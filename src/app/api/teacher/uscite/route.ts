@@ -31,13 +31,29 @@ const getQuerySchema = z.object({
   // Se valorizzato: autorizzazione PER-GITA (firma di questo specifico modulo),
   // altrimenti retro-compat (qualsiasi modulo firmato dal genitore).
   form_model_id: z.string().optional(),
-  // L'autorizzazione che il POST qui sotto genera da sé: è una riga di
-  // `forms_templates`, e la firma della famiglia sta in `forms_submissions`
-  // (Sistema B) — non in `form_submissions` (Sistema A), che è ciò che
-  // `form_model_id` interroga. Due sistemi di moduli convivono in questo repo, e
-  // un semaforo che ne guarda uno solo direbbe «nessuno ha firmato» proprio
-  // sulle gite create dall'app.
+  // ─── LE TRE STRADE DEL SEMAFORO, e perché sono tre ─────────────────────────
+  //
+  // In questo repo convivono tre modi in cui una famiglia ha autorizzato un'uscita,
+  // e sono tre EPOCHE, non tre opzioni:
+  //
+  //  · `form_model_id` — Sistema A, `form_submissions`: la modulistica storica,
+  //    firmata dal GENITORE (si passa dai legami di famiglia);
+  //  · `form_id` — Sistema B, `forms_submissions`: i moduli che questa stessa
+  //    route creava in `forms_templates` fino al 2026-08-15. **Non se ne creano
+  //    più** (vedi la testata del POST), ma le gite già pubblicate hanno la loro
+  //    riga e le famiglie l'hanno già firmata: si spegne la creazione, non la
+  //    lettura;
+  //  · `uscita_id` — l'id dell'evento in `eventi_agenda`, ed è la strada di oggi:
+  //    la famiglia firma il prestampato n. 10, che finisce in `student_documents`
+  //    (`document_type = 'autorizzazione_uscita'`) e nel fascicolo del bambino.
+  //
+  // 🔴 Fino al 2026-08-16 la terza non c'era, e questo è il difetto che la aggiunge:
+  // spento il Sistema B era rimasto acceso il suo unico lettore, quindi per ogni
+  // gita nuova il semaforo rispondeva «nessuno ha autorizzato» ANCHE con tutte le
+  // famiglie che avevano firmato. Con le parole del commento più sotto: «il giorno
+  // dell'uscita l'insegnante lascerebbe a scuola dei bambini autorizzati».
   form_id: z.string().optional(),
+  uscita_id: zUuid.optional(),
 })
 
 // GET /api/teacher/uscite?userId=&alunno_ids=a,b,c  (oppure &gruppo=)
@@ -54,7 +70,13 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
 
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const { gruppo, alunno_ids: alunnoIdsParam, form_model_id: formModelId, form_id: formId } = q.data
+    const {
+      gruppo,
+      alunno_ids: alunnoIdsParam,
+      form_model_id: formModelId,
+      form_id: formId,
+      uscita_id: uscitaId,
+    } = q.data
     const alunnoIds = alunnoIdsParam ? alunnoIdsParam.split(',').map((x) => x.trim()).filter(Boolean) : []
 
     if (!gruppo && alunnoIds.length === 0) {
@@ -91,12 +113,118 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
     const alunniList = [...targetAlunni]
     if (alunniList.length === 0) return NextResponse.json({ success: true, data: [] })
 
-    // Autorizzazione della gita GENERATA DALL'APP (il POST qui sotto): la firma
-    // sta in `forms_submissions` ed è agganciata al BAMBINO (`student_id`), non
-    // al genitore — quindi il semaforo si legge in una query sola e non ha
-    // bisogno dei legami di famiglia. È anche più preciso del ramo storico: là
-    // «autorizzato» vuol dire «un genitore collegato ha firmato quel modulo»,
-    // qui vuol dire «per QUESTO bambino esiste una firma».
+    // ── LA GITA DI OGGI: la firma sta nel FASCICOLO del bambino ────────────────
+    //
+    // Il prestampato n. 10 firmato dalla famiglia diventa una riga di
+    // `student_documents` con `document_type = 'autorizzazione_uscita'`, più la
+    // traccia in `firme_documenti`. Nessuna colonna lega quel documento all'evento
+    // — misurato sullo schema di produzione il 2026-08-16 — e questa è la parte da
+    // NON dimenticare rileggendo:
+    //
+    // ⚠️ QUESTO SEMAFORO DICE «HA FIRMATO UN'AUTORIZZAZIONE DOPO CHE LA GITA È STATA
+    // ANNUNCIATA», non «ha firmato QUESTA gita». Il confine temporale è l'unica cosa
+    // che si può pretendere senza una migrazione, e non è cosmetico: senza,
+    // l'autorizzazione firmata a marzo manderebbe un bambino in gita a maggio senza
+    // che nessuno abbia firmato niente per maggio. Resta scoperto il caso di due
+    // uscite della stessa sezione annunciate a poca distanza: la famiglia ne vede
+    // una sola alla volta nell'elenco (il n. 10 propone la PIÙ VICINA), quindi la
+    // firma che arriva è per quella — ma su questo semaforo conterebbe per
+    // entrambe. Il rimedio vero è una colonna che leghi il documento all'evento, ed
+    // è dichiarato all'orchestratore come lacuna nota.
+    if (uscitaId) {
+      // L'uscita si legge PRIMA: serve il suo istante di creazione, e serve sapere
+      // che esiste davvero — «non la trovo» non è «nessuno ha firmato».
+      const { data: uscita, error: erroreUscita } = await supabase
+        .from('eventi_agenda')
+        .select('id, scuola_id, section_id, tipo, creato_il')
+        .eq('id', uscitaId)
+        .eq('tipo', 'uscita')
+        .maybeSingle()
+      if (erroreUscita) {
+        // PostgREST non lancia: senza questo controllo un guasto di lettura
+        // diventerebbe «l'uscita non esiste», cioè un 404 su una gita che c'è.
+        logEvento('modulistica', 'error', {
+          operazione: 'teacher/uscite:GET', esito: 'uscita-non-letta',
+        }, erroreUscita)
+        return NextResponse.json(
+          { error: 'Verifica delle autorizzazioni non riuscita', codice: 'AUTORIZZAZIONI_USCITA_NON_LETTE' },
+          { status: 500 }
+        )
+      }
+      if (!uscita) {
+        /**
+         * ⚠️ NON SI RISPONDE «NESSUNO HA AUTORIZZATO», ed è il punto di tutto questo ramo:
+         * senza l'uscita non c'è nemmeno l'istante da cui contare le firme, quindi l'unica
+         * alternativa sarebbe stata contarle TUTTE — cioè dire «autorizzato» a un bambino
+         * che ha firmato per la gita di marzo. Un elenco che non si può calcolare si
+         * dichiara; non si stima.
+         *
+         * ⚠️ E IL CODICE È QUELLO DELLA LETTURA MANCATA, non uno nuovo: la frase di catalogo
+         * («non siamo riusciti a leggere chi ha firmato l'autorizzazione … l'elenco mostrato
+         * sarebbe incompleto») è vera anche qui, e resta fedele al fatto. Un
+         * `USCITA_NON_TROVATA` sarebbe più preciso ma vive in `src/lib/ui/esito-fetch.ts` +
+         * `messages/{it,en}/shared.json`, che sono di un'altra mano: è dichiarato
+         * all'orchestratore. La DIAGNOSI esatta sta dove serve, cioè nel log.
+         *
+         * `warn` e non `error`: è un id sbagliato di chi chiama, non un guasto nostro.
+         */
+        logEvento('modulistica', 'warn', {
+          operazione: 'teacher/uscite:GET', esito: 'uscita-non-trovata',
+        })
+        return NextResponse.json(
+          { error: 'Verifica delle autorizzazioni non riuscita', codice: 'AUTORIZZAZIONI_USCITA_NON_LETTE' },
+          { status: 500 }
+        )
+      }
+      // La sezione dell'uscita passa dallo stesso presidio delle scritture: un id di
+      // un altro plesso non deve poter dire nemmeno «quella gita esiste».
+      const fuoriScope = await assertSezioneInScope(supabase, auth.user, uscita.section_id as string)
+      if (fuoriScope) return fuoriScope
+
+      // ⚠️ NIENTE `document_type` DENTRO LA QUERY, e non è una preferenza: è un
+      // ENUMERATO, il DB E2E della CI non è migrato, e un valore che l'enumerazione
+      // non ha risponde `22P02` — cioè questo semaforo diventerebbe un 500 su un
+      // ambiente in cui tutto il resto funziona. Si legge ciò che quei bambini hanno
+      // e si filtra in TypeScript, dove uno slug è una stringa.
+      const { data: documenti, error: erroreDocumenti } = await supabase
+        .from('student_documents')
+        .select('student_id, document_type, created_at')
+        .in('student_id', alunniList)
+        .gte('created_at', String(uscita.creato_il ?? new Date(0).toISOString()))
+      if (erroreDocumenti) {
+        // Un dato sbagliato è peggio di un errore dichiarato: col silenzio
+        // l'insegnante lascerebbe a scuola dei bambini autorizzati.
+        logEvento('modulistica', 'error', {
+          operazione: 'teacher/uscite:GET', esito: 'firme-uscita-non-lette',
+        }, erroreDocumenti)
+        return NextResponse.json(
+          { error: 'Verifica delle autorizzazioni non riuscita', codice: 'AUTORIZZAZIONI_USCITA_NON_LETTE' },
+          { status: 500 }
+        )
+      }
+      const autorizzatiDalFascicolo = new Set(
+        (documenti ?? [])
+          .filter((d) => String(d.document_type ?? '').trim() === TIPO_DOCUMENTO_USCITA)
+          .map((d) => d.student_id as string)
+      )
+      return NextResponse.json({
+        success: true,
+        data: alunniList.map((alunno_id) => ({
+          alunno_id,
+          autorizzato: autorizzatiDalFascicolo.has(alunno_id),
+          quota_ok: quotaOk.get(alunno_id) ?? false,
+        })),
+      })
+    }
+
+    // Autorizzazione della gita del **Sistema B**, creata da questa route fino al
+    // 2026-08-15: la firma sta in `forms_submissions` ed è agganciata al BAMBINO
+    // (`student_id`), non al genitore — quindi il semaforo si legge in una query
+    // sola e non ha bisogno dei legami di famiglia.
+    //
+    // ⚠️ RESTA PER LE GITE GIÀ PUBBLICATE, e solo per quelle: nuovi moduli del
+    // Sistema B non ne nascono più. Cancellare questo ramo farebbe sparire
+    // autorizzazioni già raccolte dalle famiglie.
     if (formId) {
       const { data: firme, error: erroreFirme } = await supabase
         .from('forms_submissions')
@@ -212,6 +340,15 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
 // copie delle etichette in due file divergono al primo ritocco — con il n. 10
 // che smette di stampare la destinazione senza che niente diventi rosso. Il
 // round-trip fra chi scrive e chi legge è verificato dal test.
+
+/**
+ * Il `document_type` con cui la firma del n. 10 entra nel fascicolo.
+ *
+ * È lo slug del registro dei prestampati, e sta scritto qui una volta sola perché il
+ * semaforo del GET lo confronta in TypeScript invece che dentro la query (vedi lì il
+ * motivo: l'enumerato e il DB E2E non migrato).
+ */
+const TIPO_DOCUMENTO_USCITA = 'autorizzazione_uscita'
 
 const zOrarioHM = z
   .string()
@@ -473,7 +610,7 @@ export const POST = withRoute('teacher/uscite:POST', async (request: NextRequest
         // PostgREST non lancia: senza questo ramo un guasto di lettura sarebbe
         // «nessun destinatario», cioè una gita pubblicata che nessuno annuncia —
         // e nessuno se ne accorgerebbe fino al giorno della partenza.
-        logEvento('notifica', 'error', {
+        logEvento('push', 'error', {
           operazione: 'teacher/uscite:POST', esito: 'destinatari-non-letti', sede: scuolaId,
         }, erroreAlunni)
       } else {
@@ -482,6 +619,7 @@ export const POST = withRoute('teacher/uscite:POST', async (request: NextRequest
         destinatari = await genitoriDiAlunni(supabase, idAlunni)
       }
 
+      let annunciati = 0
       if (destinatari.length > 0) {
         // `consenso_uscita` è il tipo canonico del catalogo («Consensi uscite e
         // gite»): è anche il toggle con cui la Direzione può spegnere questo
@@ -492,44 +630,69 @@ export const POST = withRoute('teacher/uscite:POST', async (request: NextRequest
         // modifica da aspettare — l'uscita è già scritta in agenda e la famiglia
         // ha un termine per autorizzare. Dieci minuti di ritardo su una gita
         // annunciata il giorno prima sono dieci minuti tolti al genitore.
-        await notificaEvento(supabase, {
-          tipo: 'consenso_uscita',
-          scuolaId,
-          utenteIds: destinatari,
-          titolo,
-          // ⚠️ IL TESTO NOMINA LA SCHEDA GIUSTA, e il link NON porta un `?tab=`:
-          // `parent/modulistica/page.tsx` tiene la linguetta in `useState('compilare')` e
-          // non legge nessun parametro d'indirizzo (misurato). Un `?tab=certificati` sarebbe
-          // una promessa che la pagina non mantiene — si aprirebbe su «Da Compilare» e il
-          // genitore cercherebbe un modulo dove non c'è. La scheda si nomina a parole, che
-          // è ciò che oggi funziona davvero.
-          corpo: `Da autorizzare entro il ${dataItalianaUscita(termine)}. Il modulo è in Modulistica, scheda «Certificati».`,
-          link: '/parent/modulistica',
-          entitaTipo: 'eventi_agenda',
-          entitaId: create[0].id,
-          bufferMin: 0,
-        })
+        try {
+          await notificaEvento(supabase, {
+            tipo: 'consenso_uscita',
+            scuolaId,
+            utenteIds: destinatari,
+            titolo,
+            // ⚠️ IL COLLEGAMENTO PORTA ALLA SCHEDA GIUSTA, e prima non lo faceva.
+            // Misurato in un browser vero: `/parent/modulistica` si apre su «DA
+            // COMPILARE», che a quel genitore diceva «Ottimo lavoro! Non hai moduli
+            // da compilare» — mentre il modulo della gita stava nella terza scheda.
+            // Il testo per giunta nominava una linguetta con un'etichetta che
+            // nell'app non esiste. Ora la pagina legge `?tab=` (come fa già
+            // `/admin/modulistica`), quindi il link ci arriva davvero e il corpo non
+            // deve più insegnare al genitore dove cercare.
+            corpo: `Da autorizzare entro il ${dataItalianaUscita(termine)}. Il modulo da firmare è già pronto in Modulistica.`,
+            link: '/parent/modulistica?tab=certificati',
+            entitaTipo: 'eventi_agenda',
+            entitaId: create[0].id,
+            bufferMin: 0,
+          })
+          annunciati = destinatari.length
+        } catch (err) {
+          // Da qui in poi la gita c'è: un automatismo che si guasta non può
+          // impedire a un'insegnante di programmare l'uscita. Ma non passa in
+          // silenzio, e il CORPO dell'errore resta nella riga — `403` non dice
+          // niente, `403 "the domain is not verified"` dice tutto.
+          logEvento('push', 'error', {
+            operazione: 'teacher/uscite:POST',
+            esito: 'uscita-non-annunciata',
+            tipo: 'consenso_uscita',
+            sede: scuolaId,
+            n: destinatari.length,
+          }, err)
+        }
       }
 
-      // ⚠️ IL SUCCESSO SI LOGGA, e non è una nota di colore: con i soli errori
-      // «nessun log» non distingue «le notifiche partono» da «non ne è mai
-      // partita una» — l'ambiguità che in questo progetto ha nascosto per mesi
-      // il guasto delle email di credenziali. `notificaEvento` non lancia e non
-      // restituisce niente, quindi questa riga è l'unico posto in cui si vede
-      // che l'annuncio è stato chiesto e a quante persone.
+      // ⚠️ IL SUCCESSO SI LOGGA, E SU UN CANALE PERSISTITO. Sono due cose, e la
+      // seconda è quella che il 2026-08-16 mancava: la riga stava su `notifica`,
+      // che NON è fra gli `EVENTI_PERSISTITI` (`logger.ts`), quindi non arrivava
+      // in `app_log` — misurato, per la gita creata alle 00:16 in tabella c'erano
+      // solo `header-fallback` e `uscita-creata`. Con trenta giorni di ritenzione
+      // e un giorno di log runtime su Vercel, «nessuna riga» avrebbe smesso di
+      // distinguere «gli annunci partono» da «non ne è mai partito uno»:
+      // l'ambiguità che in questo progetto ha nascosto per mesi il guasto delle
+      // email di credenziali. `push` è il canale della CONSEGNA, è già persistito,
+      // ed è quello che la deroga di `eventi-log.test.ts` indica per nome.
       //
       // `info` anche con zero destinatari: `notificaEvento` emette già il suo
       // `warn` in quel caso, e alzare il livello qui gonfierebbe il canale dei
       // guasti per una sezione senza iscritti, che non è un guasto.
-      logEvento('notifica', 'info', {
+      logEvento('push', 'info', {
         operazione: 'teacher/uscite:POST',
-        esito: destinatari.length > 0 ? 'uscita-annunciata' : 'uscita-senza-destinatari',
+        esito: annunciati > 0 ? 'uscita-annunciata' : 'uscita-senza-destinatari',
         tipo: 'consenso_uscita',
         sede: scuolaId,
-        n: destinatari.length,
+        n: annunciati,
         n_alunni: alunniCoinvolti,
         sezioni: create.length,
       })
+      // La risposta dice quante famiglie l'hanno ricevuto DAVVERO, non quante ne
+      // sono state trovate: un annuncio fallito che si racconta come riuscito è
+      // peggio di nessun annuncio.
+      destinatari = annunciati > 0 ? destinatari : []
     }
 
     // 201 quando qualcosa è nato davvero, 200 quando la chiamata era una

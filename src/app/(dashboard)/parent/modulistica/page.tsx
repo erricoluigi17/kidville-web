@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 import { formattaIstante } from '@/i18n/config';
 import {
@@ -95,7 +96,28 @@ export default function ParentModulisticaPage() {
   const t = useTranslations('parentServizi');
   const { userId: parentId } = useSessionIdentity();
   const f = useDateFormat();
-  const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>('compilare');
+  /**
+   * La linguetta d'apertura, che ora si può DICHIARARE nell'indirizzo.
+   *
+   * 🔴 Misurato in un browser vero il 2026-08-16: la notifica della gita portava a
+   * `/parent/modulistica`, la pagina si apriva su «DA COMPILARE» e a quel genitore diceva
+   * «Ottimo lavoro! Non hai moduli da compilare» — mentre il modulo della gita stava nella
+   * terza scheda. Il testo della notifica per giunta nominava una linguetta con un'etichetta
+   * che nell'app non esiste. Un avviso che porta a una schermata che dice «non hai niente da
+   * fare» è peggio di nessun avviso.
+   *
+   * Stesso identico schema di `/admin/modulistica`, che i suoi `?tab=` li legge già: le
+   * quattro parole ammesse sono scritte QUI, e sono le stesse del tipo e della barra. È la
+   * riga che si dimentica — finché nessuno manda quel link, il difetto non si vede — ed è il
+   * motivo per cui il collegamento della notifica ha un test suo nella route che lo compone.
+   */
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const initialTab: 'compilare' | 'archivio' | 'certificati' | 'medici' =
+    tabParam === 'archivio' || tabParam === 'certificati' || tabParam === 'medici'
+      ? tabParam
+      : 'compilare';
+  const [activeTab, setActiveTab] = useState<'compilare' | 'archivio' | 'certificati' | 'medici'>(initialTab);
   const [assignedForms, setAssignedForms] = useState<AssignedForm[]>([]);
   const [archive, setArchive] = useState<SignedArchiveItem[]>([]);
   const [medCerts, setMedCerts] = useState<MedCert[]>([]);

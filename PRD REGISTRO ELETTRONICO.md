@@ -98,8 +98,21 @@
 
 La passata di ieri sapeva **decidere** e si fermava prima di spedire. Questa spedisce: il giro
 gira ogni mattina alle **10:10 di Roma, dal 22 agosto al 10 settembre**, con un tetto di **90
-email al giorno**. Il `cron.schedule` è armato, e da qui in avanti le password arrivano a
-famiglie vere.
+email al giorno**. Il `cron.schedule` è **armato in produzione** (`cron.job` lo mostra attivo con
+`10 8 * * *`) e la voce è in `JOB_CRON`, quindi `/api/health` lo sorveglia con finestra 26 h. Da
+qui in avanti le password arrivano a famiglie vere — **la prima il 22 agosto**.
+
+Il primo battito è stato innescato a mano il 17 agosto ed è stato **innocuo per costruzione**:
+fuori dalla finestra la route esce subito. Verificato dopo: registro inviti 0, esiti 0, nessun
+alunno creato, nessuna riga `evento=email`.
+
+🔑 **Una trappola misurata proprio lì, e vale per ogni battito del repository**: `app_log`
+deduplica per `(fingerprint, giorno)` e sull'`ON CONFLICT` aggiorna solo `occorrenze` e
+`visto_l_ultima` — **il `contesto` resta quello della PRIMA occorrenza del giorno**. Il battito
+letto subito dopo mostrava `n: 170`, che non era il giro di produzione (0, fuori finestra) ma una
+prova a vuoto locale di mezz'ora prima sullo stesso database. Il battito è un segnale di **vita**,
+non di contenuto: `/api/health` guarda l'istante e fa bene; chi legge `n` sta leggendo il primo
+giro della giornata.
 
 🔴 **Cento persone reali sarebbero rimaste fuori dall'app.** Fino a ieri l'account nasceva al solo
 genitore **referente** — il primo adulto della domanda con un'email. Misurato sulle domande già

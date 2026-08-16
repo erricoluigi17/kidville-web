@@ -135,8 +135,9 @@ descrive il codice morto non è una rimozione.*
   chiavi risolte a runtime (`etichette`: 171 su 199).
 - **`__tests__/architecture/residuo-odt-assente.test.ts`** — sotto `src/` non torna né la tabella né
   l'estensione né il tipo MIME. La lezione per iscritto: **«zero righe la leggono» non è «zero righe
-  la nominano»** — un residuo che *crea* è più vivo di uno che legge. I commenti sono esenti: un lock
-  che vieta anche di *parlare* della cosa morta obbliga a cancellarla in silenzio.
+  la nominano»** — un residuo che *crea* è più vivo di uno che legge. Il divieto vale **anche per i
+  commenti**, perché il criterio è `grep -rn … src/` e una riga di commento è una riga: il nome esatto
+  vive nel lock, e là dove il blocco è stato tolto si scrive in italiano che cosa c'era.
 - **`__tests__/pages/admin-modulistica-linguette.test.tsx`** — la barra si monta e si legge: **sei**
   linguette, col testo italiano preso dai cataloghi, e nessuna che mostri il nome di una chiave.
 - **`messaggi-plurali-e-glossario`** — ogni eccezione di `NON_CONTATORI` deve puntare a una chiave che

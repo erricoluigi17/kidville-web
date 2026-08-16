@@ -11,15 +11,17 @@ const querySchema = z.object({}); // nessun parametro in ingresso
 /**
  * ⚠️ Questo SQL non è più la copia fedele di
  * `supabase/migrations_archive/20260526_fase4_modulistica_legal.sql`, e la differenza è
- * voluta: il 2026-08-16 ne è uscito il punto 5, la tabella `certificati_templates` dei
- * «Template Certificati ODT» — CREATE, indice, RLS e la sua `CREATE POLICY … FOR ALL
- * USING (true)`.
+ * voluta: il 2026-08-16 ne è uscito il **punto 5**, la tabella dei «Template Certificati
+ * ODT» — CREATE, indice, RLS e la sua policy aperta a tutti.
  *
  * Il tab che quella tabella avrebbe dovuto alimentare era un mockup e non ci ha mai scritto
  * niente; in produzione la tabella non esiste in nessuno schema (`to_regclass` → null,
  * misurato il 2026-08-16), quindi non c'è nessun `DROP` da applicare. Restava solo qui: la
- * macchina per RIFARE una tabella che tutti davano per morta. Lock:
- * `__tests__/architecture/residuo-odt-assente.test.ts`.
+ * macchina per RIFARE una tabella che tutti davano per morta.
+ *
+ * Il nome esatto di quella tabella, e il perché per esteso, stanno nel lock che sorveglia
+ * la pulizia — `__tests__/architecture/residuo-odt-assente.test.ts` — e non qui: il criterio
+ * è che `grep` su `src/` non ne trovi più traccia, e una riga di commento sarebbe una traccia.
  *
  * Chi rimettesse questo blocco «per riallineare con l'archivio» disferebbe la pulizia: la
  * fonte di verità dello storico è l'archivio, non questa route, che è sigillata

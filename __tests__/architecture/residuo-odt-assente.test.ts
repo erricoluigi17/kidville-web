@@ -41,11 +41,17 @@ const RADICE = process.cwd()
 /**
  * Le tracce che, sotto `src/`, non devono più comparire — e perché.
  *
- * Sono le MACCHINE, non la parola: la tabella, l'estensione che il campo di caricamento
- * accettava, il tipo MIME che gli faceva da filtro. Nominare `certificati_templates` in una
- * riga di commento non è un residuo — è il modo in cui si spiega a chi verrà dopo perché
- * quel blocco non c'è più. Un lock che vieta anche di PARLARE della cosa morta obbliga a
- * cancellarla in silenzio, ed è il silenzio che ha fatto sopravvivere questo residuo.
+ * Sono le MACCHINE: la tabella, l'estensione che il campo di caricamento accettava, il tipo
+ * MIME che gli faceva da filtro.
+ *
+ * ⚠️ Il divieto vale anche per i COMMENTI, e la scelta è stata pesata. L'esenzione della
+ * prosa sarebbe stata più gentile — si spiega meglio ciò che si può nominare — ma renderebbe
+ * il criterio impossibile da verificare a mano: chi rimisura fa
+ * `grep -rn certificati_templates src/`, e una riga di commento gliene restituisce una. Un
+ * lock che pretende una cosa diversa da quella che il grep misura è un lock che litiga con
+ * chi lo controlla. Quindi il nome esatto vive **qui**, in questo file, che è il posto dove
+ * si va a cercare il perché; là dove il blocco è stato tolto si scrive in italiano che cosa
+ * c'era e si rimanda a questo lock. Cancellare non è nascondere, se resta scritto dove.
  */
 const RESIDUI_VIETATI = new Map<RegExp, string>([
   [
@@ -64,11 +70,6 @@ const RESIDUI_VIETATI = new Map<RegExp, string>([
   ],
 ])
 
-/** Una riga di commento è prosa: spiega, non esegue. */
-function eCommento(riga: string): boolean {
-  return /^\s*(\/\/|\/\*|\*|--)/.test(riga)
-}
-
 function sorgenti(): string[] {
   const trovati: string[] = []
   const cammina = (dir: string) => {
@@ -84,11 +85,11 @@ function sorgenti(): string[] {
 
 const FILE = sorgenti()
 
-/** Le righe ESEGUIBILI di un testo che contengono il residuo, coi loro numeri. */
+/** Le righe di un testo che contengono il residuo, coi loro numeri. */
 function righeColResiduo(testo: string, pattern: RegExp): number[] {
   return testo
     .split('\n')
-    .map((riga, i) => (!eCommento(riga) && pattern.test(riga) ? i + 1 : 0))
+    .map((riga, i) => (pattern.test(riga) ? i + 1 : 0))
     .filter((n) => n > 0)
 }
 
@@ -99,16 +100,18 @@ describe('lock architettura · nessun residuo dei template ODT sotto src/', () =
     expect(FILE.length).toBeGreaterThan(500)
   })
 
-  it("l'esenzione dei commenti non spegne il lock: il SQL vero resta preso", () => {
-    // È il controllo che tiene onesta la regola qui sopra. Se «prosa» finisse per
-    // includere anche il codice, questo file diventerebbe un lock che non vieta niente.
+  it('riconosce il residuo dov’era davvero: il SQL, il campo, il filtro', () => {
+    // Controllo positivo. Senza, i tre divieti qui sotto sarebbero verdi anche con una
+    // regexp che non prende niente — cioè su un lock che non vieta.
     const finto = [
-      '    -- 5. Tabella Template Certificati (ODT)',
       '    CREATE TABLE IF NOT EXISTS certificati_templates (',
       "    accept: '.odt',",
+      "    type: 'application/vnd.oasis.opendocument.text',",
+      '    const nienteDaVedere = 1',
     ].join('\n')
-    expect(righeColResiduo(finto, /certificati_templates/)).toEqual([2])
-    expect(righeColResiduo(finto, /\.odt\b/i)).toEqual([3])
+    expect(righeColResiduo(finto, /certificati_templates/)).toEqual([1])
+    expect(righeColResiduo(finto, /\.odt\b/i)).toEqual([2])
+    expect(righeColResiduo(finto, /vnd\.oasis\.opendocument/i)).toEqual([3])
   })
 
   for (const [pattern, motivo] of RESIDUI_VIETATI) {

@@ -43,6 +43,7 @@ import {
   type SedeCertificato,
 } from '@/lib/certificati/self-service'
 import { isoToIt } from '@/lib/format/data'
+import { componiIndirizzoSede } from '@/lib/scuole/anagrafica'
 import { zDataYMD } from '@/lib/validation/common'
 import type { BloccoPrestampato, CampoPrestampato } from '@/lib/prestampati/tipi'
 
@@ -1886,16 +1887,29 @@ export type RisposteCertificatoBonusNido = z.infer<typeof zCertificatoBonusNido>
  * ma qui servono come VALORE di un campo e non come riga di intestazione: chiamare
  * quella funzione e pescarne la riga per posizione sarebbe un legame che si rompe in
  * silenzio il giorno in cui una sede non ha il nome.
+ *
+ * ⚠️ La RIGA però si compone in un posto solo, e fino al 2026-08-16 non era così: qui
+ * stavano riscritte a mano le stesse quattro righe di `componiIndirizzoSede`. Il
+ * risultato coincideva byte per byte, quindi nessuna asserzione sull'uscita poteva
+ * accorgersene — ed è precisamente la condizione in cui una copia sopravvive fino al
+ * giorno in cui diverge.
+ *
+ * Che quel giorno arrivi non è un timore astratto: sulla STESSA pagina di questo
+ * certificato c'era una terza copia scritta a mano, `componiScuola` in `prefill.ts`, e
+ * quella era già divergente. Univa tre parti con ` — ` e staccava la sigla dal comune,
+ * stampando «Sede legale: Via Silvio Pellico 7 — 81030 Cesa — (CE)» due righe sopra
+ * «Sede operativa del Nido: Via Filippo Turati 2 — 81030 Cesa (CE)», su un foglio che
+ * va all'INPS. Ora entrambe passano di lì.
  */
 function indirizzoOperativo(sede: DatiSede): string {
-  const capCitta = [sede.scuola_cap?.trim(), sede.scuola_citta?.trim()].filter(Boolean).join(' ')
-  const provincia = sede.scuola_provincia?.trim()
-  return [
-    sede.scuola_indirizzo?.trim(),
-    [capCitta, provincia ? `(${provincia})` : ''].filter(Boolean).join(' '),
-  ]
-    .filter(Boolean)
-    .join(' — ')
+  return (
+    componiIndirizzoSede({
+      indirizzo: sede.scuola_indirizzo,
+      cap: sede.scuola_cap,
+      citta: sede.scuola_citta,
+      provincia: sede.scuola_provincia,
+    }) ?? ''
+  )
 }
 
 export const modelloCertificatoBonusNido = definisciModello({

@@ -407,6 +407,10 @@ export const POST = withRoute('admin/schools:POST', async (request: Request) => 
 
     await logScrittura(supabase, {
       attore: auth.user,
+      // La sede dell'audit è quella APPENA CREATA, non quella di casa di chi
+      // l'ha creata — l'unico plesso a cui la sede nuova non appartiene. Vedi la
+      // nota estesa sulla stessa riga del PATCH.
+      scuolaId: sedeId,
       entitaTipo: 'multi_sede',
       entitaId: sedeId,
       azione: 'insert',
@@ -523,8 +527,27 @@ export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) =
       }
     }
 
+    // ── L'audit dichiara la sede su cui si è scritto ─────────────────────────
+    // `logScrittura` ripiega su `attore.scuola_id` quando il chiamante tace
+    // (audit/scrittura.ts:112), e per un `admin` multi-sede quella è la sede DI
+    // CASA, non quella appena modificata. Qui si taceva, e le due coincidevano
+    // per caso una volta su tre.
+    //
+    // Misurato in produzione (2026-08-16, `audit_scritture_docente`, entità
+    // `multi_sede`): otto righe su dodici attribuivano a Giugliano un
+    // salvataggio avvenuto su Aversa o su Cesa — comprese quelle lasciate dai
+    // `PATCH` con cui l'anagrafica delle tre sedi è stata compilata dal
+    // pannello, cioè proprio le righe che dovevano PROVARE che il percorso
+    // applicativo lascia una traccia.
+    //
+    // Su `multi_sede` l'entità modificata È una sede, quindi «quale plesso» non
+    // è un contorno del record: è il record. Un registro immodificabile che
+    // nomina il plesso sbagliato è peggio di uno che tace, perché chi rilegge
+    // gli crede. È la regola di AGENTS.md — «ogni scrittura dichiara la sua
+    // sede» — applicata alla scrittura che ha per oggetto una sede.
     await logScrittura(supabase, {
       attore: auth.user,
+      scuolaId: id,
       entitaTipo: 'multi_sede',
       entitaId: id,
       azione: 'update',

@@ -1,3 +1,5 @@
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service'
 import { componiIndirizzoSede, normalizzaAnagraficaSede, zAnagraficaSede } from '@/lib/scuole/anagrafica'
@@ -220,6 +222,70 @@ describe('la riga dell\'indirizzo si compone in un posto solo', () => {
         provincia: 'CE',
       })
     ).toBe('Via Filippo Turati 2 — 81030 Cesa (CE)')
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // «IN UN POSTO SOLO» ERA UN TITOLO, NON UN VINCOLO: I COMPOSITORI ERANO DUE
+  //
+  // Il test qui sopra prova che `buildIntestazioneSede` non compone per conto
+  // suo. Non prova che NESSUN ALTRO lo faccia — e qualcun altro lo faceva.
+  //
+  // `indirizzoOperativo` (`lib/prestampati/modelli/genitore.ts`) riscriveva le
+  // stesse quattro righe di `componiIndirizzoSede` per stampare «Sede operativa
+  // del Nido» sul certificato Bonus Asilo Nido. Byte per byte lo stesso
+  // risultato, quindi nessuna asserzione sull'uscita poteva accorgersene: è la
+  // duplicazione stessa il difetto, e la si misura sulla FORMA del codice.
+  //
+  // Non è un timore astratto. Sulla STESSA pagina del Bonus Nido c'era un terzo
+  // compositore scritto a mano, `componiScuola`, e quello era già divergente:
+  // univa tre parti con ` — ` e staccava la sigla dal comune, stampando
+  //
+  //     Sede legale:             Via Silvio Pellico 7 — 81030 Cesa — (CE)
+  //     Sede operativa del Nido: Via Filippo Turati 2 — 81030 Cesa (CE)
+  //
+  // due righe sopra l'altra, su un foglio che va all'INPS. È stato riportato al
+  // compositore comune; questo qui era rimasto, con la stessa forma e lo stesso
+  // destino davanti. Due copie della stessa regola divergono sempre, prima o poi
+  // — è l'argomento con cui la spec §1.5 fonde in una le due testate PDF.
+  //
+  // IL LOCK. Si scandiscono i tre alberi che stampano indirizzi di sede su
+  // documenti e messaggi (prestampati · certificati · email) e si vieta a
+  // ciascuno di comporre da sé la provincia fra parentesi: quella parentesi è la
+  // firma inconfondibile di questa riga. Fuori da quei tre alberi la stessa
+  // forma ha usi legittimi che non c'entrano niente con un indirizzo — la
+  // targhetta «Napoli (NA)» del comune di NASCITA nel wizard del personale, gli
+  // esempi nei messaggi di validazione — e per questo lo scandaglio si ferma
+  // dove si stampano documenti, invece di allargarsi e chiedere un'allowlist che
+  // fra sei mesi conterrebbe anche il difetto che deve fermare.
+  it('nessun generatore di documenti o messaggi compone da sé la provincia fra parentesi', () => {
+    const radice = join(__dirname, '..', '..', 'src', 'lib')
+    const alberi = ['prestampati', 'certificati', 'email']
+    const CASA = join('scuole', 'anagrafica.ts') // l'unico posto dove quella riga si scrive
+
+    const sorgenti: string[] = []
+    const raccogli = (dir: string) => {
+      for (const voce of readdirSync(dir, { withFileTypes: true })) {
+        const percorso = join(dir, voce.name)
+        if (voce.isDirectory()) raccogli(percorso)
+        else if (/\.tsx?$/.test(voce.name)) sorgenti.push(percorso)
+      }
+    }
+    for (const albero of alberi) raccogli(join(radice, albero))
+    // Se lo scandaglio non trova più i file, il lock passerebbe a vuoto.
+    expect(sorgenti.length).toBeGreaterThan(10)
+
+    const colpevoli: string[] = []
+    for (const file of sorgenti) {
+      if (file.endsWith(CASA)) continue
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .forEach((riga, i) => {
+          if (/\(\$\{[^}]*[Pp]rovincia[^}]*\}\)/.test(riga)) {
+            colpevoli.push(`${file.slice(radice.length + 1)}:${i + 1}`)
+          }
+        })
+    }
+    expect(colpevoli).toEqual([])
   })
 
   it('ciò che manca si omette, non si stampa vuoto né si inventa', () => {

@@ -264,6 +264,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     let fileAdultiRimossi = 0
     let fileAdultiNonRimossi = 0
     let notificheRimosse = esitoAlunno.notificheRimosse
+    let lettureFallite = esitoAlunno.lettureFallite ?? 0
     for (const pid of parentiOrfani) {
       const e = await anonimizzaParent(supabase, pid, at, OP)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
@@ -273,6 +274,7 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       fileAdultiRimossi += e.fileRimossi
       fileAdultiNonRimossi += e.fileNonRimossi
       notificheRimosse += e.notificheRimosse
+      lettureFallite += e.lettureFallite ?? 0
     }
 
     const nFileNonRimossi = esitoAlunno.fileNonRimossi + fileAdultiNonRimossi
@@ -282,6 +284,15 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       parents: parentiOrfani.length,
       file_rimossi: esitoAlunno.file + fileAdultiRimossi,
       n_file_non_rimossi: nFileNonRimossi,
+      // ⚠️ QUANTI ARCHIVI NON SI SONO POTUTI NEMMENO GUARDARE, e non è un doppione
+      // della riga qui sopra: `n_file_non_rimossi` conta i file che si sapeva esserci
+      // e non sono usciti, questo conta i magazzini il cui INVENTARIO non si è letto —
+      // dove i file non si sanno nemmeno contare. Prima del 2026-08-16 un `42501
+      // permission denied` su `student_documents` faceva rispondere
+      // `n_file_non_rimossi: 0` e scrivere `oblio-eseguito`: la Direzione leggeva
+      // «oblio completo» mentre la scheda sanitaria firmata di un bambino — allergeni,
+      // terapie, posologie in chiaro dentro il PDF — non era stata nemmeno aperta.
+      letture_fallite: lettureFallite,
       iscrizioni_scrubbate: esitoAlunno.iscrizioniScrubbate + iscrizioniAdulti,
       foto_rimosse: esitoAlunno.fotoRimosse,
       foto_sganciate: esitoAlunno.fotoSganciate,
@@ -310,14 +321,23 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è
     // in EVENTI_PERSISTITI) con soli conteggi e uuid. Alla famiglia è stato
     // promesso che quei file non ci sono più.
-    if (nFileNonRimossi > 0) {
+    //
+    // ⚠️ E «incompleto» sono DUE cose, non una. Fino al 2026-08-16 questo `if`
+    // guardava i soli file non usciti, e un archivio che non si era potuto LEGGERE
+    // passava dal ramo `else` — cioè si dichiarava eseguito. Un inventario non letto
+    // non è un archivio vuoto: è un archivio ignoto, e sul fascicolo sanitario di un
+    // minore la differenza è fra «tolto» e «non l'ho nemmeno guardato».
+    if (nFileNonRimossi > 0 || lettureFallite > 0) {
       logEvento('gdpr', 'error', {
         operazione: OP,
         esito: 'oblio-parziale',
         entita_tipo: 'alunni',
         entita_id: alunno_id,
         n_file: nFileNonRimossi,
-        msg: `${OP}: ${nFileNonRimossi} file di un interessato NON sono usciti dall'archivio`,
+        n_letture_fallite: lettureFallite,
+        msg:
+          `${OP}: ${nFileNonRimossi} file di un interessato NON sono usciti dall'archivio` +
+          (lettureFallite > 0 ? ` · ${lettureFallite} archivi non si sono potuti leggere` : ''),
       })
     } else {
       // Evento critico → si logga anche il SUCCESSO. Con i soli errori, «nessun

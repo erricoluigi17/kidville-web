@@ -1398,12 +1398,18 @@ async function archiviaNelFascicolo(
  * nessuno riverifica.
  *
  * 🔴 E NON ERA UN'IPOTESI: in produzione quel bucket **non esiste ancora**. La fotografia
- * dello storage — `__tests__/fixtures/bucket-storage-snapshot.json`, generata l'11/08 — ne
- * elenca quattordici e `sensitive_documents` non è fra loro, perché `primaria/fascicolo` lo
- * crea alla prima scansione caricata e quella prima volta non è mai avvenuta. Chi lo avrebbe
- * creato, quindi, era questa route: al primo nulla osta generato allo sportello, con i tipi
- * MIME sbagliati, e da lì in poi il fascicolo di tutte e tre le sedi avrebbe accettato solo
- * PDF.
+ * dello storage — `__tests__/fixtures/bucket-storage-snapshot.json` — ne elenca quattordici e
+ * `sensitive_documents` non è fra loro, perché `primaria/fascicolo` lo crea alla prima
+ * scansione caricata e quella prima volta non è mai avvenuta. Chi lo avrebbe creato, quindi,
+ * era questa route: al primo nulla osta generato allo sportello, con i tipi MIME sbagliati, e
+ * da lì in poi il fascicolo di tutte e tre le sedi avrebbe accettato solo PDF.
+ *
+ * ⚠️ La data della misura NON si ricopia qui, e non è pigrizia: la fotografia la porta dentro
+ * di sé (`generato_il`, in UTC, dentro il suo `sha256`) e una data ricopiata a mano invecchia
+ * senza che nessuno se ne accorga — questa riga diceva «generata l'11/08» quando la
+ * fotografia era già stata rifatta. Chi vuole sapere quando è stata misurata legga il file;
+ * chi vuole sapere se è ancora recente non deve fare niente, perché
+ * `__tests__/lib/gdpr-oblio-completo.test.ts` diventa rosso da solo dopo trenta giorni.
  *
  * La strada di ricopiare i quattro tipi è stata scartata: sarebbe una terza copia di una
  * configurazione che vive già in due file (`primaria/fascicolo` e la route gemella della

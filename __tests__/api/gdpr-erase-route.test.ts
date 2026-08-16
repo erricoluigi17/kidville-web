@@ -344,21 +344,30 @@ describe('POST /api/admin/gdpr/erase', () => {
     expect(json.allegati_chat).toBe(0)
   })
 
-  it('execute: il corpo della risposta è INVARIATO (i conteggi sono roba del dry-run)', async () => {
-    // Il ramo che ESEGUE non è stato toccato, e questa riga lo tiene fermo: se un
-    // giorno i conteggi del dry-run comparissero anche qui, sarebbero numeri
-    // misurati PRIMA dell'operazione presentati come il suo esito.
+  it('execute: nella risposta NON entrano i conteggi del dry-run (sono misure di prima)', async () => {
+    // Il ramo che ESEGUE risponde con l'esito dell'operazione, non con l'annuncio:
+    // se un giorno i conteggi del dry-run comparissero anche qui, sarebbero numeri
+    // misurati PRIMA dell'operazione presentati come il suo risultato.
+    //
+    // ⚠️ L'ELENCO È CHIUSO ED È VOLUTO, ma non è «la risposta non cambia mai»: un
+    // campo che descrive COM'È ANDATA l'esecuzione ci può entrare, e ne è entrato
+    // uno il 2026-08-16 (`letture_fallite`, gli archivi che non si sono potuti
+    // nemmeno leggere). Ciò che non può entrare è un numero contato prima.
     h.pagelle = [{ id: 'pg-1' }]
     h.certificati = [{ id: 'cm-1' }]
     const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
     expect(res.status).toBe(200)
-    expect(Object.keys(await res.json()).sort()).toEqual(
+    const chiavi = Object.keys(await res.json())
+    expect(chiavi.sort()).toEqual(
       [
         'ok',
         'alunno',
         'parents',
         'file_rimossi',
         'n_file_non_rimossi',
+        // Quanti archivi non si è riusciti ad aprire: senza, «zero file non rimossi»
+        // diceva «oblio completo» anche su un magazzino mai letto.
+        'letture_fallite',
         'iscrizioni_scrubbate',
         'foto_rimosse',
         'foto_sganciate',
@@ -372,6 +381,11 @@ describe('POST /api/admin/gdpr/erase', () => {
         'notifiche_rimosse',
       ].sort(),
     )
+    // L'asserzione che regge il titolo, e che l'elenco da solo non renderebbe
+    // esplicita: nessuna delle chiavi del dry-run è finita qui dentro.
+    for (const delDryRun of ['fascicolo_sanitario', 'pagelle', 'certificati_medici', 'nominativo_conferma']) {
+      expect(chiavi, `\`${delDryRun}\` è un conteggio misurato PRIMA dell'operazione`).not.toContain(delDryRun)
+    }
   })
 
   it('execute con conferma errata → 400', async () => {

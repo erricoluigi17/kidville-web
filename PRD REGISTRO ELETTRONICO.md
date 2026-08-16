@@ -207,6 +207,7 @@ Dopo una richiesta di cancellazione restavano nel bucket **e** restavano indiciz
 | Avviso «cosa distrugge» in `/admin/gdpr` | due voci | **terza voce** `oblioDistruggeFascicolo`, col conteggio del dry-run |
 | Conteggio non leggibile | — | **`null` = «non misurato»**, mai zero: uno zero su una lettura fallita rassicura e basta |
 | Log del percorso di cancellazione | solo errori | **anche il successo**: `oblio-file-rimossi` e `oblio-indice-rimosso` |
+| Archivio che non si è potuto **leggere** | indistinguibile da «vuoto» → risposta «oblio eseguito» | **`letture_fallite`** nella risposta e `oblio-parziale` nel log |
 
 Il canale **genitore non tocca il fascicolo**, ed è una decisione scritta, non una lacuna: il
 fascicolo è del **bambino**, e la richiesta di un adulto non cancella i dati sanitari di un minore
@@ -223,15 +224,59 @@ dati sanitari di minori costa di più. Vale anche per l'indice **senza file**: u
 `student_documents` senza allegato porta comunque `document_type`, cioè la frase «questo bambino ha
 una dieta speciale», e veniva cancellata in totale silenzio.
 
+### «Non ho potuto leggere» non è «non c'era niente»
+
+Sul percorso di **esecuzione** i due casi erano lo stesso numero. Con un `42501 permission denied`
+su `student_documents`, `obliaFileDaTabella` tornava tre zeri e `anonimizzaAlunno(...).fileNonRimossi`
+valeva **esattamente 0** — che è vero e non vuol dire niente, perché nessuno aveva potuto contare
+quei file. A valle, `/api/admin/gdpr/erase` scriveva `oblio-eseguito` e rispondeva
+`n_file_non_rimossi: 0`: **la Direzione leggeva «oblio completo» mentre la scheda sanitaria firmata
+di un bambino non era stata nemmeno aperta.**
+
+La lezione era già scritta due volte nello stesso file: `obliaFotoAlunno` porta `letto: boolean` dal
+13/08 (*«`false` significa "non l'ho potuto guardare", e chi distrugge deve fermarsi lì»*), e il
+**dry-run** del fascicolo risponde `null` e non `0` a una lettura fallita. L'annuncio prima della
+conferma sapeva distinguere l'ignoranza dal vuoto; l'atto irreversibile che segue, no.
+
+- `obliaFileDaTabella` (pagelle · certificati medici · fascicolo), `obliaAllegatiChat` e
+  `obliaIscrizioni` ora restituiscono **`letto`**. Schema assente (DB E2E della CI non migrato)
+  resta `true`: lì il vuoto è la risposta **vera**.
+- `anonimizzaAlunno` e `anonimizzaParent` restituiscono **`lettureFallite`**, che conta gli archivi
+  il cui *inventario* non si è letto. Non è un doppione di `fileNonRimossi`: quello conta i file che
+  si sapeva esserci e non sono usciti. E raccoglie anche i due `letto` che **esistevano già dal
+  13/08 e arrivavano fin lì per essere buttati** (galleria e blog pubblico).
+- `admin/gdpr/erase` e `admin/gdpr/richieste` fanno scattare **`oblio-parziale`** quando quel numero
+  è maggiore di zero, *anche con zero file non rimossi*, e lo mettono nella risposta
+  (`letture_fallite`) e nell'esito che resta scritto sulla richiesta.
+
+### I commenti che dichiaravano un buco già chiuso
+
+Tre file continuavano a dire per iscritto, **con numeri**, che l'oblio non arrivava a
+`sensitive_documents` — e uno chiudeva con «bloccante per il rilascio». Erano numeri veri il 14/08 e
+falsi il giorno dopo. Rimisurati e riscritti: `grep -c sensitive_documents src/lib/gdpr/esegui.ts`
+→ **6** (era 0); `REGISTRO_BUCKET_OBLIO` → **15 magazzini**, questo compreso;
+`grep -rn student_documents src/lib/gdpr/` → **12 righe** (era nessuna).
+
+È lo stesso peccato scritto in `CLAUDE.md` a lettere maiuscole, capovolto: *un documento che descrive
+un buco che non c'è più costa quanto uno che descrive una protezione che non c'è più*. Chi apriva
+`firma/route.ts` leggeva che il rilascio era bloccato per un motivo inesistente. E in un punto quella
+frase **reggeva una decisione** (il n. 06 non sale nel bucket): la decisione è stata **riletta** con la
+premessa nuova, non solo ripulita — e **non cambia**, perché l'oblio raggiunge il bucket *attraverso
+l'indice*, quindi un PDF senza riga in `student_documents` resterebbe fuori portata comunque. Quel
+limite è ora **dichiarato dentro la voce del registro**: una copertura senza il suo limite è il modo
+in cui un registro comincia a mentire.
+
 ### La deroga, e perché ora scade da sola
 
 `sensitive_documents` **non esiste ancora** in produzione: non lo crea nessuna migrazione, lo creano
-al volo le route alla prima archiviazione. Misurato in sola lettura su `storage.buckets` il
-2026-08-16: **quattordici bucket, questo non c'è**. Perciò non può stare fra i `RISERVATI` di
-`bucket-storage-dichiarati.test.ts` — quel lock pretende che ogni nome esista nella fotografia — e
-vive in un elenco a parte, `NON_ANCORA_CREATI`.
+al volo le route alla prima archiviazione. Misurato in sola lettura su `storage.buckets` nella notte
+fra il 15 e il 16 agosto 2026: **quattordici bucket, questo non c'è**. La data che fa fede è quella
+della *prova*, non della prosa: `generato_il` dentro `__tests__/fixtures/bucket-storage-snapshot.json`,
+cioè **`2026-08-15` in UTC** (il generatore usa `toISOString()`, e alle due di notte italiane è già
+il 16). Perciò non può stare fra i `RISERVATI` di `bucket-storage-dichiarati.test.ts` — quel lock
+pretende che ogni nome esista nella fotografia — e vive in un elenco a parte, `NON_ANCORA_CREATI`.
 
-Due difetti di quella deroga, entrambi chiusi qui:
+Tre difetti di quella deroga, tutti chiusi qui:
 
 - **La guardia si dimostrava da sola.** Pretendeva che il nome fosse «scritto nel codice che crea il
   bucket», e lo cercava in tutto `src/` — dove lo trovava dentro `src/lib/gdpr/esegui.ts`, cioè
@@ -242,10 +287,18 @@ Due difetti di quella deroga, entrambi chiusi qui:
 - **L'«auto-annullamento» non esisteva.** Il commento prometteva che il giorno della nascita del
   bucket la prova sarebbe diventata rossa da sola. Falso: la «fotografia» della produzione è un file
   **statico**, rigenerato a mano. Il bucket poteva nascere e ogni prova restare verde a tempo
-  indeterminato. Ora la deroga porta uno **`scadeIl`** e pretende una fotografia non più vecchia di
+  indeterminato. Ora la deroga ha una **scadenza** e pretende una fotografia non più vecchia di
   **30 giorni**; e la data di rigenerazione è **dentro lo `sha256`** della fotografia, così non si
   può ringiovanire a mano — l'unico modo di far tacere la scadenza è **rifare la misura**, che è
   esattamente la domanda a cui si voleva rispondere.
+- **La scadenza era digitata, e sfasata di un giorno.** Era scritta a mano (`scadeIl: '2026-09-15'`),
+  calcolata da «misura + 30 giorni» partendo dalla data della prosa (16/08, ora di Roma) invece che
+  da quella della fotografia (15/08, UTC). Le due guardie che il testo presentava come coordinate
+  non potevano scattare insieme: il 15/09 il controllo sull'età era già rosso (31 > 30) e la
+  scadenza ancora verde — cioè la seconda era **inerte**, perché l'altra la anticipava sempre. Ora
+  la scadenza è **derivata** da `generato_il`, e una prova dedicata pretende che le due diventino
+  rosse **lo stesso giorno**: rimessa a mano la vecchia sfasatura di un giorno, quella prova
+  fallisce.
 
 > Un lock che dichiara di controllare X e controlla Y è peggio dell'assenza del lock: chi lo legge
 > smette di cercare la prova vera. È la lezione già pagata in questo repo — *«un documento che
@@ -254,9 +307,15 @@ Due difetti di quella deroga, entrambi chiusi qui:
 
 **Prove:** `__tests__/lib/gdpr-bucket-sensitive.test.ts` (registro, oblio reale su archivio finto
 con controllo negativo su un altro bambino, riga storica col solo `file_url`, storage che non
-toglie, conteggio dell'avviso, log di successo e silenzio informativo, nessun percorso nei log),
-`__tests__/lib/gdpr-oblio-completo.test.ts` (guardia dei consumatori + scadenza della deroga),
-`__tests__/architecture/bucket-storage-dichiarati.test.ts` (sha256 con la data dentro).
+toglie, conteggio dell'avviso, log di successo e silenzio informativo, nessun percorso nei log,
+**`42501` su sei tabelle ⇒ `lettureFallite > 0` e niente distrutto**, e la guardia sul **rinomino**:
+tutte e sei le dichiarazioni del bucket devono nominare lo stesso archivio — provata rossa
+rinominandone una),
+`__tests__/api/gdpr-erase-canale-unico.test.ts` (**archivio non letto ⇒ `oblio-parziale` con zero
+file non rimossi, e nessun `oblio-eseguito`** — provata rossa rimettendo il vecchio `if`),
+`__tests__/lib/gdpr-oblio-completo.test.ts` (guardia dei consumatori, scadenza della deroga, **le due
+guardie diventano rosse lo stesso giorno**), `__tests__/architecture/bucket-storage-dichiarati.test.ts`
+(sha256 con la data dentro).
 
 ---
 

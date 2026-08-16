@@ -52,6 +52,10 @@ const h = vi.hoisted(() => ({
   removed: [] as { bucket: string; paths: string[] }[],
   archivio: new Map<string, Set<string>>(),
   rimuoveDavvero: true,
+  // Errori PostgREST per tabella. Serve a misurare il caso «non ho potuto
+  // leggere», che non è «non c'era niente»: senza, ogni SELECT del finto client
+  // riesce sempre e la differenza fra i due non si può nemmeno mettere alla prova.
+  err: {} as Record<string, { code: string; message?: string }>,
 }))
 
 function scomponi(p: string) {
@@ -90,6 +94,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         error: null,
       })
       b.then = (res: (v: unknown) => unknown) => {
+        const error = h.err[table] ?? null
+        if (error) return Promise.resolve({ data: null, error }).then(res)
         let data: unknown[] = []
         if (table === 'student_parents') data = [{ parent_id: 'p-1' }]
         if (table === 'parents') data = h.parents
@@ -153,6 +159,7 @@ beforeEach(() => {
   h.deleted = []
   h.removed = []
   h.rimuoveDavvero = true
+  h.err = {}
   h.archivio = new Map<string, Set<string>>([
     ['pagelle', new Set(['scr-1/al-1.pdf'])],
     ['certificati-medici', new Set(['al-1/cert.pdf'])],
@@ -227,6 +234,50 @@ describe('POST /api/admin/gdpr/erase — un canale solo, le stesse funzioni', ()
     )
     expect(ok, 'l’oblio riuscito non lascia nessuna riga: «nessun log» non distingue «fatto» da «mai partito»').toBeTruthy()
     expect(ok![0]).toBe('gdpr')
+  })
+
+  it('archivio NON LETTO → non si dice «eseguito»: `oblio-parziale` scatta con zero file non rimossi', async () => {
+    // ⚠️ IL CASO CHE PASSAVA DAL RAMO DEL SUCCESSO, e il motivo per cui è grave.
+    //
+    // Un `42501 permission denied` su `student_documents` non è «questo bambino non
+    // ha documenti»: è «non ho potuto guardare». Fino al 2026-08-16
+    // `anonimizzaAlunno` restituiva gli stessi zeri nei due casi, `nFileNonRimossi`
+    // valeva 0, e questa rotta scriveva `oblio-eseguito` rispondendo
+    // `n_file_non_rimossi: 0`. La Direzione leggeva «oblio completo» mentre la scheda
+    // sanitaria firmata — allergeni, terapie e posologie in chiaro dentro il PDF —
+    // non era stata nemmeno aperta.
+    h.err = { student_documents: { code: '42501', message: 'permission denied' } }
+    const res = await esegui()
+    expect(res.status).toBe(200)
+    const json = await res.json()
+
+    // Il numero storico resta ZERO, ed è giusto: non c'è nessun file che si sapeva
+    // esserci e non è uscito. È esattamente il motivo per cui da solo non basta.
+    expect(json.n_file_non_rimossi).toBe(0)
+    expect(
+      json.letture_fallite,
+      'la risposta non dice che un archivio non è stato letto: chi la legge conclude ' +
+        '«oblio completo» su un magazzino che nessuno ha aperto',
+    ).toBeGreaterThan(0)
+
+    const parziale = spie.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'oblio-parziale',
+    )
+    expect(parziale, 'nessuna riga `oblio-parziale` su un oblio che non ha letto un archivio').toBeTruthy()
+    expect(parziale![1]).toBe('error')
+    expect((parziale![2] as { n_letture_fallite?: number }).n_letture_fallite).toBeGreaterThan(0)
+
+    // E soprattutto: la riga di successo NON deve esserci. È quella che, riletta fra
+    // sei mesi in `app_log`, risponde «sì, è stato fatto».
+    const successo = spie.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'oblio-eseguito',
+    )
+    expect(successo, '`oblio-eseguito` scritto su un oblio che non ha potuto leggere un archivio').toBeFalsy()
+  })
+
+  it('lettura riuscita ⇒ `letture_fallite` resta 0 (il numero deve restare informativo)', async () => {
+    const json = await (await esegui()).json()
+    expect(json.letture_fallite).toBe(0)
   })
 
   it('i conteggi storici della risposta restano quelli (chi legge la risposta non cambia)', async () => {

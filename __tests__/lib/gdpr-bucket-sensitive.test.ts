@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, sep } from 'node:path'
 import { REGISTRO_BUCKET_OBLIO, anonimizzaAlunno, anonimizzaParent } from '@/lib/gdpr/esegui'
 import { contaCosaDistrugge, OBLIO_DISTRUGGE } from '@/lib/gdpr/cosa-distrugge'
 
@@ -72,6 +74,10 @@ const PEI_DI_UN_ALTRO = {
 interface Cfg {
   /** Le righe di `student_documents`, comprese quelle di altri bambini. */
   documenti?: Record<string, unknown>[]
+  /** I thread di chat del bambino: senza, il ramo degli allegati non parte affatto. */
+  threads?: Record<string, unknown>[]
+  /** La riga di `parents` che `anonimizzaParent` legge per prima (ponte di spazio-id). */
+  parent?: Record<string, unknown>
   /** Che cosa c'è DAVVERO nell'archivio, bucket per bucket. */
   presenti?: Record<string, string[]>
   /** `false` = `remove()` risponde bene e non toglie niente (il difetto storico). */
@@ -92,6 +98,7 @@ function makeFake(cfg: Cfg) {
   for (const [b, files] of Object.entries(cfg.presenti ?? {})) archivio[b] = new Set(files)
   const tabelle: Record<string, Record<string, unknown>[]> = {
     student_documents: [...(cfg.documenti ?? [])],
+    chat_threads: [...(cfg.threads ?? [])],
   }
   const rimosseDaTabella: { tabella: string; ids: string[] }[] = []
 
@@ -126,7 +133,10 @@ function makeFake(cfg: Cfg) {
         }
         return b
       }
-      b.maybeSingle = async () => ({ data: null, error: cfg.err?.[table] ?? null })
+      b.maybeSingle = async () => ({
+        data: table === 'parents' ? (cfg.parent ?? null) : null,
+        error: cfg.err?.[table] ?? null,
+      })
       b.then = (res: (v: unknown) => unknown) => {
         const error = cfg.err?.[table] ?? null
         return Promise.resolve({ data: error ? null : righe(), error }).then(res)
@@ -271,7 +281,7 @@ describe('oblio · il fascicolo sanitario del minore esce davvero dall’archivi
     expect(r.fileNonRimossi).toBeGreaterThan(0)
   })
 
-  it('schema assente (DB E2E della CI non migrato) → nessun file, nessun rumore', async () => {
+  it('schema assente (DB E2E della CI non migrato) → nessun file, nessun rumore, lettura RIUSCITA', async () => {
     const f = makeFake({
       documenti: [SCHEDA_SANITARIA],
       presenti: { [BUCKET]: [SCHEDA_SANITARIA.storage_path] },
@@ -279,6 +289,11 @@ describe('oblio · il fascicolo sanitario del minore esce davvero dall’archivi
     })
     const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
     expect(r.fileNonRimossi).toBe(0)
+    // Se la tabella NON ESISTE, «nessun documento» è la risposta vera: la lettura
+    // è riuscita e non c'è niente da segnalare. È la stessa distinzione che il
+    // dry-run fa già (`contaCosaDistrugge` → 0, non `null`), e senza di essa ogni
+    // oblio eseguito in CI si dichiarerebbe incompleto.
+    expect(r.lettureFallite).toBe(0)
     const rumore = spie.logErrore.mock.calls.filter(
       ([ctx]) => String((ctx as { evento?: string })?.evento ?? '').includes('fascicolo'),
     )
@@ -470,5 +485,198 @@ describe('oblio · il percorso di cancellazione logga anche il SUCCESSO', () => 
     const tutto = JSON.stringify([...spie.logEvento.mock.calls, ...spie.logErrore.mock.calls])
     expect(tutto).not.toContain('scheda.pdf')
     expect(tutto).not.toContain(SCHEDA_SANITARIA.storage_path)
+  })
+})
+
+describe('oblio · «non ho potuto leggere» non è «non c’era niente»', () => {
+  // ⚠️ IL DIFETTO CHE QUESTO BLOCCO CHIUDE, e la ragione per cui è grave proprio qui.
+  //
+  // `obliaFileDaTabella` tornava `{ rimossi: 0, nonRimossi: 0, righe: 0 }` anche quando
+  // la SELECT falliva per un motivo che NON è «lo schema non c'è» — un `42501 permission
+  // denied` da RLS, per dire. Tre zeri indistinguibili dai tre zeri di «questo bambino
+  // non ha nessun documento». A valle, `/api/admin/gdpr/erase` leggeva
+  // `n_file_non_rimossi === 0`, scriveva `oblio-eseguito` e rispondeva alla Direzione che
+  // l'oblio era completo — mentre la scheda sanitaria firmata, con allergeni, terapie e
+  // posologie in chiaro dentro il PDF, non era stata nemmeno GUARDATA.
+  //
+  // La lezione era già scritta due volte in questo stesso file di produzione:
+  // `obliaFotoAlunno` ha `letto: boolean` dal 2026-08-13 («`false` significa "non l'ho
+  // potuto guardare", e chi distrugge deve fermarsi lì») e il DRY-RUN del fascicolo
+  // risponde `null` e non `0` a una lettura fallita — vedi qui sotto, «lettura FALLITA ⇒
+  // "non misurato"». L'ANNUNCIO sapeva distinguere l'ignoranza dal vuoto; l'ATTO
+  // irreversibile che segue, no.
+
+  it('42501 su `student_documents`: l’esito NON dice «tutto rimosso»', async () => {
+    const f = makeFake({
+      documenti: [SCHEDA_SANITARIA],
+      presenti: { [BUCKET]: [SCHEDA_SANITARIA.storage_path] },
+      err: { student_documents: { code: '42501', message: 'permission denied' } },
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+
+    // Il fatto misurato: `fileNonRimossi` vale ESATTAMENTE 0, perché non c'è nessun
+    // file da NON rimuovere quando non si è potuto leggere quali fossero. È giusto
+    // che valga 0 — ed è esattamente il motivo per cui da solo non basta.
+    expect(r.fileNonRimossi).toBe(0)
+    expect(
+      r.lettureFallite,
+      'l’inventario del fascicolo non è stato letto e l’esito non lo dice: chi riceve ' +
+        'questo oggetto scriverà «oblio eseguito» su un magazzino che nessuno ha guardato',
+    ).toBeGreaterThan(0)
+
+    // E niente è stato distrutto: non si cancella un indice che non si è potuto leggere.
+    expect(restaNelBucket(f)).toEqual([SCHEDA_SANITARIA.storage_path])
+    expect(f.tabelle.student_documents.map((x) => x.id)).toEqual([SCHEDA_SANITARIA.id])
+    // L'errore si logga: un ramo che fallisce in silenzio è un bug, e questo canale
+    // (`gdpr`) è persistito.
+    const detto = spie.logErrore.mock.calls.some(([ctx]) =>
+      String((ctx as { evento?: string })?.evento ?? '').includes('oblio_fascicolo'),
+    )
+    expect(detto, 'la SELECT del fascicolo è fallita senza lasciare una riga di errore').toBe(true)
+  })
+
+  // Il bambino con TUTTE le chiavi che aprono i rami dell'oblio: senza il codice
+  // fiscale la domanda d'iscrizione non si cerca nemmeno, e senza un thread gli
+  // allegati di chat non si leggono. Un test che li omette misura il ramo saltato.
+  const ALUNNO_COMPLETO = { id: 'al-1', codice_fiscale: 'AAABBB10A01H501X' }
+  // `student_id` è indispensabile: `anonimizzaAlunno` cerca i thread con
+  // `.eq('student_id', …)`, e un thread senza quella colonna non verrebbe trovato —
+  // il ramo degli allegati non partirebbe e il test misurerebbe il vuoto.
+  const CON_THREAD = { threads: [{ id: 'th-1', student_id: 'al-1' }] }
+
+  it('la stessa cecità valeva per pagelle, certificati medici, chat e domanda d’iscrizione', async () => {
+    // Il difetto non era del fascicolo: era della funzione CONDIVISA. Ripararlo solo
+    // sul fascicolo lascerebbe le pagelle e i certificati medici — stesso helper, stessa
+    // forma — a rispondere tre zeri a una lettura fallita.
+    for (const tabella of [
+      'student_documents',
+      'pagelle',
+      'certificati_medici',
+      'chat_messages',
+      'enrollment_submissions',
+      'galleria_media_v2',
+    ]) {
+      const f = makeFake({
+        ...CON_THREAD,
+        err: { [tabella]: { code: '42501', message: 'permission denied' } },
+      })
+      const r = await anonimizzaAlunno(f.client as never, ALUNNO_COMPLETO, AT, 'test')
+      expect(
+        r.lettureFallite,
+        `\`${tabella}\` non si è potuta leggere e l’esito dell’oblio dice comunque «tutto a posto»`,
+      ).toBeGreaterThan(0)
+    }
+  })
+
+  it('GENITORE · anche il suo esito dichiara le letture non riuscite', async () => {
+    // `admin/gdpr/erase` somma alunno + genitori orfani in un numero solo: se il lato
+    // adulto restasse cieco, la risposta tornerebbe a dire «zero» per metà dell'operazione.
+    const f = makeFake({
+      parent: { auth_user_id: 'auth-1', fiscal_code: 'EEEFFF80C03H501Z', documento_path: null },
+      err: { enrollment_submissions: { code: '42501', message: 'denied' } },
+    })
+    const r = await anonimizzaParent(f.client as never, 'p-1', AT, 'test')
+    expect(r.lettureFallite).toBeGreaterThan(0)
+  })
+
+  it('lettura riuscita e archivio vuoto ⇒ ZERO letture fallite (il numero deve restare informativo)', async () => {
+    // Il contrario, e conta quanto l'altro: un numero che è sempre maggiore di zero non
+    // distingue più niente. Con tutte le chiavi in mano e nessun errore, l'oblio di un
+    // bambino che non ha lasciato niente deve dire ZERO letture fallite.
+    const f = makeFake({ ...CON_THREAD, documenti: [], presenti: { [BUCKET]: [] } })
+    const r = await anonimizzaAlunno(f.client as never, ALUNNO_COMPLETO, AT, 'test')
+    expect(r.lettureFallite).toBe(0)
+    const g = makeFake({
+      parent: { auth_user_id: 'auth-1', fiscal_code: 'EEEFFF80C03H501Z', documento_path: null },
+    })
+    expect((await anonimizzaParent(g.client as never, 'p-1', AT, 'test')).lettureFallite).toBe(0)
+  })
+})
+
+describe('un solo nome per un solo archivio', () => {
+  // Il letterale `'sensitive_documents'` è ridichiarato in sei file: il registro
+  // dell'oblio e i cinque che il bucket lo scrivono o lo leggono. Un rinomino fatto in
+  // uno solo lascerebbe `REGISTRO_BUCKET_OBLIO` a svuotare un archivio che nessuno
+  // riempie più — con tutte le guardie ancora verdi, perché ognuna guarda un file solo.
+  //
+  // Accorpare il letterale in un posto solo NON si può, e la ragione è scritta in
+  // `__tests__/lib/gdpr-oblio-completo.test.ts`: la deroga `NON_ANCORA_CREATI` pretende
+  // che il nome compaia, FUORI DAI COMMENTI, in un file di `src/` che tocca davvero lo
+  // Storage e che NON sia il registro — altrimenti la prova troverebbe se stessa e
+  // resterebbe verde anche cancellando tutte le route che il bucket lo creano. Se i
+  // consumatori importassero la costante, quella guardia tornerebbe auto-soddisfacente.
+  //
+  // Quindi le dichiarazioni restano molte, e quello che si controlla è che DICANO LA
+  // STESSA COSA.
+
+  const RADICE = process.cwd()
+
+  function sorgenti(cartella = join(RADICE, 'src'), acc: string[] = []): string[] {
+    for (const voce of readdirSync(cartella, { withFileTypes: true })) {
+      const percorso = join(cartella, voce.name)
+      if (voce.isDirectory()) sorgenti(percorso, acc)
+      else if (/\.tsx?$/.test(voce.name)) acc.push(percorso)
+    }
+    return acc
+  }
+
+  /** Il testo senza commenti: una dichiarazione commentata non è una dichiarazione. */
+  const senzaCommenti = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+
+  /**
+   * Le costanti che nominano il bucket DEL FASCICOLO, ovunque siano dichiarate.
+   *
+   * Due forme, e vengono dal codice reale: `BUCKET_FASCICOLO` (registro dell'oblio,
+   * banco della famiglia, `prestampati/genera`, `documenti-firmati/dettaglio`) e il più
+   * corto `BUCKET` nei due file sotto `primaria/fascicolo`, dove il fascicolo è
+   * l'argomento dell'intera rotta e un nome lungo non aggiungerebbe niente.
+   */
+  function dichiarazioniDelFascicolo(): { file: string; nome: string; valore: string }[] {
+    const trovate: { file: string; nome: string; valore: string }[] = []
+    for (const assoluto of sorgenti()) {
+      const rel = assoluto.slice(RADICE.length + 1).split(sep).join('/')
+      const codice = senzaCommenti(readFileSync(assoluto, 'utf8'))
+      for (const m of codice.matchAll(/\b(?:const|let|var)\s+([A-Z][A-Z0-9_]*)\s*=\s*'([^']+)'/g)) {
+        const [, nome, valore] = m
+        const delFascicolo = nome.includes('FASCICOLO') || /\/fascicolo\//.test(rel)
+        if (delFascicolo && nome.startsWith('BUCKET')) trovate.push({ file: rel, nome, valore })
+      }
+    }
+    return trovate.sort((a, b) => a.file.localeCompare(b.file))
+  }
+
+  it('tutte le dichiarazioni del bucket del fascicolo nominano l’archivio del registro', () => {
+    const dichiarazioni = dichiarazioniDelFascicolo()
+    expect(
+      dichiarazioni.length,
+      'nessuna dichiarazione trovata: il riconoscitore non sta più guardando niente, e una ' +
+        'prova che gira sul vuoto è verde per costruzione',
+    ).toBeGreaterThanOrEqual(6)
+    for (const d of dichiarazioni) {
+      expect(
+        d.valore,
+        `\`${d.file}\` dichiara \`${d.nome} = '${d.valore}'\`, che non è l’archivio nominato da ` +
+          `\`REGISTRO_BUCKET_OBLIO\`. Rinominare il bucket in un file solo lascia l’oblio a ` +
+          `svuotare un magazzino che nessuno riempie più: i PDF del fascicolo — art. 9 GDPR di ` +
+          `un minore — finiscono altrove e non li tocca più nessuno.`,
+      ).toBe(BUCKET)
+    }
+  })
+
+  it('il riconoscitore vede davvero i sei file, e non conta i commenti', () => {
+    // Un elenco che si accorcia in silenzio è il modo in cui questa prova morirebbe
+    // senza diventare rossa. I file sono nominati, così spostarne uno si nota.
+    const file = dichiarazioniDelFascicolo().map((d) => d.file)
+    for (const atteso of [
+      'src/lib/gdpr/esegui.ts',
+      'src/app/api/parent/prestampati/banco-famiglia.ts',
+      'src/app/api/prestampati/genera/route.ts',
+      'src/app/api/documenti-firmati/dettaglio/route.ts',
+      'src/app/api/primaria/fascicolo/route.ts',
+      'src/app/api/primaria/fascicolo/file/route.ts',
+    ]) {
+      expect(file, `\`${atteso}\` non dichiara più il bucket del fascicolo`).toContain(atteso)
+    }
+    expect(senzaCommenti("// const BUCKET_FASCICOLO = 'altro'")).not.toContain('BUCKET_FASCICOLO')
   })
 })

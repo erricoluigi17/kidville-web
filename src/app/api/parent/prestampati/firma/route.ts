@@ -161,17 +161,23 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  */
 
 /**
- * Il bucket privato del fascicolo, con la sua dichiarazione — 🔴 compresa la lacuna
- * dell'oblio, che è bloccante — in testa a `BUCKET_FASCICOLO` (`banco-famiglia.ts`).
+ * Il bucket privato del fascicolo, con la sua dichiarazione — ✅ oblio compreso, dal
+ * 2026-08-15 — in testa a `BUCKET_FASCICOLO` (`banco-famiglia.ts`).
  *
  * Sta là e non qui perché lo nominano tutte e due le porte della famiglia e perché la scelta
  * dei magazzini ammessi è una regola, non una costante di questa rotta. L'alias locale resta
  * per leggibilità: in questo file `BUCKET` è il bucket in cui si SCRIVE.
  *
- * Ciò che invece È coperto dall'oblio, e vale la pena saperlo: gli ALLEGATI che la famiglia
- * carica — la prescrizione del n. 06, il certificato del n. 07 — vivono in `certificati-medici`
- * (`BUCKET_CERTIFICATI`), che l'oblio raggiunge davvero. La lacuna riguarda il PDF firmato,
- * non i documenti che porta con sé.
+ * Coperti dall'oblio sono tutti e due i pezzi che escono da qui: il PDF FIRMATO, per
+ * `student_documents.student_id` (`obliaFascicoloAlunno`), e gli ALLEGATI che la famiglia
+ * carica — la prescrizione del n. 06, il certificato del n. 07 — che vivono in
+ * `certificati-medici` (`BUCKET_CERTIFICATI`). Fino al 14/08 il primo dei due non era
+ * raggiunto da nessun canale, e questo commento lo diceva: ora non è più vero, e la
+ * differenza sta in `REGISTRO_BUCKET_OBLIO` più la chiamata dentro `anonimizzaAlunno`.
+ *
+ * ⚠️ Con un limite che riguarda proprio questa rotta: **l'oblio passa dall'INDICE**. Il PDF
+ * si cancella perché una riga di `student_documents` lo nomina; se quella riga non nasce
+ * (ramo `documentoId === null`, più sotto) il file resta nel bucket e nessun oblio lo trova.
  */
 const BUCKET = BUCKET_FASCICOLO
 
@@ -1195,11 +1201,22 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // durevole nominerebbe quel percorso. `student_documents` non si scrive, `firme_documenti`
     // non ha una colonna di percorso (misurato) e `app_log` ha trenta giorni di ritenzione.
     // Passati quelli, il file — farmaco, dosaggio e riferimento alla prescrizione di un
-    // minore, art. 9 — sarebbe irraggiungibile **e** incancellabile, in un bucket che l'oblio
-    // non raggiunge (testata di `BUCKET_FASCICOLO`). Non sarebbe il caso raro: è il 100% delle
-    // firme del n. 06. La copia che la famiglia riceve è `pdfBase64`, che è comunque l'unica
-    // certa; la copia della Direzione nascerà con la schermata che la accetta, insieme alla
-    // riga che la nomina — dichiarato all'orchestratore fra le funzioni mancanti.
+    // minore, art. 9 — sarebbe irraggiungibile **e** incancellabile. Non sarebbe il caso raro:
+    // è il 100% delle firme del n. 06.
+    //
+    // ⚠️ QUESTA DECISIONE È STATA RILETTA IL 2026-08-16, quando la sua premessa è cambiata.
+    // Fino al 14/08 la frase qui sopra finiva con «in un bucket che l'oblio non raggiunge», e
+    // quella frase oggi è falsa: `sensitive_documents` è nel registro dell'oblio ed è svuotato
+    // da `obliaFascicoloAlunno`. La decisione però NON cambia, e il motivo è più stringente di
+    // prima: l'oblio raggiunge il bucket **attraverso l'indice**, cioè cancella i file che una
+    // riga di `student_documents` nomina. Un PDF caricato senza quella riga — che è
+    // esattamente questo ramo — resterebbe fuori portata lo stesso. Caricarlo qui non
+    // produrrebbe un file cancellabile: produrrebbe un orfano dell'art. 9 in un archivio che
+    // ora ha un meccanismo di pulizia e continuerebbe a non vederlo.
+    //
+    // La copia che la famiglia riceve è `pdfBase64`, che è comunque l'unica certa; la copia
+    // della Direzione nascerà con la schermata che la accetta, insieme alla riga che la
+    // nomina — dichiarato all'orchestratore fra le funzioni mancanti.
     if (attesaAccettazioneDirezione(voce.slug)) {
       // `info` e non `warn`: `modulistica` è in `EVENTI_PERSISTITI` (`logger.ts:188`), quindi
       // la riga va in tabella lo stesso — ed è la stessa scelta della riga di successo in
@@ -1291,10 +1308,13 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // Un PDF che resta nel bucket senza una riga che lo nomini è un documento invisibile:
     // nessun elenco lo mostra, nessuna query lo ritrova (`firme_documenti` non ha una
     // colonna di percorso — misurato: `id, utente_id, tipo_documento, impronta_digitale,
-    // indirizzo_ip, user_agent, firmato_il`), e l'oblio non lo raggiunge — vedi la
-    // dichiarazione in testa a `BUCKET_FASCICOLO`, che è la lacuna vera e non un dettaglio di
-    // questo ramo. Su questa rotta quel file contiene una scheda sanitaria, una terapia o una dieta
-    // di un minore: dati dell'art. 9 che nessuno sa di avere e nessuno sa cancellare.
+    // indirizzo_ip, user_agent, firmato_il`), e **nemmeno l'oblio lo raggiunge**. Dal
+    // 2026-08-15 `sensitive_documents` è coperto (`obliaFascicoloAlunno`, testata di
+    // `BUCKET_FASCICOLO`), ma la copertura passa dall'INDICE: cancella i file che una riga di
+    // `student_documents` nomina. Senza quella riga il file è fuori portata comunque — non
+    // per una lacuna del registro, ma perché non esiste niente da cui risalire a lui. Su
+    // questa rotta quel file contiene una scheda sanitaria, una terapia o una dieta di un
+    // minore: dati dell'art. 9 che nessuno sa di avere e nessuno sa cancellare.
     //
     // Che cosa se ne fa del file, quando la riga non nasce, NON lo decide questa rotta: lo
     // decide `ilFileRestaNelBucket` (`banco-famiglia.ts`), che porta la stessa regola della
@@ -1413,10 +1433,13 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     if (documentoId === null) {
       // ⚠️ IL FILE RESTA QUANDO È LO SCHEMA A NON REGGERE, e se ne va quando ritentare ha
       // senso: la regola è quella della gemella (`ilFileRestaNelBucket`). Il costo del ramo
-      // «resta» è dichiarato e non è piccolo: quel file è un orfano dell'art. 9 in un bucket
-      // che l'oblio non raggiunge (testata di `BUCKET_FASCICOLO`), e la riga di log qui sotto
-      // è ciò che permette di ritrovarlo — `alunno_id`, `tipo` e `riferimento` SONO il
-      // percorso (`<alunno_id>/prestampati/<tipo>-<riferimento>.pdf`).
+      // «resta» è dichiarato e non è piccolo: quel file è un orfano dell'art. 9 — il bucket
+      // è coperto dall'oblio dal 2026-08-15, ma la copertura passa dalla riga di
+      // `student_documents`, che qui non è nata (testata di `BUCKET_FASCICOLO`). Senza
+      // indice non c'è aggancio, quindi nemmeno una richiesta di cancellazione lo troverebbe:
+      // la riga di log qui sotto è ciò che permette di ritrovarlo a mano — `alunno_id`,
+      // `tipo` e `riferimento` SONO il percorso
+      // (`<alunno_id>/prestampati/<tipo>-<riferimento>.pdf`).
       const motivoMancatoArchivio = motivoMancatoArchivioDa(codiceArchivio)
       const restaNelBucket = ilFileRestaNelBucket(motivoMancatoArchivio)
       if (!restaNelBucket) await togliDalBucket(supabase, percorso, voce.slug, firmaId)

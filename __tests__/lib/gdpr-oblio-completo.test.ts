@@ -938,7 +938,7 @@ function etaFotografiaInGiorni(oggi = new Date()): number {
  *     come prova non prova niente.
  *  2. Nella fotografia versionata della produzione il bucket NON c'è.
  *  3. La fotografia non è più vecchia di `GIORNI_VALIDITA_FOTOGRAFIA` giorni, e
- *     la deroga non ha superato il suo `scadeIl`.
+ *     la deroga non ha superato la sua scadenza.
  *
  * Il punto 3 esiste perché il punto 2 da solo NON scade. La fotografia è un file
  * statico che qualcuno rigenera a mano: il bucket può nascere in produzione e
@@ -951,6 +951,19 @@ function etaFotografiaInGiorni(oggi = new Date()): number {
  * della fotografia (`bucket-storage-fotografia.mjs`), quindi non si può spostare
  * a mano senza far cadere `bucket-storage-dichiarati.test.ts`: l'unico modo di
  * far tacere la scadenza è la misura.
+ *
+ * ⚠️ E LA SCADENZA NON SI DIGITA: SI DERIVA. Nella prima stesura (2026-08-16) la
+ * deroga portava uno `scadeIl` scritto a mano, `2026-09-15`, calcolato come
+ * «misura + 30 giorni» partendo però dalla data della PROSA (2026-08-16, ora di
+ * Roma) invece che da quella della PROVA (`generato_il` = 2026-08-15, UTC, perché
+ * il generatore usa `toISOString()` e la misura è stata fatta dopo la mezzanotte
+ * italiana). Un giorno di sfasamento, e le due guardie del punto 3 non potevano
+ * più scattare insieme: misurato giorno per giorno, il 2026-09-15 il controllo
+ * sull'età era già rosso (31 > 30) mentre la scadenza era ancora verde. La
+ * seconda delle due era, di fatto, inerte — l'altra la anticipava sempre. Ora la
+ * scadenza è `generato_il + GIORNI_VALIDITA_FOTOGRAFIA` e le due non si possono
+ * più separare, nemmeno alla prossima rigenerazione: c'è una prova che lo verifica
+ * («le due guardie scattano lo STESSO giorno»).
  */
 
 /**
@@ -961,19 +974,52 @@ function etaFotografiaInGiorni(oggi = new Date()): number {
  */
 const GIORNI_VALIDITA_FOTOGRAFIA = 30
 
-const NON_ANCORA_CREATI: Record<string, { scadeIl: string; ragione: string }> = {
+/**
+ * Il giorno in cui la deroga smette di valere: `generato_il` + la validità della
+ * fotografia, e non un letterale.
+ *
+ * ⚠️ DERIVATA, NON DIGITATA, e la ragione sta nel commentone qui sopra: una data
+ * scritta a mano si sfasa dalla fotografia al primo rinnovo, e le due guardie che
+ * dovrebbero scattare insieme smettono di farlo — in silenzio, perché quella che
+ * scatta per prima tiene comunque rosso il gate e nessuno si accorge che l'altra è
+ * inerte. Tutto in UTC come `etaFotografiaInGiorni`: due orologi diversi sulla stessa
+ * distanza sono già costati quattro punti di un collaudo, il 2026-08-09.
+ */
+function scadenzaDeroga(): string {
+  const [a, m, g] = fotografia().generato_il.split('-').map(Number)
+  return new Date(Date.UTC(a, m - 1, g) + GIORNI_VALIDITA_FOTOGRAFIA * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+}
+
+/**
+ * Le due guardie del punto 3, valutate a una data qualunque.
+ *
+ * Stanno in una funzione sola perché la prova che le riguarda deve poterle
+ * interrogare LO STESSO GIORNO: è l'unico modo di dimostrare che non si separano.
+ */
+function statoDeroga(oggi: Date): { fotografiaRecente: boolean; nonScaduta: boolean } {
+  return {
+    fotografiaRecente: etaFotografiaInGiorni(oggi) <= GIORNI_VALIDITA_FOTOGRAFIA,
+    nonScaduta: scadenzaDeroga() >= oggi.toISOString().slice(0, 10),
+  }
+}
+
+const NON_ANCORA_CREATI: Record<string, { ragione: string }> = {
   sensitive_documents: {
-    // Misurato il 2026-08-16 in sola lettura su `storage.buckets`: quattordici
-    // bucket, questo non c'è. La deroga vale finché quella misura è recente.
-    scadeIl: '2026-09-15',
+    // Misurato in sola lettura su `storage.buckets` la notte fra il 15 e il 16 agosto
+    // 2026: quattordici bucket, questo non c'è. La data che conta è quella della PROVA
+    // — `generato_il` nella fotografia versionata, cioè `2026-08-15` in UTC, che alle
+    // due di notte italiane è già il 16 — perché è quella dentro lo `sha256` e quella
+    // da cui si deriva la scadenza. La deroga vale finché quella misura è recente.
     ragione:
       'Il fascicolo del bambino — diagnosi, PEI, PDP e verbali della 104 dal lato scuola; scheda ' +
       'sanitaria, autorizzazione ai farmaci e dieta speciale dal lato famiglia: dati dell’art. 9 ' +
       'GDPR di un minore. Non lo crea nessuna migrazione: lo creano al volo `primaria/fascicolo`, ' +
-      '`parent/prestampati/firma` e `prestampati/genera` alla PRIMA archiviazione, e al 2026-08-16 ' +
-      'quella prima archiviazione non è ancora avvenuta (misurato in sola lettura su ' +
-      '`storage.buckets`: quattordici bucket, questo non c’è). Il registro dell’oblio lo copre ' +
-      'comunque, perché il giorno in cui nascerà nascerà già pieno.',
+      '`parent/prestampati/firma` e `prestampati/genera` alla PRIMA archiviazione, e alla data ' +
+      'della fotografia (`generato_il`, in UTC) quella prima archiviazione non è ancora avvenuta ' +
+      '(misurato in sola lettura su `storage.buckets`: quattordici bucket, questo non c’è). Il ' +
+      'registro dell’oblio lo copre comunque, perché il giorno in cui nascerà nascerà già pieno.',
   },
 }
 
@@ -1202,18 +1248,47 @@ describe('lock · l’oblio conosce OGNI magazzino dello Storage', () => {
         `che nessuno sta più verificando. ${COME_RIGENERARE_FOTOGRAFIA}`,
     ).toBeLessThanOrEqual(GIORNI_VALIDITA_FOTOGRAFIA)
 
+    const scadenza = scadenzaDeroga()
     const oggi = new Date().toISOString().slice(0, 10)
-    for (const [b, deroga] of Object.entries(NON_ANCORA_CREATI)) {
+    for (const b of Object.keys(NON_ANCORA_CREATI)) {
       expect(
-        deroga.scadeIl >= oggi,
-        `La deroga su \`${b}\` è scaduta il ${deroga.scadeIl}. Rimisura lo Storage di ` +
+        scadenza >= oggi,
+        `La deroga su \`${b}\` è scaduta il ${scadenza}. Rimisura lo Storage di ` +
           `produzione: se il bucket è nato, toglilo da \`NON_ANCORA_CREATI\` e mettilo fra i ` +
           `\`RISERVATI\` di \`bucket-storage-dichiarati.test.ts\`; se non è ancora nato, ` +
-          `rigenera la fotografia e sposta \`scadeIl\`. Spostare la data senza rigenerare non ` +
-          `basta: la prova qui sopra guarda l'età della fotografia, e la data di rigenerazione ` +
-          `è dentro il suo sha256. ${COME_RIGENERARE_FOTOGRAFIA}`,
+          `rigenera la fotografia — e la scadenza si sposta da sé, perché è DERIVATA da ` +
+          `\`generato_il\`. Non c'è nessuna data da spostare a mano, ed è voluto: la data di ` +
+          `rigenerazione è dentro lo sha256 della fotografia. ${COME_RIGENERARE_FOTOGRAFIA}`,
       ).toBe(true)
     }
+  })
+
+  it('le due guardie della deroga scattano lo STESSO giorno: non si possono separare', () => {
+    // ⚠️ LA PARTE CHE ERA SFASATA DI UN GIORNO, e che rendeva inerte la seconda.
+    //
+    // «Fotografia non più vecchia di trenta giorni» e «deroga non scaduta» sono
+    // presentate come due presidi coordinati. Con la scadenza scritta a mano non lo
+    // erano: `scadeIl` era `2026-09-15` mentre la fotografia porta `2026-08-15`, e
+    // misurato giorno per giorno il controllo sull'età diventava rosso il 2026-09-15
+    // (31 > 30) mentre la scadenza restava verde fino al 16. Una scadenza che non può
+    // MAI scattare per prima è una guardia che non guarda niente — e il commento che
+    // la descriveva accanto all'altra affermava un coordinamento inesistente.
+    //
+    // Questa prova non guarda il calendario di oggi: costruisce i due giorni che
+    // contano a partire dalla fotografia, quindi resta valida a ogni rigenerazione.
+    const [a, m, g] = fotografia().generato_il.split('-').map(Number)
+    const giornoDopoLaMisura = (n: number) => new Date(Date.UTC(a, m - 1, g) + n * 86_400_000)
+
+    expect(
+      statoDeroga(giornoDopoLaMisura(GIORNI_VALIDITA_FOTOGRAFIA)),
+      'ultimo giorno di validità: le due guardie devono essere ANCORA verdi tutte e due',
+    ).toEqual({ fotografiaRecente: true, nonScaduta: true })
+
+    expect(
+      statoDeroga(giornoDopoLaMisura(GIORNI_VALIDITA_FOTOGRAFIA + 1)),
+      'primo giorno oltre la validità: le due guardie devono diventare rosse INSIEME. Se una ' +
+        'sola è rossa, l’altra è inerte — e il file dichiara due presidi mentre ne ha uno.',
+    ).toEqual({ fotografiaRecente: false, nonScaduta: false })
   })
 
   it('ogni esclusione porta la sua ragione scritta, come `fatture`', () => {

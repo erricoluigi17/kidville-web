@@ -511,40 +511,35 @@ export function dipendeDallUscita(slug: string): boolean {
  * documento di fonte `fascicolo` leggendo da `sensitive_documents`. Metterlo altrove
  * vorrebbe dire archiviare un PDF che l'Archivio firmati elenca e non riesce ad aprire.
  *
- * ─── 🔴 LA REGOLA 6 OGGI NON È RISPETTATA, E IL POSTO PER DIRLO È QUESTO ─────────
+ * ─── ✅ LA REGOLA 6 ORA È RISPETTATA — e prima di questo blocco leggi la data ────
  *
  * `docs/prestampati/README.md` chiede per 05, 06, 07 e 42 — dati sanitari di minori,
- * art. 9 GDPR — un **«bucket con oblio»**. Questo non lo è, e non lo diventa scegliendolo:
- * la copertura non è una proprietà del bucket, è una riga di registro più una chiamata.
- * Misurato in sola lettura il 2026-08-14:
+ * art. 9 GDPR — un **«bucket con oblio»**. Fino al 2026-08-15 questo non lo era, e non lo
+ * diventava scegliendolo: la copertura non è una proprietà del bucket, è una riga di
+ * registro più una chiamata. Le due cose ora ci sono, e questo blocco le cita perché la
+ * versione precedente dichiarava per iscritto, con tre numeri, il contrario — numeri veri
+ * il 14/08 e falsi il giorno dopo. **Rimisurato il 2026-08-16:**
  *
- *  · `grep -c sensitive_documents src/lib/gdpr/esegui.ts` → **0**;
- *  · `REGISTRO_BUCKET_OBLIO` (`esegui.ts`) elenca **quattordici** magazzini e nessuno è
- *    questo — la quattordicesima è `documenti_personale`, aperta l'11/08/2026 e dichiarata
- *    `coperto-fuori-oblio`, che è uno stato e non un'assenza;
- *  · `grep -rn student_documents src/lib/gdpr/ src/app/api/gdpr/` → **nessun risultato**:
- *    le tabelle che `anonimizzaAlunno` tocca non comprendono l'archivio del fascicolo.
+ *  · `grep -c sensitive_documents src/lib/gdpr/esegui.ts` → **6** (era 0);
+ *  · `REGISTRO_BUCKET_OBLIO` (`esegui.ts:296`) elenca **quindici** magazzini e questo è uno
+ *    di quelli: `stato: 'coperto'`, canale `alunno`;
+ *  · `grep -rn student_documents src/lib/gdpr/` → **12 righe** (era nessuna), fra cui
+ *    `obliaFascicoloAlunno` e la sua chiamata dentro `anonimizzaAlunno` (`esegui.ts:1821`).
  *
- * Conseguenza esatta, senza attenuanti: dopo una richiesta di oblio la scheda sanitaria
- * firmata di quel bambino — allergeni, terapie, farmaci in chiaro DENTRO il PDF — resta nel
- * bucket **e** resta indicizzata in `student_documents`. Il lock
- * `__tests__/lib/gdpr-oblio-completo.test.ts` non se ne accorge perché il suo inventario è
- * la fotografia dei bucket ESISTENTI, e questo in produzione non esiste ancora (lo crea
- * `garantisciBucket`): è precisamente il terzo caso che quel registro dichiara di voler
- * rendere impossibile — «un bucket nuovo resta rosso finché qualcuno non dice chi lo svuota».
+ * Che cosa fa, per non doverlo dedurre: l'aggancio è `student_documents.student_id`, esce il
+ * PDF (percorso letto da `storage_path` **oppure** da `file_url`, nell'ordine dei lettori del
+ * fascicolo) e sparisce la riga che lo indicizza; il canale GENITORE non lo tocca, ed è una
+ * decisione scritta — il fascicolo è del BAMBINO, e la richiesta di un adulto non cancella i
+ * dati sanitari di un minore che resta iscritto. Le prove stanno in
+ * `__tests__/lib/gdpr-bucket-sensitive.test.ts`, su un archivio finto che toglie davvero.
  *
- * 🔴 E LA LACUNA NON È RARA: finché `document_type_enum` non contiene i diciassette slug —
- * cioè oggi, sul 100% delle firme — il PDF resta nel bucket senza nessuna riga che lo nomini
- * (vedi `ilFileRestaNelBucket`). È anche la ragione per cui il n. 06, che in archivio non
- * entra per scelta, nel bucket non ci sale affatto (vedi `attesaAccettazioneDirezione`).
- *
- * NON si ripara da qui, e va detto perché: `esegui.ts` è file di un'altra mano e il bucket
- * è condiviso con `documenti-firmati/dettaglio` e `primaria/fascicolo`, quindi la decisione
- * («coperto» o «escluso») vale per tutti e tre e non per questa rotta. Ciò che serve, scritto
- * per chi lo farà: una voce `sensitive_documents` in `REGISTRO_BUCKET_OBLIO` — `coperto`
- * con l'aggancio `student_documents.student_id` → `rimuoviFileOblio(storage_path)` — e la
- * chiamata dentro `anonimizzaAlunno`. Fino ad allora è **bloccante per il rilascio**, non
- * una nota: dichiarato all'orchestratore in quei termini.
+ * ⚠️ IL LIMITE CHE RESTA, ed è la parte da non dimenticare: **la copertura passa
+ * dall'INDICE**. Un PDF che finisce nel bucket senza una riga in `student_documents` non
+ * viene raggiunto da nessun oblio — nessuna query lo nomina. Non è teorico: è ciò che
+ * produce `ilFileRestaNelBucket` quando l'archiviazione non riesce, ed è il motivo per cui
+ * quella regola («il file si toglie solo quando ritentare ha senso») va letta come una
+ * decisione di privacy e non solo di robustezza. Chi carica in questo bucket scriva sempre
+ * anche la riga, o accetti di lasciare un orfano dell'art. 9.
  */
 export const BUCKET_FASCICOLO = 'sensitive_documents'
 

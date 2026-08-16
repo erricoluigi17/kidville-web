@@ -101,6 +101,14 @@ interface VoceModello {
  * il foglio che sta per uscire. Su una copia vuota e su un modulo tornato di carta quella
  * frase prometterebbe una firma che non ci sarà — che è, in piccolo, lo stesso difetto che
  * il documento non deve avere.
+ *
+ * ⚠️ E LA TERZA NON PROMETTE PIÙ IL RIQUADRO PRIMA DI AVERLO TROVATO. Fino al 2026-08-16
+ * `modalitaFirmaCopiaFirmata` diceva «Il foglio porta il riquadro della firma elettronica,
+ * perché quella firma c'è stata davvero» — una frase sulla modalità CHIESTA, non sul foglio
+ * CONSEGNATO. Nel mentre la route consegnava «l'ultima riga di quel tipo», che dopo una
+ * trascrizione `su_carta` è la trascrizione: il pannello dichiarava una firma elettronica su
+ * un foglio che non ne aveva nessuna. La route ora la verifica contro il registro FEA, e
+ * questa frase dice la condizione invece di darla per avvenuta.
  */
 const MODALITA_ORDINE = ['copia_firmata', 'copia_vuota', 'su_carta'] as const
 type Modalita = (typeof MODALITA_ORDINE)[number]
@@ -219,12 +227,19 @@ const ROTTA = '/admin/modulistica'
  * `copia_firmata_assente` non è un `MotivoNonGenerabile`: nasce nella route, dopo aver
  * guardato il fascicolo, e viaggia dallo stesso campo per la stessa ragione — è la sola
  * frase che dica cosa fare, cioè far firmare il modulo alla famiglia.
+ *
+ * 🔴 `copia_firmata_non_elettronica` È IL SUO GEMELLO, E LA DIFFERENZA VALE UNA RIGA. Il
+ * primo dice «nel fascicolo non c'è niente»; il secondo dice «c'è qualcosa, e nessuno di
+ * quei fogli l'ha firmato elettronicamente la famiglia» — trascrizioni `su_carta`,
+ * scansioni. Appiattirli manderebbe la segreteria a far firmare di nuovo un modulo che la
+ * famiglia ha già firmato, su carta, e che sta agli atti.
  */
 const CHIAVE_MOTIVO: Record<string, string> = {
   firma_senza_flusso: 'motivoFirmaSenzaFlusso',
   fonte_dati_assente: 'motivoFonteDatiAssente',
   legale_rappresentante_assente: 'motivoLegaleRappresentanteAssente',
   copia_firmata_assente: 'motivoCopiaFirmataAssente',
+  copia_firmata_non_elettronica: 'motivoCopiaFirmataNonElettronica',
 }
 
 /** Che sottoscrizione pretende il foglio (`FirmaPrestampatoRichiesta`). */

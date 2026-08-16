@@ -1579,6 +1579,70 @@ function rifiutoSoggetto(): EsitoRender<unknown> {
 
 // ─── I moduli di famiglia allo sportello ────────────────────────────────────────
 
+/**
+ * LO STILE CHE IL CODICE CHIEDE E LA PAGINA NON MOSTRA.
+ *
+ * `disegnaParagrafo` (`src/lib/prestampati/impaginazione.ts`) traduce `'corsivo'` in
+ * `setFont('helvetica', 'italic')`, e jsPDF lo scrive davvero nel PDF: misurato il
+ * 2026-08-16 sul flusso di contenuto del modulo vuoto della delega, la riga d'introduzione
+ * esce selezionata con `/F3 12 Tf` e `/F3` è `Helvetica-Oblique`. Solo che **i caratteri
+ * arrivano sul foglio perfettamente dritti**: i quattordici font standard non sono
+ * incorporati, e il rasterizzatore sostituisce una faccia non inclinata. Ritagliato a 400
+ * dpi, «Modulo da compilare e firmare a penna…» non ha un grado di inclinazione.
+ *
+ * Il grassetto invece arriva. Quindi, finché quel difetto vive nel motore — che non è di
+ * questa mano, ed è segnalato all'orchestratore — **`corsivo` non può essere l'unico
+ * portatore di un significato**: un testo subordinato marcato solo così è, sulla carta,
+ * indistinguibile dal corpo del testo. Qui non si usa, e il lock lo tiene fermo.
+ */
+export const STILE_NON_RESO = 'corsivo' as const
+
+/**
+ * LA RIGA DA FIRMARE A PENNA, e il motivo per cui viaggia dentro `luogoData` invece che
+ * come blocco di contenuto.
+ *
+ * ⚠️ È LA RIPARAZIONE DI UNA PAGINA ORFANA, misurata il 2026-08-16 sui PDF veri: su 4 dei 6
+ * moduli di famiglia la copia vuota usciva con un'ultima pagina che conteneva soltanto
+ * «Data della firma ___ / Firma del genitore/tutore ___» in cima e «Luogo e data / Napoli,
+ * lì …» sospeso a metà foglio, con sotto un terzo di pagina di bianco. Sulla delega il
+ * contenuto di pagina 1 finiva a 219,5 mm e la riga di firma andava comunque sul foglio
+ * dopo.
+ *
+ * LA CAUSA non era lo spazio: erano DUE MECCANISMI per un blocco solo. La riga da firmare
+ * era un blocco di contenuto e scorreva col testo; «Luogo e data» non scorre affatto —
+ * `disegnaFirma` lo ancora fra y=150 e y=240 — e l'impaginatore riserva quello spazio
+ * togliendolo all'ULTIMO blocco di contenuto (`limitePerUltimoBlocco`, 235 mm). Cioè: la
+ * riga da firmare competeva con la riserva fatta per la firma di cui è parte. Appena
+ * traboccava, il gruppo si spezzava in due pagine.
+ *
+ * Qui le due metà tornano UNA COSA SOLA, disegnata da un meccanismo solo, nel posto che
+ * l'impaginatore ha già riservato. Il foglio non ha più una coda che possa traboccare, e
+ * l'orfano non è «meno probabile»: non ha più il modo di nascere.
+ *
+ * ⚠️ E LA DATA STAMPATA SPARISCE, che è un guadagno e non un effetto collaterale. Su un
+ * modulo in bianco «Napoli, lì 16/08/2026» è la data in cui la segreteria ha STAMPATO il
+ * foglio, messa accanto a una firma che la famiglia darà chissà quando: una data
+ * pre-stampata su una sottoscrizione futura. Qui il luogo resta stampato e la data la
+ * scrive chi firma, che è l'unico che la sa.
+ *
+ * ⚠️ I filetti sono trattini bassi e non i filetti grigi di `disegnaCella`, e va detto
+ * perché non è una preferenza: `luogoData` è una stringa che `disegnaFirma` stampa con
+ * `doc.text`, e da lì non si disegnano linee. La riparazione elegante è una variante
+ * `{tipo:'penna'}` di `FirmaPrestampato` (`src/lib/prestampati/tipi.ts`) che disegni la
+ * riga con i filetti veri accanto a «Luogo e data» — file non di questa mano, **segnalata
+ * all'orchestratore**. Fra un foglio corretto con i trattini e uno elegante con una pagina
+ * orfana, il modulo che la famiglia si porta a casa è il primo.
+ *
+ * La città NON è cablata: viene dal precompilato, come in `rigaLuogoData`, perché le sedi
+ * sono tre e un nome scritto in un `.ts` è un nome che un giorno sarà sbagliato su venti
+ * fogli nello stesso momento. La lunghezza sta nei 166 mm fra i margini
+ * (`CARTA.margineSx` 22 → `margineDx` 188) a 11 pt, e il lock «la riga da firmare a penna
+ * non va a capo» lo verifica sul PDF invece di fidarsi di questo conto.
+ */
+function rigaDaFirmareAPenna(citta: string | null | undefined): string {
+  return `${rigaLuogoData(citta, '____________')}     Firma del genitore/tutore ____________________`
+}
+
 /** La scelta fatta allo sportello su un modulo di famiglia. */
 export interface OpzioniModuloFamiglia {
   modalita: ModalitaModuloFamiglia
@@ -1598,7 +1662,7 @@ export interface OpzioniModuloFamiglia {
  * firmato sta in archivio, di carta. Una scansione allegata NON c'è, ed è una decisione
  * esplicita — il PDF rimanda all'originale, non lo sostituisce.
  */
-export function diciturModuloSuCarta(dataIt: string): string {
+export function dicituraModuloSuCarta(dataIt: string): string {
   return `Modulo consegnato su carta il ${dataIt}, firmato in originale agli atti`
 }
 
@@ -1699,7 +1763,7 @@ function componiModuloDiFamiglia(
     blocchi = [
       ...composto.blocchi,
       { tipo: 'spazio', mm: 4 },
-      { tipo: 'paragrafo', testo: diciturModuloSuCarta(dataIt), stile: 'grassetto' },
+      { tipo: 'paragrafo', testo: dicituraModuloSuCarta(dataIt), stile: 'grassetto' },
     ]
   }
 
@@ -1710,7 +1774,10 @@ function componiModuloDiFamiglia(
     // dicitura di copia, nessun riquadro di verifica. Vedi il commento della funzione.
     protocollo: null,
     blocchi,
-    luogoData: opzioni.carta.luogoData,
+    luogoData:
+      scelta.modalita === 'copia_vuota'
+        ? rigaDaFirmareAPenna(prefill.dati.sede.scuola_citta)
+        : opzioni.carta.luogoData,
     firma: { tipo: 'nessuna' },
     verifica: null,
   }
@@ -1763,8 +1830,15 @@ function rigaSeValorizzata(etichetta: string, valore: string | null | undefined)
  * ⚠️ I campi condizionali (`mostraSe`) SI STAMPANO TUTTI. A schermo si nascondono perché la
  * risposta di un altro campo li rende inutili; sulla carta nessuno sa ancora cosa la famiglia
  * risponderà, e una domanda tolta è una domanda che non tornerà più.
+ *
+ * È **esportata** per una ragione sola, e non è la comodità: i due presidi che questo foglio
+ * ha — «nessuna microcopy dello schermo» e «nessuno stile che la pagina non rende» — si
+ * verificano sull'albero dei blocchi, non sul PDF. Sul PDF si può provare che una frase non
+ * c'è; non si può provare che uno STILE non è stato chiesto, perché `corsivo` e `normale`
+ * arrivano sulla pagina identici (vedi `STILE_NON_RESO`), ed è precisamente la ragione per
+ * cui il difetto è passato inosservato.
  */
-function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): BloccoPrestampato[] {
+export function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): BloccoPrestampato[] {
   const a = dati.alunno
   const nomeSede = testo(dati.sede.scuola_nome)
 
@@ -1773,7 +1847,9 @@ function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): Bl
       tipo: 'paragrafo',
       testo:
         'Modulo da compilare e firmare a penna, e da riconsegnare in segreteria. I dati del bambino sono già stampati: controllali e correggili se qualcosa non torna.',
-      stile: 'corsivo',
+      // `grassetto` e non `corsivo`: vedi `STILE_NON_RESO`. È l'unica riga del foglio che
+      // dice cosa farne, e deve staccarsi dalle domande.
+      stile: 'grassetto',
     },
     { tipo: 'sezione', titolo: "Dati dell'alunno/a" },
     ...(nomeSede
@@ -1804,15 +1880,11 @@ function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): Bl
 
   for (const campo of perLaFamiglia) blocchi.push(...blocchiDelCampo(campo))
 
-  blocchi.push({ tipo: 'spazio', mm: 4 })
-  // LA RIGA DA FIRMARE A PENNA, che è ciò che prende il posto del riquadro FEA. Il valore
-  // assente non è un buco: `disegnaCella` stampa il filetto grigio fino a fine colonna (§2
-  // di `00-impaginazione.md`), cioè esattamente una riga su cui si firma.
-  blocchi.push({
-    tipo: 'campi',
-    colonne: 2,
-    campi: [{ etichetta: 'Data della firma' }, { etichetta: 'Firma del genitore/tutore' }],
-  })
+  // ⚠️ QUI NON C'È PIÙ LA RIGA DA FIRMARE A PENNA, e la riga tolta vale il commento: era un
+  // BLOCCO di contenuto e per questo scorreva col testo, mentre l'altra metà della stessa
+  // firma — «Luogo e data» — non scorre affatto. Due meccanismi per un blocco solo, che si
+  // spezzava in due pagine appena il contenuto arrivava in fondo. Ora la riga viaggia dentro
+  // `luogoData` e la disegna `disegnaFirma`, in un pezzo solo: vedi `rigaDaFirmareAPenna`.
 
   if (perLUfficio.length > 0) {
     blocchi.push({
@@ -1837,18 +1909,41 @@ function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): Bl
  * `modelli/segreteria.ts`, e nessuno dei sei moduli di famiglia li usa. Restano perché il
  * parametro è `CampoPrestampato` del REGISTRO — l'unione dei due contratti — e un ramo
  * mancante lì dentro non è un errore di compilazione: è un campo che sparisce dal foglio.
+ *
+ * ─── 🔴 `campo.aiuto` NON SI STAMPA, ED È UNA DECISIONE, NON UNA DIMENTICANZA ────
+ *
+ * Fino al 2026-08-16 questa funzione stampava `campo.aiuto` parola per parola, in coda a
+ * ogni domanda. Ma `aiuto` è la **microcopy della schermata**, scritta per il form dentro
+ * l'app, e riusarla su carta senza rileggerla ci porta frasi che parlano del canale
+ * sbagliato. Letto sui PDF veri, non nel sorgente:
+ *
+ *  · permesso d'orario → «Sul cartaceo si dava per scontato "oggi": in app va detto, perché
+ *    il permesso si compila anche la sera prima.» — una frase che, stampata sul cartaceo, si
+ *    contraddice da sola;
+ *  · scheda sanitaria → «… È il motivo per cui questa scheda esiste.» — una giustificazione
+ *    interna di progetto, su un foglio che una madre compila a penna;
+ *  · delega al ritiro → «I delegati diventano attivi solo dopo la firma di questo modulo,
+ *    non prima.» — vero dell'app, non del foglio che sta per firmare.
+ *
+ * Un modulo di carta che dice «in app va detto» fa esattamente ciò che questo ramo esiste
+ * per evitare: dichiara sul foglio qualcosa che sul foglio non è vero. E c'era un secondo
+ * danno, misurato: l'aiuto usciva come paragrafo a 12 pt in nero a tutta larghezza, cioè più
+ * vistoso dell'etichetta della domanda a cui si riferiva — chi riempiva il foglio leggeva
+ * prima la nota e poi la domanda.
+ *
+ * La riparazione vera è un campo distinto nel descrittore (`aiutoStampa`, l'istruzione di
+ * compilazione che vale anche su carta), che vive in `src/lib/prestampati/modelli/` e non in
+ * questo file: **segnalata all'orchestratore, non fatta qui**. Finché non c'è, sul foglio
+ * restano la domanda e lo spazio per rispondere — che è comunque un modulo, mentre un modulo
+ * con addosso la microcopy di uno schermo è un modulo sbagliato.
  */
 function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
   const etichetta = campo.etichetta.trim()
-  const aiuto: BloccoPrestampato[] = campo.aiuto?.trim()
-    ? [{ tipo: 'paragrafo', testo: campo.aiuto.trim(), stile: 'corsivo' }]
-    : []
 
   if (campo.tipo === 'siNo' || campo.tipo === 'conferma') {
     return [
       { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
       { tipo: 'caselle', caselle: [{ testo: 'Sì' }, { testo: 'No' }] },
-      ...aiuto,
     ]
   }
 
@@ -1857,12 +1952,11 @@ function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
     // Un elenco CHIUSO rimasto senza voci è quello che l'app costruisce a runtime dai
     // delegati attivi: sulla carta non c'è un runtime, quindi si scrive a penna.
     if (caselle.length === 0) {
-      return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }, ...aiuto]
+      return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }]
     }
     return [
       { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
       { tipo: 'caselle', caselle },
-      ...aiuto,
     ]
   }
 
@@ -1875,7 +1969,6 @@ function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
         intestazioni: ['', ...(campo.valoriAmmessi ?? []).map((v) => v.etichetta)],
         righe,
       },
-      ...aiuto,
     ]
   }
 
@@ -1890,30 +1983,22 @@ function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
         // perché un modulo consegnato deve poter essere completato a penna.
         righeVuote: 3,
       },
-      ...aiuto,
     ]
   }
 
   if (campo.tipo === 'file') {
-    return [
-      {
-        tipo: 'paragrafo',
-        testo: `${etichetta}: da allegare al modulo.`,
-        stile: 'corsivo',
-      },
-      ...aiuto,
-    ]
+    // `grassetto` come le altre domande, e NON `corsivo`: vedi `STILE_NON_RESO`.
+    return [{ tipo: 'paragrafo', testo: `${etichetta}: da allegare al modulo.`, stile: 'grassetto' }]
   }
 
   if (campo.tipo === 'testoLungo') {
     // Tre righe e non una: un testo lungo scritto su un filetto solo finisce nel margine.
     return [
       { tipo: 'campi', colonne: 1, campi: [{ etichetta }, { etichetta: '' }, { etichetta: '' }] },
-      ...aiuto,
     ]
   }
 
-  return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }, ...aiuto]
+  return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }]
 }
 
 /** La carta intestata del soggetto, qualunque esso sia. */

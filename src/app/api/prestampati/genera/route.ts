@@ -718,6 +718,22 @@ async function tracciaStampaSezione(
 // ─── La copia firmata, dal fascicolo ────────────────────────────────────────────
 
 /**
+ * Quante righe del fascicolo si guardano prima di dire «non c'è».
+ *
+ * Una sola non basta, e il perché è la sequenza naturale di questo stesso ramo: la famiglia
+ * firma nell'app, poi qualcuno consegna a mano un secondo foglio e la segreteria lo
+ * trascrive con `su_carta`. Le due righe hanno lo STESSO `document_type` e la trascrizione è
+ * più recente, quindi «l'ultima di quel tipo» sarebbe sempre lei — e la copia firmata vera,
+ * che sta una riga più sotto, non uscirebbe mai.
+ *
+ * Il tetto esiste perché ogni candidato costa uno scaricamento dal bucket. Nel caso normale
+ * ne costa **uno**: la copia firmata è quasi sempre la più recente, e il ciclo si ferma al
+ * primo confronto riuscito. Cinque è il numero di volte che si è disposti a pagare quel
+ * costo prima di rispondere «non c'è», che è comunque una risposta vera.
+ */
+const CANDIDATI_COPIA_FIRMATA = 5
+
+/**
  * IL PDF CHE IL GENITORE HA SOTTOSCRITTO, ripreso dal fascicolo e riconsegnato tale e quale.
  *
  * ⚠️ NON SI RIGENERA, e la differenza non è di efficienza: quel foglio porta il riquadro
@@ -725,10 +741,34 @@ async function tracciaStampaSezione(
  * frase è vera è quello composto nel momento della firma. Ricomporlo darebbe stesse parole e
  * byte diversi — cioè un file di cui la ricevuta FEA non è più la ricevuta.
  *
- * La riga si cerca per `student_id` + `document_type`, che è lo slug del modello:
- * l'enumerato `document_type_enum` contiene i tredici slug archiviabili dal 2026-08-15, ed è
- * ciò che rende questa modalità possibile — prima del 2026-08-15 l'archiviazione falliva al
- * 100% con `22P02` e in quel fascicolo non c'era niente da ripescare.
+ * ─── 🔴 IL TIPO DI DOCUMENTO NON DICE CHI HA FIRMATO ────────────────────────────
+ *
+ * Fino al 2026-08-16 questa funzione prendeva «l'ultima riga di `student_documents` con quel
+ * `document_type`» e la consegnava. Era il vincolo di tutto il ramo rovesciato: **un foglio
+ * non deve MAI dichiarare una firma elettronica che non è avvenuta**, e qui la firma
+ * inesistente la dichiaravano l'interfaccia («il foglio porta il riquadro della firma
+ * elettronica, perché quella firma c'è stata davvero») e il registro degli accessi, mentre la
+ * segretaria consegnava a un ente un foglio che credeva l'originale sottoscritto.
+ *
+ * `student_documents` NON ha una colonna che distingua l'originale firmato dalla famiglia da
+ * una trascrizione della segreteria o da una scansione caricata a mano — misurato su
+ * `information_schema`: `id, student_id, document_type, file_url, expiry_date, created_at,
+ * section_id, caricato_da, descrizione, file_name, storage_path`. Prendere una riga per tipo
+ * significa quindi prendere una riga QUALUNQUE.
+ *
+ * La colonna che quel fatto ce l'ha sta in un'altra tabella: `firme_documenti.
+ * impronta_digitale` è lo SHA-256 dei byte che il genitore ha davvero sottoscritto — la
+ * scrive `parent/prestampati/firma` PRIMA di caricare il file, e su quegli stessi byte. Il
+ * confronto è quindi un'uguaglianza fra impronte, non un'inferenza: si consegna solo il file
+ * la cui impronta è nel registro FEA per quel tipo di documento. Una trascrizione `su_carta`,
+ * una scansione, un foglio ricomposto hanno per costruzione un'impronta diversa.
+ *
+ * ⚠️ LE DUE FORME DELL'IMPRONTA SI CERCANO ENTRAMBE, e non è una cautela di stile: le due
+ * mani che scrivono quel campo non concordano. `parent/prestampati/firma` scrive
+ * `SHA256-` + `createHash(…).digest('hex')`, cioè **minuscolo**; `sha256Impronta`
+ * (`@/lib/protocolli/store`), che è la funzione con cui qui si ricalcola, restituisce lo
+ * stesso hex in **maiuscolo**. Misurato in produzione il 2026-08-16: le righe esistenti sono
+ * tutte in minuscolo. Cercare una forma sola vorrebbe dire rifiutare una copia firmata vera.
  *
  * ⚠️ IL DEGRADO SULLO SCHEMA NON MIGRATO È PREVISTO. Il DB E2E della CI è un progetto
  * separato: `.eq('document_type', slug)` su un enumerato che quel valore non ce l'ha risponde
@@ -753,7 +793,7 @@ async function consegnaCopiaFirmata(
     .eq('student_id', input.alunnoId)
     .eq('document_type', input.voce.slug)
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(CANDIDATI_COPIA_FIRMATA)
 
   if (error) {
     // PostgREST non lancia: il valore di ritorno va controllato, sempre.
@@ -770,9 +810,11 @@ async function consegnaCopiaFirmata(
     return rispostaCopiaFirmataAssente()
   }
 
-  const riga = (data as unknown as { id: string; file_name: string | null; storage_path: string | null }[] | null)?.[0]
-  const percorso = riga?.storage_path?.trim()
-  if (!riga || !percorso) {
+  const righe = (
+    (data as unknown as { id: string; file_name: string | null; storage_path: string | null }[] | null) ?? []
+  ).filter((r) => !!r.storage_path?.trim())
+
+  if (righe.length === 0) {
     // Non è un guasto: è un modulo che la famiglia non ha ancora firmato, ed è la risposta
     // più frequente di questa modalità. `info` e non `warn`: un livello più alto renderebbe
     // illeggibile il canale proprio dove serve.
@@ -786,19 +828,90 @@ async function consegnaCopiaFirmata(
     return rispostaCopiaFirmataAssente()
   }
 
-  const { data: file, error: erroreDownload } = await supabase.storage
-    .from(BUCKET_FASCICOLO)
-    .download(percorso)
-  if (erroreDownload || !file) {
-    // Il CORPO dell'errore dello storage arriva dal parametro `err` e `descriviErrore` lo
-    // scrive per esteso: qui fra i campi finirebbe solo redatto.
-    logEvento('storage', 'error', {
+  /** Almeno un candidato non si è potuto nemmeno guardare: è un guasto, non un'assenza. */
+  let guasto = false
+  /** Candidati letti la cui impronta NON è nel registro FEA: trascrizioni, scansioni. */
+  let senzaFirma = 0
+
+  for (const riga of righe) {
+    const percorso = riga.storage_path!.trim()
+    const { data: file, error: erroreDownload } = await supabase.storage
+      .from(BUCKET_FASCICOLO)
+      .download(percorso)
+    if (erroreDownload || !file) {
+      // Il CORPO dell'errore dello storage arriva dal parametro `err` e `descriviErrore` lo
+      // scrive per esteso: qui fra i campi finirebbe solo redatto.
+      logEvento('storage', 'error', {
+        operazione: 'prestampati/genera:POST',
+        esito: 'copia-firmata-non-scaricata',
+        bucket: BUCKET_FASCICOLO,
+        tipo: input.voce.slug,
+        alunno_id: input.alunnoId,
+      }, erroreDownload)
+      guasto = true
+      continue
+    }
+
+    const byte = Buffer.from(await file.arrayBuffer())
+    const firmata = await improntaNelRegistroFea(supabase, byte, input.voce.slug, input.alunnoId)
+    if (firmata === 'non-verificabile') {
+      // Il registro FEA non risponde: NON si consegna. «Non ho potuto verificare» non è
+      // «è firmato», e questo foglio va a un ente dichiarando una sottoscrizione.
+      guasto = true
+      continue
+    }
+    if (!firmata) {
+      senzaFirma += 1
+      continue
+    }
+
+    // IL REGISTRO DEGLI ACCESSI: `download`, non `view`. Sono due fatti diversi — «ho aperto
+    // l'anagrafica» (già registrato al passo 3bis) e «mi sono portato via il documento
+    // firmato» — e il giorno in cui una famiglia chiede chi ha toccato il fascicolo di suo
+    // figlio i due si leggono in modo diverso. Si scrive solo per il documento CONSEGNATO:
+    // un candidato letto dal server e scartato non se l'è portato via nessuno.
+    await logAccessoFascicolo(supabase, {
+      alunnoId: input.alunnoId,
+      utenteId: input.utenteId,
+      azione: 'download',
+      documentoId: riga.id,
+      finalita: `Copia firmata ${input.voce.slug} ripresa dal fascicolo`,
+      request,
+    })
+
+    // Il successo si logga, non solo l'errore: senza, «nessun log» non distingue «tutto bene»
+    // da «non è mai partito niente».
+    logEvento('modulistica', 'info', {
       operazione: 'prestampati/genera:POST',
-      esito: 'copia-firmata-non-scaricata',
-      bucket: BUCKET_FASCICOLO,
+      esito: 'copia-firmata-consegnata',
+      utente: input.utenteId,
+      ruolo: input.ruolo,
       tipo: input.voce.slug,
+      evento: 'modalita:copia_firmata',
+      scuola_id: input.scuolaId,
       alunno_id: input.alunnoId,
-    }, erroreDownload)
+      n: byte.byteLength,
+    })
+
+    const nomeFile = riga.file_name?.trim() || `${slugNomeFile(input.voce.etichetta)}.pdf`
+    return new NextResponse(byte, {
+      // 200 e non 201: non è stato creato niente. È il documento che c'era già.
+      status: 200,
+      headers: {
+        'Content-Type': MIME_PDF,
+        'Content-Disposition': `attachment; filename="${nomeFile}"`,
+        'Cache-Control': 'no-store',
+        'X-Prestampato-Modello': input.voce.slug,
+        'X-Prestampato-Modalita': 'copia_firmata',
+        'X-Prestampato-Archiviato': 'archiviato',
+        'X-Prestampato-Documento': riga.id,
+      },
+    })
+  }
+
+  if (guasto) {
+    // Un guasto non si traveste da assenza: «non ho potuto guardare» e «non c'è» mandano la
+    // segreteria in due direzioni diverse — riprovare, o far firmare il modulo alla famiglia.
     return NextResponse.json(
       {
         error:
@@ -809,49 +922,88 @@ async function consegnaCopiaFirmata(
     )
   }
 
-  const byte = Buffer.from(await file.arrayBuffer())
+  if (senzaFirma > 0) {
+    // 🔴 IL CASO CHE QUESTA FUNZIONE ESISTE PER RIFIUTARE: nel fascicolo ci sono documenti di
+    // questo tipo, e nessuno porta la firma elettronica della famiglia. Sono trascrizioni
+    // `su_carta`, scansioni caricate a mano, fogli rigenerati. Consegnarne uno come «copia
+    // firmata» significherebbe dare a un ente un foglio che nessuno ha sottoscritto.
+    logEvento('modulistica', 'warn', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'copia-firmata-senza-riscontro-fea',
+      tipo: input.voce.slug,
+      alunno_id: input.alunnoId,
+      scuola_id: input.scuolaId,
+      n: senzaFirma,
+    })
+    return NextResponse.json(
+      {
+        error:
+          'Nel fascicolo ci sono documenti di questo tipo, ma nessuno porta la firma elettronica della famiglia: quella firma non risulta nel registro.',
+        codice: 'PRESTAMPATO_DATI_MANCANTI',
+        motivo: 'copia_firmata_non_elettronica',
+      },
+      { status: 422 },
+    )
+  }
 
-  // IL REGISTRO DEGLI ACCESSI: `download`, non `view`. Sono due fatti diversi — «ho aperto
-  // l'anagrafica» (già registrato al passo 3bis) e «mi sono portato via il documento
-  // firmato» — e il giorno in cui una famiglia chiede chi ha toccato il fascicolo di suo
-  // figlio i due si leggono in modo diverso.
-  await logAccessoFascicolo(supabase, {
-    alunnoId: input.alunnoId,
-    utenteId: input.utenteId,
-    azione: 'download',
-    documentoId: riga.id,
-    finalita: `Copia firmata ${input.voce.slug} ripresa dal fascicolo`,
-    request,
-  })
-
-  // Il successo si logga, non solo l'errore: senza, «nessun log» non distingue «tutto bene»
-  // da «non è mai partito niente».
   logEvento('modulistica', 'info', {
     operazione: 'prestampati/genera:POST',
-    esito: 'copia-firmata-consegnata',
-    utente: input.utenteId,
-    ruolo: input.ruolo,
+    esito: 'copia-firmata-assente',
     tipo: input.voce.slug,
-    evento: 'modalita:copia_firmata',
-    scuola_id: input.scuolaId,
     alunno_id: input.alunnoId,
-    n: byte.byteLength,
+    scuola_id: input.scuolaId,
   })
+  return rispostaCopiaFirmataAssente()
+}
 
-  const nomeFile = riga.file_name?.trim() || `${slugNomeFile(input.voce.etichetta)}.pdf`
-  return new NextResponse(byte, {
-    // 200 e non 201: non è stato creato niente. È il documento che c'era già.
-    status: 200,
-    headers: {
-      'Content-Type': MIME_PDF,
-      'Content-Disposition': `attachment; filename="${nomeFile}"`,
-      'Cache-Control': 'no-store',
-      'X-Prestampato-Modello': input.voce.slug,
-      'X-Prestampato-Modalita': 'copia_firmata',
-      'X-Prestampato-Archiviato': 'archiviato',
-      'X-Prestampato-Documento': riga.id,
-    },
-  })
+/**
+ * L'impronta di questi byte è nel registro FEA per questo tipo di documento?
+ *
+ * È l'unica domanda che distingue l'originale sottoscritto da tutto il resto, e ha una
+ * risposta a tre valori: `true` (firmato), `false` (non firmato), `'non-verificabile'` (il
+ * registro non ha risposto). Il terzo NON si appiattisce sul secondo: «non ho potuto
+ * verificare» non è «non è firmato», e le due cose portano la segreteria in due direzioni
+ * diverse. In nessuno dei due casi però il foglio esce — un documento che dichiara una
+ * sottoscrizione si consegna solo quando quella sottoscrizione è provata.
+ *
+ * ⚠️ NON si filtra per `utente_id`: `firme_documenti` lega la firma al GENITORE, e allo
+ * sportello si conosce il bambino. L'impronta però è uno SHA-256 dei byte, cioè già un
+ * identificatore univoco di QUEL foglio: `tipo_documento` accanto è una cintura, non la
+ * prova.
+ */
+async function improntaNelRegistroFea(
+  supabase: SupabaseClient,
+  byte: Uint8Array,
+  slug: string,
+  alunnoId: string,
+): Promise<boolean | 'non-verificabile'> {
+  // `SHA256-<hex maiuscolo>`; la forma minuscola è quella che la route della famiglia scrive.
+  const maiuscola = sha256Impronta(byte)
+  const minuscola = `SHA256-${maiuscola.slice('SHA256-'.length).toLowerCase()}`
+
+  const { data, error } = await supabase
+    .from('firme_documenti')
+    .select('id')
+    .eq('tipo_documento', slug)
+    .in('impronta_digitale', [maiuscola, minuscola])
+    .limit(1)
+
+  if (error) {
+    // PostgREST non lancia: il valore di ritorno va controllato, sempre. Il corpo dell'errore
+    // arriva dal parametro `err`, non dai campi — che sono a lista bianca.
+    const codice = (error as { code?: string }).code ?? null
+    logEvento('modulistica', 'error', {
+      operazione: 'prestampati/genera:POST',
+      esito: 'registro-fea-non-interrogabile',
+      entita_tipo: 'firme_documenti',
+      tipo: slug,
+      alunno_id: alunnoId,
+      error_code: codice,
+    }, error)
+    return 'non-verificabile'
+  }
+
+  return ((data as unknown as { id: string }[] | null) ?? []).length > 0
 }
 
 /**
@@ -1233,20 +1385,25 @@ const SCHEMA_NON_PRONTO = new Set(['22P02', 'PGRST204', '42703', '42P01', 'PGRST
  * Il PDF nel fascicolo del bambino: file nel bucket privato già in uso, riga in
  * `student_documents` con il `document_type` del modello.
  *
- * 🔴 `document_type` È UN ENUMERATO, E NESSUNO DEI DICIASSETTE SLUG CI STA DENTRO.
- * Misurato in produzione il 2026-08-14, in sola lettura:
- * `SELECT e.enumlabel FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid WHERE
- * t.typname = 'document_type_enum'` → `diagnosi`, `pei`, `104`, `pdp`. Sono i quattro del
- * baseline (`supabase/migrations/20260704120000_baseline.sql:43`) e nessuna migrazione ne
- * ha aggiunti. Postgres rifiuta quindi l'INSERT con `22P02 invalid input value for enum`,
- * e dal codice non si aggira: allargare l'enumerato è una migrazione, e le migrazioni su
- * questo database sono vietate dal titolare.
+ * ⚠️ `document_type` È UN ENUMERATO, E QUI STAVA SCRITTO UN CONTEGGIO CHE È INVECCHIATO.
+ * Fino al 2026-08-16 questa testata diceva, in maiuscolo, «NESSUNO DEI DICIASSETTE SLUG CI
+ * STA DENTRO — misurato il 2026-08-14: `diagnosi`, `pei`, `104`, `pdp`», e concludeva che
+ * ogni archiviazione usciva con `X-Prestampato-Archiviato: fallita`. Era vero per due
+ * giorni: la migrazione che allarga l'enumerato è stata applicata il 2026-08-15, e chi
+ * leggesse ancora quel paragrafo crederebbe rotto un percorso che funziona — smettendo di
+ * cercare la causa vera di un'archiviazione fallita.
  *
- * Perciò OGGI, in produzione, tutti e quattro i modelli archiviabili che nascono qui
- * (`nulla_osta`, `certificato_competenze`, `certificato_iscrizione_frequenza`,
- * `certificato_bonus_nido`) escono con `X-Prestampato-Archiviato: fallita`. Va detto qui,
- * dove qualcuno lo legge, invece di lasciarlo scoprire a chi apre l'«Archivio firmati» e lo
- * trova vuoto.
+ * Qui non si rimette un numero nuovo, che invecchierebbe allo stesso modo: si lascia la
+ * query, che risponde sempre.
+ *
+ * ```sql
+ * SELECT e.enumlabel FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+ *  WHERE t.typname = 'document_type_enum' ORDER BY e.enumsortorder;
+ * ```
+ *
+ * Il degrado resta comunque scritto nel codice, e non per prudenza: il DB E2E della CI è un
+ * progetto separato e **non è migrato**, quindi lì l'INSERT risponde davvero `22P02 invalid
+ * input value for enum`. Ciò che segue descrive cosa succede in quel caso.
  *
  * Le due strade sbagliate, dette perché nessuno le prenda credendole ovvie — sono le stesse
  * che ha scritto la route gemella della famiglia (`parent/prestampati/firma`), e le due

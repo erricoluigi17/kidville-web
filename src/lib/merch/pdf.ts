@@ -16,8 +16,13 @@
  *
  * Il salto di pagina scattava a `y > 270`: sulla carta è **dentro** il piede a quattro
  * colonne (272,1 → 285,1), quindi le ultime righe di un ordine lungo sarebbero state
- * stampate sopra la ragione sociale della scuola. Ora il limite è `CARTA.contenutoFine`,
- * e vale anche per il totale e per le note — che prima potevano uscire dal foglio.
+ * stampate sopra la ragione sociale della scuola. Ora il limite è `CARTA.contenutoFine`.
+ *
+ * ⚠️ **Un limite giusto non basta: serve anche sapere COSA non si spezza.** Applicato riga
+ * per riga, quel limite mandava la sola riga «Note: …» su un terzo foglio — cioè su una
+ * pagina di carta intestata della scuola, con marchio e filigrana, spedita a un fornitore
+ * con sopra una riga. Filetto, totale e note sono ora un blocco solo: vedi la chiusura di
+ * `buildOrdineFornitorePdf`.
  *
  * Testato in `__tests__/lib/merch-pdf.test.ts`.
  */
@@ -128,24 +133,67 @@ export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
     totaleQ += r.quantita
     y += 6
   }
+  // ── Chiusura: filetto, totale e note sono UN BLOCCO SOLO ─────────────────────
+  //
+  // ⚠️ **QUI LA NOTA FINIVA DA SOLA SU UNA PAGINA (riparato il 2026-08-16).** Il limite di
+  // pagina si chiedeva riga per riga, quindi il totale entrava sull'ultimo foglio e la nota
+  // ne apriva un altro: misurato su un ordine reale, pag. 2 chiudeva con «Totale pezzi:
+  // 1830» a 252,21 mm e pag. 3 conteneva la SOLA riga «Note: …» a 37,72 mm. Il salto
+  // scattava per mezzo millimetro (264,01 contro un limite di 263,5), e il risultato era un
+  // foglio di carta intestata della scuola — marchio, filigrana, le tre sedi — spedito a un
+  // FORNITORE con sopra una riga.
+  //
+  // La regola del limite era giusta: mancava il «tieni insieme» che il motore dei
+  // protocolli ha già per il blocco firma (`ALTEZZA_FIRMA`, `documento-pdf.ts`). Qui
+  // l'altezza del blocco si calcola PRIMA di stamparlo e il salto si chiede una volta sola:
+  // o ci stanno insieme, o vanno insieme sulla pagina nuova.
+  const ALTEZZA_TOTALE = 6
+  const STACCO_NOTE = 9
+  const PASSO_NOTE = 4.5
+
+  // `splitTextToSize` misura col corpo CORRENTE: senza questa riga spezzerebbe la nota
+  // sulle larghezze di 10 pt e ne verrebbe fuori un numero di righe che non è quello vero.
+  doc.setFontSize(9)
+  const righeNote = i.note
+    ? (doc.splitTextToSize(`Note: ${i.note}`, CARTA.margineDx - CARTA.margineSx) as string[])
+    : []
+
+  /** Il fondo dell'inchiostro del blocco, se il filetto cadesse a `cima`. */
+  const fondoBlocco = (cima: number): number => {
+    const yTotale = cima + ALTEZZA_TOTALE
+    const fondoTotale = ingombroTesto(yTotale, 11).fondo
+    if (righeNote.length === 0) return fondoTotale
+    const ultimaNota = yTotale + STACCO_NOTE + (righeNote.length - 1) * PASSO_NOTE
+    return Math.max(fondoTotale, ingombroTesto(ultimaNota, 9).fondo)
+  }
+
   y += 2
-  spazioPer(11)
+  if (fondoBlocco(y) > CARTA.contenutoFine) {
+    doc.addPage()
+    y = CARTA.contenutoInizio
+  }
   doc.setDrawColor(200)
   doc.line(X_ARTICOLO, y, X_QUANTITA, y)
-  y += 6
-  scrivi(`Totale pezzi: ${totaleQ}`, X_ARTICOLO, 11)
-  y += 9
+  y += ALTEZZA_TOTALE
+  doc.setTextColor(NERO)
+  doc.setFontSize(11)
+  doc.text(`Totale pezzi: ${totaleQ}`, X_ARTICOLO, y)
+  y += STACCO_NOTE
 
-  if (i.note) {
+  if (righeNote.length > 0) {
     doc.setTextColor(GRIGIO)
     doc.setFontSize(9)
-    const righe = doc.splitTextToSize(`Note: ${i.note}`, CARTA.margineDx - CARTA.margineSx) as string[]
-    for (const riga of righe) {
-      spazioPer(9)
-      doc.setFontSize(9)
-      doc.setTextColor(GRIGIO)
+    for (const riga of righeNote) {
+      // Il «tieni insieme» non può diventare un modo di sfondare il piede: se il blocco non
+      // ci sta nemmeno su una pagina vuota — una nota di quaranta righe — si spezza.
+      if (ingombroTesto(y, 9).fondo > CARTA.contenutoFine) {
+        doc.addPage()
+        y = CARTA.contenutoInizio
+        doc.setFontSize(9)
+        doc.setTextColor(GRIGIO)
+      }
       doc.text(riga, X_ARTICOLO, y)
-      y += 4.5
+      y += PASSO_NOTE
     }
     doc.setTextColor(NERO)
   }

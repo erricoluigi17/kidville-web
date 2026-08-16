@@ -109,6 +109,57 @@ describe('buildOrdineFornitorePdf — sta dentro la carta', () => {
     expect(filetti).toEqual([])
   })
 
+  it('non manda mai la nota da sola su una pagina: totale e note viaggiano insieme', async () => {
+    // Misurato su un ordine reale: pag. 2 chiudeva con «Totale pezzi: 1830» a 252,21 mm e
+    // pag. 3 conteneva la SOLA riga «Note: …» a 37,72 mm. Il salto scattava per mezzo
+    // millimetro (l'ingombro chiudeva a 264,01 contro un limite di 263,5) — e il risultato
+    // era un foglio di carta intestata della scuola, con marchio, filigrana e le tre sedi,
+    // spedito a un FORNITORE con sopra una riga sola.
+    //
+    // La regola del limite era giusta: mancava il «tieni insieme» che il motore dei
+    // protocolli ha già per il blocco firma (`ALTEZZA_FIRMA`). Si scandisce un intervallo
+    // invece di un solo numero perché il confine si sposta al primo millimetro che qualcuno
+    // tocca: un test tarato su «61 righe» smetterebbe di guardare il confine vero.
+    for (let n = 20; n <= 60; n++) {
+      const elementi = await elementiTesto(
+        ordine({
+          righe: Array.from({ length: n }, (_, k) => ({
+            articolo: `Articolo di prova numero ${k + 1}`,
+            taglia: 'M',
+            quantita: 2,
+          })),
+          note: 'Consegna entro fine mese presso il magazzino della sede.',
+        })
+      )
+      const utili = elementi.filter((t) => !eRigaDiServizio(t))
+      const paginaTotale = utili.find((t) => t.testo.startsWith('Totale pezzi'))?.pagina
+      const paginaNote = utili.find((t) => t.testo.startsWith('Note:'))?.pagina
+      expect(`${n} righe → totale p${paginaTotale}, note p${paginaNote}`).toBe(
+        `${n} righe → totale p${paginaTotale}, note p${paginaTotale}`
+      )
+
+      const ultima = Math.max(...utili.map((t) => t.pagina))
+      const suUltima = utili.filter((t) => t.pagina === ultima)
+      expect(`${n} righe → ${suUltima.length} elementi sull'ultima pagina`).not.toBe(
+        `${n} righe → 1 elementi sull'ultima pagina`
+      )
+    }
+  })
+
+  it('una nota lunghissima si spezza invece di uscire dal foglio', async () => {
+    // Il «tieni insieme» non può diventare un modo di sfondare il piede: se il blocco non
+    // ci sta nemmeno su una pagina vuota, si spezza. È la rete che il ciclo delle note
+    // conserva sotto la guardia del blocco.
+    const lunga = ordine({
+      righe: [{ articolo: 'Polo', taglia: 'M', quantita: 1 }],
+      note: Array.from({ length: 120 }, (_, k) => `riga di nota numero ${k + 1}`).join(' — '),
+    })
+    const fuori = (await elementiTesto(lunga))
+      .filter((t) => !eRigaDiServizio(t))
+      .filter((t) => ingombroTesto(t.yMm, t.corpoPt).fondo > CARTA.contenutoFine)
+    expect(fuori.map((t) => `p${t.pagina} ${t.testo} @ ${t.yMm.toFixed(1)}`)).toEqual([])
+  })
+
   it('non perde nemmeno una riga per strada', async () => {
     const { estraiTesto } = await import('@/lib/protocolli/estrai')
     const testo = (

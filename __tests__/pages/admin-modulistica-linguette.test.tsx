@@ -33,10 +33,16 @@ import itPrestampatiSegreteria from '../../messages/it/prestampatiSegreteria.jso
  * testo che la pagina dovrebbe mostrare resta verde anche quando il catalogo cambia sotto.
  */
 
-const h = vi.hoisted(() => ({ fetchMock: vi.fn() }));
+/**
+ * `query` è la stringa di `?…` con cui la pagina viene montata, e si cambia da un test
+ * all'altro. La prima versione di questo file montava sempre `new URLSearchParams('')`: tre
+ * `it` che non hanno mai passato un `?tab=` nemmeno una volta, cioè una schermata provata
+ * solo dalla porta d'ingresso principale. È il buco che i vecchi collegamenti attraversavano.
+ */
+const h = vi.hoisted(() => ({ fetchMock: vi.fn(), query: '' }));
 
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(h.query),
   usePathname: () => '/admin/modulistica',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
@@ -56,8 +62,14 @@ vi.mock('@/lib/context/sede-context', () => ({
   SedeNotice: () => null,
 }));
 
-// I cinque pannelli sono provati altrove: qui interessa solo la barra che li sceglie.
-vi.mock('@/components/features/admin/iscrizioni/ModuliInviabili', () => ({ ModuliInviabili: () => null }));
+// I cinque pannelli sono provati altrove: qui interessa solo la barra che li sceglie — con
+// un'eccezione, «Moduli inviabili», che è anche il PANNELLO DI RIPIEGO: quando `?tab=` porta
+// una parola che non esiste più, è lui che deve comparire. Un mock che rende `null` non
+// distingue «pannello di ripiego disegnato» da «pagina bianca», che è esattamente il guasto
+// da sorvegliare: quindi qui lascia un segno che si può cercare.
+vi.mock('@/components/features/admin/iscrizioni/ModuliInviabili', () => ({
+  ModuliInviabili: () => <div data-testid="pannello-inviabili" />,
+}));
 vi.mock('@/components/features/admin/iscrizioni/ModuliRicevuti', () => ({ ModuliRicevuti: () => null }));
 vi.mock('@/components/features/admin/iscrizioni/CandidatureInsegnanti', () => ({ CandidatureInsegnanti: () => null }));
 vi.mock('@/components/features/admin/personale/PratichePersonale', () => ({ PratichePersonale: () => null }));
@@ -65,6 +77,7 @@ vi.mock('@/components/features/prestampati/PrestampatiSegreteria', () => ({ Pres
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.query = '';
   h.fetchMock.mockResolvedValue({ ok: true, json: async () => [] });
   vi.stubGlobal('fetch', h.fetchMock);
 });
@@ -86,6 +99,12 @@ function etichetteDellaBarra(container: HTMLElement): string[] {
   return [...container.querySelectorAll('.kv-cockpit-tabs button')].map(
     (b) => b.textContent?.trim() ?? '',
   );
+}
+
+/** La linguetta accesa: `aria-pressed="true"` è ciò che distingue la pillola verde. */
+function linguettaAttiva(container: HTMLElement): string | null {
+  const acceso = container.querySelector('.kv-cockpit-tabs button[aria-pressed="true"]');
+  return acceso?.textContent?.trim() ?? null;
 }
 
 describe('/admin/modulistica — la barra delle linguette', () => {
@@ -115,5 +134,38 @@ describe('/admin/modulistica — la barra delle linguette', () => {
     // linguetta con quel nome, sarebbe un pannello che duplica un lavoro che c'è già.
     const { container } = render(<AdminModulisticaPage />);
     expect(etichetteDellaBarra(container).filter((e) => /attesa/i.test(e))).toEqual([]);
+  });
+
+  /**
+   * I COLLEGAMENTI VECCHI — la metà del lavoro che una linguetta cancellata si lascia dietro.
+   *
+   * `?tab=odt` e `?tab=attesa` sono link REALI, già circolati (segnalibri della Segreteria,
+   * cronologia del browser), verso due linguette che dal 2026-08-16 non esistono più. Il
+   * ripiego che li riporta su «Moduli inviabili» vive in un ternario, e finora nessuna prova
+   * lo eseguiva: `modulistica-linguette-raggiungibili.test.ts` cerca il ripiego nel TESTO del
+   * sorgente con una regexp — resta verde su qualunque ripiego, anche rotto — e questo file
+   * montava sempre la pagina senza `?tab=`.
+   *
+   * Chi domani riscrivesse quel ternario come uno `switch` senza `default`, o stringesse il
+   * tipo di `initialTab` togliendogli il ripiego, avrebbe una PAGINA BIANCA su ogni vecchio
+   * collegamento — e tutti i lock verdi. Qui la pagina si monta davvero, una volta per
+   * ciascuna delle tre parole, e si guarda cosa disegna.
+   */
+  describe('un `?tab=` che non esiste più non lascia la pagina vuota', () => {
+    for (const parola of ['odt', 'attesa', 'linguetta-mai-esistita']) {
+      it(`?tab=${parola} → sei linguette, «Moduli inviabili» accesa e il suo pannello disegnato`, () => {
+        h.query = `tab=${parola}`;
+        const { container, getByTestId } = render(<AdminModulisticaPage />);
+
+        expect(etichetteDellaBarra(container)).toEqual(LINGUETTE);
+        expect(
+          linguettaAttiva(container),
+          `«?tab=${parola}» non ha acceso nessuna linguetta: è lo stato in cui nessun ` +
+            'pannello si disegna, cioè la pagina bianca.',
+        ).toBe(itAdminModulistica.modTabInviabili);
+        // Il pannello, non solo la pillola: una barra giusta sopra un vuoto resta un vuoto.
+        expect(getByTestId('pannello-inviabili')).toBeTruthy();
+      });
+    }
   });
 });

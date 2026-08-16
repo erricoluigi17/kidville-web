@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { useTranslations } from 'next-intl';
 import {
   AlertTriangle,
@@ -109,6 +109,22 @@ interface ModelloElencoDTO {
   firmabileOra: boolean;
   motivoNonFirmabile: string | null;
   /**
+   * `true` quando la Scuola quel certificato lo può emettere PER QUESTO BAMBINO, adesso.
+   *
+   * 🔴 Esiste perché il Bonus Nido offriva a chiunque un pulsante `primary` che per la
+   * maggioranza dei bambini non poteva funzionare, e il rifiuto del server arrivava fuori
+   * dallo schermo di un telefono: al genitore sembrava che il clic non avesse fatto niente.
+   * Il verdetto è lo stesso che il POST userà per rifiutare (`motivoNonGenerabile` in
+   * `banco-famiglia.ts`), quindi una scheda accesa è una scheda che funziona.
+   *
+   * Sui sei moduli che li firma la famiglia è `false` con motivo `null`: «non è roba tua»,
+   * non «non si può». Facoltativi tutti e due, perché una risposta più vecchia del client —
+   * durante un rilascio — non deve spegnere i pulsanti: senza il campo si ricade sul
+   * comportamento di prima, cioè il pulsante c'è e sarà il server a dire di no.
+   */
+  generabileOra?: boolean;
+  motivoNonGenerabile?: string | null;
+  /**
    * Il documento di questo modello già nel fascicolo del bambino, quando c'è.
    *
    * È ciò che rende i moduli firmati riscaricabili SEMPRE: prima il PDF viveva solo dentro
@@ -118,6 +134,8 @@ interface ModelloElencoDTO {
    */
   documentoArchiviatoId?: string | null;
   documentoArchiviatoIl?: string | null;
+  /** Quale numero riconsegna il riscarico: è ciò che il genitore cerca prima di spedirlo. */
+  protocolloArchiviato?: string | null;
 }
 
 interface DelegatoDTO {
@@ -496,7 +514,23 @@ export function PrestampatiGenitore({
 
   /** Lo slug del certificato in lavorazione: spegne il suo pulsante, non tutta la pagina. */
   const [certificatoInCorso, setCertificatoInCorso] = useState<string | null>(null);
-  const [erroreCertificato, setErroreCertificato] = useState<string | null>(null);
+  /**
+   * L'esito del gesto sul documento, ATTACCATO ALLO SLUG che l'ha prodotto.
+   *
+   * 🔴 Prima era una stringa sola, disegnata in cima all'elenco: misurato su una finestra
+   * 430×900 (la misura di un telefono, che è come questa app si usa), il pulsante del Bonus
+   * Nido stava a `y≈768` e il suo rifiuto veniva disegnato a `y = -777` — 777 px sopra la
+   * finestra. Gli screenshot prima e dopo il clic erano identici: al genitore sembrava che il
+   * pulsante non facesse niente, e l'unica traccia era una riga rossa nella console.
+   *
+   * Con lo slug accanto, il messaggio si disegna DENTRO la scheda che l'ha chiesto — cioè
+   * dove l'occhio è già — e non c'è nessuno scroll da indovinare.
+   */
+  const [erroreCertificato, setErroreCertificato] = useState<{
+    slug: string;
+    testo: string;
+    tono: 'errore' | 'attenzione';
+  } | null>(null);
 
   /**
    * L'elenco dei figli arriva da chi ospita il pannello e di norma è già in mano al primo
@@ -846,6 +880,7 @@ export function PrestampatiGenitore({
       url?: string | null;
       pdfBase64?: string | null;
       riuso?: boolean;
+      archiviato?: boolean;
       motivo?: string;
     }>('/api/parent/prestampati', userId, {
       method: 'POST',
@@ -855,14 +890,32 @@ export function PrestampatiGenitore({
 
     if (!r.ok || !r.corpo?.success) {
       const chiave = r.corpo?.motivo ? CHIAVE_MOTIVO_CERTIFICATO[r.corpo.motivo] : undefined;
-      setErroreCertificato(
-        chiave ? t(chiave) : soloCatalogoDaCorpo(r.corpo, t('erroreCertificato')),
-      );
+      setErroreCertificato({
+        slug: m.slug,
+        tono: 'errore',
+        testo: chiave ? t(chiave) : soloCatalogoDaCorpo(r.corpo, t('erroreCertificato')),
+      });
       return;
     }
 
     if (r.corpo.url) window.open(r.corpo.url, '_blank', 'noopener,noreferrer');
     else if (r.corpo.pdfBase64) scaricaBase64(r.corpo.pdfBase64, `${m.slug}.pdf`);
+
+    /**
+     * 🔴 `archiviato: false` NON È UN SUCCESSO PIENO, e ignorarlo era il difetto misurato in
+     * produzione: la rotta rispondeva 201 con `documentoId: null` (il bucket del fascicolo non
+     * esisteva), il client guardava solo `success`, consegnava il PDF e ripresentava «Genera
+     * il certificato» — cioè invitava al clic che avrebbe bruciato il numero dopo. Due numeri
+     * di protocollo consumati in settanta secondi, su un registro WORM.
+     *
+     * `=== false` e non `!archiviato`: una risposta senza il campo (client più nuovo del
+     * server, durante un rilascio) non deve inventare un allarme.
+     */
+    if (r.corpo.archiviato === false) {
+      setErroreCertificato({ slug: m.slug, tono: 'attenzione', testo: t('certificatoNonArchiviato') });
+    } else {
+      setErroreCertificato(null);
+    }
 
     // L'elenco si ricarica: dopo la prima emissione il modello ha un documento in archivio,
     // e il pulsante deve cambiare da «Genera» a «Scarica» — o il gesto dopo emetterebbe un
@@ -928,7 +981,6 @@ export function PrestampatiGenitore({
           <h4 className="font-barlow text-base font-bold uppercase tracking-wide text-kidville-green">
             {t('scegliModulo')}
           </h4>
-          {erroreCertificato && <Avviso tono="errore" testo={erroreCertificato} />}
           {modelli.length === 0 ? (
             <p className="rounded-card border border-dashed border-kidville-line px-4 py-8 text-center font-maven text-sm text-kidville-sub">
               {t('vuotoModuli')}
@@ -945,6 +997,7 @@ export function PrestampatiGenitore({
                     onScegli={() => scegliModulo(m)}
                     onDocumento={(nuovo) => chiediDocumento(m, nuovo)}
                     inCorso={certificatoInCorso === m.slug}
+                    esitoGesto={erroreCertificato?.slug === m.slug ? erroreCertificato : null}
                     uscita={m.slug === 'autorizzazione_uscita' ? (elenco?.uscita ?? null) : null}
                     dataBreve={dataBreve}
                   />
@@ -1234,6 +1287,7 @@ function SchedaModello({
   onScegli,
   onDocumento,
   inCorso,
+  esitoGesto,
   uscita,
   dataBreve,
 }: {
@@ -1244,6 +1298,8 @@ function SchedaModello({
   onScegli: () => void;
   onDocumento: (nuovo: boolean) => void;
   inCorso: boolean;
+  /** L'esito dell'ULTIMO gesto su QUESTA scheda, o `null`: si disegna qui, non in cima. */
+  esitoGesto: { testo: string; tono: 'errore' | 'attenzione' } | null;
   uscita: { destinazione: string; data: string; oraPartenza: string | null; oraRientro: string | null } | null;
   dataBreve: (v: string | null) => string;
 }) {
@@ -1251,6 +1307,18 @@ function SchedaModello({
   const certificato = modello.protocollo === 'uscita';
   const dueFirme = modello.firma === 'otp_due_genitori';
   const archiviato = !!modello.documentoArchiviatoId;
+  /**
+   * Il certificato si può EMETTERE per questo bambino?
+   *
+   * `!== false` e non `=== true`: una risposta senza il campo — un server più vecchio del
+   * client, durante un rilascio — deve lasciare il pulsante dov'era, e sarà il POST a dire
+   * di no. La direzione in cui si sbaglia si sceglie, e qui si sceglie di non spegnere.
+   */
+  const emettibile = modello.generabileOra !== false;
+  /** Il perché, quando c'è: viene dal catalogo bilingue, mai dalla prosa del server. */
+  const motivoEmissione = modello.motivoNonGenerabile
+    ? CHIAVE_MOTIVO_CERTIFICATO[modello.motivoNonGenerabile]
+    : undefined;
 
   const corpo = (
     <>
@@ -1299,9 +1367,27 @@ function SchedaModello({
         <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">{motivo}</p>
       )}
 
+      {/* Il certificato che per QUESTO bambino non si emette lo dice sulla scheda, invece di
+          promettere un pulsante che il server rifiuterà: sulla sede di Giugliano la
+          maggioranza dei bambini non è al nido, quindi era il caso normale, non il limite. */}
+      {certificato && !emettibile && motivoEmissione && (
+        <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
+          {t(motivoEmissione)}
+        </p>
+      )}
+
       {archiviato && modello.documentoArchiviatoIl && (
         <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
           {t('documentoArchiviatoIl', { data: dataBreve(modello.documentoArchiviatoIl) })}
+          {/* Il numero accanto alla data, ed è dove il genitore lo cerca: senza, per sapere
+              se il foglio che manda all'INPS è il 5 o il 6 doveva aprire il PDF. In un
+              elemento suo, non concatenato: è un dato, e si deve poter leggere da solo. */}
+          {modello.protocolloArchiviato && (
+            <>
+              {' '}
+              <span>{t('certificatoNumero', { numero: modello.protocolloArchiviato })}</span>
+            </>
+          )}
         </p>
       )}
     </>
@@ -1321,11 +1407,18 @@ function SchedaModello({
     </div>
   );
 
-  // I due certificati si generano da qui; gli altri sei si riscaricano solo se firmati.
-  const mostraAzioni = certificato || archiviato;
-  if (!mostraAzioni) return scheda;
+  /**
+   * I due certificati si generano da qui; gli altri sei si riscaricano solo se firmati.
+   *
+   * ⚠️ E un certificato NON emettibile per questo bambino non porta nessun pulsante — a meno
+   * che uno ce ne sia già in archivio, e allora il riscarico resta: un bambino passato
+   * dal nido all'infanzia non deve perdere il certificato che ha già. Ciò che sparisce in
+   * quel caso è «Generane uno nuovo», più sotto.
+   */
+  const mostraAzioni = (certificato && emettibile) || archiviato;
+  if (!mostraAzioni) return esitoGesto ? conEsito(scheda, esitoGesto) : scheda;
 
-  return (
+  return conEsito(
     <div className="space-y-2">
       {scheda}
       <div className="flex flex-wrap items-center gap-2 px-1">
@@ -1346,7 +1439,10 @@ function SchedaModello({
                 ? t('certificatoScarica')
                 : t('certificatoGenera')}
         </Btn>
-        {certificato && archiviato && (
+        {/* «Generane uno nuovo» sparisce se un altro non se ne può emettere: offrirlo su un
+            bambino che il nido non lo frequenta più sarebbe un numero di protocollo bruciato
+            per ottenere un 422. */}
+        {certificato && archiviato && emettibile && (
           <button
             type="button"
             onClick={() => onDocumento(true)}
@@ -1356,11 +1452,37 @@ function SchedaModello({
             {t('certificatoNuovo')}
           </button>
         )}
-        {certificato && archiviato && (
+        {certificato && archiviato && emettibile && (
           <span className="basis-full font-maven text-[11px] leading-relaxed text-kidville-sub">
             {t('certificatoNuovoAiuto')}
           </span>
         )}
+      </div>
+    </div>,
+    esitoGesto,
+  );
+}
+
+/**
+ * L'esito del gesto, disegnato SOTTO la scheda che l'ha chiesto e dentro la stessa voce.
+ *
+ * 🔴 È la riparazione del rifiuto invisibile: con il banner in cima all'elenco, il messaggio
+ * del Bonus Nido finiva a `y = -777` su una finestra da telefono e nessuno lo vedeva. Qui è
+ * a un dito dal pulsante, e non c'è nessuno scroll da azzeccare.
+ *
+ * `role="status"` e non `role="alert"`: non interrompe chi sta leggendo, ma viene annunciato
+ * — perché chi usa uno screen reader non ha nemmeno la riga rossa della console.
+ */
+function conEsito(
+  scheda: ReactNode,
+  esito: { testo: string; tono: 'errore' | 'attenzione' } | null,
+): ReactNode {
+  if (!esito) return scheda;
+  return (
+    <div className="space-y-2">
+      {scheda}
+      <div role="status">
+        <Avviso tono={esito.tono} testo={esito.testo} />
       </div>
     </div>
   );

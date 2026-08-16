@@ -129,11 +129,11 @@
   "certificatoAutorizzazioneNidoMancante": "Per questa sede non risultano gli estremi dell’autorizzazione al funzionamento del nido: senza, l’INPS rifiuterebbe il certificato. Segnalalo alla segreteria.",
   "certificatoLivelloNonNido": "Il certificato per il Bonus Asilo Nido si rilascia solo a chi frequenta il nido: per gli altri serve il certificato di iscrizione e frequenza.",
   "erroreCertificato": "Il certificato non è stato generato: riprova fra qualche minuto.",
+  "certificatoNonArchiviato": "Il certificato è stato emesso, ma non è entrato nell’archivio della scuola: conservalo adesso, è l’unica copia che ti resta. Non premere di nuovo «Genera»: ne uscirebbe un altro con un numero di protocollo nuovo. Avvisa la segreteria.",
   "documentoScarica": "Scarica il modulo firmato",
   "documentoArchiviatoIl": "Nel fascicolo dal {data}.",
+  "certificatoNumero": "Protocollo n. {numero}.",
   "uscitaRiga": "Uscita del {data} — {destinazione} · partenza {partenza}, rientro {rientro}.",
 
-  "copiaFamiglia": "Copia a uso della famiglia — non protocollata",
-  "certificatoAvviso": "Quello che scarichi qui è una copia a uso della famiglia: se un ente lo vuole protocollato, chiedilo in segreteria.",
   "avvisoSanitario": "Quello che scrivi qui riguarda la salute di tuo figlio: lo leggono la segreteria e le insegnanti della sua sezione, nessun altro."
 }

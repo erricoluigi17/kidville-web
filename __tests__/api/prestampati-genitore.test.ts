@@ -11,15 +11,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { estraiTesto } from '@/lib/protocolli/estrai'
 import { redact, redactInput } from '@/lib/logging/redact'
 import { codeHash } from '@/lib/auth/otp-ticket'
+import { formatNumeroProtocollo } from '@/lib/protocolli/segnatura'
 import {
   BUCKET_CERTIFICATI,
   BUCKET_FASCICOLO,
   componiDescrizioneUscita,
   datiUscitaDaEvento,
+  descrizioneArchivioProtocollata,
   fineAnnoScolastico,
   ilFileRestaNelBucket,
   magazziniAmmessi,
   motivoMancatoArchivioDa,
+  numeroProtocolloDaDescrizione,
   SCHEMA_NON_PRONTO,
   SEMPRE_FIRMABILI_PREDEFINITI,
   sempreFirmabiliDa,
@@ -91,6 +94,16 @@ const h = vi.hoisted(() => {
     bucketElenco: { data: [] as { name: string }[] | null, error: null as unknown },
     bucketCreazione: { data: null as unknown, error: null as unknown },
     bucketCreati: [] as { nome: string; opzioni: unknown }[],
+    /**
+     * I bucket che ESISTONO davvero, cioè quelli su cui un `upload()` può riuscire.
+     *
+     * ⚠️ NON È `bucketCreati`, ed è la distinzione che rende questo doppione capace di
+     * vedere il difetto del 2026-08-16: `bucketCreati` registra i TENTATIVI (serve alle
+     * prove sui parametri con cui il bucket nasce), qui ci finiscono solo le creazioni
+     * riuscite. Con `bucketCreazione.error` valorizzato il bucket resta assente, ed è
+     * esattamente il caso in cui la rotta non deve consumare un numero di protocollo.
+     */
+    bucketPresenti: new Set<string>(),
     /**
      * Quante volte `listBuckets()` è stata chiamata in una richiesta.
      *
@@ -245,10 +258,32 @@ const h = vi.hoisted(() => {
         },
         createBucket: (nome: string, opzioni: unknown) => {
           state.bucketCreati.push({ nome, opzioni })
+          // Un tentativo respinto non fa esistere niente: vedi `bucketPresenti`.
+          if (!state.bucketCreazione.error) state.bucketPresenti.add(nome)
           return Promise.resolve(state.bucketCreazione)
         },
-        from: () => ({
+        from: (bucket: string) => ({
           upload: (percorso: string, byte: Uint8Array) => {
+            /**
+             * 🔴 LO STORAGE VERO RIFIUTA L'UPLOAD SU UN BUCKET CHE NON C'È, e fino al
+             * 2026-08-16 questo doppione rispondeva `{ data, error: null }` a qualunque
+             * percorso su qualunque magazzino.
+             *
+             * Era la ragione per cui nessun test poteva vedere il difetto misurato in
+             * produzione: `sensitive_documents` non esisteva, ogni «Scarica» del genitore
+             * bruciava un numero di protocollo e rispondeva 201 con `archiviato: false`, e
+             * la suite restava verde. Un doppione che non sa dire di no non è un doppione:
+             * è un lasciapassare.
+             */
+            if (
+              !(state.bucketElenco.data ?? []).some((b) => b.name === bucket) &&
+              !state.bucketPresenti.has(bucket)
+            ) {
+              return Promise.resolve({
+                data: null,
+                error: { message: 'Bucket not found', statusCode: '404' },
+              })
+            }
             // COPIA, e non il `Buffer` che la rotta ha passato: `Buffer.from()` alloca
             // dentro il pool di Node, e PDF.js — che «trasferisce» (detacha) l'ArrayBuffer
             // che riceve — su una memoria condivisa fallisce. `estraiTesto` inghiotte
@@ -629,7 +664,7 @@ function reqDocumento(corpo: unknown) {
  * che segue risponde con la riga creata. Un valore fisso avrebbe risposto la stessa cosa a
  * tutt'e due, e la prova avrebbe misurato il doppione.
  */
-function conDocumentoInArchivio(slug: string, id = DOCUMENTO) {
+function conDocumentoInArchivio(slug: string, id = DOCUMENTO, descrizione = 'Documento già emesso') {
   h.state.queues['student_documents'] = [
     {
       data: [
@@ -637,7 +672,7 @@ function conDocumentoInArchivio(slug: string, id = DOCUMENTO) {
           id,
           document_type: slug,
           storage_path: `${ALUNNO}/prestampati/${slug}-gia-emesso.pdf`,
-          descrizione: 'Documento già emesso',
+          descrizione,
           created_at: '2026-08-15T09:00:00.000Z',
         },
       ],
@@ -759,6 +794,9 @@ beforeEach(() => {
   h.state.bucketElenco = { data: [{ name: 'sensitive_documents' }], error: null }
   h.state.bucketCreazione = { data: null, error: null }
   h.state.bucketCreati = []
+  // Il bucket del PROTOCOLLO non è nell'elenco predefinito: se lo crea `ensureBucket`, come
+  // in produzione. Le prove sul fascicolo partono quindi da un magazzino che c'è già.
+  h.state.bucketPresenti = new Set<string>()
   h.state.bucketElencati = 0
   // Gli allegati che i moduli dichiarano CI SONO: è il caso normale, e le prove che
   // misurano il contrario li tolgono di mezzo una alla volta. Due magazzini, due insiemi:
@@ -1250,6 +1288,152 @@ describe('il certificato del genitore: dal motore vero, protocollato, e sempre l
     expect(per('scheda_sanitaria').documentoArchiviatoId).toBe(DOCUMENTO)
     // Gli altri no: il documento è per TIPO, non per bambino.
     expect(per('permesso_orario').documentoArchiviatoId).toBeNull()
+  })
+
+  // ── Il magazzino prima del numero ─────────────────────────────────────────────
+
+  it('senza il magazzino del fascicolo NON si consuma un numero: prima il bucket, poi il protocollo', async () => {
+    /**
+     * 🔴 IL DIFETTO MISURATO IN PRODUZIONE IL 2026-08-16, e la ragione per cui questa prova
+     * esiste. `sensitive_documents` non c'era (`storage.buckets` aveva quattordici righe e
+     * nessuna era quella), e questa rotta caricava nel fascicolo senza garantirlo: due POST
+     * identici del certificato hanno risposto 201 con `documentoId: null`, non hanno lasciato
+     * nessuna riga in `student_documents` e hanno bruciato **due numeri di protocollo** — il
+     * 3 e il 4, sullo stesso bambino e sullo stesso oggetto. Il registro è WORM: quei due
+     * numeri non tornano indietro.
+     *
+     * La regola che ne esce è una sola riga: **un numero non si consuma se il magazzino in
+     * cui il foglio deve finire non c'è.** Qui la creazione del bucket viene respinta, e ciò
+     * che si misura è che la numerazione non sia stata nemmeno chiesta.
+     */
+    h.state.bucketElenco = { data: [], error: null }
+    h.state.bucketCreazione = { data: null, error: { message: 'permission denied for table buckets' } }
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(503)
+    expect(h.state.rpc).toHaveLength(0)
+    expect(h.state.inserimenti.some((i) => i.tabella === 'protocolli')).toBe(false)
+    expect(h.state.upload).toHaveLength(0)
+
+    // E il CORPO dell'errore del provider resta nel log: `403` non dice niente, `403
+    // "permission denied for table buckets"` dice tutto (AGENTS.md §3).
+    const riga = spie.chiamate.find(
+      (c) => c[0] === 'logEvento' && (c[3] as { esito?: string })?.esito === 'bucket-non-creato',
+    )
+    expect(riga?.[2]).toBe('error')
+    expect(JSON.stringify(riga?.[4])).toContain('permission denied')
+  })
+
+  it('il bucket del fascicolo, se manca, lo crea anche QUESTA porta — e coi parametri di tutti', async () => {
+    // Fino al 2026-08-16 lo garantiva solo la rotta della firma, e il certificato del
+    // genitore dipendeva quindi da un effetto collaterale di un'altra porta: finiva in
+    // archivio solo se qualcun altro aveva già firmato qualcosa. I parametri sono quelli
+    // condivisi — il bucket lo usa anche il fascicolo della primaria, che carica immagini.
+    h.state.bucketElenco = { data: [], error: null }
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(res.status, JSON.stringify(json)).toBe(201)
+    expect(json.archiviato).toBe(true)
+    expect(json.documentoId).toBe(DOCUMENTO)
+
+    const creato = h.state.bucketCreati.find((b) => b.nome === 'sensitive_documents')
+    expect(creato, JSON.stringify(h.state.bucketCreati)).toBeDefined()
+    expect(creato?.opzioni).toMatchObject({
+      public: false,
+      allowedMimeTypes: ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'],
+      fileSizeLimit: 15 * 1024 * 1024,
+    })
+  })
+
+  it('il riscarico DICE quale numero riconsegna: la promessa non resta a metà', async () => {
+    // Il pannello promette «riscarica sempre lo stesso certificato, con lo stesso numero di
+    // protocollo» e poi rispondeva `protocollo: null` pur avendo il numero già in mano: per
+    // sapere se il foglio che sta per mandare all'INPS è il 5 o il 6, il genitore doveva
+    // aprire il PDF.
+    conDocumentoInArchivio(
+      'certificato_iscrizione_frequenza',
+      DOCUMENTO,
+      'Certificato di iscrizione e frequenza — Prot. n. 0000005/2026',
+    )
+
+    const res = await CHIEDI_DOCUMENTO(
+      reqDocumento({ alunnoId: ALUNNO, slug: 'certificato_iscrizione_frequenza' }),
+    )
+    const json = await res.json()
+
+    expect(json.riuso).toBe(true)
+    expect(json.protocollo).toBe('0000005/2026')
+    // E resta vero ciò che conta: nessun numero nuovo chiesto.
+    expect(h.state.rpc).toHaveLength(0)
+  })
+
+  it('l’elenco porta il numero del certificato già in archivio, non solo la sua data', async () => {
+    conDocumentoInArchivio(
+      'certificato_iscrizione_frequenza',
+      DOCUMENTO,
+      'Certificato di iscrizione e frequenza — Prot. n. 0000005/2026',
+    )
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const voce = json.modelli.find(
+      (m: { slug: string }) => m.slug === 'certificato_iscrizione_frequenza',
+    )
+    expect(voce.protocolloArchiviato).toBe('0000005/2026')
+  })
+
+  // ── Il certificato che per QUESTO bambino non si può emettere ─────────────────
+
+  it('il Bonus Nido arriva SPENTO a chi il nido non lo frequenta, e non promette un pulsante che fallirà', async () => {
+    /**
+     * 🔴 Misurato su un telefono (430×900): il pulsante «GENERA IL CERTIFICATO» del Bonus
+     * Nido stava a `y≈768`, si premeva, e il rifiuto veniva disegnato a `y = -777` — cioè
+     * fuori dallo schermo. Al genitore sembrava che il clic non avesse fatto niente.
+     *
+     * Il rifiuto però era prevedibile senza chiedere niente al server: il GET carica già il
+     * precompilato e conosce `dati.alunno.livello`. La regola è la stessa che usa il POST
+     * (`motivoNonGenerabile`), perché una regola valida per due strade vive in un posto solo.
+     */
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL_CON_FIRMA,
+    })
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    const per = (slug: string) =>
+      json.modelli.find((m: { slug: string }) => m.slug === slug) as {
+        generabileOra: boolean
+        motivoNonGenerabile: string | null
+      }
+
+    expect(per('certificato_bonus_nido').generabileOra).toBe(false)
+    expect(per('certificato_bonus_nido').motivoNonGenerabile).toBe('livello-non-nido')
+    // L'altro certificato invece si emette: la sede ha chi firma e il livello non c'entra.
+    expect(per('certificato_iscrizione_frequenza').generabileOra).toBe(true)
+    expect(per('certificato_iscrizione_frequenza').motivoNonGenerabile).toBeNull()
+    // E sui moduli che la famiglia firma il campo non inventa un divieto che non esiste.
+    expect(per('scheda_sanitaria').generabileOra).toBe(false)
+    expect(per('scheda_sanitaria').motivoNonGenerabile).toBeNull()
+  })
+
+  it('senza il nome di chi firma per la Scuola nessuno dei due certificati arriva acceso', async () => {
+    // `PREFILL` (predefinito del `beforeEach` esterno) non ha il legale rappresentante:
+    // misurato in produzione il 2026-08-14, su 4 righe di `scuole` nessuna ce l'aveva.
+    prefillMod.caricaPrefillAlunno.mockResolvedValue({
+      user: { id: GENITORE, role: 'genitore' },
+      prefill: PREFILL,
+    })
+    const json = await (await GET(reqGet(`?alunnoId=${ALUNNO}`))).json()
+    for (const slug of ['certificato_iscrizione_frequenza', 'certificato_bonus_nido']) {
+      const voce = json.modelli.find((m: { slug: string }) => m.slug === slug)
+      expect(voce.generabileOra, slug).toBe(false)
+      expect(voce.motivoNonGenerabile, slug).toBe('legale-rappresentante-assente')
+    }
   })
 })
 
@@ -3019,5 +3203,34 @@ describe('banco-famiglia — le regole pure che le due porte condividono', () =>
     for (const config of [{}, null, { prestampati_sempre_firmabili: 'scheda_sanitaria' }]) {
       expect([...sempreFirmabiliDa(config)].sort()).toEqual([...SEMPRE_FIRMABILI_PREDEFINITI].sort())
     }
+  })
+
+  it('il numero di protocollo si rilegge dalla descrizione che l’archivio ha scritto', () => {
+    /**
+     * ⚠️ È UN ROUND-TRIP, come quello dell'uscita, e per la stessa ragione: `student_documents`
+     * non ha una colonna per il numero di protocollo — misurato sullo schema di produzione il
+     * 2026-08-16 — quindi l'unico posto in cui quel numero può viaggiare è il TESTO della
+     * descrizione. Chi lo scrive e chi lo rilegge devono usare lo stesso formato, o il
+     * riscarico torna a non sapere quale foglio sta riconsegnando **senza che niente diventi
+     * rosso**: la risposta resterebbe valida, con un campo in meno che nessuno sa di cercare.
+     */
+    const scritta = descrizioneArchivioProtocollata(
+      'Certificato di iscrizione e frequenza',
+      formatNumeroProtocollo(5, 2026),
+    )
+    expect(numeroProtocolloDaDescrizione(scritta)).toBe('0000005/2026')
+
+    // Il formato dello SPORTELLO, che aggiunge una coda propria dopo il numero
+    // (`descrizioneArchivio` in `prestampati/genera/route.ts`): si rilegge lo stesso.
+    expect(
+      numeroProtocolloDaDescrizione('Delega al ritiro — Prot. n. 0000012/2026 — modulo consegnato su carta'),
+    ).toBe('0000012/2026')
+
+    // Ciò che un numero non ce l'ha non se ne inventa uno: i sei moduli firmati dalla
+    // famiglia si archiviano con la sola etichetta.
+    expect(numeroProtocolloDaDescrizione('Scheda sanitaria')).toBeNull()
+    expect(numeroProtocolloDaDescrizione(null)).toBeNull()
+    // E una forma che NON è quella del registro non passa per buona: sette cifre e l'anno.
+    expect(numeroProtocolloDaDescrizione('Prot. n. 5/2026')).toBeNull()
   })
 })

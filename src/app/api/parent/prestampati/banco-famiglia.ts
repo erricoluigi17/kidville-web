@@ -44,17 +44,27 @@
  * ancorate ad `alunnoId`, perché il lock `isolamento-sede-coverage` riconosce i presidi dai
  * nomi delle funzioni chiamate NELL'handler: spostando una lettura di `delegates` o di
  * `certificati_medici` in un helper di file, quell'handler diventa «handler-senza-scope»
- * (misurato). Il criterio è uno solo, e si legge dagli import di questo file: qui non entra
- * `SupabaseClient`.
+ * (misurato).
  *
- * Non fa I/O: né Supabase né `next/server` oltre a `NextResponse`. È il motivo per cui il
- * verdetto si può interrogare tre volte in tre punti diversi senza pagare una query.
+ * ⚠️ IL CRITERIO, dal 2026-08-16, NON È PIÙ «qui non entra Supabase» — che era la formula
+ * precedente, e diceva una regola più stretta di quella vera. È: **qui non entra nessuna
+ * query ancorata a un bambino.** L'unica funzione che tocca il client è
+ * `garantisciBucketFascicolo`, che non legge dati di nessuno: chiede allo storage se il
+ * magazzino dichiarato in questo stesso file esiste, e se non c'è lo crea. Stava scritta
+ * due volte — privata dentro `firma/route.ts` e assente dall'altra porta — e la porta senza
+ * copia caricava in un bucket che in produzione non esisteva: 201 all'apparenza, zero righe
+ * in `student_documents`, e un numero di protocollo bruciato a ogni «Scarica».
+ *
+ * Il resto del file non fa I/O, ed è il motivo per cui il verdetto si può interrogare tre
+ * volte in tre punti diversi senza pagare una query.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { bloccoFirma, prestampatiPerRuolo, type VocePrestampato } from '@/lib/prestampati/registro'
 import {
+  autorizzazioneNidoCompleta,
   richiedeDueFirme,
   type CampoModulo,
   type DatiPrestampato,
@@ -64,6 +74,7 @@ import {
   type TipoUscita,
 } from '@/lib/prestampati/modelli/genitore'
 import type { EsitoRender } from '@/lib/prestampati/render'
+import { logEvento } from '@/lib/logging/logger'
 
 // ─── Il cancello dello slug ─────────────────────────────────────────────────────
 
@@ -269,6 +280,106 @@ export function motivoNonFirmabile(
   }
   if (ALLEGATO_SENZA_PORTA.has(voce.slug)) return 'allegato-non-caricabile'
   return null
+}
+
+// ─── I certificati: quelli che la Scuola emette, e per chi ──────────────────────
+
+/**
+ * I tre motivi per cui un CERTIFICATO non si emette, e sono cose diverse dal non-firmabile.
+ *
+ * `MotivoNonFirmabile` risponde a «questa famiglia può sottoscrivere questo foglio?»; questo
+ * risponde a «la Scuola può emetterlo, per QUESTO bambino, adesso?». Due su tre sono lacune
+ * della SEDE (si segnalano alla segreteria e si sistemano in Impostazioni), il terzo è una
+ * proprietà del bambino e non si sistema affatto: il Bonus Asilo Nido spetta a chi il nido lo
+ * frequenta, e per gli altri esiste il certificato di iscrizione e frequenza.
+ *
+ * In kebab come tutti gli altri enumerati di queste risposte, e con gli stessi valori che il
+ * POST già restituiva in `motivo`: il client ha una mappa sola verso il catalogo bilingue.
+ */
+export type MotivoNonGenerabile =
+  | 'legale-rappresentante-assente'
+  | 'livello-non-nido'
+  | 'autorizzazione-nido-mancante'
+
+/**
+ * Il verdetto sull'emissione, o `null` se quel certificato per quel bambino si può fare.
+ *
+ * ─── PERCHÉ ESISTE, E PERCHÉ NON STA DENTRO LA ROTTA ────────────────────────────
+ *
+ * 🔴 Misurato su una finestra 430×900 — la misura di un telefono, che è come questa app si
+ * usa. Il Bonus Nido offriva a chiunque un pulsante `primary`, si premeva, e il rifiuto
+ * («si rilascia solo a chi frequenta il nido») veniva disegnato **777 px sopra la finestra**:
+ * gli screenshot prima e dopo il clic erano identici, e al genitore sembrava che il pulsante
+ * non rispondesse. Sulla sede di Giugliano la maggioranza dei bambini non è al nido, quindi
+ * quel pulsante era acceso e destinato a fallire per la maggioranza di chi lo vedeva.
+ *
+ * Il rifiuto però era prevedibile **senza chiedere niente al server**: il GET carica già il
+ * precompilato e conosce livello, sede e legale rappresentante. Quindi la stessa regola serve
+ * a due strade — il GET, per far arrivare la scheda spenta con il suo motivo scritto sopra, e
+ * il POST, per rifiutare con un 422 chi ci prova lo stesso — e una regola valida per due
+ * strade vive in un posto solo. Se le due divergessero, il pannello accenderebbe un pulsante
+ * che la rotta rifiuta: cioè esattamente il difetto di partenza, con un giro di rete in più.
+ *
+ * ⚠️ Vale SOLO sui certificati (`firma === 'legale_rappresentante'`). Sugli altri sei
+ * risponde `null` — «niente da dire» — e non `'firma-della-scuola'`: quella è la risposta di
+ * `motivoNonFirmabile`, e ripeterla qui vorrebbe dire due campi che dicono la stessa cosa in
+ * modo leggermente diverso nello stesso oggetto JSON.
+ */
+export function motivoNonGenerabile(
+  voce: VocePrestampato,
+  dati: DatiPrestampato,
+  legaleRappresentante: string | null | undefined,
+): MotivoNonGenerabile | null {
+  if (voce.firma !== 'legale_rappresentante') return null
+  // Chi firma per la Scuola non c'è: nessuno dei due certificati esce, e non è colpa del
+  // bambino. Si guarda per PRIMO perché vale su tutti e due e non dipende dal modello.
+  if (!legaleRappresentante?.trim()) return 'legale-rappresentante-assente'
+  if (voce.slug === 'certificato_bonus_nido') {
+    if (dati.alunno.livello !== 'nido') return 'livello-non-nido'
+    if (!autorizzazioneNidoCompleta(dati.sede)) return 'autorizzazione-nido-mancante'
+  }
+  return null
+}
+
+// ─── Il numero di protocollo dentro la riga d'archivio ──────────────────────────
+
+/**
+ * La descrizione con cui un documento PROTOCOLLATO entra nel fascicolo.
+ *
+ * ⚠️ È UN FORMATO, non una frase, ed è l'unico posto in cui il numero di protocollo può
+ * viaggiare: `student_documents` non ha una colonna per il protocollo — misurato sullo
+ * schema di produzione il 2026-08-16, undici colonne e nessuna è quella — e aggiungerne una
+ * è una migrazione che il DB E2E della CI non ha. Chi scrive e chi rilegge devono quindi
+ * usare le stesse parole, ed è lo stesso patto che tiene insieme l'uscita in agenda
+ * (`componiDescrizioneUscita` → `datiUscitaDaEvento`), per la stessa ragione e con lo stesso
+ * lock: senza round-trip verificato, il riscarico torna a non sapere quale foglio sta
+ * riconsegnando **e niente diventa rosso**.
+ *
+ * Nessun dato personale: c'è già il PDF. Etichetta del modello e numero, nient'altro.
+ */
+export function descrizioneArchivioProtocollata(
+  etichetta: string,
+  numeroFormattato: string | null,
+): string {
+  return numeroFormattato ? `${etichetta} — Prot. n. ${numeroFormattato}` : etichetta
+}
+
+/**
+ * Il numero di protocollo riletto da una descrizione d'archivio, o `null` se non ce n'è uno.
+ *
+ * ⚠️ LA FORMA È QUELLA DEL REGISTRO, e il rigore è la parte utile: sette cifre, barra, quattro
+ * dell'anno (`formatNumeroProtocollo`). Un'espressione più larga (`\d+/\d+`) accetterebbe
+ * qualunque frazione capitata in una descrizione scritta a mano e la mostrerebbe al genitore
+ * come «il numero del tuo certificato», che è peggio del campo vuoto: un numero sbagliato lo
+ * si trascrive su un modulo INPS senza dubitarne.
+ *
+ * Regge anche il formato dello SPORTELLO, che dopo il numero può aggiungere una coda propria
+ * (`— modulo consegnato su carta`): il numero si cerca dov'è, non si pretende che la
+ * descrizione finisca lì.
+ */
+export function numeroProtocolloDaDescrizione(descrizione: string | null | undefined): string | null {
+  if (!descrizione) return null
+  return /Prot\. n\. (\d{7}\/\d{4})/.exec(descrizione)?.[1] ?? null
 }
 
 // ─── L'USCITA: come si scrive in agenda e come si rilegge sul modulo n. 10 ──────
@@ -542,6 +653,105 @@ export function dipendeDallUscita(slug: string): boolean {
  * anche la riga, o accetti di lasciare un orfano dell'art. 9.
  */
 export const BUCKET_FASCICOLO = 'sensitive_documents'
+
+/**
+ * I parametri con cui il bucket CONDIVISO nasce — e il motivo per cui un magazzino che
+ * riceve solo PDF dichiara anche tre tipi di immagine.
+ *
+ * `sensitive_documents` lo usano in cinque (le due porte della famiglia, lo sportello, il
+ * fascicolo della primaria e il suo lettore), e lo crea **chi arriva primo**: i parametri di
+ * quel primo restano per tutti. Se a crearlo fosse una rotta che carica solo certificati con
+ * `['application/pdf']`, il fascicolo della primaria — che carica documenti d'identità in
+ * JPEG/PNG/WebP con `contentType: file.type` — comincerebbe a prendere un rifiuto dallo
+ * storage per una scelta fatta altrove.
+ *
+ * Un bucket condiviso è una risorsa di tutti: o si dichiara in un posto solo, o chi lo crea
+ * lo crea per il caso di tutti. Questo è il posto solo.
+ */
+export const BUCKET_FASCICOLO_MIME: readonly string[] = [
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+]
+export const BUCKET_FASCICOLO_MAX = 15 * 1024 * 1024
+
+/**
+ * Il magazzino del fascicolo esiste, o si crea — e la risposta dice se ci si può contare.
+ *
+ * ─── PERCHÉ NON È PIÙ PRIVATA DI UNA ROTTA SOLA ─────────────────────────────────
+ *
+ * 🔴 Misurato in produzione il 2026-08-16, non dedotto. `storage.buckets` aveva quattordici
+ * righe e nessuna era `sensitive_documents`. La rotta della FIRMA garantiva il bucket; quella
+ * del CERTIFICATO no, e caricava lo stesso: due POST identici hanno risposto **201** con
+ * `documentoId: null`, non hanno lasciato nessuna riga in `student_documents` e hanno
+ * consumato **due numeri di protocollo** sullo stesso oggetto e sullo stesso bambino. Il
+ * registro è WORM: quei due numeri non tornano indietro. Il certificato ha ricominciato a
+ * entrare in archivio solo quando la firma di un altro modulo ha creato il bucket per caso.
+ *
+ * Una porta che funziona per l'effetto collaterale di un'altra non funziona: funziona finché
+ * l'altra viene usata per prima. Da qui la funzione condivisa.
+ *
+ * ─── L'ESITO SI CONTROLLA, E ORA SI RESTITUISCE ─────────────────────────────────
+ *
+ * `listBuckets()` e `createBucket()` **ritornano `{ data, error }`** e non lanciano — stessa
+ * forma di PostgREST, AGENTS.md regola 7. Un `try/catch` da solo non scatterebbe mai su quel
+ * caso, e il corpo dell'errore del provider — la sola cosa che spieghi *perché* i
+ * caricamenti falliscono — andrebbe perso (AGENTS.md §3). Il `try/catch` resta per ciò che
+ * un'eccezione la solleva davvero (rete, fetch interrotta).
+ *
+ * ⚠️ IL VALORE DI RITORNO NON OBBLIGA I DUE CHIAMANTI ALLA STESSA REAZIONE, ed è deliberato:
+ *
+ *  · la porta del **certificato** si ferma, perché il passo successivo consumerebbe un numero
+ *    di protocollo che nessuno può restituire — e senza magazzino quel numero servirebbe solo
+ *    a bruciarne un altro al clic dopo;
+ *  · la porta della **firma** prosegue, perché lì non c'è nessuna numerazione da proteggere e
+ *    il foglio firmato ha valore anche non archiviato: la risposta lo consegna alla famiglia
+ *    dicendo che è l'unica copia rimasta (`mancatoArchivio*`). Fermarsi butterebbe via una
+ *    firma valida per un guasto dell'archivio.
+ */
+export async function garantisciBucketFascicolo(
+  supabase: SupabaseClient,
+  operazione: string,
+): Promise<boolean> {
+  try {
+    const { data: elenco, error: erroreElenco } = await supabase.storage.listBuckets()
+    if (erroreElenco) {
+      logEvento(
+        'storage',
+        'error',
+        { operazione, bucket: BUCKET_FASCICOLO, esito: 'bucket-non-elencato' },
+        erroreElenco,
+      )
+      return false
+    }
+    if (elenco?.some((b) => b.name === BUCKET_FASCICOLO)) return true
+
+    const { error: erroreCreazione } = await supabase.storage.createBucket(BUCKET_FASCICOLO, {
+      public: false,
+      allowedMimeTypes: [...BUCKET_FASCICOLO_MIME],
+      fileSizeLimit: BUCKET_FASCICOLO_MAX,
+    })
+    if (erroreCreazione) {
+      logEvento(
+        'storage',
+        'error',
+        { operazione, bucket: BUCKET_FASCICOLO, esito: 'bucket-non-creato' },
+        erroreCreazione,
+      )
+      return false
+    }
+    return true
+  } catch (e) {
+    logEvento(
+      'storage',
+      'warn',
+      { operazione, bucket: BUCKET_FASCICOLO, esito: 'bucket-non-verificato' },
+      e,
+    )
+    return false
+  }
+}
 
 /**
  * Il magazzino CON OBLIO in cui la famiglia sa già depositare un allegato, ed è quello che

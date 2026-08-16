@@ -30,6 +30,7 @@ import {
   dipendeDallUscita,
   emailMancante,
   fineAnnoScolastico,
+  garantisciBucketFascicolo,
   ilFileRestaNelBucket,
   motivoMancatoArchivioDa,
   motivoNonFirmabile,
@@ -180,23 +181,6 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  * (ramo `documentoId === null`, più sotto) il file resta nel bucket e nessun oblio lo trova.
  */
 const BUCKET = BUCKET_FASCICOLO
-
-/**
- * I parametri del bucket CONDIVISO, copiati da `primaria/fascicolo:POST` — e il motivo per
- * cui una rotta che carica solo PDF dichiara anche tre tipi di immagine.
- *
- * `sensitive_documents` non esiste ancora in produzione (misurato in sola lettura il
- * 2026-08-14: `storage.buckets` ha quattordici righe e nessuna è questa), quindi lo crea
- * **chi arriva primo**, e i parametri di quel primo restano per tutti. Se a crearlo fosse
- * questa rotta con `['application/pdf']`, il fascicolo della primaria — che carica
- * documenti d'identità in JPEG/PNG/WebP con `contentType: file.type` — comincerebbe a
- * prendere un rifiuto dallo storage e a rispondere 500, per una scelta fatta qui dentro.
- *
- * Un bucket condiviso è una risorsa di tutti: o si dichiara in un posto solo, o chi lo
- * crea lo crea per il caso di tutti. Finché il primo non c'è, vale il secondo.
- */
-const BUCKET_MIME = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp']
-const BUCKET_DIMENSIONE_MAX = 15 * 1024 * 1024
 
 /** Il tempo di aprire il file appena firmato, non di girarlo. */
 const TTL_LINK = 60
@@ -990,15 +974,23 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // n. 06 e il certificato del n. 07, non il documento d'identità di un terzo. È la riga
     // che rende vera la ragione per cui il n. 08 è spento — vedi `magazziniAmmessi`.
     //
-    // `garantisciBucket` UNA VOLTA SOLA, e qui: `sensitive_documents` in produzione non
-    // esiste ancora (misurato il 2026-08-14), e senza, `list()` risponderebbe «Bucket not
-    // found» — cioè `non-verificabile`, cioè 503 — su ogni modulo con allegato, per sempre.
-    // Prima ce n'erano due — una qui dentro e una prima dell'upload — cioè due `listBuckets()`
-    // per ogni firma con allegati. È idempotente e non scrive nessun dato: chiamarla anche
-    // per i moduli che allegati non ne hanno costa la stessa `listBuckets()` che l'upload
-    // avrebbe fatto tre passi più giù, e garantisce il bucket a tutti e due i punti che ne
-    // hanno bisogno.
-    await garantisciBucket(supabase)
+    // `garantisciBucketFascicolo` UNA VOLTA SOLA, e qui: fino al 2026-08-16
+    // `sensitive_documents` in produzione non esisteva, e senza, `list()` risponderebbe
+    // «Bucket not found» — cioè `non-verificabile`, cioè 503 — su ogni modulo con allegato,
+    // per sempre. Prima ce n'erano due — una qui dentro e una prima dell'upload — cioè due
+    // `listBuckets()` per ogni firma con allegati. È idempotente e non scrive nessun dato:
+    // chiamarla anche per i moduli che allegati non ne hanno costa la stessa `listBuckets()`
+    // che l'upload avrebbe fatto tre passi più giù, e garantisce il bucket a tutti e due i
+    // punti che ne hanno bisogno.
+    //
+    // ⚠️ IL VERDETTO SI IGNORA DI PROPOSITO, ed è l'unica differenza con la porta del
+    // certificato — che invece si ferma. Là il passo successivo consumerebbe un numero di
+    // protocollo su un registro WORM; qui non c'è nessuna numerazione da proteggere, e il
+    // foglio firmato ha valore anche se l'archivio non lo accoglie: la risposta lo consegna
+    // alla famiglia dicendole che è l'unica copia rimasta (`mancatoArchivio*`). Fermarsi
+    // butterebbe via una firma valida per un guasto del magazzino. La funzione ha già
+    // registrato il perché, col corpo dell'errore del provider.
+    await garantisciBucketFascicolo(supabase, 'parent/prestampati/firma:PATCH')
 
     const allegati = riferimentiAllegati(percorsiAllegati(modello.campi, esito.risposte))
     if (allegati.length > 0) {
@@ -1623,56 +1615,6 @@ async function consumoSmentito(supabase: SupabaseClient, ticket: string): Promis
 }
 
 // ─── L'archiviazione ────────────────────────────────────────────────────────────
-
-/**
- * Il bucket privato esiste, o si crea — con i parametri di TUTTI, non con i propri.
- *
- * ⚠️ L'ESITO SI CONTROLLA: `listBuckets()` e `createBucket()` **ritornano `{ data, error }`**,
- * non lanciano — stessa forma di PostgREST, AGENTS.md regola 7. Un `try/catch` da solo non
- * scatterebbe mai su quel caso, e la causa che spiega i caricamenti falliti («il bucket non
- * c'era e non si è potuto creare») andrebbe persa insieme al corpo dell'errore del provider,
- * che è il difetto che AGENTS.md §3 nomina per nome. Il `try/catch` resta per ciò che
- * un'eccezione la solleva davvero (rete, fetch interrotta).
- *
- * L'errore non ferma la richiesta: l'upload subito dopo ha il proprio, e sarà quello a
- * decidere. Qui si registra soltanto.
- */
-async function garantisciBucket(supabase: SupabaseClient): Promise<void> {
-  try {
-    const { data: elenco, error: erroreElenco } = await supabase.storage.listBuckets()
-    if (erroreElenco) {
-      logEvento(
-        'storage',
-        'error',
-        { operazione: 'parent/prestampati/firma:PATCH', bucket: BUCKET, esito: 'bucket-non-elencato' },
-        erroreElenco,
-      )
-      return
-    }
-    if (elenco?.some((b) => b.name === BUCKET)) return
-
-    const { error: erroreCreazione } = await supabase.storage.createBucket(BUCKET, {
-      public: false,
-      allowedMimeTypes: BUCKET_MIME,
-      fileSizeLimit: BUCKET_DIMENSIONE_MAX,
-    })
-    if (erroreCreazione) {
-      logEvento(
-        'storage',
-        'error',
-        { operazione: 'parent/prestampati/firma:PATCH', bucket: BUCKET, esito: 'bucket-non-creato' },
-        erroreCreazione,
-      )
-    }
-  } catch (e) {
-    logEvento(
-      'storage',
-      'warn',
-      { operazione: 'parent/prestampati/firma:PATCH', bucket: BUCKET, esito: 'bucket-non-verificato' },
-      e,
-    )
-  }
-}
 
 /**
  * Toglie dal bucket il PDF che nessuna riga nominerà.

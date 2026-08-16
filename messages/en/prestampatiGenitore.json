@@ -129,11 +129,11 @@
   "certificatoAutorizzazioneNidoMancante": "This location has no recorded nursery operating licence details: without them INPS would reject the certificate. Let the office know.",
   "certificatoLivelloNonNido": "The INPS Nursery Bonus certificate is only issued for children attending the nursery: for the others you need the enrolment and attendance certificate.",
   "erroreCertificato": "The certificate was not generated: try again in a few minutes.",
+  "certificatoNonArchiviato": "The certificate was issued, but it did not make it into the school archive: keep it now, it is the only copy you have. Do not press “Generate” again: that would issue another one with a new protocol number. Please let the school office know.",
   "documentoScarica": "Download the signed form",
   "documentoArchiviatoIl": "In the file since {data}.",
+  "certificatoNumero": "Protocol no. {numero}.",
   "uscitaRiga": "Trip on {data} — {destinazione} · leaving {partenza}, back {rientro}.",
 
-  "copiaFamiglia": "Copy for the family — not recorded in the protocol register",
-  "certificatoAvviso": "What you download here is a copy for the family: if an office wants it recorded in the protocol register, ask the school office for it.",
   "avvisoSanitario": "What you write here concerns your child’s health: it is read by the school office and by the teachers of their class, and by nobody else."
 }

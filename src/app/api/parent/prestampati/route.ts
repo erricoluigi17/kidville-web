@@ -7,10 +7,7 @@ import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { caricaPrefillAlunno, nucleoAlunno } from '@/lib/prestampati/prefill'
 import { chiaveEtichetta, prestampatiPerRuolo, type VocePrestampato } from '@/lib/prestampati/registro'
-import {
-  autorizzazioneNidoCompleta,
-  modelloGenitore,
-} from '@/lib/prestampati/modelli/genitore'
+import { modelloGenitore } from '@/lib/prestampati/modelli/genitore'
 import { cartaDaDati, renderPrestampatoGenitore } from '@/lib/prestampati/render'
 import { applicaCartaIntestata } from '@/lib/carta'
 import { annoFiscale } from '@/lib/format/fiscal-date'
@@ -30,10 +27,15 @@ import { denominazioneScuola } from '@/lib/protocolli/server'
 import {
   BUCKET_FASCICOLO,
   datiUscitaDaEvento,
+  descrizioneArchivioProtocollata,
   dipendeDallUscita,
+  garantisciBucketFascicolo,
   ilFileRestaNelBucket,
   motivoMancatoArchivioDa,
   motivoNonFirmabile,
+  motivoNonGenerabile,
+  type MotivoNonGenerabile,
+  numeroProtocolloDaDescrizione,
   rifiutoDelRender,
   serveElencoDelegati,
   soloFamiglia,
@@ -326,11 +328,17 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
     // un'enumerazione che quei valori non li ha risponde `22P02` — cioè l'elenco della
     // famiglia diventerebbe un 503 su un ambiente dove tutto il resto funziona. Si legge
     // ciò che quel bambino ha e si filtra in TypeScript, dove uno slug è una stringa.
-    const archiviati = new Map<string, { id: string; creatoIl: string | null }>()
+    const archiviati = new Map<string, { id: string; creatoIl: string | null; protocollo: string | null }>()
     // PostgREST non lancia: il valore di ritorno va controllato, sempre.
+    //
+    // `descrizione` entra nella `select` perché è l'unico posto in cui vive il numero di
+    // protocollo del documento archiviato: `student_documents` non ha una colonna per il
+    // protocollo (schema di produzione, 2026-08-16). Vedi `descrizioneArchivioProtocollata`.
+    // Sul DB E2E non migrato una colonna che manca risponde `42703`, e questa lettura
+    // degrada già: l'elenco esce lo stesso, senza i pulsanti «Scarica».
     const { data: righeArchivio, error: erroreArchivio } = await supabase
       .from('student_documents')
-      .select('id, document_type, created_at')
+      .select('id, document_type, descrizione, created_at')
       .eq('student_id', alunnoId)
       .order('created_at', { ascending: false })
     if (erroreArchivio) {
@@ -351,12 +359,19 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
       for (const riga of (righeArchivio ?? []) as unknown as {
         id: string
         document_type: string | null
+        descrizione: string | null
         created_at: string | null
       }[]) {
         const tipo = riga.document_type?.trim()
         // `order` è discendente: la prima riga di ogni tipo è la più recente, e le altre
         // non la sostituiscono. È il documento che il genitore riscarica.
-        if (tipo && !archiviati.has(tipo)) archiviati.set(tipo, { id: riga.id, creatoIl: riga.created_at })
+        if (tipo && !archiviati.has(tipo)) {
+          archiviati.set(tipo, {
+            id: riga.id,
+            creatoIl: riga.created_at,
+            protocollo: numeroProtocolloDaDescrizione(riga.descrizione),
+          })
+        }
       }
     }
 
@@ -430,6 +445,20 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
          * segnalate all'orchestratore: sono funzioni che mancano, non casi limite.
          */
         const motivo = motivoNonFirmabile(v, dati)
+        /**
+         * ⚠️ IL SECONDO VERDETTO, e risponde a una domanda diversa: non «questa famiglia lo
+         * può firmare?» ma «la Scuola lo può emettere, per QUESTO bambino, adesso?».
+         *
+         * 🔴 Serve perché il Bonus Nido offriva a chiunque un pulsante `primary` che per la
+         * maggioranza dei bambini non poteva funzionare — sulla sede di Giugliano la
+         * maggioranza non è al nido — e il rifiuto del server arrivava 777 px fuori dallo
+         * schermo di un telefono: al genitore sembrava che il clic non avesse fatto niente.
+         * Il rifiuto era però prevedibile qui, senza chiedere niente: il precompilato porta
+         * già livello, sede e legale rappresentante. `motivoNonGenerabile()` è la STESSA
+         * funzione che il POST usa per rifiutare con un 422, così la scheda non può accendere
+         * un pulsante che la rotta respinge.
+         */
+        const motivoEmissione = motivoNonGenerabile(v, dati, prefill.legaleRappresentante)
         const archiviato = archiviati.get(v.slug) ?? null
         return {
           slug: v.slug,
@@ -442,6 +471,13 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
           firmabileOra: motivo === null,
           motivoNonFirmabile: motivo,
           /**
+           * `true` solo sui due certificati, e solo quando il POST li emetterebbe davvero.
+           * Sugli altri sei è `false` con `motivoNonGenerabile: null` — «non è roba tua»,
+           * che è diverso da «non si può»: quelli nascono dalla firma.
+           */
+          generabileOra: v.firma === 'legale_rappresentante' && motivoEmissione === null,
+          motivoNonGenerabile: motivoEmissione,
+          /**
            * Il documento già nel fascicolo, quando c'è: è ciò che rende i moduli firmati
            * riscaricabili SEMPRE e non solo nell'istante della firma. L'id serve al POST
            * per riconsegnare **lo stesso file** — sui due certificati vuol dire anche lo
@@ -449,6 +485,13 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
            */
           documentoArchiviatoId: archiviato?.id ?? null,
           documentoArchiviatoIl: archiviato?.creatoIl ?? null,
+          /**
+           * QUALE numero riconsegna il riscarico. Il pannello promette «lo stesso numero di
+           * protocollo» e fino al 2026-08-16 non diceva quale: per sapere se il foglio che
+           * stava per mandare all'INPS era il 5 o il 6, il genitore doveva aprire il PDF.
+           * `null` sui sei moduli firmati, che un numero non ce l'hanno.
+           */
+          protocolloArchiviato: archiviato?.protocollo ?? null,
         }
       }),
       // I campi escono TALI E QUALI dal registro: portano già `opzioniDaApp`,
@@ -559,6 +602,23 @@ const postBodySchema = z.object({
 /** I modelli che questa rotta sa GENERARE: quelli che sottoscrive la Scuola. */
 function generabileDallaFamiglia(voce: VocePrestampato): boolean {
   return voce.firma === 'legale_rappresentante' && voce.protocollo === 'uscita'
+}
+
+/**
+ * La frase italiana di ciascun rifiuto d'emissione, per il campo `error`.
+ *
+ * ⚠️ IL CLIENT NON LA USA, e non è ridondanza: l'app è bilingue, quindi la scheda traduce
+ * l'enumerato `motivo` dal proprio catalogo (`CHIAVE_MOTIVO_CERTIFICATO`). Questa resta per
+ * chi la risposta la legge nuda — un log, una prova con `curl`, un client futuro — perché un
+ * 422 con il solo codice non si capisce, e un errore che non si capisce si riapre due volte.
+ */
+const SPIEGAZIONE_NON_GENERABILE: Record<MotivoNonGenerabile, string> = {
+  'legale-rappresentante-assente':
+    'Nelle impostazioni della sede manca il nome del legale rappresentante: il certificato non si può firmare.',
+  'livello-non-nido':
+    'Il certificato per il Bonus Asilo Nido si rilascia solo a un bambino iscritto al nido.',
+  'autorizzazione-nido-mancante':
+    'Gli estremi dell’autorizzazione al funzionamento del nido non sono configurati per questa sede: il certificato non si emette.',
 }
 
 export const POST = withRoute('parent/prestampati:POST', async (request: NextRequest) => {
@@ -679,6 +739,19 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
         )
       }
 
+      /**
+       * IL NUMERO CHE SI STA RICONSEGNANDO, riletto dalla descrizione già selezionata.
+       *
+       * La query lo aveva in mano e lo buttava via: la risposta diceva `protocollo: null`
+       * mentre la riga d'archivio portava `… — Prot. n. 0000005/2026`. Il pannello promette
+       * «riscarica sempre lo stesso certificato, con lo stesso numero di protocollo» e poi
+       * non diceva QUALE — cioè una promessa lasciata a metà su un foglio che va all'INPS.
+       *
+       * `null` resta una risposta legittima: i sei moduli firmati dalla famiglia si
+       * archiviano con la sola etichetta, e un numero non ce l'hanno.
+       */
+      const protocolloRiuso = numeroProtocolloDaDescrizione(documentoInArchivio.descrizione)
+
       // Il SUCCESSO si logga: con i soli errori «nessun log» non distingue «i riscarichi
       // funzionano» da «non ne è mai partito uno». `riuso: true` è ciò che si conta in SQL
       // per sapere quante volte un numero di protocollo NON è stato bruciato.
@@ -705,10 +778,12 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
         success: true,
         /** `true` quando il file è quello di prima: nessun numero nuovo, nessuna riga nuova. */
         riuso: true,
+        /** Il file c'era già: per definizione è in archivio, e il client non deve avvisare. */
+        archiviato: true,
         documentoId: documentoInArchivio.id,
         titolo: voce.etichetta,
         url: link.signedUrl,
-        protocollo: null,
+        protocollo: protocolloRiuso,
       })
     }
 
@@ -736,57 +811,36 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
     // comunque (`verificaContesto` del n. 28, `componiFirma` di `render.ts`) — ma il suo
     // rifiuto è prosa italiana dentro `errori[]`, e questa risposta arriva a un'app
     // BILINGUE: di qui esce un `motivo` ENUMERATO, che il client traduce.
-    if (!prefill.legaleRappresentante?.trim()) {
-      // Configurazione mancante = livello `error`, mai `info` (AGENTS.md §4).
-      logEvento('config', 'error', {
-        operazione: 'parent/prestampati:POST',
-        esito: 'legale-rappresentante-non-configurato',
-        tipo: voce.slug,
-        scuola_id: prefill.scuolaId,
-      })
-      return NextResponse.json(
-        {
-          error:
-            'Nelle impostazioni della sede manca il nome del legale rappresentante: il certificato non si può firmare.',
-          codice: 'PRESTAMPATO_DATI_MANCANTI',
-          motivo: 'legale-rappresentante-assente',
-        },
-        { status: 422 },
-      )
-    }
-    if (voce.slug === 'certificato_bonus_nido') {
-      // ⚠️ 422 CON UN MOTIVO LEGGIBILE, MAI UN 500. Senza gli estremi
-      // dell'autorizzazione al funzionamento il certificato uscirebbe con «N. ______ del
-      // ______», cioè un documento che l'INPS rifiuta e che la famiglia scopre di non
-      // avere quando le serve.
-      if (prefill.dati.alunno.livello !== 'nido') {
-        return NextResponse.json(
-          {
-            error:
-              'Il certificato per il Bonus Asilo Nido si rilascia solo a un bambino iscritto al nido.',
-            codice: 'PRESTAMPATO_DATI_MANCANTI',
-            motivo: 'livello-non-nido',
-          },
-          { status: 422 },
-        )
-      }
-      if (!autorizzazioneNidoCompleta(prefill.dati.sede)) {
+    //
+    // ⚠️ 422 CON UN MOTIVO LEGGIBILE, MAI UN 500. Senza gli estremi dell'autorizzazione al
+    // funzionamento, per esempio, il Bonus Nido uscirebbe con «N. ______ del ______»: un
+    // documento che l'INPS rifiuta e che la famiglia scopre di non avere quando le serve.
+    //
+    // Il verdetto lo dà `motivoNonGenerabile()`, che è la stessa funzione con cui il GET
+    // spegne la scheda e ci scrive sopra il perché: se le due divergessero, il pannello
+    // accenderebbe un pulsante che questa rotta rifiuta — che è il difetto misurato il
+    // 2026-08-16, con il rifiuto disegnato fuori dallo schermo.
+    const motivoEmissione = motivoNonGenerabile(voce, prefill.dati, prefill.legaleRappresentante)
+    if (motivoEmissione) {
+      // Configurazione mancante = livello `error`, mai `info` (AGENTS.md §4). Il livello
+      // non è per motivo: `livello-non-nido` NON è una configurazione mancante — è una
+      // proprietà del bambino, e un `error` per ogni famiglia dell'infanzia che tocca quel
+      // certificato riempirebbe il canale dei guasti di cose che funzionano.
+      if (motivoEmissione !== 'livello-non-nido') {
         logEvento('config', 'error', {
           operazione: 'parent/prestampati:POST',
-          esito: 'autorizzazione-nido-non-configurata',
+          esito:
+            motivoEmissione === 'legale-rappresentante-assente'
+              ? 'legale-rappresentante-non-configurato'
+              : 'autorizzazione-nido-non-configurata',
           tipo: voce.slug,
           scuola_id: prefill.scuolaId,
         })
-        return NextResponse.json(
-          {
-            error:
-              'Gli estremi dell’autorizzazione al funzionamento del nido non sono configurati per questa sede: il certificato non si emette.',
-            codice: 'PRESTAMPATO_DATI_MANCANTI',
-            motivo: 'autorizzazione-nido-mancante',
-          },
-          { status: 422 },
-        )
       }
+      return NextResponse.json(
+        { error: SPIEGAZIONE_NON_GENERABILE[motivoEmissione], codice: 'PRESTAMPATO_DATI_MANCANTI', motivo: motivoEmissione },
+        { status: 422 },
+      )
     }
 
     const modello = modelloGenitore(voce.slug)
@@ -810,6 +864,43 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
       copiaFamiglia: true,
     })
     if (!prova.ok) return rifiutoDelRender(prova)
+
+    // ── 2ter. IL MAGAZZINO PRIMA DEL NUMERO ────────────────────────────────────────
+    //
+    // 🔴 IL DIFETTO MISURATO IN PRODUZIONE IL 2026-08-16, e la riga che lo chiude.
+    // `sensitive_documents` non esisteva (`storage.buckets`: quattordici righe, nessuna era
+    // quella) e questa rotta caricava lo stesso: due POST identici del certificato hanno
+    // risposto **201** con `documentoId: null`, non hanno lasciato nessuna riga in
+    // `student_documents` e hanno consumato **due numeri di protocollo** — il 3 e il 4,
+    // stesso bambino, stesso oggetto, a settanta secondi di distanza. Poi il fascicolo è
+    // rimasto vuoto, quindi il POST successivo non trovava niente da riconsegnare e ne
+    // bruciava un altro: la regola §4.3 («riscarica sempre lo stesso, stesso numero,
+    // nessuna riga nuova») era disattesa sul 100% dei download.
+    //
+    // La regola è una riga sola: **un numero non si consuma se il magazzino in cui il foglio
+    // deve finire non c'è.** Perciò qui, prima della RPC, e non tre passi più giù dove
+    // l'upload se ne accorgerebbe a numero già speso.
+    //
+    // Il 503 e non un 500: è un guasto dell'infrastruttura, si ritenta, e nel frattempo il
+    // registro non si è mosso. La causa — col corpo dell'errore del provider — l'ha già
+    // registrata `garantisciBucketFascicolo`.
+    if (!(await garantisciBucketFascicolo(supabase, 'parent/prestampati:POST'))) {
+      logEvento('modulistica', 'error', {
+        operazione: 'parent/prestampati:POST',
+        esito: 'fascicolo-non-disponibile',
+        tipo: voce.slug,
+        alunno_id: alunnoId,
+        scuola_id: prefill.scuolaId,
+      })
+      return NextResponse.json(
+        {
+          error:
+            'L’archivio della scuola non è raggiungibile: il certificato non è stato generato. Riprova fra qualche minuto.',
+          codice: 'PRESTAMPATO_NON_GENERATO',
+        },
+        { status: 503 },
+      )
+    }
 
     const anno = annoFiscale()
     const { data: numeroGrezzo, error: erroreNumero } = await supabase.rpc(
@@ -978,7 +1069,10 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
           student_id: alunnoId,
           section_id: prefill.sezioneId,
           document_type: voce.slug,
-          descrizione: `${voce.etichetta} — Prot. n. ${numeroFormattato}`,
+          // Il formato lo scrive — e lo rilegge — `banco-famiglia.ts`: è l'unico posto in
+          // cui il numero di protocollo può viaggiare, perché `student_documents` non ha
+          // una colonna per il protocollo. Round-trip verificato dal test.
+          descrizione: descrizioneArchivioProtocollata(voce.etichetta, numeroFormattato),
           file_name: `${slugNomeFile(reso.titolo)}.pdf`,
           storage_path: percorsoFascicolo,
           // Percorso privato, non un indirizzo: il download passa da un URL firmato.

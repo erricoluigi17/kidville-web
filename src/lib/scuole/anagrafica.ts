@@ -92,6 +92,46 @@ export function normalizzaAnagraficaSede(input: AnagraficaSede): AnagraficaSede 
 }
 
 /**
+ * La riga d'indirizzo completa di una sede: `via — CAP CITTÀ (PROV)`.
+ *
+ * ⚠️ ESISTE PERCHÉ I LETTORI SONO DUE, E UNO SOLO SAPEVA COMPORLA.
+ *
+ * Fino al 2026-08-16 `scuole.indirizzo` conteneva la riga già scritta per esteso
+ * («Via Filippo Turati 2, 81030 Cesa (CE)»), e chiunque leggesse la colonna se la
+ * ritrovava pronta. La spec §2.2 l'ha ridotta alla sola via — era la causa del
+ * «…Giugliano in Campania (NA) — Giugliano» finito stampato su un certificato
+ * vero — ma così la riga completa da DATO è diventata CALCOLO, e chi non lo fa
+ * stampa mezzo indirizzo.
+ *
+ * Le vittime erano due, e non è teoria: il piè di pagina di tutte le email
+ * (`lib/email/contesto.ts` → `piede()`, undici generatori) leggeva la colonna
+ * grezza e da quel giorno avrebbe firmato «Via Filippo Turati 2» senza CAP né
+ * città. La composizione vive quindi in un posto SOLO — qui, accanto ai campi che
+ * compone — per lo stesso motivo per cui la spec §1.5 fonde le due testate PDF in
+ * una funzione sola: due copie della stessa regola divergono sempre, prima o poi.
+ *
+ * `cap` e `provincia` stanno in `config.anagrafica`, `indirizzo` e `citta` sono
+ * colonne di `scuole`: la funzione attraversa le due fonti di proposito, ed è la
+ * ragione per cui sta in questo modulo e non in `certificati/` o in `email/`.
+ *
+ * Vale la regola dell'omissione: ciò che manca non compare, e non lascia dietro
+ * di sé un trattino sospeso o un separatore spaiato. Tutto vuoto ⇒ `null`, così
+ * il chiamante può non stampare la riga affatto invece di stamparla vuota.
+ */
+export function componiIndirizzoSede(p: {
+  indirizzo?: string | null
+  cap?: string | null
+  citta?: string | null
+  provincia?: string | null
+}): string | null {
+  const capCitta = [clean(p.cap), clean(p.citta)].filter(Boolean).join(' ')
+  const provincia = clean(p.provincia)
+  const luogo = [capCitta, provincia ? `(${provincia})` : ''].filter(Boolean).join(' ')
+  const riga = [clean(p.indirizzo), luogo].filter(Boolean).join(' — ')
+  return riga === '' ? null : riga
+}
+
+/**
  * Estrazione safe da scuole.config (JSONB non tipizzato dal DB): mai throw.
  *
  * `autorizzazione_nido` si pota dalla lettura quando non è un oggetto, invece di

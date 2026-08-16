@@ -1,3 +1,5 @@
+import { componiIndirizzoSede } from '@/lib/scuole/anagrafica'
+
 // Certificati self-service (genitore) — testi puri e testabili, nessun valore
 // cablato: sezione dall'anagrafica alunno, anno da annoScolasticoCorrente(),
 // dati sede dalla scuola del figlio (scuole + config.anagrafica) con degrado
@@ -35,16 +37,21 @@ export function buildCertificatoBody(
 
 // Righe di intestazione sede per il PDF (multi-sede): solo dati reali dal DB,
 // righe omesse se mancanti.
+//
+// La riga dell'indirizzo NON si compone qui: la costruisce `componiIndirizzoSede`,
+// che è la stessa funzione usata dal piè di pagina delle email. `scuole.indirizzo`
+// è la sola via (spec §2.2), quindi CAP, città e provincia vanno aggiunti da chi
+// stampa — e due posti che lo fanno per conto proprio divergono, prima o poi.
 export function buildIntestazioneSede(sede: SedeCertificato): string[] {
   const righe: string[] = []
   const nome = sede.scuola_nome?.trim()
   if (nome) righe.push(nome)
-  const capCitta = [sede.scuola_cap?.trim(), sede.scuola_citta?.trim()].filter(Boolean).join(' ')
-  const provincia = sede.scuola_provincia?.trim()
-  const luogo = [
-    sede.scuola_indirizzo?.trim(),
-    [capCitta, provincia ? `(${provincia})` : ''].filter(Boolean).join(' '),
-  ].filter(Boolean).join(' — ')
+  const luogo = componiIndirizzoSede({
+    indirizzo: sede.scuola_indirizzo,
+    cap: sede.scuola_cap,
+    citta: sede.scuola_citta,
+    provincia: sede.scuola_provincia,
+  })
   if (luogo) righe.push(luogo)
   const mecc = sede.scuola_codice_meccanografico?.trim()
   if (mecc) righe.push(`Cod. Mecc. ${mecc}`)

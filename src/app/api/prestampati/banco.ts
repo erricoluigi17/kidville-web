@@ -85,10 +85,22 @@ import {
   bloccoFirma,
   prestampatiPerRuolo,
   ruoliAppDelBanco,
+  type CampoPrestampato as DescrittoreCampo,
   type RuoloRichiedente,
   type VocePrestampato,
 } from '@/lib/prestampati/registro'
-import { modelloGenitore } from '@/lib/prestampati/modelli/genitore'
+import { buildPrestampatoPdf } from '@/lib/prestampati/impaginazione'
+import type {
+  BloccoPrestampato,
+  CampoPrestampato as RigaStampata,
+  CasellaPrestampato,
+  DocumentoPrestampato,
+} from '@/lib/prestampati/tipi'
+import {
+  modelloGenitore,
+  type DatiPrestampato,
+  type ModelloPrestampato as ModelloGenitore,
+} from '@/lib/prestampati/modelli/genitore'
 import {
   modelloCertificatoCompetenze,
   modelloNullaOsta,
@@ -120,38 +132,50 @@ const testo = (v: unknown): string | null => {
 // ─── Che cosa il banco può produrre OGGI ────────────────────────────────────────
 
 /**
- * I quattro motivi per cui uno dei diciassette non nasce da questo sportello. Tenerli
- * distinti serve a chi guarda il pannello: il primo dice «si fa altrove», il secondo e il
- * terzo dicono «non si fa ancora», il quarto dice «manca un dato, e so quale» — sono lacune
- * diverse, con rimedi diversi e con destinatari diversi.
+ * I tre motivi per cui uno dei diciassette non nasce da questo sportello. Tenerli distinti
+ * serve a chi guarda il pannello: i primi due dicono «non si fa ancora», il terzo dice
+ * «manca un dato, e so quale» — sono lacune diverse, con rimedi diversi.
  *
- * ⚠️ IL TERZO È NATO DA UNA BUGIA MISURATA, e vale la pena dire quale. I motivi erano due,
- * e il primo diceva a tutti «si genera dal flusso di firma della famiglia»: falso per due
- * dei diciassette. `verbale_infortunio` (`disponibilePer: ['educator', 'coordinator',
- * 'admin', 'segreteria']`) e `valutazione_infanzia` (`['educator', 'coordinator', 'admin']`)
- * NON compaiono in nessun banco «genitore» — quel banco si costruisce con
+ * ⚠️ ERANO QUATTRO, E IL QUARTO È SPARITO IL 2026-08-16. Si chiamava
+ * `firma_da_raccogliere` e diceva ai sei moduli di famiglia «si genera dal flusso di firma
+ * della famiglia, non dallo sportello»: era vero finché l'unico foglio che questo banco
+ * sapeva produrre era quello **già firmato**. Oggi i tre modi di lavorare su un modulo di
+ * famiglia sono dichiarati (`ModalitaModuloFamiglia`), e due dei tre non attestano nessuna
+ * firma elettronica — la copia vuota da firmare a penna e il modulo tornato compilato su
+ * carta. Un banco che li rifiuta tutti e tre per non poter dichiarare una firma rifiuta
+ * anche i due che una firma non la dichiarano affatto.
+ *
+ * ⚠️ IL PRIMO È NATO DA UNA BUGIA MISURATA, e vale la pena dire quale. Il motivo sparito
+ * diceva a tutti «si genera dal flusso di firma della famiglia»: falso per due dei
+ * diciassette. `verbale_infortunio` (`disponibilePer: ['educator', 'coordinator', 'admin',
+ * 'segreteria']`) e `valutazione_infanzia` (`['educator', 'coordinator', 'admin']`) NON
+ * compaiono in nessun banco «genitore» — quel banco si costruisce con
  * `prestampatiPerRuolo('genitore')`, che li esclude entrambi — quindi l'educatrice che
  * apriva il pannello per il verbale di un infortunio leggeva un'indicazione che la mandava
- * in un flusso incapace di produrlo, e nessuna strada nel prodotto lo produceva.
+ * in un flusso incapace di produrlo, e nessuna strada nel prodotto lo produceva. Restano
+ * loro due, ed è per loro che `firma_senza_flusso` esiste ancora.
  *
- * 🔴 IL QUARTO È IL CASO CHE LA PRODUZIONE HA DAVVERO OGGI, ed è arrivato per ultimo perché
- * i primi tre si leggono nel registro e questo no: sta nella CONFIGURAZIONE DELLA SEDE.
- * Cinque dei sei fogli che questo sportello dichiara generabili — `nulla_osta`,
- * `richiesta_disponibilita`, `certificato_competenze`, `certificato_iscrizione_frequenza`,
- * `certificato_bonus_nido` — si chiudono con la firma del legale rappresentante, e
- * `componiFirma` (`src/lib/prestampati/render.ts`) li rifiuta quando quel nome non c'è.
- * Misurato in sola lettura il 2026-08-14: `SELECT count(*) FROM scuole` → **4**, e le righe
- * con `config->'anagrafica' ? 'legale_rappresentante'` → **0**. Per tutte e tre le sedi
- * vere, quindi, quel rifiuto non è il caso raro: è l'unico che accade.
+ * 🔴 IL TERZO STA NELLA CONFIGURAZIONE DELLA SEDE, non nel registro: cinque dei fogli che
+ * questo sportello produce — `nulla_osta`, `richiesta_disponibilita`,
+ * `certificato_competenze`, `certificato_iscrizione_frequenza`, `certificato_bonus_nido` —
+ * si chiudono con la firma del legale rappresentante, e `componiFirma`
+ * (`src/lib/prestampati/render.ts`) li rifiuta quando quel nome non c'è. Con tre plessi la
+ * stessa domanda può avere tre risposte, ed è il motivo per cui si CHIEDE invece di saperlo.
  *
- * ⚠️ E FINO AL 2026-08-15 NON ERA RIPARABILE. Il messaggio diceva «aggiungilo nelle
- * impostazioni della sede», ma quel campo non esisteva in nessun form del prodotto:
- * `zAnagraficaSede` non conosceva la chiave, e siccome `normalizzaAnagraficaSede`
- * RICOSTRUISCE l'oggetto dai soli campi noti, scriverla a mano nel database non
- * serviva — il primo salvataggio dell'anagrafica la cancellava. Ora la chiave sta
- * nello schema e il campo sta in Impostazioni → Sede & Intestazione; questo motivo
- * torna a essere ciò che dichiara di essere: una configurazione da completare, non un
- * vicolo cieco.
+ * ⚠️ IL COMMENTO CHE STAVA QUI DICHIARAVA UN NUMERO, ED È INVECCHIATO IN DUE GIORNI:
+ * «`SELECT count(*) FROM scuole` → 4, righe con `config->'anagrafica' ?
+ * 'legale_rappresentante'` → 0 — per tutte e tre le sedi vere quel rifiuto è l'unico che
+ * accade». Il campo non esisteva in nessun form del prodotto (`zAnagraficaSede` non
+ * conosceva la chiave, e `normalizzaAnagraficaSede` RICOSTRUISCE l'oggetto dai soli campi
+ * noti: scriverla a mano nel database non serviva, il primo salvataggio la cancellava);
+ * dal 2026-08-15 la chiave sta nello schema, il campo sta in Impostazioni → Sede &
+ * Intestazione, e i valori veri sono stati scritti. **Quel «0» è quindi falso**, e chi lo
+ * leggesse crederebbe rotto un percorso che funziona. Qui non si rimette un numero nuovo,
+ * che invecchierebbe allo stesso modo: si lascia la query, che risponde sempre.
+ *
+ * ```sql
+ * SELECT count(*) FILTER (WHERE btrim(coalesce(config->'anagrafica'->>'legale_rappresentante','')) <> '') FROM scuole;
+ * ```
  *
  * E arrivava a schermo con la frase sbagliata. Il rifiuto del render porta
  * `PRESTAMPATO_FIRMA_NON_VALIDA`, la cui frase di catalogo è «La firma non risulta raccolta
@@ -161,8 +185,6 @@ const testo = (v: unknown): string | null => {
  * giusto — `PRESTAMPATO_DATI_MANCANTI`, la cui frase è «completali in anagrafica e riprova».
  */
 export type MotivoNonGenerabile =
-  /** Il flusso della famiglia lo raccoglie davvero: si fa lì, non qui. */
-  | 'firma_da_raccogliere'
   /** Vuole la firma di un genitore, e oggi nessuna schermata gliela chiede. */
   | 'firma_senza_flusso'
   /** I dati che deve riportare non stanno in nessuna tabella leggibile oggi. */
@@ -203,6 +225,56 @@ const FONTE_DATI_ASSENTE: ReadonlySet<string> = new Set([
 const NEL_FLUSSO_DELLA_FAMIGLIA: ReadonlySet<string> = new Set(
   prestampatiPerRuolo('genitore').map((v) => v.slug),
 )
+
+// ─── I tre modi di lavorare su un modulo di famiglia ────────────────────────────
+
+/**
+ * I TRE MODI, e il vincolo che li tiene insieme: **un foglio non deve MAI dichiarare una
+ * firma elettronica che non è avvenuta.**
+ *
+ *  · **`copia_firmata`** — non si genera niente: si ripesca dal fascicolo il PDF che il
+ *    genitore ha sottoscritto davvero (`student_documents`, `document_type` = lo slug). È
+ *    l'unico dei tre che porta il riquadro FEA, e lo porta perché quella firma c'è stata;
+ *  · **`copia_vuota`** — il modulo su carta per chi non usa l'app: intestazione, dati
+ *    dell'alunno già scritti, e tutto il resto da compilare a penna. Il blocco firma è la
+ *    RIGA DA FIRMARE, non il riquadro FEA;
+ *  · **`su_carta`** — il modulo tornato compilato e firmato su carta, che la segreteria
+ *    trascrive nell'app. Al posto del riquadro FEA c'è la dicitura
+ *    «Modulo consegnato su carta il gg/mm/aaaa, firmato in originale agli atti», **senza
+ *    nessuna scansione allegata** (decisione esplicita del titolare).
+ *
+ * ⚠️ CHE DUE DEI TRE NON PORTINO IL RIQUADRO FEA NON È UNA SCELTA GRAFICA. Il riquadro
+ * dice «Firmato da …, codice OTP verificato, riferimento …»: su un foglio che nessuno ha
+ * firmato elettronicamente è un'attestazione falsa prodotta dalla scuola su sé stessa, e
+ * finirebbe nel fascicolo di un minore. Il presidio non è questo commento: è
+ * `firma: { tipo: 'nessuna' }` in `componiModuloDiFamiglia`, più i test che leggono il testo
+ * del PDF e pretendono che «Firmato da» non ci sia.
+ */
+export const MODALITA_MODULO_FAMIGLIA = ['copia_firmata', 'copia_vuota', 'su_carta'] as const
+export type ModalitaModuloFamiglia = (typeof MODALITA_MODULO_FAMIGLIA)[number]
+
+/**
+ * I modi disponibili per questo modello, o `null` se la domanda non si pone.
+ *
+ * Si CHIEDONO al registro invece di elencare sei slug a mano: la condizione è «il banco
+ * della famiglia lo contiene» **e** «il suo blocco di firma è quello del genitore»
+ * (`bloccoFirma`, la stessa funzione con cui il render decide cosa disegnare). I due
+ * certificati 26·27 e 28 stanno nel banco della famiglia ma li firma il legale
+ * rappresentante: nascono già oggi allo sportello e di modi non ne hanno.
+ *
+ * ⚠️ `verbale_infortunio` e `valutazione_infanzia` NON entrano, e va detto perché non è una
+ * dimenticanza: hanno lo stesso blocco di firma ma non stanno nel banco della famiglia, e
+ * soprattutto `componiPrestampato` non sa comporli — il loro precompilato vuole l'organico
+ * in servizio e le griglie di osservazione, che questo banco non legge. Restano
+ * `firma_senza_flusso` finché quel precompilato non arriva.
+ */
+export function modalitaDelModello(
+  voce: VocePrestampato,
+): readonly ModalitaModuloFamiglia[] | null {
+  return NEL_FLUSSO_DELLA_FAMIGLIA.has(voce.slug) && bloccoFirma(voce.firma) === 'genitore'
+    ? MODALITA_MODULO_FAMIGLIA
+    : null
+}
 
 /**
  * CIÒ CHE SI SA DELLA SEDE quando si fa la domanda — l'unica parte della risposta che il
@@ -259,7 +331,14 @@ export function motivoNonGenerabile(
   if (voce.firma === 'otp_genitore' || voce.firma === 'otp_due_genitori') {
     // «Chi la firma» e «dove la si firma» sono due domande diverse, e per un po' qui se ne
     // faceva una sola: vedi `NEL_FLUSSO_DELLA_FAMIGLIA`.
-    return NEL_FLUSSO_DELLA_FAMIGLIA.has(voce.slug) ? 'firma_da_raccogliere' : 'firma_senza_flusso'
+    //
+    // I sei del banco della famiglia NON sono più un rifiuto: allo sportello nascono in una
+    // delle tre modalità, e due delle tre non dichiarano nessuna firma elettronica. Chi
+    // chiede la modalità sbagliata — o non la chiede affatto — riceve un rifiuto dalla
+    // route, che è il posto in cui quella scelta esiste; qui la domanda è un'altra, ed è
+    // «questo foglio può nascere allo sportello?». Per loro, ora, sì.
+    if (modalitaDelModello(voce)) return null
+    return 'firma_senza_flusso'
   }
   // Il blocco di firma si CHIEDE al registro (`bloccoFirma`) invece di confrontare
   // `voce.firma === 'legale_rappresentante'`: è la stessa funzione che il render usa per
@@ -280,8 +359,6 @@ export function motivoNonGenerabile(
  * quando non si fa da nessuna parte lo dice, invece di indicare una porta che non esiste.
  */
 export const SPIEGAZIONE_NON_GENERABILE: Record<MotivoNonGenerabile, string> = {
-  firma_da_raccogliere:
-    'Questo modulo attesta la firma elettronica del genitore: si genera dal flusso di firma della famiglia, non dallo sportello.',
   firma_senza_flusso:
     'Questo documento si chiude con la firma elettronica del genitore, e oggi non c’è ancora una schermata che la raccolga: non è possibile generarlo.',
   fonte_dati_assente:
@@ -304,6 +381,13 @@ export interface VoceElenco {
   /** Falso quando il pulsante va spento: `motivo` dice perché, e la frase lo spiega. */
   generabile: boolean
   motivo?: MotivoNonGenerabile
+  /**
+   * I tre modi di lavorare su un modulo di famiglia, quando il modello ne ha
+   * (`modalitaDelModello`). Assente sugli altri undici, e l'assenza è il dato: il pannello
+   * chiede la modalità **solo** dove esiste una scelta da fare, invece di mostrare tre
+   * pulsanti su un certificato che di modi ne ha uno.
+   */
+  modalita?: readonly ModalitaModuloFamiglia[]
 }
 
 /**
@@ -317,6 +401,7 @@ export interface VoceElenco {
  */
 export function voceElenco(v: VocePrestampato, contesto: ContestoSede = {}): VoceElenco {
   const motivo = motivoNonGenerabile(v, contesto)
+  const modalita = modalitaDelModello(v)
   return {
     slug: v.slug,
     etichetta: v.etichetta,
@@ -326,6 +411,7 @@ export function voceElenco(v: VocePrestampato, contesto: ContestoSede = {}): Voc
     archiviazione: v.archiviazione,
     generabile: motivo === null,
     ...(motivo ? { motivo } : {}),
+    ...(modalita ? { modalita } : {}),
   }
 }
 
@@ -1390,12 +1476,29 @@ export function componiPrestampato(
    * persona in un elenco cerca il cognome.
    */
   operatore: string | null,
+  /**
+   * La modalità scelta allo sportello, per i sei moduli di famiglia. Assente sugli altri
+   * undici — che una scelta non ce l'hanno — e assente anche su `copia_firmata`, che non
+   * passa di qui: quel foglio non si compone, si ripesca dal fascicolo.
+   */
+  moduloFamiglia?: OpzioniModuloFamiglia,
 ): EsitoRender<unknown> {
   // Gli otto della famiglia (05…10, 26·27, 28): il loro contratto valida e compone in un
   // colpo solo, e il registro garantisce che parlino tutti di un bambino.
   const famiglia = modelloGenitore(voce.slug)
   if (famiglia) {
     if (contesto.soggetto !== 'alunno') return rifiutoSoggetto()
+    // I SEI CON LA FIRMA DEL GENITORE non passano dal render comune, e la deviazione va
+    // detta perché è l'unica di questo file. `renderPrestampatoGenitore` → `assembla()` →
+    // `componiFirma()` legge `bloccoFirma(voce.firma)` dal REGISTRO: per questi sei vale
+    // sempre `'genitore'`, quindi o gli si passa una firma OTP raccolta — che allo sportello
+    // non esiste — o il render rifiuta. Non c'è nessun modo, da qui, di chiedergli un foglio
+    // «senza riquadro FEA»: la riparazione vera è una variante di `FirmaPrestampato`
+    // (`src/lib/prestampati/tipi.ts`) e una `OpzioniRender.modalita` in `render.ts`, che non
+    // sono file di questa mano — segnalata, non fatta.
+    if (modalitaDelModello(voce)) {
+      return componiModuloDiFamiglia(famiglia, contesto.prefill, risposte, opzioni, moduloFamiglia)
+    }
     return renderPrestampatoGenitore(famiglia, contesto.prefill.dati, risposte, opzioni)
   }
 
@@ -1472,6 +1575,345 @@ function rifiutoSoggetto(): EsitoRender<unknown> {
     errori: [{ campo: '', messaggio: 'Il soggetto indicato non è quello che questo prestampato descrive.' }],
     codice: 'PRESTAMPATO_DATI_MANCANTI',
   }
+}
+
+// ─── I moduli di famiglia allo sportello ────────────────────────────────────────
+
+/** La scelta fatta allo sportello su un modulo di famiglia. */
+export interface OpzioniModuloFamiglia {
+  modalita: ModalitaModuloFamiglia
+  /**
+   * Il giorno in cui il modulo firmato è arrivato in segreteria, `YYYY-MM-DD`. Serve solo a
+   * `su_carta`, ed è ciò che la dicitura stampa: senza, quella frase direbbe «consegnato su
+   * carta il —», cioè un'attestazione senza data su un documento che va nel fascicolo.
+   */
+  consegnatoIl?: string | null
+}
+
+/**
+ * LA DICITURA DEL MODULO TORNATO SU CARTA, parola per parola.
+ *
+ * ⚠️ NON SI RIFORMULA. È la frase che il titolare ha dettato, ed è l'unica cosa che sul
+ * foglio dice perché lì non c'è né una firma elettronica né un tratto autografo: l'originale
+ * firmato sta in archivio, di carta. Una scansione allegata NON c'è, ed è una decisione
+ * esplicita — il PDF rimanda all'originale, non lo sostituisce.
+ */
+export function diciturModuloSuCarta(dataIt: string): string {
+  return `Modulo consegnato su carta il ${dataIt}, firmato in originale agli atti`
+}
+
+/**
+ * I sei moduli di famiglia, allo sportello: **senza riquadro FEA, in nessuno dei due casi
+ * che passano di qui.**
+ *
+ * `firma: { tipo: 'nessuna' }` è il presidio, e non è una scelta di stile. Il riquadro del
+ * §3a stampa «Firmato da …», il metodo e il riferimento della ricevuta: su un foglio che
+ * nessuno ha firmato elettronicamente sarebbe un'attestazione falsa prodotta dalla scuola su
+ * sé stessa, dentro il fascicolo di un minore. `disegnaFirma` con `'nessuna'` stampa solo
+ * «Luogo e data»: la riga da firmare a penna e la dicitura del modulo cartaceo arrivano come
+ * BLOCCHI, cioè dallo stesso canale con cui i modelli scrivono tutto il resto.
+ *
+ * ⚠️ NON PASSA DA `assembla()` DI `render.ts`, e la deviazione è misurata invece che
+ * preferita: quella funzione chiede la firma al REGISTRO (`bloccoFirma(voce.firma)`), che per
+ * questi sei dice sempre `'genitore'`, e senza una firma OTP raccolta rifiuta. Ciò che
+ * `assembla()` fa in più — la riga di protocollo e il riquadro di verifica — qui non si
+ * perde: tutti e sei hanno `protocollo: 'nessuno'` nel registro, quindi `componiTestata()`
+ * restituirebbe `{ riga: null, verifica: null }` e nient'altro. Il giorno in cui uno di loro
+ * uscisse dalla scuola, questa funzione va rifatta passando dal render — e il test
+ * «nessuno dei sei consuma numerazione» è ciò che lo farebbe notare.
+ */
+function componiModuloDiFamiglia(
+  modello: ModelloGenitore,
+  prefill: PrefillPrestampato,
+  risposte: unknown,
+  opzioni: OpzioniRender,
+  scelta: OpzioniModuloFamiglia | undefined,
+): EsitoRender<unknown> {
+  if (!scelta) {
+    // Irraggiungibile dalla route — lo schema `zod` la pretende su questi sei — e resta
+    // perché la funzione non si fidi di una garanzia scritta in un altro file.
+    return {
+      ok: false,
+      errori: [{ campo: 'modalita', messaggio: 'Indicare come si sta lavorando su questo modulo.' }],
+      codice: 'PRESTAMPATO_DATI_MANCANTI',
+    }
+  }
+  if (scelta.modalita === 'copia_firmata') {
+    // La copia firmata non si COMPONE: si ripesca dal fascicolo, ed è la route a farlo.
+    // Comporla qui vorrebbe dire rigenerare un foglio che dichiara una firma leggendola da
+    // nessuna parte.
+    return {
+      ok: false,
+      errori: [
+        {
+          campo: '',
+          messaggio:
+            'La copia firmata non si genera: si riprende dal fascicolo del bambino, dov’è archiviata dopo la firma della famiglia.',
+        },
+      ],
+      codice: 'PRESTAMPATO_DATI_MANCANTI',
+    }
+  }
+
+  let blocchi: BloccoPrestampato[]
+  let risposteValidate: unknown = {}
+
+  if (scelta.modalita === 'copia_vuota') {
+    // Le risposte NON si validano, e non è una svista: questo foglio esiste perché nessuno
+    // ha risposto niente — lo compilerà la famiglia a penna. Validarle rifiuterebbe il
+    // modulo proprio nell'unico caso in cui deve uscire vuoto.
+    blocchi = blocchiModuloVuoto(modello, prefill.dati)
+  } else {
+    const composto = modello.componi(prefill.dati, risposte)
+    // Errori di CAMPO: niente `codice`, e la route li rimanda al form accanto al campo
+    // sbagliato. Vedi `RifiutoRender` in `render.ts`.
+    if (!composto.ok) return { ok: false, errori: composto.errori }
+    risposteValidate = composto.risposte
+
+    const dataIt = isoToIt(scelta.consegnatoIl?.trim() ?? '')
+    if (!dataIt) {
+      return {
+        ok: false,
+        errori: [
+          {
+            campo: 'consegnatoIl',
+            messaggio: 'Indicare il giorno in cui il modulo firmato è arrivato in segreteria.',
+          },
+        ],
+      }
+    }
+    if ((scelta.consegnatoIl ?? '') > isoDiOggi()) {
+      // Una consegna nel futuro non è un refuso qualunque: finisce STAMPATA su un documento
+      // che entra nel fascicolo di un minore e dichiara che un originale firmato esiste già.
+      return {
+        ok: false,
+        errori: [
+          {
+            campo: 'consegnatoIl',
+            messaggio: 'La data di consegna non può essere nel futuro: il modulo è già arrivato.',
+          },
+        ],
+      }
+    }
+
+    blocchi = [
+      ...composto.blocchi,
+      { tipo: 'spazio', mm: 4 },
+      { tipo: 'paragrafo', testo: diciturModuloSuCarta(dataIt), stile: 'grassetto' },
+    ]
+  }
+
+  const documento: DocumentoPrestampato = {
+    intestazione: opzioni.carta.intestazione,
+    titolo: modello.titolo,
+    // Tutti e sei hanno `protocollo: 'nessuno'` nel registro: nessun numero, nessuna
+    // dicitura di copia, nessun riquadro di verifica. Vedi il commento della funzione.
+    protocollo: null,
+    blocchi,
+    luogoData: opzioni.carta.luogoData,
+    firma: { tipo: 'nessuna' },
+    verifica: null,
+  }
+
+  let pdf: Uint8Array
+  try {
+    pdf = buildPrestampatoPdf(documento)
+  } catch (err) {
+    // jsPDF lancia per davvero. Nel log lo slug, la modalità e il numero di blocchi: mai le
+    // risposte, che qui dentro possono essere una diagnosi o un'allergia.
+    logEvento('modulistica', 'error', {
+      operazione: 'prestampati/banco',
+      esito: 'modulo-famiglia-non-generato',
+      tipo: modello.slug,
+      evento: `modalita:${scelta.modalita}`,
+      n: blocchi.length,
+    }, err)
+    return {
+      ok: false,
+      errori: [{ campo: '', messaggio: 'Non è stato possibile generare il documento.' }],
+      codice: 'PRESTAMPATO_NON_GENERATO',
+    }
+  }
+
+  return {
+    ok: true,
+    pdf,
+    titolo: modello.titolo,
+    risposte: risposteValidate,
+    blocchiDopoFirmaNonStampati: 0,
+  }
+}
+
+/** Una riga-campo stampata solo quando il valore c'è: mai un'etichetta senza niente sotto. */
+function rigaSeValorizzata(etichetta: string, valore: string | null | undefined): RigaStampata[] {
+  const v = testo(valore)
+  return v ? [{ etichetta, valore: v }] : [{ etichetta }]
+}
+
+/**
+ * IL MODULO VUOTO — intestazione e dati del bambino già scritti, tutto il resto da compilare
+ * a penna.
+ *
+ * I blocchi si costruiscono dai DESCRITTORI del modello (`modello.campi`), non dalle
+ * risposte: è l'unica fonte che sappia quali domande quel modulo fa, ed è la stessa che il
+ * pannello usa per disegnare il form a schermo. Un elenco scritto a mano qui resterebbe
+ * indietro al primo campo aggiunto — e resterebbe indietro in silenzio, perché un modulo di
+ * carta a cui manca una domanda somiglia a un modulo di carta.
+ *
+ * ⚠️ I campi condizionali (`mostraSe`) SI STAMPANO TUTTI. A schermo si nascondono perché la
+ * risposta di un altro campo li rende inutili; sulla carta nessuno sa ancora cosa la famiglia
+ * risponderà, e una domanda tolta è una domanda che non tornerà più.
+ */
+function blocchiModuloVuoto(modello: ModelloGenitore, dati: DatiPrestampato): BloccoPrestampato[] {
+  const a = dati.alunno
+  const nomeSede = testo(dati.sede.scuola_nome)
+
+  const blocchi: BloccoPrestampato[] = [
+    {
+      tipo: 'paragrafo',
+      testo:
+        'Modulo da compilare e firmare a penna, e da riconsegnare in segreteria. I dati del bambino sono già stampati: controllali e correggili se qualcosa non torna.',
+      stile: 'corsivo',
+    },
+    { tipo: 'sezione', titolo: "Dati dell'alunno/a" },
+    ...(nomeSede
+      ? ([
+          { tipo: 'caselle', caselle: [{ testo: `Sede: ${nomeSede}`, spuntata: true }] },
+        ] satisfies BloccoPrestampato[])
+      : []),
+    {
+      tipo: 'campi',
+      colonne: 2,
+      campi: [
+        ...rigaSeValorizzata('Cognome', a.cognome),
+        ...rigaSeValorizzata('Nome', a.nome),
+        ...rigaSeValorizzata('Data di nascita', isoToIt(a.dataNascita ?? '')),
+        ...rigaSeValorizzata('Luogo di nascita', a.luogoNascita),
+        ...rigaSeValorizzata('Codice fiscale', a.codiceFiscale),
+        ...rigaSeValorizzata('Sezione/Classe', a.sezione),
+        ...rigaSeValorizzata('Anno scolastico', dati.annoScolastico),
+      ],
+    },
+  ]
+
+  // I campi «riservati all'ufficio» non stanno in mezzo alle domande della famiglia: vanno
+  // nel riquadro in fondo, che è il blocco che il motore disegna apposta per la parte che la
+  // segreteria compila DOPO la consegna.
+  const perLaFamiglia = modello.campi.filter((c) => c.chiestoA !== 'segreteria')
+  const perLUfficio = modello.campi.filter((c) => c.chiestoA === 'segreteria')
+
+  for (const campo of perLaFamiglia) blocchi.push(...blocchiDelCampo(campo))
+
+  blocchi.push({ tipo: 'spazio', mm: 4 })
+  // LA RIGA DA FIRMARE A PENNA, che è ciò che prende il posto del riquadro FEA. Il valore
+  // assente non è un buco: `disegnaCella` stampa il filetto grigio fino a fine colonna (§2
+  // di `00-impaginazione.md`), cioè esattamente una riga su cui si firma.
+  blocchi.push({
+    tipo: 'campi',
+    colonne: 2,
+    campi: [{ etichetta: 'Data della firma' }, { etichetta: 'Firma del genitore/tutore' }],
+  })
+
+  if (perLUfficio.length > 0) {
+    blocchi.push({
+      tipo: 'riquadro',
+      titolo: 'Riservato all’ufficio',
+      campi: perLUfficio.map((c) => ({ etichetta: c.etichetta })),
+    })
+  }
+
+  return blocchi
+}
+
+/**
+ * Un descrittore di campo → i blocchi che lo stampano vuoto.
+ *
+ * Ogni tipo di campo ha la sua forma sulla carta, e sbagliarla non è un difetto estetico: una
+ * scelta fra cinque voci stampata come una riga vuota chiede alla famiglia di indovinare
+ * quali fossero le cinque voci.
+ *
+ * ⚠️ TRE RAMI OGGI NON SI ESEGUONO, e vanno dichiarati invece di lasciar credere il
+ * contrario: `conferma`, `sceltaMultipla` e `griglia` appartengono al contratto di
+ * `modelli/segreteria.ts`, e nessuno dei sei moduli di famiglia li usa. Restano perché il
+ * parametro è `CampoPrestampato` del REGISTRO — l'unione dei due contratti — e un ramo
+ * mancante lì dentro non è un errore di compilazione: è un campo che sparisce dal foglio.
+ */
+function blocchiDelCampo(campo: DescrittoreCampo): BloccoPrestampato[] {
+  const etichetta = campo.etichetta.trim()
+  const aiuto: BloccoPrestampato[] = campo.aiuto?.trim()
+    ? [{ tipo: 'paragrafo', testo: campo.aiuto.trim(), stile: 'corsivo' }]
+    : []
+
+  if (campo.tipo === 'siNo' || campo.tipo === 'conferma') {
+    return [
+      { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
+      { tipo: 'caselle', caselle: [{ testo: 'Sì' }, { testo: 'No' }] },
+      ...aiuto,
+    ]
+  }
+
+  if (campo.tipo === 'scelta' || campo.tipo === 'sceltaMultipla') {
+    const caselle: CasellaPrestampato[] = (campo.opzioni ?? []).map((o) => ({ testo: o.etichetta }))
+    // Un elenco CHIUSO rimasto senza voci è quello che l'app costruisce a runtime dai
+    // delegati attivi: sulla carta non c'è un runtime, quindi si scrive a penna.
+    if (caselle.length === 0) {
+      return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }, ...aiuto]
+    }
+    return [
+      { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
+      { tipo: 'caselle', caselle },
+      ...aiuto,
+    ]
+  }
+
+  if (campo.tipo === 'griglia') {
+    const righe = (campo.opzioni ?? []).map((o) => [o.etichetta, ...(campo.valoriAmmessi ?? []).map(() => '')])
+    return [
+      { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
+      {
+        tipo: 'tabella',
+        intestazioni: ['', ...(campo.valoriAmmessi ?? []).map((v) => v.etichetta)],
+        righe,
+      },
+      ...aiuto,
+    ]
+  }
+
+  if (campo.tipo === 'righe') {
+    return [
+      { tipo: 'paragrafo', testo: `${etichetta}:`, stile: 'grassetto' },
+      {
+        tipo: 'tabella',
+        intestazioni: (campo.colonne ?? []).map((c) => c.etichetta),
+        righe: [],
+        // Tre righe libere: è il minimo che la specifica chiede sulle tabelle ripetibili,
+        // perché un modulo consegnato deve poter essere completato a penna.
+        righeVuote: 3,
+      },
+      ...aiuto,
+    ]
+  }
+
+  if (campo.tipo === 'file') {
+    return [
+      {
+        tipo: 'paragrafo',
+        testo: `${etichetta}: da allegare al modulo.`,
+        stile: 'corsivo',
+      },
+      ...aiuto,
+    ]
+  }
+
+  if (campo.tipo === 'testoLungo') {
+    // Tre righe e non una: un testo lungo scritto su un filetto solo finisce nel margine.
+    return [
+      { tipo: 'campi', colonne: 1, campi: [{ etichetta }, { etichetta: '' }, { etichetta: '' }] },
+      ...aiuto,
+    ]
+  }
+
+  return [{ tipo: 'campi', colonne: 1, campi: [{ etichetta }] }, ...aiuto]
 }
 
 /** La carta intestata del soggetto, qualunque esso sia. */

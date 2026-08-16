@@ -482,14 +482,32 @@ export const PATCH = withRoute('admin/schools:PATCH', async (request: Request) =
       return NextResponse.json({ error: error?.message ?? 'Aggiornamento fallito' }, { status: 500 })
     }
 
-    // Propaga nome/citta/indirizzo anche al tenant `schools` (upsert per coprire
-    // eventuali sedi orfane residue). Best-effort: `scuole` è la fonte anagrafica,
-    // ma `schools` è ciò che vede il SedeSelector e va tenuto allineato.
-    const schoolPatch: Record<string, unknown> = { id }
-    if (nome !== undefined) schoolPatch.nome = String(nome).trim()
-    if (citta !== undefined) schoolPatch.citta = citta ? String(citta).trim() : null
-    if (indirizzo !== undefined) schoolPatch.indirizzo = indirizzo ? String(indirizzo).trim() : null
-    if (Object.keys(schoolPatch).length > 1) {
+    // ── Propagazione su `schools`, e perché si legge da `data` e non dal corpo ──
+    // Best-effort: `scuole` è la fonte anagrafica, ma `schools` è ciò che vede il
+    // SedeSelector ed è il ripiego da cui prestampati, prefill e protocolli
+    // leggono nome/città/indirizzo quando manca la riga `scuole`.
+    //
+    // La riga si compone dai valori AUTORITATIVI appena scritti (`data`), non da
+    // quelli arrivati nel corpo. `schools.nome` è NOT NULL senza default, e un
+    // `upsert` propone comunque un INSERT: Postgres valida i NOT NULL sulla tupla
+    // proposta PRIMA di risolvere `ON CONFLICT`. Costruire il payload dal corpo
+    // significava quindi mandare `nome` assente ogni volta che il chiamante non
+    // lo includeva — cioè SEMPRE, perché Impostazioni → Sede & Intestazione manda
+    // `{id, citta, indirizzo, anagrafica}` e il nome non lo mostra nemmeno.
+    //
+    // Misurato in produzione (`app_log`, 2026-08-15 17:50:41Z, sede Aversa):
+    //   23502 «null value in column "nome" of relation "schools"»
+    // `scuole` si aggiornava, `schools` restava indietro, e le due tabelle
+    // divergevano in silenzio dietro un `warn` che nessuno rileggeva.
+    const toccaAnagrafica = nome !== undefined || citta !== undefined || indirizzo !== undefined
+    if (toccaAnagrafica) {
+      const riga = data as { nome?: string | null; citta?: string | null; indirizzo?: string | null }
+      const schoolPatch: Record<string, unknown> = {
+        id,
+        nome: riga.nome,
+        citta: riga.citta ?? null,
+        indirizzo: riga.indirizzo ?? null,
+      }
       try {
         const { error: schoolsErr } = await supabase
           .from('schools')

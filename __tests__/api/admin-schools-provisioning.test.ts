@@ -210,12 +210,30 @@ describe('POST /api/admin/schools — provisioning', () => {
 
 describe('PATCH /api/admin/schools — propagazione a schools', () => {
   it('200: propaga nome/citta/indirizzo anche su schools (upsert)', async () => {
+    // `.update(…).select(…).single()` restituisce la riga DOPO l'aggiornamento, e
+    // la propagazione legge da lì — non dal corpo della richiesta. Lo stub va
+    // istruito di conseguenza: prima rispondeva `{id:'sc-1', nome:'X'}` per
+    // qualunque PATCH, cioè una riga che l'aggiornamento appena fatto non lo
+    // rifletteva affatto.
+    h.scuoleUpdate = { data: { id: 'sc-1', nome: 'Kidville Centro', citta: 'Napoli', indirizzo: null }, error: null }
     const res = await PATCH(reqBody({ id: 'sc-1', nome: 'Kidville Centro', citta: 'Napoli' }, 'PATCH'))
     expect(res.status).toBe(200)
     expect(h.upserts).toHaveLength(1)
     expect(h.upserts[0]?.table).toBe('schools')
     expect(h.upserts[0]?.row).toMatchObject({ id: 'sc-1', nome: 'Kidville Centro', citta: 'Napoli' })
     expect(h.logScrittura).toHaveBeenCalled()
+  })
+
+  it('200: il corpo senza `nome` propaga comunque un nome (schools.nome è NOT NULL)', async () => {
+    // È il corpo che manda Impostazioni → Sede & Intestazione: il form il nome
+    // non lo mostra e non lo tocca. Costruendo il payload dal CORPO, `nome`
+    // restava assente e l'upsert falliva con 23502 — misurato in produzione il
+    // 2026-08-15 su Aversa — perché Postgres valida i NOT NULL sulla tupla
+    // proposta prima di risolvere `ON CONFLICT`, anche se la riga esiste già.
+    h.scuoleUpdate = { data: { id: 'sc-1', nome: 'Kidville Aversa', citta: 'Aversa', indirizzo: "Via dell'Archeologia 54" }, error: null }
+    const res = await PATCH(reqBody({ id: 'sc-1', citta: 'Aversa', indirizzo: "Via dell'Archeologia 54" }, 'PATCH'))
+    expect(res.status).toBe(200)
+    expect(h.upserts[0]?.row.nome).toBe('Kidville Aversa')
   })
 
   it('200: senza campi anagrafici non tocca schools', async () => {

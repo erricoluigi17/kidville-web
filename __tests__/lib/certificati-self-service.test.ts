@@ -1,8 +1,66 @@
 import { describe, it, expect } from 'vitest'
 import { buildCertificatoBody, buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service'
-import { normalizzaAnagraficaSede, zAnagraficaSede } from '@/lib/scuole/anagrafica'
+import { componiIndirizzoSede, normalizzaAnagraficaSede, zAnagraficaSede } from '@/lib/scuole/anagrafica'
 
 const anna = { nome: 'Anna', cognome: 'Bianchi', classe_sezione: 'TEST 1A' }
+
+// I valori della spec §2.1, scritti in produzione dalla UI il 2026-08-16.
+// Questa tabella è la testata che esce DAVVERO sui certificati delle tre sedi:
+// se un giorno qualcuno rimette CAP e città dentro `indirizzo`, il carattere in
+// più si vede qui prima che su un documento firmato che va all'INPS.
+//
+// Sta a livello di modulo perché la usano due blocchi: quello che verifica la
+// testata e quello che verifica il compositore comune.
+const TRE_SEDI = [
+  {
+    sede: 'Giugliano',
+    input: {
+      scuola_nome: 'Kidville Giugliano',
+      scuola_indirizzo: 'Via Prima Traversa Antica Giardini 5',
+      scuola_cap: '80014',
+      scuola_citta: 'Giugliano in Campania',
+      scuola_provincia: 'NA',
+      scuola_codice_meccanografico: 'NA1A079004 · NA1E094004',
+    },
+    atteso: [
+      'Kidville Giugliano',
+      'Via Prima Traversa Antica Giardini 5 — 80014 Giugliano in Campania (NA)',
+      'Cod. Mecc. NA1A079004 · NA1E094004',
+    ],
+  },
+  {
+    sede: 'Aversa',
+    input: {
+      scuola_nome: 'Kidville Aversa',
+      scuola_indirizzo: "Via dell'Archeologia 54",
+      scuola_cap: '81031',
+      scuola_citta: 'Aversa',
+      scuola_provincia: 'CE',
+      scuola_codice_meccanografico: 'CE1A178007',
+    },
+    atteso: [
+      'Kidville Aversa',
+      "Via dell'Archeologia 54 — 81031 Aversa (CE)",
+      'Cod. Mecc. CE1A178007',
+    ],
+  },
+  {
+    sede: 'Cesa',
+    input: {
+      scuola_nome: 'Kidville Cesa',
+      scuola_indirizzo: 'Via Filippo Turati 2',
+      scuola_cap: '81030',
+      scuola_citta: 'Cesa',
+      scuola_provincia: 'CE',
+      scuola_codice_meccanografico: 'CE1AE75008 · CE1E05400Q',
+    },
+    atteso: [
+      'Kidville Cesa',
+      'Via Filippo Turati 2 — 81030 Cesa (CE)',
+      'Cod. Mecc. CE1AE75008 · CE1E05400Q',
+    ],
+  },
+] as const
 
 describe('buildCertificatoBody', () => {
   it('frequenza: sezione reale, niente partitivo, niente Girasoli', () => {
@@ -93,61 +151,6 @@ describe("buildIntestazioneSede — l'indirizzo non si stampa due volte", () => 
     expect(righe[1]).not.toMatch(/\(NA\).*Giugliano/)
   })
 
-  // I valori della spec §2.1, scritti in produzione dalla UI il 2026-08-16.
-  // Questa tabella è la testata che esce DAVVERO sui certificati delle tre sedi:
-  // se un giorno qualcuno rimette CAP e città dentro `indirizzo`, il carattere
-  // in più si vede qui prima che su un documento firmato che va all'INPS.
-  const TRE_SEDI = [
-    {
-      sede: 'Giugliano',
-      input: {
-        scuola_nome: 'Kidville Giugliano',
-        scuola_indirizzo: 'Via Prima Traversa Antica Giardini 5',
-        scuola_cap: '80014',
-        scuola_citta: 'Giugliano in Campania',
-        scuola_provincia: 'NA',
-        scuola_codice_meccanografico: 'NA1A079004 · NA1E094004',
-      },
-      atteso: [
-        'Kidville Giugliano',
-        'Via Prima Traversa Antica Giardini 5 — 80014 Giugliano in Campania (NA)',
-        'Cod. Mecc. NA1A079004 · NA1E094004',
-      ],
-    },
-    {
-      sede: 'Aversa',
-      input: {
-        scuola_nome: 'Kidville Aversa',
-        scuola_indirizzo: "Via dell'Archeologia 54",
-        scuola_cap: '81031',
-        scuola_citta: 'Aversa',
-        scuola_provincia: 'CE',
-        scuola_codice_meccanografico: 'CE1A178007',
-      },
-      atteso: [
-        'Kidville Aversa',
-        "Via dell'Archeologia 54 — 81031 Aversa (CE)",
-        'Cod. Mecc. CE1A178007',
-      ],
-    },
-    {
-      sede: 'Cesa',
-      input: {
-        scuola_nome: 'Kidville Cesa',
-        scuola_indirizzo: 'Via Filippo Turati 2',
-        scuola_cap: '81030',
-        scuola_citta: 'Cesa',
-        scuola_provincia: 'CE',
-        scuola_codice_meccanografico: 'CE1AE75008 · CE1E05400Q',
-      },
-      atteso: [
-        'Kidville Cesa',
-        'Via Filippo Turati 2 — 81030 Cesa (CE)',
-        'Cod. Mecc. CE1AE75008 · CE1E05400Q',
-      ],
-    },
-  ] as const
-
   it.each(TRE_SEDI)('$sede: testata esatta, nessun pezzo ripetuto', ({ input, atteso }) => {
     const righe = buildIntestazioneSede(input)
     expect(righe).toEqual(atteso)
@@ -171,6 +174,67 @@ describe("buildIntestazioneSede — l'indirizzo non si stampa due volte", () => 
     expect(righe[1]).toBe(
       'Via Prima Traversa Antica Giardini 5, 80014 Giugliano in Campania (NA) — Giugliano'
     )
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UN COMPOSITORE SOLO, PERCHÉ I LETTORI DEL CAMPO SONO DUE
+//
+// Ridurre `scuole.indirizzo` alla sola via (spec §2.2) non ha tolto il problema:
+// l'ha SPOSTATO DI POSTO. Prima la riga completa stava NEL DATO, e chiunque
+// leggesse la colonna se la ritrovava già scritta; da oggi la riga completa è un
+// CALCOLO, e chi non lo fa stampa mezzo indirizzo.
+//
+// Il censimento del Task 3.1 la vittima l'aveva già trovata e nominata:
+// `lib/email/contesto.ts` legge `scuole.indirizzo` grezzo e lo passa a `piede()`,
+// che lo stampa come riga unica in fondo a TUTTE le email (undici generatori).
+// Prima della riduzione il piede di Cesa diceva «Via Filippo Turati 2, 81030
+// Cesa (CE)»; dopo, «Via Filippo Turati 2». Un censimento che elenca una vittima
+// e non la cura ha misurato il danno, non l'ha evitato.
+//
+// La composizione quindi vive in UN posto solo — `componiIndirizzoSede`, in
+// `lib/scuole/anagrafica`, accanto ai campi che compone. È lo stesso argomento
+// con cui la spec §1.5 fonde le due testate PDF in una funzione sola: due copie
+// della stessa regola divergono sempre, prima o poi.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('la riga dell\'indirizzo si compone in un posto solo', () => {
+  it('la testata del certificato non compone per conto suo: usa il compositore comune', () => {
+    for (const { input } of TRE_SEDI) {
+      expect(buildIntestazioneSede(input)[1]).toBe(
+        componiIndirizzoSede({
+          indirizzo: input.scuola_indirizzo,
+          cap: input.scuola_cap,
+          citta: input.scuola_citta,
+          provincia: input.scuola_provincia,
+        })
+      )
+    }
+  })
+
+  it('la sola via non basta: CAP, città e provincia entrano nella riga', () => {
+    expect(
+      componiIndirizzoSede({
+        indirizzo: 'Via Filippo Turati 2',
+        cap: '81030',
+        citta: 'Cesa',
+        provincia: 'CE',
+      })
+    ).toBe('Via Filippo Turati 2 — 81030 Cesa (CE)')
+  })
+
+  it('ciò che manca si omette, non si stampa vuoto né si inventa', () => {
+    expect(componiIndirizzoSede({})).toBeNull()
+    expect(componiIndirizzoSede({ indirizzo: '   ' })).toBeNull()
+    // Solo la via: nessun trattino sospeso in coda.
+    expect(componiIndirizzoSede({ indirizzo: 'Via Filippo Turati 2' })).toBe('Via Filippo Turati 2')
+    // Senza via ma con il luogo: la riga esiste lo stesso, senza trattino in testa.
+    expect(componiIndirizzoSede({ citta: 'Cesa', provincia: 'CE' })).toBe('Cesa (CE)')
+    // Provincia senza città: la sigla resta, fra parentesi. È il comportamento
+    // che la testata aveva già e che l'estrazione conserva tale e quale — questo
+    // test lo fissa perché sia una scelta e non un residuo. Nelle tre sedi vere
+    // non capita: città e provincia sono sempre compilate insieme.
+    expect(componiIndirizzoSede({ indirizzo: 'Via Filippo Turati 2', provincia: 'CE' }))
+      .toBe('Via Filippo Turati 2 — (CE)')
   })
 })
 

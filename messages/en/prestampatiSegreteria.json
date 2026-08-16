@@ -48,10 +48,27 @@
     "registroPresenze": "Monthly attendance register"
   },
 
-  "motivoFirmaDaRaccogliere": "It is issued from the family’s signature flow: here it would attest a signature nobody has given.",
   "motivoFirmaSenzaFlusso": "It closes with the parent’s electronic signature, and no screen collects it yet.",
   "motivoFonteDatiAssente": "The data this document must carry is not available in the records yet.",
   "motivoLegaleRappresentanteAssente": "The legal representative’s name is missing: add it under Settings → Location & Letterhead and try again.",
+  "motivoCopiaFirmataAssente": "There is no signed copy of this form in the child’s file: the family has not signed it yet.",
+
+  "modalitaTitolo": "How you are working on this form",
+  "modalitaSottotitolo": "These are three different sheets: choose before filling anything in, because it changes what you are asked for.",
+  "modalitaCopiaFirmata": "Copy signed by the family",
+  "modalitaCopiaFirmataAiuto": "Takes the form the parent already signed in the app from the child’s file: it does not create a new one.",
+  "modalitaCopiaVuota": "Blank copy to sign by hand",
+  "modalitaCopiaVuotaAiuto": "Prints the form with the child’s details already filled in and everything else blank, for families who do not use the app.",
+  "modalitaSuCarta": "Form handed back filled in on paper",
+  "modalitaSuCartaAiuto": "Records what the family wrote and signed on paper: the original stays on file, and no scan is attached here.",
+  "modalitaFirmaCopiaFirmata": "The sheet carries the electronic signature box, because that signature really happened.",
+  "modalitaFirmaCopiaVuota": "No electronic signature: in its place there is the line to sign by hand.",
+  "modalitaFirmaSuCarta": "No electronic signature: in its place there is the wording pointing to the signed original on file.",
+  "modalitaConsegnatoIl": "Handed in at the office on",
+  "modalitaConsegnatoIlAiuto": "This is the date printed on the sheet, next to the wording pointing to the original.",
+  "modalitaDaScegliere": "Choose how you are working on this form: what you are asked for depends on it.",
+  "modalitaSenzaCampiFirmata": "There is nothing to fill in: the family already filled in and signed the form.",
+  "modalitaSenzaCampiVuota": "There is nothing to fill in: the sheet comes out blank, and the family fills it in by hand.",
 
   "giaInArchivio": "What the app already has",
   "datoNascita": "Date of birth",

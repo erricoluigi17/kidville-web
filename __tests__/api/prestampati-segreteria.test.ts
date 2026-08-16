@@ -104,6 +104,10 @@ const h = vi.hoisted(() => {
     rpc: [] as { nome: string; args: unknown }[],
     caricamenti: [] as { path: string; byte: number }[],
     rimossi: [] as string[],
+    /** I percorsi di storage per cui è stato chiesto un download, nell'ordine. */
+    scaricati: [] as string[],
+    /** I file che il bucket ha davvero: `percorso → byte`. Ciò che non c'è non si scarica. */
+    fileScaricabili: {} as Record<string, Uint8Array>,
     /**
      * I bucket che lo storage ha davvero. Non è un dettaglio del doppio: `sensitive_documents`
      * è CONDIVISO col fascicolo (`primaria/fascicolo`), e la domanda che questo elenco
@@ -194,6 +198,24 @@ const h = vi.hoisted(() => {
           remove: (paths: string[]) => {
             state.rimossi.push(...paths)
             return Promise.resolve({ data: null, error: null })
+          },
+          /**
+           * Il download della copia firmata dal fascicolo.
+           *
+           * `scaricati` registra i percorsi CHIESTI, non quelli trovati: serve a provare che
+           * la route va a prendere il file che la riga di `student_documents` indica, e non
+           * uno che si è costruita da sé.
+           */
+          download: (path: string) => {
+            state.scaricati.push(path)
+            const byte = state.fileScaricabili[path]
+            if (!byte) {
+              return Promise.resolve({ data: null, error: { message: `Object not found: ${path}` } })
+            }
+            return Promise.resolve({
+              data: { arrayBuffer: async () => byte.buffer.slice(byte.byteOffset, byte.byteOffset + byte.byteLength) },
+              error: null,
+            })
           },
         }),
       },
@@ -344,12 +366,16 @@ function sedeInArchivio(config: unknown = CONFIG_SEDE) {
 /**
  * La stessa configurazione di sede, ma **senza la chiave** `legale_rappresentante`.
  *
- * 🔴 NON È UN CASO LIMITE: è l'unica configurazione che la produzione ha davvero. Misurato
- * in sola lettura il 2026-08-14 — `SELECT count(*) FROM scuole` → 4, righe con
- * `config->'anagrafica' ? 'legale_rappresentante'` → **0** — e cinque dei sei fogli che lo
- * sportello dichiara generabili si chiudono con quella firma. Finché `CONFIG_SEDE` era
- * l'unico mondo di questo file, l'unico stato che la produzione può raggiungere non veniva
- * eseguito da nessun test.
+ * ⚠️ QUI STAVA SCRITTO CHE ERA «l'unica configurazione che la produzione ha davvero»,
+ * misurato il 2026-08-14: `SELECT count(*) FROM scuole` → 4, righe con
+ * `config->'anagrafica' ? 'legale_rappresentante'` → **0**. Non lo è più: dal 2026-08-15 il
+ * campo esiste in Impostazioni → Sede & Intestazione e i valori veri sono stati scritti. Un
+ * commento che dichiara un conteggio dice il falso il giorno dopo, e questo l'ha detto in
+ * ventiquattr'ore — chi lo leggesse oggi crederebbe rotto un percorso che funziona.
+ *
+ * Il caso resta ed è quello di una sede NUOVA, che nasce senza quel campo: cinque dei fogli
+ * che lo sportello produce si chiudono con quella firma, e il rifiuto deve dire «completala
+ * nelle impostazioni della sede» invece di mandare a cercare un genitore.
  *
  * La chiave si TOGLIE invece di metterla a `null` o a stringa vuota: è così che è in
  * archivio, ed è l'unica forma che prova anche la lettura (`stringaDaAnagrafica`) oltre al
@@ -437,6 +463,8 @@ beforeEach(() => {
   h.state.rpc = []
   h.state.caricamenti = []
   h.state.rimossi = []
+  h.state.scaricati = []
+  h.state.fileScaricabili = {}
   h.state.bucketEsistenti = ['protocollo', 'sensitive_documents']
   h.state.bucketCreati = []
   h.state.bucketElencati = 0
@@ -475,11 +503,16 @@ describe('GET /api/prestampati — elenco e precompilato', () => {
       json.data.modelli.find((m: { slug: string }) => m.slug === slug)
 
     // La segreteria vede anche ciò che è dichiarato del genitore (regola di lettura del
-    // registro), ma il modulo che attesta una firma OTP non nasce da qui.
+    // registro), e da qui quel modulo NASCE: in una delle tre modalità, due delle quali non
+    // dichiarano nessuna firma elettronica.
     expect(per('scheda_sanitaria')).toMatchObject({
-      generabile: false,
-      motivo: 'firma_da_raccogliere',
+      generabile: true,
+      modalita: ['copia_firmata', 'copia_vuota', 'su_carta'],
     })
+    // I due certificati stanno nello stesso banco ma li firma il legale rappresentante:
+    // nascono già oggi allo sportello, e di modalità non ne hanno.
+    expect(per('certificato_iscrizione_frequenza')).toMatchObject({ generabile: true })
+    expect(per('certificato_iscrizione_frequenza').modalita).toBeUndefined()
     // Tre aspettano una fonte dati che non esiste ancora: il pulsante resta spento.
     expect(per('sollecito_pagamento')).toMatchObject({
       generabile: false,
@@ -490,20 +523,56 @@ describe('GET /api/prestampati — elenco e precompilato', () => {
     expect(per('stampe_sezione')).toMatchObject({ generabile: true, soggetto: 'sezione' })
   })
 
-  it('«si firma altrove» e «non si firma da nessuna parte» sono due motivi diversi', async () => {
+  it('«si firma qui, in una delle tre modalità» e «non si firma da nessuna parte» restano due cose diverse', async () => {
     // 🔴 Il motivo era uno solo e diceva a tutti «si genera dal flusso di firma della
     // famiglia»: falso per due dei diciassette. Il banco della famiglia si costruisce con
     // `prestampatiPerRuolo('genitore')`, che non contiene né il verbale di infortunio né il
     // documento di valutazione — quindi l'educatrice che apriva il pannello per il verbale
     // di un infortunio leggeva un'indicazione che la mandava in un flusso incapace di
     // produrlo, e nessuna strada nel prodotto lo produceva.
+    //
+    // Dal 2026-08-16 il primo dei due motivi è sparito del tutto: la delega al ritiro nasce
+    // allo sportello. Il secondo resta, e su questi due soli — e resta VERO, che è la
+    // ragione per cui il test si guarda ancora.
     const res = await GET(req())
     const json = await res.json()
     const per = (slug: string) => json.data.modelli.find((m: { slug: string }) => m.slug === slug)
 
-    expect(per('delega_ritiro')).toMatchObject({ generabile: false, motivo: 'firma_da_raccogliere' })
+    expect(per('delega_ritiro')).toMatchObject({ generabile: true })
     expect(per('verbale_infortunio')).toMatchObject({ generabile: false, motivo: 'firma_senza_flusso' })
     expect(per('valutazione_infanzia')).toMatchObject({ generabile: false, motivo: 'firma_senza_flusso' })
+    // E i due che restano spenti non offrono modalità: offrirle vorrebbe dire un pulsante
+    // che porta a un rifiuto, perché `componiPrestampato` non sa comporli.
+    expect(per('verbale_infortunio').modalita).toBeUndefined()
+    expect(per('valutazione_infanzia').modalita).toBeUndefined()
+  })
+
+  it('nessun modulo di famiglia resta nella lista dei non generabili', async () => {
+    // È la misura del guasto che questo lavoro chiude: `elencoPerRuolo('segreteria')`
+    // mostrava diciassette modelli e ne generava UNO, e sei dei sedici spenti cadevano per
+    // una firma elettronica che lo sportello non poteva dichiarare. Il rimedio non è
+    // dichiararla lo stesso: è ammettere che di fogli ce ne sono tre, e che due non la
+    // dichiarano affatto.
+    const res = await GET(req())
+    const json = await res.json()
+    const modelli = json.data.modelli as { slug: string; generabile: boolean; motivo?: string }[]
+
+    const SEI = [
+      'scheda_sanitaria',
+      'autorizzazione_farmaci',
+      'dieta_speciale',
+      'delega_ritiro',
+      'permesso_orario',
+      'autorizzazione_uscita',
+    ]
+    for (const slug of SEI) {
+      const voce = modelli.find((m) => m.slug === slug)
+      expect(voce, slug).toMatchObject({ generabile: true })
+      expect(voce?.motivo, slug).toBeUndefined()
+    }
+    // E il motivo non esiste più su NESSUNO dei diciassette: se ricomparisse, sarebbe
+    // ricomparso anche il rifiuto.
+    expect(modelli.map((m) => m.motivo)).not.toContain('firma_da_raccogliere')
   })
 
   it('il verbale di infortunio non rimanda a un flusso che non lo contiene', async () => {
@@ -900,7 +969,13 @@ describe('POST /api/prestampati/genera — i rifiuti', () => {
     expect(h.state.inserimenti).toEqual([])
   })
 
-  it('un modulo che attesta la firma del genitore non nasce dallo sportello, e non legge l anagrafica', async () => {
+  it('un modulo di famiglia SENZA modalità è un 400 sul campo, e non legge l anagrafica', async () => {
+    // 🔴 IL RIFIUTO ERA UN ALTRO, e la differenza è tutto questo lavoro: fino al 2026-08-16
+    // la delega al ritiro rispondeva 409 «si genera dal flusso di firma della famiglia»,
+    // cioè non nasceva affatto. Ora nasce, ma la modalità si DICHIARA: fra «la copia che il
+    // genitore ha firmato» e «un modulo vuoto da firmare a penna» non c'è un valore
+    // predefinito ragionevole, e sceglierne uno al posto di chi sta allo sportello
+    // metterebbe nel fascicolo di un minore un foglio che dice un'altra cosa.
     alunnoIn()
 
     const res = await POST(
@@ -908,35 +983,43 @@ describe('POST /api/prestampati/genera — i rifiuti', () => {
     )
     const json = await res.json()
 
-    expect(res.status).toBe(409)
-    expect(json.codice).toBe('PRESTAMPATO_FIRMA_NON_VALIDA')
+    expect(res.status).toBe(400)
+    expect(json.details?.map((d: { path?: string }) => d.path)).toContain('modalita')
     // Il rifiuto arriva PRIMA della lettura: nessun dato del bambino è stato toccato.
     expect(h.state.filtri.some((f) => f.tabella === 'alunni')).toBe(false)
   })
 
-  it('i due motivi di firma hanno lo stesso codice, e il corpo dice QUALE dei due è', async () => {
+  it('un modello senza modalità che ne riceve una è un 400: non si ignora in silenzio', async () => {
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'nulla_osta',
+        alunnoId: ALUNNO,
+        modalita: 'copia_vuota',
+        risposte: RISPOSTE_NULLA_OSTA,
+      }),
+    )
+    const json = await res.json()
+
+    expect(res.status).toBe(400)
+    expect(json.details?.map((d: { path?: string }) => d.path)).toContain('modalita')
+    // E nessun numero di protocollo è stato bruciato per una richiesta malformata.
+    expect(h.state.rpc).toEqual([])
+  })
+
+  it('«non si firma da nessuna parte» resta un rifiuto suo, col suo motivo', async () => {
     // 🔴 LA DISTINZIONE NON ARRIVAVA A SCHERMO. `messaggioDaCorpo` mostra il testo di
     // CATALOGO del `codice` e butta via `error` (tranne per i codici dichiarati in
     // `CODICI_CON_DETTAGLIO`, che oggi è il solo `CLASSI_FUORI_SEDE`): con un codice solo
     // sui due motivi, il pannello mostrava a tutti e due «La firma non risulta raccolta o
     // non è valida…». L'educatrice del verbale d'infortunio leggeva la stessa frase della
-    // delega al ritiro — che invece una schermata di firma ce l'ha — cioè la differenza
-    // viaggiava fino al client per non essere letta da nessuno.
+    // delega al ritiro — che invece una schermata di firma ce l'ha.
     //
-    // Il codice resta uno (lo status è lo stesso fatto: il foglio non esce perché la firma
-    // non c'è), e il MOTIVO viaggia in un campo suo, enumerato e stabile, che il pannello
-    // traduce con il catalogo della propria lingua.
+    // Dei due motivi ne è rimasto uno: la delega al ritiro ora nasce allo sportello. Il
+    // verbale di infortunio no, e il suo rifiuto deve continuare a dirlo con il proprio
+    // motivo enumerato — non con la frase generica del codice.
     alunnoIn()
-
-    const altrove = await POST(
-      reqGenera({ modello: 'scheda_sanitaria', alunnoId: ALUNNO, risposte: {} }),
-    )
-    const jsonAltrove = await altrove.json()
-    expect(altrove.status).toBe(409)
-    expect(jsonAltrove).toMatchObject({
-      codice: 'PRESTAMPATO_FIRMA_NON_VALIDA',
-      motivo: 'firma_da_raccogliere',
-    })
 
     const daNessunaParte = await POST(
       reqGenera({ modello: 'verbale_infortunio', alunnoId: ALUNNO, risposte: {} }),
@@ -947,11 +1030,7 @@ describe('POST /api/prestampati/genera — i rifiuti', () => {
       codice: 'PRESTAMPATO_FIRMA_NON_VALIDA',
       motivo: 'firma_senza_flusso',
     })
-
-    // Il punto: stesso codice, motivi diversi. È il campo che il pannello deve guardare.
-    expect(jsonAltrove.codice).toBe(jsonDaNessunaParte.codice)
-    expect(jsonAltrove.motivo).not.toBe(jsonDaNessunaParte.motivo)
-    // E nessuno dei due ha aperto l'anagrafica del bambino.
+    // Il rifiuto arriva PRIMA della lettura: nessun dato del bambino è stato toccato.
     expect(h.state.filtri.some((f) => f.tabella === 'alunni')).toBe(false)
   })
 
@@ -2094,5 +2173,400 @@ describe('scadenzaDaRisposte — chi scade, e con quale campo lo dice', () => {
     expect(scadenzaDaRisposte({ ricorrenzaFino: '' })).toBeNull()
     expect(scadenzaDaRisposte(null)).toBeNull()
     expect(scadenzaDaRisposte('2026-09-30')).toBeNull()
+  })
+})
+
+// ─── Le tre modalità sui moduli di famiglia ─────────────────────────────────────
+
+/**
+ * 🔴 IL VINCOLO CHE QUESTO BLOCCO ESISTE PER TENERE: **un foglio non deve MAI dichiarare una
+ * firma elettronica che non è avvenuta.**
+ *
+ * Dei tre modi di lavorare su un modulo di famiglia, uno solo porta il riquadro «Firmato da
+ * …, codice OTP verificato, riferimento …» — la copia che il genitore ha davvero
+ * sottoscritto, ripresa dal fascicolo tale e quale. Gli altri due stampano un foglio nuovo,
+ * e su quel foglio la firma non c'è: la copia vuota porta la RIGA da firmare a penna, il
+ * modulo tornato di carta porta la dicitura che rimanda all'originale agli atti.
+ *
+ * I test che seguono leggono il TESTO del PDF, non la configurazione che l'ha prodotto: è
+ * l'unica prova che regge, perché `eslint`, `tsc` e un test sulle opzioni resterebbero tutti
+ * verdi anche se il riquadro tornasse — nessuno di loro sa cosa c'è stampato sul foglio.
+ */
+describe('POST /api/prestampati/genera — le tre modalità dei moduli di famiglia', () => {
+  /** Il n. 09 compilato: entrata posticipata, che è il ramo senza cancelli di contesto. */
+  const RISPOSTE_PERMESSO = { giorno: '2026-09-15', tipo: 'entrata_posticipata', oraArrivo: '09:30' }
+
+  /** I sei moduli di famiglia, cioè quelli che `modalitaDelModello` accende. */
+  const SEI_MODULI = [
+    'scheda_sanitaria',
+    'autorizzazione_farmaci',
+    'dieta_speciale',
+    'delega_ritiro',
+    'permesso_orario',
+    'autorizzazione_uscita',
+  ] as const
+
+  /** La riga di `student_documents` che tiene la copia firmata, e il file nel bucket. */
+  function copiaFirmataInArchivio(
+    slug = 'permesso_orario',
+    percorso = `${ALUNNO}/prestampati/${slug}-1.pdf`,
+  ) {
+    h.state.risposte['student_documents'] = [
+      {
+        data: [{ id: 'doc-firmato-1', file_name: 'Permesso_firmato.pdf', storage_path: percorso }],
+        error: null,
+      },
+    ]
+    // Byte inventati: il test prova che tornano IDENTICI, non che siano un PDF.
+    h.state.fileScaricabili[percorso] = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37])
+    return percorso
+  }
+
+  it('copia vuota: nessun riquadro di firma elettronica, e la riga da firmare a penna al suo posto', async () => {
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'scheda_sanitaria',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_vuota',
+        // Nessuna risposta, ed è il punto: la scheda sanitaria ne pretende otto, e su questo
+        // foglio non ne serve nessuna — le scriverà la famiglia a penna.
+        risposte: {},
+      }),
+    )
+    const testo = await estraiTesto(new Uint8Array(await res.arrayBuffer()))
+
+    expect(res.status).toBe(201)
+    expect(res.headers.get('X-Prestampato-Modalita')).toBe('copia_vuota')
+    // 🔴 IL VINCOLO: niente riquadro FEA. Le tre righe che `componiAttestazione` scrive
+    // cominciano tutte da qui.
+    expect(testo).not.toContain('Firmato da')
+    expect(testo).not.toContain('Riferimento firma')
+    // E al suo posto la riga da firmare a penna.
+    expect(testo).toContain('Firma del genitore/tutore')
+    // I dati del bambino ci sono già: è la metà del lavoro che questo foglio fa risparmiare.
+    expect(testo).toContain('Inventato')
+    // Le domande del modulo ci sono, vuote: senza, sarebbe un foglio intestato e basta.
+    expect(testo).toContain('Pediatra')
+  })
+
+  it('copia vuota: non entra nel fascicolo del bambino', async () => {
+    // Una scheda sanitaria con tutte le risposte in bianco, archiviata, sarebbe
+    // indistinguibile da quella vera nell'elenco che la famiglia e la segreteria leggono.
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'scheda_sanitaria',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_vuota',
+        risposte: {},
+      }),
+    )
+
+    expect(res.status).toBe(201)
+    expect(res.headers.get('X-Prestampato-Archiviato')).toBe('non-previsto')
+    expect(h.state.inserimenti.filter((i) => i.tabella === 'student_documents')).toEqual([])
+    expect(h.state.caricamenti).toEqual([])
+  })
+
+  it('copia vuota: nessuno dei SEI moduli di famiglia stampa il riquadro della firma elettronica', async () => {
+    // Uno per uno, e non a campione: il difetto peggiore di questa catena è un foglio che
+    // attesta una firma che non c'è, e basta che scappi su UNO dei sei perché finisca nel
+    // fascicolo di un minore.
+    for (const slug of SEI_MODULI) {
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: slug,
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'copia_vuota',
+          risposte: {},
+        }),
+      )
+      expect(res.status, slug).toBe(201)
+      const testo = await estraiTesto(new Uint8Array(await res.arrayBuffer()))
+      expect(testo, slug).not.toContain('Firmato da')
+      expect(testo, slug).not.toContain('Riferimento firma')
+      expect(testo, slug).toContain('Firma del genitore/tutore')
+    }
+  })
+
+  it('modulo tornato su carta: la dicitura è quella, parola per parola, e la firma elettronica non c’è', async () => {
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'su_carta',
+        consegnatoIl: '2026-08-10',
+        risposte: RISPOSTE_PERMESSO,
+      }),
+    )
+    const testo = await estraiTesto(new Uint8Array(await res.arrayBuffer()))
+
+    expect(res.status).toBe(201)
+    expect(res.headers.get('X-Prestampato-Modalita')).toBe('su_carta')
+    // La dicitura dettata dal titolare, senza una parola in più o in meno.
+    expect(testo).toContain('Modulo consegnato su carta il 10/08/2026, firmato in originale agli atti')
+    // 🔴 E niente riquadro FEA: l'originale firmato è di carta e sta agli atti.
+    expect(testo).not.toContain('Firmato da')
+    expect(testo).not.toContain('Riferimento firma')
+    // Le risposte trascritte ci sono davvero: è la trascrizione di un modulo compilato.
+    expect(testo).toContain('15/09/2026')
+  })
+
+  it('modulo tornato su carta: entra nel fascicolo, con il tipo di documento del modello', async () => {
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'su_carta',
+        consegnatoIl: '2026-08-10',
+        risposte: RISPOSTE_PERMESSO,
+      }),
+    )
+
+    expect(res.status).toBe(201)
+    expect(res.headers.get('X-Prestampato-Archiviato')).toBe('archiviato')
+    const riga = h.state.inserimenti.find((i) => i.tabella === 'student_documents')
+    expect(riga?.valori).toMatchObject({
+      student_id: ALUNNO,
+      document_type: 'permesso_orario',
+      // Il permesso di un giorno scade quel giorno: un permesso che non scade è
+      // un'autorizzazione permanente firmata per un pomeriggio.
+      expiry_date: '2026-09-15',
+    })
+  })
+
+  it('modulo tornato su carta senza la data di consegna: 400 sul campo, e niente PDF', async () => {
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'su_carta',
+        risposte: RISPOSTE_PERMESSO,
+      }),
+    )
+    const json = await res.json()
+
+    expect(res.status).toBe(400)
+    expect(json.details?.map((d: { path?: string }) => d.path)).toContain('consegnatoIl')
+    expect(h.state.inserimenti.filter((i) => i.tabella === 'student_documents')).toEqual([])
+  })
+
+  it('modulo tornato su carta con una data nel futuro: 400 sul campo', async () => {
+    // Una consegna nel futuro finisce STAMPATA su un documento che entra nel fascicolo di un
+    // minore e dichiara che un originale firmato esiste già.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-16T09:00:00Z'))
+    try {
+      alunnoIn()
+      const res = await POST(
+        reqGenera({
+          modello: 'permesso_orario',
+          alunnoId: ALUNNO,
+          scuolaId: SEDE,
+          modalita: 'su_carta',
+          consegnatoIl: '2026-08-17',
+          risposte: RISPOSTE_PERMESSO,
+        }),
+      )
+      const json = await res.json()
+
+      expect(res.status).toBe(400)
+      expect(json.details?.map((d: { path?: string }) => d.path)).toContain('consegnatoIl')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('copia firmata: restituisce i byte ARCHIVIATI, non un foglio nuovo', async () => {
+    // 🔴 Rigenerarla darebbe stesse parole e byte diversi — cioè un file di cui la ricevuta
+    // FEA non è più la ricevuta, su un documento che attesta una firma.
+    alunnoIn()
+    const percorso = copiaFirmataInArchivio()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+    const byte = new Uint8Array(await res.arrayBuffer())
+
+    // 200 e non 201: non è stato creato niente.
+    expect(res.status).toBe(200)
+    expect(res.headers.get('X-Prestampato-Modalita')).toBe('copia_firmata')
+    expect(res.headers.get('X-Prestampato-Documento')).toBe('doc-firmato-1')
+    // I byte sono quelli del bucket, presi dal percorso che la riga di archivio indica.
+    expect(h.state.scaricati).toEqual([percorso])
+    expect([...byte]).toEqual([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37])
+    // Nessun documento nuovo: niente riga in archivio, niente file caricato.
+    expect(h.state.inserimenti.filter((i) => i.tabella === 'student_documents')).toEqual([])
+    expect(h.state.caricamenti).toEqual([])
+  })
+
+  it('copia firmata: la lettura del fascicolo si registra come `download`, non come `view` e basta', async () => {
+    alunnoIn()
+    copiaFirmataInArchivio()
+
+    await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+
+    const azioni = accessiTracciati().map((r) => r.azione)
+    // Due fatti diversi: «ho aperto l'anagrafica» e «mi sono portato via il documento
+    // firmato». Il giorno in cui una famiglia chiede chi ha toccato il fascicolo di suo
+    // figlio, i due si leggono in modo diverso.
+    expect(azioni).toContain('view')
+    expect(azioni).toContain('download')
+    expect(accessiTracciati().find((r) => r.azione === 'download')?.documento_id).toBe('doc-firmato-1')
+  })
+
+  it('copia firmata assente: 422 col suo motivo, e nessun tentativo di scaricare niente', async () => {
+    alunnoIn()
+    h.state.risposte['student_documents'] = [{ data: [], error: null }]
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+    const json = await res.json()
+
+    expect(res.status).toBe(422)
+    // Il MOTIVO viaggia in un campo suo perché il pannello mostra la frase del CODICE e
+    // butta via `error`: senza, la segreteria leggerebbe «completali in anagrafica».
+    expect(json).toMatchObject({ codice: 'PRESTAMPATO_DATI_MANCANTI', motivo: 'copia_firmata_assente' })
+    expect(h.state.scaricati).toEqual([])
+  })
+
+  it('copia firmata su un database senza l’enumerato: degrada pulito, non esplode', async () => {
+    // Il DB E2E della CI è un progetto separato e non è migrato: `document_type` non conosce
+    // gli slug dei prestampati, quindi il confronto risponde `22P02`. La risposta deve essere
+    // la stessa che si dà quando la copia non c'è — perché davvero non c'è.
+    alunnoIn()
+    h.state.risposte['student_documents'] = [
+      { data: null, error: { code: '22P02', message: 'invalid input value for enum document_type_enum' } },
+    ]
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'copia_firmata',
+        risposte: {},
+      }),
+    )
+    const json = await res.json()
+
+    expect(res.status).toBe(422)
+    expect(json.motivo).toBe('copia_firmata_assente')
+    expect(h.state.scaricati).toEqual([])
+  })
+
+  it('🔴 la ROTTA stende la carta intestata: i due fogli nuovi non escono nudi', async () => {
+    // È il difetto più grave possibile su questo ramo, e non lo vede nessun test sul motore:
+    // «il motore è perfetto e nessuna rotta lo chiama, e il documento vero esce PEGGIO di
+    // prima». `impaginazione.ts` non disegna più né banda né logo né piede — ce li ha la
+    // carta vera — quindi un foglio a cui la rotta non la stende è un foglio bianco con del
+    // testo sopra.
+    //
+    // La misura non è un numero cablato: è il CONFRONTO fra ciò che la rotta restituisce e
+    // lo stesso documento composto senza carta. L'asset pesa circa un megabyte e il foglio
+    // nudo qualche decina di chilobyte, quindi il rapporto è di un ordine di grandezza —
+    // ma il test non ha bisogno di sapere quanto: misura tutte e due le cose.
+    alunnoIn()
+
+    const res = await POST(
+      reqGenera({
+        modello: 'permesso_orario',
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        modalita: 'su_carta',
+        consegnatoIl: '2026-08-10',
+        risposte: RISPOSTE_PERMESSO,
+      }),
+    )
+    const daRotta = new Uint8Array(await res.arrayBuffer())
+
+    const voce = prestampato('permesso_orario')!
+    const contesto = {
+      soggetto: 'alunno' as const,
+      prefill: {
+        alunnoId: ALUNNO,
+        scuolaId: SEDE,
+        sezioneId: SEZIONE,
+        legaleRappresentante: null,
+        dati: {
+          alunno: { nome: 'Luca', cognome: 'Inventato', dataNascita: '2021-03-04', sezione: 'Coccinelle' },
+          genitori: [],
+          sede: { scuola_nome: 'Scuola Inventata', scuola_citta: 'Napoli' },
+          scuola: {},
+          annoScolastico: '2026/2027',
+          dataOggi: '2026-08-16',
+        },
+      },
+    }
+    const nudo = componiPrestampato(
+      voce,
+      contesto,
+      RISPOSTE_PERMESSO,
+      { carta: cartaDelContesto(contesto) },
+      'Inventata Anna',
+      { modalita: 'su_carta', consegnatoIl: '2026-08-10' },
+    )
+    expect(nudo.ok).toBe(true)
+    if (!nudo.ok) return
+
+    expect(res.status).toBe(201)
+    expect(daRotta.byteLength).toBeGreaterThan(nudo.pdf.byteLength * 10)
+  })
+
+  it('nessuna delle tre modalità consuma un numero di protocollo', async () => {
+    // Tutti e sei hanno `protocollo: 'nessuno'` nel registro, ed è la premessa su cui
+    // `componiModuloDiFamiglia` si permette di non passare da `assembla()`: se un giorno uno
+    // di loro uscisse dalla scuola, questo test diventerebbe rosso prima del foglio.
+    alunnoIn()
+    copiaFirmataInArchivio()
+
+    for (const corpo of [
+      { modalita: 'copia_firmata', risposte: {} },
+      { modalita: 'copia_vuota', risposte: {} },
+      { modalita: 'su_carta', consegnatoIl: '2026-08-10', risposte: RISPOSTE_PERMESSO },
+    ]) {
+      await POST(
+        reqGenera({ modello: 'permesso_orario', alunnoId: ALUNNO, scuolaId: SEDE, ...corpo }),
+      )
+    }
+
+    expect(h.state.rpc).toEqual([])
   })
 })

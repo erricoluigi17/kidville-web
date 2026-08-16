@@ -84,7 +84,47 @@ interface VoceModello {
   archiviazione: string
   generabile: boolean
   motivo?: string
+  /**
+   * I tre modi di lavorare su un modulo di famiglia, quando il modello ne ha
+   * (`modalitaDelModello`, `api/prestampati/banco.ts`). Assente sugli altri undici, e
+   * l'assenza è il dato: dove non c'è scelta non si chiede niente.
+   */
+  modalita?: string[]
 }
+
+/**
+ * LE TRE MODALITÀ, nell'ordine in cui si presentano allo sportello: prima quella che non
+ * produce niente di nuovo (la copia già firmata), poi le due che stampano un foglio.
+ *
+ * 🔴 DUE DELLE TRE NON PORTANO NESSUNA FIRMA ELETTRONICA, e il pannello deve dirlo: la
+ * riga «Firma la famiglia, con un codice usa e getta» del catalogo descrive il modello, non
+ * il foglio che sta per uscire. Su una copia vuota e su un modulo tornato di carta quella
+ * frase prometterebbe una firma che non ci sarà — che è, in piccolo, lo stesso difetto che
+ * il documento non deve avere.
+ */
+const MODALITA_ORDINE = ['copia_firmata', 'copia_vuota', 'su_carta'] as const
+type Modalita = (typeof MODALITA_ORDINE)[number]
+
+const CHIAVE_MODALITA: Record<Modalita, { titolo: string; aiuto: string; firma: string }> = {
+  copia_firmata: {
+    titolo: 'modalitaCopiaFirmata',
+    aiuto: 'modalitaCopiaFirmataAiuto',
+    firma: 'modalitaFirmaCopiaFirmata',
+  },
+  copia_vuota: {
+    titolo: 'modalitaCopiaVuota',
+    aiuto: 'modalitaCopiaVuotaAiuto',
+    firma: 'modalitaFirmaCopiaVuota',
+  },
+  su_carta: {
+    titolo: 'modalitaSuCarta',
+    aiuto: 'modalitaSuCartaAiuto',
+    firma: 'modalitaFirmaSuCarta',
+  },
+}
+
+const modalitaValida = (v: string): v is Modalita =>
+  (MODALITA_ORDINE as readonly string[]).includes(v)
 
 /** La stessa voce, più i campi che il form deve chiedere: è la risposta con `?modello=`. */
 interface SchedaModello {
@@ -164,18 +204,27 @@ const CHIAVE_MODELLI = 'modelli'
 const ROTTA = '/admin/modulistica'
 
 /**
- * I quattro motivi di `MotivoNonGenerabile` e la loro chiave di catalogo.
+ * I motivi di rifiuto enumerati che il server manda, e la loro chiave di catalogo.
  *
  * Il `motivo` viaggia in un campo suo, enumerato e stabile, proprio perché a tradurlo sia
  * il pannello: è la richiesta che `api/prestampati/banco.ts` e le due route scrivono per
  * esteso accanto a ogni rifiuto. Un motivo che non fosse qui dentro non si inventa: si
  * ripiega sulla `spiegazione` del server, che è italiana ma dice comunque qualcosa.
+ *
+ * ⚠️ `firma_da_raccogliere` NON C'È PIÙ, e la riga sparita vale un commento: diceva ai sei
+ * moduli di famiglia «si genera dal flusso di firma della famiglia, non dallo sportello»,
+ * ed era vero finché l'unico foglio che questo banco sapeva produrre era quello già
+ * firmato. Dal 2026-08-16 quei sei nascono da qui in una delle tre modalità.
+ *
+ * `copia_firmata_assente` non è un `MotivoNonGenerabile`: nasce nella route, dopo aver
+ * guardato il fascicolo, e viaggia dallo stesso campo per la stessa ragione — è la sola
+ * frase che dica cosa fare, cioè far firmare il modulo alla famiglia.
  */
 const CHIAVE_MOTIVO: Record<string, string> = {
-  firma_da_raccogliere: 'motivoFirmaDaRaccogliere',
   firma_senza_flusso: 'motivoFirmaSenzaFlusso',
   fonte_dati_assente: 'motivoFonteDatiAssente',
   legale_rappresentante_assente: 'motivoLegaleRappresentanteAssente',
+  copia_firmata_assente: 'motivoCopiaFirmataAssente',
 }
 
 /** Che sottoscrizione pretende il foglio (`FirmaPrestampatoRichiesta`). */
@@ -397,6 +446,20 @@ export function PrestampatiSegreteria() {
   const [alunnoId, setAlunnoId] = useState('')
   const [ricerca, setRicerca] = useState('')
   const [slug, setSlug] = useState('')
+  /**
+   * La modalità scelta, con lo SLUG per cui è stata scelta.
+   *
+   * La chiave rende superfluo un `reset`: cambiando modello la modalità di prima non
+   * combacia più e la schermata torna da sola a «scegli come stai lavorando», invece di
+   * portarsi dietro un «modulo tornato su carta» su un altro modulo. È lo stesso motivo per
+   * cui gli elenchi hanno la loro chiave, e la stessa ragione per cui non si scrive uno
+   * stato dentro un effetto (`react-hooks/set-state-in-effect`).
+   */
+  const [scelta, setScelta] = useState<{ chiave: string; modalita: Modalita | ''; consegnatoIl: string }>({
+    chiave: '',
+    modalita: '',
+    consegnatoIl: '',
+  })
 
   const [modelli, setModelli] = useState<Elenco<VoceModello>>(VUOTO)
   const [classi, setClassi] = useState<Elenco<Classe>>(VUOTO)
@@ -455,10 +518,31 @@ export function PrestampatiSegreteria() {
   const schedaPronta = chiaveScheda !== '' && scheda.chiave === chiaveScheda
   const dati = schedaPronta ? scheda.dati : null
 
+  // ── La modalità, per i sei moduli di famiglia ──────────────────────────────
+  //
+  // L'elenco dei modi lo dichiara il SERVER (`voceElenco`), e il pannello non lo deduce:
+  // dedurlo da `firma === 'otp_genitore'` sarebbe una seconda copia della regola di
+  // `modalitaDelModello`, e due copie divergono alla prima modifica.
+  const modiDisponibili = useMemo(
+    () => (modello?.modalita ?? []).filter(modalitaValida),
+    [modello?.modalita],
+  )
+  const modalita = scelta.chiave === slug && scelta.modalita ? scelta.modalita : ''
+  const consegnatoIl = scelta.chiave === slug ? scelta.consegnatoIl : ''
+  /** Serve una scelta e non è ancora stata fatta: la scheda non si compila. */
+  const modalitaDaScegliere = modiDisponibili.length > 0 && !modalita
+  /**
+   * Le risposte si chiedono SOLO quando la segreteria sta trascrivendo un modulo tornato
+   * compilato su carta. Sugli altri due fogli nessuno ha risposto niente — la copia firmata
+   * esiste già, la copia vuota la compila la famiglia a penna — e mostrare otto campi
+   * obbligatori davanti a un modulo che uscirà comunque vuoto è lavoro chiesto per niente.
+   */
+  const chiedeRisposte = modiDisponibili.length === 0 || modalita === 'su_carta'
+
   const campi = useMemo(() => dati?.modello.campi ?? [], [dati])
   const valori = risposte.chiave === chiaveScheda ? risposte.valori : {}
   const motivoScheda = dati?.motivo ?? null
-  const generabile = schedaPronta && !!dati?.prefill && !motivoScheda
+  const generabile = schedaPronta && !!dati?.prefill && !motivoScheda && !modalitaDaScegliere
 
   // ── Le quattro letture ─────────────────────────────────────────────────────
   //
@@ -654,6 +738,21 @@ export function PrestampatiSegreteria() {
     dimenticaEsito()
   }
 
+  const scegliModalita = (nuova: Modalita) => {
+    setScelta({ chiave: slug, modalita: nuova, consegnatoIl: '' })
+    dimenticaEsito()
+  }
+
+  const scegliConsegnatoIl = (iso: string) => {
+    setScelta((prec) => ({ ...prec, chiave: slug, consegnatoIl: iso }))
+    setErroriCampo((prec) => {
+      if (!prec.consegnatoIl) return prec
+      const resto = { ...prec }
+      delete resto.consegnatoIl
+      return resto
+    })
+  }
+
   const rispondi = (nome: string, valore: unknown) => {
     setRisposte((prec) => ({
       chiave: chiaveScheda,
@@ -679,10 +778,21 @@ export function PrestampatiSegreteria() {
    */
   const genera = async () => {
     if (!modello || !sede || !soggettoId) return
+    if (modalitaDaScegliere) return
     const mancanti: Record<string, string> = {}
-    for (const campo of campi) {
-      if (!campo.obbligatorio || !visibile(campo, valori)) continue
-      if (vuoto(campo, valori[campo.nome])) mancanti[campo.nome] = t('campoObbligatorio')
+    // I campi si controllano SOLO quando vengono chiesti: su una copia vuota nessuno ha
+    // risposto niente per costruzione, e pretendere qui una risposta obbligatoria
+    // impedirebbe di stampare proprio il foglio che deve uscire in bianco.
+    if (chiedeRisposte) {
+      for (const campo of campi) {
+        if (!campo.obbligatorio || !visibile(campo, valori)) continue
+        if (vuoto(campo, valori[campo.nome])) mancanti[campo.nome] = t('campoObbligatorio')
+      }
+    }
+    // La data di consegna è il dato che la dicitura STAMPA sul foglio: senza, quella frase
+    // direbbe che un originale firmato esiste senza dire da quando.
+    if (modalita === 'su_carta' && !consegnatoIl) {
+      mancanti.consegnatoIl = t('campoObbligatorio')
     }
     if (Object.keys(mancanti).length > 0) {
       setErroriCampo(mancanti)
@@ -701,7 +811,11 @@ export function PrestampatiSegreteria() {
           modello: modello.slug,
           scuolaId: sede,
           ...(modello.soggetto === 'sezione' ? { sezioneId: soggettoId } : { alunnoId: soggettoId }),
-          risposte: daSpedire(campi, valori),
+          // Le risposte si mandano solo dove sono state chieste: mandarle su una copia vuota
+          // significherebbe mandare quello che è rimasto scritto prima di cambiare modalità.
+          risposte: chiedeRisposte ? daSpedire(campi, valori) : {},
+          ...(modalita ? { modalita } : {}),
+          ...(modalita === 'su_carta' && consegnatoIl ? { consegnatoIl } : {}),
         }),
       })
 
@@ -1142,7 +1256,74 @@ export function PrestampatiSegreteria() {
                 <p className={AIUTO}>{t('campiSottotitolo')}</p>
               </div>
 
-              {campi.length === 0 ? (
+              {/* ── LE TRE MODALITÀ, prima di ogni campo ─────────────────────
+                  Viene prima perché DECIDE cosa viene dopo: la copia firmata non chiede
+                  niente, la copia vuota nemmeno, e solo la trascrizione di un modulo
+                  tornato di carta apre il form. Chiedere i campi e poi la modalità
+                  significherebbe far compilare otto risposte per poi buttarle via. */}
+              {modiDisponibili.length > 0 && (
+                <fieldset className="mt-4 rounded-xl border border-kidville-line p-3">
+                  <legend className="px-1 font-barlow text-[12px] font-bold uppercase tracking-[0.06em] text-kidville-sub">
+                    {t('modalitaTitolo')}
+                  </legend>
+                  <p className={AIUTO}>{t('modalitaSottotitolo')}</p>
+                  <div className="mt-2 space-y-2">
+                    {modiDisponibili.map((m) => (
+                      <label key={m} className="flex cursor-pointer items-start gap-2.5">
+                        <input
+                          type="radio"
+                          name="prest-modalita"
+                          value={m}
+                          checked={modalita === m}
+                          onChange={() => scegliModalita(m)}
+                          className={`mt-0.5 h-4 w-4 shrink-0 accent-kidville-green ${FUOCO_ESITO}`}
+                        />
+                        <span>
+                          <span className="block font-maven text-sm font-semibold text-kidville-ink">
+                            {t(CHIAVE_MODALITA[m].titolo)}
+                          </span>
+                          <span className="block font-maven text-[12.5px] text-kidville-sub">
+                            {t(CHIAVE_MODALITA[m].aiuto)}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  {modalita === 'su_carta' && (
+                    <div className="mt-3">
+                      <label className={ETICHETTA} htmlFor="prest-consegnato-il">
+                        {t('modalitaConsegnatoIl')}
+                      </label>
+                      <DateField
+                        id="prest-consegnato-il"
+                        value={consegnatoIl}
+                        onChange={scegliConsegnatoIl}
+                        className={CAMPO}
+                        aria-describedby="prest-consegnato-il-aiuto"
+                      />
+                      <p className={AIUTO} id="prest-consegnato-il-aiuto">
+                        {t('modalitaConsegnatoIlAiuto')}
+                      </p>
+                      {erroriCampo.consegnatoIl && (
+                        <p role="alert" className={`${AIUTO} font-semibold ${TONE.error.text}`}>
+                          {erroriCampo.consegnatoIl}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </fieldset>
+              )}
+
+              {modalitaDaScegliere ? (
+                <p className="mt-4 font-maven text-sm text-kidville-sub">{t('modalitaDaScegliere')}</p>
+              ) : !chiedeRisposte ? (
+                // Nessun campo, e il perché si DICE: un riquadro «Da compilare» che resta
+                // vuoto senza spiegazione somiglia a una schermata che non ha caricato.
+                <p className="mt-4 font-maven text-sm text-kidville-sub">
+                  {modalita === 'copia_firmata' ? t('modalitaSenzaCampiFirmata') : t('modalitaSenzaCampiVuota')}
+                </p>
+              ) : campi.length === 0 ? (
                 <p className="mt-4 font-maven text-sm text-kidville-sub">{t('campiNessuno')}</p>
               ) : (
                 <div className="mt-4 space-y-4">
@@ -1167,10 +1348,19 @@ export function PrestampatiSegreteria() {
               <p className="mt-4 font-maven text-[12.5px] text-kidville-sub">
                 {modello.protocollo === 'uscita' ? t('protocolloConsuma') : t('protocolloNessuno')}
               </p>
+              {/* 🔴 LA RIGA DELLA FIRMA DESCRIVE IL FOGLIO CHE ESCE, non il modello.
+                  «Firma la famiglia, con un codice usa e getta» è vera del modulo firmato
+                  nell'app; su una copia vuota e su un modulo tornato di carta prometterebbe
+                  una firma elettronica che non ci sarà — che è, in piccolo, esattamente il
+                  difetto che il documento non deve avere. */}
               <p className="font-maven text-[12.5px] text-kidville-sub">
                 <span className="font-semibold">{t('firmaTitolo')}</span>
                 {' — '}
-                {CHIAVE_FIRMA[modello.firma] ? t(CHIAVE_FIRMA[modello.firma]) : modello.firma}
+                {modalita
+                  ? t(CHIAVE_MODALITA[modalita].firma)
+                  : CHIAVE_FIRMA[modello.firma]
+                    ? t(CHIAVE_FIRMA[modello.firma])
+                    : modello.firma}
               </p>
             </>
           )}

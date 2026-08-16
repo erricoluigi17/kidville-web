@@ -71,12 +71,14 @@ const FUORI_PERIMETRO: Record<string, string> = {
   'src/lib/primaria/pagella-pdf.ts':
     '⚠️ DIFETTO NOTO: stessa banda del certificato competenze (ne è il modello). Stesse ' +
     'ragioni, stessa riparazione da fare.',
-  'src/app/(dashboard)/parent/modulistica/page.tsx':
-    "⚠️ DIFETTO NOTO E PEGGIORE DEGLI ALTRI: `generateReceiptPDF` gira NEL BROWSER, dipinge " +
-    "rect(0,0,210,40) con «KIDVILLE SCHOOLS» — che non è la ragione sociale, non è il marchio " +
-    "e non è niente — e stampa sul foglio il CODICE FISCALE del genitore, il suo indirizzo IP, " +
-    "lo User-Agent e una marca temporale in ISO UTC. È il gemello nel browser di " +
-    "`src/lib/fea/receipt-pdf.ts`, a cui quelle tre righe sono state tolte il 2026-08-16.",
+  // ⚠️ QUI C'ERA `src/app/(dashboard)/parent/modulistica/page.tsx`, ed era la riga peggiore
+  // di questa tabella: `generateReceiptPDF` girava NEL BROWSER, dipingeva rect(0,0,210,40)
+  // con «KIDVILLE SCHOOLS» e stampava sul foglio il CODICE FISCALE del genitore, il suo
+  // indirizzo IP e lo User-Agent — inventandoli quando il log non li aveva. Il motore è
+  // stato tolto il 2026-08-16: quella pagina ora chiede la ricevuta a
+  // `GET /api/fea/receipt`, che è il gemello lato server già in `SULLA_CARTA`. La riga
+  // sparisce perché il file non costruisce più un jsPDF, ed è il test n. 3 qui sotto a
+  // pretenderlo — non una pulizia facoltativa.
   'src/app/api/forms/export/pdf/route.ts':
     '⚠️ DIFETTO NOTO: rect(0,0,210,48) con barretta gialla. Export delle risposte di un ' +
     'modulo del Sistema B, che questo lavoro sta spegnendo per le gite.',

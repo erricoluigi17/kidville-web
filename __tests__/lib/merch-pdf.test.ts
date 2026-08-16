@@ -10,9 +10,20 @@
  * Nessun dato reale: fornitore e P.IVA sono inventati.
  */
 import { describe, it, expect } from 'vitest'
-import { buildOrdineFornitorePdf, type OrdineFornitorePdfInput } from '@/lib/merch/pdf'
+import {
+  COLONNE_ORDINE,
+  buildOrdineFornitorePdf,
+  type OrdineFornitorePdfInput,
+} from '@/lib/merch/pdf'
 import { CARTA, ingombroTesto } from '@/lib/carta/geometria'
-import { elementiTesto, immaginiDisegnate, ingombriPercorsi, sovrapposti } from '../fixtures/misure-pdf'
+import { RIGHE_MINIME_IN_CODA } from '@/lib/carta/blocco-finale'
+import {
+  elementiTesto,
+  immaginiDisegnate,
+  ingombriPercorsi,
+  sovrapposti,
+  type ElementoTesto,
+} from '../fixtures/misure-pdf'
 
 const BASE: OrdineFornitorePdfInput = {
   numero: 'PO-2026-001',
@@ -45,6 +56,16 @@ const PIEDE_STAMPATO = {
   altezzaMm: CARTA.piedeFine - CARTA.piedeInizio,
 }
 const eRigaDiServizio = (t: { yMm: number }) => Math.abs(t.yMm - CARTA.rigaServizio) < 0.1
+
+/**
+ * Quante righe di merce devono scendere sull'ultimo foglio insieme alla chiusura.
+ *
+ * ⚠️ **Numero LETTERALE di proposito, e non `RIGHE_MINIME_IN_CODA`.** Scritto come lettura
+ * della costante, questo lock diventerebbe verde nell'istante in cui qualcuno la abbassa —
+ * cioè smetterebbe di sorvegliare proprio la cosa per cui esiste. Il ponte fra i due è il
+ * test «la politica condivisa è ancora quella che questo motore pretende».
+ */
+const CODA_MINIMA_ATTESA = 3
 
 describe('buildOrdineFornitorePdf', () => {
   it('produce un PDF (Buffer con header %PDF)', () => {
@@ -85,6 +106,129 @@ describe('buildOrdineFornitorePdf — sta dentro la carta', () => {
     )
     expect(fuori.map((t) => `${t.testo} @ x=${t.xMm.toFixed(1)}`)).toEqual([])
   })
+})
+
+describe('buildOrdineFornitorePdf — ogni cella sta nella PROPRIA colonna', () => {
+  /**
+   * ⚠️ **IL LOCK PRECEDENTE NON POTEVA ACCORGERSENE, ED È LA PARTE CHE CONTA.**
+   *
+   * Sorvegliava i soli margini esterni (22 / 188) e veniva alimentato con «Polo» e
+   * «Cappellino»: a 149 mm non scattava, perché 149 < 188. Nessun test guardava i confini
+   * FRA le colonne — e il nome dell'articolo si tagliava con `slice(0, 60)`, cioè a
+   * sessanta CARATTERI, un numero che non ha niente a che vedere coi millimetri.
+   *
+   * Misurato sul PDF generato con nomi da catalogo scolastico veri:
+   *
+   * | nome | arrivava a | la colonna Taglia comincia a |
+   * |---|---|---|
+   * | GREMBIULE SCOLASTICO COTONE BIANCO RICAMATO LOGO KIDVILLE GI | **149,03 mm** | 132 |
+   * | FELPA CAPPUCCIO ZIP KIDVILLE PRIMARIA BLU NAVY RICAMO FRONTE | **145,11 mm** | 132 |
+   * | ZAINETTO ASILO NIDO KIDVILLE PERSONALIZZATO NOME BAMBINO COL | **146,88 mm** | 132 |
+   * | sessanta maiuscole larghe | **211,82 mm** | il foglio è largo 210 |
+   *
+   * Sulla prima riga «4A» (132,0 → 136,3) finiva **sotto** il nome dell'articolo. E il
+   * taglio era muto: «…KIDVILLE GIUGLIANO» diventava «…KIDVILLE GI», che sembra il nome
+   * vero dell'articolo su un ordine d'acquisto — l'unico foglio di questo lotto che esce
+   * dalla scuola verso un terzo.
+   */
+  const CATALOGO = [
+    'GREMBIULE SCOLASTICO COTONE BIANCO RICAMATO LOGO KIDVILLE GIUGLIANO',
+    'FELPA CAPPUCCIO ZIP KIDVILLE PRIMARIA BLU NAVY RICAMO FRONTE E RETRO',
+    'ZAINETTO ASILO NIDO KIDVILLE PERSONALIZZATO NOME BAMBINO COLORE ROSSO',
+    // Sessanta maiuscole larghe: è il numero esatto a cui `slice(0, 60)` tagliava, e con
+    // questo carattere usciva dal foglio. Un lock che non può fallire non sorveglia niente.
+    'W'.repeat(60),
+  ]
+  const TAGLIE = ['4A', '6B', '8C', 'XXL']
+  const conCatalogo = (quantita = 12) =>
+    ordine({
+      righe: CATALOGO.map((articolo, k) => ({ articolo, taglia: TAGLIE[k], quantita })),
+    })
+
+  /** Le celle stampate sulla stessa riga, raggruppate per pagina e quota. */
+  const perRiga = (elementi: ElementoTesto[]): ElementoTesto[][] => {
+    const righe = new Map<string, ElementoTesto[]>()
+    for (const t of elementi) {
+      const chiave = `${t.pagina}@${t.yMm.toFixed(1)}`
+      righe.set(chiave, [...(righe.get(chiave) ?? []), t])
+    }
+    return [...righe.values()].map((r) => [...r].sort((a, b) => a.xMm - b.xMm))
+  }
+
+  /**
+   * ⚠️ **jsPDF MISURA UN FILO PIÙ STRETTO DI QUANTO IL VISUALIZZATORE POI DISEGNI.**
+   *
+   * `accorcia()` chiede la larghezza a jsPDF; questo lock la rimisura con PDF.js, che è
+   * ciò che il foglio mostra davvero. Misurato: per le cifre di Helvetica jsPDF usa 550
+   * millesimi di em dove lo standard usa 556, e su un campione di stringhe vere lo scarto
+   * va da +0,4% a +1,1% — cioè fino a 1,2 mm su una colonna di 106. È il motivo per cui fra
+   * due colonne c'è aria e non zero, ed è una tolleranza di MISURA: la regola che non
+   * ammette tolleranza — «non si stampa sopra la cella accanto» — è il test qui sotto.
+   */
+  const SCARTO_MISURA = 1.2
+
+  it('il nome dell’articolo non sfonda la colonna Taglia', async () => {
+    const dentro = COLONNE_ORDINE.articolo.sinistra + COLONNE_ORDINE.articolo.larghezza
+    const sfondano = (await elementiTesto(conCatalogo()))
+      .filter((t) => t.xMm < COLONNE_ORDINE.taglia.sinistra - 0.05 && t.corpoPt === 10)
+      .filter((t) => t.xMm + t.larghezzaMm > dentro + SCARTO_MISURA)
+    expect(
+      sfondano.map((t) => `${t.testo.slice(0, 20)}… arriva a ${(t.xMm + t.larghezzaMm).toFixed(2)}mm`)
+    ).toEqual([])
+  })
+
+  it('nessuna cella entra nella colonna successiva — la regola senza tolleranza', async () => {
+    const invasori = (await elementiTesto(conCatalogo(999999)))
+      .filter((t) => t.corpoPt === 10 && t.xMm < COLONNE_ORDINE.taglia.sinistra - 0.05)
+      .filter((t) => t.xMm + t.larghezzaMm >= COLONNE_ORDINE.taglia.sinistra)
+    expect(
+      invasori.map((t) => `${t.testo.slice(0, 20)}… arriva a ${(t.xMm + t.larghezzaMm).toFixed(2)}mm`)
+    ).toEqual([])
+  })
+
+  it('nessuna cella si stampa sopra la cella accanto', async () => {
+    // La regola generale, non il sintomo: su qualunque riga del foglio, ciò che comincia
+    // più a destra non può cominciare prima che finisca ciò che sta a sinistra.
+    const collisioni: string[] = []
+    for (const riga of perRiga(await elementiTesto(conCatalogo(999999)))) {
+      for (let k = 1; k < riga.length; k++) {
+        const sx = riga[k - 1]
+        const dx = riga[k]
+        if (sx.xMm + sx.larghezzaMm > dx.xMm + 0.05) {
+          collisioni.push(
+            `y=${dx.yMm.toFixed(1)}: «${sx.testo.slice(0, 24)}» finisce a ` +
+              `${(sx.xMm + sx.larghezzaMm).toFixed(2)} e «${dx.testo}» comincia a ${dx.xMm.toFixed(2)}`
+          )
+        }
+      }
+    }
+    expect(collisioni).toEqual([])
+  })
+
+  it('quando taglia lo DICHIARA, invece di consegnare un nome che sembra vero', async () => {
+    const { estraiTesto } = await import('@/lib/protocolli/estrai')
+    const testo = await estraiTesto(conCatalogo())
+    for (const nome of CATALOGO) {
+      // O il nome c'è per intero, o quello stampato finisce coi puntini: «…KIDVILLE GI» è
+      // un nome articolo diverso da quello ordinato, e il magazzino del fornitore non ha
+      // modo di saperlo.
+      const intero = testo.includes(nome)
+      const tagliato = new RegExp(`${nome.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^\\n]*\\.\\.\\.`).test(testo)
+      expect(`${nome.slice(0, 24)}… → ${intero ? 'intero' : tagliato ? 'tagliato coi puntini' : 'TAGLIATO IN SILENZIO'}`).toBe(
+        `${nome.slice(0, 24)}… → ${intero ? 'intero' : 'tagliato coi puntini'}`
+      )
+    }
+  })
+
+  it('e niente esce comunque dal foglio', async () => {
+    // Con sessanta maiuscole larghe il nome arrivava a 211,82 mm su un foglio largo 210:
+    // non sfondava una colonna, usciva dal foglio.
+    const fuori = (await elementiTesto(conCatalogo(999999))).filter(
+      (t) =>
+        t.xMm < CARTA.margineSx - 0.05 || t.xMm + t.larghezzaMm > CARTA.margineDx + SCARTO_MISURA
+    )
+    expect(fuori.map((t) => `${t.testo.slice(0, 24)} @ x=${t.xMm.toFixed(2)}`)).toEqual([])
+  })
 
   it('con molte righe cambia pagina invece di attraversare il piede', async () => {
     // 60 articoli: prima di questa riparazione il salto di pagina scattava a y>270, cioè
@@ -107,6 +251,10 @@ describe('buildOrdineFornitorePdf — sta dentro la carta', () => {
 
     const filetti = (await ingombriPercorsi(molte)).filter((p) => sovrapposti(p, PIEDE_STAMPATO))
     expect(filetti).toEqual([])
+  })
+
+  it('la politica condivisa è ancora quella che questo motore pretende', () => {
+    expect(RIGHE_MINIME_IN_CODA).toBe(CODA_MINIMA_ATTESA)
   })
 
   it("nessuna pagina porta la sola chiusura: l'ultima riga di merce scende col suo totale", async () => {
@@ -152,13 +300,15 @@ describe('buildOrdineFornitorePdf — sta dentro la carta', () => {
       const ultima = Math.max(...utili.map((t) => t.pagina))
       const suUltima = utili.filter((t) => t.pagina === ultima)
       const merce = suUltima.filter((t) => /^Articolo di prova numero/.test(t.testo))
+      // ⚠️ **E «almeno una riga» non basta**: una riga di merce più il totale su un foglio
+      // di carta intestata spedito a un fornitore è lo stesso foglio quasi vuoto. La soglia
+      // è `RIGHE_MINIME_IN_CODA`, e sta in `carta/blocco-finale.ts` perché i tre motori la
+      // ereditino invece di riscoprirla ciascuno a modo suo.
+      const attese = Math.min(CODA_MINIMA_ATTESA, n)
       expect(
-        `${n} righe → p${ultima}: ${
-          merce.length > 0
-            ? 'porta anche merce'
-            : `SOLO CHIUSURA (${suUltima.map((t) => t.testo).join(' | ')})`
-        }`
-      ).toBe(`${n} righe → p${ultima}: porta anche merce`)
+        `${n} righe → p${ultima}: ${merce.length} righe di merce` +
+          (merce.length >= attese ? '' : ` (${suUltima.map((t) => t.testo).join(' | ')})`)
+      ).toBe(`${n} righe → p${ultima}: ${Math.max(merce.length, attese)} righe di merce`)
     }
   })
 

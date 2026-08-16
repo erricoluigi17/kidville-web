@@ -40,6 +40,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { fasceVietate } from '@/lib/carta/geometria'
+import { accorcia } from '@/lib/carta/testo'
 
 /** Lo stato di una cella: gli stessi quattro di `presenze.stato`. */
 export type StatoCella = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata'
@@ -182,22 +183,14 @@ function numeroDelGiorno(iso: string): string {
 }
 
 /**
- * Un testo che sta dentro una larghezza data, col taglio DICHIARATO se serve tagliare.
- *
- * `maxWidth` di jsPDF non taglia: manda a capo, e una riga in più in testa a questo foglio
- * finisce dentro la tabella. Qui il testo si accorcia con i puntini di sospensione, che è
- * l'unico modo onesto di dire «qui manca qualcosa» — a differenza di `overflow: 'hidden'`,
- * che taglia a metà parola e sembra il nome vero.
+ * ⚠️ **`accorcia()` NON VIVE PIÙ QUI (spostata il 2026-08-16).** Era nata in questo file
+ * per la testata del registro; lo stesso giorno, sull'ordine al fornitore, il nome
+ * dell'articolo si accorciava con `slice(0, 60)` — sessanta CARATTERI, cioè un numero che
+ * non ha niente a che vedere coi millimetri della colonna — e finiva stampato sopra la
+ * taglia, o fuori dal foglio. Due motori, lo stesso problema, una copia sola che misurava.
+ * Adesso la funzione sta in `@/lib/carta/testo`, accanto a `quotaBloccoFinale()`: il terzo
+ * motore che ne avrà bisogno la trova invece di riscoprirla a metà.
  */
-function accorcia(doc: jsPDF, testo: string, larghezzaMax: number): string {
-  if (larghezzaMax <= 0) return ''
-  if (doc.getTextWidth(testo) <= larghezzaMax) return testo
-  let taglio = testo
-  while (taglio.length > 0 && doc.getTextWidth(`${taglio}...`) > larghezzaMax) {
-    taglio = taglio.slice(0, -1)
-  }
-  return `${taglio.trimEnd()}...`
-}
 
 export function buildRegistroPresenzePdf(input: RegistroPresenzeInput): Uint8Array {
   const { giorni, righe, etichette } = input

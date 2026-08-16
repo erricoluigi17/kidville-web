@@ -9,7 +9,11 @@
  * impedisce alla terza copia di nascere.
  */
 import { describe, it, expect } from 'vitest'
-import { quotaBloccoFinale } from '@/lib/carta/blocco-finale'
+import {
+  RIGHE_MINIME_IN_CODA,
+  codaVuoleUnFoglioNuovo,
+  quotaBloccoFinale,
+} from '@/lib/carta/blocco-finale'
 import { CARTA } from '@/lib/carta/geometria'
 
 /** I numeri del motore dei protocolli: stacco 18, minimo 5, mai sopra 150, blocco alto 14. */
@@ -89,5 +93,99 @@ describe('quotaBloccoFinale', () => {
       dopoIlContenuto: 237,
     })
     expect(invertito).toEqual(pari)
+  })
+})
+
+describe('codaVuoleUnFoglioNuovo', () => {
+  /**
+   * ⚠️ **LA SOGLIA ERA UNA RIGA, E UNA RIGA PUÒ ESSERE DUE PAROLE (riparato il 2026-08-16).**
+   *
+   * I tre motori trascinavano sul foglio nuovo la sola ULTIMA riga di contenuto: formalmente
+   * nessuna pagina portava «solo la chiusura», ma su un documento protocollato di 21 righe
+   * l'ultima pagina conteneva «larghezza utile.», la data, «La Direzione», il tratto e
+   * «Pagina 2 di 2». La motivazione scritta nel codice non è «almeno una riga»: è che chi
+   * separa quel foglio dal fascicolo ha in mano **una firma senza documento** — e con due
+   * parole sul foglio ce l'ha ancora.
+   */
+  /** Un blocco alto `altezza` che deve stare sopra `fondo`, come lo vede un motore. */
+  const bloccoAlto = (altezza: number, fondo = CARTA.contenutoFine) => (quota: number) =>
+    quota + altezza <= fondo
+
+  const base = {
+    righeMinimeInCoda: RIGHE_MINIME_IN_CODA,
+    interlinea: 6.2,
+    inizioPagina: CARTA.contenutoInizio,
+    bloccoRestaConLUltimaRigaA: bloccoAlto(20),
+  }
+
+  it('la soglia è tre righe, non una', () => {
+    expect(RIGHE_MINIME_IN_CODA).toBe(3)
+  })
+
+  it('non muove niente finché la coda non comincia', () => {
+    // Quarantesima riga di un documento lungo: mancano ancora venti righe, e anticipare il
+    // salto qui butterebbe via mezza pagina di documento.
+    expect(codaVuoleUnFoglioNuovo({ ...base, quota: 240, righeRimaste: 20 })).toBe(false)
+  })
+
+  it('non muove niente quando la coda intera ci sta già su questo foglio', () => {
+    expect(codaVuoleUnFoglioNuovo({ ...base, quota: 100, righeRimaste: 3 })).toBe(false)
+  })
+
+  it('trascina la coda quando sul foglio ci starebbe meno del dovuto', () => {
+    // Con la coda a 240, l'ultima riga cadrebbe a 240 + 2×6,2 = 252,4 e il blocco a 272,4:
+    // oltre il fondo. Le tre righe scendono insieme.
+    expect(codaVuoleUnFoglioNuovo({ ...base, quota: 240, righeRimaste: 3 })).toBe(true)
+    // …e sul foglio nuovo non si rifà il salto: 40 + 2×6,2 + 20 = 72,4, ci sta.
+    expect(codaVuoleUnFoglioNuovo({ ...base, quota: 40, righeRimaste: 3 })).toBe(false)
+  })
+
+  it('non apre un foglio che non rimedierebbe a niente', () => {
+    // Un blocco alto 230 mm non entra su un foglio vuoto insieme a tre righe: spostare il
+    // contenuto costerebbe una pagina senza guadagnare nulla, e allora non si sposta.
+    expect(
+      codaVuoleUnFoglioNuovo({
+        ...base,
+        quota: 240,
+        righeRimaste: 3,
+        bloccoRestaConLUltimaRigaA: bloccoAlto(230),
+      })
+    ).toBe(false)
+  })
+
+  it('degrada da tre a due a una invece di arrendersi', () => {
+    // Un blocco alto 210: tre righe (40 + 12,4 + 210 = 262,4) ci stanno per un pelo, due
+    // (40 + 6,2 + 210 = 256,2) e una (250) anche. Con 215 le tre non entrano più e la coda
+    // si accorcia da sola al giro dopo, invece di lasciare il blocco da solo.
+    const stretto = { ...base, bloccoRestaConLUltimaRigaA: bloccoAlto(215) }
+    expect(codaVuoleUnFoglioNuovo({ ...stretto, quota: 250, righeRimaste: 3 })).toBe(false)
+    expect(codaVuoleUnFoglioNuovo({ ...stretto, quota: 256, righeRimaste: 2 })).toBe(true)
+  })
+
+  it('non trascina più righe di quante ne restino', () => {
+    // Un documento di due righe in tutto: scendono tutte e due, e il conto sul foglio nuovo
+    // si fa su due, non su tre — altrimenti un documento corto non si sposterebbe mai.
+    const cortissimo = { ...base, bloccoRestaConLUltimaRigaA: bloccoAlto(215) }
+    expect(codaVuoleUnFoglioNuovo({ ...cortissimo, quota: 250, righeRimaste: 2 })).toBe(true)
+  })
+
+  it('conta il foglio nuovo da dove il contenuto ricomincia davvero', () => {
+    // Chi ripete l'intestazione delle colonne riparte più in basso: un conto fatto da
+    // `contenutoInizio` prometterebbe uno spazio che sul foglio non c'è.
+    const conTestata = { ...base, bloccoRestaConLUltimaRigaA: bloccoAlto(215) }
+    expect(codaVuoleUnFoglioNuovo({ ...conTestata, quota: 250, righeRimaste: 3 })).toBe(false)
+    expect(
+      codaVuoleUnFoglioNuovo({
+        ...conTestata,
+        quota: 250,
+        righeRimaste: 3,
+        inizioPagina: CARTA.contenutoInizio - 4,
+        bloccoRestaConLUltimaRigaA: bloccoAlto(211),
+      })
+    ).toBe(true)
+  })
+
+  it('non lancia su un elenco vuoto', () => {
+    expect(codaVuoleUnFoglioNuovo({ ...base, quota: 240, righeRimaste: 0 })).toBe(false)
   })
 })

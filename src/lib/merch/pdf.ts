@@ -24,12 +24,30 @@
  * con sopra una riga. Filetto, totale e note sono ora un blocco solo: vedi la chiusura di
  * `buildOrdineFornitorePdf`.
  *
+ * ⚠️ **E IL NOME DELL'ARTICOLO SFONDAVA LA COLONNA «TAGLIA» IN SILENZIO.** Si accorciava
+ * con `String(r.articolo).slice(0, 60)`: sessanta CARATTERI, cioè un numero che non ha
+ * niente a che vedere con i millimetri della colonna. Misurato sul PDF generato con nomi da
+ * catalogo scolastico veri — `divise_ordini_righe.articolo_nome` è `text NOT NULL`, senza
+ * alcun limite — «GREMBIULE SCOLASTICO COTONE BIANCO RICAMATO LOGO KIDVILLE GI» arrivava a
+ * **149,03 mm** su una colonna che finisce a 128, e ci si stampava sopra la sigla «4A»
+ * (132,0 → 136,3); con sessanta maiuscole larghe arrivava a **211,82 mm** su un foglio
+ * largo 210, cioè **usciva dal foglio**. E il taglio era MUTO: «…KIDVILLE GIUGLIANO»
+ * diventava «…KIDVILLE GI», che sembra il nome vero dell'articolo — su un ordine d'acquisto
+ * che il magazzino del fornitore deve poter leggere senza indovinare.
+ *
+ * Ora ogni cella si accorcia sulla LARGHEZZA della propria colonna, coi puntini di
+ * sospensione, con la stessa funzione che usa il registro presenze: `accorcia()` sta in
+ * `@/lib/carta/testo` per la stessa ragione per cui ci sta `quotaBloccoFinale()` — il terzo
+ * motore che ne avrà bisogno la trova invece di riscoprirla a metà.
+ *
  * Testato in `__tests__/lib/merch-pdf.test.ts`.
  */
 
 import { jsPDF } from 'jspdf'
 import { formattaIstante } from '@/i18n/config'
+import { RIGHE_MINIME_IN_CODA, codaVuoleUnFoglioNuovo } from '@/lib/carta/blocco-finale'
 import { CARTA, ingombroTesto } from '@/lib/carta/geometria'
+import { accorcia } from '@/lib/carta/testo'
 
 export interface OrdineFornitorePdfInput {
   numero: string
@@ -47,6 +65,46 @@ const NERO = 0
 const X_ARTICOLO = CARTA.margineSx
 const X_TAGLIA = 132
 const X_QUANTITA = CARTA.margineDx
+
+/**
+ * L'aria fra una colonna e la successiva. Quattro millimetri, e servono per DUE cose.
+ *
+ * La prima si vede: sotto, due celle contigue si leggono come una sola voce e il fornitore
+ * deve indovinare dove finisce il nome dell'articolo e dove comincia la taglia.
+ *
+ * ⚠️ La seconda non si vede, ed è misurata: **jsPDF stima la larghezza un filo più stretta
+ * di quanto il visualizzatore poi disegni.** Per le cifre di Helvetica usa 550 millesimi di
+ * em dove lo standard — e PDF.js, e Anteprima, e Acrobat — usano 556; su un campione di
+ * stringhe vere lo scarto va da +0,4% a +1,1%. `accorcia()` chiede la misura a jsPDF, quindi
+ * una cella «giusta» può risultare fino a **1,2 mm** più larga su una colonna di 106. L'aria
+ * è il budget di quello scarto: azzerarla farebbe toccare le celle senza che nessun conto
+ * lo dica.
+ */
+const ARIA_COLONNA = 4
+/**
+ * Quanto la colonna «Q.tà» si prende verso sinistra: è allineata a destra, quindi cresce
+ * in quella direzione. Quattordici millimetri tengono **sette cifre** a 10 pt (1,96 mm per
+ * cifra, misurato): un ordine di divise scolastiche non arriva al milione di pezzi, e se ci
+ * arrivasse il numero resterebbe comunque dentro la sua colonna.
+ */
+const LARGHEZZA_QUANTITA = 14
+
+/**
+ * Le tre colonne come le vede chi impagina — e come le misura il lock.
+ *
+ * Esportate perché `__tests__/lib/merch-pdf.test.ts` verifichi che ogni cella stia dentro
+ * la PROPRIA colonna rifacendo il conto, invece di ricopiarne il risultato: un test che
+ * riscrive il numero che sorveglia non sorveglia niente. Il lock precedente guardava i soli
+ * margini esterni (22 / 188) e a 149 mm non scattava, perché 149 < 188.
+ */
+export const COLONNE_ORDINE = {
+  articolo: { sinistra: X_ARTICOLO, larghezza: X_TAGLIA - ARIA_COLONNA - X_ARTICOLO },
+  taglia: {
+    sinistra: X_TAGLIA,
+    larghezza: X_QUANTITA - LARGHEZZA_QUANTITA - ARIA_COLONNA - X_TAGLIA,
+  },
+  quantita: { sinistra: X_QUANTITA - LARGHEZZA_QUANTITA, larghezza: LARGHEZZA_QUANTITA },
+} as const
 
 /** Il passo di una riga articolo. */
 const PASSO_RIGA = 6
@@ -173,29 +231,35 @@ export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
   }
 
   /**
-   * Il salto anticipato ha senso solo se sulla pagina nuova la riga e la chiusura ci
-   * stanno DAVVERO insieme: con una nota di quaranta righe non ci starebbero comunque, e
-   * allora spostare l'ultimo articolo costerebbe un foglio senza rimediare a niente. In
-   * quel caso si lascia lavorare la rete che spezza la nota, più sotto.
+   * `true` se, con l'ULTIMA riga di merce scritta a `quota`, la chiusura resta sul foglio.
    *
-   * Il conto parte da dove cadrebbe davvero la riga sul foglio nuovo: dopo l'intestazione
-   * delle colonne, che si ripete, non da `contenutoInizio`.
+   * ⚠️ **NON BASTA CHE CI STIA UNA RIGA SOLA (alzato il 2026-08-16).** Fino a stamattina la
+   * coda trascinata era una riga: formalmente nessun foglio portava «solo la chiusura», ma
+   * un foglio di carta intestata spedito a un fornitore con sopra un articolo e «Totale
+   * pezzi: 46» è lo stesso foglio quasi vuoto. La soglia è `RIGHE_MINIME_IN_CODA`, e sta in
+   * `@/lib/carta/blocco-finale` insieme alla politica: i tre motori del lotto la ereditano
+   * invece di riscoprirla ciascuno a modo suo.
    */
-  const chiusuraViaggiaConUnaRiga =
-    fondoBlocco(
-      CARTA.contenutoInizio + ALTEZZA_TESTATA_TABELLA + PASSO_RIGA + STACCO_CHIUSURA
-    ) <= CARTA.contenutoFine
+  const chiusuraSegueLaRigaA = (quota: number): boolean =>
+    fondoBlocco(quota + PASSO_RIGA + STACCO_CHIUSURA) <= CARTA.contenutoFine
 
   let totaleQ = 0
   doc.setFontSize(10)
   for (let k = 0; k < i.righe.length; k++) {
     const r = i.righe[k]
-    const eUltima = k === i.righe.length - 1
     const fondoRiga = ingombroTesto(y, 10).fondo
-    const trascinaLaChiusura =
-      eUltima &&
-      chiusuraViaggiaConUnaRiga &&
-      fondoBlocco(y + PASSO_RIGA + STACCO_CHIUSURA) > CARTA.contenutoFine
+    // Il salto anticipato ha senso solo se sulla pagina nuova le righe e la chiusura ci
+    // stanno DAVVERO insieme: quel conto — e il degrado da tre righe a due a una — lo fa
+    // `codaVuoleUnFoglioNuovo`. Il foglio nuovo comincia dopo l'intestazione delle colonne,
+    // che si ripete: partire da `contenutoInizio` prometterebbe spazio che non c'è.
+    const trascinaLaChiusura = codaVuoleUnFoglioNuovo({
+      quota: y,
+      righeRimaste: i.righe.length - k,
+      righeMinimeInCoda: RIGHE_MINIME_IN_CODA,
+      interlinea: PASSO_RIGA,
+      inizioPagina: CARTA.contenutoInizio + ALTEZZA_TESTATA_TABELLA,
+      bloccoRestaConLUltimaRigaA: chiusuraSegueLaRigaA,
+    })
     if (fondoRiga > CARTA.contenutoFine || trascinaLaChiusura) {
       doc.addPage()
       y = CARTA.contenutoInizio
@@ -204,8 +268,14 @@ export function buildOrdineFornitorePdf(i: OrdineFornitorePdfInput) {
       intestazioneTabella()
       doc.setFontSize(10)
     }
-    doc.text(String(r.articolo).slice(0, 60), X_ARTICOLO, y)
-    doc.text(r.taglia || '—', X_TAGLIA, y)
+    // Ogni cella dentro la PROPRIA colonna, misurata: `slice(0, 60)` tagliava a sessanta
+    // caratteri — un numero che non ha niente a che vedere coi millimetri — e consegnava
+    // «…KIDVILLE GI» al posto di «…KIDVILLE GIUGLIANO», senza dire che mancava qualcosa.
+    doc.text(accorcia(doc, String(r.articolo), COLONNE_ORDINE.articolo.larghezza), X_ARTICOLO, y)
+    doc.text(accorcia(doc, r.taglia || '—', COLONNE_ORDINE.taglia.larghezza), X_TAGLIA, y)
+    // La quantità NON si accorcia: un numero coi puntini è un numero sbagliato, e su un
+    // ordine d'acquisto è la quantità che il fornitore spedisce. La colonna è larga quanto
+    // basta a sette cifre; se un giorno non bastasse, il rimedio è allargarla.
     doc.text(String(r.quantita), X_QUANTITA, y, { align: 'right' })
     totaleQ += r.quantita
     y += PASSO_RIGA

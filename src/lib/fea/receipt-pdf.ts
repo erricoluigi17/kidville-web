@@ -54,6 +54,7 @@
 import { jsPDF } from 'jspdf'
 import { createHash } from 'crypto'
 import { applicaCartaIntestata } from '@/lib/carta'
+import { RIGHE_MINIME_IN_CODA, codaVuoleUnFoglioNuovo } from '@/lib/carta/blocco-finale'
 import { CARTA, ingombroTesto } from '@/lib/carta/geometria'
 import { formattaIstante } from '@/i18n/config'
 import type { ReceiptPayload } from './types'
@@ -86,12 +87,47 @@ const INCHIOSTRO: [number, number, number] = [45, 45, 45] // #2D2D2D
 const GRIGIO: [number, number, number] = [100, 100, 100] // #646464
 
 const CENTRO_PAGINA = CARTA.larghezzaPagina / 2
+const LARGHEZZA_UTILE = CARTA.margineDx - CARTA.margineSx
 /** Dove comincia il valore di una riga «Etichetta: valore». */
 const COLONNA_VALORE = CARTA.margineSx + 42
 const LARGHEZZA_VALORE = CARTA.margineDx - COLONNA_VALORE
 const CORPO_TESTO = 11
 const PASSO_RIGA = 9
 const INTERLINEA = 5.5
+
+/**
+ * LA TESTATA DEL DOCUMENTO, e perché ha un passo dichiarato per ogni riga.
+ *
+ * ⚠️ **FINO AL 2026-08-16 DENOMINAZIONE E TITOLO ANDAVANO A CAPO DA SOLI E NESSUNO NE
+ * TENEVA IL CONTO.** Si stampavano con `maxWidth`, quindi jsPDF li spezzava; ma lo stacco
+ * fra i due era `y += 9` FISSO, il filetto cadeva a `y + 4` FISSO e il corpo ripartiva con
+ * `y += 16` FISSO — tre numeri che valgono solo per una riga a testa. Misurato con un
+ * titolo lungo: il filetto verde cadeva a **53,00 mm**, cioè dentro l'inchiostro della
+ * seconda riga del titolo, e la barrava.
+ *
+ * Non è un caso di scuola: `schoolName` è la denominazione della sede, e la ragione sociale
+ * estesa della cooperativa a 15 pt supera i 166 mm della finestra. È lo stesso difetto —
+ * stesso giorno, stessa radice — riparato in `protocolli/documento-pdf.ts`: i due file
+ * avevano ereditato la stessa testata, e il difetto con lei.
+ */
+const CORPO_SCUOLA = 15
+const CORPO_TITOLO = 13
+/** Il passo fra due righe di denominazione: l'inchiostro di 15 pt ne occupa 6,12. */
+const INTERLINEA_SCUOLA = 7.5
+/** Il passo fra due righe di titolo: l'inchiostro di 13 pt ne occupa 5,30. */
+const INTERLINEA_TITOLO = 6.5
+/** Dall'ultima riga di denominazione alla prima di titolo. */
+const STACCO_TITOLO = 9
+/**
+ * Il filetto verde: rientra di 18 mm per lato rispetto ai margini del contenuto (22 / 188),
+ * cioè va da 40 a 170 — centrato sul foglio, e più corto del testo per staccare la testata
+ * dal corpo.
+ */
+const RIENTRO_FILETTO = 18
+/** Dalla linea di scrittura dell'ULTIMA riga di titolo al filetto. */
+const STACCO_FILETTO = 4
+/** Dal filetto alla prima riga di corpo. */
+const STACCO_CORPO = 12
 
 /** La nota di chiusura: l'aria che la precede, il passo fra le sue righe, il suo corpo. */
 const STACCO_NOTA = 6
@@ -219,22 +255,37 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
   }
 
   // ── Intestazione del documento (il marchio ce l'ha già la carta) ──────────────
+  //
+  // Le due righe si spezzano QUI e non con `maxWidth`: il capo lo farebbe jsPDF, con un
+  // passo suo, mentre stacco, filetto e corpo resterebbero ancorati a numeri fissi. Vedi
+  // `CORPO_SCUOLA`. Ogni quota si ricava dal numero VERO di righe.
   doc.setTextColor(...VERDE)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(15)
-  doc.text(payload.schoolName ?? 'Kidville', CENTRO_PAGINA, y, {
-    align: 'center',
-    maxWidth: CARTA.margineDx - CARTA.margineSx,
-  })
-  y += 9
-  doc.setFontSize(13)
-  doc.text(payload.title, CENTRO_PAGINA, y, {
-    align: 'center',
-    maxWidth: CARTA.margineDx - CARTA.margineSx,
-  })
+  doc.setFontSize(CORPO_SCUOLA)
+  const righeScuola = doc.splitTextToSize(
+    payload.schoolName ?? 'Kidville',
+    LARGHEZZA_UTILE
+  ) as string[]
+  for (let k = 0; k < righeScuola.length; k++) {
+    doc.text(righeScuola[k], CENTRO_PAGINA, y + k * INTERLINEA_SCUOLA, { align: 'center' })
+  }
+
+  y += Math.max(0, righeScuola.length - 1) * INTERLINEA_SCUOLA + STACCO_TITOLO
+  doc.setFontSize(CORPO_TITOLO)
+  const righeTitolo = doc.splitTextToSize(payload.title, LARGHEZZA_UTILE) as string[]
+  for (let k = 0; k < righeTitolo.length; k++) {
+    doc.text(righeTitolo[k], CENTRO_PAGINA, y + k * INTERLINEA_TITOLO, { align: 'center' })
+  }
+  const fondoTitolo = y + Math.max(0, righeTitolo.length - 1) * INTERLINEA_TITOLO
+
   doc.setDrawColor(...VERDE)
-  doc.line(CARTA.margineSx + 18, y + 4, CARTA.margineDx - 18, y + 4)
-  y += 16
+  doc.line(
+    CARTA.margineSx + RIENTRO_FILETTO,
+    fondoTitolo + STACCO_FILETTO,
+    CARTA.margineDx - RIENTRO_FILETTO,
+    fondoTitolo + STACCO_FILETTO
+  )
+  y = fondoTitolo + STACCO_FILETTO + STACCO_CORPO
 
   // ── Corpo ────────────────────────────────────────────────────────────────────
   doc.setTextColor(...INCHIOSTRO)
@@ -282,7 +333,25 @@ export function buildReceiptPdf(payload: ReceiptPayload): Buffer {
     doc.setFont('helvetica', 'normal')
     for (let k = 0; k < slots.length; k++) {
       const slot = slots[k]
-      spazioPer(0, k === slots.length - 1 ? PASSO_SLOT : null)
+      // ⚠️ **E LA CODA NON È UNA RIGA SOLA (alzata il 2026-08-16).** Con una riga la regola
+      // teneva alla lettera, ma l'ultimo foglio poteva portare una riga di slot e le due di
+      // «Ricevuta generata automaticamente…»: sempre un foglio di carta intestata quasi
+      // vuoto. La soglia — e il degrado da tre righe a due a una quando tre non ci stanno —
+      // stanno in `@/lib/carta/blocco-finale`, insieme agli altri due motori del lotto.
+      if (
+        codaVuoleUnFoglioNuovo({
+          quota: y,
+          righeRimaste: slots.length - k,
+          righeMinimeInCoda: RIGHE_MINIME_IN_CODA,
+          interlinea: PASSO_SLOT,
+          inizioPagina: CARTA.contenutoInizio,
+          bloccoRestaConLUltimaRigaA: (quota) => fondoNota(quota + PASSO_SLOT) <= CARTA.contenutoFine,
+        })
+      ) {
+        doc.addPage()
+        y = CARTA.contenutoInizio
+      }
+      spazioPer(0)
       doc.setTextColor(...INCHIOSTRO)
       doc.setFontSize(CORPO_TESTO)
       doc.setFont('helvetica', 'normal')

@@ -56,6 +56,15 @@
 export { applicaCartaIntestata, type OpzioniCarta, type SegnaturaCarta } from './applica'
 export { cartaIntestataBytes } from './asset'
 export {
+  RIGHE_MINIME_IN_CODA,
+  codaVuoleUnFoglioNuovo,
+  quotaBloccoFinale,
+  type QuotaBloccoFinale,
+  type RichiestaBloccoFinale,
+  type RichiestaCoda,
+} from './blocco-finale'
+export { accorcia, type MisuraTesto } from './testo'
+export {
   CARTA,
   fasceVietate,
   ingombroTesto,

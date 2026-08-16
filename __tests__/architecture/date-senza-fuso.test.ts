@@ -295,16 +295,26 @@ describe('lock architettura · nessuna toLocale* su una data senza fuso', () => 
         // `formattaIstante(new Date(), …)`, che quel lock non riconosce: senza
         // questa regola la copertura si sarebbe ristretta in silenzio.
         //
-        // ECCEZIONI dichiarate: i tre punti in cui la data di «adesso» è il
-        // timbro di generazione di un PDF, calcolato dentro il gestore del
-        // CLICK. Lì non c'è nessun render da idratare, e pretendere
-        // `useClientValue` significherebbe congelare al primo render l'ora
-        // stampata su un documento.
+        // ECCEZIONI dichiarate: i punti in cui la data di «adesso» è il timbro di
+        // generazione di un PDF, calcolato dentro il gestore del CLICK. Lì non c'è
+        // nessun render da idratare, e pretendere `useClientValue` significherebbe
+        // congelare al primo render l'ora stampata su un documento.
+        //
+        // ⚠️ Erano tre e ora è una: dal 2026-08-16 il registro presenze
+        // (`MonthlyAttendanceTable.tsx`) non genera più il PDF nel browser — lo fa
+        // `/api/admin/registro-presenze/pdf`, perché la carta intestata pesa 1,1 MB e non
+        // può entrare in un bundle client. Un'eccezione che non trova più il suo caso è
+        // una riga morta che coprirebbe il prossimo caso vero, e l'asserzione in fondo a
+        // questo test è ciò che costringe a toglierla invece di lasciarla lì.
+        //
+        // Lo stesso giorno è caduta anche quella del genitore: `parent/modulistica/page.tsx`
+        // componeva il certificato con jsPDF nel browser — banda verde, «KIDVILLE SCHOOLS»,
+        // «Il Dirigente Scolastico» — e stampava la riga «luogo e data» con un `new Date()`
+        // di lì. Quel generatore non c'è più: il certificato lo emette
+        // `POST /api/parent/prestampati`, sulla carta intestata vera e con il numero di
+        // protocollo, quindi nel componente non si formatta più nessun «adesso».
         const SU_CLIC: Record<string, string> = {
             'src/app/(dashboard)/admin/modulistica/page.tsx': 'timbro «data di stampa» dentro l\'esportazione PDF',
-            'src/app/(dashboard)/parent/modulistica/page.tsx': 'riga «luogo e data» dentro l\'esportazione PDF',
-            'src/components/features/teacher/attendance/MonthlyAttendanceTable.tsx':
-                'metadato del PDF, dentro handleExport',
         }
 
         const colpevoli: string[] = []

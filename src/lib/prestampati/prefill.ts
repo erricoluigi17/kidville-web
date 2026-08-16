@@ -38,7 +38,7 @@ import { firstEmail } from '@/lib/auth/parent-identity'
 import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
 import { dataCivile } from '@/i18n/config'
 import { eNonPiuIscritto } from '@/lib/alunni/stato'
-import { parseAnagraficaSede } from '@/lib/scuole/anagrafica'
+import { componiIndirizzoSede, parseAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { leggiModuleConfig } from '@/lib/settings/module-config'
 import { componiIndirizzo, primoNonVuoto } from '@/lib/fatturazione/cedente'
 import type { FiscaleConfig } from '@/lib/pagamenti/fiscale'
@@ -733,14 +733,21 @@ export function componiScuola(
   pivaSede: string | null | undefined,
   fiscale: Partial<FiscaleConfig>,
 ): DatiScuola {
-  const sedeLegale = [
-    componiIndirizzo(fiscale.indirizzo, fiscale.numero_civico),
-    [fiscale.cap, fiscale.comune].map((p) => p?.trim()).filter(Boolean).join(' '),
-    fiscale.provincia?.trim() ? `(${fiscale.provincia.trim().toUpperCase()})` : '',
-  ]
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .join(' — ')
+  // La riga del domicilio fiscale la compone `componiIndirizzoSede`, che è l'unico posto
+  // in cui `via — CAP CITTÀ (PROV)` si scrive (lo stesso argomento della spec §1.5 sulle
+  // due testate PDF fuse in una). Qui prima si univano TRE parti con ` — `, e la sigla di
+  // provincia si staccava dal comune a cui appartiene: sul certificato Bonus Nido con i
+  // dati veri usciva «Sede legale: Via Silvio Pellico 7 — 81030 Cesa — (CE)» due
+  // centimetri sopra «Sede operativa del Nido: … 81030 Cesa (CE)», scritta bene. Due
+  // righe della stessa pagina che componevano lo stesso indirizzo in due modi.
+  const sedeLegale = componiIndirizzoSede({
+    indirizzo: componiIndirizzo(fiscale.indirizzo, fiscale.numero_civico),
+    cap: fiscale.cap,
+    citta: fiscale.comune,
+    // Sigla in maiuscolo (convenzione ISTAT), come faceva la versione precedente:
+    // `componiIndirizzoSede` non normalizza, e non deve — riceve già ciò che stampa.
+    provincia: fiscale.provincia?.trim().toUpperCase(),
+  })
   return {
     ragioneSociale: primoNonVuoto(fiscale.denominazione) || null,
     piva: primoNonVuoto(pivaSede, fiscale.piva, fiscale.codice_fiscale) || null,

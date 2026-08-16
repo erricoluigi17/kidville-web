@@ -956,7 +956,16 @@ describe('prefill — l’ente gestore, che non è il nome della struttura', () 
     // La P.IVA della sede resta una precedenza legittima: è lo STESSO ente, e
     // `anagrafica.piva_cf` è dichiarata «P.IVA / CF ente gestore».
     expect(scuola.piva).toBe('11111111111')
-    expect(scuola.sedeLegale).toBe('Via Inventata 1 — 80000 Cittàfinta — (XX)')
+    // ⚠️ UN TRATTINO SOLO, e prima erano due: «80000 Cittàfinta — (XX)».
+    //
+    // Le tre parti si univano tutte con ` — `, quindi la sigla di provincia si
+    // staccava dal comune a cui appartiene. Sul certificato Bonus Nido generato
+    // con i dati veri usciva «Sede legale: Via Silvio Pellico 7 — 81030 Cesa —
+    // (CE)», due centimetri sopra «Sede operativa del Nido: … 81030 Cesa (CE)»,
+    // scritta bene: due righe della stessa pagina che compongono lo stesso
+    // indirizzo in due modi. Ora la riga la costruisce `componiIndirizzoSede`,
+    // che è l'unico posto in cui `via — CAP CITTÀ (PROV)` si compone.
+    expect(scuola.sedeLegale).toBe('Via Inventata 1 — 80000 Cittàfinta (XX)')
     // Il nome di chi firma NON sta qui: lo porta `legaleRappresentante` e lo consuma il
     // blocco firma. Due sorgenti per lo stesso nome sullo stesso foglio sarebbero una di
     // troppo.

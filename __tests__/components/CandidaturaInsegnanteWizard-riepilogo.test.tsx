@@ -464,18 +464,31 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     // Con due plessi il passo esiste, e da lì si può cambiare idea.
     mockRete([ALFA, BETA])
     render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_A }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_A }))
     avanti()
     await compilaTutto()
 
     expect(sotto(itPublic.candRiepilogoSede)).toBe(NOME_SEDE_A)
     fireEvent.click(screen.getByRole('button', { name: nomeComando }))
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_B }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_B }))
     // Anche dal PRIMO passo il ritorno è uno solo, e scavalca tre passi già
     // compilati: `prosegui()` li rivalida tutti prima di lasciar passare, quindi
     // qui non c'è nessun controllo saltato — solo tre schermate risparmiate.
+    tornaAlRiepilogo()
+    await waitFor(() => expect(screen.getByText(itPublic.candRiepilogoSede)).toBeInTheDocument())
+    // ⚠️ ENTRAMBE, e la riga è cambiata il 2026-08-19 con la scelta multipla.
+    // Fino a ieri erano radio e la seconda spunta SOSTITUIVA la prima: il
+    // riepilogo diceva «Kidville Beta». Adesso sono caselle, spuntare la seconda
+    // AGGIUNGE, e la candidatura è rivolta a due plessi. Il riepilogo deve dirlo
+    // — è l'ultima schermata prima dell'invio, e chi ha spuntato due sedi
+    // leggendone una sola concluderebbe che la seconda non ha preso.
+    expect(sotto(itPublic.candRiepilogoSede)).toBe(`${NOME_SEDE_A}, ${NOME_SEDE_B}`)
+    // E togliendo la prima resta la seconda: la casella si de-spunta davvero.
+    fireEvent.click(screen.getByRole('button', { name: nomeComando }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_A }))
     tornaAlRiepilogo()
     await waitFor(() => expect(screen.getByText(itPublic.candRiepilogoSede)).toBeInTheDocument())
     expect(sotto(itPublic.candRiepilogoSede)).toBe(NOME_SEDE_B)
@@ -555,8 +568,8 @@ describe('CandidaturaInsegnanteWizard — dal riepilogo si torna al riepilogo', 
     // direbbe che va tutto bene su un modulo che il server rifiuterà.
     mockRete([ALFA, BETA])
     render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_A }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_A }))
     avanti()
     await compilaTutto()
 
@@ -627,10 +640,10 @@ describe('CandidaturaInsegnanteWizard — l’errore della sede sta dove serve',
    * le card che cominciano a y=291, fasce a y=535 con il gruppo che finisce a
    * y=518. Adesso stanno tutti dalla stessa parte.
    */
-  it('sta SOTTO le sedi come ogni altro messaggio del modulo, con la sua icona e il fuoco sul primo radio', async () => {
+  it('sta SOTTO le sedi come ogni altro messaggio del modulo, con la sua icona e il fuoco sulla prima casella', async () => {
     mockRete([ALFA, BETA])
     render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
 
     avanti()
 
@@ -641,12 +654,12 @@ describe('CandidaturaInsegnanteWizard — l’errore della sede sta dove serve',
     // 2 · sta DENTRO il gruppo e DOPO l'ultima scelta.
     const gruppo = errore.closest('fieldset')
     expect(gruppo).not.toBeNull()
-    const radio = within(gruppo!).getAllByRole('radio')
-    const ultima = radio[radio.length - 1]
+    const caselle = within(gruppo!).getAllByRole('checkbox')
+    const ultima = caselle[caselle.length - 1]
     expect(
       ultima.compareDocumentPosition(errore) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     // 3 · e il fuoco è sulla cosa da fare, non sul bottone che ha risposto di no.
-    expect(document.activeElement).toBe(radio[0])
+    expect(document.activeElement).toBe(caselle[0])
   })
 })

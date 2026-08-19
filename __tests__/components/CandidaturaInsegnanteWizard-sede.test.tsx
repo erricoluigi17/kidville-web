@@ -120,7 +120,7 @@ const SEDE_IGNOTA = '11111111-1111-4111-8111-111111111111'
 /** Nessuna parte del modulo è stata dipinta: non c'è niente da compilare. */
 function nienteDaCompilare(): void {
   expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
-  expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: itPublic.candAvanti })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: itPublic.candInvia })).not.toBeInTheDocument()
 }
@@ -203,7 +203,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     sblocca!()
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
     expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
   })
 
@@ -211,9 +211,9 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
     render(<CandidaturaInsegnanteWizard />)
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
-    expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: NOME_SEDE_C })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
+    expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: NOME_SEDE_C })).toBeInTheDocument()
     expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
     // Nessun «Indietro» = la sede è davvero il PRIMO passo.
     // ⚠️ Dall'11/08/2026 il comando NON è più «disabilitato»: non viene reso
@@ -227,7 +227,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
   it('«Avanti» senza aver scelto la sede: non avanza, e lo dice', async () => {
     mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
     render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
@@ -235,23 +235,23 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
   })
 
-  it('sede scelta: si prosegue, la scelta resta tornando indietro, e il POST porta quello scuola_id', async () => {
+  it('sede scelta: si prosegue, la scelta resta tornando indietro, e il POST porta quel suo elenco di sedi', async () => {
     mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
     render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_B }))
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_B }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candIndietro }))
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeChecked())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).toBeChecked())
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
     await compilaEInvia()
 
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(BETA.id)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([BETA.id])
     // Il riepilogo aveva mostrato il NOME del plesso, non il suo uuid.
     expect(screen.queryByText(BETA.id)).not.toBeInTheDocument()
   })
@@ -311,7 +311,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candSediRiprova }))
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
     // L'errore superato sparisce: un avviso che resta è un avviso che si impara
     // a ignorare.
     expect(screen.queryByText(itPublic.candSediErroreTitolo)).not.toBeInTheDocument()
@@ -359,13 +359,13 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     render(<CandidaturaInsegnanteWizard />)
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
     await compilaEInvia()
 
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(GAMMA.id)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([GAMMA.id])
   })
 
   it('?sede= CONFERMATO dall’elenco: nessun passo di scelta, e il riepilogo dice il NOME', async () => {
@@ -377,7 +377,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
     await compilaFinoAlRiepilogo()
@@ -386,7 +386,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
 
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(SEDE_A)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([SEDE_A])
   })
 
   it('?sede= SMENTITO dall’elenco: il passo sede torna PRIMA che si sia compilato niente', async () => {
@@ -399,20 +399,20 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_IGNOTA} />)
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).toBeInTheDocument())
     // Niente è stato ancora compilato: non c'è nessun dato da salvare e nessuna
     // spiegazione da dare — c'è solo un passo in più, al suo posto.
     expect(screen.queryByPlaceholderText(PRIMO_CAMPO)).not.toBeInTheDocument()
     expect(screen.queryByText(itPublic.candErroreInvioTitolo)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: itPublic.candIndietro })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_B }))
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_B }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await compilaEInvia()
 
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
     // L'uuid del link NON parte: partirebbe per essere rifiutato.
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(BETA.id)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([BETA.id])
   })
 
   it('?sede= smentito e UNA sola sede: nessun passo inutile, e parte quella vera', async () => {
@@ -420,14 +420,14 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_IGNOTA} />)
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
 
     await compilaFinoAlRiepilogo()
     expect(sedeNelRiepilogo()).toBe(NOME_SEDE_C)
     fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
 
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(GAMMA.id)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([GAMMA.id])
   })
 
   it('?sede= con l’elenco NON ottenuto: il modulo parte lo stesso, e il riepilogo non è un trattino', async () => {
@@ -439,7 +439,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByText(itPublic.candSediErroreTitolo)).not.toBeInTheDocument()
 
     await compilaFinoAlRiepilogo()
@@ -448,7 +448,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
 
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(SEDE_A)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([SEDE_A])
   })
 
   it('400 SEDE_DA_SPECIFICARE: il passo sede RICOMPARE, i dati restano, il secondo invio passa', async () => {
@@ -469,11 +469,11 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     await compilaEInvia()
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(SEDE_IGNOTA)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([SEDE_IGNOTA])
 
     // ⚠️ IL CONTROLLO CHE CONTA: la frase e i comandi per obbedirle stanno sulla
     // STESSA schermata.
-    const radio = await screen.findByRole('radio', { name: NOME_SEDE_B })
+    const radio = await screen.findByRole('checkbox', { name: NOME_SEDE_B })
     expect(screen.getByText(itPublic.candSedeRifiutataCorpo)).toBeInTheDocument()
     expect(screen.getByText(itPublic.candSedeRifiutataNota)).toBeInTheDocument()
     // E NON la nota generica, che direbbe di ripremere un bottone che darebbe la
@@ -502,7 +502,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
 
     await waitFor(() => expect(corpiInviati).toHaveLength(2))
-    expect((corpiInviati[1] as { scuola_id?: string }).scuola_id).toBe(BETA.id)
+    expect((corpiInviati[1] as { scuole_ids?: string[] }).scuole_ids).toEqual([BETA.id])
     await waitFor(() => expect(screen.getByText(itPublic.candInviata)).toBeInTheDocument())
   })
 
@@ -516,7 +516,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_IGNOTA} />)
 
     await compilaEInvia()
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_C })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_C })).toBeInTheDocument())
     expect(screen.getByText(itPublic.candSedeRifiutataCorpo)).toBeInTheDocument()
   })
 
@@ -526,21 +526,21 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
     render(<CandidaturaInsegnanteWizard sedeId="" />)
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_A }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_A }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
     await compilaEInvia()
     await waitFor(() => expect(corpiInviati).toHaveLength(1))
-    expect((corpiInviati[0] as { scuola_id?: string }).scuola_id).toBe(ALFA.id)
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([ALFA.id])
   })
 
-  it('accessibilità: ogni sede è un radio dello stesso gruppo, con la propria etichetta', async () => {
+  it('accessibilità: ogni sede è una casella dello stesso gruppo, con la propria etichetta', async () => {
     mockSedi([{ tipo: 'ok', sedi: [ALFA, GAMMA] }])
     render(<CandidaturaInsegnanteWizard />)
 
-    const radio = await screen.findByRole('radio', { name: NOME_SEDE_A })
-    const altro = screen.getByRole('radio', { name: NOME_SEDE_C })
+    const radio = await screen.findByRole('checkbox', { name: NOME_SEDE_A })
+    const altro = screen.getByRole('checkbox', { name: NOME_SEDE_C })
     // Stesso `name`: le frecce della tastiera scorrono il gruppo.
     expect((radio as HTMLInputElement).name).toBe((altro as HTMLInputElement).name)
     fireEvent.click(radio)
@@ -605,7 +605,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     // Terzo tentativo: l'elenco arriva, il passo diventa una scelta vera e la
     // nota torna quella che nomina un'azione possibile.
-    const radio = await screen.findByRole('radio', { name: NOME_SEDE_B })
+    const radio = await screen.findByRole('checkbox', { name: NOME_SEDE_B })
     expect(screen.getByText(itPublic.candSedeRifiutataNota)).toBeInTheDocument()
     expect(screen.queryByText(itPublic.candSediErroreTitolo)).not.toBeInTheDocument()
 
@@ -626,7 +626,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     await waitFor(() => expect(screen.getByText(itPublic.candRiepilogoSede)).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
     await waitFor(() => expect(corpiInviati).toHaveLength(2))
-    expect((corpiInviati[1] as { scuola_id?: string }).scuola_id).toBe(BETA.id)
+    expect((corpiInviati[1] as { scuole_ids?: string[] }).scuole_ids).toEqual([BETA.id])
     await waitFor(() => expect(screen.getByText(itPublic.candInviata)).toBeInTheDocument())
   })
 
@@ -674,7 +674,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     sblocca!()
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
     expect(screen.getByText(itPublic.candSedeRifiutataNota)).toBeInTheDocument()
     expect(screen.queryByText(itPublic.candCaricamento)).not.toBeInTheDocument()
   })
@@ -685,22 +685,22 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
    * Il pannello del rifiuto vive nel ramo dei passi, cioè in TUTTI: `notaErrore`
    * si decide sullo stato dell'ELENCO (`sedeSceglibile`), non sul fatto che il
    * selettore della sede sia davvero a schermo. Con due o più plessi il caso non
-   * si vede — per passare bisogna toccare un radio, e l'`onChange` del radio
-   * spegne l'avviso. Con UNA sola sede il radio è auto-spuntato
+   * si vede — per passare bisogna toccare una casella, e l'`onChange` della casella
+   * spegne l'avviso. Con UNA sola sede la casella è auto-spuntato
    * (`if (lista.length === 1) setSedeScelta(...)`), «Avanti» si preme senza
    * toccarlo, e la nota «Scegli la sede qui sopra» arrivava intatta nel passo
    * «I tuoi dati», dove di sedi non ce n'è nessuna: lo stesso ordine
    * ineseguibile, un passo più avanti.
    */
-  it('rifiuto con UNA sola sede: «Avanti» senza toccare il radio si porta via il pannello del rifiuto', async () => {
+  it('rifiuto con UNA sola sede: «Avanti» senza toccare la casella si porta via il pannello del rifiuto', async () => {
     mockSedi([{ tipo: 'http', stato: 429 }, { tipo: 'ok', sedi: [GAMMA] }], [RIFIUTO_SEDE, { tipo: 'ok' }])
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_IGNOTA} />)
 
     await compilaEInvia()
 
-    // Il plesso è uno solo: il radio è GIÀ spuntato, e non c'è nessun gesto da
+    // Il plesso è uno solo: la casella è GIÀ spuntato, e non c'è nessun gesto da
     // fare sopra di esso.
-    const radio = await screen.findByRole('radio', { name: NOME_SEDE_C })
+    const radio = await screen.findByRole('checkbox', { name: NOME_SEDE_C })
     expect(radio).toBeChecked()
     expect(screen.getByText(itPublic.candSedeRifiutataNota)).toBeInTheDocument()
 
@@ -708,7 +708,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
 
     await waitFor(() => expect(screen.getByPlaceholderText(PRIMO_CAMPO)).toBeInTheDocument())
     // ⚠️ IL CONTROLLO CHE CONTA: qui il selettore della sede non c'è…
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     // …e quindi non ci deve essere nemmeno la frase che ordina di usarlo.
     expect(screen.queryByText(itPublic.candSedeRifiutataNota)).not.toBeInTheDocument()
     expect(screen.queryByText(itPublic.candSedeRifiutataCorpo)).not.toBeInTheDocument()
@@ -728,8 +728,8 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA] }], [RIFIUTO_SEDE, { tipo: 'ok' }])
     render(<CandidaturaInsegnanteWizard />)
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_B })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_B }))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_B }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await compilaEInvia()
 
@@ -740,14 +740,14 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     // Il passo «sede» è comunque quello davanti, e la scelta è da rifare.
     //
     // ⚠️ `waitFor` e non `getBy` diretto: dopo il rifiuto il wizard RICARICA l'elenco
-    // delle sedi, e finché quella richiesta è in volo non dipinge nessun radio — è la
+    // delle sedi, e finché quella richiesta è in volo non dipinge nessuna casella — è la
     // stessa regola per cui non dipinge nessun passo prima di sapere che forma avrà la
     // procedura. Senza l'attesa questo caso misura l'istante sbagliato: fallisce non
     // perché la scelta sia rimasta selezionata, ma perché l'elenco non è ancora
     // tornato, e chi legge il rosso cercherebbe il difetto nel posto sbagliato.
     await waitFor(() => {
-      expect(screen.getByRole('radio', { name: NOME_SEDE_A })).not.toBeChecked()
-      expect(screen.getByRole('radio', { name: NOME_SEDE_B })).not.toBeChecked()
+      expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).not.toBeChecked()
+      expect(screen.getByRole('checkbox', { name: NOME_SEDE_B })).not.toBeChecked()
     })
   })
 
@@ -812,5 +812,67 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     // Nessun «Riprova»: ricaricare darebbe la stessa risposta.
     expect(screen.queryByRole('button', { name: itPublic.candSediRiprova })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: itPublic.candAvanti })).toBeDisabled()
+  })
+})
+
+describe('CandidaturaInsegnanteWizard — la scelta MULTIPLA delle sedi', () => {
+  it('due sedi si spuntano insieme, e restano spuntate', async () => {
+    mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
+    render(<CandidaturaInsegnanteWizard />)
+    const a = await screen.findByRole('checkbox', { name: ALFA.nome })
+    const b = screen.getByRole('checkbox', { name: BETA.nome })
+    fireEvent.click(a)
+    fireEvent.click(b)
+    await waitFor(() => expect(a).toBeChecked())
+    expect(b).toBeChecked()
+  })
+
+  it('il POST porta ENTRAMBE le sedi, nell’ordine dell’elenco e non del clic', async () => {
+    // L'ordine conta: la PRIMA diventa `candidature_insegnanti.scuola_id`, la
+    // sede di primo arrivo. Se dipendesse dall'ordine dei clic, due candidature
+    // identiche produrrebbero righe diverse.
+    mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }])
+    render(<CandidaturaInsegnanteWizard />)
+    const b = await screen.findByRole('checkbox', { name: BETA.nome })
+    fireEvent.click(b)
+    fireEvent.click(screen.getByRole('checkbox', { name: ALFA.nome }))
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await compilaEInvia()
+    await waitFor(() => expect(corpiInviati).toHaveLength(1))
+    expect((corpiInviati[0] as { scuole_ids?: string[] }).scuole_ids).toEqual([ALFA.id, BETA.id])
+  })
+
+  it('🔴 TOGLIERE L’ULTIMA SPUNTA NON SPEGNE L’AVVISO', async () => {
+    // Coi radio «sceglierne uno» e «averne uno» erano lo stesso fatto, e toccare
+    // una card bastava a spegnere l'errore. Con le caselle non lo sono più:
+    // togliere l'ultima spunta riporta il passo esattamente nello stato che
+    // l'avviso descrive, e spegnerlo lì direbbe che il problema è risolto nel
+    // momento in cui si è appena ricreato.
+    mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA] }])
+    render(<CandidaturaInsegnanteWizard />)
+    const a = await screen.findByRole('checkbox', { name: ALFA.nome })
+
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    expect(await screen.findByText(itPublic.candSedeErrore)).toBeInTheDocument()
+
+    fireEvent.click(a) // spuntare È la risposta all'avviso: si spegne
+    await waitFor(() => expect(screen.queryByText(itPublic.candSedeErrore)).toBeNull())
+
+    fireEvent.click(a) // …e toglierla lo riaccende
+    expect(await screen.findByText(itPublic.candSedeErrore)).toBeInTheDocument()
+  })
+
+  it('togliere UNA di DUE spunte non riaccende niente: una sede resta', async () => {
+    mockSedi([{ tipo: 'ok', sedi: [ALFA, BETA] }])
+    render(<CandidaturaInsegnanteWizard />)
+    const a = await screen.findByRole('checkbox', { name: ALFA.nome })
+    const b = screen.getByRole('checkbox', { name: BETA.nome })
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    expect(await screen.findByText(itPublic.candSedeErrore)).toBeInTheDocument()
+    fireEvent.click(a)
+    fireEvent.click(b)
+    await waitFor(() => expect(screen.queryByText(itPublic.candSedeErrore)).toBeNull())
+    fireEvent.click(a)
+    expect(screen.queryByText(itPublic.candSedeErrore)).toBeNull()
   })
 })

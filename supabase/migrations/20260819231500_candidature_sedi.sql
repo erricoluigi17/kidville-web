@@ -54,6 +54,30 @@ create table if not exists public.candidature_sedi (
   primary key (candidatura_id, scuola_id)
 );
 
+-- ── RLS ATTIVA, ZERO POLICY: NEGA TUTTO ─────────────────────────────────────
+--
+-- È lo stesso schema di `candidature_insegnanti` e di `anagrafica_personale`:
+-- riga di sicurezza attiva e nessuna policy, quindi nessun ruolo passa. L'unico
+-- che legge è `service_role`, che la RLS la scavalca per definizione — ed è il
+-- ruolo con cui girano `createAdminClient` e i gate applicativi
+-- (`requireStaff`/`requireDocente`).
+--
+-- ⚠️ NON È CONTABILITÀ, È UN BUCO CHE È STATO APERTO DAVVERO. La prima stesura
+-- di questa migrazione non aveva queste due righe, ed è stata applicata in
+-- produzione così. MISURATO il 2026-08-20 con la chiave `anon` — quella che sta
+-- nel bundle JavaScript di chiunque apra il sito:
+--
+--     GET /rest/v1/candidature_sedi?select=candidatura_id,scuola_id
+--       → [{"candidatura_id":"4cd77d67-…","scuola_id":"429da920-…"}, …]
+--     GET /rest/v1/candidature_insegnanti?select=id
+--       → []
+--
+-- La tabella nuova rispondeva, la sorella no. Una tabella creata senza `enable
+-- row level security` non è «non ancora protetta»: è PUBBLICA, e lo è dal
+-- secondo in cui esiste. Nessun errore, nessun avviso — solo un endpoint che
+-- risponde a tutti quante candidature ha ricevuto ogni plesso.
+alter table public.candidature_sedi enable row level security;
+
 -- Il cockpit chiede «cosa c'è da valutare nelle MIE sedi», in quest'ordine.
 create index if not exists candidature_sedi_scuola_stato_idx
   on public.candidature_sedi (scuola_id, stato, creata_il desc);
@@ -133,6 +157,20 @@ begin
   return null;
 end;
 $$;
+
+-- ── CHI PUÒ ESEGUIRLA: NESSUNO, TRANNE IL TRIGGER ───────────────────────────
+--
+-- `security definer` significa che questa funzione gira con i privilegi di chi
+-- l'ha creata, e questa in particolare fa UPDATE su `candidature_insegnanti`.
+-- In Supabase `revoke ... from public` NON BASTA: i ruoli `anon` e
+-- `authenticated` ricevono l'EXECUTE per GRANT esplicito, quindi vanno nominati.
+-- Senza queste due righe, chiunque abbia la chiave anon — cioè chiunque apra il
+-- sito — potrebbe invocarla via RPC e riscrivere lo stato di una candidatura.
+--
+-- Il trigger continua a funzionare: gira per conto del proprietario della
+-- tabella, non del chiamante, e non passa dai grant di esecuzione.
+revoke all on function public.candidature_ricalcola_stato() from public, anon, authenticated;
+grant execute on function public.candidature_ricalcola_stato() to service_role;
 
 -- ⚠️ NIENTE `or delete`, ED È UNA CORREZIONE, NON UN'OMISSIONE.
 --

@@ -412,12 +412,26 @@ export function CandidaturaInsegnanteWizard({
    */
   const {
     sedi, statoSedi, elencoPronto, riprova: riprovaSedi,
-    sedeScelta, scegliSede, sedeSmentitaDalServer,
-    sedeDaLink, sedeDecisa, nomeSedeDalLink, nomeSedeDecisa,
+    sediScelte, commutaSede, sediDecise, sedeSmentitaDalServer,
+    sedeDaLink, nomeSedeDalLink, nomiSediDecise,
     mostraSede, formaDecisa, sediVuote, nonPuoCominciare, sedeSceglibile,
   } = useSediPubbliche({ sedeId, etichetta: ETICHETTA_LOG })
 
   const [erroreSede, setErroreSede] = useState(false)
+  /**
+   * L'avviso sulla sede è GIÀ STATO MOSTRATO almeno una volta.
+   *
+   * Da quel momento in poi il passo si valida DAL VIVO: togliere l'ultima spunta
+   * lo riaccende subito, invece di lasciare la schermata senza nessuna scelta e
+   * senza nessun avviso finché non si ripreme «Avanti».
+   *
+   * ⚠️ Prima del primo rifiuto NON si valida dal vivo, ed è la parte voluta: chi
+   * apre il modulo e non ha ancora spuntato niente non ha sbagliato niente, e
+   * accendergli un avviso rosso addosso all'arrivo è rimproverare qualcuno per
+   * non aver ancora cominciato. Non si azzera mai: un errore già visto è un
+   * errore che quella persona sa riconoscere.
+   */
+  const [sedeGiaAvvisata, setSedeGiaAvvisata] = useState(false)
 
   const [indice, setIndice] = useState(0)
   /**
@@ -508,10 +522,10 @@ export function CandidaturaInsegnanteWizard({
    */
   const pannelloErroreRef = useRef<HTMLDivElement>(null)
   /**
-   * Il PRIMO radio della sede: è lì che va il fuoco quando «Avanti» risponde
+   * La PRIMA casella della sede: è lì che va il fuoco quando «Avanti» risponde
    * «Scegli una sede per proseguire». Vedi l'effetto più sotto.
    */
-  const primoRadioRef = useRef<HTMLInputElement>(null)
+  const primaCasellaRef = useRef<HTMLInputElement>(null)
   /** L'`h2` del passo corrente: è lì che si va quando il passo CAMBIA. */
   const titoloPassoRef = useRef<HTMLHeadingElement>(null)
   /**
@@ -610,7 +624,7 @@ export function CandidaturaInsegnanteWizard({
    * l'errore chiede di agire.
    */
   useEffect(() => {
-    if (erroreSede) primoRadioRef.current?.focus()
+    if (erroreSede) primaCasellaRef.current?.focus()
   }, [erroreSede])
 
   /*
@@ -833,8 +847,9 @@ export function CandidaturaInsegnanteWizard({
     // riaccende il ramo che l'ha acceso.
     setRitornoInterrotto(null)
     if (passo === 'sede') {
-      if (!sedeScelta) {
+      if (sediScelte.length === 0) {
         setErroreSede(true)
+        setSedeGiaAvvisata(true)
         return
       }
       setErroreSede(false)
@@ -915,9 +930,10 @@ export function CandidaturaInsegnanteWizard({
     // Ultima difesa lato client: la rotta pretende `scuola_id`, e senza sede non
     // si invia alla cieca — si torna a farla scegliere. Una candidatura
     // archiviata nel plesso sbagliato è peggio di un passo in più.
-    const sede = sedeDecisa
-    if (!sede) {
+    const sedi = sediDecise
+    if (sedi.length === 0) {
       setErroreSede(true)
+      setSedeGiaAvvisata(true)
       setIndice(0)
       return
     }
@@ -959,7 +975,7 @@ export function CandidaturaInsegnanteWizard({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          scuola_id: sede,
+          scuole_ids: sedi,
           data: dati,
           [CAMPO_ESCA]: typeof valori[CAMPO_ESCA] === 'string' ? valori[CAMPO_ESCA] : '',
         }),
@@ -976,7 +992,7 @@ export function CandidaturaInsegnanteWizard({
           // L'hook abbandona il link, dimentica la scelta e richiede l'elenco; il
           // ritorno al primo passo — dove il passo «sede» sta ricomparendo — è
           // l'unica parte che sa di numeri, e resta qui.
-          sedeSmentitaDalServer(sede)
+          sedeSmentitaDalServer(sedi[0])
           setIndice(0)
           // ⚠️ LA FRASE DIPENDE DA DOVE VENIVA LA SEDE, e le strade sono due.
           // Col link targato la causa probabile è un collegamento vecchio, e
@@ -1084,7 +1100,13 @@ export function CandidaturaInsegnanteWizard({
    * dice da dove viene la sede, che è l'unica cosa vera che si sa.
    */
   function testoSede(): string {
-    if (nomeSedeDecisa !== null) return nomeSedeDecisa
+    // ⚠️ TUTTE le sedi scelte, non la prima. Dal 2026-08-19 una candidatura può
+    // essere rivolta a più plessi, e il riepilogo è l'ultima schermata prima
+    // dell'invio: se ne nominasse una sola, chi ha spuntato Giugliano e Aversa
+    // leggerebbe «Giugliano» e concluderebbe che l'altra spunta non ha preso.
+    // È esattamente il difetto che questo passo esiste per chiudere — fino
+    // all'11/08/2026 mostrava due fatti su tredici campi compilabili.
+    if (nomiSediDecise.length > 0) return nomiSediDecise.join(', ')
     return sedeDaLink !== null ? t('candRiepilogoSedeDalLink') : '—'
   }
 
@@ -1543,7 +1565,7 @@ export function CandidaturaInsegnanteWizard({
                   >
                     <legend className="sr-only">{t('candSedeLegenda')}</legend>
                     {sedi.map((s, i) => {
-                      const scelta = sedeScelta === s.id
+                      const scelta = sediScelte.includes(s.id)
                       return (
                         <label
                           key={s.id}
@@ -1620,25 +1642,48 @@ export function CandidaturaInsegnanteWizard({
                           }`}
                         >
                           <input
-                            type="radio"
+                            type="checkbox"
                             id={`sede-${s.id}`}
-                            name="sede"
+                            name="sedi"
                             value={s.id}
-                            /* Il primo radio è il bersaglio del fuoco quando manca
-                               la scelta: l'errore lo dice, e la mano ci finisce
-                               sopra senza cercarlo. */
-                            ref={i === 0 ? primoRadioRef : undefined}
+                            /* La prima casella è il bersaglio del fuoco quando
+                               manca la scelta: l'errore lo dice, e la mano ci
+                               finisce sopra senza cercarla. */
+                            ref={i === 0 ? primaCasellaRef : undefined}
                             checked={scelta}
                             onChange={() => {
-                              scegliSede(s.id)
-                              setErroreSede(false)
+                              commutaSede(s.id)
+                              // ⚠️ L'AVVISO SI SPEGNE SOLO SE DOPO QUESTO GESTO
+                              // RESTA ALMENO UNA SPUNTA.
+                              //
+                              // Coi radio bastava toccarne uno: «sceglierne uno» e
+                              // «averne uno» erano lo stesso fatto. Con le caselle
+                              // non lo sono più — TOGLIERE l'ultima spunta riporta
+                              // il passo esattamente nello stato che l'avviso
+                              // descrive, e spegnerlo lì direbbe che il problema è
+                              // risolto nel momento in cui si è appena ricreato.
+                              // Quante spunte restano DOPO questo gesto. Si
+                              // calcola, non si legge: `sediScelte` è ancora lo
+                              // stato di prima del `commutaSede` qui sopra.
+                              const quanteRestano = scelta
+                                ? sediScelte.length - 1
+                                : sediScelte.length + 1
+                              if (quanteRestano > 0) {
+                                setErroreSede(false)
+                                setErroreInvio(null)
+                              } else if (sedeGiaAvvisata) {
+                                // Zero spunte, e l'avviso lo si è già visto: il
+                                // passo è tornato nello stato che quell'avviso
+                                // descrive, e tacere adesso lascerebbe la
+                                // schermata senza scelta e senza spiegazione.
+                                setErroreSede(true)
+                              }
                               // Scegliere È la risposta all'avviso: si spegne qui,
                               // non al prossimo invio. `sedeRifiutata` invece NON
                               // si azzera — è ciò che tiene morto il link targato e
                               // tiene in piedi questo passo: cancellarla farebbe
                               // sparire il passo sotto le mani di chi ci sta
                               // scegliendo.
-                              setErroreInvio(null)
                             }}
                             className="h-4 w-4 accent-kidville-green"
                           />

@@ -425,12 +425,51 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 giorno si vorrà scrivere «automaticamente», va aggiunta la voce in
                 `AUTOMI_DICHIARATI` di quel lock: la parola tira con sé una prova.
               */}
+              {/*
+                ⚠️ LA COPIA IN CASELLA NON LA CANCELLA NESSUN CRON (19/08/2026).
+
+                Fino a oggi questa voce era vera per intero: la candidatura viveva
+                solo dentro l'applicazione, e il job di conservazione la portava via
+                col suo curriculum. Dal 2026-08-19 ogni invio recapita alla casella
+                del plesso una copia completa del modulo con il curriculum in
+                allegato (`src/lib/candidature/copia-alla-sede.ts`), perché è dalla
+                posta che la segreteria lavora.
+
+                Quella copia il cron NON la tocca — non può: sta su un server di
+                posta, non in questo database. Titolare e finalità non cambiano (le
+                tre sedi sono la stessa cooperativa, e la persona ha scelto lei a
+                quale scrivere), ma il TERMINE promesso non è più vero per quella
+                copia, e una promessa che il codice non mantiene è peggio di una
+                promessa non fatta.
+
+                ⚠️ La frase nuova sta DENTRO questa stessa voce d'elenco, e non è
+                pigrizia: il lock `gdpr-retention-candidature.test.ts` isola la voce
+                che nomina «Lavora con noi» e ci pretende dentro i due termini in
+                lettere e la parola «curriculum». Una frase messa in una voce
+                ACCANTO sarebbe invisibile al lock — cioè potrebbe divergere dal
+                codice senza che nessuno se ne accorga, che è precisamente il
+                difetto che questo lock esiste per impedire.
+
+                ⚠️ E in questo commento non si scrive il nome del tag di lista per
+                esteso. Il lock spezza la sezione proprio su quel tag: scritto qui,
+                crea un punto di taglio finto e gli fa isolare QUESTA PROSA invece
+                della voce vera. Non è un'ipotesi — è successo scrivendo questo
+                commento, e il lock ha risposto «l'informativa non dichiara i 12
+                mesi» mentre li dichiarava due righe più sotto.
+              */}
               <li>
                 <strong>candidature spontanee di personale</strong> (modulo «Lavora con
                 noi»): <strong>dodici mesi</strong> dalla ricezione, o dalla decisione se la
                 candidatura non è accolta. Con il consenso della persona alla conservazione
                 per opportunità future: <strong>ventiquattro mesi</strong>. Il curriculum
-                allegato viene cancellato insieme alla candidatura;
+                allegato viene cancellato insieme alla candidatura. Al momento dell&rsquo;invio,
+                però, una <strong>copia della candidatura con il curriculum allegato</strong>{' '}
+                viene recapitata alla casella di posta della sede scelta, perché è la sede a
+                doverla valutare: <strong>quella copia resta nella casella e non è cancellata
+                dalla cancellazione automatica</strong>, che riguarda i dati archiviati
+                nell&apos;applicazione e il file nel suo archivio. Per farla rimuovere si
+                scrive alla segreteria della sede, o all&apos;indirizzo indicato in fondo a
+                questa pagina;
               </li>
               {/*
                 IL CURRICULUM CHE NON È DIVENTATO UNA CANDIDATURA — voce nuova del

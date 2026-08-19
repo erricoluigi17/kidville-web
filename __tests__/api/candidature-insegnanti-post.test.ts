@@ -33,6 +33,10 @@ import { SEDE_A, SEDE_B, SEDE_E2E, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_E2E } fro
 const h = vi.hoisted(() => ({
   /** Gli argomenti di ogni chiamata a `inviaCopiaAllaSede`. */
   copieAllaSede: [] as unknown[][],
+  /** Le righe scritte in `candidature_sedi`, tenute SEPARATE da `h.inserts`. */
+  righeDiSede: [] as Record<string, unknown>[],
+  /** L'errore che l'INSERT sulle righe di sede deve restituire (o `null`). */
+  erroreRigheDiSede: null as { code?: string; message?: string } | null,
   /** Colpi per chiave del rate-limit, e le opzioni con cui la route lo chiama. */
   colpi: new Map<string, number>(),
   opzioni: [] as { chiave: string; limit: number; windowMs: number }[],
@@ -138,6 +142,23 @@ vi.mock('@/lib/supabase/server-client', () => ({
                 },
           ).then(res)
         return b
+      }
+      // ── `candidature_sedi`: LE RIGHE DI SEDE, UN RAMO SUO ─────────────────
+      // ⚠️ Non condivide `h.inserts` con `candidature_insegnanti`, ed è la
+      // correzione di un difetto del FINTO: finché tutti gli insert finivano in
+      // un elenco solo, `expect(h.inserts).toHaveLength(1)` misurava «quante
+      // scritture in tutto» credendo di misurare «quante candidature». Il giorno
+      // in cui la route ha cominciato a scrivere anche le sedi, cinque test sono
+      // diventati rossi senza che la candidatura fosse cambiata di una virgola.
+      // Un finto che confonde due tabelle fa dire ai test cose che non stanno
+      // guardando.
+      if (tabella === 'candidature_sedi') {
+        const s2: Record<string, unknown> = {}
+        s2.insert = (righe: Record<string, unknown>[]) => {
+          h.righeDiSede.push(...(Array.isArray(righe) ? righe : [righe]))
+          return Promise.resolve({ data: null, error: h.erroreRigheDiSede })
+        }
+        return s2
       }
       // `candidature_insegnanti`: INSERT (con eventuale ritento) e lettura della
       // riga già viva per email sul 23505.
@@ -339,7 +360,7 @@ const invia = (corpo: Record<string, unknown>) =>
   )
 
 const inviaValida = (dati: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
-  invia({ scuola_id: SEDE_A, data: candidatura(dati), ...extra })
+  invia({ scuole_ids: [SEDE_A], data: candidatura(dati), ...extra })
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -362,6 +383,8 @@ beforeEach(() => {
   h.eventi = []
   h.notifiche = []
   h.copieAllaSede = []
+  h.righeDiSede = []
+  h.erroreRigheDiSede = null
 })
 
 describe('POST /api/iscrizione/insegnanti · il percorso felice', () => {
@@ -760,9 +783,9 @@ describe('POST /api/iscrizione/insegnanti · il tetto per IP', () => {
 })
 
 describe('POST /api/iscrizione/insegnanti · zod sull’ingresso', () => {
-  it('senza `scuola_id` uuid: 400, e niente è stato scritto', async () => {
+  it('senza `scuole_ids` di uuid: 400, e niente è stato scritto', async () => {
     expect((await invia({ data: candidatura() })).status).toBe(400)
-    expect((await invia({ scuola_id: 'non-un-uuid', data: candidatura() })).status).toBe(400)
+    expect((await invia({ scuole_ids: ['non-un-uuid'], data: candidatura() })).status).toBe(400)
     expect(h.inserts).toHaveLength(0)
   })
 
@@ -959,7 +982,7 @@ describe('POST /api/iscrizione/insegnanti · consensi e honeypot', () => {
   // motivo per cui devono rendere tutti e due.
   for (const campo of ['sito_web', 'honeypot'] as const) {
     it(`esca compilata sotto «${campo}»: 400 con codice, un \`warn\` nei log e NESSUNA riga`, async () => {
-      const res = await invia({ scuola_id: SEDE_A, data: candidatura(), [campo]: 'http://spam.invalid' })
+      const res = await invia({ scuole_ids: [SEDE_A], data: candidatura(), [campo]: 'http://spam.invalid' })
       // Un 201 finto sarebbe una bugia scritta in grande: la riga non c'è.
       expect(res.status).toBe(400)
       expect((await res.json()).codice).toBeTruthy()
@@ -972,7 +995,7 @@ describe('POST /api/iscrizione/insegnanti · consensi e honeypot', () => {
 
 describe('POST /api/iscrizione/insegnanti · la sede', () => {
   it('una sede SCONOSCIUTA è 400: nessun default silenzioso', async () => {
-    const res = await invia({ scuola_id: '99999999-0000-4000-8000-000000000099', data: candidatura() })
+    const res = await invia({ scuole_ids: ['99999999-0000-4000-8000-000000000099'], data: candidatura() })
     expect(res.status).toBe(400)
     expect((await res.json()).codice).toBe('SEDE_DA_SPECIFICARE')
     expect(h.inserts).toHaveLength(0)
@@ -999,7 +1022,7 @@ describe('POST /api/iscrizione/insegnanti · la sede', () => {
       { id: SEDE_A, nome: NOME_SEDE_A },
       { id: SEDE_E2E, nome: NOME_SEDE_E2E },
     ]
-    const res = await invia({ scuola_id: SEDE_E2E, data: candidatura() })
+    const res = await invia({ scuole_ids: [SEDE_E2E], data: candidatura() })
     expect(res.status).toBe(400)
     expect((await res.json()).codice).toBe('SEDE_DA_SPECIFICARE')
     expect(h.inserts, 'una candidatura è finita nella sede di collaudo').toHaveLength(0)
@@ -1010,7 +1033,7 @@ describe('POST /api/iscrizione/insegnanti · la sede', () => {
     // non applica il flag, quindi la rotta accettava candidature su plessi
     // soft-deleted che il wizard pubblico non mostra e non mostrerà mai.
     h.attive.set(SEDE_B, false)
-    const res = await invia({ scuola_id: SEDE_B, data: candidatura() })
+    const res = await invia({ scuole_ids: [SEDE_B], data: candidatura() })
     expect(res.status).toBe(400)
     expect((await res.json()).codice).toBe('SEDE_DA_SPECIFICARE')
     expect(h.inserts).toHaveLength(0)
@@ -1032,7 +1055,7 @@ describe('POST /api/iscrizione/insegnanti · la sede', () => {
       { id: SEDE_E2E, nome: NOME_SEDE_E2E },
     ]
     expect((await inviaValida()).status).toBe(201)
-    expect((await invia({ scuola_id: SEDE_E2E, data: candidatura() })).status).toBe(400)
+    expect((await invia({ scuole_ids: [SEDE_E2E], data: candidatura() })).status).toBe(400)
   })
 })
 
@@ -1454,5 +1477,104 @@ describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () 
     h.erroreInsert = { code: '42501', message: 'permission denied' }
     await inviaValida()
     expect(h.copieAllaSede).toHaveLength(0)
+  })
+})
+
+describe('POST /api/iscrizione/insegnanti · più sedi con un invio solo', () => {
+  const copie = () => h.copieAllaSede.map((a) => a[1] as Record<string, unknown>)
+
+  it('accetta un elenco di sedi e scrive una riga di sede per ciascuna', async () => {
+    const res = await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    expect(res.status).toBe(201)
+    expect(h.righeDiSede).toEqual([
+      { candidatura_id: 'cand-nuova', scuola_id: SEDE_A },
+      { candidatura_id: 'cand-nuova', scuola_id: SEDE_B },
+    ])
+  })
+
+  it('la candidatura porta come `scuola_id` la PRIMA dell’elenco: è la sede di primo arrivo', async () => {
+    await invia({ scuole_ids: [SEDE_B, SEDE_A], data: candidatura() })
+    expect(h.inserts[0].scuola_id).toBe(SEDE_B)
+  })
+
+  it('un elenco di UNA sede è un elenco: nessun ramo speciale, ed è il caso di ?sede=', async () => {
+    const res = await invia({ scuole_ids: [SEDE_A], data: candidatura() })
+    expect(res.status).toBe(201)
+    expect(h.righeDiSede).toHaveLength(1)
+  })
+
+  it('OGNI sede si verifica contro sediReali, non solo la prima', async () => {
+    // La seconda è un uuid che non appartiene a nessun plesso. Se la route
+    // controllasse solo la prima, la riga di sede finirebbe su una FK inesistente.
+    const res = await invia({
+      scuole_ids: [SEDE_A, '99999999-0000-4000-8000-000000000099'],
+      data: candidatura(),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('SEDE_DA_SPECIFICARE')
+    expect(h.inserts).toHaveLength(0)
+  })
+
+  it('la sede di collaudo E2E resta esclusa anche dentro un elenco', async () => {
+    const res = await invia({ scuole_ids: [SEDE_A, SEDE_E2E], data: candidatura() })
+    expect(res.status).toBe(400)
+  })
+
+  it('un elenco VUOTO è un rifiuto: senza sede non si archivia niente', async () => {
+    expect((await invia({ scuole_ids: [], data: candidatura() })).status).toBe(400)
+    expect(h.inserts).toHaveLength(0)
+  })
+
+  it('le sedi ripetute si contano una volta: la stessa casella non riceve due copie', async () => {
+    await invia({ scuole_ids: [SEDE_A, SEDE_A], data: candidatura() })
+    expect(h.righeDiSede).toHaveLength(1)
+    expect(h.copieAllaSede).toHaveLength(1)
+  })
+
+  it('parte UNA copia per ogni sede scelta, ognuna con la propria sede', async () => {
+    await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    expect(copie().map((c) => c.scuolaId)).toEqual([SEDE_A, SEDE_B])
+  })
+
+  it('ogni copia dichiara TUTTE le sedi scelte: chi valuta deve sapere del resto', async () => {
+    // Senza, due segreterie istruiscono la stessa pratica senza sapere l'una
+    // dell'altra, e la persona riceve due convocazioni scoordinate.
+    await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    for (const c of copie()) expect(c.sediScelte).toEqual([NOME_SEDE_A, NOME_SEDE_B])
+  })
+
+  it('la segreteria di OGNI sede viene avvisata, non solo quella di primo arrivo', async () => {
+    await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    const sediAvvisate = h.notifiche.map((n) => n.scuola_id ?? n.scuolaId)
+    expect(sediAvvisate).toContain(SEDE_A)
+    expect(sediAvvisate).toContain(SEDE_B)
+  })
+
+  it('DEGRADO · se candidature_sedi non esiste (DB della CI) la candidatura si registra lo stesso', async () => {
+    h.erroreRigheDiSede = { code: 'PGRST205', message: "Could not find the table 'public.candidature_sedi'" }
+    const res = await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    expect(res.status).toBe(201)
+    const riga = h.eventi.find((e) => e.campi?.esito === 'sedi-multiple-non-registrate')
+    expect(riga, 'il degrado deve lasciare una riga').toBeTruthy()
+    // `warn` e non `error`: la tabella assente è una migrazione mancante, non un guasto.
+    expect(riga?.livello).toBe('warn')
+  })
+
+  it('DEGRADO · un errore DIVERSO da «tabella assente» è un guasto vero: livello error', async () => {
+    // La candidatura esiste ma nessuna sede la vedrà: è la definizione di un
+    // incidente, non di un ambiente non migrato.
+    h.erroreRigheDiSede = { code: '42501', message: 'permission denied for table candidature_sedi' }
+    const res = await invia({ scuole_ids: [SEDE_A], data: candidatura() })
+    expect(res.status).toBe(201)
+    expect(h.eventi.find((e) => e.campi?.esito === 'sedi-multiple-non-registrate')?.livello).toBe('error')
+  })
+
+  it('più di tre sedi: rifiutato dallo schema, prima di toccare il database', async () => {
+    const res = await invia({
+      scuole_ids: [SEDE_A, SEDE_B, SEDE_A, SEDE_B, '99999999-0000-4000-8000-000000000099'],
+      data: candidatura(),
+    })
+    expect(res.status).toBe(400)
+    expect(h.inserts).toHaveLength(0)
   })
 })

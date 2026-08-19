@@ -189,19 +189,43 @@ async function avvisaSegreteria(
 const POSIZIONI_ZOD = POSIZIONI_AMMESSE as [string, ...string[]]
 
 /**
+ * Il numero dei plessi reali. Un elenco più lungo di così o è un errore, o è
+ * qualcuno che prova a far partire N email con un invio solo: in entrambi i casi
+ * la risposta è no. Non è cablato su tre a caso — è `sediReali` che decide chi
+ * accetta candidature, e questo è solo il tetto oltre il quale non si guarda
+ * nemmeno.
+ */
+const MAX_SEDI_PER_CANDIDATURA = 3
+
+/**
  * Lo schema d'ingresso.
  *
- * `scuola_id` è un uuid OBBLIGATORIO — e qui la rotta è più severa della sorella
- * `POST /api/iscrizione`, che ammette l'assenza e poi deduce la sede quando ne
- * esiste una sola. Le sedi sono tre: dedurre significherebbe archiviare la
+ * ─── LE SEDI SONO UN ELENCO, dal 2026-08-19 ─────────────────────────────────
+ * Una persona può proporsi a più plessi con un invio solo, e ogni plesso valuta
+ * per conto suo (`candidature_sedi`). Prima qui c'era `scuola_id`, uno solo.
+ *
+ * ⚠️ Resta OBBLIGATORIO averne ALMENO UNA, e la rotta resta più severa della
+ * sorella `POST /api/iscrizione`, che ammette l'assenza e poi deduce quando la
+ * sede è una sola. Le sedi sono tre: dedurre significherebbe archiviare la
  * candidatura nel plesso sbagliato in silenzio, e chi si candida non ha modo di
  * accorgersene.
+ *
+ * ⚠️ UN ELENCO DI UNO È UN ELENCO, e non ha un ramo suo. È il caso di
+ * `?sede=<uuid>`, il link targato, che non è cambiato: quando c'è, il modulo
+ * salta il passo di scelta e invia quella sola sede. Un ramo che si percorre
+ * quasi sempre e uno che si percorre di rado divergono, e a divergere è sempre
+ * quello di rado — cioè quello che nessuno guarda.
  *
  * `data` è `.loose()` come nel modulo d'iscrizione: il wizard può portare chiavi
  * che qui non si conoscono (e che NON finiscono nell'INSERT — vedi `costruisciRiga`).
  */
 const postBodySchema = z.object({
-  scuola_id: z.string().uuid({ message: 'Indicare la sede della candidatura' }),
+  scuole_ids: z
+    .array(z.string().uuid({ message: 'Indicare la sede della candidatura' }), {
+      error: 'Indicare la sede della candidatura',
+    })
+    .min(1, 'Indicare la sede della candidatura')
+    .max(MAX_SEDI_PER_CANDIDATURA, 'Troppe sedi indicate'),
   data: z
     .object(
       {
@@ -785,14 +809,39 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         { status: 500 },
       )
     }
-    const scuolaId = b.data.scuola_id
-    if (!reali.some((s) => s.id === scuolaId)) {
-      logEvento('candidatura', 'warn', { operazione: OPERAZIONE, esito: 'sede-non-valida' })
+    // La deduplica viene PRIMA della verifica, e non è cosmesi: due volte lo
+    // stesso plesso è un elenco di uno, e due righe uguali significherebbero due
+    // copie identiche nella stessa casella e un `23505` sulla chiave primaria di
+    // `candidature_sedi`.
+    const scuoleRichieste = [...new Set(b.data.scuole_ids)]
+    // ⚠️ SI VERIFICA OGNI SEDE, non solo la prima. Un elenco che ne controlla una
+    // su tre è peggio di uno che non ne controlla nessuna: sembra difeso, e il
+    // giorno in cui la seconda è un uuid inventato la riga di sede va a una FK
+    // che non esiste — o, senza FK, sparisce da ogni filtro senza un errore.
+    const sedeNonValida = scuoleRichieste.find((id) => !reali.some((s) => s.id === id))
+    if (sedeNonValida !== undefined) {
+      logEvento('candidatura', 'warn', {
+        operazione: OPERAZIONE,
+        esito: 'sede-non-valida',
+        // Un conteggio, non l'elenco: dice se il rifiuto riguarda un invio a una
+        // sede o a più sedi, senza portare uuid che non servono a nessuno.
+        n_sedi: scuoleRichieste.length,
+      })
       return NextResponse.json(
         { error: 'Indicare la sede della candidatura.', codice: 'SEDE_DA_SPECIFICARE' },
         { status: 400 },
       )
     }
+    /**
+     * La sede di PRIMO ARRIVO, quella che resta sulla candidatura.
+     *
+     * ⚠️ Da oggi questa colonna NON AUTORIZZA PIÙ NIENTE: è un dato storico
+     * («da dove è arrivata per prima»), non un criterio d'accesso. Il cockpit
+     * filtra da `candidature_sedi`. Due criteri di sede per la stessa risorsa
+     * sono due risposte diverse alla stessa domanda, e quella sbagliata la si
+     * scopre solo quando qualcuno vede ciò che non deve.
+     */
+    const scuolaId = scuoleRichieste[0]
 
     // ── 8. L'INSERIMENTO ────────────────────────────────────────────────────
     //
@@ -1116,18 +1165,72 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
 
     const entitaId = (creata as { id?: string } | null)?.id ?? null
 
+    // ── 8bis. LE RIGHE DI SEDE ──────────────────────────────────────────────
+    //
+    // Una riga per plesso scelto, ciascuna col proprio stato: è da qui che il
+    // cockpit filtra, ed è qui che ogni sede valuta per conto suo. Lo `stato`
+    // della candidatura lo ricalcola il TRIGGER `candidature_sedi_aggrega` — non
+    // si scrive a mano, e scriverlo qui vorrebbe dire due autorità sulla stessa
+    // colonna.
+    //
+    // ⚠️ IL DB E2E DELLA CI NON È MIGRATO. Se la tabella non c'è (`42P01` /
+    // `PGRST205`) la candidatura resta registrata sulla sede di primo arrivo e il
+    // 201 resta un 201: chi si candida non deve pagare una migrazione mancante, e
+    // un 500 qui butterebbe via un modulo appena compilato per intero. Con la
+    // tabella assente il cockpit si comporta come prima del 19/08 — legge la
+    // colonna sulla candidatura — quindi il degrado non nasconde niente.
+    //
+    // Un errore DIVERSO da «tabella assente» è invece un guasto vero e si logga a
+    // `error`: significa che la candidatura esiste ma nessuna sede la vedrà.
+    if (entitaId !== null) {
+      const { error: errSedi } = await supabase
+        .from('candidature_sedi')
+        .insert(scuoleRichieste.map((sid) => ({ candidatura_id: entitaId, scuola_id: sid })))
+      if (errSedi) {
+        const codice = (errSedi as { code?: string }).code ?? null
+        const tabellaAssente = codice === '42P01' || codice === 'PGRST205'
+        logEvento(
+          'candidatura',
+          tabellaAssente ? 'warn' : 'error',
+          {
+            operazione: OPERAZIONE,
+            esito: 'sedi-multiple-non-registrate',
+            entita_id: entitaId,
+            scuola_id: scuolaId,
+            n_sedi: scuoleRichieste.length,
+          },
+          errSedi,
+        )
+      }
+    }
+
     // ── 9. LA SEGRETERIA VA AVVISATA (best-effort) ──────────────────────────
     //
     // `error` benché la candidatura sia registrata (201): la riga c'è, il suo
     // annuncio è perso — e una candidatura che nessuno sa di aver ricevuto è
     // una persona che resta senza risposta. Non è un dettaglio saltato, è una
     // consegna mancata.
-    await avvisaSegreteria(
-      supabase,
-      scuolaId,
-      await staffScuola(supabase, scuolaId, RUOLI_SEGRETERIA),
-      { corpo: CORPO_AVVISO.nuova, entitaId },
-    )
+    //
+    // ⚠️ UNA NOTIFICA PER OGNI SEDE SCELTA, dal 2026-08-19. La segreteria di
+    // Aversa deve sapere di una candidatura rivolta ad Aversa anche quando la
+    // stessa persona ha indicato pure Giugliano: è Aversa a doverla valutare, e
+    // nel suo pannello quella scheda c'è. Avvisare solo la sede di primo arrivo
+    // avrebbe lasciato l'altra con una pratica nel cockpit e nessuno che glielo
+    // dice — cioè il difetto che questo blocco esiste per impedire, spostato di
+    // un plesso.
+    //
+    // In SEQUENZA e non in parallelo: sono al massimo tre, e i destinatari si
+    // risolvono per sede con una lettura ciascuna. Una raffica parallela contro
+    // un tetto di quota è il modo più rapido di prendersi un rifiuto su tutte e
+    // tre invece che su una.
+    for (const sid of scuoleRichieste) {
+      await avvisaSegreteria(
+        supabase,
+        sid,
+        await staffScuola(supabase, sid, RUOLI_SEGRETERIA),
+        { corpo: CORPO_AVVISO.nuova, entitaId },
+      )
+    }
 
     // ── 10. IL SUCCESSO SI LOGGA ────────────────────────────────────────────
     //
@@ -1230,23 +1333,41 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // ⚠️ `sediScelte` porta i NOMI, non gli uuid: questa email la legge una
     // persona, e un uuid in una casella di posta non dice niente a nessuno. Il
     // nome si prende da `reali`, che è già in mano — nessuna query in più.
-    await inviaCopiaAllaSede(supabase, {
-      scuolaId,
-      dati: normalizzati,
-      // I consensi si ricostruiscono dal TEMPLATE e non dal corpo ricevuto:
-      // così un consenso non spuntato viaggia come `false` esplicito invece di
-      // sparire, e nella copia la sede legge «No» invece di non leggere niente.
-      // «Non gliel'ho chiesto» e «ha detto no» non sono la stessa cosa.
-      consensi: Object.fromEntries(
-        CONSENSI_INSEGNANTI_FIELDS.map((c) => [c.id, normalizzati[c.id] === true]),
-      ),
-      sediScelte: [reali.find((s) => s.id === scuolaId)?.nome ?? 'Kidville'],
-      inviataIl: formattaIstante(new Date(), 'it', {
-        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-      }),
-      entitaId,
-      cvPath,
+    //
+    // ⚠️ UNA COPIA PER OGNI SEDE, e ognuna dichiara TUTTE le sedi scelte. Chi
+    // valuta ad Aversa deve sapere che la stessa persona è in gioco anche a
+    // Giugliano: senza, due segreterie istruiscono la stessa pratica senza
+    // sapere l'una dell'altra, e la persona riceve due convocazioni scoordinate.
+    //
+    // In SEQUENZA, non in `Promise.all`. Sono al massimo tre, e il tetto Resend
+    // è di circa cento email al giorno già conteso con le iscrizioni: una
+    // raffica parallela contro una quota è il modo più rapido di prendersi un
+    // 429 su tutte e tre invece che su una — e un 429 è «non oggi», che si
+    // gestisce, mentre tre 429 insieme sono tre copie perse.
+    const nomiSediScelte = scuoleRichieste.map(
+      (sid) => reali.find((s) => s.id === sid)?.nome ?? 'Kidville',
+    )
+    // I consensi si ricostruiscono dal TEMPLATE e non dal corpo ricevuto: così un
+    // consenso non spuntato viaggia come `false` esplicito invece di sparire, e
+    // nella copia la sede legge «No» invece di non leggere niente. «Non gliel'ho
+    // chiesto» e «ha detto no» non sono la stessa cosa.
+    const consensiPerLaCopia = Object.fromEntries(
+      CONSENSI_INSEGNANTI_FIELDS.map((c) => [c.id, normalizzati[c.id] === true]),
+    )
+    const inviataIl = formattaIstante(new Date(), 'it', {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
     })
+    for (const sid of scuoleRichieste) {
+      await inviaCopiaAllaSede(supabase, {
+        scuolaId: sid,
+        dati: normalizzati,
+        consensi: consensiPerLaCopia,
+        sediScelte: nomiSediScelte,
+        inviataIl,
+        entitaId,
+        cvPath,
+      })
+    }
 
     return NextResponse.json({ id: entitaId }, { status: 201 })
   } catch (err) {

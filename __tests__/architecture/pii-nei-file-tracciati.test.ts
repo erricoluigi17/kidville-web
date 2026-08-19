@@ -292,6 +292,19 @@ const VALORI_INVENTATI: { file: string; colonna: string; valore: string; perche:
       'Argomento di un test unitario citato nel piano (`normalizzaAnagraficaSede`): un prefisso ' +
       'e tre cifre, non è un numero componibile.',
   },
+  {
+    file: 'docs/superpowers/plans/2026-08-19-candidature-multisede.md',
+    colonna: 'telefono',
+    valore: '+39 333 1234567',
+    perche:
+      'È il SEGNAPOSTO del modulo stesso, copiato alla lettera: `INSEGNANTE_FIELDS` dichiara ' +
+      '`placeholder: \'Es. +39 333 1234567\'` per il campo `telefono` ' +
+      '(src/lib/forms/insegnanti-template.ts). Il piano lo riusa come dato di prova del ' +
+      'generatore della copia alla sede, accanto a «Maria Rossi» e «maria.rossi@email.com», ' +
+      'che sono gli stessi esempi del template. Cifre in scala, nessuna persona reale — ed è ' +
+      'giusto che il lock l\'abbia fermato: un numero in un file tracciato si dichiara, non si ' +
+      'lascia passare perché «si vede che è finto».',
+  },
 ]
 
 const eInventato = (r: RiscontroPii) =>

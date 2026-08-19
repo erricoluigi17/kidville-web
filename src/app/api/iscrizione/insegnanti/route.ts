@@ -25,6 +25,7 @@ import { sediReali } from '@/lib/scuole/reali'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioConfermaCandidatura } from '@/lib/email/messaggi/conferma-candidatura'
+import { inviaCopiaAllaSede } from '@/lib/candidature/copia-alla-sede'
 import { formattaIstante } from '@/i18n/config'
 import type { FormPage } from '@/types/database.types'
 
@@ -1210,6 +1211,42 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         }, e)
       }
     }
+
+    // ─── LA COPIA COMPLETA ALLA SEDE ────────────────────────────────────────
+    // La segreteria lavora dalla posta, non dal pannello: una candidatura che
+    // esiste solo dentro l'applicazione è una candidatura che qualcuno deve
+    // ricordarsi di andare a cercare. Qui il modulo intero — dati, consensi e
+    // curriculum in allegato — arriva nella casella del plesso.
+    //
+    // Stessa disciplina della conferma qui sopra, e per le stesse due ragioni:
+    // best-effort (la candidatura è già registrata, e `inviaCopiaAllaSede` non
+    // lancia mai) e mai muta (ogni esito lascia la sua riga).
+    //
+    // ⚠️ E come la conferma, NON sta nel ramo del duplicato. Mandare alla
+    // segreteria la copia di una candidatura respinta perché ce n'è già una
+    // aperta le farebbe istruire una pratica che non esiste — e quella persona
+    // ne avrebbe due in valutazione senza averne inviate due.
+    //
+    // ⚠️ `sediScelte` porta i NOMI, non gli uuid: questa email la legge una
+    // persona, e un uuid in una casella di posta non dice niente a nessuno. Il
+    // nome si prende da `reali`, che è già in mano — nessuna query in più.
+    await inviaCopiaAllaSede(supabase, {
+      scuolaId,
+      dati: normalizzati,
+      // I consensi si ricostruiscono dal TEMPLATE e non dal corpo ricevuto:
+      // così un consenso non spuntato viaggia come `false` esplicito invece di
+      // sparire, e nella copia la sede legge «No» invece di non leggere niente.
+      // «Non gliel'ho chiesto» e «ha detto no» non sono la stessa cosa.
+      consensi: Object.fromEntries(
+        CONSENSI_INSEGNANTI_FIELDS.map((c) => [c.id, normalizzati[c.id] === true]),
+      ),
+      sediScelte: [reali.find((s) => s.id === scuolaId)?.nome ?? 'Kidville'],
+      inviataIl: formattaIstante(new Date(), 'it', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      }),
+      entitaId,
+      cvPath,
+    })
 
     return NextResponse.json({ id: entitaId }, { status: 201 })
   } catch (err) {

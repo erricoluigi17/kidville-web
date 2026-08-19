@@ -42,15 +42,20 @@ vi.mock('@/lib/email/contesto', async (originale) => ({
 
 import { inviaCopiaAllaSede } from '@/lib/candidature/copia-alla-sede'
 import { contestoSenzaSede } from '@/lib/email/contesto'
+import { SEDE_A, NOME_SEDE_A } from '../../fixtures/sedi'
 
-const SCUOLA = 'd53b0fbc-a9eb-4073-b302-73d1d5abd529'
+// ⚠️ L'uuid dalle FIXTURE, mai quello vero di un plesso. Il lock
+// `migrazioni-senza-sede-cablata` lo pretende, e la prima stesura di questo file
+// aveva cablato Giugliano: un uuid di produzione dentro un test è il seme di uno
+// script che un giorno lo riusa credendolo finto.
+const SCUOLA = SEDE_A
 const ENTITA = '11111111-1111-1111-1111-111111111111'
 
 const BASE = {
   scuolaId: SCUOLA,
   dati: { nome: 'Maria', cognome: 'Rossi', email: 'maria@e.it', posizioni: ['cuoca'] },
   consensi: { presa_visione_informativa: true },
-  sediScelte: ['Kidville Giugliano'],
+  sediScelte: [NOME_SEDE_A],
   inviataIl: '19/08/2026, 10:30',
   entitaId: ENTITA,
   cvPath: null as string | null,
@@ -73,8 +78,8 @@ describe('inviaCopiaAllaSede', () => {
     sendEmailDetailed.mockReset().mockResolvedValue({ ok: true, error: null, messageId: 'm1' })
     logEvento.mockReset()
     risolviContestoSede.mockReset().mockResolvedValue({
-      ...contestoSenzaSede('Kidville Giugliano'),
-      email: 'giugliano@kidville.it',
+      ...contestoSenzaSede(NOME_SEDE_A),
+      email: 'sede.alfa@example.invalid',
     })
     delete process.env.CANDIDATURE_EMAIL_FALLBACK
   })
@@ -84,7 +89,7 @@ describe('inviaCopiaAllaSede', () => {
 
   it('spedisce alla casella dichiarata nell’anagrafica della sede', async () => {
     await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
-    expect(sendEmailDetailed.mock.calls[0][0].to).toBe('giugliano@kidville.it')
+    expect(sendEmailDetailed.mock.calls[0][0].to).toBe('sede.alfa@example.invalid')
   })
 
   it('mette in «rispondi a» l’indirizzo di chi si è candidato', async () => {
@@ -93,15 +98,15 @@ describe('inviaCopiaAllaSede', () => {
   })
 
   it('anagrafica senza email → livello ERROR, non info: una configurazione mancante è un incidente', async () => {
-    risolviContestoSede.mockResolvedValue(contestoSenzaSede('Kidville Aversa'))
-    process.env.CANDIDATURE_EMAIL_FALLBACK = 'info@kidville.it'
+    risolviContestoSede.mockResolvedValue(contestoSenzaSede('Kidville Beta'))
+    process.env.CANDIDATURE_EMAIL_FALLBACK = 'ripiego@example.invalid'
     await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
     expect(logEvento.mock.calls.filter((c) => c[1] === 'error').length).toBeGreaterThan(0)
-    expect(sendEmailDetailed.mock.calls[0][0].to).toBe('info@kidville.it')
+    expect(sendEmailDetailed.mock.calls[0][0].to).toBe('ripiego@example.invalid')
   })
 
   it('senza anagrafica E senza ripiego non spedisce, ma lo dice', async () => {
-    risolviContestoSede.mockResolvedValue(contestoSenzaSede('Kidville Cesa'))
+    risolviContestoSede.mockResolvedValue(contestoSenzaSede('Kidville Gamma'))
     const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
     expect(sendEmailDetailed).not.toHaveBeenCalled()
     expect(esito.ok).toBe(false)

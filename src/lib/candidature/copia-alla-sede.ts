@@ -62,8 +62,16 @@ export interface DatiCopiaAllaSede {
     /** I NOMI di tutti i plessi scelti — non gli uuid: la legge una persona. */
     sediScelte: string[]
     inviataIl: string
-    /** L'id della candidatura, per correlare i log. */
-    entitaId: string
+    /**
+     * L'id della candidatura, per correlare i log.
+     *
+     * `null` è legittimo e non è un caso di scuola: la rotta pubblica lo ricava
+     * rileggendo la riga appena inserita, e quella rilettura può non riuscire.
+     * Serve SOLO a correlare le righe di `app_log` — una copia si spedisce
+     * comunque, perché il destinatario e il contenuto non dipendono da lui.
+     * Tiparlo `string` costringerebbe chi chiama a inventarne uno.
+     */
+    entitaId: string | null
     cvPath: string | null
 }
 

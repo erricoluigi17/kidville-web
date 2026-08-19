@@ -31,6 +31,8 @@ import { SEDE_A, SEDE_B, SEDE_E2E, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_E2E } fro
 // =============================================================================
 
 const h = vi.hoisted(() => ({
+  /** Gli argomenti di ogni chiamata a `inviaCopiaAllaSede`. */
+  copieAllaSede: [] as unknown[][],
   /** Colpi per chiave del rate-limit, e le opzioni con cui la route lo chiama. */
   colpi: new Map<string, number>(),
   opzioni: [] as { chiave: string; limit: number; windowMs: number }[],
@@ -213,6 +215,17 @@ vi.mock('@/lib/notifiche/triggers', () => ({
     h.notifiche.push(p)
   }),
 }))
+// ⚠️ SI FINGE L'ORCHESTRATORE, NON `sendEmailDetailed`.
+// La copia alla sede è una funzione sola con un contratto suo — «non lancia mai,
+// e ogni esito è a log» — ed è collaudata per intero in
+// `__tests__/lib/candidature/copia-alla-sede.test.ts`. Qui interessa solo la
+// domanda che riguarda LA ROTTA: parte, con quale sede, e in quali rami no.
+// Fingere il livello sotto rifarebbe quel collaudo una seconda volta e legherebbe
+// questi test alla forma dell'email invece che al comportamento della rotta.
+vi.mock('@/lib/candidature/copia-alla-sede', () => ({
+  inviaCopiaAllaSede: (...a: unknown[]) => h.copieAllaSede.push(a) && Promise.resolve({ ok: true, rinviabile: false }),
+}))
+
 vi.mock('@/lib/notifiche/destinatari', () => ({
   // GLI ARGOMENTI SI MEMORIZZANO. Il payload di `notificaEvento` dice a CHI è
   // indirizzato l'avviso; `staffScuola` decide CHI lo riceve, ed è la seconda
@@ -348,6 +361,7 @@ beforeEach(() => {
   ]
   h.eventi = []
   h.notifiche = []
+  h.copieAllaSede = []
 })
 
 describe('POST /api/iscrizione/insegnanti · il percorso felice', () => {
@@ -1391,5 +1405,54 @@ describe('POST /api/iscrizione/insegnanti · il doppio invio non è un no-op', (
     // candidato.
     expect(h.notifiche).toHaveLength(1)
     expect(h.notifiche[0].entitaId).toBeNull()
+  })
+})
+
+describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () => {
+  /** Il secondo argomento di `inviaCopiaAllaSede`: i dati della copia. */
+  const copie = () => h.copieAllaSede.map((a) => a[1] as Record<string, unknown>)
+  /** La forma di percorso che `percorsoCvAmmesso` ammette: uuid + nome. */
+  const CV = 'candidature/0f5f1f2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f-cv.pdf'
+
+  it('a candidatura registrata parte ANCHE la copia alla sede, non solo la conferma a chi si candida', async () => {
+    expect((await inviaValida()).status).toBe(201)
+    expect(copie()).toHaveLength(1)
+    expect(copie()[0].scuolaId).toBe(SEDE_A)
+  })
+
+  it('la copia porta il NOME del plesso, non il suo uuid: quell’email la legge una persona', async () => {
+    await inviaValida()
+    expect(copie()[0].sediScelte).toEqual([NOME_SEDE_A])
+  })
+
+  it('porta il curriculum quando c’è — con la forma di percorso che il gate ammette', async () => {
+    // Un percorso della forma giusta e non uno inventato: `percorsoCvAmmesso` pretende la
+    // forma esatta, e un percorso finto qui non arriverebbe mai all'inserimento.
+    // (Provato: con un percorso arbitrario la route risponde 400, ed è giusto.)
+    await inviaValida({ cv_path: CV })
+    expect(copie()[0].cvPath).toBe(CV)
+  })
+
+  it('i consensi NON spuntati viaggiano come `false`, non spariscono', async () => {
+    // «Non gliel'ho chiesto» e «ha detto no» non sono la stessa cosa: nella copia
+    // la sede deve leggere «No», non trovare la riga assente.
+    await inviaValida()
+    expect(copie()[0].consensi).toMatchObject({
+      presa_visione_informativa: true,
+      consenso_conservazione_candidatura: false,
+    })
+  })
+
+  it('la copia NON parte nel ramo del duplicato: la sede aprirebbe una pratica che non esiste', async () => {
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
+    h.vivaPerEmail = { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    expect((await inviaValida()).status).toBe(201)
+    expect(h.copieAllaSede).toHaveLength(0)
+  })
+
+  it('la copia NON parte se l’inserimento è fallito: non si annuncia ciò che non è stato registrato', async () => {
+    h.erroreInsert = { code: '42501', message: 'permission denied' }
+    await inviaValida()
+    expect(h.copieAllaSede).toHaveLength(0)
   })
 })

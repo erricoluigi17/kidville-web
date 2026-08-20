@@ -94,7 +94,7 @@
 
 ---
 
-## 🔁 Changelog — Il digest che si perdeva in silenzio, e tre frasi che dicevano il falso alla Direzione — 2026-08-20 (branch `fix/digest-ritentabile-e-testi-veri`)
+## 🔁 Changelog — Il digest che si perdeva in silenzio, e quattro frasi che dicevano il falso alla Direzione — 2026-08-20 (branch `fix/digest-ritentabile-e-testi-veri`)
 
 Due difetti diversi, trovati lo stesso giorno mentre se ne verificavano altri, e con la stessa forma:
 **il codice è cambiato e la frase accanto no.**
@@ -180,6 +180,68 @@ stato **riscritto a doppio senso** proprio per questo: nella prima stesura resta
 ripescaggio spento del tutto.
 
 Specifica: `docs/superpowers/specs/2026-08-20-news-digest-ritentabile-design.md`.
+
+---
+
+## 🚨 Changelog — La copia al plesso partiva per una sede sola e moriva per due, e il finto dei test l'aveva autorizzata — 2026-08-20 (branch `fix/copia-sede-destinatari-multipli`)
+
+**Regressione introdotta dalla PR #91 e trovata un'ora dopo il suo rilascio**, mentre si contavano
+le email per l'inoltro dell'arretrato. Non l'ha segnalata nessun utente: l'ha detta `app_log`.
+
+### Il guasto
+
+```
+route: /api/iscrizione/insegnanti      app_versione: 2e505bd
+422 validation_error — "Invalid `to` field. The email address needs to follow
+                        the `[email]` or `Name <[email]>` format."
+occorrenze: 2      11:02:02 → 11:04:30
+```
+
+`copia-alla-sede.ts` costruiva il destinatario con `destinatari.join(', ')`, e
+`SendEmailParams.to` era tipato `string`. Resend accetta **una stringa oppure un elenco**; una
+stringa sola che contiene due indirizzi non è nessuna delle due.
+
+**La prova è aritmetica, non indiziaria.** Le candidature rivolte a due plessi in tutto il database
+sono **2**, arrivate alle **11:01:57** e alle **11:04:26**. I due `422` sono alle **11:02:02** e alle
+**11:04:30** — cinque secondi dopo ciascuna. Le candidature a una sede sola passavano: il guasto
+colpiva **esattamente il caso per cui la funzione era stata scritta**, e solo quello.
+
+Due candidate vere non sono arrivate a nessuna casella di sede.
+
+### Perché undici test erano verdi
+
+Perché il finto di Resend accettava qualunque `to`. Il tipo diceva `string`, il finto diceva sì, e
+nessuno dei due parlava col protocollo vero.
+
+> **Un finto più permissivo del servizio vero non verifica: autorizza.** E autorizza esattamente
+> l'input che la produzione rifiuta.
+
+È la stessa famiglia del difetto corretto la mattina stessa sugli embed posizionali, dove il finto
+era cieco all'ordine — con la differenza che qui il permissivismo del banco di prova ha lasciato
+passare un guasto fino agli utenti.
+
+### La correzione, su due piani distinti
+
+| | |
+|---|---|
+| **Il tipo** | `SendEmailParams.to: string \| string[]` — il compilatore, non la buona volontà |
+| **Il chiamante** | `copia-alla-sede.ts` passa l'elenco, niente più `join(', ')` |
+| **La rete sotto** | `destinatariPerIlProvider()` separa comunque una stringa con le virgole, così l'email **parte** invece di prendere 422 — e lascia una riga `warn`, perché è un difetto del chiamante, non una forma legittima |
+| **L'eccezione** | la virgola non si separa quando c'è `<`: in `Rossi, Maria <m@x.it>` spezzarla produrrebbe due destinatari inesistenti |
+
+### E la lezione che è costata di più
+
+La rete di sicurezza **rende invisibile l'errore di chi ci cade dentro**: rimettendo il `join`, i
+test su `send.ts` restano verdi. È stato misurato prima di scrivere il test, non dedotto.
+
+Perciò il guardiano che tiene è sul **chiamante** — `copia-alla-sede.test.ts`, «DUE plessi → il
+destinatario è un ELENCO» — e il finto nuovo (`email-send-destinatari.test.ts`) **rifiuta la virgola
+con lo stesso 422 di Resend**. Sabotaggio verificato: rimesso il `join`, cadono **3 test**.
+
+### Stato
+
+`eslint 0` · `tsc 0` · `vitest` **965 file / 12142 test** · `build` ok. Nessuna migrazione, nessun
+cambio di schema.
 
 ---
 

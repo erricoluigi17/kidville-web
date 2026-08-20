@@ -143,7 +143,13 @@ export async function inviaCopiaAllaSede(
         const senzaCasella = d.scuoleIds.filter((_, i) => contesti[i].email === null)
         const destinatari = contesti.map((c) => c.email).filter((e): e is string => e !== null)
         if (destinatari.length === 0 && ripiego) destinatari.push(ripiego)
-        const destinatario = destinatari.length > 0 ? destinatari.join(', ') : null
+        // ⚠️ UN ELENCO, NON UNA STRINGA CON LE VIRGOLE.
+        // Qui c'era `destinatari.join(', ')`, ed è costato due candidature vere:
+        // il 2026-08-20, commit `2e505bd`, alle 11:02 e alle 11:04 Resend ha
+        // risposto `422 «Invalid to field»` alle uniche due candidature rivolte a
+        // DUE plessi, mentre quelle a una sede sola passavano. Cioè: la copia
+        // funzionava ovunque tranne che nel caso per cui è stata scritta.
+        const destinatario = destinatari.length > 0 ? destinatari : null
 
         if (senzaCasella.length > 0) {
             logEvento('config', 'error', {

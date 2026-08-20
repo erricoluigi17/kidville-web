@@ -121,21 +121,32 @@ l'app registra in due tocchi.
 
 ### Installazioni attese nel primo anno
 
-**Base di calcolo**, dai numeri reali della cooperativa e tutti tracciabili:
+**Base di calcolo**, misurata sul database di produzione il **20 agosto 2026 alle 12:24**:
 
-- **390 domande d'iscrizione** per l'anno 2026/27 sulle tre sedi, al 17 agosto 2026;
-- **~479 account genitore** attesi da quelle domande — non 390, perché a una domanda corrispondono
-  fino a due genitori: la resa misurata è di **1,23 account per domanda**;
+| | misurato oggi |
+|---|---|
+| domande d'iscrizione 2026/27, tre sedi | **403** |
+| account già esistenti | **94** |
+| bambini attualmente a registro | **33** |
+| candidature di personale ricevute | 38 |
+
+- **~496 account genitore** attesi da quelle 403 domande — non 403, perché a una domanda
+  corrispondono fino a due genitori: la resa misurata è di **1,23 account per domanda**;
 - **~30 fra maestre, segreteria e direzione**.
 
-Stima: **fra 300 e 500 installazioni nel primo anno**. Il bacino massimo teorico è di circa **510
+Stima: **fra 300 e 500 installazioni nel primo anno**. Il bacino massimo teorico è di circa **530
 persone**, e non cresce con la pubblicità: cresce con le iscrizioni. Non ci aspettiamo installazioni
 fuori dalle famiglie delle tre sedi, perché l'app senza un account non mostra niente.
 
-> ⚠️ **Da rifare prima di incollare.** Questi numeri sono di documento, non di misura. Eseguire
-> `SELECT count(*) FROM enrollment_submissions;` e il conteggio degli alunni attivi al momento della
-> compilazione: le domande d'iscrizione erano 302 il 4 agosto e 390 il 17, cioè crescono di alcune
-> decine a settimana, e un numero copiato da qui invecchia in giorni.
+> **La distanza fra 94 e 496 non è un errore, ed è la cosa più importante di questa tabella.** I 94
+> account esistono adesso; i 496 sono ciò che le 403 domande diventeranno quando l'importazione
+> automatica avrà finito di crearli. È anche il motivo per cui la stima resta 300–500 e non sale:
+> un account creato non è un'app installata.
+>
+> ⚠️ **E anche 403 invecchierà.** Erano **302** il 4 agosto e **390** il 17: circa **sei domande al
+> giorno**. Chi ricompila questo modulo fra una settimana rifaccia il conteggio invece di copiare da
+> qui — è la stessa regola che `CLAUDE.md` impone per la produzione, e vale perché è già stata
+> pagata: per due settimane quel file ha sostenuto che in produzione non ci fosse nessun dato reale.
 
 ### Interazione fra utenti e contenuti generati dagli utenti
 
@@ -251,12 +262,16 @@ parent and teacher, canteen menus and allergies, fees and payments, legally sign
 certificates, trip authorisations. For the school: student and staff records, roll call, document
 protocol numbering, electronic invoicing, and data-protection obligations.
 
-**Expected installs in the first year: between 300 and 500.** Basis: 390 enrolment applications for
-the 2026/27 school year across our three sites as of 17 August 2026; those yield about **479 parent
-accounts**, because one application can carry two parents (measured ratio: 1.23 accounts per
-application); plus about 30 teaching and office staff. The theoretical ceiling is around 510 people,
-and it does not grow with advertising — it grows with enrolments. We do not expect installs outside the families of these three schools,
-because without an account the app shows nothing.
+**Expected installs in the first year: between 300 and 500.** Basis, measured against our production
+database on 20 August 2026: **403 enrolment applications** for the 2026/27 school year across our
+three sites, **94 accounts already created**, and **33 children currently on the register**. Those
+403 applications yield about **496 parent accounts**, because one application can carry two parents
+(measured ratio: 1.23 accounts per application); plus about 30 teaching and office staff. The
+theoretical ceiling is around 530 people, and it does not grow with advertising — it grows with
+enrolments. We do not expect installs outside the families of these three schools, because without an
+account the app shows nothing. The gap between the 94 accounts that exist today and the ~496 expected
+is the enrolment import still running; an account created is not an app installed, which is why our
+estimate stays below the ceiling.
 
 **User interaction and user-generated content.** Both declared as present, consistently with our IARC
 content-rating answers and our Data safety form: there is parent-to-teacher chat, and there is a
@@ -299,8 +314,9 @@ ours, measured against the code: no tester told us how much any of them cost the
 
 ## Prima di incollare — tre cose da fare
 
-1. **Rieseguire i conteggi** della Parte 2 sul database. I numeri qui sono di documento e invecchiano
-   in giorni.
+1. ~~**Rieseguire i conteggi** della Parte 2 sul database.~~ ✅ **Fatto il 20/08/2026 alle 12:24**:
+   403 domande, 94 account, 33 bambini a registro, 38 candidature. Restano validi finche' non passa
+   qualche giorno — crescono di circa sei domande al giorno.
 2. **Leggere in Console la categoria dichiarata.** Deve essere **Istruzione**. Se fosse «Social» o
    «Comunicazione», scatterebbe la Child Safety Standards policy — che si applica **per categoria,
    non per pubblico** — e servirebbe una pagina pubblica di standard anti-CSAE che oggi **non

@@ -38,11 +38,32 @@
 #   gh secret set RESEND_API_KEY            # la chiave che sta gia' su Vercel
 #   gh secret set SENTINELLA_DESTINATARI    # indirizzi separati da virgola, senza spazi
 #
+# `SENTINELLA_DESTINATARI` e' stato impostato il 2026-08-20. `RESEND_API_KEY` NO,
+# e non per dimenticanza: su Vercel quella variabile e' marcata *Sensitive*, cioe'
+# non si rilegge — si puo' solo sovrascrivere. Nessuno, uomo o agente, puo'
+# recuperarne il valore da li'. Va incollato a mano, una volta.
+#
 # I destinatari sono un SEGRETO e non una costante nel file per una ragione sola:
 # questo repository e' PUBBLICO, e un indirizzo personale scritto qui dentro
-# finisce nelle liste di spam entro un giorno. Senza uno dei due segreti la
-# sentinella FALLISCE RUMOROSAMENTE invece di tacere: scoprire la pubblicazione
-# e tenersela per se' sarebbe il guasto peggiore di tutti.
+# finisce nelle liste di spam entro un giorno.
+#
+# ─── L'AVVISO ARRIVA ANCHE SENZA LA CHIAVE RESEND ───────────────────────────
+#
+# Questo e' il punto che rende la sentinella affidabile invece che elegante.
+# Quando la scheda risponde 200 succedono TRE cose, in quest'ordine, e sono
+# indipendenti:
+#
+#   1. si apre una SEGNALAZIONE nel repository — non serve nessun segreto, usa il
+#      token che GitHub regala a ogni run. Chi possiede il repository e' iscritto
+#      di suo alle proprie segnalazioni: l'email parte da GitHub;
+#   2. si manda l'email vera via Resend, ai destinatari configurati;
+#   3. la sentinella si spegne.
+#
+# Se il passo 2 non puo' partire perche' manca la chiave, il passo 1 e' gia'
+# avvenuto e il run FALLISCE rumorosamente — una seconda email, quella di
+# «workflow fallito». Scoprire la pubblicazione e tenersela per se' sarebbe il
+# guasto peggiore di tutti, e per farlo accadere dovrebbero tacere due canali
+# diversi nello stesso momento.
 # =============================================================================
 
 name: Sentinella Play Store
@@ -64,6 +85,8 @@ permissions:
   # Serve solo per spegnersi da sola dopo aver spedito: una sentinella che
   # continua a suonare dopo che l'hai sentita viene ignorata la volta dopo.
   actions: write
+  # Serve per il canale che NON dipende da nessun segreto: vedi la testata.
+  issues: write
 
 jobs:
   controlla:
@@ -96,6 +119,53 @@ jobs:
         run: |
           echo "HTTP ${{ steps.scheda.outputs.codice }} - ${{ steps.scheda.outputs.pacchetto }} non e' (ancora) sullo store."
           echo "Nessuna email. Riprovo domani alle 09:23 di Roma."
+
+      # Questo passo viene PRIMA dell'email di proposito: non ha bisogno di nessun
+      # segreto, quindi e' quello che non puo' fallire per configurazione mancante.
+      # Se piu' avanti l'email non parte, l'avviso e' comunque gia' stato dato.
+      # ⚠️ Il corpo di questa segnalazione e' PUBBLICO: niente indirizzi, niente
+      #    dati di persone. Solo il pacchetto, l'URL della scheda e l'ora.
+      - name: Apri una segnalazione nel repository (nessun segreto richiesto)
+        if: steps.scheda.outputs.codice == '200'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKG: ${{ steps.scheda.outputs.pacchetto }}
+          URL: ${{ steps.scheda.outputs.url }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$PKG" = "it.kidville.app" ]; then
+            TITOLO="Kidville e' attiva su Google Play"
+            APERTURA="La scheda pubblica di Kidville risponde. L'app e' installabile da chiunque, non piu' solo dai dodici tester del canale chiuso."
+          else
+            TITOLO="PROVA della sentinella Play - Kidville NON e' pubblicata"
+            APERTURA="Questa e' una prova, lanciata a mano su un pacchetto che non e' Kidville, per verificare che il percorso dell'avviso funzioni prima che serva davvero. **Kidville non e' pubblicata.**"
+          fi
+
+          {
+            echo "$APERTURA"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| pacchetto | \`$PKG\` |"
+            echo "| scheda | $URL |"
+            echo "| misurato | HTTP 200 il $(date -u '+%d/%m/%Y alle %H:%M UTC') |"
+            echo "| run | $RUN_URL |"
+            echo
+            echo "La misura e' il codice HTTP della **scheda pubblica**, non quello che dichiara la"
+            echo "Play Console. Il 2026-08-04 App Store Connect diceva «Pronta per la distribuzione»"
+            echo "mentre l'app non era acquistabile in Italia: il semaforo diceva verde e mentiva."
+            echo
+            echo "La sentinella si spegne da sola. Per riaccenderla: \`gh workflow enable sentinella-play.yml\`."
+          } > /tmp/corpo-segnalazione.md
+
+          if gh issue create --repo "$REPO" --title "$TITOLO" --body-file /tmp/corpo-segnalazione.md; then
+            echo "::notice title=Sentinella Play::Segnalazione aperta nel repository."
+          else
+            # Non si esce: questo e' il canale di scorta, e un canale di scorta che
+            # fa fallire il run impedirebbe al canale principale di provarci.
+            echo "::warning title=Sentinella Play::Non sono riuscito ad aprire la segnalazione. Resta l'email."
+          fi
 
       - name: Manda l'email
         id: email

@@ -159,10 +159,23 @@ promemoria da quando il modulo pubblico è andato online.
 > **Rimisurato il 2026-08-04 — i numeri qui sopra sono di quattro giorni fa e sono già
 > RADDOPPIATI.**
 >
-> | | 2026-07-31 | 2026-08-04 |
-> |---|---|---|
-> | domande di iscrizione | 227 | **302** |
-> | codici fiscali distinti di minori | 152 | **324** |
+> | | 2026-07-31 | 2026-08-04 | 2026-08-20 |
+> |---|---|---|---|
+> | domande di iscrizione | 227 | 302 | **403** |
+> | codici fiscali distinti di minori | 152 | **324** | *non rimisurato* |
+>
+> **La terza colonna è del 2026-08-20, misurata alle 12:24** prima di mergiare la PR #91 in
+> produzione — cioè facendo esattamente ciò che questo blocco ordina, invece di fidarsi delle prime
+> due colonne. In sedici giorni le domande sono passate da 302 a 403: **circa sei al giorno**, e la
+> crescita non ha mai smesso.
+>
+> ⚠️ **La casella «non rimisurato» è la parte onesta di questa tabella e va letta, non saltata.** Il
+> conteggio dei codici fiscali distinti richiede di leggere le *righe* di `enrollment_submissions`,
+> non di contarle: la lettura è stata **rifiutata**, e giustamente, perché quelle righe sono
+> anagrafica di minori. Contare non è leggere. Chi ha bisogno di quel numero lo prenda con uno
+> `SELECT count(DISTINCT …)` eseguito dal database, che restituisce un intero e non trecento nomi.
+> Scrivere qui una stima sarebbe stato peggio del vuoto: è esattamente il modo in cui, il
+> 2026-07-31, questo file è arrivato a sostenere il falso per due settimane.
 >
 > Non è una correzione di refuso: è il punto di tutto questo blocco. Il paragrafo qui sopra
 > esisteva proprio per dire «non fidarti della data, esegui la query», e chi l'ha scritto ha

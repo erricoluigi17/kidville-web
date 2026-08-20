@@ -290,10 +290,31 @@ cui su Apple si sta convertendo l'account ([A1](A1-dsa-operatore-commerciale.md)
 
 ## §11 — Verificare l'AAB, non il sorgente
 
-Il 2026-08-09 il bundle sul disco aveva `versionCode 1` mentre `build.gradle` diceva 2, e portava
-dentro `http://10.0.2.2:3100`. Entrambi i difetti sono invisibili a `git status`, al gate e a una
-build che riesce benissimo: **il file gitignorato che li contiene non è il file che si legge.**
-Quindi i controlli si fanno sul `.aab`, uno per uno.
+Il 2026-08-09 il bundle sul disco aveva `versionCode 1` mentre `build.gradle` diceva 2, e il file
+**sorgente** `android/app/src/main/assets/capacitor.config.json` puntava a `http://10.0.2.2:3100`.
+Entrambi i difetti sono invisibili a `git status`, al gate e a una build che riesce benissimo:
+**il file gitignorato che li contiene non è il file che si legge.** Quindi i controlli si fanno sul
+`.aab`, uno per uno.
+
+> 🔻 **CORRETTO il 2026-08-17.** Fino a oggi questa riga diceva che *il bundle* «portava dentro
+> `http://10.0.2.2:3100`». **È falso, ed è stato misurato falso.** Ciò che il 09/08 fu trovato
+> avvelenato è il **sorgente**, non l'artefatto — e la nota di quel giorno lo scriveva
+> esplicitamente: *«che una `bundleRelease` lanciata ora lo imbarchi è inferenza, non prova»*.
+> È questo riassunto ad aver promosso quella cautela a fatto, e per otto giorni il bundle in mano
+> ai 12 tester è stato creduto rotto senza esserlo.
+>
+> La misura (17/08): `intermediates/assets/release/mergeReleaseAssets/capacitor.config.json` ha
+> mtime **05/08 14:09:03**, dice `https://app.kidville.it` · `cleartext false`, ed è **byte-identico
+> (7 file su 7)** a `base/assets/` dell'`.aab` del 09/08. Il 09/08 Gradle non ha rifatto
+> `mergeReleaseAssets` (solo manifest, risorse e `buildReleasePreBundle`): gli asset del bundle
+> `versionCode 2` **sono** quelli del 05/08. Il `10.0.2.2:3100` sta nel ramo **debug**
+> (`mergeDebugAssets`, mtime **07/08 15:25**, `cleartext true`), nato due giorni **dopo** il bundle
+> caricato su Play.
+>
+> 🔑 **La lezione non cambia — la rafforza**: i controlli qui sotto vanno fatti sull'artefatto. Ma
+> vale anche al contrario: *un difetto dedotto e mai misurato non va scritto come misurato*, perché
+> il documento che lo riassume perde l'avverbio e conserva l'allarme. Quando l'artefatto non c'è
+> più, guardare in `android/app/build/intermediates/` prima di dichiarare l'impossibilità.
 
 ```bash
 A=android/app/build/outputs/bundle/release/app-release.aab

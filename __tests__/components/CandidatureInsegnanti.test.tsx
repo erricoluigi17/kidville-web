@@ -79,6 +79,8 @@ vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => '
  * togliere la riga di guardia da `carica` e la suite restava verde).
  */
 let reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
+/** La sede scelta nel selettore in alto: è quella su cui si decide. */
+let sedeCorrenteFinta: string | null = null
 vi.mock('@/lib/context/sede-context', () => ({
   useSediAttive: () => ({
     sedi: [
@@ -87,7 +89,7 @@ vi.mock('@/lib/context/sede-context', () => ({
     ],
     selezionate: [],
     effettive: reFetchKeyCorrente.split(','),
-    sedeCorrente: null,
+    sedeCorrente: sedeCorrenteFinta,
     reFetchKey: reFetchKeyCorrente,
     epocaSede: 0,
     loading: false,
@@ -127,6 +129,16 @@ const ELENCO = [
     creata_il: '2026-08-05T09:00:00Z',
     email: 'recapito.da.non.mostrare@example.test',
     note: 'PRESENTAZIONE-DA-NON-MOSTRARE-IN-ELENCO',
+    /**
+     * ⚠️ LA RIGA DI SEDE C'È, ANCHE IN ELENCO — e non è un di più.
+     *
+     * L'elenco si legge con `candidature_sedi!inner(scuola_id, stato)`: una
+     * candidatura senza nemmeno una riga in scope non uscirebbe dalla query.
+     * Fino al 2026-08-20 questo fixture non ce l'aveva, e ogni test di questo
+     * file esercitava `statoDiRiga`/`mia` sul RAMO DI RIPIEGO — quello che serve
+     * al database della CI, non migrato — invece che su quello vero.
+     */
+    candidature_sedi: [{ scuola_id: 'sc-aversa', stato: 'pending' }],
   },
   {
     id: '22222222-2222-4222-8222-222222222222',
@@ -140,6 +152,7 @@ const ELENCO = [
     posizioni: ['collaboratrice'],
     gradi: [],
     creata_il: '2026-08-04T09:00:00Z',
+    candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'rifiutata' }],
   },
 ]
 
@@ -153,6 +166,8 @@ const DETTAGLIO = {
   anni_esperienza: 4,
   disponibilita: 'tempo_pieno',
   cv_path: 'candidature/cv-anna.pdf',
+  // La riga di sede arriva dallo spread di `ELENCO[0]`, con la nota che spiega
+  // perché non può mancare: la scheda si legge con `!inner`.
 }
 
 /**
@@ -212,6 +227,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   ruoloCorrente = 'admin'
   reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
+  sedeCorrenteFinta = null
   fetchMock.mockImplementation((url: string) => ok(rispostaPredefinita(url)))
   vi.stubGlobal('fetch', fetchMock)
   finestraAperta = null
@@ -567,6 +583,86 @@ describe('CandidatureInsegnanti — cambio di sede con una lettura già in volo'
     expect(screen.getByText('Dora Rossi')).toBeInTheDocument()
     expect(screen.queryByText('Anna Bianchi')).not.toBeInTheDocument()
     expect(screen.queryByText('Bruno Neri')).not.toBeInTheDocument()
+  })
+
+  it('🔴 senza righe di sede (CI non migrata) i pulsanti sono SPENTI, e il badge no', async () => {
+    // ⚠️ IL RIPIEGO ACCENDEVA DUE PULSANTI SU UN PERCORSO CHE NON PUÒ RIUSCIRE.
+    //
+    // Il ripiego `mia?.stato ?? cand.stato` era documentato come servizio
+    // «all'ambiente non ancora migrato, dove le righe di sede non esistono». In
+    // quell'ambiente il BADGE dice una cosa vera, anche se grossolana — e va
+    // bene. Ma `cambiaStato` scrive su `candidature_sedi` e degrada solo sulla
+    // COLONNA assente, non sulla TABELLA assente: ogni «Approva» prende
+    // `42P01`/`PGRST205` e torna 503.
+    //
+    // È lo stesso difetto che il blocco su `mia` denuncia per l'aggregato — «un
+    // ordine ineseguibile, dato all'infinito» — entrato da un'altra porta: là
+    // era un 409, qui è un 503.
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url)
+      // Il dettaglio SENZA `candidature_sedi`: è il database della CI.
+      if (u.includes('id=')) {
+        const senzaRighe: Record<string, unknown> = { ...DETTAGLIO }
+        delete senzaRighe.candidature_sedi
+        return ok({ data: senzaRighe })
+      }
+      return ok({ data: ELENCO, total: 2 })
+    })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Anna Bianchi'))
+    await waitFor(() => expect(screen.getByText('+39 000 0000000')).toBeInTheDocument())
+
+    const approva = screen.getByRole('button', { name: 'Approva' })
+    expect(approva, 'un pulsante che non può riuscire, acceso').toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Rifiuta' })).toBeDisabled()
+    // E il motivo è scritto, non solo il pulsante spento: un divieto legittimo
+    // che si presenta come un guasto è l'anti-pattern che questo file evita.
+    expect(approva.getAttribute('title')).toContain('non può riuscire')
+    // Il badge invece ripiega e dice il vero: «In attesa», dall'aggregato.
+    expect(screen.getAllByText('In attesa').length).toBeGreaterThan(0)
+  })
+
+  it('🔴 togliere una sede dal selettore CHIUDE il pannello aperto su quella sede', async () => {
+    // ⚠️ IL PANNELLO SOPRAVVIVEVA AL PROPRIO SCOPE.
+    //
+    // L'effetto `[reFetchKey]` ricaricava l'elenco e basta: `selezionata` e
+    // `sedeScelta` restavano. Aperta una candidatura e tolta la sua sede dal
+    // selettore in alto, il pannello restava a schermo con email, telefono,
+    // curriculum e note di sede di un plesso su cui chi guarda non ha più
+    // titolo — e «Rifiuta» spediva una sede fuori scope, prendendo un 404 e
+    // accendendo il warn `sede-fuori-scope`.
+    //
+    // Non è una fuga — quei dati erano stati letti quando il titolo c'era — ma è
+    // una schermata che mostra ciò che il suo scope non copre più.
+    fetchMock.mockImplementation((url: string, init?: { headers?: Record<string, string> }) => {
+      const u = String(url)
+      if (u.includes('id=')) return ok({ data: DETTAGLIO })
+      // ⚠️ L'ELENCO NUOVO NON DEV'ESSERE VUOTO. Il pannello vive dentro il ramo
+      // `righe.length > 0`: con zero righe sparirebbe da solo, e il test
+      // resterebbe verde anche togliendo la chiusura. Misurato il 2026-08-20 —
+      // la prima stesura di questo test non cadeva sul sabotaggio.
+      if (init?.headers?.['x-sedi'] === 'sc-giugliano') return ok({ data: [ELENCO[1]], total: 1 })
+      return ok({ data: ELENCO, total: 3 })
+    })
+    const { rerender } = render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Anna Bianchi'))
+    // Il pannello è aperto: il telefono esce solo con `?id=`, quindi è la prova
+    // che il dettaglio è a schermo e non solo la riga d'elenco.
+    await waitFor(() => expect(screen.getByText('+39 000 0000000')).toBeInTheDocument())
+
+    // Aversa esce dal selettore in alto: la candidatura aperta era sua.
+    reFetchKeyCorrente = 'sc-giugliano'
+    rerender(<CandidatureInsegnanti />)
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('+39 000 0000000'),
+        'il pannello è rimasto a schermo con i dati di una sede che non è più in scope',
+      ).not.toBeInTheDocument(),
+    )
   })
 
   it('«Mostra altre» è SPENTO mentre una lettura d’elenco è in volo: non si accoda a un elenco che sta per cambiare', async () => {
@@ -979,7 +1075,19 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
    * il badge «Approvata» timbrato su una candidatura ancora in attesa, e i due
    * pulsanti di Bruno spariti perché `decisa` era diventato vero.
    */
-  const BRUNO_IN_ATTESA = { ...ELENCO[1], stato: 'pending' }
+  /**
+   * ⚠️ SI SPOSTA ANCHE LA RIGA DI SEDE, non solo l'aggregato.
+   *
+   * Dal 2026-08-19 badge e pulsanti leggono `candidature_sedi[…].stato`, non
+   * `stato`: un fixture che sposta solo l'aggregato descrive una candidatura che
+   * il database non può produrre — il trigger `candidature_sedi_aggrega` calcola
+   * l'aggregato DALLE righe, quindi i due non possono essere in disaccordo.
+   */
+  const BRUNO_IN_ATTESA = {
+    ...ELENCO[1],
+    stato: 'pending',
+    candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'pending' }],
+  }
 
   function serverConPatchLenta(ritardoMs: number) {
     let approvata = false
@@ -1009,7 +1117,16 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
       if (u.includes('id=')) return ok({ data: DETTAGLIO })
       // L'elenco ricaricato dopo la PATCH dice la verità: Anna è approvata.
       return ok({
-        data: [approvata ? { ...ELENCO[0], stato: 'approvata' } : ELENCO[0], BRUNO_IN_ATTESA],
+        data: [
+          approvata
+            ? {
+                ...ELENCO[0],
+                stato: 'approvata',
+                candidature_sedi: [{ scuola_id: 'sc-aversa', stato: 'approvata' }],
+              }
+            : ELENCO[0],
+          BRUNO_IN_ATTESA,
+        ],
         total: 2,
       })
     })
@@ -1678,5 +1795,180 @@ describe('CandidatureInsegnanti — accessibilità e cataloghi', () => {
   it('adminAltro e adminModulistica: it ed en espongono lo stesso set di chiavi', () => {
     expect(Object.keys(itAdminAltro).sort()).toEqual(Object.keys(enAdminAltro).sort())
     expect(Object.keys(itAdminModulistica).sort()).toEqual(Object.keys(enAdminModulistica).sort())
+  })
+})
+
+describe('CandidatureInsegnanti — una candidatura rivolta a PIÙ sedi', () => {
+  /** Il dettaglio di una candidatura in valutazione a Giugliano E ad Aversa. */
+  const DUE_SEDI = {
+    ...DETTAGLIO,
+    sedi: [
+      { scuola_id: 'sc-giugliano', stato: 'pending' },
+      { scuola_id: 'sc-aversa', stato: 'rifiutata' },
+    ],
+  }
+
+  function serverConDueSedi(corpoPatch?: unknown) {
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok(corpoPatch ?? { success: true, esitoAccount: 'nessuno' })
+      const u = String(url)
+      if (u.includes('id=')) return ok({ data: DUE_SEDI })
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+  }
+
+  it('la scheda elenca TUTTE le sedi, con lo stato di ciascuna', async () => {
+    // Anche quelle che non sono di chi guarda: se nessuna delle due segreterie
+    // sa dell'altra, istruiscono la stessa pratica in parallelo e convocano la
+    // persona due volte con parole diverse.
+    serverConDueSedi()
+    await apriPrima()
+    // Il nome compare anche nel selettore in alto: si guarda DENTRO l'elenco
+    // dei plessi della scheda, non in tutta la pagina.
+    const elenco = screen.getByText(itAdminAltro.candSediMultiple).parentElement as HTMLElement
+    expect(within(elenco).getByText('Kidville Giugliano')).toBeInTheDocument()
+    expect(within(elenco).getByText('Kidville Aversa')).toBeInTheDocument()
+    // Senza una sede scelta nel selettore in alto NON si evidenzia niente: con
+    // due plessi e nessuna scelta, indicare «la tua» sarebbe inventarla.
+    expect(screen.queryByTestId('sede-propria')).toBeNull()
+  })
+
+  it('la sede su cui si sta decidendo è distinguibile dalle altre', async () => {
+    // Con tre plessi in elenco, «Approva» senza sapere quale riga si sta
+    // chiudendo è il gesto da cui esce la decisione sbagliata.
+    sedeCorrenteFinta = 'sc-aversa'
+    serverConDueSedi()
+    await apriPrima()
+    const propria = await screen.findByTestId('sede-propria')
+    expect(propria).toHaveTextContent('Kidville Aversa')
+  })
+
+  it('🔴 il PATCH DICHIARA la sede: senza, chi ha più sedi prende 400', async () => {
+    sedeCorrenteFinta = 'sc-aversa'
+    serverConDueSedi()
+    await apriPrima()
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+    // La conferma in due tempi resta: si preme, poi si conferma.
+    fireEvent.click(await screen.findByRole('button', { name: 'Confermo' }))
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PATCH')
+      expect(patch, 'nessun PATCH partito').toBeTruthy()
+      const corpo = JSON.parse((patch![1] as { body: string }).body) as Record<string, unknown>
+      expect(corpo.scuola_id).toBe('sc-aversa')
+    })
+  })
+
+  it('con una sede sola la riga resta quella di prima: nessun elenco dove non serve', async () => {
+    await apriPrima() // il dettaglio predefinito non ha `sedi`
+    expect(screen.queryByTestId('sede-propria')).toBeNull()
+  })
+
+  it('🔴 badge e pulsanti seguono la PROPRIA sede, non l’aggregato', async () => {
+    // Giugliano ha già approvato, Aversa sta ancora valutando: l'aggregato è
+    // `pending`. Chi guarda da GIUGLIANO ha chiuso, e deve vederlo — altrimenti
+    // ripreme «Approva», prende 409 «ricaricare la pagina», ricarica, e trova
+    // tutto identico. Un ordine ineseguibile, dato all'infinito.
+    sedeCorrenteFinta = 'sc-giugliano'
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok({ success: true })
+      const u = String(url)
+      if (u.includes('id=')) {
+        return ok({
+          data: {
+            ...DETTAGLIO,
+            stato: 'pending', // l'aggregato
+            sedi: [
+              { scuola_id: 'sc-giugliano', stato: 'approvata' },
+              { scuola_id: 'sc-aversa', stato: 'pending' },
+            ],
+            candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'approvata', motivo_rifiuto: null }],
+          },
+        })
+      }
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+    await apriPrima()
+    // Niente pulsanti: per questa sede la pratica è chiusa.
+    expect(screen.queryByRole('button', { name: 'Approva' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rifiuta' })).toBeNull()
+  })
+
+  it('il MOTIVO mostrato è quello della propria sede, e arriva dall’embed filtrato', async () => {
+    // `cand.motivo_rifiuto` non lo scrive più nessuno dal 2026-08-19: leggere
+    // ancora quella colonna vorrebbe dire non mostrare mai più nessun motivo.
+    sedeCorrenteFinta = 'sc-aversa'
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok({ success: true })
+      const u = String(url)
+      if (u.includes('id=')) {
+        return ok({
+          data: {
+            ...DETTAGLIO,
+            stato: 'pending',
+            motivo_rifiuto: null, // la colonna della candidatura è vuota, e resta vuota
+            sedi: [
+              { scuola_id: 'sc-giugliano', stato: 'pending' },
+              { scuola_id: 'sc-aversa', stato: 'rifiutata' },
+            ],
+            candidature_sedi: [
+              { scuola_id: 'sc-aversa', stato: 'rifiutata', motivo_rifiuto: 'Nota della mia sede.' },
+            ],
+          },
+        })
+      }
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+    await apriPrima()
+    expect(await screen.findByText('Nota della mia sede.')).toBeInTheDocument()
+  })
+
+  it('🔴 operatore su DUE sedi della stessa candidatura: può SCEGLIERE su quale decidere', async () => {
+    // `sedeCorrente` è null appena l'operatore ha più di una sede attiva. Prima
+    // di oggi il pannello non offriva nessuna via: il server rispondeva 400
+    // `SEDE_DA_SPECIFICARE` e chi lavora su tutte e tre le sedi non poteva
+    // chiudere niente, senza che una riga glielo spiegasse.
+    sedeCorrenteFinta = null // due sedi attive nel selettore
+    serverConDueSedi()
+    await apriPrima()
+
+    const scelte = await screen.findAllByRole('radio')
+    expect(scelte.length, 'nessun modo di scegliere il plesso').toBe(2)
+    expect(screen.getByText(itAdminAltro.candScegliSedeSuCuiDecidere)).toBeInTheDocument()
+
+    fireEvent.click(scelte[1]) // Aversa
+    await waitFor(() => expect(screen.getByTestId('sede-propria')).toHaveTextContent('Kidville Aversa'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confermo' }))
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PATCH')
+      expect(JSON.parse((patch![1] as { body: string }).body).scuola_id).toBe('sc-aversa')
+    })
+  })
+
+  it('con UNA sola sede in comune non si chiede niente: sarebbe una domanda con una risposta sola', async () => {
+    sedeCorrenteFinta = null
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok({ success: true })
+      const u = String(url)
+      if (u.includes('id=')) {
+        return ok({
+          data: {
+            ...DETTAGLIO,
+            // Rivolta anche a un plesso che NON è di chi guarda: l'intersezione
+            // resta di uno, quindi non c'è niente da scegliere.
+            sedi: [
+              { scuola_id: 'sc-giugliano', stato: 'pending' },
+              { scuola_id: 'sc-cesa', stato: 'pending' },
+            ],
+            candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'pending' }],
+          },
+        })
+      }
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+    await apriPrima()
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+    expect(screen.getByTestId('sede-propria')).toHaveTextContent('Kidville Giugliano')
   })
 })

@@ -109,7 +109,7 @@ const COOKIE_SEDI = 'sedi_attive'
  * resta negata, ed è il controllo negativo che sta accanto a ognuno di questi
  * casi in `__tests__/lib/auth/scope.test.ts`.
  */
-function formaConfronto(id: string): string {
+export function formaConfronto(id: string): string {
   return id.trim().toLowerCase()
 }
 

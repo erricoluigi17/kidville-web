@@ -113,6 +113,23 @@ import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-do
 interface RigaElenco {
   id: string
   scuola_id?: string | null
+  /**
+   * I plessi a cui la candidatura è rivolta, con lo stato di CIASCUNO.
+   *
+   * Dal 2026-08-19 una persona può proporsi a più sedi e ogni sede valuta per
+   * conto suo. `scuola_id` qui sopra è la sede di PRIMO ARRIVO — un dato storico
+   * — e non dice su quale plesso si sta decidendo.
+   */
+  sedi?: { scuola_id: string; stato?: string | null; evasa_il?: string | null }[] | null
+  /**
+   * Le righe di sede DI CHI GUARDA — l'embed filtrato del server.
+   *
+   * ⚠️ È QUI che vive `motivo_rifiuto`, e non in `sedi`. Quello non è filtrato
+   * per sede (è il suo scopo: dire anche i plessi altrui), quindi ogni campo che
+   * ci si mette viaggia cross-sede. La nota interna con cui una segreteria
+   * giudica una persona non attraversa i plessi.
+   */
+  candidature_sedi?: { scuola_id: string; stato?: string | null; motivo_rifiuto?: string | null; evasa_il?: string | null }[] | null
   stato: string
   nome?: string | null
   cognome?: string | null
@@ -359,7 +376,60 @@ function accoda(precedenti: RigaElenco[], nuove: RigaElenco[]): RigaElenco[] {
 export function CandidatureInsegnanti() {
   const t = useTranslations('adminAltro')
   const f = useDateFormat()
-  const { reFetchKey, sedi } = useSediAttive()
+  const { reFetchKey, sedi, sedeCorrente, effettive } = useSediAttive()
+  /** Gli uuid dei plessi su cui questa persona ha titolo, adesso. */
+  const sediAttive = effettive
+  /**
+   * Il plesso scelto A MANO nella scheda, quando la candidatura ne ha più d'uno
+   * in comune con chi guarda e il selettore in alto non ne indica nessuno.
+   * Si azzera cambiando candidatura: è una scelta su QUELLA pratica.
+   */
+  const [sedeScelta, setSedeScelta] = useState<string | null>(null)
+
+  /**
+   * SU QUALE PLESSO SI STA DECIDENDO.
+   *
+   * Dal 2026-08-19 la stessa candidatura può essere in valutazione a più sedi, e
+   * ognuna decide per sé: «approva» senza dire dove chiuderebbe una pratica a
+   * caso. Il server risponde 400 a un operatore multi-sede che non lo dichiara.
+   *
+   * L'ordine delle tre risposte NON è intercambiabile:
+   *  1. la sede SCELTA nel selettore in alto, se quella candidatura ce l'ha: è il
+   *     plesso su cui questa persona sta lavorando adesso, e ciò che vede nella
+   *     scheda è filtrato su quello;
+   *  2. altrimenti, se la candidatura è rivolta a UNA sola sede, quella: non c'è
+   *     niente da scegliere;
+   *  3. altrimenti `undefined`, e il server risponde 400. Meglio un rifiuto
+   *     leggibile che una scelta presa dal client — indovinare qui vorrebbe dire
+   *     chiudere la pratica di un plesso al posto di un altro, in silenzio.
+   */
+  function sedeSuCuiDecido(riga: { scuola_id?: string | null; sedi?: { scuola_id: string }[] | null }): string | undefined {
+    const sueSedi = (riga.sedi ?? []).map((x) => x.scuola_id)
+    // Nessuna riga di sede (ambiente non ancora migrato): si ripiega sulla
+    // colonna storica, che lì è ancora l'unica verità.
+    if (sueSedi.length === 0) return riga.scuola_id ?? undefined
+    // La scelta esplicita di chi guarda, quando l'ha fatta (vedi `sedeScelta`).
+    if (sedeScelta && sueSedi.includes(sedeScelta)) return sedeScelta
+    // La sede selezionata in alto, se questa candidatura ce l'ha.
+    if (sedeCorrente && sueSedi.includes(sedeCorrente)) return sedeCorrente
+    /**
+     * ⚠️ L'INTERSEZIONE, e non `sueSedi.length === 1`.
+     *
+     * `sedeCorrente` è `null` appena l'operatore ha più di una sede attiva nel
+     * selettore in alto (`sede-context`), e la vecchia condizione guardava solo
+     * quante sedi ha la CANDIDATURA. Risultato: chi lavora su tutte e tre —
+     * `test.multisede.admin`, e chiunque in Direzione — non poteva decidere
+     * NIENTE su una candidatura rivolta a due plessi: il server rispondeva 400 e
+     * il pannello non offriva nessun modo di scegliere.
+     *
+     * Ciò che conta è quante sedi hanno IN COMUNE la candidatura e chi guarda:
+     * se è una sola, non c'è niente da scegliere, qualunque sia il selettore.
+     */
+    const comuni = sueSedi.filter((id) => sediAttive.includes(id))
+    if (comuni.length === 1) return comuni[0]
+    // Ambiguo per davvero: lo si chiede, non lo si indovina.
+    return undefined
+  }
   const { ruolo } = useAdminIdentity()
 
   const [righe, setRighe] = useState<RigaElenco[]>([])
@@ -562,8 +632,32 @@ export function CandidatureInsegnanti() {
    * precedente.)
    */
   const caricaRef = useRef(carica)
+  const chiudiRef = useRef(chiudiDettaglio)
   useEffect(() => { caricaRef.current = carica })
-  useEffect(() => { caricaRef.current(reFetchKey) }, [reFetchKey])
+  useEffect(() => { chiudiRef.current = chiudiDettaglio })
+  /**
+   * ⚠️ E IL PANNELLO SI CHIUDE, non solo l'elenco si ricarica.
+   *
+   * Fino al 2026-08-20 questo effetto ricaricava le righe e basta: `selezionata`
+   * e `sedeScelta` sopravvivevano. Aperta una candidatura di Cesa, scelta Cesa
+   * nel selettore della scheda, e poi tolta Cesa dal selettore in alto, il
+   * pannello restava a schermo con email, telefono, curriculum e note di sede di
+   * un plesso su cui chi guarda non ha più titolo — e «Rifiuta» spediva
+   * `scuola_id = Cesa`, che il server respinge con un 404 accendendo il warn
+   * `sede-fuori-scope`.
+   *
+   * Non è una fuga: quei dati erano stati letti quando il titolo c'era. È una
+   * schermata che sopravvive al proprio scope, che è la premessa di una fuga.
+   *
+   * `reFetchKey` è `effettive.join(',')` (`sede-context.tsx:246`): cambia SOLO
+   * quando cambiano le sedi attive, mai per una ricarica dopo una decisione.
+   * Non serve distinguere: la chiusura non ruba mai un pannello a chi sta
+   * lavorando.
+   */
+  useEffect(() => {
+    chiudiRef.current()
+    caricaRef.current(reFetchKey)
+  }, [reFetchKey])
 
   /** Pagina successiva, in coda a quelle già mostrate. */
   async function caricaAltre() {
@@ -666,6 +760,9 @@ export function CandidatureInsegnanti() {
         })
         return
       }
+      // La scelta della sede appartiene alla pratica che si sta aprendo: si
+      // azzera qui, o si porterebbe dietro il plesso deciso sulla precedente.
+      setSedeScelta(null)
       setSelezionata(json.data as Candidatura)
     } catch (e) {
       if (mio === gettoneDettaglio.current) setErrore(t('candDettaglioNonAperto'))
@@ -690,6 +787,7 @@ export function CandidatureInsegnanti() {
    */
   function chiudiDettaglio() {
     gettoneDettaglio.current += 1
+    setSedeScelta(null)
     setSelezionata(null)
   }
 
@@ -742,12 +840,22 @@ export function CandidatureInsegnanti() {
       const res = await fetch(API, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-sedi': reFetchKey },
+        // ⚠️ `scuola_id` DICHIARA SU QUALE PLESSO SI STA DECIDENDO, e senza di
+        // esso un operatore con più sedi attive riceve 400. Non è burocrazia: la
+        // stessa candidatura può essere in valutazione a Giugliano e ad Aversa, e
+        // «approva» senza dire dove chiuderebbe una pratica a caso.
+        //
+        // Si manda la sede DI CHI GUARDA fra quelle della candidatura, non la
+        // prima dell'elenco: è la sola su cui questa persona ha titolo di
+        // decidere. Il server la rifiuta comunque se non è sua — un uuid nel
+        // corpo lo scrive il client, e un client può scrivere qualunque cosa.
         body: JSON.stringify(
           azione === 'approva'
-            ? { id: selezionata.id, action: 'approva' }
+            ? { id: selezionata.id, action: 'approva', scuola_id: sedeSuCuiDecido(selezionata) }
             : {
                 id: selezionata.id,
                 action: 'rifiuta',
+                scuola_id: sedeSuCuiDecido(selezionata),
                 motivo: motivo.trim() || undefined,
                 inviaEmailEsito: avvisaEmail,
               },
@@ -822,7 +930,41 @@ export function CandidatureInsegnanti() {
       setConferma(null)
       setEsito(esitoDaRisposta(azione, statoNuovo, json))
       setAvvisi(avvisiDaRisposta(json))
-      if (statoNuovo) setSelezionata((s) => (s ? { ...s, stato: statoNuovo } : s))
+      /**
+       * ⚠️ SI AGGIORNA ANCHE LA RIGA DI SEDE, non solo l'aggregato.
+       *
+       * Fino al 2026-08-20 qui si scriveva solo `stato`, che è l'AGGREGATO —
+       * mentre il pannello, dal 2026-08-19, legge `mia.stato` (la riga della
+       * propria sede) per il badge, per `decisa` e per i due pulsanti. Dopo un
+       * «Approva» andato a buon fine il badge continuava a dire «in valutazione»
+       * e i pulsanti restavano ACCESI: ripremerli prendeva un 409 «già valutata:
+       * ricaricare la pagina», e ricaricare non cambiava niente perché non era
+       * la pagina a essere vecchia.
+       *
+       * È parola per parola il difetto che il blocco su `mia` descrive per
+       * l'aggregato — «un ordine ineseguibile, dato all'infinito» — rientrato
+       * dalla porta dell'aggiornamento ottimistico.
+       *
+       * ⚠️ Si tocca SOLO la riga della sede su cui si è deciso. Le altre non le
+       * ha decise nessuno, e scriverle qui direbbe che una segreteria ha chiuso
+       * una pratica di un plesso che non è il suo.
+       */
+      const sedeDecisa = sedeSuCuiDecido(selezionata)
+      if (statoNuovo) {
+        setSelezionata((s) => {
+          if (!s) return s
+          const righe = s.candidature_sedi ?? []
+          return {
+            ...s,
+            stato: statoNuovo,
+            candidature_sedi: righe.map((r) =>
+              // Senza riga di sede in comune non si indovina: si lascia com'è, e
+              // la ricarica dell'elenco resta la fonte.
+              sedeDecisa !== undefined && r.scuola_id === sedeDecisa ? { ...r, stato: statoNuovo } : r,
+            ),
+          }
+        })
+      }
       await carica(reFetchKey)
     } catch (e) {
       // Qui non si sa nemmeno se l'operazione sia avvenuta: la risposta non è
@@ -843,7 +985,23 @@ export function CandidatureInsegnanti() {
     }
   }
 
-  const inAttesa = righe.filter((r) => r.stato === 'pending' || r.stato === 'in_approvazione')
+  /**
+   * ⚠️ LO STATO DELLA PROPRIA SEDE, anche nei CONTATORI e nell'elenco.
+   *
+   * `r.stato` è l'AGGREGATO di tutte le sedi: con Giugliano già approvata e
+   * Aversa ancora in valutazione vale `pending`, quindi la segreteria di
+   * Giugliano si vedrebbe contare fra «in attesa» una pratica che ha chiuso — e
+   * i tre numeri in cima alla pagina, che sono il primo colpo d'occhio, direbbero
+   * il falso. La scheda già legge la riga di sede: i contatori la seguono.
+   *
+   * Ripiego su `r.stato` per l'ambiente non ancora migrato, dove le righe di
+   * sede non esistono e la colonna è l'unica verità.
+   */
+  const statoDiRiga = (r: Candidatura): string =>
+    (r.candidature_sedi ?? []).find((x) => x.scuola_id === sedeCorrente)?.stato ??
+    (r.candidature_sedi ?? [])[0]?.stato ??
+    r.stato
+  const inAttesa = righe.filter((r) => statoDiRiga(r) === 'pending' || statoDiRiga(r) === 'in_approvazione')
   // Due domande diverse, e prima erano una sola: «le righe caricate sono TUTTE
   // quelle che esistono?» governa i riquadri per stato (un conteggio parziale
   // spacciato per totale è una bugia scritta in grande), «c'è un'altra pagina?»
@@ -876,8 +1034,8 @@ export function CandidatureInsegnanti() {
           {tuttoContato && (
             <>
               <StatCard icon={Clock} label={t('candStatAttesa')} value={inAttesa.length} tone="warn" />
-              <StatCard icon={CheckCircle2} label={t('candStatApprovate')} value={righe.filter((r) => r.stato === 'approvata').length} tone="success" />
-              <StatCard icon={XCircle} label={t('candStatRifiutate')} value={righe.filter((r) => r.stato === 'rifiutata').length} tone="error" />
+              <StatCard icon={CheckCircle2} label={t('candStatApprovate')} value={righe.filter((r) => statoDiRiga(r) === 'approvata').length} tone="success" />
+              <StatCard icon={XCircle} label={t('candStatRifiutate')} value={righe.filter((r) => statoDiRiga(r) === 'rifiutata').length} tone="error" />
             </>
           )}
         </div>
@@ -938,7 +1096,8 @@ export function CandidatureInsegnanti() {
               >
                 <span className="mb-1.5 flex items-center justify-between gap-2">
                   <span className="font-barlow font-bold text-kidville-ink">{nomeCompleto(riga)}</span>
-                  <BadgeStato stato={riga.stato} />
+                  {/* Come i contatori: lo stato della PROPRIA sede, non l'aggregato. */}
+                  <BadgeStato stato={statoDiRiga(riga)} />
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
                   {/* LE POSIZIONI, non le fasce: sono loro a dire a colpo d'occhio
@@ -990,6 +1149,12 @@ export function CandidatureInsegnanti() {
               <PannelloDettaglio
                 cand={selezionata}
                 nomeSede={nomeSede(selezionata.scuola_id)}
+                nomeDiSede={nomeSede}
+                sedeDecisionale={sedeSuCuiDecido(selezionata)}
+                sediSceglibili={(selezionata.sedi ?? [])
+                  .map((x) => x.scuola_id)
+                  .filter((id) => sediAttive.includes(id))}
+                onScegliSede={setSedeScelta}
                 nomeCompleto={nomeCompleto(selezionata)}
                 posizioni={posizioniOrdinate(selezionata.posizioni)}
                 etichettaPosizione={etichettaPosizione}
@@ -1162,7 +1327,7 @@ function Voce({ etichetta, valore }: { etichetta: string; valore?: string | numb
 }
 
 function PannelloDettaglio({
-  cand, nomeSede, nomeCompleto, posizioni, etichettaPosizione, gradi, etichettaGrado,
+  cand, nomeSede, nomeDiSede, sedeDecisionale, sediSceglibili, onScegliSede, nomeCompleto, posizioni, etichettaPosizione, gradi, etichettaGrado,
   titoloStudio, disponibilita,
   isDirezione, motivoBlocco, conferma, setConferma, motivo, setMotivo, avvisaEmail,
   setAvvisaEmail, lavorando, esito, avvisi, cvBloccato, onChiudiEsito, onEsegui,
@@ -1170,6 +1335,14 @@ function PannelloDettaglio({
 }: {
   cand: Candidatura
   nomeSede: string
+  /** Il nome leggibile di UNA sede qualunque, per l'elenco dei plessi. */
+  nomeDiSede: (scuolaId?: string | null) => string
+  /** Il plesso su cui questa persona sta decidendo, da evidenziare. */
+  sedeDecisionale: string | undefined
+  /** I plessi di questa candidatura su cui chi guarda ha titolo di decidere. */
+  sediSceglibili: string[]
+  /** Sceglie il plesso su cui decidere, quando ce n'è più d'uno possibile. */
+  onScegliSede: (scuolaId: string) => void
   nomeCompleto: string
   posizioni: string[]
   etichettaPosizione: (p: string) => string
@@ -1196,7 +1369,49 @@ function PannelloDettaglio({
 }) {
   const t = useTranslations('adminAltro')
   const f = useDateFormat()
-  const decisa = cand.stato === 'approvata' || cand.stato === 'rifiutata'
+  /**
+   * LA RIGA DI SEDE DI CHI GUARDA, e da qui in giù è LEI a comandare.
+   *
+   * ⚠️ `cand.stato` è l'AGGREGATO di tutte le sedi, e usarlo per i pulsanti è un
+   * difetto vero: con Giugliano già approvata e Aversa ancora in valutazione
+   * l'aggregato vale `pending`, quindi l'operatore di Giugliano vedrebbe il
+   * badge «in valutazione» e i due pulsanti ACCESI su una pratica che ha già
+   * chiuso. Premendoli prenderebbe 409 «già valutata: ricaricare la pagina» —
+   * e ricaricare non cambierebbe niente, perché non è la pagina a essere
+   * vecchia. Un ordine ineseguibile, dato all'infinito.
+   *
+   * Il ripiego su `cand.stato` serve all'ambiente non ancora migrato, dove le
+   * righe di sede non esistono e la colonna è ancora l'unica verità — ma serve
+   * SOLO al badge: vedi `senzaRigheDiSede` qui sotto, e perché i pulsanti in
+   * quell'ambiente restano spenti.
+   */
+  const mia =
+    (cand.candidature_sedi ?? []).find((r) => r.scuola_id === sedeDecisionale) ??
+    (cand.candidature_sedi ?? [])[0]
+  const statoMio = mia?.stato ?? cand.stato
+  /**
+   * ⚠️ IL BADGE PUÒ RIPIEGARE, I PULSANTI NO.
+   *
+   * Il ripiego su `cand.stato` era documentato come servizio «all'ambiente non
+   * ancora migrato, dove le righe di sede non esistono». In quell'ambiente il
+   * badge dice una cosa vera, anche se grossolana — e va bene. Ma `cambiaStato`
+   * scrive su `candidature_sedi` e degrada solo sulla COLONNA assente, non sulla
+   * TABELLA assente: ogni «Approva» prende `42P01`/`PGRST205` e torna 503.
+   *
+   * Quindi il ripiego accendeva due pulsanti su un percorso che non può
+   * riuscire. È lo stesso difetto che il blocco qui sopra denuncia per
+   * l'aggregato — «un ordine ineseguibile, dato all'infinito» — entrato da
+   * un'altra porta: là era un 409, qui è un 503.
+   */
+  const senzaRigheDiSede = (cand.candidature_sedi ?? []).length === 0
+  /**
+   * La scelta del plesso è DAVVERO ambigua: più di uno in comune fra la
+   * candidatura e chi guarda, e nessuno ancora indicato. Solo in questo caso
+   * l'elenco diventa scegliibile — altrove sarebbe una domanda con una risposta
+   * sola, cioè un ostacolo.
+   */
+  const deveScegliere = sediSceglibili.length > 1 && sedeDecisionale === undefined
+  const decisa = statoMio === 'approvata' || statoMio === 'rifiutata'
   /**
    * Questa approvazione farà nascere un account?
    *
@@ -1216,7 +1431,7 @@ function PannelloDettaglio({
    * server, scriverebbe `rifiutata` e, con la spunta, manderebbe l'email di
    * rifiuto a chi ha già ricevuto le credenziali.
    */
-  const sospesa = cand.stato === 'in_approvazione'
+  const sospesa = statoMio === 'in_approvazione'
   /**
    * I due pulsanti sono spenti per TRE ragioni, e ognuna ha la sua frase.
    *
@@ -1228,12 +1443,14 @@ function PannelloDettaglio({
    * divieto legittimo che si presenta come un guasto, l'anti-pattern che
    * l'intestazione di questo file si impegna a evitare.
    */
-  const azioniSpente = !isDirezione || sospesa || lavorando
+  const azioniSpente = !isDirezione || sospesa || lavorando || senzaRigheDiSede
   const motivoAzioniSpente = sospesa
     ? t('candSospesaAzioniSpente')
     : !isDirezione
       ? motivoBlocco
-      : t('candAzioneInCorso')
+      : senzaRigheDiSede
+        ? t('candSenzaRigheDiSede')
+        : t('candAzioneInCorso')
 
   /**
    * Il fuoco si sposta sull'intestazione del pannello a ogni apertura: su schermo
@@ -1281,13 +1498,88 @@ function PannelloDettaglio({
         >
           {nomeCompleto}
         </h2>
-        <BadgeStato stato={cand.stato} />
+        {/* Lo stato DELLA PROPRIA SEDE, non l'aggregato: vedi `statoMio`. Il
+            badge sta accanto ai pulsanti, e mostrarne uno che li contraddice è
+            il modo più diretto di far premere il gesto sbagliato. */}
+        <BadgeStato stato={statoMio} />
       </div>
 
-      {/* Per quale scuola si sta decidendo: prima di ogni altro dato. */}
-      <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
-        <MapPin size={14} /> {t('candSede')} <strong>{nomeSede}</strong>
-      </p>
+      {/* ── PER QUALI SCUOLE, E COME STA CIASCUNA ──────────────────────────
+          Prima di ogni altro dato, come è sempre stato: chi decide deve sapere
+          per quale plesso sta decidendo, prima di leggere il nome della persona.
+
+          ⚠️ DAL 2026-08-19 I PLESSI POSSONO ESSERE PIÙ D'UNO, e la scheda li dice
+          TUTTI — anche quelli che non sono di chi guarda. Non è indiscrezione: se
+          la stessa persona è in valutazione a Giugliano e ad Aversa e nessuna
+          delle due lo sa, le due segreterie istruiscono la stessa pratica in
+          parallelo e la convocano due volte con parole diverse. Il nome della
+          sede altrui non è un dato sensibile; l'ignoranza reciproca sì, è un
+          disservizio.
+
+          Il plesso su cui si sta decidendo È EVIDENZIATO: con tre sedi in
+          elenco, «Approva» senza sapere quale riga si sta chiudendo è il gesto
+          da cui esce la decisione sbagliata. */}
+      {(cand.sedi ?? []).length > 1 ? (
+        <div className="rounded-xl bg-kidville-green-soft px-3 py-2">
+          <p className="flex items-center gap-1.5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
+            <MapPin size={14} /> {t('candSediMultiple')}
+          </p>
+          {/* ⚠️ QUANDO IL PLESSO NON È DEDUCIBILE, LO SI CHIEDE.
+              `sedeCorrente` è `null` appena l'operatore ha più di una sede attiva
+              nel selettore in alto, e se la candidatura è rivolta a due dei suoi
+              plessi non c'è modo di sapere su quale stia decidendo: il server
+              risponde 400 `SEDE_DA_SPECIFICARE`, giustamente. Prima di oggi il
+              pannello non offriva NESSUNA via — l'elenco era di sola lettura — e
+              chi lavora su tutte e tre le sedi non poteva chiudere niente,
+              senza che una riga glielo spiegasse. */}
+          <ul className="mt-1.5 space-y-1" {...(deveScegliere ? { role: 'radiogroup', 'aria-label': t('candSediMultiple') } : {})}>
+            {(cand.sedi ?? []).map((s) => {
+              const propria = s.scuola_id === sedeDecisionale
+              const sceglibile = deveScegliere && sediSceglibili.includes(s.scuola_id)
+              const etichetta = (
+                <>
+                  <span>
+                    {propria && <span aria-hidden="true">▸ </span>}
+                    {nomeDiSede(s.scuola_id)}
+                  </span>
+                  <BadgeStato stato={s.stato ?? 'pending'} />
+                </>
+              )
+              const classi = `flex items-center justify-between gap-2 font-maven text-sm ${
+                propria ? 'font-bold text-kidville-green' : 'text-kidville-sub'
+              }`
+              return (
+                <li key={s.scuola_id} {...(propria ? { 'data-testid': 'sede-propria' } : {})}>
+                  {sceglibile ? (
+                    <label className={`${classi} min-h-11 cursor-pointer`}>
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="radio"
+                          name="sede-su-cui-decido"
+                          value={s.scuola_id}
+                          checked={propria}
+                          onChange={() => onScegliSede(s.scuola_id)}
+                          className="h-4 w-4 accent-kidville-green"
+                        />
+                        {etichetta}
+                      </span>
+                    </label>
+                  ) : (
+                    <span className={classi}>{etichetta}</span>
+                  )}
+                </li>
+              )
+            })}
+          </ul>
+          {deveScegliere && (
+            <p className="mt-1.5 font-maven text-xs text-kidville-sub">{t('candScegliSedeSuCuiDecidere')}</p>
+          )}
+        </div>
+      ) : (
+        <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
+          <MapPin size={14} /> {t('candSede')} <strong>{nomeSede}</strong>
+        </p>
+      )}
 
       <section>
         <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-kidville-sub">
@@ -1392,11 +1684,18 @@ function PannelloDettaglio({
         )}
       </section>
 
-      {cand.stato === 'rifiutata' && (cand.motivo_rifiuto ?? '').trim() !== '' && (
+      {/* ⚠️ LO STATO E IL MOTIVO SONO QUELLI DELLA PROPRIA SEDE, non della
+          candidatura. Dal 2026-08-19 `cand.stato` è l'AGGREGATO: con Giugliano
+          già rifiutata e Aversa ancora in valutazione vale `pending`, e la
+          segreteria di Giugliano non vedrebbe più la nota che ha appena scritto.
+          E `cand.motivo_rifiuto` non lo scrive più nessuno: il verdetto vive
+          sulla riga di sede. Leggere ancora la colonna della candidatura
+          significa non mostrare mai più nessun motivo. */}
+      {mia?.stato === 'rifiutata' && (mia?.motivo_rifiuto ?? '').trim() !== '' && (
         <section>
           <h3 className="mb-1 text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('candMotivoRegistrato')}</h3>
           <p className="whitespace-pre-line rounded-xl border border-kidville-line bg-kidville-cream/50 p-3 font-maven text-sm text-kidville-ink">
-            {cand.motivo_rifiuto}
+            {mia?.motivo_rifiuto}
           </p>
         </section>
       )}

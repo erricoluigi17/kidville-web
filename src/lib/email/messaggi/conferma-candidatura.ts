@@ -34,6 +34,16 @@ export interface DatiConfermaCandidatura {
     inviataIl: string
     /** Ruolo o posizione per cui ci si è candidate. Assente ⇒ la riga si omette. */
     ruolo?: string | null
+    /**
+     * I NOMI di tutti i plessi scelti. Vuoto ⇒ si nomina la sede del contesto.
+     *
+     * ⚠️ Dal 2026-08-20 una candidatura può essere rivolta a più sedi, e questa
+     * riga diceva sempre UNA. Chi aveva spuntato due caselle riceveva la
+     * conferma con un plesso solo e concludeva che la seconda spunta non avesse
+     * preso — lo stesso difetto che il riepilogo del modulo è stato scritto per
+     * chiudere, spostato dall'ultima schermata alla prima email.
+     */
+    sediScelte?: string[]
     /** Quanti allegati, NON quali. Zero ⇒ la riga si omette. */
     numeroAllegati?: number
     /** Entro quanti giorni arriva una risposta. */
@@ -50,13 +60,31 @@ function descriviAllegati(n: number): string | null {
 }
 
 export function messaggioConfermaCandidatura(d: DatiConfermaCandidatura, sede: ContestoSede): Messaggio {
-    const motivo = `Ricevi questo messaggio perché hai inviato una candidatura a ${sede.nome}.`
+    /**
+     * ⚠️ IL PIEDE NOMINA LE SEDI SCELTE, NON QUELLA DELLA CARTA INTESTATA.
+     *
+     * Qui c'era `${sede.nome}` fisso, e `sede` è il contesto risolto sul PRIMO
+     * plesso richiesto. Chi si era proposta a tre riceveva una email che nel
+     * corpo diceva «Sedi: Giugliano, Aversa, Cesa» e venti righe più in basso
+     * «hai inviato una candidatura a Giugliano»: lo stesso difetto che la riga
+     * «Sedi» era stata appena scritta per chiudere, spostato nello stesso file.
+     *
+     * La CARTA INTESTATA resta di una sede sola, ed è una scelta, non una
+     * dimenticanza: l'email è una, e una carta intestata con tre loghi non è una
+     * carta intestata. Il piede invece è testo, e il testo le può dire tutte.
+     */
+    const sediNominate = (d.sediScelte ?? []).filter((n) => n.trim() !== '')
+    const doveSonoAndata = sediNominate.length > 0 ? sediNominate.join(', ') : sede.nome
+    const motivo = `Ricevi questo messaggio perché hai inviato una candidatura a ${doveSonoAndata}.`
     const saluto = d.nome ? `Gentile ${d.nome},` : 'Gentile candidata, gentile candidato,'
     const allegati = descriviAllegati(d.numeroAllegati ?? 0)
 
     const righe: RigaDati[] = [
         { etichetta: 'Inviata il', valore: d.inviataIl, mono: true },
-        { etichetta: 'Sede', valore: sede.nome },
+        {
+            etichetta: (d.sediScelte?.length ?? 0) > 1 ? 'Sedi' : 'Sede',
+            valore: (d.sediScelte?.length ?? 0) > 0 ? d.sediScelte!.join(', ') : sede.nome,
+        },
         ...(d.ruolo ? [{ etichetta: 'Ruolo', valore: d.ruolo }] : []),
         ...(allegati ? [{ etichetta: 'Allegati', valore: allegati }] : []),
     ]

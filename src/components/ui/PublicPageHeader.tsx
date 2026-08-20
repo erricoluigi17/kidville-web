@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { getLocale, getTranslations } from 'next-intl/server'
 import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
+import { MarchioKidville } from '@/components/ui/MarchioKidville'
 import { ritornoInterno } from '@/lib/ui/ritorno-interno'
 
 // LA RIGA DI TESTA DELLE PAGINE PUBBLICHE, IN UN POSTO SOLO.
@@ -65,6 +66,11 @@ export async function PublicPageHeader({
       <div className="flex flex-wrap items-center gap-2">
         <PublicContrastButton />
         {children}
+        {/* Il marchio. Sta in `MarchioKidville` e non qui dentro perché le
+            testate pubbliche sono DUE: questa e quella di `/iscrizione`, che ha
+            il contatore dei passi al posto del ritorno. Il file spiega il resto,
+            misure e trappole comprese. */}
+        <MarchioKidville />
       </div>
     </div>
   )

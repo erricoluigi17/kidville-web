@@ -187,6 +187,38 @@ export const POSIZIONI_OPTIONS: FormFieldOption[] = [
 export const POSIZIONI_AMMESSE: string[] = POSIZIONI_OPTIONS.map((o) => String(o.value))
 
 /**
+ * LE POSIZIONI COME LE LEGGE UNA PERSONA — e per «altro», ciò che ha scritto lei.
+ *
+ * ─── PERCHÉ NON BASTA LA `label` ────────────────────────────────────────────
+ * L'etichetta di `altro` è «Altro (specifica qui sotto)», ed è un'ISTRUZIONE A
+ * CHI COMPILA, non un mestiere: ha senso accanto a una casella, non dentro una
+ * email. Chi si candidava come psicomotricista riceveva la conferma con
+ * «Ruolo: Altro (specifica qui sotto)» — la propria professione sostituita da un
+ * comando rivolto a un modulo che non stava più guardando — e
+ * `posizione_altro`, cioè quello che aveva davvero scritto, non compariva.
+ *
+ * ─── PERCHÉ STA QUI E NON NELLA ROTTA ───────────────────────────────────────
+ * Perché `POSIZIONI_OPTIONS` sta qui, e una regola che traduce quei valori
+ * scritta altrove diverge il giorno in cui l'elenco cambia. La rotta la chiama;
+ * chiunque debba mostrare le posizioni a una persona la chiama.
+ *
+ * Ripiego su «Altro» pulito quando il campo libero è vuoto — mai
+ * sull'istruzione — e sul valore GREZZO quando non è fra le opzioni: un valore
+ * uscito dall'elenco dopo l'invio è un dato che va comunque mostrato, e tacerlo
+ * sarebbe peggio che mostrarlo brutto.
+ */
+export function etichettePosizioni(posizioni: string[], posizioneAltro?: string | null): string | null {
+  if (posizioni.length === 0) return null
+  const scritto = typeof posizioneAltro === 'string' ? posizioneAltro.trim() : ''
+  return posizioni
+    .map((v) => {
+      if (v === 'altro') return scritto !== '' ? scritto : 'Altro'
+      return POSIZIONI_OPTIONS.find((o) => String(o.value) === v)?.label ?? v
+    })
+    .join(', ')
+}
+
+/**
  * Da posizione a fascia d'età — la mappa che sostituisce una domanda.
  *
  * Costruita dalle stesse `GRADI_OPTIONS` che generano le voci docenti: le due

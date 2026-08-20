@@ -338,8 +338,36 @@ const leggi = (p: string) => fs.readFileSync(path.join(RADICE, p), 'utf8')
  */
 const codice = (p: string) =>
   leggi(p)
-    .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+    // ⚠️ L'ORDINE È LA CORREZIONE DI UN DIFETTO, NON UNO STILE (19/08/2026).
+    //
+    // Prima qui la riga d'apertura era `.replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')`,
+    // cioè «togli i commenti JSX `{/* … */}`». Sembra innocua e non lo è: cerca
+    // una graffa aperta seguita da `/*`, e la trova anche sulla graffa dei
+    // PARAMETRI di un componente che comincia con un JSDoc —
+    //
+    //     export async function PublicPageHeader({
+    //       /** Il percorso da cui si è arrivati. */
+    //       ritorno,
+    //
+    // — dopodiché il quantificatore pigro corre fino al PRIMO `*/` seguito da `}`,
+    // che è la fine di un commento JSX centinaia di righe più in basso. Tutto ciò
+    // che sta in mezzo sparisce: codice vero compreso.
+    //
+    // MISURATO su `PublicPageHeader.tsx` il 19/08/2026, quando al file è stato
+    // aggiunto il primo commento JSX: il match ha inghiottito 5272 caratteri e con
+    // essi `<PublicContrastButton />`, che nel file c'è. Il lock ha accusato le
+    // quattro pagine legali di essere rimaste senza comando di Alto Contrasto —
+    // una diagnosi falsa, prodotta dallo spogliatore e non dal codice.
+    //
+    // Il difetto era LATENTE: si arma solo quando nel file esiste un `*/}` dopo la
+    // graffa dei parametri, e fino a quel giorno in quel file non ce n'erano.
+    //
+    // Togliere prima TUTTI i blocchi `/* … */` lo chiude alla radice: quando si
+    // arriva alla graffa, il commento che la seguiva non c'è più, e del commento
+    // JSX resta il guscio `{}`, che si toglie dopo. Un lock non può permettersi di
+    // cancellare il codice che deve misurare.
     .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\{\s*\}/g, '')
     .replace(/(?<!:)\/\/.*$/gm, '')
 
 afterEach(() => {

@@ -1,5 +1,29 @@
 // C5 · Versioni dei testi legali accettati (prova d'accettazione — art. 1341 c.c.).
 //
+// 2026-08-20 — SOLO l'informativa privacy. La voce «candidature spontanee di
+// personale» adesso dichiara una cosa che prima non diceva, e che dal 19/08 è
+// vera: all'invio, una COPIA della candidatura con il curriculum in allegato
+// arriva nella casella di posta di OGNI sede scelta, e quella copia il job di
+// cancellazione automatica NON la tocca — non può, sta su un server di posta.
+//
+// ⚠️ Questa voce ha portato per qualche ora la data '2026-08-19', e quella data
+// è stata SOSTITUITA invece che affiancata. Si può fare qui, e solo qui, perché
+// quella versione non è mai andata in produzione: misurato il 2026-08-20 sul
+// database vero, le uniche versioni citate nei `consents_log` sono '2026-08-10'
+// e '2026-08-15'. Nessuno ha accettato il testo del 19, quindi lasciarlo
+// creerebbe una versione fantasma — un documento nell'elenco che nessuna riga
+// nomina. La regola che vieta di riscrivere una versione esiste per proteggere
+// ciò che qualcuno ha già firmato, non per conservare bozze.
+//
+// PERCHÉ È SOSTANZIALE e non redazionale: fino a ieri il documento prometteva,
+// senza riserve, che «il curriculum allegato viene cancellato insieme alla
+// candidatura». Da oggi quella promessa è vera per l'archivio dell'applicazione
+// e falsa per la copia in casella. Un'informativa che descrive una cancellazione
+// che non avviene è peggio di una che non la promette: l'interessato rinuncia a
+// chiedere ciò che crede già garantito. La voce nuova dice anche a chi
+// rivolgersi per farla rimuovere, che è l'unica cosa che gli restituisce il
+// controllo perso.
+//
 // FONTE UNICA della versione: la usano sia l'INSERT in `consensi_accettazioni`
 // (quando il genitore accetta in onboarding) sia il piè di pagina "Versione: …"
 // delle pagine legali. Così il testo MOSTRATO e il testo ACCETTATO non divergono
@@ -101,4 +125,4 @@
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-08-15'
+export const VERSIONE_PRIVACY = '2026-08-20'

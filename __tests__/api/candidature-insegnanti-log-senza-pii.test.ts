@@ -69,6 +69,21 @@ vi.mock('@/lib/supabase/server-client', () => ({
           Promise.resolve({ data: h.sedi.map((s) => ({ ...s, attiva: true })), error: null }).then(res)
         return b
       }
+      // Le RIGHE DI SEDE: qui interessa solo che non facciano cadere la rotta —
+      // questo file misura i LOG, non lo schema. Un ramo suo, però, perché
+      // condividere `h.inserts` con la candidatura confonderebbe due tabelle
+      // (lezione del 2026-08-20 su `-post.test.ts`).
+      if (tabella === 'candidature_sedi') {
+        const s2: Record<string, unknown> = {}
+        const scrivi = () => Promise.resolve({ data: null, error: null })
+        s2.insert = scrivi
+        s2.upsert = scrivi
+        s2.select = () => s2
+        s2.eq = () => s2
+        s2.then = (res: (v: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(res)
+        return s2
+      }
       const b: Record<string, unknown> = {}
       let scrittura = false
       b.insert = (row: Record<string, unknown>) => {
@@ -76,6 +91,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         h.inserts.push(row)
         return b
       }
+      b.upsert = b.insert
       b.select = () => b
       b.eq = () => b
       b.in = () => b
@@ -219,22 +235,22 @@ function nessunaPii(dove: string): void {
 
 describe('i log della candidatura non portano fuori la persona', () => {
   it('la route ha davvero loggato qualcosa (se cade, questo file non sta provando niente)', async () => {
-    await invia({ scuola_id: SEDE_A, data: candidatura() })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     expect(h.eventi.some((e) => e.evento === 'candidatura')).toBe(true)
   })
 
   it('ramo FELICE', async () => {
-    await invia({ scuola_id: SEDE_A, data: candidatura() })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     nessunaPii('felice')
   })
 
   it('ramo HONEYPOT', async () => {
-    await invia({ scuola_id: SEDE_A, data: candidatura(), sito_web: 'http://spam.invalid' })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura(), sito_web: 'http://spam.invalid' })
     nessunaPii('honeypot')
   })
 
   it('ramo CAMPI NON VALIDI (il campo si nomina, il valore no)', async () => {
-    await invia({ scuola_id: SEDE_A, data: candidatura({ residence_province: 'XY' }) })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura({ residence_province: 'XY' }) })
     nessunaPii('campi-non-validi')
     // Il campo va nominato: senza, il warn non dice cosa correggere.
     expect(testoDeiLog()).toContain('residence_province')
@@ -243,12 +259,12 @@ describe('i log della candidatura non portano fuori la persona', () => {
   })
 
   it('ramo CONSENSI MANCANTI', async () => {
-    await invia({ scuola_id: SEDE_A, data: candidatura({ presa_visione_informativa: false }) })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura({ presa_visione_informativa: false }) })
     nessunaPii('consensi')
   })
 
   it('ramo SEDE NON VALIDA', async () => {
-    await invia({ scuola_id: '99999999-0000-4000-8000-000000000099', data: candidatura() })
+    await invia({ scuole_ids: ['99999999-0000-4000-8000-000000000099'], data: candidatura() })
     nessunaPii('sede')
   })
 
@@ -259,7 +275,7 @@ describe('i log della candidatura non portano fuori la persona', () => {
         'duplicate key value violates unique constraint "candidature_insegnanti_email_viva" ' +
         'Key (lower(email))=(ines.cognomericonoscibile@example.invalid) already exists.',
     }
-    const res = await invia({ scuola_id: SEDE_A, data: candidatura() })
+    const res = await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     expect(res.status).toBe(201)
     // Il `message` di Postgres sul 23505 contiene l'indirizzo PER COSTRUZIONE:
     // è il caso in cui rimandarlo nel log costerebbe l'email di una maestra.
@@ -272,7 +288,7 @@ describe('i log della candidatura non portano fuori la persona', () => {
     // un curriculum è quasi sempre il nome di una persona. Si registra CHE è
     // stato respinto — `cv-path-non-ammesso` — non che cosa era.
     await invia({
-      scuola_id: SEDE_A,
+      scuole_ids: [SEDE_A],
       data: candidatura({ cv_path: 'iscrizioni/generico/carta-identita-cognomericonoscibile.pdf' }),
     })
     expect(h.eventi.some((e) => e.campi.esito === 'cv-path-non-ammesso')).toBe(true)
@@ -284,7 +300,7 @@ describe('i log della candidatura non portano fuori la persona', () => {
 
   it('ramo TABELLA ASSENTE (503)', async () => {
     h.erroreInsert = { code: 'PGRST205', message: 'relation "candidature_insegnanti" does not exist' }
-    await invia({ scuola_id: SEDE_A, data: candidatura() })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     nessunaPii('tabella-assente')
   })
 
@@ -293,13 +309,13 @@ describe('i log della candidatura non portano fuori la persona', () => {
       code: 'PGRST204',
       message: "Could not find the 'consents_log' column of 'candidature_insegnanti' in the schema cache",
     }
-    await invia({ scuola_id: SEDE_A, data: candidatura() })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     nessunaPii('colonna-assente')
   })
 
   it('ramo ERRORE GENERICO: il `message` del database esce MASCHERATO, non intatto', async () => {
     h.erroreInsert = { code: '42501', message: 'permission denied: ines.cognomericonoscibile@example.invalid' }
-    await invia({ scuola_id: SEDE_A, data: candidatura() })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     nessunaPii('errore')
 
     // E la prova che la riga è arrivata a `logErrore`: senza, l'asserzione qui
@@ -377,7 +393,7 @@ describe('i log della candidatura non portano fuori la persona', () => {
     // campi — cioè questo caso misurerebbe un ramo che non è il suo.
     const vuoti = Object.fromEntries(INSEGNANTE_FIELDS.map((f) => [f.id, '']))
     await invia({
-      scuola_id: SEDE_A,
+      scuole_ids: [SEDE_A],
       data: {
         ...vuoti,
         posizioni: ['insegnante_nido'],
@@ -403,7 +419,7 @@ describe('i log della candidatura non portano fuori la persona', () => {
   })
 
   it('nessuna chiamata a `logEvento` porta una chiave che nomina un dato personale', async () => {
-    await invia({ scuola_id: SEDE_A, data: candidatura() })
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
     // `posizioni` e `posizione_altro` sono nell'elenco dal 2026-08-15: la prima
     // dice che lavoro sta cercando una persona, la seconda è testo libero scritto
     // da un anonimo. Il log ne porta il CONTEGGIO (`n_posizioni`) e un booleano

@@ -579,6 +579,18 @@ export const CODICI_ERRORE = {
      */
     CANDIDATURE_NON_DISPONIBILI: 'erroreCandidatureNonDisponibili',
     /**
+     * 400 — l'invio nomina più plessi di quanti ne esistano
+     * (`POST /api/iscrizione/insegnanti`).
+     *
+     * ⚠️ ESISTE PERCHÉ SENZA IL CODICE IL MESSAGGIO NON ARRIVAVA. Il rifiuto era
+     * la sola prosa di zod («Troppe sedi indicate») su `scuole_ids`, che non è un
+     * campo del modulo: `mappaErroriServer` non lo riconosceva, qui non c'era
+     * niente da tradurre, e chi compilava leggeva «Si è verificato un errore
+     * durante l'invio. Controlla i dati e riprova» — dopo cinque passi, senza che
+     * nulla nominasse la causa e senza nessun dato da correggere.
+     */
+    TROPPE_SEDI: 'erroreTroppeSedi',
+    /**
      * 404 — la candidatura chiesta per id non è apribile dal cockpit.
      *
      * Un solo codice per due situazioni, come per `DOMANDA_NON_APRIBILE` e per la

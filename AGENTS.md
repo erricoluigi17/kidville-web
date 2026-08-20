@@ -99,12 +99,13 @@ Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **con
 🔻 Quel blocco è stato **applicato e REVOCATO il 2026-08-03**, nello stesso giorno, su richiesta
 esplicita del titolare («proprio tutto, migrazioni e merge compresi»): **merge, deploy, migrazioni
 ed `execute_sql` NON chiedono più conferma**, e `defaultMode` è di nuovo `acceptEdits`.
-🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**
-(**302** domande di iscrizione e **324** codici fiscali di bambini al 2026-08-04 — erano 227 e 152
-il 31 luglio: in quattro giorni sono raddoppiati, e mentre leggi sono già di più). La differenza è
+🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**.
+**403 domande di iscrizione, misurate il 2026-08-20 alle 12:24** — erano 302 il 4 agosto e 227 il 31
+luglio: in venti giorni sono quasi raddoppiate, circa sei al giorno, e mentre leggi sono già di più.
+Non copiare questo numero: rifai il conteggio, è una query sola. La differenza portata dai permessi è
 che ora **nessun essere umano vede un `UPDATE` o una migrazione prima che parta**. Chi lavora qui
 mostri comunque cosa sta per applicare: *mostrare* non è *chiedere*, non costa niente, ed è l'unica
-cosa rimasta fra un errore e 152 minori.
+cosa rimasta fra un errore e le famiglie che stanno dietro quelle righe.
 
 ## Note
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.

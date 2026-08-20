@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
+import { MarchioKidville } from '@/components/ui/MarchioKidville'
 import {
   CHILD_FIELDS, ADULT_FIELDS, CONSENSI_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
@@ -539,8 +540,37 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
           L'icona è decorativa e viene tolta dall'albero di accessibilità, così
           il nome dell'`h1` resta esattamente il titolo.
         */}
-        <div className="mb-6 flex items-start justify-between gap-3">
-          <div>
+        {/* ⚠️ `flex-wrap` E `min-w-0`, E NON SONO RIFINITURE — SONO UNA MISURA.
+            Aggiungere il marchio a questa riga ha fatto TRABOCCARE la pagina, e
+            non solo su schermo stretto: misurato con Chromium il 2026-08-20 su
+            `/iscrizione` viva, `document.documentElement.scrollWidth` contro
+            `clientWidth`:
+
+              viewport   prima      dopo
+              320 px     394        320
+              360 px     423        360
+              390 px     437        390
+              414 px     448        414
+
+            Nascondendo il solo `<img>` l'eccedenza spariva del tutto a ogni
+            larghezza: la causa era il marchio, e la pagina scrollava in
+            orizzontale — su quella da cui ~9 famiglie l'ora consegnano dati di
+            minori.
+
+            Il rilievo che l'aveva ipotizzata parlava di «250 px in una riga che
+            non va a capo» sotto i 360, e la sua aritmetica era giusta ma per
+            difetto: la riga era `flex … justify-between gap-3` SENZA
+            `flex-wrap`, il gruppo destro (`Alto contrasto` 148 px + gap +
+            wordmark 94 px) non si comprime per costruzione, e il blocco di
+            sinistra non aveva `min-w-0` — quindi il suo min-content spingeva
+            fuori tutto il resto a QUALUNQUE larghezza, non solo sotto i 360.
+
+            Il commento di `MarchioKidville.tsx` misurava il wrap su
+            `PublicPageHeader`, che `flex-wrap` ce l'ha: quella misura non
+            diceva niente di questa riga, ed è il motivo per cui il difetto è
+            passato. */}
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
             <h1 className="flex items-center gap-2 mb-2 text-xs uppercase tracking-widest font-semibold text-kidville-warn-strong">
               <UserPlus className="w-3.5 h-3.5" aria-hidden="true" />
               {t('wizardEyebrow')}
@@ -555,7 +585,19 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
               DUE — «Indietro» e «Avanti» — e nessuno offriva accessibilità: è la
               pagina da cui ~9 famiglie l'ora consegnano dati di minori, e chi
               fatica a leggere non aveva alcun rimedio raggiungibile. */}
-          <PublicContrastButton />
+          {/* ⚠️ IL MARCHIO MANCAVA PROPRIO QUI, e il lock diceva il contrario.
+              `PublicPageHeader-logo.test.tsx` elencava `/iscrizione` fra le
+              pagine che prendono la testata dal componente unico: questa pagina
+              non lo ha mai usato — monta il comando di contrasto a mano, perché
+              a sinistra ha il contatore dei passi invece del ritorno. Il lock
+              restava verde perché prova il componente ISOLATO, senza mai rendere
+              la pagina. Misurato il 2026-08-20: zero `<img>` nel DOM di
+              `/iscrizione`. È la pagina da cui ~9 famiglie l'ora consegnano dati
+              di minori, cioè la superficie pubblica più vista di tutte. */}
+          <div className="flex shrink-0 items-center gap-2">
+            <PublicContrastButton />
+            <MarchioKidville />
+          </div>
         </div>
 
         {domandaNonPuoCominciare ? (

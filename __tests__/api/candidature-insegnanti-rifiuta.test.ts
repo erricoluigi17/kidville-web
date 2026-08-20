@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
+import { madreSopravvive, materializzaEmbedSede, togliGliEmbed } from '../helpers/embed-sede'
 
 // =============================================================================
 // «RIFIUTA»: il gesto che NON crea niente.
@@ -40,7 +41,14 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => h.state.scuole }))
+// ⚠️ `formaConfronto` è quella VERA, non un finto. È la funzione che decide se
+// un uuid del client è la stessa sede di una letta dal database, e sostituirla
+// con `(x) => x` renderebbe verde proprio il difetto che il caso «maiuscolo»
+// esiste per provare: un mock che semplifica la regola prova la semplificazione.
+vi.mock('@/lib/auth/scope', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
+  return { formaConfronto: vero.formaConfronto, resolveScuoleAttive: async () => h.state.scuole }
+})
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))
 vi.mock('@/lib/email/send', async (importOriginal) => {
@@ -55,8 +63,71 @@ vi.mock('@/lib/supabase/server-client', () => ({
 function proietta(r: Riga, cols: string): Riga {
   if (!cols || cols.trim() === '*') return { ...r }
   const fuori: Riga = {}
-  for (const c of cols.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
+  const senzaEmbed = togliGliEmbed(cols)
+  for (const c of senzaEmbed.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
   return fuori
+}
+
+/** Le righe di sede di una candidatura, dal magazzino del finto. */
+function sediFinteDi(tabelle: Record<string, Riga[]>, idCandidatura: unknown): Riga[] {
+  return (tabelle['candidature_sedi'] ?? []).filter((s) => s.candidatura_id === idCandidatura)
+}
+
+/**
+ * La riga proiettata PIÙ i suoi array incorporati, come li consegna PostgREST:
+ * ogni embed col proprio alias e le SOLE colonne che ha chiesto, il primo
+ * ristretto dal filtro di sede. Vedi `__tests__/helpers/embed-sede.ts`.
+ */
+function conEmbed(r: Riga, cols: string, filtri: Filtro[]): Riga {
+  return {
+    ...proietta(r, cols),
+    ...materializzaEmbedSede(cols, sediFinteDi(h.state.tabelle, r.id), filtri),
+  }
+}
+
+/**
+ * IL TRIGGER `candidature_sedi_aggrega`, RIFATTO NEL FINTO.
+ *
+ * In produzione lo stato di `candidature_insegnanti` non lo scrive più la rotta:
+ * lo ricalcola un trigger dalle righe di sede. Un finto che non lo simulasse
+ * lascerebbe la candidatura a `pending` per sempre — e qualcuno, per far passare
+ * i test, rimetterebbe nella rotta la scrittura diretta, reintroducendo le due
+ * autorità sulla stessa colonna che la migrazione ha appena tolto.
+ */
+function aggregaComeIlTrigger(tabelle: Record<string, Riga[]>, idCandidatura: unknown): void {
+  const sedi = sediFinteDi(tabelle, idCandidatura)
+  if (sedi.length === 0) return
+  const stato = sedi.some((s) => s.stato === 'pending')
+    ? 'pending'
+    : sedi.some((s) => s.stato === 'approvata')
+      ? 'approvata'
+      : 'rifiutata'
+  /**
+   * ⚠️ IL FINTO PROPAGA ANCHE `evasa_il` ED `evasa_da`, e prima no.
+   *
+   * Riprodurre il solo `stato` lasciava senza copertura la metà del trigger che
+   * esiste per il GDPR: `retention-candidature` legge `candidature_insegnanti.evasa_il`
+   * per far decorrere i dodici mesi dalla DECISIONE invece che dalla ricezione.
+   * Un ritorno alla versione del 19/08 — quella che riportava solo lo stato —
+   * sarebbe rimasto verde, e la cancellazione anticipata sarebbe tornata senza
+   * che un test lo dicesse.
+   *
+   * Stessa regola del database: la data è la PIÙ RECENTE, e solo quando nessuna
+   * sede è più in valutazione; i due campi si muovono insieme, senza `coalesce`.
+   */
+  const decise = sedi.filter((s) => s.stato !== 'pending')
+  const nessunaInAttesa = decise.length === sedi.length
+  const ultima = nessunaInAttesa
+    ? decise
+        .filter((s) => s.evasa_il)
+        .sort((a, b) => String(b.evasa_il).localeCompare(String(a.evasa_il)))[0]
+    : undefined
+  const madre = (tabelle['candidature_insegnanti'] ?? []).find((c) => c.id === idCandidatura)
+  if (madre) {
+    madre.stato = stato
+    madre.evasa_il = ultima?.evasa_il ?? null
+    madre.evasa_da = ultima?.evasa_da ?? null
+  }
 }
 
 function finto() {
@@ -67,7 +138,15 @@ function finto() {
       let cols = '*'
       let patch: Riga | null = null
       let inserimento: Riga | null = null
-      const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
+      const corrisponde = (r: Riga) =>
+        // I filtri sulle colonne della madre, uno per uno…
+        filtri.every((f) => (f.col.includes('.') ? true : f.vals.some((v) => r[f.col] === v))) &&
+        // …e quelli sull'EMBED, che seguono la regola POSIZIONALE di PostgREST:
+        // il filtro va al PRIMO embed della `select`, e la madre sparisce solo
+        // se quello porta `!inner`. La regola vive in un posto solo — era
+        // ricopiata in quattro finti, e in tutti e quattro era la stessa
+        // approssimazione cieca. Vedi `__tests__/helpers/embed-sede.ts`.
+        madreSopravvive(cols, sediFinteDi(h.state.tabelle, r.id), filtri)
       const esegui = () => {
         if (inserimento) {
           const riga = { ...inserimento }
@@ -89,9 +168,14 @@ function finto() {
         if (patch) {
           for (const r of trovate) Object.assign(r, patch)
           h.state.aggiornamenti.push({ table, patch: { ...patch } })
-          return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
+          // Il trigger: dopo una scrittura sulle righe di sede, lo stato della
+          // candidatura si ricalcola. Vedi `aggregaComeIlTrigger`.
+          if (table === 'candidature_sedi') {
+            for (const r of trovate) aggregaComeIlTrigger(h.state.tabelle, r.candidatura_id)
+          }
+          return { data: trovate.map((r) => conEmbed(r, cols, filtri)), error: null, count: null }
         }
-        return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
+        return { data: trovate.map((r) => conEmbed(r, cols, filtri)), error: null, count: null }
       }
       const b: Record<string, unknown> = {}
       b.select = (c?: string) => { if (typeof c === 'string') cols = c; return b }
@@ -129,7 +213,9 @@ const patch = (body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-const rifiuta = (extra: Riga = {}) => PATCH(patch({ id: CANDIDATURA_ID, action: 'rifiuta', ...extra }))
+/** ⚠️ `scuola_id` nel corpo: vedi il gemello in `-approva.test.ts`. */
+const rifiuta = (extra: Riga = {}) =>
+  PATCH(patch({ id: CANDIDATURA_ID, action: 'rifiuta', scuola_id: SEDE_A, ...extra }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -140,6 +226,11 @@ beforeEach(() => {
   h.state.creazioniAuth = []
   h.state.colonneAssentiUpdate = []
   h.state.tabelle = {
+    // ⚠️ Le righe di sede si seminano SEMPRE insieme alle candidature: dal
+    // 2026-08-19 sono il criterio d'accesso del cockpit ED è lì che il verdetto
+    // si scrive. Senza, ogni lettura è vuota e ogni scrittura non tocca niente:
+    // i test misurerebbero un magazzino vuoto credendo di misurare la rotta.
+    // (Le righe vere si aggiungono in coda a questo blocco, vedi `sediPerLeCandidature`.)
     candidature_insegnanti: [
       {
         id: CANDIDATURA_ID,
@@ -158,6 +249,12 @@ beforeEach(() => {
     parents: [],
   }
   h.sendEmail.mockResolvedValue({ ok: true, error: null })
+  h.state.tabelle.candidature_sedi = (h.state.tabelle.candidature_insegnanti ?? []).map((c) => ({
+    candidatura_id: c.id,
+    scuola_id: c.scuola_id,
+    stato: c.stato ?? 'pending',
+  }))
+
   h.requireStaff.mockImplementation(async (_req: unknown, allowed?: string[]) => {
     const ammessi = allowed ?? ['admin', 'coordinator', 'segreteria']
     const u = h.state.utente
@@ -173,11 +270,16 @@ describe('candidature insegnanti · rifiuto', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).success).toBe(true)
 
-    const cand = h.state.tabelle.candidature_insegnanti[0]
-    expect(cand.stato).toBe('rifiutata')
-    expect(cand.evasa_da).toBe(ADMIN.id)
-    expect(cand.evasa_il).toBeTruthy()
-    expect(cand.motivo_rifiuto).toBe(MOTIVO)
+    // Lo stato della CANDIDATURA arriva per aggregazione dal trigger…
+    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('rifiutata')
+    // …mentre chi ha deciso, quando, e con quale nota interna stanno sulla RIGA
+    // DI SEDE: è la sede che rifiuta, e con tre plessi «chi ha deciso» senza «per
+    // quale plesso» è un'informazione a metà.
+    const rigaDiSede = h.state.tabelle.candidature_sedi[0]
+    expect(rigaDiSede.stato).toBe('rifiutata')
+    expect(rigaDiSede.evasa_da).toBe(ADMIN.id)
+    expect(rigaDiSede.evasa_il).toBeTruthy()
+    expect(rigaDiSede.motivo_rifiuto).toBe(MOTIVO)
 
     expect(h.state.creazioniAuth).toEqual([])
     expect(h.state.inserimenti.filter((i) => i.table === 'utenti')).toEqual([])
@@ -246,6 +348,11 @@ describe('candidature insegnanti · rifiuto', () => {
   })
 
   it('una candidatura GIÀ APPROVATA non si rifiuta: 409', async () => {
+    // ⚠️ Lo stato di partenza si mette sulla RIGA DI SEDE, che è ciò che il
+    // `WHERE` del passaggio guarda; sulla candidatura ci arriva per aggregazione.
+    // Metterlo solo sulla candidatura lascerebbe la riga di sede a `pending`, il
+    // rifiuto passerebbe, e il test misurerebbe il contrario di ciò che dice.
+    h.state.tabelle.candidature_sedi[0].stato = 'approvata'
     h.state.tabelle.candidature_insegnanti[0].stato = 'approvata'
     const res = await rifiuta()
     expect(res.status).toBe(409)
@@ -260,5 +367,47 @@ describe('candidature insegnanti · rifiuto', () => {
     expect((await res.json()).codice).toBe('CANDIDATURA_NON_TROVATA')
     expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
     expect(h.state.aggiornamenti).toEqual([])
+  })
+})
+
+describe('candidature insegnanti · la DECISIONE arriva sulla candidatura, per il GDPR', () => {
+  /**
+   * 🔴 IL TEST CHE MANCAVA, e la sua assenza era la parte peggiore del difetto.
+   *
+   * `gdpr/retention-candidature` legge `candidature_insegnanti.evasa_il` per far
+   * decorrere i dodici mesi dalla DECISIONE invece che dalla ricezione. Quando
+   * il verdetto è passato sulle righe di sede, quella colonna ha smesso di
+   * essere scritta — e ogni candidatura respinta si sarebbe cancellata PRIMA del
+   * dovuto, distruggendo dati che /privacy promette di conservare, con la prima
+   * scadenza fra dodici mesi e nessuno che se ne accorga.
+   *
+   * Il trigger la riporta. Senza questo test, tornare alla versione che
+   * riportava il solo `stato` lascerebbe la suite verde.
+   */
+  it('rifiutando, `evasa_il` arriva sulla CANDIDATURA e non solo sulla riga di sede', async () => {
+    await rifiuta({ motivo: MOTIVO })
+    const madre = h.state.tabelle.candidature_insegnanti[0]
+    expect(madre.stato).toBe('rifiutata')
+    expect(
+      madre.evasa_il,
+      'evasa_il non arriva sulla candidatura: il cron GDPR cancellerebbe dalla data di RICEZIONE',
+    ).toBeTruthy()
+    expect(madre.evasa_da).toBe(ADMIN.id)
+  })
+
+  it('finché una sede è ancora in valutazione, `evasa_il` resta NULLO su entrambe', async () => {
+    // Non è una sottigliezza: con `evasa_il` valorizzato mentre un plesso guarda
+    // ancora, il termine di conservazione decorrerebbe da una decisione che la
+    // cooperativa non ha ancora preso.
+    h.state.tabelle.candidature_sedi.push({
+      candidatura_id: h.state.tabelle.candidature_insegnanti[0].id,
+      scuola_id: SEDE_B,
+      stato: 'pending',
+    })
+    await rifiuta({ motivo: MOTIVO })
+    const madre = h.state.tabelle.candidature_insegnanti[0]
+    expect(madre.stato).toBe('pending')
+    expect(madre.evasa_il ?? null).toBeNull()
+    expect(madre.evasa_da ?? null).toBeNull()
   })
 })

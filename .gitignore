@@ -142,3 +142,9 @@ elenchi-classi/
 *.xls
 *.csv
 *.zip
+
+# Esportazioni del design (HTML standalone da Claude Design): 1,7 MB di artefatti
+# rigenerabili, che nessuna pagina importa. Non sono sorgente: sono l'uscita di uno
+# strumento. Ignorati perche' un `git add -A` da una sessione qualunque li
+# porterebbe dentro senza che nessuno lo abbia deciso.
+design-export/

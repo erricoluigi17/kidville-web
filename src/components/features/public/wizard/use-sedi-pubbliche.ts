@@ -158,13 +158,40 @@ export interface SediPubbliche {
   elencoPronto: boolean
   /** Richiede l'elenco da capo. È ciò che sta sotto il bottone «Riprova». */
   riprova: () => void
-  /** La sede spuntata da chi compila (auto-decisa quando il plesso è uno solo). */
+  /**
+   * La sede spuntata da chi compila (auto-decisa quando il plesso è uno solo).
+   *
+   * ⚠️ È LA PRIMA di `sediScelte`, e sopravvive per un motivo solo: questo hook
+   * è condiviso con `AnagraficaPersonaleWizard`, che di sedi ne sceglie UNA e
+   * deve uscire da qui identico a com'è entrato. Chi scrive un modulo NUOVO usi
+   * `sediScelte`.
+   */
   sedeScelta: string | null
   scegliSede: (id: string) => void
+  /**
+   * Le sedi spuntate, quando il modulo ne ammette più d'una.
+   *
+   * Convive con `sedeScelta` invece di sostituirla, e la convivenza è la parte
+   * voluta: la scelta multipla è nata per «Lavora con noi» il 2026-08-19, e
+   * riscrivere l'hook avrebbe trascinato dentro il modulo del personale un
+   * cambiamento che nessuno gli ha chiesto.
+   */
+  sediScelte: string[]
+  /** Spunta o toglie la spunta a una sede. */
+  commutaSede: (id: string) => void
+  /** Le sedi che partiranno nel POST: il link se regge, altrimenti le spunte. */
+  sediDecise: string[]
   /** L'uuid che il SERVER ha rifiutato, se c'è stato. */
   sedeRifiutata: string | null
+  /** TUTTE le sedi che il server ha rifiutato, non solo la prima. */
+  sediRifiutate: string[]
   /** Il server ha rifiutato la sede: si abbandona il link e si richiede l'elenco. */
-  sedeSmentitaDalServer: (sede: string) => void
+  /**
+   * Il server ha rifiutato UNA O PIÙ sedi. Prende l'ELENCO, non una sede: con
+   * più caselle spuntate il chiamante non sa quale sia caduta se non gliela si
+   * dice, e prima marcava `sedi[0]` — spesso quella valida.
+   */
+  sedeSmentitaDalServer: (sedi: string[]) => void
   /** La sede decisa dal link, se il link vale ancora qualcosa. */
   sedeDaLink: string | null
   /** Il link è smentito dall'elenco o dal server: da qui in poi non è mai esistito. */
@@ -175,6 +202,13 @@ export interface SediPubbliche {
   nomeSedeDalLink: string | null
   /** Il NOME del plesso che partirà nel POST, quando si sa. */
   nomeSedeDecisa: string | null
+  /**
+   * I NOMI di TUTTI i plessi che partiranno nel POST, nell'ordine dell'elenco.
+   *
+   * Vuoto quando i nomi non si sanno — elenco non arrivato (429, rete giù) — e
+   * in quel caso chi lo usa non scrive un uuid: non dice niente a chi lo legge.
+   */
+  nomiSediDecise: string[]
   /** Un rifiuto del server è arrivato: il modulo è già cominciato ed è già compilato. */
   giaCompilato: boolean
   /** Il passo «sede» esiste. */
@@ -211,13 +245,15 @@ export function useSediPubbliche({
   const [statoSedi, setStatoSedi] = useState<StatoSedi>('caricamento')
   /** Cambia a ogni «Riprova»: è ciò che fa ripartire la fetch dell'elenco. */
   const [tentativoSedi, setTentativoSedi] = useState(0)
-  const [sedeScelta, setSedeScelta] = useState<string | null>(null)
+  const [sediScelte, setSediScelte] = useState<string[]>([])
   /**
    * La sede che il SERVER ha appena rifiutato (400 `SEDE_DA_SPECIFICARE`), se
    * c'è stata. Non è un doppione dell'elenco: è l'unico modo di sapere che quel
    * plesso non vale più anche quando l'elenco non si è potuto leggere.
    */
-  const [sedeRifiutata, setSedeRifiutata] = useState<string | null>(null)
+  const [sediRifiutate, setSediRifiutate] = useState<string[]>([])
+  /** La prima delle rifiutate, per i consumatori che ne mostrano una sola. */
+  const sedeRifiutata = sediRifiutate[0] ?? null
 
   useEffect(() => {
     // L'elenco si chiede SEMPRE, anche col link targato: è l'unica autorità su
@@ -262,7 +298,7 @@ export function useSediPubbliche({
         // Con UNA sola sede non si fa scegliere niente, ma la sede va DECISA lo
         // stesso: `scuola_id` è obbligatorio sulla rotta, e lasciarlo `null`
         // qui significherebbe un 400 all'invio dopo quattro passi compilati.
-        if (lista.length === 1) setSedeScelta(lista[0].id)
+        if (lista.length === 1) setSediScelte([lista[0].id])
         setStatoSedi('pronto')
       })
       .catch((err) => {
@@ -290,9 +326,17 @@ export function useSediPubbliche({
    */
   const linkSmentito =
     sedeLink !== null &&
-    (sedeLink === sedeRifiutata || (elencoPronto && !sedi.some((s) => s.id === sedeLink)))
+    (sediRifiutate.includes(sedeLink) || (elencoPronto && !sedi.some((s) => s.id === sedeLink)))
   const sedeDaLink = sedeLink !== null && !linkSmentito ? sedeLink : null
-  const sedeDecisa = sedeDaLink ?? sedeScelta
+  /**
+   * ⚠️ IL LINK TARGATO VINCE, E RESTA UNA SEDE SOLA.
+   * `?sede=<uuid>` non è cambiato il 2026-08-19: quando c'è, il passo di scelta
+   * non compare (`mostraSede`) e parte quel solo plesso. Chi indirizza una
+   * candidatura a un plesso preciso sta dichiarando di volerne uno.
+   */
+  const sediDecise = sedeDaLink !== null ? [sedeDaLink] : sediScelte
+  const sedeScelta = sediScelte[0] ?? null
+  const sedeDecisa = sediDecise[0] ?? null
   /**
    * Il NOME del plesso indicato dal collegamento, quando si sa.
    *
@@ -309,6 +353,9 @@ export function useSediPubbliche({
   const nomeSedeDalLink =
     sedeDaLink !== null ? (sedi.find((s) => s.id === sedeDaLink)?.nome ?? null) : null
   const nomeSedeDecisa = sedi.find((s) => s.id === sedeDecisa)?.nome ?? null
+  const nomiSediDecise = sediDecise
+    .map((id) => sedi.find((s) => s.id === id)?.nome)
+    .filter((n): n is string => typeof n === 'string')
 
   /**
    * IL MODULO È GIÀ COMINCIATO, ED È GIÀ COMPILATO.
@@ -318,7 +365,7 @@ export function useSediPubbliche({
    * sull'elenco può più smontare il modulo: le schermate che «non fanno
    * cominciare» sono giuste all'apertura e sarebbero una perdita di lavoro qui.
    */
-  const giaCompilato = sedeRifiutata !== null
+  const giaCompilato = sediRifiutate.length > 0
 
   /**
    * La sede si sceglie quando c'è davvero da scegliere — e SEMPRE dopo un
@@ -388,14 +435,35 @@ export function useSediPubbliche({
    * ha, e i dati compilati NON si toccano — react-hook-form li conserva anche
    * mentre il pannello dei campi è smontato dall'attesa dell'elenco.
    */
-  function sedeSmentitaDalServer(sede: string): void {
-    setSedeRifiutata(sede)
-    setSedeScelta(null)
+  function sedeSmentitaDalServer(sedi: string[]): void {
+    setSediRifiutate(sedi)
+    // Si azzerano TUTTE le spunte, non solo quella rifiutata: il server ha
+    // appena smentito l'elenco da cui venivano, e `riprova()` lo richiede. Ciò
+    // che si potrà scegliere è ciò che il server accetta adesso.
+    setSediScelte([])
     riprova()
   }
 
+  /** Sede singola: sostituisce la scelta. Lo usa il modulo del personale. */
   function scegliSede(id: string): void {
-    setSedeScelta(id)
+    setSediScelte([id])
+  }
+
+  /**
+   * Spunta o toglie la spunta a una sede, conservando l'ORDINE DELL'ELENCO.
+   *
+   * L'ordine conta perché la PRIMA sede diventa `candidature_insegnanti.scuola_id`,
+   * la sede di primo arrivo. Accodare in ordine di clic farebbe dipendere un dato
+   * archiviato dall'ordine in cui una persona ha toccato lo schermo: due
+   * candidature identiche produrrebbero righe diverse. Qui l'ordine è quello in
+   * cui i plessi compaiono, che è stabile e uguale per tutti.
+   */
+  function commutaSede(id: string): void {
+    setSediScelte((prima) =>
+      prima.includes(id)
+        ? prima.filter((x) => x !== id)
+        : sedi.filter((s) => s.id === id || prima.includes(s.id)).map((s) => s.id),
+    )
   }
 
   return {
@@ -405,13 +473,18 @@ export function useSediPubbliche({
     riprova,
     sedeScelta,
     scegliSede,
+    sediScelte,
+    commutaSede,
+    sediDecise,
     sedeRifiutata,
+    sediRifiutate,
     sedeSmentitaDalServer,
     sedeDaLink,
     linkSmentito,
     sedeDecisa,
     nomeSedeDalLink,
     nomeSedeDecisa,
+    nomiSediDecise,
     giaCompilato,
     mostraSede,
     formaDecisa,

@@ -25,7 +25,7 @@ import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_C } from '.
  *     consenso al trattamento si annunciava «Riepilogo». Un'intestazione che
  *     dice il nome di un'altra pagina non è un dettaglio estetico — è la prima
  *     cosa che uno screen reader legge quando ci si arriva.
- *  3. **`fieldset`/`legend` sulla sede.** Tre radio senza un gruppo dichiarato
+ *  3. **`fieldset`/`legend` sulla sede.** Tre caselle senza un gruppo dichiarato
  *     si annunciano come tre domande separate: chi ascolta sente «Kidville
  *     Alfa, pulsante di opzione» senza sapere che cosa stia scegliendo.
  *  4. **Il fuoco va sul primo campo non valido.** Senza, chi usa la tastiera o
@@ -130,7 +130,7 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
   it('c’è UN SOLO `h1`, ed è il titolo della pagina', async () => {
     mockSedi([ALFA, BETA, GAMMA])
     render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
 
     const h1 = screen.getAllByRole('heading', { level: 1 })
     expect(h1).toHaveLength(1)
@@ -153,9 +153,9 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     mockSedi([ALFA, BETA, GAMMA])
     render(<CandidaturaInsegnanteWizard />)
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
     expect(screen.getByRole('heading', { level: 2, name: itPublic.candSede })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_A }))
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_A }))
     avanti()
 
     await waitFor(() =>
@@ -208,10 +208,10 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0)
   })
 
-  it('la scelta della sede è un `fieldset` con una `legend`, non tre radio sciolti', async () => {
+  it('la scelta della sede è un `fieldset` con una `legend`, non tre caselle sciolte', async () => {
     mockSedi([ALFA, BETA, GAMMA])
     const { container } = render(<CandidaturaInsegnanteWizard />)
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
 
     const gruppo = container.querySelector('fieldset')
     expect(gruppo, 'le sedi devono stare in un fieldset: senza, sono tre domande separate').not.toBeNull()
@@ -219,7 +219,7 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     // Il gruppo è annunciato con il suo nome, e contiene tutte e tre le sedi.
     expect(screen.getByRole('group', { name: itPublic.candSedeLegenda })).toBeInTheDocument()
     for (const nome of [NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_C]) {
-      expect(screen.getByRole('radio', { name: nome })).toBeInTheDocument()
+      expect(screen.getByRole('checkbox', { name: nome })).toBeInTheDocument()
     }
   })
 
@@ -457,9 +457,9 @@ describe('a11y · /lavora-con-noi — jest-axe su ogni schermata', () => {
     const { container } = render(<CandidaturaInsegnanteWizard />)
 
     // 1 · sede
-    await waitFor(() => expect(screen.getByRole('radio', { name: NOME_SEDE_A })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
     expect(await axe(container, axeOpts)).toHaveNoViolations()
-    fireEvent.click(screen.getByRole('radio', { name: NOME_SEDE_B }))
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_B }))
     avanti()
 
     // 2 · dati

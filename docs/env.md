@@ -50,6 +50,7 @@ sviluppo, quando l'ambiente si deduceva da `VERCEL_ENV ?? NODE_ENV` (corretto in
 |---|---|
 | `RESEND_API_KEY` | API key Resend per l'invio email reale; assente → fallback console (dev). **Segreto.** |
 | `OTP_FROM_EMAIL` | Mittente delle email OTP (default dev). |
+| `CANDIDATURE_EMAIL_FALLBACK` | **Casella di ripiego per la copia della candidatura**, quando la sede non ha un'email in Impostazioni → Anagrafica sede. Dal 2026-08-19 ogni invio di «Lavora con noi» recapita al plesso una copia completa del modulo col curriculum in allegato (`src/lib/candidature/copia-alla-sede.ts`); il destinatario normale è `scuole.config.anagrafica.email`, cioè lo stesso campo che firma il piè di pagina di tutte le email della sede. **Assente E anagrafica vuota → la copia non parte**: la candidatura resta comunque registrata e visibile nel pannello, e in `app_log` c'è una riga `evento=config`, livello **`error`** (`esito=casella-sede-assente`). Il livello non è un'esagerazione: un ripiego silenzioso vorrebbe dire che per mesi le candidature di un plesso arrivano altrove mentre tutti credono di sapere dove, ed è la forma esatta del guasto delle email delle credenziali. Quando il ripiego SCATTA la riga è comunque `error` (`esito=casella-sede-assente-ripiego`), perché l'anagrafica va compilata, non aggirata. Valore consigliato: `info@kidville.it`. Non è un segreto, ma il valore si imposta su Vercel (produzione **e** preview) e non in un file del repo. |
 
 ## Push (VAPID)
 

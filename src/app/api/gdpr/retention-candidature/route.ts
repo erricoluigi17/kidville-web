@@ -198,6 +198,31 @@ const CODICI_TABELLA_ASSENTE = new Set(['PGRST205', 'PGRST202', '42P01'])
 const CODICI_COLONNA_ASSENTE = new Set(['PGRST204', '42703'])
 
 /**
+ * L'errore riguarda le RIGHE DI SEDE, cioè l'embed?
+ *
+ * ⚠️ NON basta «un errore qualunque». Se un guasto qualsiasi facesse cadere
+ * l'embed, il ripiego sulla colonna aggregata diventerebbe la strada normale —
+ * e siccome è meno conservativo sul caso misto, si cancellerebbe prima del
+ * dovuto per un guasto di rete. Si ripiega solo su ciò che dice, con parole
+ * sue, che la relazione o la tabella non c'è:
+ *
+ *  · `PGRST200` — «Could not find a relationship … in the schema cache»,
+ *    che è la risposta esatta a un embed verso una tabella che non esiste;
+ *  · tabella assente, ma SOLO se il messaggio nomina `candidature_sedi`:
+ *    lo stesso codice su `candidature_insegnanti` è un'altra storia, e va
+ *    a finire in 503 come prima.
+ */
+function sediIllegibili(err: unknown): boolean {
+    const codice = codiceDi(err)
+    if (codice === 'PGRST200') return true
+    const messaggio = String((err as { message?: unknown } | null)?.message ?? '')
+    return (
+        (CODICI_TABELLA_ASSENTE.has(codice) || CODICI_COLONNA_ASSENTE.has(codice)) &&
+        messaggio.includes('candidature_sedi')
+    )
+}
+
+/**
  * Le colonne che possono mancare su un database non migrato, e cosa significa
  * perderle. Nessuna di queste assenze autorizza a cancellare di più: quando
  * un'informazione non c'è, si sceglie sempre il verso che CONSERVA.
@@ -228,7 +253,20 @@ type Candidatura = {
     evasa_il?: string | null
     cv_path?: string | null
     consents_log?: unknown
+    /**
+     * LE DECISIONI, UNA PER PLESSO. Assente ⇒ il database non ha
+     * `candidature_sedi` (la CI non è migrata) e si ripiega sulla colonna
+     * aggregata: vedi `scadenza()`.
+     */
+    candidature_sedi?: { stato?: string | null; evasa_il?: string | null }[] | null
 }
+
+/**
+ * L'embed delle righe di sede. NON è filtrato, e non deve esserlo: il cron non
+ * guarda per conto di un plesso, guarda per conto del titolare del trattamento —
+ * deve vedere TUTTE le decisioni, perché è l'ultima a fissare il termine.
+ */
+const EMBED_SEDI = 'candidature_sedi(stato, evasa_il)'
 
 const NIENTE_DA_TOGLIERE: EsitoRimozione = {
     rimossi: [],
@@ -322,6 +360,69 @@ function termine(
         ? MESI_CON_CONSENSO
         : MESI_SENZA_CONSENSO
     return { riferimento: Number.isNaN(t) ? null : new Date(t), mesi }
+}
+
+/**
+ * LA SCADENZA DELLA CANDIDATURA È LA PIÙ LONTANA FRA QUELLE DELLE SUE SEDI.
+ *
+ * ─── PERCHÉ UNA DATA SOLA NON BASTAVA ───────────────────────────────────────
+ * `candidature_insegnanti.evasa_il` è UNA colonna e porta il termine di PIÙ
+ * trattamenti: dal 2026-08-19 una candidatura può essere rivolta a tre plessi, e
+ * ognuno la valuta per conto suo. Il trigger `candidature_sedi_aggrega` ci scrive
+ * `max()` — il verso che conserva di più — ma l'aggregato `stato` è un'altra cosa
+ * ancora, e nel caso MISTO le due cose insieme sbagliano.
+ *
+ * Aversa rifiuta a novembre, Giugliano approva a dicembre, la candidatura è
+ * arrivata a gennaio. L'aggregato vale `approvata`, quindi il termine decorre
+ * dalla RICEZIONE: si cancella a gennaio, cioè DUE MESI dopo il rifiuto di
+ * Aversa invece dei dodici che l'informativa promette. Il verbale di quel
+ * rifiuto sparisce prima del dovuto — la stessa classe di difetto che la
+ * migrazione `20260820004500` ha chiuso su un altro percorso.
+ *
+ * ─── LA REGOLA, PER RIGA ────────────────────────────────────────────────────
+ *   riga `rifiutata` → dalla SUA decisione
+ *   riga `approvata` → dalla ricezione
+ *   riga `pending`   → dalla ricezione
+ * e la candidatura si cancella quando è scaduta l'ULTIMA.
+ *
+ * La DURATA (12 / 24 mesi) resta una proprietà della PERSONA, non della riga:
+ * la sposta il consenso, e il consenso è uno solo.
+ *
+ * ⚠️ NEI CASI NON MISTI NON CAMBIA NIENTE, ed è la prova che questa non è una
+ * riscrittura del termine: tutte rifiutate → l'ultima decisione, identico a
+ * `max(evasa_il)`; tutte approvate o mai valutate → la ricezione, identico a
+ * prima. Cambia solo il misto, e nel verso che CONSERVA. Nessuna promessa
+ * dell'informativa viene ridotta, quindi non c'è niente da riscrivere lì.
+ *
+ * ─── SENZA LE RIGHE DI SEDE ─────────────────────────────────────────────────
+ * Il database della CI non ha `candidature_sedi`: lì si ripiega su `termine()`,
+ * cioè sulla regola della colonna aggregata. Il ripiego è DICHIARATO da chi
+ * legge (`esito: 'sedi-non-leggibili'`), non taciuto qui.
+ */
+function scadenza(riga: Candidatura, consensoIgnoto: boolean): Date | null {
+    const mesi = haConsensoConservazione(riga.consents_log, consensoIgnoto)
+        ? MESI_CON_CONSENSO
+        : MESI_SENZA_CONSENSO
+    const righe = riga.candidature_sedi
+    if (!Array.isArray(righe) || righe.length === 0) {
+        const { riferimento } = termine(riga, consensoIgnoto)
+        return riferimento ? piuMesi(riferimento, mesi) : null
+    }
+    const ricezione = typeof riga.creata_il === 'string' ? Date.parse(riga.creata_il) : NaN
+    let piuLontana: Date | null = null
+    for (const r of righe) {
+        const stato = typeof r.stato === 'string' ? r.stato : ''
+        const decisione =
+            STATI_NON_ACCOLTE.has(stato) && typeof r.evasa_il === 'string' ? Date.parse(r.evasa_il) : NaN
+        const base = Number.isNaN(decisione) ? ricezione : decisione
+        // Una data che non si sa leggere non è un permesso: su un'operazione
+        // irreversibile «non verificabile» vale «non toccare», e basta UNA riga
+        // illeggibile perché l'intera candidatura resti.
+        if (Number.isNaN(base)) return null
+        const sua = piuMesi(new Date(base), mesi)
+        if (piuLontana === null || sua.getTime() > piuLontana.getTime()) piuLontana = sua
+    }
+    return piuLontana
 }
 
 /** Quello che la spazzata degli orfani ha fatto, per il battito e per la risposta. */
@@ -621,10 +722,10 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
         // subito sotto, dove è leggibile e collaudabile.
         const sogliaMinima = piuMesi(adesso, -MESI_SENZA_CONSENSO)
 
-        const leggi = (colonne: string) =>
+        const leggi = (colonne: string, conSedi: boolean) =>
             supabase
                 .from('candidature_insegnanti')
-                .select(colonne)
+                .select(conSedi ? `${colonne}, ${EMBED_SEDI}` : colonne)
                 .lt('creata_il', sogliaMinima.toISOString())
                 // Le più vecchie per prime: se il tetto taglia, taglia le meno in
                 // ritardo. Con l'ordine opposto un lotto pieno lascerebbe indietro
@@ -633,10 +734,34 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
                 .limit(TETTO_LOTTO)
 
         let colonne = [...COLONNE_SEMPRE, ...COLONNE_FACOLTATIVE].join(', ')
+        let conSedi = true
         // PostgREST NON lancia: ritorna `{ error }`. Senza questo controllo un
         // guasto di lettura diventerebbe «nessuna candidatura scaduta», cioè un
         // giro a vuoto che si dichiara riuscito.
-        let { data, error: erroreLettura } = await leggi(colonne)
+        let { data, error: erroreLettura } = await leggi(colonne, conSedi)
+
+        if (erroreLettura && conSedi && sediIllegibili(erroreLettura)) {
+            // Il database della CI non ha `candidature_sedi`: si ritenta SENZA
+            // l'embed e si torna alla regola della colonna aggregata.
+            //
+            // ⚠️ NON si salta la spazzata. Una conservazione che non gira è
+            // peggio di una approssimata: significa curriculum di persone adulte
+            // che restano nell'archivio oltre il termine promesso, e nessuno che
+            // lo sappia. Il ripiego si DICE, con il codice: un ripiego taciuto
+            // diventa la strada normale, ed è così che si scopre dopo un anno.
+            conSedi = false
+            logEvento('cron', 'warn', {
+                operazione: JOB,
+                esito: 'sedi-non-leggibili',
+                canale,
+                error_code: codiceDi(erroreLettura),
+                msg:
+                    `${JOB}: candidature_sedi non è leggibile su questo database: il termine ` +
+                    `torna a essere quello della colonna aggregata. Sul caso MISTO (un plesso ` +
+                    `approva, un altro rifiuta) è meno conservativo del dovuto`,
+            })
+            ;({ data, error: erroreLettura } = await leggi(colonne, conSedi))
+        }
 
         if (erroreLettura && CODICI_COLONNA_ASSENTE.has(codiceDi(erroreLettura))) {
             // Il database della CI non è migrato: si ritenta SENZA le colonne che
@@ -660,7 +785,7 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
                     `più lungo (${MESI_CON_CONSENSO} mesi): non si cancella prima di quanto si ` +
                     `potrebbe aver promesso`,
             })
-            ;({ data, error: erroreLettura } = await leggi(colonne))
+            ;({ data, error: erroreLettura } = await leggi(colonne, conSedi))
         }
 
         if (erroreLettura) {
@@ -690,12 +815,12 @@ export const POST = withRoute('gdpr/retention-candidature:POST', async (request:
         const lette = (data ?? []) as unknown as Candidatura[]
         lottoPieno = lette.length >= TETTO_LOTTO
         const scadute = lette.filter((r) => {
-            const { riferimento, mesi } = termine(r, consensoIgnoto)
             // Data illeggibile ⇒ non si cancella. Un dato mancante non è un
             // permesso: è un «non verificabile», e su un'operazione irreversibile
             // «non verificabile» vale «non toccare».
-            if (!riferimento) return false
-            return piuMesi(riferimento, mesi).getTime() <= adesso.getTime()
+            const quando = scadenza(r, consensoIgnoto)
+            if (!quando) return false
+            return quando.getTime() <= adesso.getTime()
         })
         nScadute = scadute.length
 

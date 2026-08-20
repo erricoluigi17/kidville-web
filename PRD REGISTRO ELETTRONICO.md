@@ -94,6 +94,471 @@
 
 ---
 
+## 🤖 Changelog — La domanda di accesso alla produzione su Google Play, e l'elenco dei difetti che si è accorciato verificandolo — 2026-08-20
+
+Il terzo requisito del test chiuso è caduto: la Console mostra il requisito **barrato**
+(`aria-label` = *«Attività completata. Esegui il test chiuso con almeno 12 tester per almeno 14
+giorni»*) e **«Richiedi per la produzione» ha `disabled: false`**. Al momento in cui si scrive **non
+è ancora stato premuto**. Margine: **zero** — 12 tester contati su 12 richiesti; se uno esce, il
+contatore riparte e si perdono altri quattordici giorni.
+
+### 1 · Il problema vero era la Parte 1, e non era il codice
+
+Il questionario chiede: *«riepiloga i feedback che hai ricevuto dai tester e facci sapere in che
+modo lo hai raccolto»*. **Il feedback scritto è zero**, misurato tre volte (17, 19, 20 agosto) in
+Console, su `info@kidville.it` e sulla posta del titolare.
+
+La tentazione — scrivere dodici testi di riscontro e attribuirli ai tester — è stata scartata e va
+scritto perché: Google chiama *misrepresentation* qualunque informazione falsa nella Console, e la
+sanzione è la sospensione dell'account. Sarebbe l'unico modo di perdere l'app **dopo** averla fatta
+funzionare.
+
+La risposta veritiera è più forte di una inventata, e poggia su un fatto misurato: **il bundle in
+mano ai dodici tester è una WebView su `https://app.kidville.it`**. Ogni rilascio web è arrivato ai
+tester **senza un nuovo bundle** — e la produzione è cambiata **17 volte** in quei quattordici
+giorni (`git log --first-parent main --since=2026-08-06 --until=2026-08-21` → 18 commit, meno lo
+stato di partenza). Il test chiuso non è stato una vetrina ferma: è la finestra in cui l'app è
+passata da rotta a funzionante.
+
+### 2 · Dodici ricostruzioni e dodici revisioni, e l'elenco si è ACCORCIATO
+
+Dodici agenti hanno ricostruito, profilo per profilo, i difetti che un utente reale poteva
+incontrare fra il 6 e il 20 agosto — **senza inventare testimonianze**: ogni riga porta un commit.
+Dodici revisori indipendenti, con mandato di bocciare, hanno riverificato ogni riga.
+
+**Tutti e dodici i documenti sono stati RESPINTI al primo giro.** Non è un incidente: è il risultato
+utile. Le correzioni che ne sono uscite sono di tre famiglie.
+
+**a) Lo squash.** I commit su `main` sono squash merge (`git rev-list --parents -n 1` → un solo
+genitore). Conseguenza scoperta indipendentemente da cinque agenti: **un difetto introdotto e
+corretto dentro la stessa lavorazione in produzione non è mai esistito.** Le date dei messaggi di
+commit descrivono il *lavoro*, non la *produzione*. Sono caduti così, fra gli altri: il pulsante
+coperto dalla barra e il link che faceva partire l'invio (n. 3, 4, 6, 7); l'appello sovrascritto dal
+genitore (n. 9-12), anche perché il controllo sulla morosità precedeva quello sul grado; la pratica
+del personale senza uscite (n. 44); l'account `educator` alla cuoca (n. 48); i tre fogli di carta
+intestata con sopra due righe di conteggio (n. 55 — *tutti* i file di `src/lib/carta/` nascono nel
+commit che li corregge); i nomi tagliati nel registro presenze (n. 53).
+
+**b) Attribuzioni sbagliate.**
+- Il **codice fiscale di un minore** mandato a un fornitore esterno non dichiarato **non partiva dal
+  modulo pubblico**: `fetchFiscalCode` aveva **tre soli chiamanti**, tutti in
+  `components/features/admin/`, e la catena porta a `/admin/students/new`. Era lo schermo della
+  **segreteria**. Verificato indipendentemente da tre agenti.
+- Il **modulo pubblico d'iscrizione non ha nessuna firma OTP** (`send-otp` importa `requireUser`:
+  serve un account). La formulazione «compilava e firmava con l'OTP» era falsa.
+- **`/lavora-con-noi` non esisteva in produzione prima dell'11/08 alle 10:16.** Sette difetti che
+  gli erano attribuiti sono nati e morti nel commit che ha pubblicato il modulo.
+- «Firmare il certificato per il bambino sbagliato» **non è mai stato possibile**: la firma nasce
+  nello stesso commit che aggiunge il selettore. Il certificato usciva *intestato* al primo figlio —
+  e lo faceva **dal 6 al 15 agosto**, non «dal 14».
+- Un account **`segreteria` non può essere multi-sede**: `scope.ts:59` → `if (user.role !== 'admin')
+  return own`. Il mestiere esiste, l'account no.
+
+**c) Precisioni inventate.** La finestra in cui `candidature_sedi` è stata pubblica circolava come
+«37 minuti» **senza una misura a monte**: il numero rimbalzava fra i documenti. Misurato:
+`e8319816` 00:50:56 → `ddfe3b0e` 01:27:07 = **36 minuti fra i due commit**, mentre chi ha chiuso il
+buco scrive «un'ora» — e l'istante di **applicazione al database**, che è quando il buco si è
+davvero aperto, non è provato da nessun documento.
+
+> 🔑 **E una regola che vale per ogni riga di ogni collaudo, scoperta qui.** Le ore delle finestre
+> sono **timbri di commit**, non l'istante in cui il deploy è diventato servibile: fra il merge e la
+> pagina che si apre col telefono c'è una compilazione che nessuno ha misurato. **Ogni guasto è
+> durato un po' più di quanto scritto, mai meno.** Stessa famiglia: il timbro di una migrazione
+> (`20260812194501`) non dichiara il fuso — se è UTC, una finestra «di 6h40» è di 4h40. L'incertezza
+> è di **due ore, non di un minuto**.
+
+### 3 · Tre difetti trovati strada facendo, ANCORA APERTI
+
+1. **`src/lib/sezioni/docenti.ts:186-187`** — se la lettura delle sezioni fallisce, la funzione
+   logga e poi `return (data ?? []).map(...)`: **elenco vuoto**. Alla maestra l'app dice «nessuna
+   sezione assegnata» invece di «non ho potuto leggere». `f59854ab` ha aggiunto **solo** la riga di
+   log: il sintomo è diagnosticabile, non eliminato. Stesso schema in `sezioniDiUtentePerGrado`.
+2. **`messages/it/public.json:57`** — `candContestoCredenziali` promette ancora *«se la candidatura
+   viene accolta, le credenziali di accesso arrivano via email»*, ed è reso alla riga 1907 del
+   wizard. Ma `fcc51fc8` (15/08) ha smontato l'invio. **Da cinque giorni un modulo pubblico promette
+   un'email che il sistema non spedisce più.**
+3. **`admin-nav-config.ts:99`** — la voce «Privacy & GDPR» non ha `roles` e compare nel menu di
+   tutti i ruoli staff, mentre le tre porte a valle sono di sola Direzione.
+
+### 4 · La sentinella, e l'email
+
+`.github/workflows/sentinella-play.yml`: ogni mattina alle 07:23 UTC legge la scheda pubblica di
+`it.kidville.app`. **404 → non c'è, nessuna email. 200 → c'è, e manda l'email, poi si spegne da
+sola.** Tarato sul vivo il 20/08: `it.kidville.app` → 404, `com.whatsapp` → 200.
+
+Non è un `pg_cron` come gli altri quindici lavori del repo, e la ragione è di proporzione: una
+migrazione sul database che contiene i codici fiscali di centinaia di minori, per mandare una
+notifica personale, è sproporzionata. Qui non si tocca né l'app né il database.
+
+Serve impostare due segreti: `RESEND_API_KEY` e `SENTINELLA_DESTINATARI`. **I destinatari non stanno
+nel file** perché il repository è pubblico. Senza uno dei due la sentinella **fallisce
+rumorosamente** invece di tacere: scoprire la pubblicazione e tenersela per sé sarebbe il guasto
+peggiore di tutti.
+
+### 5 · Cosa resta aperto
+
+| | |
+|---|---|
+| ✅ **Il branch è stato spinto** | Non è più vero che esiste su un disco solo: `feat/candidature-multisede` è su GitHub, **PR #91 aperta**, CI in corso. Vedi l'aggiornamento in fondo a questa voce. |
+| 🔴 **`news-digest` del 1° settembre** | `digest.ts:388-400` ignora `rinviabile` e marca comunque `inviata_il`: un'edizione respinta per quota **non verrà mai più rispedita**, in silenzio. E `/api/health` non lo sorveglia. ⚠️ Il «~500 email» scritto qui è una **proiezione, non una misura** — vedi la correzione in fondo. |
+| 🟡 **Categoria in Console** | Deve risultare **Istruzione**. La Child Safety Standards si applica **per categoria, non per pubblico**: con «Social» servirebbe una pagina pubblica di standard anti-CSAE che **non esiste**. Va **letta**, non dedotta. |
+| 🟡 **Dopo l'approvazione** | L'accesso sblocca il canale, **non pubblica**: serve creare una release di produzione. Consiglio: promuovere la release **1**, quella che i dodici tester hanno usato per quattordici giorni. E allargare la distribuzione, oggi ferma a 1 paese su 177. |
+| ✅ **Numeri della Parte 2** | Rieseguiti sul database il **20/08 alle 12:24**: **403** domande, 94 account, 33 bambini a registro, 38 candidature. |
+
+Documenti: `docs/submission/C6-questionario-produzione.md` (le tre parti, italiano e inglese) e
+`docs/collaudo/produzione/` (l'inventario più i dodici documenti di profilo).
+
+### 6 · Aggiornamento della stessa giornata — tre cose sono cambiate dopo che è stata scritta
+
+**a. La sentinella non dipende più da una chiave che nessuno può leggere.** L'avviso «l'app è sullo
+store» partiva solo via Resend, e quindi dipendeva dal segreto `RESEND_API_KEY`. Quel segreto **non
+è impostabile da questa parte**: su Vercel la variabile è marcata *Sensitive*, cioè non si rilegge —
+si può solo sovrascrivere. Il risultato sarebbe stato una sentinella che il giorno della
+pubblicazione scopre la notizia e **non la dice a nessuno**, che per una funzione nata per avvisare
+è il guasto peggiore possibile.
+
+Ora, quando la scheda pubblica risponde `200`, succedono **tre cose indipendenti**: si apre una
+**segnalazione nel repository** col token che GitHub regala a ogni run — nessun segreto —, si manda
+l'email via Resend, e la sentinella si spegne. Perché l'avviso non arrivi devono tacere due canali
+diversi nello stesso momento. `SENTINELLA_DESTINATARI` è impostato; `RESEND_API_KEY` **no**, e la
+testata del workflow lo dichiara invece di lasciarlo sembrare una dimenticanza. Taratura rifatta:
+`com.whatsapp` → **200**, `it.kidville.app` → **404**.
+
+**b. I numeri di produzione sono stati rimisurati, e uno è stato lasciato VUOTO apposta.** 403
+domande d'iscrizione contro le 302 del 4 agosto: circa sei al giorno. `CLAUDE.md` e `AGENTS.md`
+portano la stessa misura. Il conteggio dei **codici fiscali distinti** è invece dichiarato *non
+rimisurato*: ottenerlo richiede di leggere le **righe** di `enrollment_submissions`, non di
+contarle, e quella lettura è stata **rifiutata** — sono anagrafiche di minori. *Contare non è
+leggere.* Scrivere lì una stima sarebbe stato peggio del vuoto: è esattamente il meccanismo per cui,
+a luglio, `CLAUDE.md` è arrivato a sostenere il falso per due settimane.
+
+**c. Il «~500 email del 1° settembre» era una proiezione presentata come misura — e va corretto.**
+Misurato oggi: il digest scrive ai genitori dei bambini **a registro**, e a registro ci sono **31
+iscritti** con **37 legami** genitore-alunno. Oggi il 1° settembre non sfonderebbe nessun tetto.
+Diventa vero **fra dieci giorni**: l'importazione delle iscrizioni crea davvero righe in `alunni` e
+`student_parents` (`src/lib/iscrizioni/import/esegui.ts`), procede a ~90 email al giorno dal 22/08,
+e 403 domande × 1,23 ≈ 496 account si esauriscono intorno al **28 agosto**. Quindi la scadenza
+regge, ma per una ragione diversa da quella scritta.
+
+⚠️ **E rileggendolo si è trovato un difetto in più, nel percorso che era già considerato quello
+sicuro.** Il ramo «non si è potuto nemmeno tentare» di `digest.ts` non marca l'edizione, e il
+commento accanto spiega che va bene *«perché il cron gira ogni giorno»*. **Non gira ogni giorno**:
+`news-digest` è schedulato `'0 8 1 * *'` — una volta al mese
+(`20260720191525_news_cron.sql:109`). Un'edizione lasciata in coda da quel ramo non riparte domani:
+riparte **il primo del mese dopo**. La cautela era giusta, la ragione scritta accanto no — ed è la
+ragione che qualcuno leggerà per decidere se fidarsi.
+
+---
+
+## ✉️ Changelog — «Lavora con noi»: il marchio, la sede al plurale, e la copia che arriva al plesso — 2026-08-19/20
+
+Tre richieste del titolare sul modulo pubblico `/lavora-con-noi`, rilasciate insieme.
+
+### 1 · Il marchio sulle superfici pubbliche
+
+Il wordmark verde entra in `PublicPageHeader`, quindi su tutte e cinque le pagine pubbliche
+(`/lavora-con-noi`, `/iscrizione`, `/privacy`, `/termini`, `/assistenza`). Asset già esistente
+(`logo-kidville.png`, quello del login): **non** `logo_green.png`, che è lo stesso marchio in un
+file 6000×3375 con il 90% di bianco intorno e a 24 px renderebbe un wordmark alto otto.
+
+**Costo misurato con Playwright su Chrome, sulle pagine vive:** sotto i **414 px** la testata passa
+da **46 a 102 px** — il marchio va a capo. Da 414 in su costa zero. A 360 px le tre cose non ci
+stanno (`Torna indietro` 111 px + `Alto contrasto` 148 px lasciano 49 px, cioè un wordmark alto 12).
+**Scelta del titolare: marchio ovunque, i 56 px si accettano.** La variante con `order-first` è
+stata provata e peggiora: il logo finisce in basso a sinistra.
+
+Contrasto calcolato sui **pixel del file** (inchiostro reale `#007055`): **6,09:1** in Alto
+Contrasto, **5,48:1** sul crema. Soglia WCAG 1.4.11 per la grafica: 3:1. Nessun ripiego necessario.
+
+### 2 · La sede diventa una scelta multipla
+
+Una persona può proporsi a **più plessi con un invio solo**, e **ogni plesso valuta per conto suo**.
+
+- **Schema**: nuova `candidature_sedi` (`candidatura_id`, `scuola_id`, `stato`, `evasa_il`,
+  `evasa_da`, `motivo_rifiuto`), con FK verso `schools`, `on delete cascade` verso la candidatura,
+  **RLS attiva e zero policy** e indice `(scuola_id, stato, creata_il desc)`.
+- **Perché non una riga per sede**: due indici UNIQUE globali lo impediscono —
+  `candidature_insegnanti_email_viva` e `candidature_insegnanti_cv_unico` — e il secondo è il gate
+  anti-IDOR del curriculum. Allentarlo avrebbe riaperto il buco chiuso il 14/08.
+- **Lo stato della candidatura è l'AGGREGATO** delle sue sedi, mantenuto dal trigger
+  `candidature_sedi_aggrega`: una sede pending ⇒ `pending`; nessuna pending e almeno una approvata
+  ⇒ `approvata`; tutte rifiutate ⇒ `rifiutata`. È ciò che tiene in piedi `email_viva` senza
+  toccarlo: se Giugliano rifiuta e Aversa valuta ancora, quella persona **è ancora in gioco**.
+- **`candidature_insegnanti.scuola_id` resta ma NON AUTORIZZA PIÙ NIENTE**: è la sede di primo
+  arrivo, un dato storico. Il cockpit filtra dalle righe di sede.
+- **`?sede=<uuid>` non è cambiato**: quando c'è, salta il passo e invia quella sola sede.
+- **`PATCH approva|rifiuta`** dichiara su quale plesso si decide; **400** se l'operatore ha più
+  sedi e non ne indica nessuna.
+
+**Applicata in produzione il 19/08 su 18 candidature reali**, tutte con la loro riga di sede.
+Sette invarianti verificati, trigger provato sul database vero con rollback (quattro casi su
+quattro).
+
+### 3 · La copia completa alla sede, col curriculum in allegato
+
+Ogni invio recapita alla casella di **ogni** plesso scelto una copia completa del modulo, con il
+curriculum in allegato e `Reply-To` sull'indirizzo di chi si è candidato.
+
+- `sendEmailDetailed` impara `attachments` e `replyTo` (additivi).
+- Il corpo si genera **iterando il template dei campi**, non da un elenco scritto a mano: un
+  elenco a mano diverge al primo campo aggiunto, e diverge in silenzio.
+- Destinatario da `scuole.config.anagrafica.email` (tutte e tre le sedi ce l'hanno); se manca,
+  ripiego su **`CANDIDATURE_EMAIL_FALLBACK`** con riga a livello **`error`**.
+- Best-effort: un'email che non parte non trasforma un 201 in un 500, ma ogni esito è a log.
+
+**Provata davvero il 19/08**: invio da Chrome, copia arrivata su `giugliano@kidville.it`, allegato
+**identico byte per byte** (sha256), consenso non dato reso come «No», `cv_path` assente dal corpo,
+DKIM e SPF validi. Riga e allegato di prova rimossi, email cancellate.
+
+### Privacy — una promessa che andava corretta
+
+`/privacy` dichiarava senza riserve che *«il curriculum allegato viene cancellato insieme alla
+candidatura»*. La copia in casella **nessun cron la cancella**. La voce ora lo dice e indica a chi
+rivolgersi. **`VERSIONE_PRIVACY` alzata a `2026-08-19`**, impronta nuova aggiunta e vecchie
+lasciate: sono citate nei `consents_log` già scritti.
+
+### 🔴 Un buco aperto e chiuso in giornata
+
+`candidature_sedi` è stata creata **senza RLS** e per circa un'ora è stata **leggibile da chiunque**
+con la chiave anon (quella nel bundle del browser): `GET /rest/v1/candidature_sedi` restituiva le
+coppie candidatura/sede, mentre la tabella sorella rispondeva `[]`. Chiuso e verificato lo stesso
+giorno; nello stesso giro revocato l'`EXECUTE` della funzione `SECURITY DEFINER` del trigger ad
+`anon` e `authenticated`. Una tabella creata senza `enable row level security` non è «non ancora
+protetta»: è pubblica dal secondo in cui esiste.
+
+### Misura di contesto
+
+Il modulo **non è dormiente**: fra le 19:19 e le 22:36 del 19/08 sono arrivate **16 candidature
+vere** su tutte e tre le sedi, quattro col curriculum — circa una ogni venti minuti.
+`enrollment_submissions` è a **401** (il PRD e `CLAUDE.md` ne dichiaravano 302 al 04/08).
+
+---
+
+### 🔍 Cosa hanno trovato i due collaudi critici (20/08)
+
+Un agente ha rivisto il codice, un altro ha usato il prodotto su Chrome. Hanno
+trovato **nove difetti veri** che 12048 test verdi non vedevano. Tutti verificati
+prima di correggerli — quattro contro il database di produzione.
+
+| | Difetto | Conseguenza se fosse uscito |
+|---|---|---|
+| 🔴 | `aggiornata_il` scritta su una tabella che non ce l'ha | **il 100% delle approvazioni e dei rifiuti** degradava, con un avviso di guasto falso all'operatore |
+| 🔴 | `evasa_il` non più riportato sulla candidatura | il cron GDPR cancellava i rifiuti **dalla data sbagliata** — prima del dovuto, distruggendo dati che l'informativa promette di conservare |
+| 🔴 | `motivo_rifiuto` nell'embed non filtrato | la nota interna con cui una segreteria giudica una persona viaggiava **verso gli altri plessi**, in ogni riga dell'elenco |
+| 🔴 | il secondo invio perdeva le sedi nuove | chi ha già una candidatura viva e ne spunta altre due: quei plessi non ne sapevano **niente** |
+| 🟠 | `/iscrizione` senza marchio, e il lock diceva il contrario | la pagina più vista (~9 invii l'ora) restava senza logo, e il test era **immunizzato dal proprio commento** |
+| 🟠 | `.limit(1)` rimesso sotto il commento che ne dichiara l'assenza «la difesa» | regressione chiusa il 15/08 e riaperta il 19/08 |
+| 🟠 | corsa fra due sedi che decidono insieme | la candidatura restava `pending` **per sempre**: quella persona non avrebbe più potuto inviarne nessuna |
+| 🟠 | operatore multi-sede senza modo di scegliere il plesso | chi lavora su tutte e tre le sedi **non poteva chiudere niente** |
+| 🟡 | conferma alla candidata con una sede sola e `insegnante_infanzia` grezzo | — |
+
+Due controlli del `PATCH` — fra cui il presidio anti-IDOR sull'uuid che arriva
+dal corpo — erano **cancellabili senza far cadere un solo test**. Ora hanno i
+loro, sabotati per vederli fallire.
+
+E una classe di difetto chiusa nel database invece che nella procedura: un
+trigger garantisce che **ogni candidatura abbia almeno una riga di sede**. Fra
+la migrazione e il merge la produzione gira il codice vecchio, e ogni
+candidatura che arriva in quella finestra sarebbe nata invisibile al cockpit
+nuovo. Rifare il backfill dopo il deploy avrebbe chiuso quella finestra e
+nessuna delle prossime.
+
+---
+
+## 🔬 Changelog — Le quattro cose rimaste aperte, e le cinque trovate chiudendole — 2026-08-20
+
+Alla domanda del titolare «al di fuori del tetto delle email non ci sono altri errori?» la
+risposta è stata **no**, con quattro voci. Questo intervento le chiude. Nel farlo ne sono uscite
+**cinque che nessuno aveva visto** — quattro delle quali *sembravano già chiuse*, ed è il motivo
+per cui questa voce esiste.
+
+### Le quattro dichiarate
+
+**1 · Il filtro di sede non aveva guardiani.** `.in('candidature_sedi.scuola_id', …)` si lega al
+**primo** embed della `select`, per POSIZIONE — non a quello con `!inner`. La rotta del cockpit ne
+usa due: uno restringe, uno descrive. Invertirli sposta il filtro sull'embed descrittivo e
+l'elenco mostra candidature di plessi che chi guarda non ha, senza un errore.
+
+Nessun test poteva vederlo perché il finto — ricopiato in **quattro file**, e in tutti e quattro
+nella stessa forma approssimata — applicava il filtro come predicato sulla riga madre e popolava
+gli array a mano. Ora la regola vive in un posto solo (`__tests__/helpers/embed-sede.ts`) e
+riproduce le tre cose che fa il database: il filtro va al primo embed; la madre sparisce solo se
+quel primo porta `!inner`; **un embed consegna solo le colonne che ha chiesto**. Più un lock
+d'architettura sull'ordine, con il controllo negativo *codificato*.
+
+**2 · La conservazione GDPR ora si calcola per riga di sede.** `evasa_il` è una colonna sola e
+porta il termine di più trattamenti. Nel caso **misto** — Aversa rifiuta a novembre, Giugliano
+approva a dicembre, candidatura arrivata a gennaio — l'aggregato vale `approvata`, quindi il
+termine decorreva dalla **ricezione**: cancellazione a gennaio, cioè **due mesi** dopo il rifiuto
+di Aversa invece dei dodici promessi dall'informativa. Ora vince la scadenza **più lontana** fra
+quelle delle sue sedi. Nei casi non misti non cambia niente — ed è la prova che non è una
+riscrittura del termine: i due test che lo dicono erano verdi *prima* della correzione.
+**Nessuna riga dell'informativa è stata toccata**: la regola nuova conserva di più, mai di meno.
+
+**3 · I due test instabili.** Vedi §«La suite misurava il carico della macchina» qui sotto.
+
+**4 · Lo scaglione «minore» dei quattro fronti** — quattordici rilievi, riverificati uno per uno
+sull'albero di oggi prima di entrare nel piano (tre erano già chiusi e non compaiono). Fra questi:
+l'uuid della sede confrontato come stringa grezza (`z.guid()` accetta il maiuscolo, quindi la
+**propria** sede in maiuscolo prendeva un 404 e accendeva un warn di sicurezza — falsi positivi in
+un contatore nato per vedere gli abusi veri); `motivo_rifiuto` della madre fuori dal dettaglio; il
+tetto delle sedi **cablato su tre** mentre il commento accanto dichiarava che decideva `sediReali`;
+il rifiuto del server che non diceva **quale** sede aveva respinto, così il client incolpava
+`sedi[0]` — spesso quella valida; sei stringhe al singolare rivolte a chi si era candidato a tre
+plessi; la conferma firmata da una sede sola nel piede mentre il corpo ne elencava tre;
+«Ruolo: Altro (specifica qui sotto)» — l'istruzione del modulo al posto del mestiere; il pannello
+che sopravviveva al cambio di sedi; `{ "id": null }` come oracolo di enumerazione.
+
+### Le cinque trovate chiudendole
+
+| | Difetto | Perché nessuno l'aveva visto |
+|---|---|---|
+| 🔴 | **L'elenco mostrava l'aggregato**: interrogava con `candidature_sedi!inner(scuola_id)` — **senza `stato`** — mentre il componente legge `candidature_sedi[…].stato`. Il campo arrivava `undefined` e la catena di `??` scivolava fino all'aggregato: cioè il numero che il commit precedente dichiarava di aver corretto | il tipo dichiara `stato?` **opzionale**, quindi TypeScript non poteva dirlo; e il finto popolava gli array a mano invece di proiettare le colonne chieste |
+| 🔴 | **Dopo un «Approva» riuscito i pulsanti restavano accesi**: l'aggiornamento ottimistico scriveva solo l'aggregato, non la riga di sede. Ripremerli dava 409 «ricaricare la pagina», e ricaricare non serviva | i finti del file non portavano `candidature_sedi`, quindi **ogni** test esercitava il ramo di ripiego invece di quello vero |
+| 🔴 | **Il marchio faceva scrollare `/iscrizione` in orizzontale**, a ogni larghezza — 414 px compreso | il rilievo lo dava «sotto i 360» ed era aritmetica su commenti; la misura esistente era stata presa sull'**altra** testata, che `flex-wrap` ce l'ha |
+| 🔴 | **Il mock di `next-intl` ignorava i valori di `t()`**: ogni messaggio con placeholder o plurale ICU finiva a schermo con le graffe, e le asserzioni restavano verdi perché confrontavano la stessa stringa grezza | tre test avevano messo per iscritto la limitazione del banco **come se fosse una proprietà del prodotto** («il nome non si può asserire qui») |
+| 🟠 | **Il lock del marchio non guardava lo slot**: `/lavora-con-noi` e `/anagrafica-personale` passano la testata come *prop*, e togliere `{intestazione}` dal wizard le lasciava senza marchio, senza ritorno e senza Alto Contrasto — con tutto il gate verde | il test esistente verificava solo che la **prop** fosse l'elemento giusto, e per farlo mockava `PublicPageHeader` a `() => null` |
+
+Il quarto ha reso **non più vacue 12 asserzioni in 6 file**, e ne ha scoperta una falsa: «il
+riquadro nomina il passo rimasto indietro» era soddisfatta dal **titolo della schermata**, mentre
+il riquadro diceva `{passo}`.
+
+### La suite misurava il carico della macchina
+
+Quattro test di **quattro file diversi** sono caduti in esecuzioni diverse della suite intera, mai
+lo stesso due volte, tutti verdi rieseguiti da soli. Trentatré esecuzioni mirate non ne hanno
+riprodotto uno: si presenta **solo** con 964 file su tutti i worker.
+
+La firma è la durata: l'ultimo caduto, un `waitFor` senza opzioni, ha impiegato **1043 ms** contro
+il default di Testing Library di **1000**. Non aspettava niente di reale: aspettava un microtask
+deschedulato dalla contesa di CPU. Un test che passa al secondo tentativo non è un test.
+
+`asyncUtilTimeout` sale a 5 s **in un posto solo** (`test/setup.ts`), con `testTimeout` a 20 s
+perché altrimenti un'attesa scaduta non arriverebbe mai a dire cosa non ha trovato. Nessuna
+asserzione si indebolisce: un test rotto cade lo stesso, qualche secondo dopo. E si fa in un posto
+solo perché `CandidatureInsegnanti.test.tsx` aveva già **dieci** `{ timeout: 2000 }` scritti a
+mano: qualcuno l'aveva incontrato e chiuso una chiamata alla volta, che è una consuetudine, non un
+invariante.
+
+### Cosa resta aperto, dichiarato
+
+- **Il tetto delle email** — decisione del titolare: abbassare `INVITI_AL_GIORNO`, alzare il piano
+  Resend, o accettare le perdite. Non è un difetto del codice.
+- **Il marchio su `/cancellazione-account/conferma` e `/m/[token]`** e il **lock derivato da
+  `PUBLIC_PREFIXES`** invece che cablato a sette voci: debito preesistente, fuori da questo diff.
+
+---
+
+## 🤖 Changelog — Il bundle sullo store non era avvelenato, e la prova stava in una cartella di build 2026-08-17 (controllo di sola lettura, nessun rilascio)
+
+Controllo in **sola lettura** dello stato Google Play chiesto dal titolare. Nessuna modifica in
+Console, nessun caricamento, nessuna promozione, nessun commit. Metà del controllo è **riuscita**,
+metà **non è stato possibile eseguirla** (§C).
+
+### A. Il sospetto che ha mosso il controllo, e perché cade
+
+Si temeva che il `.aab` del **05/08** caricato sul canale Alpha (`versionCode 1`, l'unico che i 12
+tester hanno in mano) portasse dentro `http://10.0.2.2:3100` — l'indirizzo dell'emulatore — al
+posto di `https://app.kidville.it`. Se fosse vero, l'app dei tester non avrebbe **mai** raggiunto
+la produzione, e il 19/08 non si potrebbe chiedere l'accesso alla produzione con quel bundle.
+
+La fonte del sospetto è `docs/submission/C2-build-aab.md:293`, che dichiara: *«Il 2026-08-09 il
+bundle sul disco aveva `versionCode 1` mentre `build.gradle` diceva 2, **e portava dentro**
+`http://10.0.2.2:3100`»*. Il `.aab` del 05/08 non esiste più su disco — la ricostruzione del 09/08
+l'ha sovrascritto — quindi si riteneva misurabile solo scaricandolo da Play.
+
+**Non era vero, e la prova è rimasta sul disco per dodici giorni in una cartella intermedia di
+Gradle.** Misurato oggi:
+
+| Misura | Esito |
+|---|---|
+| `intermediates/assets/release/mergeReleaseAssets/capacitor.config.json`, mtime **05/08 14:09:03** | `"url": "https://app.kidville.it"` · `"cleartext": false` — **sano** |
+| stesso albero (7 file) confrontato con `base/assets/` dell'`.aab` del 09/08 | **byte-identici, 7 su 7** |
+| intermedi `release` riscritti il **09/08** | `processReleaseManifest`, `processReleaseResources`, `buildReleasePreBundle` — **nessun `mergeReleaseAssets`** |
+| `intermediates/assets/debug/mergeDebugAssets/capacitor.config.json`, mtime **07/08 15:25** | `"url": "http://10.0.2.2:3100"` · `"cleartext": true` — **è qui che sta il veleno** |
+| build `release` del 05/08 00:24 | `BUILD FAILED in 982ms` (log del daemon Gradle) — produsse solo `packaged_res`, nessun bundle |
+
+La catena: gli asset dell'`.aab` del 09/08 — che è **misurato sano** — sono l'output di un merge
+datato **05/08 14:09:03**, mai rifatto dopo. Il 09/08 Gradle ha ritoccato solo il manifest (è il
+`versionCode` 1→2) e ha trovato gli asset *up-to-date*, cioè **identici a quelli del 05/08**.
+Quindi la build del 05/08 ha impacchettato quella stessa configurazione sana. Il `10.0.2.2:3100`
+esiste, ma è del ramo **debug** del 07/08 (l'`app-debug.apk` dell'emulatore Maestro), ed è nato
+**due giorni dopo** il bundle caricato su Play.
+
+**`docs/submission/C2-build-aab.md:293` afferma il falso** e va corretto: ciò che il 09/08 fu
+misurato avvelenato è il **file sorgente** `android/app/src/main/assets/capacitor.config.json`, non
+il bundle. La nota di memoria di quel giorno era corretta e prudente — scriveva *«che una
+`bundleRelease` lanciata ora lo imbarchi è **inferenza, non prova**»* — ed è il documento di sintesi
+ad aver trasformato quella cautela in un fatto. 🔑 **Una cautela scritta bene si perde nel
+riassunto: il riassunto va misurato come il codice.**
+
+⚠️ **Quel che resta dedotto**: è provato che *la build del 05/08 su questa macchina* produsse un
+bundle sano. Che il file caricato su Play sia quello resta **inferenza** (una macchina sola, una
+sola build riuscita quel giorno, stesso `versionCode`). La misura definitiva è scaricare l'APK
+universale da *Esplora bundle dell'app* — e richiede la Console (§C).
+
+### B. Verificato l'artefatto che si caricherà il 19/08 (`versionCode 2`, su disco)
+
+Rifatti tutti e cinque i controlli di `C2` §11 sull'`.aab`, non sul sorgente: config
+`https://app.kidville.it` · `cleartext false` · `versionCode 2` · `versionName 1.0` · `minSdk 24` ·
+`targetSdk 36` · impronta SHA-256 del certificato **identica** a `upload_certificate.pem`
+(`6C:65:EC:19:…:66:B2`) · `jar verified.` · unico residuo `10.0.2.2` in `assets/public/offline.html`
+(**commento HTML**, falso positivo noto) · allineamento **16384 su tutte e 6** le `.so` a 64 bit.
+**Pronto al caricamento.** Non è stato caricato: serve la conferma del titolare.
+
+### C. Ciò che NON è stato possibile misurare, e perché
+
+La Play Console **non è stata letta**: questa sessione gira dentro Antigravity/VSCode e **non ha il
+bridge Chrome** (`ToolSearch select:mcp__claude-in-chrome__navigate` → *No matching deferred
+tools found*; nessun server `claude-in-chrome` fra gli MCP connessi). Restano quindi non misurati:
+il contatore dei giorni, il questionario, la panoramica della pubblicazione, la lista tester, lo
+stato delle norme. Si sblocca **solo** con una sessione lanciata da terminale con `claude --chrome`
+(memoria [[claude_in_chrome_sempre_attivo]] — l'env da sola non basta con questo launcher).
+
+### D. La data del traguardo dipende da un numero che va letto, non calcolato
+
+Le due letture in Console **non sono coerente fra loro** e nessuno l'aveva notato:
+
+| Letto in Console | Contatore | Giorno 1 implicato | Traguardo |
+|---|---|---|---|
+| 09/08 | «12 tester per **3** giorni di fila» | 07/08 | **20/08** |
+| 13/08 | «12 tester per **8** giorni di fila» | 06/08 | **19/08** |
+
+Fra il 9 e il 13 agosto passano **4** giorni di calendario ma il contatore ne guadagna **5**. Questo
+documento e la memoria hanno dichiarato *«è la lettura del 09/08 a essere fuori linea»*: è una
+**scelta fra due misure**, non una spiegazione. Perciò la data non si deduce, si legge — e oggi
+17/08 la lettura decide da sola:
+
+- contatore **12** → traguardo **19/08** (mancano 2 giorni)
+- contatore **11** → traguardo **20/08** (mancano 3 giorni)
+- contatore **< 11** → **un tester è uscito e il conteggio è ripartito**: traguardo = 17/08 + (14 − N)
+
+### E. Misurato per contorno, senza Console
+
+- Scheda pubblica `play.google.com/store/apps/details?id=it.kidville.app&gl=IT` → **404** (metodo
+  tarato su `com.whatsapp` → **200**): l'app **non è** in produzione, come atteso.
+- Posta di `erricoluigi17@gmail.com`, cartella *Tutti i messaggi* **e** *Spam*, 45 giorni: **una
+  sola** email da `noreply-play-console@google.com`, del **13/07** («La tua identità è stata
+  verificata»). Nessun avviso di norme, nessun rifiuto, nessuna notifica sui tester. Le altre
+  `googleplay-noreply@` sono ricevute Google One, non Console.
+- Nessuna credenziale per l'API Google Play Developer (nessun service account `androidpublisher`,
+  `gcloud` non installato): lo stato del test chiuso **non è misurabile via API**, solo a schermo.
+- Account `@kidville.test` con login dal 05/08: **31 su 52** (ultimo 16/08). ⚠️ **Segnale
+  contaminato**: gli stessi account li usano la suite E2E, i flow Maestro e il collaudo dei venti
+  tester. **Non** dice che i tester di Play abbiano aperto l'app.
+
+### Cosa resta da fare il 19/08, in ordine
+
+1. Leggere il contatore in Console e **decidere la data dalla lettura** (§D).
+2. Se il pulsante *Richiedi per la produzione* è attivo: rispondere al questionario — tre sezioni
+   (*il tuo test chiuso* · *la tua app* · *la prontezza alla produzione*), testo letterale ancora da
+   trascrivere (§C).
+3. Caricare il `versionCode 2` **solo se serve**: il contatore corre con il bundle 1 e §A dice che
+   quel bundle è sano. Se si carica, rifare i cinque controlli di §B sull'artefatto.
+4. Fino al traguardo: **la lista tester non si tocca** (margine 12 su 12, zero).
+
+---
+
 ## ✉️ Changelog — L'automazione degli inviti si arma, e l'altro genitore smette di restare fuori 2026-08-17 (branch `feat/iscrizioni-import-2026-27`)
 
 La passata di ieri sapeva **decidere** e si fermava prima di spedire. Questa spedisce: il giro

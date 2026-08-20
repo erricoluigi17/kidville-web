@@ -272,6 +272,27 @@ describe('lock — pagine legali', () => {
      * propone come alternativa comoda.
      */
     const IMPRONTE_PRIVACY: Record<string, string> = {
+        // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
+        // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
+        // job di cancellazione NON la tocca.
+        //
+        // ⚠️ Questa riga ha portato per qualche ora la chiave '2026-08-19', ed è stata
+        // SOSTITUITA e non affiancata. È legittimo qui e solo qui: quella versione non
+        // è mai andata in produzione — misurato il 2026-08-20, le uniche versioni nei
+        // `consents_log` sono '2026-08-10' e '2026-08-15'. Il divieto di riscrivere
+        // protegge i documenti che qualcuno ha già accettato, non le bozze.
+        //
+        // È una modifica al MERITO e non alla forma: fino al 18/08 il documento
+        // prometteva senza riserve che «il curriculum allegato viene cancellato
+        // insieme alla candidatura», e da oggi quella promessa è vera per l'archivio
+        // dell'applicazione e falsa per la copia in posta. Un'informativa che
+        // descrive una cancellazione che non avviene è peggio di una che non la
+        // promette: chi legge rinuncia a chiedere ciò che crede già garantito. La
+        // voce nuova dice anche a chi rivolgersi per farla rimuovere.
+        //
+        // Le impronte precedenti restano dove sono: sono i testi che le persone hanno
+        // letto fino a ieri, e sono citati nelle righe di `consents_log` già scritte.
+        '2026-08-20': 'ae05485a021e8b5e93bae7ba7010bff70cd91a7a8cb7805e3ff78ec0cb0c9cef',
         // 2026-08-15 — aggiunta la voce di conservazione «curriculum caricato e mai
         // inviato»: ventiquattro ore.
         //

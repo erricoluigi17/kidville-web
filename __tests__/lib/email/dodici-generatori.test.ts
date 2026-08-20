@@ -9,6 +9,7 @@ import { messaggioEsitoCandidatura } from '@/lib/email/messaggi/esito-candidatur
 import { messaggioCancellazioneAccount } from '@/lib/email/messaggi/cancellazione-account'
 import { messaggioDigestNews } from '@/lib/email/messaggi/digest-news'
 import { messaggioRicevutaIscrizione } from '@/lib/email/messaggi/ricevuta-iscrizione'
+import { messaggioCandidaturaAllaSede } from '@/lib/email/messaggi/candidatura-alla-sede'
 import { messaggioConfermaCandidatura } from '@/lib/email/messaggi/conferma-candidatura'
 
 // =============================================================================
@@ -137,6 +138,24 @@ function tutti(sede: ContestoSede): { nome: string; m: Messaggio; dati: string[]
             m: messaggioConfermaCandidatura({ nome: M.nome, inviataIl: M.data, ruolo: 'Educatrice nido', numeroAllegati: 2, giorniRisposta: 30 }, sede),
             dati: [M.nome, M.data, 'Educatrice nido'],
         },
+        {
+            // ⚠️ IL TREDICESIMO È L'UNICO CHE NON VA A UNA PERSONA: va alla
+            // CASELLA DEL PLESSO. Entra comunque in questa suite, e proprio per
+            // il controllo che qui conta di più — «due sedi, due email diverse».
+            // È il generatore che NOMINA i plessi (`sediScelte`), quindi è quello
+            // in cui una perdita fra sedi si vedrebbe per prima, e `sediScelte`
+            // si deriva da `sede` invece di essere cablato: cablarlo farebbe
+            // passare il test per costruzione, cioè non lo farebbe passare.
+            nome: '13 copia della candidatura alla sede',
+            m: messaggioCandidaturaAllaSede({
+                dati: { nome: M.nome, cognome: 'Rossi', email: 'candidata@example.test', titolo_studio: 'laurea_magistrale' },
+                consensi: { presa_visione_informativa: true },
+                sediScelte: [sede.nome],
+                inviataIl: M.data,
+                conCurriculum: true,
+            }, sede),
+            dati: [M.nome, M.data, 'Laurea magistrale'],
+        },
     ]
 }
 
@@ -158,7 +177,7 @@ describe('i dodici generatori — il gemello testuale non diverge dall\'HTML', (
         }
     })
 
-    it('il nome della sede compare in TUTTI e dodici, HTML e testo', () => {
+    it('il nome della sede compare in TUTTI e tredici, HTML e testo', () => {
         for (const { nome, m } of tutti(GIUGLIANO)) {
             expect(m.html, nome).toContain('Kidville Giugliano')
             // Tranne la cancellazione account, che di proposito non nomina un

@@ -1,5 +1,50 @@
 import '@testing-library/jest-dom';
+import { configure } from '@testing-library/dom';
 import { vi } from 'vitest';
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * L'ATTESA DI `waitFor`/`findBy*` NON È PIÙ UN SECONDO — E NON È UN CEROTTO.
+ *
+ * ─── IL DIFETTO, MISURATO ────────────────────────────────────────────────────
+ * Il 2026-08-19/20 la suite ha fatto cadere, in esecuzioni diverse, quattro test
+ * di QUATTRO FILE DIVERSI — `CandidatureInsegnanti`,
+ * `StaffDetailPanel-anagrafica`, `CodiciFiscaliDaVerificare`, `SidiPanel-sede` —
+ * mai lo stesso due volte, e tutti verdi rieseguiti da soli. Trentatré
+ * esecuzioni mirate (i file singoli, dieci giri; le coppie nei due ordini; tutti
+ * i componenti, tre giri) non ne hanno riprodotto uno: si presenta SOLO con la
+ * suite intera, cioè con 964 file su tutti i worker.
+ *
+ * La firma è nella durata. L'ultimo caduto — «i frequentanti partono con la sede
+ * nella query», un `waitFor` senza opzioni — ha impiegato **1043 ms**: il
+ * default di Testing Library è 1000. Non stava aspettando niente di reale per un
+ * secondo; stava aspettando un microtask deschedulato dalla contesa di CPU.
+ *
+ * ─── PERCHÉ ALZARLO È LA CORREZIONE E NON IL CEROTTO ────────────────────────
+ * Un `waitFor` non è un budget di prestazione: è «aspetta finché la cosa
+ * succede». Con un tetto di un secondo su una macchina carica, quello che si
+ * misura è il carico della macchina, non il comportamento del prodotto — e un
+ * test che passa al secondo tentativo non è un test, è un dado.
+ *
+ * Alzando il tetto NESSUNA asserzione si indebolisce: un test davvero rotto
+ * cade lo stesso, solo qualche secondo dopo. Quello che sparisce è il falso
+ * rosso.
+ *
+ * ⚠️ E SI FA IN UN POSTO SOLO. `CandidatureInsegnanti.test.tsx` ha DIECI
+ * `{ timeout: 2000 }` scritti a mano: qualcuno aveva già incontrato questo
+ * difetto e l'aveva chiuso una chiamata alla volta. Un invariante che dipende
+ * dal fatto che il prossimo si ricordi di scrivere l'opzione non è un
+ * invariante: è una consuetudine, ed è la stessa lezione della migrazione
+ * `20260820011500`.
+ *
+ * ⚠️ `testTimeout` sale insieme, e DEVE: con l'attesa a 5 s e il test a 5 s
+ * (default di vitest) un `waitFor` che scade non arriverebbe mai a dire cosa non
+ * ha trovato — cadrebbe prima il test, con un messaggio che non aiuta.
+ * `testTimeout` sta in `vitest.config.ts`, accanto a questa nota.
+ *
+ * Verificato prima di alzarlo: nessun test si appoggia allo SCADERE di un
+ * `waitFor` (`grep -rn "\.rejects" __tests__ | grep -i "waitfor\|findby"` → zero).
+ * ════════════════════════════════════════════════════════════════════════════ */
+configure({ asyncUtilTimeout: 5000 });
 
 /* ════════════════════════════════════════════════════════════════════════════
  * 🔴 LA SUITE NON PARLA CON LA PRODUZIONE. MAI.
@@ -93,6 +138,7 @@ if (typeof fetchNudo === 'function') {
 // e la classe intera del difetto è chiusa per costruzione — non c'è più niente da ricordare.
 vi.mock('next-intl', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
+  const { IntlMessageFormat } = await import('intl-messageformat');
   const { join } = await import('node:path');
   // `process.cwd()` è la radice del repo sotto vitest, ed è l'ancora che usano già i lock
   // di `__tests__/architecture/`. `import.meta.url` qui NON serve: dentro la trasformazione
@@ -117,8 +163,34 @@ vi.mock('next-intl', async () => {
     const gruppo = ns ? it[ns] : undefined;
     return (gruppo && gruppo[key]) ?? (ns ? `${ns}.${key}` : key);
   };
+  // ─── I VALORI, QUANDO CI SONO ──────────────────────────────────────────────
+  //
+  // Fino al 2026-08-20 questo mock IGNORAVA il secondo argomento di `t()`. Una
+  // chiave con un placeholder (`Passo {corrente} di {totale}`) o con un plurale
+  // ICU (`{n, plural, one {…} other {…}}`) finiva a schermo COSÌ COM'È, con le
+  // graffe. Le asserzioni sui testi restavano verdi perché confrontavano la
+  // stessa stringa grezza letta dal catalogo: nessun test poteva accorgersi che
+  // un plurale non si formatta, o che un placeholder è scritto male.
+  //
+  // ⚠️ SI FORMATTA SOLO QUANDO ARRIVANO DEI VALORI. `t('chiave')` senza secondo
+  // argomento resta byte per byte ciò che era: è l'unico modo di chiudere questo
+  // buco senza toccare le centinaia di asserzioni che confrontano `t(k)` con la
+  // stringa del catalogo. Le chiavi con ICU chiamate senza valori continuano a
+  // rendersi grezze, esattamente come prima — quelle restano scoperte, e chi
+  // scrive un plurale nuovo lo sappia.
+  const formatta = (messaggio: string, valori: Record<string, unknown>): string => {
+    try {
+      return String(new IntlMessageFormat(messaggio, 'it').format(valori));
+    } catch {
+      // Un messaggio che non compila non deve far cadere il mock: cadrebbe come
+      // «errore del test» invece che come «testo sbagliato», che è più difficile
+      // da leggere. Si restituisce il grezzo, come faceva prima.
+      return messaggio;
+    }
+  };
   const useTranslations = (ns?: string) => {
-    const t = (key: string) => resolve(ns, key);
+    const t = (key: string, valori?: Record<string, unknown>) =>
+      valori === undefined ? resolve(ns, key) : formatta(resolve(ns, key), valori);
     return Object.assign(t, {
       rich: (key: string) => resolve(ns, key),
       markup: (key: string) => resolve(ns, key),

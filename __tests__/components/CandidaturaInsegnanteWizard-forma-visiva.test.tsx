@@ -188,7 +188,7 @@ const POSIZIONE_SCELTA = posizione('insegnante_infanzia')
  * pretendono. Il wizard dev'essere già reso e l'elenco già arrivato.
  */
 async function compilaFinoAlRiepilogo(): Promise<void> {
-  fireEvent.click(await screen.findByRole('radio', { name: NOME_SEDE_A }))
+  fireEvent.click(await screen.findByRole('checkbox', { name: NOME_SEDE_A }))
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
@@ -236,7 +236,7 @@ describe('CandidaturaInsegnanteWizard — un solo linguaggio per le card di scel
     // 2 · Le card della sede, dentro il wizard vero.
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    const primaSede = await screen.findByRole('radio', { name: NOME_SEDE_A })
+    const primaSede = await screen.findByRole('checkbox', { name: NOME_SEDE_A })
     const sedeLibera = pelle(primaSede.closest('label') as Element)
     const sedePesoLibera = pesoTesto(primaSede.closest('label') as Element)
     fireEvent.click(primaSede)
@@ -281,7 +281,7 @@ describe('CandidaturaInsegnanteWizard — un solo linguaggio per le card di scel
     // 2 · Le card della sede dopo un «Avanti» senza scelta.
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    const prima = await screen.findByRole('radio', { name: NOME_SEDE_A })
+    const prima = await screen.findByRole('checkbox', { name: NOME_SEDE_A })
     const aRiposo = pelleColPeso(prima.closest('label') as Element)
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
@@ -312,13 +312,13 @@ describe('CandidaturaInsegnanteWizard — un solo linguaggio per le card di scel
   it('l’errore del gruppo sede sta SOTTO le card, e il gruppo lo dichiara con aria-describedby', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     const { container } = render(<CandidaturaInsegnanteWizard />)
-    await screen.findByRole('radio', { name: NOME_SEDE_A })
+    await screen.findByRole('checkbox', { name: NOME_SEDE_A })
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
     const errore = await screen.findByText(itPublic.candSedeErrore)
     const gruppo = container.querySelector('fieldset') as HTMLFieldSetElement
-    const ultimaCard = screen.getByRole('radio', { name: NOME_SEDE_B }).closest('label') as Element
+    const ultimaCard = screen.getByRole('checkbox', { name: NOME_SEDE_B }).closest('label') as Element
 
     // `DOCUMENT_POSITION_FOLLOWING` = l'errore viene DOPO l'ultima card.
     expect(ultimaCard.compareDocumentPosition(errore) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -332,7 +332,7 @@ describe('CandidaturaInsegnanteWizard — un solo linguaggio per le card di scel
   it('i pallini dei passi ANCORA DA FARE hanno un anello, non solo un riempimento', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     const { container } = render(<CandidaturaInsegnanteWizard />)
-    await screen.findByRole('radio', { name: NOME_SEDE_A })
+    await screen.findByRole('checkbox', { name: NOME_SEDE_A })
 
     const pallini = [...container.querySelectorAll('span[aria-hidden="true"] > span')].filter((s) =>
       (s.getAttribute('class') ?? '').includes('rounded-pill'),
@@ -377,7 +377,7 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
   it('la colonna «Dopo l’invio» viene DOPO i comandi sotto lg, ed è sticky da lg in su', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    await screen.findByRole('radio', { name: NOME_SEDE_A })
+    await screen.findByRole('checkbox', { name: NOME_SEDE_A })
 
     const contesto = screen.getByText(itPublic.candContestoTitolo).parentElement as HTMLElement
     const avanti = screen.getByRole('button', { name: itPublic.candAvanti })
@@ -418,7 +418,7 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
   it('le note di «posizioni» e del curriculum vengono DOPO il loro campo, nella stessa scatola', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    fireEvent.click(await screen.findByRole('radio', { name: NOME_SEDE_A }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: NOME_SEDE_A }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
     fireEvent.change(screen.getByPlaceholderText('Es. Maria'), { target: { value: 'Ines' } })
@@ -481,7 +481,7 @@ describe('CandidaturaInsegnanteWizard — il collegamento targato nomina la sede
 
     // Il primo passo è «I tuoi dati»: la sede non si sceglie.
     await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: NOME_SEDE_A })).not.toBeInTheDocument()
 
     const atteso = itPublic.candSedeDalLinkTitolo.replace('{sede}', NOME_SEDE_A)
     expect(screen.getByText(atteso)).toBeInTheDocument()
@@ -508,7 +508,7 @@ describe('CandidaturaInsegnanteWizard — il collegamento targato nomina la sede
   it('senza ?sede=, quando la sede la si sceglie, l’aside torna a dire «che hai scelto»', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    await screen.findByRole('radio', { name: NOME_SEDE_A })
+    await screen.findByRole('checkbox', { name: NOME_SEDE_A })
 
     expect(screen.getByText(itPublic.candContestoDirezione)).toBeInTheDocument()
     expect(screen.queryByText(itPublic.candContestoDirezioneDalLink)).not.toBeInTheDocument()
@@ -570,7 +570,7 @@ describe('CandidaturaInsegnanteWizard — cambiando passo si ricomincia dal tito
   it('«Avanti»: il fuoco va sull’`h2` del passo nuovo e il documento torna in cima', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    fireEvent.click(await screen.findByRole('radio', { name: NOME_SEDE_A }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: NOME_SEDE_A }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
     await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
@@ -590,7 +590,7 @@ describe('CandidaturaInsegnanteWizard — cambiando passo si ricomincia dal tito
   it('«Indietro»: stessa cosa nell’altro verso', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    fireEvent.click(await screen.findByRole('radio', { name: NOME_SEDE_A }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: NOME_SEDE_A }))
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
 
@@ -627,7 +627,7 @@ describe('CandidaturaInsegnanteWizard — cambiando passo si ricomincia dal tito
   it('all’APERTURA il fuoco non si tocca: nessuno ha chiesto di essere spostato', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    await screen.findByRole('radio', { name: NOME_SEDE_A })
+    await screen.findByRole('checkbox', { name: NOME_SEDE_A })
 
     // Rubare il fuoco al caricamento sarebbe il difetto opposto, e sarebbe peggio:
     // il passo non è «cambiato», la pagina è appena comparsa.
@@ -644,7 +644,7 @@ describe('CandidaturaInsegnanteWizard — cambiando passo si ricomincia dal tito
     // ramo: se l'effetto del cambio di passo glielo rubasse, quel test è rosso.
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
     render(<CandidaturaInsegnanteWizard />)
-    const prima = await screen.findByRole('radio', { name: NOME_SEDE_A })
+    const prima = await screen.findByRole('checkbox', { name: NOME_SEDE_A })
 
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 

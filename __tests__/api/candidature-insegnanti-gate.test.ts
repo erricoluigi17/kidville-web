@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
 import { SEDE_A } from '../fixtures/sedi'
+import { madreSopravvive, materializzaEmbedSede, togliGliEmbed } from '../helpers/embed-sede'
 
 // =============================================================================
 // CHI PUÒ FARE COSA sul cockpit delle candidature insegnanti.
@@ -50,7 +51,14 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => h.state.scuole }))
+// ⚠️ `formaConfronto` è quella VERA, non un finto. È la funzione che decide se
+// un uuid del client è la stessa sede di una letta dal database, e sostituirla
+// con `(x) => x` renderebbe verde proprio il difetto che il caso «maiuscolo»
+// esiste per provare: un mock che semplifica la regola prova la semplificazione.
+vi.mock('@/lib/auth/scope', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
+  return { formaConfronto: vero.formaConfronto, resolveScuoleAttive: async () => h.state.scuole }
+})
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({
   logEvento: h.logEvento,
@@ -70,10 +78,27 @@ vi.mock('@/lib/supabase/server-client', () => ({
 function proietta(r: Riga, cols: string): Riga {
   if (!cols || cols.trim() === '*') return { ...r }
   const fuori: Riga = {}
-  for (const c of cols.split(',').map((s) => s.trim()).filter(Boolean)) {
+  for (const c of togliGliEmbed(cols).split(',').map((s) => s.trim()).filter(Boolean)) {
     if (c in r) fuori[c] = r[c]
   }
   return fuori
+}
+
+/** Le righe di sede di una candidatura, dal magazzino del finto. */
+function sediFinteDi(tabelle: Record<string, Riga[]>, idCandidatura: unknown): Riga[] {
+  return (tabelle['candidature_sedi'] ?? []).filter((s) => s.candidatura_id === idCandidatura)
+}
+
+/**
+ * La riga proiettata PIÙ i suoi array incorporati, come li consegna PostgREST:
+ * ogni embed col proprio alias e le SOLE colonne che ha chiesto, il primo
+ * ristretto dal filtro di sede. Vedi `__tests__/helpers/embed-sede.ts`.
+ */
+function conEmbed(r: Riga, cols: string, filtri: Filtro[]): Riga {
+  return {
+    ...proietta(r, cols),
+    ...materializzaEmbedSede(cols, sediFinteDi(h.state.tabelle, r.id), filtri),
+  }
 }
 
 function finto() {
@@ -86,7 +111,15 @@ function finto() {
       let cols = '*'
       let conteggio = false
 
-      const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
+      const corrisponde = (r: Riga) =>
+        // I filtri sulle colonne della madre, uno per uno…
+        filtri.every((f) => (f.col.includes('.') ? true : f.vals.some((v) => r[f.col] === v))) &&
+        // …e quelli sull'EMBED, che seguono la regola POSIZIONALE di PostgREST:
+        // il filtro va al PRIMO embed della `select`, e la madre sparisce solo
+        // se quello porta `!inner`. La regola vive in un posto solo — era
+        // ricopiata in quattro finti, e in tutti e quattro era la stessa
+        // approssimazione cieca. Vedi `__tests__/helpers/embed-sede.ts`.
+        madreSopravvive(cols, sediFinteDi(h.state.tabelle, r.id), filtri)
       const esegui = () => {
         if (inserimento) {
           const riga = { ...inserimento }
@@ -98,10 +131,10 @@ function finto() {
         if (patch) {
           for (const r of trovate) Object.assign(r, patch)
           h.state.aggiornamenti.push({ table, patch: { ...patch } })
-          return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
+          return { data: trovate.map((r) => conEmbed(r, cols, filtri)), error: null, count: null }
         }
         return {
-          data: trovate.map((r) => proietta(r, cols)),
+          data: trovate.map((r) => conEmbed(r, cols, filtri)),
           error: null,
           count: conteggio ? trovate.length : null,
         }
@@ -153,6 +186,11 @@ beforeEach(() => {
   h.state.aggiornamenti = []
   h.state.inserimenti = []
   h.state.tabelle = {
+    // ⚠️ Le righe di sede si seminano SEMPRE insieme alle candidature: dal
+    // 2026-08-19 sono il criterio d'accesso del cockpit ED è lì che il verdetto
+    // si scrive. Senza, ogni lettura è vuota e ogni scrittura non tocca niente:
+    // i test misurerebbero un magazzino vuoto credendo di misurare la rotta.
+    // (Le righe vere si aggiungono in coda a questo blocco, vedi `sediPerLeCandidature`.)
     candidature_insegnanti: [
       {
         id: CANDIDATURA_ID,
@@ -176,6 +214,12 @@ beforeEach(() => {
   h.sendEmail.mockResolvedValue({ ok: true, error: null })
   // Il gate FINTO che si comporta come quello vero: default = staff di gestione
   // (segreteria compresa), lista esplicita = solo chi ci sta dentro.
+  h.state.tabelle.candidature_sedi = (h.state.tabelle.candidature_insegnanti ?? []).map((c) => ({
+    candidatura_id: c.id,
+    scuola_id: c.scuola_id,
+    stato: c.stato ?? 'pending',
+  }))
+
   h.requireStaff.mockImplementation(async (_req: unknown, allowed?: string[]) => {
     const ammessi = allowed ?? ['admin', 'coordinator', 'segreteria']
     const u = h.state.utente

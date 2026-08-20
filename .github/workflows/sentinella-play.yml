@@ -1,0 +1,272 @@
+# =============================================================================
+# La sentinella: dice quando l'app è DAVVERO sullo store, non quando la Console
+# dichiara di averla approvata.
+#
+# ─── PERCHÉ NON SI GUARDA LA CONSOLE ────────────────────────────────────────
+#
+# Il 2026-08-04 App Store Connect diceva «Pronta per la distribuzione» mentre
+# l'app non era acquistabile in Italia (`TRADER_STATUS_NOT_PROVIDED`): il
+# semaforo diceva verde e mentiva. La misura che non mente è la scheda pubblica,
+# quella che vede un genitore col telefono in mano.
+#
+#   404 → l'app non c'è
+#   200 → l'app c'è, e chiunque la può installare
+#
+# Taratura eseguita il 2026-08-20, prima che questo file esistesse:
+# `it.kidville.app` → 404. È lo stato di partenza atteso.
+#
+# ─── PERCHÉ QUI E NON IN pg_cron ────────────────────────────────────────────
+#
+# Questo repository schedula i suoi lavori con `pg_cron` su Supabase, e sarebbe
+# la via di casa. Ma vorrebbe dire una migrazione sul database che contiene i
+# codici fiscali di centinaia di minori, per mandare una notifica personale.
+# Sproporzionato. Qui non si tocca né l'app né il database.
+#
+# ⚠️ I workflow schedulati girano SOLO dal branch di default: questo file serve a
+#    qualcosa solo una volta che è su `main`.
+#
+# ─── COME SI PROVA PRIMA CHE SERVA ──────────────────────────────────────────
+#
+#   gh workflow run sentinella-play.yml
+#     → legge 404 e NON manda niente. È il comportamento giusto.
+#
+#   gh workflow run sentinella-play.yml -f pacchetto=com.whatsapp
+#     → legge 200 e manda davvero l'email, marcata «PROVA». Non si spegne.
+#
+# ─── I DUE SEGRETI DA IMPOSTARE, UNA VOLTA SOLA ─────────────────────────
+#
+#   gh secret set RESEND_API_KEY            # la chiave che sta gia' su Vercel
+#   gh secret set SENTINELLA_DESTINATARI    # indirizzi separati da virgola, senza spazi
+#
+# `SENTINELLA_DESTINATARI` e' stato impostato il 2026-08-20. `RESEND_API_KEY` NO,
+# e non per dimenticanza: su Vercel quella variabile e' marcata *Sensitive*, cioe'
+# non si rilegge — si puo' solo sovrascrivere. Nessuno, uomo o agente, puo'
+# recuperarne il valore da li'. Va incollato a mano, una volta.
+#
+# I destinatari sono un SEGRETO e non una costante nel file per una ragione sola:
+# questo repository e' PUBBLICO, e un indirizzo personale scritto qui dentro
+# finisce nelle liste di spam entro un giorno.
+#
+# ─── L'AVVISO ARRIVA ANCHE SENZA LA CHIAVE RESEND ───────────────────────────
+#
+# Questo e' il punto che rende la sentinella affidabile invece che elegante.
+# Quando la scheda risponde 200 succedono TRE cose, in quest'ordine, e sono
+# indipendenti:
+#
+#   1. si apre una SEGNALAZIONE nel repository — non serve nessun segreto, usa il
+#      token che GitHub regala a ogni run. Chi possiede il repository e' iscritto
+#      di suo alle proprie segnalazioni: l'email parte da GitHub;
+#   2. si manda l'email vera via Resend, ai destinatari configurati;
+#   3. la sentinella si spegne.
+#
+# Se il passo 2 non puo' partire perche' manca la chiave, il passo 1 e' gia'
+# avvenuto e il run FALLISCE rumorosamente — una seconda email, quella di
+# «workflow fallito». Scoprire la pubblicazione e tenersela per se' sarebbe il
+# guasto peggiore di tutti, e per farlo accadere dovrebbero tacere due canali
+# diversi nello stesso momento.
+# =============================================================================
+
+name: Sentinella Play Store
+
+on:
+  schedule:
+    # 07:23 UTC = 09:23 di Roma. Il minuto non è tondo di proposito: le :00 sono
+    # l'ora in cui il mondo intero interroga GitHub, e i cron schedulati lì
+    # partono in ritardo.
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      pacchetto:
+        description: "Lasciare il default. Passare com.whatsapp per PROVARE il percorso dell'email senza aspettare la pubblicazione."
+        required: false
+        default: 'it.kidville.app'
+
+permissions:
+  # Serve solo per spegnersi da sola dopo aver spedito: una sentinella che
+  # continua a suonare dopo che l'hai sentita viene ignorata la volta dopo.
+  actions: write
+  # Serve per il canale che NON dipende da nessun segreto: vedi la testata.
+  issues: write
+
+jobs:
+  controlla:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Leggi la scheda pubblica del Play Store
+        id: scheda
+        env:
+          PKG_IN: ${{ inputs.pacchetto }}
+        run: |
+          PKG="${PKG_IN:-it.kidville.app}"
+          URL="https://play.google.com/store/apps/details?id=${PKG}&gl=IT"
+          echo "pacchetto=${PKG}" >> "$GITHUB_OUTPUT"
+          echo "url=${URL}"       >> "$GITHUB_OUTPUT"
+
+          # --retry copre il caso «Google ha singhiozzato», non il caso «non c'è»:
+          # un 404 è una risposta valida e non va ritentato.
+          CODICE=$(curl -sS -o /dev/null -L --max-time 30 --retry 2 --retry-connrefused \
+                        -w '%{http_code}' "$URL" || echo "000")
+          echo "codice=${CODICE}" >> "$GITHUB_OUTPUT"
+          echo "::notice title=Sentinella Play::${PKG} -> HTTP ${CODICE}"
+
+          if [ "$CODICE" = "000" ]; then
+            # Non è «non pubblicata»: è «non lo so». Va detto, non silenziato.
+            echo "::warning title=Sentinella Play::la richiesta non e' arrivata a destinazione (timeout o rete). Nessuna conclusione."
+          fi
+
+      - name: Non e' ancora pubblicata, esci senza dire niente a nessuno
+        if: steps.scheda.outputs.codice != '200'
+        run: |
+          echo "HTTP ${{ steps.scheda.outputs.codice }} - ${{ steps.scheda.outputs.pacchetto }} non e' (ancora) sullo store."
+          echo "Nessuna email. Riprovo domani alle 09:23 di Roma."
+
+      # Questo passo viene PRIMA dell'email di proposito: non ha bisogno di nessun
+      # segreto, quindi e' quello che non puo' fallire per configurazione mancante.
+      # Se piu' avanti l'email non parte, l'avviso e' comunque gia' stato dato.
+      # ⚠️ Il corpo di questa segnalazione e' PUBBLICO: niente indirizzi, niente
+      #    dati di persone. Solo il pacchetto, l'URL della scheda e l'ora.
+      - name: Apri una segnalazione nel repository (nessun segreto richiesto)
+        if: steps.scheda.outputs.codice == '200'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PKG: ${{ steps.scheda.outputs.pacchetto }}
+          URL: ${{ steps.scheda.outputs.url }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$PKG" = "it.kidville.app" ]; then
+            TITOLO="Kidville e' attiva su Google Play"
+            APERTURA="La scheda pubblica di Kidville risponde. L'app e' installabile da chiunque, non piu' solo dai dodici tester del canale chiuso."
+          else
+            TITOLO="PROVA della sentinella Play - Kidville NON e' pubblicata"
+            APERTURA="Questa e' una prova, lanciata a mano su un pacchetto che non e' Kidville, per verificare che il percorso dell'avviso funzioni prima che serva davvero. **Kidville non e' pubblicata.**"
+          fi
+
+          {
+            echo "$APERTURA"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| pacchetto | \`$PKG\` |"
+            echo "| scheda | $URL |"
+            echo "| misurato | HTTP 200 il $(date -u '+%d/%m/%Y alle %H:%M UTC') |"
+            echo "| run | $RUN_URL |"
+            echo
+            echo "La misura e' il codice HTTP della **scheda pubblica**, non quello che dichiara la"
+            echo "Play Console. Il 2026-08-04 App Store Connect diceva «Pronta per la distribuzione»"
+            echo "mentre l'app non era acquistabile in Italia: il semaforo diceva verde e mentiva."
+            echo
+            echo "La sentinella si spegne da sola. Per riaccenderla: \`gh workflow enable sentinella-play.yml\`."
+          } > /tmp/corpo-segnalazione.md
+
+          if gh issue create --repo "$REPO" --title "$TITOLO" --body-file /tmp/corpo-segnalazione.md; then
+            echo "::notice title=Sentinella Play::Segnalazione aperta nel repository."
+          else
+            # Non si esce: questo e' il canale di scorta, e un canale di scorta che
+            # fa fallire il run impedirebbe al canale principale di provarci.
+            echo "::warning title=Sentinella Play::Non sono riuscito ad aprire la segnalazione. Resta l'email."
+          fi
+
+      - name: Manda l'email
+        id: email
+        if: steps.scheda.outputs.codice == '200'
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          # I destinatari NON stanno in questo file: il repository e' PUBBLICO, e un
+          # indirizzo personale scritto qui verrebbe raccolto dai crawler entro un
+          # giorno. Segreto separato, indirizzi separati da virgola SENZA spazi.
+          DESTINATARI: ${{ secrets.SENTINELLA_DESTINATARI }}
+          PKG: ${{ steps.scheda.outputs.pacchetto }}
+          URL: ${{ steps.scheda.outputs.url }}
+          RUN_N: ${{ github.run_number }}
+        run: |
+          set -o pipefail
+
+          # Configurazione mancante = errore, mai nota a pie' di pagina (AGENTS.md
+          # punto 4). Senza questa riga la sentinella scoprirebbe la pubblicazione
+          # e se la terrebbe per se', che e' il guasto peggiore di tutti.
+          if [ -z "$RESEND_API_KEY" ]; then
+            echo "::error title=Sentinella Play::L'app E' PUBBLICATA ma manca il segreto RESEND_API_KEY: l'email non parte. Impostalo con 'gh secret set RESEND_API_KEY'."
+            exit 1
+          fi
+          if [ -z "$DESTINATARI" ]; then
+            echo "::error title=Sentinella Play::L'app E' PUBBLICATA ma manca il segreto SENTINELLA_DESTINATARI: non so a chi scrivere. Impostalo con 'gh secret set SENTINELLA_DESTINATARI' (indirizzi separati da virgola)."
+            exit 1
+          fi
+
+          if [ "$PKG" = "it.kidville.app" ]; then
+            OGGETTO="Kidville e' attiva su Google Play"
+            INTRO='<p>La scheda pubblica di <strong>Kidville</strong> risponde. L&rsquo;app e&rsquo; installabile da chiunque, non piu&rsquo; solo dai tester del canale chiuso.</p>'
+          else
+            OGGETTO="PROVA della sentinella Play - nessuna pubblicazione"
+            INTRO='<p><strong>Questa e&rsquo; una prova.</strong> La sentinella e&rsquo; stata lanciata a mano su un pacchetto che non e&rsquo; Kidville. Serve a verificare che il percorso dell&rsquo;email funzioni <em>prima</em> che serva davvero. <strong>Kidville non e&rsquo; pubblicata.</strong></p>'
+          fi
+
+          QUANDO=$(date -u '+%d/%m/%Y alle %H:%M UTC')
+
+          # Il corpo si compone dentro jq: virgolette, apostrofi e a capo non
+          # possono rompere la richiesta, e non serve un heredoc annidato dentro
+          # un blocco YAML (che e' esattamente cio' che ha rotto la prima stesura).
+          PAYLOAD=$(jq -n \
+            --arg from    "Kidville <noreply@mail.kidville.it>" \
+            --arg subject "$OGGETTO" \
+            --arg intro   "$INTRO" \
+            --arg pkg     "$PKG" \
+            --arg url     "$URL" \
+            --arg quando  "$QUANDO" \
+            --arg run     "$RUN_N" \
+            --arg dest    "$DESTINATARI" \
+            '{
+               from: $from,
+               to: ($dest | split(",") | map(select(length > 0))),
+               subject: $subject,
+               html: (
+                 "<div style=\"font-family:system-ui,-apple-system,Segoe UI,sans-serif;max-width:560px;color:#1a1a1a\">"
+                 + "<h2 style=\"color:#006A5F;margin-bottom:4px\">" + $subject + "</h2>"
+                 + $intro
+                 + "<p>Pacchetto: <code>" + $pkg + "</code><br>"
+                 + "Scheda: <a href=\"" + $url + "\" style=\"color:#006A5F\">" + $url + "</a><br>"
+                 + "Misurato: HTTP 200 il " + $quando + ".</p>"
+                 + "<p style=\"background:#FEF1E4;padding:12px;border-radius:8px;font-size:14px\">"
+                 + "La sentinella si spegne da sola adesso che ha spedito. Per riaccenderla: "
+                 + "<code>gh workflow enable sentinella-play.yml</code>.</p>"
+                 + "<p style=\"font-size:12px;color:#55615C\">Sentinella Play Store &middot; repository kidville-web &middot; run #" + $run + "</p>"
+                 + "</div>"
+               )
+             }')
+
+          RISPOSTA=$(curl -sS -X POST https://api.resend.com/emails \
+            -H "Authorization: Bearer ${RESEND_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            -w '\n%{http_code}')
+
+          STATO=$(echo "$RISPOSTA" | tail -n1)
+          CORPO_RISPOSTA=$(echo "$RISPOSTA" | sed '$d')
+
+          # Il corpo dell'errore di un provider esterno non si butta MAI via
+          # (AGENTS.md punto 3). Per mesi nessuna email di credenziali e' arrivata
+          # perche' si registrava il numero 403 senza la frase che diceva perche'.
+          echo "Resend ha risposto ${STATO}: ${CORPO_RISPOSTA}"
+
+          if [ "$STATO" != "200" ]; then
+            echo "::error title=Sentinella Play::Resend ha rifiutato l'invio con ${STATO}: ${CORPO_RISPOSTA}"
+            exit 1
+          fi
+
+          # Gli eventi critici loggano anche il SUCCESSO (AGENTS.md punto 5):
+          # senza, «nessun log» non distingue «tutto ok» da «non e' mai partito niente».
+          echo "::notice title=Sentinella Play::Email spedita ai destinatari configurati - ${CORPO_RISPOSTA}"
+
+      - name: Spegniti, hai finito
+        if: steps.scheda.outputs.codice == '200' && steps.scheda.outputs.pacchetto == 'it.kidville.app'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Solo sul pacchetto vero: una prova con un altro pacchetto non deve
+          # spegnere la sentinella che sta ancora aspettando Kidville.
+          if gh workflow disable sentinella-play.yml --repo "${{ github.repository }}"; then
+            echo "::notice title=Sentinella Play::Sentinella spenta. Riaccendila con 'gh workflow enable sentinella-play.yml'."
+          else
+            echo "::warning title=Sentinella Play::Non sono riuscito a spegnermi: continuero' a mandare un'email al giorno finche' non esegui 'gh workflow disable sentinella-play.yml'."
+          fi

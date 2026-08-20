@@ -46,6 +46,36 @@ export interface SendEmailParams {
    * chiamante esistente lo passa → comportamento invariato. Usato dal digest News.
    */
   html?: string
+  /**
+   * Allegati, additivo. Resend li vuole in **base64** dentro `content`, e chiama
+   * `content_type` ciò che qui si chiama `contentType`: la traduzione avviene nel
+   * corpo della richiesta, sotto, perché il resto dell'applicazione non deve
+   * conoscere il vocabolario del provider — il giorno in cui si cambia provider,
+   * cambia un file solo.
+   *
+   * ⚠️ Il tetto di Resend è 40 MB per messaggio, e in base64 un file cresce di
+   * circa un terzo. Chi allega un curriculum sta sotto i 4 MB — è il limite del
+   * corpo di una funzione Vercel, non del bucket — quindi c'è margine; chi
+   * allegasse altro faccia il conto prima, perché il rifiuto arriva dal provider
+   * e non da qui.
+   *
+   * ⚠️ Il NOME dell'allegato è ciò che finisce nella casella di chi riceve. Non
+   * ci si mette mai un percorso interno né un identificativo tecnico: `cv_path`,
+   * per esempio, è la chiave di un gate (`candidature_insegnanti_cv_unico`) e non
+   * ha nessun motivo di comparire in una casella di posta.
+   */
+  attachments?: { filename: string; content: string; contentType?: string }[]
+  /**
+   * A chi risponde chi riceve, quando è diverso dal mittente.
+   *
+   * Il mittente DEVE restare su `@mail.kidville.it` — Resend rifiuta con 403 tutto
+   * il resto, ed è la scena del delitto descritta in testa a questo file — quindi
+   * l'indirizzo di chi si è candidato non può essere il `from`. Senza `reply_to`
+   * la sede dovrebbe ricopiarselo a mano dal corpo del messaggio, e chi ricopia un
+   * indirizzo a mano prima o poi sbaglia una lettera: la risposta non arriva, e
+   * nessuno dei due sa perché.
+   */
+  replyTo?: string
 }
 
 export interface SendEmailResult {
@@ -100,7 +130,7 @@ const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
  * viene letto e propagato: un rifiuto (es. sandbox: "solo verso il proprio
  * indirizzo") non deve mai ridursi a un generico "non inviata".
  */
-export async function sendEmailDetailed({ to, subject, text, html }: SendEmailParams): Promise<SendEmailResult> {
+export async function sendEmailDetailed({ to, subject, text, html, attachments, replyTo }: SendEmailParams): Promise<SendEmailResult> {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
     // `error`, non `info`: senza chiave NESSUNA email parte, e in produzione è un incidente.
@@ -130,6 +160,20 @@ export async function sendEmailDetailed({ to, subject, text, html }: SendEmailPa
         subject,
         text,
         ...(html ? { html } : {}),
+        // `?.length` e non la sola presenza: un elenco VUOTO significa «non ho
+        // allegati», e mandare `attachments: []` a Resend è dire una cosa diversa
+        // dal non dirla. Le due forme si equivalgono oggi; il contratto di un
+        // provider esterno non è una cosa su cui si scommette.
+        ...(attachments?.length
+          ? {
+              attachments: attachments.map((a) => ({
+                filename: a.filename,
+                content: a.content,
+                ...(a.contentType ? { content_type: a.contentType } : {}),
+              })),
+            }
+          : {}),
+        ...(replyTo ? { reply_to: replyTo } : {}),
       }),
     },
     {

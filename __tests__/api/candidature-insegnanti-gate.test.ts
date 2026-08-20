@@ -76,6 +76,11 @@ function proietta(r: Riga, cols: string): Riga {
   return fuori
 }
 
+/** Le righe di sede di una candidatura, dal magazzino del finto. */
+function sediFinteDi(tabelle: Record<string, Riga[]>, idCandidatura: unknown): Riga[] {
+  return (tabelle['candidature_sedi'] ?? []).filter((s) => s.candidatura_id === idCandidatura)
+}
+
 function finto() {
   const righeDi = (t: string) => (h.state.tabelle[t] ??= [])
   return {
@@ -86,7 +91,22 @@ function finto() {
       let cols = '*'
       let conteggio = false
 
-      const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
+      const corrisponde = (r: Riga) =>
+        filtri.every((f) => {
+          // `candidature_sedi.scuola_id` → il filtro vive sull'EMBED di PostgREST:
+          // la candidatura passa se ALMENO UNA delle sue righe di sede
+          // corrisponde. Ignorare il punto significherebbe cercare una colonna
+          // inesistente e non escludere NIENTE: ogni test d'isolamento
+          // diventerebbe verde per costruzione.
+          const punto = f.col.indexOf('.')
+          if (punto > 0) {
+            const tabellaEmbed = f.col.slice(0, punto)
+            const colonna = f.col.slice(punto + 1)
+            if (tabellaEmbed !== 'candidature_sedi') return true
+            return sediFinteDi(h.state.tabelle, r.id).some((s) => f.vals.some((v) => s[colonna] === v))
+          }
+          return f.vals.some((v) => r[f.col] === v)
+        })
       const esegui = () => {
         if (inserimento) {
           const riga = { ...inserimento }
@@ -153,6 +173,11 @@ beforeEach(() => {
   h.state.aggiornamenti = []
   h.state.inserimenti = []
   h.state.tabelle = {
+    // ⚠️ Le righe di sede si seminano SEMPRE insieme alle candidature: dal
+    // 2026-08-19 sono il criterio d'accesso del cockpit ED è lì che il verdetto
+    // si scrive. Senza, ogni lettura è vuota e ogni scrittura non tocca niente:
+    // i test misurerebbero un magazzino vuoto credendo di misurare la rotta.
+    // (Le righe vere si aggiungono in coda a questo blocco, vedi `sediPerLeCandidature`.)
     candidature_insegnanti: [
       {
         id: CANDIDATURA_ID,
@@ -176,6 +201,12 @@ beforeEach(() => {
   h.sendEmail.mockResolvedValue({ ok: true, error: null })
   // Il gate FINTO che si comporta come quello vero: default = staff di gestione
   // (segreteria compresa), lista esplicita = solo chi ci sta dentro.
+  h.state.tabelle.candidature_sedi = (h.state.tabelle.candidature_insegnanti ?? []).map((c) => ({
+    candidatura_id: c.id,
+    scuola_id: c.scuola_id,
+    stato: c.stato ?? 'pending',
+  }))
+
   h.requireStaff.mockImplementation(async (_req: unknown, allowed?: string[]) => {
     const ammessi = allowed ?? ['admin', 'coordinator', 'segreteria']
     const u = h.state.utente

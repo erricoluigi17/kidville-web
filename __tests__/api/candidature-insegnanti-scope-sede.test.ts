@@ -64,9 +64,37 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 function proietta(r: Riga, cols: string): Riga {
   if (!cols || cols.trim() === '*') return { ...r }
+  // Gli EMBED (`sedi:candidature_sedi(a, b)`) hanno le parentesi: si tolgono
+  // prima di spezzare sulle virgole, o `scuola_id` e `stato` di dentro
+  // verrebbero scambiati per colonne della candidatura.
+  const senzaEmbed = cols.replace(/[\w:]*candidature_sedi(!inner)?\s*\([^)]*\)/g, '')
   const fuori: Riga = {}
-  for (const c of cols.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
+  for (const c of senzaEmbed.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
   return fuori
+}
+
+/**
+ * ─── IL FINTO SA FARE IL JOIN, E DEVE ───────────────────────────────────────
+ *
+ * Dal 2026-08-19 il cockpit non filtra più su `candidature_insegnanti.scuola_id`
+ * ma sulle RIGHE DI SEDE, con la sintassi degli embed di PostgREST:
+ *
+ *     .select('id, …, candidature_sedi!inner(scuola_id), sedi:candidature_sedi(...)')
+ *     .in('candidature_sedi.scuola_id', scuole)
+ *
+ * Un finto che ignorasse il punto in `candidature_sedi.scuola_id` cercherebbe una
+ * colonna con quel nome, non la troverebbe, e il predicato non escluderebbe
+ * NIENTE: ogni test d'isolamento diventerebbe verde per costruzione — cioè
+ * smetterebbe di essere un test proprio mentre lo si crede più severo.
+ *
+ * Perciò qui il filtro col punto è modellato per quello che è: «tieni la
+ * candidatura se ESISTE una sua riga di sede che corrisponde».
+ */
+const TABELLA_SEDI_FINTA = 'candidature_sedi'
+
+/** Le righe di sede di una candidatura, dal magazzino del finto. */
+function sediDi(h_: { state: { tabelle: Record<string, Riga[]> } }, idCandidatura: unknown): Riga[] {
+  return (h_.state.tabelle[TABELLA_SEDI_FINTA] ?? []).filter((s) => s.candidatura_id === idCandidatura)
 }
 
 function finto() {
@@ -79,7 +107,19 @@ function finto() {
       let patch: Riga | null = null
       /** La FINESTRA di `range(from, to)`: senza, `limit` non si può misurare. */
       let finestra: { da: number; a: number } | null = null
-      const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
+      const corrisponde = (r: Riga) =>
+        filtri.every((f) => {
+          // `candidature_sedi.scuola_id` → il filtro vive sull'EMBED: la
+          // candidatura passa se ALMENO UNA delle sue righe di sede corrisponde.
+          const punto = f.col.indexOf('.')
+          if (punto > 0) {
+            const tabellaEmbed = f.col.slice(0, punto)
+            const colonna = f.col.slice(punto + 1)
+            if (tabellaEmbed !== TABELLA_SEDI_FINTA) return true
+            return sediDi(h, r.id).some((s) => f.vals.some((v) => s[colonna] === v))
+          }
+          return f.vals.some((v) => r[f.col] === v)
+        })
       const esegui = () => {
         if (table === 'candidature_insegnanti' && h.state.erroreTabella) {
           return { data: [] as Riga[], error: h.state.erroreTabella, count: null as number | null }
@@ -93,7 +133,20 @@ function finto() {
         // `count` è il totale delle righe che CORRISPONDONO, non della pagina: è
         // esattamente la differenza fra «60» e «60 su 200».
         const pagina = finestra ? trovate.slice(finestra.da, finestra.a + 1) : trovate
-        return { data: pagina.map((r) => proietta(r, cols)), error: null, count: conteggio ? trovate.length : null }
+        // L'embed NON filtrato (`sedi:candidature_sedi(...)`) porta TUTTE le sedi
+        // della candidatura: è ciò che permette alla scheda di dire «questa
+        // persona è in gioco anche altrove». Quello filtrato (`!inner`) non
+        // compare nella proiezione — serve solo a restringere.
+        const conSedi = /sedi:candidature_sedi\s*\(/.test(cols)
+        return {
+          data: pagina.map((r) => {
+            const proiettata = proietta(r, cols)
+            if (conSedi) proiettata.sedi = sediDi(h, r.id).map((x) => ({ ...x }))
+            return proiettata
+          }),
+          error: null,
+          count: conteggio ? trovate.length : null,
+        }
       }
       const b: Record<string, unknown> = {}
       b.select = (c?: string, o?: { count?: string }) => {
@@ -158,6 +211,14 @@ beforeEach(() => {
   h.state.erroreFirma = null
   h.state.tabelle = {
     candidature_insegnanti: [candidatura(MIA, SEDE_A, CV_MIO), candidatura(ALTRUI, SEDE_B, CV_ALTRUI)],
+    // ⚠️ LE RIGHE DI SEDE SONO IL CRITERIO D'ACCESSO, dal 2026-08-19: senza,
+    // ogni lettura del cockpit non trova niente e i test verdi direbbero solo
+    // che il magazzino era vuoto. Qui rispecchiano il backfill della migrazione —
+    // una riga per candidatura, sulla sua sede di primo arrivo.
+    candidature_sedi: [
+      { candidatura_id: MIA, scuola_id: SEDE_A, stato: 'pending' },
+      { candidatura_id: ALTRUI, scuola_id: SEDE_B, stato: 'pending' },
+    ],
     schools: [{ id: SEDE_A, nome: 'Sede di Prova' }, { id: SEDE_B, nome: 'Altra Sede' }],
   }
   h.requireStaff.mockImplementation(async () =>
@@ -175,9 +236,16 @@ describe('candidature insegnanti · elenco ristretto alla sede', () => {
 
     const lettura = h.state.letture.find((l) => l.table === 'candidature_insegnanti')
     expect(lettura, 'nessuna lettura della tabella delle candidature').toBeTruthy()
+    // ⚠️ IL FILTRO È SULL'EMBED, non sulla colonna. Dal 2026-08-19
+    // `candidature_insegnanti.scuola_id` è la sede di PRIMO ARRIVO e non
+    // autorizza più niente: filtrare su quella non farebbe vedere di più, farebbe
+    // vedere di MENO — una candidatura rivolta anche alla mia sede ma arrivata a
+    // un'altra sparirebbe dal mio elenco.
     expect(
-      lettura!.filtri.some((f) => f.col === 'scuola_id' && f.vals.length === 1 && f.vals[0] === SEDE_A),
-      'il filtro di sede non sta nella stessa query dell’elenco',
+      lettura!.filtri.some(
+        (f) => f.col === 'candidature_sedi.scuola_id' && f.vals.length === 1 && f.vals[0] === SEDE_A,
+      ),
+      'il filtro di sede non sta nella stessa query dell’elenco, o non passa dalle righe di sede',
     ).toBe(true)
   })
 
@@ -282,6 +350,13 @@ describe('candidature insegnanti · elenco ristretto alla sede', () => {
       candidatura('dddddddd-0000-4000-8000-000000000002', SEDE_A, 'candidature/b.pdf'),
       candidatura('dddddddd-0000-4000-8000-000000000003', SEDE_A, 'candidature/c.pdf'),
     ]
+    // Le righe di sede vanno rifatte insieme: sono il criterio d'accesso, e senza
+    // di esse l'elenco è vuoto — un test che misurerebbe il magazzino, non la rotta.
+    h.state.tabelle.candidature_sedi = h.state.tabelle.candidature_insegnanti.map((c) => ({
+      candidatura_id: c.id,
+      scuola_id: c.scuola_id,
+      stato: 'pending',
+    }))
     const body = await (await GET(get('?limit=1'))).json()
     expect(body.data).toHaveLength(1)
     expect(body.total, '`total` conta la pagina, non le righe').toBe(3)
@@ -301,5 +376,60 @@ describe('candidature insegnanti · elenco ristretto alla sede', () => {
     // …e un `offset` negativo non risale sopra la prima riga.
     const indietro = await (await GET(get('?offset=-5'))).json()
     expect(indietro.offset).toBe(0)
+  })
+})
+
+describe('candidature insegnanti · una candidatura rivolta a PIÙ sedi', () => {
+  /** La candidatura ARRIVATA a B ma rivolta anche ad A, che è la mia. */
+  const CONDIVISA = 'eeeeeeee-0000-4000-8000-00000000000e'
+
+  beforeEach(() => {
+    h.state.tabelle.candidature_insegnanti.push(
+      candidatura(CONDIVISA, SEDE_B, 'candidature/condivisa.pdf'),
+    )
+    h.state.tabelle.candidature_sedi.push(
+      { candidatura_id: CONDIVISA, scuola_id: SEDE_B, stato: 'pending' },
+      { candidatura_id: CONDIVISA, scuola_id: SEDE_A, stato: 'pending' },
+    )
+  })
+
+  it('🔴 la vedo, anche se è ARRIVATA a un’altra sede', async () => {
+    // È il caso per cui tutta la multi-sede esiste. Col vecchio filtro sulla
+    // colonna `scuola_id` questa candidatura sarebbe invisibile alla mia
+    // segreteria — una pratica che devo valutare e che non compare in nessun
+    // elenco. Non è «vedo di meno del dovuto»: è una persona senza risposta.
+    const body = await (await GET(get())).json()
+    expect(body.data.map((r: Riga) => r.id)).toContain(CONDIVISA)
+  })
+
+  it('compare UNA volta sola: si cerca una persona, non una pratica', async () => {
+    h.state.scuole = [SEDE_A, SEDE_B] // entrambe mie
+    const body = await (await GET(get())).json()
+    const occorrenze = body.data.filter((r: Riga) => r.id === CONDIVISA).length
+    expect(occorrenze, 'il join sdoppia la riga').toBe(1)
+    expect(body.total).toBe(body.data.length)
+  })
+
+  it('la SCHEDA dice anche le sedi che non sono mie: chi valuta deve sapere', async () => {
+    // Senza, due segreterie istruiscono la stessa pratica senza sapere l'una
+    // dell'altra, e la persona riceve due convocazioni scoordinate.
+    const body = await (await GET(get(`?id=${CONDIVISA}`))).json()
+    const sedi = (body.data.sedi ?? []) as Riga[]
+    expect(sedi.map((x) => x.scuola_id).sort()).toEqual([SEDE_A, SEDE_B].sort())
+  })
+
+  it('il CURRICULUM si apre, anche se la candidatura è arrivata all’altra sede', async () => {
+    // Restando sulla colonna, il criterio sarebbe diventato «di chi era la prima
+    // sede» invece di «chi ha titolo»: valuterei una persona senza poter leggere
+    // il documento che la descrive.
+    const res = await GET(get('?doc=candidature%2Fcondivisa.pdf'))
+    expect(res.status).toBe(200)
+  })
+
+  it('e resta chiuso per una sede che non c’entra: il messaggio è quello del 404', async () => {
+    h.state.scuole = ['ffffffff-0000-4000-8000-00000000000f']
+    const res = await GET(get('?doc=candidature%2Fcondivisa.pdf'))
+    expect(res.status).toBe(403)
+    expect((await res.json()).error).toContain('non esiste, oppure appartiene a un')
   })
 })

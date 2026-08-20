@@ -127,8 +127,35 @@ vi.mock('@/lib/supabase/server-client', () => ({
 function proietta(r: Riga, cols: string): Riga {
   if (!cols || cols.trim() === '*') return { ...r }
   const fuori: Riga = {}
-  for (const c of cols.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
+  const senzaEmbed = cols.replace(/[\w:]*candidature_sedi(!inner)?\s*\([^)]*\)/g, '')
+  for (const c of senzaEmbed.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
   return fuori
+}
+
+/** Le righe di sede di una candidatura, dal magazzino del finto. */
+function sediFinteDi(tabelle: Record<string, Riga[]>, idCandidatura: unknown): Riga[] {
+  return (tabelle['candidature_sedi'] ?? []).filter((s) => s.candidatura_id === idCandidatura)
+}
+
+/**
+ * IL TRIGGER `candidature_sedi_aggrega`, RIFATTO NEL FINTO.
+ *
+ * In produzione lo stato di `candidature_insegnanti` non lo scrive più la rotta:
+ * lo ricalcola un trigger dalle righe di sede. Un finto che non lo simulasse
+ * lascerebbe la candidatura a `pending` per sempre — e qualcuno, per far passare
+ * i test, rimetterebbe nella rotta la scrittura diretta, reintroducendo le due
+ * autorità sulla stessa colonna che la migrazione ha appena tolto.
+ */
+function aggregaComeIlTrigger(tabelle: Record<string, Riga[]>, idCandidatura: unknown): void {
+  const sedi = sediFinteDi(tabelle, idCandidatura)
+  if (sedi.length === 0) return
+  const stato = sedi.some((s) => s.stato === 'pending')
+    ? 'pending'
+    : sedi.some((s) => s.stato === 'approvata')
+      ? 'approvata'
+      : 'rifiutata'
+  const madre = (tabelle['candidature_insegnanti'] ?? []).find((c) => c.id === idCandidatura)
+  if (madre) madre.stato = stato
 }
 
 function finto() {
@@ -139,7 +166,22 @@ function finto() {
       let cols = '*'
       let patch: Riga | null = null
       let inserimento: Riga | null = null
-      const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
+      const corrisponde = (r: Riga) =>
+        filtri.every((f) => {
+          // `candidature_sedi.scuola_id` → il filtro vive sull'EMBED di PostgREST:
+          // la candidatura passa se ALMENO UNA delle sue righe di sede
+          // corrisponde. Ignorare il punto significherebbe cercare una colonna
+          // inesistente e non escludere NIENTE: ogni test d'isolamento
+          // diventerebbe verde per costruzione.
+          const punto = f.col.indexOf('.')
+          if (punto > 0) {
+            const tabellaEmbed = f.col.slice(0, punto)
+            const colonna = f.col.slice(punto + 1)
+            if (tabellaEmbed !== 'candidature_sedi') return true
+            return sediFinteDi(h.state.tabelle, r.id).some((s) => f.vals.some((v) => s[colonna] === v))
+          }
+          return f.vals.some((v) => r[f.col] === v)
+        })
       const esegui = () => {
         // La LETTURA si registra prima di qualunque guasto: la domanda a cui
         // risponde è «questa query è stata fatta?», non «com'è andata».
@@ -198,6 +240,11 @@ function finto() {
           // nell'istruzione che scrive è metà del presidio, e senza guardarla
           // toglierla resterebbe verde.
           h.state.aggiornamenti.push({ table, patch: { ...patch }, filtri: filtri.map((f) => ({ ...f })) })
+          // Il trigger: dopo una scrittura sulle righe di sede, lo stato della
+          // candidatura si ricalcola. Vedi `aggregaComeIlTrigger`.
+          if (table === 'candidature_sedi') {
+            for (const r of trovate) aggregaComeIlTrigger(h.state.tabelle, r.candidatura_id)
+          }
           return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
         }
         return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
@@ -258,7 +305,16 @@ const patch = (body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-const approva = () => PATCH(patch({ id: CANDIDATURA_ID, action: 'approva' }))
+/**
+ * ⚠️ `scuola_id` NEL CORPO, dal 2026-08-19.
+ *
+ * Qui l'operatore ha DUE sedi attive (`h.state.scuole = [SEDE_A, SEDE_B]`) e la
+ * candidatura sta su `SEDE_B`: senza dichiarare su quale plesso si sta
+ * decidendo, la rotta risponde 400 invece di indovinare. È il contratto di
+ * `resolveScuolaScrittura`, e il caso del rifiuto ha il suo test più sotto.
+ */
+const approva = (extra: Riga = {}) =>
+  PATCH(patch({ id: CANDIDATURA_ID, action: 'approva', scuola_id: SEDE_B, ...extra }))
 
 // ⚠️ Non c'è più una `rigaUtenti()`: questa route non inserisce più in `utenti`.
 // I casi qui sotto guardano l'ASSENZA di quell'inserimento — che è il punto — e
@@ -286,6 +342,11 @@ beforeEach(() => {
   h.state.erroriTabella = {}
   h.state.erroreChiusura = null
   h.state.tabelle = {
+    // ⚠️ Le righe di sede si seminano SEMPRE insieme alle candidature: dal
+    // 2026-08-19 sono il criterio d'accesso del cockpit ED è lì che il verdetto
+    // si scrive. Senza, ogni lettura è vuota e ogni scrittura non tocca niente:
+    // i test misurerebbero un magazzino vuoto credendo di misurare la rotta.
+    // (Le righe vere si aggiungono in coda a questo blocco, vedi `sediPerLeCandidature`.)
     candidature_insegnanti: [
       {
         id: CANDIDATURA_ID,
@@ -314,6 +375,12 @@ beforeEach(() => {
     parents: [],
   }
   h.sendEmail.mockResolvedValue({ ok: true, error: null })
+  h.state.tabelle.candidature_sedi = (h.state.tabelle.candidature_insegnanti ?? []).map((c) => ({
+    candidatura_id: c.id,
+    scuola_id: c.scuola_id,
+    stato: c.stato ?? 'pending',
+  }))
+
   h.requireStaff.mockImplementation(async (_req: unknown, allowed?: string[]) => {
     const ammessi = allowed ?? ['admin', 'coordinator', 'segreteria']
     const u = h.state.utente
@@ -394,16 +461,32 @@ describe('candidature insegnanti · approvazione', () => {
     expect(h.sendEmail).not.toHaveBeenCalled()
   })
 
-  it('ogni UPDATE della candidatura porta il filtro di SEDE nella stessa istruzione', async () => {
+  it('ogni UPDATE porta il filtro di SEDE nella stessa istruzione, e scrive sulla RIGA DI SEDE', async () => {
+    // ⚠️ DAL 2026-08-19 IL VERDETTO NON STA PIÙ SULLA CANDIDATURA.
+    // Ogni sede valuta per conto suo, quindi l'esito appartiene alla coppia
+    // (candidatura, sede) e vive in `candidature_sedi`. Lo `stato` della
+    // candidatura è l'AGGREGATO, e lo scrive il trigger.
     await approva()
-    const suCandidature = h.state.aggiornamenti.filter((a) => a.table === 'candidature_insegnanti')
-    expect(suCandidature.length, 'nessun UPDATE registrato').toBeGreaterThan(0)
-    for (const agg of suCandidature) {
+    const suSedi = h.state.aggiornamenti.filter((a) => a.table === 'candidature_sedi')
+    expect(suSedi.length, 'nessun UPDATE sulle righe di sede').toBeGreaterThan(0)
+    for (const agg of suSedi) {
       expect(
         agg.filtri.some((f) => f.col === 'scuola_id'),
         `un UPDATE (${JSON.stringify(agg.patch.stato)}) scrive senza filtro di sede`,
       ).toBe(true)
+      expect(
+        agg.filtri.some((f) => f.col === 'candidatura_id'),
+        'un UPDATE scrive senza dire QUALE candidatura',
+      ).toBe(true)
     }
+    // 🔴 E LA ROTTA NON TOCCA `candidature_insegnanti.stato`. Due autorità sulla
+    // stessa colonna — questa rotta e il trigger — prima o poi dicono cose
+    // diverse, e la differenza si vedrebbe solo nel caso multi-sede, cioè in
+    // quello raro. Il lock è questa riga.
+    expect(
+      h.state.aggiornamenti.filter((a) => a.table === 'candidature_insegnanti'),
+      'la rotta scrive ancora lo stato sulla candidatura: quello lo fa il trigger',
+    ).toHaveLength(0)
   })
 
   it('candidatura di un’altra sede: 404 identico all’inesistente, e nessuna scrittura', async () => {
@@ -435,8 +518,12 @@ describe('candidature insegnanti · approvazione', () => {
   const conPosizioni = (...posizioni: string[]) => {
     h.state.tabelle.candidature_insegnanti[0].posizioni = posizioni
   }
-  /** Le scritture di stato sulla candidatura: quante sono, e con quale `WHERE`. */
-  const scrittureStato = () => h.state.aggiornamenti.filter((a) => a.table === 'candidature_insegnanti')
+  /**
+   * Le scritture di stato, che dal 2026-08-19 stanno sulle RIGHE DI SEDE.
+   * Su `candidature_insegnanti` non ce n'è più nessuna: quello stato lo ricalcola
+   * il trigger `candidature_sedi_aggrega`.
+   */
+  const scrittureStato = () => h.state.aggiornamenti.filter((a) => a.table === 'candidature_sedi')
   /** `ensureStaffIdentity` comincia SEMPRE con una SELECT su `utenti`: zero letture = mai chiamata. */
   const lettureUtenti = () => h.state.letture.filter((l) => l.table === 'utenti')
 
@@ -531,7 +618,15 @@ describe('candidature insegnanti · approvazione', () => {
     expect((await res.json()).codice).toBe('CANDIDATURA_GIA_EVASA')
     // La seconda istruzione parte (è il `WHERE` a non trovare niente, ed è così
     // che si chiude la corsa) ma non riscrive `evasa_da`/`evasa_il` di nessuno.
-    expect(h.state.tabelle.candidature_insegnanti[0].evasa_da).toBe(ADMIN.id)
+    //
+    // ⚠️ `evasa_da` sta sulla RIGA DI SEDE, non sulla candidatura: è la sede che
+    // evade, e con tre plessi «chi ha deciso» senza «per quale plesso» è
+    // un'informazione a metà.
+    const rigaDiSede = h.state.tabelle.candidature_sedi.find((x) => x.candidatura_id === CANDIDATURA_ID)
+    expect(rigaDiSede?.evasa_da).toBe(ADMIN.id)
+    expect(rigaDiSede?.stato).toBe('approvata')
+    // …e la candidatura, per aggregazione, è approvata anch'essa.
+    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('approvata')
     expect(h.state.creazioniAuth).toEqual([])
     expect(h.state.inserimenti).toEqual([])
   })

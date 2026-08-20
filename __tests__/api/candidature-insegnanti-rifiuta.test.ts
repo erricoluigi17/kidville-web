@@ -55,8 +55,35 @@ vi.mock('@/lib/supabase/server-client', () => ({
 function proietta(r: Riga, cols: string): Riga {
   if (!cols || cols.trim() === '*') return { ...r }
   const fuori: Riga = {}
-  for (const c of cols.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
+  const senzaEmbed = cols.replace(/[\w:]*candidature_sedi(!inner)?\s*\([^)]*\)/g, '')
+  for (const c of senzaEmbed.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
   return fuori
+}
+
+/** Le righe di sede di una candidatura, dal magazzino del finto. */
+function sediFinteDi(tabelle: Record<string, Riga[]>, idCandidatura: unknown): Riga[] {
+  return (tabelle['candidature_sedi'] ?? []).filter((s) => s.candidatura_id === idCandidatura)
+}
+
+/**
+ * IL TRIGGER `candidature_sedi_aggrega`, RIFATTO NEL FINTO.
+ *
+ * In produzione lo stato di `candidature_insegnanti` non lo scrive più la rotta:
+ * lo ricalcola un trigger dalle righe di sede. Un finto che non lo simulasse
+ * lascerebbe la candidatura a `pending` per sempre — e qualcuno, per far passare
+ * i test, rimetterebbe nella rotta la scrittura diretta, reintroducendo le due
+ * autorità sulla stessa colonna che la migrazione ha appena tolto.
+ */
+function aggregaComeIlTrigger(tabelle: Record<string, Riga[]>, idCandidatura: unknown): void {
+  const sedi = sediFinteDi(tabelle, idCandidatura)
+  if (sedi.length === 0) return
+  const stato = sedi.some((s) => s.stato === 'pending')
+    ? 'pending'
+    : sedi.some((s) => s.stato === 'approvata')
+      ? 'approvata'
+      : 'rifiutata'
+  const madre = (tabelle['candidature_insegnanti'] ?? []).find((c) => c.id === idCandidatura)
+  if (madre) madre.stato = stato
 }
 
 function finto() {
@@ -67,7 +94,22 @@ function finto() {
       let cols = '*'
       let patch: Riga | null = null
       let inserimento: Riga | null = null
-      const corrisponde = (r: Riga) => filtri.every((f) => f.vals.some((v) => r[f.col] === v))
+      const corrisponde = (r: Riga) =>
+        filtri.every((f) => {
+          // `candidature_sedi.scuola_id` → il filtro vive sull'EMBED di PostgREST:
+          // la candidatura passa se ALMENO UNA delle sue righe di sede
+          // corrisponde. Ignorare il punto significherebbe cercare una colonna
+          // inesistente e non escludere NIENTE: ogni test d'isolamento
+          // diventerebbe verde per costruzione.
+          const punto = f.col.indexOf('.')
+          if (punto > 0) {
+            const tabellaEmbed = f.col.slice(0, punto)
+            const colonna = f.col.slice(punto + 1)
+            if (tabellaEmbed !== 'candidature_sedi') return true
+            return sediFinteDi(h.state.tabelle, r.id).some((s) => f.vals.some((v) => s[colonna] === v))
+          }
+          return f.vals.some((v) => r[f.col] === v)
+        })
       const esegui = () => {
         if (inserimento) {
           const riga = { ...inserimento }
@@ -89,6 +131,11 @@ function finto() {
         if (patch) {
           for (const r of trovate) Object.assign(r, patch)
           h.state.aggiornamenti.push({ table, patch: { ...patch } })
+          // Il trigger: dopo una scrittura sulle righe di sede, lo stato della
+          // candidatura si ricalcola. Vedi `aggregaComeIlTrigger`.
+          if (table === 'candidature_sedi') {
+            for (const r of trovate) aggregaComeIlTrigger(h.state.tabelle, r.candidatura_id)
+          }
           return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
         }
         return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
@@ -129,7 +176,9 @@ const patch = (body: unknown) =>
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-const rifiuta = (extra: Riga = {}) => PATCH(patch({ id: CANDIDATURA_ID, action: 'rifiuta', ...extra }))
+/** ⚠️ `scuola_id` nel corpo: vedi il gemello in `-approva.test.ts`. */
+const rifiuta = (extra: Riga = {}) =>
+  PATCH(patch({ id: CANDIDATURA_ID, action: 'rifiuta', scuola_id: SEDE_A, ...extra }))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -140,6 +189,11 @@ beforeEach(() => {
   h.state.creazioniAuth = []
   h.state.colonneAssentiUpdate = []
   h.state.tabelle = {
+    // ⚠️ Le righe di sede si seminano SEMPRE insieme alle candidature: dal
+    // 2026-08-19 sono il criterio d'accesso del cockpit ED è lì che il verdetto
+    // si scrive. Senza, ogni lettura è vuota e ogni scrittura non tocca niente:
+    // i test misurerebbero un magazzino vuoto credendo di misurare la rotta.
+    // (Le righe vere si aggiungono in coda a questo blocco, vedi `sediPerLeCandidature`.)
     candidature_insegnanti: [
       {
         id: CANDIDATURA_ID,
@@ -158,6 +212,12 @@ beforeEach(() => {
     parents: [],
   }
   h.sendEmail.mockResolvedValue({ ok: true, error: null })
+  h.state.tabelle.candidature_sedi = (h.state.tabelle.candidature_insegnanti ?? []).map((c) => ({
+    candidatura_id: c.id,
+    scuola_id: c.scuola_id,
+    stato: c.stato ?? 'pending',
+  }))
+
   h.requireStaff.mockImplementation(async (_req: unknown, allowed?: string[]) => {
     const ammessi = allowed ?? ['admin', 'coordinator', 'segreteria']
     const u = h.state.utente
@@ -173,11 +233,16 @@ describe('candidature insegnanti · rifiuto', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).success).toBe(true)
 
-    const cand = h.state.tabelle.candidature_insegnanti[0]
-    expect(cand.stato).toBe('rifiutata')
-    expect(cand.evasa_da).toBe(ADMIN.id)
-    expect(cand.evasa_il).toBeTruthy()
-    expect(cand.motivo_rifiuto).toBe(MOTIVO)
+    // Lo stato della CANDIDATURA arriva per aggregazione dal trigger…
+    expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('rifiutata')
+    // …mentre chi ha deciso, quando, e con quale nota interna stanno sulla RIGA
+    // DI SEDE: è la sede che rifiuta, e con tre plessi «chi ha deciso» senza «per
+    // quale plesso» è un'informazione a metà.
+    const rigaDiSede = h.state.tabelle.candidature_sedi[0]
+    expect(rigaDiSede.stato).toBe('rifiutata')
+    expect(rigaDiSede.evasa_da).toBe(ADMIN.id)
+    expect(rigaDiSede.evasa_il).toBeTruthy()
+    expect(rigaDiSede.motivo_rifiuto).toBe(MOTIVO)
 
     expect(h.state.creazioniAuth).toEqual([])
     expect(h.state.inserimenti.filter((i) => i.table === 'utenti')).toEqual([])
@@ -246,6 +311,11 @@ describe('candidature insegnanti · rifiuto', () => {
   })
 
   it('una candidatura GIÀ APPROVATA non si rifiuta: 409', async () => {
+    // ⚠️ Lo stato di partenza si mette sulla RIGA DI SEDE, che è ciò che il
+    // `WHERE` del passaggio guarda; sulla candidatura ci arriva per aggregazione.
+    // Metterlo solo sulla candidatura lascerebbe la riga di sede a `pending`, il
+    // rifiuto passerebbe, e il test misurerebbe il contrario di ciò che dice.
+    h.state.tabelle.candidature_sedi[0].stato = 'approvata'
     h.state.tabelle.candidature_insegnanti[0].stato = 'approvata'
     const res = await rifiuta()
     expect(res.status).toBe(409)

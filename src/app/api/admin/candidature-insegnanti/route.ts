@@ -37,6 +37,8 @@ import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/pagi
 
 /** La tabella, in un posto solo: il nome compare in sei query. */
 const TABELLA = 'candidature_insegnanti'
+/** Le righe di sede: una per plesso a cui la candidatura è rivolta. */
+const TABELLA_SEDI = 'candidature_sedi'
 
 /**
  * Il bucket dove il modulo pubblico deposita il curriculum (nessun bucket nuovo).
@@ -136,6 +138,59 @@ const colonnaMancante = (messaggio: string): string | null => {
  */
 const COLONNE_ELENCO = ['id', 'scuola_id', 'stato', 'nome', 'cognome', 'posizioni', 'gradi', 'creata_il']
 
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  IL FILTRO DI SEDE PASSA DA `candidature_sedi`, NON PIÙ DALLA COLONNA    ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Dal 2026-08-19 una candidatura può essere rivolta a PIÙ plessi, e ogni plesso
+ * la valuta per conto suo. `candidature_insegnanti.scuola_id` è rimasta, ma è
+ * la sede di PRIMO ARRIVO: un dato storico, non un criterio d'accesso.
+ *
+ * ⚠️ FILTRARE ANCORA SULLA COLONNA sarebbe il difetto peggiore dei due possibili,
+ * e non è quello che si immagina: non fa vedere di più, fa vedere di MENO. Una
+ * candidatura arrivata a Giugliano e rivolta anche ad Aversa resterebbe
+ * invisibile alla segreteria di Aversa, che pure la deve valutare — una pratica
+ * che non compare in nessun elenco e di cui nessuno sa niente.
+ *
+ * ⚠️ E NON SI TENGONO ENTRAMBI «per sicurezza». Due criteri di sede sulla stessa
+ * risorsa sono due risposte diverse alla stessa domanda, e quale delle due vinca
+ * lo si scopre il giorno in cui qualcuno vede ciò che non deve.
+ *
+ * ─── LE DUE FORME, E PERCHÉ SONO DUE ────────────────────────────────────────
+ * MISURATO sulla produzione il 2026-08-20, con una candidatura rivolta a due
+ * sedi entrambe visibili:
+ *
+ *  · `!inner` + `.in('candidature_sedi.scuola_id', scuole)` NON sdoppia la riga
+ *    né il conteggio — la candidatura compare UNA volta, `count` è esatto. Chi
+ *    guarda cerca una persona, non una pratica.
+ *
+ *  · ma l'array incorporato porta SOLO le sedi che hanno passato il filtro.
+ *    Filtrando su Aversa si legge `[{Aversa}]`, e di Giugliano nessuna traccia.
+ *    Per la SCHEDA non basta: chi valuta deve sapere che quella persona è in
+ *    gioco anche altrove, altrimenti due segreterie istruiscono la stessa
+ *    pratica senza saperlo. Serve un SECONDO embed, non filtrato — provato, e
+ *    restituisce tutte e due.
+ */
+const EMBED_FILTRO = 'candidature_sedi!inner(scuola_id)'
+/** Tutte le sedi della candidatura, col loro stato. Solo per la SCHEDA. */
+const EMBED_TUTTE = 'sedi:candidature_sedi(scuola_id, stato, evasa_il, motivo_rifiuto)'
+/*
+ * ⚠️ LA COLONNA DEL FILTRO SI SCRIVE PER ESTESO, OGNI VOLTA.
+ *
+ * C'era una costante `FILTRO_SEDE = 'candidature_sedi.scuola_id'`, ed era una
+ * comodità pagata carissima: il lock `isolamento-sede-coverage` riconosce il
+ * filtro di sede cercando la colonna come STRINGA LETTERALE dentro `.in(…)`, e
+ * con la costante non la vedeva più. MISURATO il 2026-08-20 togliendo il filtro
+ * dall'elenco: il lock è rimasto VERDE. Cioè la query più importante del cockpit
+ * era uscita dalla sorveglianza senza che nessuno lo notasse.
+ *
+ * Che il lock non insegua le costanti è voluto, non un suo limite: un rilevatore
+ * che risolve indirezioni lo si aggira aggiungendone un'altra. Il contratto è che
+ * il filtro sia LEGGIBILE nel punto in cui si applica — da una persona come da
+ * una regex. Quattro ripetizioni di una stringa sono il prezzo, ed è basso.
+ */
+
 /** Il dettaglio: proiezione ESPLICITA (mai `select('*')`), una candidatura alla volta. */
 const COLONNE_DETTAGLIO = [
   'id', 'scuola_id', 'stato', 'nome', 'cognome', 'email', 'telefono',
@@ -199,6 +254,23 @@ const getQuerySchema = z.object({
 const patchBodySchema = z.object({
   id: zUuid,
   action: z.enum(['approva', 'rifiuta']),
+  /**
+   * SU QUALE SEDE si sta decidendo.
+   *
+   * Dal 2026-08-19 una candidatura può essere rivolta a più plessi e ogni plesso
+   * la valuta per conto suo: senza questo campo, un operatore con due sedi
+   * attive chiederebbe «approva» e la route dovrebbe INDOVINARE quale delle sue
+   * pratiche sta chiudendo.
+   *
+   * ⚠️ FACOLTATIVO, e non per pigrizia: chi ha UNA sola sede attiva non ha
+   * niente da scegliere, e obbligarlo a dichiararla vorrebbe dire far scrivere
+   * al client un uuid che il server già conosce — cioè aprire la porta a un
+   * client che lo scrive sbagliato. Con più sedi e nessuna indicata la risposta
+   * è 400, mai una scelta arbitraria: è lo stesso contratto di
+   * `resolveScuolaScrittura`, e la ragione è la stessa — una rotta che indovina
+   * la sede archivia i dati nel plesso sbagliato in silenzio.
+   */
+  scuola_id: zUuid.optional(),
   /** Nota INTERNA: resta in tabella, non esce nell'email e non entra nei log. */
   motivo: z.string().max(2000).optional(),
   inviaEmailEsito: z.boolean().optional(),
@@ -261,11 +333,14 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
       const { data: riga, error } = await conResilienza(COLONNE_DETTAGLIO, 'admin/candidature-insegnanti:GET', (colonne) =>
         supabase
           .from(TABELLA)
-          .select(colonne)
+          // Due embed: uno RESTRINGE (`!inner` + filtro), l'altro DESCRIVE.
+          // Vedi il blocco su `EMBED_FILTRO`: l'array filtrato mostrerebbe solo
+          // le sedi di chi guarda, e la scheda deve dire anche le altre.
+          .select(`${colonne}, ${EMBED_FILTRO}, ${EMBED_TUTTE}`)
           // Il filtro di sede sta nella STESSA query dell'id (AND), non «da
           // qualche parte nell'handler»: è l'unico posto in cui è vero.
           .eq('id', idCandidatura)
-          .in('scuola_id', scuole)
+          .in('candidature_sedi.scuola_id', scuole)
           .maybeSingle(),
       )
       if (error) return leggiFallita('admin/candidature-insegnanti:GET', 'dettaglio-non-letto', error)
@@ -289,8 +364,10 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
     const { data, error, count } = await conResilienza(COLONNE_ELENCO, 'admin/candidature-insegnanti:GET', (colonne) =>
       supabase
         .from(TABELLA)
-        .select(colonne, { count: 'exact' })
-        .in('scuola_id', scuole)
+        // `!inner` restringe: senza, il join arricchirebbe e basta, e l'elenco
+        // mostrerebbe le candidature di TUTTE le sedi con accanto quelle proprie.
+        .select(`${colonne}, ${EMBED_FILTRO}, ${EMBED_TUTTE}`, { count: 'exact' })
+        .in('candidature_sedi.scuola_id', scuole)
         .order('creata_il', { ascending: false })
         .range(offset, offset + limit - 1),
     )
@@ -331,9 +408,9 @@ export const PATCH = withRoute('admin/candidature-insegnanti:PATCH', async (requ
       (colonne) =>
         supabase
           .from(TABELLA)
-          .select(colonne)
+          .select(`${colonne}, ${EMBED_FILTRO}`)
           .eq('id', id)
-          .in('scuola_id', scuole)
+          .in('candidature_sedi.scuola_id', scuole)
           .maybeSingle(),
     )
     if (errCand) return leggiFallita('admin/candidature-insegnanti:PATCH', 'candidatura-non-letta', errCand)
@@ -352,9 +429,51 @@ export const PATCH = withRoute('admin/candidature-insegnanti:PATCH', async (requ
     }
     const riga = cand as unknown as CandidaturaDiLavoro
 
+    // ── SU QUALE SEDE SI STA DECIDENDO ──────────────────────────────────────
+    // Dichiarata nel corpo, oppure — se l'operatore ha una sede sola — quella.
+    // Con più sedi e nessuna indicata: 400. Mai una scelta arbitraria.
+    const sedeDichiarata = b.data.scuola_id ?? (scuole.length === 1 ? scuole[0] : null)
+    if (sedeDichiarata === null) {
+      logEvento('multi_sede', 'warn', {
+        operazione: 'admin/candidature-insegnanti:PATCH',
+        esito: 'sede-non-dichiarata',
+        azione: action,
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+        entita_id: id,
+        sedi_attive: scuole.length,
+      })
+      return NextResponse.json(
+        {
+          error: 'Specificare la sede su cui si sta decidendo: questa candidatura è rivolta a più plessi.',
+          codice: 'SEDE_DA_SPECIFICARE',
+        },
+        { status: 400 },
+      )
+    }
+    // …e deve essere UNA DELLE SUE. Un uuid nel corpo è scritto dal client, e un
+    // client può scrivere qualunque cosa: senza questo controllo, chi ha Aversa
+    // potrebbe dichiarare Giugliano e chiudere una pratica che non è sua.
+    if (!scuole.includes(sedeDichiarata)) {
+      logEvento('multi_sede', 'warn', {
+        operazione: 'admin/candidature-insegnanti:PATCH',
+        esito: 'sede-fuori-scope',
+        azione: action,
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+        entita_id: id,
+        sede_id: sedeDichiarata,
+        sedi_attive: scuole.length,
+      })
+      return nonTrovata()
+    }
+
+    // Da qui in giù la sede è UNA: le funzioni ricevono `[sedeDichiarata]` e non
+    // più tutte le sedi attive, così la scrittura non può toccare la riga di un
+    // plesso su cui nessuno ha deciso niente.
     return action === 'approva'
-      ? await approva(supabase, auth.user, scuole, riga)
-      : await rifiuta(supabase, auth.user, scuole, riga, motivo, inviaEmailEsito)
+      ? await approva(supabase, auth.user, [sedeDichiarata], riga)
+      : await rifiuta(supabase, auth.user, [sedeDichiarata], riga, motivo, inviaEmailEsito)
   } catch (err) {
     logErrore({ operazione: 'admin/candidature-insegnanti:PATCH', stato: 503 }, err)
     return nonDisponibile('Non è stato possibile evadere la candidatura: riprovare fra poco.')
@@ -409,7 +528,7 @@ async function conResilienza<T>(
     logEvento('candidatura', 'warn', {
       operazione,
       esito: 'colonna-assente-rimossa',
-      entita_tipo: TABELLA,
+      entita_tipo: TABELLA_SEDI,
       error_code: codiceDi(esito.error),
       msg: `colonna assente, rimossa dalla proiezione: ${col}`,
     })
@@ -475,11 +594,18 @@ async function assertCurriculumInScope(
   // senza conferma umana, quindi una riga scritta a mano resta possibile: senza
   // il `.limit(1)`, quel caso diventa un `PGRST116` che questo gate tratta come
   // un guasto — fail-closed, e LOGGATO — invece di una firma silenziosa.
+  // ⚠️ IL FILTRO PASSA DALLE RIGHE DI SEDE, come l'elenco e la scheda.
+  // Restando sulla colonna, il criterio sarebbe diventato «di chi era la PRIMA
+  // sede» invece di «chi ha titolo»: la segreteria di Aversa non avrebbe potuto
+  // aprire il curriculum di una candidatura rivolta anche ad Aversa ma arrivata
+  // prima a Giugliano — e si sarebbe trovata a valutare una persona senza poterne
+  // leggere il documento che la descrive.
   const { data, error } = await supabase
     .from(TABELLA)
-    .select('id, scuola_id')
+    .select(`id, scuola_id, ${EMBED_FILTRO}`)
     .eq('cv_path', docPath)
-    .in('scuola_id', scuole)
+    .in('candidature_sedi.scuola_id', scuole)
+    .limit(1)
     .maybeSingle()
   if (error) {
     logEvento('multi_sede', 'error', {
@@ -549,9 +675,19 @@ async function assertCurriculumInScope(
 
 /**
  * Il passaggio di stato, con la sede NELLA STESSA istruzione che scrive e gli
- * stati di partenza ammessi nel `WHERE`: è ciò che rende ATOMICO il claim
- * (`pending → in_approvazione`) e chiude la corsa fra due clic o due schede.
+ * stati di partenza ammessi nel `WHERE`: è ciò che rende ATOMICO il passaggio e
+ * chiude la corsa fra due clic o due schede.
  * Zero righe non è un errore: è «qualcun altro è arrivato prima».
+ *
+ * ─── DAL 2026-08-19 SCRIVE SU `candidature_sedi`, NON PIÙ SULLA CANDIDATURA ──
+ * Ogni sede valuta per conto suo, quindi il verdetto appartiene alla COPPIA
+ * (candidatura, sede). Lo `stato` di `candidature_insegnanti` diventa
+ * l'aggregato, e lo ricalcola il trigger `candidature_sedi_aggrega`.
+ *
+ * ⚠️ QUI NON SI SCRIVE PIÙ `candidature_insegnanti.stato`. Scriverlo vorrebbe
+ * dire due autorità sulla stessa colonna — questa funzione e il trigger — che
+ * prima o poi dicono cose diverse, e la differenza si vedrebbe solo nel caso
+ * multi-sede, cioè in quello raro.
  */
 async function cambiaStato(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -574,12 +710,15 @@ async function cambiaStato(
   const colonneCadute: string[] = []
   const scrivi = () =>
     supabase
-      .from(TABELLA)
+      .from(TABELLA_SEDI)
       .update(record)
-      .eq('id', args.id)
+      .eq('candidatura_id', args.id)
       .in('stato', args.da)
+      // La sede è UNA: quella su cui l'operatore ha titolo e che ha dichiarato.
+      // `.in` con un elenco di uno, per restare nella stessa forma degli altri
+      // filtri di sede del file e non introdurre un `.eq` che si legge diverso.
       .in('scuola_id', args.scuole)
-      .select(COLONNE_LAVORO)
+      .select('candidatura_id, scuola_id, stato')
   let esito = await scrivi()
   let tentativi = 0
   // Degrado sulla COLONNA assente (DB della CI non migrato). `stato` non si toglie
@@ -590,7 +729,7 @@ async function cambiaStato(
     logEvento('candidatura', 'warn', {
       operazione,
       esito: 'colonna-assente-rimossa',
-      entita_tipo: TABELLA,
+      entita_tipo: TABELLA_SEDI,
       error_code: codiceDi(esito.error),
       msg: `colonna assente, rimossa dalla scrittura: ${col}`,
     })
@@ -660,6 +799,15 @@ async function approvaSenzaAccount(
   riga: CandidaturaDiLavoro,
 ): Promise<NextResponse> {
   const operazione = 'admin/candidature-insegnanti:PATCH'
+  /**
+   * La sede su cui si sta decidendo.
+   *
+   * Il PATCH passa qui un elenco di UNO — la sede dichiarata nel corpo, o l'unica
+   * attiva dell'operatore — dopo averne verificato la titolarità. Non è
+   * `riga.scuola_id`, che dal 2026-08-19 è la sede di PRIMO ARRIVO e non dice
+   * niente su chi sta valutando.
+   */
+  const sedeCheDecide = scuole[0]
   const adesso = new Date().toISOString()
   const warnings: string[] = []
 
@@ -684,7 +832,7 @@ async function approvaSenzaAccount(
       esito: 'approvazione-senza-account-non-riuscita',
       entita_tipo: TABELLA,
       entita_id: riga.id,
-      sede_id: riga.scuola_id,
+      sede_id: sedeCheDecide,
       error_code: codiceDi(chiusura.error),
     }, chiusura.error)
     return nonDisponibile('Non è stato possibile approvare la candidatura: riprovare fra poco.')
@@ -711,7 +859,10 @@ async function approvaSenzaAccount(
     entitaTipo: 'candidatura',
     entitaId: riga.id,
     azione: 'update',
-    scuolaId: riga.scuola_id,
+    // ⚠️ LA SEDE CHE DECIDE, non quella di primo arrivo. `riga.scuola_id` è un
+    // dato storico dal 2026-08-19: usarlo qui attribuirebbe la decisione di
+    // Aversa al registro di Giugliano, sulle candidature rivolte a entrambe.
+    scuolaId: sedeCheDecide,
     // ESPLICITI e non omessi: fra mesi «la chiave non c'era» e «la chiave valeva
     // null» si leggono diversi, e la domanda che qualcuno farà a questo registro
     // immutabile è esattamente «a quale account è legata questa candidatura?».
@@ -735,7 +886,7 @@ async function approvaSenzaAccount(
     esito: 'candidatura-approvata-senza-account',
     entita_tipo: TABELLA,
     entita_id: riga.id,
-    sede_id: riga.scuola_id,
+    sede_id: sedeCheDecide,
     account_creato: false,
     // Quante posizioni portava, mai QUALI: `redact()` lascia passare i numeri per
     // tipo, e a chi interroga `app_log` serve sapere che il ramo è stato preso,
@@ -807,6 +958,15 @@ async function rifiuta(
   inviaEmailEsito: boolean,
 ): Promise<NextResponse> {
   const operazione = 'admin/candidature-insegnanti:PATCH'
+  /**
+   * La sede su cui si sta decidendo.
+   *
+   * Il PATCH passa qui un elenco di UNO — la sede dichiarata nel corpo, o l'unica
+   * attiva dell'operatore — dopo averne verificato la titolarità. Non è
+   * `riga.scuola_id`, che dal 2026-08-19 è la sede di PRIMO ARRIVO e non dice
+   * niente su chi sta valutando.
+   */
+  const sedeCheDecide = scuole[0]
   const warnings: string[] = []
   const adesso = new Date().toISOString()
 
@@ -849,7 +1009,10 @@ async function rifiuta(
     entitaTipo: 'candidatura',
     entitaId: riga.id,
     azione: 'update',
-    scuolaId: riga.scuola_id,
+    // ⚠️ LA SEDE CHE DECIDE, non quella di primo arrivo. `riga.scuola_id` è un
+    // dato storico dal 2026-08-19: usarlo qui attribuirebbe la decisione di
+    // Aversa al registro di Giugliano, sulle candidature rivolte a entrambe.
+    scuolaId: sedeCheDecide,
     // Il TESTO del motivo non entra nell'audit: è una nota interna su una persona,
     // e l'audit deve dire che cosa è successo, non conservarne il giudizio.
     //
@@ -868,7 +1031,11 @@ async function rifiuta(
   let esitoEmailInviato = false
   const email = (riga.email ?? '').trim()
   if (inviaEmailEsito && email) {
-    const sedeEsito = await risolviContestoSede(supabase, riga.scuola_id, operazione)
+    // ⚠️ LA SEDE CHE HA RIFIUTATO. L'email dice «La Segreteria di <nome>», e
+    // firmarla col plesso di primo arrivo manderebbe a chi si è candidato una
+    // risposta a nome di una sede che non ha deciso niente — mentre quella che
+    // ha deciso sta ancora zitta.
+    const sedeEsito = await risolviContestoSede(supabase, sedeCheDecide, operazione)
     // Il MOTIVO del rifiuto non entra qui, e non perché ce ne dimentichiamo: il
     // generatore non lo riceve affatto. Non si può far uscire un dato che una
     // funzione non ha.
@@ -886,7 +1053,7 @@ async function rifiuta(
       canale: 'email',
       entita_tipo: TABELLA,
       entita_id: riga.id,
-      sede_id: riga.scuola_id,
+      sede_id: sedeCheDecide,
     }, invio.ok ? undefined : new Error(invio.error ?? 'motivo sconosciuto'))
     if (!invio.ok) {
       warnings.push(`Email di esito NON inviata: ${invio.error ?? 'motivo sconosciuto'}.`)
@@ -898,7 +1065,7 @@ async function rifiuta(
     esito: 'candidatura-rifiutata',
     entita_tipo: TABELLA,
     entita_id: riga.id,
-    sede_id: riga.scuola_id,
+    sede_id: sedeCheDecide,
     motivo_presente: Boolean(motivo),
     email_inviata: esitoEmailInviato,
   })

@@ -113,6 +113,14 @@ import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-do
 interface RigaElenco {
   id: string
   scuola_id?: string | null
+  /**
+   * I plessi a cui la candidatura è rivolta, con lo stato di CIASCUNO.
+   *
+   * Dal 2026-08-19 una persona può proporsi a più sedi e ogni sede valuta per
+   * conto suo. `scuola_id` qui sopra è la sede di PRIMO ARRIVO — un dato storico
+   * — e non dice su quale plesso si sta decidendo.
+   */
+  sedi?: { scuola_id: string; stato?: string | null; evasa_il?: string | null }[] | null
   stato: string
   nome?: string | null
   cognome?: string | null
@@ -359,7 +367,34 @@ function accoda(precedenti: RigaElenco[], nuove: RigaElenco[]): RigaElenco[] {
 export function CandidatureInsegnanti() {
   const t = useTranslations('adminAltro')
   const f = useDateFormat()
-  const { reFetchKey, sedi } = useSediAttive()
+  const { reFetchKey, sedi, sedeCorrente } = useSediAttive()
+
+  /**
+   * SU QUALE PLESSO SI STA DECIDENDO.
+   *
+   * Dal 2026-08-19 la stessa candidatura può essere in valutazione a più sedi, e
+   * ognuna decide per sé: «approva» senza dire dove chiuderebbe una pratica a
+   * caso. Il server risponde 400 a un operatore multi-sede che non lo dichiara.
+   *
+   * L'ordine delle tre risposte NON è intercambiabile:
+   *  1. la sede SCELTA nel selettore in alto, se quella candidatura ce l'ha: è il
+   *     plesso su cui questa persona sta lavorando adesso, e ciò che vede nella
+   *     scheda è filtrato su quello;
+   *  2. altrimenti, se la candidatura è rivolta a UNA sola sede, quella: non c'è
+   *     niente da scegliere;
+   *  3. altrimenti `undefined`, e il server risponde 400. Meglio un rifiuto
+   *     leggibile che una scelta presa dal client — indovinare qui vorrebbe dire
+   *     chiudere la pratica di un plesso al posto di un altro, in silenzio.
+   */
+  function sedeSuCuiDecido(riga: { scuola_id?: string | null; sedi?: { scuola_id: string }[] | null }): string | undefined {
+    const sueSedi = (riga.sedi ?? []).map((x) => x.scuola_id)
+    if (sedeCorrente && sueSedi.includes(sedeCorrente)) return sedeCorrente
+    if (sueSedi.length === 1) return sueSedi[0]
+    // Nessuna riga di sede (ambiente non ancora migrato): si ripiega sulla
+    // colonna storica, che lì è ancora l'unica verità.
+    if (sueSedi.length === 0) return riga.scuola_id ?? undefined
+    return undefined
+  }
   const { ruolo } = useAdminIdentity()
 
   const [righe, setRighe] = useState<RigaElenco[]>([])
@@ -742,12 +777,22 @@ export function CandidatureInsegnanti() {
       const res = await fetch(API, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', 'x-sedi': reFetchKey },
+        // ⚠️ `scuola_id` DICHIARA SU QUALE PLESSO SI STA DECIDENDO, e senza di
+        // esso un operatore con più sedi attive riceve 400. Non è burocrazia: la
+        // stessa candidatura può essere in valutazione a Giugliano e ad Aversa, e
+        // «approva» senza dire dove chiuderebbe una pratica a caso.
+        //
+        // Si manda la sede DI CHI GUARDA fra quelle della candidatura, non la
+        // prima dell'elenco: è la sola su cui questa persona ha titolo di
+        // decidere. Il server la rifiuta comunque se non è sua — un uuid nel
+        // corpo lo scrive il client, e un client può scrivere qualunque cosa.
         body: JSON.stringify(
           azione === 'approva'
-            ? { id: selezionata.id, action: 'approva' }
+            ? { id: selezionata.id, action: 'approva', scuola_id: sedeSuCuiDecido(selezionata) }
             : {
                 id: selezionata.id,
                 action: 'rifiuta',
+                scuola_id: sedeSuCuiDecido(selezionata),
                 motivo: motivo.trim() || undefined,
                 inviaEmailEsito: avvisaEmail,
               },
@@ -990,6 +1035,8 @@ export function CandidatureInsegnanti() {
               <PannelloDettaglio
                 cand={selezionata}
                 nomeSede={nomeSede(selezionata.scuola_id)}
+                nomeDiSede={nomeSede}
+                sedeDecisionale={sedeSuCuiDecido(selezionata)}
                 nomeCompleto={nomeCompleto(selezionata)}
                 posizioni={posizioniOrdinate(selezionata.posizioni)}
                 etichettaPosizione={etichettaPosizione}
@@ -1162,7 +1209,7 @@ function Voce({ etichetta, valore }: { etichetta: string; valore?: string | numb
 }
 
 function PannelloDettaglio({
-  cand, nomeSede, nomeCompleto, posizioni, etichettaPosizione, gradi, etichettaGrado,
+  cand, nomeSede, nomeDiSede, sedeDecisionale, nomeCompleto, posizioni, etichettaPosizione, gradi, etichettaGrado,
   titoloStudio, disponibilita,
   isDirezione, motivoBlocco, conferma, setConferma, motivo, setMotivo, avvisaEmail,
   setAvvisaEmail, lavorando, esito, avvisi, cvBloccato, onChiudiEsito, onEsegui,
@@ -1170,6 +1217,10 @@ function PannelloDettaglio({
 }: {
   cand: Candidatura
   nomeSede: string
+  /** Il nome leggibile di UNA sede qualunque, per l'elenco dei plessi. */
+  nomeDiSede: (scuolaId?: string | null) => string
+  /** Il plesso su cui questa persona sta decidendo, da evidenziare. */
+  sedeDecisionale: string | undefined
   nomeCompleto: string
   posizioni: string[]
   etichettaPosizione: (p: string) => string
@@ -1284,10 +1335,52 @@ function PannelloDettaglio({
         <BadgeStato stato={cand.stato} />
       </div>
 
-      {/* Per quale scuola si sta decidendo: prima di ogni altro dato. */}
-      <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
-        <MapPin size={14} /> {t('candSede')} <strong>{nomeSede}</strong>
-      </p>
+      {/* ── PER QUALI SCUOLE, E COME STA CIASCUNA ──────────────────────────
+          Prima di ogni altro dato, come è sempre stato: chi decide deve sapere
+          per quale plesso sta decidendo, prima di leggere il nome della persona.
+
+          ⚠️ DAL 2026-08-19 I PLESSI POSSONO ESSERE PIÙ D'UNO, e la scheda li dice
+          TUTTI — anche quelli che non sono di chi guarda. Non è indiscrezione: se
+          la stessa persona è in valutazione a Giugliano e ad Aversa e nessuna
+          delle due lo sa, le due segreterie istruiscono la stessa pratica in
+          parallelo e la convocano due volte con parole diverse. Il nome della
+          sede altrui non è un dato sensibile; l'ignoranza reciproca sì, è un
+          disservizio.
+
+          Il plesso su cui si sta decidendo È EVIDENZIATO: con tre sedi in
+          elenco, «Approva» senza sapere quale riga si sta chiudendo è il gesto
+          da cui esce la decisione sbagliata. */}
+      {(cand.sedi ?? []).length > 1 ? (
+        <div className="rounded-xl bg-kidville-green-soft px-3 py-2">
+          <p className="flex items-center gap-1.5 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
+            <MapPin size={14} /> {t('candSediMultiple')}
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {(cand.sedi ?? []).map((s) => {
+              const propria = s.scuola_id === sedeDecisionale
+              return (
+                <li
+                  key={s.scuola_id}
+                  {...(propria ? { 'data-testid': 'sede-propria' } : {})}
+                  className={`flex items-center justify-between gap-2 font-maven text-sm ${
+                    propria ? 'font-bold text-kidville-green' : 'text-kidville-sub'
+                  }`}
+                >
+                  <span>
+                    {propria && <span aria-hidden="true">▸ </span>}
+                    {nomeDiSede(s.scuola_id)}
+                  </span>
+                  <BadgeStato stato={s.stato ?? 'pending'} />
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ) : (
+        <p className="flex items-center gap-1.5 rounded-xl bg-kidville-green-soft px-3 py-2 font-barlow text-sm font-extrabold uppercase tracking-[0.03em] text-kidville-green">
+          <MapPin size={14} /> {t('candSede')} <strong>{nomeSede}</strong>
+        </p>
+      )}
 
       <section>
         <h3 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-kidville-sub">

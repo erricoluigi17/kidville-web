@@ -79,6 +79,8 @@ vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => '
  * togliere la riga di guardia da `carica` e la suite restava verde).
  */
 let reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
+/** La sede scelta nel selettore in alto: è quella su cui si decide. */
+let sedeCorrenteFinta: string | null = null
 vi.mock('@/lib/context/sede-context', () => ({
   useSediAttive: () => ({
     sedi: [
@@ -87,7 +89,7 @@ vi.mock('@/lib/context/sede-context', () => ({
     ],
     selezionate: [],
     effettive: reFetchKeyCorrente.split(','),
-    sedeCorrente: null,
+    sedeCorrente: sedeCorrenteFinta,
     reFetchKey: reFetchKeyCorrente,
     epocaSede: 0,
     loading: false,
@@ -212,6 +214,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   ruoloCorrente = 'admin'
   reFetchKeyCorrente = 'sc-giugliano,sc-aversa'
+  sedeCorrenteFinta = null
   fetchMock.mockImplementation((url: string) => ok(rispostaPredefinita(url)))
   vi.stubGlobal('fetch', fetchMock)
   finestraAperta = null
@@ -1678,5 +1681,71 @@ describe('CandidatureInsegnanti — accessibilità e cataloghi', () => {
   it('adminAltro e adminModulistica: it ed en espongono lo stesso set di chiavi', () => {
     expect(Object.keys(itAdminAltro).sort()).toEqual(Object.keys(enAdminAltro).sort())
     expect(Object.keys(itAdminModulistica).sort()).toEqual(Object.keys(enAdminModulistica).sort())
+  })
+})
+
+describe('CandidatureInsegnanti — una candidatura rivolta a PIÙ sedi', () => {
+  /** Il dettaglio di una candidatura in valutazione a Giugliano E ad Aversa. */
+  const DUE_SEDI = {
+    ...DETTAGLIO,
+    sedi: [
+      { scuola_id: 'sc-giugliano', stato: 'pending' },
+      { scuola_id: 'sc-aversa', stato: 'rifiutata' },
+    ],
+  }
+
+  function serverConDueSedi(corpoPatch?: unknown) {
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok(corpoPatch ?? { success: true, esitoAccount: 'nessuno' })
+      const u = String(url)
+      if (u.includes('id=')) return ok({ data: DUE_SEDI })
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+  }
+
+  it('la scheda elenca TUTTE le sedi, con lo stato di ciascuna', async () => {
+    // Anche quelle che non sono di chi guarda: se nessuna delle due segreterie
+    // sa dell'altra, istruiscono la stessa pratica in parallelo e convocano la
+    // persona due volte con parole diverse.
+    serverConDueSedi()
+    await apriPrima()
+    // Il nome compare anche nel selettore in alto: si guarda DENTRO l'elenco
+    // dei plessi della scheda, non in tutta la pagina.
+    const elenco = screen.getByText(itAdminAltro.candSediMultiple).parentElement as HTMLElement
+    expect(within(elenco).getByText('Kidville Giugliano')).toBeInTheDocument()
+    expect(within(elenco).getByText('Kidville Aversa')).toBeInTheDocument()
+    // Senza una sede scelta nel selettore in alto NON si evidenzia niente: con
+    // due plessi e nessuna scelta, indicare «la tua» sarebbe inventarla.
+    expect(screen.queryByTestId('sede-propria')).toBeNull()
+  })
+
+  it('la sede su cui si sta decidendo è distinguibile dalle altre', async () => {
+    // Con tre plessi in elenco, «Approva» senza sapere quale riga si sta
+    // chiudendo è il gesto da cui esce la decisione sbagliata.
+    sedeCorrenteFinta = 'sc-aversa'
+    serverConDueSedi()
+    await apriPrima()
+    const propria = await screen.findByTestId('sede-propria')
+    expect(propria).toHaveTextContent('Kidville Aversa')
+  })
+
+  it('🔴 il PATCH DICHIARA la sede: senza, chi ha più sedi prende 400', async () => {
+    sedeCorrenteFinta = 'sc-aversa'
+    serverConDueSedi()
+    await apriPrima()
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+    // La conferma in due tempi resta: si preme, poi si conferma.
+    fireEvent.click(await screen.findByRole('button', { name: 'Confermo' }))
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PATCH')
+      expect(patch, 'nessun PATCH partito').toBeTruthy()
+      const corpo = JSON.parse((patch![1] as { body: string }).body) as Record<string, unknown>
+      expect(corpo.scuola_id).toBe('sc-aversa')
+    })
+  })
+
+  it('con una sede sola la riga resta quella di prima: nessun elenco dove non serve', async () => {
+    await apriPrima() // il dettaglio predefinito non ha `sedi`
+    expect(screen.queryByTestId('sede-propria')).toBeNull()
   })
 })

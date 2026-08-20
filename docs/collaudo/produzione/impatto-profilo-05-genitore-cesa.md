@@ -110,7 +110,7 @@ In tabella stanno solo i sintomi **visibili a schermo** a questo profilo. La fal
 | 16 | Col telefono **in inglese** compariva «Value must be … or later» dentro un'app italiana, in una bolla di sistema | fastidioso | 08/08 22:54 | `f59854ab` | inventario A.1 n.16 (la seconda metà, il calendario, è iOS: esclusa) |
 | 18 | **La stessa data in due formati nella stessa schermata**, e senza anno nell'elenco storico | bloccante | 08/08 22:54 | `f59854ab` | inventario A.1 n.18. La caduta della schermata richiede una data malformata nel database: non dimostrabile per questo account |
 | 20 | **«Caricamento…» per sempre**, senza messaggio e senza pulsante, quando manca un pezzo di bundle. `ChunkErrorBoundary` esisteva dal 03/08 con 11 test verdi e non era importato da nessun file | bloccante | 15/08 00:25 | `0e8480a3` | `git show --stat 0e8480a3 -- src/components/providers/RootProviders.tsx` → 15 righe aggiunte; oggi `RootProviders.tsx:45`; PRD:1472-1480 |
-| 22 | Il certificato scaricato portava **una banda verde inventata, «KIDVILLE SCHOOLS», l'indirizzo stampato due volte e la firma di un «Dirigente Scolastico»** che in una cooperativa non esiste | bloccante | 16/08 11:31 | `0974424a` | `git branch --contains 0974424a` → `main`; msg righe 1-8 |
+| 22 | Il certificato scaricato portava **una banda verde inventata, «KIDVILLE SCHOOLS», l'indirizzo stampato due volte e la firma di un «Dirigente Scolastico»** che in una cooperativa non esiste. **C'era dal primo giorno del test**, non dalle ultime ore | bloccante | 16/08 11:31 (tutta la finestra: dal 6/08) | `0974424a` | `git grep -c "KIDVILLE SCHOOLS" 29da34b4 -- 'src/app/(dashboard)/parent/modulistica/page.tsx'` → **2**, e `29da34b4` è del 6/08; `git branch --contains 0974424a` → `main` |
 | 23 | Il certificato protocollato usciva di **due pagine**, la seconda con la sola firma e tredici centimetri di vuoto; numero di protocollo stampato due volte | fastidioso | 16/08 11:31 | `0974424a` | inventario A.1 n.23; commit su `main` |
 | 24 | **Il modulo di autorizzazione alla gita non compariva mai**, e la notifica apriva `/parent` invece del modulo | bloccante | 16/08 11:31 | `0974424a` | msg riga 316 «Le gite smettono di essere due sistemi: il modulo compare quando la gita esiste»; riga 1850 sui due orari vuoti. **A Cesa nessuno organizzava gite**: il sintomo era invisibile qui |
 | 26 | Ho compilato il modulo d'iscrizione, ho firmato col codice, **e non è arrivato niente**: nessuna conferma, nessun riepilogo | bloccante | 15/08 02:48 | `b43a556e` | `src/lib/email/messaggi/ricevuta-iscrizione.ts:16-18`: «387 domande registrate, 381 con un indirizzo email valorizzato»; aggancio in `src/app/api/iscrizione/route.ts:25` introdotto da questo commit |
@@ -287,31 +287,43 @@ sul database, nessun file toccato all'infuori di questo.
 4. **Confine della finestra** — `git log main --since=2026-08-06 --until=2026-08-15` e
    `git log main --since=2026-08-14`: l'ultimo commit in produzione è `b87ee964` (17/08 01:35),
    nulla fra il 17 e il 20.
-5. **Il difetto n. 56, e perché è FUORI tabella** — `git show 3721f884 -- src/lib/scuole/anagrafica.ts`
-   → `max(20)` sostituito da `max(60)`; `git show -s --format=%ad 3721f884` → **16/08 01:35**;
-   `git branch --contains 3721f884` → **vuoto**: il commit non è su nessun branch, vive solo nella
-   storia schiacciata dalla squash `0974424a`. Il `400` è quindi interno alla lavorazione della PR #88.
-   `git show 125c5de9:src/lib/scuole/anagrafica.ts` → il tetto di 20 esisteva **dal 10/07**, non dal
-   15/08 (correzione alla finestra dell'inventario). Stato dell'anagrafica misurato il 15/08 —
-   compilati solo `email`, `legale_rappresentante` e la `denominazione` di Aversa — da
+5. **Il difetto n. 56, misurato sui due estremi dello STATO ROTTO** (e non sul commit che lo chiude,
+   che è l'errore da cui questa riga è passata) — `git branch --contains 0e0ba538 | grep -w main` →
+   `main`; `git show 0e0ba538:src/lib/scuole/anagrafica.ts` → `z.string().max(20)`;
+   `git show 0e0ba538:src/components/features/admin/settings/CampiAnagraficaSede.tsx` → il campo esiste,
+   riga 66; `git show 0974424a:src/lib/scuole/anagrafica.ts` → `z.string().max(60)`. Campo e tetto
+   insieme su `main` dalle **12:12 del 15/08 alle 11:31 del 16/08**, circa 23 ore servite.
+   Contro-misura conservata perché è la trappola: `git branch --contains 3721f884` → **vuoto**
+   (`3721f884`, 16/08 01:35, riassorbito dalla squash) — dice quando il difetto è stato chiuso *sul
+   ramo*, non che lo stato rotto non sia stato servito.
+   `git show 125c5de9:src/lib/scuole/anagrafica.ts` → il tetto di 20 esisteva **dal 10/07** (correzione
+   alla finestra dell'inventario). Stato dell'anagrafica il 15/08 — compilati solo `email`,
+   `legale_rappresentante` e la `denominazione` di Aversa — da
    `docs/superpowers/specs/2026-08-15-carta-intestata-e-modulistica-design.md:180-183`: nessuna delle
-   tre sedi aveva il codice meccanografico, quindi il certificato usciva monco in tutte e tre.
-6. **Il meccanismo che resta vero** — lettura di `src/lib/certificati/self-service.ts:45-58`
+   tre sedi aveva il codice, quindi a schermo la testata usciva monca in tutte e tre; il tetto decideva
+   **chi poteva ripararla**.
+6. **L'esclusione dei n. 4, 6, 7, 9, 10, 11** — `git grep -l "ComunicaAssenzaCard" 29da34b4 -- src` →
+   nessun file; `git show 29da34b4:src/app/api/parent/comunica-assenza/route.ts | grep -c "export const DELETE"`
+   → **0**. La schermata dell'assenza non esisteva all'inizio del test chiuso.
+7. **La finestra vera del n. 22** —
+   `git grep -c "KIDVILLE SCHOOLS" 29da34b4 -- 'src/app/(dashboard)/parent/modulistica/page.tsx'` →
+   **2**: la carta inventata era in produzione **dal 6 agosto**, non da 35 ore prima della correzione.
+8. **Il meccanismo che resta vero** — lettura di `src/lib/certificati/self-service.ts:45-58`
    (`buildIntestazioneSede`, riga «Cod. Mecc.» omessa **in silenzio** se il campo è vuoto),
    `src/lib/scuole/anagrafica.ts` (`componiIndirizzoSede`, e il valore sporco di Cesa documentato
    alle righe 130-131), `__tests__/lib/certificati-self-service.test.ts:50-62` (testata attesa delle
    tre sedi vere, Cesa compresa).
-7. **Il gate primaria/infanzia** — nel diff di `f59854ab`: rimozione di
+9. **Il gate primaria/infanzia** — nel diff di `f59854ab`: rimozione di
    `'Disponibile solo per la scuola primaria'` e test nuovo «NIDO: 201 (era 403 …)».
-8. **La schermata di scelta del plesso** — `git show a9dcc6d8^:src/components/features/public/EnrollmentWizard.tsx`
+10. **La schermata di scelta del plesso** — `git show a9dcc6d8^:src/components/features/public/EnrollmentWizard.tsx`
    riga 654 (`border-kidville-line`) contro la riga 725 di oggi (`border-kidville-neutral`), più il
    blocco di `src/app/globals.css:866-925` che misura 2,79:1 → 5,82:1 sulla superficie.
-9. **Chi è questo profilo** — `docs/collaudo/risultati/credenziali-tester-play-2026-08-05.md`
+11. **Chi è questo profilo** — `docs/collaudo/risultati/credenziali-tester-play-2026-08-05.md`
    (riga 61: un solo tester su Cesa), `scripts/seed-test-sedi.mjs` (un genitore, un bambino, sezione
    «TEST Infanzia»), `scripts/crea-account-tester.mjs:43-44` (`SEDE = 'Kidville Cesa'` con la guardia
    a runtime sugli alunni reali), `PRD REGISTRO ELETTRONICO.md:1517` e `:8800`.
-10. **L'esclusione del n. 25** — lettura di `src/lib/anno-scolastico.ts:25-27`.
-11. **L'esclusione del n. 61** — `git grep -n "fiscalCodeApi" a9dcc6d8^ -- src`: tre soli chiamanti,
+12. **L'esclusione del n. 25** — lettura di `src/lib/anno-scolastico.ts:25-27`.
+13. **L'esclusione del n. 61** — `git grep -n "fiscalCodeApi" a9dcc6d8^ -- src`: tre soli chiamanti,
     tutti in `src/components/features/admin/`.
 
 **Nessun dato personale in questo documento**: nessun indirizzo email di tester, nessun nome di

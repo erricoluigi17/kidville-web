@@ -222,6 +222,35 @@ Non è un dettaglio di stile: sono i casi in cui l'autore aveva già scritto la 
 
 ## Dove i dodici documenti si contraddicono
 
+> 🔻 **AGGIORNAMENTO — le contraddizioni qui sotto sono state CHIUSE il 2026-08-20, terzo giro.**
+>
+> Questa sezione è stata scritta quando i documenti ancora divergevano. I comandi che decidono erano
+> già qui, e sono stati applicati: cinque documenti sono stati corretti di conseguenza, e i tagli
+> sono stati **riverificati uno per uno** invece di essere creduti sulla parola dei correttori.
+>
+> | Documento | Righe tolte | Righe rimesse |
+> |---|---|---|
+> | 04 · genitore Aversa | n. 4, 6, 9, 10, 11 (il 7 era già fuori) | — |
+> | 05 · genitore Cesa | n. 4, 6, 7, 9, 10, 11 | **n. 56** |
+> | 08 · maestra primaria | n. 9, 10 | — |
+> | 10 · segreteria multi-sede | n. 44, 48, 53, 55 | — |
+> | 11 · Direzione | n. 46, 58 | — |
+>
+> **Il n. 56 è il caso che vale la pena rileggere**, ed è l'unico movimento in senso opposto: era
+> stato *tolto* al secondo giro applicando la regola dello squash, e la misura del §3 qui sotto
+> dimostra che quell'esclusione era sbagliata. Lo stato rotto è stato servito per circa 23 ore.
+>
+> 🔑 **La regola dello squash funziona in una direzione sola.** Toglie dagli elenchi i difetti nati
+> e morti dentro la stessa lavorazione, e oggi ha avuto ragione decine di volte. Ma applicata al
+> contrario accorcia troppo: che il commit di *riparazione* non stia su un ramo dice quando il
+> difetto è stato chiuso **sul ramo**, non che lo stato rotto non fosse in produzione. Il controllo
+> giusto non è «dove sta il commit che ripara», è **«a quale stato di `main` era esposto un
+> utente»**.
+>
+> Le sezioni che seguono restano scritte al presente, com'erano: cancellarle nasconderebbe il
+> percorso, e il percorso è la ragione per cui l'elenco finale regge.
+
+
 Le dichiaro invece di sceglierne una in silenzio, come prescritto. Dove un comando risolve la
 contraddizione, lo scrivo: **risolvere non è scegliere in silenzio**.
 

@@ -29,9 +29,12 @@ genitore** (indirizzo email, indirizzo IP, dispositivo). In due dei tre punti in
 quegli stessi dati finivano anche nell'**archivio delle scritture del docente**, che si conserva per
 anni.
 
-Dall'altra parte della stessa funzione, un genitore che comunicava un'assenza poteva **riscrivere
-l'appello già fatto** quella mattina; e se poi la annullava, il registro perdeva **una presenza di un
-giorno qualunque del passato**.
+Sulla carta, in quegli stessi giorni, un genitore che comunicava un'assenza avrebbe potuto
+**riscrivere l'appello già fatto** quella mattina, e annullandola far sparire dal registro **una
+presenza di un giorno qualunque del passato**. Scrivo «sulla carta» perché il meccanismo esisteva
+davvero nel codice ma **non poteva scattare**: in quella finestra nessun genitore aveva il riquadro
+per comunicare un'assenza, e l'annullamento non esisteva affatto. La prova sta più sotto, fra le
+cose che questo profilo non poteva incontrare.
 
 **La sera dell'8 agosto** entra in produzione la correzione che chiude tutto questo blocco. Da lì in
 poi l'appello apre sul giorno giusto, i conteggi si fermano a ciò che è davvero accaduto, gli errori
@@ -60,12 +63,6 @@ sviluppo e non è mai stato installato da nessuno.
 | 30 | Nella notifica «Assenza comunicata» — l'unico testo che quella funzione scriveva per la maestra — la data usciva come `2026-08-09T…Z` invece di `09/08/2026` | cosmetico | 8 ago 2026 (sera) | `f59854ab` | ✅ `git show --stat --oneline f59854ab` · `git branch --contains f59854ab` → `main` |
 | 31 | Sulle uscite e le gite, i rifiuti del server erano frasi scritte a mano in italiano, senza un codice a cui agganciare una traduzione: con il telefono in inglese non avevano una versione inglese da mostrare. Con la correzione ognuno ha il suo codice e la sua frase nelle due lingue | fastidioso (**latente**: vedi più sotto) | 15 ago 2026, notte | `0e8480a3` | ✅ `git show --stat --oneline 0e8480a3` · `git branch --contains 0e8480a3` → `main` |
 | 33 | Un genitore **che non aveva fatto niente** si vedeva rispondere «questo non è tuo figlio» perché una lettura era fallita, e finiva contato fra i tentativi di accesso abusivo. Il difetto stava nel controllo comune a venti schermate della famiglia | bloccante | 8 ago 2026 (sera) | `f59854ab` | ✅ `git show --stat --oneline f59854ab` · `git branch --contains f59854ab` → `main` |
-| 9 (A.1) | **L'appello appena fatto veniva riscritto dal genitore.** Il bambino era stato visto entrare e segnato presente; la comunicazione d'assenza della famiglia gli passava sopra e faceva partire alla maestra un avviso «sarà assente». La riga che restava non era né dell'una né dell'altro, e dall'app non si poteva più aggiustare | bloccante | 7-8 ago 2026 | `f59854ab` | ✅ `git show --stat --oneline f59854ab` · `git branch --contains f59854ab` → `main` |
-| 10 (A.1) | **Dal registro spariva una presenza di un giorno passato.** Bastava che un genitore annullasse un'assenza: la cancellazione non guardava di quale giorno si trattasse | bloccante | 7 ago 2026 | `f59854ab` | ✅ `git show --stat --oneline f59854ab` · `git branch --contains f59854ab` → `main` |
-
-I numeri 9 e 10 stanno nella sezione A.1 dell'inventario perché il gesto è del genitore. Sono qui
-perché **il danno cade sul registro della maestra**, ed è lei che se ne accorge — o che non se ne
-accorge, che è il caso peggiore.
 
 ## Quello che era specifico della primaria — e quello che coincide col profilo 07
 
@@ -111,8 +108,6 @@ numeri 30 e 33 significherebbe rimandare a qualcosa che lì non c'è.
 - **29** è comune sul prospetto mensile di `/teacher/attendance`, che è una schermata dei due gradi,
   e diverge sull'appello di primaria e sul monte ore, dove smette di essere una vista sbagliata e
   diventa una scrittura sbagliata.
-- **9** e **10** riguardano entrambi i gradi: la correzione ha esteso all'appello 0-6 la firma della
-  riga che la primaria già aveva.
 - **28**, invece, alla primaria pesa **di più**, e va detto al contrario di come suonerebbe un
   «coincide». Delle tre porte, le due che archiviavano quei dati per anni —
   `primaria/appello` e `giust-vista` — sono schermate **che esistono solo alla primaria**. E il
@@ -129,6 +124,17 @@ numeri 30 e 33 significherebbe rimandare a qualcosa che lì non c'è.
   maestra la mostra e nessuna sua richiesta la interroga. Il rimedio, per giunta, vive su un ramo di
   sviluppo (`ddfe3b0e`, verificato: `git branch --contains ddfe3b0e` **non** restituisce `main`) — è
   il database di produzione ad essere stato corretto, non l'app.
+- **I numeri 9 e 10 — l'appello riscritto dal genitore e la presenza sparita dal registro.** Li avevo
+  messi in tabella perché il danno cade sul registro della maestra. È vero che il meccanismo esiste
+  e che è documentato nel codice, ma **nessuna delle due cose poteva capitare a un tester**, e i
+  comandi lo dicono senza margine. Il n. 10 non era nemmeno raggiungibile: al 6 agosto la rotta che
+  annulla l'assenza **non aveva un annullamento** — `git show
+  29da34b4:src/app/api/parent/presenze/comunica-assenza/route.ts | grep -c 'export const DELETE'`
+  restituisce `0`, e l'unico verbo esportato è `POST`. Il n. 9 presuppone che un genitore possa
+  comunicare un'assenza, e il n. 2 dell'inventario dimostra che non è mai successo: il riquadro che
+  glielo permetteva non esisteva proprio (`git ls-tree -r --name-only 29da34b4 | grep
+  ComunicaAssenzaCard` → vuoto), e la prova indipendente sono **zero notifiche
+  `assenza_comunicata` da sempre**. Meccanismo reale e documentato, mai capitato.
 - **Il numero 32 (la barra in fondo), e l'errore era mio.** L'avevo messo in tabella: non ci va,
   perché **non è mai esistito in produzione**. `f59854ab` è uno squash con un solo genitore
   (`git rev-list --parents -n 1 f59854ab` → `f59854ab 29da34b4`), e al genitore la variabile a cui
@@ -162,8 +168,9 @@ numeri 30 e 33 significherebbe rimandare a qualcosa che lì non c'è.
 - **Il modulo di comunicazione dell'assenza dal lato genitore** (numeri 3-8, 12-26 della sezione
   A.1): il pulsante coperto dalla barra, il campo «Motivo» sotto il piede, il calendario che si
   apriva da solo, il certificato firmato per il figlio sbagliato. Sono schermate dell'area famiglia,
-  che questo account non apre. Di quella funzione, a questo profilo arrivano solo le conseguenze —
-  ed è quello che ho messo in tabella ai numeri 9 e 10.
+  che questo account non apre. Di quella funzione, a questo profilo sarebbero arrivate solo le
+  conseguenze — i numeri 9 e 10 — e nella finestra del collaudo non è arrivata nemmeno quelle: vedi
+  il punto qui sopra.
 
 ## Verifiche eseguite
 
@@ -171,7 +178,7 @@ Tutte in sola lettura: nessun `git` di scrittura, nessuna modifica fuori da ques
 accesso al database.
 
 1. **Fonte.** Letto per intero `docs/collaudo/produzione/00-INVENTARIO-difetti-6-20-agosto.md`.
-   Presi solo la PARTE A (sezione A.2 per intero, più i numeri 9 e 10 della A.1) e la PARTE C.1.
+   Presa solo la PARTE A (sezione A.2) e la PARTE C.1.
 2. **Esistenza dei commit.** `git show --stat --oneline <hash> | head -20` su `f59854ab` (8 ago
    2026, 22:54 — 260 file), `0e8480a3` (15 ago 2026, 00:25 — 98 file) e `ddfe3b0e` (20 ago 2026,
    01:27 — 10 file).
@@ -187,23 +194,29 @@ accesso al database.
    «nessuna sezione» (n. 27); la formattazione della data della notifica (n. 30); il controllo
    comune alle venti schermate della famiglia (n. 33); la scrittura
    condizionata che impedisce di passare sopra l'appello e la cancellazione legata al giorno
-   (nn. 9 e 10).
+   (nn. 9 e 10, poi esclusi — vedi il punto 6).
 5. **Raggiungibilità delle schermate.** Verificato che l'appello di primaria chiama davvero
    `primaria/appello`, `giust-vista` e il riepilogo del monte ore; che il prospetto mensile di
    `/teacher/attendance` è visibile anche a chi insegna solo alla primaria (voce di menù «comune»),
    mentre Diario e Armadietto sono voci dell'infanzia. Per le uscite/gite, `grep -rn
    "api/teacher/uscite" src/` non trova chiamanti: da qui la nota sul numero 31.
-6. **Prova dello squash, sul mio stesso commit.** `f59854ab` ha un solo genitore
+6. **Raggiungibilità dei numeri 9 e 10 al 6 agosto**, cioè sullo stato che i tester avevano in mano:
+   `git ls-tree -r --name-only 29da34b4 | grep ComunicaAssenzaCard` → vuoto (il riquadro con cui il
+   genitore comunica l'assenza non esisteva); `git show
+   29da34b4:src/app/api/parent/presenze/comunica-assenza/route.ts | grep -c 'export const DELETE'`
+   → `0` (l'annullamento non c'era: l'unico verbo esportato è `POST`). Da qui la loro uscita dalla
+   tabella.
+7. **Prova dello squash, sul mio stesso commit.** `f59854ab` ha un solo genitore
    (`git rev-list --parents -n 1 f59854ab` → `f59854ab 29da34b4`). Al genitore `29da34b4` la
    variabile `--kv-bottomnav-h` non esiste (`git grep -c "kv-bottomnav-h" 29da34b4` → vuoto; il
    primo commit che la introduce è `f59854ab` stesso) e le due barre in fondo sono identiche. Da qui
    la rimozione del n. 32 dalla tabella: un difetto nato e chiuso dentro lo stesso squash non è mai
    arrivato a nessun tester.
-7. **Confronto col profilo 07 invece di assumerlo.**
+8. **Confronto col profilo 07 invece di assumerlo.**
    `grep -nE "^\| [0-9]" impatto-profilo-07-maestra-infanzia.md` restituisce **tre** righe: 27, 29 e
    il n. 1. I numeri 30 e 33 lì non ci sono, e il 28 vi è trattato fuori tabella con la conclusione
    opposta a un «coincide». Da qui la riformulazione della sezione delle coincidenze.
-8. **Un rilievo emerso durante la verifica, che non è una riga dell'inventario e non lo diventa
+9. **Un rilievo emerso durante la verifica, che non è una riga dell'inventario e non lo diventa
    qui**: lo stesso commit `f59854ab` ha corretto una frase inglese rimasta nel piè di pagina
    *italiano* del registro presenze stampabile («Kidville Electronic Register» → «Registro
    Elettronico Kidville»). Lo scrivo per trasparenza sul metodo, non per aggiungere un difetto.

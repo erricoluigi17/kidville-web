@@ -24,11 +24,11 @@ su Play, sono i minuti in cui lo schermo cambiava da solo, anche a app già inst
 |---|---|
 | **6 → 11 agosto** | La settimana più silenziosa e la peggiore. Aperti e non ancora toccati: la scheda del genitore che non salvava niente (n. 40, aperta dal **5 luglio**), «Elimina Alunno (GDPR)» che falliva sulla stragrande maggioranza dei bambini (n. 38), il riquadro di conferma dell'anonimizzazione che contava i file senza nominarli (n. 39), la carta intestata che spariva al primo aggiornamento (n. 42), la «Sala d'Attesa» irraggiungibile (n. 43), la ricevuta di firma con email, IP e User-Agent stampati sul foglio (n. 54), le caselle di consenso con la label che inglobava l'informativa (n. 60). E, sopra tutto, il n. 37. |
 | **11 agosto, 10:16** (`a9dcc6d8`) | La scheda del genitore comincia finalmente a salvare. Chiusa anche la rotta di creazione adulti che accettava un `role` libero (n. 51, prima metà). |
-| **12 agosto, 07:09** (`65e3631c`) | Le pratiche del personale ferme in `in_approvazione` tornano ad avere un'uscita (n. 44); la spunta del modulo pubblico smette di regalare lo scope `primaria` (n. 50); le caselle di consenso vengono separate dall'informativa (n. 60). |
+| **12 agosto, 07:09** (`65e3631c`) | La spunta del modulo pubblico smette di regalare lo scope `primaria` (n. 50); le caselle di consenso vengono separate dall'informativa (n. 60). |
 | **12 agosto (ora non provata) → 13 agosto, 02:24** | **Le ore peggiori della finestra.** In giornata, il 12/08, una migrazione rinomina in produzione la colonna che teneva il percorso della scansione del documento. Da quel momento **nessuna scansione di documento d'identità del personale è più apribile in nessuna delle tre sedi** (n. 34), ogni fascicolo del personale risponde 503 (n. 35), il cruscotto Scadenze dichiara assenti scansioni che nell'archivio ci sono (n. 36). **L'istante di apertura non lo so**, e non lo scrivo: l'unica cosa che avrei da mostrare è il nome del file di migrazione, che dice quando quel file è stato *scritto*, non quando è stato *applicato*. Provata è solo la chiusura: **13/08 alle 02:24**. |
 | **13 agosto, 02:24** (`d7af75b6`) | Il rilascio che cambia la giornata di questo profilo: chiuso il n. 37 — e con lui 34, 35, 36, 38, 39, 57, 59. |
 | **15 agosto, 00:25 → 19:23** (`0e8480a3`, `b43a556e`, `0e0ba538`, `fcc51fc8`) | Quattro rilasci in diciannove ore: il certificato Bonus Nido torna rilasciabile alla famiglia sospesa (n. 52); il curriculum di chi si è candidato a un altro plesso smette di essere firmabile dalla Segreteria sbagliata (n. 49); **nasce** la schermata «Sede & Intestazione» che il messaggio d'errore prometteva da giorni (n. 41); «Prendo in considerazione questa candidatura» smette di consegnare le chiavi del registro (n. 47, 48). |
-| **16 agosto, 11:31** (`0974424a`) | L'ultimo rilascio che questo profilo vede: carta intestata vera su ogni foglio (n. 55), nomi dei bambini non più tagliati a metà parola sul registro presenze (n. 53), la ricevuta di firma senza IP e User-Agent (n. 54), il tab dei template che finalmente conserva ciò che si carica (n. 42), la «Sala d'Attesa» tolta di mezzo (n. 43), il codice meccanografico a due valori accettato in scrittura (n. 56). |
+| **16 agosto, 11:31** (`0974424a`) | L'ultimo rilascio che questo profilo vede: la ricevuta di firma senza IP e User-Agent (n. 54), il tab dei template che finalmente conserva ciò che si carica (n. 42), la «Sala d'Attesa» tolta di mezzo (n. 43), il codice meccanografico a due valori accettato in scrittura (n. 56). |
 | **17 → 20 agosto** | In produzione, per questo profilo, **non cambia più niente di visibile**. Tutto il lavoro del 19-20 agosto vive su `feat/candidature-multisede` e non è mai stato in produzione. L'unica cosa che è stata vera in produzione in quelle ore è invisibile dentro l'app: vedi l'ultima sezione. |
 
 ## Le sette pagine che chiedevano di usare un menu che non c'era
@@ -104,19 +104,15 @@ raggiunto l'app, senza bisogno di aggiornare nulla su Play.
 | **39** | Si confermava un'anonimizzazione **irreversibile** leggendo «file da rimuovere: 3»: dentro c'erano pagelle e certificati medici che nessuna riga nominava. Se il controllo preventivo falliva l'avviso restava muto e **il bottone rosso restava premibile**. E nell'altro pannello si leggevano i numeri **di un bambino diverso** | bloccante | 13/08 02:24 | `d7af75b6` | ✅ su `main` |
 | **40** | **La scheda del genitore non salvava niente.** Ogni «Salva» falliva, dal 5 luglio | bloccante | 11/08 10:16 | `a9dcc6d8` | ✅ su `main` |
 | **51** | Creare un adulto dal pannello era irraggiungibile e lasciava account a metà — e il campo del ruolo era **testo libero**: dal pannello di segreteria ci si sarebbe potuti creare un `admin` | bloccante (latente) | 11/08 10:16 e 12/08 07:09 | `a9dcc6d8`, `65e3631c` | ✅ entrambi su `main` |
-| **44** | Una pratica del personale ferma in «in approvazione» **non aveva nessuna uscita**: tutti e tre i comandi spenti, mentre il server avrebbe accettato «rifiuta» | bloccante | 12/08 07:09 | `65e3631c` | ✅ su `main` |
 | **50** | **Una spunta sbagliata su un modulo pubblico e anonimo dava a qualcuno l'elenco delle classi di primaria** — cioè i bambini. La casella arrivava dal form e veniva applicata anche a un account che esisteva già | bloccante | 12/08 07:09 | `65e3631c` | ✅ su `main` |
 | **60** | Le caselle di consenso avevano **la label che inglobava l'intero testo dell'informativa**, anche sui due percorsi già in produzione: proprio dove la volontà dev'essere inequivocabile | fastidioso | 12/08 07:09 | `65e3631c` | ✅ su `main` |
 | **47** | **«Prendo in considerazione questa candidatura» consegnava nello stesso clic le chiavi del registro di 33 minori**: creava un account da educatrice e ne spediva la password a un indirizzo arrivato da un modulo pubblico anonimo. Mentre approvare l'anagrafica vera **non spediva niente**, e mostrava la password in un riquadro che chiudendosi se la portava via | bloccante | 15/08 19:23 | `fcc51fc8` | ✅ su `main` |
-| **48** | Approvare **una cuoca** avrebbe creato un account che legge l'anagrafica dei bambini | bloccante | 15/08 02:48 | `b43a556e` | ✅ su `main` |
 | **49** | La Segreteria di una sede poteva farsi firmare **il curriculum di chi si era proposto a un'altra** | bloccante | 15/08 02:48 | `b43a556e` | ✅ su `main` |
 | **41** | I prestampati firmati dalla Scuola rifiutavano di uscire dicendo «aggiungilo nelle impostazioni della sede» — **e nelle impostazioni non c'era niente da aggiungere**. Peggio: il nome del legale rappresentante **veniva cancellato al primo salvataggio**. E la schermata dove si compila non era in nessun menu | bloccante | 15/08 12:12 | `0e0ba538` | ✅ su `main` |
 | **52** | Il certificato per il Bonus Nido era **irrilasciabile proprio alla famiglia sospesa per morosità**, che è quella che lo chiede | fastidioso | 15/08 00:25 | `0e8480a3` | ✅ su `main` |
 | **42** | Trascinavo la carta intestata nel tab dei template, leggevo «documento caricato», e **al primo aggiornamento della pagina era sparito tutto** | bloccante | 16/08 11:31 | `0974424a` | ✅ su `main` |
 | **43** | Il pannello **«Sala d'Attesa» era irraggiungibile da mesi** | fastidioso | 16/08 11:31 | `0974424a` | ✅ su `main` |
-| **53** | Il registro presenze **tagliava i nomi dei bambini a metà parola**, senza puntini e senza avviso — su un foglio che serve a dire chi era presente | bloccante | 16/08 11:31 | `0974424a` | ✅ su `main` |
 | **54** | La ricevuta di firma stampava sul foglio **l'email di chi aveva firmato, il suo indirizzo IP e l'intero identificativo del suo browser**; e l'ora della firma usciva due ore indietro | bloccante | 16/08 11:31 | `0974424a` | ✅ su `main` |
-| **55** | Tre fogli di carta intestata — marchio, filigrana, P.IVA, **le tre sedi** — spediti a un fornitore, consegnati a una famiglia, allegati a un ente, con sopra due righe di conteggio. Più: registro senza intestazione dalla seconda pagina, banda bianca che cancellava la filigrana, titolo che cadeva sulle lettere, indirizzo stampato sopra la parola «Kidville» | bloccante | 16/08 11:31 | `0974424a` | ✅ su `main` |
 | **56** | Salvare l'anagrafica di sede **rispondeva «dati non validi»**: il limite di 20 caratteri sul codice meccanografico era tarato su un codice solo | fastidioso | 16/08 11:31 | `0974424a` | ✅ su `main` |
 
 Un difetto elencato fra quelli del docente lo vedeva anche questa scrivania e va nominato: il **n.
@@ -172,16 +168,18 @@ proposto a un'altra sede» presuppone che le sedi siano più d'una. Una segreter
 la potenziale *vittima* del difetto — il curriculum arrivato a lei poteva finire sotto gli occhi di
 un altro plesso; questo profilo era, senza saperlo, la scrivania da cui il confine si attraversava.
 
-**n. 55 e n. 39 — il rumore di fondo del multi-plesso.** Sulla carta intestata sono stampate **tutte
-e tre le sedi**: i tre fogli usciti con sopra due righe di conteggio non erano un foglio qualunque,
-erano l'intestazione della cooperativa con i tre indirizzi, finiti a un fornitore, a una famiglia e a
-un ente. E il pannello dell'anonimizzazione che mostrava «i numeri di un bambino diverso» pesa
-diversamente su chi ha 33 bambini in una sede e su chi ne ha tre elenchi da tenere distinti.
+**n. 39 — il rumore di fondo del multi-plesso.** Il pannello dell'anonimizzazione che mostrava «i
+numeri di un bambino diverso» pesa diversamente su chi ha 33 bambini in una sede sola e su chi ne ha
+tre elenchi da tenere distinti: qui la domanda «di chi sono questi tre file che sto per cancellare
+per sempre» ha tre risposte possibili invece di una.
+
+*(In questo punto avevo messo anche il n. 55 — la carta intestata con le tre sedi stampate sopra. Ce
+l'ho tolto: vedi le esclusioni.)*
 
 **Dove i due profili coincidono, e lo dico senza girarci intorno:** i numeri **35, 36, 38, 40, 42,
-43, 44, 47, 48, 50, 51, 52, 53, 54, 57, 59, 60** colpivano allo stesso identico modo la segreteria di
-una sede sola. Sono diciassette su ventiquattro. Il profilo 10 non aggiunge nulla lì: aggiunge il 37
-(che è quasi tutto suo), e cambia il *significato* di 34, 41, 49, 55 e 56.
+43, 47, 50, 51, 52, 54, 57, 59, 60** colpivano allo stesso identico modo la segreteria di una sede
+sola. Sono quattordici su venti. Il profilo 10 non aggiunge nulla lì: aggiunge il 37
+(che è quasi tutto suo), e cambia il *significato* di 34, 39, 41, 49 e 56.
 
 ## Cosa questo profilo NON poteva incontrare, e perché lo scrivo
 
@@ -208,10 +206,12 @@ Lo scrivo lo stesso perché **i dati esposti erano suoi**: «quante candidature 
 plesso» è precisamente l'informazione che questa scrivania amministra. Il fatto che sia stato chiuso
 in trentasette minuti non lo rende meno vero — lo rende solo invisibile a chi lo subiva.
 
-**I numeri 45, 46 e 58 li avevo messi in tabella, e ce li ho tolti: nessuno dei tre è mai esistito
-in produzione nella forma in cui li avevo descritti.** È lo stesso errore ripetuto tre volte —
+**Sette numeri li avevo messi in tabella, e ce li ho tolti: nessuno dei sette è mai esistito in
+produzione nella forma in cui li avevo descritti.** È lo stesso errore ripetuto sette volte —
 attribuire a un utente il difetto di una schermata che, in quel momento, non era ancora sul suo
-telefono.
+telefono. In tutti e sette i casi la prova è la stessa e si legge in una riga: il file che contiene
+il difetto **nasce nel commit che lo corregge**. Un difetto trovato dal collaudo interno prima del
+rilascio è un difetto vero, ma non è un difetto che qualcuno abbia subìto.
 
 - **n. 46** («caricando il fronte di un documento leggevo la frase di un'altra schermata»): la rotta
   che quel pulsante chiama **nasce dentro `d7af75b6`** — `git log --diff-filter=A --
@@ -230,6 +230,26 @@ telefono.
   modulo che lo contiene (`src/lib/personale/percorso-documento.ts`) è **creato da `d7af75b6`**. È un
   difetto latente di superficie d'attacco, che appartiene a un audit di sicurezza, non al racconto di
   cosa vedeva una persona.
+- **n. 44** («la pratica ferma in approvazione non aveva nessuna uscita»): il pannello Pratiche
+  **nasce in `65e3631c`**, cioè nel commit che gli dà l'uscita —
+  `git log --all --diff-filter=A -- 'src/components/features/admin/*PratichePersonale*'
+  'src/app/api/admin/pratiche-personale/route.ts'` → `65e3631c`. I tre comandi spenti su tre sono un
+  difetto del lavoro pre-merge: nessuna pratica di nessuno è mai rimasta bloccata in produzione,
+  perché in produzione le pratiche non c'erano ancora.
+- **n. 48** («approvare una cuoca avrebbe creato un account che legge l'anagrafica dei bambini»): il
+  condizionale era già un indizio, e la misura lo conferma —
+  `git show a9dcc6d8:src/lib/forms/insegnanti-template.ts | grep -c cuoca` → **0**, contro **4** in
+  `b43a556e`. Prima del 15/08 il modulo pubblico era per sole maestre: **non c'era nessuna cuoca da
+  approvare**, quindi nessuna Segreteria poteva trovarsi davanti quel bottone. Il difetto e la
+  possibilità di commetterlo sono nati e morti nello stesso rilascio.
+- **n. 53 e n. 55** (nomi tagliati a metà sul registro presenze; i tre fogli di carta intestata con
+  sopra due righe di conteggio): `git log --diff-filter=A --name-only -- src/lib/carta/` →
+  **`0974424a` per tutti e sette i file**, cioè il motore che disegna marchio, filigrana e
+  intestazione nasce nel commit che lo corregge. **Nessun foglio con la carta intestata delle tre
+  sedi è mai uscito da questa app con sopra due righe di conteggio**, e nessun registro presenze è
+  mai stato stampato coi nomi troncati: prima del 16/08 quei fogli non esistevano affatto. È
+  l'esclusione che mi dispiace di più, perché era la riga più forte della sezione sul multi-sede —
+  ed è esattamente il motivo per cui va tolta.
 
 **La riapertura del n. 49 il 19-20 agosto: non è mai stata in produzione.** L'inventario segnala il
 n. 49 come riaperto il 19/08 e richiuso il 20/08 con `aa048978`. Quel commit **non è su `main`**
@@ -323,7 +343,7 @@ il file è arrivato su `main` *insieme* alla correzione, non prima.
 `git show "d7af75b6^:src/app/(dashboard)/admin/<pagina>/page.tsx" | grep -cE "useSede|sedeCorrente|SedeRequired"`
 → **0** su tutte e quattro. Nessuna guardia di sede, quindi nessun blocco.
 
-**Verifica su ciò che ho tolto dalla tabella** — tre comandi, tre risposte:
+**Verifica su ciò che ho tolto dalla tabella** — sette numeri, sette risposte:
 - `git log --diff-filter=A -- src/app/api/admin/anagrafica-personale/scansione/route.ts` → `d7af75b6`
   (n. 46: la rotta nasce nel commit che la «correggeva»);
 - `git grep -il "fronte" d7af75b6^ -- 'messages/**'` → **nessun risultato** (n. 46: il pulsante
@@ -331,7 +351,13 @@ il file è arrivato su `main` *insieme* alla correzione, non prima.
 - `git log --diff-filter=A -- src/components/features/admin/settings/AnagraficaSedeSettings.tsx` →
   `0e0ba538` (n. 45: il pannello nasce nel commit che lo «correggeva»);
 - `git log --diff-filter=A -- src/lib/personale/percorso-documento.ts` → `d7af75b6` (n. 58: il gate
-  nasce lì, e non ha comunque nessuna schermata).
+  nasce lì, e non ha comunque nessuna schermata);
+- `git log --all --diff-filter=A -- 'src/components/features/admin/*PratichePersonale*' 'src/app/api/admin/pratiche-personale/route.ts'`
+  → `65e3631c` (n. 44: il pannello nasce nel commit che gli dà l'uscita);
+- `git show a9dcc6d8:src/lib/forms/insegnanti-template.ts | grep -c cuoca` → **0**, e lo stesso
+  comando su `b43a556e` → **4** (n. 48: prima del 15/08 nessuna cuoca poteva candidarsi);
+- `git log --diff-filter=A --name-only -- src/lib/carta/` → **`0974424a`, tutti e sette i file**
+  (n. 53 e n. 55: il motore della carta intestata nasce nel commit che lo corregge).
 
 **Verifica sul n. 56** — dentro `0974424a`: lo schema di prima era
 `codice_meccanografico: z.string().max(20).nullish()`, e i tre valori veri sono

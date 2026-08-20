@@ -66,16 +66,22 @@ attivo il difetto più silenzioso: un pezzo di bundle mancante lasciava l'utente
 **15 agosto — l'app raddoppia, e i certificati escono sbagliati.** Alle 00:25 (`0e8480a3`) arrivano
 diciassette moduli di carta dentro l'app e il tab «Certificati» del genitore; alle 02:48
 (`b43a556e`) parte finalmente la ricevuta d'iscrizione, che fino a quel momento non era mai partita
-a nessuno. Ma per **trentacinque ore** — da `0e8480a3` (15/08 00:25) a `0974424a` (16/08 11:31) — il
-certificato che questo profilo poteva scaricare usciva con una banda verde inventata, la dicitura
-«KIDVILLE SCHOOLS», l'indirizzo stampato due volte, la firma di un «Dirigente Scolastico» che in una
-cooperativa non esiste, e senza il codice meccanografico in testata. Quest'ultima mancanza **non era
-di Cesa**: l'anagrafica di sede non era ancora stata scritta per nessuna delle tre, e il certificato
-usciva monco a Giugliano e ad Aversa esattamente come qui (vedi più avanti, «il 400 che sembrava di
-Cesa»).
+a nessuno.
 
-**16 agosto 11:31 (`0974424a`) — la carta vera.** Entra la carta intestata reale e viene scritta
-l'anagrafica delle tre sedi. Da qui in avanti un certificato di Cesa dice «Kidville Cesa»,
+**Ma la carta sbagliata non è arrivata il 15 agosto: c'era dal primo giorno del test.**
+`git grep -c "KIDVILLE SCHOOLS" 29da34b4 -- 'src/app/(dashboard)/parent/modulistica/page.tsx'` → **2**,
+e `29da34b4` è del 6 agosto. La banda verde inventata, la dicitura «KIDVILLE SCHOOLS», l'indirizzo
+stampato due volte e la firma di un «Dirigente Scolastico» che in una cooperativa non esiste sono
+state lì per **tutta la finestra**, dal 6 agosto alle 11:31 del 16. Il 15 agosto ha aggiunto altre
+strade per arrivarci, non il difetto.
+
+Alle 12:12 di quel giorno (`0e0ba538`) compare in Impostazioni il campo «codice meccanografico», con
+un tetto di 20 caratteri: per le ventitré ore successive **la sede di Cesa non poteva scrivere la
+propria identità nemmeno provandoci**, e la testata del certificato ha continuato a uscire senza il
+codice del plesso.
+
+**16 agosto 11:31 (`0974424a`) — la carta vera.** Entra la carta intestata reale, il tetto passa a 60
+caratteri e viene scritta l'anagrafica delle tre sedi. Da qui in avanti un certificato di Cesa dice «Kidville Cesa»,
 «Via Filippo Turati 2 — 81030 Cesa (CE)» e «Cod. Mecc. CE1AE75008 · CE1E05400Q».
 
 **17-20 agosto — l'app non cambia più.** L'ultimo commit arrivato in produzione è `b87ee964`
@@ -90,19 +96,15 @@ il deploy è diventato servibile**: fra il merge e la pagina che un tester apre 
 ogni guasto è durato un po' **più** di quanto si legge qui, mai meno. Dove l'inventario indica una
 data interna alla PR, la riporto nel testo.
 
-In tabella stanno solo i sintomi **visibili a schermo** a questo profilo. Due voci dell'inventario
-che lo riguardano — il n. 56 e la falla della notte del 20 — non ci stanno, e le due sezioni
-successive spiegano perché.
+In tabella stanno solo i sintomi **visibili a schermo** a questo profilo. La falla della notte del
+20 agosto è vera e sta in produzione, ma a schermo non si vedeva niente: sta in prosa, non qui.
 
 | # inv. | Cosa si vedeva a schermo | Gravità | Rotto fino al | Commit | Verificato |
 |---|---|---|---|---|---|
 | 1 | Scrivo alla maestra, mando un modulo, chiedo il codice via email, rispondo a un avviso: **premo e non succede niente**. Otto rotte rispondevano 500 con corpo vuoto a tutti i genitori non sospesi | bloccante | 08/08 22:54 | `f59854ab` | `git branch --contains f59854ab` → `main`; msg righe 484-501 (elenco delle otto rotte) |
 | 2 | «Comunica un'assenza»: **il pulsante c'era e l'errore era garantito**. La dashboard lo mostrava ai non-primaria, la rotta rispondeva 403 «Disponibile solo per la scuola primaria». Il bambino di questo account è di infanzia | bloccante | 08/08 22:54 (fix interno 07/08) | `f59854ab` | diff: `- return NextResponse.json({ error: 'Disponibile solo per la scuola primaria' }, { status: 403 })`; test aggiunto «NIDO: 201 (era 403 …)» |
 | 3 | Tocco «Comunica assenza» e **mi ritrovo sul Diario**: il pulsante d'invio era coperto al 100% dalla barra di navigazione | bloccante | 08/08 22:54 | `f59854ab` | inventario A.1 n.3 (`page.mouse.click(112, 823)` → `/parent/diary`); commit su `main` |
-| 4 | Tocco «Leggi l'informativa» e **parte la comunicazione dell'assenza** | bloccante | 08/08 22:54 | `f59854ab` | inventario A.1 n.4, riprodotto con `adb shell input tap` su WebView 390×731 |
 | 5 | Tocco il campo «Motivo» dove lo vedo e **finisco sul pulsante che invia**: su schermi 640-731 px il campo finiva sotto il piede | bloccante | 09/08 00:38 | `7ef10e87` | `git show --stat 7ef10e87` (include `e2e/parent-attendance-tocco.spec.ts`); su `main` |
-| 6 | Premo Invia, **la schermata non cambia di un pixel**: il messaggio di rifiuto nasceva dietro il piede appiccicato | bloccante | 08/08 22:54 | `f59854ab` | inventario A.1 n.6; commit su `main` |
-| 7 | Dopo l'elenco delle assenze la pagina **continua a scorrere su una schermata e mezza di nulla** (documento 2147 px, contenuto fino a 754) | fastidioso | 08/08 22:54 | `f59854ab` | inventario A.1 n.7; commit su `main` |
 | 14 | Mentre aspetto, **il pulsante primario è illeggibile**: contrasto 1,20:1 | fastidioso | 08/08 22:54 | `f59854ab` | inventario A.1 n.14 (→ 5,75:1); commit su `main` |
 | 15 | Con l'**Alto Contrasto** acceso i due campi erano **bianchi su bianco**; più due frasi a 2,51:1 e il formato `gg/mm/aaaa` che spariva digitando | bloccante (HC) | 08/08 22:54 | `f59854ab` | inventario A.1 n.15; commit su `main`. Vale se il tester aveva acceso l'Alto Contrasto |
 | 16 | Col telefono **in inglese** compariva «Value must be … or later» dentro un'app italiana, in una bolla di sistema | fastidioso | 08/08 22:54 | `f59854ab` | inventario A.1 n.16 (la seconda metà, il calendario, è iOS: esclusa) |
@@ -112,30 +114,77 @@ successive spiegano perché.
 | 23 | Il certificato protocollato usciva di **due pagine**, la seconda con la sola firma e tredici centimetri di vuoto; numero di protocollo stampato due volte | fastidioso | 16/08 11:31 | `0974424a` | inventario A.1 n.23; commit su `main` |
 | 24 | **Il modulo di autorizzazione alla gita non compariva mai**, e la notifica apriva `/parent` invece del modulo | bloccante | 16/08 11:31 | `0974424a` | msg riga 316 «Le gite smettono di essere due sistemi: il modulo compare quando la gita esiste»; riga 1850 sui due orari vuoti. **A Cesa nessuno organizzava gite**: il sintomo era invisibile qui |
 | 26 | Ho compilato il modulo d'iscrizione, ho firmato col codice, **e non è arrivato niente**: nessuna conferma, nessun riepilogo | bloccante | 15/08 02:48 | `b43a556e` | `src/lib/email/messaggi/ricevuta-iscrizione.ts:16-18`: «387 domande registrate, 381 con un indirizzo email valorizzato»; aggancio in `src/app/api/iscrizione/route.ts:25` introdotto da questo commit |
+| 56 | **Il certificato di mio figlio non dice da quale delle tre Kidville viene**, e per Cesa non poteva dirlo nemmeno provandoci: il campo «codice meccanografico» c'era in Impostazioni, ma accettava 20 caratteri — su misura per UN codice — e Cesa ne ha **due**, `CE1AE75008 · CE1E05400Q`, 23 caratteri. Salvare rispondeva `400` | fastidioso lato Segreteria, **visibile in testata** al genitore | 16/08 11:31 (~23 ore in produzione, dalle 12:12 del 15/08) | `0e0ba538` → `0974424a` | `git branch --contains 0e0ba538` → `main`; `git show 0e0ba538:src/lib/scuole/anagrafica.ts` → `z.string().max(20)`; `git show 0e0ba538:…/CampiAnagraficaSede.tsx:66` → il campo c'è; `git show 0974424a:…/anagrafica.ts` → `max(60)`. Il sintomo a schermo — testata senza «Cod. Mecc.» — sta in `src/lib/certificati/self-service.ts:57`, che omette la riga in silenzio |
 | 66 | Sulla schermata dove si sceglie **Giugliano, Aversa o Cesa**, il contorno fra una sede e l'altra era a **1,10:1**, cioè non esisteva, e il riempimento bianco su crema aggiunge 1,11:1 | fastidioso | 11/08 10:16 | `a9dcc6d8` | `git show a9dcc6d8^:src/components/features/public/EnrollmentWizard.tsx` riga 654 → `border-kidville-line`; oggi riga 725 → `border-kidville-neutral`, con il commento che misura 1,10:1 → 5,82:1 e nomina «la schermata su cui 375 famiglie hanno scelto il plesso del proprio figlio» |
 
 ## Quello che era specifico di questa sede — e quello che non lo era
 
-**Va detto subito, perché è la cosa più onesta di questo documento: sedici delle diciassette righe
-qui sopra sono le stesse del profilo 01, il genitore di Giugliano.** Le otto rotte a 500, il pulsante
-dell'assenza che non funzionava, il tocco che finiva sul Diario, l'Alto Contrasto, il
-«Caricamento…» eterno, il certificato con la carta inventata: nessuna di queste cose guarda la sede.
-Sono difetti dell'applicazione, e li prendeva chiunque avesse un account genitore, a Giugliano come
-a Cesa. **L'unica riga in tabella che esiste perché le sedi sono tre è il n. 66.** Il resto della
-specificità di Cesa sta fuori dalla tabella, ed è di tre tipi: una sfumatura dentro un difetto
-comune, un difetto vero ma invisibile a schermo, e — la parte più utile — una cosa che sembrava di
-Cesa e non lo era.
+**Va detto subito, perché è la cosa più onesta di questo documento: tredici delle quindici righe qui
+sopra sono le stesse del profilo 01, il genitore di Giugliano.** Le otto rotte a 500, il pulsante
+dell'assenza che non funzionava, l'Alto Contrasto, il «Caricamento…» eterno, il certificato con la
+carta inventata: nessuna di queste cose guarda la sede. Sono difetti dell'applicazione, e li prendeva
+chiunque avesse un account genitore. **Le righe che esistono perché le sedi sono tre sono due: il
+n. 66 e il n. 56.**
 
-**1. La schermata dove si sceglie il plesso (n. 66), l'unica specificità incontrabile.** È il solo
-punto in cui il carattere multi-sede del prodotto tocca il genitore, e lo tocca **prima** che abbia
-un account. Le card di Giugliano, Aversa e Cesa erano separate da un bordo `--color-kidville-line`
-(#EFE7DC) su fondo crema: **1,10:1**, cioè nulla — e con il riempimento bianco che su crema aggiunge
-1,11:1, quel contorno era l'unico indizio di dove finisse una sede e cominciasse l'altra. Il commento
-lasciato nel codice dice perché conta: *«questa è la schermata su cui 375 famiglie hanno scelto il
-plesso del proprio figlio»* (`EnrollmentWizard.tsx:715-724`). Per chi cerca Cesa e non Giugliano, un
-separatore invisibile fra due card non è cosmesi.
+**1. La schermata dove si sceglie il plesso (n. 66).** È il punto in cui il carattere multi-sede del
+prodotto tocca il genitore **prima** che abbia un account. Le card di Giugliano, Aversa e Cesa erano
+separate da un bordo `--color-kidville-line` (#EFE7DC) su fondo crema: **1,10:1**, cioè nulla — e con
+il riempimento bianco che su crema aggiunge 1,11:1, quel contorno era l'unico indizio di dove finisse
+una sede e cominciasse l'altra. Il commento lasciato nel codice dice perché conta: *«questa è la
+schermata su cui 375 famiglie hanno scelto il plesso del proprio figlio»*
+(`EnrollmentWizard.tsx:715-724`). Per chi cerca Cesa e non Giugliano, un separatore invisibile fra
+due card non è cosmesi.
 
-**2. L'indirizzo sporco, che a Cesa aveva la sua forma (sfumatura dentro il n. 22).** Fino al
+**2. Il campo troppo corto per un plesso doppio (n. 56).** Per il MIM nido/infanzia e primaria sono
+**due plessi distinti**, e sia Giugliano sia Cesa ne hanno due a testa. Aversa, con un codice solo
+(`CE1A178007`, 10 caratteri), nel campo da 20 ci sarebbe entrata. Cesa no: `CE1AE75008 · CE1E05400Q`
+fa 23. Per le circa ventitré ore in cui il campo è stato in produzione col tetto vecchio, **due sedi
+su tre non potevano scrivere la propria identità**, e il certificato del genitore continuava a uscire
+senza la riga «Cod. Mecc.» — che `buildIntestazioneSede()`
+(`src/lib/certificati/self-service.ts:45-58`) omette **in silenzio** quando il campo è vuoto, e lo fa
+dal 10/07. Un documento che va a un ente esce senza dire da quale plesso viene, e niente, da nessuna
+parte, lo segnala.
+
+### Come questo n. 56 è stato prima gonfiato, poi cancellato per sbaglio, e infine misurato
+
+Questa riga è passata per **due misure sbagliate in senso opposto**, e siccome la seconda l'ha fatta
+sparire dal documento vale la pena lasciarne traccia qui.
+
+**La mia, in eccesso.** Nella prima stesura avevo scritto che il `400` colpiva Cesa e non Aversa, e
+che perciò il 15 agosto il certificato di Cesa usciva monco mentre quello di Aversa no. Falso:
+l'anagrafica di sede non era ancora stata scritta per **nessuna** delle tre (spec del 15/08 — compilati
+solo `email`, `legale_rappresentante` e la `denominazione` di Aversa), quindi a schermo la testata
+usciva monca in tutte e tre. Il tetto decideva **chi poteva ripararla**, non chi la vedeva rotta.
+
+**La seconda, in difetto, ed è quella che aveva cancellato la riga.** `git branch --contains 3721f884`
+— il commit che porta `max(20)` a `max(60)` — non restituisce niente, perché la squash l'ha
+riassorbito. Da lì la conclusione: «nato e morto dentro la PR #88, in produzione non è mai esistito».
+**È la regola dello squash applicata al contrario.** Quella regola serve a non attribuire alla
+produzione un commit che non ci è arrivato; usata per dedurre che *lo stato rotto* non è mai stato
+servito, taglia via difetti veri. Che il commit di riparazione non stia su un ramo dice quando il
+difetto è stato chiuso **sul ramo**, non che nessuno l'abbia subito.
+
+**La misura che regge**, ed è sui due estremi dello stato rotto, non sul commit che lo chiude:
+
+```
+git branch --contains 0e0ba538 | grep -w main                              → main
+git show 0e0ba538:src/lib/scuole/anagrafica.ts | grep codice_meccanografico → z.string().max(20)
+git show 0e0ba538:…/CampiAnagraficaSede.tsx    | grep meccanografico        → il campo c'è, riga 66
+git show 0974424a:src/lib/scuole/anagrafica.ts | grep codice_meccanografico → z.string().max(60)
+```
+
+Il campo nell'interfaccia e il tetto da 20 caratteri sono stati **insieme su `main`** dalle 12:12 del
+15/08 alle 11:31 del 16/08: **circa ventitré ore servite in produzione**. La lezione, per i prossimi
+documenti: la regola dello squash accorcia gli elenchi, e va bene; applicata al contrario li accorcia
+**troppo**. La domanda giusta non è «dov'è il commit che ripara», è «quando lo stato rotto era su
+`main`».
+
+**Resta vera, e non dipende da nessuna delle due misure**, la correzione alla finestra
+dell'inventario: il tetto di 20 caratteri **non è nato il 15 agosto**, c'era dal **10 luglio**
+(`125c5de9:src/lib/scuole/anagrafica.ts:8`, su `main`). Il 15 agosto è il giorno in cui è arrivato il
+campo che permetteva di andarci a sbattere.
+
+**3. L'indirizzo sporco, che a Cesa aveva la sua forma (sfumatura dentro il n. 22).** Fino al
 16 agosto `scuole.indirizzo` conteneva la riga già scritta per esteso, e per Cesa il valore era
 letteralmente «Via Filippo Turati 2, 81030 Cesa (CE)» — documentato in
 `src/lib/scuole/anagrafica.ts:130-131` e in `__tests__/lib/certificati-self-service.test.ts:193-194`.
@@ -143,37 +192,6 @@ Siccome `componiIndirizzoSede()` **aggiunge** CAP, città e provincia a ciò che
 stampava CAP e città due volte. Sul certificato vero misurato quel giorno (Giugliano) la riga uscì
 «Via Prima Traversa Antica Giardini 5, 80014 Giugliano in Campania (NA) — Giugliano». A Cesa il
 meccanismo è identico e il dato di partenza è identico nella forma: **stesso difetto, altra via**.
-Non è una specificità in più, è la stessa riga n. 22 vista da qui.
-
-### Il 400 che sembrava di Cesa, e non lo era
-
-L'inventario, al n. 56, dice che salvare l'anagrafica di sede rispondeva `400` perché il tetto di
-20 caratteri sul codice meccanografico era su misura per **un** codice, e Giugliano e Cesa ne hanno
-due a testa (`CE1AE75008 · CE1E05400Q` per Cesa: 23 caratteri). Sembra l'aggancio perfetto per questo
-profilo. **Non lo è, e va detto invece che sfruttato.**
-
-Il `400` nasce **al primo tentativo di scrittura vero, dentro la lavorazione della PR #88, e muore
-nella stessa lavorazione**: il commit che porta `max(20)` a `max(60)` è `3721f884` del 16/08 01:35, e
-`git branch --contains 3721f884` non restituisce **niente** — vive solo nella storia schiacciata dalla
-squash. In produzione quel rifiuto non è mai esistito come stato dell'applicazione: è un attrito
-interno alla riparazione, non un guasto che qualcuno ha subito.
-
-E soprattutto: fino a quel momento l'anagrafica di sede **non era stata scritta per nessuna delle
-tre**. La misura è nella spec del 15/08 — compilati solo `email`, `legale_rappresentante` e la
-`denominazione` di Aversa; tutto il resto `null`. Quindi fra il 15 e il 16 agosto il certificato
-usciva senza «Cod. Mecc.» **anche a Giugliano e anche ad Aversa**. Dire «Aversa passava, Giugliano e
-Cesa no» descrive il salvataggio del 16 agosto, non un esito diverso a schermo il 15: a schermo
-l'esito era identico nelle tre sedi, ed è già la riga n. 22.
-
-**Due cose di quel rilievo restano vere e le tengo**, perché non dipendono dal 400:
-
-- Il meccanismo. `buildIntestazioneSede()` (`src/lib/certificati/self-service.ts:45-58`) stampa la
-  riga «Cod. Mecc. …» **solo se il campo è pieno** e **omette in silenzio** ciò che manca — e lo fa
-  dal 10/07 (`125c5de9`). Un documento che va a un ente esce senza dire da quale plesso viene, e
-  niente, da nessuna parte, lo segnala.
-- La correzione alla finestra dell'inventario. Il tetto di 20 caratteri **non è nato il 15 agosto**:
-  c'era dal **10 luglio** (`125c5de9:src/lib/scuole/anagrafica.ts:8`, su `main`). Il 15 agosto è solo
-  il giorno in cui qualcuno ha provato per la prima volta a scriverci dentro il valore vero.
 
 ### Il difetto della notte del 20: reale, per plesso, e invisibile
 
@@ -191,11 +209,10 @@ per chi stava leggendo.
 
 ### E una specificità in negativo, che vale quanto le altre
 
-A Cesa **non c'erano né famiglie vere né personale**. Perciò tutta la famiglia di difetti che
-richiede una maestra dall'altra parte — il genitore che sovrascrive l'appello già fatto (n. 9),
-l'annullamento che cancella una presenza passata (n. 10), il motivo sanitario sovrascritto in
-silenzio (n. 11) — a Cesa **non aveva chi la innescasse**. Sono difetti veri, gravi e in produzione:
-semplicemente, non su questo tavolo.
+A Cesa **non c'erano né famiglie vere né personale**: nessuna maestra faceva l'appello, nessuno
+organizzava gite, nessuno scriveva nel diario. Anche là dove un difetto era raggiungibile in teoria,
+qui mancava chi lo innescasse dall'altra parte. È una ragione **in più** rispetto a quelle misurate
+nella sezione successiva, non un sostituto: dove ho potuto misurare, ho misurato.
 
 ## Cosa questo profilo NON poteva incontrare, e perché lo scrivo
 
@@ -226,10 +243,18 @@ Un elenco che comprende tutto non dimostra niente. Queste voci dell'inventario l
   figlio. Non lo conto come difetto incontrato.
 - **n. 62-65, 67-71 — riepilogo che non riepiloga, bordi degli errori, curriculum, `<main>` mancante.**
   Sono `/lavora-con-noi`, il modulo per candidarsi a lavorare nella scuola. Un genitore non ci passa.
-- **n. 27-33 (docente) e n. 34-60 (segreteria e direzione), n. 56 compreso.** Fuori ruolo. Sul n. 56
-  — che a prima vista sembrava uscire dal pannello della Segreteria e finire sul foglio del genitore —
-  la sezione «Il 400 che sembrava di Cesa» spiega perché non regge: il rifiuto è nato e morto dentro
-  la lavorazione della PR #88 e non è mai stato uno stato dell'applicazione in produzione.
+- **n. 4, 6, 7, 9, 10, 11 — i difetti della schermata dell'assenza.** Li avevo messi in tabella, e li
+  tolgo: la schermata su cui vivono **non esisteva** all'inizio del test chiuso. A `29da34b4` (6/08
+  17:52, l'ultimo commit prima di `f59854ab`) `git grep -l "ComunicaAssenzaCard" 29da34b4 -- src` non
+  trova niente, e `grep -c "export const DELETE"` sulla rotta dà **0** — quindi né l'informativa che
+  faceva partire l'invio, né il messaggio dietro il piede, né lo scorrimento a vuoto, né la
+  sovrascrittura dell'appello, né l'annullamento che cancellava una presenza passata potevano essere
+  incontrati da chi ha aperto l'app fra il 6 e l'8 agosto. Restano il n. 2 (il pulsante c'era e la
+  rotta rispondeva 403), il n. 3 e il n. 5, che vivono **dopo** l'arrivo della card. I profili 01, 02
+  e 03 escludono gli stessi sei, e hanno ragione.
+- **n. 27-33 (docente) e n. 34-55, 57-60 (segreteria e direzione).** Fuori ruolo. Il n. 56 è l'unica
+  eccezione, ed è in tabella: il suo effetto **esce** dal pannello della Segreteria e finisce stampato
+  in testata sul foglio che il genitore scarica.
 - **La falla della notte del 20 agosto (PARTE C.1).** Reale in produzione, e la più multi-sede
   dell'inventario — ma non **incontrabile**: a schermo, aprendo l'app, non se ne vedeva niente. Sta in
   prosa, non in tabella.

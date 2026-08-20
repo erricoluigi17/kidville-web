@@ -83,12 +83,13 @@ tabella aperta a chiunque (§ C.1 qui sotto).
 
 ## I difetti che questo profilo poteva incontrare
 
-**Il criterio, dichiarato una volta.** La tabella elenca ciò che era in produzione per questo
-profilo. Due righe — **n. 51** e **n. 58** — non avevano nessun sintomo a schermo: le tengo lo
-stesso, perché riguardano i due poteri che definiscono questo profilo (creare un accesso, custodire
-un documento d'identità), e la colonna «Cosa si vedeva a schermo» dice apertamente che non si vedeva
-niente. Il criterio vale per tutte e due: nessuna delle due è raccontata come qualcosa che un tester
-ha visto.
+**Il criterio, dichiarato una volta, ed è uno solo.** In tabella sta ciò che è **esistito** su
+`main`, cioè in produzione — non ciò che si vedeva. Le due cose non coincidono, e la differenza si
+misura: la riga **n. 51** non aveva nessun sintomo a schermo eppure resta, perché la porta che crea
+un adulto accettava davvero come «ruolo» qualunque parola sotto il gate della segreteria, ed è una
+superficie d'attacco vera; la dichiaro invisibile nella colonna «Cosa si vedeva a schermo» e non la
+racconto come qualcosa che un tester ha visto. Ciò che invece non è mai esistito su `main` in forma
+difettosa esce dalla tabella e finisce fra le esclusioni, per quanto grave suoni nell'inventario.
 
 | # inv. | Cosa si vedeva a schermo | Gravità | Rotto fino al | Commit | Verificato |
 |---|---|---|---|---|---|
@@ -98,7 +99,6 @@ ha visto.
 | 38 | «Elimina Alunno (GDPR)» falliva su 28 bambini su 33: un errore tecnico e nessuna cancellazione. Il pulsante prometteva una cosa che il sistema non sapeva fare | bloccante | 13/08 02:24 | `d7af75b6` | su `main`; misura «28 su 33» nel messaggio del commit |
 | 34 | Nessuna scansione di documento d'identità del personale si apriva più, in nessuna delle tre sedi, e la frase mostrata accusava chi guardava: «non esiste, oppure appartiene a un'altra sede» | bloccante | 13/08 02:24 | `d7af75b6` | su `main`; introdotto con `65e3631c` (12/08 07:09) |
 | 35 | Ogni apertura di un fascicolo del personale finiva in errore | bloccante | 13/08 02:24 | `d7af75b6` | su `main` |
-| 46 | Sbagliato il caricamento del fronte del documento, si leggeva la frase di un'altra schermata — mai la sola notizia che contava: il documento non è stato archiviato | bloccante | 13/08 02:24 | `d7af75b6` | su `main` |
 | 57 | Chi caricava la scansione della propria carta d'identità e chiudeva la pagina la lasciava nel magazzino senza nessuna riga che la nominasse: invisibile a chi deve conservarla, e non cancellabile su richiesta | bloccante | 13/08 02:24 | `65e3631c` · `d7af75b6` | entrambi su `main` |
 | 49 | La segreteria di una sede poteva farsi aprire il curriculum di chi si era proposto a un'altra: il pannello, davanti a due candidature che dichiaravano lo stesso curriculum, ne apriva una a caso, e la riga che tiene traccia dell'apertura la attribuiva alla candidatura sbagliata (chi aveva aperto era invece registrato giusto) | bloccante | 15/08 02:48 | `b43a556e` | su `main`; l'indice che chiude la porta è nella migrazione `20260814225302` dentro quel commit |
 | 28 | Aprendo il registro, al telefono di questo profilo arrivavano — senza mostrarli — il motivo sanitario scritto dal genitore, la nota dell'appello e la ricevuta della firma con email, indirizzo IP e modello di telefono del genitore | bloccante | 08/08 22:54 | `f59854ab` | su `main`; i test aggiunti verificano che quei campi non escano più |
@@ -106,7 +106,6 @@ ha visto.
 | 41 | I prestampati firmati dalla Scuola rifiutavano di uscire dicendo «manca il nome del legale rappresentante nelle impostazioni della sede: aggiungilo e riprova» — e nelle impostazioni non c'era niente da aggiungere. Se il nome veniva messo per altra via, il primo salvataggio lo cancellava | bloccante | 15/08 12:12 | `0e0ba538` | su `main`; la frase esiste in `0e0ba538^`, i campi per obbedirle nascono in `0e0ba538` |
 | 37 | Sette pagine — contabilità, news, mensa, modulistica, primaria, impostazioni, SIDI — dicevano «Hai più sedi attive. Scegline una sola dal menu in alto», e quel menu non si montava affatto. È il profilo che le sedi le ha davvero tutte e tre | bloccante | 13/08 02:24 | `d7af75b6` | su `main`; comportamento descritto nel commit e nel codice del componente |
 | 51 | Niente, a schermo: nessun pulsante la chiamava. Ma la porta che crea un adulto accettava come «ruolo» qualunque parola, e chi ha il profilo di segreteria avrebbe potuto crearsi un amministratore | bloccante (latente) | 12/08 07:09 | `a9dcc6d8` · `65e3631c` | entrambi su `main`; campo libero letto in `a9dcc6d8^`, porta rimossa nel file al 12/08 |
-| 58 | Niente, a schermo. Il controllo che verifica la forma del percorso di un documento del personale non veniva **mai** eseguito: dimostrato riscrivendolo perché dicesse sempre «va bene» e vedendo che non cambiava nulla | bloccante (latente) | 13/08 02:24 | `d7af75b6` | su `main`; la dimostrazione è nel messaggio del commit |
 | 36 | Il cruscotto delle scadenze dichiarava mancante la scansione di un documento che era archiviato, senza segnalare nessun errore | fastidioso | 13/08 02:24 | `d7af75b6` | su `main` |
 | 59 | L'elenco del personale era vuoto — nessuna scheda, dodici persone senza fascicolo — e il documento d'identità veniva chiesto su una faccia sola | fastidioso | 13/08 02:24 | `d7af75b6` | su `main` |
 | 60 | Nei moduli di consenso la casella da spuntare si portava dietro, come propria etichetta, l'intero testo dell'informativa: proprio dove la volontà deve essere inequivocabile | fastidioso | 12/08 07:09 | `65e3631c` | su `main`; valeva anche sui due percorsi già in produzione |
@@ -220,7 +219,7 @@ un'ora», «un buco vero che avevo aperto io un'ora prima»); **l'istante esatto
 
 ## Cosa questo profilo NON poteva incontrare, e perché lo scrivo
 
-Tre cose che stanno nell'inventario e che, misurate, **in produzione non sono mai state vere**.
+Quattro cose che stanno nell'inventario e che, misurate, **in produzione non sono mai state vere**.
 Le scrivo perché un elenco di difetti gonfiato di uno vale meno di un elenco corto e vero.
 
 1. **n. 44, «tre comandi spenti su tre» sulle pratiche del personale — mai in produzione.** Il
@@ -243,6 +242,17 @@ Le scrivo perché un elenco di difetti gonfiato di uno vale meno di un elenco co
    `git branch --contains` non trova `main` per nessuno dei due. Sull'ultimo commit di produzione la
    difesa è al suo posto, con scritto accanto perché. **In produzione la porta è chiusa dal 15
    agosto alle 02:48 e non si è più riaperta.**
+
+4. **n. 46 e n. 58, i due difetti sul documento del personale — mai in produzione in forma
+   difettosa.** La porta che carica la scansione dalla scheda della persona
+   (`src/app/api/admin/anagrafica-personale/scansione/route.ts`) e il modulo che controlla la forma
+   del percorso del documento (`src/lib/personale/percorso-documento.ts`) **nascono tutt'e due nel
+   commit che li corregge**, `d7af75b6` del 13 agosto: `git log --all --diff-filter=A` su ciascuno
+   dei due file non trova nessun commit precedente. Quindi la frase sbagliata mostrata dopo un
+   errore di caricamento (n. 46) e il controllo che non veniva mai eseguito (n. 58) non hanno mai
+   avuto una versione servita ai tester. Nel giro precedente avevo rimesso il n. 58 in tabella
+   ragionando sulla visibilità: era il criterio sbagliato — la domanda non è se si vedesse, ma se
+   sia esistito.
 
 E poi, per confine di profilo: le schermate del genitore e della maestra (righe 1-33 dell'inventario)
 e il lavoro di carta della segreteria — carta intestata, certificati protocollati, registro presenze,
@@ -290,6 +300,9 @@ nessun `git` che modifichi qualcosa, nessun accesso al database.
   più di quello che era. La riga di sorveglianza registrava correttamente **chi** apriva il
   curriculum; ciò che risultava sbagliato era **quale** candidatura veniva attribuita all'apertura,
   perché fra due righe che dichiaravano lo stesso curriculum ne usciva una a caso.
+- **n. 46 e n. 58**: `git log --all --diff-filter=A -- <file>` sui due file coinvolti — la rotta
+  della scansione e il modulo del controllo sul percorso — restituisce `d7af75b6` per entrambi, cioè
+  il commit che li corregge: prima non esistevano, né su `main` né altrove.
 - **C.1**: confrontata la prima stesura della migrazione (`e8319816`, 20/08 00:50:56) con quella
   corretta (`ddfe3b0e`, 20/08 01:27:07): nella prima la riga che chiude la tabella al pubblico
   **non c'è**; lette le sette colonne della tabella per dire con precisione cosa era esposto; letti

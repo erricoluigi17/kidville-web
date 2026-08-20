@@ -32,8 +32,8 @@ L'app Android è una WebView su `https://app.kidville.it`, quindi ogni correzion
   murata: il server rispondeva *«Disponibile solo per la scuola primaria»*. Ad Aversa, dove la
   primaria non esiste, **tutti** vedevano quel pulsante e **tutti** prendevano l'errore.
 - **8 agosto, dalle 22:54, alla mezzanotte e mezza del 9.** `f59854ab` chiude in un colpo solo le
-  otto rotte mute, il pulsante d'invio coperto dalla barra di navigazione (n. 3) e il messaggio di
-  rifiuto nato dietro il piede (n. 6). Da quel momento resta **un difetto solo**: il campo «Motivo»,
+  otto rotte mute e il pulsante d'invio coperto dalla barra di navigazione (n. 3), e porta in
+  produzione il modulo rifatto. Da quel momento resta **un difetto solo**: il campo «Motivo»,
   che su schermi da 640 a 731 px cadeva sotto il piede della schermata, così che toccandolo si
   premeva Invia. Chiuso da `7ef10e87` alle 00:38 del 9 agosto — **1 ora e 44 minuti** dopo.
 - **11 agosto.** Sul modulo pubblico d'iscrizione, la schermata in cui si sceglie il plesso smette
@@ -54,12 +54,7 @@ L'app Android è una WebView su `https://app.kidville.it`, quindi ogni correzion
 | 1 | Premo un pulsante e non succede niente, o compare un errore che non spiega niente. Vale per comunicare un'assenza, ritirarla, giustificarla, **scrivere alla maestra**, inviare un modulo, farsi mandare il codice di verifica, rispondere a un avviso | bloccante | **08/08 22:54** | `f59854ab` | `git show --stat` ok · su `main` · la stringa `"TURBOPACK unreachable"` è in `__tests__/lib/logging-with-route.test.ts:363` come valore reale del collaudo |
 | 2 | Il pulsante «Comunica un'assenza» c'è, lo premo, e il sistema risponde che il servizio è **solo per la scuola primaria**. Ad Aversa non c'è primaria: qui l'errore non era probabile, era certo | bloccante | **07/08** | `f59854ab` | `git show --stat` ok · su `main` · «Aversa non ha primaria attiva quest'anno» — `PRD REGISTRO ELETTRONICO.md:8826` |
 | 3 | Tocco «Comunica assenza» e mi ritrovo sul Diario: il pulsante d'invio era coperto dalla barra di navigazione | bloccante | **08/08** | `f59854ab` | `git show --stat` ok · su `main` |
-| 4 | Tocco «Leggi l'informativa» e invece **parte la comunicazione dell'assenza** | bloccante | **08/08** | `f59854ab` | `git show --stat` ok · su `main` |
 | 5 | Tocco il campo «Motivo» dove lo vedo e finisco sul pulsante che invia: su schermi da 640 a 731 px il campo cadeva sotto il piede | bloccante | **09/08 00:38** | `7ef10e87` | `git show --stat` ok · su `main` |
-| 6 | Premo Invia, la schermata non cambia di un pixel, ripremo. Il messaggio che spiegava il rifiuto nasceva **dietro** il piede | bloccante | **08/08** | `f59854ab` | `git show --stat` ok · su `main` |
-| 9 | Comunico l'assenza e **cancello l'appello che la maestra aveva già fatto** quel giorno | bloccante | **07-08/08** | `f59854ab` | `git show --stat` ok · su `main` |
-| 10 | Annullo un'assenza e sparisce dal registro **una presenza di un giorno qualunque del passato** | bloccante | **07/08** | `f59854ab` | `git show --stat` ok · su `main` |
-| 11 | Ricomunico lo stesso giorno e il motivo — che è un dato sanitario di mio figlio — viene sovrascritto senza dirmelo; se lo lascio vuoto, viene cancellato | bloccante | **08/08** | `f59854ab` | `git show --stat` ok · su `main` |
 | 14 | Mentre aspetto, il pulsante principale è illeggibile: contrasto **1,20:1** | fastidioso | **08/08** | `f59854ab` | `git show --stat` ok · su `main` |
 | 15 | Con l'Alto Contrasto acceso i due campi del modulo sono **bianchi su bianco**; la conferma non viene annunciata; due frasi stanno a 2,51:1 | bloccante (Alto Contrasto) | **07-08/08** | `f59854ab` | `git show --stat` ok · su `main` |
 | 16 | Col telefono in inglese leggo **«Value must be … or later»** dentro un'app italiana, in una finestrella di sistema | fastidioso | **08/08** | `f59854ab` | `git show --stat` ok · su `main` |
@@ -76,7 +71,7 @@ L'app Android è una WebView su `https://app.kidville.it`, quindi ogni correzion
 ## Quello che era specifico di questa sede — e quello che non lo era
 
 **Va detto subito, perché è la risposta onesta alla domanda che questo documento doveva porsi:
-venti delle ventuno righe qui sopra sono le stesse che avrebbe subito un genitore di Giugliano.**
+quindici delle sedici righe qui sopra sono le stesse che avrebbe subito un genitore di Giugliano.**
 I difetti delle assenze, il «Caricamento…» infinito, il certificato firmato per il figlio sbagliato,
 la gita che non compariva, la ricevuta d'iscrizione mai partita: nessuno di questi guardava la sede.
 Erano difetti del prodotto, non del plesso. Chi cercasse in questo documento un elenco di sventure
@@ -189,6 +184,21 @@ dell'inventario che ho **tolto**, e la ragione di ciascuna.
 - **n. 8 — la barra verde che sparisce e il testo che risale nella fascia della Dynamic Island** e
   **n. 17 — il calendario che si apre da solo**: sono difetti di iPhone. Il collaudo chiuso di cui
   parla questo documento è quello di **Google Play**, su Android.
+- **n. 4, 6, 9, 10 e 11 — i difetti delle assenze del 7-8 agosto: reali nel codice, mai capitati a
+  nessuno.** Li tenevo in tabella e sbagliavo. Lo stato che era in produzione il 6 agosto
+  (`29da34b4`, 06/08 17:52) dice tre cose. **Primo**: il modulo dell'assenza non era la scheda che
+  ho descritto — `ComunicaAssenzaCard` **nasce con `f59854ab`**, cioè col commit che ripara. Il
+  modulo vero stava in `parent/attendance/page.tsx`, 141 righe, e **non aveva né un link
+  all'informativa né un piede appiccicato**: il n. 4 (tocco «Leggi l'informativa» e parte la
+  comunicazione) e il n. 6 (il messaggio di rifiuto nato dietro il piede) non avevano la superficie
+  su cui verificarsi. **Secondo**: quella rotta aveva il solo `export const POST` — **nessun
+  `DELETE`** — quindi il n. 10 (annullo un'assenza e sparisce una presenza passata) non era
+  fisicamente raggiungibile. **Terzo**: il n. 9 e il n. 11 richiedono che un genitore *sia riuscito*
+  a comunicare un'assenza, e il n. 2 dimostra che non è mai successo — zero notifiche
+  `assenza_comunicata` da sempre. Sono difetti che il collaudo ha trovato **dentro il ramo**, fra un
+  giro e l'altro dei cinque collaudi, e che sono arrivati in produzione già corretti. Chiamarli
+  «incontrati da un tester» sarebbe falso.
+
 - **n. 25 — ogni «Scarica il certificato» ne riemetteva uno nuovo, con l'anno scolastico sbagliato.**
   Difetto vero, corretto il 16/08 con `0974424a`, ma **latente per tutta la finestra**: scattava solo
   fra le 00:00 e le 02:00 del **1° agosto**, quando il server (che contava in UTC) e l'utente (ora
@@ -230,6 +240,21 @@ cui il suo difetto è stato ugualmente reale (migrazioni applicate direttamente 
 **Il commit che apre il buco di C.1** — `e8319816` («Le sedi di una candidatura diventano righe…»),
 `2026-08-20 00:50:56`. Come `ddfe3b0e`, **non è su `main`**: `git branch --contains e8319816 | grep
 -w main` non restituisce niente.
+
+**Lo stato che era in produzione il 6 agosto** — `29da34b4` (06/08 17:52), per stabilire cosa
+esisteva davvero all'inizio del test chiuso:
+
+```
+git ls-tree -r --name-only 29da34b4 | grep ComunicaAssenzaCard                → vuoto
+git show 29da34b4:src/app/api/parent/presenze/comunica-assenza/route.ts \
+  | grep -c 'export const DELETE'                                             → 0
+```
+
+Verificato in più, per non fermarmi al nome di un file: `git grep -l "comunica-assenza" 29da34b4 --
+'src/*'` trova **un chiamante**, `src/app/(dashboard)/parent/attendance/page.tsx` — quindi il modulo
+c'era, ma era un altro (141 righe, nessuna `informativa`, nessun `DELETE`, nessun piede appiccicato).
+E `git log --diff-filter=A -- '*ComunicaAssenzaCard*'` dà **`f59854ab`**: la scheda descritta
+dall'inventario nasce con il commit che la ripara.
 
 **Date dei commit** — `git show -s --format='%ci'`: `f59854ab` 2026-08-08 22:54 · `7ef10e87`
 2026-08-09 00:38 · `a9dcc6d8` 2026-08-11 10:16 · `0e8480a3` 2026-08-15 00:25 · `b43a556e` 2026-08-15

@@ -290,5 +290,7 @@
   "erroreElencoClassiTipoNonAmmesso": "Questo tipo di file non si può caricare: serve un foglio di calcolo Excel (.xlsx o .xls)",
   "erroreElencoClassiTroppoGrande": "Il foglio è troppo grande: può pesare al massimo 4 MB",
   "erroreElencoClassiIlleggibile": "Il file è arrivato ma non si apre come foglio di calcolo: controlla che sia il file giusto e riprova",
-  "erroreElencoClassiAssente": "Per questa sede non è stato ancora caricato nessun elenco delle classi"
+  "erroreElencoClassiAssente": "Per questa sede non è stato ancora caricato nessun elenco delle classi",
+  "erroreCorpoNonValido": "La richiesta non è valida. Ricarica la pagina e riprova.",
+  "erroreLetturaFallita": "Non siamo riusciti a leggere i dati. Riprova fra poco."
 }

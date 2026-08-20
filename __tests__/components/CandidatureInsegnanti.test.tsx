@@ -1987,3 +1987,127 @@ describe('CandidatureInsegnanti — una candidatura rivolta a PIÙ sedi', () => 
     expect(screen.getByTestId('sede-propria')).toHaveTextContent('Kidville Giugliano')
   })
 })
+
+
+describe('l’inoltro ai plessi delle copie mai partite', () => {
+  /**
+   * ─── PERCHÉ QUESTO PULSANTE HA BISOGNO DI GUARDIANI ─────────────────────────
+   *
+   * È l'unico modo, in tutta l'applicazione, per far partire decine di email con
+   * dati personali di persone vere verso caselle vere. Non esiste un «annulla»
+   * per un'email spedita: se questo pulsante si comporta male, il danno è già
+   * fuori dal software quando qualcuno se ne accorge.
+   *
+   * Le tre cose che qui non possono rompersi: lo vede solo la Direzione, il primo
+   * clic NON spedisce, e il resoconto NOMINA ciò che non è andato.
+   */
+  const APRI = 'Inoltra ai plessi le copie mai partite'
+
+  /** Le chiamate POST all'inoltro, in ordine, col loro corpo. */
+  function chiamateInoltro() {
+    return fetchMock.mock.calls
+      .filter((c) => String(c[0]).includes('/inoltro-arretrato'))
+      .map((c) => JSON.parse(String((c[1] as { body?: string })?.body ?? '{}')))
+  }
+
+  function rispondiInoltro(corpo: unknown, status = 200) {
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes('/inoltro-arretrato')
+        ? ok(corpo, status)
+        : ok(rispostaPredefinita(String(url))),
+    )
+  }
+
+  it('la SEGRETERIA non lo vede nemmeno', async () => {
+    // Il gate vero è nella route (`requireStaff(['admin','coordinator'])`): questo
+    // serve a non far scoprire il divieto dopo il clic.
+    ruoloCorrente = 'segreteria'
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+    expect(screen.queryByText(APRI)).not.toBeInTheDocument()
+  })
+
+  it('la Direzione sì', async () => {
+    ruoloCorrente = 'admin'
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+  })
+
+  it('IL PRIMO CLIC NON SPEDISCE: chiede `prova` e mostra il conteggio', async () => {
+    // Se questo test cade perché il corpo non ha più `prova: true`, vuol dire che
+    // il primo tocco è diventato un invio vero. È il difetto peggiore possibile
+    // qui dentro, ed è per questo che l'asserzione è sul CORPO della richiesta e
+    // non su ciò che appare a schermo.
+    rispondiInoltro({ da_inviare: 7, senza_curriculum: 3, multi_sede: 1 })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText('Sì, inoltra')).toBeInTheDocument())
+    expect(chiamateInoltro()).toEqual([{ prova: true }])
+    expect(screen.getByText(/7 candidature non sono mai arrivate/)).toBeInTheDocument()
+  })
+
+  it('il SECONDO clic spedisce, e solo allora', async () => {
+    rispondiInoltro({ da_inviare: 2 })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText('Sì, inoltra')).toBeInTheDocument())
+    rispondiInoltro({ inviate: 2, fallite: 0, fermato: null })
+    fireEvent.click(screen.getByText('Sì, inoltra'))
+    await waitFor(() => expect(screen.getByText(/2 copie inviate/)).toBeInTheDocument())
+    expect(chiamateInoltro()).toEqual([{ prova: true }, {}])
+  })
+
+  it('«Annulla» torna indietro senza aver spedito niente', async () => {
+    rispondiInoltro({ da_inviare: 5 })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText('Annulla')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Annulla'))
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    expect(chiamateInoltro()).toEqual([{ prova: true }])
+  })
+
+  it('niente da fare → lo dice, e non offre un pulsante che non serve', async () => {
+    rispondiInoltro({ da_inviare: 0 })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText(/Nessuna copia in sospeso/)).toBeInTheDocument())
+    expect(screen.queryByText('Sì, inoltra')).not.toBeInTheDocument()
+  })
+
+  it('IL RESOCONTO NOMINA I FALLIMENTI: «inviate 3» che tace su 2 perse è un successo dichiarato su un guasto', async () => {
+    rispondiInoltro({ da_inviare: 5 })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText('Sì, inoltra')).toBeInTheDocument())
+    rispondiInoltro({ inviate: 3, fallite: 2, fermato: null })
+    fireEvent.click(screen.getByText('Sì, inoltra'))
+    await waitFor(() => expect(screen.getByText(/2 non sono partite/)).toBeInTheDocument())
+  })
+
+  it('quota esaurita → dice che le restanti partiranno domani, invece di sembrare finito', async () => {
+    rispondiInoltro({ da_inviare: 40 })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText('Sì, inoltra')).toBeInTheDocument())
+    rispondiInoltro({ inviate: 25, fallite: 0, fermato: 'quota-del-provider-esaurita' })
+    fireEvent.click(screen.getByText('Sì, inoltra'))
+    await waitFor(() => expect(screen.getByText(/esaurito la quota di oggi/)).toBeInTheDocument())
+    expect(screen.getByText(/ripremendo il pulsante domani/)).toBeInTheDocument()
+  })
+
+  it('un rifiuto del server non lascia il pannello a metà', async () => {
+    rispondiInoltro({ error: 'Non autorizzato.' }, 403)
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(APRI))
+    await waitFor(() => expect(screen.getByText(APRI)).toBeInTheDocument())
+    expect(screen.queryByText('Sì, inoltra')).not.toBeInTheDocument()
+  })
+})

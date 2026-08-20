@@ -52,7 +52,7 @@ const SCUOLA = SEDE_A
 const ENTITA = '11111111-1111-1111-1111-111111111111'
 
 const BASE = {
-  scuolaId: SCUOLA,
+  scuoleIds: [SCUOLA],
   dati: { nome: 'Maria', cognome: 'Rossi', email: 'maria@e.it', posizioni: ['cuoca'] },
   consensi: { presa_visione_informativa: true },
   sediScelte: [NOME_SEDE_A],
@@ -162,6 +162,20 @@ describe('inviaCopiaAllaSede', () => {
     const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
     expect(esito).toEqual({ ok: false, rinviabile: true })
     expect(campiLoggati().map((c) => c.esito)).toContain('copia-sede-non-inviata')
+  })
+
+  it('🔴 la quota esaurita GRIDA: qui «rinviabile» vuol dire PERSA, non «riprovo domani»', async () => {
+    // Non c'è nessuna coda che riprovi: la candidatura è già registrata e questa
+    // funzione finisce. Un `warn` fra mille avrebbe fatto sparire in silenzio il
+    // curriculum che la segreteria doveva ricevere — e il caso si ripete su OGNI
+    // candidatura fino a mezzanotte, quindi va distinto da «una casella non
+    // risponde»: la cura è un'altra.
+    sendEmailDetailed.mockResolvedValue({ ok: false, error: 'quota esaurita (429)', rinviabile: true })
+    await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
+    const grido = logEvento.mock.calls.find(
+      (c) => c[1] === 'error' && (c[2] as { esito?: string })?.esito === 'copia-sede-persa-per-quota',
+    )
+    expect(grido, 'la quota esaurita esce come un warning qualunque').toBeTruthy()
   })
 
   it('non lancia MAI: la candidatura è già registrata, e un’email non deve poterla annullare', async () => {

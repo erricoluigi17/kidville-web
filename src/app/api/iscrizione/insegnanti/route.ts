@@ -1078,7 +1078,10 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         // sempre o farlo uscire sempre.
         const { data: viva, error: erroreViva } = await supabase
           .from('candidature_insegnanti')
-          .select('id, scuola_id')
+          // ⚠️ Si legge ANCHE `cognome`, e serve a un controllo d'identità, non
+          // a mostrarlo: vedi `stessaPersona` più sotto. Non esce mai nella
+          // risposta né nei log.
+          .select('id, scuola_id, cognome')
           .eq('email', emailScritta)
           .in('stato', ['pending', 'in_approvazione'])
           .maybeSingle()
@@ -1158,8 +1161,46 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         // sono già, lette un attimo prima. Una corsa fra due invii della stessa
         // persona nello stesso istante produce al più un `23505` sulla chiave
         // primaria, che qui si logga e non rompe niente.
+        /**
+         * ╔════════════════════════════════════════════════════════════════════╗
+         * ║  È DAVVERO LA STESSA PERSONA? — il gate che manca all'email sola   ║
+         * ╚════════════════════════════════════════════════════════════════════╝
+         *
+         * Agganciare un plesso a una candidatura viva sulla SOLA prova
+         * dell'indirizzo email è una leva di scrittura ANONIMA sul record di
+         * un'altra persona: chi conosce l'email di Maria potrebbe far comparire
+         * la candidatura di Maria — nome, telefono, curriculum — nel cockpit di
+         * un plesso che lei non ha scelto. Nessun dato esce dalla risposta, ma
+         * il dato si SPOSTA, e a spostarlo è uno sconosciuto.
+         *
+         * Il modulo è anonimo per costruzione e non può chiedere una prova
+         * d'identità. Ma può chiedere una seconda coincidenza: il COGNOME. Chi
+         * si ricandida lo scrive uguale senza pensarci; chi tira a indovinare
+         * deve conoscerne due, non uno.
+         *
+         * ⚠️ Non è autenticazione e non finge di esserlo: alza il costo, non lo
+         * rende impossibile. La difesa vera resterebbe non scrivere affatto —
+         * ma allora chi si ricandida davvero a due plessi in più non verrebbe
+         * visto da nessuno dei due, che è il difetto misurato il 2026-08-20.
+         * Fra i due errori si è scelto quello recuperabile: una segreteria che
+         * riceve una scheda in più la chiude; una persona che nessuno vede resta
+         * senza risposta.
+         *
+         * ⚠️ E il confronto NON decide niente sui dati: normalizzato, senza
+         * accenti e senza spazi, come si fa altrove in questo repo per i nomi.
+         */
+        const normalizzaCognome = (v: unknown): string =>
+          String(v ?? '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z]/g, '')
+        const cognomeVivo = normalizzaCognome((rigaViva as { cognome?: unknown } | null)?.cognome)
+        const cognomeOra = normalizzaCognome(riga.cognome)
+        const stessaPersona = cognomeVivo !== '' && cognomeVivo === cognomeOra
+
         const sediNuove: string[] = []
-        if (idVivo !== null) {
+        if (idVivo !== null && stessaPersona) {
           const { data: giaSue, error: eGia } = await supabase
             .from('candidature_sedi')
             .select('scuola_id')
@@ -1221,6 +1262,12 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
           // Quante sedi si sono aggiunte alla candidatura già viva: è la misura
           // che dice se questo ramo sta servendo qualcuno o solo respingendo.
           n_sedi_aggiunte: sediNuove.length,
+          // Booleano, quindi passa `redact()` per tipo. Falso significa: qualcuno
+          // ha mandato il modulo con l'email di una candidatura viva ma un
+          // cognome diverso. Può essere un refuso, e può essere un tentativo di
+          // spostare la pratica di qualcun altro: senza questa riga i due casi
+          // sono indistinguibili, e il secondo non lascia traccia da nessuna parte.
+          stessa_persona: stessaPersona,
           // Booleano, quindi passa `redact()` per tipo: è la differenza fra «ha
           // bussato due volte alla stessa porta» e «ha bussato a una porta
           // diversa», cioè l'unico modo di contare in SQL quante candidature
@@ -1228,47 +1275,22 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
           stessa_sede: stessaSede,
           error_code: '23505',
         })
-        // ── LA COPIA VA ALLE SEDI APPENA AGGANCIATE, E SOLO A QUELLE ────────
+        // ── NESSUNA COPIA IN QUESTO RAMO, E LA RAGIONE È CAMBIATA ───────────
         //
-        // Hanno la scheda nel cockpit ma non il curriculum: senza questa copia
-        // dovrebbero aprire l'applicazione e scaricarlo, mentre la segreteria
-        // lavora dalla posta. Alle sedi che già l'avevano NON si rimanda niente:
-        // per loro non è successo niente di nuovo, e una seconda copia identica
-        // si legge come una seconda candidatura.
+        // C'è stata per un'ora, e portava i dati di QUESTO invio attaccati alla
+        // candidatura del PRIMO. La sede avrebbe letto un modulo — nome,
+        // recapiti, curriculum — accanto a un uuid che nel cockpit apre una
+        // scheda con dati potenzialmente diversi, compilata settimane prima. Due
+        // versioni della stessa persona, senza niente che dica quale delle due
+        // sia quella buona.
         //
-        // ⚠️ ALLA CANDIDATA NON SI SCRIVE, e resta come prima: la conferma
-        // direbbe «abbiamo ricevuto la sua candidatura» a chi ne ha già una in
-        // corso, facendole credere di averne due.
+        // La segreteria riceve comunque l'avviso, e con esso l'uuid della scheda
+        // vera quando può aprirla: è quella la fonte, ed è l'unica che il
+        // cockpit sappia mostrare per intero.
         //
-        // ⚠️ Il `cvPath` è quello appena caricato, NON quello della candidatura
-        // viva: l'indice unico su `cv_path` impedisce di attaccarlo alla riga, e
-        // il cron di conservazione lo tratterà come «caricato e mai inviato»
-        // spazzandolo in 24 ore. Nell'email però l'allegato è già partito e resta
-        // nella casella: la sede ha ciò che le serve, e nel bucket non resta un
-        // oggetto che nessuna riga reclama.
-        if (sediNuove.length > 0) {
-          const nomiTutte = scuoleRichieste.map(
-            (sid) => reali.find((x) => x.id === sid)?.nome ?? 'Kidville',
-          )
-          const consensiCopia = Object.fromEntries(
-            CONSENSI_INSEGNANTI_FIELDS.map((c) => [c.id, normalizzati[c.id] === true]),
-          )
-          const quando = formattaIstante(new Date(), 'it', {
-            day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-          })
-          for (const sid of sediNuove) {
-            await inviaCopiaAllaSede(supabase, {
-              scuolaId: sid,
-              dati: normalizzati,
-              consensi: consensiCopia,
-              sediScelte: nomiTutte,
-              inviataIl: quando,
-              entitaId: idVivo,
-              cvPath,
-            })
-          }
-        }
-
+        // ⚠️ Nemmeno la conferma alla candidata, e resta come prima: dire
+        // «abbiamo ricevuto la sua candidatura» a chi ne ha già una aperta le
+        // farebbe credere di averne due in corsa.
         return NextResponse.json({ id: idVivo }, { status: 201 })
       }
 
@@ -1325,7 +1347,12 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         )
       if (errSedi) {
         const codice = (errSedi as { code?: string }).code ?? null
-        const tabellaAssente = codice === '42P01' || codice === 'PGRST205'
+        // `PGRST200` — «Could not find a relationship in the schema cache» — è
+        // il codice che arriva quando manca la RELAZIONE incorporata, e sul DB
+        // E2E della CI (non migrato) è quello che si vede davvero. Senza,
+        // l'assenza della tabella usciva come guasto: livello `error` e allarme
+        // per una migrazione mancante.
+        const tabellaAssente = ['42P01', 'PGRST205', 'PGRST200'].includes(codice ?? '')
         logEvento(
           'candidatura',
           tabellaAssente ? 'warn' : 'error',
@@ -1506,11 +1533,12 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // Giugliano: senza, due segreterie istruiscono la stessa pratica senza
     // sapere l'una dell'altra, e la persona riceve due convocazioni scoordinate.
     //
-    // In SEQUENZA, non in `Promise.all`. Sono al massimo tre, e il tetto Resend
-    // è di circa cento email al giorno già conteso con le iscrizioni: una
-    // raffica parallela contro una quota è il modo più rapido di prendersi un
-    // 429 su tutte e tre invece che su una — e un 429 è «non oggi», che si
-    // gestisce, mentre tre 429 insieme sono tre copie perse.
+    // ⚠️ UNA SOLA EMAIL, con tutti i plessi in destinatario. Era un ciclo — una
+    // copia per sede — e il conto non tornava: il tetto Resend è ~100 al giorno
+    // ed è già conteso con `INVITI_AL_GIORNO = 90` del cron delle iscrizioni.
+    // Misurato sulle candidature vere: media 2,4 al giorno ma PICCO DI 16 in un
+    // giorno solo, che con una copia per sede vale 64 email. Una copia sola lo
+    // porta a 32.
     // I consensi si ricostruiscono dal TEMPLATE e non dal corpo ricevuto: così un
     // consenso non spuntato viaggia come `false` esplicito invece di sparire, e
     // nella copia la sede legge «No» invece di non leggere niente. «Non gliel'ho
@@ -1521,17 +1549,15 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     const inviataIl = formattaIstante(new Date(), 'it', {
       day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
     })
-    for (const sid of scuoleRichieste) {
-      await inviaCopiaAllaSede(supabase, {
-        scuolaId: sid,
-        dati: normalizzati,
-        consensi: consensiPerLaCopia,
-        sediScelte: nomiSediScelte,
-        inviataIl,
-        entitaId,
-        cvPath,
-      })
-    }
+    await inviaCopiaAllaSede(supabase, {
+      scuoleIds: scuoleRichieste,
+      dati: normalizzati,
+      consensi: consensiPerLaCopia,
+      sediScelte: nomiSediScelte,
+      inviataIl,
+      entitaId,
+      cvPath,
+    })
 
     return NextResponse.json({ id: entitaId }, { status: 201 })
   } catch (err) {

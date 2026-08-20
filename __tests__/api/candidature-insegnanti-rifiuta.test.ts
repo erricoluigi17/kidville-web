@@ -82,8 +82,32 @@ function aggregaComeIlTrigger(tabelle: Record<string, Riga[]>, idCandidatura: un
     : sedi.some((s) => s.stato === 'approvata')
       ? 'approvata'
       : 'rifiutata'
+  /**
+   * ⚠️ IL FINTO PROPAGA ANCHE `evasa_il` ED `evasa_da`, e prima no.
+   *
+   * Riprodurre il solo `stato` lasciava senza copertura la metà del trigger che
+   * esiste per il GDPR: `retention-candidature` legge `candidature_insegnanti.evasa_il`
+   * per far decorrere i dodici mesi dalla DECISIONE invece che dalla ricezione.
+   * Un ritorno alla versione del 19/08 — quella che riportava solo lo stato —
+   * sarebbe rimasto verde, e la cancellazione anticipata sarebbe tornata senza
+   * che un test lo dicesse.
+   *
+   * Stessa regola del database: la data è la PIÙ RECENTE, e solo quando nessuna
+   * sede è più in valutazione; i due campi si muovono insieme, senza `coalesce`.
+   */
+  const decise = sedi.filter((s) => s.stato !== 'pending')
+  const nessunaInAttesa = decise.length === sedi.length
+  const ultima = nessunaInAttesa
+    ? decise
+        .filter((s) => s.evasa_il)
+        .sort((a, b) => String(b.evasa_il).localeCompare(String(a.evasa_il)))[0]
+    : undefined
   const madre = (tabelle['candidature_insegnanti'] ?? []).find((c) => c.id === idCandidatura)
-  if (madre) madre.stato = stato
+  if (madre) {
+    madre.stato = stato
+    madre.evasa_il = ultima?.evasa_il ?? null
+    madre.evasa_da = ultima?.evasa_da ?? null
+  }
 }
 
 function finto() {
@@ -330,5 +354,47 @@ describe('candidature insegnanti · rifiuto', () => {
     expect((await res.json()).codice).toBe('CANDIDATURA_NON_TROVATA')
     expect(h.state.tabelle.candidature_insegnanti[0].stato).toBe('pending')
     expect(h.state.aggiornamenti).toEqual([])
+  })
+})
+
+describe('candidature insegnanti · la DECISIONE arriva sulla candidatura, per il GDPR', () => {
+  /**
+   * 🔴 IL TEST CHE MANCAVA, e la sua assenza era la parte peggiore del difetto.
+   *
+   * `gdpr/retention-candidature` legge `candidature_insegnanti.evasa_il` per far
+   * decorrere i dodici mesi dalla DECISIONE invece che dalla ricezione. Quando
+   * il verdetto è passato sulle righe di sede, quella colonna ha smesso di
+   * essere scritta — e ogni candidatura respinta si sarebbe cancellata PRIMA del
+   * dovuto, distruggendo dati che /privacy promette di conservare, con la prima
+   * scadenza fra dodici mesi e nessuno che se ne accorga.
+   *
+   * Il trigger la riporta. Senza questo test, tornare alla versione che
+   * riportava il solo `stato` lascerebbe la suite verde.
+   */
+  it('rifiutando, `evasa_il` arriva sulla CANDIDATURA e non solo sulla riga di sede', async () => {
+    await rifiuta({ motivo: MOTIVO })
+    const madre = h.state.tabelle.candidature_insegnanti[0]
+    expect(madre.stato).toBe('rifiutata')
+    expect(
+      madre.evasa_il,
+      'evasa_il non arriva sulla candidatura: il cron GDPR cancellerebbe dalla data di RICEZIONE',
+    ).toBeTruthy()
+    expect(madre.evasa_da).toBe(ADMIN.id)
+  })
+
+  it('finché una sede è ancora in valutazione, `evasa_il` resta NULLO su entrambe', async () => {
+    // Non è una sottigliezza: con `evasa_il` valorizzato mentre un plesso guarda
+    // ancora, il termine di conservazione decorrerebbe da una decisione che la
+    // cooperativa non ha ancora preso.
+    h.state.tabelle.candidature_sedi.push({
+      candidatura_id: h.state.tabelle.candidature_insegnanti[0].id,
+      scuola_id: SEDE_B,
+      stato: 'pending',
+    })
+    await rifiuta({ motivo: MOTIVO })
+    const madre = h.state.tabelle.candidature_insegnanti[0]
+    expect(madre.stato).toBe('pending')
+    expect(madre.evasa_il ?? null).toBeNull()
+    expect(madre.evasa_da ?? null).toBeNull()
   })
 })

@@ -69,7 +69,7 @@ const h = vi.hoisted(() => ({
    * PER SEDE, quindi la riga viva può benissimo stare in un altro plesso — ed è
    * il caso in cui, prima del 2026-08-10, non veniva avvisato nessuno.
    */
-  vivaPerEmail: null as { id: string; email: string; stato: string; scuola_id: string } | null,
+  vivaPerEmail: null as { id: string; email: string; stato: string; scuola_id: string; cognome?: string } | null,
   /** L'errore che la RILETTURA della riga viva deve restituire (PostgREST non lancia). */
   erroreRilettura: null as { code?: string; message?: string } | null,
   /** I filtri `.eq(...)` visti dal finto: colonna e valore, in ordine. */
@@ -258,7 +258,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
           chiesta === viva.email &&
           (statiChiesti === undefined || statiChiesti.includes(viva.stato))
         return {
-          data: combacia ? { id: viva.id, scuola_id: viva.scuola_id } : null,
+          // `cognome` esce perché la route lo usa per il gate d'identità del ramo
+          // duplicato (`stessaPersona`). Il finto che non lo restituisse farebbe
+          // fallire quel gate SEMPRE, e i test dell'aggancio misurerebbero il
+          // ramo del rifiuto credendo di misurare quello dell'aggancio.
+          data: combacia
+            ? { id: viva.id, scuola_id: viva.scuola_id, cognome: viva.cognome ?? 'Prova' }
+            : null,
           error: null,
         }
       }
@@ -1359,6 +1365,9 @@ describe('POST /api/iscrizione/insegnanti · il doppio invio non è un no-op', (
       email: 'ines.prova@example.invalid',
       stato: 'pending',
       scuola_id: SEDE_B,
+      // Lo STESSO cognome della candidatura di prova: è la seconda coincidenza
+      // che il ramo pretende prima di agganciare un plesso a una riga viva.
+      cognome: 'Prova',
     }
 
     const res = await inviaValida()
@@ -1492,7 +1501,7 @@ describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () 
   it('a candidatura registrata parte ANCHE la copia alla sede, non solo la conferma a chi si candida', async () => {
     expect((await inviaValida()).status).toBe(201)
     expect(copie()).toHaveLength(1)
-    expect(copie()[0].scuolaId).toBe(SEDE_A)
+    expect(copie()[0].scuoleIds).toEqual([SEDE_A])
   })
 
   it('la copia porta il NOME del plesso, non il suo uuid: quell’email la legge una persona', async () => {
@@ -1520,7 +1529,7 @@ describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () 
 
   it('doppio invio sulla STESSA sede: nessuna copia, perché per quella sede non è successo niente', async () => {
     h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
-    h.vivaPerEmail = { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    h.vivaPerEmail = { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid', cognome: 'Prova' }
     h.righeDiSede.push({ candidatura_id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', scuola_id: SEDE_A })
     expect((await inviaValida()).status).toBe(201)
     // Una seconda copia identica nella stessa casella si legge come una seconda
@@ -1528,13 +1537,13 @@ describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () 
     expect(h.copieAllaSede).toHaveLength(0)
   })
 
-  it('🔴 doppio invio verso una sede NUOVA: la sede viene agganciata, avvisata E riceve la copia', async () => {
+  it('🔴 doppio invio verso una sede NUOVA: la sede viene agganciata e avvisata', async () => {
     // È il buco che il collaudo del 2026-08-20 ha misurato: chi ha una
     // candidatura viva su un plesso e ne spunta altri due riceveva
     // «Candidatura inviata!» mentre quei due plessi non ne sapevano niente —
     // nessuna scheda nel cockpit, nessun curriculum, nessun avviso.
     h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
-    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid', cognome: 'Prova' }
     h.righeDiSede.push({ candidatura_id: 'viva-su-A', scuola_id: SEDE_A })
 
     const res = await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
@@ -1548,16 +1557,18 @@ describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () 
     // Entrambe le segreterie sanno; l'uuid esce a entrambe, perché entrambe
     // possono aprire la scheda.
     expect(h.notifiche.map((n) => n.scuolaId).sort()).toEqual([SEDE_A, SEDE_B].sort())
-    // La copia col curriculum va SOLO alla sede nuova: l'altra non ha niente di
-    // nuovo da sapere.
-    expect(h.copieAllaSede.map((a) => (a[1] as Record<string, unknown>).scuolaId)).toEqual([SEDE_B])
+    // ⚠️ NESSUNA COPIA in questo ramo. Porterebbe i dati di QUESTO invio
+    // attaccati alla candidatura del PRIMO: la sede leggerebbe un modulo accanto
+    // a un uuid che apre una scheda con dati potenzialmente diversi, compilata
+    // settimane prima. L'avviso con l'uuid basta: la fonte è la scheda.
+    expect(h.copieAllaSede).toHaveLength(0)
   })
 
   it('se l’aggancio della sede nuova FALLISCE, l’uuid non esce e la copia non parte', async () => {
     // Il presidio di ieri non è sparito, si è spostato: un link che porta a un
     // diniego resta peggio di nessun link.
     h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
-    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid', cognome: 'Prova' }
     h.righeDiSede.push({ candidatura_id: 'viva-su-A', scuola_id: SEDE_A })
     h.erroreRigheDiSede = { code: '42501', message: 'permission denied' }
 
@@ -1625,9 +1636,15 @@ describe('POST /api/iscrizione/insegnanti · più sedi con un invio solo', () =>
     expect(h.copieAllaSede).toHaveLength(1)
   })
 
-  it('parte UNA copia per ogni sede scelta, ognuna con la propria sede', async () => {
+  it('🔴 UNA SOLA copia, con tutti i plessi in destinatario — non una per sede', async () => {
+    // Aritmetica, non estetica: il tetto Resend è ~100 email al giorno ed è già
+    // conteso con `INVITI_AL_GIORNO = 90` del cron delle iscrizioni. Misurato
+    // sulle candidature vere: media 2,4 al giorno ma PICCO DI 16 in un giorno
+    // solo, che con una copia per sede vale 64 email — 154 col cron. Una copia
+    // sola porta quel picco a 32.
     await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
-    expect(copie().map((c) => c.scuolaId)).toEqual([SEDE_A, SEDE_B])
+    expect(h.copieAllaSede, 'più di una copia: il conto delle email non torna').toHaveLength(1)
+    expect(copie()[0].scuoleIds).toEqual([SEDE_A, SEDE_B])
   })
 
   it('ogni copia dichiara TUTTE le sedi scelte: chi valuta deve sapere del resto', async () => {
@@ -1670,5 +1687,57 @@ describe('POST /api/iscrizione/insegnanti · più sedi con un invio solo', () =>
     })
     expect(res.status).toBe(400)
     expect(h.inserts).toHaveLength(0)
+  })
+})
+
+describe('POST /api/iscrizione/insegnanti · agganciare una sede a una candidatura ALTRUI', () => {
+  /**
+   * 🔴 IL RILIEVO CHE HA FERMATO IL RILASCIO.
+   *
+   * Agganciare un plesso a una candidatura viva sulla SOLA prova dell'email è
+   * una leva di scrittura ANONIMA sul record di un'altra persona: chi conosce
+   * l'email di Maria potrebbe far comparire la sua candidatura — nome, telefono,
+   * curriculum — nel cockpit di un plesso che lei non ha scelto.
+   *
+   * Il modulo è anonimo e non può chiedere una prova d'identità, ma può chiedere
+   * una seconda coincidenza: il cognome.
+   */
+  it('cognome DIVERSO: nessun aggancio, nessun uuid, e il tentativo resta scritto', async () => {
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
+    h.vivaPerEmail = {
+      id: 'viva-di-maria',
+      stato: 'pending',
+      scuola_id: SEDE_A,
+      email: 'ines.prova@example.invalid',
+      cognome: 'Maria', // ≠ «Prova», il cognome che il corpo di questo invio porta
+    }
+    h.righeDiSede.push({ candidatura_id: 'viva-di-maria', scuola_id: SEDE_A })
+
+    const res = await invia({ scuole_ids: [SEDE_B], data: candidatura() })
+    // La risposta resta 201: cambiarla rimetterebbe l'oracolo di enumerazione.
+    expect(res.status).toBe(201)
+    // Ma NON si è scritto niente sulla candidatura di un'altra persona…
+    expect(h.righeDiSede).toEqual([{ candidatura_id: 'viva-di-maria', scuola_id: SEDE_A }])
+    // …e l'uuid non è uscito verso una sede che non può aprire quella scheda.
+    expect(h.notifiche.find((n) => n.scuolaId === SEDE_B)?.entitaId).toBeNull()
+    // Il tentativo lascia una traccia: senza, «refuso» e «tentativo di spostare
+    // la pratica di qualcun altro» sono indistinguibili e il secondo è invisibile.
+    const riga = h.eventi.find((e) => e.campi?.esito === 'duplicata')
+    expect(riga?.campi.stessa_persona).toBe(false)
+  })
+
+  it('cognome UGUALE a meno di accenti e maiuscole: si aggancia, perché è la stessa persona', async () => {
+    // Chi si ricandida scrive il proprio cognome come gli viene, e un accento in
+    // più non è un'altra persona.
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
+    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid', cognome: '  PRÒVA ' }
+    h.righeDiSede.push({ candidatura_id: 'viva-su-A', scuola_id: SEDE_A })
+
+    await invia({ scuole_ids: [SEDE_B], data: candidatura() })
+    expect(h.righeDiSede).toEqual([
+      { candidatura_id: 'viva-su-A', scuola_id: SEDE_A },
+      { candidatura_id: 'viva-su-A', scuola_id: SEDE_B },
+    ])
+    expect(h.eventi.find((e) => e.campi?.esito === 'duplicata')?.campi.stessa_persona).toBe(true)
   })
 })

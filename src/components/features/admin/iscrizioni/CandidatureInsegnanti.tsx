@@ -927,7 +927,23 @@ export function CandidatureInsegnanti() {
     }
   }
 
-  const inAttesa = righe.filter((r) => r.stato === 'pending' || r.stato === 'in_approvazione')
+  /**
+   * ⚠️ LO STATO DELLA PROPRIA SEDE, anche nei CONTATORI e nell'elenco.
+   *
+   * `r.stato` è l'AGGREGATO di tutte le sedi: con Giugliano già approvata e
+   * Aversa ancora in valutazione vale `pending`, quindi la segreteria di
+   * Giugliano si vedrebbe contare fra «in attesa» una pratica che ha chiuso — e
+   * i tre numeri in cima alla pagina, che sono il primo colpo d'occhio, direbbero
+   * il falso. La scheda già legge la riga di sede: i contatori la seguono.
+   *
+   * Ripiego su `r.stato` per l'ambiente non ancora migrato, dove le righe di
+   * sede non esistono e la colonna è l'unica verità.
+   */
+  const statoDiRiga = (r: Candidatura): string =>
+    (r.candidature_sedi ?? []).find((x) => x.scuola_id === sedeCorrente)?.stato ??
+    (r.candidature_sedi ?? [])[0]?.stato ??
+    r.stato
+  const inAttesa = righe.filter((r) => statoDiRiga(r) === 'pending' || statoDiRiga(r) === 'in_approvazione')
   // Due domande diverse, e prima erano una sola: «le righe caricate sono TUTTE
   // quelle che esistono?» governa i riquadri per stato (un conteggio parziale
   // spacciato per totale è una bugia scritta in grande), «c'è un'altra pagina?»
@@ -960,8 +976,8 @@ export function CandidatureInsegnanti() {
           {tuttoContato && (
             <>
               <StatCard icon={Clock} label={t('candStatAttesa')} value={inAttesa.length} tone="warn" />
-              <StatCard icon={CheckCircle2} label={t('candStatApprovate')} value={righe.filter((r) => r.stato === 'approvata').length} tone="success" />
-              <StatCard icon={XCircle} label={t('candStatRifiutate')} value={righe.filter((r) => r.stato === 'rifiutata').length} tone="error" />
+              <StatCard icon={CheckCircle2} label={t('candStatApprovate')} value={righe.filter((r) => statoDiRiga(r) === 'approvata').length} tone="success" />
+              <StatCard icon={XCircle} label={t('candStatRifiutate')} value={righe.filter((r) => statoDiRiga(r) === 'rifiutata').length} tone="error" />
             </>
           )}
         </div>
@@ -1022,7 +1038,8 @@ export function CandidatureInsegnanti() {
               >
                 <span className="mb-1.5 flex items-center justify-between gap-2">
                   <span className="font-barlow font-bold text-kidville-ink">{nomeCompleto(riga)}</span>
-                  <BadgeStato stato={riga.stato} />
+                  {/* Come i contatori: lo stato della PROPRIA sede, non l'aggregato. */}
+                  <BadgeStato stato={statoDiRiga(riga)} />
                 </span>
                 <span className="flex flex-wrap items-center gap-2">
                   {/* LE POSIZIONI, non le fasce: sono loro a dire a colpo d'occhio

@@ -154,8 +154,32 @@ function aggregaComeIlTrigger(tabelle: Record<string, Riga[]>, idCandidatura: un
     : sedi.some((s) => s.stato === 'approvata')
       ? 'approvata'
       : 'rifiutata'
+  /**
+   * ⚠️ IL FINTO PROPAGA ANCHE `evasa_il` ED `evasa_da`, e prima no.
+   *
+   * Riprodurre il solo `stato` lasciava senza copertura la metà del trigger che
+   * esiste per il GDPR: `retention-candidature` legge `candidature_insegnanti.evasa_il`
+   * per far decorrere i dodici mesi dalla DECISIONE invece che dalla ricezione.
+   * Un ritorno alla versione del 19/08 — quella che riportava solo lo stato —
+   * sarebbe rimasto verde, e la cancellazione anticipata sarebbe tornata senza
+   * che un test lo dicesse.
+   *
+   * Stessa regola del database: la data è la PIÙ RECENTE, e solo quando nessuna
+   * sede è più in valutazione; i due campi si muovono insieme, senza `coalesce`.
+   */
+  const decise = sedi.filter((s) => s.stato !== 'pending')
+  const nessunaInAttesa = decise.length === sedi.length
+  const ultima = nessunaInAttesa
+    ? decise
+        .filter((s) => s.evasa_il)
+        .sort((a, b) => String(b.evasa_il).localeCompare(String(a.evasa_il)))[0]
+    : undefined
   const madre = (tabelle['candidature_insegnanti'] ?? []).find((c) => c.id === idCandidatura)
-  if (madre) madre.stato = stato
+  if (madre) {
+    madre.stato = stato
+    madre.evasa_il = ultima?.evasa_il ?? null
+    madre.evasa_da = ultima?.evasa_da ?? null
+  }
 }
 
 function finto() {

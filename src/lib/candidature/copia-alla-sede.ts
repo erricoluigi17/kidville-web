@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { sendEmailDetailed } from '@/lib/email/send'
-import { risolviContestoSede } from '@/lib/email/contesto'
+import { risolviContestoSede, contestoSenzaSede } from '@/lib/email/contesto'
 import { messaggioCandidaturaAllaSede } from '@/lib/email/messaggi/candidatura-alla-sede'
 import { logEvento } from '@/lib/logging/logger'
 import { BUCKET_CURRICULUM } from './percorso-cv'
@@ -54,8 +54,25 @@ export interface EsitoCopiaAllaSede {
 }
 
 export interface DatiCopiaAllaSede {
-    /** La sede a cui questa copia è destinata. */
-    scuolaId: string
+    /**
+     * I plessi a cui questa copia è destinata: UNA email per tutti.
+     *
+     * ⚠️ ERA UNA COPIA PER SEDE, ed è cambiato il 2026-08-20 per un motivo
+     * aritmetico, non estetico. Il tetto Resend è ~100 email al giorno ed è già
+     * conteso con il cron degli inviti alle iscrizioni (`INVITI_AL_GIORNO = 90`).
+     * Misurato sulle candidature vere: media 2,4 al giorno, ma PICCO DI 16 in un
+     * giorno solo. Con una copia per sede quel picco vale 16 × (1 conferma + fino
+     * a 3 copie) = 64 email, più 90 inviti: 154 su 100.
+     *
+     * Una copia sola con tutti i plessi in destinatario porta lo stesso picco a
+     * 32. Non basta da sola a stare sotto il tetto — quella è una decisione sul
+     * piano o sul cron, non su questo file — ma toglie i due terzi che dipendono
+     * da qui.
+     *
+     * Le tre caselle sono della stessa cooperativa: vedersi in `To:` non è una
+     * perdita di riservatezza fra loro.
+     */
+    scuoleIds: string[]
     /** I valori del modulo, con le chiavi degli `id` di `INSEGNANTE_FIELDS`. */
     dati: Record<string, unknown>
     consensi: Record<string, boolean>
@@ -103,16 +120,37 @@ export async function inviaCopiaAllaSede(
     supabase: SupabaseClient,
     d: DatiCopiaAllaSede,
 ): Promise<EsitoCopiaAllaSede> {
+    // La sede di riferimento per l'intestazione e il piè di pagina: la prima
+    // quando è una sola. Con più plessi il messaggio non è «di» nessuno di loro —
+    // vedi sotto.
+    const scuolaPrincipale = d.scuoleIds[0]
     try {
-        const sede = await risolviContestoSede(supabase, d.scuolaId, OPERAZIONE)
+        const contesti = await Promise.all(
+            d.scuoleIds.map((sid) => risolviContestoSede(supabase, sid, OPERAZIONE)),
+        )
         const ripiego = process.env[ENV_RIPIEGO]
-        const destinatario = sede.email ?? ripiego ?? null
+        /**
+         * L'intestazione e il piè di pagina.
+         *
+         * Con UN plesso è quello: nome, indirizzo, recapiti. Con PIÙ plessi
+         * nessuno dei tre è il mittente di questa email — la candidatura è
+         * rivolta a tutti — e firmarla con l'anagrafica del primo direbbe una
+         * cosa falsa in fondo a ogni pagina. Si usa l'identità generica, che è
+         * ciò che `contestoSenzaSede` esiste per rappresentare.
+         */
+        const sede = contesti.length === 1 ? contesti[0] : contestoSenzaSede()
 
-        if (sede.email === null) {
+        const senzaCasella = d.scuoleIds.filter((_, i) => contesti[i].email === null)
+        const destinatari = contesti.map((c) => c.email).filter((e): e is string => e !== null)
+        if (destinatari.length === 0 && ripiego) destinatari.push(ripiego)
+        const destinatario = destinatari.length > 0 ? destinatari.join(', ') : null
+
+        if (senzaCasella.length > 0) {
             logEvento('config', 'error', {
                 operazione: OPERAZIONE,
                 esito: destinatario ? 'casella-sede-assente-ripiego' : 'casella-sede-assente',
-                scuola_id: d.scuolaId,
+                scuola_id: senzaCasella[0],
+                n_sedi: senzaCasella.length,
                 // `msg` non è in lista bianca nel jsonb, ma `testoEvento()` lo promuove
                 // alla colonna `app_log.messaggio`, che è in chiaro: è lì che si legge.
                 msg: destinatario
@@ -138,7 +176,7 @@ export async function inviaCopiaAllaSede(
                     operazione: OPERAZIONE,
                     esito: 'curriculum-non-allegato',
                     entita_id: d.entitaId,
-                    scuola_id: d.scuolaId,
+                    scuola_id: scuolaPrincipale,
                 }, error)
             } else if (file === null || file === undefined) {
                 // ⚠️ `{ data: null, error: null }` è un caso reale dello Storage, non
@@ -150,7 +188,7 @@ export async function inviaCopiaAllaSede(
                     operazione: OPERAZIONE,
                     esito: 'curriculum-non-allegato',
                     entita_id: d.entitaId,
-                    scuola_id: d.scuolaId,
+                    scuola_id: scuolaPrincipale,
                 }, new Error('curriculum non trovato nello storage'))
             } else {
                 const buf = Buffer.from(await (file as Blob).arrayBuffer())
@@ -179,12 +217,42 @@ export async function inviaCopiaAllaSede(
                 : {}),
         })
 
+        /**
+         * ⚠️ IL `429` NON È UN WARNING COME GLI ALTRI, e questa distinzione è
+         * arrivata dopo — prima una quota esaurita usciva come un `warn` fra
+         * mille, cioè come una copia persa in silenzio.
+         *
+         * `rinviabile` significa «non oggi», non «non si può»: la quota del
+         * provider si è esaurita e domani sarebbe passata. Ma QUI non c'è
+         * nessuna coda che riprovi — la candidatura è già registrata e questa
+         * funzione finisce — quindi «rinviabile» in pratica vuol dire PERSA, e
+         * con essa il curriculum che la segreteria doveva ricevere.
+         *
+         * Livello `error`: chi legge i log deve poter distinguere «una casella
+         * non risponde» da «abbiamo finito le email per oggi», perché il secondo
+         * si ripete su OGNI candidatura fino a mezzanotte e la cura è un'altra
+         * (il piano, o il tetto del cron degli inviti).
+         */
+        if (invio.rinviabile === true) {
+            logEvento('config', 'error', {
+                operazione: OPERAZIONE,
+                esito: 'copia-sede-persa-per-quota',
+                entita_id: d.entitaId,
+                scuola_id: scuolaPrincipale,
+                n_sedi: d.scuoleIds.length,
+                msg:
+                    'quota email del provider esaurita: la copia della candidatura NON è arrivata ' +
+                    'alla sede e nessuno la ritenterà. La scheda resta nel pannello. ' +
+                    'Se si ripete, il tetto giornaliero è troppo basso per il volume attuale.',
+            })
+        }
         logEvento('candidatura', invio.ok ? 'info' : 'warn', {
             operazione: OPERAZIONE,
             esito: invio.ok ? 'copia-sede-inviata' : 'copia-sede-non-inviata',
             canale: 'email',
             entita_id: d.entitaId,
-            scuola_id: d.scuolaId,
+            scuola_id: scuolaPrincipale,
+            n_sedi: d.scuoleIds.length,
             con_allegato: allegati !== undefined,
         }, invio.ok ? undefined : new Error(invio.error ?? 'motivo sconosciuto'))
 
@@ -194,7 +262,7 @@ export async function inviaCopiaAllaSede(
             operazione: OPERAZIONE,
             esito: 'copia-sede-non-inviata',
             entita_id: d.entitaId,
-            scuola_id: d.scuolaId,
+            scuola_id: scuolaPrincipale,
         }, e)
         return { ok: false, rinviabile: false }
     }

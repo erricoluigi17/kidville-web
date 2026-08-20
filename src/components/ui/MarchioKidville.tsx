@@ -63,6 +63,29 @@ import Image from 'next/image'
 // contrasto» (148 px) lasciano 49 px, cioè un wordmark alto 12. Da 414 px in su
 // il costo è zero.
 //
+// ⚠️ QUELLA MISURA VALE PER `PublicPageHeader`, E BASTA — e per due giorni si è
+// creduto valesse anche per l'altra testata. Non era così: `EnrollmentWizard`
+// (`/iscrizione`) la riga di testa la costruisce per conto suo, e `flex-wrap`
+// NON ce l'aveva. Misurato con Chromium sulla pagina viva il 2026-08-20,
+// `document.documentElement.scrollWidth` contro `clientWidth`:
+//
+//     viewport   con il marchio, prima   dopo `flex-wrap`+`min-w-0`
+//     320 px     394  ❌ trabocca        320 ✅   (testa 98 px)
+//     360 px     423  ❌                 360 ✅   (testa 98 px)
+//     390 px     437  ❌                 390 ✅   (testa 98 px)
+//     414 px     448  ❌                 414 ✅   (testa 82 px)
+//     768 px     —                       768 ✅   (testa 46 px, nessun a capo)
+//
+// Nascondendo il solo `<img>` l'eccedenza spariva a OGNI larghezza: la causa era
+// il marchio, e la pagina scrollava in orizzontale. Il rilievo che l'aveva
+// ipotizzata parlava di «250 px sotto i 360»: aveva ragione sulla causa e per
+// difetto sulla portata, perché il blocco di sinistra non aveva `min-w-0` e il
+// suo min-content spingeva fuori il resto a qualunque larghezza.
+//
+// La lezione è la ragione per cui questa tabella sta scritta qui: una misura
+// presa su una delle due testate NON dice niente dell'altra, e usarla per
+// entrambe è il modo in cui questo difetto è passato.
+//
 // Contrasto misurato sui PIXEL del file — l'inchiostro reale è `#007055`, non il
 // token `#006A5F`: 6,09:1 su bianco (Alto Contrasto), 5,48:1 sul crema. La
 // soglia WCAG 1.4.11 per la grafica non testuale è 3:1: passa in entrambi i

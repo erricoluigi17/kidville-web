@@ -167,3 +167,51 @@ describe('il marchio sulle superfici pubbliche — chi ce l’ha DAVVERO', () =>
     ).toBe(true)
   })
 })
+
+describe('la riga di testa di `/iscrizione` va a capo: il marchio non fa traboccare la pagina', () => {
+  /**
+   * ⚠️ QUESTO È UN LOCK SU CLASSI, E LO DICE. jsdom non fa layout: nessun test
+   * di questa suite può misurare uno `scrollWidth`. La misura vera è stata fatta
+   * con Chromium sulla pagina viva il 2026-08-20, e sta scritta in
+   * `src/components/ui/MarchioKidville.tsx` — con marchio e senza, a cinque
+   * larghezze. Riassunto: prima il documento scrollava in orizzontale a OGNI
+   * larghezza (320→394, 360→423, 390→437, 414→448); nascondendo il solo `<img>`
+   * l'eccedenza spariva del tutto.
+   *
+   * Quello che questo test può fare è impedire che le tre classi che l'hanno
+   * chiusa spariscano in silenzio. Sono tre e servono tutte e tre:
+   *
+   *  · `flex-wrap` sulla riga — senza, il gruppo destro non ha dove andare;
+   *  · `min-w-0` sul blocco di sinistra — senza, il suo min-content spinge fuori
+   *    il resto anche quando ci sarebbe spazio (è la parte che il rilievo non
+   *    aveva previsto, ed è perché traboccava anche a 414 px);
+   *  · `shrink-0` sul gruppo del marchio — l'`<img>` con `w-auto` non si comprime
+   *    per costruzione, e senza `shrink-0` sarebbe il bottone di contrasto a
+   *    farlo, andando a capo dentro di sé (difetto già misurato e scritto in
+   *    `PublicContrastButton.tsx`).
+   *
+   * Se un giorno la riga cambia forma, questo test va RIMISURATO in un browser,
+   * non adattato: tre classi giuste in un layout diverso non garantiscono niente.
+   */
+  const SORGENTE = readFileSync(
+    join(process.cwd(), 'src/components/features/public/EnrollmentWizard.tsx'),
+    'utf8',
+  )
+
+  it('la riga di testa ha `flex-wrap`', () => {
+    expect(
+      /className="mb-6 flex flex-wrap items-start justify-between gap-3"/.test(SORGENTE),
+      'senza `flex-wrap` il gruppo destro non ha dove andare e la pagina scrolla in orizzontale',
+    ).toBe(true)
+  })
+
+  it('il blocco di sinistra ha `min-w-0`', () => {
+    // È subito dentro la riga di testa: si cerca lì, non nel file intero.
+    const riga = SORGENTE.slice(SORGENTE.indexOf('mb-6 flex flex-wrap items-start justify-between'))
+    expect(riga.slice(0, 400)).toContain('className="min-w-0"')
+  })
+
+  it('il gruppo del marchio ha `shrink-0`', () => {
+    expect(SORGENTE).toContain('className="flex shrink-0 items-center gap-2"')
+  })
+})

@@ -111,7 +111,14 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => h.state.scuole }))
+// ⚠️ `formaConfronto` è quella VERA, non un finto. È la funzione che decide se
+// un uuid del client è la stessa sede di una letta dal database, e sostituirla
+// con `(x) => x` renderebbe verde proprio il difetto che il caso «maiuscolo»
+// esiste per provare: un mock che semplifica la regola prova la semplificazione.
+vi.mock('@/lib/auth/scope', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
+  return { formaConfronto: vero.formaConfronto, resolveScuoleAttive: async () => h.state.scuole }
+})
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))
 // `credentialsEmailBody` resta VERO: è così che si prova che nel testo dell'email

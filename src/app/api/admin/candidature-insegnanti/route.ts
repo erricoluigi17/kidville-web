@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, formaConfronto } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
@@ -292,8 +292,26 @@ const COLONNE_DETTAGLIO = [
   'residence_city', 'residence_province', 'posizioni', 'posizione_altro', 'gradi',
   'titolo_studio', 'titolo_dettaglio',
   'anni_esperienza', 'disponibilita', 'note', 'cv_path', 'consents_log',
-  'creata_il', 'aggiornata_il', 'evasa_il', 'evasa_da', 'utente_id', 'motivo_rifiuto',
+  'creata_il', 'aggiornata_il', 'evasa_il', 'evasa_da', 'utente_id',
 ]
+/*
+ * ⚠️ `motivo_rifiuto` DELLA MADRE NON È IN QUESTO ELENCO, e non ci deve tornare.
+ *
+ * È testo libero con cui una segreteria giudica una persona. Questa rotta lo
+ * chiama «nota INTERNA» e lo tiene fuori perfino dall'audit — «l'audit deve dire
+ * che cosa è successo, non conservarne il giudizio» — e lo esclude dai due embed
+ * non filtrati con altrettanti blocchi di commento.
+ *
+ * Restava qui, cioè nell'UNICO posto dove la regola non era applicata: questa
+ * proiezione è della tabella madre e per sede non è filtrata. Oggi non perdeva
+ * niente, perché dal 2026-08-19 nessuno scrive più quella colonna (il verdetto
+ * vive sulla riga di sede) — ma «oggi è vuota» non è un presidio: il giorno di
+ * un import o di un backfill tornerebbe a uscire verso ogni plesso in scope
+ * senza che una riga di codice cambi, e nessun test sarebbe rosso.
+ *
+ * La nota che il pannello disegna arriva da `EMBED_FILTRO_SCHEDA`, che è
+ * filtrato: chi valuta ad Aversa legge quello che ha scritto Aversa.
+ */
 
 /**
  * Le colonne che si RILEGGONO dopo aver scritto lo stato (`cambiaStato`).
@@ -527,8 +545,37 @@ export const PATCH = withRoute('admin/candidature-insegnanti:PATCH', async (requ
     // ── SU QUALE SEDE SI STA DECIDENDO ──────────────────────────────────────
     // Dichiarata nel corpo, oppure — se l'operatore ha una sede sola — quella.
     // Con più sedi e nessuna indicata: 400. Mai una scelta arbitraria.
-    const sedeDichiarata = b.data.scuola_id ?? (scuole.length === 1 ? scuole[0] : null)
-    if (sedeDichiarata === null) {
+    /**
+     * ⚠️ SI CONFRONTA NORMALIZZATO, E POI SI PORTA AVANTI LA FORMA DEL DATABASE.
+     *
+     * In Postgres `uuid` è un TIPO: `'AAAA-…'` e `'aaaa-…'` sono lo STESSO
+     * valore. In JavaScript sono due stringhe diverse, e `zUuid` è `z.guid()`,
+     * che il maiuscolo lo accetta. Con un `Array.includes()` fra la stringa del
+     * client e le forme canoniche lette dal database, chi dichiara la PROPRIA
+     * sede in maiuscolo si prende un 404 «non esiste, oppure appartiene a
+     * un'altra sede» — più un `warn` `sede-fuori-scope`.
+     *
+     * Due danni, e il secondo è quello che dura: una scrittura legittima negata
+     * (la si vede, ci si accorge) e un contatore nato come SEGNALE DI SICUREZZA
+     * riempito di falsi positivi, che nessuno guarda finché non serve. È parola
+     * per parola il difetto che `scope.ts:95-107` racconta come già misurato il
+     * 2026-07-31 sui dati veri, ripreso qui perché il confronto era fatto a mano
+     * invece che con `formaConfronto`.
+     *
+     * Ciò che prosegue è `canonica`, cioè il valore del DATABASE: il resto della
+     * rotta ci fa `===` con altri uuid già letti, e un `'AAAA-…'` di ritorno
+     * sarebbe lo stesso difetto spostato di un metro.
+     *
+     * Normalizzare è un CONFRONTO, non un permesso: una sede ALTRUI in maiuscolo
+     * resta negata, e il controllo negativo sta accanto a questo caso in
+     * `candidature-insegnanti-scope-sede.test.ts`.
+     */
+    const dichiarataDalClient = b.data.scuola_id ?? (scuole.length === 1 ? scuole[0] : null)
+    const canonica =
+      dichiarataDalClient === null
+        ? null
+        : (scuole.find((s) => formaConfronto(s) === formaConfronto(dichiarataDalClient)) ?? null)
+    if (dichiarataDalClient === null) {
       logEvento('multi_sede', 'warn', {
         operazione: 'admin/candidature-insegnanti:PATCH',
         esito: 'sede-non-dichiarata',
@@ -549,7 +596,7 @@ export const PATCH = withRoute('admin/candidature-insegnanti:PATCH', async (requ
     // …e deve essere UNA DELLE SUE. Un uuid nel corpo è scritto dal client, e un
     // client può scrivere qualunque cosa: senza questo controllo, chi ha Aversa
     // potrebbe dichiarare Giugliano e chiudere una pratica che non è sua.
-    if (!scuole.includes(sedeDichiarata)) {
+    if (canonica === null) {
       logEvento('multi_sede', 'warn', {
         operazione: 'admin/candidature-insegnanti:PATCH',
         esito: 'sede-fuori-scope',
@@ -557,18 +604,18 @@ export const PATCH = withRoute('admin/candidature-insegnanti:PATCH', async (requ
         utente: auth.user.id,
         ruolo: auth.user.role,
         entita_id: id,
-        sede_id: sedeDichiarata,
+        sede_id: dichiarataDalClient,
         sedi_attive: scuole.length,
       })
       return nonTrovata()
     }
 
-    // Da qui in giù la sede è UNA: le funzioni ricevono `[sedeDichiarata]` e non
+    // Da qui in giù la sede è UNA, in forma CANONICA: le funzioni ricevono
     // più tutte le sedi attive, così la scrittura non può toccare la riga di un
     // plesso su cui nessuno ha deciso niente.
     return action === 'approva'
-      ? await approva(supabase, auth.user, [sedeDichiarata], riga)
-      : await rifiuta(supabase, auth.user, [sedeDichiarata], riga, motivo, inviaEmailEsito)
+      ? await approva(supabase, auth.user, [canonica], riga)
+      : await rifiuta(supabase, auth.user, [canonica], riga, motivo, inviaEmailEsito)
   } catch (err) {
     logErrore({ operazione: 'admin/candidature-insegnanti:PATCH', stato: 503 }, err)
     return nonDisponibile('Non è stato possibile evadere la candidatura: riprovare fra poco.')
@@ -1081,12 +1128,27 @@ async function rifiuta(
   const warnings: string[] = []
   const adesso = new Date().toISOString()
 
-  // Si rifiuta ciò che è ancora in gioco: `pending` oppure `in_approvazione`
-  // (una presa in carico rimasta appesa). Zero righe ⇒ ha già deciso qualcun altro.
+  /**
+   * Si rifiuta ciò che è ancora in gioco: sulle righe di sede è `pending`, e
+   * basta. Zero righe ⇒ ha già deciso qualcun altro.
+   *
+   * ⚠️ QUI C'ERA ANCHE `'in_approvazione'`, ED ERA UN VALORE MORTO. Il commento
+   * lo giustificava («una presa in carico rimasta appesa») e `cambiaStato`
+   * scrive su `candidature_sedi`, il cui `CHECK` — verificato in produzione —
+   * ammette solo `pending | approvata | rifiutata`. Quel valore nel `WHERE` non
+   * poteva corrispondere a niente: descriveva uno stato che su quella tabella
+   * non esiste.
+   *
+   * Non è cosmesi. Un `IN` con dentro un valore impossibile fa credere a chi
+   * legge che quel caso sia coperto, e il giorno in cui qualcuno reintroduce
+   * davvero uno stato intermedio penserà di non dover toccare niente qui. Lo
+   * stato a tre passi vive sulla CANDIDATURA, non sulle sue righe di sede: se un
+   * giorno dovrà vivere anche lì, prima va allargato il `CHECK`.
+   */
   const esito = await cambiaStato(supabase, operazione, {
     id: riga.id,
     scuole,
-    da: ['pending', 'in_approvazione'],
+    da: ['pending'],
     patch: {
       stato: 'rifiutata',
       evasa_il: adesso,

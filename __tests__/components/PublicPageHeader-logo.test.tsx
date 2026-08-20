@@ -97,9 +97,18 @@ describe('PublicPageHeader · il marchio', () => {
   })
 
   it('resta l’ultimo anche quando la pagina aggiunge comandi propri (`children`)', async () => {
-    // `/iscrizione` passa il selettore di lingua come `children`. Se il marchio
-    // fosse renso prima dello slot, su quella pagina non sarebbe più al bordo — e
-    // sarebbe l'unica delle cinque a mostrarlo altrove.
+    // ⚠️ QUESTO COMMENTO DICEVA IL FALSO SU TRE PUNTI, e stava ottanta righe
+    // sotto il riquadro che denuncia esattamente questa classe di errore.
+    // Diceva: «`/iscrizione` passa il selettore di lingua come `children` […]
+    // sarebbe l'unica delle cinque a mostrarlo altrove». Ma `/iscrizione` non
+    // usa questo componente (lo dice il file stesso, più su), non ha nessun
+    // `LanguageSwitcher`, e «delle cinque» è il conteggio che il commit che ha
+    // scritto quel riquadro dichiarava di aver ritirato.
+    //
+    // L'unica pagina che passa `children` è `/cancellazione-account`
+    // (`page.tsx:45-47`). Il caso resta da provare — se il marchio fosse reso
+    // prima dello slot, lì non sarebbe più al bordo — ma va provato per quello
+    // che è.
     render(await PublicPageHeader({ children: <button type="button">Lingua</button> }))
     const gruppoDestro = (screen.getByAltText('Kidville').parentElement) as HTMLElement
     expect(gruppoDestro.lastElementChild).toBe(screen.getByAltText('Kidville'))

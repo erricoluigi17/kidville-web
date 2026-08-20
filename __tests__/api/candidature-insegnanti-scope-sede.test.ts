@@ -51,7 +51,14 @@ const h = vi.hoisted(() => {
 })
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => h.state.scuole }))
+// ⚠️ `formaConfronto` è quella VERA, non un finto. È la funzione che decide se
+// un uuid del client è la stessa sede di una letta dal database, e sostituirla
+// con `(x) => x` renderebbe verde proprio il difetto che il caso «maiuscolo»
+// esiste per provare: un mock che semplifica la regola prova la semplificazione.
+vi.mock('@/lib/auth/scope', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
+  return { formaConfronto: vero.formaConfronto, resolveScuoleAttive: async () => h.state.scuole }
+})
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))
 vi.mock('@/lib/email/send', async (importOriginal) => {
@@ -172,7 +179,7 @@ function finto() {
   }
 }
 
-import { GET } from '@/app/api/admin/candidature-insegnanti/route'
+import { GET, PATCH } from '@/app/api/admin/candidature-insegnanti/route'
 
 const URL_ROUTE = 'http://localhost/api/admin/candidature-insegnanti'
 const get = (qs = '') => new NextRequest(`${URL_ROUTE}${qs}`)
@@ -562,5 +569,98 @@ describe('candidature insegnanti · l’elenco porta lo stato DELLA PROPRIA sede
     const riga = body.data.find((r: Riga) => r.id === MISTA) as Riga
     expect(riga.sedi, 'le sedi altrui viaggiano ancora nell’elenco').toBeUndefined()
     expect(JSON.stringify(riga)).not.toContain(SEDE_B)
+  })
+})
+
+// =============================================================================
+// UN UUID NON È UNA STRINGA, e confrontarlo come tale nega la propria sede.
+//
+// `zUuid` è `z.guid()`, che ACCETTA il maiuscolo; le sedi in scope arrivano dal
+// database in forma canonica (minuscola). Un `Array.includes()` fra le due
+// risponde `false`, e chi dichiara la PROPRIA sede in maiuscolo si vede
+// rispondere «non esiste, oppure appartiene a un'altra sede» — più un
+// `logEvento('multi_sede','warn',{esito:'sede-fuori-scope'})`.
+//
+// Due danni, e il secondo è quello che dura: una scrittura legittima negata (la
+// si vede, ci si accorge) e un contatore nato come SEGNALE DI SICUREZZA riempito
+// di falsi positivi, che nessuno guarda finché non serve. È parola per parola il
+// difetto che `src/lib/auth/scope.ts:95-107` racconta come già misurato il
+// 2026-07-31, reintrodotto qui perché il confronto era fatto a mano invece che
+// con `formaConfronto`.
+//
+// ⚠️ Normalizzare è un CONFRONTO, non un permesso: il secondo test è il
+// controllo negativo, e senza di lui questa correzione sarebbe un buco.
+// =============================================================================
+describe('candidature insegnanti · l’uuid della sede si confronta normalizzato', () => {
+  const MAIUSCOLO = (id: string) => id.toUpperCase()
+
+  beforeEach(() => {
+    h.state.scuole = [SEDE_A, SEDE_B]
+    h.state.tabelle.candidature_insegnanti = [candidatura(MIA, SEDE_A, CV_MIO)]
+    h.state.tabelle.candidature_sedi = [{ candidatura_id: MIA, scuola_id: SEDE_A, stato: 'pending' }]
+  })
+
+  const patch = (corpo: Record<string, unknown>) =>
+    new NextRequest(URL_ROUTE, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(corpo),
+    })
+
+  it('🔴 la PROPRIA sede in maiuscolo NON viene negata', async () => {
+    const res = await PATCH(patch({ id: MIA, action: 'approva', scuola_id: MAIUSCOLO(SEDE_A) }))
+    expect(res.status, 'la propria sede negata perché scritta in maiuscolo').not.toBe(404)
+    expect(
+      h.logEvento.mock.calls.some(
+        (c: unknown[]) => (c[2] as { esito?: string } | undefined)?.esito === 'sede-fuori-scope',
+      ),
+      'un falso positivo nel contatore che serve a vedere gli abusi veri',
+    ).toBe(false)
+  })
+
+  it('e una sede ALTRUI resta negata, maiuscola o no: normalizzare è un confronto', async () => {
+    const ALTRA = 'ffffffff-0000-4000-8000-00000000000f'
+    const res = await PATCH(patch({ id: MIA, action: 'approva', scuola_id: MAIUSCOLO(ALTRA) }))
+    expect(res.status).toBe(404)
+  })
+})
+
+// =============================================================================
+// LA NOTA DI GIUDIZIO NON VIAGGIA FUORI DALL'EMBED FILTRATO.
+//
+// `motivo_rifiuto` è testo libero con cui una segreteria giudica una persona.
+// Questa stessa rotta lo chiama «nota INTERNA» e lo tiene fuori perfino
+// dall'audit — «l'audit deve dire che cosa è successo, non conservarne il
+// giudizio» — e lo esclude dagli embed non filtrati con due blocchi di commento.
+//
+// Restava però nella proiezione della MADRE (`COLONNE_DETTAGLIO`), che per sede
+// non è filtrata: l'unico posto dove la regola non era applicata. Oggi la
+// colonna è vuota e nessuno la scrive più, quindi non perdeva niente — ma il
+// giorno di un import o di un backfill tornerebbe a uscire verso ogni plesso in
+// scope senza che una riga di codice cambi.
+// =============================================================================
+describe('candidature insegnanti · `motivo_rifiuto` della MADRE non esce dal dettaglio', () => {
+  it('🔴 la scheda non porta `motivo_rifiuto` al primo livello', async () => {
+    h.state.tabelle.candidature_insegnanti = [
+      { ...candidatura(MIA, SEDE_A, CV_MIO), stato: 'rifiutata', motivo_rifiuto: 'un giudizio su una persona' },
+    ]
+    h.state.tabelle.candidature_sedi = [
+      { candidatura_id: MIA, scuola_id: SEDE_A, stato: 'rifiutata', motivo_rifiuto: 'la nota di casa mia' },
+    ]
+    const body = await (await GET(get(`?id=${MIA}`))).json()
+    expect(body.data.motivo_rifiuto, 'la nota della madre viaggia ancora').toBeUndefined()
+    expect(JSON.stringify(body)).not.toContain('un giudizio su una persona')
+  })
+
+  it('…e quella della PROPRIA sede continua ad arrivare: è quella che il pannello disegna', async () => {
+    h.state.tabelle.candidature_insegnanti = [
+      { ...candidatura(MIA, SEDE_A, CV_MIO), stato: 'rifiutata' },
+    ]
+    h.state.tabelle.candidature_sedi = [
+      { candidatura_id: MIA, scuola_id: SEDE_A, stato: 'rifiutata', motivo_rifiuto: 'la nota di casa mia' },
+    ]
+    const body = await (await GET(get(`?id=${MIA}`))).json()
+    const mie = (body.data.candidature_sedi ?? []) as Riga[]
+    expect(mie[0]?.motivo_rifiuto).toBe('la nota di casa mia')
   })
 })

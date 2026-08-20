@@ -464,8 +464,10 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 per opportunità future: <strong>ventiquattro mesi</strong>. Il curriculum
                 allegato viene cancellato insieme alla candidatura. Al momento dell&rsquo;invio,
                 però, una <strong>copia della candidatura con il curriculum allegato</strong>{' '}
-                viene recapitata alla casella di posta della sede scelta, perché è la sede a
-                doverla valutare: <strong>quella copia resta nella casella e non è cancellata
+                viene recapitata alla casella di posta di <strong>ciascuna sede scelta</strong>,
+                perché è la sede a doverla valutare, e ogni copia indica tutte le sedi a cui
+                la persona si è proposta, così due plessi non istruiscono la stessa pratica
+                senza saperlo: <strong>quella copia resta nella casella e non è cancellata
                 dalla cancellazione automatica</strong>, che riguarda i dati archiviati
                 nell&apos;applicazione e il file nel suo archivio. Per farla rimuovere si
                 scrive alla segreteria della sede, o all&apos;indirizzo indicato in fondo a

@@ -111,7 +111,20 @@ const giaEvasa = () =>
   )
 
 /** Codici con cui PostgREST/Postgres dicono «questa TABELLA qui non c'è». */
-const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205'])
+const TABELLA_ASSENTE = new Set([
+  '42P01',
+  'PGRST205',
+  // ⚠️ `PGRST200` — «Could not find a relationship … in the schema cache».
+  // È il codice che PostgREST restituisce quando manca la RELAZIONE INCORPORATA,
+  // non la tabella: dal 2026-08-19 questo cockpit legge `candidature_sedi` con
+  // un embed, quindi sul DB E2E della CI — che non è migrato — l'errore che
+  // arriva è questo, non `PGRST205`. Senza, la rotta lo trattava come guasto
+  // generico: livello `error` e «riprovare fra poco», cioè mandava a cercare un
+  // problema transitorio dove c'è una migrazione mancante. Che sia questo il
+  // codice lo dice il repo stesso: nove rotte merch lo elencano già fra i loro
+  // `SCHEMA_MANCANTE`.
+  'PGRST200',
+])
 /** …e «questa COLONNA qui non c'è». */
 const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
 

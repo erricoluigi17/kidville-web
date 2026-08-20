@@ -738,3 +738,50 @@ describe('candidature insegnanti · approvazione', () => {
     expect((caduta![2] as { error_code?: string }).error_code).toBe('42703')
   })
 })
+
+describe('candidature insegnanti · SU QUALE SEDE si sta decidendo', () => {
+  /**
+   * ⚠️ QUESTI DUE TEST MANCAVANO, e la revisione critica del 2026-08-20 l'ha
+   * dimostrato nel modo che conta: cancellando i due controlli dalla rotta, la
+   * suite intera restava VERDE. Uno dei due è il presidio anti-IDOR sull'uuid
+   * che arriva dal corpo della richiesta.
+   */
+
+  it('🔴 operatore MULTI-SEDE che non dichiara la sede: 400, mai una scelta indovinata', async () => {
+    // `h.state.scuole` sono due. Senza `scuola_id` la rotta non sa quale delle
+    // due pratiche si stia chiudendo: indovinare vorrebbe dire chiudere il
+    // plesso sbagliato, in silenzio.
+    const res = await PATCH(patch({ id: CANDIDATURA_ID, action: 'approva' }))
+    expect(res.status).toBe(400)
+    expect((await res.json()).codice).toBe('SEDE_DA_SPECIFICARE')
+    expect(h.state.aggiornamenti).toHaveLength(0)
+  })
+
+  it('operatore con UNA sola sede: non deve dichiararla, il server la conosce già', async () => {
+    // Obbligarlo a scrivere un uuid che il server già sa vorrebbe dire solo
+    // dargli modo di scriverlo sbagliato.
+    h.state.scuole = [SEDE_B]
+    const res = await PATCH(patch({ id: CANDIDATURA_ID, action: 'approva' }))
+    expect(res.status).toBe(200)
+  })
+
+  it('🔴 sede dichiarata FUORI dalle proprie: la pratica altrui non si chiude', async () => {
+    // L'uuid nel corpo lo scrive il client, e un client può scrivere qualunque
+    // cosa. Senza questo controllo chi ha Aversa dichiara Giugliano e chiude una
+    // pratica che non è sua.
+    const ALTRUI = 'cccccccc-0000-4000-8000-00000000000c'
+    const res = await PATCH(patch({ id: CANDIDATURA_ID, action: 'approva', scuola_id: ALTRUI }))
+    expect(res.status).toBe(404)
+    expect(h.state.aggiornamenti, 'ha scritto su una sede che non è sua').toHaveLength(0)
+  })
+
+  it('la scrittura tocca SOLO la sede dichiarata, non tutte quelle dell’operatore', async () => {
+    // `cambiaStato` riceve `[sedeDichiarata]`, non `scuole`. Con l'elenco intero
+    // un operatore multi-sede chiuderebbe con un clic la pratica di ogni plesso.
+    await PATCH(patch({ id: CANDIDATURA_ID, action: 'approva', scuola_id: SEDE_B }))
+    const suSedi = h.state.aggiornamenti.filter((a) => a.table === 'candidature_sedi')
+    expect(suSedi).toHaveLength(1)
+    const filtroSede = suSedi[0].filtri.find((f) => f.col === 'scuola_id')
+    expect(filtroSede?.vals).toEqual([SEDE_B])
+  })
+})

@@ -1748,4 +1748,113 @@ describe('CandidatureInsegnanti — una candidatura rivolta a PIÙ sedi', () => 
     await apriPrima() // il dettaglio predefinito non ha `sedi`
     expect(screen.queryByTestId('sede-propria')).toBeNull()
   })
+
+  it('🔴 badge e pulsanti seguono la PROPRIA sede, non l’aggregato', async () => {
+    // Giugliano ha già approvato, Aversa sta ancora valutando: l'aggregato è
+    // `pending`. Chi guarda da GIUGLIANO ha chiuso, e deve vederlo — altrimenti
+    // ripreme «Approva», prende 409 «ricaricare la pagina», ricarica, e trova
+    // tutto identico. Un ordine ineseguibile, dato all'infinito.
+    sedeCorrenteFinta = 'sc-giugliano'
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok({ success: true })
+      const u = String(url)
+      if (u.includes('id=')) {
+        return ok({
+          data: {
+            ...DETTAGLIO,
+            stato: 'pending', // l'aggregato
+            sedi: [
+              { scuola_id: 'sc-giugliano', stato: 'approvata' },
+              { scuola_id: 'sc-aversa', stato: 'pending' },
+            ],
+            candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'approvata', motivo_rifiuto: null }],
+          },
+        })
+      }
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+    await apriPrima()
+    // Niente pulsanti: per questa sede la pratica è chiusa.
+    expect(screen.queryByRole('button', { name: 'Approva' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Rifiuta' })).toBeNull()
+  })
+
+  it('il MOTIVO mostrato è quello della propria sede, e arriva dall’embed filtrato', async () => {
+    // `cand.motivo_rifiuto` non lo scrive più nessuno dal 2026-08-19: leggere
+    // ancora quella colonna vorrebbe dire non mostrare mai più nessun motivo.
+    sedeCorrenteFinta = 'sc-aversa'
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok({ success: true })
+      const u = String(url)
+      if (u.includes('id=')) {
+        return ok({
+          data: {
+            ...DETTAGLIO,
+            stato: 'pending',
+            motivo_rifiuto: null, // la colonna della candidatura è vuota, e resta vuota
+            sedi: [
+              { scuola_id: 'sc-giugliano', stato: 'pending' },
+              { scuola_id: 'sc-aversa', stato: 'rifiutata' },
+            ],
+            candidature_sedi: [
+              { scuola_id: 'sc-aversa', stato: 'rifiutata', motivo_rifiuto: 'Nota della mia sede.' },
+            ],
+          },
+        })
+      }
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+    await apriPrima()
+    expect(await screen.findByText('Nota della mia sede.')).toBeInTheDocument()
+  })
+
+  it('🔴 operatore su DUE sedi della stessa candidatura: può SCEGLIERE su quale decidere', async () => {
+    // `sedeCorrente` è null appena l'operatore ha più di una sede attiva. Prima
+    // di oggi il pannello non offriva nessuna via: il server rispondeva 400
+    // `SEDE_DA_SPECIFICARE` e chi lavora su tutte e tre le sedi non poteva
+    // chiudere niente, senza che una riga glielo spiegasse.
+    sedeCorrenteFinta = null // due sedi attive nel selettore
+    serverConDueSedi()
+    await apriPrima()
+
+    const scelte = await screen.findAllByRole('radio')
+    expect(scelte.length, 'nessun modo di scegliere il plesso').toBe(2)
+    expect(screen.getByText(itAdminAltro.candScegliSedeSuCuiDecidere)).toBeInTheDocument()
+
+    fireEvent.click(scelte[1]) // Aversa
+    await waitFor(() => expect(screen.getByTestId('sede-propria')).toHaveTextContent('Kidville Aversa'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Confermo' }))
+    await waitFor(() => {
+      const patch = fetchMock.mock.calls.find((c) => (c[1] as { method?: string })?.method === 'PATCH')
+      expect(JSON.parse((patch![1] as { body: string }).body).scuola_id).toBe('sc-aversa')
+    })
+  })
+
+  it('con UNA sola sede in comune non si chiede niente: sarebbe una domanda con una risposta sola', async () => {
+    sedeCorrenteFinta = null
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (init?.method === 'PATCH') return ok({ success: true })
+      const u = String(url)
+      if (u.includes('id=')) {
+        return ok({
+          data: {
+            ...DETTAGLIO,
+            // Rivolta anche a un plesso che NON è di chi guarda: l'intersezione
+            // resta di uno, quindi non c'è niente da scegliere.
+            sedi: [
+              { scuola_id: 'sc-giugliano', stato: 'pending' },
+              { scuola_id: 'sc-cesa', stato: 'pending' },
+            ],
+            candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'pending' }],
+          },
+        })
+      }
+      return ok({ data: ELENCO, total: ELENCO.length, limit: 50, offset: 0 })
+    })
+    await apriPrima()
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+    expect(screen.getByTestId('sede-propria')).toHaveTextContent('Kidville Giugliano')
+  })
 })

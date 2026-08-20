@@ -226,7 +226,17 @@ const postBodySchema = z.object({
       error: 'Indicare la sede della candidatura',
     })
     .min(1, 'Indicare la sede della candidatura')
-    .max(MAX_SEDI_PER_CANDIDATURA, 'Troppe sedi indicate'),
+    // ⚠️ IL TETTO SI APPLICA ALLE SEDI DISTINTE, non alle voci dell'elenco.
+    // `[G, G, A, A]` sono DUE plessi scritti quattro volte, e prima prendeva
+    // «Troppe sedi indicate»: un rifiuto che nomina un limite che non è stato
+    // superato. Dall'interfaccia non è raggiungibile — le caselle non producono
+    // doppioni — ma lo è da qualunque client che ripeta, e un messaggio d'errore
+    // che descrive il caso sbagliato manda a cercare la causa dove non è.
+    // Il tetto vero resta: quattro plessi DISTINTI sono ancora troppi.
+    .refine(
+      (v) => new Set(v).size <= MAX_SEDI_PER_CANDIDATURA,
+      { message: 'Troppe sedi indicate' },
+    ),
   data: z
     .object(
       {

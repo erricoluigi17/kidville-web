@@ -61,10 +61,26 @@ const BASE = {
   cvPath: null as string | null,
 }
 
-/** Un client Supabase finto: solo lo Storage, che è l'unica cosa che si usa. */
+/** Le marcature di `copia_inviata_il` che il finto client ha ricevuto. */
+let marcature: { tabella: string; patch: Record<string, unknown>; colonna: string; id: unknown }[] = []
+/** L'errore che il finto `update` deve restituire, quando il test ne vuole uno. */
+let erroreMarcatura: { message: string } | null = null
+
+/**
+ * Un client Supabase finto: lo Storage (per l'allegato) e `update().eq()` sulla
+ * tabella delle candidature, che è l'altra cosa che questa funzione tocca.
+ */
 function supabaseCon(risposta: unknown) {
   return {
     storage: { from: () => ({ download: async () => risposta }) },
+    from: (tabella: string) => ({
+      update: (patch: Record<string, unknown>) => ({
+        eq: async (colonna: string, id: unknown) => {
+          marcature.push({ tabella, patch, colonna, id })
+          return { error: erroreMarcatura }
+        },
+      }),
+    }),
   } as never
 }
 
@@ -82,6 +98,8 @@ describe('inviaCopiaAllaSede', () => {
       email: 'sede.alfa@example.invalid',
     })
     delete process.env.CANDIDATURE_EMAIL_FALLBACK
+    marcature = []
+    erroreMarcatura = null
   })
   afterEach(() => {
     delete process.env.CANDIDATURE_EMAIL_FALLBACK
@@ -198,7 +216,7 @@ describe('inviaCopiaAllaSede', () => {
   it('un rifiuto per quota (429) si riporta come rinviabile: «non oggi» non è «non si può»', async () => {
     sendEmailDetailed.mockResolvedValue({ ok: false, error: 'quota esaurita', rinviabile: true })
     const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
-    expect(esito).toEqual({ ok: false, rinviabile: true })
+    expect(esito).toEqual({ ok: false, rinviabile: true, segnata: false })
     expect(campiLoggati().map((c) => c.esito)).toContain('copia-sede-non-inviata')
   })
 
@@ -221,6 +239,111 @@ describe('inviaCopiaAllaSede', () => {
     await expect(
       inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE),
     ).resolves.toMatchObject({ ok: false })
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // «QUESTA COPIA È GIÀ PARTITA»: LA MEMORIA SI SCRIVE QUI, NON NEI CHIAMANTI.
+  //
+  // Misurato in produzione il 2026-08-20: la rotta pubblica spediva la copia e
+  // NON scriveva `copia_inviata_il`, che solo l'inoltro dell'arretrato sapeva
+  // scrivere. Alle 14:28 quattro candidature (arrivate fra le 13:25 e le 13:54)
+  // avevano la copia regolarmente in casella e la colonna a NULL: al primo clic
+  // successivo su «inoltra ai plessi» avrebbero preso un doppione, e ogni
+  // candidatura futura con loro — la lista dei «non ancora inviati» si riempiva
+  // di righe già inviate.
+  //
+  // La lezione è quella del ciclo 2: una regola valida per DUE strade deve
+  // vivere in un posto solo. La strada era una regola sola — «se è partita,
+  // segnala» — scritta in una sola delle due. Ora sta qui, dove passano
+  // entrambe, e nessun chiamante può dimenticarsene: per dimenticarla dovrebbe
+  // smettere di spedire.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('la memoria di ciò che è partito', () => {
+    it('copia partita → `copia_inviata_il` la scrive QUESTA funzione, non il chiamante', async () => {
+      const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
+      expect(esito.segnata).toBe(true)
+      expect(marcature).toHaveLength(1)
+      expect(marcature[0].tabella).toBe('candidature_insegnanti')
+      expect(marcature[0].colonna).toBe('id')
+      expect(marcature[0].id).toBe(ENTITA)
+      // Solo quella colonna: questa funzione manda email, non modifica candidature.
+      expect(Object.keys(marcature[0].patch)).toEqual(['copia_inviata_il'])
+      expect(Date.parse(String(marcature[0].patch.copia_inviata_il))).not.toBeNaN()
+    })
+
+    /**
+     * ⚠️ IL VERSO CHE COSTA CARO.
+     *
+     * Una riga segnata per sbaglio è una candidatura che NESSUNA sede riceverà
+     * mai, e di cui nessuno si accorgerà: la query «chi manca?» non la trova
+     * più. Un doppione si vede e si butta; una candidatura segnata e mai partita
+     * è invisibile. Fra i due errori non c'è simmetria, e questo test difende il
+     * lato che non perdona.
+     */
+    it('copia NON partita → la colonna resta NULL, costi pure un doppione domani', async () => {
+      sendEmailDetailed.mockResolvedValue({ ok: false, error: 'casella inesistente' })
+      const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
+      expect(esito.ok).toBe(false)
+      expect(esito.segnata).toBe(false)
+      expect(marcature).toEqual([])
+    })
+
+    it('nemmeno un 429 la segna: «non oggi» non è «consegnata»', async () => {
+      sendEmailDetailed.mockResolvedValue({ ok: false, error: 'quota (429)', rinviabile: true })
+      await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
+      expect(marcature).toEqual([])
+    })
+
+    it('senza anagrafica e senza ripiego non parte niente, e niente si segna', async () => {
+      risolviContestoSede.mockResolvedValue(contestoSenzaSede('Kidville Gamma'))
+      await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
+      expect(marcature).toEqual([])
+    })
+
+    /**
+     * `entitaId: null` è legittimo — la rotta pubblica lo ricava rileggendo la
+     * riga appena inserita, e quella rilettura può non riuscire. La copia parte
+     * lo stesso, perché destinatario e contenuto non dipendono da lui. Ma non si
+     * può marcare una riga di cui non si ha l'id: si dice, e non si inventa un
+     * `eq('id', null)` che colpirebbe qualunque cosa o niente.
+     */
+    it('senza id della candidatura la copia parte, non si segna, e lo dichiara', async () => {
+      const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), {
+        ...BASE,
+        entitaId: null,
+      })
+      expect(esito.ok).toBe(true)
+      expect(esito.segnata).toBe(false)
+      expect(marcature).toEqual([])
+      expect(campiLoggati().map((c) => c.esito)).toContain('copia-inviata-ma-non-segnata')
+    })
+
+    /**
+     * PostgREST non lancia: ritorna `{ error }`. Se questo ramo non controllasse
+     * il valore di ritorno, una marcatura fallita passerebbe per riuscita — e il
+     * doppione di domani arriverebbe senza che nessuna riga di log lo annunci.
+     */
+    it('marcatura fallita → esito.segnata è false e la riga di log è ERROR', async () => {
+      erroreMarcatura = { message: 'permission denied for table candidature_insegnanti' }
+      const esito = await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
+      // L'email È partita: l'esito non diventa false per un difetto di memoria.
+      expect(esito.ok).toBe(true)
+      expect(esito.segnata).toBe(false)
+      const grido = logEvento.mock.calls.find(
+        (c) => c[1] === 'error' && (c[2] as { esito?: string })?.esito === 'copia-inviata-ma-non-segnata',
+      )
+      expect(grido, 'una marcatura fallita passa in silenzio').toBeTruthy()
+    })
+
+    it('la marcatura non può far fallire l’email: se `update` esplode, l’esito resta ok', async () => {
+      const supabase = {
+        storage: { from: () => ({ download: async () => ({ data: null, error: null }) }) },
+        from: () => ({ update: () => ({ eq: async () => { throw new Error('rete giù') } }) }),
+      } as never
+      const esito = await inviaCopiaAllaSede(supabase, BASE)
+      expect(esito.ok).toBe(true)
+      expect(esito.segnata).toBe(false)
+    })
   })
 
   it('nei log NON finisce mai il nome, l’email o il percorso del curriculum', async () => {

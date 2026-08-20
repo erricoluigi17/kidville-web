@@ -1633,6 +1633,14 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     const inviataIl = formattaIstante(new Date(), 'it', {
       day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
     })
+    // ⚠️ QUESTA CHIAMATA LASCIA MEMORIA DI SÉ, dal 2026-08-20: se la copia parte,
+    // `inviaCopiaAllaSede` scrive `copia_inviata_il` sulla candidatura. Prima non
+    // lo faceva nessuno da questa strada — la colonna la sapeva scrivere solo
+    // l'inoltro dell'arretrato — e la conseguenza era misurabile: quel giorno
+    // quattro candidature avevano la copia regolarmente in casella e la riga a
+    // NULL, cioè risultavano «mai inoltrate» a chiunque avesse fatto la query.
+    // Al primo inoltro dell'arretrato sarebbero tornate come doppioni, e con loro
+    // ogni candidatura futura.
     await inviaCopiaAllaSede(supabase, {
       scuoleIds: scuoleRichieste,
       dati: normalizzati,

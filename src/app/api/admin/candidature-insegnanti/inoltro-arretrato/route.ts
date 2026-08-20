@@ -35,6 +35,15 @@ import { formattaIstante } from '@/i18n/config'
 // da mandare. Senza quella colonna, un secondo clic significherebbe un centinaio
 // di email alle sedi.
 //
+// ⚠️ MA LA SCRITTURA NON È PIÙ QUI: sta in `inviaCopiaAllaSede`, appesa
+// all'invio. Il 2026-08-20 questa rotta era l'unica a saper segnare, e la rotta
+// pubblica spediva la copia lasciando la colonna a NULL: quel giorno, misurate,
+// quattro candidature avevano la copia in casella e la riga vuota. Due clic
+// sull'arretrato non si sono pestati i piedi — 25 + 25 righe diverse — ma sette
+// sedi hanno ricevuto due volte la stessa candidata, perché l'elenco dei «non
+// ancora inviati» conteneva righe già inviate. Il rimedio non è più diligenza
+// qui: è che chi spedisce segni, sempre, da qualunque strada arrivi.
+//
 // ─── IL TETTO DEL PROVIDER SI RISPETTA, NON SI SCOPRE ────────────────────────
 // Resend sta intorno alle 100 email al giorno ed è già conteso con
 // `INVITI_AL_GIORNO = 90` del cron delle iscrizioni. Perciò: un tetto per
@@ -169,6 +178,8 @@ export const POST = withRoute('admin/candidature-insegnanti/inoltro-arretrato:PO
   let inviate = 0
   let fallite = 0
   let senzaSede = 0
+  /** Partite ma senza memoria: torneranno al prossimo giro, come doppioni. */
+  let nonSegnate = 0
   let fermato: string | null = null
 
   for (const r of daFare) {
@@ -207,21 +218,19 @@ export const POST = withRoute('admin/candidature-insegnanti/inoltro-arretrato:PO
     })
 
     if (esito.ok) {
-      const { error: errSegno } = await supabase
-        .from('candidature_insegnanti')
-        .update({ copia_inviata_il: new Date().toISOString() })
-        .eq('id', r.id as string)
-      if (errSegno !== null) {
-        // L'email È partita. Non poterlo scrivere significa che al prossimo giro
-        // parte di nuovo: un doppione, non una perdita. Ma va detto forte, perché
-        // se succede su tutte le righe l'inoltro non finisce mai.
-        logEvento('candidatura', 'error', {
-          operazione: OPERAZIONE,
-          esito: 'copia-inviata-ma-non-segnata',
-          entita_id: r.id as string,
-          msg: 'la copia è partita ma copia_inviata_il non è stata scritta: al prossimo giro ripartirà, come doppione',
-        }, errSegno)
-      }
+      // ⚠️ QUI NON SI SEGNA PIÙ NIENTE, ed è la correzione del 2026-08-20.
+      // `copia_inviata_il` la scrive `inviaCopiaAllaSede`, cioè il posto da cui
+      // passano ENTRAMBE le strade — questa e il modulo pubblico. Finché la
+      // regola stava soltanto qui, la rotta pubblica spediva senza lasciare
+      // memoria e riempiva di doppioni il giro successivo. Una regola valida per
+      // due strade vive in un posto solo, e quel posto è l'invio.
+      //
+      // L'email È partita: una marcatura mancata è un doppione domani, non una
+      // perdita, e non toglie la riga dal conto delle inviate. Ma si conta e si
+      // riporta, perché se succede su TUTTE le righe l'inoltro non finisce mai —
+      // il grido a livello `error`, con l'errore vero del database in mano, lo
+      // lascia già `inviaCopiaAllaSede`.
+      if (!esito.segnata) nonSegnate++
       inviate++
       continue
     }
@@ -254,12 +263,16 @@ export const POST = withRoute('admin/candidature-insegnanti/inoltro-arretrato:PO
     n_inviate: inviate,
     n_fallite: fallite,
     n_senza_sede: senzaSede,
+    n_non_segnate: nonSegnate,
   })
 
   return NextResponse.json({
     inviate,
     fallite,
     senza_riga_di_sede: senzaSede,
+    // Partite ma non segnate: chi legge il resoconto deve sapere che quelle
+    // torneranno, invece di scoprirlo dai doppioni nella casella di una sede.
+    partite_ma_non_segnate: nonSegnate,
     esaminate: daFare.length,
     fermato,
   })

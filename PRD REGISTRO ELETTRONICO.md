@@ -94,6 +94,80 @@
 
 ---
 
+## 🔂 Changelog — Sette sedi hanno ricevuto due volte la stessa candidata, e la colonna che doveva impedirlo era scritta da una strada sola — 2026-08-20 (branch `fix/copia-sede-marcata-alla-fonte`)
+
+Due clic su **«Inoltra ai plessi le copie mai partite»**, e poi la domanda giusta: *sono arrivati
+tutti i curriculum, e ci sono doppioni?* La risposta si ottiene confrontando le tre caselle dei
+plessi con la tabella. È stata misurata, non stimata.
+
+### Cosa dicono i numeri (2026-08-20, ore 14:30)
+
+| | |
+|---|---|
+| candidature in `candidature_insegnanti` | **55** |
+| email di copia nelle caselle dei plessi (messaggi distinti) | **61** |
+| candidature che hanno ricevuto la copia | **54 su 55** |
+| curriculum in `cv_path` | **29**, di cui **28** allegati e verificati byte a byte |
+| doppioni | **7 persone** |
+
+**I due clic non si sono pestati i piedi.** In `app_log` l'evento `inoltro-arretrato-concluso`
+compare due volte fra le 14:28:03 e le 14:29:01, e in mezzo ci sono **50 email, non 100**: il tetto
+è 25 per chiamata, il primo giro ha preso le 25 righe più vecchie e il secondo le 25 successive.
+L'idempotenza ha retto.
+
+**I curriculum sono tutti quelli giusti.** Per ognuna delle 29 candidature con allegato, il peso del
+file nello Storage e quello dell'email stanno nel rapporto del base64 (~1,37): nessun curriculum
+arrivato mutilo, nessuno scambiato. L'unico assente è quello della candidatura di cui l'email non è
+mai partita.
+
+### I 7 doppioni non venivano dai due clic
+
+Venivano dalle candidature arrivate **fra le 10:50 e le 11:42** di quel giorno: avevano già ricevuto
+la copia automatica al momento dell'invio, ma `copia_inviata_il` era a NULL, quindi l'arretrato le
+ha rispedite. Sei a Giugliano, una ad Aversa.
+
+La causa non è il mancato backfill — quella era una scelta consapevole e giusta (il changelog qui
+sotto la argomenta). **La causa è che la colonna la sapeva scrivere una strada sola.** L'inoltro
+dell'arretrato la scriveva; il modulo pubblico spediva la copia e non scriveva niente. La prova sta
+nelle quattro candidature arrivate fra le 13:25 e le 13:54: copia regolarmente in casella,
+`copia_inviata_il` a NULL. Non un residuo storico — il difetto era **vivo**, e ogni candidatura
+nuova sarebbe tornata come doppione al clic successivo.
+
+### La correzione: la memoria è appesa all'invio
+
+`copia_inviata_il` la scrive ora **`inviaCopiaAllaSede`**, cioè il punto da cui passano entrambe le
+strade, e l'esito che restituisce porta un terzo campo, `segnata`. La rotta di inoltro non aggiorna
+più la riga da sé: conta i casi «partita ma non segnata» e li riporta nel resoconto
+(`partite_ma_non_segnate`), perché se succedesse su tutte le righe l'inoltro non finirebbe mai.
+
+> Un chiamante può dimenticare di segnare. **Non può dimenticare di spedire**: se salta quella
+> funzione non manda niente, e il guasto si vede subito. Perciò la memoria sta appesa all'invio, non
+> alla diligenza di chi chiama — è la stessa lezione del ciclo 2 di `/ship-cycle`: *una regola valida
+> per due strade deve vivere in un posto solo*.
+
+Il verso che non perdona resta protetto: si segna **solo** dopo un esito positivo vero del provider,
+mai su un 429, mai senza id della candidatura. Una riga segnata per sbaglio è una candidatura che
+nessuna sede riceverà mai e che la query «chi manca?» non troverà più; un doppione si vede e si
+butta. Fra i due errori non c'è simmetria.
+
+Un `update` fallito non può far fallire l'email — è già partita — ma esce a livello `error` col
+corpo dell'errore del database, e `segnata: false` lo dichiara al chiamante.
+
+### La candidatura che nessuno aveva ricevuto
+
+Una sola, delle 55: arrivata alle **11:51:53**, rivolta a **due plessi**, con curriculum caricato
+(il file c'è nello Storage). In `app_log`, alle 11:51:56, il suo `422 — Invalid to field`: è
+l'ultima colpita dal difetto del destinatario multiplo corretto poche ore prima (PR #94). L'inoltro
+dell'arretrato non l'ha ripescata perché 25+25 si sono fermati alle 50 righe più vecchie e lei era
+la 51ª.
+
+Rimedio applicato: le quattro righe con la copia già in casella sono state marcate **una per una**,
+con l'istante **vero** dell'email arrivata (letto dalla casella, non dedotto da una finestra
+temporale), così che il clic successivo su «Inoltra ai plessi» spedisca **quella sola** email invece
+di quattro doppioni.
+
+---
+
 ## 📬 Changelog — Le copie mai arrivate ai plessi, e la cricca che ha respinto la scorciatoia — 2026-08-20 (branch `feat/inoltro-arretrato-plessi`)
 
 La copia della candidatura al plesso è nata il 2026-08-20 con la PR #91. Tutto ciò che era

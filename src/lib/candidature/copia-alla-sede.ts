@@ -51,6 +51,15 @@ export interface EsitoCopiaAllaSede {
     ok: boolean
     /** Vero quando il provider ha detto «non oggi» (429) e non «non si può». */
     rinviabile: boolean
+    /**
+     * Vero quando `copia_inviata_il` è stata scritta davvero.
+     *
+     * `ok: true, segnata: false` non è una contraddizione: l'email è partita ma
+     * la riga non porta memoria del fatto, quindi al prossimo inoltro
+     * dell'arretrato ripartirà come DOPPIONE. È un guasto minore — un doppione
+     * si vede e si butta — ma va detto, non dedotto.
+     */
+    segnata: boolean
 }
 
 export interface DatiCopiaAllaSede {
@@ -96,6 +105,83 @@ export interface DatiCopiaAllaSede {
      * la rotta pubblica non lo passa mai, perché oggi il campo c'è.
      */
     curriculumNonPrevisto?: boolean
+}
+
+/** La tabella su cui vive `copia_inviata_il`. */
+const TABELLA = 'candidature_insegnanti'
+
+/**
+ * ═════════════════════════════════════════════════════════════════════════════
+ * «QUESTA COPIA È GIÀ PARTITA» — e la memoria si scrive QUI, non nei chiamanti.
+ * ═════════════════════════════════════════════════════════════════════════════
+ *
+ * ─── PERCHÉ STA DENTRO QUESTO FILE ───────────────────────────────────────────
+ * Perché la regola è una sola — «se è partita, segnala» — e le strade che ci
+ * passano sono due: il modulo pubblico e l'inoltro dell'arretrato. Fino al
+ * 2026-08-20 la regola viveva soltanto nella seconda, e la prima spediva senza
+ * lasciare memoria. Misurato quel giorno: quattro candidature arrivate fra le
+ * 13:25 e le 13:54 avevano la copia regolarmente in casella e `copia_inviata_il`
+ * a NULL. Al primo clic successivo su «inoltra ai plessi» avrebbero preso un
+ * doppione — e con loro ogni candidatura futura, perché l'elenco dei «non
+ * ancora inviati» si riempiva di righe già inviate.
+ *
+ * Un chiamante può dimenticare di segnare. Non può dimenticare di spedire: se
+ * salta questa funzione non manda niente, e il guasto si vede subito. Perciò la
+ * memoria sta appesa all'invio, non alla buona volontà di chi chiama.
+ *
+ * ─── PERCHÉ NON PUÒ MAI FAR FALLIRE L'EMAIL ──────────────────────────────────
+ * L'email è già partita quando questo codice gira. Un `update` andato male è un
+ * doppione domani; un'eccezione che risale sarebbe una candidatura dichiarata
+ * non consegnata quando invece è in casella — cioè il contrario esatto della
+ * verità, e su questa colonna la bugia più costosa è proprio quella.
+ *
+ * ⚠️ PostgREST NON LANCIA: ritorna `{ error }`. Il `try` qui sotto copre la rete
+ * e i client finti, non l'errore di PostgREST — quello si legge nel valore di
+ * ritorno, ed è la riga sopra il `catch`.
+ */
+async function segnaCopiaInviata(
+    supabase: SupabaseClient,
+    entitaId: string | null,
+    scuolaId: string,
+): Promise<boolean> {
+    // Senza id non si marca: `eq('id', null)` non colpisce la riga giusta, e
+    // «quale riga» non è una cosa che si indovina.
+    if (entitaId === null) {
+        logEvento('candidatura', 'warn', {
+            operazione: OPERAZIONE,
+            esito: 'copia-inviata-ma-non-segnata',
+            scuola_id: scuolaId,
+            msg:
+                'la copia è partita ma la candidatura non ha un id in mano: copia_inviata_il resta ' +
+                'NULL e al prossimo inoltro dell’arretrato partirà di nuovo, come doppione',
+        })
+        return false
+    }
+    try {
+        const { error } = await supabase
+            .from(TABELLA)
+            .update({ copia_inviata_il: new Date().toISOString() })
+            .eq('id', entitaId)
+        if (error !== null && error !== undefined) {
+            logEvento('candidatura', 'error', {
+                operazione: OPERAZIONE,
+                esito: 'copia-inviata-ma-non-segnata',
+                entita_id: entitaId,
+                scuola_id: scuolaId,
+                msg: 'la copia è partita ma copia_inviata_il non è stata scritta: al prossimo inoltro ripartirà, come doppione',
+            }, error)
+            return false
+        }
+        return true
+    } catch (e) {
+        logEvento('candidatura', 'error', {
+            operazione: OPERAZIONE,
+            esito: 'copia-inviata-ma-non-segnata',
+            entita_id: entitaId,
+            scuola_id: scuolaId,
+        }, e)
+        return false
+    }
 }
 
 /**
@@ -170,7 +256,7 @@ export async function inviaCopiaAllaSede(
                     : `nessuna email in Impostazioni → Anagrafica sede per questo plesso e ${ENV_RIPIEGO} non è impostata: la copia della candidatura NON parte`,
             })
         }
-        if (destinatario === null) return { ok: false, rinviabile: false }
+        if (destinatario === null) return { ok: false, rinviabile: false, segnata: false }
 
         // ── L'ALLEGATO ──────────────────────────────────────────────────────
         // Un curriculum che non si scarica NON ferma l'email: la sede riceve
@@ -271,7 +357,14 @@ export async function inviaCopiaAllaSede(
             con_allegato: allegati !== undefined,
         }, invio.ok ? undefined : new Error(invio.error ?? 'motivo sconosciuto'))
 
-        return { ok: invio.ok, rinviabile: invio.rinviabile === true }
+        // ⚠️ SOLO dopo un esito positivo VERO del provider, e mai su un 429.
+        // Una riga segnata per sbaglio è una candidatura che nessuna sede
+        // riceverà mai e di cui nessuno si accorgerà: la query «chi manca?» non
+        // la trova più. Un doppione si vede e si butta. Fra i due errori non
+        // c'è simmetria, e questa `if` è il lato che non perdona.
+        const segnata = invio.ok ? await segnaCopiaInviata(supabase, d.entitaId, scuolaPrincipale) : false
+
+        return { ok: invio.ok, rinviabile: invio.rinviabile === true, segnata }
     } catch (e) {
         logEvento('candidatura', 'warn', {
             operazione: OPERAZIONE,
@@ -279,6 +372,6 @@ export async function inviaCopiaAllaSede(
             entita_id: d.entitaId,
             scuola_id: scuolaPrincipale,
         }, e)
-        return { ok: false, rinviabile: false }
+        return { ok: false, rinviabile: false, segnata: false }
     }
 }

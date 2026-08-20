@@ -17,10 +17,13 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 //  2. `prova: true` NON SPEDISCE E NON SCRIVE. Un conteggio che manda un'email è
 //     peggio di nessun conteggio, perché chi lo chiede sta ancora decidendo.
 //
-//  3. SI SEGNA SOLO CIÒ CHE È PARTITO DAVVERO. `copia_inviata_il` si scrive dopo
-//     un esito positivo del provider, mai prima e mai su un fallimento: una riga
-//     segnata per sbaglio è una candidatura che nessuna sede riceverà MAI, e
-//     nessuno se ne accorgerà, perché la query «chi manca?» non la troverà più.
+//  3. QUESTA ROTTA NON SEGNA PIÙ NIENTE. `copia_inviata_il` la scrive
+//     `inviaCopiaAllaSede`, cioè il punto da cui passano ENTRAMBE le strade —
+//     questa e il modulo pubblico — e il test che difende «si segna solo ciò che
+//     è partito davvero» sta là, in `__tests__/lib/candidature/copia-alla-sede`.
+//     Qui resta il verso: se qualcuno rimettesse l'`update` in questo file, la
+//     regola tornerebbe ad avere due case, che è la condizione da cui il difetto
+//     del 2026-08-20 è nato.
 //
 //  4. UN 429 FERMA IL GIRO. «Non oggi» non è «non si può»: insistere brucia
 //     tentativi che falliscono tutti, e il resto dell'arretrato è ancora lì
@@ -120,7 +123,7 @@ beforeEach(() => {
   h.state.righe = []
   h.state.aggiornamenti = []
   h.logEvento.mockReset()
-  h.inviaCopiaAllaSede.mockReset().mockResolvedValue({ ok: true, rinviabile: false })
+  h.inviaCopiaAllaSede.mockReset().mockResolvedValue({ ok: true, rinviabile: false, segnata: true })
   h.requireStaff.mockImplementation(async (_req: unknown, allowed?: string[]) => {
     const u = h.state.utente
     if (!u) return { response: NextResponse.json({ error: 'non autenticato' }, { status: 401 }) }
@@ -169,12 +172,43 @@ describe('prova: conta e basta', () => {
 })
 
 describe('l’invio vero', () => {
-  it('manda una copia per candidatura e segna solo quelle partite', async () => {
+  it('manda una copia per candidatura', async () => {
     h.state.righe = [candidatura('c1', [SEDE_A]), candidatura('c2', [SEDE_B])]
     const json = await (await POST(chiamata({}))).json()
     expect(json.inviate).toBe(2)
-    expect(h.state.aggiornamenti.map((a) => a.id)).toEqual(['c1', 'c2'])
-    expect(Object.keys(h.state.aggiornamenti[0].patch)).toEqual(['copia_inviata_il'])
+    expect(h.inviaCopiaAllaSede.mock.calls.map((c) => c[1].entitaId)).toEqual(['c1', 'c2'])
+  })
+
+  /**
+   * ─── LA MEMORIA NON SI SCRIVE PIÙ QUI ──────────────────────────────────────
+   *
+   * `copia_inviata_il` la scrive `inviaCopiaAllaSede`, cioè il punto da cui
+   * passano entrambe le strade. Finché stava soltanto in questa rotta, il modulo
+   * pubblico spediva senza lasciare memoria: il 2026-08-20 quattro candidature
+   * avevano la copia in casella e la colonna a NULL, e sette sedi hanno ricevuto
+   * due volte la stessa candidata.
+   *
+   * Questo test è il guardiano di quella correzione: se un giorno qualcuno
+   * rimettesse l'`update` qui dentro «per sicurezza», la riga verrebbe scritta
+   * due volte e la regola tornerebbe ad avere due case — che è la condizione da
+   * cui il difetto è nato.
+   */
+  it('la rotta NON scrive più la colonna: la memoria è appesa all’invio, non al chiamante', async () => {
+    h.state.righe = [candidatura('c1', [SEDE_A]), candidatura('c2', [SEDE_B])]
+    const json = await (await POST(chiamata({}))).json()
+    expect(json.inviate).toBe(2)
+    expect(h.state.aggiornamenti).toEqual([])
+  })
+
+  it('partita ma non segnata → si conta e si riporta, perché tornerà come doppione', async () => {
+    // Non poterlo scrivere non è una perdita — l'email è in casella — ma se
+    // succede su tutte le righe l'inoltro non finisce mai, e chi legge il
+    // resoconto deve saperlo prima di rilanciarlo.
+    h.inviaCopiaAllaSede.mockResolvedValue({ ok: true, rinviabile: false, segnata: false })
+    h.state.righe = [candidatura('c1', [SEDE_A]), candidatura('c2', [SEDE_B])]
+    const json = await (await POST(chiamata({}))).json()
+    expect(json.inviate).toBe(2)
+    expect(json.partite_ma_non_segnate).toBe(2)
   })
 
   it('i plessi arrivano come ELENCO di uuid, e i nomi in chiaro accanto', async () => {
@@ -185,8 +219,8 @@ describe('l’invio vero', () => {
     expect(arg.sediScelte).toEqual(['Kidville Alfa', 'Kidville Beta'])
   })
 
-  it('una copia NON partita non viene segnata: altrimenti sparisce per sempre', async () => {
-    h.inviaCopiaAllaSede.mockResolvedValue({ ok: false, rinviabile: false })
+  it('una copia NON partita non entra fra le inviate: altrimenti sparisce per sempre', async () => {
+    h.inviaCopiaAllaSede.mockResolvedValue({ ok: false, rinviabile: false, segnata: false })
     h.state.righe = [candidatura('c1', [SEDE_A])]
     const json = await (await POST(chiamata({}))).json()
     expect(json.inviate).toBe(0)
@@ -194,10 +228,10 @@ describe('l’invio vero', () => {
     expect(h.state.aggiornamenti).toEqual([])
   })
 
-  it('un 429 FERMA il giro, e non segna la riga su cui si è fermato', async () => {
+  it('un 429 FERMA il giro', async () => {
     h.inviaCopiaAllaSede
-      .mockResolvedValueOnce({ ok: true, rinviabile: false })
-      .mockResolvedValueOnce({ ok: false, rinviabile: true })
+      .mockResolvedValueOnce({ ok: true, rinviabile: false, segnata: true })
+      .mockResolvedValueOnce({ ok: false, rinviabile: true, segnata: false })
     h.state.righe = [candidatura('c1', [SEDE_A]), candidatura('c2', [SEDE_A]), candidatura('c3', [SEDE_A])]
     const json = await (await POST(chiamata({}))).json()
     expect(json.inviate).toBe(1)
@@ -205,7 +239,6 @@ describe('l’invio vero', () => {
     // La terza non è stata nemmeno tentata: insistere dopo un «non oggi» brucia
     // tentativi che falliscono tutti.
     expect(h.inviaCopiaAllaSede).toHaveBeenCalledTimes(2)
-    expect(h.state.aggiornamenti.map((a) => a.id)).toEqual(['c1'])
   })
 
   it('una candidatura SENZA righe di sede non si spedisce «da qualche parte»: si conta e si logga error', async () => {

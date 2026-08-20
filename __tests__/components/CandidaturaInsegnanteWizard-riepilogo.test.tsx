@@ -597,8 +597,24 @@ describe('CandidaturaInsegnanteWizard — dal riepilogo si torna al riepilogo', 
     // 2 · e non è successo in SILENZIO: il riquadro nomina il passo rimasto
     //     indietro, che è l'unica cosa che spiega perché la schermata non è
     //     quella promessa dal comando appena premuto.
-    expect(screen.getByText(itPublic.candRitornoInterrottoTitolo)).toBeInTheDocument()
-    expect(screen.getByText(new RegExp(itPublic.candProfilo, 'i'))).toBeInTheDocument()
+    const titolo = screen.getByText(itPublic.candRitornoInterrottoTitolo)
+    // ⚠️ SI CERCA DENTRO IL RIQUADRO, non nella pagina intera.
+    //
+    // Fino al 2026-08-20 questa riga era `screen.getByText(/Il tuo profilo/i)` e
+    // passava per la ragione sbagliata: il mock di `next-intl` ignorava i valori
+    // di `t()`, quindi il corpo del riquadro mostrava letteralmente «il passo
+    // «{passo}»» — con le graffe — e a soddisfare l'asserzione era il TITOLO
+    // della schermata, che si chiama «Il tuo profilo» per conto suo. Il riquadro
+    // non nominava un bel niente, e il test diceva che lo faceva.
+    //
+    // Ora il mock formatta quando arrivano dei valori, e la ricerca è ristretta
+    // al riquadro: se il nome del passo sparisce dal corpo, questa riga cade.
+    const riquadro = titolo.closest('div') as HTMLElement
+    expect(riquadro).not.toBeNull()
+    expect(
+      within(riquadro).getByText(new RegExp(itPublic.candProfilo, 'i')),
+      'il riquadro non nomina il passo rimasto indietro',
+    ).toBeInTheDocument()
     // 3 · si è ricaduti nel percorso lineare: il comando torna «Avanti», perché
     //     una promessa appena mancata non si rifà mentre il modulo è incompleto.
     expect(screen.getByRole('button', { name: itPublic.candAvanti })).toBeInTheDocument()

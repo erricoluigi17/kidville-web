@@ -992,7 +992,26 @@ export function CandidaturaInsegnanteWizard({
           // L'hook abbandona il link, dimentica la scelta e richiede l'elenco; il
           // ritorno al primo passo — dove il passo «sede» sta ricomparendo — è
           // l'unica parte che sa di numeri, e resta qui.
-          sedeSmentitaDalServer(sedi[0])
+          /**
+           * ⚠️ LE SEDI CHE IL SERVER HA DAVVERO RIFIUTATO, non `sedi[0]`.
+           *
+           * Il server risponde `SEDE_DA_SPECIFICARE` quando UNA QUALSIASI delle
+           * sedi non è valida, e fino al 2026-08-20 non diceva quale: il client
+           * marcava la prima. Con «Giugliano e Aversa» spuntate e solo Aversa
+           * disattivata mentre si compilava, marcava GIUGLIANO — la sede valida —
+           * e poi mostrava «la sede che avevi scelto non riceve candidature», al
+           * singolare, a chi ne aveva scelte due.
+           *
+           * Il ripiego su `sedi` intero serve a un server più vecchio di questo
+           * client (un deploy a metà): senza l'elenco non si può sapere quale sia
+           * caduta, e incolparle tutte è meno sbagliato che incolparne una a caso.
+           */
+          const rifiutateDalServer = (corpo as { sedi_rifiutate?: unknown } | null)?.sedi_rifiutate
+          const rifiutate =
+            Array.isArray(rifiutateDalServer) && rifiutateDalServer.length > 0
+              ? rifiutateDalServer.filter((x): x is string => typeof x === 'string')
+              : sedi
+          sedeSmentitaDalServer(rifiutate)
           setIndice(0)
           // ⚠️ LA FRASE DIPENDE DA DOVE VENIVA LA SEDE, e le strade sono due.
           // Col link targato la causa probabile è un collegamento vecchio, e
@@ -1011,7 +1030,13 @@ export function CandidaturaInsegnanteWizard({
           // non è cosmesi»: vale qui identico.
           setErroreInvio({
             tipo: 'sede',
-            corpo: sedeDaLink !== null ? t('candSedeRifiutataCorpo') : t('candSedeRifiutataCorpoScelta'),
+            corpo:
+              sedeDaLink !== null
+                ? t('candSedeRifiutataCorpo')
+                // Il numero decide il singolare o il plurale: dire «la sede che
+                // avevi scelto» a chi ne aveva spuntate tre è una frase che non
+                // descrive niente di ciò che è appena successo.
+                : t('candSedeRifiutataCorpoScelta', { n: rifiutate.length }),
             nota: t('candSedeRifiutataNota'),
           })
           // `warn` e non `error`: il server ha risposto correttamente a un dato

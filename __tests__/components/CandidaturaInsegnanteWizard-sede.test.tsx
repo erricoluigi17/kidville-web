@@ -733,7 +733,13 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
     await compilaEInvia()
 
-    await waitFor(() => expect(screen.getByText(itPublic.candSedeRifiutataCorpoScelta)).toBeInTheDocument())
+    // ⚠️ NON `itPublic.candSedeRifiutataCorpoScelta`: dal 2026-08-20 quella
+    // chiave è un plurale ICU, e confrontarla grezza vorrebbe dire pretendere a
+    // schermo le graffe di `{n, plural, …}` — che è ciò che succedeva davvero,
+    // finché il mock di `next-intl` ignorava i valori.
+    await waitFor(() =>
+      expect(screen.getByText(/^La sede che avevi scelto non riceve candidature/)).toBeInTheDocument(),
+    )
     // Chi non ha mai aperto un link targato non deve sentirsi dire che il suo
     // collegamento è vecchio: il link diffuso è UNO solo per tutte e tre le sedi.
     expect(screen.queryByText(itPublic.candSedeRifiutataCorpo)).not.toBeInTheDocument()
@@ -758,7 +764,7 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     await compilaEInvia()
 
     await waitFor(() => expect(screen.getByText(itPublic.candSedeRifiutataCorpo)).toBeInTheDocument())
-    expect(screen.queryByText(itPublic.candSedeRifiutataCorpoScelta)).not.toBeInTheDocument()
+    expect(screen.queryByText(/La sede che avevi scelto non riceve candidature/)).not.toBeInTheDocument()
   })
 
   /*
@@ -812,6 +818,84 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
     // Nessun «Riprova»: ricaricare darebbe la stessa risposta.
     expect(screen.queryByRole('button', { name: itPublic.candSediRiprova })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: itPublic.candAvanti })).toBeDisabled()
+  })
+})
+
+describe('CandidaturaInsegnanteWizard — il rifiuto del server nomina LE SEDI GIUSTE', () => {
+  /**
+   * ⚠️ IL DIFETTO: IL CLIENT INCOLPAVA LA SEDE VALIDA.
+   *
+   * Il server risponde `SEDE_DA_SPECIFICARE` quando UNA QUALSIASI delle sedi non
+   * è valida. Fino al 2026-08-20 non diceva quale, e il client faceva l'unica
+   * cosa che poteva: `sedeSmentitaDalServer(sedi[0])`. Con ALFA e BETA spuntate
+   * e solo BETA disattivata mentre si compilava, marcava ALFA — cioè la sede
+   * buona — e poi mostrava «la sede che avevi scelto non riceve candidature»,
+   * al singolare, a chi ne aveva scelte due, dopo aver azzerato tutte le spunte.
+   *
+   * Nessuno dei cinque `it` esistenti su `SEDE_DA_SPECIFICARE` lo copriva: sono
+   * tutti a sede singola, e il `describe` della scelta multipla non ne aveva
+   * nemmeno uno.
+   */
+  const RIFIUTO_CON_ELENCO = (rifiutate: string[]) => ({
+    tipo: 'http' as const,
+    stato: 400,
+    corpo: {
+      error: 'Indicare la sede della candidatura.',
+      codice: 'SEDE_DA_SPECIFICARE',
+      sedi_rifiutate: rifiutate,
+    },
+  })
+
+  it('🔴 con due sedi e una sola caduta, il messaggio è al PLURALE giusto (una)', async () => {
+    mockSedi(
+      [{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }, { tipo: 'ok', sedi: [ALFA, GAMMA] }],
+      [RIFIUTO_CON_ELENCO([BETA.id]), { tipo: 'ok' }],
+    )
+    render(<CandidaturaInsegnanteWizard />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: ALFA.nome }))
+    fireEvent.click(screen.getByRole('checkbox', { name: BETA.nome }))
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await compilaEInvia()
+
+    // Una sola sede rifiutata ⇒ la frase al singolare, che qui è quella VERA.
+    expect(
+      await screen.findByText(/La sede che avevi scelto non riceve candidature/),
+    ).toBeInTheDocument()
+  })
+
+  it('🔴 con DUE sedi cadute il messaggio smette di dire «la sede», al singolare', async () => {
+    mockSedi(
+      [{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }, { tipo: 'ok', sedi: [GAMMA] }],
+      [RIFIUTO_CON_ELENCO([ALFA.id, BETA.id]), { tipo: 'ok' }],
+    )
+    render(<CandidaturaInsegnanteWizard />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: ALFA.nome }))
+    fireEvent.click(screen.getByRole('checkbox', { name: BETA.nome }))
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await compilaEInvia()
+
+    expect(await screen.findByText(/2 delle sedi che avevi scelto/)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/^La sede che avevi scelto non riceve candidature/),
+      'a chi ne aveva scelte due si diceva «la sede», al singolare',
+    ).toBeNull()
+  })
+
+  it('un server VECCHIO che non manda l’elenco non fa incolpare una sede a caso', async () => {
+    // Il ripiego durante un deploy a metà: senza `sedi_rifiutate` non si può
+    // sapere quale sia caduta, e incolparle tutte è meno sbagliato che
+    // incolparne una — che sarebbe con ogni probabilità quella valida.
+    mockSedi(
+      [{ tipo: 'ok', sedi: [ALFA, BETA, GAMMA] }, { tipo: 'ok', sedi: [GAMMA] }],
+      [RIFIUTO_SEDE, { tipo: 'ok' }],
+    )
+    render(<CandidaturaInsegnanteWizard />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: ALFA.nome }))
+    fireEvent.click(screen.getByRole('checkbox', { name: BETA.nome }))
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await compilaEInvia()
+
+    expect(await screen.findByText(/2 delle sedi che avevi scelto/)).toBeInTheDocument()
   })
 })
 

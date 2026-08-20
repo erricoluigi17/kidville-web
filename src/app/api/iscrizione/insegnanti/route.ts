@@ -829,17 +829,35 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // su tre è peggio di uno che non ne controlla nessuna: sembra difeso, e il
     // giorno in cui la seconda è un uuid inventato la riga di sede va a una FK
     // che non esiste — o, senza FK, sparisce da ogni filtro senza un errore.
-    const sedeNonValida = scuoleRichieste.find((id) => !reali.some((s) => s.id === id))
-    if (sedeNonValida !== undefined) {
+    const sediNonValide = scuoleRichieste.filter((id) => !reali.some((s) => s.id === id))
+    if (sediNonValide.length > 0) {
       logEvento('candidatura', 'warn', {
         operazione: OPERAZIONE,
         esito: 'sede-non-valida',
         // Un conteggio, non l'elenco: dice se il rifiuto riguarda un invio a una
         // sede o a più sedi, senza portare uuid che non servono a nessuno.
         n_sedi: scuoleRichieste.length,
+        n_rifiutate: sediNonValide.length,
       })
       return NextResponse.json(
-        { error: 'Indicare la sede della candidatura.', codice: 'SEDE_DA_SPECIFICARE' },
+        {
+          error: 'Indicare la sede della candidatura.',
+          codice: 'SEDE_DA_SPECIFICARE',
+          /**
+           * ⚠️ QUALI sedi sono state rifiutate, non solo che una lo è stata.
+           *
+           * Senza questo elenco il client non può saperlo, e faceva l'unica cosa
+           * che poteva: marcava `sedi[0]`. Con «Giugliano e Aversa» spuntate e
+           * solo Aversa disattivata, marcava GIUGLIANO — cioè la sede valida — e
+           * poi diceva «la sede che avevi scelto non riceve candidature», al
+           * singolare, a chi ne aveva scelte due, senza dire quale, dopo aver
+           * azzerato tutte le spunte.
+           *
+           * Non è una fuga: sono gli uuid CHE IL CLIENT HA APPENA MANDATO. Non
+           * dice niente che non sappia già, e il log resta un conteggio.
+           */
+          sedi_rifiutate: sediNonValide,
+        },
         { status: 400 },
       )
     }

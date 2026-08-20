@@ -884,7 +884,7 @@ export function AnagraficaPersonaleWizard({
         // compila. Non è un caso di scuola: `GET /api/iscrizione/sedi` e la POST
         // applicano lo STESSO `sediReali`, ma non nello stesso istante.
         if (res.status === 400 && (corpo as { codice?: unknown } | null)?.codice === 'SEDE_DA_SPECIFICARE') {
-          sedeSmentitaDalServer(sede)
+          sedeSmentitaDalServer([sede])
           setIndice(0)
           // Una sola frase, e non due come sul modulo fratello: qui il link
           // targato non esiste, quindi la sede l'ha scelta chi compila da un

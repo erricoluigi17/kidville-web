@@ -61,8 +61,17 @@ vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.n
 import { AnagraficaPersonaleWizard } from '@/components/features/public/AnagraficaPersonaleWizard'
 
 const campoScadenza = () => screen.getByLabelText(/^Scadenza del documento/) as HTMLInputElement
-const riquadroScaduto = () => screen.queryByText(itPublic.persDocScaduto)
-const riquadroInScadenza = () => screen.queryByText(itPublic.persDocInScadenza)
+/**
+ * ⚠️ SI CERCA UN FRAMMENTO, NON LA CHIAVE GREZZA.
+ *
+ * `persDocScaduto` porta `{data}` e `persDocInScadenza` è un plurale ICU. Fino
+ * al 2026-08-20 il mock di `next-intl` ignorava i valori di `t()`, quindi a
+ * schermo restavano le graffe e confrontare la stringa del catalogo funzionava:
+ * il test misurava un testo che nel browser non è mai apparso. Ora il mock
+ * formatta, e il riquadro si riconosce da ciò che ha di stabile.
+ */
+const riquadroScaduto = () => screen.queryByText(/Questo documento risulta scaduto il /)
+const riquadroInScadenza = () => screen.queryByText(/^Scade (oggi|fra )/)
 
 /** Le due facce, con l'etichetta che le nomina e l'`id` che è anche la colonna. */
 const FACCE = [

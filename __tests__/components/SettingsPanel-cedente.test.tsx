@@ -202,11 +202,16 @@ describe('Impostazioni → Dati fiscali: la sede legale è in campi separati', (
 
         await waitFor(() => expect(within(sezione).getByText(itSettings.spFiscaleCorreggi)).toBeInTheDocument())
         expect(within(sezione).getByLabelText(itSettings.spFiscaleNumeroCivico)).toHaveAttribute('aria-invalid', 'true')
-        // Il messaggio dice il numero: senza, si accorcia a caso. (In questo banco
-        // `t` non interpola, quindi a schermo resta il segnaposto: che il numero
-        // sia quello dello XSD lo misura `cedente.test.ts` su `LUNGHEZZE_CEDENTE`.)
+        // ⚠️ IL MESSAGGIO DICE IL NUMERO, E ORA LO SI PUÒ PROVARE. Questo blocco
+        // diceva: «in questo banco `t` non interpola, quindi a schermo resta il
+        // segnaposto», e si accontentava di verificare che la CHIAVE contenesse
+        // `{max, plural,`. Era vero del banco, non del prodotto — e lasciava
+        // scoperto proprio ciò che serve a chi legge l'errore: senza il numero,
+        // si accorcia a caso.
         expect(itSettings.spFiscaleErrTroppoLungo).toContain('{max, plural,')
-        expect(within(sezione).getByText(itSettings.spFiscaleErrTroppoLungo)).toBeInTheDocument()
+        expect(
+          within(sezione).getByText(/^Massimo \d+ caratteri?: il tracciato della fattura taglia il resto\.$/),
+        ).toBeInTheDocument()
         expect(ultimoPatchImpostazioni()).toBeNull()
     })
 

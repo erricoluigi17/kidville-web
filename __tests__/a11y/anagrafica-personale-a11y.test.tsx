@@ -433,7 +433,10 @@ describe('a11y · /anagrafica-personale — nessun riferimento nel vuoto', () =>
     expect(riferimentiInteri(), 'passo: documento (nessun avviso di scadenza)').toEqual([])
 
     fireEvent.change(screen.getByLabelText(/^Scadenza del documento/), { target: { value: '01/01/2020' } })
-    await waitFor(() => expect(screen.getByText(itPublic.persDocScaduto)).toBeInTheDocument())
+    // Un frammento, non la chiave grezza: `persDocScaduto` porta `{data}`.
+    await waitFor(() =>
+      expect(screen.getByText(/Questo documento risulta scaduto il /)).toBeInTheDocument(),
+    )
     expect(riferimentiInteri(), 'passo: documento (avviso acceso)').toEqual([])
   })
 })

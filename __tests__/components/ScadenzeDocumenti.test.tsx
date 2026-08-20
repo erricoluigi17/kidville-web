@@ -165,8 +165,10 @@ describe('ScadenzeDocumenti · lo stato si deriva dalle date', () => {
       screen.queryByRole('button', { name: new RegExp(itAdmin.scadStatoRegola, 'i') }),
       'un riquadro che nessuno clicca è rumore',
     ).not.toBeInTheDocument()
-    // …ma il numero c'è: senza, i quattro riquadri non hanno scala.
-    expect(screen.getByText(itAdmin.scadInRegola)).toBeInTheDocument()
+    // …ma il numero c'è: senza, i quattro riquadri non hanno scala. `scadInRegola`
+    // è un plurale ICU, e si pretende il TESTO FORMATTATO: confrontare la chiave
+    // grezza vorrebbe dire attendersi a schermo le graffe di `{n, plural, …}`.
+    expect(screen.getByText(/documento?i? in regola$|^Nessun documento in regola$/)).toBeInTheDocument()
   })
 
   it('un riquadro filtra l’elenco e si annuncia PREMUTO (`aria-pressed`)', async () => {

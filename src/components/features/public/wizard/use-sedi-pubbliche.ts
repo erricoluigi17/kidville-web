@@ -183,8 +183,15 @@ export interface SediPubbliche {
   sediDecise: string[]
   /** L'uuid che il SERVER ha rifiutato, se c'è stato. */
   sedeRifiutata: string | null
+  /** TUTTE le sedi che il server ha rifiutato, non solo la prima. */
+  sediRifiutate: string[]
   /** Il server ha rifiutato la sede: si abbandona il link e si richiede l'elenco. */
-  sedeSmentitaDalServer: (sede: string) => void
+  /**
+   * Il server ha rifiutato UNA O PIÙ sedi. Prende l'ELENCO, non una sede: con
+   * più caselle spuntate il chiamante non sa quale sia caduta se non gliela si
+   * dice, e prima marcava `sedi[0]` — spesso quella valida.
+   */
+  sedeSmentitaDalServer: (sedi: string[]) => void
   /** La sede decisa dal link, se il link vale ancora qualcosa. */
   sedeDaLink: string | null
   /** Il link è smentito dall'elenco o dal server: da qui in poi non è mai esistito. */
@@ -244,7 +251,9 @@ export function useSediPubbliche({
    * c'è stata. Non è un doppione dell'elenco: è l'unico modo di sapere che quel
    * plesso non vale più anche quando l'elenco non si è potuto leggere.
    */
-  const [sedeRifiutata, setSedeRifiutata] = useState<string | null>(null)
+  const [sediRifiutate, setSediRifiutate] = useState<string[]>([])
+  /** La prima delle rifiutate, per i consumatori che ne mostrano una sola. */
+  const sedeRifiutata = sediRifiutate[0] ?? null
 
   useEffect(() => {
     // L'elenco si chiede SEMPRE, anche col link targato: è l'unica autorità su
@@ -317,7 +326,7 @@ export function useSediPubbliche({
    */
   const linkSmentito =
     sedeLink !== null &&
-    (sedeLink === sedeRifiutata || (elencoPronto && !sedi.some((s) => s.id === sedeLink)))
+    (sediRifiutate.includes(sedeLink) || (elencoPronto && !sedi.some((s) => s.id === sedeLink)))
   const sedeDaLink = sedeLink !== null && !linkSmentito ? sedeLink : null
   /**
    * ⚠️ IL LINK TARGATO VINCE, E RESTA UNA SEDE SOLA.
@@ -356,7 +365,7 @@ export function useSediPubbliche({
    * sull'elenco può più smontare il modulo: le schermate che «non fanno
    * cominciare» sono giuste all'apertura e sarebbero una perdita di lavoro qui.
    */
-  const giaCompilato = sedeRifiutata !== null
+  const giaCompilato = sediRifiutate.length > 0
 
   /**
    * La sede si sceglie quando c'è davvero da scegliere — e SEMPRE dopo un
@@ -426,8 +435,8 @@ export function useSediPubbliche({
    * ha, e i dati compilati NON si toccano — react-hook-form li conserva anche
    * mentre il pannello dei campi è smontato dall'attesa dell'elenco.
    */
-  function sedeSmentitaDalServer(sede: string): void {
-    setSedeRifiutata(sede)
+  function sedeSmentitaDalServer(sedi: string[]): void {
+    setSediRifiutate(sedi)
     // Si azzerano TUTTE le spunte, non solo quella rifiutata: il server ha
     // appena smentito l'elenco da cui venivano, e `riprova()` lo richiede. Ciò
     // che si potrà scegliere è ciò che il server accetta adesso.
@@ -468,6 +477,7 @@ export function useSediPubbliche({
     commutaSede,
     sediDecise,
     sedeRifiutata,
+    sediRifiutate,
     sedeSmentitaDalServer,
     sedeDaLink,
     linkSmentito,

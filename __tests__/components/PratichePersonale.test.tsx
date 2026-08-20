@@ -454,12 +454,16 @@ describe('PratichePersonale — pannello', () => {
     // l'italiano scritto a mano nella route, proprio sui messaggi che dicono «NON
     // ripremere Approva».
     //
-    // ⚠️ Il testo atteso è quello GREZZO, con `{colonne}` dentro: il mock globale di
-    // `next-intl` (`test/setup.ts`) risolve la chiave sui messaggi italiani veri ma NON
-    // interpola i parametri. Che il parametro parta davvero è provato dall'altra parte,
-    // sulla route (`pratiche-personale-approva`, `parametri(body)`): qui si prova la
-    // cosa che riguarda questo file, cioè che dal CODICE si arrivi al CATALOGO.
-    const attesoAvviso = itAdminAltro.pratAvvisoChiusuraParzialeNonLegata
+    // ⚠️ E IL PARAMETRO ARRIVA FINO A SCHERMO. Questo blocco diceva, fino al
+    // 2026-08-20: «il testo atteso è quello GREZZO, con `{colonne}` dentro,
+    // perché il mock di `next-intl` non interpola; che il parametro parta è
+    // provato sulla route». Era vero del mock, non del prodotto — e significava
+    // che la catena codice → catalogo → SCHERMO non era provata da nessuno: il
+    // test sarebbe rimasto verde con un messaggio che mostra le graffe.
+    //
+    // Ora il mock formatta quando arrivano dei valori, e qui si pretende il nome
+    // della colonna che il server ha mandato (`utente_id`), non il segnaposto.
+    const attesoAvviso = /mancano le colonne utente_id\./
     expect(screen.getByText(attesoAvviso)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratHoPresoNota }))
     await waitFor(() => expect(screen.queryByText(itAdminAltro.pratEsitoPresaInCarico)).not.toBeInTheDocument())
@@ -633,7 +637,13 @@ describe('PratichePersonale — pannello', () => {
     await apriAnna()
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
 
-    expect(screen.getByText(itAdminAltro.pratConfermaAccountEsiste)).toBeInTheDocument()
+    // Il ruolo e la sede arrivano davvero a schermo, non come `{ruolo}`/`{sede}`:
+    // è l'unica informazione che rende quel riquadro utile a chi deve decidere.
+    // Il ruolo passa dal catalogo (`CHIAVE_RUOLO`), la sede è quella vera: si
+    // pretende che a schermo ci sia il NOME DEL PLESSO, non `{sede}`.
+    expect(
+      screen.getByText(/^Questa email HA GIÀ un accesso: ruolo .+, sede Kidville Alfa\.$/),
+    ).toBeInTheDocument()
     expect(screen.getByText(itAdminAltro.pratConfermaAccountEffetto)).toBeInTheDocument()
     // E si dice PRIMA del clic: il riquadro di conferma è ancora aperto.
     expect(screen.getByRole('button', { name: itAdminAltro.pratConferma })).toBeInTheDocument()
@@ -1271,7 +1281,7 @@ describe('PratichePersonale — il fuoco del riquadro di conferma', () => {
       .split(' ')
       .map((id) => document.getElementById(id)?.textContent ?? '')
       .join(' ')
-    expect(descrizione).toContain(itAdminAltro.pratConfermaAccountEsiste)
+    expect(descrizione).toContain('Questa email HA GIÀ un accesso: ruolo')
     expect(descrizione).toContain(itAdminAltro.pratConfermaApprovaTesto)
   })
 

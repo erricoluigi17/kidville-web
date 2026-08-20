@@ -93,6 +93,7 @@ if (typeof fetchNudo === 'function') {
 // e la classe intera del difetto è chiusa per costruzione — non c'è più niente da ricordare.
 vi.mock('next-intl', async () => {
   const { readdirSync, readFileSync } = await import('node:fs');
+  const { IntlMessageFormat } = await import('intl-messageformat');
   const { join } = await import('node:path');
   // `process.cwd()` è la radice del repo sotto vitest, ed è l'ancora che usano già i lock
   // di `__tests__/architecture/`. `import.meta.url` qui NON serve: dentro la trasformazione
@@ -117,8 +118,34 @@ vi.mock('next-intl', async () => {
     const gruppo = ns ? it[ns] : undefined;
     return (gruppo && gruppo[key]) ?? (ns ? `${ns}.${key}` : key);
   };
+  // ─── I VALORI, QUANDO CI SONO ──────────────────────────────────────────────
+  //
+  // Fino al 2026-08-20 questo mock IGNORAVA il secondo argomento di `t()`. Una
+  // chiave con un placeholder (`Passo {corrente} di {totale}`) o con un plurale
+  // ICU (`{n, plural, one {…} other {…}}`) finiva a schermo COSÌ COM'È, con le
+  // graffe. Le asserzioni sui testi restavano verdi perché confrontavano la
+  // stessa stringa grezza letta dal catalogo: nessun test poteva accorgersi che
+  // un plurale non si formatta, o che un placeholder è scritto male.
+  //
+  // ⚠️ SI FORMATTA SOLO QUANDO ARRIVANO DEI VALORI. `t('chiave')` senza secondo
+  // argomento resta byte per byte ciò che era: è l'unico modo di chiudere questo
+  // buco senza toccare le centinaia di asserzioni che confrontano `t(k)` con la
+  // stringa del catalogo. Le chiavi con ICU chiamate senza valori continuano a
+  // rendersi grezze, esattamente come prima — quelle restano scoperte, e chi
+  // scrive un plurale nuovo lo sappia.
+  const formatta = (messaggio: string, valori: Record<string, unknown>): string => {
+    try {
+      return String(new IntlMessageFormat(messaggio, 'it').format(valori));
+    } catch {
+      // Un messaggio che non compila non deve far cadere il mock: cadrebbe come
+      // «errore del test» invece che come «testo sbagliato», che è più difficile
+      // da leggere. Si restituisce il grezzo, come faceva prima.
+      return messaggio;
+    }
+  };
   const useTranslations = (ns?: string) => {
-    const t = (key: string) => resolve(ns, key);
+    const t = (key: string, valori?: Record<string, unknown>) =>
+      valori === undefined ? resolve(ns, key) : formatta(resolve(ns, key), valori);
     return Object.assign(t, {
       rich: (key: string) => resolve(ns, key),
       markup: (key: string) => resolve(ns, key),

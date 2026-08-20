@@ -399,15 +399,21 @@ describe('/admin/students/[id] — sul fallimento NON si naviga', () => {
     expect(conferma.textContent).toMatch(/non più iscritti/i)
 
     /**
-     * ⚠️ IL NOME NON SI PUÒ ASSERIRE QUI, e il perché va detto invece di lasciare
-     * un'asserzione più debole a fingere che vada bene: il mock di next-intl in
-     * `test/setup.ts` risolve la chiave e restituisce la stringa GREZZA, senza
-     * interpolare — a schermo, in questo test, resta `{nome}` letterale. Quindi si
-     * misura la sola cosa vera e misurabile da qui: che la frase di catalogo il
-     * segnaposto ce l'abbia. Se qualcuno lo togliesse, la segreteria — che lavora
-     * con più schede aperte — leggerebbe «è stato spostato» senza sapere CHI.
+     * ⚠️ IL NOME ORA SI ASSERISCE, e questo blocco raccontava il contrario.
+     *
+     * Diceva: «il nome non si può asserire qui, il mock di next-intl restituisce
+     * la stringa GREZZA senza interpolare — a schermo resta `{nome}` letterale»,
+     * e ripiegava sul verificare che il CATALOGO il segnaposto ce l'avesse. Era
+     * una descrizione fedele del banco di prova, non del prodotto: significava
+     * che nessuno provava la cosa che la nota dichiara importante — che la
+     * segreteria, con più schede aperte, legga CHI è stato spostato.
+     *
+     * Dal 2026-08-20 il mock formatta quando arrivano dei valori, e si pretende
+     * il nome vero. Il controllo sul catalogo resta: se qualcuno togliesse il
+     * segnaposto dalla frase, la prima asserzione cadrebbe e la seconda direbbe
+     * perché.
      */
-    expect(conferma.textContent).toContain('{nome}')
+    expect(conferma.textContent).toContain('Aurora Verdi')
     expect(catalogoIt.detailPageArchiviato).toContain('{nome}')
 
     await act(async () => {

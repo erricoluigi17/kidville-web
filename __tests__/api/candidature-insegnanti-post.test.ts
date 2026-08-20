@@ -1457,7 +1457,15 @@ describe('POST /api/iscrizione/insegnanti · il doppio invio non è un no-op', (
 
     const res = await inviaValida()
     expect(res.status).toBe(201)
-    expect(await res.json(), 'una riga già evasa è stata spacciata per viva').toEqual({ id: null })
+    // ⚠️ IL CORPO È `{}`, NON `{ id: null }`, e la differenza è dottrina di
+    // questo file: una risposta di forma diversa È l'oracolo che il 201 serve a
+    // togliere. `{ id: null }` è distinguibile da `{ id: "<uuid>" }` quanto
+    // basta a un client per sapere se quell'email ha già una candidatura viva.
+    // Ora la chiave si omette, e il corpo è identico nei due rami che non
+    // possono nominare una riga: la distinzione resta in `app_log`.
+    const corpo = await res.json()
+    expect(corpo, 'una riga già evasa è stata spacciata per viva').toEqual({})
+    expect(Object.keys(corpo), '`id: null` è un oracolo con un altro nome').not.toContain('id')
 
     // Il filtro è stato dichiarato al database, non solo sperato.
     const stati = h.filtriIn.find((f) => f.colonna === 'stato')?.valori
@@ -1477,7 +1485,9 @@ describe('POST /api/iscrizione/insegnanti · il doppio invio non è un no-op', (
 
     const res = await inviaValida()
     expect(res.status).toBe(201)
-    expect(await res.json()).toEqual({ id: null })
+    // Stesso corpo del ramo qui sopra: «duplicata e persa di vista» e «duplicata
+    // e non letta» non si distinguono da fuori. Vedi la nota dell'altro test.
+    expect(await res.json()).toEqual({})
 
     const muto = h.eventi.find((e) => e.campi.esito === 'duplicata-riga-viva-non-letta')
     expect(muto, 'una rilettura fallita non ha lasciato traccia').toBeTruthy()
@@ -1739,5 +1749,109 @@ describe('POST /api/iscrizione/insegnanti · agganciare una sede a una candidatu
       { candidatura_id: 'viva-su-A', scuola_id: SEDE_B },
     ])
     expect(h.eventi.find((e) => e.campi?.esito === 'duplicata')?.campi.stessa_persona).toBe(true)
+  })
+})
+
+// =============================================================================
+// IL TETTO DELLE SEDI, E IL MESSAGGIO CHE PRIMA NON ARRIVAVA.
+//
+// `MAX_SEDI_PER_CANDIDATURA = 3` era una costante cablata, con accanto un
+// commento che diceva «non è cablato su tre a caso — è `sediReali` che decide»:
+// `sediReali` stava tre righe sotto e non veniva consultata. Il giorno della
+// quarta sede il wizard avrebbe rese quattro caselle e l'invio le avrebbe
+// rifiutate.
+//
+// E il rifiuto non arrivava: era la sola prosa di zod su `scuole_ids`, che non è
+// un campo del modulo, quindi `mappaErroriServer` non lo riconosceva e chi
+// compilava leggeva «Si è verificato un errore durante l'invio» dopo cinque
+// passi, senza che nulla nominasse la causa.
+// =============================================================================
+describe('POST /api/iscrizione/insegnanti · il tetto delle sedi è quello VERO', () => {
+  const UUID = (n: number) => `dddddddd-0000-4000-8000-${String(n).padStart(12, '0')}`
+
+  it('🔴 con QUATTRO sedi reali, quattro sedi passano', async () => {
+    // Il caso che la costante cablata avrebbe rifiutato. Da una a tre sedi la
+    // cooperativa ci ha messo un mese.
+    const C = UUID(3)
+    const D = UUID(4)
+    h.sedi = [
+      { id: SEDE_A, nome: NOME_SEDE_A },
+      { id: SEDE_B, nome: NOME_SEDE_B },
+      { id: C, nome: 'Kidville Terza' },
+      { id: D, nome: 'Kidville Quarta' },
+    ]
+    const res = await invia({ scuole_ids: [SEDE_A, SEDE_B, C, D], data: candidatura() })
+    expect(res.status, 'quattro plessi reali rifiutati da un tetto cablato su tre').toBe(201)
+  })
+
+  it('🔴 più sedi di quante ne esistano: 400 con un CODICE, non con una prosa', async () => {
+    const res = await invia({
+      scuole_ids: [SEDE_A, SEDE_B, UUID(3)],
+      data: candidatura(),
+    })
+    expect(res.status).toBe(400)
+    const corpo = await res.json()
+    expect(
+      corpo.codice,
+      'senza un codice il modulo ripiega su «Si è verificato un errore durante l’invio»',
+    ).toBe('TROPPE_SEDI')
+  })
+
+  it('e la ripetizione della STESSA sede non conta come «troppe»', async () => {
+    // `[A, A, B, B]` sono DUE plessi scritti quattro volte. Un rifiuto che nomina
+    // un limite non superato manda a cercare la causa dove non è.
+    const res = await invia({ scuole_ids: [SEDE_A, SEDE_A, SEDE_B, SEDE_B], data: candidatura() })
+    expect(res.status).toBe(201)
+  })
+
+  it('un elenco che non è un elenco di sedi si ferma in `zod`, prima di ogni lettura', async () => {
+    // 60 voci: `parseBody` non ha nessun tetto di dimensione, quindi senza il
+    // tetto strutturale un corpo di centomila uuid arriverebbe fino al `Set`.
+    const res = await invia({
+      scuole_ids: Array.from({ length: 60 }, () => SEDE_A),
+      data: candidatura(),
+    })
+    expect(res.status).toBe(400)
+  })
+})
+
+// =============================================================================
+// `stessa_sede` GUARDAVA SOLO LA PRIMA SEDE RICHIESTA.
+//
+// È il booleano citato nel file come «l'unico modo di contare in SQL quante
+// candidature stanno cercando un secondo plesso». Con `[Aversa, Giugliano]` e la
+// riga viva su Giugliano diceva `false` pur avendo bussato anche a quella porta:
+// una metrica che si legge al contrario è peggio di nessuna metrica, perché la
+// si usa.
+// =============================================================================
+describe('POST /api/iscrizione/insegnanti · `stessa_sede` guarda TUTTE le sedi richieste', () => {
+  const vivaSu = (sede: string) => {
+    h.erroreInsert = {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"',
+    }
+    h.vivaPerEmail = {
+      id: 'ffffffff-ffff-ffff-ffff-ffffffffffff',
+      stato: 'pending',
+      scuola_id: sede,
+      email: 'ines.prova@example.invalid',
+      cognome: 'Prova',
+    }
+    h.righeDiSede.push({ candidatura_id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', scuola_id: sede })
+  }
+  const duplicata = () => h.eventi.find((e) => e.campi.esito === 'duplicata')
+
+  it('🔴 la riga viva è sulla SECONDA sede richiesta: `stessa_sede` è vero', async () => {
+    vivaSu(SEDE_B)
+    await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    expect(duplicata()?.campi.stessa_sede, 'ha bussato a quella porta e il log dice di no').toBe(true)
+  })
+
+  it('e resta falso quando la riga viva è su un plesso che NON è stato richiesto', async () => {
+    // Il controllo negativo: se il booleano diventasse sempre vero, la metrica
+    // sarebbe rotta nell'altro verso e nessuno se ne accorgerebbe.
+    vivaSu(SEDE_B)
+    await invia({ scuole_ids: [SEDE_A], data: candidatura() })
+    expect(duplicata()?.campi.stessa_sede).toBe(false)
   })
 })

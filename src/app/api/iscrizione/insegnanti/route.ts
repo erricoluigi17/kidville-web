@@ -12,7 +12,7 @@ import {
   CONSENSI_INSEGNANTI_FIELDS,
   CONSENSI_INSEGNANTI_VERSIONE,
   POSIZIONI_AMMESSE,
-  POSIZIONI_OPTIONS,
+  etichettePosizioni,
   gradiDallePosizioni,
 } from '@/lib/forms/insegnanti-template'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
@@ -190,13 +190,25 @@ async function avvisaSegreteria(
 const POSIZIONI_ZOD = POSIZIONI_AMMESSE as [string, ...string[]]
 
 /**
- * Il numero dei plessi reali. Un elenco più lungo di così o è un errore, o è
- * qualcuno che prova a far partire N email con un invio solo: in entrambi i casi
- * la risposta è no. Non è cablato su tre a caso — è `sediReali` che decide chi
- * accetta candidature, e questo è solo il tetto oltre il quale non si guarda
- * nemmeno.
+ * IL TETTO STRUTTURALE, e non è il tetto vero.
+ *
+ * ⚠️ QUI C'ERA `MAX_SEDI_PER_CANDIDATURA = 3`, con accanto un commento che
+ * diceva «non è cablato su tre a caso — è `sediReali` che decide». Era cablato
+ * su tre, e `sediReali` sta tre righe sotto senza essere consultata. Il giorno
+ * in cui la cooperativa apre la quarta sede (da una a tre ci ha messo un mese)
+ * il wizard renderebbe quattro caselle e l'invio le rifiuterebbe.
+ *
+ * Zod le sedi reali non le può conoscere: gira prima di ogni lettura. Quindi
+ * qui resta soltanto un tetto STRUTTURALE — «questo non è un elenco di sedi, è
+ * un tentativo» — e il tetto vero si applica dopo, dove il numero si sa.
+ *
+ * Il numero è alto di proposito: non è una regola di dominio, è la difesa
+ * contro un corpo di centomila uuid che `parseBody` accetterebbe senza dire
+ * niente (`src/lib/validation/http.ts` non ha nessun tetto di dimensione).
+ * Superarlo non è un errore di chi compila: è un client che sta provando
+ * qualcosa.
  */
-const MAX_SEDI_PER_CANDIDATURA = 3
+const TETTO_STRUTTURALE_SEDI = 50
 
 /**
  * Lo schema d'ingresso.
@@ -226,17 +238,15 @@ const postBodySchema = z.object({
       error: 'Indicare la sede della candidatura',
     })
     .min(1, 'Indicare la sede della candidatura')
-    // ⚠️ IL TETTO SI APPLICA ALLE SEDI DISTINTE, non alle voci dell'elenco.
-    // `[G, G, A, A]` sono DUE plessi scritti quattro volte, e prima prendeva
-    // «Troppe sedi indicate»: un rifiuto che nomina un limite che non è stato
-    // superato. Dall'interfaccia non è raggiungibile — le caselle non producono
-    // doppioni — ma lo è da qualunque client che ripeta, e un messaggio d'errore
-    // che descrive il caso sbagliato manda a cercare la causa dove non è.
-    // Il tetto vero resta: quattro plessi DISTINTI sono ancora troppi.
-    .refine(
-      (v) => new Set(v).size <= MAX_SEDI_PER_CANDIDATURA,
-      { message: 'Troppe sedi indicate' },
-    ),
+    // ⚠️ QUESTO È IL TETTO STRUTTURALE, e si applica alle VOCI, non ai plessi
+    // distinti: serve a fermare un corpo che non è un elenco di sedi ma un
+    // tentativo. `parseBody` non ha nessun tetto di dimensione, quindi senza
+    // questa riga `[G × 100 000]` passerebbe zod e arriverebbe fino al `Set`.
+    //
+    // Il tetto VERO — «non più plessi di quanti ne esistano» — non può stare
+    // qui: zod gira prima di poter leggere `sediReali`. Sta più sotto, dove il
+    // numero si sa, e con un codice d'errore che il modulo sa tradurre.
+    .max(TETTO_STRUTTURALE_SEDI, 'Troppe sedi indicate'),
   data: z
     .object(
       {
@@ -829,6 +839,33 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // su tre è peggio di uno che non ne controlla nessuna: sembra difeso, e il
     // giorno in cui la seconda è un uuid inventato la riga di sede va a una FK
     // che non esiste — o, senza FK, sparisce da ogni filtro senza un errore.
+    /**
+     * IL TETTO VERO: non più plessi di quanti ne accettino.
+     *
+     * ⚠️ SI CONTANO I DISTINTI, e `scuoleRichieste` è già deduplicato:
+     * `[G, G, A, A]` sono DUE plessi scritti quattro volte, e un rifiuto che
+     * nomina un limite non superato manda a cercare la causa dove non è.
+     *
+     * ⚠️ E IL MESSAGGIO ARRIVA. Prima il rifiuto era una `prosa` di zod
+     * («Troppe sedi indicate») su un campo che il modulo non conosce:
+     * `mappaErroriServer` cerca `campi`/`consensi`, `scuole_ids` non è un campo
+     * del modulo, quindi si cadeva su `soloCatalogoDaCorpo`, che senza un codice
+     * dichiarato ripiega su «Si è verificato un errore durante l'invio.
+     * Controlla i dati e riprova» — un vicolo cieco dopo cinque passi, con un
+     * messaggio che non nomina la causa. Ora c'è un `codice`.
+     */
+    if (scuoleRichieste.length > reali.length) {
+      logEvento('candidatura', 'warn', {
+        operazione: OPERAZIONE,
+        esito: 'troppe-sedi',
+        n_sedi: scuoleRichieste.length,
+        n_reali: reali.length,
+      })
+      return NextResponse.json(
+        { error: 'Troppe sedi indicate.', codice: 'TROPPE_SEDI' },
+        { status: 400 },
+      )
+    }
     const sediNonValide = scuoleRichieste.filter((id) => !reali.some((s) => s.id === id))
     if (sediNonValide.length > 0) {
       logEvento('candidatura', 'warn', {
@@ -1153,7 +1190,20 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         // sarebbe l'uuid di una candidatura che questa segreteria non ha titolo
         // per aprire — il cockpit filtra per sede — e un link che porta a un
         // diniego è peggio di nessun link: sposta il difetto dove non si vede.
-        const stessaSede = sedeViva !== null && sedeViva === scuolaId
+        /**
+         * ⚠️ FRA TUTTE LE SEDI RICHIESTE, non solo la prima.
+         *
+         * Era `sedeViva === scuolaId`, e `scuolaId` è `scuoleRichieste[0]`. Con
+         * `[Aversa, Giugliano]` e la riga viva su Giugliano il log diceva
+         * `stessa_sede: false` pur avendo bussato anche a quella porta — cioè
+         * proprio il contrario di quello che era successo.
+         *
+         * Non è un dettaglio di cosmesi del log: questo booleano è citato, tre
+         * righe sotto, come «l'unico modo di contare in SQL quante candidature
+         * stanno cercando un secondo plesso». Una metrica che si legge al
+         * contrario è peggio di nessuna metrica, perché la si usa.
+         */
+        const stessaSede = sedeViva !== null && scuoleRichieste.includes(sedeViva)
 
         // ── LE SEDI NUOVE SI ATTACCANO ALLA CANDIDATURA CHE C'È GIÀ ─────────
         //
@@ -1309,7 +1359,25 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         // ⚠️ Nemmeno la conferma alla candidata, e resta come prima: dire
         // «abbiamo ricevuto la sua candidatura» a chi ne ha già una aperta le
         // farebbe credere di averne due in corsa.
-        return NextResponse.json({ id: idVivo }, { status: 201 })
+        /**
+         * ⚠️ E `{ "id": null }` NON ESCE PIÙ.
+         *
+         * Nel ramo `duplicata-riga-viva-non-trovata` — il `23505` c'è stato ma la
+         * riga viva non si trova più, perché fra l'INSERT e la lettura qualcuno
+         * l'ha approvata o rifiutata — `idVivo` è `null`, e la risposta usciva
+         * `{ "id": null }`: una forma nuova, che nessuna delle due dottrine di
+         * questo file ammette. Le righe 1063-1071 e 1090-1100 dicono che una
+         * risposta di forma DIVERSA È l'oracolo che il 201 serve a togliere, e
+         * `{ id: null }` è diversa da `{ id: "<uuid>" }` quanto basta a un
+         * client per distinguere «non c'era» da «c'era già».
+         *
+         * Non si inventa un uuid per far tornare la forma — sarebbe peggio: un
+         * identificativo che non apre niente. Si omette la chiave, che è ciò che
+         * fa già `undefined` in JSON: il corpo diventa `{}`, uguale per un
+         * doppione tracciato e per uno perso di vista, e la distinzione resta
+         * dove serve, cioè in `app_log`.
+         */
+        return NextResponse.json(idVivo !== null ? { id: idVivo } : {}, { status: 201 })
       }
 
       // ── TUTTO IL RESTO ⇒ 500 ────────────────────────────────────────────
@@ -1487,17 +1555,15 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
           // stesso difetto che il riepilogo del modulo chiude, spostato
           // dall'ultima schermata alla prima email.
           sediScelte: nomiSediScelte,
-          // ⚠️ LE ETICHETTE, non i valori del database. Prima era
-          // `posizioni.join(', ')`, e a chi si era candidata arrivava
-          // testualmente «Ruolo: insegnante_infanzia» — un identificatore
-          // interno, letto da una persona che aveva spuntato «Insegnante —
-          // Infanzia (3-6)». La copia alla sede lo risolveva già bene; questa no.
-          ruolo:
-            posizioni.length > 0
-              ? posizioni
-                  .map((v) => POSIZIONI_OPTIONS.find((o) => o.value === v)?.label ?? v)
-                  .join(', ')
-              : null,
+          // ⚠️ LE ETICHETTE, non i valori del database — e per «altro» ciò che
+          // ha scritto lei, non «Altro (specifica qui sotto)», che è
+          // un'istruzione al modulo. La regola sta accanto a `POSIZIONI_OPTIONS`
+          // (`etichettePosizioni`): scritta qui, divergerebbe il giorno in cui
+          // l'elenco cambia.
+          ruolo: etichettePosizioni(
+            posizioni,
+            typeof riga.posizione_altro === 'string' ? riga.posizione_altro : null,
+          ),
           // Un CONTEGGIO, mai i nomi dei file: un nome di file può contenere di
           // tutto — il codice fiscale, la data di nascita, il datore precedente —
           // e questa email non ha nessun motivo di ripeterlo a chi l'ha caricato.

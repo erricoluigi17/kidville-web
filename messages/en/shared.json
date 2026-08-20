@@ -159,6 +159,7 @@
   "erroreCandidaturaNonInviata": "We couldn’t record your application. Please try again in a few minutes.",
   "erroreCandidaturaGiaInviata": "There is already an application under review from this email address: open that one instead of adding a second.",
   "erroreCandidatureNonDisponibili": "We can’t accept applications right now. Please try again later, or write to the school office.",
+  "erroreTroppeSedi": "You selected more locations than exist. Go back to the first step and choose from the locations listed.",
   "erroreCandidaturaNonTrovata": "This application cannot be opened: reload the page or check the selected location.",
   "erroreCandidaturaGiaEvasa": "This application has already been reviewed: reload the page to see the current outcome.",
   "erroreCandidaturaEmailGiaStaff": "This email address already belongs to a staff account: link the application to the existing account instead of creating a second one.",

@@ -159,6 +159,7 @@
   "erroreCandidaturaNonInviata": "Non siamo riusciti a registrare la tua candidatura. Riprova fra qualche minuto.",
   "erroreCandidaturaGiaInviata": "Da questa email c’è già una candidatura in valutazione: apri quella invece di inserirne una seconda.",
   "erroreCandidatureNonDisponibili": "In questo momento non possiamo ricevere candidature. Riprova più avanti, oppure scrivi alla segreteria della scuola.",
+  "erroreTroppeSedi": "Hai indicato più sedi di quante ne esistano. Torna al primo passo e scegli fra i plessi elencati.",
   "erroreCandidaturaNonTrovata": "Questa candidatura non è apribile: ricarica la pagina o controlla la sede selezionata.",
   "erroreCandidaturaGiaEvasa": "Questa candidatura è già stata valutata: ricarica la pagina per vedere l’esito aggiornato.",
   "erroreCandidaturaEmailGiaStaff": "Questa email appartiene già a un account del personale: collega la candidatura all’account esistente invece di crearne un secondo.",

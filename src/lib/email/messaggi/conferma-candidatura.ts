@@ -60,7 +60,22 @@ function descriviAllegati(n: number): string | null {
 }
 
 export function messaggioConfermaCandidatura(d: DatiConfermaCandidatura, sede: ContestoSede): Messaggio {
-    const motivo = `Ricevi questo messaggio perché hai inviato una candidatura a ${sede.nome}.`
+    /**
+     * ⚠️ IL PIEDE NOMINA LE SEDI SCELTE, NON QUELLA DELLA CARTA INTESTATA.
+     *
+     * Qui c'era `${sede.nome}` fisso, e `sede` è il contesto risolto sul PRIMO
+     * plesso richiesto. Chi si era proposta a tre riceveva una email che nel
+     * corpo diceva «Sedi: Giugliano, Aversa, Cesa» e venti righe più in basso
+     * «hai inviato una candidatura a Giugliano»: lo stesso difetto che la riga
+     * «Sedi» era stata appena scritta per chiudere, spostato nello stesso file.
+     *
+     * La CARTA INTESTATA resta di una sede sola, ed è una scelta, non una
+     * dimenticanza: l'email è una, e una carta intestata con tre loghi non è una
+     * carta intestata. Il piede invece è testo, e il testo le può dire tutte.
+     */
+    const sediNominate = (d.sediScelte ?? []).filter((n) => n.trim() !== '')
+    const doveSonoAndata = sediNominate.length > 0 ? sediNominate.join(', ') : sede.nome
+    const motivo = `Ricevi questo messaggio perché hai inviato una candidatura a ${doveSonoAndata}.`
     const saluto = d.nome ? `Gentile ${d.nome},` : 'Gentile candidata, gentile candidato,'
     const allegati = descriviAllegati(d.numeroAllegati ?? 0)
 

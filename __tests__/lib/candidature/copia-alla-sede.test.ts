@@ -42,7 +42,7 @@ vi.mock('@/lib/email/contesto', async (originale) => ({
 
 import { inviaCopiaAllaSede } from '@/lib/candidature/copia-alla-sede'
 import { contestoSenzaSede } from '@/lib/email/contesto'
-import { SEDE_A, NOME_SEDE_A } from '../../fixtures/sedi'
+import { SEDE_A, SEDE_B, NOME_SEDE_A } from '../../fixtures/sedi'
 
 // ⚠️ L'uuid dalle FIXTURE, mai quello vero di un plesso. Il lock
 // `migrazioni-senza-sede-cablata` lo pretende, e la prima stesura di questo file
@@ -89,7 +89,45 @@ describe('inviaCopiaAllaSede', () => {
 
   it('spedisce alla casella dichiarata nell’anagrafica della sede', async () => {
     await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
-    expect(sendEmailDetailed.mock.calls[0][0].to).toBe('sede.alfa@example.invalid')
+    expect(sendEmailDetailed.mock.calls[0][0].to).toEqual(['sede.alfa@example.invalid'])
+  })
+
+  /**
+   * ─── IL CASO CHE SI È ROTTO IN PRODUZIONE, E CHE QUI NON PUÒ PIÙ PASSARE ───
+   *
+   * Il 2026-08-20, commit `2e505bd`, questa funzione costruiva il destinatario
+   * con `destinatari.join(', ')`. Resend risponde `422 «Invalid to field»` a una
+   * stringa che contiene due indirizzi, e in produzione le uniche due
+   * candidature rivolte a DUE plessi — arrivate alle 11:01:57 e alle 11:04:26 —
+   * non sono state recapitate a nessuna casella di sede. Quelle a una sede sola
+   * passavano: il guasto colpiva esattamente il caso per cui la funzione era
+   * stata scritta.
+   *
+   * ⚠️ QUESTA ASSERZIONE NON È RIDONDANTE con quelle in
+   * `__tests__/lib/email-send-destinatari.test.ts`, e la differenza è il motivo
+   * per cui esiste. Là si verifica che `send.ts` sappia separare una stringa con
+   * le virgole: è una RETE DI SICUREZZA, e una rete che funziona rende invisibile
+   * l'errore di chi ci cade dentro. Rimettendo il `join` qui, quei test restano
+   * verdi — l'ho misurato prima di scrivere questa riga.
+   *
+   * Solo un'asserzione sul CHIAMANTE, che pretende un array e non una stringa,
+   * cade quando il `join` torna. È questa.
+   */
+  it('DUE plessi → il destinatario è un ELENCO, mai una stringa con le virgole', async () => {
+    risolviContestoSede
+      .mockResolvedValueOnce({ ...contestoSenzaSede('Alfa'), email: 'alfa@example.invalid' })
+      .mockResolvedValueOnce({ ...contestoSenzaSede('Beta'), email: 'beta@example.invalid' })
+    await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), {
+      ...BASE,
+      scuoleIds: [SCUOLA, SEDE_B],
+      sediScelte: ['Alfa', 'Beta'],
+    })
+    const to = sendEmailDetailed.mock.calls[0][0].to
+    expect(Array.isArray(to)).toBe(true)
+    expect(to).toEqual(['alfa@example.invalid', 'beta@example.invalid'])
+    // E la forma esatta che la produzione rifiuta, dichiarata a parte: se un
+    // giorno `to` tornasse a essere una stringa, questa riga nomina il perché.
+    expect(typeof to).not.toBe('string')
   })
 
   it('mette in «rispondi a» l’indirizzo di chi si è candidato', async () => {
@@ -102,7 +140,7 @@ describe('inviaCopiaAllaSede', () => {
     process.env.CANDIDATURE_EMAIL_FALLBACK = 'ripiego@example.invalid'
     await inviaCopiaAllaSede(supabaseCon({ data: null, error: null }), BASE)
     expect(logEvento.mock.calls.filter((c) => c[1] === 'error').length).toBeGreaterThan(0)
-    expect(sendEmailDetailed.mock.calls[0][0].to).toBe('ripiego@example.invalid')
+    expect(sendEmailDetailed.mock.calls[0][0].to).toEqual(['ripiego@example.invalid'])
   })
 
   it('senza anagrafica E senza ripiego non spedisce, ma lo dice', async () => {

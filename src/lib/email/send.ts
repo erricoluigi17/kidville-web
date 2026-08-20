@@ -37,7 +37,25 @@ import { hashCorrelabile } from '@/lib/logging/redact'
  */
 
 export interface SendEmailParams {
-  to: string
+  /**
+   * Il destinatario, o PIÙ destinatari come elenco.
+   *
+   * ⚠️ NON si passa mai una stringa sola con dentro più indirizzi separati da
+   * virgola. Resend la rifiuta con `422 validation_error` — «Invalid `to` field.
+   * The email address needs to follow the `[email]` or `Name <[email]>` format»
+   * — e non è un dettaglio di formato: è successo in produzione il 2026-08-20,
+   * commit `2e505bd`, alle 11:02 e alle 11:04. Le due candidature rivolte a due
+   * plessi che erano arrivate quel giorno non sono state recapitate a nessuna
+   * casella di sede, mentre quelle a una sede sola passavano.
+   *
+   * Il tipo era `string`, il finto dei test accettava qualunque cosa, e undici
+   * test sulla copia alla sede erano verdi. **Un finto più permissivo del
+   * servizio vero non verifica: autorizza.** Perciò l'elenco è un `string[]`
+   * nel tipo — il compilatore, non la buona volontà — e
+   * `__tests__/lib/email-send-destinatari.test.ts` monta un finto che RIFIUTA
+   * la virgola come fa Resend.
+   */
+  to: string | string[]
   subject: string
   text: string
   /**
@@ -123,6 +141,42 @@ export interface SendEmailResult {
  */
 const QUOTA_ESAURITA = 429
 
+/**
+ * Il campo `to` nella forma che Resend accetta: **sempre un elenco**.
+ *
+ * ─── PERCHÉ ESISTE, E PERCHÉ NON SI LIMITA A FIDARSI DEL TIPO ────────────────
+ * Il tipo di `SendEmailParams.to` ora vieta la stringa-con-virgole, ma un tipo
+ * protegge solo chi compila. Questa funzione è la rete sotto: se qualcuno
+ * rimette un `join(', ')` — o arriva da JavaScript non tipato — l'email PARTE
+ * lo stesso, verso tutti gli indirizzi che il chiamante intendeva, invece di
+ * fallire con un 422 che nessuno guarda.
+ *
+ * E **non tace**: quella riga è un `warn`, perché è un difetto del chiamante
+ * che va corretto, non una forma alternativa legittima. Silenzio qui vorrebbe
+ * dire che il bug del 2026-08-20 può tornare e sopravvivere.
+ *
+ * ⚠️ La virgola si separa SOLO quando non c'è `<`: nella forma
+ * `Nome Cognome <indirizzo@dominio>` una virgola può stare dentro il nome
+ * («Rossi, Maria <m@x.it>») e spezzarla produrrebbe due destinatari inesistenti
+ * — cioè trasformerebbe un invio riuscito in due rifiuti.
+ */
+export function destinatariPerIlProvider(to: string | string[]): string[] {
+  if (Array.isArray(to)) return to
+  if (to.includes(',') && !to.includes('<')) {
+    const pezzi = to.split(',').map((s) => s.trim()).filter((s) => s !== '')
+    logEvento('email', 'warn', {
+      operazione: 'sendEmail',
+      esito: 'destinatari-in-una-stringa-sola',
+      n_destinatari: pezzi.length,
+      // `msg` non è in lista bianca nel jsonb, ma `testoEvento()` lo promuove alla
+      // colonna `app_log.messaggio`, che è in chiaro: è lì che si legge.
+      msg: 'più indirizzi passati come UNA stringa separata da virgole: Resend la rifiuta con 422, sono stati separati qui. Il chiamante va corretto per passare un elenco',
+    })
+    return pezzi
+  }
+  return [to]
+}
+
 const DEFAULT_FROM = 'Kidville <onboarding@resend.dev>'
 
 /**
@@ -156,7 +210,7 @@ export async function sendEmailDetailed({ to, subject, text, html, attachments, 
       },
       body: JSON.stringify({
         from: process.env.OTP_FROM_EMAIL ?? DEFAULT_FROM,
-        to,
+        to: destinatariPerIlProvider(to),
         subject,
         text,
         ...(html ? { html } : {}),

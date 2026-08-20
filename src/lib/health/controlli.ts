@@ -274,6 +274,21 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             '`esito: ok`. Si segue con una query su app_log.',
     },
     {
+        nome: 'news-digest',
+        perche:
+            'MENSILE (`0 8 1 * *`): stessa ragione dei due sopra — la finestra necessaria ' +
+            '(~32 giorni) supera i 30 di conservazione di app_log, quindi il battito precedente ' +
+            'sparisce prima che arrivi il successivo. ⚠️ Fino al 2026-08-20 questo lavoro non era ' +
+            'in NESSUNA delle due liste, che è lo stato peggiore: «lasciato fuori apposta» e ' +
+            '«dimenticato» diventano indistinguibili, ed è proprio ciò che le due costanti ' +
+            'esistono per separare. Spedisce una comunicazione istituzionale a TUTTE le famiglie, ' +
+            'quindi vale la pena guardarlo: si segue con una query su app_log su ' +
+            '`operazione: digest`, dove ora compaiono anche gli esiti `rimandata-quota` ' +
+            '(tetto email raggiunto, edizione lasciata in coda) e `digest-arretrate`. ' +
+            'Diventa sorvegliabile da qui il giorno in cui la cadenza passa a giornaliera: ' +
+            'allora entra in `JOB_CRON` con `finestraMs: 26 * ORA` come tutti gli altri.',
+    },
+    {
         nome: 'app-log-purge',
         perche:
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +

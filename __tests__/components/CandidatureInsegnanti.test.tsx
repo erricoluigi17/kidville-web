@@ -761,11 +761,21 @@ describe('CandidatureInsegnanti — due aperture ravvicinate', () => {
 })
 
 describe('CandidatureInsegnanti — approvazione', () => {
-  it('la conferma NOMINA sede, fasce e destinatario delle credenziali', async () => {
+  it('la conferma NOMINA persona, sede, fasce e recapito', async () => {
+    // ⚠️ SI CERCA LA CHIAVE DEL CATALOGO, NON LA FRASE. Fino al 2026-08-20 qui
+    // c'era `/Verrà creato un account docente per/` scritto a mano, e quella frase
+    // era FALSA dal 15 agosto: approvare non crea nessun account (`approva()` fa
+    // `return await approvaSenzaAccount(...)`, un solo percorso). Un test che
+    // ricopia la copia la CONGELA: finché il testo restava sbagliato il test era
+    // verde, e correggerlo lo faceva diventare rosso — cioè il test difendeva la
+    // bugia. Con la chiave, il test dice QUALE RAMO si disegna e resta muto su
+    // cosa c'è scritto dentro, che è il suo mestiere.
     await apriPrima()
     fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
 
-    const conferma = await screen.findByText(/Verrà creato un account docente per/)
+    const conferma = await screen.findByText(
+      new RegExp(itAdminAltro.candConfermaApprovaAccount.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    )
     const blocco = conferma.parentElement as HTMLElement
     expect(within(blocco).getByText('Anna Bianchi')).toBeInTheDocument()
     expect(within(blocco).getByText('Kidville Aversa')).toBeInTheDocument()
@@ -1029,7 +1039,12 @@ describe('CandidatureInsegnanti — le posizioni non docenti', () => {
     await apriLaSola('Anna Bianchi')
     fireEvent.click(screen.getByRole('button', { name: 'Approva' }))
 
-    expect(await screen.findByText(/Verrà creato un account docente per/)).toBeInTheDocument()
+    // Stessa ragione del test sopra: la chiave, non la frase.
+    expect(
+      await screen.findByText(
+        new RegExp(itAdminAltro.candConfermaApprovaAccount.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      ),
+    ).toBeInTheDocument()
     expect(screen.getByText(itAdminAltro.candConfermaApprovaFasceMancanti)).toBeInTheDocument()
   })
 

@@ -161,10 +161,26 @@ l'ultima colpita dal difetto del destinatario multiplo corretto poche ore prima 
 dell'arretrato non l'ha ripescata perché 25+25 si sono fermati alle 50 righe più vecchie e lei era
 la 51ª.
 
-Rimedio applicato: le quattro righe con la copia già in casella sono state marcate **una per una**,
-con l'istante **vero** dell'email arrivata (letto dalla casella, non dedotto da una finestra
-temporale), così che il clic successivo su «Inoltra ai plessi» spedisca **quella sola** email invece
-di quattro doppioni.
+Rimedio applicato: le righe con la copia già in casella sono state marcate **una per una**, con
+l'istante **vero** dell'email arrivata (letto dalla casella, non dedotto da una finestra temporale),
+così che il clic successivo su «Inoltra ai plessi» spedisca **quella sola** email invece di un
+pugno di doppioni.
+
+> ⚠️ **Erano quattro quando questa voce è stata scritta. Un'ora dopo erano sette.**
+>
+> Fra la misura delle 14:30 e l'applicazione del rimedio sono arrivate **altre tre candidature**
+> (14:36, 14:49, 14:53): copia regolarmente recapitata a Giugliano, `copia_inviata_il` a NULL. Il
+> totale è passato da **55 a 58** in un'ora, e le righe da marcare da 4 a 7 — ognuna verificata
+> nella casella prima di scriverla, non dedotta dall'orario.
+>
+> Non è un dettaglio di cronaca: è la dimostrazione che il difetto era **vivo**, non storico. Finché
+> questa correzione non è in produzione, ogni candidatura nuova nasce senza memoria della propria
+> copia. Chi legge questa voce e vuole il numero di adesso non lo copi da qui — è una query sola:
+> ```sql
+> SELECT count(*) FILTER (WHERE copia_inviata_il IS NULL) FROM candidature_insegnanti;
+> ```
+> Misurato dopo il rimedio: **1 riga scoperta su 58**, ed è quella delle 11:51:53 — l'unica che
+> nessuna sede ha mai ricevuto.
 
 ---
 

@@ -70,8 +70,46 @@ import {
 import { decidi } from '@/lib/iscrizioni/import/analisi'
 import { eseguiDomanda } from '@/lib/iscrizioni/import/esegui'
 import { invitiPrevisti, riprendiInvitiSospesi } from '@/lib/iscrizioni/import/inviti'
+import { pausaFraEmail } from '@/lib/email/ritmo'
 
 const JOB = 'iscrizioni-import-invio'
+
+/**
+ * IL TEMPO MASSIMO DELLA FUNZIONE, DICHIARATO E NON EREDITATO.
+ *
+ * Non c'era, e in tutto il repository non esiste nessun `maxDuration` né un
+ * `vercel.json`: valeva il default della piattaforma. Un giro che manda
+ * password a famiglie vere non può dipendere da un numero che nessuno ha scelto
+ * e che può cambiare con un aggiornamento del piano — si vedrebbe solo una
+ * funzione troncata in mezzo a una domanda, e nessun log direbbe perché.
+ */
+export const maxDuration = 300
+
+/**
+ * IL BUDGET DI LAVORO, e il minuto che resta fuori.
+ *
+ * ─── PERCHÉ ESISTE, CON LA MISURA CHE LO GIUSTIFICA ─────────────────────────
+ * Fino al 2026-08-20 il tetto delle email era l'unica cosa che poteva fermare
+ * il giro, e bastava: novanta email non riempivano nessun orologio. Con il
+ * tetto a 300 non è più vero.
+ *
+ * Misurato in produzione il 2026-08-20 sull'inoltro arretrato delle candidature,
+ * che spedisce SENZA pause: 50 email in 57,2 secondi, cioè ~1,17 s per email —
+ * e quel giro è più leggero di questo, che per ogni domanda scrive anche
+ * anagrafica, alunno, legami e account. Trecento email non stanno in 300
+ * secondi, e senza questa guardia il giro verrebbe troncato a metà di una
+ * famiglia: un genitore con l'accesso e l'altro no, senza che niente lo dica.
+ *
+ * ─── PERCHÉ 240 E NON 300 ───────────────────────────────────────────────────
+ * I sessanta secondi che avanzano non sono margine generico. Servono a finire
+ * la domanda già cominciata — una domanda non si spacca a metà, è la stessa
+ * regola che governa il tetto delle email — e a spedire i riepiloghi di sede,
+ * che sono l'unico modo in cui una segreteria viene a sapere che oggi il giro
+ * si è fermato prima.
+ *
+ * La guardia si controlla PRIMA di cominciare una domanda, mai in mezzo.
+ */
+const BUDGET_MS = 240_000
 
 /** La finestra decisa dal titolare. Estremi compresi, in ora italiana. */
 export const PRIMO_GIORNO = '2026-08-22'
@@ -154,6 +192,8 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
     // domanda — ormai `approved` — non verrebbe ripresa da nessuno.
     let ripresi = 0
     let quotaEsaurita = false
+    let tempoScaduto = false
+    let nonLavorate = 0
     if (!dryRun) {
       const ripresa = await riprendiInvitiSospesi(supabase, tetto)
       ripresi = ripresa.spedite
@@ -179,7 +219,13 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
           { status: 500 },
         )
       }
-      sedi = [...new Set((data ?? []).map((r) => (r as { scuola_id: string }).scuola_id))]
+      // ⚠️ L'ORDINE NON LO DECIDE POSTGREST. Qui c'era `[...new Set(...)]` su una
+      // `select` senza `order`: l'ordine era quello che il database si trovava in
+      // mano, e cambiava. Finché il tetto era 90 su una sola sede armata non si
+      // vedeva; con tre sedi e un giro che può fermarsi per tempo, «chi viene
+      // servito» diventava un sorteggio quotidiano — e una sede può restare a
+      // zero per giorni senza che nessuno sappia perché.
+      sedi = [...new Set((data ?? []).map((r) => (r as { scuola_id: string }).scuola_id))].sort()
     }
 
     let gia = 0
@@ -210,7 +256,7 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
     }
 
     for (const scuolaId of sedi) {
-      if (quotaEsaurita) break
+      if (quotaEsaurita || tempoScaduto) break
       const { righe } = await caricaElenco(supabase, scuolaId)
       if (righe.length === 0) continue
 
@@ -256,8 +302,21 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
       const duplicati = trovaDuplicati(tutte)
       const decisioni = await caricaDecisioni(supabase, ids)
 
-      for (const id of ids) {
+      for (const [posizione, id] of ids.entries()) {
         if (quotaEsaurita) break
+
+        // ── IL TEMPO, MISURATO PRIMA DI COMINCIARE ────────────────────────
+        // Le domande non lavorate NON si sospendono, e non è pigrizia: scrivere
+        // «rinviata» su ognuna costerebbe due chiamate a testa — altri secondi
+        // di funzione — per dire una cosa che il prestito di trenta minuti di
+        // `iscrizioni_prendi_in_carico` dice già da sé. Restano `in_lavorazione`
+        // e si liberano da sole.
+        if (Date.now() - t0 > BUDGET_MS) {
+          tempoScaduto = true
+          nonLavorate += ids.length - posizione
+          break
+        }
+
         const domanda = perId.get(id)
         if (!domanda) continue
 
@@ -366,8 +425,8 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
           bloccate.push(id)
         }
 
-        // Lo stesso passo del digest: ~2 al secondo. È il limite del provider.
-        await new Promise((r) => setTimeout(r, 550))
+        // Il passo fra due email vive in un posto solo: `@/lib/email/ritmo`.
+        await pausaFraEmail()
       }
     }
 
@@ -379,9 +438,23 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
       let ripresiDaDire = ripresi
       for (const [sede, c] of contatoriPerSede) {
         if (c.inviate === 0 && c.fallite === 0 && c.daControllare === 0 && ripresiDaDire === 0) continue
-        await mandaRiepilogo(supabase, sede, { ...c, ripresi: ripresiDaDire, quotaEsaurita })
+        await mandaRiepilogo(supabase, sede, { ...c, ripresi: ripresiDaDire, quotaEsaurita, tempoScaduto, nonLavorate })
         ripresiDaDire = 0
       }
+    }
+
+    // ⚠️ «SI È FERMATO PER TEMPO» E «SI È FERMATO PER QUOTA» NON SONO LA STESSA
+    // COSA, e nel riepilogo si somigliano moltissimo. I rimedi sono opposti: al
+    // primo si risponde con più giri, al secondo con più quota. Se li si scrive
+    // con lo stesso `esito`, chi legge i log fra un mese non potrà più separarli.
+    if (tempoScaduto) {
+      logEvento('cron', 'warn', {
+        operazione: JOB,
+        esito: 'tempo-scaduto',
+        ms: Date.now() - t0,
+        n: emailOggi,
+        msg: `${JOB}: fermato dal tempo, non dalla quota: ${nonLavorate} domande restano per domani`,
+      })
     }
 
     battito = true
@@ -390,6 +463,8 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
       dryRun,
       oggi,
       inviate,
+      tempoScaduto,
+      nonLavorate,
       giaInvitate: gia,
       daControllare,
       duplicate,
@@ -444,7 +519,7 @@ interface ContatoriSede {
 async function mandaRiepilogo(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
   scuolaId: string | null,
-  n: ContatoriSede & { ripresi: number; quotaEsaurita: boolean },
+  n: ContatoriSede & { ripresi: number; quotaEsaurita: boolean; tempoScaduto: boolean; nonLavorate: number },
 ): Promise<void> {
   const sede = await risolviContestoSede(supabase, scuolaId, JOB)
   if (!sede.email) return
@@ -464,7 +539,12 @@ async function mandaRiepilogo(
         '',
         'Il giro si è fermato prima del previsto perché il fornitore delle email ha segnalato di aver raggiunto il limite giornaliero. Non è un guasto e non si è perso niente: le domande rimaste riprendono domani mattina.',
       ]
-    : []
+    : n.tempoScaduto
+      ? [
+          '',
+          `Il giro si è fermato prima di finire perché ha raggiunto il tempo massimo di esecuzione — non perché sia mancato qualcosa e non perché il fornitore delle email abbia detto no. ${n.nonLavorate} domande restano in coda e riprendono domani mattina. Nessuna iscrizione è rimasta a metà.`,
+        ]
+      : []
   const testo = [
     'Riepilogo dell’import automatico delle iscrizioni.',
     '',

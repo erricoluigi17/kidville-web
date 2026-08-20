@@ -9,6 +9,7 @@ import { messaggioDigestNews } from '@/lib/email/messaggi/digest-news'
 import { risolviContestoSede, type ContestoSede } from '@/lib/email/contesto'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { MESI_IT } from '@/lib/news/tipi'
+import { pausaFraEmail } from '@/lib/email/ritmo'
 
 // =============================================================================
 // Digest mensile «Kidville News».
@@ -451,7 +452,15 @@ export async function generaEInviaDigest(
         errori++
         inviate++ // tentato e rifiutato in via definitiva: non si ritenta al giro dopo
       }
-      if (i < destinatari.length - 1) await new Promise((r) => setTimeout(r, 500)) // throttle ~2/s
+      // Il passo fra due email vive in un posto solo: `@/lib/email/ritmo`.
+      //
+      // ⚠️ QUI IL PASSO NON È COSMESI. Il digest del 1° settembre è il primo che
+      // scriverà a ~500 famiglie (sono gli account che l'import delle iscrizioni
+      // sta creando in questi giorni). A 500 ms sarebbero 250 secondi di sola
+      // attesa, contro un tetto di 300 per la funzione: il giro morirebbe prima
+      // della fine, senza salvare l'avanzamento, e quello dopo RISPEDIREBBE a
+      // chi aveva già ricevuto. A 150 ms sono ~75 secondi.
+      if (i < destinatari.length - 1) await pausaFraEmail()
     }
 
     if (rimandata) {

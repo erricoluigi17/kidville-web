@@ -42,6 +42,8 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 import { leggiElenco, type Anomalia } from '@/lib/iscrizioni/import/elenco'
+import { anomalieClassiSenzaSezione } from '@/lib/iscrizioni/import/sezioni'
+import { SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
 
 const OPERAZIONE_POST = 'admin/iscrizioni/elenco:POST'
 const OPERAZIONE_GET = 'admin/iscrizioni/elenco:GET'
@@ -190,6 +192,21 @@ export const POST = withRoute('admin/iscrizioni/elenco:POST', async (request: Ne
       { status: 400 },
     )
   }
+
+  // ── 5bis. LE CLASSI CHE IN ARCHIVIO NON ESISTONO ────────────────────────
+  // Il giro di domani scrive la classe come TESTO e lascia al trigger
+  // `sync_alunno_section_id` il compito di risolvere `section_id`. Se il nome
+  // non combacia con nessuna sezione, il trigger lascia NULL **senza sollevare
+  // niente**: il bambino risulta iscritto e non compare in nessun appello.
+  //
+  // Si guarda QUI, al caricamento, perché è l'unico momento in cui una persona
+  // sta guardando questo file. Scoprirlo a settembre vorrebbe dire cercare a
+  // mano quali bambini sono rimasti fuori, e da quanto.
+  //
+  // Non rifiuta il file: lasciare la sede senza elenco spegnerebbe il giro per
+  // tutti, che è un male peggiore. Dichiara, e la segreteria decide.
+  const nomiSezioni = await leggiNomiSezioni(supabase, scuolaId)
+  letto.anomalie.push(...anomalieClassiSenzaSezione(letto.perClasse, nomiSezioni))
 
   // ── 6. IL BUCKET PRIVATO ────────────────────────────────────────────────
   // Il percorso lo genera il SERVER: un nome scelto dal client permetterebbe di
@@ -401,3 +418,36 @@ export const GET = withRoute('admin/iscrizioni/elenco:GET', async (request: Next
 
   return NextResponse.json({ elenchi })
 })
+
+/**
+ * I nomi delle sezioni della sede, per la guardia `classe-senza-sezione`.
+ *
+ * ⚠️ NON RIFIUTA MAI E NON RISPONDE MAI 500. Un elenco vuoto significa «non lo
+ * so» — il DB E2E della CI non è migrato — e a valle vuol dire «nessuna
+ * anomalia», non «nessuna classe combacia»: gridare su tutte e tredici le classi
+ * sarebbe rumore che nasconde il segnale.
+ *
+ * Nel log va il CONTEGGIO, mai il nome della classe: a Cesa le classi si
+ * chiamano `2 ANNI CONCY`, `4 ANNI M.ROSARIA`, `5 ANNI GIUSY` — cioè il nome di
+ * battesimo di un'insegnante, che è un dato personale di una dipendente, e
+ * `app_log` non è il posto.
+ */
+async function leggiNomiSezioni(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  scuolaId: string,
+): Promise<string[]> {
+  const { data, error } = await supabase.from('sections').select('name').eq('scuola_id', scuolaId)
+  if (error) {
+    const codice = (error as { code?: string }).code
+    logEvento('db', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
+      operazione: OPERAZIONE_POST,
+      esito: 'sezioni-non-leggibili',
+      sede_id: scuolaId,
+    }, error)
+    return []
+  }
+  if (!Array.isArray(data)) return []
+  return (data as { name?: unknown }[])
+    .map((r) => String(r?.name ?? ''))
+    .filter((n) => n !== '')
+}

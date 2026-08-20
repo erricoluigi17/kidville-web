@@ -28,13 +28,21 @@
  * domanda è `approved`, il lotto non la ripescherebbe mai più, e nessuno
  * saprebbe che manca un accesso.
  *
- * ─── IL 429 NON È UN FALLIMENTO: È «NON OGGI» ───────────────────────────────
- * Con il tetto tirato a 90 email al giorno, il giorno in cui qualcos'altro mangia
- * la quota Resend risponde `429`. Trattarlo come un rifiuto definitivo
- * brucerebbe i tentativi di domande **buone** e le porterebbe a `bloccata`: si
- * perderebbero iscrizioni valide per un limite di quota. Quindi il 429 non
- * incrementa `tentativi`, non porta a `fallita` e ferma il giro in modo pulito.
- * Il caso peggiore diventa «il giro finisce prima e riprende domani».
+ * ─── IL 429 NON È UN FALLIMENTO: MA HA CAMBIATO SIGNIFICATO ─────────────────
+ * Fino al 2026-08-20, col piano Resend Free, un `429` voleva dire «la quota di
+ * oggi è finita»: novanta email al giorno, e chiunque altro spedisse mangiava la
+ * parte di questo giro. Dal 2026-08-20 il piano è **Pro** e un tetto giornaliero
+ * non esiste più: il `429` ora dice **«stai andando a più di dieci richieste al
+ * secondo, adesso»**. È un rifiuto di RITMO, non di quota, e passa in un secondo
+ * invece che a mezzanotte.
+ *
+ * Il trattamento però resta identico, e vale la pena dire perché: qui fermarsi è
+ * comunque la scelta giusta. La domanda successiva costa altre decine di
+ * chiamate, non c'è nessuna fretta che valga una famiglia lasciata a metà, e
+ * insistere brucerebbe i tentativi di domande **buone** portandole a `bloccata`.
+ * Quindi il 429 non incrementa `tentativi`, non porta a `fallita` e ferma il giro
+ * in modo pulito: il caso peggiore resta «il giro finisce prima e riprende
+ * domani».
  *
  * ─── `email_conflict` SU UN NON REFERENTE È UN ESITO PREVISTO ────────────────
  * Undici domande su 390 portano la STESSA casella per entrambi i genitori (3 a
@@ -53,6 +61,7 @@ import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { logEvento } from '@/lib/logging/logger'
 import { normalizzaEmailModulo } from '@/lib/iscrizioni/email-genitori'
+import { pausaFraEmail } from '@/lib/email/ritmo'
 
 /** Oltre questo numero di tentativi un invito non si ritenta più da solo. */
 export const MAX_TENTATIVI_INVITO = 3
@@ -457,8 +466,8 @@ export async function riprendiInvitiSospesi(
       break
     } else esito.fallite++
 
-    // Lo stesso passo del digest: ~2 al secondo, che è il limite del provider.
-    await new Promise((r) => setTimeout(r, 550))
+    // Il passo fra due email vive in un posto solo: `@/lib/email/ritmo`.
+    await pausaFraEmail()
   }
 
   return esito

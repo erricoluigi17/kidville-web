@@ -58,22 +58,44 @@ export interface RapportoLotto {
 /**
  * IL TETTO GIORNALIERO, IN EMAIL — non in domande.
  *
- * Novanta è il numero che il titolare ha fissato il 2026-08-16 sulla risorsa
- * scarsa, cioè la quota del provider (100 al giorno; il riepilogo di fine giro è
- * la novantunesima e ci sta dentro).
+ * ─── PERCHÉ NON È PIÙ NOVANTA ───────────────────────────────────────────────
+ * Novanta era il numero di un vincolo che non esiste più. Il piano Resend era
+ * **Free**: 100 email al giorno, e il riepilogo di fine giro era la novantunesima.
+ * Dal 2026-08-20 il piano è **Pro** — nessun tetto giornaliero, 50.000 al mese,
+ * 10 richieste al secondo per team. La quota del giorno ha smesso di essere la
+ * risorsa scarsa, e con lei è decaduta tutta la vecchia aritmetica.
  *
- * Non è un tetto sulle DOMANDE, e la differenza è tutta pratica: dal 2026-08-16
- * ogni genitore con un'email ha il suo account, e 100 domande su 390 ne portano
- * due. Contare le domande vorrebbe dire non sapere quante email escono — «48
- * domande» sarebbe un consumo qualsiasi fra 48 e 96.
+ * Trecento è il numero fissato dal titolare il 2026-08-20. Non difende più una
+ * quota: difende il **ritmo condiviso** — il limite è per team, e le stesse
+ * richieste servono a una candidatura che arriva mentre il giro spedisce — e
+ * tiene il giro dentro una misura che una persona può ancora leggere.
  *
- * Resa misurata sul vero: 479 account su 390 domande = 1,23 email a domanda;
- * 437 bambini su 390 domande = 1,12. Novanta email valgono quindi circa 73
- * famiglie e 82 bambini al giorno: Giugliano da sola (196 domande, 241 account)
- * si esaurisce in tre giri, tutte e tre le sedi in sei. La finestra è di venti
- * giorni.
+ * ─── ⚠️ IL TETTO NON È PIÙ CIÒ CHE FERMA IL GIRO PER PRIMO ──────────────────
+ * Misurato in produzione il 2026-08-20 sull'inoltro arretrato delle candidature,
+ * che spedisce senza pause: **50 email in 57,2 secondi**, cioè ~1,17 s per
+ * email — e quello è un giro PIÙ LEGGERO di questo, che per ogni domanda scrive
+ * anche anagrafica, alunno, legami e account.
+ *
+ * Trecento email, a quel passo, sono più di cinque minuti: oltre il tempo
+ * massimo della funzione. Il numero che ferma davvero il giro è la DURATA, e sta
+ * in `src/app/api/iscrizione/import-massivo/route.ts` (`maxDuration` e la
+ * guardia sul tempo). **Alzare questo tetto senza guardare quello non fa uscire
+ * una sola email in più**: fa solo dire al riepilogo un numero più grande di
+ * quello che il giro può davvero raggiungere.
+ *
+ * ─── PERCHÉ IN EMAIL E NON IN DOMANDE (questa parte non è cambiata) ─────────
+ * Dal 2026-08-16 ogni genitore con un'email ha il suo account: una domanda con
+ * due genitori costa il doppio di una con un genitore solo. Un tetto di «48
+ * domande» sarebbe un consumo qualsiasi fra 48 e 96 che nessuno conosce prima.
+ *
+ * Resa misurata sul vero il 2026-08-20, a domande ferme in coda:
+ *   · Giugliano  201 domande, 238 caselle distinte
+ *   · Cesa       123 domande, 133 caselle (1,16 a domanda; 10 domande portano la
+ *                STESSA casella per entrambi i genitori, 1 non ne porta nessuna)
+ *   · Aversa      79 domande, 103 caselle
+ *   403 domande, ~474 email.
  */
-export const INVITI_AL_GIORNO = 90
+export const INVITI_AL_GIORNO = 300
 
 interface RigaSubmission {
   id: string
@@ -322,9 +344,10 @@ export async function analizzaLotto(
   let duplicate = 0
 
   for (const d of tutte) {
-    // Il tetto vale sugli INVII, non sull'esame: fermarsi a 90 domande
+    // Il tetto vale sugli INVII, non sull'esame: fermarsi al tetto di domande
     // esaminate lascerebbe invisibile tutto ciò che sta oltre, e la segreteria
-    // non saprebbe mai quante correzioni ha davanti.
+    // non saprebbe mai quante correzioni ha davanti. (Il numero non si ripete
+    // qui: vive in `INVITI_AL_GIORNO` e in nessun altro posto.)
     const decisione = decidi(
       d,
       righe,

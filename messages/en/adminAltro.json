@@ -479,6 +479,7 @@
   "candScartatoRespinta": "The server refused the action and it did not go through: open the application again from the list to see the state it is in.",
   "candScartatoSenzaRisposta": "No answer ever arrived: there is no way to know whether the action went through. Open the application again from the list before repeating it.",
   "candAzioneInCorso": "An action on this application is still running: Approve and Reject stay off until the answer arrives, so it cannot be sent twice.",
+  "candSenzaRigheDiSede": "On this environment the per-location rows do not exist: Approve and Reject would have no effect (the server replies 503). The button is off because pressing it cannot succeed.",
   "inviabiliPersonaleTitolo": "Staff personal details",
   "inviabiliPersonaleDesc": "Public form “Staff personal details”: submissions arrive in the “Staff” tab. It is for people who ALREADY have a contract with the school — “Work with us” stays for those applying. It does not go through the form builder and cannot be reset.",
   "inviabiliPersonaleSediNota": "One link for all locations: the person filling it in chooses the location inside the form.",

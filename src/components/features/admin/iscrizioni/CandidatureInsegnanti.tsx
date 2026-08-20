@@ -632,8 +632,32 @@ export function CandidatureInsegnanti() {
    * precedente.)
    */
   const caricaRef = useRef(carica)
+  const chiudiRef = useRef(chiudiDettaglio)
   useEffect(() => { caricaRef.current = carica })
-  useEffect(() => { caricaRef.current(reFetchKey) }, [reFetchKey])
+  useEffect(() => { chiudiRef.current = chiudiDettaglio })
+  /**
+   * ⚠️ E IL PANNELLO SI CHIUDE, non solo l'elenco si ricarica.
+   *
+   * Fino al 2026-08-20 questo effetto ricaricava le righe e basta: `selezionata`
+   * e `sedeScelta` sopravvivevano. Aperta una candidatura di Cesa, scelta Cesa
+   * nel selettore della scheda, e poi tolta Cesa dal selettore in alto, il
+   * pannello restava a schermo con email, telefono, curriculum e note di sede di
+   * un plesso su cui chi guarda non ha più titolo — e «Rifiuta» spediva
+   * `scuola_id = Cesa`, che il server respinge con un 404 accendendo il warn
+   * `sede-fuori-scope`.
+   *
+   * Non è una fuga: quei dati erano stati letti quando il titolo c'era. È una
+   * schermata che sopravvive al proprio scope, che è la premessa di una fuga.
+   *
+   * `reFetchKey` è `effettive.join(',')` (`sede-context.tsx:246`): cambia SOLO
+   * quando cambiano le sedi attive, mai per una ricarica dopo una decisione.
+   * Non serve distinguere: la chiusura non ruba mai un pannello a chi sta
+   * lavorando.
+   */
+  useEffect(() => {
+    chiudiRef.current()
+    caricaRef.current(reFetchKey)
+  }, [reFetchKey])
 
   /** Pagina successiva, in coda a quelle già mostrate. */
   async function caricaAltre() {
@@ -906,7 +930,41 @@ export function CandidatureInsegnanti() {
       setConferma(null)
       setEsito(esitoDaRisposta(azione, statoNuovo, json))
       setAvvisi(avvisiDaRisposta(json))
-      if (statoNuovo) setSelezionata((s) => (s ? { ...s, stato: statoNuovo } : s))
+      /**
+       * ⚠️ SI AGGIORNA ANCHE LA RIGA DI SEDE, non solo l'aggregato.
+       *
+       * Fino al 2026-08-20 qui si scriveva solo `stato`, che è l'AGGREGATO —
+       * mentre il pannello, dal 2026-08-19, legge `mia.stato` (la riga della
+       * propria sede) per il badge, per `decisa` e per i due pulsanti. Dopo un
+       * «Approva» andato a buon fine il badge continuava a dire «in valutazione»
+       * e i pulsanti restavano ACCESI: ripremerli prendeva un 409 «già valutata:
+       * ricaricare la pagina», e ricaricare non cambiava niente perché non era
+       * la pagina a essere vecchia.
+       *
+       * È parola per parola il difetto che il blocco su `mia` descrive per
+       * l'aggregato — «un ordine ineseguibile, dato all'infinito» — rientrato
+       * dalla porta dell'aggiornamento ottimistico.
+       *
+       * ⚠️ Si tocca SOLO la riga della sede su cui si è deciso. Le altre non le
+       * ha decise nessuno, e scriverle qui direbbe che una segreteria ha chiuso
+       * una pratica di un plesso che non è il suo.
+       */
+      const sedeDecisa = sedeSuCuiDecido(selezionata)
+      if (statoNuovo) {
+        setSelezionata((s) => {
+          if (!s) return s
+          const righe = s.candidature_sedi ?? []
+          return {
+            ...s,
+            stato: statoNuovo,
+            candidature_sedi: righe.map((r) =>
+              // Senza riga di sede in comune non si indovina: si lascia com'è, e
+              // la ricarica dell'elenco resta la fonte.
+              sedeDecisa !== undefined && r.scuola_id === sedeDecisa ? { ...r, stato: statoNuovo } : r,
+            ),
+          }
+        })
+      }
       await carica(reFetchKey)
     } catch (e) {
       // Qui non si sa nemmeno se l'operazione sia avvenuta: la risposta non è
@@ -1323,12 +1381,29 @@ function PannelloDettaglio({
    * vecchia. Un ordine ineseguibile, dato all'infinito.
    *
    * Il ripiego su `cand.stato` serve all'ambiente non ancora migrato, dove le
-   * righe di sede non esistono e la colonna è ancora l'unica verità.
+   * righe di sede non esistono e la colonna è ancora l'unica verità — ma serve
+   * SOLO al badge: vedi `senzaRigheDiSede` qui sotto, e perché i pulsanti in
+   * quell'ambiente restano spenti.
    */
   const mia =
     (cand.candidature_sedi ?? []).find((r) => r.scuola_id === sedeDecisionale) ??
     (cand.candidature_sedi ?? [])[0]
   const statoMio = mia?.stato ?? cand.stato
+  /**
+   * ⚠️ IL BADGE PUÒ RIPIEGARE, I PULSANTI NO.
+   *
+   * Il ripiego su `cand.stato` era documentato come servizio «all'ambiente non
+   * ancora migrato, dove le righe di sede non esistono». In quell'ambiente il
+   * badge dice una cosa vera, anche se grossolana — e va bene. Ma `cambiaStato`
+   * scrive su `candidature_sedi` e degrada solo sulla COLONNA assente, non sulla
+   * TABELLA assente: ogni «Approva» prende `42P01`/`PGRST205` e torna 503.
+   *
+   * Quindi il ripiego accendeva due pulsanti su un percorso che non può
+   * riuscire. È lo stesso difetto che il blocco qui sopra denuncia per
+   * l'aggregato — «un ordine ineseguibile, dato all'infinito» — entrato da
+   * un'altra porta: là era un 409, qui è un 503.
+   */
+  const senzaRigheDiSede = (cand.candidature_sedi ?? []).length === 0
   /**
    * La scelta del plesso è DAVVERO ambigua: più di uno in comune fra la
    * candidatura e chi guarda, e nessuno ancora indicato. Solo in questo caso
@@ -1368,12 +1443,14 @@ function PannelloDettaglio({
    * divieto legittimo che si presenta come un guasto, l'anti-pattern che
    * l'intestazione di questo file si impegna a evitare.
    */
-  const azioniSpente = !isDirezione || sospesa || lavorando
+  const azioniSpente = !isDirezione || sospesa || lavorando || senzaRigheDiSede
   const motivoAzioniSpente = sospesa
     ? t('candSospesaAzioniSpente')
     : !isDirezione
       ? motivoBlocco
-      : t('candAzioneInCorso')
+      : senzaRigheDiSede
+        ? t('candSenzaRigheDiSede')
+        : t('candAzioneInCorso')
 
   /**
    * Il fuoco si sposta sull'intestazione del pannello a ogni apertura: su schermo

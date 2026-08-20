@@ -479,6 +479,7 @@
   "candScartatoRespinta": "L’operazione è stata respinta dal server e non è andata a termine: riapri la candidatura dall’elenco per vedere in quale stato è rimasta.",
   "candScartatoSenzaRisposta": "La risposta non è mai arrivata: non si sa se l’operazione sia avvenuta. Riapri la candidatura dall’elenco prima di ripeterla.",
   "candAzioneInCorso": "Un’operazione su questa candidatura è ancora in corso: Approva e Rifiuta restano spenti finché non arriva la risposta, per non farla partire due volte.",
+  "candSenzaRigheDiSede": "Su questo ambiente le righe di sede non esistono: Approva e Rifiuta resterebbero senza effetto (il server risponde 503). Il pulsante è spento perché premerlo non può riuscire.",
   "inviabiliPersonaleTitolo": "Anagrafica del personale",
   "inviabiliPersonaleDesc": "Modulo pubblico «Anagrafica del personale»: le schede arrivano nella linguetta «Personale». È per chi ha GIÀ un rapporto di lavoro con la Scuola — «Lavora con noi» resta per chi si propone. Non passa dal costruttore di moduli e non si reimposta.",
   "inviabiliPersonaleSediNota": "Link unico per tutte le sedi: è chi compila a scegliere il plesso dentro il modulo.",

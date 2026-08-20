@@ -129,6 +129,16 @@ const ELENCO = [
     creata_il: '2026-08-05T09:00:00Z',
     email: 'recapito.da.non.mostrare@example.test',
     note: 'PRESENTAZIONE-DA-NON-MOSTRARE-IN-ELENCO',
+    /**
+     * ⚠️ LA RIGA DI SEDE C'È, ANCHE IN ELENCO — e non è un di più.
+     *
+     * L'elenco si legge con `candidature_sedi!inner(scuola_id, stato)`: una
+     * candidatura senza nemmeno una riga in scope non uscirebbe dalla query.
+     * Fino al 2026-08-20 questo fixture non ce l'aveva, e ogni test di questo
+     * file esercitava `statoDiRiga`/`mia` sul RAMO DI RIPIEGO — quello che serve
+     * al database della CI, non migrato — invece che su quello vero.
+     */
+    candidature_sedi: [{ scuola_id: 'sc-aversa', stato: 'pending' }],
   },
   {
     id: '22222222-2222-4222-8222-222222222222',
@@ -142,6 +152,7 @@ const ELENCO = [
     posizioni: ['collaboratrice'],
     gradi: [],
     creata_il: '2026-08-04T09:00:00Z',
+    candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'rifiutata' }],
   },
 ]
 
@@ -155,6 +166,8 @@ const DETTAGLIO = {
   anni_esperienza: 4,
   disponibilita: 'tempo_pieno',
   cv_path: 'candidature/cv-anna.pdf',
+  // La riga di sede arriva dallo spread di `ELENCO[0]`, con la nota che spiega
+  // perché non può mancare: la scheda si legge con `!inner`.
 }
 
 /**
@@ -572,6 +585,86 @@ describe('CandidatureInsegnanti — cambio di sede con una lettura già in volo'
     expect(screen.queryByText('Bruno Neri')).not.toBeInTheDocument()
   })
 
+  it('🔴 senza righe di sede (CI non migrata) i pulsanti sono SPENTI, e il badge no', async () => {
+    // ⚠️ IL RIPIEGO ACCENDEVA DUE PULSANTI SU UN PERCORSO CHE NON PUÒ RIUSCIRE.
+    //
+    // Il ripiego `mia?.stato ?? cand.stato` era documentato come servizio
+    // «all'ambiente non ancora migrato, dove le righe di sede non esistono». In
+    // quell'ambiente il BADGE dice una cosa vera, anche se grossolana — e va
+    // bene. Ma `cambiaStato` scrive su `candidature_sedi` e degrada solo sulla
+    // COLONNA assente, non sulla TABELLA assente: ogni «Approva» prende
+    // `42P01`/`PGRST205` e torna 503.
+    //
+    // È lo stesso difetto che il blocco su `mia` denuncia per l'aggregato — «un
+    // ordine ineseguibile, dato all'infinito» — entrato da un'altra porta: là
+    // era un 409, qui è un 503.
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url)
+      // Il dettaglio SENZA `candidature_sedi`: è il database della CI.
+      if (u.includes('id=')) {
+        const senzaRighe: Record<string, unknown> = { ...DETTAGLIO }
+        delete senzaRighe.candidature_sedi
+        return ok({ data: senzaRighe })
+      }
+      return ok({ data: ELENCO, total: 2 })
+    })
+    render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+    fireEvent.click(screen.getByText('Anna Bianchi'))
+    await waitFor(() => expect(screen.getByText('+39 000 0000000')).toBeInTheDocument())
+
+    const approva = screen.getByRole('button', { name: 'Approva' })
+    expect(approva, 'un pulsante che non può riuscire, acceso').toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Rifiuta' })).toBeDisabled()
+    // E il motivo è scritto, non solo il pulsante spento: un divieto legittimo
+    // che si presenta come un guasto è l'anti-pattern che questo file evita.
+    expect(approva.getAttribute('title')).toContain('non può riuscire')
+    // Il badge invece ripiega e dice il vero: «In attesa», dall'aggregato.
+    expect(screen.getAllByText('In attesa').length).toBeGreaterThan(0)
+  })
+
+  it('🔴 togliere una sede dal selettore CHIUDE il pannello aperto su quella sede', async () => {
+    // ⚠️ IL PANNELLO SOPRAVVIVEVA AL PROPRIO SCOPE.
+    //
+    // L'effetto `[reFetchKey]` ricaricava l'elenco e basta: `selezionata` e
+    // `sedeScelta` restavano. Aperta una candidatura e tolta la sua sede dal
+    // selettore in alto, il pannello restava a schermo con email, telefono,
+    // curriculum e note di sede di un plesso su cui chi guarda non ha più
+    // titolo — e «Rifiuta» spediva una sede fuori scope, prendendo un 404 e
+    // accendendo il warn `sede-fuori-scope`.
+    //
+    // Non è una fuga — quei dati erano stati letti quando il titolo c'era — ma è
+    // una schermata che mostra ciò che il suo scope non copre più.
+    fetchMock.mockImplementation((url: string, init?: { headers?: Record<string, string> }) => {
+      const u = String(url)
+      if (u.includes('id=')) return ok({ data: DETTAGLIO })
+      // ⚠️ L'ELENCO NUOVO NON DEV'ESSERE VUOTO. Il pannello vive dentro il ramo
+      // `righe.length > 0`: con zero righe sparirebbe da solo, e il test
+      // resterebbe verde anche togliendo la chiusura. Misurato il 2026-08-20 —
+      // la prima stesura di questo test non cadeva sul sabotaggio.
+      if (init?.headers?.['x-sedi'] === 'sc-giugliano') return ok({ data: [ELENCO[1]], total: 1 })
+      return ok({ data: ELENCO, total: 3 })
+    })
+    const { rerender } = render(<CandidatureInsegnanti />)
+    await waitFor(() => expect(screen.getByText('Anna Bianchi')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByText('Anna Bianchi'))
+    // Il pannello è aperto: il telefono esce solo con `?id=`, quindi è la prova
+    // che il dettaglio è a schermo e non solo la riga d'elenco.
+    await waitFor(() => expect(screen.getByText('+39 000 0000000')).toBeInTheDocument())
+
+    // Aversa esce dal selettore in alto: la candidatura aperta era sua.
+    reFetchKeyCorrente = 'sc-giugliano'
+    rerender(<CandidatureInsegnanti />)
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('+39 000 0000000'),
+        'il pannello è rimasto a schermo con i dati di una sede che non è più in scope',
+      ).not.toBeInTheDocument(),
+    )
+  })
+
   it('«Mostra altre» è SPENTO mentre una lettura d’elenco è in volo: non si accoda a un elenco che sta per cambiare', async () => {
     // Il gettone è condiviso, e `caricaAltre` lo incrementava: un clic su «Mostra
     // altre» mentre la ricarica per cambio sede è in volo faceva SCARTARE la
@@ -982,7 +1075,19 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
    * il badge «Approvata» timbrato su una candidatura ancora in attesa, e i due
    * pulsanti di Bruno spariti perché `decisa` era diventato vero.
    */
-  const BRUNO_IN_ATTESA = { ...ELENCO[1], stato: 'pending' }
+  /**
+   * ⚠️ SI SPOSTA ANCHE LA RIGA DI SEDE, non solo l'aggregato.
+   *
+   * Dal 2026-08-19 badge e pulsanti leggono `candidature_sedi[…].stato`, non
+   * `stato`: un fixture che sposta solo l'aggregato descrive una candidatura che
+   * il database non può produrre — il trigger `candidature_sedi_aggrega` calcola
+   * l'aggregato DALLE righe, quindi i due non possono essere in disaccordo.
+   */
+  const BRUNO_IN_ATTESA = {
+    ...ELENCO[1],
+    stato: 'pending',
+    candidature_sedi: [{ scuola_id: 'sc-giugliano', stato: 'pending' }],
+  }
 
   function serverConPatchLenta(ritardoMs: number) {
     let approvata = false
@@ -1012,7 +1117,16 @@ describe('CandidatureInsegnanti — la PATCH in volo mentre si apre un’altra c
       if (u.includes('id=')) return ok({ data: DETTAGLIO })
       // L'elenco ricaricato dopo la PATCH dice la verità: Anna è approvata.
       return ok({
-        data: [approvata ? { ...ELENCO[0], stato: 'approvata' } : ELENCO[0], BRUNO_IN_ATTESA],
+        data: [
+          approvata
+            ? {
+                ...ELENCO[0],
+                stato: 'approvata',
+                candidature_sedi: [{ scuola_id: 'sc-aversa', stato: 'approvata' }],
+              }
+            : ELENCO[0],
+          BRUNO_IN_ATTESA,
+        ],
         total: 2,
       })
     })

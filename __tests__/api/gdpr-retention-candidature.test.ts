@@ -1276,3 +1276,165 @@ describe('lock · il termine promesso e il termine applicato sono LO STESSO nume
     }
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LA CONSERVAZIONE SI CALCOLA PER RIGA DI SEDE, E VINCE LA PIÙ LONTANA.
+//
+// `candidature_insegnanti.evasa_il` è UNA colonna e porta il termine di PIÙ
+// trattamenti: una candidatura rivolta a tre plessi porta tre decisioni. Il
+// trigger ci scrive `max()`, ma l'aggregato `stato` è un'altra cosa ancora, e
+// nel caso MISTO le due cose insieme sbagliano.
+//
+// Aversa rifiuta a novembre, Giugliano approva a dicembre, la candidatura è
+// arrivata a gennaio. L'aggregato vale `approvata` → il termine decorre dalla
+// RICEZIONE → si cancella a gennaio, cioè due mesi dopo il rifiuto di Aversa
+// invece dei dodici promessi. Il verbale sparisce prima del dovuto: è la stessa
+// classe di difetto che la migrazione `20260820004500` ha chiuso altrove.
+//
+// ⚠️ Nei casi NON misti non cambia niente, ed è la prova che questa non è una
+// riscrittura: tutte rifiutate → l'ultima decisione, identico a `max(evasa_il)`;
+// tutte approvate o mai valutate → la ricezione, identico a prima.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/gdpr/retention-candidature — il termine per RIGA DI SEDE', () => {
+  /** Le righe di sede di una candidatura, come le consegna l'embed. */
+  const sedi = (...righe: { stato: string; evasa_il?: string | null }[]) =>
+    righe.map((r) => ({ stato: r.stato, evasa_il: r.evasa_il ?? null }))
+
+  it('🔴 il caso MISTO conserva fino a dodici mesi dall’ULTIMA decisione', async () => {
+    // Ricevuta 13 mesi fa; Aversa ha rifiutato UN MESE FA. Con la regola vecchia
+    // l'aggregato `approvata` faceva decorrere il termine dalla ricezione e la
+    // candidatura sarebbe uscita oggi, portandosi via il verbale di Aversa.
+    h.righe = [
+      candidatura('mista', {
+        stato: 'approvata',
+        creata_il: meseFa(13),
+        evasa_il: meseFa(1),
+        candidature_sedi: sedi(
+          { stato: 'approvata', evasa_il: meseFa(1) },
+          { stato: 'rifiutata', evasa_il: meseFa(1) },
+        ),
+      }),
+    ]
+    await chiama()
+    expect(idsCancellati(), 'il rifiuto di un mese fa va conservato ancora undici mesi').toEqual([])
+  })
+
+  it('…e quando anche l’ULTIMA decisione ha più di dodici mesi, si cancella', async () => {
+    h.righe = [
+      candidatura('mista-vecchia', {
+        stato: 'approvata',
+        creata_il: meseFa(30),
+        evasa_il: meseFa(14),
+        candidature_sedi: sedi(
+          { stato: 'approvata', evasa_il: meseFa(14) },
+          { stato: 'rifiutata', evasa_il: meseFa(14) },
+        ),
+      }),
+    ]
+    await chiama()
+    expect(idsCancellati()).toEqual(['mista-vecchia'])
+  })
+
+  it('TUTTE RIFIUTATE: vale l’ultima decisione, come prima — non è una riscrittura', async () => {
+    h.righe = [
+      candidatura('respinte-fresche', {
+        stato: 'rifiutata', creata_il: meseFa(20), evasa_il: meseFa(3),
+        candidature_sedi: sedi(
+          { stato: 'rifiutata', evasa_il: meseFa(11) },
+          { stato: 'rifiutata', evasa_il: meseFa(3) },
+        ),
+      }),
+      candidatura('respinte-vecchie', {
+        stato: 'rifiutata', creata_il: meseFa(30), evasa_il: meseFa(14),
+        candidature_sedi: sedi(
+          { stato: 'rifiutata', evasa_il: meseFa(20) },
+          { stato: 'rifiutata', evasa_il: meseFa(14) },
+        ),
+      }),
+    ]
+    await chiama()
+    expect(idsCancellati()).toEqual(['respinte-vecchie'])
+  })
+
+  it('TUTTE APPROVATE o mai valutate: vale la ricezione, come prima', async () => {
+    h.righe = [
+      candidatura('accolte-fresche', {
+        stato: 'approvata', creata_il: meseFa(6), evasa_il: meseFa(1),
+        candidature_sedi: sedi({ stato: 'approvata', evasa_il: meseFa(1) }),
+      }),
+      candidatura('accolte-vecchie', {
+        stato: 'approvata', creata_il: meseFa(14), evasa_il: meseFa(2),
+        candidature_sedi: sedi({ stato: 'approvata', evasa_il: meseFa(2) }),
+      }),
+      candidatura('mai-valutata', {
+        stato: 'pending', creata_il: meseFa(14),
+        candidature_sedi: sedi({ stato: 'pending' }),
+      }),
+    ]
+    await chiama()
+    expect(idsCancellati()).toEqual(['accolte-vecchie', 'mai-valutata'])
+  })
+
+  it('🔴 una riga di sede con una data ILLEGGIBILE non autorizza a cancellare', async () => {
+    // Stessa dottrina del caso a sede singola: su un'operazione irreversibile un
+    // dato che non si sa leggere vale «non toccare», non «via libera».
+    h.righe = [
+      candidatura('data-rotta', {
+        stato: 'rifiutata', creata_il: 'non-una-data', evasa_il: meseFa(30),
+        candidature_sedi: sedi({ stato: 'pending' }),
+      }),
+    ]
+    await chiama()
+    expect(idsCancellati()).toEqual([])
+  })
+
+  it('la lettura CHIEDE le righe di sede', async () => {
+    h.righe = [candidatura('c1', { creata_il: meseFa(14) })]
+    await chiama()
+    expect(
+      h.select.join(' | '),
+      'senza l’embed il termine torna a essere quello di una colonna sola',
+    ).toContain('candidature_sedi(')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/gdpr/retention-candidature — senza `candidature_sedi` (CI non migrata)', () => {
+  it('degrada alla regola della colonna, LO DICE, e non salta la spazzata', async () => {
+    // Una conservazione che non gira è peggio di una conservazione approssimata:
+    // il silenzio qui significa curriculum di persone adulte che restano
+    // nell'archivio oltre il termine promesso, e nessuno che lo sappia.
+    h.letture = [
+      { data: null, error: { code: 'PGRST200', message: "Could not find a relationship between 'candidature_insegnanti' and 'candidature_sedi'" } },
+      { data: [candidatura('c1', { stato: 'rifiutata', creata_il: meseFa(30), evasa_il: meseFa(14) })], error: null },
+    ]
+    const res = await chiama()
+    expect(res.status).toBe(200)
+    expect(idsCancellati()).toEqual(['c1'])
+    const avviso = h.eventi.find((e) => e.campi.esito === 'sedi-non-leggibili')
+    expect(avviso, 'il ripiego non è stato dichiarato').toBeTruthy()
+    expect(avviso!.livello).toBe('warn')
+    expect(avviso!.campi.error_code).toBe('PGRST200')
+  })
+
+  it('la seconda lettura NON chiede più l’embed', async () => {
+    h.letture = [
+      { data: null, error: { code: 'PGRST200', message: 'Could not find a relationship' } },
+      { data: [], error: null },
+    ]
+    await chiama()
+    expect(h.select).toHaveLength(2)
+    expect(h.select[0]).toContain('candidature_sedi(')
+    expect(h.select[1], 'ha ritentato con lo stesso embed che l’ha appena fatta fallire')
+      .not.toContain('candidature_sedi(')
+  })
+
+  it('un guasto che NON riguarda le sedi non fa perdere l’embed né tace', async () => {
+    // Il controllo negativo: se qualunque errore facesse cadere l'embed, il
+    // ripiego diventerebbe la strada normale e nessuno lo saprebbe.
+    h.erroreLettura = { code: '08006', message: 'connection failure' }
+    const res = await chiama()
+    expect(res.status).toBe(500)
+    expect(h.eventi.some((e) => e.campi.esito === 'sedi-non-leggibili')).toBe(false)
+  })
+})

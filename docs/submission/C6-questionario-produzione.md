@@ -312,6 +312,110 @@ ours, measured against the code: no tester told us how much any of them cost the
 
 ---
 
+## ✅ INVIATA — 2026-08-20, ore 13:53 (Roma)
+
+Letto in Console subito dopo l'invio, testo letterale:
+
+> **«Abbiamo ricevuto la tua richiesta di accesso in produzione.»**
+> **«In genere questa operazione richiede al massimo 7 giorni, ma a volte può essere necessario più
+> tempo.»**
+> **«Data della richiesta: oggi, 13:53.»**
+
+| Voce | Stato letto |
+|---|---|
+| Pulsante «Richiedi per la produzione» | **SPARITO** dal DOM — non `disabled`, proprio non renderizzato. È la conferma che l'invio è andato |
+| Produzione | «Non hai ancora accesso alla produzione» · **Non attivo** · nessuna release |
+| Stato secondo le norme | «Non è stato rilevato alcun problema» |
+| Notifiche | **1 sola**, del 6 agosto (Search Console). **Nessuna** notifica sull'invio |
+| Nessuna dicitura «In revisione» | lo stato è espresso solo dalla frase qui sopra |
+
+### 🔴 Le risposte inviate NON sono ripescabili da nessuna schermata
+
+Cercate in Dashboard, *Testa e rilascia → Produzione*, *Test chiusi*, *Panoramica della
+pubblicazione* e nel *Log delle attività* dell'account (30 giorni, tabella **vuota**). Non esiste in
+Console una pagina che rimostri il questionario compilato.
+
+🔑 **Conseguenza da conoscere adesso e non fra una settimana**: se Google chiede un chiarimento su
+una risposta, non c'è modo di rileggere che cosa è stato scritto. L'unica copia è il blocco qui
+sotto. Non è una copia *certificata* — è il testo **fornito** a chi ha compilato, e nessuno può più
+verificare che sia stato incollato parola per parola né se un campo abbia troncato.
+
+### Il testo effettivamente fornito — versione da 300 caratteri
+
+Il modulo ha imposto un limite di **300 caratteri per campo**, misurato a schermo durante la
+compilazione. Le risposte lunghe di questo documento non ci stavano: qui sotto ciò che è stato usato.
+
+**Parte 1 · Facilità di reclutamento** (280)
+> I tester sono gli utenti finali: famiglie e personale delle tre scuole dell'infanzia che gestiamo
+> (Giugliano, Aversa, Cesa). 29 invitati, 12 hanno attivato il test, 18 installazioni. Reclutare è
+> stato facile: usano l'app per seguire il proprio figlio o per fare il proprio lavoro.
+
+**Parte 1 · Coinvolgimento** (280)
+> 12 tester attivi per 14 giorni consecutivi, serie mai interrotta. 18 installazioni su 29 inviti.
+> Hanno usato le funzioni vere nel contesto vero: presenze, assenze, diario, messaggi con le maestre,
+> moduli da firmare, certificati. Non un percorso di prova: il lavoro di ogni giorno.
+
+**Parte 1 · Riepilogo del feedback e come è stato raccolto** (271)
+> Feedback scritto in Console: zero, e lo dichiariamo. I nostri tester sono genitori e maestre, non
+> collaudatori. Il riscontro è arrivato a voce in sede e dalla telemetria dell'app (307 route su 308
+> loggate): 71 difetti visibili all'utente trovati e corretti nei 14 giorni.
+
+**Parte 2 · Pubblico** (267)
+> Famiglie e personale di tre scuole dell'infanzia gestite da una cooperativa in Campania (Giugliano,
+> Aversa, Cesa): genitori dei bambini iscritti, maestre, segreteria, direzione. Non è un'app per
+> bambini: tutti gli utenti sono adulti. Categoria dichiarata: Istruzione.
+
+**Parte 2 · Valore** (278)
+> Sostituisce il registro cartaceo e i gruppi di messaggistica con un posto solo: presenze e assenze,
+> diario giornaliero, galleria di classe, comunicazioni, messaggi genitore-maestra, mensa e allergie,
+> rette e pagamenti, moduli e certificati firmati, autorizzazioni per le uscite.
+
+**Parte 2 · Installazioni attese** (288)
+> Fra 300 e 500 nel primo anno. Base misurata sul nostro database il 20/08/2026: 403 domande
+> d'iscrizione 2026/27 sulle tre sedi, che valgono circa 496 account genitore (una domanda può portare
+> due genitori), più ~30 fra maestre e uffici. Non cresce con la pubblicità, ma con le iscrizioni.
+
+**Parte 2 · Interazione e UGC** (278)
+> Entrambi presenti e già dichiarati nel questionario IARC e nella scheda Sicurezza dei dati: c'è una
+> chat fra genitore e docente, e ci sono galleria di classe e diario con fotografie. Sono moderati:
+> strumento di segnalazione in-app e coda di moderazione riservata alla Direzione.
+
+**Parte 3 · Modifiche fatte in base al test chiuso** (285)
+> 71 difetti visibili all'utente corretti nei 14 giorni. I più gravi: otto funzioni del genitore
+> rispondevano con un errore vuoto; "Comunica un'assenza" non era usabile da nessuno; con due figli il
+> certificato usciva intestato al primo; la cancellazione dati falliva su 28 bambini su 33.
+
+**Parte 3 · Come si è stabilito che è pronta** (286)
+> Gate automatico a ogni modifica: lint, controllo dei tipi, 12.142 test unitari, build, end-to-end in
+> CI. Più un collaudo interno su 20 tracce manuali e 11 collaudatori automatici. E il backend che
+> l'app serve è già in produzione con utenti veri e un endpoint di salute che lo sorveglia.
+
+### Che cosa succede adesso
+
+1. Google risponde cambiando lo stato **in Console**, quasi mai per email.
+2. ⚠️ **L'approvazione NON pubblica niente**: sblocca il canale. Serve poi creare una release di
+   produzione. Consiglio: promuovere la **release 1 (1.0)**, quella che i dodici tester hanno usato
+   per quattordici giorni, non il `versionCode 2` che nessuno ha mai avuto in mano — il guscio è una
+   WebView su `app.kidville.it`, quindi la release 1 serve già l'app aggiornata. E allargare la
+   distribuzione, oggi ferma a **1 paese su 177**.
+3. Quando l'app è davvero installabile, `.github/workflows/sentinella-play.yml` manda l'avviso. Prova
+   d'invio reale eseguita il 20/08 alle 12:14: Resend ha risposto **200** (`id`
+   `a40646be-…`), su entrambi i destinatari.
+
+### 🔻 Questo blocco è stato scritto DUE volte
+
+La prima stesura è stata **distrutta da un `git reset --hard`** eseguito da un'altra sessione
+sull'albero di lavoro condiviso, mentre era ancora non committata. Un file modificato che non è mai
+passato dall'index non lascia nessun oggetto nel database di git: `git fsck --lost-found` non aveva
+niente da restituire. È stato riscritto dalla trascrizione della conversazione, non recuperato.
+
+🔑 **La lezione operativa, per chi lavora su quest'albero**: un documento che registra un evento
+irripetibile — e l'invio di questo questionario lo è — **si committa nello stesso minuto in cui lo si
+scrive**, non a fine giornata insieme al resto. Fra le due cose c'è la finestra in cui vive solo su
+un disco, e su un albero condiviso quella finestra ha già mangiato del lavoro.
+
+---
+
 ## Prima di incollare — le tre cose da fare sono FATTE (20/08/2026)
 
 1. ~~**Rieseguire i conteggi** della Parte 2 sul database.~~ ✅ **Fatto il 20/08/2026 alle 12:24**:

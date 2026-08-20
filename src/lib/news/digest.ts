@@ -252,7 +252,12 @@ async function emailFamiglie(supabase: SupabaseClient, scuolaId: string): Promis
   const emails = (data as { email: string | null }[])
     .map((u) => (u.email ?? '').trim())
     .filter((e) => e.includes('@'))
-  return { ok: true, emails: [...new Set(emails)] }
+  // ⚠️ ORDINATO, e non per estetica: `destinatari_count` fa da SEGNAPOSTO quando
+  // un'edizione resta a metà per quota esaurita (vedi il ciclo d'invio). Un offset
+  // dentro un elenco che PostgREST non promette di restituire nello stesso ordine
+  // salterebbe famiglie diverse a ogni giro. `.sort()` costa nulla su qualche
+  // centinaio di stringhe e rende la ripresa ripetibile.
+  return { ok: true, emails: [...new Set(emails)].sort() }
 }
 
 /**
@@ -376,8 +381,23 @@ export async function generaEInviaDigest(
     // SE NON SI È POTUTO NEMMENO TENTARE, NON SI MARCA. È la stessa regola già
     // scritta e provata in src/app/api/push/dispatch/route.ts (~281): «saltate > 0
     // e tentate === 0 ⇒ rimandate++ e si continua». Marcare qui significherebbe
-    // perdere l'edizione del mese per sempre; lasciandola in coda riparte al giro
-    // successivo (il cron gira ogni giorno) appena il database torna leggibile.
+    // perdere l'edizione del mese per sempre.
+    //
+    // ⚠️ FINO AL 2026-08-20 QUI C'ERA SCRITTO «riparte al giro successivo (il cron
+    // gira ogni giorno)». NON GIRA OGNI GIORNO: `news-digest` è schedulato
+    // `'0 8 1 * *'` — una volta al mese, il primo
+    // (`supabase/migrations/20260720191525_news_cron.sql:109`). Quello che gira ogni
+    // dieci minuti è `news-tick`, che è un ALTRO lavoro, dieci righe sopra nella
+    // stessa migrazione.
+    //
+    // La cautela era giusta, la ragione scritta accanto no — ed è la ragione che il
+    // prossimo legge per decidere se fidarsi. Peggio: `generaEInviaDigest` lavora su
+    // UN mese solo, quello che il chiamante gli passa, quindi un'edizione lasciata
+    // in coda qui non veniva ripresa NEMMENO il mese dopo: restava orfana esattamente
+    // come se fosse stata marcata. È `eseguiDigest`
+    // (`src/app/api/news/cron/run/route.ts`) a ripescare ora le edizioni pendenti dei
+    // mesi passati: senza quel ripescaggio questo `continue` è una perdita silenziosa
+    // travestita da prudenza.
     if (!destinatariOk) {
       logEvento('news', 'error', {
         operazione: 'digest', esito: 'rimandata', scuola_id: sede.id, anno, mese,
@@ -385,11 +405,87 @@ export async function generaEInviaDigest(
       edizioni.push(esito)
       continue
     }
+    // ── IL TETTO DEL PROVIDER NON È UN FALLIMENTO: È UN «NON OGGI» ─────────────
+    //
+    // `sendEmailDetailed` distingue i due casi DA SEMPRE — `src/lib/email/send.ts`
+    // ritorna `{ ok: false, rinviabile: true }` sul `429` e spiega accanto che «un
+    // rifiuto definitivo consuma un tentativo, un `429` rinvia». Fino al 2026-08-20
+    // questo ciclo NON guardava quel campo: scorreva tutti i destinatari
+    // collezionando 429, e poi marcava `inviata_il` lo stesso. L'edizione risultava
+    // inviata a chi non l'aveva ricevuta, e `inviata_il IS NULL` — l'unica guardia
+    // che decide se rispedire — non sarebbe stata mai più vera. Nessun errore,
+    // nessuno che se ne accorge tranne le famiglie che non ricevono niente.
+    //
+    // Al PRIMO `rinviabile` ci si ferma. La quota è finita per oggi: continuare
+    // significa solo collezionare altri 429 e, col throttle di 500 ms, tenere
+    // occupata la route per minuti a vuoto.
+    //
+    // ── LA RIPRESA, SENZA UNA COLONNA NUOVA ────────────────────────────────────
+    //
+    // `destinatari_count` fa da segnaposto. Non è un uso improprio: il suo
+    // significato diventa «a quanti è arrivata FINORA», che a edizione completa
+    // coincide col totale — cioè con ciò che ha sempre voluto dire. Il giro
+    // successivo riprende da lì invece di ricominciare da capo e spedire due volte
+    // a chi l'ha già ricevuto. Perché l'offset significhi qualcosa, `emailFamiglie`
+    // restituisce l'elenco ORDINATO (vedi lì).
+    //
+    // ⚠️ IL PREZZO, che va conosciuto e non scoperto: se fra due giri l'elenco
+    // cambia, l'offset è approssimato. Una famiglia che si iscrive nel frattempo e
+    // ordina PRIMA dell'offset non riceve QUELL'edizione — ed è il verso giusto
+    // dell'errore, perché è il digest di un mese in cui quella famiglia non c'era.
+    // Il verso sbagliato (spedire due volte) resta possibile solo se un indirizzo
+    // cambia: si è preferito così, perché una mail doppia è un fastidio e una mail
+    // mancante è una comunicazione istituzionale persa.
+    const giaFatti = Math.max(0, Math.min(edizione.destinatari_count ?? 0, destinatari.length))
     let errori = 0
-    for (let i = 0; i < destinatari.length; i++) {
+    let inviate = giaFatti
+    let rimandata = false
+    for (let i = giaFatti; i < destinatari.length; i++) {
       const res = await sendEmailDetailed({ to: destinatari[i], subject: composto.titolo, text: composto.testo, html: composto.html })
-      if (!res.ok) errori++
+      if (res.ok) {
+        inviate++
+      } else if (res.rinviabile) {
+        rimandata = true
+        break
+      } else {
+        errori++
+        inviate++ // tentato e rifiutato in via definitiva: non si ritenta al giro dopo
+      }
       if (i < destinatari.length - 1) await new Promise((r) => setTimeout(r, 500)) // throttle ~2/s
+    }
+
+    if (rimandata) {
+      // Si salva l'avanzamento e NON si marca `inviata_il`: l'edizione resta in coda
+      // e `eseguiDigest` la ripesca al giro successivo.
+      const { error: parzErr } = await supabase
+        .from('news_digest_edizioni')
+        .update({ destinatari_count: inviate, errori_count: errori })
+        .eq('id', edizione.id)
+        .is('inviata_il', null)
+      if (parzErr) {
+        // Se nemmeno l'avanzamento si scrive, il giro dopo ricomincia da `giaFatti`: si
+        // rispedisce a qualcuno, non si perde nessuno. Ma va detto (regola 6).
+        logErrore({ operazione: 'news/digest:avanzamento', stato: 500, evento: 'news' }, parzErr)
+      }
+      // `warn` e non `error`: non è un guasto, è il tetto del piano che si è fatto
+      // sentire — la stessa scelta già fatta in `send.ts`. Ma resta scritto, coi due
+      // numeri che contano: senza, «tutte le email» e «un terzo delle email» hanno
+      // lo stesso aspetto nei log.
+      logEvento('news', 'warn', {
+        operazione: 'digest',
+        esito: 'rimandata-quota',
+        scuola_id: sede.id,
+        anno,
+        mese,
+        inviate,
+        mancanti: destinatari.length - inviate,
+        errori,
+        msg: `digest ${anno}-${mese}: quota email esaurita dopo ${inviate}/${destinatari.length}, edizione lasciata in coda`,
+      })
+      esito.destinatari_count = inviate
+      esito.errori_count = errori
+      edizioni.push(esito)
+      continue
     }
 
     // 5) Marca inviata (guardia inviata_il IS NULL contro doppio invio concorrente).

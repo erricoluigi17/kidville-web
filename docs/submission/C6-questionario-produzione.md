@@ -312,19 +312,37 @@ ours, measured against the code: no tester told us how much any of them cost the
 
 ---
 
-## Prima di incollare — tre cose da fare
+## Prima di incollare — le tre cose da fare sono FATTE (20/08/2026)
 
 1. ~~**Rieseguire i conteggi** della Parte 2 sul database.~~ ✅ **Fatto il 20/08/2026 alle 12:24**:
    403 domande, 94 account, 33 bambini a registro, 38 candidature. Restano validi finche' non passa
    qualche giorno — crescono di circa sei domande al giorno.
-2. **Leggere in Console la categoria dichiarata.** Deve essere **Istruzione**. Se fosse «Social» o
-   «Comunicazione», scatterebbe la Child Safety Standards policy — che si applica **per categoria,
-   non per pubblico** — e servirebbe una pagina pubblica di standard anti-CSAE che oggi **non
-   esiste** (`src/app/` ha solo `privacy/` e `termini/`; lo strumento di segnalazione in-app invece
-   c'è). La Console al 20/08 dice «Non hai niente in sospeso», il che è coerente con «Istruzione», ma
-   va **letto**, non dedotto.
-3. **Ricontrollare che il pulsante sia ancora abilitato.** ⚠️ Il contatore in corsivo *sparisce*
-   quando il requisito è soddisfatto: cercare «Al momento partecipano» dà `false` **senza che sia
-   successo niente di male**. Il verdetto sta nell'`aria-label` del requisito e nel `disabled` del
-   pulsante. E il margine è **zero**: 12 tester contati su 12 richiesti — se uno esce, si riparte da
-   capo.
+2. ~~**Leggere in Console la categoria dichiarata.**~~ ✅ **Letta il 20/08 alle 12:4x**, in *Presenza
+   nello Store → Impostazioni dello Store → Categoria app*: **App = `App`, Categoria = `Istruzione`**.
+   **Il rilievo CSAE decade.** I requisiti Child Safety Standards si applicano **per categoria, non
+   per pubblico**: con `Istruzione` non scattano, e la pagina pubblica di standard anti-CSAE che in
+   `src/app/` **non esiste** non serve. Letta, non dedotta — era il punto.
+3. ~~**Ricontrollare che il pulsante sia ancora abilitato.**~~ ✅ **Letto il 20/08 alle 12:4x** dal DOM:
+   `disabledProp=false`, `disabledAttr=null`, `ariaDisabled=null`. Terzo requisito: `aria-label` =
+   *«Attività completata. Esegui il test chiuso con almeno 12 tester per almeno 14 giorni»*.
+   Norme: «Non è stato rilevato alcun problema». Contenuti app: «Non hai niente in sospeso».
+   ⚠️ Il contatore in corsivo *sparisce* quando il requisito è soddisfatto: cercare «Al momento
+   partecipano» dà `false` **senza che sia successo niente di male**. Il verdetto sta
+   nell'`aria-label` e nel `disabled`. E il margine è **zero**: 12 tester su 12 — se uno esce, si
+   riparte da capo.
+
+---
+
+## ⚠️ Due cose da sapere PRIMA di aprire il modulo
+
+**Il testo letterale delle domande non è mai stato ottenibile, e non lo è tuttora.** Non c'è
+anteprima: «Visualizza l'anteprima delle domande» apre l'articolo della Guida, non il questionario
+(verificato il 17/08). Il modulo si apre **solo premendo** «Richiedi per la produzione». Quindi
+questo documento è scritto contro le *descrizioni* della Guida `answer/14151465`, non contro i campi
+veri.
+
+**Il limite di caratteri per campo è quindi IGNOTO.** Se il modulo cappa — 500 o 1000 caratteri per
+risposta è la forma abituale di questi questionari — le risposte qui sotto vanno accorciate al volo.
+In quel caso l'ordine di ciò che si salva, per ciascuna parte, è: **prima i numeri misurati**, poi il
+metodo con cui sono stati raccolti, poi le motivazioni. I numeri sono l'unica parte che Google non
+può verificare altrove e che non si può ricostruire a memoria.

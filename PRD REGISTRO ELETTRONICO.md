@@ -94,6 +94,95 @@
 
 ---
 
+## 🔁 Changelog — Il digest che si perdeva in silenzio, e tre frasi che dicevano il falso alla Direzione — 2026-08-20 (branch `fix/digest-ritentabile-e-testi-veri`)
+
+Due difetti diversi, trovati lo stesso giorno mentre se ne verificavano altri, e con la stessa forma:
+**il codice è cambiato e la frase accanto no.**
+
+### 1 · `news-digest`: un'edizione respinta per quota risultava inviata
+
+`sendEmailDetailed` distingue **da sempre** i due fallimenti — `src/lib/email/send.ts` ritorna
+`{ ok: false, rinviabile: true }` sul `429` di Resend, col commento che spiega che *«un rifiuto
+definitivo consuma un tentativo, un `429` rinvia»*. **Il ciclo d'invio del digest non guardava quel
+campo.** Scorreva tutti i destinatari collezionando 429, e poi marcava `inviata_il` lo stesso.
+
+`inviata_il IS NULL` è l'unica guardia che decide se rispedire. Una volta marcata, quell'edizione non
+sarebbe mai più ripartita: **persa per chi non l'aveva ricevuta, in silenzio.** Nessun errore, nessuna
+eccezione, nessuno che se ne accorge tranne le famiglie a cui non arriva niente.
+
+**E «non marcare» da solo non bastava** — è il difetto trovato correggendo il primo, ed è il più
+istruttivo. Il ramo prudente accanto (database illeggibile) faceva già la cosa giusta, e giustificava
+la scelta così: *«riparte al giro successivo (il cron gira ogni giorno)»*. **`news-digest` è
+`'0 8 1 * *'`: mensile.** Quello che gira ogni dieci minuti è `news-tick`, un altro lavoro, dieci
+righe sopra nella stessa migrazione. Peggio: `generaEInviaDigest` lavora su **un mese solo**, quello
+che il chiamante gli passa — quindi un'edizione lasciata in coda non veniva ripresa **nemmeno il mese
+dopo**. Restava orfana esattamente come se fosse stata marcata. La cautela era giusta; la ragione
+scritta accanto no, ed è la ragione che il prossimo legge per decidere se fidarsi.
+
+**Cosa è stato costruito**, senza nessuna migrazione:
+
+| | |
+|---|---|
+| `digest.ts` | al primo `rinviabile` **ci si ferma** e non si marca; l'avanzamento va in `destinatari_count`, che assume il significato «a quanti è arrivata finora» — a edizione completa coincide col totale, cioè con ciò che ha sempre voluto dire |
+| `digest.ts` | l'elenco dei destinatari è **ordinato**: PostgREST non promette un ordine, e un offset dentro un elenco che si rimescola salterebbe famiglie diverse a ogni giro |
+| `cron/run/route.ts` | **ripescaggio** delle edizioni con `inviata_il IS NULL`, tetto a 6 mesi. Senza questo pezzo il primo non serve a niente: cambierebbe solo il modo di perdere l'edizione |
+| `controlli.ts` | `news-digest` non era **in nessuna** delle due liste — lo stato peggiore, perché «lasciato fuori apposta» e «dimenticato» diventano indistinguibili. Ora è in `JOB_CRON_NON_SORVEGLIATI` con la ragione strutturale: `app_log` conserva 30 giorni, un lavoro mensile ne chiede ~32 |
+
+⚠️ **Il «~500 email del 1° settembre» era una proiezione, non una misura.** Misurato il 20/08 alle
+12:24: a registro ci sono **31 iscritti** e **37 legami** genitore-alunno. Oggi nessun tetto verrebbe
+sfondato. Lo sarà verso il **28 agosto**, quando l'importazione avrà macinato le 403 domande a ~90
+email al giorno. La scadenza regge, per una ragione diversa da quella scritta.
+
+**Resta aperta** la cadenza giornaliera (`'0 8 * * *'`): richiede una migrazione, e una migrazione va
+*applicata*. Con questa correzione la cadenza mensile **non perde più niente**; la giornaliera
+accorcerebbe l'attesa da un mese a un giorno e renderebbe il lavoro sorvegliabile da `/api/health`.
+
+### 2 · Il pannello Candidature prometteva alla Direzione un account che nessuno crea
+
+`messages/{it,en}/adminAltro.json` diceva: *«approvarne una da INSEGNANTE crea l'account docente e
+manda le credenziali»*. **Falso dal 15 agosto** (PR #87, quando l'accesso è passato all'anagrafica del
+personale). La prova non è un commento: `approva()` fa **`return await approvaSenzaAccount(...)`** — un
+solo percorso — la route non importa nemmeno `ensureStaffIdentity`, e il server ha **una sola** riga
+`esitoAccount: 'nessuno'`.
+
+**La contraddizione stava dentro un solo clic**: la finestra di conferma prometteva *«Verrà creato un
+account docente per X»*, e la schermata di esito subito dopo diceva che nessun account era stato
+creato. La Direzione confermava una cosa e le veniva detto il contrario.
+
+🔑 **Il danno vive fuori dal software, ed è per questo che nessun log poteva vederlo**: la Direzione
+telefona alla persona e le dice di aspettare un'email che non arriverà mai. Corrette **quattro**
+stringhe per lingua — la quarta, `candConfermaApprovaCredenziali` («Le credenziali andranno a»), è
+saltata fuori solo facendo girare la suite. Le varianti «account creato» restano nel catalogo perché
+servono agli stati legacy `in_approvazione`, e la route spiega già perché.
+
+### 🔴 E due test DIFENDEVANO la frase falsa
+
+Correggendo il testo, due test di `CandidatureInsegnanti.test.tsx` sono diventati **rossi**. Cercavano
+`/Verrà creato un account docente per/` — la frase, ricopiata a mano nel test.
+
+Fermarsi un momento su cosa significa: dal 15 agosto quella frase era falsa, e per cinque giorni quei
+due test sono stati **verdi proprio perché era falsa**. Correggerla li faceva fallire. Non
+sorvegliavano un comportamento: sorvegliavano una stringa, e nel farlo la **congelavano** — la
+protezione era diventata il lucchetto del difetto.
+
+Riscritti contro la **chiave del catalogo** (`itAdminAltro.candConfermaApprovaAccount`) invece che
+contro il suo contenuto: ora il test dice *quale ramo viene disegnato* e resta muto su *cosa c'è
+scritto dentro*, che è il suo mestiere. Il testo può essere corretto senza chiedere permesso a un test,
+e il ramo resta sorvegliato.
+
+### Come è stato verificato
+
+`eslint 0` · `tsc 0` · suite intera · `build` · `/api/health` → `ok`. E **i test sono stati rotti
+apposta**: reinserendo `else if (false)` al posto di `res.rinviabile` diventano rossi 3 test su 5;
+togliendo il ripescaggio, 4 su 5. Un test verde al primo colpo prova solo che è verde — in questo repo
+un lock si era già immunizzato col proprio commento. Il test «il mese appena lavorato non si rifà» è
+stato **riscritto a doppio senso** proprio per questo: nella prima stesura restava verde anche col
+ripescaggio spento del tutto.
+
+Specifica: `docs/superpowers/specs/2026-08-20-news-digest-ritentabile-design.md`.
+
+---
+
 ## 🤖 Changelog — La domanda di accesso alla produzione su Google Play, e l'elenco dei difetti che si è accorciato verificandolo — 2026-08-20
 
 Il terzo requisito del test chiuso è caduto: la Console mostra il requisito **barrato**

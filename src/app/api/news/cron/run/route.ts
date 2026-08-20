@@ -183,8 +183,69 @@ async function eseguiDigest(supabase: SupabaseClient, t0: number): Promise<NextR
     anno -= 1
   }
   const { edizioni } = await generaEInviaDigest(supabase, { anno, mese })
-  logEvento('cron', 'info', { operazione: JOB, esito: 'ok', azione: 'digest', anno, mese, edizioni: edizioni.length, ms: Date.now() - t0, msg: `${JOB}: ok` })
-  return NextResponse.json({ success: true, anno, mese, edizioni })
+
+  // ── LE EDIZIONI RIMASTE IN CODA ─────────────────────────────────────────────
+  //
+  // `generaEInviaDigest` lavora su UN mese solo: quello che gli si passa. Finché
+  // qui si passava soltanto il mese precedente, un'edizione lasciata in coda dai
+  // rami prudenti di `digest.ts` — database illeggibile, notifiche disattivate,
+  // e da oggi quota email esaurita — non veniva ripresa MAI. Restava orfana
+  // esattamente come se fosse stata marcata: `inviata_il` a null per sempre, e
+  // nessuno a guardarla.
+  //
+  // I commenti accanto a quei `continue` dicevano «riparte al giro successivo».
+  // Era vero solo a metà: il giro successivo c'era, ma guardava un altro mese.
+  // Questo ripescaggio è ciò che rende vera quella frase.
+  //
+  // ⚠️ TETTO A 6 MESI, di proposito. Non è prudenza generica: senza, un'edizione
+  // vecchia e irrecuperabile (una sede chiusa, un mese senza destinatari validi)
+  // verrebbe ritentata a ogni giro per sempre, e il costo crescerebbe in silenzio.
+  // Sei mesi coprono ampiamente il caso reale — un tetto di quota che dura
+  // qualche giorno — e chiudono la coda su tutto il resto.
+  const arretrate: { anno: number; mese: number }[] = []
+  const { data: pendenti, error: pendErr } = await supabase
+    .from('news_digest_edizioni')
+    .select('anno, mese')
+    .is('inviata_il', null)
+    .order('anno', { ascending: true })
+    .order('mese', { ascending: true })
+    .limit(200)
+  if (pendErr) {
+    // PostgREST non lancia (AGENTS regola 7): senza questo controllo il
+    // ripescaggio fallirebbe in silenzio e sembrerebbe «non c'era niente da
+    // ripescare» — che è indistinguibile da «funziona».
+    logEvento('cron', 'warn', { operazione: JOB, esito: 'arretrate-non-lette', azione: 'digest' }, pendErr)
+  } else {
+    const sogliaMesi = (anno * 12 + mese) - 6
+    const visti = new Set<string>()
+    for (const r of (pendenti ?? []) as { anno: number; mese: number }[]) {
+      const chiave = `${r.anno}-${r.mese}`
+      // Il mese corrente è appena stato lavorato: ripeterlo qui rispedirebbe.
+      if (r.anno === anno && r.mese === mese) continue
+      if (visti.has(chiave)) continue
+      if (r.anno * 12 + r.mese < sogliaMesi) continue
+      visti.add(chiave)
+      arretrate.push({ anno: r.anno, mese: r.mese })
+    }
+  }
+
+  let edizioniArretrate = 0
+  for (const a of arretrate) {
+    const { edizioni: rec } = await generaEInviaDigest(supabase, a)
+    edizioniArretrate += rec.length
+  }
+  if (arretrate.length > 0) {
+    // Il SUCCESSO di un canale critico si logga (AGENTS regola 5): senza questa
+    // riga, «nessun arretrato» e «il ripescaggio non è mai partito» sono uguali.
+    logEvento('cron', 'info', {
+      operazione: JOB, esito: 'ok', azione: 'digest-arretrate',
+      arretrate: arretrate.length, edizioni: edizioniArretrate,
+      msg: `${JOB}: ripescate ${arretrate.length} edizioni rimaste in coda`,
+    })
+  }
+
+  logEvento('cron', 'info', { operazione: JOB, esito: 'ok', azione: 'digest', anno, mese, edizioni: edizioni.length, arretrate: arretrate.length, ms: Date.now() - t0, msg: `${JOB}: ok` })
+  return NextResponse.json({ success: true, anno, mese, edizioni, arretrate: arretrate.length })
 }
 
 export const POST = withRoute('news/cron/run:POST', async (request: Request) => {

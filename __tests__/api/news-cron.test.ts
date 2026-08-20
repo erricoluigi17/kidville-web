@@ -44,18 +44,21 @@ const db = vi.hoisted(() => {
     instagramError: null as unknown,
     updates: [] as Array<{ rec: Record<string, unknown>; eqs: Record<string, unknown> }>,
     updateError: null as unknown,
+    // Edizioni digest rimaste in coda (`inviata_il IS NULL`): le ripesca `eseguiDigest`.
+    pendenti: [] as Array<{ anno: number; mese: number }>,
+    pendentiError: null as unknown,
   }
   function client() {
     return {
       from() {
-        const st = { eqs: {} as Record<string, unknown>, isUpdate: false, updateRec: null as Record<string, unknown> | null }
+        const st = { eqs: {} as Record<string, unknown>, iss: {} as Record<string, unknown>, isUpdate: false, updateRec: null as Record<string, unknown> | null }
         const b: Record<string, unknown> = {}
         b.select = () => b
         b.eq = (c: string, v: unknown) => { st.eqs[c] = v; return b }
         b.lte = () => b
         b.lt = () => b
         b.gte = () => b
-        b.is = () => b
+        b.is = (c: string, v: unknown) => { st.iss[c] = v; return b }
         b.or = () => b
         b.order = () => b
         b.in = () => b
@@ -66,6 +69,12 @@ const db = vi.hoisted(() => {
           if (st.isUpdate) {
             state.updates.push({ rec: st.updateRec ?? {}, eqs: { ...st.eqs } })
             return { data: null, error: state.updateError }
+          }
+          // `.is('inviata_il', null)` senza nessun `.eq`: è il ripescaggio delle
+          // edizioni rimaste in coda (`eseguiDigest`). Nessun'altra query di questa
+          // route ha quella forma.
+          if ('inviata_il' in st.iss && Object.keys(st.eqs).length === 0) {
+            return { data: state.pendenti, error: state.pendentiError }
           }
           if (st.eqs.stato === 'programmata') return { data: state.programmate, error: state.programmateError }
           if (st.eqs.tipo === 'instagram') return { data: state.instagram, error: state.instagramError }
@@ -102,6 +111,8 @@ const battitoOk = () => righe().some((r) => r.evento === 'cron' && r.campi.esito
 
 beforeEach(() => {
   vi.clearAllMocks()
+  db.state.pendenti = []
+  db.state.pendentiError = null
   db.state.programmate = []
   db.state.programmateError = null
   db.state.instagram = []
@@ -241,6 +252,90 @@ describe('news/cron/run — job digest', () => {
     vi.setSystemTime(new Date('2026-01-10T08:00:00Z'))
     await cronPOST(req({ job: 'digest' }, SEGRETO))
     expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2025, mese: 12 })
+  })
+
+  // ── LE EDIZIONI RIMASTE IN CODA ──────────────────────────────────────────────
+  //
+  // `generaEInviaDigest` lavora su UN mese solo: quello che gli si passa. Finché
+  // qui si passava soltanto il mese precedente, un'edizione lasciata in coda dai
+  // rami prudenti di `digest.ts` (database illeggibile, notifiche disattivate, e
+  // dal 2026-08-20 quota email esaurita) non veniva ripresa MAI: restava orfana
+  // esattamente come se fosse stata marcata `inviata_il`.
+  //
+  // I commenti accanto a quei `continue` dicevano «riparte al giro successivo». Era
+  // vero a metà: il giro successivo c'era, ma guardava un altro mese. E il giro
+  // successivo, per `news-digest` (`'0 8 1 * *'`), è il mese DOPO — non domani.
+  describe('ripescaggio delle edizioni rimaste in coda', () => {
+    it('🔴 un\'edizione pendente di un mese passato viene ripresa', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-01T08:00:00Z'))
+      db.state.pendenti = [{ anno: 2026, mese: 7 }]
+
+      const res = await cronPOST(req({ job: 'digest' }, SEGRETO))
+
+      expect(res.status).toBe(200)
+      // il mese corrente (agosto) + l'arretrato (luglio)
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 8 })
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 7 })
+      expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
+    })
+
+    it('il mese APPENA lavorato non si rifà, ma gli altri sì', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-01T08:00:00Z'))
+      // Agosto è pendente perché il giro di poco fa l'ha lasciato in coda; luglio
+      // è un arretrato vero.
+      db.state.pendenti = [{ anno: 2026, mese: 8 }, { anno: 2026, mese: 7 }]
+
+      await cronPOST(req({ job: 'digest' }, SEGRETO))
+
+      // ⚠️ Le DUE direzioni nello stesso test, di proposito. Con la sola asserzione
+      // «agosto non si rifà» questo test resterebbe verde anche se il ripescaggio
+      // fosse spento del tutto — e un verde che non distingue «funziona» da «non
+      // c'è» è peggio di nessun test. Luglio deve essere ripescato.
+      expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 8 })
+      expect(news.generaEInviaDigest).toHaveBeenCalledWith(expect.anything(), { anno: 2026, mese: 7 })
+    })
+
+    it('oltre sei mesi si lascia perdere: una coda infinita cresce in silenzio', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-01T08:00:00Z'))
+      db.state.pendenti = [{ anno: 2025, mese: 1 }, { anno: 2026, mese: 5 }]
+
+      await cronPOST(req({ job: 'digest' }, SEGRETO))
+
+      // agosto (corrente) + maggio (dentro i 6 mesi). Gennaio 2025 no.
+      expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
+      expect(news.generaEInviaDigest).not.toHaveBeenCalledWith(expect.anything(), { anno: 2025, mese: 1 })
+    })
+
+    it('la stessa coppia anno/mese su più sedi si lavora UNA volta sola', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-01T08:00:00Z'))
+      // tre sedi, stesso mese: la query ritorna tre righe
+      db.state.pendenti = [{ anno: 2026, mese: 7 }, { anno: 2026, mese: 7 }, { anno: 2026, mese: 7 }]
+
+      await cronPOST(req({ job: 'digest' }, SEGRETO))
+
+      // `generaEInviaDigest` senza `scuolaId` fa già TUTTE le sedi: chiamarla tre
+      // volte spedirebbe tre volte.
+      expect(news.generaEInviaDigest).toHaveBeenCalledTimes(2)
+    })
+
+    it('se la lettura delle pendenti fallisce lo DICE, e il giro non muore', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-01T08:00:00Z'))
+      db.state.pendentiError = { code: '42703', message: 'column does not exist' }
+
+      const res = await cronPOST(req({ job: 'digest' }, SEGRETO))
+
+      // PostgREST non lancia (AGENTS §7): senza il controllo, «non c'era niente da
+      // ripescare» e «non ho potuto guardare» sarebbero la stessa cosa.
+      expect(res.status).toBe(200)
+      expect(news.generaEInviaDigest).toHaveBeenCalledTimes(1)
+      expect(righe('warn').some((r) => r.campi.esito === 'arretrate-non-lette')).toBe(true)
+    })
   })
 })
 

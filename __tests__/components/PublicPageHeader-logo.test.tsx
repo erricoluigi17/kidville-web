@@ -156,6 +156,50 @@ describe('il marchio sulle superfici pubbliche — chi ce l’ha DAVVERO', () =>
     })
   }
 
+  /**
+   * ⚠️ E LA CATENA HA UN ANELLO IN PIÙ, che il lock qui sopra non vedeva.
+   *
+   * `/lavora-con-noi` e `/anagrafica-personale` NON rendono la testata: la
+   * passano al wizard come `intestazione={<PublicPageHeader …/>}`. A renderla è
+   * il wizard. Il lock dei sorgenti trova `<PublicPageHeader` nella pagina e si
+   * dichiara soddisfatto — ma togliere `{intestazione}` dal corpo del wizard
+   * toglierebbe marchio, ritorno e Alto Contrasto a DUE superfici pubbliche con
+   * tutto il gate verde.
+   *
+   * Non è teorico: `anagrafica-personale-page.test.tsx:85` verifica solo che la
+   * PROP sia l'elemento giusto, e per farlo mocka `PublicPageHeader` a
+   * `() => null`. Nessun test, prima di questo, leggeva lo slot.
+   */
+  const SLOT: { nome: string; pagina: string; wizard: string }[] = [
+    {
+      nome: '/lavora-con-noi',
+      pagina: 'src/app/lavora-con-noi/page.tsx',
+      wizard: 'src/components/features/public/CandidaturaInsegnanteWizard.tsx',
+    },
+    {
+      nome: '/anagrafica-personale',
+      pagina: 'src/app/anagrafica-personale/page.tsx',
+      wizard: 'src/components/features/public/AnagraficaPersonaleWizard.tsx',
+    },
+  ]
+
+  for (const { nome, pagina, wizard } of SLOT) {
+    it(`${nome} passa la testata come prop, e il wizard la RENDE`, () => {
+      const dellaPagina = readFileSync(join(process.cwd(), pagina), 'utf8')
+      expect(
+        dellaPagina.includes('intestazione={<PublicPageHeader'),
+        `${nome} non passa più la testata al wizard`,
+      ).toBe(true)
+      const delWizard = readFileSync(join(process.cwd(), wizard), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(?<!:)\/\/.*$/gm, '')
+      expect(
+        delWizard.includes('{intestazione}'),
+        `${wizard} riceve la testata e non la rende: ${nome} resta senza marchio, senza ritorno e senza Alto Contrasto, con il gate verde`,
+      ).toBe(true)
+    })
+  }
+
   it('e `PublicPageHeader` il marchio lo monta davvero (la catena si verifica, non si suppone)', () => {
     const src = readFileSync(join(process.cwd(), 'src/components/ui/PublicPageHeader.tsx'), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')

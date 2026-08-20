@@ -1,5 +1,50 @@
 import '@testing-library/jest-dom';
+import { configure } from '@testing-library/dom';
 import { vi } from 'vitest';
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * L'ATTESA DI `waitFor`/`findBy*` NON È PIÙ UN SECONDO — E NON È UN CEROTTO.
+ *
+ * ─── IL DIFETTO, MISURATO ────────────────────────────────────────────────────
+ * Il 2026-08-19/20 la suite ha fatto cadere, in esecuzioni diverse, quattro test
+ * di QUATTRO FILE DIVERSI — `CandidatureInsegnanti`,
+ * `StaffDetailPanel-anagrafica`, `CodiciFiscaliDaVerificare`, `SidiPanel-sede` —
+ * mai lo stesso due volte, e tutti verdi rieseguiti da soli. Trentatré
+ * esecuzioni mirate (i file singoli, dieci giri; le coppie nei due ordini; tutti
+ * i componenti, tre giri) non ne hanno riprodotto uno: si presenta SOLO con la
+ * suite intera, cioè con 964 file su tutti i worker.
+ *
+ * La firma è nella durata. L'ultimo caduto — «i frequentanti partono con la sede
+ * nella query», un `waitFor` senza opzioni — ha impiegato **1043 ms**: il
+ * default di Testing Library è 1000. Non stava aspettando niente di reale per un
+ * secondo; stava aspettando un microtask deschedulato dalla contesa di CPU.
+ *
+ * ─── PERCHÉ ALZARLO È LA CORREZIONE E NON IL CEROTTO ────────────────────────
+ * Un `waitFor` non è un budget di prestazione: è «aspetta finché la cosa
+ * succede». Con un tetto di un secondo su una macchina carica, quello che si
+ * misura è il carico della macchina, non il comportamento del prodotto — e un
+ * test che passa al secondo tentativo non è un test, è un dado.
+ *
+ * Alzando il tetto NESSUNA asserzione si indebolisce: un test davvero rotto
+ * cade lo stesso, solo qualche secondo dopo. Quello che sparisce è il falso
+ * rosso.
+ *
+ * ⚠️ E SI FA IN UN POSTO SOLO. `CandidatureInsegnanti.test.tsx` ha DIECI
+ * `{ timeout: 2000 }` scritti a mano: qualcuno aveva già incontrato questo
+ * difetto e l'aveva chiuso una chiamata alla volta. Un invariante che dipende
+ * dal fatto che il prossimo si ricordi di scrivere l'opzione non è un
+ * invariante: è una consuetudine, ed è la stessa lezione della migrazione
+ * `20260820011500`.
+ *
+ * ⚠️ `testTimeout` sale insieme, e DEVE: con l'attesa a 5 s e il test a 5 s
+ * (default di vitest) un `waitFor` che scade non arriverebbe mai a dire cosa non
+ * ha trovato — cadrebbe prima il test, con un messaggio che non aiuta.
+ * `testTimeout` sta in `vitest.config.ts`, accanto a questa nota.
+ *
+ * Verificato prima di alzarlo: nessun test si appoggia allo SCADERE di un
+ * `waitFor` (`grep -rn "\.rejects" __tests__ | grep -i "waitfor\|findby"` → zero).
+ * ════════════════════════════════════════════════════════════════════════════ */
+configure({ asyncUtilTimeout: 5000 });
 
 /* ════════════════════════════════════════════════════════════════════════════
  * 🔴 LA SUITE NON PARLA CON LA PRODUZIONE. MAI.

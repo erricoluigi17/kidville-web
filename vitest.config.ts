@@ -8,6 +8,12 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./test/setup.ts'],
+    // ⚠️ VA INSIEME a `configure({ asyncUtilTimeout: 5000 })` di `test/setup.ts`,
+    // e il perché sta scritto lì per esteso: con l'attesa a 5 s e il test al
+    // default di vitest (5 s) un `waitFor` che scade non arriverebbe mai a dire
+    // che cosa non ha trovato — cadrebbe prima il test, con un messaggio muto.
+    // Alzarne uno solo dei due lascia il difetto e toglie la diagnosi.
+    testTimeout: 20000,
     // `.claude/**` non è una svista: le sessioni parallele di Claude Code creano i propri
     // worktree lì dentro (`.claude/worktrees/<branch>/`), che sono COPIE COMPLETE del repo —
     // test compresi. Senza questa esclusione una `vitest run` esegue anche i test di un ALTRO

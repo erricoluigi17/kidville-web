@@ -94,6 +94,122 @@
 
 ---
 
+## 🤖 Changelog — La domanda di accesso alla produzione su Google Play, e l'elenco dei difetti che si è accorciato verificandolo — 2026-08-20
+
+Il terzo requisito del test chiuso è caduto: la Console mostra il requisito **barrato**
+(`aria-label` = *«Attività completata. Esegui il test chiuso con almeno 12 tester per almeno 14
+giorni»*) e **«Richiedi per la produzione» ha `disabled: false`**. Al momento in cui si scrive **non
+è ancora stato premuto**. Margine: **zero** — 12 tester contati su 12 richiesti; se uno esce, il
+contatore riparte e si perdono altri quattordici giorni.
+
+### 1 · Il problema vero era la Parte 1, e non era il codice
+
+Il questionario chiede: *«riepiloga i feedback che hai ricevuto dai tester e facci sapere in che
+modo lo hai raccolto»*. **Il feedback scritto è zero**, misurato tre volte (17, 19, 20 agosto) in
+Console, su `info@kidville.it` e sulla posta del titolare.
+
+La tentazione — scrivere dodici testi di riscontro e attribuirli ai tester — è stata scartata e va
+scritto perché: Google chiama *misrepresentation* qualunque informazione falsa nella Console, e la
+sanzione è la sospensione dell'account. Sarebbe l'unico modo di perdere l'app **dopo** averla fatta
+funzionare.
+
+La risposta veritiera è più forte di una inventata, e poggia su un fatto misurato: **il bundle in
+mano ai dodici tester è una WebView su `https://app.kidville.it`**. Ogni rilascio web è arrivato ai
+tester **senza un nuovo bundle** — e la produzione è cambiata **17 volte** in quei quattordici
+giorni (`git log --first-parent main --since=2026-08-06 --until=2026-08-21` → 18 commit, meno lo
+stato di partenza). Il test chiuso non è stato una vetrina ferma: è la finestra in cui l'app è
+passata da rotta a funzionante.
+
+### 2 · Dodici ricostruzioni e dodici revisioni, e l'elenco si è ACCORCIATO
+
+Dodici agenti hanno ricostruito, profilo per profilo, i difetti che un utente reale poteva
+incontrare fra il 6 e il 20 agosto — **senza inventare testimonianze**: ogni riga porta un commit.
+Dodici revisori indipendenti, con mandato di bocciare, hanno riverificato ogni riga.
+
+**Tutti e dodici i documenti sono stati RESPINTI al primo giro.** Non è un incidente: è il risultato
+utile. Le correzioni che ne sono uscite sono di tre famiglie.
+
+**a) Lo squash.** I commit su `main` sono squash merge (`git rev-list --parents -n 1` → un solo
+genitore). Conseguenza scoperta indipendentemente da cinque agenti: **un difetto introdotto e
+corretto dentro la stessa lavorazione in produzione non è mai esistito.** Le date dei messaggi di
+commit descrivono il *lavoro*, non la *produzione*. Sono caduti così, fra gli altri: il pulsante
+coperto dalla barra e il link che faceva partire l'invio (n. 3, 4, 6, 7); l'appello sovrascritto dal
+genitore (n. 9-12), anche perché il controllo sulla morosità precedeva quello sul grado; la pratica
+del personale senza uscite (n. 44); l'account `educator` alla cuoca (n. 48); i tre fogli di carta
+intestata con sopra due righe di conteggio (n. 55 — *tutti* i file di `src/lib/carta/` nascono nel
+commit che li corregge); i nomi tagliati nel registro presenze (n. 53).
+
+**b) Attribuzioni sbagliate.**
+- Il **codice fiscale di un minore** mandato a un fornitore esterno non dichiarato **non partiva dal
+  modulo pubblico**: `fetchFiscalCode` aveva **tre soli chiamanti**, tutti in
+  `components/features/admin/`, e la catena porta a `/admin/students/new`. Era lo schermo della
+  **segreteria**. Verificato indipendentemente da tre agenti.
+- Il **modulo pubblico d'iscrizione non ha nessuna firma OTP** (`send-otp` importa `requireUser`:
+  serve un account). La formulazione «compilava e firmava con l'OTP» era falsa.
+- **`/lavora-con-noi` non esisteva in produzione prima dell'11/08 alle 10:16.** Sette difetti che
+  gli erano attribuiti sono nati e morti nel commit che ha pubblicato il modulo.
+- «Firmare il certificato per il bambino sbagliato» **non è mai stato possibile**: la firma nasce
+  nello stesso commit che aggiunge il selettore. Il certificato usciva *intestato* al primo figlio —
+  e lo faceva **dal 6 al 15 agosto**, non «dal 14».
+- Un account **`segreteria` non può essere multi-sede**: `scope.ts:59` → `if (user.role !== 'admin')
+  return own`. Il mestiere esiste, l'account no.
+
+**c) Precisioni inventate.** La finestra in cui `candidature_sedi` è stata pubblica circolava come
+«37 minuti» **senza una misura a monte**: il numero rimbalzava fra i documenti. Misurato:
+`e8319816` 00:50:56 → `ddfe3b0e` 01:27:07 = **36 minuti fra i due commit**, mentre chi ha chiuso il
+buco scrive «un'ora» — e l'istante di **applicazione al database**, che è quando il buco si è
+davvero aperto, non è provato da nessun documento.
+
+> 🔑 **E una regola che vale per ogni riga di ogni collaudo, scoperta qui.** Le ore delle finestre
+> sono **timbri di commit**, non l'istante in cui il deploy è diventato servibile: fra il merge e la
+> pagina che si apre col telefono c'è una compilazione che nessuno ha misurato. **Ogni guasto è
+> durato un po' più di quanto scritto, mai meno.** Stessa famiglia: il timbro di una migrazione
+> (`20260812194501`) non dichiara il fuso — se è UTC, una finestra «di 6h40» è di 4h40. L'incertezza
+> è di **due ore, non di un minuto**.
+
+### 3 · Tre difetti trovati strada facendo, ANCORA APERTI
+
+1. **`src/lib/sezioni/docenti.ts:186-187`** — se la lettura delle sezioni fallisce, la funzione
+   logga e poi `return (data ?? []).map(...)`: **elenco vuoto**. Alla maestra l'app dice «nessuna
+   sezione assegnata» invece di «non ho potuto leggere». `f59854ab` ha aggiunto **solo** la riga di
+   log: il sintomo è diagnosticabile, non eliminato. Stesso schema in `sezioniDiUtentePerGrado`.
+2. **`messages/it/public.json:57`** — `candContestoCredenziali` promette ancora *«se la candidatura
+   viene accolta, le credenziali di accesso arrivano via email»*, ed è reso alla riga 1907 del
+   wizard. Ma `fcc51fc8` (15/08) ha smontato l'invio. **Da cinque giorni un modulo pubblico promette
+   un'email che il sistema non spedisce più.**
+3. **`admin-nav-config.ts:99`** — la voce «Privacy & GDPR» non ha `roles` e compare nel menu di
+   tutti i ruoli staff, mentre le tre porte a valle sono di sola Direzione.
+
+### 4 · La sentinella, e l'email
+
+`.github/workflows/sentinella-play.yml`: ogni mattina alle 07:23 UTC legge la scheda pubblica di
+`it.kidville.app`. **404 → non c'è, nessuna email. 200 → c'è, e manda l'email, poi si spegne da
+sola.** Tarato sul vivo il 20/08: `it.kidville.app` → 404, `com.whatsapp` → 200.
+
+Non è un `pg_cron` come gli altri quindici lavori del repo, e la ragione è di proporzione: una
+migrazione sul database che contiene i codici fiscali di centinaia di minori, per mandare una
+notifica personale, è sproporzionata. Qui non si tocca né l'app né il database.
+
+Serve impostare due segreti: `RESEND_API_KEY` e `SENTINELLA_DESTINATARI`. **I destinatari non stanno
+nel file** perché il repository è pubblico. Senza uno dei due la sentinella **fallisce
+rumorosamente** invece di tacere: scoprire la pubblicazione e tenersela per sé sarebbe il guasto
+peggiore di tutti.
+
+### 5 · Cosa resta aperto
+
+| | |
+|---|---|
+| 🔴 **Il branch non è mai stato spinto** | `feat/candidature-multisede`: 28 commit, mai una PR, mai un giro di CI. Esiste su **un disco solo**. Decisione del titolare. |
+| 🔴 **`news-digest` del 1° settembre** | ~500 email contro un tetto di 100/giorno; `digest.ts:388-400` ignora `rinviabile` e marca comunque `inviata_il`: quel digest **non verrà mai più rispedito**, per ~490 famiglie, in silenzio. E `/api/health` non lo sorveglia. |
+| 🟡 **Categoria in Console** | Deve risultare **Istruzione**. La Child Safety Standards si applica **per categoria, non per pubblico**: con «Social» servirebbe una pagina pubblica di standard anti-CSAE che **non esiste**. Va **letta**, non dedotta. |
+| 🟡 **Dopo l'approvazione** | L'accesso sblocca il canale, **non pubblica**: serve creare una release di produzione. Consiglio: promuovere la release **1**, quella che i dodici tester hanno usato per quattordici giorni. E allargare la distribuzione, oggi ferma a 1 paese su 177. |
+| 🟡 **Numeri della Parte 2** | Da rieseguire sul database al momento di incollare: le domande d'iscrizione erano 302 il 4 agosto e 390 il 17. |
+
+Documenti: `docs/submission/C6-questionario-produzione.md` (le tre parti, italiano e inglese) e
+`docs/collaudo/produzione/` (l'inventario più i dodici documenti di profilo).
+
+---
+
 ## ✉️ Changelog — «Lavora con noi»: il marchio, la sede al plurale, e la copia che arriva al plesso — 2026-08-19/20
 
 Tre richieste del titolare sul modulo pubblico `/lavora-con-noi`, rilasciate insieme.
@@ -206,6 +322,90 @@ la migrazione e il merge la produzione gira il codice vecchio, e ogni
 candidatura che arriva in quella finestra sarebbe nata invisibile al cockpit
 nuovo. Rifare il backfill dopo il deploy avrebbe chiuso quella finestra e
 nessuna delle prossime.
+
+---
+
+## 🔬 Changelog — Le quattro cose rimaste aperte, e le cinque trovate chiudendole — 2026-08-20
+
+Alla domanda del titolare «al di fuori del tetto delle email non ci sono altri errori?» la
+risposta è stata **no**, con quattro voci. Questo intervento le chiude. Nel farlo ne sono uscite
+**cinque che nessuno aveva visto** — quattro delle quali *sembravano già chiuse*, ed è il motivo
+per cui questa voce esiste.
+
+### Le quattro dichiarate
+
+**1 · Il filtro di sede non aveva guardiani.** `.in('candidature_sedi.scuola_id', …)` si lega al
+**primo** embed della `select`, per POSIZIONE — non a quello con `!inner`. La rotta del cockpit ne
+usa due: uno restringe, uno descrive. Invertirli sposta il filtro sull'embed descrittivo e
+l'elenco mostra candidature di plessi che chi guarda non ha, senza un errore.
+
+Nessun test poteva vederlo perché il finto — ricopiato in **quattro file**, e in tutti e quattro
+nella stessa forma approssimata — applicava il filtro come predicato sulla riga madre e popolava
+gli array a mano. Ora la regola vive in un posto solo (`__tests__/helpers/embed-sede.ts`) e
+riproduce le tre cose che fa il database: il filtro va al primo embed; la madre sparisce solo se
+quel primo porta `!inner`; **un embed consegna solo le colonne che ha chiesto**. Più un lock
+d'architettura sull'ordine, con il controllo negativo *codificato*.
+
+**2 · La conservazione GDPR ora si calcola per riga di sede.** `evasa_il` è una colonna sola e
+porta il termine di più trattamenti. Nel caso **misto** — Aversa rifiuta a novembre, Giugliano
+approva a dicembre, candidatura arrivata a gennaio — l'aggregato vale `approvata`, quindi il
+termine decorreva dalla **ricezione**: cancellazione a gennaio, cioè **due mesi** dopo il rifiuto
+di Aversa invece dei dodici promessi dall'informativa. Ora vince la scadenza **più lontana** fra
+quelle delle sue sedi. Nei casi non misti non cambia niente — ed è la prova che non è una
+riscrittura del termine: i due test che lo dicono erano verdi *prima* della correzione.
+**Nessuna riga dell'informativa è stata toccata**: la regola nuova conserva di più, mai di meno.
+
+**3 · I due test instabili.** Vedi §«La suite misurava il carico della macchina» qui sotto.
+
+**4 · Lo scaglione «minore» dei quattro fronti** — quattordici rilievi, riverificati uno per uno
+sull'albero di oggi prima di entrare nel piano (tre erano già chiusi e non compaiono). Fra questi:
+l'uuid della sede confrontato come stringa grezza (`z.guid()` accetta il maiuscolo, quindi la
+**propria** sede in maiuscolo prendeva un 404 e accendeva un warn di sicurezza — falsi positivi in
+un contatore nato per vedere gli abusi veri); `motivo_rifiuto` della madre fuori dal dettaglio; il
+tetto delle sedi **cablato su tre** mentre il commento accanto dichiarava che decideva `sediReali`;
+il rifiuto del server che non diceva **quale** sede aveva respinto, così il client incolpava
+`sedi[0]` — spesso quella valida; sei stringhe al singolare rivolte a chi si era candidato a tre
+plessi; la conferma firmata da una sede sola nel piede mentre il corpo ne elencava tre;
+«Ruolo: Altro (specifica qui sotto)» — l'istruzione del modulo al posto del mestiere; il pannello
+che sopravviveva al cambio di sedi; `{ "id": null }` come oracolo di enumerazione.
+
+### Le cinque trovate chiudendole
+
+| | Difetto | Perché nessuno l'aveva visto |
+|---|---|---|
+| 🔴 | **L'elenco mostrava l'aggregato**: interrogava con `candidature_sedi!inner(scuola_id)` — **senza `stato`** — mentre il componente legge `candidature_sedi[…].stato`. Il campo arrivava `undefined` e la catena di `??` scivolava fino all'aggregato: cioè il numero che il commit precedente dichiarava di aver corretto | il tipo dichiara `stato?` **opzionale**, quindi TypeScript non poteva dirlo; e il finto popolava gli array a mano invece di proiettare le colonne chieste |
+| 🔴 | **Dopo un «Approva» riuscito i pulsanti restavano accesi**: l'aggiornamento ottimistico scriveva solo l'aggregato, non la riga di sede. Ripremerli dava 409 «ricaricare la pagina», e ricaricare non serviva | i finti del file non portavano `candidature_sedi`, quindi **ogni** test esercitava il ramo di ripiego invece di quello vero |
+| 🔴 | **Il marchio faceva scrollare `/iscrizione` in orizzontale**, a ogni larghezza — 414 px compreso | il rilievo lo dava «sotto i 360» ed era aritmetica su commenti; la misura esistente era stata presa sull'**altra** testata, che `flex-wrap` ce l'ha |
+| 🔴 | **Il mock di `next-intl` ignorava i valori di `t()`**: ogni messaggio con placeholder o plurale ICU finiva a schermo con le graffe, e le asserzioni restavano verdi perché confrontavano la stessa stringa grezza | tre test avevano messo per iscritto la limitazione del banco **come se fosse una proprietà del prodotto** («il nome non si può asserire qui») |
+| 🟠 | **Il lock del marchio non guardava lo slot**: `/lavora-con-noi` e `/anagrafica-personale` passano la testata come *prop*, e togliere `{intestazione}` dal wizard le lasciava senza marchio, senza ritorno e senza Alto Contrasto — con tutto il gate verde | il test esistente verificava solo che la **prop** fosse l'elemento giusto, e per farlo mockava `PublicPageHeader` a `() => null` |
+
+Il quarto ha reso **non più vacue 12 asserzioni in 6 file**, e ne ha scoperta una falsa: «il
+riquadro nomina il passo rimasto indietro» era soddisfatta dal **titolo della schermata**, mentre
+il riquadro diceva `{passo}`.
+
+### La suite misurava il carico della macchina
+
+Quattro test di **quattro file diversi** sono caduti in esecuzioni diverse della suite intera, mai
+lo stesso due volte, tutti verdi rieseguiti da soli. Trentatré esecuzioni mirate non ne hanno
+riprodotto uno: si presenta **solo** con 964 file su tutti i worker.
+
+La firma è la durata: l'ultimo caduto, un `waitFor` senza opzioni, ha impiegato **1043 ms** contro
+il default di Testing Library di **1000**. Non aspettava niente di reale: aspettava un microtask
+deschedulato dalla contesa di CPU. Un test che passa al secondo tentativo non è un test.
+
+`asyncUtilTimeout` sale a 5 s **in un posto solo** (`test/setup.ts`), con `testTimeout` a 20 s
+perché altrimenti un'attesa scaduta non arriverebbe mai a dire cosa non ha trovato. Nessuna
+asserzione si indebolisce: un test rotto cade lo stesso, qualche secondo dopo. E si fa in un posto
+solo perché `CandidatureInsegnanti.test.tsx` aveva già **dieci** `{ timeout: 2000 }` scritti a
+mano: qualcuno l'aveva incontrato e chiuso una chiamata alla volta, che è una consuetudine, non un
+invariante.
+
+### Cosa resta aperto, dichiarato
+
+- **Il tetto delle email** — decisione del titolare: abbassare `INVITI_AL_GIORNO`, alzare il piano
+  Resend, o accettare le perdite. Non è un difetto del codice.
+- **Il marchio su `/cancellazione-account/conferma` e `/m/[token]`** e il **lock derivato da
+  `PUBLIC_PREFIXES`** invece che cablato a sette voci: debito preesistente, fuori da questo diff.
 
 ---
 

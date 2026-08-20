@@ -94,6 +94,200 @@
 
 ---
 
+## ✉️ Changelog — «Lavora con noi»: il marchio, la sede al plurale, e la copia che arriva al plesso — 2026-08-19/20
+
+Tre richieste del titolare sul modulo pubblico `/lavora-con-noi`, rilasciate insieme.
+
+### 1 · Il marchio sulle superfici pubbliche
+
+Il wordmark verde entra in `PublicPageHeader`, quindi su tutte e cinque le pagine pubbliche
+(`/lavora-con-noi`, `/iscrizione`, `/privacy`, `/termini`, `/assistenza`). Asset già esistente
+(`logo-kidville.png`, quello del login): **non** `logo_green.png`, che è lo stesso marchio in un
+file 6000×3375 con il 90% di bianco intorno e a 24 px renderebbe un wordmark alto otto.
+
+**Costo misurato con Playwright su Chrome, sulle pagine vive:** sotto i **414 px** la testata passa
+da **46 a 102 px** — il marchio va a capo. Da 414 in su costa zero. A 360 px le tre cose non ci
+stanno (`Torna indietro` 111 px + `Alto contrasto` 148 px lasciano 49 px, cioè un wordmark alto 12).
+**Scelta del titolare: marchio ovunque, i 56 px si accettano.** La variante con `order-first` è
+stata provata e peggiora: il logo finisce in basso a sinistra.
+
+Contrasto calcolato sui **pixel del file** (inchiostro reale `#007055`): **6,09:1** in Alto
+Contrasto, **5,48:1** sul crema. Soglia WCAG 1.4.11 per la grafica: 3:1. Nessun ripiego necessario.
+
+### 2 · La sede diventa una scelta multipla
+
+Una persona può proporsi a **più plessi con un invio solo**, e **ogni plesso valuta per conto suo**.
+
+- **Schema**: nuova `candidature_sedi` (`candidatura_id`, `scuola_id`, `stato`, `evasa_il`,
+  `evasa_da`, `motivo_rifiuto`), con FK verso `schools`, `on delete cascade` verso la candidatura,
+  **RLS attiva e zero policy** e indice `(scuola_id, stato, creata_il desc)`.
+- **Perché non una riga per sede**: due indici UNIQUE globali lo impediscono —
+  `candidature_insegnanti_email_viva` e `candidature_insegnanti_cv_unico` — e il secondo è il gate
+  anti-IDOR del curriculum. Allentarlo avrebbe riaperto il buco chiuso il 14/08.
+- **Lo stato della candidatura è l'AGGREGATO** delle sue sedi, mantenuto dal trigger
+  `candidature_sedi_aggrega`: una sede pending ⇒ `pending`; nessuna pending e almeno una approvata
+  ⇒ `approvata`; tutte rifiutate ⇒ `rifiutata`. È ciò che tiene in piedi `email_viva` senza
+  toccarlo: se Giugliano rifiuta e Aversa valuta ancora, quella persona **è ancora in gioco**.
+- **`candidature_insegnanti.scuola_id` resta ma NON AUTORIZZA PIÙ NIENTE**: è la sede di primo
+  arrivo, un dato storico. Il cockpit filtra dalle righe di sede.
+- **`?sede=<uuid>` non è cambiato**: quando c'è, salta il passo e invia quella sola sede.
+- **`PATCH approva|rifiuta`** dichiara su quale plesso si decide; **400** se l'operatore ha più
+  sedi e non ne indica nessuna.
+
+**Applicata in produzione il 19/08 su 18 candidature reali**, tutte con la loro riga di sede.
+Sette invarianti verificati, trigger provato sul database vero con rollback (quattro casi su
+quattro).
+
+### 3 · La copia completa alla sede, col curriculum in allegato
+
+Ogni invio recapita alla casella di **ogni** plesso scelto una copia completa del modulo, con il
+curriculum in allegato e `Reply-To` sull'indirizzo di chi si è candidato.
+
+- `sendEmailDetailed` impara `attachments` e `replyTo` (additivi).
+- Il corpo si genera **iterando il template dei campi**, non da un elenco scritto a mano: un
+  elenco a mano diverge al primo campo aggiunto, e diverge in silenzio.
+- Destinatario da `scuole.config.anagrafica.email` (tutte e tre le sedi ce l'hanno); se manca,
+  ripiego su **`CANDIDATURE_EMAIL_FALLBACK`** con riga a livello **`error`**.
+- Best-effort: un'email che non parte non trasforma un 201 in un 500, ma ogni esito è a log.
+
+**Provata davvero il 19/08**: invio da Chrome, copia arrivata su `giugliano@kidville.it`, allegato
+**identico byte per byte** (sha256), consenso non dato reso come «No», `cv_path` assente dal corpo,
+DKIM e SPF validi. Riga e allegato di prova rimossi, email cancellate.
+
+### Privacy — una promessa che andava corretta
+
+`/privacy` dichiarava senza riserve che *«il curriculum allegato viene cancellato insieme alla
+candidatura»*. La copia in casella **nessun cron la cancella**. La voce ora lo dice e indica a chi
+rivolgersi. **`VERSIONE_PRIVACY` alzata a `2026-08-19`**, impronta nuova aggiunta e vecchie
+lasciate: sono citate nei `consents_log` già scritti.
+
+### 🔴 Un buco aperto e chiuso in giornata
+
+`candidature_sedi` è stata creata **senza RLS** e per circa un'ora è stata **leggibile da chiunque**
+con la chiave anon (quella nel bundle del browser): `GET /rest/v1/candidature_sedi` restituiva le
+coppie candidatura/sede, mentre la tabella sorella rispondeva `[]`. Chiuso e verificato lo stesso
+giorno; nello stesso giro revocato l'`EXECUTE` della funzione `SECURITY DEFINER` del trigger ad
+`anon` e `authenticated`. Una tabella creata senza `enable row level security` non è «non ancora
+protetta»: è pubblica dal secondo in cui esiste.
+
+### Misura di contesto
+
+Il modulo **non è dormiente**: fra le 19:19 e le 22:36 del 19/08 sono arrivate **16 candidature
+vere** su tutte e tre le sedi, quattro col curriculum — circa una ogni venti minuti.
+`enrollment_submissions` è a **401** (il PRD e `CLAUDE.md` ne dichiaravano 302 al 04/08).
+
+---
+
+## 🤖 Changelog — Il bundle sullo store non era avvelenato, e la prova stava in una cartella di build 2026-08-17 (controllo di sola lettura, nessun rilascio)
+
+Controllo in **sola lettura** dello stato Google Play chiesto dal titolare. Nessuna modifica in
+Console, nessun caricamento, nessuna promozione, nessun commit. Metà del controllo è **riuscita**,
+metà **non è stato possibile eseguirla** (§C).
+
+### A. Il sospetto che ha mosso il controllo, e perché cade
+
+Si temeva che il `.aab` del **05/08** caricato sul canale Alpha (`versionCode 1`, l'unico che i 12
+tester hanno in mano) portasse dentro `http://10.0.2.2:3100` — l'indirizzo dell'emulatore — al
+posto di `https://app.kidville.it`. Se fosse vero, l'app dei tester non avrebbe **mai** raggiunto
+la produzione, e il 19/08 non si potrebbe chiedere l'accesso alla produzione con quel bundle.
+
+La fonte del sospetto è `docs/submission/C2-build-aab.md:293`, che dichiara: *«Il 2026-08-09 il
+bundle sul disco aveva `versionCode 1` mentre `build.gradle` diceva 2, **e portava dentro**
+`http://10.0.2.2:3100`»*. Il `.aab` del 05/08 non esiste più su disco — la ricostruzione del 09/08
+l'ha sovrascritto — quindi si riteneva misurabile solo scaricandolo da Play.
+
+**Non era vero, e la prova è rimasta sul disco per dodici giorni in una cartella intermedia di
+Gradle.** Misurato oggi:
+
+| Misura | Esito |
+|---|---|
+| `intermediates/assets/release/mergeReleaseAssets/capacitor.config.json`, mtime **05/08 14:09:03** | `"url": "https://app.kidville.it"` · `"cleartext": false` — **sano** |
+| stesso albero (7 file) confrontato con `base/assets/` dell'`.aab` del 09/08 | **byte-identici, 7 su 7** |
+| intermedi `release` riscritti il **09/08** | `processReleaseManifest`, `processReleaseResources`, `buildReleasePreBundle` — **nessun `mergeReleaseAssets`** |
+| `intermediates/assets/debug/mergeDebugAssets/capacitor.config.json`, mtime **07/08 15:25** | `"url": "http://10.0.2.2:3100"` · `"cleartext": true` — **è qui che sta il veleno** |
+| build `release` del 05/08 00:24 | `BUILD FAILED in 982ms` (log del daemon Gradle) — produsse solo `packaged_res`, nessun bundle |
+
+La catena: gli asset dell'`.aab` del 09/08 — che è **misurato sano** — sono l'output di un merge
+datato **05/08 14:09:03**, mai rifatto dopo. Il 09/08 Gradle ha ritoccato solo il manifest (è il
+`versionCode` 1→2) e ha trovato gli asset *up-to-date*, cioè **identici a quelli del 05/08**.
+Quindi la build del 05/08 ha impacchettato quella stessa configurazione sana. Il `10.0.2.2:3100`
+esiste, ma è del ramo **debug** del 07/08 (l'`app-debug.apk` dell'emulatore Maestro), ed è nato
+**due giorni dopo** il bundle caricato su Play.
+
+**`docs/submission/C2-build-aab.md:293` afferma il falso** e va corretto: ciò che il 09/08 fu
+misurato avvelenato è il **file sorgente** `android/app/src/main/assets/capacitor.config.json`, non
+il bundle. La nota di memoria di quel giorno era corretta e prudente — scriveva *«che una
+`bundleRelease` lanciata ora lo imbarchi è **inferenza, non prova**»* — ed è il documento di sintesi
+ad aver trasformato quella cautela in un fatto. 🔑 **Una cautela scritta bene si perde nel
+riassunto: il riassunto va misurato come il codice.**
+
+⚠️ **Quel che resta dedotto**: è provato che *la build del 05/08 su questa macchina* produsse un
+bundle sano. Che il file caricato su Play sia quello resta **inferenza** (una macchina sola, una
+sola build riuscita quel giorno, stesso `versionCode`). La misura definitiva è scaricare l'APK
+universale da *Esplora bundle dell'app* — e richiede la Console (§C).
+
+### B. Verificato l'artefatto che si caricherà il 19/08 (`versionCode 2`, su disco)
+
+Rifatti tutti e cinque i controlli di `C2` §11 sull'`.aab`, non sul sorgente: config
+`https://app.kidville.it` · `cleartext false` · `versionCode 2` · `versionName 1.0` · `minSdk 24` ·
+`targetSdk 36` · impronta SHA-256 del certificato **identica** a `upload_certificate.pem`
+(`6C:65:EC:19:…:66:B2`) · `jar verified.` · unico residuo `10.0.2.2` in `assets/public/offline.html`
+(**commento HTML**, falso positivo noto) · allineamento **16384 su tutte e 6** le `.so` a 64 bit.
+**Pronto al caricamento.** Non è stato caricato: serve la conferma del titolare.
+
+### C. Ciò che NON è stato possibile misurare, e perché
+
+La Play Console **non è stata letta**: questa sessione gira dentro Antigravity/VSCode e **non ha il
+bridge Chrome** (`ToolSearch select:mcp__claude-in-chrome__navigate` → *No matching deferred
+tools found*; nessun server `claude-in-chrome` fra gli MCP connessi). Restano quindi non misurati:
+il contatore dei giorni, il questionario, la panoramica della pubblicazione, la lista tester, lo
+stato delle norme. Si sblocca **solo** con una sessione lanciata da terminale con `claude --chrome`
+(memoria [[claude_in_chrome_sempre_attivo]] — l'env da sola non basta con questo launcher).
+
+### D. La data del traguardo dipende da un numero che va letto, non calcolato
+
+Le due letture in Console **non sono coerente fra loro** e nessuno l'aveva notato:
+
+| Letto in Console | Contatore | Giorno 1 implicato | Traguardo |
+|---|---|---|---|
+| 09/08 | «12 tester per **3** giorni di fila» | 07/08 | **20/08** |
+| 13/08 | «12 tester per **8** giorni di fila» | 06/08 | **19/08** |
+
+Fra il 9 e il 13 agosto passano **4** giorni di calendario ma il contatore ne guadagna **5**. Questo
+documento e la memoria hanno dichiarato *«è la lettura del 09/08 a essere fuori linea»*: è una
+**scelta fra due misure**, non una spiegazione. Perciò la data non si deduce, si legge — e oggi
+17/08 la lettura decide da sola:
+
+- contatore **12** → traguardo **19/08** (mancano 2 giorni)
+- contatore **11** → traguardo **20/08** (mancano 3 giorni)
+- contatore **< 11** → **un tester è uscito e il conteggio è ripartito**: traguardo = 17/08 + (14 − N)
+
+### E. Misurato per contorno, senza Console
+
+- Scheda pubblica `play.google.com/store/apps/details?id=it.kidville.app&gl=IT` → **404** (metodo
+  tarato su `com.whatsapp` → **200**): l'app **non è** in produzione, come atteso.
+- Posta di `erricoluigi17@gmail.com`, cartella *Tutti i messaggi* **e** *Spam*, 45 giorni: **una
+  sola** email da `noreply-play-console@google.com`, del **13/07** («La tua identità è stata
+  verificata»). Nessun avviso di norme, nessun rifiuto, nessuna notifica sui tester. Le altre
+  `googleplay-noreply@` sono ricevute Google One, non Console.
+- Nessuna credenziale per l'API Google Play Developer (nessun service account `androidpublisher`,
+  `gcloud` non installato): lo stato del test chiuso **non è misurabile via API**, solo a schermo.
+- Account `@kidville.test` con login dal 05/08: **31 su 52** (ultimo 16/08). ⚠️ **Segnale
+  contaminato**: gli stessi account li usano la suite E2E, i flow Maestro e il collaudo dei venti
+  tester. **Non** dice che i tester di Play abbiano aperto l'app.
+
+### Cosa resta da fare il 19/08, in ordine
+
+1. Leggere il contatore in Console e **decidere la data dalla lettura** (§D).
+2. Se il pulsante *Richiedi per la produzione* è attivo: rispondere al questionario — tre sezioni
+   (*il tuo test chiuso* · *la tua app* · *la prontezza alla produzione*), testo letterale ancora da
+   trascrivere (§C).
+3. Caricare il `versionCode 2` **solo se serve**: il contatore corre con il bundle 1 e §A dice che
+   quel bundle è sano. Se si carica, rifare i cinque controlli di §B sull'artefatto.
+4. Fino al traguardo: **la lista tester non si tocca** (margine 12 su 12, zero).
+
+---
+
 ## ✉️ Changelog — L'automazione degli inviti si arma, e l'altro genitore smette di restare fuori 2026-08-17 (branch `feat/iscrizioni-import-2026-27`)
 
 La passata di ieri sapeva **decidere** e si fermava prima di spedire. Questa spedisce: il giro

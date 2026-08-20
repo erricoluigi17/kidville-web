@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
+import { madreSopravvive, materializzaEmbedSede, togliGliEmbed } from '../helpers/embed-sede'
 
 // =============================================================================
 // «RIFIUTA»: il gesto che NON crea niente.
@@ -55,7 +56,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 function proietta(r: Riga, cols: string): Riga {
   if (!cols || cols.trim() === '*') return { ...r }
   const fuori: Riga = {}
-  const senzaEmbed = cols.replace(/[\w:]*candidature_sedi(!inner)?\s*\([^)]*\)/g, '')
+  const senzaEmbed = togliGliEmbed(cols)
   for (const c of senzaEmbed.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
   return fuori
 }
@@ -63,6 +64,18 @@ function proietta(r: Riga, cols: string): Riga {
 /** Le righe di sede di una candidatura, dal magazzino del finto. */
 function sediFinteDi(tabelle: Record<string, Riga[]>, idCandidatura: unknown): Riga[] {
   return (tabelle['candidature_sedi'] ?? []).filter((s) => s.candidatura_id === idCandidatura)
+}
+
+/**
+ * La riga proiettata PIÙ i suoi array incorporati, come li consegna PostgREST:
+ * ogni embed col proprio alias e le SOLE colonne che ha chiesto, il primo
+ * ristretto dal filtro di sede. Vedi `__tests__/helpers/embed-sede.ts`.
+ */
+function conEmbed(r: Riga, cols: string, filtri: Filtro[]): Riga {
+  return {
+    ...proietta(r, cols),
+    ...materializzaEmbedSede(cols, sediFinteDi(h.state.tabelle, r.id), filtri),
+  }
 }
 
 /**
@@ -119,21 +132,14 @@ function finto() {
       let patch: Riga | null = null
       let inserimento: Riga | null = null
       const corrisponde = (r: Riga) =>
-        filtri.every((f) => {
-          // `candidature_sedi.scuola_id` → il filtro vive sull'EMBED di PostgREST:
-          // la candidatura passa se ALMENO UNA delle sue righe di sede
-          // corrisponde. Ignorare il punto significherebbe cercare una colonna
-          // inesistente e non escludere NIENTE: ogni test d'isolamento
-          // diventerebbe verde per costruzione.
-          const punto = f.col.indexOf('.')
-          if (punto > 0) {
-            const tabellaEmbed = f.col.slice(0, punto)
-            const colonna = f.col.slice(punto + 1)
-            if (tabellaEmbed !== 'candidature_sedi') return true
-            return sediFinteDi(h.state.tabelle, r.id).some((s) => f.vals.some((v) => s[colonna] === v))
-          }
-          return f.vals.some((v) => r[f.col] === v)
-        })
+        // I filtri sulle colonne della madre, uno per uno…
+        filtri.every((f) => (f.col.includes('.') ? true : f.vals.some((v) => r[f.col] === v))) &&
+        // …e quelli sull'EMBED, che seguono la regola POSIZIONALE di PostgREST:
+        // il filtro va al PRIMO embed della `select`, e la madre sparisce solo
+        // se quello porta `!inner`. La regola vive in un posto solo — era
+        // ricopiata in quattro finti, e in tutti e quattro era la stessa
+        // approssimazione cieca. Vedi `__tests__/helpers/embed-sede.ts`.
+        madreSopravvive(cols, sediFinteDi(h.state.tabelle, r.id), filtri)
       const esegui = () => {
         if (inserimento) {
           const riga = { ...inserimento }
@@ -160,9 +166,9 @@ function finto() {
           if (table === 'candidature_sedi') {
             for (const r of trovate) aggregaComeIlTrigger(h.state.tabelle, r.candidatura_id)
           }
-          return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
+          return { data: trovate.map((r) => conEmbed(r, cols, filtri)), error: null, count: null }
         }
-        return { data: trovate.map((r) => proietta(r, cols)), error: null, count: null }
+        return { data: trovate.map((r) => conEmbed(r, cols, filtri)), error: null, count: null }
       }
       const b: Record<string, unknown> = {}
       b.select = (c?: string) => { if (typeof c === 'string') cols = c; return b }

@@ -218,7 +218,48 @@ const EMBED_FILTRO_SCHEDA = 'candidature_sedi!inner(scuola_id, stato, motivo_rif
  * nell'elenco lo avrebbe mandato alla segreteria di Aversa insieme a quello che
  * ha scritto la collega di Giugliano.
  */
-const EMBED_ELENCO = 'sedi:candidature_sedi(scuola_id, stato)'
+const EMBED_FILTRO_ELENCO = 'candidature_sedi!inner(scuola_id, stato)'
+/*
+ * ⚠️ `stato` NON È UN DI PIÙ, ED È IL DIFETTO CHE QUESTA RIGA CHIUDE.
+ *
+ * Fino al 2026-08-20 l'elenco interrogava con `EMBED_FILTRO`, cioè
+ * `candidature_sedi!inner(scuola_id)` — **senza `stato`** — mentre
+ * `CandidatureInsegnanti.tsx:942-945` legge `candidature_sedi[…].stato` per i tre
+ * contatori e per il badge di riga. Il campo arrivava `undefined`, la catena di
+ * `??` scivolava fino a `r.stato`, e quello che si vedeva era l'AGGREGATO: cioè
+ * esattamente il numero che il commit `84a91ef5` dichiarava di aver corretto.
+ *
+ * MISURATO sulla produzione, in sola lettura:
+ *   embed FILTRATO: [{"scuola_id":"d53b0fbc-…"}]          ← nessuno `stato`
+ *   embed `sedi`:   [{"stato":"pending","scuola_id":"…"}]
+ *
+ * Perché nessuno se n'era accorto, e vale più della correzione: il tipo del
+ * componente dichiara `stato?` OPZIONALE, quindi TypeScript non poteva dirlo; e
+ * il finto dei test popolava gli array a mano invece di proiettare le colonne
+ * chieste, quindi nessun test poteva vederlo. Un campo facoltativo che nessuno
+ * consegna non è un campo facoltativo: è un ripiego che si accende sempre.
+ * Il guardiano ora è `__tests__/helpers/embed-sede.ts`, che proietta come il
+ * database: un embed consegna SOLO le colonne che ha chiesto.
+ *
+ * ⚠️ È l'embed FILTRATO, quindi lo stato che porta è solo quello delle sedi di
+ * chi guarda.
+ */
+
+/*
+ * ⚠️ L'ELENCO NON PORTA PIÙ LE SEDI ALTRUI, e la dottrina è quella di
+ * `COLONNE_ELENCO`: l'elenco è POVERO.
+ *
+ * C'era `EMBED_ELENCO = 'sedi:candidature_sedi(scuola_id, stato)'`, non filtrato
+ * per sede, che spediva il piano decisionale di OGNI plesso al browser di ogni
+ * membro dello staff a ogni apertura di pagina — e nell'elenco non lo disegnava
+ * nessuno: `riga.sedi` serve solo alla SCHEDA (`sedeSuCuiDecido`, il selettore
+ * dei plessi, l'avviso «è in gioco anche altrove»), che si apre una candidatura
+ * alla volta e di proposito. La giustificazione scritta per la scheda — «due
+ * segreterie non devono istruire la stessa pratica senza saperlo» — non vale per
+ * una lista che quel dato non lo mostra.
+ *
+ * Era la stessa regola applicata a `motivo_rifiuto` e non al resto.
+ */
 
 /**
  * Le sedi per la SCHEDA: una candidatura alla volta, aperta di proposito.
@@ -420,7 +461,7 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
         .from(TABELLA)
         // `!inner` restringe: senza, il join arricchirebbe e basta, e l'elenco
         // mostrerebbe le candidature di TUTTE le sedi con accanto quelle proprie.
-        .select(`${colonne}, ${EMBED_FILTRO}, ${EMBED_ELENCO}`, { count: 'exact' })
+        .select(`${colonne}, ${EMBED_FILTRO_ELENCO}`, { count: 'exact' })
         .in('candidature_sedi.scuola_id', scuole)
         .order('creata_il', { ascending: false })
         .range(offset, offset + limit - 1),

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextRequest, NextResponse } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
+import { madreSopravvive, materializzaEmbedSede, togliGliEmbed } from '../helpers/embed-sede'
 import { LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 
 // =============================================================================
@@ -67,7 +68,7 @@ function proietta(r: Riga, cols: string): Riga {
   // Gli EMBED (`sedi:candidature_sedi(a, b)`) hanno le parentesi: si tolgono
   // prima di spezzare sulle virgole, o `scuola_id` e `stato` di dentro
   // verrebbero scambiati per colonne della candidatura.
-  const senzaEmbed = cols.replace(/[\w:]*candidature_sedi(!inner)?\s*\([^)]*\)/g, '')
+  const senzaEmbed = togliGliEmbed(cols)
   const fuori: Riga = {}
   for (const c of senzaEmbed.split(',').map((s) => s.trim()).filter(Boolean)) if (c in r) fuori[c] = r[c]
   return fuori
@@ -108,18 +109,12 @@ function finto() {
       /** La FINESTRA di `range(from, to)`: senza, `limit` non si può misurare. */
       let finestra: { da: number; a: number } | null = null
       const corrisponde = (r: Riga) =>
-        filtri.every((f) => {
-          // `candidature_sedi.scuola_id` → il filtro vive sull'EMBED: la
-          // candidatura passa se ALMENO UNA delle sue righe di sede corrisponde.
-          const punto = f.col.indexOf('.')
-          if (punto > 0) {
-            const tabellaEmbed = f.col.slice(0, punto)
-            const colonna = f.col.slice(punto + 1)
-            if (tabellaEmbed !== TABELLA_SEDI_FINTA) return true
-            return sediDi(h, r.id).some((s) => f.vals.some((v) => s[colonna] === v))
-          }
-          return f.vals.some((v) => r[f.col] === v)
-        })
+        // I filtri sulle colonne della madre, uno per uno…
+        filtri.every((f) => (f.col.includes('.') ? true : f.vals.some((v) => r[f.col] === v))) &&
+        // …e quelli sull'EMBED, che seguono la regola posizionale di PostgREST:
+        // la madre sparisce solo se il PRIMO embed è `!inner` e il filtro non
+        // gli lascia niente. Vedi `__tests__/helpers/embed-sede.ts`.
+        madreSopravvive(cols, sediDi(h, r.id), filtri)
       const esegui = () => {
         if (table === 'candidature_insegnanti' && h.state.erroreTabella) {
           return { data: [] as Riga[], error: h.state.erroreTabella, count: null as number | null }
@@ -133,17 +128,16 @@ function finto() {
         // `count` è il totale delle righe che CORRISPONDONO, non della pagina: è
         // esattamente la differenza fra «60» e «60 su 200».
         const pagina = finestra ? trovate.slice(finestra.da, finestra.a + 1) : trovate
-        // L'embed NON filtrato (`sedi:candidature_sedi(...)`) porta TUTTE le sedi
-        // della candidatura: è ciò che permette alla scheda di dire «questa
-        // persona è in gioco anche altrove». Quello filtrato (`!inner`) non
-        // compare nella proiezione — serve solo a restringere.
-        const conSedi = /sedi:candidature_sedi\s*\(/.test(cols)
+        // OGNI embed si materializza con il proprio alias e le PROPRIE colonne:
+        // il primo filtrato, gli altri interi. Non è un dettaglio di comodo — è
+        // l'unico modo in cui questo finto può vedere due difetti che il
+        // database vero produce e il finto di prima nascondeva: le due costanti
+        // scambiate, e un embed che non chiede `stato` e quindi non lo consegna.
         return {
-          data: pagina.map((r) => {
-            const proiettata = proietta(r, cols)
-            if (conSedi) proiettata.sedi = sediDi(h, r.id).map((x) => ({ ...x }))
-            return proiettata
-          }),
+          data: pagina.map((r) => ({
+            ...proietta(r, cols),
+            ...materializzaEmbedSede(cols, sediDi(h, r.id), filtri),
+          })),
           error: null,
           count: conteggio ? trovate.length : null,
         }
@@ -431,5 +425,142 @@ describe('candidature insegnanti · una candidatura rivolta a PIÙ sedi', () => 
     const res = await GET(get('?doc=candidature%2Fcondivisa.pdf'))
     expect(res.status).toBe(403)
     expect((await res.json()).error).toContain('non esiste, oppure appartiene a un')
+  })
+})
+
+// =============================================================================
+// IL FINTO SA DISTINGUERE L'ORDINE DEGLI EMBED — cioè può fare da guardiano.
+//
+// Questi due test non provano la rotta: provano lo STRUMENTO con cui tutti gli
+// altri la provano. Fino al 2026-08-20 il finto popolava `sedi` cablato e non
+// materializzava mai l'embed filtrato, quindi non poteva vedere la differenza
+// fra la query giusta e quella con le due costanti scambiate — e siccome è
+// l'unico posto in cui quella differenza si manifesta, l'isolamento di sede
+// era senza guardiani nonostante 12077 test verdi.
+//
+// Un finto cieco non è un finto imperfetto: è un test che dice sempre sì.
+// =============================================================================
+/**
+ * Il costruttore del finto, tipato: `from()` restituisce un
+ * `Record<string, unknown>` e la catena si perde. Qui serve interrogarlo
+ * direttamente, quindi gli si dà la forma che ha.
+ */
+interface QueryFinta extends PromiseLike<{ data: Riga[] }> {
+  select(c: string): QueryFinta
+  in(c: string, v: unknown[]): QueryFinta
+}
+const interroga = () => finto().from('candidature_insegnanti') as unknown as QueryFinta
+
+describe('il finto riproduce la semantica posizionale degli embed di PostgREST', () => {
+  /** Una candidatura rivolta a DUE sedi, di cui chi guarda ne ha una sola. */
+  const SU_DUE = 'eeeeeeee-0000-4000-8000-0000000000dd'
+
+  beforeEach(() => {
+    h.state.tabelle.candidature_insegnanti = [candidatura(SU_DUE, SEDE_B, 'candidature/due.pdf')]
+    h.state.tabelle.candidature_sedi = [
+      { candidatura_id: SU_DUE, scuola_id: SEDE_A, stato: 'approvata' },
+      { candidatura_id: SU_DUE, scuola_id: SEDE_B, stato: 'pending' },
+    ]
+  })
+
+  it('il filtro si lega al PRIMO embed, e gli altri portano tutte le sedi', async () => {
+    const { data } = await interroga()
+      .select('id, candidature_sedi!inner(scuola_id, stato), sedi:candidature_sedi(scuola_id, stato)')
+      .in('candidature_sedi.scuola_id', [SEDE_A])
+
+    const filtrato = (data[0].candidature_sedi ?? []) as Riga[]
+    const tutte = (data[0].sedi ?? []) as Riga[]
+    expect(filtrato.map((x) => x.scuola_id), 'l’embed filtrato porta solo la mia sede').toEqual([SEDE_A])
+    expect(tutte.map((x) => x.scuola_id).sort(), 'quello descrittivo le porta tutte').toEqual(
+      [SEDE_A, SEDE_B].sort(),
+    )
+  })
+
+  it('🔴 invertendo i due embed il filtro cambia bersaglio, e l’isolamento sparisce', async () => {
+    // ⚠️ L'ORDINE È SCAMBIATO di proposito: il descrittivo davanti, l'`!inner`
+    // dietro. È l'unica differenza rispetto al test qui sopra.
+    const { data } = await interroga()
+      .select('id, sedi:candidature_sedi(scuola_id, stato), candidature_sedi!inner(scuola_id, stato)')
+      .in('candidature_sedi.scuola_id', [SEDE_A])
+
+    // Ora è `sedi` a essere ristretto…
+    expect((data[0].sedi as Riga[]).map((x) => x.scuola_id)).toEqual([SEDE_A])
+    // …e `candidature_sedi`, l'array su cui il codice della rotta si fida, porta
+    // ANCHE la sede che non è di chi guarda. Questo è il difetto, ed è visibile.
+    expect((data[0].candidature_sedi as Riga[]), 'l’`!inner` in seconda posizione non restringe più')
+      .toHaveLength(2)
+  })
+
+  it('🔴 senza `!inner` in testa la madre NON sparisce più: resta con l’array vuoto', async () => {
+    // È la seconda metà della stessa regola, e la più pericolosa: `!inner` è ciò
+    // che rende la query DI sede invece di limitarsi ad arricchirla. Senza, una
+    // candidatura di un plesso altrui resta in elenco.
+    h.state.scuole = [SEDE_A]
+    const { data } = await interroga()
+      .select('id, sedi:candidature_sedi(scuola_id, stato)')
+      .in('candidature_sedi.scuola_id', ['ffffffff-0000-4000-8000-00000000000f'])
+    expect(data, 'la madre è sparita senza che nessun `!inner` lo chiedesse').toHaveLength(1)
+    expect(data[0].sedi).toEqual([])
+  })
+
+  it('un embed consegna SOLO le colonne che ha chiesto', async () => {
+    // Ovvio nel database, invisibile nei finti di prima — che popolavano l'array
+    // con la riga intera. È così che `candidature_sedi!inner(scuola_id)` senza
+    // `stato` è potuto restare in produzione mentre il componente leggeva
+    // `[…].stato` e ripiegava sull'aggregato.
+    const { data } = await interroga()
+      .select('id, candidature_sedi!inner(scuola_id)')
+      .in('candidature_sedi.scuola_id', [SEDE_A])
+    expect((data[0].candidature_sedi as Riga[])[0]).toEqual({ scuola_id: SEDE_A })
+  })
+})
+
+// =============================================================================
+// LO STATO DELLA PROPRIA SEDE ARRIVA DAVVERO ALL'ELENCO.
+//
+// Trovato il 2026-08-20 e misurato sulla PRODUZIONE, in sola lettura: l'elenco
+// interrogava con `candidature_sedi!inner(scuola_id)` — senza `stato` — mentre
+// `CandidatureInsegnanti.tsx:942-945` legge `candidature_sedi[…].stato`. Il
+// campo arrivava `undefined`, la catena di `??` scivolava fino a `r.stato`, e i
+// tre contatori e il badge d'elenco mostravano l'AGGREGATO: cioè esattamente il
+// numero che il commit `84a91ef5` dichiarava di aver corretto.
+//
+// Perché nessuno se n'era accorto: il tipo dichiara `stato?` opzionale, quindi
+// TypeScript non poteva dirlo, e il finto popolava gli array a mano invece di
+// proiettare le colonne chieste, quindi nessun test poteva vederlo.
+// =============================================================================
+describe('candidature insegnanti · l’elenco porta lo stato DELLA PROPRIA sede', () => {
+  const MISTA = 'eeeeeeee-0000-4000-8000-0000000000ee'
+
+  beforeEach(() => {
+    // Giugliano ha già approvato, Aversa sta ancora valutando: l'aggregato vale
+    // `pending`, ma chi guarda da Giugliano quella pratica l'ha chiusa.
+    h.state.tabelle.candidature_insegnanti = [candidatura(MISTA, SEDE_A, 'candidature/mista.pdf')]
+    h.state.tabelle.candidature_sedi = [
+      { candidatura_id: MISTA, scuola_id: SEDE_A, stato: 'approvata' },
+      { candidatura_id: MISTA, scuola_id: SEDE_B, stato: 'pending' },
+    ]
+    h.state.scuole = [SEDE_A]
+  })
+
+  it('🔴 la riga d’elenco porta `stato` nell’embed filtrato, non solo `scuola_id`', async () => {
+    const body = await (await GET(get())).json()
+    const riga = body.data.find((r: Riga) => r.id === MISTA) as Riga
+    const mie = (riga.candidature_sedi ?? []) as Riga[]
+    expect(mie, 'l’embed filtrato non è arrivato affatto').toHaveLength(1)
+    expect(
+      mie[0].stato,
+      'senza `stato` il componente ripiega sull’aggregato, e i contatori dicono il falso',
+    ).toBe('approvata')
+  })
+
+  it('e non porta lo stato dei plessi ALTRUI: l’elenco resta povero', async () => {
+    // L'embed non filtrato mandava il piano decisionale di ogni plesso al
+    // browser di ogni membro dello staff, a ogni apertura di pagina, senza che
+    // nessuno lo disegnasse.
+    const body = await (await GET(get())).json()
+    const riga = body.data.find((r: Riga) => r.id === MISTA) as Riga
+    expect(riga.sedi, 'le sedi altrui viaggiano ancora nell’elenco').toBeUndefined()
+    expect(JSON.stringify(riga)).not.toContain(SEDE_B)
   })
 })

@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { PublicPageHeader } from '@/components/ui/PublicPageHeader'
 
@@ -7,11 +9,21 @@ import { PublicPageHeader } from '@/components/ui/PublicPageHeader'
  * IL MARCHIO NELLA RIGA DI TESTA PUBBLICA.
  *
  * ─── PERCHÉ QUESTO FILE ESISTE ───────────────────────────────────────────────
- * Perché `PublicPageHeader` è il punto unico da cui cinque pagine pubbliche
- * prendono la loro testata — `/lavora-con-noi`, `/iscrizione`, `/privacy`,
- * `/termini`, `/assistenza` — e ogni cosa che ci entra la ereditano tutte e
- * cinque insieme. Un difetto qui non è un difetto in una pagina: è un difetto in
- * ogni superficie che una famiglia o una candidata vede prima di avere un account.
+ * Perché `PublicPageHeader` è il punto unico da cui prendono la testata le
+ * pagine pubbliche che ne usano UNA CON IL RITORNO, e ogni cosa che ci entra la
+ * ereditano tutte insieme.
+ *
+ * ⚠️ QUESTO COMMENTO ELENCAVA LE PAGINE, E FRA QUELLE C'ERA `/iscrizione`. Era
+ * FALSO: `/iscrizione` non ha mai usato questo componente — `EnrollmentWizard`
+ * monta il comando di contrasto a mano, perché a sinistra ha il contatore dei
+ * passi invece del ritorno. Misurato il 2026-08-20: zero `<img>` nel DOM di
+ * `/iscrizione`, cioè la pagina più vista di tutte (~9 invii l'ora) era rimasta
+ * senza marchio mentre questo file dichiarava il contrario, e restava verde
+ * perché prova il COMPONENTE ISOLATO senza rendere nessuna pagina.
+ *
+ * Un elenco di pagine scritto in un commento non è una misura: si controlla con
+ * `grep -rn "PublicPageHeader\|MarchioKidville" src`. Il lock che sorveglia
+ * DAVVERO quali pagine hanno il marchio sta più sotto e legge i sorgenti.
  *
  * ─── LE QUATTRO COSE CHE SORVEGLIA, E PERCHÉ OGNUNA ─────────────────────────
  *
@@ -91,5 +103,58 @@ describe('PublicPageHeader · il marchio', () => {
     render(await PublicPageHeader({ children: <button type="button">Lingua</button> }))
     const gruppoDestro = (screen.getByAltText('Kidville').parentElement) as HTMLElement
     expect(gruppoDestro.lastElementChild).toBe(screen.getByAltText('Kidville'))
+  })
+})
+
+describe('il marchio sulle superfici pubbliche — chi ce l’ha DAVVERO', () => {
+  /**
+   * ⚠️ QUESTO È IL LOCK CHE MANCAVA.
+   *
+   * Quelli qui sopra provano il componente isolato: dicono che `PublicPageHeader`
+   * monta il marchio, e non sanno niente di quali pagine lo usino. Il 2026-08-20
+   * erano tutti verdi mentre `/iscrizione` non aveva nessun logo.
+   *
+   * Questo legge i SORGENTI delle pagine pubbliche e pretende che ognuna arrivi
+   * al marchio per una delle due strade: `PublicPageHeader` (testata col
+   * ritorno) o `MarchioKidville` montato direttamente (testata del wizard
+   * d'iscrizione, che il ritorno non ce l'ha).
+   */
+  const SUPERFICI_PUBBLICHE: { nome: string; file: string }[] = [
+    { nome: '/lavora-con-noi', file: 'src/app/lavora-con-noi/page.tsx' },
+    { nome: '/privacy', file: 'src/app/privacy/page.tsx' },
+    { nome: '/termini', file: 'src/app/termini/page.tsx' },
+    { nome: '/assistenza', file: 'src/app/assistenza/page.tsx' },
+    { nome: '/cancellazione-account', file: 'src/app/cancellazione-account/page.tsx' },
+    { nome: '/anagrafica-personale', file: 'src/app/anagrafica-personale/page.tsx' },
+    // Il wizard, non la pagina: `/iscrizione/page.tsx` lo monta e basta.
+    { nome: '/iscrizione', file: 'src/components/features/public/EnrollmentWizard.tsx' },
+  ]
+
+  for (const { nome, file } of SUPERFICI_PUBBLICHE) {
+    it(`${nome} arriva al marchio, per una delle due strade`, () => {
+      const src = readFileSync(join(process.cwd(), file), 'utf8')
+        // Via i commenti: un file che NOMINA il componente in una nota non lo
+        // monta. È esattamente l'errore che ha tenuto verde questo file.
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/\{\s*\}/g, '')
+        .replace(/(?<!:)\/\/.*$/gm, '')
+      const viaTestata = src.includes('<PublicPageHeader')
+      const viaMarchio = src.includes('<MarchioKidville')
+      expect(
+        viaTestata || viaMarchio,
+        `${nome} non monta né <PublicPageHeader> né <MarchioKidville>: quella pagina è senza marchio`,
+      ).toBe(true)
+    })
+  }
+
+  it('e `PublicPageHeader` il marchio lo monta davvero (la catena si verifica, non si suppone)', () => {
+    const src = readFileSync(join(process.cwd(), 'src/components/ui/PublicPageHeader.tsx'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\{\s*\}/g, '')
+      .replace(/(?<!:)\/\/.*$/gm, '')
+    expect(
+      src.includes('<MarchioKidville'),
+      'PublicPageHeader non monta più il marchio: le pagine che si affidano a lui sono senza, e nessuna lo saprebbe',
+    ).toBe(true)
   })
 })

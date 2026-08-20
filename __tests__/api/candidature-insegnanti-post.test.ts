@@ -37,6 +37,8 @@ const h = vi.hoisted(() => ({
   righeDiSede: [] as Record<string, unknown>[],
   /** L'errore che l'INSERT sulle righe di sede deve restituire (o `null`). */
   erroreRigheDiSede: null as { code?: string; message?: string } | null,
+  /** L'errore della LETTURA «quali sedi ha già» nel ramo del doppio invio. */
+  erroreSediEsistenti: null as { code?: string; message?: string } | null,
   /** Colpi per chiave del rate-limit, e le opzioni con cui la route lo chiama. */
   colpi: new Map<string, number>(),
   opzioni: [] as { chiave: string; limit: number; windowMs: number }[],
@@ -154,10 +156,31 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // guardando.
       if (tabella === 'candidature_sedi') {
         const s2: Record<string, unknown> = {}
+        let filtroCand: unknown = undefined
         s2.insert = (righe: Record<string, unknown>[]) => {
-          h.righeDiSede.push(...(Array.isArray(righe) ? righe : [righe]))
+          const elenco = Array.isArray(righe) ? righe : [righe]
+          if (!h.erroreRigheDiSede) h.righeDiSede.push(...elenco)
           return Promise.resolve({ data: null, error: h.erroreRigheDiSede })
         }
+        // ⚠️ Dal 2026-08-20 la rotta LEGGE anche questa tabella: nel ramo del
+        // doppio invio chiede quali sedi la candidatura viva abbia già, per
+        // agganciarle solo quelle nuove. Un finto che sapesse solo inserire
+        // faceva morire quel ramo con un 500 — cioè trasformava la riparazione
+        // in un guasto peggiore di quello che riparava.
+        s2.select = () => s2
+        s2.eq = (col: string, val: unknown) => {
+          if (col === 'candidatura_id') filtroCand = val
+          return s2
+        }
+        s2.then = (res: (v: unknown) => unknown) =>
+          Promise.resolve(
+            h.erroreSediEsistenti
+              ? { data: null, error: h.erroreSediEsistenti }
+              : {
+                  data: h.righeDiSede.filter((r) => r.candidatura_id === filtroCand),
+                  error: null,
+                },
+          ).then(res)
         return s2
       }
       // `candidature_insegnanti`: INSERT (con eventuale ritento) e lettura della
@@ -385,6 +408,7 @@ beforeEach(() => {
   h.copieAllaSede = []
   h.righeDiSede = []
   h.erroreRigheDiSede = null
+  h.erroreSediEsistenti = null
 })
 
 describe('POST /api/iscrizione/insegnanti · il percorso felice', () => {
@@ -1332,10 +1356,25 @@ describe('POST /api/iscrizione/insegnanti · il doppio invio non è un no-op', (
     expect(h.notifiche[0].scuolaId).toBe(SEDE_A)
     expect(h.destinatariChiesti[0].scuolaId).toBe(SEDE_A)
 
-    // MA senza portarsi dietro l'`entita_id` di un'altra sede: quella riga la
-    // segreteria di questa sede non ha titolo per aprirla, e un link che porta a
-    // un 403 è peggio di nessun link.
-    expect(h.notifiche[0].entitaId, 'l’uuid di una riga di un’altra sede è uscito').toBeNull()
+    // ⚠️ L'`entita_id` ADESSO ESCE, e la riga è cambiata il 2026-08-20.
+    //
+    // Fino a ieri restava `null`, e la ragione era buona: quella riga viveva in
+    // un'altra sede, questa segreteria non aveva titolo per aprirla, e un link
+    // che porta a un 403 è peggio di nessun link. Con la multi-sede la premessa
+    // cade: la sede richiesta viene AGGANCIATA alla candidatura viva
+    // (`candidature_sedi`), quindi da questo istante ha titolo di aprirla — e
+    // tenerle nascosto l'uuid le lascerebbe un avviso su una scheda che ha nel
+    // proprio cockpit e non sa raggiungere.
+    //
+    // Il presidio non è sparito, si è spostato: l'uuid esce solo per le sedi che
+    // ADESSO hanno una riga. Il test qui sotto lo prova nel caso in cui
+    // l'aggancio non riesce.
+    expect(h.notifiche[0].entitaId, 'la sede agganciata non riceve l’uuid che può aprire').toBe(
+      'cand-di-altra-sede',
+    )
+    expect(h.righeDiSede, 'la sede richiesta non è stata agganciata alla candidatura viva').toEqual([
+      { candidatura_id: 'cand-di-altra-sede', scuola_id: SEDE_A },
+    ])
 
     // E IL TESTO DICE CHE LA SCHEDA NON È QUI. È l'unica cosa che questa
     // segreteria può leggere: l'avviso non porta nessun uuid (per progetto), e
@@ -1466,10 +1505,52 @@ describe('POST /api/iscrizione/insegnanti · la copia che arriva alla sede', () 
     })
   })
 
-  it('la copia NON parte nel ramo del duplicato: la sede aprirebbe una pratica che non esiste', async () => {
+  it('doppio invio sulla STESSA sede: nessuna copia, perché per quella sede non è successo niente', async () => {
     h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
     h.vivaPerEmail = { id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    h.righeDiSede.push({ candidatura_id: 'ffffffff-ffff-ffff-ffff-ffffffffffff', scuola_id: SEDE_A })
     expect((await inviaValida()).status).toBe(201)
+    // Una seconda copia identica nella stessa casella si legge come una seconda
+    // candidatura, e non lo è: la persona è una e la pratica pure.
+    expect(h.copieAllaSede).toHaveLength(0)
+  })
+
+  it('🔴 doppio invio verso una sede NUOVA: la sede viene agganciata, avvisata E riceve la copia', async () => {
+    // È il buco che il collaudo del 2026-08-20 ha misurato: chi ha una
+    // candidatura viva su un plesso e ne spunta altri due riceveva
+    // «Candidatura inviata!» mentre quei due plessi non ne sapevano niente —
+    // nessuna scheda nel cockpit, nessun curriculum, nessun avviso.
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
+    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    h.righeDiSede.push({ candidatura_id: 'viva-su-A', scuola_id: SEDE_A })
+
+    const res = await invia({ scuole_ids: [SEDE_A, SEDE_B], data: candidatura() })
+    expect(res.status).toBe(201)
+
+    // Solo la sede NUOVA si aggancia: quella che l'aveva già non si duplica.
+    expect(h.righeDiSede).toEqual([
+      { candidatura_id: 'viva-su-A', scuola_id: SEDE_A },
+      { candidatura_id: 'viva-su-A', scuola_id: SEDE_B },
+    ])
+    // Entrambe le segreterie sanno; l'uuid esce a entrambe, perché entrambe
+    // possono aprire la scheda.
+    expect(h.notifiche.map((n) => n.scuolaId).sort()).toEqual([SEDE_A, SEDE_B].sort())
+    // La copia col curriculum va SOLO alla sede nuova: l'altra non ha niente di
+    // nuovo da sapere.
+    expect(h.copieAllaSede.map((a) => (a[1] as Record<string, unknown>).scuolaId)).toEqual([SEDE_B])
+  })
+
+  it('se l’aggancio della sede nuova FALLISCE, l’uuid non esce e la copia non parte', async () => {
+    // Il presidio di ieri non è sparito, si è spostato: un link che porta a un
+    // diniego resta peggio di nessun link.
+    h.erroreInsert = { code: '23505', message: 'duplicate key value violates unique constraint "candidature_insegnanti_email_viva"' }
+    h.vivaPerEmail = { id: 'viva-su-A', stato: 'pending', scuola_id: SEDE_A, email: 'ines.prova@example.invalid' }
+    h.righeDiSede.push({ candidatura_id: 'viva-su-A', scuola_id: SEDE_A })
+    h.erroreRigheDiSede = { code: '42501', message: 'permission denied' }
+
+    await invia({ scuole_ids: [SEDE_B], data: candidatura() })
+    const perB = h.notifiche.find((n) => n.scuolaId === SEDE_B)
+    expect(perB?.entitaId, 'l’uuid è uscito verso una sede che non può aprirlo').toBeNull()
     expect(h.copieAllaSede).toHaveLength(0)
   })
 

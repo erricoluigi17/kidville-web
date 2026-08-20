@@ -12,6 +12,7 @@ import {
   CONSENSI_INSEGNANTI_FIELDS,
   CONSENSI_INSEGNANTI_VERSIONE,
   POSIZIONI_AMMESSE,
+  POSIZIONI_OPTIONS,
   gradiDallePosizioni,
 } from '@/lib/forms/insegnanti-template'
 import { estraiConsensi, consensiObbligatoriMancanti } from '@/lib/forms/consensi'
@@ -1122,21 +1123,91 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
         // per aprire — il cockpit filtra per sede — e un link che porta a un
         // diniego è peggio di nessun link: sposta il difetto dove non si vede.
         const stessaSede = sedeViva !== null && sedeViva === scuolaId
-        await avvisaSegreteria(
-          supabase,
-          scuolaId,
-          await staffScuola(supabase, scuolaId, RUOLI_SEGRETERIA),
-          {
-            corpo: stessaSede ? CORPO_AVVISO.duplicataQui : CORPO_AVVISO.duplicataAltrove,
-            entitaId: stessaSede ? idVivo : null,
-          },
-        )
+
+        // ── LE SEDI NUOVE SI ATTACCANO ALLA CANDIDATURA CHE C'È GIÀ ─────────
+        //
+        // ⚠️ QUESTO BLOCCO CHIUDE UN BUCO CHE LA MULTI-SEDE AVEVA APERTO, e che
+        // il collaudo del 2026-08-20 ha misurato: chi ha una candidatura viva su
+        // Giugliano e oggi spunta Aversa e Cesa riceveva «Candidatura inviata!»,
+        // un 201 — e nel cockpit di Aversa e di Cesa la sua scheda NON ESISTEVA.
+        // La rotta usciva da qui prima del punto 8bis, quindi nessuna riga di
+        // sede, nessuna copia, e una sola segreteria avvisata su tre.
+        //
+        // È esattamente il difetto che il blocco qui sopra dichiara di aver
+        // chiuso — «alla seconda segreteria non arriva niente» — riaperto sulle
+        // sedi in più. Candidarsi a più plessi della stessa cooperativa è il
+        // comportamento normale di chi cerca lavoro, e mandare due volte il
+        // modulo lo è altrettanto.
+        //
+        // La riparazione non crea una candidatura nuova — l'indice non lo
+        // permette, ed è giusto così: la persona è una — ma AGGANCIA i plessi
+        // mancanti a quella viva. Da lì in poi ogni sede la vede e la valuta per
+        // conto suo, che è la semantica di `candidature_sedi`.
+        //
+        // `onConflict: ignora` non serve: si inseriscono solo le sedi che non ci
+        // sono già, lette un attimo prima. Una corsa fra due invii della stessa
+        // persona nello stesso istante produce al più un `23505` sulla chiave
+        // primaria, che qui si logga e non rompe niente.
+        const sediNuove: string[] = []
+        if (idVivo !== null) {
+          const { data: giaSue, error: eGia } = await supabase
+            .from('candidature_sedi')
+            .select('scuola_id')
+            .eq('candidatura_id', idVivo)
+          if (eGia) {
+            logEvento('candidatura', 'warn', {
+              operazione: OPERAZIONE, esito: 'sedi-esistenti-non-lette',
+              entita_id: idVivo, scuola_id: scuolaId,
+            }, eGia)
+          } else {
+            const note = new Set((giaSue ?? []).map((r) => (r as { scuola_id: string }).scuola_id))
+            sediNuove.push(...scuoleRichieste.filter((sid) => !note.has(sid)))
+            if (sediNuove.length > 0) {
+              const { error: eAgg } = await supabase
+                .from('candidature_sedi')
+                .insert(sediNuove.map((sid) => ({ candidatura_id: idVivo, scuola_id: sid })))
+              logEvento('candidatura', eAgg ? 'warn' : 'info', {
+                operazione: OPERAZIONE,
+                esito: eAgg ? 'sedi-aggiunte-non-registrate' : 'sedi-aggiunte-a-candidatura-viva',
+                entita_id: idVivo,
+                scuola_id: scuolaId,
+                n_sedi: sediNuove.length,
+              }, eAgg ?? undefined)
+              if (eAgg) sediNuove.length = 0
+            }
+          }
+        }
+
+        // ⚠️ SI AVVISA OGNI SEDE RICHIESTA, non solo la prima. Prima di oggi
+        // `avvisaSegreteria` veniva chiamata una volta con `scuolaId`, cioè
+        // `scuoleRichieste[0]`: con tre plessi spuntati, due segreterie non
+        // sapevano niente.
+        //
+        // L'`entitaId` esce SOLO per le sedi che ADESSO hanno una riga — cioè
+        // quelle che possono davvero aprire la scheda. Per le altre resta `null`:
+        // un link che porta a un diniego è peggio di nessun link, sposta il
+        // difetto dove non si vede.
+        for (const sid of scuoleRichieste) {
+          const puoAprire = sid === sedeViva || sediNuove.includes(sid)
+          await avvisaSegreteria(
+            supabase,
+            sid,
+            await staffScuola(supabase, sid, RUOLI_SEGRETERIA),
+            {
+              corpo: sid === sedeViva ? CORPO_AVVISO.duplicataQui : CORPO_AVVISO.duplicataAltrove,
+              entitaId: puoAprire ? idVivo : null,
+            },
+          )
+        }
 
         logEvento('candidatura', 'warn', {
           operazione: OPERAZIONE,
           esito: 'duplicata',
           scuola_id: scuolaId,
           entita_id: idVivo,
+          // Quante sedi si sono aggiunte alla candidatura già viva: è la misura
+          // che dice se questo ramo sta servendo qualcuno o solo respingendo.
+          n_sedi_aggiunte: sediNuove.length,
           // Booleano, quindi passa `redact()` per tipo: è la differenza fra «ha
           // bussato due volte alla stessa porta» e «ha bussato a una porta
           // diversa», cioè l'unico modo di contare in SQL quante candidature
@@ -1144,6 +1215,47 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
           stessa_sede: stessaSede,
           error_code: '23505',
         })
+        // ── LA COPIA VA ALLE SEDI APPENA AGGANCIATE, E SOLO A QUELLE ────────
+        //
+        // Hanno la scheda nel cockpit ma non il curriculum: senza questa copia
+        // dovrebbero aprire l'applicazione e scaricarlo, mentre la segreteria
+        // lavora dalla posta. Alle sedi che già l'avevano NON si rimanda niente:
+        // per loro non è successo niente di nuovo, e una seconda copia identica
+        // si legge come una seconda candidatura.
+        //
+        // ⚠️ ALLA CANDIDATA NON SI SCRIVE, e resta come prima: la conferma
+        // direbbe «abbiamo ricevuto la sua candidatura» a chi ne ha già una in
+        // corso, facendole credere di averne due.
+        //
+        // ⚠️ Il `cvPath` è quello appena caricato, NON quello della candidatura
+        // viva: l'indice unico su `cv_path` impedisce di attaccarlo alla riga, e
+        // il cron di conservazione lo tratterà come «caricato e mai inviato»
+        // spazzandolo in 24 ore. Nell'email però l'allegato è già partito e resta
+        // nella casella: la sede ha ciò che le serve, e nel bucket non resta un
+        // oggetto che nessuna riga reclama.
+        if (sediNuove.length > 0) {
+          const nomiTutte = scuoleRichieste.map(
+            (sid) => reali.find((x) => x.id === sid)?.nome ?? 'Kidville',
+          )
+          const consensiCopia = Object.fromEntries(
+            CONSENSI_INSEGNANTI_FIELDS.map((c) => [c.id, normalizzati[c.id] === true]),
+          )
+          const quando = formattaIstante(new Date(), 'it', {
+            day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+          })
+          for (const sid of sediNuove) {
+            await inviaCopiaAllaSede(supabase, {
+              scuolaId: sid,
+              dati: normalizzati,
+              consensi: consensiCopia,
+              sediScelte: nomiTutte,
+              inviataIl: quando,
+              entitaId: idVivo,
+              cvPath,
+            })
+          }
+        }
+
         return NextResponse.json({ id: idVivo }, { status: 201 })
       }
 
@@ -1267,6 +1379,21 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
       con_cv: cvPath !== null,
     })
 
+    /**
+     * I NOMI dei plessi scelti, nell'ordine dell'elenco.
+     *
+     * Serve a DUE email — la conferma a chi si candida e la copia a ogni sede —
+     * e sta qui sopra entrambe perché è lo stesso fatto: a quali plessi questa
+     * persona si è proposta. Calcolarlo due volte inviterebbe le due email a
+     * divergere, ed è precisamente su una divergenza del genere che la conferma
+     * nominava una sede sola mentre la copia le nominava tutte.
+     *
+     * Da `reali`, che è già in mano: nessuna query in più.
+     */
+    const nomiSediScelte = scuoleRichieste.map(
+      (sid) => reali.find((s) => s.id === sid)?.nome ?? 'Kidville',
+    )
+
     // ─── LA CONFERMA ALLA CANDIDATA ─────────────────────────────────────────
     // Best-effort: la candidatura è già registrata, e un'email che non parte non
     // deve trasformare un 201 in un 500. Ma non tace: ogni esito lascia una riga,
@@ -1284,8 +1411,23 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
           inviataIl: formattaIstante(new Date(), 'it', {
             day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
           }),
-          // Le posizioni scelte, come testo: è quello che la persona ha indicato.
-          ruolo: posizioni.length > 0 ? posizioni.join(', ') : null,
+          // ⚠️ TUTTE le sedi scelte. Prima qui non c'era e la conferma nominava
+          // il solo plesso del contesto: chi aveva spuntato due caselle leggeva
+          // un nome solo e concludeva che la seconda non avesse preso — lo
+          // stesso difetto che il riepilogo del modulo chiude, spostato
+          // dall'ultima schermata alla prima email.
+          sediScelte: nomiSediScelte,
+          // ⚠️ LE ETICHETTE, non i valori del database. Prima era
+          // `posizioni.join(', ')`, e a chi si era candidata arrivava
+          // testualmente «Ruolo: insegnante_infanzia» — un identificatore
+          // interno, letto da una persona che aveva spuntato «Insegnante —
+          // Infanzia (3-6)». La copia alla sede lo risolveva già bene; questa no.
+          ruolo:
+            posizioni.length > 0
+              ? posizioni
+                  .map((v) => POSIZIONI_OPTIONS.find((o) => o.value === v)?.label ?? v)
+                  .join(', ')
+              : null,
           // Un CONTEGGIO, mai i nomi dei file: un nome di file può contenere di
           // tutto — il codice fiscale, la data di nascita, il datore precedente —
           // e questa email non ha nessun motivo di ripeterlo a chi l'ha caricato.
@@ -1344,9 +1486,6 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // raffica parallela contro una quota è il modo più rapido di prendersi un
     // 429 su tutte e tre invece che su una — e un 429 è «non oggi», che si
     // gestisce, mentre tre 429 insieme sono tre copie perse.
-    const nomiSediScelte = scuoleRichieste.map(
-      (sid) => reali.find((s) => s.id === sid)?.nome ?? 'Kidville',
-    )
     // I consensi si ricostruiscono dal TEMPLATE e non dal corpo ricevuto: così un
     // consenso non spuntato viaggia come `false` esplicito invece di sparire, e
     // nella copia la sede legge «No» invece di non leggere niente. «Non gliel'ho

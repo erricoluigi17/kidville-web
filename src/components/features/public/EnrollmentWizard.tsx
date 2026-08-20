@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import { PublicContrastButton } from '@/components/ui/PublicContrastButton'
+import { MarchioKidville } from '@/components/ui/MarchioKidville'
 import {
   CHILD_FIELDS, ADULT_FIELDS, CONSENSI_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
@@ -555,7 +556,19 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
               DUE — «Indietro» e «Avanti» — e nessuno offriva accessibilità: è la
               pagina da cui ~9 famiglie l'ora consegnano dati di minori, e chi
               fatica a leggere non aveva alcun rimedio raggiungibile. */}
-          <PublicContrastButton />
+          {/* ⚠️ IL MARCHIO MANCAVA PROPRIO QUI, e il lock diceva il contrario.
+              `PublicPageHeader-logo.test.tsx` elencava `/iscrizione` fra le
+              pagine che prendono la testata dal componente unico: questa pagina
+              non lo ha mai usato — monta il comando di contrasto a mano, perché
+              a sinistra ha il contatore dei passi invece del ritorno. Il lock
+              restava verde perché prova il componente ISOLATO, senza mai rendere
+              la pagina. Misurato il 2026-08-20: zero `<img>` nel DOM di
+              `/iscrizione`. È la pagina da cui ~9 famiglie l'ora consegnano dati
+              di minori, cioè la superficie pubblica più vista di tutte. */}
+          <div className="flex items-center gap-2">
+            <PublicContrastButton />
+            <MarchioKidville />
+          </div>
         </div>
 
         {domandaNonPuoCominciare ? (

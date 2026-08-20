@@ -34,6 +34,16 @@ export interface DatiConfermaCandidatura {
     inviataIl: string
     /** Ruolo o posizione per cui ci si è candidate. Assente ⇒ la riga si omette. */
     ruolo?: string | null
+    /**
+     * I NOMI di tutti i plessi scelti. Vuoto ⇒ si nomina la sede del contesto.
+     *
+     * ⚠️ Dal 2026-08-20 una candidatura può essere rivolta a più sedi, e questa
+     * riga diceva sempre UNA. Chi aveva spuntato due caselle riceveva la
+     * conferma con un plesso solo e concludeva che la seconda spunta non avesse
+     * preso — lo stesso difetto che il riepilogo del modulo è stato scritto per
+     * chiudere, spostato dall'ultima schermata alla prima email.
+     */
+    sediScelte?: string[]
     /** Quanti allegati, NON quali. Zero ⇒ la riga si omette. */
     numeroAllegati?: number
     /** Entro quanti giorni arriva una risposta. */
@@ -56,7 +66,10 @@ export function messaggioConfermaCandidatura(d: DatiConfermaCandidatura, sede: C
 
     const righe: RigaDati[] = [
         { etichetta: 'Inviata il', valore: d.inviataIl, mono: true },
-        { etichetta: 'Sede', valore: sede.nome },
+        {
+            etichetta: (d.sediScelte?.length ?? 0) > 1 ? 'Sedi' : 'Sede',
+            valore: (d.sediScelte?.length ?? 0) > 0 ? d.sediScelte!.join(', ') : sede.nome,
+        },
         ...(d.ruolo ? [{ etichetta: 'Ruolo', valore: d.ruolo }] : []),
         ...(allegati ? [{ etichetta: 'Allegati', valore: allegati }] : []),
     ]

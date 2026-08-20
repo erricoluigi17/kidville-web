@@ -172,9 +172,50 @@ const COLONNE_ELENCO = ['id', 'scuola_id', 'stato', 'nome', 'cognome', 'posizion
  *    pratica senza saperlo. Serve un SECONDO embed, non filtrato — provato, e
  *    restituisce tutte e due.
  */
+/**
+ * L'embed che RESTRINGE, per l'elenco: solo il plesso, nient'altro.
+ * `!inner` più il filtro `.in('candidature_sedi.scuola_id', …)` è ciò che rende
+ * la query di sede, invece di limitarsi ad arricchirla.
+ */
 const EMBED_FILTRO = 'candidature_sedi!inner(scuola_id)'
-/** Tutte le sedi della candidatura, col loro stato. Solo per la SCHEDA. */
-const EMBED_TUTTE = 'sedi:candidature_sedi(scuola_id, stato, evasa_il, motivo_rifiuto)'
+
+/**
+ * L'embed che restringe, per la SCHEDA: porta anche lo stato e la NOTA INTERNA.
+ *
+ * ⚠️ Il motivo del rifiuto sta QUI, cioè nell'embed FILTRATO, e non in quello che
+ * elenca tutti i plessi. È filtrato per sede, quindi ne esce solo la nota della
+ * PROPRIA sede: chi valuta ad Aversa legge quello che ha scritto Aversa, e di
+ * Giugliano vede lo stato — «rifiutata» — senza le parole con cui una collega ha
+ * giudicato quella persona. Verificato sul database vero il 2026-08-20: con la
+ * nota scritta da Aversa e il filtro su Giugliano, la nota NON esce dalla query.
+ */
+const EMBED_FILTRO_SCHEDA = 'candidature_sedi!inner(scuola_id, stato, motivo_rifiuto, evasa_il)'
+/**
+ * Le sedi della candidatura per l'ELENCO: il plesso e lo stato, niente altro.
+ *
+ * ⚠️ QUI NON ENTRA `motivo_rifiuto`, ed è la stessa lezione di «Moduli ricevuti»
+ * che il blocco su `COLONNE_ELENCO` racconta più sopra. Quell'embed NON è
+ * filtrato per sede — è il suo scopo, dire anche i plessi altrui — quindi ogni
+ * campo che ci si mette viaggia CROSS-SEDE, verso il browser di ogni membro
+ * dello staff, a ogni apertura della pagina, senza che nessuno apra niente.
+ *
+ * `motivo_rifiuto` è testo libero di giudizio su una persona: questa stessa
+ * rotta lo chiama «nota INTERNA» e lo tiene fuori perfino dall'audit, perché
+ * «l'audit deve dire che cosa è successo, non conservarne il giudizio». Metterlo
+ * nell'elenco lo avrebbe mandato alla segreteria di Aversa insieme a quello che
+ * ha scritto la collega di Giugliano.
+ */
+const EMBED_ELENCO = 'sedi:candidature_sedi(scuola_id, stato)'
+
+/**
+ * Le sedi per la SCHEDA: una candidatura alla volta, aperta di proposito.
+ *
+ * ⚠️ `motivo_rifiuto` non c'è NEMMENO QUI. La scheda è un gesto deliberato, ma
+ * l'embed resta non filtrato: la nota che ha scritto un altro plesso continuerebbe
+ * a uscire. Chi valuta deve sapere CHE un'altra sede ha rifiutato — quello sì, e
+ * `stato` glielo dice — non con quali parole l'ha giudicata una collega.
+ */
+const EMBED_TUTTE = 'sedi:candidature_sedi(scuola_id, stato, evasa_il)'
 /*
  * ⚠️ LA COLONNA DEL FILTRO SI SCRIVE PER ESTESO, OGNI VOLTA.
  *
@@ -336,7 +377,7 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
           // Due embed: uno RESTRINGE (`!inner` + filtro), l'altro DESCRIVE.
           // Vedi il blocco su `EMBED_FILTRO`: l'array filtrato mostrerebbe solo
           // le sedi di chi guarda, e la scheda deve dire anche le altre.
-          .select(`${colonne}, ${EMBED_FILTRO}, ${EMBED_TUTTE}`)
+          .select(`${colonne}, ${EMBED_FILTRO_SCHEDA}, ${EMBED_TUTTE}`)
           // Il filtro di sede sta nella STESSA query dell'id (AND), non «da
           // qualche parte nell'handler»: è l'unico posto in cui è vero.
           .eq('id', idCandidatura)
@@ -366,7 +407,7 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
         .from(TABELLA)
         // `!inner` restringe: senza, il join arricchirebbe e basta, e l'elenco
         // mostrerebbe le candidature di TUTTE le sedi con accanto quelle proprie.
-        .select(`${colonne}, ${EMBED_FILTRO}, ${EMBED_TUTTE}`, { count: 'exact' })
+        .select(`${colonne}, ${EMBED_FILTRO}, ${EMBED_ELENCO}`, { count: 'exact' })
         .in('candidature_sedi.scuola_id', scuole)
         .order('creata_il', { ascending: false })
         .range(offset, offset + limit - 1),
@@ -605,7 +646,11 @@ async function assertCurriculumInScope(
     .select(`id, scuola_id, ${EMBED_FILTRO}`)
     .eq('cv_path', docPath)
     .in('candidature_sedi.scuola_id', scuole)
-    .limit(1)
+    // ⚠️ NESSUN `.limit(1)`: vedi il blocco qui sopra, che spiega perché la sua
+    // ASSENZA è la difesa. Ce n'era finito uno il 2026-08-20 durante il lavoro
+    // sulla multi-sede, sotto quel commento e in contraddizione con esso —
+    // riaprendo una regressione dichiarata chiusa cinque giorni prima. Non serve
+    // nemmeno: l'embed `!inner` non sdoppia la riga, ed è misurato.
     .maybeSingle()
   if (error) {
     logEvento('multi_sede', 'error', {
@@ -819,7 +864,19 @@ async function approvaSenzaAccount(
       stato: 'approvata',
       evasa_il: adesso,
       evasa_da: user.id,
-      aggiornata_il: adesso,
+      // ⚠️ NIENTE `aggiornata_il` QUI. Quella colonna sta su
+      // `candidature_insegnanti`, non sulle righe di sede, e la scrive il TRIGGER
+      // quando ricalcola lo stato aggregato.
+      //
+      // Nominarla qui non è innocuo: PostgREST risponde `PGRST204`, il ciclo di
+      // degrado di `cambiaStato` la toglie e ritenta, l'operazione riesce — ma
+      // OGNI approvazione e OGNI rifiuto lasciano una riga `warn`
+      // `colonna-assente-rimossa` e mostrano all'operatore «Chiusura registrata
+      // solo in parte: su questo ambiente mancano le colonne aggiornata_il».
+      // Cioè: il segnale che dovrebbe dire «questo ambiente non è migrato»
+      // diventa rumore costante e smette di significare qualcosa, e a chi lavora
+      // si annuncia un guasto che non c'è. Misurato sullo schema di produzione:
+      // `candidature_sedi` ha sette colonne e `aggiornata_il` non è fra quelle.
       // ⚠️ `utente_id` NON si scrive, e non si scrive nemmeno `null`: la colonna
       // è già `null` e nominarla nel patch la esporrebbe al ciclo di degrado di
       // `cambiaStato`, che la toglierebbe e la conterebbe fra le `colonneCadute`
@@ -981,7 +1038,9 @@ async function rifiuta(
       evasa_il: adesso,
       evasa_da: user.id,
       motivo_rifiuto: motivo,
-      aggiornata_il: adesso,
+      // ⚠️ Niente `aggiornata_il`: sta sulla candidatura e la scrive il trigger.
+      // Vedi il blocco in `approvaSenzaAccount` per che cosa succedeva a
+      // nominarla — un falso guasto annunciato a ogni singola decisione.
     },
   })
   if (esito.error) {

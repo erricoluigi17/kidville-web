@@ -1004,6 +1004,8 @@ const AMMESSE: Record<string, string> = {
     // Le due righe che questo lock segnala sono la lettura delle candidature scadute
     // e la loro cancellazione. La sede la porta comunque la riga (`scuola_id NOT NULL`
     // con FK a `schools`): non si perde nulla, semplicemente non si filtra.
+    'admin/candidature-insegnanti/inoltro-arretrato:POST':
+        'inoltro dell\'arretrato ai plessi (temporaneo, PR #95). Legge e marca candidature di TUTTE le sedi di proposito: l\'arretrato non appartiene a un plesso, e un filtro di sede qui lascerebbe in silenzio senza copia proprio i plessi che chi lancia il comando non ha in mente. Il destinatario NON viene scelto dalla rotta: viene dalle righe `candidature_sedi` di ogni candidatura, cioè dai plessi che la persona ha spuntato — l\'isolamento sta nel dato, non nella query. La scrittura tocca UNA colonna, `copia_inviata_il`, che non contiene dati di nessuno: serve solo a non spedire due volte. Nessun utente da cui derivare uno scope: si chiama da riga di comando con `INOLTRO_ARRETRATO_TOKEN`. Va tolta con la rotta.',
     'gdpr/retention-candidature:POST': 'conservazione delle candidature spontanee (12 mesi, 24 col consenso), curriculum compreso: come l\'oblio, il termine deve valere su TUTTE le sedi — un curriculum scade allo stesso giorno a Giugliano, Aversa e Cesa, e un filtro di sede qui lascerebbe scoperti in silenzio i plessi che il job non conosce. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.',
     // ── La SPAZZATA DEGLI ORFANI, che sta FUORI dall'handler (2026-08-15) ─────
     //
@@ -1455,7 +1457,16 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `src/app/api/admin/iscrizioni/elenco/` spostata FUORI dall'albero si legge
             // esattamente `{297, 460, 95}`, cioè i tre valori precedenti, e nessun altro
             // pezzo dell'albero si è mosso in questo passaggio.
-            routeConServiceRole: 299,
+            //
+            // 🔺 299 → 300 il 2026-08-20: `admin/candidature-insegnanti/inoltro-arretrato`,
+            // la rotta TEMPORANEA che rimanda ai plessi le copie mai partite. Service-role
+            // perché non ha un utente da cui derivare uno scope: si chiama da riga di
+            // comando con `INOLTRO_ARRETRATO_TOKEN`, e senza quella variabile risponde 503.
+            //
+            // ⚠️ IL +1 È MISURATO, NON DEDOTTO: eseguendo questo lock con la cartella
+            // `src/app/api/admin/candidature-insegnanti/inoltro-arretrato/` spostata FUORI
+            // dall'albero si legge di nuovo `299` e `463`, cioè i due valori precedenti.
+            routeConServiceRole: 300,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1543,7 +1554,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // due route nuove dell'elenco di classe portano tre handler — `elenco:POST`,
             // `elenco:GET` e `elenco/export:GET`. I due passi non coincidono, ed è il caso
             // normale: un file può esporre più di un metodo.
-            handlerControllati: 463,
+            // 🔺 463 → 464 il 2026-08-20: l'unico handler della rotta d'inoltro
+            // dell'arretrato. Qui il passo coincide col file perché il file espone un solo
+            // metodo — ed è il caso in cui la coincidenza va detta, non dedotta.
+            handlerControllati: 464,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1644,7 +1658,23 @@ describe('coverage-lock isolamento fra sedi', () => {
             // scritta accanto alla voce in `AMMESSE`. È un cron che itera per sede, come i
             // quattro che lo precedono in quel blocco: non è un debito nuovo, è la stessa
             // forma già ammessa quattro volte.
-            handlerEsentati: 95,
+            //
+            // 🔻 95 → 96 il 2026-08-20, ED È UN DEBITO, non una forma già ammessa:
+            // `admin/candidature-insegnanti/inoltro-arretrato:POST`. Questo numero sale solo
+            // quando qualcuno toglie un pezzo di questo lock, e stavolta l'ho tolto io.
+            //
+            // La ragione sta accanto alla voce in `AMMESSE`, ma il punto per chi rilegge è
+            // un altro: quella rotta è TEMPORANEA. Esiste per rimandare ai plessi le copie
+            // delle candidature mai partite (le anteriori alla PR #91, più le due perse dal
+            // difetto del destinatario multiplo della PR #94), e va cancellata quando
+            // l'arretrato è finito. Quando succede, questo numero torna a 95 e la voce in
+            // `AMMESSE` sparisce con lei.
+            //
+            // ⚠️ Se fra un mese questo commento è ancora qui e la rotta pure, il debito non
+            // è più temporaneo: è permanente e nessuno l'ha deciso. Chi lo legge in quel
+            // momento cancelli la rotta o riscriva questa riga dicendo che si tiene, e
+            // perché.
+            handlerEsentati: 96,
         })
     })
 })

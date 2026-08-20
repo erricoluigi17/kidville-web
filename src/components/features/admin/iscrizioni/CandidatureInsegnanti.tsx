@@ -521,6 +521,94 @@ export function CandidatureInsegnanti() {
   const isDirezione = ruolo === 'admin' || ruolo === 'coordinator'
   const motivoBlocco = !ruoloRisolto ? t('candRuoloInCorso') : t('candSoloDirezione')
 
+  /**
+   * ─── L'INOLTRO AI PLESSI DELLE COPIE MAI PARTITE ──────────────────────────
+   *
+   * La copia al plesso è nata il 2026-08-20: tutto ciò che è arrivato prima non
+   * è mai stato recapitato in posta a nessuna segreteria, e resta il caso in cui
+   * un invio fallisce (quota del provider, sede senza email in anagrafica, un
+   * difetto come quello del destinatario multiplo).
+   *
+   * ⚠️ DUE PASSI, E NON È UN VEZZO. Il primo clic CONTA e non spedisce niente;
+   * il secondo spedisce. Un solo pulsante che manda decine di email a caselle
+   * vere al primo tocco è un pulsante che qualcuno preme per sbaglio, e non
+   * esiste un «annulla» per un'email partita. Il conteggio prima serve anche a
+   * chi non ha idea di quante siano: senza, il numero si scopre dal resoconto.
+   */
+  const [arretrato, setArretrato] = useState<{
+    fase: 'fermo' | 'conteggio' | 'pronto' | 'invio'
+    n: number
+    esito: string | null
+  }>({ fase: 'fermo', n: 0, esito: null })
+
+  async function contaArretrato() {
+    setArretrato({ fase: 'conteggio', n: 0, esito: null })
+    try {
+      const res = await fetch(`${API}/inoltro-arretrato`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prova: true }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        setArretrato({ fase: 'fermo', n: 0, esito: messaggioDaCorpo(json, t('candArretratoNonRiuscito')) })
+        return
+      }
+      setArretrato({ fase: 'pronto', n: Number(json?.da_inviare ?? 0), esito: null })
+    } catch (e) {
+      logClient({
+        livello: 'error', evento: 'react',
+        // ⚠️ NIENTE `e.message` nel testo: il messaggio di un errore di rete può
+        // portarsi dentro un URL con dei parametri, e da lì dati di una persona.
+        // Lo `stack` sì: `EventoClient` ha un campo suo, e la redazione lavora lì.
+        messaggio: 'inoltro-arretrato-conteggio-fallito',
+        stack: e instanceof Error ? e.stack : undefined,
+        route: ROUTE_LOG,
+      })
+      setArretrato({ fase: 'fermo', n: 0, esito: t('candArretratoNonRiuscito') })
+    }
+  }
+
+  async function inoltraArretrato() {
+    setArretrato((a) => ({ ...a, fase: 'invio' }))
+    try {
+      const res = await fetch(`${API}/inoltro-arretrato`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        setArretrato({ fase: 'fermo', n: 0, esito: messaggioDaCorpo(json, t('candArretratoNonRiuscito')) })
+        return
+      }
+      const inviate = Number(json?.inviate ?? 0)
+      const fallite = Number(json?.fallite ?? 0)
+      const fermato = typeof json?.fermato === 'string' ? json.fermato : null
+      setArretrato({
+        fase: 'fermo',
+        n: 0,
+        // Il resoconto NOMINA ciò che non è andato. «Inviate 25» senza dire che
+        // due sono fallite è un successo dichiarato su un guasto.
+        esito: fermato
+          ? t('candArretratoFermatoQuota', { n: inviate })
+          : t('candArretratoFatto', { n: inviate, k: fallite }),
+      })
+      await carica(reFetchKey)
+    } catch (e) {
+      logClient({
+        livello: 'error', evento: 'react',
+        // ⚠️ NIENTE `e.message` nel testo: il messaggio di un errore di rete può
+        // portarsi dentro un URL con dei parametri, e da lì dati di una persona.
+        // Lo `stack` sì: `EventoClient` ha un campo suo, e la redazione lavora lì.
+        messaggio: 'inoltro-arretrato-fallito',
+        stack: e instanceof Error ? e.stack : undefined,
+        route: ROUTE_LOG,
+      })
+      setArretrato({ fase: 'fermo', n: 0, esito: t('candArretratoNonRiuscito') })
+    }
+  }
+
   // Un uuid non dice niente a nessuno: la sede si risolve nel nome del plesso.
   const nomeSede = (scuolaId?: string | null) =>
     sedi.find((s) => s.id === scuolaId)?.nome ?? t('candSedeSconosciuta')
@@ -1075,6 +1163,56 @@ export function CandidatureInsegnanti() {
             {/* Un vero titolo, non un `p` vestito da titolo: con uno screen reader
                 è l'unico punto di salto che questo frammento offre. */}
             <h2 className="text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('candListaHeader')}</h2>
+            {/* ── L'inoltro ai plessi delle copie mai partite ──────────────────
+                Solo Direzione, e a due passi: il primo conta, il secondo manda.
+                Non esiste un «annulla» per un'email partita. */}
+            {isDirezione && (
+              <div className="rounded-xl border border-kidville-line bg-white/60 p-3">
+                {arretrato.fase === 'pronto' ? (
+                  arretrato.n === 0 ? (
+                    <p className="font-maven text-xs text-kidville-sub">{t('candArretratoNessuno')}</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="font-maven text-xs text-kidville-ink">
+                        {t('candArretratoConferma', { n: arretrato.n })}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={inoltraArretrato}
+                          className="rounded-lg bg-kidville-green px-3 py-1.5 font-maven text-xs font-bold text-kidville-white disabled:opacity-50"
+                        >
+                          {t('candArretratoInvia')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setArretrato({ fase: 'fermo', n: 0, esito: null })}
+                          className="rounded-lg border border-kidville-line px-3 py-1.5 font-maven text-xs text-kidville-sub"
+                        >
+                          {t('candArretratoAnnulla')}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    onClick={contaArretrato}
+                    disabled={arretrato.fase !== 'fermo'}
+                    className="font-maven text-xs font-bold text-kidville-green underline underline-offset-2 disabled:opacity-50"
+                  >
+                    {arretrato.fase === 'conteggio'
+                      ? t('candArretratoConteggio')
+                      : arretrato.fase === 'invio'
+                        ? t('candArretratoInvioInCorso')
+                        : t('candArretratoApri')}
+                  </button>
+                )}
+                {arretrato.esito !== null && (
+                  <p role="status" className="mt-2 font-maven text-xs text-kidville-sub">{arretrato.esito}</p>
+                )}
+              </div>
+            )}
             {/* `sub` e non `muted`: questa riga È l'avviso che l'elenco è
                 troncato, cioè l'unico segnale che dice che ci sono candidature
                 che non si stanno vedendo. */}

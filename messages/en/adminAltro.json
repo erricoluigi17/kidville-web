@@ -630,5 +630,15 @@
   "pratScartatoRifiutoRegistrato": "The rejection was recorded.",
   "pratScartatoSpostata": "The submission was moved to another location: the office of the destination location can now see it.",
   "pratScartatoAnagraficaRegistrata": "The staff record HAS BEEN FILED. In the list the row will say “Approved” and nothing else: everything you need to know is below.",
-  "pratScartatoAnagraficaAMeta": "The staff record HAS BEEN FILED, but the submission is not marked as approved: do not press “Approve” again and report it to support."
+  "pratScartatoAnagraficaAMeta": "The staff record HAS BEEN FILED, but the submission is not marked as approved: do not press “Approve” again and report it to support.",
+  "candArretratoApri": "Forward the copies that never reached the locations",
+  "candArretratoConteggio": "Counting…",
+  "candArretratoInvioInCorso": "Sending…",
+  "candArretratoNessuno": "Nothing pending: every application has already reached its location’s mailbox.",
+  "candArretratoConferma": "{n, plural, one {One application never reached its location by email.} other {# applications never reached their location by email.}} Forward them now, with the completed form and the CV attached?",
+  "candArretratoInvia": "Yes, forward",
+  "candArretratoAnnulla": "Cancel",
+  "candArretratoFatto": "{n, plural, =0 {No copies sent.} one {One copy sent.} other {# copies sent.}}{k, plural, =0 {} one { One did not go out: see the logs.} other { # did not go out: see the logs.}}",
+  "candArretratoFermatoQuota": "{n, plural, =0 {No copies sent: the email provider has used up today’s quota.} one {One copy sent, then the email provider used up today’s quota.} other {# copies sent, then the email provider used up today’s quota.}} The rest will go out by pressing the button again tomorrow.",
+  "candArretratoNonRiuscito": "We could not forward the copies to the locations. Please try again shortly."
 }

@@ -590,6 +590,8 @@ export const CODICI_ERRORE = {
      * nulla nominasse la causa e senza nessun dato da correggere.
      */
     TROPPE_SEDI: 'erroreTroppeSedi',
+    CORPO_NON_VALIDO: 'erroreCorpoNonValido',
+    LETTURA_FALLITA: 'erroreLetturaFallita',
     /**
      * 404 — la candidatura chiesta per id non è apribile dal cockpit.
      *

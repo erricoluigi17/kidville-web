@@ -90,6 +90,12 @@ export interface DatiCopiaAllaSede {
      */
     entitaId: string | null
     cvPath: string | null
+    /**
+     * `true` quando il curriculum manca perché il modulo non lo chiedeva ancora
+     * (candidature anteriori al 2026-08-15). Lo sa solo chi inoltra l'arretrato:
+     * la rotta pubblica non lo passa mai, perché oggi il campo c'è.
+     */
+    curriculumNonPrevisto?: boolean
 }
 
 /**
@@ -208,6 +214,9 @@ export async function inviaCopiaAllaSede(
             sediScelte: d.sediScelte,
             inviataIl: d.inviataIl,
             conCurriculum: allegati !== undefined,
+            // Solo quando l'allegato manca DAVVERO: se il file c'è, «non era
+            // previsto» sarebbe una contraddizione stampata sotto un allegato.
+            curriculumNonPrevisto: allegati === undefined && d.curriculumNonPrevisto === true,
         }, sede)
 
         const invio = await sendEmailDetailed({

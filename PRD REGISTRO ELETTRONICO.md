@@ -94,6 +94,79 @@
 
 ---
 
+## 📬 Changelog — Le copie mai arrivate ai plessi, e la cricca che ha respinto la scorciatoia — 2026-08-20 (branch `feat/inoltro-arretrato-plessi`)
+
+La copia della candidatura al plesso è nata il 2026-08-20 con la PR #91. Tutto ciò che era
+arrivato **prima** non è mai stato recapitato in posta a nessuna segreteria, e due candidature
+di quel giorno l'hanno persa per il difetto del destinatario multiplo (PR #94).
+
+### Cosa c'è adesso
+
+Nel pannello **Candidature**, per la sola Direzione, un'azione **«Inoltra ai plessi le copie mai
+partite»**, a **due passi**: il primo conta e non spedisce niente, il secondo spedisce. Non esiste
+un «annulla» per un'email partita, e un pulsante che ne manda decine al primo tocco è un pulsante
+che qualcuno preme per sbaglio.
+
+Le email sono le **stesse** che partono automaticamente — stesso codice, stesso template. Una copia
+«di recupero» scritta a parte diverge dall'originale al primo cambio di modello.
+
+### La memoria è nel database, non nella buona volontà
+
+Migrazione `20260820141500_candidatura_copia_inviata_il`: una colonna `copia_inviata_il`,
+scritta **solo dopo un esito positivo vero del provider**. Due clic non raddoppiano le email.
+
+**Nessun backfill a indovinare.** La tentazione era «tutte quelle dopo le 10:44 di oggi hanno
+ricevuto la copia», ma è falso: le due multi-sede hanno preso 422 proprio in quella finestra. Una
+regola che sbaglia su due righe su quattro non è una regola. Chi riceve un doppione vede due volte
+la stessa candidata; chi non riceve niente non sa che quella persona esiste — fra i due errori non
+c'è simmetria.
+
+### Il tetto del provider si rispetta, non si scopre
+
+Resend sta intorno alle 100 email al giorno ed è già conteso con `INVITI_AL_GIORNO = 90`. Perciò:
+tetto per chiamata (25 di norma, 60 il massimo assoluto) e **un 429 ferma il giro**, senza segnare
+la riga su cui si è fermato. Il resto riparte al clic successivo.
+
+### Due frasi diverse per due cose diverse
+
+«Nessun curriculum allegato: chi si è candidato non ne ha caricato uno» era l'unica frase
+disponibile, e per le candidature anteriori al 2026-08-15 **accusa una persona di una negligenza
+che non ha commesso**: il modulo non lo chiedeva ancora. Ora c'è la seconda frase. Misurato sui
+dati veri: **una** candidatura su 51 sta di qua dal confine — una sola persona, ed è comunque
+quella che avrebbe ricevuto l'accusa.
+
+### 🔑 La parte che vale oltre questa funzione
+
+La prima stesura metteva il gate su un **token in una variabile d'ambiente**, per poter lanciare
+l'inoltro da riga di comando. Per farla passare bisognava iscrivere la rotta fra le `PUBBLICHE` del
+lock `gate-coverage` — dove un secondo lock, **«il TETTO dell'allowlist può solo SCENDERE»**, monta
+una cricca deliberata contro le porte senza identità.
+
+Non era un ostacolo da aggirare: era la diagnosi giusta. Quella non è una rotta pubblica, è una
+rotta d'amministrazione, e **un segreto in una variabile non è un'identità** — non dice *chi* ha
+premuto, che è la sola cosa che conterà quando qualcuno lo chiederà di un invio di decine di email
+con dati personali. Gate rifatto con `requireStaff(request, ['admin','coordinator'])`: la stessa
+coppia che decide su una candidatura.
+
+In tutto i lock che hanno parlato sono stati **dieci**, e nessuno a vuoto: il nome letterale in
+`withRoute`, i codici d'errore non tradotti, l'isolamento fra sedi da dichiarare, i tre contatori
+di copertura, il glossario inglese che diceva «site» invece di «location», tre classi Tailwind
+senza token (che Tailwind scarta **in silenzio**, lasciando l'elemento senza colore) e il divieto
+di interpolare `error.message` nel testo di un log.
+
+`handlerEsentati` sale da 95 a **96**, ed è dichiarato come **debito**: l'inoltro legge e marca
+candidature di **tutte** le sedi di proposito — l'arretrato non appartiene a un plesso — ma il
+destinatario non lo sceglie la rotta, viene dalle righe `candidature_sedi` che la persona ha
+spuntato. L'isolamento sta nel dato, non nella query.
+
+### Stato
+
+`eslint 0` · `tsc 0` · `vitest` **966 file / 12158 test** · `build` ok. Sabotaggio verificato su
+tre fronti: gate allargato, marcatura prima dell'esito, 429 che non ferma — tutti e tre fanno
+cadere dei test.
+
+---
+
 ## 🔁 Changelog — Il digest che si perdeva in silenzio, e quattro frasi che dicevano il falso alla Direzione — 2026-08-20 (branch `fix/digest-ritentabile-e-testi-veri`)
 
 Due difetti diversi, trovati lo stesso giorno mentre se ne verificavano altri, e con la stessa forma:

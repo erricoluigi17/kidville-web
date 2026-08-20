@@ -290,5 +290,7 @@
   "erroreElencoClassiTipoNonAmmesso": "This file type cannot be uploaded: an Excel spreadsheet (.xlsx or .xls) is required",
   "erroreElencoClassiTroppoGrande": "This spreadsheet is too large: it can weigh up to 4 MB",
   "erroreElencoClassiIlleggibile": "The file arrived but cannot be opened as a spreadsheet: check that it is the right file and try again",
-  "erroreElencoClassiAssente": "No class list has been uploaded for this location yet"
+  "erroreElencoClassiAssente": "No class list has been uploaded for this location yet",
+  "erroreCorpoNonValido": "The request is not valid. Reload the page and try again.",
+  "erroreLetturaFallita": "We could not read the data. Please try again shortly."
 }

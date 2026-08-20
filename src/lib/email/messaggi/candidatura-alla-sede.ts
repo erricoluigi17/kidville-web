@@ -60,6 +60,16 @@ export interface DatiCandidaturaAllaSede {
     /** L'istante d'invio, già formattato in Europe/Rome da chi chiama. */
     inviataIl: string
     conCurriculum: boolean
+    /**
+     * `true` quando il curriculum manca perché il modulo NON LO CHIEDEVA ANCORA.
+     *
+     * ⚠️ Non è una sfumatura di cortesia. «Non ne ha caricato uno» descrive una
+     * scelta di chi si è candidato; per le candidature arrivate prima del
+     * 2026-08-15 quella frase accusa una persona di una negligenza che non ha
+     * commesso — il campo non esisteva. La sede legge una riga sola e non ha
+     * modo di sapere quale delle due cose sia vera.
+     */
+    curriculumNonPrevisto?: boolean
 }
 
 /** L'etichetta leggibile di un valore, quando il campo dichiara delle opzioni. */
@@ -124,7 +134,9 @@ export function messaggioCandidaturaAllaSede(
     const consensi = righeDeiConsensi(d)
     const allegato = d.conCurriculum
         ? 'Curriculum in allegato a questo messaggio.'
-        : 'Nessun curriculum allegato: chi si è candidato non ne ha caricato uno.'
+        : d.curriculumNonPrevisto === true
+          ? 'Nessun curriculum allegato: questa candidatura è arrivata prima che il modulo permettesse di caricarne uno.'
+          : 'Nessun curriculum allegato: chi si è candidato non ne ha caricato uno.'
 
     // ⚠️ Le sedi si dichiarano SEMPRE, anche quando è una sola. Una frase che
     // compare solo nel caso multiplo insegna a chi legge che la sua assenza non

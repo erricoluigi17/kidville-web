@@ -630,5 +630,15 @@
   "pratScartatoRifiutoRegistrato": "Il rifiuto è stato registrato.",
   "pratScartatoSpostata": "La pratica è stata spostata di sede: adesso la vede la segreteria del plesso di destinazione.",
   "pratScartatoAnagraficaRegistrata": "L’anagrafica È STATA REGISTRATA. Nell’elenco la riga dirà «Approvata» e non dirà altro: quello che serve sapere è tutto qui sotto.",
-  "pratScartatoAnagraficaAMeta": "L’anagrafica È STATA REGISTRATA, ma la pratica non risulta marcata come approvata: non ripremere «Approva» e segnalalo all’assistenza."
+  "pratScartatoAnagraficaAMeta": "L’anagrafica È STATA REGISTRATA, ma la pratica non risulta marcata come approvata: non ripremere «Approva» e segnalalo all’assistenza.",
+  "candArretratoApri": "Inoltra ai plessi le copie mai partite",
+  "candArretratoConteggio": "Sto contando…",
+  "candArretratoInvioInCorso": "Invio in corso…",
+  "candArretratoNessuno": "Nessuna copia in sospeso: ogni candidatura è già arrivata nella casella del suo plesso.",
+  "candArretratoConferma": "{n, plural, one {Una candidatura non è mai arrivata in posta al suo plesso.} other {# candidature non sono mai arrivate in posta al loro plesso.}} Inoltrarle adesso, con il modulo compilato e il curriculum in allegato?",
+  "candArretratoInvia": "Sì, inoltra",
+  "candArretratoAnnulla": "Annulla",
+  "candArretratoFatto": "{n, plural, =0 {Nessuna copia inviata.} one {Una copia inviata.} other {# copie inviate.}}{k, plural, =0 {} one { Una non è partita: il dettaglio è nei log.} other { # non sono partite: il dettaglio è nei log.}}",
+  "candArretratoFermatoQuota": "{n, plural, =0 {Nessuna copia inviata: il provider email ha esaurito la quota di oggi.} one {Una copia inviata, poi il provider ha esaurito la quota di oggi.} other {# copie inviate, poi il provider ha esaurito la quota di oggi.}} Le restanti partiranno ripremendo il pulsante domani.",
+  "candArretratoNonRiuscito": "Non siamo riusciti a inoltrare le copie ai plessi. Riprova fra poco."
 }

@@ -178,6 +178,37 @@ vere** su tutte e tre le sedi, quattro col curriculum — circa una ogni venti m
 
 ---
 
+### 🔍 Cosa hanno trovato i due collaudi critici (20/08)
+
+Un agente ha rivisto il codice, un altro ha usato il prodotto su Chrome. Hanno
+trovato **nove difetti veri** che 12048 test verdi non vedevano. Tutti verificati
+prima di correggerli — quattro contro il database di produzione.
+
+| | Difetto | Conseguenza se fosse uscito |
+|---|---|---|
+| 🔴 | `aggiornata_il` scritta su una tabella che non ce l'ha | **il 100% delle approvazioni e dei rifiuti** degradava, con un avviso di guasto falso all'operatore |
+| 🔴 | `evasa_il` non più riportato sulla candidatura | il cron GDPR cancellava i rifiuti **dalla data sbagliata** — prima del dovuto, distruggendo dati che l'informativa promette di conservare |
+| 🔴 | `motivo_rifiuto` nell'embed non filtrato | la nota interna con cui una segreteria giudica una persona viaggiava **verso gli altri plessi**, in ogni riga dell'elenco |
+| 🔴 | il secondo invio perdeva le sedi nuove | chi ha già una candidatura viva e ne spunta altre due: quei plessi non ne sapevano **niente** |
+| 🟠 | `/iscrizione` senza marchio, e il lock diceva il contrario | la pagina più vista (~9 invii l'ora) restava senza logo, e il test era **immunizzato dal proprio commento** |
+| 🟠 | `.limit(1)` rimesso sotto il commento che ne dichiara l'assenza «la difesa» | regressione chiusa il 15/08 e riaperta il 19/08 |
+| 🟠 | corsa fra due sedi che decidono insieme | la candidatura restava `pending` **per sempre**: quella persona non avrebbe più potuto inviarne nessuna |
+| 🟠 | operatore multi-sede senza modo di scegliere il plesso | chi lavora su tutte e tre le sedi **non poteva chiudere niente** |
+| 🟡 | conferma alla candidata con una sede sola e `insegnante_infanzia` grezzo | — |
+
+Due controlli del `PATCH` — fra cui il presidio anti-IDOR sull'uuid che arriva
+dal corpo — erano **cancellabili senza far cadere un solo test**. Ora hanno i
+loro, sabotati per vederli fallire.
+
+E una classe di difetto chiusa nel database invece che nella procedura: un
+trigger garantisce che **ogni candidatura abbia almeno una riga di sede**. Fra
+la migrazione e il merge la produzione gira il codice vecchio, e ogni
+candidatura che arriva in quella finestra sarebbe nata invisibile al cockpit
+nuovo. Rifare il backfill dopo il deploy avrebbe chiuso quella finestra e
+nessuna delle prossime.
+
+---
+
 ## 🤖 Changelog — Il bundle sullo store non era avvelenato, e la prova stava in una cartella di build 2026-08-17 (controllo di sola lettura, nessun rilascio)
 
 Controllo in **sola lettura** dello stato Google Play chiesto dal titolare. Nessuna modifica in

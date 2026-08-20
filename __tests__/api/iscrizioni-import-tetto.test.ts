@@ -95,7 +95,7 @@ vi.mock('@/lib/supabase/server-client', () => supa)
 // ── Le due letture di DB del lotto restano fuori dal mirino ──────────────────
 // `caricaElenco` e `caricaDecisioni` interrogano tabelle che non c'entrano col tetto: si
 // sostituiscono, e tutto il resto del modulo (`domandaDaRiga`, `costruisciFamiglie`,
-// `trovaDuplicati`, `INVITI_AL_GIORNO`) resta QUELLO VERO — compreso il 90 di default, che
+// `trovaDuplicati`, `INVITI_AL_GIORNO`) resta QUELLO VERO — compreso il 300 di default, che
 // se qualcuno lo cambiasse cambierebbe il significato di questi test.
 const lotto = vi.hoisted(() => ({
   caricaElenco: vi.fn(async () => ({ righe: [{ id: 'r1', classe: 'Sezione A', nome: 'RIGA UNICA', riga: 2, retta: 180, rettaTesto: null }], caricatoIl: null })),
@@ -444,5 +444,100 @@ describe('import iscrizioni — il battito sta in un `finally`', () => {
     const [campi, err] = log.logErrore.mock.calls[0] as [Record<string, unknown>, unknown]
     expect(campi).toMatchObject({ evento: 'cron', stato: 500 })
     expect(err).toBe(guasto)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// IL TEMPO, CHE DAL 2026-08-20 FERMA IL GIRO PRIMA DEL TETTO
+//
+// Con il tetto a 90 email nessun orologio si riempiva. Con 300 sì: misurato in
+// produzione il 2026-08-20 sull'inoltro arretrato delle candidature, che spedisce
+// senza pause, 50 email hanno preso 57,2 secondi — e quel giro è più leggero di
+// questo. Senza la guardia, la funzione verrebbe troncata a metà di una domanda:
+// un genitore con l'accesso e l'altro no, e nessun log a dirlo.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('import iscrizioni — il giro si chiude da sé quando il tempo finisce', () => {
+  it('si ferma prima di cominciare una domanda che sforerebbe, e NON la sospende', async () => {
+    db.state.domande = ['d1', 'd2', 'd3', 'd4'].map((id) => domanda(id, [`${id}@example.test`]))
+    db.state.lotto = ['d1', 'd2', 'd3', 'd4']
+
+    // Ogni domanda «costa» 100 secondi di orologio: alla terza il budget di 240 s
+    // è finito. `eseguiDomanda` è già finta, quindi si sposta solo il tempo.
+    const vero = Date.now
+    let trascorso = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => vero.call(Date) + trascorso)
+    esegui.eseguiDomanda.mockImplementation(async () => {
+      trascorso += 100_000
+      return { esito: 'inviata', messageId: 'm', errore: null, emailSpedite: 1 }
+    })
+
+    const res = await POST(req({ max_inviti: 500 }, SEGRETO))
+    const corpo = await res.json()
+
+    // Tre lavorate (0 s, 100 s, 200 s), la quarta no: a 300 s il budget è sforato.
+    expect(corpo.inviate).toBe(3)
+    expect(corpo.tempoScaduto).toBe(true)
+    expect(corpo.nonLavorate).toBe(1)
+    // Le non lavorate NON si sospendono: il prestito di 30 minuti le libera da sé,
+    // e scrivere «rinviata» su ognuna costerebbe altro tempo di funzione.
+    expect(sospensioni()).toHaveLength(0)
+    vi.mocked(Date.now).mockRestore()
+  })
+
+  it('«fermato dal tempo» e «fermato dalla quota» non si confondono nei log', async () => {
+    db.state.domande = ['d1', 'd2'].map((id) => domanda(id, [`${id}@example.test`]))
+    db.state.lotto = ['d1', 'd2']
+
+    const vero = Date.now
+    let trascorso = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => vero.call(Date) + trascorso)
+    esegui.eseguiDomanda.mockImplementation(async () => {
+      trascorso += 250_000
+      return { esito: 'inviata', messageId: 'm', errore: null, emailSpedite: 1 }
+    })
+
+    await POST(req({ max_inviti: 500 }, SEGRETO))
+
+    const perTempo = righe().filter((r) => r.evento === 'cron' && r.campi.esito === 'tempo-scaduto')
+    expect(perTempo).toHaveLength(1)
+    expect(perTempo[0].livello).toBe('warn')
+    // I due rimedi sono opposti — più giri contro più quota — e con lo stesso
+    // `esito` chi legge i log fra un mese non potrebbe più separarli.
+    expect(String(perTempo[0].campi.msg)).toMatch(/non dalla quota/)
+    // Il battito di famiglia resta `ok`: il giro è girato, e /api/health lo cerca.
+    expect(battiti().some((b) => b.campi.esito === 'ok')).toBe(true)
+    vi.mocked(Date.now).mockRestore()
+  })
+
+  it('un giro che sta nel tempo non dichiara niente', async () => {
+    db.state.domande = [domanda('d1', ['d1@example.test'])]
+    db.state.lotto = ['d1']
+
+    const res = await POST(req({}, SEGRETO))
+    const corpo = await res.json()
+
+    expect(corpo.tempoScaduto).toBe(false)
+    expect(corpo.nonLavorate).toBe(0)
+    expect(righe().filter((r) => r.campi.esito === 'tempo-scaduto')).toHaveLength(0)
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+describe('import iscrizioni — l\'ordine delle sedi non lo decide il database', () => {
+  it('le sedi si lavorano in un ordine stabile, qualunque cosa risponda PostgREST', async () => {
+    const A = '11111111-1111-1111-1111-111111111111'
+    const B = '22222222-2222-2222-2222-222222222222'
+    const C = '33333333-3333-3333-3333-333333333333'
+    // Il database le restituisce in disordine, come fa quando non c'è un `order`.
+    db.state.elenchi = [{ scuola_id: C }, { scuola_id: A }, { scuola_id: B }]
+    db.state.domande = []
+    db.state.lotto = []
+
+    await POST(req({}, SEGRETO))
+
+    // Il finto di `caricaElenco` è dichiarato senza argomenti: qui interessa il
+    // SECONDO, che è la sede. Si passa da `unknown[]` invece di forzare il tipo.
+    const chiamate = (lotto.caricaElenco.mock.calls as unknown as unknown[][]).map((c) => c[1] as string)
+    expect(chiamate).toEqual([A, B, C])
   })
 })

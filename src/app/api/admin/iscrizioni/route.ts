@@ -19,6 +19,7 @@ import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
 import { CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
 import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
+import { normalizzaNomeSezione, SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -78,29 +79,13 @@ function descriviErroreDb(
 }
 
 /**
- * Normalizza un nome di sezione ESATTAMENTE come il trigger DB
- * `sync_alunno_section_id()` (supabase/migrations/20260704120000_baseline.sql):
- *
- *   lower(replace(s.name, ' ', '')) = lower(replace(NEW.classe_sezione, ' ', ''))
- *
- * Cioè: via TUTTI gli spazi (non un `trim`, che lascerebbe quelli interni) e
- * minuscolo. La formula va replicata alla lettera, non "a senso": se il pre-flight
- * normalizzasse anche solo un carattere in più del trigger accetterebbe nomi che il
- * trigger poi NON risolve — e il bug tornerebbe identico (`section_id` NULL, in
- * silenzio); se ne normalizzasse uno in meno boccerebbe assegnazioni valide.
+ * La formula del trigger e i codici di «schema assente» vivono in un posto solo
+ * (`src/lib/alunni/sezione.ts`): due copie della stessa normalizzazione sono due
+ * dialetti che divergono, e quando divergono il pre-flight accetta nomi che il
+ * trigger poi non risolve — `section_id` NULL, in silenzio. Il lock
+ * `__tests__/architecture/formula-sezione-un-posto-solo.test.ts` impedisce che
+ * la copia rinasca qui.
  */
-function normalizzaNomeSezione(nome: unknown): string {
-  return String(nome ?? '').replace(/ /g, '').toLowerCase()
-}
-
-/**
- * Codici PostgREST/Postgres che significano «qui lo schema non c'è» (il DB E2E
- * della CI non è migrato): non sono guasti, sono un ambiente diverso.
- *  42P01 tabella assente · 42703 colonna assente (SELECT) · PGRST205 tabella non
- *  in cache. Su questi il pre-flight sezione si SALTA (livello `info`): non si
- *  blocca l'iscrizione di un bambino per un problema d'infrastruttura del DB di test.
- */
-const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST205'])
 
 /**
  * Gate di SCOPE sull'invio (multi-sede). Fino a tre sedi (Giugliano, Aversa, Cesa)

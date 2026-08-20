@@ -71,6 +71,7 @@ import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { normalizzaNome } from './normalizza'
 import { invitaGenitore, normalizzaEmail } from './inviti'
 import type { AssegnazioneBambino, Domanda } from './analisi'
+import { pausaFraEmail } from '@/lib/email/ritmo'
 
 const OPERAZIONE = 'iscrizione/import-massivo'
 
@@ -446,8 +447,8 @@ async function invitaGliAltri(
     )
     if (esito.tipo === 'inviata') {
       spedite++
-      // Lo stesso passo del digest: ~2 al secondo, che è il limite del provider.
-      await new Promise((r) => setTimeout(r, 550))
+      // Il passo fra due email vive in un posto solo: `@/lib/email/ritmo`.
+      await pausaFraEmail()
     } else if (esito.tipo === 'condivisa') {
       // I due genitori hanno la stessa casella (11 domande su 390) oppure quella
       // casella è già di un'altra anagrafica. In entrambi i casi l'account

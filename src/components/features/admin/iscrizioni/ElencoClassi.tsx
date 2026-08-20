@@ -46,12 +46,33 @@ interface ElencoSede {
 }
 
 /**
- * I generi che FERMANO un'iscrizione, separati da quelli che sono solo da
- * guardare. Non è una sfumatura di colore: senza la distinzione la segreteria
- * vedrebbe «46 anomalie» su un foglio in cui a bloccare sono 30 righe, e
- * dedicherebbe lo stesso tempo alle une e alle altre.
+ * I generi DA CORREGGERE, separati da quelli che sono solo da guardare. Non è
+ * una sfumatura di colore: senza la distinzione la segreteria vedrebbe «46
+ * anomalie» su un foglio in cui a bloccare sono 30 righe, e dedicherebbe lo
+ * stesso tempo alle une e alle altre.
+ *
+ * ─── PERCHÉ UNA MAPPA E NON PIÙ UN INSIEME ──────────────────────────────────
+ * Perché non tutti i difetti da correggere fanno la stessa cosa, e scrivere
+ * «ferma l'iscrizione» su tutti sarebbe una bugia con una conseguenza pratica.
+ *
+ * `classe-senza-sezione` NON ferma niente: l'iscrizione va a buon fine, l'alunno
+ * viene creato, e resta senza sezione — invisibile all'appello e a ogni
+ * registro. È il difetto PIÙ pericoloso dei cinque proprio perché non si vede,
+ * e una segreteria che leggesse «ferma l'iscrizione» aspetterebbe un blocco che
+ * non arriva mai.
+ *
+ * `colonna-senza-classe` non ferma un'iscrizione: ne fa sparire un'intera
+ * colonna dal conteggio, cioè dei bambini che non entrano proprio nell'elenco.
  */
-const BLOCCANTI = new Set(['nome-mancante', 'retta-mancante', 'retta-non-numerica', 'nome-ripetuto'])
+const DA_CORREGGERE: Record<string, string> = {
+  'nome-mancante': 'ferma l’iscrizione',
+  'retta-mancante': 'ferma l’iscrizione',
+  'retta-non-numerica': 'ferma l’iscrizione',
+  'nome-ripetuto': 'ferma l’iscrizione',
+  'classe-senza-sezione': 'il bambino resta senza sezione',
+  'colonna-senza-classe': 'questi alunni non entrano nell’elenco',
+}
+const daCorreggere = (genere: string): boolean => genere in DA_CORREGGERE
 
 export function ElencoClassi() {
   const { reFetchKey, sedi } = useSediAttive()
@@ -109,10 +130,10 @@ export function ElencoClassi() {
         return
       }
       const json = await res.json()
-      const bloccanti = (json?.anomalie as Anomalia[] | undefined)?.filter((a) => BLOCCANTI.has(a.genere)).length ?? 0
+      const bloccanti = (json?.anomalie as Anomalia[] | undefined)?.filter((a) => daCorreggere(a.genere)).length ?? 0
       setEsito(
         bloccanti > 0
-          ? `Elenco caricato: ${json?.righeTotali ?? 0} alunni. ${bloccanti} righe fermeranno un’iscrizione finché non vengono corrette.`
+          ? `Elenco caricato: ${json?.righeTotali ?? 0} alunni. ${bloccanti} righe da correggere prima del giro di domani.`
           : `Elenco caricato: ${json?.righeTotali ?? 0} alunni, nessuna riga bloccante.`,
       )
       setAperta(scuolaId)
@@ -134,10 +155,10 @@ export function ElencoClassi() {
   const perSede = new Map(elenchi.map((e) => [e.scuolaId, e]))
   const totaleRighe = elenchi.reduce((n, e) => n + e.righeTotali, 0)
   const totaleBloccanti = elenchi.reduce(
-    (n, e) => n + e.anomalie.filter((a) => BLOCCANTI.has(a.genere)).length, 0,
+    (n, e) => n + e.anomalie.filter((a) => daCorreggere(a.genere)).length, 0,
   )
   const totaleDaGuardare = elenchi.reduce(
-    (n, e) => n + e.anomalie.filter((a) => !BLOCCANTI.has(a.genere)).length, 0,
+    (n, e) => n + e.anomalie.filter((a) => !daCorreggere(a.genere)).length, 0,
   )
 
   if (caricando) {
@@ -185,8 +206,8 @@ export function ElencoClassi() {
 
       {sedi.map((s) => {
         const e = perSede.get(s.id)
-        const bloccanti = e?.anomalie.filter((a) => BLOCCANTI.has(a.genere)) ?? []
-        const daGuardare = e?.anomalie.filter((a) => !BLOCCANTI.has(a.genere)) ?? []
+        const bloccanti = e?.anomalie.filter((a) => daCorreggere(a.genere)) ?? []
+        const daGuardare = e?.anomalie.filter((a) => !daCorreggere(a.genere)) ?? []
         return (
           <div key={s.id} className="bg-white rounded-card border border-kidville-line p-5 space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -253,9 +274,9 @@ export function ElencoClassi() {
                             <td className="px-3 py-2 whitespace-nowrap">{a.classe}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{a.rigaExcel}</td>
                             <td className="px-3 py-2">
-                              {BLOCCANTI.has(a.genere) && (
+                              {daCorreggere(a.genere) && (
                                 <span className="inline-block mr-2 px-2 py-0.5 rounded-full text-xs bg-kidville-error-soft text-kidville-error-strong">
-                                  ferma l’iscrizione
+                                  {DA_CORREGGERE[a.genere]}
                                 </span>
                               )}
                               {a.dettaglio}
@@ -273,9 +294,12 @@ export function ElencoClassi() {
       })}
 
       <p className="text-xs text-kidville-sub font-maven leading-relaxed">
-        Il foglio deve avere un foglio di lavoro per classe: il nome del foglio è la classe, la colonna A il
-        nome dell’alunno e la colonna B la retta mensile (una cifra, oppure «vedi fratello»). Formato .xlsx o
-        .xls, fino a {LIMITE_UPLOAD_MB} MB. Caricando un nuovo elenco quello precedente viene sostituito.
+        Vanno bene due modi di preparare il foglio, e li riconosce da solo. <strong>Un foglio di lavoro per
+        classe</strong>: il nome del foglio è la classe, la colonna A il nome dell’alunno e la colonna B la
+        retta. Oppure <strong>le classi affiancate in un foglio solo</strong>: il nome della classe nella
+        prima riga, sopra la colonna dei suoi alunni, e la retta nella colonna subito a fianco. In entrambi
+        i casi la retta è una cifra oppure «vedi fratello». Formato .xlsx o .xls, fino a {LIMITE_UPLOAD_MB} MB.
+        Caricando un nuovo elenco quello precedente viene sostituito.
       </p>
     </div>
   )

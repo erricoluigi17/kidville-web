@@ -873,6 +873,114 @@ documento e la memoria hanno dichiarato *«è la lettura del 09/08 a essere fuor
 
 ---
 
+## 🏫 Changelog — Cesa entra nell'automazione, e il tetto che proteggeva una quota che non c'è più 2026-08-21 (branch `feat/iscrizioni-cesa-elenco-blocchi`)
+
+Il titolare ha consegnato il foglio di classe di **Kidville Cesa** e chiesto di attivare anche lì
+il giro automatico delle iscrizioni, già armato per Giugliano dal 22 agosto. Nel frattempo il piano
+Resend è passato da Free a **Pro**. Due lavori diversi, e in mezzo **due difetti che nessun test
+vedeva** e che avrebbero colpito 123 famiglie.
+
+### Il foglio di Cesa è fatto in un altro modo, e il lettore ne conosceva uno solo
+
+`leggiElenco` assumeva **un foglio di lavoro per classe** — così è Giugliano, 16 fogli, 338 righe.
+Cesa è l'opposto: **un foglio solo** con **13 classi affiancate**, larghe 4 colonne (numero
+progressivo · nome · retta · vuota), e il nome della classe nella **riga 1**.
+
+Caricato com'era, il lettore avrebbe preso la colonna A (i numeri 1, 2, 3…) per il **nome
+dell'alunno** e la colonna B (i nomi dei bambini) per la **retta**. `normalizzaNome` non scarta le
+cifre, quindi sarebbero nate ~27 righe di alunni chiamati «1», «2», «3» — e siccome `caricaElenco`
+guarda solo `righe.length > 0`, **Cesa sarebbe risultata ARMATA con un elenco di spazzatura**, con
+ogni domanda vera fermata da un motivo che non diceva la verità.
+
+Ora il lettore riconosce da solo le due forme. **La regola che sembra giusta è sbagliata**, e va
+detto perché è la parte che costa: «più di un'intestazione nella riga 1 vuol dire classi
+affiancate» è falsa — tutti e 16 i fogli di Giugliano ne hanno due (`NOME` + `RETTA`). E nemmeno
+«intestazioni fuori dalle prime due colonne» funziona: il file che la segreteria **riscarica** da
+qui per correggerlo ha tre colonne (`Alunno · Retta · Stato`) e `Stato` è testo su ogni riga —
+sarebbe diventato una classe. La regola vera guarda **tre cose insieme**: intestazione in riga 1,
+almeno tre nomi sotto, e almeno una cifra nella colonna a destra. È la terza a reggere entrambi i
+casi. In più, **un nome senza nemmeno una lettera non è un nome**: una riga sola, e lo stesso
+sbaglio che avrebbe armato Cesa con la spazzatura produce zero righe e un rifiuto rumoroso.
+
+Verificato sui due file veri: Giugliano **338 righe in 16 classi, identiche a quelle già in
+produzione** (zero regressione, confrontate una per una), Cesa **255 righe in 13 classi**.
+
+### Quattro classi su tredici non esistevano in archivio, e il fallimento era muto
+
+`alunni.classe_sezione` si scrive come testo, e a risolvere `section_id` è il trigger
+`sync_alunno_section_id`. Quando non trova corrispondenza **lascia NULL senza sollevare niente**:
+l'alunno risulta iscritto e non compare in nessun appello, in nessun registro.
+
+Misurato sul vero: dei 125 bambini di Cesa che il foglio abbina, **46 (il 37%) sarebbero finiti
+senza classe**. `2 ANNI CONCY` e `2 ANNI AMALIA` contro l'unica sezione `2 ANNI`; `5 ANNI GIUSY`
+contro `5 ANNI`; e `NIDO 2026\2027` con la **barra rovescia** contro `NIDO 2026/2027`.
+
+Tre rimedi, e ognuno nel suo posto. La **barra si raddrizza nel lettore**, dove il nome della
+classe nasce — non nel trigger: quel testo finisce in `alunni.classe_sezione` ed è **visibile alle
+famiglie**, quindi dev'essere giusto alla fonte. Le **sezioni sono state allineate al foglio** con
+una migrazione (le classi vere di Cesa sono due, con due maestre; l'archivio ne aveva una sola).
+E soprattutto è nata una **guardia**: al caricamento, una classe senza sezione diventa un'anomalia
+dichiarata, con scritto quanti bambini vale. Non blocca il file — lasciare la sede senza elenco
+spegnerebbe il giro per tutti — ma smette di tacere.
+
+L'etichetta rossa non dice più «ferma l'iscrizione» su tutto: `classe-senza-sezione` dice **«il
+bambino resta senza sezione»**, perché l'iscrizione va a buon fine ed è proprio questo a renderla
+il difetto più pericoloso dei cinque.
+
+### Il tetto passa da 90 a 300 — e si scopre che il vincolo non era il tetto
+
+I 90 difendevano la quota del piano Free (100 al giorno; il riepilogo era la 91ª). Su **Pro** un
+tetto giornaliero non esiste: restano 50.000 al mese e **10 richieste al secondo per team**. Il
+numero cambia, e con lui **tutta la motivazione**: un numero nuovo accanto alla vecchia
+spiegazione è un difetto, non una svista.
+
+Il passo fra due invii scende da 550 a **150 ms** (~6,7/s) e smette di essere copiato in quattro
+punti: vive in `src/lib/email/ritmo.ts`, con un lock che impedisce alle copie di rinascere. Il
+terzo di ritmo che resta libero non è prudenza generica — il limite è **per team**, e un 429 preso
+da questo giro lo paga la candidatura che arriva in quel momento.
+
+**⚠️ Ma il tetto non è più ciò che ferma il giro per primo.** Misurato in produzione il 2026-08-20
+sull'inoltro arretrato delle candidature, che spedisce senza pause: **50 email in 57,2 secondi**,
+cioè ~1,17 s per email — e quel giro è **più leggero** di questo, che per ogni domanda scrive anche
+anagrafica, alunno, legami e account. Trecento email non stanno nei 300 secondi della funzione.
+
+Da qui tre cose che prima non c'erano: un **`maxDuration` dichiarato** (non c'era nessun
+`maxDuration` in tutto il repository), una **guardia sul tempo** che chiude il giro in modo pulito
+prima di cominciare una domanda che sforerebbe — mai a metà famiglia, la stessa regola del tetto —
+e un log che separa **«fermato dal tempo»** da **«fermato dalla quota»**, perché i due rimedi sono
+opposti e nel riepilogo si somigliano.
+
+Le domande non lavorate **non si sospendono**: scrivere «rinviata» su ognuna costerebbe altro tempo
+di funzione per dire una cosa che il prestito di trenta minuti dice già da sé.
+
+### L'ordine delle sedi non lo decide più il database
+
+L'elenco delle sedi nasceva da un `Set` su una `select` senza `order`: l'ordine era quello che
+PostgREST si trovava in mano, e cambiava. Con una sola sede armata non si vedeva; con tre sedi e un
+giro che può fermarsi per tempo, «chi viene servito» diventava un sorteggio quotidiano — e una sede
+poteva restare a zero per giorni senza che nessuno sapesse perché.
+
+### I numeri, misurati il 2026-08-20 e il 2026-08-21
+
+| | |
+|---|---|
+| domande d'iscrizione in produzione | **406** (Giugliano 201 · Cesa 123 · Aversa 79 in attesa) |
+| foglio di Cesa | 255 alunni, 13 classi, 9 rette vuote, 1 scritta `X`, 0 rimandi, 0 doppioni |
+| abbinamento Cesa | **121 bambini** con retta valida · 13 assenti dal foglio · 4 senza retta · **0 ambigui** |
+| esito atteso | **106 domande partirebbero subito**, 17 si fermerebbero come «da controllare» |
+| classi senza sezione | **4 prima, 0 dopo** (13 su 13 risolvono) |
+| domande con casella condivisa fra i due genitori | 10 a Cesa |
+
+Il confronto fra foglio e domande è stato fatto **per impronta hash**: nessun nome di minore è
+transitato fuori dal database. *Contare non è leggere.*
+
+⏳ **Resta aperto**: con ~1,17 s per email il giro raggiunge ~200 email per volta, non 300. Perché
+«300 al giorno» sia un numero vero servono **più giri al giorno** con il contatore letto dal
+registro invece che dalla memoria di una singola esecuzione. Deciso di misurarlo sul primo giro
+vero del 22 agosto invece di stimarlo.
+
+---
+
 ## ✉️ Changelog — L'automazione degli inviti si arma, e l'altro genitore smette di restare fuori 2026-08-17 (branch `feat/iscrizioni-import-2026-27`)
 
 La passata di ieri sapeva **decidere** e si fermava prima di spedire. Questa spedisce: il giro

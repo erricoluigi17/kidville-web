@@ -199,14 +199,54 @@ peggiore di tutti.
 
 | | |
 |---|---|
-| 🔴 **Il branch non è mai stato spinto** | `feat/candidature-multisede`: 28 commit, mai una PR, mai un giro di CI. Esiste su **un disco solo**. Decisione del titolare. |
-| 🔴 **`news-digest` del 1° settembre** | ~500 email contro un tetto di 100/giorno; `digest.ts:388-400` ignora `rinviabile` e marca comunque `inviata_il`: quel digest **non verrà mai più rispedito**, per ~490 famiglie, in silenzio. E `/api/health` non lo sorveglia. |
+| ✅ **Il branch è stato spinto** | Non è più vero che esiste su un disco solo: `feat/candidature-multisede` è su GitHub, **PR #91 aperta**, CI in corso. Vedi l'aggiornamento in fondo a questa voce. |
+| 🔴 **`news-digest` del 1° settembre** | `digest.ts:388-400` ignora `rinviabile` e marca comunque `inviata_il`: un'edizione respinta per quota **non verrà mai più rispedita**, in silenzio. E `/api/health` non lo sorveglia. ⚠️ Il «~500 email» scritto qui è una **proiezione, non una misura** — vedi la correzione in fondo. |
 | 🟡 **Categoria in Console** | Deve risultare **Istruzione**. La Child Safety Standards si applica **per categoria, non per pubblico**: con «Social» servirebbe una pagina pubblica di standard anti-CSAE che **non esiste**. Va **letta**, non dedotta. |
 | 🟡 **Dopo l'approvazione** | L'accesso sblocca il canale, **non pubblica**: serve creare una release di produzione. Consiglio: promuovere la release **1**, quella che i dodici tester hanno usato per quattordici giorni. E allargare la distribuzione, oggi ferma a 1 paese su 177. |
-| 🟡 **Numeri della Parte 2** | Da rieseguire sul database al momento di incollare: le domande d'iscrizione erano 302 il 4 agosto e 390 il 17. |
+| ✅ **Numeri della Parte 2** | Rieseguiti sul database il **20/08 alle 12:24**: **403** domande, 94 account, 33 bambini a registro, 38 candidature. |
 
 Documenti: `docs/submission/C6-questionario-produzione.md` (le tre parti, italiano e inglese) e
 `docs/collaudo/produzione/` (l'inventario più i dodici documenti di profilo).
+
+### 6 · Aggiornamento della stessa giornata — tre cose sono cambiate dopo che è stata scritta
+
+**a. La sentinella non dipende più da una chiave che nessuno può leggere.** L'avviso «l'app è sullo
+store» partiva solo via Resend, e quindi dipendeva dal segreto `RESEND_API_KEY`. Quel segreto **non
+è impostabile da questa parte**: su Vercel la variabile è marcata *Sensitive*, cioè non si rilegge —
+si può solo sovrascrivere. Il risultato sarebbe stato una sentinella che il giorno della
+pubblicazione scopre la notizia e **non la dice a nessuno**, che per una funzione nata per avvisare
+è il guasto peggiore possibile.
+
+Ora, quando la scheda pubblica risponde `200`, succedono **tre cose indipendenti**: si apre una
+**segnalazione nel repository** col token che GitHub regala a ogni run — nessun segreto —, si manda
+l'email via Resend, e la sentinella si spegne. Perché l'avviso non arrivi devono tacere due canali
+diversi nello stesso momento. `SENTINELLA_DESTINATARI` è impostato; `RESEND_API_KEY` **no**, e la
+testata del workflow lo dichiara invece di lasciarlo sembrare una dimenticanza. Taratura rifatta:
+`com.whatsapp` → **200**, `it.kidville.app` → **404**.
+
+**b. I numeri di produzione sono stati rimisurati, e uno è stato lasciato VUOTO apposta.** 403
+domande d'iscrizione contro le 302 del 4 agosto: circa sei al giorno. `CLAUDE.md` e `AGENTS.md`
+portano la stessa misura. Il conteggio dei **codici fiscali distinti** è invece dichiarato *non
+rimisurato*: ottenerlo richiede di leggere le **righe** di `enrollment_submissions`, non di
+contarle, e quella lettura è stata **rifiutata** — sono anagrafiche di minori. *Contare non è
+leggere.* Scrivere lì una stima sarebbe stato peggio del vuoto: è esattamente il meccanismo per cui,
+a luglio, `CLAUDE.md` è arrivato a sostenere il falso per due settimane.
+
+**c. Il «~500 email del 1° settembre» era una proiezione presentata come misura — e va corretto.**
+Misurato oggi: il digest scrive ai genitori dei bambini **a registro**, e a registro ci sono **31
+iscritti** con **37 legami** genitore-alunno. Oggi il 1° settembre non sfonderebbe nessun tetto.
+Diventa vero **fra dieci giorni**: l'importazione delle iscrizioni crea davvero righe in `alunni` e
+`student_parents` (`src/lib/iscrizioni/import/esegui.ts`), procede a ~90 email al giorno dal 22/08,
+e 403 domande × 1,23 ≈ 496 account si esauriscono intorno al **28 agosto**. Quindi la scadenza
+regge, ma per una ragione diversa da quella scritta.
+
+⚠️ **E rileggendolo si è trovato un difetto in più, nel percorso che era già considerato quello
+sicuro.** Il ramo «non si è potuto nemmeno tentare» di `digest.ts` non marca l'edizione, e il
+commento accanto spiega che va bene *«perché il cron gira ogni giorno»*. **Non gira ogni giorno**:
+`news-digest` è schedulato `'0 8 1 * *'` — una volta al mese
+(`20260720191525_news_cron.sql:109`). Un'edizione lasciata in coda da quel ramo non riparte domani:
+riparte **il primo del mese dopo**. La cautela era giusta, la ragione scritta accanto no — ed è la
+ragione che qualcuno leggerà per decidere se fidarsi.
 
 ---
 

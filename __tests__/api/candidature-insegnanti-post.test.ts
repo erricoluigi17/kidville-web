@@ -157,11 +157,24 @@ vi.mock('@/lib/supabase/server-client', () => ({
       if (tabella === 'candidature_sedi') {
         const s2: Record<string, unknown> = {}
         let filtroCand: unknown = undefined
-        s2.insert = (righe: Record<string, unknown>[]) => {
+        const scrivi = (righe: Record<string, unknown>[]) => {
           const elenco = Array.isArray(righe) ? righe : [righe]
-          if (!h.erroreRigheDiSede) h.righeDiSede.push(...elenco)
+          if (!h.erroreRigheDiSede) {
+            // `ignoreDuplicates`: la chiave e' (candidatura_id, scuola_id), e il
+            // trigger del database puo' aver gia' creato la riga della sede di
+            // primo arrivo. Un finto che accodasse comunque farebbe passare un
+            // codice che in produzione prende 23505.
+            for (const r of elenco) {
+              const gia = h.righeDiSede.some(
+                (x) => x.candidatura_id === r.candidatura_id && x.scuola_id === r.scuola_id,
+              )
+              if (!gia) h.righeDiSede.push(r)
+            }
+          }
           return Promise.resolve({ data: null, error: h.erroreRigheDiSede })
         }
+        s2.insert = scrivi
+        s2.upsert = scrivi
         // ⚠️ Dal 2026-08-20 la rotta LEGGE anche questa tabella: nel ramo del
         // doppio invio chiede quali sedi la candidatura viva abbia già, per
         // agganciarle solo quelle nuove. Un finto che sapesse solo inserire

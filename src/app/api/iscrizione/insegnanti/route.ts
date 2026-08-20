@@ -1175,7 +1175,10 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
             if (sediNuove.length > 0) {
               const { error: eAgg } = await supabase
                 .from('candidature_sedi')
-                .insert(sediNuove.map((sid) => ({ candidatura_id: idVivo, scuola_id: sid })))
+                .upsert(
+                  sediNuove.map((sid) => ({ candidatura_id: idVivo, scuola_id: sid })),
+                  { onConflict: 'candidatura_id,scuola_id', ignoreDuplicates: true },
+                )
               logEvento('candidatura', eAgg ? 'warn' : 'info', {
                 operazione: OPERAZIONE,
                 esito: eAgg ? 'sedi-aggiunte-non-registrate' : 'sedi-aggiunte-a-candidatura-viva',
@@ -1305,9 +1308,21 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // Un errore DIVERSO da «tabella assente» è invece un guasto vero e si logga a
     // `error`: significa che la candidatura esiste ma nessuna sede la vedrà.
     if (entitaId !== null) {
+      // ⚠️ `upsert` CHE IGNORA I DOPPIONI, e non un `insert`.
+      // Dal 2026-08-20 un trigger sul database garantisce che ogni candidatura
+      // abbia almeno la riga della sua sede di primo arrivo — serve a non
+      // lasciare orfane le candidature che arrivano mentre il deploy è in corso,
+      // quando la produzione gira ancora il codice vecchio. Quella riga è una
+      // delle nostre, quindi un `insert` semplice prenderebbe `23505` sulla
+      // chiave primaria e perderebbe TUTTE le altre sedi dello stesso invio.
+      // Le due scritture si sovrappongono di proposito: è la cintura oltre alle
+      // bretelle, e questa riga è ciò che le fa convivere.
       const { error: errSedi } = await supabase
         .from('candidature_sedi')
-        .insert(scuoleRichieste.map((sid) => ({ candidatura_id: entitaId, scuola_id: sid })))
+        .upsert(
+          scuoleRichieste.map((sid) => ({ candidatura_id: entitaId, scuola_id: sid })),
+          { onConflict: 'candidatura_id,scuola_id', ignoreDuplicates: true },
+        )
       if (errSedi) {
         const codice = (errSedi as { code?: string }).code ?? null
         const tabellaAssente = codice === '42P01' || codice === 'PGRST205'

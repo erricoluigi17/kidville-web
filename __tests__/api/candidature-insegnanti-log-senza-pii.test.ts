@@ -69,6 +69,21 @@ vi.mock('@/lib/supabase/server-client', () => ({
           Promise.resolve({ data: h.sedi.map((s) => ({ ...s, attiva: true })), error: null }).then(res)
         return b
       }
+      // Le RIGHE DI SEDE: qui interessa solo che non facciano cadere la rotta —
+      // questo file misura i LOG, non lo schema. Un ramo suo, però, perché
+      // condividere `h.inserts` con la candidatura confonderebbe due tabelle
+      // (lezione del 2026-08-20 su `-post.test.ts`).
+      if (tabella === 'candidature_sedi') {
+        const s2: Record<string, unknown> = {}
+        const scrivi = () => Promise.resolve({ data: null, error: null })
+        s2.insert = scrivi
+        s2.upsert = scrivi
+        s2.select = () => s2
+        s2.eq = () => s2
+        s2.then = (res: (v: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(res)
+        return s2
+      }
       const b: Record<string, unknown> = {}
       let scrittura = false
       b.insert = (row: Record<string, unknown>) => {
@@ -76,6 +91,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         h.inserts.push(row)
         return b
       }
+      b.upsert = b.insert
       b.select = () => b
       b.eq = () => b
       b.in = () => b

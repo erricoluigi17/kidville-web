@@ -292,5 +292,8 @@
   "erroreElencoClassiIlleggibile": "The file arrived but cannot be opened as a spreadsheet: check that it is the right file and try again",
   "erroreElencoClassiAssente": "No class list has been uploaded for this location yet",
   "erroreCorpoNonValido": "The request is not valid. Reload the page and try again.",
-  "erroreLetturaFallita": "We could not read the data. Please try again shortly."
+  "erroreLetturaFallita": "We could not read the data. Please try again shortly.",
+  "erroreRinvioCredenzialiRiservato": "Resending credentials is reserved for the school office",
+  "erroreRegistroInvitiNonLetto": "The invitation register could not be read",
+  "erroreRinvioSedeNonRisolta": "The selected location could not be resolved"
 }

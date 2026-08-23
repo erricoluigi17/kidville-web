@@ -58,6 +58,7 @@ import { ensureParentIdentity, sedeDelGenitore } from '@/lib/auth/parent-identit
 import { rigeneraPasswordPerInvito } from '@/lib/auth/password-invito'
 import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
+import { inizioGiornoRomaISO } from '@/lib/format/fiscal-date'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { logEvento } from '@/lib/logging/logger'
 import { normalizzaEmailModulo } from '@/lib/iscrizioni/email-genitori'
@@ -143,6 +144,43 @@ export async function emailGiaInvitate(
   }
 
   return new Set((data ?? []).map((r) => String((r as { email_norm: string }).email_norm)))
+}
+
+/**
+ * Quante email di credenziali sono già uscite OGGI — dal database, non dalla memoria.
+ *
+ * ⚠️ IL DIFETTO CHE QUESTA FUNZIONE CHIUDE, e perché nessun test poteva vederlo.
+ *
+ * Il contatore del tetto era una variabile LOCALE alla singola invocazione della
+ * route. Finché il cron gira una volta al giorno il nome «inviti al giorno» non
+ * mente, e tutto torna. Ma il 2026-08-22 il giro si è fermato per `tempo-scaduto`
+ * con 50 domande in coda e un tetto di 300 mai sfiorato — e la cura è farlo girare
+ * più volte al giorno. Nel momento esatto in cui lo si fa, «300 al giorno» diventa
+ * «300 PER GIRO» e il totale si moltiplica **in silenzio**: nessun errore, nessun
+ * log, solo un numero che ha smesso di significare quello che dice.
+ *
+ * «Oggi» è il giorno di ROMA, non di UTC: sono le famiglie a riceverle, queste
+ * email. Vedi `inizioGiornoRomaISO`, che l'offset lo chiede al fuso invece di
+ * assumerlo — questo repo ha già pagato quattro difetti caduti insieme per UTC
+ * contro Europe/Rome, uno dei quali passava per coincidenza.
+ *
+ * Si contano le sole righe `inviata`: quelle rimaste `da_inviare` non hanno
+ * consumato niente, e includerle stringerebbe il tetto per email mai partite.
+ */
+export async function emailSpediteOggi(supabase: SupabaseClient): Promise<number> {
+    const { count, error } = await supabase
+        .from('iscrizioni_inviti_credenziali')
+        .select('auth_user_id', { count: 'exact', head: true })
+        .eq('stato', 'inviata')
+        .gte('inviato_il', inizioGiornoRomaISO())
+    if (error) {
+        // PostgREST non lancia: ritorna `{ error }` (regola 7 di AGENTS.md). Qui si
+        // RILANCIA di proposito, perché la decisione di degradare non spetta a questa
+        // funzione ma alla route, che deve poterla dichiarare a livello `error`.
+        // Restituire 0 in silenzio sarebbe un tetto sbagliato che nessuno vede.
+        throw new Error(`conteggio email di oggi non leggibile: ${error.message}`)
+    }
+    return count ?? 0
 }
 
 /**

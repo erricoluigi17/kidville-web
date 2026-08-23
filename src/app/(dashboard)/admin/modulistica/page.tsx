@@ -14,6 +14,7 @@ import { SedeNotice, useSediAttive } from '@/lib/context/sede-context';
 import { ModuliInviabili } from '@/components/features/admin/iscrizioni/ModuliInviabili';
 import { ModuliRicevuti } from '@/components/features/admin/iscrizioni/ModuliRicevuti';
 import { ElencoClassi } from '@/components/features/admin/iscrizioni/ElencoClassi';
+import { RinviaCredenziali } from '@/components/features/admin/iscrizioni/RinviaCredenziali';
 import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
 import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale';
 import { PrestampatiSegreteria } from '@/components/features/prestampati/PrestampatiSegreteria';
@@ -533,7 +534,12 @@ function ModulisticaInner() {
       ) : activeTab === 'ricevuti' ? (
         <ModuliRicevuti />
       ) : activeTab === 'elenco-classi' ? (
-        <ElencoClassi />
+        <>
+          <ElencoClassi />
+          <div className="mt-6">
+            <RinviaCredenziali />
+          </div>
+        </>
       ) : activeTab === 'candidature' ? (
         <CandidatureInsegnanti />
       ) : activeTab === 'personale' ? (

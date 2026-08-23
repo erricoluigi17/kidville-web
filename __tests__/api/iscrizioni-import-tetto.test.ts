@@ -127,6 +127,7 @@ const inviti = vi.hoisted(() => ({
   invitiPrevisti: vi.fn(async (_c: unknown, email: readonly (string | null)[]) =>
     new Set(email.filter((e): e is string => typeof e === 'string' && e.includes('@'))).size),
   riprendiInvitiSospesi: vi.fn(async () => ({ spedite: 0, fallite: 0, rinviata: false })),
+  emailSpediteOggi: vi.fn(async () => 0),
 }))
 vi.mock('@/lib/iscrizioni/import/inviti', () => inviti)
 
@@ -213,6 +214,7 @@ beforeEach(() => {
   lotto.caricaDecisioni.mockResolvedValue(new Map())
   analisi.decidi.mockReturnValue({ tipo: 'invia', assegnazioni: [], referente: { nome: 'Genitore', cognome: 'Inventato', email: null, codiceFiscale: null, ruolo: null } })
   inviti.riprendiInvitiSospesi.mockResolvedValue({ spedite: 0, fallite: 0, rinviata: false })
+  inviti.emailSpediteOggi.mockResolvedValue(0)
   inviti.invitiPrevisti.mockImplementation(async (_c: unknown, email: readonly (string | null)[]) =>
     new Set(email.filter((e): e is string => typeof e === 'string' && e.includes('@'))).size)
   esegui.eseguiDomanda.mockResolvedValue({ esito: 'inviata', messageId: 'm-1', errore: null, emailSpedite: 1 })
@@ -540,4 +542,98 @@ describe('import iscrizioni — l\'ordine delle sedi non lo decide il database',
     const chiamate = (lotto.caricaElenco.mock.calls as unknown as unknown[][]).map((c) => c[1] as string)
     expect(chiamate).toEqual([A, B, C])
   })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+describe('il tetto GIORNALIERO è davvero giornaliero — la trappola dei giri multipli', () => {
+    /**
+     * ⚠️ IL DIFETTO CHE QUESTO BLOCCO CHIUDE, E PERCHÉ ERA INVISIBILE.
+     *
+     * `emailOggi` era una variabile LOCALE alla singola invocazione, inizializzata a
+     * `ripresi`. Finché il cron gira una volta al giorno il nome non mente e nessun
+     * test poteva accorgersene. Ma il 2026-08-22 il giro si è fermato per
+     * `tempo-scaduto` con 50 domande in coda a un tetto di 300 mai sfiorato: la cura
+     * è farlo girare più volte — e nel momento esatto in cui lo si fa, «300 al
+     * giorno» diventa «300 PER GIRO», e il totale si moltiplica in silenzio.
+     *
+     * Il conteggio va quindi preso dal database, sulle righe già spedite oggi, con
+     * «oggi» misurato a Roma e non in UTC.
+     */
+
+    it('quello che è già uscito oggi CONTA: col tetto pieno non parte niente', async () => {
+        inviti.emailSpediteOggi.mockResolvedValue(300)
+        db.state.lotto = ['d1']
+        db.state.domande = [domanda('d1', ['genitore.uno@example.test'])]
+
+        const res = await POST(req({}, SEGRETO))
+        const corpo = await res.json()
+
+        expect(res.status).toBe(200)
+        // Il giro precedente ha già consumato il tetto: questo non comincia nemmeno.
+        expect(esegui.eseguiDomanda).not.toHaveBeenCalled()
+        expect(corpo.inviate).toBe(0)
+    })
+
+    it('il residuo è il tetto MENO quanto è già uscito, e la ripresa lo rispetta', async () => {
+        inviti.emailSpediteOggi.mockResolvedValue(298)
+        db.state.lotto = ['d1']
+        db.state.domande = [domanda('d1', ['genitore.uno@example.test', 'genitore.due@example.test'])]
+
+        const res = await POST(req({}, SEGRETO))
+        await res.json()
+
+        // 298 già uscite + 2 previste = 300: ci sta esatto, la domanda parte.
+        expect(esegui.eseguiDomanda).toHaveBeenCalledTimes(1)
+        // E la ripresa degli inviti sospesi non può spendere più del residuo: se le
+        // passassimo il tetto pieno, da sola sfonderebbe il conto della giornata.
+        expect(inviti.riprendiInvitiSospesi).toHaveBeenCalledWith(expect.anything(), 2)
+    })
+
+    it('LA VALVOLA: una domanda più cara dell\'intero tetto parte comunque, al primo giro utile', async () => {
+        /**
+         * È il contrappeso, e la riformulazione più delicata di tutto il lavoro.
+         *
+         * La guardia storica era `emailOggi > 0`: bastava perché `emailOggi` partiva
+         * da zero a ogni invocazione. Con il conteggio letto dal database, dalla
+         * SECONDA invocazione del giorno `emailOggi` è già > 0 sempre — e la valvola
+         * si chiuderebbe da sola, condannando quella domanda a restare in coda per
+         * sempre senza che nessun log dica che è proprio lei a non passare mai.
+         *
+         * La condizione giusta non guarda quanto si è già spedito OGGI, ma quanto si
+         * è spedito IN QUESTO GIRO: se questo giro non ha ancora fatto niente e la
+         * domanda da sola sfonda il tetto, si procede lo stesso.
+         */
+        inviti.emailSpediteOggi.mockResolvedValue(5)
+        db.state.lotto = ['d1']
+        db.state.domande = [domanda('d1', ['uno@example.test', 'due@example.test', 'tre@example.test', 'quattro@example.test'])]
+
+        const res = await POST(req({ max_inviti: 3 }, SEGRETO))
+        await res.json()
+
+        // 4 previste > tetto 3, e questo giro non ha ancora spedito nulla: passa.
+        expect(esegui.eseguiDomanda).toHaveBeenCalledTimes(1)
+        expect(sospensioni().filter((a) => a.p_stato === 'in_attesa')).toHaveLength(0)
+    })
+
+    it('se il conteggio non si legge NON si tace: si logga e si riparte da zero', async () => {
+        /**
+         * Fail-OPEN, e va detto perché. Il caso peggiore aprendo è 5 giri × 300 email
+         * su un piano Pro da 50.000 al mese, con una coda che in tutto ne vale ~370:
+         * non è un disastro. Il caso peggiore chiudendo è che in uno dei venti giorni
+         * della finestra non riceva le credenziali NESSUNO. La risorsa che il tetto
+         * protegge non è più scarsa: governa un ritmo leggibile da una persona, e un
+         * governatore che spegne la macchina è peggio di uno che slitta.
+         */
+        inviti.emailSpediteOggi.mockRejectedValue(new Error('PostgREST giù'))
+        db.state.lotto = ['d1']
+        db.state.domande = [domanda('d1', ['genitore.uno@example.test'])]
+
+        const res = await POST(req({}, SEGRETO))
+
+        expect(res.status).toBe(200)
+        expect(esegui.eseguiDomanda).toHaveBeenCalledTimes(1)
+        // Il degrado è dichiarato, non silenzioso: senza questa riga nessuno saprebbe
+        // mai che il tetto di quel giorno non era quello che credeva.
+        expect(righe('error').some((r) => r.campi?.esito === 'conteggio-oggi-non-letto')).toBe(true)
+    })
 })

@@ -873,6 +873,106 @@ documento e la memoria hanno dichiarato *«è la lettura del 09/08 a essere fuor
 
 ---
 
+## ⏱️ Changelog — Il tetto non era il vincolo: lo erano ventotto andate e ritorni — 2026-08-23 (branch `feat/import-throughput-e-rinvio`)
+
+Seguito diretto del changelog qui sopra. Chiuso il formato della password, restavano tre cose: il
+throughput dell'import, un tetto giornaliero che non era giornaliero, e il modo di rimandare le
+credenziali a chi non è mai entrato.
+
+### Dove finiva il tempo, misurato invece che supposto
+
+Il 22/08 il giro si è fermato dopo 244 s con `esito: 'tempo-scaduto'` e 50 domande in coda, a un
+tetto di 300 email che non aveva nemmeno sfiorato (ne erano uscite 67). Letto dai timestamp di
+`iscrizioni_inviti_credenziali`:
+
+| | valore |
+|---|---|
+| intervallo mediano fra due email | **3,35 s** |
+| medio · minimo · massimo | 3,58 s · 2,25 s · 5,32 s |
+
+Costante, senza coda lunga. Una costante senza coda non è «una query ogni tanto lenta»: è un
+**numero fisso di andate-e-ritorni in serie** — ~27-29 per domanda. Resend ne pesa ~350 ms (il
+10%), `PAUSA_FRA_EMAIL_MS` 150 ms (il 4,5%). **Alzare `INVITI_AL_GIORNO` non poteva spostare
+niente**, ed è il motivo per cui il passaggio da 90 a 300 del 21/08 non ha cambiato l'esito.
+
+Una di quelle chiamate peggiorava con ciò che il giro stesso produceva: `findAuthUserIdByEmail`
+scandiva l'intera `auth.users` a pagine da 100 (`listUsers`) confrontando le email in JavaScript.
+Oggi 166 account = 2 pagine; a fine finestra ~570 = 6. La 201ª e la 301ª pagina cadono **dentro**
+questa finestra di iscrizioni. Ora si chiede prima a `utenti` — che ha `email`, `id` uguale
+all'auth user id, l'indice unique già pronto ed è tenuta allineata dalla stessa
+`ensureParentIdentity`. La scansione resta come ripiego: il caso «auth user senza riga `utenti`»
+esiste ed è quello che `ensureUtentiRow` ripara, e degradarlo a «non esiste» creerebbe un secondo
+account per la stessa persona. Il degrado è sicuro in entrambe le direzioni: al massimo si perde
+velocità, mai correttezza.
+
+### Il tetto «giornaliero» era per invocazione
+
+`emailOggi` era una variabile **locale alla singola invocazione**. Finché il cron girava una volta
+al giorno il nome non mentiva, e nessun test poteva accorgersene. Ma la cura del throughput è farlo
+girare più volte — e in quel momento esatto «300 al giorno» sarebbe diventato «300 per giro», con
+il totale moltiplicato **in silenzio**. Ora il conteggio si legge dal database, con «oggi» misurato
+a Roma (`inizioGiornoRomaISO`, che l'offset lo chiede al fuso invece di assumerlo: la scorciatoia
+`new Date(oggiFiscaleISO() + 'T00:00:00Z')` sbaglia di un'ora, due in estate).
+
+⚠️ **La valvola andava riformulata, ed è la parte più delicata.** La guardia storica era
+`emailOggi > 0`, e funzionava perché `emailOggi` ripartiva da zero: al primo giro era falsa e una
+domanda più cara dell'intero tetto passava comunque. Con il conteggio letto dal database, dalla
+seconda invocazione `emailOggi` è già > 0 **sempre**, e la valvola si sarebbe chiusa da sola,
+condannando quella domanda a restare in coda per sempre senza che nessun log lo dicesse. La
+condizione ora guarda quanto si è spedito **in questo giro**, non nel giorno.
+
+Fail-open dichiarato sul conteggio: se non si legge si riparte da zero e lo si scrive a livello
+`error`. Il caso peggiore aprendo è qualche centinaio di email su un piano da 50.000 al mese; il
+caso peggiore chiudendo è che in uno dei venti giorni della finestra non riceva le credenziali
+nessuno.
+
+### Rimandare le credenziali senza strappare quelle che funzionano
+
+`POST /api/admin/iscrizioni/rinvia-credenziali`, riservata alla Direzione. Tre cose che non si
+sbagliano:
+
+1. **Chi**: solo `last_sign_in_at IS NULL`, mai `updated_at`. Il criterio dedotto da `updated_at`
+   era stato scritto una volta e si è rivelato falso (vedi il changelog sopra): non sapendo chi
+   abbia una password propria, non se ne tocca nessuna.
+2. **Il ricontrollo immediatamente prima**: fra la lista e il gesto possono passare minuti, e in
+   quei minuti un genitore può entrare. L'ultima parola ce l'ha `getUserById`, chiamata per ogni
+   account subito prima di rigenerare — ed è la ragione per cui questa è una route e non una
+   `UPDATE` sul registro: una SQL non può ricontrollare.
+3. **La prova del primo recapito non si cancella**: `inviato_il` e `resend_message_id` restano
+   intatti, sono la sola risposta possibile a «non mi è mai arrivato niente». La seconda consegna
+   scrive su colonne sue.
+
+Più un claim compare-and-swap su `rigenerazioni`, perché un doppio clic non consegni due password
+alla stessa famiglia (la seconda invaliderebbe la prima). E il rischio che **non si può
+eliminare** — la password si invalida prima di sapere se l'email parte, perché non esiste un ordine
+inverso — è reso rimediabile: sul fallimento la password torna all'operatore, che ha la famiglia
+al telefono in quel momento.
+
+### Un difetto preesistente, trovato rigenerando la fotografia
+
+`20260820220954_cesa_sezioni_due_anni_e_cinque_anni` era **applicata in produzione e assente dal
+repo** dal 21/08: da tre giorni il database non era più ricostruibile dai suoi file. Il lock
+`migrazioni-complete` esisteva già e non l'aveva vista, perché confronta i file con una fotografia
+ferma al 16 agosto — la migrazione mancava da **entrambi** i lati del confronto. È emersa nel
+momento in cui la fotografia è stata rigenerata, e il file è stato recuperato dal database, non
+riscritto a memoria.
+
+Vale la pena dirlo perché è la forma più insidiosa di guardiano cieco: non uno che tace, ma uno
+che confronta due copie della stessa lacuna e le trova concordi.
+
+### Cosa resta, e in che ordine
+
+- La migrazione **`iscrizioni_import_cinque_giri`** (`10,20,30,40,50 8 * * *`) è scritta e
+  collaudata ma **non ancora applicata**, di proposito: va applicata solo dopo che il conteggio
+  giornaliero è in produzione, altrimenti cinque giri col codice vecchio significano 300 email
+  *per giro*. Il nuovo lock `import-iscrizioni-giri-non-si-sovrappongono` verifica che due
+  accensioni distino più del `maxDuration`: `riprendiInvitiSospesi` **non ha un claim**, e due giri
+  sovrapposti spedirebbero due volte alla stessa persona invalidando la prima password.
+- Il **recupero password autonomo** continua a non esistere: «Password dimenticata?» dice solo di
+  telefonare in segreteria.
+
+---
+
 ## 🔑 Changelog — Le credenziali «non valide» erano valide, e il difetto era che nessuno poteva saperlo — 2026-08-23 (branch `fix/credenziali-accessibili`)
 
 Il 22 agosto alle 10:10 il cron `iscrizioni-import-invio` è partito per la prima volta sul serio:

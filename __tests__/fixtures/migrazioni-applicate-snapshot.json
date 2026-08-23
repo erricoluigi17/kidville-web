@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-16",
-  "generato_alle": "2026-08-16T23:19:02Z",
-  "sha256": "2eaae6e00893de430029d99525a441e35edb17fe58ab74a5ddb3dd7db1ed411a",
+  "generato_il": "2026-08-23",
+  "generato_alle": "2026-08-23T02:46:06Z",
+  "sha256": "ef7691d9cca9538a473f9661fd30773f8d4c02cc090d635d6a1aee9363119fc8",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -503,6 +503,38 @@
     {
       "version": "20260816231729",
       "name": "iscrizioni_import_cron"
+    },
+    {
+      "version": "20260819231500",
+      "name": "candidature_sedi"
+    },
+    {
+      "version": "20260820004500",
+      "name": "candidature_sedi_evasa_il"
+    },
+    {
+      "version": "20260820011500",
+      "name": "candidature_sede_garantita"
+    },
+    {
+      "version": "20260820020000",
+      "name": "candidature_sede_decisione_intera"
+    },
+    {
+      "version": "20260820084800",
+      "name": "conservazione_per_riga_di_sede"
+    },
+    {
+      "version": "20260820141500",
+      "name": "candidatura_copia_inviata_il"
+    },
+    {
+      "version": "20260820220954",
+      "name": "cesa_sezioni_due_anni_e_cinque_anni"
+    },
+    {
+      "version": "20260823024231",
+      "name": "inviti_credenziali_rigenerazione"
     }
   ]
 }

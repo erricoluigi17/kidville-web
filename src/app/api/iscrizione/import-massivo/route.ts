@@ -69,7 +69,7 @@ import {
 } from '@/lib/iscrizioni/import/lotto'
 import { decidi } from '@/lib/iscrizioni/import/analisi'
 import { eseguiDomanda } from '@/lib/iscrizioni/import/esegui'
-import { invitiPrevisti, riprendiInvitiSospesi } from '@/lib/iscrizioni/import/inviti'
+import { invitiPrevisti, riprendiInvitiSospesi, emailSpediteOggi } from '@/lib/iscrizioni/import/inviti'
 import { pausaFraEmail } from '@/lib/email/ritmo'
 
 const JOB = 'iscrizioni-import-invio'
@@ -194,13 +194,46 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
     let quotaEsaurita = false
     let tempoScaduto = false
     let nonLavorate = 0
+
+    /**
+     * QUANTE NE SONO GIÀ USCITE OGGI, prima che questo giro cominci.
+     *
+     * ⚠️ Fino al 2026-08-23 questo valore era semplicemente 0, perché il cron girava
+     * una volta al giorno e la variabile locale bastava a rappresentare la giornata.
+     * Dal momento in cui i giri diventano più d'uno, un contatore che riparte da zero
+     * trasforma «300 al giorno» in «300 per giro» **senza che niente lo segnali**.
+     *
+     * FAIL-OPEN, dichiarato. Se il conteggio non si legge si riparte da zero — cioè
+     * si degrada al comportamento di ieri — e lo si SCRIVE a livello `error`. Il caso
+     * peggiore aprendo è qualche centinaio di email in più su un piano che ne consente
+     * 50.000 al mese, con una coda che in tutto ne vale ~370. Il caso peggiore
+     * chiudendo è che in uno dei venti giorni della finestra non riceva le credenziali
+     * nessuno. La risorsa che il tetto protegge non è più scarsa: governa un ritmo
+     * leggibile da una persona, e un governatore che spegne la macchina è peggio di
+     * uno che slitta.
+     */
+    let emailGiaOggi = 0
+    try {
+      emailGiaOggi = await emailSpediteOggi(supabase)
+    } catch (errore) {
+      logEvento('cron', 'error', {
+        operazione: JOB,
+        esito: 'conteggio-oggi-non-letto',
+      }, errore)
+    }
+    const residuo = Math.max(0, tetto - emailGiaOggi)
+
     if (!dryRun) {
-      const ripresa = await riprendiInvitiSospesi(supabase, tetto)
+      // Alla ripresa si passa il RESIDUO, non il tetto: da sola sfonderebbe il conto
+      // della giornata già speso dai giri precedenti.
+      const ripresa = await riprendiInvitiSospesi(supabase, residuo)
       ripresi = ripresa.spedite
       quotaEsaurita = ripresa.rinviata
     }
-    /** Le email uscite in questo giro. È ciò che il tetto misura. */
-    let emailOggi = ripresi
+    /** Le email uscite IN QUESTO GIRO. Serve alla valvola, che guarda il giro e non il giorno. */
+    let emailQuestoGiro = ripresi
+    /** Le email uscite oggi in tutto: è questo che il tetto misura. */
+    let emailOggi = emailGiaOggi + ripresi
 
     // Le sedi da lavorare: quelle che hanno un elenco di classe attivo. Senza
     // elenco non c'è niente da cui leggere la classe, e si tacerebbe.
@@ -379,7 +412,32 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
         // contraddice da sola, su una domanda che non consuma quota. Nella
         // finestra di venti giorni il tetto si satura per costruzione, quindi
         // non è un caso di laboratorio.
-        if (previste > 0 && emailOggi > 0 && emailOggi + previste > tetto) {
+        /**
+         * LA VALVOLA, riformulata — ed è il punto più delicato di tutto il lavoro.
+         *
+         * La condizione storica era `emailOggi > 0`, e bastava perché `emailOggi`
+         * ripartiva da zero a ogni invocazione: al primo giro della giornata era
+         * falsa, e la domanda troppo cara passava comunque. Con il conteggio letto
+         * dal database, dalla SECONDA invocazione in poi `emailOggi` è già > 0
+         * sempre — e la valvola si chiuderebbe da sola, condannando quella domanda a
+         * restare in coda per sempre senza che nessun log dica che è proprio lei a
+         * non passare mai. La stima «prima» diventerebbe una prigione, che è
+         * esattamente ciò che la valvola esiste per impedire.
+         *
+         * Ciò che conta non è quanto si è spedito OGGI, ma quanto si è spedito IN
+         * QUESTO GIRO: se il giro non ha ancora fatto niente e la domanda da sola
+         * sfonda il tetto, si procede lo stesso — una volta, e non più.
+         */
+        const sfonda = emailOggi + previste > tetto
+        /**
+         * L'ECCEZIONE, e vale UNA volta per giro: una domanda che da sola costa più
+         * dell'INTERO tetto non passerebbe mai, in nessun giorno, e resterebbe in
+         * coda per sempre senza che nessun log dica che è proprio lei a non passare.
+         * Non è «il tetto di oggi è pieno» — quello è un rinvio legittimo, e domani
+         * si riprova. È «questa domanda non ci sta nemmeno in un tetto vuoto».
+         */
+        const troppoGrandePerQualunqueGiorno = previste > tetto && emailQuestoGiro === 0
+        if (previste > 0 && sfonda && !troppoGrandePerQualunqueGiorno) {
           restano++
           perSede(scuolaId).restano++
           if (!dryRun) {
@@ -408,6 +466,7 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
           scuolaId,
         )
         emailOggi += esito.emailSpedite
+        emailQuestoGiro += esito.emailSpedite
         perSede(scuolaId).emailSpedite += esito.emailSpedite
 
         if (esito.esito === 'inviata') { inviate++; perSede(scuolaId).inviate++ }

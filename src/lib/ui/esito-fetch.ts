@@ -1248,6 +1248,20 @@ export const CODICI_ERRORE = {
      * Il motivo vero resta nel log con il codice PostgREST: farlo uscire da qui
      * significherebbe mandare il nome di una tabella a chi legge la risposta.
      */
+    /**
+     * 403 — il rinvio delle credenziali in blocco è della Direzione
+     * (`admin/iscrizioni/rinvia-credenziali:POST`).
+     *
+     * Riscrive in una volta sola la password di decine di famiglie: è la stessa
+     * riserva che `regenerate-credentials` applica già alle credenziali dello staff,
+     * e per la stessa ragione — una password riscritta per sbaglio chiude fuori
+     * qualcuno che stava lavorando, e non se ne accorge nessuno finché non telefona.
+     */
+    RINVIO_CREDENZIALI_RISERVATO: 'erroreRinvioCredenzialiRiservato',
+    /** 500 — il registro degli inviti non si è potuto leggere. */
+    REGISTRO_INVITI_NON_LETTO: 'erroreRegistroInvitiNonLetto',
+    /** 500 — la sede indicata non si è potuta risolvere in un elenco di genitori. */
+    RINVIO_SEDE_NON_RISOLTA: 'erroreRinvioSedeNonRisolta',
     IMPORT_ISCRIZIONI_NON_ESEGUITO: 'erroreImportIscrizioniNonEseguito',
     /** 500 — l'elenco di classe della sede non si è potuto leggere. */
     ELENCO_CLASSI_NON_LETTO: 'erroreElencoClassiNonLetto',

@@ -1466,7 +1466,16 @@ describe('coverage-lock isolamento fra sedi', () => {
             // ⚠️ IL +1 È MISURATO, NON DEDOTTO: eseguendo questo lock con la cartella
             // `src/app/api/admin/candidature-insegnanti/inoltro-arretrato/` spostata FUORI
             // dall'albero si legge di nuovo `299` e `463`, cioè i due valori precedenti.
-            routeConServiceRole: 300,
+            // 300 → 301 il 2026-08-23: è ENTRATA
+            // `admin/iscrizioni/rinvia-credenziali:POST`, che rimanda le credenziali a chi
+            // non è mai entrato dopo il primo invio del 22/08 (67 spedite, 37 accessi).
+            // Service-role perché deve leggere `auth.users.last_sign_in_at` — l'unico dato
+            // che dica se una persona sia mai entrata — e PostgREST lo schema `auth` non lo
+            // espone. Lo scope non manca: c'è, ed è più stretto del solito (gate
+            // `admin`/`coordinator`, e per ogni account il controllo che `utenti.ruolo` sia
+            // `genitore`, così un'email che coincide con quella di una collega non può
+            // essere resettata da questa strada).
+            routeConServiceRole: 301,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1557,7 +1566,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 🔺 463 → 464 il 2026-08-20: l'unico handler della rotta d'inoltro
             // dell'arretrato. Qui il passo coincide col file perché il file espone un solo
             // metodo — ed è il caso in cui la coincidenza va detta, non dedotta.
-            handlerControllati: 464,
+            // 464 → 465 il 2026-08-23: il POST della route di rinvio credenziali (sopra).
+            handlerControllati: 465,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

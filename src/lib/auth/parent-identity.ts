@@ -119,9 +119,42 @@ export function dettaglioErroreAuth(error: unknown): string {
 }
 
 /**
- * Cerca un auth.users per email. L'admin API non ha getUserByEmail: scansione
- * paginata O(utenti totali), accettabile alla scala attuale (decine di account);
- * stesso approccio del backfill S6.
+ * Cerca un auth.users per email.
+ *
+ * ⚠️ LA SCANSIONE È IL RIPIEGO, NON LA STRADA — e il motivo è una misura.
+ *
+ * L'admin API di GoTrue non ha un `getUserByEmail`: qui si ripiegava su `listUsers`
+ * paginata a 100, scandendo l'INTERA `auth.users` e confrontando le email in
+ * JavaScript. Il commento diceva «accettabile alla scala attuale (decine di
+ * account)», ed era vero quando è stato scritto.
+ *
+ * Il 2026-08-22 il cron delle iscrizioni si è fermato per `tempo-scaduto` con 50
+ * domande in coda, a un tetto di 300 email mai sfiorato: l'intervallo mediano fra
+ * un'email e l'altra era **3,35 s**, costante e senza coda lunga — cioè un numero
+ * fisso di andate-e-ritorni in serie, ~27-29 per domanda. Resend ne pesa il 10%, la
+ * pausa il 4,5%. Questa funzione era l'unico pezzo del giro **che peggiora con ciò
+ * che il giro stesso produce**: ogni account creato allunga la scansione del
+ * successivo. Oggi 166 account = 2 pagine; a fine finestra ~570 = 6 pagine, e la
+ * 201ª e la 301ª cadono dentro questa finestra di iscrizioni.
+ *
+ * `utenti` in `public` ha `email`, ha `id` uguale all'auth user id, ed è tenuta
+ * allineata dalla STESSA `ensureParentIdentity` che chiama questa funzione
+ * (`ensureUtentiRow`): una SELECT indicizzata al posto di N pagine di GoTrue.
+ *
+ * Il confronto veloce è ESATTO (`.eq`) e non insensibile alle maiuscole, e va bene
+ * così: in produzione le 166 righe di `utenti` hanno tutte l'email già in minuscolo
+ * e senza spazi (misurato il 2026-08-23), e l'indice unique `utenti_email_key` c'è
+ * già. Ma soprattutto il degrado è SICURO in entrambe le direzioni: se un domani
+ * una riga avesse una maiuscola, la strada veloce non la troverebbe e la scansione
+ * sì — si perderebbe velocità, mai correttezza. È la proprietà che rende questa
+ * ottimizzazione innocua anche il giorno in cui il presupposto smette di valere.
+ *
+ * Il ripiego resta, e non per prudenza generica: il caso «account in `auth.users`
+ * senza riga in `utenti`» esiste davvero ed è precisamente quello che
+ * `ensureUtentiRow` ripara. Degradarlo a «non esiste» creerebbe un SECONDO account
+ * per la stessa persona — un registro diviso in due, cioè il danno che questa
+ * funzione esiste per impedire. Per la stessa ragione un ERRORE di lettura ripiega
+ * invece di rispondere `null`: un errore PostgREST non è una risposta negativa.
  *
  * ⚠️ ESPORTATA dal 2026-08-10, ed è l'unico motivo per cui non è più privata:
  * `ensureStaffIdentity` (src/lib/auth/staff-identity.ts) deve fare la STESSA
@@ -134,6 +167,26 @@ export function dettaglioErroreAuth(error: unknown): string {
  */
 export async function findAuthUserIdByEmail(admin: SupabaseClient, email: string): Promise<string | null> {
   const key = email.toLowerCase();
+
+  // La strada veloce: una riga, un indice. `maybeSingle()` e non `single()`, perché
+  // «non c'è» è un esito normale e non un errore da gestire.
+  const { data: riga, error: erroreUtenti } = await admin
+    .from('utenti')
+    .select('id')
+    .eq('email', key)
+    .maybeSingle();
+  if (!erroreUtenti && riga?.id) return String(riga.id);
+  if (erroreUtenti) {
+    // Non si tace e non si degrada: si dice che la strada veloce non ha risposto, e
+    // si paga la scansione. Un catch muto qui è il difetto della regola 6 di
+    // AGENTS.md, e per giunta invisibile — il giro continuerebbe a funzionare, solo
+    // lento, e nessuno saprebbe perché.
+    logEvento('auth', 'warn', {
+      operazione: 'findAuthUserIdByEmail',
+      esito: 'utenti-non-consultabile-si-scandisce',
+    }, erroreUtenti);
+  }
+
   let page = 1;
   for (;;) {
     const { data, error } = await admin.auth.admin.listUsers({ page, perPage: PER_PAGE });

@@ -249,7 +249,7 @@ function eAnnullata(err: unknown): boolean {
  * difende da sé: è la porta ostile), serve a non scoprire in produzione che una riga di log
  * è stata scartata con un 400 perché il nome dell'evento era `errore-js` invece di `js`.
  */
-export type EventoNome = 'js' | 'unhandledrejection' | 'fetch' | 'react' | 'offline' | 'biometria' | 'push' | 'avvio';
+export type EventoNome = 'js' | 'unhandledrejection' | 'fetch' | 'react' | 'offline' | 'biometria' | 'push' | 'avvio' | 'accesso';
 
 export interface EventoClient {
     livello: 'warn' | 'error';

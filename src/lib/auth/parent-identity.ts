@@ -1,6 +1,6 @@
-import { randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logEvento } from '@/lib/logging/logger';
+import { passwordTemporanea } from '@/lib/auth/password-temporanea';
 
 // =============================================================================
 // Identità di accesso di un GENITORE — fonte unica (S6bis).
@@ -56,9 +56,23 @@ export type EnsureParentIdentityResult =
     }
   | { ok: false; reason: 'no_email' | 'email_conflict' | 'error'; message: string };
 
-/** Password iniziale forte e non indovinabile (le credenziali reali si emettono via S11). */
+/**
+ * Password iniziale forte e non indovinabile (le credenziali reali si emettono via S11).
+ *
+ * ⚠️ IL GENERATORE NON STA PIÙ QUI, e non è un riordino di file. Fino al 2026-08-22
+ * questa funzione era `randomBytes(18).toString('base64url') + 'Aa1!'`: forte, e
+ * illeggibile per la persona che deve trascriverla. Quel giorno il cron ne ha
+ * spedite 67 a famiglie vere e 30 non sono mai entrate. Il perché, l'alfabeto e il
+ * conto dell'entropia stanno in `@/lib/auth/password-temporanea`, insieme al lock
+ * che impedisce a un secondo generatore di rinascere da qualche altra parte.
+ *
+ * Il nome resta `randomPassword` perché è importato da cinque punti (invito,
+ * staff, backfill, rigenerazione manuale, creazione genitore): cambiarlo qui
+ * avrebbe spostato la modifica su file che non hanno niente a che vedere con
+ * questo difetto.
+ */
 export function randomPassword(): string {
-  return randomBytes(18).toString('base64url') + 'Aa1!';
+  return passwordTemporanea();
 }
 
 /** Prima email valida da `parents.emails` (array o stringa singola). */

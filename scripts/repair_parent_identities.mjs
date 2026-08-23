@@ -62,8 +62,33 @@ function firstEmail(emails) {
   return null;
 }
 
+// Il formato è quello di `src/lib/auth/password-temporanea.ts` (Xxxx-xxxx-xxxx-xxxx,
+// alfabeto Crockford senza caratteri ambigui). Qui è per forza una COPIA — uno
+// script .mjs non può importare dagli alias di `src/` — ed è per questo che il lock
+// `__tests__/architecture/password-temporanea-un-posto-solo.test.ts` sorveglia anche
+// `scripts/`: il 2026-08-22 il vecchio generatore è sopravvissuto proprio qui,
+// mentre `src/` era già stato cambiato. Toccando l'uno si tocca l'altro.
+const PT_MINUSCOLE = '0123456789abcdefghjkmnpqrstvwxyz';
+const PT_MAIUSCOLE = 'ACDEFHJKMNPRTVWXY';
+
 function randomPassword() {
-  return Buffer.from(crypto.getRandomValues(new Uint8Array(18))).toString('base64url') + 'Aa1!';
+  const scegli = (alfabeto) => {
+    const b = new Uint32Array(1);
+    // Rifiuto del residuo: senza, i primi simboli uscirebbero più spesso degli altri.
+    const limite = Math.floor(0x100000000 / alfabeto.length) * alfabeto.length;
+    do { crypto.getRandomValues(b); } while (b[0] >= limite);
+    return alfabeto[b[0] % alfabeto.length];
+  };
+  for (;;) {
+    let fuori = '';
+    for (let g = 0; g < 4; g++) {
+      if (g > 0) fuori += '-';
+      for (let c = 0; c < 4; c++) {
+        fuori += g === 0 && c === 0 ? scegli(PT_MAIUSCOLE) : scegli(PT_MINUSCOLE);
+      }
+    }
+    if (/[0-9]/.test(fuori) && /[a-z]/.test(fuori)) return fuori;
+  }
 }
 
 async function buildEmailIndex(admin) {

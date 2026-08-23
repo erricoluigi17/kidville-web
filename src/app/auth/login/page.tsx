@@ -21,6 +21,7 @@ import {
   type EsitoAccesso,
 } from '@/lib/auth/errore-accesso';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { classificaFormaPassword, type FormaPassword } from '@/lib/auth/forma-password';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import styles from './page.module.css';
 
@@ -172,20 +173,63 @@ function persisti(chiave: string, valore: string) {
 type FaseAccesso = 'credenziali' | 'dopo-accesso';
 
 /**
- * Un accesso fallito PER UN GUASTO si registra; una password sbagliata no.
+ * Un accesso fallito si registra. ANCHE quando è una password sbagliata.
  *
- * La ragione è la stessa che tiene i 400 di `/auth/v1/token` fuori dal patch di `fetch`
- * (`src/lib/logging/client.ts`): un refuso al login è un evento normale di ogni giorno di
- * ogni genitore, e spedirlo sarebbe la riga di rumore sotto cui l'incidente vero non si trova
- * più. Ciò che invece NON ha nessun'altra traccia è proprio il caso di T16-F3: il guasto che
- * l'utente vedeva come «credenziali non valide». Da oggi ha un nome nel log — e il TIMEOUT,
- * che non produce nemmeno una risposta HTTP, è visibile SOLO da qui.
+ * ⚠️ FINO AL 2026-08-22 QUI C'ERA SCRITTO IL CONTRARIO, e la motivazione era che «un
+ * refuso al login è un evento normale di ogni giorno di ogni genitore, e spedirlo
+ * sarebbe la riga di rumore sotto cui l'incidente vero non si trova più». Il timore
+ * era il rumore. Il rumore non è mai arrivato: in trenta giorni di `app_log` le righe
+ * di accesso fallito erano **zero**, perché non ne veniva scritta nessuna.
  *
- * Nel messaggio non entra nulla dell'utente: né l'email né la password. Solo la nostra
- * classificazione, il nome della classe d'errore e lo status — cioè struttura, non dato. Il
- * lock di quella promessa è in `login-errori-servizio.test.tsx`: fino al 2026-08-03 questa
- * funzione non aveva NESSUNA asserzione addosso, e azzerarne il corpo lasciava verdi tutti e
- * 29 i test del file.
+ * Quello che è arrivato è il caso opposto. Il 22/08 il cron delle iscrizioni ha
+ * spedito 67 credenziali a famiglie vere: 37 sono entrate, 30 no, e alcune hanno
+ * telefonato in segreteria. Alla domanda «quante persone hanno provato e non ci sono
+ * riuscite, e stavano usando la password che avevamo spedito noi o una loro?» il
+ * sistema non sapeva rispondere — e senza quella risposta la diagnosi è rimasta
+ * un'opinione per un giorno intero. L'assenza di rumore è costata la misura.
+ *
+ * ─── LA DISTINZIONE CHE REGGE TUTTO: MOSTRARE ≠ REGISTRARE ──────────────────────
+ * `errore-accesso.ts` spiega perché all'utente non si dice MAI se sia sbagliata
+ * l'email o la password: lo direbbe a un anonimo, e trasformerebbe il modulo in un
+ * oracolo su chi è iscritto a una scuola dell'infanzia. Quel vincolo riguarda ciò che
+ * si MOSTRA, e non cambia di una virgola. Questa riga è roba nostra, e per tre
+ * ragioni cumulative non riapre quell'oracolo:
+ *
+ *  · non contiene identità: né email, né un suo hash, né la lunghezza della password.
+ *    `hashCorrelabile` sta sul server e ha un salt; un hash calcolato QUI, senza
+ *    salt, sarebbe invertibile con l'elenco delle caselle iscritte — cioè PII
+ *    travestita da impronta. Non si fa;
+ *  · non crea conoscenza nuova: GoTrue risponde `400 invalid_credentials` in entrambi
+ *    i casi, quindi nemmeno noi sappiamo quale dei due sia;
+ *  · il «chi» c'è già altrove ed è più affidabile: `auth.users.last_sign_in_at` è la
+ *    colonna da cui è uscito il «37 su 67». Questa riga deve rispondere al PERCHÉ.
+ *
+ * ─── DUE TRAPPOLE, ENTRAMBE CAPACI DI PASSARE I TEST ────────────────────────────
+ *
+ * 1. `stato` DEVE restare `undefined` per il ramo credenziali. `livelloEvento` in
+ *    `logging/client.ts` applica `livelloFetch` a qualunque evento che porti uno
+ *    `stato` fra 400 e 599, e 400 non è fra le `ANOMALIE_4XX`: passare lo status di
+ *    GoTrue farebbe **scartare l'evento in silenzio**, i test che spiano `logClient`
+ *    resterebbero verdi perché guardano a monte, e in produzione non arriverebbe
+ *    niente. Lo status vive dentro il messaggio, dove nessun filtro lo tocca.
+ * 2. Le discriminanti stanno nel MESSAGGIO, non nel contesto. L'impronta di
+ *    deduplicazione di `app_log` comprende il messaggio e **non** il contesto (che
+ *    resta quello della prima occorrenza del giorno): una combinazione diversa deve
+ *    essere una riga diversa col proprio `occorrenze`, altrimenti diciannove casi su
+ *    venti verrebbero raccontati dal primo.
+ *
+ * Il vocabolario è CHIUSO — tre valori per `pwd`, quattro per `spazi`, tre per
+ * `riprova` — quindi al massimo 36 righe al giorno, e nessuna esplosione di cardinalità.
+ *
+ * Livello `warn` e non `error`, e non è estetica: `controlloTassoErrore` dichiara
+ * `/api/health` degradato a cinque impronte `error` distinte in un quarto d'ora. Sei
+ * famiglie che sbagliano password nella stessa mattina marcherebbero l'applicazione
+ * come guasta.
+ *
+ * E va detto ciò che questo canale NON è: **non è un sensore d'attacco**. Chi attacca
+ * parla direttamente con `/auth/v1/token` e non esegue il nostro JavaScript. Serve a
+ * dare un'ETICHETTA DI CAUSA alle righe, così che un picco di `pwd=temporanea` si
+ * legga come «le famiglie non riescono a entrare» invece che come rumore.
  */
 function registraGuastoAccesso(
   fase: FaseAccesso,
@@ -199,6 +243,45 @@ function registraGuastoAccesso(
     messaggio: `accesso non completato — fase=${fase} esito=${esito} errore=${nomeErrore(errore)}`,
     route: '/auth/login',
     stato,
+  });
+}
+
+/** Dove stavano gli spazi di troppo. Vocabolario chiuso: quattro valori, mai altro. */
+type SpaziIncollati = 'nessuno' | 'email' | 'password' | 'entrambi';
+
+function doveSonoGliSpazi(email: string, password: string): SpaziIncollati {
+  const e = email !== email.trim();
+  const p = password !== password.trim();
+  if (e && p) return 'entrambi';
+  if (e) return 'email';
+  if (p) return 'password';
+  return 'nessuno';
+}
+
+/**
+ * Il fallimento di credenziali, con la sua causa strutturale e nulla della persona.
+ *
+ * `riprova` racconta l'esito del secondo tentativo con la stringa ripulita, e
+ * `riprova=riuscita` è la regola 5 di AGENTS.md applicata a un ricupero: senza quella
+ * parola non sapremmo mai quante persone il ritentativo ha salvato, cioè quanto
+ * pesasse davvero il difetto degli spazi incollati.
+ */
+function registraCredenzialiRifiutate(dati: {
+  esito: string;
+  stato: number | undefined;
+  forma: FormaPassword;
+  spazi: SpaziIncollati;
+  riprova: 'non-serviva' | 'fallita' | 'riuscita';
+}) {
+  logClient({
+    livello: 'warn',
+    evento: 'accesso',
+    messaggio:
+      `credenziali rifiutate — esito=${dati.esito} http=${dati.stato ?? 'nessuno'} ` +
+      `pwd=${dati.forma} spazi=${dati.spazi} riprova=${dati.riprova}`,
+    route: '/auth/login',
+    // Vedi la trappola 1 qui sopra: con `stato: 400` questa riga non esisterebbe.
+    stato: undefined,
   });
 }
 
@@ -606,13 +689,27 @@ function LoginForm() {
    * Ciò che resta INDISTINTO è l'errore dell'utente: email inesistente e password sbagliata
    * dicono la stessa cosa, perché distinguerle direbbe a un anonimo chi è iscritto.
    */
-  function mostraErroreAccesso(errore: unknown) {
+  function mostraErroreAccesso(
+    errore: unknown,
+    /** Com'è andato il secondo tentativo con la stringa ripulita, se c'è stato. */
+    riprova: 'non-serviva' | 'fallita' = 'non-serviva',
+  ) {
     const esito: EsitoAccesso = classificaErroreAccesso(errore);
     setChiaveErrore(esito);
     setCredenzialiErrate(!eGuastoDelServizio(esito));
     if (eGuastoDelServizio(esito)) {
       registraGuastoAccesso('credenziali', esito, errore, statoErroreAccesso(errore));
+      return;
     }
+    // Il ramo che fino al 22/08 non lasciava traccia: vedi il blocco su
+    // `registraCredenzialiRifiutate` per il perché adesso la lascia.
+    registraCredenzialiRifiutate({
+      esito,
+      stato: statoErroreAccesso(errore),
+      forma: classificaFormaPassword(password),
+      spazi: doveSonoGliSpazi(email, password),
+      riprova,
+    });
   }
 
   async function onSubmit(e: React.FormEvent) {
@@ -637,10 +734,26 @@ function LoginForm() {
       // Il tipo è dichiarato QUI perché `getSupabase()` arriva tipizzato `any`: senza
       // annotazione l'errore tornerebbe `any` (com'era prima) e nessuno si accorgerebbe di
       // un `error.status` scritto male. `unknown` obbliga a passare dal classificatore.
-      const accesso: Promise<{ error: unknown }> = supabase.auth.signInWithPassword({ email, password });
+      /**
+       * L'EMAIL SI RIPULISCE SEMPRE, LA PASSWORD SOLO SE SERVE — e la differenza non
+       * è una sfumatura.
+       *
+       * Uno spazio ai bordi di un indirizzo non ha nessuna semantica legittima:
+       * GoTrue normalizza già di suo, e il `trim()` qui evita solo di sprecare un
+       * tentativo. Uno spazio ai bordi di una PASSWORD invece può essere voluto —
+       * chi l'ha scelta così in onboarding ce l'ha davvero dentro l'hash — e
+       * ripulirla d'ufficio chiuderebbe fuori quella persona senza che possa
+       * capirlo, visto che il messaggio d'errore è indistinto per costruzione.
+       * Perciò la password grezza si prova SEMPRE per prima: chi è dentro resta
+       * dentro, e il secondo tentativo lo vede solo chi stava già fallendo.
+       */
+      const emailPulita = email.trim();
+      const provaAccesso = (pwd: string): Promise<{ error: unknown }> =>
+        supabase.auth.signInWithPassword({ email: emailPulita, password: pwd });
+
       // T16-F4 — senza tetto, una risposta che non arriva mai lascia il bottone su
       // «Accesso…» per sempre: nessun messaggio, nessun modo di riprovare.
-      const tentativo = await budget.corri(accesso);
+      const tentativo = await budget.corri(provaAccesso(password));
       if (tentativo.scaduto) {
         mostraErrore(ESITO_TIMEOUT);
         // Un timeout non produce nessuna risposta HTTP: né il patch di `fetch` né i log del
@@ -648,10 +761,53 @@ function LoginForm() {
         registraGuastoAccesso('credenziali', ESITO_TIMEOUT, null, undefined);
         return;
       }
-      const { error } = tentativo.valore;
+      let { error } = tentativo.valore;
+
+      /**
+       * IL SECONDO E ULTIMO TENTATIVO — il rimedio al difetto del 2026-08-22.
+       *
+       * Si fa solo se ricorrono tutte e tre le condizioni, e ognuna esclude un modo
+       * di peggiorare le cose:
+       *  · l'esito è `credenzialiNonValide` — su un 429 ritentare aggrava il rate
+       *    limit, e su un 500 il secondo tentativo mentirebbe due volte;
+       *  · la password aveva davvero spazi ai bordi — altrimenti sarebbe una
+       *    richiesta identica alla prima, cioè regalata a GoTrue;
+       *  · ripulita non resta vuota.
+       * Gira dentro lo STESSO `budget`: nessun tetto nuovo, nessuna manopola nuova.
+       */
+      const passwordPulita = password.trim();
+      let riprova: 'non-serviva' | 'fallita' | 'riuscita' = 'non-serviva';
+      if (
+        error &&
+        classificaErroreAccesso(error) === 'credenzialiNonValide' &&
+        passwordPulita !== password &&
+        passwordPulita !== ''
+      ) {
+        const secondo = await budget.corri(provaAccesso(passwordPulita));
+        if (secondo.scaduto) {
+          mostraErrore(ESITO_TIMEOUT);
+          registraGuastoAccesso('credenziali', ESITO_TIMEOUT, null, undefined);
+          return;
+        }
+        error = secondo.valore.error;
+        riprova = error ? 'fallita' : 'riuscita';
+      }
+
       if (error) {
-        mostraErroreAccesso(error);
+        mostraErroreAccesso(error, riprova === 'fallita' ? 'fallita' : 'non-serviva');
         return;
+      }
+      if (riprova === 'riuscita') {
+        // Il ricupero riuscito si registra (regola 5 di AGENTS.md): è l'unico modo di
+        // sapere quante persone il ritentativo ha salvato, cioè quanto pesasse
+        // davvero il difetto degli spazi incollati.
+        registraCredenzialiRifiutate({
+          esito: 'credenzialiNonValide',
+          stato: 400,
+          forma: classificaFormaPassword(password),
+          spazi: doveSonoGliSpazi(email, password),
+          riprova: 'riuscita',
+        });
       }
       autenticato = true;
 

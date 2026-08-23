@@ -1191,19 +1191,68 @@ describe('W8 — il guasto lascia una traccia, e la traccia non contiene dati pe
         expect(String(eventi[0].messaggio)).toContain('esito=timeoutDopoAccesso')
     })
 
-    it('una password sbagliata NON si logga: sarebbe una riga per ogni refuso di ogni genitore', async () => {
+    /**
+     * ⚠️ QUESTO TEST DICEVA IL CONTRARIO, E IL PERCHÉ DEL RIBALTAMENTO È UNA MISURA.
+     *
+     * Fino al 2026-08-22 asseriva `expect(eventiLoggati()).toEqual([])`, con la
+     * motivazione «sarebbe una riga per ogni refuso di ogni genitore». Il timore era
+     * il rumore. Il rumore non è mai arrivato: in trenta giorni di `app_log` le righe
+     * di accesso fallito sono **zero**, perché non ne veniva scritta nessuna.
+     *
+     * Quello che è arrivato è il caso opposto. Il 22/08 il cron ha spedito 67
+     * credenziali; 37 famiglie sono entrate e 30 no. Alla domanda «quante hanno
+     * provato e non ci sono riuscite, e con che tipo di password», il sistema non
+     * sapeva rispondere: il fallimento più frequente che abbiamo era l'unico muto.
+     * L'assenza di rumore è costata la diagnosi.
+     *
+     * Ciò che NON cambia è il messaggio a schermo: resta `credenzialiNonValide`,
+     * indistinto fra email inesistente e password sbagliata. Il vincolo di
+     * `errore-accesso.ts` riguarda ciò che si MOSTRA a un anonimo; questa riga è
+     * roba nostra, non esce dal dispositivo con niente che identifichi una persona,
+     * e i test 7 e 8 continuano a sorvegliare l'indistinguibilità.
+     */
+    it('una password sbagliata lascia UNA riga warn con la causa, e niente dell\'utente', async () => {
         h.signIn.mockResolvedValueOnce({ error: ERRORI.credenziali })
         renderLogin()
         submitCredenziali()
         expect(await messaggioMostrato()).toBe(catalogoIt.credenzialiNonValide)
 
-        expect(eventiLoggati()).toEqual([])
+        const eventi = eventiLoggati()
+        expect(eventi).toHaveLength(1)
+        expect(eventi[0]).toMatchObject({
+            livello: 'warn',
+            evento: 'accesso',
+            route: '/auth/login',
+            /**
+             * `stato: undefined` NON è una dimenticanza: è la condizione perché la
+             * riga esista. `livelloEvento` in `logging/client.ts` applica
+             * `livelloFetch` a qualunque evento che porti uno `stato` fra 400 e 599,
+             * e 400 non è fra le `ANOMALIE_4XX`: passare lo status di GoTrue farebbe
+             * scartare l'evento in silenzio, questo test resterebbe verde perché
+             * spia `logClient` a monte, e in produzione non arriverebbe niente.
+             * Lo status vive dentro il messaggio, dove nessuno lo filtra.
+             */
+            stato: undefined,
+        })
+        const messaggio = String(eventi[0].messaggio)
+        expect(messaggio).toContain('esito=credenzialiNonValide')
+        expect(messaggio).toContain('http=400')
+        // Le tre discriminanti stanno nel MESSAGGIO e non nel contesto, perché
+        // l'impronta di deduplicazione di `app_log` comprende il messaggio e non il
+        // contesto: una combinazione diversa deve essere una riga diversa, con il
+        // proprio conteggio, invece di essere assorbita da quella del mattino.
+        expect(messaggio).toMatch(/pwd=(temporanea|temporanea-legacy|altra)/)
+        expect(messaggio).toMatch(/spazi=(nessuno|email|password|entrambi)/)
     })
 
     it.each([
         ['timeout', () => { h.signIn.mockReturnValueOnce(MAI() as never) }],
         ['500', () => { h.signIn.mockResolvedValueOnce({ error: ERRORI.cinquecento }) }],
         ['dopo l’accesso', () => { h.meMuta = true }],
+        // Il caso nuovo, ed è quello che conta di più: è l'unico in cui la persona
+        // ha appena DIGITATO la sua password: se una riga di log dovesse portarsela
+        // via, sarebbe da qui.
+        ['password sbagliata', () => { h.signIn.mockResolvedValue({ error: ERRORI.credenziali }) }],
     ])('né l’email né la password finiscono nel log (%s)', async (_nome, prepara) => {
         vi.useFakeTimers()
         prepara()

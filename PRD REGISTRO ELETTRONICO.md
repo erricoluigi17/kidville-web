@@ -873,6 +873,136 @@ documento e la memoria hanno dichiarato *«è la lettura del 09/08 a essere fuor
 
 ---
 
+## 🔑 Changelog — Le credenziali «non valide» erano valide, e il difetto era che nessuno poteva saperlo — 2026-08-23 (branch `fix/credenziali-accessibili`)
+
+Il 22 agosto alle 10:10 il cron `iscrizioni-import-invio` è partito per la prima volta sul serio:
+**67 account genitore creati e 67 email di credenziali spedite**, tutte accettate da Resend. In
+giornata alcune famiglie hanno telefonato dicendo che non riuscivano a entrare, e la segnalazione
+è arrivata come *«tutte le credenziali che l'automazione ha inviato non risultano valide»*.
+
+**Non era così, e la differenza cambia tutto il lavoro da fare.**
+
+### Cosa dicono i dati (misurati il 2026-08-23 alle 03:27)
+
+| Misura | Valore |
+|---|---|
+| Email di credenziali partite | 67, tutte 200 da Resend |
+| Registro `iscrizioni_inviti_credenziali`: fallite / ritentate | **0** — `tentativi = 0` su tutte |
+| Account entrati con `authentication_method = 'password'` | **37 su 67** (64 sessioni, 10:13 → 23:54) |
+| Usi di «password dimenticata» (`recovery_sent_at`) | **0** |
+| Password modificate dopo l'invio | **0** — nessuna rotazione |
+| Disallineamenti fra email del registro ed email dell'account | **0** |
+| Righe di log di un accesso fallito, in tutto il 22/08 | **0** |
+
+Le password erano valide, e per i 30 che non sono mai entrati **sono tuttora quelle che hanno in
+mano**: nessuna è stata ruotata. Contate per famiglia, 36 domande su 60 (60%) avevano già almeno un
+accesso dopo quattordici ore, con una curva di attivazione normale (6 accessi nella prima ora, 8
+nella seconda, in coda fino alle 23).
+
+⚠️ **Due numeri che erano stati scritti e sono risultati falsi alla verifica.** Il primo: «16 dei 37
+hanno già scelto una password propria», dedotto da `auth.users.updated_at` — ma `parents.onboarded_at`
+è **NULL per tutti e 67**, e `updated_at` si muove anche per ragioni che non sono un cambio password.
+Il secondo: «~460 account, quindi 5 pagine di `listUsers`» — `auth.users` ne ha **166**, cioè 2 pagine.
+Sono qui perché la lezione è la stessa già pagata da questo file il 31 luglio: *una deduzione
+plausibile non è una misura*, e va rifatta con una query prima di diventare una decisione.
+
+### Il difetto vero, ed era di osservabilità
+
+`mostraErroreAccesso` in `src/app/auth/login/page.tsx` registrava il fallimento **solo** se era un
+guasto del servizio: `credenzialiNonValide` non lasciava nessuna riga. Trenta persone possono aver
+sbattuto contro il login per un giorno intero senza che ne restasse traccia. Il test
+`login-errori-servizio.test.tsx` **difendeva** quel silenzio, con la motivazione «sarebbe una riga
+per ogni refuso di ogni genitore»: il timore era il rumore, e il rumore non è mai arrivato — sono
+arrivati zero. **L'assenza di rumore è costata la diagnosi**, ed è la ragione per cui quella
+decisione è stata ribaltata invece che aggirata.
+
+La distinzione che regge il ribaltamento: `errore-accesso.ts` vieta di dire **all'utente** quale
+delle due credenziali sia sbagliata (sarebbe un oracolo su chi è iscritto a una scuola dell'infanzia).
+Quel vincolo riguarda ciò che si **mostra** — e non è cambiato di una virgola. Ciò che si **registra**
+non contiene identità: né email, né un suo hash (calcolato nel browser sarebbe invertibile con
+l'elenco delle caselle iscritte, cioè PII travestita), solo causa strutturale a vocabolario chiuso.
+
+### La password non era illeggibile per caso
+
+`randomPassword()` produceva `randomBytes(18).toString('base64url') + 'Aa1!'`: 28 caratteri con `-`,
+`_`, maiuscole e minuscole mischiate e le coppie indistinguibili `l`/`I`/`1` e `O`/`0`. Il suffisso
+`Aa1!` non portava entropia — è scritto nel repo, lo conosce chiunque — e serviva solo a soddisfare
+la policy di GoTrue appiccicando quattro caratteri, fra cui un `!` da cercare sulla terza tastiera
+di un telefono.
+
+Il formato nuovo è `Xxxx-xxxx-xxxx-xxxx` (19 caratteri, alfabeto Crockford Base32 senza `i l o u`,
+una sola maiuscola in testa da un sottoinsieme ancora più prudente). La conformità alla policy viene
+dalla **struttura** — il trattino è il simbolo, la cifra è garantita per campionamento a rifiuto —
+non da una costante in coda. Entropia: log2(17) + 15 × 5 = **~79 bit**, in calo dai ~144 di prima, e
+il conto è scritto per intero in `src/lib/auth/password-temporanea.ts`. È abbondante lo stesso: la
+password è temporanea, l'hash è bcrypt, e un attacco online passa dal rate limit di GoTrue — il
+numero da battere non è 144 ma il minimo difendibile, fra 40 e 64 bit.
+
+### Gli spazi che il dito si porta dietro
+
+Nel testo semplice la riga era `  Password temporanea:   <pwd>`. Su un telefono la selezione si fa
+col dito, e il dito prende **la riga**: chi copiava si portava via l'etichetta, l'indentazione o uno
+spazio in coda, e `signInWithPassword` riceveva la stringa tale e quale. Adesso il valore sta **da
+solo sulla sua riga**, e il login ritenta **una volta sola** con la stringa ripulita — ma solo se
+l'esito è `credenzialiNonValide` e solo se gli spazi c'erano davvero.
+
+⚠️ **Perché il ritentativo e non un `trim()` secco**: un `trim()` d'ufficio toglierebbe l'accesso a
+chi ha scelto in onboarding una password con spazi ai bordi, e glielo toglierebbe **senza che possa
+capirlo**, visto che il messaggio è indistinto per costruzione. La stringa grezza si prova sempre
+per prima: chi è dentro resta dentro. Sull'email invece il `trim()` è secco — uno spazio ai bordi di
+un indirizzo non ha nessuna semantica legittima.
+
+### La trappola che avrebbe reso tutto questo un no-op silenzioso
+
+`logClient` applica `livelloEvento`, che a qualunque evento con uno `stato` fra 400 e 599 applica
+`livelloFetch`: **400 non è fra le `ANOMALIE_4XX`**, quindi torna `null` e l'evento non parte. Passare
+a `logClient` lo status 400 di GoTrue — il gesto più naturale, «completiamo la riga con lo stato» —
+sarebbe bastato a spegnere il canale in silenzio. E i test della schermata **non se ne sarebbero
+accorti**, perché spiano `logClient` a monte: avrebbero visto la chiamata e detto verde, mentre
+`app_log` restava vuota come prima.
+
+Da qui `__tests__/logging/accesso-fallito-non-si-perde.test.ts`, che osserva **a valle** della
+politica (la coda persistita) e tiene visibile la trappola con un caso che la dimostra.
+
+Per la stessa ragione le tre discriminanti (`pwd`, `spazi`, `riprova`) stanno nel **messaggio** e non
+nel contesto: l'impronta di deduplicazione di `app_log` comprende il messaggio e **non** il contesto,
+che resta quello della prima occorrenza del giorno. Vocabolario chiuso, 3 × 4 × 3 = al massimo 36
+righe al giorno. Livello `warn` e non `error`, perché `controlloTassoErrore` dichiara `/api/health`
+degradato a cinque impronte `error` distinte in un quarto d'ora: sei famiglie che sbagliano password
+nella stessa mattina marcherebbero l'applicazione come guasta.
+
+E va detto ciò che questo canale **non** è: non è un sensore d'attacco. Chi attacca parla direttamente
+con `/auth/v1/token` e non esegue il nostro JavaScript. Serve a dare un'**etichetta di causa** alle
+righe, così che un picco di `pwd=temporanea` si legga come «le famiglie non riescono a entrare».
+
+### Cosa NON è stato toccato
+
+- **Le password dei 37 che sono già entrati.** Nessuna, e non solo le presunte 16: come misurato
+  sopra, quel criterio non esisteva. Non sapendo chi abbia una password propria, non se ne tocca
+  nessuna.
+- `inviato_il` e `resend_message_id` sulle 67 righe: sono la prova del primo recapito, cioè l'unica
+  risposta possibile a «non mi è mai arrivato niente».
+- La regola per cui all'utente non si dice mai *quale* delle due credenziali è sbagliata.
+- Il claim anti-doppio-invio e il 429 trattato come rinvio: hanno funzionato, 0 fallimenti su 67.
+
+### Resta aperto
+
+- **Il recupero password autonomo non esiste.** «Password dimenticata?» apre solo un testo che dice
+  di telefonare in segreteria — ed è il motivo per cui `recovery_sent_at` è 0 su tutti e 67: non è
+  che nessuno ne avesse bisogno, è che la strada non c'è. Con 352 domande ancora in coda, ogni
+  famiglia bloccata diventa una telefonata e una rigenerazione a mano.
+- **La rigenerazione ai mai-entrati**, da fare *dopo* che questo formato è in produzione: rispedire
+  ciò che non ha funzionato brucerebbe anche la seconda occasione. Selezione **solo** su
+  `last_sign_in_at IS NULL`, mai su `updated_at`.
+- **Il tetto giornaliero non è giornaliero**: `emailOggi` è una variabile locale alla singola
+  invocazione. Finché il cron gira una volta al giorno il nome non mente; appena gira più volte,
+  «300 al giorno» diventa 300 *per giro*.
+- **Il collo di bottiglia sono ~27-29 round-trip in serie per domanda** (gap mediano misurato: 3,35 s),
+  non l'email (~350 ms, il 10%) né la pausa (150 ms, il 4,5%). Il tetto di 300 non è mai stato il
+  vincolo: il 22/08 il giro si è fermato a 67 per `tempo-scaduto`.
+
+---
+
 ## 🏫 Changelog — Cesa entra nell'automazione, e il tetto che proteggeva una quota che non c'è più 2026-08-21 (branch `feat/iscrizioni-cesa-elenco-blocchi`)
 
 Il titolare ha consegnato il foglio di classe di **Kidville Cesa** e chiesto di attivare anche lì

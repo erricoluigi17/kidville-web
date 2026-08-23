@@ -99,7 +99,7 @@ export function messaggioCredenziali(d: DatiCredenziali, sede: ContestoSede): Me
         saluto,
         p(h`${esc(apertura)} le credenziali per accedere all'area riservata di <strong>${esc(sede.nome)}</strong>. Vanno conservate in un posto sicuro.`),
         riquadroCredenziali(d.email, d.password),
-        avviso('info', h`Al primo accesso è necessario impostare una nuova password. La password qui sopra è temporanea e serve solo per entrare la prima volta.`),
+        avviso('info', h`Si entra con la password qui sopra, e subito dopo il sistema ne fa scegliere una nuova. Quella temporanea serve solo per la prima volta.`),
         bottone(login, 'Vai all\'area riservata'),
         linkDiScorta(login, 'Se il bottone non funziona, l\'accesso avviene da'),
         riga(),
@@ -129,10 +129,20 @@ export function messaggioCredenziali(d: DatiCredenziali, sede: ContestoSede): Me
             '',
             // Le due etichette con i due punti sono le stesse dell'HTML e sono
             // ciò che chi legge in testo semplice cerca con gli occhi.
-            `  Email di accesso:      ${d.email}`,
-            `  Password temporanea:   ${d.password}`,
+            //
+            // ⚠️ IL VALORE STA DA SOLO SULLA SUA RIGA, e non è impaginazione. Fino al
+            // 2026-08-22 la riga era `  Password temporanea:   <pwd>`: su un telefono
+            // la selezione si fa col dito, e il dito prende LA RIGA. Chi copiava si
+            // portava via l'etichetta, o l'indentazione, o uno spazio in coda — e il
+            // login rispondeva «credenziali non valide» a una password giusta. Quel
+            // giorno 30 famiglie su 67 non sono entrate. Niente davanti, niente dopo:
+            // la riga È il valore.
+            'Email di accesso:',
+            d.email,
+            'Password temporanea:',
+            d.password,
             '',
-            'Al primo accesso è necessario impostare una nuova password. La password qui sopra è temporanea e serve solo per entrare la prima volta.',
+            'Si entra con la password qui sopra, e subito dopo il sistema ne fa scegliere una nuova. Quella temporanea serve solo per la prima volta.',
             '',
             'Accesso all\'area riservata:',
             login,

@@ -962,10 +962,10 @@ che confronta due copie della stessa lacuna e le trova concordi.
 
 ### Cosa resta, e in che ordine
 
-- La migrazione **`iscrizioni_import_cinque_giri`** (`10,20,30,40,50 8 * * *`) è scritta e
-  collaudata ma **non ancora applicata**, di proposito: va applicata solo dopo che il conteggio
-  giornaliero è in produzione, altrimenti cinque giri col codice vecchio significano 300 email
-  *per giro*. Il nuovo lock `import-iscrizioni-giri-non-si-sovrappongono` verifica che due
+- ✅ La migrazione **`iscrizioni_import_cinque_giri`** (`10,20,30,40,50 8 * * *`) è stata
+  **applicata il 2026-08-23 alle 03:28 UTC**, dopo aver verificato `Ready` su Vercel il deploy del
+  conteggio giornaliero — l'ordine che il commento della migrazione stessa prescrive, e che se
+  invertito avrebbe significato 300 email *per giro* invece che al giorno. Il nuovo lock `import-iscrizioni-giri-non-si-sovrappongono` verifica che due
   accensioni distino più del `maxDuration`: `riprendiInvitiSospesi` **non ha un claim**, e due giri
   sovrapposti spedirebbero due volte alla stessa persona invalidando la prima password.
 - Il **recupero password autonomo** continua a non esistere: «Password dimenticata?» dice solo di

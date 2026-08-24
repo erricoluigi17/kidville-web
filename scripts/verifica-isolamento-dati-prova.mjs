@@ -4,20 +4,35 @@
  *
  * PERCHÉ ESISTE. Il 2026-08-24 tutti i dati di prova sono stati spostati in una
  * sede dedicata, perché fino a quel giorno vivevano dentro le sedi vere: il KPI
- * «Studenti iscritti» che vede la segreteria contava 22 bambini inesistenti a
- * Giugliano, 2 ad Aversa e 1 a Cesa, e `Collaudo ProvaAversa` sedeva nella
- * sezione REALE «3 ANNI» di Aversa — nel registro di una maestra vera.
+ * «Studenti iscritti» contava 22 bambini inesistenti a Giugliano, e
+ * `Collaudo ProvaAversa` sedeva nella sezione REALE «3 ANNI» di Aversa — nel
+ * registro di una maestra vera.
  *
- * Lo spostamento è stato un'operazione una-tantum. Questo file NON la ripete:
- * verifica che regga. Un account di collaudo creato domani dentro Giugliano
- * rimetterebbe il problema dov'era, e nessun test unitario può accorgersene
- * perché il difetto vive nei DATI, non nel codice.
+ * ⚠️ PERCHÉ HA DUE CONTROLLI, E PERCHÉ IL SECONDO È NATO SUBITO DOPO IL PRIMO.
+ * La prima stesura di questo file aveva solo il controllo A: cinque tabelle
+ * scelte a mano. Rispondeva «✓ nessun dato di collaudo dentro una sede reale»
+ * mentre **1.353 righe** erano rimaste indietro — 370 in `audit_scritture_docente`,
+ * 89 in `pagamenti`, 66 in `mensa_ticket_movimenti`, 50 in `solleciti`, 96 in
+ * `presenze`, e altre otto tabelle. Al KPI «Pagamenti scaduti» di Giugliano la
+ * segreteria vedeva 24 morosità per € 2.710, di cui 23 per € 2.670 di bambini
+ * che non esistono: il dato vero era **€ 40**.
  *
- * COME RICONOSCE UNA SEDE FINTA. Solo dal PREFISSO `e2e00000` dell'uuid, lo
- * stesso segnale di `isScuolaE2E` (src/lib/scuole/reali.ts). Nessun uuid di sede
- * è scritto qui dentro, di proposito: un uuid in un letterale vale per la sede
- * di oggi e per nessuna di domani, e il lock
- * `__tests__/architecture/migrazioni-senza-sede-cablata.test.ts` lo vieta.
+ * Non era un controllo assente: era un controllo che DAVA IL VERDE. È il guasto
+ * peggiore, perché toglie a chi legge la voglia di guardare. Il rimedio non è
+ * allungare la lista — la prossima tabella la dimenticherebbe di nuovo — ma
+ * derivarla dallo schema. Da qui il controllo B.
+ *
+ *   A · MARCATORI — chi non ha un legame da seguire: un utente `@kidville.test`,
+ *       una classe che si chiama «TEST», un bambino che si chiama «Collaudo»
+ *       messo direttamente in una sede vera. Nessuna colonna lo tradisce: solo
+ *       il nome. Questo controllo B non lo vedrebbe mai.
+ *
+ *   B · COERENZA (funzione `dati_prova_fuori_sede()`) — righe la cui `scuola_id`
+ *       dice una sede REALE mentre l'entità a cui appartengono vive in una sede
+ *       di collaudo. L'elenco delle tabelle è DERIVATO dallo schema: qualunque
+ *       tabella nasca domani con `scuola_id` e un legame noto entra da sola.
+ *
+ * Nessuno dei due basta. Insieme coprono le due forme del difetto.
  *
  * SOLA LETTURA. Non scrive niente, mai.
  *
@@ -26,7 +41,7 @@
  *     node scripts/verifica-isolamento-dati-prova.mjs
  *
  * USCITA
- *   0 = pulito · 1 = errore di lettura · 3 = dati di prova trovati in sedi vere
+ *   0 = pulito · 1 = errore di lettura · 3 = dati di prova in sedi vere
  */
 import { createClient } from '@supabase/supabase-js';
 
@@ -81,53 +96,58 @@ async function idDiCollaudo() {
 
 const collaudo = await idDiCollaudo();
 const nomiSede = new Map(esito('schools', await db.from('schools').select('id, nome')).map((s) => [s.id, s.nome]));
-const rilievi = [];
-
 const sedeDi = (id) => `${nomiSede.get(id) ?? id}`;
+const difetti = [];
+const registri = [];
 
-// 1. Account di collaudo agganciati a una sede vera.
+// ─── A · MARCATORI ───────────────────────────────────────────────────────────
+
 for (const u of esito('utenti', await db.from('utenti').select('id, scuola_id'))) {
   if (collaudo.has(u.id) && !eNonReale(u.scuola_id)) {
-    rilievi.push(`utente di collaudo nella sede reale «${sedeDi(u.scuola_id)}»  (id ${u.id})`);
+    difetti.push(`utente di collaudo nella sede reale «${sedeDi(u.scuola_id)}»  (id ${u.id})`);
   }
 }
 
-// 2. Ponte multi-sede: un account di collaudo che vede un plesso vero.
-for (const r of esito('utenti_scuole', await db.from('utenti_scuole').select('utente_id, scuola_id'))) {
-  if (collaudo.has(r.utente_id) && !eNonReale(r.scuola_id)) {
-    rilievi.push(`account di collaudo agganciato via utenti_scuole a «${sedeDi(r.scuola_id)}»`);
-  }
-}
-
-// 3. Classi di prova dentro una sede vera.
 for (const s of esito('sections', await db.from('sections').select('id, name, scuola_id'))) {
   if (!eNonReale(s.scuola_id) && MARCATORI.test(String(s.name ?? ''))) {
-    rilievi.push(`classe di prova «${s.name}» nella sede reale «${sedeDi(s.scuola_id)}»`);
+    difetti.push(`classe di prova «${s.name}» nella sede reale «${sedeDi(s.scuola_id)}»`);
   }
 }
 
-// 4. Bambini inventati fra i bambini veri: è il rilievo che conta di più,
-//    perché è quello che gonfia il KPI della segreteria e riempie un registro.
+// Bambini inventati fra i bambini veri: è il rilievo che pesa di più, perché
+// gonfia il KPI della segreteria e riempie il registro di una maestra.
 for (const a of esito('alunni', await db.from('alunni').select('id, nome, cognome, scuola_id, stato'))) {
   if (eNonReale(a.scuola_id)) continue;
   if (MARCATORI.test(`${a.nome ?? ''} ${a.cognome ?? ''}`)) {
-    rilievi.push(`alunno con nome di prova nella sede reale «${sedeDi(a.scuola_id)}» (stato ${a.stato}, id ${a.id})`);
+    difetti.push(`alunno con nome di prova nella sede reale «${sedeDi(a.scuola_id)}» (stato ${a.stato}, id ${a.id})`);
   }
 }
 
-// 5. Avvisi scritti da un account di collaudo dentro una sede vera: li vedono
-//    famiglie reali. Il 2026-08-24 uno di questi era stato APERTO da 43 famiglie.
-for (const v of esito('avvisi', await db.from('avvisi').select('id, author_id, scuola_id'))) {
-  if (collaudo.has(v.author_id) && !eNonReale(v.scuola_id)) {
-    rilievi.push(`avviso di un account di collaudo pubblicato in «${sedeDi(v.scuola_id)}» (id ${v.id})`);
-  }
+// ─── B · COERENZA, derivata dallo schema ─────────────────────────────────────
+
+for (const r of esito('dati_prova_fuori_sede()', await db.rpc('dati_prova_fuori_sede'))) {
+  const riga = `${r.righe} righe in \`${r.tabella}\` (via ${r.colonna_legame}) risultano di una sede reale`;
+  if (r.natura === 'registro_numerato') registri.push(riga);
+  else difetti.push(riga);
 }
 
-if (rilievi.length === 0) {
+// ─── Verdetto ────────────────────────────────────────────────────────────────
+
+if (registri.length > 0) {
+  console.log('\nℹ️  Registri NUMERATI — si segnalano, non si spostano:\n');
+  for (const r of registri) console.log(`  · ${r}`);
+  console.log(
+    '\n  Protocolli (DPR 445), ricevute e fatture hanno numerazione sequenziale per sede:\n' +
+    '  toglierne una lascia un BUCO, che in un registro legale o fiscale è peggio della\n' +
+    '  riga di prova che contiene. Lì si annulla o si annota — è una decisione contabile.\n',
+  );
+}
+
+if (difetti.length === 0) {
   console.log('✓ Nessun dato di collaudo dentro una sede reale.');
   process.exit(0);
 }
-console.error(`\n✗ ${rilievi.length} rilievi — dati di collaudo dentro sedi reali:\n`);
-for (const r of rilievi) console.error(`  · ${r}`);
+console.error(`\n✗ ${difetti.length} rilievi — dati di collaudo dentro sedi reali:\n`);
+for (const d of difetti) console.error(`  · ${d}`);
 console.error('\nVanno spostati nella sede demo, non cancellati: sono agganciati agli account che Apple e Google usano.\n');
 process.exit(3);

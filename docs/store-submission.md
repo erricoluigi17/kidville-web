@@ -49,8 +49,23 @@ funzionalità richiedono l'accesso.
 
 ### Quale account dare — e quale NO
 
-Gli account TEST esistono già **in produzione**, agganciati alle due classi etichettate
-TEST della sede Kidville Giugliano (vedi PRD, sezione «Classi di prova»).
+> 🏫 **Dal 2026-08-24 gli account TEST non stanno più dentro Kidville Giugliano.** Vivono
+> tutti nella sede **`Kidville Demo`** (`e2e00000-…d000`), creata apposta perché i loro
+> bambini finti gonfiavano il KPI «Studenti iscritti» della segreteria di 22 unità e uno di
+> loro sedeva nella sezione **reale** «3 ANNI» di Aversa. Le classi si chiamano ora
+> `TEST Infanzia GIU` · `TEST 1A GIU` · `TEST Infanzia AVE` · `TEST Infanzia CES`.
+>
+> Per il revisore **non cambia niente**: accede con le stesse credenziali e vede gli stessi
+> bambini. Cambia che `test.segreteria@kidville.test` — l'account che non va MAI consegnato
+> — non legge più l'anagrafica di una sede vera, perché non è più agganciato a una.
+>
+> 🔴 **L'account demo non si cancella, mai, e non ha una data di scadenza.** Apple rientra
+> con lo **stesso** account a ogni aggiornamento: cancellarlo significa rigetto **5.1.1** al
+> primo update, non «un problema quando ci sarà la prossima review». Il controllo
+> automatico è `scripts/verifica-isolamento-dati-prova.mjs`.
+
+Gli account TEST esistono già **in produzione**, agganciati alle classi etichettate
+TEST della sede `Kidville Demo` (vedi PRD, changelog del 2026-08-24).
 
 | Account | Ruolo | Cosa vede | Darlo al revisore? |
 |---|---|---|---|

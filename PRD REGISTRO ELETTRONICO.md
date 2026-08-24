@@ -156,9 +156,18 @@ misura era in corso. L'avviso è stato spostato, non cancellato: le 43 righe res
 🔴 **`utenti.attivo = false` non impedisce l'accesso a nessuno.** `requireStaff` seleziona
 `id, nome, cognome, ruolo, role, scuola_id` e quella colonna non la legge mai; su `utenti` **non
 esiste alcuna policy RLS**; e nessuna interfaccia consente di disattivare un utente (`attivo` viene
-scritto solo come `true` alla creazione). I 26 account sono **marcati** inattivi, non bloccati: a
-proteggere i dati veri è lo spostamento di sede. **Resta aperto** decidere se bloccarli davvero —
-controllo di `attivo` nel gate, `banned_until` in GoTrue, o rotazione delle password.
+scritto solo come `true` alla creazione). I 26 account sono **marcati** inattivi, non bloccati.
+
+**Decisione del titolare, 2026-08-24: si lasciano così, e non è una svista.** A proteggere i dati
+veri non è quel flag ma lo **spostamento di sede**: dopo il 24/08 quei 26 account risolvono su
+`Kidville Demo` e non hanno più alcun aggancio a un plesso vero — `test.segreteria` non legge più
+l'anagrafica di Giugliano, `test.multisede.admin` è passato da tre sedi vere a una demo. Possono
+ancora accedere, e vedono soltanto bambini inventati.
+
+> ⚠️ **Perciò «disattivati», in questo changelog e altrove, va letto come «marcati».** Chi un giorno
+> avesse bisogno di chiudere davvero un accesso ha tre strade e nessuna è in opera oggi: controllo
+> di `attivo` nel gate di autenticazione, `banned_until` in GoTrue, rotazione delle password.
+> Scriverlo è il punto: una protezione descritta e non presente è peggio di nessuna protezione.
 
 **Codice:** `__tests__/lib/sede-demo.test.ts` (lock: il prefisso dell'uuid è obbligatorio, il nome
 non basta), `__tests__/fixtures/sedi.ts` (`SEDE_DEMO`), `scripts/verifica-isolamento-dati-prova.mjs`

@@ -266,7 +266,7 @@ Verifiche eseguite, tutte a zero: alunni finti in sedi reali **0** · alunni nel
 
 ## Cosa resta aperto
 
-- **Bloccare davvero gli account disattivati.** O si aggiunge il controllo di `attivo` nel gate di autenticazione (durevole, ma tocca il percorso più delicato), oppure si sospendono in GoTrue (`banned_until`), oppure si ruotano le password. Oggi non è fatto nessuno dei tre.
+- ~~Bloccare davvero gli account disattivati.~~ **Deciso il 2026-08-24: si lasciano accessibili**, perché lo spostamento di sede li confina già ai soli dati demo. Le tre strade restano scritte qui per chi un giorno ne avesse bisogno — `attivo` nel gate, `banned_until` in GoTrue, rotazione password — e **nessuna è in opera**: «disattivati» va letto come «marcati».
 - **Rinfrescare il contenuto della classe demo** (Task 4): il più recente è di luglio e la revisione Google è in corso.
 
 ## Cosa questo piano NON fa, di proposito

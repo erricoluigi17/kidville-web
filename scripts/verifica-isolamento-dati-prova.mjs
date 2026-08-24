@@ -34,6 +34,24 @@
  *
  * Nessuno dei due basta. Insieme coprono le due forme del difetto.
  *
+ * ⚠️ QUELLO CHE NEMMENO INSIEME COPRONO, e va detto invece di lasciarlo credere.
+ * Il 2026-08-24 il registro protocolli di Giugliano conteneva due registrazioni
+ * di prova — la n. 1 intitolata `tdfguuipo`, la n. 2 «Certificato di iscrizione
+ * e frequenza — Test PRI A». Nessuno dei due controlli le vede, e non per una
+ * dimenticanza:
+ *   · B non può, perché `protocolli` non ha NESSUNA colonna che punti al bambino
+ *     finto: il documento lo nomina soltanto nel testo libero dell'oggetto;
+ *   · e il creatore non aiuta — le ha registrate `erricoluigi17@gmail.com`, un
+ *     account VERO in una sede VERA;
+ *   · A non può, perché un marcatore sulle parole non avrebbe mai riconosciuto
+ *     `tdfguuipo`, e su un oggetto come «Verbale del test di evacuazione»
+ *     scatterebbe su un protocollo autentico.
+ *
+ * Sono state trovate leggendo il registro a occhio. Un controllo automatico che
+ * fingesse di coprirle sarebbe peggio di questa nota: darebbe il verde su una
+ * cosa che non guarda, che è il difetto per cui questo file è stato riscritto.
+ * Il registro protocolli si rilegge a mano, ogni tanto, e per ora è così.
+ *
  * SOLA LETTURA. Non scrive niente, mai.
  *
  * USO

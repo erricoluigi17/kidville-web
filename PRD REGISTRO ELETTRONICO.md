@@ -160,6 +160,45 @@ correzione è annullare o annotare, ed è una decisione contabile.
 🔻 **`app_log` (602 righe)** è escluso del tutto: registra ciò che è **accaduto**, e riscriverne
 l'attribuzione di sede falsificherebbe una cronaca. Scade da sé a 30 giorni.
 
+### Seguito del 2026-08-24 — i due registri, chiusi in due modi diversi
+
+Il titolare ha chiesto di eliminare anche quelli. **Il database ha risposto due cose diverse**, ed è
+la ragione per cui non si è fatta la stessa operazione su entrambi.
+
+**Ricevute — il DELETE è vietato, senza eccezioni.** `worm_ricevute_emesse` solleva
+*«registro fiscale immodificabile (DELETE non consentito)»* e **non prevede alcuna via d'uscita**:
+l'unica modifica ammessa è l'annullo. Le due ricevute di Giugliano (n. 1 € 40 e n. 2 € 150) sono
+state **annullate** con motivo *«emessa in collaudo: intestata a un alunno di prova, mai consegnata
+a una famiglia»* e operatore. Restano nel registro, la numerazione resta continua, e sono
+visibilmente nulle — che è come si corregge una ricevuta emessa per errore. Cancellarle davvero
+avrebbe richiesto di **smontare quel trigger su un registro fiscale in produzione**.
+
+**Protocolli — il DELETE è previsto dal prodotto.** `worm_protocolli` lo consente con
+`app.protocollo_admin_delete = 'on'` (è l'«eliminazione admin» della migrazione
+`protocolli_rettifica_admin`). Le due registrazioni di prova si eliminano, **ma prima vanno tolti i
+4 file** dal bucket `protocollo` (`0000001-*`, `0000002-*`, 4,1 MB): il database **vieta** il
+`DELETE` diretto su `storage.objects` — *«Use the Storage API instead»* — proprio per non lasciare
+file orfani. ⏳ Operazione **da completare**: rimossi i file, restano da cancellare le due righe.
+
+🔻 **Il contatore `protocolli_numerazione` di Giugliano NON si tocca: resta a 9.** I protocolli 3–9
+sono veri — certificati per il Bonus Asilo Nido INPS **già consegnati alle famiglie**, col numero
+stampato sopra. Rinumerarli farebbe litigare il registro con la carta uscita dalla scuola. La
+numerazione riprenderà da 10, con un buco dichiarato in 1–2.
+
+⚠️ **Un limite che nessun controllo automatico copre, e che è meglio scritto che sottinteso.** Quelle
+due registrazioni **nessuno dei due controlli le vede**: `protocolli` non ha alcuna colonna che punti
+al bambino finto (lo nomina solo nel testo dell'oggetto), il creatore è un account **vero**
+(`erricoluigi17@gmail.com`) in una sede **vera**, e un marcatore sulle parole non avrebbe mai
+riconosciuto un oggetto intitolato `tdfguuipo` — mentre su «Verbale del test di evacuazione»
+scatterebbe a torto. Sono state trovate **leggendo il registro a occhio**. Un controllo che fingesse
+di coprirle darebbe il verde su ciò che non guarda: è esattamente il difetto per cui questo
+verificatore è stato riscritto.
+
+**Terza stesura della funzione** (`20260824214500`): i documenti **già annullati non si segnalano
+più**. È lo stesso difetto di stamattina all'incontrario — un controllo che approva sempre non viene
+creduto, uno che segnala sempre non viene letto; in entrambi i casi si spegne da solo, nella testa di
+chi lo guarda. Un annullo è una risposta; chi non risponde resta segnalato.
+
 ---
 
 ## 🏫 Changelog — I bambini finti erano nel conteggio dei veri, e uno sedeva in una classe vera — 2026-08-24 (branch `chore/sede-demo-isolamento-dati-prova`)

@@ -43,6 +43,26 @@ export const SEDE_E2E = 'e2e00000-0000-4000-8000-000000000001'
  * deve poter mettere DUE sedi di collaudo, non una.
  */
 export const SEDE_E2E_DUE = 'e2e00000-0000-4000-8000-000000000002'
+/**
+ * La sede che in PRODUZIONE ospita tutti i dati di collaudo, dal 2026-08-24.
+ *
+ * Non è la sede della CI e non va confusa con lei: `SEDE_E2E` esiste per il seed
+ * di `scripts/seed-e2e.mjs`, che la svuota e la ripopola a ogni giro. Questa
+ * invece contiene gli account che Apple e Google usano per la revisione, i
+ * bambini finti delle loro classi e il contenuto che il revisore deve vedere:
+ * un seed che la resettasse spegnerebbe la review.
+ *
+ * PERCHÉ ESISTE. Fino al 2026-08-24 i dati di prova vivevano dentro le sedi
+ * VERE, e il KPI «Studenti iscritti» che vede la segreteria contava 22 bambini
+ * inesistenti a Giugliano, 2 ad Aversa, 1 a Cesa. Uno di loro sedeva nella
+ * sezione reale «3 ANNI» di Aversa, cioè nel registro di una maestra vera.
+ *
+ * ⚠️ IL PREFISSO `e2e00000` NON È DECORATIVO, ed è l'unica ragione per cui
+ * questa sede non compare nel selettore pubblico del modulo d'iscrizione:
+ * `isScuolaE2E` la riconosce da lì. Con un uuid qualunque, una famiglia vera
+ * potrebbe iscrivere il proprio figlio a una sede che non esiste.
+ */
+export const SEDE_DEMO = 'e2e00000-0000-4000-8000-00000000d000'
 
 /** Nomi visualizzabili, in ordine alfabetico crescente A → B → C. */
 export const NOME_SEDE_A = 'Kidville Alfa'
@@ -52,3 +72,10 @@ export const NOME_SEDE_C = 'Kidville Gamma'
 export const NOME_SEDE_E2E = 'Kidville E2E'
 /** Come sopra, per la seconda sede di collaudo (lo stesso nome del seed). */
 export const NOME_SEDE_E2E_DUE = 'Kidville E2E Due'
+/**
+ * Il nome della sede demo, che di proposito NON contiene «e2e»: lo legge il
+ * revisore Apple e Google dentro l'app. L'esclusione dagli elenchi pubblici la
+ * regge il prefisso dell'uuid, non il nome — ed è per questo che il prefisso non
+ * si può cambiare.
+ */
+export const NOME_SEDE_DEMO = 'Kidville Demo'

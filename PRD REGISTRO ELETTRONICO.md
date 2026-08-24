@@ -94,6 +94,90 @@
 
 ---
 
+## 🏫 Changelog — I bambini finti erano nel conteggio dei veri, e uno sedeva in una classe vera — 2026-08-24 (branch `chore/sede-demo-isolamento-dati-prova`)
+
+**Il KPI «Studenti iscritti» che vede la segreteria contava 25 bambini che non esistono.** Misurato
+sul database di produzione: Giugliano 198 → di cui **22 finti**; Aversa 2 → **tutti e 2 finti**;
+Cesa 128 → **1 finto**. Non era una svista di un giorno: i record di collaudo vivevano dentro le
+sedi vere da luglio, e nessuno li aveva mai sottratti perché il numero non sembrava sbagliato.
+
+**Il caso peggiore non era un numero.** `Collaudo ProvaAversa` non stava in una classe di prova:
+stava nella sezione **REALE** «3 ANNI» di Aversa. Nel registro di una maestra vera, in mezzo a
+bambini veri.
+
+**La correzione non è un filtro nel codice, ed è questo il punto.** L'isolamento fra sedi esisteva
+già e sta in un posto solo: `isScuolaE2E` (`src/lib/scuole/reali.ts`) esclude dagli elenchi pubblici
+ogni sede il cui id inizia per `e2e00000`, e `resolveScuoleAttive` filtra **ogni** KPI con
+`.in('scuola_id', sedi)`. Bastava che i dati di prova cambiassero sede. Aggiungere un secondo filtro
+«escludi i finti» avrebbe creato una seconda verità da tenere allineata per sempre.
+
+Nasce quindi **`Kidville Demo`** (`e2e00000-…d000`), quarta sede non pubblica, distinta da
+`Kidville E2E` della CI — che il seed svuota e ripopola a ogni giro, e che perciò non poteva
+ospitare gli account su cui è in corso una revisione.
+
+| Sede | prima | dopo |
+|---|---|---|
+| Kidville Giugliano | 198 | **176** |
+| Kidville Aversa | 2 | **0** |
+| Kidville Cesa | 128 | **127** |
+| Kidville Demo *(nuova)* | — | 25 |
+
+**Niente è stato cancellato.** 48 utenti, 4 classi, 25 alunni, 9 avvisi, 9 presenze e 3 domande
+d'iscrizione hanno cambiato `scuola_id`. Ogni riga è recuperabile con una `UPDATE`.
+
+**I 22 account che Apple e Google USANO restano attivi**, e non hanno una data di scadenza: la
+release Play 1.0 è in revisione dal 24/08 ore 18:05, e Apple rientra con **lo stesso account demo a
+ogni aggiornamento**. Gli altri 26 sono marcati `attivo = false`.
+
+### Quattro cose imparate, tre delle quali costano
+
+1. **`pg_constraint` non elenca gli indici.** Il piano scritto un'ora prima diceva *«verificato,
+   nessun vincolo UNIQUE su `sections(scuola_id, name)`»*. Era falso: `sections_nome_per_sede`
+   esiste ed è un `CREATE UNIQUE INDEX`. Avevo interrogato la tabella dei *constraint* e scritto
+   «verificato» accanto al risultato. La misura giusta è `pg_indexes … indexdef ILIKE '%UNIQUE%'`.
+2. **A salvare l'operazione è stata la TRANSAZIONE, non la revisione.** Tre classi «TEST Infanzia»
+   non possono convivere nella stessa sede: l'indice ha respinto, e tutto è tornato indietro. Lo
+   script `.mjs` scritto prima — chiamate separate, nessuna transazione — avrebbe lasciato sezioni,
+   alunni e utenti spostati **a metà**.
+3. **`utenti_scuole` ha PK `(utente_id, scuola_id)`**: `test.multisede.admin` aveva tre righe verso
+   le tre sedi vere, e portarle tutte alla stessa sede demo viola la chiave alla seconda. Sostituite
+   da una sola — effetto desiderato: quell'account non vede più i tre plessi veri.
+4. **Il trigger `sync_alunno_section_id` NON si riattiva sul cambio di sola sede** (solo su INSERT,
+   o se cambia `classe_sezione`, o se `section_id` è `NULL`). Spostare `Collaudo ProvaAversa` di
+   sede lo avrebbe lasciato **dentro la sezione vera di Aversa, in silenzio**.
+
+### Due misure che smentiscono quanto si dava per buono
+
+🔴 **Le «39 risposte» dei genitori all'avviso di prova del 18/07 non erano risposte: erano letture.**
+`risposto_il` è `NULL` su tutte e 43 le righe. Nessuno ha mai risposto — **43 famiglie vere hanno
+aperto un avviso di collaudo**, e l'ultima l'ha aperto il **2026-08-24 alle 18:49**, mentre questa
+misura era in corso. L'avviso è stato spostato, non cancellato: le 43 righe restano.
+
+🔴 **`utenti.attivo = false` non impedisce l'accesso a nessuno.** `requireStaff` seleziona
+`id, nome, cognome, ruolo, role, scuola_id` e quella colonna non la legge mai; su `utenti` **non
+esiste alcuna policy RLS**; e nessuna interfaccia consente di disattivare un utente (`attivo` viene
+scritto solo come `true` alla creazione). I 26 account sono **marcati** inattivi, non bloccati.
+
+**Decisione del titolare, 2026-08-24: si lasciano così, e non è una svista.** A proteggere i dati
+veri non è quel flag ma lo **spostamento di sede**: dopo il 24/08 quei 26 account risolvono su
+`Kidville Demo` e non hanno più alcun aggancio a un plesso vero — `test.segreteria` non legge più
+l'anagrafica di Giugliano, `test.multisede.admin` è passato da tre sedi vere a una demo. Possono
+ancora accedere, e vedono soltanto bambini inventati.
+
+> ⚠️ **Perciò «disattivati», in questo changelog e altrove, va letto come «marcati».** Chi un giorno
+> avesse bisogno di chiudere davvero un accesso ha tre strade e nessuna è in opera oggi: controllo
+> di `attivo` nel gate di autenticazione, `banned_until` in GoTrue, rotazione delle password.
+> Scriverlo è il punto: una protezione descritta e non presente è peggio di nessuna protezione.
+
+**Codice:** `__tests__/lib/sede-demo.test.ts` (lock: il prefisso dell'uuid è obbligatorio, il nome
+non basta), `__tests__/fixtures/sedi.ts` (`SEDE_DEMO`), `scripts/verifica-isolamento-dati-prova.mjs`
+(controllo in sola lettura, esce **3** se un dato di prova rientra in una sede vera; provato a
+rompersi: 96 rilievi col predicato guasto, 0 con quello giusto). Nessuna migrazione, nessuna query
+di KPI modificata. Piano e trappole in
+`docs/superpowers/plans/2026-08-24-sede-demo-isolamento-dati-prova.md`.
+
+---
+
 ## 🚀 Changelog — Google Play ha concesso l'accesso, e la release è partita per la revisione — 2026-08-24 (nessuna modifica al codice)
 
 Il **23/08 alle 21:22** è arrivata l'email `no-reply-googleplay-developer@google.com` — *«Congratulations!

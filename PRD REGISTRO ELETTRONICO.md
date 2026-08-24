@@ -94,6 +94,98 @@
 
 ---
 
+## 🚀 Changelog — Google Play ha concesso l'accesso, e la release è partita per la revisione — 2026-08-24 (nessuna modifica al codice)
+
+Il **23/08 alle 21:22** è arrivata l'email `no-reply-googleplay-developer@google.com` — *«Congratulations!
+Your app has been granted Google Play production access»*. Quattro giorni dopo la domanda del 20/08,
+dentro la finestra dei «al massimo 7 giorni». Copia a `giuseppegrande07@gmail.com`.
+
+### 🔑 «Accesso concesso» non è «app pubblicata», ed è la confusione che costa una giornata
+
+L'email concede il **permesso** di usare il canale Produzione: è l'esito del questionario dei 12
+tester / 14 giorni. Non pubblica niente. Al 24/08 mattina il canale Produzione era **«Non attivo»**,
+con **zero paesi** in targeting e **«Nessuna release»**. Tutto restava da fare.
+
+Le due cose vanno tenute separate anche nel vocabolario, perché la Console usa la stessa parola per
+entrambe: *Attivo* sul canale significa **«il canale esiste ed è in uso»**, non «l'app è sullo
+store». Dopo l'invio il canale dice «Attivo» e l'app **non è scaricabile**.
+
+### 🍏 Su iOS l'app era GIÀ scaricabile, e nessuno lo sapeva
+
+Misurato il 24/08, non dedotto: `apps.apple.com/it/app/kidville/id6794883055` → **200**, con
+taratura su un id inesistente → 404 e sulla versione `us` → 404. Il lookup pubblico restituisce
+*Kidville · 1.0 · Gratis · 4+ · pubblicata il 5 agosto*.
+
+Il blocco **`TRADER_STATUS_NOT_PROVIDED`** che il changelog del 2026-08-06 dava per aperto — *«Paesi
+o regioni: 0»*, Italia ❌ *«Stato di operatore commerciale non fornito»* — **si è sciolto**: Apple ha
+chiuso la verifica del DSA e la scheda italiana è viva. Nessuno se n'era accorto, perché nessuno
+aveva più rifatto la misura. 🔑 **Una casella «bloccato» invecchia come una casella «pronto»**: si
+rilegge, non si eredita.
+
+Conseguenza pratica: il commento in `src/lib/email/tema.ts` che spiega perché il bottone Play
+risponde 404 resta vero **solo finché la revisione non chiude**; gli indirizzi nelle email erano già
+quelli definitivi e non vanno toccati.
+
+### Cosa è stato fatto in Console, su istruzione esplicita del titolare
+
+Tre scelte poste una per una e decise dal titolare: **bundle = promuovere il `versionCode 1` già
+caricato** (non uno nuovo), **paesi = solo Italia**, **rollout = completo**.
+
+| Passo | Esito |
+|---|---|
+| Paesi/regioni del canale Produzione | da **0** a **1: Italia** (`Aggiunte al targeting (1)`) |
+| Release di produzione | creata da *Aggiungi dalla raccolta*, **un solo bundle, `versionCode 1` (1.0)**, note di rilascio `it-IT` |
+| Invio | **ID invio 2 · 24 ago 2026, 6:05 p. · «In revisione»** |
+| Canale Produzione | da «Non attivo» a **«Attivo · Release 1 (1.0) in fase di revisione · 1 paese/regione»** |
+| Test chiuso Alpha | **intatto** — Attivo, release 1 (1.0), 29 tester. Promuovere non svuota il canale |
+
+Perché il `versionCode 1` e non il `2` che stava su disco: **il bundle 1 Google l'ha già
+revisionato** il 5 agosto per il test chiuso. Sono funzionalmente identici — è la stessa shell
+WebView che punta a `https://app.kidville.it` — ma uno dei due è un artefatto che il revisore ha
+già visto. Il `versionCode 2` resta su disco, verificato e mai caricato.
+
+### 🔑 Il tempo di revisione è leggibile in UN SOLO punto, e sparisce appena lo confermi
+
+Testo letterale del dialogo di conferma dell'invio:
+
+> *«Queste modifiche verranno inviate a Google per l'analisi. Di solito, le revisioni vengono
+> completate entro 7 giorni, ma in alcuni casi potrebbe essere necessario più tempo.»*
+
+Quella frase **non esiste da nessun'altra parte**: non in Dashboard, non in Panoramica della
+pubblicazione, non nella pagina della release. Una ricognizione in sola lettura non può trovarla,
+perché vive dentro il flusso di creazione. Dopo la conferma è irrecuperabile, e in Console **non
+compare nessuna data prevista di fine revisione**. Vale la stessa regola del questionario del 20/08:
+*chi compila un modulo Play che non si rilegge ne conserva copia prima di inviarlo*.
+
+### Tre trappole della Console incontrate strada facendo
+
+1. **Il filtro dei paesi non fa match sul nome intero.** Cercare `Italia` restituisce una tabella
+   **vuota**; `Ital` restituisce la riga. Vuoto non significava «paese assente».
+2. **Il selettore di percentuale del rollout non esiste** in questo flusso. Il 100% non si imposta:
+   si legge a valle, nella riga della modifica, come *«Avvio dell'implementazione completa»*.
+3. **La modifica ai paesi porta il badge «Interessa altre tracce»**: *«Le seguenti tracce verranno
+   aggiornate perché condividono già il targeting per paese con produzione: • Test aperti»*. È un
+   effetto automatico della Console, e riguarda il test **aperto** (mai configurato), non l'Alpha.
+
+### Cosa non era bloccante, e si temeva lo fosse
+
+Gli **screenshot per tablet 7" e 10"** sono vuoti e marcati obbligatori (`*`) nella scheda dello
+Store. **Non hanno bloccato l'invio.** Gli unici due avvisi sul bundle sono quelli noti e non
+bloccanti: nessun file di deoffuscamento, nessun simbolo di debug per il codice nativo.
+
+### Stato
+
+Nessuna modifica al codice, nessuna migrazione, nessun commit di sorgenti: è un'operazione di
+Console. **Pubblicazione gestita disattivata** ⇒ all'approvazione l'app va online da sola su Google
+Play in Italia, senza altri passaggi. Alla scrittura di questa voce
+`play.google.com/store/apps/details?id=it.kidville.app&gl=IT` risponde ancora **404** (taratura
+`com.whatsapp` → 200), che è lo stato atteso finché la revisione non chiude.
+
+⚠️ Resta scoperto quanto lo era il 20/08: **il feedback dei tester è zero**, quinta misura
+consecutiva.
+
+---
+
 ## 🔂 Changelog — Sette sedi hanno ricevuto due volte la stessa candidata, e la colonna che doveva impedirlo era scritta da una strada sola — 2026-08-20 (branch `fix/copia-sede-marcata-alla-fonte`)
 
 Due clic su **«Inoltra ai plessi le copie mai partite»**, e poi la domanda giusta: *sono arrivati

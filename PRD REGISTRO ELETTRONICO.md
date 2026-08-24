@@ -94,6 +94,74 @@
 
 ---
 
+## 🔍 Changelog — Il controllo diceva «pulito» e ne mancavano 1.353 — 2026-08-24 (branch `chore/verifica-isolamento-generica`)
+
+Questo è il **secondo giro** dello stesso lavoro, e la ragione per cui è servito è più
+importante di ciò che ha corretto.
+
+Il changelog qui sotto racconta lo spostamento dei dati di prova nella sede `Kidville Demo`, e
+si chiudeva con un verificatore che rispondeva **«✓ nessun dato di collaudo dentro una sede
+reale»**. Alla domanda «hai spostato anche avvisi, messaggi ecc.?» la risposta misurata è stata
+**no**: erano rimaste indietro **1.353 righe** in tredici tabelle.
+
+**Il difetto peggiore non era che mancassero: era che il controllo dava il verde.** Enumerava
+cinque tabelle scelte a mano — `utenti`, `utenti_scuole`, `sections`, `alunni`, `avvisi` — cioè
+esattamente quelle che chi l'ha scritto ricordava di aver spostato. Un controllo assente lascia
+in guardia; un controllo che approva **toglie a chi legge la voglia di guardare**.
+
+### Cosa nascondeva quel verde
+
+| Tabella | righe | Effetto |
+|---|---|---|
+| `audit_scritture_docente` | 396 | tracciabilità attribuita a plessi veri |
+| `pagamenti` | 89 | **KPI «Pagamenti scaduti»** |
+| `mensa_ticket_movimenti` | 66 | ledger mensa |
+| `presenze` | 96 | registro di classe |
+| `solleciti` | 50 | **50 solleciti su 50 erano per bambini inesistenti** |
+| `registro_orario` · `materie` · `mensa_prenotazioni` · `cassa_movimenti` · `armadietto` · `news_posts` · `iscrizioni_import_esiti` | 51 | orario, cassa, armadietti, news |
+
+🔴 **Il conto vero.** Al KPI «Pagamenti scaduti» di Giugliano la segreteria vedeva **24 morosità
+per € 2.710**. Ventitré, per **€ 2.670**, erano di bambini che non esistono: il dato reale era
+**€ 40**. E **62 incassi su 70 (€ 2.360)** venivano da pagamenti finti, quindi anche «Incassato
+questo mese» e il grafico a sei mesi erano falsi. `incassi` non ha `scuola_id` — la sede si
+raggiunge solo via `pagamento_id → pagamenti.scuola_id` — quindi spostare i pagamenti li ha
+portati via con sé, senza una riga di SQL in più.
+
+| Giugliano | prima | dopo |
+|---|---|---|
+| Pagamenti scaduti | 24 · € 2.710 | **1 · € 40** |
+| Solleciti | 50 | **0** |
+| Incassato | € 2.580 | **€ 220** |
+
+### Il rimedio non è allungare la lista
+
+Una lista più lunga dimenticherebbe la tabella successiva. L'elenco ora si **deriva dallo
+schema**: la funzione `dati_prova_fuori_sede()` (migrazioni `20260824202353` e `20260824202558`)
+scorre `information_schema` e cerca ogni tabella che abbia insieme una `scuola_id` e una colonna
+di legame nota (`alunno_id`, `section_id`, `attore_id`, `author_id`, `registrato_da`…), poi conta
+le righe la cui sede **contraddice** quella dell'entità a cui appartengono. Una tabella nuova
+entra nel controllo da sola.
+
+**Restano due controlli, non uno, e nessuno dei due basta:**
+- **A · marcatori** — un utente `@kidville.test` o un bambino di nome «Collaudo» messo
+  *direttamente* in una sede vera non ha una colonna di legame che lo tradisca: solo il nome.
+- **B · coerenza** — tutto il resto, derivato dallo schema.
+
+### Due cose che NON sono state spostate, di proposito
+
+🔻 **`protocolli` (2 righe) e `ricevute_emesse` (2 righe)** sono registri a **numerazione
+sequenziale per sede** — DPR 445 il primo, fiscale il secondo. Toglierne una lascia un **buco
+nella numerazione**, che in un registro legale vale più della riga di prova che contiene. La
+funzione le marca `natura = 'registro_numerato'`: **le segnala e non le tocca**, perché lì la
+correzione è annullare o annotare, ed è una decisione contabile.
+⚠️ Le due ricevute di Giugliano — n. 1 (€ 40) e n. 2 (€ 150), intestate a `Alunno1 Test PRI` e
+`Alunno5 Test INF` — sono le **uniche mai emesse da quella sede**, e nessuna è annullata.
+
+🔻 **`app_log` (602 righe)** è escluso del tutto: registra ciò che è **accaduto**, e riscriverne
+l'attribuzione di sede falsificherebbe una cronaca. Scade da sé a 30 giorni.
+
+---
+
 ## 🏫 Changelog — I bambini finti erano nel conteggio dei veri, e uno sedeva in una classe vera — 2026-08-24 (branch `chore/sede-demo-isolamento-dati-prova`)
 
 **Il KPI «Studenti iscritti» che vede la segreteria contava 25 bambini che non esistono.** Misurato

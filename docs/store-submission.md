@@ -815,6 +815,25 @@ dica *«Le modifiche sono ora in fase di revisione»* e che la Dashboard dica *�
 ✅ **L'app pubblicata non va giù**: durante tutto il rifiuto *Produzione* è rimasta *Attivo · 18
 dispositivi*. Cade l'**aggiornamento**, non l'app.
 
+##### ✅ Regola 1 applicata subito: Apple è stata ricontrollata lo stesso giorno, ed è pulita
+
+Non si è aspettato un rifiuto iOS per scoprirlo. La console web chiedeva un login interattivo, ma
+**il campo si legge dall'API** — senza autenticarsi a mano e senza aprire nulla:
+
+```bash
+node scripts/asc-api.mjs GET "/v1/apps/6794883055/appStoreVersions?limit=3"
+node scripts/asc-api.mjs GET "/v1/appStoreVersions/<versionId>/appStoreReviewDetail"
+# → demoAccountName, demoAccountPassword, demoAccountRequired, notes
+```
+
+Esito del 29/08 sulla versione **1.0** (`READY_FOR_SALE`, id `ab848698-…`): `demoAccountName` =
+`test.inf.genitore1@kidville.test`, `demoAccountPassword` di **24 caratteri**, e **impronta SHA-256
+identica** a quella del file sul disco — cioè alla password verificata con un login vero. **Il campo
+Apple contiene la credenziale giusta.**
+
+🔑 La lunghezza da sola non sarebbe bastata: due stringhe di 24 caratteri possono essere diverse.
+Le lunghezze servono a **smentire** a costo zero; a **confermare** serve l'impronta.
+
 ### 🔴 Il DSA non esiste nell'API. Solo a schermo.
 
 Verificato sullo **spec OpenAPI ufficiale 4.3** di App Store Connect: `trader` compare in tutto

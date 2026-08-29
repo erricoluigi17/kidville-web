@@ -924,6 +924,65 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not
 [data-contrast="high"] .bg-kidville-cream label[class*="border-kidville-neutral"]:hover {
   border-color: #000000;
 }
+
+/* =============================================================================
+   L'ANELLO DEL RIQUADRO SEGUE L'ALTO CONTRASTO (2026-08-25)
+   -----------------------------------------------------------------------------
+   In tutto il prodotto il fuoco è un `outline`, e le righe a ~578 lo portano al
+   GIALLO quando l'Alto Contrasto è acceso. Un campo fa eccezione, e non per
+   capriccio: `FileField` ha l'`<input type="file">` in `sr-only`, quindi
+   l'`outline` del sistema si disegnerebbe attorno a un elemento invisibile. Il
+   segnale deve stare sulla `<label>` che si vede, e lì lo disegna Tailwind con
+   `focus-within:ring-*` — che NON è un `outline`: scrive `--tw-ring-color`, e le
+   regole `outline-color` qui sopra non lo toccano.
+
+   Risultato MISURATO prima di questa riga, con `data-contrast="high"` acceso e
+   il fuoco sui tre controlli del passo «Il tuo profilo» di `/lavora-con-noi`:
+   «Dettaglio del titolo» e «Titolo di studio» rispondevano `rgb(255,229,0)`, il
+   riquadro del curriculum `rgb(0,106,95)`. Il campo che dal 24/08 decide se la
+   candidatura parte era l'unico della schermata a rispondere in verde alla
+   domanda «dove sono col fuoco» — proprio a chi l'Alto Contrasto l'ha acceso per
+   non dover interpretare i colori.
+
+   ── E DAL 2026-08-25 NON SOLO LA TINTA: ANCHE LA FORMA ───────────────────────
+   La prima stesura di questo blocco ribaltava `--tw-ring-color` e basta, e il
+   commento qui sotto dichiarava chiuso un difetto che era chiuso a metà.
+   RIMISURATO in Chromium, `data-contrast="high"`, fuoco da tastiera, letto dopo
+   1,4 s (dentro i 150 ms di `transition-all` il `box-shadow` torna trasparente e
+   la misura mente):
+     · `#titolo_studio`, e con lui ogni input/bottone/link via
+       `[data-contrast="high"] *:focus-visible` → `outline: 3px solid #FFE500`,
+       `outline-offset: 2px`, `box-shadow: #000 0 0 0 2px`.
+       Cioè: NERO da 0 a 2 px, GIALLO da 2 a 5 px.
+     · questo riquadro → `box-shadow: #FFF 0 0 0 2px, #FFE500 0 0 0 4px`.
+       Cioè: BIANCO da 0 a 2 px, GIALLO da 2 a 4 px.
+   Il verde non c'era più, ma il campo restava l'unico che rispondeva diverso —
+   sullo stesso controllo, e davanti alle stesse persone. Servono tutte e tre le
+   proprietà, non una: la tinta, lo stacco (il nero non è decorazione, vedi il
+   commento a ~428: #FFE500 sul crema #FEF1E4 vale ~1,15:1, senza il nero la
+   banda gialla non ha nessun bordo dal lato interno) e lo SPESSORE.
+   `--tw-ring-shadow` si riscrive tenendo `var(--tw-ring-offset-width)`, così la
+   riga non ribatte a mano lo stacco che `ring-offset-2` già dichiara.
+
+   ── E IL SELETTORE ORA DICE LA VERITÀ ────────────────────────────────────────
+   Fin qui c'era scritto «`label:focus-within` e non un selettore più largo: la
+   stessa cardinalità stretta della regola qui sopra». Era falso, e il rilievo
+   l'ha misurato: la regola qui sopra porta tre qualificatori in più,
+   `label:focus-within` prende OGNI `<label>` del prodotto che contenga il fuoco.
+   Non faceva danno — in tutto `src/` una sola `<label>` porta davvero una utility
+   `ring-*`, ed è questa — ma restava armata per la prossima. Ora il selettore
+   chiede ciò che descrive: le label che l'anello ce l'hanno per davvero. Stessa
+   forma di `[class*="border-kidville-neutral"]` della regola qui sopra.
+   Il valore è il letterale #FFE500 come nelle righe a ~578, e non un token: là
+   dentro il giallo È la costante dell'Alto Contrasto.
+   Presidio: `__tests__/components/FieldRenderer-stati-visivi.test.tsx` §13 (c) e (d).
+   ============================================================================= */
+[data-contrast="high"] label[class*="focus-within:ring-"]:focus-within {
+  --tw-ring-color: #FFE500;
+  --tw-ring-offset-color: #000000;
+  --tw-ring-shadow: 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+}
+
 /* 🟠 design #2 del collaudo 2026-08-02, chiuso qui.
    La regola qui sopra si sfila solo con `:not(:focus)`: l'HOVER non era escluso,
    quindi vinceva anche sulle utility `hover:border-*` e i 19 select del cockpit

@@ -303,6 +303,17 @@ export async function inviaCopiaAllaSede(
             // Solo quando l'allegato manca DAVVERO: se il file c'è, «non era
             // previsto» sarebbe una contraddizione stampata sotto un allegato.
             curriculumNonPrevisto: allegati === undefined && d.curriculumNonPrevisto === true,
+            // ⚠️ IL CURRICULUM C'ERA E NON È ARRIVATO. `allegati` resta
+            // `undefined` anche quando lo SCARICAMENTO fallisce (vedi i due rami
+            // del `warn` `curriculum-non-allegato` qui sopra): senza questa
+            // riga, la sede leggeva «chi si è candidato non ne ha caricato uno»
+            // sopra un guasto dello Storage, cioè un'accusa a una persona al
+            // posto di un difetto nostro. Dal 2026-08-24 il campo è
+            // obbligatorio, quindi su ogni candidatura nuova quella frase
+            // sarebbe falsa per costruzione. Il predicato guarda `d.cvPath`, che
+            // è ciò che dice se il file esiste in tabella — non `allegati`, che
+            // dice soltanto se ce l'abbiamo fatta.
+            curriculumNonAllegabile: allegati === undefined && d.cvPath !== null,
         }, sede)
 
         const invio = await sendEmailDetailed({

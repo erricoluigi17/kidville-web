@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
+import itCampi from '../../messages/it/parentForms.json'
 import {
   INSEGNANTE_FIELDS, GRADI_OPTIONS, POSIZIONI_OPTIONS, CANDIDATURA_LIMITI,
   gradiDallePosizioni,
 } from '@/lib/forms/insegnanti-template'
 import { campiVisibili } from '@/lib/forms/conditional'
+import { MSG_SCEGLI_OPZIONE } from '@/lib/forms/validate-fields'
 import { SEDE_A } from '../fixtures/sedi'
 
 /**
@@ -57,6 +59,7 @@ const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' 
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
 
 import { CandidaturaInsegnanteWizard } from '@/components/features/public/CandidaturaInsegnanteWizard'
+import { allegaCurriculumDiProva } from '../helpers/allega-curriculum'
 
 /**
  * LE SETTE VOCI, ETICHETTA E VALORE, RIBATTUTE A MANO — l'unica lista di questo
@@ -150,7 +153,24 @@ async function vaiAlProfilo(): Promise<void> {
   avanti()
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'laurea_triennale' } })
+  await allegaCurriculum()
 }
+
+/**
+ * Allega il curriculum, che dal 2026-08-24 è OBBLIGATORIO.
+ *
+ * ⚠️ Sta dentro `vaiAlProfilo` di proposito, e non nei singoli test. Questo file
+ * parla delle POSIZIONI: lasciare il curriculum vuoto vorrebbe dire misurare due
+ * campi mancanti invece di uno, e i due casi che pretendono il rifiuto sotto
+ * «posizioni» — `ALMENO UNA è obbligatoria` e `togliere la spunta all'unica
+ * posizione` — cercano «Campo obbligatorio» a schermo: con anche il curriculum
+ * vuoto ne trovano DUE e cadono con «Found multiple elements», cioè accusando il
+ * campo sbagliato. MISURATO, non previsto.
+ */
+/** Allega il curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *  La sonda vive in `__tests__/helpers/allega-curriculum`: erano SEI copie identiche,
+ *  e il giorno in cui il riquadro ha cambiato impaginazione sono cadute tutte e sei. */
+const allegaCurriculum = () => allegaCurriculumDiProva('cv-collaudo.pdf')
 
 /** Consensi → riepilogo, e ci si ferma lì. */
 async function vaiAlRiepilogo(): Promise<void> {
@@ -224,13 +244,18 @@ describe('CandidaturaInsegnanteWizard — le posizioni per cui ci si propone', (
     avanti()
 
     // La frase è quella di `validateField`, la stessa che userebbe il server.
-    expect(await screen.findByText('Campo obbligatorio')).toBeInTheDocument()
+    // ⚠️ LA COSTANTE, NON LA STRINGA. Dal 25/08 un gruppo a spunta vuoto risponde
+    // «Scegli almeno un'opzione per proseguire» — la cadenza di `candSedeErrore`,
+    // che il modulo usa già al passo 1 per lo stesso predicato — invece del
+    // «Campo obbligatorio» che è la risposta di un database. Ribattuta a mano,
+    // questa riga chiedeva manutenzione a ogni ritocco della frase.
+    expect(await screen.findByText(MSG_SCEGLI_OPZIONE)).toBeInTheDocument()
     // ED È UNA SOLA. `posizione_altro` è `required: true` con una `condition`:
     // finché «Altro» non è spuntato non è visibile, e ciò che non è visibile non
     // si valida — né qui né sul server, che applica `campiVisibili` prima di
     // `validatePage`. Due messaggi vorrebbero dire che il campo condizionale è
     // obbligatorio per tutti, cioè un modulo che non si può inviare.
-    expect(screen.getAllByText('Campo obbligatorio')).toHaveLength(1)
+    expect(screen.getAllByText(MSG_SCEGLI_OPZIONE)).toHaveLength(1)
     // E non si è passati oltre: i consensi non sono stati raggiunti.
     expect(screen.queryByRole('checkbox', { name: /informativa sulla privacy/i })).not.toBeInTheDocument()
     expect(casella('insegnante_nido')).toBeInTheDocument()
@@ -262,7 +287,7 @@ describe('CandidaturaInsegnanteWizard — le posizioni per cui ci si propone', (
     expect(casella('collaboratrice')).not.toBeChecked()
 
     avanti()
-    expect(await screen.findByText('Campo obbligatorio')).toBeInTheDocument()
+    expect(await screen.findByText(MSG_SCEGLI_OPZIONE)).toBeInTheDocument()
   })
 
   it('L’ARRAY ARRIVA NEL CORPO DEL POST, con tutte le posizioni spuntate e con i loro valori', async () => {
@@ -332,7 +357,7 @@ describe('CandidaturaInsegnanteWizard — le posizioni per cui ci si propone', (
     const campo = await screen.findByLabelText(/^Quale posizione/)
     avanti()
 
-    const messaggio = await screen.findByText('Campo obbligatorio')
+    const messaggio = await screen.findByText(itCampi.campoObbligatorio)
     expect(messaggio).toBeInTheDocument()
     // Sotto QUEL campo, non davanti a una frase generica: è
     // `aria-describedby` a dirlo, cioè la stessa cosa che sente chi ascolta.
@@ -438,9 +463,15 @@ describe('CandidaturaInsegnanteWizard — le posizioni per cui ci si propone', (
     // Il tetto è quello della PIATTAFORMA, non un numero scritto a occhio: sopra
     // di esso la funzione non parte nemmeno e la risposta non è nostra.
     expect(dichiarato?.max_size_mb).toBe(CANDIDATURA_LIMITI.maxCvMb)
-    // È facoltativo: chi si candida dal telefono spesso il curriculum non ce l'ha
-    // sottomano.
-    expect(dichiarato?.required ?? false).toBe(false)
+    // ⚠️ È OBBLIGATORIO DAL 2026-08-24, e qui c'era scritto il contrario («è
+    // facoltativo: chi si candida dal telefono spesso il curriculum non ce l'ha
+    // sottomano»). Quella ragione era vera e ha perso contro un'altra: senza
+    // curriculum la segreteria non ha niente da valutare. Il prezzo è stato
+    // misurato prima di deciderlo — quattro su dieci oggi arrivano senza
+    // allegato, àncora `MISURA-CV` — e la contro-obiezione sopravvive
+    // nella nota sotto il campo, che continua a dire che va bene anche una
+    // fotografia.
+    expect(dichiarato?.required).toBe(true)
     expect(screen.getByText(itPublic.candCvNota)).toBeInTheDocument()
   })
 
@@ -449,6 +480,13 @@ describe('CandidaturaInsegnanteWizard — le posizioni per cui ci si propone', (
     await vaiAlProfilo()
 
     fireEvent.click(casella('collaboratrice'))
+    // ⚠️ SI AZZERA IL REGISTRO PRIMA DI MISURARE. Dal 2026-08-24 `vaiAlProfilo`
+    // allega già un curriculum (il campo è obbligatorio), quindi `caricamenti`
+    // arriva qui con dentro un giro. Questo test guarda dove è andato QUESTO
+    // multipart, non quanti ne sono partiti: senza l'azzeramento l'asserzione in
+    // coda misurerebbe il conto invece della destinazione, e cadrebbe per una
+    // ragione che non è la sua.
+    caricamenti.length = 0
     fireEvent.change(screen.getByLabelText(/^Curriculum/), {
       target: { files: [new File(['%PDF'], 'curriculum-ines.pdf', { type: 'application/pdf' })] },
     })

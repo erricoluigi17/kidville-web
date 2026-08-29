@@ -286,7 +286,24 @@ const EMBED_TUTTE = 'sedi:candidature_sedi(scuola_id, stato, evasa_il)'
  * una regex. Quattro ripetizioni di una stringa sono il prezzo, ed è basso.
  */
 
-/** Il dettaglio: proiezione ESPLICITA (mai `select('*')`), una candidatura alla volta. */
+/**
+ * Il dettaglio: proiezione ESPLICITA (mai `select('*')`), una candidatura alla volta.
+ *
+ * ⚠️ DUE COLONNE QUI DENTRO NON SONO PIÙ CAMPI DEL MODULO, e vanno lasciate stare.
+ * `gradi` è uscito dal template il 2026-08-15 (oggi lo deriva il server dalle
+ * posizioni) e `disponibilita` il 2026-08-24 (in Kidville si lavora solo a tempo
+ * pieno, quindi la domanda non si fa più). Cercarle in
+ * `src/lib/forms/insegnanti-template.ts` non le trova: chi passa di qui le
+ * scambierebbe per residui e le toglierebbe «per pulizia».
+ *
+ * Non sono residui: sono la sola strada per cui le candidature ARRIVATE PRIMA
+ * arrivano ancora alla scheda della segreteria — 225 righe con `disponibilita`
+ * valorizzata alla misura del 2026-08-25 (rifà il conto, non ricopiare: la
+ * tabella cresce di sei righe al giorno). Toglierle non farebbe sparire un campo
+ * dal modulo, farebbe sparire uno storico da una scheda su cui si decide
+ * un'assunzione. Il presidio è in `__tests__/api/candidature-insegnanti-scope-sede.test.ts`,
+ * che diventa rosso se `disponibilita` esce da questo elenco.
+ */
 const COLONNE_DETTAGLIO = [
   'id', 'scuola_id', 'stato', 'nome', 'cognome', 'email', 'telefono',
   'residence_city', 'residence_province', 'posizioni', 'posizione_altro', 'gradi',

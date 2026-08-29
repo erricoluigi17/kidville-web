@@ -247,14 +247,30 @@ const CHIAVE_GRADO: Record<string, string> = {
 /**
  * Titolo di studio e disponibilità: enum in tabella, ETICHETTE a schermo.
  *
- * Sono due dei tre campi da cui dipende la decisione, e fino al 2026-08-11 in
+ * Sono due dei campi da cui dipende la decisione, e fino al 2026-08-11 in
  * segreteria si leggevano come valori di database — `laurea_magistrale`,
  * `tempo_pieno`, con l'underscore — in italiano come in inglese, mentre le fasce
- * accanto erano tradotte. Le etichette del template (`TITOLI_STUDIO`,
- * `DISPONIBILITA` in `insegnanti-template.ts`) sono italiane per costruzione:
- * servono al modulo pubblico, non a un cockpit bilingue. Quindi qui si passa
- * dal catalogo, come per i gradi, e il lock in coda al test verifica che ogni
- * valore dell'enum abbia la sua chiave.
+ * accanto erano tradotte. Le etichette del template sono italiane per
+ * costruzione: servono al modulo pubblico, non a un cockpit bilingue. Quindi qui
+ * si passa dal catalogo, come per i gradi.
+ *
+ * ⚠️ LA DISPONIBILITÀ NON SI CHIEDE PIÙ dal 2026-08-24 — in Kidville si lavora
+ * solo a tempo pieno — e con lei è sparita la costante `DISPONIBILITA` da
+ * `insegnanti-template.ts`, da cui queste etichette discendevano. `CHIAVE_TITOLO`
+ * continua quindi a tradurre un enum VIVO, `CHIAVE_DISPONIBILITA` un enum
+ * STORICO: la colonna resta, piena dei valori scritti dalle candidature arrivate
+ * prima, e la scheda continua a leggerli. Ogni candidatura nuova nasce invece
+ * con quel valore NULL, e la riga sparisce dal pannello (vedi il blocco «Profilo»).
+ *
+ * ⚠️ E cambia CHI le difende. Il lock in coda al test derivava il perimetro dal
+ * template: col campo fuori, sulla disponibilità avrebbe smesso di guardare
+ * qualunque cosa. Non subito, però, e non in silenzio: il conteggio in testa a
+ * quel lock — `toBe(20)` — sarebbe diventato rosso e avrebbe chiesto di
+ * aggiornarlo, che è esattamente il suo mestiere. È DOPO quell'aggiornamento che
+ * le cinque etichette sarebbero rimaste senza nessuno a guardarle, in silenzio e
+ * col verde. Ora quel lock importa `CHIAVE_DISPONIBILITA` da qui, quindi è questa
+ * mappa la fonte, e toglierne una riga fa rosso — misurato togliendo `tirocinio`,
+ * non promesso. Per il titolo di studio la fonte resta il template.
  *
  * Un valore FUORI enum resta grezzo: nasconderlo direbbe che il campo è vuoto.
  */
@@ -274,7 +290,12 @@ const CHIAVE_TITOLO: Record<string, string> = {
   altro: 'candTitoloAltro',
 }
 
-const CHIAVE_DISPONIBILITA: Record<string, string> = {
+// Esportata, e non per comodità: dal 2026-08-24 il campo non è più nel template,
+// quindi il lock dei cataloghi (`CandidatureInsegnanti.test.tsx`) non può più
+// derivare queste cinque voci di lì e le legge QUI. Cancellare la mappa, o una
+// sua riga, fa rosso quel test — che è l'unica cosa che tiene in vita le chiavi
+// `candDisp*` nei due cataloghi.
+export const CHIAVE_DISPONIBILITA: Record<string, string> = {
   tempo_pieno: 'candDispTempoPieno',
   part_time_mattina: 'candDispPartTimeMattina',
   part_time_pomeriggio: 'candDispPartTimePomeriggio',
@@ -1739,7 +1760,13 @@ function PannelloDettaglio({
           <Voce etichetta={t('candTitoloStudio')} valore={titoloStudio} />
           <Voce etichetta={t('candTitoloDettaglio')} valore={cand.titolo_dettaglio} />
           <Voce etichetta={t('candAnni')} valore={cand.anni_esperienza} />
-          <Voce etichetta={t('candDisponibilita')} valore={disponibilita} />
+          {/* Dal 2026-08-24 la domanda non si fa più: la riga esiste solo per le
+              candidature che quel valore ce l'hanno in tabella. `Voce` non nasconde una
+              riga vuota — stampa «Non indicato» — quindi il condizionale sta QUI e non
+              dentro di lei, che serve a una dozzina di altre voci dove «Non indicato» è
+              informazione voluta. Il predicato basta così com'è: `daCatalogo` torna
+              `null` anche sulla stringa vuota o di soli spazi. */}
+          {disponibilita && <Voce etichetta={t('candDisponibilita')} valore={disponibilita} />}
         </div>
         {/* LE POSIZIONI VENGONO PRIMA DELLE FASCE, ed è l'ordine della domanda:
             «per quale lavoro si è proposta» precede «per quali fasce d'età». È

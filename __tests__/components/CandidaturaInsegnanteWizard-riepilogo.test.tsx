@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
+import fs from 'node:fs'
+import path from 'node:path'
 import itPublic from '../../messages/it/public.json'
+import enPublic from '../../messages/en/public.json'
+import itParentForms from '../../messages/it/parentForms.json'
 import {
   INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS, TITOLI_STUDIO, POSIZIONI_OPTIONS,
 } from '@/lib/forms/insegnanti-template'
@@ -14,11 +18,44 @@ import type { FormField } from '@/types/database.types'
  * ─── IL DIFETTO CHE QUESTO FILE IMPEDISCE ──────────────────────────────────
  *
  * Fino all'11/08/2026 l'ultimo passo del modulo diceva «Controlla e invia la
- * candidatura» e mostrava DUE fatti su tredici campi compilabili: la sede e le
- * fasce d'età. Misurato, non stimato: nome, cognome, EMAIL, telefono, comune,
- * provincia, titolo di studio, dettaglio del titolo, anni di esperienza,
- * disponibilità, presentazione e le due risposte sui consensi non comparivano
- * da nessuna parte.
+ * candidatura» e mostrava DUE fatti soli: la sede e le fasce d'età. Misurato,
+ * non stimato: tutto il resto di ciò che era stato compilato non compariva da
+ * nessuna parte — né il nome, né il telefono, né la residenza, né il titolo di
+ * studio, né i consensi, e soprattutto NON L'EMAIL.
+ *
+ * ⚠️ Qui c'erano un NUMERO — «tredici campi compilabili» — e l'elenco CHIUSO dei
+ * campi che mancavano, «disponibilità» compresa. Il numero non era falso, ed è
+ * il guaio: i campi compilabili erano tredici l'11/08 e sono di
+ * nuovo tredici dopo il 2026-08-24, ma non sono GLI STESSI (fuori `gradi` e `disponibilita`,
+ * dentro `posizioni` e `posizione_altro`). Una cifra che torna uguale sopra un
+ * insieme diverso si legge come lo stato di oggi ed è la fotografia di un altro
+ * giorno — e l'elenco chiuso nominava un campo che il modulo non ha più. Qui la
+ * lista vera è `INSEGNANTE_FIELDS`, e la rifà `campiVisibili` a ogni esecuzione.
+ *
+ * ⚠️ E LA FRASE VIVEVA IN PIÙ COPIE DI QUANTE SE NE RICORDASSE CHI L'HA
+ * CORRETTA. Fino al 2026-08-25 questo blocco diceva «la stessa frase viveva in
+ * DUE copie — qui e in testa al componente — e questo giro le ha corrette
+ * entrambe»: era falso. Le copie ancora col numero erano due, in file diversi da
+ * quelli nominati, e il conto era stato fatto a memoria invece che con un grep —
+ * cioè proprio la trappola che questo repo documenta («un elenco scritto a mano
+ * di tutti i posti da toccare mente»), applicata alla propria correzione.
+ *
+ * Il conto non si riscrive, perché al prossimo giro sarebbe falso allo stesso
+ * modo. L'elenco si RIFÀ, e il comando è questo:
+ *
+ *     grep -rn tredici src __tests__
+ *
+ * ⚠️ E si cerca il NUMERO, non la frase. `grep -rn 'campi compilabili'` sembra
+ * più mirato ed è la scelta sbagliata: MISURATO il 2026-08-25, una delle copie
+ * porta «due su» a fine riga e «tredici» su quella dopo, quindi nessun grep di
+ * RIGA la trova. Un rilevatore più stretto della cosa che cerca è il modo in cui
+ * questo conto è arrivato a essere falso la prima volta.
+ *
+ * Chi lo esegue trova anche le copie che raccontano lo stesso difetto dal punto
+ * di vista di ALTRI moduli — il riepilogo dell'anagrafica del personale lo cita
+ * come «modulo fratello» — e parecchi «tredici» che non c'entrano niente (classi,
+ * bucket, prefissi). Non sono state toccate, e questo blocco non dichiara di
+ * averle contate: dichiara solo dove si guarda.
  *
  * Non è un difetto estetico ed è la ragione per cui questo collaudo esiste: chi
  * arrivava lì non aveva niente da controllare, e soprattutto non rileggeva il
@@ -47,6 +84,7 @@ const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' 
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
 
 import { CandidaturaInsegnanteWizard } from '@/components/features/public/CandidaturaInsegnanteWizard'
+import { allegaCurriculumDiProva } from '../helpers/allega-curriculum'
 
 const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
 const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
@@ -160,30 +198,36 @@ const TITOLO = TITOLI_STUDIO[2] // «Laurea triennale»
 /**
  * Allega un curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
  *
- * ⚠️ Il nome del file scelto qui NON sopravvive: la rotta di caricamento lo butta
+ * ⚠️ Il nome del file NON sopravvive al PERCORSO: la rotta di caricamento lo butta
  * via e restituisce `candidature/<uuid>-cv.<est>` (vedi `costruisciPercorsoCv`).
- * Perciò il nome qui sotto è un cognome finto e riconoscibile — è la forma vera
- * di quel nome in produzione, `cv-<cognome>.pdf` — e serve a provare che nemmeno
- * LUI compare nel riepilogo.
+ * Dal 25/08/2026 sopravvive però nella memoria della pagina — `nomiAllegati` nel
+ * wizard — perché è ciò che il riepilogo mostra al posto della parola «Allegato».
+ * Il nome qui sotto è un cognome finto e riconoscibile: è la forma vera di quel
+ * nome in produzione, `cv-<cognome>.pdf`.
  */
 const NOME_FILE_CV = 'cv-diprova.pdf'
 
-async function allegaCurriculum(): Promise<void> {
-  const controllo = document.getElementById('cv_path') as HTMLInputElement | null
-  expect(controllo, 'il campo del curriculum non è reso dal modulo').not.toBeNull()
-  const file = new File(['%PDF-1.4 finto'], NOME_FILE_CV, { type: 'application/pdf' })
-  fireEvent.change(controllo!, { target: { files: [file] } })
-  // Il caricamento è asincrono: si aspetta che il campo abbia preso il percorso,
-  // che è la sola prova che la rotta ha risposto e il valore è entrato nel modulo.
-  await waitFor(() => expect(screen.getByText(NOME_FILE_CV)).toBeInTheDocument())
-}
+/** Allega il curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *  La sonda vive in `__tests__/helpers/allega-curriculum`: erano SEI copie identiche,
+ *  e il giorno in cui il riquadro ha cambiato impaginazione sono cadute tutte e sei. */
+const allegaCurriculum = () => allegaCurriculumDiProva(NOME_FILE_CV)
 
 /**
  * Compila TUTTI i campi del modulo e si ferma sul riepilogo.
- * `vuoti` sono gli id da lasciare in bianco (per il collaudo del «Non indicato»);
- * `allegaCv` fa passare anche dal caricamento del curriculum.
+ * `vuoti` sono gli id da lasciare in bianco (per il collaudo del «Non indicato»).
+ *
+ * ⚠️ IL CURRICULUM SI ALLEGA SEMPRE, e dal 2026-08-24 non è più una scelta: il
+ * campo è OBBLIGATORIO, quindi senza allegato il passo «profilo» non avanza e
+ * ogni chiamata a questa funzione si fermerebbe lì — undici test che cadono in
+ * timeout su `waitFor` e si leggono come «il wizard è rotto». Fino a ieri era il
+ * parametro `allegaCv`, spento per difetto: un parametro che ha un solo valore
+ * possibile è un parametro che mente sul fatto che ci sia una scelta.
+ *
+ * Il caso «senza curriculum» non si ottiene più da qui: ha il suo `describe`
+ * dedicato, che si ferma al passo profilo proprio perché è lì che il modulo si
+ * blocca.
  */
-async function compilaTutto(vuoti: string[] = [], allegaCv = false): Promise<void> {
+async function compilaTutto(vuoti: string[] = []): Promise<void> {
   await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('nome'))).toBeInTheDocument())
   for (const [id, valore] of Object.entries(SCRITTI)) {
     if (vuoti.includes(id)) continue
@@ -200,10 +244,7 @@ async function compilaTutto(vuoti: string[] = [], allegaCv = false): Promise<voi
     scrivi(id, SCRITTI[id])
   }
   fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
-  if (!vuoti.includes('disponibilita')) {
-    fireEvent.change(screen.getByLabelText(/Disponibilità/), { target: { value: 'part_time_mattina' } })
-  }
-  if (allegaCv) await allegaCurriculum()
+  await allegaCurriculum()
   avanti()
 
   await waitFor(() =>
@@ -292,6 +333,10 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     fireEvent.click(screen.getByRole('checkbox', { name: posizione('altro') }))
     await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('posizione_altro'))).toBeInTheDocument())
     scrivi('posizione_altro', 'psicomotricista')
+    // Il curriculum è obbligatorio dal 2026-08-24: questo caso non parla di lui,
+    // ma senza allegato il passo «profilo» non avanza e il test non arriverebbe
+    // mai al riepilogo di cui parla.
+    await allegaCurriculum()
     avanti()
 
     await waitFor(() =>
@@ -328,7 +373,6 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     // sarebbe chiedere di controllare una cosa mai scritta.
     expect(sotto(String(campo('titolo_studio').label))).toBe(String(TITOLO.label))
     expect(screen.queryByText(String(TITOLO.value))).not.toBeInTheDocument()
-    expect(sotto(String(campo('disponibilita').label))).toBe('Part-time mattina')
     // Le posizioni restano un elenco, una per riga, con l'etichetta spuntata —
     // che dal 2026-08-15 porta anche la fascia dentro il nome del mestiere.
     expect(screen.getByText(POSIZIONE_SCELTA)).toBeInTheDocument()
@@ -336,11 +380,31 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
   })
 
   it('i facoltativi lasciati VUOTI si vedono come «Non indicato»: l’omissione resta visibile', async () => {
-    // ⚠️ `cv_path` è in elenco dal 2026-08-15, e non perché `compilaTutto` lo
-    // salti: non ha mai avuto un valore da scrivere. Il curriculum è facoltativo,
-    // e senza questa riga il conteggio più sotto direbbe uno in meno di quello che
-    // si legge a schermo — cioè misurerebbe l'omissione mentre la lascia passare.
-    const vuoti = ['telefono', 'residence_city', 'residence_province', 'titolo_dettaglio', 'anni_esperienza', 'note', 'disponibilita', 'cv_path']
+    // ⚠️ QUESTO ELENCO HA PERSO DUE ID IN DUE GIORNI, PER DUE RAGIONI OPPOSTE, e
+    // vale la pena tenerle distinte perché la seconda è quella che inganna.
+    //  · `disponibilita` è uscito il 2026-08-24 insieme al CAMPO: un id che il
+    //    template non ha più non è un facoltativo lasciato vuoto, è un id che
+    //    `campo()` fa esplodere.
+    //  · `cv_path` è uscito lo stesso giorno restando nel template: non è più
+    //    FACOLTATIVO. Al riepilogo non ci si arriva più col curriculum vuoto —
+    //    il passo «profilo» si ferma prima — quindi «Curriculum: Non indicato»
+    //    è uno stato che l'invio non produce. Il ramo nel componente RESTA (è
+    //    l'unica cosa che direbbe, in rosso e sul riepilogo, che il blocco a
+    //    monte si è rotto), ma non è più questo test a esercitarlo.
+    //
+    // Il conteggio in coda è `vuoti.length`, cioè DERIVATO, quindi si riallinea
+    // da solo — e un errore in questa lista si vede in due versi su tre.
+    // Misurato rompendola apposta, non dedotto:
+    //  · un id di TROPPO, non nel template → `campo(id)` LANCIA. ROSSO.
+    //  · `cv_path` RIMESSO qui → `compilaTutto` lo allega comunque (è
+    //    obbligatorio), a schermo la riga dice «Allegato» e non «Non indicato»:
+    //    la prima asserzione del ciclo cade. ROSSO.
+    //  · uno degli altri sei TOLTO da qui → `compilaTutto` glielo riempie, a
+    //    schermo ne restano sei e `vuoti.length` è sei. **VERDE**, e la
+    //    copertura di quel campo è sparita in silenzio.
+    // È l'unico verso che resta scoperto, ed è il motivo per cui questi sei si
+    // contano a mano prima di toccarli.
+    const vuoti = ['telefono', 'residence_city', 'residence_province', 'titolo_dettaglio', 'anni_esperienza', 'note']
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
     await compilaTutto(vuoti)
 
@@ -353,6 +417,56 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
     expect(screen.getAllByText(itPublic.candRiepilogoNonIndicato)).toHaveLength(vuoti.length)
     // I campi compilati restano compilati: il vuoto non ha contagiato niente.
     expect(sotto(String(campo('email').label))).toBe(SCRITTI.email)
+  })
+
+  /*
+   * ── UN FILE NON SI «INDICA»: SI ALLEGA (25/08/2026, quarto giro) ───────────
+   *
+   * Il ramo `type: 'file'` del riepilogo ripiegava su `candRiepilogoNonIndicato`,
+   * cioè sulla STESSA parola che le righe qui sopra usano per il telefono, il
+   * comune e la provincia lasciati vuoti perché si poteva. Due difetti in una
+   * riga sola: «Non indicato» è la parola sbagliata per un allegato, e — cosa che
+   * pesa di più — rendeva quella riga indistinguibile da un facoltativo vuoto,
+   * proprio mentre il commento accanto al ramo la dichiara «l'unico allarme che
+   * resta se l'obbligo salta». Una rete di sicurezza che quando scatta si esprime
+   * come un campo facoltativo vuoto non è una rete: è una riga in più.
+   *
+   * ⚠️ PERCHÉ IL PRESIDIO GUARDA IL SORGENTE E NON LA SCHERMATA. Lo stato non è
+   * più raggiungibile dal wizard — il passo «profilo» si ferma prima, ed è il
+   * motivo per cui `cv_path` è uscito dalla lista `vuoti` qui sopra. Renderlo
+   * vorrebbe dire rompere apposta la validazione, cioè collaudare un componente
+   * diverso da quello che va in produzione. Si difende quindi ciò che si può
+   * difendere: che la chiave esista nelle due lingue, che sia DIVERSA da quella
+   * dei facoltativi (senza questo, «Non allegato» potrebbe essere lo stesso testo
+   * e l'allarme resterebbe muto), e che il ramo del file usi quella e non l'altra.
+   */
+  it('il riepilogo di un allegato mancante dice «Non allegato», non «Non indicato»', () => {
+    expect(itPublic.candRiepilogoNonAllegato, 'manca la chiave italiana').toBeTruthy()
+    expect(enPublic.candRiepilogoNonAllegato, 'manca la chiave inglese').toBeTruthy()
+    expect(
+      itPublic.candRiepilogoNonAllegato,
+      'l’allarme dell’allegato dice la stessa parola dei facoltativi vuoti: non allarma nessuno',
+    ).not.toBe(itPublic.candRiepilogoNonIndicato)
+    expect(enPublic.candRiepilogoNonAllegato).not.toBe(enPublic.candRiepilogoNonIndicato)
+
+    // …e il ramo del file usa quella. Commenti tolti prima di cercare: questo
+    // stesso blocco cita entrambe le chiavi, e cercarle nel sorgente grezzo
+    // renderebbe il test verde per colpa della propria spiegazione.
+    const codice = fs
+      .readFileSync(
+        path.join(process.cwd(), 'src/components/features/public/CandidaturaInsegnanteWizard.tsx'),
+        'utf8',
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+    const ramo = codice.slice(codice.indexOf("if (f.type === 'file')"))
+    const fine = ramo.indexOf("if (f.type === 'checkbox')")
+    expect(fine, 'il ramo del file ha cambiato forma: questo presidio non lo trova più').toBeGreaterThan(0)
+    const soloFile = ramo.slice(0, fine)
+    expect(soloFile, 'il ramo del file ripiega ancora sulla parola dei facoltativi').not.toContain(
+      "t('candRiepilogoNonIndicato')",
+    )
+    expect(soloFile).toContain("t('candRiepilogoNonAllegato')")
   })
 
   it('i consensi si leggono «Sì» e «No», mai «non indicato»', async () => {
@@ -415,30 +529,56 @@ describe('CandidaturaInsegnanteWizard — il riepilogo contiene ciò che si è s
    * `FieldRenderer` (12/08) e nel riepilogo del modulo del personale — e la terza
    * volta sarebbe su un modulo PUBBLICO, che chiunque apre senza account.
    *
-   * La riga dice l'unica cosa che serve a chi controlla prima di inviare: allegato
-   * oppure no. Nemmeno il NOME del file: in produzione quel nome è
-   * `cv-<cognome>.pdf`, cioè il cognome di chi si è candidato, e comunque non
-   * sopravvive alla rotta di caricamento.
+   * ── E LA RIGA DICE IL NOME DEL FILE, NON PIÙ LA PAROLA «Allegato» (25/08/2026) ─
+   *
+   * Questo test pretendeva anche che il NOME del file non comparisse, con due
+   * ragioni. La prima — «non sopravvive alla rotta di caricamento» — riguardava il
+   * PERCORSO e resta vera: dal percorso il nome non si ricava, ed è per questo che
+   * ora sale da `FileField` e lo tiene il wizard. La seconda — «quel nome è
+   * `cv-<cognome>.pdf`, cioè il cognome di chi si è candidato, e le schermate si
+   * fotografano» — non regge alla misura, ed è la misura che segue: su QUESTA
+   * schermata il cognome è già stampato per esteso come valore del campo
+   * «Cognome», due centimetri più su. Stampare `cv-diprova.pdf` non aggiunge
+   * niente a una fotografia che contiene già «Di Prova» — e lo stesso nome il
+   * prodotto lo mostra già nel riquadro del campo, un passo prima.
+   *
+   * Quel che invece costava: la riga del curriculum era l'UNICA del riepilogo a
+   * non rimandare indietro ciò che la persona ha scelto, e lo era proprio sul solo
+   * campo diventato obbligatorio. Da «Allegato» non si distingue il curriculum
+   * dalla fotografia sbagliata scattata due minuti prima — che è esattamente
+   * l'errore di chi compila dal telefono, cioè la gente che questo campo protegge.
+   *
+   * Il divieto sul PERCORSO — la chiave d'archivio del bucket privato — resta
+   * intero, ed è l'unico che questo test è mai esistito per difendere davvero.
    */
-  it('il curriculum allegato si dice «Allegato», e il suo PERCORSO non compare da nessuna parte', async () => {
+  it('il curriculum si riepiloga col NOME DEL FILE, e il suo PERCORSO non compare da nessuna parte', async () => {
     render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
-    await compilaTutto([], true)
+    await compilaTutto()
 
-    // 1 · La riga c'è, e dice che il curriculum è arrivato.
-    expect(sotto(String(campo('cv_path').label))).toBe(itPublic.candRiepilogoCvAllegato)
+    // 1 · La riga c'è, e dice QUALE file è arrivato — controllabile, come ogni
+    //     altra riga del riepilogo.
+    expect(sotto(String(campo('cv_path').label))).toBe(NOME_FILE_CV)
+    expect(
+      sotto(String(campo('cv_path').label)),
+      'la riga è tornata alla parola generica: da lì non si controlla niente',
+    ).not.toBe(itPublic.candRiepilogoCvAllegato)
+
+    // 1bis · LA MISURA CHE HA CHIUSO L'OBIEZIONE «il nome contiene il cognome»:
+    //        il cognome è GIÀ su questa schermata, come valore del campo che lo
+    //        raccoglie. Se un giorno il riepilogo smettesse di mostrarlo, questa
+    //        riga diventerebbe rossa e l'obiezione andrebbe ripesata da capo.
+    expect(sotto(String(campo('cognome').label))).toBe(SCRITTI.cognome)
 
     // 2 · ⚠️ IL CONTROLLO CHE CONTA: nel testo della schermata non c'è né il
-    //     percorso, né il prefisso del bucket, né l'uuid che lo compone, né il
-    //     nome del file scelto dal browser.
+    //     percorso, né il prefisso del bucket, né l'uuid che lo compone.
     const testo = document.body.textContent ?? ''
     // Il controllo POSITIVO viene prima: una sonda che legge il documento
     // sbagliato — o un riepilogo che non è stato dipinto — supererebbe da sola
     // tutte le righe qui sotto senza guardare niente.
-    expect(testo).toContain(itPublic.candRiepilogoCvAllegato)
+    expect(testo).toContain(NOME_FILE_CV)
     expect(testo).not.toContain(PERCORSO_CV)
     expect(testo).not.toContain(CV_PREFISSO)
     expect(testo).not.toContain('11111111-2222-4333-8444-555555555555')
-    expect(testo).not.toContain(NOME_FILE_CV)
     // …e nemmeno dentro un attributo (un `title`, un `value`, un `href` firmato).
     expect(document.body.innerHTML).not.toContain(PERCORSO_CV)
 
@@ -677,5 +817,314 @@ describe('CandidaturaInsegnanteWizard — l’errore della sede sta dove serve',
     ).toBeTruthy()
     // 3 · e il fuoco è sulla cosa da fare, non sul bottone che ha risposto di no.
     expect(document.activeElement).toBe(caselle[0])
+  })
+})
+
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IL CURRICULUM È OBBLIGATORIO — e obbligatorio vuol dire CHE IL MODULO NON
+ * AVANZA, non che il template lo dichiari.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Decisione del titolare del 2026-08-24: senza curriculum la candidatura non si
+ * invia. Il prezzo è stato MISURATO prima di deciderlo — quattro candidature su
+ * dieci (àncora `MISURA-CV`) oggi arrivano senza allegato, e sono
+ * esattamente quelle che d'ora in poi si fermeranno — quindi il blocco deve
+ * essere impeccabile: chiaro, sotto il campo giusto, e con il fuoco dove sta la
+ * cosa da fare.
+ *
+ * ⚠️ PERCHÉ QUESTO `describe` ESISTE INVECE DI FIDARSI DEL `required: true`.
+ * `required` sul template è una dichiarazione: vale quanto vale la catena che lo
+ * legge. Fra il template e il bottone «Avanti» ci sono un `Controller`, le sue
+ * `rules`, `validateField`, `trigger` e `setFocus`. Se UNO di quegli anelli non
+ * arrivasse al ramo `field.type === 'file'` — è già successo su questo stesso
+ * campo per il `ref`, che mancava e rendeva `setFocus` un comando senza
+ * destinatario — il modulo avanzerebbe lo stesso e il rifiuto arriverebbe dal
+ * server, dopo, su una schermata che non c'è più. Qui si misura il gesto, non
+ * l'attributo.
+ */
+describe('CandidaturaInsegnanteWizard — senza curriculum il modulo non avanza', () => {
+  /** Porta fino al passo «Il tuo profilo» compilato, MA senza allegare niente. */
+  async function finoAlProfiloSenzaCv(): Promise<void> {
+    await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('nome'))).toBeInTheDocument())
+    for (const id of ['nome', 'cognome', 'email', 'telefono', 'residence_city', 'residence_province']) {
+      scrivi(id, SCRITTI[id])
+    }
+    avanti()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: TITOLO.value } })
+    fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
+  }
+
+  /*
+   * ── MENTRE IL CURRICULUM SALE, IL MODULO NON DEVE DIRE CHE NON C'È ─────────
+   *
+   * Il caso: si sceglie il file, il caricamento parte, e prima che finisca si
+   * preme «Avanti». Il riquadro del campo in quell'istante dice «Caricamento…» e
+   * porta `aria-busy="true"`; il modulo, giustamente, non avanza — il percorso
+   * non c'è ancora. Ma il MOTIVO che veniva scritto sotto il campo era «Campo
+   * obbligatorio», cioè l'accusa di non aver allegato niente rivolta proprio a
+   * chi ha appena scelto il file e sta aspettando.
+   *
+   * ⚠️ FINO AL 24/08 LA STESSA CORSA NON AVEVA CONSEGUENZE: il campo era
+   * facoltativo, si passava oltre e basta. Da quando è obbligatorio quella frase
+   * si legge come un rifiuto — e la legge, per prima, la popolazione che questa
+   * modifica manda al caricatore: i quattro su dieci che oggi non allegano, cioè chi
+   * fotografa il curriculum col telefono su rete mobile, dove il caricamento dura.
+   *
+   * ⚠️ LA REGOLA DI VALIDAZIONE NON SI TOCCA: `validateField` ha ragione, il
+   * valore è vuoto. A essere sbagliato è il MESSAGGIO, che non sapeva del
+   * caricamento in volo — l'informazione esisteva (`aria-busy` la stampa) e non
+   * arrivava a chi decide cosa scrivere. Una seconda regola di validazione sarebbe
+   * stata «la regola destinata a divergere».
+   */
+  it('mentre il curriculum si sta caricando il messaggio dice di ASPETTARE, non «Campo obbligatorio»', async () => {
+    // Caricamento che non risponde MAI: è lo stato «in volo», tenuto fermo.
+    let sbloccaCaricamento: (() => void) | null = null
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/api/iscrizione/sedi')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [ALFA, BETA] }) })
+      }
+      if (url.includes('/api/iscrizione/insegnanti/upload')) {
+        return new Promise((risolvi) => {
+          sbloccaCaricamento = () =>
+            risolvi({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+        })
+      }
+      if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
+        corpiInviati.push(JSON.parse(String(init.body)))
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: null }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
+    await finoAlProfiloSenzaCv()
+
+    const controllo = document.getElementById('cv_path') as HTMLInputElement
+    fireEvent.change(controllo, {
+      target: { files: [new File(['%PDF-1.4 finto'], NOME_FILE_CV, { type: 'application/pdf' })] },
+    })
+    // La premessa del caso, misurata e non data per scontata: il caricamento È in
+    // volo — il riquadro lo dice e l'attributo lo dichiara.
+    //
+    // ⚠️ `caricamentoAllegato` E NON `caricamento`: sono due chiavi diverse, e
+    // fino al 25/08/2026 avevano lo STESSO valore italiano — quindi questa riga
+    // misurava la chiave sbagliata e passava per coincidenza. In inglese le due
+    // erano già distinte («Loading…» contro «Uploading…»). Ora anche in italiano
+    // («Caricamento del file…»), e la coincidenza è finita.
+    //
+    // ⚠️ LA RICERCA È RISTRETTA AL RIQUADRO, e non è pignoleria. Dal 2026-08-25
+    // il testo dell'attesa sta in DUE posti: dentro la `<label>` (il riquadro, che è ciò
+    // che questa riga vuole misurare) e dentro la regione viva `sr-only`
+    // `role="status"` che annuncia lo stato a chi non vede la rotellina. Un
+    // `screen.getByText` globale trovava due nodi e cadeva con «Found multiple
+    // elements» — cioè per una ragione che non c'entra col comportamento difeso.
+    // Il presidio della regione viva è un altro e sta in
+    // `__tests__/a11y/candidatura-insegnante-a11y.test.tsx`; qui si misura il
+    // riquadro, e restringere la ricerca è il modo di continuare a misurarlo.
+    const riquadro = controllo.closest('label')!
+    await waitFor(() =>
+      expect(within(riquadro).getByText(itParentForms.caricamentoAllegato)).toBeInTheDocument(),
+    )
+    expect(controllo.getAttribute('aria-busy')).toBe('true')
+
+    avanti()
+
+    // 1 · Non si avanza: giusto, il percorso non c'è ancora.
+    await waitFor(() => expect(document.getElementById('cv_path-error')).not.toBeNull())
+    expect(
+      screen.queryByRole('checkbox', { name: /informativa sulla privacy/i }),
+      'il modulo è avanzato ai consensi con il caricamento ancora in volo',
+    ).not.toBeInTheDocument()
+
+    // 2 · …e il motivo detto è quello VERO.
+    //     ⚠️ SI VIETANO ENTRAMBE LE FRASI DEL «VUOTO», e non solo quella vecchia:
+    //     dal 25/08/2026 `validateField` sul campo di caricamento dice «Allega un
+    //     file per proseguire» invece di «Campo obbligatorio». Lasciando il solo
+    //     divieto della frase di ieri, questo controllo sarebbe diventato verde per
+    //     costruzione — cioè avrebbe smesso di difendere qualcosa proprio mentre
+    //     l'accusa sbagliata cambiava parole.
+    expect(
+      document.getElementById('cv_path-error')?.textContent,
+      'al campo che sta caricando si dice che non è stato allegato niente',
+    ).not.toContain(itParentForms.campoObbligatorio)
+    expect(
+      document.getElementById('cv_path-error')?.textContent,
+      'al campo che sta caricando si chiede di allegare il file che sta già salendo',
+    ).not.toContain('Allega un file')
+    expect(document.getElementById('cv_path-error')?.textContent).toContain(
+      itParentForms.attendiCaricamento,
+    )
+
+    // 3 · E finito il caricamento il modulo riparte: l'attesa era un'attesa, non
+    //     un vicolo cieco.
+    sbloccaCaricamento!()
+    // Il nome vive in due `<span>` (troncamento centrale): si guarda il riquadro.
+    await waitFor(() => expect(riquadro.textContent).toContain(NOME_FILE_CV))
+    avanti()
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
+    )
+  })
+
+  it('«Avanti» non porta da nessuna parte, lo DICE sotto il campo e ci posa il fuoco', async () => {
+    render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
+    await finoAlProfiloSenzaCv()
+
+    // Tutto il resto del passo è a posto: l'unica cosa che manca è l'allegato.
+    // È il caso che vale il 41% delle candidature di oggi, non un caso limite.
+    avanti()
+
+    // 1 · NON si è passati. Il modo di dirlo che non mente è cercare la schermata
+    //     successiva: i consensi. Un `queryByText` sull'errore direbbe solo che
+    //     un errore c'è, non che il passo si è fermato.
+    await waitFor(() =>
+      expect(screen.getByText(itPublic.candCvNota), 'il passo «profilo» è stato lasciato').toBeInTheDocument(),
+    )
+    expect(
+      screen.queryByRole('checkbox', { name: /informativa sulla privacy/i }),
+      'il modulo è avanzato ai consensi senza il curriculum',
+    ).not.toBeInTheDocument()
+
+    // 2 · e lo dice DOVE si guarda: il messaggio è quello degli altri campi
+    //     obbligatori del modulo — la stessa frase, dallo stesso motore
+    //     (`validateField`) — dentro un `role="alert"` collegato al campo con
+    //     `aria-describedby`. Non una formulazione nuova per lo stesso rifiuto.
+    const cv = document.getElementById('cv_path') as HTMLInputElement
+    expect(cv, 'il campo del curriculum non è reso').not.toBeNull()
+    // ⚠️ L'ATTRIBUTO PORTA DUE ID DAL 25/08, e l'ORDINE È IL PUNTO. Fino a quel
+    // giorno qui c'era `.toBe('cv_path-error')`: l'errore era l'unica descrizione
+    // del campo, e la nota che spiega l'obbligo («va bene anche una fotografia…
+    // senza allegato non si può inviare») non era agganciata a niente. Ora è
+    // agganciata, e `aria-describedby` le legge in sequenza: **prima il
+    // messaggio**, che è la cosa urgente, poi la nota. Un `toContain` da solo non
+    // difenderebbe l'ordine, e un attributo che cominciasse dalla nota farebbe
+    // sentire il consiglio prima del rifiuto.
+    const descritto = (cv.getAttribute('aria-describedby') ?? '').split(/\s+/)
+    expect(descritto, 'il campo in errore non è collegato al suo messaggio').toEqual([
+      'cv_path-error',
+      'cv_path-nota',
+    ])
+    const idErrore = descritto[0]
+    const messaggio = document.getElementById(idErrore)
+    expect(messaggio?.getAttribute('role'), 'il messaggio non viene annunciato').toBe('alert')
+    // ⚠️ La frase è quella dei campi di CARICAMENTO, non quella generica: su un
+    // riquadro «Campo obbligatorio» non dice cosa fare (25/08/2026).
+    expect(messaggio?.textContent).toContain('Allega un file per proseguire')
+    expect(cv.getAttribute('aria-invalid')).toBe('true')
+
+    // 3 · e il fuoco sta sulla cosa da fare. Senza, chi usa la tastiera o uno
+    //     screen reader resta sul bottone che ha appena detto di no, in fondo
+    //     alla pagina, con un messaggio che non vede.
+    //
+    // ⚠️ `waitFor` E NON UN'ASSERZIONE SECCA, e non è pigrizia: `setFocus` di
+    // react-hook-form mette il `focus()` dentro un `setTimeout`, quindi subito
+    // dopo il clic il fuoco è ancora dov'era (qui l'`h2` del passo). MISURATO:
+    // senza l'attesa questa riga fallisce dicendo «expected <h2> to be <input
+    // id="cv_path">», cioè accusa il prodotto di un difetto che non ha. È lo
+    // stesso `waitFor` che usa il test gemello dell'a11y sul primo campo di
+    // testo non valido.
+    await waitFor(() => expect(document.activeElement, 'il fuoco non è sul curriculum').toBe(cv))
+  })
+
+  it('allegare il curriculum sblocca lo stesso passo: il blocco è il CV, non un guasto del wizard', async () => {
+    // ⚠️ IL CONTROLLO NEGATIVO, e non è cerimoniale: senza, il test qui sopra
+    // resterebbe verde anche se il passo «profilo» fosse rotto per una qualunque
+    // altra ragione — un titolo di studio che non si salva, una posizione che non
+    // si spunta — e attribuirebbe al curriculum un blocco che non è suo.
+    render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
+    await finoAlProfiloSenzaCv()
+    avanti()
+    await waitFor(() =>
+      expect(document.getElementById('cv_path')?.getAttribute('aria-invalid')).toBe('true'),
+    )
+
+    await allegaCurriculum()
+    avanti()
+
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
+    )
+  })
+
+  /*
+   * ── IL SALTO AL RIEPILOGO, che è la strada che `trigger` NON copre ─────────
+   *
+   * Il wizard permette di tornare dritti al riepilogo da un passo precedente, e
+   * `prosegui()` valida i passi che quel salto scavalca — con `validateField` su
+   * `getValues`, NON con `trigger`, che sui campi smontati risponde `true` a
+   * qualunque cosa. Se il curriculum non entrasse in quel controllo, si
+   * arriverebbe al riepilogo con un modulo che il server rifiuta: cioè
+   * esattamente il difetto per cui `prosegui()` è stato scritto, spostato su un
+   * campo nuovo.
+   *
+   * ⚠️ LO SCENARIO NON È COSTRUITO: è un CARICAMENTO FALLITO. `FileField`, quando
+   * la rotta risponde male (un 429 del tetto per IP, un 500, la rete che cade),
+   * chiama `onChange('')` — cioè SVUOTA il campo. A schermo resta il messaggio
+   * rosso del caricamento, ma se in quel momento si preme «Indietro» e poi «Torna
+   * al riepilogo», il passo «profilo» viene scavalcato con il curriculum vuoto.
+   * È la sola strada per cui un modulo può arrivare al riepilogo senza allegato,
+   * ed è per questo che si collauda questa e non un'altra.
+   */
+  it('il ritorno al riepilogo si ferma sul profilo se un caricamento fallito ha svuotato il curriculum', async () => {
+    mockRete([ALFA, BETA])
+    render(<CandidaturaInsegnanteWizard />)
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: NOME_SEDE_A })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: NOME_SEDE_A }))
+    avanti()
+    await compilaTutto()
+
+    // Si torna sul profilo e si prova a sostituire l'allegato: il caricamento
+    // fallisce, e il campo resta VUOTO senza che nessuno lo dica al riepilogo.
+    modifica(itPublic.candProfilo)
+    await waitFor(() => expect(document.getElementById('cv_path')).not.toBeNull())
+
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes('/api/iscrizione/sedi')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [ALFA, BETA] }) })
+      }
+      if (url.includes('/api/iscrizione/insegnanti/upload')) {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'Caricamento non riuscito' }) })
+      }
+      if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
+        corpiInviati.push(JSON.parse(String(init.body)))
+        return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: null }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    const cv = document.getElementById('cv_path') as HTMLInputElement
+    fireEvent.change(cv, {
+      target: { files: [new File(['%PDF-1.4 finto'], 'cv-secondo-tentativo.pdf', { type: 'application/pdf' })] },
+    })
+    // Il campo è tornato vuoto: è la premessa di tutto il caso, e si misura
+    // invece di darla per scontata. Il riquadro torna a dire «Seleziona un
+    // file», che è ciò che `FileField` mostra quando `value` è vuoto — la sola
+    // prova a schermo che `onChange('')` è passato.
+    await waitFor(() =>
+      expect(screen.getByText(itParentForms.selezionaFile)).toBeInTheDocument(),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candIndietro }))
+    await waitFor(() => expect(screen.getByPlaceholderText(segnaposto('nome'))).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: itPublic.candTornaAlRiepilogo })).toBeInTheDocument()
+
+    tornaAlRiepilogo()
+
+    // 1 · Il salto si è fermato sul profilo, e NON si è arrivati al riepilogo.
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 2, name: itPublic.candProfilo })).toBeInTheDocument(),
+    )
+    expect(sulRiepilogo()).toBe(false)
+    // 2 · e non in silenzio: il riquadro nomina il passo rimasto indietro.
+    expect(screen.getByText(itPublic.candRitornoInterrottoTitolo)).toBeInTheDocument()
+    // 3 · e il campo porta il suo messaggio, scritto a mano da `prosegui()`
+    //     perché `trigger` non lo avrebbe visto.
+    const cvOra = document.getElementById('cv_path') as HTMLInputElement
+    expect(cvOra.getAttribute('aria-invalid')).toBe('true')
+    expect(document.getElementById('cv_path-error')?.textContent).toContain(
+      'Allega un file per proseguire',
+    )
   })
 })

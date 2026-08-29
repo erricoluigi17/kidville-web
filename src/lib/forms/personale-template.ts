@@ -383,7 +383,6 @@ export const CONSENSI_PERSONALE_FIELDS: FormField[] = [
       'non è richiesto il consenso, ed è per lo stesso motivo che non mi viene chiesto. Posso in ' +
       'ogni momento chiedere di accedere ai miei dati, correggerli o farli aggiornare.',
     link: '/privacy',
-    link_label: 'Leggi l’informativa completa',
   },
   {
     id: 'dichiarazione_veridicita',

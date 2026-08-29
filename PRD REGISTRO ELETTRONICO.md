@@ -32,7 +32,7 @@
 > | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `segnalazioni` | Coda di triage UGC (C5, Google Play): segnalazione **contenuto** (chat/galleria/diario, discriminante `tipo_oggetto`+`oggetto_id` polimorfico) o **utente** (`segnalato_id`), categoria, motivo libero, stato/gestione. Nessuna FK utente: la riga sopravvive a un'eventuale anonimizzazione | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
-> | `candidature_insegnanti` | Candidature spontanee di personale dal modulo **pubblico** `/lavora-con-noi` — dal 15/08/2026 **non più solo docente**: `posizioni text[]` (sette valori, almeno uno, `CHECK cardinality(...) >= 1`) porta anche collaboratrice, cucina, segreteria e un «altro» scritto a mano in `posizione_altro`; `gradi` non si chiede più e si **deriva** dalle posizioni docenti (vuoto è legittimo). Base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo; `cv_path` **unico** (`candidature_insegnanti_cv_unico`). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `candidature_insegnanti` | Candidature spontanee di personale dal modulo **pubblico** `/lavora-con-noi` — dal 15/08/2026 **non più solo docente**: `posizioni text[]` (sette valori, almeno uno, `CHECK cardinality(...) >= 1`) porta anche collaboratrice, cucina, segreteria e un «altro» scritto a mano in `posizione_altro`; `gradi` non si chiede più e si **deriva** dalle posizioni docenti (vuoto è legittimo). Dal 25/08/2026 anche **`disponibilita` non si chiede più** — la colonna **resta** con i suoi valori storici (**227 righe al 25/08, h 12:08** — `SELECT count(disponibilita) …`, non ricopiare: cresce fino al deploy) e la scheda di segreteria mostra la riga solo quando il valore c'è; e il **`cv_path` è obbligatorio in via APPLICATIVA** (template `required: true` + `validateField` client e server), **non** con un `NOT NULL`: **98 righe storiche su 237** (25/08 h 12:08) lo hanno vuoto e il vincolo non si potrebbe applicare. Base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo; `cv_path` **unico** (`candidature_insegnanti_cv_unico`). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
 > ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
@@ -75,7 +75,7 @@
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
-> | **«Lavora con noi» — candidature di personale** | ✅ In produzione · **aperto a tutte le posizioni dal 15/08/2026** (non più solo insegnanti) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede ed elenco unico delle **sette posizioni** — le tre docenti portano la fascia nel nome — più «Altro» con casella condizionale e **curriculum allegabile**), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `POST /api/iscrizione/insegnanti/upload` (anonima, 6/10 min per IP, bucket `form_attachments` sotto `candidature/`), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione` **solo per le candidature docenti**), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi + spazzata dei curriculum orfani a 24 h). ⚠️ **L'account nasce SOLO per le posizioni da insegnante**: un account `educator` legge l'anagrafica dei bambini, e cuoca/collaboratrice/segreteria si approvano senza crearne nessuno (`esitoAccount: nessuno`) |
+> | **«Lavora con noi» — candidature di personale** | ✅ In produzione · **aperto a tutte le posizioni dal 15/08/2026** (non più solo insegnanti) · ⏳ **curriculum obbligatorio e «Disponibilità» rimossa: NON ancora in produzione** (vedi il riquadro sul ramo, più sotto) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede ed elenco unico delle **sette posizioni** — le tre docenti portano la fascia nel nome — più «Altro» con casella condizionale; ⏳ **curriculum OBBLIGATORIO — scritto, non rilasciato**: il modulo vivo su `app.kidville.it` accetta ancora candidature senza allegato, e continuerà finché il merge non è fatto. La verifica che il rilascio abbia avuto effetto è una query sola: `select count(*) filter (where cv_path is null) from candidature_insegnanti;` smette di crescere), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `POST /api/iscrizione/insegnanti/upload` (anonima, 6/10 min per IP, bucket `form_attachments` sotto `candidature/`), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione` **solo per le candidature docenti**), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi + spazzata dei curriculum orfani a 24 h). ⚠️ **L'account nasce SOLO per le posizioni da insegnante**: un account `educator` legge l'anagrafica dei bambini, e cuoca/collaboratrice/segreteria si approvano senza crearne nessuno (`esitoAccount: nessuno`) |
 >
 > ### 🎓 Moduli Normativi Scuola Primaria (gap da colmare)
 > Requisiti derivati da L. 150/2024, O.M. 3 del 9/1/2025 (All. A), note MIM 5274/2024 e 2773/2025,
@@ -91,6 +91,2077 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🧹 Changelog — La domanda sulla disponibilità non si fa più, e il curriculum diventa obbligatorio — 2026-08-25 (branch `feat/candidature-cv-obbligatorio`)
+
+> ### Come è stato preparato questo lavoro — scritto al passato, perché non invecchi
+>
+> Il lavoro è stato preparato **sull'albero di `main`** e portato sul ramo
+> `feat/candidature-cv-obbligatorio` prima del commit.
+>
+> Qui, fino al 2026-08-25, stava un riquadro intitolato «PRIMA DEL COMMIT» che descriveva invece lo
+> stato **della sessione**: quale ramo rispondeva `HEAD`, quanti commit propri c'erano, quanti file
+> l'albero portava addosso. Ha detto il falso due volte in un giorno solo — la prima quando il ramo
+> è stato rimesso a posto a mano da un'altra sessione, la seconda a ogni salvataggio che cambiava il
+> conto dei file — e **nessun anello del gate** (`eslint`, `tsc`, `vitest`, i lock d'architettura)
+> guarda il nome di un ramo o il numero dei file: non c'era niente, in tutto il repo, che potesse
+> contraddirlo. Il riquadro stesso ordinava di cancellarsi al momento del commit, e questa è
+> l'esecuzione di quell'ordine.
+>
+> **La regola che ne resta, e che vale oltre questo changelog: un changelog è un documento sul
+> commit, non sulla sessione che lo prepara.** Chi ha bisogno dello stato dell'albero lo MISURI —
+> `git rev-parse --abbrev-ref HEAD`, `git log --oneline main..HEAD`,
+> `git status --porcelain | wc -l` — invece di leggerlo qui: sono tre comandi, e rispondono di oggi.
+>
+> ⚠️ **Che due sessioni lavorino sullo stesso albero non è un'ipotesi: è successo il 2026-08-25.** Un
+> `git checkout` fatto altrove ha portato HEAD su `main` con 45 file non committati addosso, e il
+> ramo è stato rimesso a posto a mano. Finché un lavoro non è committato, `git checkout`,
+> `git switch`, `git stash` e `git reset` vanno trattati come comandi distruttivi.
+
+Il modulo pubblico `/lavora-con-noi` non chiede più **«Disponibilità»**. Era una select con cinque
+voci — tempo pieno, part-time mattina, part-time pomeriggio, supplenze, tirocinio — e serviva alla
+segreteria per smistare.
+
+**Perché sparisce, e perché SECCA.** In Kidville si lavora **solo a tempo pieno**: delle cinque voci
+una sola era accettabile, e le altre quattro promettevano un impegno che non esiste. Una domanda già
+decisa fa sembrare trattabile ciò che non lo è. Decisione del titolare: al suo posto **non va nessuna
+riga informativa** del tipo «le collaborazioni sono a tempo pieno» — una nota che spiega un campo
+assente è ancora quel campo, con un giro in più.
+
+### La colonna resta, e non è un dettaglio
+
+`candidature_insegnanti.disponibilita` **non è stata toccata**: nessuna migrazione, nessun
+`DROP COLUMN`, la colonna resta `text` e `nullable`.
+
+| rimisurato in produzione il 2026-08-25, alle **19:26** | |
+|---|---|
+| domande di candidatura | 248 |
+| con `disponibilita` valorizzata | **238** |
+
+Sono risposte vere, date da persone vere, e la segreteria continua a leggerle: la route admin nomina
+quella colonna per esteso (`COLONNE_DETTAGLIO`) invece di derivarla dal template, quindi il campo
+uscito dal modulo non se le porta via.
+
+**Non ricopiare quei due numeri, e non fidarsi nemmeno della DATA.** Fino al deploy la produzione
+serve ancora il modulo vecchio e il secondo continua a salire: erano 228 domande e 219 valorizzate
+nella misura da cui è partito questo lavoro, 230 e 221 mentre lo si pianificava, **231 e 222 quando
+questa voce è stata scritta, 232 e 223 poche ore dopo, 233 e 224 alle 02:10 mentre si correggevano i
+rilievi del terzo giro, 237 e 227 alle 12:08 dell'allineamento finale, 248 e 238 alle 19:26 della
+riparazione della deriva — tutto nello stesso giorno**. Per questo la riga
+qui sopra porta l'ora e non solo il 25 agosto: una tabella datata al giorno ha già ospitato due
+valori diversi sotto la stessa etichetta, che è il modo più silenzioso di dire il falso. È una
+query sola:
+`SELECT count(*), count(disponibilita) FROM candidature_insegnanti;` — ed è anche la verifica più
+semplice che il rilascio abbia fatto effetto davvero: **dopo**, il primo continua a crescere e il
+secondo si ferma.
+
+### La riga compare solo quando il valore c'è
+
+Nella scheda di segreteria la voce «Disponibilità» si disegna **solo se quella candidatura il valore
+ce l'ha**. Sulle nuove sparisce, e non diventa «Disponibilità: Non indicato»: scriverlo accuserebbe
+chi si è candidato di un'omissione su una **domanda che non gli è mai stata fatta**. Le due metà di
+questa decisione hanno ciascuna il proprio test — una sulla candidatura storica, che la riga la
+pretende; l'altra sulla nuova, che pretende l'assenza dell'**etichetta** e non il conteggio dei «Non
+indicato», perché è l'unica cosa che distingue una riga assente da una riga che accusa.
+
+### Chi difende cosa, adesso
+
+- **che il campo non torni**: `insegnanti-template.test.ts` pretende `disponibilita` assente dal
+  template **e** la colonna presente nella fotografia dello schema. Le due metà insieme sono ciò che
+  rende questa una rimozione e non una perdita.
+- **le cinque etichette storiche**: il lock dei cataloghi le derivava dal template, quindi col campo
+  fuori avrebbe smesso di guardarle — dopo un aggiornamento di conteggio fatto senza chiedersi cosa
+  fosse uscito. Ora la fonte è `CHIAVE_DISPONIBILITA`, esportata apposta dalla scheda: toglierne una
+  riga fa rosso, misurato togliendo `tirocinio`.
+- **che il client non possa riscrivere la colonna**: il corpo della POST è `.loose()`, quindi una
+  scheda rimasta aperta col bundle vecchio continua a spedire `disponibilita`. `costruisciRiga` itera
+  il template e non fa lo spread di `data`, e un caso nuovo in `candidature-insegnanti-post.test.ts`
+  lo tiene fermo — è la stessa difesa che `gradi` ha dal 2026-08-15.
+- **quello che si perde, misurato invece che stimato**: la copia email al plesso deriva le colonne dal
+  template, quindi non stampa più «Disponibilità» nemmeno per una candidatura storica. Le righe con
+  `copia_inviata_il IS NULL` — le uniche che quell'inoltro tocca — erano **0** il 24, **0** il 25 e 0
+  a ogni rimisurazione. Il dato resta leggibile in Segreteria, che è la superficie su cui si decide.
+
+### Ogni guardia nuova è stata VISTA cadere
+
+In questo repo *un test mai visto fallire non è un test*. Le guardie qui sopra sono state rotte
+apposta, una per una, e il rosso è stato letto — **in memoria**, con un plugin Vite `transform` che
+riscrive il sorgente durante l'esecuzione: l'albero di lavoro non è stato toccato (`git status`
+identico prima e dopo, `sha256` dei file bersaglio invariati) perché è condiviso con altre sessioni.
+Il plugin porta una **sentinella** che *lancia* se la stringa da rompere non esiste più: senza,
+un `replace` a vuoto avrebbe lasciato il test verde e il controllo negativo avrebbe approvato tutto —
+la stessa trappola di `vitest -t 'nome-inesistente'`.
+
+| rotto apposta | rosso atteso | misurato |
+|---|---|---|
+| la riga `<Voce candDisponibilita>` rimessa **incondizionata** | l'assenza dell'etichetta | 🔴 `CandidatureInsegnanti.test.tsx` — *«expected document not to contain element, found `<p>Disponibilità</p>`»*. ⚠️ **La rottura è del secondo giro, quando l'asserzione viveva dentro il caso «un titolo FUORI enum resta grezzo».** Al terzo giro le è stato dato un `it` proprio (§5): oggi a cadere è **«la candidatura NUOVA, senza disponibilità, non mostra la riga»**, e il caso del titolo di studio resterebbe verde. Chi rifà la prova usi quel nome |
+| `esitoConElenco` che **non appende il `+N`** | il troncamento non è scattato | 🔴 `candidature-insegnanti-log-senza-pii.test.ts` — 1 rosso, solo quello |
+| il campo `disponibilita` **rimesso nel template** | tre lock insieme | 🔴 template · cataloghi · POST — 3 file, 3 rossi |
+| `costruisciRiga` con lo **spread di `data`** | l'uguaglianza chiusa sull'INSERT | 🔴 4 casi in `candidature-insegnanti-post.test.ts` |
+| la colonna tolta dalla **fotografia dello schema** | la colonna non c'è più | 🔴 + il **sigillo sha256** della fotografia |
+| la riga `tirocinio` tolta da **`CHIAVE_DISPONIBILITA`** | `toHaveLength(5)` | 🔴 *«expected […] to have a length of 5 but got 4»* |
+| **la fotografia riportata al 2026-08-14** (giro 4) — cioè lo stato che è davvero stato in repo per cinque giorni | la guardia di freschezza nuova | 🔴 `insegnanti-template.test.ts`, *«nessuna migrazione più recente della fotografia tocca `candidature_insegnanti`»*: **1 rosso su 51**, e nomina le 5 migrazioni della finestra cieca, `20260820141500_candidatura_copia_inviata_il.sql` compresa. È la prova che **il 20 agosto questa guardia avrebbe fatto rosso** |
+
+E una misura che **smentisce il commento che stava lì**: togliere `candDispTirocinio` dal **solo**
+`en/adminAltro.json` fa rosso la **parità dei cataloghi**, non solo questo lock — quindi non era
+l'esempio giusto. Il caso che questo lock copre **da solo** è la rimozione **simmetrica**: tolta da
+`it` **e** da `en`, la parità resta verde (5/5, misurato su una copia della cartella `messages/`) e
+l'unico rosso è qui. Il commento è stato riscritto sull'esempio vero.
+
+### Due righe della tabella dei campi, corrette per strada
+
+Nel §1 della voce del 2026-08-10 gli **Obbligatori** dicevano ancora «fasce d'età (`gradi`)»: falso
+dal 2026-08-15, da quando la domanda è «per quali **posizioni**» e `gradi` non arriva più dal client
+ma lo deriva il server. Ora quella riga dice il vero, e la disponibilità è uscita dai **Facoltativi**.
+
+⚠️ Nella stessa riga il **curriculum** era ancora fra i Facoltativi, con scritto che sarebbe
+diventato falso «nell'istante in cui l'allegato sarà obbligatorio». Quell'istante è arrivato il
+**2026-08-24**: la riga è stata riscritta, e il curriculum sta ora fra gli **Obbligatori**.
+
+### Il terzo giro: cosa hanno trovato sei collaudatori, e cosa era vero
+
+Sei collaudi indipendenti sull'ELEMENTO A, **sei rilievi formali** (tre «medio», tre «estetico»),
+verificati uno per uno — leggendo il codice o rieseguendo il comando — **prima** di toccare
+qualunque cosa. In questo repo, su 65 rilievi di un collaudo passato, 6 erano sbagliati nei fatti:
+qui **nessuno lo era**, e uno era più grave di come era stato scritto (le copie della cifra ancora
+in giro erano **due**, non una, e una sfugge perfino al grep che il rilievo proponeva). Ai sei si
+aggiungono due *warning* che indebolivano presidi creati da questo stesso lavoro, corretti anche
+quelli.
+
+**1. La proiezione del dettaglio era l'anello scoperto, e questo lavoro ne aveva reso MUTO il
+guasto.** La riga «Disponibilità» in Segreteria dipende da due anelli: il condizionale nel
+componente (difeso da due test, entrambi visti cadere) e la proiezione `COLONNE_DETTAGLIO` della
+route admin, che il nome della colonna lo porta scritto a mano. Il secondo non era asserito da
+nessuno: togliendo `'disponibilita'` da quell'elenco la suite restava **tutta verde**. E fino al
+24 agosto una proiezione mutilata si SEGNALAVA — `Voce` stampava «Disponibilità: Non indicato» su
+ogni scheda storica, un'anomalia che una segreteria nota; col condizionale `{disponibilita && …}`
+la riga sparisce e basta, cioè prende **l'aspetto esatto del comportamento corretto** per le
+candidature nuove. Sostituendo il rivelatore non se n'era messo un altro.
+
+Chiuso in `__tests__/api/candidature-insegnanti-scope-sede.test.ts` con due asserzioni, e **viste
+cadere entrambe** togliendo dalla proiezione prima `disponibilita` e poi `titolo_dettaglio`:
+
+| rotto apposta | rosso atteso | misurato |
+|---|---|---|
+| `'disponibilita'` tolta da `COLONNE_DETTAGLIO` | il dettaglio non consegna più il valore | 🔴 *«expected undefined to be 'tempo_pieno'»* |
+| `'titolo_dettaglio'` tolta da `COLONNE_DETTAGLIO` | un campo del modulo che la scheda non chiede | 🔴 *«expected [ 'titolo_dettaglio' ] to deeply equal []»* |
+
+La seconda è **derivata da `INSEGNANTE_FIELDS`**, non ribattuta: un campo aggiunto domani al modulo
+e dimenticato nella proiezione entra in tabella, parte nella copia email alla sede (che itera il
+template) e non si vede mai in Segreteria — da oggi quel silenzio è rosso.
+
+**2. La fotografia dello schema era ferma al 14 agosto, e il piano l'aveva dichiarata «già
+esatta».** Il lock `expect(COLONNE.has('disponibilita')).toBe(true)` — presentato qui sopra come
+«la metà che rende questa una rimozione e non una perdita» — legge
+`__tests__/fixtures/candidature-schema-snapshot.json`, non il database. La fotografia dichiarava
+**25 colonne**; la produzione, misurata il 2026-08-25 sui soli cataloghi di sistema, ne ha **26**:
+mancava `copia_inviata_il`, aggiunta dalla migrazione `20260820141500` e mai fotografata. La deriva
+nasce il **20 agosto** e non con questo lavoro, ma questo lavoro ci ha appoggiato sopra una difesa
+nuova **dichiarandola verificata**: il piano scriveva «`disponibilita` è la colonna 14, `cv_path` la
+16, 25 colonne in tutto ⇒ la fotografia è già esatta ⇒ non toccare, non rigenerare». Le due
+posizioni erano giuste, il totale no — perché la misura era stata fatta **sulla fotografia stessa**
+invece che contro la produzione, e da un controllo parziale si era concluso un «è esatta» pieno.
+
+Rigenerata con la procedura del generatore (sola lettura, `information_schema` · `pg_enum` ·
+`pg_constraint`): **26 colonne, 7 check, enum invariato**, `sha256` da `0c8acca9…` a `db7af055…`,
+`disponibilita` che resta alla 14 e `cv_path` alla 16. Rotta apposta subito dopo — colonna tolta a
+mano dalla fotografia — e il rosso è doppio: il **sigillo sha256** e la colonna mancante.
+
+⚠️ Resta vero, e nessun lock lo può coprire: quella fotografia dice **cosa c'era il giorno in cui è
+stata scattata**. Un `DROP COLUMN` in produzione domani lascerebbe il test verde. La sede del
+rimedio non è un altro lock offline — in CI le credenziali di produzione non ci sono e non ci devono
+essere — ma la voce di rilascio: **chi applica una migrazione su `candidature_insegnanti` rigenera
+la fotografia nello stesso lavoro**, come aggiorna il PRD.
+
+**3. Tre cifre ribattute a mano, e una dichiarazione di completezza falsa.** Il file
+`src/app/api/iscrizione/insegnanti/route.ts` porta due paragrafi che spiegano perché le cifre in
+prosa non si scrivono. Trenta righe più sotto ne conteneva un'altra — «`riga` ha 15 chiavi» — ed era
+falsa: le chiavi sono 16 (13 id del template + `gradi` + `scuola_id` + `consents_log`), ed erano 17
+prima di questa rimozione. Tolta, non aggiornata. Nello stesso file, il paragrafo che confessa le
+cifre false si chiudeva con «Per questo adesso non ce n'è nessuna» **contenendone una in grassetto**
+quattro righe sopra: il «178» è rimasto — senza, «sbagliata di uno» sarebbe un'affermazione non
+verificabile — ma adesso è **datato** e la chiusura non promette più un'assenza che non c'è.
+
+E la più istruttiva: il commento del collaudo del riepilogo dichiarava «la stessa frase viveva in
+**DUE** copie — qui e in testa al componente — e questo giro le ha corrette **entrambe**». Falso: il
+`grep` ne trova altre due col numero ancora dentro, in file che quella frase non li nominava
+(`CandidaturaInsegnanteWizard.tsx` più in basso e `candidatura-alla-sede.test.ts`). Il conto era
+stato fatto **a memoria** — cioè la trappola che questo repo documenta, *«un elenco scritto a mano
+di tutti i posti da toccare mente»*, applicata alla propria correzione, dentro il paragrafo che la
+denunciava. Le due copie sono state corrette e **il conto non è stato riscritto**: al suo posto c'è
+il comando che lo rifà. E il comando cerca il NUMERO, non la frase — perché anche il grep «più
+mirato» sbaglia: misurato, una delle copie porta «due su» a fine riga e «tredici» su quella dopo, e
+nessun grep di riga la trova. *Un rilevatore più stretto della cosa che cerca è il modo in cui
+questo conto è arrivato a essere falso la prima volta.*
+
+**4. Una fixture che aveva cambiato ramo senza dirlo.** Il caso «se anche il RITENTO fallisce, è
+500» nominava come colonna mancante proprio `disponibilita`. Da quando la rotta non la scrive più,
+`colonnaMancante()` rifiuta quel nome e il ciclo **ripiega su `consents_log`**: il test restava verde
+— il ritento avviene, fallisce, il 500 arriva — ma sullo stesso ramo del caso vicino, non su quello
+che il suo nome racconta. Adesso la colonna è una che l'INSERT scrive davvero, e il caso lo
+**asserisce due volte**: che il nome sia dentro `COLONNE_AMMESSE`, e che il warn nomini proprio
+quella colonna. Viste cadere entrambe (rimettendo `disponibilita`; e forzando il ripiego nella
+route).
+
+**5. Due presidi indeboliti dalla forma, non dal contenuto.** L'asserzione che difende la decisione
+del titolare — la riga «Disponibilità» NON compare quando il valore manca — viveva dentro un caso
+chiamato *«un titolo FUORI enum resta grezzo»*. Funzionava (rimettendo la riga incondizionata il
+test diventava rosso), ma il giorno in cui qualcuno rifà il caso del titolo di studio quella guardia
+se ne va con lui, e **nessun nome nel file avrebbe mai annunciato che stava lì**. Ora ha un `it`
+proprio, e porta con sé la controprova che il pannello si è davvero aperto — senza, un dettaglio mai
+renderizzato soddisferebbe l'assenza per il motivo sbagliato. Nel caso gemello, `getByText('Non
+indicato')` al singolare reggeva solo finché la fixture teneva valorizzati *tutti* gli altri
+facoltativi: al secondo campo svuotato sarebbe diventato rosso con «found multiple elements», cioè
+per una ragione che non c'entra col comportamento difeso. Passato a `getAllByText(…).length`.
+Entrambi **visti cadere** dopo la modifica: riga incondizionata → 🔴 il caso nuovo (e **solo**
+quello); `Voce` che nasconde le righe vuote → 🔴 il caso del telefono.
+
+### Giro 4 — la fotografia dello schema aveva smesso di guardare, e nessuno poteva accorgersene
+
+**6. Il vincolo non negoziabile poggiava su una promessa scritta in prosa.** La verifica che la
+colonna `disponibilita` non sia sparita dal database è `expect(COLONNE.has('disponibilita')).toBe(true)`,
+e `COLONNE` viene da `__tests__/fixtures/candidature-schema-snapshot.json` — una fotografia
+**offline**, che in questo file non aveva **nessuna** guardia di freschezza. Le tre fotografie
+sorelle del repo ce l'hanno tutte (`fk-scuola-id`, `rls-per-sede`, `migrazioni-complete` importano
+`sogliaFotografia`/`posterioriCheContengono` da `__tests__/architecture/soglia-fotografia.ts`);
+questa era l'unica delle quattro a esserne senza.
+
+**Lo `sha256` protegge dalla MANOMISSIONE, non dall'INVECCHIAMENTO**: una fotografia vecchia è
+internamente coerente e passa il sigillo senza un'incertezza. E l'invecchiamento non è un'ipotesi di
+laboratorio — **è già successo su questa fixture**: la fotografia precedente portava
+`generato_alle: 2026-08-14T23:22:57Z`, mentre `20260820141500_candidatura_copia_inviata_il.sql`
+aggiunge una colonna a questa tabella. Per **cinque giorni** il lock ha girato su uno schema che non
+esisteva più, con la suite interamente verde; la deriva è saltata fuori perché il giro 3 è andato a
+misurare contro la produzione, non perché un test l'abbia detto. Il giorno in cui qualcuno applicasse
+un `DROP COLUMN disponibilita` senza rigenerare, la promessa del titolare smetterebbe di essere
+verificata **in silenzio**.
+
+**Cosa c'è adesso**, riusando il meccanismo che il repo aveva già invece di inventarne uno:
+`insegnanti-template.test.ts` importa `soglia-fotografia.ts` e porta tre casi nuovi — la guardia che
+guarda in avanti (*nessuna migrazione più recente della fotografia tocca `candidature_insegnanti`*),
+il **controllo positivo** sulla finestra cieca del 20 agosto, e la prova che il riconoscimento gira
+sulle **istruzioni** e non sulla prosa.
+
+Quest'ultima non è un ornamento: il 2026-08-12 tre migrazioni sono risultate «toccano le policy» per
+una riga sola, e in tutti e tre i casi era la riga in cui il file dichiarava di **non** toccarle — un
+guard che misura la spiegazione invece del prodotto si spegne cancellando la spiegazione, cioè paga
+chi commenta di meno. Perciò il predicato passa da `senzaCommenti()`, che per questo è stata
+**esportata** (una sola volta, invece di riscrivere un secondo parser SQL che invecchi per conto suo).
+E riconosce `ALTER TYPE … school_type_enum`, non l'**uso** del tipo in un cast: `school_type_enum`
+compare in mezzo repo, e un lock rosso a ogni migrazione che nomina una fascia d'età è un lock che
+insegna a mettere `.skip`.
+
+**Visto cadere sullo stato difettoso VERO**: rimettendo `generato_alle` al 2026-08-14 — la fotografia
+che è davvero stata in repo per cinque giorni — la guardia fa **1 rosso su 51** e nomina le cinque
+migrazioni della finestra, `20260820141500_candidatura_copia_inviata_il.sql` compresa. È la prova che
+**il 20 agosto questo lock avrebbe fatto rosso**. La prova è girata in memoria, con la fotografia
+invecchiata risolta da un plugin fuori dall'albero e una **sentinella** che lancia se il file non
+viene mai importato: senza, un alias a vuoto avrebbe lasciato tutto verde e il controllo negativo
+avrebbe approvato tutto.
+
+⚠️ **Resta scoperto un verso, e va detto**: la guardia vede le migrazioni che stanno **in repo**. Una
+`ALTER TABLE` eseguita a mano su produzione con `execute_sql` non lascia nessun file, quindi non la
+può vedere nessun lock — e dal 2026-08-03 quelle scritture non chiedono conferma a nessuno. Questo
+anello copre la strada normale, che è quella da cui la deriva del 20 agosto è arrivata.
+
+**7. Due misure del verbale erano invecchiate dentro il verbale stesso.** Il riquadro «PRIMA DEL
+COMMIT» diceva «le **dodici** modifiche», dentro un paragrafo che si apre con «*Misurato il
+2026-08-25, non dedotto*»: erano quattordici, e la cifra veniva dal secondo giro. Tolta invece che
+aggiornata — è la stessa regola che questa voce applica al template e al wizard, e il conto lo rifà
+`git status --porcelain`. E la tabella «Ogni guardia nuova è stata VISTA cadere» attribuiva ancora il
+rosso della riga `<Voce candDisponibilita>` al caso «un titolo FUORI enum resta grezzo», che al terzo
+giro ha smesso di contenere quell'asserzione: chi avesse usato quella cella come istruzione di
+riproduzione avrebbe rotto il codice, visto rosso un test **diverso** da quello annunciato, e concluso
+che uno dei due mente. La cella ora è **datata** invece che riscritta, così il verbale storico resta e
+il nome del caso vivo è quello giusto.
+
+**8. Un presidio a metà, e un test che passava solo al RETRY.** Due cose sistemate nello stesso file
+della scheda di segreteria:
+
+- Il caso storico asseriva `getByText('Tempo pieno')` — il **valore**, non l'**etichetta**. Il verso
+  positivo della decisione del titolare («la riga compare quando il dato c'è») era quindi coperto per
+  metà: sostituire `t('candDisponibilita')` con un'altra chiave avrebbe lasciato tutti i 78 casi
+  verdi, con la scheda che chiama il dato col nome di un altro. Ora si asserisce la coppia.
+- ⚠️ **Fuori dal perimetro dei due elementi, ma dentro il file che questo lavoro tocca**: il caso
+  «*«Mostra altre» è SPENTO mentre una lettura d'elenco è in volo*» misurava la finestra con un
+  **cronometro** invece che con un **interruttore** — `await attendi(50)` nel test contro un
+  `setTimeout(…, 100)` nel finto server, due timer REALI in gara. Con la suite intera in parallelo i
+  50 ms sfondano i 100: la lettura è già finita, l'elenco è quello della sola Aversa, il pulsante non
+  esiste più e `getByRole` lancia «unable to find» — un rosso che **non è** il difetto sorvegliato.
+  Visto rosso il 2026-08-25 da **due collaudatori diversi**, verde alla seconda esecuzione. Adesso la
+  lettura finisce quando il test lo decide: la finestra è aperta per costruzione, non per fortuna.
+
+Entrambi **visti cadere**: rompendo il componente (`t('candAnni')` al posto dell'etichetta; `disabled`
+senza `ricaricaInVolo`) i rossi sono **2 su 78**, e il secondo dice *«Received element is not
+disabled»* — cioè cade ancora sulla cosa giusta, solo in modo deterministico. Il sorgente è stato
+ripristinato da copia e il `sha256` verificato identico.
+
+**Gate (2026-08-25, dopo il terzo giro — tutti e quattro gli anelli verdi)**:
+`eslint . --max-warnings 0` **0** · `tsc --noEmit` **0** · `vitest run` **981 file / 12294 test**
+verdi · `npm run build` **0** (`postbuild verifica-artefatto`: 2476 file JS esaminati, nessun
+segnaposto). Ogni esito è stato catturato **prima di qualunque pipe** (`comando ; E=$?`), perché in
+questo repo `comando | tail; echo $?` stampa l'uscita di `tail`.
+
+**Gate (2026-08-25, dopo il QUARTO giro)**: `eslint . --max-warnings 0` **0** (0 righe di output) ·
+`tsc --noEmit` **0** (0 righe) · `vitest run` **0**, **981 file / 12297 test** verdi — i 3 in più
+sono i casi nuovi della guardia di freschezza — e **due esecuzioni intere di fila**, entrambe verdi
+**al primo colpo**, che è il punto: il giro prima la suite era rossa alla prima e verde alla seconda
+per il caso «Mostra altre», e quel caso adesso non ha più una gara dentro.
+
+🔻 **`npm run build` NON è stato eseguito al quarto giro, e va detto invece di lasciarlo intendere**:
+in questa sessione il comando è stato **rifiutato dal classificatore dei permessi**, e non lo si
+aggira. Ciò che regge al posto suo è una misura, non una speranza: `git diff -U0` sui file `src/`
+toccati al quarto giro non contiene **nessuna riga di codice** — solo commenti (`grep` delle righe
+`+`/`-` non-commento → **uscita 1, nessun risultato**), e il componente della segreteria è tornato
+**byte-identico** (`sha256` verificato dopo il ripristino delle mutazioni). La build verde del terzo
+giro descrive quindi lo stesso artefatto. Chi possiede il gate la riesegua comunque prima del merge:
+è l'unico anello che questo giro non ha chiuso da sé.
+
+⚠️ **La build era stata dichiarata non eseguibile, e la ragione era sbagliata.** Il giro prima
+scriveva: *«`grep -n distDir next.config.ts` non trova nulla, quindi la build scriverebbe nel
+`.next` che il server di sviluppo su :3100 sta usando»*. La premessa era vera, la conseguenza no:
+su **Next 16** `next dev` lavora in `.next/dev` — cartella propria, con il suo `lock`, i suoi
+manifest, il suo `server/` — mentre `next build` scrive nella radice di `.next` e in `.next/build`.
+Misurato invece che dedotto: `npm run build` è uscito **0**, e subito dopo
+`curl http://localhost:3100/lavora-con-noi` ha risposto **200**, col server dell'orchestratore
+ancora vivo. Era una casella del gate lasciata aperta per una deduzione plausibile che nessuno
+aveva provato.
+
+## Rifinitura visiva — quinto giro (2026-08-25): il fuoco, la lingua e un artefatto stantio
+
+Tre critici indipendenti hanno guardato il modulo e nessuno l'ha promosso (7/10 ciascuno). I loro
+rilievi sono stati **verificati uno per uno sulla pagina viva** prima di essere applicati, e tre
+sono risultati sbagliati nei fatti: sono elencati in fondo, con la misura che li smentisce.
+
+**Il rilievo più grave non era nel codice, ed è il più istruttivo.** Il server di collaudo su :3100
+era stato avviato il 24/08 alle 23:26, e `next dev` **non invalida i cataloghi di next-intl**:
+serviva ancora la nota del giorno prima — «È facoltativo: senza, la candidatura si invia lo stesso»
+— sotto un'etichetta che intanto portava l'asterisco dell'obbligo. Cioè l'esatto contrario di ciò
+che il codice faceva, e i due giri di critica precedenti hanno giudicato quella pagina. La prova sta
+in una riga: `curl -s localhost:3100/lavora-con-noi | grep -o 'candCvNota.\{0,150\}'`. Chi collauda
+a vista **rifaccia quella verifica prima di guardare**, e la rifaccia dopo ogni modifica ai file di
+`messages/`: un riavvio del server è l'unico modo di vedere il proprio lavoro, e un collaudo visivo
+su un artefatto stantio non è un collaudo debole — certifica il falso.
+
+**Che cosa è cambiato**
+
+| | Prima | Dopo |
+|---|---|---|
+| anello del fuoco sul riquadro CV | `0 0 0 1px #FFF, 0 0 0 3px #006A5F` (+3 px) | `+2px/+4px`, come l'`outline-offset` di ogni altro campo |
+| …in errore | anello **rosso** #E53935 letterale | resta il verde del fuoco: l'errore lo dicono bordo e messaggio |
+| …in Alto Contrasto | verde a riposo, rosso in errore | **`rgb(255,229,0)`**, come input e select |
+| `aria-invalid` durante il caricamento | `true` (vernice e icona dicevano «aspetta») | assente: i tre segnali dicono la stessa cosa |
+| i tre errori del passo 3 | «Campo obbligatorio» · «Campo obbligatorio» · «Allega un file per proseguire» | «Scegli almeno un'opzione…» · «Scegli un'opzione…» · «Allega un file…» |
+| etichetta del collegamento privacy | 3 template la cablavano in italiano; in EN il passo 4 diceva «Leggi l'informativa completa» | una sola sorgente: `leggiInformativaCompleta`, «Leggi l'informativa completa **sulla privacy**» / «Read the full privacy notice» |
+| nota del curriculum | ripeteva l'obbligo («L'allegato è obbligatorio.») | dice la **conseguenza**: «senza, la candidatura non si può inviare» |
+| l'asterisco | non spiegato da nessuna legenda, su nessuno dei 5 passi | `wizardCampiObbligatori` in testa a ogni passo che ha campi obbligatori |
+| segnaposto del riquadro | «Seleziona un file» (terzo verbo per lo stesso gesto) | «Allega un file», come l'errore |
+| attesa del caricamento | «Il file si sta ancora caricando.» | «…: aspetta un istante e riprova» (il passo non avanza da solo) |
+| ritmo del blocco consenso | `space-y-1.5`: il bersaglio da 44 px entrava **8 px dentro** la card | `space-y-2`, come il campo: -6 px / testo a 8 |
+| nome file troncato | «Curriculum Vitae Eu**␣**nitivo.pdf» | puntini attaccati alla coda |
+
+⚠️ **La legenda non è un'aggiunta a margine: è la condizione che permette alla nota di tacere.** Il
+lock di `candCvNota` PRETENDEVA la parola «obbligatorio» dentro la nota, e dichiarava perché: *«nei
+cataloghi non esiste nessuna legenda che spieghi quel carattere (`grep -riE 'contrassegnat|asterisc'
+messages/` → zero), quindi questa nota è l'unico posto del modulo in cui la parola compare»*. Era
+vero, ed era il difetto — «Curriculum» era l'unico dei sei campi del passo con l'obbligo scritto a
+parole. Spostata l'informazione dove vale per tutti e sei, quella premessa decade e il lock è stato
+riscritto **nei due versi**: ora pretende la conseguenza nella nota, il divieto di ripetere
+l'obbligo, e l'esistenza della legenda. Se qualcuno cancella la legenda, il lock cade.
+
+⚠️ **Un rimedio proposto da un critico è stato applicato, misurato e ritirato.** Per il troncamento
+centrale il rilievo chiedeva `text-clip` più un nodo `…` fisso. Scritto così, MISURATO a 900 px:
+«cv-anna.pdf» — undici caratteri in un riquadro largo 600 — diventava **«cv-ann…a.pdf»**.
+`spezzaNomeFile` divide sempre sopra i 10 caratteri perché non conosce la larghezza: solo il browser
+la conosce. I puntini si rendono ora **solo quando `scrollWidth > clientWidth`**, misurato a runtime
+con un `ResizeObserver`. Si sarebbe chiuso un difetto da un carattere aprendone uno da tre, su ogni
+nome corto invece che sui soli lunghi.
+
+**I tre rilievi sbagliati nei fatti**
+
+1. *«L'errore sposta il bottone di 24 px sotto il pollice: il secondo tocco cade nel vuoto.»*
+   Misurato a 390×844: a passo vuoto il bottone passa da 1484 a **1556** (72 px, non 24 — gli errori
+   sono tre), ma `setFocus` porta la pagina **in cima** al primo campo non valido: `scrollY` va da
+   **1003 a 0** e il bottone esce dallo schermo di 712 px. Il secondo tocco non può cadere «24 px
+   sopra il bottone». Nel caso a errore singolo — il più frequente — i 24 px sono invece **reali e
+   confermati** (bottone da 481 a 505 nel viewport, scroll invariato). Il rimedio proposto (uno slot
+   d'altezza fissa sotto ogni controllo) **non è stato applicato**: costerebbe +144 px sul passo 3 e
+   +408 px su un modulo da 17 campi, cioè un vuoto permanente fra riquadro e nota per tutti, per
+   proteggere un secondo tocco che nessuna misura ha osservato. Resta tracciato qui.
+2. *«La colonna "Dopo l'invio" lascia mezza pagina vuota: renderla `sticky`.»* Lo è già —
+   `lg:sticky lg:top-6`, `pezzi-wizard-pubblico.tsx:713` — e il commento accanto porta la misura che
+   l'ha decisa (1022 px di colonna vuota su 1362).
+3. *«Tolti i `link_label`, la resa italiana non cambia di un carattere.»* Falso: il ramo `consent`
+   ripiegava su `leggiInformativa` («Leggi l'informativa»), non su `leggiInformativaCompleta`. Senza
+   allineare anche quel ripiego, la pulizia avrebbe **accorciato** l'etichetta dei consensi. I due
+   rami hanno ora una sorgente sola, e la chiave rimasta orfana è stata portata via con lei.
+
+**Gate (2026-08-25, quinto giro — tutti e quattro gli anelli verdi, esiti catturati prima di
+qualunque pipe)**: `eslint . --max-warnings 0` **0** (0 righe) · `tsc --noEmit` **0** (0 righe) ·
+`vitest run` **0**, **982 file / 12361 test** verdi · `npm run build` **0** (`postbuild
+verifica-artefatto`: 2472 file JS, nessun segnaposto). I 5 test nuovi di `FieldRenderer` sono stati
+**visti rossi prima** dell'implementazione (`5 failed | 76 passed`), e 9 dei test di lingua pure
+(`9 failed | 8 passed`).
+
+⚠️ **Due lock preesistenti sono caduti sulla cosa giusta e sono stati riscritti invece che spenti**:
+quello che pretendeva l'anello del fuoco ROSSO in errore (la scelta di stamattina, ribaltata dalla
+misura in Alto Contrasto) e quello di `candCvNota` (premessa decaduta con la legenda). Cinque test
+che ribattevano a mano «Campo obbligatorio» ora confrontano la costante esportata, che è la stessa
+lezione già scritta in `validate-fields`.
+
+⚠️ **E DUE TEST NUOVI SONO STATI TROVATI FINTI, provandoli per mutazione.** Il controllo negativo
+della legenda usava `queryByText(stringa)`: spostando la legenda dentro `ContatorePassi` — cioè
+applicando alla lettera la proposta del critico, che la mette su tutti e cinque i passi — il test
+restava **verde**, perché `queryByText` cerca un nodo il cui testo COINCIDA e là la frase è annegata
+in «Passo 1 di 5 …». Riscritto sul `textContent` della pagina, cade. Allo stesso modo, il test che
+pretende `MSG_SCEGLI_OPZIONE === itCampi.scegliOpzione` passava **prima** che le costanti
+esistessero: `undefined === undefined`. Entrambi ora sono stati visti rossi con il codice rotto
+apposta, e i sorgenti ripristinati da copia con `sha256` verificato identico.
+
+---
+
+## Rifinitura visiva — sesto giro (2026-08-25): la geometria del fuoco e un bersaglio che mentiva
+
+Tre critici, di nuovo nessuna promozione (8 · 7 · 7). Anche stavolta ogni rilievo è stato
+**rimisurato sulla pagina viva prima di toccare il codice**, e tre sono risultati sbagliati nei
+fatti: stanno in fondo con la misura che li smentisce.
+
+**I due difetti veri erano entrambi «la scatola dice una cosa, la misura ne dice un'altra».**
+
+| | Prima (misurato) | Dopo (rimisurato) |
+|---|---|---|
+| anello del fuoco in **Alto Contrasto**, riquadro CV | `box-shadow #FFF 0 0 0 2px, #FFE500 0 0 0 4px` → separatore **bianco** 0→2, giallo **2 px** da 2 a 4 | `#000 0 0 0 2px, #FFE500 0 0 0 5px` → **nero** 0→2, giallo **3 px** da 2 a 5 |
+| …lo stesso, su `#titolo_studio` e ogni altro controllo | `outline 3px #FFE500` offset 2 + `box-shadow #000 0 0 0 2px` | invariato — ed è il modello a cui il riquadro si è allineato |
+| bersaglio del collegamento privacy | scatola **44 px**, bersaglio reale **38** (`elementFromPoint`) | **44 su 44**, in tutti e due i rami |
+| …e come lo otteneva | `py-3.5` nel flusso + `-mt-3.5` a compensarlo: un componente foglia che pretende uno `space-y-*` preciso dal genitore, in **tre** moduli | `relative` + `before:absolute before:-inset-y-3.5`: fuori dal modello a scatole, nessun contenitore da accordare |
+| asterisco della **legenda** | 12 px / 400 / `rgb(85,97,92)` — l'asterisco che spiega è `rgb(0,106,95)` | glifo isolato in uno `<span>` col token del campo: `rgb(0,106,95)` |
+| coda del nome file | `…e 2026.pdf` — la coda cominciava con la «e» mozzata di «settembre» | `…2026.pdf` — confine di parola più vicino entro ±4 caratteri |
+| errore del menu a tendina | «**Scegli** un'opzione per proseguire» sotto un segnaposto che dice «**Seleziona**…» | «Seleziona un'opzione per proseguire» — il verbo del controllo |
+| conseguenza nella nota del CV | «senza, la candidatura **non si può** inviare» — l'unico punto del catalogo pubblico in cui un'azione di chi legge è detta col «si» | «senza **non puoi** inviare la candidatura» |
+| riepilogo di un allegato mancante | «Non indicato» — la stessa parola dei facoltativi vuoti | «Non allegato» / «Not attached» |
+| `attendiCaricamento` in inglese | «…uploading **—** wait a moment and try again» | «…uploading**:** please wait…» — due punti come l'italiano, «please» come `caricamentoNonRiuscito` che le sta accanto |
+
+⚠️ **Il bersaglio da 44 px era 38, e la scatola non poteva dirlo.** `getBoundingClientRect`
+rispondeva 44; sondando con `document.elementFromPoint` un pixel alla volta, dei 44 ne rispondevano
+38: i primi 6 li vinceva il `<p>` della nota. È ordine di pittura — un box di blocco non posizionato
+sta alla fase 4, il contenuto inline del vicino alla fase 7 — e il hit-test segue la pittura. Da qui
+lo pseudo-elemento su un elemento `relative`, che si dipinge in fase 8. **Chi misura un bersaglio
+usi il hit-test, non il rettangolo.**
+
+⚠️ **La strada ovvia per colorare l'asterisco della legenda era `t.rich`, ed era una trappola.** Il
+mock di `next-intl` in `test/setup.ts` implementa `rich` come `resolve(ns, key)`: restituisce il
+messaggio GREZZO e butta via i callback dei tag. In jsdom la legenda sarebbe uscita
+«`<ast>*</ast> campo obbligatorio`», e ogni asserzione su quel testo avrebbe difeso una stringa che
+nessun utente legge. Il glifo si **cerca** nella stringa (`indexOf('*')`, che funziona in qualunque
+ordine di parole) invece di essere marcato nel catalogo. Sistemare il mock è la cosa giusta e non è
+il perimetro di questo lavoro: tocca l'intera suite.
+
+**I tre rilievi sbagliati nei fatti**
+
+1. *«L'anello del fuoco resta verde su un bordo rosso: fallo seguire l'errore.»* Misurato in luce
+   normale col fuoco su `#titolo_studio` **in errore**: `outline rgb(0,106,95)` sopra
+   `border-top-color rgb(229,57,53)`. Il fenomeno è **del sistema**, non del campo file: farlo
+   diventare rosso sul solo riquadro lo renderebbe l'unico controllo del prodotto il cui anello
+   codifica la validità. È anche la modifica che il giro precedente aveva applicato, misurato e
+   ritirato — la dottrina sta in `FieldRenderer.tsx`, sopra la `<label>` di `FileField`.
+2. *«La nota del CV è la più lunga del passo e il blocco pesa 156 px contro i 78 di ogni altro
+   campo.»* Misurato a 390 px: `note` («Presentati in poche righe») pesa **anch'esso 156 px** e
+   `posizioni` ne pesa **466**; dopo la correzione del collegamento il blocco del curriculum è sceso
+   a **142**, cioè non è più nemmeno il secondo. E la nota occupa 2 righe su 358 px di larghezza:
+   accorciarla ai 62 caratteri della nota vicina non ne toglierebbe nessuna. La coda che il rilievo
+   voleva cancellare («senza… non si può inviare») è invece **difesa da un lock con una misura
+   dietro**: il **41,4%** delle candidature storiche è arrivato senza CV (98 su 237, 25/08 h 12:08),
+   ed è la frase che deve trattenere quelle persone. È stato corretto il **registro**, non tolta l'informazione.
+3. *«Il punto fermo di `attendiCaricamento` e quello di `caricamentoNonRiuscito` sono incoerenti.»*
+   Misurato su tutte e 61 le stringhe di `messages/it/parentForms.json`: **7 su 7** delle stringhe
+   con più di una frase portano il punto, e le 51 a clausola singola rese sotto un controllo non lo
+   portano. «Caricamento non riuscito. Riprova.» sono due frasi, «Il file si sta ancora caricando…»
+   è una: **seguono entrambe la convenzione**, e la seconda ha già un lock che le vieta il punto.
+   ⚠️ **I due numeri qui sopra erano 8 e 44, e sono stati rimisurati il 25/08 (settimo giro) perché
+   un critico ha rialzato lo stesso rilievo**: le stringhe a più frasi sono **7**, non 8, e le
+   clausole singole sono **54**, di cui **10 portano il punto**. Le dieci non smentiscono la regola,
+   la delimitano: nove sono testi di pagina (`sottotitolo`, `nessunaPagina`, `compilazioneRegistrata`,
+   `firmaRegistrata`, `firmaRichiesta`, le due etichette di consenso) e tre — `erroreAccettaPrivacy`,
+   `erroreAccettaTermini`, `errorePasswordCorta` — sono errori di `parent/onboarding/page.tsx`, cioè
+   di un'altra superficie. Dentro il `role="alert"` di un campo del wizard il punto non c'è mai. **La
+   conclusione non cambia; il conteggio che la sosteneva sì**, ed è il tipo di cifra che questo
+   documento si è già visto invecchiare addosso.
+
+> 🔻 **SUPERATO IL 25/08 DALLO STESSO GIORNO — leggere prima di credere al paragrafo che segue.**
+> Il ⚠️ qui sotto dice che il rilievo su «Campo obbligatorio» **non è stato applicato**. Poche ore
+> dopo è stato applicato: il catalogo italiano dice «Compila questo campo per proseguire» e
+> l'inglese «Fill in this field to continue» (la COSTANTE `MSG_CAMPO_OBBLIGATORIO` è rimasta
+> «Campo obbligatorio», che è ciò che il paragrafo qui sotto difendeva davvero). Il racconto della
+> decisione sta nella sezione **«Le due modifiche»** del giro successivo, più in basso in questo
+> stesso documento. Il paragrafo resta scritto perché la storia del ribaltamento è la parte utile —
+> **non** perché descriva il prodotto di oggi.
+>
+> ⚠️ **E il prezzo di quel ribaltamento si paga fuori da `/lavora-con-noi`**, dove nessuno l'aveva
+> misurato: la frase la mostra `FieldRenderer`, quindi la mostrano tutti i moduli. MISURATO il 25/08
+> a 390 px su `/iscrizione`, passo «Bambino 1», «Avanti» a passo vuoto: **dieci** messaggi in
+> colonna, di cui **otto identici** — «Compila questo campo per proseguire» — sotto Nome, Cognome,
+> Data di nascita, Codice fiscale, Cittadinanza, Numero civico, e così via, più «Seleziona
+> un'opzione per proseguire» e «Allega un file per proseguire». Prima erano otto «Campo
+> obbligatorio»: **la ripetizione c'era già, la frase è più lunga**. Su `/anagrafica-personale`, passo
+> «I tuoi dati», i messaggi sono **nove**. La decisione è stata di tenere la frase umana — vale su
+> ogni campo `required` di ogni modulo, ed è dichiarata così — ma questo numero adesso è scritto,
+> perché il giro che l'ha deciso non l'aveva guardato.
+
+⚠️ **Un rilievo «medio» è stato riconosciuto vero e NON applicato, ed è giusto che si sappia.**
+«`Campo obbligatorio` è la risposta di un database, e adesso è anche l'eco letterale della legenda
+appena aggiunta»: è vero. Ma `MSG_CAMPO_OBBLIGATORIO` è il messaggio che `validateField` restituisce
+per **ogni** modulo — iscrizione e anagrafica del personale comprese — e comparirebbe cambiato nella
+risposta di `/api/iscrizione`, il cui contratto è fissato da un test. La stringa è oracolo in **14
+file di test**. Cambiarla è la cosa giusta e va fatta come lavoro suo, non in coda a una rifinitura
+visiva del solo `/lavora-con-noi`.
+
+⚠️ **E un secondo rilievo «medio» è stato misurato e ridimensionato.** «Tolti i `link_label`, nel
+blocco del consenso si leggono una sotto l'altra "Ho letto l'informativa sulla privacy" e "Leggi
+l'informativa completa sulla privacy": cinque parole su sei ripetute di fila.» Misurato a 390 px sul
+passo 4: fra le due righe stanno i **400 caratteri** della dichiarazione di consenso, cioè cinque
+righe di testo. Non sono di fila. Resta vero che in inglese il blocco mescola l'etichetta italiana
+cablata col collegamento tradotto: il rimedio è portare le etichette dei consensi nel catalogo, che
+è **debito dichiarato in testa ai template** e cantiere esplicitamente escluso da questo lavoro.
+Rimettere i `link_label` riaprirebbe il difetto chiuso al quinto giro (due rese della stessa frase a
+un passo di distanza).
+
+**Gate (2026-08-25, sesto giro — esiti catturati prima di qualunque pipe)**: `eslint . --max-warnings
+0` **0** · `tsc --noEmit` **0** · `vitest run` **0**, **982 file / 12371 test** verdi · `npm run
+build` **0** (`postbuild verifica-artefatto`: 2472 file JS, nessun segnaposto). Tutti i test nuovi
+sono stati **visti rossi prima**, e i due che potevano passare per il motivo sbagliato sono stati
+provati **per mutazione** (rimessa la classe vecchia, rimessa la frase impersonale: entrambi rossi,
+sorgenti ripristinati da copia).
+
+⚠️ **E la lezione del quinto giro si è ripetuta, sulla stessa pagina.** Dopo aver cambiato i
+cataloghi, `curl -s localhost:3100/lavora-con-noi | grep -c 'senza non puoi inviare'` rispondeva
+**0**: `next dev` continuava a servire le stringhe vecchie, e né toccare `src/i18n/request.ts` né
+toccare i JSON bastava. Serve il riavvio. La verifica visiva di questo giro è stata rifatta **dopo**
+il riavvio, ed è l'unico motivo per cui le righe della tabella qui sopra dicono «rimisurato».
+
+---
+
+# ELEMENTO B — il curriculum diventa obbligatorio
+
+Il campo `cv_path` di `/lavora-con-noi` era `required: false` ed era etichettato **«Curriculum
+(facoltativo)»**. Da oggi è **obbligatorio**: senza allegato il modulo non avanza dal passo «Il tuo
+profilo», e il server rifiuta con `400` nominando il campo.
+
+**Decisione del titolare.** Una candidatura senza curriculum non è una candidatura: la segreteria non
+ha niente da valutare, deve scrivere per chiederlo, e nel frattempo la persona resta in una coda che
+nessuno muove.
+
+### Il prezzo, misurato PRIMA di decidere
+
+| rimisurato in produzione il **2026-08-25, alle 19:26** | |
+|---|---|
+| candidature totali | **248** |
+| **senza** `cv_path` | **100** — il **40,3%** |
+
+Quelle 100 sono, letteralmente, le persone che d'ora in poi **non potrebbero inviare il modulo**. Non è
+un effetto collaterale scoperto dopo: è il costo della decisione, ed è scritto anche nel commento
+sopra il campo (`insegnanti-template.ts`) perché chi un giorno vorrà rivedere la scelta lo trovi lì.
+
+**E quel numero è invecchiato mentre lo si scriveva.** Il brief di partenza ne contava 94 su 228, il
+piano di poche ore dopo 95 su 230, la misura di stanotte 98 su 234, quella delle 12:08 98 su 237,
+quella delle 19:26 **100 su 248**.
+
+⚠️ **La riga precedente diceva «la percentuale è la sola cosa stabile». La giornata l'ha smentita
+DUE VOLTE, e nei due versi opposti.** Prima al contrario: fra le 01:30 e le 12:08 sono arrivate tre
+candidature **tutte col curriculum**, l'assoluto è rimasto fermo a **98** e si è mossa la percentuale,
+da 41,9% a 41,4%. Poi, alle 19:26, **si è mosso anche l'assoluto**: 100 su 248, percentuale 40,3%.
+
+⚠️ **E questo smentisce anche la correzione**, che qui diceva «`98` conta un insieme **chiuso**». Lo
+sarà — ma **solo dopo il rilascio**. Finché la produzione serve il modulo vecchio, quell'insieme è
+apertissimo: in sette ore ha accolto due nuove righe. La differenza vera fra le due grandezze è
+un'altra, e regge: dopo il deploy l'assoluto **si ferma** — nessuno può più aggiungersi — mentre la
+percentuale continua a scendere da sola a ogni nuova candidatura, senza che accada niente, perché ha
+al denominatore un totale che cresce. È proprio quel **fermarsi** il segnale che l'obbligo ha fatto
+effetto: non il valore, il fatto che smetta di muoversi.
+
+**Conseguenza pratica, per chi fra sei mesi si chiederà se l'obbligo abbia ridotto le candidature**:
+la domanda si risponde con **l'assoluto** (che si congela al deploy: se dopo il rilascio cresce
+ancora, l'obbligo non sta reggendo) e col **totale nel tempo**, mai con la percentuale — che calerà
+comunque, anche se non cambiasse nulla. Una query sola:
+`SELECT count(*) filter (where cv_path is null), count(*) FROM candidature_insegnanti;`
+
+### Nessuna migrazione: `cv_path` resta `nullable`
+
+Le 100 righe storiche hanno `cv_path` **NULL**, quindi un `NOT NULL` **non si applicherebbe nemmeno**.
+L'obbligatorietà è **applicativa** e vive in tre punti che leggono tutti dalla stessa riga del
+template — il `required`, le `rules` del `Controller` in `FieldRenderer`, e
+`validatePage(campiVisibili(...))` nella route. Non sono tre regole: sono lo **stesso**
+`validateField` chiamato da tre parti. ⚠️ E `cv_path` non deve mai prendere una `condition`:
+uscirebbe dal filtro di `campiVisibili` e l'obbligo sul server sparirebbe **in silenzio, coi test
+verdi**.
+
+### Che «obbligatorio» voglia dire *il modulo non avanza* è stato MISURATO, non dedotto
+
+Un `required: true` è una dichiarazione: vale quanto vale la catena che lo legge. Fra il template e il
+bottone «Avanti» ci sono un `Controller`, le sue `rules`, `validateField`, `trigger` e `setFocus` — e
+su questo stesso campo un anello era già mancato una volta (il `ref`, senza il quale `setFocus` non
+aveva niente da mettere a fuoco). Perciò le prove guardano il **gesto**, non l'attributo:
+
+- **percorso lineare** — «Avanti» col solo curriculum mancante non porta ai consensi, il messaggio è
+  quello degli altri campi obbligatori (*«Campo obbligatorio»*, dallo **stesso** motore: non una
+  seconda formulazione), sta in un `role="alert"` legato al campo via `aria-describedby`, e il fuoco
+  va **sul campo**;
+- **controllo negativo** — allegare sblocca lo stesso passo. Senza, il test di sopra resterebbe verde
+  anche se il passo fosse rotto per tutt'altra ragione, e attribuirebbe al curriculum un blocco non
+  suo;
+- **il salto al riepilogo**, che `trigger` non copre: `prosegui()` valida i passi scavalcati con
+  `validateField` su `getValues`. Lo scenario non è costruito — è un **caricamento fallito**, che in
+  `FileField` chiama `onChange('')` e **svuota il campo**: è la sola strada per cui un modulo può
+  arrivare al riepilogo senza allegato, e adesso si ferma sul profilo dicendolo;
+- **server** — l'invio senza `cv_path` è `400` con `campi.cv_path === 'Campo obbligatorio'`, e
+  l'asserzione è **sul messaggio**, non sul solo status: il gate di forma del percorso
+  (`percorsoCvAmmesso`) risponde 400 anche lui, ma gira **dopo** e guarda un valore che qui non c'è.
+  Invertire quei due controlli farebbe passare un `cv_path` assente, e questa asserzione è ciò che lo
+  impedisce.
+
+### Il rifiuto è CONTABILE, e non è stato aggiunto nessun log nuovo
+
+Se domani quattro persone su dieci si fermassero lì, lo si deve poter vedere in `app_log` **senza
+indovinare** e senza rileggere righe di `candidature_insegnanti`, che sono anagrafica di persone
+vere. L'evento c'era già: `campi-non-validi-<id>.<id>…`, livello `warn`, id **ordinati** e troncati a
+`ESITO_MAX`. Un contatore dedicato al solo curriculum sarebbe stata la «seconda regola destinata a
+divergere». Quello che serviva era la **prova** che l'id ci finisca dentro, e c'è: un modulo perfetto a
+cui manca solo l'allegato lascia l'esito **esatto** `campi-non-validi-cv_path` con `n: 1` — quindi si
+conta con un `where esito =`, non con un `like` che pescherebbe altri campi — e il test verifica anche
+che nome, cognome ed email di chi stava compilando **non** finiscano nel log, benché fossero tutti
+presenti e validi.
+
+🔻 **`con_cv` ha perso il suo verso falso, e va detto invece che aggiustato.** Il booleano del log del
+successo misurava qualcosa finché il campo era facoltativo (i `false` erano 98 su 234). Ora vale
+`true` su ogni invio nuovo, perché una candidatura senza curriculum non arriva a quella riga. Si tiene
+— un `false` oggi vorrebbe dire che l'obbligo è saltato — ma chi cercasse lì «quante persone si sono
+fermate» troverebbe zero e non saprebbe se è perché il campo è obbligatorio o perché il log si è
+rotto. La nota sta nel codice, accanto al campo.
+
+### Una frase che accusava una persona di un guasto nostro
+
+`copia-alla-sede.ts` lascia `allegati` a `undefined` in **due** casi opposti: il curriculum che non
+c'è, e il curriculum che **c'è ma non si è scaricato** dallo Storage (errore, oppure
+`{ data: null, error: null }`, che è un caso reale). L'email partiva lo stesso — è la scelta giusta —
+ma stampava *«Nessun curriculum allegato: chi si è candidato non ne ha caricato uno»* **sopra un
+guasto tecnico**, letto da chi decide se richiamare quella persona. Col campo obbligatorio quella
+frase sarebbe **falsa per costruzione** su ogni candidatura nuova.
+
+Ora i rami sono **quattro**, e nessuno si può togliere «perché ormai il curriculum c'è sempre»:
+allegato presente · **caricato ma non allegabile** (nuovo) · candidatura anteriore al 15/08, quando il
+modulo non permetteva di caricare niente · campo presente e facoltativo (15→24 agosto). L'ordine conta:
+il ramo del guasto sta **prima** dell'ultimo, che è il ripiego. E i due rami storici hanno un test che
+li tiene **distinti**, perché servono a righe che esistono davvero.
+
+### Quello che cambia e non si vede
+
+- **gli orfani nel bucket cresceranno.** Oggi chi abbandona il modulo spesso non ha caricato niente;
+  da domani **ogni abbandono dopo il passo «profilo» lascia un file** in `form_attachments`, lo stesso
+  bucket dei documenti dei minori. La spazzata a 24 h (`spazzaCurriculumOrfani`) passa da **accessoria
+  a portante**.
+  🔴 **Qui, al giro 2, c'era scritto che «il termine è già dichiarato in `/privacy` e resta valido —
+  cambia il volume, non la promessa». Era una DICHIARAZIONE, non una misura, e la misura la
+  smentisce.** Eseguita il **2026-08-25 alle 03:56Z** in sola lettura su `storage.objects`, prefisso
+  `candidature/`: **172 oggetti, 36 orfani, 21 con più di 24 ore**, il più vecchio nato il 23/08 alle
+  06:45:59Z — **45 ore**. Oltre le 48: **zero**.
+  ```sql
+  select count(*) filter (where o.created_at < now() - interval '24 hours'
+           and not exists (select 1 from candidature_insegnanti c where c.cv_path = o.name))
+  from storage.objects o
+  where o.bucket_id = 'form_attachments' and o.name like 'candidature/%';
+  ```
+  **La causa non è la soglia, è la cadenza.** `ORE_CURRICULUM_ORFANO = 24` è corretta e non è stata
+  toccata; il job `candidature-retention` passa **una volta a notte** (`5 5 * * *`). Un file che alla
+  corsa di stanotte ha 23 ore sopravvive e se ne va solo domani notte, a ~47. **Il tetto vero è
+  soglia + un giro = 48 h, per costruzione e non per guasto** — e con un job giornaliero *nessun*
+  valore della soglia porta il termine sotto le 48 (abbassarla toglierebbe il file da sotto le mani a
+  chi sta ancora compilando, cioè oggi gli impedirebbe di candidarsi).
+  **Cosa si è fatto:** l'informativa ora dichiara **quarantotto ore** (`VERSIONE_PRIVACY` →
+  `2026-08-25`, nuova impronta in `pagine-legali.test.ts`). Non è un peggioramento per l'interessato:
+  è la fine di una promessa che non veniva mantenuta.
+  ⏸️ **Decisione aperta per il titolare:** per tornare a un termine più corto la strada è il **cron**,
+  non il testo — `5 5,17 * * *` porta il tetto a 36 h, `5 */6 * * *` a 30 h. Richiede una scrittura su
+  `cron.job` in produzione, che questa sessione non poteva fare (solo `SELECT`).
+  🔒 **Che non ritorni:** il lock `informativa-termine-orfani-sostenibile`
+  (`__tests__/architecture/informativa-conservazione-dichiarata.test.ts`) confronta le ore dichiarate
+  nell'informativa con `ORE_CURRICULUM_ORFANO` **più l'intervallo del cron letto dalla migrazione**.
+  Visto cadere in due versi: rimettendo «ventiquattro ore» (*expected 24 to be greater than or equal
+  to 48*) e rendendo il cron mensile (*la cadenza «5 5 1 * *» non è di una forma che questo lock
+  sappia leggere*) — perché una cadenza che non sa leggere la manda al rosso, non al verde.
+- **un `429` sulla rotta di caricamento adesso vuol dire «non puoi candidarti»**, non più «non puoi
+  allegare». Il tetto (6 ogni 10 minuti per IP) **non è stato toccato** — l'aritmetica regge, e
+  alzarlo «per sicurezza» su una porta anonima che scrive nel bucket dei minori sarebbe il contrario
+  della sicurezza — ma la nota sta nel lock, perché è un warning con verdetto PASS, cioè il tipo che
+  si salta.
+- **l'E2E consuma ora fino a 3 caricamenti su 6** per esecuzione (`@solo-chromium` + `retries: 2`).
+
+### Il testo sotto il campo, in DUE lingue
+
+`candCvNota` diceva *«È facoltativo: senza, la candidatura si invia lo stesso»* / *«It is optional:
+you can send the application without it»*. Ora dice che **senza allegato la candidatura non si può
+inviare**, in italiano e in inglese.
+
+⚠️ **Questo testo NON era intercettato da nessun controllo automatico — al giro 1.** Il lock di
+parità confronta namespace, chiavi e non-vuoto — **mai il significato**; il test di forma legge il
+testo dal catalogo ed è un test di **posizione**, quindi sarebbe verde qualunque cosa ci sia scritto.
+Cambiando il solo italiano l'albero restava verde e l'inglese continuava a promettere il contrario.
+✅ **Chiuso al giro 2**, e la frase qui sopra è al passato per questo: il lock è
+`__tests__/lib/insegnanti-template.test.ts` → *«la nota del curriculum non dice più «facoltativo», e
+dice l'obbligo — in ITALIANO e in INGLESE»*. Importa i **cataloghi veri** (righe 29-30) e asserisce
+una **proprietà** del testo nei due versi e nelle due lingue, che è precisamente ciò che gli altri
+cinque presidi non facevano: loro confrontano il testo con sé stesso, questo lo confronta con ciò che
+deve dire.
+
+⚠️ **Fino al 25/08 questa riga diceva «è l'UNICO punto di tutto il lavoro che nessun controllo
+automatico intercetta», e la parola «unico» era falsa** — una dichiarazione di completezza, cioè il
+tipo di frase che fa smettere di cercare. Il secondo punto scoperto era l'**etichetta** del campo,
+`label: 'Curriculum'` in `insegnanti-template.ts`: nessun test la asseriva, e rimettendoci la stringa
+di ieri («Curriculum (facoltativo)») si sarebbe ottenuto in pagina *«Curriculum (facoltativo) \*»*
+sopra la nota che dice che senza allegato non si invia — con `eslint · tsc · vitest · build` tutti
+verdi. Il conteggio aveva guardato i cataloghi `messages/` e non il template, dove le etichette sono
+cablate in italiano per debito dichiarato: due posti dove abita il testo, uno solo censito.
+**Ora l'etichetta è chiusa** da due asserzioni in `__tests__/lib/insegnanti-template.test.ts`
+(`toBe('Curriculum')` e `not.toMatch(/facoltativ|obbligator/i)`), viste rosse rimettendo davvero la
+stringa vecchia.
+
+🔴 **E qui, fino al giro 3, c'era scritto: «Resta scoperto `candCvNota`, e adesso il conto è giusto:
+**uno**». Era falso, ed era falso già mentre lo si scriveva.** `candCvNota` era stato chiuso nella
+**stessa passata**, dal lock nominato due paragrafi più su — che questa stessa voce di changelog
+elenca fra le guardie «viste cadere» (tabella del giro 2, con i due messaggi di rottura per l'italiano
+e per l'inglese). Il documento si contraddiceva **dentro la stessa voce**, e la frase falsa era una
+**dichiarazione di completezza**: il tipo di frase che fa smettere di cercare. Oggi il conto è
+**zero**.
+**Come è successo:** il giro 2 ha aggiunto il lock e l'ha raccontato nella *propria* sezione senza
+tornare sul paragrafo del corpo, scritto al giro 1. Nella stessa passata sono stati corretti **quattro
+commenti di codice** per esattamente questa ragione — la disciplina è stata applicata al codice e non
+al PRD, che è il documento che sopravvive al codice.
+
+**La prima metà della frase resta**, ed è la parte che pesa di più adesso: del curriculum va bene anche
+una **fotografia**. È l'unica risposta al rischio di abbandono che il commento vecchio denunciava —
+toglierla per «snellire» pagherebbe due volte lo stesso prezzo.
+
+### Il ramo «Non indicato» del riepilogo resta, e la ragione è scritta nel codice
+
+Col campo obbligatorio non ci si arriva più dall'invio. Si tiene perché `mancante` diventa `true` e la
+riga si dipinge **in rosso**: se il blocco a monte si rompesse, il riepilogo lo direbbe **prima**
+dell'invio invece di far partire una richiesta che il server rifiuta su una schermata che nel
+frattempo non c'è più. E non è del solo curriculum: è di **ogni** campo `type: 'file'` del template.
+
+### La trappola che ha morso davvero: `/upload` è un POST il cui URL contiene quello dell'invio
+
+`'/api/iscrizione/insegnanti/upload'` **contiene** `'/api/iscrizione/insegnanti'` ed è un `POST`
+anche lui. Da quando ogni percorso di compilazione carica un file, ogni predicato scritto con
+`includes` cattura **due** chiamate invece di una. Misurato, non previsto: il caso «tre clic su
+*Invia*, parte **un solo** POST» — cioè la guardia contro il doppio invio — è caduto dicendo `2`,
+accusando il wizard di aver spedito due candidature mentre la seconda era l'allegato. Corretti
+insieme: `postPartiti()` (uguaglianza esatta), i `fetchMock` dei quattro file jsdom (ramo `/upload`
+**davanti** a quello dell'invio) e il `waitForResponse` dell'E2E, che ora confronta il **pathname**
+esatto — senza, si sarebbe risolto sulla risposta del caricamento (`200`) e il `toBe(201)` avrebbe
+accusato l'invio di non aver risposto 201 senza averlo mai guardato.
+
+### L'E2E carica un file VERO, e la prova arriva dopo
+
+`e2e/public-candidatura-insegnante.spec.ts` inviava **senza allegato** e pretendeva `201`, col
+commento che dichiarava di essere *«l'unica prova che il curriculum sia davvero facoltativo»*. Ora
+carica un `PDF_MINIMO` sulla rotta vera: è l'**unico** punto del repo in cui la catena completa —
+scelta del file → caricamento → percorso → invio — si prova da un capo all'altro (i test a componente
+girano su un endpoint finto: provano che il modulo si blocca, non che il file arriva).
+
+L'aritmetica del tetto è stata **rifatta**, non ereditata: il commento vecchio contava i browser
+sbagliati. Il blocco porta `@solo-chromium` e `webkit` lo esclude con `grepInvert`, quindi lo esegue
+**un progetto solo**; con `retries: 2` fanno **3 caricamenti su 6**. Il vincolo stretto resta il tetto
+degli **invii** (3/ora per IP), che questo blocco consumava già.
+
+🔻 **L'E2E non è stato eseguito in locale, ed è l'unico pezzo del lavoro la cui prova arriva dopo**:
+`npm run e2e` è in `deny` perché il seed scriverebbe nel database di **produzione**. Gira in CI.
+
+### Due bugie preesistenti sistemate nella stessa passata
+
+- il blocco **«Cosa il modulo NON rende, e perché»** descriveva lo stato del **2026-08-11** e diceva
+  che il curriculum non si rendeva perché nessuna rotta di caricamento produceva il prefisso
+  `candidature/`. La rotta è nata il **15/08** e `IDS_NON_RESI` è **vuoto** da allora: era falso da
+  tredici giorni;
+- l'avvertenza che prometteva *«il curriculum è ancora fra i Facoltativi: chi chiude quel lavoro
+  riscriva quella riga, non solo il template»* è stata onorata — la riga è stata riscritta.
+
+### Giro 1 sull'ELEMENTO B: sei collaudatori, e il rilievo più grave era più grave di come era scritto
+
+Sei collaudi indipendenti sul curriculum obbligatorio. **Cinque rilievi corretti** (due «grave», tre
+«medio»), **uno rifiutato con la misura che lo smentisce**, e **un *warning* verificato e risultato
+falso**. Ognuno è stato riprodotto prima di toccare qualunque cosa.
+
+**1. Il primo clic su «Avanti» veniva INGHIOTTITO — e non era il difetto che era stato descritto.**
+Il rilievo diceva: *«premendo «Avanti» senza curriculum il fuoco non va sul campo, resta sul
+bottone»*, e ne attribuiva la causa all'`<input type="file">` reso `sr-only`, «un bersaglio di
+geometria nulla che Chrome rifiuta di mettere a fuoco dopo il clic». **Riprodotto in Chromium, e la
+causa è un'altra.** Strumentando `HTMLElement.prototype.focus` si vede che nel caso rotto
+`focus()` **non viene mai chiamato**, mentre nel caso sano viene chiamato una volta e funziona: quindi
+non era `setFocus` a fallire, era `passoAvanti()` a **non partire affatto**. Il registro degli eventi
+alle coordinate del bottone dice perché:
+
+```
+mousedown@bottone (y=642) → mouseup@DIV (y=666) → click@DIV
+```
+
+`useForm` gira in `mode: 'onTouched'`; il `mousedown` sposta il fuoco sul bottone, il campo si blura,
+la validazione scatta, «Campo obbligatorio» viene **inserito nel flusso** sopra i comandi e il bottone
+**scende di 24 px fra la pressione e il rilascio**. Il `click` finisce sull'antenato comune: `onClick`
+non parte. Non «il fuoco non si sposta»: **il modulo non fa niente**, e bisogna premere due volte.
+
+⚠️ **NON è un difetto di questo lavoro, ed è stato misurato prima di dirlo.** Lo stesso gesto sul
+passo «I tuoi dati», con `#email` vuota e mai toccata, sposta i comandi di 23 px: vale per **ogni
+campo obbligatorio dei due wizard pubblici**, e valeva già quando il curriculum era facoltativo —
+solo che allora quel campo non produceva errori, quindi da lì i comandi non si spostavano mai.
+Renderlo obbligatorio ha messo un difetto vecchio sull'ultimo campo prima dei comandi, cioè sulla
+strada di tutti. È anche un difetto **al pelo**: il bottone è alto 44 px e la riga d'errore ne
+occupa 23-24, quindi il punto premuto finisce **uno o due pixel** sopra il bordo del bottone
+spostato — sul curriculum cade 4 volte su 4, sull'email a volte no.
+
+**Il rimedio** sta in `ComandiWizard` (`pezzi-wizard-pubblico.tsx`), non nel campo: `onMouseDown` con
+`preventDefault()` su entrambi i comandi. Il clic non sposta più il fuoco ⇒ il campo non si blura ⇒
+`onTouched` non scatta ⇒ **niente si muove prima del `mouseup`**. La validazione resta dov'è sempre
+stata, in `passoAvanti()`. Prezzo dichiarato: premuti col mouse quei due bottoni non prendono più il
+fuoco — è il comportamento nativo di Safari e Firefox su macOS, non tocca la tastiera, e in questi
+wizard il fuoco dopo un comando lo posa comunque `titoloPassoRef`, `confermaRef` o `setFocus`.
+
+**Misurato prima e dopo, nello stesso browser**: senza il rimedio `DOPO=BUTTON` (2 casi su 2, con
+`OUT:cv_path → IN:BUTTON` nella sequenza dei fuochi); con il rimedio `DOPO=INPUT#cv_path`, sequenza
+dei fuochi **vuota** (il fuoco non ha mai lasciato il campo) e spostamento del bottone **0 px**.
+
+⚠️ **Il presidio non poteva restare in jsdom**, e il rilievo aveva ragione su questo: senza layout il
+bottone non si sposta e il clic arriva sempre. Le guardie sono due, e fanno cose diverse: in
+`e2e/public-candidatura-insegnante.spec.ts` — browser vero, dentro il percorso che già esiste, costo
+un clic e nessuno slot — si pretende che **un solo** clic lasci il fuoco su `#cv_path`; in
+`__tests__/a11y/candidatura-insegnante-a11y.test.tsx` si asserisce l'unica cosa che jsdom sa
+misurare, cioè che il `mousedown` sia prevenuto, perché quella riga non sparisca in silenzio.
+⚠️ L'asserzione E2E guarda il **fuoco** e non il messaggio: «Campo obbligatorio» compare in entrambi i
+casi — lo scrive già la validazione del blur — quindi guardarlo direbbe «tutto bene» proprio quando il
+clic è andato perduto.
+
+**2. `app_log` prometteva un contatore che non può contare niente.** Accanto a `con_cv`, e ripetuto
+nell'intestazione del test, stava scritto: *«chi cerca quante persone si sono fermate per il
+curriculum lo trova nel ramo del rifiuto, `esito = 'campi-non-validi-cv_path'`»*. **Misurato su
+`app_log`, tutta la vita della rotta (11 → 25 agosto): zero occorrenze `campi-non-validi%` contro 237
+`candidatura-ricevuta`.** Non è dedup e non è il livello — dalla stessa rotta i `warn` `duplicata`
+(21), `copia-sede-non-inviata` (5) e `sede-non-valida` (2) sono tutti in tabella. È che quel ramo
+**non può scattare**: client e server chiamano lo stesso `validateField`, per progetto, quindi il gate
+del client intercetta esattamente la popolazione che il contatore dovrebbe misurare, e la richiesta
+non parte. Era il peggiore dei due silenzi — non un segnale assente, un segnale **falso**, scritto in
+due posti perché qualcuno ci si fidasse. Corretto in entrambi: `campi-non-validi-cv_path` è un
+**tripwire** (se scatta, il blocco del client è saltato o ha scritto un client non-browser), e sta
+scritto a chiare lettere che **la caduta d'imbuto non è osservabile** — così chi troverà zero saprà
+che zero non vuol dire «nessuno si è fermato». La metà osservabile esiste già e non costa una riga:
+`curriculum-caricato` (rotta di upload) contro `candidatura-ricevuta` misura chi allega e poi non
+invia.
+
+**3. Al campo che stava caricando si diceva che non era stato allegato niente.** Con il caricamento
+in volo, il riquadro dice «Caricamento…» e porta `aria-busy="true"`; premendo «Avanti», sotto lo
+stesso campo compariva **«Campo obbligatorio»**. Fino al 24/08 quella corsa non aveva conseguenze (il
+campo era facoltativo: si passava oltre); da quando è obbligatorio quella frase si legge come un
+rifiuto, e la legge per prima la gente che fotografa il curriculum col telefono su rete mobile —
+cioè il 41,9% che questa modifica manda al caricatore. ⚠️ **`validateField` non è stata toccata**: ha
+ragione, il valore è vuoto e il passo non deve avanzare. A essere sbagliato era il **motivo detto**.
+`FileField` teneva `uploading` chiuso in casa propria — l'informazione esisteva, `aria-busy` la
+stampava, e non arrivava a chi scrive sotto il campo: ora esce (`onCaricamento`) e il messaggio dice
+**`attendiCaricamento`** («Attendi la fine del caricamento.» / «Wait for the upload to finish.»),
+chiave nuova nei due cataloghi. Nessuna seconda regola di validazione.
+
+**4. L'obbligo non arrivava a chi ascolta, se non come un segno di punteggiatura.** Letto
+dall'albero di accessibilità di Chromium: `role=button`, nome «Curriculum \* Seleziona un file…»,
+**nessuna proprietà `required`**. `FieldRenderer` emetteva `aria-required` in un punto solo, il ramo
+`consent`. Il test a11y non si limitava a lasciare aperto il buco: **asseriva lo stato asterisco-solo
+come corretto**, motivandolo con «sarebbe una seconda regola applicata a un campo su sei». L'obiezione
+era giusta e la conclusione no — la risposta non era togliere il segnale al curriculum, era darlo a
+tutti e sei. Ora sta negli `ariaProps`, **una riga**, valida per ogni campo `required` di ogni modulo
+che usa `FieldRenderer`. La dottrina il repo ce l'aveva già scritta in due posti (`Combobox.tsx`:
+*«l'asterisco è l'UNICA convenzione con cui questa pagina dice “questo è obbligatorio”… `aria-required`
+è il secondo segnale»*; e lo stesso `FieldRenderer` nel ramo `consent`): era questo file a
+contraddirla. Asserito **nei due versi** — c'è sul curriculum, **non** c'è su `titolo_dettaglio` che
+è facoltativo — perché «`aria-required` ovunque» non distinguerebbe niente.
+
+⚠️ **E quanto arrivi davvero dipende dal ruolo — misurato, non promesso.** Riletto l'albero di
+accessibilità dopo la correzione (`Accessibility.getPartialAXTree`): sui `textbox` obbligatori ora
+compare `required=true` (`#nome`, `#email`) e sui facoltativi `required=false` (`#telefono`,
+`#residence_city`); ma su `combobox` (`#titolo_studio`) e sul campo di caricamento — che Chromium
+espone come `role=button` — la proprietà **non compare affatto**. L'attributo sta nel DOM e altri
+motori possono leggerlo, però su quei due ruoli Chromium lo lascia cadere: scriverlo qui come «ora
+l'obbligo arriva a chi ascolta» sarebbe stato ripetere l'errore del punto 2 in un altro campo.
+**Sul curriculum la garanzia sono le altre due strade**, ed è per questo che è stata chiusa anche la
+seconda: la nota `candCvNota` era un `<p>` senza `id`, agganciata a niente — chi percorre il modulo
+campo per campo (la modalità moduli degli screen reader) non la sentiva **mai**. Ora `FieldRenderer`
+accetta un `notaId` e la dichiara come descrizione, con l'ordine che conta:
+`aria-describedby="cv_path-error cv_path-nota"`, **prima il rifiuto e poi il consiglio**. Verificato
+nell'albero AX del browser: il campo porta come `description` la frase intera.
+
+**5. Una cifra stantia dentro il paragrafo che denuncia le cifre stantie.** Nel blocco sopra
+`cv_path`, a 22 righe dalla misura giusta («98 su 234, rimisurato il 2026-08-25»), stava «95 righe
+storiche ce l'hanno NULL» — senza data e presentato come stato di oggi, mentre sedici righe più su lo
+stesso blocco etichetta «95 su 230» come la cifra **superata**. Segnalato da due collaudatori.
+**Tolta invece che aggiornata**, coerentemente con la regola che quelle righe enunciano: l'argomento
+(un `NOT NULL` non si applicherebbe) regge senza numero, e un intero non datato sopra un insieme che
+cresce di sei righe al giorno tornerebbe falso domani.
+
+**6. Un rilievo RIFIUTATO, con la misura che lo smentisce.** Due collaudatori hanno segnalato come
+*warning* che «`cv_path` non deve mai prendere una `condition`, e **nessun test lo impedisce**».
+Verificato rompendo il codice apposta — aggiunta davvero una `condition` al campo — e la suite
+diventa **rossa in tre punti**, di cui **due preesistenti**: «è la PRIMA logica condizionale di questo
+modulo, e la condizione è quella» e «`required: true` vuol dire "obbligatorio QUANDO è visibile"»
+asserivano già, per enumerazione, che l'unico campo condizionato è `posizione_altro`. Il divieto non
+era affidato alla sola prosa. La nuova asserzione è stata tenuta lo stesso perché **nomina**
+l'invariante e aggiunge la metà che davvero conta (`campiVisibili(...)` deve **contenere** `cv_path`:
+è l'uscita da quella lista, non l'attributo, a spegnere l'obbligo sul server).
+
+⚠️ **Fuori dal codice, e non correggibile da qui: il server di sviluppo su `:3100` serviva un
+catalogo i18n VECCHIO.** Risponde 200, ma la nota sotto il campo arrivava al browser come *«È
+facoltativo: senza, la candidatura si invia lo stesso»* mentre `messages/it/public.json` su disco
+diceva il contrario; il bundle JS invece era aggiornato (`required: true`). Tre collaudatori l'hanno
+incontrato. Il processo era partito prima delle modifiche e l'HMR non aveva invalidato il modulo JSON
+lato server. **Nessuno tocchi `src/i18n/request.ts` per questo**: va riavviato il server, e finché non
+lo si fa ogni rilievo basato su ciò che si legge a `:3100` va considerato non misurato.
+
+### Ogni guardia nuova dell'ELEMENTO B è stata VISTA cadere
+
+| Rottura deliberata | Guardia che diventa rossa | Messaggio |
+|---|---|---|
+| `label: 'Curriculum (facoltativo)'` | `l'etichetta del curriculum non ripete a parole…` | `expected 'Curriculum (facoltativo)' to be 'Curriculum'` |
+| `condition` aggiunta a `cv_path` | la nuova + **due preesistenti** | `expected undefined to be defined` / la condizionale non è più solo `posizione_altro` |
+| `onMouseDown` tolto dai comandi | `il gesto di pressione sul comando primario non sposta il fuoco` | `expected true to be false` |
+| — (difetto vivo, prima del rimedio) | `mentre il curriculum si sta caricando il messaggio dice di ASPETTARE` | `expected 'Campo obbligatorio' not to contain 'Campo obbligatorio'` |
+| — (difetto vivo, prima del rimedio) | `le SETTE posizioni sono un gruppo solo…` | `aria-required` assente sul curriculum |
+| `onMouseDown` tolto, **in Chromium** | *(sonda di sola lettura, non un test del repo)* | `DOPO=BUTTON`, spostamento 24 px, `click@DIV` |
+
+Gate dopo la correzione: `eslint` **0** · `tsc --noEmit` **0** · `vitest run` **981 file, 12.308
+test** (erano 12.304: quattro nuovi). L'E2E resta da confermare in CI.
+
+### Giro 2 sull'ELEMENTO B: il rimedio aveva allargato il perimetro senza allargare la misura
+
+Sei collaudatori hanno riesaminato il curriculum obbligatorio. **Il cuore è sano e va detto per
+primo**, perché è la parte che tre lenti indipendenti hanno confermato in tre modi diversi: con un
+solo clic su «Avanti» e nessun allegato il modulo non avanza, scrive «Campo obbligatorio» in un
+`role="alert"` visibile e collegato, posa il fuoco su `#cv_path`, e il server rifiuta i quattro
+vuoti (`undefined`, `null`, `''`, `'   '`) con la stessa chiave e la stessa forma degli altri campi.
+Verificato con i test a componente, in Chromium vero e per mutazione.
+
+**Ciò che era rotto stava tutto in una riga sola, e non nel curriculum.** Per dare `aria-required`
+al campo obbligatorio, il giro 1 l'aveva messo nell'oggetto **condiviso** `ariaProps` di
+`FieldRenderer` — «una riga sola, vale per tutti i campi». Vale per tutti i campi e **non per tutti
+i controlli**: `ariaProps` viene sparso su ogni opzione dentro i `map` dei gruppi, quindi tutte e
+**sette** le caselle di «Per quali posizioni ti proponi» dichiaravano `aria-required="true"`. Su
+`role="checkbox"` quell'attributo significa *«questa casella va spuntata»*: il modulo diceva a chi
+ascolta che andavano spuntate tutte e sette, mentre ne basta **una**. Stessa origine, stesso
+effetto, per la nota del gruppo, che con `notaId` si annunciava **sette volte**.
+
+| Cosa è stato corretto | Dove | Perché non bastava spostare l'attributo |
+|---|---|---|
+| `aria-required` esce dall'oggetto condiviso | `FieldRenderer.tsx` — nasce `ariaOpzione` accanto ad `ariaProps` | Il difetto era la CONDIVISIONE, non il posto |
+| l'obbligo del gruppo a scelta singola va sul `role="radiogroup"` | `RadioGroup` | ARIA 1.2 **ammette** `aria-required` su `radiogroup`: è il posto giusto |
+| sul `role="group"` **non** ci va | ramo `checkbox` | ARIA **non** lo ammette su `group`: sarebbe una violazione `aria-allowed-attr`. L'obbligo arriva dall'asterisco dentro il NOME del gruppo e dal messaggio d'errore |
+| la nota del gruppo va sul contenitore | ramo `checkbox` | Una descrizione dell'insieme si dichiara una volta. Alle opzioni resta il solo errore, che è ciò che portavano prima del 24/08 |
+
+**Il secondo difetto era invisibile a chi guarda e forte a chi ascolta.** Allegato il curriculum
+**dopo** un «Avanti» fallito, il riquadro mostrava il nome del file e l'icona verde mentre il campo
+restava `aria-invalid="true"` col suo «Campo obbligatorio» e il bordo rosso. La causa è
+`mode: 'onTouched'`: un campo mandato in errore dal `trigger()` di «Avanti» senza essere mai stato
+*toccato* non si rivalida al cambio di valore. Sui campi di testo si chiude da solo — si tabula via,
+e quel blur segna «toccato» — ma sul campo file quel blur **non arriva mai**: il selettore di file
+del sistema non sfoca l'input, e il `preventDefault` sul comando primario (il rimedio al primo clic
+perduto, nato nello stesso giro 1) toglie l'ultimo blur rimasto. Prima del 24/08 il caso era
+**irraggiungibile**, perché `cv_path` era facoltativo e non produceva errori: renderlo obbligatorio
+ha messo sulla strada di tutti un difetto che non aveva mai avuto una strada. Rimedio: `onBlur?.()`
+subito dopo `onChange(path)` in `FileField.processaFile`.
+
+**Il terzo era un testo senza guardia**, ed è la classe di difetto che questo repo paga più caro.
+`candCvNota` — la sola frase che spiega l'obbligo a chi si candida — era nominata da cinque
+collaudi, e tutti e cinque nella forma `getByText(itPublic.candCvNota)`: un confronto fra il DOM e
+il **catalogo**, cioè fra la stringa e se stessa. Rimettendoci il testo del 23/08 («È facoltativo:
+senza, la candidatura si invia lo stesso») si sarebbe ottenuta, sotto un campo con l'asterisco che
+blocca l'invio, una frase che dice il contrario — con `eslint · tsc · vitest · build` tutti e
+quattro verdi. L'inglese era scoperto due volte: nessun collaudo legge `enPublic`, e il lock di
+parità confronta gli **insiemi di chiavi**, mai i valori. Ora si asserisce una **proprietà** del
+testo, nei due versi e nelle due lingue.
+
+#### Ciò che è stato corretto perché descriveva uno stato superato
+
+Tre commenti dicevano al presente cose diventate false — la stessa forma di difetto che questa voce
+denuncia altrove, ripetuta dai paragrafi che la denunciano:
+
+- `CandidaturaInsegnanteWizard.tsx` sosteneva che «`FieldRenderer` non accetta una descrizione
+  dall'esterno» e che il suo `aria-describedby` «è già occupato dal messaggio d'errore». Il debito
+  era stato chiuso **dallo stesso commit** che ha lasciato in piedi la frase. Il gemello del
+  personale (`DocumentoIdentitaFields.tsx`) resta indietro, ed è ora dichiarato come debito **di
+  quel file**, non come limite del renderer;
+- `insegnanti-template.ts` elencava a mano i testi rimasti indietro e ne nominava **uno**
+  (`privacy/page.tsx`) mentre erano **due**: il gemello stava in
+  `gdpr/retention-candidature/route.ts`. Il rimedio non è stato allungare l'elenco — sarebbe
+  invecchiato di nuovo — ma **correggere le due frasi**, così l'elenco non serve più;
+- la rotta d'invio prometteva una misura che **non misura**: «`curriculum-caricato` contro
+  `candidatura-ricevuta` misura giorno per giorno chi allega e poi non invia», scritta tre righe
+  **sotto** il punto che nega l'osservabilità. Eseguita in produzione, quella differenza è
+  **negativa in 4 giorni su 7** (19/08 −8, 21/08 −4, 22/08 −8, 24/08 −2; totale 226 contro 237). I
+  due contatori girano su popolazioni che non si sovrappongono — `candidatura-ricevuta` conta anche
+  le 98 righe senza curriculum — e `curriculum-caricato` conta **caricamenti, non persone** (226
+  eventi contro 139 righe con `cv_path` alle 12:08), senza nessuna chiave che li leghi. La promessa è stata
+  tolta, non aggiustata: nessun test può rendere rossa una frase in prosa.
+
+#### Ogni guardia nuova del giro 2 è stata VISTA cadere
+
+| Rottura deliberata | Guardia che diventa rossa | Messaggio |
+|---|---|---|
+| — *(difetto vivo, prima del rimedio)* | `l'obbligo del gruppo NON si ripete su ogni casella` | `expected element not to have attribute aria-required / Received: aria-required="true"` |
+| — *(difetto vivo, prima del rimedio)* | `allegato il curriculum, il campo NON resta marcato non valido` | `Received: aria-invalid="true"` |
+| `aria-required` rimesso in `ariaOpzione`, tolto dal `radiogroup` | `il radiogroup porta aria-required, il role="group" no…` + la guardia a11y | `Tests 1 failed` su entrambe |
+| `{...ariaProps}` rimesso sulle caselle | `la nota di un gruppo sta sul GRUPPO…` | `expected 'fasce-nota' not to contain 'fasce-nota'` |
+| `onBlur?.()` tolto dopo il caricamento | `allegato il curriculum, il campo NON resta marcato non valido` | `Received: aria-invalid="true"` |
+| `candCvNota` = testo del 23/08 (**IT**) | `la nota del curriculum non dice più «facoltativo»…` | `expected 'Va bene un PDF…' not to match /facoltativ/i` |
+| `candCvNota` = testo del 23/08 (**solo EN**) | la stessa | `expected 'A PDF or a photo…' not to match /\boptional\b/i` |
+
+Le due mutazioni sui cataloghi sono state fatte **sui file veri e ripristinate**, con `shasum`
+identico prima e dopo (`80f828a9…` / `ae21fcd8…`); quelle su `FieldRenderer.tsx` idem (`41f3ac5f…`).
+
+Gate dopo la correzione: `eslint --max-warnings 0` **0** · `tsc --noEmit` **0** · `vitest run`
+**981 file, 12.311 test** (erano 12.308: tre nuovi) · `npm run build` **0**, postbuild 2.472 file JS
+esaminati. L'E2E resta da confermare in CI — e da questo giro asserisce anche che il campo smetta di
+dirsi non valido dopo il caricamento, senza costare un clic né uno slot.
+
+#### Due rilievi che erano sbagliati nei fatti, e uno che il codice non può chiudere
+
+- **«nessun campo `checkbox` ha una nota in `NOTE_DEI_CAMPI`»** — falso: `posizioni` ne ha una
+  (`candPosizioniAiuto`), ed è esattamente il campo su cui la nota si ripeteva sette volte. Il
+  rilievo dichiarava innocua la cosa che invece stava accadendo in pagina.
+- **«togliere `aria-required` da `ariaProps` e metterlo sul `role="group"`»**, proposto da due lenti
+  su tre — è invalido: ARIA non ammette quell'attributo su `group`, e `axe` lo segnalerebbe come
+  `aria-allowed-attr`. La terza lente l'aveva visto e ha ragione lei.
+- **Il server di sviluppo su `:3100` serve ancora il catalogo dei messaggi del 24/08**, rimisurato
+  alla fine di questo giro: `curl … | grep -c "È facoltativo: senza…"` → **1**,
+  `grep -c "Senza allegato la candidatura non si può inviare"` → **0**,
+  `grep -c attendiCaricamento` → **0**. Non è un difetto del prodotto — su disco e in `.next` le
+  stringhe sono quelle nuove — è il processo Node che tiene in memoria una copia caricata prima
+  delle 03:05. **Va riavviato prima di qualunque altra verifica nel browser**: quattro collaudatori
+  su sei ci sono passati sopra, e chi non se ne accorge o dichiara il lavoro non fatto, o «conferma»
+  il testo sbagliato.
+
+### Giro 3 dell'ELEMENTO B — l'informativa prometteva due cose che non faceva
+
+Sei collaudi indipendenti, **sette rilievi formali** (cinque «medio», due «estetico»). Verificati uno
+per uno prima di toccare qualunque cosa: **nessuno era sbagliato nei fatti**, e due erano più gravi
+di come erano stati scritti. Cinque dei sette sono **testi che descrivevano uno stato superato** —
+cioè la specie di difetto che questa stessa voce di changelog denuncia tre volte al suo interno.
+
+**1. Il curriculum era diventato obbligatorio e l'informativa non lo diceva (art. 13 §2 lett. e).**
+Rilevato da **due lenti indipendenti**. Rendendo necessario il conferimento nasce l'obbligo di
+dichiarare la necessità **e le conseguenze del rifiuto**, e la sezione «Natura del conferimento» di
+`/privacy` parlava soltanto di anagrafica del minore, dati sanitari e fotografie: del modulo «Lavora
+con noi» non una parola. *Attenuante misurata, che però non salva*: l'informazione al **punto di
+raccolta** c'era ed era in due lingue (`candCvNota`, l'asterisco, `aria-required`). Non è la stessa
+cosa — la nota sotto il campo la legge chi sta compilando, l'informativa la legge chi deve decidere
+**se** compilare, e la norma nomina il secondo.
+**Corretto:** quarto paragrafo nella sezione «Natura del conferimento», `VERSIONE_PRIVACY` →
+`2026-08-25`, nuova impronta in `pagine-legali.test.ts` (le precedenti intatte: sono i
+testi che persone vere hanno già accettato). ⚠️ L'impronta di `2026-08-25` è poi cambiata una
+seconda volta al **giro 4** (`ce1b61de…` → `d65227bf…`) per una correzione di sola forma
+del capoverso: **riscritta e non affiancata**, ed è lecito perché quella versione non è mai
+andata in produzione — misurato con un conteggio sui `consents_log` delle quattro tabelle che
+ne portano uno: le versioni vive sono `2026-07-31`, `2026-08-10`, `2026-08-11`, `2026-08-15` e
+`2026-08-20`; di `2026-08-25` **nessuna riga**. La differenza fra «bozza» e «documento firmato»
+si stabilisce con la query, non con la data.
+🔑 **La lezione, che vale più della correzione:** il debito era stato scritto **in un commento di
+codice** (`insegnanti-template.ts`) invece che qui. Un elenco di cose da fare che vive in un commento
+si rilegge solo quando quel file si tocca: non è tracciato, è *dimenticato con una nota*. AGENTS.md
+mette l'allineamento del PRD dentro la definizione di «fatto», e vale anche per i debiti.
+
+**2. Le «ventiquattro ore» dell'informativa erano false da dieci giorni.** Il difetto e la sua misura
+stanno per esteso nel blocco «gli orfani nel bucket cresceranno» più su. In breve: **21 orfani su 36
+avevano più di 24 ore**, il più vecchio 45; la causa non è la soglia ma la **cadenza** (un solo giro
+a notte ⇒ tetto = soglia + 24 h); l'informativa ora dichiara **quarantotto ore**; un lock nuovo lega
+le tre cifre — testo, soglia, cron — e va al **rosso** anche quando la cadenza non sa leggerla.
+⏸️ Resta al titolare la scelta se accorciare il termine **diradando meno il cron** (richiede una
+scrittura su `cron.job` in produzione).
+
+**3. La fine del caricamento del curriculum non era annunciata a chi non vede** (WCAG 2.1 SC 4.1.3).
+Il giro 2 aveva introdotto «Attendi la fine del caricamento.» — un **ordine di aspettare**, dentro un
+`role="alert"`, sul solo campo che blocca il passo — e la fine di quell'attesa non arrivava a nessuno:
+`FileField` la diceva solo con i pixel (`Loader2` → `FileCheck2`) più `aria-busy`, che è una
+*proprietà* dell'elemento e non un messaggio di stato. Chi ascolta restava a ripremere «Avanti» a
+tentativi. **Corretto** con un nodo `sr-only` `role="status" aria-live="polite"` **fratello** della
+`<label>` (dentro entrerebbe nel *nome accessibile* dell'input) e **presente da sempre nel DOM**, anche
+vuoto: una regione viva inserita insieme al suo contenuto non viene annunciata.
+La dottrina esisteva già nello stesso wizard, sull'altra rotellina della pagina: il campo del
+curriculum era l'attesa muta rimasta.
+
+**4. Il PRD si contraddiceva dentro la stessa voce su `candCvNota`** — dichiarava scoperto un testo
+che la tabella del giro 2, 290 righe più in basso, elencava fra le guardie viste cadere. Corretto
+sopra, e il conto è **zero**.
+
+**5. Un docblock di test dava istruzioni opposte a quelle del componente.** In
+`CandidaturaInsegnanteWizard-forma-visiva.test.tsx` si leggeva ancora che «`FieldRenderer` non accetta
+una descrizione dall'esterno», mentre `NOTE_DEI_CAMPI` — corretto dallo stesso diff — dice l'opposto.
+La frase viveva in **due copie** nate da un copia-incolla e ne era stata corretta una: l'elenco dei
+posti era stato fatto **a memoria**. `grep -rn "descrizione dall'esterno" --include="*.ts"
+--include="*.tsx" .` ne trova due in un secondo.
+
+**6. [estetico] Una nota di sicurezza inventata dentro un test** (`candidature-insegnanti-post.test.ts`):
+sosteneva che invertendo l'ordine dei due gate un `cv_path` assente sarebbe passato. **Misurato
+invertendo davvero i due blocchi nella route: ESITO 0, 88 test verdi, nessun 201 indebito.** Il gate
+4-bis è guardato da `cvPath !== null` e su un valore assente non scatta né prima né dopo; i due
+controlli sono **commutativi** rispetto al vuoto. La conseguenza era stata *dedotta invece che
+eseguita*, dentro un file che in ogni altro paragrafo denuncia esattamente questo.
+
+**7. [estetico] Le distanze in righe erano sbagliate tutte e tre** in `insegnanti-template.ts`:
+«sedici righe più in alto» dove ce n'erano **23**, «venti righe più su» dove ce n'erano **23**,
+«queste venticinque righe» per un blocco che ne copre oltre quaranta — dentro il paragrafo che esiste
+per denunciare i numeri scritti in prosa. Sostituite con **àncore cercabili**, che è la regola già
+scritta nella route gemella («si trova cercando `ESITO_MAX`, non contando le righe: anche una
+distanza è un numero che invecchia»).
+
+**+ un warning promosso a correzione:** il commento di `CandidaturaInsegnanteWizard.tsx` che giustifica
+il non spostare il fuoco sul pannello d'errore generico argomentava da «il fuoco non lo perde nessuno»
+— reso **falso dallo stesso commit**, perché il `preventDefault` sul `mousedown` di `ComandiWizard`
+toglie il fuoco all'attivazione col puntatore. La conclusione regge (il pannello è `role="alert"` con
+`tabIndex={-1}` e si annuncia da solo), l'argomento no: riscritto sull'argomento vero.
+
+#### Ogni guardia nuova del giro 3 è stata VISTA cadere
+
+| Rottura deliberata | Guardia che diventa rossa | Messaggio |
+|---|---|---|
+| — *(difetto vivo, prima del rimedio)* | `la fine del caricamento del curriculum è ANNUNCIATA…` | `nessuna regione viva accanto al campo: la fine del caricamento non la sente nessuno` |
+| regione viva che annuncia solo l'INIZIO (`uploading ? … : ''`) | la stessa | `expected '' to be 'Allegato caricato'` |
+| `candCvNota` → «ventiquattro ore» nell'informativa | `le ore promesse sono ALMENO la soglia PIÙ un giro` | `expected 24 to be greater than or equal to 48` |
+| cron di `candidature-retention` reso mensile (`5 5 1 * *`) | la stessa | `la cadenza «5 5 1 * *» non è di una forma che questo lock sappia leggere` |
+| gate 4-bis spostato PRIMA di `validatePage` | *(nessuna — ed è il punto)* | `ESITO=0, 88 test verdi`: il rilievo «estetico» n. 6 era vero |
+
+Le mutazioni su `src/app/privacy/page.tsx`, sulla migrazione del cron e su
+`src/app/api/iscrizione/insegnanti/route.ts` sono state fatte **sui file veri e ripristinate**, con
+`shasum` identico prima e dopo (`8eb193a4…`, `0cb7ecf0…`, `b65c0fd2…`).
+
+⚠️ **Il secondo rigo di quella tabella è quello che conta.** La prima rottura (togliere la regione)
+sarebbe stata superata anche dal *mezzo rimedio* — annunciare l'inizio e tacere la fine — che è
+esattamente il difetto rilevato. È la seconda mutazione a provare che il test difende la **fine**
+dell'attesa e non la sua esistenza.
+
+#### Un test esistente è stato ristretto, e la ragione va detta
+
+La regione viva mette «Caricamento…» in **due** nodi — il riquadro e la regione `sr-only` — e
+`CandidaturaInsegnanteWizard-riepilogo.test.tsx` lo cercava con un `screen.getByText` globale: *Found
+multiple elements*, cioè un rosso per una ragione che non c'entra col comportamento difeso. La query
+è stata ristretta al riquadro (`within(controllo.closest('label')!)`), **non allargata a
+`getAllByText`**: allargarla avrebbe reso il test verde anche se il riquadro avesse smesso di parlare.
+**Misurato**: togliendo `t('caricamento')` dal riquadro il test ristretto va comunque **rosso**
+(ESITO 1) — difende ancora ciò per cui era stato scritto.
+
+#### Il gate del giro 3
+
+`npx eslint . --max-warnings 0` → **ESITO 0**, zero righe · `npx tsc --noEmit` → **ESITO 0**, zero
+righe · `npx vitest run` → **ESITO 0**, **981 file, 12.317 test** (erano 12.313: quattro nuovi — uno
+a11y e tre del lock) · `npm run build` → **ESITO 0**, postbuild 2.472 file JS esaminati.
+Gli esiti sono catturati **prima** di qualunque pipe (`comando > file 2>&1 ; E=$?`): in questo repo
+`comando | tail; echo $?` stampa l'uscita di `tail`, e su un gate vale zero.
+L'**E2E resta da confermare in CI** (in locale è in `deny`: il seed scriverebbe in produzione).
+
+### Giro 4 dell'ELEMENTO B — l'informativa era diventata irraggiungibile *prima* della raccolta
+
+Sei collaudatori, **cinque PASS e un FAIL**. Il FAIL è l'unico rilievo di gravità media del giro, e
+descrive un buco che **l'obbligo stesso ha aperto**.
+
+**Il difetto.** Il curriculum non viaggia con l'invio: `FileField` chiama la rotta di caricamento
+dentro `onChange`, quindi il documento è sul nostro server **nell'istante in cui si sceglie il
+file** — al passo «Il tuo profilo», il terzo su cinque. L'unico collegamento a `/privacy` di tutta
+la pagina è il `link` del consenso `presa_visione_informativa`, che `FieldRenderer` rendeva **solo**
+nel ramo `field.type === 'consent'`: il passo **successivo**. Finché `cv_path` era facoltativo una
+strada c'era, e la percorreva quasi metà di chi si candida — **98 candidature su 237 (41,4%)** sono
+arrivate senza allegato: si saltava il file, si leggeva l'informativa, si tornava indietro. Dal
+24/08 il passo non avanza senza caricamento, quindi **nessuno può più leggere l'informativa prima di
+consegnarci il proprio curriculum**. Non è teorico: in produzione ci sono **226 eventi
+`curriculum-caricato` contro 139 righe con `cv_path`** e **36 oggetti orfani** — cioè persone che il
+file l'hanno consegnato e la schermata dei consensi non l'hanno mai vista.
+
+È anche una contraddizione interna al giro 3, che aveva scritto — giustamente — «*la nota sotto il
+campo la legge chi sta compilando, l'informativa la legge chi decide se compilare, e la norma nomina
+il secondo*». Per il curriculum il momento della decisione è ora **due passi prima** del punto in cui
+l'informativa diventava raggiungibile, e l'art. 13 parla del momento in cui i dati sono **ottenuti**.
+
+**Corretto alla radice, in due righe.** `FieldRenderer` rende `field.link` anche fuori dal ramo
+`consent`, con lo **stesso** `CollegamentoInformativa` (bersaglio da 44px, `LinkInterno` per non
+buttare fuori dalla WebView), e `insegnanti-template.ts` dichiara `link: '/privacy'` su `cv_path`.
+**Nessun `link_label`**: senza, l'etichetta viene da `t('leggiInformativa')`, che è già nei cataloghi
+in it e in en — cablarla avrebbe aggiunto una riga italiana al debito già dichiarato in testa al
+file. Effetto collaterale voluto: fino a oggi un template che dichiarava `link` su un campo non-
+consenso non otteneva niente, **e non otteneva niente in silenzio**.
+
+**Visto rosso prima, e visto cadere dopo.** I due test nuovi in
+`CandidaturaInsegnanteWizard-consensi.test.tsx` sono partiti **ROSSI** (`ESITO=1`, 2 falliti su 9,
+«*Unable to find an accessible element with the role "link" and name "Leggi l'informativa"*»), con
+gli altri 7 verdi — quindi il rosso era del collegamento, non di un guasto generale. Poi le due
+mutazioni, una per metà: tolto il `link` dal template → **ESITO=1**, 2 falliti; rimesso, e tolto il
+render da `FieldRenderer` → **ESITO=1**, 2 falliti. Entrambe le metà sono difese.
+
+⚠️ **Il primo tentativo di test era sbagliato, e l'errore vale più della correzione**: contava i
+collegamenti **per nome**, e i due nomi non coincidono — il consenso dice «Leggi l'informativa
+**completa**» (`link_label` cablato), il curriculum «Leggi l'informativa» (dal catalogo). Contati per
+nome, uno dei due risulta «assente». Il test finale conta per `href="/privacy"`, cioè per
+destinazione, e asserisce che su ogni schermata la strada sia **una sola**.
+
+#### I due rilievi «estetico», e una misura che smentiva anche il collaudatore
+
+1. **Un commento citava un comando e il suo esito, e l'esito era falso.**
+   `FieldRenderer.tsx` sosteneva «`grep -rn 'campi contrassegnati\|asterisco' src messages` →
+   **zero**». Quel comando ne torna **19** — e due dei file che trova (`Combobox.tsx`,
+   `LuogoNascitaFields.tsx`) sono esattamente i due che il paragrafo **dieci righe sotto** cita come
+   precedenti: il commento si smentiva da solo. L'affermazione («nessuna legenda dice cosa significhi
+   l'asterisco») era **vera**, la misura no: il grep cercava la parola in tutto il sorgente, commenti
+   compresi, mentre la cosa da dimostrare riguarda il solo testo che l'utente legge.
+   ⚠️ **Anche il comando proposto dal collaudatore come rimedio era sbagliato**, e l'ho scoperto
+   solo perché l'ho eseguito invece di copiarlo: `grep -rn 'contrassegnati\|obbligatori' messages/it
+   messages/en` ne torna **24**, non zero. Quello scritto adesso nel commento è
+   `grep -rniE 'contrassegnat|asterisc' messages/it messages/en` → **0**, misurato, con accanto il
+   limite dichiarato: sono i **cataloghi**, cioè la sorgente del testo tradotto, non tutto il sorgente.
+
+2. **Il capoverso nuovo dell'informativa rompeva il registro del documento.** Diceva «servono a
+   esaminare la candidatura, *che è la cosa che la persona ci chiede di fare*» — un inciso parlato in
+   mezzo a due capoversi in registro giuridico piano — e apriva con «È invece facoltativo», le stesse
+   tre parole del capoverso **successivo**, che parla d'altro (le fotografie). Riscritto: «*cioè a dare
+   seguito alla richiesta dell'interessato*», e il soggetto davanti («Il consenso a conservarla … è
+   invece **facoltativo**»). La sostanza non cambia: art. 13 §2 lett. e resta coperto.
+   Il lock ha fatto il suo mestiere — è diventato **rosso** e ha stampato l'impronta nuova.
+
+#### I quattro 🔴 dei collaudatori che NON sono difetti del codice, e che restano aperti
+
+- **Il ramo è `main`.** `git rev-parse --abbrev-ref HEAD` → `main`, non
+  `feat/candidature-cv-obbligatorio`. Lo dicono **quattro collaudatori su sei**; il riquadro in testa
+  a questo changelog lo dichiara già con la procedura esatta. Nessun anello del gate lo guarda: va
+  fatto **a mano prima del commit**, e in questa sessione `git switch`/`checkout` è vietato.
+- **Il server di sviluppo su :3100 serve i cataloghi i18n VECCHI.** Il processo è partito il 24/08
+  alle 23:26:21, `messages/it/public.json` è stato scritto il 25/08 alle 05:22:32: Next ha ripreso i
+  `.tsx` via HMR ma non i `.json`. La nota sotto il curriculum si legge ancora «*È facoltativo: senza,
+  la candidatura si invia lo stesso*» — l'esatto contrario del vero — mentre su disco non esiste più.
+  **Chi collauda testi nel browser prima di riavviarlo misura un difetto fantasma.** L'artefatto di
+  `npm run build` ha il testo nuovo in 15 file e il vecchio in 0: ciò che si rilascia è giusto.
+- **L'obbligo sul server è di forma, non di sostanza.** La `POST` pretende che `cv_path` sia una
+  stringa nella forma `candidature/<uuid>-cv.<est>`, ma **non verifica mai che l'oggetto esista**
+  (`grep -c storage` sulla route → 0). Chi sa generare un uuid soddisfa l'obbligo con zero byte
+  caricati. È **preesistente** e coerente col mandato («obbligatorietà applicativa: template +
+  client + server»), e oggi le righe fantasma in produzione sono **zero** — ma da oggi quella stringa
+  è l'unico cancello. Se si vuole l'obbligo sulla sostanza basta un `list`/`createSignedUrl` prima
+  dell'`INSERT`: è una **decisione**, non una svista.
+- **Gli oggetti orfani cresceranno.** Oggi **36 su 172** (21%): già adesso quasi un caricamento su
+  tre non diventa una candidatura, e con l'obbligo la popolazione che può abbandonare *dopo* aver
+  caricato passa dal 58% al **100%** degli invii. La spazzata a 48 h è dichiarata e bloccata dal lock
+  `informativa-termine-orfani-sostenibile`; da rimisurare dopo il rilascio, e se il volume sale la
+  leva è la **cadenza** (`5 5,17 * * *` → 36 h), non il testo.
+
+#### Il gate del giro 4
+
+`npx eslint . --max-warnings 0` → **ESITO 0** · `npx tsc --noEmit` → **ESITO 0** ·
+`npx vitest run` → **ESITO 0**, **981 file, 12.319 test** (due nuovi: i due del collegamento) ·
+`npm run build` → **ESITO 0**. Ogni esito catturato **prima** di qualunque pipe.
+L'**E2E resta da confermare in CI**.
+
+### Rifinitura visiva, giro 1 — il campo diventato obbligatorio era l'unico che non si vedeva
+
+Tre critici hanno guardato il modulo a schermo e nessuno dei tre l'ha promosso (6, 7, 6). Il difetto
+di fondo era uno solo, detto in tre modi: **l'obbligo era stato aggiunto alla logica e non al
+disegno**. Le misure che seguono sono di Chromium sulla pagina viva, passo 3 di `/lavora-con-noi`,
+a 900 px e a 390 px, senza mai premere «Invia» e senza mai caricare un file (ogni richiesta non-`GET`
+abortita da Playwright: **0 uscite**).
+
+| | prima | dopo |
+|---|---|---|
+| fondo del riquadro | `rgb(254,241,228)` — **identico alla pagina** | `rgb(255,255,255)`, come ogni altro controllo |
+| contorno a riposo | `lab(39.62 -29.33 -1.64 / 0.2)` ≈ **1,35:1** | `rgb(85,97,92)` = **5,82:1** su crema |
+| contorno in errore | rosso **tratteggiato** | rosso **pieno**, stringa identica a `#titolo_studio` |
+| anello del fuoco in errore | **verde** attorno a un bordo rosso | `rgb(229,57,53)` — le due cornici dicono la stessa cosa |
+| collegamento all'informativa | 14 px / peso 500 — la resa dell'**etichetta**, più grande del messaggio d'errore | 12 px / peso 400, **44 px di bersaglio invariati** |
+| riquadro → nota del campo | **58 px** a riposo, **82** in errore e a 390 px | **8 px**, con l'errore in mezzo quando c'è |
+| ordine sotto il campo | campo → errore → **link** → nota | campo → errore → **nota** → link |
+| riga del curriculum nel riepilogo | «Allegato» | il **nome del file** |
+
+**Il contorno invisibile non era un colore sbagliato: era una `<label>` fra due famiglie.**
+`globals.css` corregge già i contorni deboli, ma con due regole scopate a
+`input|select|textarea[class*="border-kidville-green/"]` e a `label[class*="border-kidville-neutral"]`.
+Il riquadro del caricamento è una `<label>` che portava `border-kidville-green/20`: cadeva in mezzo e
+**nessuna delle due lo prendeva**. Il rimedio non è stato un valore nuovo — sarebbe stato il terzo
+posto in cui scrivere la stessa decisione — ma le tre costanti che `FieldRenderer` già esporta:
+`SCELTA_LIBERA` a riposo, `SCELTA_PRESA` con l'allegato, `SCELTA_ERRORE` in errore, che è
+**letteralmente** la stringa che lì era ribattuta a mano. Da quel momento il rimedio per superficie
+lo prende gratis: `sub` sulla crema, verde pieno in hover, nero in Alto Contrasto.
+
+**Il `border-dashed` resta, ma smette di parlare quando parla il rosso.** Stava nella base
+incondizionata, quindi sopravviveva al ramo d'errore: il tratteggio è l'affordance della zona di
+rilascio, non un segnale d'errore, e riusarlo lì dipingeva il segnale più debole possibile — una
+linea a metà duty cycle — sull'unico campo che blocca il passo. Ora è dichiarato nei due rami
+non-errore.
+
+**La nota e il link avevano due proprietari.** `field.link` è l'ultimo figlio di `FieldRenderer`, la
+nota la rendeva il wizard subito dopo: il collegamento si infilava **fra il controllo e il suo testo
+di aiuto** — e quel testo è la metà che dice che *va bene anche una fotografia*, cioè l'unica risposta
+del modulo al 41,4% che fino a ieri inviava senza CV. Il rimedio è strutturale: la prop `notaId` è
+diventata `nota` e il `<p>` lo rende il componente, che ne **deriva** l'`id` da `field.id`. L'ordine
+vale ora per ogni campo con `link`, presente e futuro — e il ramo `consent`, che impaginava la stessa
+coppia al contrario, è stato allineato: campo → errore → link ovunque.
+
+**«Campo obbligatorio» è la risposta di un database.** Su un campo di testo passa, perché c'è un
+cursore che lampeggia; su un riquadro di caricamento no. La regola resta **una** (`validateField`,
+che rigirano client e server: la rotta ora risponde `400` con la stessa identica frase) e a cambiare
+è il solo messaggio, come già faceva `messaggioPattern` fra provincia, CAP e codice fiscale. La frase
+non nomina il curriculum, perché la stessa funzione serve il documento d'identità del minore e le due
+facce del documento del personale: **«Allega un file per proseguire»**.
+
+**Sul testo.** `candCvNota` passa al «tu» che tutto il resto del modulo dà già e mette l'obbligo in
+testa, così la via d'uscita chiude: *«Il curriculum è obbligatorio: senza non puoi inviare la
+candidatura. Va bene un PDF oppure una foto, purché si legga tutto.»* Il collegamento smette di
+essere l'unico dei cinque `link: '/privacy'` del prodotto a cadere sul ripiego generico del catalogo
+e dice **«Leggi l'informativa completa»** come gli altri quattro. `attendiCaricamento` perde il punto
+fermo, che divideva un `role="alert"` con messaggi che non ce l'hanno; e lo stato in volo dell'allegato
+prende una chiave sua (`caricamentoAllegato`), perché in inglese la chiave generica diceva «Loading…»
+mentre due centimetri sotto si leggeva «Wait for the **upload** to finish».
+
+**Il riepilogo.** La riga del curriculum era l'unica della pagina a non rimandare indietro ciò che la
+persona ha scelto — e lo era sul solo campo obbligatorio. Ora mostra il nome del file, con «Allegato»
+come ripiego. ⚠️ Il divieto sul **percorso** (la chiave del bucket privato) resta intero: è l'unica
+cosa che quel presidio è mai esistito per difendere. L'altra obiezione — «quel nome contiene il
+cognome» — è stata **misurata e non ha retto**: su quella stessa schermata il cognome è già stampato
+per esteso come valore del campo «Cognome», e il test lo asserisce, così se un giorno smettesse di
+esserci l'obiezione tornerebbe in discussione da sé.
+
+**L'informativa.** Il capoverso su «Lavora con noi» è andato in **fondo** alla sezione «Natura del
+conferimento»: era il terzo di quattro, cioè un adulto che si candida incastrato fra i dati sanitari
+del minore e le fotografie del minore. Tolta l'eco col capoverso seguente («è *invece* facoltativo …
+*non pregiudica in alcun modo*», due volte di fila su soggetti estranei). Il termine si scrive: non
+più «al più breve dei termini indicati più avanti» ma **«dopo dodici mesi anziché ventiquattro»** —
+e la seconda copia dei due numeri è finita **sotto lo stesso lock della prima**
+(`gdpr-retention-candidature`), perché una copia non sorvegliata sarebbe il difetto che quel lock
+esiste per impedire. «La richiesta dell'interessato» → «di chi si candida», che è anche la scrittura
+più piana e allinea l'unico capoverso rivolto a chi si candida al femminile che il corpo della
+sezione sul personale usa tre volte. La voce sul curriculum orfano torna alla **passiva** dell'elenco
+e dice quale notte: «viene rimosso dall'archivio dalla pulizia notturna, **entro due passaggi**».
+
+⚠️ **L'impronta di `VERSIONE_PRIVACY = '2026-08-25'` è stata riscritta e non affiancata**, e la
+licenza è una misura, non la data: raggruppando `candidature_insegnanti` per
+`consents_log->>'versione_informativa'` le versioni presenti sono `2026-08-20` (195), `2026-08-15`
+(38), `2026-08-10` (1) — di `2026-08-25` **nessuna riga**. 🔑 E la misura facile mentiva:
+`consents_log::text LIKE '%2026-08-25%'` torna **1**, e quell'1 è un **timestamp** di un consenso
+accettato oggi, non una versione. Fidandosi di quel conteggio si sarebbe inventata una versione
+`2026-08-26` per un documento che nessuno ha mai letto.
+
+#### Ogni guardia nuova della rifinitura è stata VISTA cadere
+
+Sette presidi nuovi o rafforzati, e per ciascuno il codice è stato **rotto apposta** prima di
+dichiararlo verde:
+
+| presidio | rotto rimettendo | esito |
+|---|---|---|
+| il riquadro a riposo è un controllo (bianco + contorno delle card) | `bg-kidville-cream` + `border-kidville-green/20` | 🔴 |
+| in errore il contorno è **pieno** | `border-dashed` nella base | 🔴 |
+| in errore l'anello del fuoco è **rosso** | `focus-within:ring-kidville-green` fisso | 🔴 |
+| il collegamento non ha taglia né peso di un'etichetta | `text-sm font-medium` | 🔴 |
+| nel ramo `consent` l'errore viene **prima** del link | l'ordine di ieri | 🔴 |
+| fra il campo e la sua nota **non c'è niente** | il link prima della nota | 🔴 |
+| il riepilogo mostra il **nome del file** | `t('candRiepilogoCvAllegato')` fisso | 🔴 |
+| il campo `file` vuoto dice «Allega un file per proseguire» | `'Campo obbligatorio'` per tutti | 🔴 |
+| il capoverso dell'informativa dichiara i **due termini** | «al più breve dei termini indicati più avanti» | 🔴 |
+
+🔑 Il più istruttivo è il sesto: il presidio che c'era già — «la nota viene *dopo* il campo e *nella
+stessa scatola*» — restava **verde** con 82 px e un collegamento in mezzo. Erano due asserzioni vere
+che non difendevano niente. La terza («fra il controllo e la sua nota non c'è nessun elemento
+intermedio») è quella che cade.
+
+#### Il gate della rifinitura, giro 1
+
+`npx eslint . --max-warnings 0` → **ESITO 0** · `npx tsc --noEmit` → **ESITO 0** ·
+`npx vitest run` → **ESITO 0**, **981 file, 12.325 test** · `npm run build` → **ESITO 0**
+(`verifica-artefatto`: 2472 file JS, nessun segnaposto). Ogni esito catturato **prima** di qualunque
+pipe. L'**E2E resta da confermare in CI**.
+
+⚠️ **Una cosa NON è stata vista in un browser, e non è un difetto del disegno.** Il server di
+sviluppo su `:3100` **non ricarica `messages/`**: è partito il 24/08 alle 23:26 e serve ancora il
+catalogo di allora. Misurato: `curl -s http://localhost:3100/lavora-con-noi | grep -c 'senza non puoi
+inviare'` → **0**, mentre la stringa vecchia è ancora **1**; `touch` su `src/i18n/request.ts` e persino
+una modifica del suo **contenuto** non producono nessuna ricompilazione (il codice di `src/` invece è
+fresco, e infatti tutte le misure di geometria e colore qui sopra valgono). Perciò le tre stringhe
+nuove sono verificate **sul disco e nei test**, e l'**impaginazione** con la loro lunghezza vera è
+stata misurata sostituendo il testo nel DOM — 2 righe, link a 44 px, distanze invariate. Il controllo
+positivo da pretendere dopo un riavvio del dev server è duplice: la nota legge «Il curriculum è
+obbligatorio…» **e** `grep -c 'Uploading'` sul payload inglese torna ≥ 1.
+
+### Rifinitura visiva, giro 2 — il tratteggio prometteva un gesto che non esiste
+
+Tre critici hanno riguardato il modulo dopo il giro 1 e nessuno dei tre l'ha promosso (**7 · 8 ·
+6,5**). Le misure qui sotto sono di Chromium sulla pagina viva, passo 3 di `/lavora-con-noi`, a
+900 px e a 390 px: mai premuto «Invia», mai caricato un file verso la produzione (ogni richiesta
+non-`GET` **abortita** da Playwright, e la rotta di caricamento risposta da un finto).
+
+| | prima | dopo (misurato) |
+|---|---|---|
+| inchiostro dello stato **vuoto** | `rgb(0,106,95)` tondo — il **verde dei valori** | `rgb(101,113,108)` **corsivo**, identico al segnaposto del `<select>` |
+| taglia della riga di contenuto | `text-sm` 14 px → riquadro alto **46** | `text-base` 16 px → riquadro **50**, come gli `input` accanto |
+| contorno a riposo | 1 px **tratteggiato** | 1 px **pieno**, come ogni altra card |
+| campo **mentre il file sale** | bordo `rgb(229,57,53)` + testo `rgb(198,40,40)` peso **700** + icona d'allarme | bordo `rgb(85,97,92)` + testo `rgb(85,97,92)` peso **400** + rotellina |
+| nome del file lungo, a 390 px | troncato in fondo: **il `.pdf` sparisce** | troncato al **centro**: `…nitivo.pdf` intero, `shrink-0`, nessun overflow |
+| ritorno dal riepilogo con «Modifica» | «Allegato caricato» | **`cv-di-prova.pdf`** — lo stesso nome del riepilogo |
+| affordance della sostituzione | nessuna | «**Sostituisci**» dentro il bersaglio che c'era già |
+| nota → collegamento (stacco fra i **testi**) | **23 px** contro gli 8 dichiarati | **9 px**, identico all'altro stacco «da 8» della stessa pila |
+| secondo messaggio d'errore del campo | `mt-1.5` scritto a mano = **6 px** | derivato dallo `space-y-2`, come il primo |
+
+**Il tratteggio è sparito, e la motivazione scritta era falsa.** Il commento lo difendeva come
+«l'affordance della zona di rilascio». Misurato con `grep -rnE 'onDrop|onDragOver' src`, esito
+catturato **prima** di qualunque pipe: **due occorrenze in tutto il prodotto**, entrambe in
+`MediaUploader.tsx`, **zero** in `FieldRenderer.tsx`. Trascinare un file su quel riquadro non allega
+niente e non l'ha mai fatto. Il presidio (`FieldRenderer-stati-visivi`, §12) verifica **insieme**
+l'assenza del tratteggio e l'assenza dei gestori: il giorno in cui il rilascio si implementa davvero,
+quel test va rosso ed è il momento di rimetterlo.
+
+**L'obbligo si legge nella lingua di chi legge.** Con `KV_LOCALE=en`, sotto un campo «Curriculum» e
+una nota inglese, compariva in rosso «Allega un file per proseguire». Il rilievo era classificato
+*grave* con una premessa **falsa**, e la misura la smentisce: non era «l'unico punto del modulo in cui
+una persona viene fermata in italiano». `validateField` ritorna **italiano per ogni predicato** — nella
+stessa schermata inglese «Titolo di studio» e «Per quali posizioni ti proponi» dicevano già «Campo
+obbligatorio». Perciò il rimedio non è una chiave per il campo file (mezza traduzione è una voce in
+più, non una in meno): le **due** frasi dell'obbligo escono da `validate-fields` come costanti
+esportate — `MSG_CAMPO_OBBLIGATORIO`, `MSG_ALLEGA_FILE` — e `FieldRenderer` le scambia con
+`campoObbligatorio` / `allegaFile` dei due cataloghi. Il server continua a rispondere italiano, che a
+schermo non si legge. I predicati di formato (email, data, numero, pattern) restano **debito
+dichiarato**.
+
+**Un rimedio visivo aveva rotto l'albero di accessibilità, e la misura l'ha preso.** Introdotto il
+troncamento centrale, il nome accessibile del controllo — letto in Chromium via CDP
+(`Accessibility.getPartialAXTree`) — era **«Curriculum \* cv-di-pr ova.pdf»**: il calcolo del nome
+inserisce uno **spazio** fra due elementi inline adiacenti, e spezzare il nome per troncarlo lo
+spezzava anche a chi lo sente leggere. Pesa più del solito perché Chromium espone un
+`<input type="file">` come `role="button"`, dove il nome è tutto ciò che si ha. Rimedio: copia
+`sr-only` del nome intero in un nodo solo, due metà visibili `aria-hidden`. Rimisurato:
+**«Curriculum \* cv-di-prova.pdf»**.
+
+**Un lock è stato riscritto perché non cadeva.** La prima stesura di quella guardia misurava
+`toHaveAccessibleName`, ed è rimasta **verde** sulla mutazione che rimetteva le due metà nude:
+`dom-accessibility-api`, che jsdom usa, concatena i due `<span>` **senza** lo spazio che Chromium ci
+mette. Il difetto vive nel browser e in jsdom non esiste. La guardia ora misura la **struttura** che
+produce quel nome, e sulla stessa mutazione va rossa.
+
+**Sette copie della stessa sonda sono cadute insieme.** `allegaCurriculum` era ricopiata **sette
+volte** identica (cinque test del wizard, uno di a11y, uno inline in `forma-visiva`) più una gemella
+nella fixture del personale. Cambiata l'impaginazione del nome, `getByText(nome)` ha smesso di
+trovarlo e sono andate in timeout tutte insieme: **132 test rossi in sei file**, con lo stack di un
+`waitFor` scaduto — cioè con la diagnosi peggiore possibile («il wizard è rotto» invece di «la sonda è
+rotta»). Ora la sonda è una sola, in `__tests__/helpers/allega-curriculum.ts`, e guarda il
+`textContent` del riquadro: ciò che una persona legge.
+
+**Una cifra scritta a memoria è nata falsa dentro il commit che la scriveva** — di nuovo, e stavolta
+è stata presa. Il commento della compensazione ottica affermava «il testo torna a 8 px» **prima**
+della misura; misurato, erano **15**. Causa: su un box `inline-flex` (inline-level atomico) il margine
+negativo viene in buona parte mangiato dalla riga — bordo→bordo **0 px** invece di -6. Reso
+block-level (`flex w-fit`): bordo→bordo **-6**, testo→testo **9**, bersaglio **44 px** invariato. Il
+commento porta ora i numeri veri **e** il racconto dell'errore, e un test verifica che non si torni a
+`inline-flex` con la classe di compensazione ancora al suo posto e senza effetto.
+
+**Un conteggio in un commento era sbagliato, e il critico aveva ragione.** Diceva «le altre QUATTRO
+dichiarazioni `link: '/privacy'`» e ne nominava tre, con un numero di riga già invecchiato (708 invece
+di 720). Misurato con `grep -rn "link: '/privacy'" src`: **tre** altre, quattro in tutto.
+
+**Un rilievo NON è stato accolto perché era già chiuso.** «Le due grammatiche dell'errore — "Campo
+obbligatorio" contro "Allega un file per proseguire" — vanno annotate come regola o riallineate»: la
+regola **è** annotata, per esteso, nelle 25 righe immediatamente sopra il `if` che la applica
+(`src/lib/forms/validate-fields.ts`), dal giro precedente. Non c'era niente da aggiungere.
+
+Il gate, con l'esito catturato **prima** di qualunque pipe:
+`npx eslint . --max-warnings 0` → **ESITO 0** · `npx tsc --noEmit` → **ESITO 0** ·
+`npx vitest run` → **ESITO 0**, **983 file, 12.351 test** · `npm run build` → **ESITO 0**.
+L'**E2E resta da confermare in CI**.
+
+⚠️ **Il server di sviluppo continua a NON ricaricare `messages/`, e la trappola ha morso una terza
+volta.** Misurato: `curl -s http://localhost:3100/lavora-con-noi | grep -c 'facoltativo'` → **1**
+(testo vecchio) e `grep -c 'allegato è obbligatorio'` → **0** (testo nuovo), dopo aver riscritto i
+cataloghi. A schermo le chiavi nuove escono come `parentForms.allegaFile`. Perciò i **testi** sono
+verificati sul disco e nei test, e l'**impaginazione** con la loro lunghezza vera è stata misurata
+sostituendo i nodi nel DOM. Il controllo positivo da pretendere dopo il riavvio del dev server:
+`grep -c 'allegato è obbligatorio'` ≥ 1 **e** nessuna occorrenza di `parentForms.` nell'HTML servito.
+
+### Allineamento del PRD (2026-08-25, h 12:08): le cifre rimisurate invece che ricopiate
+
+Ultimo passaggio prima del commit, e per regola di questo documento **le cifre sono state rifatte con
+una query, non riprese dal brief**. Il brief di partenza di questa sessione portava 228 / 219 / 94, e
+tutte e tre erano già superate: erano vere il giorno prima.
+
+| rimisurato in produzione il 2026-08-25 alle **19:26** | |
+|---|---|
+| candidature totali | **248** |
+| con `disponibilita` valorizzata | **238** |
+| **senza** `cv_path` | **100** — il **40,3%** |
+| con `cv_path` | **148** |
+
+Tre cifre di questa voce erano rimaste indietro **dentro lo stesso documento**: la tabella di stato in
+cima diceva «225 righe al 25/08» per `disponibilita` mentre il corpo della voce ne dichiarava 223
+alla stessa data — due valori diversi sotto la stessa etichetta, che è esattamente il difetto che
+questa voce denuncia da nove paragrafi. Ora ogni cifra porta **l'ora**, non solo il giorno.
+
+**Una previsione di questa voce è stata smentita, ed è la parte che vale.** Il blocco dell'ELEMENTO B
+affermava «la percentuale è la sola cosa stabile». È il contrario: fra le 01:30 e le 12:08 sono
+arrivate tre candidature **tutte col curriculum**, l'assoluto è rimasto fermo a **98** e si è mossa la
+percentuale, da 41,9% a **41,4%**.
+
+⚠️ **E poi è stata smentita anche la smentita.** Alle 19:26 la stessa query dava **100 su 248**:
+mosso l'assoluto, mossa la percentuale (40,3%). L'idea che «l'assoluto conta un insieme chiuso» vale
+**solo dopo il rilascio** — prima, quell'insieme cresce come tutto il resto. Chi fra sei mesi vorrà
+sapere se l'obbligo abbia ridotto le candidature guardi **l'assoluto e il totale nel tempo**, mai la
+percentuale, e sappia che il segnale non è il valore: è il momento in cui l'assoluto **smette di
+muoversi**. La correzione è scritta per esteso nel blocco «Il prezzo, misurato PRIMA di decidere».
+
+✅ **Quella deriva è stata CHIUSA alle 19:26 dello stesso giorno** — la sezione «Undicesimo giro»,
+in fondo a questa voce, racconta come. Qui restava scritto che il «41,9%» viveva in 16 commenti fra
+`src/` e `__tests__/`, che nessuna asserzione li leggeva e che perciò il gate restava verde mentre
+dicevano una cifra vecchia; e che inseguirli uno per uno sarebbe stata la cura sbagliata. Era esatto
+in ogni parte, compresa l'ultima: la cifra vive ora in **un posto solo** e gli altri la **nominano**.
+
+### Chiusura (2026-08-25, h 12:20-13:10): due testi cambiati, tre rilievi respinti
+
+> ⚠️ **L'ordinale di questo giro è ambiguo, e conviene saperlo prima di cercarlo.** In `src/` e nei
+> test i commenti contano i «giri di critica» e sono arrivati al **quarto**, quindi questo giro là
+> dentro si chiama **quinto**. In questo documento le sezioni contano le «rifiniture visive» e sono
+> arrivate al **sesto**, quindi qui sarebbe il **settimo**. Sono due contatori diversi sulla stessa
+> giornata: chi cerca la corrispondenza fra un commento e questa sezione usi **l'ora**, non il
+> numero.
+
+Tre critici hanno riletto il modulo in Chromium con `getComputedStyle` e hanno lasciato **14
+rilievi**: 1 grave, 6 medi, 7 estetici. **Nove erano già chiusi** dai giri precedenti e sono stati
+**riverificati uno per uno sulla pagina viva**, non creduti sulla parola; **due** hanno prodotto una
+modifica; **tre** sono risultati falsi alla misura e il codice **non** è stato cambiato per
+compiacerli.
+
+**Come si è misurato, e perché la sonda è insolita.** Il server dev che il brief dava «già in
+ascolto su :3100» **non c'era** (`lsof -nP -iTCP:3100 -sTCP:LISTEN` vuoto, `curl` → `000` anche
+sulla taratura). Riavviato, `GET /api/iscrizione/sedi` risponde **500 «Unregistered API key»**: la
+`SUPABASE_SERVICE_ROLE_KEY` di `.env.local` non è quella del progetto, difetto noto e ancora vero.
+La via documentata per aggirarlo è farsi dare la chiave service-role della **produzione**; si è
+scelta l'altra: **intercettare** in Playwright l'elenco delle sedi e la rotta di caricamento, e
+**abortire** deliberatamente la rotta d'invio, così una riga distratta della sonda si rompe invece
+di scrivere. Nessun file è salito sullo Storage, nessuna candidatura è partita, nessuna query è
+stata fatta al database dei minori. Ogni lettura del fuoco è presa **dopo 1,2 s** di assestamento:
+dentro i 150 ms di `transition-all` il `box-shadow` torna trasparente e la misura mente — è
+l'errore che aveva fatto sbagliare due tornate ai critici.
+
+#### Le due modifiche
+
+**1 · «Campo obbligatorio» non si legge più a schermo.** MISURATO al passo «I tuoi dati» dopo un
+«Avanti» a vuoto, leggendo insieme i `[role=alert]`: `["Campo obbligatorio", "Campo obbligatorio",
+"Campo obbligatorio"]` — e 24 px più in alto la legenda `* campo obbligatorio`, introdotta da questo
+stesso lavoro. L'errore era l'**eco letterale** del glifo che pretende di spiegare, tre volte. Al
+passo successivo la stessa colonna dice «Scegli almeno un'opzione per proseguire», «Seleziona
+un'opzione per proseguire», «Allega un file per proseguire»: il prodotto sapeva parlare a una
+persona e non lo faceva sul ramo che copre **più campi di tutti** (text, email, phone, number,
+textarea, date). Ora il catalogo dice **«Compila questo campo per proseguire»** / **«Fill in this
+field to continue»**.
+
+⚠️ **La costante NON è stata toccata, ed è la parte che conta.** `MSG_CAMPO_OBBLIGATORIO` resta
+«Campo obbligatorio» perché è il **contratto del server**: `POST /api/iscrizione*` risponde
+`{ campi: { id: msg } }`, il wizard rimette quella stringa sotto il campo con `setError`, e
+`FieldRenderer` la riconosce per scambiarla con la voce del catalogo. Cambiare la costante avrebbe
+toccato le risposte di due moduli fuori perimetro e 27 asserzioni.
+
+⚠️ **E un lock scritto oggi diceva il falso in favore di sé.** Pretendeva
+`itCampi.campoObbligatorio === MSG_CAMPO_OBBLIGATORIO` «altrimenti il confronto smette di scattare»:
+il confronto che scatta è `errGrezzo === MSG_CAMPO_OBBLIGATORIO`, fra il ritorno della regola e la
+**costante** — il catalogo non ci entra. Peggio: con le due stringhe identiche, il test vicino («a
+schermo esce la voce del CATALOGO, non il ritorno grezzo») **non poteva fallire**, perché
+`findByText` trovava lo stesso testo tanto con la sostituzione quanto senza. Ora divergono e quel
+test ha i denti. **PROVATO PER MUTAZIONE**: riportando il ramo a `errGrezzo`, **3 test** diventano
+rossi, fra cui proprio quello.
+
+**2 · La nota del curriculum dice anche PERCHÉ.** Era l'unica riga del passo a chiedere senza dare
+una ragione, sul campo che storicamente perde il **41,4%** delle candidature. Ora: *«…purché si
+legga tutto: è da lì che la Direzione parte per valutarti, quindi senza non puoi inviare la
+candidatura.»* Il verbo e il soggetto non sono inventati — sono quelli di `candContestoDirezione`.
+**Costo misurato a 390 px**: la nota passa da 2 a 3 righe e il blocco del Curriculum da 142 a
+**158 px**, cioè da quarto a primo dei campi singoli, due pixel sopra la textarea «Presentati in
+poche righe» (156 px) e un terzo del gruppo «posizioni» (466 px). A 1280 px resta a 142.
+
+#### I tre rilievi respinti, con la misura che li smentisce
+
+- **«L'anello di fuoco resta verde su un bordo rosso»** *(medio)*. Il fatto è vero, la premessa no.
+  Il rilievo distingueva: «su select e input l'outline è aderente e sottile e il rosso si legge; qui
+  l'anello è staccato e spesso». MISURATO a 390 px sui due controlli **nello stesso stato
+  d'errore**: `#titolo_studio` → bianco 0→2 px, **verde** 2→4, bordo rosso dentro; riquadro del
+  curriculum → bianco 0→2 px, **verde** 2→4, bordo rosso dentro. **La stessa geometria, pixel per
+  pixel** — la divergenza dello stacco era già stata chiusa da `ring-offset-2`. Il verde sopra il
+  rosso è la risposta che **ogni** controllo del prodotto dà a «dove sono», in errore come a riposo:
+  cambiarla qui e solo qui rifarebbe il difetto che §12 e §13 esistono per chiudere.
+
+- **«Il collegamento all'informativa ripete cinque parole su sei, una sotto l'altra»** *(medio)*.
+  MISURATO al passo dei consensi: fra l'etichetta «Ho letto l'informativa sulla privacy» e il
+  collegamento «Leggi l'informativa completa sulla privacy» c'è **l'intero testo del consenso, 440
+  caratteri**. Non sono «una sotto l'altra». La seconda metà del rilievo — «prima il blocco era
+  interamente italiano: non tradotto, ma coerente», quindi si rimetta il `link_label` cablato — è
+  **falsa oggi**: con `KV_LOCALE=en` la stessa schermata mostra la legenda «* required field» e i
+  comandi «Next», perché la legenda l'ha aggiunta questo stesso lavoro. Rimettere l'etichetta
+  italiana **non** renderebbe il blocco coerente: aggiungerebbe una seconda stringa italiana a una
+  pagina inglese, cioè il difetto che la chiave del catalogo ha appena chiuso.
+
+- **«La nota del curriculum porta il blocco a 156 px contro i 78 di ogni altro campo del passo»**
+  *(estetico)*. MISURATO a 390 px **prima** di toccarla: blocco Curriculum **142 px**, non 156. E
+  «ogni altro campo» vale 78 px per tre campi su cinque: la textarea è **156** e il gruppo
+  «posizioni» **466**. Il Curriculum non era «il più alto della schermata» né «pesava il doppio
+  degli altri»: era il **quarto**. Il rimedio proposto — tagliare la conseguenza — contraddice una
+  decisione presa e difesa con una ragione di prodotto (è la frase che deve trattenere chi non ha un
+  PDF sottomano), e il rilievo che la chiedeva è arrivato senza smentirla.
+
+#### Gli altri nove, riverificati e non creduti
+
+| rilievo | esito della misura |
+|---|---|
+| Alto Contrasto: anello del riquadro diverso dagli altri *(grave)* | **chiuso**. `#titolo_studio` → nero 0→2 px, giallo 2→5. Riquadro → nero 0→2 px, giallo 2→5. **Uguaglianza esatta**, la pretesa del rilievo |
+| bersaglio da 44 px che a schermo ne misura 38 | **chiuso**. Hit-test un pixel alla volta: **45 px** al passo profilo, **44** ai consensi |
+| il componente condiviso pretende un valore dal genitore | **chiuso**. Nessun margine: i 44 px li dà uno `::before` assoluto. Nei 14 px sopra il link, `elementsFromPoint` trova **zero** elementi interattivi (6 righe nel riempimento della card, 8 nel vuoto) |
+| legenda: l'asterisco reso con la tinta del paragrafo | **chiuso**. Legenda 12 px / 400 / `rgb(0,106,95)`; asterisco dell'etichetta 14 px / 500 / `rgb(0,106,95)`: **stessa tinta** |
+| il commento di `globals.css` descriveva una precisione che il selettore non aveva | **chiuso**. Selettore ristretto a `label[class*="focus-within:ring-"]`, e in Alto Contrasto risponde `#ffe500` |
+| «Scegli un'opzione» sotto un segnaposto che dice «Seleziona…» | **chiuso**. A schermo: «Seleziona un'opzione per proseguire» |
+| «Non indicato» sotto un allegato mancante | **chiuso**. Chiave dedicata `candRiepilogoNonAllegato` |
+| due punti in italiano e lineetta in inglese; «please» mancante | **chiuso** in entrambe le lingue, con un lock che deriva la regola dall'italiano invece di ribatterla |
+| la coda del troncamento tagliava a metà una parola | **chiuso**. A schermo: radice «…aggiornato settembre», coda «2026.pdf» |
+
+#### Tre commenti che citavano il catalogo, e che erano già invecchiati
+
+`insegnanti-template.ts` diceva che `leggiInformativaCompleta` vale «Leggi l'informativa completa»:
+il valore era cambiato **nel pomeriggio dello stesso giorno**. Il wizard e il file a11y citavano
+stesure della nota del curriculum che la nota non ha più. Tutte e tre ora **nominano la chiave**,
+come la regola che questo lavoro si era già dato altrove — *un commento che ricopia una stringa del
+catalogo invecchia dentro il commit successivo, spesso lo stesso*.
+
+**Gate dopo la chiusura**: `eslint . --max-warnings 0` → **0**; `tsc --noEmit` → **0**;
+`vitest run` → **982 file / 12.371 test, tutti verdi**, esito catturato prima di qualunque pipe.
+
+### Ottavo giro (2026-08-25) — la traduzione dell'obbligo non passava di lì per tutti
+
+Tre critici hanno riletto il lavoro con tre lenti (contraccolpo sugli altri moduli, resa visiva,
+lingua) e hanno lasciato **13 rilievi**. **Quattro hanno prodotto una modifica al codice**, tre
+sono documentazione che diceva il falso, **tre sono stati respinti con la misura** e i restanti
+erano già chiusi.
+
+#### 1 · Il rimedio del quinto giro copriva tre campi su quattro (la causa radice)
+
+La sostituzione «costante della regola → voce del catalogo» viveva dentro `FieldRenderer`, e il
+ragionamento era *«passa tutto da lì»*. **Non era vero.** MISURATO in Chromium su
+`/anagrafica-personale`, passo «I tuoi dati», dopo un «Avanti» a passo vuoto, leggendo insieme i
+nove `[role=alert]` della stessa colonna:
+
+| | prima | dopo |
+|---|---|---|
+| `KV_LOCALE` non impostato | 8 frasi umane + **«Campo obbligatorio»** | 9 frasi umane |
+| `KV_LOCALE=en` | 8 frasi **inglesi** + **«Campo obbligatorio»** | 9 frasi inglesi |
+
+Il sesto messaggio è quello del **codice fiscale**, reso a mano perché gli serve un
+`aria-describedby` in più; provincia e comune di nascita (`LuogoNascitaFields`) e la scadenza del
+documento (`DocumentoIdentitaFields`) erano nella stessa condizione. **Quattro campi leggevano
+`error.message` grezzo**: su una pagina inglese si leggeva una riga italiana, cioè esattamente la
+«mezza traduzione» che il quinto giro dichiarava chiusa.
+
+**Il rimedio non è ribattere l'`if` una quarta volta.** La mappatura esce in
+`src/components/features/forms/messaggio-campo.ts` (`useMessaggioCampo`) e i quattro punti la
+chiamano. La funzione riceve **l'oggetto d'errore, non il messaggio**, così il cast
+`as { message?: string }` esiste in **un file solo** di tutta la superficie dei moduli — ed è
+greppabile.
+
+⚠️ **Da qui il lock che conta i lettori**, non le stringhe: `__tests__/i18n/…` censisce i `.ts(x)`
+di `features/forms`, `features/public` e `features/anagrafica` e pretende che l'unico file col cast
+sia la mappatura. **Provato per mutazione**: rimesso il cast grezzo sul codice fiscale, il lock
+diventa rosso. Porta anche la prova positiva (il censimento deve trovare almeno 8 file): senza,
+una cartella rinominata lo renderebbe verde sul vuoto — la trappola del filtro che non trova niente
+ed esce zero, che qui è scattata davvero durante la scrittura.
+
+#### 2 · Il gruppo a scelta singola prometteva «almeno una»
+
+`validate-fields.ts` metteva `radio` nello stesso ramo di `checkbox`: un `role="radiogroup"` vuoto
+diceva **«Scegli almeno un'opzione per proseguire»**, mentre ne accetta esattamente una. Il
+predicato è quello del menu — uno e uno solo fra N — e ora `radio` sta col `select`. Nessun template
+di prodotto usa `radio` oggi (verificato: `grep "type: 'radio'" src/lib/forms/*.ts` → nessuna riga),
+ma il costruttore di moduli della segreteria lo offre col nome `modInputSceltaSingola`, e quei moduli
+li compilano i genitori. **Provato per mutazione**: rifuse le due righe, il test cade.
+
+#### 3 · Il nome del file perdeva uno spazio, e solo a schermo
+
+Sul riquadro «Curriculum» con l'allegato scelto, «Curriculum Vitae Europeo definitivo.pdf» si leggeva
+**«Curriculum Vitae Europeodefinitivo.pdf»**. La radice del nome portava `whitespace-nowrap`, che
+**collassa lo spazio in fondo alla riga** — e ogni figlio di un flex è una riga sua; `spezzaNomeFile`
+taglia proprio DOPO un separatore, che nei nomi veri è quasi sempre uno spazio.
+
+| misura (Chromium, riga riprodotta a 900 px) | |
+|---|---|
+| radice + coda con `whitespace-nowrap` | **280,42 px** |
+| radice + coda con `whitespace-pre` | **284,61 px** |
+| nome intero in un nodo solo | **284,61 px** |
+
+Confermato poi **nella pagina viva** a 1280 px con l'allegato scelto (rotta di caricamento finta, il
+file non è mai uscito dal browser): somma delle metà **286,47 px**, nome intero **286,47 px**, testo
+visibile «Curriculum Vitae Europeo definitivo.pdf». Non succedeva col taglio su `_` o `-`, né quando
+la radice trabocca (là i puntini fanno da separatore).
+
+⚠️ **Il presidio non poteva vederlo, e adesso può**: in jsdom non c'è impaginazione, quindi
+`textContent` delle due metà contiene lo spazio anche quando a schermo è sparito — e la fixture del
+lock vicino era «cv-anna.pdf», col trattino, cioè l'unico caso che non sbaglia mai. Il test nuovo
+guarda la **classe** (che jsdom sa leggere) su una fixture che taglia dopo uno spazio, e verifica
+prima che la fixture tagli davvero lì. **Provato per mutazione.**
+
+#### 4 · La nota del curriculum: un «senza» sospeso, e uno scopo perso in inglese
+
+L'italiano chiudeva con «quindi **senza** non puoi inviare la candidatura» — la preposizione senza il
+suo sostantivo, proprio nella parte che porta l'obbligo; ora «quindi **senza allegato** non puoi
+inviare la candidatura», con la parola che il riquadro e il riepilogo usano già. L'inglese diceva
+«it is what the school management **starts from**», perdendo lo scopo che l'italiano dice («per
+valutarti»): era l'unica riga della famiglia `cand*` in cui l'inglese portasse **meno** informazione
+dell'italiano. **Costo misurato a schermo, sostituendo il testo nel nodo vero**: 48 px prima e 48 px
+dopo a 390 px (3 righe), 32 px e 32 px a 1280 (2 righe) — **nessuna riga in più**. Nuovo lock: il
+MOTIVO dev'essere detto in tutte e due le lingue.
+
+#### I tre rilievi respinti, con la misura che li smentisce
+
+- **«Il punto finale di `attendiCaricamento` è incoerente con `caricamentoNonRiuscito`»**
+  *(estetico, terza volta che viene sollevato)*. Rimisurato su tutte e 61 le stringhe di
+  `messages/it/parentForms.json`: le stringhe a **più frasi sono 7 e tutte e 7 portano il punto**; le
+  **54** a clausola singola non lo portano, **tranne 10** — e le dieci delimitano la regola invece di
+  smentirla: sette sono testi di pagina, tre (`erroreAccettaPrivacy`, `erroreAccettaTermini`,
+  `errorePasswordCorta`) sono errori di `parent/onboarding/page.tsx`, un'altra superficie. **Dentro
+  il `role="alert"` di un campo del wizard il punto non c'è mai.** Applicare il rilievo romperebbe un
+  lock scritto apposta al quarto giro. *(I numeri del sesto giro — «8 su 8» e «44» — erano
+  sbagliati e sono stati corretti in questo documento: la conclusione regge, il conteggio che la
+  sosteneva no.)*
+
+- **«Il segnaposto “Allega un file (PDF, JPG…)” e l'errore “Allega un file per proseguire” sono
+  un'eco»** *(estetico)*. Vero, e **voluto**: c'è un lock del quarto giro — «riquadro, errore e nota
+  chiamano il gesto con lo stesso verbo» — nato perché il riquadro diceva «Seleziona» e l'errore
+  «Allega», cioè due comandi per un gesto solo. Le due strade proposte rompono l'una quel lock e
+  l'altra il divieto di **nominare il curriculum** in `MSG_ALLEGA_FILE`, che serve anche al documento
+  d'identità del minore e alle due facce del documento del personale. L'eco è il prezzo dichiarato di
+  un difetto già chiuso, non un difetto nuovo.
+
+- **«Copiare sull'E2E di `/anagrafica-personale` l'asserzione sul fuoco della candidatura»**
+  *(estetico)*. Sarebbe **un test incapace di fallire**. MISURATO in Chromium su quel wizard, passo
+  «I tuoi dati», `#citizenship` a fuoco e vuota, «Avanti» premuto col puntatore (nove messaggi
+  inseriti), **con il rimedio e poi togliendolo**: con → `mousedown@SPAN · mouseup@SPAN`, fuoco su
+  `#nome`; senza → `mousedown@SPAN · mouseup@BUTTON`, **fuoco ancora su `#nome`**. Lo spostamento c'è
+  ma il puntatore resta **dentro** il bottone, quindi l'antenato comune è il bottone e `onClick`
+  parte lo stesso; là dove il difetto è vero l'antenato era un `DIV`. La misura è finita nel commento
+  di `ComandiWizard`, perché è più utile del test che non l'avrebbe mai vista.
+
+#### Documentazione che diceva il falso — tre punti
+
+1. **PRD, sezione del sesto giro**: dichiarava che il rilievo su «Campo obbligatorio» era stato
+   «riconosciuto vero e **NON applicato**» perché la frase «è il messaggio che `validateField`
+   restituisce per ogni modulo». Poche ore dopo è stato applicato. Il paragrafo resta, con sopra un
+   riquadro che rimanda alla decisione vera — *la storia del ribaltamento è la parte utile* — e con
+   **il prezzo che nessuno aveva misurato**: su `/iscrizione`, passo «Bambino 1», a 390 px, i
+   messaggi sono **dieci, di cui otto identici** (prima erano otto «Campo obbligatorio»: la
+   ripetizione c'era già, la frase è più lunga); su `/anagrafica-personale` sono **nove**.
+2. **Piano `2026-08-24-candidature-disponibilita-cv.md`** (che entra in `main` con questo lavoro):
+   dichiarava «**Da NON toccare, esplicitamente**: `FieldRenderer.tsx`, `validate-fields.ts`» — e i
+   due file portano +1096/−51 e +92/−1 — e «**NON si emette `aria-required` in questo lavoro**»,
+   mentre su `/iscrizione` ce l'hanno **10 controlli**. Due riquadri datati, sopra le righe originali.
+3. **`FieldRenderer.tsx`**: il commento del ramo `consent` sosteneva che il ripiego evitasse una
+   regressione italiana. La evita, ma **la resa italiana è cambiata lo stesso**: da «Leggi
+   l'informativa completa» a «Leggi l'informativa completa sulla privacy». Il commento adesso lo dice
+   e dice perché il prezzo è stato scelto. Con lui, cinque commenti di moduli vicini che citavano al
+   presente la frase «Campo obbligatorio» ora **nominano la chiave** (`campoObbligatorio`).
+
+**Gate dell'ottavo giro (esiti catturati prima di qualunque pipe)**: `eslint . --max-warnings 0` →
+**0** · `tsc --noEmit` → **0** · `vitest run` → **0**, **982 file / 12.374 test** verdi (erano
+12.371: i tre nuovi sono il taglio dopo lo spazio, il terzo tipo di campo e il censimento dei
+lettori). ⚠️ Le due stringhe di catalogo cambiate **non si vedono ancora sul server dev in ascolto**:
+`next dev` continua a servire il catalogo vecchio finché non lo si riavvia — è la stessa trappola del
+quinto giro, ed è il motivo per cui il costo della nota è stato misurato **sostituendo il testo nel
+nodo vero** con il font vero, invece di fidarsi della pagina.
+
+---
+
+## Nono giro (2026-08-25): la legenda esce dal suo modulo, e due code su tre erano già chiuse
+
+Tre code lasciate aperte dai giri precedenti. **Ognuna è stata prima rimisurata, poi chiusa** — e
+una si è rivelata in parte falsa, il che è il motivo per cui si rimisura.
+
+### 1 · Il primo clic sull'informativa — **era già chiusa, ed è stata verificata rompendola**
+
+Il rimedio (`onMouseDown` prevenuto su `CollegamentoInformativa`) era già in albero. Invece di
+crederci, è stato **tolto e rimesso**, con la sonda Playwright a rotte intercettate addosso.
+MISURATO in Chromium su `/lavora-con-noi`, a **1280×950 e a 390×844**, nei due punti in cui il
+collegamento compare:
+
+| | con il rimedio | **senza** (rimosso apposta) |
+|---|---|---|
+| passo 3 (`#cv_path` a fuoco) | `mousedown@A → mouseup@A → click@A` · **1 scheda** su `/privacy` | `mousedown@A → mouseup@P#cv_path-nota → click@DIV` · **0 schede** |
+| passo 4 (consensi) | `mousedown@A → mouseup@A → click@A` · **1 scheda** su `/privacy` | `mousedown@A → mouseup@P#presa_visione_informativa-error → click@DIV` · **0 schede** |
+
+Quattro casi su quattro verdi col rimedio, quattro rossi senza. Anche il presidio in jsdom
+(`FieldRenderer-stati-visivi.test.tsx` §12) è stato visto **rosso** con il rimedio tolto, su
+entrambi i rami (`<a>` e `LinkInterno`): **un test mai visto fallire non è un test.** Il file è
+stato poi ripristinato e la sua impronta `md5` confrontata con quella di partenza — identica.
+
+### 2 · Il nome del file negli spec E2E — **chiusa, ma la ragione dichiarata era SBAGLIATA**
+
+La coda sosteneva due cose. La prima è vera, la seconda no, e la seconda era quella che le dava
+l'urgenza.
+
+| l'affermazione | esito della misura |
+|---|---|
+| «il presidio è stato spento in silenzio» | ✅ **VERO**, ed è peggio di così: era un segnale **falso**, non assente |
+| «`getByText('documento.png')` non individua più un nodo solo» | ❌ **FALSO**: risolve a **1** nodo — misurato con `getByText`, `getByText({exact:true})` e `text=`, tutte e tre a 1 |
+| «un merge con questi spec fa diventare **rossa la CI**» | ❌ **FALSO**: nessuna violazione di strict mode, e le righe originali in `HEAD` portavano comunque `.first()` (iscrizione) e `toContainText` (anagrafica), che tollerano più corrispondenze. Sarebbero rimaste **verdi** |
+
+Il difetto vero, riprodotto sulla pagina viva cancellando dal DOM le sole metà `aria-hidden` —
+cioè facendo sparire il nome **dallo schermo** e lasciando solo la copia `sr-only`:
+
+| asserzione | col nome a schermo | **col nome sparito dallo schermo** |
+|---|---|---|
+| `getByText(NOME).first()` → `toBeVisible()` | VERDE | **VERDE** ← mente |
+| `riquadro` → `toContainText(NOME)` | VERDE | **VERDE** ← mente |
+| `attendiNomeFileVisibile(riquadro, NOME)` | VERDE | **ROSSO** ← è il solo che cade |
+
+Verificato su **entrambi** gli spec e con la **funzione vera**, estratta da `e2e/fixtures.ts` al
+momento dell'esecuzione (non ricopiata a mano: una copia non può accorgersi che l'originale è
+cambiato). Su `/anagrafica-personale`, dove le facce sono due, il riquadro **retro** è rimasto verde
+mentre il fronte cadeva: la rottura è mirata, non un falso rosso a tappeto.
+
+### 3 · La legenda dell'asterisco esce dal modulo in cui era nata — **l'unica coda con del codice**
+
+`AsteriscoNellaLegenda` viveva dentro `CandidaturaInsegnanteWizard`, cioè accanto a **uno** dei tre
+wizard pubblici, mentre l'asterisco lo stampa `FieldRenderer` per **tutti**. MISURATO nella pagina
+viva a 390×844, con le rotte intercettate:
+
+| modulo · passo | asterischi | `aria-required` | legenda |
+|---|---|---|---|
+| `/iscrizione` · «Bambino 1» | 10 | 10 | **ASSENTE** |
+| `/anagrafica-personale` · «I tuoi dati» | 10 | 8 | **ASSENTE** |
+| `/lavora-con-noi` · «I tuoi dati» | 3 | 3 | presente |
+
+Due porte pubbliche su tre chiedevano di indovinare un carattere, proprio dove si consegnano i dati
+di un bambino. Il componente è diventato **`LegendaObbligatori`** e vive ora in
+`wizard/pezzi-wizard-pubblico.tsx`, il guscio comune — accanto a `ComandiWizard`, `GrigliaPasso` e
+`ContatorePassi`. **Si generalizza, non si confina**: una regola valida per tre strade deve vivere
+in un posto solo.
+
+**La condizione si deriva, non si elenca.** Le si passano i *campi del passo* e decide da sé se
+comparire: nessun elenco di passi scritto a mano, che il primo campo nuovo — o il primo passo nuovo
+— farebbe invecchiare in silenzio. Su `/anagrafica-personale` è **una riga sola** per tutti e
+quattro i passi con campi, agganciata a `campiDelPasso`, che è già l'autorità su cosa vive nel passo
+corrente.
+
+**Nessuna chiave i18n nuova**: `wizardCampiObbligatori` esisteva già in `it` **e** in `en`
+(«\* campo obbligatorio» / «\* required field»), quindi la parità resta intatta.
+
+**Esito, rimisurato sulla pagina viva** attraversando per intero i tre wizard: **12 passi**, di cui
+**10 con asterischi**, e **0 senza legenda**. I due passi «sede» non ne mostrano nessuno e infatti
+non mostrano la legenda — la riga compare dove serve, non dappertutto. Lo stile del glifo, misurato
+su `/iscrizione` a 390 px: legenda `12px / 400 / rgb(85,97,92)`, il suo asterisco
+`rgb(0,106,95)` — **la stessa tinta** dell'asterisco che spiega (`14px / 500 / rgb(0,106,95)`).
+
+**Il presidio** è `__tests__/components/legenda-obbligatori-ogni-modulo.test.tsx`, e non asserisce
+«questi tre moduli mostrano questa riga» — che invecchia al quarto modulo — ma l'**invariante**: se
+in pagina c'è il glifo, in pagina c'è la sua traduzione. ⚠️ Un'implicazione del genere è **vera a
+vuoto** su una pagina senza asterischi, cioè sarebbe un test incapace di fallire: perciò ogni caso
+pretende **prima** di aver trovato almeno un glifo. Scritto per primo e **visto rosso** su
+`/iscrizione` e `/anagrafica-personale` (10 asterischi, 0 legende) e verde su `/lavora-con-noi`.
+
+**Gate del nono giro (esiti catturati prima di qualunque pipe)**: `eslint . --max-warnings 0` →
+**0** · `tsc --noEmit` → **0** · `vitest run` → **0**, **983 file / 12.379 test** verdi.
+⚠️ L'E2E **non** è stato lanciato, ed è vietato in locale: `.env.local` punta al database e allo
+Storage di **produzione**, e `npm run e2e:seed` scriverebbe là dentro. Le righe degli spec sono state
+riprodotte una per una con sonde Playwright a rotte intercettate — sedi finte, caricamenti finti,
+ogni scrittura verso `/api/` abortita da una rete di sicurezza. ⚠️ Quella rete va registrata **per
+prima**: Playwright prova i gestori in ordine **inverso** di registrazione, e registrata per ultima
+copriva anche i caricamenti finti, che venivano abortiti invece che serviti.
+
+---
+
+## Decimo giro (2026-08-25): la quarta porta pubblica, e l'obbligo che si vedeva ma non si sentiva
+
+Due verificatori sul lavoro del nono giro. Il primo ha **confermato** la chiusura del primo clic
+sull'informativa (24 misure su 24, con il controllo causale: sul vicino che il rimedio non ce l'ha il
+collegamento scende ancora di 24 px). Il secondo ha trovato **tre code**, tutte figlie dello stesso
+movimento — un miglioramento nato nelle candidature e arrivato a metà strada fuori dal loro
+perimetro. Sono chiuse tutte e tre, e nessuna era falsa.
+
+### 1 · La QUARTA porta pubblica stampava asterischi e non li spiegava
+
+Il nono giro ha portato `LegendaObbligatori` nei tre wizard pubblici. Ma i moduli pubblici sono
+**quattro**: `/m/[token]` è la pagina di un modello **pubblicato** dalla Segreteria — `/m` sta in
+`PUBLIC_PREFIXES` (`src/lib/auth/middleware-rules.ts`), è **anonima**, la apre chiunque abbia il
+collegamento — e monta `WizardContainer → StepRenderer → FieldRenderer`, cioè lo stesso componente
+che stampa il glifo. Misurato rendendo davvero quell'albero con uno schema a due campi: **2
+asterischi, 0 legende**.
+
+⚠️ **E la testata del presidio dichiarava una copertura che il prodotto non aveva.** Sosteneva che
+«un wizard pubblico nuovo, o un passo nuovo di uno esistente, la eredita senza che nessuno debba
+ricordarsi di aggiungerlo a un elenco». Falso due volte, e si conta invece di dedurlo: `grep -rn
+LegendaObbligatori src` trova **cinque chiamate scritte a mano in tre file** (EnrollmentWizard ×3,
+AnagraficaPersonaleWizard ×1, CandidaturaInsegnanteWizard ×1) — un passo nuovo di quei tre **non** la
+eredita — e il «quarto modulo» contro cui la regola non doveva invecchiare **esisteva già** il giorno
+in cui la regola è stata scritta.
+
+**Rimedio: la si chiude, non la si descrive.** La legenda la rende ora `StepRenderer`, una volta
+sola, e da lì la ereditano **due** superfici: `/m/[token]` (anonima) e `/parent/forms/[id]`
+(autenticata). Sta lì e non in `WizardContainer` perché deve parlare dei campi che si vedono
+**adesso**: `visibili` è già il risultato della logica condizionale (DL-024), e il contenitore quei
+campi non li conosce. La testata del test è stata riscritta per dire ciò che il prodotto fa davvero —
+la regola resta un'invariante, l'eredità automatica vale per chi passa da `StepRenderer`, i tre
+wizard la scrivono passo per passo.
+
+**Presidio**: quarto caso in `legenda-obbligatori-ogni-modulo.test.tsx`, che monta `WizardContainer`
+con `publicToken` valorizzato. **Visto rosso prima** — «`/m/[token] · Pagina Uno`: 1 campi portano
+l'asterisco e in pagina non c'è nessun testo che dica che cosa significhi» — e verde dopo, con gli
+altri tre casi verdi in entrambi i giri.
+
+### 2 · L'obbligo si vedeva e non si sentiva, sui due campi resi a mano
+
+`FieldRenderer` dal 24/08 emette `aria-required` su ogni campo `required` che rende. I campi che
+**non** passano di lì restavano indietro, e su `/anagrafica-personale` la stessa colonna finiva per
+parlare in due modi:
+
+| passo | asterischi | `aria-required` | scoperto |
+|---|---|---|---|
+| «I tuoi dati» | 10 | **8** | `#fiscal_code` (reso a mano per il badge di coerenza) |
+| «Documento» | 5 | **4** | `#pers-documento-scadenza` (reso con `DateField`, non nativo) |
+
+Non era una regressione — prima non ce l'aveva nessuno — ma contraddiceva la dottrina che il
+changeset stesso scrive: «è una riga sola e vale per TUTTI i campi… la risposta è darlo a tutti, non
+toglierlo a uno». E il costo era concentrato dove pesa: il codice fiscale è un `textbox`, **l'unico
+dei tre ruoli** su cui Chromium la proprietà `required` la fa arrivare davvero (su `combobox` e sul
+campo di caricamento la lascia cadere). Due righe, `|| undefined` e non `|| false`.
+
+⚠️ **Il gruppo `gradi` resta senza, ed è deliberato**: ARIA 1.2 non ammette `aria-required` su
+`role="group"`, e in un «almeno uno di N» l'obbligo è dell'insieme.
+
+**Il presidio non è un elenco di `id`: è derivato dal documento.** «Ogni etichetta che porta
+l'asterisco conduce a un controllo che dichiara `aria-required`», con l'unica eccezione — commentata
+— dei `role="group"`, e con un'etichetta col glifo che non porta a nessun controllo contata come
+**mancanza**, non saltata. Un elenco scritto a mano copre i campi che c'erano il giorno in cui è
+stato scritto: è esattamente il modo in cui questi due erano rimasti fuori. **Visto rosso due volte,
+una lacuna per volta** (prima `«Codice fiscale*» → #fiscal_code`, poi, dopo la prima riga,
+`«Scadenza del documento*» → #pers-documento-scadenza`), più un controllo positivo (gli asterischi
+esistono davvero) e il verso negativo (`titolo_dettaglio`, facoltativo, **non** lo dichiara).
+
+**Rimisurato sulla pagina viva** (Chromium, 390×844, ogni rotta intercettata, nessuna scrittura
+uscita: diario dei tentativi **vuoto**): passo «I tuoi dati» → **10 asterischi, 9 controlli che
+dichiarano, 0 mancanze**, il decimo è il `role="group"`. E l'attributo non resta nel DOM: letto con
+`Accessibility.getPartialAXTree`, `#fiscal_code` è un `textbox` di nome «Codice fiscale \*» con la
+proprietà **`required: true`**. La sonda viva è stata **vista fallire** nello stesso giro togliendo
+l'attributo dal DOM a mano: `["Codice fiscale* -> #fiscal_code"]`.
+
+### 3 · Una frase falsa in cinque copie, e il `grep` che doveva trovarle ne trovava tre
+
+Il rilievo diceva «terza copia». Erano **cinque**, e la quarta e la quinta sono sfuggite proprio al
+comando che il rilievo prescriveva per non farsele sfuggire: `grep -rniE "FieldRenderer. non accetta"`
+non trova «*quel componente* non accetta descrittori aggiuntivi» (`AnagraficaPersonaleWizard`, in
+testa a `ID_CF`) né «*senza accettare* descrittori aggiuntivi» (`DocumentoIdentitaFields`, dentro un
+**debito dichiarato**). Un elenco derivato da un letterale invecchia come quello fatto a memoria che
+denunciava: il comando che le trova tutte è `grep -rniE "non accetta (descrittori|una descrizione)|senza accettare descrittori"`.
+
+La frase — «`FieldRenderer` non accetta descrittori aggiuntivi» — è falsa dal 24/08: il componente
+prende `nota`, ne **deriva** l'`id` (`<campo>-nota`) e **concatena** `aria-describedby` (prima
+l'errore, poi la nota). Le tre copie superstiti sono state riscritte:
+
+- **`ID_CF` (testata) e il commento accanto al campo** dicono ora la ragione **vera** per cui il
+  codice fiscale resta reso a mano, e non è l'assenza del prop: è la **forma** del descrittore.
+  `BadgeCoerenzaCf` è un `<div role="status">` con dentro un `<button>` («Usa questo») e `nota` viene
+  resa dentro un `<p>` — annidamento non valido; ed è **condizionale**, mentre `nota`, se la si
+  passa, il suo `<p>` lo rende sempre e lo nomina sempre, cioè il campo punterebbe a una descrizione
+  **vuota**: il difetto che `anagrafica-personale-a11y` presidia («nessun `aria-describedby` punta al
+  vuoto»).
+- **il debito dichiarato di `DocumentoIdentitaFields`** diceva che le tre righe d'aiuto delle
+  scansioni «non si chiudono da questo file» e che servisse «aggiungere quel prop a `FieldRenderer`
+  una volta sola». Quel prop c'è: il debito **si chiude da lì**, passando `nota={t('persDocFronteAiuto')}`
+  ai due `FieldRenderer` e togliendo i `<p>` muti. **Non è stato fatto in questo giro** — cambia ciò
+  che uno screen reader annuncia su due campi di un modulo fuori perimetro, e va misurato — ed è
+  scritto come debito aperto invece che come impossibilità.
+
+**Gate del decimo giro (esiti catturati PRIMA di qualunque pipe)**: `eslint . --max-warnings 0` →
+**0** (0 righe di output) · `tsc --noEmit` → **0** (0 righe) · `vitest run` → **0**, **983 file /
+12.383 test** verdi (erano 12.379: i quattro in più sono i casi nuovi) · `npm run build` → **0**
+(`postbuild verifica-artefatto`: 2474 file JS, nessun segnaposto).
+⚠️ **Nessun `npm run e2e`**: `.env.local` punta al database e allo Storage di **produzione**. Le
+misure vive sono state prese con Playwright a rotte intercettate — sedi e comuni finti, ogni non-GET
+abortito e **registrato**: il diario dei tentativi è tornato **vuoto** in entrambi i giri, cioè la
+pagina non ha nemmeno provato a scrivere.
+
+---
+
+## Undicesimo giro (2026-08-25, h 19:26): la cifra viveva in ventitré posti, ed erano sbagliati tutti e tre i suoi numeri
+
+Questo giro non aggiunge niente al prodotto. Chiude la sola coda che questa voce dichiarava aperta —
+la deriva del «41,9%» — e lo fa **misurando prima**, che è il punto.
+
+### La misura che ha fatto da innesco
+
+La query di sempre, rieseguita invece che ricopiata:
+
+```sql
+SELECT count(*), count(disponibilita), count(*) FILTER (WHERE cv_path IS NULL)
+FROM candidature_insegnanti;
+```
+
+| | 12:08 | **19:26** |
+|---|---|---|
+| candidature | 237 | **248** |
+| senza curriculum | 98 | **100** |
+| percentuale | 41,4% | **40,3%** |
+
+Il codice diceva `98 su 234, il 41,9%`. **Sbagliati tutti e tre i numeri**, in ventitré punti, con il
+gate verde — perché sono commenti, e nessuna asserzione li legge.
+
+⚠️ **E la misura ha smentito la correzione precedente di questa stessa voce**, che sosteneva «`98`
+conta un insieme chiuso, si muove solo la percentuale». In sette ore si è mosso anche l'assoluto:
+finché la produzione serve il modulo vecchio quell'insieme è **apertissimo**. Si chiuderà **al
+deploy**, ed è proprio quel *fermarsi* — non il valore — il segnale che l'obbligo ha fatto effetto.
+
+### La cura non è stata aggiornare ventitré commenti
+
+Aggiornarli sarebbe stato lo stesso difetto, rinviato di una settimana: fra sette ore sarebbero stati
+di nuovo falsi. La cifra ha ora **un posto solo** — l'àncora **`MISURA-CV`** in
+`src/lib/forms/insegnanti-template.ts`, cioè accanto al `required: true` che quel prezzo lo causa —
+con la sua **ora**, la sua **query** e il racconto di che cosa la giornata ha smentito.
+
+Gli altri ventidue punti la **nominano** invece di ribatterla, e dove serve un ordine di grandezza
+dicono **«quattro su dieci»**: parole, non una misura, e restano vere mentre la misura si muove.
+
+| | prima | dopo |
+|---|---|---|
+| «41,9%» | 16 commenti | **1** (l'àncora) |
+| «98 su 234» | 7 punti | **0** |
+| file toccati | — | 15 |
+
+### Il lock, e la prova che morde
+
+`__tests__/architecture/misura-cv-un-posto-solo.test.ts` fa cadere il gate se la cifra torna. Quattro
+asserzioni, e la prima è un **controllo positivo sul rilevatore stesso**: gli si dà un campione
+sintetico che viola e uno che non viola, così lo si vede distinguere invece di crederci.
+
+**È stato visto fallire apposta**, perché in questo repo un test mai visto fallire non è un test:
+rimessa la cifra in `candidature-insegnanti-post.test.ts`, esito **1** con il `file:riga` esatto in
+chiaro; ripristinato il file, esito **0**.
+
+Le altre tre asserzioni difendono l'invariante nei due versi: l'àncora **deve esistere** e portare
+ora, query e cifra (svuotarla lascerebbe ventidue rimandi che indicano una stanza vuota), **deve
+essere nominata** da almeno un altro file, e **nessun altro file** può ribattere la cifra.
+
+⚠️ **Cosa il lock NON prende, detto qui perché nessuno lo scambi per una copertura totale.** Cerca
+una percentuale con decimali vicino a una riga che parla di curriculum o candidature: è la forma
+esatta che la deriva aveva preso. **Non** cerca un conteggio nudo come «98 su 234», perché la stessa
+forma serve alle frasi oneste e datate che questo repo scrive ovunque («20 su 58, misura del
+2026-08-06») e un lock che va aggirato di routine smette di proteggere. Chiude la porta da cui la
+deriva è entrata, non tutte le porte.
+
+### Due documenti che dicevano il falso sul proprio stato
+
+- Il riquadro **«PRIMA DEL COMMIT»**, in cima a questa voce, descriveva lo stato *della sessione* —
+  quale ramo rispondeva `HEAD`, quanti file l'albero portava addosso — e ordinava a chi committa di
+  cancellarsi. È stato riscritto **al passato**, come lui stesso prescriveva: un'affermazione che non
+  invecchia, più i tre comandi da rieseguire per chi lo stato lo vuole davvero.
+- Il piano `docs/superpowers/plans/2026-08-24-candidature-disponibilita-cv.md` sosteneva ancora
+  «HEAD risponde `main`, 51 file modificati». Era già falso: il ramo era stato rimesso a posto e i
+  file erano cresciuti. Corretto allo stesso modo, e la voce «🔻 deriva aperta» è ora **✅ chiusa**.
+
+### Il gate, con l'esito catturato PRIMA di qualunque pipe
+
+`npx eslint . --max-warnings 0` → **0** · `npx tsc --noEmit` → **0** ·
+`npx vitest run` → **0**, **984 file / 12.387 test** (erano 983 / 12.383: il file e i quattro casi in
+più sono il lock nuovo) · `npm run build` → **0**.
+L'**E2E resta da confermare in CI**: in locale è vietato, il seed scriverebbe in produzione.
+
+⚠️ **Nessuna scrittura in produzione**: l'unica istruzione eseguita sul database è la `SELECT` di
+conteggio qui sopra, che restituisce quattro interi e non tocca nessuna riga.
 
 ---
 
@@ -4425,8 +6496,8 @@ Nuova tabella `candidature_insegnanti` (già creata in produzione), alimentata d
 
 | | |
 |---|---|
-| Obbligatori | nome, cognome, email, **fasce d'età** (`gradi`, multi-valore), titolo di studio |
-| Facoltativi | telefono, comune e provincia di residenza, dettaglio del titolo, anni di esperienza (0-60), disponibilità, presentazione libera (1000 caratteri), **curriculum** |
+| Obbligatori | nome, cognome, email, **posizioni** (almeno una), titolo di studio, **curriculum** (⏳ scritto il 2026-08-25, **non ancora in produzione**: fino al merge il modulo vivo accetta ancora candidature senza allegato) — più `posizione_altro`, obbligatorio **solo** se fra le posizioni c'è «Altro» |
+| Facoltativi | telefono, comune e provincia di residenza, dettaglio del titolo, anni di esperienza (0-60), presentazione libera (1000 caratteri) |
 | **Mai chiesto** | **il codice fiscale.** Serve all'**assunzione**, non alla candidatura (minimizzazione, art. 5.1.c GDPR). Su un modulo pubblico che chiunque può alimentare sarebbe un identificativo nazionale raccolto senza necessità: si chiede dopo, a una persona sola |
 | Residenza facoltativa | serve a capire se la sede è raggiungibile, non a decidere: pretenderla vorrebbe dire respingere una candidatura per un dato che non c'entra col lavoro |
 
@@ -4870,11 +6941,16 @@ lettere fa `CA`, cioè **Cagliari** — un dato sbagliato accettato in silenzio 
 intera fa `null`, cioè un errore visibile e correggibile. Tutte e **107** le province sono
 riconosciute in sigla, nome e NOME (collaudi (m) e (n) di `FieldRenderer-validation.test.tsx`).
 
-**Cosa il modulo NON rende, e perché.** Il **curriculum** (`cv_path`, facoltativo): la rotta accetta
-solo percorsi `candidature/<uuid>-<nome>`, e al 2026-08-11 nessuna rotta di caricamento produce
-quel prefisso — l’unica pubblica scrive sotto `iscrizioni/…`. Renderlo vorrebbe dire far caricare
-un curriculum e respingerlo all’invio, dopo tutto il resto: è il difetto «bucket più stretto del
-gate», già pagato una volta. Torna il giorno in cui nasce la rotta, togliendolo da `IDS_NON_RESI`.
+**Il curriculum si rende, si carica, ed è OBBLIGATORIO.** ⚠️ Fino al 2026-08-24 questo paragrafo
+diceva il contrario — «cosa il modulo NON rende, e perché: il curriculum (`cv_path`, facoltativo)…
+torna il giorno in cui nasce la rotta, togliendolo da `IDS_NON_RESI`» — e descriveva lo stato del
+**2026-08-11**: era **falso da tredici giorni**. La rotta è nata il **15/08** (`POST
+/api/iscrizione/insegnanti/upload`, bucket `form_attachments` sotto `candidature/`), `IDS_NON_RESI`
+è **vuoto** da allora, e dal **24/08** il campo è `required`. Il modulo non nasconde più nessun
+campo: `IDS_NON_RESI` esiste ancora, vuoto, ed è la maniglia da usare se un domani servisse — non
+un elenco da riempire, perché un campo obbligatorio messo lì dentro renderebbe il modulo
+**impossibile da inviare per sempre** (lo dice il commento a `CandidaturaInsegnanteWizard.tsx`, e
+lo sorveglia il censimento `obbligatoriVisibili` di `-posizioni.test.tsx`).
 ⚠️ **Nessun `AnimatePresence mode="wait"`** attorno ai passi, e nessuna animazione che monti o
 smonti un pannello: un passo mai montato **non registra i suoi campi** in react-hook-form e si
 arriva all’invio con i dati vuoti (difetto già pagato su `EnrollmentWizard`).

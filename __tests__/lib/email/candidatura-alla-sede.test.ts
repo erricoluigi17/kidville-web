@@ -19,7 +19,7 @@ import { INSEGNANTE_FIELDS, CONSENSI_INSEGNANTI_FIELDS } from '@/lib/forms/inseg
  * chiedendosi perché di quella candidata non sappia il titolo di studio.
  *
  * È lo stesso difetto di famiglia del riepilogo del wizard, che fino
- * all'11/08/2026 mostrava due fatti su tredici campi compilabili.
+ * all'11/08/2026 mostrava due fatti soli.
  */
 
 const SEDE = { ...contestoSenzaSede('Kidville Giugliano'), email: 'giugliano@kidville.it' }
@@ -35,7 +35,6 @@ const DATI: Record<string, unknown> = {
   titolo_studio: 'laurea_magistrale',
   titolo_dettaglio: 'Scienze della formazione',
   anni_esperienza: 3,
-  disponibilita: 'tempo_pieno',
   note: 'Mi piacerebbe lavorare con voi.',
 }
 
@@ -65,8 +64,6 @@ describe('messaggioCandidaturaAllaSede', () => {
     // secondo è un valore di database, e in una casella di posta è rumore.
     expect(t).toContain('Laurea magistrale')
     expect(t).not.toContain('laurea_magistrale')
-    expect(t).toContain('Tempo pieno')
-    expect(t).not.toContain('tempo_pieno')
     expect(t).toContain('Cuoca / aiuto cucina')
     expect(t).not.toContain('insegnante_infanzia')
   })
@@ -121,6 +118,66 @@ describe('messaggioCandidaturaAllaSede', () => {
     expect(senza.testo.toLowerCase()).toContain('nessun curriculum')
   })
 
+  it('curriculum caricato ma non allegabile: il messaggio dice il GUASTO, non un’omissione', () => {
+    /*
+     * ⚠️ IL RAMO «non ne ha caricato uno» SI RAGGIUNGE ANCHE QUANDO IL FILE C'È.
+     *
+     * `copia-alla-sede.ts` lascia `allegati` a `undefined` sia quando il
+     * curriculum non c'è, sia quando lo scaricamento dallo Storage FALLISCE (o
+     * risponde `{ data: null, error: null }`) — e l'email parte lo stesso, che è
+     * la scelta giusta. Ma il testo che ne usciva accusava una persona di
+     * un'omissione mentre il fatto vero era un guasto tecnico.
+     *
+     * Dal 2026-08-24 il curriculum è OBBLIGATORIO: ogni volta che quella frase
+     * comparirà su una candidatura nuova sarà FALSA per costruzione — senza
+     * curriculum non ci sarebbe la candidatura. E la segreteria, letta la frase,
+     * scarterebbe la persona per una cosa che ha fatto.
+     *
+     * È la classe di difetto che questo repo ha già pagato con le email: un
+     * messaggio che afferma una cosa e ne nasconde un'altra, con i test verdi.
+     */
+    const m = messaggioCandidaturaAllaSede(
+      {
+        dati: DATI,
+        consensi: { presa_visione_informativa: true },
+        sediScelte: ['Kidville Cesa'],
+        inviataIl: '24/08/2026, 10:30',
+        conCurriculum: false,
+        curriculumNonAllegabile: true,
+      },
+      SEDE,
+    )
+    expect(m.testo).toContain('non siamo riusciti ad allegarlo')
+    // ⚠️ Il controllo che conta: la sede NON deve leggere che la persona non
+    // l'ha caricato. Senza questa riga il test resterebbe verde anche
+    // AGGIUNGENDO la frase nuova accanto alla vecchia.
+    expect(m.testo, 'la sede legge un’accusa sopra un guasto dello Storage').not.toContain('non ne ha caricato uno')
+    // E la strada dell'allegato vero non è stata toccata.
+    expect(m.html).toContain('non siamo riusciti ad allegarlo')
+  })
+
+  it('i due rami STORICI del «nessun curriculum» restano, e restano distinti', () => {
+    // ⚠️ NON SI CANCELLANO «PERCHÉ ORMAI IL CV C'È SEMPRE». Servono a due
+    // popolazioni diverse di righe già in tabella (quattro su dieci — àncora `MISURA-CV`):
+    //  · prima del 2026-08-15 il modulo non permetteva di caricare niente;
+    //  · fra il 15 e il 24 agosto il campo c'era ed era facoltativo — e per
+    //    quelle candidature «non ne ha caricato uno» è l'unica frase corretta.
+    const nonPrevisto = messaggioCandidaturaAllaSede(
+      { dati: DATI, consensi: {}, sediScelte: ['Kidville Cesa'], inviataIl: '10/08/2026, 10:30',
+        conCurriculum: false, curriculumNonPrevisto: true },
+      SEDE,
+    )
+    expect(nonPrevisto.testo).toContain('prima che il modulo permettesse')
+
+    const nonCaricato = messaggioCandidaturaAllaSede(
+      { dati: DATI, consensi: {}, sediScelte: ['Kidville Cesa'], inviataIl: '20/08/2026, 10:30',
+        conCurriculum: false },
+      SEDE,
+    )
+    expect(nonCaricato.testo).toContain('non ne ha caricato uno')
+    expect(nonCaricato.testo, 'il ramo del guasto ha inghiottito quello dell’omissione').not.toContain('non siamo riusciti ad allegarlo')
+  })
+
   it('OMETTE i campi non compilati invece di stampare l’etichetta col vuoto accanto', () => {
     const scarno = messaggioCandidaturaAllaSede(
       {
@@ -136,7 +193,13 @@ describe('messaggioCandidaturaAllaSede', () => {
     // che manca si omette, non si stampa vuoto. Un'etichetta seguita dal nulla
     // non è un dato mancante, è una riga rotta.
     expect(scarno.testo).not.toContain('Anni di esperienza')
-    expect(scarno.testo).not.toContain('Disponibilità')
+    // ⚠️ QUI C'ERA `not.toContain('Disponibilità')`, e dal 2026-08-24 non poteva
+    // più fallire in nessun caso: il campo è uscito dal template, quindi
+    // `righeDellaCopia` non lo stampa nemmeno su una candidatura che lo avesse.
+    // Una guardia che non può cadere non guarda niente, e questo test esiste per
+    // provare l'OMISSIONE. Sostituita con un'etichetta di un campo che c'è
+    // ancora e che nella fixture scarna non è compilato.
+    expect(scarno.testo).not.toContain('Dettaglio del titolo')
   })
 
   it('l’HTML fa scappare i metacaratteri: un nome col « < » non apre un tag', () => {

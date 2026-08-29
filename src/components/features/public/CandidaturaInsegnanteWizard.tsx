@@ -10,8 +10,8 @@ import {
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import {
   BarraAvanzamento, ColonnaCentrale, ColonnaContesto, ComandiWizard, ContatorePassi,
-  EscaHoneypot, GrigliaPasso, GuscioPubblico, PannelloConferma, PannelloErroreInvio,
-  TestataPasso, type ComandoAvanti,
+  EscaHoneypot, GrigliaPasso, GuscioPubblico, LegendaObbligatori, PannelloConferma,
+  PannelloErroreInvio, TestataPasso, type ComandoAvanti,
 } from '@/components/features/public/wizard/pezzi-wizard-pubblico'
 import {
   corpoDellaRisposta, useSediPubbliche,
@@ -102,15 +102,25 @@ import type { FormField } from '@/types/database.types'
  * ── IL RIEPILOGO RIEPILOGA, E NON È UN DETTAGLIO ESTETICO ──────────────────
  *
  * Fino al 2026-08-11 l'ultimo passo diceva «Controlla e invia la candidatura» e
- * mostrava DUE fatti su tredici campi compilabili: la sede e le fasce d'età.
- * Nome, cognome, EMAIL, telefono, comune, provincia, titolo di studio, dettaglio,
- * anni di esperienza, disponibilità, presentazione e le due risposte sui consensi
- * non comparivano affatto. Chi arrivava lì non aveva niente da controllare — e
+ * mostrava DUE fatti soli: la sede e le fasce d'età. Tutto il resto di ciò che
+ * era stato compilato non compariva da nessuna parte — né il nome, né il
+ * telefono, né la residenza, né il titolo di studio, né i consensi, e
+ * soprattutto NON L'EMAIL. Chi arrivava lì non aveva niente da controllare — e
  * soprattutto non rileggeva il proprio indirizzo email, che è l'UNICO modo con
  * cui la Scuola può rispondergli (`candInviataCorpo`: «riceverai le credenziali
  * di accesso via email»). Un refuso nell'indirizzo, e la candidatura è persa
  * senza che nessuno lo sappia mai: la rotta risponde 201 anche al duplicato, e
  * nessun rimbalzo torna a chi ha compilato.
+ *
+ * ⚠️ Qui c'erano un NUMERO — «tredici campi compilabili» — e un ELENCO CHIUSO
+ * di ciò che mancava, «disponibilità» compresa. Il numero non era falso, ed è
+ * proprio questo il guaio: misurati sul template, i campi compilabili erano
+ * tredici l'11/08 e sono di nuovo tredici dopo il 2026-08-24, ma NON SONO GLI
+ * STESSI — sono usciti `gradi` e `disponibilita`, sono entrati `posizioni` e
+ * `posizione_altro`. Una cifra che ritorna uguale sopra un insieme diverso non
+ * invecchia rumorosamente come le «50 chiavi» qui sotto: resta vera, si legge
+ * come lo stato di oggi, ed è la fotografia di un altro giorno. L'elenco chiuso
+ * faceva lo stesso danno nominando un campo che il modulo non ha più.
  *
  * Adesso il riepilogo è COSTRUITO DAI CAMPI, non scritto a mano: `CAMPI_DATI`,
  * `CAMPI_PROFILO` e `CONSENSI_INSEGNANTI_FIELDS` sono le stesse liste che
@@ -157,11 +167,18 @@ import type { FormField } from '@/types/database.types'
  * erano 55, e nessuno l'aveva aggiornato dopo il riepilogo completo dell'11/08.
  * Un commento che conta cose è un commento che mente entro un rilascio; il lock
  * di parità, che le conta davvero, non invecchia. Le ETICHETTE DEI CAMPI no: arrivano da
- * `INSEGNANTE_FIELDS` e sono cablate in italiano — «Per quali fasce ti proponi»,
- * «Titolo di studio», «Presentati in poche righe», i sette `TITOLI_STUDIO`, le
- * cinque `DISPONIBILITA` e le sette `POSIZIONI_OPTIONS` — che dal 2026-08-15
- * sono la DOMANDA PRINCIPALE del modulo, non più tre caselle in fondo a un
- * passo: il debito non è cambiato di natura, è cresciuto di peso.
+ * `INSEGNANTE_FIELDS` e sono cablate in italiano — «Per quali posizioni ti
+ * proponi», «Titolo di studio», «Presentati in poche righe», i `TITOLI_STUDIO` e
+ * le `POSIZIONI_OPTIONS` — che dal 2026-08-15 sono la DOMANDA PRINCIPALE del
+ * modulo, non più tre caselle in fondo a un passo: il debito non è cambiato di
+ * natura, è cresciuto di peso. Gli enum citati erano tre fino al 2026-08-24,
+ * quando la disponibilità è uscita dal modulo; qui i loro numeri non si
+ * scrivono più, per la ragione detta in apertura di questo paragrafo.
+ *
+ * ⚠️ E l'esempio di etichetta era «Per quali fasce ti proponi», che non è di
+ * nessun campo dal 2026-08-15 — lo dice questo stesso file poche righe sopra.
+ * Anche un esempio invecchia come una cifra: era rimasto dentro una frase
+ * riscritta apposta per togliere gli enum morti.
  *
  * ⚠️ E dal 2026-08-11 quel debito PESA DI PIÙ, il che è il prezzo dichiarato del
  * riepilogo completo: prima le etichette italiane si vedevano una volta sola, nel
@@ -280,18 +297,41 @@ const CAMPI_CONDIZIONANTI: string[] = [
 /**
  * Le note sotto un campo: id del campo → chiave di messaggio.
  *
- * Sono due, e dicono cose che l'etichetta da sola non può dire: che il curriculum
- * è facoltativo e che va bene anche una fotografia (senza, chi non ha il PDF
- * sottomano abbandona), e che nella casella «Altro» ci va il nome del mestiere e
- * non un racconto.
+ * Sono due, e dicono cose che l'etichetta da sola non può dire: che del
+ * curriculum va bene anche una FOTOGRAFIA, e che nella casella «Altro» ci va il
+ * nome del mestiere e non un racconto.
  *
- * ⚠️ Sono `<p>` accanto al campo e NON un `aria-describedby`: `FieldRenderer` non
- * accetta una descrizione dall'esterno — il suo `aria-describedby` è già occupato
- * dal messaggio d'errore, che è ciò che deve essere annunciato quando c'è. È lo
- * stesso limite, e la stessa forma, del modulo del personale
- * (`DocumentoIdentitaFields.tsx`, `persDocAllegatoNota`). Il debito è dichiarato
- * qui perché la nota resta comunque leggibile nell'ordine del documento, subito
- * dopo il campo che descrive.
+ * ⚠️ LA PRIMA NOTA HA CAMBIATO SCOPO IL 2026-08-24, E VALE PIÙ DI PRIMA. Fino a
+ * quel giorno diceva due cose — «va bene una foto» e «è facoltativo» — e la
+ * seconda è diventata falsa: il curriculum è obbligatorio. Il testo nuovo lo
+ * dichiara, ma la metà che resta è quella che porta il peso: è l'unica cosa che
+ * tiene nel modulo chi
+ * compila dal telefono e non ha un PDF sottomano — cioè proprio le persone che
+ * l'obbligo rischia di far abbandonare: **quattro su dieci** oggi arrivano senza
+ * allegato (la cifra, con la sua ora, sta nell'àncora `MISURA-CV` in
+ * `src/lib/forms/insegnanti-template.ts`). Toglierla per
+ * «snellire» pagherebbe due volte lo stesso prezzo.
+ *
+ * ⚠️ SONO `<p>` RESI DA QUI, MA AGGANCIATI AL CAMPO — e questo paragrafo, fino al
+ * 2026-08-25, diceva il contrario di ciò che il file fa: sosteneva che
+ * «`FieldRenderer` non accetta una descrizione dall'esterno» e che «il suo
+ * `aria-describedby` è già occupato dal messaggio d'errore». Erano vere fino al
+ * 24/08 e da allora non lo sono più: `FieldRenderer` prende `notaId`, e il suo
+ * `aria-describedby` CONCATENA — prima l'errore (la cosa urgente), poi la nota.
+ * Il debito che quel paragrafo descriveva era già chiuso, dallo stesso commit che
+ * l'ha lasciato in piedi.
+ *
+ * La forma di oggi: la nota vive qui perché è TRADOTTA col catalogo della pagina e
+ * non sta nel template; il suo `id` è `<campo>-nota`; viene passata a
+ * `FieldRenderer` come `notaId`, che la nomina in `aria-describedby` dopo
+ * l'errore. Chi percorre il modulo campo per campo — cioè come si compila un
+ * modulo con uno screen reader — la sente insieme al campo che descrive.
+ *
+ * ⚠️ IL GEMELLO DEL PERSONALE È INDIETRO, e resta un debito di QUEL file, non un
+ * limite di questo componente: `DocumentoIdentitaFields.tsx` rende
+ * `persDocAllegatoNota` in un `<p>` senza `id` e senza aggancio. La strada per
+ * chiuderlo è la stessa riga che c'è qui — non c'è più niente da costruire in
+ * `FieldRenderer`.
  */
 const NOTE_DEI_CAMPI: Record<string, string> = {
   posizioni: 'candPosizioniAiuto',
@@ -381,6 +421,19 @@ function testoDelValore(f: FormField, grezzo: unknown): string | null {
   return testo
 }
 
+/*
+ * LA LEGENDA «* campo obbligatorio» NON VIVE PIÙ QUI, ed è il punto della
+ * correzione del 2026-08-25.
+ *
+ * Nasceva in questo file, cioè accanto a UNO dei tre wizard pubblici, mentre
+ * l'asterisco lo stampa `FieldRenderer` per tutti. MISURATO nella pagina viva:
+ * `/iscrizione` («Bambino 1») e `/anagrafica-personale` («I tuoi dati»)
+ * mostravano DIECI asterischi ciascuno e nessuna riga che ne desse il
+ * significato. Il componente e le sue misure stanno adesso in
+ * `LegendaObbligatori` (`wizard/pezzi-wizard-pubblico.tsx`), il guscio comune,
+ * e i tre moduli lo usano tutti.
+ */
+
 export function CandidaturaInsegnanteWizard({
   sedeId = null,
   intestazione,
@@ -418,6 +471,21 @@ export function CandidaturaInsegnanteWizard({
   } = useSediPubbliche({ sedeId, etichetta: ETICHETTA_LOG })
 
   const [erroreSede, setErroreSede] = useState(false)
+  /**
+   * IL NOME DEL FILE ALLEGATO, per campo — e vive QUI perché il riepilogo lo deve
+   * leggere quando il campo che l'ha raccolto non è più a schermo.
+   *
+   * ⚠️ Il wizard rende UN PASSO ALLA VOLTA: arrivando al riepilogo, il `FileField`
+   * del passo «profilo» è smontato insieme al suo stato. E dal percorso non si
+   * ricava: la rotta di caricamento butta via il nome originale (il valore è
+   * `candidature/<uuid>-cv.pdf`). Perciò il nome sale quando c'è e resta qui.
+   *
+   * ⚠️ Non è la fonte della VERITÀ sull'allegato — quella resta il valore del
+   * modulo. Qui c'è solo l'etichetta con cui mostrarlo: se il nome manca (pagina
+   * ricaricata, ritorno da un altro passo) la riga ripiega su «Allegato», che è
+   * ciò che diceva sempre fino al 25/08/2026.
+   */
+  const [nomiAllegati, setNomiAllegati] = useState<Record<string, string>>({})
   /**
    * L'avviso sulla sede è GIÀ STATO MOSTRATO almeno una volta.
    *
@@ -599,9 +667,24 @@ export function CandidaturaInsegnanteWizard({
    * può essere «il fuoco non è su `<body>`», che sarebbe verde anche senza
    * questo effetto: è che il fuoco stia sul pannello che spiega cos'è successo.
    *
-   * Solo per `tipo === 'sede'`: sul pannello generico si resta sul riepilogo, il
-   * bottone «Invia candidatura» NON si disabilita e il fuoco non lo perde
-   * nessuno — spostarlo sarebbe portare via le mani a chi non le aveva mosse.
+   * Solo per `tipo === 'sede'`: sul pannello generico si resta sul riepilogo e il
+   * bottone «Invia candidatura» NON si disabilita, quindi spostare il fuoco
+   * sarebbe portare via le mani a chi non le aveva mosse.
+   *
+   * ⚠️ QUI C'ERA SCRITTO «e il fuoco non lo perde nessuno», e dal 2026-08-24 non è
+   * più vero per l'attivazione col PUNTATORE: `ComandiWizard` mette
+   * `onMouseDown={(e) => e.preventDefault()}` sui due comandi — è il rimedio al
+   * primo clic perduto — e un bottone che annulla il proprio `mousedown` non
+   * prende il fuoco quando lo si clicca col mouse. La premessa è stata resa falsa
+   * dallo stesso commit che la lasciava in piedi, ed è la ragione per cui questa
+   * riga è stata riscritta invece che confermata.
+   * LA CONCLUSIONE NON CAMBIA, e il perché è misurato e non dedotto: il pannello è
+   * `role="alert"` con `tabIndex={-1}`, quindi si annuncia da solo senza bisogno
+   * del fuoco; da tastiera (Tab + Invio) il `mousedown` non passa e il fuoco resta
+   * sul bottone come prima. Col puntatore il fuoco è su `<body>` — ma chi clicca
+   * col mouse non stava navigando col fuoco. Quello che si perde è l'ARGOMENTO,
+   * non il comportamento: si resta fermi perché il messaggio si annuncia comunque,
+   * non perché nessuno perda il fuoco.
    */
   useEffect(() => {
     if (erroreInvio?.tipo === 'sede') pannelloErroreRef.current?.focus()
@@ -1130,7 +1213,7 @@ export function CandidaturaInsegnanteWizard({
     // dell'invio: se ne nominasse una sola, chi ha spuntato Giugliano e Aversa
     // leggerebbe «Giugliano» e concluderebbe che l'altra spunta non ha preso.
     // È esattamente il difetto che questo passo esiste per chiudere — fino
-    // all'11/08/2026 mostrava due fatti su tredici campi compilabili.
+    // all'11/08/2026 il riepilogo mostrava due fatti soli.
     if (nomiSediDecise.length > 0) return nomiSediDecise.join(', ')
     return sedeDaLink !== null ? t('candRiepilogoSedeDalLink') : '—'
   }
@@ -1175,12 +1258,46 @@ export function CandidaturaInsegnanteWizard({
     // non c'è più niente da cui ricavarlo. Il riquadro del campo, un passo più
     // su, lo mostra ancora finché la pagina è aperta: è lì che si controlla di
     // aver scelto il file giusto.
+    //
+    // ⚠️ IL RAMO «NON INDICATO» RESTA, BENCHÉ DAL 2026-08-24 L'INVIO NON POSSA
+    // PIÙ PRODURLO — ed è una scelta, non un residuo dimenticato. Da quel giorno
+    // `cv_path` è `required`, quindi per arrivare qui bisogna aver superato sia
+    // `passoAvanti('profilo')` sia `prosegui()`, che ora lo bloccano entrambi.
+    // Si tiene per due ragioni:
+    //  · `mancante` diventa `true` e la riga si dipinge in ROSSO: se un giorno
+    //    il blocco a monte si rompesse, il riepilogo lo direbbe qui, prima
+    //    dell'invio, invece di far partire una richiesta che il server rifiuta
+    //    su una schermata che nel frattempo non c'è più;
+    //  · questo ramo non è del solo curriculum: è di OGNI campo `type: 'file'`
+    //    del template, e togliere il caso vuoto lo toglierebbe anche a un campo
+    //    facoltativo aggiunto domani.
+    // Cancellarlo «perché ormai è irraggiungibile» vorrebbe dire spegnere
+    // l'unico allarme che resta se l'obbligo salta.
     if (f.type === 'file') {
       const allegato = typeof grezzo === 'string' && grezzo.trim() !== ''
       return {
         id: f.id,
         etichetta,
-        valore: allegato ? t('candRiepilogoCvAllegato') : t('candRiepilogoNonIndicato'),
+        // ⚠️ IL NOME DEL FILE, E «Allegato» SOLO COME RIPIEGO (25/08/2026). La riga
+        // diceva «Allegato» e basta: l'unica del riepilogo che non rimandasse
+        // indietro ciò che la persona ha scelto. Da «Allegato» non si distingue il
+        // curriculum dalla fotografia sbagliata scattata due minuti prima — e il
+        // riepilogo esiste per far controllare cosa si sta per mandare, su un campo
+        // che dal 24/08 è l'unico obbligatorio del passo.
+        // Il ripiego resta e non è teorico: il nome vive nella memoria di questa
+        // pagina (vedi `nomiAllegati`), quindi un ricaricamento lo perde mentre il
+        // percorso, se il modulo lo tiene, no.
+        // ⚠️ `candRiepilogoNonAllegato` E NON `candRiepilogoNonIndicato` (25/08/2026).
+        // Un file non si indica: si allega. E la parola contava soprattutto per il
+        // secondo motivo: «Non indicato» è la STESSA che il riepilogo usa per il
+        // telefono, il comune e la provincia lasciati vuoti perché si poteva —
+        // quindi questo ramo, che il commento qui sopra chiama «l'unico allarme
+        // che resta se l'obbligo salta», suonava esattamente come un facoltativo
+        // vuoto. Una rete di sicurezza che quando scatta si esprime come un campo
+        // opzionale non è una rete.
+        valore: allegato
+          ? nomiAllegati[f.id] || t('candRiepilogoCvAllegato')
+          : t('candRiepilogoNonAllegato'),
         vuoto: !allegato,
         mancante: obbligatorio && !allegato,
       }
@@ -1753,32 +1870,80 @@ export function CandidaturaInsegnanteWizard({
                   </fieldset>
                 )}
 
+                {/* ── CHE COSA SIGNIFICA QUELL'ASTERISCO, DETTO UNA VOLTA (25/08/2026)
+                    `FieldRenderer` stampa un `*` verde accanto a ogni etichetta
+                    obbligatoria, e fino al 25/08 nessuna riga del modulo diceva che
+                    cosa fosse: MISURATO su tutti e cinque i passi, la parola
+                    «obbligator*» compariva UNA volta sola in tutto il wizard — nella
+                    nota del curriculum — cioè un campo su sei aveva l'obbligo scritto
+                    a parole e gli altri cinque un glifo da indovinare.
+                    Con la legenda quella premessa decade, e la nota del curriculum
+                    (`candCvNota` — la chiave, non la frase: ricopiarla qui la farebbe
+                    invecchiare) torna a spendere la sua coda per il PERCHÉ e per la
+                    CONSEGUENZA, invece che per la terza copia di un segnale già dato
+                    dall'asterisco e dal messaggio d'errore.
+                    Un prodotto disegnato dice ogni cosa una volta, nel posto giusto.
+
+                    La riga la rende `LegendaObbligatori` (guscio comune dei wizard
+                    pubblici), che porta le misure e decide DA SÉ se comparire: le si
+                    passano i campi del passo, non un elenco di passi scritto a mano
+                    che il primo campo nuovo farebbe invecchiare. Al riepilogo non ci
+                    sono campi e la riga non compare; al passo «sede» l'obbligo c'è ma
+                    non è un asterisco (è `candSedeErrore`), e questo ramo lì non entra
+                    affatto. */}
                 {(passo === 'dati' || passo === 'profilo' || passo === 'consensi') && (
                   <div className={passo === 'consensi' ? 'space-y-3' : 'space-y-6'}>
+                    <LegendaObbligatori campi={campiDelPasso(passo)} />
                     {campiDelPasso(passo).map((f) => (
-                      <div key={f.id}>
-                        <FieldRenderer
-                          field={f}
-                          modelId="candidature"
-                          register={register}
-                          control={control}
-                          error={errors[f.id]}
-                          // ⚠️ SEMPRE, non solo sul campo `file`: passarla in
-                          // modo condizionale sarebbe una riga in più che dice
-                          // la stessa cosa, e il giorno in cui nasce un secondo
-                          // allegato sarebbe la riga che nessuno aggiorna.
-                          // `FieldRenderer` la ignora per ogni tipo che non sia
-                          // `file`. Senza, `FileField` ripiega su
-                          // `/api/forms/upload`, che è dietro `requireUser`: su
-                          // un modulo anonimo, un 401 a ogni caricamento.
-                          uploadEndpoint={ROTTA_CARICAMENTO_CV}
-                        />
-                        {NOTE_DEI_CAMPI[f.id] && (
-                          <p className="mt-1.5 text-xs text-kidville-sub">
-                            {t(NOTE_DEI_CAMPI[f.id])}
-                          </p>
-                        )}
-                      </div>
+                      <FieldRenderer
+                        key={f.id}
+                        field={f}
+                        modelId="candidature"
+                        register={register}
+                        control={control}
+                        error={errors[f.id]}
+                        // ⚠️ SEMPRE, non solo sul campo `file`: passarla in
+                        // modo condizionale sarebbe una riga in più che dice
+                        // la stessa cosa, e il giorno in cui nasce un secondo
+                        // allegato sarebbe la riga che nessuno aggiorna.
+                        // `FieldRenderer` la ignora per ogni tipo che non sia
+                        // `file`. Senza, `FileField` ripiega su
+                        // `/api/forms/upload`, che è dietro `requireUser`: su
+                        // un modulo anonimo, un 401 a ogni caricamento.
+                        uploadEndpoint={ROTTA_CARICAMENTO_CV}
+                        // ⚠️ IL TESTO, NON PIÙ L'`id` DEL NODO (25/08/2026). Fino a
+                        // stamattina questo componente rendeva il `<p>` da sé, DOPO
+                        // `<FieldRenderer>`, e gli passava il solo `notaId` perché lo
+                        // dichiarasse come descrizione. Due proprietari per una pila
+                        // sola, e sul curriculum il conto era misurabile: `field.link`
+                        // è l'ultimo figlio del renderer, quindi «Leggi l'informativa»
+                        // si infilava FRA il riquadro e la sua nota, portandola da 6 px
+                        // (la distanza del campo gemello «posizioni») a 58, e a 82 in
+                        // errore. Passando il testo, l'ordine — controllo → errore →
+                        // nota → link — lo decide un posto solo, e vale per ogni campo
+                        // con `link`, non solo per questo.
+                        // La traduzione resta qui: le note vivono in `NOTE_DEI_CAMPI`
+                        // e nel catalogo di QUESTO wizard, non nel template.
+                        nota={NOTE_DEI_CAMPI[f.id] ? t(NOTE_DEI_CAMPI[f.id]) : undefined}
+                        // Il nome del file allegato, che il riepilogo mostra al posto
+                        // della parola «Allegato». Sale da `FileField` e sopravvive al
+                        // cambio di passo perché lo tiene questo componente.
+                        onNomeAllegato={(nome) =>
+                          setNomiAllegati((precedenti) => ({ ...precedenti, [f.id]: nome }))
+                        }
+                        // ⚠️ …E IL VERSO DI RITORNO, che al mattino mancava. Il
+                        // wizard rende UN PASSO ALLA VOLTA: premendo «Modifica»
+                        // sul riepilogo questo campo si RIMONTA e `FileField`
+                        // ripartiva senza nome, mostrando «Allegato caricato»
+                        // mentre il riepilogo — a due clic di distanza e nello
+                        // stesso istante — continuava a dire «cv-di-prova.pdf».
+                        // Due schermate dello stesso wizard che raccontano lo
+                        // stesso dato in due modi, e nel punto peggiore: su
+                        // «Modifica» si preme proprio per controllare quale file
+                        // si è allegato. Il proprietario del nome resta UNO —
+                        // questo componente — e questa riga glielo restituisce.
+                        nomeAllegatoIniziale={nomiAllegati[f.id]}
+                      />
                     ))}
                   </div>
                 )}

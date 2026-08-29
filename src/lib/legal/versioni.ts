@@ -121,8 +121,56 @@
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
 // invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// 2026-08-25 — SOLO l'informativa privacy. DUE modifiche, e nessuna delle due è
+// redazionale.
+//
+// (1) SEZIONE «NATURA DEL CONFERIMENTO» — voce nuova per il modulo «Lavora con
+// noi». Dal 24/08 il CURRICULUM è obbligatorio: senza allegato la candidatura non
+// si invia. L'art. 13 §2 lett. e pretende che, quando il conferimento è
+// necessario, siano dichiarate anche le CONSEGUENZE del rifiuto — e fino a ieri
+// quella sezione parlava soltanto dell'anagrafica del minore, dei dati sanitari e
+// delle fotografie: di chi si candida a un lavoro non diceva una parola. Non era
+// un'omissione, era un obbligo che il 23/08 non esisteva ancora: finché il
+// curriculum era facoltativo, quel modulo non aveva niente di necessario da
+// dichiarare oltre a ciò che il primo paragrafo già copriva.
+// ⚠️ L'informazione al PUNTO DI RACCOLTA c'era già, in due lingue (`candCvNota`,
+// l'asterisco, `aria-required`). Non è la stessa cosa: la nota sotto il campo la
+// legge chi sta compilando, l'informativa la legge chi deve decidere se compilare.
+//
+// (2) VOCE «CURRICULUM CARICATO E MAI INVIATO» — da ventiquattro a QUARANTOTTO ore.
+// Qui non è cambiato niente nel codice: è cambiato ciò che il documento dichiara,
+// perché le ventiquattro ore erano FALSE dal 15/08 e nessuno le aveva misurate.
+// MISURA in produzione, 2026-08-25 03:56Z: 36 curriculum orfani sotto
+// `candidature/`, di cui 21 con più di 24 ore; il più vecchio ne aveva 45. Oltre
+// le 48: zero. La causa non è la soglia (`ORE_CURRICULUM_ORFANO = 24`, corretta e
+// non toccata) ma la CADENZA: la spazzata passa una volta a notte (`5 5 * * *`),
+// quindi un file che alla corsa di stanotte ha 23 ore se ne va solo domani notte,
+// a 47. Il tetto vero è soglia + un giro, e con un job giornaliero NESSUN valore
+// della soglia porta il termine sotto le 48 ore.
+// ⚠️ ABBASSARE IL TERMINE PROMESSO NON È UN PEGGIORAMENTO PER L'INTERESSATO: è la
+// fine di una promessa che non veniva mantenuta. Un'informativa che dichiara una
+// cancellazione più rapida di quella che avviene fa rinunciare a chiedere ciò che
+// si crede già garantito — è la stessa fattispecie per cui il 20/08 si è dovuta
+// dichiarare la copia in casella. Se il titolare vorrà tornare alle 24 ore la
+// strada non è il testo: è portare la spazzata a due giri al giorno.
+// ⚠️ ORA C'È UN LOCK: `informativa-termine-orfani-sostenibile` (dentro
+// `__tests__/architecture/informativa-conservazione-dichiarata.test.ts`) confronta
+// le ore dichiarate qui con la soglia della route PIÙ l'intervallo del cron letto
+// dalla migrazione. Le tre cifre non possono più divergere in silenzio.
+//
+// PERCHÉ ALZARE LA VERSIONE NON È UN FORMALISMO, ed è la ragione del 10, dell'11,
+// del 15 e del 20 agosto: `VERSIONE_PRIVACY` finisce dentro
+// `consents_log.versione_informativa` di OGNI candidatura. Le candidature raccolte
+// da oggi sono le prime che un curriculum lo portano per forza — cioè proprio
+// quelle a cui le due voci nuove si rivolgono. Lasciandola a '2026-08-20' ogni riga
+// avrebbe attestato la presa visione di un documento che non diceva né che il
+// curriculum è necessario né entro quando sparisce quello mai inviato.
+//
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
+// invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-08-20'
+export const VERSIONE_PRIVACY = '2026-08-25'

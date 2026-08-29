@@ -285,6 +285,96 @@ export function ColonnaCentrale({ children }: { children: ReactNode }) {
 }
 
 /**
+ * LA LEGENDA DELL'ASTERISCO — «* campo obbligatorio», col glifo nella tinta del
+ * glifo che spiega.
+ *
+ * ── PERCHÉ STA QUI, E NON DENTRO UN WIZARD ──────────────────────────────────
+ *
+ * L'asterisco lo stampa `FieldRenderer`, che è di TUTTI i moduli. La legenda era
+ * nata dentro `CandidaturaInsegnanteWizard`, cioè accanto a UNO solo dei tre, e
+ * il risultato è stato MISURATO nella pagina viva il 2026-08-25 con le rotte
+ * intercettate, a 390×844:
+ *
+ *   /iscrizione            · «Bambino 1»    10 asterischi · 10 `aria-required` · legenda ASSENTE
+ *   /anagrafica-personale  · «I tuoi dati»  10 asterischi ·  8 `aria-required` · legenda ASSENTE
+ *   /lavora-con-noi        · «I tuoi dati»   3 asterischi ·  3 `aria-required` · legenda presente
+ *
+ * Due porte pubbliche su tre chiedevano di indovinare un carattere, proprio dove
+ * si consegnano i dati di un bambino. Una regola valida per tre strade deve
+ * vivere in un posto solo — è la stessa lezione del ciclo 2 di `/ship-cycle`, e
+ * questo è il posto: il guscio comune dei wizard pubblici, dove già stanno
+ * `ComandiWizard`, `GrigliaPasso` e `ContatorePassi`.
+ *
+ * ── LA CONDIZIONE SI DERIVA, NON SI ELENCA ──────────────────────────────────
+ *
+ * Si passano i CAMPI del passo e la legenda decide da sé: niente elenco di passi
+ * scritto a mano, che il primo campo nuovo — o il primo passo nuovo — farebbe
+ * invecchiare in silenzio. Al riepilogo non ci sono campi e la riga non compare;
+ * dove l'obbligo c'è ma non è un asterisco (la scelta della sede, che ha un
+ * messaggio suo) non si passa di qui affatto.
+ *
+ * ── IL GLIFO IN UN NODO SUO, E CON LA TINTA GIUSTA ──────────────────────────
+ *
+ * MISURATO al passo «I tuoi dati» prima che questa riga esistesse: la legenda
+ * rendeva l'asterisco a 12 px / peso 400 / `rgb(85,97,92)` (`text-kidville-sub`,
+ * il token del paragrafo), mentre l'asterisco che spiega — quello di «Nome *»,
+ * 24 px più in basso — è 14 px / peso 500 / `rgb(0,106,95)`
+ * (`text-kidville-green`). Stesso carattere, due tinte, nella stessa schermata.
+ * Una legenda è un dizionario: mostra il segno e poi lo traduce, e se il segno
+ * mostrato non è quello che si incontra chiede al lettore il passaggio in più
+ * che esiste per risparmiargli. La TAGLIA resta quella del paragrafo: è la tinta
+ * a portare il riconoscimento.
+ *
+ * ⚠️ E NON CON `t.rich`, benché il catalogo abbia già i tag altrove. MISURATO:
+ * il mock di `next-intl` in `test/setup.ts` implementa `rich` come
+ * `resolve(ns, key)`, cioè restituisce il messaggio GREZZO e butta via i
+ * callback dei tag. In jsdom la legenda uscirebbe «<ast>*</ast> campo
+ * obbligatorio», e ogni asserzione su quel testo difenderebbe una stringa che
+ * nessun utente legge. Sistemare il mock è la cosa giusta e non è questo il
+ * perimetro: tocca l'intera suite.
+ *
+ * ⚠️ IL GLIFO SI CERCA, NON SI ASSUME IN TESTA: `indexOf` e non `slice(0, 1)`.
+ * In italiano e in inglese l'asterisco apre la frase, ma è un fatto delle due
+ * lingue che abbiamo, non una regola. Se un giorno il carattere non c'è più nel
+ * catalogo, la frase si rende INTERA invece di perdere il primo carattere in
+ * silenzio — il verso in cui questa funzione può sbagliare è quello innocuo.
+ *
+ * ⚠️ `aria-hidden` NO: chi ascolta non «vede» l'asterisco, ma i campi
+ * obbligatori li riceve già da `aria-required`. La riga resta nell'albero perché
+ * è testo di pagina come un altro — nasconderla sarebbe dichiarare che serve
+ * solo a chi guarda, e la stessa frase a chi ascolta non fa nessun danno.
+ *
+ * Il presidio che tiene l'invariante su tutti i moduli insieme è
+ * `__tests__/components/legenda-obbligatori-ogni-modulo.test.tsx`: pretende che
+ * in pagina non ci sia MAI un asterisco senza la sua traduzione, e prima ancora
+ * che un asterisco ci sia — altrimenti sarebbe un'implicazione vera a vuoto.
+ */
+export function LegendaObbligatori({
+  campi,
+}: {
+  /** I campi del passo corrente: la legenda compare solo se almeno uno è obbligatorio. */
+  campi: ReadonlyArray<{ required?: boolean }>
+}) {
+  const t = useTranslations('public')
+  if (!campi.some((f) => f.required)) return null
+  const testo = t('wizardCampiObbligatori')
+  const i = testo.indexOf('*')
+  return (
+    <p className="text-xs text-kidville-sub">
+      {i < 0 ? (
+        testo
+      ) : (
+        <>
+          {testo.slice(0, i)}
+          <span className="text-kidville-green">*</span>
+          {testo.slice(i + 1)}
+        </>
+      )}
+    </p>
+  )
+}
+
+/**
  * La griglia del passo.
  *
  * TRE FIGLI, NON DUE — e il terzo esiste perché su `lg` i comandi
@@ -425,6 +515,73 @@ export function ComandiWizard({
   const avantiSpento = avanti.disabilitato === true
   const indietroSpento = indietro?.disabilitato === true
 
+  /*
+   * ── IL PRIMO CLIC NON SI PERDE (25/08/2026) ─────────────────────────────────
+   *
+   * Entrambi i comandi neutralizzano il gesto di PRESSIONE del puntatore. Non è
+   * una preferenza di stile: è il rimedio a un difetto misurato, per cui premere
+   * «Avanti» una volta sola NON FACEVA NIENTE.
+   *
+   * ⚠️ MISURATO IN CHROMIUM su `/lavora-con-noi`, passo «Il tuo profilo», con il
+   * fuoco dentro il campo del curriculum (arrivato con Tab, o toccando il riquadro
+   * e annullando il selettore di file) e nessun allegato. Registro degli eventi
+   * alle coordinate del bottone:
+   *     mousedown@bottone (y=642) → mouseup@DIV (y=666) → click@DIV
+   * `mousedown` sul bottone; `mouseup` VENTIQUATTRO PIXEL PIÙ IN BASSO, su un
+   * altro elemento; e quindi un `click` emesso sull'antenato comune dei due — mai
+   * sul bottone. `onClick` non partiva: niente avanzamento, niente fuoco posato,
+   * nessun messaggio nuovo. Bisognava premere due volte.
+   *
+   * LA CATENA, e la ragione per cui il rimedio sta QUI e non nel campo:
+   *   1. `useForm` dei due wizard gira in `mode: 'onTouched'`;
+   *   2. il `mousedown` sposta il fuoco sul bottone → il campo si blura;
+   *   3. il blur fa scattare la validazione → il messaggio dell'obbligo (la voce
+   *      `campoObbligatorio` del catalogo — la CHIAVE e non la frase, che è
+   *      cambiata il 25/08) viene INSERITO nel flusso, sopra questi comandi;
+   *   4. i comandi scendono dell'altezza di quella riga — FRA la pressione e il
+   *      rilascio. Il bersaglio si sposta da sotto il dito mentre il dito è giù.
+   * Prevenendo il default del `mousedown` il fuoco non si muove, il campo non si
+   * blura, `onTouched` non scatta e niente cambia altezza prima del `mouseup`. La
+   * validazione la fa `passoAvanti()`, che è il posto che l'ha sempre fatta, e il
+   * fuoco lo posa `setFocus` sul primo campo non valido.
+   *
+   * ⚠️ NON È UN DIFETTO DEL CAMPO FILE, ed è stato misurato prima di dirlo: lo
+   * stesso gesto sul passo «I tuoi dati», con `#email` vuota e mai toccata, dava
+   * `click su HTML` e il fuoco su `<body>` — peggio ancora. Vale per ogni campo
+   * obbligatorio di ENTRAMBI i wizard pubblici, e valeva già prima che il
+   * curriculum diventasse obbligatorio: allora quel campo non produceva errori,
+   * quindi da lì i comandi non si spostavano mai.
+   *
+   * ⚠️ IL PREZZO, dichiarato: premendo col mouse questi due bottoni non prendono
+   * più il fuoco. È il comportamento nativo di Safari e Firefox su macOS, non
+   * toglie niente a chi usa la tastiera (`Tab` + `Invio` non passa di qui) e in
+   * questi wizard il fuoco dopo un comando lo posa comunque qualcun altro:
+   * `titoloPassoRef` al cambio di passo, `confermaRef` all'invio riuscito,
+   * `setFocus` sul primo campo non valido quando il passo non si supera.
+   *
+   * ⚠️ jsdom non può vedere il difetto (non ha layout, il bottone non si sposta e
+   * il clic arriva sempre). Il presidio locale asserisce che il `mousedown` sia
+   * prevenuto — `__tests__/a11y/candidatura-insegnante-a11y.test.tsx` — e quello
+   * che vede il difetto vero sta in `e2e/public-candidatura-insegnante.spec.ts`.
+   *
+   * ⚠️ E LO STESSO PRESIDIO NON SI COPIA SU `/anagrafica-personale`, benché il
+   * `preventDefault` valga anche per lui: sarebbe un test incapace di fallire.
+   * MISURATO in Chromium il 25/08/2026 sul passo «I tuoi dati» di quel wizard
+   * (`#citizenship` a fuoco e vuota, «Avanti» premuto col puntatore, nove messaggi
+   * inseriti), con il rimedio e poi TOGLIENDOLO:
+   *     con    → mousedown@SPAN · mouseup@SPAN    · fuoco su #nome
+   *     senza  → mousedown@SPAN · mouseup@BUTTON  · fuoco su #nome
+   * Lo spostamento c'è (il puntatore esce dallo `<span>`) ma resta DENTRO il
+   * bottone, quindi l'antenato comune è il bottone stesso e `onClick` parte lo
+   * stesso. Là dove il difetto è vero — il passo «Il tuo profilo» della
+   * candidatura — l'antenato comune era un `DIV` e il clic si perdeva. Un'asserzione
+   * sul fuoco copiata qui sarebbe verde in entrambi i mondi: un test mai visto
+   * fallire non è un test. Se un giorno si vorrà un presidio anche per questo
+   * wizard, dovrà nascere da uno spostamento MISURATO che porti il puntatore fuori
+   * dal bottone, non dalla somiglianza fra i due moduli.
+   */
+  const nonRubareIlFuoco = (e: React.MouseEvent<HTMLButtonElement>) => e.preventDefault()
+
   return (
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-kidville-line pt-6">
       {/*
@@ -446,6 +603,7 @@ export function ComandiWizard({
       {indietro !== null && (
         <button
           type="button"
+          onMouseDown={nonRubareIlFuoco}
           /* «Indietro» si spegne SOLO mentre l'invio è in volo (è l'unico uso
              che ne fanno i due moduli), cioè esattamente il caso in cui il
              fuoco non va rubato: `aria-disabled` e guardia, mai `disabled`. */
@@ -466,6 +624,7 @@ export function ComandiWizard({
 
       <button
         type="button"
+        onMouseDown={nonRubareIlFuoco}
         onClick={() => {
           // La guardia è ciò che `aria-disabled` NON fa da solo: l'attributo
           // dichiara lo stato, non impedisce il clic.

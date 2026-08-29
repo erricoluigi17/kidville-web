@@ -47,7 +47,7 @@ import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
  * ── ⚠️ DEBITO DICHIARATO: LE ETICHETTE QUI SOTTO SONO SOLO IN ITALIANO ───────
  *
  * Tutto ciò che si legge a schermo di questo template — le `label` dei campi,
- * `TITOLI_STUDIO`, `DISPONIBILITA`, `POSIZIONI_OPTIONS` (che il riepilogo di
+ * `TITOLI_STUDIO` e `POSIZIONI_OPTIONS` (che il riepilogo di
  * `/lavora-con-noi` ristampa così come sono) e i testi dei consensi — è cablato
  * in italiano. Il guscio della pagina è bilingue per davvero (tutte le chiavi
  * `cand*` di `messages/{it,en}/public.json`, con lock di parità), quindi con
@@ -319,15 +319,6 @@ export const TITOLI_STUDIO: FormFieldOption[] = [
   { label: 'Altro titolo', value: 'altro' },
 ]
 
-/** Disponibilità dichiarata: serve alla segreteria per smistare, non a valutare. */
-const DISPONIBILITA: FormFieldOption[] = [
-  { label: 'Tempo pieno', value: 'tempo_pieno' },
-  { label: 'Part-time mattina', value: 'part_time_mattina' },
-  { label: 'Part-time pomeriggio', value: 'part_time_pomeriggio' },
-  { label: 'Supplenze e sostituzioni', value: 'supplenze' },
-  { label: 'Tirocinio o volontariato', value: 'tirocinio' },
-]
-
 /**
  * I limiti del modulo, in un posto solo.
  *
@@ -478,14 +469,112 @@ export const INSEGNANTE_FIELDS: FormField[] = [
   // Cioè: il valore non arriva più da fuori affatto, e il `22P02` dell'enum
   // diventa inesprimibile invece che difeso.
 
-  { id: 'disponibilita', type: 'select', label: 'Disponibilità', required: false, db_mapping: 'candidature_insegnanti.disponibilita', options: DISPONIBILITA },
+  // ── LA DISPONIBILITÀ NON SI CHIEDE PIÙ, E LA COLONNA RESTA ─────────────────
+  //
+  // Fino al 2026-08-24 qui c'era una select — tempo pieno, part-time mattina,
+  // part-time pomeriggio, supplenze, tirocinio — e serviva alla segreteria per
+  // smistare. È uscita perché in Kidville si lavora solo a tempo pieno: delle
+  // sue voci una sola era accettabile, e le altre promettevano un impegno che
+  // non esiste. Chiedere una cosa già decisa la fa sembrare trattabile. È una
+  // rimozione SECCA, decisa dal titolare: al suo posto non va nessuna riga
+  // informativa, perché una nota che spiega un campo assente è il campo.
+  //
+  // LA COLONNA `candidature_insegnanti.disponibilita` RESTA, e resta `nullable`:
+  // le candidature arrivate prima ci hanno scritto un valore vero, e la scheda
+  // di segreteria continua a leggerlo di lì. Le etichette che lo traducono non
+  // vivono più qui: le risolve `CHIAVE_DISPONIBILITA` (`CandidatureInsegnanti.tsx`)
+  // sui cataloghi `messages/{it,en}/adminAltro.json`, ed è quella mappa — non più
+  // questo file — la fonte del lock che le sorveglia. Da oggi ogni candidatura
+  // nuova nasce con quel valore NULL, e nella scheda la riga sparisce da sé.
+
   { id: 'note', type: 'textarea', label: 'Presentati in poche righe', required: false, db_mapping: 'candidature_insegnanti.note', placeholder: 'Raccontaci il tuo percorso e perché ti piacerebbe lavorare con noi', validation: { max_length: CANDIDATURA_LIMITI.maxPresentazione } },
 
   // ── IL CV, e la difesa che tocca alla route (misurata, non dedotta) ─────────
   //
-  // CV facoltativo: chi si candida dal telefono spesso il curriculum non ce
-  // l'ha sottomano, e un allegato obbligatorio farebbe abbandonare il modulo a
-  // chi i campi li ha già compilati tutti.
+  // ⚠️ IL CURRICULUM È OBBLIGATORIO DAL 2026-08-24, ED È UNA DECISIONE, NON UN
+  // ASSESTAMENTO. Fino a quel giorno queste righe argomentavano il CONTRARIO —
+  // «chi si candida dal telefono spesso il curriculum non ce l'ha sottomano, e
+  // un allegato obbligatorio farebbe abbandonare il modulo a chi i campi li ha
+  // già compilati tutti» — ed è il tipo di commento più caro che esista: fra sei
+  // mesi qualcuno lo rilegge, lo trova ragionevole e rimette `required: false`
+  // «perché c'era una ragione». La ragione c'era davvero. È stata pesata contro
+  // un'altra e ha perso.
+  //
+  // Decisione del titolare: una candidatura senza curriculum non è una
+  // candidatura. La segreteria non ha niente da valutare, deve scrivere per
+  // chiederlo, e nel frattempo la persona resta in una coda che nessuno muove.
+  //
+  // ⚠️ IL PREZZO, MISURATO PRIMA DI DECIDERE — ÀNCORA `MISURA-CV`.
+  //
+  // QUESTO È L'UNICO POSTO DEL PERIMETRO CANDIDATURE CHE PORTA LA CIFRA. Ogni
+  // altro commento che ne aveva bisogno NOMINA questa àncora invece di
+  // ribattere il numero, e il lock
+  // `__tests__/architecture/misura-cv-un-posto-solo.test.ts` lo impone: una
+  // percentuale scritta in un file del perimetro fa cadere il gate. Non è
+  // pignoleria — è la cronaca di queste righe, raccontata qui sotto.
+  //
+  // Misurato in produzione il **2026-08-25 alle 19:26** (ora di Roma):
+  // **100 candidature senza curriculum su 248**. Non è una stima ed è la parte
+  // che conta: sono esattamente le persone che d'ora in poi NON potranno
+  // inviare il modulo.
+  //
+  // ⚠️ QUI C'ERA SCRITTO CHE «LA PERCENTUALE È LA SOLA COSA STABILE». È FALSO, e
+  // la stessa giornata l'ha smentito due volte, in due versi opposti:
+  //   · alle 12:08 erano **98 su 237** — l'assoluto FERMO, la percentuale scesa
+  //     dal 41,9% al 41,4%, perché nel frattempo arrivavano candidature CON il
+  //     curriculum;
+  //   · alle 19:26 sono **100 su 248** — si è mosso anche l'ASSOLUTO.
+  // Finché il modulo vecchio è in produzione non esiste nessuna cifra stabile.
+  // La sola differenza vera è che DOPO il rilascio l'assoluto si ferma — a
+  // quell'insieme nessuno può più aggiungersi — mentre la percentuale continua
+  // a scendere da sola, avendo al denominatore un totale che cresce. Chi vorrà
+  // misurare l'effetto dell'obbligo guardi **l'assoluto e il totale**, mai la
+  // percentuale; e **rifaccia il conto invece di fidarsi di questa riga**, che a
+  // quel punto avrà mesi. È una query sola:
+  //     select count(*) filter (where cv_path is null), count(*)
+  //     from candidature_insegnanti;
+  //
+  // ⚠️ LA CONTRO-OBIEZIONE RESTA VERA, e per questo la nota sotto il campo NON è
+  // stata tolta: continua a dire che va bene anche una FOTOGRAFIA del curriculum
+  // (`candCvNota`, `messages/{it,en}/public.json`). È ciò che tiene aperta la
+  // porta a chi compila dal telefono e non ha un PDF sottomano — cioè l'unica
+  // risposta che questo campo dà al rischio di abbandono che il commento
+  // precedente denunciava. Toglierla per «snellire» rimetterebbe in piedi il
+  // difetto senza rimettere il campo facoltativo: il peggiore dei due mondi.
+  //
+  // ⚠️ NEL DATABASE `cv_path` RESTA `nullable`, e non è una svista: le righe
+  // storiche che ce l'hanno NULL sono quattro su dieci (la cifra, con la sua ora
+  // e la sua query, sta nell'àncora `MISURA-CV` qui sopra — qui non si ribatte),
+  // quindi un `NOT NULL` non si applicherebbe nemmeno.
+  //
+  // ⚠️ QUI C'ERA UN NUMERO, ed era SBAGLIATO: «95 righe storiche», copiato dal
+  // piano del giorno prima e sopravvissuto alla rimisurazione del 25/08 che aveva
+  // aggiornato il paragrafo qui sopra. Era una cifra già etichettata come SUPERATA
+  // poche righe più su, e ripetuta qui come stato di oggi, senza data. È
+  // esattamente la trappola che l'àncora `MISURA-CV` esiste per denunciare,
+  // ripetuta dentro la prosa che la denuncia — ed è il motivo per cui quella cifra
+  // ora ha UN POSTO SOLO, e un lock che lo difende.
+  //
+  // ⚠️ E LE DISTANZE IN RIGHE ERANO A LORO VOLTA SBAGLIATE (rilevato al giro 3, e il
+  // collaudatore aveva ragione: contate, non misurate). Qui c'era scritto «sedici
+  // righe più in alto» dove ce n'erano 23, «venti righe più su» dove ce n'erano 23,
+  // e «queste venticinque righe» per un blocco che ne copre oltre quaranta. Un
+  // numero di righe scritto in prosa è falso al primo commento inserito sopra: è la
+  // stessa specie di cifra che questo blocco denuncia, applicata a sé stesso. La
+  // regola giusta era già scritta nella route gemella
+  // (`iscrizione/insegnanti/route.ts`, blocco `ESITO_MAX`): «si trova cercando la
+  // costante, non contando le righe — anche una distanza è un numero che invecchia».
+  // Ora i riferimenti sono ÀNCORE CERCABILI, e restano vere comunque si muova il file.
+  // Tolto invece che aggiornato: l'argomento regge senza, e un intero non datato
+  // sopra un insieme che cresce di sei righe al giorno tornerebbe falso domani.
+  // L'obbligatorietà è APPLICATIVA e vive in tre punti che leggono tutti da qui:
+  // il `required` di questa riga, le `rules` del `Controller` in `FieldRenderer`
+  // e `validatePage(campiVisibili(...))` nella route. Nessuno dei tre è una
+  // seconda regola: sono lo stesso `validateField` chiamato da tre parti.
+  //
+  // ⚠️ E `cv_path` NON DEVE MAI PRENDERE UNA `condition`: uscirebbe dal filtro di
+  // `campiVisibili` e l'obbligo sul server sparirebbe in silenzio, con i test
+  // verdi.
   //
   // ⚠️ L'`accept` NON è una scelta di questo file, ed è la correzione del
   // 2026-08-10. Prima diceva `.pdf,.doc,.docx,.jpg,.jpeg,.png`: sei estensioni
@@ -520,7 +609,54 @@ export const INSEGNANTE_FIELDS: FormField[] = [
   // ribatterlo è il modo in cui le due liste divergono in silenzio. Non è importato
   // perché quel modulo tira dentro `next/server`, e questo template lo carica anche
   // il browser.
-  { id: 'cv_path', type: 'file', label: 'Curriculum (facoltativo)', required: false, db_mapping: 'candidature_insegnanti.cv_path', accept: '.pdf,.jpg,.jpeg,.png,.webp,.heic', max_size_mb: CANDIDATURA_LIMITI.maxCvMb },
+  // ⚠️ L'etichetta è «Curriculum» e basta, SENZA «(obbligatorio)»: l'asterisco lo
+  // stampa `FieldRenderer` da sé leggendo `required`, e «Curriculum
+  // (obbligatorio) *» sarebbe lo stesso segnale detto due volte.
+  //
+  // ⚠️ `link: '/privacy'` NON È UN ORNAMENTO, ed è arrivato con l'obbligo. Questo
+  // allegato parte nell'istante in cui si sceglie il file — `FileField` chiama la
+  // rotta di caricamento dentro `onChange` — cioè DUE PASSI prima della schermata
+  // dei consensi, che fino al 25/08 era l'unico punto del modulo da cui
+  // l'informativa fosse raggiungibile. Finché il campo era facoltativo una strada
+  // c'era (saltare l'allegato, leggere, tornare indietro) e la percorrevano
+  // quattro su dieci (la cifra, con la sua ora, sta nell'àncora `MISURA-CV`).
+  // Da quando è obbligatorio quella strada non esiste più, e l'art. 13 parla del
+  // momento in cui i dati sono OTTENUTI: per un allegato è il caricamento.
+  // ⚠️ NIENTE `link_label`, E L'ETICHETTA È COMUNQUE QUELLA DELLE ALTRE
+  // (25/08/2026, seconda correzione in giornata — vale la pena raccontarla per
+  // intero, perché la strada giusta era la terza e nessuna delle prime due lo era).
+  //   · Al mattino `link_label` non c'era: `FieldRenderer` ripiegava su
+  //     `t('leggiInformativa')`, cioè «Leggi l'informativa» / «Read the policy».
+  //     Tradotto, ma generico — e in inglese chiede «quale policy?», in un punto
+  //     dove la parola «informativa» non compare da nessun'altra parte del passo:
+  //     sui consensi il collegamento è preceduto da «Ho letto l'informativa sulla
+  //     privacy», qui è nudo.
+  //   · A mezzogiorno si è cablato «Leggi l'informativa completa» qui dentro, per
+  //     allinearlo alle altre dichiarazioni. Chiarezza comprata pagando la lingua:
+  //     MISURATO sulla pagina viva con `KV_LOCALE=en`, sotto una nota inglese
+  //     compariva una riga italiana.
+  //   · La terza strada — quella presa — costava le stesse due righe delle altre
+  //     due: una CHIAVE nei due cataloghi. `leggiInformativaCompleta` è ora il
+  //     ripiego del collegamento di CAMPO in `FieldRenderer`, quindi qui non serve
+  //     dichiarare niente e l'etichetta è insieme la stessa delle altre E tradotta.
+  //     ⚠️ LA CHIAVE E NON LA FRASE: la versione delle 12:22 di questo commento
+  //     ricopiava il valore italiano, e il valore è cambiato nel pomeriggio dello
+  //     stesso giorno («…sulla privacy», perché al passo 3 quella parola non
+  //     compare da nessun'altra parte). Il commento è invecchiato prima di sera:
+  //     è la stessa trappola che il resto di questo file denuncia sulle CIFRE.
+  //     È la stessa mossa fatta poche ore prima per `attendiCaricamento` e
+  //     `caricamentoAllegato`, in questo stesso lavoro: era già lì da copiare.
+  //
+  // ⚠️ E LE ALTRE SONO TRE, NON QUATTRO. La versione di mezzogiorno di questo
+  // commento diceva «le altre QUATTRO dichiarazioni» e poi ne nominava tre, con un
+  // numero di riga già invecchiato (708 invece di 720). Misurato con
+  // `grep -rn "link: '/privacy'" src`, esito catturato prima di qualunque pipe:
+  // TRE — `enrollment-template.ts`, `personale-template.ts` e il consenso in fondo
+  // a questo file — più questa, che quattro le fa in tutto. È lo stesso difetto che
+  // questo repo insegue da settimane: un conteggio ribattuto a mano invecchia entro
+  // il commit che lo scrive. Chi ha bisogno del numero lo rifaccia con il grep,
+  // che è una riga.
+  { id: 'cv_path', type: 'file', label: 'Curriculum', required: true, db_mapping: 'candidature_insegnanti.cv_path', accept: '.pdf,.jpg,.jpeg,.png,.webp,.heic', max_size_mb: CANDIDATURA_LIMITI.maxCvMb, link: '/privacy' },
 ]
 
 // ── Consensi (→ candidature_insegnanti.consents_log) ──────────────────────────
@@ -566,12 +702,42 @@ export const INSEGNANTE_FIELDS: FormField[] = [
  *
  * ── COSA MANCA ANCORA, detto qui invece che taciuto ──────────────────────────
  *
- * L'informativa pubblica (`src/app/privacy/page.tsx`) al 2026-08-10 non ha una
- * sezione per le candidature: dice cosa succede alle domande d'iscrizione non
- * accolte, non ai curriculum. Finché non ce l'ha, il link qui sotto porta a un
- * testo che non parla di chi lo sta leggendo. È fuori dal perimetro di questo
- * file — ma un consenso raccolto su un'informativa che non copre la finalità è
- * esattamente il difetto T06-F2 di questo repo, spostato di un modulo.
+ * ⚠️ QUESTA NOTA ERA SCADUTA E DICEVA IL FALSO AL CONTRARIO, corretta il
+ * 25/08/2026. Sosteneva che «l'informativa pubblica (`src/app/privacy/page.tsx`)
+ * al 2026-08-10 non ha una sezione per le candidature» e che quindi «il link qui
+ * sotto porta a un testo che non parla di chi lo sta leggendo». La sezione
+ * ESISTE, ed esiste dal 2026-08-10 stesso: `src/app/privacy/page.tsx` dichiara i
+ * dodici mesi (ventiquattro col consenso alla conservazione), la cancellazione del
+ * curriculum insieme alla candidatura e la copia recapitata alla casella di
+ * ciascuna sede scelta — con un lock che la difende. Una nota di debito che
+ * descrive un buco GDPR ormai chiuso costa quanto una che ne nasconde uno aperto:
+ * chi la legge va a cercare un guasto che non c'è, o peggio, si fida del suo
+ * essere «già noto» e non ricontrolla.
+ *
+ * ⚠️ L'ART. 13 §2 LETT. e È STATO CHIUSO IL 2026-08-25, e questo paragrafo lo dice
+ * perché fino a quel giorno diceva il contrario. Dal 24/08 il curriculum è
+ * necessario, quindi l'informativa doveva dichiarare la necessità e le conseguenze
+ * del rifiuto: la sezione «Natura del conferimento» di `src/app/privacy/page.tsx`
+ * ora ha la sua voce per «Lavora con noi», e `VERSIONE_PRIVACY` è salita a
+ * '2026-08-25' con la nuova impronta in `pagine-legali.test.ts`.
+ *
+ * ⚠️ E QUESTO DEBITO NON DOVEVA VIVERE QUI. Era stato scritto dentro un commento di
+ * codice invece che nel PRD, cioè nel file che si riapre solo quando lo si tocca
+ * invece che nel documento che sopravvive al codice: due collaudatori indipendenti
+ * l'hanno rilevato, e avevano ragione. Un elenco di cose da fare in un commento non
+ * è tracciato, è dimenticato con una nota. La regola sta in AGENTS.md e vale anche
+ * per i debiti, non solo per le funzionalità.
+ *
+ * ⚠️ I DUE COMMENTI CHE DICEVANO «e SPESSO il curriculum» SONO GIÀ CORRETTI, ed è
+ * il motivo per cui non sono più elencati qui. Il 2026-08-25 questa nota ne
+ * nominava UNO (`src/app/privacy/page.tsx`) e ce n'erano DUE: il gemello stava in
+ * `src/app/api/gdpr/retention-candidature/route.ts`, e chi fosse venuto a chiudere
+ * il debito fidandosi dell'elenco ne avrebbe corretto uno solo. L'elenco era stato
+ * scritto a memoria dentro il paragrafo che esiste proprio per impedire a un testo
+ * di invecchiare — la stessa trappola che il resto di questo file denuncia. Il
+ * rimedio non è stato allungare l'elenco (`grep -rn "spesso il curriculum" src`
+ * l'avrebbe derivato, ma sarebbe di nuovo invecchiato): è stato correggere le due
+ * frasi, così l'elenco non serve più.
  */
 export const CONSENSI_INSEGNANTI_FIELDS: FormField[] = [
   {
@@ -586,7 +752,6 @@ export const CONSENSI_INSEGNANTI_FIELDS: FormField[] = [
       'richiesto il consenso, ed è per lo stesso motivo che non mi viene chiesto. ' +
       'Posso in ogni momento chiedere di accedere ai miei dati, correggerli o farli cancellare.',
     link: '/privacy',
-    link_label: 'Leggi l’informativa completa',
   },
   {
     id: 'consenso_conservazione_candidatura',

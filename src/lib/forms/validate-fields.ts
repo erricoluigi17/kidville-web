@@ -30,6 +30,62 @@
 import type { FormField } from '@/types/database.types'
 import { isSiglaProvincia } from '@/lib/anagrafiche/province'
 
+/**
+ * ── I DUE MESSAGGI DELL'OBBLIGO, ESPORTATI (25/08/2026) ──────────────────────
+ *
+ * Questa funzione gira su DUE lati e i suoi messaggi sono ITALIANI PER
+ * COSTRUZIONE (vedi la testata): sul server il locale dell'interfaccia non
+ * esiste. Ma il lato client la stessa frase la mostra A SCHERMO, e la porta
+ * pubblica ha il catalogo inglese completo — cioè su `/lavora-con-noi` con
+ * `KV_LOCALE=en` sotto un'etichetta «Curriculum» compariva «Allega un file per
+ * proseguire», e sotto «Titolo di studio» «Campo obbligatorio».
+ *
+ * ⚠️ E NON ERA UNA STRINGA SOLA, che è il motivo per cui il rimedio non poteva
+ * essere una chiave dedicata al campo file. MISURATO: `validateField` ritorna
+ * italiano per OGNI predicato (email, data, numero, minimo, massimo, selezione,
+ * pattern), e l'obbligo è quello che si legge per primo e su ogni campo. Tradurre
+ * il solo messaggio del curriculum avrebbe lasciato una schermata inglese con
+ * «Campo obbligatorio» sotto il menu e «Attach a file to continue» sotto il
+ * riquadro: mezza traduzione è una voce in più, non una in meno.
+ *
+ * Perciò le due frasi dell'obbligo escono di qui come COSTANTI, e
+ * `FieldRenderer` le usa come chiave per il catalogo (`campoObbligatorio`,
+ * `allegaFile`, in it e in en). Il server continua a ricevere e a rispondere
+ * l'italiano, che non si legge a schermo. Il residuo — i predicati di formato —
+ * resta scoperto ed è debito dichiarato, non una svista: si chiude con la stessa
+ * forma, una costante per messaggio, quando qualcuno lo affronterà.
+ */
+export const MSG_CAMPO_OBBLIGATORIO = 'Campo obbligatorio'
+export const MSG_ALLEGA_FILE = 'Allega un file per proseguire'
+/**
+ * ── E L'OBBLIGO NON PARLA DUE DIALETTI SULLA STESSA SCHERMATA (25/08/2026) ───
+ *
+ * MISURATO leggendo insieme i tre `[role=alert]` del passo «Il tuo profilo» dopo
+ * un «Avanti» a passo vuoto, prima di questa aggiunta:
+ *   ["Campo obbligatorio", "Campo obbligatorio", "Allega un file per proseguire"]
+ *
+ * «Campo obbligatorio» è la risposta di un database. Il lavoro del 24/08 l'aveva
+ * riconosciuto e aveva dato la frase umana a UN TIPO SOLO — il che, in un aspetto,
+ * è peggio del punto di partenza: a mezzo metro di distanza sulla stessa colonna
+ * il prodotto dimostrava di saper parlare a una persona e sceglieva di non farlo
+ * due volte su tre.
+ *
+ * ⚠️ E LA CADENZA NON SI INVENTA QUI: il modulo ce l'ha già scritta al passo 1,
+ * `candSedeErrore` = «Scegli almeno una sede per proseguire». Stesso predicato
+ * («almeno uno di N»), stesse parole, stessa chiusa. Queste due frasi la copiano.
+ *
+ * ⚠️ E NON NOMINANO IL CAMPO, per la stessa ragione per cui `MSG_ALLEGA_FILE` non
+ * nomina il curriculum: `validateField` la chiamano anche il modulo d'iscrizione e
+ * quello del personale, e una frase che nomina il caso che l'ha fatta nascere è un
+ * difetto peggiore di quello che chiude.
+ *
+ * Resta fuori `consent`, e di proposito: il suo obbligo ha già una frase sua
+ * («Devi accettare per proseguire»), che `FieldRenderer` applica nel ramo dedicato
+ * e che non passa di qui.
+ */
+export const MSG_SCEGLI_OPZIONE = 'Scegli almeno un’opzione per proseguire'
+export const MSG_SCEGLI_DA_ELENCO = 'Seleziona un’opzione per proseguire'
+
 /** Tipi decorativi: non raccolgono un valore, non si validano mai. */
 const TIPI_DECORATIVI = new Set(['section_header', 'paragraph', 'signature'])
 
@@ -107,7 +163,49 @@ export function validateField(field: FormField, value: unknown): string | null {
   const vuoto = eVuoto(field, value)
 
   // 1) Obbligatorietà.
-  if (field.required && vuoto) return 'Campo obbligatorio'
+  //
+  // ── E QUANDO L'AZIONE NON È «SCRIVI», LA FRASE LO DICE (25/08/2026) ─────────
+  //
+  // «Campo obbligatorio» è la risposta di un database, e su un campo di testo passa
+  // perché il gesto mancante è ovvio: c'è un cursore che lampeggia. Su un campo di
+  // CARICAMENTO no. Dal 24/08 il curriculum di «Lavora con noi» è obbligatorio, e
+  // chi preme «Avanti» senza allegato leggeva due parole che non dicono cosa fare,
+  // non nominano l'allegato e non ricordano che va bene anche una fotografia —
+  // sotto un riquadro che è l'unico attrito nuovo di tutto quel lavoro.
+  //
+  // Il repo aveva GIÀ preso questa decisione una volta, per l'altro campo in cui
+  // l'azione non è digitare: la spunta di un consenso ha il suo messaggio dedicato
+  // («Devi accettare per proseguire», `FieldRenderer` ramo `consent`). Il campo
+  // file non l'aveva ereditata.
+  //
+  // ⚠️ NON È UNA SECONDA REGOLA — ed è l'obiezione a cui questo ramo risponde. La
+  // regola resta una, questa, che gira identica sul client e sul server; a cambiare
+  // è il MESSAGGIO, esattamente come già fa `messaggioPattern` qui sotto, che per
+  // lo stesso predicato «pattern fallito» dice cose diverse a una provincia, a un
+  // CAP e a un codice fiscale. Una frase diversa per lo stesso predicato non è una
+  // strada che diverge: è la stessa strada che sa dove si trova.
+  //
+  // ⚠️ E LA FRASE NON NOMINA IL CURRICULUM, benché il caso che l'ha fatta nascere
+  // sia quello: questa funzione la chiamano anche il documento d'identità del
+  // minore (`enrollment-template`) e le due facce del documento del personale
+  // (`personale-template`). «Allega il curriculum» sotto «Fronte del documento»
+  // sarebbe un difetto peggiore di quello che si sta chiudendo.
+  if (field.required && vuoto) {
+    // Una frase diversa per lo stesso predicato non è una strada che diverge: è
+    // la stessa strada che sa dove si trova (vedi il commento qui sopra e
+    // `messaggioPattern` più in basso, che fa lo stesso per provincia, CAP e CF).
+    if (field.type === 'file') return MSG_ALLEGA_FILE
+    // ⚠️ `radio` STA COL MENU, NON COL GRUPPO A SPUNTA (25/08/2026, settimo giro).
+    // Fino a stamattina i due gruppi condividevano il ramo e un `radio` vuoto
+    // diceva «Scegli ALMENO UN'opzione»: «almeno una» promette che se ne possano
+    // prendere più d'una, e `FieldRenderer` rende `radio` come `role="radiogroup"`,
+    // che ne accetta esattamente una (il costruttore di moduli della segreteria lo
+    // offre col nome `modInputSceltaSingola`, cioè «scelta singola»). Il predicato è
+    // lo stesso del menu — uno e uno solo fra N — e la frase è quella.
+    if (field.type === 'checkbox') return MSG_SCEGLI_OPZIONE
+    if (field.type === 'select' || field.type === 'radio') return MSG_SCEGLI_DA_ELENCO
+    return MSG_CAMPO_OBBLIGATORIO
+  }
 
   // 2) Un campo facoltativo vuoto è valido: niente pattern/lunghezze sul vuoto.
   if (vuoto) return null

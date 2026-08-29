@@ -8,10 +8,11 @@ import {
   ShieldCheck, UserRound,
 } from 'lucide-react'
 import { FieldRenderer, FIELD_BASE, FIELD_BASE_ERRORE } from '@/components/features/forms/FieldRenderer'
+import { useMessaggioCampo } from '@/components/features/forms/messaggio-campo'
 import {
   BarraAvanzamento, ColonnaCentrale, ColonnaContesto, ComandiWizard, ContatorePassi,
-  EscaHoneypot, GrigliaPasso, GuscioPubblico, PannelloConferma, PannelloErroreInvio,
-  TestataPasso, type ComandoAvanti,
+  EscaHoneypot, GrigliaPasso, GuscioPubblico, LegendaObbligatori, PannelloConferma,
+  PannelloErroreInvio, TestataPasso, type ComandoAvanti,
 } from '@/components/features/public/wizard/pezzi-wizard-pubblico'
 import {
   corpoDellaRisposta, useSediPubbliche,
@@ -226,8 +227,26 @@ const CAMPI_RESI: FormField[] = [...CAMPI_DATI, ...CAMPI_RESIDENZA, ...CAMPI_DOC
 
 /**
  * Il codice fiscale. È l'unico campo del passo «I tuoi dati» che non passa da
- * `FieldRenderer`, e l'unica ragione è `aria-describedby`: deve poter puntare al
- * badge di coerenza, e quel componente non accetta descrittori aggiuntivi.
+ * `FieldRenderer`, e la ragione è cambiata il 25/08/2026 — vale la pena dirlo,
+ * perché fino a quel giorno queste righe ne davano una che era diventata falsa.
+ *
+ * Dicevano: «`FieldRenderer` non accetta descrittori aggiuntivi». Non è più vero
+ * dal 24/08: il componente prende `nota`, ne DERIVA l'`id` (`<campo>-nota`) e
+ * CONCATENA `aria-describedby` — prima l'errore, poi la nota. Il debito che
+ * queste righe descrivevano era già chiuso dal commit che le ha lasciate in piedi.
+ *
+ * La ragione VERA per cui il campo resta reso a mano è la FORMA del descrittore,
+ * non la sua esistenza. `BadgeCoerenzaCf` è un `<div role="status">` con dentro un
+ * `<button>` («Usa questo»), mentre `nota` viene resa dentro un `<p>`: un blocco
+ * dentro un paragrafo è annidamento non valido, e React lo dice. E il badge è
+ * CONDIZIONALE — `badgeHaQualcosaDaDire` è falso per la maggior parte dei record —
+ * mentre `nota`, se la si passa, il suo `<p>` lo rende sempre e lo nomina sempre:
+ * il campo finirebbe per puntare a una descrizione vuota, cioè il difetto che
+ * `__tests__/a11y/anagrafica-personale-a11y.test.tsx` presidia («nessun
+ * `aria-describedby` punta al vuoto»).
+ *
+ * Il prezzo di restare fuori si paga in `aria-required`, che `FieldRenderer` dà a
+ * tutti i suoi e qui va scritto a mano: vedi la riga sull'`<input>`.
  */
 const ID_CF = 'fiscal_code'
 
@@ -602,16 +621,19 @@ export function AnagraficaPersonaleWizard({
         guasti.push({ id: f.id, messaggio })
         continue
       }
-      // Un messaggio solo per tutta la cascata: quattro «Campo obbligatorio»
-      // sotto un controllo solo direbbero che i problemi sono quattro.
+      // Un messaggio solo per tutta la cascata: quattro volte lo stesso messaggio
+      // d'obbligo (`campoObbligatorio`) sotto un controllo solo direbbero che i
+      // problemi sono quattro. La CHIAVE, non la frase: la frase è cambiata il
+      // 25/08 e un commento che la ricopia invecchia con lei.
       if (nascitaGiaDetta) continue
       nascitaGiaDetta = true
       const dove = bersaglioDelCampo(f.id)
       guasti.push({
         id: dove,
         // Sul primo gradino il messaggio non è «manca un dato»: è l'ISTRUZIONE
-        // che sblocca il gradino successivo. «Campo obbligatorio» su una
-        // provincia che il template dichiara facoltativa sarebbe anche falso.
+        // che sblocca il gradino successivo. Il messaggio d'obbligo generico
+        // (`campoObbligatorio`) su una provincia che il template dichiara
+        // facoltativa sarebbe anche falso.
         messaggio: dove === ID_PROVINCIA_NASCITA ? t('persNascitaProvinciaPrima') : messaggio,
       })
     }
@@ -662,8 +684,9 @@ export function AnagraficaPersonaleWizard({
    * il valore (si riscrive quello che c'è) e non sporca `isDirty`.
    *
    * Si accende SOLO sui campi che hanno davvero acceso un messaggio: fare vivi
-   * anche gli altri significherebbe mostrare «Campo obbligatorio» sotto un campo
-   * appena cominciato, cioè spostare il difetto invece di chiuderlo.
+   * anche gli altri significherebbe mostrare il messaggio d'obbligo
+   * (`campoObbligatorio`) sotto un campo appena cominciato, cioè spostare il
+   * difetto invece di chiuderlo.
    */
   function accendiRivalidazione(id: string): void {
     setValue(id, getValues(id), { shouldTouch: true, shouldValidate: false })
@@ -1215,7 +1238,20 @@ export function AnagraficaPersonaleWizard({
         ? t('persSedeRifiutataNotaAttesa')
         : erroreInvio.nota
 
-  const messaggioCf = (errors[ID_CF] as { message?: string } | undefined)?.message
+  /*
+   * ── L'OBBLIGO SI LEGGE NELLA LINGUA DI CHI COMPILA, ANCHE QUI (25/08/2026) ──
+   *
+   * Questi tre campi (codice fiscale, provincia e comune di nascita) sono resi A
+   * MANO — al CF serve un `aria-describedby` in più, alla cascata del luogo un
+   * messaggio suo — e leggevano `error.message` GREZZO, cioè la risposta della
+   * regola, che è italiana per costruzione. MISURATO su questa pagina, passo «I
+   * tuoi dati», dopo un «Avanti» a vuoto: con `KV_LOCALE=en` la colonna mostrava
+   * otto righe inglesi e «Campo obbligatorio» in mezzo. La mappatura costante →
+   * catalogo è UNA SOLA e sta in `messaggio-campo.ts`: qui si chiama, non si
+   * ricopia.
+   */
+  const messaggioCampo = useMessaggioCampo()
+  const messaggioCf = messaggioCampo(errors[ID_CF])
   const badgeParla = badgeHaQualcosaDaDire(esitoCoerenza)
   /** L'avviso sul documento si ripete sopra il bottone d'invio: vedi il riepilogo. */
   const scadenzaISO = stringa(vScadenza)
@@ -1531,6 +1567,21 @@ export function AnagraficaPersonaleWizard({
                   </fieldset>
                 )}
 
+                {/* CHE COSA SIGNIFICA QUELL'ASTERISCO (25/08/2026).
+                    `FieldRenderer` lo stampa accanto a ogni etichetta obbligatoria, e
+                    fino a oggi questo modulo non lo spiegava da nessuna parte:
+                    MISURATO a 390×844 sul passo «I tuoi dati», DIECI asterischi e
+                    otto `aria-required` senza una riga che ne desse il significato.
+
+                    ⚠️ UNA RIGA SOLA PER TUTTI E QUATTRO I PASSI CON CAMPI, e non una
+                    per blocco: la si aggancia a `campiDelPasso`, che è già l'autorità
+                    su quali campi vivono nel passo corrente. Al riepilogo torna un
+                    elenco vuoto e la legenda non compare; al passo «sede» l'obbligo
+                    c'è ma non è un asterisco, e `campiDelPasso` lì è vuoto lo stesso.
+                    Quattro copie sarebbero quattro occasioni perché il quinto passo
+                    nasca senza. */}
+                <LegendaObbligatori campi={campiDelPasso(passo)} />
+
                 {/* ⚠️ L'ORDINE DEI CAMPI È QUELLO DEL TEMPLATE, e non «prima gli
                     ordinari e poi quelli speciali»: `PERSONALE_FIELDS` dichiara che
                     il suo ordine È l'ordine in cui i campi compaiono nel modulo, e
@@ -1582,8 +1633,8 @@ export function AnagraficaPersonaleWizard({
                               // ha già deciso su quale dei due controlli posarlo
                               // (quello abilitato adesso). Le due letture qui
                               // sotto non si sovrappongono mai.
-                              provincia: (errors[ID_PROVINCIA_NASCITA] as { message?: string } | undefined)?.message,
-                              comune: (errors[ID_BELFIORE] as { message?: string } | undefined)?.message,
+                              provincia: messaggioCampo(errors[ID_PROVINCIA_NASCITA]),
+                              comune: messaggioCampo(errors[ID_BELFIORE]),
                             }}
                           />
                         )
@@ -1591,14 +1642,17 @@ export function AnagraficaPersonaleWizard({
 
                       if (f.id === ID_CF) {
                         return (
-                          /* IL CODICE FISCALE, reso a mano — e l'unica ragione è
-                             `aria-describedby`: `FieldRenderer` non accetta
-                             descrittori aggiuntivi, e senza il legame col badge chi
-                             usa uno screen reader non sentirebbe mai che il codice
-                             appena scritto contraddice la data di nascita. Le classi
-                             sono IMPORTATE (`FIELD_BASE`/`FIELD_BASE_ERRORE`), non
-                             riscritte: sono le stesse di ogni altro campo, bordo
-                             d'errore compreso. */
+                          /* IL CODICE FISCALE, reso a mano — la ragione per esteso
+                             sta accanto a `ID_CF`, e in due parole è la FORMA del
+                             badge (un `<div role="status">` con un bottone, e che
+                             c'è solo quando ha qualcosa da dire), non il fatto che
+                             `FieldRenderer` non accetti descrittori: dal 24/08 li
+                             accetta, `aria-describedby` CONCATENA. Senza il legame
+                             col badge chi usa uno screen reader non sentirebbe mai
+                             che il codice appena scritto contraddice la data di
+                             nascita. Le classi sono IMPORTATE
+                             (`FIELD_BASE`/`FIELD_BASE_ERRORE`), non riscritte: sono
+                             le stesse di ogni altro campo, bordo d'errore compreso. */
                           <div key={f.id} className="space-y-2">
                             <label
                               htmlFor={ID_CF}
@@ -1615,6 +1669,24 @@ export function AnagraficaPersonaleWizard({
                               placeholder={f.placeholder}
                               className={`${messaggioCf ? FIELD_BASE_ERRORE : FIELD_BASE} uppercase`}
                               {...(messaggioCf ? { 'aria-invalid': true } : {})}
+                              /* ⚠️ L'OBBLIGO ANCHE A CHI ASCOLTA, e qui va scritto
+                                 a mano perché questo è l'unico campo del passo che
+                                 non passa da `FieldRenderer` — che dal 25/08 lo
+                                 emette per tutti i suoi. Senza questa riga il passo
+                                 «I tuoi dati» aveva DIECI asterischi e OTTO
+                                 dichiarazioni, e il campo scoperto era proprio un
+                                 `textbox`: l'unico dei tre ruoli su cui Chromium la
+                                 proprietà `required` la fa arrivare davvero
+                                 nell'albero di accessibilità (su `combobox` e sul
+                                 campo di caricamento la lascia cadere — misurato).
+                                 `|| undefined` e non `|| false`: `aria-required
+                                 ="false"` su un campo facoltativo è rumore al posto
+                                 del silenzio. Il presidio non è un elenco di `id`
+                                 ma un'invariante derivata dal documento — ogni
+                                 etichetta con l'asterisco porta a un controllo che
+                                 lo dichiara — in
+                                 `__tests__/a11y/anagrafica-personale-a11y.test.tsx`. */
+                              aria-required={f.required || undefined}
                               /* ⚠️ IL BADGE SI AGGANCIA SOLO SE HA QUALCOSA DA DIRE.
                                  `BadgeCoerenzaCf` ritorna `null` quando tace — ed è
                                  lo stato ORDINARIO di un campo appena aperto —

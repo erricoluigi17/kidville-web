@@ -115,7 +115,6 @@ export const CONSENSI_FIELDS: FormField[] = [
       'richiesto il consenso: la loro comunicazione è però necessaria, perché senza di essa ' +
       'la Scuola non può predisporre in sicurezza il servizio.',
     link: '/privacy',
-    link_label: 'Leggi l’informativa completa',
   },
   {
     id: 'consenso_foto_galleria',

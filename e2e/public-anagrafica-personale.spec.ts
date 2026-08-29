@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { IDS, PERSONALE_E2E, STORAGE, attendiFineCaricamento } from './fixtures';
+import { IDS, PERSONALE_E2E, STORAGE, attendiFineCaricamento, attendiNomeFileVisibile } from './fixtures';
 import itPublic from '../messages/it/public.json';
 // Il riepilogo rende i campi `file` con una frase del catalogo `parentForms`
 // (`allegatoCaricato`), non di `public`: il wizard tiene due `useTranslations`.
@@ -317,13 +317,19 @@ test.describe('modulo pubblico dell’anagrafica del personale @solo-chromium', 
     // costruzione, mentre un `label:has(#id)` scritto sulla pagina tornerebbe a essere
     // un selettore che può risolvere a più di un elemento — cioè lo stesso genere di
     // strict mode che questa correzione esiste per togliere.
+    //
+    // ⚠️ E IL RIQUADRO NON BASTA PIÙ GUARDARLO CON `toContainText` (25/08/2026).
+    // Dal 25/08 il nome del file sta nel riquadro TRE volte: intero in uno
+    // `<span class="sr-only">` (serve: senza, il nome accessibile del campo usciva
+    // spezzato) e poi in due metà `aria-hidden` che sono ciò che si vede. Lo
+    // `sr-only` è `clip`-ato ma RESO, quindi entra in `textContent` e in
+    // `innerText`: MISURATO cancellando dalla pagina viva tutte le metà visibili,
+    // `toContainText(NOME)` sul riquadro restava VERDE — con il nome del file
+    // sparito dallo schermo. L'ancoraggio al riquadro resta giusto e resta qui (è
+    // ciò che tiene separate le due facce); a cambiare è COSA vi si legge dentro.
     const riquadro = (id: string) => page.locator(`#${id}`).locator('xpath=ancestor::label[1]');
-    await expect(riquadro('documento_fronte_path')).toContainText(NOME_FILE_FRONTE, {
-      timeout: 20_000,
-    });
-    await expect(riquadro('documento_retro_path')).toContainText(NOME_FILE_RETRO, {
-      timeout: 20_000,
-    });
+    await attendiNomeFileVisibile(riquadro('documento_fronte_path'), NOME_FILE_FRONTE);
+    await attendiNomeFileVisibile(riquadro('documento_retro_path'), NOME_FILE_RETRO);
 
     // ── ⚠️ PERCORSI DIVERSI — l'unica asserzione di questo passo che guardi il SERVER.
     //

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 // Deve restare allineato a scripts/seed-e2e.mjs (UUID fissi, credenziali).
 
@@ -184,4 +184,60 @@ export async function attendiFineCaricamento(page: Page) {
         errore instanceof Error ? errore.message.split('\n')[0] : String(errore),
       );
     });
+}
+
+
+/**
+ * IL NOME DEL FILE COME SI LEGGE A SCHERMO — e non come lo sente chi ascolta.
+ *
+ * ─── PERCHÉ NON BASTA PIÙ CERCARE IL NOME NEL RIQUADRO ─────────────────────
+ *
+ * Dal 2026-08-25 `FileField` (`src/components/features/forms/FieldRenderer.tsx`)
+ * scrive il nome del file TRE volte nello stesso riquadro:
+ *
+ *   <span title="documento.png">                    ← la riga del nome
+ *     <span class="sr-only">documento.png</span>    ← per chi ascolta, intero
+ *     <span aria-hidden>documen</span>              ← la radice, che si accorcia
+ *     <span aria-hidden>…</span>                    ← i puntini, quando serve
+ *     <span aria-hidden>to.png</span>               ← la coda, che non si accorcia
+ *   </span>
+ *
+ * Lo `sr-only` è la riparazione di un difetto vero (spezzare il nome in due
+ * `<span>` lo spezzava anche nel nome accessibile: «cv-di-pr ova.pdf»), ma è
+ * `clip`-ato, non `display:none` — quindi finisce in `textContent`, in
+ * `innerText` E dentro `toBeVisible()`, che per Playwright è vero già con una
+ * scatola di 1×1 px.
+ *
+ * ⚠️ MISURATO IL 2026-08-25, ed è il motivo per cui questa funzione esiste.
+ * Sulla pagina viva di `/iscrizione`, con le rotte intercettate, CANCELLANDO
+ * tutte le metà visibili (`label span[aria-hidden]`) e lasciando il solo
+ * `sr-only`, restavano VERDI tutte e tre le forme che i due spec pubblici
+ * usavano o che erano state proposte per sostituirle:
+ *     getByText('documento.png').first() → toBeVisible()     VERDE
+ *     riquadro → toContainText('documento.png')              VERDE
+ *     riquadro → toContainText(…, { useInnerText: true })    VERDE
+ * Cioè: l'asserzione «il riquadro mostra il nome del file» sopravviveva alla
+ * sparizione completa del nome dallo schermo. Il segnale non è ASSENTE — è
+ * FALSO, e un segnale falso si smaschera in un modo solo: rompendo apposta e
+ * guardando se il guardiano cade.
+ *
+ * ─── COSA GUARDA QUESTA FUNZIONE ───────────────────────────────────────────
+ *
+ * Solo le metà `aria-hidden`, cioè esattamente ciò che una persona LEGGE, e
+ * pretende che rimesse insieme facciano il nome intero — che è l'invariante
+ * dichiarata da `spezzaNomeFile` («RADICE + CODA è sempre il nome, byte per
+ * byte»). I puntini si tolgono per NODO e non con una sostituzione sulla
+ * stringa: sono un nodo loro, e un nome che contenesse «…» non va mutilato.
+ */
+export async function attendiNomeFileVisibile(riquadro: Locator, nome: string) {
+  // `span[title] >` esclude «Sostituisci», che è `aria-hidden` ma è figlio della
+  // <label>, non della riga del nome. Senza il titolo (nessun file) la riga non
+  // esiste affatto e la lista è vuota: il messaggio dice «'' invece di …».
+  const metaVisibili = riquadro.locator('span[title] > span[aria-hidden="true"]');
+  await expect
+    .poll(async () => (await metaVisibili.allTextContents()).filter((t) => t !== '…').join(''), {
+      message: `il riquadro non MOSTRA «${nome}»: a schermo le due metà del nome non lo compongono (la copia \`sr-only\`, che c'è comunque, non conta)`,
+      timeout: 20_000,
+    })
+    .toBe(nome);
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateField, validatePage, isProvinceField } from '@/lib/forms/validate-fields'
+import { validateField, validatePage, isProvinceField, MSG_SCEGLI_OPZIONE, MSG_SCEGLI_DA_ELENCO } from '@/lib/forms/validate-fields'
 import type { FormField } from '@/types/database.types'
 
 const f = (over: Partial<FormField> & { id: string; type: FormField['type'] }): FormField => ({
@@ -32,7 +32,20 @@ describe('validateField — required', () => {
     expect(validateField(f({ id: 'note', type: 'textarea', validation: { min_length: 5 } }), '')).toBeNull()
   })
   it('checkbox obbligatorio senza selezioni → obbligatorio', () => {
-    expect(validateField(f({ id: 'scelte', type: 'checkbox', required: true, options: [{ label: 'A', value: 'a' }] }), [])).toBe('Campo obbligatorio')
+    // ⚠️ NON PIÙ «Campo obbligatorio»: dal 25/08 un gruppo a spunta vuoto risponde
+    // con la frase che il modulo usa già al passo «sede» per lo stesso predicato
+    // («almeno uno di N»). Il ramo per tipo era arrivato al solo `file` il 24/08, e
+    // lasciava la stessa schermata a parlare due dialetti.
+    expect(validateField(f({ id: 'scelte', type: 'checkbox', required: true, options: [{ label: 'A', value: 'a' }] }), [])).toBe(MSG_SCEGLI_OPZIONE)
+    expect(validateField(f({ id: 'menu', type: 'select', required: true, options: [{ label: 'A', value: 'a' }] }), '')).toBe(MSG_SCEGLI_DA_ELENCO)
+    // ⚠️ IL TERZO TIPO, E STA COL MENU. `radio` è reso come `role="radiogroup"`,
+    // che accetta ESATTAMENTE UNA opzione: fino al settimo giro condivideva il ramo
+    // del gruppo a spunta e prometteva «almeno una». Senza questa riga i due rami
+    // possono tornare a fondersi senza che niente diventi rosso — nessun template di
+    // prodotto usa `radio` oggi, ma il costruttore della segreteria lo offre e quei
+    // moduli li compilano i genitori.
+    expect(validateField(f({ id: 'scelta_singola', type: 'radio', required: true, options: [{ label: 'A', value: 'a' }] }), '')).toBe(MSG_SCEGLI_DA_ELENCO)
+    expect(validateField(f({ id: 'scelta_singola', type: 'radio', required: true, options: [{ label: 'A', value: 'a' }] }), undefined)).toBe(MSG_SCEGLI_DA_ELENCO)
     expect(validateField(f({ id: 'scelte', type: 'checkbox', required: true, options: [{ label: 'A', value: 'a' }] }), ['a'])).toBeNull()
   })
 })

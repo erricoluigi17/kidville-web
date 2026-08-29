@@ -123,7 +123,9 @@ interface ComboboxProps {
    * MISURATO al passo «I tuoi dati» di `/anagrafica-personale`: su dieci campi
    * sette portavano l'asterisco e i due combobox no — di cui uno,
    * `codice_belfiore_nascita`, è dichiarato `required: true` nel template e
-   * produce «Campo obbligatorio» quando si preme «Avanti». L'asterisco è
+   * produce il messaggio dell'obbligo (`campoObbligatorio`) quando si preme
+   * «Avanti» — la CHIAVE e non la frase: dal 25/08 quella frase è cambiata, e un
+   * commento che la ricopia invecchia con lei. L'asterisco è
    * l'UNICA convenzione con cui questa pagina dice «questo è obbligatorio»:
    * dove non c'è, non c'è per nessuno — chi guarda e chi ascolta.
    * `aria-required` è il secondo segnale, quello che non dipende da un

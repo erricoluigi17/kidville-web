@@ -196,8 +196,18 @@ export function toccaLaRls(sql: string): boolean {
  * Un commento a blocco ANNIDATO (Postgres li ammette) si chiude qui alla prima `*\/`
  * invece che all'ultima: si toglie meno del dovuto, cioè si resta dal lato che fa
  * scattare il guard. È la direzione giusta in cui sbagliare.
+ *
+ * ── PERCHÉ È `export` (2026-08-25) ──────────────────────────────────────────
+ *
+ * La usa anche `__tests__/lib/insegnanti-template.test.ts`, che dal 2026-08-25 ha
+ * la sua guardia di freschezza sulla fotografia di `candidature_insegnanti`. Il
+ * riconoscimento di quel lock deve girare sulle ISTRUZIONI per la stessa ragione
+ * scritta qui sopra: una migrazione che nel commento dichiara di NON toccare quella
+ * tabella la nomina comunque, e un guard che misura la prosa si spegne cancellando
+ * la prosa. Riscrivere lì un secondo parser SQL avrebbe significato avere due
+ * parser che invecchiano separatamente.
  */
-function senzaCommenti(sql: string): string {
+export function senzaCommenti(sql: string): string {
     let fuori = ''
     let i = 0
     let dentro: 'sql' | 'apice' | 'dollaro' = 'sql'

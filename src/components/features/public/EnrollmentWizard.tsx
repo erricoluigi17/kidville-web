@@ -15,6 +15,7 @@ import {
   CHILD_FIELDS, ADULT_FIELDS, CONSENSI_FIELDS, ENROLLMENT_LIMITS,
 } from '@/lib/forms/enrollment-template'
 import { extractEnrollmentTemplates } from '@/lib/forms/enrollment-default-schema'
+import { LegendaObbligatori } from '@/components/features/public/wizard/pezzi-wizard-pubblico'
 import { validateField, isProvinceField } from '@/lib/forms/validate-fields'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { EMAIL_RIPETUTA_FRA_GENITORI, indiciEmailRipetute } from '@/lib/iscrizioni/email-genitori'
@@ -781,6 +782,15 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                   {/* CHILD step */}
                   {current.kind === 'child' && (
                     <div className="space-y-6">
+                      {/* CHE COSA SIGNIFICA QUELL'ASTERISCO (25/08/2026).
+                          `FieldRenderer` lo stampa accanto a ogni etichetta
+                          obbligatoria; fino a oggi questo modulo non diceva da
+                          nessuna parte che cosa fosse. MISURATO a 390×844 sul
+                          passo «Bambino 1»: DIECI asterischi, dieci
+                          `aria-required`, e in pagina nessun testo che li
+                          spiegasse. La riga decide da sé se comparire — le si
+                          passano i campi del passo, non un elenco scritto a mano. */}
+                      <LegendaObbligatori campi={childFields} />
                       {nsFields(`children.${current.index}`, childFields).map(f => (
                         <FieldRenderer
                           key={f.id}
@@ -841,6 +851,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           </p>
                         </div>
                       )}
+                      <LegendaObbligatori campi={adultFields} />
                       {nsFields(`adults.${current.index}`, adultFields).map(f => (
                         <FieldRenderer
                           key={f.id}
@@ -887,6 +898,7 @@ export function EnrollmentWizard({ scuolaId = null }: { scuolaId?: string | null
                           dà ormai l'header dello step (ramo `consensi` di
                           `heading`), con la stessa icona. Ripeterlo qui creava
                           il secondo `h2` che diceva una cosa diversa dal primo. */}
+                      <LegendaObbligatori campi={CONSENSI_FIELDS} />
                       <div className="space-y-3">
                         {CONSENSI_FIELDS.map(f => (
                           <FieldRenderer

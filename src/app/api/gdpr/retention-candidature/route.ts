@@ -13,8 +13,12 @@ import { BUCKET_CURRICULUM, CV_PREFISSO } from '@/lib/candidature/percorso-cv'
  *
  * ─── PERCHÉ ESISTE, E PERCHÉ È UNA ROUTE E NON UNA FUNZIONE SQL ─────────────
  *
- * Il modulo pubblico `/lavora-con-noi` raccoglie il nome, il recapito e spesso il
- * curriculum di persone adulte che si propongono per un lavoro. La base giuridica
+ * Il modulo pubblico `/lavora-con-noi` raccoglie il nome, il recapito e il
+ * curriculum di persone adulte che si propongono per un lavoro. («E SPESSO il
+ * curriculum», diceva questa riga fino al 2026-08-25: l'allegato è obbligatorio dal
+ * 24/08. Le righe storiche che lo hanno `NULL` — quattro su dieci, àncora
+ * `MISURA-CV` in `src/lib/forms/insegnanti-template.ts` — restano, e sono il
+ * motivo per cui la colonna non è `NOT NULL`, ma non arrivano più.) La base giuridica
  * è l'art. 6.1.b (misure precontrattuali su richiesta dell'interessata): finita la
  * valutazione, quella base **si esaurisce** e non copre più niente. Tenere il
  * curriculum «per il futuro» è una finalità nuova, e per quella serve il consenso

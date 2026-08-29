@@ -242,7 +242,7 @@ afterEach(() => {
   cleanup()
 })
 
-import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti'
+import { CandidatureInsegnanti, CHIAVE_DISPONIBILITA } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti'
 
 /** Apre il dettaglio della prima candidatura e aspetta che sia disegnato. */
 async function apriPrima() {
@@ -265,8 +265,16 @@ function serverConUnaSola(riga: Record<string, unknown>, corpoPatch?: unknown) {
 
 /**
  * Apre l'unica candidatura a schermo. Il segnale di «pannello aperto» è
- * l'INTESTAZIONE e non «Apri il curriculum», perché il curriculum è facoltativo
- * e una candidatura senza allegato non lo disegna affatto.
+ * l'INTESTAZIONE e non «Apri il curriculum», perché una candidatura senza
+ * allegato quel comando non lo disegna affatto.
+ *
+ * ⚠️ E ce ne sono, anche dopo il 2026-08-24. Dal modulo pubblico il curriculum è
+ * ora OBBLIGATORIO, ma questa scheda legge la TABELLA, dove quattro righe su dieci
+ * hanno `cv_path` NULL (àncora `MISURA-CV`) — le candidature arrivate quando il
+ * campo non c'era (prima del
+ * 15/08) o era facoltativo (fino al 24/08). La colonna resta `nullable` proprio
+ * per loro: legare questo aiutante al comando del curriculum lo renderebbe cieco
+ * su quasi metà dell'archivio.
  */
 async function apriLaSola(nome: string) {
   const utils = render(<CandidatureInsegnanti />)
@@ -676,13 +684,28 @@ describe('CandidatureInsegnanti — cambio di sede con una lettura già in volo'
     // coppia arriva subito (e con `total: 3` accende «Mostra altre»), la ricarica
     // per la sola Aversa è quella lenta — cioè la finestra in cui il pulsante
     // sarebbe cliccabile.
+    // ⚠️ LA FINESTRA «LETTURA IN VOLO» SI APRE CON UN INTERRUTTORE, NON CON UN
+    // CRONOMETRO (corretto al giro 4 del 2026-08-25). Qui c'era un
+    // `setTimeout(…, 100)` dentro il finto server contro un `await attendi(50)`
+    // nel test: due timer REALI in gara, e la finestra che il test crede aperta
+    // esisteva solo finché la macchina era abbastanza veloce. Con la suite intera
+    // in parallelo i 50 ms sfondano i 100: la lettura di Aversa è già finita,
+    // l'elenco è quello della sola Aversa (`total: 1`), «Mostra altre
+    // candidature» non c'è PIÙ e `getByRole` lancia «unable to find» — cioè un
+    // rosso che NON è il difetto che questo caso sorveglia. Visto il 2026-08-25
+    // da due collaudatori diversi, e verde alla seconda esecuzione: un test che
+    // passa solo al RETRY, che in questo repo non è un test.
+    //
+    // Adesso la lettura di Aversa finisce quando il test lo decide. La finestra è
+    // aperta per COSTRUZIONE e non per fortuna, e il caso non dipende più dalla
+    // velocità della macchina né dal carico delle altre 980 corsie.
+    let sbloccaAversa!: () => void
+    const aversaInVolo = new Promise<void>((risolvi) => { sbloccaAversa = risolvi })
     fetchMock.mockImplementation((url: string, init?: { headers?: Record<string, string> }) => {
       const u = String(url)
       if (u.includes('id=')) return ok({ data: DETTAGLIO })
       if (init?.headers?.['x-sedi'] === 'sc-aversa') {
-        return new Promise((risolvi) =>
-          setTimeout(() => risolvi({ ok: true, status: 200, json: async () => ({ data: SOLO_AVERSA, total: 1 }) }), 100),
-        )
+        return aversaInVolo.then(() => ({ ok: true, status: 200, json: async () => ({ data: SOLO_AVERSA, total: 1 }) }))
       }
       return ok({ data: ELENCO, total: 3 })
     })
@@ -695,9 +718,13 @@ describe('CandidatureInsegnanti — cambio di sede con una lettura già in volo'
     rerender(<CandidatureInsegnanti />)
     expect(screen.getByRole('button', { name: 'Mostra altre candidature' })).toBeDisabled()
     // …e resta spento per tutta la durata della lettura, non solo per un istante.
-    await attendi(50)
+    // Si cede il controllo a React più volte SENZA far avanzare la lettura: cinque
+    // giri di coda bastano a far girare ogni effetto in sospeso, e nessuno di essi
+    // può chiudere la finestra, perché a chiuderla è `sbloccaAversa()` qui sotto.
+    for (let giro = 0; giro < 5; giro++) await attendi(0)
     expect(screen.getByRole('button', { name: 'Mostra altre candidature' })).toBeDisabled()
 
+    sbloccaAversa()
     await waitFor(() => expect(screen.getByText('Dora Rossi')).toBeInTheDocument())
     // Nessuna accodatura è mai partita: l'offset dell'elenco vecchio non è stato
     // chiesto a nessuna delle due sedi.
@@ -1564,13 +1591,26 @@ describe('CandidatureInsegnanti — curriculum', () => {
 
 describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => {
   it('titolo di studio e disponibilità si leggono come ETICHETTE, mai come valori di database', async () => {
-    // Sono due dei tre campi da cui dipende la decisione, e si leggevano
+    // Sono due dei campi da cui dipende la decisione, e si leggevano
     // `laurea_magistrale` e `tempo_pieno` — con l'underscore — mentre le fasce
-    // accanto, nello stesso pannello, erano tradotte.
+    // accanto, nello stesso pannello, erano tradotte. Erano tre fino al
+    // 2026-08-24: la disponibilità non si chiede più, ma questo caso continua a
+    // esercitarla perché `DETTAGLIO` è una candidatura STORICA, di quelle che
+    // quel valore in tabella ce l'hanno.
     const { container } = await apriPrima()
 
     expect(screen.getByText('Laurea magistrale')).toBeInTheDocument()
     expect(screen.getByText('Tempo pieno')).toBeInTheDocument()
+
+    // ⚠️ E anche l'ETICHETTA, non solo il valore (aggiunto al giro 4 del 2026-08-25).
+    // Il caso qui sotto pretende che su una candidatura NUOVA la riga «Disponibilità»
+    // non compaia; questo pretende che su una STORICA compaia. Senza questa riga il
+    // verso positivo era scoperto per metà: `getByText('Tempo pieno')` non dice CHE
+    // COSA sia «Tempo pieno», quindi sostituire `t('candDisponibilita')` con un'altra
+    // chiave — `t('candAnni')`, per dire — avrebbe lasciato TUTTI i casi del file
+    // verdi, con la scheda su cui si decide un'assunzione che chiama il dato con il
+    // nome di un altro. La coppia etichetta+valore è ciò che rende leggibile la riga.
+    expect(screen.getByText(itAdminAltro.candDisponibilita)).toBeInTheDocument()
 
     // Nessun token con underscore a schermo, in nessun punto del pannello.
     const conUnderscore = (container.textContent ?? '').match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []
@@ -1586,8 +1626,89 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
     })
     await apriPrima()
     expect(screen.getByText('dottorato_di_ricerca')).toBeInTheDocument()
-    // E la disponibilità vuota resta un dato mancante, non un errore.
-    expect(screen.getAllByText('Non indicato').length).toBeGreaterThan(0)
+    // ⚠️ QUI C'ERA `getAllByText('Non indicato').length > 0`, col commento «e la
+    // disponibilità vuota resta un dato mancante, non un errore». Era l'unico
+    // «Non indicato» del pannello: `DETTAGLIO` ha tutti gli altri facoltativi
+    // valorizzati, `note` compresa. Cioè quell'asserzione misurava ESATTAMENTE la
+    // riga che la decisione del 2026-08-24 toglie, e affiancargliene una che ne
+    // pretende l'assenza avrebbe reso il test insoddisfacibile. Sostituita, non
+    // aggiunta. La REGOLA «vuoto → Non indicato» resta sorvegliata su ALTRI
+    // componenti, dove è ancora vera: `StaffDetailPanel-anagrafica` e i due
+    // riepiloghi dei wizard. Su QUESTA `Voce`, che è una funzione privata di
+    // questo file e non la stessa, la sorveglianza la rimettono in piedi i due
+    // casi qui sotto — ed è per questo che le due frasi non si contraddicono.
+  })
+
+  it('la candidatura NUOVA, senza disponibilità, non mostra la riga: né il valore né l’etichetta', async () => {
+    // ⚠️ QUESTO CASO ESISTE PER AVERE UN NOME PROPRIO, e il nome è la metà del
+    // presidio. Fino al 2026-08-25 questa asserzione viveva dentro «un titolo
+    // FUORI enum resta grezzo»: funzionava — misurata, rimettendo la riga
+    // incondizionata il test diventava rosso — ma difendeva una DECISIONE DEL
+    // TITOLARE sotto il nome di un'altra cosa. Il giorno in cui qualcuno rifà il
+    // caso del titolo di studio, quella guardia se ne va con lui e nessun nome
+    // nel file avrà mai annunciato che stava lì.
+    //
+    // La decisione: dal 2026-08-24 la domanda non si fa più, quindi sulle
+    // candidature che il valore non ce l'hanno la riga non compare AFFATTO.
+    // «Disponibilità: Non indicato» accuserebbe chi si è candidato di
+    // un'omissione su una domanda che non gli è mai stata fatta.
+    //
+    // Si NOMINA l'etichetta, non si conta il «Non indicato»: è ciò che distingue
+    // «la riga non c'è» da «la riga c'è e dice Non indicato», che a occhio si
+    // somigliano e sono la differenza fra un dato assente e un'accusa.
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('id=')) {
+        return ok({ data: { ...DETTAGLIO, disponibilita: null } })
+      }
+      return ok(rispostaPredefinita(url))
+    })
+    await apriPrima()
+    expect(
+      screen.queryByText(itAdminAltro.candDisponibilita),
+      'la riga «Disponibilità» compare su una candidatura a cui quella domanda non è ' +
+        'mai stata fatta: se dice «Non indicato», accusa di un’omissione',
+    ).not.toBeInTheDocument()
+    // La controprova che il pannello si è davvero aperto: senza, un dettaglio
+    // mai renderizzato soddisferebbe l'asserzione qui sopra per il motivo
+    // sbagliato — è la forma più silenziosa di test verde.
+    expect(screen.getByText(itAdminAltro.candTelefono)).toBeInTheDocument()
+  })
+
+  it('un facoltativo VUOTO si legge «Non indicato»: la riga resta, e a mancare è il dato', async () => {
+    // ⚠️ QUESTA È LA GUARDIA CHE LA RIMOZIONE DELLA DISPONIBILITÀ HA LASCIATO
+    // SCOPERTA, e va rimessa qui perché `Voce` è privata di QUESTO file.
+    //
+    // Fino al 2026-08-24 il ramo vuoto di `Voce` era esercitato dalla
+    // disponibilità assente (vedi il test qui sopra). Oggi `DETTAGLIO` ha tutti
+    // gli altri facoltativi valorizzati, quindi in questo pannello non compare
+    // più nemmeno un «Non indicato» e nessun caso di questo file lo pretende:
+    // estendere a `Voce` la regola «se è vuoto non stampare la riga» — che per
+    // la disponibilità è la decisione giusta — farebbe sparire in silenzio anche
+    // Email, Telefono e Residenza dalla scheda su cui si decide un'assunzione, e
+    // la suite resterebbe verde.
+    //
+    // Il telefono è il campo giusto per dirlo: la domanda gliela si fa ancora,
+    // quindi lasciarlo in bianco È un'omissione — ed è la differenza esatta con
+    // la disponibilità, che invece nessuno chiede più.
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).includes('id=')) {
+        return ok({ data: { ...DETTAGLIO, telefono: null } })
+      }
+      return ok(rispostaPredefinita(url))
+    })
+    await apriPrima()
+    expect(screen.getByText(itAdminAltro.candTelefono)).toBeInTheDocument()
+    // `getAllByText` e non `getByText`: al singolare questo caso regge solo
+    // finché `DETTAGLIO` tiene valorizzati TUTTI gli altri facoltativi. Il
+    // giorno in cui qualcuno ne svuota un secondo, `getByText` esplode con
+    // «found multiple elements» e il test diventa rosso per una ragione che non
+    // c'entra niente col comportamento che difende — cioè rumore, non un
+    // segnale. Ciò che si pretende è che il ramo vuoto di `Voce` stampi la riga,
+    // e per quello basta che ce ne sia almeno uno.
+    expect(
+      screen.getAllByText(itAdminAltro.candNonIndicato).length,
+      'un facoltativo vuoto non si legge più come dato mancante',
+    ).toBeGreaterThan(0)
   })
 
   it('TUTTE le posizioni del modulo si leggono tradotte, non solo quelle delle fixture', async () => {
@@ -1619,14 +1740,21 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
     expect(chip.filter((testo) => POSIZIONI_AMMESSE.includes(testo))).toEqual([])
   })
 
-  it('ogni valore dei TRE enum del modulo ha la sua etichetta in italiano e in inglese', () => {
+  it('ogni valore dei DUE enum del modulo — e le cinque etichette storiche — ha la sua etichetta in italiano e in inglese', () => {
     // Il perimetro si legge dal template, non si ricopia: una voce aggiunta lì e
     // dimenticata qui tornerebbe a schermo con l'underscore.
     //
-    // Dal 2026-08-15 gli enum sono TRE: `posizioni` è entrato nel modulo con
+    // Dal 2026-08-15 gli enum del modulo erano TRE: `posizioni` è entrato con
     // sette valori che sono token di database (`insegnante_nido`), e a
-    // differenza degli altri due si legge anche in ELENCO, cioè sulla prima
+    // differenza degli altri si legge anche in ELENCO, cioè sulla prima
     // schermata che la Segreteria apre.
+    //
+    // ⚠️ Dal 2026-08-24 sono DUE: la disponibilità è uscita dal modulo. Le sue
+    // cinque etichette sopravvivono al campo perché sopravvivono i DATI — la
+    // colonna resta piena per le candidature arrivate prima — e la loro
+    // sorveglianza si è dovuta spostare, perché quella vecchia leggeva dal
+    // template e col campo sarebbe morta in silenzio. Sta nel secondo blocco,
+    // in coda a questo test.
     //
     // ⚠️ La mappa è per CAMPO e non per valore: `altro` sta in due enum diversi
     // («Altro titolo» e la posizione «Altro») e vuole due chiavi diverse. Con una
@@ -1645,13 +1773,6 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
         master: 'candTitoloMaster',
         altro: 'candTitoloAltro',
       },
-      disponibilita: {
-        tempo_pieno: 'candDispTempoPieno',
-        part_time_mattina: 'candDispPartTimeMattina',
-        part_time_pomeriggio: 'candDispPartTimePomeriggio',
-        supplenze: 'candDispSupplenze',
-        tirocinio: 'candDispTirocinio',
-      },
       posizioni: {
         insegnante_nido: 'candPosInsegnanteNido',
         insegnante_infanzia: 'candPosInsegnanteInfanzia',
@@ -1664,7 +1785,7 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
     }
     const campi = Object.keys(attese)
     const valori = campi.flatMap((campo) => opzioni(campo))
-    expect(valori.length, 'il template non espone più le opzioni: il lock non guarda niente').toBe(20)
+    expect(valori.length, 'il template non espone più le opzioni: il lock non guarda niente').toBe(15)
     // Le posizioni del CAMPO sono le stesse che la route filtra con lo `z.enum`:
     // se un giorno divergessero, questo lock sorveglierebbe una lista e a schermo
     // ne arriverebbe un'altra.
@@ -1678,6 +1799,38 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
         expect(enAdminAltro, `en/adminAltro.json → ${chiave}`).toHaveProperty(chiave)
       }
     }
+
+    // ── LE CINQUE ETICHETTE STORICHE, e la loro fonte NON è più il template ────
+    // Il campo «Disponibilità» è uscito dal modulo il 2026-08-24 (in Kidville si
+    // lavora solo a tempo pieno). Le candidature che quel valore ce l'hanno in
+    // tabella continuano però a leggersi in segreteria, e queste cinque chiavi
+    // sono ciò che le traduce. La fonte è la mappa che le RISOLVE — non un
+    // elenco ribattuto qui, che divergerebbe dalla mappa senza che nulla lo dica.
+    //
+    // ⚠️ È l'unica sorveglianza rimasta su `candDisp*`: `messaggi-chiavi-orfane`
+    // ha sotto tutela il solo namespace `adminModulistica`, e la parità dei
+    // cataloghi guarda le chiavi, non il loro uso.
+    //
+    // ⚠️ E l'esempio che lo dimostra è la rimozione SIMMETRICA, non quella da un
+    // catalogo solo. Misurato: togliendo `candDispTirocinio` dal solo
+    // `en/adminAltro.json` i rossi sono DUE — questo lock e `messaggi-parita-
+    // cataloghi`, che confronta le chiavi namespace per namespace; togliendolo
+    // da `it` E da `en` insieme la parità resta verde (i due cataloghi restano
+    // identici) e il rosso è UNO SOLO, questo. Cioè il caso che qui era portato
+    // ad esempio è l'unico dei due già coperto altrove, e citarlo faceva
+    // sembrare vigilato dal lock sbagliato l'unico che questo lock vigila da
+    // solo. Senza, la segreteria tornerebbe a leggere `tempo_pieno` con
+    // l'underscore sulle candidature storiche: il difetto corretto l'11/08.
+    expect(INSEGNANTE_FIELDS.find((f) => f.id === 'disponibilita'),
+      'il campo è tornato nel template: le cinque voci vanno rimesse fra gli enum derivati',
+    ).toBeUndefined()
+    expect(Object.keys(CHIAVE_DISPONIBILITA)).toHaveLength(5)
+    for (const [valore, chiave] of Object.entries(CHIAVE_DISPONIBILITA)) {
+      expect(itAdminAltro, `it/adminAltro.json → ${chiave} (valore storico «${valore}»)`).toHaveProperty(chiave)
+      expect(enAdminAltro, `en/adminAltro.json → ${chiave} (valore storico «${valore}»)`).toHaveProperty(chiave)
+    }
+    expect(itAdminAltro).toHaveProperty('candDisponibilita')
+    expect(enAdminAltro).toHaveProperty('candDisponibilita')
   })
 })
 

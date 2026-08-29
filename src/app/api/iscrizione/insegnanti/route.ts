@@ -281,9 +281,9 @@ function testo(v: unknown): string | null {
  *
  * ⚠️ PERCHÉ NON SI CONCATENA E BASTA. `redact()` lascia in chiaro il valore di
  * `esito` solo se rispetta `FORMA_ENUMERATO` (`src/lib/logging/redact.ts`), che
- * impone al massimo 64 caratteri. Misurato sui 13 id di `INSEGNANTE_FIELDS`:
- * `campi-non-validi-` più tutti gli id ordinati è lungo **158** caratteri, e già
- * con **sei** campi non validi si arriva a 78. Sopra il tetto non si perde il
+ * impone al massimo 64 caratteri. `campi-non-validi-` più tutti gli id di
+ * `INSEGNANTE_FIELDS` ordinati sta LARGAMENTE sopra quel tetto, e bastano pochi
+ * campi respinti per superarlo. Sopra il tetto non si perde il
  * dettaglio: si perde TUTTO, perché l'intero valore diventa `[redatto:str/N]` e
  * nel log non resta nemmeno la parola «campi-non-validi». Cioè si perde la
  * classificazione del ramo — e il caso che lo innesca è il modulo spedito quasi
@@ -293,6 +293,34 @@ function testo(v: unknown): string | null {
  * gli id entrano finché ci stanno, e i tagliati si CONTANO: `+7` dice che sopra
  * ce n'erano altri sette. Un elenco troncato senza il conteggio direbbe una
  * cosa falsa — che i campi respinti erano quelli e basta.
+ *
+ * ⚠️ QUI C'ERANO DUE NUMERI — «i 13 id» e «158 caratteri» — e il 2026-08-24 erano
+ * ENTRAMBI falsi: gli id erano 14 (il 13 risaliva a prima che `posizione_altro`
+ * entrasse nel modulo) e la concatenazione stava a quasi tre volte il tetto.
+ * Sono stati tolti, non aggiornati: il ragionamento regge senza cifre, e ogni
+ * cifra scritta qui torna falsa al primo campo aggiunto o tolto — cioè entro un
+ * rilascio.
+ *
+ * ⚠️ E la prova migliore di questa regola è che la prima stesura di questo
+ * paragrafo, al posto del «158», una cifra ce l'aveva rimessa — «179» — ed era
+ * sbagliata di uno: al commit del 2026-08-24, con `disponibilita` ancora nel
+ * modulo, la concatenazione senza taglio misurava **178** caratteri, contati
+ * unendo gli id con lo stesso separatore di `esitoConElenco` invece che a mente.
+ * Cioè il paragrafo che spiega perché le cifre non si scrivono ne ha scritta una
+ * falsa alla prima occasione, e nessun test poteva contraddirla: quello che
+ * misura la lunghezza guarda l'esito GIÀ TAGLIATO, non la concatenazione piena.
+ *
+ * Quel «178» è rimasto — è la PROVA dell'errore, e senza «sbagliata di uno»
+ * sarebbe un'affermazione non verificabile — ma è DATATO e non descrive più
+ * niente: tolto `disponibilita`, poche ore dopo, la concatenazione era già
+ * scesa. Perciò la regola, detta per esteso: qui dentro nessuna cifra racconta
+ * lo stato di OGGI. L'unica che resta vale come reperto, ed è appesa al giorno
+ * in cui è stata contata.
+ *
+ * La misura vera la fa il test, che la rifà a ogni esecuzione invece di
+ * ricordarsela:
+ * `candidature-insegnanti-log-senza-pii.test.ts` verifica che l'esito stia in 64
+ * caratteri e che dopo `redact()` si legga ancora. `ESITO_MAX` non è cambiato.
  *
  * L'alternativa (id in un campo separato) non regge alla misura: `campi_ko` non
  * è una chiave in lista bianca, quindi ogni id uscirebbe `[redatto:str/N]`. La
@@ -948,10 +976,22 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
     // `public-candidatura-insegnante.spec.ts` — che su `main` era verde —
     // aspettava 201 e ne prendeva un altro.
     //
-    // Il tetto è cinque giri: `riga` ha 15 chiavi e un database che ne perde
-    // cinque non è «non migrato», è un altro database. Senza tetto, un errore
+    // Il tetto è cinque giri: un database che perde cinque colonne del record
+    // non è «non migrato», è un altro database. Senza tetto, un errore
     // `PGRST204` che nominasse una colonna che non stiamo scrivendo — o che non
     // sappiamo leggere — farebbe girare l'INSERT all'infinito.
+    //
+    // ⚠️ QUI C'ERA UNA CIFRA — «`riga` ha 15 chiavi» — ed era falsa: il
+    // 2026-08-24 le chiavi erano 16, e prima della rimozione della disponibilità
+    // erano 17. È la terza cifra ribattuta a mano trovata falsa in questo stesso
+    // file — le altre due, «i 13 id» e «158 caratteri», stanno nel blocco che
+    // spiega `esitoConElenco` (si trova cercando `ESITO_MAX`, non contando le
+    // righe: anche una distanza è un numero che invecchia). Le tre hanno la
+    // stessa causa: un numero scritto in prosa sopra un insieme che
+    // cambia a ogni campo aggiunto o tolto. Il conto vero non si scrive qui —
+    // `Object.keys(riga).length` ce l'ha a portata di mano, e il perimetro
+    // ESATTO lo asserisce `candidature-insegnanti-post.test.ts` con
+    // un'uguaglianza CHIUSA su `COLONNE_AMMESSE`, derivata dal template.
     //
     // ⚠️ SI LAVORA SU UNA COPIA E NON SI MUTA `riga`, e non è pulizia: `riga` è
     // ciò che il ramo `23505` più sotto rilegge per ritrovare la candidatura viva
@@ -1511,9 +1551,74 @@ export const POST = withRoute('iscrizione/insegnanti:POST', async (request: Next
       // una candidatura che all'approvazione farà nascere un account docente da
       // una che non ne farà nascere nessuno: senza, quel bivio non è contabile.
       docente: gradiDallePosizioni(posizioni).length > 0,
-      // Il modulo raccoglie curriculum, oppure li perde? Prima di oggi la
-      // domanda non aveva senso — nessuna rotta di caricamento esisteva — e da
-      // oggi è la misura che dice se la funzione appena aperta funziona.
+      // ⚠️ QUESTO BOOLEANO HA PERSO IL SUO VERSO FALSO IL 2026-08-24, e la nota
+      // serve a chi lo interrogherà. Nato il 15/08 per rispondere a «il modulo
+      // raccoglie curriculum, oppure li perde?», misurava qualcosa finché il
+      // campo era facoltativo: in produzione i `false` erano **quattro su
+      // dieci** (la cifra, con la sua ora, sta nell'àncora `MISURA-CV` in
+      // `src/lib/forms/insegnanti-template.ts`; qui non si ribatte, perché
+      // cresce di giorno in giorno).
+      // Da quando `cv_path` è OBBLIGATORIO una candidatura senza curriculum non
+      // arriva a questa riga — si ferma con un 400 — e `con_cv` vale `true` su
+      // ogni invio nuovo.
+      //
+      // Si tiene perché il verso VERO continua a dire una cosa: un `false` qui
+      // dentro, oggi, vorrebbe dire che l'obbligo è saltato da qualche parte.
+      //
+      // ⚠️ E QUI, IL 2026-08-25, C'ERA SCRITTA UNA COSA FALSA — corretta perché è
+      // il tipo di errore che questo repo paga più caro: non un segnale assente,
+      // un segnale FALSO, scritto apposta perché qualcuno ci si fidasse. Diceva:
+      // «chi cerca in `app_log` quante persone si sono fermate per il curriculum
+      // NON deve cercarlo qui: la risposta sta nel ramo del rifiuto,
+      // `esito = 'campi-non-validi-cv_path'`». NON è la risposta a quella domanda.
+      //
+      // MISURATO su `app_log`, tutta la vita della rotta (11 → 25 agosto):
+      //     select coalesce(sum(occorrenze), 0) from app_log
+      //     where route = '/api/iscrizione/insegnanti'
+      //       and contesto->'campi'->>'esito' like 'campi-non-validi%';
+      // → **ZERO**, contro 237 `candidatura-ricevuta`. Non è dedup e non è il
+      // livello: dalla stessa rotta i `warn` `duplicata` (21), `copia-sede-non-inviata`
+      // (5) e `sede-non-valida` (2) stanno tutti in tabella. È che quel ramo NON
+      // PUÒ scattare per chi compila dal browser: il client e il server chiamano
+      // lo STESSO `validateField` — per progetto — quindi il gate del client
+      // intercetta esattamente la popolazione che quel contatore dovrebbe
+      // misurare. La richiesta non parte proprio: non arriva un byte.
+      //
+      // Quindi, detto nel verso giusto:
+      //   · `esito = 'campi-non-validi-cv_path'` è un TRIPWIRE, non un misuratore.
+      //     Se compare vuol dire che il blocco del client è saltato, oppure che ha
+      //     scritto un client non-browser. È giusto che esista, ed è giusto che sia
+      //     `warn`. Ma **zero lì non vuol dire «nessuno si è fermato»**;
+      //   · LA CADUTA D'IMBUTO NON È OSSERVABILE, e nessuno dovrebbe cercarla
+      //     credendo di trovarla: chi non allega e chiude la pagina esiste solo nel
+      //     browser, e nessun modulo di questo repo logga i blocchi di validazione
+      //     lato client;
+      //   · ⚠️ E NEMMENO `curriculum-caricato` CONTRO `candidatura-ricevuta` LA
+      //     MISURA. Il 2026-08-25, in queste stesse righe, c'era scritto che quella
+      //     differenza «c'è già e non costa una riga» e «misura giorno per giorno
+      //     chi allega e poi non invia»: è il SECONDO segnale falso di questo
+      //     blocco, scritto tre righe sotto quello che nega l'osservabilità, e
+      //     misurato prima di toglierlo:
+      //         2026-08-19  10 caricati /  18 ricevute  → −8
+      //         2026-08-21  30 /  34 → −4      2026-08-22  31 /  39 → −8
+      //         2026-08-24  44 /  46 → −2      totale 226 / 237 → −11
+      //     «−11 persone hanno allegato e non inviato» non è un numero: è una
+      //     sottrazione fra due popolazioni che non si sovrappongono.
+      //       · `candidatura-ricevuta` conta ANCHE le candidature SENZA curriculum
+      //         (quattro su dieci — àncora `MISURA-CV`), che per costruzione non
+      //         hanno nessun caricamento dietro — cioè il fatto dichiarato tre
+      //         paragrafi più su, e dimenticato quattro righe più giù;
+      //       · `curriculum-caricato` conta CARICAMENTI, non persone: chi ri-sceglie
+      //         il file logga due volte e lascia in più un oggetto mai reclamato
+      //         (226 eventi contro 136 righe con `cv_path`). E i due eventi non
+      //         portano nessuna chiave in comune che leghi il caricamento al
+      //         tentativo, quindi non sono congiungibili nemmeno volendo.
+      //     Al più quella differenza è un TETTO SUPERIORE, e sui giorni precedenti
+      //     l'obbligo non è nemmeno quello.
+      // Il prezzo di questo obbligo — quattro candidature storiche su dieci,
+      // àncora `MISURA-CV` — resta una cosa DECISA, non una cosa sorvegliata. Chi vorrà sorvegliarla
+      // aggiunga un segnale — un identificativo di tentativo che `curriculum-caricato`
+      // e `candidatura-ricevuta` condividano — e non interroghi questi due.
       con_cv: cvPath !== null,
     })
 

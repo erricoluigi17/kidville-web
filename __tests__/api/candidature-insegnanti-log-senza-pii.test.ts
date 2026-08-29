@@ -175,7 +175,6 @@ const candidatura = (extra: Record<string, unknown> = {}) => ({
   // `posizioni` e non più `gradi`: dal 2026-08-15 lo zod della rotta pretende
   // questo campo, e le fasce le deriva la route da qui.
   posizioni: ['insegnante_nido'],
-  disponibilita: 'tempo_pieno',
   presa_visione_informativa: true,
   ...extra,
 })
@@ -376,16 +375,30 @@ describe('i log della candidatura non portano fuori la persona', () => {
     //
     // `redact()` lascia in chiaro il valore di `esito` solo se rispetta
     // `FORMA_ENUMERATO`, che impone al massimo 64 caratteri. Concatenando gli id
-    // dei 13 campi del modulo il caso peggiore è lungo 158 e già con sei si
-    // arriva a 78: sopra il tetto l'INTERO valore diventa `[redatto:str/N]`, e
-    // nel log non resta nemmeno la parola «campi-non-validi» — cioè si perde la
-    // classificazione del ramo, non solo il dettaglio.
+    // di TUTTI i campi del modulo si sta largamente sopra quel tetto, e bastano
+    // pochi campi respinti per superarlo: sopra il tetto l'INTERO valore diventa
+    // `[redatto:str/N]`, e nel log non resta nemmeno la parola
+    // «campi-non-validi» — cioè si perde la classificazione del ramo, non solo
+    // il dettaglio.
+    //
+    // ⚠️ QUI C'ERANO TRE CIFRE — «i 13 campi del modulo», «158» e «già con sei si
+    // arriva a 78» — ed erano scadute o false. Sono le stesse che `route.ts`
+    // dichiara di aver tolto il 2026-08-24 perché false: la frase viveva in DUE
+    // copie, nate nello stesso commit dell'11/08 (`a9dcc6d8`), e quel giorno ne è
+    // stata corretta una sola. Una cifra duplicata non si scopre quando la si
+    // scrive, ma quando una delle due si muove. Sono state tolte invece che
+    // aggiornate, per la ragione scritta per esteso accanto a `ESITO_MAX`: una
+    // cifra in un commento torna falsa al primo campo aggiunto o tolto, e qui i
+    // campi si tolgono — questo stesso caso ne ha appena perso uno.
     //
     // Non è un caso di laboratorio: è il modulo spedito quasi vuoto, che è la
     // forma più comune di invio fallito.
-    // Otto campi respinti: i quattro obbligatori lasciati vuoti più quattro
-    // facoltativi compilati male. I soli obbligatori sarebbero quattro, cioè
-    // sotto il tetto — e un test che si fermasse lì misurerebbe il caso comodo.
+    //
+    // I campi respinti sono i quattro obbligatori lasciati vuoti più i
+    // facoltativi compilati male qui sotto. Non si contano a mano: quello che
+    // deve valere è che siano ABBASTANZA da far scattare il TAGLIO, e a
+    // pretenderlo è l'asserzione in coda al test. I soli obbligatori non
+    // basterebbero — un test che si fermasse lì misurerebbe il caso comodo.
     //
     // ⚠️ `posizioni` NON può restare fra i vuoti: è un array e lo zod lo pretende
     // con almeno un elemento, quindi una stringa vuota farebbe uscire la
@@ -401,7 +414,6 @@ describe('i log della candidatura non portano fuori la persona', () => {
         residence_province: 'XY',
         residence_city: 'x'.repeat(101),
         anni_esperienza: 999,
-        disponibilita: 'quando-capita',
       },
     })
 
@@ -416,6 +428,16 @@ describe('i log della candidatura non portano fuori la persona', () => {
     expect(String(avviso?.campi.esito).length, 'l’esito supera il tetto di `FORMA_ENUMERATO`').toBeLessThanOrEqual(64)
     expect(dopo.esito, 'la classificazione del ramo è stata redatta via').toContain('campi-non-validi')
     expect(dopo.esito).not.toContain('[redatto')
+
+    // ⚠️ E IL TAGLIO DEVE ESSERE SCATTATO DAVVERO. Le tre asserzioni qui sopra
+    // sono verdi anche su un esito corto, cioè sul ramo comodo: nel tetto ci
+    // starebbe da sé, e questo caso smetterebbe di misurare ciò per cui esiste
+    // senza dirlo. Il `+N` finale è la firma del ramo — l'elenco troncato che si
+    // porta dietro il conteggio di quelli rimasti fuori.
+    expect(
+      String(avviso?.campi.esito),
+      'il troncamento non è scattato: questo caso non sta più misurando il suo ramo',
+    ).toMatch(/\+\d+$/)
   })
 
   it('nessuna chiamata a `logEvento` porta una chiave che nomina un dato personale', async () => {

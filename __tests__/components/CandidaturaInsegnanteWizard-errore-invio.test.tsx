@@ -46,6 +46,7 @@ const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' 
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
 
 import { CandidaturaInsegnanteWizard } from '@/components/features/public/CandidaturaInsegnanteWizard'
+import { allegaCurriculumDiProva } from '../helpers/allega-curriculum'
 
 /** La prosa che il server manda, e che NON deve comparire né a schermo né nei log. */
 const PROSA_DEL_SERVER = 'Non siamo riusciti a registrare la candidatura.'
@@ -78,6 +79,16 @@ type EsitoPost =
 function mockRete(esiti: EsitoPost[]): void {
   let n = 0
   fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+    // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+    // `/api/iscrizione/insegnanti` è un PREFISSO di
+    // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+    // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+    // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+    // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+    // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+    if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+    }
     if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
       const e = esiti[Math.min(n, esiti.length - 1)]
       n += 1
@@ -90,6 +101,30 @@ function mockRete(esiti: EsitoPost[]): void {
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
   })
 }
+
+/**
+ * Il percorso che `POST /api/iscrizione/insegnanti/upload` restituisce, e il nome
+ * del file che si sceglie per ottenerlo.
+ *
+ * ⚠️ Servono dal 2026-08-24, quando il curriculum è diventato OBBLIGATORIO:
+ * l'elicottero che attraversa il passo «Il tuo profilo» senza allegare niente non
+ * arriva più ai consensi, e cadrebbe in TIMEOUT su `waitFor` — cioè con uno stack
+ * che si legge come «il wizard è rotto» invece che «manca un allegato».
+ */
+const PERCORSO_CV = 'candidature/11111111-2222-4333-8444-555555555555-cv.pdf'
+const NOME_FILE_CV = 'cv-collaudo.pdf'
+
+/**
+ * Allega un curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *
+ * ⚠️ L'ATTESA IN CODA NON È FACOLTATIVA: il caricamento è asincrono, e senza di
+ * essa si preme «Avanti» prima che il campo abbia preso il percorso — cioè si
+ * collauda esattamente il caso che si voleva evitare.
+ */
+/** Allega il curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *  La sonda vive in `__tests__/helpers/allega-curriculum`: erano SEI copie identiche,
+ *  e il giorno in cui il riquadro ha cambiato impaginazione sono cadute tutte e sei. */
+const allegaCurriculum = () => allegaCurriculumDiProva(NOME_FILE_CV)
 
 /** Compila tutto e si ferma sul riepilogo, senza premere «Invia candidatura». */
 async function compilaFinoAlRiepilogo(): Promise<void> {
@@ -104,6 +139,7 @@ async function compilaFinoAlRiepilogo(): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
   fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
+  await allegaCurriculum()
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() =>
@@ -121,11 +157,22 @@ async function compilaEInvia(): Promise<void> {
   fireEvent.click(screen.getByRole('button', { name: itPublic.candInvia }))
 }
 
-/** Quanti POST di candidatura sono davvero partiti. */
+/**
+ * Quanti POST di candidatura sono davvero partiti.
+ *
+ * ⚠️ UGUAGLIANZA ESATTA, NON `includes`, e la differenza si è vista il
+ * 2026-08-24. `/api/iscrizione/insegnanti` è un PREFISSO di
+ * `/api/iscrizione/insegnanti/upload`, che è un POST anche lui: da quando il
+ * curriculum è obbligatorio ogni percorso di compilazione ne fa uno, e con
+ * l'`includes` questo contatore rispondeva DUE dove i POST di candidatura erano
+ * uno. MISURATO: il caso «tre clic su Invia, parte un solo POST» — cioè la
+ * guardia contro il doppio invio — è caduto accusando il wizard di aver spedito
+ * due candidature, mentre la seconda era il caricamento dell'allegato.
+ */
 function postPartiti(): number {
   return fetchMock.mock.calls.filter(
     ([url, init]) =>
-      String(url).includes('/api/iscrizione/insegnanti') &&
+      String(url) === '/api/iscrizione/insegnanti' &&
       (init as RequestInit | undefined)?.method === 'POST',
   ).length
 }
@@ -364,6 +411,16 @@ describe('CandidaturaInsegnanteWizard — l’invio fallisce', () => {
 
   it('201 con un corpo ILLEGGIBILE: resta un successo, e il corpo strano finisce in un log', async () => {
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+      // `/api/iscrizione/insegnanti` è un PREFISSO di
+      // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+      // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+      // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+      // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+      // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+      if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+      }
       if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
         return Promise.resolve({
           ok: true,

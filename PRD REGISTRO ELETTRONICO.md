@@ -94,6 +94,64 @@
 
 ---
 
+## ⏸️ Changelog — Il digest delle news è DISATTIVATO in produzione, tre giorni prima che partisse — 2026-08-29 (nessuna modifica al codice)
+
+**Il PRD sosteneva ancora che il digest del 1° settembre non avrebbe sfondato nessun tetto, sulla
+base di «31 iscritti» misurati il 20/08.** Rimisurato il 29/08, tre giorni prima della partenza:
+
+| Sede | Alunni iscritti | Email famiglie distinte |
+|---|---|---|
+| Kidville Giugliano | 223 | **245** |
+| Kidville Cesa | 142 | **143** |
+| Kidville Aversa | 71 | **84** |
+| *(Kidville Demo — dati di prova)* | 25 | 33 |
+| **Totale sedi vere** | **436** | **472** |
+
+⚠️ Contati con `stato = 'iscritto'`, **ed è la conta giusta**: in produzione esistono solo
+`iscritto` e `ritirato`. Verificato prima di riportare il numero, perché `'sospeso'` sta **dentro**
+`STATI_CON_CANALE_FAMIGLIA` e, se fosse esistito, contare il solo `iscritto` sarebbe stato una
+sottostima.
+
+### Il difetto residuo che la correzione del 20/08 non aveva chiuso
+
+La correzione del 20/08 (in produzione dalla PR #98) ha chiuso la **perdita silenziosa**: al `429`
+il digest si ferma, non marca `inviata_il`, salva l'avanzamento. **Non ha chiuso la latenza.**
+Verificato nel codice il 29/08:
+
+- il ripescaggio delle edizioni in coda vive in `eseguiDigest`, e `api/news/cron/run/route.ts:272`
+  lo invoca **solo** se `job === 'digest'`;
+- il job `digest` è il cron **`'0 8 1 * *'` — mensile**;
+- `eseguiTick` (il battito ogni 10 minuti) **non tocca il digest**: zero riferimenti, verificato.
+
+⇒ Le famiglie oltre il tetto giornaliero non avrebbero atteso «~5 giorni» come scrive la spec
+(`2026-08-20-news-digest-ritentabile-design.md:150`), ma **il 1° ottobre**. Quella frase presuppone
+un ripescaggio giornaliero **che non esiste**.
+
+### Decisione del titolare (2026-08-29): piano Resend già alzato, e digest comunque fermato
+
+```sql
+SELECT cron.alter_job(job_id := 8, active := false);   -- 'news-digest'
+```
+
+⚠️ `UPDATE cron.job SET active = false` è **negato** (`42501: permission denied for table job`): su
+pg_cron si passa da `cron.alter_job`. **Verificato dopo l'esecuzione**, non dedotto dall'assenza di
+errore: `news-digest` `active = false`; `news-tick` (jobid 7) e `news-retention` (jobid 9) **restano
+attivi e intatti**.
+
+**Conseguenza da conoscere prima di riattivare.** Il ripescaggio cerca righe **già esistenti** in
+`news_digest_edizioni` con `inviata_il IS NULL`. A digest fermo l'edizione di **agosto non viene
+creata affatto**: non è «in coda», non esiste — quindi **non verrà recuperata da sola** riattivando
+il cron. Oggi in tabella c'è una sola edizione, luglio 2026, inviata il 01/08 a 33 destinatari:
+nessuna pendenza.
+
+**Come si rimette in moto**, quando si vorrà:
+- riattivare il cron → `SELECT cron.alter_job(job_id := 8, active := true);`
+- recuperare agosto → **Admin → News → pannello Digest**: si scelgono mese e anno e si preme
+  *Genera e invia*. È idempotente lato server (`ON CONFLICT` + guardia `inviata_il`): un mese già
+  inviato non parte due volte.
+
+---
+
 ## 🔑 Changelog — Google Play ha rifiutato l'aggiornamento per una password che non era di nessuno — 2026-08-29 (nessuna modifica al codice)
 
 **Il 29/08 alle 06:27 Google ha rifiutato l'aggiornamento** di `it.kidville.app`: *«Violation of

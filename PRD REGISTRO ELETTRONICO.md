@@ -94,6 +94,48 @@
 
 ---
 
+## 🔑 Changelog — Google Play ha rifiutato l'aggiornamento per una password che non era di nessuno — 2026-08-29 (nessuna modifica al codice)
+
+**Il 29/08 alle 06:27 Google ha rifiutato l'aggiornamento** di `it.kidville.app`: *«Violation of
+Play Console Requirements → Login credentials are incorrect»*, con allegata la schermata di login di
+Kidville e l'errore **«Credenziali non valide»** su `test.inf.genitore1@kidville.test`.
+
+Non era un contenuto, una norma sui minori o la privacy: **il revisore non riusciva a entrare.**
+
+| Misura del 29/08 | Esito |
+|---|---|
+| account demo in `auth.users` | **sano**: non bannato, non cancellato, ultimo accesso **riuscito** il 26/08 |
+| password dedicata sul disco del titolare (24 caratteri) | **apre l'account** — login vero su GoTrue di produzione, **HTTP 200** |
+| campo *Password* in *Contenuti app → Dettagli di accesso* | stringa **diversa, di 28 caratteri** |
+| quella stringa nel repo, in `git log --all -S`, sul disco | **zero riscontri** |
+
+Non era una password vecchia né ruotata: è stata **generata, incollata nella Console e mai impostata
+su nessun account**. Nessun controllo poteva accorgersene, perché il campo *risultava compilato*.
+
+🔴 **È lo stesso difetto già trovato il 04/08 su App Store Connect** (§ «I quattro bloccanti»,
+punto 1), da cui erano nati `scripts/allinea-password-revisore.mjs` e la frase *«un campo compilato
+non è una credenziale che funziona»*. La frase era scritta, il presidio no: **viveva in un solo
+store**, e tre settimane dopo l'errore si è ripetuto sull'altro. Le due regole che mancavano — la
+verifica su *tutti* gli store che consegnano quell'account, e il confronto delle **lunghezze** come
+smentita a costo zero — sono ora in `docs/store-submission.md`.
+
+**Correzione applicata il 29/08**: sostituita la password nella Console (**non** cambiata quella
+dell'account: lo stesso account è l'account demo di Apple, allinearlo a Google avrebbe rotto la
+prossima revisione iOS). Verifica **per impronta SHA-256** del valore nel campo contro il file, mai
+a occhio — `I`/`l`/`1` e `O`/`0` si confondono e leggere una password da uno screenshot è un modo
+per sbagliare. Poi invio, e **seconda lettura a scadenza** dei «controlli rapidi» (max 14 minuti):
+*«Le modifiche sono ora in fase di revisione»*, Dashboard **«In revisione»**. Revisione attesa
+**entro 7 giorni ⇒ ~05/09**.
+
+✅ **L'app pubblicata non è mai andata giù**: *Produzione · Attivo · 18 dispositivi* per tutta la
+durata del rifiuto. Cade l'**aggiornamento**, non l'app. Una sola violazione aperta, nessun altro
+rilievo.
+
+⛔ **Fino all'esito**: non ruotare le credenziali demo e non toccare gli account TEST. Una rotazione
+in questi giorni rimette il revisore davanti allo stesso errore e costa altri 7 giorni.
+
+---
+
 ## 🧹 Changelog — La domanda sulla disponibilità non si fa più, e il curriculum diventa obbligatorio — 2026-08-25 (branch `feat/candidature-cv-obbligatorio`)
 
 > ### Come è stato preparato questo lavoro — scritto al passato, perché non invecchi

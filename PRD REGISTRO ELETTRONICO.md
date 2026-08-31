@@ -94,6 +94,181 @@
 
 ---
 
+## 📇 Changelog — Le anagrafiche della primaria da Argo, e i 110 bambini che il registro non ha — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
+
+**Sulla primaria, 57 bambini su 76 avevano un solo genitore collegato, e la parentela era `NULL`
+su tutti e 95 i legami — su 586 su 623 in tutto il database.** Quel `NULL` non è cosmetico:
+`invitaGenitore` dà le credenziali solo a chi è `mother` o `father`, quindi una parentela vuota
+non è un errore, è un'**esclusione silenziosa**.
+
+La fonte è **Argo Alunni Web** (codice scuola `SP29900`, a.s. 2025/26, 163 alunni su 10 classi),
+letto con `Altro → Esporta Dati → Esportazioni personalizzabili`: 65 campi, alunno e genitori
+**sulla stessa riga**. Il «rischio numero uno» del recupero da KinderTap — l'aggancio per nome —
+qui non esiste: padre e madre arrivano già attaccati al figlio, con la parentela scritta
+nell'intestazione della colonna.
+
+### Quattro misure che hanno smentito altrettante aspettative
+
+- 🔴 **Il terzo posto adulto di Argo non contiene nessuno di nuovo.** `CF_GEN` era valorizzato 81
+  volte e in **81 casi su 81** ripeteva padre o madre. Trattarlo come un terzo adulto avrebbe
+  creato **81 genitori doppioni**, ognuno collegato al proprio figlio — e un duplicato non dà
+  errore, dà due righe. La regola sta in `scripts/lib/argo.mjs` e tre test la presidiano: tolta la
+  deduplicazione, diventano rossi.
+- 🔴 **In Argo il 2026/2027 è VUOTO**: zero classi. Le sue classi sono del 2025/26, e copiarle
+  avrebbe **retrocesso 76 bambini di un anno**, in silenzio. Argo dà anagrafica e genitori; il
+  perimetro e la classe restano di Kidville.
+- 🔴 **`Sede/Plesso` esiste in Argo ma vale `SCUOLA PRIMARIA` su tutte e dieci le classi**: la sede
+  lì non è registrata. La corrispondenza corso→sede è stata **misurata dai comuni di residenza** —
+  corso A: Giugliano 68 su 84; corso B: Cesa 25, Gricignano 18, Sant'Antimo 10, Aversa 10 — non
+  dedotta dall'ordine alfabetico. È lo stesso metodo che ad Aversa ha retto, e la stessa cautela
+  che a KinderTap serviva: là l'inferenza ovvia («La Favola» → Cesa) era sbagliata.
+- 🔴 **Argo ha meno genitori del previsto**: su 163 bambini, solo **47 hanno due adulti distinti**,
+  105 ne hanno uno e 11 nessuno. Il guadagno reale è stato di 25 legami, non dei ~57 sperati.
+
+### Cosa è stato scritto in produzione (2026-09-01)
+
+| | prima | dopo |
+|---|---|---|
+| legami genitore-figlio sulla primaria | 95 | **120** |
+| `relation_type` `NULL` | 95 | **49** (46 riempiti da Argo, 16 non risolvibili) |
+| bambini con **un solo** genitore | 57 | **33** |
+| `alunni.data_iscrizione` vuota | 76 | **25** |
+| genitori nuovi in anagrafica | — | **23** |
+
+Credenziali: **17 spedite**, **6 «casella condivisa»** — entrambi i genitori usano la stessa
+email, `utenti.email` è UNIQUE e GoTrue rifiuta un indirizzo già registrato: il bambino viene
+collegato all'account che quella casella ce l'ha già, e nessuna seconda password parte.
+
+### 🔻 Due cose emerse che NON sono state toccate, e vanno decise
+
+1. **Circa 81 bambini frequentavano la primaria nel 2025/26 e in Kidville non risultano.** I 110
+   presenti in Argo e assenti qui non sono solo le due quinte uscite (29): sono sparsi su tutte e
+   dieci le classi. Elenco in `05-in-argo-non-in-kidville.xlsx`. Non creati: il perimetro sono gli
+   elenchi 2026/27.
+2. **Cinque bambini hanno due codici fiscali diversi nei due archivi.** Quattro sono confermati
+   dalla data di nascita *e* dalla progressione di classe esatta di un anno: è la stessa persona,
+   e uno dei due sistemi ha il codice sbagliato. Non scritti — la chiave è in conflitto e la
+   decisione è della segreteria. Elenco in `03-cf-discordanti.xlsx`.
+
+Codice: `scripts/argo-primaria-2026.mjs` (riconciliazione, prova a vuoto senza `--apply`),
+`scripts/argo-primaria-inviti.mjs` (credenziali, **script separato apposta**: nessuna combinazione
+di flag può spedire mentre si riconcilia), `scripts/lib/argo.mjs` + 20 test in
+`__tests__/lib/argo-primaria.test.ts`. Spec: `docs/superpowers/specs/2026-09-01-argo-primaria-anagrafiche-design.md`.
+
+---
+
+## 🏫 Changelog — Ad Aversa 73 bambini erano iscritti in una classe che non esiste, e nessuno li vedeva — 2026-08-31 (branch `feat/candidature-cv-obbligatorio`)
+
+**Il 26/08 la segreteria di Aversa ha caricato il suo elenco classi. Il registro ha iscritto tutti
+e 117 i bambini in una classe chiamata `RETTE`, che non è una sezione. Al 31/08 gli alunni creati
+erano 73, tutti con `section_id` NULL — cioè fuori da ogni appello e da ogni registro — e alle
+loro famiglie erano già partite 87 credenziali.** L'app funzionava, il bambino non c'era.
+
+Il file era un **foglio Excel unico**, chiamato `RETTE`, con due colonne e i nomi delle sezioni
+scritti **come righe in mezzo ai nomi dei bambini**, ognuna preceduta da una riga vuota.
+`leggiElenco` lo legge in **Forma A** — dove il nome del foglio *è* la classe — e ha quindi
+scritto `classe = 'RETTE'` su ogni riga. Il trigger `sync_alunno_section_id()` non ha trovato
+nessuna sezione con quel nome e ha fatto ciò che fa sempre: **ha lasciato `section_id` NULL senza
+sollevare niente.**
+
+### La conclusione del 30/08 era «il file va rifatto, e la corrispondenza non si può dedurre». Era sbagliata.
+
+La nota alla segreteria diceva che nessuno poteva sapere quale sezione del foglio corrispondesse a
+quale sezione in anagrafica, perché *«l'ordine nel foglio non è una prova»*. È vero che l'ordine
+non è una prova — ma **due misure indipendenti lo sono**, e c'erano entrambe:
+
+1. **Le date di nascita dei bambini di ogni blocco** (anno scolastico 2026/27);
+2. **L'export del vecchio registro** (2025/26), dove la stessa sede aveva **sei** sezioni e ognuna
+   teneva l'anno di nascita **precedente**.
+
+| nel foglio 2026/27 | nati | la stessa sezione nel 2025/26 | → sezione |
+|---|---|---|---|
+| `MERAVIGLIE` | 2025 | 2024 · 33 bambini | `NIDO` |
+| `SEZIONE SOGNI` | 2024 | 2023 · 24 | `2 ANNI A` |
+| `SEZIONE ABBRACCI` | 2024 | 2023 · 21 | `2 ANNI B` |
+| `SEZ RACCONTI` | 2023 | 2022 · 24 | `3 ANNI` |
+| `SEZ SCINTILLE` | 2022 | 2021 · 14 | `4 ANNI` |
+| `PICCOLI SAPIENTI` | 2021 | 2020 · 8 | `5 ANNI` |
+
+**Ogni sezione già nominata nel foglio ha traslato di esattamente un anno di nascita**: il nome
+resta attaccato alla *fascia d'età*, non alla coorte — i bambini salgono, il nome no. Le cinque
+sezioni nominate lo dimostrano da sole, e per esclusione fissano anche la sesta.
+
+I blocchi erano **sei e non cinque**: le intestazioni sopravvissute in `iscrizioni_elenco_righe`
+sono cinque, ma la prima riga del foglio era stata consumata come intestazione della tabella. Il
+nome mancante **non è stato dedotto: è stato letto** dal file originale nel bucket privato. Dice
+`MERAVIGLIE`, come la ricostruzione prevedeva.
+
+⚠️ **La lezione, che vale oltre questo caso**: «non si può dedurre» era una conclusione sui *dati
+guardati*, non sui dati *disponibili*. La prova stava in due sorgenti che nessuno aveva incrociato.
+
+### Cosa è cambiato
+
+| | | esito in produzione |
+|---|---|---|
+| **Sezioni** | migr. `20260831192032_aversa_due_sezioni_di_due_anni.sql`: `2 ANNI` → `2 ANNI A` (rinominata, `id` conservato) e `2 ANNI B` creata. `NIDO`, `3/4/5 ANNI` intatte. Le cinque avevano **0 alunni, 0 docenti, 0 materie** | ✅ applicata, advisors senza ERROR — **6 sezioni** |
+| **Elenco** | `scripts/ricostruisci-elenco-aversa.mjs` riscrive il foglio in **Forma A, un foglio per sezione**, partendo da `iscrizioni_elenco_righe` e non dal .xlsx: una pura ri-forma. Con `--carica` ripete i passi 5→8 della route usando **le stesse due funzioni** (`leggiElenco`, `anomalieClassiSenzaSezione`) e la stessa disfatta a metà strada | ✅ caricato — **112 righe, 13 · 21 · 6 · 33 · 23 · 16**, zero in `RETTE`, un solo elenco attivo |
+| **Riallineamento** | `scripts/riallinea-classi-aversa.mjs`, anteprima obbligatoria e `--apply`: scrive **una sola colonna**, `classe_sezione`. `section_id` lo riempie il trigger; `importo_retta_mensile` non si tocca | ✅ **73 su 73** — senza sezione da **73 a 0**, 73 righe in `registro_modifiche`, inviti invariati (474), rette invariate (0 cambiate) |
+| **La mappa in un posto solo** | `scripts/lib/blocchi-aversa.mjs`: i due script leggono da lì, così non possono divergere | ✅ — e la prova: il riallineamento dà **la stessa identica assegnazione** ricostruendo i blocchi dal vecchio elenco e leggendo la classe dal nuovo |
+| **La difesa** | pre-flight sezione in `src/app/api/iscrizione/import-massivo/route.ts` | ✅ 7 test; disattivandola **4 diventano rosse** |
+| **Perimetro** | `scripts/anagrafica-completa-2026.mjs`: Aversa rimessa in `SEDI_IN_SCOPE`, `notaAversa()` **rimossa** (era testo cablato coi numeri del 30/08, che questo lavoro rende falsi) | ✅ prova a vuoto su tre sedi: 705 righe di elenco, INVIA 27 · GIÀ A POSTO 422 · DA RIVEDERE 256, nessuna traccia lasciata |
+
+**La verifica dell'età, riletta dal database dopo la scrittura** — è la prova che la mappa non era
+un'ipotesi:
+
+| sezione | alunni | nato prevalente | età media al 1/9 | retta prevalente |
+|---|---|---|---|---|
+| `NIDO` | 11 | 2025 | 1,10 | 330 |
+| `2 ANNI B` | 4 | 2024 | 1,70 | 300 |
+| `2 ANNI A` | 17 | 2024 | 1,87 | 250 |
+| `3 ANNI` | 21 | 2023 | 2,88 | 180 |
+| `4 ANNI` | 12 | 2022 | 3,52 | 170 |
+| `5 ANNI` | 8 | 2021 | 5,12 | 170 |
+
+### La causa radice non era il file: era una regola che viveva su una strada sola
+
+La via **manuale** (`admin/iscrizioni:PATCH`) rifiuta da mesi di iscrivere un bambino in una
+classe che nella sede non ha una sezione. La via **automatica** — il cron, che iscrive la grande
+maggioranza dei bambini — **non lo controllava**. Gli stessi 73 bambini, passati a mano, sarebbero
+stati fermati uno per uno.
+
+Ora il cron fa lo stesso controllo, con la stessa formula del trigger (`normalizzaNomeSezione`, in
+un posto solo): la domanda finisce in `da_controllare` con un motivo leggibile, e **non si scrive
+niente**. Se le sezioni non si riescono a leggere, o la sede non ne ha nessuna, **non si blocca**:
+non sapere non può voler dire bocciare un'iscrizione, e il DB E2E della CI non è migrato.
+
+Copertura: `__tests__/api/iscrizioni-import-sezione-inesistente.test.ts`, sette prove. Disattivando
+il pre-flight **quattro diventano rosse** — verificato, non promesso.
+
+### Quello che resta aperto
+
+- 🔻 **1 retta è vuota** (riga 94 del foglio): non è stata inventata, e quel bambino resta fermo
+  finché la segreteria non manda la cifra. Le altre due non numeriche sono diventate il **totale**
+  di bonus e contante (210 e 300) per decisione del titolare — ⚠️ **300 è molto sopra la retta
+  prevalente della sua sezione (170)**: va guardato prima che diventi una fattura.
+- 🔻 **14 grafie da approvare**: nomi che nel foglio sono scritti diversamente dalla domanda con
+  somiglianza fra 0,61 e 0,90. Le 4 sopra 0,9 (refusi di una lettera) sono state corrette
+  d'ufficio; le altre le decide una persona, perché un refuso non è una grafia.
+- 🔻 **10 domande** non somigliano a nessuna riga del foglio: o il bambino non è iscritto, o manca.
+- ⚠️ **Un bambino di `4 ANNI` risulta nato nel 2026.** O è una data sbagliata nella domanda, o è
+  un omonimo. Segnalato, non corretto d'ufficio.
+- 🔻 **I nomi veri delle sezioni** (MERAVIGLIE, SOGNI, ABBRACCI, RACCONTI, SCINTILLE, PICCOLI
+  SAPIENTI) non sono più in anagrafica: la convenzione scelta è quella di Giugliano, solo la
+  fascia d'età. La corrispondenza vive **in due soli posti** — il commento della migrazione e
+  `scripts/lib/blocchi-aversa.mjs`. `2 ANNI B` (6 bambini, retta uniforme 300) ha la forma di una
+  **sezione primavera**, che è un servizio autorizzato a sé: se lo è, il nome va rivisto.
+- 🔻 **26 bambini di domande ancora in attesa non trovano la loro riga** nell'elenco (erano 30
+  prima delle 4 correzioni). Il cron ripassa da loro ogni giorno e continuerà a fermarsi finché le
+  grafie non combaciano: è lo stesso lotto delle 14 + 10 righe qui sopra, e si chiude con un
+  secondo caricamento dell'elenco, non con una soglia.
+- ⚠️ **`scripts/pii-nel-repo.mjs` riporta 1.147 riscontri**, tutti **preesistenti** (nomi inventati
+  nei test che collidono con nomi veri letti da produzione, e sezioni vecchie del PRD): zero nei
+  file di questo lavoro, verificato riga per riga. Non è una regressione, ma non è zero. ⚠️ Lo
+  script legge solo `.env.local`, la cui chiave dà «Unregistered API key»: serve un involucro che
+  carichi prima `~/kindertap-export/.env.runtime`.
+
+---
+
 ## ⏸️ Changelog — Il digest delle news è DISATTIVATO in produzione, tre giorni prima che partisse — 2026-08-29 (nessuna modifica al codice)
 
 **Il PRD sosteneva ancora che il digest del 1° settembre non avrebbe sfondato nessun tetto, sulla

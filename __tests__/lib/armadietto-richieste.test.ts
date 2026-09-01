@@ -103,3 +103,17 @@ describe('riconciliaRichieste', () => {
     expect(h.upsert).not.toHaveBeenCalled()
   })
 })
+
+describe('riconciliaTutto', () => {
+  it('riconcilia ogni alunno con movimenti, non solo quelli mossi di recente', async () => {
+    // La segreteria ieri ha alzato una soglia da 5 a 8: le richieste devono
+    // comparire stamattina anche se nessun bambino si e' mosso.
+    h.vive.current = [{ alunno_id: 'a1' }, { alunno_id: 'a2' }, { alunno_id: 'a1' }]
+    h.stock.mockResolvedValue({ Pannolini: 6 })
+    h.soglie.mockResolvedValue({ Pannolini: { allerta: 8, emergenza: 3 } })
+    const { riconciliaTutto } = await import('@/lib/armadietto/richieste')
+    const esito = await riconciliaTutto(admin())
+    expect(esito.alunni).toBe(2)      // a1 una volta sola
+    expect(esito.aperte).toBe(2)
+  })
+})

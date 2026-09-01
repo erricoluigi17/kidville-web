@@ -132,3 +132,35 @@ export async function riconciliaRichieste(
 
     return esito
 }
+
+/**
+ * La passata completa, per il cron delle 06:00.
+ *
+ * Riconcilia OGNI alunno che ha almeno un movimento in `armadietto` — non solo
+ * quelli mossi di recente. Serve proprio per i casi senza movimento: se ieri la
+ * segreteria ha alzato una soglia da 5 a 8, le richieste devono comparire
+ * stamattina, e nessun bambino si è mosso.
+ */
+export async function riconciliaTutto(
+    admin: SupabaseClient,
+): Promise<EsitoRiconciliazione & { alunni: number }> {
+    const totale = { aperte: 0, aggiornate: 0, evase: 0, alunni: 0 }
+
+    const { data, error } = await admin.from('armadietto').select('alunno_id')
+    if (error) {
+        logErrore({ operazione: 'armadietto/riconcilia-tutto', evento: 'db' }, error)
+        return totale
+    }
+
+    const ids = [...new Set(((data as Array<{ alunno_id: string }> | null) ?? []).map((r) => r.alunno_id))]
+    totale.alunni = ids.length
+
+    for (const id of ids) {
+        const e = await riconciliaRichieste(admin, { alunnoId: id })
+        totale.aperte += e.aperte
+        totale.aggiornate += e.aggiornate
+        totale.evase += e.evase
+    }
+
+    return totale
+}

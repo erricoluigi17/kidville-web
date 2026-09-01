@@ -26,10 +26,18 @@ const patchBodySchema = z.object({
     stato: z.enum(['acknowledged', 'fulfilled']),
 });
 
-// La tabella `locker_requests` può non esistere in alcuni ambienti — e in
-// PRODUZIONE non esiste affatto (misurato il 2026-08-04: ci sono `armadietto` e
-// `locker_config`, e nessuna migrazione crea `locker_requests`). In quel caso si
-// degrada a vuoto invece di rispondere 500.
+// La tabella può non esistere in alcuni ambienti: in quel caso si degrada a
+// vuoto invece di rispondere 500.
+//
+// ⚠️ QUEL «alcuni ambienti» OGGI È SOLO LA CI, e il verso della frase è
+// cambiato. Fino al 2026-09-01 questa route interrogava `locker_requests`, del
+// vecchio schema a saldo, che NESSUNA migrazione applicata crea: il ramo
+// tollerato era quello che girava SEMPRE in produzione (226 `PGRST205` in 28
+// giorni, 195 proprio qui, e nessuno se n'era accorto perché la lista «Da
+// portare a scuola» è condizionata a `length > 0` e restava invisibile). Ora si
+// legge `armadietto_richieste`, che in produzione c'è. La tolleranza RESTA
+// perché il DB E2E della CI è un progetto Supabase separato e non migrato, dove
+// la tabella davvero non c'è: toglierla farebbe rossa la CI.
 //
 // ⚠️ `tabellaMancante` ARRIVA DA UN MODULO CONDIVISO e non si riscrive qui. La
 // copia che stava in queste righe decideva col REGEX SUL MESSAGGIO
@@ -76,12 +84,8 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             if (auth.response) return auth.response;
 
             let query = supabase
-                .from('locker_requests')
-                .select(`
-                    *,
-                    locker_catalog (id, nome, icona, unita),
-                    alunni (id, nome, cognome)
-                `)
+                .from('armadietto_richieste')
+                .select('id, alunno_id, materiale, livello, quantita_residua, stato, presa_in_carico_il, evasa_il, creato_il, alunni (id, nome, cognome)')
                 .eq('alunno_id', alunnoId)
                 .order('creato_il', { ascending: false });
 
@@ -121,12 +125,8 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             const ids = alunni.map(a => a.id);
 
             let query = supabase
-                .from('locker_requests')
-                .select(`
-                    *,
-                    locker_catalog (id, nome, icona, unita),
-                    alunni (id, nome, cognome)
-                `)
+                .from('armadietto_richieste')
+                .select('id, alunno_id, materiale, livello, quantita_residua, stato, presa_in_carico_il, evasa_il, creato_il, alunni (id, nome, cognome)')
                 .in('alunno_id', ids)
                 .order('creato_il', { ascending: false });
 

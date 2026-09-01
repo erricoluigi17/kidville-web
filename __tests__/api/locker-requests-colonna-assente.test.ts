@@ -16,8 +16,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  *
  * ⚠️ MISURATO il 2026-08-04: `locker_requests` NON ESISTE nel database di
  * produzione (le tabelle vere sono `armadietto` e `locker_config`). Il ramo
- * tollerato è quindi quello che gira SEMPRE in produzione — motivo in più perché
- * non debba coprire anche i guasti veri.
+ * tollerato era quindi quello che girava SEMPRE in produzione — motivo in più
+ * perché non debba coprire anche i guasti veri.
+ *
+ * DAL 2026-09-01 la route legge `armadietto_richieste`, che in produzione c'è, e
+ * il ramo tollerato è tornato a essere quello che dovrebbe: il DB E2E della CI,
+ * progetto separato e non migrato. Il nome della tabella è cambiato QUI DENTRO
+ * insieme alla route, e non è un dettaglio di forma: il finto client discrimina
+ * `from(tabella)` per nome: con quello vecchio l'elenco `h.elenco` non veniva
+ * più servito a nessuno, e queste prove misuravano lo stub degli `alunni`
+ * invece della route. Un lock che guarda una tabella che la route non
+ * interroga più è verde su niente.
  *
  * Test di COMPORTAMENTO, non di nome: si guardano lo stato della risposta e il
  * suo corpo, non se una certa funzione è stata chiamata.
@@ -29,7 +38,7 @@ type ErrDb = { code?: string; message?: string } | null
 const h = vi.hoisted(() => ({
     requireParentOfStudent: vi.fn(),
     requireDocente: vi.fn(),
-    /** Esito della SELECT su `locker_requests` (il thenable della catena). */
+    /** Esito della SELECT su `armadietto_richieste` (il thenable della catena). */
     elenco: { data: null as unknown, error: null as { code?: string; message?: string } | null },
     /** Esito della `maybeSingle()` con cui la PATCH carica la riga. */
     riga: { data: null as unknown, error: null as { code?: string; message?: string } | null },
@@ -53,7 +62,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
             b.maybeSingle = async () => h.riga
             b.single = async () => h.aggiornata
             b.then = (res: (v: unknown) => unknown) =>
-                res(tabella === 'locker_requests' ? h.elenco : { data: [{ id: ALUNNO }], error: null })
+                res(tabella === 'armadietto_richieste' ? h.elenco : { data: [{ id: ALUNNO }], error: null })
             return b
         },
     }),
@@ -84,7 +93,7 @@ beforeEach(() => {
 
 describe('GET /api/locker/requests — tabella assente vs colonna assente', () => {
     it('42P01 (tabella assente) → 200 con elenco vuoto: tolleranza d\'ambiente', async () => {
-        h.elenco = { data: null, error: errore('42P01', 'relation "locker_requests" does not exist') }
+        h.elenco = { data: null, error: errore('42P01', 'relation "armadietto_richieste" does not exist') }
         const res = await GET(getReq(`alunno_id=${ALUNNO}`))
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual([])
@@ -93,7 +102,7 @@ describe('GET /api/locker/requests — tabella assente vs colonna assente', () =
     it('PGRST205 (tabella fuori dalla schema cache) → 200 con elenco vuoto', async () => {
         h.elenco = {
             data: null,
-            error: errore('PGRST205', "Could not find the table 'public.locker_requests' in the schema cache"),
+            error: errore('PGRST205', "Could not find the table 'public.armadietto_richieste' in the schema cache"),
         }
         const res = await GET(getReq(`alunno_id=${ALUNNO}`))
         expect(res.status).toBe(200)
@@ -103,18 +112,18 @@ describe('GET /api/locker/requests — tabella assente vs colonna assente', () =
     it('42703 (COLONNA assente) → 500, NON un elenco vuoto', async () => {
         // Il cuore del difetto: «zero richieste armadietto» non è una risposta
         // accettabile a una migrazione applicata a metà.
-        h.elenco = { data: null, error: errore('42703', 'column locker_requests.reminder_inviato_il does not exist') }
+        h.elenco = { data: null, error: errore('42703', 'column armadietto_richieste.promemoria_inviato_il does not exist') }
         const res = await GET(getReq(`alunno_id=${ALUNNO}`))
         expect(res.status).toBe(500)
         expect(await res.json()).not.toEqual([])
     })
 
     it('il 500 non racconta lo schema al chiamante (né tabella né colonna)', async () => {
-        h.elenco = { data: null, error: errore('42703', 'column locker_requests.reminder_inviato_il does not exist') }
+        h.elenco = { data: null, error: errore('42703', 'column armadietto_richieste.promemoria_inviato_il does not exist') }
         const res = await GET(getReq(`alunno_id=${ALUNNO}`))
         const corpo = JSON.stringify(await res.json())
-        expect(corpo).not.toContain('locker_requests')
-        expect(corpo).not.toContain('reminder_inviato_il')
+        expect(corpo).not.toContain('armadietto_richieste')
+        expect(corpo).not.toContain('promemoria_inviato_il')
     })
 
     it('ramo docente (classe_sezione): 42703 → 500, 42P01 → elenco vuoto', async () => {

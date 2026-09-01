@@ -53,16 +53,47 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
   logEvento: h.logEvento,
 }))
 
+/**
+ * Il TETTO GLOBALE di upload del progetto: 50 MB (Supabase → Settings → Storage →
+ * «Global file size limit»). È una scelta, non un valore di fabbrica dimenticato:
+ * tiene fuori il singolo video che si mangia lo spazio, ed è lo stesso limite che
+ * il client applica in `teacher/gallery/page.tsx`.
+ */
+const TETTO_GLOBALE_B = 52_428_800
+
+/**
+ * Lo Storage simulato si comporta come quello VERO, su due punti che qui contano
+ * più di tutti gli altri:
+ *
+ *  1. un `fileSizeLimit` più alto del tetto globale fa rifiutare l'INTERA chiamata
+ *     con 400 `EntityTooLarge` — Supabase valuta quel campo PRIMA di applicare
+ *     qualunque altro, quindi non viene scritto niente, `public` compreso;
+ *  2. quando invece va a buon fine, la modifica viene APPLICATA a `h.buckets`.
+ *
+ * Il punto 2 è la ragione per cui questo stub esiste. Fino al 2026-09-01 restituiva
+ * sempre `{ error: null }` senza toccare niente, e la prova «il bucket viene
+ * mantenuto PRIVATO» si accontentava di vedere la rotta CHIEDERE. In produzione
+ * quella richiesta è stata respinta ogni singola volta dal 26/05/2026 — 98 giorni,
+ * zero richiusure, prova verde. Un test che guarda l'intenzione invece dell'esito
+ * non è un test.
+ */
+const scriviBucket = (nome: string, opts: Record<string, unknown>) => {
+  h.bucketOpzioni.push(opts)
+  if (h.erroreBucket) return { data: null, error: h.erroreBucket }
+  if (typeof opts.fileSizeLimit === 'number' && opts.fileSizeLimit > TETTO_GLOBALE_B) {
+    return { data: null, error: { message: 'The object exceeded the maximum allowed size', status: 400 } }
+  }
+  h.buckets = h.buckets.map((b) => (b.name === nome ? { ...b, ...opts } : b))
+  return { data: null, error: null }
+}
+
 const storage = {
   listBuckets: async () => ({ data: h.buckets, error: null }),
-  createBucket: async (_n: string, opts: Record<string, unknown>) => {
-    h.bucketOpzioni.push(opts)
-    return { data: null, error: h.erroreBucket }
+  createBucket: async (n: string, opts: Record<string, unknown>) => {
+    if (!h.buckets.some((b) => b.name === n)) h.buckets = [...h.buckets, { name: n }]
+    return scriviBucket(n, opts)
   },
-  updateBucket: async (_n: string, opts: Record<string, unknown>) => {
-    h.bucketOpzioni.push(opts)
-    return { data: null, error: h.erroreBucket }
-  },
+  updateBucket: async (n: string, opts: Record<string, unknown>) => scriviBucket(n, opts),
   from: () => ({
     upload: async (path: string) => {
       h.uploadPath = path
@@ -191,10 +222,14 @@ describe('POST /api/gallery/upload — niente più indirizzi pubblici', () => {
     expect(j.fileUrl).not.toContain('token=')
   })
 
-  it('il bucket viene mantenuto PRIVATO (public: false)', async () => {
+  it('bucket già privato: la rotta NON riscrive la configurazione', async () => {
+    // La configurazione del bucket si dichiara in migrazione e la verifica il lock
+    // `bucket-storage-dichiarati`. Riscriverla a ogni foto costava due chiamate
+    // HTTP per caricamento e — quando una di esse veniva respinta — due righe
+    // `error` nei log per ogni foto riuscita: 62 il 01/09/2026, su 31 upload
+    // tutti andati a buon fine.
     await UPLOAD(uploadReq(foto()))
-    expect(h.bucketOpzioni.length).toBeGreaterThan(0)
-    for (const o of h.bucketOpzioni) expect(o.public).toBe(false)
+    expect(h.bucketOpzioni).toEqual([])
   })
 
   it('trovare il bucket ANCORA pubblico è un incidente: livello `error`', async () => {
@@ -208,15 +243,59 @@ describe('POST /api/gallery/upload — niente più indirizzi pubblici', () => {
     expect(ev[0][2]).toMatchObject({ operazione: 'gallery/upload:POST', bucket: 'gallery' })
   })
 
-  it('riconfigurazione del bucket fallita: si logga COL CORPO (non lancia, ritorna `error`)', async () => {
+  it('il bucket trovato aperto RISULTA richiuso — non «la rotta l’ha chiesto»', async () => {
+    h.buckets = [{ name: 'gallery', public: true }]
+    await UPLOAD(uploadReq(foto()))
+    // L'ESITO, letto dallo Storage simulato dopo la chiamata. È l'asserzione che
+    // per 98 giorni è mancata: quella vecchia guardava `h.bucketOpzioni`, cioè la
+    // domanda, e sarebbe stata verde anche con lo Storage che rispondeva 400.
+    expect(h.buckets.find((b) => b.name === 'gallery')?.public).toBe(false)
+    const ev = eventiStorage().filter((c) => (c[2] as { esito?: string })?.esito === 'bucket-richiuso')
+    expect(ev).toHaveLength(1)
+  })
+
+  it('la richiusura NON può essere vetata da un altro campo (il difetto del 26/05→01/09)', async () => {
+    // IL GUASTO, misurato in produzione il 01/09/2026: la rotta spediva `public:
+    // false` insieme a `fileSizeLimit: 209715200` (200 MB), sopra il tetto globale
+    // di 50 MB. Supabase valida quel campo per primo e rifiuta TUTTA la chiamata
+    // con `EntityTooLarge`: la richiusura non è mai avvenuta, nemmeno una volta in
+    // 98 giorni, e ogni foto scriveva due `error`.
+    //
+    // Questa prova è rossa su quel codice, e resta rossa su qualunque futura
+    // riscrittura che rimetta un campo rifiutabile accanto a una correzione di
+    // sicurezza: si spedisce SOLO ciò che si sta riparando.
+    h.buckets = [{ name: 'gallery', public: true }]
+    await UPLOAD(uploadReq(foto()))
+    for (const o of h.bucketOpzioni) {
+      expect(o.fileSizeLimit, 'la richiusura non deve portare con sé il limite di dimensione').toBeUndefined()
+      expect(o.allowedMimeTypes, 'né la lista MIME: la sua divergenza è una decisione aperta').toBeUndefined()
+    }
+    expect(h.buckets.find((b) => b.name === 'gallery')?.public).toBe(false)
+  })
+
+  it('richiusura fallita: si logga COL CORPO (non lancia, ritorna `error`)', async () => {
+    h.buckets = [{ name: 'gallery', public: true }]
     h.erroreBucket = { message: 'new row violates row-level security policy' }
     await UPLOAD(uploadReq(foto()))
     const ev = eventiStorage().filter(
-      (c) => (c[2] as { esito?: string })?.esito === 'bucket-non-riconfigurato',
+      (c) => (c[2] as { esito?: string })?.esito === 'bucket-non-richiuso',
     )
     expect(ev).toHaveLength(1)
     expect(ev[0][1]).toBe('error')
     expect(descriviErrore(ev[0][3]).messaggio).toContain('row-level security')
+  })
+
+  it('bucket assente: si crea, e con un limite che lo Storage può accettare', async () => {
+    // Ambiente nuovo (o DB E2E non migrato). Il limite dichiarato qui deve stare
+    // SOTTO il tetto globale, altrimenti il bucket non nasce affatto: `createBucket`
+    // viene respinto dallo stesso `EntityTooLarge` dell'update.
+    h.buckets = []
+    const res = await UPLOAD(uploadReq(foto()))
+    expect(res.status).toBe(200)
+    expect(h.bucketOpzioni).toHaveLength(1)
+    expect(h.bucketOpzioni[0].public).toBe(false)
+    expect(h.bucketOpzioni[0].fileSizeLimit).toBeLessThanOrEqual(TETTO_GLOBALE_B)
+    expect(h.buckets.find((b) => b.name === 'gallery')?.public).toBe(false)
   })
 
   it('firma fallita: il file è salvo (200 + path), anteprima nulla, log `error` col corpo', async () => {

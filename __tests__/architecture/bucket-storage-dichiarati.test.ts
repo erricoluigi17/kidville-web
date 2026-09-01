@@ -280,25 +280,88 @@ const inProduzione = new Map(foto.bucket.map((b) => [b.id, b.pubblico]))
 
 const sorgente = (rel: string) => readFileSync(join(RADICE, rel), 'utf8')
 
-/** `fileSizeLimit: 209715200` nel sorgente di una route. */
+/**
+ * Il sorgente SENZA commenti.
+ *
+ * ⚠️ NON È UN DETTAGLIO DI PULIZIA. Questo lock legge numeri e stringhe dal codice
+ * con delle regex, e una regex non sa distinguere un valore da una frase che lo
+ * nomina. Il 2026-09-01, correggendo il difetto dei 200 MB, il commento che lo
+ * SPIEGAVA («spediva `fileSizeLimit: 209715200`…») è stato letto come se fosse il
+ * valore in vigore: il lock è rimasto rosso su una riga che era già stata
+ * corretta. Al contrario — ed è il caso pericoloso — un commento può rendere VERDE
+ * un lock su codice guasto (già successo in questo repo, `carta intestata`).
+ * Le migrazioni sono lette così da sempre (`statementDelleMigrazioni`); il codice
+ * lo era rimasto.
+ *
+ * Il `//` preceduto da `:` non si tocca, altrimenti sparirebbe metà di ogni URL.
+ */
+const senzaCommenti = (codice: string) =>
+  codice.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
+/** `fileSizeLimit: 209715200` nel sorgente di una route (commenti esclusi). */
 function limiteNelCodice(rel: string): number | null {
-  const m = sorgente(rel).match(/fileSizeLimit:\s*(\d+)/)
+  const m = senzaCommenti(sorgente(rel)).match(/fileSizeLimit:\s*(\d+)/)
   return m ? Number(m[1]) : null
 }
 
-/** I letterali MIME dentro `const <NOME> = [ … ]`. */
+/** I letterali MIME dentro `const <NOME> = [ … ]` (commenti esclusi). */
 function mimeNelCodice(rel: string, costante: string): string[] {
-  const m = sorgente(rel).match(new RegExp(`const\\s+${costante}\\s*=\\s*\\[([\\s\\S]*?)\\]`))
+  const m = senzaCommenti(sorgente(rel)).match(
+    new RegExp(`const\\s+${costante}\\s*=\\s*\\[([\\s\\S]*?)\\]`),
+  )
   if (!m) return []
   return [...m[1].matchAll(/'([a-z]+\/[a-z0-9.+-]+)'/gi)].map((x) => x[1])
 }
 
 const ordinati = (v: string[]) => [...new Set(v)].sort()
 
+/**
+ * Il TETTO GLOBALE di upload del progetto Supabase: 50 MB.
+ *
+ * DOVE VIVE DAVVERO: pannello Supabase → Settings → Storage → «Global file size
+ * limit». Non sta nel database del progetto, quindi il repo non può leggerlo: qui
+ * è DICHIARATO, come la fotografia dei bucket, e come quella va tenuto aggiornato
+ * a mano quando il pannello cambia.
+ *
+ * PERCHÉ ESISTE QUESTA COSTANTE. Supabase applica `min(limite del bucket, tetto
+ * globale)`, e rifiuta con 400 `EntityTooLarge` qualunque `createBucket`/
+ * `updateBucket` che dichiari un limite più alto — rifiutando l'INTERA chiamata,
+ * quindi senza applicare nemmeno gli altri campi. Fino al 2026-09-01 tre bucket
+ * dichiaravano 200 MB e `gallery/upload` li rispediva a ogni foto: 98 giorni di
+ * richiusure di sicurezza mai avvenute e due `error` per ogni caricamento
+ * riuscito, con il gate sempre verde. Nessun test guardava questo rapporto.
+ *
+ * DECISIONE DEL TITOLARE (2026-09-01): il tetto resta a 50 MB e non si alza — è
+ * ciò che impedisce a un singolo video di mangiarsi lo spazio, ed è già il limite
+ * che il client applica. Alzarlo è possibile (il piano Pro arriva a 500 GB): chi
+ * lo facesse aggiorni QUESTO numero, altrimenti il lock diventa una bugia con
+ * l'aria dell'autorevolezza.
+ */
+const TETTO_GLOBALE_STORAGE_B = 52_428_800
+
 describe('lock architettura · i bucket dello storage sono dichiarati in migrazione', () => {
   it('le migrazioni si leggono davvero (sanity)', () => {
     // Un parser rotto renderebbe questo lock verde per sempre, su niente.
     expect(STATEMENT.length).toBeGreaterThan(100)
+  })
+
+  it('i commenti del codice non vengono scambiati per valori (sanity)', () => {
+    // Se `senzaCommenti` smettesse di funzionare, ogni confronto «codice contro
+    // migrazione» qui sotto potrebbe leggere un numero citato in una frase invece
+    // di quello in vigore — verde o rosso a caso, e senza che si veda perché.
+    const finto = [
+      "// storicamente era fileSizeLimit: 999999999, e allowedMimeTypes: ['image/bmp']",
+      '/* anche qui: fileSizeLimit: 888888888 */',
+      "const VERO = ['image/jpeg'] // https://esempio.test/doc",
+      'const opzioni = { fileSizeLimit: 123 }',
+    ].join('\n')
+    const pulito = senzaCommenti(finto)
+    expect(pulito).not.toContain('999999999')
+    expect(pulito).not.toContain('888888888')
+    expect(pulito).not.toContain('image/bmp')
+    expect(pulito.match(/fileSizeLimit:\s*(\d+)/)?.[1]).toBe('123')
+    // Gli URL restano interi: il `//` di `https://` non è un commento.
+    expect(pulito).toContain("const VERO = ['image/jpeg']")
   })
 
   describe('gallery — foto e video dei bambini, bucket privato', () => {
@@ -318,6 +381,82 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
         `La route accetta ${codice} byte, la migrazione ne dichiara altri: il file che sta ` +
           'nel mezzo passa i controlli dell\'applicazione e viene respinto dallo Storage.',
       ).toBe(codice)
+    })
+
+    it('è DICHIARATO privato da una migrazione, non solo chiuso a mano', () => {
+      // Fino al 2026-09-01 non lo diceva nessun file del repo: il bucket è stato
+      // chiuso dalla console il 31/07/2026, e da allora l'unica cosa che lo teneva
+      // chiuso era che nessuno lo riaprisse. La fotografia della produzione, qui
+      // sotto, si accorgerebbe di una riapertura — ma solo DOPO, e solo se
+      // qualcuno la rigenera; e una ricostruzione da zero sarebbe ripartita senza
+      // nessuna garanzia. Dentro ci sono foto e video di bambini.
+      const dichiarata = visibilitaDichiarata('gallery')
+      expect(
+        dichiarata,
+        'Nessuna migrazione dichiara la visibilità di `gallery`. Su un bucket pubblico lo ' +
+          'Storage serve il file a chiunque conosca l\'indirizzo: niente login, niente ruolo, ' +
+          'niente sede, per sempre.',
+      ).not.toBeNull()
+      expect(dichiarata?.pubblico).toBe(false)
+    })
+  })
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // NESSUN LIMITE DICHIARATO PUÒ SUPERARE IL TETTO GLOBALE
+  // ───────────────────────────────────────────────────────────────────────────
+
+  describe('i limiti dichiarati stanno sotto il tetto globale del progetto', () => {
+    it.each([...RISERVATI, ...Object.keys(PUBBLICI_PER_DECISIONE)])(
+      '`%s` dichiara un limite che lo Storage può davvero accettare',
+      (bucket) => {
+        const dichiarato = limiteDichiarato(bucket)
+        if (dichiarato === null) return // non tutti i bucket dichiarano un limite
+        expect(
+          dichiarato,
+          `La migrazione dichiara ${dichiarato} byte per \`${bucket}\`, sopra il tetto globale ` +
+            `di ${TETTO_GLOBALE_STORAGE_B}. Supabase applica \`min(limite del bucket, tetto ` +
+            `globale)\`: quel numero non entrerebbe mai in vigore, e sarebbe una regola scritta ` +
+            `che non vale — il modo più silenzioso di mentire a chi legge il repo. Peggio: una ` +
+            `\`createBucket\`/\`updateBucket\` che lo spedisse verrebbe respinta con 400 ` +
+            `\`EntityTooLarge\` e non applicherebbe NESSUN campo, \`public\` compreso. ` +
+            `O abbassi il numero, o alzi il tetto globale e aggiorni la costante qui sopra.`,
+        ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
+      },
+    )
+
+    it('la route non spedisce allo Storage un limite che verrebbe respinto', () => {
+      // IL GUASTO, misurato il 2026-09-01: `gallery/upload` mandava
+      // `fileSizeLimit: 209715200` a ogni foto. Respinto 31 volte su 31, con due
+      // righe `error` per ogni caricamento RIUSCITO — e, siccome il rifiuto è
+      // sull'intera chiamata, `public: false` non è mai stato applicato: la
+      // richiusura automatica del bucket non è avvenuta nemmeno una volta dal
+      // 26/05/2026 al 01/09/2026.
+      const codice = limiteNelCodice('src/app/api/gallery/upload/route.ts')
+      expect(codice, 'La route deve dichiarare `fileSizeLimit`.').not.toBeNull()
+      expect(
+        codice,
+        `La route dichiara ${codice} byte, sopra il tetto globale di ` +
+          `${TETTO_GLOBALE_STORAGE_B}: la chiamata allo Storage verrebbe respinta per intero.`,
+      ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
+    })
+
+    it('il tetto dichiarato qui è quello che il client applica davvero (controllo incrociato)', () => {
+      // Una costante scritta in un test è una dichiarazione, non una misura: se
+      // nessuno la confronta con niente, invecchia in silenzio come è invecchiato
+      // il «200 MB» per tre mesi. Il client è il terzo posto dove lo stesso numero
+      // vive, e lì ha un effetto visibile (il video viene rifiutato prima di
+      // partire): se i due divergono, uno dei due sta mentendo.
+      const client = sorgente('src/app/(dashboard)/teacher/gallery/page.tsx').match(
+        /MAX_SIZE\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/,
+      )
+      expect(client, 'Il client deve dichiarare `MAX_SIZE = N * 1024 * 1024`.').not.toBeNull()
+      expect(
+        Number(client![1]) * 1024 * 1024,
+        'Il tetto che il client applica ai video e il tetto globale dello Storage non ' +
+          'coincidono più: o è cambiato il pannello Supabase (e va aggiornata la costante ' +
+          '`TETTO_GLOBALE_STORAGE_B`), o è cambiato il client — e allora una maestra vedrà ' +
+          'rifiutato dal server un file che l\'applicazione le ha lasciato scegliere.',
+      ).toBe(TETTO_GLOBALE_STORAGE_B)
     })
   })
 

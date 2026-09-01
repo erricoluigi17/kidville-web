@@ -94,6 +94,56 @@
 
 ---
 
+## 📸 Changelog — Ogni foto caricata scriveva due errori, e la protezione che li causava non è mai entrata in funzione — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
+
+Il 01/09, primo giorno di scuola, le maestre hanno caricato **31 foto**: tutte salvate, e **62 righe
+`error`** nei log — due per foto. `EntityTooLarge` su `/api/gallery/upload`, con la corrispondenza
+1:1 fra errore e caricamento riuscito (l'errore precede il file di 0,4 s **nella stessa richiesta**).
+
+**Causa radice.** La rotta riscriveva la configurazione del bucket a ogni foto, spedendo
+`public: false` **insieme a** `fileSizeLimit: 209715200` (200 MB). Il tetto globale di upload del
+progetto è **50 MB**, e Supabase applica `min(limite del bucket, tetto globale)`: valuta quel campo
+**prima** di applicare qualunque altro e rifiuta l'**intera** chiamata con 400. Nessun campo veniva
+scritto — `public` compreso.
+
+Le tre conseguenze, tutte misurate e nessuna visibile prima:
+
+| | |
+|---|---|
+| **La richiusura automatica non è mai avvenuta** | Non una volta dal **26/05/2026**. La prova non è l'assenza di log (il controllo dell'esito esiste solo dal 03/08): è che la lista MIME in produzione è ancora quella del 25/05, mai sovrascritta. |
+| **Per 69 giorni quella chiamata chiedeva `public: TRUE`** | Fino al commit `fc7c94a8` (03/08). È stato **il rifiuto di Supabase** a impedire che il bucket con le foto dei bambini venisse riaperto al mondo a ogni caricamento. |
+| **I 200 MB non sono mai stati in vigore** | Né sul client (`MAX_SIZE = 50 MB`), né sullo Storage (tetto globale). La migrazione del 31/07 che li scriveva nel database non ha corretto il difetto: lo ha spostato dove si vede meno. File più grande mai caricato in tutto lo Storage: **6,4 MB**. |
+
+E il test che copriva tutto questo — *«il bucket viene mantenuto PRIVATO»* — era **verde da 98
+giorni** perché lo stub di `updateBucket` restituiva `error: null`: verificava che la rotta
+**chiedesse**, mai che lo Storage **accettasse**.
+
+**Correzione.** La riconfigurazione esce dal percorso di ogni upload: il bucket si dichiara in
+migrazione e lo verifica il lock. Resta la rete di sicurezza, ma **condizionale e minima** — solo se
+il bucket risulta pubblico, e spedendo **solo `public: false`**, così un campo rifiutabile non può
+più mettere il veto su una correzione di sicurezza. Nel caso normale non si scrive più niente: via i
+62 errori e **due chiamate HTTP per ogni foto**.
+
+**Migrazione `20260901174336`** (applicata, verificata): `gallery` è finalmente **dichiarato**
+privato — fino a oggi nessun file del repo lo diceva, era stato chiuso a mano dalla console il
+31/07 — e i limiti di `gallery`, `news`, `news_bozze` scendono da 209715200 a **52428800**, cioè al
+valore già in vigore. Le liste MIME **non** sono toccate: la divergenza di `gallery`
+(`video/quicktime` presente, `image/gif` assente) è reale e resta una decisione aperta.
+
+**Il lock ora verifica la regola, non il guasto**: nessun limite dichiarato può superare il tetto
+globale (costante `TETTO_GLOBALE_STORAGE_B`, incrociata col `MAX_SIZE` del client), `gallery` deve
+essere dichiarato privato, e il parser **ignora i commenti** — la prima stesura leggeva il
+`209715200` citato nel commento che spiegava il difetto, scambiando la prosa per il valore in vigore.
+
+Provato invece che dichiarato: rimettendo i 200 MB nel codice, **2 prove del lock diventano rosse**;
+prima della correzione erano rosse **6 prove** della rotta, compresa una che esisteva già e passava
+solo grazie allo stub compiacente.
+
+**Deciso dal titolare (2026-09-01)**: il tetto globale **resta a 50 MB** e non si alza — è ciò che
+impedisce a un singolo video di mangiarsi lo spazio.
+
+---
+
 ## 🕐 Changelog — Un test della Contabilità è esploso da solo al cambio di mese — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
 
 `__tests__/components/importi-euro-italiani.test.tsx` era **rosso senza che nessuno avesse toccato

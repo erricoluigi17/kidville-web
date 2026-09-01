@@ -10,6 +10,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zAnnoMese, zDataYMD, zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore } from '@/lib/logging/logger';
+import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' nei query param equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -300,6 +301,16 @@ export const POST = withRoute('locker/inventory:POST', async (request: NextReque
             scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: result,
         });
 
+        // Il carico è il DATO, la richiesta è la CONSEGUENZA: la conseguenza non
+        // può far fallire il dato. Se la riconciliazione esplode, il movimento
+        // resta scritto e il cron delle 06:00 rimetterà le cose a posto.
+        // Un catch che non logga sarebbe un bug (AGENTS.md regola 6).
+        try {
+            await riconciliaRichieste(supabase, { alunnoId: alunno_id });
+        } catch (e) {
+            logErrore({ operazione: 'locker/inventory:POST', evento: 'db' }, e);
+        }
+
         return NextResponse.json({ success: true, data: result });
     } catch (err) {
         const msg = err instanceof Error ? err.message : 'Errore interno';
@@ -364,6 +375,16 @@ export const PATCH = withRoute('locker/inventory:PATCH', async (request: NextReq
             attore: auth.user, entitaTipo: 'armadietto', entitaId: data.id, azione: 'insert',
             scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null, valoreDopo: data,
         });
+
+        // Il consumo è il DATO, la richiesta è la CONSEGUENZA: la conseguenza non
+        // può far fallire il dato. Se la riconciliazione esplode, il movimento
+        // resta scritto e il cron delle 06:00 rimetterà le cose a posto.
+        // Un catch che non logga sarebbe un bug (AGENTS.md regola 6).
+        try {
+            await riconciliaRichieste(admin, { alunnoId: alunno_id });
+        } catch (e) {
+            logErrore({ operazione: 'locker/inventory:PATCH', evento: 'db' }, e);
+        }
 
         return NextResponse.json({ success: true, data });
     } catch (err) {

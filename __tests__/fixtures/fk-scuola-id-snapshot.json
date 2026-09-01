@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-10",
-  "generato_alle": "2026-08-10T18:26:18Z",
-  "sha256": "ac220c312e58f6db0d3cbf01a26369227066585a0d7f3e01656d872916398b9a",
+  "generato_il": "2026-09-01",
+  "generato_alle": "2026-09-01T16:42:33Z",
+  "sha256": "1eb06e367364f5f592e62f0419c22b268fe4c14f27a19656330df7f3804a5f16",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -29,6 +29,12 @@
       "fk_verso": "schools"
     },
     {
+      "tabella": "armadietto_richieste",
+      "not_null": true,
+      "fk_nome": "armadietto_richieste_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
       "tabella": "audit_scritture_docente",
       "not_null": false,
       "fk_nome": "audit_scritture_docente_scuola_id_fkey",
@@ -44,6 +50,12 @@
       "tabella": "candidature_insegnanti",
       "not_null": true,
       "fk_nome": "candidature_insegnanti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "candidature_sedi",
+      "not_null": true,
+      "fk_nome": "candidature_sedi_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {
@@ -167,6 +179,24 @@
       "fk_verso": "schools"
     },
     {
+      "tabella": "iscrizioni_elenco_caricamenti",
+      "not_null": true,
+      "fk_nome": "iscrizioni_elenco_caricamenti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "iscrizioni_elenco_righe",
+      "not_null": true,
+      "fk_nome": "iscrizioni_elenco_righe_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "iscrizioni_import_esiti",
+      "not_null": true,
+      "fk_nome": "iscrizioni_import_esiti_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
       "tabella": "materie",
       "not_null": true,
       "fk_nome": "materie_scuola_id_fkey",
@@ -278,6 +308,12 @@
       "tabella": "payment_categories",
       "not_null": false,
       "fk_nome": "payment_categories_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "pratiche_personale",
+      "not_null": true,
+      "fk_nome": "pratiche_personale_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

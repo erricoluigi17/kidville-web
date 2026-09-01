@@ -40,6 +40,15 @@ const h = vi.hoisted(() => ({
     requireDocente: vi.fn(),
     /** Esito della SELECT su `armadietto_richieste` (il thenable della catena). */
     elenco: { data: null as unknown, error: null as { code?: string; message?: string } | null },
+    /**
+     * Esito della SELECT su `alunni` — il primo tempo del ramo docente.
+     *
+     * È uno stato A SÉ, e deve esserlo: fino al 2026-09-01 il finto client
+     * restituiva `{ data: [{ id }], error: null }` a chiunque non fosse
+     * `armadietto_richieste`, quindi quella query non poteva FALLIRE nemmeno
+     * volendo — ed è precisamente il caso che il difetto riguardava.
+     */
+    alunni: { data: null as unknown, error: null as { code?: string; message?: string } | null },
     /** Esito della `maybeSingle()` con cui la PATCH carica la riga. */
     riga: { data: null as unknown, error: null as { code?: string; message?: string } | null },
     /** Esito della `single()` in coda alla UPDATE della PATCH. */
@@ -62,7 +71,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
             b.maybeSingle = async () => h.riga
             b.single = async () => h.aggiornata
             b.then = (res: (v: unknown) => unknown) =>
-                res(tabella === 'armadietto_richieste' ? h.elenco : { data: [{ id: ALUNNO }], error: null })
+                res(tabella === 'armadietto_richieste' ? h.elenco : h.alunni)
             return b
         },
     }),
@@ -91,6 +100,7 @@ beforeEach(() => {
     h.requireParentOfStudent.mockResolvedValue({ user: { id: 'gen-1', role: 'genitore' } })
     h.requireDocente.mockResolvedValue({ user: { id: 'ed-1', role: 'educator', scuola_id: 'sc-1' } })
     h.elenco = { data: [], error: null }
+    h.alunni = { data: [{ id: ALUNNO }], error: null }
     h.riga = { data: { id: 'req-1', alunno_id: ALUNNO }, error: null }
     h.aggiornata = { data: { id: 'req-1', stato: 'evasa' }, error: null }
 })
@@ -140,6 +150,71 @@ describe('GET /api/locker/requests — tabella assente vs colonna assente', () =
         const ok = await GET(getReq('classe_sezione=Rossi'))
         expect(ok.status).toBe(200)
         expect(await ok.json()).toEqual([])
+    })
+})
+
+describe('GET /api/locker/requests — la lettura degli ALUNNI non fallisce in silenzio', () => {
+    /**
+     * IL DIFETTO, e perché sta in questo file e non altrove.
+     *
+     * Il ramo docente legge in due tempi: prima gli alunni della sezione (dentro
+     * i propri plessi), poi le loro richieste. Fino al 2026-09-01 il primo tempo
+     * era scritto `const { data: alunni } = await …`: l'`error` non veniva
+     * nemmeno raccolto. PostgREST non lancia (regola 7 di AGENTS.md), quindi una
+     * query fallita lasciava `alunni` a `null`, il `if (!alunni …) return []`
+     * scattava e la route rispondeva `200 []` SENZA LOGGARE NIENTE.
+     *
+     * La maestra vedeva la sezione vuota. «Nessun bambino qui» e «non ho potuto
+     * guardare» si leggevano uguali — la stessa ambiguità che aveva tenuto
+     * nascosti 226 errori per 28 giorni, in questa stessa route.
+     *
+     * Fallisce CHIUSO (non esce nessun dato), quindi non era un buco di
+     * sicurezza: era un guasto invisibile, che è la categoria che questo file
+     * esiste per bloccare. Le due prove sono simmetriche a quelle di sopra: la
+     * tolleranza d'ambiente resta, il guasto no.
+     */
+    it('42703 sugli ALUNNI → 500, NON un 200 con elenco vuoto e muto', async () => {
+        h.alunni = { data: null, error: errore('42703', 'column alunni.classe_sezione does not exist') }
+        // L'elenco delle richieste è SANO: se la route rispondesse `[]` non
+        // sarebbe «non c'erano richieste», sarebbe «non so nemmeno chi guardare».
+        h.elenco = { data: [{ id: 'r1' }], error: null }
+
+        const res = await GET(getReq('classe_sezione=Rossi'))
+
+        expect(res.status).toBe(500)
+        expect(await res.json()).not.toEqual([])
+    })
+
+    it('il 500 sugli ALUNNI non racconta lo schema al chiamante', async () => {
+        h.alunni = { data: null, error: errore('42703', 'column alunni.classe_sezione does not exist') }
+        const res = await GET(getReq('classe_sezione=Rossi'))
+        // Lo stato SI ASSERISCE anche qui, e non è una ripetizione: senza, un `[]`
+        // muto passerebbe questa prova a mani basse — non contiene nomi di schema
+        // perché non contiene niente. Sarebbe un lock immunizzato proprio contro
+        // il difetto che deve sorvegliare.
+        expect(res.status).toBe(500)
+        const corpo = JSON.stringify(await res.json())
+        expect(corpo).not.toContain('alunni')
+        expect(corpo).not.toContain('classe_sezione')
+    })
+
+    it('42P01 sugli ALUNNI → 200 con elenco vuoto: la tolleranza d\'ambiente resta', async () => {
+        // Il controllo negativo. Senza, la correzione potrebbe essere «500 su
+        // qualunque errore», che farebbe rossa la CI sul DB E2E non migrato — e
+        // un lock che pretende una correzione sbagliata viene zittito, non seguito.
+        h.alunni = { data: null, error: errore('42P01', 'relation "alunni" does not exist') }
+        const res = await GET(getReq('classe_sezione=Rossi'))
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual([])
+    })
+
+    it('sezione davvero VUOTA → 200 con elenco vuoto (e non è un guasto)', async () => {
+        // L'altra metà della distinzione: `[]` deve continuare a significare
+        // «nessun bambino iscritto in questa sezione» quando è vero.
+        h.alunni = { data: [], error: null }
+        const res = await GET(getReq('classe_sezione=Rossi'))
+        expect(res.status).toBe(200)
+        expect(await res.json()).toEqual([])
     })
 })
 

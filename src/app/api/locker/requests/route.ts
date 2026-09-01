@@ -117,13 +117,31 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             const plessi = await scuoleDiUtente(admin, auth.user);
             if (plessi.length === 0) return NextResponse.json([]);
 
-            // Ottieni gli alunni della sezione (solo dei propri plessi)
-            const { data: alunni } = await supabase
+            // Ottieni gli alunni della sezione (solo dei propri plessi).
+            //
+            // ⚠️ L'`error` SI RACCOGLIE, e questa è la quarta query del file a
+            // farlo: fino al 2026-09-01 era l'unica che lo buttava via. PostgREST
+            // non lancia (regola 7 di AGENTS.md), quindi una lettura fallita
+            // lasciava `alunni` a `null`, la riga sotto rispondeva `200 []` e non
+            // si loggava niente. «Nessun bambino in questa sezione» e «non ho
+            // potuto guardare» si leggevano UGUALI — che è, parola per parola, il
+            // silenzio che questa route ha già pagato una volta (226 `PGRST205` in
+            // 28 giorni, 195 proprio qui, e nessuno se n'era accorto).
+            //
+            // Fallisce chiuso, quindi non era una fuga: era un guasto invisibile.
+            // Stesso trattamento delle altre tre — tabella assente ⇒ si degrada
+            // (il DB E2E della CI), qualunque altro codice ⇒ `erroreDb`, che
+            // logga per intero e al chiamante non racconta niente.
+            const { data: alunni, error: errAlunni } = await supabase
                 .from('alunni')
                 .select('id')
                 .eq('classe_sezione', classeSezione)
                 .eq('stato', 'iscritto')
                 .in('scuola_id', plessi);
+            if (errAlunni) {
+                if (tabellaMancante(errAlunni)) return NextResponse.json([]);
+                return erroreDb(errAlunni, 'locker/requests:GET');
+            }
 
             if (!alunni || alunni.length === 0) return NextResponse.json([]);
             const ids = alunni.map(a => a.id);

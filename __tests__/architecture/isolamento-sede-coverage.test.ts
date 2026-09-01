@@ -904,6 +904,32 @@ const AMMESSE: Record<string, string> = {
     'public/forms/[token]/upload:POST': 'token pubblico del modello',
     'iscrizione:<modulo>': 'modulo pubblico: la sede è scelta nel wizard e validata dentro la route',
     'iscrizione/model:GET': 'modulo pubblico: legge il modello di iscrizione, che è globale',
+    // ── L'IDENTITÀ DI CHI SI PROPONE NON HA CONFINI DI PLESSO (2026-09-01) ────
+    //
+    // `documentiDiUnaPraticaViva` (riga ~699) legge `pratiche_personale` per
+    // `email` + `stato in ('pending','in_approvazione')`, senza filtro di sede.
+    // La forma è quella giusta da segnalare: elenco su una tabella che
+    // `scuola_id` ce l'ha. Qui però il filtro sarebbe la cosa sbagliata.
+    //
+    // A DELIMITARE È LA PERSONA, NON IL PLESSO — è lo stesso ragionamento dello
+    // «scope famiglia» in cima a questo elenco. La domanda che la funzione pone
+    // è «questo percorso di documento appartiene a una pratica VIVA di QUESTA
+    // email?», e serve ad AMMETTERE chi rimanda in buona fede il PROPRIO modulo.
+    // La stessa dipendente può avere una pratica ad Aversa e proporsi a
+    // Giugliano: restringendo alla sede la funzione non troverebbe la pratica
+    // che è sua, e le rifiuterebbe il suo stesso documento. Non è un presidio
+    // che si perde, è un rifiuto che si guadagna.
+    //
+    // COSA NON LEGGE, che è la metà che rende la voce difendibile: `id` e le sole
+    // colonne del documento (`SELECT_PRATICA_VIVA` = `id` + `COLONNE_DOCUMENTO`),
+    // al più `MAX_PRATICHE_VIVE_LETTE` = 5 righe. Nessun nome, nessuna residenza,
+    // nessun codice fiscale, nessun conteggio: la sede la porta comunque la riga,
+    // semplicemente non si filtra. E la route la sede la conosce eccome — la
+    // scrive nei propri log (`scuola_id: scuolaId`) e la dichiara nell'INSERT.
+    //
+    // ⚠️ NON copre il `POST`: quello scrive, e la sede la deve DIRE. Se un domani
+    // l'handler comparisse qui, sarebbe un debito nuovo, non questa esenzione.
+    'iscrizione/personale:<modulo>': "helper `documentiDiUnaPraticaViva`: chiede se un percorso di documento sia già di una pratica VIVA della STESSA email, per lasciar rimandare il proprio modulo a chi lo rimanda. A delimitare è la persona, non il plesso: la stessa dipendente può avere una pratica in un'altra sede, e un `.eq('scuola_id', …)` qui non proteggerebbe nessuno — le rifiuterebbe il suo stesso documento. Legge `id` e le sole colonne del documento, al più 5 righe: nessun nome, nessuna residenza, nessun codice fiscale. Modulo pubblico, nessuna sessione da cui derivare uno scope.",
     // ── `iscrizione/insegnanti:POST` NON È QUI, ed è una decisione misurata ───
     //
     // È l'INSERT pubblico del modulo «Lavora con noi»: un anonimo scrive una riga
@@ -1034,6 +1060,34 @@ const AMMESSE: Record<string, string> = {
     // nessun conteggio: la risposta è un sottoinsieme dell'input, e a leggerla è un cron.
     // Nessun utente da cui derivare uno scope — la chiama pg_net con `x-cron-secret`, e il
     // lancio manuale dello staff passa da `requireStaff` ma fa lo stesso identico lavoro.
+    // ── TERZA DELLA FAMIGLIA (2026-09-01), e le due ragioni sono state VERIFICATE
+    //     una per una invece di ereditate — perché «gemella di quell'altra» è il
+    //     modo in cui un'esenzione smette di essere riletta.
+    //
+    // (1) UN TERMINE DI CONSERVAZIONE NON HA CONFINI DI SEDE. Vale qui come per
+    //     iscrizioni e candidature, ma la posta è più alta: questo è l'UNICO posto
+    //     del repo che toglie dal bucket la scansione del DOCUMENTO D'IDENTITÀ di
+    //     una dipendente (fronte E retro, dal 12/08/2026) dodici mesi dopo la
+    //     cessazione. La base giuridica non è il consenso — fra datore e dipendente
+    //     non sarebbe libero — ma il contratto e gli obblighi di legge, e nessuna
+    //     delle due copre la conservazione all'infinito di una FOTOCOPIA. Il
+    //     termine scade lo stesso giorno a Giugliano, Aversa e Cesa: un
+    //     `.in('scuola_id', plessi)` qui lascerebbe la carta d'identità di una
+    //     cessata di un altro plesso nell'archivio, e la lascerebbe IN SILENZIO,
+    //     perché il battito direbbe comunque «ok».
+    //
+    // (2) NON C'È NESSUN UTENTE DA CUI DERIVARE UNO SCOPE — misurato, non supposto:
+    //     `cron.job` 22, `retention-personale`, `17 5 * * *`, `active = true`, cioè
+    //     pg_net con l'header `x-cron-secret` (`segretoCronValido`). Il lancio
+    //     manuale dello staff passa da `requireStaff`, ma fa lo stesso identico
+    //     lavoro: la conservazione non è un elenco che cambia a seconda di chi
+    //     guarda.
+    //
+    // Le quattro righe che questo lock segnala sono la lettura delle pratiche
+    // scadute (`stato` + `creata_il`), la rilettura per id dei fascicoli da chiudere
+    // e le due `delete().in('id', …)`. Le ultime tre lavorano su id che vengono
+    // dalla prima: nessuna allarga la domanda. La sede la porta comunque la riga.
+    'gdpr/retention-personale:POST': "conservazione dell'anagrafica del personale — scansione del documento d'identità compresa, ed è l'unico posto del repo che la toglie dal bucket: come l'oblio, il termine deve valere su TUTTE le sedi, perché una fotocopia di carta d'identità scade lo stesso giorno a Giugliano, Aversa e Cesa e un filtro di sede la lascerebbe in archivio in silenzio, col battito che dice «ok». Le due `delete` lavorano su id già letti dalla prima query, non allargano la domanda. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret (`cron.job` 22, `17 5 * * *`); il lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro.",
     'gdpr/retention-candidature:<modulo>': "helper `spazzaCurriculumOrfani`: chiede quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i curriculum reclamati dalle altre due sedi e li cancellerebbe, lasciando quelle candidature con un `cv_path` che punta al nulla. Legge una sola colonna (`cv_path`) e solo per i percorsi che ha già in mano: la risposta è un sottoinsieme dell'input. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
@@ -1051,6 +1105,34 @@ const AMMESSE: Record<string, string> = {
     // SOLO `scuola_id`, mai il resto della riga, e non produce mai un riuso.
     'admin/import/anagrafiche:POST': 'ricerca del CF nelle altre sedi (solo `scuola_id`) per non fondere due bambini omonimi',
     'admin/iscrizioni:PATCH': "idem in fase di approvazione + aggiornamento della classe sull'alunno già dedotto in sede",
+
+    // ── L'ELENCO CLASSI: LA SEDE STA SUL PADRE, E IL PADRE È FILTRATO (2026-09-01)
+    //
+    // Le tre voci qui sotto nascono tutte dalla stessa forma, e tutte e tre da
+    // `iscrizioni_elenco_righe` / `iscrizioni_elenco_caricamenti`, tabelle entrate
+    // in questo lock il 2026-09-01 con la rigenerazione della fotografia. NON sono
+    // debiti nuovi: erano scoperte da quando le tabelle esistono (metà agosto),
+    // e la fotografia ferma al 10/08 le teneva semplicemente invisibili.
+    //
+    // L'elenco è a DUE LIVELLI: un `iscrizioni_elenco_caricamenti` per sede (il
+    // foglio caricato, `attivo = true`) e le sue `iscrizioni_elenco_righe`, legate
+    // da `caricamento_id`. La sede si impone sul PADRE, una volta sola, e i figli
+    // scendono da una chiave che è già ristretta: chiedere `caricamento_id = X`
+    // dopo aver risolto X per sede non allarga niente, perché X è di quella sede.
+    // Un `.in('scuola_id', plessi)` in più sulle righe sarebbe una seconda copia
+    // della stessa regola in un secondo posto — cioè la premessa di due schermate
+    // che un giorno mostrano numeri diversi.
+    //
+    // ⚠️ Il presidio è sul padre, quindi è LÌ che va guardato se un domani queste
+    // voci si rileggono: se qualcuno togliesse il filtro di sede dalla lettura di
+    // `iscrizioni_elenco_caricamenti`, queste tre esenzioni diventerebbero false
+    // tutte insieme, e questo lock non se ne accorgerebbe.
+    'admin/iscrizioni/elenco/export:GET':
+        "righe dell'elenco lette per `caricamento_id`: la sede è già imposta sul padre, che questa route risolve con `resolveScuolaScrittura` (una sede sola, DETTA: un foglio che mescolasse tre plessi non sarebbe l'elenco di nessuno) e legge con `.eq('scuola_id', scuolaId).eq('attivo', true)`. Senza sede risolta risponde 400 e non arriva mai qui.",
+    'admin/iscrizioni/elenco:GET':
+        "conteggio per classe letto per `caricamento_id`, uno per ogni caricamento già selezionato con `.in('scuola_id', sedi)` da `resolveScuoleAttive` — in lettura le sedi sono più d'una di proposito: la segreteria multi-sede deve vedere quali plessi hanno già il loro elenco. Uno scope vuoto NEGA (`sedi.length === 0` → elenco vuoto), non toglie il filtro.",
+    'admin/iscrizioni/elenco:POST':
+        "il `delete` segnalato è il ROLLBACK: `.eq('id', caricamentoId)` sulla chiave primaria della riga che questo stesso handler ha appena creato per la sede risolta, quando l'INSERT delle righe cade a metà (un elenco caricato per tre quarti è peggio di nessun elenco). Una PK non si allarga a un'altra sede. Le righe, invece, la sede la DICHIARANO: `.insert({ …, scuola_id: scuolaId })`.",
     // ⚰️ Qui c'era `admin/pre-inscriptions:PATCH` («recupero dell'account genitore per
     // email quando l'utente auth esiste già»). La rotta è stata CANCELLATA il 2026-08-16:
     // il pannello «Sala d'Attesa» che la usava non esiste più e non aveva nessun altro
@@ -1684,7 +1766,39 @@ describe('coverage-lock isolamento fra sedi', () => {
             // è più temporaneo: è permanente e nessuno l'ha deciso. Chi lo legge in quel
             // momento cancelli la rotta o riscriva questa riga dicendo che si tiene, e
             // perché.
-            handlerEsentati: 96,
+            //
+            // 🔻 96 → 101 il 2026-09-01, CINQUE IN UN COLPO — ed è il numero più
+            // importante di questa riga, perché la lettura ovvia («qualcuno ha tolto
+            // cinque pezzi di lock») è quella SBAGLIATA.
+            //
+            // Non è stato aggiunto un solo handler e non è stata allentata una sola
+            // regola. È stata RIGENERATA la fotografia delle tabelle
+            // (`__tests__/fixtures/tabelle-scuola-id.json`), ferma al 2026-08-10:
+            // 66 tabelle con `scuola_id` su 72. Le sei mancanti —
+            // `armadietto_richieste`, `candidature_sedi`,
+            // `iscrizioni_elenco_caricamenti`, `iscrizioni_elenco_righe`,
+            // `iscrizioni_import_esiti`, `pratiche_personale` — erano FUORI da
+            // `CON_SEDE`, e una tabella fuori da `CON_SEDE` non è sorvegliata: il
+            // lock non le guardava nemmeno.
+            //
+            // Quindi questi cinque handler non hanno smesso oggi di dichiarare la
+            // sede: non la dichiaravano da SETTIMANE, e passavano verdi. La
+            // rigenerazione non ha aperto un buco, ha acceso la luce su un buco già
+            // aperto — e le cinque voci in `AMMESSE` dicono, una per una, che cosa
+            // impone la sede al posto del filtro (la FK su un padre già ristretto,
+            // la PK di una riga appena creata dallo stesso handler, un cron di
+            // conservazione senza utente da cui derivare uno scope, un modulo
+            // pubblico dove a delimitare è la persona e non il plesso).
+            //
+            // ⚠️ LA LEZIONE, che vale più delle cinque voci: questa fotografia era
+            // l'unica delle quattro del repo SENZA guardia di freschezza. Le altre
+            // tre scadono su `generato_alle`; questa aveva solo un tamper-check
+            // sha256 sul contenuto, che verifica la coerenza di ciò che c'è e non
+            // dice niente su ciò che manca. Restava verde e non sapeva più niente.
+            // Chi rilegge: `npx vitest run __tests__/architecture/` non basta a dire
+            // che questo lock stia guardando tutto — bisogna rigenerare la
+            // fotografia e vedere se il numero delle tabelle è ancora quello.
+            handlerEsentati: 101,
         })
     })
 })

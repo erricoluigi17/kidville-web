@@ -41,11 +41,25 @@ import { join } from 'node:path'
 //     un bucket dell'elenco `RISERVATI`, e in produzione nessuno di quelli è pubblico.
 //     L'unica eccezione è `news`, elencata qui sotto con la ragione scritta.
 //
-// PERCHÉ SU `gallery` SI CONFRONTA SOLO IL LIMITE. La lista dei tipi ammessi del
-// bucket in produzione (che contiene `video/quicktime` e non contiene `image/gif`)
-// diverge da quella della route: è un secondo disallineamento, REALE, che però
-// cambierebbe cosa si può caricare e non è stato deciso. Sta nel rapporto, non qui
-// dentro: un lock non è il posto dove prendere decisioni di prodotto di nascosto.
+// SU `gallery` ORA SI CONFRONTA ANCHE LA LISTA DEI TIPI — decisa il 2026-09-01.
+// Fino a quel giorno qui c'era scritto che il confronto NON si faceva, perché la
+// lista del bucket in produzione (`video/quicktime` dentro, `image/gif` fuori)
+// divergeva da quella della route e allinearle cambia cosa si può caricare: una
+// decisione di prodotto, che un lock non è il posto dove prendere di nascosto.
+//
+// La decisione, dal titolare: **le foto e i video devono vedersi sia da Android
+// che da iOS.** Ne segue una lista sola, e il `.mov` ne esce:
+//   · `video/quicktime` è il formato dell'iPhone e Android NON lo riproduce. Non
+//     ci arriva mai — il client converte, e il server rifiuta con 415 ciò che è
+//     sfuggito — ma finché resta in elenco è la terza porta lasciata aperta su un
+//     video che metà dei genitori non riuscirebbe ad aprire;
+//   · `image/gif` esce perché è irraggiungibile, non perché faccia danno: il
+//     client ridisegna OGNI immagine su canvas e la riesporta in JPEG, quindi al
+//     bucket una GIF non arriva. Tenerla in elenco descriveva una cosa che non
+//     accade;
+//   · `image/jpg` esce perché non è un tipo MIME: nessun browser lo manda.
+// Restano `image/jpeg`, `image/png`, `image/webp`, `video/mp4`, `video/webm` —
+// tutti riproducibili su tutt'e due i sistemi.
 //
 // PERCHÉ LA VISIBILITÀ SI GUARDA IN DUE POSTI. Otto bucket su dodici non sono
 // dichiarati in nessuna migrazione: sono nati dalla console di Supabase. Per loro il
@@ -304,6 +318,18 @@ function limiteNelCodice(rel: string): number | null {
   return m ? Number(m[1]) : null
 }
 
+/**
+ * I letterali MIME dentro `allowedMimeTypes: [ … ]` nel sorgente di una route —
+ * cioè la configurazione che la route userebbe per CREARE il bucket in un ambiente
+ * nuovo. Deve dire le stesse cose della migrazione, altrimenti l'ambiente appena
+ * nato accetta file diversi da quello di produzione.
+ */
+function mimeBucketNelCodice(rel: string): string[] {
+  const m = senzaCommenti(sorgente(rel)).match(/allowedMimeTypes:\s*\[([\s\S]*?)\]/)
+  if (!m) return []
+  return [...m[1].matchAll(/'([a-z]+\/[a-z0-9.+-]+)'/gi)].map((x) => x[1])
+}
+
 /** I letterali MIME dentro `const <NOME> = [ … ]` (commenti esclusi). */
 function mimeNelCodice(rel: string, costante: string): string[] {
   const m = senzaCommenti(sorgente(rel)).match(
@@ -381,6 +407,33 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
         `La route accetta ${codice} byte, la migrazione ne dichiara altri: il file che sta ` +
           'nel mezzo passa i controlli dell\'applicazione e viene respinto dallo Storage.',
       ).toBe(codice)
+    })
+
+    it('i tipi ammessi dal bucket sono ESATTAMENTE quelli che dichiara la route', () => {
+      const codice = ordinati(mimeBucketNelCodice('src/app/api/gallery/upload/route.ts'))
+      expect(codice.length, 'La route deve elencare i MIME in `allowedMimeTypes`.').toBeGreaterThan(0)
+      expect(
+        ordinati(mimeDichiarati('gallery')),
+        'La migrazione e la route dichiarano tipi diversi per lo stesso bucket. Se il bucket è ' +
+          'più stretto, il file viene respinto DOPO il caricamento e la maestra vede un errore ' +
+          'generico; se è più largo, in un ambiente nuovo entrerebbe roba che qui non entra.',
+      ).toEqual(codice)
+    })
+
+    it('non ammette formati che una delle due piattaforme non riproduce', () => {
+      // La regola dietro l'elenco, scritta come regola e non come elenco: qualunque
+      // aggiunta futura deve passare di qui. `video/quicktime` è il caso che l'ha
+      // motivata — il `.mov` dell'iPhone, che Android non apre — ma vale per tutti.
+      const NON_UNIVERSALI = ['video/quicktime', 'video/x-matroska', 'image/heic', 'image/heif']
+      for (const fonte of [mimeDichiarati('gallery'), mimeBucketNelCodice('src/app/api/gallery/upload/route.ts')]) {
+        expect(
+          fonte.filter((m) => NON_UNIVERSALI.includes(m.toLowerCase())),
+          'In galleria finiscono foto e video che ogni famiglia deve poter aprire, su Android ' +
+            'come su iOS. Questi formati non si vedono su entrambi: il client li converte prima ' +
+            'di caricare e il server rifiuta con 415 ciò che è sfuggito — ammetterli nel bucket ' +
+            'riaprirebbe la terza porta, quella che serve quando le prime due cedono.',
+        ).toEqual([])
+      }
     })
 
     it('è DICHIARATO privato da una migrazione, non solo chiuso a mano', () => {

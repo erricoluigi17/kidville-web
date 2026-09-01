@@ -223,6 +223,37 @@ solo grazie allo stub compiacente.
 **Deciso dal titolare (2026-09-01)**: il tetto globale **resta a 50 MB** e non si alza — è ciò che
 impedisce a un singolo video di mangiarsi lo spazio.
 
+### La decisione sospesa, presa lo stesso giorno: `.mov` fuori dalla galleria
+
+La lista dei tipi ammessi era il secondo disallineamento, ed era rimasta aperta perché allinearla
+cambia *cosa si può caricare*. La regola l'ha decisa il titolare: **foto e video devono aprirsi sia
+su Android sia su iOS.** Da lì la lista è una sola.
+
+| | prima | dopo |
+|---|---|---|
+| `gallery` | jpeg · png · webp · mp4 · **quicktime** · webm | jpeg · png · webp · mp4 · webm |
+
+**Esce `video/quicktime`**, il `.mov` dell'iPhone: Android non lo riproduce. Non ci arriva mai — il
+client converte *ogni* video in MP4/WebM (per HEVC/`.mov` la conversione è **obbligatoria**: se
+fallisce l'upload non parte) e il server rifà lo sniff rispondendo **415** a ciò che è sfuggito — ma
+finché resta in elenco è la **terza porta**, quella che conta il giorno in cui le prime due cedono.
+In 98 giorni nel bucket: **46 JPEG e 1 MP4**, zero `.mov`.
+
+Escono anche `image/gif` e `image/jpg`, e per una ragione diversa: sono **irraggiungibili**. Il
+client ridisegna ogni immagine su canvas e la riesporta **sempre in JPEG**, quindi al bucket una GIF
+non arriva; e `image/jpg` non è un tipo MIME, nessun browser lo manda. Elencarli descriveva cose che
+non accadono. *(Correzione a un rilievo precedente di questa stessa giornata, che dava la GIF come
+«respinta dallo Storage»: nel percorso reale non ci arriva affatto.)*
+
+Restano `image/png` e `image/webp`: si vedono su entrambi i sistemi, e coprono il caso in cui il
+watermark non parta e l'immagine originale venga caricata così com'è.
+
+**Migrazione `20260901182942`** (applicata, verificata). Il lock ora **confronta le due liste** — il
+confronto era disattivato di proposito in attesa di questa decisione — e ne pretende una terza cosa,
+scritta come regola e non come elenco: **nessuna delle due può contenere un formato che una delle due
+piattaforme non riproduce**. Provato invece che dichiarato: cambiata la migrazione e non il codice,
+il lock diventa rosso sulla divergenza.
+
 ---
 
 ## 🕐 Changelog — Un test della Contabilità è esploso da solo al cambio di mese — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)

@@ -111,10 +111,19 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                     // la creazione verrebbe respinta e il bucket non esisterebbe affatto.
                     const esitoCreazione = await supabase.storage.createBucket(BUCKET_GALLERIA, {
                         public: false,
+                        // SOLO formati che si aprono sia su Android sia su iOS (decisione
+                        // del 2026-09-01). In galleria finiscono foto e video dei bambini:
+                        // un formato che si vede da una parte sola è metà dei genitori
+                        // davanti a un riquadro nero.
+                        //  · niente QuickTime (.mov) né Matroska (.mkv): Android non li
+                        //    riproduce. Il telefono converte prima di caricare, e ciò che
+                        //    sfugge lo ferma il 415 qui sopra — questa è la terza rete;
+                        //  · niente `image/gif`: il client ridisegna OGNI immagine su
+                        //    canvas e la riesporta in JPEG, quindi una GIF al bucket non
+                        //    arriva. Elencarla descriveva una cosa che non accade;
+                        //  · niente `image/jpg`: non è un tipo MIME, nessun browser lo manda.
                         allowedMimeTypes: [
-                            'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                            // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
-                            // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
+                            'image/jpeg', 'image/png', 'image/webp',
                             'video/mp4', 'video/webm'
                         ],
                         fileSizeLimit: 52428800 // 50MB — quanto il tetto globale del progetto

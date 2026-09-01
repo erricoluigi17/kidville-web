@@ -108,7 +108,28 @@ export const GET = withRoute('locker/materials:GET', async (request: NextRequest
         }
 
         return NextResponse.json(data && data.length > 0 ? data : MATERIALI_DEFAULT);
-    } catch {
+    } catch (err) {
+        // Ripiego di ULTIMA istanza, e fino al 2026-09-01 era MUTO. Qui non arriva
+        // l'errore di PostgREST — quello lo intercetta il ramo `if (error)` qui sopra,
+        // perché PostgREST non lancia: ritorna `{ error }`. Qui arriva un'ECCEZIONE
+        // vera: il client admin che non si costruisce, la risoluzione delle sezioni
+        // che esplode. Cose che non capitano «a volte»: capitano a OGNI richiesta.
+        //
+        // Ed è esattamente ciò che stava succedendo dentro la suite senza che nessuno
+        // potesse accorgersene: `__tests__/api/locker-materials-auth.test.ts` credeva
+        // di leggere la riga configurata e riceveva i quattro default, perché ogni
+        // chiamata passava di qui. Il test era VERDE — asseriva `length > 0`, e i
+        // default sono quattro — e questa riga non esisteva. Con «nessun log» non si
+        // distingue «tutto ok» da «va in eccezione ogni volta» (AGENTS.md regole 5 e 6).
+        //
+        // `warn` e non `error`, per la stessa ragione del catch qui sopra: il ripiego è
+        // previsto e il chiamante riceve comunque dei materiali validi. Ma `esito`
+        // dev'essere DIVERSO da quello del ramo PostgREST: sono due guasti con due
+        // correzioni diverse, e chi legge il log deve poterli separare.
+        logEvento('db', 'warn', {
+            operazione: 'locker/materials:GET',
+            esito: 'locker-materials-eccezione-uso-default',
+        }, err);
         return NextResponse.json(MATERIALI_DEFAULT);
     }
 });

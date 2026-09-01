@@ -94,6 +94,42 @@
 
 ---
 
+## 🕐 Changelog — Un test della Contabilità è esploso da solo al cambio di mese — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
+
+`__tests__/components/importi-euro-italiani.test.tsx` era **rosso senza che nessuno avesse toccato
+né il test né il componente**. Scritto il 2026-08-03, ha cominciato a fallire il **2026-09-01**.
+
+Misurato congelando l'orologio, invece di dedurre:
+
+| data di esecuzione | «€ 1.234,50» | «€ 2.000,00» |
+|---|---|---|
+| 2026-08-03 *(quando fu scritto)* | 2 ✅ | 2 ✅ |
+| 2026-09-01 | **4** ❌ | 2 |
+| 2026-10-01 | 2 | **4** ❌ |
+
+**Causa radice**: le asserzioni contavano le occorrenze di un importo su **tutto il documento**,
+mentre il commento accanto diceva «due card». Sotto i KPI ci sono l'agenda e la tabella dei
+pagamenti, e *quali righe mostrino dipende da che giorno è oggi*: ad agosto nessuno dei due
+pagamenti finti cadeva nel mese corrente, la tabella era vuota, e i conteggi tornavano **per
+coincidenza**. Il componente non aveva nulla che non andasse.
+
+C'era un secondo danno, più silenzioso del primo: il test «in tutta la schermata non resta un solo
+importo col punto decimale» ad agosto **non guardava la tabella affatto**, perché non c'era. Passava
+perché non c'era niente da guardare — il caso peggiore di verde.
+
+**Correzione**: le asserzioni si agganciano alla singola card dentro `data-testid="kpi-contabilita"`
+(le etichette **non sono uniche** nella schermata: «Da fatturare» è anche il badge di stato di una
+riga, e al 01/09 compariva tre volte); l'orologio è congelato al **2026-10-01**, cioè a una data in
+cui tabella e agenda sono **piene**; e un `describe` nuovo ripete le stesse asserzioni su **tre mesi
+diversi**, così un ritorno del conteggio globale si vede subito invece che al cambio di mese.
+
+Provato invece che dichiarato: rompendo `formatEuro` su una card, **5 delle 6 prove diventano
+rosse**; ripristinandola tornano verdi.
+
+**Gate ora integralmente verde**: eslint 0 · tsc 0 · **12.418 test su 12.418** · build ok.
+
+---
+
 ## 📇 Changelog — Le anagrafiche della primaria da Argo, e i 110 bambini che il registro non ha — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
 
 **Sulla primaria, 57 bambini su 76 avevano un solo genitore collegato, e la parentela era `NULL`

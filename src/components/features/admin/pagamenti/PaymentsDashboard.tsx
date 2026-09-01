@@ -272,8 +272,13 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 </div>
             )}
 
-            {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg */}
-            <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {/* KPI (StatCard cockpit): 1 colonna sotto sm, 2 da sm, 4 da lg
+                `data-testid`: le etichette dei KPI NON sono uniche nella schermata —
+                «Da fatturare» è anche il badge di stato di una riga della tabella —
+                e senza un confine i test finiscono per contare importi che stanno
+                altrove, con esiti che cambiano col calendario. Vedi
+                `__tests__/components/importi-euro-italiani.test.tsx`. */}
+            <div data-testid="kpi-contabilita" className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : formatEuro(totals.incassato)} tone="success" />
                 <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : formatEuro(totals.daIncassare)} tone="warn" />
                 <StatCard icon={AlertTriangle} label={t('dashScadutoMorosita')} value={loading ? '—' : formatEuro(totals.scaduto)} tone="error" />

@@ -114,8 +114,37 @@ export async function riconciliaRichieste(
             continue
         }
 
-        // `ON CONFLICT` sull'indice unico parziale: due scritture concorrenti sullo
-        // stesso (alunno, materiale) non si rompono a vicenda.
+        // 🔴 QUESTA `upsert` FALLISCE IN PRODUZIONE, SEMPRE. Il commento che stava
+        // qui diceva «`ON CONFLICT` sull'indice unico parziale: due scritture
+        // concorrenti non si rompono a vicenda». È FALSO, ed è stato misurato sul
+        // database vero il 2026-09-01, non dedotto:
+        //
+        //   EXPLAIN INSERT … ON CONFLICT (alunno_id, materiale) DO NOTHING;
+        //   → ERROR: 42P10: there is no unique or exclusion constraint
+        //            matching the ON CONFLICT specification
+        //
+        //   EXPLAIN INSERT … ON CONFLICT (alunno_id, materiale)
+        //                    WHERE stato <> 'evasa' DO NOTHING;
+        //   → Conflict Arbiter Indexes: armadietto_richieste_viva_uniq   ✅
+        //
+        // Postgres non può inferire un indice PARZIALE da un `ON CONFLICT (colonne)`
+        // nudo: per usarlo come arbitro pretende un `WHERE` che implichi il predicato
+        // dell'indice. PostgREST emette solo l'elenco delle colonne (`on_conflict=…`)
+        // e NON ha modo di mandare un predicato, quindi da qui quella forma è
+        // irraggiungibile. L'unico indice unico su (alunno_id, materiale) è parziale
+        // (`WHERE stato <> 'evasa'`); l'altro unico è la PK su `id`.
+        //
+        // CONSEGUENZA: ogni apertura ritorna 42P10, `logErrore` scrive la riga e
+        // `aperte` resta a zero. Il modulo non aprirebbe MAI una richiesta — visibile
+        // solo in `app_log`, che è il fallimento silenzioso di sempre.
+        //
+        // I test non lo vedono: mockano il query-builder, e un mock dice sempre di sì.
+        //
+        // LA CORREZIONE, che tocca anche le asserzioni del test (`h.upsert` →
+        // `h.insert`) e per questo non è stata applicata qui dentro senza deciderlo:
+        // usare `.insert(…)` e trattare il `23505` come benigno — è l'indice parziale
+        // che fa il lavoro anti-doppione, esattamente come previsto, e restituisce
+        // «richiesta già viva» invece di rompere la passata.
         const { error } = await admin.from(TAVOLA).upsert({
             alunno_id: alunnoId,
             scuola_id: al.scuola_id as string,

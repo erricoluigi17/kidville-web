@@ -632,8 +632,11 @@ function TeacherLockerInner() {
                         </div>
                     )}
 
+                    {/* `text-kidville-sub` e non `text-kidville-muted`: quel grigio vale
+                        2,51:1 su bianco contro i 4,5:1 di WCAG AA, e su una vista NUOVA non
+                        si riapre un debito che il repo sta smaltendo. */}
                     {richiesteLoading ? (
-                        <div className="text-center py-10 text-kidville-muted">{t('lockerCaricamento')}</div>
+                        <div className="text-center py-10 text-kidville-sub">{t('lockerCaricamento')}</div>
                     ) : richiesteErrore ? (
                         <div role="status" className="flex items-start gap-2 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft px-4 py-3">
                             <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-kidville-error" />
@@ -644,8 +647,8 @@ function TeacherLockerInner() {
                            stato ricollegato e non ci sono ancora movimenti. Lo stato
                            vuoto deve dirlo, non lasciare una pagina bianca. */
                         <div className="rounded-2xl border border-kidville-line bg-white px-4 py-10 text-center">
-                            <Bell size={32} className="mx-auto mb-2 text-kidville-muted" />
-                            <p className="font-maven text-sm text-kidville-muted">{t('lockerRichiesteVuoto')}</p>
+                            <Bell size={32} className="mx-auto mb-2 text-kidville-sub" />
+                            <p className="font-maven text-sm text-kidville-sub">{t('lockerRichiesteVuoto')}</p>
                         </div>
                     ) : (
                         <div className="space-y-3">
@@ -663,7 +666,7 @@ function TeacherLockerInner() {
                                                 <p className="font-maven font-bold text-kidville-green truncate">
                                                     {alunno ? `${alunno.nome} ${alunno.cognome}` : t('lockerRichiestaAlunnoIgnoto')}
                                                 </p>
-                                                <p className="font-maven text-xs text-kidville-muted">
+                                                <p className="font-maven text-xs text-kidville-sub">
                                                     {t('lockerRichiestaResiduo', { materiale: r.materiale, quantita: r.quantita_residua })}
                                                 </p>
                                                 <p className={`mt-0.5 font-maven text-xs ${r.stato === 'presa_in_carico' ? 'text-kidville-success' : 'text-kidville-warn'}`}>

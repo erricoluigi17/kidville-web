@@ -4,19 +4,74 @@ import { useEffect, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { Package, Bell } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 
 interface StockItem {
   materiale: string
   stock: number
 }
 
-interface Props {
-  studentId: string
+/** Le due soglie di un materiale, come le dichiara `/api/locker/materials`. */
+interface Soglia {
+  allerta: number
+  emergenza: number
 }
 
-// Soglie allineate alla pagina /parent/locker (getSemaforoUI).
-const SOGLIA_GIALLA = 5
-const SOGLIA_ROSSA = 2
+interface Props {
+  studentId: string
+  /**
+   * La sezione del bambino: è la chiave con cui si chiedono le SOGLIE al server.
+   * Arriva dalla home, che quel dato ce l'ha già (`/api/diary/students?id=`) — così
+   * la card non fa una seconda chiamata per sapere una cosa che il padre sa.
+   * Assente ⇒ nessuna soglia ⇒ nessun semaforo, che è la verità.
+   */
+  classeSezione?: string
+}
+
+/**
+ * Le soglie per materiale, dalla configurazione della sezione.
+ *
+ * ⚠️ Qui c'erano `SOGLIA_GIALLA = 5` e `SOGLIA_ROSSA = 2`, «allineate alla pagina
+ * /parent/locker» — che le aveva cablate a sua volta, e sbagliate: il listino vero
+ * (`src/lib/armadietto/materiali-default.ts`) dice Crema 3/1 e Cambio 2/1. Due
+ * copie della stessa regola non restano allineate: restano sbagliate insieme.
+ *
+ * Il `try/catch` vive in una funzione di MODULO perché dentro il componente farebbe
+ * scattare `react-hooks/set-state-in-effect`. Non rigetta mai: chi chiama riceve
+ * `null` e semplicemente non mostra il semaforo.
+ */
+async function caricaSoglie(classeSezione: string): Promise<Record<string, Soglia> | null> {
+  try {
+    const res = await fetch(`/api/locker/materials?classe_sezione=${encodeURIComponent(classeSezione)}`)
+    if (!res.ok) {
+      logClient({
+        livello: 'warn', evento: 'fetch',
+        messaggio: `armadietto-soglie-home-non-lette: ${res.status}`,
+        route: '/parent', stato: res.status,
+      })
+      return null
+    }
+    const dati: unknown = await res.json()
+    if (!Array.isArray(dati)) return null
+    const mappa: Record<string, Soglia> = {}
+    for (const riga of dati) {
+      if (riga === null || typeof riga !== 'object') continue
+      const m = riga as Record<string, unknown>
+      if (typeof m.nome !== 'string' || m.nome === '') continue
+      // Una riga senza soglie numeriche si SCARTA: non si inventa un numero.
+      if (typeof m.livello_allerta !== 'number' || typeof m.livello_emergenza !== 'number') continue
+      mappa[m.nome] = { allerta: m.livello_allerta, emergenza: m.livello_emergenza }
+    }
+    return mappa
+  } catch (err) {
+    logClient({
+      livello: 'error', evento: 'fetch',
+      messaggio: `armadietto-soglie-home-fallite: ${nomeErrore(err)}`,
+      route: '/parent',
+    })
+    return null
+  }
+}
 
 /**
  * Teaser "Armadietto · Scorte" del design (DR LockerCard): scorte attuali con
@@ -26,9 +81,10 @@ const SOGLIA_ROSSA = 2
  * Il pulsante "Avvisa" (M5.3) invia POST /api/locker/notify: notifica lo staff
  * della scuola e i docenti della sezione (tipo `locker_scorte`).
  */
-export function LockerTodayCard({ studentId }: Props) {
+export function LockerTodayCard({ studentId, classeSezione }: Props) {
   const t = useTranslations('home')
   const [items, setItems] = useState<StockItem[]>([])
+  const [soglie, setSoglie] = useState<Record<string, Soglia>>({})
   const [loaded, setLoaded] = useState(false)
   const [toast, setToast] = useState('')
   const [sending, setSending] = useState(false)
@@ -49,6 +105,20 @@ export function LockerTodayCard({ studentId }: Props) {
       active = false
     }
   }, [studentId])
+
+  // Le soglie, in un effetto suo: dipendono dalla SEZIONE, non dal bambino, e
+  // senza sezione non si chiedono affatto (la route, senza `classe_sezione`, non
+  // filtra per plesso e risponderebbe con la configurazione di tutte le sedi).
+  useEffect(() => {
+    if (!classeSezione) return
+    let active = true
+    void caricaSoglie(classeSezione).then((s) => {
+      if (active && s !== null) setSoglie(s)
+    })
+    return () => {
+      active = false
+    }
+  }, [classeSezione])
 
   const notifyScuola = async (nome: string) => {
     if (sending) return
@@ -92,9 +162,13 @@ export function LockerTodayCard({ studentId }: Props) {
     <Card className="p-4">
       <div className="flex flex-col gap-3">
         {items.map((it) => {
-          const basso = it.stock <= SOGLIA_ROSSA
-          const medio = !basso && it.stock <= SOGLIA_GIALLA
-          const pct = Math.min(100, Math.round((it.stock / Math.max(SOGLIA_GIALLA * 2, it.stock)) * 100))
+          // Materiale senza configurazione ⇒ niente semaforo e niente barra: un
+          // colore inventato dice al genitore «stai tranquillo» o «corri» senza
+          // saperlo. Il numero, quello, si mostra sempre.
+          const s = soglie[it.materiale]
+          const basso = s ? it.stock <= s.emergenza : false
+          const medio = s ? !basso && it.stock <= s.allerta : false
+          const pct = s ? Math.min(100, Math.round((it.stock / Math.max(s.allerta * 2, it.stock)) * 100)) : 0
           const barColor = basso ? 'bg-kidville-error' : medio ? 'bg-kidville-warn' : 'bg-kidville-success'
           return (
             <div key={it.materiale} className="flex items-center gap-3">
@@ -119,9 +193,11 @@ export function LockerTodayCard({ studentId }: Props) {
                     {it.stock} {t('lockerPz')}
                   </span>
                 </div>
-                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-kidville-line">
-                  <div className={'h-full rounded-full ' + barColor} style={{ width: `${pct}%` }} />
-                </div>
+                {s && (
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-kidville-line">
+                    <div className={'h-full rounded-full ' + barColor} style={{ width: `${pct}%` }} />
+                  </div>
+                )}
               </div>
               {basso && (
                 <button

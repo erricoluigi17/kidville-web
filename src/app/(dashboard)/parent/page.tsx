@@ -36,6 +36,9 @@ function ParentHomeContent() {
 
   const [firstName, setFirstName] = useState('');
   const [nameResolved, setNameResolved] = useState(false);
+  // La sezione del bambino viaggia fino alla card dell'armadietto, che senza non
+  // può chiedere al server le soglie del materiale (e prima le aveva cablate).
+  const [classeSezione, setClasseSezione] = useState('');
 
   useEffect(() => {
     if (!studentId) return;
@@ -44,6 +47,7 @@ function ParentHomeContent() {
       .then(d => {
         if (!d) return;
         setFirstName(d.nome ?? '');
+        if (typeof d.classe_sezione === 'string') setClasseSezione(d.classe_sezione);
       })
       .catch(() => {})
       .finally(() => setNameResolved(true));
@@ -167,7 +171,7 @@ function ParentHomeContent() {
       {studentId && (
         <div className="px-4 pt-5">
           <SectionHeader eyebrow={t('eyebrowArmadietto')} title={t('titoloScorte')} actionLabel={t('azioneGestisci')} actionHref={wi('/parent/locker')} />
-          <LockerTodayCard studentId={studentId} />
+          <LockerTodayCard studentId={studentId} classeSezione={classeSezione} />
         </div>
       )}
 

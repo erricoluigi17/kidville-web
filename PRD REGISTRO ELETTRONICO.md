@@ -175,6 +175,55 @@ Piano: `docs/superpowers/plans/2026-09-01-armadietto-richieste-rifornimento.md`
 
 ---
 
+## 📵 Changelog — La colonna che dice da quale telefono arriva un errore non ha mai visto un telefono — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
+
+Cercando da dove venissero 13 `fotocamera-errore` in mezz'ora, è saltato fuori qualcosa di più
+grosso dell'errore che si stava cercando.
+
+| `app_log.piattaforma` (eventi client) | righe | occorrenze | periodo |
+|---|---|---|---|
+| `web` | 1.722 | **3.625** | 2/08 → 1/09 |
+| `ios` | 1 | 1 | 8/08 |
+| `android` | — | **0** | mai |
+
+E quell'unica riga iOS **non è un telefono**: `evento: client:collaudo-r10`, messaggio *«verifica
+onda5 R10: stack WebKit sintetico, nessun dato reale»*. È un payload finto iniettato a mano durante
+il collaudo dell'8 agosto. **In 31 giorni, zero eventi da un dispositivo nativo reale.**
+
+**Causa radice.** `client.ts` decideva la piattaforma **annusando la stringa `Capacitor` nello
+user-agent**. Capacitor quella stringa non la scrive: `appendUserAgent` è una configurazione
+facoltativa, e non è impostata né in `capacitor.config.ts` né nei config generati per Android e iOS.
+La condizione non poteva diventare vera su un dispositivo vero.
+
+**La prova che erano eventi nativi**, e non un'app senza utenti: `scegliFotoNativa`
+(`src/lib/native/camera.ts:78`) esce **prima del `try`** quando non siamo nella shell, quindi sul web
+non può loggare niente. Eppure i suoi 13 `fotocamera-errore` del 01/09 — più uno sulla chat docenti e
+quattro di agosto — risultano tutti `web`. Due rilevazioni della stessa cosa che si contraddicono: la
+fotocamera chiede a `Capacitor.isNativePlatform()`, il logger tirava a indovinare.
+
+**Cosa è costato**: non un errore in più, ma **ogni domanda del tipo «succede solo su Android?»
+rimasta senza risposta per un mese** — e senza che si vedesse, perché una colonna piena di `web`
+sembra una misura invece che un silenzio. È il gemello del difetto delle email del 2025: nessun test
+rosso, nessuno se n'è accorto.
+
+**Correzione.** La piattaforma si chiede al bridge (`globalThis.Capacitor.getPlatform()`), non allo
+user-agent — e si accettano solo i tre valori che la colonna contempla, così una shell futura che
+dicesse «electron» non ci scrive dentro una quarta parola. Lo user-agent resta come **ripiego**: da
+solo non bastava, ma se un giorno `appendUserAgent` venisse configurato quel ramo lo raccoglie.
+Niente `import`: la **regola 1** del file vieta qualunque import oltre a `./path`, e il bridge sta
+sul globale.
+
+**Sette prove nuove** dove non ce n'era nessuna: Android e iOS nella shell (rosse sul codice di
+prima), browser vero, shim `web`, valore fuori elenco, bridge che lancia (regola 6: il logger non può
+rompere l'app), e il ripiego user-agent.
+
+⏳ **Resta aperto**: *perché* la fotocamera fallisce. Oggi non è conoscibile — `camera.ts:117` scrive
+la parola `fotocamera-errore` e butta via la causa. Il passo successivo è dare a `classifica()`
+categorie chiuse (`non_disponibile`, `immagine_non_elaborabile`, `memoria`) senza far uscire dal
+telefono una sola stringa del plugin. La causa vera si legge **dopo il rilascio**, sulle righe nuove.
+
+---
+
 ## 📸 Changelog — Ogni foto caricata scriveva due errori, e la protezione che li causava non è mai entrata in funzione — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
 
 Il 01/09, primo giorno di scuola, le maestre hanno caricato **31 foto**: tutte salvate, e **62 righe

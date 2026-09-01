@@ -6,13 +6,14 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import {
     RefreshCw, ChevronDown, ChevronRight,
     PlusCircle, MinusCircle, Table2, Truck, ChevronLeft,
-    ChevronRight as ChevronRightIcon, Settings,
+    ChevronRight as ChevronRightIcon, Settings, Bell, Check, AlertTriangle,
 } from 'lucide-react';
 import Link from 'next/link';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { LoadStockModal } from '@/components/features/teacher/locker/LoadStockModal';
 import { MonthlyLockerTable, type StudentInfo } from '@/components/features/teacher/locker/MonthlyLockerTable';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 function currentYearMonth() {
     const d = new Date();
@@ -31,6 +32,94 @@ interface StockAlunno { id: string; nome: string; cognome: string; stocks: Stock
 interface InventarioRecord { date: string; nome_oggetto: string; materiale?: string; quantita?: number; }
 interface CaricoDayStudent { id: string; nome: string; cognome: string; inventario: InventarioRecord[]; }
 
+/** L'alunno incorporato da `armadietto_richieste → alunni (id, nome, cognome)`. */
+interface RichiestaAlunno { id: string; nome: string; cognome: string; }
+
+/**
+ * Una richiesta di rifornimento come la restituisce
+ * `GET /api/locker/requests?classe_sezione=`.
+ *
+ * Quel ramo della route esisteva DA SEMPRE e non aveva mai avuto un consumatore:
+ * la scuola apriva richieste che soltanto il genitore poteva vedere. Questa vista
+ * è il primo.
+ */
+interface Richiesta {
+    id: string;
+    alunno_id: string;
+    materiale: string;
+    livello: 'giallo' | 'rosso';
+    quantita_residua: number;
+    stato: 'aperta' | 'presa_in_carico' | 'evasa';
+    presa_in_carico_il: string | null;
+    evasa_il: string | null;
+    creato_il: string;
+    /** PostgREST rende una relazione to-one come oggetto; alcune versioni come array. */
+    alunni?: RichiestaAlunno | RichiestaAlunno[] | null;
+}
+
+/** L'alunno della richiesta, qualunque forma abbia scelto PostgREST. */
+function alunnoDi(r: Richiesta): RichiestaAlunno | null {
+    const a = r.alunni;
+    if (!a) return null;
+    return (Array.isArray(a) ? a[0] : a) ?? null;
+}
+
+/**
+ * Giorni interi trascorsi da una data ISO.
+ *
+ * Solo aritmetica sui millisecondi: niente `Intl`, niente `toLocale*`, quindi
+ * nessun fuso da dichiarare. E non compare nel primo render — la lista esiste solo
+ * dopo la fetch — quindi non può disallineare l'idratazione.
+ */
+function giorniDa(iso: string): number {
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return 0;
+    return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
+}
+
+/**
+ * Le richieste vive della sezione, o `null` se non si è potuto leggere.
+ *
+ * ⚠️ NIENTE `&userId=`. Le tre chiamate qui accanto ce l'hanno e sarebbe stato
+ * naturale copiarlo: è la vecchia identità-per-query, chiusa con
+ * `ALLOW_HEADER_IDENTITY=false`, e `getQuerySchema` di questa route non la
+ * dichiara — zod la scarterebbe in silenzio. Non un errore: un parametro che non
+ * fa niente e che il prossimo copia di nuovo.
+ *
+ * ⚠️ Il `try/catch` vive qui, in una funzione di MODULO, e non dentro il
+ * componente: `react-hooks/set-state-in-effect` considera il ramo `catch` di una
+ * funzione chiamata da `useEffect` raggiungibile sincronicamente e rende rosso
+ * ogni `setState` che ne discende. Il chiamante riceve `null` — «non ho potuto
+ * guardare», diverso da «non c'è niente» — e lo dice a schermo.
+ *
+ * Nel log non entra mai il nome di un bambino: solo uno slug fisso e lo stato.
+ */
+async function caricaRichieste(sezione: string): Promise<Richiesta[] | null> {
+    try {
+        const res = await fetch(`/api/locker/requests?classe_sezione=${encodeURIComponent(sezione)}`);
+        if (!res.ok) {
+            logClient({
+                livello: 'warn', evento: 'fetch',
+                messaggio: `armadietto-richieste-sezione-non-lette: ${res.status}`,
+                route: '/teacher/locker', stato: res.status,
+            });
+            return null;
+        }
+        const dati: unknown = await res.json();
+        if (!Array.isArray(dati)) return [];
+        // Le evase sono storia. Questa vista risponde a una domanda sola: che cosa
+        // manca ADESSO, e chi non ha ancora risposto.
+        return (dati as Richiesta[]).filter((r) => r.stato !== 'evasa');
+    } catch (err) {
+        logClient({
+            livello: 'error', evento: 'fetch',
+            messaggio: `armadietto-richieste-sezione-fallite: ${nomeErrore(err)}`,
+            route: '/teacher/locker',
+        });
+        return null;
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TeacherLockerInner() {
@@ -44,8 +133,8 @@ function TeacherLockerInner() {
     const settingsHref = pathname?.startsWith('/admin')
         ? `/admin/impostazioni?sezione=armadietto${uid ? `&userId=${uid}` : ''}`
         : '/teacher/settings/locker';
-    // 'carico' | 'consumo' | 'mensile'
-    const [view, setView]   = useState<'carico' | 'consumo' | 'mensile'>('carico');
+    // 'carico' | 'consumo' | 'richieste' | 'mensile'
+    const [view, setView]   = useState<'carico' | 'consumo' | 'richieste' | 'mensile'>('carico');
     const [month, setMonth] = useState(currentYearMonth());
 
     // Carico state
@@ -65,6 +154,13 @@ function TeacherLockerInner() {
     const [consumoQty,  setConsumoQty]          = useState(1);
     const [consumoSaving, setConsumoSaving]     = useState(false);
 
+    // Richieste state («Da portare»)
+    const [richieste,        setRichieste]        = useState<Richiesta[]>([]);
+    const [richiesteLoading, setRichiesteLoading] = useState(true);
+    const [richiesteErrore,  setRichiesteErrore]  = useState(false);
+    const [evadendoId,       setEvadendoId]       = useState<string | null>(null);
+    const [erroreEvasione,   setErroreEvasione]   = useState(false);
+
     // Mensile state
     const [mensileStudents, setMensileStudents] = useState<StudentInfo[]>([]);
     const [mensileLoading,  setMensileLoading]  = useState(true);
@@ -83,9 +179,19 @@ function TeacherLockerInner() {
                 setAvailableSections(secs);
                 setSezione(prev => prev || secs[0] || '');
                 // Nessuna sezione assegnata: niente da caricare → chiudo gli spinner.
-                if (secs.length === 0) { setCaricoLoading(false); setConsumoLoading(false); }
+                // ⚠️ TUTTI E QUATTRO, non i due che c'erano: senza `sezione` nessuna
+                // fetch parte mai, quindi ogni spinner rimasto acceso è ETERNO.
+                // «Mensile» ne aveva già uno, e nessuno se n'era accorto perché quella
+                // vista si apre di rado. La quarta vista non ne aggiunge un altro.
+                if (secs.length === 0) {
+                    setCaricoLoading(false); setConsumoLoading(false);
+                    setRichiesteLoading(false); setMensileLoading(false);
+                }
             })
-            .catch(() => { setCaricoLoading(false); setConsumoLoading(false); });
+            .catch(() => {
+                setCaricoLoading(false); setConsumoLoading(false);
+                setRichiesteLoading(false); setMensileLoading(false);
+            });
     }, [userId]);
 
     // ── Fetch Carico ─────────────────────────────────────────────────────────
@@ -120,6 +226,24 @@ function TeacherLockerInner() {
         } finally { setConsumoLoading(false); }
     }, [expandedConsumo, userId, sezione]);
 
+    // ── Fetch Richieste («Da portare») ────────────────────────────────────────
+    // `finally` e non `catch`: il `catch` vive dentro `caricaRichieste` (che logga),
+    // e qui il `finally` copre TUTTI i rami terminali — compreso quello d'errore.
+    // Nessuna strada porta a uno spinner che non si spegne.
+    const fetchRichieste = useCallback(async () => {
+        try {
+            const dati = await caricaRichieste(sezione);
+            if (dati === null) {
+                setRichiesteErrore(true);
+            } else {
+                setRichieste(dati);
+                setRichiesteErrore(false);
+            }
+        } finally {
+            setRichiesteLoading(false);
+        }
+    }, [sezione]);
+
     // ── Fetch Mensile ─────────────────────────────────────────────────────────
     const fetchMensile = useCallback(async (ym: string) => {
         try {
@@ -146,6 +270,7 @@ function TeacherLockerInner() {
     // Carica Carico odierno + stock totale quando la sezione reale è nota.
     useEffect(() => { if (sezione) { fetchCarico(); fetchConsumo(); } }, [sezione]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => { if (view === 'mensile' && sezione) fetchMensile(month); }, [view, month, sezione, fetchMensile]);
+    useEffect(() => { if (view === 'richieste' && sezione) fetchRichieste(); }, [view, sezione, fetchRichieste]);
 
     // ── Azioni ────────────────────────────────────────────────────────────────
     const handleLoadStock = async (body: { alunno_id: string; materiale: string; quantita: number }) => {
@@ -181,6 +306,43 @@ function TeacherLockerInner() {
         finally { setConsumoSaving(false); }
     };
 
+    /**
+     * «Arrivato» — la scuola chiude la richiesta a mano.
+     *
+     * Serve per il caso in cui il materiale arriva e il carico si registra dopo (o
+     * non si registra affatto): il motore chiude da sé la richiesta quando lo stock
+     * risale sopra soglia, ma finché quel carico non c'è la richiesta resterebbe
+     * aperta a dire il falso.
+     *
+     * Il gate segue il gesto: `evasa` è la SCUOLA, quindi `requireDocente` + scope
+     * di sezione. `alunno_id` viaggia nel corpo perché la route ci verifica che la
+     * riga sia davvero di quel bambino.
+     */
+    const handleEvadi = async (r: Richiesta) => {
+        setEvadendoId(r.id);
+        setErroreEvasione(false);
+        try {
+            const res = await fetch('/api/locker/requests', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: r.id, alunno_id: r.alunno_id, stato: 'evasa' }),
+            });
+            if (!res.ok) throw new Error(`stato ${res.status}`);
+            await fetchRichieste();
+        } catch (err) {
+            // Il nome del bambino resta a schermo e MAI nel log: qui va solo il NOME
+            // della classe d'errore, che è struttura e non contenuto.
+            logClient({
+                livello: 'error', evento: 'fetch',
+                messaggio: `armadietto-richiesta-evasione-fallita: ${nomeErrore(err)}`,
+                route: '/teacher/locker',
+            });
+            setErroreEvasione(true);
+        } finally {
+            setEvadendoId(null);
+        }
+    };
+
     // ── Render ────────────────────────────────────────────────────────────────
     return (
         <div className="mx-auto max-w-[460px] px-4 pt-5">
@@ -199,7 +361,7 @@ function TeacherLockerInner() {
                         <button
                             id="refresh-btn"
                             aria-label={t('lockerAggiorna')}
-                            onClick={() => { fetchCarico(); if (view === 'consumo') fetchConsumo(); if (view === 'mensile') fetchMensile(month); }}
+                            onClick={() => { fetchCarico(); if (view === 'consumo') fetchConsumo(); if (view === 'richieste') fetchRichieste(); if (view === 'mensile') fetchMensile(month); }}
                             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25"
                         >
                             <RefreshCw size={17} />
@@ -225,15 +387,16 @@ function TeacherLockerInner() {
             {/* Toggle 3 viste */}
             <div className="mt-5 mb-6 flex gap-1 rounded-2xl bg-white p-1 shadow-sm">
                 {([
-                    { key: 'carico',  icon: <Truck size={14} />,    label: t('lockerTabCarico') },
-                    { key: 'consumo', icon: <MinusCircle size={14} />, label: t('lockerTabConsumo') },
-                    { key: 'mensile', icon: <Table2 size={14} />,   label: t('lockerTabMensile') },
+                    { key: 'carico',    icon: <Truck size={14} />,       label: t('lockerTabCarico') },
+                    { key: 'consumo',   icon: <MinusCircle size={14} />, label: t('lockerTabConsumo') },
+                    { key: 'richieste', icon: <Bell size={14} />,        label: t('lockerTabRichieste') },
+                    { key: 'mensile',   icon: <Table2 size={14} />,      label: t('lockerTabMensile') },
                 ] as const).map(({ key, icon, label }) => (
                     <button
                         key={key}
                         id={`view-${key}-btn`}
                         onClick={() => setView(key)}
-                        className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-all
+                        className={`flex-1 flex items-center justify-center gap-1 py-2.5 rounded-xl text-[11px] font-semibold transition-all
                             ${view === key ? 'bg-white shadow text-kidville-green' : 'text-kidville-muted hover:text-kidville-green'}`}
                     >
                         {icon} {label}
@@ -451,6 +614,73 @@ function TeacherLockerInner() {
                                                 })}
                                             </div>
                                         )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* ══════════════════════ DA PORTARE ═══════════════════════════════ */}
+            {view === 'richieste' && (
+                <>
+                    {erroreEvasione && (
+                        <div role="status" className="mb-4 flex items-start gap-2 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft px-4 py-3">
+                            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-kidville-error" />
+                            <p className="font-maven text-sm text-kidville-error">{t('lockerRichiestaErroreArrivato')}</p>
+                        </div>
+                    )}
+
+                    {richiesteLoading ? (
+                        <div className="text-center py-10 text-kidville-muted">{t('lockerCaricamento')}</div>
+                    ) : richiesteErrore ? (
+                        <div role="status" className="flex items-start gap-2 rounded-2xl border border-kidville-error/30 bg-kidville-error-soft px-4 py-3">
+                            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-kidville-error" />
+                            <p className="font-maven text-sm text-kidville-error">{t('lockerRichiesteErrore')}</p>
+                        </div>
+                    ) : richieste.length === 0 ? (
+                        /* In produzione questa vista SARÀ vuota: il modulo è appena
+                           stato ricollegato e non ci sono ancora movimenti. Lo stato
+                           vuoto deve dirlo, non lasciare una pagina bianca. */
+                        <div className="rounded-2xl border border-kidville-line bg-white px-4 py-10 text-center">
+                            <Bell size={32} className="mx-auto mb-2 text-kidville-muted" />
+                            <p className="font-maven text-sm text-kidville-muted">{t('lockerRichiesteVuoto')}</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {richieste.map(r => {
+                                const alunno = alunnoDi(r);
+                                return (
+                                    <div key={r.id} className="bg-white rounded-2xl shadow-sm border border-kidville-line p-4">
+                                        <div className="flex items-center gap-3">
+                                            {/* Il pallino ripete un'informazione che il testo dà già
+                                                («nessuna risposta» / «in arrivo»): il colore aggiunge,
+                                                non sostituisce — WCAG 1.4.1. */}
+                                            <span aria-hidden="true"
+                                                className={`h-3 w-3 flex-shrink-0 rounded-full ${r.livello === 'rosso' ? 'bg-kidville-error' : 'bg-kidville-warn'}`} />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="font-maven font-bold text-kidville-green truncate">
+                                                    {alunno ? `${alunno.nome} ${alunno.cognome}` : t('lockerRichiestaAlunnoIgnoto')}
+                                                </p>
+                                                <p className="font-maven text-xs text-kidville-muted">
+                                                    {t('lockerRichiestaResiduo', { materiale: r.materiale, quantita: r.quantita_residua })}
+                                                </p>
+                                                <p className={`mt-0.5 font-maven text-xs ${r.stato === 'presa_in_carico' ? 'text-kidville-success' : 'text-kidville-warn'}`}>
+                                                    {r.stato === 'presa_in_carico'
+                                                        ? t('lockerRichiestaInArrivo')
+                                                        : t('lockerRichiestaSenzaRisposta', { count: giorniDa(r.creato_il) })}
+                                                </p>
+                                            </div>
+                                            <button
+                                                id={`evadi-${r.id}-btn`}
+                                                onClick={() => handleEvadi(r)}
+                                                disabled={evadendoId === r.id}
+                                                className="flex flex-shrink-0 items-center gap-1 rounded-pill border border-kidville-green/20 bg-kidville-green px-3 py-1.5 font-barlow text-[11px] font-extrabold uppercase tracking-wide text-kidville-yellow transition-all active:scale-95 disabled:opacity-50"
+                                            >
+                                                <Check size={13} /> {t('lockerRichiestaArrivato')}
+                                            </button>
+                                        </div>
                                     </div>
                                 );
                             })}

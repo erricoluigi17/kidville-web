@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, assertSezioneInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -235,12 +235,13 @@ export const PATCH = withRoute('locker/materials:PATCH', async (request: NextReq
         const admin = await createAdminClient();
         const { id, ...updates } = b.data;
 
-        // Scope: risolve la classe del record (per nome) entro i propri plessi.
-        const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
-        if (row?.classe_sezione) {
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, row.classe_sezione);
-            if (scopeErr) return scopeErr;
-        }
+        // Scope: la sede si risolve dalla SEZIONE della riga. Vedi la nota estesa
+        // sulla DELETE, in fondo al file: le due erano lo stesso difetto.
+        const { data: row, error: rowErr } = await admin
+            .from('locker_config').select('section_id').eq('id', id).maybeSingle();
+        if (rowErr) throw rowErr;
+        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        if (scopeErr) return scopeErr;
 
         const { data, error } = await admin
             .from('locker_config').update(updates).eq('id', id).select().single();
@@ -268,11 +269,37 @@ export const DELETE = withRoute('locker/materials:DELETE', async (request: NextR
 
         const admin = await createAdminClient();
 
-        const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
-        if (row?.classe_sezione) {
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, row.classe_sezione);
-            if (scopeErr) return scopeErr;
-        }
+        // ─── LO SCOPE SI RISOLVE DALLA SEZIONE, NON DAL NOME DELLA CLASSE ────────
+        //
+        // Fino al 2026-09-01 qui (e nella PATCH) si leggeva `classe_sezione` e lo si
+        // passava ad `assertClasseNomeInScope`. Due guasti in una riga sola:
+        //
+        //  1. `classe_sezione` è testo LIBERO e NULLABLE, e il gate stava dentro un
+        //     `if (row?.classe_sezione)`: con la colonna a `null` NON VENIVA CHIAMATO
+        //     AFFATTO. La riga si cancellava senza nessun controllo.
+        //  2. Il nome-classe non è una chiave univoca da quando le sedi sono tre.
+        //     «2 ANNI» esiste sia ad Aversa sia a Cesa: chi lavora in una sede
+        //     passava il gate sul PROPRIO omonimo e cancellava la configurazione
+        //     dell'altra. Lo dichiara `assertClasseNomeInScope` in testa a sé stesso
+        //     — impedisce di NOMINARE una classe altrui, non di toccare una riga
+        //     altrui, e per quello serve un gate sulla riga.
+        //
+        // `section_id` è la chiave dal 2026-07-30 e porta con sé la `scuola_id` della
+        // sezione: `assertSezioneInScope` risolve la sede da lì.
+        //
+        // ⚠️ SENZA SEZIONE SI RIFIUTA. Su una riga legacy con `section_id` a `null` —
+        // e su una riga che non esiste — non c'è modo di dire a quale plesso
+        // appartenga: `assertSezioneInScope` risponde 400 e non si scrive niente. Non
+        // sapere di chi è una cosa non è il permesso di cancellarla.
+        const { data: row, error: rowErr } = await admin
+            .from('locker_config').select('section_id').eq('id', id).maybeSingle();
+        // PostgREST non lancia: senza questa riga una lettura fallita lascerebbe
+        // `row` a `null`, cioè indistinguibile dalla riga legacy. Il diniego sarebbe
+        // lo stesso — si fallisce chiusi in entrambi i casi — ma il log direbbe
+        // «riga senza sezione» invece di «il database non ha risposto».
+        if (rowErr) throw rowErr;
+        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        if (scopeErr) return scopeErr;
 
         const { error } = await admin.from('locker_config').delete().eq('id', id);
         if (error) throw error;

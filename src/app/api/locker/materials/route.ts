@@ -8,6 +8,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -263,11 +264,3 @@ export const DELETE = withRoute('locker/materials:DELETE', async (request: NextR
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
     }
 });
-
-// ── Default fallback ──────────────────────────────────────────────────────────
-export const MATERIALI_DEFAULT = [
-    { id: 'default-1', nome: 'Pannolini', icona: '🧷', unita: 'pz', livello_allerta: 5, livello_emergenza: 2, ordine: 1, attivo: true },
-    { id: 'default-2', nome: 'Salviette', icona: '🧻', unita: 'pz', livello_allerta: 4, livello_emergenza: 2, ordine: 2, attivo: true },
-    { id: 'default-3', nome: 'Crema',     icona: '🧴', unita: 'pz', livello_allerta: 3, livello_emergenza: 1, ordine: 3, attivo: true },
-    { id: 'default-4', nome: 'Cambio',    icona: '👕', unita: 'pz', livello_allerta: 2, livello_emergenza: 1, ordine: 4, attivo: true },
-];

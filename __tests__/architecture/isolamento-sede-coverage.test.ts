@@ -1557,7 +1557,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `admin`/`coordinator`, e per ogni account il controllo che `utenti.ruolo` sia
             // `genitore`, così un'email che coincide con quella di una collega non può
             // essere resettata da questa strada).
-            routeConServiceRole: 301,
+            //
+            // 🔻 301 → 300 il 2026-09-01: è USCITA `locker/catalog`, cancellata. Unica rotta
+            // su `locker_catalog` — tabella del vecchio schema a saldo che NESSUNA migrazione
+            // applicata crea — senza un solo chiamante in tutto il repo, senza tolleranza
+            // (500 secco a ogni chiamata) e con `error.message` di PostgREST restituito al
+            // chiamante in due punti: nome dello schema, della tabella e della colonna. Non è
+            // un presidio tolto, è un file che non esiste più.
+            routeConServiceRole: 300,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1649,7 +1656,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // dell'arretrato. Qui il passo coincide col file perché il file espone un solo
             // metodo — ed è il caso in cui la coincidenza va detta, non dedotta.
             // 464 → 465 il 2026-08-23: il POST della route di rinvio credenziali (sopra).
-            handlerControllati: 465,
+            // 🔻 465 → 463 il 2026-09-01, ed è una DISCESA di 2 a fronte di −1 file: la
+            // `locker/catalog` cancellata esponeva DUE metodi, `GET` e `POST`. I due passi
+            // non coincidono, ed è il caso normale — va detto ogni volta, o al giro dopo
+            // qualcuno prenderà la coincidenza per una regola.
+            //
+            // ⚠️ IL −2 È MISURATO, NON DEDOTTO: eseguendo questo lock col solo file
+            // cancellato si legge esattamente `{300, 463, 101}`, cioè i tre valori qui
+            // scritti, e nessun altro pezzo dell'albero si è mosso in questo passaggio.
+            handlerControllati: 463,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

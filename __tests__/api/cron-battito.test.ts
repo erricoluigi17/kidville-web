@@ -156,13 +156,24 @@ const TABELLA_ASSENTE = { code: '42P01', message: 'relation "avvisi" does not ex
 /**
  * La stessa cosa vista da PostgREST invece che da Postgres, e questa NON è ipotetica: è la riga
  * misurata in `app_log` di PRODUZIONE il 2026-08-04 alle 06:00:02, un decimo di secondo prima di
- * «notifiche-promemoria: ok». `locker_requests` non esiste in produzione (le tabelle vere si
- * chiamano `armadietto` e `locker_config`) e nessuna migrazione la crea: quella scansione è
- * MORTA da sempre, e il battito la copriva.
+ * «notifiche-promemoria: ok». Allora la tabella interrogata era `locker_requests`, che in
+ * produzione non è mai esistita e che nessuna migrazione crea: quella scansione era MORTA da
+ * sempre, e il battito la copriva.
+ *
+ * ⚠️ IL NOME QUI DENTRO È CAMBIATO IL 2026-09-01, INSIEME ALLA ROUTE, e non è cosmesi: il
+ * finto client discrimina `from(table)` per NOME. Con `locker_requests` nella coda e
+ * `armadietto_richieste` nella route, questi cinque casi avrebbero smesso di pilotare la
+ * scansione dell'armadietto — la coda non sarebbe stata consumata da nessuno, la scansione
+ * avrebbe letto il `{ data: null, error: null }` di default e sarebbe passata. Verdi tutti e
+ * cinque, e su niente. È lo stesso inciampo già documentato in
+ * `__tests__/api/locker-requests-colonna-assente.test.ts`.
+ *
+ * Oggi `armadietto_richieste` in produzione C'È: questo caso resta perché resta vero sul DB
+ * E2E della CI, che è un progetto separato e non migrato.
  */
 const TABELLA_ASSENTE_PGRST = {
     code: 'PGRST205',
-    message: "Could not find the table 'public.locker_requests' in the schema cache",
+    message: "Could not find the table 'public.armadietto_richieste' in the schema cache",
 }
 
 /**
@@ -175,7 +186,7 @@ const TABELLA_ASSENTE_PGRST = {
  */
 const COLONNA_ASSENTE = {
     code: '42703',
-    message: 'column locker_requests.reminder_inviato_il does not exist',
+    message: 'column armadietto_richieste.promemoria_inviato_il does not exist',
     details: null,
     hint: null,
 }
@@ -346,7 +357,7 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         // guardato». Le due frasi si leggono uguali e significano l'opposto.
         db.state.code = {
             avvisi: [{ error: DB_IN_AFFANNO }],
-            locker_requests: [{ data: [] }],
+            armadietto_richieste: [{ data: [] }],
             student_documents: [{ data: [] }],
         }
 
@@ -370,13 +381,15 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         // significa «ambiente non migrato»: significa FUNZIONALITÀ MORTA. Misurato il 2026-08-04:
         // `PGRST205 locker_requests` alle 06:00:02.511, «notifiche-promemoria: ok» alle
         // 06:00:02.667. La scansione dell'armadietto non è mai partita, da sempre, e il battito
-        // diceva di aver guardato.
+        // diceva di aver guardato. (Quel nome è di allora: dal 2026-09-01 la tabella è
+        // `armadietto_richieste` e in produzione ESISTE, quindi qui «saltata» significa ormai
+        // solo «DB E2E della CI». Il caso resta perché quell'ambiente resta.)
         //
         // Il terzo stato è la risposta: il giro resta 200 (non c'è niente da riparare stanotte),
         // ma NON dice «ok» — dice «ok-parziale» e NOMINA ciò che non ha guardato.
         db.state.code = {
             avvisi: [{ error: TABELLA_ASSENTE }],
-            locker_requests: [{ error: TABELLA_ASSENTE_PGRST }],
+            armadietto_richieste: [{ error: TABELLA_ASSENTE_PGRST }],
             student_documents: [{ error: TABELLA_ASSENTE }],
         }
 
@@ -403,7 +416,7 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         // nominare SOLO quella che manca, o il battito passerebbe da «mento» a «grido a vuoto».
         db.state.code = {
             avvisi: [{ data: [] }],
-            locker_requests: [{ error: TABELLA_ASSENTE_PGRST }],
+            armadietto_richieste: [{ error: TABELLA_ASSENTE_PGRST }],
             student_documents: [{ data: [] }],
         }
 
@@ -424,7 +437,7 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         // invece di guardare il CODICE.
         db.state.code = {
             avvisi: [{ data: [] }],
-            locker_requests: [{ error: COLONNA_ASSENTE }],
+            armadietto_richieste: [{ error: COLONNA_ASSENTE }],
             student_documents: [{ data: [] }],
         }
 
@@ -452,7 +465,7 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         // e il 500 sparirebbe. Il giro incompleto vince sempre.
         db.state.code = {
             avvisi: [{ error: DB_IN_AFFANNO }],
-            locker_requests: [{ error: TABELLA_ASSENTE_PGRST }],
+            armadietto_richieste: [{ error: TABELLA_ASSENTE_PGRST }],
             student_documents: [{ data: [] }],
         }
 
@@ -473,7 +486,7 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         // che è il modo in cui il guasto vero torna invisibile.
         db.state.code = {
             avvisi: [{ data: [] }],
-            locker_requests: [{ data: [] }],
+            armadietto_richieste: [{ data: [] }],
             student_documents: [{ data: [] }],
         }
 
@@ -483,6 +496,42 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         expect(battitoOk()).toBe(true)
         expect(errori()).toHaveLength(0)
         expect(righe().some((r) => r.campi.esito === 'ok-parziale')).toBe(false)
+    })
+
+    it('notifiche/promemoria: si RICONCILIA prima di leggere (o si ricorderebbe lo stato di ieri sera)', async () => {
+        // Le richieste di rifornimento non nascono da sole: le apre il confronto fra lo stock
+        // dell'armadietto e le soglie della sezione. Se la scansione leggesse
+        // `armadietto_richieste` senza riconciliare prima, lavorerebbe sulla fotografia di ieri
+        // sera — e una soglia alzata dalla segreteria ieri pomeriggio non produrrebbe nessuna
+        // richiesta stamattina, senza che niente diventi rosso da nessuna parte.
+        //
+        // Si asserisce sull'ORDINE, non solo sulla presenza: `riconciliaTutto` che gira DOPO la
+        // lettura sarebbe indistinguibile, con la sola presenza, da quello che gira prima.
+        db.state.code = {
+            avvisi: [{ data: [] }],
+            armadietto: [{ data: [] }],
+            armadietto_richieste: [{ data: [] }],
+            student_documents: [{ data: [] }],
+        }
+
+        const res = await promemoriaPOST(req('http://localhost/api/notifiche/promemoria', SEGRETO))
+
+        expect(res.status).toBe(200)
+        const tabelle = db.state.calls.map((c) => c.table)
+        expect(tabelle, 'la riconciliazione non ha nemmeno letto `armadietto`').toContain('armadietto')
+        expect(tabelle.indexOf('armadietto')).toBeLessThan(tabelle.indexOf('armadietto_richieste'))
+
+        // E lo DICE: il battito intermedio è l'unica traccia che la riconciliazione sia
+        // avvenuta. Senza, «zero richieste stamattina» non si distingue da «non ho riconciliato»
+        // — la stessa ambiguità che questo file esiste per togliere di mezzo.
+        const riconciliato = righe().filter(
+            (r) => r.evento === 'cron' && r.campi.esito === 'armadietto-riconciliato',
+        )
+        expect(riconciliato).toHaveLength(1)
+        // Conteggi e basta: nessun nome di bambino, nessun materiale (regola 8 di AGENTS.md).
+        expect(Object.keys(riconciliato[0].campi).sort()).toEqual(
+            ['aperte', 'esito', 'evase', 'n', 'operazione'],
+        )
     })
 
     it('il giro sano continua a chiudere con «ok» (il fix non grida a vuoto)', async () => {

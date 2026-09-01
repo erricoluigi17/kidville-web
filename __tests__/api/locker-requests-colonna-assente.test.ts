@@ -73,11 +73,15 @@ import { GET, PATCH } from '@/app/api/locker/requests/route'
 const getReq = (qs: string) =>
     ({ url: `http://test/api/locker/requests?${qs}`, headers: new Headers(), cookies: { get: () => undefined } }) as never
 
+// `alunno_id` nel corpo e `stato: 'evasa'` dal 2026-09-01: il gate segue il gesto,
+// e questo è il ramo SCUOLA (`requireDocente`, finto qui sopra). La riga finta ha
+// lo stesso `alunno_id`, altrimenti la route risponde 404 prima di arrivare al
+// punto che queste prove misurano — la tolleranza di schema.
 const patchReq = () =>
     new Request('http://test/api/locker/requests', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id: '22222222-2222-2222-2222-222222222222', stato: 'acknowledged' }),
+        body: JSON.stringify({ id: '22222222-2222-2222-2222-222222222222', alunno_id: ALUNNO, stato: 'evasa' }),
     }) as never
 
 const errore = (code: string, message: string): ErrDb => ({ code, message })
@@ -88,7 +92,7 @@ beforeEach(() => {
     h.requireDocente.mockResolvedValue({ user: { id: 'ed-1', role: 'educator', scuola_id: 'sc-1' } })
     h.elenco = { data: [], error: null }
     h.riga = { data: { id: 'req-1', alunno_id: ALUNNO }, error: null }
-    h.aggiornata = { data: { id: 'req-1', stato: 'acknowledged' }, error: null }
+    h.aggiornata = { data: { id: 'req-1', stato: 'evasa' }, error: null }
 })
 
 describe('GET /api/locker/requests — tabella assente vs colonna assente', () => {
@@ -141,7 +145,7 @@ describe('GET /api/locker/requests — tabella assente vs colonna assente', () =
 
 describe('PATCH /api/locker/requests — tabella assente vs colonna assente', () => {
     it('42P01 sulla lettura della riga → degrada dichiarato (ok/degraded)', async () => {
-        h.riga = { data: null, error: errore('42P01', 'relation "locker_requests" does not exist') }
+        h.riga = { data: null, error: errore('42P01', 'relation "armadietto_richieste" does not exist') }
         const res = await PATCH(patchReq())
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ ok: true, degraded: true })
@@ -157,23 +161,23 @@ describe('PATCH /api/locker/requests — tabella assente vs colonna assente', ()
     })
 
     it('42703 sulla UPDATE → 500 (il secondo punto della stessa route)', async () => {
-        h.aggiornata = { data: null, error: errore('42703', 'column preso_in_carico_il does not exist') }
+        h.aggiornata = { data: null, error: errore('42703', 'column presa_in_carico_il does not exist') }
         const res = await PATCH(patchReq())
         expect(res.status).toBe(500)
         expect(await res.json()).not.toEqual({ ok: true, degraded: true })
     })
 
     it('42P01 sulla UPDATE → degrada dichiarato', async () => {
-        h.aggiornata = { data: null, error: errore('42P01', 'relation "locker_requests" does not exist') }
+        h.aggiornata = { data: null, error: errore('42P01', 'relation "armadietto_richieste" does not exist') }
         const res = await PATCH(patchReq())
         expect(res.status).toBe(200)
         expect(await res.json()).toEqual({ ok: true, degraded: true })
     })
 
     it('il 500 della PATCH non racconta lo schema al chiamante', async () => {
-        h.aggiornata = { data: null, error: errore('42703', 'column preso_in_carico_il does not exist') }
+        h.aggiornata = { data: null, error: errore('42703', 'column presa_in_carico_il does not exist') }
         const corpo = JSON.stringify(await (await PATCH(patchReq())).json())
-        expect(corpo).not.toContain('preso_in_carico_il')
-        expect(corpo).not.toContain('locker_requests')
+        expect(corpo).not.toContain('presa_in_carico_il')
+        expect(corpo).not.toContain('armadietto_richieste')
     })
 })

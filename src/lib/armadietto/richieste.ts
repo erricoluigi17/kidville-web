@@ -114,38 +114,37 @@ export async function riconciliaRichieste(
             continue
         }
 
-        // 🔴 QUESTA `upsert` FALLISCE IN PRODUZIONE, SEMPRE. Il commento che stava
-        // qui diceva «`ON CONFLICT` sull'indice unico parziale: due scritture
-        // concorrenti non si rompono a vicenda». È FALSO, ed è stato misurato sul
-        // database vero il 2026-09-01, non dedotto:
+        // `insert` NUDO, e NON `upsert({ onConflict: 'alunno_id,materiale' })`.
+        //
+        // Qui c'era un `upsert`, con un commento che diceva «`ON CONFLICT`
+        // sull'indice unico parziale: due scritture concorrenti non si rompono a
+        // vicenda». Era falso, e non per sfumature: quella forma FALLISCE SEMPRE.
+        // Misurato sul database vero il 2026-09-01 con `EXPLAIN`, che pianifica e
+        // non scrive — l'inferenza dell'arbitro avviene in fase di planning:
         //
         //   EXPLAIN INSERT … ON CONFLICT (alunno_id, materiale) DO NOTHING;
-        //   → ERROR: 42P10: there is no unique or exclusion constraint
-        //            matching the ON CONFLICT specification
+        //   → ERROR 42P10: there is no unique or exclusion constraint
+        //                  matching the ON CONFLICT specification
         //
         //   EXPLAIN INSERT … ON CONFLICT (alunno_id, materiale)
         //                    WHERE stato <> 'evasa' DO NOTHING;
         //   → Conflict Arbiter Indexes: armadietto_richieste_viva_uniq   ✅
         //
-        // Postgres non può inferire un indice PARZIALE da un `ON CONFLICT (colonne)`
-        // nudo: per usarlo come arbitro pretende un `WHERE` che implichi il predicato
-        // dell'indice. PostgREST emette solo l'elenco delle colonne (`on_conflict=…`)
-        // e NON ha modo di mandare un predicato, quindi da qui quella forma è
-        // irraggiungibile. L'unico indice unico su (alunno_id, materiale) è parziale
-        // (`WHERE stato <> 'evasa'`); l'altro unico è la PK su `id`.
+        // Postgres non infersce un indice PARZIALE da un `ON CONFLICT (colonne)`
+        // nudo: per usarlo come arbitro pretende un `WHERE` che implichi il
+        // predicato dell'indice. PostgREST emette solo l'elenco delle colonne
+        // (`on_conflict=…`) e non ha modo di mandare il predicato, quindi da
+        // supabase-js quella forma è IRRAGGIUNGIBILE. L'unico indice unico su
+        // (alunno_id, materiale) è parziale (`WHERE stato <> 'evasa'`); l'altro
+        // unico è la PK su `id`, che non conflitta mai.
         //
-        // CONSEGUENZA: ogni apertura ritorna 42P10, `logErrore` scrive la riga e
-        // `aperte` resta a zero. Il modulo non aprirebbe MAI una richiesta — visibile
-        // solo in `app_log`, che è il fallimento silenzioso di sempre.
+        // Sarebbe finita così: ogni apertura torna 42P10, `logErrore` scrive la
+        // riga, `aperte` resta a zero. Il modulo non avrebbe MAI aperto una
+        // richiesta, e lo si sarebbe visto solo in `app_log`.
         //
-        // I test non lo vedono: mockano il query-builder, e un mock dice sempre di sì.
-        //
-        // LA CORREZIONE, che tocca anche le asserzioni del test (`h.upsert` →
-        // `h.insert`) e per questo non è stata applicata qui dentro senza deciderlo:
-        // usare `.insert(…)` e trattare il `23505` come benigno — è l'indice parziale
-        // che fa il lavoro anti-doppione, esattamente come previsto, e restituisce
-        // «richiesta già viva» invece di rompere la passata.
-        const { error } = await admin.from(TAVOLA).upsert({
+        // La guardia anti-doppione resta quella prevista dalla migrazione: è
+        // l'indice parziale a farla, e non serve dirlo anche a PostgREST.
+        const { error } = await admin.from(TAVOLA).insert({
             alunno_id: alunnoId,
             scuola_id: al.scuola_id as string,
             materiale,
@@ -154,9 +153,60 @@ export async function riconciliaRichieste(
             stato: 'aperta',
             creato_il: adesso,
             aggiornato_il: adesso,
-        }, { onConflict: 'alunno_id,materiale', ignoreDuplicates: true }).select()
-        if (error) logErrore({ operazione: 'armadietto/riconcilia:apre', evento: 'db' }, error)
-        else esito.aperte++
+        })
+
+        if (!error) {
+            esito.aperte++
+        } else if (error.code === '23505') {
+            // `23505` NON è un guasto: è la guardia che ha funzionato. Un'altra
+            // scrittura concorrente (l'aggancio dopo il carico, mentre gira il cron)
+            // ha già aperto quella richiesta, e l'indice parziale ha impedito il
+            // doppione — che è esattamente ciò per cui esiste. `aperte` non si
+            // incrementa: quella richiesta non l'ha aperta questa passata.
+            //
+            // Si logga `info` e non lo si ingoia (AGENTS.md regola 6): un errore
+            // davvero ignorabile si logga comunque, dicendo perché.
+            logEvento('db', 'info', {
+                operazione: 'armadietto/riconcilia:apre',
+                esito: 'richiesta-gia-viva',
+                error_code: error.code,
+            })
+        } else {
+            logErrore({ operazione: 'armadietto/riconcilia:apre', evento: 'db' }, error)
+        }
+    }
+
+    // ─── LE RICHIESTE ORFANE ────────────────────────────────────────────────
+    // Il ciclo qui sopra itera sulle SOGLIE, quindi una richiesta viva per un
+    // materiale che la segreteria ha tolto da `locker_config` non viene MAI
+    // guardata: nessun ramo la tocca, e resterebbe aperta per sempre. Il genitore
+    // continuerebbe a vedersi chiedere una cosa che la scuola non traccia più, e
+    // nessuna schermata direbbe perché.
+    //
+    // Si evade, ma il log non dice «è arrivato»: dice che il materiale non è più
+    // tracciato. Sono due fatti diversi — una consegna della famiglia contro una
+    // decisione della segreteria — e tenerli sulla stessa etichetta renderebbe
+    // illeggibile proprio la domanda che si farà qualcuno: «quante richieste ha
+    // chiuso il rifornimento, e quante le ha chiuse una modifica di listino?».
+    //
+    // ⚠️ NON copre il materiale che è ANCORA in `soglie` ma sparito dallo stock
+    // (`q === undefined` più sopra): lì la richiesta resta aperta di proposito.
+    // Assenza di movimenti non è prova che il bisogno sia finito, ed è la stessa
+    // prudenza per cui uno stock illeggibile non chiude niente.
+    for (const [materiale, viva] of vive) {
+        if (Object.hasOwn(soglie, materiale)) continue
+        const { error } = await admin.from(TAVOLA)
+            .update({ stato: 'evasa', evasa_il: adesso, aggiornato_il: adesso })
+            .eq('id', viva.id)
+        if (error) {
+            logErrore({ operazione: 'armadietto/riconcilia:evade-orfana', evento: 'db' }, error)
+            continue
+        }
+        esito.evase++
+        logEvento('db', 'info', {
+            operazione: 'armadietto/riconcilia:evade-orfana',
+            esito: 'materiale-non-piu-tracciato',
+        })
     }
 
     return esito

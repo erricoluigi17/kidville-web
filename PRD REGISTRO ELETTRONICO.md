@@ -20,7 +20,9 @@
 > | `legame_genitori_alunni` | Relazione genitore↔figlio | ✅ RLS attivo |
 > | `valutazioni` | Voti e giudizi (Primaria) | Schema creato, non ancora popolato |
 > | `galleria_media` | Foto/Video con privacy tagging | Schema creato, non ancora popolato |
-> | `armadietto` | Inventario materiali a scalare | Schema creato, non ancora popolato |
+> | `armadietto` | Inventario materiali a scalare (libro giornale: `portato` true/false, stock = somma) | ✅ Operativo, in attesa del primo uso reale |
+> | `armadietto_richieste` | Richieste di rifornimento al genitore: `aperta` → `presa_in_carico` → `evasa` | ✅ Operativa dal 2026-09-01 (migr. `20260901163536`) |
+> | `locker_config` | Catalogo materiali e soglie, per sezione | ⚠️ **Vuota per scelta** — vedi nota sotto |
 > | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno) | Schema creato, non ancora popolato |
 > | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
 > | `mensa_alternative` | Alternativa pasto per allergia/richiesta genitore (UNIQUE alunno+data, origine segreteria/genitore) | ✅ RLS + policy service_role |
@@ -62,7 +64,7 @@
 > | **Diario 0-6** | ✅ Operativo | `/teacher/diary` | `/api/diary/students`, `/api/diary/entries` |
 > | **Presenze** | ✅ Operativo | `/teacher/attendance`, `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*`, `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP) |
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
-> | **Armadietto** | ✅ Operativo | `/teacher/locker`, `/parent/locker` | `/api/locker/*` |
+> | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
@@ -91,6 +93,85 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🧷 Changelog — L'Armadietto chiedeva materiale a una tabella che nessuna migrazione ha mai creato — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
+
+Il monitoraggio della produzione ha trovato **226 errori `PGRST205`** in 28 giorni su
+`/api/locker/requests` (195) e sul cron `notifiche/promemoria` (31): *«Could not find the table
+'public.locker_requests'»*. Quella tabella esiste **solo** in `migrations_archive/`, e il modulo era
+stato portato al nuovo schema **a metà** — `inventory` e `materials` su `armadietto`/`locker_config`,
+`requests` e il cron sulle tabelle vecchie.
+
+**Il degrado era pulito, ed è per questo che nessuno se n'era accorto**: `tabellaMancante` tornava
+lista vuota, e la sezione «Da portare a scuola» della pagina genitore è condizionata a `length > 0`.
+Non un errore a schermo: una funzione invisibile. Questo PRD la dichiarava «✅ Operativo» alla riga 65
+e «schema creato, non ancora popolato» alla riga 23 — **due righe che si contraddicevano da settimane**.
+
+**Cosa c'è adesso.** `armadietto_richieste` (migr. `20260901163536`), ciclo `aperta` →
+`presa_in_carico` → `evasa`. La guardia anti-doppione è un **indice unico parziale** su
+`(alunno_id, materiale) WHERE stato <> 'evasa'`: sta nel database, non in un `SELECT`-poi-`INSERT`
+che sotto due scritture concorrenti perde la corsa. Il motore (`src/lib/armadietto/`) apre quando lo
+stock tocca la soglia e chiude quando il carico la risupera — **stessa linea**, nessuna zona morta e
+nessun ping-pong. Promuove giallo → rosso ma **non declassa**: un allarme già dato al genitore non si
+ritira perché la maestra ha caricato due pezzi. Agganciato a carico, consumo e scalo automatico del
+pannolino; il cron delle 06:00 riconcilia **tutti** gli alunni con movimenti — non solo quelli mossi
+di recente, perché una soglia alzata ieri dalla segreteria deve produrre richieste stamattina.
+
+**`locker_config` resta VUOTA, ed è una decisione, non una dimenticanza** (titolare, 2026-09-01): il
+modulo non è ancora in uso e i materiali li aggiungeranno le maestre man mano. Le soglie vive sono
+quindi quelle di `MATERIALI_DEFAULT` — Pannolini 5/2, Salviette 4/2, Crema 3/1, Cambio 2/1 — che da
+oggi vivono in `src/lib/armadietto/materiali-default.ts` **in una copia sola**: erano tre, e già
+divergenti (la pagina genitore e la card della home mostravano 5/2 per **tutti** i materiali).
+
+### Difetti trovati strada facendo, tutti preesistenti
+
+- **Il bottone «Preso in carico» del genitore prendeva 403**, e non per la tabella mancante: la
+  `PATCH` aveva un solo gate, `requireDocente`, per due gesti opposti. Sarebbe rimasto rotto anche
+  dopo aver creato la tabella. Ora il gate **segue il gesto**: `presa_in_carico` è il genitore
+  («La porto»), `evasa` è la scuola.
+- **Scope fra sedi su una colonna nullable**: `PATCH`/`DELETE` di `/api/locker/materials`
+  risolvevano lo scope da `classe_sezione`, testo libero e `NULL`-abile, invece che da `section_id`.
+  Con quel campo a `null` non c'era **nessun** controllo, e «2 ANNI» esiste sia ad Aversa sia a Cesa.
+- **`/api/locker/catalog`**: rotta morta su tabella morta, senza chiamanti, senza tolleranza, che
+  restituiva `error.message` di PostgREST al chiamante. Rimossa.
+- **Un `error` buttato via** in `requests/route.ts`, nel file il cui commento in testa racconta
+  proprio come il silenzio avesse nascosto quei 226 errori: elenco vuoto e «non ho potuto guardare»
+  si leggevano uguali.
+- **La fotografia `tabelle-scuola-id.json` era cieca da tre settimane** — l'unica delle quattro
+  senza guardia di freschezza: le altre scadono su `generato_alle`, questa ha solo un tamper-check
+  sul *contenuto*, quindi restava verde mentre non sapeva più niente. Ferma al 10 agosto, 66 tabelle
+  su 72. Fuori da `CON_SEDE` una tabella non è sorvegliata: **cinque handler erano scoperti da
+  settimane** e la rigenerazione li ha resi visibili (esentati con motivazione, 96 → 101).
+- **`errori-con-codice`**: la PR #88 aveva abbassato l'allowlist senza abbassare i tetti, lasciando
+  **tredici** risposte che potevano tornare senza codice, in file vivi, **col lock verde**.
+
+### Due misure che hanno cambiato il codice
+
+- **`upsert` con `onConflict` non aggancia un indice parziale.** `EXPLAIN` sulla produzione:
+  `42P10 — there is no unique or exclusion constraint matching`. Postgres non infersce un indice
+  parziale da un `ON CONFLICT (colonne)` nudo, e PostgREST non può mandare il predicato. Il modulo
+  **non avrebbe mai aperto una richiesta**, e si sarebbe visto solo in `app_log`. I test con i mock
+  restavano verdi: **un mock dice sempre di sì**. → `.insert()`, e `23505` è benigno.
+- **Una chiave assente dal libro giornale dice «nessun movimento», non «esaurito».** Con
+  `locker_config` vuota, `soglieMateriali` torna tutti e quattro i materiali per **ogni** bambino:
+  leggendo la chiave mancante come `0`, il cron avrebbe aperto richieste **rosse** di Crema,
+  Salviette e Cambio a ogni bambino che in armadietto ha solo i pannolini — e le avrebbe spedite
+  alle famiglie.
+
+### Debito dichiarato
+
+- Le colonne relitto di `armadietto` (`nome_oggetto`, `quantita_residua`, `livello_allerta`,
+  `livello_emergenza`): scritte a ogni insert, **mai lette**. `nome_oggetto` è `NOT NULL` senza
+  default; toglierle da una tabella viva è un lavoro a sé.
+- **`funzioni_matrice.<grado>.armadietto` è un interruttore scollegato**: esiste come dato e come
+  pannello di Segreteria, con `primaria: false` di default, ma **nessuna route lo legge** —
+  `requireFunzione` non ha un solo call site di produzione. La Segreteria crede di avere un
+  controllo che non c'è.
+
+Spec: `docs/superpowers/specs/2026-09-01-armadietto-richieste-rifornimento-design.md` ·
+Piano: `docs/superpowers/plans/2026-09-01-armadietto-richieste-rifornimento.md`
 
 ---
 
@@ -14850,7 +14931,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **P4 — Galleria · G1 (DL-041)** | `requireDocente` (POST); ruolo per delete/patch | service-role (visibilità tagged/broadcast in API) | — | ✅ **Privacy Lock server-side**: tag di alunni senza `consenso_privacy` → **422 con nomi** (POST+PATCH, bypass broadcast); helper `src/lib/gallery/privacy.ts`. **S9b Galleria:** DROP `galleria_media_v2` permissive (migr. `20260754`, tutti gli accessi già service-role), advisors 0 ERROR. *(broadcast, delete admin, interconnessione Diario già presenti.)* 🔄 **2026-07-13 (DL-051/052):** 422 **solo per foto di gruppo** (>1 taggato senza liberatoria); **singolo taggato = foto privata** ai soli genitori; **GET gated** (genitore→`requireParentOfStudent`, staff→`requireDocente`); **broadcast solo Direzione**; **liberatoria ora scrivibile** dall'anagrafica (`consenso_privacy` in `PATCH /api/admin/students`). 🔶 Follow-up: bucket pubblico→signed URL, DELETE su identità legacy |
 | **P4 — Comunicazione · C1 (DL-042)** | `requireUser` + rate-limit (`/api/chat/translate`) | service-role | — | ✅ **Traduzione automatica chat** via Claude `claude-haiku-4-5`, **gated su `ANTHROPIC_API_KEY`** (503 + UI nasconde se assente): servizio `src/lib/translate/claude.ts`, endpoint `/api/chat/translate`, pulsante "Traduci" sui messaggi in arrivo (target = lingua dispositivo). 🔶 S9b chat realtime (`chat_messages`/`chat_threads`) = gated onboarding; note vocali/file/super-admin lettura = slice successive |
 | **P4 — Mensa · M1 (DL-043)** | `requireUser` (`/api/parent/mensa/allergie`) | service-role; alunno per id | — | ✅ **Icona pericolo allergeni genitore**: cross menù-del-giorno↔allergeni figlio (riuso helper puri 14 UE), banner rosso nella pagina mensa genitore. *(Infra allergeni cuoca/segreteria + cron già presenti.)* 🔶 Resta: isolamento UI Cuoca, dashboard real-time tipologia, semaforo scorte, esclusioni classe |
-| **P4 — Armadietto · S9b (DL-044)** | `requireDocente` + scope (`/api/locker/materials`) | service-role | `logScrittura` (`armadietto_config`) | ✅ Migrata a service-role + **DROP** `locker_config` permissive (migr. `20260755`), advisors 0 ERROR. *(Flusso richiesta→chiusura ciclo già presente in `locker/requests`.)* 🔶 Resta: carico merci, lista spesa genitore, dashboard inadempienze, reminder 07:00 |
+| **P4 — Armadietto · S9b (DL-044)** | `requireDocente` + scope (`/api/locker/materials`) | service-role | `logScrittura` (`armadietto_config`) | ✅ Migrata a service-role + **DROP** `locker_config` permissive (migr. `20260755`), advisors 0 ERROR. *(Flusso richiesta→chiusura ciclo già presente in `locker/requests`.)* ✅ **2026-09-01: lista spesa genitore e reminder FATTI** — `armadietto_richieste` + motore + cron 06:00; la voce «flusso già presente» era falsa, girava su una tabella mai migrata. 🔶 Resta: carico merci, dashboard inadempienze |
 | **P4 — Anagrafica · onboarding (DL-045)** | `requireUser` (`/api/parent/onboarding`) | service-role; genitore self | — | ✅ **Onboarding genitore** `/parent/onboarding`: consensi GDPR obbligatori (422 se mancanti) + set password Supabase Auth (se bindato) + `parents.onboarded_at`/`consensi_gdpr` (migr. `20260756`). **Prerequisito S13** (sessione reale). 🔶 Resta: PIN dispositivo, stato Non-iscritto, trasferimento sedi, dati finanziari; **flip S13 = operativo** (onboarding di massa) |
 | **P5 — Certificato Competenze (DL-047)** | `requireStaff` (read/seed) / `['admin','coordinator']` (genera+firma) | alunno; genitore via `student_parents`/`legame` | slot FEA `certificato_competenze` + `fea_audit_log` (`logFeaEvent`) | ✅ Fatto: tabelle `certificati_competenze`+`_livelli` (migr. `20260760`, RLS default-deny), modello D.M.14/2024 (8 competenze × 4 livelli A/B/C/D), PDF (riuso pagella) + firma applicativa dirigente, seed da scrutinio finale classe-quinta (guard 422/409), download admin+genitore. UI `/admin/competenze` + card pagelle genitore |
 | **P5 — Numero domanda + Import ZIP SIDI (DL-048)** | `requireStaff` (upload/preview) / `['admin','coordinator']` (apply) | service-role | `logScrittura` (`alunni`/`genitori`/`legame`) | ✅ Fatto: `alunni.numero_domanda_sidi` + staging `sidi_import_batches` (migr. `20260762`); parser **jszip pluggable** (`normalizeSidiRow` sostituibile), matching numero domanda→CF-fallback→crea, genitori dedup CF, **idempotente**. Route `/api/admin/sidi/import`. UI in `SidiPanel` |

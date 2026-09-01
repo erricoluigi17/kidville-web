@@ -36,8 +36,11 @@ richieste; il cron delle 06:00 che riconcilia tutto e manda le notifiche.
 
 - Branch: `feat/candidature-cv-obbligatorio` (si continua, non se ne crea uno nuovo).
 - Albero pulito, spec già committato in `4a1ffa0f`.
-- ⚠️ Un test è rosso da prima e non c'entra con questo lavoro: `importi-euro-italiani.test.tsx`
-  (1 su 12.415). Non è una regressione tua.
+- ✅ **La suite è interamente verde**: 12.419 test, 986 file, misurati il 2026-09-01 durante il
+  Task 1. Questo piano in una stesura precedente diceva di aspettarsi un rosso preesistente su
+  `importi-euro-italiani.test.tsx` — era **falso**, quel test è stato riparato in `ef04d831`.
+  La correzione conta: chi si aspetta un rosso lo perdona, e un rosso perdonato è un rosso invisibile.
+  **Qualunque fallimento tu veda è tuo.**
 
 ---
 
@@ -615,6 +618,26 @@ EOF
 
 ### Task 5: `riconciliaRichieste` — il motore
 
+> 🔴 **IL CODICE QUI SOTTO CONTIENE DUE DIFETTI, TROVATI IN ESECUZIONE E CORRETTI.
+> La verità è in `src/lib/armadietto/richieste.ts` (commit `f0e15d22` + `b4bab171` + `b2832052`),
+> non in questo blocco.** Resta scritto perché la misura vale più della correzione.
+>
+> **1. L'`upsert` non funziona, e sarebbe stato invisibile.** Il piano diceva
+> `.upsert(…, { onConflict: 'alunno_id,materiale' })`. `EXPLAIN` sulla produzione risponde
+> **`42P10 — there is no unique or exclusion constraint matching the ON CONFLICT specification`**:
+> Postgres **non infersce un indice parziale** da un `ON CONFLICT (colonne)` nudo — pretende un
+> `WHERE` che implichi il predicato — e PostgREST non ha modo di mandarlo. Ogni apertura sarebbe
+> fallita, `aperte` sarebbe restato a zero, **il modulo non avrebbe mai aperto una richiesta**, e si
+> sarebbe visto solo in `app_log`. I test restavano verdi: **un mock dice sempre di sì.**
+> → `.insert()` nudo, e il `23505` è **benigno** (la guardia ha funzionato, non incrementa `aperte`).
+>
+> **2. `stock[materiale] ?? 0` avrebbe spedito notifiche false a centinaia di famiglie.** Siccome
+> `locker_config` è vuota, `soglieMateriali` restituisce tutti e quattro i materiali per **ogni**
+> bambino. Leggendo la chiave assente come `0`, il cron avrebbe aperto una richiesta **rossa** di
+> Crema, Salviette e Cambio a ogni bambino che in armadietto ha solo i pannolini. Una chiave assente
+> dal libro giornale dice «nessun movimento», **non** «esaurito».
+> → i materiali senza movimenti si saltano.
+
 **File:**
 - Crea: `src/lib/armadietto/richieste.ts`, `__tests__/lib/armadietto-richieste.test.ts`
 
@@ -1097,6 +1120,82 @@ Carico, consumo e scalo pannolino ora riconciliano le richieste
 Agganciati i tre punti di scrittura. La riconciliazione non puo' far fallire il
 movimento: il carico e' il dato, la richiesta e' la conseguenza. Se esplode, il
 movimento resta scritto, resta una riga di log e il cron rimette a posto.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+### Task 7-bis: ⚠️ Rigenerare `tabelle-scuola-id.json` — PRIMA del Task 8
+
+**Aggiunto il 2026-09-01 dopo la revisione del Task 1. Era una lacuna di questo piano.**
+
+`__tests__/fixtures/tabelle-scuola-id.json` è l'unica delle quattro istantanee **senza guardia di
+freschezza**: le altre tre scadono su `generato_alle` (`migrazioni-complete.test.ts:290`,
+`rls-per-sede.test.ts:300`, `fk-scuola-id.test.ts:290`), questa ha solo un tamper-check sha256 sul
+*contenuto* (`isolamento-sede-coverage.test.ts:1166-1176`). Resta verde ed è **cieca**.
+
+Fotografia del **2026-08-10**, 66 tabelle; il database ne ha **72**. Mancano `armadietto_richieste`,
+`candidature_sedi`, `iscrizioni_elenco_caricamenti`, `iscrizioni_elenco_righe`,
+`iscrizioni_import_esiti`, `pratiche_personale` — le ultime cinque scoperte da settimane.
+
+`CON_SEDE` (riga 112) alimenta i tre controlli alle righe **688, 692, 696**, quelli che pretendono
+che un handler service-role dichiari la sede in scrittura e verifichi la riga in lettura. **Una
+tabella fuori da `CON_SEDE` non è sorvegliata**: senza questo task, le rotte dei Task 8 e 9
+passerebbero il lock senza dichiarare mai una sede, su una tabella con `scuola_id NOT NULL`, tre
+plessi di produzione e dati di minori.
+
+- [ ] **Step 1: Rigenera**
+
+```bash
+node scripts/tabelle-sede-fotografia.mjs --sql
+```
+
+Esegui la query che stampa su Supabase **in sola lettura**, salva la risposta e passala allo script:
+
+```bash
+node scripts/tabelle-sede-fotografia.mjs < risposta.json
+```
+
+- [ ] **Step 2: Verifica che le sei tabelle siano entrate**
+
+```bash
+grep -c '"' __tests__/fixtures/tabelle-scuola-id.json
+grep -n "armadietto_richieste" __tests__/fixtures/tabelle-scuola-id.json
+```
+
+Atteso: `armadietto_richieste` presente.
+
+- [ ] **Step 3: Aspettati un rosso NON correlato, e non aggirarlo**
+
+```bash
+npx vitest run __tests__/architecture/isolamento-sede-coverage.test.ts
+```
+
+Le altre cinque tabelle erano scoperte da settimane: rendendole visibili al lock, **emergeranno
+handler che non c'entrano niente con l'armadietto**. Non metterli in allowlist per far passare il
+test: leggi ogni caso, e se l'handler davvero non dichiara la sede è un difetto vero che questo lock
+esisteva per trovare. Se sono più di due o tre, **fermati e riferisci**: è un lavoro a sé e non deve
+finire dentro questo piano di soppiatto.
+
+Il `toEqual` esatto sui conteggi (`:1218`) andrà comunque aggiornato a mano.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add __tests__/fixtures/tabelle-scuola-id.json __tests__/architecture/isolamento-sede-coverage.test.ts
+git commit -m "$(cat <<'EOF'
+La fotografia dell'isolamento per sede era cieca da tre settimane
+
+E' l'unica delle quattro senza guardia di freschezza: le altre scadono su
+`generato_alle`, questa ha solo un tamper-check sul contenuto — quindi restava
+verde mentre non sapeva piu' niente. Ferma al 10 agosto, 66 tabelle su 72.
+
+Fuori da CON_SEDE una tabella non e' sorvegliata: senza questa rigenerazione le
+rotte su `armadietto_richieste` sarebbero passate senza dichiarare mai una sede,
+su una tabella con scuola_id NOT NULL e tre plessi.
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 EOF
@@ -1715,7 +1814,11 @@ Il ramo `?classe_sezione` della GET esiste da sempre e **non ha mai avuto un con
 
 Aggiungi `richieste` all'unione delle viste (riga 48) e al toggle (righe 226-242), etichetta
 «Da portare». Nel `fetch` chiama
-`/api/locker/requests?classe_sezione=${encodeURIComponent(sezione)}&userId=${userId}`, con lo stesso
+`/api/locker/requests?classe_sezione=${encodeURIComponent(sezione)}` — **senza `&userId=`**: questo
+piano in una stesura precedente lo includeva copiandolo dalle chiamate accanto, ma è la vecchia
+identità-per-query, chiusa con `ALLOW_HEADER_IDENTITY=false`. `getQuerySchema` non lo dichiara,
+quindi zod lo scarterebbe in silenzio: non un errore, solo un parametro che non fa niente e che il
+prossimo copierebbe. Con lo stesso
 schema di `fetchStock` (righe 112-120) — effetto guardato su `sezione`, `setLoading(false)` su
 **tutti** i rami terminali, compreso il `catch`: la pagina ha già due spinner eterni nella sua
 storia (F7 del collaudo), non aggiungerne un terzo.

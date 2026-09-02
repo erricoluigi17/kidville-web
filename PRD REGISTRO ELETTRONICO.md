@@ -96,6 +96,88 @@
 
 ---
 
+## 🏫 Changelog — L'insegnante era in classe, i bambini pure, e la sua schermata era vuota — 2026-09-02 (branch `fix/classe-per-section-id`)
+
+**Il fatto.** Un'insegnante risultava assegnata alla sua classe, i bambini risultavano in quella
+classe, e aprendo la propria schermata non ne vedeva nessuno: niente appello, niente diario,
+niente da compilare.
+
+**La causa radice.** `alunni` tiene la classe in DUE colonne: `section_id` (uuid, la chiave
+esterna vera) e `classe_sezione` (testo). Il legame docente↔classe (`utenti_sezioni`) e quello
+bambino↔classe erano **entrambi corretti**, per uuid. Ma l'area docente **0-6** cercava i bambini
+per **NOME** — `.eq('classe_sezione', sections.name)` — mentre la primaria, da sempre, per uuid.
+Il gate risolveva il nome, lo trovava e passava: la risposta usciva **HTTP 200 con l'elenco
+vuoto**. Nessun errore, nessun log, schermata bianca.
+
+Il testo può divergere dal nome della sezione mentre `section_id` resta giusto, perché il trigger
+`sync_alunno_section_id` va **solo testo → uuid** e confronta senza spazi né maiuscole.
+
+**Le misure, in produzione il 2026-09-02 — tutte a Kidville Giugliano:**
+
+| sezione | testo sugli alunni | bambini | ne mostrava |
+|---|---|---|---|
+| `4 ANNI A` | `4 anni  a` (due spazi) | 17 | **0** |
+| `4 ANNI B` | `4 anni b` | 19 | **0** |
+| `3 ANNI B` | `3 ANNI B ` (spazio finale) | 14 | **1** |
+| `5 ANNI A` | `5 anni a` | 11 | **1** |
+| `5 ANNI B` | `5 anni b` | 16 | **4** |
+
+Le tre **parziali** sono le peggiori: una classe vuota fa telefonare, una classe con un bambino su
+quattordici sembra vera e resta rotta per settimane. Controprova incrociata: l'appello del 1° e 2
+settembre risulta registrato **solo** nelle sezioni col testo coincidente.
+
+**Le tre sorgenti della divergenza**, tutte e tre chiuse:
+1. **L'import** scriveva il testo grezzo del foglio. L'elenco *attivo* di Giugliano ne porta **106
+   righe**: ogni nuova domanda riscriveva la divergenza, ~6 al giorno. Ora `esegui.ts` risolve il
+   nome contro `sections` e scrive quello **canonico**.
+2. **La rinomina di una sezione** non propagava. Ora un trigger `AFTER UPDATE OF name ON sections`
+   la propaga — **nel database e non nella route**, perché la rinomina passa anche dalle migrazioni
+   in SQL puro (Aversa 31/08, Cesa 20/08) e da ogni `execute_sql`.
+3. **Il trigger che azzerava `section_id` in silenzio** ora lascia una riga `warn` in `app_log`.
+   È il guasto che è costato 73 bambini ad Aversa e 66 a Cesa. Non diventa `RAISE EXCEPTION`:
+   farebbe fallire l'import intero e lascerebbe la sede senza elenco.
+
+**Che cosa è stato fatto.**
+- **Dati**: riallineate **71 righe** di `alunni.classe_sezione` a `sections.name`, partendo
+  dall'uuid già presente e solo dove la forma normalizzata coincideva. Precondizione verificata al
+  momento della scrittura (zero collisioni sulla forma normalizzata: con una il trigger, che usa
+  `LIMIT 1` senza `ORDER BY`, avrebbe **spostato** un bambino invece di rinominargli il testo).
+  Dopo: `per_id == per_nome` su tutte e 42 le sezioni, conteggi identici alla fotografia, audit su
+  `registro_modifiche`. Strumento committato in `scripts/riallinea-testo-classe.mjs`.
+- **Codice**: nuovo `src/lib/sezioni/risoluzione.ts` — gate e traduzione nome→uuid nello stesso
+  posto. **Tredici route** passate a `.in('section_id', …)`. Il nome resta accettato (shell native
+  già installate, URL salvati) ma porta allo stesso filtro per uuid: la strada vecchia non è
+  affiancata, è stata resa corretta. Lato client viaggia `sectionId`, che
+  `/api/educator-sections` restituiva **da sempre** senza che nessuno lo usasse.
+- **Presidi**: migrazione `20260902145538_identita_classe_presidi` (propagazione della rinomina,
+  trigger che parla, indice UNIQUE sulla **forma normalizzata** di `sections.name` — l'unicità
+  esistente non la copriva); sesto controllo `sezione-testo-allineato` in `/api/health`; lock
+  `__tests__/architecture/identita-della-classe.test.ts`.
+
+**Cosa resta per NOME, per progetto**: i destinatari dei broadcast (`avvisi`, `news_posts`,
+`forms_templates`, `galleria_media_v2`.`target_classes`), `mensa_class_menu_assignment.classe`,
+`registro_orario.classe_sezione` (colonna di quella tabella, scritta canonicamente) e
+`chat/contacts`, che è auto-consistente. Verificato: nessuna di quelle tabelle conteneva il testo
+divergente, quindi il riallineamento è stato **inerte** per tutte.
+
+**⚠️ Resta aperto, e non è un difetto di codice:** a **Kidville Cesa 13 insegnanti attive hanno
+zero sezioni assegnate** in `utenti_sezioni` (a Giugliano 9 su 27, ad Aversa 1 su 8): non vedono
+nemmeno la classe. Non c'è un dato sbagliato, c'è un dato mai inserito, e nessun codice può
+indovinare chi insegna dove — dedurlo dai media taggati produrrebbe abbinamenti plausibili e
+sbagliati, peggio del vuoto. Li inserisce la segreteria da Admin → anagrafica del dipendente
+(percorso verificato). ⚠️ Il `PATCH /api/admin/staff` è un **replace completo**: mandare un
+`section_ids` parziale cancella le assegnazioni non incluse.
+
+**⚠️ Cinque alunni iscritti senza nessuna sezione** (`section_id` e `classe_sezione` NULL), creati
+fra il 5 luglio e il 10 agosto: due a Giugliano, tre nella sede Demo. **Preesistenti**, non toccati
+dal riallineamento, e la loro classe va decisa da una persona.
+
+**Gate**: `eslint` 0 · `tsc` 0 · `vitest` **13.287/13.287** · `build` ok. I test nuovi sono stati
+**visti fallire** rimettendo il filtro per nome: 6 su 9 rossi, coi numeri esatti della produzione
+(0 su 17, 1 su 14).
+
+---
+
 ## 🔑 Changelog — L'email prometteva a 560 famiglie un pulsante che non esisteva — 2026-09-02 (branch `feat/candidature-cv-obbligatorio`)
 
 Tre richieste distinte, tenute insieme da una cosa sola: ognuna è stata **misurata** prima di essere

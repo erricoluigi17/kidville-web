@@ -723,6 +723,67 @@ async function controlloConfig(): Promise<Controllo> {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * 6. Il testo della classe è allineato al nome della sezione
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * IL GUASTO CHE QUESTO CONTROLLO ESISTE PER RENDERE VISIBILE.
+ *
+ * `alunni` tiene la classe in due colonne: `section_id` (uuid) e `classe_sezione`
+ * (testo). Il codice ora filtra per uuid, ma il testo resta la chiave dei
+ * destinatari dei broadcast (`avvisi`, `news_posts`, `forms_templates`) e del
+ * menu per classe. Quando le due divergono nessuno se ne accorge: non c'è un
+ * errore, non c'è un log — e il 2026-09-02 cinque classi di Giugliano si sono
+ * aperte vuote o quasi per settimane esattamente così.
+ *
+ * `degradato` e mai `giu`: la divergenza non impedisce all'app di servire, e
+ * dichiarare «giù» un servizio che funziona è il modo per far ignorare l'endpoint.
+ *
+ * ⚠️ PostgREST non sa confrontare due COLONNE fra loro (`col1 <> col2`): non
+ * esiste un filtro che dica «il testo non combacia col nome della sua sezione».
+ * Si legge quindi la coppia `(section_id, classe_sezione)` degli iscritti e si
+ * confronta qui. Sono poche centinaia di righe (559 al 2026-09-02) e la `select`
+ * chiede DUE colonne: nessun nome, nessun cognome, nessun codice fiscale esce
+ * dal database — questa rotta è pubblica, e ciò che non serve non viaggia.
+ * Se un giorno gli iscritti diventassero decine di migliaia, la strada giusta è
+ * una vista o una RPC che restituisca il solo conteggio, non alzare il limite.
+ */
+async function controlloTestoClasse(supabase: SupabaseClient): Promise<Controllo> {
+    return misura('sezione-testo-allineato', 'degradato', async () => {
+        const { data: sezioni, error: errSez } = await supabase
+            .from('sections')
+            .select('id, name')
+        // PostgREST non lancia: senza questo ramo una lettura caduta darebbe
+        // «zero divergenze», cioè un verde che non ha misurato niente.
+        if (errSez) return { esito: 'degradato', dettaglio: `sections:${codiceDi(errSez)}` }
+
+        const { data: alunni, error: errAl } = await supabase
+            .from('alunni')
+            .select('section_id, classe_sezione')
+            .eq('stato', 'iscritto')
+        if (errAl) return { esito: 'degradato', dettaglio: `alunni:${codiceDi(errAl)}` }
+
+        const nomePerSezione = new Map(
+            (sezioni ?? []).map((s) => [s.id as string, s.name as string]),
+        )
+        const divergenti = (alunni ?? []).filter((a) => {
+            const sid = a.section_id as string | null
+            if (!sid) return false // gli orfani sono un'altra misura, non questa
+            const nome = nomePerSezione.get(sid)
+            return nome !== undefined && a.classe_sezione !== nome
+        }).length
+
+        // Nel corpo esce SOLO il numero: i nomi delle classi divergenti direbbero
+        // a chiunque interroghi `/api/health` come si chiamano le sezioni della
+        // scuola, e per contare non servono.
+        if (divergenti > 0) {
+            return { esito: 'degradato', dettaglio: `${divergenti} alunni col testo classe divergente` }
+        }
+        return { esito: 'ok', dettaglio: `${(alunni ?? []).length} iscritti allineati` }
+    })
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * Aggregazione
  * ════════════════════════════════════════════════════════════════════════════ */
 
@@ -740,9 +801,9 @@ export interface OpzioniSalute {
 }
 
 /**
- * I cinque controlli girano IN PARALLELO.
+ * I sei controlli girano IN PARALLELO.
  *
- * In serie il caso peggiore sarebbe 5 × il tetto = 10 secondi, cioè oltre il timeout di
+ * In serie il caso peggiore sarebbe 6 × il tetto = 12 secondi, cioè oltre il timeout di
  * ogni monitor ragionevole: l'endpoint verrebbe dichiarato giù proprio quando il suo
  * compito è dire in che modo è giù. In parallelo il caso peggiore resta il tetto singolo.
  */
@@ -758,6 +819,7 @@ export async function eseguiControlli(
         controlloBattitoCron(supabase, adesso, opzioni.ambiente),
         controlloTassoErrore(supabase, adesso, opzioni.ambiente),
         controlloConfig(),
+        controlloTestoClasse(supabase),
     ])
     return { stato: aggrega(controlli), ms: Date.now() - t0, controlli }
 }

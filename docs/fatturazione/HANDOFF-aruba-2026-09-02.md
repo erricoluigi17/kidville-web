@@ -1,8 +1,9 @@
 # Handoff — chiudere la fatturazione Aruba
 
-> **Per chi apre una chat nuova dedicata SOLO a questo.** Il codice è già in produzione
-> (`8bea8bfb`, PR #109). Quello che manca è **provarlo contro Aruba in presa diretta** e
-> **emettere una fattura vera**. Tutto ciò che segue è misurato il 2026-09-02, non dedotto.
+> **Per chi apre una chat nuova dedicata SOLO a questo.** Il codice è in produzione (`8bea8bfb`,
+> PR #109) e **la lettura del progressivo è stata verificata in presa diretta il 2026-09-03**
+> (Passo 1 ✅). Quello che manca è **una sola cosa: emettere una fattura vera**, e la preme una
+> persona in segreteria. Tutto ciò che segue è misurato, non dedotto.
 
 ---
 
@@ -91,16 +92,39 @@ se anche quella prende `429`, si ferma e non insiste.)
 
 ## 3. Cosa resta da fare, in ordine
 
-### Passo 1 — la lettura col codice di PRODOTTO (sola lettura)
+### ✅ Passo 1 — la lettura col codice di PRODOTTO — **FATTO il 2026-09-03 alle 00:10**
 
 ```bash
 COLLAUDO_REALE=1 npx vitest run --config vitest.collaudo.config.ts \
   scripts/collaudo/numerazione-aruba.collaudo.ts
 ```
 
-**Lanciarlo come PRIMA cosa della sessione**, senza aver fatto nessun'altra chiamata ad Aruba prima.
-Stampa solo due interi (nessun dato personale). Atteso: `Asilo` e `FPR` entrambi **> 1000** e
-**diversi fra loro**.
+**Esito: `Tests 1 passed`.** `arubaUltimoNumeroFattura` ha letto **entrambe le serie dall'API vera**,
+ottenendo due progressivi **> 1000** e **diversi fra loro**.
+
+⚠️ **Su QUALE codice, detto con precisione**: il collaudo ha girato sull'albero locale, che a
+quell'ora conteneva già `0b3a4380` — la lettura in **un passaggio solo**, non ancora pushata. Quindi
+è dimostrato il *parser* (`etichetteDellElemento`, identico nelle due versioni) contro l'API vera,
+**nella variante a un passaggio**. La versione in produzione (`8bea8bfb`) ha lo stesso parser ma
+scorre le pagine due volte: leggere quella richiede un altro collaudo, oppure — meglio — pushare
+`0b3a4380`, che è comunque la versione giusta.
+
+Le tre asserzioni che il passaggio garantisce, e che sono quelle che contano:
+
+- **non è zero** → il pavimento della serie è stato letto davvero (uno zero significherebbe «la serie
+  non è mai partita», ed è la frase che fa uscire `FPR 1/26` su millenovecento documenti);
+- **è plausibile** (> 1000) → coerente con serie vive da anni;
+- **`Asilo` ≠ `FPR`** → le due serie non sono più mescolate in un mucchio solo.
+
+La correzione non è più dimostrata soltanto contro una fixture: è dimostrata **in presa diretta**.
+
+⚠️ **Al prossimo lancio, NON filtrare l'output.** Il 2026-09-03 il comando è stato lanciato con un
+`| grep` che si è mangiato le due righe con i numeri: il test è passato, ma i due progressivi non
+sono stati letti da nessuno. Il collaudo li stampa (`Asilo 2026: ultimo numero letto = …`), e
+servono al Passo 3 per controllare che la fattura emessa porti `max + 1`. Rilanciare solo per
+rivederli costa un intero secchio: **si guarda l'output la prima volta**.
+
+**Lanciarlo come PRIMA cosa della sessione**, senza nessun'altra chiamata ad Aruba prima.
 
 - Se stampa i due numeri → la correzione è dimostrata anche in presa diretta. Si passa al passo 2.
 - Se dà `429` → aspettare un'ora **senza altre chiamate** e ripetere. Non c'è scorciatoia.

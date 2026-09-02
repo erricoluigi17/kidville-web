@@ -236,6 +236,86 @@ export const propsScelta = (
   ...(nonValido && !scelta ? { 'data-scelta-invalida': 'true' as const } : {}),
 })
 
+/**
+ * Le classi del MESSAGGIO D'ERRORE, in due pezzi.
+ *
+ * Sono estratte qui — invece di stare scritte due volte nei due rami che rendono
+ * il messaggio — perché dal 2026-09-01 c'è un terzo nodo che deve portarle
+ * IDENTICHE: l'ombra (`OmbraErrore`). Se le due stringhe divergessero,
+ * l'altezza riservata smetterebbe di corrispondere a quella del messaggio e il
+ * difetto sotto tornerebbe in silenzio.
+ *
+ * `ERRORE_IMPAGINAZIONE` è ciò che determina l'ALTEZZA (taglia del testo,
+ * disposizione, distanza dall'icona); `ERRORE_TONO` il peso e il colore — che
+ * l'altezza non la cambiano, ma cambiano la LARGHEZZA del testo, quindi quante
+ * righe occupa.
+ */
+const ERRORE_IMPAGINAZIONE = 'flex items-center gap-1.5 text-xs'
+const ERRORE_TONO = 'font-bold text-kidville-error-strong'
+const ERRORE_CLASSI = `${ERRORE_IMPAGINAZIONE} ${ERRORE_TONO}`
+
+/**
+ * ── L'OMBRA DEL MESSAGGIO D'ERRORE: LO SPAZIO NON SI RESTITUISCE ─────────────
+ *
+ * MISURATO nel trace della CI, passo «Consensi» di `/iscrizione` su **WebKit**
+ * (Safari e la WebView iOS dell'app), cioè su ciò che i genitori hanno in mano:
+ *  1. «Avanti» senza spunta → il `<p role="alert">` entra nel flusso e spinge i
+ *     comandi giù di **31,99 px** (667,71 → 699,70);
+ *  2. il genitore spunta la casella con un tocco vero. WebKit **non assegna il
+ *     fuoco a un checkbox cliccato**: il fuoco cade su `<body>` → blur;
+ *  3. `mode: 'onTouched'` valida al blur → il campo diventa valido → il
+ *     messaggio viene RIMOSSO (`errore:false` a t=0 ms su WebKit; su Chromium
+ *     resta `true` per 540 ms, ed è per questo che il difetto era «solo
+ *     webkit»);
+ *  4. rimosso il messaggio, «Avanti» **risale di 24,98 px** — più della sua
+ *     semi-altezza (20 px su 40);
+ *  5. il tocco in corso, calcolato sulla posizione *con* l'errore, cade fuori
+ *     dal pulsante. Il wizard resta fermo e non dice niente.
+ *
+ * La causa non è il blur di WebKit: è che **la posizione dei comandi dipende da
+ * un messaggio effimero**. Perciò lo spazio che il messaggio ha occupato resta
+ * suo finché il campo vive, e a occuparlo è questa ombra: una copia esatta del
+ * messaggio, `invisible` (che tiene il posto e non si vede) e `aria-hidden`.
+ *
+ * ⚠️ PIGRA, e non un `min-h` sempre acceso. Riservare l'altezza a prescindere
+ * metterebbe spazio morto sotto OGNI campo di ogni modulo pubblico — al passo
+ * dei consensi sono quattro, al passo 1 dell'iscrizione sono dodici — anche in
+ * una pagina che non ha mai sbagliato niente. L'ombra nasce solo DOPO che un
+ * errore c'è stato davvero: a riposo la pila è identica a prima.
+ *
+ * ⚠️ UNA COPIA, e non un'altezza fissa. Quanto è alto il messaggio dipende da
+ * quante righe occupa. MISURATO nella pagina viva (build di produzione,
+ * `/iscrizione`, sonda nel pannello del wizard) restringendo la colonna:
+ * «Devi accettare per proseguire» sta su una riga (16 px) fino a 200 px di
+ * larghezza e ne occupa DUE (32 px) a 150 px — dove il salto, prima della
+ * correzione, era di **41 px** invece di 25. Un `min-h-4` avrebbe riservato
+ * 16 px dei 32 che servivano, cioè avrebbe lasciato in piedi metà del difetto
+ * proprio nella colonna più stretta; e sarebbe stato tarato su UNA stringa in
+ * UNA lingua, mentre i messaggi sono nove e il catalogo è bilingue.
+ *
+ * ⚠️ NON ANNUNCIA A VUOTO, ed è la ragione per cui è un `<div>` senza ruolo e
+ * non un `role="alert"` sempre presente e vuoto:
+ *  · niente `role`, `aria-hidden="true"` e `visibility: hidden` (che da sola
+ *    già toglie il nodo all'albero di accessibilità): nessuna seconda live
+ *    region negli snapshot delle pagine pubbliche, dove ce n'è già una in coda;
+ *  · niente `id`: `<campo>-error` resta uno solo, ed è il bersaglio di
+ *    `aria-describedby`;
+ *  · è un `<div>` mentre il messaggio è un `<p>` **di proposito**: due tipi
+ *    diversi obbligano React a smontare e rimontare invece di riusare il nodo,
+ *    quindi al ritorno dell'errore il `role="alert"` viene INSERITO nel DOM
+ *    insieme al proprio contenuto — che è la forma che le tecnologie assistive
+ *    annunciano. Trasformare in `alert` un nodo che era già lì è comportamento
+ *    non specificato.
+ */
+function OmbraErrore({ testo, classiIcona }: { testo: string; classiIcona: string }) {
+  return (
+    <div aria-hidden="true" className={`${ERRORE_CLASSI} invisible`}>
+      <AlertCircle className={classiIcona} />
+      {testo}
+    </div>
+  )
+}
+
 export function FieldRenderer({
   field,
   modelId,
@@ -411,6 +491,25 @@ export function FieldRenderer({
   const messaggioCampo = useMessaggioCampo()
   const errMsg = messaggioCampo(error)
   const errorId = `${field.id}-error`
+  /**
+   * L'ultimo messaggio che questo campo ha mostrato: è ciò che l'ombra
+   * ricalca quando il messaggio se ne va (vedi `OmbraErrore` per la misura e
+   * per il perché).
+   *
+   * ⚠️ È uno STATO aggiornato durante il render, non un `useRef` scritto
+   * durante il render: il primo tentativo era un ref, e la regola
+   * `react-hooks/refs` lo rifiuta a ragione — un valore che decide che cosa
+   * disegnare non è un ref, è stato, e un ref cambiato in render non fa
+   * ridisegnare niente. La forma qui sotto è quella documentata da React per
+   * derivare uno stato da una prop: la guardia `!==` la rende idempotente,
+   * React rilancia il render subito e senza commit intermedio, e il doppio
+   * render di StrictMode dà lo stesso valore.
+   *
+   * Si azzera quando il campo si smonta, cioè al cambio di passo: lo spazio
+   * riservato non sopravvive al campo che l'ha reso necessario.
+   */
+  const [ombraErrore, setOmbraErrore] = useState<string | null>(null)
+  if (errMsg && errMsg !== ombraErrore) setOmbraErrore(errMsg)
   /**
    * L'`id` della nota, DERIVATO e non ricevuto: c'è se e solo se c'è la nota.
    * Vedi la prop `nota` — erano due props che dovevano concordare.
@@ -806,12 +905,18 @@ export function FieldRenderer({
                   il blocco.
                   ⚠️ Restando DOPO `errMsg` resta comunque FUORI dalla <label> del
                   consenso, che è il vincolo del blocco qui sopra. */}
-              {errMsg && (
-                <p id={errorId} role="alert" className="flex items-center gap-1.5 text-xs font-bold text-kidville-error-strong">
+              {/* ⚠️ L'`else` NON È UN `null`: quando il messaggio se ne va, il
+                  suo spazio resta all'ombra. È la correzione del difetto WebKit
+                  misurato su questo stesso campo — la catena, i pixel e le tre
+                  ragioni di forma stanno sulla dichiarazione di `OmbraErrore`. */}
+              {errMsg ? (
+                <p id={errorId} role="alert" className={ERRORE_CLASSI}>
                   <AlertCircle className="w-3.5 h-3.5" />
                   {errMsg}
                 </p>
-              )}
+              ) : ombraErrore ? (
+                <OmbraErrore testo={ombraErrore} classiIcona="w-3.5 h-3.5" />
+              ) : null}
               {/* ⚠️ LO STESSO RIPIEGO DEL RAMO DI CAMPO, E FINO AL 25/08 ERANO DUE.
                   Qui si ripiegava su `leggiInformativa` («Leggi l'informativa» /
                   «Read the policy»), il ramo generico su `leggiInformativaCompleta`:
@@ -1106,12 +1211,20 @@ export function FieldRenderer({
           all'Alto Contrasto, dove il messaggio diventa #000000 su bianco — 21:1,
           identico a un'etichetta qualunque — e il colore smette di dire
           «errore». */}
-      {errMsg && (
+      {/* ⚠️ Il ramo `else` è l'OMBRA, non il vuoto: lo spazio che il messaggio
+          ha occupato resta riservato finché il campo vive, altrimenti la sua
+          scomparsa sposta i comandi sotto le dita di chi sta correggendo. La
+          misura, la catena su WebKit e le ragioni di forma stanno sulla
+          dichiarazione di `OmbraErrore`. Qui vale identico al ramo del
+          consenso: è lo stesso componente, e su questa stessa pila i due rami
+          hanno già raccontato la stessa cosa in due modi una volta
+          (25/08/2026, §9 dei test degli stati visivi). */}
+      {errMsg ? (
         <p
           id={errorId}
           role="alert"
-          className={`flex items-center gap-1.5 text-xs ${
-            caricamentoInVolo ? 'text-kidville-sub' : 'font-bold text-kidville-error-strong'
+          className={`${ERRORE_IMPAGINAZIONE} ${
+            caricamentoInVolo ? 'text-kidville-sub' : ERRORE_TONO
           }`}
         >
           {caricamentoInVolo ? (
@@ -1122,7 +1235,9 @@ export function FieldRenderer({
           {/* Il MESSAGGIO, non la regola: vedi `caricamentoInVolo` in testa. */}
           {caricamentoInVolo ? t('attendiCaricamento') : errMsg}
         </p>
-      )}
+      ) : ombraErrore ? (
+        <OmbraErrore testo={ombraErrore} classiIcona="w-3.5 h-3.5 shrink-0" />
+      ) : null}
 
       {/* ── LA NOTA DEL CAMPO, SUBITO SOTTO IL CAMPO ────────────────────────────
           Il posto in cui sta è metà del suo valore: è la coppia «controllo → testo

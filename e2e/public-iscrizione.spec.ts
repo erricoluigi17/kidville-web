@@ -98,10 +98,25 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await expect(presaVisione).toBeVisible();
 
   // Prova che l'obbligo sia REALE: senza spunta, «Avanti» non deve portare al
-  // riepilogo. NB: NON si può cercare il testo «Riepilogo», che compare anche
-  // nell'indicatore dei passi — guarderebbe la barra di avanzamento invece del
-  // pannello, e l'asserzione sarebbe sempre vera per il motivo sbagliato.
-  // L'elemento che esiste SOLO nel riepilogo è il pulsante d'invio.
+  // riepilogo.
+  //
+  // ⚠️ NON si può cercare il testo «Riepilogo», e il motivo qui scritto era
+  // SBAGLIATO fino al 2026-09-01: diceva «compare anche nell'indicatore dei
+  // passi». Il sosia vero è un altro, ed è misurato — il sottotitolo di QUESTO
+  // passo, `wizardConsensiSottotitolo` in `messages/it/public.json`, che recita
+  // «Un passaggio, poi il riepilogo». `getByText(stringa)` senza
+  // `{ exact: true }` cerca per sottostringa e senza distinzione di maiuscole:
+  // quel sottotitolo lo soddisfa, quindi l'asserzione è verde anche stando
+  // fermi qui.
+  //
+  // Il commento vecchio proteggeva la riga giusta (questa, negativa) e lasciava
+  // scoperta quella positiva più in basso, che infatti diceva il falso: per due
+  // settimane, dal 24/08, ha lasciato passare un difetto di prodotto su WebKit
+  // e ha mandato la diagnosi sulla pista sbagliata (falliva la riga dopo,
+  // accusando «Stai iscrivendo 1 bambino»).
+  //
+  // L'elemento che esiste SOLO nel riepilogo è il pulsante d'invio: lo stesso
+  // locatore serve qui per dire «non ci siamo» e sotto per dire «ci siamo».
   await page.getByRole('button', { name: 'Avanti' }).click();
   await expect(page.getByRole('button', { name: 'Invia richiesta' })).toHaveCount(0);
   await expect(presaVisione).toBeVisible();
@@ -110,7 +125,7 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await page.getByRole('button', { name: 'Avanti' }).click();
 
   // Riepilogo → invio.
-  await expect(page.getByText('Riepilogo')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Invia richiesta' })).toBeVisible();
   await expect(page.getByText(/Stai iscrivendo 1 bambino/)).toBeVisible();
   await page.getByRole('button', { name: 'Invia richiesta' }).click();
 

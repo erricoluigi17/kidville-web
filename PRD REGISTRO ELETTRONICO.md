@@ -199,9 +199,45 @@ da 1px e stroke reso a 1,25px, che a schermo arrivano mescolati al fondo.
 crema — **19,9:1 di salto di luminanza**. Correggerlo significa ridisegnare la login, che è la porta
 d'ingresso di tutte le 560 famiglie: è una decisione, non una rifinitura di fine serata.
 
+### Coda: il modulo pubblico saltava sotto il dito, su iPhone, da nove giorni
+
+L'E2E ha bocciato il primo tentativo di rilascio con **un solo test rosso, solo su webkit**. Non era
+una regressione di questo lavoro: era un difetto **preesistente** che i tentativi ripetuti
+nascondevano. Il conteggio vero delle tre run:
+
+| | esito reale |
+|---|---|
+| 24/08 | ✘ poi ✓ al primo ripescaggio → job «verde» |
+| 01/09 | ✘ ✘ poi ✓ al secondo → job «verde» |
+| 02/09 | ✘ ✘ ✘ → **rosso** |
+
+`retries: 2` in `playwright.config.ts` ripesca, e nessuno conta i ripescati. **Un test che passa solo
+al terzo tentativo è un guasto che non è ancora arrivato**, e in nove giorni è arrivato.
+
+**Il difetto sta nel prodotto, e riguarda le famiglie.** Al passo «Consensi», su **Safari e sulla
+WebView iOS**: «Avanti» senza spunta fa entrare il messaggio d'errore nel flusso e **spinge i
+pulsanti giù di 32 px**; l'utente spunta la casella, e **WebKit non assegna il fuoco a un checkbox
+cliccato** → parte un blur → `mode: 'onTouched'` valida → **l'errore sparisce e «Avanti» risale di
+25 px**, più della propria semi-altezza. Il tocco già in corso cade **sotto** il pulsante, e il
+wizard resta fermo **senza dire niente**. Su Chromium nulla di tutto questo accade: da qui il «solo
+webkit», che è anche il browser con cui quel modulo si compila davvero.
+
+Corretto riservando lo spazio del messaggio con un'ombra invisibile, **pigra** (nasce solo dopo un
+errore vero, quindi a riposo la pila non cambia) e senza `role` né `id`, per non annunciare a vuoto.
+Misurato: salto **25,00 → 1,00 px**; a colonna stretta, dove il messaggio va su due righe, **41 → 1
+px**; in Alto Contrasto **30 → 6 px**. Il residuo non è il messaggio: è il bordo della card che
+cambia spessore con lo stato. `FieldRenderer` è condiviso, quindi la correzione vale anche per
+«Lavora con noi» — dove il salto misurato era di **48 px**.
+
+⚠️ Trovato per secondo, e più insidioso del primo: `getByText('Riepilogo')` alla riga 113 dello spec
+**passava anche restando al passo precedente**, perché la ricerca è per sottostringa e il sottotitolo
+di quel passo dice «Un passaggio, poi il riepilogo». Il test si accorgeva del guasto una riga dopo e
+accusava la stringa sbagliata: **ha mascherato il difetto per due settimane**. Ancorato a «Invia
+richiesta», che è esclusivo del riepilogo.
+
 ### Gate
 
-`tsc --noEmit` 0 · `eslint --max-warnings 0` 0 · `vitest` **13.242/13.242** (baseline 12.490: **+752
+`tsc --noEmit` 0 · `eslint --max-warnings 0` 0 · `vitest` **13.254/13.254** (baseline 12.490: **+764
 test**, zero regressioni) · `build` 0. Migrazioni applicate e verificate:
 `20260901203141_password_cambi` (0 righe, RLS attiva, 0 policy) e
 `20260901203333_legami_anagrafici_profili_doppi` (1 riga, invisibili alla RLS 1 → 0).

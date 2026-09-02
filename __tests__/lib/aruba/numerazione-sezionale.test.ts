@@ -276,6 +276,34 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     expect(await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(4000)
   })
 
+  it('documenti SENZA fatture dentro → LANCIA, e il log dice quali chiavi sono arrivate', async () => {
+    // Il caso che verrebbe dopo, se Aruba cambiasse ancora forma: l'array
+    // annidato sparisce o si svuota. Il verso in cui si sbaglia dev'essere
+    // sempre lo stesso — non emettere — perché uno zero qui significa «la serie
+    // non è mai partita», ed è la frase che fa uscire «Asilo 1/2026».
+    //
+    // E il messaggio deve portare le CHIAVI del primo elemento: il 2026-09-02
+    // diceva solo «(vuoto)», che non distingue «il campo è vuoto» da «il campo
+    // non esiste più» — ed era la seconda. Nomi di campo, mai valori: dentro
+    // quegli elementi c'è `receiver.fiscalCode`, cioè un genitore vero.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          content: [
+            { filename: 'a.p7m', idSdi: '17898673698', invoices: [] },
+            { filename: 'b.p7m', idSdi: '17898673699' },
+          ],
+        }),
+    } as Response)
+    const errore = await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'Asilo' }).catch((e) => e)
+    expect(errore).toBeInstanceOf(Error)
+    expect((errore as Error).name).toBe('ArubaNumerazioneError')
+    expect((errore as Error).message).toContain('filename')
+    expect((errore as Error).message).toContain('idSdi')
+  })
+
   it('un rifiuto HTTP LANCIA, col corpo del provider: non si degrada a zero', async () => {
     // Zero vorrebbe dire «serie nuova», e su una serie viva è un numero già usato.
     fetchMock.mockResolvedValue({

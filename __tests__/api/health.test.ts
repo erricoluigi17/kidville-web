@@ -142,6 +142,7 @@ describe('GET /api/health', () => {
             'cron-battito',
             'db-lettura',
             'schema-atteso',
+            'sezione-testo-allineato',
             'tasso-errore',
         ])
         for (const c of corpo.controlli) expect([c.nome, c.esito]).toEqual([c.nome, 'ok'])

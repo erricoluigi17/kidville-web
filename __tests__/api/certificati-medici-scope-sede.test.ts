@@ -84,12 +84,12 @@ const dbBase = (): DBFinto => ({
     {
       id: CERT_A, alunno_id: ALU_A, file_path: 'certificati/sede-a.pdf', stato: 'in_validazione',
       note: 'DIAGNOSI-A', data_inizio: '2026-07-01', data_fine: '2026-07-10',
-      alunno: { nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, scuola_id: SEDE_A },
+      alunno: { nome: 'Alfa', cognome: 'Sede-A', section_id: 'sec-a', classe_sezione: OMONIMA, scuola_id: SEDE_A },
     },
     {
       id: CERT_B, alunno_id: ALU_B, file_path: 'certificati/sede-b.pdf', stato: 'in_validazione',
       note: 'DIAGNOSI-B', data_inizio: '2026-07-01', data_fine: '2026-07-10',
-      alunno: { nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, scuola_id: SEDE_B },
+      alunno: { nome: 'Beta', cognome: 'Sede-B', section_id: 'sec-b', classe_sezione: OMONIMA, scuola_id: SEDE_B },
     },
   ],
 })

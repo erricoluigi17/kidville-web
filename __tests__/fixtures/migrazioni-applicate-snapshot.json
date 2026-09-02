@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-01",
-  "generato_alle": "2026-09-01T20:34:43Z",
-  "sha256": "f46498403ebbe27fce9ba4da21c7b627c664e1fc7cdaf2384a4e9d30b09e46ab",
+  "generato_il": "2026-09-02",
+  "generato_alle": "2026-09-02T14:57:43Z",
+  "sha256": "6b74df91aee70ac524adff67f84165c2d3c8159747916a740128072be8d6937e",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -575,6 +575,10 @@
     {
       "version": "20260901203333",
       "name": "legami_anagrafici_profili_doppi"
+    },
+    {
+      "version": "20260902145538",
+      "name": "identita_classe_presidi"
     }
   ]
 }

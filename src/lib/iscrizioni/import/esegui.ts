@@ -67,6 +67,7 @@ import { buildParentRecord } from '@/lib/anagrafiche/parents'
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
 import { findAuthUserIdByEmail } from '@/lib/auth/parent-identity'
 import { logEvento } from '@/lib/logging/logger'
+import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { normalizzaNome } from './normalizza'
 import { invitaGenitore, normalizzaEmail } from './inviti'
@@ -146,8 +147,59 @@ async function parentDiRiferimento(
   return { id, creato: true }
 }
 
-/** Trova un `alunno` per codice fiscale nella sede, oppure lo crea. */
-async function alunnoDiRiferimento(
+/**
+ * IL NOME CANONICO DELLA CLASSE, NON QUELLO DEL FOGLIO.
+ *
+ * `alunni.classe_sezione` è TESTO, e chi lo legge sono le schermate dell'area
+ * 0-6. Il trigger `sync_alunno_section_id` risolve `section_id` confrontando
+ * senza spazi né maiuscole, quindi il foglio può scrivere «4 anni  a» e il
+ * bambino finisce lo stesso nella sezione giusta — ma il TESTO resta divergente
+ * da `sections.name`, e fino al 2026-09-02 le schermate cercavano proprio quello.
+ *
+ * Misurato quel giorno: l'elenco ATTIVO di Giugliano porta 106 righe col testo
+ * divergente, e ogni domanda abbinata a una di quelle righe riscriveva la
+ * divergenza — un bambino alla volta, circa sei al giorno. Riallineare i dati
+ * senza toccare questa funzione sarebbe stato inutile: si sarebbe disfatto da sé.
+ *
+ * Se il nome non risolve nessuna sezione si scrive il GREZZO, non si inventa
+ * niente: l'anomalia `classe-senza-sezione` è già prevista da
+ * `src/lib/iscrizioni/import/sezioni.ts`, e rifiutare qui lascerebbe la sede
+ * senza elenco — rimedio peggiore del male, come già motivato in quel modulo.
+ */
+async function nomeCanonicoClasse(
+  supabase: SupabaseClient,
+  scuolaId: string,
+  classe: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('sections')
+    .select('name')
+    .eq('scuola_id', scuolaId)
+  if (error) {
+    // PostgREST non lancia: senza questo la lettura caduta diventerebbe
+    // «nessuna sezione», e si tornerebbe a scrivere il grezzo in silenzio.
+    logEvento('iscrizione', 'error', {
+      operazione: 'iscrizioni/import:nomeCanonicoClasse', esito: 'sezioni-non-lette',
+      sede_id: scuolaId,
+    }, error)
+    return classe
+  }
+  const cercata = normalizzaNomeSezione(classe)
+  const trovata = (data ?? [])
+    .map((s) => s.name as string)
+    .find((nome) => normalizzaNomeSezione(nome) === cercata)
+  return trovata ?? classe
+}
+
+/**
+ * Trova un `alunno` per codice fiscale nella sede, oppure lo crea.
+ *
+ * Esportata per il collaudo (`__tests__/api/iscrizioni-import-nome-canonico.test.ts`):
+ * è il punto in cui il nome della classe passa dal foglio al database, e provarlo
+ * dall'esterno di `eseguiDomanda` significa provare CHE COSA viene scritto invece
+ * di quante righe tornano.
+ */
+export async function alunnoDiRiferimento(
   supabase: SupabaseClient,
   grezzo: unknown,
   assegnazione: AssegnazioneBambino,
@@ -155,6 +207,8 @@ async function alunnoDiRiferimento(
   submissionId: string,
 ): Promise<{ id: string } | { errore: string }> {
   const cf = campo(grezzo, 'codice_fiscale')?.toUpperCase() ?? null
+  // Il nome della sezione com'è in anagrafica, non com'è nel foglio.
+  const classe = await nomeCanonicoClasse(supabase, scuolaId, assegnazione.classe)
 
   if (cf) {
     const { data, error } = await supabase
@@ -174,7 +228,7 @@ async function alunnoDiRiferimento(
       const { error: errUp } = await supabase
         .from('alunni')
         .update({
-          classe_sezione: assegnazione.classe,
+          classe_sezione: classe,
           importo_retta_mensile: assegnazione.retta,
         })
         .eq('id', trovato.id)
@@ -203,8 +257,11 @@ async function alunnoDiRiferimento(
     note_mediche: campo(grezzo, 'note_mediche'),
     stato: STATO_ISCRITTO,
     // La classe si scrive come TESTO: è il trigger `sync_alunno_section_id` a
-    // risolvere `section_id`, confrontando senza maiuscole né spazi.
-    classe_sezione: assegnazione.classe,
+    // risolvere `section_id`, confrontando senza maiuscole né spazi. Il testo è
+    // quello CANONICO di `sections.name` (vedi `nomeCanonicoClasse`), non quello
+    // del foglio: le schermate dell'area 0-6 lo confrontano, e una differenza di
+    // spazi apriva la classe senza nessun bambino.
+    classe_sezione: classe,
     importo_retta_mensile: assegnazione.retta,
   }
 

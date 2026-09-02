@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { notificaTitolariScrittura, enqueueDiarioGenitori } from '@/lib/primaria/notifiche';
@@ -25,6 +26,9 @@ const getParentQuerySchema = z.object({
 // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
 const getTeacherQuerySchema = z.object({
     sezione: z.string().default(''),
+    // L'identità VERA della classe. Il nome resta accettato (shell native già
+    // installate, URL salvati) ma porta allo stesso filtro per uuid.
+    sectionId: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
     date: zDataYMD.optional(),
     // La sede scelta nel SedeSelector (R70): il nome-classe da solo non basta più.
     scuola_id: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
@@ -154,12 +158,7 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     const sezione = q.data.sezione;
     const date = q.data.date ?? new Date().toISOString().split('T')[0];
     // Contratto storico: senza sezione la risposta è vuota, non un 400.
-    if (!sezione) return NextResponse.json([]);
-
-    // GATE per SEZIONE ASSEGNATA prima di leggere gli alunni: `requireDocente`
-    // verifica il ruolo, non la classe (R108). Educator → solo le sue sezioni.
-    const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione, { soloSezioniAssegnate: true });
-    if (scopeErr) return scopeErr;
+    if (!sezione && !q.data.sectionId) return NextResponse.json([]);
 
     // Rispetta la selezione del SedeSelector (cookie `sedi_attive`), ri-validata
     // contro le sedi accessibili, e la sede eventualmente dichiarata in query.
@@ -171,10 +170,17 @@ export const GET = withRoute('diary/entries:GET', async (request: NextRequest) =
     const plessi = sede.plessi ?? [];
     if (plessi.length === 0) return NextResponse.json([]);
 
+    // GATE per SEZIONE ASSEGNATA prima di leggere gli alunni: `requireDocente`
+    // verifica il ruolo, non la classe (R108). Educator → solo le sue sezioni.
+    // Il gate passava e l'elenco restava vuoto lo stesso: si filtrava per NOME.
+    const classe = await risolviSezione(admin, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
+    if (classe.response) return classe.response;
+    if (classe.sectionIds.length === 0) return NextResponse.json([]);
+
     const { data: alunni } = await admin
         .from('alunni')
         .select('id')
-        .eq('classe_sezione', sezione)
+        .in('section_id', classe.sectionIds)
         .in('scuola_id', plessi);
 
     if (!alunni || alunni.length === 0) return NextResponse.json([]);

@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -111,11 +112,15 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             // GATE per SEZIONE ASSEGNATA (R108) prima di leggere gli alunni:
             // `requireDocente` verifica il ruolo, non la classe. Educator → solo
             // le sezioni assegnate (decisione di prodotto del 2026-07-30).
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, classeSezione, { soloSezioniAssegnate: true });
-            if (scopeErr) return scopeErr;
-
             const plessi = await scuoleDiUtente(admin, auth.user);
             if (plessi.length === 0) return NextResponse.json([]);
+
+            // Il gate e la traduzione nome→uuid stanno insieme: erano due passi
+            // separati e il secondo — il filtro — usava il NOME, che può
+            // divergere da `sections.name` senza che niente lo dica.
+            const classe = await risolviSezione(admin, auth.user, { nome: classeSezione }, plessi);
+            if (classe.response) return classe.response;
+            if (classe.sectionIds.length === 0) return NextResponse.json([]);
 
             // Ottieni gli alunni della sezione (solo dei propri plessi).
             //
@@ -135,7 +140,7 @@ export const GET = withRoute('locker/requests:GET', async (request: NextRequest)
             const { data: alunni, error: errAlunni } = await supabase
                 .from('alunni')
                 .select('id')
-                .eq('classe_sezione', classeSezione)
+                .in('section_id', classe.sectionIds)
                 .eq('stato', 'iscritto')
                 .in('scuola_id', plessi);
             if (errAlunni) {

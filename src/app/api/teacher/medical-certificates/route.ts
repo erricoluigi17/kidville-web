@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope'
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope'
+import { risolviSezione } from '@/lib/sezioni/risoluzione'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { periodoValido } from '@/lib/certificati/stato'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -41,37 +42,47 @@ export const GET = withRoute('teacher/medical-certificates:GET', async (request:
     const { stato, class_name: className } = q.data
 
     const supabase = await createAdminClient()
-    // Docente (educator) → certificati della propria sezione; lo scope per
-    // nome-classe impedisce letture cross-plesso. Staff → proprio plesso.
-    if (className) {
-      const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className)
-      if (scopeErr) return scopeErr
-    }
-    // Il gate qui sopra scatta SOLO se arriva `?class_name=`, e comunque non filtra le
+    // Il gate qui sotto scatta SOLO se arriva `?class_name=`, e comunque non filtra le
     // righe: sono due presidi diversi e servono entrambi (cfr. il commento di
-    // `assertClasseNomeInScope` in src/lib/auth/scope.ts). Senza il filtro qui sotto,
+    // `assertClasseNomeInScope` in src/lib/auth/scope.ts). Senza il filtro,
     // una GET senza parametri restituiva i certificati medici — periodo di malattia,
     // note cliniche libere, `file_path` — di TUTTE le sedi; e con `?class_name=2 ANNI`
     // entravano anche gli omonimi dell'altro plesso. `!inner` è necessario perché il
     // filtro sulla risorsa embedded scarti davvero la riga padre; scope vuoto ⇒
     // `.in(…, [])` ⇒ nessuna riga, cioè si nega, non si apre.
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+
+    // Docente (educator) → certificati della propria sezione; lo scope impedisce
+    // letture cross-plesso. Staff → proprio plesso.
+    //
+    // ⚠️ QUESTA ROUTE FILTRAVA DUE VOLTE per nome — nella query e poi in JS — e
+    // le due cose vanno cambiate INSIEME: correggerne una sola avrebbe lasciato
+    // il risultato vuoto lo stesso, con l'aria di una correzione fatta.
+    let sezioniClasse: string[] = []
+    if (className) {
+      const classe = await risolviSezione(supabase, auth.user, { nome: className }, plessi)
+      if (classe.response) return classe.response
+      if (classe.sectionIds.length === 0) return NextResponse.json([])
+      sezioniClasse = classe.sectionIds
+    }
+
     let query = supabase
       .from('certificati_medici')
-      .select('id, alunno_id, file_path, data_inizio, data_fine, stato, note, nota_validazione, validato_il, creato_il, alunno:alunni!inner(nome, cognome, classe_sezione)')
+      .select('id, alunno_id, file_path, data_inizio, data_fine, stato, note, nota_validazione, validato_il, creato_il, alunno:alunni!inner(nome, cognome, section_id, classe_sezione)')
       .in('alunno.scuola_id', plessi)
       .order('creato_il', { ascending: false })
     if (stato) query = query.eq('stato', stato)
-    if (className) query = query.eq('alunno.classe_sezione', className)
+    if (className) query = query.in('alunno.section_id', sezioniClasse)
 
     const { data, error } = await query
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     let rows = (data ?? []) as Record<string, unknown>[]
     if (className) {
+      // Il secondo filtro, gemello del primo: per UUID, non per nome.
       rows = rows.filter((c) => {
-        const a = c.alunno as { classe_sezione?: string } | null
-        return a?.classe_sezione === className
+        const a = c.alunno as { section_id?: string | null } | null
+        return Boolean(a?.section_id) && sezioniClasse.includes(a!.section_id as string)
       })
     }
     // appiattisce nome/cognome alunno per retro-compat con la UI

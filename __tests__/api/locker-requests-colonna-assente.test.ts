@@ -60,6 +60,9 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente })
 vi.mock('@/lib/auth/scope', () => ({
     assertAlunnoInScope: async () => null,
     assertClasseNomeInScope: async () => null,
+    // Il gemello per UUID: da quando la classe si identifica con `section_id`
+    // (2026-09-02) `risolviSezione` sceglie fra i due gate.
+    assertSezioneInScope: async () => null,
     scuoleDiUtente: async () => ['sc-1'],
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
@@ -70,8 +73,16 @@ vi.mock('@/lib/supabase/server-client', () => ({
             b.update = () => { b.__update = true; return b }
             b.maybeSingle = async () => h.riga
             b.single = async () => h.aggiornata
-            b.then = (res: (v: unknown) => unknown) =>
-                res(tabella === 'armadietto_richieste' ? h.elenco : h.alunni)
+            b.then = (res: (v: unknown) => unknown) => {
+                // `sections` risponde SEMPRE bene, e separatamente: è la
+                // traduzione nome→uuid che la route fa PRIMA di leggere gli
+                // alunni. Se le si desse la stessa risposta di `alunni`, un
+                // `h.alunni` in errore diventerebbe un guasto sulle SEZIONI —
+                // la route uscirebbe con `[]` e questo test proverebbe un'altra
+                // cosa da quella che dice di provare.
+                if (tabella === 'sections') return res({ data: [{ id: 'sec-1' }], error: null })
+                return res(tabella === 'armadietto_richieste' ? h.elenco : h.alunni)
+            }
             return b
         },
     }),

@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { parseQuery } from '@/lib/validation/http';
+import { zUuid } from '@/lib/validation/common';
 import { COLONNE_SORGENTE, eFattoDelRegistro } from '@/lib/presenze/finestra-trascorsa';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
@@ -61,6 +63,9 @@ const getQuerySchema = z.object({
     month: zIntParseInt(z.number().int().min(1).max(12)).optional(),
     // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
     sezione: z.string().default(''),
+    // L'identità VERA della classe. Il nome resta accettato (shell native già
+    // installate, URL salvati) ma porta allo stesso filtro per uuid.
+    sectionId: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
 });
 
 export const GET = withRoute('attendance/monthly:GET', async (request: NextRequest) => {
@@ -87,16 +92,9 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
         const supabase = await createAdminClient();
 
         // Contratto storico: senza sezione la risposta è vuota, non un 400.
-        if (!sezione) {
+        if (!sezione && !q.data.sectionId) {
             return NextResponse.json([], { status: 200, headers: { 'Cache-Control': 'no-store' } });
         }
-
-        // GATE per SEZIONE ASSEGNATA (R108): `requireDocente` verifica il RUOLO,
-        // non la classe. Senza questo un educator otteneva il prospetto presenze
-        // del mese di qualunque classe del proprio plesso, comprese quelle non
-        // sue. Admin/coordinator/segreteria non sono toccati (vedono il plesso).
-        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, { soloSezioniAssegnate: true });
-        if (scopeErr) return scopeErr;
 
         // Isolamento per tenant (finora ASSENTE su questa route): la stessa
         // `classe_sezione` può esistere in più sedi, quindi senza filtro il
@@ -107,11 +105,23 @@ export const GET = withRoute('attendance/monthly:GET', async (request: NextReque
             return NextResponse.json([], { status: 200, headers: { 'Cache-Control': 'no-store' } });
         }
 
+        // GATE per SEZIONE ASSEGNATA (R108): `requireDocente` verifica il RUOLO,
+        // non la classe. Senza questo un educator otteneva il prospetto presenze
+        // del mese di qualunque classe del proprio plesso, comprese quelle non
+        // sue. Admin/coordinator/segreteria non sono toccati (vedono il plesso).
+        // Il gate passava e il prospetto usciva vuoto lo stesso: la query sotto
+        // filtrava per NOME, e il nome può divergere da `sections.name`.
+        const classe = await risolviSezione(supabase, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
+        if (classe.response) return classe.response;
+        if (classe.sectionIds.length === 0) {
+            return NextResponse.json([], { status: 200, headers: { 'Cache-Control': 'no-store' } });
+        }
+
         // ── Query 1: alunni della sezione (entro le sedi attive) ───────────────
         const { data: alunniData, error: alunniError } = await supabase
             .from('alunni')
             .select('id, nome, cognome, classe_sezione')
-            .eq('classe_sezione', sezione)
+            .in('section_id', classe.sectionIds)
             .in('scuola_id', plessi);
 
         if (alunniError) {

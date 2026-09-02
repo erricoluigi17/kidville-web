@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { getGenitoriDiAlunni, getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { parseQuery } from '@/lib/validation/http';
@@ -23,6 +24,12 @@ const getByIdQuerySchema = z.object({
 const getBySezioneQuerySchema = z.object({
     sezione: z.string().optional(),
     classeSezione: z.string().optional(),
+    // L'identità VERA della classe. `sezione`/`classeSezione` restano per
+    // retrocompatibilità (la shell nativa in circolazione manda ancora il nome,
+    // e un URL salvato deve continuare a funzionare) — ma entrambe le strade
+    // finiscono sullo stesso filtro per uuid: la vecchia non è solo affiancata,
+    // è stata resa corretta.
+    sectionId: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
     onlyPresent: z.string().optional(),
     date: zDataYMD.optional(),
     // La sede scelta nel SedeSelector (R70): finora non viaggiava mai, e con tre
@@ -107,25 +114,17 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     // reale: entrambi assenti → nessuna lettura → risposta [] (contratto storico:
     // la UI chiama questa route anche prima di aver risolto la classe).
     const sezione = q.data.sezione ?? q.data.classeSezione ?? '';
-    if (!sezione) return NextResponse.json([]);
+    if (!sezione && !q.data.sectionId) return NextResponse.json([]);
     const onlyPresent = q.data.onlyPresent === 'true';
     // Giorno civile ITALIANO, non UTC (rilievo T27): con `onlyPresent` un
     // giorno sbagliato mostra alla maestra la classe di ieri.
     const date = q.data.date ?? oggiFiscaleISO();
 
-    // GATE prima di qualunque lettura. `requireDocente` verifica il RUOLO, non
-    // la classe: senza `soloSezioniAssegnate` un educator poteva chiedere
-    // qualunque nome di classe del proprio plesso e ricevere `note_mediche`,
-    // nome e cognome dei bambini di una sezione non sua. Il modello (PRD §3/§12,
-    // decisione del 2026-07-30) dice: educator → SOLO le sezioni assegnate.
-    // Admin/coordinator/segreteria non sono toccati: vedono tutto il plesso.
-    const scopeErr = await assertClasseNomeInScope(admin, auth.user, sezione, { soloSezioniAssegnate: true });
-    if (scopeErr) return scopeErr;
-
-    // FILTRO, complemento del gate: il gate impedisce di NOMINARE una classe
-    // altrui, il filtro impedisce che l'omonimia porti dentro i bambini
-    // dell'altra sede. `resolveScuoleAttive` (non `scuoleDiUtente`) perché il
+    // FILTRO di sede, che ora precede il gate perché la risoluzione nome→uuid ne
+    // ha bisogno. `resolveScuoleAttive` (non `scuoleDiUtente`) perché il
     // SedeSelector deve contare: prima qui il cookie non veniva nemmeno letto.
+    // Restringere le sedi non concede niente — il gate viene comunque prima di
+    // qualunque lettura di dati di minori, due righe sotto.
     const attive = await resolveScuoleAttive(request, admin, auth.user);
     const sede = restringiASedeRichiesta(attive, q.data.scuola_id, {
         azione: 'diary/students:GET', utente: auth.user.id, ruolo: auth.user.role,
@@ -134,10 +133,29 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
     const plessi = sede.plessi ?? [];
     if (plessi.length === 0) return NextResponse.json([]);
 
+    // GATE prima di qualunque lettura. `requireDocente` verifica il RUOLO, non
+    // la classe: senza `soloSezioniAssegnate` un educator poteva chiedere
+    // qualunque nome di classe del proprio plesso e ricevere `note_mediche`,
+    // nome e cognome dei bambini di una sezione non sua. Il modello (PRD §3/§12,
+    // decisione del 2026-07-30) dice: educator → SOLO le sezioni assegnate.
+    // Admin/coordinator/segreteria non sono toccati: vedono tutto il plesso.
+    // Il gate e la risoluzione a uuid stanno insieme in `risolviSezione`: erano
+    // due passi separati, e il secondo — il filtro — usava il NOME. Bastava che
+    // `alunni.classe_sezione` differisse di uno spazio da `sections.name` perché
+    // la classe si aprisse vuota, con 200 e senza un log.
+    const classe = await risolviSezione(admin, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
+    if (classe.response) return classe.response;
+    if (classe.sectionIds.length === 0) return NextResponse.json([]);
+
     const { data: alunni, error } = await admin
         .from('alunni')
         .select('id, nome, cognome, note_mediche, classe_sezione, consenso_privacy')
-        .eq('classe_sezione', sezione)
+        // Per UUID, non per nome. `.in` e non `.eq`: un admin multi-plesso che
+        // chiede un nome omonimo ha legittimamente più di una sezione.
+        .in('section_id', classe.sectionIds)
+        // Difesa in profondità: il gate impedisce di NOMINARE una sezione
+        // altrui, questo filtro impedisce che ci finisca dentro un bambino la
+        // cui `scuola_id` non combacia con quella della sua sezione.
         .in('scuola_id', plessi)
         .order('cognome');
 

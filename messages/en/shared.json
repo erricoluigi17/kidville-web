@@ -287,6 +287,7 @@
   "erroreAutorizzazioniUscitaNonLette": "We couldn’t load who has signed the authorisation: please try again in a few minutes, the list shown would be incomplete",
   "erroreRegistroAlunniNonLetti": "We couldn’t load the list of children in this class: the register was not printed. Please try again in a few minutes.",
   "erroreRegistroSezioneVuota": "There are no children in this class: there is nothing to print.",
+  "erroreRegistroClasseNonRisolta": "This class isn’t among your active locations: check the location selected at the top and try again.",
   "erroreRegistroNonGenerato": "The register was not generated: please try again in a few minutes.",
   "erroreCronNonAutorizzato": "This operation is reserved for the platform’s automated jobs",
   "erroreImportIscrizioniNonEseguito": "The automated enrolment run did not complete: please try again in a few minutes",

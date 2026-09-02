@@ -164,8 +164,22 @@ describe('lock di forma — il nome della classe non viaggia senza la sede', () 
     // Verde perché non trova violazioni ≠ verde perché non guarda più niente:
     // se un domani il ritaglio delle catene si rompesse, questo conteggio cade
     // prima che il lock diventi una decorazione.
+    //
+    // ⚠️ Il pavimento è sceso da 20 a 12 il 2026-09-02, e la ragione va detta
+    // perché abbassare la soglia di sanità di un lock è il modo tipico in cui un
+    // lock diventa una decorazione. Non è il rilevatore ad essersi rotto: sono i
+    // filtri per NOME ad essere diminuiti davvero, perché nove route dell'area
+    // 0-6 sono passate a identificare la classe per `section_id` (l'uuid) invece
+    // che per `sections.name`. Il conteggio misurato subito dopo era 16.
+    //
+    // Questo lock resta necessario per i filtri per nome che RESTANO — i
+    // destinatari dei broadcast (`avvisi`, `news_posts`, `forms_templates`),
+    // `mensa_class_menu_assignment`, `registro_orario`, i filtri di segreteria —
+    // e il pavimento va rialzato, non abbassato ancora, se la migrazione
+    // proseguisse: sotto una certa soglia la domanda giusta non è più «il
+    // rilevatore funziona?» ma «questo lock ha ancora un oggetto?».
     const totale = FILES.reduce((n, f) => n + filtriEsaminati(fs.readFileSync(f, 'utf8')), 0)
-    expect(totale).toBeGreaterThanOrEqual(20)
+    expect(totale).toBeGreaterThanOrEqual(12)
   })
 
   it('ogni filtro per nome-classe ha la sede nella stessa query', () => {

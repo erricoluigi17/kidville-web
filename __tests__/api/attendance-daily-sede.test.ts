@@ -53,11 +53,11 @@ const dbBase = (): DBFinto => ({
   presenze: [
     {
       id: 'p-a', alunno_id: 'al-a', data: GIORNO, stato: 'presente',
-      alunni: { id: 'al-a', nome: 'BIMBO', cognome: 'SEDE-A', classe_sezione: OMONIMA, scuola_id: SEDE_A },
+      alunni: { id: 'al-a', nome: 'BIMBO', cognome: 'SEDE-A', section_id: SEC_A, classe_sezione: OMONIMA, scuola_id: SEDE_A },
     },
     {
       id: 'p-b', alunno_id: 'al-b', data: GIORNO, stato: 'presente',
-      alunni: { id: 'al-b', nome: 'BIMBO', cognome: 'SEDE-B', classe_sezione: OMONIMA, scuola_id: SEDE_B },
+      alunni: { id: 'al-b', nome: 'BIMBO', cognome: 'SEDE-B', section_id: SEC_B, classe_sezione: OMONIMA, scuola_id: SEDE_B },
     },
   ],
 })

@@ -1268,6 +1268,18 @@ export const CODICI_ERRORE = {
      */
     REGISTRO_SEZIONE_VUOTA: 'erroreRegistroSezioneVuota',
     /**
+     * 404 — il nome della classe non corrisponde a nessuna sezione fra le sedi
+     * ATTIVE (`admin/registro-presenze/pdf:GET`).
+     *
+     * Distinto da `REGISTRO_SEZIONE_VUOTA`, e la differenza non è formale: là la
+     * sezione c'è e non ha alunni, qui la sezione non è stata trovata affatto —
+     * di solito perché il SedeSelector è su un'altra sede. Le due situazioni si
+     * risolvono in modi opposti (iscrivere un bambino / cambiare sede), e dire
+     * «non c'è nessun alunno» a chi ha solo la sede sbagliata lo manda a cercare
+     * il problema dove non è.
+     */
+    REGISTRO_CLASSE_NON_RISOLTA: 'erroreRegistroClasseNonRisolta',
+    /**
      * 500 — il registro mensile non è stato generato
      * (`admin/registro-presenze/pdf:GET`): la composizione del PDF o la carta
      * intestata sono fallite.

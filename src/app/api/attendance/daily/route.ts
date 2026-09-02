@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -43,6 +44,9 @@ const getQuerySchema = z.object({
     data: zDataYMD.optional(),
     // Nessun default a un nome sezione reale: param omesso → '' → risposta vuota.
     sezione: z.string().default(''),
+    // L'identità VERA della classe. Il nome resta accettato (shell native già
+    // installate, URL salvati) ma porta allo stesso filtro per uuid.
+    sectionId: z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional()),
     // La sede scelta nel cockpit (W3-A). Il nome-classe da solo non identifica
     // più una classe: «2 ANNI» esiste ad Aversa E a Cesa, e senza questo l'appello
     // usciva UNITO fra le due, senza dirlo.
@@ -125,19 +129,8 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
 
         // Sezione assente → risposta vuota, come da contratto storico di questa
         // route (nessun 400: la UI la chiama anche prima di risolvere la classe).
-        if (!sezione) return NextResponse.json([]);
+        if (!sezione && !q.data.sectionId) return NextResponse.json([]);
 
-        // Scope di sede: `requireDocente` verifica il RUOLO, non il tenant, e la
-        // route gira in service-role. Con tre sedi «2 ANNI» esiste sia ad Aversa
-        // sia a Cesa: senza questo, chi ne indovinava il nome otteneva nomi e
-        // presenze dei bambini dell'altra sede.
-        //
-        // `soloSezioniAssegnate` (aggiunto il 2026-07-31, R108): il gate senza
-        // opzioni risponde a «di quale sede è questa classe?», non a «questa
-        // classe è tua?» — e questa route era citata come il «gemello corretto»
-        // pur avendo lo stesso buco. Educator → solo le sue sezioni.
-        const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, { soloSezioniAssegnate: true });
-        if (scopeErr) return scopeErr;
         const attive = await resolveScuoleAttive(request, supabase, auth.user);
         // Sede dichiarata dal client ⇒ una sola sede. Dichiararne una non
         // accessibile è un 403 loggato, mai un elenco allargato.
@@ -146,6 +139,24 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
         });
         if (sede.response) return sede.response;
         const plessi = sede.plessi ?? [];
+
+        // Scope di sede + identità della classe. `requireDocente` verifica il
+        // RUOLO, non il tenant, e la route gira in service-role. Con tre sedi
+        // «2 ANNI» esiste sia ad Aversa sia a Cesa: senza il gate, chi ne
+        // indovinava il nome otteneva nomi e presenze dei bambini dell'altra sede.
+        //
+        // `soloSezioniAssegnate` (aggiunto il 2026-07-31, R108): il gate senza
+        // opzioni risponde a «di quale sede è questa classe?», non a «questa
+        // classe è tua?» — e questa route era citata come il «gemello corretto»
+        // pur avendo lo stesso buco. Educator → solo le sue sezioni.
+        //
+        // Il gate passava e la lettura restava vuota lo stesso: filtrava per
+        // NOME su `alunni.classe_sezione`, che il 2026-09-02 divergeva dal nome
+        // della sezione su cinque classi di Giugliano. Ora la classe si risolve a
+        // uuid una volta sola, in `risolviSezione`.
+        const classe = await risolviSezione(supabase, auth.user, { sectionId: q.data.sectionId, nome: sezione }, plessi);
+        if (classe.response) return classe.response;
+        if (classe.sectionIds.length === 0) return NextResponse.json([]);
 
         // ─── IL MOTIVO DELL'ASSENZA ARRIVA A CHI LA FAMIGLIA CREDE LO LEGGA ──
         //
@@ -182,7 +193,10 @@ export const GET = withRoute('attendance/daily:GET', async (request: NextRequest
             .from('presenze')
             .select(colonneConMotivo(COLONNE_APPELLO, auth.user))
             .eq('data', data)
-            .eq('alunni.classe_sezione', sezione)
+            // Per UUID sulla risorsa embedded, non per nome: `classe_sezione` è
+            // testo scritto dall'import e può divergere da `sections.name` senza
+            // che niente lo dica.
+            .in('alunni.section_id', classe.sectionIds)
             // Difesa in profondità sul join: il gate impedisce di NOMINARE una
             // classe altrui, il filtro impedisce che l'omonimia ne porti dentro
             // gli alunni comunque.

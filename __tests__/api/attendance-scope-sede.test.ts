@@ -56,12 +56,12 @@ const dbBase = (): DBFinto => ({
   utenti_scuole: [],
   utenti_sezioni: [{ utente_id: 'ed1', section_id: 'sec-a' }],
   presenze: [
-    { id: 'pre-a', alunno_id: ALU_A, data: GIORNO, stato: 'presente', alunni: { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, scuola_id: SEDE_A } },
-    { id: 'pre-b', alunno_id: ALU_B, data: GIORNO, stato: 'assente', alunni: { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, scuola_id: SEDE_B } },
+    { id: 'pre-a', alunno_id: ALU_A, data: GIORNO, stato: 'presente', alunni: { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', section_id: 'sec-a', classe_sezione: OMONIMA, scuola_id: SEDE_A } },
+    { id: 'pre-b', alunno_id: ALU_B, data: GIORNO, stato: 'assente', alunni: { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', section_id: 'sec-b', classe_sezione: OMONIMA, scuola_id: SEDE_B } },
   ],
   delegates: [
-    { id: 'del-a', student_id: ALU_A, first_name: 'Nonna', last_name: 'Sede-A', document_number: 'DOC-A', alunni: { classe_sezione: OMONIMA, scuola_id: SEDE_A } },
-    { id: 'del-b', student_id: ALU_B, first_name: 'Nonno', last_name: 'Sede-B', document_number: 'DOC-B', alunni: { classe_sezione: OMONIMA, scuola_id: SEDE_B } },
+    { id: 'del-a', student_id: ALU_A, first_name: 'Nonna', last_name: 'Sede-A', document_number: 'DOC-A', alunni: { section_id: 'sec-a', classe_sezione: OMONIMA, scuola_id: SEDE_A } },
+    { id: 'del-b', student_id: ALU_B, first_name: 'Nonno', last_name: 'Sede-B', document_number: 'DOC-B', alunni: { section_id: 'sec-b', classe_sezione: OMONIMA, scuola_id: SEDE_B } },
   ],
 })
 

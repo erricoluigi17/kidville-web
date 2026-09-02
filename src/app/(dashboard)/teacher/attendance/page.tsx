@@ -12,6 +12,8 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
+import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { formattaIstante } from '@/i18n/config';
 import { conIniziale } from '@/lib/i18n/date';
 
@@ -204,7 +206,10 @@ function Summary({
 
 // ─── Vista Oggi ───────────────────────────────────────────────────────────────
 
-function TodayView({ sezione }: { sezione: string }) {
+function TodayView({ sezione, sectionId }: { sezione: string; sectionId?: string }) {
+    // L'uuid quando c'è, il nome quando no: la scelta sta in `parametroClasse`,
+    // un posto solo per tutte e tre le chiamate qui sotto.
+    const paramClasse = parametroClasse({ id: sectionId, name: sezione });
     const t = useTranslations('teacherPresenze');
     const locale = useLocale();
     const [selectedDate, setSelectedDate] = useState(toISO(new Date()));
@@ -232,7 +237,7 @@ function TodayView({ sezione }: { sezione: string }) {
     // ── Fetch studenti reali dall'anagrafica Supabase ──
     // Restituisce null in caso di errore (rete o HTTP), mai eccezioni.
     const fetchStudents = useCallback(async (): Promise<Student[] | null> => {
-        const res = await fetch(`/api/diary/students?sezione=${encodeURIComponent(sezione)}`).catch(() => null);
+        const res = await fetch(`/api/diary/students?${paramClasse}`).catch(() => null);
         if (!res?.ok) return null;
         const data = await res.json().catch(() => null);
         if (Array.isArray(data)) {
@@ -243,11 +248,11 @@ function TodayView({ sezione }: { sezione: string }) {
             }));
         }
         return [];
-    }, [sezione]);
+    }, [paramClasse]);
 
     // ── Fetch presenze del giorno selezionato da Supabase ──
     const fetchTodayRecords = useCallback(async () => {
-        const res = await fetch(`/api/attendance/daily?data=${selectedDate}&sezione=${encodeURIComponent(sezione)}`).catch(() => null);
+        const res = await fetch(`/api/attendance/daily?data=${selectedDate}&${paramClasse}`).catch(() => null);
         const rows = res?.ok ? await res.json().catch(() => null) : null;
         const map: Record<string, AttendanceRecord> = {};
         if (Array.isArray(rows)) {
@@ -275,17 +280,17 @@ function TodayView({ sezione }: { sezione: string }) {
             });
         }
         setRecords(map);
-    }, [selectedDate, sezione]);
+    }, [selectedDate, paramClasse]);
 
     // ── Fetch delegati ──
     const fetchDelegates = useCallback(async () => {
         try {
-            const res = await fetch(`/api/attendance/delegates?sezione=${encodeURIComponent(sezione)}`);
+            const res = await fetch(`/api/attendance/delegates?${paramClasse}`);
             if (!res.ok) return;
             const data = await res.json();
             if (Array.isArray(data)) setDelegates(data);
         } catch { /* non bloccante */ }
-    }, [sezione]);
+    }, [paramClasse]);
 
     // ── Caricamento iniziale ──
     const loadAll = useCallback(async () => {
@@ -586,18 +591,27 @@ function TeacherAttendanceContent() {
     const [prevTab, setPrevTab] = useState<Tab>('oggi');
 
     // Sezione REALE del docente (niente 'Girasoli' hardcoded): da educator-sections.
+    //
+    // Si tiene il NOME (è quello che la maestra legge nell'intestazione e nel
+    // selettore) ma si porta dietro anche l'UUID, che è l'identità vera. Fino al
+    // 2026-09-02 questa pagina leggeva `sectionNames` — i soli nomi — e mandava
+    // il nome al server, che filtrava `alunni.classe_sezione` per uguaglianza
+    // esatta: cinque classi di Giugliano si aprivano vuote o quasi perché il
+    // testo scritto dal foglio d'iscrizione differiva di uno spazio.
     const [sezione, setSezione] = useState('');
-    const [availableSections, setAvailableSections] = useState<string[]>([]);
+    const [availableSections, setAvailableSections] = useState<SezioneDocente[]>([]);
     const [sectionsLoaded, setSectionsLoaded] = useState(false);
+    const sectionId = availableSections.find((s) => s.name === sezione)?.id;
 
     useEffect(() => {
         if (!teacherId) return;
-        fetch(`/api/educator-sections?userId=${teacherId}`)
-            .then((r) => (r.ok ? r.json() : null))
+        fetchEducatorSections(teacherId)
             .then((d) => {
-                const secs: string[] = d?.sectionNames ?? [];
+                // `sezioniDallaRisposta` regge entrambe le forme della risposta:
+                // `sections` (con l'id) e la vecchia `sectionNames` (senza).
+                const secs = sezioniDallaRisposta(d);
                 setAvailableSections(secs);
-                if (secs.length > 0) setSezione((prev) => prev || secs[0]);
+                if (secs.length > 0) setSezione((prev) => prev || secs[0].name);
             })
             .catch(() => {})
             .finally(() => setSectionsLoaded(true));
@@ -634,7 +648,7 @@ function TeacherAttendanceContent() {
                         onChange={(e) => setSezione(e.target.value)}
                         className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none"
                     >
-                        {availableSections.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
+                        {availableSections.map((sec) => <option key={sec.id ?? sec.name} value={sec.name}>{sec.name}</option>)}
                     </select>
                 </div>
             )}
@@ -688,11 +702,11 @@ function TeacherAttendanceContent() {
                             animate="center"
                             exit="exit"
                         >
-                            {activeTab === 'oggi' && <TodayView sezione={sezione} />}
+                            {activeTab === 'oggi' && <TodayView sezione={sezione} sectionId={sectionId} />}
 
                             {activeTab === 'mese' && (
                                 <div className="overflow-x-auto rounded-3xl border border-kidville-line bg-white p-4 shadow-sm">
-                                    <MonthlyAttendanceTable sezione={sezione} />
+                                    <MonthlyAttendanceTable sezione={sezione} sectionId={sectionId} />
                                 </div>
                             )}
                         </motion.div>

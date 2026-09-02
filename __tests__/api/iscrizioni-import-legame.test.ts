@@ -93,7 +93,7 @@ const req = (body: unknown) =>
   })
 
 const importa = () =>
-  PATCH(req({ id: SUB_ID, action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 0 }) as never)
+  PATCH(req({ id: SUB_ID, action: 'import', assignments: { '0': 'Girasoli' }, rette: { '0': 300 }, referenteIndex: 0 }) as never)
 
 const legami = () => h.upserts.filter((u) => u.table === 'legame_genitori_alunni')
 const anagrafici = () => h.upserts.filter((u) => u.table === 'student_parents')

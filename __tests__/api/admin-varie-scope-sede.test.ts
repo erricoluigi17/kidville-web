@@ -245,8 +245,15 @@ describe('GET /api/admin/audit — il registro immutabile è del proprio plesso'
 })
 
 describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
+  // ⚠️ QUESTI TEST PARLANO DI SEDI, NON DI RUOLI, e dal 2026-09-02 l'identità che
+  // usano non è più indifferente: gli aggregati economici (`incassatoMese`,
+  // `scadutoImporto`, `trend`) il server li OMETTE per chi non è Direzione. Una
+  // segreteria qui vedrebbe `undefined` e il test parlerebbe d'altro. La Direzione
+  // è l'identità che quei numeri li riceve, quindi è l'unica da cui si può
+  // osservare se sommano la sede sbagliata — che è la domanda di questo blocco.
+  // Il comportamento per ruolo ha i suoi test in `admin-dashboard-kpi-direzione`.
   it('Moduli conta solo le compilazioni del proprio plesso', async () => {
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
     expect(res.status).toBe(200)
     const j = await res.json()
@@ -255,7 +262,7 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
   })
 
   it('Incassato del mese: solo gli incassi legati a pagamenti del proprio plesso', async () => {
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
     expect(res.status).toBe(200)
     const j = await res.json()
@@ -265,7 +272,7 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
   })
 
   it('scope vuoto ⇒ tutti gli aggregati a zero (deny), non i totali di tutte le sedi', async () => {
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard', `sedi_attive=${SEDE_B}`))
     expect(res.status).toBe(200)
     const j = await res.json()
@@ -279,7 +286,7 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
   // uno zero senza log è indistinguibile da «non ci sono compilazioni», che è
   // esattamente l'ambiguità che ha tenuto nascosto il guasto delle email.
   it('colonna assente (42703): il KPI degrada a 0 ma l\'errore FINISCE nei log', async () => {
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     h.errori = { form_submissions: { code: '42703', message: 'column does not exist' } }
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
     expect(res.status).toBe(200)
@@ -294,7 +301,7 @@ describe('GET /api/admin/dashboard — i KPI non sommano le altre sedi', () => {
   })
 
   it('incassi illeggibili: l\'errore del join non resta muto', async () => {
-    h.requireStaff.mockResolvedValue({ user: { id: 'seg1', role: 'segreteria', scuola_id: SEDE_A } })
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir1', role: 'coordinator', scuola_id: SEDE_A } })
     h.errori = { incassi: { code: '42703', message: 'column does not exist' } }
     const res = await DASHBOARD_GET(req('http://localhost/api/admin/dashboard'))
     expect(res.status).toBe(200)

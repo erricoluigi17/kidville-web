@@ -97,7 +97,7 @@ const req = (body: unknown) =>
   })
 
 const importa = () =>
-  PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 0 }) as never)
+  PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, rette: { '0': 300 }, referenteIndex: 0 }) as never)
 
 /** Domanda con la PROVA dei consensi (`consents_log`), non il payload grezzo. */
 const domanda = (blocchi: { field_id: string; accepted: boolean }[]) => ({

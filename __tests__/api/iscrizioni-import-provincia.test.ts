@@ -98,7 +98,7 @@ beforeEach(() => {
 })
 
 const importa = (body: Record<string, unknown> = {}) =>
-  PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 0, ...body }) as never)
+  PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, rette: { '0': 300 }, referenteIndex: 0, ...body }) as never)
 
 describe('iscrizioni import — province + semantica esito', () => {
   it('(a) 22001 sull\'insert parents → success:false e invio NON marcato approved', async () => {

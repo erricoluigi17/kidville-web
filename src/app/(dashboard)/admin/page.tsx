@@ -40,13 +40,21 @@ import {
 import type { PresenzeAggregate } from '@/lib/presenze/aggregate';
 import { dataCivile, formattaIstante } from '@/i18n/config';
 
+/**
+ * ⚠️ I tre campi economici sono OPZIONALI, e non è un dettaglio di tipizzazione.
+ *
+ * `GET /api/admin/dashboard` li OMETTE per chi non è Direzione (titolare, 2026-09-02): la
+ * chiave non arriva proprio. Il gate vero è quello — questa pagina non fa che non disegnare
+ * ciò che non ha ricevuto. Un `?? 0` al posto del controllo di presenza scriverebbe
+ * «€ 0,00» dove il dato è riservato, cioè direbbe una cosa falsa invece di tacere.
+ */
 interface DashboardData {
   studenti: { iscritti: number; perClasse: { classe: string; count: number }[] };
-  pagamenti: { scadutoImporto: number; scadutoCount: number; incassatoMese: number; fattureInAttesa: number };
+  pagamenti: { scadutoImporto?: number; scadutoCount: number; incassatoMese?: number; fattureInAttesa: number };
   iscrizioni: { pending: number };
   mensa: { oggiPrenotazioni: number };
   moduli: { submissionTotale: number; daFirmare: number };
-  trend: { mese: string; label: string; incassato: number }[];
+  trend?: { mese: string; label: string; incassato: number }[];
   alert: {
     scaduti: { id: string; alunno: string; importo: number; scadenza: string }[];
     iscrizioni: { id: string; data: string | null }[];
@@ -99,27 +107,46 @@ function AdminDashboardInner() {
         iconBg: 'bg-kidville-green/10 text-kidville-green',
         href: '/admin/students',
       },
-      {
-        key: 'scaduto',
-        label: t('kpiPagamentiScaduti'),
-        value: data.pagamenti.scadutoImporto,
-        format: 'euro' as const,
-        sub: t('kpiPagamentiScadutiSub', { count: data.pagamenti.scadutoCount }),
-        icon: AlertTriangle,
-        accent: 'border-kidville-error',
-        iconBg: 'bg-kidville-error-soft text-kidville-error',
-        href: '/admin/pagamenti',
-      },
-      {
-        key: 'incassato',
-        label: t('kpiIncassatoMese'),
-        value: data.pagamenti.incassatoMese,
-        format: 'euro' as const,
-        icon: TrendingUp,
-        accent: 'border-kidville-success',
-        iconBg: 'bg-kidville-success-soft text-kidville-success',
-        href: '/admin/pagamenti',
-      },
+      // Scaduti: alla Direzione l'IMPORTO (col conteggio sotto), a tutti gli altri il
+      // solo CONTEGGIO. Non è un ripiego: la Segreteria deve sapere quanti pagamenti
+      // sono scaduti per sollecitarli, e quello non è un dato economico riservato.
+      data.pagamenti.scadutoImporto !== undefined
+        ? {
+            key: 'scaduto',
+            label: t('kpiPagamentiScaduti'),
+            value: data.pagamenti.scadutoImporto,
+            format: 'euro' as const,
+            sub: t('kpiPagamentiScadutiSub', { count: data.pagamenti.scadutoCount }),
+            icon: AlertTriangle,
+            accent: 'border-kidville-error',
+            iconBg: 'bg-kidville-error-soft text-kidville-error',
+            href: '/admin/pagamenti',
+          }
+        : {
+            key: 'scaduto',
+            label: t('kpiPagamentiScaduti'),
+            value: data.pagamenti.scadutoCount,
+            format: 'int' as const,
+            icon: AlertTriangle,
+            accent: 'border-kidville-error',
+            iconBg: 'bg-kidville-error-soft text-kidville-error',
+            href: '/admin/pagamenti',
+          },
+      // Incassato del mese: non ha un gemello «di conteggio», quindi o c'è o sparisce.
+      ...(data.pagamenti.incassatoMese === undefined
+        ? []
+        : [
+            {
+              key: 'incassato',
+              label: t('kpiIncassatoMese'),
+              value: data.pagamenti.incassatoMese,
+              format: 'euro' as const,
+              icon: TrendingUp,
+              accent: 'border-kidville-success',
+              iconBg: 'bg-kidville-success-soft text-kidville-success',
+              href: '/admin/pagamenti',
+            },
+          ]),
       {
         key: 'iscrizioni',
         label: t('kpiIscrizioniAttesa'),
@@ -242,9 +269,12 @@ function AdminDashboardInner() {
         )
       )}
 
-      {/* Grafici */}
+      {/* Grafici. Senza il trend degli incassi (non-Direzione: il server non lo manda)
+          resta il solo grafico degli alunni, che allora prende tutta la larghezza invece
+          di lasciare mezza riga vuota. */}
       {data && (
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className={`mt-6 grid grid-cols-1 gap-4${data.trend ? ' lg:grid-cols-2' : ''}`}>
+          {data.trend && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -259,6 +289,7 @@ function AdminDashboardInner() {
             </div>
             <TrendIncassiChart data={data.trend} />
           </motion.div>
+          )}
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}

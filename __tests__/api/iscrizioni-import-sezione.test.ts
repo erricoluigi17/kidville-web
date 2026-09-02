@@ -107,7 +107,16 @@ const req = (body: unknown) =>
   })
 
 const importa = (assignments: Record<string, string>) =>
-  PATCH(req({ id: ID, action: 'import', assignments, referenteIndex: 0 }) as never)
+  PATCH(req({
+    id: ID,
+    action: 'import',
+    assignments,
+    // Una retta per ogni bambino a cui questo test assegna una classe: qui gli
+    // `assignments` cambiano da caso a caso, e una mappa fissa avrebbe fatto
+    // fallire sulla guardia della retta i casi con più figli.
+    rette: Object.fromEntries(Object.keys(assignments).map((k) => [k, 300])),
+    referenteIndex: 0,
+  }) as never)
 
 const alunniCreati = () => h.inserts.filter((i) => i.table === 'alunni')
 

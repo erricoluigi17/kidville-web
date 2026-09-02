@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { RUOLI_DIREZIONE } from '@/lib/auth/predicati-ruolo'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -31,10 +32,10 @@ function schemaAssente(err: unknown): boolean {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-// GET /api/pagamenti/cassa/chiusura?scuola_id=  — SOLO admin: storico svuotamenti.
+// GET /api/pagamenti/cassa/chiusura?scuola_id=  — SOLO DIREZIONE: storico svuotamenti.
 export const GET = withRoute('pagamenti/cassa/chiusura:GET', async (request: NextRequest) => {
   try {
-    const auth = await requireStaff(request, ['admin'])
+    const auth = await requireStaff(request, RUOLI_DIREZIONE)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)
@@ -65,12 +66,12 @@ export const GET = withRoute('pagamenti/cassa/chiusura:GET', async (request: Nex
   }
 })
 
-// POST /api/pagamenti/cassa/chiusura  — SOLO admin: svuotamento con conteggio.
+// POST /api/pagamenti/cassa/chiusura  — SOLO DIREZIONE: svuotamento con conteggio.
 // Il saldo atteso è calcolato SERVER-side; la RPC atomica registra la chiusura +
 // gli eventuali movimenti (rettifica di differenza + prelievo di svuotamento).
 export const POST = withRoute('pagamenti/cassa/chiusura:POST', async (request: NextRequest) => {
   try {
-    const auth = await requireStaff(request, ['admin'])
+    const auth = await requireStaff(request, RUOLI_DIREZIONE)
     if (auth.response) return auth.response
     const { user } = auth
 

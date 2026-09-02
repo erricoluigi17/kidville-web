@@ -131,6 +131,28 @@ describe('GET /api/pagamenti/cassa/movimenti', () => {
     expect(body).toHaveProperty('totali')
     expect(body.totali.uscite_contanti).toBe(20)
   })
+
+  it('anche la DIREZIONE (`coordinator`) riceve `totali`, non il solo admin', async () => {
+    // Fino al 2026-09-02 il gate era `user.role === 'admin'`: l'unico account che
+    // nell'app si chiama letteralmente «Direzione» non vedeva i totali della propria
+    // cassa. Segnalato mentre si riservavano gli altri KPI economici e corretto.
+    h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'coordinator', scuola_id: SEDE } })
+    const res = await GET(getReq())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toHaveProperty('totali')
+  })
+
+  it('decide sui ruoli REALI, non sulla veste indossata adesso', async () => {
+    // `user.role` è il ruolo ATTIVO (cookie `kv-active-role`): un amministratore che
+    // sta guardando l'app «come genitore» resta un amministratore. Un'autorizzazione
+    // non si decide su un cookie — `predicati-ruolo.ts` lo prescrive, e questa route
+    // fino a oggi lo violava.
+    h.requireStaff.mockResolvedValue({
+      user: { id: 'dir-2', role: 'genitore', ruoli: ['admin', 'genitore'], scuola_id: SEDE },
+    })
+    const res = await GET(getReq())
+    expect(await res.json()).toHaveProperty('totali')
+  })
 })
 
 describe('POST /api/pagamenti/cassa/movimenti', () => {

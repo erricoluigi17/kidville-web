@@ -112,7 +112,7 @@ beforeEach(() => {
 
 describe('PATCH /api/admin/iscrizioni — la domanda accolta perde la copia sanitaria', () => {
   it('import riuscito: allergie e note mediche escono dalla domanda, il resto resta', async () => {
-    const res = await PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 99 }) as never)
+    const res = await PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, rette: { '0': 300 }, referenteIndex: 99 }) as never)
     expect(res.status).toBe(200)
     expect((await res.json()).success).toBe(true)
 
@@ -135,7 +135,7 @@ describe('PATCH /api/admin/iscrizioni — la domanda accolta perde la copia sani
     // l'esito. Se l'import non passa, la domanda resta 'pending' e integra —
     // altrimenti la segreteria riproverebbe su dati sanitari già cancellati.
     h.sezioni = [{ name: 'Tulipani' }]
-    const res = await PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 99 }) as never)
+    const res = await PATCH(req({ id: ID, action: 'import', assignments: { '0': 'Girasoli' }, rette: { '0': 300 }, referenteIndex: 99 }) as never)
     expect(res.status).toBe(200)
     expect((await res.json()).success).toBe(false)
     expect(h.updates.some((u) => u.table === 'enrollment_submissions')).toBe(false)

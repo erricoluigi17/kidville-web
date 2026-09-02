@@ -133,6 +133,30 @@ export const CODICI_ERRORE = {
      */
     CLASSI_FUORI_SEDE: 'erroreClassiFuoriSede',
     /**
+     * 400 — l'import di una domanda d'iscrizione senza la retta di un bambino.
+     *
+     * Non è un campo dimenticato: fino al 2026-09-02 la retta non veniva chiesta
+     * affatto, e il bambino nasceva a `0` — che il generatore rilegge come «usa il
+     * default di sede», cioè 150 €/mese decisi da nessuno. Quaranta alunni veri
+     * erano in quello stato. La frase dice la CONSEGUENZA, non «campo obbligatorio».
+     */
+    RETTA_MANCANTE: 'erroreRettaMancante',
+    /**
+     * 400 — retta scritta come zero.
+     *
+     * Lo zero è il valore che si digita naturalmente per dire «non paga», ed è
+     * proprio quello che sulla colonna significa il contrario. La prova che senza
+     * spiegazione la gente trova un ripiego: sei bambini in produzione avevano la
+     * retta a **0,01 €**.
+     */
+    RETTA_ZERO: 'erroreRettaZero',
+    /** 400 — «la paga il fratello», ma il fratello indicato non è di questa domanda. */
+    RETTA_FRATELLO_NON_VALIDO: 'erroreRettaFratelloNonValido',
+    /** 400 — il fratello indicato non paga a sua volta: la catena non finisce mai. */
+    RETTA_FRATELLO_SENZA_CIFRA: 'erroreRettaFratelloSenzaCifra',
+    /** 400 — l'adulto scelto per le fatture non è fra quelli della domanda. */
+    INTESTATARIO_NON_VALIDO: 'erroreIntestatarioNonValido',
+    /**
      * 500 — non è stato possibile leggere le sezioni per validare i destinatari.
      * È un guasto NOSTRO, e va detto come tale: prima del 2026-08-01 un errore di
      * lettura sarebbe uscito come «nessuna classe trovata», cioè un 400 che accusa
@@ -1479,6 +1503,15 @@ export type CodiceErrore = keyof typeof CODICI_ERRORE;
  */
 export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErrore>([
     'CLASSI_FUORI_SEDE',
+    // I cinque della retta all'import portano tutti il NUMERO DEL BAMBINO
+    // («Bambino 2: …»), che il catalogo non può conoscere. Con tre figli nella
+    // stessa domanda, sapere che «una retta manca» senza sapere quale è
+    // un'informazione che non si può usare: si riguardano tutti e tre.
+    'RETTA_MANCANTE',
+    'RETTA_ZERO',
+    'RETTA_FRATELLO_NON_VALIDO',
+    'RETTA_FRATELLO_SENZA_CIFRA',
+    'INTESTATARIO_NON_VALIDO',
 ]);
 
 const CATALOGHI: Record<Locale, Record<string, string>> = {

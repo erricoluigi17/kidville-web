@@ -8,6 +8,8 @@ import { Layers, RefreshCw } from 'lucide-react';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
+import { useRuoloCockpit } from '@/lib/context/admin-identity';
+import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -29,6 +31,10 @@ function addMonths(iso: string, n: number): string {
 // gli iscritti, con importo unico, causale e scadenza. Opzione divisione in acconti.
 export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    // Vedi GeneratoreRette: il TOTALE è riservato alla Direzione, il conteggio no.
+    // L'importo unitario resta visibile perché lo digita chi sta guardando: nasconderlo
+    // sarebbe nascondere a una persona ciò che ha appena scritto lei.
+    const eDirezione = eDirezioneCockpit(useRuoloCockpit());
     const f = useDateFormat();
     const [categorie, setCategorie] = useState<Categoria[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
@@ -211,7 +217,8 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     <p className="font-maven text-sm font-bold text-kidville-green">{t('gencAnteprimaGenerazione')}</p>
                     <p className="font-maven text-xs text-kidville-ink">
                         {t('gencDaGenerare')} {anteprima.candidati.length} {anteprima.candidati.length === 1 ? t('gencPagamentoSing') : t('gencPagamentoPlur')} {t('gencDa')} {formatEuro(importo)}
-                        {acconti && nRate >= 2 ? ` ${t('gencInRate1')}${nRate}${t('gencInRate2')}` : ''} · {t('gencTotale')} {formatEuro(anteprima.candidati.length * importo)}
+                        {acconti && nRate >= 2 ? ` ${t('gencInRate1')}${nRate}${t('gencInRate2')}` : ''}
+                        {eDirezione ? ` · ${t('gencTotale')} ${formatEuro(anteprima.candidati.length * importo)}` : ''}
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">{t('gencGiaPresenti')} {anteprima.giaGenerati}</p>
                     <p className="font-maven text-xs text-kidville-muted">

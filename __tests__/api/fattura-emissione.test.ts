@@ -593,10 +593,56 @@ describe('il progressivo che non si può leggere: si FERMA, non si indovina', ()
     if (!esito.ok) {
       expect(esito.motivo).toBe('numerazione_non_allineata')
       expect(esito.httpStatus).toBe(503)
-      expect(esito.messaggio).toContain('FPR')
+      // Su un 403 la serie NON è l'informazione utile: ciò che la segreteria deve
+      // sapere è che riprovare non serve e dove andare a guardare. Fino al
+      // 2026-09-02 qui usciva «Riprova più tardi» per un guasto che sarebbe
+      // rimasto identico l'indomani.
+      expect(esito.messaggio).toContain('credenziali')
+      expect(esito.messaggio).toContain('nessun numero è stato consumato')
+      expect(esito.messaggio).not.toContain('Riprova fra')
     }
     expect(arubaUpload).not.toHaveBeenCalled()
     expect(sb._rpc).toHaveLength(0)
     expect(sb._inserts.filter((i) => i.table === 'fatture_emesse')).toHaveLength(0)
+  })
+
+  it('ogni guasto ha il SUO messaggio: sei cause non possono avere una frase sola', async () => {
+    // Il 2026-09-02 la segreteria ha letto «Riprova più tardi» davanti a un guasto
+    // del nostro parser, che sarebbe stato identico anche il giorno dopo. Il `code`
+    // per distinguere c'era già: non veniva guardato.
+    //
+    // Si asserisce su PAROLE PORTANTI, non sulla frase intera: una virgola cambiata
+    // non deve tingere di rosso un test che parla d'altro. Ma un test ci vuole:
+    // senza, «Riprova più tardi» può tornare su un 403 e nessuno se ne accorge.
+    const casi = [
+      { code: '429', deve: 'troppe richieste', nonDeve: 'configurazione' },
+      { code: '403', deve: 'credenziali', nonDeve: 'Riprova fra' },
+      { code: '401', deve: 'credenziali', nonDeve: 'Riprova fra' },
+      { code: 'rete', deve: 'non ha risposto entro 30 secondi', nonDeve: 'credenziali' },
+      // Qui il «non deve» NON può essere «credenziali»: il messaggio le nomina
+      // apposta, per dire che NON sono loro il problema. Ciò che non deve esserci è
+      // l'invito a riprovare — il formato non cambia aspettando.
+      { code: 'etichette-illeggibili', deve: 'FPR', nonDeve: 'Riprova' },
+      { code: 'qualcosa-di-ignoto', deve: 'Impossibile leggere', nonDeve: 'credenziali' },
+    ] as const
+
+    for (const caso of casi) {
+      vi.mocked(arubaUltimoNumeroFattura).mockRejectedValue(
+        Object.assign(new Error(`guasto simulato ${caso.code}`), { code: caso.code }),
+      )
+      const sb = makeSupabase({ pagamenti: pagamentoSaldato, admin_settings: settingsConfig, parents: parent, rpc: 1 })
+      const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+      expect(esito.ok, caso.code).toBe(false)
+      if (!esito.ok) {
+        expect(esito.messaggio, caso.code).toContain(caso.deve)
+        expect(esito.messaggio, caso.code).not.toContain(caso.nonDeve)
+        // L'unica promessa identica in tutti e sei i rami, ed è quella che conta:
+        // chi legge deve poter dare per certo che non è partito niente.
+        expect(esito.messaggio, caso.code).toContain('nessun numero è stato consumato')
+      }
+      // E la promessa deve essere VERA, non solo scritta.
+      expect(arubaUpload, caso.code).not.toHaveBeenCalled()
+      expect(sb._rpc, caso.code).toHaveLength(0)
+    }
   })
 })

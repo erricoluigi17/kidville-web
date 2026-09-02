@@ -19,10 +19,21 @@ interface Props {
     oggi?: string;
     attivo: AgingBucketId | null;
     onSelect: (id: AgingBucketId | null) => void;
+    /**
+     * Mostrare l'importo accanto al conteggio? Solo la Direzione (titolare, 2026-09-02).
+     *
+     * Il CONTEGGIO e il clic restano a tutti di proposito: i bucket non sono un cruscotto,
+     * sono il filtro con cui la Segreteria trova gli scaduti da sollecitare. Toglierli
+     * interi le avrebbe tolto uno strumento di lavoro per nascondere un numero.
+     *
+     * Il default è `true` perché tutti i richiamanti esistenti mostravano gli importi:
+     * un default `false` avrebbe cambiato in silenzio ogni altro uso presente e futuro.
+     */
+    mostraImporti?: boolean;
 }
 
 /** Agenda scadenze: 4 bucket di aging cliccabili che filtrano la lista. */
-export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect }: Props) {
+export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect, mostraImporti = true }: Props) {
     const agingLabel = useAgingLabel();
     const rif = oggi ?? new Date().toISOString().slice(0, 10);
     const buckets = useMemo(() => bucketScadenze(pagamenti, rif), [pagamenti, rif]);
@@ -48,7 +59,9 @@ export function AgendaScadenze({ pagamenti, oggi, attivo, onSelect }: Props) {
                         </span>
                         <span className="mt-0.5 flex items-baseline gap-1.5">
                             <span className={cx('font-barlow text-xl font-black leading-none', TONO[id].testo)}>{b.count}</span>
-                            <span className="font-maven text-[11px] text-kidville-muted">{formatEuro(b.totale)}</span>
+                            {mostraImporti && (
+                                <span className="font-maven text-[11px] text-kidville-muted">{formatEuro(b.totale)}</span>
+                            )}
                         </span>
                     </button>
                 );

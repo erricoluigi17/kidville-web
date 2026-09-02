@@ -603,7 +603,7 @@ export async function requireSessioneAuth(): Promise<
  */
 export async function requireStaff(
   request: Request,
-  allowed: StaffRole[] = ['admin', 'coordinator', 'segreteria']
+  allowed: readonly StaffRole[] = ['admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
   const NEGATO = messaggioNegatoStaff(allowed)
   const { userId, user } = await utenteDellaRichiesta(request)
@@ -627,7 +627,7 @@ export async function requireStaff(
  */
 export async function requireKitchenRead(
   request: Request,
-  allowed: AppRole[] = ['admin', 'coordinator', 'segreteria', 'cuoca', 'educator']
+  allowed: readonly AppRole[] = ['admin', 'coordinator', 'segreteria', 'cuoca', 'educator']
 ): Promise<AuthResult> {
   const NEGATO = 'Accesso negato: operazione riservata a cucina/staff'
   const { userId, user } = await utenteDellaRichiesta(request)
@@ -686,7 +686,7 @@ export async function requireUser(request: Request): Promise<AuthResult> {
  */
 export async function requireDocente(
   request: Request,
-  allowed: AppRole[] = ['educator', 'admin', 'coordinator', 'segreteria']
+  allowed: readonly AppRole[] = ['educator', 'admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
   const NEGATO = 'Accesso negato: riservato al personale docente'
   const { userId, user } = await utenteDellaRichiesta(request)

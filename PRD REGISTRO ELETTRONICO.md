@@ -96,6 +96,128 @@
 
 ---
 
+## 💶 Changelog — La fattura cercava il proprio numero dove non c'era, e la retta non l'aveva mai chiesta nessuno — 2026-09-02 (branch `fix/contabilita-rette-e-fatture`)
+
+**Il fatto.** Dalla Contabilità di Kidville Aversa, premendo «Emetti» su una retta saldata,
+compariva: *«Impossibile leggere l'ultimo numero della serie «FPR» da Aruba: la fattura non è stata
+emessa per non rischiare un numero duplicato»*. Nessuna fattura era mai uscita dall'app
+(`fatture_emesse`: 0 righe su tutte e tre le sedi). Indagando sono emersi altri tre difetti, due
+dei quali toccavano soldi veri di famiglie vere.
+
+### 1. Il numero della fattura stava un livello più sotto
+
+`app_log` aveva già la diagnosi, e diceva che *non* era nessuna delle spiegazioni comode: `signin`
+**200**, `findByUsername` **200**, 3.311 documenti ricevuti — e **nessuna etichetta riconosciuta**,
+primo valore non riconosciuto «(vuoto)». Non il limite di ~60 richieste l'ora (quello ha un
+messaggio suo), non l'utenza non abilitata, non l'ambiente sbagliato, non un timeout.
+
+Misurato contro l'API vera (`scripts/aruba-forma-elenco.mjs`, sola lettura, esperimento a quattro
+celle per escludere `size` e `vatcodeSender`): `findByUsername` restituisce una **pagina di
+DOCUMENTI** — `filename`, `idSdi`, `sender`, `receiver` — e ogni documento porta le proprie fatture
+in un array annidato. Il numero sta lì:
+
+    json.content[i].invoices[j].number  ===  «Asilo 2327/2026»
+
+Il codice leggeva `.number` sull'involucro, che quel campo non ce l'ha: `undefined` su 3.311
+documenti su 3.311. La guardia che ha fermato l'emissione ha funzionato **esattamente come doveva**
+— ha preferito non emettere niente piuttosto che «FPR 1/26» su una serie da millenovecento
+documenti — e il difetto si è potuto trovare in due minuti proprio grazie a quell'errore esplicito.
+
+⚠️ **Perché nessun test l'aveva visto**: i mock costruivano la risposta come
+`{ invoices: [{ number }] }`, cioè **assumevano la forma che avrebbero dovuto dimostrare**, e sono
+rimasti verdi mentre in produzione non si leggeva niente. Il caso nuovo è costruito sulla forma
+misurata ed è stato **visto fallire** prima della correzione. Si scorrono tutte le fatture di ogni
+documento, non solo la prima: il tracciato FatturaPA ne ammette più d'una per file.
+
+Aggiunto anche il rimedio che vale a prescindere: quando non si capisce nemmeno un'etichetta, il log
+porta ora **i NOMI delle chiavi** del primo elemento (mai i valori: quei documenti contengono
+`receiver.fiscalCode` di genitori reali). La prossima volta la diagnosi sta in `app_log` e non serve
+interrogare Aruba. E i messaggi a schermo sono cinque invece di due: `401/403` («riprovare non
+serve, controlla la configurazione»), `rete`, `etichette-illeggibili` («non è un problema della
+sede: va corretta l'app»), `429`, generico. Prima sei guasti diversi leggevano tutti «Riprova più
+tardi».
+
+### 2. I KPI economici sono della Direzione, non della Segreteria
+
+`admin` + `coordinator` (che nell'app si chiama «Direzione»). Predicato in **un posto solo**
+(`RUOLI_DIREZIONE`/`eDirezione` in `predicati-ruolo.ts`), dov'era ricopiato in otto file.
+
+| dove | cosa succede |
+|---|---|
+| Contabilità → 4 card KPI | nascoste alla Segreteria |
+| Agenda scadenze (bucket) | restano **conteggio e clic**, spariscono gli euro — è il filtro con cui si sollecita |
+| Scheda «Genera» | nascosto il «totale previsto»; il conteggio degli alunni resta |
+| Home /admin | il **server OMETTE** `scadutoImporto`, `incassatoMese` e `trend`; restano conteggi e lista scaduti |
+| Cassa | il gate passa da solo-`admin` a Direzione: l'unico account «Direzione» non vedeva i totali della propria cassa |
+
+⚠️ **Detto una volta e senza giri di parole**: sullo **Scadenzario** i totali li somma il BROWSER
+dalle stesse righe che la Segreteria deve legittimamente vedere. Nasconderli mette in ordine la
+vista, **non costruisce una barriera**: chi vuole i numeri somma le righe, o le esporta
+(`/api/pagamenti/export` resta aperto, per scelta del titolare). Dove il numero lo calcola il server
+— la **home /admin** — l'omissione è reale e la chiave non esiste nel corpo della risposta. Le due
+cose hanno test separati, e i commenti dicono quale è quale.
+
+### 3. L'import di una domanda non chiedeva la retta
+
+Chiedeva solo la classe. Il bambino nasceva con `importo_retta_mensile = 0`, e chi genera le rette
+legge `COALESCE(NULLIF(importo_retta_mensile, 0), retta_default_importo, 150)`: **`NULLIF(…,0)`
+annulla lo zero**, quindi ogni bambino importato dal modulo si prendeva **150 €/mese decisi da
+nessuno**, senza che nessun errore comparisse. In archivio, il 2026-09-02: **40 alunni reali** in
+quello stato (3 Aversa, 6 Cesa, 31 Giugliano).
+
+La schermata ora chiede, per ogni bambino: **retta mensile** (obbligatoria, **vuota** di partenza —
+un campo precompilato è un campo che si conferma senza guardarlo), oppure l'alternativa **«la paga
+→ \<fratello\>»**; più **intestatario delle fatture** (serve al genitore per la detrazione) e
+**giorno di scadenza**. Guardia gemella di quella sulla classe, prima di qualunque scrittura.
+
+⚠️ **Lo zero è rifiutato, e con una spiegazione.** Lo schema `zod` lo lascia passare *apposta* fino
+alla guardia: fermato dallo schema avrebbe risposto «Dati non validi», che è vero e inutile. La
+prova che senza spiegazione la gente trova un ripiego: in produzione **sei bambini avevano la retta
+a 0,01 €** — l'aggiramento che la segreteria aveva inventato da sola. Chi non paga si dichiara con
+`retta_a_carico_di`, scritto in una seconda passata quando tutti i fratelli hanno un uuid.
+
+### 4. La retta corretta non ridiscendeva sui pagamenti già generati
+
+**La premessa iniziale era sbagliata, e la misura l'ha ribaltata.** Il difetto sembrava «la
+generazione calcola 330 invece di 300». L'audit di produzione dice altro:
+
+| ora (UTC) | fatto |
+|---|---|
+| 14:46:53 | generate 98 rette di Aversa — l'anagrafica diceva **330** |
+| 14:53:49 | la Direzione corregge l'anagrafica **330 → 300** |
+| 14:56 | si prova a fatturare: il pagamento porta ancora **330** |
+
+Controprova: **Giugliano 0 divergenze su 227**, generata lo stesso giorno e mai corretta dopo;
+Aversa **12 su 98**, una per ogni modifica fatta *dopo* le 14:46. Gli scarti non seguono nessuna
+percentuale (+20 su 150, +30 su 300, +10 su 370, +80 su 250): non è una formula sbagliata, sono
+istantanee diverse dello stesso dato. La generazione aveva usato il valore giusto nell'istante
+giusto — **il difetto è che nessuno diceva che la correzione non era arrivata a destinazione**.
+
+Ora `PATCH /api/admin/students` riallinea i pagamenti della categoria «retta» che siano
+*contemporaneamente* del **periodo corrente o futuro**, **non fatturati** e **non pagati nemmeno in
+parte** — la regola più prudente delle tre, scelta dal titolare. ⚠️ Conseguenza da conoscere: il
+pagamento che ha fatto scoprire il difetto era marcato «pagato» (300 su 330) e quindi **non
+rientra**; è stato corretto a mano. Ogni riallineamento **si logga**: un aggiornamento automatico
+che cambia importi senza lasciare traccia è la stessa malattia, girata al contrario.
+
+### Dati di produzione toccati (mostrati e approvati, uno per uno)
+
+- **1 pagamento** portato da 330,00 a 300,00 (quello dello screenshot, su istruzione esplicita).
+- **5 bambini** su 6 con retta 0,01 € collegati al fratello che paga (`retta_a_carico_di`) e cifra
+  azzerata. Il sesto — **Isabel Del prete**, Cesa — non risulta avere nessun fratello con una
+  retta: **non è stato inventato un abbinamento**, resta a 0,01 € finché non lo indica il titolare.
+- **1 pagamento** da 0,01 € cancellato (verificati prima: 0 incassi, non fatturato, nulla pagato).
+- ⚠️ **I 12 pagamenti divergenti di Aversa NON sono stati toccati**: il titolare ha scelto di
+  correggerli a mano dall'app. Il meccanismo automatico vale da qui in avanti e non li recupera.
+
+**Il gate.** `eslint` · `tsc` · `vitest` **13.327 verdi** (erano 13.287) · `build` ✅.
+Quattro lock hanno fatto il loro lavoro e sono stati **pagati, non abbassati**: `text-kidville-muted`
+(righe nuove scritte con `text-kidville-sub`), `errori-con-codice` (cinque codici dichiarati e
+tradotti in due lingue), `glossario-sede` («site» → «location»), e i KPI della Contabilità (il test
+sul formato ora dichiara il ruolo, e ne è nato il gruppo che collauda il nascondimento).
+
+---
+
 ## 🏫 Changelog — L'insegnante era in classe, i bambini pure, e la sua schermata era vuota — 2026-09-02 (branch `fix/classe-per-section-id`)
 
 **Il fatto.** Un'insegnante risultava assegnata alla sua classe, i bambini risultavano in quella

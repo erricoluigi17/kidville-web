@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { eDirezione } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -225,15 +226,32 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
     data: (invio.created_at as string | null) ?? null,
   }))
 
+  /**
+   * I TOTALI ECONOMICI SONO DELLA DIREZIONE (decisione del titolare, 2026-09-02).
+   *
+   * Qui — a differenza dello Scadenzario, dove i totali li somma il browser dalle righe —
+   * gli aggregati li calcola il SERVER, e quindi ometterli è una protezione vera: la
+   * chiave non esiste nel corpo della risposta, non c'è niente da riscoprire dalla
+   * console. È lo stesso contratto della Cassa (`pagamenti/cassa/movimenti`).
+   *
+   * Restano a tutti, per scelta esplicita del titolare: `scadutoCount`,
+   * `fattureInAttesa` e `alert.scaduti`. Sono la lista operativa — la Segreteria deve
+   * sapere QUANTI pagamenti sono scaduti e di chi, per sollecitare — coerentemente col
+   * fatto che gli importi riga per riga restano visibili in Contabilità.
+   *
+   * `eDirezione` guarda i RUOLI REALI, non `auth.user.role`, che è la veste indossata
+   * adesso: un'autorizzazione non si decide su un cookie.
+   */
+  const direzione = eDirezione(auth.user)
+
   return NextResponse.json({
     studenti: {
       iscritti: alunni.length,
       perClasse,
     },
     pagamenti: {
-      scadutoImporto,
+      ...(direzione ? { scadutoImporto, incassatoMese } : {}),
       scadutoCount: scaduti.length,
-      incassatoMese,
       fattureInAttesa: fattureRes.count ?? 0,
     },
     iscrizioni: {
@@ -246,7 +264,7 @@ export const GET = withRoute('admin/dashboard:GET', async (request: NextRequest)
       submissionTotale: moduliTotRes.count ?? 0,
       daFirmare: moduliPendingRes.count ?? 0,
     },
-    trend,
+    ...(direzione ? { trend } : {}),
     alert: {
       scaduti: alertScaduti,
       iscrizioni: alertIscrizioni,

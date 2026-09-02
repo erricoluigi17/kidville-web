@@ -104,7 +104,7 @@ const req = (body: unknown) =>
   })
 
 const importa = (body: Record<string, unknown> = {}) =>
-  PATCH(req({ id: ID, action: 'import', assignments: { '0': '3 ANNI' }, referenteIndex: 0, ...body }) as never)
+  PATCH(req({ id: ID, action: 'import', assignments: { '0': '3 ANNI' }, rette: { '0': 300 }, referenteIndex: 0, ...body }) as never)
 
 const rifiuta = () => PATCH(req({ id: ID, action: 'reject' }) as never)
 

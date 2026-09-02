@@ -23,6 +23,8 @@ import { StatCard, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockp
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { useRuoloCockpit } from '@/lib/context/admin-identity';
+import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 
 // Pelle locale della dashboard contabilità, su token dell'app (allineata a
 // `Btn`/cockpit): pillole verde+giallo per le azioni, filtri come la Toolbar.
@@ -78,6 +80,22 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
     const f = useDateFormat();
     const agingLabel = useAgingLabel();
+    /**
+     * I TOTALI ECONOMICI SONO DELLA DIREZIONE (decisione del titolare, 2026-09-02).
+     *
+     * ⚠️ E qui va detto cosa questa riga può e cosa non può, perché la differenza è reale.
+     * I totali di questa schermata NON arrivano dal server: li somma il browser
+     * (`calcolaTotaliPagamenti`) a partire dalle stesse righe che la Segreteria deve
+     * legittimamente vedere — deve incassare, sollecitare, fatturare. Quindi nasconderli
+     * è mettere in ordine la vista, NON costruire una barriera: chi apre gli strumenti per
+     * sviluppatori, o esporta in Excel (`/api/pagamenti/export`, che resta aperto per
+     * scelta del titolare), somma le righe da sé.
+     *
+     * Il pattern «il server omette la chiave» — quello vero, in `cassa/movimenti` — qui
+     * non è applicabile senza togliere anche le righe. Dove invece i numeri li calcola il
+     * server (la home /admin) l'omissione è reale e si fa là.
+     */
+    const eDirezione = eDirezioneCockpit(useRuoloCockpit());
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categorie, setCategorie] = useState<Categoria[]>([]);
@@ -278,6 +296,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 e senza un confine i test finiscono per contare importi che stanno
                 altrove, con esiti che cambiano col calendario. Vedi
                 `__tests__/components/importi-euro-italiani.test.tsx`. */}
+            {eDirezione && (
             <div data-testid="kpi-contabilita" className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <StatCard icon={CheckCircle2} label={t('dashIncassato')} value={loading ? '—' : formatEuro(totals.incassato)} tone="success" />
                 <StatCard icon={Clock} label={t('dashDaIncassare')} value={loading ? '—' : formatEuro(totals.daIncassare)} tone="warn" />
@@ -285,9 +304,12 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                 <StatCard icon={FileText} label={t('dashDaFatturare')} value={loading ? '—' : formatEuro(totals.daFatturare)}
                     sub={!loading && totals.nDaFatturare > 0 ? `${totals.nDaFatturare} ${totals.nDaFatturare === 1 ? t('dashPagamentoSing') : t('dashPagamentiPlur')}` : undefined} tone="info" />
             </div>
+            )}
 
-            {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante */}
-            {!loading && <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} />}
+            {/* Agenda scadenze / aging: i bucket filtrano la lista sottostante.
+                Alla Segreteria restano i CONTEGGI e il clic — è uno strumento di lavoro,
+                non un cruscotto — e spariscono i soli importi (`mostraImporti`). */}
+            {!loading && <AgendaScadenze pagamenti={pagamenti} attivo={agendaFiltro} onSelect={setAgendaFiltro} mostraImporti={eDirezione} />}
 
             {/* Filtri (nascosti in vista agenda: non filtrerebbero la lista del bucket) */}
             {!agendaFiltro && (

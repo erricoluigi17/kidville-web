@@ -25,6 +25,22 @@ export function labelRuolo(r: string): string {
 }
 
 /**
+ * PRESENTAZIONE: la stringa di ruolo che il browser ha in mano è Direzione?
+ *
+ * Prende una `string` e non un `AppUser` perché lato client il ruolo arriva così — da
+ * `useRuoloCockpit()`, che fuori dal provider vale `''`. Quel `''` risponde `false`, ed è
+ * il verso giusto in cui sbagliare: mentre la fetch del provider è in volo non si disegna
+ * un totale economico.
+ *
+ * ⚠️ Serve a decidere COSA MOSTRARE, mai se qualcuno può: la decisione vera è
+ * `eDirezione()` in `predicati-ruolo.ts`, sul server, sui ruoli reali. Dove il numero è un
+ * segreto vero il server lo OMETTE; qui si nasconde soltanto ciò che il browser ha già.
+ */
+export function eDirezioneCockpit(ruolo: string | null | undefined): boolean {
+  return ruolo === 'admin' || ruolo === 'coordinator'
+}
+
+/**
  * Hook locale-aware per l'etichetta di un ruolo (namespace `etichette`,
  * chiavi `ruolo_<code>`). Da usare nei componenti client. Se la chiave non
  * esiste (codice ignoto), degrada alla funzione pura `labelRuolo` — che

@@ -392,6 +392,31 @@ const PAGINE_MAX = 20
 const PAGINA_SIZE = 500
 
 /**
+ * ─── IL LIMITE DI ARUBA È A RAFFICA, NON A SECCHIO ORARIO ────────────────────
+ * Misurato il 2026-09-02, col collaudo di sola lettura: `signin` + **7 GET
+ * riuscite** in **4,2 secondi**, e la GET successiva `429`. Un tetto di «~60
+ * richieste all'ora», che è quello che questo repo ha creduto fino a oggi, non
+ * spiega otto chiamate accettate in quattro secondi e la nona no: quello che si
+ * tocca è uno strozzamento sulla FREQUENZA, dentro una finestra breve.
+ *
+ * Spiega anche l'osservazione che sembrava incoerente — *un `signin`, trenta
+ * secondi, un secondo `signin` → `429`*: non era il secchio quasi pieno, erano
+ * due richieste troppo vicine.
+ *
+ * ⚠️ **Questi due numeri sono prudenza, non misura.** Il valore esatto della
+ * finestra non è noto e NON si è cercato a tentativi: ogni probe consuma quota
+ * e brucia il tentativo successivo, che è precisamente il modo in cui questo
+ * lavoro ha perso tre ore. Si è scelto il verso che non fa danni — aspettare
+ * più del necessario costa secondi, aspettare meno costa un'ora. Se qualcuno un
+ * giorno misurerà la finestra vera, questi due numeri sono il posto da cambiare.
+ */
+const PAUSA_FRA_PAGINE_MS = 1_100
+/** Quanto si aspetta dopo un `429` prima dell'unico ritentativo. */
+const PAUSA_DOPO_429_MS = 90_000
+
+const attendi = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
  * Il progressivo dentro un'etichetta, **se e solo se** appartiene a QUESTA serie e
  * a QUEST'ANNO. Altrimenti `null`.
  *
@@ -477,9 +502,17 @@ function etichetteDellElemento(elemento: unknown): unknown[] {
   return [doc.number]
 }
 
-/** Una pagina di `findByUsername`: il massimo, quanti documenti e quanti se ne sono CAPITI. */
+/** Una pagina di `findByUsername`: i massimi, quanti documenti e quanti se ne sono CAPITI. */
 interface EsitoPagina {
-  max: number
+  /**
+   * Il massimo trovato in questa pagina, **per ciascuna serie chiesta**.
+   *
+   * Era un intero solo, ed è diventato una mappa perché la pagina non appartiene
+   * a una serie: `findByUsername` non sa cosa sia un sezionale (vedi la testata di
+   * `paginaUltimoNumero`). Tenere un intero solo obbligava a riscaricare le stesse
+   * pagine una volta per serie — che è il motivo per cui il collaudo prendeva `429`.
+   */
+  massimi: Map<Sezionale, number>
   ricevuti: number
   /** Etichette nella forma attesa, di QUALUNQUE serie e anno: quante ne abbiamo capite. */
   leggibili: number
@@ -499,10 +532,24 @@ interface EsitoPagina {
   chiaviPrimoElemento: string[]
 }
 
+/**
+ * Una pagina di `findByUsername`, spogliata dei numeri di TUTTE le serie chieste.
+ *
+ * ─── LA RICHIESTA NON SA COSA SIA UN SEZIONALE ───────────────────────────────
+ * Si guardi la query qui sotto: `username`, `page`, `size`, `startDate`, `endDate`,
+ * al più `vatcodeSender`. **Il sezionale non c'è**, e non c'è perché Aruba non lo
+ * accetta: la selezione della serie è tutta nostra, e avviene DOPO, in memoria, su
+ * `numeroSezionaleDaEtichetta`. Ne segue un fatto che è costato un `429` per non
+ * essere stato notato: leggere «Asilo» e leggere «FPR» scaricava **le stesse identiche
+ * pagine, due volte**, per filtrarle in modo diverso. Metà delle richieste erano un
+ * duplicato esatto — su una serie da 3.311 documenti, sette GET buttate.
+ *
+ * Perciò le serie si passano INSIEME e si spoglia la pagina una volta sola.
+ */
 async function paginaUltimoNumero(
   ws: string,
   accessToken: string,
-  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string },
+  params: { username: string; anno: number; sezionali: readonly Sezionale[]; vatcodeSender?: string },
   pagina: number,
 ): Promise<EsitoPagina> {
   const qs = new URLSearchParams({
@@ -528,7 +575,7 @@ async function paginaUltimoNumero(
   // il numero lo estrae `etichetteDellElemento`, che scende dove serve.
   const documenti = (env.content ?? env.invoices ?? []) as unknown[]
 
-  let max = 0
+  const massimi = new Map<Sezionale, number>(params.sezionali.map((s) => [s, 0]))
   let leggibili = 0
   let campione = ''
   /** Le CHIAVI del primo elemento: la diagnosi del prossimo cambio di forma. */
@@ -540,11 +587,50 @@ async function paginaUltimoNumero(
     for (const etichetta of etichetteDellElemento(doc)) {
       if (etichettaNellaFormaAttesa(etichetta)) leggibili++
       else if (campione === '') campione = String(etichetta ?? '(vuoto)').slice(0, CAMPIONE_ETICHETTA_MAX)
-      const n = numeroSezionaleDaEtichetta(etichetta, params.sezionale, params.anno)
-      if (n !== null && n > max) max = n
+      // Una sola etichetta, confrontata con ogni serie chiesta: `numeroSezionaleDaEtichetta`
+      // risponde `null` a quelle che non sono sue, ed è la stessa domanda di prima —
+      // solo posta a tutte le serie invece che a una, senza riscaricare niente.
+      for (const sezionale of params.sezionali) {
+        const n = numeroSezionaleDaEtichetta(etichetta, sezionale, params.anno)
+        if (n !== null && n > (massimi.get(sezionale) ?? 0)) massimi.set(sezionale, n)
+      }
     }
   }
-  return { max, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento }
+  return { massimi, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento }
+}
+
+/**
+ * `paginaUltimoNumero` con UN solo ritentativo dopo un `429`.
+ *
+ * Uno, non tre: il limite di Aruba punisce la frequenza, quindi insistere è
+ * letteralmente il modo di peggiorare la situazione che si sta cercando di
+ * risolvere. Se anche il secondo tentativo trova il muro, si lancia — e chi
+ * emette si ferma, che è sempre la risposta giusta quando il progressivo non
+ * si è potuto leggere.
+ */
+async function paginaConRitentativo(
+  ws: string,
+  accessToken: string,
+  params: { username: string; anno: number; sezionali: readonly Sezionale[]; vatcodeSender?: string },
+  pagina: number,
+): Promise<EsitoPagina> {
+  try {
+    return await paginaUltimoNumero(ws, accessToken, params, pagina)
+  } catch (e) {
+    if ((e as { code?: unknown })?.code !== '429') throw e
+    logEvento('fattura', 'warn', {
+      operazione: 'aruba:findByUsername',
+      provider: 'aruba',
+      esito: 'limite-richieste',
+      anno: params.anno,
+      pagina,
+      msg:
+        `Aruba ha risposto 429 alla pagina ${pagina}: si attende ` +
+        `${Math.round(PAUSA_DOPO_429_MS / 1000)}s e si ritenta UNA volta sola`,
+    })
+    await attendi(PAUSA_DOPO_429_MS)
+    return await paginaUltimoNumero(ws, accessToken, params, pagina)
+  }
 }
 
 /**
@@ -600,12 +686,37 @@ async function paginaUltimoNumero(
  * il fatto che si sia potuto trovare in due minuti è merito di questo errore
  * esplicito — non del silenzio che c'era prima.
  */
-export async function arubaUltimoNumeroFattura(
+/**
+ * ─── PERCHÉ ESISTE LA VERSIONE AL PLURALE ────────────────────────────────────
+ * `arubaUltimoNumeroFattura` (qui sotto) è rimasta, e chiama questa con una serie
+ * sola: tutto il codice che la usa non ha dovuto cambiare. Ma chiamarla DUE volte,
+ * una per serie, scarica due volte le stesse pagine — perché la richiesta ad Aruba
+ * non contiene il sezionale, vedi la testata di `paginaUltimoNumero`. Il 2026-09-02
+ * il collaudo che leggeva entrambe le serie ha preso `429` esattamente lì: la prima
+ * serie era passata, la seconda ha chiesto di nuovo le stesse sette pagine e Aruba
+ * ha detto basta.
+ *
+ * Chi ha bisogno di più di una serie usi QUESTA, e le paghi una volta sola.
+ */
+export async function arubaUltimiNumeriFattura(
   ambiente: string | undefined,
   accessToken: string,
-  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string }
-): Promise<number> {
+  params: { username: string; anno: number; sezionali: readonly Sezionale[]; vatcodeSender?: string }
+): Promise<Map<Sezionale, number>> {
   const { ws } = arubaBaseUrls(ambiente)
+  const elencoSerie = params.sezionali.join('/')
+
+  /**
+   * Il ritmo si tiene sull'INTERA chiamata, non per anno né per serie: ad Aruba non
+   * importa da quale ciclo `for` del nostro codice esca una richiesta, importa quanto
+   * sono vicine fra loro. La prima non aspetta — sarebbe attesa buttata.
+   */
+  let primaRichiesta = true
+  const pagina = async (anno: number, sezionali: readonly Sezionale[], n: number): Promise<EsitoPagina> => {
+    if (!primaRichiesta) await attendi(PAUSA_FRA_PAGINE_MS)
+    primaRichiesta = false
+    return await paginaConRitentativo(ws, accessToken, { ...params, anno, sezionali }, n)
+  }
 
   /**
    * L'errore del formato incomprensibile. `name` a sé perché `get_runtime_errors` di
@@ -617,7 +728,7 @@ export async function arubaUltimoNumeroFattura(
   const erroreEtichette = (anno: number, ricevuti: number, campione: string, chiavi: string[]): Error => {
     const err = new Error(
       `Aruba findByUsername: ${ricevuti} documenti nell'anno ${anno} e nessuna etichetta nella forma attesa ` +
-        `«${params.sezionale} <numero>/<anno>» (primo valore non riconosciuto: «${campione}»). ` +
+        `«${elencoSerie} <numero>/<anno>» (primo valore non riconosciuto: «${campione}»). ` +
         // Le CHIAVI del primo elemento, non i valori: il 2026-09-02 il messaggio diceva
         // solo «(vuoto)», che è vero e inutile — non distingue «il campo è vuoto» da «il
         // campo non esiste più», e la seconda era la risposta giusta. Con l'elenco dei
@@ -630,27 +741,30 @@ export async function arubaUltimoNumeroFattura(
     return err
   }
 
-  const massimoDellAnno = async (anno: number): Promise<number> => {
-    let max = 0
+  const massimiDellAnno = async (anno: number, serie: readonly Sezionale[]): Promise<Map<Sezionale, number>> => {
+    const massimi = new Map<Sezionale, number>(serie.map((s) => [s, 0]))
     let ricevutiTotali = 0
     let leggibiliTotali = 0
     let campione = ''
     let chiavi: string[] = []
     /** Vero solo se sono arrivati documenti e non se n'è riconosciuto nemmeno uno. */
     const nessunaEtichettaCapita = () => ricevutiTotali > 0 && leggibiliTotali === 0
-    for (let pagina = 1; pagina <= PAGINE_MAX; pagina++) {
-      const { max: maxPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento } =
-        await paginaUltimoNumero(ws, accessToken, { ...params, anno }, pagina)
-      if (maxPagina > max) max = maxPagina
+    for (let n = 1; n <= PAGINE_MAX; n++) {
+      const { massimi: massimiPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento } =
+        await pagina(anno, serie, n)
+      for (const s of serie) {
+        const trovato = massimiPagina.get(s) ?? 0
+        if (trovato > (massimi.get(s) ?? 0)) massimi.set(s, trovato)
+      }
       ricevutiTotali += ricevuti
       leggibiliTotali += leggibili
       if (campione === '' && campionePagina !== '') campione = campionePagina
       if (chiavi.length === 0 && chiaviPrimoElemento.length > 0) chiavi = chiaviPrimoElemento
       if (ricevuti < PAGINA_SIZE) {
         if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
-        return max
+        return massimi
       }
-      if (pagina === PAGINE_MAX) {
+      if (n === PAGINE_MAX) {
         // Il tetto è stato toccato: l'elenco continua e noi smettiamo di guardarlo.
         // `warn` e non `error` perché il numero che restituiamo resta un limite
         // INFERIORE valido (il progressivo non torna indietro), ma se questa riga
@@ -660,17 +774,46 @@ export async function arubaUltimoNumeroFattura(
           provider: 'aruba',
           esito: 'pagine-troncate',
           anno,
-          msg: `Aruba findByUsername: superate ${PAGINE_MAX} pagine da ${PAGINA_SIZE} per la serie ${params.sezionale}; il massimo letto potrebbe non essere l'ultimo`,
+          msg: `Aruba findByUsername: superate ${PAGINE_MAX} pagine da ${PAGINA_SIZE} per le serie ${serie.join('/')}; il massimo letto potrebbe non essere l'ultimo`,
         })
       }
     }
     if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
-    return max
+    return massimi
   }
 
-  const corrente = await massimoDellAnno(params.anno)
-  if (corrente > 0) return corrente
-  return await massimoDellAnno(params.anno - 1)
+  const massimi = await massimiDellAnno(params.anno, params.sezionali)
+
+  // L'anno prima si guarda SOLO per le serie rimaste a zero, e solo se ce n'è
+  // qualcuna: se «Asilo» ha documenti quest'anno e «FPR» no, non ha senso
+  // riscaricare il 2025 anche per «Asilo». Il criterio resta quello di prima —
+  // «zero in questo anno» — applicato serie per serie invece che al mucchio.
+  const senzaDocumenti = params.sezionali.filter((s) => (massimi.get(s) ?? 0) === 0)
+  if (senzaDocumenti.length === 0) return massimi
+
+  const precedenti = await massimiDellAnno(params.anno - 1, senzaDocumenti)
+  for (const s of senzaDocumenti) massimi.set(s, precedenti.get(s) ?? 0)
+  return massimi
+}
+
+/**
+ * L'ultimo numero di UNA serie. Involucro su `arubaUltimiNumeriFattura`.
+ *
+ * Resta perché è quello che serve a chi emette una fattura sola, ed è la firma che
+ * tutto il resto del repo già usa. ⚠️ Chiamarla due volte per due serie costa il
+ * doppio delle richieste ad Aruba **per gli stessi identici dati**: se le serie sono
+ * più d'una, si usi la versione al plurale.
+ */
+export async function arubaUltimoNumeroFattura(
+  ambiente: string | undefined,
+  accessToken: string,
+  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string }
+): Promise<number> {
+  const massimi = await arubaUltimiNumeriFattura(ambiente, accessToken, {
+    ...params,
+    sezionali: [params.sezionale],
+  })
+  return massimi.get(params.sezionale) ?? 0
 }
 
 /** Notifiche SDI relative a una fattura inviata. */

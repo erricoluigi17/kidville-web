@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { arubaSignin, arubaUltimoNumeroFattura } from '@/lib/aruba/client'
+import { arubaSignin, arubaUltimiNumeriFattura } from '@/lib/aruba/client'
 
 /**
  * IL PROGRESSIVO LETTO DA ARUBA, COL CODICE VERO E CONTRO L'API VERA. Sola lettura.
@@ -24,10 +24,22 @@ import { arubaSignin, arubaUltimoNumeroFattura } from '@/lib/aruba/client'
  * personale — i documenti contengono `receiver.fiscalCode` di genitori reali, e qui esce
  * solo un intero per serie.
  *
- * ⚠️ Consuma parte del limite Aruba (~60 richieste/ora): una signin più una pagina ogni
- * 500 documenti, per ciascuna delle due serie.
+ * ─── QUANTO COSTA, E PERCHÉ IL 2026-09-02 NON BASTÒ ─────────────────────────────────
+ * La prima esecuzione prese `429`, e NON alla prima chiamata: `signin` passò, l'intero
+ * scorrimento di «Asilo» passò, e il muro arrivò sulla prima pagina di «FPR» — otto
+ * richieste accettate in **4,2 secondi**, la nona no. Due cose si impararono:
  *
- * ESECUZIONE
+ *  · il limite di Aruba punisce la FREQUENZA, non un monte-ore. «~60 richieste all'ora»
+ *    non spiega otto chiamate accettate in quattro secondi e la nona rifiutata;
+ *  · leggere le due serie separatamente scaricava **due volte le stesse pagine**, perché
+ *    la richiesta a `findByUsername` non contiene il sezionale. Metà del costo era un
+ *    duplicato esatto, ed è la metà che prese il `429`.
+ *
+ * Ora si usa `arubaUltimiNumeriFattura`, che scorre UNA volta sola per entrambe le
+ * serie e mette una pausa fra una pagina e l'altra. Costo: **1 signin + 7 GET** su
+ * 3.311 documenti, invece di 1 + 14.
+ *
+ * ESECUZIONE — come PRIMA cosa della sessione, senza altre chiamate ad Aruba prima.
  *   COLLAUDO_REALE=1 npx vitest run --config vitest.collaudo.config.ts
  */
 
@@ -52,12 +64,19 @@ describe.skipIf(!ATTIVO || !USERNAME || !PASSWORD)('numerazione Aruba — il cod
     const anno = new Date().getFullYear()
     const { accessToken } = await arubaSignin('production', { username: USERNAME, password: PASSWORD })
 
-    const asilo = await arubaUltimoNumeroFattura('production', accessToken, {
-      username: USERNAME, anno, sezionale: 'Asilo',
+    // UNA lettura per entrambe le serie. Il 2026-09-02 erano due, e la seconda
+    // richiedeva ad Aruba le stesse identiche pagine della prima.
+    const massimi = await arubaUltimiNumeriFattura('production', accessToken, {
+      username: USERNAME, anno, sezionali: ['Asilo', 'FPR'],
     })
-    const fpr = await arubaUltimoNumeroFattura('production', accessToken, {
-      username: USERNAME, anno, sezionale: 'FPR',
-    })
+    const asilo = massimi.get('Asilo') ?? 0
+    const fpr = massimi.get('FPR') ?? 0
+
+    // Si stampa PRIMA di asserire. Il 2026-09-02 i due `console.log` stavano dopo
+    // entrambe le letture: quando la seconda lanciò, il numero della prima — che era
+    // già stato pagato in richieste — andò perso, e con esso l'unica cosa che quella
+    // esecuzione aveva davvero ottenuto. Un valore misurato non si butta via perché
+    // il passo dopo è andato male.
     // Solo numeri: nessun nome, nessun codice fiscale.
     console.log(`  Asilo ${anno}: ultimo numero letto = ${asilo}`)
     console.log(`  FPR   ${anno}: ultimo numero letto = ${fpr}`)

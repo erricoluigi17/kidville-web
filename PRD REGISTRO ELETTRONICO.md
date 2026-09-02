@@ -96,6 +96,66 @@
 
 ---
 
+## ⏱️ Changelog — Metà delle richieste ad Aruba chiedevano due volte le stesse pagine — 2026-09-02 (branch `fix/handoff-aruba`)
+
+**Il fatto.** Il collaudo di sola lettura che doveva dimostrare in presa diretta la correzione del
+numero di fattura (changelog qui sotto) ha preso **`429 Troppe richieste`**. Ma non alla prima
+chiamata: `signin` era passato, l'intero scorrimento della serie **«Asilo» era passato**, e il muro
+è arrivato sulla **prima pagina di «FPR»** — otto richieste accettate in **4,2 secondi**, la nona
+no.
+
+### Il limite di Aruba non è un monte-ore: punisce la frequenza
+
+Questo repo ha creduto per tre settimane a «~60 richieste all'ora», ed è scritto in più punti.
+**Quel modello non regge la misura**: non spiega otto chiamate accettate in quattro secondi e la
+nona rifiutata. Spiega invece l'osservazione che era rimasta lì come una stranezza — *un `signin`,
+trenta secondi, un secondo `signin` → `429`*: non era il secchio quasi pieno, erano due richieste
+troppo vicine.
+
+### La causa vera era nel nostro codice, non nel limite
+
+`GET /services/invoice/out/findByUsername` accetta `username`, `page`, `size`, `startDate`,
+`endDate`, al più `vatcodeSender`. **Il sezionale non c'è**: la selezione della serie è tutta
+nostra e avviene dopo, in memoria. Quindi leggere «Asilo» e leggere «FPR» scaricava **due volte le
+stesse identiche pagine** per filtrarle in modo diverso: su 3.311 documenti, **sette GET
+duplicate** — ed è la prima delle sette duplicate che ha preso il `429`.
+
+⚠️ **Non era un difetto del solo collaudo.** La cache del progressivo è per serie
+(`chiaveSerieAruba`), quindi un lotto di rette che contiene **sia un bambino del nido sia uno della
+fascia FPR** faceva la stessa raffica di quattordici richieste. E poiché `arubaUltimoNumeroFattura`
+**lancia** — deliberatamente, per non emettere su un progressivo non letto — il lotto si sarebbe
+fermato **a metà**, con una parte delle famiglie fatturate e una parte no. È lo scenario che il TTL
+da 5 minuti esiste per evitare, e che il TTL da solo non copriva.
+
+### Cosa è cambiato
+
+- **`arubaUltimiNumeriFattura`** (nuova): scorre le pagine **una volta sola** e ne ricava il massimo
+  di **tutte** le serie chieste. Costo di una lettura completa: **1 signin + 7 GET** invece di 1 + 14.
+- **`arubaUltimoNumeroFattura`** resta, come involucro a una serie sola: nessuno dei ~60 punti che
+  la usano ha dovuto cambiare, e la sua testata ora avverte di non chiamarla due volte per due serie.
+- **Un ritmo fra le pagine** e **un solo ritentativo** dopo un `429` (uno, non tre: insistere su un
+  limite di frequenza è il modo di peggiorarlo). Il ritentativo logga a `warn` con
+  `esito: 'limite-richieste'`.
+- **L'anno precedente** si guarda ora solo per le serie rimaste a zero, non per tutte.
+- Il collaudo **stampa i numeri prima di asserire**: nell'esecuzione fallita il valore di «Asilo»,
+  già pagato in richieste, era andato perso perché i due `console.log` stavano dopo entrambe le
+  letture.
+
+⚠️ **La pausa e l'attesa dopo il `429` sono prudenza, non misura.** La finestra vera non è nota e
+**non si è cercata a tentativi**: ogni probe consuma quota e brucia il tentativo successivo, che è
+esattamente il modo in cui questo lavoro ha perso tre ore. Si è scelto il verso che non fa danni.
+
+**Verifica.** `__tests__/lib/aruba/numerazione-un-passaggio.test.ts` (6 test). Ognuno è stato visto
+**diventare rosso** rompendo apposta il codice — pausa a zero, ritentativo tolto, una serie sola per
+pagina — perché in questo file un test verde che non è mai stato visto fallire è precisamente ciò
+che ha lasciato passare il difetto originale. Gate: eslint 0, `tsc` 0, **13.334 test verdi**, build ok.
+
+**Resta aperto**: la lettura in presa diretta contro l'API vera, che va rifatta come **prima** cosa
+di una sessione (l'handoff `docs/fatturazione/HANDOFF-aruba-2026-09-02.md` dice come), e l'emissione
+della prima fattura vera, che deve premerla una persona in segreteria.
+
+---
+
 ## 💶 Changelog — La fattura cercava il proprio numero dove non c'era, e la retta non l'aveva mai chiesta nessuno — 2026-09-02 (branch `fix/contabilita-rette-e-fatture`)
 
 **Il fatto.** Dalla Contabilità di Kidville Aversa, premendo «Emetti» su una retta saldata,

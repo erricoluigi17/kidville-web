@@ -52,12 +52,30 @@ Ogni elemento di `content[]`:
 
 Questo è il motivo per cui il lavoro non si è chiuso, e ha fatto perdere tre ore.
 
-- **`signin` È STROZZATO DURAMENTE, e più delle altre chiamate.** Misurato: un `signin` riuscito, e
-  **trenta secondi dopo** un secondo `signin` → `429`. Non «60 all'ora»: due login ravvicinati bastano.
+> ### ⏱️ RIMISURATO IL 2026-09-02 — «~60 richieste all'ora» È IL MODELLO SBAGLIATO
+>
+> Il Passo 1 è stato eseguito, e ha preso `429`. **Ma non alla prima chiamata**: `signin` è passato,
+> l'**intero** scorrimento della serie «Asilo» è passato, e il muro è arrivato sulla **prima pagina
+> di «FPR»** — cioè **otto richieste accettate in 4,2 secondi**, e la nona no.
+>
+> Un tetto orario di sessanta richieste **non spiega** otto chiamate accettate in quattro secondi e
+> la nona rifiutata. Quello che si tocca è uno strozzamento sulla **frequenza**, dentro una finestra
+> breve. E spiega anche la riga qui sotto che sembrava una stranezza — *un `signin`, +30 s, un
+> secondo `signin` → `429`*: non era il secchio quasi pieno, erano **due richieste troppo vicine**.
+>
+> ⚠️ **La finestra esatta non è nota, e NON è stata cercata a tentativi**: ogni probe consuma quota
+> e brucia il tentativo dopo. È la stessa trappola che ha fatto perdere le tre ore. Chi vorrà
+> misurarla lo faccia sapendo che costa un'ora per campione.
+
+- **`signin` è strozzato duramente**, forse più delle altre chiamate: un `signin` riuscito, e
+  **trenta secondi dopo** un secondo `signin` → `429`. Due login ravvicinati bastano.
 - **Anche i tentativi RIFIUTATI consumano.** Dopo cinque tentativi in tre ore il `429` arrivava
   perfino sul `signin`, cioè sulla prima chiamata. **Non è un secchio che si riempie mentre bussi.**
-- **Una lettura del progressivo costa 7 pagine** (3.311 documenti ÷ 500 per pagina), per serie.
-  Il collaudo che legge *entrambe* le serie costa **1 signin + 14 GET**.
+- **Una lettura del progressivo costa 7 pagine** (3.311 documenti ÷ 500 per pagina).
+  ✅ **Non più per serie**: dal 2026-09-02 le due serie si leggono in **un passaggio solo**, perché
+  la richiesta a `findByUsername` **non contiene il sezionale** — leggerle separatamente scaricava
+  due volte le stesse identiche pagine. Il collaudo completo ora costa **1 signin + 7 GET**,
+  non 1 + 14.
 - Il `429` arriva come **pagina HTML**, non come JSON.
 
 ### La regola operativa che ne discende
@@ -66,7 +84,8 @@ Questo è il motivo per cui il lavoro non si è chiuso, e ha fatto perdere tre o
 > Quella prova costa esattamente quanto quella vera, e brucia la successiva.
 
 Se si vede un `429`: **fermarsi almeno 45-60 minuti senza toccare niente**. Non fare probe di
-verifica: le probe sono il problema.
+verifica: le probe sono il problema. (Il codice ritenta **una volta sola**, da sé, dopo un'attesa:
+se anche quella prende `429`, si ferma e non insiste.)
 
 ---
 
@@ -88,8 +107,15 @@ Stampa solo due interi (nessun dato personale). Atteso: `Asilo` e `FPR` entrambi
 - Se dà `ArubaNumerazioneError` con l'elenco delle chiavi → Aruba ha cambiato forma di nuovo, e le
   chiavi nel messaggio dicono dove guardare (la correzione del 2026-09-02 le mette apposta nel log).
 
-Se serve solo la serie della fattura di prova, si può dimezzare il costo leggendo la sola `FPR`
-(commentare l'altra chiamata nel collaudo): 1 signin + 7 GET invece di 14.
+⚠️ **Questo passo è stato TENTATO il 2026-09-02 e ha preso `429`** — sulla seconda serie, dopo che
+la prima era già passata. Da allora il collaudo legge **entrambe le serie in un passaggio solo**
+(1 signin + 7 GET, non 1 + 14) e mette una pausa fra le pagine, quindi il tentativo successivo
+parte da una configurazione diversa e più leggera di quella che ha fallito. **Non serve più
+commentare una delle due chiamate per dimezzare il costo**: il costo è già dimezzato.
+
+Sui numeri attesi: la serie **`Asilo`** era arrivata a leggersi (il valore non è stato stampato
+perché il collaudo asseriva prima di stampare — corretto anche quello), quindi il progressivo
+`Asilo` **esiste ed è leggibile**. Quello che manca è vederlo, insieme a `FPR`.
 
 ### Passo 2 — la fattura vera
 
@@ -168,6 +194,11 @@ ORDER BY creato_il DESC;
   degrado «gentile» qui produce un numero di fattura già usato, cioè un illecito fiscale.
 - **La lettura una volta per LOTTO** (`TTL_ULTIMO_NUMERO_MS`, 5 minuti). Una rilettura per fattura
   strozzerebbe un'emissione massiva a metà, lasciando la segreteria con metà delle rette fatturate.
+  ⚠️ **Il TTL da solo non bastava, e il 2026-09-02 si è visto perché**: la cache è per *serie*
+  (`chiaveSerieAruba`), quindi un lotto con dentro sia un bambino del nido sia uno della fascia FPR
+  faceva **due** scorrimenti completi in rapida successione — quattordici richieste — che è
+  esattamente la raffica che Aruba rifiuta. Ora le serie si leggono in un passaggio solo; se un
+  giorno le serie diventassero tre, si continui a leggerle **insieme**, mai una alla volta.
 - **I mock dei test.** Fino al 2026-09-02 costruivano la risposta come `{invoices:[{number}]}`, cioè
   **assumevano la forma che avrebbero dovuto dimostrare**, e sono rimasti verdi mentre in produzione
   non si leggeva niente. Le fixture nuove riproducono la forma **misurata**: se si toccano, si toccano

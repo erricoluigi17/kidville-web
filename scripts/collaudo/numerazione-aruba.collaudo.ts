@@ -40,7 +40,17 @@ import { arubaSignin, arubaUltimiNumeriFattura } from '@/lib/aruba/client'
  * 3.311 documenti, invece di 1 + 14.
  *
  * ESECUZIONE — come PRIMA cosa della sessione, senza altre chiamate ad Aruba prima.
- *   COLLAUDO_REALE=1 npx vitest run --config vitest.collaudo.config.ts
+ *
+ *   COLLAUDO_REALE=1 npx vitest run --config vitest.collaudo.config.ts \
+ *     scripts/collaudo/numerazione-aruba.collaudo.ts
+ *
+ * ⚠️ Il nome del file NON è pleonastico. L'`include` della configurazione è
+ * `scripts/collaudo/**\/*.collaudo.ts`, quindi il comando senza argomento tira dentro
+ * anche `fattura-reale.collaudo.ts` — che non chiama Aruba (solo `SELECT` e generazione
+ * in memoria, verificato), ma attraversa l'anagrafica di PRODUZIONE e pretende una
+ * `SUPABASE_SERVICE_ROLE_KEY` valida. Sono due collaudi diversi con due prerequisiti
+ * diversi: qui ne serve uno solo, e questa è l'unica chiamata ad Aruba che si vuole
+ * spendere.
  */
 
 function envLocale(nome: string): string {

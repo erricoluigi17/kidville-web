@@ -4,6 +4,7 @@ import { useForm, type FieldValues } from 'react-hook-form'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
 import { PROVINCE, normalizzaProvincia } from '@/lib/anagrafiche/province'
 import type { FormField } from '@/types/database.types'
+import itCampi from '../../messages/it/parentForms.json'
 
 // Harness minimale: un solo FieldRenderer dentro un form RHF + un bottone che
 // forza la validazione (come fa il wizard alla pressione di "Avanti"). Serve a
@@ -47,7 +48,7 @@ describe('FieldRenderer — validazione e accessibilità', () => {
     fireEvent.click(screen.getByRole('button', { name: /valida/i }))
 
     // Messaggio d'errore visibile (testo, non solo colore).
-    const msg = await screen.findByText('Campo obbligatorio')
+    const msg = await screen.findByText(itCampi.campoObbligatorio)
     expect(msg).toBeInTheDocument()
     // Il messaggio ha un id, l'input lo referenzia via aria-describedby.
     expect(msg).toHaveAttribute('id', 'nome-error')

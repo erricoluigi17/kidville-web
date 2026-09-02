@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import Link from 'next/link'
 import {
@@ -8,28 +8,46 @@ import {
 } from 'lucide-react'
 import { publicFormUrl } from '@/lib/forms/publish'
 import { STANDARD_ENROLLMENT_MODEL_ID } from '@/lib/forms/enrollment-default-schema'
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
+import { useFiltri } from '@/lib/ui/filtri/use-filtri'
+import { useSediAttive } from '@/lib/context/sede-context'
+import { cx } from '@/lib/ui/cx'
+import {
+  campiInviabili,
+  opzioniSedeInviabili,
+  type ModelloInviabile,
+} from '@/components/features/admin/iscrizioni/filtri-inviabili'
 
 // "Moduli inviabili": moduli del form-builder + Modulo d'iscrizione standard,
 // da inviare ai genitori tramite link. Estratto da /admin/iscrizioni.
 
-interface FormModel {
-  id: string
-  title: string
-  is_active?: boolean
-  is_enrollment_form?: boolean
-  published_at?: string | null
-  public_token?: string | null
-  access_mode?: string | null
-}
+type FormModel = ModelloInviabile
 
 export function ModuliInviabili() {
   const t = useTranslations('adminAltro')
+  // I testi della barra e degli stati dell'elenco vengono dal catalogo `shared`; le etichette
+  // dei CAMPI da `adminModulistica`, dove i filtri di questa schermata vivono tutti insieme.
+  const tShared = useTranslations('shared')
+  const tFiltri = useTranslations('adminModulistica')
+  const { sedi } = useSediAttive()
   const [models, setModels] = useState<FormModel[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [resetting, setResetting] = useState(false)
 
+  /**
+   * La lettura dei modelli. **Non tocca `loading` in modo sincrono**, ed è un vincolo, non
+   * uno stile: questa funzione la chiama anche l'effetto di montaggio, e
+   * `react-hooks/set-state-in-effect` — in questo repo è ERRORE, non un avviso — vieta un
+   * `setState` raggiungibile in modo sincrono dal corpo di un effetto, perché innesca render
+   * a cascata. Il `setLoading(true)` del RICARICAMENTO sta quindi nel gestore d'evento che lo
+   * provoca (`togglePublish`), dove è un gesto e non una cascata. Le due scritture nel
+   * `.finally()` arrivano dopo un await: quelle sono ammesse, ed è la stessa forma che
+   * `ElencoClassi` documenta per esteso.
+   */
   const load = () => {
     // Assicura l'esistenza del modello standard editabile (seed idempotente).
     fetch('/api/iscrizione/model').catch(() => {})
@@ -41,6 +59,23 @@ export function ModuliInviabili() {
       .finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [])
+
+  const nomeSede = useMemo(() => {
+    const perId = new Map(sedi.map((s) => [s.id, s.nome]))
+    return (id: string) => perId.get(id)
+  }, [sedi])
+  const campi = useMemo(
+    () => campiInviabili(tFiltri, opzioniSedeInviabili(models, nomeSede, tFiltri)),
+    [tFiltri, models, nomeSede],
+  )
+  const filtri = useFiltri<FormModel>(campi)
+  const visibili = filtri.filtra(models)
+  const statoElenco = decidiStatoElenco({
+    caricamento: loading,
+    errore: false,
+    totale: models.length,
+    mostrati: visibili.length,
+  })
 
   const resetStandard = async () => {
     if (!confirm(t('inviabiliResetConferma'))) return
@@ -67,6 +102,12 @@ export function ModuliInviabili() {
         body: JSON.stringify({ id: m.id, action: m.published_at ? 'unpublish' : 'publish' }),
       })
       if (!res.ok) { const j = await res.json().catch(() => ({})); alert(j.error || t('errore')); return }
+      // Il ricaricamento si DICHIARA, ed è ciò che tiene le righe a schermo attenuate
+      // (`aria-busy`) invece di sostituirle con uno spinner: sparire dopo ogni pubblicazione
+      // farebbe perdere il posto in un elenco che si scorre. Sta QUI, dentro il gestore
+      // d'evento, e non dentro `load()`: là sarebbe un `setState` sincrono raggiungibile
+      // dall'effetto di montaggio, che il gate rifiuta.
+      setLoading(true)
       load()
     } finally { setBusy(null) }
   }
@@ -173,11 +214,50 @@ export function ModuliInviabili() {
         </div>
       </div>
 
-      {loading ? (
+      {/* La barra governa SOLO i modelli del costruttore: le tre card qui sopra non sono
+          modelli — non si pubblicano e non si cancellano — e farle sparire con una ricerca
+          toglierebbe alla segreteria i tre link che manda ogni giorno. Per questo la barra
+          sta QUI, sotto di loro, e il conteggio che mostra è quello dell'elenco che segue.
+          Non si disegna sopra il nulla: con zero modelli non c'è niente da filtrare, e una
+          barra sopra una tabella vuota fa cercare un filtro da togliere che non c'è. */}
+      {models.length > 0 && (
+        <BarraFiltri
+          campi={campi}
+          stato={filtri}
+          testi={testiBarraFiltri(tShared)}
+          totale={models.length}
+          mostrati={visibili.length}
+        />
+      )}
+
+      <div
+        data-testid="elenco-modelli-inviabili"
+        // Le righe non spariscono mentre si ricarica: restano attenuate e dichiarate
+        // occupate. `aria-busy` c'è SEMPRE (anche a `false`), altrimenti un lettore di
+        // schermo non avrebbe niente da confrontare quando cambia.
+        aria-busy={loading}
+        className={cx(
+          'space-y-4',
+          loading && models.length > 0 && 'opacity-60 pointer-events-none',
+        )}
+      >
+      {loading && models.length === 0 ? (
         <div className="flex items-center gap-2 text-kidville-muted p-4"><Loader2 size={16} className="animate-spin" /> {t('caricamento')}</div>
-      ) : models.length === 0 ? (
-        <p className="font-maven text-sm text-kidville-muted p-2">{t('inviabiliNessunModulo')}</p>
-      ) : models.map((m) => {
+      ) : statoElenco !== 'pronto' ? (
+        <div data-testid="stato-elenco-inviabili">
+          <StatoElenco
+            stato={statoElenco}
+            testi={{
+              ...testiStatoElenco(tShared),
+              // «Non c'è ancora nulla qui» è vero e non aiuta: al suo posto va il passo che
+              // crea la prima riga, che questa linguetta dice già da sé.
+              vuotoTitolo: t('inviabiliNessunModulo'),
+            }}
+            attivi={filtri.attivi}
+            onPulisci={filtri.pulisci}
+          />
+        </div>
+      ) : visibili.map((m) => {
         const pub = !!m.published_at
         const url = m.public_token ? `${origin}${publicFormUrl(m.public_token)}` : ''
         return (
@@ -207,6 +287,7 @@ export function ModuliInviabili() {
           </div>
         )
       })}
+      </div>
     </div>
   )
 }

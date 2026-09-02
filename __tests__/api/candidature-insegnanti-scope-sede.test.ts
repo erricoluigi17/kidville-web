@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 import { madreSopravvive, materializzaEmbedSede, togliGliEmbed } from '../helpers/embed-sede'
 import { LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
+import { INSEGNANTE_FIELDS } from '@/lib/forms/insegnanti-template'
 
 // =============================================================================
 // ISOLAMENTO FRA SEDI del cockpit delle candidature, e POVERTÀ dell'elenco.
@@ -57,7 +58,13 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 // esiste per provare: un mock che semplifica la regola prova la semplificazione.
 vi.mock('@/lib/auth/scope', async (importOriginal) => {
   const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
-  return { formaConfronto: vero.formaConfronto, resolveScuoleAttive: async () => h.state.scuole }
+  return {
+    formaConfronto: vero.formaConfronto,
+    // VERA: la sede chiesta col filtro deve intersecare davvero, e il diniego
+    // di una sede altrui non si può provare con un finto che dice sempre sì.
+    restringiSedi: vero.restringiSedi,
+    resolveScuoleAttive: async () => h.state.scuole,
+  }
 })
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))
@@ -278,6 +285,52 @@ describe('candidature insegnanti · elenco ristretto alla sede', () => {
     expect(body.data.id).toBe(MIA)
     expect(body.data.email).toBe(`prova.${MIA}@example.test`)
     expect(body.data.cv_path).toBe(CV_MIO)
+    // ⚠️ `disponibilita` È LA COLONNA CHE NESSUNA ALTRA FONTE TIENE FERMA, e da
+    // oggi il suo guasto è MUTO. Dal 2026-08-24 il campo è uscito dal modulo
+    // pubblico ma la colonna resta, con i valori delle candidature arrivate
+    // prima, e la scheda di segreteria li mostra solo quando ci sono
+    // (`{disponibilita && <Voce …>}`). Finché la riga si disegnava sempre, una
+    // proiezione che avesse perso il nome faceva comparire «Disponibilità: Non
+    // indicato» su ogni scheda storica: un'anomalia visibile, che qualcuno
+    // segnala. Adesso la riga sparirebbe e basta — cioè prenderebbe l'aspetto
+    // esatto del comportamento CORRETTO per le candidature nuove.
+    //
+    // Nessun lock deriva `COLONNE_DETTAGLIO` — non lo può fare, perché questa
+    // colonna non è più nel template — quindi il presidio è qui: si guarda il
+    // VALORE nel corpo della risposta, che è l'unica cosa che la segreteria
+    // legge davvero. MISURATO: togliendo `'disponibilita'` da `COLONNE_DETTAGLIO`
+    // questo `expect` diventa rosso, e prima di questa riga non lo diventava
+    // nessuno.
+    expect(
+      body.data.disponibilita,
+      'la colonna storica non esce più dalla proiezione del dettaglio: le candidature ' +
+        'arrivate prima del 2026-08-24 perdono la riga «Disponibilità» IN SILENZIO, ' +
+        'perché una riga assente è anche ciò che si vede quando il valore è NULL',
+    ).toBe('tempo_pieno')
+  })
+
+  it('la proiezione del DETTAGLIO porta OGNI campo del template, e non per memoria', async () => {
+    // `COLONNE_DETTAGLIO` è un elenco di colonne scritto A MANO. Un campo nuovo
+    // aggiunto domani al modulo pubblico entra in tabella, si vede nella copia
+    // email alla sede — che itera il template — e NON si vede nella scheda di
+    // segreteria, perché lì il nome della colonna va ribattuto a mano. Nessuna
+    // di quelle tre strade è rossa, e chi apre la scheda vede una candidatura
+    // «completa» a cui manca esattamente il campo nuovo.
+    //
+    // Qui l'atteso si DERIVA da `INSEGNANTE_FIELDS`, che è la stessa lista che
+    // disegna il modulo: l'elenco non si ricopia, si rifà a ogni esecuzione.
+    await GET(get(`?id=${MIA}`))
+    const lettura = h.state.letture.find((l) => l.table === 'candidature_insegnanti')
+    expect(lettura, 'nessuna lettura della tabella delle candidature').toBeTruthy()
+    const proiettate = new Set(
+      togliGliEmbed(lettura!.cols).split(',').map((c) => c.trim()).filter(Boolean),
+    )
+    const mancanti = INSEGNANTE_FIELDS.map((f) => f.id).filter((id) => !proiettate.has(id))
+    expect(
+      mancanti,
+      'campi del modulo che la scheda di segreteria non chiede al database: ' +
+        'chi compila li scrive, la sede li riceve per email, e la segreteria non li vede mai',
+    ).toEqual([])
   })
 
   it('`?id=` di un’ALTRA sede risponde come `?id=` inesistente: stesso stato, stesso corpo', async () => {

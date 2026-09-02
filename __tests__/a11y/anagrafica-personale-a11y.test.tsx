@@ -230,6 +230,115 @@ describe('a11y · /anagrafica-personale — ogni gruppo di scelta ha un nome', (
   })
 })
 
+/**
+ * I controlli la cui etichetta porta l'ASTERISCO e che non dichiarano
+ * `aria-required`: l'obbligo detto a chi guarda e taciuto a chi ascolta.
+ *
+ * ⚠️ L'ELENCO SI DERIVA DAL DOCUMENTO, NON SI SCRIVE. Un elenco di `id` scritto a
+ * mano copre i campi che c'erano il giorno in cui è stato scritto: è esattamente
+ * il modo in cui, il 25/08/2026, `aria-required` è arrivato su tutti i campi resi
+ * da `FieldRenderer` e su NESSUNO dei due resi a mano in questo modulo (il codice
+ * fiscale e la scadenza del documento) — dieci asterischi e otto dichiarazioni al
+ * passo «I tuoi dati», cinque e quattro al passo «Documento». Qui la premessa è
+ * l'asterisco che una persona VEDE, e la conseguenza è la proprietà che una
+ * persona SENTE: il prossimo campo scritto a mano cade da solo.
+ *
+ * ⚠️ L'ECCEZIONE È UNA SOLA, ED È DICHIARATA: `role="group"` (le «Fasce d'età»).
+ * ARIA 1.2 non ammette `aria-required` su quel ruolo, e l'obbligo di un gruppo
+ * «almeno uno di N» non è dei suoi controlli — se lo portassero tutti direbbero
+ * che vanno spuntati tutti. Il gruppo si riconosce dal fatto che è LUI a essere
+ * nominato dall'etichetta (`aria-labelledby`), quindi non serve nominarlo qui.
+ *
+ * ⚠️ E UN'ETICHETTA COL GLIFO CHE NON PORTA A NESSUN CONTROLLO viene riportata
+ * come mancanza, non saltata: sarebbe il modo silenzioso in cui questa sonda
+ * smetterebbe di misurare.
+ */
+function obbligatoriSoloAVista(): string[] {
+  const mancanti: string[] = []
+  for (const label of [...document.querySelectorAll('label')]) {
+    const haGlifo = [...label.querySelectorAll('span')].some(
+      (s) => s.children.length === 0 && s.textContent?.trim() === '*',
+    )
+    if (!haGlifo) continue
+
+    const per = label.getAttribute('for')
+    const bersaglio: Element | null =
+      (per ? document.getElementById(per) : null) ??
+      label.querySelector('input, select, textarea') ??
+      (label.id ? document.querySelector(`[aria-labelledby~="${label.id}"]`) : null)
+
+    const nome = (label.textContent ?? '').replace(/\s+/g, ' ').trim()
+    if (bersaglio === null) {
+      mancanti.push(`«${nome}»: etichetta con asterisco legata a nessun controllo`)
+      continue
+    }
+    const ruolo = bersaglio.getAttribute('role')
+    if (ruolo === 'group' || ruolo === 'radiogroup') continue
+    if (bersaglio.getAttribute('aria-required') !== 'true') {
+      mancanti.push(`«${nome}» → #${bersaglio.id || '(senza id)'}`)
+    }
+  }
+  return mancanti
+}
+
+describe('a11y · /anagrafica-personale — l’obbligo si sente, non solo si vede', () => {
+  it('in ogni passo, ogni etichetta con l’asterisco porta a un controllo che lo dichiara', async () => {
+    monta()
+
+    await waitFor(() => expect(screen.getAllByRole('radio').length).toBeGreaterThan(0))
+    expect(obbligatoriSoloAVista(), 'passo: sede').toEqual([])
+
+    await passoSede(ALFA.id)
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+    expect(obbligatoriSoloAVista(), 'passo: dati').toEqual([])
+
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/^Indirizzo di residenza/)).toBeInTheDocument())
+    expect(obbligatoriSoloAVista(), 'passo: residenza').toEqual([])
+
+    await passoResidenza()
+    await waitFor(() => expect(screen.getByLabelText(/^Tipo di documento/)).toBeInTheDocument())
+    expect(obbligatoriSoloAVista(), 'passo: documento').toEqual([])
+
+    await passoDocumento()
+    await waitFor(() =>
+      expect(screen.getByRole('checkbox', { name: /informativa sulla privacy/i })).toBeInTheDocument(),
+    )
+    expect(obbligatoriSoloAVista(), 'passo: consensi').toEqual([])
+  })
+
+  /**
+   * IL CONTROLLO POSITIVO — senza, la sonda qui sopra sarebbe vera a vuoto il
+   * giorno in cui gli asterischi sparissero dal modulo.
+   */
+  it('gli asterischi ci sono davvero, e sono più di uno', async () => {
+    monta()
+    await passoSede(ALFA.id)
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+    const conGlifo = [...document.querySelectorAll('label')].filter((l) =>
+      [...l.querySelectorAll('span')].some(
+        (s) => s.children.length === 0 && s.textContent?.trim() === '*',
+      ),
+    )
+    expect(conGlifo.length, 'nessun asterisco: la sonda non sta più misurando niente').toBeGreaterThan(1)
+  })
+
+  /**
+   * E NON SU TUTTO: un campo facoltativo che si dichiarasse obbligatorio
+   * renderebbe il segnale rumore. `titolo_dettaglio` sta nello stesso passo del
+   * codice fiscale ed è `required: false` nel template.
+   */
+  it('un campo facoltativo NON si dichiara obbligatorio', async () => {
+    monta()
+    await passoSede(ALFA.id)
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+    expect(
+      document.getElementById('titolo_dettaglio'),
+      'un campo facoltativo si dichiara obbligatorio: «aria-required ovunque» non distingue niente',
+    ).not.toHaveAttribute('aria-required')
+  })
+})
+
 describe('a11y · /anagrafica-personale — il consenso si annuncia col TITOLO', () => {
   /**
    * ⚠️ IL DIFETTO, MISURATO IL 12/08/2026 SULLA PAGINA VIVA.

@@ -215,8 +215,105 @@ const COLONNA_ASSENTE = new Set(['PGRST204', '42703'])
  * Tipizzato `AppRole` e non `string`: se un domani quel ruolo cambiasse nome,
  * questa riga diventa rossa a compilazione invece di restare un letterale che non
  * corrisponde più a niente e che quindi non nega più niente.
+ *
+ * ESPORTATO dal 2026-09-02, e non per comodità: `admin/staff/collega-profilo-esistente`
+ * è la porta che apre a mano ciò che questo file nega d'ufficio, e le due decisioni
+ * si prendono sullo STESSO valore. Ribattuto là come letterale, il giorno in cui
+ * cambia nome una delle due smette di riconoscerlo — e a smettere sarebbe quella che
+ * CONCEDE, cioè il verso sbagliato in cui sbagliare.
  */
-const RUOLO_GENITORE: AppRole = 'genitore'
+export const RUOLO_GENITORE: AppRole = 'genitore'
+
+/**
+ * IL RUOLO, NELLA FORMA SU CUI SI DECIDE — `.trim()` + minuscolo.
+ *
+ * `utenti.ruolo` è `character varying` senza `CHECK` né enum (la misura sta in
+ * `RIUSABILE_PER_RUOLO`), quindi `'Genitore'` e `'genitore '` sono valori che il
+ * database accetta e che per chiunque legga sono la stessa persona. Devono esserlo
+ * anche per chi decide: qui, nel cockpit delle pratiche (`esitoPrevisto`) e nella
+ * route che aggiunge un ruolo a un account esistente.
+ *
+ * Sta in un posto solo perché la regola è una sola: tre normalizzazioni ribattute
+ * divergono alla prima modifica, e a divergere sarebbe il confronto che tiene chiusa
+ * la porta del genitore.
+ */
+export function normalizzaRuolo(grezzo: unknown): string {
+  return typeof grezzo === 'string' ? grezzo.trim().toLowerCase() : ''
+}
+
+/**
+ * LE DUE FORME DELL'EMAIL su cui si cerca un profilo in `utenti`.
+ *
+ * Confronto per valore ESATTO su due forme (com'è scritta e minuscola) e MAI con
+ * `ilike`: PostgREST traduce `*` in `%` dentro i pattern, quindi un carattere jolly
+ * arrivato da un modulo pubblico ALLARGHEREBBE la ricerca invece di stringerla.
+ * `.in()` è uguaglianza pura.
+ *
+ * ⚠️ COPRE UNA DIREZIONE SOLA, e va detto invece che promesso al contrario: se in
+ * `utenti` l'indirizzo è archiviato `Mario.Rossi@x.it` e chi cerca scrive
+ * `mario.rossi@x.it`, qui non esce niente — `utenti_email_key` è UNIQUE **sensibile
+ * alle maiuscole**, quindi nemmeno il database chiude il buco. La chiusura vera è un
+ * indice su `lower(email)`; quel giorno il filtro giusto è quello e queste due forme
+ * diventano superflue.
+ */
+export function formeEmail(email: string): string[] {
+  const pulita = (email ?? '').trim()
+  return [...new Set([pulita, pulita.toLowerCase()])]
+}
+
+/** La riga di `utenti` che risponde alla domanda «questa email ha già un profilo?». */
+export interface ProfiloUtentiNoto {
+  id: string
+  /** Il valore GREZZO della colonna: normalizzarlo è compito di chi decide. */
+  ruolo: string
+  scuolaId: string | null
+}
+
+/**
+ * IL PROFILO `utenti` DI UN'EMAIL — la lettura, in un posto solo.
+ *
+ * La fanno in due, e devono dare la stessa risposta: il punto 1 di
+ * `ensureStaffIdentity` (che da lì decide se riusare o negare) e il risolutore di
+ * `admin/staff/collega-profilo-esistente` (che da lì tira fuori l'uid da mostrare a
+ * chi deve decidere a mano). Scritta due volte diverge alla prima modifica, e allora
+ * la schermata direbbe che quella porta si può aprire mentre il server la tiene
+ * chiusa — o il contrario.
+ *
+ * ⚠️ NIENTE FILTRO DI SEDE, di proposito: la domanda è «esiste un profilo con questa
+ * email in QUALUNQUE plesso?». Ristretta alle sedi attive, la risposta «no» sarebbe
+ * falsa per una maestra trasferita, e chi chiama creerebbe il suo secondo account.
+ * Lo scope lo applica il chiamante, DOPO, su ciò che ha trovato.
+ *
+ * ⚠️ PostgREST non lancia: l'errore torna come valore, e chi chiama deve trattarlo
+ * come «non lo so» e fermarsi. Una lettura fallita scambiata per «email libera» è il
+ * modo esatto in cui nasce il secondo account di una persona che ce l'ha già.
+ */
+export async function cercaProfiloPerEmail(
+  admin: SupabaseClient,
+  email: string,
+): Promise<{ profilo: ProfiloUtentiNoto | null; error: { code?: string; message: string } | null }> {
+  // `scuola_id` si legge anche quando non la si scrive: è l'unica sede che una
+  // persona del personale abbia, e senza di lei il chiamante non può nemmeno
+  // accorgersi che diverge da quella dichiarata.
+  const { data, error } = await admin
+    .from('utenti')
+    .select('id, ruolo, email, scuola_id')
+    .in('email', formeEmail(email))
+    .limit(1)
+    .maybeSingle()
+  if (error) return { profilo: null, error: error as { code?: string; message: string } }
+  const riga = data as { id?: unknown; ruolo?: unknown; scuola_id?: unknown } | null
+  const id = typeof riga?.id === 'string' && riga.id !== '' ? riga.id : null
+  if (!id) return { profilo: null, error: null }
+  return {
+    profilo: {
+      id,
+      ruolo: String(riga?.ruolo ?? ''),
+      scuolaId: typeof riga?.scuola_id === 'string' && riga.scuola_id !== '' ? riga.scuola_id : null,
+    },
+    error: null,
+  }
+}
 
 /**
  * CHI SI RIUSA — un elenco di AMMESSI, non di esclusi, e la differenza sta tutta
@@ -369,7 +466,9 @@ function riusaIdentitaEsistente(
   // IL RUOLO SI NORMALIZZA PRIMA DI DECIDERCI SOPRA. Arriva da una colonna che il
   // database non vincola (vedi `RIUSABILE_PER_RUOLO`): `'Genitore'` e `'genitore '`
   // sono la stessa persona per chiunque legga, e devono esserlo anche per la porta.
-  const ruolo = (profilo.ruolo ?? '').trim().toLowerCase()
+  // La forma sta in `normalizzaRuolo`, che è la stessa usata dalla route che quella
+  // porta la apre a mano: due normalizzazioni diverse sarebbero due porte diverse.
+  const ruolo = normalizzaRuolo(profilo.ruolo)
 
   if (ruolo === RUOLO_GENITORE) {
     // LA PORTA DEL GENITORE RESTA CHIUSA ANCHE COL RIUSO ACCESO — ed è QUESTA riga
@@ -518,19 +617,13 @@ export async function ensureStaffIdentity(
     }
 
     // ── 1. L'email è già di un account del PERSONALE? ────────────────────────
-    // Confronto per valore ESATTO su due forme (com'è scritta e minuscola) e non
-    // con `ilike`: PostgREST traduce `*` in `%` dentro i pattern, quindi un
-    // carattere jolly arrivato dal modulo pubblico allargherebbe la ricerca
-    // invece di stringerla. `.in()` è uguaglianza pura.
+    // La lettura sta in `cercaProfiloPerEmail` (in cima a questo file), perché la
+    // fa anche il risolutore di `admin/staff/collega-profilo-esistente` e le due
+    // devono dare la stessa risposta. Lì stanno anche i due ⚠️ che la riguardano:
+    // il confronto per valore esatto su due forme (mai `ilike`) e il limite di
+    // quella copertura.
     //
-    // ⚠️ QUESTE DUE FORME COPRONO UNA DIREZIONE SOLA, e va detto invece che
-    // promesso al contrario: se in `utenti` l'indirizzo è archiviato
-    // `Mario.Rossi@x.it` e la candidata scrive `mario.rossi@x.it`, qui non esce
-    // niente. `utenti_email_key` è UNIQUE **sensibile alle maiuscole**, quindi
-    // nemmeno il database chiude il buco.
-    //
-    // CHI LO CHIUDE, ESATTAMENTE — e fin dove arriva, che è la parte che questo
-    // commento prima taceva:
+    // CHI CHIUDE IL BUCO DELLE MAIUSCOLE, ESATTAMENTE — e fin dove arriva:
     //  · il punto 3-bis confronta per UID, dove le maiuscole non esistono, ma vive
     //    dentro `if (authUserId)`: chiude il caso SOLO quando in `auth.users`
     //    l'account esiste già;
@@ -541,22 +634,7 @@ export async function ensureStaffIdentity(
     //    due profili per la stessa persona.
     // Per non allargare da soli quel buco, il punto 5 archivia l'email
     // MINUSCOLA: il repo smette di produrre le varianti che poi non riconosce.
-    // La chiusura vera è un indice su `lower(email)`; quel giorno il filtro giusto
-    // è quello e questi due valori diventano superflui.
-    const forme = [...new Set([email, email.toLowerCase()])]
-    // `scuola_id` SI LEGGE anche se questa strada non la scrive mai: sul riuso è
-    // l'unica sede che quella persona abbia (`anagrafica_personale` non ne ha una),
-    // e senza leggerla il chiamante non potrebbe nemmeno accorgersi che diverge da
-    // quella della pratica. Non è una colonna a rischio sul DB non migrato della CI:
-    // `loadAppUser` (`require-staff.ts`) la chiede già a OGNI gate, e il punto 5 qui
-    // sotto la SCRIVE tenendola fuori da `COLONNE_RIMOVIBILI` — se mancasse, non
-    // sarebbe questa SELECT a scoprirlo, sarebbe l'intera applicazione.
-    const { data: staff, error: errStaff } = await admin
-      .from('utenti')
-      .select('id, ruolo, email, scuola_id')
-      .in('email', forme)
-      .limit(1)
-      .maybeSingle()
+    const { profilo: staff, error: errStaff } = await cercaProfiloPerEmail(admin, email)
     if (errStaff) {
       // PostgREST non lancia: senza questo controllo una lettura fallita si
       // travestirebbe da «email libera» e creerebbe il secondo account.
@@ -573,9 +651,9 @@ export async function ensureStaffIdentity(
       }
     }
     if (staff) {
-      const ruoloEsistente = String((staff as { ruolo?: unknown }).ruolo ?? '')
-      const idEsistente = String((staff as { id?: unknown }).id ?? '')
-      const sedeEsistente = String((staff as { scuola_id?: unknown }).scuola_id ?? '') || null
+      const ruoloEsistente = staff.ruolo
+      const idEsistente = staff.id
+      const sedeEsistente = staff.scuolaId
       // Prima di dichiararla chiusa: col riuso acceso questa non è una porta, è la
       // risposta attesa. `null` = non si riusa, e allora vale tutto ciò che segue.
       const riuso = riusaIdentitaEsistente(

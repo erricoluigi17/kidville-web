@@ -71,7 +71,10 @@ vi.mock('@/lib/auth/parent-identity', () => ({
 }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ sincronizzaLegamiRuntime: async () => ({ creati: 0 }) }))
 
-vi.mock('@/lib/auth/scope', () => ({
+// `restringiSedi` resta VERA: `?scuola_id=` deve intersecare davvero le sedi
+// attive, e un finto che dicesse sempre di sì non proverebbe nessun diniego.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
   resolveScuoleAttive: (...a: unknown[]) => h.resolveScuoleAttive(...a),
   resolveScuolaScrittura: async () => ({ scuolaId: GIUGLIANO }),
   scuoleDiUtente: async () => [GIUGLIANO],

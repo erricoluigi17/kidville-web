@@ -246,6 +246,17 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/auth/use-parent-identity.ts',
         'BROWSER: hook React su `/api/parent/students`, una nostra route. Stessa forma, stesso '
         + 'motivo: il tetto sta nella route, non nel chiamante.'],
+    ['src/lib/auth/ruolo-attivo-client.ts',
+        'BROWSER: `POST /api/auth/active-role`, una nostra route — ed è l\'unico di questo elenco '
+        + 'che un tetto CE L\'HA, solo non è questo. Il gesto intero (POST + riconciliazione dello '
+        + 'stato locale) corre dentro `apriBudgetAccesso()`, il budget di 15 s condiviso con la '
+        + 'pagina di login: chi preme è già autenticato, e senza tetto un cambio di veste che non '
+        + 'risponde lascerebbe il bottone inattivo per sempre. `conTetto(` qui non compare perché '
+        + 'la primitiva è quella di `errore-accesso.ts`, non quella di `logging`.'],
+    ['src/lib/auth/use-profili.ts',
+        'BROWSER: hook React su `/api/me`, una nostra route — la stessa già dichiarata per '
+        + '`use-session-identity.ts`, letta qui una volta sola per sessione con `creaCachePromesse`. '
+        + 'Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
     ['src/lib/auth/use-session-identity.ts',
         'BROWSER: hook React su `/api/me`, una nostra route. Stessa forma, stesso motivo: il tetto '
         + 'sta nella route, non nel chiamante.'],

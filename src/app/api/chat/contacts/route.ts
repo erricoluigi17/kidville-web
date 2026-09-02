@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { scuoleDiUtente } from '@/lib/auth/scope';
 import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
@@ -177,7 +181,17 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
                     }
                 }
             }
-        } else if (role === 'genitore') {
+        // PRESENTAZIONE: quale rubrica si sta guardando.
+        //
+        // ⚠️ NOTA ONESTA, perché la conversione qui è meno efficace di quanto sembri:
+        // il ramo docente qui sopra biforca ancora su `role`, che in questo file è
+        // letto dal DATABASE (`utenti.role || utenti.ruolo`), non dal cookie. Una
+        // docente-genitore che commuti la veste viene quindi intercettata PRIMA, dal
+        // ramo `maestra/educator`, e questa riga non la vede nemmeno. Metterle la
+        // vista di famiglia davanti sarebbe la cosa giusta, ma cambia quale rubrica
+        // riceve — non è una conversione, è una decisione di prodotto, e sta fuori
+        // dal perimetro di questo intervento.
+        } else if (agisceComeGenitore(auth.user)) {
             // Genitore: figli → docenti delle loro sezioni, tutto batched (niente N+1).
             // I figli vengono dall'unione runtime+anagrafica: con la sola tabella
             // runtime il genitore importato dal form pubblico non aveva contatti.

@@ -11,7 +11,8 @@ import { getModuleConfig } from '@/lib/settings/module-config';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logEvento } from '@/lib/logging/logger';
+import { logEvento, logErrore } from '@/lib/logging/logger';
+import { riconciliaRichieste } from '@/lib/armadietto/richieste';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
 const getParentQuerySchema = z.object({
@@ -334,6 +335,24 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
                             livello_allerta: 5,
                             livello_emergenza: 2,
                         });
+
+                        // Lo scalo è il DATO, la richiesta è la CONSEGUENZA: la
+                        // conseguenza non può far fallire il dato. Se la
+                        // riconciliazione esplode, il movimento resta scritto e il
+                        // cron delle 06:00 rimetterà le cose a posto. Un catch che
+                        // non logga sarebbe un bug (AGENTS.md regola 6).
+                        //
+                        // Dentro il ramo dell'insert e non fuori: qui lo stock è
+                        // appena cambiato. Se il pannolino era già stato scalato
+                        // oggi (idempotenza per giorno) non c'è nessun movimento
+                        // nuovo da riconciliare, e ripassare a ogni evento «bagno»
+                        // di ogni bambino della sezione sarebbe solo lavoro inutile
+                        // sul database.
+                        try {
+                            await riconciliaRichieste(admin, { alunnoId: entry.alunno_id });
+                        } catch (e) {
+                            logErrore({ operazione: 'diary/entries:POST', evento: 'db' }, e);
+                        }
                     }
                 }
             } catch (e) {

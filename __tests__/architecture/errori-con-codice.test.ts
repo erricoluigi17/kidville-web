@@ -82,9 +82,37 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * tetto scende lo stesso, perché lasciarlo a 1460 vorrebbe dire che quelle cinque risposte
  * possono tornare — in un file vivo, gated e molto frequentato — con questo lock verde.
  * `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero (21 risposte).
+ *
+ * 2026-09-01 · −2 file e −18 risposte (280 → 278, 1455 → 1437), e i due cali non hanno la
+ * stessa origine. CINQUE risposte se ne vanno con `GET/POST /api/locker/catalog`, cancellata:
+ * unica rotta su `locker_catalog` (tabella che nessuna migrazione applicata crea), senza un
+ * solo chiamante in tutto il repo, e con `error.message` di PostgREST restituito al chiamante
+ * in due punti. Come per `admin/adults` e `admin/students`, qui non è stato pagato un debito:
+ * è sparito il codice che lo portava, e il tetto scende lo stesso.
+ *
+ * Le altre TREDICI non sono di questo lavoro, ed è il motivo per cui vanno scritte. `0974424a`
+ * (PR #88, carta intestata) ha abbassato l'allowlist a 1442 risposte e 279 file senza toccare
+ * questi due numeri, rimasti a 1455/280: tredici risposte d'errore potevano tornare senza
+ * codice, dentro file vivi, con questo lock verde. È il difetto descritto nel ⚠️ qui sopra
+ * («si abbassano FINO ALLA MISURA, non di un po'»), ricomparso tre settimane dopo che quel
+ * paragrafo era stato scritto — la prova che una regola affidata a un commento non si fa
+ * rispettare da sola. Da qui i due numeri tornano a coincidere con `totale_occorrenze` (1437)
+ * e con la lunghezza dell'elenco (278). Non è un giudizio sul merito di quelle tredici: è la
+ * loro MISURA, e la rifà chiunque con
+ * `jq '.totale_occorrenze, (.file | length)' docs/superpowers/errori-senza-codice-allowlist.json`.
+ *
+ * 2026-09-01 · −1 (1437 → 1436), e il debito è stato PAGATO, non spostato. Il rifiuto della
+ * password in `parent/onboarding:POST` era una risposta sola, scritta senza codice apposta
+ * «per non far crescere il conteggio»: la schermata che la riceve passa da
+ * `soloCatalogoDaCorpo`, quindi il genitore leggeva «Operazione non riuscita» davanti a una
+ * password lunga nove caratteri. Ora sono QUATTRO risposte — una per motivo, ciascuna con il
+ * suo `codice` letterale — e il conteggio scende lo stesso, perché le risposte CON codice non
+ * sono debito: sono la sua estinzione. `MAX_FILE` non si muove, il file resta in elenco con
+ * cinque risposte ancora da convertire (misurate, non stimate: dichiararne quattro rende
+ * rosso il test qui sotto).
  */
-const MAX_FILE = 280;
-const MAX_OCCORRENZE = 1455;
+const MAX_FILE = 278;
+const MAX_OCCORRENZE = 1436;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

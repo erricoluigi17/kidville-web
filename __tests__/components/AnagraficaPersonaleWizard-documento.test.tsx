@@ -6,6 +6,7 @@ import { statoScadenza, SOGLIA_MAX } from '@/lib/anagrafica/scadenze'
 import { PERSONALE_FIELDS, PERSONALE_LIMITI } from '@/lib/forms/personale-template'
 import { CAMPI_DOCUMENTO } from '@/components/features/anagrafica/DocumentoIdentitaFields'
 import {
+  campoFile,
   ALFA, NOME_SCANSIONE, NOME_SCANSIONE_RETRO, OGGI, PERCORSO_SCANSIONE,
   PERCORSO_SCANSIONE_RETRO, avanti, caricaLato, caricaScansione,
   compilaFinoAlRiepilogo, passoDati, passoResidenza, passoSede, reteFinta,
@@ -427,7 +428,9 @@ describe('AnagraficaPersonaleWizard — la scansione SI PUÒ RAGGIUNGERE', () =>
     expect(document.activeElement).toBe(input)
 
     sblocca()
-    await waitFor(() => expect(screen.getByText(NOME_SCANSIONE)).toBeInTheDocument())
+    // Il nome vive in due `<span>` (troncamento centrale, vedi `spezzaNomeFile`):
+    // si guarda il testo del riquadro, che è ciò che una persona legge.
+    await waitFor(() => expect(campoFile('fronte').closest('label')!.textContent).toContain(NOME_SCANSIONE))
     expect(input).not.toHaveAttribute('aria-busy')
   })
 
@@ -557,7 +560,11 @@ describe('AnagraficaPersonaleWizard — le facce sono DUE, e servono entrambe', 
     // è un messaggio che uno screen reader non ricollega a niente.
     const descritto = (retro.getAttribute('aria-describedby') ?? '').split(' ')
     const testi = descritto.map((id) => document.getElementById(id)?.textContent ?? '')
-    expect(testi.join(' ')).toContain('Campo obbligatorio')
+    // ⚠️ La frase dei campi di CARICAMENTO, dal 25/08/2026: «Campo obbligatorio»
+    // è la risposta di un database, e su un riquadro dove il gesto è allegare —
+    // non digitare — non dice cosa fare. La regola resta `validateField`, una per
+    // client e server; cambia il solo messaggio, per tipo.
+    expect(testi.join(' ')).toContain('Allega un file per proseguire')
 
     // E il fuoco cade sul campo VUOTO, non sul primo dei due.
     expect(document.activeElement).toBe(retro)
@@ -606,8 +613,8 @@ describe('AnagraficaPersonaleWizard — la scansione: si dice che c’è, mai DO
     // si legge ad alta voce e finisce nelle segnalazioni di guasto. Lo stesso repo
     // lo redige nei log e si rifiuta di stamparlo nel riepilogo: stamparlo qui era
     // la terza risposta diversa alla stessa domanda.
-    expect(screen.getByText(NOME_SCANSIONE)).toBeInTheDocument()
-    expect(screen.getByText(NOME_SCANSIONE_RETRO)).toBeInTheDocument()
+    expect(campoFile('fronte').closest('label')!.textContent).toContain(NOME_SCANSIONE)
+    expect(campoFile('retro').closest('label')!.textContent).toContain(NOME_SCANSIONE_RETRO)
     const testo = document.body.textContent ?? ''
     expect(testo).not.toContain(PERCORSO_SCANSIONE)
     expect(testo).not.toContain(PERCORSO_SCANSIONE_RETRO)

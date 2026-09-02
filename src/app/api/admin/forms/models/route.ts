@@ -18,9 +18,16 @@ const getQuerySchema = z.object({}) // nessun parametro in ingresso
  *  carica il singolo modello — entrambi in scope di sede.
  *  La proiezione è ESPLICITA in codice e non affidata alla sola stringa di
  *  `select()`: così la garanzia è verificabile da un test. */
+/*  ⚠️ `requires_signature` e `scuola_id` sono entrati il 2026-09-01 per la barra filtri di
+ *  «Moduli inviabili», e la scelta va detta: sono i DUE assi su cui la segreteria cerca —
+ *  «quali chiedono la firma» e «quali valgono solo per questo plesso» — e senza di loro il
+ *  filtro sarebbe stato una seconda lettura, o (peggio) un criterio inventato nel browser.
+ *  Nessuno dei due è una capability: `scuola_id` è l'uuid di una sede che chi guarda ha già
+ *  in `useSediAttive`, e `requires_signature` è un booleano sul modello. `public_token`
+ *  resta fuori, e resta fuori per il motivo scritto qui sopra. */
 const CAMPI_ELENCO = [
   'id', 'title', 'description', 'is_active', 'is_enrollment_form',
-  'published_at', 'access_mode', 'created_at',
+  'published_at', 'access_mode', 'created_at', 'requires_signature', 'scuola_id',
 ] as const
 
 // GET /api/admin/forms/models — elenco modelli (id, title) per i filtri admin.
@@ -49,10 +56,12 @@ export const GET = withRoute('admin/forms/models:GET', async (request: NextReque
     const leggi = async (conSede: boolean) => {
       const res = conSede
         ? await supabase.from('form_models')
-            .select('id, title, description, is_active, is_enrollment_form, published_at, access_mode, created_at, scuola_id')
+            .select('id, title, description, is_active, is_enrollment_form, published_at, access_mode, created_at, requires_signature, scuola_id')
             .or(filtroSede).order('title')
+        // Senza `scuola_id`: è il ramo del DB E2E non migrato, dove quella colonna non
+        // esiste. `requires_signature` sì — è del baseline — e resta.
         : await supabase.from('form_models')
-            .select('id, title, description, is_active, is_enrollment_form, published_at, access_mode, created_at')
+            .select('id, title, description, is_active, is_enrollment_form, published_at, access_mode, created_at, requires_signature')
             .order('title')
       return { data: (res.data ?? []) as unknown as Record<string, unknown>[], error: res.error }
     }

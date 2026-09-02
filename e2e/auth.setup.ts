@@ -1,4 +1,4 @@
-import { test as setup } from '@playwright/test';
+import { test as setup, expect } from '@playwright/test';
 import { EMAILS, IDS, STORAGE, login } from './fixtures';
 
 // Progetto "setup": login UI per i 3 ruoli → storageState riusati dagli spec.
@@ -76,4 +76,55 @@ setup('storageState genitore', async ({ page }) => {
   await login(page, EMAILS.genitore);
   await page.waitForURL('**/parent');
   await page.context().storageState({ path: STORAGE.genitore });
+});
+
+/**
+ * IL PROFILO DOPPIO, NELLE SUE DUE VESTI — e perché sono due file e non uno.
+ *
+ * ─── CHI È ─────────────────────────────────────────────────────────────────
+ *
+ * Un solo `auth.users`: `utenti.ruolo = 'educator'` PIÙ il ponte
+ * `parents.auth_user_id`. Cioè un'insegnante che è anche genitore di un bambino
+ * della scuola. In produzione, misurate il 2026-09-01, sono CINQUE persone; sei
+ * dei loro legami figlio↔genitore cadono fuori dalle sezioni che insegnano e uno
+ * è in un'altra sede.
+ *
+ * ─── PERCHÉ IL PICKER E NON UN COOKIE SCRITTO A MANO ───────────────────────
+ *
+ * Come per il cookie `sedi_attive` dell'admin, si potrebbe scrivere
+ * `kv-active-role` con `addCookies` e risparmiare un login. Sarebbe il banco di
+ * prova sbagliato: quel cookie lo SETTA server-side `POST /api/auth/active-role`
+ * DOPO aver verificato che il ruolo appartenga davvero alla persona
+ * (`src/app/api/auth/active-role/route.ts`). Scrivendolo dal test si
+ * collauderebbe un cookie che nessun prodotto ha mai emesso — e in particolare
+ * non si vedrebbe mai il caso in cui quella rotta smette di emetterlo.
+ *
+ * ─── PERCHÉ DUE STATI ──────────────────────────────────────────────────────
+ *
+ * `eFamiglia` (autorizzazione, database) e `agisceComeGenitore` (presentazione,
+ * cookie) danno risposte DIVERSE sulla stessa persona, ed è il punto dell'intera
+ * biforcazione di `requireParentOfStudent`. Con un solo stato si può misurare un
+ * verso solo: che la veste di famiglia apre il diario del figlio. L'altro verso —
+ * che la veste di famiglia non ha allargato niente sul mestiere — richiede la
+ * stessa identità con l'altra veste, e nient'altro cambiato.
+ */
+setup('storageState doppio profilo (veste genitore)', async ({ page }) => {
+  await login(page, EMAILS.doppio);
+
+  // Il form viene sostituito IN PLACE dal picker: stessa card, URL invariato
+  // (vedi `role-routing.spec.ts`, che collauda proprio questo passaggio).
+  const picker = page.getByRole('group', { name: 'Scelta del ruolo' });
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Genitore' }).click();
+  await page.waitForURL('**/parent');
+  await page.context().storageState({ path: STORAGE.doppioGenitore });
+});
+
+setup('storageState doppio profilo (veste docente)', async ({ page }) => {
+  await login(page, EMAILS.doppio);
+  const picker = page.getByRole('group', { name: 'Scelta del ruolo' });
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Docente' }).click();
+  await page.waitForURL('**/teacher');
+  await page.context().storageState({ path: STORAGE.doppioDocente });
 });

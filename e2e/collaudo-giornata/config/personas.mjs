@@ -58,9 +58,20 @@ export const PERSONAS = [
   { id: 'G-NUOVO', ruolo: 'Nuova famiglia (iscrizione)', email: OTP_INBOX('gnuovo'),
     area: 'public', device: 'desktop', competenza: 'media',
     scenario: 'compila /iscrizione (anonimo) → P-SEGR importa → riceve credenziali → 1° login+onboarding' },
+  // ⚠️ IL FIGLIO NON STA NELLA CLASSE DEL PADRE, e non è un dettaglio dello
+  // scenario: è la condizione che rende il collaudo capace di fallire. Finché il
+  // bambino sta in una sezione che il genitore INSEGNA, ogni prova sul doppio
+  // profilo riesce perché il docente vede la propria classe — non perché il
+  // genitore veda suo figlio. Misurato in produzione il 2026-09-01: cinque
+  // persone hanno riga `utenti` da personale più il ponte `parents`, SEI dei loro
+  // legami cadono fuori dalle sezioni che insegnano e UNO è in un'altra sede.
+  // Stesso allineamento in `scripts/seed-e2e.mjs` (alunni A5 e B2) e in
+  // `e2e/doppio-profilo.spec.ts`.
   { id: 'X-DOPPIO', ruolo: 'Doppio profilo docente+genitore', email: 'test.doppio@kidville.test', seed: true,
     area: 'teacher', device: 'android', competenza: 'esperta',
-    scenario: 'stesso auth_user con ruolo educator + genitore; ?scegli=1 + cookie kv-active-role' },
+    scenario: 'stesso auth_user con ruolo educator + genitore; ?scegli=1 + cookie kv-active-role. '
+      + 'Il figlio va legato FUORI dalle sezioni che insegna (e un secondo figlio in un ALTRO plesso): '
+      + 'diario, galleria e mensa del proprio figlio, poi controprova che sui bambini altrui resti 403' },
 ];
 
 export const byId = (id) => PERSONAS.find((p) => p.id === id);

@@ -70,6 +70,23 @@ export interface DatiCandidaturaAllaSede {
      * modo di sapere quale delle due cose sia vera.
      */
     curriculumNonPrevisto?: boolean
+    /**
+     * `true` quando il curriculum C'È ma non si è riusciti ad allegarlo.
+     *
+     * ⚠️ Lo stesso `allegati === undefined` di `copia-alla-sede.ts` copre DUE
+     * fatti opposti: il curriculum che non c'è e il curriculum che c'è ma non si
+     * è scaricato dallo Storage (errore, oppure `{ data: null, error: null }`,
+     * che è un caso reale). L'email parte comunque — è la scelta giusta, perché
+     * il contrario perderebbe anche i dati che si potevano consegnare — ma senza
+     * questa distinzione stampava «chi si è candidato non ne ha caricato uno»
+     * sopra un guasto tecnico: una falsa accusa, letta da chi decide se
+     * richiamare quella persona.
+     *
+     * Dal 2026-08-24 il curriculum è OBBLIGATORIO: su ogni candidatura nuova
+     * quella frase sarebbe falsa per costruzione, perché senza allegato la
+     * candidatura non esisterebbe.
+     */
+    curriculumNonAllegabile?: boolean
 }
 
 /** L'etichetta leggibile di un valore, quando il campo dichiara delle opzioni. */
@@ -132,11 +149,31 @@ export function messaggioCandidaturaAllaSede(
 
     const dati = righeDellaCopia(d)
     const consensi = righeDeiConsensi(d)
+    // ⚠️ I QUATTRO RAMI SONO QUATTRO FATTI DIVERSI, e nessuno si può togliere
+    // «perché ormai il curriculum c'è sempre»:
+    //  1. l'allegato c'è;
+    //  2. il file C'È in tabella ma non si è riusciti ad allegarlo ⇒ è un GUASTO
+    //     nostro, e va detto come tale (ramo nuovo del 2026-08-24);
+    //  3. la candidatura è anteriore al 2026-08-15, quando il modulo non
+    //     permetteva ancora di caricare niente;
+    //  4. il campo c'era ed era FACOLTATIVO (le candidature fra il 15 e il 24
+    //     agosto): qui, e solo qui, «non ne ha caricato uno» è corretto.
+    // L'ordine conta: il ramo 2 sta PRIMA del 4, perché entrambi arrivano con
+    // `conCurriculum: false` e il 4 è il ripiego finale.
     const allegato = d.conCurriculum
         ? 'Curriculum in allegato a questo messaggio.'
-        : d.curriculumNonPrevisto === true
-          ? 'Nessun curriculum allegato: questa candidatura è arrivata prima che il modulo permettesse di caricarne uno.'
-          : 'Nessun curriculum allegato: chi si è candidato non ne ha caricato uno.'
+        : d.curriculumNonAllegabile === true
+          // ⚠️ ATTIVA, E CON UN SOGGETTO. La stesura precedente metteva tre
+          // passive in fila — «è stato caricato», «non è stato possibile»,
+          // «si apre» — in una riga sola, ed è la riga da cui la Direzione
+          // decide se il curriculum esiste da qualche parte: il senso arrivava
+          // dopo la terza subordinata, e del guasto non si prendeva la
+          // responsabilità nessuno. Il ramo resta quello giusto (distinguere un
+          // guasto NOSTRO da un'accusa a chi si è candidato); cambia chi lo dice.
+          ? 'Il curriculum c’è, ma non siamo riusciti ad allegarlo a questo messaggio: si apre dalla scheda della candidatura in Segreteria.'
+          : d.curriculumNonPrevisto === true
+            ? 'Nessun curriculum allegato: questa candidatura è arrivata prima che il modulo permettesse di caricarne uno.'
+            : 'Nessun curriculum allegato: chi si è candidato non ne ha caricato uno.'
 
     // ⚠️ Le sedi si dichiarano SEMPRE, anche quando è una sola. Una frase che
     // compare solo nel caso multiplo insegna a chi legge che la sua assenza non

@@ -621,3 +621,105 @@ describe('nomeErrore — estrae la classe, mai il contenuto', () => {
         expect(nomeErrore(ostile)).toBe('errore');
     });
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * DIFETTO 5 — LA PIATTAFORMA SI CHIEDE AL BRIDGE, NON SI INDOVINA DALLO UA.
+ *
+ * `piattaforma()` decideva annusando la stringa `Capacitor` nello user-agent. Ma
+ * Capacitor quella stringa NON la scrive: `appendUserAgent` è una configurazione
+ * facoltativa, e in questo repo non è impostata né in `capacitor.config.ts` né nei
+ * config generati per Android e iOS.
+ *
+ * MISURATO IN PRODUZIONE il 2026-09-01: in 31 giorni, su 1.722 righe e 3.625
+ * occorrenze di eventi client, la colonna `piattaforma` diceva `web` per tutte
+ * tranne UNA — e quell'una era un payload sintetico iniettato a mano durante il
+ * collaudo dell'08/08 (`client:collaudo-r10`, «nessun dato reale»). Zero
+ * dispositivi nativi veri, mai, in un mese.
+ *
+ * LA PROVA CHE ERANO EVENTI NATIVI. `scegliFotoNativa` (`@/lib/native/camera`)
+ * esce alla prima riga quando non siamo nella shell, PRIMA del `try`: sul web non
+ * può loggare niente. Eppure i suoi 13 `fotocamera-errore` del 01/09 — più uno
+ * sulla chat docenti e quattro di agosto — risultano tutti `web`. Le due
+ * rilevazioni si contraddicevano, e quella che mentiva era l'indovinello.
+ *
+ * COSA È COSTATO: non un errore in più, ma ogni domanda del tipo «succede solo su
+ * Android?» rimasta senza risposta per un mese — e senza che si vedesse, perché
+ * una colonna piena di `web` sembra una misura invece che un silenzio.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+describe('difetto 5 — la piattaforma la dichiara il bridge nativo', () => {
+    /** Lo user-agent di un Android VERO dentro la WebView: nessuna traccia di «Capacitor». */
+    const UA_ANDROID_WEBVIEW =
+        'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) '
+        + 'Version/4.0 Chrome/126.0.0.0 Mobile Safari/537.36 wv';
+    /** Lo user-agent di un iPhone VERO dentro WKWebView: indistinguibile da Safari. */
+    const UA_IOS_WKWEBVIEW =
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 '
+        + '(KHTML, like Gecko) Mobile/15E148';
+
+    function conUserAgent(ua: string): void {
+        Object.defineProperty(window.navigator, 'userAgent', { value: ua, configurable: true });
+    }
+    function conBridge(b: unknown): void {
+        (globalThis as Record<string, unknown>).Capacitor = b;
+    }
+
+    afterEach(() => {
+        delete (globalThis as Record<string, unknown>).Capacitor;
+        // Toglie la proprietà PROPRIA e rimette in luce il getter del prototipo jsdom.
+        delete (window.navigator as unknown as Record<string, unknown>).userAgent;
+    });
+
+    /** Un evento, un flush, e la piattaforma che è uscita dal dispositivo. */
+    async function piattaformaSpedita(): Promise<string> {
+        const { logClient, flush } = await carica();
+        logClient({ livello: 'error', evento: 'js', messaggio: 'boom' });
+        flush();
+        await tick();
+        return batchSpedito().piattaforma;
+    }
+
+    it('Android nella shell nativa: lo UA non dice niente, il bridge sì', async () => {
+        conUserAgent(UA_ANDROID_WEBVIEW);
+        conBridge({ getPlatform: () => 'android' });
+        expect(await piattaformaSpedita()).toBe('android');
+    });
+
+    it('iOS nella shell nativa: la WKWebView è indistinguibile da Safari, il bridge no', async () => {
+        conUserAgent(UA_IOS_WKWEBVIEW);
+        conBridge({ getPlatform: () => 'ios' });
+        expect(await piattaformaSpedita()).toBe('ios');
+    });
+
+    it('browser vero: nessun bridge, resta `web`', async () => {
+        conUserAgent(UA_IOS_WKWEBVIEW); // Safari su iPhone NON è la nostra app iOS
+        expect(await piattaformaSpedita()).toBe('web');
+    });
+
+    it('il bridge dichiara `web` (shim di @capacitor/core sul browser): resta `web`', async () => {
+        conBridge({ getPlatform: () => 'web' });
+        expect(await piattaformaSpedita()).toBe('web');
+    });
+
+    it('un valore che la colonna non contempla non ci finisce dentro', async () => {
+        // `app_log.piattaforma` ha tre valori e basta: una shell futura che dicesse
+        // «electron» non deve poter scrivere una quarta parola in una colonna che
+        // nessuna query si aspetta.
+        conBridge({ getPlatform: () => 'electron' });
+        expect(await piattaformaSpedita()).toBe('web');
+    });
+
+    it('bridge ostile: non lancia mai (regola 6 — il logger non può rompere l’app)', async () => {
+        conUserAgent(UA_ANDROID_WEBVIEW);
+        conBridge({ getPlatform: () => { throw new Error('bridge a pezzi'); } });
+        expect(await piattaformaSpedita()).toBe('web');
+    });
+
+    it('se un giorno `appendUserAgent` viene configurato, il ripiego lo raccoglie', async () => {
+        // Il ramo user-agent resta, ma come SECONDO segnale: da solo non bastava, ed
+        // è esattamente il difetto qui sopra. Se qualcuno configura `appendUserAgent`
+        // in `capacitor.config.ts`, questo ramo smette di essere teorico.
+        conUserAgent(`${UA_ANDROID_WEBVIEW} Capacitor/6.0.0`);
+        expect(await piattaformaSpedita()).toBe('android');
+    });
+});

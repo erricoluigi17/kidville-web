@@ -540,3 +540,175 @@ describe('lock · l’informativa non promette automatismi che non esistono', ()
     }
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOCK · IL TERMINE IN ORE DELL'INFORMATIVA DEV'ESSERE SOSTENIBILE DALLA CADENZA
+//
+// ─── LA STORIA (misurata il 2026-08-25, giro 3 del lavoro «curriculum obbligatorio»)
+//
+// L'informativa prometteva che il «curriculum caricato e mai inviato» sparisse in
+// VENTIQUATTRO ORE. In produzione, quella mattina, sotto il prefisso `candidature/`
+// c'erano 36 orfani e VENTUNO avevano più di 24 ore; il più vecchio ne aveva 45.
+// La promessa era falsa dal giorno in cui era stata scritta (15/08) e nessuno
+// l'aveva misurata: tre gate verdi, un lock che confrontava i MESI, e nessuno che
+// confrontasse le ORE con il meccanismo che deve rispettarle.
+//
+// ─── PERCHÉ IL DIFETTO NON ERA LA SOGLIA
+//
+// `ORE_CURRICULUM_ORFANO = 24` è corretta e non è stata toccata. A non tornare era
+// l'ARITMETICA fra due numeri che vivono in file diversi e che nessuno moltiplicava:
+// la soglia dice «da quando è rimovibile», il cron dice «ogni quanto qualcuno passa
+// a rimuoverlo». Con un passaggio al giorno, un file che alla corsa di stanotte ha
+// 23 ore sopravvive e se ne va solo domani notte, a 47. Il tetto vero è
+// SOGLIA + INTERVALLO, sempre, e nessuna scelta della soglia lo porta sotto
+// l'intervallo. Un termine in ore promesso a un interessato è la dichiarazione
+// dell'art. 13 §2 lett. a: non è una stima, è ciò che si è obbligati a fare.
+//
+// ─── PERCHÉ UN LOCK E NON SOLO LA CORREZIONE DEL TESTO
+//
+// Perché la stessa somma torna sbagliata da sola ogni volta che uno dei tre numeri
+// si muove — e si muovono in tre file che nessuno apre insieme: l'informativa, la
+// route, la migrazione del cron. Abbassare la soglia «per fare prima» senza toccare
+// la cadenza non accorcia il tetto quanto sembra; diradare il cron lo allunga senza
+// che una riga di testo lo dica. Qui i tre numeri si incontrano.
+//
+// ⚠️ SE QUESTO LOCK NON SA LEGGERE LA CADENZA, È ROSSO. Non verde: una cadenza che
+// il lock non sa interpretare è una cadenza di cui non può dire niente, e un
+// controllo che approva ciò che non ha capito è peggio di nessun controllo. È la
+// forma che questo repo ha già pagato — un `grep` rotto che stampa vuoto e passa.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROUTE_ORFANI = join(RADICE, 'src/app/api/gdpr/retention-candidature/route.ts')
+const JOB_ORFANI = 'candidature-retention'
+
+/**
+ * Le ore dichiarate dalla voce dell'informativa, in cifre o in lettere.
+ * La mappa delle parole è la stessa dei mesi: le parole non cambiano con l'unità,
+ * e due copie degli stessi numeri sono il difetto che questo file esiste per
+ * impedire.
+ */
+function oreDichiarate(voce: string): number | null {
+  const trovate = new Set<number>()
+  for (const m of voce.matchAll(/(\d+)\s*ore/gi)) trovate.add(Number(m[1]))
+  for (const [n, parola] of Object.entries(MESI_IN_LETTERE)) {
+    if (new RegExp(`${parola}\\s*ore`, 'i').test(voce)) trovate.add(Number(n))
+  }
+  // ⚠️ DUE NUMERI IN UNA VOCE SONO UN'AMBIGUITÀ, NON UNA SCELTA DA FARE QUI.
+  // Misurato scrivendo questo lock: una prima stesura della voce diceva
+  // «quarantotto ore … diventa rimovibile dopo ventiquattro ore», e la funzione
+  // — che restituiva il PRIMO numero incontrato — leggeva 24 e dichiarava rossa
+  // una promessa corretta. Il termine dell'art. 13 §2 lett. a è UNO: se in una
+  // voce ce ne sono due, chi la legge non sa quale lo riguarda, e nemmeno questo
+  // controllo. `null` manda il caso al rosso della sanity, con il suo messaggio.
+  return trovate.size === 1 ? [...trovate][0] : null
+}
+
+/**
+ * Il massimo intervallo fra due corse consecutive, in ore, di un'espressione cron
+ * a cinque campi — oppure `null` se l'espressione non è di una forma che questo
+ * lock sappia leggere con certezza.
+ *
+ * Copre le forme che il repo usa davvero sui lavori giornalieri: `m h * * *`,
+ * `m h1,h2 * * *`, `m h1-h2 * * *` e `m *​/n * * *`. Tutto il resto — un giorno
+ * del mese, un giorno della settimana, una lista di minuti — torna `null`, e chi
+ * chiama lo tratta come un rosso: una cadenza non giornaliera non può sostenere
+ * un termine espresso in ore, e una che non si sa leggere nemmeno.
+ */
+function intervalloMassimoOre(cron: string): number | null {
+  const campi = cron.trim().split(/\s+/)
+  if (campi.length !== 5) return null
+  const [minuti, ore, giornoDelMese, mese, giornoDellaSettimana] = campi
+  // Un lavoro che non gira TUTTI i giorni non ha un intervallo esprimibile in ore
+  // utile qui: fra due corse ci sono giorni interi.
+  if (giornoDelMese !== '*' || mese !== '*' || giornoDellaSettimana !== '*') return null
+  // Un solo minuto fisso: le corse sono una per ora selezionata.
+  if (!/^\d+$/.test(minuti)) return null
+
+  let oreDiCorsa: number[]
+  if (ore === '*') oreDiCorsa = Array.from({ length: 24 }, (_, i) => i)
+  else if (/^\*\/\d+$/.test(ore)) {
+    const passo = Number(ore.slice(2))
+    if (passo < 1 || passo > 23) return null
+    oreDiCorsa = []
+    for (let h = 0; h < 24; h += passo) oreDiCorsa.push(h)
+  } else if (/^\d+(-\d+)?(,\d+(-\d+)?)*$/.test(ore)) {
+    oreDiCorsa = []
+    for (const pezzo of ore.split(',')) {
+      const [da, a] = pezzo.split('-').map(Number)
+      for (let h = da; h <= (a ?? da); h++) oreDiCorsa.push(h)
+    }
+  } else return null
+
+  const distinte = [...new Set(oreDiCorsa)].sort((x, y) => x - y)
+  if (distinte.length === 0 || distinte.some((h) => h < 0 || h > 23)) return null
+  // Il salto più lungo fra due corse, contando anche quello che scavalca la notte.
+  let massimo = 24 - distinte[distinte.length - 1] + distinte[0]
+  for (let i = 1; i < distinte.length; i++) massimo = Math.max(massimo, distinte[i] - distinte[i - 1])
+  return massimo
+}
+
+// ⚠️ IL NOME `informativa-termine-orfani-sostenibile` STA NEL TITOLO APPOSTA: quattro
+// commenti in tre file lo citano come l'indirizzo di questo lock (l'informativa, la
+// costante di versione, l'elenco delle impronte e il PRD). Scritto solo in prosa
+// sarebbe stata un'àncora che non risolve — la stessa specie di riferimento sbagliato
+// che il giro 3 ha corretto tre volte. Con lo slug qui dentro,
+// `grep -rn informativa-termine-orfani-sostenibile` trova il lock E chi lo nomina.
+describe('lock · informativa-termine-orfani-sostenibile — un termine in ORE regge la cadenza che lo mantiene', () => {
+  const voceOrfani = VOCI_CONSERVAZIONE.find((v) => /curriculum caricato e mai inviato/i.test(v))
+
+  it('la voce del curriculum orfano c’è, e dichiara un numero di ore (sanity)', () => {
+    // Senza questa, tutto il resto sarebbe verde sul vuoto: una voce rinominata
+    // farebbe sparire il confronto invece di romperlo.
+    expect(
+      voceOrfani,
+      'la voce «curriculum caricato e mai inviato» non si trova più in /privacy: se è stata rinominata, aggiorna QUI il modo di trovarla — non toglierla',
+    ).toBeDefined()
+    expect(oreDichiarate(voceOrfani!), 'la voce non dichiara più nessun termine in ore').not.toBeNull()
+  })
+
+  it('la soglia della route e la cadenza del cron si leggono entrambe (sanity)', () => {
+    const sorgente = readFileSync(ROUTE_ORFANI, 'utf8')
+    expect(
+      sorgente.match(/const ORE_CURRICULUM_ORFANO = (\d+)/),
+      '`ORE_CURRICULUM_ORFANO` non si trova più in retention-candidature/route.ts',
+    ).not.toBeNull()
+    const installano = migrazioniCheInstallano(JOB_ORFANI)
+    expect(
+      installano.length,
+      `nessuna migrazione installa \`${JOB_ORFANI}\`: senza la sua cadenza questo lock non può dire niente`,
+    ).toBeGreaterThan(0)
+  })
+
+  it('🔴 le ore promesse sono ALMENO la soglia PIÙ un giro di spazzata', () => {
+    const sorgente = readFileSync(ROUTE_ORFANI, 'utf8')
+    const soglia = Number(sorgente.match(/const ORE_CURRICULUM_ORFANO = (\d+)/)![1])
+
+    // L'ULTIMA migrazione che lo installa è quella che vale: le precedenti sono
+    // storia, e `cron.schedule` fa unschedule-e-rischedula.
+    const installano = migrazioniCheInstallano(JOB_ORFANI)
+    const ultima = installano[installano.length - 1]
+    const espressione = ultima.sql.match(
+      new RegExp(`cron\\.schedule\\s*\\(\\s*'${JOB_ORFANI}'\\s*,\\s*'([^']+)'`, 'i'),
+    )?.[1]
+    expect(
+      espressione,
+      `non si legge la cadenza di \`${JOB_ORFANI}\` in ${ultima.file}: l'espressione cron è la seconda argomento di cron.schedule`,
+    ).toBeDefined()
+
+    const intervallo = intervalloMassimoOre(espressione!)
+    expect(
+      intervallo,
+      `la cadenza «${espressione}» non è di una forma che questo lock sappia leggere. NON allargare il termine per farlo passare: insegna a \`intervalloMassimoOre\` a leggerla, oppure — se il lavoro non gira più tutti i giorni — un termine in ORE non è più sostenibile e va riscritta la voce dell'informativa.`,
+    ).not.toBeNull()
+
+    const promesse = oreDichiarate(voceOrfani!)!
+    const tetto = soglia + intervallo!
+    expect(
+      promesse,
+      `L'informativa promette ${promesse} ore, ma il tetto vero è ${tetto} (soglia ORE_CURRICULUM_ORFANO=${soglia} + un giro di «${espressione}» = ${intervallo} h). ` +
+        `Un file diventa rimovibile alla soglia e sparisce solo alla prima corsa SUCCESSIVA: chi ne ha appena meno della soglia quando il job passa aspetta un giro intero. ` +
+        `Le strade sono due, e nessuna delle due è ritoccare questo numero da solo: (1) diradare meno il cron nella migrazione che lo installa, (2) scrivere nell'informativa il termine vero. ` +
+        `È la dichiarazione dell'art. 13 §2 lett. a: quel numero è un obbligo, non una stima.`,
+    ).toBeGreaterThanOrEqual(tetto)
+  })
+})

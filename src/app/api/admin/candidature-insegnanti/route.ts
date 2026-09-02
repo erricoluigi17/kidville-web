@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive, formaConfronto } from '@/lib/auth/scope'
+import { resolveScuoleAttive, formaConfronto, restringiSedi } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioEsitoCandidatura } from '@/lib/email/messaggi/esito-candidatura'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zBool, zOpzionale, zPeriodo, zTestoRicerca, zUuid } from '@/lib/validation/common'
+import { orIlike, termineOr } from '@/lib/db/ricerca-postgrest'
+import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
+import { GRADI_OPTIONS, POSIZIONI_AMMESSE, TITOLI_STUDIO } from '@/lib/forms/insegnanti-template'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { BUCKET_CURRICULUM } from '@/lib/candidature/percorso-cv'
@@ -286,7 +290,24 @@ const EMBED_TUTTE = 'sedi:candidature_sedi(scuola_id, stato, evasa_il)'
  * una regex. Quattro ripetizioni di una stringa sono il prezzo, ed è basso.
  */
 
-/** Il dettaglio: proiezione ESPLICITA (mai `select('*')`), una candidatura alla volta. */
+/**
+ * Il dettaglio: proiezione ESPLICITA (mai `select('*')`), una candidatura alla volta.
+ *
+ * ⚠️ DUE COLONNE QUI DENTRO NON SONO PIÙ CAMPI DEL MODULO, e vanno lasciate stare.
+ * `gradi` è uscito dal template il 2026-08-15 (oggi lo deriva il server dalle
+ * posizioni) e `disponibilita` il 2026-08-24 (in Kidville si lavora solo a tempo
+ * pieno, quindi la domanda non si fa più). Cercarle in
+ * `src/lib/forms/insegnanti-template.ts` non le trova: chi passa di qui le
+ * scambierebbe per residui e le toglierebbe «per pulizia».
+ *
+ * Non sono residui: sono la sola strada per cui le candidature ARRIVATE PRIMA
+ * arrivano ancora alla scheda della segreteria — 225 righe con `disponibilita`
+ * valorizzata alla misura del 2026-08-25 (rifà il conto, non ricopiare: la
+ * tabella cresce di sei righe al giorno). Toglierle non farebbe sparire un campo
+ * dal modulo, farebbe sparire uno storico da una scheda su cui si decide
+ * un'assunzione. Il presidio è in `__tests__/api/candidature-insegnanti-scope-sede.test.ts`,
+ * che diventa rosso se `disponibilita` esce da questo elenco.
+ */
 const COLONNE_DETTAGLIO = [
   'id', 'scuola_id', 'stato', 'nome', 'cognome', 'email', 'telefono',
   'residence_city', 'residence_province', 'posizioni', 'posizione_altro', 'gradi',
@@ -355,6 +376,21 @@ const interoClampato = (def: number, min: number, max: number) =>
     return Math.min(Math.max(Math.trunc(n), min), max)
   }, z.number())
 
+/* ── I FILTRI DELL'ELENCO — elenchi chiusi, presi da dove sono già dichiarati ──
+ *
+ * Nessuno di questi elenchi si ribatte qui: `POSIZIONI_AMMESSE`, `GRADI_OPTIONS`
+ * e `TITOLI_STUDIO` sono il contratto del modulo pubblico, e una seconda copia
+ * diverge il giorno in cui il modulo cambia — con l'effetto che un valore
+ * archiviato in tabella non sarebbe più filtrabile, in silenzio. */
+const STATI_CANDIDATURA = ['pending', 'in_approvazione', 'approvata', 'rifiutata'] as const
+/** «Da evadere»: gli stati su cui qualcuno deve ancora decidere qualcosa. */
+const STATI_DA_EVADERE: string[] = ['pending', 'in_approvazione']
+const GRADI_AMMESSI = GRADI_OPTIONS.map((o) => String(o.value))
+const TITOLI_AMMESSI = TITOLI_STUDIO.map((o) => String(o.value))
+
+/** `z.enum` da un elenco costruito a runtime, senza cast sparsi nello schema. */
+const zFraElenco = (valori: string[]) => z.enum(valori as [string, ...string[]])
+
 const getQuerySchema = z.object({
   // Un percorso di storage non è lungo: una stringa senza tetto è solo
   // superficie d'attacco in più (stesso tetto di `pagamenti/cassa/allegato:GET`).
@@ -362,6 +398,31 @@ const getQuerySchema = z.object({
   id: zUuid.optional(),
   limit: interoClampato(LIMITE_ISCRIZIONI_DEFAULT, 1, LIMITE_ISCRIZIONI_MAX),
   offset: interoClampato(0, 0, Number.MAX_SAFE_INTEGER),
+
+  /**
+   * ⚠️ `stato` COLPISCE LA RIGA DI SEDE, non la colonna aggregata della madre.
+   *
+   * L'elenco disegna `statoDiRiga()` (`CandidatureInsegnanti.tsx`), che è lo
+   * stato della PROPRIA sede: filtrare su `candidature_insegnanti.stato` — che
+   * dal 2026-08-19 è l'aggregato ricalcolato dal trigger — farebbe sparire righe
+   * il cui badge dice il contrario, e comparire righe con il badge sbagliato.
+   * Un filtro che non concorda con ciò che si legge nella riga è peggio di
+   * nessun filtro: nessuno lo mette in dubbio.
+   */
+  stato: zOpzionale(z.enum(STATI_CANDIDATURA)),
+  /** La sede su cui guardare: RESTRINGE le sedi attive, non le sostituisce. */
+  scuola_id: zOpzionale(zUuid),
+  posizione: zOpzionale(zFraElenco(POSIZIONI_AMMESSE)),
+  grado: zOpzionale(zFraElenco(GRADI_AMMESSI)),
+  titolo: zOpzionale(zFraElenco(TITOLI_AMMESSI)),
+  /** Sigla di provincia. Il confronto col database è già senza maiuscole. */
+  provincia: zOpzionale(z.string().regex(/^[A-Za-z]{1,2}$/, 'Provincia non valida (attesa la sigla, es. NA)')),
+  citta: zOpzionale(z.string().max(120)),
+  esperienza_min: zOpzionale(z.coerce.number().int().min(0).max(60)),
+  ...zPeriodo('creata').shape,
+  q: zTestoRicerca,
+  /** «Solo da evadere»: l'interruttore della barra. */
+  daEvadere: zOpzionale(zBool),
 })
 
 const patchBodySchema = z.object({
@@ -402,7 +463,35 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
     if ('response' in q) return q.response
     const supabase = await createAdminClient()
     // Scope vuoto ⇒ elenco vuoto: `.in()` incondizionato, mai `if (scuole.length)`.
-    const scuole = await resolveScuoleAttive(request, supabase, auth.user)
+    const attive = await resolveScuoleAttive(request, supabase, auth.user)
+    /**
+     * La sede chiesta dal filtro INTERSECA, non sostituisce.
+     *
+     * `restringiSedi` distingue i due vuoti che qui hanno rimedi opposti: `[]` è
+     * «non hai nessun plesso» (elenco vuoto, che è la risposta giusta), `null` è
+     * «hai chiesto un plesso che non è tuo» — e quello si rifiuta, con un 403 che
+     * resta leggibile come segnale di sicurezza. Il confronto è senza distinzione
+     * di maiuscole: in Postgres `uuid` è un TIPO, e una segreteria che scrive la
+     * PROPRIA sede in maiuscolo non deve prendersi un diniego (misurato il
+     * 2026-07-31, ed è la ragione per cui `formaConfronto` esiste).
+     *
+     * Vale per TUTTI i rami — elenco, scheda, curriculum — perché restringere è
+     * sempre sicuro: un parametro che non allarga mai il perimetro non ha bisogno
+     * di essere ripetuto ramo per ramo, e un ramo dimenticato sarebbe l'unico che
+     * non lo rispetta.
+     */
+    const scuole = restringiSedi(attive, q.data.scuola_id)
+    if (scuole === null) {
+      logEvento('multi_sede', 'warn', {
+        operazione: 'admin/candidature-insegnanti:GET',
+        esito: 'sede-filtro-fuori-scope',
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+        sede_id: q.data.scuola_id,
+        sedi_attive: attive.length,
+      })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
 
     // ─── IL CURRICULUM: `?doc=<percorso>` ─────────────────────────────────────
     if (q.data.doc) {
@@ -473,24 +562,116 @@ export const GET = withRoute('admin/candidature-insegnanti:GET', async (request:
     }
 
     // ─── L'ELENCO ─────────────────────────────────────────────────────────────
+    //
+    // ⚠️ I FILTRI SI SCRIVONO QUI, PER ESTESO, e non in un aiutante che li
+    // applica «tutti insieme»: è la stessa ragione per cui la colonna del filtro
+    // di sede non sta in una costante (vedi il blocco sopra `EMBED_FILTRO`). Il
+    // contratto è che il criterio sia LEGGIBILE nel punto in cui si applica — da
+    // una persona come da una regex — e un rilevatore che insegue le indirezioni
+    // lo si aggira aggiungendone un'altra.
+    //
+    // ⚠️ E FILTRARE NON VUOL DIRE PROIETTARE: `residence_province`,
+    // `residence_city`, `titolo_studio`, `anni_esperienza` ed `email` NON sono in
+    // `COLONNE_ELENCO` e non ci devono entrare (il blocco che le esclude spiega
+    // perché: l'elenco viaggia cross-sede verso ogni browser dello staff). Un
+    // `.eq()` funziona benissimo su una colonna che non esce dalla `select`.
     const { limit, offset } = q.data
-    const { data, error, count } = await conResilienza(COLONNE_ELENCO, 'admin/candidature-insegnanti:GET', (colonne) =>
-      supabase
+    const termineRicerca = termineOr(q.data.q ?? '')
+    /**
+     * ⚠️ `residence_city` È DENTRO LA RICERCA, e la colonna NON è nell'elenco.
+     *
+     * Sono due cose diverse e vanno tenute diverse: filtrare è una condizione
+     * che vive nel database, proiettare è un dato che parte verso il browser di
+     * ogni membro dello staff. Qui la città serve perché la barra ha UN solo
+     * campo di testo (`BarraFiltri` disegna il primo `tipo: 'ricerca'` e basta),
+     * e senza di lei «Giugliano» non troverebbe chi ci abita da nessuna parte.
+     * `?citta=` resta come parametro suo, per un indirizzo che lo porta.
+     */
+    const condizioniRicerca = orIlike(['nome', 'cognome', 'email', 'residence_city'], termineRicerca)
+    const cittaCercata = termineOr(q.data.citta ?? '')
+    const { data, error, count } = await conResilienza(COLONNE_ELENCO, 'admin/candidature-insegnanti:GET', (colonne) => {
+      let query = supabase
         .from(TABELLA)
         // `!inner` restringe: senza, il join arricchirebbe e basta, e l'elenco
         // mostrerebbe le candidature di TUTTE le sedi con accanto quelle proprie.
+        // ⚠️ `count: 'exact'` sta sulla STESSA query dei filtri: `total` deve
+        // essere il totale FILTRATO, altrimenti «12 su 392» torna a mentire.
         .select(`${colonne}, ${EMBED_FILTRO_ELENCO}`, { count: 'exact' })
         .in('candidature_sedi.scuola_id', scuole)
-        .order('creata_il', { ascending: false })
-        .range(offset, offset + limit - 1),
-    )
+
+      // Lo stato della PROPRIA sede: la stessa riga che disegna il badge.
+      if (q.data.stato) query = query.eq('candidature_sedi.stato', q.data.stato)
+      if (q.data.daEvadere === true) query = query.in('candidature_sedi.stato', STATI_DA_EVADERE)
+      // ⚠️ `posizioni` e `gradi` sono ARRAY in tabella (`text[]` e
+      // `school_type_enum[]`), quindi `contains` e non `eq`: una candidatura si
+      // propone spesso per più mestieri insieme, ed è il caso normale.
+      // Su un database non ancora migrato `posizioni` può non esserci: lì
+      // `conResilienza` NON aiuta — sa togliere una colonna dalla PROIEZIONE, non
+      // da un filtro — e la richiesta esce con un 503 che nomina la colonna nel
+      // log. È il degrado giusto: un elenco NON filtrato spacciato per filtrato
+      // sarebbe la bugia che tutto questo lavoro esiste per togliere.
+      if (q.data.posizione) query = query.contains('posizioni', [q.data.posizione])
+      if (q.data.grado) query = query.contains('gradi', [q.data.grado])
+      if (q.data.titolo) query = query.eq('titolo_studio', q.data.titolo)
+      // Per PREFISSO: la colonna è `varchar(2)`, quindi con due lettere è
+      // un'uguaglianza; con una sola resta una restrizione VERA («le province
+      // che cominciano per N») invece di un 400 a metà digitazione.
+      if (q.data.provincia) query = query.ilike('residence_province', `${q.data.provincia}%`)
+      if (cittaCercata) query = query.ilike('residence_city', `%${cittaCercata}%`)
+      // Campo facoltativo: una riga senza anni dichiarati non è «zero anni», è
+      // «non lo so», e `.gte()` la lascia fuori — che è la risposta onesta.
+      if (q.data.esperienza_min !== undefined) query = query.gte('anni_esperienza', q.data.esperienza_min)
+      // Il periodo si misura sul GIORNO CIVILE italiano: `creata_il` è un
+      // istante, e un confine in UTC sposta nel giorno prima tutto ciò che è
+      // arrivato fra mezzanotte e le due (vedi `@/lib/format/confini-giorno`).
+      const dal = q.data.creataDa ? inizioGiornoCivile(q.data.creataDa) : null
+      const al = q.data.creataA ? fineGiornoCivile(q.data.creataA) : null
+      if (dal) query = query.gte('creata_il', dal)
+      if (al) query = query.lte('creata_il', al)
+      // Stringa vuota ⇒ nessun `.or()`: `nome.ilike.%%` non è «nessun filtro», è
+      // un filtro che passa tutto scritto in un modo che sembra una restrizione.
+      if (condizioniRicerca) query = query.or(condizioniRicerca)
+
+      return query.order('creata_il', { ascending: false }).range(offset, offset + limit - 1)
+    })
     if (error) return leggiFallita('admin/candidature-insegnanti:GET', 'elenco-non-letto', error)
 
     const righe = (data ?? []) as unknown as Record<string, unknown>[]
     // `total` dal conteggio ESATTO: con 60 righe su 200 la lunghezza della pagina
     // direbbe «60», e nessuno saprebbe delle altre 140.
     const total = typeof count === 'number' ? count : offset + righe.length
-    return NextResponse.json({ data: righe, total, limit, offset })
+    /**
+     * QUANTE CE NE SONO IN QUESTA LINGUETTA **SENZA** FILTRI.
+     *
+     * Non è un doppione di `total`, ed è il cardine di ciò che la schermata dice
+     * quando non esce nessuna riga: «nessun risultato con questi filtri» su una
+     * tabella che non ha mai avuto una riga accusa i filtri di una colpa che non
+     * hanno, e manda a cercare un filtro che non esiste. `decidiStatoElenco`
+     * distingue i due casi solo se riceve QUESTO numero — `total`, che è
+     * filtrato, direbbe zero in entrambi.
+     *
+     * `head: true`: nessuna riga, solo il conteggio. Il filtro di sede resta
+     * quello delle sedi ATTIVE, senza il restringimento di `?scuola_id=`: anche
+     * la sede è un filtro che l'utente ha aggiunto, e toglierlo è uno dei rimedi
+     * che la schermata suggerisce.
+     */
+    const { count: countLinguetta, error: errLinguetta } = await supabase
+      .from(TABELLA)
+      .select(`id, ${EMBED_FILTRO}`, { count: 'exact', head: true })
+      .in('candidature_sedi.scuola_id', attive)
+    if (errLinguetta) {
+      // PostgREST non lancia: un conteggio fallito non deve diventare uno zero
+      // silenzioso, che è ciò che trasforma «non l'ho potuto contare» in
+      // «l'archivio è vuoto».
+      logEvento('candidatura', 'warn', {
+        operazione: 'admin/candidature-insegnanti:GET',
+        esito: 'conteggio-linguetta-non-letto',
+        entita_tipo: TABELLA,
+        error_code: codiceDi(errLinguetta),
+      }, errLinguetta)
+    }
+    const totaleLinguetta = typeof countLinguetta === 'number' ? countLinguetta : total
+    return NextResponse.json({ data: righe, total, totaleLinguetta, limit, offset })
   } catch (err) {
     logErrore({ operazione: 'admin/candidature-insegnanti:GET', stato: 503 }, err)
     return nonDisponibile('Le candidature non sono consultabili in questo momento: riprovare fra poco.')

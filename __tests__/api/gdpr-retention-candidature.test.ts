@@ -1168,6 +1168,45 @@ describe('lock · il termine promesso e il termine applicato sono LO STESSO nume
       'l’informativa non lega i ventiquattro mesi al CONSENSO: nel codice sono l’unica leva che ' +
         'allunga la durata, e nel testo del modulo sono l’unica cosa che la persona ha spuntato',
     ).toBe(true)
+
+    /*
+     * ── E I DUE NUMERI SONO SCRITTI IN DUE POSTI, DAL 2026-08-25 ───────────────
+     *
+     * «Natura del conferimento» dice ora, sul consenso facoltativo alla
+     * conservazione, che il rifiuto «comporta soltanto la cancellazione della
+     * candidatura dopo DODICI mesi anziché VENTIQUATTRO». Prima diceva «al più
+     * breve dei termini indicati più avanti»: nessun numero, quindi niente da far
+     * divergere — e niente da capire, per chi in quel momento sta decidendo se
+     * spuntare la casella.
+     *
+     * Scritti i numeri, la copia va sorvegliata come l'originale. Senza queste
+     * righe si potrebbe cambiare `CANDIDATURA_LIMITI.mesiConservazione` e vedere
+     * rosso sulla voce di «Conservazione dei dati» mentre questo capoverso continua
+     * a promettere il vecchio termine — cioè esattamente il difetto che il blocco
+     * qui sopra esiste per impedire, spostato di trecento righe.
+     *
+     * Il capoverso si isola per SOGGETTO («Lavora con noi») dentro la sua sezione,
+     * come la voce d'elenco qui sopra si isola dentro la sua.
+     */
+    const dalNatura = INFORMATIVA.indexOf('Natura del conferimento')
+    const alNatura = INFORMATIVA.indexOf('</section>', dalNatura)
+    const capoverso = INFORMATIVA.slice(dalNatura, alNatura === -1 ? undefined : alNatura)
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '') // fuori i commenti JSX: là i numeri si citano
+      .replace(/\s+/g, ' ')
+      .split('<p ')
+      .find((c) => /Lavora con noi/i.test(c))
+    expect(
+      capoverso,
+      'la sezione «Natura del conferimento» non parla più del modulo «Lavora con noi»: senza ' +
+        'quel capoverso l’art. 13 §2 lett. e non è coperto per il curriculum obbligatorio',
+    ).toBeTruthy()
+    for (const mesi of [mesiSenza, CANDIDATURA_LIMITI.mesiConservazione]) {
+      expect(
+        new RegExp(`${mesi}\\s*mesi|${inLettere[mesi]}`, 'i').test(capoverso!),
+        `il capoverso «Lavora con noi» non dichiara i ${mesi} mesi che il codice applica: ` +
+          'è la seconda copia dei due termini, e deve dire quello che dice la prima',
+      ).toBe(true)
+    }
   })
 
   it('🔴 e la route non allunga MAI il termine per uno stato: le due leve restano due', () => {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser, type AuthResult } from '@/lib/auth/require-staff'
+import { agisceComeGenitore, eFamiglia } from '@/lib/auth/predicati-ruolo'
 import { verificaLegameGenitore } from '@/lib/anagrafiche/legami'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -15,6 +16,29 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * I DUE PREDICATI DEI RUOLI SONO IMPORTATI — e per un po' non lo erano.
+ *
+ * Fino al 2026-09-01 questo file RI-DICHIARAVA `eFamiglia` e `agisceComeGenitore`
+ * in casa propria, e la ragione era vera: importarli da `@/lib/auth/require-staff`
+ * faceva diventare rossi **46 test su 7 file**, 40 con lo stesso identico errore —
+ *   `[vitest] No "eFamiglia" export is defined on the "@/lib/auth/require-staff" mock`
+ * — e quattro di quei sette file non c'entravano niente con questo gate
+ * (`diary-students-genitori-unione`, `diary-students-id-gate`,
+ * `parent-mensa-allergie`, `parent-onboarding`).
+ *
+ * LA CAUSA NON ERA IL MOCK, ERA IL MODULO: `require-staff.ts` teneva insieme l'I/O
+ * (`requireUser`, `resolveIdentity`, `loadAppUser`) e i predicati PURI, e 296 file
+ * lo sostituiscono per intero per iniettare un'identità. Il rimedio strutturale è
+ * stato applicato: i predicati vivono in `@/lib/auth/predicati-ruolo`, che nessuno
+ * mocka perché non fa I/O, e `require-staff.ts` li ri-esporta per non muovere un
+ * solo call site. Da qui si importano da lì, e la duplicazione è sparita.
+ *
+ * La cautela di allora resta scritta perché la lezione vale ancora: se un domani
+ * un import da `@/lib/auth/require-staff` facesse esplodere test che non parlano di
+ * autorizzazione, il difetto è il MODULO che mescola I/O e regole, non il test.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
 /**
  * Gate per le route che leggono o scrivono i dati di UN alunno indicato dal
  * client — venti, di cui cinque in scrittura e una con valore legale (la firma
@@ -24,12 +48,22 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  *  1. Auth-bypass (`?userId=` arbitrario): usa `requireUser` → `resolveIdentity`,
  *     che lega l'identità alla SESSIONE reale (con `ALLOW_HEADER_IDENTITY=false`
  *     l'header/query non è più accettato). 401 se non autenticato.
- *  2. IDOR sulla FAMIGLIA: il `genitore` deve avere il legame con l'alunno
- *     (`genitoreHasFiglio`, unione robusta `legame_genitori_alunni` +
- *     `student_parents` via ponte `parents.auth_user_id`). 403 altrimenti.
- *  3. IDOR fra SEDI e fra CLASSI: chiunque non sia genitore deve avere l'alunno
- *     nel proprio plesso e — se `educator` — nella propria sezione
- *     (`assertAlunnoInScope`).
+ *  2. IDOR sulla FAMIGLIA: chi è genitore NEL DATABASE deve avere il legame con
+ *     l'alunno (`verificaLegameGenitore`, unione robusta `legame_genitori_alunni`
+ *     + `student_parents` via ponte `parents.auth_user_id`). 403 altrimenti.
+ *  3. IDOR fra SEDI e fra CLASSI: chi non ha (o non usa) un legame di famiglia
+ *     deve avere l'alunno nel proprio plesso e — se `educator` — nella propria
+ *     sezione (`assertAlunnoInScope`).
+ *
+ * ⚠️ LA BIFORCAZIONE È SUL LEGAME, NON SULLA VESTE, e fino al 2026-09-01 non lo
+ * era: la condizione leggeva `auth.user.role === 'genitore'`, cioè il ruolo
+ * ATTIVO (cookie). Quattro persone in produzione hanno insieme `utenti.ruolo =
+ * 'educator'` e il ponte `parents.auth_user_id`: sei dei loro legami
+ * figlio↔genitore cadono fuori dalle sezioni che insegnano e uno è in un'altra
+ * sede, e aprendo il diario del PROPRIO figlio prendevano `403 «Alunno non nella
+ * tua classe»`. I due rami NON si escludono: chi è famiglia prova prima il
+ * legame e, se quel bambino non è suo figlio, ricade sullo scope di lavoro —
+ * così un docente-genitore resta un docente su tutti gli altri bambini.
  *
  * ⚠️ IL PUNTO 3 NON C'ERA, e fino al 2026-07-31 questa testata dichiarava il
  * contrario: «staff/educator passano: il loro scope è applicato altrove nelle
@@ -98,7 +132,27 @@ export async function requireParentOfStudent(
     }
   }
 
-  if (auth.user.role === 'genitore') {
+  // ── LA FAMIGLIA VINCE, E PRIMA DEL RUOLO ─────────────────────────────────
+  //
+  // Questa riga diceva `auth.user.role === 'genitore'`, e biforcava sulla VESTE
+  // invece che sul LEGAME. Misurato in produzione: quattro persone hanno insieme
+  // una riga `utenti` con ruolo `educator` e il ponte `parents.auth_user_id` sullo
+  // stesso `auth.uid()` — sono insegnanti che sono anche genitori di un bambino
+  // della scuola. SEI dei loro legami figlio↔genitore cadono fuori dalle sezioni
+  // che insegnano e UNO è in un'altra sede: aprendo il diario del PROPRIO figlio
+  // finivano su `assertAlunnoInScope`, che confronta `utenti_sezioni` —  cioè le
+  // classi che INSEGNANO, che col figlio non c'entrano niente — e si prendevano
+  // `403 «Alunno non nella tua classe»` sul registro del figlio.
+  //
+  // `eFamiglia` guarda i ruoli REALI (database), non il cookie: è AUTORIZZAZIONE.
+  // È anche il PONTE già letto insieme all'identità (`resolveIdentity` legge
+  // `utenti` e `parents` in parallelo), quindi qui costa zero query in più — ed è
+  // il motivo per cui la condizione sta PRIMA della lettura dei legami e non
+  // dopo: 61 educator su 61 non hanno il ponte, non entrano qui, e non pagano le
+  // letture di `verificaLegameGenitore` (fast-path a una query, più il fallback
+  // anagrafico a tre). Un gate che tassa 61 persone per servirne 4 è un gate che
+  // qualcuno finirà per togliere.
+  if (eFamiglia(auth.user)) {
     const esito = await verificaLegameGenitore(supabase, auth.user.id, studentId)
 
     // ── «NON L'HO POTUTO LEGGERE» NON È «NON È TUO FIGLIO» (rilievo T13) ────
@@ -130,7 +184,48 @@ export async function requireParentOfStudent(
       return { response: NextResponse.json({ error: 'Errore interno' }, { status: 500 }) }
     }
 
-    if (esito === 'no') {
+    if (esito === 'si') {
+      // ─── IL SEGNALE CHE DICE SE LA CORREZIONE È VIVA ─────────────────────
+      //
+      // Una riga `info` (Vercel, non persistita: `vaPersistito` tiene in tabella
+      // solo `warn` ed `error`) emessa SOLO quando il legame ha aperto una porta
+      // che il ruolo attivo, da solo, non avrebbe aperto. È l'unico modo di
+      // rispondere alla domanda «i quattro profili doppi la stanno davvero
+      // usando?» senza andare a leggere i diari di quei bambini.
+      //
+      // CONDIZIONATA, e non «sempre, tanto è info»: chi agisce già da genitore
+      // passa di qui a ogni schermata dell'app di famiglia — sono le richieste
+      // più frequenti del sistema — e una riga costante non distingue niente da
+      // niente. Il segnale è la DIFFERENZA fra la veste e il legame.
+      //
+      // SOLO UUID ED ENUMERATI: `tipo`, `azione` e `ruolo` sono in lista bianca
+      // di `redact`, `utente` passa per FORMA (uuid). Nessun `alunno_id`: qui non
+      // è stato negato niente, e il bambino di cui si apre il diario non ha
+      // motivo di comparire in una riga che serve a contare le PERSONE.
+      if (!agisceComeGenitore(auth.user)) {
+        logEvento('auth', 'info', {
+          tipo: 'accesso-per-legame-famiglia',
+          azione: 'requireParentOfStudent',
+          utente: auth.user.id,
+          ruolo: auth.user.role,
+        })
+      }
+      return { user: auth.user }
+    }
+
+    // ─── ESITO `no`: E QUI LE DUE VESTI SI SEPARANO ────────────────────────
+    //
+    // Chi AGISCE da genitore ha chiesto un bambino che non è suo figlio, dentro
+    // una vista che mostra solo i figli: è il tentativo che il contatore qui
+    // sotto esiste per contare, e il 403 è definitivo — non gli si offre una
+    // seconda strada che nella vista di famiglia non ha senso.
+    //
+    // Chi NON agisce da genitore (il docente-genitore in veste di lavoro) ha
+    // semplicemente aperto il registro di un bambino che non è suo figlio: è il
+    // suo mestiere. Non è un tentativo di IDOR e non va contato come tale —
+    // cade sullo scope di plesso/sezione qui sotto, esattamente come i 61
+    // educator senza ponte, e lì sarà ammesso o negato per i motivi di sempre.
+    if (agisceComeGenitore(auth.user)) {
       // ─── IL TENTATIVO CHE PIÙ DI OGNI ALTRO SI VUOLE POTER CONTARE ───────
       //
       // Fino al 2026-08-07 questo `return` era nudo, e il rifiuto non lasciava
@@ -179,7 +274,7 @@ export async function requireParentOfStudent(
       }, undefined, { distingui: ['alunno_id'] })
       return { response: NextResponse.json({ error: 'Accesso negato' }, { status: 403 }) }
     }
-    return { user: auth.user }
+    // Esito `no` senza veste di genitore: si prosegue, non si esce.
   }
 
   // ── Tutti gli altri ruoli: plesso + sezione assegnata ────────────────────

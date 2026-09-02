@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireUser } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { assertClasseNomeInScope, assertSezioneInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 /** '' equivale ad assente (i check truthy pre-esistenti restano invariati). */
@@ -107,7 +108,28 @@ export const GET = withRoute('locker/materials:GET', async (request: NextRequest
         }
 
         return NextResponse.json(data && data.length > 0 ? data : MATERIALI_DEFAULT);
-    } catch {
+    } catch (err) {
+        // Ripiego di ULTIMA istanza, e fino al 2026-09-01 era MUTO. Qui non arriva
+        // l'errore di PostgREST — quello lo intercetta il ramo `if (error)` qui sopra,
+        // perché PostgREST non lancia: ritorna `{ error }`. Qui arriva un'ECCEZIONE
+        // vera: il client admin che non si costruisce, la risoluzione delle sezioni
+        // che esplode. Cose che non capitano «a volte»: capitano a OGNI richiesta.
+        //
+        // Ed è esattamente ciò che stava succedendo dentro la suite senza che nessuno
+        // potesse accorgersene: `__tests__/api/locker-materials-auth.test.ts` credeva
+        // di leggere la riga configurata e riceveva i quattro default, perché ogni
+        // chiamata passava di qui. Il test era VERDE — asseriva `length > 0`, e i
+        // default sono quattro — e questa riga non esisteva. Con «nessun log» non si
+        // distingue «tutto ok» da «va in eccezione ogni volta» (AGENTS.md regole 5 e 6).
+        //
+        // `warn` e non `error`, per la stessa ragione del catch qui sopra: il ripiego è
+        // previsto e il chiamante riceve comunque dei materiali validi. Ma `esito`
+        // dev'essere DIVERSO da quello del ramo PostgREST: sono due guasti con due
+        // correzioni diverse, e chi legge il log deve poterli separare.
+        logEvento('db', 'warn', {
+            operazione: 'locker/materials:GET',
+            esito: 'locker-materials-eccezione-uso-default',
+        }, err);
         return NextResponse.json(MATERIALI_DEFAULT);
     }
 });
@@ -213,12 +235,13 @@ export const PATCH = withRoute('locker/materials:PATCH', async (request: NextReq
         const admin = await createAdminClient();
         const { id, ...updates } = b.data;
 
-        // Scope: risolve la classe del record (per nome) entro i propri plessi.
-        const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
-        if (row?.classe_sezione) {
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, row.classe_sezione);
-            if (scopeErr) return scopeErr;
-        }
+        // Scope: la sede si risolve dalla SEZIONE della riga. Vedi la nota estesa
+        // sulla DELETE, in fondo al file: le due erano lo stesso difetto.
+        const { data: row, error: rowErr } = await admin
+            .from('locker_config').select('section_id').eq('id', id).maybeSingle();
+        if (rowErr) throw rowErr;
+        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        if (scopeErr) return scopeErr;
 
         const { data, error } = await admin
             .from('locker_config').update(updates).eq('id', id).select().single();
@@ -246,11 +269,37 @@ export const DELETE = withRoute('locker/materials:DELETE', async (request: NextR
 
         const admin = await createAdminClient();
 
-        const { data: row } = await admin.from('locker_config').select('classe_sezione').eq('id', id).maybeSingle();
-        if (row?.classe_sezione) {
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, row.classe_sezione);
-            if (scopeErr) return scopeErr;
-        }
+        // ─── LO SCOPE SI RISOLVE DALLA SEZIONE, NON DAL NOME DELLA CLASSE ────────
+        //
+        // Fino al 2026-09-01 qui (e nella PATCH) si leggeva `classe_sezione` e lo si
+        // passava ad `assertClasseNomeInScope`. Due guasti in una riga sola:
+        //
+        //  1. `classe_sezione` è testo LIBERO e NULLABLE, e il gate stava dentro un
+        //     `if (row?.classe_sezione)`: con la colonna a `null` NON VENIVA CHIAMATO
+        //     AFFATTO. La riga si cancellava senza nessun controllo.
+        //  2. Il nome-classe non è una chiave univoca da quando le sedi sono tre.
+        //     «2 ANNI» esiste sia ad Aversa sia a Cesa: chi lavora in una sede
+        //     passava il gate sul PROPRIO omonimo e cancellava la configurazione
+        //     dell'altra. Lo dichiara `assertClasseNomeInScope` in testa a sé stesso
+        //     — impedisce di NOMINARE una classe altrui, non di toccare una riga
+        //     altrui, e per quello serve un gate sulla riga.
+        //
+        // `section_id` è la chiave dal 2026-07-30 e porta con sé la `scuola_id` della
+        // sezione: `assertSezioneInScope` risolve la sede da lì.
+        //
+        // ⚠️ SENZA SEZIONE SI RIFIUTA. Su una riga legacy con `section_id` a `null` —
+        // e su una riga che non esiste — non c'è modo di dire a quale plesso
+        // appartenga: `assertSezioneInScope` risponde 400 e non si scrive niente. Non
+        // sapere di chi è una cosa non è il permesso di cancellarla.
+        const { data: row, error: rowErr } = await admin
+            .from('locker_config').select('section_id').eq('id', id).maybeSingle();
+        // PostgREST non lancia: senza questa riga una lettura fallita lascerebbe
+        // `row` a `null`, cioè indistinguibile dalla riga legacy. Il diniego sarebbe
+        // lo stesso — si fallisce chiusi in entrambi i casi — ma il log direbbe
+        // «riga senza sezione» invece di «il database non ha risposto».
+        if (rowErr) throw rowErr;
+        const scopeErr = await assertSezioneInScope(admin, auth.user, (row?.section_id as string | null) ?? null);
+        if (scopeErr) return scopeErr;
 
         const { error } = await admin.from('locker_config').delete().eq('id', id);
         if (error) throw error;
@@ -263,11 +312,3 @@ export const DELETE = withRoute('locker/materials:DELETE', async (request: NextR
         return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 });
     }
 });
-
-// ── Default fallback ──────────────────────────────────────────────────────────
-export const MATERIALI_DEFAULT = [
-    { id: 'default-1', nome: 'Pannolini', icona: '🧷', unita: 'pz', livello_allerta: 5, livello_emergenza: 2, ordine: 1, attivo: true },
-    { id: 'default-2', nome: 'Salviette', icona: '🧻', unita: 'pz', livello_allerta: 4, livello_emergenza: 2, ordine: 2, attivo: true },
-    { id: 'default-3', nome: 'Crema',     icona: '🧴', unita: 'pz', livello_allerta: 3, livello_emergenza: 1, ordine: 3, attivo: true },
-    { id: 'default-4', nome: 'Cambio',    icona: '👕', unita: 'pz', livello_allerta: 2, livello_emergenza: 1, ordine: 4, attivo: true },
-];

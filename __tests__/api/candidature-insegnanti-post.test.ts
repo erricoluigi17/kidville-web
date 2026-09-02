@@ -371,6 +371,22 @@ function attendiCorpo(corpo: unknown, quale: keyof typeof FRAMMENTO_AVVISO): voi
   }
 }
 
+/**
+ * Il percorso che la rotta di caricamento produce — `candidature/<uuid>-cv.<est>`.
+ *
+ * ⚠️ Sta QUI, a livello di modulo, e non più solo dentro il `describe` del
+ * curriculum: dal 2026-08-24 `cv_path` è OBBLIGATORIO, quindi ogni invio valido
+ * deve portarlo e la factory qui sotto ne ha bisogno. Due costanti con lo stesso
+ * nome e lo stesso valore in due ambiti diversi sono la coppia che diverge al
+ * primo che ne tocca una sola.
+ *
+ * ⚠️ IL NOME DEL FILE NON C'È, e non è un dettaglio di scrittura:
+ * `costruisciPercorsoCv` non conserva niente di quello che manda il browser (su
+ * questa porta il file si chiama `cv-<cognome>.pdf`), e `CV_FORMA` pretende la
+ * stringa fissa `-cv`.
+ */
+const CV_BUONO = 'candidature/0f5f1f2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f-cv.pdf'
+
 /** Una candidatura valida e completa: da qui si toglie o si sposta un pezzo per volta. */
 const candidatura = (extra: Record<string, unknown> = {}) => ({
   nome: 'Ines',
@@ -386,8 +402,12 @@ const candidatura = (extra: Record<string, unknown> = {}) => ({
   // docenti («Insegnante — Nido (0-3)») e la route le deriva. Un corpo che
   // mandasse ancora `gradi` prende 400 dallo zod, che pretende `posizioni`.
   posizioni: ['insegnante_nido', 'insegnante_infanzia'],
-  disponibilita: 'tempo_pieno',
   note: 'Mi presento in poche righe.',
+  // ⚠️ DAL 2026-08-24 IL CURRICULUM È OBBLIGATORIO: senza questa riga ogni invio
+  // di questo file prenderebbe 400 «Campo obbligatorio» — una sessantina di casi
+  // rossi che si leggono come un guasto della route invece che come un allegato
+  // mancante. Chi vuole il caso senza curriculum usa `inviaSenzaCv()`.
+  cv_path: CV_BUONO,
   presa_visione_informativa: true,
   ...extra,
 })
@@ -403,6 +423,25 @@ const invia = (corpo: Record<string, unknown>) =>
 
 const inviaValida = (dati: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
   invia({ scuole_ids: [SEDE_A], data: candidatura(dati), ...extra })
+
+/**
+ * Lo stesso invio, senza il curriculum — cioè la chiave OMESSA, non messa a
+ * `null`.
+ *
+ * La differenza conta: `cv_path: null` supererebbe comunque `validateField`
+ * (`eVuoto` cattura anche `null`), ma l'omissione è la forma vera con cui un
+ * corpo arriva da un client vecchio o da `curl`. Dal 2026-08-24 è ciò che il
+ * server rifiuta.
+ */
+const inviaSenzaCv = () => {
+  // ⚠️ `delete` su una copia e non una destrutturazione con scarto: il gate del
+  // progetto è `eslint --max-warnings 0`, e la variabile scartata accende
+  // `@typescript-eslint/no-unused-vars` — un WARNING, quindi invisibile a
+  // `tsc --noEmit` e rosso soltanto sul gate.
+  const senza: Record<string, unknown> = candidatura()
+  delete senza.cv_path
+  return invia({ scuole_ids: [SEDE_A], data: senza })
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -518,16 +557,92 @@ describe('POST /api/iscrizione/insegnanti · il percorso felice', () => {
     expect(scritto).not.toContain('insegnante_nido')
     expect(scritto, 'il percorso del curriculum è uscito nel log').not.toContain('candidature/')
 
-    // E il verso opposto, che è quello nuovo: una candidatura NON docente e
-    // senza curriculum. `docente: false` è ciò che distingue in SQL le
-    // candidature che faranno nascere un account da quelle che non ne faranno
-    // nessuno — senza, quel bivio non è contabile.
+    // E il verso opposto: una candidatura NON docente. `docente: false` è ciò che
+    // distingue in SQL le candidature che faranno nascere un account da quelle
+    // che non ne faranno nessuno — senza, quel bivio non è contabile.
     h.eventi = []
     await inviaValida({ posizioni: ['segreteria'] })
     const seconda = h.eventi.find((e) => e.campi.esito === 'candidatura-ricevuta')
     expect(seconda?.campi.n_posizioni).toBe(1)
     expect(seconda?.campi.docente, 'una candidatura di segreteria è contata come docente').toBe(false)
-    expect(seconda?.campi.con_cv).toBe(false)
+
+    // ⚠️ `con_cv` HA PERSO IL SUO VERSO FALSO, ED È UNA PERDITA, NON UN DETTAGLIO.
+    //
+    // Fino al 2026-08-24 qui c'era `expect(seconda?.campi.con_cv).toBe(false)`, e
+    // misurava qualcosa: quante candidature arrivavano senza curriculum (in
+    // produzione erano quattro su dieci — àncora `MISURA-CV`). Col campo obbligatorio quel verso non
+    // esiste più — una candidatura senza `cv_path` non arriva a questo log, si
+    // ferma con un 400 — e il booleano vale `true` su OGNI riga nuova.
+    //
+    // Si tiene lo stesso, come asserzione POSITIVA: dice che il campo continua a
+    // essere registrato, e il giorno in cui tornasse `false` su un invio andato a
+    // buon fine vorrebbe dire che l'obbligo è saltato senza che nessuno se ne
+    // accorga.
+    //
+    // ⚠️ E QUI, IL 25/08, C'ERA SCRITTO CHE «chi cerca quante persone si sono
+    // fermate per il curriculum lo trova nel ramo del RIFIUTO». È FALSO, ed è
+    // stato misurato: in `app_log`, su tutta la vita della rotta, gli eventi
+    // `campi-non-validi%` sono **zero** contro 237 `candidatura-ricevuta`. Non
+    // possono che essere zero: il client blocca con lo STESSO `validateField` del
+    // server, quindi la richiesta non parte. Quel ramo è un TRIPWIRE — se scatta,
+    // il gate del client è saltato — e la caduta d'imbuto non è osservabile da
+    // nessuna parte. La ragione per esteso sta accanto a `con_cv` nella route.
+    expect(seconda?.campi.con_cv, 'un invito andato a buon fine senza curriculum: l’obbligo è saltato').toBe(true)
+  })
+
+  // ===========================================================================
+  // IL RIFIUTO PER CURRICULUM MANCANTE DEVE ESSERE CONTABILE
+  //
+  // Dal 2026-08-24 il curriculum è obbligatorio, e la misura fatta prima di
+  // deciderlo dice che quattro candidature su dieci — àncora `MISURA-CV` — oggi
+  // arrivano senza.
+  //
+  // ⚠️ QUESTA INTESTAZIONE PROMETTEVA UNA COSA CHE QUESTO EVENTO NON PUÒ DARE, e
+  // il 25/08 è stata corretta. Diceva: «è un prezzo che va SORVEGLIATO: se domani
+  // il modulo perdesse quattro persone su dieci, lo si deve poter vedere in
+  // `app_log` senza indovinare». Non lo si può vedere: chi si ferma si ferma NEL
+  // BROWSER, perché il client rifiuta con lo stesso `validateField` del server, e
+  // la richiesta non parte. Misurato: `campi-non-validi%` su questa rotta = **0**
+  // occorrenze contro 237 candidature ricevute, dall'11 al 25 agosto.
+  //
+  // Quello che questo test garantisce — e che vale — è un'altra cosa, più
+  // modesta e vera: che il TRIPWIRE sia leggibile. Se un giorno un rifiuto per
+  // curriculum mancante arriva davvero al server, vuol dire che il blocco del
+  // client è saltato o che ha scritto un client non-browser, e in quel momento
+  // l'evento deve nominare `cv_path` in una forma contabile con un `where esito =`
+  // — non un `like` che pescherebbe i rifiuti di tutt'altri campi.
+  //
+  // L'evento c'è già e non se ne aggiunge un altro: `campi-non-validi-<id>.<id>…`,
+  // livello `warn`, con gli id ORDINATI e troncati a `ESITO_MAX`. Una seconda
+  // difesa dedicata al solo curriculum sarebbe la «seconda regola destinata a
+  // divergere» contro cui questo repo ha una dottrina scritta. Quello che serve è
+  // la PROVA che l'id ci finisca dentro e che dentro non ci finisca altro.
+  // ===========================================================================
+  it('un modulo perfetto a cui manca SOLO il curriculum lascia in `app_log` un esito che lo NOMINA', async () => {
+    const res = await inviaSenzaCv()
+    expect(res.status).toBe(400)
+
+    const avviso = h.eventi.find(
+      (e) => e.evento === 'candidatura' && String(e.campi.esito ?? '').startsWith('campi-non-validi'),
+    )
+    expect(avviso, 'il rifiuto per curriculum mancante non ha loggato niente').toBeTruthy()
+    expect(avviso?.livello).toBe('warn')
+
+    // ⚠️ L'ESITO ESATTO, non un `toContain`. È un solo campo respinto, quindi
+    // l'elenco non viene troncato e la stringa è interamente prevedibile: è
+    // questa forma — e solo questa — che si conta con un `where esito =` invece
+    // che con un `like` che pescherebbe anche i rifiuti di tutt'altri campi.
+    expect(avviso?.campi.esito).toBe('campi-non-validi-cv_path')
+    expect(avviso?.campi.n).toBe(1)
+
+    // E il log resta quello che questo repo pretende: un IDENTIFICATIVO di campo,
+    // mai la persona che stava compilando. Il nome, il cognome e l'email erano
+    // tutti presenti e validi in questo invio — è proprio il caso in cui sarebbe
+    // stato comodo scriverli accanto al motivo del rifiuto.
+    const scritto = JSON.stringify(avviso?.campi)
+    expect(scritto, 'il nome di chi si candidava è finito nel log del rifiuto').not.toContain('Ines')
+    expect(scritto, 'il cognome è finito nel log del rifiuto').not.toContain('Prova')
+    expect(scritto, 'l’email è finita nel log del rifiuto').not.toContain('example.invalid')
   })
 
   // ===========================================================================
@@ -647,18 +762,8 @@ describe('POST /api/iscrizione/insegnanti · il percorso felice', () => {
 // far firmare alla segreteria un documento che non è un curriculum.
 // =============================================================================
 describe('POST /api/iscrizione/insegnanti · il percorso del curriculum', () => {
-  /**
-   * La forma che la rotta di caricamento produce — `candidature/<uuid>-cv.<est>`.
-   *
-   * ⚠️ IL NOME DEL FILE NON C'È PIÙ, e non è un dettaglio di scrittura: fino al
-   * 2026-08-15 qui c'era `-curriculum.pdf`, cioè una forma che ammetteva un nome
-   * arbitrario dopo l'uuid. `costruisciPercorsoCv` non conserva più niente di
-   * quello che manda il browser (su questa porta il file si chiama
-   * `cv-<cognome>.pdf`), e `CV_FORMA` pretende la stringa fissa `-cv`: un
-   * percorso finisce in una colonna, dentro un URL firmato che lo porta in
-   * chiaro e — se qualcuno si distrae — dentro un log.
-   */
-  const CV_BUONO = 'candidature/0f5f1f2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f-cv.pdf'
+  // `CV_BUONO` vive a livello di modulo (vedi la sua testata): dal 2026-08-24 lo
+  // usa anche la factory `candidatura()`, perché il campo è obbligatorio.
 
   it('un percorso NELLA FORMA della rotta di caricamento passa e finisce in tabella', async () => {
     const res = await inviaValida({ cv_path: CV_BUONO })
@@ -719,10 +824,49 @@ describe('POST /api/iscrizione/insegnanti · il percorso del curriculum', () => 
     expect(h.inserts).toHaveLength(0)
   })
 
-  it('senza curriculum non cambia niente: il campo è FACOLTATIVO', async () => {
-    const res = await inviaValida()
-    expect(res.status).toBe(201)
-    expect(h.inserts[0].cv_path).toBeNull()
+  it('senza curriculum è 400, e il campo è NOMINATO: dal 2026-08-24 è OBBLIGATORIO', async () => {
+    // In Kidville il curriculum non è più un allegato gradito: senza, la
+    // candidatura non esiste. Il rifiuto arriva dalla ri-validazione server
+    // (`validatePage` sui campi visibili), NON dal gate di forma del percorso —
+    // che gira DOPO e guarda un valore che qui non c'è (`cvPath !== null` è
+    // falso, quindi quel ramo non scatta). Due rifiuti diversi con lo stesso
+    // status, e l'unico modo di distinguerli è leggere il MESSAGGIO: questo è
+    // «Allega un file per proseguire», l'altro è «Allega di nuovo il curriculum…».
+    // ⚠️ IL PRIMO DEI DUE È CAMBIATO IL 25/08/2026, e la stessa frase la dice ORA
+    // anche il client: era «Campo obbligatorio», cioè la risposta di un database
+    // su un campo dove l'azione non è digitare ma allegare. La regola è rimasta
+    // UNA — `validateField`, che rigirano entrambe le sponde — e a cambiare è il
+    // solo messaggio, come già fa `messaggioPattern` fra provincia, CAP e CF.
+    //
+    // ⚠️ QUI C'ERA UNA NOTA DI SICUREZZA INVENTATA, e va detto perché sparisce.
+    // Sosteneva che invertendo l'ordine — il gate di forma prima di `validatePage`
+    // — un `cv_path` assente «cadrebbe fuori da entrambi i rami e passerebbe», e
+    // che a impedirlo fosse questa asserzione sul messaggio. È FALSO, ed è stato
+    // MISURATO invertendo davvero i due blocchi nella route (2026-08-25):
+    // `npx vitest run __tests__/api/candidature-insegnanti-post.test.ts` → ESITO=0,
+    // 88 test verdi, nessun 201 indebito. Il gate 4-bis è guardato da
+    // `cvPath !== null`: su un valore assente non scatta né prima né dopo, e
+    // `validatePage` respinge comunque. I due controlli sono COMMUTATIVI rispetto
+    // al valore assente; l'ordine decide quale messaggio esce su una stringa
+    // MALFORMATA, non se il vuoto passa.
+    // La conseguenza dell'inversione era stata dedotta invece che eseguita —
+    // dentro un file che in ogni altro paragrafo denuncia esattamente questo.
+    // QUELLO CHE L'ASSERZIONE DIFENDE DAVVERO è che i due rifiuti restino
+    // DISTINGUIBILI: il 400 su cv_path assente deve dire «Allega un file per
+    // proseguire» e non «Allega di nuovo il curriculum…», perché a chi compila si
+    // deve dire di allegare, non che il suo riferimento è corrotto.
+    // LA DIFESA CONTRO LA SPARIZIONE DELL'OBBLIGO è un'altra, esiste ed è già
+    // presidiata altrove: `cv_path` non ha `condition`, quindi non esce mai da
+    // `campiVisibili` (test «il curriculum non ha condition…»).
+    const res = await inviaSenzaCv()
+    expect(res.status).toBe(400)
+    const j = await res.json()
+    expect(Object.keys(j.campi), 'il campo respinto va NOMINATO').toContain('cv_path')
+    expect(j.campi.cv_path).toBe('Allega un file per proseguire')
+    // …e NON la frase generica dei campi da digitare, che è ciò che diceva fino al
+    // 25/08: su un riquadro di caricamento non dice cosa fare.
+    expect(j.campi.cv_path).not.toBe('Campo obbligatorio')
+    expect(h.inserts, 'una candidatura senza curriculum è entrata in tabella').toHaveLength(0)
   })
 
   // ===========================================================================
@@ -955,6 +1099,40 @@ describe('POST /api/iscrizione/insegnanti · le posizioni e le fasce derivate', 
     expect(res.status).toBe(201)
     expect(h.inserts[0].posizione_altro, 'un campo nascosto ha scritto il suo valore').toBeNull()
     expect(JSON.stringify(h.inserts[0])).not.toContain('psicomotricista')
+  })
+})
+
+// =============================================================================
+// LA DISPONIBILITÀ: LA DOMANDA È USCITA, LA COLONNA È RIMASTA VIVA
+//
+// Dal 2026-08-24 il modulo non chiede più la disponibilità — in Kidville si
+// lavora solo a tempo pieno — ma `candidature_insegnanti.disponibilita` NON è
+// stata cancellata: porta i valori scritti dalle candidature arrivate prima, e
+// la segreteria continua a leggerli di lì. È la stessa situazione di `gradi`
+// qui sopra — campo uscito dal template, colonna viva — e vuole la stessa
+// difesa, perché `data` è `.loose()`: una scheda rimasta aperta col bundle
+// vecchio continua a spedire quella chiave, e una colonna viva è una colonna in
+// cui si può ancora scrivere.
+//
+// Oggi la difesa è strutturale: `costruisciRiga` itera `INSEGNANTE_FIELDS` e non
+// fa lo spread di `data`. Questo caso la tiene ferma. Senza, basterebbe una riga
+// «se il client la manda, scrivila» — che è esattamente la forma con cui `gradi`
+// è scritta a mano poche righe più in là — per rimettere in tabella un dato che
+// non si chiede più, senza che nessun test lo dicesse.
+// =============================================================================
+describe('POST /api/iscrizione/insegnanti · la disponibilità che non si chiede più', () => {
+  it('`disponibilita` mandata dal CLIENT non entra in tabella: la colonna resta NULL', async () => {
+    const res = await inviaValida({ disponibilita: 'part_time_mattina' })
+    expect(res.status).toBe(201)
+    expect(
+      h.inserts[0],
+      'la disponibilità mandata dal client è finita in tabella: da oggi quella colonna la scrivono solo le righe storiche',
+    ).not.toHaveProperty('disponibilita')
+    // Il valore non deve nemmeno essere finito altrove: `COLONNE_AMMESSE` si
+    // deriva dal template, quindi da oggi non contiene più `disponibilita` e
+    // l'uguaglianza chiusa qui sotto prende anche una scrittura CONDIZIONATA.
+    expect(Object.keys(h.inserts[0]).sort()).toEqual(COLONNE_AMMESSE)
+    expect(JSON.stringify(h.inserts[0])).not.toContain('part_time_mattina')
   })
 })
 
@@ -1321,11 +1499,37 @@ describe('POST /api/iscrizione/insegnanti · come si traducono gli errori del da
   })
 
   it('se anche il RITENTO fallisce, è 500: non si finge un 201', async () => {
-    h.erroreInsert = { code: '42703', message: 'column "disponibilita" of relation "x" does not exist' }
+    // ⚠️ LA COLONNA NOMINATA DALL'ERRORE DEV'ESSERE UNA CHE LA ROTTA SCRIVE
+    // DAVVERO, e qui lo si ASSERISCE invece di darlo per scontato.
+    // `colonnaMancante()` accetta il nome solo se è fra le chiavi del record;
+    // altrimenti la rotta ripiega su `consents_log`, il ritento avviene lo
+    // stesso, fallisce lo stesso e il 500 arriva lo stesso — cioè questo caso
+    // scivolerebbe sul ramo del suo vicino («colonna_che_non_scriviamo») con
+    // TUTTE le sue asserzioni ancora verdi.
+    //
+    // Non è un'ipotesi: fino al 2026-08-24 qui c'era scritto `disponibilita`, e
+    // il giorno in cui quel campo è uscito dal modulo il caso ha smesso di
+    // provare ciò che il suo nome racconta senza che niente diventasse rosso.
+    // Perciò adesso il nome è sorvegliato da due parti — il perimetro
+    // dell'INSERT qui sotto, e il warn che la colonna la NOMINA in coda.
+    const CADUTA = 'titolo_dettaglio'
+    expect(
+      COLONNE_AMMESSE,
+      `«${CADUTA}» non è più una colonna che l’INSERT scrive: questo caso non prova ` +
+        'più il ramo che il suo nome racconta. Scegline una da `INSEGNANTE_FIELDS`.',
+    ).toContain(CADUTA)
+    h.erroreInsert = { code: '42703', message: `column "${CADUTA}" of relation "x" does not exist` }
     h.erroriSuccessivi = [{ code: '42501', message: 'permission denied' }]
     const res = await inviaValida()
     expect(res.status).toBe(500)
     expect((await res.json()).codice).toBe('CANDIDATURA_NON_INVIATA')
+    // La prova che il ritento è caduto SU QUESTA colonna e non sul ripiego.
+    expect(
+      h.eventi
+        .filter((e) => String(e.campi.esito ?? '').startsWith('colonna-assente'))
+        .map((e) => String(e.campi.esito)),
+      'il ritento non è caduto sulla colonna nominata dall’errore: ha ripiegato altrove',
+    ).toEqual([`colonna-assente-${CADUTA}`])
   })
 })
 

@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { caricaFigliConTarget, postVisibileAiFigli, type FiglioTarget, type PostTarget } from '@/lib/news/target'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -80,7 +84,10 @@ export const GET = withRoute('news/feed:GET', async (request: NextRequest) => {
     // Sedi visibili (+ figli, per il filtro genitore).
     let sedi: string[]
     let figli: FiglioTarget[] = []
-    if (user.role === 'genitore') {
+    // PRESENTAZIONE: le news hanno due viste — il feed della famiglia (filtrato sui
+    // target dei figli) e quello di lavoro (le sedi selezionate). Con `eFamiglia`
+    // una docente-genitore perderebbe il secondo, che è quello che usa in servizio.
+    if (agisceComeGenitore(user)) {
       figli = await caricaFigliConTarget(supabase, user.id)
       sedi = [...new Set(figli.map((f) => f.scuola_id).filter((s): s is string => !!s))]
       if (sedi.length === 0) {
@@ -120,7 +127,9 @@ export const GET = withRoute('news/feed:GET', async (request: NextRequest) => {
     }
 
     let posts = (data ?? []) as unknown as FeedPost[]
-    if (user.role === 'genitore') posts = posts.filter((p) => postVisibileAiFigli(p, figli))
+    // Stesso predicato del ramo che ha popolato `figli`: se i due divergessero,
+    // il filtro girerebbe su un elenco vuoto e nasconderebbe tutto.
+    if (agisceComeGenitore(user)) posts = posts.filter((p) => postVisibileAiFigli(p, figli))
     posts = ordina(posts)
 
     if (archivio) {

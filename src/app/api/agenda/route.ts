@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, requireUser, type AppUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import {
   assertSezioneInScope,
   resolveScuoleAttive,
@@ -146,7 +150,12 @@ export const GET = withRoute('agenda:GET', async (request: NextRequest) => {
     const supabase = await createAdminClient()
     const from = q.data.from ?? oggiYMD()
 
-    if (user.role === 'genitore') {
+    // PRESENTAZIONE: «sto guardando l'agenda in veste di famiglia?». Chi guarda in
+    // veste di lavoro scende al ramo staff e ottiene lo scope di plesso/sezione: con
+    // `eFamiglia` una docente-genitore verrebbe dirottata sul ramo famiglia e
+    // dovrebbe indicare un `alunno_id` — cioè perderebbe l'agenda che le serve per
+    // insegnare.
+    if (agisceComeGenitore(user)) {
       const alunnoId = q.data.alunno_id
       if (!alunnoId) {
         return NextResponse.json({ error: 'alunno_id obbligatorio' }, { status: 400 })

@@ -88,7 +88,29 @@ const Corpo = z
  */
 const CV_CARICABILE_DA = Date.parse('2026-08-15T00:48:42Z')
 
-/** Le colonne del modulo: gli `id` dei campi SONO i nomi delle colonne. */
+/**
+ * Le colonne del modulo: gli `id` dei campi SONO i nomi delle colonne.
+ *
+ * ⚠️ SI DERIVANO DAL TEMPLATE, e questa è una comodità con un prezzo: un campo
+ * tolto di lì sparisce anche da questa lettura e dalla copia email — comprese le
+ * candidature STORICHE che quel valore ce l'hanno ancora in tabella. Nessun test
+ * diventa rosso: è il tipo di perdita che si scopre leggendo un'email.
+ *
+ * Il 2026-08-24, togliendo «Disponibilità» dal modulo, la perdita è stata
+ * MISURATA prima di accettarla, non stimata: questa rotta lavora solo sulle righe
+ * con `copia_inviata_il IS NULL`, e quelle righe erano zero — zero anche il
+ * giorno dopo, rimisurate. Ogni riga che entrerà in coda da qui in avanti nasce
+ * senza quel campo, quindi la perdita effettiva è zero adesso e in avanti.
+ * Aggiungere la colonna a mano alla `select` non sarebbe nemmeno bastato: l'email
+ * itera il template, quindi sarebbe servito un caso speciale fuori dalla
+ * derivazione, che nessun test difende, per zero righe.
+ *
+ * Chi toglierà il prossimo campo rifaccia il conto invece di fidarsi di questa
+ * riga — è una query sola — e sappia che un `UPDATE` che riportasse
+ * `copia_inviata_il` a NULL su una candidatura storica le farebbe arrivare la
+ * copia SENZA quel campo. Il dato resta comunque leggibile in Segreteria, che è
+ * la superficie su cui si decide.
+ */
 const COLONNE_MODULO = INSEGNANTE_FIELDS.map((f) => f.id).join(', ')
 
 interface RigaConsenso {

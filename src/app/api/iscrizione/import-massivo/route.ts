@@ -51,6 +51,7 @@
  */
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
@@ -69,10 +70,59 @@ import {
 } from '@/lib/iscrizioni/import/lotto'
 import { decidi } from '@/lib/iscrizioni/import/analisi'
 import { eseguiDomanda } from '@/lib/iscrizioni/import/esegui'
+import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { invitiPrevisti, riprendiInvitiSospesi, emailSpediteOggi } from '@/lib/iscrizioni/import/inviti'
 import { pausaFraEmail } from '@/lib/email/ritmo'
 
 const JOB = 'iscrizioni-import-invio'
+
+/**
+ * I codici con cui PostgREST dice «quella cosa qui non c'è»: tabella assente,
+ * colonna assente, schema non ricaricato. Il DB E2E della CI non è migrato, e un
+ * ambiente diverso non è un guasto.
+ */
+const SCHEMA_ASSENTE = new Set(['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'])
+
+/**
+ * I nomi delle sezioni della sede, per il pre-flight qui sotto.
+ *
+ * `null` significa «non lo so» ed è diverso da «non ce n'è nessuna»: chi riceve
+ * `null` non controlla, perché non sapere non può voler dire bocciare
+ * un'iscrizione. Non lancia mai.
+ */
+async function nomiSezioniDiSede(
+  supabase: SupabaseClient,
+  scuolaId: string,
+): Promise<Set<string> | null> {
+  const { data, error } = await supabase.from('sections').select('name').eq('scuola_id', scuolaId)
+  if (error) {
+    const codice = (error as { code?: string }).code ?? null
+    logEvento('iscrizione', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
+      operazione: JOB,
+      esito: 'sezioni-non-leggibili',
+      entita_tipo: 'sections',
+      sede_id: scuolaId,
+      error_code: codice,
+    }, error)
+    return null
+  }
+  // PostgREST senza errore torna SEMPRE un array (al più vuoto): se non lo è, la
+  // risposta non è conforme e non si sa niente.
+  if (!Array.isArray(data)) {
+    logEvento('iscrizione', 'warn', {
+      operazione: JOB,
+      esito: 'sezioni-non-leggibili',
+      entita_tipo: 'sections',
+      sede_id: scuolaId,
+      error_code: null,
+    })
+    return null
+  }
+  // Elenco VUOTO: nemmeno questo autorizza a bocciare. Una sede senza sezioni in
+  // archivio è una sede da configurare, non cento iscrizioni da rifiutare.
+  if (data.length === 0) return null
+  return new Set((data as { name?: unknown }[]).map((x) => normalizzaNomeSezione(x?.name)))
+}
 
 /**
  * IL TEMPO MASSIMO DELLA FUNZIONE, DICHIARATO E NON EREDITATO.
@@ -293,6 +343,10 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
       const { righe } = await caricaElenco(supabase, scuolaId)
       if (righe.length === 0) continue
 
+      // Una SELECT per sede per giro, non una per domanda: il pre-flight qui
+      // sotto la consuma decine di volte.
+      const nomiSezioni = await nomiSezioniDiSede(supabase, scuolaId)
+
       // Il lotto: le domande prendibili, dalle più vecchie. In prova a vuoto NON
       // si prende in carico niente — un dry-run che lascia il segno non è a vuoto.
       let ids: string[] = []
@@ -386,6 +440,53 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
             })
           }
           continue
+        }
+
+        // ── PRE-FLIGHT sezione: la classe assegnata esiste NELLA SEDE? ────
+        //
+        // ⚠️ QUESTA REGOLA ESISTEVA GIÀ, MA SU UNA STRADA SOLA. La via manuale
+        // (`admin/iscrizioni:PATCH`) rifiuta da sempre di iscrivere un bambino in
+        // una classe che nella sede non ha una sezione. Questa via — il cron, che
+        // iscrive la grande maggioranza dei bambini — non lo controllava.
+        //
+        // Il prezzo, misurato il 2026-08-31 su Kidville Aversa: l'elenco della
+        // sede era un foglio unico chiamato `RETTE`, quindi ogni riga aveva
+        // `classe = 'RETTE'`, che non è una sezione. `sync_alunno_section_id()`
+        // non trova il nome, lascia `section_id` NULL **e non solleva niente**:
+        // 73 bambini iscritti e invisibili ad appello, registro e classe, con 87
+        // credenziali già spedite alle loro famiglie. Passati per la via manuale
+        // sarebbero stati fermati uno per uno.
+        //
+        // La domanda non si perde: va in `da_controllare`, che è lo stesso posto
+        // in cui finisce chi non compare nell'elenco. Nessuna scrittura parziale —
+        // qui non è ancora stato creato niente.
+        if (nomiSezioni) {
+          const fuori = decisione.assegnazioni.filter(
+            (a) => !nomiSezioni.has(normalizzaNomeSezione(a.classe)),
+          )
+          if (fuori.length > 0) {
+            daControllare++
+            perSede(scuolaId).daControllare++
+            // Nel log solo conteggi e sede: il nome della classe a Cesa è il nome
+            // di battesimo di un'insegnante, e il nome del bambino è di un minore.
+            logEvento('iscrizione', 'error', {
+              operazione: JOB,
+              esito: 'sezione-inesistente-in-sede',
+              entita_id: id,
+              sede_id: scuolaId,
+              quantita: fuori.length,
+            })
+            if (!dryRun) {
+              await supabase.rpc('iscrizioni_sospendi', {
+                p_submission_id: id,
+                p_stato: 'da_controllare',
+                p_motivo: fuori.length === 1
+                  ? `La classe «${fuori[0].classe}» non è fra le sezioni di questa sede: l'iscrizione si fermerebbe qui e il bambino resterebbe fuori da ogni appello. Va creata la sezione con questo nome esatto, oppure corretto il nome nell'elenco.`
+                  : `${fuori.length} bambini di questa domanda sono assegnati a classi che non sono fra le sezioni di questa sede (${[...new Set(fuori.map((a) => a.classe))].join(', ')}): resterebbero fuori da ogni appello.`,
+              })
+            }
+            continue
+          }
         }
 
         // ── IL TETTO, MISURATO PRIMA DI COMINCIARE ────────────────────────

@@ -84,45 +84,79 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                 // gate di ruolo, dall'isolamento per sede e dalla regola «foto
                 // privata», che vivevano tutti sul database e mai sul file.
                 // Da qui in poi si serve un link firmato a tempo (vedi
-                // `@/lib/gallery/storage`), e questo blocco deve RIMETTERE il
-                // bucket privato a ogni upload: se una mano lo riaprisse dalla
-                // console, il primo caricamento lo richiuderebbe.
-                const opzioniBucket = {
-                    public: false,
-                    allowedMimeTypes: [
-                        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp',
-                        // niente QuickTime (.mov) né Matroska (.mkv): HEVC/.mov si convertono
-                        // (o si rifiutano con 415), il bucket accetta solo formati riproducibili.
-                        'video/mp4', 'video/webm'
-                    ],
-                    fileSizeLimit: 209715200 // 200MB
-                };
+                // `@/lib/gallery/storage`).
+                //
+                // ⚠️ QUESTO BLOCCO È UNA RETE DI SICUREZZA, NON CONFIGURAZIONE.
+                // La configurazione del bucket si dichiara in migrazione
+                // (`20260901…_bucket_gallery_privato_50mb.sql`) e la verifica il lock
+                // `__tests__/architecture/bucket-storage-dichiarati.test.ts`. Qui NON
+                // si riscrive a ogni foto: si guarda, e si scrive solo se c'è da
+                // riparare.
+                //
+                // IL DIFETTO CHE HA PORTATO A QUESTA FORMA, misurato il 2026-09-01.
+                // Fino a quel giorno questo blocco spediva `public: false` insieme a
+                // `fileSizeLimit: 209715200` (200 MB), sopra il TETTO GLOBALE di upload
+                // del progetto (50 MB, e deve restare tale). Supabase valuta quel campo
+                // PRIMA di applicare qualunque altro e rifiuta l'INTERA chiamata con
+                // 400 `EntityTooLarge`: nessun campo veniva scritto, `public` compreso.
+                // Risultato: la richiusura automatica non è mai avvenuta — nemmeno una
+                // volta dal 26/05/2026 — e ogni caricamento riuscito lasciava due righe
+                // `error` nei log (62 il 01/09, su 31 foto tutte salvate).
+                // La lezione, cablata nel test «la richiusura NON può essere vetata da
+                // un altro campo»: si spedisce SOLO ciò che si sta riparando.
                 const info = buckets?.find(b => b.name === BUCKET_GALLERIA);
-                // Trovarlo APERTO è un incidente, non una nota: finché è rimasto
-                // così, ogni foto di bambino era scaricabile da chiunque avesse
-                // l'indirizzo. Si logga PRIMA di richiuderlo, altrimenti la
-                // riparazione cancellerebbe la traccia del guasto.
-                if (info?.public === true) {
+                if (!info) {
+                    // Ambiente nuovo (o DB non migrato): il bucket nasce qui, già chiuso.
+                    // Il limite dichiarato sta SOTTO il tetto globale, altrimenti anche
+                    // la creazione verrebbe respinta e il bucket non esisterebbe affatto.
+                    const esitoCreazione = await supabase.storage.createBucket(BUCKET_GALLERIA, {
+                        public: false,
+                        // SOLO formati che si aprono sia su Android sia su iOS (decisione
+                        // del 2026-09-01). In galleria finiscono foto e video dei bambini:
+                        // un formato che si vede da una parte sola è metà dei genitori
+                        // davanti a un riquadro nero.
+                        //  · niente QuickTime (.mov) né Matroska (.mkv): Android non li
+                        //    riproduce. Il telefono converte prima di caricare, e ciò che
+                        //    sfugge lo ferma il 415 qui sopra — questa è la terza rete;
+                        //  · niente `image/gif`: il client ridisegna OGNI immagine su
+                        //    canvas e la riesporta in JPEG, quindi una GIF al bucket non
+                        //    arriva. Elencarla descriveva una cosa che non accade;
+                        //  · niente `image/jpg`: non è un tipo MIME, nessun browser lo manda.
+                        allowedMimeTypes: [
+                            'image/jpeg', 'image/png', 'image/webp',
+                            'video/mp4', 'video/webm'
+                        ],
+                        fileSizeLimit: 52428800 // 50MB — quanto il tetto globale del progetto
+                    });
+                    logEvento('storage', esitoCreazione.error ? 'error' : 'info', {
+                        operazione: 'gallery/upload:POST',
+                        esito: esitoCreazione.error ? 'bucket-non-creato' : 'bucket-creato',
+                        bucket: BUCKET_GALLERIA,
+                    }, esitoCreazione.error ?? undefined);
+                } else if (info.public === true) {
+                    // Trovarlo APERTO è un incidente, non una nota: finché è rimasto
+                    // così, ogni foto di bambino era scaricabile da chiunque avesse
+                    // l'indirizzo. Si logga PRIMA di richiuderlo, altrimenti la
+                    // riparazione cancellerebbe la traccia del guasto.
                     logEvento('storage', 'error', {
                         operazione: 'gallery/upload:POST',
                         esito: 'bucket-pubblico',
                         bucket: BUCKET_GALLERIA,
                     });
-                }
-                // ⚠️ Anche queste NON lanciano: ritornano `{ error }`. Senza
-                // guardare il valore di ritorno, «il bucket lo rimettiamo
-                // privato a ogni upload» sarebbe una promessa non verificata —
-                // e il fallimento della richiusura è esattamente ciò che non
-                // possiamo permetterci di non sapere.
-                const esitoBucket = info
-                    ? await supabase.storage.updateBucket(BUCKET_GALLERIA, opzioniBucket)
-                    : await supabase.storage.createBucket(BUCKET_GALLERIA, opzioniBucket);
-                if (esitoBucket.error) {
-                    logEvento('storage', 'error', {
+                    // SOLO `public`. Niente `fileSizeLimit`, niente `allowedMimeTypes`:
+                    // il primo farebbe rifiutare la chiamata (vedi sopra), il secondo
+                    // applicherebbe di soppiatto una divergenza che è una decisione di
+                    // prodotto aperta e non presa (il lock la descrive per esteso).
+                    // `updateBucket` NON lancia: ritorna `{ error }`, e il fallimento di
+                    // una richiusura è esattamente ciò che non possiamo non sapere.
+                    const esitoChiusura = await supabase.storage.updateBucket(BUCKET_GALLERIA, {
+                        public: false,
+                    });
+                    logEvento('storage', esitoChiusura.error ? 'error' : 'warn', {
                         operazione: 'gallery/upload:POST',
-                        esito: 'bucket-non-riconfigurato',
+                        esito: esitoChiusura.error ? 'bucket-non-richiuso' : 'bucket-richiuso',
                         bucket: BUCKET_GALLERIA,
-                    }, esitoBucket.error);
+                    }, esitoChiusura.error ?? undefined);
                 }
             }
         } catch (bucketErr) {

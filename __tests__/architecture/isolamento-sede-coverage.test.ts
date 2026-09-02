@@ -813,8 +813,34 @@ const AMMESSE: Record<string, string> = {
     'parent/submissions:GET': 'scope famiglia: moduli compilati per i propri figli',
     'parent/medical-certificates:GET': 'scope famiglia: certificati medici dei propri figli',
     'parent/medical-certificates:POST': 'scope famiglia: caricamento su un proprio figlio',
-    'parent/forms/otp:PATCH': 'scope famiglia + OTP monouso sulla propria compilazione',
-    'parent/primaria:GET': 'scope famiglia: registro del proprio figlio',
+    // `parent/forms/otp:PATCH` NON è più qui (2026-09-01), e il debito è stato
+    // pagato per la ragione descritta poco sopra: ora l'handler chiama
+    // `requireParentOfStudent`, quindi il lock lo riconosce da solo dal corpo.
+    // La voce diceva «scope famiglia + OTP monouso sulla propria compilazione», e
+    // la prima metà era falsa: il controllo sull'alunno era
+    // `if (student_id && role === 'genitore' && !genitoreHasFiglio(…)) → 403`,
+    // cioè per chiunque NON agisse da genitore non c'era NESSUNO scope — né di
+    // famiglia né di sede — su una rotta che appone una firma con valore legale.
+    // L'OTP c'era davvero, ma un OTP prova CHI firma, non SU CHI.
+    // `parent/primaria:GET` NON è più qui (2026-09-01), ed è la nona voce tolta
+    // per la ragione descritta in cima al blocco: l'handler chiama
+    // `requireParentOfStudent`, quindi il lock lo riconosce da solo dal corpo.
+    //
+    // La voce diceva «scope famiglia: registro del proprio figlio», e la sua
+    // prima metà era falsa esattamente come le undici del 31/07. Il controllo
+    // era `if (agisceComeGenitore(user)) { serve il legame }`: per chi NON
+    // agiva da genitore — l'educator di un'altra sezione o di un'altra sede, la
+    // cuoca, la segreteria di un altro plesso — non c'era NESSUNO scope, né di
+    // famiglia né di sede, su una rotta che serve lezioni, valutazioni, NOTE
+    // DISCIPLINARI in testo libero e assenze con lo stato della giustificazione.
+    // Misurato prima del rimedio in `parent-primaria-idor.test.ts`: un educator
+    // della sede A chiedeva un minore della sede B e riceveva 200 con la nota
+    // disciplinare dentro il corpo.
+    //
+    // Era l'ULTIMA delle otto route della primaria a starci: le altre sette se
+    // n'erano già andate il 31/07, e questa è rimasta indietro un mese proprio
+    // perché la riga qui sopra spegneva il sospetto — che resta il danno
+    // peggiore di una voce falsa.
     'parent/primaria/note/firma:POST': 'scope famiglia: firma sulla nota del proprio figlio',
     // L'account è del genitore: lo scope è SE STESSO, non una sede.
     'parent/account/richiesta-cancellazione:GET': 'self: la richiesta di cancellazione del proprio account',
@@ -904,6 +930,32 @@ const AMMESSE: Record<string, string> = {
     'public/forms/[token]/upload:POST': 'token pubblico del modello',
     'iscrizione:<modulo>': 'modulo pubblico: la sede è scelta nel wizard e validata dentro la route',
     'iscrizione/model:GET': 'modulo pubblico: legge il modello di iscrizione, che è globale',
+    // ── L'IDENTITÀ DI CHI SI PROPONE NON HA CONFINI DI PLESSO (2026-09-01) ────
+    //
+    // `documentiDiUnaPraticaViva` (riga ~699) legge `pratiche_personale` per
+    // `email` + `stato in ('pending','in_approvazione')`, senza filtro di sede.
+    // La forma è quella giusta da segnalare: elenco su una tabella che
+    // `scuola_id` ce l'ha. Qui però il filtro sarebbe la cosa sbagliata.
+    //
+    // A DELIMITARE È LA PERSONA, NON IL PLESSO — è lo stesso ragionamento dello
+    // «scope famiglia» in cima a questo elenco. La domanda che la funzione pone
+    // è «questo percorso di documento appartiene a una pratica VIVA di QUESTA
+    // email?», e serve ad AMMETTERE chi rimanda in buona fede il PROPRIO modulo.
+    // La stessa dipendente può avere una pratica ad Aversa e proporsi a
+    // Giugliano: restringendo alla sede la funzione non troverebbe la pratica
+    // che è sua, e le rifiuterebbe il suo stesso documento. Non è un presidio
+    // che si perde, è un rifiuto che si guadagna.
+    //
+    // COSA NON LEGGE, che è la metà che rende la voce difendibile: `id` e le sole
+    // colonne del documento (`SELECT_PRATICA_VIVA` = `id` + `COLONNE_DOCUMENTO`),
+    // al più `MAX_PRATICHE_VIVE_LETTE` = 5 righe. Nessun nome, nessuna residenza,
+    // nessun codice fiscale, nessun conteggio: la sede la porta comunque la riga,
+    // semplicemente non si filtra. E la route la sede la conosce eccome — la
+    // scrive nei propri log (`scuola_id: scuolaId`) e la dichiara nell'INSERT.
+    //
+    // ⚠️ NON copre il `POST`: quello scrive, e la sede la deve DIRE. Se un domani
+    // l'handler comparisse qui, sarebbe un debito nuovo, non questa esenzione.
+    'iscrizione/personale:<modulo>': "helper `documentiDiUnaPraticaViva`: chiede se un percorso di documento sia già di una pratica VIVA della STESSA email, per lasciar rimandare il proprio modulo a chi lo rimanda. A delimitare è la persona, non il plesso: la stessa dipendente può avere una pratica in un'altra sede, e un `.eq('scuola_id', …)` qui non proteggerebbe nessuno — le rifiuterebbe il suo stesso documento. Legge `id` e le sole colonne del documento, al più 5 righe: nessun nome, nessuna residenza, nessun codice fiscale. Modulo pubblico, nessuna sessione da cui derivare uno scope.",
     // ── `iscrizione/insegnanti:POST` NON È QUI, ed è una decisione misurata ───
     //
     // È l'INSERT pubblico del modulo «Lavora con noi»: un anonimo scrive una riga
@@ -1034,6 +1086,34 @@ const AMMESSE: Record<string, string> = {
     // nessun conteggio: la risposta è un sottoinsieme dell'input, e a leggerla è un cron.
     // Nessun utente da cui derivare uno scope — la chiama pg_net con `x-cron-secret`, e il
     // lancio manuale dello staff passa da `requireStaff` ma fa lo stesso identico lavoro.
+    // ── TERZA DELLA FAMIGLIA (2026-09-01), e le due ragioni sono state VERIFICATE
+    //     una per una invece di ereditate — perché «gemella di quell'altra» è il
+    //     modo in cui un'esenzione smette di essere riletta.
+    //
+    // (1) UN TERMINE DI CONSERVAZIONE NON HA CONFINI DI SEDE. Vale qui come per
+    //     iscrizioni e candidature, ma la posta è più alta: questo è l'UNICO posto
+    //     del repo che toglie dal bucket la scansione del DOCUMENTO D'IDENTITÀ di
+    //     una dipendente (fronte E retro, dal 12/08/2026) dodici mesi dopo la
+    //     cessazione. La base giuridica non è il consenso — fra datore e dipendente
+    //     non sarebbe libero — ma il contratto e gli obblighi di legge, e nessuna
+    //     delle due copre la conservazione all'infinito di una FOTOCOPIA. Il
+    //     termine scade lo stesso giorno a Giugliano, Aversa e Cesa: un
+    //     `.in('scuola_id', plessi)` qui lascerebbe la carta d'identità di una
+    //     cessata di un altro plesso nell'archivio, e la lascerebbe IN SILENZIO,
+    //     perché il battito direbbe comunque «ok».
+    //
+    // (2) NON C'È NESSUN UTENTE DA CUI DERIVARE UNO SCOPE — misurato, non supposto:
+    //     `cron.job` 22, `retention-personale`, `17 5 * * *`, `active = true`, cioè
+    //     pg_net con l'header `x-cron-secret` (`segretoCronValido`). Il lancio
+    //     manuale dello staff passa da `requireStaff`, ma fa lo stesso identico
+    //     lavoro: la conservazione non è un elenco che cambia a seconda di chi
+    //     guarda.
+    //
+    // Le quattro righe che questo lock segnala sono la lettura delle pratiche
+    // scadute (`stato` + `creata_il`), la rilettura per id dei fascicoli da chiudere
+    // e le due `delete().in('id', …)`. Le ultime tre lavorano su id che vengono
+    // dalla prima: nessuna allarga la domanda. La sede la porta comunque la riga.
+    'gdpr/retention-personale:POST': "conservazione dell'anagrafica del personale — scansione del documento d'identità compresa, ed è l'unico posto del repo che la toglie dal bucket: come l'oblio, il termine deve valere su TUTTE le sedi, perché una fotocopia di carta d'identità scade lo stesso giorno a Giugliano, Aversa e Cesa e un filtro di sede la lascerebbe in archivio in silenzio, col battito che dice «ok». Le due `delete` lavorano su id già letti dalla prima query, non allargano la domanda. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret (`cron.job` 22, `17 5 * * *`); il lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro.",
     'gdpr/retention-candidature:<modulo>': "helper `spazzaCurriculumOrfani`: chiede quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i curriculum reclamati dalle altre due sedi e li cancellerebbe, lasciando quelle candidature con un `cv_path` che punta al nulla. Legge una sola colonna (`cv_path`) e solo per i percorsi che ha già in mano: la risposta è un sottoinsieme dell'input. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
@@ -1051,6 +1131,34 @@ const AMMESSE: Record<string, string> = {
     // SOLO `scuola_id`, mai il resto della riga, e non produce mai un riuso.
     'admin/import/anagrafiche:POST': 'ricerca del CF nelle altre sedi (solo `scuola_id`) per non fondere due bambini omonimi',
     'admin/iscrizioni:PATCH': "idem in fase di approvazione + aggiornamento della classe sull'alunno già dedotto in sede",
+
+    // ── L'ELENCO CLASSI: LA SEDE STA SUL PADRE, E IL PADRE È FILTRATO (2026-09-01)
+    //
+    // Le tre voci qui sotto nascono tutte dalla stessa forma, e tutte e tre da
+    // `iscrizioni_elenco_righe` / `iscrizioni_elenco_caricamenti`, tabelle entrate
+    // in questo lock il 2026-09-01 con la rigenerazione della fotografia. NON sono
+    // debiti nuovi: erano scoperte da quando le tabelle esistono (metà agosto),
+    // e la fotografia ferma al 10/08 le teneva semplicemente invisibili.
+    //
+    // L'elenco è a DUE LIVELLI: un `iscrizioni_elenco_caricamenti` per sede (il
+    // foglio caricato, `attivo = true`) e le sue `iscrizioni_elenco_righe`, legate
+    // da `caricamento_id`. La sede si impone sul PADRE, una volta sola, e i figli
+    // scendono da una chiave che è già ristretta: chiedere `caricamento_id = X`
+    // dopo aver risolto X per sede non allarga niente, perché X è di quella sede.
+    // Un `.in('scuola_id', plessi)` in più sulle righe sarebbe una seconda copia
+    // della stessa regola in un secondo posto — cioè la premessa di due schermate
+    // che un giorno mostrano numeri diversi.
+    //
+    // ⚠️ Il presidio è sul padre, quindi è LÌ che va guardato se un domani queste
+    // voci si rileggono: se qualcuno togliesse il filtro di sede dalla lettura di
+    // `iscrizioni_elenco_caricamenti`, queste tre esenzioni diventerebbero false
+    // tutte insieme, e questo lock non se ne accorgerebbe.
+    'admin/iscrizioni/elenco/export:GET':
+        "righe dell'elenco lette per `caricamento_id`: la sede è già imposta sul padre, che questa route risolve con `resolveScuolaScrittura` (una sede sola, DETTA: un foglio che mescolasse tre plessi non sarebbe l'elenco di nessuno) e legge con `.eq('scuola_id', scuolaId).eq('attivo', true)`. Senza sede risolta risponde 400 e non arriva mai qui.",
+    'admin/iscrizioni/elenco:GET':
+        "conteggio per classe letto per `caricamento_id`, uno per ogni caricamento già selezionato con `.in('scuola_id', sedi)` da `resolveScuoleAttive` — in lettura le sedi sono più d'una di proposito: la segreteria multi-sede deve vedere quali plessi hanno già il loro elenco. Uno scope vuoto NEGA (`sedi.length === 0` → elenco vuoto), non toglie il filtro.",
+    'admin/iscrizioni/elenco:POST':
+        "il `delete` segnalato è il ROLLBACK: `.eq('id', caricamentoId)` sulla chiave primaria della riga che questo stesso handler ha appena creato per la sede risolta, quando l'INSERT delle righe cade a metà (un elenco caricato per tre quarti è peggio di nessun elenco). Una PK non si allarga a un'altra sede. Le righe, invece, la sede la DICHIARANO: `.insert({ …, scuola_id: scuolaId })`.",
     // ⚰️ Qui c'era `admin/pre-inscriptions:PATCH` («recupero dell'account genitore per
     // email quando l'utente auth esiste già»). La rotta è stata CANCELLATA il 2026-08-16:
     // il pannello «Sala d'Attesa» che la usava non esiste più e non aveva nessun altro
@@ -1475,7 +1583,47 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `admin`/`coordinator`, e per ogni account il controllo che `utenti.ruolo` sia
             // `genitore`, così un'email che coincide con quella di una collega non può
             // essere resettata da questa strada).
-            routeConServiceRole: 301,
+            //
+            // 🔻 301 → 300 il 2026-09-01: è USCITA `locker/catalog`, cancellata. Unica rotta
+            // su `locker_catalog` — tabella del vecchio schema a saldo che NESSUNA migrazione
+            // applicata crea — senza un solo chiamante in tutto il repo, senza tolleranza
+            // (500 secco a ogni chiamata) e con `error.message` di PostgREST restituito al
+            // chiamante in due punti: nome dello schema, della tabella e della colonna. Non è
+            // un presidio tolto, è un file che non esiste più.
+            //
+            // 🔺 300 → 301 il 2026-09-01: è nata `account/password:POST`, il cambio password
+            // condiviso fra genitori e personale. Service-role per una ragione sola e non
+            // aggirabile: `auth.admin.updateUserById` VUOLE la chiave di servizio, e la
+            // password vive in `auth.users`, che PostgREST non espone.
+            //
+            // NON porta nessuna esenzione, e `handlerEsentati` resta fermo a 100 — che è il
+            // punto da guardare. L'unica tabella di `public` che tocca è `password_cambi`,
+            // la cui chiave primaria È `auth.users.id`: non ha nessuna colonna di sede
+            // perché un account non appartiene a un plesso (una maestra può lavorare su due
+            // sedi, e la sua password è una sola). Non c'è quindi niente da isolare: la riga
+            // che scrive è quella dell'uid che la sessione ha appena dimostrato, e l'uid non
+            // arriva né dal corpo né da un header — `requireSessioneAuth` non li legge.
+            //
+            // ⚠️ IL +1 È MISURATO, NON DEDOTTO: spostando fuori dall'albero la cartella
+            // `src/app/api/account/` questo lock torna a leggere `300` e `463`.
+            //
+            // 🔺 301 → 302 il 2026-09-02: è nata
+            // `admin/staff/collega-profilo-esistente`, la porta con cui la Direzione
+            // aggiunge il ruolo del personale all'accesso di un GENITORE senza togliergli
+            // le schede dei figli — la decisione che `staff-identity.ts` chiede da mesi
+            // («serve una decisione della segreteria») e che finora non aveva nessun posto
+            // in cui essere presa. Service-role come tutto il cockpit: l'enforcement è
+            // applicativo.
+            //
+            // NON porta nessuna esenzione, e `handlerEsentati` resta fermo a 99 — che è il
+            // punto da guardare. La sede non è dedotta da nessuna parte: la `POST` la
+            // pretende nel corpo, la fa passare da `resolveScuolaScrittura` e scrive con
+            // `.in('scuola_id', scuole)` nell'istruzione stessa; l'account viene verificato
+            // da `accountNelloScope`, che porta la clausola dentro la query invece che in
+            // un `includes` di JavaScript. Il `parents` letto dai due handler è la tabella
+            // che per DDL non ha (e non deve avere) una sede propria — un genitore può
+            // avere figli in due plessi — ed è letto per uid singolo, dopo la verifica.
+            routeConServiceRole: 302,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1567,7 +1715,26 @@ describe('coverage-lock isolamento fra sedi', () => {
             // dell'arretrato. Qui il passo coincide col file perché il file espone un solo
             // metodo — ed è il caso in cui la coincidenza va detta, non dedotta.
             // 464 → 465 il 2026-08-23: il POST della route di rinvio credenziali (sopra).
-            handlerControllati: 465,
+            // 🔻 465 → 463 il 2026-09-01, ed è una DISCESA di 2 a fronte di −1 file: la
+            // `locker/catalog` cancellata esponeva DUE metodi, `GET` e `POST`. I due passi
+            // non coincidono, ed è il caso normale — va detto ogni volta, o al giro dopo
+            // qualcuno prenderà la coincidenza per una regola.
+            //
+            // ⚠️ IL −2 È MISURATO, NON DEDOTTO: eseguendo questo lock col solo file
+            // cancellato si legge esattamente `{300, 463, 101}`, cioè i tre valori qui
+            // scritti, e nessun altro pezzo dell'albero si è mosso in questo passaggio.
+            //
+            // 🔺 463 → 464 il 2026-09-01: il solo `POST` di `account/password`. Qui il passo
+            // coincide col file perché il file espone un metodo solo — e la coincidenza va
+            // detta, non dedotta, per la ragione scritta due righe sopra.
+            //
+            // 🔺 464 → 466 il 2026-09-02: i DUE metodi di
+            // `admin/staff/collega-profilo-esistente` — la `POST` che aggiunge il ruolo e
+            // la `GET` che risolve l'uid da mostrare a chi deve decidere. Qui il passo NON
+            // coincide col file (+1 route, +2 handler), ed è di nuovo il caso normale: va
+            // detto ogni volta, o al giro dopo qualcuno prenderà la coincidenza del giro
+            // precedente per una regola.
+            handlerControllati: 466,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1684,7 +1851,64 @@ describe('coverage-lock isolamento fra sedi', () => {
             // è più temporaneo: è permanente e nessuno l'ha deciso. Chi lo legge in quel
             // momento cancelli la rotta o riscriva questa riga dicendo che si tiene, e
             // perché.
-            handlerEsentati: 96,
+            //
+            // 🔻 96 → 101 il 2026-09-01, CINQUE IN UN COLPO — ed è il numero più
+            // importante di questa riga, perché la lettura ovvia («qualcuno ha tolto
+            // cinque pezzi di lock») è quella SBAGLIATA.
+            //
+            // Non è stato aggiunto un solo handler e non è stata allentata una sola
+            // regola. È stata RIGENERATA la fotografia delle tabelle
+            // (`__tests__/fixtures/tabelle-scuola-id.json`), ferma al 2026-08-10:
+            // 66 tabelle con `scuola_id` su 72. Le sei mancanti —
+            // `armadietto_richieste`, `candidature_sedi`,
+            // `iscrizioni_elenco_caricamenti`, `iscrizioni_elenco_righe`,
+            // `iscrizioni_import_esiti`, `pratiche_personale` — erano FUORI da
+            // `CON_SEDE`, e una tabella fuori da `CON_SEDE` non è sorvegliata: il
+            // lock non le guardava nemmeno.
+            //
+            // Quindi questi cinque handler non hanno smesso oggi di dichiarare la
+            // sede: non la dichiaravano da SETTIMANE, e passavano verdi. La
+            // rigenerazione non ha aperto un buco, ha acceso la luce su un buco già
+            // aperto — e le cinque voci in `AMMESSE` dicono, una per una, che cosa
+            // impone la sede al posto del filtro (la FK su un padre già ristretto,
+            // la PK di una riga appena creata dallo stesso handler, un cron di
+            // conservazione senza utente da cui derivare uno scope, un modulo
+            // pubblico dove a delimitare è la persona e non il plesso).
+            //
+            // ⚠️ LA LEZIONE, che vale più delle cinque voci: questa fotografia era
+            // l'unica delle quattro del repo SENZA guardia di freschezza. Le altre
+            // tre scadono su `generato_alle`; questa aveva solo un tamper-check
+            // sha256 sul contenuto, che verifica la coerenza di ciò che c'è e non
+            // dice niente su ciò che manca. Restava verde e non sapeva più niente.
+            // Chi rilegge: `npx vitest run __tests__/architecture/` non basta a dire
+            // che questo lock stia guardando tutto — bisogna rigenerare la
+            // fotografia e vedere se il numero delle tabelle è ancora quello.
+            //
+            // 🔻 101 → 100 il 2026-09-01: è USCITA `parent/forms/otp:PATCH`. È il verso
+            // buono di questo contatore — un'esenzione in meno, non una in più — e il
+            // debito è stato pagato davvero: l'handler chiama ora
+            // `requireParentOfStudent`, che questo lock riconosce da sé dal corpo. La
+            // voce prometteva «scope famiglia + OTP monouso», e la prima metà era falsa:
+            // il controllo era `if (student_id && role === 'genitore' && !legame) → 403`,
+            // cioè NIENTE per chiunque non agisse da genitore, su una rotta che appone
+            // una firma con valore legale. Un OTP prova CHI firma, non SU CHI.
+            //
+            // 🔻 100 → 99 il 2026-09-01: è USCITA `parent/primaria:GET`, la TERZA riga
+            // della stessa forma trovata in questo ciclo e l'ultima delle otto route
+            // della primaria a portare un'esenzione. Stesso verso buono, stesso motivo:
+            // l'handler chiama ora `requireParentOfStudent` e il lock lo riconosce dal
+            // corpo. La voce prometteva «scope famiglia: registro del proprio figlio», e
+            // per metà degli attori non c'era nessuno scope affatto — misurato in
+            // `parent-primaria-idor.test.ts` prima del rimedio: un educator della sede A
+            // riceveva 200 su un minore della sede B, con la nota disciplinare in testo
+            // libero nel corpo della risposta.
+            //
+            // Tre voci false trovate in un giorno, tutte e tre scritte come un permesso
+            // (`if (agisce da genitore) { nego }`) e tutte e tre lette per un mese come
+            // se dichiarassero una difesa. Chi rilegge una riga di questo blocco che dice
+            // «scope famiglia» vada a guardare il codice: la frase descrive ciò che
+            // succede a un genitore, e non dice niente di tutti gli altri.
+            handlerEsentati: 99,
         })
     })
 })

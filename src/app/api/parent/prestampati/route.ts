@@ -3,6 +3,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { logAccessoFascicolo } from '@/lib/primaria/fascicolo-rbac'
 import { caricaPrefillAlunno, nucleoAlunno } from '@/lib/prestampati/prefill'
@@ -151,7 +155,14 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
     const portata = await requireParentOfStudent(request, alunnoId)
     if (portata.response) return portata.response
     const utente = portata.user
-    if (utente.role !== 'genitore') return soloFamiglia()
+    // PRESENTAZIONE, non autorizzazione — e qui la differenza è voluta. Il diniego
+    // dice: «questi moduli li firma il genitore col proprio OTP: dallo sportello si
+    // usa il pannello della segreteria». Una docente-genitore che stia guardando in
+    // veste di LAVORO deve continuare a riceverlo — è la ragione per cui questo
+    // diniego esiste — e per firmare per il proprio figlio commuta la veste, che è
+    // un clic. Con `eFamiglia` le si aprirebbe il self-service mentre è al lavoro,
+    // cioè si toglierebbe il confine che il messaggio stesso descrive.
+    if (!agisceComeGenitore(utente)) return soloFamiglia()
 
     // IL CANCELLO DELLO SLUG: uno slug che il banco «genitore» non ha è un 404, non un
     // elenco filtrato male. `document_type` finisce dentro `student_documents` e dentro il
@@ -661,7 +672,14 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
     // certificati li emette lo sportello dalla sua rotta, con il suo operatore in calce.
     const auth = await requireUser(request)
     if (auth.response) return auth.response
-    if (auth.user.role !== 'genitore') return soloFamiglia()
+    // PRESENTAZIONE, non autorizzazione — e qui la differenza è voluta. Il diniego
+    // dice: «questi moduli li firma il genitore col proprio OTP: dallo sportello si
+    // usa il pannello della segreteria». Una docente-genitore che stia guardando in
+    // veste di LAVORO deve continuare a riceverlo — è la ragione per cui questo
+    // diniego esiste — e per firmare per il proprio figlio commuta la veste, che è
+    // un clic. Con `eFamiglia` le si aprirebbe il self-service mentre è al lavoro,
+    // cioè si toglierebbe il confine che il messaggio stesso descrive.
+    if (!agisceComeGenitore(auth.user)) return soloFamiglia()
     const parentId = auth.user.id
 
     const b = await parseBody(request, postBodySchema)

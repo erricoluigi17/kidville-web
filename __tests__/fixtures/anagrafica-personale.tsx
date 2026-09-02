@@ -2,6 +2,7 @@ import { expect, vi } from 'vitest'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
 import { SEDE_A, SEDE_B, SEDE_C } from './sedi'
+import { allegaAlCampoFile } from '../helpers/allega-curriculum'
 
 /**
  * ═════════════════════════════════════════════════════════════════════════════
@@ -296,20 +297,28 @@ export const NOME_SCANSIONE_RETRO = 'documento-retro.pdf'
 export const nomeScansione = (lato: Lato): string =>
   lato === 'retro' ? NOME_SCANSIONE_RETRO : NOME_SCANSIONE
 
-/** Carica UNA faccia: il file è un PDF finto di tre byte. */
+/**
+ * Carica UNA faccia: il file è un PDF finto di tre byte.
+ *
+ * ⚠️ Si aspetta il NOME DEL FILE, non il percorso nel bucket — che dal
+ * 12/08/2026 non si stampa più in pagina (era un doppio uuid del bucket privato,
+ * illeggibile e da non far uscire: vedi `FileField`). Il segnale è stretto
+ * identico: la riga del caricamento mostra «Caricamento del file…» finché la
+ * richiesta è in volo e «Seleziona un file» se fallisce — il nome compare SOLO
+ * quando il valore è arrivato nel modulo.
+ *
+ * ⚠️ E L'ATTESA VIVE IN `__tests__/helpers/allega-curriculum`, non qui. Il
+ * 25/08/2026 il riquadro del file ha smesso di stampare il nome in un nodo di
+ * testo unico (troncamento centrale: radice `truncate` + coda `shrink-0`), e ogni
+ * `getByText(nome)` sparso per la suite è caduto in timeout — con lo stack di un
+ * `waitFor` scaduto, cioè con la diagnosi peggiore possibile. La sonda è una
+ * sola, guarda il `textContent` del riquadro (ciò che una persona legge) e
+ * sopravvive a come il componente sceglie di impaginare il nome.
+ */
 export async function caricaLato(lato: Lato): Promise<void> {
-  const nome = nomeScansione(lato)
-  fireEvent.change(campoFile(lato), {
-    target: { files: [new File(['%PD'], nome, { type: 'application/pdf' })] },
-  })
-  // ⚠️ Si aspetta il NOME DEL FILE, non il percorso nel bucket — che dal
-  // 12/08/2026 non si stampa più in pagina (era un doppio uuid del bucket
-  // privato, illeggibile e da non far uscire: vedi `FileField`).
-  // Il segnale è stretto identico: la riga del caricamento mostra
-  // «Caricamento…» finché la richiesta è in volo e «Seleziona un file» se
-  // fallisce — il nome del file compare SOLO quando il valore è arrivato nel
-  // modulo.
-  await waitFor(() => expect(screen.getByText(nome)).toBeInTheDocument())
+  const controllo = campoFile(lato)
+  expect(controllo.id, 'il campo della scansione ha perso il proprio `id`').toBeTruthy()
+  await allegaAlCampoFile(controllo.id, nomeScansione(lato))
 }
 
 /**

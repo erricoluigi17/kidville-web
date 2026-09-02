@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { caricaFigliConTarget } from '@/lib/news/target'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -44,7 +48,10 @@ export const GET = withRoute('news/digest/[id]:GET', async (request: NextRequest
     if (!data) return NON_TROVATA()
     const ed = data as NewsDigestEdizione
 
-    if (user.role === 'genitore') {
+    // PRESENTAZIONE: le news hanno due viste — il feed della famiglia (filtrato sui
+    // target dei figli) e quello di lavoro (le sedi selezionate). Con `eFamiglia`
+    // una docente-genitore perderebbe il secondo, che è quello che usa in servizio.
+    if (agisceComeGenitore(user)) {
       if (!ed.inviata_il) return NON_TROVATA()
       const figli = await caricaFigliConTarget(supabase, user.id)
       const sedi = new Set(figli.map((f) => f.scuola_id).filter((s): s is string => !!s))

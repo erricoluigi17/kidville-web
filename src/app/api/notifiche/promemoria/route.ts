@@ -9,6 +9,7 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { tabellaMancante } from '@/lib/db/tolleranza-schema'
+import { riconciliaTutto } from '@/lib/armadietto/richieste'
 
 // =============================================================================
 // POST /api/notifiche/promemoria — giro promemoria GIORNALIERO.
@@ -18,8 +19,10 @@ import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 // Tre scansioni, ognuna best-effort e gated dal proprio toggle notifiche:
 //  1. moduli non compilati (avvisi con form_model_id, dopo N giorni —
 //     admin_settings.modulistica_config.promemoria_giorni, default 3)
-//  2. richieste armadietto pending mai ricordate (locker_requests,
-//     reminder_inviato_il NULL — sostituisce la edge fn locker-reminder simulata)
+//  2. richieste armadietto aperte mai ricordate (armadietto_richieste,
+//     promemoria_inviato_il NULL — sostituisce la edge fn locker-reminder simulata).
+//     Dal 2026-09-01 la scansione RICONCILIA prima di leggere: le richieste non
+//     nascono da sole, le apre il confronto fra stock e soglie.
 //  3. documenti alunno in scadenza ≤30gg → segreteria (sostituisce la edge fn
 //     document-expiry-alert, storicamente rotta: colonne inesistenti)
 // Ogni tabella può mancare su ambienti non migrati (DB E2E CI) → skip.
@@ -72,7 +75,7 @@ const postQuerySchema = z.object({})
  * butta MAI via (regola 3): `PGRST301` non dice nulla, `PGRST301 "JWT expired"` dice tutto.
  *
  * Non si applica `tabellaMancante` qui: queste sono letture SECONDARIE, su tabelle che la
- * scansione ha appena letto (`locker_requests`) o su tabelle core (`notifiche`, `alunni`) — e
+ * scansione ha appena letto (`armadietto_richieste`) o su tabelle core (`notifiche`, `alunni`) — e
  * `form_submissions` esiste per costruzione, perché ci si arriva solo da un avviso che ha un
  * `form_model_id`. Su queste, «tabella assente» non è mai «ambiente non migrato»: è un guasto.
  */
@@ -122,16 +125,25 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
     // Quali delle tre scansioni NON HANNO GUARDATO perché la loro tabella non esiste in questo
     // ambiente. È il terzo stato, e nasce da un guasto misurato: in produzione, il 2026-08-04
     // alle 06:00:02, `PGRST205 locker_requests` e un decimo di secondo dopo «notifiche-promemoria:
-    // ok». `locker_requests` in produzione NON ESISTE — e nessuna migrazione la crea: le tabelle
-    // vere sono `armadietto` e `locker_config`. La scansione dell'armadietto era morta da sempre e
-    // il battito dichiarava di aver guardato.
+    // ok». `locker_requests` in produzione NON ESISTEVA — e nessuna migrazione la creava. La
+    // scansione dell'armadietto era morta da sempre e il battito dichiarava di aver guardato.
     //
-    // La tolleranza per lo schema drift è nata per il DB E2E della CI (progetto separato, mai
-    // migrato) e lì è GIUSTA: non è un job rotto, è un ambiente diverso. L'errore era applicarla
-    // indistintamente, perché in PRODUZIONE «tabella assente» non significa «ambiente non
-    // migrato»: significa funzionalità morta. Non potendo distinguere i due ambienti da qui senza
-    // inventare una variabile che qualcuno dimenticherebbe di impostare, si smette semplicemente
-    // di FINGERE: il giro resta 200 (non c'è nulla da riparare stanotte) ma non dice più «ok» —
+    // ⚠️ QUELLA STORIA È CHIUSA, E IL SIGNIFICATO DI `saltate` È CAMBIATO CON LEI. Dal
+    // 2026-09-01 la scansione legge `armadietto_richieste`, che in produzione ESISTE (migrazione
+    // `armadietto_richieste_rifornimento`) e che il cron stesso popola riconciliando stock e
+    // soglie prima di leggerla. Quindi «armadietto» dentro `saltate` non vuol più dire
+    // «funzionalità morta»: vuol dire SOLO «DB E2E della CI», che è un progetto Supabase
+    // separato e non migrato dove quella tabella davvero non c'è. Se ricomparisse in una riga
+    // `ok-parziale` di PRODUZIONE, quello sarebbe di nuovo un buco — e andrebbe letto come tale,
+    // non archiviato come rumore noto.
+    //
+    // La spiegazione storica resta perché è la RAGIONE per cui questo terzo stato esiste. La
+    // tolleranza per lo schema drift è nata per il DB E2E della CI e lì è GIUSTA: non è un job
+    // rotto, è un ambiente diverso. L'errore era applicarla indistintamente, perché in
+    // PRODUZIONE «tabella assente» non significava «ambiente non migrato»: significava
+    // funzionalità morta. Non potendo distinguere i due ambienti da qui senza inventare una
+    // variabile che qualcuno dimenticherebbe di impostare, si è smesso semplicemente di
+    // FINGERE: il giro resta 200 (non c'è nulla da riparare stanotte) ma non dice più «ok» —
     // dice «ok-parziale» e NOMINA ciò che non ha guardato. Chi legge decide se è la CI o un buco.
     const saltate: string[] = []
 
@@ -219,54 +231,63 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
       falliti.push('moduli')
     }
 
-    // ── 2. Richieste armadietto pending ───────────────────────────────────────
+    // ── 2. Richieste armadietto ───────────────────────────────────────────────
     try {
+      // Prima si riconcilia, poi si legge: senza questa riga la scansione
+      // lavorerebbe sullo stato di ieri sera, e una soglia alzata dalla segreteria
+      // ieri non produrrebbe nessuna richiesta stamattina.
+      const ric = await riconciliaTutto(supabase)
+      logEvento('cron', 'info', {
+        operazione: JOB, esito: 'armadietto-riconciliato',
+        n: ric.alunni, aperte: ric.aperte, evase: ric.evase,
+      })
+
       const { data: richieste, error } = await supabase
-        .from('locker_requests')
-        .select('id, alunno_id, quantita_residua, locker_catalog (nome, unita)')
-        .eq('stato', 'pending')
-        .is('reminder_inviato_il', null)
+        .from('armadietto_richieste')
+        .select('id, alunno_id, materiale, quantita_residua')
+        .eq('stato', 'aperta')
+        .is('promemoria_inviato_il', null)
       if (error) {
         if (!tabellaMancante(error)) throw error
         saltate.push('armadietto')
       } else {
         for (const r of (richieste ?? []) as Array<{
-          id: string; alunno_id: string; quantita_residua: number | null
-          locker_catalog: { nome?: string | null; unita?: string | null } | { nome?: string | null; unita?: string | null }[] | null
+          id: string; alunno_id: string; materiale: string; quantita_residua: number | null
         }>) {
-          const cat = Array.isArray(r.locker_catalog) ? r.locker_catalog[0] : r.locker_catalog
           const { data: alunno, error: errAlunno } = await supabase
-            .from('alunni')
-            .select('nome, scuola_id')
-            .eq('id', r.alunno_id)
-            .maybeSingle()
+            .from('alunni').select('nome, scuola_id').eq('id', r.alunno_id).maybeSingle()
           // Fallita in silenzio, `alunno` è `null`: la notifica partirebbe lo stesso, ma senza
           // `scuola_id` (quindi fuori dal gating per sede) e con il nome del bambino sostituito
           // dal fallback «tuo figlio» — una notifica che sembra funzionante e non lo è.
           seFallita(errAlunno, 'lettura alunni (armadietto)')
           const genitori = await genitoriDiAlunni(supabase, [r.alunno_id])
           if (genitori.length > 0) {
+            // ⚠️ IL NOME DEL BAMBINO E IL MATERIALE STANNO QUI DENTRO, e ci stanno bene: è
+            // il testo che il genitore legge sul telefono, non una riga di log. Nessuno dei
+            // due tocca `logEvento`/`logErrore` — sopra e sotto passano solo conteggi, uuid
+            // e il codice PostgREST. La lista bianca di `redact` li redigerebbe comunque,
+            // ma la regola 8 di AGENTS.md non è «tanto poi vengono redatti»: è non
+            // scriverli. Sono dati di minori.
             await notificaEvento(supabase, {
               tipo: 'locker_richiesta',
               scuolaId: (alunno?.scuola_id as string | undefined) ?? null,
               utenteIds: genitori,
               titolo: 'Materiale da portare a scuola',
-              corpo: `${cat?.nome ?? 'Materiale'} in esaurimento per ${alunno?.nome ?? 'tuo figlio'}${r.quantita_residua != null ? ` (${r.quantita_residua} ${cat?.unita ?? 'pz'} rimasti)` : ''}.`,
+              corpo: `${r.materiale} in esaurimento per ${alunno?.nome ?? 'tuo figlio'}${r.quantita_residua != null ? ` (${r.quantita_residua} rimasti)` : ''}.`,
               link: '/parent/locker',
-              entitaTipo: 'locker_request',
+              entitaTipo: 'armadietto_richiesta',
               entitaId: r.id,
               bufferMin: 0,
             })
             esiti.armadietto += 1
           }
           const { error: errMarca } = await supabase
-            .from('locker_requests')
-            .update({ reminder_inviato_il: new Date().toISOString() })
+            .from('armadietto_richieste')
+            .update({ promemoria_inviato_il: new Date().toISOString() })
             .eq('id', r.id)
-          // Anche una UPDATE ritorna `{ error }` senza lanciare. Questa marcatura È la garanzia di
-          // «un promemoria e uno solo»: se salta in silenzio, la stessa richiesta viene ricordata
-          // ogni notte, all'infinito.
-          seFallita(errMarca, 'marcatura locker_requests')
+          // Questa marcatura È la garanzia di «un promemoria e uno solo»: se salta
+          // in silenzio, la stessa richiesta viene ricordata ogni notte, per sempre.
+          seFallita(errMarca, 'marcatura armadietto_richieste')
         }
       }
     } catch (e) {

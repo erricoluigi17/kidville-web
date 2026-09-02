@@ -127,4 +127,57 @@ describe('POST /api/chat/messages — gate Termini (C5)', () => {
     expect(res.status).toBe(201)
     expect(h.inserted).toMatchObject({ sender_id: TEACHER })
   })
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * IL BUCO CHE SI APRIVA GUARDANDO SOLO LA VESTE.
+   *
+   * Il gate Termini biforcava su `auth.user.role === 'genitore'`, cioè sul ruolo
+   * ATTIVO — quello che il cookie `kv-active-role` commuta. Quattro insegnanti in
+   * produzione hanno insieme `utenti.ruolo = 'educator'` e il ponte
+   * `parents.auth_user_id`: bastava a una di loro NON commutare la veste per
+   * scrivere nella chat della propria famiglia da `parent_id` del thread —
+   * cioè come genitore, a tutti gli effetti, dentro il proprio fascicolo — con il
+   * gate che la trattava da staff e non le chiedeva niente.
+   *
+   * I Termini di servizio non sono un ramo di vista: sono un'accettazione con
+   * valore contrattuale (art. 1341 c.c.), e un `agisceComeGenitore` nudo avrebbe
+   * lasciato il buco aperto esattamente com'era. Ciò che conta non è la veste, è
+   * IN CHE POSTO DEL THREAD si sta scrivendo: chi occupa il posto della famiglia
+   * accetta i Termini della famiglia.
+   *
+   * Il thread è già letto due righe sopra, per l'autorizzazione al thread: la
+   * regola costa zero query in più.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('docente-genitore in veste DOCENTE, ma nel posto della famiglia → 403: i Termini non si saltano', async () => {
+    // Stesso `auth.uid` sul posto `parent_id` del thread, ruolo attivo `educator`.
+    h.requireUser.mockResolvedValue({ user: { id: PARENT, role: 'educator', scuola_id: 'sc-1' } })
+    h.thread = { teacher_id: TEACHER, parent_id: PARENT }
+    h.parent = { consensi_gdpr: { privacy: true } } // i Termini NON sono accettati
+    const res = await POST(postReq({ thread_id: THREAD, content: 'ciao' }))
+    expect(res.status).toBe(403)
+    expect((await res.json()).motivo).toBe('termini_non_accettati')
+    expect(h.inserted).toBeNull()
+  })
+
+  it('e se i Termini li ha accettati, scrive alla propria famiglia senza attriti → 201', async () => {
+    // Il gate non deve diventare un ostacolo per chi è in regola: si verifica che
+    // il ramo nuovo abbia due uscite, non una sola porta chiusa.
+    h.requireUser.mockResolvedValue({ user: { id: PARENT, role: 'educator', scuola_id: 'sc-1' } })
+    h.thread = { teacher_id: TEACHER, parent_id: PARENT }
+    h.parent = { consensi_gdpr: { privacy: true, termini: true } }
+    const res = await POST(postReq({ thread_id: THREAD, content: 'ciao' }))
+    expect(res.status).toBe(201)
+    expect(h.inserted).toMatchObject({ sender_id: PARENT })
+  })
+
+  it('il docente che scrive dal posto del DOCENTE resta trasparente, anche se è anche genitore', async () => {
+    // La controprova che il gate non si è allargato a tutti: qui la stessa persona
+    // occupa il posto `teacher_id`, e i Termini della famiglia non c'entrano.
+    h.requireUser.mockResolvedValue({ user: { id: TEACHER, role: 'educator', scuola_id: 'sc-1' } })
+    h.thread = { teacher_id: TEACHER, parent_id: PARENT }
+    h.parent = { consensi_gdpr: { privacy: true } } // termini mancanti: irrilevanti
+    const res = await POST(postReq({ thread_id: THREAD, content: 'ciao' }))
+    expect(res.status).toBe(201)
+    expect(h.inserted).toMatchObject({ sender_id: TEACHER })
+  })
 })

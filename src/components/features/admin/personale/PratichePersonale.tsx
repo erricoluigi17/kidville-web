@@ -17,10 +17,17 @@ import { dataCivile } from '@/i18n/config'
 import { useDateFormat } from '@/lib/i18n/date'
 import { LIMITE_ISCRIZIONI_DEFAULT } from '@/lib/api/paginazione'
 import { useSediAttive } from '@/lib/context/sede-context'
+import { useRuoloCockpit } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
 import { apriDocumentoFirmato, AVVISO_FINESTRA_BLOCCATA } from '@/lib/ui/apri-documento-firmato'
 import { FUOCO_ESITO } from '@/lib/ui/fuoco'
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { useFiltri } from '@/lib/ui/filtri/use-filtri'
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
+import { campiPratiche } from './filtri-pratiche'
+import { opzioniSedeAttive } from '@/components/features/admin/opzioni-sede'
 
 /**
  * IL COCKPIT DELLE PRATICHE DEL PERSONALE — lato Segreteria di `/anagrafica-personale`.
@@ -417,6 +424,26 @@ function esitoPrevisto(sguardo: SguardoAccount | null): EsitoPrevisto {
  */
 const APPROVAZIONE_PERSA: readonly EsitoPrevisto[] = ['altraSede', 'genitore']
 
+/**
+ * LA PORTA CHE APRE IL VICOLO CIECO — `POST /api/admin/staff/collega-profilo-esistente`.
+ *
+ * Fino al 2026-09-01 l'esito `genitore` era una frase e basta: il riquadro diceva
+ * «l'approvazione verrà rifiutata», il pulsante era spento, e il messaggio del server
+ * — scritto mesi prima — prometteva che «serve una decisione della segreteria». Quella
+ * decisione non aveva nessun posto in cui essere presa: chi operava restava con un 409
+ * e nessun comando, e il rimedio suggerito («va fatto a mano dal pannello Personale»)
+ * non esisteva, perché quel pannello non elenca i genitori.
+ *
+ * Adesso esiste, ed è QUI: un comando della Direzione che aggiunge il ruolo del
+ * personale all'accesso che c'è già, **senza toccare il ponte verso le schede dei
+ * figli**. Il gate vero sta sul server (`requireStaff(['admin','coordinator'])`); ciò
+ * che sta in questo file serve a non far scoprire il divieto dopo il clic.
+ */
+const API_COLLEGA = '/api/admin/staff/collega-profilo-esistente'
+
+/** Il ruolo che questo comando assegna: è il mestiere per cui la pratica è arrivata. */
+const RUOLO_DA_AGGIUNGERE = 'educator'
+
 /** L'etichetta di un ruolo `utenti.ruolo`, dal catalogo e non da una stringa a mano. */
 const CHIAVE_RUOLO: Record<string, string> = {
   admin: 'pratRuoloAdmin',
@@ -436,12 +463,40 @@ function accoda(precedenti: RigaElenco[], nuove: RigaElenco[]): RigaElenco[] {
 
 export function PratichePersonale() {
   const t = useTranslations('adminAltro')
+  /**
+   * Il catalogo della SCHERMATA, per le sole etichette dei filtri. Le parole
+   * degli STATI restano quelle di `adminAltro`, cioè le stesse del badge di
+   * riga: due cataloghi per la stessa parola sono due parole diverse nella
+   * stessa schermata.
+   */
+  const tm = useTranslations('adminModulistica')
+  const ts = useTranslations('shared')
   const f = useDateFormat()
   const { reFetchKey, sedi, effettive, tutte } = useSediAttive()
   const searchParams = useSearchParams()
+  /**
+   * IL RUOLO DI CHI GUARDA — e serve a UNA cosa sola: decidere se disegnare il comando
+   * «aggiungi il ruolo di insegnante a questo account». Tutto il resto di questa
+   * schermata resta com'era: i tre comandi valgono per i tre ruoli che possono aprire
+   * la pagina, e su quelli un gate lato client non avrebbe niente da dire.
+   *
+   * `useRuoloCockpit` e non `useAdminIdentity`: il secondo LANCIA fuori dal provider,
+   * cioè farebbe esplodere ogni test che rende questa schermata in isolamento — e
+   * un'eccezione è la risposta sbagliata alla domanda «disegno un bottone?».
+   * `''` = non ancora saputo, e non abilita niente.
+   */
+  const ruoloCockpit = useRuoloCockpit()
+  const ruoloRisolto = ruoloCockpit !== ''
+  const isDirezione = ruoloCockpit === 'admin' || ruoloCockpit === 'coordinator'
 
   const [righe, setRighe] = useState<RigaElenco[]>([])
   const [totale, setTotale] = useState(0)
+  /**
+   * Quante pratiche esistono in questa linguetta SENZA filtri: distingue «non ne
+   * è ancora arrivata nessuna» da «nessun risultato con questi filtri». `totale`
+   * è filtrato e direbbe zero in entrambi i casi.
+   */
+  const [totaleLinguetta, setTotaleLinguetta] = useState(0)
   // «La pagina è tornata più corta del limite», cioè: non ce n'è un'altra. Serve
   // perché dalla pagina 2 in poi `total` può mancare, e col solo
   // `righe.length < totale` un `total` stantìo lascia «Mostra altre» acceso per
@@ -478,6 +533,18 @@ export function PratichePersonale() {
   const [avvisi, setAvvisi] = useState<Avviso[]>([])
   /** Che cosa sa il server dell'email di QUESTA pratica, prima che si prema «Confermo». */
   const [sguardo, setSguardo] = useState<SguardoAccount | null>(null)
+  /**
+   * IL RUOLO DEL PERSONALE È STATO AGGIUNTO A QUESTO ACCESSO, in questa apertura.
+   *
+   * Vive qui e non dentro il riquadro che lo produce: quel riquadro esiste solo finché
+   * l'esito previsto è `genitore`, e il successo è precisamente ciò che smette di
+   * renderlo vero. Tenuto là dentro, l'unico messaggio che dice «l'accesso alle schede
+   * dei figli è rimasto» sparirebbe nell'istante in cui compare.
+   *
+   * Si azzera a ogni apertura, come tutto il resto del pannello: parla di QUESTA
+   * pratica, e su un'altra sarebbe una bugia.
+   */
+  const [ruoloAggiunto, setRuoloAggiunto] = useState(false)
   /** La URL firmata della scansione, quando il browser ha bloccato la finestra. */
   const [docBloccato, setDocBloccato] = useState<string | null>(null)
   const [esitiScartati, setEsitiScartati] = useState<EsitoScartato[]>([])
@@ -518,11 +585,44 @@ export function PratichePersonale() {
     [r.nome ?? '', r.cognome ?? ''].map((s) => s.trim()).filter(Boolean).join(' ')
     || t('pratSenzaNome')
 
-  async function carica(sediKey: string) {
+  /**
+   * I campi della barra: TUTTI `dove: 'server'`.
+   *
+   * Le pratiche sono 55 e il `limit` predefinito è 50: la pagina 2 esiste già, e
+   * un filtro nel browser conterebbe cinquanta righe su cinquantacinque. È poco
+   * abbastanza perché nessuno se ne accorga, e abbastanza da mandare la
+   * Segreteria a cercare una pratica che l'elenco giura di non avere.
+   */
+  const campi = campiPratiche<RigaElenco>(
+    tm,
+    {
+      pending: t('pratStatoAttesa'),
+      in_approvazione: t('pratStatoInApprovazione'),
+      approvata: t('pratStatoApprovata'),
+      rifiutata: t('pratStatoRifiutata'),
+    },
+    opzioniSedeAttive(sedi, effettive),
+    (iso) => f.dataBreve(iso),
+  )
+  const filtri = useFiltri<RigaElenco>(campi)
+
+  /**
+   * @param azzera  la richiesta nasce da un CAMBIO DI FILTRO: l'accumulo si
+   *   svuota PRIMA che parta la pagina 0. Senza, «Mostra altre» chiederebbe
+   *   `offset=righe.length` contando righe di un insieme diverso, e le due
+   *   pagine si fonderebbero in una lista sola che non corrisponde a niente.
+   */
+  async function carica(sediKey: string, chiave: string, azzera = false) {
     const mio = ++gettoneElenco.current
+    if (azzera) {
+      setRighe([])
+      setTotale(0)
+      setFinePagine(false)
+    }
     setRicaricaInVolo(true)
     try {
-      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0`, {
+      const coda = chiave ? `&${chiave}` : ''
+      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`, {
         headers: { 'x-sedi': sediKey },
       })
       if (!res.ok) {
@@ -547,6 +647,17 @@ export function PratichePersonale() {
       if (Array.isArray(json?.data)) {
         setRighe(json.data as RigaElenco[])
         setTotale(typeof json.total === 'number' ? json.total : json.data.length)
+        // ⚠️ RIPIEGO SUL TOTALE FILTRATO quando il server non lo manda: una
+        // risposta senza `totaleLinguetta` (un deploy più vecchio, una pagina in
+        // cache) non deve far sparire i riquadri e la barra — sarebbe una
+        // schermata che si svuota per un campo assente, non per un dato.
+        setTotaleLinguetta(
+          typeof json.totaleLinguetta === 'number'
+            ? json.totaleLinguetta
+            : typeof json.total === 'number'
+              ? json.total
+              : json.data.length,
+        )
         setFinePagine(false)
         setErrore(null)
         setLetturaFallita(false)
@@ -585,7 +696,7 @@ export function PratichePersonale() {
   /** Il ritenta del riquadro «elenco non letto»: rimette il velo e rilegge. */
   function riprovaElenco() {
     setCaricamento(true)
-    void carica(reFetchKey)
+    void carica(reFetchKey, filtri.chiaveServer)
   }
 
   /**
@@ -597,8 +708,27 @@ export function PratichePersonale() {
    * una funzione nuova a ogni render — l'effetto rifarebbe la fetch all'infinito.)
    */
   const caricaRef = useRef(carica)
+  /** Sedi e chiave dei filtri sempre fresche, senza entrare nelle dipendenze. */
+  const contestoRef = useRef({ sedi: reFetchKey, chiave: filtri.chiaveServer })
+  /** L'ultima `chiaveServer` per cui una pagina 0 è già partita. */
+  const chiaveCaricataRef = useRef<string>(filtri.chiaveServer)
   useEffect(() => { caricaRef.current = carica })
-  useEffect(() => { caricaRef.current(reFetchKey) }, [reFetchKey])
+  useEffect(() => { contestoRef.current = { sedi: reFetchKey, chiave: filtri.chiaveServer } })
+  // ⚠️ Il cambio di SEDE non azzera: le righe restano a schermo finché non arriva
+  // l'elenco nuovo (`ricaricaInVolo` spegne «Mostra altre», quindi accodare è
+  // impossibile). Svuotare farebbe lampeggiare «nessuna pratica» su un elenco
+  // che sta arrivando. Il cambio di FILTRO invece azzera: vedi l'effetto sotto.
+  useEffect(() => { caricaRef.current(reFetchKey, contestoRef.current.chiave, false) }, [reFetchKey])
+  /**
+   * Il cambio di FILTRO ricarica: effetto suo, e non un secondo elemento
+   * nell'array di quello delle sedi. La guardia sul `ref` evita la doppia
+   * lettura al primo montaggio, dove la chiave è già quella di partenza.
+   */
+  useEffect(() => {
+    if (chiaveCaricataRef.current === filtri.chiaveServer) return
+    chiaveCaricataRef.current = filtri.chiaveServer
+    caricaRef.current(contestoRef.current.sedi, filtri.chiaveServer, true)
+  }, [filtri.chiaveServer])
 
   /**
    * IL COLLEGAMENTO PROFONDO. `?pratica=<uuid>` apre quella pratica all'avvio: è ciò
@@ -629,7 +759,11 @@ export function PratichePersonale() {
     const mio = gettoneElenco.current
     setCaricandoAltre(true)
     try {
-      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${righe.length}`, {
+      // ⚠️ LA STESSA `chiaveServer` della pagina 0: l'offset conta le righe di
+      // QUESTO insieme, e una pagina che arrivasse da un altro si fonderebbe con
+      // le precedenti senza che niente lo mostri.
+      const coda = filtri.chiaveServer ? `&${filtri.chiaveServer}` : ''
+      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${righe.length}${coda}`, {
         headers: { 'x-sedi': reFetchKey },
       })
       if (!res.ok) {
@@ -685,6 +819,7 @@ export function PratichePersonale() {
     setEsito(null)
     setAvvisi([])
     setSguardo(null)
+    setRuoloAggiunto(false)
     setDocBloccato(null)
     setErrore(null)
     // Gli esiti scartati NON si azzerano qui: parlano di un'ALTRA pratica e sono
@@ -739,6 +874,48 @@ export function PratichePersonale() {
     }
   }
   useEffect(() => { apriRef.current = apriDettaglio })
+
+  /**
+   * RILEGGE SOLO LO SGUARDO SULL'ACCOUNT, dopo che il ruolo è stato aggiunto.
+   *
+   * Non riapre la pratica: `apriDettaglio` azzera `conferma`, e chiuderebbe sotto le
+   * dita il riquadro in cui si è appena premuto. Qui cambia una cosa sola — quell'email
+   * non è più «solo di un genitore» — e a dirlo dev'essere il SERVER: dedurlo lato
+   * client vorrebbe dire accendere «Confermo» su una risposta che nessuno ha letto.
+   *
+   * Se la rilettura non riesce, lo sguardo resta com'era: il riquadro continuerà a dire
+   * «l'approvazione verrà rifiutata» e «Confermo» resterà spento. È il verso giusto in
+   * cui sbagliare — si riapre la pratica e si riprova — e il guasto finisce nei log.
+   */
+  async function rileggiSguardo(id: string) {
+    const mio = gettoneDettaglio.current
+    try {
+      const res = await fetch(`${API}?id=${encodeURIComponent(id)}`, {
+        headers: { 'x-sedi': reFetchKey },
+      })
+      const json = await res.json().catch(() => null)
+      if (mio !== gettoneDettaglio.current) return
+      if (!res.ok || !json?.data) {
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `pratica-personale-sguardo-non-riletto: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      const acc = (json as { account?: unknown }).account
+      setSguardo(acc && typeof acc === 'object' ? (acc as SguardoAccount) : null)
+    } catch (e) {
+      logClient({
+        livello: 'warn',
+        evento: 'react',
+        messaggio: `pratica-personale-sguardo-non-riletto: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    }
+  }
 
   /**
    * Chiude il pannello — ed è un CAMBIO D'APERTURA a tutti gli effetti: il gettone
@@ -901,7 +1078,7 @@ export function PratichePersonale() {
           route: ROUTE_LOG,
           stato: res.status,
         })
-        await carica(reFetchKey)
+        await carica(reFetchKey, filtri.chiaveServer)
         return
       }
       setConferma(null)
@@ -950,7 +1127,7 @@ export function PratichePersonale() {
             : s,
         )
       }
-      await carica(reFetchKey)
+      await carica(reFetchKey, filtri.chiaveServer)
     } catch (e) {
       // Qui non si sa nemmeno se l'operazione sia avvenuta: la risposta non è mai
       // arrivata. È diverso da «respinta», e va detto con parole diverse.
@@ -1027,7 +1204,7 @@ export function PratichePersonale() {
         <AvvisoEsitiScartati voci={esitiScartati} onCongeda={() => setEsitiScartati([])} />
       )}
 
-      {!caricamento && righe.length > 0 && (
+      {!caricamento && totaleLinguetta > 0 && (
         <div className={`mb-6 grid grid-cols-2 gap-3 ${tuttoContato ? 'sm:grid-cols-4' : 'sm:grid-cols-1'}`}>
           <StatCard icon={Users} label={t('pratStatTotale')} value={totale} tone="green" />
           {tuttoContato && (
@@ -1038,6 +1215,20 @@ export function PratichePersonale() {
             </>
           )}
         </div>
+      )}
+
+      {/* La barra non si disegna sopra una linguetta che non ha mai avuto una
+          riga: la pastiglia «Filtri» sul vuoto manda a cercare un filtro da
+          togliere che non esiste. */}
+      {totaleLinguetta > 0 && (
+        <BarraFiltri
+          campi={campi}
+          stato={filtri}
+          testi={testiBarraFiltri(ts)}
+          totale={totaleLinguetta}
+          mostrati={totale}
+          className="mb-5"
+        />
       )}
 
       {caricamento ? (
@@ -1081,6 +1272,23 @@ export function PratichePersonale() {
               <MapPin size={14} /> {t('pratVuotoGuardaTutte')}
             </button>
           </div>
+        ) : totaleLinguetta > 0 ? (
+          // La QUINTA schermata, dal 2026-09-01: la linguetta ha righe, ma non
+          // con QUESTI filtri. «Nessuna anagrafica ricevuta» qui sarebbe falso, e
+          // manderebbe ad aspettare una pratica che è già arrivata — basta
+          // togliere un filtro per vederla. `StatoElenco` mostra i chip attivi e
+          // «Pulisci filtri», cioè il rimedio accanto alla frase.
+          <StatoElenco
+            stato={decidiStatoElenco({
+              caricamento: false,
+              errore: false,
+              totale: totaleLinguetta,
+              mostrati: righe.length,
+            })}
+            testi={{ ...testiStatoElenco(ts), vuotoTitolo: t('pratVuoto') }}
+            attivi={filtri.attivi}
+            onPulisci={filtri.pulisci}
+          />
         ) : (
           <div className="rounded-card border border-kidville-line bg-kidville-white p-10 text-center">
             <UserCheck className="mx-auto mb-3 h-10 w-10 text-kidville-neutral" />
@@ -1088,7 +1296,12 @@ export function PratichePersonale() {
           </div>
         )
       ) : (
-        <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
+        <div
+          className={`rounded-card border border-kidville-line bg-kidville-white p-4 ${filtri.inAttesa ? 'opacity-60' : ''}`}
+          // `aria-busy` solo quando è vero: un `false` in più sposta il primo
+          // elemento che risponde a `querySelector('[aria-busy]')`.
+          aria-busy={filtri.inAttesa || undefined}
+        >
           <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('pratListaHeader')}</h2>
           {/* `sub` e non `muted`: questa riga È l'avviso che l'elenco è troncato. */}
           {!tuttoContato && (
@@ -1153,7 +1366,7 @@ export function PratichePersonale() {
               onClick={caricaAltre}
               // Spento anche mentre una RILETTURA è in volo: accodare alla lista
               // vecchia mescolerebbe due plessi.
-              disabled={caricandoAltre || ricaricaInVolo}
+              disabled={caricandoAltre || ricaricaInVolo || filtri.inAttesa}
               // ⚠️ Lo stato spento si DIPINGE, non si sbiadisce — vedi `SPENTO`. Ed è
               // il caso peggiore dei cinque: qui il pulsante è spento MENTRE carica,
               // con dentro lo spinner e la parola, cioè l'unico segnale che il gesto
@@ -1218,6 +1431,13 @@ export function PratichePersonale() {
             errore={errore}
             sguardo={sguardo}
             docBloccato={docBloccato}
+            isDirezione={isDirezione}
+            ruoloRisolto={ruoloRisolto}
+            ruoloAggiunto={ruoloAggiunto}
+            onRuoloAggiunto={() => {
+              setRuoloAggiunto(true)
+              void rileggiSguardo(selezionata.id)
+            }}
             onChiudiEsito={() => setEsito(null)}
             onEsegui={esegui}
             onApriDocumento={apriDocumento}
@@ -1478,6 +1698,262 @@ function SguardoSullAccount({ sguardo, id }: { sguardo: SguardoAccount | null; i
 }
 
 /**
+ * «AGGIUNGI IL RUOLO DI INSEGNANTE A QUESTO ACCOUNT» — il comando che mancava.
+ *
+ * ─── PERCHÉ ESISTE, e perché sta proprio QUI ────────────────────────────────
+ *
+ * `SguardoSullAccount` (qui sopra) dice da mesi la cosa giusta: quell'email è di un
+ * GENITORE, l'approvazione verrà rifiutata, non verrà scritto niente. Ed è la
+ * collisione PIÙ probabile di tutte: in un nido la maestra è spessissimo anche la
+ * mamma di un bambino iscritto. Il messaggio del server, dal canto suo, prometteva
+ * «serve una decisione della segreteria per aggiungere il ruolo di insegnante senza
+ * togliere l'accesso alle schede dei figli» — e quella decisione non aveva nessun
+ * posto in cui essere presa. Chi operava leggeva una promessa e trovava un muro.
+ *
+ * Questo riquadro è quel posto. Non apre il percorso automatico: l'approvazione
+ * continua a rifiutare (`RIUSABILE_PER_RUOLO.genitore` resta `false` sul server), e
+ * ciò che cambia è che il rifiuto ora rimanda a un comando che una PERSONA preme, con
+ * la sua identità nell'audit.
+ *
+ * ─── LE TRE COSE CHE QUESTO RIQUADRO NON FA, e sono deliberate ──────────────
+ *
+ *  1. NON DECIDE DA SOLO IL PERMESSO. Il gate vero è
+ *     `requireStaff(['admin','coordinator'])` sul server: `isDirezione` serve a non
+ *     far scoprire il divieto dopo il clic, che è la stessa regola per cui il gemello
+ *     delle candidature spegne i suoi comandi. E «non ancora saputo» non è «segreteria»:
+ *     finché il ruolo è in volo si dice quello, invece di negare.
+ *  2. NON BASTA UN TOCCO. La spunta è obbligatoria e il server la ripretende
+ *     (`conferma: z.literal(true)`): un comando che crea un doppio profilo su dati di
+ *     minori non si preme per sbaglio scorrendo il pannello.
+ *  3. NON INDOVINA LA SEDE. Manda `scuolaId` della PRATICA — cioè il plesso in cui
+ *     quella persona lavorerà — e senza di quella il comando resta spento. Una route
+ *     che indovina la sede archivia nel plesso sbagliato in silenzio.
+ *
+ * ⚠️ L'UID NON ARRIVA COL DETTAGLIO. `sguardoSullAccount` lo tiene per sé, e lo
+ * dichiara: quella risposta la legge anche la Segreteria. Lo risolve invece
+ * `GET /api/admin/staff/collega-profilo-esistente?email=…`, che sta dietro allo stesso
+ * gate dell'azione e restituisce l'uid SOLO quando la porta è davvero quella del
+ * genitore. Finché non è risolto il comando resta spento: senza uid non c'è niente da
+ * indicare, e un pulsante che parte «tanto poi si vede» è un 400 travestito.
+ */
+function RuoloAggiuntivoGenitore({
+  email, scuolaId, nomeSede, isDirezione, ruoloRisolto, onFatto,
+}: {
+  email: string
+  scuolaId: string | null
+  nomeSede: string
+  isDirezione: boolean
+  /** `false` = il ruolo di chi guarda non è ancora arrivato: non è «non può». */
+  ruoloRisolto: boolean
+  onFatto: () => void
+}) {
+  const t = useTranslations('adminAltro')
+  const [uid, setUid] = useState<string | null>(null)
+  const [risolto, setRisolto] = useState(false)
+  const [spunta, setSpunta] = useState(false)
+  const [invio, setInvio] = useState(false)
+  const [errore, setErrore] = useState<string | null>(null)
+
+  /**
+   * L'uid, chiesto una volta sola e solo a chi può usarlo.
+   *
+   * Il gettone chiude la corsa fra due aperture: chi apre una seconda pratica mentre
+   * la prima risposta è in volo non deve ritrovarsi l'uid della prima in mano — che
+   * è l'unico modo, da questa schermata, di premere il comando sulla persona
+   * sbagliata.
+   */
+  const gettone = useRef(0)
+  useEffect(() => {
+    if (!isDirezione || email === '') return
+    const mio = ++gettone.current
+    let vivo = true
+    fetch(`${API_COLLEGA}?email=${encodeURIComponent(email)}`)
+      .then(async (res) => {
+        const json = (await res.json().catch(() => null)) as { authUserId?: unknown } | null
+        if (!vivo || mio !== gettone.current) return
+        const trovato = typeof json?.authUserId === 'string' ? json.authUserId : null
+        setUid(trovato)
+        setRisolto(true)
+        if (!res.ok) {
+          logClient({
+            livello: 'warn',
+            evento: 'react',
+            messaggio: `pratica-personale-uid-non-risolto: http ${res.status}`,
+            route: ROUTE_LOG,
+            stato: res.status,
+          })
+        }
+      })
+      .catch((e: unknown) => {
+        if (!vivo || mio !== gettone.current) return
+        setRisolto(true)
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `pratica-personale-uid-non-risolto: ${nomeErrore(e)}`,
+          route: ROUTE_LOG,
+        })
+      })
+    return () => { vivo = false }
+  }, [email, isDirezione])
+
+  async function aggiungiRuolo() {
+    if (!uid || !scuolaId || !spunta || invio) return
+    setInvio(true)
+    setErrore(null)
+    try {
+      const res = await fetch(API_COLLEGA, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          authUserId: uid,
+          ruolo: RUOLO_DA_AGGIUNGERE,
+          scuolaId,
+          conferma: true,
+        }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        setErrore(messaggioDaCorpo(json, t('pratRuoloAggiuntivoNonRiuscito')))
+        logClient({
+          livello: 'warn',
+          evento: 'react',
+          messaggio: `pratica-personale-ruolo-aggiuntivo-non-riuscito: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      // ⚠️ L'ESITO NON SI TIENE QUI DENTRO, e la ragione è misurata: appena il ruolo è
+      // aggiunto, la rilettura fa dire al server `educator`, l'esito previsto smette di
+      // essere `genitore` e QUESTO componente viene SMONTATO. Un «fatto» tenuto nel suo
+      // stato locale sparirebbe insieme a lui: chi ha premuto non leggerebbe mai la
+      // conferma, e chi usa uno screen reader non sentirebbe niente — l'unico segnale
+      // sarebbe «Confermo» che si riaccende da solo. Lo conserva il pannello, che a quel
+      // cambio sopravvive (vedi `ruoloAggiunto` in `PratichePersonale`).
+      onFatto()
+    } catch (e) {
+      setErrore(t('pratRuoloAggiuntivoNonRiuscito'))
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `pratica-personale-ruolo-aggiuntivo-fallito: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    } finally {
+      setInvio(false)
+    }
+  }
+
+  // Chi non è Direzione legge che cosa serve, invece di un comando grigio senza
+  // spiegazione — che si legge come un guasto.
+  if (!isDirezione) {
+    return (
+      <p className="font-maven text-xs text-kidville-sub">
+        {ruoloRisolto ? t('pratRuoloAggiuntivoSoloDirezione') : t('pratRuoloAggiuntivoRuoloInCorso')}
+      </p>
+    )
+  }
+
+  const senzaSede = !scuolaId
+  const spento = invio || !spunta || uid === null || senzaSede
+  const motivoSpento = senzaSede
+    ? t('pratRuoloAggiuntivoSenzaSede')
+    : !risolto
+      ? t('pratRuoloAggiuntivoInCorso')
+      : uid === null
+        ? t('pratRuoloAggiuntivoNonApplicabile')
+        : !spunta
+          ? t('pratRuoloAggiuntivoSpuntaMancante')
+          : undefined
+
+  return (
+    <div className="space-y-2 rounded-xl border border-kidville-line bg-kidville-white px-3 py-2.5">
+      <p className="font-barlow text-[11px] font-bold uppercase tracking-[0.04em] text-kidville-sub">
+        {t('pratRuoloAggiuntivoTitolo')}
+      </p>
+      <p className="font-maven text-xs text-kidville-ink">
+        {t('pratRuoloAggiuntivoTesto', { sede: nomeSede })}
+      </p>
+      {/* LA SPUNTA. Il bersaglio è la RIGA intera (`min-h-[44px]` sull'etichetta), non
+          il quadratino da 16 px: su un telefono un bersaglio di 16 px si sbaglia, e
+          questo è un comando che crea un profilo doppio su dati di minori.
+
+          ⚠️ NON si spegne durante l'invio, ed è deliberato. Il pulsante sì — quello è
+          il comando — ma una casella `disabled` andrebbe DIPINTA come tutti gli altri
+          comandi di questo file (`SPENTO`, e il lock in fondo a
+          `PratichePersonale.test.tsx` lo pretende), e quelle tre classi sono una coppia
+          fondo/inchiostro pensata per una pillola: su un `<input type="checkbox">`
+          nativo ridipingerebbero il quadratino invece di spegnerlo. Toglierla di mezzo
+          non perde niente: la richiesta è già partita col valore letto al clic, e ciò
+          che compare dopo — riuscito o errore — sostituisce comunque questo riquadro. */}
+      <label className="flex min-h-[44px] cursor-pointer items-start gap-2 py-1 font-maven text-xs text-kidville-ink">
+        <input
+          type="checkbox"
+          checked={spunta}
+          onChange={(e) => setSpunta(e.target.checked)}
+          className="mt-0.5 size-4 shrink-0 accent-kidville-green"
+        />
+        <span>{t('pratRuoloAggiuntivoSpunta')}</span>
+      </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={aggiungiRuolo}
+          disabled={spento}
+          title={motivoSpento}
+          className={`inline-flex min-h-[44px] items-center gap-2 rounded-pill border border-kidville-green px-4 py-2 font-barlow text-xs font-bold uppercase tracking-[0.02em] text-kidville-green hover:bg-kidville-green-soft ${SPENTO}`}
+        >
+          {invio ? <Loader2 size={14} className="animate-spin" /> : <UserCheck size={14} />}
+          {t('pratRuoloAggiuntivoComando')}
+        </button>
+        {/* Il motivo dello spento si SCRIVE: un pulsante grigio senza spiegazione si
+            legge come un permesso mancante, e qui il motivo più frequente — «sto
+            ancora risolvendo» — dura un istante e non è un divieto. */}
+        {spento && motivoSpento && (
+          <span className="font-maven text-xs text-kidville-sub">{motivoSpento}</span>
+        )}
+      </div>
+      {errore && (
+        <p role="status" className="flex items-start gap-1.5 font-maven text-xs text-kidville-error-strong">
+          <AlertTriangle size={12} className="mt-0.5 shrink-0" /> {errore}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * L'ESITO DEL COLLEGAMENTO — e vive FUORI dal componente che l'ha prodotto.
+ *
+ * ⚠️ È il difetto che questo blocco esiste per non ripetere, misurato mentre lo si
+ * scriveva: appena il ruolo è aggiunto la rilettura fa dire al server `educator`,
+ * `esitoPrevisto` smette di valere `genitore` e `RuoloAggiuntivoGenitore` viene
+ * SMONTATO. Con l'esito tenuto nel suo stato locale, la conferma spariva nello stesso
+ * istante in cui nasceva: chi aveva premuto vedeva solo «Confermo» riaccendersi da
+ * solo, e chi usa uno screen reader non sentiva niente. È la stessa lezione che questo
+ * file ha già pagato con gli esiti scartati — *un esito che non si può mostrare non si
+ * butta*.
+ *
+ * `role="status"` e non un `<p>` muto: compare DOPO un gesto, ed è l'unica frase che
+ * dice che cosa è successo davvero — che l'accesso alle schede dei figli è rimasto.
+ */
+function EsitoRuoloAggiunto() {
+  const t = useTranslations('adminAltro')
+  return (
+    <div
+      role="status"
+      className="space-y-1 rounded-xl border border-kidville-success/30 bg-kidville-success-soft px-3 py-2"
+    >
+      <p className="flex items-start gap-1.5 font-maven text-xs font-semibold text-kidville-success-strong">
+        <CheckCircle2 size={12} className="mt-0.5 shrink-0" /> {t('pratRuoloAggiuntivoFatto')}
+      </p>
+      <p className="font-maven text-xs text-kidville-sub">{t('pratRuoloAggiuntivoFattoNota')}</p>
+    </div>
+  )
+}
+
+/**
  * Una voce del dettaglio: etichetta + valore, o «Non indicato».
  *
  * Un dato mancante NON è un errore: qui si dice che non c'è, in inchiostro neutro,
@@ -1529,7 +2005,8 @@ function PannelloPratica({
   pratica, oggi, nomeCompleto, nomeSede, gradi, etichettaGrado, titoloStudio, conferma,
   setConferma, motivo, setMotivo, destinazione, setDestinazione, sediDestinazione,
   sediNonLette, onApriSposta, lavorando, esito, avvisi, errore, sguardo, docBloccato,
-  onChiudiEsito, onEsegui, onApriDocumento,
+  isDirezione, ruoloRisolto, ruoloAggiunto, onRuoloAggiunto, onChiudiEsito, onEsegui,
+  onApriDocumento,
 }: {
   pratica: Pratica
   oggi: string
@@ -1554,6 +2031,24 @@ function PannelloPratica({
   errore: string | null
   sguardo: SguardoAccount | null
   docBloccato: string | null
+  /**
+   * La Direzione, lato client. Il gate VERO è il `requireStaff(['admin','coordinator'])`
+   * della route che aggiunge il ruolo: questo serve solo a non far scoprire il divieto
+   * dopo il clic.
+   */
+  isDirezione: boolean
+  /** `false` = il ruolo di chi guarda è ancora in volo: non è «non può». */
+  ruoloRisolto: boolean
+  /**
+   * Il ruolo È STATO aggiunto in questa apertura.
+   *
+   * Sta QUI e non dentro `RuoloAggiuntivoGenitore` perché quel componente viene
+   * smontato proprio dal successo (lo sguardo riletto non dice più `genitore`): l'esito
+   * sparirebbe nell'istante in cui nasce. Vedi `EsitoRuoloAggiunto`.
+   */
+  ruoloAggiunto: boolean
+  /** Il ruolo è stato aggiunto: lo sguardo va riletto, non dedotto. */
+  onRuoloAggiunto: () => void
   onChiudiEsito: () => void
   onEsegui: (azione: Azione) => void
   onApriDocumento: (path?: string | null) => void
@@ -2024,6 +2519,28 @@ function PannelloPratica({
                   claim) e la buttava in un campo di log: qui non compariva, e chi
                   premeva non aveva modo di accorgersene. */}
               <SguardoSullAccount sguardo={sguardo} id={ID_CONFERMA_ACCOUNT} />
+              {/* …E IL COMANDO CHE APRE QUEL VICOLO CIECO.
+                  La frase qui sopra dice da mesi «serve una decisione della segreteria»,
+                  e fino al 2026-09-01 non c'era nessun posto in cui prenderla: chi
+                  operava restava con un pulsante spento e un rimedio che non esisteva.
+                  Il riquadro compare SOLO sull'esito `genitore` — sugli altri quattro
+                  non c'è nessuna porta da aprire — e legge lo stesso `esitoPrevisto` di
+                  tutto il resto del pannello. */}
+              {ruoloAggiunto ? (
+                <EsitoRuoloAggiunto />
+              ) : esitoPrevisto(sguardo) === 'genitore' ? (
+                <RuoloAggiuntivoGenitore
+                  email={(pratica.email ?? '').trim()}
+                  // LA SEDE DELLA PRATICA, mai quella di chi guarda: è il plesso in cui
+                  // quella persona lavorerà, ed è l'unica che il server accetti senza
+                  // doverla indovinare.
+                  scuolaId={pratica.scuola_id ?? null}
+                  nomeSede={nomeSede}
+                  isDirezione={isDirezione}
+                  ruoloRisolto={ruoloRisolto}
+                  onFatto={onRuoloAggiunto}
+                />
+              ) : null}
               {/* LE FASCE, PRIMA DI PREMERE — e non solo quando mancano.
                   Fino al 2026-08-12 questo riquadro parlava delle fasce SOLO nel caso
                   vuoto, mentre nel caso pieno l'approvazione le scriveva sull'account.

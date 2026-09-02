@@ -6,17 +6,30 @@ import { useTranslations } from 'next-intl';
 import { formattaIstante } from '@/i18n/config';
 import {
   Clock, Archive, Award, HeartPulse, Shield,
-  ArrowRight, Download, CheckCircle2, Upload, Mail
+  ArrowRight, Download, Upload, Mail
 } from 'lucide-react';
 import { OtpEmailModal } from '@/components/features/parent/forms/OtpEmailModal';
 import { PrestampatiGenitore } from '@/components/features/prestampati/PrestampatiGenitore';
 import { DateField } from '@/components/ui/DateField';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri';
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
+import { useClientValue } from '@/lib/hooks/use-client-value';
+import { dataCivile } from '@/i18n/config';
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore';
+import { useFiltri } from '@/lib/ui/filtri/use-filtri';
+import { logClient } from '@/lib/logging/client';
+import {
+  campiArchivio,
+  campiCertificatiMedici,
+  campiDaCompilare,
+  descriviPeriodoIt,
+} from '@/components/features/parent/filtri-modulistica';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
 
@@ -55,11 +68,23 @@ interface AssignedForm {
 // Valore di risposta di un campo modulo (testo, rating numerico, consenso).
 type AnswerValue = string | number | boolean;
 
+/**
+ * Il certificato medico come lo serve `GET /api/parent/medical-certificates`.
+ *
+ * ⚠️ `alunno_id`, `stato`, `data_inizio` e `data_fine` NON sono campi nuovi: la
+ * rotta li seleziona da sempre (`.select('id, alunno_id, data_inizio, data_fine,
+ * stato, …')`) e questo tipo non li dichiarava, quindi la pagina li buttava via
+ * senza saperlo. Nessuna modifica alla rotta: solo il tipo che smette di mentire.
+ */
 interface MedCert {
   id: string;
+  alunno_id?: string | null;
   fileName?: string | null;
-  alunno?: { nome?: string | null } | null;
+  alunno?: { nome?: string | null; cognome?: string | null } | null;
   creato_il: string;
+  stato?: string | null;
+  data_inizio?: string | null;
+  data_fine?: string | null;
   notes?: string | null;
   giorni_coperti?: string[] | null;
 }
@@ -70,6 +95,8 @@ interface SignedArchiveItem {
   is_signed: boolean;
   pdf_path: string;
   created_at: string;
+  /** `online` = firmato dalla famiglia · `cartaceo` = scansione acquisita dallo staff. */
+  origine?: string | null;
   forms_templates: {
     title: string;
     description: string;
@@ -80,9 +107,29 @@ interface SignedArchiveItem {
   };
 }
 
+/**
+ * Una delle quattro letture non è arrivata, e lo si dice.
+ *
+ * Fuori dal componente perché non ha bisogno di niente di suo: è il collo di
+ * bottiglia da cui passano i tre rami di fallimento, così nessuno di essi resta
+ * muto — ed è la regola 6 di AGENTS.md applicata dove il guasto si presenta
+ * all'utente come «l'elenco è vuoto», che è indistinguibile da «non c'è nessuno».
+ * Nessun dato della famiglia nel messaggio: solo che cosa non si è caricato.
+ */
+function segnalaLetturaFallita(cosa: string, stato?: number): void {
+  logClient({
+    livello: 'warn',
+    evento: 'fetch',
+    messaggio: `modulistica genitore: ${cosa} non letti`,
+    route: '/parent/modulistica',
+    ...(typeof stato === 'number' ? { stato } : null),
+  });
+}
+
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ContenutoModulistica() {
   const t = useTranslations('parentServizi');
+  const ts = useTranslations('shared');
   const { userId: parentId } = useSessionIdentity();
   const f = useDateFormat();
   /**
@@ -130,6 +177,15 @@ function ContenutoModulistica() {
   }[]>([]);
   const [parentInfo, setParentInfo] = useState<{ nome?: string | null; cognome?: string | null } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  /**
+   * Una lettura FALLITA non è mai «nessun risultato», e nemmeno «vuoto»: le tre
+   * cose si somigliano a schermo e chiedono all'utente gesti opposti — riprova,
+   * togli un filtro, non c'è ancora nulla. Prima di questo ramo la pagina non le
+   * distingueva affatto: un guasto di rete si presentava come un archivio vuoto.
+   */
+  const [erroreForms, setErroreForms] = useState(false);
+  const [erroreArchivio, setErroreArchivio] = useState(false);
+  const [erroreMedici, setErroreMedici] = useState(false);
 
   // Active Compiler state
   const [compilingForm, setCompilingForm] = useState<AssignedForm | null>(null);
@@ -157,16 +213,35 @@ function ContenutoModulistica() {
       const fRes = await fetch('/api/parent/forms', { headers: { 'x-user-id': parentId } }).catch(() => null);
       const fData = await fRes?.json().catch(() => null);
       if (Array.isArray(fData)) setAssignedForms(fData);
+      else segnalaLetturaFallita('moduli assegnati', fRes?.status);
+      setErroreForms(!Array.isArray(fData));
 
       // 2. Fetch signed archive
       const aRes = await fetch('/api/parent/submissions', { headers: { 'x-user-id': parentId } }).catch(() => null);
       const aData = await aRes?.json().catch(() => null);
       if (Array.isArray(aData)) setArchive(aData);
+      else segnalaLetturaFallita('archivio firmati', aRes?.status);
+      setErroreArchivio(!Array.isArray(aData));
 
-      // 3. Fetch medical certificates
+      /**
+       * 3. I certificati medici.
+       *
+       * 🔴 QUI C'ERA `if (Array.isArray(mData)) setMedCerts(mData)`, e la rotta
+       * risponde `{ success, data }` — lo fa da sempre. `Array.isArray` su un
+       * oggetto è `false`, quindi questa scheda era VUOTA SEMPRE, per chiunque,
+       * qualunque cosa ci fosse nel database: nessun errore, nessun log, nessun
+       * test rosso. È la stessa firma del guasto delle email di credenziali —
+       * «non c'è niente» e «non è mai arrivato niente» hanno lo stesso aspetto.
+       *
+       * L'array nudo resta accettato: durante un rilascio il client può essere
+       * più nuovo del server, o viceversa.
+       */
       const mRes = await fetch('/api/parent/medical-certificates', { headers: { 'x-user-id': parentId } }).catch(() => null);
-      const mData = await mRes?.json().catch(() => null);
+      const mCorpo = await mRes?.json().catch(() => null);
+      const mData = Array.isArray(mCorpo) ? mCorpo : mCorpo?.data;
       if (Array.isArray(mData)) setMedCerts(mData);
+      else segnalaLetturaFallita('certificati medici', mRes?.status);
+      setErroreMedici(!Array.isArray(mData));
 
       // 4. Fetch children list via route server gated (parent-scoped, service-role)
       const sRes = await fetch('/api/parent/students', { headers: { 'x-user-id': parentId } }).catch(() => null);
@@ -448,6 +523,52 @@ function ContenutoModulistica() {
     }
   };
 
+  // ── I FILTRI DELLE TRE SCHEDE ───────────────────────────────────────────────
+  //
+  // Tre hook al livello della pagina, non uno per scheda montata a turno: qui
+  // NON serve, perché ogni campo è `dove: 'client'` e i dati sono già tutti in
+  // memoria — non c'è nessuna cornice da conoscere prima di nascere, che è
+  // invece il vincolo della pagina del docente (vedi `PannelloSemaforo`).
+  //
+  // ⚠️ `scriviUrl: false`. Tre barre sulla stessa pagina governano gli stessi nomi
+  // di parametro (`q`, `figlio`, `stato`): scrivendoli tutte, l'ultima che tocca
+  // cancella i filtri della precedente e lascia nella barra degli indirizzi uno
+  // stato che non descrive quello che si vede. L'indirizzo resta comunque LETTO
+  // (`?tab=` continua a funzionare, e un `?q=` incollato apre la ricerca già
+  // fatta): si rinuncia alla scrittura, non alla lettura.
+  const oggi = useClientValue(dataCivile, '');
+  const descriviPeriodo = descriviPeriodoIt(t, f.dataBreve);
+  const campiCompilare = campiDaCompilare(assignedForms, t, { oggi });
+  const campiArch = campiArchivio(archive, t, { descriviPeriodo });
+  const campiMed = campiCertificatiMedici(medCerts, t, { descriviPeriodo });
+  const filtriCompilare = useFiltri<AssignedForm>(campiCompilare, { scriviUrl: false });
+  const filtriArchivio = useFiltri<SignedArchiveItem>(campiArch, { scriviUrl: false });
+  const filtriMedici = useFiltri<MedCert>(campiMed, { scriviUrl: false });
+
+  const moduliVisibili = filtriCompilare.filtra(assignedForms);
+  const archivioVisibile = filtriArchivio.filtra(archive);
+  const mediciVisibili = filtriMedici.filtra(medCerts);
+
+  const testiBarra = testiBarraFiltri(ts);
+  const testiStato = testiStatoElenco(ts);
+
+  // `totale` è quante righe esistono nella scheda SENZA filtri, e non `mostrati`:
+  // è il cardine di «vuoto» contro «nessun risultato». Per una famiglia lo zero è
+  // il caso normale — `forms_templates`, `forms_submissions` e `certificati_medici`
+  // hanno zero righe in produzione — quindi è la distinzione che si vede più spesso.
+  const statoCompilare = decidiStatoElenco({
+    caricamento: isLoading, errore: erroreForms,
+    totale: assignedForms.length, mostrati: moduliVisibili.length,
+  });
+  const statoArchivio = decidiStatoElenco({
+    caricamento: isLoading, errore: erroreArchivio,
+    totale: archive.length, mostrati: archivioVisibile.length,
+  });
+  const statoMedici = decidiStatoElenco({
+    caricamento: isLoading, errore: erroreMedici,
+    totale: medCerts.length, mostrati: mediciVisibili.length,
+  });
+
   return (
     <div className="flex-1 flex flex-col px-4 pt-5 pb-24">
       {/* Header */}
@@ -495,13 +616,28 @@ function ContenutoModulistica() {
           {/* TAB 1: Da Compilare */}
           {activeTab === 'compilare' && !compilingForm && (
             <div className="space-y-4">
-              {assignedForms.filter(f => f.status === 'pending').length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
-                  <CheckCircle2 className="mx-auto text-kidville-success mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">{t('modulisticaNessunModulo')}</p>
-                </div>
-              ) : (
-                assignedForms.filter(f => f.status === 'pending').map(form => (
+              {/* 🔴 Qui c'era `assignedForms.filter(f => f.status === 'pending')`,
+                  scritto DUE volte: una per decidere se l'elenco è vuoto, una per
+                  disegnarlo. Ora è un filtro con `pending` come valore di riposo —
+                  la scheda si apre esattamente su ciò che si apriva prima, ma la
+                  famiglia può anche guardare i firmati e gli scaduti, e «Pulisci
+                  filtri» riporta al riposo invece di azzerare. */}
+              <BarraFiltri
+                campi={campiCompilare}
+                stato={filtriCompilare}
+                testi={testiBarra}
+                totale={assignedForms.length}
+                mostrati={moduliVisibili.length}
+                variante="compatta"
+              />
+              <StatoElenco
+                stato={statoCompilare}
+                testi={{ ...testiStato, vuotoTitolo: t('modulisticaNessunModulo') }}
+                attivi={filtriCompilare.attivi}
+                onPulisci={filtriCompilare.pulisci}
+                onRiprova={fetchData}
+              />
+              {moduliVisibili.map(form => (
                   <div key={form.form_id + '-' + form.student.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
@@ -545,8 +681,7 @@ function ContenutoModulistica() {
                       {form.form_type === 'autorizzazione' ? t('modulisticaCompilaFirma') : t('modulisticaCompila')} <ArrowRight size={16} />
                     </Btn>
                   </div>
-                ))
-              )}
+                ))}
             </div>
           )}
 
@@ -693,13 +828,22 @@ function ContenutoModulistica() {
           {/* TAB 2: Archivio Firmati */}
           {activeTab === 'archivio' && (
             <div className="space-y-4">
-              {archive.length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
-                  <Archive className="mx-auto text-kidville-line mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">{t('modulisticaNessunFirmato')}</p>
-                </div>
-              ) : (
-                archive.map(item => (
+              <BarraFiltri
+                campi={campiArch}
+                stato={filtriArchivio}
+                testi={testiBarra}
+                totale={archive.length}
+                mostrati={archivioVisibile.length}
+                variante="compatta"
+              />
+              <StatoElenco
+                stato={statoArchivio}
+                testi={{ ...testiStato, vuotoTitolo: t('modulisticaNessunFirmato') }}
+                attivi={filtriArchivio.attivi}
+                onPulisci={filtriArchivio.pulisci}
+                onRiprova={fetchData}
+              />
+              {archivioVisibile.map(item => (
                   <div key={item.id} className="bg-white rounded-card p-5 border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
                       <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
@@ -722,8 +866,7 @@ function ContenutoModulistica() {
                       <Download size={14} /> {t('modulisticaRicevutaPdf')}
                     </Btn>
                   </div>
-                ))
-              )}
+                ))}
             </div>
           )}
 
@@ -829,12 +972,22 @@ function ContenutoModulistica() {
                 <h4 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide">
                   {t('modulisticaRicevuteRecenti')}
                 </h4>
-                {medCerts.length === 0 ? (
-                  <div className="bg-white rounded-card p-6 text-center border border-kidville-line font-maven text-xs text-kidville-muted">
-                    {t('modulisticaNessunCertMedico')}
-                  </div>
-                ) : (
-                  medCerts.map(cert => (
+                <BarraFiltri
+                  campi={campiMed}
+                  stato={filtriMedici}
+                  testi={testiBarra}
+                  totale={medCerts.length}
+                  mostrati={mediciVisibili.length}
+                  variante="compatta"
+                />
+                <StatoElenco
+                  stato={statoMedici}
+                  testi={{ ...testiStato, vuotoTitolo: t('modulisticaNessunCertMedico') }}
+                  attivi={filtriMedici.attivi}
+                  onPulisci={filtriMedici.pulisci}
+                  onRiprova={fetchData}
+                />
+                {mediciVisibili.map(cert => (
                     <div key={cert.id} className="bg-white rounded-card p-4 border border-kidville-line flex items-center justify-between text-xs font-maven">
                       <div>
                         <div className="font-semibold text-kidville-ink">{t('modulisticaCertLabel', { nome: cert.fileName ?? '' })}</div>
@@ -854,8 +1007,7 @@ function ContenutoModulistica() {
                         )}
                       </div>
                     </div>
-                  ))
-                )}
+                  ))}
               </div>
             </div>
           )}

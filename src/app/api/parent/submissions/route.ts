@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
-import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
+import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione';
 import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
@@ -48,10 +48,31 @@ export const POST = withRoute('parent/submissions:POST', async (request: NextReq
 
     const supabase = await createAdminClient();
 
-    // IDOR: un genitore può sottomettere (e auto-aggiornare l'anagrafica) solo su
-    // un PROPRIO figlio. student_id assente = onboarding (ammesso).
-    if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
-      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 });
+    // ── IDOR: questa riga era scritta come un permesso e non controllava niente ──
+    //
+    // Diceva:
+    //   `if (student_id && auth.user.role === 'genitore' && !genitoreHasFiglio(…))`
+    // cioè: «se sei un genitore e quel bambino non è tuo figlio, ti nego». Per
+    // chiunque NON avesse il ruolo ATTIVO `genitore` — la cuoca, la segreteria di
+    // un altro plesso, l'educator di un'altra sede, e la docente-genitore in veste
+    // di lavoro — il controllo semplicemente NON C'ERA: `requireUser` ammette ogni
+    // utente autenticato, e questa condizione era l'unica cosa fra un account
+    // qualunque e l'archiviazione di una compilazione a nome di un minore indicato
+    // per uuid.
+    //
+    // Il rimedio NON è scambiare il predicato: `eFamiglia` avrebbe lasciato in
+    // piedi la stessa forma (nego a un genitore, non chiedo niente agli altri). La
+    // domanda giusta non è «di che ruolo sei» ma «questo bambino ti è
+    // raggiungibile?», e `requireParentOfStudent` la risponde per TUTTI: legame di
+    // famiglia per chi è famiglia — e la biforcazione è sul legame, non sulla veste,
+    // così una docente-genitore compila per il proprio figlio anche fuori dalle
+    // sezioni che insegna — plesso e sezione per tutti gli altri.
+    //
+    // `student_id` assente = onboarding: si compila PRIMA che esista un bambino a
+    // cui riferire il modulo, quindi non c'è niente a cui applicare il gate.
+    if (student_id) {
+      const gateAlunno = await requireParentOfStudent(request, student_id);
+      if (gateAlunno.response) return gateAlunno.response;
     }
 
     // Sospensione moroso (finding #4: ramo scoperto): sottoscrivere/firmare un

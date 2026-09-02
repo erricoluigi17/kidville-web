@@ -45,6 +45,19 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
   genitoreHasFiglio: vi.fn().mockImplementation(async () => h.hasFiglio),
 }))
 
+// L'IDOR sul bambino non passa più da `role === 'genitore' && genitoreHasFiglio(…)`
+// — riga che per chiunque non agisse da genitore non controllava niente — ma da
+// `requireParentOfStudent`, che pone la domanda a tutti i ruoli: legame di famiglia
+// per chi è famiglia, plesso e sezione per gli altri. `h.hasFiglio` continua a
+// pilotare l'esito, così i casi di questo file restano quelli di prima.
+vi.mock('@/lib/auth/require-parent', () => ({
+  requireParentOfStudent: vi.fn().mockImplementation(async () =>
+    h.hasFiglio
+      ? { user: { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaa11', role: 'genitore', scuola_id: null } }
+      : { response: NextResponse.json({ error: 'Accesso negato' }, { status: 403 }) }
+  ),
+}))
+
 vi.mock('@/lib/pagamenti/sospensione', () => ({
   assertGenitoreNonSospeso: vi.fn().mockImplementation(async () => h.sospeso),
   // Contabilità v2: POST/PATCH usano la variante flag-aware; delega su h.sospeso.

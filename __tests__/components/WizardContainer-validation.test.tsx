@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { FormSchemaConfig } from '@/types/database.types'
+import itCampi from '../../messages/it/parentForms.json'
 
 // framer-motion in jsdom: le animazioni con AnimatePresence mode="wait" possono
 // bloccare lo scambio di pagina (l'exit non completa). Le sostituiamo con render
@@ -87,7 +88,7 @@ describe('WizardContainer — validazione per pagina', () => {
 
     // Il messaggio compare dopo la validazione (async): attendilo, poi verifica
     // che NON si sia avanzati.
-    await screen.findAllByText('Campo obbligatorio')
+    await screen.findAllByText(itCampi.campoObbligatorio)
     expect(screen.getByText('Pagina Uno')).toBeInTheDocument()
     expect(screen.queryByText('Pagina Due')).not.toBeInTheDocument()
   })

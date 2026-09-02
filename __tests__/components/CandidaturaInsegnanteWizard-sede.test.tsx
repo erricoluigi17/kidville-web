@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' 
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
 
 import { CandidaturaInsegnanteWizard } from '@/components/features/public/CandidaturaInsegnanteWizard'
+import { allegaCurriculumDiProva } from '../helpers/allega-curriculum'
 
 const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
 const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
@@ -94,6 +95,16 @@ function mockSedi(risposte: Risposta[], invii: EsitoPost[] = [{ tipo: 'ok' }]): 
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: r.sedi }) })
     }
+    // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+    // `/api/iscrizione/insegnanti` è un PREFISSO di
+    // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+    // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+    // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+    // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+    // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+    if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+    }
     if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
       corpiInviati.push(JSON.parse(String(init.body)))
       const e = invii[Math.min(invio, invii.length - 1)]
@@ -106,6 +117,30 @@ function mockSedi(risposte: Risposta[], invii: EsitoPost[] = [{ tipo: 'ok' }]): 
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
   })
 }
+
+/**
+ * Il percorso che `POST /api/iscrizione/insegnanti/upload` restituisce, e il nome
+ * del file che si sceglie per ottenerlo.
+ *
+ * ⚠️ Servono dal 2026-08-24, quando il curriculum è diventato OBBLIGATORIO:
+ * l'elicottero che attraversa il passo «Il tuo profilo» senza allegare niente non
+ * arriva più ai consensi, e cadrebbe in TIMEOUT su `waitFor` — cioè con uno stack
+ * che si legge come «il wizard è rotto» invece che «manca un allegato».
+ */
+const PERCORSO_CV = 'candidature/11111111-2222-4333-8444-555555555555-cv.pdf'
+const NOME_FILE_CV = 'cv-collaudo.pdf'
+
+/**
+ * Allega un curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *
+ * ⚠️ L'ATTESA IN CODA NON È FACOLTATIVA: il caricamento è asincrono, e senza di
+ * essa si preme «Avanti» prima che il campo abbia preso il percorso — cioè si
+ * collauda esattamente il caso che si voleva evitare.
+ */
+/** Allega il curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *  La sonda vive in `__tests__/helpers/allega-curriculum`: erano SEI copie identiche,
+ *  e il giorno in cui il riquadro ha cambiato impaginazione sono cadute tutte e sei. */
+const allegaCurriculum = () => allegaCurriculumDiProva(NOME_FILE_CV)
 
 /** Il 400 che la rotta risponde quando `scuola_id` non è un plesso che riceve. */
 const RIFIUTO_SEDE = {
@@ -138,6 +173,7 @@ async function compilaFinoAlRiepilogo(): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'laurea_triennale' } })
   fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
+  await allegaCurriculum()
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() =>
@@ -652,6 +688,16 @@ describe('CandidaturaInsegnanteWizard — i tre stati dell’elenco sedi', () =>
           status: 200,
           json: async () => ({ success: true, data: [ALFA, BETA] }),
         }))
+      }
+      // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+      // `/api/iscrizione/insegnanti` è un PREFISSO di
+      // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+      // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+      // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+      // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+      // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+      if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
       }
       if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
         corpiInviati.push(JSON.parse(String(init.body)))

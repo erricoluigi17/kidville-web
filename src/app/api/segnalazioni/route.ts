@@ -3,6 +3,10 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser, type AppUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { getFigliDiGenitore, genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { notificaEvento } from '@/lib/notifiche/triggers'
@@ -135,7 +139,12 @@ async function figliDi(supabase: SupabaseClient, genitoreId: string): Promise<st
  * migrazione, non aprire una via alternativa.
  */
 async function sediDelSegnalante(supabase: SupabaseClient, user: AppUser): Promise<string[]> {
-  if (user.role !== 'genitore') return await scuoleDiUtente(supabase, user)
+  // PRESENTAZIONE, e qui il predicato sbagliato farebbe un danno preciso: con
+  // `eFamiglia` una docente-genitore avrebbe SEMPRE le sedi dei propri figli e MAI
+  // quelle in cui insegna — quindi, segnalando un genitore della propria classe, la
+  // segnalazione finirebbe archiviata nel plesso sbagliato. «Ogni scrittura dichiara
+  // la sua sede», e la sede giusta è quella della veste in cui si sta agendo.
+  if (!agisceComeGenitore(user)) return await scuoleDiUtente(supabase, user)
 
   const figli = await figliDi(supabase, user.id)
   if (figli.length === 0) return []
@@ -256,8 +265,12 @@ async function contattoLegittimo(
   }
 
   // 2. Relazione per sezione: chi è il genitore e chi il docente dipende dal ruolo.
-  const parentId = segnalante.role === 'genitore' ? uid : segnalatoId
-  const teacherId = segnalante.role === 'genitore' ? segnalatoId : uid
+  // Chi dei due è il genitore e chi il docente lo dice la VESTE di chi segnala: con
+  // `eFamiglia` una docente-genitore che segnala un genitore verrebbe messa lei nel
+  // posto del genitore e il segnalato in quello del docente — la coppia si
+  // ribalterebbe, e con essa la ricerca dei figli e delle sezioni qui sotto.
+  const parentId = agisceComeGenitore(segnalante) ? uid : segnalatoId
+  const teacherId = agisceComeGenitore(segnalante) ? segnalatoId : uid
 
   const figli = await figliDi(supabase, parentId)
   if (figli.length === 0) return { ok: false }
@@ -323,7 +336,9 @@ async function verificaAccesso(
   sedi: string[],
 ): Promise<EsitoAccesso> {
   const uid = segnalante.id
-  const isGenitore = segnalante.role === 'genitore'
+  // Stesso criterio dei due rami qui sopra: la visibilità dell'oggetto segnalato si
+  // misura sulla veste in cui lo si è visto.
+  const isGenitore = agisceComeGenitore(segnalante)
 
   if (tipo === 'messaggio_chat') {
     const { data: msg, error: errMsg } = await supabase

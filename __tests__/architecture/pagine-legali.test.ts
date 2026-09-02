@@ -272,6 +272,96 @@ describe('lock — pagine legali', () => {
      * propone come alternativa comoda.
      */
     const IMPRONTE_PRIVACY: Record<string, string> = {
+        // 2026-08-25 — due voci nuove, e nessuna redazionale.
+        // (1) «Natura del conferimento» dichiara che nel modulo «Lavora con noi» il
+        //     CURRICULUM è necessario e che senza allegato la candidatura non si può
+        //     inviare (art. 13 §2 lett. e). L'obbligo è nato il 24/08 con il campo:
+        //     finché il curriculum era facoltativo quel modulo non aveva niente di
+        //     necessario da dichiarare, e la sezione parlava solo dei minori.
+        // (2) Il «curriculum caricato e mai inviato» passa da ventiquattro a
+        //     QUARANTOTTO ore. Non perché il codice sia cambiato: perché le 24 ore
+        //     erano false dal 15/08. Misurato in produzione il 2026-08-25 alle 03:56Z:
+        //     36 orfani, 21 con più di 24 ore, il più vecchio 45 h; oltre le 48 zero.
+        //     La soglia è giusta (24 h), la cadenza no: la spazzata passa una volta a
+        //     notte, quindi il tetto vero è soglia + un giro. Il lock
+        //     `informativa-termine-orfani-sostenibile` ora lega le tre cifre.
+        //
+        // ⚠️ QUESTA IMPRONTA È STATA RISCRITTA, non affiancata, ed è lecito qui per
+        // la stessa ragione — e con la stessa prova — del '2026-08-19' più sotto:
+        // la versione '2026-08-25' NON è mai andata in produzione. Misurato il
+        // 2026-08-25 con un conteggio sulle quattro tabelle che portano un
+        // `consents_log` (`candidature_insegnanti`, `enrollment_submissions`,
+        // `form_submissions`, `pratiche_personale`): le versioni presenti sono
+        // '2026-07-31' (285), '2026-08-10' (5), '2026-08-11' (7), '2026-08-15' (95)
+        // e '2026-08-20' (234). Di '2026-08-25' nessuna riga. Il divieto di
+        // riscrivere protegge i documenti che qualcuno ha già accettato, non le
+        // bozze — e la differenza fra i due casi si stabilisce con la query, non
+        // con la data.
+        // Cosa è cambiato rispetto alla prima stesura di oggi: SOLO la forma del
+        // capoverso «Lavora con noi». Spariti l'inciso parlato («che è la cosa che
+        // la persona ci chiede di fare») e l'attacco ripetuto («È invece
+        // facoltativo», che apriva anche il capoverso seguente sulle fotografie).
+        // Necessità del curriculum e conseguenza del rifiuto restano dichiarate.
+        //
+        // ── E RISCRITTA UNA SECONDA VOLTA LO STESSO GIORNO (rifinitura del 25/08) ──
+        // Quattro correzioni di FORMA, nessuna di merito, tutte dentro la stessa
+        // versione mai pubblicata:
+        //  1. il capoverso «Lavora con noi» è andato in FONDO alla sezione. Era il
+        //     terzo di quattro, cioè un adulto che si candida a un lavoro incastrato
+        //     fra i dati sanitari del minore e le fotografie del minore;
+        //  2. tolta l'ECO col capoverso seguente — «è INVECE facoltativo … NON
+        //     PREGIUDICA IN ALCUN MODO» ripetuto due volte di fila su due soggetti
+        //     estranei. Ora «invece» è uno solo e il rifiuto «non incide sulla
+        //     valutazione»;
+        //  3. i DUE TERMINI si scrivono («dodici mesi anziché ventiquattro») invece
+        //     di «al più breve dei termini indicati più avanti»: è la frase su cui si
+        //     decide se spuntare un consenso, e il numero era rimandato. La seconda
+        //     copia dei due numeri è sotto lo stesso lock della prima —
+        //     `gdpr-retention-candidature` è stato esteso a questo capoverso;
+        //  4. «la richiesta dell'interessato» → «la richiesta di chi si candida». Era
+        //     l'unico capoverso della pagina rivolto a chi si candida, e usava il
+        //     maschile mentre il corpo della sezione sul personale — stessa
+        //     popolazione — scrive «l'interessata» tre volte.
+        // Più una fuori sezione: la voce «curriculum caricato e mai inviato» torna
+        // alla PASSIVA dell'elenco («viene rimosso … dalla pulizia notturna, entro
+        // due passaggi») invece di «e lo toglie dall'archivio la pulizia notturna»,
+        // che cambiava soggetto a metà frase.
+        //
+        // ⚠️ RISCRITTA E NON AFFIANCATA, e la licenza è di nuovo una MISURA, non la
+        // data. Conteggio del 2026-08-25 su `candidature_insegnanti`, raggruppando
+        // per `consents_log->>'versione_informativa'`: '2026-08-20' 195 righe,
+        // '2026-08-15' 38, '2026-08-10' 1 — di '2026-08-25' NESSUNA.
+        // ⚠️ E LA MISURA FACILE MENTIVA: `consents_log::text LIKE '%2026-08-25%'`
+        // torna 1, e quell'1 non è una versione — è un TIMESTAMP di un consenso
+        // accettato oggi. Fidandosi di quel conteggio si sarebbe inventata una
+        // versione '2026-08-26' per un documento che nessuno ha mai letto. La
+        // domanda è «quale versione attesta questa riga», e si fa al campo, non al
+        // testo intero.
+        //
+        // ── E RISCRITTA UNA TERZA VOLTA, SEMPRE IL 25/08 (rifinitura di lingua) ──
+        // UNA correzione di forma, zero di merito. Il capoverso «Lavora con noi»
+        // reggeva sotto lo stesso «e» due cose di natura diversa — uno SCOPO
+        // («servono a esaminare la candidatura») e una CONSEGUENZA («e senza il
+        // curriculum allegato la candidatura non può essere inviata») — così che per
+        // capire a che cosa si attaccasse la congiunzione bisognava tornare indietro;
+        // e «candidatura» compariva tre volte in due righe. Ora sono due frasi:
+        // «…dare seguito alla richiesta di chi si candida. Senza il curriculum
+        // allegato il modulo non si invia.» Una parola in meno, stessa informazione,
+        // stessi obblighi dichiarati (art. 13 §2 lett. e).
+        //
+        // ⚠️ RISCRITTA E NON AFFIANCATA per la TERZA volta, e la licenza è ancora una
+        // misura rifatta, non ereditata dalle due qui sopra. Conteggio del 2026-08-25
+        // su `candidature_insegnanti` per `consents_log->>'versione_informativa'`:
+        // '2026-08-20' 197 righe, '2026-08-15' 38, '2026-08-10' 1 — di '2026-08-25'
+        // NESSUNA. (Le 197 erano 195 quando è stata scritta la misura precedente,
+        // poche ore fa: il modulo riceve candidature vere mentre lo si tocca, ed è il
+        // motivo per cui il conteggio si rifà invece di ricopiarlo.)
+        // ⚠️ E LA TRAPPOLA DEL `LIKE` HA COLPITO DI NUOVO, esattamente come previsto
+        // dieci righe più su: `consents_log::text LIKE '%2026-08-25%'` oggi torna 3,
+        // e nessuna delle tre è una versione — sono i TIMESTAMP di tre consensi
+        // accettati stamattina. Il paragrafo che avverte del difetto non ha impedito
+        // di commetterlo: a fermarlo è stata la query giusta, sul campo.
+        '2026-08-25': 'ca47f58ee52197fcb44ecd51dd2f7edfee114356cac68b9c439acbda39103ad8',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

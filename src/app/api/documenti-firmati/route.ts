@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
-import { resolveScuoleAttive, sezioniVisibili, vedeTutteLeClassi } from '@/lib/auth/scope'
+import { resolveScuoleAttive, restringiSedi, sezioniVisibili, vedeTutteLeClassi } from '@/lib/auth/scope'
 import { sezioniContitolari } from '@/lib/primaria/fascicolo-rbac'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -97,10 +97,27 @@ export const GET = withRoute('documenti-firmati:GET', async (request: NextReques
     if (plessi.length === 0) {
       return NextResponse.json({ success: true, data: [], alunni: [], riepilogo: riepilogo([]) })
     }
-    // La sede chiesta dal filtro deve essere fra quelle accessibili: un uuid
-    // scritto a mano nella query non allarga il perimetro.
-    const plessiEffettivi = scuolaId ? plessi.filter((p) => p === scuolaId) : plessi
-    if (plessiEffettivi.length === 0) return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    /**
+     * La sede chiesta dal filtro deve essere fra quelle accessibili: un uuid
+     * scritto a mano nella query non allarga il perimetro.
+     *
+     * ⚠️ QUI C'ERA UN `p === scuolaId`, cioè un confronto CON DISTINZIONE DI
+     * MAIUSCOLE, ed è il difetto per cui `formaConfronto` esiste. In Postgres
+     * `uuid` è un TIPO: `'AAAA-…'` e `'aaaa-…'` sono lo stesso valore e la riga
+     * si trova; in JavaScript sono due stringhe diverse. Misurato sui dati veri
+     * il 2026-07-31: chi chiedeva la PROPRIA sede in maiuscolo si prendeva un
+     * **403**, e insieme al diniego accendeva un contatore nato come segnale di
+     * sicurezza. Due danni, e il secondo è quello che dura — una lettura negata
+     * la si vede, un segnale riempito di falsi positivi no.
+     *
+     * `restringiSedi` fa l'intersezione senza maiuscole e restituisce la forma
+     * CANONICA del database, non la stringa arrivata dal client; `null` è «hai
+     * chiesto un plesso che non è tuo», ed è l'unico caso che si rifiuta.
+     */
+    const plessiEffettivi = restringiSedi(plessi, scuolaId)
+    if (plessiEffettivi === null || plessiEffettivi.length === 0) {
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
 
     // Le sezioni PRIMA della query, non dopo: un educator senza sezioni assegnate
     // esce di qui senza aver chiesto niente al database. Costruire la query e poi

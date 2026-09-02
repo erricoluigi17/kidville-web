@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { assertAlunnoInScope } from '@/lib/auth/scope';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -178,7 +182,11 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
         // bambino dev'essere di chi la apre — altrimenti bastava passare l'uuid di
         // un minore di un'altra sede per aprirci sopra un thread (e comparire
         // nella supervisione come interlocutore legittimo).
-        if (auth.user.role === 'genitore') {
+        // PRESENTAZIONE: in veste di famiglia si apre una chat solo sui PROPRI
+        // figli; in veste di lavoro sui bambini del proprio scope. Con `eFamiglia`
+        // una docente-genitore non potrebbe più aprire un thread su un bambino
+        // della sua sezione — le si negherebbe il mestiere.
+        if (agisceComeGenitore(auth.user)) {
             const suo = await genitoreHasFiglio(supabase, auth.user.id, student_id);
             if (!suo) {
                 return NextResponse.json({ error: 'Accesso negato: non è tuo figlio' }, { status: 403 });

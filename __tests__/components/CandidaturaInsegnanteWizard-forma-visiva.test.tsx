@@ -36,6 +36,14 @@ import type { FormField } from '@/types/database.types'
  * quelle prese nel browser, e stanno scritte nei commenti del componente.
  */
 
+/**
+ * La legenda «* campo obbligatorio» come SI LEGGE. Oggi coincide col valore di
+ * catalogo — il glifo è isolato in uno `<span>` per riceverne la tinta, ma il
+ * testo non cambia — e resta una costante derivata perché è il `textContent`
+ * dell'intero `<p>` che i due test qui sotto confrontano, non una sua metà.
+ */
+const LEGENDA_RESA = itPublic.wizardCampiObbligatori
+
 const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' }))
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
 
@@ -81,6 +89,7 @@ vi.mock('next-intl', async () => {
 
 import { CandidaturaInsegnanteWizard } from '@/components/features/public/CandidaturaInsegnanteWizard'
 import { FieldRenderer } from '@/components/features/forms/FieldRenderer'
+import { allegaCurriculumDiProva } from '../helpers/allega-curriculum'
 
 const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
 const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
@@ -94,9 +103,20 @@ function mockSedi(esito: { ok: true; sedi: { id: string; nome: string }[] } | { 
       if (!esito.ok) return Promise.resolve({ ok: false, status: 429, json: async () => ({ error: 'no' }) })
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: esito.sedi }) })
     }
+    // ⚠️ IL CARICAMENTO DEL CURRICULUM, dal 2026-08-24: il campo è obbligatorio,
+    // quindi `compilaFinoAlRiepilogo` ci passa. Senza questo ramo il ripiego qui
+    // sotto risponde `{}`, il `path` è `undefined` e il campo non si riempie mai:
+    // il passo «profilo» non avanza e il test cade in TIMEOUT sui consensi.
+    if (url.includes('/api/iscrizione/insegnanti/upload')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+    }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
   })
 }
+
+/** Il percorso che la rotta di caricamento restituisce, e il nome del file scelto. */
+const PERCORSO_CV = 'candidature/11111111-2222-4333-8444-555555555555-cv.pdf'
+const NOME_FILE_CV = 'cv-collaudo.pdf'
 
 /**
  * I token di COLORE di una card di scelta: contorno e riempimento allo stato in
@@ -202,6 +222,12 @@ async function compilaFinoAlRiepilogo(): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'laurea_triennale' } })
   fireEvent.click(screen.getByRole('checkbox', { name: POSIZIONE_SCELTA }))
+  // Il curriculum è obbligatorio dal 2026-08-24: senza, il passo non avanza.
+  // L'attesa non è facoltativa — il caricamento è asincrono, e la sonda vive in
+  // `__tests__/helpers/allega-curriculum` (era la SETTIMA copia della stessa
+  // sequenza: sono cadute tutte insieme il giorno in cui il riquadro ha cambiato
+  // il modo di impaginare il nome).
+  await allegaCurriculumDiProva(NOME_FILE_CV)
   fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
 
   await waitFor(() =>
@@ -400,20 +426,51 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
    * ─── LE DUE NOTE DEL PASSO «PROFILO» STANNO DOPO IL CAMPO CHE DESCRIVONO ────
    *
    * Dal 2026-08-15 il passo «profilo» porta due righe di aiuto che l'etichetta da
-   * sola non può dire: che le posizioni si possono spuntare in più d'una, e che il
-   * curriculum va bene anche come fotografia ed è facoltativo (senza quella riga,
-   * chi non ha il PDF sottomano abbandona il modulo).
+   * sola non può dire: che le posizioni si possono spuntare in più d'una, e che
+   * del curriculum va bene anche una FOTOGRAFIA.
    *
-   * ⚠️ Il componente le rende come `<p>` accanto al campo e NON come
-   * `aria-describedby`: `FieldRenderer` non accetta una descrizione dall'esterno —
-   * il suo `aria-describedby` è già occupato dal messaggio d'errore, che è ciò che
-   * dev'essere annunciato quando c'è. Il debito è dichiarato in
-   * `CandidaturaInsegnanteWizard.tsx` (`NOTE_DEI_CAMPI`), e la ragione per cui è
-   * tollerabile è UNA sola: la nota resta comunque leggibile nell'ordine del
-   * documento, subito dopo il campo che descrive. Quella ragione è una misura, non
-   * una promessa — e questo è il posto in cui si misura. Se un domani la nota
-   * finisse sopra il campo, o in fondo al passo, il debito smetterebbe di essere
-   * tollerabile senza che nessun altro controllo lo dica.
+   * ⚠️ La seconda nota diceva anche «ed è facoltativo», e dal 2026-08-24 non è
+   * più vero: il curriculum è obbligatorio. La metà che resta pesa PIÙ di prima —
+   * è ciò che tiene nel modulo chi compila dal telefono e non ha un PDF
+   * sottomano, cioè proprio le persone che l'obbligo rischia di far abbandonare
+   * (quattro su dieci oggi arrivano senza allegato: àncora `MISURA-CV`).
+   * Questo test non guarda il TESTO della nota, guarda dove sta: resterebbe verde
+   * qualunque cosa ci sia scritto, ed è il motivo per cui il testo va riletto a
+   * mano quando cambia.
+   *
+   * ⚠️ QUESTO PARAGRAFO HA DETTO IL FALSO PER UN GIORNO, e la correzione vale più
+   * della frase. Diceva che «`FieldRenderer` non accetta una descrizione
+   * dall'esterno — il suo `aria-describedby` è già occupato dal messaggio
+   * d'errore», e che l'unica mitigazione di quel debito fosse l'ordine nel
+   * documento. Era vero fino al 24/08 e da allora non più: `FieldRenderer` prende
+   * `notaId`, e il suo `aria-describedby` CONCATENA — prima l'errore (la cosa
+   * urgente), poi la nota. Il debito era già chiuso dallo stesso commit che qui
+   * lo dava per aperto.
+   *
+   * ⚠️ COME È SUCCESSO, perché è la parte riusabile: la frase viveva in DUE copie
+   * nate da un copia-incolla — questo docblock e `NOTE_DEI_CAMPI` in
+   * `CandidaturaInsegnanteWizard.tsx` — e ne è stata corretta una sola, perché
+   * l'elenco dei posti da toccare era stato fatto a memoria. Un `grep` lo avrebbe
+   * derivato in un secondo: `grep -rn "descrizione dall'esterno" --include="*.ts"
+   * --include="*.tsx" .` ne trova due. È la stessa trappola che questo stesso
+   * lavoro aveva denunciato quaranta righe più in là per il gemello «e SPESSO il
+   * curriculum» — disciplina applicata a una coppia di frasi e non all'altra.
+   *
+   * COM'È OGGI: la nota è resa dal wizard (è tradotta col catalogo della pagina e
+   * non sta nel template), porta `id="<campo>-nota"`, è passata a `FieldRenderer`
+   * come `notaId` e finisce in `aria-describedby` DOPO l'errore. Chi percorre il
+   * modulo campo per campo la sente insieme al campo che descrive.
+   *
+   * PERCHÉ QUESTO TEST RESTA, ora che il debito non c'è più: perché l'aggancio ARIA
+   * e l'ORDINE NEL DOCUMENTO sono due cose diverse, e la seconda non la guarda
+   * nessun altro. `aria-describedby` serve chi ascolta; l'ordine serve chi legge e
+   * chi ingrandisce. Se un domani la nota finisse sopra il campo, o in fondo al
+   * passo, la pagina resterebbe corretta per lo screen reader e sbagliata per tutti
+   * gli altri, senza che nessun controllo lo dica.
+   *
+   * ⚠️ IL DEBITO RESIDUO NON È DI `FieldRenderer`, è di
+   * `DocumentoIdentitaFields.tsx:383`, che rende `persDocAllegatoNota` in un `<p>`
+   * senza `id` e senza passare `notaId`. Il meccanismo per agganciarla esiste già.
    */
   it('le note di «posizioni» e del curriculum vengono DOPO il loro campo, nella stessa scatola', async () => {
     mockSedi({ ok: true, sedi: [ALFA, BETA] })
@@ -432,7 +489,8 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
     const coppie: [string, string][] = [
       // La prima casella del gruppo delle posizioni, e la nota che lo riguarda.
       [POSIZIONE_SCELTA, itPublic.candPosizioniAiuto],
-      // Il controllo del curriculum, e la nota che dice che è facoltativo.
+      // Il controllo del curriculum, e la nota che dice che va bene una foto —
+      // e che senza allegato non si invia (dal 2026-08-24).
       ['cv_path', itPublic.candCvNota],
     ]
     for (const [ancora, testoNota] of coppie) {
@@ -455,7 +513,62 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
         nota.parentElement?.contains(campo),
         `la nota di «${ancora}» non sta nella stessa scatola del campo`,
       ).toBe(true)
+      /*
+       * 3 · E SUBITO DOPO, senza niente in mezzo. ⚠️ QUESTA È LA RIGA CHE MANCAVA,
+       *     e le due qui sopra restavano verdi senza di lei. MISURATO nella pagina
+       *     viva il 25/08/2026, a 900 px: fra il riquadro del curriculum e la sua
+       *     nota c'erano **58 px** a riposo e **82** in errore (82 anche a 360 px),
+       *     con dentro il collegamento «Leggi l'informativa» alto 44 — mentre il
+       *     campo gemello «Per quali posizioni ti proponi», che la nota ce l'ha ma
+       *     il link no, misurava **6 px**. Cioè: «dopo il campo» e «nella stessa
+       *     scatola» erano entrambe vere CON un elemento estraneo interposto, e la
+       *     frase che dice a chi compila dal telefono che può fotografare il foglio
+       *     era spinta sotto un rimando legale che non aiuta a compilare.
+       *     La causa era strutturale — il link lo rendeva `FieldRenderer`, la nota
+       *     il wizard, sempre dopo — quindi ogni campo con `link` l'avrebbe
+       *     ereditata. Ora la pila la possiede il renderer: campo → errore → nota →
+       *     link.
+       *     Si guarda il fratello PRECEDENTE e non i pixel: in jsdom le distanze
+       *     non esistono, e la proprietà da difendere è l'adiacenza, non il numero.
+       */
+      const precedente = nota.previousElementSibling
+      expect(precedente, `la nota di «${ancora}» non ha niente prima di sé`).not.toBeNull()
+      expect(
+        precedente!.contains(campo) || precedente!.getAttribute('role') === 'alert',
+        `fra il campo di «${ancora}» e la sua nota si è infilato <${precedente!.tagName.toLowerCase()}>`,
+      ).toBe(true)
     }
+  })
+
+  /*
+   * ── E IL COLLEGAMENTO ALL'INFORMATIVA CHIUDE IL BLOCCO, NON LO SPEZZA ──────
+   *
+   * Il verso complementare del test qui sopra, sull'unico campo del modulo che ha
+   * insieme una nota e un `link`. Senza, si potrebbe soddisfare l'adiacenza
+   * togliendo il collegamento — che invece deve restare: dal 24/08 il curriculum
+   * parte nell'istante in cui si sceglie il file, cioè due passi prima della
+   * schermata dei consensi, e questa è l'unica via all'informativa da lì.
+   */
+  it('sotto il curriculum l’informativa viene DOPO la nota, non fra la nota e il campo', async () => {
+    mockSedi({ ok: true, sedi: [ALFA, BETA] })
+    render(<CandidaturaInsegnanteWizard sedeId={SEDE_A} />)
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Es. Maria'), { target: { value: 'Ines' } })
+    fireEvent.change(screen.getByPlaceholderText('Es. Rossi'), { target: { value: 'Di Prova' } })
+    fireEvent.change(screen.getByPlaceholderText('Es. mario.rossi@email.com'), {
+      target: { value: 'aspirante@example.test' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    const nota = screen.getByText(itPublic.candCvNota)
+    const blocco = nota.parentElement!
+    const collegamento = blocco.querySelector('a[href="/privacy"], [href="/privacy"]')
+    expect(collegamento, 'il collegamento all’informativa non è più sotto il curriculum').not.toBeNull()
+    expect(
+      nota.compareDocumentPosition(collegamento!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'il collegamento all’informativa si è rimesso fra il campo e la sua nota',
+    ).toBeTruthy()
   })
 
   it('i comandi «Modifica» del riepilogo sono alti quanto gli altri comandi della pagina', async () => {
@@ -471,6 +584,101 @@ describe('CandidaturaInsegnanteWizard — dove stanno le cose', () => {
     // 12 px (riga 16) fa 44 px, la stessa altezza di «Indietro»/«Avanti» — e su
     // telefono questi sono l'unico modo di correggere prima di inviare.
     for (const b of modifiche) expect(b.getAttribute('class')).toContain('py-3.5')
+  })
+})
+
+/**
+ * ─── CHE COSA SIGNIFICA QUELL'ASTERISCO, DETTO UNA VOLTA (25/08/2026) ───────
+ *
+ * `FieldRenderer` stampa un `*` verde accanto a ogni etichetta obbligatoria, e
+ * fino a oggi nessuna riga del modulo diceva che cosa fosse. MISURATO su tutti e
+ * cinque i passi: la parola «obbligator*» compariva UNA volta sola in tutto il
+ * wizard — nella nota del curriculum — cioè un campo su sei aveva l'obbligo
+ * scritto a parole e gli altri cinque un glifo da indovinare. Era anche la
+ * ragione per cui quella nota DOVEVA ripeterlo, dichiarata nel lock di
+ * `candCvNota`: senza legenda, la nota era l'unico posto in cui la parola potesse
+ * stare. La legenda è quindi la condizione che permette alla nota di tacere
+ * sull'obbligo e di spendere la sua ultima frase per la conseguenza.
+ *
+ * Il lock di `insegnanti-template` difende la CHIAVE (esiste, in due lingue, e
+ * nomina il carattere che spiega). Questi due difendono che sia RESA, e dove.
+ */
+describe('CandidaturaInsegnanteWizard — l’asterisco è spiegato una volta per passo', () => {
+  it('la legenda compare in testa ai campi, e prima del primo asterisco', async () => {
+    mockSedi({ ok: true, sedi: [ALFA, BETA] })
+    render(<CandidaturaInsegnanteWizard />)
+    fireEvent.click(await screen.findByRole('checkbox', { name: NOME_SEDE_A }))
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+    fireEvent.change(screen.getByPlaceholderText('Es. Maria'), { target: { value: 'Ines' } })
+    fireEvent.change(screen.getByPlaceholderText('Es. Rossi'), { target: { value: 'Di Prova' } })
+    fireEvent.change(screen.getByPlaceholderText('Es. mario.rossi@email.com'), {
+      target: { value: 'aspirante@example.test' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: itPublic.candAvanti }))
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    const legenda = screen.getByText(
+      (_, el) => el?.tagName === 'P' && el.textContent === LEGENDA_RESA,
+    )
+    expect(legenda).toBeInTheDocument()
+
+    /*
+     * ── E L'ASTERISCO DELLA LEGENDA È L'ASTERISCO CHE SPIEGA (25/08/2026) ────
+     *
+     * Rilievo del quarto giro, MISURATO nella pagina viva al passo «I tuoi dati»:
+     *   · legenda      → 12 px / peso 400 / `rgb(85,97,92)`  (`text-kidville-sub`)
+     *   · «Nome *», 24 px più sotto → 14 px / peso 500 / `rgb(0,106,95)`
+     *     (`text-kidville-green`)
+     * Stesso glifo, due taglie e due tinte, nella stessa schermata e a colpo
+     * d'occhio. Una legenda è un dizionario: mostra il segno e poi lo traduce, e
+     * se il segno mostrato non è quello che si incontra chiede al lettore il
+     * passaggio in più che esiste per risparmiargli.
+     *
+     * La TAGLIA resta 12: la legenda è un paragrafo e deve pesare come un
+     * paragrafo. È la TINTA a portare il riconoscimento, ed è la sola cosa che
+     * questo test pretende — sullo stesso token del glifo che spiega, non su un
+     * colore ribattuto a mano.
+     */
+    const astLegenda = legenda.querySelector('span')
+    expect(astLegenda?.textContent, 'la legenda non isola più il glifo che spiega').toBe('*')
+    expect(
+      astLegenda?.getAttribute('class') ?? '',
+      'l’asterisco della legenda non è quello dei campi',
+    ).toContain('text-kidville-green')
+    // PRIMA del campo che porta il primo asterisco: una legenda che arriva dopo
+    // il glifo che spiega è una nota a piè di pagina, non una legenda.
+    const primaEtichetta = screen.getByText('Per quali posizioni ti proponi')
+    expect(
+      legenda.compareDocumentPosition(primaEtichetta) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'la legenda arriva dopo il campo che dovrebbe spiegare',
+    ).toBeTruthy()
+  })
+
+  it('…e NON compare dove non c’è nessun asterisco da spiegare', async () => {
+    // Il controllo negativo: senza, la legenda potrebbe essere incondizionata e
+    // comparire anche al riepilogo, dove non c'è un solo campo. La condizione è
+    // derivata da `campiDelPasso`, non da un elenco di passi scritto a mano.
+    mockSedi({ ok: true, sedi: [ALFA, BETA] })
+    render(<CandidaturaInsegnanteWizard />)
+    await screen.findByRole('checkbox', { name: NOME_SEDE_A })
+    // ⚠️ SUL `textContent` DELLA PAGINA, non con `queryByText`. Provato per
+    // mutazione: spostando la legenda dentro `ContatorePassi` — che è la proposta
+    // letterale del rilievo, «accanto al contatore», e la mette su tutti e cinque
+    // i passi — `queryByText(stringa)` restava NULL e questo test verde, perché
+    // cerca un nodo il cui testo COINCIDA e là la frase è annegata in «Passo 1 di
+    // 5 …». Un test che non cade quando il difetto c'è non difende niente.
+    // ⚠️ SUL TESTO RESO. Oggi è lo stesso valore di catalogo, e va tenuto
+    // distinto lo stesso: la strada «ovvia» per colorare il solo asterisco era
+    // `t.rich` con un tag `<ast>`, e il mock di `next-intl` in `test/setup.ts`
+    // implementa `rich` come `resolve(ns, key)` — restituisce il messaggio
+    // GREZZO. Con quella strada la legenda in jsdom sarebbe uscita
+    // «<ast>*</ast> campo obbligatorio» e questa riga sarebbe diventata un
+    // controllo negativo che non può fallire, cioè approva tutto in silenzio.
+    expect(
+      document.body.textContent,
+      'la legenda compare anche su un passo che non ha campi con asterisco',
+    ).not.toContain(LEGENDA_RESA)
   })
 })
 

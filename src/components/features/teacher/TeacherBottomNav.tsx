@@ -15,6 +15,7 @@ import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { diarioVisibile, visibileDocente, type GradoVoce } from '@/lib/auth/teacher-gradi';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
 // ============================================================================
@@ -120,7 +121,12 @@ export default function TeacherBottomNav() {
         // e i documenti sanitari solo di quelli di cui è contitolare (gate in API).
         { id: 'documenti', label: t('voceDocumentiLabel'), sub: t('voceDocumentiSub'), icon: FileSignature, href: '/teacher/documenti-firmati', tint: tintaFunzione('moduli'), grado: 'comune' },
         { id: 'messaggi', label: t('voceMessaggiLabel'), sub: t('voceMessaggiSub'), icon: MessageCircle, href: '/teacher/chat', tint: tintaFunzione('messaggi'), grado: 'comune' },
-        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: User, href: null, tint: tintaFunzione('profilo'), grado: 'comune', soon: true },
+        // ⚠️ «In arrivo» tolto il 2026-09-02, e non per riempire un buco: da oggi
+        // esiste `/teacher/profilo`, che è l'UNICA strada con cui un'insegnante
+        // arriva al cambio della propria password. Un docente non ha un profilo
+        // genitore da cui passare: lasciare il riquadro spento avrebbe voluto dire
+        // una schermata che esiste e che nessuno può aprire.
+        { id: 'profilo', label: t('voceProfiloLabel'), sub: t('voceProfiloSub'), icon: User, href: '/teacher/profilo', tint: tintaFunzione('profilo'), grado: 'comune' },
       ],
     },
   ];
@@ -346,6 +352,16 @@ export default function TeacherBottomNav() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Cambio di veste — l'altra metà del difetto: fino a oggi, per
+                      guardare il diario del proprio figlio, un'insegnante che è
+                      anche genitore doveva USCIRE e rientrare scegliendo
+                      «Genitore». Il componente non renderizza niente per chi ha un
+                      profilo solo (617 persone su 622). */}
+                  <CambiaProfiloMenuButton
+                    iconSize={21}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-green-soft disabled:opacity-60"
+                  />
 
                   {/* Accessibilità: il toggle stava solo nella login → irraggiungibile da dentro l'app. */}
                   <ContrastMenuButton

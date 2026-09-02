@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import { axe, toHaveNoViolations } from 'jest-axe'
 import itPublic from '../../messages/it/public.json'
+import itParentForms from '../../messages/it/parentForms.json'
 import { INSEGNANTE_FIELDS, POSIZIONI_OPTIONS } from '@/lib/forms/insegnanti-template'
 import { SEDE_A, SEDE_B, SEDE_C, NOME_SEDE_A, NOME_SEDE_B, NOME_SEDE_C } from '../fixtures/sedi'
 
@@ -57,6 +58,7 @@ const h = vi.hoisted(() => ({ logClient: vi.fn(), nomeErrore: () => 'TypeError' 
 vi.mock('@/lib/logging/client', () => ({ logClient: h.logClient, nomeErrore: h.nomeErrore }))
 
 import { CandidaturaInsegnanteWizard } from '@/components/features/public/CandidaturaInsegnanteWizard'
+import { allegaCurriculumDiProva } from '../helpers/allega-curriculum'
 
 const ALFA = { id: SEDE_A, nome: NOME_SEDE_A }
 const BETA = { id: SEDE_B, nome: NOME_SEDE_B }
@@ -68,6 +70,14 @@ function mockSedi(sedi: { id: string; nome: string }[]): void {
   fetchMock.mockImplementation((url: string) => {
     if (url.includes('/api/iscrizione/sedi')) {
       return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: sedi }) })
+    }
+    // ⚠️ IL CARICAMENTO DEL CURRICULUM SERVE ANCHE QUI, dal 2026-08-24: il campo
+    // è obbligatorio, quindi ogni percorso che attraversa il passo «Il tuo
+    // profilo» ci passa. Senza questo ramo il ripiego qui sotto risponde `{}`,
+    // il `path` è `undefined`, il campo non si riempie mai e il test cade in
+    // TIMEOUT — con uno stack che accusa il wizard invece dell'elicottero.
+    if (url.includes('/api/iscrizione/insegnanti/upload')) {
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
     }
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
   })
@@ -100,11 +110,36 @@ async function passoDati(): Promise<void> {
   avanti()
 }
 
+/**
+ * Il percorso che `POST /api/iscrizione/insegnanti/upload` restituisce, e il nome
+ * del file che si sceglie per ottenerlo.
+ *
+ * ⚠️ Servono dal 2026-08-24, quando il curriculum è diventato OBBLIGATORIO:
+ * l'elicottero che attraversa il passo «Il tuo profilo» senza allegare niente non
+ * arriva più ai consensi, e cadrebbe in TIMEOUT su `waitFor` — cioè con uno stack
+ * che si legge come «il wizard è rotto» invece che «manca un allegato».
+ */
+const PERCORSO_CV = 'candidature/11111111-2222-4333-8444-555555555555-cv.pdf'
+const NOME_FILE_CV = 'cv-collaudo.pdf'
+
+/**
+ * Allega un curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *
+ * ⚠️ L'ATTESA IN CODA NON È FACOLTATIVA: il caricamento è asincrono, e senza di
+ * essa si preme «Avanti» prima che il campo abbia preso il percorso — cioè si
+ * collauda esattamente il caso che si voleva evitare.
+ */
+/** Allega il curriculum al campo `cv_path`, come lo farebbe chi sceglie un file.
+ *  La sonda vive in `__tests__/helpers/allega-curriculum`: erano SEI copie identiche,
+ *  e il giorno in cui il riquadro ha cambiato impaginazione sono cadute tutte e sei. */
+const allegaCurriculum = () => allegaCurriculumDiProva(NOME_FILE_CV)
+
 /** Compila «Il tuo profilo» e passa ai consensi. */
 async function passoProfilo(): Promise<void> {
   await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
   fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
   fireEvent.click(screen.getByRole('checkbox', { name: posizione('insegnante_nido') }))
+  await allegaCurriculum()
   avanti()
 }
 
@@ -236,7 +271,65 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
 
     await waitFor(() => expect(document.activeElement).toBe(screen.getByPlaceholderText('Es. Rossi')))
     // E il messaggio è testo, non solo un bordo colorato.
-    expect(screen.getAllByText('Campo obbligatorio').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(itParentForms.campoObbligatorio).length).toBeGreaterThan(0)
+  })
+
+  /*
+   * IL PRIMO CLIC SU «AVANTI» NON DEVE ESSERE INGHIOTTITO.
+   *
+   * ⚠️ MISURATO IN CHROMIUM il 2026-08-25 su http://localhost:3100/lavora-con-noi,
+   * passo «Il tuo profilo», curriculum non allegato, fuoco dentro `#cv_path`
+   * (arrivato con Tab, oppure toccando il riquadro e annullando il selettore —
+   * cioè il gesto di chi il curriculum sottomano non ce l'ha). Premendo «Avanti»
+   * UNA volta con il mouse o col dito, il modulo NON FACEVA NIENTE. Il registro
+   * degli eventi, alle coordinate del bottone:
+   *     mousedown@bottone (y=642) → mouseup@DIV (y=666) → click@DIV
+   * cioè `mousedown` sul bottone, `mouseup` VENTIQUATTRO PIXEL PIÙ IN BASSO su un
+   * altro elemento, e quindi un `click` emesso sull'antenato comune — MAI sul
+   * bottone. `onClick` non partiva: nessun avanzamento, nessun fuoco posato,
+   * nessun messaggio nuovo. Serviva premere due volte.
+   *
+   * LA CAUSA non è il campo file e non è `setFocus`: è il MOVIMENTO. `useForm` gira
+   * in `mode: 'onTouched'`; il `mousedown` sposta il fuoco sul bottone, il campo si
+   * blura, la validazione scatta, il messaggio «Campo obbligatorio» viene INSERITO
+   * nel flusso sopra i comandi e il bottone scende — fra la pressione e il rilascio.
+   * Il bersaglio si sposta da sotto il dito mentre il dito è ancora giù.
+   *
+   * ⚠️ NON È UN DIFETTO DI QUESTO LAVORO, ed è stato misurato prima di dirlo: lo
+   * stesso gesto sul passo «I tuoi dati», con `#email` vuota e mai toccata, dava
+   * `click su HTML` e il fuoco su `<body>`. Vale per OGNI campo obbligatorio dei
+   * due wizard pubblici, e valeva già quando il curriculum era facoltativo — solo
+   * che allora il curriculum non produceva nessun errore, quindi il bottone non si
+   * spostava mai da lì. Renderlo obbligatorio ha messo il difetto sull'ultimo campo
+   * prima dei comandi, cioè sulla strada di tutti.
+   *
+   * IL RIMEDIO sta in `ComandiWizard`: `onMouseDown` con `preventDefault()`. Il
+   * clic non sposta più il fuoco, quindi il campo non si blura, quindi la
+   * validazione di `onTouched` non scatta, quindi niente si muove prima del
+   * `mouseup`. La validazione la fa `passoAvanti()`, che è il posto che l'ha
+   * sempre fatta.
+   *
+   * ⚠️ QUESTO TEST NON PUÒ VEDERE IL DIFETTO: jsdom non ha layout, il bottone non
+   * si sposta e il clic arriva sempre. Asserisce l'unica cosa che jsdom sa
+   * misurare — che il gesto di pressione sia neutralizzato — e serve a impedire
+   * che quella riga sparisca in silenzio. La guardia che vede il difetto VERO sta
+   * in `e2e/public-candidatura-insegnante.spec.ts`, in un browser con un layout.
+   */
+  it('il gesto di pressione sul comando primario non sposta il fuoco (il primo clic non si perde)', async () => {
+    mockSedi([GAMMA])
+    render(<CandidaturaInsegnanteWizard />)
+    await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
+
+    const primario = screen.getByRole('button', { name: itPublic.candAvanti })
+    const consumato = fireEvent.mouseDown(primario)
+    expect(
+      consumato,
+      'il `mousedown` sul comando primario non è prevenuto: il fuoco cambia, il campo si blura, il messaggio compare e il bottone si sposta fra la pressione e il rilascio',
+    ).toBe(false)
+
+    // E il comando resta un comando: il clic vero continua a eseguirlo.
+    fireEvent.click(primario)
+    await waitFor(() => expect(screen.getAllByText(itParentForms.campoObbligatorio).length).toBeGreaterThan(0))
   })
 
   it('«candidatura inviata» è ANNUNCIATA, e il fuoco non cade su `<body>`', async () => {
@@ -254,6 +347,16 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url.includes('/api/iscrizione/sedi')) {
         return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true, data: [GAMMA] }) })
+      }
+      // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+      // `/api/iscrizione/insegnanti` è un PREFISSO di
+      // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+      // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+      // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+      // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+      // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+      if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
       }
       if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
         return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'c-1' }) })
@@ -354,6 +457,79 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     // file»: due caricamenti sulla stessa schermata sarebbero altrimenti
     // indistinguibili.
     expect(cv).toHaveAccessibleName(/Curriculum/)
+
+    // ── 3 · E CHE SIA OBBLIGATORIO SI DEVE SENTIRE, NON SOLO VEDERE ──────────
+    //
+    // Dal 2026-08-24 il curriculum è OBBLIGATORIO, e chi ascolta lo deve sapere
+    // PRIMA di premere «Avanti»: scoprirlo dopo vuol dire tornare indietro su una
+    // schermata che si era già data per finita. L'obbligo viaggia
+    // nell'ASTERISCO, che `FieldRenderer` stampa dentro la <label> esterna —
+    // cioè dentro il nome accessibile, che è la somma delle due <label> che
+    // puntano l'input.
+    //
+    // ⚠️ E ANCHE IN `aria-required` — il 2026-08-25 questo commento diceva il
+    // CONTRARIO, e la riga qui sotto non esisteva. Sosteneva che l'assenza fosse
+    // «una decisione, non una dimenticanza», perché metterlo sul solo curriculum
+    // sarebbe stata «una seconda regola applicata a un campo su sei». L'obiezione
+    // era giusta e la conclusione no: la risposta non era togliere il segnale al
+    // curriculum, era darlo a tutti e sei. `FieldRenderer` ora lo emette nel ramo
+    // GENERICO, una riga sola, e vale per ogni campo `required` di ogni modulo che
+    // lo usa.
+    //
+    // La dottrina il repo ce l'aveva già scritta in DUE posti, e questo file la
+    // contraddiceva: `Combobox.tsx` («l'asterisco è l'UNICA convenzione con cui
+    // questa pagina dice "questo è obbligatorio"… `aria-required` è il secondo
+    // segnale, quello che non dipende da un carattere dentro l'etichetta») e lo
+    // stesso `FieldRenderer` nel ramo `consent` («l'obbligatorietà detta anche a
+    // chi non vede l'asterisco»). Un asterisco è punteggiatura: chi ascolta lo
+    // sente come «asterisco» o non lo sente affatto, e in nessun punto della
+    // pagina c'è una legenda che dica che cosa significhi.
+    //
+    // ⚠️ `jest-axe` NON VEDE NÉ L'UNO NÉ L'ALTRO: un input senza `aria-required`
+    // non è una violazione axe, ed è la stessa classe di difetto raccontata in
+    // `FieldRenderer` per il `role="group"` di `gradi`. Perciò le due asserzioni
+    // stanno qui, scritte a mano, e non sono coperte dallo `toHaveNoViolations`
+    // più sotto.
+    //
+    // ⚠️ E SU QUESTO CAMPO L'ATTRIBUTO NON BASTA, misurato e non dedotto: Chromium
+    // espone l'`<input type="file">` come `role=button`, e su quel ruolo lascia
+    // cadere la proprietà `required` (letto con `Accessibility.getPartialAXTree`
+    // il 25/08: sui `textbox` obbligatori arriva `required=true`, qui NIENTE).
+    // L'asserzione qui sotto difende comunque una cosa vera — l'attributo nel DOM,
+    // che altri motori possono leggere — ma chi cerca la garanzia per QUESTO campo
+    // la trovi negli altri due punti: l'asterisco dentro il nome accessibile
+    // (asserito sopra) e la nota agganciata (asserita sotto), che nell'albero AX
+    // arriva come `description` ed è la frase che dice che senza allegato non si
+    // invia.
+    expect(cv, 'l’obbligo del curriculum non arriva a chi ascolta').toHaveAccessibleName(/Curriculum\s*\*/)
+    expect(cv, 'l’obbligo non è dichiarato con `aria-required`').toHaveAttribute('aria-required', 'true')
+
+    // E non su TUTTO: un campo facoltativo che lo portasse renderebbe il segnale
+    // rumore. `titolo_dettaglio` sta nello stesso passo ed è `required: false`.
+    expect(
+      document.getElementById('titolo_dettaglio'),
+      'un campo facoltativo si dichiara obbligatorio: «aria-required ovunque» non distingue niente',
+    ).not.toHaveAttribute('aria-required')
+
+    // ── 4 · E LA FRASE CHE SPIEGA L'OBBLIGO DEV'ESSERE AGGANCIATA AL CAMPO ────
+    //
+    // `candCvNota` — la chiave, non la frase: ricopiarla qui la farebbe invecchiare,
+    // e infatti la citazione che stava su queste due righe descriveva una stesura
+    // che la nota ha smesso di avere lo stesso giorno — era un `<p>` nudo, senza
+    // `id`, reso dal wizard SOTTO il campo. Chi legge la pagina in sequenza la
+    // incontra; chi la percorre campo per campo (modalità moduli degli screen
+    // reader, che è il modo in cui un modulo si compila davvero) non la sentiva
+    // MAI. È la sola frase che dice a chi non ha un PDF sottomano che può
+    // fotografare il foglio invece di abbandonare: la metà che tiene aperta la
+    // porta ai quattro su dieci che oggi non allegano (àncora `MISURA-CV`).
+    //
+    // Si asserisce la catena intera — l'`id` esiste, `aria-describedby` lo nomina,
+    // e il nodo che porta quell'id contiene davvero il testo del catalogo —
+    // perché ognuno dei tre anelli da solo sarebbe vero anche con la catena rotta.
+    const descritto = cv!.getAttribute('aria-describedby') ?? ''
+    const idNota = descritto.split(/\s+/).find((x) => x.endsWith('-nota'))
+    expect(idNota, 'la nota del curriculum non è agganciata al campo').toBeTruthy()
+    expect(document.getElementById(String(idNota))?.textContent).toBe(itPublic.candCvNota)
   })
 
   /*
@@ -384,6 +560,295 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     expect(await axe(container, axeOpts)).toHaveNoViolations()
   })
 
+
+  /*
+   * L'OBBLIGO DI UN GRUPPO È DEL GRUPPO, NON DI OGNI CASELLA.
+   *
+   * ⚠️ REGRESSIONE MISURATA IL 2026-08-25, nata da questo stesso lavoro. Per dare
+   * `aria-required` al curriculum l'attributo è stato messo nell'oggetto CONDIVISO
+   * `ariaProps` di `FieldRenderer` — una riga sola, «vale per tutti i campi». Vale
+   * davvero per tutti, e per i gruppi è SBAGLIATO: `ariaProps` viene sparso su ogni
+   * `<input>` del `map` delle opzioni, quindi tutte e SETTE le caselle di «Per quali
+   * posizioni ti proponi» dichiaravano `aria-required="true"`. Su `role="checkbox"`
+   * quell'attributo significa «questa casella va spuntata»: il modulo diceva a chi
+   * ascolta che vanno spuntate tutte e sette, mentre ne basta UNA.
+   *
+   * Misurato in Chromium su /lavora-con-noi, passo «Il tuo profilo»:
+   *   [...document.querySelectorAll('[role=group] input[type=checkbox]')]
+   *     .map(c => c.getAttribute('aria-required'))   → ["true", …sette volte…]
+   *
+   * ⚠️ E IL RIMEDIO NON È SPOSTARLO SUL CONTENITORE. `aria-required` non è fra le
+   * proprietà che ARIA 1.2 ammette su `role="group"` (lo sono su `radiogroup`,
+   * `checkbox`, `textbox`, `combobox`, `listbox`, `spinbutton`, `gridcell`, `tree` —
+   * non su `group`): metterlo lì scambierebbe un difetto semantico con una
+   * violazione formale, e `jest-axe` la vedrebbe come `aria-allowed-attr`. Per il
+   * gruppo a spunta l'obbligo continua ad arrivare per le due strade che ha sempre
+   * avuto: l'ASTERISCO dentro il nome del gruppo (`aria-labelledby` punta la <label>
+   * che lo stampa) e il messaggio d'errore agganciato con `aria-describedby`.
+   *
+   * ⚠️ `jest-axe` NON VEDE IL DIFETTO: `aria-required` su `role="checkbox"` è
+   * consentito, quindi lo `toHaveNoViolations` più sotto resta verde con o senza.
+   * Per questo l'asserzione è scritta a mano, ed è nei DUE versi — il gruppo non lo
+   * porta (sarebbe una violazione), le caselle non lo portano (sarebbe una bugia) —
+   * mentre il campo singolo accanto (`cv_path`) lo porta eccome: senza il terzo
+   * verso, «toglierlo a tutti» passerebbe questo test.
+   */
+  it('l’obbligo del gruppo NON si ripete su ogni casella (e non finisce sul `role="group"`)', async () => {
+    mockSedi([GAMMA])
+    render(<CandidaturaInsegnanteWizard />)
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    const gruppo = screen.getByRole('group', { name: /Per quali posizioni ti proponi/ })
+    const caselle = within(gruppo).getAllByRole('checkbox')
+    expect(caselle).toHaveLength(POSIZIONI_OPTIONS.length)
+
+    for (const casella of caselle) {
+      expect(
+        casella,
+        'una casella del gruppo si dichiara obbligatoria: a chi ascolta il modulo chiede di spuntarle TUTTE, mentre ne basta una',
+      ).not.toHaveAttribute('aria-required')
+    }
+    expect(
+      gruppo,
+      '`aria-required` su `role="group"` non è ammesso da ARIA: l’obbligo del gruppo viaggia nell’asterisco del suo nome',
+    ).not.toHaveAttribute('aria-required')
+
+    // L'obbligo del gruppo si sente lo stesso: sta nel NOME, che è la <label>
+    // esterna con l'asterisco che `FieldRenderer` stampa quando `required`.
+    expect(gruppo).toHaveAccessibleName(/Per quali posizioni ti proponi\s*\*/)
+
+    // E il terzo verso, che impedisce di far passare questo test cancellando la
+    // riga: sul campo SINGOLO accanto l'attributo ci deve ancora essere.
+    expect(
+      document.getElementById('cv_path'),
+      'l’attributo è sparito anche dai campi a controllo singolo: il rimedio ha buttato via il segnale invece di metterlo al posto giusto',
+    ).toHaveAttribute('aria-required', 'true')
+  })
+
+  /*
+   * ALLEGATO IL CURRICULUM, IL CAMPO SMETTE DI DIRSI SBAGLIATO.
+   *
+   * ⚠️ MISURATO IN CHROMIUM il 2026-08-25 su /lavora-con-noi: premuto «Avanti»
+   * senza allegato (il campo va in errore, come deve), e POI scelto il file. Il
+   * riquadro mostrava il nome del file e l'icona verde, ma il campo restava
+   * `aria-invalid="true"` con il suo `<p role="alert">Campo obbligatorio</p>` e il
+   * bordo rosso. Chi ascolta ha appena risolto il problema e sente che il campo è
+   * ancora sbagliato — sull'unico campo bloccante del passo.
+   *
+   * LA CAUSA è `mode: 'onTouched'`. Un campo mandato in errore dal `trigger()` di
+   * `passoAvanti()` senza essere mai stato «toccato» non viene rivalidato al cambio
+   * di valore: l'errore sopravvive al valore che lo risolve. Sui campi di TESTO il
+   * caso si chiude da solo — il gesto naturale è tabulare via, e quel blur segna
+   * «toccato» — ma sul campo file quel blur non arriva MAI: il selettore di file
+   * del sistema non sfoca l'input, e il `preventDefault` sul comando primario
+   * (`ComandiWizard`, nato in questo stesso lavoro contro il primo clic perduto)
+   * toglie l'ultimo blur rimasto. Prima del 2026-08-24 il caso era IRRAGGIUNGIBILE:
+   * `cv_path` era `required: false` e non produceva errori.
+   *
+   * IL RIMEDIO sta in `FileField.processaFile`: al successo si chiama `onBlur()`
+   * subito dopo `onChange(path)`, così react-hook-form segna il campo come toccato
+   * e rivalida sul valore appena scritto.
+   */
+  it('allegato il curriculum, il campo NON resta marcato non valido', async () => {
+    mockSedi([GAMMA])
+    render(<CandidaturaInsegnanteWizard />)
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: posizione('insegnante_nido') }))
+
+    // 1 · Senza allegato il passo non avanza, e il campo si dichiara non valido.
+    avanti()
+    const cv = () => document.getElementById('cv_path') as HTMLInputElement
+    await waitFor(() => expect(cv()).toHaveAttribute('aria-invalid', 'true'))
+
+    // 2 · Ora si allega davvero.
+    await allegaCurriculum()
+
+    // 3 · …e il campo smette di dirsi sbagliato: niente `aria-invalid`, niente
+    //     messaggio, e `aria-describedby` torna alla sola nota.
+    await waitFor(() =>
+      expect(
+        cv(),
+        'il curriculum è allegato ma il campo si dichiara ancora non valido: chi ascolta sente un errore su un problema appena risolto',
+      ).not.toHaveAttribute('aria-invalid'),
+    )
+    expect(
+      document.getElementById('cv_path-error'),
+      'il messaggio «Campo obbligatorio» sopravvive al file che lo risolve',
+    ).toBeNull()
+    expect(cv().getAttribute('aria-describedby')).toBe('cv_path-nota')
+  })
+
+  /**
+   * LA FINE DELL'ATTESA VA ANNUNCIATA, NON SOLO IL SUO INIZIO — WCAG 2.1 SC 4.1.3.
+   *
+   * ⚠️ IL DIFETTO, MISURATO PRIMA DEL RIMEDIO (giro 3, 2026-08-25). Dal 24/08 chi
+   * preme «Avanti» mentre il curriculum sta salendo si sente dire «Attendi la fine
+   * del caricamento.» — un ORDINE di aspettare, dentro un `role="alert"`. La fine
+   * di quell'attesa non arrivava a nessuno: `FileField` la comunicava solo con i
+   * pixel (`Loader2` → `FileCheck2`, e il testo dentro la `<label>`) più
+   * `aria-busy` sull'`input`. `aria-busy` è una PROPRIETÀ dell'elemento, non un
+   * messaggio di stato: nessuno screen reader ne garantisce l'annuncio, e il
+   * cambio del nome accessibile di un controllo già a fuoco è comportamento non
+   * specificato. Chi ascolta restava a ripremere «Avanti» a tentativi, sull'unico
+   * campo che da oggi BLOCCA il passo.
+   *
+   * ⚠️ IL TESTO NON PUÒ VIVERE DENTRO LA `<label>`: quella compone il NOME
+   * accessibile dell'`input`, e una regione viva là dentro annuncerebbe il nome
+   * del campo, non un messaggio. La regione sta FRATELLA della label, `sr-only`.
+   *
+   * La dottrina esiste già in questo stesso wizard — `CandidaturaInsegnanteWizard`
+   * avvolge l'altra rotellina della pagina in `role="status" aria-live="polite"`
+   * col commento «un'attesa muta è indistinguibile da una pagina rotta per chi non
+   * vede la rotellina». Il campo del curriculum era l'attesa muta rimasta.
+   *
+   * ⚠️ PERCHÉ `polite` E NON `assertive`: non è un errore, è un lavoro finito. Un
+   * `assertive` interromperebbe la lettura del messaggio che l'utente sta
+   * ascoltando in quel momento — cioè proprio `attendiCaricamento`.
+   * ⚠️ LA CHIAVE E NON LA FRASE: qui c'era scritto «Attendi la fine del
+   * caricamento.», testo che quella chiave ha smesso di avere il 25/08 (ora dice
+   * anche COSA FARE, «aspetta un istante e riprova», perché il passo non avanza da
+   * solo a caricamento finito). Un commento che ricopia una stringa del catalogo
+   * invecchia dentro il commit successivo.
+   */
+  it('la fine del caricamento del curriculum è ANNUNCIATA, non solo dipinta', async () => {
+    // Caricamento tenuto in volo a mano: è l'unico modo di guardare i due stati.
+    let sbloccaCaricamento: (() => void) | null = null
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/api/iscrizione/sedi')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ success: true, data: [GAMMA] }),
+        })
+      }
+      if (url.includes('/api/iscrizione/insegnanti/upload')) {
+        return new Promise((risolvi) => {
+          sbloccaCaricamento = () =>
+            risolvi({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+    })
+
+    render(<CandidaturaInsegnanteWizard />)
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+
+    const controllo = document.getElementById('cv_path') as HTMLInputElement
+    fireEvent.change(controllo, {
+      target: { files: [new File(['%PDF-1.4 finto'], NOME_FILE_CV, { type: 'application/pdf' })] },
+    })
+
+    // La regione viva dev'essere NEL DOCUMENTO GIÀ ORA, non comparire alla fine:
+    // un `aria-live` inserito insieme al suo contenuto non viene annunciato —
+    // le tecnologie assistive osservano le MUTAZIONI di una regione che c'era.
+    const regione = () =>
+      document.querySelector('#cv_path-stato[role="status"][aria-live="polite"]')
+    await waitFor(() =>
+      expect(
+        regione(),
+        'nessuna regione viva accanto al campo: la fine del caricamento non la sente nessuno',
+      ).not.toBeNull(),
+    )
+
+    // 1 · Mentre sale, la regione dice che sta salendo.
+    // ⚠️ `caricamentoAllegato` E NON `caricamento`: questa riga confrontava la
+    // chiave GENERICA («Caricamento…», quella delle pagine che si popolano) e
+    // passava per COINCIDENZA, perché fino al 25/08/2026 le due voci italiane
+    // erano la stessa stringa. In inglese erano già diverse — «Loading…» contro
+    // «Uploading…» — e nessuno se n'era accorto. Chiusa la coincidenza in
+    // italiano («Caricamento del file…»), questa riga è caduta: era un test che
+    // asseriva sulla chiave sbagliata.
+    await waitFor(() => expect(regione()?.textContent).toBe(itParentForms.caricamentoAllegato))
+
+    // 2 · Finito, la regione CAMBIA e dice che l'allegato c'è. È questo cambio —
+    //     non l'icona, non `aria-busy` — la sola cosa che uno screen reader legge
+    //     senza che l'utente vada a cercarla.
+    sbloccaCaricamento!()
+    // Il nome vive in due `<span>` (troncamento centrale): si guarda il riquadro.
+    await waitFor(() =>
+      expect(controllo.closest('label')!.textContent).toContain(NOME_FILE_CV),
+    )
+    await waitFor(() =>
+      expect(
+        regione()?.textContent,
+        'il caricamento è finito e la regione viva non lo dice: chi ascolta resta ad aspettare un segnale che non arriva',
+      ).toBe(itParentForms.allegatoCaricato),
+    )
+
+    // 3 · …e la regione NON entra nel NOME accessibile del campo. È la ragione per
+    //     cui sta fratella della `<label>` e non dentro: là dentro il controllo si
+    //     chiamerebbe «Curriculum * cv-collaudo.pdf Allegato caricato», cioè il suo
+    //     nome cambierebbe due volte mentre lo si usa (WCAG 2.5.3).
+    //     ⚠️ Il nome contiene «cv-collaudo.pdf» ed è GIUSTO che lo contenga: quel
+    //     testo sta nella `<label>` e dice quale file è allegato. La misura che
+    //     conta è l'assenza del testo della REGIONE.
+    expect(
+      document.getElementById('cv_path'),
+      'la regione viva è finita dentro il nome accessibile del campo',
+    ).not.toHaveAccessibleName(new RegExp(itParentForms.allegatoCaricato))
+    expect(
+      document.getElementById('cv_path'),
+      'il nome accessibile ha perso l’etichetta del campo',
+    ).toHaveAccessibleName(/Curriculum\s*\*/)
+  })
+
+  /*
+   * ── IL NOME DEL FILE ARRIVA INTERO A CHI ASCOLTA ───────────────────────────
+   *
+   * MISURATO in Chromium via CDP (`Accessibility.getPartialAXTree`) il
+   * 2026-08-25, subito dopo aver introdotto il troncamento CENTRALE del nome: il
+   * controllo si chiamava **«Curriculum * cv-di-pr ova.pdf»**. Il calcolo del
+   * nome accessibile inserisce uno SPAZIO fra due elementi inline adiacenti, e il
+   * troncamento centrale spezza il nome in due `<span>` (radice `truncate` +
+   * coda `shrink-0`) proprio per poter accorciare solo la parte di mezzo.
+   *
+   * ⚠️ Un rimedio VISIVO che rompe l'albero AX è un difetto scambiato con un
+   * altro, e qui pesa più del solito: Chromium espone un `<input type="file">`
+   * come `role="button"`, dove il nome è tutto ciò che si ha — non c'è un valore
+   * da leggere accanto. Il nome del file è la sola conferma che l'allegato è
+   * quello giusto, su un campo che dal 24/08 decide se la candidatura parte.
+   *
+   * Il rimedio: le due metà VISIBILI sono `aria-hidden`, e una copia `sr-only`
+   * porta il nome intero in un nodo di testo solo.
+   */
+  it('il nome del file arriva INTERO a chi ascolta, anche se a schermo è troncato al centro', async () => {
+    mockSedi([GAMMA])
+    render(<CandidaturaInsegnanteWizard />)
+    await passoDati()
+    await waitFor(() => expect(screen.getByLabelText(/Titolo di studio/)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/Titolo di studio/), { target: { value: 'diploma' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: posizione('insegnante_nido') }))
+    await allegaCurriculum()
+
+    const riquadro = document.getElementById('cv_path')!.closest('label')!
+    // La RIGA di contenuto, non tutto il riquadro: fuori di qui c'è anche la
+    // parola «Sostituisci», che è `aria-hidden` per un'altra ragione (è
+    // un'istruzione visiva, non parte del nome del campo).
+    const riga = riquadro.querySelector('span[title]')!
+    const meta = [...riga.querySelectorAll('[aria-hidden="true"]')]
+
+    // ⚠️ NON SI MISURA `toHaveAccessibleName`, ED È IL PUNTO DI QUESTO TEST.
+    // Provato per mutazione il 25/08/2026: rimesse le due metà nude, senza
+    // `aria-hidden` e senza la copia `sr-only`, questo file resta VERDE — perché
+    // `dom-accessibility-api` (che jsdom usa) concatena i due `<span>` SENZA lo
+    // spazio che Chromium ci mette. Il difetto vive nel browser vero e in jsdom
+    // non esiste: un'asserzione sul nome accessibile qui sarebbe un guardiano che
+    // parla e non guarda.
+    // Si misura quindi la STRUTTURA che produce il nome giusto, che è ciò che
+    // jsdom sa davvero vedere — e che va rossa sulla stessa mutazione.
+    const perChiAscolta = riga.querySelector('.sr-only')
+    expect(
+      perChiAscolta?.textContent,
+      'il nome intero non arriva più in un nodo solo: nel browser vero si spezza a metà',
+    ).toBe(NOME_FILE_CV)
+    expect(meta.length, 'le metà VISIBILI del nome non sono più nascoste all’albero AX').toBe(2)
+    expect(meta.map((e) => e.textContent).join(''), 'le due metà non ricompongono il nome').toBe(NOME_FILE_CV)
+  })
+
   it('il campo in errore è marcato `aria-invalid` e collegato al proprio messaggio', async () => {
     mockSedi([GAMMA])
     render(<CandidaturaInsegnanteWizard />)
@@ -395,7 +860,7 @@ describe('a11y · /lavora-con-noi — struttura e annunci', () => {
     )
     const descritto = screen.getByPlaceholderText('Es. Maria').getAttribute('aria-describedby')
     expect(descritto).toBe('nome-error')
-    expect(document.getElementById(String(descritto))?.textContent).toContain('Campo obbligatorio')
+    expect(document.getElementById(String(descritto))?.textContent).toContain(itParentForms.campoObbligatorio)
   })
 })
 
@@ -449,6 +914,16 @@ describe('a11y · /lavora-con-noi — jest-axe su ogni schermata', () => {
           json: async () => ({ success: true, data: [ALFA, BETA, GAMMA] }),
         })
       }
+      // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+      // `/api/iscrizione/insegnanti` è un PREFISSO di
+      // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+      // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+      // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+      // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+      // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+      if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+      }
       if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
         return Promise.resolve({ ok: true, status: 201, json: async () => ({ id: 'c-1' }) })
       }
@@ -491,6 +966,16 @@ describe('a11y · /lavora-con-noi — jest-axe su ogni schermata', () => {
 
   it('il pannello d’errore d’invio', async () => {
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      // ⚠️ IL CARICAMENTO SI RICONOSCE PER PRIMO, e l'ordine NON è cosmetico:
+      // `/api/iscrizione/insegnanti` è un PREFISSO di
+      // `/api/iscrizione/insegnanti/upload`, ed è un POST anche lui. Con il ramo
+      // dell'invio davanti, il multipart del curriculum finirebbe fra i corpi
+      // inviati e riceverebbe la risposta dell'invio invece del percorso: il
+      // campo non si riempirebbe mai (timeout) e i conteggi degli invii
+      // direbbero uno in più. È l'ordine che usa già `-riepilogo.test.tsx`.
+      if (String(url).includes('/api/iscrizione/insegnanti/upload')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ path: PERCORSO_CV }) })
+      }
       if (url.includes('/api/iscrizione/insegnanti') && init?.method === 'POST') {
         return Promise.resolve({
           ok: false,

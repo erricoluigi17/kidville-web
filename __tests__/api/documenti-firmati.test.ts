@@ -26,7 +26,12 @@ const scope = vi.hoisted(() => ({
   vedeTutteLeClassi: vi.fn(),
   assertAlunnoInScope: vi.fn(),
 }))
-vi.mock('@/lib/auth/scope', () => scope)
+// `restringiSedi` resta VERA: è la funzione in prova (il confronto fra uuid
+// senza distinzione di maiuscole), e un finto la renderebbe non misurabile.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
+  ...scope,
+}))
 
 const h = vi.hoisted(() => {
   const state = {
@@ -211,6 +216,23 @@ describe('GET /api/documenti-firmati — perimetro e filtri', () => {
     comeStaff()
     const res = await ELENCO(req('?scuolaId=99999999-9999-4999-8999-999999999999'))
     expect(res.status).toBe(403)
+  })
+
+  it('🔴 la PROPRIA sede scritta in MAIUSCOLO non è un diniego', async () => {
+    // In Postgres `uuid` è un TIPO: `'CCCC-…'` e `'cccc-…'` sono lo STESSO
+    // valore. Il confronto era `p === scuolaId`, cioè fra due STRINGHE, e chi
+    // chiedeva la propria sede in maiuscolo si prendeva un 403 — misurato sui
+    // dati veri il 2026-07-31, ed è il difetto per cui esiste `formaConfronto`.
+    comeStaff()
+    alunniInElenco()
+    const res = await ELENCO(req(`?scuolaId=${SCUOLA.toUpperCase()}`))
+    expect(res.status).toBe(200)
+    // …e ciò che arriva alla query è la forma CANONICA del database, non la
+    // stringa maiuscola arrivata dal client: il resto del codice ci fa `===`.
+    const inSede = h.state.filtri.find(
+      (f) => f.tabella === 'alunni' && f.metodo === 'in' && f.args[0] === 'scuola_id',
+    )
+    expect(inSede?.args[1]).toEqual([SCUOLA])
   })
 
   it('il filtro per classe arriva alla query come uguaglianza su classe_sezione', async () => {

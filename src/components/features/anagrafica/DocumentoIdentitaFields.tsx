@@ -2,6 +2,7 @@
 
 import type { ReactElement } from 'react'
 import { useTranslations } from 'next-intl'
+import { useMessaggioCampo } from '@/components/features/forms/messaggio-campo'
 import {
   Controller, useWatch,
   type Control, type FieldErrors, type FieldValues, type UseFormRegister,
@@ -65,13 +66,30 @@ import type { FormField } from '@/types/database.types'
  * scansione era una sola — ma con due campi la distanza fra ciò che si vede e ciò
  * che si sente raddoppia, e va scritto invece che taciuto.
  *
- * Non si chiude da questo file: `FieldRenderer` costruisce `aria-describedby` per
- * conto suo e lo valorizza SOLO in errore, senza accettare descrittori aggiuntivi
- * (è la stessa ragione per cui il codice fiscale, nel wizard, non passa da lì). Si
- * chiude aggiungendo quel prop a `FieldRenderer` una volta sola, e da lì lo
- * useranno anche gli altri campi che oggi hanno un aiuto scritto e muto. La
- * scadenza qui accanto ce l'ha, perché è l'unico campo che non passa da
- * `FieldRenderer`: è la prova che la strada funziona, non un'incoerenza.
+ * ⚠️ E DAL 25/08/2026 SI CHIUDE PROPRIO DA QUESTO FILE — fino a stamattina queste
+ * righe dicevano il contrario, ed è la parte che vale più della frase. Dicevano
+ * che «`FieldRenderer` costruisce `aria-describedby` per conto suo e lo valorizza
+ * SOLO in errore, senza accettare descrittori aggiuntivi», e che il debito si
+ * chiudesse «aggiungendo quel prop a `FieldRenderer` una volta sola». Quel prop è
+ * stato aggiunto il 24/08 e si chiama `nota`: il componente ne deriva l'`id`
+ * (`<campo>-nota`), rende il `<p>` sotto il campo e CONCATENA `aria-describedby` —
+ * prima l'errore, poi la nota. Il debito era già chiuso dal commit che qui lo dava
+ * per aperto, e la frase è sopravvissuta in QUATTRO copie nate da un copia-incolla
+ * (due qui e nel wizard, due già corrette in `CandidaturaInsegnanteWizard`).
+ *
+ * Resta aperto solo il lavoro, non la strada: le tre righe qui sotto sono ancora
+ * `<p>` muti, e si agganciano passando `nota={t('persDocFronteAiuto')}` (e le altre
+ * due) ai `FieldRenderer` delle due facce, togliendo i `<p>` scritti a mano. Non è
+ * stato fatto in questo passaggio perché cambia ciò che uno screen reader annuncia
+ * su due campi di un modulo fuori dal perimetro di questo lavoro, e va misurato.
+ *
+ * ⚠️ E NON È PIÙ «la stessa ragione per cui il codice fiscale non passa da lì»:
+ * quella, dal 25/08, è la FORMA del badge di coerenza — un `<div role="status">`
+ * con un bottone dentro, che compare solo quando ha qualcosa da dire — non
+ * l'assenza del prop. Vedi l'intestazione di `ID_CF` nel wizard.
+ *
+ * La scadenza qui accanto la descrizione ce l'ha, perché è l'unico campo che non
+ * passa da `FieldRenderer`: è la prova che la strada funziona, non un'incoerenza.
  *
  * ── ⚠️ E LA SCADENZA PASSATA NON BLOCCA NIENTE ──────────────────────────────
  *
@@ -280,6 +298,7 @@ export function DocumentoIdentitaFields({
   modelId: string
 }): ReactElement {
   const t = useTranslations('public')
+  const messaggioCampo = useMessaggioCampo()
 
   const radice = idSicuro(idPrefisso)
   const idScadenza = `${radice}-scadenza`
@@ -291,7 +310,14 @@ export function DocumentoIdentitaFields({
   const scadenzaISO = typeof scadenza === 'string' ? scadenza : ''
   const avvisoInPagina = avvisoScadenzaDaDire(statoScadenza(scadenzaISO, oggi))
 
-  const erroreScadenza = (errori[ID_SCADENZA] as { message?: string } | undefined)?.message
+  /*
+   * La SCADENZA è resa a mano (vedi la testata), quindi la sua traduzione non la
+   * fa `FieldRenderer`: la mappatura costante → catalogo è una sola e sta in
+   * `messaggio-campo.ts`. Senza questa riga, su una pagina inglese comparirebbe
+   * «Campo obbligatorio» — è il difetto misurato il 25/08 sul codice fiscale di
+   * `/anagrafica-personale`.
+   */
+  const erroreScadenza = messaggioCampo(errori[ID_SCADENZA])
 
   return (
     <div className="space-y-6">
@@ -347,6 +373,16 @@ export function DocumentoIdentitaFields({
                 avvisoInPagina ? idAvviso : undefined,
               )}
               aria-invalid={erroreScadenza ? true : undefined}
+              /* ⚠️ L'OBBLIGO ANCHE A CHI ASCOLTA. `FieldRenderer` dal 25/08 lo
+                 emette per ogni campo `required` che rende; questo è l'unico dei
+                 cinque che non passa di lì (vedi il debito dichiarato in testa),
+                 quindi la riga va scritta a mano — ed è il motivo per cui il passo
+                 «Documento» aveva CINQUE asterischi e QUATTRO dichiarazioni.
+                 `|| undefined` e non `|| false`, per la stessa ragione scritta in
+                 `FieldRenderer`: `aria-required="false"` sui facoltativi è rumore.
+                 `DateField` spande i props sull'`<input>` vero, quindi l'attributo
+                 arriva sul nodo, non sul contenitore. */
+              aria-required={CAMPO_SCADENZA.required || undefined}
             />
           )}
         />

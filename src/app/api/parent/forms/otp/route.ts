@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
-import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { persistSignedSubmission } from '@/lib/forms/persist-submission'
 import { getUserEmail, sendOtp, verifyTicket, codeHash, consumeTicket } from '@/lib/auth/otp-ticket'
 import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospensione'
@@ -106,9 +106,26 @@ export const PATCH = withRoute('parent/forms/otp:PATCH', async (request: NextReq
     const sospeso = await assertGenitoreNonSospesoSalvoEssenziale(supabase, parentId, { sempreFirmabile })
     if (sospeso) return sospeso
 
-    // IDOR: la firma è consentita solo su un PROPRIO figlio (onboarding = student_id assente).
-    if (student_id && auth.user.role === 'genitore' && !(await genitoreHasFiglio(supabase, auth.user.id, student_id))) {
-      return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
+    // ── IDOR: qui si FIRMA, e il controllo copriva un ruolo su cinque ───────────
+    //
+    // Diceva:
+    //   `if (student_id && auth.user.role === 'genitore' && !genitoreHasFiglio(…))`
+    // cioè nulla, per chiunque non avesse il ruolo ATTIVO `genitore`. Gemella
+    // esatta della riga di `parent/submissions:POST`, con un aggravante: questa
+    // rotta non archivia una compilazione, appone una FIRMA ELETTRONICA SEMPLICE
+    // (FES, art. 20 CAD) su un modulo intestato a un minore.
+    //
+    // Il rimedio non è cambiare predicato — `eFamiglia` negherebbe al genitore
+    // senza legame e continuerebbe a non chiedere niente a tutti gli altri — ma
+    // porre la domanda giusta: «questo bambino è raggiungibile da chi sta
+    // firmando?». `requireParentOfStudent` la risponde per tutti i ruoli: legame di
+    // famiglia per chi è famiglia (sul LEGAME, non sulla veste), plesso e sezione
+    // per gli altri.
+    //
+    // `student_id` assente = onboarding, come sopra: nessun bambino a cui riferirsi.
+    if (student_id) {
+      const gateAlunno = await requireParentOfStudent(request, student_id)
+      if (gateAlunno.response) return gateAlunno.response
     }
 
     const email = await getUserEmail(supabase, parentId)

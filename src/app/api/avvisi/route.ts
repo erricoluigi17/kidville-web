@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { getModuleConfig } from '@/lib/settings/module-config';
 import { requireUser, requireDocente } from '@/lib/auth/require-staff';
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
@@ -247,7 +251,10 @@ export const GET = withRoute('avvisi:GET', async (request: NextRequest) => {
         if (auth.response) return auth.response;
         const supabase = await createAdminClient();
 
-        if (auth.user.role === 'genitore') {
+        // PRESENTAZIONE: quale delle due bacheche si sta guardando. `eFamiglia`
+        // qui toglierebbe a una docente-genitore il cockpit di plesso — la sua
+        // bacheca di lavoro — ogni volta che apre gli avvisi.
+        if (agisceComeGenitore(auth.user)) {
             return await listaAvvisiGenitore(supabase, auth.user.id);
         }
 

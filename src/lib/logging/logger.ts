@@ -226,6 +226,32 @@ export const EVENTI_PERSISTITI = new Set([
     // che NON arriva in tabella — cioè il difetto misurato su `avvisi` il 2026-07-31 —
     // oppure promuovere di colpo 23 chiamate scritte per un altro scopo.
     'personale',
+    // `credenziali` entra il 2026-09-01 con `POST /api/account/password`, che porta il
+    // battito: il ramo felice emette `logEvento('credenziali','info',…)` con
+    // `esito: 'password-cambiata'`.
+    //
+    // Fino a oggi questo canale aveva SOLO `warn` ed `error` (due chiamate in tutto il
+    // repo: `admin/regenerate-credentials` e `admin/pratiche-personale`), cioè si
+    // sapeva quando le credenziali NON si consegnavano e mai quando andavano a buon
+    // fine. È la stessa asimmetria — «solo errori» — con cui il guasto delle email di
+    // credenziali è rimasto invisibile per mesi, sullo stesso identico dominio.
+    //
+    // La domanda che senza questa riga resterebbe senza risposta è concreta e ha una
+    // data: fra trenta giorni, «quante persone hanno scelto una password propria, e da
+    // quale delle tre porte?». La tabella `password_cambi` tiene lo STATO (una riga per
+    // account, aggiornata); `app_log` tiene il FATTO, con l'ora e l'esito — ed è
+    // l'unico dei due che sa dire che un cambio è stato TENTATO e respinto. Con la sola
+    // tabella, «nessuna riga nuova» non distingue «non cambia password nessuno» da
+    // «l'instradamento al primo accesso non raggiunge più nessuno».
+    //
+    // Il volume non è un argomento: un cambio password è un gesto raro per definizione
+    // (una volta per persona, in pratica), e il tetto di 5 tentativi ogni 15 minuti per
+    // utente mette comunque un soffitto alle righe che una persona può produrre.
+    //
+    // ⚠️ Il bicondizionale è sorvegliato da `__tests__/architecture/eventi-log.test.ts`,
+    // che diventa rosso in ENTRAMBE le direzioni: evento promosso senza battito, e
+    // battito senza promozione. Le due modifiche vivono nello stesso commit.
+    'credenziali',
 ]);
 
 /**

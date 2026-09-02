@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { IDS, PERSONALE_E2E, attendiFineCaricamento } from './fixtures';
 import itPublic from '../messages/it/public.json';
+import itParentForms from '../messages/it/parentForms.json';
 
 /**
  * ╔══════════════════════════════════════════════════════════════════════════╗
@@ -104,6 +105,32 @@ const POSIZIONE_NON_DOCENTE = 'Cuoca / aiuto cucina';
 const POSIZIONE_ALTRO = 'Altro (specifica qui sotto)';
 
 /** «Candidatura per la sede X», composta DAL CATALOGO e non ricopiata a mano. */
+/**
+ * Un PDF valido e minuscolo, costruito qui invece di vivere come file nel repo.
+ *
+ * ⚠️ Copiato da `public-anagrafica-personale.spec.ts`, che fa la stessa cosa sulla
+ * rotta pubblica gemella. Il contenuto non conta — `verificaAllegatoPubblico`
+ * guarda il tipo DICHIARATO e l'estensione, non ispeziona i byte — ma resta un
+ * PDF vero per non dipendere da quel dettaglio il giorno in cui qualcuno
+ * aggiungesse lo sniffing.
+ */
+const PDF_MINIMO = Buffer.from(
+  '%PDF-1.4\n' +
+    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+    '3 0 obj<</Type/Page/MediaBox[0 0 99 99]/Parent 2 0 R>>endobj\n' +
+    'trailer<</Root 1 0 R>>\n%%EOF\n',
+  'utf8',
+);
+
+/**
+ * Il nome del file che si sceglie. NON sopravvive al caricamento — la rotta lo
+ * butta via e restituisce `candidature/<uuid>-cv.pdf` — ed è proprio per questo
+ * che serve riconoscibile: è la sola cosa che il riquadro mostra a schermo, e
+ * quindi l'unica conferma visiva che l'allegato sia entrato nel campo.
+ */
+const NOME_CV = 'cv-candidatura-e2e.pdf';
+
 const rigaSedeDalLink = (sede: string) => itPublic.candSedeDalLinkTitolo.replace('{sede}', sede);
 /**
  * Lo stesso testo senza il nome del plesso («Candidatura per la sede»).
@@ -225,8 +252,18 @@ test.describe('modulo pubblico di candidatura', () => {
 
     // La risposta si ascolta PRIMA di premere: `waitForResponse` registrato dopo
     // il click perde le risposte veloci.
+    //
+    // ⚠️ IL PREDICATO È SUL PATHNAME ESATTO, e dal 2026-08-24 non è una finezza.
+    // `/api/iscrizione/insegnanti` è un PREFISSO di
+    // `/api/iscrizione/insegnanti/upload`, che è un POST anche lui: da quando il
+    // curriculum è obbligatorio questo percorso ne fa uno, e con un `includes`
+    // questa attesa si risolverebbe sulla risposta del CARICAMENTO (200). Il
+    // `toBe(201)` in coda fallirebbe dicendo «200», cioè accusando l'invio di non
+    // aver risposto 201 mentre l'invio non è stato nemmeno guardato.
     const invio = page.waitForResponse(
-      (r) => r.url().includes('/api/iscrizione/insegnanti') && r.request().method() === 'POST',
+      (r) =>
+        new URL(r.url()).pathname === '/api/iscrizione/insegnanti' &&
+        r.request().method() === 'POST',
     );
 
     await page.goto('/lavora-con-noi');
@@ -283,9 +320,9 @@ test.describe('modulo pubblico di candidatura', () => {
     await page.getByRole('checkbox', { name: POSIZIONE_DOCENTE }).check();
     await page.getByRole('checkbox', { name: POSIZIONE_NON_DOCENTE }).check();
 
-    // IL CURRICULUM SI PUÒ ALLEGARE, ed è facoltativo: il campo `cv_path` è reso
-    // da questo passo dal 15/08/2026 (prima il wizard lo teneva fuori, perché
-    // nessuna rotta di caricamento produceva il prefisso che il server pretende).
+    // IL CURRICULUM È OBBLIGATORIO dal 2026-08-24: il campo `cv_path` è reso da
+    // questo passo dal 15/08/2026 (prima il wizard lo teneva fuori, perché nessuna
+    // rotta di caricamento produceva il prefisso che il server pretende).
     // L'`input[type=file]` è `sr-only` — fuori dalla vista, dentro l'albero di
     // accessibilità — quindi si afferma che è ATTACCATO, non che è visibile; e la
     // nota accanto è ciò che dice a chi non ha il PDF sottomano che può fotografare
@@ -293,12 +330,157 @@ test.describe('modulo pubblico di candidatura', () => {
     await expect(page.locator('#cv_path')).toBeAttached();
     await expect(page.getByText(itPublic.candCvNota)).toBeVisible();
 
-    // Nessun file allegato: si invia lo stesso. È l'unica prova che il curriculum
-    // sia davvero facoltativo — e un caricamento vero non si fa qui, perché la
-    // rotta di upload sta a 6 caricamenti ogni 10 minuti per IP
-    // (`TETTO_UPLOAD_CANDIDATURE`) e in CI i browser escono da un IP solo: con
-    // `retries: 2` sarebbe la stessa aritmetica che tiene questo blocco fuori dal
-    // progetto `webkit`.
+    /*
+     * ── IL PRIMO CLIC SU «AVANTI» NON SI PERDE ────────────────────────────────
+     *
+     * ⚠️ QUESTA È L'UNICA GUARDIA DEL REPO CHE PUÒ VEDERE QUESTO DIFETTO, e la
+     * ragione è che jsdom non ha layout. MISURATO IN CHROMIUM il 2026-08-25,
+     * esattamente in questo punto del percorso (curriculum non ancora allegato,
+     * fuoco dentro `#cv_path`): premendo «Avanti» UNA volta il modulo non faceva
+     * NIENTE. Registro degli eventi alle coordinate del bottone:
+     *     mousedown@bottone (y=642) → mouseup@DIV (y=666) → click@DIV
+     * Il `mousedown` sposta il fuoco sul bottone, il campo si blura, `mode:
+     * 'onTouched'` fa scattare la validazione, «Allega un file per proseguire»
+     * viene inserito nel flusso e i comandi SCENDONO di 24 px — fra la pressione e
+     * il rilascio.
+     * Il `click` finisce sull'antenato comune, `onClick` non parte, e chi compila
+     * deve premere due volte senza sapere perché. Il rimedio è in `ComandiWizard`
+     * (`onMouseDown` con `preventDefault`).
+     *
+     * L'ASSERZIONE È SUL FUOCO e non sul messaggio, di proposito: «Allega un file
+     * per proseguire» compare in ENTRAMBI i casi — lo scrive già la validazione del
+     * blur — quindi guardarlo direbbe «tutto bene» proprio quando il clic è andato
+     * perduto. Il fuoco invece separa i due mondi: se `passoAvanti()` gira, lo posa
+     * `setFocus` sul primo campo non valido; se il clic è stato inghiottito resta
+     * sul bottone, che è dove il `mousedown` l'aveva messo.
+     *
+     * Costa un clic e nessuno slot: niente caricamento, niente invio.
+     */
+    await page.locator('#cv_path').focus();
+
+    /*
+     * ── E NEMMENO IL PRIMO CLIC SUL COLLEGAMENTO ALL'INFORMATIVA ──────────────
+     *
+     * ⚠️ STESSO DIFETTO, STESSA CATENA, ALTRO BERSAGLIO — e per un anno buono la
+     * differenza non si sarebbe vista, perché il rimedio del 25/08 era stato
+     * applicato ai due COMANDI e non al link che sta fra loro e il campo.
+     * MISURATO in Chromium il 2026-08-25 a 1280×950 e a 390×844, in questo punto
+     * esatto (curriculum non allegato, fuoco dentro `#cv_path`):
+     *     mousedown@A → mouseup@P#cv_path-nota → click@DIV
+     * cioè il `mousedown` sulla `<a>`, il `mouseup` VENTIQUATTRO PIXEL PIÙ IN
+     * BASSO sul paragrafo della nota, e un `click` emesso sull'antenato comune.
+     * Schede aperte al PRIMO clic: **zero**. Al secondo: una. Chi cerca di
+     * leggere come vengono trattati i propri dati — nell'istante in cui il
+     * curriculum sta per partire — tocca e non succede niente.
+     *
+     * L'ASSERZIONE È SULLA SCHEDA CHE SI APRE, non sul fuoco: `LinkInterno` rende
+     * `target="_blank"` sul web, quindi l'unica prova che il collegamento abbia
+     * fatto il suo mestiere è che una pagina nuova esista. E si conta la
+     * DIFFERENZA rispetto a prima, non `toBe(2)`: un contatore assoluto su un
+     * contesto condiviso è il modo classico di scrivere una prova che passa quasi
+     * sempre.
+     *
+     * Il rimedio è in `CollegamentoInformativa` (`src/components/features/forms/
+     * FieldRenderer.tsx`), che porta la misura e il prezzo per esteso.
+     * Costa un clic e una pagina pubblica: niente caricamento, niente invio.
+     */
+    const schedePrima = page.context().pages().length;
+    await page.getByRole('link', { name: itParentForms.leggiInformativaCompleta }).click();
+    await expect
+      .poll(() => page.context().pages().length, {
+        message:
+          'il primo clic sul collegamento all’informativa è stato inghiottito: il link si è spostato fra mousedown e mouseup',
+        timeout: 15_000,
+      })
+      .toBe(schedePrima + 1);
+    const informativa = page.context().pages()[schedePrima];
+    await expect(informativa).toHaveURL(/\/privacy/, { timeout: 20_000 });
+    await informativa.close();
+    // Il fuoco non si è mosso: è la condizione del blocco qui sotto, ed è la
+    // stessa proprietà che il rimedio garantisce.
+    await expect(page.locator('#cv_path')).toBeFocused();
+
+    await page.getByRole('button', { name: itPublic.candAvanti }).click();
+    await expect(
+      page.locator('#cv_path'),
+      'il primo clic su «Avanti» è stato inghiottito: i comandi si sono spostati fra mousedown e mouseup',
+    ).toBeFocused();
+    // E il passo non è stato superato: il curriculum manca davvero.
+    await expect(page.locator('#titolo_studio')).toBeVisible();
+
+    /*
+     * ── IL CARICAMENTO VERO, E PERCHÉ ADESSO SI FA QUI ────────────────────────
+     *
+     * ⚠️ FINO AL 2026-08-24 QUESTO BLOCCO DICHIARAVA L'ESATTO CONTRARIO: «nessun
+     * file allegato: si invia lo stesso, è l'unica prova che il curriculum sia
+     * davvero facoltativo», con accanto la ragione per cui un caricamento vero
+     * era stato ESCLUSO. Il curriculum ora è obbligatorio: quel percorso non
+     * arriverebbe più al 201, e questo è l'UNICO punto di tutto il repo in cui la
+     * catena vera — scelta del file → rotta di caricamento → percorso → invio —
+     * si prova da un capo all'altro. I test a componente girano su un endpoint
+     * finto: possono provare che il modulo si blocca, non che il file arriva.
+     *
+     * ⚠️ L'ARITMETICA DEL TETTO, RIFATTA invece di ereditata. La ragione scritta
+     * qui prima («6 caricamenti ogni 10 minuti per IP, e in CI i browser escono da
+     * un IP solo») contava i browser sbagliati: questo blocco porta
+     * `@solo-chromium` e il progetto `webkit` lo esclude con
+     * `grepInvert: /@solo-chromium/`, quindi lo esegue UN progetto solo. Con
+     * `retries: 2` fanno al massimo 3 tentativi ⇒ **3 caricamenti su 6**, tre slot
+     * di margine. Il vincolo stretto resta il tetto degli INVII — 3 all'ora per
+     * IP — che questo blocco consumava già prima, uno per tentativo, e che non
+     * cambia. Chi aggiungerà un progetto a questo test rifaccia il conto.
+     *
+     * Il bucket in CI regge: `public-anagrafica-personale.spec.ts` fa già due
+     * caricamenti veri su una rotta pubblica gemella (`/api/iscrizione/personale/upload`,
+     * stesso bucket `form_attachments`), e `PDF_MINIMO` è copiato di lì.
+     */
+    const caricamento = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === '/api/iscrizione/insegnanti/upload',
+    );
+    await page.locator('#cv_path').setInputFiles({
+      name: NOME_CV,
+      mimeType: 'application/pdf',
+      buffer: PDF_MINIMO,
+    });
+    expect(
+      (await caricamento).status(),
+      'il caricamento del curriculum non ha risposto 200',
+    ).toBe(200);
+    // Il riquadro mostra il nome del file LOCALE — il percorso nel bucket non si
+    // stampa mai, di proposito — ed è la sola conferma a schermo che l'allegato
+    // sia entrato nel campo. È anche il punto di sincronizzazione: senza, si
+    // preme «Avanti» prima che il valore sia arrivato al modulo, e il passo si
+    // ferma con «Allega un file per proseguire» su un file che c'è.
+    await expect(
+      page.locator('#cv_path').locator('xpath=ancestor::label[1]'),
+    ).toContainText(NOME_CV, { timeout: 20_000 });
+
+    /*
+     * ── E IL CAMPO SMETTE DI DIRSI SBAGLIATO ──────────────────────────────────
+     *
+     * ⚠️ MISURATO IN CHROMIUM il 2026-08-25, ed è il caso che QUESTO blocco già
+     * percorreva senza guardarlo: il clic su «Avanti» qui sopra manda `cv_path` in
+     * errore, poi `setInputFiles` lo risolve — e il campo restava
+     * `aria-invalid="true"` col suo «Allega un file per proseguire», mentre il riquadro
+     * mostrava il nome del file e l'icona verde. Due segnali che si contraddicono,
+     * sull'unico campo bloccante del passo, e chi ascolta sente quello sbagliato.
+     *
+     * La causa è `mode: 'onTouched'`: un campo mandato in errore dal `trigger()` di
+     * «Avanti» senza essere mai stato toccato non si rivalida al cambio di valore.
+     * Sui campi di testo si chiude da solo (si tabula via, e quel blur segna
+     * «toccato»); sul campo file quel blur non arriva mai — il selettore di file
+     * non sfoca l'input, e il `preventDefault` sul comando primario, asserito
+     * poche righe più su, toglie l'ultimo blur rimasto. Il rimedio è l'`onBlur()`
+     * in `FileField.processaFile`, subito dopo il valore.
+     *
+     * Costa zero: nessun clic, nessuno slot, nessuna richiesta in più.
+     */
+    await expect(
+      page.locator('#cv_path'),
+      'il curriculum è allegato ma il campo si dichiara ancora non valido',
+    ).not.toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#cv_path-error')).toHaveCount(0);
+
     await page.getByRole('button', { name: itPublic.candAvanti }).click();
 
     // ── Passo «Consensi e informativa» ──────────────────────────────────────

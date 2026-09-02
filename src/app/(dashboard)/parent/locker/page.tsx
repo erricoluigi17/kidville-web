@@ -5,7 +5,7 @@ import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import {
     CheckCircle2, Clock, ChevronDown, Package, Bell,
-    Table2, ChevronLeft, ChevronRight, RefreshCw, Zap,
+    Table2, ChevronLeft, ChevronRight, RefreshCw, Zap, AlertTriangle,
 } from 'lucide-react';
 import {
     MonthlyLockerTable,
@@ -17,19 +17,44 @@ import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useDateFormat } from '@/lib/i18n/date';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
+/**
+ * La forma che `GET /api/locker/requests?alunno_id=` restituisce davvero.
+ *
+ * ⚠️ Fino al 2026-09-01 questo tipo descriveva `locker_requests`, la tabella del
+ * vecchio schema a saldo che NESSUNA migrazione applicata crea: oggetto annidato
+ * `locker_catalog`, stati inglesi, `livello_alert`. La route legge
+ * `armadietto_richieste`, dove il materiale è una COLONNA PIATTA (stessa chiave di
+ * `armadietto.materiale`, non una FK verso `locker_config` — quella tabella è
+ * legittimamente vuota). Il tipo sbagliato non faceva rumore: la lista è
+ * condizionata a `length > 0`, e con la tabella assente restava semplicemente
+ * invisibile.
+ */
 interface LockerRequest {
     id: string;
-    livello_alert: 'giallo' | 'rosso';
+    alunno_id: string;
+    materiale: string;
+    livello: 'giallo' | 'rosso';
     quantita_residua: number;
-    stato: 'pending' | 'acknowledged' | 'fulfilled';
-    preso_in_carico_il: string | null;
+    stato: 'aperta' | 'presa_in_carico' | 'evasa';
+    presa_in_carico_il: string | null;
+    evasa_il: string | null;
     creato_il: string;
-    locker_catalog: {
-        id: string;
-        nome: string;
-        icona: string;
-        unita: string;
-    };
+}
+
+/**
+ * Un materiale come lo descrive `GET /api/locker/materials`: soglie e icona.
+ *
+ * Le soglie NON si cablano qui. Quelle che stavano a riga 400 (`gialla = 5`,
+ * `rossa = 2`) erano già sbagliate il giorno in cui sono state scritte: il listino
+ * vero (`src/lib/armadietto/materiali-default.ts`, l'unica copia) dice Crema 3/1 e
+ * Cambio 2/1. Due schermate che decidono da sé quando un materiale è «esaurito»
+ * sono due schermate che un giorno dicono cose diverse allo stesso genitore.
+ */
+interface MaterialeConfig {
+    icona: string;
+    unita: string;
+    livello_allerta: number;
+    livello_emergenza: number;
 }
 
 // Ritorna una CHIAVE di traduzione (`labelKey`) invece del testo: la funzione è
@@ -61,6 +86,122 @@ function getSemaforoUI(qty: number, gialla: number, rossa: number) {
     };
 }
 
+/**
+ * Indicizza per NOME la risposta di `/api/locker/materials`.
+ *
+ * La route restituisce le righe di `locker_config` oppure — ed è il caso normale
+ * al 2026-09-01, perché la tabella è vuota per decisione del titolare —
+ * `MATERIALI_DEFAULT`. Le due forme hanno le stesse colonne, quindi qui non serve
+ * distinguerle. Ciò che NON si fa è inventare un valore mancante: una riga senza
+ * soglie numeriche viene scartata, e il materiale resterà senza semaforo.
+ */
+function indicizzaMateriali(righe: unknown[]): Record<string, MaterialeConfig> {
+    const mappa: Record<string, MaterialeConfig> = {};
+    for (const riga of righe) {
+        if (riga === null || typeof riga !== 'object') continue;
+        const m = riga as Record<string, unknown>;
+        if (typeof m.nome !== 'string' || m.nome === '') continue;
+        if (typeof m.livello_allerta !== 'number' || typeof m.livello_emergenza !== 'number') continue;
+        mappa[m.nome] = {
+            icona: typeof m.icona === 'string' && m.icona !== '' ? m.icona : '📦',
+            unita: typeof m.unita === 'string' && m.unita !== '' ? m.unita : 'pz',
+            livello_allerta: m.livello_allerta,
+            livello_emergenza: m.livello_emergenza,
+        };
+    }
+    return mappa;
+}
+
+/** Una riga di `mode=carico`: un giorno in cui il genitore ha consegnato qualcosa. */
+interface RigaCarico {
+    nome_oggetto: string;
+    date: string;
+    materiale?: string;
+    quantita?: number;
+}
+
+/**
+ * ⚠️ PERCHÉ IL `try/catch` VIVE QUI E NON DENTRO IL COMPONENTE.
+ *
+ * Fino al 2026-09-01 `fetchData` e `fetchMonthly` avevano `try/finally` **senza
+ * `catch`**: un errore di rete diventava una unhandled rejection e il genitore
+ * vedeva una lista vuota — cioè «non ti serve niente» al posto di «non ho potuto
+ * guardare». Aggiungere il `catch` dentro il componente, però, rende rosso il
+ * gate: `react-hooks/set-state-in-effect` (React Compiler) considera il ramo
+ * `catch` di una funzione chiamata da `useEffect` raggiungibile SINCRONICAMENTE,
+ * e ogni `setState` che ne discende diventa un errore ESLint. È la ragione per cui
+ * mezzo repo usa `try/finally` e delega l'osservabilità al patch globale di
+ * `fetch` — che però NON vede `res.json()` su un corpo malformato, e non può
+ * accendere nessuno stato d'errore a schermo.
+ *
+ * Qui il `catch` c'è, logga, e sta in una funzione di MODULO: nessun `setState`
+ * dentro, quindi l'analizzatore non ha niente da segnalare. Il chiamante riceve
+ * `null` — «non ho potuto guardare», che è diverso da «non c'è niente» — e decide
+ * cosa mostrare.
+ *
+ * Nel messaggio non entra mai il nome di un bambino: solo uno slug fisso e il
+ * NOME della classe d'errore (`nomeErrore`), che è struttura, non contenuto.
+ */
+async function caricaPanoramica(
+    studentId: string,
+    classeSezione: string,
+): Promise<{
+    stock: { materiale: string; stock: number }[];
+    richieste: LockerRequest[];
+    materiali: Record<string, MaterialeConfig> | null;
+} | null> {
+    try {
+        // mode=stock: ritorna [{materiale, stock}] con stock aggregato reale.
+        // La terza chiamata sono le SOGLIE, e si fa solo con la sezione in mano:
+        // senza `classe_sezione` la route non filtra per plesso e risponderebbe
+        // con la configurazione di tutte le sedi. Meglio nessun semaforo che il
+        // semaforo di un'altra scuola.
+        const [stockRes, reqRes, matRes] = await Promise.all([
+            fetch(`/api/locker/inventory?alunno_id=${studentId}&mode=stock`),
+            fetch(`/api/locker/requests?alunno_id=${studentId}`),
+            classeSezione
+                ? fetch(`/api/locker/materials?classe_sezione=${encodeURIComponent(classeSezione)}`)
+                : Promise.resolve(null),
+        ]);
+
+        const stockJson: unknown = await stockRes.json();
+        const reqData: unknown = await reqRes.json();
+        const matData: unknown = matRes ? await matRes.json() : null;
+
+        return {
+            stock: Array.isArray(stockJson) ? stockJson : [],
+            richieste: Array.isArray(reqData) ? reqData : [],
+            materiali: Array.isArray(matData) ? indicizzaMateriali(matData) : null,
+        };
+    } catch (err) {
+        logClient({
+            livello: 'error', evento: 'fetch',
+            messaggio: `armadietto-genitore-caricamento-fallito: ${nomeErrore(err)}`,
+            route: '/parent/locker',
+        });
+        return null;
+    }
+}
+
+/** Il mese di consegne, o `null` se non si è potuto leggere. Vedi `caricaPanoramica`. */
+async function caricaMensile(studentId: string, ym: string): Promise<RigaCarico[] | null> {
+    try {
+        // mode=carico → solo giorni in cui il genitore ha consegnato
+        const res = await fetch(
+            `/api/locker/inventory?alunno_id=${studentId}&mode=carico&month=${ym}`
+        );
+        const data: unknown = await res.json();
+        return Array.isArray(data) ? (data as RigaCarico[]) : [];
+    } catch (err) {
+        logClient({
+            livello: 'error', evento: 'fetch',
+            messaggio: `armadietto-genitore-mensile-fallito: ${nomeErrore(err)}`,
+            route: '/parent/locker',
+        });
+        return null;
+    }
+}
+
 // ── Helper mesi ───────────────────────────────────────────────────────────────
 
 function currentYearMonth(): string {
@@ -86,11 +227,17 @@ function LockerInner() {
     const { studentId, ready } = useParentIdentity();
     const f = useDateFormat();
     const [childName, setChildName] = useState('');
+    // La sezione del bambino: è la chiave con cui si chiedono le SOGLIE al server.
+    // Arriva dalla stessa risposta che già dava il nome — nessuna chiamata in più.
+    const [classeSezione, setClasseSezione] = useState('');
     useEffect(() => {
         if (!studentId) return;
         fetch(`/api/diary/students?id=${studentId}`)
             .then(r => (r.ok ? r.json() : null))
-            .then(d => { if (d?.nome) setChildName(d.nome); })
+            .then(d => {
+                if (d?.nome) setChildName(d.nome);
+                if (typeof d?.classe_sezione === 'string') setClasseSezione(d.classe_sezione);
+            })
             .catch(() => {});
     }, [studentId]);
 
@@ -100,9 +247,14 @@ function LockerInner() {
     const [stockData, setStockData]   = useState<{ materiale: string; stock: number }[]>([]);
     const [requests, setRequests]     = useState<LockerRequest[]>([]);
     const [monthlyData, setMonthlyData] = useState<StudentInfo[]>([]);
+    // Soglie e icone per materiale. Vuoto finché il server non ha risposto: un
+    // materiale che non c'è si mostra SENZA semaforo, non con soglie inventate.
+    const [materiali, setMateriali]   = useState<Record<string, MaterialeConfig>>({});
 
     const [isLoading, setIsLoading]               = useState(true);
     const [isMonthlyLoading, setIsMonthlyLoading] = useState(true);
+    const [errore, setErrore]                     = useState(false);
+    const [erroreMensile, setErroreMensile]       = useState(false);
     const [showHistory, setShowHistory]           = useState(false);
     const [savingId, setSavingId]                 = useState<string | null>(null);
     const [showToast, setShowToast]               = useState(false);
@@ -115,17 +267,13 @@ function LockerInner() {
     const fetchData = useCallback(async (silent = false) => {
         if (!studentId) return; // identità non risolta: evita ?alunno_id=null (400/500); render gestisce loading/empty
         try {
-            // mode=stock: ritorna [{materiale, stock}] con stock aggregato reale
-            const [stockRes, reqRes] = await Promise.all([
-                fetch(`/api/locker/inventory?alunno_id=${studentId}&mode=stock`),
-                fetch(`/api/locker/requests?alunno_id=${studentId}`),
-            ]);
-            
-            const stockJson = await stockRes.json();
-            const reqData = await reqRes.json();
-
-            if (Array.isArray(stockJson)) {
-                const signature = JSON.stringify(stockJson);
+            const dati = await caricaPanoramica(studentId, classeSezione);
+            if (dati === null) {
+                // `caricaPanoramica` ha già lasciato la riga di log: qui si dice
+                // all'utente ciò che prima non gli veniva detto.
+                setErrore(true);
+            } else {
+                const signature = JSON.stringify(dati.stock);
                 // Lampeggia solo se i dati sono EFFETTIVAMENTE cambiati
                 if (signature !== prevStockRef.current) {
                     prevStockRef.current = signature;
@@ -133,30 +281,30 @@ function LockerInner() {
                     setRealtimePulse(true);
                     setTimeout(() => setRealtimePulse(false), 2000);
                 }
-                setStockData(stockJson);
+                setStockData(dati.stock);
+                setRequests(dati.richieste);
+                if (dati.materiali !== null) setMateriali(dati.materiali);
+                setErrore(false);
             }
-            if (Array.isArray(reqData)) setRequests(reqData);
         } finally {
             if (!silent) setIsLoading(false);
         }
-    }, [studentId]);
+    }, [studentId, classeSezione]);
 
     // ── Fetch tabella mensile (solo per il figlio corrente) ───────────────────
     const fetchMonthly = useCallback(async (ym: string) => {
         if (!studentId) return; // identità non risolta
         try {
-            // mode=carico → solo giorni in cui il genitore ha consegnato
-            const res = await fetch(
-                `/api/locker/inventory?alunno_id=${studentId}&mode=carico&month=${ym}`
-            );
-            const data = await res.json();
-            if (Array.isArray(data)) {
+            const righe = await caricaMensile(studentId, ym);
+            if (righe === null) {
+                setErroreMensile(true);
+            } else {
                 setMonthlyData([
                     {
                         id: studentId,
                         nome: childName,
                         cognome: '',
-                        inventario: data.map((item: { nome_oggetto: string; date: string; materiale?: string; quantita?: number }) => ({
+                        inventario: righe.map((item) => ({
                             id:        item.nome_oggetto + item.date,
                             alunno_id: studentId,
                             materiale: item.materiale ?? item.nome_oggetto ?? '',
@@ -166,6 +314,7 @@ function LockerInner() {
                         })),
                     },
                 ]);
+                setErroreMensile(false);
             }
         } finally {
             setIsMonthlyLoading(false);
@@ -186,16 +335,25 @@ function LockerInner() {
         return () => clearInterval(interval);
     }, [fetchData, fetchMonthly, activeTab, month]);
 
-    const handleAcknowledge = async (requestId: string) => {
+    /**
+     * «La porto» — il genitore prende in carico la richiesta.
+     *
+     * ⚠️ `alunno_id` NON è decorativo: il gate della PATCH segue il gesto, e per
+     * `presa_in_carico` è `requireParentOfStudent(request, alunno_id)`, che deve
+     * sapere di quale bambino si parla. Senza, la route risponde 400 — ed è ciò
+     * che questa pagina faceva: mandava `{ id, stato: 'acknowledged' }`, cioè uno
+     * stato che l'enum non contempla e un corpo senza il soggetto del permesso.
+     */
+    const handleAcknowledge = async (requestId: string, alunnoId: string) => {
         setSavingId(requestId);
         try {
             const res = await fetch('/api/locker/requests', {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: requestId, stato: 'acknowledged' }),
+                body: JSON.stringify({ id: requestId, alunno_id: alunnoId, stato: 'presa_in_carico' }),
             });
             if (!res.ok) throw new Error('Errore');
-            showToastMsg(t('lockerToastPresoInCarico'));
+            showToastMsg(t('lockerToastLaPorto'));
             fetchData();
         } catch (err) {
             // L'id della richiesta resta fuori dal messaggio: il log dice COSA è fallito,
@@ -213,9 +371,12 @@ function LockerInner() {
         setTimeout(() => setShowToast(false), 2500);
     };
 
-    const pendingRequests     = requests.filter(r => r.stato === 'pending');
-    const acknowledgedRequests = requests.filter(r => r.stato === 'acknowledged');
-    const completedRequests   = requests.filter(r => r.stato === 'fulfilled');
+    // I filtri seguono gli stati VERI della tabella: `aperta` → `presa_in_carico`
+    // → `evasa`. Con i nomi inglesi del vecchio schema queste tre liste erano
+    // sempre vuote, qualunque cosa il server rispondesse.
+    const pendingRequests      = requests.filter(r => r.stato === 'aperta');
+    const acknowledgedRequests = requests.filter(r => r.stato === 'presa_in_carico');
+    const completedRequests    = requests.filter(r => r.stato === 'evasa');
 
     if (ready && !studentId) {
         return (
@@ -264,6 +425,16 @@ function LockerInner() {
                 </p>
             )}
 
+            {/* Un caricamento fallito si DICE. Prima diventava una lista vuota, che
+                al genitore significa «non serve niente». */}
+            {errore && (
+                <div role="status"
+                    className="mt-4 flex items-start gap-2 rounded-2xl border-2 border-kidville-error/30 bg-kidville-error-soft px-4 py-3">
+                    <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-kidville-error" />
+                    <p className="font-maven text-sm text-kidville-error">{t('lockerErroreCaricamento')}</p>
+                </div>
+            )}
+
             {/* ── Tab switcher ── */}
             <div className="flex bg-kidville-neutral-soft rounded-xl p-1 gap-1 mt-5 mb-6 self-start w-fit">
                 <button
@@ -310,26 +481,26 @@ function LockerInner() {
                                     <div
                                         key={req.id}
                                         className={`rounded-2xl border-2 p-4 ${
-                                            req.livello_alert === 'rosso'
+                                            req.livello === 'rosso'
                                                 ? 'bg-kidville-error-soft border-kidville-error/30'
                                                 : 'bg-kidville-warn-soft border-kidville-warn/30'
                                         }`}
                                     >
                                         <div className="flex items-center gap-3">
                                             <div className="w-12 h-12 rounded-2xl bg-white flex items-center justify-center text-2xl shadow-sm">
-                                                {req.locker_catalog.icona}
+                                                {materiali[req.materiale]?.icona ?? '📦'}
                                             </div>
                                             <div className="flex-1">
                                                 <p className="font-maven font-bold text-kidville-green">
-                                                    {req.locker_catalog.nome}
+                                                    {req.materiale}
                                                 </p>
                                                 <p className={`font-maven text-sm ${
-                                                    req.livello_alert === 'rosso' ? 'text-kidville-error' : 'text-kidville-warn'
+                                                    req.livello === 'rosso' ? 'text-kidville-error' : 'text-kidville-warn'
                                                 }`}>
                                                     {t('lockerRigaResiduo', {
-                                                        stato: t(req.livello_alert === 'rosso' ? 'lockerAlertRosso' : 'lockerAlertGiallo'),
+                                                        stato: t(req.livello === 'rosso' ? 'lockerAlertRosso' : 'lockerAlertGiallo'),
                                                         quantita: req.quantita_residua,
-                                                        unita: req.locker_catalog.unita,
+                                                        unita: materiali[req.materiale]?.unita ?? t('lockerPz'),
                                                     })}
                                                 </p>
                                                 <p className="font-maven text-xs text-kidville-muted mt-0.5 flex items-center gap-1">
@@ -340,7 +511,7 @@ function LockerInner() {
                                         </div>
                                         <Btn
                                             id={`acknowledge-${req.id}-btn`}
-                                            onClick={() => handleAcknowledge(req.id)}
+                                            onClick={() => handleAcknowledge(req.id, req.alunno_id)}
                                             disabled={savingId === req.id}
                                             variant="primary"
                                             size="md"
@@ -351,7 +522,7 @@ function LockerInner() {
                                             ) : (
                                                 <>
                                                     <CheckCircle2 size={16} />
-                                                    {t('lockerPresoInCaricoBtn')}
+                                                    {t('lockerLaPortoBtn')}
                                                 </>
                                             )}
                                         </Btn>
@@ -371,11 +542,13 @@ function LockerInner() {
                             <div className="space-y-2">
                                 {acknowledgedRequests.map(req => (
                                     <div key={req.id} className="rounded-2xl border-2 border-kidville-success/30 bg-kidville-success-soft p-3 flex items-center gap-3">
-                                        <span className="text-xl">{req.locker_catalog.icona}</span>
+                                        <span className="text-xl">{materiali[req.materiale]?.icona ?? '📦'}</span>
                                         <div className="flex-1">
-                                            <p className="font-maven font-bold text-sm text-kidville-green">{req.locker_catalog.nome}</p>
+                                            <p className="font-maven font-bold text-sm text-kidville-green">{req.materiale}</p>
                                             <p className="font-maven text-xs text-kidville-success">
-                                                {t('lockerPortareEPreso', { data: intlDateTime(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.preso_in_carico_il!)) })}
+                                                {/* `?? creato_il`, non `!`: la colonna è nullable e una data
+                                                    mancante darebbe «Invalid Date» a schermo. */}
+                                                {t('lockerPortareEPreso', { data: intlDateTime(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.presa_in_carico_il ?? req.creato_il)) })}
                                             </p>
                                         </div>
                                     </div>
@@ -392,27 +565,36 @@ function LockerInner() {
                         {stockData.length > 0 ? (
                             <div className="grid grid-cols-2 gap-3">
                                 {stockData.map(item => {
-                                    const n = item.materiale.toLowerCase();
-                                    const icona = n.includes('pannolin') ? '🧷'
-                                        : n.includes('salviet') ? '🧻'
-                                        : n.includes('crema')   ? '🧴'
-                                        : n.includes('cambio')  ? '👕' : '📦';
-                                    const gialla = 5, rossa = 2;
+                                    // Icona e soglie vengono dalla STESSA risposta del server.
+                                    // Qui c'era una catena di `includes()` sul nome del materiale
+                                    // («pannolin», «salviet», …) e due costanti 5/2: la prima
+                                    // sbagliava l'icona di qualunque materiale nuovo, le seconde
+                                    // sbagliavano il semaforo di Crema (3/1) e Cambio (2/1) già
+                                    // il giorno in cui sono state scritte.
+                                    const cfg = materiali[item.materiale];
                                     const qty = item.stock;
-                                    const sem = getSemaforoUI(qty, gialla, rossa);
-                                    const maxBar = Math.max(gialla * 4, qty + 2);
-                                    const pct = Math.min(100, (qty / maxBar) * 100);
+                                    // Materiale non configurato ⇒ NIENTE semaforo. Un colore
+                                    // inventato è peggio di nessun colore: dice al genitore che
+                                    // può stare tranquillo, o che deve correre, senza saperlo.
+                                    const sem = cfg ? getSemaforoUI(qty, cfg.livello_allerta, cfg.livello_emergenza) : null;
+                                    const maxBar = cfg ? Math.max(cfg.livello_allerta * 4, qty + 2) : 0;
+                                    const pct = cfg ? Math.min(100, (qty / maxBar) * 100) : 0;
                                     return (
-                                        <div key={item.materiale} className={`rounded-2xl border-2 ${sem.border} ${sem.bg} p-4 text-center`}>
-                                            <div className="text-3xl mb-2">{icona}</div>
+                                        <div key={item.materiale}
+                                            className={`rounded-2xl border-2 p-4 text-center ${sem ? `${sem.border} ${sem.bg}` : 'border-kidville-line bg-white'}`}>
+                                            <div className="text-3xl mb-2">{cfg?.icona ?? '📦'}</div>
                                             <p className="font-maven font-bold text-sm text-kidville-green mb-1">{item.materiale}</p>
-                                            <p className={`font-barlow font-black text-3xl ${sem.text}`}>{qty}</p>
-                                            <p className="font-maven text-xs text-kidville-muted mb-2">{t('lockerPz')}</p>
-                                            <div className="h-2 bg-white/60 rounded-full overflow-hidden">
-                                                <div className={`h-full ${sem.barColor} rounded-full transition-all duration-700`}
-                                                    style={{ width: `${pct}%` }} />
-                                            </div>
-                                            <p className={`font-maven text-xs mt-1 ${sem.text}`}>{sem.icon} {t(sem.labelKey)}</p>
+                                            <p className={`font-barlow font-black text-3xl ${sem ? sem.text : 'text-kidville-green'}`}>{qty}</p>
+                                            <p className="font-maven text-xs text-kidville-muted mb-2">{cfg?.unita ?? t('lockerPz')}</p>
+                                            {sem && (
+                                                <>
+                                                    <div className="h-2 bg-white/60 rounded-full overflow-hidden">
+                                                        <div className={`h-full ${sem.barColor} rounded-full transition-all duration-700`}
+                                                            style={{ width: `${pct}%` }} />
+                                                    </div>
+                                                    <p className={`font-maven text-xs mt-1 ${sem.text}`}>{sem.icon} {t(sem.labelKey)}</p>
+                                                </>
+                                            )}
                                         </div>
                                     );
                                 })}
@@ -442,9 +624,9 @@ function LockerInner() {
                                 <div className="space-y-1.5">
                                     {completedRequests.map(req => (
                                         <div key={req.id} className="rounded-xl bg-kidville-neutral-soft px-3 py-2 flex items-center gap-3 opacity-60">
-                                            <span className="text-lg">{req.locker_catalog.icona}</span>
+                                            <span className="text-lg">{materiali[req.materiale]?.icona ?? '📦'}</span>
                                             <div className="flex-1">
-                                                <p className="font-maven text-sm text-kidville-muted">{req.locker_catalog.nome}</p>
+                                                <p className="font-maven text-sm text-kidville-muted">{req.materiale}</p>
                                             </div>
                                             <span className="font-maven text-xs text-kidville-muted">
                                                 {intlDateTime(f.locale, { day: 'numeric', month: 'short' }).format(new Date(req.creato_il))}
@@ -488,6 +670,11 @@ function LockerInner() {
                         <div className="flex items-center justify-center py-16 gap-3">
                             <div className="w-6 h-6 border-2 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
                             <span className="text-kidville-muted text-sm">{t('caricamento')}</span>
+                        </div>
+                    ) : erroreMensile ? (
+                        <div role="status" className="flex items-start gap-2 rounded-2xl border-2 border-kidville-error/30 bg-kidville-error-soft px-4 py-3">
+                            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-kidville-error" />
+                            <p className="font-maven text-sm text-kidville-error">{t('lockerErroreMensile')}</p>
                         </div>
                     ) : (
                         <MonthlyLockerTable

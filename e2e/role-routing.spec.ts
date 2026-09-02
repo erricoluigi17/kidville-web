@@ -21,6 +21,10 @@ test.describe('docente con sessione attiva', () => {
   });
 });
 
+// Qui si collauda il PICKER, cioè come si sceglie la veste. Che cosa quella veste
+// apra davvero — il diario del figlio fuori sezione, la galleria del figlio di un
+// altro plesso, la mensa della sua sede — sta in `e2e/doppio-profilo.spec.ts`,
+// che usa gli `storageState` scritti da questo stesso passaggio.
 test('utente con doppio profilo: picker → area scelta', async ({ page }) => {
   await login(page, EMAILS.doppio);
 

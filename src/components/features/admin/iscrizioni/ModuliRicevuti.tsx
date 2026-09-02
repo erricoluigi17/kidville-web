@@ -14,6 +14,12 @@ import { StatCard } from '@/components/ui/cockpit'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato'
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { useFiltri } from '@/lib/ui/filtri/use-filtri'
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
+import { campiRicevuti } from './filtri-ricevuti'
+import { opzioniSedeAttive } from '@/components/features/admin/opzioni-sede'
 
 // Esito dell'import. `success:false` = almeno un errore BLOCCANTE (referente/figlio non
 // creati): l'invio resta tra i "Da importare" e va mostrato il pannello d'errore in evidenza.
@@ -61,9 +67,31 @@ interface Section { id: string; name: string; scuola_id?: string | null }
 
 export function ModuliRicevuti() {
   const t = useTranslations('adminAltro')
+  /**
+   * Il catalogo della SCHERMATA («Modulistica»), per le sole etichette dei
+   * filtri. Le parole degli STATI restano quelle di `adminAltro`, cioè le stesse
+   * del badge di ogni riga: due cataloghi per la stessa parola sono due parole
+   * diverse nella stessa schermata.
+   */
+  const tm = useTranslations('adminModulistica')
+  const ts = useTranslations('shared')
   const f = useDateFormat()
   const [rows, setRows] = useState<RigaElenco[]>([])
   const [totale, setTotale] = useState(0)
+  /** Quante domande esistono in questa linguetta SENZA filtri (dal server). */
+  const [totaleLinguetta, setTotaleLinguetta] = useState(0)
+  /**
+   * I tre conteggi per stato, dal DATABASE.
+   *
+   * Prima si contavano le righe CARICATE — cioè cinquanta su cinquecentotrenta —
+   * e il ripiego era nascondere i riquadri finché non erano tutte in memoria:
+   * la fotografia spariva proprio quando serviva.
+   */
+  const [conteggi, setConteggi] = useState<{ pending: number; approved: number; rejected: number }>({
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+  })
   const [caricandoAltre, setCaricandoAltre] = useState(false)
   const [sections, setSections] = useState<Section[]>([])
   const [loading, setLoading] = useState(true)
@@ -76,7 +104,7 @@ export function ModuliRicevuti() {
   /** La URL firmata che il browser ha rifiutato di aprire: si offre come link. */
   const [docBloccato, setDocBloccato] = useState<string | null>(null)
 
-  const { reFetchKey, sedi } = useSediAttive()
+  const { reFetchKey, sedi, effettive } = useSediAttive()
 
   // Con tre plessi la domanda va letta insieme alla sua sede: importare "alla cieca"
   // significa archiviare un bambino di Aversa a Giugliano. L'uuid non dice niente a
@@ -84,13 +112,49 @@ export function ModuliRicevuti() {
   const nomeSede = (scuolaId?: string | null) =>
     sedi.find((s) => s.id === scuolaId)?.nome ?? t('ricevutiSedeSconosciuta')
 
-  useEffect(() => { load(reFetchKey) }, [reFetchKey])
+  /**
+   * I campi della barra: TUTTI `dove: 'server'`.
+   *
+   * Le etichette degli stati arrivano da `adminAltro`, cioè dalle stesse chiavi
+   * con cui `StatusBadge` disegna la pastiglia di ogni riga.
+   */
+  const campi = campiRicevuti(
+    tm,
+    {
+      pending: t('ricevutiStatAttesa'),
+      approved: t('badgeImportata'),
+      rejected: t('badgeRifiutata'),
+    },
+    opzioniSedeAttive(sedi, effettive),
+    (iso) => f.dataBreve(iso),
+  )
+  const filtri = useFiltri<RigaElenco>(campi)
 
-  async function load(sediKey: string) {
+  /**
+   * ⚠️ SI RICARICA ANCHE QUANDO CAMBIA `chiaveServer`, ed è il punto di tutto.
+   *
+   * `chiaveServer` è una STRINGA stabile e già attesa (debounce di 300 ms): un
+   * `URLSearchParams` qui dentro sarebbe un oggetto nuovo a ogni render, cioè un
+   * ciclo di fetch infinito che si presenta come «la pagina è lenta».
+   */
+  useEffect(() => { load(reFetchKey, filtri.chiaveServer, true) }, [reFetchKey, filtri.chiaveServer])
+
+  /**
+   * @param azzera  la richiesta nasce da un CAMBIO DI FILTRO: l'accumulo delle
+   *   pagine si svuota PRIMA che parta la pagina 0. Senza, `offset=rows.length`
+   *   punterebbe dentro il risultato VECCHIO e le due pagine si fonderebbero —
+   *   righe di due insiemi diversi nella stessa lista, con lo stesso aspetto.
+   */
+  async function load(sediKey: string, chiave: string, azzera = false) {
+    if (azzera) {
+      setRows([])
+      setTotale(0)
+    }
     try {
       const hdr = { 'x-sedi': sediKey }
+      const coda = chiave ? `&${chiave}` : ''
       const [r, s] = await Promise.all([
-        fetch(`/api/admin/iscrizioni?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0`, { headers: hdr }).then(x => x.json()),
+        fetch(`/api/admin/iscrizioni?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`, { headers: hdr }).then(x => x.json()),
         fetch('/api/admin/sections', { headers: hdr }).then(x => x.json()),
       ])
       // La risposta è `{ data, total }`: `total` è il conteggio ESATTO lato
@@ -99,6 +163,22 @@ export function ModuliRicevuti() {
       if (Array.isArray(r?.data)) {
         setRows(r.data as RigaElenco[])
         setTotale(typeof r.total === 'number' ? r.total : r.data.length)
+        // ⚠️ RIPIEGO SUL TOTALE FILTRATO quando il server non lo manda: una
+        // risposta senza `totaleLinguetta` (un deploy più vecchio, una pagina in
+        // cache) non deve far sparire i riquadri e la barra — sarebbe una
+        // schermata che si svuota per un campo assente, non per un dato.
+        setTotaleLinguetta(
+          typeof r.totaleLinguetta === 'number'
+            ? r.totaleLinguetta
+            : typeof r.total === 'number'
+              ? r.total
+              : r.data.length,
+        )
+        if (r.conteggi && typeof r.conteggi === 'object') {
+          const c = r.conteggi as Record<string, unknown>
+          const n = (v: unknown) => (typeof v === 'number' ? v : 0)
+          setConteggi({ pending: n(c.pending), approved: n(c.approved), rejected: n(c.rejected) })
+        }
       }
       if (Array.isArray(s)) setSections(s)
     } catch (e) {
@@ -117,12 +197,23 @@ export function ModuliRicevuti() {
   async function caricaAltre() {
     setCaricandoAltre(true)
     try {
+      // ⚠️ LA STESSA `chiaveServer` DELLA PAGINA 0. Senza, l'offset conterebbe
+      // righe di un insieme e la pagina arriverebbe da un altro: due elenchi
+      // diversi fusi in una lista sola, con lo stesso aspetto.
+      const coda = filtri.chiaveServer ? `&${filtri.chiaveServer}` : ''
       const r = await fetch(
-        `/api/admin/iscrizioni?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${rows.length}`,
+        `/api/admin/iscrizioni?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${rows.length}${coda}`,
         { headers: { 'x-sedi': reFetchKey } },
       ).then(x => x.json())
       if (Array.isArray(r?.data)) {
-        setRows(prec => [...prec, ...(r.data as RigaElenco[])])
+        // Deduplicato per `id`: il modulo pubblico riceve invii di continuo, e
+        // una domanda arrivata fra la prima pagina e la seconda sposta tutto di
+        // uno — cioè fa ricomparire una riga già mostrata, con la stessa `key`.
+        setRows(prec => {
+          const perId = new Map(prec.map((riga) => [riga.id, riga]))
+          for (const riga of r.data as RigaElenco[]) perId.set(riga.id, riga)
+          return [...perId.values()]
+        })
         if (typeof r.total === 'number') setTotale(r.total)
       }
     } catch (e) {
@@ -227,7 +318,7 @@ export function ModuliRicevuti() {
         warnings: json.warnings,
         errors: json.errors,
       })
-      await load(reFetchKey)
+      await load(reFetchKey, filtri.chiaveServer)
     } catch (e) {
       logClient({
         livello: 'error',
@@ -269,15 +360,28 @@ export function ModuliRicevuti() {
         alert(json.error ?? t('ricevutiImportFallito'))
         return
       }
-      await load(reFetchKey)
+      await load(reFetchKey, filtri.chiaveServer)
       setSelected(null)
     } finally {
       setWorking(false)
     }
   }
 
-  const pending = rows.filter(r => r.status === 'pending')
   const tutteCaricate = rows.length >= totale
+  /**
+   * Quale delle cinque schermate rendere.
+   *
+   * ⚠️ `totale` qui è quello della LINGUETTA, non quello filtrato: dire «nessun
+   * risultato con questi filtri» su una tabella che non ha mai avuto una riga
+   * accusa i filtri di una colpa che non hanno, e manda a cercare un filtro che
+   * non esiste.
+   */
+  const statoElenco = decidiStatoElenco({
+    caricamento: loading,
+    errore: false,
+    totale: totaleLinguetta,
+    mostrati: rows.length,
+  })
 
   return (
     <>
@@ -291,39 +395,51 @@ export function ModuliRicevuti() {
         </a>
       </div>
 
-      {!loading && rows.length > 0 && (
-        // «Totale» viene dal conteggio ESATTO del server; i tre riquadri per
-        // stato contano le righe CARICATE, quindi si mostrano solo quando sono
-        // tutte. Un conteggio parziale presentato come totale sarebbe una
-        // bugia scritta in grande — meglio un riquadro in meno.
-        <div className={`mb-6 grid grid-cols-2 gap-3 ${tutteCaricate ? 'sm:grid-cols-4' : 'sm:grid-cols-1'}`}>
+      {!loading && totaleLinguetta > 0 && (
+        // I QUATTRO riquadri, sempre. «Totale» è il conteggio filtrato del
+        // server; gli altri tre vengono dai conteggi ESATTI per stato, sulla
+        // stessa selezione. Prima contavano le righe CARICATE — cinquanta su
+        // cinquecentotrenta — e per non mentire si nascondevano: la fotografia
+        // spariva proprio quando serviva.
+        <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard icon={Users} label={t('ricevutiStatTotale')} value={totale} tone="green" />
-          {tutteCaricate && (
-            <>
-              <StatCard icon={Clock} label={t('ricevutiStatAttesa')} value={pending.length} tone="warn" />
-              <StatCard icon={CheckCircle2} label={t('ricevutiStatImportate')} value={rows.filter((r) => r.status === 'approved').length} tone="success" />
-              <StatCard icon={XCircle} label={t('ricevutiStatRifiutate')} value={rows.filter((r) => r.status === 'rejected').length} tone="error" />
-            </>
-          )}
+          <StatCard icon={Clock} label={t('ricevutiStatAttesa')} value={conteggi.pending} tone="warn" />
+          <StatCard icon={CheckCircle2} label={t('ricevutiStatImportate')} value={conteggi.approved} tone="success" />
+          <StatCard icon={XCircle} label={t('ricevutiStatRifiutate')} value={conteggi.rejected} tone="error" />
         </div>
       )}
 
-      {loading ? (
-        <div className="flex items-center justify-center min-h-[40vh] gap-3">
-          <Loader2 className="w-6 h-6 animate-spin text-kidville-green" />
-          <span className="font-maven text-kidville-muted">{t('caricamento')}</span>
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="bg-kidville-white rounded-card p-10 text-center border border-kidville-line">
-          <Clock className="w-10 h-10 text-kidville-neutral/50 mx-auto mb-3" />
-          <p className="font-maven text-kidville-muted">{t('ricevutiVuoto')}</p>
-        </div>
+      {/* La barra non si disegna su una linguetta che non ha mai avuto una riga:
+          filtrare il nulla non è un'operazione che qualcuno voglia fare. */}
+      {totaleLinguetta > 0 && (
+        <BarraFiltri
+          campi={campi}
+          stato={filtri}
+          testi={testiBarraFiltri(ts)}
+          totale={totaleLinguetta}
+          mostrati={totale}
+          className="mb-5"
+        />
+      )}
+
+      {statoElenco !== 'pronto' ? (
+        <StatoElenco
+          stato={statoElenco}
+          testi={{ ...testiStatoElenco(ts), vuotoTitolo: t('ricevutiVuoto') }}
+          attivi={filtri.attivi}
+          onPulisci={filtri.pulisci}
+        />
       ) : (
-        <div className="grid md:grid-cols-2 gap-5">
+        <div className="grid gap-5 md:grid-cols-2">
           {/* Lista */}
-          <div className="space-y-3">
+          {/* L'attenuazione sta sulla COLONNA dell'elenco: il pannello di
+              dettaglio non ha niente da aspettare quando cambia un filtro. */}
+          <div
+            className={`space-y-3 ${filtri.inAttesa ? 'opacity-60' : ''}`}
+            aria-busy={filtri.inAttesa || undefined}
+          >
             <p className="text-xs font-bold uppercase tracking-wider text-kidville-muted">
-              {t('ricevutiListaHeader', { attesa: pending.length, totale: rows.length })}
+              {t('ricevutiListaHeader', { attesa: conteggi.pending, totale: rows.length })}
             </p>
             {/* `sub` e non `muted`: la riga qui sotto È l'avviso che l'elenco è troncato —
                 l'unico segnale che dice all'operatore che ci sono domande che non sta
@@ -365,7 +481,11 @@ export function ModuliRicevuti() {
             {!tutteCaricate && (
               <button
                 onClick={caricaAltre}
-                disabled={caricandoAltre}
+                // ⚠️ Spento anche durante i 300 ms di debounce di un cambio di
+                // filtro (`inAttesa`): lì `chiaveServer` è ancora quella VECCHIA e
+                // un clic chiederebbe la pagina successiva del risultato di PRIMA,
+                // accodandola a un elenco che sta per essere sostituito.
+                disabled={caricandoAltre || filtri.inAttesa}
                 className="w-full flex items-center justify-center gap-2 rounded-xl border border-kidville-line px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green-soft disabled:opacity-50"
               >
                 {caricandoAltre && <Loader2 size={14} className="animate-spin" />}
@@ -496,8 +616,24 @@ function DetailPanel({
               <p className="text-xs text-kidville-muted font-mono mt-0.5">{c.codice_fiscale} · {c.data_nascita}</p>
               {!done && (
                 <div className="mt-2">
-                  <label className="text-[11px] font-semibold text-kidville-muted uppercase">{t('ricevutiClasseSezione')}</label>
+                  {/* ⚠️ `htmlFor`/`id`: l'etichetta era VISIBILE ma non legata al
+                      controllo, quindi la tendina non aveva nessun nome
+                      accessibile — uno screen reader annunciava «menu a
+                      discesa», e basta. Dal 2026-09-01 la pagina ha anche le
+                      tendine della barra filtri: senza un nome, «la tendina
+                      delle classi» non è più nemmeno identificabile, né da una
+                      persona che naviga a tastiera né da un test. L'`id` porta
+                      l'indice del bambino perché i controlli sono uno per
+                      figlio: un `id` ripetuto legherebbe tutte le etichette
+                      alla prima tendina. */}
+                  <label
+                    htmlFor={`ricevuti-classe-${i}`}
+                    className="text-[11px] font-semibold text-kidville-muted uppercase"
+                  >
+                    {t('ricevutiClasseSezione')}
+                  </label>
                   <select
+                    id={`ricevuti-classe-${i}`}
                     value={assignments[String(i)] ?? ''}
                     onChange={e => setAssignments({ ...assignments, [String(i)]: e.target.value })}
                     className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"

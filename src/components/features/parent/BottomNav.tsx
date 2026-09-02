@@ -14,6 +14,7 @@ import {
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 
 import { tintaFunzione } from '@/lib/ui/tinte-funzioni';
 
@@ -378,6 +379,17 @@ export default function BottomNav() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Cambio di veste — visibile SOLO a chi ha davvero due profili (le
+                      cinque insegnanti che sono anche genitori). Per le altre 617
+                      persone il componente non renderizza niente: un'affordance
+                      morta in un menu che si apre ogni giorno è rumore, non una
+                      funzione in più. Sta SOPRA «Alto contrasto» (che è una
+                      preferenza) e lontano da «Esci» (che è distruttivo). */}
+                  <CambiaProfiloMenuButton
+                    iconSize={21}
+                    className="flex w-full items-center justify-center gap-2.5 rounded-card bg-white px-3 py-[13px] font-barlow text-base font-extrabold uppercase tracking-wide text-kidville-green shadow-[0_1px_2px_rgba(0,84,75,.04),0_8px_24px_-18px_rgba(0,84,75,.28)] active:bg-kidville-green-soft disabled:opacity-60"
+                  />
 
                   {/* Accessibilità: il toggle stava solo nella login → irraggiungibile da dentro l'app. */}
                   <ContrastMenuButton

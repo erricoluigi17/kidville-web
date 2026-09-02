@@ -781,6 +781,53 @@ export const CODICI_ERRORE = {
      */
     PRATICA_ACCOUNT_ALTRA_SEDE: 'errorePraticaPersonaleAccountAltraSede',
 
+    /* ── «Aggiungi il ruolo di insegnante a questo account» ──────────────────────
+     *
+     * I cinque rifiuti di `POST /api/admin/staff/collega-profilo-esistente`, la porta
+     * che una PERSONA apre a mano quando l'email di una pratica è quella di un
+     * genitore. NON riusano `PRATICA_*`: quelli parlano di una pratica da approvare
+     * («l'approvazione verrà rifiutata»), questi di un ruolo da aggiungere a un
+     * accesso che esiste — e chi legge sta facendo due gesti diversi.
+     */
+
+    /**
+     * 404 — quell'uid non ha (più) nessun profilo. Non si crea niente: l'operazione
+     * esiste per AGGIUNGERE un ruolo a un accesso vivo, e su un uid che non risponde
+     * l'unica cosa onesta è dirlo.
+     */
+    PROFILO_DOPPIO_ACCOUNT_NON_TROVATO: 'erroreProfiloDoppioAccountNonTrovato',
+    /**
+     * 409 — quell'accesso ha già un profilo del PERSONALE.
+     *
+     * È anche l'esito del secondo clic: la clausola `ruolo = <valore letto>` rende
+     * l'UPDATE atomico, quindi due schede aperte danno un 200 e un 409 invece di due
+     * scritture. Il ruolo che la persona ha NON viene sovrascritto: un declassamento
+     * silenzioso è un accesso perso, e si cambia dal pannello Personale.
+     */
+    PROFILO_DOPPIO_GIA_PERSONALE: 'erroreProfiloDoppioGiaPersonale',
+    /**
+     * 409 — quell'accesso non è collegato a nessuna scheda di figlio.
+     *
+     * Questa porta esiste per aggiungere un ruolo *senza togliere l'accesso alle
+     * schede dei figli*: senza il ponte `parents` non c'è nessun accesso da salvare,
+     * quindi non è questo lo strumento — è un normale cambio di ruolo, e si fa dal
+     * pannello Personale, dove si vede che cosa si sta cambiando.
+     */
+    PROFILO_DOPPIO_SENZA_PONTE: 'erroreProfiloDoppioSenzaPonte',
+    /**
+     * 403 — quell'accesso è registrato su un plesso che questa postazione non
+     * gestisce, e non è stato modificato niente. Come per `PRATICA_ACCOUNT_ALTRA_SEDE`
+     * il muro è la SEDE DELLA PERSONA, non il gesto: un 403 muto manderebbe a
+     * ripremere.
+     */
+    PROFILO_DOPPIO_ALTRA_SEDE: 'erroreProfiloDoppioAltraSede',
+    /**
+     * 400/503 — la richiesta non porta la conferma esplicita, oppure una lettura o la
+     * scrittura non sono riuscite. In ogni caso niente è stato modificato: è la
+     * differenza che chi opera deve poter leggere prima di riprovare.
+     */
+    PROFILO_DOPPIO_NON_RIUSCITO: 'erroreProfiloDoppioNonRiuscito',
+
     /* ── Cruscotto «Scadenze documenti» in Segreteria (`/admin/staff?tab=scadenze`) ──
      *
      * Tre codici, e nessuno riusa i due della porta PUBBLICA qui sopra: quelli
@@ -1281,6 +1328,110 @@ export const CODICI_ERRORE = {
     ELENCO_CLASSI_ILLEGGIBILE: 'erroreElencoClassiIlleggibile',
     /** 404 — per questa sede non c'è nessun elenco attivo da riscaricare. */
     ELENCO_CLASSI_ASSENTE: 'erroreElencoClassiAssente',
+
+    /* ── La PASSWORD: sette rifiuti, e perché ce ne vogliono sette ─────────────
+     *
+     * I primi QUATTRO sono, uno per uno, i motivi di `CodiceRegolaPassword`
+     * (`src/lib/auth/regole-password.ts`): stesso nome, di proposito, così la route
+     * e la schermata mandano al catalogo il codice che la regola ha appena
+     * restituito, senza una mappa in mezzo da tenere allineata. Il compilatore lo
+     * verifica dove i due tipi si incontrano (`parent/onboarding/page.tsx`), e
+     * `__tests__/components/parent-onboarding-password.test.tsx` lo misura.
+     *
+     * PERCHÉ ESISTONO. Fino al 2026-09-01 la schermata dell'onboarding si fermava a
+     * `password.length < 8` mentre la regola condivisa ne pretende dieci con una
+     * lettera e una cifra: chi ne scriveva nove passava il client e veniva respinto
+     * dal server. E siccome quella pagina passa da `soloCatalogoDaCorpo` — che la
+     * prosa del server non la mostra mai — il rifiuto arrivava come «Operazione non
+     * riuscita. Riprova.»: una password correggibile in tre secondi, davanti a un
+     * messaggio che non nomina la password. Un rifiuto che non dice che cosa
+     * correggere manda l'utente a riprovare la stessa cosa.
+     *
+     * PERCHÉ UNO PER MOTIVO E NON UNO SOLO. Perché i rimedi sono diversi: allungare,
+     * aggiungere una cifra, togliere uno spazio, sceglierne un'altra. Una frase sola
+     * («password non valida») li coprirebbe tutti dicendo, ogni volta, quasi niente —
+     * ed è precisamente il rifiuto opaco che la regola condivisa esiste per evitare.
+     *
+     * ⚠️ NESSUNA di queste frasi ripete la password, e nessuna dice quale regola è
+     * stata violata *sull'ultimo tentativo di qualcun altro*: sono messaggi per chi
+     * sta scegliendo la propria.
+     */
+
+    /** 400 — sotto {@link LUNGHEZZA_MINIMA_PASSWORD} caratteri. La frase porta il numero. */
+    PASSWORD_TROPPO_CORTA: 'errorePasswordTroppoCorta',
+    /**
+     * 400 — manca una lettera **oppure** manca una cifra.
+     *
+     * UN codice per le due metà, e non è una scorciatoia: la policy `letters_digits`
+     * di GoTrue è una regola sola, e chi la viola in un verso o nell'altro deve
+     * correggere la stessa cosa. Due codici darebbero due frasi da tradurre e da
+     * tenere allineate per un unico requisito.
+     */
+    PASSWORD_SENZA_CIFRA: 'errorePasswordSenzaCifra',
+    /**
+     * 400 — uno spazio a inizio o fine, di solito arrivato con un incollaggio.
+     *
+     * La frase lo dice esplicitamente perché è l'unico dei quattro rifiuti che
+     * riguarda un carattere CHE NON SI VEDE: senza nominarlo, chi guarda il proprio
+     * campo vede una password giusta e un rifiuto senza causa. `src/app/auth/login/page.tsx`
+     * porta un intero secondo tentativo d'accesso per non chiudere fuori chi una
+     * password così ce l'ha già dentro l'hash (difetto del 2026-08-22).
+     */
+    PASSWORD_CON_SPAZI_AI_BORDI: 'errorePasswordConSpaziAiBordi',
+    /**
+     * 400 — la nuova coincide con quella in uso.
+     *
+     * Dall'onboarding non può uscire (lì non c'è nessuna password precedente): serve
+     * al cambio password, ed è dichiarato ADESSO perché il vocabolario della regola è
+     * chiuso e completo. Dichiarare tre motivi su quattro vuol dire che il quarto,
+     * il giorno in cui esce, ricade sulla frase generica — con tutto il resto verde.
+     */
+    PASSWORD_UGUALE_ALLA_PRECEDENTE: 'errorePasswordUgualeAllaPrecedente',
+    /**
+     * 400 — la password ATTUALE non verifica (cambio password: `POST /api/account/password`).
+     *
+     * ⚠️ Qui c'era scritto **401**, e sarebbe stato l'errore sbagliato: un 401 dice
+     * «non sei autenticato» e manda a rifare il login, mentre chi arriva a questa
+     * risposta la sessione ce l'ha già — l'ha dovuta esibire per passare il gate.
+     * Rimandarlo al login per un campo sbagliato gli farebbe perdere anche la nuova
+     * password appena scritta. La route implementa 400 (verificato nel suo test).
+     *
+     * NON è uno dei motivi di `valutaPasswordNuova`, che giudica solo la nuova: qui
+     * l'utente ha sbagliato a riscrivere quella che sta già usando. Riusare
+     * `PASSWORD_UGUALE_ALLA_PRECEDENTE` — l'unico altro codice che nomina la password
+     * di prima — direbbe l'esatto contrario di ciò che è successo, e manderebbe a
+     * cambiare il campo sbagliato.
+     */
+    PASSWORD_ATTUALE_ERRATA: 'errorePasswordAttualeErrata',
+    /**
+     * 400 — GoTrue ha respinto la password (4xx) per una ragione che le nostre regole
+     * non prevedono: password nota alle liste di violazione, utente sospeso, policy
+     * del provider cambiata sotto di noi.
+     *
+     * NON riusa i quattro codici della regola, e la differenza è tutta nel rimedio:
+     * quelli dicono che cosa correggere, questo può solo dire «sceglierne un'altra» —
+     * perché il motivo vero lo conosce il provider, e sta nel log (mai a schermo: il
+     * corpo di GoTrue è prosa inglese, ed è esattamente ciò che i codici hanno tolto
+     * dall'interfaccia).
+     */
+    PASSWORD_RIFIUTATA: 'errorePasswordRifiutata',
+    /**
+     * 500 — GoTrue non ha potuto scrivere (5xx): guasto suo, non della password.
+     *
+     * NON riusa `PASSWORD_RIFIUTATA`: quella frase manda a sceglierne un'altra, cioè
+     * a rifare un lavoro che non era sbagliato, e lascia credere che il problema sia
+     * la password appena pensata. Qui il rimedio è riprovare, e c'è una cosa che chi
+     * legge deve sapere e nessun'altra frase dice: **la password di prima è ancora
+     * valida**. Senza, resta il dubbio peggiore — di essere rimasto fuori.
+     */
+    PASSWORD_NON_SCRITTA: 'errorePasswordNonScritta',
+    /* ⚠️ Il tetto di frequenza dei tentativi NON prende un codice nuovo: è già
+     * `TROPPE_RICHIESTE`, dichiarato più in alto in questo stesso file e tradotto
+     * nelle due lingue. Un `PASSWORD_TROPPE_RICHIESTE` accanto direbbe la stessa
+     * cosa con un'altra frase da tenere allineata — che è il modo in cui questo
+     * elenco ha già prodotto un codice riusato per sbaglio (vedi
+     * `NEWS_FILE_SOSTITUITI_NON_RIMOSSI`). Chi scriverà `POST /api/account/password`
+     * usi quello. */
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

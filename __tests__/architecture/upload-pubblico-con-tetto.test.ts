@@ -256,6 +256,21 @@ describe('lock architettura · gli upload da una porta aperta hanno tetto e tipi
     //    I due tentativi sono i due modi in cui il primo caricamento fallisce davvero —
     //    413 (oltre il limite della piattaforma) e 415 (il `.docx`, che è il formato in
     //    cui la maggioranza dei curriculum viaggia e che questo bucket non ammette).
+    //
+    // ⚠️ DAL 2026-08-24 IL NUMERO NON CAMBIA MA LA POSTA SÌ, e va detto qui perché
+    // è il posto in cui si decide se 6 basta. Fino al 23 agosto il caricamento era
+    // un passo FACOLTATIVO: un 429 su quella porta voleva dire «non puoi
+    // allegare», e la candidatura partiva lo stesso. Da quando il curriculum è
+    // OBBLIGATORIO, lo stesso 429 vuol dire «non puoi candidarti» — un rifiuto che
+    // chiude la porta invece di limarla, su un modulo pubblico e senza login, dove
+    // chi lo riceve non ha nessuno a cui chiedere.
+    //
+    // L'aritmetica regge lo stesso (3 invii ammessi × 2 tentativi = 6, e il
+    // vincolo stretto resta il tetto degli INVII), quindi il valore non si tocca:
+    // alzarlo «per sicurezza» su una porta anonima che scrive nel bucket dei
+    // minori sarebbe il contrario della sicurezza. Ma chi un giorno vedrà dei 429
+    // su `TETTO_UPLOAD_CANDIDATURE` sappia che sta guardando persone che non
+    // riescono a candidarsi, non allegati mancanti.
     expect(
       TETTO_UPLOAD_PUBBLICO,
       'il tetto delle porte delle famiglie è sceso sotto le cinque domande complete che ' +

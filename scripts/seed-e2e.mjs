@@ -88,10 +88,33 @@ export const IDS = {
   // isola il loro conteggio da Girasoli/Tulipani (l'appello docente su Girasoli
   // esige esattamente 2 alunni → "Completo"). Vedi public-iscrizione.spec.ts.
   SEC_ISCRIZIONE: 'e2e00000-0000-4000-8000-000000000013',
+  /**
+   * ⚠️ LA SEZIONE CHE ESISTE PER NON ESSERE QUELLA DEL DOCENTE-GENITORE.
+   *
+   * Ci sta UN bambino solo: il figlio del profilo doppio (`A5`). Non poteva
+   * andare da nessun'altra parte, e le tre alternative sono tutte sbagliate per
+   * un motivo diverso:
+   *  · `SEC_TULIPANI` è LA SEZIONE CHE IL DOPPIO INSEGNA — ed è esattamente il
+   *    difetto che questa sezione ripara (vedi il blocco sui legami, più sotto);
+   *  · `SEC_GIRASOLI` ha un conteggio ESATTO in tre spec
+   *    (`teacher-attendance` pretende «Completo» a 2/2,
+   *    `isolamento-sedi` pretende l'insieme `[A1, A2]` carattere per carattere);
+   *  · `SEC_ISCRIZIONE` è la parcheggio degli import pubblici, e un residuo fisso
+   *    lì dentro cambierebbe ciò che `public-iscrizione.spec.ts` trova.
+   *
+   * L'omonimia con `SEC2_MARGHERITE` è VOLUTA, per la stessa ragione per cui
+   * «Girasoli» esiste in entrambe le sedi: i due figli del doppio stanno in due
+   * classi che si chiamano UGUALE in due plessi diversi, e ogni rotta che risolve
+   * la sede dal nome-classe invece che dal bambino sbaglia in modo visibile.
+   */
+  SEC_MARGHERITE: 'e2e00000-0000-4000-8000-000000000014',
   A1: 'e2e00000-0000-4000-8000-000000000101', // Aurora Arcobaleno-E2E (Girasoli)
   A2: 'e2e00000-0000-4000-8000-000000000102', // Bruno Baleno-E2E (Girasoli)
   A3: 'e2e00000-0000-4000-8000-000000000103', // Clara Cometa-E2E (Tulipani)
   A4: 'e2e00000-0000-4000-8000-000000000104', // Dino Delfino-E2E (Tulipani)
+  // ⚠️ `…105` è già di B1 (sede 2), qualche riga più sotto: A5 e B2 partono da 106.
+  A5: 'e2e00000-0000-4000-8000-000000000106', // Fiore Fiocco-E2E — figlio del DOPPIO, ALTRA SEZIONE (Margherite, sede 1)
+  B2: 'e2e00000-0000-4000-8000-000000000107', // Gigi Girandola-E2E — figlio del DOPPIO, ALTRA SEDE (Margherite, sede 2)
   ADMIN: 'e2e00000-0000-4000-8000-000000000201',
   DOCENTE: 'e2e00000-0000-4000-8000-000000000202',
   GENITORE: 'e2e00000-0000-4000-8000-000000000203',
@@ -109,6 +132,26 @@ export const IDS = {
   FORM_SUB: 'e2e00000-0000-4000-8000-000000000802',
   DIARIO_UMORE: 'e2e00000-0000-4000-8000-000000000901',
   DIARIO_ATTIVITA: 'e2e00000-0000-4000-8000-000000000902',
+  // Il diario del figlio del profilo doppio: senza una voce, «il diario si apre»
+  // e «il diario è vuoto» si somigliano troppo per essere un'asserzione.
+  DIARIO_A5: 'e2e00000-0000-4000-8000-000000000903',
+
+  // ── Media di galleria, uno per sede ───────────────────────────────────────
+  // Servono a distinguere «200 con la galleria del figlio» da «200 con la lista
+  // vuota», che è il difetto peggiore perché somiglia a «non ci sono ancora
+  // foto». Nessuno dei due è `is_broadcast`: sono TAGGATI sul singolo bambino,
+  // così non compaiono nel diario/galleria degli altri alunni delle due sedi e
+  // non muovono nessuno spec esistente.
+  MEDIA_A5: 'e2e00000-0000-4000-8000-000000001001',
+  MEDIA_B2: 'e2e00000-0000-4000-8000-000000001002',
+
+  // ── Menu mensa di OGGI, uno per sede ──────────────────────────────────────
+  // Due primi DIVERSI nello stesso giorno: è l'unico modo di distinguere «il
+  // menu del plesso del FIGLIO» da «il menu di `utenti.scuola_id` del genitore»
+  // guardando la risposta invece del codice. Sono `override` per data, quindi
+  // valgono anche di sabato e di domenica (la rotazione no).
+  MENU_OVR_S1: 'e2e00000-0000-4000-8000-000000001101',
+  MENU_OVR_S2: 'e2e00000-0000-4000-8000-000000001102',
 
   // ── SEDE 2 — la sede che l'isolamento deve tenere fuori ───────────────────
   // Stesso prefisso `e2e00000`: `isScuolaE2E` (src/lib/scuole/reali.ts) riconosce
@@ -118,6 +161,14 @@ export const IDS = {
   SCUOLA2: 'e2e00000-0000-4000-8000-000000000002',
   // OMONIMA di SEC_GIRASOLI: stesso nome, altra sede. È il cuore della prova.
   SEC2_GIRASOLI: 'e2e00000-0000-4000-8000-000000000021',
+  /**
+   * OMONIMA di `SEC_MARGHERITE`, e non ci va per caso: ci sta il SECONDO figlio
+   * del profilo doppio, quello dell'altro plesso. Non è `SEC2_GIRASOLI` perché
+   * `isolamento-sedi.spec.ts` pretende che l'elenco della maestra della sede 2
+   * sia ESATTAMENTE `[B1]` — mettere qui un secondo bambino renderebbe rosso uno
+   * spec che parla d'altro.
+   */
+  SEC2_MARGHERITE: 'e2e00000-0000-4000-8000-000000000022',
   B1: 'e2e00000-0000-4000-8000-000000000105', // Emma Eclissi-E2E (Girasoli, sede 2)
   // La segreteria della sede 1: l'admin E2E vedrebbe le stesse righe, ma il
   // ruolo che in produzione sta allo sportello — e che il modello del 2026-07-30
@@ -178,14 +229,42 @@ export const PERSONALE_E2E = {
   emailCandidatura: 'candidatura.e2e@kidville.test',
 };
 
+/**
+ * Le ÀNCORE del profilo doppio: didascalie e primi piatti, uno per sede.
+ *
+ * ⚠️ SONO DATO DEL SEED, NON TESTO DI CATALOGO, ed è il punto. Uno spec che
+ * asserisce su una frase dei `messages/` diventa rosso alla prima riscrittura
+ * editoriale — è già successo due volte in questo repo (i puntini `...` → `…`,
+ * l'apostrofo dritto → tipografico). Queste stringhe le scrive il seed e le
+ * rilegge lo spec: se cambiano, cambiano insieme.
+ *
+ * Sono anche DIVERSE fra le due sedi di proposito: «c'è del contenuto» sarebbe
+ * verde anche col contenuto dell'altro plesso. La differenza è ciò che rende
+ * l'isolamento osservabile dalla risposta, non deducibile dal codice.
+ */
+export const DOPPIO_PROFILO_E2E = {
+  /** Didascalia del media taggato su `A5` (sede 1). */
+  fotoSede1: 'Foto E2E · Margherite della sede 1',
+  /** Didascalia del media taggato su `B2` (sede 2). */
+  fotoSede2: 'Foto E2E · Margherite della sede 2',
+  /** Primo piatto dell'override mensa di OGGI nella sede 1. */
+  primoSede1: 'Pasta E2E della sede 1',
+  /** Primo piatto dell'override mensa di OGGI nella sede 2. */
+  primoSede2: 'Riso E2E della sede 2',
+  /** Nota di diario di `A5`: prova che il diario del figlio si APRE e ha contenuto. */
+  notaDiarioA5: 'Nota E2E per il genitore-docente',
+};
+
 // Perimetri di reset: TUTTI gli alunni e TUTTI gli utenti E2E, sede 2 inclusa —
 // un reset che dimentica la seconda sede lascia indietro dati fra un run e
 // l'altro, e un test d'isolamento che vede residui non dimostra niente.
-const ALUNNI_E2E = [IDS.A1, IDS.A2, IDS.A3, IDS.A4, IDS.B1];
+const ALUNNI_E2E = [IDS.A1, IDS.A2, IDS.A3, IDS.A4, IDS.B1, IDS.A5, IDS.B2];
 const UTENTI_E2E = [
   IDS.ADMIN, IDS.DOCENTE, IDS.GENITORE, IDS.DOPPIO, IDS.SEGRETERIA,
   IDS.SEGRETERIA2, IDS.DOCENTE2, IDS.GENITORE2,
 ];
+/** I record ANAGRAFICI (`parents`) del seed: perimetro del reset di `student_parents`. */
+const PARENTS_E2E = [IDS.P_GENITORE, IDS.P_DOPPIO, IDS.P_GENITORE2];
 /** Autori degli avvisi creati DAI TEST (la bacheca docente pubblica davvero). */
 const AUTORI_AVVISI_TEST = [IDS.DOCENTE, IDS.DOCENTE2];
 
@@ -303,6 +382,68 @@ async function ripulisciModuliPersonale() {
   }
 }
 
+/**
+ * I due media di galleria dei figli del profilo doppio — uno per sede.
+ *
+ * ─── PERCHÉ NON BASTA CONTROLLARE LO STATO ──────────────────────────────────
+ *
+ * `GET /api/gallery?studentId=…` risponde **200 con `{media: [], total: 0}`**
+ * tutte le volte che lo scope di sede non risolve: nessun errore, nessun log
+ * `warn`, una pagina che dice «non ci sono ancora foto». È il difetto peggiore
+ * di tutta la galleria, perché è indistinguibile dal caso normale. Un test che
+ * asserisce `status() === 200` lo dichiara sano.
+ *
+ * ─── PERCHÉ QUESTO BLOCCO NON USA `must()` ──────────────────────────────────
+ *
+ * `galleria_media_v2.scuola_id` NON è nel baseline: l'ha aggiunta la migrazione
+ * `20260714103000_galleria_scuola_id`, e il database E2E della CI è un progetto
+ * separato che non viene migrato. Là l'INSERT con quella colonna risponde
+ * `PGRST204` — e con `must()` l'INTERA suite morirebbe prima di eseguire un
+ * test, per una colonna che in quell'ambiente non esiste. Si riprova senza la
+ * sede (che è esattamente il degrado che la rotta fa in lettura, via
+ * `colonnaSedeAssente` + `degradoSedeLecito`) e si prosegue.
+ *
+ * Il degrado NON indebolisce il test: i due media sono TAGGATI sul singolo
+ * bambino e non sono `is_broadcast`, quindi il filtro `tag_students.cs.{…}` li
+ * tiene separati anche senza la colonna di sede.
+ *
+ * `file_url` è un PERCORSO nel bucket privato `gallery`, non un indirizzo: è la
+ * forma che il prodotto salva da quando il bucket è privato. Il file non esiste,
+ * quindi la firma non riuscirà e la rotta restituirà `file_url: null` — la riga
+ * esce lo stesso, con la sua didascalia, ed è quella che lo spec legge.
+ */
+async function seminaGalleriaDoppioProfilo() {
+  const righe = (conSede) => [
+    {
+      id: IDS.MEDIA_A5, uploaded_by: IDS.DOCENTE, file_url: 'uploads/e2e/doppio-profilo-sede1.jpg',
+      file_type: 'foto', caption: DOPPIO_PROFILO_E2E.fotoSede1,
+      tag_students: [IDS.A5], is_broadcast: false, target_classes: ['Margherite'],
+      ...(conSede ? { scuola_id: IDS.SCUOLA } : {}),
+    },
+    {
+      id: IDS.MEDIA_B2, uploaded_by: IDS.DOCENTE2, file_url: 'uploads/e2e/doppio-profilo-sede2.jpg',
+      file_type: 'foto', caption: DOPPIO_PROFILO_E2E.fotoSede2,
+      tag_students: [IDS.B2], is_broadcast: false, target_classes: ['Margherite'],
+      ...(conSede ? { scuola_id: IDS.SCUOLA2 } : {}),
+    },
+  ];
+
+  const { error } = await db.from('galleria_media_v2').upsert(righe(true), { onConflict: 'id' });
+  if (!error) return;
+
+  const codice = `${error.code ?? ''}`;
+  if (codice !== 'PGRST204' && codice !== '42703') {
+    // Non è «schema più vecchio»: è un guasto, e va detto NOMINANDOLO. Non si
+    // interrompe — lo spec della galleria diventerà rosso da solo, con un
+    // messaggio che parla di contenuto mancante, e questa riga spiega perché.
+    console.error('galleria_media_v2 (seed doppio profilo):', error.message ?? JSON.stringify(error));
+    return;
+  }
+  console.warn('↷ galleria_media_v2 senza `scuola_id` su questo database: reinserisco senza la sede');
+  const secondo = await db.from('galleria_media_v2').upsert(righe(false), { onConflict: 'id' });
+  if (secondo.error) console.error('galleria_media_v2 (senza sede):', secondo.error.message);
+}
+
 async function main() {
   console.log('🌱 Seed E2E — sedi dedicate', IDS.SCUOLA, '+', IDS.SCUOLA2,
     '· sede visibile ai moduli pubblici', IDS.SCUOLA_COLLAUDO);
@@ -360,6 +501,11 @@ async function main() {
     { id: IDS.SEC_TULIPANI, scuola_id: IDS.SCUOLA, name: 'Tulipani', school_type: 'infanzia' },
     { id: IDS.SEC_ISCRIZIONE, scuola_id: IDS.SCUOLA, name: 'Nuovi Iscritti', school_type: 'infanzia' },
     { id: IDS.SEC2_GIRASOLI, scuola_id: IDS.SCUOLA2, name: 'Girasoli', school_type: 'infanzia' },
+    // «Margherite» in ENTRAMBE le sedi: ci stanno i due figli del profilo doppio,
+    // uno per plesso. Nessun docente vi è assegnato — è deliberato: il punto è che
+    // quei bambini NON siano in una classe del loro genitore-insegnante.
+    { id: IDS.SEC_MARGHERITE, scuola_id: IDS.SCUOLA, name: 'Margherite', school_type: 'infanzia' },
+    { id: IDS.SEC2_MARGHERITE, scuola_id: IDS.SCUOLA2, name: 'Margherite', school_type: 'infanzia' },
   ], { onConflict: 'id' }));
 
   // 4. Utenti Auth reali (login UI con password) + righe utenti (id == auth.users.id)
@@ -445,13 +591,78 @@ async function main() {
     { id: IDS.A3, scuola_id: IDS.SCUOLA, nome: 'Clara', cognome: 'Cometa-E2E', data_nascita: '2021-11-03', section_id: IDS.SEC_TULIPANI, classe_sezione: 'Tulipani', stato: 'iscritto' },
     { id: IDS.A4, scuola_id: IDS.SCUOLA, nome: 'Dino', cognome: 'Delfino-E2E', data_nascita: '2021-02-14', section_id: IDS.SEC_TULIPANI, classe_sezione: 'Tulipani', stato: 'iscritto' },
     { id: IDS.B1, scuola_id: IDS.SCUOLA2, nome: 'Emma', cognome: 'Eclissi-E2E', data_nascita: '2022-03-08', section_id: IDS.SEC2_GIRASOLI, classe_sezione: 'Girasoli', stato: 'iscritto' },
+    // I due figli del profilo doppio. Nessuno dei due sta in `SEC_TULIPANI`:
+    // vedi il blocco qui sotto, che è il motivo per cui esistono.
+    { id: IDS.A5, scuola_id: IDS.SCUOLA, nome: 'Fiore', cognome: 'Fiocco-E2E', data_nascita: '2022-01-19', section_id: IDS.SEC_MARGHERITE, classe_sezione: 'Margherite', stato: 'iscritto' },
+    { id: IDS.B2, scuola_id: IDS.SCUOLA2, nome: 'Gigi', cognome: 'Girandola-E2E', data_nascita: '2021-09-27', section_id: IDS.SEC2_MARGHERITE, classe_sezione: 'Margherite', stato: 'iscritto' },
   ], { onConflict: 'id' }));
 
+  /* ═══════════════════════════════════════════════════════════════════════════
+   * I LEGAMI DI FAMIGLIA — e il legame che è stato TOLTO, che è la parte da leggere.
+   *
+   * ─── IL DIFETTO, che era nel BANCO DI PROVA e non nel prodotto ──────────────
+   *
+   * Fino al 2026-09-01 qui c'era `{ genitore_id: IDS.DOPPIO, alunno_id: IDS.A3 }`,
+   * e A3 (Clara) sta in `SEC_TULIPANI` — che è **LA SEZIONE CHE IL DOPPIO
+   * INSEGNA** (`utenti_sezioni`, poche righe più sopra). Conseguenza: qualunque
+   * test sul doppio profilo passava perché il DOCENTE vede la propria classe, non
+   * perché il GENITORE vede suo figlio. Cioè non poteva diventare rosso nemmeno
+   * con il gate della famiglia completamente rotto: un test che non prova nulla.
+   *
+   * ⚠️ NON RIMETTERE QUELLA RIGA. Se serve un figlio del doppio, dev'essere fuori
+   * dalle sezioni che insegna — come lo sono i casi veri.
+   *
+   * ─── I DUE CASI, MISURATI IN PRODUZIONE IL 2026-09-01 ───────────────────────
+   *
+   * Cinque persone hanno insieme la riga `utenti` da personale e il ponte
+   * `parents.auth_user_id`. SEI dei loro legami figlio↔genitore cadono FUORI
+   * dalle sezioni che insegnano, e UNO è in un'ALTRA SEDE. Sono esattamente i due
+   * casi che questo seed non sapeva produrre, e sono i due qui sotto:
+   *   · `A5` — stessa sede, sezione «Margherite», che il doppio non insegna;
+   *   · `B2` — sede 2, dove il doppio non ha né sezioni né `utenti_scuole`.
+   *
+   * ─── PERCHÉ SI CANCELLA PRIMA DI SCRIVERE ──────────────────────────────────
+   *
+   * Il seed è idempotente per UPSERT, che aggiunge e aggiorna ma non toglie: il
+   * database E2E della CI è un progetto persistente, quindi il legame DOPPIO↔A3
+   * dei run precedenti sopravviverebbe alla cancellazione di questa riga — e il
+   * test tornerebbe verde per il motivo sbagliato senza che nessuno se ne
+   * accorga. La lista qui sotto è la VERITÀ, non un incremento.
+   * ═══════════════════════════════════════════════════════════════════════════ */
+  must('reset legami E2E', await db.from('legame_genitori_alunni').delete().in('genitore_id', UTENTI_E2E));
   must('legami', await db.from('legame_genitori_alunni').upsert([
     { genitore_id: IDS.GENITORE, alunno_id: IDS.A1 },
-    { genitore_id: IDS.DOPPIO, alunno_id: IDS.A3 },
     { genitore_id: IDS.GENITORE2, alunno_id: IDS.B1 },
+    { genitore_id: IDS.DOPPIO, alunno_id: IDS.A5 }, // fuori sezione (i 6 casi reali)
+    { genitore_id: IDS.DOPPIO, alunno_id: IDS.B2 }, // altra sede    (il caso reale)
   ], { onConflict: 'genitore_id,alunno_id' }));
+
+  /* ── E LE STESSE DUE RIGHE ANCHE IN ANAGRAFICA (`student_parents`) ──────────
+   *
+   * Non è una ridondanza: le due sorgenti dicono cose diverse a lettori diversi.
+   * Il codice applicativo fa l'UNIONE delle due (`getFigliDiGenitoreEsito`), ma
+   * `current_parent_student_ids()` — la funzione SECURITY DEFINER su cui poggia
+   * OGNI policy «(parents space)» — legge SOLTANTO `student_parents`. Con il solo
+   * legame di runtime, quel disallineamento resta invisibile in CI: le rotte
+   * rispondono (passano dal service-role) e nessuno scopre che la RLS, per lo
+   * stesso genitore, direbbe di no.
+   *
+   * In produzione il caso c'era davvero — uno — ed è stato riparato il 2026-09-01
+   * con la migrazione `20260901203333_legami_anagrafici_profili_doppi`.
+   *
+   * ⚠️ `relation_type` RESTA NULL. È nullable, e in produzione è NULL nell'83%
+   * delle righe: inventare qui un 'padre' o un 'tutore' renderebbe il banco di
+   * prova più ordinato del dato vero, che è il modo più silenzioso di non
+   * collaudare il caso normale.
+   *
+   * Stessa regola dei legami di runtime: si cancella e si riscrive, perché
+   * l'upsert non toglie e il database della CI è persistente.
+   * ─────────────────────────────────────────────────────────────────────────── */
+  must('reset student_parents E2E', await db.from('student_parents').delete().in('parent_id', PARENTS_E2E));
+  must('student_parents', await db.from('student_parents').upsert([
+    { parent_id: IDS.P_DOPPIO, student_id: IDS.A5 },
+    { parent_id: IDS.P_DOPPIO, student_id: IDS.B2 },
+  ], { onConflict: 'student_id,parent_id' }));
 
   // 6. Reset dei dati E2E mutabili (solo entità delle scuole/utenti E2E)
   must('reset presenze', await db.from('presenze').delete().in('alunno_id', ALUNNI_E2E));
@@ -543,6 +754,12 @@ async function main() {
   must('eventi_diario', await db.from('eventi_diario').insert([
     { id: IDS.DIARIO_UMORE, alunno_id: IDS.A1, maestra_id: IDS.DOCENTE, tipo_evento: 'umore', orario_inizio: now, creato_il: creato, dettagli: { umore: 'felice' } },
     { id: IDS.DIARIO_ATTIVITA, alunno_id: IDS.A1, maestra_id: IDS.DOCENTE, tipo_evento: 'attivita', orario_inizio: now, creato_il: creato, dettagli: { activities: [{ tipo: 'Pittura', descrizione: 'Pittura con le dita', partecipazione: 'autonomia' }] }, nota_libera: 'Nota E2E per i genitori' },
+    // Il diario del figlio del profilo doppio (A5, sezione «Margherite»): senza
+    // una voce, «200 e il diario si apre» sarebbe indistinguibile da «200 e non
+    // c'è niente da vedere» — cioè un'asserzione che il 403 lo vedrebbe, ma il
+    // contenuto no. La maestra è quella della sede 1: chi ha scritto la voce non
+    // c'entra col gate, e A5 non ha una propria sezione con docente assegnato.
+    { id: IDS.DIARIO_A5, alunno_id: IDS.A5, maestra_id: IDS.DOCENTE, tipo_evento: 'attivita', orario_inizio: now, creato_il: creato, dettagli: { activities: [{ tipo: 'Lettura', descrizione: 'Lettura ad alta voce', partecipazione: 'autonomia' }] }, nota_libera: DOPPIO_PROFILO_E2E.notaDiarioA5 },
   ]));
 
   // 9. Avvisi: uno per sede.
@@ -614,6 +831,45 @@ async function main() {
     id: IDS.FORM_SUB, model_id: IDS.FORM_MODEL, status: 'completed',
     data: { note: 'Compilazione E2E' }, gestita_il: null, gestita_da: null,
   }, { onConflict: 'id' }));
+
+  // 15. Galleria: un media per ciascuno dei due figli del profilo doppio.
+  await seminaGalleriaDoppioProfilo();
+
+  // 16. Menu mensa di OGGI, diverso nelle due sedi.
+  //
+  // È un `override` per DATA e non una riga di rotazione: la rotazione dipende
+  // dal giorno della settimana (`giorniAttivi` di default è lun-ven), quindi in
+  // un run di sabato il menu sarebbe `null` e l'asserzione sarebbe rossa per il
+  // calendario invece che per il prodotto. L'override vale sempre.
+  //
+  // I due primi sono DIVERSI di proposito: il genitore-docente ha
+  // `utenti.scuola_id` = sede 1, e il figlio `B2` sta nella sede 2. Se la rotta
+  // risolvesse la mensa dal record del GENITORE invece che dal BAMBINO,
+  // risponderebbe comunque 200 — con il piatto sbagliato. È l'unico modo di
+  // vedere la differenza dalla risposta.
+  // ⚠️ SI CANCELLA E SI REINSERISCE, non si fa `upsert(onConflict:'id')`.
+  // `uidx_mensa_ovr_legacy` è un indice unico PARZIALE — `(scuola_id, data) WHERE
+  // menu_config_id IS NULL` — e `ON CONFLICT (id)` NON lo inferisce: un override
+  // già presente su (sede, oggi) con un id diverso farebbe fallire l'insert con
+  // `23505`, e `must()` ucciderebbe l'intera suite prima del primo test. È la
+  // stessa trappola del commit «ON CONFLICT non infersce un indice parziale».
+  // Il perimetro del delete sono le sole due sedi di collaudo.
+  must('reset menu mensa E2E', await db.from('mensa_menu_override').delete()
+    .in('scuola_id', [IDS.SCUOLA, IDS.SCUOLA2]));
+  must('mensa_menu_override', await db.from('mensa_menu_override').insert([
+    {
+      id: IDS.MENU_OVR_S1, scuola_id: IDS.SCUOLA, data: oggi, chiuso: false,
+      menu_config_id: null,
+      portate: { primo: DOPPIO_PROFILO_E2E.primoSede1, secondo: 'Frittata E2E', contorno: 'Insalata E2E', frutta: 'Mela E2E' },
+      note: 'Menu E2E della sede 1',
+    },
+    {
+      id: IDS.MENU_OVR_S2, scuola_id: IDS.SCUOLA2, data: oggi, chiuso: false,
+      menu_config_id: null,
+      portate: { primo: DOPPIO_PROFILO_E2E.primoSede2, secondo: 'Platessa E2E', contorno: 'Carote E2E', frutta: 'Pera E2E' },
+      note: 'Menu E2E della sede 2',
+    },
+  ]));
 
   console.log('✅ Seed E2E completato (idempotente, 2 sedi). Oggi (Europe/Rome):', oggi);
 }

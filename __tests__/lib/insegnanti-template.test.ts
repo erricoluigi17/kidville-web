@@ -12,7 +12,8 @@ import {
   TITOLI_STUDIO,
   CANDIDATURA_LIMITI,
 } from '@/lib/forms/insegnanti-template'
-import { validateField } from '@/lib/forms/validate-fields'
+import { validateField, MSG_SCEGLI_OPZIONE } from '@/lib/forms/validate-fields'
+import { CV_PREFISSO } from '@/lib/candidature/percorso-cv'
 import { campiVisibili, campoVisibile } from '@/lib/forms/conditional'
 import { CODICI_ERRORE } from '@/lib/ui/esito-fetch'
 import { EVENTI_NOTI, EVENTI_PERSISTITI } from '@/lib/logging/logger'
@@ -21,9 +22,12 @@ import { LIMITE_UPLOAD_MB, limiteUploadByte } from '@/lib/upload/limite-piattafo
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { posterioriCheContengono, senzaCommenti, sogliaFotografia } from '../architecture/soglia-fotografia'
 import schemaSnapshot from '../fixtures/candidature-schema-snapshot.json'
 import itShared from '../../messages/it/shared.json'
 import enShared from '../../messages/en/shared.json'
+import itPublic from '../../messages/it/public.json'
+import enPublic from '../../messages/en/public.json'
 
 /**
  * Il modulo pubblico di candidatura delle insegnanti (`/lavora-con-noi`).
@@ -76,6 +80,26 @@ const COME_RIGENERARE =
   'Rigenera la fotografia: `node __tests__/fixtures/candidature-schema-fotografia.mjs --sql` → ' +
   'esegui la query sul DB di produzione (sola lettura) → ' +
   '`node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json`.'
+
+const CARTELLA_MIGRAZIONI = join(process.cwd(), 'supabase', 'migrations')
+
+/**
+ * Questa migrazione può cambiare ciò che la fotografia di `candidature_insegnanti`
+ * racconta? La fotografia porta tre cose — le colonne, i `CHECK` e le etichette di
+ * `school_type_enum` — quindi si riconosce chi tocca la tabella e chi cambia
+ * l'ENUM, non chi si limita a usarlo.
+ *
+ * Nel dubbio, largo: un falso positivo costa una rigenerazione, che è l'unico
+ * momento in cui qualcuno guarda davvero se repo e database dicono la stessa cosa.
+ * Un falso negativo costa un lock verde su uno schema che non esiste più.
+ */
+function cambiaLaFotografia(sql: string): boolean {
+  const istruzioni = senzaCommenti(sql)
+  return (
+    /\bcandidature_insegnanti\b/i.test(istruzioni) ||
+    /\balter\s+type\s+(public\.)?school_type_enum\b/i.test(istruzioni)
+  )
+}
 
 /** Il nome del `CHECK` di appartenenza delle posizioni, in migrazione e in tabella. */
 const VINCOLO_POSIZIONI = 'candidature_insegnanti_posizioni_note'
@@ -146,6 +170,80 @@ describe('template di candidatura insegnanti · il legame con lo schema vero', (
     expect(schemaSnapshot.colonne.length, 'fotografia troppo magra').toBeGreaterThan(15)
     expect(schemaSnapshot.enum_school_type.length).toBeGreaterThan(1)
     expect(schemaSnapshot.check.length).toBeGreaterThan(1)
+  })
+
+  /**
+   * ── LA FOTOGRAFIA È CIECA A CIÒ CHE SUCCEDE DOPO LO SCATTO ──────────────────
+   *
+   * `sha256` protegge dalla MANOMISSIONE, non dall'INVECCHIAMENTO: una fotografia
+   * vecchia è internamente coerente e passa il sigillo senza un'incertezza. Ed è
+   * proprio l'invecchiamento che è successo, non un'ipotesi di laboratorio: la
+   * fotografia precedente portava `generato_alle: 2026-08-14T23:22:57Z`, mentre
+   * `20260820141500_candidatura_copia_inviata_il.sql` AGGIUNGE una colonna a
+   * questa tabella. Per cinque giorni questo file ha descritto una tabella che non
+   * esisteva più e l'intera suite è rimasta verde; la deriva è saltata fuori
+   * perché qualcuno è andato a misurare contro la produzione, non perché un test
+   * l'abbia detto.
+   *
+   * Il buco è grave qui più che altrove perché su questa fotografia poggia la
+   * verifica del vincolo che il titolare ha dichiarato non negoziabile — «la
+   * colonna `disponibilita` NON si cancella dal database». Senza guardia, il
+   * giorno in cui qualcuno applicasse un `DROP COLUMN` senza rigenerare,
+   * `expect(COLONNE.has('disponibilita')).toBe(true)` resterebbe VERDE e la
+   * promessa smetterebbe di essere verificata in silenzio.
+   *
+   * Il meccanismo non è nuovo: è lo stesso che `fk-scuola-id`, `rls-per-sede` e
+   * `migrazioni-complete` usano già da `soglia-fotografia.ts`. Questa fotografia
+   * era l'unica delle quattro a esserne senza.
+   */
+  it('nessuna migrazione più recente della fotografia tocca `candidature_insegnanti`', () => {
+    const colpevoli = posterioriCheContengono(CARTELLA_MIGRAZIONI, sogliaFotografia(schemaSnapshot), cambiaLaFotografia)
+    expect(
+      colpevoli,
+      `Queste migrazioni sono più recenti della fotografia e toccano la tabella che la ` +
+      `fotografia descrive: da questo momento il lock gira su uno schema che non esiste ` +
+      `più, e resta verde comunque. ${COME_RIGENERARE}`,
+    ).toEqual([])
+  })
+
+  it('il guard riconosce davvero una migrazione posteriore (la finestra cieca del 2026-08-20)', () => {
+    // Un guard che non ha mai visto un colpevole non è un guard: è una riga che
+    // nessuno ha messo alla prova, e la prova qui sopra è verde per costruzione
+    // ogni volta che la fotografia è fresca. Qui lo si prova sul caso VERO che gli
+    // è sfuggito, con la soglia della fotografia che quel giorno era in repo.
+    //
+    // La finestra è CHIUSA per costruzione (14 agosto → 25 agosto): è storia, i
+    // file di migrazione non si riscrivono, e una migrazione futura non può
+    // entrarci — quella la sorveglia la prova qui sopra, che guarda in avanti.
+    const storiche = posterioriCheContengono(CARTELLA_MIGRAZIONI, '20260814232257', cambiaLaFotografia)
+      .filter((f) => f < '20260825')
+    expect(
+      storiche,
+      `Il guard non riconosce più le migrazioni che hanno reso vecchia la fotografia ` +
+      `del 14 agosto: il predicato è stato ristretto e il difetto che questo lock esiste ` +
+      `per vedere gli passerebbe di nuovo davanti.`,
+    ).toEqual([
+      '20260819231500_candidature_sedi.sql',
+      '20260820004500_candidature_sedi_evasa_il.sql',
+      '20260820011500_candidature_sede_garantita.sql',
+      '20260820020000_candidature_sede_decisione_intera.sql',
+      '20260820141500_candidatura_copia_inviata_il.sql',
+    ])
+  })
+
+  it('il guard misura le ISTRUZIONI, non la prosa che le accompagna', () => {
+    // Il 2026-08-12 tre migrazioni sono risultate «toccano le policy» per una riga
+    // sola, e in tutti e tre i casi era la riga in cui il file dichiarava di NON
+    // toccarle. Un guard che misura la spiegazione invece del prodotto paga chi
+    // commenta di meno, e l'unico modo di spegnerlo è cancellare la spiegazione.
+    expect(cambiaLaFotografia('-- questa migrazione non tocca candidature_insegnanti\nSELECT 1;')).toBe(false)
+    expect(cambiaLaFotografia('/* vedi candidature_insegnanti */\nSELECT 1;')).toBe(false)
+    expect(cambiaLaFotografia('ALTER TABLE public.candidature_insegnanti DROP COLUMN disponibilita;')).toBe(true)
+    // L'enum delle fasce sta NELLA fotografia (`enum_school_type`): a cambiarlo è
+    // `ALTER TYPE`, non l'uso del tipo in un cast — che compare in mezzo repo e
+    // renderebbe questo lock rosso per migrazioni che non lo riguardano.
+    expect(cambiaLaFotografia("ALTER TYPE public.school_type_enum ADD VALUE 'primavera';")).toBe(true)
+    expect(cambiaLaFotografia("INSERT INTO sections VALUES ('nido'::public.school_type_enum);")).toBe(false)
   })
 
   it('la fotografia esiste accanto al generatore che la sa rifare', () => {
@@ -241,16 +339,262 @@ describe('template di candidatura insegnanti · i campi', () => {
     expect(sospetti.map((f) => f.id)).toEqual([])
   })
 
-  it('nome, cognome ed email sono obbligatori; residenza e telefono no', () => {
-    for (const id of ['nome', 'cognome', 'email']) {
+  it('nome, cognome, email e CURRICULUM sono obbligatori; residenza e telefono no', () => {
+    for (const id of ['nome', 'cognome', 'email', 'cv_path']) {
       expect(campo(id)?.required, `${id} dovrebbe essere obbligatorio`).toBe(true)
     }
-    for (const id of ['telefono', 'residence_city', 'residence_province', 'cv_path']) {
+    for (const id of ['telefono', 'residence_city', 'residence_province']) {
       expect(campo(id)?.required ?? false, `${id} dovrebbe essere facoltativo`).toBe(false)
     }
     expect(campo('email')?.type).toBe('email')
     expect(campo('telefono')?.type).toBe('phone')
     expect(campo('cv_path')?.type).toBe('file')
+  })
+
+  /*
+   * I DUE APPIGLI DELL'OBBLIGO CHE FINO AL 2026-08-25 ERANO DIFESI DA UN COMMENTO.
+   *
+   * Il blocco sopra `cv_path` nel template dichiara due invarianti e le argomenta
+   * bene. Nessuna delle due era ASSERITA — e un divieto affidato alla prosa è un
+   * divieto che si viola con i test verdi, che è precisamente la forma di guasto
+   * per cui questo repo tiene i lock.
+   *
+   * 1 · L'ETICHETTA. Il template dice «l'etichetta è "Curriculum" e basta, SENZA
+   *     "(obbligatorio)": l'asterisco lo stampa `FieldRenderer` da sé». Fino al
+   *     23/08 diceva «Curriculum (facoltativo)». Rimettere quella stringa oggi
+   *     produrrebbe «Curriculum (facoltativo) *» con sotto la nota «Senza allegato
+   *     la candidatura non si può inviare» — un'etichetta che contraddice il
+   *     proprio asterisco e la propria nota — e `eslint · tsc · vitest · build`
+   *     resterebbero tutti verdi: `-riepilogo.test.tsx` l'etichetta la legge DAL
+   *     template e la usa come chiave di ricerca, quindi combacia con qualunque
+   *     cosa ci sia scritto.
+   *
+   * 2 · LA `condition`. Il template avverte: «`cv_path` NON DEVE MAI PRENDERE UNA
+   *     `condition`: uscirebbe dal filtro di `campiVisibili` e l'obbligo sul
+   *     server sparirebbe in silenzio, con i test verdi». È vero alla lettera —
+   *     la route valida `validatePage(campiVisibili(INSEGNANTE_FIELDS, …))`, e un
+   *     campo che esce da `campiVisibili` non viene nemmeno nominato. Qui si
+   *     asserisce la cosa nei DUE versi: che la `condition` non c'è, e che il
+   *     campo è davvero dentro `campiVisibili` per un corpo che non spunta
+   *     «Altro» — perché è l'uscita da quella lista, non l'attributo, a fare il
+   *     danno.
+   */
+  it('l’etichetta del curriculum non ripete a parole ciò che l’asterisco già dice', () => {
+    expect(campo('cv_path')?.label).toBe('Curriculum')
+    expect(
+      campo('cv_path')?.label,
+      'l’etichetta non deve dire «facoltativo» né «obbligatorio»: l’asterisco lo stampa FieldRenderer da `required`',
+    ).not.toMatch(/facoltativ|obbligator/i)
+  })
+
+
+  /*
+   * LA NOTA SOTTO IL CAMPO: LA SOLA FRASE CHE SPIEGA L'OBBLIGO, E FINO AL
+   * 2026-08-25 L'UNICA COSA DI QUESTO LAVORO SENZA NESSUNA GUARDIA.
+   *
+   * L'etichetta qui sopra ha la sua (`toBe('Curriculum')` + il divieto delle due
+   * parole). `candCvNota` no, e il buco era di una forma precisa: TUTTI e cinque i
+   * collaudi che la nominano — `-forma-visiva`, `-posizioni`, `-riepilogo`, il file
+   * a11y e l'E2E — la asseriscono nella forma `getByText(itPublic.candCvNota)`,
+   * cioè confrontano il DOM col catalogo. Quel confronto prova la POSIZIONE della
+   * nota, non ciò che dice: cambiando il valore nel catalogo cambia anche l'oracolo,
+   * e tutto resta verde. Rimettendoci la stringa del 23/08 — «È facoltativo: senza,
+   * la candidatura si invia lo stesso» — si otterrebbe, sotto un campo con
+   * l'asterisco che blocca l'invio, una frase che dice l'esatto contrario, con
+   * `eslint · tsc · vitest · build` tutti e quattro verdi.
+   *
+   * ⚠️ E L'INGLESE ERA SCOPERTO DUE VOLTE: nessun collaudo legge `enPublic`
+   * affatto, tranne il lock di parità — che confronta gli INSIEMI DI CHIAVI e mai i
+   * valori. Una traduzione può quindi dire il contrario dell'italiano restando in
+   * parità perfetta.
+   *
+   * Perciò qui si assertisce una PROPRIETÀ del testo e non un confronto col
+   * catalogo, nei due versi e nelle due lingue: la parola vietata non c'è, e la
+   * cosa da dire è detta. Il verso positivo non è ornamento — senza, si passerebbe
+   * il test svuotando la chiave.
+   *
+   * ⚠️ QUESTO NON È IL POSTO IN CUI SI DECIDE LA PROSA. Se un giorno la frase si
+   * riscrive, si riscrivono anche queste due espressioni: difendono l'INFORMAZIONE
+   * («non si può inviare senza»), non le parole con cui oggi è scritta.
+   */
+  it('la nota del curriculum non dice più «facoltativo», e dice l’obbligo — in ITALIANO e in INGLESE', () => {
+    expect(
+      itPublic.candCvNota,
+      'la nota italiana chiama ancora facoltativo un campo che blocca l’invio',
+    ).not.toMatch(/facoltativ/i)
+    expect(
+      enPublic.candCvNota,
+      'la nota inglese chiama ancora «optional» un campo che blocca l’invio',
+    ).not.toMatch(/\boptional\b/i)
+
+    // ⚠️ LA CONSEGUENZA TORNA A PRETENDERSI QUI, E L'OBBLIGO SMETTE — LA
+    // PREMESSA È CAMBIATA, NON L'OPINIONE (25/08/2026, terzo giro).
+    //
+    // Fino a stamattina queste righe pretendevano la parola «obbligatorio» dentro
+    // la nota, e il commento diceva perché: «nei cataloghi non esiste nessuna
+    // legenda che spieghi che cosa significhi quel carattere (`grep -riE
+    // 'contrassegnat|asterisc' messages/` → zero), quindi questa nota è l'unico
+    // posto del modulo in cui la parola compare». Era vero, ed era il difetto:
+    // MISURATO su tutti e cinque i passi, «Curriculum» era l'UNICO dei sei campi
+    // del passo la cui obbligatorietà fosse scritta a parole — «Titolo di studio *»
+    // e «Per quali posizioni ti proponi *» si affidavano al solo asterisco. Un
+    // campo trattato come speciale senza che nulla lo giustifichi agli occhi di
+    // chi compila, e in errore tre righe impilate che dicono la stessa cosa in tre
+    // registri diversi (asterisco · «Allega un file per proseguire» · «L'allegato è
+    // obbligatorio»).
+    //
+    // Il rimedio non è stato togliere e basta: è stato spostare l'informazione dove
+    // vale per tutti e sei i campi. `wizardCampiObbligatori` («* campo
+    // obbligatorio») sta ora in testa ai campi di ogni passo che ne ha almeno uno,
+    // e il `grep` di cui sopra non dà più zero. Liberata dalla ripetizione, la nota
+    // torna a spendere la sua ultima frase per la sola cosa che né l'asterisco né
+    // il messaggio d'errore dicono: che senza allegato la candidatura NON PARTE.
+    // Su un modulo che perde quattro candidature su dieci proprio su questo campo, è
+    // la frase che deve trattenere quelle persone.
+    //
+    // Le due pretese si sono quindi SCAMBIATE di posto, e sono entrambe difese:
+    // qui sotto la conseguenza (con l'ordine: prima la via d'uscita, poi il
+    // divieto), e più giù la legenda, che è la condizione che permette a questa
+    // nota di tacere sull'obbligo.
+    //
+    // ⚠️ LA CONSEGUENZA SI DICE DANDO DEL TU (25/08/2026, quarto giro). La prima
+    // stesura scriveva «senza, la candidatura non si può inviare»: l'unico punto
+    // di tutto il catalogo pubblico in cui un'azione di CHI LEGGE fosse detta col
+    // «si» impersonale — e il gemello inglese non lo faceva («without it you
+    // can't send the application»), quindi non era nemmeno una scelta di
+    // registro, era una svista visibile solo confrontando le due lingue. La
+    // frase esiste identica in `src/app/privacy/page.tsx` («Senza il curriculum
+    // allegato il modulo non si invia»), dove il registro giuridico la regge:
+    // era stata portata di peso dove il registro è un altro.
+    // Il predicato qui sotto accetta le due persone, perché difende
+    // l'INFORMAZIONE; il registro lo difende l'asserzione che segue il ciclo.
+    for (const [lingua, nota, uscita, conseguenza] of [
+      ['italiana', itPublic.candCvNota, /foto/i, /non (puoi|si pu[oò]) inviare|non parte/i],
+      ['inglese', enPublic.candCvNota, /photo/i, /can.?t send|cannot send/i],
+    ] as const) {
+      const posUscita = nota.search(uscita)
+      const posConseguenza = nota.search(conseguenza)
+      expect(posUscita, `la nota ${lingua} non offre più la via d'uscita`).toBeGreaterThanOrEqual(0)
+      expect(
+        posConseguenza,
+        `la nota ${lingua} non dice più che cosa succede senza allegato`,
+      ).toBeGreaterThanOrEqual(0)
+      expect(
+        posUscita,
+        `la nota ${lingua} rimette il divieto davanti alla cosa che sblocca`,
+      ).toBeLessThan(posConseguenza)
+    }
+
+    // ⚠️ E LA NOTA NON RIPETE PIÙ L'ASTERISCO. Senza questa riga si potrebbe
+    // rimettere «L'allegato è obbligatorio.» in coda e tutto resterebbe verde: la
+    // conseguenza ci sarebbe, la via d'uscita pure, e il campo tornerebbe a dire
+    // l'obbligo tre volte in errore.
+    expect(
+      itPublic.candCvNota,
+      'la nota ripete un obbligo che l’asterisco e la legenda già dicono',
+    ).not.toMatch(/obbligatori/i)
+    expect(enPublic.candCvNota).not.toMatch(/\brequired\b/i)
+
+    // …E L'OBBLIGO RESTA DETTO A PAROLE DA QUALCHE PARTE, che è la metà che
+    // rende lecita la riga qui sopra. Se qualcuno cancellasse la legenda, questa
+    // asserzione cade e il modulo tornerebbe ad avere sei asterischi non spiegati.
+    expect(itPublic.wizardCampiObbligatori, 'sparita la legenda dell’asterisco').toMatch(/obbligatori/i)
+    expect(enPublic.wizardCampiObbligatori).toMatch(/required/i)
+    expect(itPublic.wizardCampiObbligatori, 'la legenda non nomina il carattere che spiega').toContain('*')
+    expect(enPublic.wizardCampiObbligatori).toContain('*')
+
+    // E la metà che tiene aperta la porta ai quattro su dieci che oggi non
+    // allegano (àncora `MISURA-CV`): che va
+    // bene anche una FOTOGRAFIA. È la parte che l'obbligo rende più importante,
+    // non meno — toglierla per «snellire» pagherebbe due volte lo stesso prezzo.
+    expect(itPublic.candCvNota, 'sparita la metà che dice che va bene una foto').toMatch(/foto/i)
+    expect(enPublic.candCvNota, 'sparita la metà che dice che va bene una foto').toMatch(/photo/i)
+
+    // ⚠️ …E IL MOTIVO SI DICE IN TUTTE E DUE LE LINGUE (25/08/2026, settimo giro).
+    // MISURATO confrontando le due rese: l'italiano diceva «è da lì che la Direzione
+    // parte PER VALUTARTI», l'inglese «it is what the school management starts
+    // from» — lo scopo spariva e restava un «starts from» che non dice a fare che
+    // cosa. Era l'unica riga della famiglia `cand*` in cui l'inglese portasse meno
+    // informazione dell'italiano; le vicine (`candContestoDirezione`,
+    // `candContestoTempi`) lo scopo lo traducono per intero. Nessun lock poteva
+    // vederlo: la parità confronta le CHIAVI, e i due predicati qui sopra
+    // (foto/photo, la conseguenza) c'erano in entrambe.
+    expect(
+      itPublic.candCvNota,
+      'la nota italiana non dice più A CHE COSA serve il curriculum',
+    ).toMatch(/valutar|valutazione/i)
+    expect(
+      enPublic.candCvNota,
+      'la nota inglese ha perso lo scopo che l’italiana dice: resta un «starts from» senza a fare che cosa',
+    ).toMatch(/assess|review|evaluat/i)
+
+    // ⚠️ …E LA CONSEGUENZA PARLA A CHI LEGGE, non a un ufficio. Tutto il modulo dà
+    // del tu (`candSedeErrore`, `candPosizioniAiuto`, `candContestoTempi`), e
+    // questa è la riga che porta l'attrito nuovo di tutto il lavoro: è l'ultimo
+    // posto in cui passare all'impersonale. L'italiano c'era arrivato e l'inglese
+    // no — la prova che era una svista e non una scelta.
+    expect(
+      itPublic.candCvNota,
+      'la nota italiana torna a dire l’obbligo all’impersonale, come una pagina legale',
+    ).toMatch(/\bpuoi\b|\btua\b|\btuo\b/i)
+    expect(enPublic.candCvNota).toMatch(/\byou\b|\byour\b/i)
+  })
+
+  it('il curriculum non ha `condition`, e resta dentro `campiVisibili` — l’obbligo sul server vive di lì', () => {
+    expect(
+      campo('cv_path')?.condition,
+      'una `condition` su cv_path lo farebbe uscire da campiVisibili e l’obbligo sul server sparirebbe in silenzio',
+    ).toBeUndefined()
+    const visibili = campiVisibili(INSEGNANTE_FIELDS, { posizioni: ['insegnante_nido'] }).map((f) => f.id)
+    expect(visibili, 'cv_path non è fra i campi che il server valida').toContain('cv_path')
+  })
+
+  it('un `type: \'file\'` obbligatorio e VUOTO lo respinge `validateField`, che è la regola del server', () => {
+    /*
+     * ⚠️ QUESTA È LA PROVA CHE L'OBBLIGO NON È UNA DICHIARAZIONE SENZA EFFETTO.
+     *
+     * `required: true` sul template vale quanto vale il motore che lo legge. Il
+     * motore è uno solo — `validateField` — e lo rigirano ENTRAMBE le sponde: il
+     * wizard (via le `rules` del `Controller` in `FieldRenderer`) e la route
+     * (`validatePage(campiVisibili(...))`). Se `file` fosse finito fra i
+     * `TIPI_DECORATIVI`, o se `eVuoto` non catturasse la stringa vuota che il
+     * campo porta quando non è stato toccato, il `required` di `cv_path` sarebbe
+     * un attributo che nessuno legge: modulo che avanza, server che accetta, e
+     * nessun test rosso a dirlo. È il silenzio che questo repo condanna, e qui
+     * si misura invece di darlo per buono.
+     *
+     * Le tre forme del vuoto sono quelle vere: `''` è il `defaultValue` del
+     * `Controller`, `undefined` è il campo mai montato (il ritorno al riepilogo
+     * che scavalca il passo), `null` è ciò che arriva da un corpo JSON.
+     */
+    /*
+     * ⚠️ LA FRASE È CAMBIATA IL 25/08/2026, E LA PROVA CHE CONTA NON È CAMBIATA.
+     * Il predicato resta «obbligatorio e vuoto → respinto»; a cambiare è il
+     * MESSAGGIO, perché su un campo di caricamento «Campo obbligatorio» è la
+     * risposta di un database: non dice cosa fare, non nomina l'allegato. Ora
+     * `validateField` distingue per tipo, esattamente come già fa `messaggioPattern`
+     * fra provincia, CAP e codice fiscale — una frase diversa per lo stesso
+     * predicato, non una seconda regola. E la frase è la stessa sulle due sponde,
+     * perché la funzione è la stessa.
+     */
+    const cv = campo('cv_path')!
+    const RESPINTO = 'Allega un file per proseguire'
+    expect(cv.type, 'non è più un campo di caricamento: questa prova misura altro').toBe('file')
+    expect(validateField(cv, '')).toBe(RESPINTO)
+    expect(validateField(cv, undefined)).toBe(RESPINTO)
+    expect(validateField(cv, null)).toBe(RESPINTO)
+    expect(validateField(cv, '   '), 'tre spazi non sono un curriculum').toBe(RESPINTO)
+    // ⚠️ E NON È LA FRASE DEI CAMPI DI TESTO: è il difetto che il ramo chiude.
+    expect(
+      validateField(cv, ''),
+      'il campo di caricamento è tornato a dire la frase generica dei campi da digitare',
+    ).not.toBe('Campo obbligatorio')
+    // CONTROLLO NEGATIVO, perché il ramo non deve aver cambiato tutto: un campo di
+    // TESTO obbligatorio e vuoto continua a dire la frase di sempre.
+    expect(validateField(campo('nome')!, '')).toBe('Campo obbligatorio')
+    // E il percorso vero passa: senza questa riga la prova sarebbe verde anche
+    // con una regola che respinge tutto.
+    expect(validateField(cv, `${CV_PREFISSO}0f5f1f2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f-cv.pdf`)).toBeNull()
   })
 
   it('la provincia di residenza eredita il comportamento «provincia» dall’id', () => {
@@ -283,14 +627,28 @@ describe('template di candidatura insegnanti · i campi', () => {
     expect(validateField(note, 'a'.repeat(1000))).toBeNull()
   })
 
-  it('titolo di studio e disponibilità sono select chiuse', () => {
+  it('il titolo di studio è una select chiusa', () => {
     const titolo = campo('titolo_studio')!
     expect(titolo.type).toBe('select')
     expect(titolo.options).toEqual(TITOLI_STUDIO)
     expect(validateField(titolo, 'inventato')).toBe('Selezione non valida')
     expect(validateField(titolo, TITOLI_STUDIO[0].value)).toBeNull()
-    expect(campo('disponibilita')?.type).toBe('select')
-    expect((campo('disponibilita')?.options ?? []).length).toBeGreaterThan(1)
+  })
+
+  it('il campo `disponibilita` è USCITO dal modulo, mentre la colonna `disponibilita` è rimasta', () => {
+    // Stessa forma del blocco su `gradi` in coda a questo file, e per la stessa
+    // ragione: la seconda metà è ciò che rende la prima una rimozione e non una
+    // perdita. In Kidville si lavora solo a tempo pieno, quindi la domanda
+    // chiedeva una cosa già decisa e dal 2026-08-24 non si fa più; la colonna
+    // resta, con i valori che le candidature arrivate prima ci hanno scritto, ed
+    // è da lì che la segreteria continua a leggerli.
+    expect(campo('disponibilita'), 'la domanda sulla disponibilità è tornata nel modulo: ' +
+      'in Kidville si lavora solo a tempo pieno, chiederlo è chiedere una cosa già decisa').toBeUndefined()
+    expect(
+      INSEGNANTE_FIELDS.filter((f) => String(f.db_mapping).endsWith('.disponibilita')).map((f) => f.id),
+      'un campo del modulo punta di nuovo alla colonna `disponibilita`',
+    ).toEqual([])
+    expect(COLONNE.has('disponibilita'), `la colonna \`disponibilita\` non c’è più. ${COME_RIGENERARE}`).toBe(true)
   })
 
   it('l’elenco dei titoli comincia dalla LICENZA MEDIA, perché il campo è obbligatorio', () => {
@@ -502,9 +860,17 @@ describe('template di candidatura insegnanti · le posizioni (multi-valore obbli
   it('«almeno una posizione» lo dicono il modulo E il database, e stavolta dicono la stessa cosa', () => {
     // Il modulo tiene: `eVuoto()` tratta una checkbox come vuota quando il valore
     // non è un array o è un array vuoto, e `required` fa il resto.
-    expect(validateField(posizioni(), [])).toBe('Campo obbligatorio')
-    expect(validateField(posizioni(), undefined)).toBe('Campo obbligatorio')
-    expect(validateField(posizioni(), null)).toBe('Campo obbligatorio')
+    // ⚠️ LA COSTANTE, NON LA STRINGA RIBATTUTA. Dal 25/08 un gruppo a spunta vuoto
+    // risponde «Scegli almeno un'opzione per proseguire» invece di «Campo
+    // obbligatorio» (la cadenza di `candSedeErrore`, che il modulo usava già al
+    // passo 1). Queste tre righe la ribattevano a mano: sono cadute, ed è giusto
+    // che siano cadute — ma la lezione è la stessa scritta in `validate-fields`,
+    // cioè che il confronto va fatto sull'oggetto esportato. Riscritta così, il
+    // giorno in cui la frase cambia questo test non chiede manutenzione e continua
+    // a difendere ciò che difende: che il confine sia lo stesso nel modulo e nel DB.
+    expect(validateField(posizioni(), [])).toBe(MSG_SCEGLI_OPZIONE)
+    expect(validateField(posizioni(), undefined)).toBe(MSG_SCEGLI_OPZIONE)
+    expect(validateField(posizioni(), null)).toBe(MSG_SCEGLI_OPZIONE)
     expect(validateField(posizioni(), ['cuoca'])).toBeNull()
     expect(validateField(posizioni(), ['insegnante_nido', 'segreteria'])).toBeNull()
 

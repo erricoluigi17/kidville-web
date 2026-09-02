@@ -22,6 +22,13 @@ export default getRequestConfig(async () => {
     mensa: (await import(`../../messages/${locale}/mensa.json`)).default,
     pagamenti: (await import(`../../messages/${locale}/pagamenti.json`)).default,
     profilo: (await import(`../../messages/${locale}/profilo.json`)).default,
+    // Il cambio password: UN namespace per QUATTRO superfici (profilo genitore,
+    // profilo docente, impostazioni della segreteria, interstiziale del primo
+    // accesso). Sta a sé e non dentro `profilo` o `adminSettings` perché è lo
+    // stesso identico modulo montato in aree diverse: dividerne i testi per area
+    // vorrebbe dire quattro copie della stessa frase, e la prima a divergere
+    // sarebbe quella che nessuno riapre più.
+    password: (await import(`../../messages/${locale}/password.json`)).default,
     teacherNav: (await import(`../../messages/${locale}/teacherNav.json`)).default,
     teacherDiario: (await import(`../../messages/${locale}/teacherDiario.json`)).default,
     teacherPresenze: (await import(`../../messages/${locale}/teacherPresenze.json`)).default,

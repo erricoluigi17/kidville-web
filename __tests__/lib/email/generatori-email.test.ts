@@ -11,12 +11,22 @@ import { messaggioDigestNews } from '@/lib/email/messaggi/digest-news'
 import { messaggioRicevutaIscrizione } from '@/lib/email/messaggi/ricevuta-iscrizione'
 import { messaggioCandidaturaAllaSede } from '@/lib/email/messaggi/candidatura-alla-sede'
 import { messaggioConfermaCandidatura } from '@/lib/email/messaggi/conferma-candidatura'
+import { messaggioPasswordCambiata } from '@/lib/email/messaggi/password-cambiata'
 
 // =============================================================================
-// I dodici generatori, misurati insieme.
+// I generatori di email, misurati insieme.
+//
+// ─── PERCHÉ QUESTO FILE NON SI CHIAMA PIÙ `dodici-generatori.test.ts` ────────
+// Perché i generatori non erano più dodici. Erano tredici dal 2026-08-20 (la
+// copia della candidatura alla sede è entrata nella tabella qui sotto senza che
+// nessuno toccasse il nome del file), e con «la password è stata cambiata» sono
+// quattordici. Un nome che conta è un nome che invecchia, e un nome che mente è
+// precisamente ciò che questo repo vieta: il numero è uscito dal titolo, dai
+// `describe` e dalle asserzioni, e sta solo dove è un dato — l'etichetta di ogni
+// riga della tabella.
 //
 // Tre proprietà che valgono per TUTTI, e che si verificano una volta sola invece
-// che dodici:
+// che una per generatore:
 //
 //  1. NIENTE SI APRE. Un valore ostile in qualunque parametro non produce un tag
 //     vivo. È la difesa a runtime che sta accanto a quella del tipo `Html`:
@@ -139,7 +149,7 @@ function tutti(sede: ContestoSede): { nome: string; m: Messaggio; dati: string[]
             dati: [M.nome, M.data, 'Educatrice nido'],
         },
         {
-            // ⚠️ IL TREDICESIMO È L'UNICO CHE NON VA A UNA PERSONA: va alla
+            // ⚠️ LA 13 È L'UNICA CHE NON VA A UNA PERSONA: va alla
             // CASELLA DEL PLESSO. Entra comunque in questa suite, e proprio per
             // il controllo che qui conta di più — «due sedi, due email diverse».
             // È il generatore che NOMINA i plessi (`sediScelte`), quindi è quello
@@ -156,10 +166,20 @@ function tutti(sede: ContestoSede): { nome: string; m: Messaggio; dati: string[]
             }, sede),
             dati: [M.nome, M.data, 'Laurea magistrale'],
         },
+        {
+            // ⚠️ LA 14 È L'UNICA CHE NON PORTA NESSUN DATO OLTRE AL FATTO: non
+            // c'è password, non c'è lunghezza, non c'è indirizzo di accesso. I
+            // due dati che DEVONO reggere nel gemello testuale sono anche gli
+            // unici che ha — quando è successo e a chi. Le proprietà sue stanno
+            // in `password-cambiata.test.ts`.
+            nome: '14 password cambiata',
+            m: messaggioPasswordCambiata({ nome: M.nome, avvenutoIl: M.data }, sede),
+            dati: [M.nome, M.data],
+        },
     ]
 }
 
-describe('i dodici generatori — il gemello testuale non diverge dall\'HTML', () => {
+describe('i generatori di email — il gemello testuale non diverge dall\'HTML', () => {
     for (const { nome, m, dati } of tutti(GIUGLIANO)) {
         it(`${nome}: ogni dato dell'HTML è anche nel testo`, () => {
             for (const d of dati) {
@@ -177,7 +197,7 @@ describe('i dodici generatori — il gemello testuale non diverge dall\'HTML', (
         }
     })
 
-    it('il nome della sede compare in TUTTI e tredici, HTML e testo', () => {
+    it('il nome della sede compare in TUTTI, HTML e testo', () => {
         for (const { nome, m } of tutti(GIUGLIANO)) {
             expect(m.html, nome).toContain('Kidville Giugliano')
             // Tranne la cancellazione account, che di proposito non nomina un
@@ -187,7 +207,7 @@ describe('i dodici generatori — il gemello testuale non diverge dall\'HTML', (
     })
 })
 
-describe('i dodici generatori — due sedi, due email diverse', () => {
+describe('i generatori di email — due sedi, due email diverse', () => {
     it('nessuna email di una sede nomina l\'altra', () => {
         const g = tutti(GIUGLIANO)
         const c = tutti(CESA)
@@ -201,11 +221,11 @@ describe('i dodici generatori — due sedi, due email diverse', () => {
     })
 })
 
-describe('i dodici generatori — niente si apre', () => {
+describe('i generatori di email — niente si apre', () => {
     const OSTILE = '<script>alert(1)</script>"><img src=x onerror=1>'
     const sede: ContestoSede = { ...GIUGLIANO, nome: OSTILE, indirizzo: OSTILE, email: OSTILE }
 
-    /** Gli stessi dodici, ma con il payload in OGNI campo stringa. */
+    /** Gli stessi generatori, ma con il payload in OGNI campo stringa. */
     function tuttiOstili(): { nome: string; m: Messaggio }[] {
         return [
             { nome: '01', m: messaggioCredenziali({ nome: OSTILE, email: OSTILE, password: OSTILE, occasione: 'anagrafica-personale-approvata' }, sede) },
@@ -223,10 +243,11 @@ describe('i dodici generatori — niente si apre', () => {
             { nome: '10', m: messaggioDigestNews({ mese: OSTILE, anno: 2026, articoli: [{ categoria: OSTILE, titolo: OSTILE, estratto: OSTILE, url: OSTILE }] }, sede) },
             { nome: '11', m: messaggioRicevutaIscrizione({ riferimento: OSTILE, inviataIl: OSTILE, nomeBambino: OSTILE, sezione: OSTILE, genitore: OSTILE }, sede) },
             { nome: '12', m: messaggioConfermaCandidatura({ nome: OSTILE, inviataIl: OSTILE, ruolo: OSTILE, numeroAllegati: 2, giorniRisposta: 30 }, sede) },
+            { nome: '14', m: messaggioPasswordCambiata({ nome: OSTILE, avvenutoIl: OSTILE }, sede) },
         ]
     }
 
-    it('nessun tag ostile si apre in nessuno dei dodici', () => {
+    it('nessun tag ostile si apre in nessuno di loro', () => {
         for (const { nome, m } of tuttiOstili()) {
             expect(m.html, nome).not.toContain('<script')
             expect(m.html, nome).not.toContain('<img src=x')

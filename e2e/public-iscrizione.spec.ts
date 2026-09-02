@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
-import { IDS, STORAGE } from './fixtures';
+import { IDS, STORAGE, attendiNomeFileVisibile } from './fixtures';
 
 // Flusso pubblico /iscrizione (happy path) + import admin con degrado email
 // VISIBILE (provider non configurato). CF/email fissi: il seed ripulisce gli
@@ -16,8 +16,25 @@ const PNG_1PX = Buffer.from(
 
 async function caricaDocumento(page: Page, pngPath: string) {
   await page.locator('input[type="file"]').setInputFiles(pngPath);
-  // L'upload sostituisce il testo del campo file con il nome del file.
-  await expect(page.getByText('documento.png').first()).toBeVisible({ timeout: 15_000 });
+  /*
+   * L'upload sostituisce il testo del campo file con il nome del file, ed è anche
+   * il punto di sincronizzazione: finché il nome non c'è, il valore del campo è
+   * vuoto e «Avanti» si ferma su un documento che in realtà è arrivato.
+   *
+   * ⚠️ NON PIÙ `getByText('documento.png').first()`, e la ragione è misurata.
+   * Dal 2026-08-25 il riquadro scrive il nome anche in uno `<span class="sr-only">`
+   * (serve: senza, il nome accessibile del campo usciva spezzato). Quello `span`
+   * è `clip`-ato ma RESO, quindi per Playwright è «visibile» — 1×1 px bastano — e
+   * il vecchio `toBeVisible()` restava VERDE anche cancellando dallo schermo tutte
+   * le metà visibili del nome. Non era un'asserzione assente: era un'asserzione
+   * che mentiva, ed è stata smascherata rompendo apposta la pagina viva.
+   * `attendiNomeFileVisibile` guarda le sole metà `aria-hidden`, cioè ciò che una
+   * persona legge davvero; la testata di quella funzione porta la misura.
+   */
+  await attendiNomeFileVisibile(
+    page.locator('input[type="file"]').locator('xpath=ancestor::label[1]'),
+    'documento.png',
+  );
 }
 
 test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInfo) => {
@@ -81,10 +98,25 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await expect(presaVisione).toBeVisible();
 
   // Prova che l'obbligo sia REALE: senza spunta, «Avanti» non deve portare al
-  // riepilogo. NB: NON si può cercare il testo «Riepilogo», che compare anche
-  // nell'indicatore dei passi — guarderebbe la barra di avanzamento invece del
-  // pannello, e l'asserzione sarebbe sempre vera per il motivo sbagliato.
-  // L'elemento che esiste SOLO nel riepilogo è il pulsante d'invio.
+  // riepilogo.
+  //
+  // ⚠️ NON si può cercare il testo «Riepilogo», e il motivo qui scritto era
+  // SBAGLIATO fino al 2026-09-01: diceva «compare anche nell'indicatore dei
+  // passi». Il sosia vero è un altro, ed è misurato — il sottotitolo di QUESTO
+  // passo, `wizardConsensiSottotitolo` in `messages/it/public.json`, che recita
+  // «Un passaggio, poi il riepilogo». `getByText(stringa)` senza
+  // `{ exact: true }` cerca per sottostringa e senza distinzione di maiuscole:
+  // quel sottotitolo lo soddisfa, quindi l'asserzione è verde anche stando
+  // fermi qui.
+  //
+  // Il commento vecchio proteggeva la riga giusta (questa, negativa) e lasciava
+  // scoperta quella positiva più in basso, che infatti diceva il falso: per due
+  // settimane, dal 24/08, ha lasciato passare un difetto di prodotto su WebKit
+  // e ha mandato la diagnosi sulla pista sbagliata (falliva la riga dopo,
+  // accusando «Stai iscrivendo 1 bambino»).
+  //
+  // L'elemento che esiste SOLO nel riepilogo è il pulsante d'invio: lo stesso
+  // locatore serve qui per dire «non ci siamo» e sotto per dire «ci siamo».
   await page.getByRole('button', { name: 'Avanti' }).click();
   await expect(page.getByRole('button', { name: 'Invia richiesta' })).toHaveCount(0);
   await expect(presaVisione).toBeVisible();
@@ -93,7 +125,7 @@ test('happy path: la richiesta pubblica viene inviata', async ({ page }, testInf
   await page.getByRole('button', { name: 'Avanti' }).click();
 
   // Riepilogo → invio.
-  await expect(page.getByText('Riepilogo')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Invia richiesta' })).toBeVisible();
   await expect(page.getByText(/Stai iscrivendo 1 bambino/)).toBeVisible();
   await page.getByRole('button', { name: 'Invia richiesta' }).click();
 

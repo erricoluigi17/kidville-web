@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-23",
-  "generato_alle": "2026-08-23T03:29:29Z",
-  "sha256": "b928bf2cb73378757399b1d5ae57218abbdc32abb83a184aa728cb90306ee337",
+  "generato_il": "2026-09-01",
+  "generato_alle": "2026-09-01T20:34:43Z",
+  "sha256": "f46498403ebbe27fce9ba4da21c7b627c664e1fc7cdaf2384a4e9d30b09e46ab",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -539,6 +539,42 @@
     {
       "version": "20260823032818",
       "name": "iscrizioni_import_cinque_giri"
+    },
+    {
+      "version": "20260824202353",
+      "name": "dati_prova_fuori_sede_controllo_generico"
+    },
+    {
+      "version": "20260824202558",
+      "name": "dati_prova_fuori_sede_distingue_registri"
+    },
+    {
+      "version": "20260824212333",
+      "name": "dati_prova_fuori_sede_ignora_gli_annullati"
+    },
+    {
+      "version": "20260831192043",
+      "name": "aversa_due_sezioni_di_due_anni"
+    },
+    {
+      "version": "20260901163536",
+      "name": "armadietto_richieste"
+    },
+    {
+      "version": "20260901174336",
+      "name": "bucket_gallery_privato_50mb"
+    },
+    {
+      "version": "20260901182942",
+      "name": "bucket_gallery_formati_universali"
+    },
+    {
+      "version": "20260901203141",
+      "name": "password_cambi"
+    },
+    {
+      "version": "20260901203333",
+      "name": "legami_anagrafici_profili_doppi"
     }
   ]
 }

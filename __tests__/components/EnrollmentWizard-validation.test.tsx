@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
+import itCampi from '../../messages/it/parentForms.json'
 
 vi.mock('framer-motion', async () => {
   const React = await import('react')
@@ -117,7 +118,7 @@ describe('EnrollmentWizard — validazione per pagina (template ripetibile)', ()
     fireEvent.click(screen.getByRole('button', { name: /avanti/i }))
 
     // Il messaggio compare dopo la validazione (async).
-    await screen.findAllByText('Campo obbligatorio')
+    await screen.findAllByText(itCampi.campoObbligatorio)
     expect(screen.getByText('Bambino 1')).toBeInTheDocument()
     // Non è avanzato all'adulto.
     expect(screen.queryByText(/^Adulto 1/)).not.toBeInTheDocument()

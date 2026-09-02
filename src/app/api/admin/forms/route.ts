@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope';
+import { resolveScuoleAttive, resolveScuolaScrittura, restringiSedi } from '@/lib/auth/scope';
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { zOpzionale, zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -11,8 +13,23 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 // Gli id restano stringhe libere (niente zUuid): oggi il codice non impone
 // alcun formato e nei test/dati seed circolano id non-UUID.
 
+/**
+ * ⚠️ `scuola_id` ERA ACCETTATO E BUTTATO VIA, e il commento che stava qui lo
+ * diceva: «ignorato: la lista filtra sulle sedi attive risolte».
+ *
+ * Un parametro dichiarato nello schema e mai usato è il modo più silenzioso che
+ * un'API ha di mentire: chi lo manda non riceve nessun errore — riceve l'elenco
+ * di TUTTE le sedi attive e lo prende per quello di una sola. Non c'è un 400, non
+ * c'è un log, non c'è un test rosso; c'è solo una lista più lunga di quella
+ * chiesta, che nessuno mette in dubbio perché il parametro «l'ha accettato».
+ *
+ * Adesso è un uuid vero e passa da `restringiSedi`, che INTERSECA le sedi attive
+ * (senza distinzione di maiuscole, e restituendo la forma canonica del database)
+ * e distingue i due vuoti: `[]` è «non hai nessun plesso» — elenco vuoto — e
+ * `null` è «hai chiesto un plesso che non è tuo», che si rifiuta con un 403.
+ */
 const getQuerySchema = z.object({
-  scuola_id: z.string().optional(), // ignorato: la lista filtra sulle sedi attive risolte
+  scuola_id: zOpzionale(zUuid),
 });
 
 const postBodySchema = z.object({
@@ -62,7 +79,19 @@ export const GET = withRoute('admin/forms:GET', async (request: NextRequest) => 
 
     try {
       const supabase = await createAdminClient();
-      const sedi = await resolveScuoleAttive(request, supabase, auth.user);
+      const attive = await resolveScuoleAttive(request, supabase, auth.user);
+      const sedi = restringiSedi(attive, q.data.scuola_id);
+      if (sedi === null) {
+        logEvento('modulistica', 'warn', {
+          operazione: 'admin/forms:GET',
+          esito: 'sede-filtro-fuori-scope',
+          utente: auth.user.id,
+          ruolo: auth.user.role,
+          sede_id: q.data.scuola_id,
+          sedi_attive: attive.length,
+        });
+        return rifiutoSede('SEDE_NON_ACCESSIBILE');
+      }
 
       const { data, error } = await supabase
         .from('forms_templates')

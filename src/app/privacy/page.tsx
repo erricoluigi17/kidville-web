@@ -288,6 +288,86 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
               <strong>tre e separati</strong> — galleria riservata, sito web pubblico, canali
               social — e si possono accogliere o rifiutare uno per uno.
             </p>
+            {/*
+              «LAVORA CON NOI» — VOCE NUOVA DEL 2026-08-25, e nasce con l'obbligo.
+              Fino al 24/08 il curriculum era FACOLTATIVO: questa sezione non aveva
+              niente da dire su quel modulo, perché di obbligatorio non c'era altro
+              che l'anagrafica e il recapito, coperti dal primo paragrafo. Dal 24/08
+              senza allegato la candidatura non si invia — e l'art. 13 §2 lett. e
+              pretende che sia detto QUI: se il conferimento è necessario, vanno
+              dichiarate anche le CONSEGUENZE del rifiuto.
+              ⚠️ L'informazione al punto di raccolta c'era già ed era in due lingue
+              (`candCvNota`, l'asterisco, `aria-required`). Non basta: la nota sotto
+              il campo la legge chi sta compilando, l'informativa la legge chi decide
+              se compilare. Sono due momenti diversi e la norma nomina il secondo.
+              ⚠️ NON si scrive «automaticamente»: il lock
+              `informativa-conservazione-dichiarata` lega quella parola a una voce di
+              `AUTOMI_DICHIARATI`, e qui non si sta dichiarando un automa.
+
+              ── STA IN FONDO ALLA SEZIONE, E NON IN MEZZO (rifinitura del 25/08) ──
+              Nella prima stesura questo capoverso era il TERZO di quattro, cioè
+              incastrato fra i dati sanitari del minore e le fotografie del minore.
+              La sezione racconta un filo solo — anagrafica → salute → fotografie —
+              e ci si infilava in mezzo il soggetto di un altro racconto: un adulto
+              che si candida a un lavoro. Chi seguiva il filo del bambino
+              incespicava e poi doveva tornare indietro. In fondo il salto di
+              soggetto avviene una volta sola, e alla fine.
+
+              ── E L'ECO È STATA TOLTA, non spostata ──
+              Il capoverso chiudeva con «è INVECE facoltativo … il rifiuto NON
+              PREGIUDICA IN ALCUN MODO la valutazione» e quello delle fotografie
+              apriva con «È INVECE facoltativo … il rifiuto o la revoca NON
+              PREGIUDICANO IN ALCUN MODO l'iscrizione»: due volte la stessa figura,
+              di fila, su due soggetti che non c'entrano niente fra loro. La prima
+              stesura aveva visto il problema e aveva spostato il soggetto in testa
+              per non ripetere le tre parole d'apertura — ma la ripetizione non era
+              nelle tre parole, era nella figura. Ora l'«invece» è uno solo (quello
+              delle fotografie, che contrappone davvero) e la conseguenza del
+              rifiuto è detta con altre parole: «non incide sulla valutazione».
+
+              ── E IL NUMERO SI SCRIVE ──
+              Diceva «comporta soltanto la cancellazione AL PIÙ BREVE DEI TERMINI
+              INDICATI PIÙ AVANTI»: la frase su cui una persona decide se spuntare
+              un consenso, e la più difficile da leggere del capoverso — chiede di
+              tenere a mente che i termini sono più d'uno, che stanno più avanti, e
+              che ne vale il più breve, mentre il dato che serve (dodici invece di
+              ventiquattro) era rimandato. Ora c'è.
+              ⚠️ I DUE NUMERI SONO ORA SCRITTI IN DUE POSTI di questa pagina, e il
+              secondo posto è sotto lo STESSO lock del primo: `gdpr-retention-candidature`
+              («l'INFORMATIVA dichiara gli stessi due termini, in lettere») è stato
+              esteso a questo capoverso, e li confronta entrambi con
+              `MESI_SENZA_CONSENSO` e `CANDIDATURA_LIMITI.mesiConservazione`. Una
+              copia non sorvegliata sarebbe stata il difetto che quel lock esiste per
+              impedire — promettere dodici qui e ventiquattro nel codice.
+
+              ── E NON SI DICE «L'INTERESSATO» ──
+              Il capoverso è l'unico della pagina rivolto a chi si candida, e usava
+              il maschile «l'interessato» mentre il corpo della sezione sul personale
+              — la stessa popolazione — scrive «l'interessata» tre volte (e così la
+              rotta che governa quei dati). «Diritti dell'interessato» resta come
+              TITOLO, perché lì è il termine tecnico. Qui il termine si aggira del
+              tutto, che è anche la scrittura più piana: «chi si candida».
+            */}
+            {/* ⚠️ SPEZZATO IN DUE IL 25/08/2026, ed è una parola in meno.
+                La frase d'apertura reggeva sotto lo stesso «e» due cose di natura
+                diversa — uno SCOPO («servono a esaminare la candidatura») e una
+                CONSEGUENZA («senza il curriculum non può essere inviata») — così che
+                per capire a che cosa si attaccasse la congiunzione bisognava tornare
+                indietro. E «candidatura» compariva tre volte in due righe. Questo è
+                il capoverso che una persona legge per decidere se compilare il
+                modulo, e l'unico dell'intera pagina scritto per chi si candida: il
+                periodo lungo stava proprio nella riga che porta l'informazione
+                nuova. */}
+            <p className={P}>
+              Nel modulo «Lavora con noi» sono <strong>necessari</strong> i dati anagrafici,
+              il recapito e il <strong>curriculum</strong>: servono a esaminare la
+              candidatura, cioè a dare seguito alla richiesta di chi si candida.{' '}
+              <strong>Senza il curriculum allegato il modulo non si invia.</strong>{' '}
+              Il consenso a conservarla per opportunità future è{' '}
+              <strong>facoltativo</strong>: il rifiuto non incide sulla valutazione, e comporta
+              soltanto la cancellazione della candidatura dopo <strong>dodici mesi</strong>{' '}
+              anziché <strong>ventiquattro</strong>.
+            </p>
           </section>
 
           <section className="mt-8 space-y-3">
@@ -401,8 +481,11 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
               </li>
               {/*
                 LA CANDIDATURA DI CHI CERCA LAVORO, E PERCHÉ I NUMERI SONO DUE.
-                Il modulo pubblico «Lavora con noi» raccoglie nome, recapito e spesso il
-                curriculum di una persona adulta. La base è l'art. 6.1.b (misure
+                Il modulo pubblico «Lavora con noi» raccoglie nome, recapito e curriculum
+                di una persona adulta — «e SPESSO il curriculum», diceva questa riga fino al
+                2026-08-25: vero finché l'allegato era facoltativo (quattro candidature su
+                dieci non ce l'hanno — la cifra sta nell'àncora `MISURA-CV` in
+                `src/lib/forms/insegnanti-template.ts`), falso da quando è obbligatorio. La base è l'art. 6.1.b (misure
                 precontrattuali su sua richiesta): esaurita la valutazione, quella base non
                 copre più niente, e restano dodici mesi. I ventiquattro esistono solo se la
                 persona li ha chiesti spuntando il consenso facoltativo, il cui testo
@@ -496,13 +579,52 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 scritta sopra: il lock `informativa-conservazione-dichiarata` lega
                 quella parola a una voce in `AUTOMI_DICHIARATI`, e ciò che la persona
                 ha diritto di sapere è il TERMINE, non il meccanismo.
+
+                ⚠️ IL TERMINE È PASSATO DA VENTIQUATTRO A QUARANTOTTO ORE IL 2026-08-25,
+                E NON PERCHÉ SIA CAMBIATO IL CODICE: perché le ventiquattro ore erano
+                FALSE da quando sono state scritte, e nessuno le aveva misurate.
+                MISURA in produzione, 2026-08-25 03:56Z, sotto il prefisso `candidature/`:
+                172 oggetti, 36 orfani, **21 con più di 24 ore**, il più vecchio nato il
+                23/08 alle 06:45:59Z, cioè 45 ore prima. Oltre le 48 ore: ZERO.
+                  select count(*) filter (where o.created_at < now() - interval '24 hours'
+                    and not exists (select 1 from candidature_insegnanti c
+                                    where c.cv_path = o.name))
+                  from storage.objects o
+                  where o.bucket_id = 'form_attachments' and o.name like 'candidature/%';
+                LA CAUSA NON È LA SOGLIA, È LA CADENZA. `ORE_CURRICULUM_ORFANO = 24` è
+                giusta e non è stata toccata; il job passa UNA volta a notte (`5 5 * * *`,
+                `supabase/migrations/20260810204727_candidature_retention_cron.sql`). Un
+                file nato alle 06:00 ne ha 23 alla corsa successiva — sotto soglia,
+                sopravvive — e se ne va solo alla corsa dopo, a ~47. Il tetto vero è
+                soglia + un giro: 48 ore, per costruzione e non per guasto.
+                PERCHÉ SI È CORRETTO IL TESTO E NON IL MECCANISMO: con un job giornaliero
+                NESSUN valore della soglia rende vere le 24 ore (il tetto resta sempre
+                soglia + 24), e abbassarla toglierebbe il file da sotto le mani a chi sta
+                ancora compilando — oggi che il curriculum è obbligatorio, quello vuol dire
+                impedirgli di candidarsi. Portare la spazzata a due giri al giorno
+                (`5 5,17 * * *`) riporterebbe il tetto a 36 ore: è una decisione del
+                titolare, e finché non è presa il documento dice ciò che il codice fa.
+                CHE NON RITORNI: il lock `informativa-termine-orfani-sostenibile` confronta
+                le ORE dichiarate qui con la soglia della route PIÙ l'intervallo del cron
+                letto dalla migrazione. Le tre cifre non possono più divergere in silenzio.
+                ⚠️ E LA FORMA È TORNATA PASSIVA (rifinitura del 25/08). La riscrittura di
+                stamattina diceva «e LO TOGLIE dall'archivio la pulizia notturna»: il
+                soggetto cambiava a metà frase e il clitico «lo» riprendeva come oggetto
+                ciò che fino a un attimo prima era il soggetto, costringendo a
+                ri-analizzare — in un punto in cui chi legge sta contando ore, non
+                leggendo prosa. L'elenco in cui sta è tutto impersonale, e la passiva lì è
+                la norma del registro, non un difetto da correggere.
+                ⚠️ «ENTRO DUE PASSAGGI» scioglie l'altra ambiguità: la voce dichiara
+                «quarantotto ore» e le affida alla «pulizia notturna» al singolare, che
+                suggerisce «stanotte». La risposta misurata è «la seconda», ed è la stessa
+                aritmetica del tetto (soglia + un giro) spiegata qui sopra.
               */}
               <li>
                 <strong>curriculum caricato e mai inviato</strong> (il modulo è stato
-                abbandonato prima della conferma finale): <strong>ventiquattro ore</strong>.
+                abbandonato prima della conferma finale): <strong>quarantotto ore</strong>.
                 Non essendo collegato a nessuna candidatura non ha una valutazione da cui
-                far decorrere un termine, e viene rimosso dall&rsquo;archivio con la
-                pulizia notturna;
+                far decorrere un termine, e viene rimosso dall&rsquo;archivio dalla pulizia
+                notturna, entro due passaggi;
               </li>
               {/*
                 I TRE TERMINI DEL PERSONALE, E DA DOVE VENGONO I NUMERI.

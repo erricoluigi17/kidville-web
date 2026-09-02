@@ -479,6 +479,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['adminStudents.detailPageRiattivatoSenzaClasse', 'nome e cognome del bambino, che rientra senza classe'],
         ['adminPrimaria.materieNessunObiettivoDefinito', 'codice materia e livello ordinale'],
         ['diario.nannaDurata', 'orari di inizio e fine'],
+        ['parentServizi.modulisticaPeriodoDalAl', 'date di inizio e fine di un periodo, non conteggi'],
         ['pagamenti.importoScaduti', 'importo in euro, già formattato'],
         ['pagamenti.restaImporto', 'importo in euro, già formattato'],
         ['parentChat.outOfHoursFallback', 'orari di apertura'],
@@ -611,7 +612,24 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // due gestori. Il difetto non era il tetto: era che un tetto scende solo se
         // qualcuno RIMISURA, e finora nessuno chiedeva a questo elenco se i suoi
         // bersagli fossero ancora vivi. Ora glielo si chiede, tre righe più giù.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(38)
+        //
+        // 2026-09-01 · 38 → 39. `parentServizi.modulisticaPeriodoDalAl` («dal {da} al
+        // {a}») è come si legge un periodo nel chip di un filtro — la barra della
+        // «Modulistica» del genitore, dove il periodo di firma e quello di copertura di
+        // un certificato medico diventano un chip removibile. Cade nella categoria (a),
+        // la stessa di `diario.nannaDurata`: i due segnaposti sono DATE già formattate,
+        // e la parola che segue («al») è una preposizione, non un sostantivo che possa
+        // andare al plurale.
+        //
+        // ⚠️ La via alternativa era scrivere «{da} → {a}», che schiva il riconoscitore
+        // perché dopo il segnaposto non c'è una parola. Scartata: quella freccia è il
+        // testo che il MOTORE produce da solo quando la pagina non gli passa un
+        // descrittore (`descriviPeriodo` in `lib/ui/filtri/motore.ts`), ed è neutro di
+        // lingua proprio perché non è italiano. Adottarlo per far tacere un lock
+        // significherebbe rinunciare alla frase leggibile che questa chiave esiste per
+        // dare — cioè piegare un messaggio a una regexp, che è la scelta già scartata
+        // due volte il 12 e il 13 agosto.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(39)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

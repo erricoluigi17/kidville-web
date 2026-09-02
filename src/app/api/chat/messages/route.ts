@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireUser } from '@/lib/auth/require-staff';
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { controparteThread } from '@/lib/notifiche/destinatari';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -194,13 +198,27 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
         );
         if (conversazioneSospesaErr) return conversazioneSospesaErr;
 
-        // (b) Gate TERMINI (art. 1341 c.c.): un genitore che non ha accettato i Termini
-        //     non produce UGC. Trasparente per lo staff (docente scrive solo alla propria
-        //     sezione, gate a monte). Identità e ruolo dal gate, MAI dal body.
+        // (b) Gate TERMINI (art. 1341 c.c.): chi scrive COME FAMIGLIA e non ha accettato
+        //     i Termini non produce UGC. Trasparente per chi scrive dal posto del docente.
+        //     Identità dal gate, MAI dal body.
+        //
+        //     ⚠️ QUI PASSAVA `auth.user.role`, cioè la VESTE, e il gate si saltava
+        //     semplicemente non cambiandola. Quattro insegnanti hanno insieme
+        //     `utenti.ruolo = 'educator'` e il ponte `parents.auth_user_id`: una di loro
+        //     che scrivesse nella chat della PROPRIA famiglia senza commutare il cookie
+        //     occupava il posto `parent_id` del thread — cioè scriveva da genitore a
+        //     tutti gli effetti — e questo gate la trattava da staff.
+        //
+        //     `agisceComeGenitore` da solo non basterebbe: guarda lo stesso cookie. È il
+        //     SECONDO termine a chiudere il buco, e non è una furbizia — è la domanda
+        //     giusta: non «di che ruolo sei», ma «da quale posto di questo thread stai
+        //     scrivendo». Il thread è già letto qui sopra per l'autorizzazione: costa zero.
+        const scriveComeFamiglia =
+            agisceComeGenitore(auth.user) || thread.parent_id === auth.user.id;
         const terminiErr = await assertTerminiAccettatiSeGenitore(
             supabase,
             sender_id,
-            auth.user.role
+            scriveComeFamiglia
         );
         if (terminiErr) return terminiErr;
 

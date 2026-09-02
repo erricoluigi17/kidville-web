@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/candidature-schema-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-14",
-  "generato_alle": "2026-08-14T23:22:57Z",
-  "sha256": "0c8acca91aa23aa334ecaae0ac363975cc6b187e4c9d468b14df8b318fcc8a41",
+  "generato_il": "2026-08-25",
+  "generato_alle": "2026-08-25T00:07:50Z",
+  "sha256": "db7af0557104c8ae2eeec56e8d15c0f922b57a484471eb9b5408da1c3b9d3bd5",
   "tabella": "candidature_insegnanti",
   "colonne": [
     {
@@ -177,6 +177,13 @@
       "posizione": 25,
       "nome": "posizione_altro",
       "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 26,
+      "nome": "copia_inviata_il",
+      "udt": "timestamptz",
       "nullable": true,
       "default": null
     }

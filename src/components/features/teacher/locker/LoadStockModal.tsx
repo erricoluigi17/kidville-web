@@ -4,7 +4,10 @@ import { useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { X, Plus, Minus, Settings } from 'lucide-react';
 import Link from 'next/link';
+import { MATERIALI_DEFAULT } from '@/lib/armadietto/materiali-default';
 
+/** Il modale mostra solo icona e nome: delle otto colonne di `locker_config` gliene
+ *  bastano quattro. Il ripiego resta però la lista condivisa, non una sua copia. */
 interface MaterialeConfig {
     id: string;
     nome: string;
@@ -24,13 +27,6 @@ interface Props {
     onConfirmBulk?: (data: { alunno_ids: string[]; materiale: string; quantita: number }) => Promise<void>;
 }
 
-const MATERIALI_FALLBACK: MaterialeConfig[] = [
-    { id: '1', nome: 'Pannolini', icona: '🧷', unita: 'pz' },
-    { id: '2', nome: 'Salviette', icona: '🧻', unita: 'pz' },
-    { id: '3', nome: 'Crema',     icona: '🧴', unita: 'pz' },
-    { id: '4', nome: 'Cambio',    icona: '👕', unita: 'pz' },
-];
-
 export function LoadStockModal({
     isOpen,
     onClose,
@@ -47,7 +43,7 @@ export function LoadStockModal({
     const [quantity,          setQuantity]          = useState(10);
     const [isSaving,          setIsSaving]          = useState(false);
     const [error,             setError]             = useState('');
-    const [materiali,         setMateriali]         = useState<MaterialeConfig[]>(MATERIALI_FALLBACK);
+    const [materiali,         setMateriali]         = useState<readonly MaterialeConfig[]>(MATERIALI_DEFAULT);
     const [tuttaLaSezione,    setTuttaLaSezione]    = useState(false);
 
     // Aggiorna i valori preselezionati quando cambiano le prop

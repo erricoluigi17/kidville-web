@@ -12,6 +12,30 @@ import enAdminAltro from '../../messages/en/adminAltro.json'
  * a inventarsi tre link diversi.
  */
 
+/**
+ * Il contesto delle sedi serve al pannello dal 2026-09-01: la barra filtri dei modelli del
+ * costruttore mostra il NOME del plesso accanto a `scuola_id`, e un uuid in una tendina non
+ * si legge. Qui è un finto minimo — quello che questo file misura è la nota accanto a «Copia
+ * link», non la barra — e l'elenco è vuoto di proposito: senza sedi il campo si nasconde da
+ * sé, quindi il finto non può cambiare l'esito di ciò che il file dichiara di provare.
+ */
+vi.mock('@/lib/context/sede-context', () => ({
+  useSediAttive: () => ({
+    sedi: [],
+    selezionate: [],
+    effettive: [],
+    sedeCorrente: null,
+    reFetchKey: '',
+    epocaSede: 0,
+    errore: false,
+    loading: false,
+    toggle: vi.fn(),
+    soloSede: vi.fn(),
+    tutte: vi.fn(),
+    ricarica: vi.fn(),
+  }),
+}))
+
 vi.mock('next/link', async () => {
   const React = await import('react')
   return {

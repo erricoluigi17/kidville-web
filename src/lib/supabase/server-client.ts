@@ -124,6 +124,58 @@ export async function createParentReadClient() {
 }
 
 /**
+ * Client di sola VERIFICA delle credenziali (chiave ANON, **senza cookie**).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A COSA SERVE, ed è un caso solo: `POST /api/account/password` deve accertare che
+ * chi chiede il cambio conosca la password ATTUALE. GoTrue non lo fa da sé —
+ * `secure_password_change = false` (`supabase/config.toml:223`) — quindi l'unico modo
+ * di verificarla è tentare un accesso vero con essa (`signInWithPassword`).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PERCHÉ NON `createSessionClient()`, che pure ha la chiave anon.
+ *
+ * Perché quello propaga i cookie E LI RISCRIVE (`setAll`). Un `signInWithPassword`
+ * fatto con quel client APRE UNA SESSIONE NUOVA e ne deposita i cookie **a metà
+ * richiesta**, sostituendo quella del chiamante: un controllo di sicurezza che, nel
+ * verificare, cambia l'identità di chi sta chiedendo. Con la password GIUSTA sarebbe
+ * la stessa persona e non si vedrebbe niente; con quella SBAGLIATA il tentativo
+ * fallisce e i cookie non si toccano. Il guasto vivrebbe quindi solo nei casi in
+ * mezzo, ed è esattamente la forma di difetto che non si scopre provando.
+ *
+ * I due `cookies` no-op non sono un dettaglio di stile: sono il presidio. Il client
+ * legge zero cookie (nessuna sessione da propagare: qui l'identità non c'entra, si
+ * sta provando una password) e ne scrive zero (la sessione che GoTrue apre resta
+ * nella memoria di questa funzione e muore con la richiesta).
+ *
+ * ⚠️ EFFETTO COLLATERALE DICHIARATO: una verifica RIUSCITA crea comunque una riga in
+ * `auth.sessions`, perché `POST /token?grant_type=password` è l'unico modo che GoTrue
+ * dà di provare una password e una sessione la apre sempre. Nessuno ne possiede i
+ * token — non escono da qui — e sul percorso felice la riga sparisce subito dopo:
+ * l'admin API, cambiando la password, cancella TUTTE le sessioni di quell'utente
+ * (misurato sul sorgente di GoTrue, vedi la route). Resta solo se il cambio fallisce
+ * dopo la verifica, e scade da sé.
+ *
+ * Il `fetch` strumentato c'è come su tutti gli altri: una verifica di credenziali che
+ * resta appesa perché GoTrue accetta e tace è un login che non finisce mai, e senza
+ * la riga non si distinguerebbe da una password sbagliata.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function createVerificaClient() {
+  return createServerClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY,
+    {
+      global: { fetch: fetchStrumentato },
+      cookies: {
+        getAll() { return [] },
+        setAll() { },
+      },
+    }
+  )
+}
+
+/**
  * Client con privilegi di amministrazione (Service Role)
  * Da usare SOLO lato server e per operazioni critiche che devono bypassare RLS
  */

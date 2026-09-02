@@ -270,11 +270,44 @@ let installato = false;
 /** Il fetch di PRIMA del patch. È il solo che il fallback di `flush` può usare (regola 2). */
 let fetchOriginale: typeof fetch | null = null;
 
+/**
+ * La piattaforma su cui gira il codice. SI CHIEDE AL BRIDGE, NON SI INDOVINA.
+ *
+ * IL DIFETTO, misurato in produzione il 2026-09-01. Questa funzione decideva
+ * annusando la stringa `Capacitor` nello user-agent — e Capacitor quella stringa
+ * NON la scrive: `appendUserAgent` è una configurazione facoltativa e in questo
+ * repo non è impostata, né in `capacitor.config.ts` né nei config generati per
+ * Android e iOS. Su 1.722 righe e 3.625 occorrenze di eventi client in 31 giorni,
+ * `piattaforma` diceva `web` per tutte tranne UNA, e quell'una era un payload
+ * sintetico del collaudo dell'08/08. Zero dispositivi nativi veri, mai.
+ *
+ * LA PROVA che erano eventi nativi: `scegliFotoNativa` (`@/lib/native/camera`)
+ * esce PRIMA del `try` quando non siamo nella shell, quindi sul web non può
+ * loggare niente — eppure i suoi `fotocamera-errore` risultavano tutti `web`. Due
+ * rilevazioni che si contraddicevano; quella che mentiva era l'indovinello.
+ *
+ * Non è costato un errore in più: è costato ogni domanda del tipo «succede solo
+ * su Android?», rimasta senza risposta per un mese senza che si vedesse — una
+ * colonna piena di `web` sembra una misura invece che un silenzio.
+ *
+ * `globalThis.Capacitor` e non un `import`: la REGOLA 1 di questo file vieta
+ * qualunque import oltre a `./path`. Il bridge nativo si espone sul globale, ed è
+ * la stessa fonte che interroga `isNativeApp()`.
+ */
 function piattaforma(): 'web' | 'ios' | 'android' {
     try {
+        const bridge = (globalThis as { Capacitor?: { getPlatform?: () => unknown } }).Capacitor;
+        const dichiarata = typeof bridge?.getPlatform === 'function' ? bridge.getPlatform() : null;
+        // Solo i tre valori che la colonna contempla: una shell futura che dicesse
+        // «electron» non deve poter scrivere una quarta parola che nessuna query
+        // si aspetta.
+        if (dichiarata === 'ios' || dichiarata === 'android') return dichiarata;
+        if (dichiarata === 'web') return 'web';
+
+        // RIPIEGO, per la finestra in cui il bridge non è ancora installato. Da solo
+        // non bastava — è il difetto qui sopra — ma se un giorno `appendUserAgent`
+        // venisse configurato, questo ramo lo raccoglie invece di ignorarlo.
         const ua = typeof navigator === 'undefined' ? '' : navigator.userAgent;
-        // `Capacitor` nello user-agent lo mette il bridge nativo: senza, è il browser normale
-        // (Safari su iPhone NON è la nostra app iOS, ed è un bug diverso).
         if (!/Capacitor/i.test(ua)) return 'web';
         if (/iPhone|iPad|iPod/i.test(ua)) return 'ios';
         if (/Android/i.test(ua)) return 'android';

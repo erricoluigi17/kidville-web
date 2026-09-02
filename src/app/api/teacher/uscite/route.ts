@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente, requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { assertAlunnoInScope, assertSezioneInScope, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { getGenitoriDiAlunni } from '@/lib/anagrafiche/legami'
 import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato'
@@ -64,7 +68,19 @@ export const GET = withRoute('teacher/uscite:GET', async (request: Request) => {
     const auth = await requireUser(request)
     if (auth.response) return auth.response
     const { user } = auth
-    if (user.role === 'genitore') {
+    // ⚠️ IL CASO CHE SPIEGA PERCHÉ QUESTA CONVERSIONE È STATA FATTA A MANO.
+    //
+    // Il semaforo delle gite è una FUNZIONE DI LAVORO: dice all'insegnante chi è
+    // autorizzato e chi ha pagato, prima di far salire i bambini sul pullman. Il
+    // diniego esiste per tenerne fuori le famiglie, non per tenerne fuori chi è
+    // anche una famiglia. Con `eFamiglia` — che guarda i ruoli REALI — le quattro
+    // insegnanti che hanno anche un figlio alla scuola si vedrebbero negare il
+    // proprio mestiere, e non avrebbero modo di riaverlo: il ruolo nel database non
+    // si commuta, il cookie sì.
+    //
+    // È presentazione: «stai guardando l'app in veste di famiglia?». Se sì, questa
+    // schermata non è la tua.
+    if (agisceComeGenitore(user)) {
       return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
     }
 

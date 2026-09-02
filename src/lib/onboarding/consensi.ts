@@ -30,13 +30,34 @@ function negatoTermini(): NextResponse {
 }
 
 /**
- * Gate Termini server-side (C5). 403 (motivo `termini_non_accettati`) se un
- * GENITORE non ha `consensi_gdpr.termini === true`; altrimenti `null`.
+ * Gate Termini server-side (C5). 403 (motivo `termini_non_accettati`) se chi
+ * scrive COME FAMIGLIA non ha `consensi_gdpr.termini === true`; altrimenti `null`.
  *
- * TRASPARENTE PER LO STAFF: se il ruolo non è `genitore` ritorna `null` senza
- * nemmeno interrogare il DB — la chat è l'unica UGC che un genitore produce, e il
- * docente scrive solo alla propria sezione (gate a monte). Stesso principio del
- * guard morosità, che «su un docente è trasparente».
+ * ⚠️ IL TERZO PARAMETRO NON È PIÙ UN RUOLO, ED È IL PUNTO (2026-09-01).
+ *
+ * Era `role: string | null | undefined`, confrontato con `'genitore'`: cioè il
+ * ruolo ATTIVO, quello che il cookie `kv-active-role` commuta. Quattro insegnanti
+ * in produzione hanno insieme `utenti.ruolo = 'educator'` e il ponte
+ * `parents.auth_user_id`, e per una di loro bastava NON commutare la veste per
+ * scrivere nella chat della propria famiglia — dal posto `parent_id` del thread,
+ * cioè come genitore a tutti gli effetti — con questo gate che la trattava da
+ * staff e non le chiedeva niente.
+ *
+ * Sostituire il confronto con `agisceComeGenitore` avrebbe lasciato il buco
+ * esattamente dov'era: guarda lo stesso cookie. E i Termini di servizio non sono
+ * un ramo di vista — sono un'accettazione con VALORE CONTRATTUALE (art. 1341
+ * c.c.), e un'accettazione non si salta cambiando la schermata che si guarda.
+ *
+ * Perciò il parametro dice ciò che conta davvero: **si sta scrivendo dal posto
+ * della famiglia?** Il chiamante lo calcola come
+ * `agisceComeGenitore(user) || thread.parent_id === user.id` — il secondo termine
+ * è quello che chiude il buco, e costa zero perché il thread è già in mano al
+ * chiamante per l'autorizzazione a scriverci.
+ *
+ * TRASPARENTE PER LO STAFF: `false` ritorna `null` senza nemmeno interrogare il DB
+ * — la chat è l'unica UGC che un genitore produce, e il docente che scrive dal
+ * posto del docente non c'entra. Stesso principio del guard morosità, che «su un
+ * docente è trasparente».
  *
  * DEGRADAZIONE: sul DB E2E non migrato la colonna/tabella può non esserci →
  * PostgREST ritorna `{ error }` (42703/PGRST205) e si degrada a `null` (non blocca).
@@ -56,9 +77,9 @@ function negatoTermini(): NextResponse {
 export async function assertTerminiAccettatiSeGenitore(
   supabase: SupabaseClient,
   senderId: string,
-  role: string | null | undefined,
+  scriveComeFamiglia: boolean,
 ): Promise<NextResponse | null> {
-  if (role !== 'genitore') return null
+  if (!scriveComeFamiglia) return null
 
   const { data, error } = await supabase
     .from('parents')

@@ -33,6 +33,10 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { firstEmail } from '@/lib/auth/parent-identity'
 import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
@@ -235,7 +239,11 @@ export async function caricaPrefillAlunno(
   const user = portata.user
   // Self-service: la famiglia dal telefono. Cambia due cose e nient'altro — la frase del
   // 404 (una madre non ha una «postazione») e chi risulta sottoscrittore del foglio.
-  const selfService = user.role === 'genitore'
+  // «Self-service» è la definizione stessa della presentazione: dice in che VESTE
+  // si sta compilando il foglio, e cambia la frase del 404 e chi risulta
+  // sottoscrittore. Chi lo compila dallo sportello, anche se a casa è un genitore,
+  // lo firma come operatore — quindi `agisceComeGenitore`, mai `eFamiglia`.
+  const selfService = agisceComeGenitore(user)
 
   const alunno = await leggiAlunno(supabase, alunnoId, selfService)
   if ('errore' in alunno) return { response: alunno.errore }

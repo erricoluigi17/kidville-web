@@ -211,7 +211,16 @@ function fuoriOrdineDelRepo(): { chiave: string; dettaglio: string }[] {
  * stare sopra», si sposta il gate — è ciò che è stato fatto il 2026-08-02 su
  * `locker/requests:PATCH`, il cui `requireDocente(request)` non guardava il corpo affatto.
  *
- * Le cinque voci qui sotto sono tutte la STESSA forma, ed è una forma vera:
+ * ⚠️ E `locker/requests:PATCH` È TORNATO, il 2026-09-01, dalla porta principale: non perché
+ * qualcuno abbia rimesso il gate al posto sbagliato, ma perché il gate È CAMBIATO. Quel
+ * `requireDocente` che non guardava il corpo era un gate solo per due gesti opposti — e la
+ * pagina genitore chiamava questa PATCH col bottone «Preso in carico», prendendo 403 ogni
+ * volta. Ora `presa_in_carico` passa da `requireParentOfStudent(request, alunno_id)` e
+ * `evasa` da `requireDocente`: la sesta voce ha la stessa forma delle altre cinque, ed è la
+ * dimostrazione che il criterio di questo file non è «chi c'era prima»: è se il soggetto del
+ * permesso stia nella sessione o nella richiesta.
+ *
+ * Le sei voci qui sotto sono tutte la STESSA forma, ed è una forma vera:
  * `requireParentOfStudent(request, studentId)` prende l'id del bambino come ARGOMENTO —
  * l'identità la stabilisce `requireUser` al suo interno, ma il legame «questo bambino è tuo
  * figlio» non si può verificare prima di sapere di quale bambino si parla, e quel dato viaggia
@@ -228,6 +237,13 @@ const CORPO_PRIMA_DEL_GATE_AMMESSO: Record<string, string> = {
     'locker/inventory:POST':
         'il gate è `requireParentOfStudent(request, alunno_id)` e `alunno_id` è un campo del corpo: ' +
         "il legame genitore↔alunno non è verificabile prima di sapere di quale alunno si tratti",
+    'locker/requests:PATCH':
+        'stesso identico motivo del gemello qui sopra, e dal 2026-09-01: il gate SEGUE IL GESTO — ' +
+        '`presa_in_carico` è il genitore che dice «la porto» (`requireParentOfStudent(request, ' +
+        'alunno_id)`), `evasa` è la scuola (`requireDocente`). Quale dei due applicare, e per quale ' +
+        'bambino, si sa solo dal corpo. Dopo il gate la route verifica che la riga sia davvero di ' +
+        "quell'alunno e risponde 404 altrimenti: `alunno_id` nel corpo apre la porta di casa " +
+        'propria, non quella del vicino',
     'parent/giustifiche-didattiche:POST':
         'idem — `requireParentOfStudent(request, studentId)`, con `studentId` nel corpo',
     'parent/presenze/comunica-assenza:POST':
@@ -324,10 +340,22 @@ describe('lock architettura · il corpo si legge dopo il gate, e con la primitiv
     // `primaria/fascicolo:POST`, che è il motivo per cui questo file esiste, e
     // `locker/requests:PATCH`, il cui gate non guardava il corpo affatto. Sono state
     // corrette, non esentate — ed è il verso in cui questo numero deve muoversi.
+    //
+    // ⚠️ SALITO A SEI il 2026-09-01, e questa riga è il punto in cui la decisione è passata
+    // sotto gli occhi di qualcuno — che è esattamente ciò per cui il tetto esiste.
+    // `locker/requests:PATCH` rientra, e non per un ripensamento sul 2026-08-02: quel giorno
+    // il suo `requireDocente` fu spostato sopra il corpo perché il corpo non gli serviva, ed
+    // era giusto. Ma quel gate era anche SBAGLIATO nel merito — uno solo per due gesti
+    // opposti — e la pagina genitore ci sbatteva contro con un 403 a ogni «Preso in carico».
+    // Correggendo il merito, il corpo è tornato a servire: `presa_in_carico` →
+    // `requireParentOfStudent(request, alunno_id)`, `evasa` → `requireDocente`. Sesta voce,
+    // stessa forma delle altre cinque. Il residuo resta quello dichiarato lassù: un anonimo
+    // fa deserializzare un JSON prima del suo 401, e `parseBody` risponde 400 sul corpo
+    // malformato invece di lanciare.
     expect(
       Object.keys(CORPO_PRIMA_DEL_GATE_AMMESSO).length,
       'Se è SALITO, hai appena tolto un pezzo di R2 — la regola che ha morso davvero.',
-    ).toBe(5)
+    ).toBe(6)
   })
 })
 

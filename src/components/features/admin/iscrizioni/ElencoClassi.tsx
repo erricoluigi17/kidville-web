@@ -17,15 +17,27 @@
  * dice quale è quale. Un elenco che grida su tutto è un elenco che non si legge.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslations } from 'next-intl'
 import {
   AlertTriangle, CheckCircle2, Download, Eye, FileSpreadsheet, Loader2, Upload,
 } from 'lucide-react'
 import { StatCard } from '@/components/ui/cockpit'
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
+import { useFiltri } from '@/lib/ui/filtri/use-filtri'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { erroreDaRisposta } from '@/lib/ui/esito-fetch'
 import { LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
+import {
+  campiDifformita,
+  opzioniClasse,
+  opzioniGenere,
+  opzioniSedeDifformita,
+  type RigaDifformita,
+} from '@/components/features/admin/iscrizioni/filtri-elenco-classi'
 
 interface Anomalia {
   genere: string
@@ -75,6 +87,11 @@ const DA_CORREGGERE: Record<string, string> = {
 const daCorreggere = (genere: string): boolean => genere in DA_CORREGGERE
 
 export function ElencoClassi() {
+  // I testi della barra vengono da `shared`, le etichette dei campi da `adminModulistica`
+  // (dove stanno i filtri di tutte e quattro le linguette di questa schermata). Il resto del
+  // pannello è ancora italiano cablato: è un debito che precede questa barra, non un suo effetto.
+  const tShared = useTranslations('shared')
+  const tFiltri = useTranslations('adminModulistica')
   const { reFetchKey, sedi } = useSediAttive()
   const [elenchi, setElenchi] = useState<ElencoSede[]>([])
   const [caricando, setCaricando] = useState(true)
@@ -161,6 +178,54 @@ export function ElencoClassi() {
     (n, e) => n + e.anomalie.filter((a) => !daCorreggere(a.genere)).length, 0,
   )
 
+  // ── L'elenco che la barra governa: le difformità, appiattite ────────────────
+  //
+  // La sede non sta nella riga che il server manda: la porta il caricamento che la contiene.
+  // Appiattire qui è ciò che permette di filtrare «tutte le sedi insieme» con una regola sola,
+  // invece di ripetere lo stesso filtro dentro ogni card.
+  const difformita: RigaDifformita[] = useMemo(
+    () =>
+      elenchi.flatMap((e) =>
+        e.anomalie.map((a) => ({
+          sedeId: e.scuolaId,
+          genere: a.genere,
+          classe: a.classe,
+          rigaExcel: a.rigaExcel,
+          nome: a.nome,
+          dettaglio: a.dettaglio,
+          bloccante: daCorreggere(a.genere),
+        })),
+      ),
+    [elenchi],
+  )
+  const nomeSede = useMemo(() => {
+    const perId = new Map(sedi.map((s) => [s.id, s.nome]))
+    return (id: string) => perId.get(id)
+  }, [sedi])
+  const campi = useMemo(
+    () =>
+      campiDifformita(tFiltri, {
+        sede: opzioniSedeDifformita(difformita, nomeSede),
+        classe: opzioniClasse(elenchi.flatMap((e) => e.perClasse)),
+        genere: opzioniGenere(difformita, tFiltri),
+      }),
+    [tFiltri, difformita, elenchi, nomeSede],
+  )
+  // 🔴 `scriviUrl: false`: il testo cercato può essere il nome di un bambino (vedi la testata
+  // di `filtri-elenco-classi.ts`). Un indirizzo si copia e resta nella cronologia.
+  const filtri = useFiltri<RigaDifformita>(campi, { scriviUrl: false })
+  const visibili = filtri.filtra(difformita)
+  const statoDifformita = decidiStatoElenco({
+    caricamento: caricando,
+    // `errore` qui è `false` di proposito: il guasto di lettura ha già il suo riquadro rosso
+    // sopra le card, e lo stesso `errore` porta anche gli errori di CARICAMENTO di un file,
+    // che non sono un guasto dell'elenco. Dirlo due volte, in due lingue diverse, farebbe
+    // sembrare due guasti dove ce n'è uno.
+    errore: false,
+    totale: difformita.length,
+    mostrati: visibili.length,
+  })
+
   if (caricando) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
@@ -204,10 +269,46 @@ export function ElencoClassi() {
         </div>
       )}
 
+      {/* La barra governa le DIFFORMITÀ, non le card: con almeno un foglio caricato compare,
+          altrimenti no — sopra una tabella che non esiste ancora, una barra filtri fa cercare
+          un filtro da togliere che non c'è. */}
+      {elenchi.length > 0 && (
+        <>
+          <BarraFiltri
+            campi={campi}
+            stato={filtri}
+            testi={testiBarraFiltri(tShared)}
+            totale={difformita.length}
+            mostrati={visibili.length}
+          />
+          {statoDifformita !== 'pronto' && (
+            <div data-testid="stato-difformita">
+              <StatoElenco
+                stato={statoDifformita}
+                testi={{
+                  ...testiStatoElenco(tShared),
+                  // Zero difformità su fogli caricati è una BUONA notizia, non un vuoto da
+                  // riempire: «Non c'è ancora nulla qui» direbbe il contrario.
+                  vuotoTitolo: tFiltri('filtriClassiVuotoTitolo'),
+                  vuotoCorpo: tFiltri('filtriClassiVuotoCorpo'),
+                }}
+                attivi={filtri.attivi}
+                onPulisci={filtri.pulisci}
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Le card di sede restano SEMPRE tutte, anche quando il filtro non lascia passare
+          nessuna delle loro righe: portano il comando «Carica elenco», e nasconderlo
+          toglierebbe alla segreteria la cosa per cui è venuta. Il filtro cambia ciò che
+          hanno DENTRO, non se esistono. */}
       {sedi.map((s) => {
         const e = perSede.get(s.id)
-        const bloccanti = e?.anomalie.filter((a) => daCorreggere(a.genere)) ?? []
-        const daGuardare = e?.anomalie.filter((a) => !daCorreggere(a.genere)) ?? []
+        const righeSede = visibili.filter((r) => r.sedeId === s.id)
+        const bloccanti = righeSede.filter((r) => r.bloccante)
+        const daGuardare = righeSede.filter((r) => !r.bloccante)
         return (
           <div key={s.id} className="bg-white rounded-card border border-kidville-line p-5 space-y-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -274,7 +375,7 @@ export function ElencoClassi() {
                             <td className="px-3 py-2 whitespace-nowrap">{a.classe}</td>
                             <td className="px-3 py-2 whitespace-nowrap">{a.rigaExcel}</td>
                             <td className="px-3 py-2">
-                              {daCorreggere(a.genere) && (
+                              {a.bloccante && (
                                 <span className="inline-block mr-2 px-2 py-0.5 rounded-full text-xs bg-kidville-error-soft text-kidville-error-strong">
                                   {DA_CORREGGERE[a.genere]}
                                 </span>

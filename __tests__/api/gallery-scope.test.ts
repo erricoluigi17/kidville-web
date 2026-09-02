@@ -256,6 +256,77 @@ describe('(d) GET /api/gallery — degrado su 42703 (SELECT senza la colonna)', 
   })
 })
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * (f) IL PERMESSO CONCESSO DAL GATE E POI SVUOTATO DALLO SCOPE.
+ *
+ * L'intersezione con `resolveScuoleAttive` biforcava su `auth.user.role !==
+ * 'genitore'`, cioè sulla VESTE (il cookie `kv-active-role`). Il gate a monte,
+ * invece, biforca sul LEGAME: `requireParentOfStudent` fa passare una
+ * docente-genitore sul PROPRIO figlio anche fuori dalle sezioni che insegna e
+ * anche in un'altra sede — è stato riscritto apposta il 2026-09-01, perché quelle
+ * persone si prendevano `403 «Alunno non nella tua classe»` sul registro del
+ * figlio.
+ *
+ * Con i due criteri disallineati il permesso veniva concesso e poi SVUOTATO:
+ * `attive = [sede dove insegno]`, `sedeFiglio = [altra sede]`, intersezione vuota,
+ * `plessi = []`, e la risposta usciva **200 con `media: []`**. In produzione c'è
+ * un legame di questa forma (un figlio in una sede diversa da quella della madre
+ * che insegna), e un 200 vuoto è il difetto più difficile da vedere che esista:
+ * nessun errore, nessun log, «la galleria di mio figlio è vuota».
+ *
+ * Il rimedio NON è `agisceComeGenitore`: guarda lo stesso cookie ed è, riga per
+ * riga, la stessa condizione di prima. Il commento nel file lo diceva già — «il
+ * genitore resta fuori: la sua sede sono i FIGLI» — e «essere genitore» è una
+ * proprietà del DATABASE, non della schermata che si sta guardando: `eFamiglia`.
+ *
+ * ⚠️ E l'intersezione NON si indebolisce per chi famiglia non è: la controprova
+ * qui sotto la esercita su un educator puro, che continua a vedere `[]`.
+ * ──────────────────────────────────────────────────────────────────────────── */
+describe('(f) GET /api/gallery — la docente-genitore e il figlio iscritto in un\'ALTRA sede', () => {
+  it('in veste DOCENTE vede comunque le foto del proprio figlio (contenuto, non solo 200)', async () => {
+    // Ruolo ATTIVO `educator` (non ha commutato la veste), ruoli REALI entrambi.
+    h.requireParentOfStudent.mockResolvedValue({
+      user: { id: 'ed-mamma', role: 'educator', ruoli: ['educator', 'genitore'], scuola_id: SEDE_A },
+    })
+    // Le sedi selezionate nel SedeSelector: dove insegna. Il figlio non è lì.
+    h.resolveScuoleAttive.mockResolvedValue([SEDE_A])
+    h.alunniMaster = [{ id: ALU_B, classe_sezione: CLASSE_OMONIMA, scuola_id: SEDE_B }]
+    h.mediaAll = [
+      { id: 'broadcast-B', scuola_id: SEDE_B, is_broadcast: true, tag_students: [], uploaded_by: 'ed2' },
+    ]
+
+    const res = await GET(getReq(`studentId=${ALU_B}`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    const ids = (j.media as Array<{ id: string }>).map((m) => m.id)
+    // L'asserzione che conta: il CONTENUTO. Uno `expect(res.status).toBe(200)` da
+    // solo sarebbe passato anche col difetto in piedi.
+    expect(ids, 'il gate ha detto sì per legame: lo scope non può svuotare').toContain('broadcast-B')
+    expect(j.total).toBe(1)
+  })
+
+  it('controprova: un educator PURO non guadagna niente — resta fuori dalla sede altrui', async () => {
+    // Nessun ponte `parents`: `eFamiglia` è falso, l'intersezione resta viva ed è
+    // ciò che impedisce a un docente di leggere le foto di un minore di un plesso
+    // che non ha selezionato. Se questa asserzione diventasse verde con `[]`
+    // sostituito da `[sedeFiglio]`, il rimedio avrebbe aperto una porta.
+    h.requireParentOfStudent.mockResolvedValue({
+      user: { id: 'ed-puro', role: 'educator', scuola_id: SEDE_A },
+    })
+    h.resolveScuoleAttive.mockResolvedValue([SEDE_A])
+    h.alunniMaster = [{ id: ALU_B, classe_sezione: CLASSE_OMONIMA, scuola_id: SEDE_B }]
+    h.mediaAll = [
+      { id: 'broadcast-B', scuola_id: SEDE_B, is_broadcast: true, tag_students: [], uploaded_by: 'ed2' },
+    ]
+
+    const res = await GET(getReq(`studentId=${ALU_B}`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect((j.media as unknown[]).length).toBe(0)
+    expect(j.total).toBe(0)
+  })
+})
+
 describe('(e) GET /api/gallery — genitore vede solo i broadcast della sede del figlio', () => {
   it('esclude i broadcast di un\'altra sede', async () => {
     // Il figlio è nella sede A.

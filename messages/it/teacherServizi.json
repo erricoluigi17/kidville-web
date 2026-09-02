@@ -160,6 +160,18 @@
   "modulisticaCertRifiutato": "⛔ Certificato rifiutato.",
   "modulisticaErrValidazione": "❌ Errore durante la validazione",
 
+  "modulisticaFiltroSezione": "Sezione",
+  "modulisticaFiltroModulo": "Modulo",
+  "modulisticaFiltroStato": "Stato",
+  "modulisticaStatoFirmato": "Firmati",
+  "modulisticaStatoMancante": "Mancanti",
+  "modulisticaFiltroCercaAlunno": "Cerca un alunno",
+  "modulisticaFiltroCercaAlunnoSegnaposto": "Cognome o nome…",
+  "modulisticaVuotoSemaforo": "Nessun alunno in questa sezione",
+  "modulisticaVuotoSemaforoTesto": "L’elenco si riempie con i bambini iscritti alla sezione: se è vuoto, o la sezione non ne ha ancora, oppure il modulo scelto non è assegnato a questa sezione.",
+  "modulisticaNessunModuloSezione": "Nessun modulo di autorizzazione per questa sezione",
+  "modulisticaVuotoCertTesto": "I certificati compaiono qui appena una famiglia ne carica uno dall’app.",
+
   "settingsEyebrow": "Armadietto",
   "settingsTitolo": "Materiali",
   "settingsSottotitolo": "Configura i materiali che i genitori consegnano quotidianamente",

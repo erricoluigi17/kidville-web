@@ -5,6 +5,7 @@ import {
   homePathForRole,
   isAreaAllowed,
   parseActiveRole,
+  risolviRuoloAttivo,
   type Area,
 } from './active-role'
 import { getSessionProfili, type Profilo } from './profili'
@@ -20,10 +21,14 @@ import { getSessionProfili, type Profilo } from './profili'
  * `null` (accesso ok) oppure il path di redirect.
  * - anonimo/non collegato → login (il middleware già copre l'anonimo: qui è
  *   difesa in profondità);
- * - cookie valido solo se il ruolo appartiene davvero ai profili (un cookie
- *   estraneo viene ignorato); fallback: ruolo unico;
+ * - il ruolo attivo lo risolve `risolviRuoloAttivo` (cookie valido solo se il
+ *   ruolo appartiene davvero ai profili; ripiego sul ruolo unico);
  * - doppio profilo senza ruolo attivo → login per la scelta (`?scegli=1`);
  * - ruolo attivo non ammesso nell'area → home del ruolo.
+ *
+ * La risoluzione stava QUI, scritta due volte identica (anche in
+ * `decideRootLanding`). Ora vive in `active-role.ts` ed è la stessa che usano i
+ * gate API: una regola valida per due strade deve stare in un posto solo.
  */
 export function decideAreaAccess(
   profili: Profilo[] | null,
@@ -32,12 +37,7 @@ export function decideAreaAccess(
 ): string | null {
   if (!profili || profili.length === 0) return '/auth/login'
 
-  const ruoloAttivo =
-    cookieRuolo && profili.some((p) => p.ruolo === cookieRuolo)
-      ? cookieRuolo
-      : profili.length === 1
-        ? profili[0].ruolo
-        : null
+  const ruoloAttivo = risolviRuoloAttivo(profili, cookieRuolo)
 
   if (!ruoloAttivo) return `/auth/login?scegli=1&next=/${area}`
   if (!isAreaAllowed(ruoloAttivo, area)) {
@@ -57,6 +57,11 @@ export function decideAreaAccess(
  *  - anonimo/nessun profilo → login;
  *  - ruolo attivo risolto (cookie valido, oppure profilo unico) → home del ruolo;
  *  - doppio profilo senza ruolo attivo → login con scelta ruolo (`?scegli=1`).
+ *
+ * L'ANTI-LOOP resta in `decideAreaAccess` e NON scende in `risolviRuoloAttivo`:
+ * è una proprietà della DESTINAZIONE (una home che coincide con l'area che si sta
+ * guardando), non della risoluzione del ruolo. Qui, senza area di destinazione,
+ * non ha nemmeno un significato.
  */
 export function decideRootLanding(
   profili: Profilo[] | null,
@@ -64,12 +69,7 @@ export function decideRootLanding(
 ): string {
   if (!profili || profili.length === 0) return '/auth/login'
 
-  const ruoloAttivo =
-    cookieRuolo && profili.some((p) => p.ruolo === cookieRuolo)
-      ? cookieRuolo
-      : profili.length === 1
-        ? profili[0].ruolo
-        : null
+  const ruoloAttivo = risolviRuoloAttivo(profili, cookieRuolo)
 
   if (!ruoloAttivo) return '/auth/login?scegli=1'
   return homePathForRole(ruoloAttivo)

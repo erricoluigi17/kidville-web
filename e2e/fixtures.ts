@@ -79,11 +79,22 @@ export const IDS = {
    */
   SCUOLA_COLLAUDO: 'c0110a0d-0000-4000-8000-000000000001',
   SEC_GIRASOLI: 'e2e00000-0000-4000-8000-000000000011',
+  /**
+   * La sezione dei figli del PROFILO DOPPIO, sede 1 — e la sua omonima nella
+   * sede 2 (`SEC2_MARGHERITE`). Nessun docente vi è assegnato: è il punto.
+   * Vedi il blocco dei legami in `scripts/seed-e2e.mjs`.
+   */
+  SEC_MARGHERITE: 'e2e00000-0000-4000-8000-000000000014',
   A1: 'e2e00000-0000-4000-8000-000000000101', // Aurora Arcobaleno-E2E
   A2: 'e2e00000-0000-4000-8000-000000000102', // Bruno Baleno-E2E
+  A3: 'e2e00000-0000-4000-8000-000000000103', // Clara Cometa-E2E (Tulipani = LA classe del DOPPIO)
+  /** Fiore Fiocco-E2E — figlio del profilo doppio, sede 1, sezione che lui NON insegna. */
+  A5: 'e2e00000-0000-4000-8000-000000000106',
   ADMIN: 'e2e00000-0000-4000-8000-000000000201',
   DOCENTE: 'e2e00000-0000-4000-8000-000000000202',
   GENITORE: 'e2e00000-0000-4000-8000-000000000203',
+  /** Duccio Doppio-E2E — `utenti.ruolo = 'educator'` PIÙ il ponte `parents.auth_user_id`. */
+  DOPPIO: 'e2e00000-0000-4000-8000-000000000204',
   SEGRETERIA: 'e2e00000-0000-4000-8000-000000000205',
 
   // ── Sede 2: quella che l'isolamento deve tenere fuori ────────────────────
@@ -91,11 +102,42 @@ export const IDS = {
   // non è una chiave, e questo è il caso che il 2026-07-29 ha reso reale.
   SCUOLA2: 'e2e00000-0000-4000-8000-000000000002',
   SEC2_GIRASOLI: 'e2e00000-0000-4000-8000-000000000021',
+  /** «Margherite» della sede 2: OMONIMA di `SEC_MARGHERITE`, come lo è «Girasoli». */
+  SEC2_MARGHERITE: 'e2e00000-0000-4000-8000-000000000022',
   B1: 'e2e00000-0000-4000-8000-000000000105', // Emma Eclissi-E2E (Girasoli, sede 2)
+  /** Gigi Girandola-E2E — figlio del profilo doppio, ALTRA SEDE. */
+  B2: 'e2e00000-0000-4000-8000-000000000107',
   SEGRETERIA2: 'e2e00000-0000-4000-8000-000000000206',
   DOCENTE2: 'e2e00000-0000-4000-8000-000000000207',
   GENITORE2: 'e2e00000-0000-4000-8000-000000000208',
   AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
+};
+
+/**
+ * Le ÀNCORE seminate per il profilo doppio: didascalie di galleria, primi piatti
+ * della mensa, nota di diario.
+ *
+ * ⚠️ RICOPIATE da `DOPPIO_PROFILO_E2E` di `scripts/seed-e2e.mjs`, stessa
+ * duplicazione dichiarata in cima a questo file (gli spec Playwright non
+ * importano moduli `.mjs` del repo). Se qui e là divergono, lo spec cerca frasi
+ * che nessuno ha scritto e diventa rosso su un prodotto sano.
+ *
+ * Sono dato del SEED e non testo di catalogo, di proposito: un'asserzione su una
+ * frase dei `messages/` diventa rossa alla prima riscrittura editoriale — in
+ * questo repo è già successo due volte (i puntini `...` → `…`, l'apostrofo
+ * dritto → tipografico), e ogni volta il rosso accusava il prodotto.
+ */
+export const DOPPIO_PROFILO_E2E = {
+  /** Didascalia del media taggato su `A5` (sede 1). */
+  fotoSede1: 'Foto E2E · Margherite della sede 1',
+  /** Didascalia del media taggato su `B2` (sede 2). */
+  fotoSede2: 'Foto E2E · Margherite della sede 2',
+  /** Primo piatto dell'override mensa di OGGI nella sede 1. */
+  primoSede1: 'Pasta E2E della sede 1',
+  /** Primo piatto dell'override mensa di OGGI nella sede 2. */
+  primoSede2: 'Riso E2E della sede 2',
+  /** Nota di diario di `A5`. */
+  notaDiarioA5: 'Nota E2E per il genitore-docente',
 };
 
 /**
@@ -139,6 +181,28 @@ export const STORAGE = {
   adminTutteLeSedi: path.join(__dirname, '.auth', 'admin-tutte-le-sedi.json'),
   docente: path.join(__dirname, '.auth', 'docente.json'),
   genitore: path.join(__dirname, '.auth', 'genitore.json'),
+  /**
+   * IL PROFILO DOPPIO IN VESTE DI GENITORE — cookie `kv-active-role=genitore`.
+   *
+   * Non è «un quinto account»: è LO STESSO utente di `STORAGE.doppioDocente`,
+   * con l'altra veste. `utenti.ruolo` è `educator` e il ponte
+   * `parents.auth_user_id` esiste, quindi `eFamiglia` è vero e
+   * `agisceComeGenitore` dipende SOLO da quale bottone si è premuto sul picker
+   * del login. I due stati esistono per poter fare la stessa domanda al server
+   * due volte, cambiando una cosa sola.
+   *
+   * In produzione (misura del 2026-09-01) sono cinque persone: insegnanti che
+   * sono anche genitori di un bambino della scuola.
+   */
+  doppioGenitore: path.join(__dirname, '.auth', 'doppio-genitore.json'),
+  /**
+   * Lo stesso utente in veste di DOCENTE — cookie `kv-active-role=educator`.
+   *
+   * Serve al controllo di non-regressione: la veste di famiglia non deve aver
+   * allargato NIENTE sul mestiere. Senza questo stato, «in veste docente resta
+   * 403» si potrebbe solo raccontare.
+   */
+  doppioDocente: path.join(__dirname, '.auth', 'doppio-docente.json'),
 };
 
 // Login dalla UI reale (/auth/login): sessione Supabase via cookie, niente header.

@@ -2,21 +2,26 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
-import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive, restringiSedi } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { ensureStaffIdentity, type Grado } from '@/lib/auth/staff-identity'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { staffScuola } from '@/lib/notifiche/destinatari'
 import { nomeSede, sediReali } from '@/lib/scuole/reali'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zBool, zOpzionale, zPeriodo, zTestoRicerca, zUuid } from '@/lib/validation/common'
+import { orIlike, termineOr } from '@/lib/db/ricerca-postgrest'
+import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
+import { aggiungiGiorni } from '@/lib/anagrafica/scadenze'
+import { dataCivile } from '@/i18n/config'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { sendEmailDetailed } from '@/lib/email/send'
 import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
-import { GRADI_OPTIONS } from '@/lib/forms/insegnanti-template'
-import { PERSONALE_FIELDS } from '@/lib/forms/personale-template'
+import { GRADI_OPTIONS, TITOLI_STUDIO } from '@/lib/forms/insegnanti-template'
+import { PERSONALE_FIELDS, TIPI_DOCUMENTO } from '@/lib/forms/personale-template'
 import {
   BUCKET_DOCUMENTI_PERSONALE,
   collegaCaricamenti,
@@ -283,6 +288,28 @@ const interoClampato = (def: number, min: number, max: number) =>
     return Math.min(Math.max(Math.trunc(n), min), max)
   }, z.number())
 
+/* ── I FILTRI DELL'ELENCO ─────────────────────────────────────────────────────
+ * Gli elenchi chiusi si leggono da dove sono già dichiarati (`TIPI_DOCUMENTO`,
+ * `GRADI_OPTIONS`, `TITOLI_STUDIO`): una seconda copia diverge il giorno in cui
+ * il modulo cambia, e un valore archiviato smette di essere filtrabile. */
+const STATI_PRATICA = ['pending', 'in_approvazione', 'approvata', 'rifiutata'] as const
+/** «Da evadere»: gli stati su cui la Segreteria deve ancora decidere. */
+const STATI_DA_EVADERE: string[] = ['pending', 'in_approvazione']
+const TIPI_DOCUMENTO_AMMESSI = TIPI_DOCUMENTO.map((o) => String(o.value))
+const GRADI_AMMESSI_FILTRO = GRADI_OPTIONS.map((o) => String(o.value))
+const TITOLI_AMMESSI = TITOLI_STUDIO.map((o) => String(o.value))
+
+/**
+ * LE QUATTRO FINESTRE DELLA SCADENZA. `entro90` COMPRENDE `entro30`: è una
+ * finestra più larga, non un'altra finestra — «entro novanta giorni» in italiano
+ * vuol dire questo, e due insiemi disgiunti farebbero sparire dalla vista di chi
+ * chiede «entro 90» proprio i documenti che scadono la settimana prossima.
+ */
+const FINESTRE_SCADENZA = ['scaduto', 'entro30', 'entro90', 'valido'] as const
+
+/** `z.enum` da un elenco costruito a runtime, senza cast sparsi nello schema. */
+const zFraElenco = (valori: string[]) => z.enum(valori as [string, ...string[]])
+
 const getQuerySchema = z.object({
   // Un percorso di storage non è lungo: il tetto è lo STESSO del CHECK in tabella, e
   // adesso lo è davvero — `DOC_MAX_LUNGHEZZA` è la costante che le colonne dichiarano
@@ -293,6 +320,25 @@ const getQuerySchema = z.object({
   id: zUuid.optional(),
   limit: interoClampato(LIMITE_ISCRIZIONI_DEFAULT, 1, LIMITE_ISCRIZIONI_MAX),
   offset: interoClampato(0, 0, Number.MAX_SAFE_INTEGER),
+
+  /**
+   * ⚠️ `stato` e `scuola_id` NON HANNO BISOGNO D'ALTRO, ed è misurabile: la
+   * migrazione `20260811205643` crea `pratiche_personale_stato_idx (stato,
+   * creata_il desc)` e `pratiche_personale_scuola_idx (scuola_id, creata_il
+   * desc)` — cioè esattamente le due colonne di filtro PIÙ l'ordinamento di
+   * questo elenco, nello stesso indice. Nessun indice nuovo, nessuna migrazione.
+   */
+  stato: zOpzionale(z.enum(STATI_PRATICA)),
+  scuola_id: zOpzionale(zUuid),
+  tipo_documento: zOpzionale(zFraElenco(TIPI_DOCUMENTO_AMMESSI)),
+  scadenza: zOpzionale(z.enum(FINESTRE_SCADENZA)),
+  grado: zOpzionale(zFraElenco(GRADI_AMMESSI_FILTRO)),
+  titolo: zOpzionale(zFraElenco(TITOLI_AMMESSI)),
+  provincia: zOpzionale(z.string().regex(/^[A-Za-z]{1,2}$/, 'Provincia non valida (attesa la sigla, es. NA)')),
+  citta: zOpzionale(z.string().max(120)),
+  ...zPeriodo('creata').shape,
+  q: zTestoRicerca,
+  daEvadere: zOpzionale(zBool),
 })
 
 /**
@@ -336,6 +382,50 @@ function gradiValidi(grezzi: unknown): Grado[] {
 const testo = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
 
 /**
+ * I DUE ESTREMI (in giorni civili) DELLA FINESTRA DI SCADENZA CHIESTA.
+ *
+ * ⚠️ «OGGI» È `dataCivile()`, NON `new Date().toISOString().slice(0,10)`.
+ * Su Vercel il processo gira in UTC e chi guarda sta in Italia: fra mezzanotte e
+ * le due il server è al GIORNO PRIMA, e un documento scaduto ieri comparirebbe
+ * fra quelli che scadono oggi — o, peggio, sparirebbe da «scaduti» proprio nella
+ * fascia oraria in cui la Segreteria prepara la giornata. È lo stesso scarto che
+ * il 2026-08-01 alle 01:08 ha fatto sparire un incasso da un KPI, ed è il motivo
+ * per cui il lock `date-senza-fuso` esiste.
+ *
+ * L'aritmetica sui giorni passa da `aggiungiGiorni` (`@/lib/anagrafica/scadenze`),
+ * che è intera e senza `Date`: `new Date(ymd + n giorni)` costruisce l'istante nel
+ * fuso del processo e nei due giorni di cambio ora sbaglia di uno.
+ *
+ * `document_expiry` è una colonna `date`: qui non servono istanti, servono
+ * giorni — ed è il motivo per cui questa funzione non passa da
+ * `confini-giorno.ts`, che serve alle `timestamptz`.
+ */
+function confiniScadenza(finestra: string | undefined): { da?: string; a?: string } {
+  if (!finestra) return {}
+  const oggi = dataCivile()
+  switch (finestra) {
+    // Scaduto = ieri o prima. Il confine superiore è ESCLUSIVO su «oggi», e si
+    // scrive come `<= ieri` invece che come `< oggi` perché la colonna è `date`
+    // e i due sono la stessa cosa: quello che si legge, però, è il primo.
+    case 'scaduto':
+      return { a: aggiungiGiorni(oggi, -1) }
+    case 'entro30':
+      return { da: oggi, a: aggiungiGiorni(oggi, 30) }
+    // ⚠️ COMPRENDE i 30: «entro novanta giorni» è una finestra più larga, non
+    // un'altra finestra. Renderli disgiunti nasconderebbe a chi chiede «entro
+    // 90» proprio i documenti che scadono la settimana prossima.
+    case 'entro90':
+      return { da: oggi, a: aggiungiGiorni(oggi, 90) }
+    // «Valido» è il complemento di «scaduto», e comprende oggi: un documento che
+    // scade stasera è ancora valido stamattina.
+    case 'valido':
+      return { da: oggi }
+    default:
+      return {}
+  }
+}
+
+/**
  * LA PROVA DELL'INFORMATIVA ESCE RIDOTTA — tre campi, non l'oggetto intero.
  *
  * `consents_log` è la prova legale che va CONSERVATA, non un dato da mostrare: dentro
@@ -370,7 +460,26 @@ export const GET = withRoute('admin/pratiche-personale:GET', async (request: Nex
     if ('response' in q) return q.response
     const supabase = await createAdminClient()
     // Scope vuoto ⇒ elenco vuoto: `.in()` incondizionato, mai `if (scuole.length)`.
-    const scuole = await resolveScuoleAttive(request, supabase, auth.user)
+    const attive = await resolveScuoleAttive(request, supabase, auth.user)
+    /**
+     * La sede chiesta dal filtro INTERSECA le sedi attive, non le sostituisce.
+     * `null` significa «hai chiesto un plesso che non è tuo» e si rifiuta: `[]`,
+     * che significa «non hai nessun plesso», resta un elenco vuoto. Confonderli
+     * vorrebbe dire o un 403 a chi semplicemente non ha sedi, o un elenco vuoto
+     * su un tentativo cross-sede — cioè perdere il segnale.
+     */
+    const scuole = restringiSedi(attive, q.data.scuola_id)
+    if (scuole === null) {
+      logEvento('multi_sede', 'warn', {
+        operazione: 'admin/pratiche-personale:GET',
+        esito: 'sede-filtro-fuori-scope',
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+        sede_id: q.data.scuola_id,
+        sedi_attive: attive.length,
+      })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
 
     // ─── LA SCANSIONE DEL DOCUMENTO: `?doc=<percorso>` ────────────────────────
     if (q.data.doc) {
@@ -453,17 +562,56 @@ export const GET = withRoute('admin/pratiche-personale:GET', async (request: Nex
     }
 
     // ─── L'ELENCO ─────────────────────────────────────────────────────────────
+    //
+    // ⚠️ I FILTRI SI SCRIVONO QUI, PER ESTESO. Filtrare non vuol dire proiettare:
+    // `residence_city`, `residence_province`, `titolo_studio`, `email` e
+    // `document_type` NON sono in `COLONNE_ELENCO` e non ci devono entrare — la
+    // testata di questo file spiega perché — ma un `.eq()` funziona benissimo su
+    // una colonna che non esce dalla `select`.
     const { limit, offset } = q.data
+    const termineRicerca = termineOr(q.data.q ?? '')
+    // La città entra nella ricerca (la barra ha un solo campo di testo) ma NON
+    // nella proiezione: filtrare non è proiettare.
+    const condizioniRicerca = orIlike(['nome', 'cognome', 'email', 'residence_city'], termineRicerca)
+    const cittaCercata = termineOr(q.data.citta ?? '')
+    const finestra = confiniScadenza(q.data.scadenza)
     const { data, error, count } = await conResilienza(
       COLONNE_ELENCO,
       'admin/pratiche-personale:GET',
-      (colonne) =>
-        supabase
+      (colonne) => {
+        let query = supabase
           .from(TABELLA)
+          // `count: 'exact'` sulla STESSA query dei filtri: `total` è il totale
+          // FILTRATO, altrimenti «12 su 55» torna a mentire.
           .select(colonne, { count: 'exact' })
           .in('scuola_id', scuole)
-          .order('creata_il', { ascending: false })
-          .range(offset, offset + limit - 1),
+
+        if (q.data.stato) query = query.eq('stato', q.data.stato)
+        if (q.data.daEvadere === true) query = query.in('stato', STATI_DA_EVADERE)
+        if (q.data.tipo_documento) query = query.eq('document_type', q.data.tipo_documento)
+        // ⚠️ `gradi` è un ARRAY (`school_type_enum[]`): `contains`, non `eq`.
+        if (q.data.grado) query = query.contains('gradi', [q.data.grado])
+        if (q.data.titolo) query = query.eq('titolo_studio', q.data.titolo)
+        // Per PREFISSO: `varchar(2)`, quindi due lettere sono un'uguaglianza.
+        if (q.data.provincia) query = query.ilike('residence_province', `${q.data.provincia}%`)
+        if (cittaCercata) query = query.ilike('residence_city', `%${cittaCercata}%`)
+        // La scadenza: `document_expiry` è una colonna `date`, quindi i confini
+        // sono giorni civili e basta (vedi `confiniScadenza`). Una riga SENZA
+        // scadenza non entra in nessuna delle quattro finestre — `.gte`/`.lte`
+        // scartano il NULL — ed è la risposta giusta: non è «scaduto», è «non
+        // lo so».
+        if (finestra.da) query = query.gte('document_expiry', finestra.da)
+        if (finestra.a) query = query.lte('document_expiry', finestra.a)
+        // Il periodo su `creata_il` è un ISTANTE, non un giorno: i confini si
+        // prendono dal giorno civile italiano (`@/lib/format/confini-giorno`).
+        const dal = q.data.creataDa ? inizioGiornoCivile(q.data.creataDa) : null
+        const al = q.data.creataA ? fineGiornoCivile(q.data.creataA) : null
+        if (dal) query = query.gte('creata_il', dal)
+        if (al) query = query.lte('creata_il', al)
+        if (condizioniRicerca) query = query.or(condizioniRicerca)
+
+        return query.order('creata_il', { ascending: false }).range(offset, offset + limit - 1)
+      },
     )
     if (error) return leggiFallita('admin/pratiche-personale:GET', 'elenco-non-letto', error)
 
@@ -471,7 +619,26 @@ export const GET = withRoute('admin/pratiche-personale:GET', async (request: Nex
     // `total` dal conteggio ESATTO: con 12 righe su 40 la lunghezza della pagina
     // direbbe «12», e nessuno saprebbe delle altre 28.
     const total = typeof count === 'number' ? count : offset + righe.length
-    return NextResponse.json({ data: righe, total, limit, offset })
+    /**
+     * Quante pratiche ci sono in questa linguetta SENZA filtri: è ciò che
+     * distingue «non c'è ancora nessuna pratica» da «nessun risultato con questi
+     * filtri». Due frasi che portano a due gesti opposti — aspettare, oppure
+     * togliere un filtro — e `total`, che è filtrato, direbbe zero in entrambi.
+     */
+    const { count: countLinguetta, error: errLinguetta } = await supabase
+      .from(TABELLA)
+      .select('id', { count: 'exact', head: true })
+      .in('scuola_id', attive)
+    if (errLinguetta) {
+      logEvento('personale', 'warn', {
+        operazione: 'admin/pratiche-personale:GET',
+        esito: 'conteggio-linguetta-non-letto',
+        entita_tipo: TABELLA,
+        error_code: codiceDi(errLinguetta),
+      }, errLinguetta)
+    }
+    const totaleLinguetta = typeof countLinguetta === 'number' ? countLinguetta : total
+    return NextResponse.json({ data: righe, total, totaleLinguetta, limit, offset })
   } catch (err) {
     logErrore({ operazione: 'admin/pratiche-personale:GET', stato: 503 }, err)
     return nonDisponibile('Le pratiche del personale non sono consultabili in questo momento: riprovare fra poco.')

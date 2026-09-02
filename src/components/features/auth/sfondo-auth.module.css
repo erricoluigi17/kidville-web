@@ -1,0 +1,84 @@
+/* =============================================================================
+   Sfondo decorativo delle schermate SOTTO `/auth` (login e interstiziale del
+   primo accesso).
+
+   Queste regole vivevano in `src/app/auth/login/page.module.css`, insieme al
+   componente che le usa, e andava bene finché la schermata era una. Con
+   l'interstiziale del primo accesso diventano due, ed è la stessa identica
+   scenografia: due copie del blocco — o una `composes` fra due moduli — sarebbero
+   due sfondi che si somigliano finché qualcuno non ne tocca uno.
+
+   Sono state SPOSTATE, non riscritte: path, coordinate e colori sono quelli del
+   design «Kidville · Login (standalone)» (spazio 402×874), ritagliati per angolo
+   così restano agganciati ai bordi del viewport anche su schermi larghi.
+
+   Colori via token --color-kidville-* (globals.css). Il componente NON si monta
+   in Alto Contrasto — è decorazione, e in quella modalità sparisce — quindi qui
+   non serve nessun ribaltamento.
+   ============================================================================= */
+
+/* Due livelli: i blob restano agganciati agli angoli del viewport (su telefono
+   coincidono con gli angoli dello schermo del design), le iconcine seguono la
+   colonna centrale così su desktop non scappano ai bordi. */
+.deco {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden; /* taglia la parte fuori schermo del cuneo in alto */
+}
+
+/* Blob angolari — path e colori presi dal design (deco-svg, viewBox 402×874). */
+.blob {
+  position: absolute;
+  display: block;
+}
+/* Cuneo verde in alto a destra: nel design è traslato di -175px oltre il bordo. */
+.blobTop {
+  top: -175px;
+  right: 0;
+  width: 84px;
+  height: 250px;
+  color: var(--color-kidville-green);
+}
+.blobBottomLeft {
+  bottom: 0;
+  left: 0;
+  width: 190px;
+  height: 132px;
+}
+.blobBottomRight {
+  bottom: 0;
+  right: 0;
+  width: 168px;
+  height: 156px;
+}
+.fillGreen {
+  fill: var(--color-kidville-green);
+}
+.fillTeal {
+  fill: #0a8072; /* accento del design, senza token: la deco non esiste in Alto Contrasto */
+}
+.fillYellow {
+  fill: var(--color-kidville-yellow);
+}
+
+/* Iconcine: coordinate del design, ancorate alla colonna centrale. */
+.icons {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 402px;
+}
+.ico {
+  position: absolute;
+  color: var(--color-kidville-green-dark);
+  opacity: 0.11;
+}
+.icoStar { top: 120px; left: 34px; width: 36px; }
+.icoCloud { top: 150px; right: 104px; width: 50px; opacity: 0.09; }
+.icoRing { top: 300px; right: 30px; width: 44px; }
+.icoHouse { top: 352px; left: 24px; width: 44px; }

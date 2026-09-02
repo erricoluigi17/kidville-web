@@ -72,6 +72,13 @@ vi.mock('@/components/ui/ContrastMenuButton', () => ({
 vi.mock('@/components/ui/LogoutMenuButton', () => ({
   LogoutMenuButton: () => <button>Esci</button>,
 }))
+// Stessa ragione delle due sorelle qui sopra: «Cambia profilo» ha i suoi test
+// (`__tests__/components/cambia-profilo.test.tsx`) e ha bisogno di `useRouter` e
+// di una `/api/me`. Qui è un marker inerte, così questo file continua a misurare
+// il tasto Indietro e nient'altro.
+vi.mock('@/components/ui/CambiaProfiloMenuButton', () => ({
+  CambiaProfiloMenuButton: () => <button>Passa a Genitore</button>,
+}))
 
 import { Modal } from '@/components/ui/Modal'
 import { AdminMenuSheet } from '@/components/features/admin/AdminMenuSheet'

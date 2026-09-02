@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
 import { caricaFigliConTarget, postVisibileAiFigli, type PostTarget } from '@/lib/news/target'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -55,7 +59,10 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
     if (post.stato !== 'pubblicata') return NON_TROVATA()
 
     // Ri-verifica il target su QUESTO post: fuori target → 404 (non 403).
-    if (user.role === 'genitore') {
+    // PRESENTAZIONE: le news hanno due viste — il feed della famiglia (filtrato sui
+    // target dei figli) e quello di lavoro (le sedi selezionate). Con `eFamiglia`
+    // una docente-genitore perderebbe il secondo, che è quello che usa in servizio.
+    if (agisceComeGenitore(user)) {
       const figli = await caricaFigliConTarget(supabase, user.id)
       if (!postVisibileAiFigli(post as PostTarget, figli)) return NON_TROVATA()
     } else {
@@ -75,7 +82,10 @@ export const GET = withRoute('news/feed/[id]:GET', async (request: NextRequest, 
 
     // Solo i genitori contano fra le visualizzazioni (decisione 10). Best-effort:
     // un errore d'upsert si logga ma non blocca la risposta.
-    if (user.role === 'genitore') {
+    // PRESENTAZIONE, ed è la lettura giusta: il contatore misura quante FAMIGLIE
+    // hanno aperto la news. Una docente-genitore che la legge mentre lavora non è
+    // una famiglia che l'ha ricevuta, e con `eFamiglia` finirebbe nel conteggio.
+    if (agisceComeGenitore(user)) {
       const { error: visErr } = await supabase
         .from('news_visualizzazioni')
         .upsert({ post_id: p.data, utente_id: user.id }, { onConflict: 'post_id,utente_id', ignoreDuplicates: true })

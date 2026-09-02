@@ -35,7 +35,11 @@ vi.mock('next-intl', async () => {
   const prestampatiSegreteria = (await import('../../messages/it/prestampatiSegreteria.json'))
     .default
   const shared = (await import('../../messages/it/shared.json')).default
-  const cataloghi = { prestampatiSegreteria, shared }
+  // `adminModulistica` dal 2026-09-01: il pannello ci prende le etichette dei campi della sua
+  // barra filtri. Senza, il finto risolverebbe quelle chiavi nel proprio nome e la console si
+  // riempirebbe di errori di traduzione su una schermata sana.
+  const adminModulistica = (await import('../../messages/it/adminModulistica.json')).default
+  const cataloghi = { prestampatiSegreteria, shared, adminModulistica }
   /**
    * ⚠️ UN `t` SOLO PER NAMESPACE, E NON UNO NUOVO A OGNI RENDER.
    *
@@ -206,15 +210,25 @@ async function finoAlModulo(cognome = 'Iscritta') {
 const pulsanteGenera = () => screen.getByRole('button', { name: itPrestampati.genera })
 
 /**
- * Il riquadro dell'esito, aspettato per la sua FRASE e non per il ruolo.
+ * Il riquadro dell'esito, aspettato per la sua FRASE e preso RISALENDO da quella.
  *
  * «Generazione in corso…» ha anch'essa `role="status"` — deve averlo, è ciò che annuncia
  * l'attesa a chi non guarda lo schermo — e `findByRole('status')` si accontenterebbe di
  * quella, cioè misurerebbe l'attesa credendo di misurare l'esito.
+ *
+ * ⚠️ E FINO AL 2026-09-01 NON BASTAVA. Dopo aver aspettato la frase giusta, questa funzione
+ * tornava `getByRole('status')`: una premessa sul NUMERO di regioni annunciate nella
+ * schermata, non sul riquadro. La barra filtri del catalogo ne ha aggiunta una legittima — il
+ * conteggio «1 risultato su 1», che deve essere annunciato a chi non vede l'elenco
+ * accorciarsi — e i tre `it` che passavano di qui sono diventati rossi senza che il
+ * comportamento sorvegliato fosse cambiato di un carattere. Ora si RISALE dalla frase al suo
+ * contenitore: il riquadro è legato a ciò che dice, non a quanti vicini ha.
  */
 async function attendiIlDocumento() {
-  await screen.findByText(itPrestampati.confermaGenerato)
-  return screen.getByRole('status')
+  const conferma = await screen.findByText(itPrestampati.confermaGenerato)
+  const riquadro = conferma.closest('[role="status"]')
+  expect(riquadro, 'la conferma non vive dentro una regione annunciata').not.toBeNull()
+  return riquadro as HTMLElement
 }
 
 describe('PrestampatiSegreteria — il rifiuto della generazione', () => {

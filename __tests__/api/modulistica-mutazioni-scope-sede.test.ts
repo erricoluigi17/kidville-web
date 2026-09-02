@@ -90,9 +90,12 @@ const dbBase = (): DBFinto => ({
     },
   ],
   form_models: [
-    { id: MODELLO_A, title: 'Modello della sede A', scuola_id: SEDE_A, public_token: 'tok-a', published_at: null, access_mode: 'public', is_enrollment_form: false },
-    { id: MODELLO_B, title: 'Modello della sede B', scuola_id: SEDE_B, public_token: 'tok-b', published_at: null, access_mode: 'public', is_enrollment_form: false },
-    { id: MODELLO_GLOBALE, title: 'Modello globale', scuola_id: null, public_token: 'tok-glob', published_at: '2026-07-01T00:00:00Z', access_mode: 'public', is_enrollment_form: true },
+    // `requires_signature` è `NOT NULL DEFAULT false` sulla tabella vera: qui c'è perché
+    // una riga di prova senza una colonna obbligatoria fa passare per «campo non esposto»
+    // ciò che è solo «campo non scritto nel finto».
+    { id: MODELLO_A, title: 'Modello della sede A', scuola_id: SEDE_A, public_token: 'tok-a', published_at: null, access_mode: 'public', is_enrollment_form: false, requires_signature: true },
+    { id: MODELLO_B, title: 'Modello della sede B', scuola_id: SEDE_B, public_token: 'tok-b', published_at: null, access_mode: 'public', is_enrollment_form: false, requires_signature: false },
+    { id: MODELLO_GLOBALE, title: 'Modello globale', scuola_id: null, public_token: 'tok-glob', published_at: '2026-07-01T00:00:00Z', access_mode: 'public', is_enrollment_form: true, requires_signature: false },
   ],
   forms_templates: [
     { id: TEMPLATE_A, scuola_id: SEDE_A, title: 'Autorizzazione A', created_at: '2026-07-01T00:00:00Z' },
@@ -320,5 +323,25 @@ describe('GET /api/admin/forms/models — elenco per i filtri admin', () => {
     const corpo = await res.text()
     expect(corpo).not.toContain('public_token')
     expect(corpo).not.toContain('tok-glob')
+  })
+
+  /**
+   * `scuola_id` e `requires_signature` ESCONO, ed è la barra filtri della linguetta a
+   * chiederli: «solo quelli che chiedono la firma» e «solo quelli di questo plesso» sono due
+   * criteri che, senza questi campi, la schermata avrebbe dovuto o indovinare o andarsi a
+   * leggere una seconda volta. Sono un booleano e l'uuid di una sede che chi guarda ha già
+   * nel proprio contesto: nessuno dei due apre niente, a differenza di `public_token`.
+   */
+  it('distribuisce `scuola_id` e `requires_signature`: sono i due assi su cui la segreteria filtra', async () => {
+    const res = await MODELLI_LISTA(req('/api/admin/forms/models'))
+    const righe = (await res.json()) as Record<string, unknown>[]
+    const globale = righe.find((m) => m.title === 'Modello globale')
+    const dellaSede = righe.find((m) => m.title === 'Modello della sede A')
+    // `scuola_id` NULL è il dato, non l'assenza del dato: dice «vale per tutte le sedi», e
+    // la chiave deve esserci per poterlo distinguere da un campo che non è stato letto.
+    expect(globale).toHaveProperty('scuola_id')
+    expect(globale?.scuola_id).toBeNull()
+    expect(dellaSede?.scuola_id).toBe(SEDE_A)
+    expect(righe.every((m) => 'requires_signature' in m)).toBe(true)
   })
 })

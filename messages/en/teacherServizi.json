@@ -160,6 +160,18 @@
   "modulisticaCertRifiutato": "⛔ Certificate rejected.",
   "modulisticaErrValidazione": "❌ Error during validation",
 
+  "modulisticaFiltroSezione": "Class",
+  "modulisticaFiltroModulo": "Form",
+  "modulisticaFiltroStato": "Status",
+  "modulisticaStatoFirmato": "Signed",
+  "modulisticaStatoMancante": "Missing",
+  "modulisticaFiltroCercaAlunno": "Search a child",
+  "modulisticaFiltroCercaAlunnoSegnaposto": "Surname or first name…",
+  "modulisticaVuotoSemaforo": "No children in this class",
+  "modulisticaVuotoSemaforoTesto": "The list fills up with the children enrolled in the class: if it is empty, either the class has none yet, or the selected form is not assigned to this class.",
+  "modulisticaNessunModuloSezione": "No authorisation form for this class",
+  "modulisticaVuotoCertTesto": "Certificates appear here as soon as a family uploads one from the app.",
+
   "settingsEyebrow": "Locker",
   "settingsTitolo": "Materials",
   "settingsSottotitolo": "Configure the materials that parents deliver daily",

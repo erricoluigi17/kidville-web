@@ -43,7 +43,11 @@ vi.mock('next-intl', async () => {
   const prestampatiSegreteria = (await import('../../messages/it/prestampatiSegreteria.json'))
     .default
   const shared = (await import('../../messages/it/shared.json')).default
-  const cataloghi = { prestampatiSegreteria, shared }
+  // `adminModulistica` dal 2026-09-01: il pannello ci prende le etichette dei campi della sua
+  // barra filtri. Senza, il finto risolverebbe quelle chiavi nel proprio nome e la console si
+  // riempirebbe di errori di traduzione su una schermata sana.
+  const adminModulistica = (await import('../../messages/it/adminModulistica.json')).default
+  const cataloghi = { prestampatiSegreteria, shared, adminModulistica }
   /**
    * ⚠️ UN `t` SOLO PER NAMESPACE, E NON UNO NUOVO A OGNI RENDER.
    *

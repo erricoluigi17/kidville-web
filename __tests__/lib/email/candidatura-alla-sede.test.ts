@@ -219,7 +219,7 @@ describe('messaggioCandidaturaAllaSede', () => {
   })
 
   it('il corpo di testo è sostanzioso quanto gli altri generatori', () => {
-    // La soglia che `dodici-generatori.test.ts` applica a tutti: sotto i 120
+    // La soglia che `generatori-email.test.ts` applica a tutti: sotto i 120
     // caratteri un'email non è un'email.
     expect(messaggio().testo.length).toBeGreaterThan(120)
     expect(messaggio().oggetto.length).toBeGreaterThan(5)

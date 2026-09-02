@@ -204,6 +204,47 @@ export async function resolveScuoleAttive(
 }
 
 /**
+ * LETTURE, secondo tempo: la sede chiesta dal CLIENT **interseca**, non sostituisce.
+ *
+ * `resolveScuoleAttive` dice su quali plessi l'utente può leggere. Una schermata
+ * può poi chiedere di guardarne uno solo (un filtro «Sede» nella barra, un
+ * `?scuolaId=` in un collegamento): quella richiesta può soltanto RESTRINGERE.
+ * Un uuid scritto a mano nella query non allarga mai il perimetro.
+ *
+ * ⚠️ I DUE RITORNI VUOTI SIGNIFICANO COSE OPPOSTE, e vanno tenuti distinti:
+ *  · `[]`   → «non hai nessun plesso» (nessuna sede attiva e nessuna richiesta).
+ *            I chiamanti lo trattano come elenco vuoto, che è la risposta giusta.
+ *  · `null` → «hai chiesto un plesso che non è tuo». Il chiamante **rifiuta**
+ *            (`rifiutoSede('SEDE_NON_ACCESSIBILE')`), che è ciò che
+ *            `documenti-firmati/route.ts` fa già a mano.
+ * Confonderli vorrebbe dire o rispondere 403 a chi semplicemente non ha sedi, o
+ * rispondere «elenco vuoto» a un tentativo cross-sede — cioè perdere il segnale.
+ *
+ * ⚠️ IL CONFRONTO IGNORA LE MAIUSCOLE, e non è un vezzo: in Postgres `uuid` è un
+ * TIPO, quindi `'AAAA…'` e `'aaaa…'` sono lo stesso valore e la riga si trova; in
+ * JavaScript sono due stringhe diverse. È lo stesso difetto che il 2026-07-31 ha
+ * fatto rispondere **403 sulla PROPRIA sede** a una segreteria che la scriveva in
+ * maiuscolo (vedi `formaConfronto`). Le copie scritte a mano nelle rotte usano
+ * `===` e quel difetto ce l'hanno ancora: qui non nasce. Ciò che esce è sempre la
+ * forma CANONICA del database, mai la stringa arrivata dal client.
+ *
+ * Uso tipico (rimpiazza le tre righe scritte a mano in `documenti-firmati`):
+ * ```ts
+ * const plessi = await resolveScuoleAttive(request, supabase, user)
+ * if (plessi.length === 0) return NextResponse.json({ success: true, data: [] })
+ * const scope = restringiSedi(plessi, q.data.scuolaId)
+ * if (!scope) return rifiutoSede('SEDE_NON_ACCESSIBILE')
+ * query = query.in('scuola_id', scope)
+ * ```
+ */
+export function restringiSedi(attive: string[], scuolaId?: string | null): string[] | null {
+  if (!scuolaId) return attive
+  const richiesta = formaConfronto(scuolaId)
+  const dentro = attive.filter((id) => formaConfronto(id) === richiesta)
+  return dentro.length > 0 ? dentro : null
+}
+
+/**
  * SCRITTURE (create/update che settano `scuola_id`): UNA sola sede, e la sede si
  * DICHIARA. Ordine: `preferita`/body.scuola_id → l'unica sede attiva (cookie) →
  * l'unica sede accessibile. Se resta ambiguo — più sedi accessibili e nessuna

@@ -1,9 +1,10 @@
 'use client';
 
-import { Suspense, useState, useEffect, useCallback } from 'react';
+import { Suspense, useId, useState, useEffect, useCallback } from 'react';
 import { LinkInterno } from '@/components/ui/LinkInterno';
-import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint } from 'lucide-react';
+import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint, KeyRound, ChevronDown } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { CambiaPasswordCard } from '@/components/features/account/CambiaPasswordCard';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { doLogout } from '@/lib/auth/logout';
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
@@ -28,6 +29,9 @@ function Inner() {
   // I testi del prompt NATIVO stanno nel namespace condiviso (li usa anche il
   // BiometricGate): una copia sola, così non possono divergere.
   const tShared = useTranslations('shared');
+  // Il cambio password ha un namespace suo, condiviso con le altre tre superfici
+  // che montano lo stesso form: qui non se ne ricopia nemmeno una frase.
+  const tPwd = useTranslations('password');
   const { userId } = useSessionIdentity();
   const [richiesta, setRichiesta] = useState<RichiestaStato | null>(null);
   const [loading, setLoading] = useState(true);
@@ -40,6 +44,10 @@ function Inner() {
   const [bioSupportata, setBioSupportata] = useState<boolean | null>(null);
   const [bioAttiva, setBioAttiva] = useState(false);
   const [bioBusy, setBioBusy] = useState(false);
+
+  // Sicurezza dell'accesso: accordion CHIUSO di default (vedi la sezione più sotto).
+  const [apertoPwd, setApertoPwd] = useState(false);
+  const idPannelloPwd = useId();
 
   const hdr = (uid: string) => ({ 'Content-Type': 'application/json', 'x-user-id': uid });
 
@@ -159,6 +167,57 @@ function Inner() {
           <LifeBuoy size={20} className="text-kidville-green" />
           <span className="font-barlow text-sm font-extrabold uppercase text-kidville-green">{t('linkAssistenza')}</span>
         </LinkInterno>
+      </section>
+
+      {/* ── SICUREZZA DELL'ACCESSO ────────────────────────────────────────────
+          L'ORDINE DI QUESTA PAGINA È PARTE DEL REQUISITO: legali → sicurezza →
+          biometrico → elimina account. Il comando distruttivo resta ULTIMO, perché
+          chi cerca «cambia password» col pollice, di fretta, non deve trovarsi sotto
+          il dito la richiesta di cancellazione dell'account. E sta PRIMA del
+          biometrico perché il biometrico è una scorciatoia per entrare: si sceglie
+          dopo aver deciso con che cosa si entra.
+
+          ⚠️ CHIUSO DI DEFAULT, e non per estetica. Due ragioni misurabili:
+           · questa pagina è già lunga, e tre campi password aperti in mezzo la
+             raddoppiano;
+           · un campo `type="password"` MONTATO fa scattare i gestori di password del
+             telefono, che offrono di salvare o riempire qualcosa su una schermata
+             che l'utente ha aperto per tutt'altro. Perciò il pannello non è
+             «nascosto»: non esiste finché non lo si chiede. */}
+      <section aria-labelledby={`${idPannelloPwd}-titolo`} className="rounded-card border border-kidville-line bg-white shadow-sm">
+        <h2 id={`${idPannelloPwd}-titolo`} className="sr-only">{tPwd('sezioneTitolo')}</h2>
+        <button
+          type="button"
+          onClick={() => setApertoPwd((v) => !v)}
+          aria-expanded={apertoPwd}
+          aria-controls={idPannelloPwd}
+          className="flex min-h-[44px] w-full items-center gap-3 rounded-card px-5 py-4 text-left active:bg-kidville-cream"
+        >
+          <KeyRound size={20} className="flex-shrink-0 text-kidville-green" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="block font-barlow text-sm font-extrabold uppercase text-kidville-green">
+              {tPwd('sezioneApri')}
+            </span>
+            {/* `text-kidville-sub` e non `-muted`: quest'ultimo vale 2,51:1 su bianco
+                (lock `__tests__/a11y/testo-muted-allowlist.test.ts`). */}
+            <span className="mt-0.5 block font-maven text-[13px] leading-relaxed text-kidville-sub">
+              {tPwd('sezioneDescrizione')}
+            </span>
+          </span>
+          {/* La rotazione è una `transition`, che `prefers-reduced-motion` in
+              `globals.css` già azzera per tutta l'app: qui non serve nessuna
+              eccezione locale. */}
+          <ChevronDown
+            size={18}
+            aria-hidden="true"
+            className={`flex-shrink-0 text-kidville-green transition-transform ${apertoPwd ? 'rotate-180' : ''}`}
+          />
+        </button>
+        {apertoPwd && (
+          <div id={idPannelloPwd} className="border-t border-kidville-line px-5 py-4">
+            <CambiaPasswordCard origine="self-service" />
+          </div>
+        )}
       </section>
 
       {/* Sblocco biometrico (opt-in) — solo se il dispositivo lo supporta */}

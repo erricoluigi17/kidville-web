@@ -81,6 +81,14 @@ const GRUPPI_COPERTI: string[] = [
     // triage sta sotto `admin/`, già coperta). Valida con zod dal giorno 1: body/query
     // dell'ingresso pubblico delle segnalazioni non deve poter regredire a senza-validazione.
     'segnalazioni',
+    // Il proprio account (2026-09-01): prefisso di primo livello nuovo, che nasce con
+    // `account/password` — il cambio password condiviso fra genitori e personale. Entra
+    // qui dal giorno 1 e non «quando ce ne saranno abbastanza»: il suo corpo è fatto di
+    // DUE PASSWORD, e senza schema `attuale` e `nuova` sarebbero `unknown` passati a
+    // `signInWithPassword` e a `updateUserById`. Il tetto sulla lunghezza (200) non è
+    // decorativo: senza, un corpo da megabyte verrebbe deserializzato, redatto e
+    // depositato nel contesto prima che qualcuno lo giudichi.
+    'account',
 ];
 
 const API_ROOT = path.join(process.cwd(), 'src', 'app', 'api');

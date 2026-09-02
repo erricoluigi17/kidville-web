@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
-import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
+import { resolveScuoleAttive, resolveScuolaScrittura, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { riassuntoCampi } from '@/lib/audit/riassunto'
 import { ensureParentIdentity } from '@/lib/auth/parent-identity'
@@ -12,7 +13,9 @@ import { risolviContestoSede } from '@/lib/email/contesto'
 import { messaggioCredenziali } from '@/lib/email/messaggi/credenziali'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid } from '@/lib/validation/common'
+import { zBool, zOpzionale, zPeriodo, zTestoRicerca, zUuid } from '@/lib/validation/common'
+import { orIlike, termineOr } from '@/lib/db/ricerca-postgrest'
+import { fineGiornoCivile, inizioGiornoCivile } from '@/lib/format/confini-giorno'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
@@ -290,6 +293,56 @@ const interoClampato = (def: number, min: number, max: number) =>
     return Math.min(Math.max(Math.trunc(n), min), max)
   }, z.number())
 
+/** I tre stati di una domanda, come stanno in `enrollment_submissions.status`. */
+const STATI_DOMANDA = ['pending', 'approved', 'rejected'] as const
+
+/**
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║  LA RICERCA ENTRA DENTRO `data` jsonb — MISURATA, NON DEDOTTA            ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Il nome del bambino è l'unico modo in cui la segreteria riconosce una domanda,
+ * e vive dentro il jsonb che l'elenco NON restituisce più (`riassunto`). Che
+ * PostgREST accetti un percorso JSON dentro un filtro non è stato dato per
+ * buono: è stato provato contro il database di produzione il 2026-09-01, in sola
+ * lettura e via HTTP, con due controlli negativi accanto ai due positivi.
+ *
+ *   A  ?data->children->0->>cognome=ilike.*ross*                  → 200
+ *   B  ?or=(data->children->0->>cognome.ilike.*ross*, …)          → 200
+ *   C  la stessa B con una parentesi in meno                      → 400 PGRST100
+ *                                        «failed to parse logic tree»
+ *   D  ?or=(dataXYZ->children->0->>cognome.ilike.*ross*)          → 400 42703
+ *                «column enrollment_submissions.dataXYZ does not exist»
+ *
+ * C e D sono la parte che conta. Un 200 da solo direbbe soltanto che PostgREST
+ * non si è lamentato — e un filtro ignorato in silenzio produce un elenco INTERO
+ * spacciato per filtrato, cioè la bugia peggiore che questa schermata possa
+ * raccontare. C prova che il filtro viene parsato, D che il percorso viene
+ * compilato contro la colonna vera.
+ *
+ * ── PERCHÉ QUATTRO INDICI E NON UNO ─────────────────────────────────────────
+ *
+ * Misurato in SQL sulle 533 domande vere lo stesso giorno: 464 hanno UN figlio,
+ * 63 ne hanno DUE, 6 ne hanno TRE (massimo osservato: 3). Cercando «ia» sul solo
+ * `children->0` uscivano 160 domande; su tutti i figli, 169 — nove famiglie
+ * perse, quelle in cui il nome cercato è del secondo o del terzo bambino, e
+ * nessun modo di accorgersene guardando lo schermo.
+ *
+ * Quattro indici sono il massimo misurato più uno di margine. Il numero è
+ * dichiarato qui e non sparso: `jsonb` non ha un modo di dire «per ogni elemento
+ * dell'array» dentro un filtro PostgREST, quindi gli indici si elencano — e un
+ * quinto figlio, il giorno in cui arrivasse, resterebbe fuori dalla ricerca
+ * (mai fuori dall'ELENCO: il filtro è un OR, non un join).
+ */
+const INDICI_FIGLI_CERCATI = 4
+/** I campi del bambino su cui la ricerca lavora. */
+const CAMPI_FIGLIO_CERCATI = ['nome', 'cognome'] as const
+/** `data->children->0->>nome`, … per ogni indice e per ogni campo. */
+const PERCORSI_RICERCA_FIGLI: string[] = Array.from(
+  { length: INDICI_FIGLI_CERCATI },
+  (_, i) => CAMPI_FIGLIO_CERCATI.map((campo) => `data->children->${i}->>${campo}`),
+).flat()
+
 const getQuerySchema = z.object({
   // `max(500)` come in `pagamenti/cassa/allegato:GET`: un percorso di storage
   // non è lungo, e una stringa senza tetto è solo superficie d'attacco in più.
@@ -301,6 +354,16 @@ const getQuerySchema = z.object({
   id: zUuid.optional(),
   limit: interoClampato(LIMITE_ISCRIZIONI_DEFAULT, 1, LIMITE_ISCRIZIONI_MAX),
   offset: interoClampato(0, 0, Number.MAX_SAFE_INTEGER),
+
+  // ── I FILTRI DELL'ELENCO ──────────────────────────────────────────────────
+  /** I tre stati di `enrollment_submissions.status`, come stanno in tabella. */
+  stato: zOpzionale(z.enum(STATI_DOMANDA)),
+  /** La sede su cui guardare: RESTRINGE le sedi attive, non le sostituisce. */
+  scuola_id: zOpzionale(zUuid),
+  ...zPeriodo('creato').shape,
+  q: zTestoRicerca,
+  /** «Solo da lavorare»: le domande ancora da importare o rifiutare. */
+  daLavorare: zOpzionale(zBool),
 })
 
 // referenteIndex resta unknown: il codice accetta qualsiasi valore e usa 0
@@ -386,7 +449,24 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     // traccia. Anche `consents_log` resta fuori: è la prova dei consensi, la
     // legge il server nella PATCH, non serve all'elenco.
     let cols = ['id', 'scuola_id', 'data', 'status', 'assigned_classes', 'created_at']
-    const scuole = await resolveScuoleAttive(request, supabase, auth.user)
+    const attive = await resolveScuoleAttive(request, supabase, auth.user)
+    /**
+     * La sede chiesta dal filtro INTERSECA le sedi attive, non le sostituisce.
+     * `null` è «hai chiesto un plesso che non è tuo» ⇒ 403; `[]` è «non hai
+     * nessun plesso» ⇒ elenco vuoto. I due vuoti hanno rimedi opposti.
+     */
+    const scuole = restringiSedi(attive, q.data.scuola_id)
+    if (scuole === null) {
+      logEvento('multi_sede', 'warn', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'sede-filtro-fuori-scope',
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+        sede_id: q.data.scuola_id,
+        sedi_attive: attive.length,
+      })
+      return rifiutoSede('SEDE_NON_ACCESSIBILE')
+    }
 
     // Resilienza pre-migration (come in admin/students:GET): `select('*')` non
     // falliva mai, una proiezione esplicita sì. Il DB E2E della CI non è
@@ -473,15 +553,104 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     // minori non partono più verso il browser a ogni apertura della pagina,
     // anche quando nessuno apre un dettaglio. `data` si continua a LEGGERE dal
     // database — serve al riassunto qui sotto — ma non esce di qui.
-    const { data, error, count } = await conResilienza((colonne) =>
-      supabase
+    //
+    // ⚠️ I FILTRI SI SCRIVONO QUI, PER ESTESO, accanto al filtro di sede: un
+    // criterio leggibile nel punto in cui si applica è l'unico che una persona
+    // — e un lock — possono verificare senza inseguire indirezioni.
+    const termineRicerca = termineOr(q.data.q ?? '')
+    const condizioniRicerca = orIlike(PERCORSI_RICERCA_FIGLI, termineRicerca)
+    /** Gli estremi del periodo, in ISTANTI, dal giorno civile italiano. */
+    const dal = q.data.creatoDa ? inizioGiornoCivile(q.data.creatoDa) : null
+    const al = q.data.creatoA ? fineGiornoCivile(q.data.creatoA) : null
+    /**
+     * ⚠️ I FILTRI SI SCRIVONO DUE VOLTE — QUI E SUI CONTEGGI — E NON PER
+     * DISATTENZIONE.
+     *
+     * La strada «pulita» sarebbe un aiutante generico che riceve il builder e ci
+     * appende le condizioni. Provata, e MISURATA: `tsc` risponde
+     * **TS2589 «Type instantiation is excessively deep and possibly infinite»**,
+     * perché il tipo del builder di postgrest-js si riscrive a ogni `.eq()` e un
+     * generico auto-referenziale (`Q extends { eq(…): Q }`) lo fa esplodere. Le
+     * uscite erano due: un `as unknown as` al confine — cioè spegnere proprio il
+     * controllo di tipo che tiene onesta questa query — oppure ripetere sei
+     * righe. Si ripetono sei righe.
+     *
+     * ⚠️ E DEVONO RESTARE IDENTICHE: riquadri che descrivono un insieme diverso
+     * da quello della lista sarebbero il difetto di partenza con un vestito
+     * nuovo. Il presidio è in `__tests__/api/iscrizioni-filtri-server.test.ts`,
+     * che pretende QUATTRO `.or()` uguali (l'elenco più i tre conteggi) e
+     * verifica che i conteggi seguano la sede filtrata.
+     *
+     * Il filtro di SEDE resta scritto per esteso in ogni query
+     * (`.in('scuola_id', scuole)`): il perimetro dev'essere leggibile nel punto
+     * in cui si applica, da una persona come dal lock `isolamento-sede-coverage`.
+     */
+    const { data, error, count } = await conResilienza((colonne) => {
+      let query = supabase
         .from('enrollment_submissions')
         .select(colonne, { count: 'exact' })
         .in('scuola_id', scuole)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1),
-    )
+      if (q.data.stato) query = query.eq('status', q.data.stato)
+      if (q.data.daLavorare === true) query = query.eq('status', 'pending')
+      if (dal) query = query.gte('created_at', dal)
+      if (al) query = query.lte('created_at', al)
+      // Stringa vuota ⇒ nessun `.or()`: un `ilike.%%` passa tutto travestito da
+      // restrizione.
+      if (condizioniRicerca) query = query.or(condizioniRicerca)
+      return query.order('created_at', { ascending: false }).range(offset, offset + limit - 1)
+    })
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+    /**
+     * I TRE RIQUADRI CONTANO SUL DATABASE, NON SULLE RIGHE CARICATE.
+     *
+     * Fino a oggi «In attesa», «Importate» e «Rifiutate» contavano `rows`, cioè
+     * la PAGINA: con 533 domande e 50 caricate dicevano il vero solo quando la
+     * segreteria aveva premuto «Mostra altre» dieci volte. Il ripiego era
+     * nasconderli finché non erano tutte caricate — cioè togliere l'unica
+     * fotografia utile proprio quando serve.
+     *
+     * `head: true` chiede SOLO il conteggio: nessuna riga, nessun payload, tre
+     * richieste che non portano indietro un byte di dati di minori. Portano gli
+     * stessi filtri dell'elenco più il proprio stato: i riquadri descrivono
+     * l'insieme che si sta guardando, non un altro.
+     */
+    const conteggi: Record<string, number> = { pending: 0, approved: 0, rejected: 0 }
+    const esitiConteggi = await Promise.all(
+      STATI_DOMANDA.map(async (stato) => {
+        // Gli STESSI filtri dell'elenco (vedi il blocco qui sopra), più lo stato
+        // di questo riquadro. `q.data.stato` e `daLavorare` non si riapplicano:
+        // sono già rappresentati dal filtro per stato di ciascun conteggio, e
+        // riapplicarli renderebbe due riquadri su tre vuoti per costruzione.
+        let conta = supabase
+          .from('enrollment_submissions')
+          .select('id', { count: 'exact', head: true })
+          .in('scuola_id', scuole)
+          .eq('status', stato)
+        if (q.data.stato) conta = conta.eq('status', q.data.stato)
+        if (q.data.daLavorare === true) conta = conta.eq('status', 'pending')
+        if (dal) conta = conta.gte('created_at', dal)
+        if (al) conta = conta.lte('created_at', al)
+        if (condizioniRicerca) conta = conta.or(condizioniRicerca)
+        const { count: n, error: errConteggio } = await conta
+        return { stato, n, errConteggio }
+      }),
+    )
+    for (const e of esitiConteggi) {
+      if (e.errConteggio) {
+        // PostgREST non lancia: un conteggio fallito non deve diventare uno zero
+        // silenzioso — «nessuna domanda in attesa» e «non l'ho potuto contare»
+        // sono due cose diverse, e la seconda va vista nei log.
+        logEvento('db', 'warn', {
+          operazione: 'admin/iscrizioni:GET',
+          esito: 'conteggio-stato-non-letto',
+          entita_tipo: 'enrollment_submissions',
+          error_code: (e.errConteggio as { code?: string }).code ?? null,
+        }, e.errConteggio)
+        continue
+      }
+      conteggi[e.stato] = typeof e.n === 'number' ? e.n : 0
+    }
 
     const righe = ((data ?? []) as unknown as Record<string, unknown>[]).map((riga) => {
       const { data: payload, ...resto } = riga
@@ -492,7 +661,24 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
     // mai delle altre 400. `offset + righe.length` è solo la rete di sicurezza
     // per un DB che non abbia restituito il conteggio.
     const total = typeof count === 'number' ? count : offset + righe.length
-    return NextResponse.json({ data: righe, total, limit, offset })
+    /**
+     * Quante domande ci sono in questa linguetta SENZA filtri: distingue «non è
+     * ancora arrivata nessuna domanda» da «nessun risultato con questi filtri».
+     */
+    const { count: countLinguetta, error: errLinguetta } = await supabase
+      .from('enrollment_submissions')
+      .select('id', { count: 'exact', head: true })
+      .in('scuola_id', attive)
+    if (errLinguetta) {
+      logEvento('db', 'warn', {
+        operazione: 'admin/iscrizioni:GET',
+        esito: 'conteggio-linguetta-non-letto',
+        entita_tipo: 'enrollment_submissions',
+        error_code: (errLinguetta as { code?: string }).code ?? null,
+      }, errLinguetta)
+    }
+    const totaleLinguetta = typeof countLinguetta === 'number' ? countLinguetta : total
+    return NextResponse.json({ data: righe, total, totaleLinguetta, conteggi, limit, offset })
   } catch (err) {
     logErrore({ operazione: 'admin/iscrizioni:GET', stato: 500 }, err)
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Errore interno' }, { status: 500 })

@@ -14,6 +14,12 @@ import {
   X,
 } from 'lucide-react'
 import { HEADER_BTN, SectionTitle, TONE } from '@/components/ui/cockpit'
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
+import { useFiltri } from '@/lib/ui/filtri/use-filtri'
+import { ordinaPerRicerca } from '@/lib/ui/opzioni-filtro'
+import { campiCatalogo } from '@/components/features/prestampati/filtri-catalogo'
 import { DateField } from '@/components/ui/DateField'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { useDateFormat } from '@/lib/i18n/date'
@@ -443,6 +449,12 @@ interface Esito {
 
 export function PrestampatiSegreteria() {
   const t = useTranslations('prestampatiSegreteria')
+  // I testi generici della barra vengono da `shared`, le etichette dei suoi campi da
+  // `adminModulistica` — dove stanno insieme i filtri di tutte le linguette di «Modulistica».
+  // Le voci del SOGGETTO restano invece di `t`: sono le stesse parole delle pastiglie della
+  // griglia, e due nomi per la stessa cosa nella stessa schermata non si fanno.
+  const tShared = useTranslations('shared')
+  const tFiltri = useTranslations('adminModulistica')
   const { dataBreve } = useDateFormat()
   /**
    * TRE STATI DELLE SEDI, NON DUE — e qui vale il doppio, perché la sede è il PRIMO passo e
@@ -924,8 +936,30 @@ export function PrestampatiSegreteria() {
     return chiave ? t(chiave) : spiegazione ?? null
   }
 
-  const generabili = modelli.righe.filter((m) => m.generabile)
-  const spenti = modelli.righe.filter((m) => !m.generabile)
+  // ── Il catalogo filtrato ───────────────────────────────────────────────────
+  //
+  // ⚠️ NIENTE `useMemo` su `campiCatalogo`, ed è una scelta: le sue dipendenze vere sono i due
+  // traduttori, le righe E `nomeModello`, che è una chiusura ricreata a ogni render — metterla
+  // nelle dipendenze renderebbe il memo inutile, ometterla lo renderebbe SBAGLIATO (etichette
+  // ferme alla lingua di prima). Su diciassette righe la funzione costa quanto il confronto
+  // delle dipendenze, e `useFiltri` non memoizza sull'identità dei campi.
+  const campiCat = campiCatalogo(tFiltri, t, modelli.righe, nomeModello)
+  const filtriCat = useFiltri<VoceModello>(campiCat)
+  const testoCercato = typeof filtriCat.valori.q === 'string' ? filtriCat.valori.q : ''
+  // Filtrare tiene o scarta; su un CATALOGO serve anche l'ordine, perché chi scrive «cert»
+  // si aspetta «Certificato di servizio» prima di «Richiesta di un certificato».
+  const visibili = ordinaPerRicerca(filtriCat.filtra(modelli.righe), testoCercato, nomeModello)
+  const generabili = visibili.filter((m) => m.generabile)
+  const spenti = visibili.filter((m) => !m.generabile)
+  const statoCatalogo = decidiStatoElenco({
+    // Il caricamento e il guasto hanno già i loro due rami qui sotto, con un «Riprova» che
+    // `StatoElenco` non saprebbe dare: qui resta la sola distinzione fra «catalogo vuoto» e
+    // «nessuna corrispondenza», che è quella che i filtri possono causare.
+    caricamento: false,
+    errore: false,
+    totale: modelli.righe.length,
+    mostrati: visibili.length,
+  })
 
   const alunniVisibili = alunniPronti
     ? alunni.righe.filter((a) =>
@@ -1120,6 +1154,27 @@ export function PrestampatiSegreteria() {
           <p className="mt-3 font-maven text-sm text-kidville-sub">{t('vuotoModuli')}</p>
         ) : (
           <>
+            {/* La barra si disegna solo se un catalogo c'è: sopra zero modelli mostrerebbe
+                «0 risultati su 0» e manderebbe a togliere un filtro che nessuno ha messo.
+                Il ramo del catalogo vuoto è quello qui sopra, e dice un'altra cosa. */}
+            <BarraFiltri
+              className="mt-3"
+              campi={campiCat}
+              stato={filtriCat}
+              testi={testiBarraFiltri(tShared)}
+              totale={modelli.righe.length}
+              mostrati={visibili.length}
+            />
+            {statoCatalogo !== 'pronto' && (
+              <div data-testid="stato-catalogo-prestampati">
+                <StatoElenco
+                  stato={statoCatalogo}
+                  testi={testiStatoElenco(tShared)}
+                  attivi={filtriCat.attivi}
+                  onPulisci={filtriCat.pulisci}
+                />
+              </div>
+            )}
             <p className="mt-1 font-maven text-[12.5px] text-kidville-sub">
               {t('moduliDisponibili', { n: generabili.length })}
             </p>

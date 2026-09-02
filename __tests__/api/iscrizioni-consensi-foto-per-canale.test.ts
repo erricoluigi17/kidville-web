@@ -38,7 +38,10 @@ vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: async () => ({ ok: 
 vi.mock('@/lib/auth/parent-identity', () => ({
   ensureParentIdentity: async () => ({ ok: true, authUserId: 'auth-x', password: null, createdAuth: false, reason: null, message: '' }),
 }))
-vi.mock('@/lib/auth/scope', () => ({
+// `restringiSedi` resta VERA: `?scuola_id=` deve intersecare davvero le sedi
+// attive, e un finto che dicesse sempre di sì non proverebbe nessun diniego.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
   resolveScuoleAttive: async () => ['sc-1'],
   resolveScuolaScrittura: async () => ({ scuolaId: 'sc-1' }),
   scuoleDiUtente: async () => ['sc-1'],

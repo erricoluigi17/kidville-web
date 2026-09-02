@@ -108,3 +108,62 @@ describe('decideRootLanding', () => {
     expect(decideRootLanding(cuoca, null)).toBe('/admin')
   })
 })
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * LA RISOLUZIONE DEL RUOLO ATTIVO ORA VIVE IN UN POSTO SOLO
+ *
+ * Stava scritta due volte — `decideAreaAccess` e `decideRootLanding` —
+ * IDENTICA carattere per carattere. Due copie della stessa decisione divergono
+ * al primo ritocco, e questa decisione è di sicurezza: dice quale veste una
+ * persona sta indossando. Ora entrambe chiamano `risolviRuoloAttivo`
+ * (`active-role.ts`), che è la stessa funzione usata dai gate API.
+ *
+ * I casi qui sotto sono AGGIUNTI: non riscrivono niente di quelli sopra, e
+ * verificano ciò che prima nessuno verificava — che le due strade CONCORDINO.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+describe('le due decisioni concordano sempre sul ruolo attivo', () => {
+  const casi: Array<[string, Profilo[], string | null]> = [
+    ['profilo unico, nessun cookie', educator, null],
+    ['profilo unico, cookie estraneo', genitore, 'admin'],
+    ['doppio profilo, cookie valido', doppio, 'genitore'],
+    ['doppio profilo, cookie valido (l\'altro)', doppio, 'educator'],
+    ['doppio profilo, nessun cookie', doppio, null],
+    ['doppio profilo, cookie estraneo', doppio, 'admin'],
+  ]
+
+  for (const [nome, profili, cookie] of casi) {
+    it(`${nome}: chi va alla radice atterra dove la guardia d'area lo lascerebbe entrare`, () => {
+      const landing = decideRootLanding(profili, cookie)
+      // Ambiguo di qua = ambiguo di là: la scelta si chiede in entrambi i casi.
+      if (landing.startsWith('/auth/login?scegli=1')) {
+        expect(decideAreaAccess(profili, cookie, 'parent')).toBe(
+          '/auth/login?scegli=1&next=/parent',
+        )
+        return
+      }
+      // Altrimenti: l'area di atterraggio è un'area in cui la guardia lo fa ENTRARE
+      // (`null` = accesso ok). Se le due copie divergessero, qui uscirebbe un redirect.
+      const area = landing.slice(1) as 'admin' | 'teacher' | 'parent'
+      expect(decideAreaAccess(profili, cookie, area)).toBeNull()
+    })
+  }
+})
+
+describe('il cookie passa da una lista CHIUSA di ruoli', () => {
+  it('un valore inventato non viene mai onorato, nemmeno se combacia con un profilo legacy', () => {
+    // `parseActiveRole` gira PRIMA del confronto coi profili: il cookie è input del
+    // client e non può nominare un ruolo che l'app non conosce. Con due profili
+    // legacy e un cookie fuori lista, la scelta resta AMBIGUA invece di essere
+    // decisa da una stringa arbitraria arrivata dal browser.
+    const legacy = [{ ruolo: 'maestra' }, { ruolo: 'bidella' }] as unknown as Profilo[]
+    expect(decideRootLanding(legacy, 'maestra')).toBe('/auth/login?scegli=1')
+  })
+
+  it('un profilo legacy UNICO resta però risolvibile: è il ruolo vero di quella persona', () => {
+    // Regressione sull'anti-loop già coperto sopra: il ripiego «profilo unico» non
+    // passa da `parseActiveRole` e continua a restituire il ruolo così com'è in `utenti`.
+    const legacy = [{ ruolo: 'maestra' }] as unknown as Profilo[]
+    expect(decideRootLanding(legacy, null)).toBe('/parent')
+  })
+})

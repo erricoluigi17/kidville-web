@@ -51,8 +51,8 @@ const ESENTE = 'src/lib/logging/';
  * il numero. Chi si trovasse a doverli ALZARE sta aggiungendo un catch muto, ed è quello il
  * momento di fermarsi, non dopo.
  */
-const MAX_FILE = 53;
-const MAX_OCCORRENZE = 83;
+const MAX_FILE = 52;
+const MAX_OCCORRENZE = 82;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un
@@ -75,12 +75,21 @@ const MAX_OCCORRENZE = 83;
  * irraggiungibile e rotta che serviva. Una voce che punta a un percorso inesistente farebbe
  * cadere il controllo POSITIVO qui sotto (`fs.existsSync`), che è esattamente ciò che deve
  * fare: questo elenco parla di file vivi e bonificati, non di file scomparsi.
+ *
+ * AGGIUNTO IL 2026-09-01 — `teacher/modulistica/page.tsx`, bonificata riscrivendola per la
+ * barra filtri. Il suo unico `.catch(() => {})` stava sulla lettura delle SEZIONI del docente
+ * (`/api/educator-sections`), ed è il caso peggiore della categoria: senza sezioni la pagina
+ * non sa quale classe mostrare, quindi resta ferma sullo spinner — e uno spinner eterno è
+ * indistinguibile da «questo docente non ha sezioni». Ora quel ramo logga, e la voce esce
+ * dall'allowlist: se restasse, ESLint continuerebbe a tacere sul file e il prossimo catch
+ * muto ci rientrerebbe senza che nessuno se ne accorga.
  */
 const MAI_PIU_IN_ALLOWLIST = [
     'src/app/api/admin/regenerate-credentials/route.ts',
     'src/app/(dashboard)/admin/students/page.tsx',
     'src/components/features/admin/pagamenti/TicketMensaPanel.tsx',
     'src/components/providers/NativePushAutoRegister.tsx',
+    'src/app/(dashboard)/teacher/modulistica/page.tsx',
 ];
 
 /* ────────────────────────────────────────────────────────────────────────────────
@@ -305,9 +314,10 @@ describe('lock — catch muti (AGENTS.md regola 6)', () => {
         const rientrati = MAI_PIU_IN_ALLOWLIST.filter((p) => noti.has(p));
         expect(
             rientrati,
-            'Questi tre percorsi sono stati bonificati apposta e non tornano in allowlist: ' +
+            'Questi percorsi sono stati bonificati apposta e non tornano in allowlist: ' +
                 'credenziali (il difetto storico che ha dato origine alla regola 6), anagrafica ' +
-                'alunni e ricarica ticket mensa.',
+                'alunni, ricarica ticket mensa, registrazione push nativa e modulistica del ' +
+                'docente.',
         ).toEqual([]);
 
         // Controllo POSITIVO, accanto a quello negativo: i tre file esistono davvero e sono

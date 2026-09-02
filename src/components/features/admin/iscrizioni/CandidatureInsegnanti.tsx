@@ -17,6 +17,12 @@ import { useAdminIdentity } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 import { messaggioDaCorpo, messaggioErrore } from '@/lib/ui/esito-fetch'
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato'
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
+import { useFiltri } from '@/lib/ui/filtri/use-filtri'
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
+import { campiCandidature } from './filtri-candidature'
+import { opzioniSedeAttive } from '@/components/features/admin/opzioni-sede'
 
 /**
  * IL COCKPIT DELLE CANDIDATURE — lato segreteria del modulo `/lavora-con-noi`.
@@ -396,6 +402,14 @@ function accoda(precedenti: RigaElenco[], nuove: RigaElenco[]): RigaElenco[] {
 
 export function CandidatureInsegnanti() {
   const t = useTranslations('adminAltro')
+  /**
+   * Il catalogo della SCHERMATA, per le sole etichette dei filtri. Le parole
+   * degli STATI restano quelle di `adminAltro` — le stesse di `BadgeStato` —
+   * perché due cataloghi per la stessa parola sono due parole diverse nella
+   * stessa schermata, ed è ciò che il lock del glossario sorveglia.
+   */
+  const tm = useTranslations('adminModulistica')
+  const ts = useTranslations('shared')
   const f = useDateFormat()
   const { reFetchKey, sedi, sedeCorrente, effettive } = useSediAttive()
   /** Gli uuid dei plessi su cui questa persona ha titolo, adesso. */
@@ -455,6 +469,14 @@ export function CandidatureInsegnanti() {
 
   const [righe, setRighe] = useState<RigaElenco[]>([])
   const [totale, setTotale] = useState(0)
+  /**
+   * Quante candidature esistono in questa linguetta SENZA filtri.
+   *
+   * Non è un doppione di `totale`, che è il conteggio FILTRATO: è ciò che
+   * distingue «non si è candidato ancora nessuno» da «nessun risultato con
+   * questi filtri» quando l'elenco esce vuoto. Due frasi con due rimedi opposti.
+   */
+  const [totaleLinguetta, setTotaleLinguetta] = useState(0)
   // «La pagina è tornata più corta del limite», cioè: non ce n'è un'altra. È il
   // secondo segnale, e serve perché dalla pagina 2 in poi `total` può mancare:
   // con il solo `righe.length < totale` un `total` rimasto vecchio lascia
@@ -615,7 +637,7 @@ export function CandidatureInsegnanti() {
           ? t('candArretratoFermatoQuota', { n: inviate })
           : t('candArretratoFatto', { n: inviate, k: fallite }),
       })
-      await carica(reFetchKey)
+      await carica(reFetchKey, filtri.chiaveServer)
     } catch (e) {
       logClient({
         livello: 'error', evento: 'react',
@@ -648,11 +670,48 @@ export function CandidatureInsegnanti() {
     [r.nome ?? '', r.cognome ?? ''].map((s) => s.trim()).filter(Boolean).join(' ')
     || t('candSenzaNome')
 
-  async function carica(sediKey: string) {
+  /**
+   * I campi della barra: TUTTI `dove: 'server'`.
+   *
+   * Su 392 candidature caricate a pagine da 50, un filtro nel browser
+   * scriverebbe «3 risultati» mentre trecento righe mai caricate corrispondono
+   * al criterio. Il tipo `CampoFiltro` impedisce anche l'errore opposto: un
+   * campo server non può portare un estrattore, e `tsc` lo fa rispettare.
+   */
+  const campi = campiCandidature<RigaElenco>(
+    tm,
+    {
+      pending: t('candStatoAttesa'),
+      in_approvazione: t('candStatoInApprovazione'),
+      approvata: t('candStatoApprovata'),
+      rifiutata: t('candStatoRifiutata'),
+    },
+    opzioniSedeAttive(sedi, sediAttive),
+    (iso) => f.dataBreve(iso),
+  )
+  const filtri = useFiltri<RigaElenco>(campi)
+
+  /**
+   * @param azzera  la richiesta nasce da un CAMBIO DI FILTRO.
+   *
+   * ⚠️ L'ACCUMULO SI SVUOTA PRIMA CHE PARTA LA PAGINA 0, e non è una pulizia
+   * estetica: «Mostra altre» chiede `offset=righe.length`, quindi con le righe
+   * VECCHIE ancora in memoria l'offset punterebbe dentro il risultato di prima e
+   * `accoda` fonderebbe due insiemi diversi in una lista sola — righe che non
+   * corrispondono al filtro, con lo stesso aspetto di quelle che corrispondono,
+   * e un totale che non torna con nessuna delle due.
+   */
+  async function carica(sediKey: string, chiave: string, azzera = false) {
     const mio = ++gettoneElenco.current
+    if (azzera) {
+      setRighe([])
+      setTotale(0)
+      setFinePagine(false)
+    }
     setRicaricaInVolo(true)
     try {
-      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0`, {
+      const coda = chiave ? `&${chiave}` : ''
+      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`, {
         headers: { 'x-sedi': sediKey },
       })
       if (!res.ok) {
@@ -679,6 +738,19 @@ export function CandidatureInsegnanti() {
         // `total` è il conteggio ESATTO del server: con 60 candidature su 200,
         // la lunghezza della pagina direbbe «60» e nessuno saprebbe delle altre.
         setTotale(typeof json.total === 'number' ? json.total : json.data.length)
+        // Il totale della LINGUETTA (senza filtri): è ciò che distingue
+        // «nessuna candidatura» da «nessun risultato con questi filtri».
+        // ⚠️ RIPIEGO SUL TOTALE FILTRATO quando il server non lo manda: una
+        // risposta senza `totaleLinguetta` (un deploy più vecchio, una pagina in
+        // cache) non deve far sparire i riquadri e la barra — sarebbe una
+        // schermata che si svuota per un campo assente, non per un dato.
+        setTotaleLinguetta(
+          typeof json.totaleLinguetta === 'number'
+            ? json.totaleLinguetta
+            : typeof json.total === 'number'
+              ? json.total
+              : json.data.length,
+        )
         // La prima pagina porta con sé il suo `total`, che è fresco: da qui si
         // riparte fidandosi di quello, e `finePagine` torna a essere una domanda
         // aperta che risponderà la prima pagina successiva.
@@ -721,7 +793,7 @@ export function CandidatureInsegnanti() {
   /** Il ritenta del riquadro «elenco non letto»: rimette il velo e rilegge. */
   function riprovaElenco() {
     setCaricamento(true)
-    void carica(reFetchKey)
+    void carica(reFetchKey, filtri.chiaveServer)
   }
 
   /**
@@ -742,8 +814,17 @@ export function CandidatureInsegnanti() {
    */
   const caricaRef = useRef(carica)
   const chiudiRef = useRef(chiudiDettaglio)
+  /**
+   * Sedi attive e chiave dei filtri, sempre fresche, per gli effetti qui sotto.
+   * Un `ref` è stabile per costruzione: leggerle da qui evita di metterle fra le
+   * dipendenze di un effetto che NON deve ripartire quando cambiano.
+   */
+  const contestoRef = useRef({ sedi: reFetchKey, chiave: filtri.chiaveServer })
+  /** L'ultima `chiaveServer` per cui una pagina 0 è già partita. */
+  const chiaveCaricataRef = useRef<string>(filtri.chiaveServer)
   useEffect(() => { caricaRef.current = carica })
   useEffect(() => { chiudiRef.current = chiudiDettaglio })
+  useEffect(() => { contestoRef.current = { sedi: reFetchKey, chiave: filtri.chiaveServer } })
   /**
    * ⚠️ E IL PANNELLO SI CHIUDE, non solo l'elenco si ricarica.
    *
@@ -765,8 +846,33 @@ export function CandidatureInsegnanti() {
    */
   useEffect(() => {
     chiudiRef.current()
-    caricaRef.current(reFetchKey)
+    // ⚠️ NON azzera, e la differenza col cambio di FILTRO è deliberata. Qui le
+    // righe restano a schermo (attenuate) finché non arriva la sede nuova: è il
+    // comportamento che questo pannello ha sempre avuto, e svuotare farebbe
+    // lampeggiare «Nessuna candidatura ricevuta» su un elenco che sta
+    // arrivando. L'accodatura è comunque impossibile, perché `ricaricaInVolo`
+    // spegne «Mostra altre» per tutta la durata della lettura.
+    caricaRef.current(contestoRef.current.sedi, contestoRef.current.chiave, false)
   }, [reFetchKey])
+
+  /**
+   * ⚠️ IL CAMBIO DI FILTRO RICARICA, MA NON CHIUDE IL PANNELLO.
+   *
+   * È la ragione per cui questo effetto è SEPARATO da quello delle sedi e non un
+   * secondo elemento del suo array di dipendenze: la chiusura del pannello serve
+   * quando si perde il titolo su un plesso (una scheda che sopravvive al proprio
+   * scope è la premessa di una fuga), e non ha niente a che vedere con il
+   * digitare una lettera nella ricerca. Fusi in uno, la scheda aperta si
+   * chiuderebbe a ogni battuta di tasto.
+   *
+   * La guardia sul `ref` evita la doppia lettura al primo montaggio: lì il
+   * contesto è già quello di partenza, e l'effetto delle sedi ha già letto.
+   */
+  useEffect(() => {
+    if (chiaveCaricataRef.current === filtri.chiaveServer) return
+    chiaveCaricataRef.current = filtri.chiaveServer
+    caricaRef.current(contestoRef.current.sedi, filtri.chiaveServer, true)
+  }, [filtri.chiaveServer])
 
   /** Pagina successiva, in coda a quelle già mostrate. */
   async function caricaAltre() {
@@ -778,7 +884,11 @@ export function CandidatureInsegnanti() {
     const mio = gettoneElenco.current
     setCaricandoAltre(true)
     try {
-      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${righe.length}`, {
+      // ⚠️ LA STESSA `chiaveServer` DELLA PAGINA 0: l'offset conta le righe di
+      // QUESTO insieme, e una pagina che arrivasse da un insieme diverso si
+      // fonderebbe con le precedenti senza che niente lo mostri.
+      const coda = filtri.chiaveServer ? `&${filtri.chiaveServer}` : ''
+      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=${righe.length}${coda}`, {
         headers: { 'x-sedi': reFetchKey },
       })
       if (!res.ok) {
@@ -1033,7 +1143,7 @@ export function CandidatureInsegnanti() {
           route: ROUTE_LOG,
           stato: res.status,
         })
-        await carica(reFetchKey)
+        await carica(reFetchKey, filtri.chiaveServer)
         return
       }
       setConferma(null)
@@ -1074,7 +1184,7 @@ export function CandidatureInsegnanti() {
           }
         })
       }
-      await carica(reFetchKey)
+      await carica(reFetchKey, filtri.chiaveServer)
     } catch (e) {
       // Qui non si sa nemmeno se l'operazione sia avvenuta: la risposta non è
       // mai arrivata. È diverso da «respinta», e va detto con parole diverse.
@@ -1137,7 +1247,7 @@ export function CandidatureInsegnanti() {
         <AvvisoEsitiScartati voci={esitiScartati} onCongeda={() => setEsitiScartati([])} />
       )}
 
-      {!caricamento && righe.length > 0 && (
+      {!caricamento && totaleLinguetta > 0 && (
         <div className={`mb-6 grid grid-cols-2 gap-3 ${tuttoContato ? 'sm:grid-cols-4' : 'sm:grid-cols-1'}`}>
           <StatCard icon={Users} label={t('candStatTotale')} value={totale} tone="green" />
           {tuttoContato && (
@@ -1150,6 +1260,21 @@ export function CandidatureInsegnanti() {
         </div>
       )}
 
+      {/* La barra non si disegna su una linguetta che non ha mai avuto una riga:
+          filtrare il nulla non è un'operazione che qualcuno voglia fare, e la
+          pastiglia «Filtri» sopra il vuoto manda a cercare un filtro da togliere
+          che non esiste. */}
+      {totaleLinguetta > 0 && (
+        <BarraFiltri
+          campi={campi}
+          stato={filtri}
+          testi={testiBarraFiltri(ts)}
+          totale={totaleLinguetta}
+          mostrati={totale}
+          className="mb-5"
+        />
+      )}
+
       {caricamento ? (
         <div role="status" className="flex min-h-[40vh] items-center justify-center gap-3">
           <Loader2 className="h-6 w-6 animate-spin text-kidville-green" />
@@ -1159,6 +1284,12 @@ export function CandidatureInsegnanti() {
         // Tre stati, non due: «vuoto» è un'affermazione, e si fa solo quando
         // l'elenco è stato letto davvero. Se l'ultima lettura è fallita, qui non
         // si dice che non ci sono candidature: si dice che non si sa.
+        //
+        // ⚠️ E dal 2026-09-01 gli stati sono QUATTRO, perché con i filtri
+        // «nessuna candidatura» e «nessun risultato con questi filtri» smettono
+        // di coincidere: il primo si aspetta, il secondo si toglie. `totale` qui
+        // è quello della LINGUETTA, non quello filtrato — con quello sarebbero
+        // di nuovo indistinguibili.
         letturaFallita ? (
           <div className="rounded-card border border-kidville-warn/40 bg-kidville-warn-soft p-10 text-center">
             <AlertTriangle className="mx-auto mb-3 h-10 w-10 text-kidville-warn-strong" />
@@ -1171,6 +1302,18 @@ export function CandidatureInsegnanti() {
               {t('candElencoRiprova')}
             </button>
           </div>
+        ) : totaleLinguetta > 0 ? (
+          <StatoElenco
+            stato={decidiStatoElenco({
+              caricamento: false,
+              errore: false,
+              totale: totaleLinguetta,
+              mostrati: righe.length,
+            })}
+            testi={{ ...testiStatoElenco(ts), vuotoTitolo: t('candVuoto') }}
+            attivi={filtri.attivi}
+            onPulisci={filtri.pulisci}
+          />
         ) : (
           <div className="rounded-card border border-kidville-line bg-kidville-white p-10 text-center">
             <UserCheck className="mx-auto mb-3 h-10 w-10 text-kidville-neutral" />
@@ -1180,7 +1323,18 @@ export function CandidatureInsegnanti() {
       ) : (
         <div className="grid gap-5 md:grid-cols-2">
           {/* Elenco */}
-          <div className="space-y-3">
+          {/* ⚠️ L'attenuazione sta sulla COLONNA dell'elenco, non sulla griglia:
+              la griglia contiene anche il PANNELLO di dettaglio, che con un
+              filtro in attesa non ha niente da aspettare — segnarlo occupato
+              direbbe il falso a uno screen reader mentre qualcuno lo legge.
+              E `aria-busy` compare SOLO quando è vero (`|| undefined`): un
+              `aria-busy="false"` in più cambia quale elemento trova un
+              `querySelector('[aria-busy]')`, e l'unico che deve rispondere a
+              quella domanda è il contenitore del dettaglio. */}
+          <div
+            className={`space-y-3 ${filtri.inAttesa ? 'opacity-60' : ''}`}
+            aria-busy={filtri.inAttesa || undefined}
+          >
             {/* Un vero titolo, non un `p` vestito da titolo: con uno screen reader
                 è l'unico punto di salto che questo frammento offre. */}
             <h2 className="text-xs font-bold uppercase tracking-wider text-kidville-sub">{t('candListaHeader')}</h2>
@@ -1284,7 +1438,15 @@ export function CandidatureInsegnanti() {
                 onClick={caricaAltre}
                 // Spento anche mentre una RILETTURA è in volo: accodare alla
                 // lista vecchia mescolerebbe due plessi (vedi il commento in cima).
-                disabled={caricandoAltre || ricaricaInVolo}
+                // ⚠️ Spento anche mentre un cambio di filtro è in ATTESA
+                // (`inAttesa`, i 300 ms del debounce): in quella finestra
+                // `chiaveServer` è ancora quella VECCHIA, e un clic qui
+                // chiederebbe la pagina successiva del risultato di PRIMA per
+                // accodarla a un elenco che sta per essere sostituito. Misurato
+                // in `__tests__/components/CandidatureInsegnanti-filtri-paginazione.test.tsx`:
+                // senza questa condizione parte una richiesta con `offset=50` e
+                // senza il filtro.
+                disabled={caricandoAltre || ricaricaInVolo || filtri.inAttesa}
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-kidville-line px-4 py-2.5 font-barlow text-sm font-bold uppercase tracking-[0.03em] text-kidville-green hover:bg-kidville-green-soft disabled:opacity-50"
               >
                 {caricandoAltre && <Loader2 size={14} className="animate-spin" />}

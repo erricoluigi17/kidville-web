@@ -38,6 +38,7 @@ import { useTranslations } from 'next-intl';
 import { X, Users, ChevronRight, Check, School } from 'lucide-react';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
 import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
+import { CambiaProfiloMenuButton } from '@/components/ui/CambiaProfiloMenuButton';
 import { useOverlayIndietro } from '@/lib/mobile/overlay-indietro';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { NAV_GROUPS, visibleItem } from './admin-nav-config';
@@ -260,8 +261,11 @@ export function AdminMenuSheet({ open, onClose, withUser, ruolo, returnFocusRef 
           ))}
         </div>
 
-        {/* Accessibilità + uscita, in fondo come nel BottomNav genitore/docente. */}
+        {/* Cambio di veste + accessibilità + uscita, in fondo come nel BottomNav
+            genitore/docente. La prima voce esiste solo per chi ha davvero due
+            profili: qui è il caso della segreteria che è anche genitore. */}
         <div className="mt-4 border-t border-kidville-line pt-3 flex flex-col gap-1">
+          <CambiaProfiloMenuButton className={`${FOOTER_BTN_CLS} text-kidville-green hover:bg-kidville-green-soft disabled:opacity-60`} />
           <ContrastMenuButton className={`${FOOTER_BTN_CLS} text-kidville-ink hover:bg-kidville-green-soft`} />
           <LogoutMenuButton className={`${FOOTER_BTN_CLS} text-kidville-error hover:bg-kidville-error-soft disabled:opacity-60`} />
         </div>

@@ -1,5 +1,13 @@
 /**
- * Il contratto dei dodici generatori.
+ * Il contratto dei generatori di email.
+ *
+ * ⚠️ Qui c'era scritto «i dodici generatori», e non erano più dodici da un pezzo:
+ * la copia della candidatura alla sede li ha fatti tredici il 2026-08-20, «la
+ * password è stata cambiata» quattordici il 2026-09-01, e questa riga ha
+ * continuato a dire il numero vecchio. Il conteggio è uscito da qui per la stessa
+ * ragione per cui è uscito dal nome del file di test: un numero in un commento non
+ * si aggiorna da solo, e un documento che descrive qualcosa che non c'è più è
+ * peggio di nessun documento.
  *
  * Ognuno è una funzione PURA: riceve dati già formattati e un `ContestoSede`
  * già risolto, e ritorna le tre cose che servono a spedire. Nessun file di

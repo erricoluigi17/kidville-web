@@ -15,6 +15,7 @@
       "/admin": "Home segreteria",
       "/segreteria": "Home segreteria",
       "/auth/login": "Accesso",
+      "/auth/nuova-password": "Nuova password",
       "/privacy": "Privacy",
       "/termini": "Termini",
       "/assistenza": "Assistenza",

@@ -6,6 +6,9 @@ import { axe, toHaveNoViolations } from 'jest-axe'
 
 import itAdminAltro from '../../messages/it/adminAltro.json'
 import enAdminAltro from '../../messages/en/adminAltro.json'
+// Le frasi degli ERRORI del server vivono nel catalogo condiviso: qui si verifica che
+// a schermo arrivi quella, e non la prosa italiana che il server manda accanto al codice.
+import itShared from '../../messages/it/shared.json'
 
 expect.extend(toHaveNoViolations)
 
@@ -44,6 +47,17 @@ expect.extend(toHaveNoViolations)
  */
 
 vi.mock('@/lib/logging/client', () => ({ logClient: vi.fn(), nomeErrore: () => 'Error' }))
+
+/**
+ * IL RUOLO DI CHI GUARDA è pilotabile: serve al comando «aggiungi il ruolo di
+ * insegnante», che si disegna solo per la Direzione.
+ *
+ * `''` è il default, ed è quello giusto: è il valore che `useRuoloCockpit` restituisce
+ * fuori dal provider e mentre la fetch del ruolo è ancora in volo. Non abilita niente,
+ * quindi nessuno dei test già scritti cambia significato.
+ */
+let ruoloCockpit = ''
+vi.mock('@/lib/context/admin-identity', () => ({ useRuoloCockpit: () => ruoloCockpit }))
 
 /** Il collegamento profondo è pilotabile: è l'unico modo di provare che funziona. */
 let paramsCorrenti = new URLSearchParams('tab=personale')
@@ -180,6 +194,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-08-12T09:00:00Z'))
   paramsCorrenti = new URLSearchParams('tab=personale')
   reFetchKeyCorrente = 'sc-alfa'
+  ruoloCockpit = ''
   sediContesto = SEDE_SOLA
   effettiveContesto = ['sc-alfa']
   fetchMock.mockImplementation((url: string) => ok(rispostaPredefinita(url)))
@@ -194,6 +209,22 @@ afterEach(() => {
 })
 
 import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale'
+
+/**
+ * I comandi e le tendine DELLA PRATICA, cercati dentro il pannello.
+ *
+ * ⚠️ Dal 2026-09-01 sopra l'elenco c'è la barra filtri, e porta bottoni e
+ * `<select>` che una ricerca a pagina intera pesca per primi: la pastiglia di
+ * stato «Approvata» corrisponde a `/Approva/i` e sta nel DOM PRIMA del pannello,
+ * quindi `getAllByRole('button', …)[0]` restituiva la pastiglia del FILTRO
+ * invece del pulsante «Approva» della pratica; e `getByRole('combobox')` da solo
+ * ne trova più di uno. In entrambi i casi il test misurava un altro elemento —
+ * verde o rosso, non stava guardando ciò che dice di guardare.
+ *
+ * Il pannello è un `role="dialog"`: il perimetro è già dichiarato dal markup,
+ * non serve inventare un `data-testid`.
+ */
+const nelPannello = () => within(screen.getByRole('dialog'))
 
 /** Apre la pratica di Anna e aspetta che il pannello sia disegnato. */
 async function apriAnna() {
@@ -713,15 +744,17 @@ describe('PratichePersonale — pannello', () => {
       itAdminAltro.pratApprova, itAdminAltro.pratRifiuta, itAdminAltro.pratSposta,
       itAdminAltro.pratApriFronte, itAdminAltro.pratApriRetro,
     ]) {
-      const el = screen.getAllByRole('button', { name: new RegExp(nome, 'i') })[0]
+      // ⚠️ DENTRO IL PANNELLO: la barra filtri ha una pastiglia «Approvata», che
+      // una regex non ancorata su «Approva» pesca — e sta prima nel DOM.
+      const el = nelPannello().getAllByRole('button', { name: new RegExp(nome, 'i') })[0]
       expect(el.className, `«${nome}» non dichiara 44 px`).toContain('min-h-[44px]')
     }
 
     // …e i due del riquadro di conferma, che sono i più piccoli di tutti e i più
     // pesanti: «Confermo» crea un accesso.
-    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
+    fireEvent.click(nelPannello().getByRole('button', { name: itAdminAltro.pratApprova }))
     for (const nome of [itAdminAltro.pratConferma, itAdminAltro.pratAnnulla]) {
-      const el = screen.getAllByRole('button', { name: new RegExp(nome, 'i') })[0]
+      const el = nelPannello().getAllByRole('button', { name: new RegExp(nome, 'i') })[0]
       expect(el.className, `«${nome}» non dichiara 44 px`).toContain('min-h-[44px]')
     }
     // E i collegamenti col nome in tabella, che sono il bersaglio più stretto di tutti.
@@ -823,23 +856,28 @@ describe('PratichePersonale — pannello', () => {
     // destinazione è un plesso che NON gestisce. Con l'elenco ristretto al contesto,
     // l'unica persona capace di rimediare sarebbe l'unica che non ne ha bisogno.
     await apriAnna()
-    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratSposta }))
-    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument())
+    fireEvent.click(nelPannello().getByRole('button', { name: itAdminAltro.pratSposta }))
+    // ⚠️ La tendina DEL PANNELLO: la barra filtri ne ha altre (stato, scadenza,
+    // sede, tipo di documento…), e `getByRole('combobox')` da solo ne trova più
+    // di una.
+    await waitFor(() => expect(nelPannello().getByRole('combobox')).toBeInTheDocument())
     await waitFor(() =>
-      expect(within(screen.getByRole('combobox')).getByText('Kidville Beta')).toBeInTheDocument(),
+      expect(within(nelPannello().getByRole('combobox')).getByText('Kidville Beta')).toBeInTheDocument(),
     )
     // La sede in cui la pratica già sta non è una destinazione.
-    expect(within(screen.getByRole('combobox')).queryByText('Kidville Alfa')).not.toBeInTheDocument()
+    expect(
+      within(nelPannello().getByRole('combobox')).queryByText('Kidville Alfa'),
+    ).not.toBeInTheDocument()
   })
 
   it('SPOSTA DI SEDE: senza destinazione il pulsante resta spento', async () => {
     await apriAnna()
-    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratSposta }))
-    await waitFor(() => expect(screen.getByRole('combobox')).toBeInTheDocument())
-    const conferma = screen.getByRole('button', { name: itAdminAltro.pratConferma })
+    fireEvent.click(nelPannello().getByRole('button', { name: itAdminAltro.pratSposta }))
+    await waitFor(() => expect(nelPannello().getByRole('combobox')).toBeInTheDocument())
+    const conferma = nelPannello().getByRole('button', { name: itAdminAltro.pratConferma })
     expect(conferma).toBeDisabled()
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'sc-beta' } })
-    expect(screen.getByRole('button', { name: itAdminAltro.pratConferma })).not.toBeDisabled()
+    fireEvent.change(nelPannello().getByRole('combobox'), { target: { value: 'sc-beta' } })
+    expect(nelPannello().getByRole('button', { name: itAdminAltro.pratConferma })).not.toBeDisabled()
   })
 
   it('DUE facce, DUE pulsanti: ognuno apre il SUO percorso', async () => {
@@ -1426,6 +1464,241 @@ describe('PratichePersonale — «Confermo» spento su un’approvazione già pe
     fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
     expect(screen.getByText(itAdminAltro.pratConfermaAccountIgnoto)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: itAdminAltro.pratConferma })).not.toBeDisabled()
+  })
+})
+
+/**
+ * IL VICOLO CIECO DEL «GENITORE», E LA PORTA CHE ORA LO APRE.
+ *
+ * ─── IL FATTO ───────────────────────────────────────────────────────────────
+ *
+ * Il server risponde da mesi «serve una decisione della segreteria per aggiungere il
+ * ruolo di insegnante senza togliere l'accesso alle schede dei figli», e fino al
+ * 2026-09-01 quella decisione non aveva nessun posto in cui essere presa: il riquadro
+ * diceva che l'approvazione sarebbe fallita, «Confermo» era spento, e il rimedio
+ * suggerito («va fatto a mano dal pannello Personale») non esisteva — quel pannello i
+ * genitori non li elenca. Chi operava restava con una promessa e un muro.
+ *
+ * ─── COSA TIENE FERMO QUESTO BLOCCO ─────────────────────────────────────────
+ *
+ *  1. IL COMANDO ESISTE, e solo dove serve: sull'esito `genitore`. Sugli altri
+ *     quattro non c'è nessuna porta da aprire, e disegnarlo lì sarebbe un invito a
+ *     premere su qualcosa che non c'entra.
+ *  2. È DELLA DIREZIONE. Il gate vero è sul server; qui si verifica che la segreteria
+ *     legga PERCHÉ non può, invece di trovare un pulsante grigio e muto — e che «non
+ *     ancora saputo» (`''`) non venga scambiato per «non può».
+ *  3. NON BASTA UN TOCCO. Senza la spunta il comando resta spento, e il motivo è
+ *     scritto.
+ *  4. MANDA L'UID RISOLTO E LA SEDE DELLA PRATICA. Non l'email (in `utenti` la chiave
+ *     è sensibile alle maiuscole) e non la sede di chi guarda: quella dichiarata.
+ *  5. DOPO, LO SGUARDO SI RILEGGE DAL SERVER. Dedurre lato client che «adesso si può
+ *     approvare» vorrebbe dire riaccendere «Confermo» su una risposta che nessuno ha
+ *     letto — cioè lo stesso difetto, dall'altra parte.
+ */
+describe('PratichePersonale — «aggiungi il ruolo di insegnante a questo account»', () => {
+  const ACCOUNT_GENITORE = {
+    esiste: true, ruolo: 'genitore', sede_gestita: true, sede_nome: 'Kidville Alfa',
+  }
+  const UID = '99999999-9999-4999-8999-999999999999'
+
+  /** Le chiamate alla porta nuova, per poterle guardare una per una. */
+  const chiamateCollega = () =>
+    fetchMock.mock.calls.filter((c) => String(c[0]).includes('/api/admin/staff/collega-profilo-esistente'))
+
+  function montaFinto(opts: {
+    account?: Record<string, unknown> | null
+    uid?: string | null
+    postOk?: boolean
+    corpoPost?: unknown
+    statoPost?: number
+  } = {}) {
+    const account = opts.account === undefined ? ACCOUNT_GENITORE : opts.account
+    let approvato = false
+    fetchMock.mockImplementation((url: string, init?: { method?: string }) => {
+      const u = String(url)
+      if (u.includes('/api/admin/staff/collega-profilo-esistente')) {
+        if (init?.method === 'POST') {
+          approvato = true
+          return ok(opts.corpoPost ?? { ok: true }, opts.statoPost ?? (opts.postOk === false ? 409 : 200))
+        }
+        return ok({
+          trovato: true,
+          authUserId: opts.uid === undefined ? UID : opts.uid,
+          ruolo: 'genitore',
+          sedeGestita: true,
+          ponteGenitore: true,
+        })
+      }
+      if (u.includes('id=') && !u.includes('doc=')) {
+        // Dopo il collegamento riuscito, il SERVER dice un'altra cosa: quell'email non
+        // è più solo di un genitore. È la rilettura, e deve arrivare da qui.
+        const acc = approvato
+          ? { esiste: true, ruolo: 'educator', sede_gestita: true, sede_nome: 'Kidville Alfa' }
+          : account
+        return ok(acc ? { data: DETTAGLIO_ANNA, account: acc } : { data: DETTAGLIO_ANNA })
+      }
+      return ok(rispostaPredefinita(u))
+    })
+  }
+
+  /** Apre Anna e il riquadro di conferma dell'approvazione. */
+  async function apriConferma() {
+    await apriAnna()
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratApprova }))
+  }
+
+  it('🔴 la DIREZIONE trova il comando, e il vicolo cieco ha un’uscita', async () => {
+    ruoloCockpit = 'admin'
+    montaFinto()
+    await apriConferma()
+
+    // La frase del server resta: dice ancora che l'approvazione verrà rifiutata.
+    expect(screen.getByText(itAdminAltro.pratConfermaAccountGenitore)).toBeInTheDocument()
+    // …ma adesso, sotto, c'è il comando.
+    expect(screen.getByText(itAdminAltro.pratRuoloAggiuntivoTitolo)).toBeInTheDocument()
+    const comando = screen.getByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando })
+    expect(comando).toBeInTheDocument()
+
+    // L'uid si risolve dalla porta nuova, non arriva col dettaglio della pratica.
+    await waitFor(() => expect(chiamateCollega().length).toBeGreaterThan(0))
+    expect(String(chiamateCollega()[0][0])).toContain(encodeURIComponent('recapito.da.non.mostrare@example.test'))
+  })
+
+  it('🔴 SENZA la spunta il comando resta spento, e il motivo è scritto', async () => {
+    ruoloCockpit = 'coordinator'
+    montaFinto()
+    await apriConferma()
+    await waitFor(() => expect(chiamateCollega().length).toBeGreaterThan(0))
+
+    const comando = screen.getByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando })
+    await waitFor(() => expect(comando).toBeDisabled())
+    expect(screen.getByText(itAdminAltro.pratRuoloAggiuntivoSpuntaMancante)).toBeInTheDocument()
+
+    // Premerlo non manda niente: un comando spento che parte lo stesso è peggio di
+    // nessun comando.
+    fireEvent.click(comando)
+    await attendi(20)
+    expect(chiamateCollega().filter((c) => (c[1] as { method?: string } | undefined)?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('🔴 con la spunta manda l’UID risolto, la SEDE DELLA PRATICA e `conferma: true`', async () => {
+    ruoloCockpit = 'admin'
+    montaFinto()
+    await apriConferma()
+    await waitFor(() => expect(chiamateCollega().length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    const comando = screen.getByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando })
+    await waitFor(() => expect(comando).not.toBeDisabled())
+    fireEvent.click(comando)
+
+    await waitFor(() => {
+      const post = chiamateCollega().find((c) => (c[1] as { method?: string } | undefined)?.method === 'POST')
+      expect(post, 'la POST non è partita').toBeTruthy()
+      expect(JSON.parse(String((post![1] as { body?: string }).body))).toEqual({
+        authUserId: UID,
+        ruolo: 'educator',
+        // La sede della PRATICA: mai quella di chi guarda, mai indovinata.
+        scuolaId: 'sc-alfa',
+        conferma: true,
+      })
+    })
+
+    // …e l'esito lo si legge, in una regione che si annuncia.
+    await waitFor(() => expect(screen.getByText(itAdminAltro.pratRuoloAggiuntivoFatto)).toBeInTheDocument())
+  })
+
+  it('🔴 dopo il collegamento lo sguardo si RILEGGE dal server, e «Confermo» si riaccende', async () => {
+    ruoloCockpit = 'admin'
+    montaFinto()
+    await apriConferma()
+    await waitFor(() => expect(chiamateCollega().length).toBeGreaterThan(0))
+
+    // Prima: il pannello dà l'approvazione per persa.
+    expect(screen.getByRole('button', { name: itAdminAltro.pratConferma })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando }))
+
+    // Dopo: la risposta nuova del server dice `educator`, e il pannello si adegua —
+    // senza che il riquadro di conferma venga chiuso sotto le dita.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: itAdminAltro.pratConferma })).not.toBeDisabled(),
+    )
+    expect(screen.queryByText(itAdminAltro.pratConfermaAccountGenitore)).not.toBeInTheDocument()
+  })
+
+  it('🔴 la SEGRETERIA legge perché non può, invece di trovare un pulsante muto', async () => {
+    ruoloCockpit = 'segreteria'
+    montaFinto()
+    await apriConferma()
+
+    expect(screen.getByText(itAdminAltro.pratRuoloAggiuntivoSoloDirezione)).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando }),
+      'il comando non si disegna a chi il server rifiuterebbe',
+    ).not.toBeInTheDocument()
+    // …e nessuna chiamata alla porta nuova: l'uid non esce verso chi non può usarlo.
+    await attendi(20)
+    expect(chiamateCollega()).toHaveLength(0)
+  })
+
+  it('🔴 «non ancora saputo» NON è «non può»: lo dice, e non accusa nessuno', async () => {
+    ruoloCockpit = ''
+    montaFinto()
+    await apriConferma()
+    expect(screen.getByText(itAdminAltro.pratRuoloAggiuntivoRuoloInCorso)).toBeInTheDocument()
+    expect(screen.queryByText(itAdminAltro.pratRuoloAggiuntivoSoloDirezione)).not.toBeInTheDocument()
+  })
+
+  it('🔴 uid NON risolto ⇒ comando spento col motivo, e niente POST alla cieca', async () => {
+    ruoloCockpit = 'admin'
+    montaFinto({ uid: null })
+    await apriConferma()
+    await waitFor(() => expect(chiamateCollega().length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    const comando = screen.getByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando })
+    await waitFor(() => expect(comando).toBeDisabled())
+    expect(screen.getByText(itAdminAltro.pratRuoloAggiuntivoNonApplicabile)).toBeInTheDocument()
+    fireEvent.click(comando)
+    await attendi(20)
+    expect(chiamateCollega().filter((c) => (c[1] as { method?: string } | undefined)?.method === 'POST')).toHaveLength(0)
+  })
+
+  it('🔴 la POST che fallisce si LEGGE, e non finge che sia andata bene', async () => {
+    ruoloCockpit = 'admin'
+    montaFinto({
+      statoPost: 409,
+      corpoPost: { error: 'ignorato', codice: 'PROFILO_DOPPIO_GIA_PERSONALE' },
+    })
+    await apriConferma()
+    await waitFor(() => expect(chiamateCollega().length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: itAdminAltro.pratRuoloAggiuntivoComando }))
+
+    // La frase arriva dal CATALOGO tramite il codice, non dalla prosa del server.
+    await waitFor(() => expect(screen.getByText(itShared.erroreProfiloDoppioGiaPersonale)).toBeInTheDocument())
+    expect(screen.queryByText(itAdminAltro.pratRuoloAggiuntivoFatto)).not.toBeInTheDocument()
+  })
+
+  it('CONTROLLO POSITIVO: sugli altri esiti il comando NON compare', async () => {
+    ruoloCockpit = 'admin'
+    for (const account of [
+      { esiste: true, ruolo: 'admin', sede_gestita: true, sede_nome: 'Kidville Alfa' },
+      { esiste: false, ruolo: null, sede_gestita: null, sede_nome: null },
+      { esiste: true, ruolo: null, sede_gestita: false, sede_nome: null },
+      null,
+    ]) {
+      montaFinto({ account })
+      await apriConferma()
+      expect(
+        screen.queryByText(itAdminAltro.pratRuoloAggiuntivoTitolo),
+        `il comando è comparso su un esito che non è «genitore»: ${JSON.stringify(account)}`,
+      ).not.toBeInTheDocument()
+      cleanup()
+    }
   })
 })
 

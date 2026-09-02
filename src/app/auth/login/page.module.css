@@ -65,71 +65,12 @@
 }
 
 /* ───────── Sfondo decorativo ─────────
-   Due livelli: i blob restano agganciati agli angoli del viewport (su telefono
-   coincidono con gli angoli dello schermo del design), le iconcine seguono la
-   colonna centrale così su desktop non scappano ai bordi. */
-.deco {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  overflow: hidden; /* taglia la parte fuori schermo del cuneo in alto */
-}
-
-/* Blob angolari — path e colori presi dal design (deco-svg, viewBox 402×874). */
-.blob {
-  position: absolute;
-  display: block;
-}
-/* Cuneo verde in alto a destra: nel design è traslato di -175px oltre il bordo. */
-.blobTop {
-  top: -175px;
-  right: 0;
-  width: 84px;
-  height: 250px;
-  color: var(--color-kidville-green);
-}
-.blobBottomLeft {
-  bottom: 0;
-  left: 0;
-  width: 190px;
-  height: 132px;
-}
-.blobBottomRight {
-  bottom: 0;
-  right: 0;
-  width: 168px;
-  height: 156px;
-}
-.fillGreen {
-  fill: var(--color-kidville-green);
-}
-.fillTeal {
-  fill: #0a8072; /* accento del design, senza token: la deco non esiste in Alto Contrasto */
-}
-.fillYellow {
-  fill: var(--color-kidville-yellow);
-}
-
-/* Iconcine: coordinate del design, ancorate alla colonna centrale. */
-.icons {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 100%;
-  max-width: 402px;
-}
-.ico {
-  position: absolute;
-  color: var(--color-kidville-green-dark);
-  opacity: 0.11;
-}
-.icoStar { top: 120px; left: 34px; width: 36px; }
-.icoCloud { top: 150px; right: 104px; width: 50px; opacity: 0.09; }
-.icoRing { top: 300px; right: 30px; width: 44px; }
-.icoHouse { top: 352px; left: 24px; width: 44px; }
+   ⚠️ NON STA PIÙ QUI. Il componente e le sue regole vivono in
+   `src/components/features/auth/sfondo-auth.module.css`, insieme a
+   `SfondoAuth.tsx`: da quando le schermate sotto `/auth` sono DUE (questa e
+   l'interstiziale del primo accesso) la stessa scenografia serve a tutte e due,
+   e «stessa» ricopiata è due cose che si somigliano finché qualcuno non ne tocca
+   una. Le regole sono state SPOSTATE, non riscritte. */
 
 /* ───────── Colonna centrale ───────── */
 .scene {

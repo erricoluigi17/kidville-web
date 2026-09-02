@@ -10,7 +10,15 @@ import { Btn } from '@/components/ui/Btn';
 // consegna la pagina al browser di sistema, e il genitore che sta accettando i
 // consensi al PRIMO accesso si ritroverebbe fuori dall'app a metà onboarding (R25).
 import { LinkInterno } from '@/components/ui/LinkInterno';
-import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
+import { soloCatalogoDaCorpo, type CodiceErrore } from '@/lib/ui/esito-fetch';
+// LA REGOLA DELLA PASSWORD STA IN UN POSTO SOLO, ed è questa. Fino al 2026-09-01
+// qui c'era `password.length < 8` mentre la route ne pretendeva dieci con una
+// lettera e una cifra: chi ne scriveva nove passava di qui e veniva respinto dal
+// server — con «Operazione non riuscita», perché questa schermata la prosa del
+// server non la mostra. Il modulo non importa nulla (né Node né server) proprio
+// per poter essere chiamato anche da qui: lo verifica
+// `__tests__/lib/regole-password.test.ts`.
+import { valutaPasswordNuova } from '@/lib/auth/regole-password';
 
 // Onboarding genitore (DL-045): primo accesso → password + consensi GDPR.
 // L'identità viene dalla sessione (URL → localStorage → /api/me), senza demo.
@@ -32,7 +40,26 @@ function Inner() {
     setError(null);
     if (!privacy) { setError(t('erroreAccettaPrivacy')); return; }
     if (!termini) { setError(t('erroreAccettaTermini')); return; }
-    if (password && password.length < 8) { setError(t('errorePasswordCorta')); return; }
+    // La password è FACOLTATIVA: chi accetta solo i consensi non viene giudicato.
+    // Ciò che si giudica, si giudica con lo STESSO verdetto del server, perché è
+    // la stessa funzione — è il punto di tutto questo.
+    if (password) {
+      const regola = valutaPasswordNuova(password);
+      if (!regola.ok) {
+        // I quattro motivi della regola hanno lo stesso nome dei quattro codici
+        // d'errore dichiarati in `CODICI_ERRORE`, e questa riga è il punto in cui
+        // il compilatore lo verifica: se un domani la regola ne aggiungesse uno
+        // senza dichiararlo, `tsc` diventerebbe rosso qui invece di lasciare che
+        // il genitore legga la frase generica.
+        const codice: CodiceErrore = regola.codice;
+        // `soloCatalogoDaCorpo` è la stessa strada del rifiuto che arriva dal
+        // server: codice → frase tradotta nella lingua dell'interfaccia. Il
+        // ripiego non è più «operazione non riuscita» ma i requisiti, che almeno
+        // dicono che cosa si sta chiedendo.
+        setError(soloCatalogoDaCorpo({ codice }, t('passwordRequisiti')));
+        return;
+      }
+    }
     if (!parentId) { setError(t('erroreIdentita')); return; }
     setSaving(true);
     try {
@@ -65,17 +92,32 @@ function Inner() {
         </div>
 
         <div>
-          <label className="block font-maven text-xs font-semibold text-kidville-green mb-1">{t('passwordLabel')}</label>
+          {/* `htmlFor`/`id`: senza il legame, chi usa uno screen reader arriva su
+              un campo password senza nome — e nessuno legge i requisiti qui sotto. */}
+          <label htmlFor="onboarding-password" className="block font-maven text-xs font-semibold text-kidville-green mb-1">{t('passwordLabel')}</label>
           <div className="relative">
             <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-muted" />
             <input
+              id="onboarding-password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder={t('passwordPlaceholder')}
+              aria-describedby="onboarding-password-requisiti"
               className="w-full pl-9 pr-3 py-2.5 border-2 border-kidville-line rounded-xl font-maven text-sm focus:outline-none focus:border-kidville-green"
             />
           </div>
+          {/* I requisiti si leggono PRIMA di sbagliare. Il placeholder da solo non
+              basta: sparisce al primo carattere digitato, cioè un istante prima del
+              momento in cui servirebbe. */}
+          {/* `text-kidville-sub` e NON `-muted`, che è il grigio dei tre vicini in
+              questa stessa schermata: 2,51:1 su bianco, sotto il 4,5:1 di WCAG AA
+              (lock `__tests__/a11y/testo-muted-allowlist.test.ts`). Una riga che
+              esiste per essere letta PRIMA di sbagliare non può essere quella che si
+              legge peggio. */}
+          <p id="onboarding-password-requisiti" className="mt-1.5 font-maven text-xs text-kidville-sub leading-snug">
+            {t('passwordRequisiti')}
+          </p>
         </div>
 
         <label className="flex items-start gap-2.5 cursor-pointer">

@@ -244,6 +244,28 @@ afterEach(() => {
 
 import { CandidatureInsegnanti, CHIAVE_DISPONIBILITA } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti'
 
+/**
+ * IL VELO di caricamento del pannello, distinto dal conteggio della barra filtri.
+ *
+ * Dal 2026-09-01 questa schermata ha DUE `role="status"`: il velo del dettaglio
+ * («Caricamento…») e la riga «12 risultati su 387» della barra, che è una
+ * regione viva perché chi usa uno screen reader deve sentire quanti risultati
+ * restano mentre filtra. `getByRole('status')` ne trova due e fallisce per una
+ * ragione che non c'entra con i casi qui sotto.
+ *
+ * ⚠️ E non si può nemmeno restringere con `{ name: /caricamento/i }`: un
+ * `role="status"` NON prende il nome accessibile dal proprio contenuto, quindi
+ * quel filtro non troverebbe niente — misurato, ed è il motivo per cui qui c'è
+ * una funzione invece di un'opzione.
+ */
+function veloDiCaricamento(): HTMLElement | null {
+  return (
+    screen
+      .queryAllByRole('status')
+      .find((el) => el.getAttribute('data-testid') !== 'conteggio-risultati') ?? null
+  )
+}
+
 /** Apre il dettaglio della prima candidatura e aspetta che sia disegnato. */
 async function apriPrima() {
   const utils = render(<CandidatureInsegnanti />)
@@ -398,7 +420,12 @@ describe('CandidatureInsegnanti — elenco', () => {
     fireEvent.click(screen.getByText('Anna Bianchi'))
     await waitFor(() => expect(screen.getByText('Apri il curriculum')).toBeInTheDocument())
     // Nel pannello: la fascia dell'enum tradotta, quella ignota grezza…
-    expect(screen.getByText('Infanzia (3-6)')).toBeInTheDocument()
+    // ⚠️ `:not(option)`: dal 2026-09-01 la barra filtri offre le stesse fasce in
+    // una tendina, quindi «Infanzia (3-6)» sta a schermo DUE volte — una come
+    // voce di filtro, una come dato della candidatura. Qui si misura la seconda:
+    // senza il selettore, `getByText` trova due elementi e fallisce per una
+    // ragione che non c'entra con ciò che il caso sorveglia.
+    expect(screen.getByText('Infanzia (3-6)', { selector: ':not(option)' })).toBeInTheDocument()
     expect(screen.getByText('sezione_primavera')).toBeInTheDocument()
     // …e la posizione ignota compare due volte, perché il pannello ristampa le
     // posizioni accanto alle fasce.
@@ -779,11 +806,14 @@ describe('CandidatureInsegnanti — due aperture ravvicinate', () => {
     fireEvent.click(screen.getByText('Anna Bianchi'))
 
     await attendi(30)
-    expect(screen.getByRole('status')).toBeInTheDocument()
+    // Il velo, NON il conteggio della barra filtri: anche quello è un
+    // `role="status"` (annuncia «12 risultati su 387» a chi usa uno screen
+    // reader). Si nomina quello che si vuole misurare.
+    expect(veloDiCaricamento()).not.toBeNull()
     expect(screen.queryByText('bruno@example.test')).not.toBeInTheDocument()
 
     await waitFor(() => expect(screen.getByText('anna@example.test')).toBeInTheDocument(), { timeout: 2000 })
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(veloDiCaricamento()).toBeNull()
   })
 })
 
@@ -1599,7 +1629,9 @@ describe('CandidatureInsegnanti — le etichette dei campi che decidono', () => 
     // quel valore in tabella ce l'hanno.
     const { container } = await apriPrima()
 
-    expect(screen.getByText('Laurea magistrale')).toBeInTheDocument()
+    // `:not(option)`: il titolo di studio è anche una voce della tendina «Titolo
+    // di studio» nella barra filtri. Qui si misura il DATO della candidatura.
+    expect(screen.getByText('Laurea magistrale', { selector: ':not(option)' })).toBeInTheDocument()
     expect(screen.getByText('Tempo pieno')).toBeInTheDocument()
 
     // ⚠️ E anche l'ETICHETTA, non solo il valore (aggiunto al giro 4 del 2026-08-25).
@@ -1930,8 +1962,9 @@ describe('CandidatureInsegnanti — accessibilità e cataloghi', () => {
 
     fireEvent.click(screen.getByText('Anna Bianchi'))
     expect(contenitore).toHaveAttribute('aria-busy', 'true')
-    // …e il velo è annunciato, non è solo una rotella che gira.
-    expect(screen.getByRole('status')).toHaveTextContent(/caricamento/i)
+    // …e il velo è annunciato, non è solo una rotella che gira. Si NOMINA,
+    // perché la barra filtri ha un `role="status"` suo (il conteggio).
+    expect(veloDiCaricamento()).toHaveTextContent(/caricamento/i)
 
     await waitFor(() => expect(contenitore).toHaveAttribute('aria-busy', 'false'), { timeout: 2000 })
   })

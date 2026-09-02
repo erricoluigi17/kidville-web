@@ -29,6 +29,15 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: vi.fn().mockResolvedValue({ user: { id: 'g1', role: 'genitore', scuola_id: null } }),
 }))
 vi.mock('@/lib/anagrafiche/legami', () => ({ genitoreHasFiglio: vi.fn(async () => true) }))
+// `parent/submissions:POST` non chiede più «di che ruolo sei» ma «questo bambino ti
+// è raggiungibile?»: dal 2026-09-01 il controllo IDOR passa da
+// `requireParentOfStudent` (che biforca sul LEGAME, non sulla veste) invece che da
+// `role === 'genitore' && genitoreHasFiglio(…)` — riga che, per chiunque non
+// agisse da genitore, non controllava niente. Qui il bambino è raggiungibile: il
+// soggetto del file è la morosità, non lo scope.
+vi.mock('@/lib/auth/require-parent', () => ({
+  requireParentOfStudent: vi.fn(async () => ({ user: { id: 'g1', role: 'genitore', scuola_id: null } })),
+}))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn(async () => {}) }))
 vi.mock('@/lib/notifiche/destinatari', () => ({ staffScuola: async () => [], scuolaUnicaReale: async () => 's1' }))
 vi.mock('@/lib/forms/persist-submission', () => ({

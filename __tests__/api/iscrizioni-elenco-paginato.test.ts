@@ -58,7 +58,10 @@ vi.mock('@/lib/email/send', () => ({
 }))
 vi.mock('@/lib/scuole/reali', () => ({ nomeSede: async () => 'Kidville Alfa' }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: async () => undefined }))
-vi.mock('@/lib/auth/scope', () => ({
+// `restringiSedi` resta VERA: `?scuola_id=` deve intersecare davvero le sedi
+// attive, e un finto che dicesse sempre di sì non proverebbe nessun diniego.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
   resolveScuoleAttive: async () => [SEDE],
   resolveScuolaScrittura: async () => ({ scuolaId: SEDE }),
   scuoleDiUtente: async () => [SEDE],

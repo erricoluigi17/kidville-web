@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
@@ -167,7 +171,11 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
 
     // Proiezione lato genitore: nasconde i container rateali (padre); le rate
     // figlie (tipo='rata') restano visibili come voci separate con la propria scadenza.
-    if (user.role === 'genitore') {
+    // PRESENTAZIONE: è una PROIEZIONE della schermata, non un permesso — nasconde i
+    // container rateali e mostra la propria quota. Chi guarda in veste di lavoro
+    // deve continuare a vedere il prospetto intero, che è ciò che gli serve per
+    // riconciliare: con `eFamiglia` a una docente-genitore verrebbe amputato.
+    if (agisceComeGenitore(user)) {
       rows = rows.filter((r) => r.tipo !== 'padre')
       const splitIds = rows.filter((r) => r.tipo === 'split').map((r) => r.id)
       const quoteByPagamento: Record<string, { importo: number; quota_id: string } | undefined> = {}

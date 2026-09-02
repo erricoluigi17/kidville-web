@@ -335,6 +335,77 @@ describe('registro — chi può generare che cosa', () => {
     for (const voce of inUscita) expect(voce.protocollo).toBe('uscita')
   })
 
+  /**
+   * I DUE ASSI AGGIUNTI PER IL CATALOGO A SCHERMO — e perché stanno QUI.
+   *
+   * Il pannello della segreteria mostra diciassette voci in una griglia, e per trovarne una
+   * servono le stesse quattro domande che questa funzione sa già rispondere per metà: di chi
+   * parla, se esce dalla scuola, **da quale delle due famiglie viene** e **che firma
+   * pretende**. Scrivere le ultime due nel browser avrebbe voluto dire una seconda
+   * definizione di «famiglia» accanto a quella del registro — e due definizioni divergono
+   * alla prima modifica, con il gate verde.
+   */
+  it('il filtro per famiglia separa i moduli della famiglia da quelli dello sportello', () => {
+    const dellaFamiglia = prestampatiPerRuolo('segreteria', { famiglia: 'genitore' })
+    expect(dellaFamiglia.map((v) => v.slug).sort()).toEqual(
+      [
+        'autorizzazione_farmaci',
+        'autorizzazione_uscita',
+        'certificato_bonus_nido',
+        'certificato_iscrizione_frequenza',
+        'delega_ritiro',
+        'dieta_speciale',
+        'permesso_orario',
+        'scheda_sanitaria',
+      ].sort(),
+    )
+    for (const voce of dellaFamiglia) expect(voce.famiglia).toBe('genitore')
+
+    const delloSportello = prestampatiPerRuolo('segreteria', { famiglia: 'segreteria' })
+    for (const voce of delloSportello) expect(voce.famiglia).toBe('segreteria')
+    // Le due famiglie sono una PARTIZIONE: nessuna voce fuori, nessuna contata due volte.
+    expect(dellaFamiglia.length + delloSportello.length).toBe(
+      prestampatiPerRuolo('segreteria').length,
+    )
+  })
+
+  it('il filtro per firma isola i fogli che nessuno deve sottoscrivere', () => {
+    const senzaFirma = prestampatiPerRuolo('segreteria', { firma: 'nessuna' })
+    expect(senzaFirma.length).toBeGreaterThan(0)
+    for (const voce of senzaFirma) expect(voce.firma).toBe('nessuna')
+
+    const delLegale = prestampatiPerRuolo('segreteria', { firma: 'legale_rappresentante' })
+    expect(delLegale.length).toBeGreaterThan(0)
+    for (const voce of delLegale) expect(voce.firma).toBe('legale_rappresentante')
+
+    // `otp_due_genitori` NON si confonde con `otp_genitore`: sono due requisiti diversi
+    // (una firma o due), ed è l'unica informazione che il blocco disegnato perde.
+    const dueGenitori = prestampatiPerRuolo('segreteria', { firma: 'otp_due_genitori' })
+    for (const voce of dueGenitori) expect(voce.firma).toBe('otp_due_genitori')
+    expect(prestampatiPerRuolo('segreteria', { firma: 'otp_genitore' })).not.toEqual(
+      expect.arrayContaining(dueGenitori),
+    )
+  })
+
+  it('i quattro assi si combinano in AND, non in OR', () => {
+    // Un filtro che sommasse invece di restringere mostrerebbe PIÙ righe man mano che si
+    // scelgono criteri: è il difetto che si nota solo contando, e per questo si conta.
+    const solo = prestampatiPerRuolo('segreteria', { famiglia: 'genitore' })
+    const combinato = prestampatiPerRuolo('segreteria', {
+      famiglia: 'genitore',
+      protocollo: 'uscita',
+    })
+    expect(combinato.length).toBeLessThan(solo.length)
+    for (const voce of combinato) {
+      expect(voce.famiglia).toBe('genitore')
+      expect(voce.protocollo).toBe('uscita')
+    }
+    // Una combinazione impossibile dà l'insieme vuoto, non l'elenco intero.
+    expect(
+      prestampatiPerRuolo('segreteria', { soggetto: 'dipendente', famiglia: 'genitore' }),
+    ).toEqual([])
+  })
+
   it('i ruoli dell’app finiscono al banco giusto, e la cuoca non ne ha uno', () => {
     expect(ruoloRichiedente('admin')).toBe('segreteria')
     expect(ruoloRichiedente('coordinator')).toBe('segreteria')

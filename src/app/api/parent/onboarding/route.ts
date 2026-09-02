@@ -9,6 +9,11 @@ import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import {
+  valutaPasswordNuova,
+  LUNGHEZZA_MINIMA_PASSWORD,
+  type CodiceRegolaPassword,
+} from '@/lib/auth/regole-password'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -16,12 +21,69 @@ const postBodySchema = z.object({
   // (oggi nessun vincolo di tipo sui singoli consensi). L'obbligo dei consensi
   // richiesti resta il 422 semantico dell'handler.
   consensi: z.record(z.string(), z.unknown()).optional(),
-  // Permissivo: oggi un valore falsy ('' incluso) viene ignorato e qualsiasi
-  // valore truthy con String(v).length >= 8 è accettato; un vincolo
-  // z.string().min(8) cambierebbe il comportamento. Il check di lunghezza
-  // resta nell'handler.
+  // Permissivo: oggi un valore falsy ('' incluso) viene ignorato, e qualsiasi
+  // valore truthy viene giudicato da `valutaPasswordNuova`; un vincolo
+  // z.string().min(…) cambierebbe il comportamento — e soprattutto duplicherebbe
+  // QUI il numero che ora vive in un posto solo. Il giudizio resta nell'handler.
   password: z.unknown().optional(),
 })
+
+/**
+ * Il rifiuto di ciascun motivo: la prosa (per i log e per chi chiama l'API) e il CODICE
+ * (per chi guarda lo schermo).
+ *
+ * ─── PERCHÉ IL CODICE, DAL 2026-09-01 ──────────────────────────────────────────
+ *
+ * Il genitore NON legge questa prosa: `src/app/(dashboard)/parent/onboarding/page.tsx` passa
+ * da `soloCatalogoDaCorpo`, che mostra la prosa del server MAI e il catalogo tradotto solo
+ * quando la risposta porta un `codice` (lock
+ * `__tests__/architecture/errori-server-schermate-famiglia.test.ts`: nelle schermate delle
+ * famiglie la prosa del server è italiana per costruzione e non si mostra). Finché questi
+ * quattro motivi non hanno avuto un codice, a schermo si è letto «Operazione non riuscita.
+ * Riprova.» davanti a una password correggibile in tre secondi — cioè il motivo vero viveva
+ * qui e nel log, e in nessun posto in cui potesse servire a chi stava digitando.
+ *
+ * ─── PERCHÉ QUATTRO COSTRUTTORI E NON UNA RISPOSTA SOLA ────────────────────────
+ *
+ * Perché il `codice` va scritto come STRINGA LETTERALE: il lock
+ * `__tests__/architecture/errori-con-codice.test.ts` legge il corpo di ogni
+ * `NextResponse.json({ … })` e un `codice: mappa[x].codice` non lo saprebbe verificare —
+ * non contro `CODICI_ERRORE`, non contro i due cataloghi. Un valore che il lock non sa
+ * leggere è un valore che nessuno controlla, ed è esattamente il buco che quel file ha
+ * chiuso il 2026-08-03. Qui ogni codice è scritto per esteso e verificabile a occhio.
+ *
+ * `PASSWORD_UGUALE_ALLA_PRECEDENTE` da questa route non può uscire (l'onboarding non conosce
+ * nessuna password precedente e non passa `attuale`): sta nella mappa perché il tipo è
+ * esaustivo, cioè perché il giorno in cui una regola nuova si aggiunge il compilatore
+ * pretenda anche il suo rifiuto, invece di lasciar uscire `undefined`.
+ *
+ * Il numero non è ricopiato: viene da `LUNGHEZZA_MINIMA_PASSWORD`, che è il posto in cui la
+ * regola vive. Le due copie inevitabili — le voci di catalogo, che sono JSON e non possono
+ * importare una costante — le sorveglia
+ * `__tests__/components/parent-onboarding-password.test.tsx`.
+ */
+const RIFIUTO_PASSWORD: Record<CodiceRegolaPassword, () => NextResponse> = {
+  PASSWORD_TROPPO_CORTA: () =>
+    NextResponse.json(
+      { error: `La password deve avere almeno ${LUNGHEZZA_MINIMA_PASSWORD} caratteri.`, codice: 'PASSWORD_TROPPO_CORTA' },
+      { status: 400 },
+    ),
+  PASSWORD_SENZA_CIFRA: () =>
+    NextResponse.json(
+      { error: 'La password deve contenere almeno una lettera e almeno una cifra.', codice: 'PASSWORD_SENZA_CIFRA' },
+      { status: 400 },
+    ),
+  PASSWORD_CON_SPAZI_AI_BORDI: () =>
+    NextResponse.json(
+      { error: 'La password non può iniziare o finire con uno spazio.', codice: 'PASSWORD_CON_SPAZI_AI_BORDI' },
+      { status: 400 },
+    ),
+  PASSWORD_UGUALE_ALLA_PRECEDENTE: () =>
+    NextResponse.json(
+      { error: 'La nuova password deve essere diversa da quella attuale.', codice: 'PASSWORD_UGUALE_ALLA_PRECEDENTE' },
+      { status: 400 },
+    ),
+}
 
 // POST /api/parent/onboarding — primo accesso genitore (DL-045):
 // accettazione consensi GDPR obbligatori + (opzionale) impostazione password
@@ -42,8 +104,28 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
     if (mancanti.length > 0) {
       return NextResponse.json({ error: 'Consensi obbligatori mancanti', mancanti }, { status: 422 })
     }
-    if (password && String(password).length < 8) {
-      return NextResponse.json({ error: 'La password deve avere almeno 8 caratteri' }, { status: 400 })
+    // LA REGOLA DELLA PASSWORD STA IN UN POSTO SOLO — `@/lib/auth/regole-password`.
+    // Qui c'era `String(password).length < 8`, mentre la schermata che chiama questa
+    // route ne pretendeva 8 per conto suo e `supabase/config.toml` ne dichiarava 6 al
+    // provider: tre numeri per lo stesso gesto, e nessun test che potesse vederli
+    // diversi, perché ogni copia era coerente con sé stessa.
+    //
+    // La password resta FACOLTATIVA: chi accetta solo i consensi non viene giudicato.
+    if (password) {
+      const regola = valutaPasswordNuova(String(password))
+      if (!regola.ok) {
+        // Livello `info`: non è un guasto nostro, è una password che non va bene. Va
+        // loggato lo stesso, perché senza questa riga «il genitore non completa
+        // l'onboarding» non distingue una password rifiutata QUI da una rifiutata da
+        // GoTrue cento righe più in basso — due guasti diversi con lo stesso sintomo,
+        // e uno solo dei due è nostro. Esce il CODICE, mai la password.
+        logEvento('auth', 'info', {
+          operazione: 'parent/onboarding:POST',
+          esito: 'password-onboarding-rifiutata',
+          error_code: regola.codice,
+        })
+        return RIFIUTO_PASSWORD[regola.codice]()
+      }
     }
 
     const admin = await createAdminClient()

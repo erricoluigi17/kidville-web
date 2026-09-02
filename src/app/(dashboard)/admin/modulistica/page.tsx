@@ -18,6 +18,14 @@ import { RinviaCredenziali } from '@/components/features/admin/iscrizioni/Rinvia
 import { CandidatureInsegnanti } from '@/components/features/admin/iscrizioni/CandidatureInsegnanti';
 import { PratichePersonale } from '@/components/features/admin/personale/PratichePersonale';
 import { PrestampatiSegreteria } from '@/components/features/prestampati/PrestampatiSegreteria';
+import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri';
+import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco';
+import { decidiStatoElenco } from '@/lib/ui/filtri/motore';
+import { useFiltri } from '@/lib/ui/filtri/use-filtri';
+import {
+  campiModuliGenitori,
+  opzioniClasseModuli,
+} from '@/components/features/admin/iscrizioni/filtri-moduli-genitori';
 import { formattaIstante } from '@/i18n/config';
 
 type FormType = 'sondaggio' | 'gradimento' | 'autorizzazione';
@@ -562,87 +570,14 @@ function ModulisticaInner() {
         <>
           {/* TAB: Moduli Genitori (iscritti) */}
           {activeTab === 'moduli-genitori' && (
-            <div className="space-y-4">
-              {scopedForms.length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
-                  <FileText className="mx-auto text-kidville-muted mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">
-                    {t('modNessunModuloGenitori')}
-                  </p>
-                </div>
-              ) : (
-                scopedForms.map(form => (
-                  <div key={form.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
-                        {form.title}
-                      </h3>
-                      <p className="font-maven text-xs text-kidville-muted line-clamp-2 max-w-xl mt-1">
-                        {form.description || t('modNessunaDescrizione')}
-                      </p>
-
-                      <div className="flex flex-wrap items-center gap-3 mt-3">
-                        {form.form_type && (
-                          <span className="bg-kidville-green text-kidville-yellow px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                            {FORM_TYPE_META[form.form_type]?.otp && <Shield size={11} />}
-                            {FORM_TYPE_META[form.form_type] ? t(FORM_TYPE_META[form.form_type].labelKey) : form.form_type}
-                          </span>
-                        )}
-                        <span className="bg-kidville-cream text-kidville-green px-2.5 py-1 rounded-full text-xs font-semibold">
-                          {t('modDestinatari')} {form.target_scope === 'external' ? t('modEsterniPreiscrizione') : form.target_classes.join(', ')}
-                        </span>
-
-                        {form.expiration_date && (
-                          <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
-                            <Calendar size={12} />
-                            {t('modScadenza')} {f.dataBreve(form.expiration_date)}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
-                      {form.target_scope !== 'external' && form.target_classes.map(clsName => (
-                        <button
-                          key={clsName}
-                          onClick={() => handleExportMergePDF(form, clsName)}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-cream text-kidville-green rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-green hover:text-kidville-yellow transition-colors"
-                          title={t('modEsportaConsensiClasse', { classe: clsName })}
-                        >
-                          <Download size={14} /> {t('modMergeClasse', { classe: clsName })}
-                        </button>
-                      ))}
-                      {form.target_scope !== 'external' && form.target_classes.map(clsName => (
-                        <button
-                          key={`prot-${clsName}`}
-                          onClick={() => apriProtocolla(form, clsName)}
-                          className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-info-soft text-kidville-info rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-info hover:text-white transition-colors"
-                          title={t('modProtocollaClasseTitle', { classe: clsName })}
-                        >
-                          <Stamp size={14} /> {t('modProtocollaClasse', { classe: clsName })}
-                        </button>
-                      ))}
-
-                      <button
-                        onClick={() => handleExtendScadenza(form)}
-                        className="p-2 text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream rounded-lg transition-all"
-                        title={t('modModificaScadenza')}
-                      >
-                        <Calendar size={18} />
-                      </button>
-
-                      <button
-                        onClick={() => handleDeleteForm(form.id)}
-                        className="p-2 text-kidville-muted hover:text-kidville-error hover:bg-kidville-error-soft rounded-lg transition-all"
-                        title={t('modEliminaModulo')}
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
+            <PannelloModuliGenitori
+              moduli={scopedForms}
+              sezioni={sections}
+              onEsporta={handleExportMergePDF}
+              onProtocolla={apriProtocolla}
+              onScadenza={handleExtendScadenza}
+              onElimina={handleDeleteForm}
+            />
           )}
         </>
       )}
@@ -943,6 +878,173 @@ function ModulisticaInner() {
           animation: slideIn 0.3s ease-out forwards;
         }
       `}</style>
+    </div>
+  );
+}
+
+/**
+ * ─── I MODULI PER I GENITORI ISCRITTI, con la loro barra filtri ─────────────────
+ *
+ * È un componente a sé e non un pezzo di JSX dentro `ModulisticaInner`, e la ragione sta
+ * tutta negli HOOK: `useFiltri` deve nascere e morire CON la linguetta. Tenuto nella pagina
+ * resterebbe montato anche mentre si guarda «Prestampati», e i suoi parametri (`q`, `tipo`,
+ * `classe`…) resterebbero nell'indirizzo — dove si scontrerebbero con quelli, omonimi, della
+ * barra di un'altra linguetta. Smontandosi, invece, `useFiltri` ripulisce da sé i propri
+ * parametri e lascia in pace tutti gli altri, `?tab=` compreso.
+ *
+ * ⚠️ La catena dei rami di `ModulisticaInner` NON si tocca: il lock
+ * `modulistica-linguette-raggiungibili` pretende che ogni linguetta di `TAB_ORDINE` abbia il
+ * suo ramo, e questo componente è ciò che quel ramo disegna — non un modo di aggirarlo.
+ *
+ * ⚠️ E in questo commento NON si scrive il confronto per esteso, per quanto sarebbe comodo
+ * citarlo: quel lock legge il TESTO del file con una espressione regolare, e una citazione
+ * dentro un commento gli è arrivata come un ramo vero, verso una linguetta che non esiste.
+ * Misurato il 2026-09-01, ed è il gemello rovesciato del difetto già visto qui — là un lock
+ * si era immunizzato col proprio commento, qui un commento ha avvelenato il lock.
+ *
+ * Le quattro azioni arrivano come PROPS invece di essere ricreate qui: esportare i consensi,
+ * protocollare, spostare la scadenza ed eliminare toccano stato che vive nella pagina (la
+ * modale del protocollo, il toast, la rilettura). Spostarlo sarebbe stato un secondo lavoro,
+ * e non è quello che questo passo doveva fare.
+ */
+function PannelloModuliGenitori({
+  moduli,
+  sezioni,
+  onEsporta,
+  onProtocolla,
+  onScadenza,
+  onElimina,
+}: {
+  moduli: FormTemplate[];
+  sezioni: { id: string; name: string }[];
+  onEsporta: (form: FormTemplate, classe: string) => void;
+  onProtocolla: (form: FormTemplate, classe: string) => void;
+  onScadenza: (form: FormTemplate) => void;
+  onElimina: (id: string) => void;
+}) {
+  const t = useTranslations('adminModulistica');
+  const tShared = useTranslations('shared');
+  const f = useDateFormat();
+
+  const campi = campiModuliGenitori(
+    t,
+    { classe: opzioniClasseModuli(moduli, sezioni) },
+    (iso) => f.dataBreve(iso),
+  );
+  const filtri = useFiltri<FormTemplate>(campi);
+  const visibili = filtri.filtra(moduli);
+  const statoElenco = decidiStatoElenco({
+    // La lettura è già finita quando questo pannello si monta — la pagina mostra il proprio
+    // spinner prima — e il suo guasto lo dice la pagina. Qui resta la sola distinzione che i
+    // filtri possono causare: «non è ancora stato creato nessun modulo» contro «nessuno
+    // corrisponde».
+    caricamento: false,
+    errore: false,
+    totale: moduli.length,
+    mostrati: visibili.length,
+  });
+
+  return (
+    <div className="space-y-4">
+      {/* La barra non si disegna sopra una tabella che non ha mai avuto una riga: in
+          produzione questa linguetta ha ZERO moduli, ed è il caso normale, non il limite. */}
+      {moduli.length > 0 && (
+        <BarraFiltri
+          campi={campi}
+          stato={filtri}
+          testi={testiBarraFiltri(tShared)}
+          totale={moduli.length}
+          mostrati={visibili.length}
+        />
+      )}
+
+      {statoElenco !== 'pronto' ? (
+        <div data-testid="stato-moduli-genitori">
+          <StatoElenco
+            stato={statoElenco}
+            testi={{
+              ...testiStatoElenco(tShared),
+              // ⚠️ A zero moduli si dice che non ne è stato creato nessuno, NON «nessun
+              // risultato con questi filtri»: quella frase accuserebbe i filtri di una colpa
+              // che non hanno, e manderebbe a cercare un filtro che non esiste.
+              vuotoTitolo: t('modNessunModuloGenitori'),
+            }}
+            attivi={filtri.attivi}
+            onPulisci={filtri.pulisci}
+          />
+        </div>
+      ) : (
+        visibili.map(form => (
+          <div key={form.id} className="bg-white rounded-card p-5 shadow-sm border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="font-barlow font-bold text-xl text-kidville-green uppercase tracking-wide">
+                {form.title}
+              </h3>
+              <p className="font-maven text-xs text-kidville-muted line-clamp-2 max-w-xl mt-1">
+                {form.description || t('modNessunaDescrizione')}
+              </p>
+
+              <div className="flex flex-wrap items-center gap-3 mt-3">
+                {form.form_type && (
+                  <span className="bg-kidville-green text-kidville-yellow px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+                    {FORM_TYPE_META[form.form_type]?.otp && <Shield size={11} />}
+                    {FORM_TYPE_META[form.form_type] ? t(FORM_TYPE_META[form.form_type].labelKey) : form.form_type}
+                  </span>
+                )}
+                <span className="bg-kidville-cream text-kidville-green px-2.5 py-1 rounded-full text-xs font-semibold">
+                  {t('modDestinatari')} {form.target_scope === 'external' ? t('modEsterniPreiscrizione') : form.target_classes.join(', ')}
+                </span>
+
+                {form.expiration_date && (
+                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1 ${new Date(form.expiration_date) < new Date() ? 'bg-kidville-error-soft text-kidville-error' : 'bg-kidville-warn-soft text-kidville-warn'}`}>
+                    <Calendar size={12} />
+                    {t('modScadenza')} {f.dataBreve(form.expiration_date)}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 self-end md:self-auto flex-wrap">
+              {form.target_scope !== 'external' && form.target_classes.map(clsName => (
+                <button
+                  key={clsName}
+                  onClick={() => onEsporta(form, clsName)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-cream text-kidville-green rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-green hover:text-kidville-yellow transition-colors"
+                  title={t('modEsportaConsensiClasse', { classe: clsName })}
+                >
+                  <Download size={14} /> {t('modMergeClasse', { classe: clsName })}
+                </button>
+              ))}
+              {form.target_scope !== 'external' && form.target_classes.map(clsName => (
+                <button
+                  key={`prot-${clsName}`}
+                  onClick={() => onProtocolla(form, clsName)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-kidville-info-soft text-kidville-info rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-info hover:text-white transition-colors"
+                  title={t('modProtocollaClasseTitle', { classe: clsName })}
+                >
+                  <Stamp size={14} /> {t('modProtocollaClasse', { classe: clsName })}
+                </button>
+              ))}
+
+              <button
+                onClick={() => onScadenza(form)}
+                className="p-2 text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream rounded-lg transition-all"
+                title={t('modModificaScadenza')}
+              >
+                <Calendar size={18} />
+              </button>
+
+              <button
+                onClick={() => onElimina(form.id)}
+                className="p-2 text-kidville-muted hover:text-kidville-error hover:bg-kidville-error-soft rounded-lg transition-all"
+                title={t('modEliminaModulo')}
+              >
+                <Trash2 size={18} />
+              </button>
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }

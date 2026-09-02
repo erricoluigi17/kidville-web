@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-09-01",
-  "generato_alle": "2026-09-01T16:38:30Z",
-  "sha256": "68db571d73b6476872b2acd31a145c40006768608924997d65ef4e78d59cab26",
+  "generato_alle": "2026-09-01T20:34:43Z",
+  "sha256": "f46498403ebbe27fce9ba4da21c7b627c664e1fc7cdaf2384a4e9d30b09e46ab",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -559,6 +559,22 @@
     {
       "version": "20260901163536",
       "name": "armadietto_richieste"
+    },
+    {
+      "version": "20260901174336",
+      "name": "bucket_gallery_privato_50mb"
+    },
+    {
+      "version": "20260901182942",
+      "name": "bucket_gallery_formati_universali"
+    },
+    {
+      "version": "20260901203141",
+      "name": "password_cambi"
+    },
+    {
+      "version": "20260901203333",
+      "name": "legami_anagrafici_profili_doppi"
     }
   ]
 }

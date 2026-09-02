@@ -400,7 +400,7 @@ E nel corpo della richiesta (riga ~128):
 npx vitest run __tests__/lib/email/send-allegati.test.ts __tests__/lib/email
 ```
 
-Atteso: **PASS**. I test esistenti (`dodici-generatori`, `pie-di-pagina-senza-buchi`, `credenziali-la-sede-nel-corpo`, `layout-master`) restano verdi: le due chiavi sono additive e nessun chiamante le passa.
+Atteso: **PASS**. I test esistenti (`generatori-email` — allora `dodici-generatori`, rinominato il 2026-09-01 perché il numero nel nome aveva smesso di essere vero —, `pie-di-pagina-senza-buchi`, `credenziali-la-sede-nel-corpo`, `layout-master`) restano verdi: le due chiavi sono additive e nessun chiamante le passa.
 
 - [ ] **Step 5: Commit**
 
@@ -654,10 +654,10 @@ L'HTML rende le stesse righe in una tabella a due colonne dentro `documento(sede
 
 ```bash
 npx vitest run __tests__/lib/email/candidatura-alla-sede.test.ts
-npx vitest run __tests__/lib/email/dodici-generatori.test.ts
+npx vitest run __tests__/lib/email/generatori-email.test.ts
 ```
 
-Atteso: **PASS** su entrambi. ⚠️ `dodici-generatori.test.ts` conta i generatori di email: aggiungendone uno **va aggiornato** — dichiarando il nuovo, non allentando il conteggio. Aprirlo e leggere cosa pretende prima di modificarlo.
+Atteso: **PASS** su entrambi. ⚠️ `generatori-email.test.ts` (fino al 2026-09-01: `dodici-generatori.test.ts`) elenca i generatori di email: aggiungendone uno **va aggiornato** — dichiarando il nuovo, non allentando l'elenco. Aprirlo e leggere cosa pretende prima di modificarlo.
 
 - [ ] **Step 5: Il test che dimostra che il lock funziona davvero**
 
@@ -672,7 +672,7 @@ Atteso col sabotaggio: **FAIL** con «manca il campo «Numero di telefono»». S
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/lib/email/messaggi/candidatura-alla-sede.ts __tests__/lib/email/candidatura-alla-sede.test.ts __tests__/lib/email/dodici-generatori.test.ts
+git add src/lib/email/messaggi/candidatura-alla-sede.ts __tests__/lib/email/candidatura-alla-sede.test.ts __tests__/lib/email/generatori-email.test.ts
 git commit -m "La copia alla sede si costruisce dal template dei campi, non da un elenco scritto a mano"
 ```
 

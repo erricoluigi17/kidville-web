@@ -100,9 +100,19 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * e con la lunghezza dell'elenco (278). Non è un giudizio sul merito di quelle tredici: è la
  * loro MISURA, e la rifà chiunque con
  * `jq '.totale_occorrenze, (.file | length)' docs/superpowers/errori-senza-codice-allowlist.json`.
+ *
+ * 2026-09-01 · −1 (1437 → 1436), e il debito è stato PAGATO, non spostato. Il rifiuto della
+ * password in `parent/onboarding:POST` era una risposta sola, scritta senza codice apposta
+ * «per non far crescere il conteggio»: la schermata che la riceve passa da
+ * `soloCatalogoDaCorpo`, quindi il genitore leggeva «Operazione non riuscita» davanti a una
+ * password lunga nove caratteri. Ora sono QUATTRO risposte — una per motivo, ciascuna con il
+ * suo `codice` letterale — e il conteggio scende lo stesso, perché le risposte CON codice non
+ * sono debito: sono la sua estinzione. `MAX_FILE` non si muove, il file resta in elenco con
+ * cinque risposte ancora da convertire (misurate, non stimate: dichiararne quattro rende
+ * rosso il test qui sotto).
  */
 const MAX_FILE = 278;
-const MAX_OCCORRENZE = 1437;
+const MAX_OCCORRENZE = 1436;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

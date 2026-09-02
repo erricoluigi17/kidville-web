@@ -84,6 +84,54 @@ export function zLimite({ predefinito, max }: { predefinito: number; max: number
         .default(predefinito);
 }
 
+/**
+ * '' / null / assente → `undefined`, poi lo schema dato.
+ *
+ * ⚠️ Serve perché i moduli e le barre filtri mandano STRINGHE VUOTE, non campi
+ * assenti: un `<select>` a «Tutti» vale `''`, e un `.optional()` da solo lo
+ * farebbe arrivare allo schema che lo rifiuta (o, peggio, a PostgREST come
+ * filtro `= ''`). Era scritto — identico — in `admin/protocolli/route.ts` e in
+ * `admin/protocolli/rettifica/route.ts`: due copie della stessa riga, che è il
+ * modo in cui una convenzione diventa una consuetudine e poi diverge.
+ */
+export const zOpzionale = <S extends z.ZodType>(schema: S) =>
+    z.preprocess((v) => (v === '' || v === null ? undefined : v), schema.optional());
+
+/**
+ * Il testo di una barra di ricerca: facoltativo, con un tetto.
+ *
+ * Il tetto non è un capriccio: quel testo finisce dentro un `ilike` di PostgREST
+ * e viaggia nella query string. Duecento caratteri sono più di qualunque ricerca
+ * vera; senza tetto, un incolla accidentale di mezza pagina diventa una query
+ * che il database esegue davvero.
+ * Va sempre usato insieme a `termineOr()` (`@/lib/db/ricerca-postgrest`), che
+ * toglie i metacaratteri di `.or()`: questo schema misura la LUNGHEZZA, quello
+ * la SINTASSI, e servono tutti e due.
+ */
+export const zTestoRicerca = zOpzionale(z.string().max(200, 'Testo di ricerca troppo lungo'));
+
+/**
+ * I due estremi di un periodo, nominati `<chiave>Da` e `<chiave>A` — gli stessi
+ * nomi che la barra filtri scrive nell'indirizzo (`motore.ts` → `versoUrl`), così
+ * che il parametro dell'URL, quello della richiesta e quello dello schema siano
+ * la stessa parola. Entrambi facoltativi ed entrambi validati sul CALENDARIO
+ * (`zDataYMD`: `2026-02-30` non passa).
+ *
+ * Si spande dentro lo schema della query:
+ * ```ts
+ * const querySchema = z.object({ ...zPeriodo('data').shape, q: zTestoRicerca })
+ * ```
+ * Gli estremi sono INCLUSIVI, come nel motore dei filtri: chi costruisce la
+ * query ci mette `.gte(da)` e `.lte(a)`, mai `.lt()`.
+ */
+export function zPeriodo<C extends string>(chiave: C) {
+    const estremo = zOpzionale(zDataYMD);
+    return z.object({
+        [`${chiave}Da`]: estremo,
+        [`${chiave}A`]: estremo,
+    } as Record<`${C}Da` | `${C}A`, typeof estremo>);
+}
+
 /** Booleano tollerante per query param: 'true'/'1'/'si' → true, 'false'/'0'/'no' → false. */
 export const zBool = z.preprocess((v) => {
     if (typeof v === 'string') {

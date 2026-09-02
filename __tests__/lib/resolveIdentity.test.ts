@@ -54,11 +54,25 @@ describe('resolveIdentity (session-authoritative shim)', () => {
   });
   afterEach(() => vi.unstubAllEnvs());
 
+  /**
+   * `rigaUtenti` e `ponteGenitore` sono l'aggiunta ADDITIVA che permette ai gate di non
+   * rileggere `utenti` (era la terza query sequenziale di ogni richiesta) e di sapere se
+   * questa persona ha anche il ponte genitore. Qui restano asserzioni ESATTE — `toEqual`,
+   * non `toMatchObject` — perché il contratto di `resolveIdentity` è precisamente ciò che
+   * questo file esiste per congelare: un campo in più che comparisse per sbaglio deve
+   * far diventare rosso questo test, non passare inosservato.
+   */
   it('prefers the session id for a staff user (utenti.id == auth.uid())', async () => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: 'staff-uid' } }, error: null });
     mocks.utentiMaybeSingle.mockResolvedValue({ data: { id: 'staff-uid' }, error: null });
     const res = await resolveIdentity(new Request('http://localhost'));
-    expect(res).toEqual({ userId: 'staff-uid', source: 'session' });
+    expect(res).toEqual({
+      userId: 'staff-uid',
+      source: 'session',
+      // La riga GIÀ LETTA viaggia con l'identità: è ciò che toglie una query per richiesta.
+      rigaUtenti: { id: 'staff-uid' },
+      ponteGenitore: false,
+    });
   });
 
   it('ignores a spoofed x-user-id that differs from the session (anti-spoof)', async () => {
@@ -75,7 +89,14 @@ describe('resolveIdentity (session-authoritative shim)', () => {
     mocks.utentiMaybeSingle.mockResolvedValue({ data: null, error: null });
     mocks.parentsMaybeSingle.mockResolvedValue({ data: { id: 'parent-row' }, error: null });
     const res = await resolveIdentity(new Request('http://localhost'));
-    expect(res).toEqual({ userId: 'parent-row', source: 'session' });
+    expect(res).toEqual({
+      userId: 'parent-row',
+      source: 'session',
+      // `null` = letta e ASSENTE (≠ `undefined`, che vuol dire «non letta»): è la
+      // distinzione su cui i gate decidono se possono riusare la riga o devono rileggere.
+      rigaUtenti: null,
+      ponteGenitore: true,
+    });
   });
 
   it('falls back to header/query identity when no session and flag not disabled', async () => {
@@ -107,7 +128,13 @@ describe('resolveIdentity (session-authoritative shim)', () => {
       error: { message: 'column parents.auth_user_id does not exist' },
     });
     const res = await resolveIdentity(new Request('http://localhost'));
-    expect(res).toEqual({ userId: 'unknown-uid', source: 'session' });
+    expect(res).toEqual({
+      userId: 'unknown-uid',
+      source: 'session',
+      rigaUtenti: null,
+      // La colonna ponte non esiste: l'errore NON diventa «sì, c'è il ponte». Fail-closed.
+      ponteGenitore: false,
+    });
   });
 
   /**

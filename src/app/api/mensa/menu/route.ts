@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { loadMensaConfig, loadResolveOptions, resolveMenuConfigId } from '@/lib/mensa/server'
 import { resolveMenuRange } from '@/lib/mensa/resolveMenu'
 import { resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope'
@@ -114,18 +118,28 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
       // `legame_genitori_alunni` + anagrafica `student_parents`).
       const { data: al } = await supabase.from('alunni').select('classe_sezione, scuola_id').eq('id', alunnoId).maybeSingle()
       if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
-      if (user.role === 'genitore') {
+      // PRESENTAZIONE: in veste di famiglia si guarda il menu dei PROPRI figli, e
+      // il legame è ciò che lo prova. In veste di lavoro il perimetro è la sede, ed
+      // è il blocco più sotto ad applicarlo. Con `eFamiglia` una docente-genitore
+      // che apre il menu di un bambino della sua classe prenderebbe 403.
+      if (agisceComeGenitore(user)) {
         const ok = await genitoreHasFiglio(supabase, user.id, alunnoId)
         if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
       }
       classeAlunno = (al.classe_sezione as string | null) ?? null
       scuolaId = (al.scuola_id as string | null) ?? scuolaId
-    } else if (user.role === 'genitore') {
+    } else if (agisceComeGenitore(user)) {
       // Un genitore consulta il menu solo tramite un proprio figlio.
       return NextResponse.json({ error: 'alunno_id obbligatorio' }, { status: 400 })
     }
 
-    if (user.role !== 'genitore') {
+    // Gemello dei due rami qui sopra, e va letto insieme a loro: chi guarda in
+    // veste di famiglia ha già dimostrato il legame col figlio (e la sede è quella
+    // del bambino, non il plesso scritto sul suo record); chi guarda in veste di
+    // lavoro deve restare dentro i propri plessi. Le due condizioni devono usare lo
+    // STESSO predicato, altrimenti si aprono le forbici fra chi entra nel primo
+    // ramo e chi salta il secondo.
+    if (!agisceComeGenitore(user)) {
       // Personale scolastico: MAI fidarsi dello scuola_id dal client — la sede
       // (indicata o derivata dall'alunno) dev'essere tra i plessi accessibili;
       // se assente (report cucina, diario docente) si risolve dal proprio scope.

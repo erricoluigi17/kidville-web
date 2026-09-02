@@ -430,11 +430,30 @@ export function slugPrestampato(slug: string | null | undefined): slug is SlugPr
   return prestampato(slug) !== null
 }
 
+/**
+ * I QUATTRO ASSI su cui i diciassette si restringono. Si combinano in **AND**: ogni criterio
+ * in più toglie righe, non ne aggiunge — che è la sola lettura in cui «di chi parla» e «che
+ * firma vuole» insieme rispondono alla domanda che qualcuno sta facendo.
+ *
+ * `famiglia` e `firma` sono nati per il catalogo a schermo, e stanno qui e non nel browser
+ * per una ragione misurata altrove in questo repo: una seconda definizione di «da quale
+ * famiglia viene questo modello», scritta accanto a quella del registro, diverge alla prima
+ * modifica e nessun gate se ne accorge. Qui la definizione resta una sola, e un pannello che
+ * la usa la CHIEDE invece di ricostruirla.
+ */
 export interface FiltriPrestampati {
   /** Di chi parla il foglio: un bambino, una sezione, un dipendente. */
   soggetto?: SoggettoPrestampato
   /** Solo ciò che consuma (o non consuma) un numero di protocollo. */
   protocollo?: ProtocolloPrestampato
+  /** Da quale dei due file dei modelli arriva: decide come si compone, non chi lo usa. */
+  famiglia?: FamigliaPrestampato
+  /**
+   * Che sottoscrizione pretende il foglio. È il REQUISITO, non il blocco disegnato:
+   * `otp_genitore` e `otp_due_genitori` restano due valori distinti, perché la differenza
+   * fra una firma e due è l'unica che il blocco perde.
+   */
+  firma?: FirmaPrestampatoRichiesta
 }
 
 /**
@@ -465,6 +484,8 @@ export function prestampatiPerRuolo(
     if (!dichiarato && !ereditato) return false
     if (filtri.soggetto && v.soggetto !== filtri.soggetto) return false
     if (filtri.protocollo && v.protocollo !== filtri.protocollo) return false
+    if (filtri.famiglia && v.famiglia !== filtri.famiglia) return false
+    if (filtri.firma && v.firma !== filtri.firma) return false
     return true
   })
 }

@@ -92,7 +92,13 @@ describe('ModuliRicevuti — sede della domanda', () => {
     await waitFor(() => expect(screen.getByText('Ada Verdi')).toBeInTheDocument())
     fireEvent.click(screen.getByText('Ada Verdi'))
 
-    const select = await screen.findByRole('combobox')
+    // ⚠️ SI NOMINA LA TENDINA, non si prende «la prima». Dal 2026-09-01 questa
+    // schermata ha anche le tendine della barra filtri, e `findByRole('combobox')`
+    // risolve sulla PRIMA che compare — che è quella dei filtri, disegnata subito,
+    // mentre il pannello di dettaglio sta ancora arrivando. Il test misurava le
+    // opzioni del filtro «Sede» credendo di misurare le classi: verde o rosso,
+    // non stava guardando ciò che dice di guardare.
+    const select = await screen.findByLabelText(/Classe \/ Sezione/i)
     const opzioni = within(select).getAllByRole('option').map((o) => o.textContent)
     expect(opzioni).toContain('AVERSA 3 ANNI')
     expect(opzioni).toContain('AVERSA 2 ANNI A')

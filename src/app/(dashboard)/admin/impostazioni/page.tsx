@@ -6,8 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import {
     Settings, CreditCard, GraduationCap, LayoutGrid, NotebookPen, CalendarCheck,
     StickyNote, Megaphone, MessageCircle, Images, Package, FileSignature,
-    UtensilsCrossed, BookOpenCheck, BellRing, Percent, Building2,
+    UtensilsCrossed, BookOpenCheck, BellRing, Percent, Building2, KeyRound,
 } from 'lucide-react';
+import { CambiaPasswordCard } from '@/components/features/account/CambiaPasswordCard';
 import { SettingsPanel } from '@/components/features/admin/settings/SettingsPanel';
 import { RetteSettings } from '@/components/features/admin/settings/RetteSettings';
 import { DidatticaPrimariaPanel } from '@/components/features/admin/primaria/DidatticaPrimariaPanel';
@@ -30,7 +31,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired } from '@/lib/context/sede-context';
 
 type Sezione =
-    | 'moduli' | 'sede'
+    | 'moduli' | 'sede' | 'account'
     | 'pagamenti' | 'rette' | 'modulistica'
     | 'didattica' | 'pagelle' | 'diario' | 'presenze' | 'note'
     | 'mensa' | 'armadietto'
@@ -49,6 +50,11 @@ const GRUPPI: Gruppo[] = [
             // Prima voce nata da un messaggio d'errore: i prestampati rimandavano
             // «nelle impostazioni della sede» a una schermata che non esisteva.
             { id: 'sede', labelKey: 'voceSede', icon: <Building2 size={15} /> },
+            // ⚠️ L'UNICA VOCE DI QUESTA PAGINA CHE NON CONFIGURA UNA SEDE: configura
+            // CHI STA GUARDANDO. Sta qui e non in una schermata sua perché è dove la
+            // segreteria cerca le proprie preferenze, e perché una pagina in più per
+            // un form solo sarebbe una voce in più da trovare nel menu.
+            { id: 'account', labelKey: 'voceAccount', icon: <KeyRound size={15} /> },
         ],
     },
     {
@@ -91,6 +97,9 @@ const SEZIONI_VALIDE = new Set<string>(GRUPPI.flatMap((g) => g.voci.map((v) => v
 
 function Inner() {
     const t = useTranslations('adminSettings');
+    // Il cambio password ha un namespace suo, condiviso con le altre tre superfici
+    // che montano lo stesso form: qui non se ne ricopia nemmeno una frase.
+    const tPwd = useTranslations('password');
     const params = useSearchParams();
     const router = useRouter();
     const { userId } = useSessionIdentity();
@@ -208,6 +217,34 @@ function Inner() {
                         </h2>
                         {userId && sezione === 'moduli' && conSede(t('sedeRequiredModuli'), (sid) => <FunzioniMatricePanel userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'sede' && conSede(t('sedeRequiredSede'), (sid) => <AnagraficaSedeSettings userId={userId} scuolaId={sid} />)}
+                        {/* ⚠️ SENZA `conSede`, ED È L'UNICA. La password non è un
+                            affare di plesso: la chiave è `auth.users.id`, e la route
+                            che la scrive (`POST /api/account/password`) è una sola per
+                            genitori e personale. Passare di qui da `SedeRequired`
+                            avrebbe messo un muro inventato davanti a chi le sedi le ha
+                            tutte e tre — cioè proprio a `test.multisede.admin` e a chi
+                            in Direzione lavora su Giugliano, Aversa e Cesa insieme:
+                            «scegli una sede» prima di poter cambiare la PROPRIA
+                            password è una domanda senza risposta giusta. */}
+                        {/* La CARTA BIANCA non è cornice: è la superficie su cui i
+                            contrasti di questo form sono stati misurati. Il fondo
+                            della pagina è `bg-kidville-cream/40`, e lì il contorno
+                            delle tacche della barra di forza (token `neutral`)
+                            scenderebbe da 3,10:1 a 2,79:1 — sotto la soglia di WCAG
+                            1.4.11, cioè con gli alloggiamenti che sbiadiscono.
+                            Le misure stanno in
+                            `__tests__/a11y/contrasto-barra-forza-password.test.ts`. */}
+                        {sezione === 'account' && (
+                            <section className="max-w-md rounded-2xl bg-kidville-white p-5 shadow-sm">
+                                <h2 className="mb-1 font-barlow text-sm font-extrabold uppercase text-kidville-green">
+                                    {tPwd('sezioneTitolo')}
+                                </h2>
+                                <p className="mb-4 font-maven text-[13px] leading-relaxed text-kidville-sub">
+                                    {tPwd('sezioneDescrizione')}
+                                </p>
+                                <CambiaPasswordCard origine="self-service" />
+                            </section>
+                        )}
                         {userId && sezione === 'pagamenti' && conSede(t('sedeRequiredPagamenti'), (sid) => <SettingsPanel userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'rette' && conSede(t('sedeRequiredRette'), (sid) => <RetteSettings userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'modulistica' && conSede(t('sedeRequiredModulistica'), (sid) => <ModulisticaSettings userId={userId} scuolaId={sid} />)}

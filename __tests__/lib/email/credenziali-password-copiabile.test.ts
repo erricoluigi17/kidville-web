@@ -104,7 +104,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
 
     it('resta impersonale: né «tu» né «lei», in tutte e quattro le occasioni', () => {
         // La stessa email va a una famiglia e a una maestra. Il lock è già in
-        // `dodici-generatori.test.ts`; qui si ripete sulle frasi NUOVE, perché è
+        // `generatori-email.test.ts`; qui si ripete sulle frasi NUOVE, perché è
         // esattamente su una frase aggiunta di fretta che quella regola si perde.
         for (const occasione of OCCASIONI) {
             const { testo } = messaggioCredenziali(

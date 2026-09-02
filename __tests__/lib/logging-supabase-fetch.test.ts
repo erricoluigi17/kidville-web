@@ -736,7 +736,7 @@ describe('lock: ogni factory è strumentato, tranne quello dei log', () => {
         return sorgente.slice(inizio, dopo === -1 ? undefined : dopo);
     }
 
-    it.each(['createClient', 'createSessionClient', 'createAdminClient'])(
+    it.each(['createClient', 'createSessionClient', 'createAdminClient', 'createVerificaClient'])(
         '%s passa il fetch strumentato',
         (nome) => {
             expect(corpoDi(nome)).toContain('global: { fetch: fetchStrumentato }');
@@ -752,6 +752,19 @@ describe('lock: ogni factory è strumentato, tranne quello dei log', () => {
         expect(new Set(nomi)).toEqual(new Set([
             'createClient', 'createSessionClient', 'createParentReadClient',
             'createAdminClient', 'createLogClient',
+            // `createVerificaClient` (2026-09-01) — il SESTO, e il primo aggiunto da quando
+            // questo elenco esiste. Serve a un caso solo: verificare che chi chiede il cambio
+            // password conosca quella ATTUALE, tentando un accesso vero
+            // (`signInWithPassword`), perché GoTrue quel controllo non lo fa
+            // (`secure_password_change = false`).
+            //
+            // È STRUMENTATO come gli altri tre — c'è la riga qui sopra che lo verifica, non
+            // basta comparire in questo elenco — e la sua particolarità sta altrove: ha i
+            // `cookies` NO-OP. Non è una svista da correggere: un `signInWithPassword` fatto
+            // con `createSessionClient()` aprirebbe una sessione nuova e ne DEPOSITEREBBE i
+            // cookie a metà richiesta, sostituendo quella del chiamante — un controllo di
+            // sicurezza che, nel verificare, cambia l'identità di chi sta chiedendo.
+            'createVerificaClient',
         ]));
     });
 });

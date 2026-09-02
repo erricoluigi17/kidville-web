@@ -813,8 +813,34 @@ const AMMESSE: Record<string, string> = {
     'parent/submissions:GET': 'scope famiglia: moduli compilati per i propri figli',
     'parent/medical-certificates:GET': 'scope famiglia: certificati medici dei propri figli',
     'parent/medical-certificates:POST': 'scope famiglia: caricamento su un proprio figlio',
-    'parent/forms/otp:PATCH': 'scope famiglia + OTP monouso sulla propria compilazione',
-    'parent/primaria:GET': 'scope famiglia: registro del proprio figlio',
+    // `parent/forms/otp:PATCH` NON è più qui (2026-09-01), e il debito è stato
+    // pagato per la ragione descritta poco sopra: ora l'handler chiama
+    // `requireParentOfStudent`, quindi il lock lo riconosce da solo dal corpo.
+    // La voce diceva «scope famiglia + OTP monouso sulla propria compilazione», e
+    // la prima metà era falsa: il controllo sull'alunno era
+    // `if (student_id && role === 'genitore' && !genitoreHasFiglio(…)) → 403`,
+    // cioè per chiunque NON agisse da genitore non c'era NESSUNO scope — né di
+    // famiglia né di sede — su una rotta che appone una firma con valore legale.
+    // L'OTP c'era davvero, ma un OTP prova CHI firma, non SU CHI.
+    // `parent/primaria:GET` NON è più qui (2026-09-01), ed è la nona voce tolta
+    // per la ragione descritta in cima al blocco: l'handler chiama
+    // `requireParentOfStudent`, quindi il lock lo riconosce da solo dal corpo.
+    //
+    // La voce diceva «scope famiglia: registro del proprio figlio», e la sua
+    // prima metà era falsa esattamente come le undici del 31/07. Il controllo
+    // era `if (agisceComeGenitore(user)) { serve il legame }`: per chi NON
+    // agiva da genitore — l'educator di un'altra sezione o di un'altra sede, la
+    // cuoca, la segreteria di un altro plesso — non c'era NESSUNO scope, né di
+    // famiglia né di sede, su una rotta che serve lezioni, valutazioni, NOTE
+    // DISCIPLINARI in testo libero e assenze con lo stato della giustificazione.
+    // Misurato prima del rimedio in `parent-primaria-idor.test.ts`: un educator
+    // della sede A chiedeva un minore della sede B e riceveva 200 con la nota
+    // disciplinare dentro il corpo.
+    //
+    // Era l'ULTIMA delle otto route della primaria a starci: le altre sette se
+    // n'erano già andate il 31/07, e questa è rimasta indietro un mese proprio
+    // perché la riga qui sopra spegneva il sospetto — che resta il danno
+    // peggiore di una voce falsa.
     'parent/primaria/note/firma:POST': 'scope famiglia: firma sulla nota del proprio figlio',
     // L'account è del genitore: lo scope è SE STESSO, non una sede.
     'parent/account/richiesta-cancellazione:GET': 'self: la richiesta di cancellazione del proprio account',
@@ -1564,7 +1590,40 @@ describe('coverage-lock isolamento fra sedi', () => {
             // (500 secco a ogni chiamata) e con `error.message` di PostgREST restituito al
             // chiamante in due punti: nome dello schema, della tabella e della colonna. Non è
             // un presidio tolto, è un file che non esiste più.
-            routeConServiceRole: 300,
+            //
+            // 🔺 300 → 301 il 2026-09-01: è nata `account/password:POST`, il cambio password
+            // condiviso fra genitori e personale. Service-role per una ragione sola e non
+            // aggirabile: `auth.admin.updateUserById` VUOLE la chiave di servizio, e la
+            // password vive in `auth.users`, che PostgREST non espone.
+            //
+            // NON porta nessuna esenzione, e `handlerEsentati` resta fermo a 100 — che è il
+            // punto da guardare. L'unica tabella di `public` che tocca è `password_cambi`,
+            // la cui chiave primaria È `auth.users.id`: non ha nessuna colonna di sede
+            // perché un account non appartiene a un plesso (una maestra può lavorare su due
+            // sedi, e la sua password è una sola). Non c'è quindi niente da isolare: la riga
+            // che scrive è quella dell'uid che la sessione ha appena dimostrato, e l'uid non
+            // arriva né dal corpo né da un header — `requireSessioneAuth` non li legge.
+            //
+            // ⚠️ IL +1 È MISURATO, NON DEDOTTO: spostando fuori dall'albero la cartella
+            // `src/app/api/account/` questo lock torna a leggere `300` e `463`.
+            //
+            // 🔺 301 → 302 il 2026-09-02: è nata
+            // `admin/staff/collega-profilo-esistente`, la porta con cui la Direzione
+            // aggiunge il ruolo del personale all'accesso di un GENITORE senza togliergli
+            // le schede dei figli — la decisione che `staff-identity.ts` chiede da mesi
+            // («serve una decisione della segreteria») e che finora non aveva nessun posto
+            // in cui essere presa. Service-role come tutto il cockpit: l'enforcement è
+            // applicativo.
+            //
+            // NON porta nessuna esenzione, e `handlerEsentati` resta fermo a 99 — che è il
+            // punto da guardare. La sede non è dedotta da nessuna parte: la `POST` la
+            // pretende nel corpo, la fa passare da `resolveScuolaScrittura` e scrive con
+            // `.in('scuola_id', scuole)` nell'istruzione stessa; l'account viene verificato
+            // da `accountNelloScope`, che porta la clausola dentro la query invece che in
+            // un `includes` di JavaScript. Il `parents` letto dai due handler è la tabella
+            // che per DDL non ha (e non deve avere) una sede propria — un genitore può
+            // avere figli in due plessi — ed è letto per uid singolo, dopo la verifica.
+            routeConServiceRole: 302,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1664,7 +1723,18 @@ describe('coverage-lock isolamento fra sedi', () => {
             // ⚠️ IL −2 È MISURATO, NON DEDOTTO: eseguendo questo lock col solo file
             // cancellato si legge esattamente `{300, 463, 101}`, cioè i tre valori qui
             // scritti, e nessun altro pezzo dell'albero si è mosso in questo passaggio.
-            handlerControllati: 463,
+            //
+            // 🔺 463 → 464 il 2026-09-01: il solo `POST` di `account/password`. Qui il passo
+            // coincide col file perché il file espone un metodo solo — e la coincidenza va
+            // detta, non dedotta, per la ragione scritta due righe sopra.
+            //
+            // 🔺 464 → 466 il 2026-09-02: i DUE metodi di
+            // `admin/staff/collega-profilo-esistente` — la `POST` che aggiunge il ruolo e
+            // la `GET` che risolve l'uid da mostrare a chi deve decidere. Qui il passo NON
+            // coincide col file (+1 route, +2 handler), ed è di nuovo il caso normale: va
+            // detto ogni volta, o al giro dopo qualcuno prenderà la coincidenza del giro
+            // precedente per una regola.
+            handlerControllati: 466,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1813,7 +1883,32 @@ describe('coverage-lock isolamento fra sedi', () => {
             // Chi rilegge: `npx vitest run __tests__/architecture/` non basta a dire
             // che questo lock stia guardando tutto — bisogna rigenerare la
             // fotografia e vedere se il numero delle tabelle è ancora quello.
-            handlerEsentati: 101,
+            //
+            // 🔻 101 → 100 il 2026-09-01: è USCITA `parent/forms/otp:PATCH`. È il verso
+            // buono di questo contatore — un'esenzione in meno, non una in più — e il
+            // debito è stato pagato davvero: l'handler chiama ora
+            // `requireParentOfStudent`, che questo lock riconosce da sé dal corpo. La
+            // voce prometteva «scope famiglia + OTP monouso», e la prima metà era falsa:
+            // il controllo era `if (student_id && role === 'genitore' && !legame) → 403`,
+            // cioè NIENTE per chiunque non agisse da genitore, su una rotta che appone
+            // una firma con valore legale. Un OTP prova CHI firma, non SU CHI.
+            //
+            // 🔻 100 → 99 il 2026-09-01: è USCITA `parent/primaria:GET`, la TERZA riga
+            // della stessa forma trovata in questo ciclo e l'ultima delle otto route
+            // della primaria a portare un'esenzione. Stesso verso buono, stesso motivo:
+            // l'handler chiama ora `requireParentOfStudent` e il lock lo riconosce dal
+            // corpo. La voce prometteva «scope famiglia: registro del proprio figlio», e
+            // per metà degli attori non c'era nessuno scope affatto — misurato in
+            // `parent-primaria-idor.test.ts` prima del rimedio: un educator della sede A
+            // riceveva 200 su un minore della sede B, con la nota disciplinare in testo
+            // libero nel corpo della risposta.
+            //
+            // Tre voci false trovate in un giorno, tutte e tre scritte come un permesso
+            // (`if (agisce da genitore) { nego }`) e tutte e tre lette per un mese come
+            // se dichiarassero una difesa. Chi rilegge una riga di questo blocco che dice
+            // «scope famiglia» vada a guardare il codice: la frase descrive ciò che
+            // succede a un genitore, e non dice niente di tutti gli altri.
+            handlerEsentati: 99,
         })
     })
 })

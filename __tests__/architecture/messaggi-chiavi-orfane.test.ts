@@ -56,6 +56,18 @@ const SOTTO_TUTELA = new Map<string, string>([
     'adminModulistica',
     'ogni chiave è nominata per esteso in page.tsx e nei componenti: nessuna costruita da un dato',
   ],
+  // ⚠️ VA DOPO `adminModulistica` E NON PRIMA: la prova di sanità qui sotto prende il
+  // PRIMO namespace dell'elenco e pretende che, senza sorgenti, risultino orfane più di
+  // 50 chiavi. `password` ne ha 38 — metterlo in testa renderebbe rosso il controllo che
+  // dimostra che la scansione funziona, cioè si romperebbe la misura invece del prodotto.
+  [
+    'password',
+    'namespace nato il 2026-09-02 e montato da quattro superfici (profilo genitore, profilo ' +
+      'docente, impostazioni segreteria, interstiziale del primo accesso): ogni chiave è ' +
+      'nominata per esteso: le quattro parole della barra di forza stanno in un array di ' +
+      'stringhe letterali, non composte da `forza${livello}` — proprio perché una chiave ' +
+      'costruita da un dato è invisibile a questa scansione',
+  ],
 ])
 
 /** Tutti i sorgenti applicativi: è lì che una chiave viene chiesta. */

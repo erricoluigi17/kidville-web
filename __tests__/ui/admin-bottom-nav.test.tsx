@@ -67,6 +67,14 @@ vi.mock('@/components/ui/ContrastMenuButton', () => ({
 vi.mock('@/components/ui/LogoutMenuButton', () => ({
   LogoutMenuButton: ({ className }: { className?: string }) => <button className={className}>Esci</button>,
 }));
+// Idem per «Cambia profilo», che oltre al provider ha bisogno di `useRouter` e di
+// una `/api/me`: il suo comportamento vive in `__tests__/components/cambia-profilo.test.tsx`
+// e il suo montaggio nei tre menu in `__tests__/ui/cambia-profilo-nei-menu.test.tsx`.
+vi.mock('@/components/ui/CambiaProfiloMenuButton', () => ({
+  CambiaProfiloMenuButton: ({ className }: { className?: string }) => (
+    <button className={className}>Passa a Genitore</button>
+  ),
+}));
 
 import { AdminBottomNav } from '@/components/features/admin/AdminBottomNav';
 

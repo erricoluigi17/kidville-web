@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
-import { zUuid, zDataYMD, zPaginazione } from '@/lib/validation/common'
+import { zUuid, zDataYMD, zPaginazione, zOpzionale } from '@/lib/validation/common'
 import { annoFiscale } from '@/lib/format/fiscal-date'
 import {
   MIME_AMMESSI,
@@ -36,9 +36,9 @@ import { logErrore } from '@/lib/logging/logger'
 
 const GATE: ('admin' | 'segreteria')[] = ['admin', 'segreteria']
 
-/** '' / null / assente → undefined (i form inviano stringhe vuote). */
-const zOpzionale = <S extends z.ZodType>(schema: S) =>
-  z.preprocess((v) => (v === '' || v === null ? undefined : v), schema.optional())
+// `zOpzionale` ('' / null / assente → undefined) vive in `@/lib/validation/common`:
+// era dichiarato qui e, identico, in `protocolli/rettifica/route.ts`. Due copie
+// della stessa riga sono il modo in cui una convenzione diverge senza far rumore.
 
 const zTipo = z.enum(['ingresso', 'uscita', 'interno'])
 const zMime = z.enum(MIME_AMMESSI)

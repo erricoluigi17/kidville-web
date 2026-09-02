@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 import { VERSIONE_TERMINI } from '@/lib/legal/versioni'
+import { valutaPasswordNuova } from '@/lib/auth/regole-password'
+import { CASI_PASSWORD } from '../helpers/casi-password'
 
 // P4/DL-045 — POST /api/parent/onboarding: consensi GDPR obbligatori + (opzionale)
 // set password Supabase Auth; marca onboarded_at sul genitore.
@@ -62,6 +64,19 @@ beforeEach(() => {
   h.updates = []; h.eqCalls = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null; h.parentNotFound = false; h.pwErr = null
 })
 
+/**
+ * Una password che SUPERA la regola condivisa (`@/lib/auth/regole-password`) — inventata, come
+ * ogni credenziale che compare in questo repo pubblico.
+ *
+ * Era `'unaPasswordLunga'`, scelta quando l'unico requisito era «almeno 8 caratteri»: sedici
+ * caratteri e nessuna cifra. Dal 2026-09-01 la regola pretende anche una cifra, e con quel
+ * valore i tre test qui sotto si fermavano al gate — cioè smettevano di misurare ciò che
+ * dichiarano (che cosa succede DOPO la risposta di GoTrue) pur restando scritti come se lo
+ * misurassero. Il fixture di un test che parla del passo successivo deve superare il passo
+ * precedente, altrimenti il test cambia argomento senza dirlo.
+ */
+const PASSWORD_VALIDA = 'unaPassword1Lunga'
+
 /** I `logEvento` emessi con un dato livello, per `esito`. */
 const esitiLoggati = (livello: string): string[] =>
   h.logEvento.mock.calls
@@ -90,6 +105,82 @@ describe('POST /api/parent/onboarding', () => {
 
   it('400 se la password è troppo corta', async () => {
     expect((await POST(req({ consensi: { privacy: true, termini: true }, password: 'abc' }))).status).toBe(400)
+  })
+
+  // ── La regola della password sta in UN POSTO SOLO (2026-09-01) ─────────────
+  // Questa route pretendeva 8 caratteri; `supabase/config.toml` ne dichiara 6 al
+  // provider; la schermata che la chiama ne ripeteva 8 per conto suo. Tre numeri
+  // per lo stesso gesto, e nessun test poteva vederli diversi: ogni copia era
+  // coerente con sé stessa. Ora il giudizio è di `@/lib/auth/regole-password`, e
+  // i tre casi qui sotto sono quelli che il vecchio `length < 8` LASCIAVA PASSARE.
+  it('400 su una password di 9 caratteri: il minimo è quello del modulo condiviso, non 8', async () => {
+    const nove = 'abcdefg12'
+    expect(nove).toHaveLength(9)
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: nove }))
+    expect(res.status).toBe(400)
+    // Il gate scatta PRIMA di GoTrue: la password non viene nemmeno tentata.
+    expect(h.pwUpdates).toHaveLength(0)
+    expect(esitiLoggati('info')).toContain('password-onboarding-rifiutata')
+  })
+
+  it('400 su una password senza cifre, per quanto lunga (policy `letters_digits` di GoTrue)', async () => {
+    // Senza questo controllo la respingerebbe GoTrue, dopo, con un messaggio che
+    // il genitore non può interpretare — ed è il rifiuto opaco che la regola evita.
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'parolachiavelunga' }))
+    expect(res.status).toBe(400)
+    expect(h.pwUpdates).toHaveLength(0)
+  })
+
+  it('esattamente 10 caratteri con lettera e cifra: passa, e la password arriva a GoTrue', async () => {
+    const dieci = 'abcdefgh12'
+    expect(dieci).toHaveLength(10)
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: dieci }))
+    expect(res.status).toBe(200)
+    expect(h.pwUpdates).toHaveLength(1)
+  })
+
+  // ── LO STESSO VERDETTO DEL CLIENT, SUGLI STESSI INPUT ─────────────────────
+  //
+  // La tabella è `__tests__/helpers/casi-password.ts`, e la attraversa anche
+  // `__tests__/components/parent-onboarding-password.test.tsx`. Il difetto che
+  // chiude non stava né in questo file né in quello: stava NELLO SPAZIO FRA I DUE
+  // — il client si fermava a `length < 8` e questa route ne pretendeva 10, e
+  // ciascuno dei due test era coerente con la propria metà.
+  //
+  // Qui si verifica anche il CODICE: senza, la risposta ricadrebbe sul messaggio
+  // generico della schermata («Operazione non riuscita»), che è la metà peggiore
+  // del difetto — quella che lascia il genitore senza sapere cosa correggere.
+  describe.each(CASI_PASSWORD.filter((c) => c.scritta !== ''))('«$scritta» → $atteso', (caso) => {
+    it(caso.perche, async () => {
+      const regola = valutaPasswordNuova(caso.scritta)
+      expect(regola.ok ? 'OK' : regola.codice, 'la tabella non descrive più la regola').toBe(caso.atteso)
+
+      const res = await POST(req({ consensi: { privacy: true, termini: true }, password: caso.scritta }))
+      const j = await res.json()
+
+      if (caso.atteso === 'OK') {
+        expect(res.status).toBe(200)
+        expect(h.pwUpdates).toHaveLength(1)
+        return
+      }
+      expect(res.status).toBe(400)
+      expect(j.codice).toBe(caso.atteso)
+      // Il gate scatta PRIMA di GoTrue: la password non viene nemmeno tentata.
+      expect(h.pwUpdates).toHaveLength(0)
+    })
+  })
+
+  it('un campo password lasciato VUOTO non è un rifiuto: è «nessuna password»', async () => {
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: '' }))
+    expect(res.status).toBe(200)
+    expect(h.pwUpdates).toHaveLength(0)
+  })
+
+  it('nessun log della password rifiutata porta la password (esce solo il codice)', async () => {
+    await POST(req({ consensi: { privacy: true, termini: true }, password: 'abcdefg12' }))
+    const contesti = h.logEvento.mock.calls.map((c) => JSON.stringify(c[2]))
+    expect(contesti.join(' ')).not.toContain('abcdefg12')
+    expect(contesti.join(' ')).toContain('PASSWORD_TROPPO_CORTA')
   })
 
   it('200 con consensi: marca onboarded_at + salva consensi_gdpr', async () => {
@@ -153,7 +244,7 @@ describe('POST /api/parent/onboarding', () => {
   })
 
   it('aggiorna la password Supabase Auth se fornita e il genitore è bindato', async () => {
-    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'unaPasswordLunga' }))
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: PASSWORD_VALIDA }))
     expect(res.status).toBe(200)
     expect(h.pwUpdates[0]).toMatchObject({ uid: 'auth-1' })
     // Regola 5 del logging: gli eventi critici loggano anche il SUCCESSO.
@@ -173,7 +264,7 @@ describe('POST /api/parent/onboarding', () => {
     // una sola riga da nessuna parte.
     h.pwErr = { name: 'AuthApiError', message: 'Password is known to be weak and easy to guess', status: 422 }
 
-    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'unaPasswordLunga' }))
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: PASSWORD_VALIDA }))
 
     expect(res.status).toBe(400)
     const j = await res.json()
@@ -187,7 +278,7 @@ describe('POST /api/parent/onboarding', () => {
   it('guasto di GoTrue (5xx) ⇒ 500, e i consensi restano salvati (l onboarding è ripetibile)', async () => {
     h.pwErr = { name: 'AuthRetryableFetchError', message: 'service unavailable', status: 503 }
 
-    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: 'unaPasswordLunga' }))
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: PASSWORD_VALIDA }))
 
     expect(res.status).toBe(500)
     expect((await res.json()).success).toBeUndefined()

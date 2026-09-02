@@ -2,6 +2,10 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "eFamiglia" export is defined on the mock`.
+import { agisceComeGenitore, eFamiglia } from '@/lib/auth/predicati-ruolo';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
@@ -101,7 +105,15 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
 
         // Genitore: il parentId storico in query deve coincidere con l'identità
         // reale del gate (anti-IDOR sul parametro; il legame è già verificato).
-        if (auth.user.role === 'genitore' && q.data.parentId && q.data.parentId !== auth.user.id) {
+        //
+        // PRESENTAZIONE, non autorizzazione: la domanda è «stai facendo
+        // self-service dal telefono, in veste di famiglia?». In quella vista il
+        // `parentId` non può che essere il proprio. Chi guarda in veste di lavoro
+        // usa lo stesso parametro come FILTRO legittimo, e resta coperto dal
+        // controllo di legame `genitoreHasFiglio(parentId, studentId)` poche righe
+        // più sotto: con `eFamiglia` qui si toglierebbe a una docente-genitore un
+        // filtro del suo mestiere senza guadagnare un grammo di sicurezza.
+        if (agisceComeGenitore(auth.user) && q.data.parentId && q.data.parentId !== auth.user.id) {
             return NextResponse.json(
                 { error: 'Non sei autorizzato a visualizzare i media di questo studente' },
                 { status: 403 }
@@ -187,7 +199,32 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             // diverse, e questa route deve rispettare anche la seconda.
             // Il genitore resta fuori: la sua sede sono i FIGLI, non il plesso
             // scritto sul suo record.
-            if (auth.user.role !== 'genitore') {
+            //
+            // ⚠️ AUTORIZZAZIONE, NON PRESENTAZIONE — e la differenza si misura in
+            // foto che spariscono. Qui c'era `auth.user.role !== 'genitore'`, cioè
+            // la VESTE (cookie `kv-active-role`), mentre il gate a monte
+            // (`requireParentOfStudent`) biforca sul LEGAME: fa passare una
+            // docente-genitore sul PROPRIO figlio anche fuori dalle sezioni che
+            // insegna e anche in un'altra sede. Con i due criteri disallineati il
+            // permesso veniva concesso e poi svuotato qui sotto:
+            // `attive = [sede dove insegno]`, `sedeFiglio = [altra sede]`,
+            // intersezione vuota, `plessi = []`, risposta **200 con `media: []`**.
+            // In produzione esiste un legame di questa forma, e un 200 vuoto non
+            // lascia né un errore né un log: solo una galleria vuota.
+            //
+            // `agisceComeGenitore` NON sarebbe stato un rimedio: è la stessa
+            // condizione, scritta con un nome più bello. «Essere famiglia» è una
+            // proprietà del DATABASE — `eFamiglia`, che legge i ruoli reali.
+            //
+            // Il prezzo, dichiarato: chi ha il ponte `parents` non vede più
+            // applicato il proprio SedeSelector su QUESTA lettura. È una
+            // preferenza di visualizzazione, non un permesso — i permessi li ha
+            // già decisi il gate — e riguarda le quattro persone con il doppio
+            // profilo. Per chi famiglia non è, l'intersezione resta identica: è
+            // ciò che impedisce alla segreteria di un plesso di leggere le foto di
+            // un minore di un altro, e ha una controprova sua in
+            // `gallery-scope.test.ts` (f).
+            if (!eFamiglia(auth.user)) {
                 const attive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
                 plessi = attive.includes(sedeFiglio) ? [sedeFiglio] : [];
             }

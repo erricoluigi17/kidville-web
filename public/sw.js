@@ -199,8 +199,25 @@
 // i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
 // questo file restano identici il browser non reinstalla niente. La copia
 // vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
-const VERSIONE = 'v10';
-// IMPRONTA-PAGINA-OFFLINE: a00babfd13e18f7958698e68743660c64f2c73dd44cb2af091f2c13f4211efbc
+// 2026-09-02 — nasce `/auth/nuova-password`, l'interstiziale del primo accesso:
+// ci arriva chi ha appena fatto l'accesso con la password ricevuta via email, per
+// sceglierne una sua. I due cataloghi di /offline guadagnano la sua etichetta
+// («Nuova password» / «New password»); senza, il lock `offline-etichette-rotte` è
+// rosso e la pagina renderebbe quella rotta capitalizzando l'URL — cioè
+// «Nuova-password», in italiano anche a interfaccia inglese.
+//
+// Qui la voce vale quanto quella di `/anagrafica-personale`, e per lo stesso
+// motivo: è una schermata che si apre SUBITO DOPO l'accesso, spesso sul telefono e
+// fuori casa, e chi ci perde la connessione deve poter capire dall'elenco di
+// /offline dove si era fermato — altrimenti l'unica lettura possibile è «l'accesso
+// non ha funzionato», che è falsa.
+//
+// `VERSIONE` sale a `v11` per la ragione di sempre, che è tutta di questo blocco:
+// i cataloghi di /offline sono serviti dalla CacheStorage, e finché i BYTE di
+// questo file restano identici il browser non reinstalla niente. La copia
+// vecchia della pagina resterebbe su ogni dispositivo che l'ha già salvata.
+const VERSIONE = 'v11';
+// IMPRONTA-PAGINA-OFFLINE: a5b029480c6114b32812cb944d80c432e3510ebd6e1af448d5401c1f41743ef6
 const CACHE_SHELL = 'kidville-shell-' + VERSIONE;
 
 /** Pagina di ripiego, pre-cachata in `install`. Pubblica: vedi PUBLIC_PREFIXES. */

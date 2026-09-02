@@ -96,6 +96,120 @@
 
 ---
 
+## 🔑 Changelog — L'email prometteva a 560 famiglie un pulsante che non esisteva — 2026-09-02 (branch `feat/candidature-cv-obbligatorio`)
+
+Tre richieste distinte, tenute insieme da una cosa sola: ognuna è stata **misurata** prima di essere
+progettata, e in tutti e tre i casi la misura ha smentito la premessa.
+
+### 1. Il cambio password (il più urgente, per numero di persone)
+
+L'email delle credenziali dice da mesi, testualmente: *«Si entra con la password qui sopra, e subito
+dopo il sistema ne fa scegliere una nuova»* (`src/lib/email/messaggi/credenziali.ts`). **Non
+succedeva.** `supabase.auth.updateUser` aveva **zero occorrenze** in tutto il repo, e l'unico campo
+password self-service viveva in `/parent/onboarding`, pagina che **nessuna voce di menu raggiunge**.
+
+**Misurato il 2026-09-01**: **560** genitori con account · **129** non hanno mai fatto login ·
+**22** hanno `onboarded_at`. Cioè circa **538 persone con la password provvisoria e nessun modo di
+cambiarla**.
+
+Fatto: `POST /api/account/password` (gate a **sola sessione** — non `requireUser`, che onora ancora
+`x-user-id` se `ALLOW_HEADER_IDENTITY` non è esattamente `'false'`), la card «Cambia password» nel
+profilo genitore, la **nuova pagina profilo del personale** (`/teacher/profilo`: lo slot esisteva già
+con `soon: true`), la sezione «Il mio account» in Impostazioni, e l'interstiziale
+`/auth/nuova-password` **con «Non ora»**, che è la valvola che impedisce di chiudere fuori qualcuno.
+
+**Chi deve cambiare non lo decide un flag**, lo decide la **forma della password digitata** al login
+(`classificaFormaPassword`, che già girava e finiva solo in una riga di log). Nessuna colonna può
+saperlo retroattivamente: `parents.onboarded_at` non è un proxy (si valorizza anche accettando i soli
+consensi), `auth.users.updated_at` nemmeno, l'impronta bcrypt non è invertibile. Per questo la nuova
+tabella `password_cambi` **nasce con zero righe**, e il suo commento dichiara i **tre** stati — non
+due: *riga presente* · *nessuna riga + mai entrato* · *nessuna riga + ha fatto login = **ignoto***.
+Un blocco costruito su un ignoto sarebbe stato un lockout di 560 famiglie.
+
+⚠️ **Letto sul sorgente di GoTrue, non assunto**: `adminUserUpdate` con `sessionID == nil` esegue
+`Logout(tx, u.ID)` = `DELETE FROM sessions WHERE user_id = ?`. Il cambio password **revoca tutte le
+sessioni, compresa quella di chi sta cambiando**. La schermata di successo lo dice e porta al login;
+senza, l'utente avrebbe visto una raffica di 401 proprio mentre faceva la cosa giusta.
+
+### 2. L'insegnante che è anche genitore
+
+**Non era un caso teorico: erano 5 persone reali** (4 la mattina, 5 la sera — la crescita è reale), e
+**6 dei loro legami figlio↔genitore cadono fuori dalle sezioni** del docente, **1 in un'altra sede**.
+Aprendo il diario del proprio figlio ricevevano **403 «Alunno non nella tua classe»**.
+
+La regola nuova, in una riga: **autorizzazione = ruoli reali (database); presentazione = ruolo attivo
+(cookie)**. Il cookie non concede e non revoca: sceglie *quale delle proprie viste legittime* si sta
+guardando, e viene **ri-validato a ogni richiesta** contro i ruoli letti in quella stessa richiesta
+(prima la validazione era solo al momento della scrittura, con un cookie che dura 180 giorni).
+`requireParentOfStudent` biforca ora sul **legame**, non sul ruolo. Più lo **switch di profilo** nei
+tre menu e il **chip della veste** in AppBar, che non si mostrano a chi ha un profilo solo (617
+persone su 622: un'affordance morta è rumore).
+
+**Nessuna migrazione di schema**, e non è una scorciatoia: `current_parent_student_ids()` — la
+funzione `SECURITY DEFINER` su cui poggia ogni policy «(parents space)» — **non nomina `utenti`**.
+Il secondo profilo non è un ruolo: è una relazione, e ha già la sua tabella.
+
+Aperto anche il verso opposto, **con presidio**: `POST /api/admin/staff/collega-profilo-esistente`,
+gate `admin`/`coordinator` (**non** segreteria), conferma esplicita, audit + log. Il percorso
+automatico continua a rifiutare. ⚠️ Anche qui la premessa era falsa: **563 righe `parents` su 563
+hanno già una riga `utenti`**, quindi l'operazione è un `UPDATE` del ruolo, non un `INSERT`.
+
+### 3. I filtri in tutte le modulistiche
+
+Zero filtri in admin e parent; nel docente due `<select>`. Ora un **motore unico**
+(`src/lib/ui/filtri/`) con tredici configurazioni, invece di tredici barre.
+**Client dove i dati sono tutti in memoria, server dove c'è la paginazione** — e non è una preferenza:
+`offset=righe.length` significa che un filtro client su una lista paginata **scrive «3 risultati»
+mentre 380 righe non caricate corrispondono**.
+
+⚠️ **`forms_templates`, `forms_submissions` e `certificati_medici` hanno zero righe in produzione**:
+cinque linguette su tredici filtrano il nulla. Per questo `decidiStatoElenco` distingue *vuoto* da
+*nessun risultato*: dire «nessun risultato» su una tabella vuota accusa i filtri di una colpa che non
+hanno.
+
+**La ricerca sulle domande di iscrizione cerca su tutti i figli, non solo sul primo.** Misurato: 533
+domande, fino a 3 figli per famiglia; cercando solo su `children->0` uscivano **160** risultati, su
+tutti **169** — **nove famiglie sarebbero sparite dalla ricerca senza che nessuno potesse accorgersene**.
+
+### Difetti trovati strada facendo, che nessuno aveva chiesto di cercare
+
+| | Dove | Era |
+|---|---|---|
+| **3 IDOR** | `parent/submissions`, `parent/forms/otp`, `parent/primaria` | «se sei genitore e non è tuo figlio ti nego» — per **tutti gli altri nessun controllo**, con `requireUser` a monte. `parent/primaria` restituiva **note disciplinari in testo libero e valutazioni di un minore di un altro plesso** a qualunque autenticato |
+| **Consensi aggirabili** | chat di famiglia | una docente-genitore scriveva nel proprio thread senza che i Termini le venissero mai chiesti |
+| **Scheda vuota per sempre** | certificati medici del genitore | `Array.isArray()` su `{success, data}`: mai un errore, mai un log, mai un test rosso |
+| **Lunghezza password nei log** | `app_log`, 30 giorni | `[redatto:str/12]` su ogni tentativo fallito |
+| **1 legame invisibile alla RLS** | produzione | il codice unisce due tabelle, il database ne legge una: gate aperto e schermata vuota. Riparato (`20260901203333`), riverificato a 0 |
+| **Due lock diventati ciechi** | tendina classi, 44px | leggevano il `<select>` dei filtri e la pastiglia «Approvata» invece degli elementi veri |
+| **Un test verde per costruzione** | email «codice di verifica» | il ritaglio `split('kv-card')[1]` prende CSS, non il corpo — **non corretto, fuori perimetro: resta come debito** |
+
+### Verifica visiva
+
+Tre giri di confronto **cieco** su `/auth/nuova-password`: due critici indipendenti, immagini
+rinominate e in ordine invertito fra loro. Giro 1 e 2: scelgono la versione nuova ma la **bocciano**.
+Giro 3: **promossa da entrambi**. Contorno delle tacche dell'indicatore da **2,13:1 a 5,17:1**,
+marcatori da 2,9:1 a 6,1:1, vincolo della password spostato **sopra** il campo.
+
+Due lezioni di metodo, entrambe pagate: il rilievo peggiore del giro 2 (**«Non ora» ridotto a 50×15
+px**, l'unica via d'uscita) l'aveva causato la correzione del giro 1 — era da abbassare il *rango*,
+non l'*area*. E la causa radice di due rilievi su tre non era il colore ma lo **spessore**: contorno
+da 1px e stroke reso a 1,25px, che a schermo arrivano mescolati al fondo.
+
+⚠️ **Rilievo aperto, non risolto**: la login è nera, l'interstiziale che la segue di un secondo è
+crema — **19,9:1 di salto di luminanza**. Correggerlo significa ridisegnare la login, che è la porta
+d'ingresso di tutte le 560 famiglie: è una decisione, non una rifinitura di fine serata.
+
+### Gate
+
+`tsc --noEmit` 0 · `eslint --max-warnings 0` 0 · `vitest` **13.242/13.242** (baseline 12.490: **+752
+test**, zero regressioni) · `build` 0. Migrazioni applicate e verificate:
+`20260901203141_password_cambi` (0 righe, RLS attiva, 0 policy) e
+`20260901203333_legami_anagrafici_profili_doppi` (1 riga, invisibili alla RLS 1 → 0).
+⚠️ Entrambe hanno confermato la trappola nota: `apply_migration` registra il **proprio** timestamp in
+UTC (`223048` → `203141`), e i file locali sono stati rinominati di conseguenza.
+
+---
+
 ## 🧷 Changelog — L'Armadietto chiedeva materiale a una tabella che nessuna migrazione ha mai creato — 2026-09-01 (branch `feat/candidature-cv-obbligatorio`)
 
 Il monitoraggio della produzione ha trovato **226 errori `PGRST205`** in 28 giorni su

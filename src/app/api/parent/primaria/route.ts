@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
-import { requireUser } from '@/lib/auth/require-staff'
-import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
+import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import { limitaAiFatti } from '@/lib/presenze/finestra-trascorsa'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
@@ -20,25 +19,46 @@ const getQuerySchema = z.object({
 // gli argomenti/compiti "propri" del docente di sostegno sono visibili solo se il
 // figlio è tra i destinatari. Valutazioni mostrate dopo il buffer notifica.
 export const GET = withRoute('parent/primaria:GET', async (request: NextRequest) => {
-  // Gate sessione (M5.6): sostituisce il vecchio check di sola presenza
-  // dell'header x-user-id (spoofabile post-M4).
-  const auth = await requireUser(request)
-  if (auth.response) return auth.response
-
   try {
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
     const { studentId } = q.data
 
-    const supabase = await createAdminClient()
+    // ─── IL CONTROLLO ERA SCRITTO COME UN PERMESSO, E PER METÀ DEGLI ATTORI
+    //     NON CONTROLLAVA NIENTE ─────────────────────────────────────────────
+    //
+    // Diceva:
+    //   `if (agisceComeGenitore(auth.user)) { …serve il legame col bambino… }`
+    // cioè «se stai guardando in veste di famiglia e quel bambino non è tuo
+    // figlio, ti nego». Per chiunque NON agisse da genitore — un educator di
+    // un'altra sezione o di un'altra sede, la cuoca, la segreteria di un altro
+    // plesso — il controllo non era permissivo: NON C'ERA. Il gate a monte era
+    // `requireUser`, che ammette OGNI utente autenticato, e il client è
+    // `createAdminClient()` (service-role), che scavalca la RLS: questa riga era
+    // l'unica cosa fra un account qualunque e il registro di un minore indicato
+    // per uuid — lezioni, valutazioni, NOTE DISCIPLINARI in testo libero e
+    // assenze con lo stato della giustificazione.
+    //
+    // Il rimedio NON è scambiare il predicato con `eFamiglia`: lascerebbe in
+    // piedi la stessa forma (nego a un genitore, non chiedo niente agli altri).
+    // La domanda giusta non è «di che ruolo sei» ma «questo bambino ti è
+    // raggiungibile?», e `requireParentOfStudent` la risponde per TUTTI: legame
+    // di famiglia per chi è famiglia — biforcando sul LEGAME e non sulla veste,
+    // così le cinque docenti-genitori aprono il registro del proprio figlio
+    // anche fuori dalle sezioni che insegnano — plesso e sezione per tutti gli
+    // altri, che è il perimetro con cui l'educator continua a leggere i bambini
+    // delle proprie classi e la segreteria tutte le classi del proprio plesso.
+    //
+    // Era l'ULTIMA delle otto route della primaria senza questo gate: le sette
+    // sorelle (`{assenze,note,orario,pagella,scrutinio,valutazioni}:GET` e
+    // `pagella/firma:POST`) ci passano già, e servono gli stessi dati.
+    //
+    // Il gate sta PRIMA di `createAdminClient()`: dopo un 403 non deve partire
+    // nemmeno una lettura.
+    const auth = await requireParentOfStudent(request, studentId)
+    if (auth.response) return auth.response
 
-    // scope: il genitore deve essere collegato all'alunno (lo staff passa dal ruolo)
-    if (auth.user.role === 'genitore') {
-      // Unione runtime + anagrafica: col solo legame runtime il registro del
-      // proprio figlio (lezioni, valutazioni, note, assenze) era inaccessibile.
-      const ok = await genitoreHasFiglio(supabase, auth.user.id, studentId)
-      if (!ok) return NextResponse.json({ error: 'Accesso negato' }, { status: 403 })
-    }
+    const supabase = await createAdminClient()
 
     const { data: alunno } = await supabase
       .from('alunni')

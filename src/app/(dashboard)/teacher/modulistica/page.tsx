@@ -1,23 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { Suspense, useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { useDateFormat } from '@/lib/i18n/date';
-import {
-  FileText, Users, HeartPulse,
-  AlertCircle, Upload, Check, Bell, Calendar
-} from 'lucide-react';
+import { Users, HeartPulse } from 'lucide-react';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
-import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
-
-interface StudentSemaforo {
-  student_id: string;
-  nome: string;
-  cognome: string;
-  status: 'green' | 'red';
-  submission: unknown;
-}
+import { logClient } from '@/lib/logging/client';
+import { PannelloSemaforo } from '@/components/features/teacher/PannelloSemaforo';
+import { PannelloCertificatiMedici } from '@/components/features/teacher/PannelloCertificatiMedici';
+import type { ModuloSelezionabile } from '@/components/features/teacher/filtri-modulistica';
 
 interface FormTemplate {
   id: string;
@@ -26,176 +18,110 @@ interface FormTemplate {
   target_classes: string[];
 }
 
-interface MedicalCertificate {
-  id: string;
-  alunno_id: string;
-  nome_alunno: string;
-  cognome_alunno: string;
-  file_path: string;
-  giorni_coperti?: string[];
-  data_inizio?: string | null;
-  data_fine?: string | null;
-  stato?: string;
-  nota_validazione?: string | null;
-  note: string;
-  creato_il: string;
-}
-
-// Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
-export default function TeacherModulisticaPage() {
+/**
+ * ─── «MODULISTICA» DEL DOCENTE — la pagina tiene la CORNICE, i pannelli i filtri ─
+ *
+ * La sezione è la cornice di tutte e due le schede: la stessa nel semaforo e nei
+ * certificati, e per questo vive QUI e non dentro una delle due barre. I pannelli
+ * si montano con `key={sezione}` — cambiando sezione rinascono già sulla sezione
+ * nuova, coi moduli di QUELLA sezione — e la riportano indietro con `onSezione`
+ * invece di tenersene una copia. Il perché per esteso sta in `PannelloSemaforo`.
+ *
+ * ⚠️ `<Suspense>`: i pannelli montano `useFiltri`, che legge `useSearchParams()`.
+ * Senza confine di sospensione questa rotta statica cade in build con
+ * `missing-suspense-with-csr-bailout` (il lock
+ * `__tests__/architecture/use-search-params-con-suspense.test.ts` racconta perché
+ * la stessa pagina del genitore ha imparato la lezione prima di questa).
+ */
+function ContenutoModulistica() {
   const t = useTranslations('teacherServizi');
-  const f = useDateFormat();
   const { userId: teacherId } = useSessionIdentity();
-  const [className, setClassName] = useState('');
-  const [availableSections, setAvailableSections] = useState<string[]>([]);
+  const parametri = useSearchParams();
+
+  const [sezioni, setSezioni] = useState<string[]>([]);
+  // Un `?class_name=` incollato apre la sezione giusta. Resta una PROPOSTA finché
+  // l'elenco vero non arriva: se non è una sezione di questo docente viene
+  // scartata qui sotto, non passata alla barra — una cornice inesistente
+  // produrrebbe un elenco vuoto che sembra un archivio vuoto.
+  const [sezione, setSezione] = useState(() => parametri.get('class_name') ?? '');
+  const [moduli, setModuli] = useState<ModuloSelezionabile[]>([]);
+  /**
+   * La sezione PER CUI i moduli in `moduli` sono stati letti — non un booleano
+   * «pronti».
+   *
+   * 🔴 Con un booleano il difetto era questo, ed è stato misurato: la prima lettura
+   * parte con la sezione ancora vuota, `moduliPronti` diventa `true` e il pannello
+   * nasce con zero moduli; quando la sezione arriva, la `key` cambia e il pannello
+   * rinasce — ma i moduli di QUELLA sezione non sono ancora tornati, quindi rinasce
+   * di nuovo senza. Da lì in poi la `key` non cambia più: la barra resta senza
+   * modulo scelto per sempre, il semaforo non fa nessuna richiesta e l'elenco è
+   * vuoto senza un errore, senza un log e senza niente da toccare.
+   *
+   * Confrontare la sezione dei moduli con quella corrente rende la condizione di
+   * nascita ESATTA: il pannello si monta quando la risposta che ha in mano è la
+   * risposta alla domanda che sta facendo.
+   */
+  const [sezioneDeiModuli, setSezioneDeiModuli] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'semaforo' | 'medici'>('semaforo');
-  const [forms, setForms] = useState<FormTemplate[]>([]);
-  const [selectedFormId, setSelectedFormId] = useState('');
-  const [students, setStudents] = useState<StudentSemaforo[]>([]);
-  const [medCerts, setMedCerts] = useState<MedicalCertificate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  // Proxy Upload state
-  const [showProxyModal, setShowProxyModal] = useState<StudentSemaforo | null>(null);
-  const [proxyFileName, setProxyFileName] = useState('');
-  const [proxyFile, setProxyFile] = useState<File | null>(null);
-  const [proxyUploading, setProxyUploading] = useState(false);
-
-  // Manage Covered Days state
-  const [managingCert, setManagingCert] = useState<MedicalCertificate | null>(null);
-  const [notaValidazione, setNotaValidazione] = useState('');
-
-  // Notifications
   const [toast, setToast] = useState('');
 
-  // Sezione reale del docente (niente 'Girasoli' hardcoded): da educator-sections.
+  // Sezione reale del docente (niente 'Girasoli' cablato): da educator-sections.
   useEffect(() => {
     if (!teacherId) return;
     fetch(`/api/educator-sections?userId=${teacherId}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        const secs: string[] = d?.sectionNames ?? [];
-        setAvailableSections(secs);
-        if (secs.length > 0) setClassName((prev) => prev || secs[0]);
+        const trovate: string[] = d?.sectionNames ?? [];
+        setSezioni(trovate);
+        setSezione((precedente) => (trovate.includes(precedente) ? precedente : trovate[0] ?? ''));
       })
-      .catch(() => {});
+      .catch((err) => {
+        // Un catch che non logga è un bug: senza sezioni la pagina resta ferma
+        // sullo spinner, e nessuno saprebbe distinguerlo da «nessuna sezione».
+        logClient({
+          livello: 'error',
+          evento: 'fetch',
+          messaggio: `sezioni del docente: ${err instanceof Error ? err.name : 'errore di rete'}`,
+          route: '/teacher/modulistica',
+        });
+      });
   }, [teacherId]);
 
-  const fetchForms = useCallback(async () => {
+  const caricaModuli = useCallback(async () => {
     if (!teacherId) return; // identità non risolta: lo spinner resta
     try {
+      // Il fallimento è un VALORE e non un `catch`: uno `setState` dentro un
+      // `catch` gira in modo sincrono quando `fetch` lancia sincrono, e in un
+      // effetto è ciò che `react-hooks/set-state-in-effect` vieta (ERRORE).
       const res = await fetch('/api/admin/forms').catch(() => null);
-      const data = await res?.json().catch(() => null);
-      if (Array.isArray(data)) {
-        // Filter forms assigned to this teacher's class
-        const classForms = data.filter((f: FormTemplate) => f.target_classes?.includes(className));
-        setForms(classForms);
-        if (classForms.length > 0) {
-          setSelectedFormId(classForms[0].id);
-        }
+      const dati = await res?.json().catch(() => null);
+      if (!res?.ok || !Array.isArray(dati)) {
+        logClient({
+          livello: res ? 'warn' : 'error',
+          evento: 'fetch',
+          messaggio: 'moduli di autorizzazione non letti',
+          route: '/teacher/modulistica',
+          ...(res ? { stato: res.status } : null),
+        });
+        setModuli([]);
+        return;
       }
+      const dellaSezione = (dati as FormTemplate[]).filter((m) => m.target_classes?.includes(sezione));
+      setModuli(dellaSezione.map((m) => ({ id: m.id, title: m.title })));
     } finally {
-      setIsLoading(false);
+      // Su ogni uscita: se restasse indietro, la pagina non monterebbe mai il
+      // pannello e resterebbe sullo spinner per sempre.
+      setSezioneDeiModuli(sezione);
     }
-  }, [teacherId, className]);
-
-  const fetchSemaforo = useCallback(async () => {
-    if (!selectedFormId) return;
-    try {
-      const res = await fetch(`/api/teacher/modulistica?form_id=${selectedFormId}&class_name=${className}`).catch(() => null);
-      const data = await res?.json().catch(() => null);
-      if (Array.isArray(data)) setStudents(data);
-    } finally {
-      // errore di rete ⇒ stato invariato (nessun loading dedicato)
-    }
-  }, [selectedFormId, className]);
-
-  const fetchMedicalCertificates = useCallback(async () => {
-    if (!teacherId) return; // identità non risolta: lo spinner resta
-    try {
-      const res = await fetch(`/api/teacher/medical-certificates?class_name=${className}`, { headers: { 'x-user-id': teacherId } }).catch(() => null);
-      const data = await res?.json().catch(() => null);
-      const rows = Array.isArray(data) ? data : (data?.data ?? []);
-      setMedCerts(rows);
-    } finally {
-      // errore di rete ⇒ stato invariato (nessun loading dedicato)
-    }
-  }, [teacherId, className]);
+  }, [teacherId, sezione]);
 
   useEffect(() => {
-    fetchForms();
-    fetchMedicalCertificates();
-  }, [fetchForms, fetchMedicalCertificates]);
+    void caricaModuli();
+  }, [caricaModuli]);
 
-  useEffect(() => {
-    fetchSemaforo();
-  }, [fetchSemaforo]);
-
-  const showToastMsg = (msg: string) => {
-    setToast(msg);
+  const mostraToast = (messaggio: string) => {
+    setToast(messaggio);
     setTimeout(() => setToast(''), 3000);
-  };
-
-  // Actions
-  const handleSendReminder = (studentName: string) => {
-    showToastMsg(t('modulisticaSollecitoInviato', { nome: studentName }));
-  };
-
-  const handleProxyUploadSubmit = async () => {
-    if (!showProxyModal || !proxyFile || !teacherId) return;
-    setProxyUploading(true);
-    try {
-      // Upload reale della scansione (multipart) — DL-032.
-      const fd = new FormData();
-      fd.append('file', proxyFile);
-      fd.append('form_id', selectedFormId);
-      fd.append('student_id', showProxyModal.student_id);
-      const res = await fetch('/api/teacher/modulistica', {
-        method: 'POST',
-        headers: { 'x-user-id': teacherId },
-        body: fd,
-      });
-
-      if (!res.ok) throw new Error('Errore proxy upload');
-
-      showToastMsg(t('modulisticaAutorizzazioneRegistrata', { nome: showProxyModal.nome }));
-      setShowProxyModal(null);
-      setProxyFileName('');
-      setProxyFile(null);
-      fetchSemaforo();
-    } catch {
-      showToastMsg(t('modulisticaErrInserimento'));
-    } finally {
-      setProxyUploading(false);
-    }
-  };
-
-  // Manage days logic
-  const handleOpenManager = (cert: MedicalCertificate) => {
-    setManagingCert(cert);
-    setNotaValidazione('');
-  };
-
-  const handleValidate = async (esito: 'validato' | 'rifiutato') => {
-    if (!managingCert || !teacherId) return;
-    try {
-      const res = await fetch('/api/teacher/medical-certificates', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
-        body: JSON.stringify({
-          id: managingCert.id,
-          esito,
-          nota_validazione: notaValidazione || undefined,
-        }),
-      });
-      if (!res.ok) throw new Error('Errore validazione');
-      showToastMsg(esito === 'validato' ? t('modulisticaCertValidato') : t('modulisticaCertRifiutato'));
-      setManagingCert(null);
-      setNotaValidazione('');
-      fetchMedicalCertificates();
-    } catch {
-      showToastMsg(t('modulisticaErrValidazione'));
-    }
   };
 
   return (
@@ -204,22 +130,8 @@ export default function TeacherModulisticaPage() {
       <PageHeaderCard
         eyebrow={t('modulisticaEyebrow')}
         title={t('modulisticaTitolo')}
-        subtitle={t('modulisticaSottotitolo', { sezione: className || '…' })}
+        subtitle={t('modulisticaSottotitolo', { sezione: sezione || '…' })}
       />
-
-      {availableSections.length > 1 && (
-        <div className="mt-3 flex items-center gap-2">
-          <label htmlFor="mod-section-select" className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-muted">{t('modulisticaSezioneLabel')}</label>
-          <select
-            id="mod-section-select"
-            value={className}
-            onChange={(e) => setClassName(e.target.value)}
-            className="rounded-xl border border-kidville-line bg-white px-3 py-1.5 font-barlow text-sm font-bold uppercase text-kidville-green shadow-sm focus:outline-none"
-          >
-            {availableSections.map((sec) => <option key={sec} value={sec}>{sec}</option>)}
-          </select>
-        </div>
-      )}
 
       {/* Tabs */}
       <div className="mt-5 mb-6 flex gap-4 border-b border-kidville-line">
@@ -227,285 +139,48 @@ export default function TeacherModulisticaPage() {
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'semaforo' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('semaforo')}
         >
-          <Users size={16} /> {t('modulisticaTabSemaforo')}
+          <Users size={16} aria-hidden="true" /> {t('modulisticaTabSemaforo')}
         </button>
         <button
           className={`pb-3 px-2 font-barlow font-bold uppercase tracking-wide transition-colors flex items-center gap-1.5 ${activeTab === 'medici' ? 'text-kidville-green border-b-2 border-kidville-green' : 'text-kidville-muted hover:text-kidville-ink'}`}
           onClick={() => setActiveTab('medici')}
         >
-          <HeartPulse size={16} /> {t('modulisticaTabMedici')}
+          <HeartPulse size={16} aria-hidden="true" /> {t('modulisticaTabMedici')}
         </button>
       </div>
 
-      {isLoading ? (
-        <div className="flex-1 flex flex-col items-center justify-center min-h-[40vh] gap-3">
-          <div className="w-10 h-10 border-4 border-kidville-green/30 border-t-kidville-green rounded-full animate-spin" />
+      {/* La cornice deve esistere PRIMA della barra: finché i moduli della sezione
+          non sono noti, una barra montata adesso nascerebbe senza modulo scelto e
+          nessun effetto avrebbe il diritto di riscriverle lo stato. */}
+      {!teacherId || sezioneDeiModuli !== sezione ? (
+        <div className="flex min-h-[40vh] flex-1 flex-col items-center justify-center gap-3">
+          <div className="h-10 w-10 animate-spin rounded-full border-4 border-kidville-green/30 border-t-kidville-green" />
           <p className="font-maven text-kidville-muted">{t('modulisticaCaricamento')}</p>
         </div>
+      ) : activeTab === 'semaforo' ? (
+        <PannelloSemaforo
+          key={`semaforo:${sezione}`}
+          teacherId={teacherId}
+          sezioni={sezioni}
+          sezione={sezione}
+          moduli={moduli}
+          onSezione={setSezione}
+          onToast={mostraToast}
+        />
       ) : (
-        <>
-          {/* TAB 1: Semaforo Autorizzazioni */}
-          {activeTab === 'semaforo' && (
-            <div className="space-y-6">
-              {/* Form Selector */}
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-kidville-line flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <label className="font-maven font-semibold text-sm text-kidville-green">
-                  {t('modulisticaSelezionaModulo')}
-                </label>
-                <select
-                  value={selectedFormId}
-                  onChange={e => setSelectedFormId(e.target.value)}
-                  className="border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-ink focus:outline-none bg-white max-w-sm"
-                >
-                  {forms.map(form => (
-                    <option key={form.id} value={form.id}>{form.title}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Semaforo Table */}
-              <div className="bg-white rounded-card shadow-sm border border-kidville-line overflow-hidden">
-                <div className="p-4 bg-kidville-cream border-b border-kidville-line flex items-center justify-between">
-                  <h3 className="font-barlow font-bold text-base text-kidville-green uppercase tracking-wide">
-                    {t('modulisticaStatoApprovazioni')}
-                  </h3>
-                  <div className="flex items-center gap-3 text-xs font-maven font-semibold text-kidville-muted">
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-kidville-success rounded-full" /> {t('modulisticaFirmati', { count: students.filter(s => s.status === 'green').length })}</span>
-                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-kidville-error rounded-full" /> {t('modulisticaMancanti', { count: students.filter(s => s.status === 'red').length })}</span>
-                  </div>
-                </div>
-
-                <div className="divide-y divide-kidville-line">
-                  {students.map(student => (
-                    <div key={student.student_id} className="p-4 flex items-center justify-between gap-4 hover:bg-kidville-cream/50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <span className={`w-3.5 h-3.5 rounded-full shadow-inner ${student.status === 'green' ? 'bg-kidville-success' : 'bg-kidville-error animate-pulse'}`} />
-                        <span className="font-maven font-semibold text-sm text-kidville-ink">
-                          {student.cognome} {student.nome}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {student.status === 'red' ? (
-                          <>
-                            <button
-                              onClick={() => handleSendReminder(student.nome)}
-                              className="p-2 text-kidville-muted hover:text-kidville-info hover:bg-kidville-cream-dark rounded-lg transition-colors"
-                              title={t('modulisticaInviaSollecito')}
-                            >
-                              <Bell size={18} />
-                            </button>
-                            
-                            <button
-                              onClick={() => setShowProxyModal(student)}
-                              className="flex items-center gap-1 px-3 py-1.5 bg-kidville-cream text-kidville-green border border-kidville-green/10 rounded-pill font-barlow font-bold text-xs uppercase hover:bg-kidville-green hover:text-kidville-yellow transition-colors"
-                              title={t('modulisticaProxyCartaceo')}
-                            >
-                              <Upload size={13} /> {t('modulisticaProxy')}
-                            </button>
-                          </>
-                        ) : (
-                          <span className="text-[10px] text-kidville-success bg-kidville-success-soft px-2.5 py-1 rounded-full font-bold uppercase tracking-wider flex items-center gap-1">
-                            <Check size={12} /> {t('modulisticaFesOk')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: Certificati Medici */}
-          {activeTab === 'medici' && (
-            <div className="space-y-4">
-              {medCerts.length === 0 ? (
-                <div className="bg-white rounded-card p-10 text-center border border-kidville-line">
-                  <HeartPulse className="mx-auto text-kidville-muted mb-3" size={48} />
-                  <p className="font-maven text-kidville-muted">{t('modulisticaNessunCert')}</p>
-                </div>
-              ) : (
-                medCerts.map(cert => (
-                  <div key={cert.id} className="bg-white rounded-card p-5 border border-kidville-line flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-barlow font-bold text-lg text-kidville-green uppercase">
-                          {cert.cognome_alunno} {cert.nome_alunno}
-                        </h3>
-                        <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                          {t('modulisticaBadgeCertMedico')}
-                        </span>
-                      </div>
-                      <p className="font-maven text-xs text-kidville-muted mt-1">
-                        {t('modulisticaCaricatoIl', { data: f.dataBreve(cert.creato_il) })}
-                      </p>
-                      {cert.note && (
-                        <p className="font-maven text-xs text-kidville-ink mt-2 bg-kidville-cream p-2 rounded-lg italic">
-                          &quot;{cert.note}&quot;
-                        </p>
-                      )}
-                      
-                      <div className="mt-3 flex items-center gap-2 flex-wrap">
-                        {(cert.data_inizio || cert.data_fine) && (
-                          <span className="bg-kidville-cream text-kidville-ink px-2.5 py-0.5 rounded-full text-[10px] font-semibold">
-                            {cert.data_inizio ?? '—'} → {cert.data_fine ?? '—'}
-                          </span>
-                        )}
-                        {cert.stato === 'validato' ? (
-                          <span className="bg-kidville-success-soft text-kidville-success px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">{t('modulisticaValidato')}</span>
-                        ) : cert.stato === 'rifiutato' ? (
-                          <span className="bg-kidville-error-soft text-kidville-error px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">{t('modulisticaRifiutato')}</span>
-                        ) : (
-                          <span className="text-kidville-warn bg-kidville-warn-soft px-2 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 font-maven uppercase tracking-wider">
-                            <AlertCircle size={10} /> {t('modulisticaInValidazione')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleOpenManager(cert)}
-                      className="flex items-center gap-1 px-3.5 py-2 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase text-xs tracking-wider shadow-sm hover:opacity-90 transition-opacity"
-                    >
-                      <Calendar size={14} /> {t('modulisticaValida')}
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Modal: Proxy Upload Paper Form */}
-      {showProxyModal && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl text-center">
-            <Upload className="text-kidville-green mx-auto mb-3" size={40} />
-            <h3 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mb-1">{t('modulisticaProxyTitolo')}</h3>
-            <p className="font-maven text-xs text-kidville-muted mb-6">
-              {t.rich('modulisticaProxyDescrizione', { nome: showProxyModal.nome, strong: (c) => <strong>{c}</strong> })}
-            </p>
-
-            <div className="space-y-4">
-              {proxyFile ? (
-                <div className="flex items-center justify-between border-2 border-kidville-success/30 bg-kidville-success-soft text-kidville-success px-3 py-2 rounded-xl text-xs font-semibold select-none">
-                  <span>📄 {proxyFileName}</span>
-                  <button onClick={() => { setProxyFileName(''); setProxyFile(null); }} className="text-kidville-muted hover:text-kidville-error">✕</button>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1.5">
-                  <label className="w-full h-12 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl flex items-center justify-center gap-1.5 cursor-pointer text-xs font-semibold text-kidville-ink transition-colors">
-                    <Upload size={14} /> {t('modulisticaCaricaFile')}
-                    <input
-                      type="file"
-                      accept="image/*,.pdf"
-                      className="hidden"
-                      onChange={e => {
-                        const f = e.target.files?.[0] ?? null;
-                        setProxyFile(f);
-                        setProxyFileName(f?.name ?? '');
-                      }}
-                    />
-                  </label>
-                  {/* Nativo: scatta la foto del modulo cartaceo firmato. Su web non compare. */}
-                  <ScattaFotoButton
-                    onFile={(f) => { setProxyFile(f); setProxyFileName(f.name); }}
-                    label={t('modulisticaScattaFoto')}
-                    className="w-full h-12 flex items-center justify-center gap-1.5 border-2 border-dashed border-kidville-line hover:border-kidville-green rounded-xl text-xs font-semibold text-kidville-green transition-colors"
-                  />
-                </div>
-              )}
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={() => { setShowProxyModal(null); setProxyFileName(''); setProxyFile(null); }}
-                className="flex-1 h-11 font-maven text-sm rounded-pill border border-kidville-line text-kidville-muted hover:bg-kidville-cream transition-colors"
-              >
-                {t('modulisticaAnnulla')}
-              </button>
-              <button
-                disabled={!proxyFile || proxyUploading}
-                onClick={handleProxyUploadSubmit}
-                className="flex-1 h-11 font-barlow font-black uppercase tracking-wider rounded-pill bg-kidville-green text-kidville-yellow hover:opacity-90 disabled:opacity-50 transition-all"
-              >
-                {proxyUploading ? t('modulisticaCaricamentoBtn') : t('modulisticaRegistraFirma')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal: Covered Days Calendar Checklist */}
-      {managingCert && (
-        <div className="fixed inset-0 bg-kidville-green/30 z-50 flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between border-b border-kidville-line pb-3 mb-4">
-              <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide">
-                {t('modulisticaValidazioneCert')}
-              </h2>
-              <button onClick={() => setManagingCert(null)} className="text-kidville-muted hover:text-kidville-ink">✕</button>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-              <p className="font-maven text-xs text-kidville-muted leading-relaxed">
-                {t.rich('modulisticaValidaDescrizione', {
-                  nome: `${managingCert.cognome_alunno} ${managingCert.nome_alunno}`,
-                  strong: (c) => <strong>{c}</strong>,
-                })}
-              </p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-kidville-cream/50 rounded-xl px-3 py-2">
-                  <p className="font-maven text-[10px] text-kidville-muted uppercase">{t('modulisticaCopertoDal')}</p>
-                  <p className="font-maven text-sm font-bold text-kidville-green">{managingCert.data_inizio ?? '—'}</p>
-                </div>
-                <div className="bg-kidville-cream/50 rounded-xl px-3 py-2">
-                  <p className="font-maven text-[10px] text-kidville-muted uppercase">{t('modulisticaAl')}</p>
-                  <p className="font-maven text-sm font-bold text-kidville-green">{managingCert.data_fine ?? '—'}</p>
-                </div>
-              </div>
-
-              {managingCert.note && (
-                <p className="font-maven text-xs text-kidville-ink"><span className="font-semibold">{t('modulisticaNoteGenitore')}</span> {managingCert.note}</p>
-              )}
-
-              <a href={`/api/parent/medical-certificates/file?id=${managingCert.id}&userId=${teacherId ?? ''}`} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-kidville-green hover:underline">
-                <FileText size={14} /> {t('modulisticaApriDocumento')}
-              </a>
-
-              <div>
-                <label className="block font-maven text-[10px] font-semibold text-kidville-muted mb-1">{t('modulisticaNotaValidazioneLabel')}</label>
-                <textarea value={notaValidazione} onChange={e => setNotaValidazione(e.target.value)} rows={2}
-                  className="w-full border border-kidville-line rounded-lg px-3 py-1.5 font-maven text-xs focus:outline-none focus:border-kidville-green resize-none"
-                  placeholder={t('modulisticaNotaPlaceholder')} />
-              </div>
-            </div>
-
-            <div className="flex gap-3 border-t border-kidville-line pt-4 mt-4 justify-end">
-              <button
-                onClick={() => handleValidate('rifiutato')}
-                className="px-4 py-2 font-barlow font-bold uppercase tracking-wide rounded-pill border border-kidville-error/20 text-kidville-error text-sm hover:bg-kidville-error-soft"
-              >
-                {t('modulisticaRifiuta')}
-              </button>
-              <button
-                onClick={() => handleValidate('validato')}
-                className="px-5 py-2.5 bg-kidville-green text-kidville-yellow rounded-pill font-barlow font-black uppercase tracking-wider text-sm hover:opacity-90 transition-all shadow-md"
-              >
-                {t('modulisticaValida')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <PannelloCertificatiMedici
+          key={`medici:${sezione}`}
+          teacherId={teacherId}
+          sezioni={sezioni}
+          sezione={sezione}
+          onSezione={setSezione}
+          onToast={mostraToast}
+        />
       )}
 
       {/* Toast */}
       {toast && (
-        <div className="fixed bottom-6 right-6 z-[60] bg-kidville-green text-white font-maven font-semibold px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 animate-slideIn">
+        <div className="animate-slideIn fixed bottom-6 right-6 z-[60] flex items-center gap-3 rounded-2xl bg-kidville-green px-6 py-4 font-maven font-semibold text-white shadow-2xl">
           {toast}
         </div>
       )}
@@ -527,5 +202,13 @@ export default function TeacherModulisticaPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function TeacherModulisticaPage() {
+  return (
+    <Suspense fallback={null}>
+      <ContenutoModulistica />
+    </Suspense>
   );
 }

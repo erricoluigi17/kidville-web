@@ -47,7 +47,13 @@ vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 // esiste per provare: un mock che semplifica la regola prova la semplificazione.
 vi.mock('@/lib/auth/scope', async (importOriginal) => {
   const vero = await importOriginal<typeof import('@/lib/auth/scope')>()
-  return { formaConfronto: vero.formaConfronto, resolveScuoleAttive: async () => h.state.scuole }
+  return {
+    formaConfronto: vero.formaConfronto,
+    // VERA: la sede chiesta col filtro deve intersecare davvero, e il diniego
+    // di una sede altrui non si può provare con un finto che dice sempre sì.
+    restringiSedi: vero.restringiSedi,
+    resolveScuoleAttive: async () => h.state.scuole,
+  }
 })
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))

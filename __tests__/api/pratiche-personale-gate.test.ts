@@ -56,7 +56,12 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: async () => [SEDE_A] }))
+// `restringiSedi` resta VERA: la sede chiesta col filtro deve intersecare davvero,
+// e un finto che dicesse sempre di sì non proverebbe nessun diniego.
+vi.mock('@/lib/auth/scope', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/scope')>()),
+  resolveScuoleAttive: async () => [SEDE_A],
+}))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn() }))
 vi.mock('@/lib/logging/logger', () => ({ logEvento: h.logEvento, logErrore: h.logErrore, logOk: h.logOk }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: vi.fn() }))

@@ -4,6 +4,10 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+// Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
+// intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
+// esplodere con `No "agisceComeGenitore" export is defined on the mock`.
+import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { requireParentOfStudent } from '@/lib/auth/require-parent'
 import {
   codeHash,
@@ -385,7 +389,14 @@ export const POST = withRoute('parent/prestampati/firma:POST', async (request: N
     // stare un gradino più in basso.
     const auth = await requireUser(request)
     if (auth.response) return auth.response
-    if (auth.user.role !== 'genitore') return soloFamiglia()
+    // PRESENTAZIONE, non autorizzazione — e qui la differenza è voluta. Il diniego
+    // dice: «questi moduli li firma il genitore col proprio OTP: dallo sportello si
+    // usa il pannello della segreteria». Una docente-genitore che stia guardando in
+    // veste di LAVORO deve continuare a riceverlo — è la ragione per cui questo
+    // diniego esiste — e per firmare per il proprio figlio commuta la veste, che è
+    // un clic. Con `eFamiglia` le si aprirebbe il self-service mentre è al lavoro,
+    // cioè si toglierebbe il confine che il messaggio stesso descrive.
+    if (!agisceComeGenitore(auth.user)) return soloFamiglia()
     const parentId = auth.user.id
 
     // Tetto di frequenza PRIMA di ogni query e di ogni invio: il budget è uno solo per
@@ -643,7 +654,14 @@ export const PATCH = withRoute('parent/prestampati/firma:PATCH', async (request:
     // limitare: il tetto viene subito dopo, e un tetto ha bisogno di un nome.
     const auth = await requireUser(request)
     if (auth.response) return auth.response
-    if (auth.user.role !== 'genitore') return soloFamiglia()
+    // PRESENTAZIONE, non autorizzazione — e qui la differenza è voluta. Il diniego
+    // dice: «questi moduli li firma il genitore col proprio OTP: dallo sportello si
+    // usa il pannello della segreteria». Una docente-genitore che stia guardando in
+    // veste di LAVORO deve continuare a riceverlo — è la ragione per cui questo
+    // diniego esiste — e per firmare per il proprio figlio commuta la veste, che è
+    // un clic. Con `eFamiglia` le si aprirebbe il self-service mentre è al lavoro,
+    // cioè si toglierebbe il confine che il messaggio stesso descrive.
+    if (!agisceComeGenitore(auth.user)) return soloFamiglia()
     const parentId = auth.user.id
 
     // Tetto sui TENTATIVI di verifica, su un budget separato da quello degli invii: qui

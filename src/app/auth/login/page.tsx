@@ -20,9 +20,16 @@ import {
   type ChiaveErroreAccesso,
   type EsitoAccesso,
 } from '@/lib/auth/errore-accesso';
+import {
+  impostaRuoloAttivo,
+  passoDiRete,
+  type EsitoPasso,
+} from '@/lib/auth/ruolo-attivo-client';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { classificaFormaPassword, type FormaPassword } from '@/lib/auth/forma-password';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
+import { OcchioPassword } from '@/components/ui/OcchioPassword';
+import { SfondoAuth } from '@/components/features/auth/SfondoAuth';
 import styles from './page.module.css';
 
 /* ───────── Iconcine inline (leading/eye + decori) ───────── */
@@ -42,69 +49,24 @@ function LockIcon() {
     </svg>
   );
 }
-function EyeIcon({ off }: { off: boolean }) {
-  return off ? (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 3l18 18" />
-      <path d="M10.6 5.1A9.8 9.8 0 0 1 12 5c5 0 9 4.5 10 7a15.5 15.5 0 0 1-3 4M6.2 6.2C3.9 7.6 2.4 9.7 2 12c1 2.5 5 7 10 7a10 10 0 0 0 4.2-.9" />
-      <path d="M9.5 9.6a3.4 3.4 0 0 0 4.9 4.7" />
-    </svg>
-  ) : (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2 12c1-2.5 5-7 10-7s9 4.5 10 7c-1 2.5-5 7-10 7s-9-4.5-10-7z" />
-      <circle cx="12" cy="12" r="3.1" />
-    </svg>
-  );
-}
-
-/**
- * Sfondo decorativo, nascosto in Alto Contrasto.
- * Blob e iconcine ripresi dal design "Kidville · Login (standalone)": i path
- * sono quelli originali (spazio 402×874), ritagliati per angolo così restano
- * agganciati ai bordi del viewport anche su schermi larghi.
+/*
+ * ⚠️ `EyeIcon` e `BackgroundDeco` NON VIVONO PIÙ QUI.
+ *
+ * · l'occhio della password sta in `@/components/ui/OcchioPassword` (importato in
+ *   cima). Era privato di questa schermata, e andava bene finché il campo password
+ *   dell'app era UNO. Dal cambio password i campi diventano quattro, in due
+ *   schermate che un utente vede a trenta secondi l'una dall'altra: ricopiare i due
+ *   `path` avrebbe prodotto due disegni destinati a divergere al primo ritocco.
+ *   Lock: `__tests__/architecture/occhio-password-una-copia-sola.test.ts`.
+ * · lo sfondo decorativo sta in `@/components/features/auth/SfondoAuth`, con le sue
+ *   regole CSS, per la stessa ragione: l'interstiziale del primo accesso deve avere
+ *   lo STESSO linguaggio visivo della login, e «stesso» scritto due volte è due cose
+ *   che si somigliano finché qualcuno non ne tocca una.
+ *
+ * Sono stati SPOSTATI, non riscritti: i path sono quelli del design «Kidville ·
+ * Login (standalone)» (spazio 402×874) e il comportamento di questa pagina non
+ * cambia di un pixel.
  */
-function BackgroundDeco() {
-  return (
-    <div className={styles.deco} aria-hidden="true">
-      {/* cuneo verde in alto a destra */}
-      <svg className={`${styles.blob} ${styles.blobTop}`} viewBox="318 0 84 250">
-        <path
-          className={styles.fillGreen}
-          d="M402,0 L402,250 C 358,246 336,224 326,186 C 317,152 324,100 318,52 C 315,30 318,12 326,0 Z"
-        />
-      </svg>
-
-      {/* collina verde/teal in basso a sinistra */}
-      <svg className={`${styles.blob} ${styles.blobBottomLeft}`} viewBox="0 742 190 132">
-        <path className={styles.fillTeal} d="M0,874 L0,742 C 40,724 100,732 146,772 C 176,798 188,840 190,874 Z" />
-        <path className={styles.fillGreen} d="M0,874 L0,792 C 30,780 76,786 108,812 C 132,831 144,854 146,874 Z" />
-      </svg>
-
-      {/* collina gialla + onda verde in basso a destra */}
-      <svg className={`${styles.blob} ${styles.blobBottomRight}`} viewBox="234 718 168 156">
-        <path className={styles.fillYellow} d="M402,874 L402,762 C 362,766 306,776 270,810 C 246,832 236,856 234,874 Z" />
-        <path className={styles.fillGreen} d="M402,720 C 348,728 298,750 272,788 C 306,760 356,752 402,768 Z" />
-      </svg>
-
-      <div className={styles.icons}>
-        <svg className={`${styles.ico} ${styles.icoStar}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round">
-          <path d="M12 3l2.6 5.9 6.4.6-4.8 4.3 1.4 6.3L12 17.8 6.4 20.1l1.4-6.3L3 9.5l6.4-.6L12 3z" />
-        </svg>
-        <svg className={`${styles.ico} ${styles.icoCloud}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round">
-          <path d="M7 18h10a3.8 3.8 0 0 0 .5-7.6 5.4 5.4 0 0 0-10.5-1.3A3.7 3.7 0 0 0 7 18z" />
-        </svg>
-        <svg className={`${styles.ico} ${styles.icoRing}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6}>
-          <circle cx="12" cy="12" r="9" />
-        </svg>
-        <svg className={`${styles.ico} ${styles.icoHouse}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-          <path d="M4 11l8-6 8 6" />
-          <path d="M6 10v9h12v-9" />
-          <path d="M10 19v-5h4v5" />
-        </svg>
-      </div>
-    </div>
-  );
-}
 
 // M4B.3 — login unico con smistamento per ruolo: dopo l'accesso si atterra
 // sulla dashboard del proprio ruolo; chi ha più profili (docente che è anche
@@ -132,13 +94,59 @@ interface ProfiloDisponibile {
  * Chi fosse tentato di rimetterlo: il lock è `__tests__/components/login-navigazione-singola.test.tsx`.
  */
 
-/** Destinazione post-login: `?next=` onorato solo se coerente col ruolo attivo. */
-function destinazione(ruolo: string, next: string | null): string {
+/**
+ * Dove si andrebbe A PRESCINDERE dalla password: `?next=` onorato solo se coerente
+ * col ruolo attivo, altrimenti la home del ruolo.
+ *
+ * `ruolo: null` è il DEGRADO — `/api/me` ha risposto, il corpo era il nostro, e
+ * semplicemente non contiene un ruolo da cui smistare. Lì `?next=` si onora se è un
+ * path interno alle aree (mai grezzo: sarebbe un open redirect) e per il resto si va
+ * alla radice, dove le guardie server-side faranno il loro lavoro. È lo stesso
+ * comportamento che quella riga aveva scritto in linea: sta qui perché il ramo che
+ * NON ha un ruolo è esattamente quello che una funzione «per ruolo» si dimentica.
+ */
+function meta(ruolo: string | null, next: string | null): string {
   if (next) {
     const area = areaFromPath(next);
-    if (area && isAreaAllowed(ruolo, area)) return next;
+    if (area && (ruolo === null || isAreaAllowed(ruolo, area))) return next;
   }
-  return homePathForRole(ruolo);
+  return ruolo === null ? '/' : homePathForRole(ruolo);
+}
+
+/**
+ * L’USCITA DAL LOGIN, per tutte e quattro le strade — e l’unico posto in cui si
+ * decide se in mezzo ci va l’interstiziale del primo accesso.
+ *
+ * ─── PERCHÉ QUI E NON NEI CHIAMANTI ─────────────────────────────────────────
+ *
+ * Perché i chiamanti sono QUATTRO (auto-riparazione di `?scegli=1`, picker dei
+ * ruoli, smistamento diretto, degrado senza ruolo) e il commento in testa a questo
+ * file spiega, con la misura di WebKit accanto, perché una seconda navigazione ne
+ * annulla un’altra. Una regola valida per quattro strade scritta in quattro posti è
+ * una regola che, alla prossima modifica, resta giusta in tre.
+ *
+ * ─── LA REGOLA, E I DUE MODI DI SBAGLIARLA ──────────────────────────────────
+ *
+ * Se la password appena digitata ha la FORMA di una temporanea (quella spedita per
+ * email: `Xxxx-xxxx-xxxx-xxxx`, o il formato vecchio che 67 famiglie hanno ancora in
+ * mano), si passa da `/auth/nuova-password` e la destinazione vera viaggia in
+ * `?next=`. Altrimenti non cambia niente.
+ *
+ *  · troppo largo, e l’interstiziale si mette davanti a chi la password se l’è
+ *    scelta mesi fa — un ostacolo quotidiano fra una madre e il diario di suo figlio;
+ *  · troppo stretto, e non compare mai: il lavoro sembra fatto mentre chi ha in mano
+ *    una temporanea continua a usarla.
+ *
+ * ⚠️ LA STRINGA VUOTA NON È UNA TEMPORANEA, ed è il caso che si vede solo provandolo.
+ * Chi arriva con `?scegli=1` è **già autenticato** (lo manda la guardia d’area) e non
+ * ha digitato nessuna password: `password` vale `''`. `classificaFormaPassword('')`
+ * risponde `'altra'` — cioè nessun instradamento — ed è la ragione per cui questa
+ * funzione interroga il classificatore invece di chiedersi «la password è vuota?».
+ */
+function destinazione(ruolo: string | null, next: string | null, password: string): string {
+  const dove = meta(ruolo, next);
+  if (classificaFormaPassword(password) === 'altra') return dove;
+  return `/auth/nuova-password?next=${encodeURIComponent(dove)}`;
 }
 
 /**
@@ -285,70 +293,20 @@ function registraCredenzialiRifiutate(dati: {
   });
 }
 
-/**
- * Il GUASTO di un passo verso le nostre route, con dentro le due sole cose di un errore che
- * possono lasciare il dispositivo: la CLASSE (che `nomeErrore` estrae dal `name`) e lo stato
- * HTTP. Il corpo della risposta non si legge mai — è roba del nostro server, e ciò che scrive
- * dentro un 401 può benissimo essere il nome di chi sta entrando.
- */
-interface GuastoPasso {
-  guasto: true;
-  errore: unknown;
-  stato: number | undefined;
-}
-
-/** O il passo ha portato a casa il suo dato, o è un guasto. Non esiste una terza forma. */
-type EsitoPasso<T> = { guasto: false; dato: T } | GuastoPasso;
-
-/**
- * Il `name` con cui una risposta NON-OK entra nel log. Serve perché `nomeErrore()` fa passare
- * solo la CLASSE dell'errore e mai il messaggio: senza un errore da nominare, un 500 di
- * `/api/me` finirebbe in `app_log` come `errore=errore`, indistinguibile da qualunque altra
- * cosa. Il messaggio contiene il solo status, che è già nel campo `stato`: nessun dato altrui.
- */
-function erroreRispostaNonOk(stato: number | undefined): Error {
-  const e = new Error(`risposta ${stato ?? '?'}`);
-  e.name = 'RispostaNonOk';
-  return e;
-}
-
-/**
- * UNA CHIAMATA ALLE NOSTRE ROUTE, LETTA PER INTERO — e i tre modi in cui può andare male.
+/*
+ * ⚠️ `passoDiRete`, `EsitoPasso`, `erroreRispostaNonOk` e `impostaRuoloAttivo` NON
+ * VIVONO PIÙ QUI: stanno in `@/lib/auth/ruolo-attivo-client`, importate in cima.
  *
- * Fino al 2026-08-03 questa lettura erano due `.catch(() => null)` e un `if (!res?.ok) return
- * null`: **tre guasti diversi collassati sullo stesso valore di ritorno di «questo utente non
- * ha profili»**. Il chiamante non poteva distinguerli, e infatti non li distingueva — un
- * `/api/me` che rispondeva 500 DOPO un'autenticazione riuscita cadeva nel ramo di degrado, cioè
- * in un `router.replace('/')` senza messaggio e senza una riga di log. Da lì la guardia d'area
- * rimandava a `?scegli=1`, dove la stessa fetch falliva di nuovo, l'elenco tornava vuoto e si
- * ricadeva sul form credenziali: due schermate mute e un giro senza uscita. I due `.catch`
- * erano anche la violazione diretta della regola 6 di AGENTS.md.
+ * Erano private di questa pagina, e andava bene finché l'unico modo di scegliere una
+ * veste era il picker qui sotto. Dal 2026-09-01 esiste uno switch di profilo DENTRO
+ * l'app (`ui/CambiaProfiloMenuButton`), e lasciarle qui avrebbe voluto dire
+ * ricopiarle: due copie della stessa decisione — quale ruolo si sta indossando, e
+ * cosa fare quando il server dice di no — che divergono al primo ritocco.
  *
- *  · `fetch` rifiuta → la richiesta non è mai arrivata (rete, DNS, CORS): nessuno stato;
- *  · `!res.ok` → il server ha risposto e ha detto di no: lo stato È l'informazione;
- *  · `res.json()` rifiuta → ha risposto qualcosa che non è il nostro JSON, tipicamente la
- *    pagina HTML di un proxy davanti all'API. È lo scenario 3 già collaudato su
- *    `signInWithPassword` un passo più indietro; qui non era coperto e taceva come il primo.
- *
- * Non rifiuta mai: la chiamano percorsi che devono DECIDERE, non morire.
+ * Sono state SPOSTATE, non riscritte: il comportamento di questa pagina non cambia
+ * di una riga, e i commenti che spiegano il perché di ogni ramo (i tre modi di
+ * fallire di una fetch, il trattamento del 401 e del 403) sono andati con loro.
  */
-async function passoDiRete<T>(url: string, init?: RequestInit): Promise<EsitoPasso<T | null>> {
-  let res: Response;
-  try {
-    res = await fetch(url, init);
-  } catch (errore) {
-    return { guasto: true, errore, stato: undefined };
-  }
-  if (!res.ok) {
-    return { guasto: true, errore: erroreRispostaNonOk(res.status), stato: res.status };
-  }
-  try {
-    return { guasto: false, dato: (await res.json()) as T };
-  } catch (errore) {
-    // Il corpo non è il nostro: lo stato resta quello della risposta, che c'è ed è arrivata.
-    return { guasto: true, errore, stato: res.status };
-  }
-}
 
 /** Ciò che di `/api/me` interessa a questa pagina. Tutto `unknown`: è roba di rete. */
 interface RispostaMe {
@@ -378,55 +336,14 @@ function leggiProfilo(): Promise<EsitoPasso<RispostaMe | null>> {
   return passoDiRete<RispostaMe>('/api/me');
 }
 
-/**
- * `POST /api/auth/active-role`.
- *
- * Il suo esito ha TRE chiamanti — il form credenziali, il picker dei ruoli e l'effetto
- * `?scegli=1` — e fino al 2026-08-03 lo stesso `false` del server riceveva tre trattamenti
- * diversi: uno lo ignorava e navigava lo stesso, uno mostrava un messaggio senza loggare, uno
- * non lo leggeva nemmeno. È la forma esatta del difetto che questa pagina si portava dietro da
- * W8 — una regola valida su una strada e non sulle altre.
- *
- * ⚠️ E NON NAVIGARE È LA SCELTA GIUSTA ANCHE COL PROFILO UNICO, dove il commento di prima
- * dichiarava il fallimento «best-effort perché la guardia ha il fallback ruolo unico».
- *
- * ─── E VALE PER IL 403 QUANTO PER IL 401, ANCHE SE NON PER LO STESSO MOTIVO ───────────
- *
- * Fino al 2026-08-03 questo paragrafo argomentava **solo sul 401** («`resolveIdentity()` non ha
- * visto la sessione, quindi nemmeno `getSessionProfili()` la vedrà»), e la regola la applicava a
- * tutti e due. Un argomento che copre metà dei casi che decide è un argomento che, alla prossima
- * lettura, fa cambiare la regola per il caso che non nomina. I due stati vanno detti separati:
- *
- *  · **401** — `resolveIdentity()` non ha visto la sessione. È transitorio e ritentabile, ed è
- *    anche il caso in cui la guardia d'area non può salvare niente: legge la stessa sessione.
- *  · **403** — «Ruolo non disponibile per questo utente» (`active-role/route.ts`). Sembra
- *    permanente, e in astratto lo sarebbe; nella pratica di questa app la causa più probabile è
- *    ancora **transitoria**, ed è scritta in `getProfiliForAuthUid`: una lettura di `utenti` o
- *    `parents` che fallisce degrada in «meno profili», e un ruolo che non c'è non è ammesso.
- *    La guardia d'area chiama **la stessa** `getSessionProfili()`: se il ruolo manca a lei,
- *    manca anche alla guardia, che non ha nessun fallback da offrire — quello «ruolo unico»
- *    scatta sui profili che ha letto, cioè su quelli che hanno appena prodotto il 403.
- *
- * IL COSTO, dichiarato: se un 403 fosse davvero permanente, prima quell'utente entrava lo stesso
- * (si navigava, e la guardia col profilo unico lo faceva passare) e ora non entra più. Si accetta,
- * per due ragioni: navigare avrebbe portato l'utente in un'area con un ruolo che il server non ha
- * riconosciuto — cioè `kv_user_role` nel client e nessun cookie di ruolo sul server, l'incoerenza
- * descritta su `persisti` — e l'atterraggio sarebbe stato deciso da una guardia che legge la
- * stessa fonte che ha appena detto di no: nel caso migliore un'area diversa da quella attesa, nel
- * caso normale un rimbalzo muto al login. Meglio una frase che si può leggere.
- *
- * ⚠️ QUESTA È UNA DECISIONE DI PRODOTTO, non un dettaglio d'implementazione: va ratificata dal
- * titolare prima del merge (vedi il changelog del PRD). Se un giorno si volesse distinguere —
- * 401 non naviga, 403 naviga e decida la guardia — **il punto da toccare è UNO**: lo `stato`
- * dentro `eseguiPasso`, non i tre chiamanti.
+/*
+ * ⚠️ RESTA VERO, E VA LETTO DOVE ORA VIVE: il trattamento del 401 e del 403 di
+ * `POST /api/auth/active-role` — nessuna navigazione, in nessuno dei due casi — è
+ * una DECISIONE DI PRODOTTO, motivata per esteso nella testata di
+ * `impostaRuoloAttivo` dentro `@/lib/auth/ruolo-attivo-client`. Se un giorno si
+ * volesse distinguere i due stati, il punto da toccare resta UNO: lo `stato` dentro
+ * `eseguiPasso`, non i chiamanti.
  */
-function impostaRuoloAttivo(ruolo: string): Promise<EsitoPasso<unknown>> {
-  return passoDiRete('/api/auth/active-role', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ ruolo }),
-  });
-}
 
 /** Le chiavi con cui si racconta un guasto capitato DOPO che la sessione è stata scritta. */
 type ChiaveGuastoDopoAccesso =
@@ -602,7 +519,14 @@ function LoginForm() {
         // DOPO l'accettazione del server, come nel picker (vedi `persisti`).
         persisti('kv_user_role', ruolo);
         // `attesa` resta `true`: si sta navigando via, niente flash del form.
-        router.replace(destinazione(ruolo, next));
+        //
+        // ⚠️ LA PASSWORD SI PASSA VUOTA, ED È UN FATTO, NON UNA SCORCIATOIA. Su questa
+        // strada nessuna password è stata digitata: chi arriva con `?scegli=1` è già
+        // autenticato e lo manda la guardia d'area. Leggere lo stato `password` qui
+        // darebbe lo stesso risultato (`''`) e in più obbligherebbe a metterlo fra le
+        // dipendenze dell'effetto — cioè a rilanciare questa fetch a ogni tasto
+        // digitato nel form che compare quando i profili sono zero.
+        router.replace(destinazione(ruolo, next, ''));
         return;
       }
 
@@ -661,7 +585,10 @@ function LoginForm() {
         return;
       }
       persisti('kv_user_role', ruolo);
-      router.replace(destinazione(ruolo, next));
+      // La password è quella dello stato: su questa strada può essere sia quella
+      // appena digitata (si è passati da `onSubmit` e poi dal picker) sia la stringa
+      // vuota (si è arrivati da `?scegli=1`). `destinazione` distingue i due casi.
+      router.replace(destinazione(ruolo, next, password));
     } catch (err) {
       // `impostaRuoloAttivo` non rifiuta (`passoDiRete` non lascia passare niente), ma qui dentro
       // c'è anche `router.replace`, che LANCIA se la navigazione viene rifiutata — ed è il modo
@@ -853,7 +780,7 @@ function LoginForm() {
         }
         // DOPO l'accettazione del server, come nelle altre due strade (vedi `persisti`).
         persisti('kv_user_role', ruolo);
-        router.replace(destinazione(ruolo, next));
+        router.replace(destinazione(ruolo, next, password));
         return;
       }
 
@@ -861,7 +788,14 @@ function LoginForm() {
       // il nostro, e semplicemente non contiene un ruolo da cui smistare. Mai next grezzo
       // (open redirect): si onorano solo path interni alle aree; per il resto si va alla radice
       // e le guardie server-side faranno il loro lavoro.
-      router.replace(next && areaFromPath(next) ? next : '/');
+      //
+      // ⚠️ QUESTA RIGA ERA SCRITTA IN LINEA, ED È L'USCITA CHE SI DIMENTICA. La regola
+      // («next solo se interno, altrimenti la radice») è la stessa di `meta`, e passa da
+      // `destinazione` per la sola ragione che conta: è l'unica delle quattro uscite senza
+      // un ruolo, quindi l'unica che un instradamento «per ruolo» lascerebbe indietro —
+      // e chi ci finisce con una password temporanea in mano è, per definizione, qualcuno
+      // il cui accesso non si è ancora concluso bene.
+      router.replace(destinazione(null, next, password));
     } catch (err) {
       // PER UN FALLIMENTO DELL'ACCESSO questo ramo non era raggiungibile — `signInWithPassword`
       // non lancia — ed è il motivo per cui `erroreConnessione` non si vedeva mai. Ci arriva
@@ -880,7 +814,7 @@ function LoginForm() {
 
   return (
     <div className={styles.page}>
-      {!highContrast && <BackgroundDeco />}
+      {!highContrast && <SfondoAuth />}
       {/* ⚠️ QUI NON C'È IL COMANDO DI ALTO CONTRASTO, ED È UNA DECISIONE, NON UNA
           DIMENTICANZA — ma è una decisione che va riaperta.
 
@@ -1028,7 +962,7 @@ function LoginForm() {
                     aria-pressed={showPassword}
                     aria-label={t('mostraPassword')}
                   >
-                    <EyeIcon off={showPassword} />
+                    <OcchioPassword off={showPassword} />
                   </button>
                 </div>
               </div>

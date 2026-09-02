@@ -373,6 +373,42 @@ const patchBodySchema = z.object({
   action: z.enum(['reject', 'import']),
   assignments: z.record(z.string(), z.string()).nullish(),
   referenteIndex: z.unknown().optional(),
+  /**
+   * ─── I CAMPI ECONOMICI, CHIESTI AL MOMENTO DELL'IMPORT (2026-09-02) ─────────
+   *
+   * `rette` è `positive()` e non `nonnegative()`, e la differenza vale 150 € al
+   * mese per bambino. `alunni.importo_retta_mensile = 0` NON significa «non
+   * paga»: chi genera le rette legge
+   *   COALESCE(NULLIF(importo_retta_mensile, 0), retta_default_importo, 150)
+   * e `NULLIF(…, 0)` annulla lo zero, sostituendolo col default di sede. Uno zero
+   * accettato qui è una retta piena addebitata a chi non doveva pagare nulla,
+   * senza che nessun errore compaia da nessuna parte.
+   *
+   * Chi non paga si dichiara con `retteACarico`: l'indice del FRATELLO nella
+   * stessa domanda, che finisce in `alunni.retta_a_carico_di` — ed è quella
+   * colonna, non la cifra, a far saltare l'alunno alla generazione.
+   *
+   * Le chiavi sono gli stessi indici di `assignments` (stringhe: sono chiavi
+   * JSON). `nullish()` su tutti perché una domanda già importata viene ri-inviata
+   * senza questi campi, e la guardia sotto distingue i due casi.
+   */
+  /**
+   * ⚠️ `nonnegative()` e non `positive()`, ed è una scelta, non una svista.
+   *
+   * Lo zero è il valore SBAGLIATO ma è anche quello che una persona digita
+   * naturalmente per dire «non paga». Se lo ferma lo schema, la risposta è «Dati
+   * non validi»: vero, inutile, e non insegna niente — è esattamente il vuoto in
+   * cui è nato il ripiego dello 0,01 € che sei famiglie hanno in archivio. Lo si
+   * lascia arrivare alla guardia sotto, che lo rifiuta spiegando che nel registro
+   * lo zero vale «retta predefinita della sede» e indicando la strada giusta.
+   * I negativi restano allo schema: nessuno li digita per un fraintendimento.
+   */
+  rette: z.record(z.string(), z.number().nonnegative()).nullish(),
+  retteACarico: z.record(z.string(), z.number().int().nonnegative()).nullish(),
+  intestatari: z.record(z.string(), z.number().int().nonnegative()).nullish(),
+  // 1..28: oltre il 28 non tutti i mesi hanno quel giorno, e una scadenza al 31
+  // febbraio è una scadenza che non arriva mai.
+  giorniScadenza: z.record(z.string(), z.number().int().min(1).max(28)).nullish(),
 })
 
 /**
@@ -686,7 +722,11 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
 })
 
 // PATCH: rifiuto o import nelle anagrafiche.
-// Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex }
+// Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex,
+//                rette: { [childIndex]: number>0 }, retteACarico: { [childIndex]: indiceFratello },
+//                intestatari: { [childIndex]: indiceAdulto }, giorniScadenza: { [childIndex]: 1..28 } }
+// I quattro campi economici sono nati il 2026-09-02: senza la retta il bambino
+// entrava a 0, che la generazione mensile rilegge come «default di sede» (150 €).
 // Body reject: { id, action:'reject' }
 export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextRequest) => {
   const auth = await requireStaff(request)
@@ -817,6 +857,83 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     for (let i = 0; i < children.length; i++) {
       if (!assignments[String(i)]) {
         return NextResponse.json({ error: `Assegnare una classe al bambino ${i + 1}` }, { status: 400 })
+      }
+    }
+
+    // ─── E OGNI FIGLIO DEVE AVERE UNA RETTA, o un fratello che la paga ─────────
+    //
+    // Guardia gemella di quella sulla classe, e nata dallo stesso genere di
+    // guasto: finché l'import non l'ha chiesta, il bambino nasceva con
+    // `importo_retta_mensile = 0` e la generazione mensile lo leggeva come «usa
+    // il default di sede» — 150 € al mese a chiunque, deciso da nessuno. Il
+    // 2026-09-02 in archivio c'erano quaranta alunni veri in quello stato.
+    //
+    // Si rifiuta PRIMA di scrivere qualunque cosa, come le altre pre-flight: un
+    // import a metà è peggio di un import non fatto.
+    const rette: Record<string, number> = b.data.rette || {}
+    const retteACarico: Record<string, number> = b.data.retteACarico || {}
+    const intestatari: Record<string, number> = b.data.intestatari || {}
+    const giorniScadenza: Record<string, number> = b.data.giorniScadenza || {}
+
+    for (let i = 0; i < children.length; i++) {
+      const chiave = String(i)
+      const aCarico = retteACarico[chiave]
+      const importo = rette[chiave]
+
+      if (aCarico !== undefined) {
+        // Il fratello indicato deve esistere in QUESTA domanda, non essere se
+        // stesso, e pagare davvero: un rimando a chi a sua volta non paga è una
+        // catena che non finisce su nessuna cifra.
+        if (aCarico === i || aCarico >= children.length) {
+          return NextResponse.json(
+            { error: `Bambino ${i + 1}: il fratello indicato per la retta non è valido`, codice: 'RETTA_FRATELLO_NON_VALIDO' },
+            { status: 400 },
+          )
+        }
+        if (retteACarico[String(aCarico)] !== undefined || !(rette[String(aCarico)] > 0)) {
+          return NextResponse.json(
+            { error: `Bambino ${i + 1}: il fratello indicato non ha a sua volta una retta`, codice: 'RETTA_FRATELLO_SENZA_CIFRA' },
+            { status: 400 },
+          )
+        }
+        continue
+      }
+
+      if (importo === undefined) {
+        return NextResponse.json(
+          {
+            error:
+              `Indicare la retta mensile del bambino ${i + 1}, oppure il fratello che la paga per lui. ` +
+              'Senza, verrebbe applicata la retta predefinita della sede.',
+            codice: 'RETTA_MANCANTE',
+          },
+          { status: 400 },
+        )
+      }
+      // Lo `0` ARRIVA fin qui apposta (lo schema lo ammette, vedi la sua testata):
+      // è il valore che una persona digita per dire «non paga», e deve trovare una
+      // spiegazione invece di un «Dati non validi». Senza, si cerca — e si trova —
+      // il ripiego dello 0,01 €, che in produzione sei famiglie hanno già.
+      if (!(importo > 0)) {
+        return NextResponse.json(
+          {
+            error:
+              `Bambino ${i + 1}: la retta non può essere zero. Nel registro lo zero vale «usa la retta ` +
+              'predefinita della sede»: se il bambino non deve pagare, indica il fratello che paga per lui.',
+            codice: 'RETTA_ZERO',
+          },
+          { status: 400 },
+        )
+      }
+    }
+
+    // L'adulto a cui intestare le fatture dev'essere uno di questa domanda.
+    for (const [chiave, ai] of Object.entries(intestatari)) {
+      if (ai >= adults.length) {
+        return NextResponse.json(
+          { error: `Bambino ${Number(chiave) + 1}: l'intestatario delle fatture indicato non esiste`, codice: 'INTESTATARIO_NON_VALIDO' },
+          { status: 400 },
+        )
       }
     }
 
@@ -1035,6 +1152,8 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // `accountId` è l'`utenti.id` (spazio-id ACCOUNT) dell'adulto, quando ne ha uno:
     // serve a scrivere anche il legame runtime `legame_genitori_alunni` (vedi punto 3).
     const parentLinks: { parentId: string; accountId: string | null; role: string; isReferente: boolean }[] = []
+    /** L'adulto creato, per INDICE nella domanda: serve a `intestatario_fatture`. */
+    const parentIdPerIndice: Record<number, { id: string; nome: string }> = {}
     // Conteggi per il log riassuntivo dei legami runtime (una riga per import, non una per coppia).
     let legamiScritti = 0
     let legamiSenzaAccount = 0
@@ -1219,10 +1338,41 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }
 
       if (parentId) parentLinks.push({ parentId, accountId: parentAuthId, role: a.ruolo || 'delegate', isReferente })
+      // Per INDICE, non per posizione in `parentLinks`: quello salta gli adulti
+      // che non si sono potuti creare, quindi `parentLinks[2]` non è «il terzo
+      // adulto della domanda». `intestatari` invece parla di indici della domanda,
+      // ed è a quelli che va agganciato — altrimenti la fattura si intesta alla
+      // persona sbagliata, in silenzio.
+      if (parentId) parentIdPerIndice[ai] = { id: parentId, nome: `${a.first_name ?? ''} ${a.last_name ?? ''}`.trim() }
     }
 
     // 3. FIGLI → alunni (dedup per CF) + collegamento a tutti gli adulti
     const createdStudents: { id: string; nome: string }[] = []
+    /** L'uuid dell'alunno per INDICE: serve alla seconda passata su `retta_a_carico_di`. */
+    const alunnoIdPerIndice: Record<number, string> = {}
+
+    /**
+     * I campi economici da scrivere per il bambino `ci`.
+     *
+     * ⚠️ NON contiene `retta_a_carico_di`: quel campo punta all'uuid di un FRATELLO
+     * che, alla prima passata, potrebbe non essere ancora stato creato. Si scrive
+     * dopo, quando tutti hanno un id (stesso ordine di `esegui.ts` per l'import
+     * massivo).
+     *
+     * `importo_retta_mensile` compare solo per chi paga: per chi è a carico di un
+     * fratello NON si scrive nessuna cifra, perché nessuna cifra è quella giusta —
+     * e in particolare non lo zero, che il generatore rilegge come 150 €.
+     */
+    const campiEconomici = (ci: number): Record<string, unknown> => {
+      const k = String(ci)
+      const out: Record<string, unknown> = {}
+      if (retteACarico[k] === undefined && rette[k] !== undefined) out.importo_retta_mensile = rette[k]
+      if (giorniScadenza[k] !== undefined) out.giorno_scadenza_pagamenti = giorniScadenza[k]
+      const ai = intestatari[k]
+      const adulto = ai === undefined ? undefined : parentIdPerIndice[ai]
+      if (adulto) out.intestatario_fatture = { tipo: 'adult', adult_id: adulto.id, nome: adulto.nome }
+      return out
+    }
 
     for (let ci = 0; ci < children.length; ci++) {
       const c = children[ci] as EnrollmentChild
@@ -1233,14 +1383,17 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       let studentId: string | null = dedupCf[ci] ?? null
 
       if (studentId) {
-        await supabase.from('alunni').update({ classe_sezione: classe }).eq('id', studentId)
+        // Il re-import SOVRASCRIVE la retta esistente (decisione del titolare,
+        // 2026-09-02): quello che la segreteria ha appena digitato è la retta.
+        const daScrivere = { classe_sezione: classe, ...campiEconomici(ci) }
+        await supabase.from('alunni').update(daScrivere).eq('id', studentId)
         await logScrittura(supabase, {
           attore: auth.user,
           entitaTipo: 'alunni',
           entitaId: studentId,
           azione: 'update',
           scuolaId,
-          valoreDopo: { classe_sezione: classe },
+          valoreDopo: daScrivere,
         })
       }
 
@@ -1268,14 +1421,15 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           logEvento('db', 'info', { operazione: 'admin/iscrizioni:PATCH', esito: 'dedup-soft-non-disponibile', entita: 'bambino', indice: ci + 1, codice: (softErr as { code?: string }).code ?? null })
         } else if (soft) {
           studentId = soft.id
-          await supabase.from('alunni').update({ classe_sezione: classe }).eq('id', studentId)
+          const daScrivere = { classe_sezione: classe, ...campiEconomici(ci) }
+          await supabase.from('alunni').update(daScrivere).eq('id', studentId)
           await logScrittura(supabase, {
             attore: auth.user,
             entitaTipo: 'alunni',
             entitaId: studentId,
             azione: 'update',
             scuolaId,
-            valoreDopo: { classe_sezione: classe },
+            valoreDopo: daScrivere,
           })
         }
       }
@@ -1302,6 +1456,10 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           documento_path: c.documento_path ?? null,
           classe_sezione: classe,
           stato: STATO_ISCRITTO,
+          // La retta, il giorno di scadenza e l'intestatario delle fatture, chiesti
+          // al momento dell'import: senza, il bambino nasceva a 0 e la generazione
+          // mensile leggeva lo zero come «150 € di default».
+          ...campiEconomici(ci),
           // Liberatorie foto raccolte al momento dell'iscrizione, UNA PER CANALE.
           // Senza queste righe la famiglia acconsentiva e il bambino restava
           // comunque a `false`: il consenso c'era, ma non era mai arrivato dove
@@ -1346,6 +1504,11 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           valoreDopo: riassuntoCampi(childRecord),
         })
       }
+
+      // L'uuid di questo bambino, per indice: la seconda passata su
+      // `retta_a_carico_di` ha bisogno degli id dei FRATELLI, e alcuni di loro
+      // non esistevano ancora quando è toccato a questo.
+      if (studentId) alunnoIdPerIndice[ci] = studentId
 
       // Collega tutti gli adulti a questo figlio
       for (const link of parentLinks) {
@@ -1424,6 +1587,68 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           legamiScritti++
         }
       }
+    }
+
+    // ─── SECONDA PASSATA: chi non paga, e chi paga per lui ────────────────────
+    //
+    // `alunni.retta_a_carico_di` punta all'uuid di un fratello, che alla prima
+    // passata poteva non esistere ancora. Si scrive adesso, quando tutti hanno un
+    // id — stesso ordine dell'import massivo (`src/lib/iscrizioni/import/esegui.ts`).
+    //
+    // È QUESTA colonna, non una cifra, a far saltare l'alunno alla generazione
+    // delle rette. La strada sbagliata sarebbe scrivergli `importo_retta_mensile = 0`:
+    // il generatore lo rilegge come «usa il default di sede» e gli manda 150 € al
+    // mese per dieci mesi, senza che nessun errore compaia da nessuna parte.
+    let aCaricoScritti = 0
+    let aCaricoFalliti = 0
+    for (const [chiave, fratelloIdx] of Object.entries(retteACarico)) {
+      const figlioId = alunnoIdPerIndice[Number(chiave)]
+      const fratelloId = alunnoIdPerIndice[fratelloIdx]
+      if (!figlioId || !fratelloId) {
+        // Un bambino non creato è già un errore bloccante segnalato sopra: qui si
+        // annota solo che il collegamento non ha potuto seguirlo.
+        aCaricoFalliti++
+        logEvento('db', 'warn', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'retta-a-carico-senza-alunno',
+          indice: Number(chiave) + 1,
+        })
+        continue
+      }
+      const { error: acErr } = await supabase
+        .from('alunni')
+        .update({ retta_a_carico_di: fratelloId })
+        .eq('id', figlioId)
+      if (acErr) {
+        // PostgREST non lancia (AGENTS.md §7): senza questo controllo il bambino
+        // resterebbe senza il collegamento E senza una cifra, e alla prima
+        // generazione si prenderebbe i 150 € del default. Warning e non errore
+        // bloccante: l'anagrafica è scritta e si corregge dalla scheda alunno.
+        aCaricoFalliti++
+        const d = descriviErroreDb(acErr as { code?: string; message?: string })
+        logEvento('db', 'warn', {
+          operazione: 'admin/iscrizioni:PATCH',
+          esito: 'retta-a-carico-non-scritta',
+          indice: Number(chiave) + 1,
+          error_code: d.codice,
+        }, acErr)
+        warnings.push(
+          `Bambino ${Number(chiave) + 1}: non è stato possibile registrare che la retta la paga un fratello. ` +
+          'Va corretto dalla scheda dell\'alunno, altrimenti gli verrà addebitata la retta predefinita della sede.',
+        )
+      } else {
+        aCaricoScritti++
+      }
+    }
+    if (aCaricoScritti > 0 || aCaricoFalliti > 0) {
+      // Il SUCCESSO si logga (AGENTS.md §5): senza, «nessun log» non distingue
+      // «nessuno era a carico di un fratello» da «non è mai partito niente».
+      logEvento('db', aCaricoFalliti > 0 ? 'warn' : 'info', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'retta-a-carico-fratello',
+        scritti: aCaricoScritti,
+        falliti: aCaricoFalliti,
+      })
     }
 
     // Evento critico → si logga anche il SUCCESSO, in UNA riga per import (mai una

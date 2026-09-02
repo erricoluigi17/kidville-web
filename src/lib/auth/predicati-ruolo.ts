@@ -89,6 +89,31 @@ export function haUnRuolo(user: AppUser, ammessi: readonly AppRole[]): boolean {
 }
 
 /**
+ * I ruoli che nell'app si chiamano «Direzione».
+ *
+ * `coordinator` è l'etichetta letterale «Direzione» (`src/lib/auth/ruoli.ts`), `admin` è
+ * l'amministratore: entrambi, per decisione del titolare del 2026-09-02, vedono i totali
+ * economici che la Segreteria non deve vedere.
+ *
+ * Sta qui e non in otto file perché era già ricopiata in otto file (`admin/staff`,
+ * `admin/gdpr/*`, `admin/schools`, `admin/segnalazioni`, `chat/threads/*`): una regola
+ * valida per più strade vive in un posto solo, altrimenti se ne corregge una e le altre
+ * restano indietro in silenzio.
+ */
+export const RUOLI_DIREZIONE: readonly StaffRole[] = ['admin', 'coordinator']
+
+/**
+ * AUTORIZZAZIONE: è Direzione? Sui RUOLI REALI, non sulla veste indossata adesso.
+ *
+ * ⚠️ Il gemello lato browser è `eDirezioneCockpit` (`src/lib/auth/ruoli.ts`), che lavora
+ * sulla stringa del ruolo attivo e serve solo a decidere COSA DISEGNARE. Dove il dato è un
+ * segreto — cioè dove il server può ometterlo — la domanda si fa qui, sul server.
+ */
+export function eDirezione(user: AppUser): boolean {
+  return haUnRuolo(user, RUOLI_DIREZIONE)
+}
+
+/**
  * PRESENTAZIONE: sta guardando l'app come genitore?
  *
  * Guarda il ruolo ATTIVO, quindi cambia quando la persona cambia veste. Serve a

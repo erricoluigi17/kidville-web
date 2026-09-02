@@ -8,7 +8,7 @@ import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuol
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { colonnaSconosciuta, linkOrCreateParent } from '@/lib/anagrafiche/parents';
-import { riallineaScadenzeRetteFuture } from '@/lib/pagamenti/scadenze';
+import { riallineaScadenzeRetteFuture, riallineaImportoRetteFuture } from '@/lib/pagamenti/scadenze';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { staffScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
@@ -862,6 +862,17 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 // aperte future (best-effort, vedi lib/pagamenti/scadenze).
                 if ('giorno_scadenza_pagamenti' in updates) {
                     await riallineaScadenzeRetteFuture(supabase, id as string, updates.giorno_scadenza_pagamenti as number | null);
+                }
+
+                // RETTA cambiata → scende sui pagamenti del mese corrente e futuri
+                // ancora intatti (non fatturati, non pagati). Senza questa riga la
+                // correzione in anagrafica non arrivava a destinazione e la si
+                // scopriva solo provando a fatturare: misurato il 2026-09-02 su 12
+                // pagamenti di Aversa. Le condizioni, e ciò che deliberatamente
+                // NON tocca, stanno sulla testata della funzione.
+                if ('importo_retta_mensile' in updates
+                    && Number(updates.importo_retta_mensile) !== Number(prima.importo_retta_mensile)) {
+                    await riallineaImportoRetteFuture(supabase, id as string, updates.importo_retta_mensile as number | null);
                 }
 
                 await logScrittura(supabase, {

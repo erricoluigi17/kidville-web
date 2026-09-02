@@ -4,7 +4,8 @@ import { NextResponse, NextRequest } from 'next/server'
 import type { SaldoCassa } from '@/lib/cassa/tipi'
 
 // ── Saldo cassa (E2.3) ────────────────────────────────────────────────────────
-// Gate SOLO admin (requireStaff(request, ['admin']) — NON esiste requireAdmin):
+// Gate SOLO DIREZIONE (requireStaff(request, RUOLI_DIREZIONE) — NON esiste
+// requireAdmin; dal 2026-09-02 comprende `coordinator`, non il solo `admin`):
 // 403 per la segreteria, 401 senza identità. Legge il fondo da cassa_config,
 // delega a caricaSaldoCassa (che degrada a { disponibile:false } su schema assente)
 // e verifica la soglia best-effort a valle.

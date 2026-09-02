@@ -442,6 +442,41 @@ function etichettaNellaFormaAttesa(etichetta: unknown): boolean {
 /** Quanto di un'etichetta incomprensibile si porta nel log: serve la forma, non l'elenco. */
 const CAMPIONE_ETICHETTA_MAX = 40
 
+/**
+ * Le etichette dei numeri di fattura contenute in UN elemento dell'elenco.
+ *
+ * ─── LA FORMA VERA, MISURATA IL 2026-09-02 ──────────────────────────────────
+ * `findByUsername` restituisce una PAGINA (Spring Data). I suoi elementi non sono
+ * fatture: sono DOCUMENTI, con `filename`, `idSdi`, `docType`, `sender`, `receiver`.
+ * Ogni documento porta le proprie fatture in un array annidato, e il numero sta lì:
+ *
+ *     json.content[i].invoices[j].number  ===  «Asilo 2327/2026»
+ *
+ * Fino a oggi questo codice leggeva `.number` sul DOCUMENTO, che quel campo non ce
+ * l'ha: su 3.311 documenti del 2026 il valore era `undefined` su tutti e 3.311, e
+ * l'emissione si fermava — giustamente — perché non sapeva da che numero ripartire.
+ * Misura riproducibile: `node scripts/aruba-forma-elenco.mjs` (sola lettura).
+ *
+ * ⚠️ `invoices` è un ARRAY, e si scorre tutto. Sul campione vero conteneva sempre una
+ * fattura sola, ma il tracciato FatturaPA ammette più `FatturaElettronicaBody` nello
+ * stesso file: fermarsi a `[0]` sarebbe assumere di nuovo qualcosa che non è stato
+ * misurato — ed è esattamente l'errore che ha prodotto questo guasto.
+ *
+ * ⚠️ La busta ha una chiave `number` a livello alto, ma è il NUMERO DI PAGINA
+ * (`number: 0`), non un numero di fattura. Non si legge da lì.
+ *
+ * Il ramo `elemento.number` resta per gli elementi che SONO già una fattura: un
+ * elenco senza involucro è una forma legittima, non un'ipotesi sul provider.
+ */
+function etichetteDellElemento(elemento: unknown): unknown[] {
+  if (elemento == null || typeof elemento !== 'object') return []
+  const doc = elemento as { invoices?: unknown; number?: unknown }
+  if (Array.isArray(doc.invoices)) {
+    return doc.invoices.map((f) => (f && typeof f === 'object' ? (f as { number?: unknown }).number : undefined))
+  }
+  return [doc.number]
+}
+
 /** Una pagina di `findByUsername`: il massimo, quanti documenti e quanti se ne sono CAPITI. */
 interface EsitoPagina {
   max: number
@@ -450,6 +485,18 @@ interface EsitoPagina {
   leggibili: number
   /** La prima etichetta che non si è saputo leggere, troncata. Vuota se non ce ne sono. */
   campione: string
+  /**
+   * I NOMI delle chiavi del primo elemento ricevuto.
+   *
+   * Serve solo quando non si capisce nulla, e serve MOLTO: il 2026-09-02 il log diceva
+   * «primo valore non riconosciuto: (vuoto)» e basta, il che è vero e inutile — non dice
+   * che il campo non esiste né come si chiami quello giusto. Con le chiavi in mano la
+   * diagnosi sta in `app_log` e non serve andare a interrogare Aruba.
+   *
+   * Sono NOMI DI CAMPO, non valori: nessun dato personale. (Gli stessi elementi
+   * contengono `receiver.fiscalCode` di genitori reali, che infatti non si tocca.)
+   */
+  chiaviPrimoElemento: string[]
 }
 
 async function paginaUltimoNumero(
@@ -476,18 +523,28 @@ async function paginaUltimoNumero(
   if (!esito.ok) throw erroreAruba('findByUsername', esito)
   const json = await leggiCorpoJson(esito.res, 'aruba:findByUsername')
   const env = (json.value as Record<string, unknown>) ?? json
-  const invoices = (env.invoices ?? env.content ?? []) as { number?: string | number | null }[]
+  // `content` è la forma vera (pagina Spring); `invoices` in cima resta accettata perché
+  // un elenco nudo è una forma legittima. In entrambi i casi gli elementi sono DOCUMENTI:
+  // il numero lo estrae `etichetteDellElemento`, che scende dove serve.
+  const documenti = (env.content ?? env.invoices ?? []) as unknown[]
 
   let max = 0
   let leggibili = 0
   let campione = ''
-  for (const inv of invoices) {
-    if (etichettaNellaFormaAttesa(inv.number)) leggibili++
-    else if (campione === '') campione = String(inv.number ?? '(vuoto)').slice(0, CAMPIONE_ETICHETTA_MAX)
-    const n = numeroSezionaleDaEtichetta(inv.number, params.sezionale, params.anno)
-    if (n !== null && n > max) max = n
+  /** Le CHIAVI del primo elemento: la diagnosi del prossimo cambio di forma. */
+  let chiaviPrimoElemento: string[] = []
+  for (const doc of documenti) {
+    if (chiaviPrimoElemento.length === 0 && doc && typeof doc === 'object') {
+      chiaviPrimoElemento = Object.keys(doc).sort()
+    }
+    for (const etichetta of etichetteDellElemento(doc)) {
+      if (etichettaNellaFormaAttesa(etichetta)) leggibili++
+      else if (campione === '') campione = String(etichetta ?? '(vuoto)').slice(0, CAMPIONE_ETICHETTA_MAX)
+      const n = numeroSezionaleDaEtichetta(etichetta, params.sezionale, params.anno)
+      if (n !== null && n > max) max = n
+    }
   }
-  return { max, ricevuti: invoices.length, leggibili, campione }
+  return { max, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento }
 }
 
 /**
@@ -532,6 +589,16 @@ async function paginaUltimoNumero(
  * di nessuna serie e di nessun anno — si LANCIA, come per un 5xx. Se invece le
  * etichette si leggono e semplicemente nessuna è di questa serie, `0` è una risposta
  * vera: quella serie in quell'anno non ha documenti.
+ *
+ * ─── E IL 2026-09-02 QUESTA GUARDIA HA SPARATO SUL SERIO ─────────────────────
+ * Ha fermato un'emissione da Kidville Aversa: 3.311 documenti letti, zero etichette
+ * capite. Non era un capriccio di Aruba: il campo `number` non stava dove questo
+ * codice lo cercava — sta nelle fatture DENTRO il documento, e la spiegazione per
+ * esteso è sulla testata di `etichetteDellElemento`. La guardia ha funzionato
+ * esattamente come doveva: ha preferito non emettere niente piuttosto che emettere
+ * «FPR 1/26» su una serie da millenovecento documenti. Il difetto era il parser, e
+ * il fatto che si sia potuto trovare in due minuti è merito di questo errore
+ * esplicito — non del silenzio che c'era prima.
  */
 export async function arubaUltimoNumeroFattura(
   ambiente: string | undefined,
@@ -547,10 +614,15 @@ export async function arubaUltimoNumeroFattura(
    * propria. `code` non è uno status HTTP — la risposta era `200` — quindi dice cosa
    * è successo, non un numero che non esiste.
    */
-  const erroreEtichette = (anno: number, ricevuti: number, campione: string): Error => {
+  const erroreEtichette = (anno: number, ricevuti: number, campione: string, chiavi: string[]): Error => {
     const err = new Error(
       `Aruba findByUsername: ${ricevuti} documenti nell'anno ${anno} e nessuna etichetta nella forma attesa ` +
         `«${params.sezionale} <numero>/<anno>» (primo valore non riconosciuto: «${campione}»). ` +
+        // Le CHIAVI del primo elemento, non i valori: il 2026-09-02 il messaggio diceva
+        // solo «(vuoto)», che è vero e inutile — non distingue «il campo è vuoto» da «il
+        // campo non esiste più», e la seconda era la risposta giusta. Con l'elenco dei
+        // nomi, chi legge il log vede subito dov'è finito il numero.
+        (chiavi.length ? `Chiavi del primo elemento: ${chiavi.join(', ')}. ` : '') +
         'Il progressivo NON è stato letto: emettere adesso significherebbe ripartire da 1 su una serie viva.',
     )
     err.name = 'ArubaNumerazioneError'
@@ -563,21 +635,19 @@ export async function arubaUltimoNumeroFattura(
     let ricevutiTotali = 0
     let leggibiliTotali = 0
     let campione = ''
+    let chiavi: string[] = []
     /** Vero solo se sono arrivati documenti e non se n'è riconosciuto nemmeno uno. */
     const nessunaEtichettaCapita = () => ricevutiTotali > 0 && leggibiliTotali === 0
     for (let pagina = 1; pagina <= PAGINE_MAX; pagina++) {
-      const { max: maxPagina, ricevuti, leggibili, campione: campionePagina } = await paginaUltimoNumero(
-        ws,
-        accessToken,
-        { ...params, anno },
-        pagina,
-      )
+      const { max: maxPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento } =
+        await paginaUltimoNumero(ws, accessToken, { ...params, anno }, pagina)
       if (maxPagina > max) max = maxPagina
       ricevutiTotali += ricevuti
       leggibiliTotali += leggibili
       if (campione === '' && campionePagina !== '') campione = campionePagina
+      if (chiavi.length === 0 && chiaviPrimoElemento.length > 0) chiavi = chiaviPrimoElemento
       if (ricevuti < PAGINA_SIZE) {
-        if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione)
+        if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
         return max
       }
       if (pagina === PAGINE_MAX) {
@@ -594,7 +664,7 @@ export async function arubaUltimoNumeroFattura(
         })
       }
     }
-    if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione)
+    if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
     return max
   }
 

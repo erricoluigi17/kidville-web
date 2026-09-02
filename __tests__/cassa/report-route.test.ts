@@ -218,11 +218,14 @@ describe('costruisciCsvReport', () => {
 
 // ── ROUTE GET ───────────────────────────────────────────────────────────────────
 describe('GET /api/pagamenti/cassa/report', () => {
-  it('403 per la segreteria (gate solo admin)', async () => {
+  it('403 per la segreteria (gate solo Direzione)', async () => {
+    // Dal 2026-09-02 il gate ammette anche `coordinator`, che nell'app si chiama
+    // «Direzione»: prima era il solo `admin`, e l'unico account Direzione non
+    // vedeva i report della propria cassa. La segreteria resta fuori.
     h.requireStaff.mockResolvedValue({ response: NextResponse.json({ error: 'no' }, { status: 403 }) })
     const res = await GET(req(`scuola_id=${SC}`))
     expect(res.status).toBe(403)
-    expect(h.requireStaff).toHaveBeenCalledWith(expect.anything(), ['admin'])
+    expect(h.requireStaff).toHaveBeenCalledWith(expect.anything(), ['admin', 'coordinator'])
   })
 
   it('schema cassa assente (42P01 su cassa_movimenti) → 200 { disponibile:false }, mai 500', async () => {

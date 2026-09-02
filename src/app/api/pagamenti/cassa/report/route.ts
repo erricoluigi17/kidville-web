@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { RUOLI_DIREZIONE } from '@/lib/auth/predicati-ruolo'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
@@ -60,12 +61,12 @@ const reportVuoto = () =>
   NextResponse.json({ disponibile: false, entrate_per_categoria: [], uscite_per_categoria: [], mensile: [] })
 
 // GET /api/pagamenti/cassa/report?scuola_id&da?&a?&categoria_pagamento_id?&format=csv?
-// SOLO admin (KPI economici). Entrate per categoria di PAGAMENTO (join incassi →
+// SOLO DIREZIONE (KPI economici). Entrate per categoria di PAGAMENTO (join incassi →
 // pagamenti → payment_categories, tutti i metodi, storni netti — copre «quota Saggio
 // per intero» su più mesi); uscite per categoria cassa; riepilogo mensile; export CSV.
 export const GET = withRoute('pagamenti/cassa/report:GET', async (request: NextRequest) => {
   try {
-    const auth = await requireStaff(request, ['admin'])
+    const auth = await requireStaff(request, RUOLI_DIREZIONE)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)

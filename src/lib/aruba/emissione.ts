@@ -948,22 +948,64 @@ export async function emettiFatturaPagamento(
         pagamento_id: pagamentoId,
         anno,
       }, e)
-      // Il 429 di Aruba merita un messaggio suo: non è un guasto, è il secchio
-      // pieno (~60 richieste l'ora), e la risposta giusta è ASPETTARE, non
-      // ricontrollare la configurazione. Arriva come pagina HTML, non come errore
-      // strutturato: il `code` che il client mette sull'errore è l'unico appiglio.
+      // ── PERCHÉ QUI CI SONO CINQUE MESSAGGI E NON UNO ────────────────────────
+      // Fino al 2026-09-02 ce n'erano due: il 429 e «tutto il resto». Quel «tutto
+      // il resto» copriva SEI guasti diversi — login fallito, utenza non abilitata
+      // ai Web Service, ambiente sbagliato, rete lenta, formato non riconosciuto,
+      // parsing — e chi leggeva la schermata non poteva sapere quale. Misurato sul
+      // campo: il 2026-09-02 la segreteria ha letto «Riprova più tardi» per un
+      // guasto che sarebbe stato lì anche fra un mese, perché era il nostro parser.
+      //
+      // `e.code` era già in mano e bastava guardarlo. La chiusura resta identica in
+      // ogni ramo — nessun numero consumato, nessuna fattura emessa — perché quella
+      // è l'unica cosa che la persona davanti allo schermo deve poter dare per
+      // certa; a cambiare è solo COSA FARE dopo, che è l'informazione utile.
       const codiceProvider = String((e as { code?: unknown } | null)?.code ?? '')
+      const nienteEmesso =
+        'La fattura non è stata emessa e nessun numero è stato consumato.'
+      const messaggioNumerazione = (() => {
+        switch (codiceProvider) {
+          case '429':
+            // Non è un guasto: è il secchio pieno (~60 richieste l'ora, e il 429
+            // arriva come pagina HTML). La risposta giusta è aspettare.
+            return (
+              'Aruba ha risposto «troppe richieste» (limite di circa 60 chiamate l’ora). ' +
+              `${nienteEmesso} Riprova fra qualche minuto.`
+            )
+          case '401':
+          case '403':
+            // Riprovare non serve: finché la configurazione è quella, l'esito è
+            // quello. Le due cose che possono essere: credenziali e ambiente.
+            return (
+              'Aruba ha rifiutato le credenziali della sede (utenza, password o ambiente). ' +
+              `${nienteEmesso} Riprovare non basta: controlla la configurazione Aruba nelle impostazioni della sede.`
+            )
+          case 'rete':
+            return (
+              'Aruba non ha risposto entro 30 secondi. ' +
+              `${nienteEmesso} Riprova fra qualche minuto.`
+            )
+          case 'etichette-illeggibili':
+            // Il caso del 2026-09-02. Va detto che NON è un problema di Aruba né
+            // della sede, altrimenti si va a cercare nel posto sbagliato.
+            return (
+              `Aruba ha risposto, ma il formato dei numeri della serie «${sezionale}» non è riconosciuto: ` +
+              `non è stato possibile sapere da quale numero ripartire. ${nienteEmesso} ` +
+              'Non è un problema della sede né delle credenziali: va corretta l’app. Segnalalo.'
+            )
+          default:
+            return (
+              `Impossibile leggere l’ultimo numero della serie «${sezionale}» da Aruba. ` +
+              `${nienteEmesso} Riprova più tardi.`
+            )
+        }
+      })()
       esiti.push({
         adultId: q.adultId,
         label: q.label,
         ok: false,
         motivo: 'numerazione',
-        messaggio:
-          codiceProvider === '429'
-            ? 'Aruba ha risposto «troppe richieste» (limite di circa 60 chiamate l’ora): ' +
-              'la fattura non è stata emessa e nessun numero è stato consumato. Riprova fra qualche minuto.'
-            : `Impossibile leggere l’ultimo numero della serie «${sezionale}» da Aruba: ` +
-              'la fattura non è stata emessa per non rischiare un numero duplicato. Riprova più tardi.',
+        messaggio: messaggioNumerazione,
       })
       continue
     }

@@ -7,6 +7,8 @@ import { CalendarClock, RefreshCw, CheckCircle2 } from 'lucide-react';
 import { TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/cockpit';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
+import { useRuoloCockpit } from '@/lib/context/admin-identity';
+import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 
 const GEN_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GEN_INPUT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -29,6 +31,12 @@ type Mode = 'mese' | 'anno';
 
 export function GeneratoreRette({ userId, scuolaId }: Props) {
     const t = useTranslations('adminContabilita');
+    // Il «totale previsto» è il fatturato del mese in anticipo: KPI economico, quindi
+    // Direzione (titolare, 2026-09-02). Il CONTEGGIO degli alunni coinvolti resta a
+    // tutti di proposito — è il controllo con cui la segreteria si accorge di stare
+    // per generare rette a chi non deve averle, e toglierlo sarebbe stato togliere una
+    // verifica per nascondere un numero.
+    const eDirezione = eDirezioneCockpit(useRuoloCockpit());
     const [mode, setMode] = useState<Mode>('anno');
     const [periodo, setPeriodo] = useState(currentPeriod());
     const [anno, setAnno] = useState(annoScolasticoCorrente());
@@ -123,7 +131,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <div className="flex flex-wrap gap-4 mb-3 font-maven text-sm">
                         <span className="text-kidville-green font-bold">{previewAnno.alunni_attivi} {t('genrAlunniAttivi')}</span>
                         <span className="text-kidville-muted">{t('genrRettaDefault')} {formatEuro(previewAnno.retta_default ?? 150)}</span>
-                        <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} {formatEuro(previewAnno.totale_previsto)}</span>
+                        {eDirezione && <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} {formatEuro(previewAnno.totale_previsto)}</span>}
                     </div>
                     <div className={cx('max-h-80 overflow-y-auto border border-kidville-line rounded-card mb-4', TABLE_WRAP)}>
                         <table className={TABLE}>
@@ -152,7 +160,7 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                     <div className="flex flex-wrap gap-4 mb-3 font-maven text-sm">
                         <span className="text-kidville-green font-bold">{previewMese.candidati.length} {t('genrAlunniCandidati')}</span>
                         <span className="text-kidville-muted">{t('genrGiaGenerati')} {previewMese.gia_generati}</span>
-                        <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} {formatEuro(previewMese.totale_previsto)}</span>
+                        {eDirezione && <span className="text-kidville-green font-bold">{t('genrTotalePrevisto')} {formatEuro(previewMese.totale_previsto)}</span>}
                     </div>
                     {previewMese.candidati.length === 0 ? (
                         <p className="font-maven text-sm text-kidville-muted py-6 text-center">{t('genrNessunAlunnoMese')}</p>

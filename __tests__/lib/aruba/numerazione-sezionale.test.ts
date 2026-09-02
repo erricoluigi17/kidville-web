@@ -208,6 +208,102 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     expect((errore as Error).name).toBe('ArubaNumerazioneError')
   })
 
+  it('LA FORMA VERA DI ARUBA: il numero sta nelle fatture DENTRO il documento', async () => {
+    // ─── QUESTO CASO NASCE DA UN GUASTO IN PRODUZIONE, NON DA UN'IDEA ──────────────
+    // Il 2026-09-02, da Kidville Aversa, un'emissione si è fermata con «Impossibile
+    // leggere l'ultimo numero della serie FPR». Il log diceva: signin 200,
+    // findByUsername 200, 3.311 documenti nell'anno, e NESSUNA etichetta riconosciuta —
+    // primo valore non riconosciuto «(vuoto)».
+    //
+    // Misurato lo stesso giorno contro l'API vera (scripts/aruba-forma-elenco.mjs, sola
+    // lettura, 100/100 elementi): `findByUsername` restituisce una PAGINA Spring, i cui
+    // elementi sono DOCUMENTI — `filename`, `idSdi`, `sender`, `receiver` — e ogni
+    // documento contiene le sue fatture in un array annidato. Il numero sta LÌ:
+    //
+    //     json.content[i].invoices[j].number === «Asilo 2327/2026»
+    //
+    // Il codice leggeva `.number` sul DOCUMENTO, che quel campo non ce l'ha.
+    //
+    // ⚠️ Due trappole che questa fixture riproduce apposta:
+    //  1. la busta ha una chiave `number` a livello alto, ma è il NUMERO DI PAGINA di
+    //     Spring Data (`number: 0`), non un numero di fattura. Chi lo legge per sbaglio
+    //     ottiene «pagina zero» e lo scambia per un progressivo;
+    //  2. `invoices` è un ARRAY: un file FatturaPA può contenere più fatture. Si scorrono
+    //     tutte, non solo la prima — sul campione vero era sempre 1, e fermarsi lì
+    //     sarebbe stato assumere di nuovo qualcosa che non si è misurato.
+    const paginaAruba = (numeri: string[]): Response => ({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          number: 0, // ← numero di PAGINA, non di fattura
+          size: 500,
+          totalElements: numeri.length,
+          content: numeri.map((n, i) => ({
+            filename: `IT01879020517_0000${i}.xml.p7m`,
+            idSdi: '17898673698',
+            docType: 'FAT',
+            invoiceType: 'FPR12',
+            sender: { fiscalCode: '03394870616', vatCode: '03394870616' },
+            receiver: { fiscalCode: 'AAAAAA00A00A000A' },
+            invoices: [{ number: n, invoiceDate: '2026-09-01T00:00:00.000+0000', status: 'DELIVERED' }],
+          })),
+        }),
+    }) as Response
+
+    fetchMock.mockResolvedValue(paginaAruba(['Asilo 2325/2026', 'FPR 1946/26', 'Asilo 2327/2026']))
+    expect(await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    fetchMock.mockClear()
+    fetchMock.mockResolvedValue(paginaAruba(['Asilo 2325/2026', 'FPR 1946/26', 'Asilo 2327/2026']))
+    expect(await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'FPR' })).toBe(1946)
+  })
+
+  it('un documento con PIÙ fatture dentro: si guardano tutte, non solo la prima', async () => {
+    // `invoices` è un array e il tracciato FatturaPA ammette più `FatturaElettronicaBody`
+    // nello stesso file. Se si leggesse solo `invoices[0]`, il massimo della serie
+    // potrebbe restare nascosto dentro un documento già letto — e sarebbe di nuovo un
+    // numero più basso del vero, cioè un doppione.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          content: [
+            { filename: 'a.p7m', invoices: [{ number: 'Asilo 10/2026' }, { number: 'Asilo 4000/2026' }] },
+          ],
+        }),
+    } as Response)
+    expect(await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(4000)
+  })
+
+  it('documenti SENZA fatture dentro → LANCIA, e il log dice quali chiavi sono arrivate', async () => {
+    // Il caso che verrebbe dopo, se Aruba cambiasse ancora forma: l'array
+    // annidato sparisce o si svuota. Il verso in cui si sbaglia dev'essere
+    // sempre lo stesso — non emettere — perché uno zero qui significa «la serie
+    // non è mai partita», ed è la frase che fa uscire «Asilo 1/2026».
+    //
+    // E il messaggio deve portare le CHIAVI del primo elemento: il 2026-09-02
+    // diceva solo «(vuoto)», che non distingue «il campo è vuoto» da «il campo
+    // non esiste più» — ed era la seconda. Nomi di campo, mai valori: dentro
+    // quegli elementi c'è `receiver.fiscalCode`, cioè un genitore vero.
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          content: [
+            { filename: 'a.p7m', idSdi: '17898673698', invoices: [] },
+            { filename: 'b.p7m', idSdi: '17898673699' },
+          ],
+        }),
+    } as Response)
+    const errore = await arubaUltimoNumeroFattura('production', 'AT', { ...parametri, sezionale: 'Asilo' }).catch((e) => e)
+    expect(errore).toBeInstanceOf(Error)
+    expect((errore as Error).name).toBe('ArubaNumerazioneError')
+    expect((errore as Error).message).toContain('filename')
+    expect((errore as Error).message).toContain('idSdi')
+  })
+
   it('un rifiuto HTTP LANCIA, col corpo del provider: non si degrada a zero', async () => {
     // Zero vorrebbe dire «serie nuova», e su una serie viva è un numero già usato.
     fetchMock.mockResolvedValue({

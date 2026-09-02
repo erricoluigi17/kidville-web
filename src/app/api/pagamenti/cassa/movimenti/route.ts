@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { eDirezione } from '@/lib/auth/predicati-ruolo'
 import { resolveScuoleAttive, resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid, zDataYMD } from '@/lib/validation/common'
@@ -17,8 +18,10 @@ import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 //
 // GET (staff): elenco movimenti reali + entrate AUTO virtuali dagli incassi
 //   contanti (origine:'incasso', non stornabili da qui). I `totali` compaiono
-//   SOLO per il ruolo admin: per gli altri la chiave non esiste nel JSON
-//   (segreteria operativa ma senza KPI — decisione #10, trappola #5).
+//   SOLO per la DIREZIONE (admin + coordinator): per gli altri la chiave non
+//   esiste nel JSON (segreteria operativa ma senza KPI — decisione #10,
+//   trappola #5). Fino al 2026-09-02 erano riservati al solo `admin`, e l'unico
+//   account «Direzione» non vedeva i totali della propria cassa.
 // POST (staff): registra un'entrata manuale o un'uscita (prelievo/rettifica NO:
 //   li genera solo la chiusura). Best-effort a valle: notifica gli admin se un
 //   non-admin registra un'uscita, e verifica la soglia contante.
@@ -107,7 +110,15 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
       return rifiutoSede('SEDE_NON_ACCESSIBILE')
     }
 
-    const isAdmin = user.role === 'admin'
+    // I KPI di cassa sono della DIREZIONE, non del solo `admin`.
+    //
+    // Fino al 2026-09-02 questa riga diceva `user.role === 'admin'`, e sbagliava due
+    // volte. La prima: escludeva `coordinator`, che nell'app si chiama letteralmente
+    // «Direzione» — in archivio è UN account, e non vedeva i totali della propria
+    // cassa. La seconda, più insidiosa: `user.role` è il ruolo ATTIVO, quello del
+    // cookie della veste indossata adesso, e un'autorizzazione non si decide su un
+    // cookie. `eDirezione` guarda i ruoli REALI.
+    const isDirezione = eDirezione(user)
 
     // 1) Movimenti reali della sede (con nome categoria). Degrada sul DB CI non migrato.
     let movQuery = supabase
@@ -211,12 +222,12 @@ export const GET = withRoute('pagamenti/cassa/movimenti:GET', async (request: Re
     }
     righe.sort((x, y) => (x.data < y.data ? 1 : x.data > y.data ? -1 : x.creato_il < y.creato_il ? 1 : -1))
 
-    if (!isAdmin) {
+    if (!isDirezione) {
       // Segreteria: SOLO l'elenco, nessun KPI. La chiave `totali` NON esiste.
       return NextResponse.json({ disponibile: true, movimenti: righe })
     }
 
-    // Admin: totali sul set filtrato (le entrate auto già escludono gli storni).
+    // Direzione: totali sul set filtrato (le entrate auto già escludono gli storni).
     const aggr = calcolaAggregatiMovimenti(
       movimentiReali.map((m) => ({ tipo: m.tipo, importo: Number(m.importo), metodo: m.metodo })),
     )

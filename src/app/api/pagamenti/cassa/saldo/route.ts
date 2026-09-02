@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { RUOLI_DIREZIONE } from '@/lib/auth/predicati-ruolo'
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -15,13 +16,13 @@ const getQuerySchema = z.object({
   scuola_id: z.preprocess((v) => v || undefined, zUuid.optional()),
 })
 
-// GET /api/pagamenti/cassa/saldo?scuola_id=  — SOLO admin (KPI economico).
+// GET /api/pagamenti/cassa/saldo?scuola_id=  — SOLO DIREZIONE (KPI economico).
 // «Saldo atteso in cassa» = quanto contante deve esserci nel cassetto + «entrato oggi»
 // per metodo. Il fondo viene da cassa_config; caricaSaldoCassa degrada da solo a
 // { disponibile:false } sul DB E2E CI non migrato (mai 500).
 export const GET = withRoute('pagamenti/cassa/saldo:GET', async (request: NextRequest) => {
   try {
-    const auth = await requireStaff(request, ['admin'])
+    const auth = await requireStaff(request, RUOLI_DIREZIONE)
     if (auth.response) return auth.response
 
     const q = parseQuery(request, getQuerySchema)

@@ -65,6 +65,35 @@ interface SubmissionRow extends RigaElenco {
 
 interface Section { id: string; name: string; scuola_id?: string | null }
 
+/**
+ * I campi numerici compilati, convertiti in numeri. Salta i vuoti e chi è escluso.
+ *
+ * `esclusi` sono i bambini a carico di un fratello: per loro il campo importo non
+ * si manda affatto. È la riga che impedisce di mandare uno zero — e lo zero, su
+ * `alunni.importo_retta_mensile`, non significa «non paga»: significa «usa il
+ * default di sede», cioè 150 € al mese.
+ */
+function numeriDaCampi(campi: Record<string, string>, esclusi: Record<string, string>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(campi)) {
+    if (esclusi[k]) continue
+    const n = Number(String(v).replace(',', '.').trim())
+    if (String(v).trim() !== '' && Number.isFinite(n)) out[k] = n
+  }
+  return out
+}
+
+/** Gli indici scelti in una tendina, come numeri. Le voci non scelte non si mandano. */
+function indiciDaCampi(campi: Record<string, string>): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [k, v] of Object.entries(campi)) {
+    if (String(v).trim() === '') continue
+    const n = Number(v)
+    if (Number.isInteger(n) && n >= 0) out[k] = n
+  }
+  return out
+}
+
 export function ModuliRicevuti() {
   const t = useTranslations('adminAltro')
   /**
@@ -98,6 +127,29 @@ export function ModuliRicevuti() {
   const [selected, setSelected] = useState<SubmissionRow | null>(null)
   const [aprendo, setAprendo] = useState<string | null>(null)
   const [assignments, setAssignments] = useState<Record<string, string>>({})
+  /**
+   * LA RETTA, CHIESTA AL MOMENTO DELL'IMPORT — e perché non era così prima.
+   *
+   * Fino al 2026-09-02 l'import chiedeva solo la classe. Il bambino nasceva con
+   * `importo_retta_mensile = 0`, e chi genera le rette mensili legge:
+   *
+   *     COALESCE(NULLIF(importo_retta_mensile, 0), retta_default_importo, 150)
+   *
+   * `NULLIF(…, 0)` ANNULLA LO ZERO: ogni bambino importato dal modulo si prendeva
+   * 150 €/mese senza che nessuno l'avesse deciso e senza che nessun errore
+   * comparisse da nessuna parte. In archivio, il 2026-09-02, quaranta alunni veri
+   * erano in questa condizione.
+   *
+   * Tre stati e non uno solo perché le domande sono tre e vanno tenute distinte:
+   *  · `rette`        quanto paga (stringa: è il valore grezzo del campo, e "" ≠ 0)
+   *  · `retteACarico` chi non paga, e QUALE fratello paga per lui — mai lo zero
+   *  · `intestatari`  a quale adulto si intesta la fattura (serve la detrazione)
+   *  · `giorniScadenza` il giorno del mese, vuoto = default di sede
+   */
+  const [rette, setRette] = useState<Record<string, string>>({})
+  const [retteACarico, setRetteACarico] = useState<Record<string, string>>({})
+  const [intestatari, setIntestatari] = useState<Record<string, string>>({})
+  const [giorniScadenza, setGiorniScadenza] = useState<Record<string, string>>({})
   const [referenteIndex, setReferenteIndex] = useState(0)
   const [working, setWorking] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
@@ -238,6 +290,14 @@ export function ModuliRicevuti() {
     setSelected(null)
     setAprendo(row.id)
     setAssignments(row.assigned_classes ?? {})
+    // Retta e affini NON si precompilano: decisione del titolare del 2026-09-02.
+    // Un valore già scritto nel campo è un valore che si conferma senza guardarlo,
+    // ed è esattamente il modo in cui i 150 € di default sono passati inosservati
+    // per quaranta bambini. Chi importa deve digitare la cifra.
+    setRette({})
+    setRetteACarico({})
+    setIntestatari({})
+    setGiorniScadenza({})
     setReferenteIndex(0)
     setResult(null)
     try {
@@ -304,7 +364,20 @@ export function ModuliRicevuti() {
       const res = await fetch('/api/admin/iscrizioni', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: selected.id, action: 'import', assignments, referenteIndex }),
+        body: JSON.stringify({
+          id: selected.id,
+          action: 'import',
+          assignments,
+          referenteIndex,
+          // I quattro campi economici. Si mandano NUMERI, non stringhe: la
+          // conversione avviene qui, una volta, invece che in tre punti del server.
+          // Chi è a carico di un fratello non manda nessuna cifra — la sua retta
+          // NON è zero, è di qualcun altro, e la differenza vale 150 € al mese.
+          rette: numeriDaCampi(rette, retteACarico),
+          retteACarico: indiciDaCampi(retteACarico),
+          intestatari: indiciDaCampi(intestatari),
+          giorniScadenza: numeriDaCampi(giorniScadenza, {}),
+        }),
       })
       const json = await res.json()
       if (!res.ok) { alert(json.error ?? t('ricevutiImportFallito')); return }
@@ -512,6 +585,14 @@ export function ModuliRicevuti() {
                 nomeSede={nomeSede(selected.scuola_id)}
                 assignments={assignments}
                 setAssignments={setAssignments}
+                rette={rette}
+                setRette={setRette}
+                retteACarico={retteACarico}
+                setRetteACarico={setRetteACarico}
+                intestatari={intestatari}
+                setIntestatari={setIntestatari}
+                giorniScadenza={giorniScadenza}
+                setGiorniScadenza={setGiorniScadenza}
                 referenteIndex={referenteIndex}
                 setReferenteIndex={setReferenteIndex}
                 working={working}
@@ -542,7 +623,10 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function DetailPanel({
-  row, sections, nomeSede, assignments, setAssignments, referenteIndex, setReferenteIndex,
+  row, sections, nomeSede, assignments, setAssignments,
+  rette, setRette, retteACarico, setRetteACarico,
+  intestatari, setIntestatari, giorniScadenza, setGiorniScadenza,
+  referenteIndex, setReferenteIndex,
   working, result, onImport, onReject, onViewDoc, docBloccato, onBack,
 }: {
   row: SubmissionRow
@@ -550,6 +634,14 @@ function DetailPanel({
   nomeSede: string
   assignments: Record<string, string>
   setAssignments: (a: Record<string, string>) => void
+  rette: Record<string, string>
+  setRette: (a: Record<string, string>) => void
+  retteACarico: Record<string, string>
+  setRetteACarico: (a: Record<string, string>) => void
+  intestatari: Record<string, string>
+  setIntestatari: (a: Record<string, string>) => void
+  giorniScadenza: Record<string, string>
+  setGiorniScadenza: (a: Record<string, string>) => void
   referenteIndex: number
   setReferenteIndex: (n: number) => void
   working: boolean
@@ -641,6 +733,105 @@ function DetailPanel({
                     <option value="">{t('ricevutiSelezionaSezione')}</option>
                     {sezioniSede.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
                   </select>
+
+                  {/* ── LA RETTA ────────────────────────────────────────────
+                      Obbligatoria come la classe, e VUOTA di partenza: un campo
+                      precompilato è un campo che si conferma senza guardarlo, ed
+                      è così che quaranta bambini hanno preso 150 € al mese senza
+                      che nessuno l'avesse deciso.
+
+                      ⚠️ Chi non paga NON si scrive con uno zero. Su
+                      `alunni.importo_retta_mensile` lo zero significa «usa il
+                      default di sede», cioè 150 €: per questo l'alternativa è una
+                      tendina che nomina il fratello che paga, e quando è scelta
+                      l'importo si disabilita invece di restare lì a mentire.
+                      In produzione, prima di questa schermata, sei bambini
+                      avevano la retta a 0,01 € — il ripiego che la segreteria
+                      aveva trovato da sola per aggirare lo zero. */}
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label
+                        htmlFor={`ricevuti-retta-${i}`}
+                        className="text-[11px] font-semibold text-kidville-sub uppercase"
+                      >
+                        {t('ricevutiRettaMensile')}
+                      </label>
+                      <input
+                        id={`ricevuti-retta-${i}`}
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        inputMode="decimal"
+                        disabled={!!retteACarico[String(i)]}
+                        value={rette[String(i)] ?? ''}
+                        onChange={e => setRette({ ...rette, [String(i)]: e.target.value })}
+                        placeholder={t('ricevutiRettaPlaceholder')}
+                        className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green disabled:bg-kidville-cream disabled:text-kidville-muted"
+                      />
+                    </div>
+                    {children.length > 1 && (
+                      <div>
+                        <label
+                          htmlFor={`ricevuti-acarico-${i}`}
+                          className="text-[11px] font-semibold text-kidville-muted uppercase"
+                        >
+                          {t('ricevutiRettaACarico')}
+                        </label>
+                        <select
+                          id={`ricevuti-acarico-${i}`}
+                          value={retteACarico[String(i)] ?? ''}
+                          onChange={e => setRetteACarico({ ...retteACarico, [String(i)]: e.target.value })}
+                          className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
+                        >
+                          <option value="">{t('ricevutiRettaPagaLui')}</option>
+                          {children.map((f: EnrollmentChild, j: number) => j === i ? null : (
+                            <option key={j} value={String(j)}>{f.nome} {f.cognome}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label
+                        htmlFor={`ricevuti-giorno-${i}`}
+                        className="text-[11px] font-semibold text-kidville-sub uppercase"
+                      >
+                        {t('ricevutiGiornoScadenza')}
+                      </label>
+                      <input
+                        id={`ricevuti-giorno-${i}`}
+                        type="number"
+                        min={1}
+                        max={28}
+                        inputMode="numeric"
+                        value={giorniScadenza[String(i)] ?? ''}
+                        onChange={e => setGiorniScadenza({ ...giorniScadenza, [String(i)]: e.target.value })}
+                        placeholder={t('ricevutiGiornoScadenzaPlaceholder')}
+                        className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
+                      />
+                    </div>
+                    {/* A chi si intesta la fattura: è il campo che serve al
+                        genitore per la detrazione. Vuoto = lo decide il server
+                        dal referente, come faceva prima. */}
+                    <div>
+                      <label
+                        htmlFor={`ricevuti-intestatario-${i}`}
+                        className="text-[11px] font-semibold text-kidville-sub uppercase"
+                      >
+                        {t('ricevutiIntestatarioFatture')}
+                      </label>
+                      <select
+                        id={`ricevuti-intestatario-${i}`}
+                        value={intestatari[String(i)] ?? ''}
+                        onChange={e => setIntestatari({ ...intestatari, [String(i)]: e.target.value })}
+                        className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green"
+                      >
+                        <option value="">{t('ricevutiIntestatarioReferente')}</option>
+                        {adults.map((a: EnrollmentAdult, j: number) => (
+                          <option key={j} value={String(j)}>{a.first_name} {a.last_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
               )}
               {done && assignments[String(i)] && (

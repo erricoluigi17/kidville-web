@@ -131,7 +131,7 @@ const patchReq = (body: unknown) =>
   })
 
 const importa = () =>
-  PATCH(patchReq({ id: SUB_ID, action: 'import', assignments: { '0': 'Girasoli' }, referenteIndex: 0 }) as never)
+  PATCH(patchReq({ id: SUB_ID, action: 'import', assignments: { '0': 'Girasoli' }, rette: { '0': 300 }, referenteIndex: 0 }) as never)
 
 const updateInvii = () => h.updates.filter((u) => u.tabella === 'enrollment_submissions')
 const proiezioniInvii = () => h.proiezioni.filter((p) => p.tabella === 'enrollment_submissions').map((p) => p.colonne)

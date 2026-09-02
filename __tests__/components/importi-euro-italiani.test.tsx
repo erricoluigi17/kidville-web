@@ -1,5 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
+
+/**
+ * ─── ⚠️ IL RUOLO, DAL 2026-09-02, DECIDE SE LE CARD ESISTONO ────────────────
+ * I totali economici della Contabilità sono riservati alla Direzione (admin +
+ * coordinator). `useRuoloCockpit()` fuori dal provider vale `''`, cioè «nessun
+ * ruolo, quindi niente»: senza questo mock il blocco dei KPI non verrebbe reso
+ * affatto e questo file — che parla di FORMATO degli importi — fallirebbe
+ * parlando d'altro.
+ *
+ * Il ruolo è una variabile e non una costante perché in fondo al file c'è il
+ * gruppo che collauda proprio il contrario: che alla segreteria quelle card non
+ * compaiano. Un mock che rispondesse sempre «admin» renderebbe quel gruppo
+ * incapace di fallire.
+ */
+const identita = vi.hoisted(() => ({ ruolo: 'admin' }));
+vi.mock('@/lib/context/admin-identity', async (orig) => ({
+    ...(await orig<typeof import('@/lib/context/admin-identity')>()),
+    useRuoloCockpit: () => identita.ruolo,
+}));
+
 import { PaymentsDashboard } from '@/components/features/admin/pagamenti/PaymentsDashboard';
 import { AgendaScadenze } from '@/components/features/admin/pagamenti/AgendaScadenze';
 
@@ -122,6 +142,7 @@ function cardKpi(etichetta: string): HTMLElement {
 
 describe('PaymentsDashboard — i KPI della Contabilità in formato italiano', () => {
     beforeEach(() => {
+        identita.ruolo = 'admin';
         vi.useFakeTimers({ shouldAdvanceTime: true });
         vi.setSystemTime(new Date(GIORNO_FISSO));
         stubFetch();
@@ -181,6 +202,60 @@ describe('PaymentsDashboard — le card KPI non dipendono da che giorno è oggi'
     });
 });
 
+describe('PaymentsDashboard — i totali sono della Direzione (2026-09-02)', () => {
+    /**
+     * ⚠️ QUESTO GRUPPO COLLAUDA UN NASCONDIGLIO, NON UNA BARRIERA, e la
+     * differenza va detta qui perché non si scopra dopo.
+     *
+     * Questi totali li somma il BROWSER (`calcolaTotaliPagamenti`) a partire
+     * dalle righe che la segreteria deve legittimamente vedere: deve incassare,
+     * sollecitare, fatturare. Nasconderli mette in ordine la vista; non impedisce
+     * a nessuno di sommare le righe da sé, e nemmeno di esportarle in Excel
+     * (`/api/pagamenti/export` resta aperto, per scelta del titolare).
+     *
+     * Dove il numero è un segreto vero — la home /admin, dove gli aggregati li
+     * calcola il server — l'omissione è reale e ha i suoi test in
+     * `__tests__/api/admin-dashboard-kpi-direzione.test.ts`.
+     */
+    beforeEach(() => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        vi.setSystemTime(new Date(GIORNO_FISSO));
+        stubFetch();
+    });
+    afterEach(() => {
+        identita.ruolo = 'admin';
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('alla SEGRETERIA il blocco dei KPI non c\'è affatto', async () => {
+        identita.ruolo = 'segreteria';
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        // Si aspetta che la schermata sia carica guardando qualcosa che la
+        // segreteria vede eccome: la riga del pagamento. Senza questa attesa il
+        // test passerebbe anche su una pagina ancora vuota, cioè non proverebbe
+        // niente.
+        await waitFor(() => expect(screen.getByText('Retta Ottobre')).toBeInTheDocument());
+        expect(screen.queryByTestId('kpi-contabilita')).toBeNull();
+    });
+
+    it('senza ruolo risolto (fetch in volo) i KPI restano nascosti', async () => {
+        // `useRuoloCockpit()` vale `''` finché il provider non ha risposto. Si
+        // sbaglia verso il NASCONDERE: un totale economico che compare per mezzo
+        // secondo è comparso.
+        identita.ruolo = '';
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await waitFor(() => expect(screen.getByText('Retta Ottobre')).toBeInTheDocument());
+        expect(screen.queryByTestId('kpi-contabilita')).toBeNull();
+    });
+
+    it('alla DIREZIONE (coordinator) i KPI ci sono', async () => {
+        identita.ruolo = 'coordinator';
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await waitFor(() => expect(cardKpi('Incassato')).toHaveTextContent('€ 1.234,50'));
+    });
+});
+
 describe('AgendaScadenze — i totali dei bucket in formato italiano', () => {
     it('somma e stampa «€ 1.500,00» col punto separatore delle migliaia', () => {
         render(
@@ -196,5 +271,29 @@ describe('AgendaScadenze — i totali dei bucket in formato italiano', () => {
         );
         expect(screen.getByRole('button', { name: /Questa settimana/ })).toHaveTextContent('€ 1.500,00');
         expect(document.body.textContent).not.toMatch(/\d\.\d{2}(?!\d)/);
+    });
+
+    it('senza `mostraImporti` restano i CONTEGGI e il clic, spariscono gli euro', () => {
+        // Alla segreteria si tolgono gli importi, non lo strumento: i bucket sono
+        // il filtro con cui trova gli scaduti da sollecitare. Toglierli interi
+        // sarebbe stato levarle un pezzo di lavoro per nascondere un numero.
+        const onSelect = vi.fn();
+        render(
+            <AgendaScadenze
+                pagamenti={[
+                    { importo: 1000, importo_pagato: 0, scadenza: '2026-07-12', stato: 'da_pagare', tipo: 'singolo' },
+                    { importo: 500, importo_pagato: 0, scadenza: '2026-07-13', stato: 'da_pagare', tipo: 'singolo' },
+                ]}
+                oggi="2026-07-10"
+                attivo={null}
+                onSelect={onSelect}
+                mostraImporti={false}
+            />
+        );
+        const bucket = screen.getByRole('button', { name: /Questa settimana/ });
+        expect(bucket).not.toHaveTextContent('€');
+        expect(bucket).toHaveTextContent('2');
+        bucket.click();
+        expect(onSelect).toHaveBeenCalled();
     });
 });

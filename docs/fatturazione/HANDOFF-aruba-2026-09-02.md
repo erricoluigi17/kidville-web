@@ -1,0 +1,181 @@
+# Handoff — chiudere la fatturazione Aruba
+
+> **Per chi apre una chat nuova dedicata SOLO a questo.** Il codice è già in produzione
+> (`8bea8bfb`, PR #109). Quello che manca è **provarlo contro Aruba in presa diretta** e
+> **emettere una fattura vera**. Tutto ciò che segue è misurato il 2026-09-02, non dedotto.
+
+---
+
+## 1. Il problema originale, e perché è chiuso a metà
+
+Dalla Contabilità di Kidville Aversa, «Emetti» rispondeva:
+
+> *«Impossibile leggere l'ultimo numero della serie «FPR» da Aruba: la fattura non è stata emessa
+> per non rischiare un numero duplicato.»*
+
+**Causa radice, misurata.** `GET /services/invoice/out/findByUsername` restituisce una pagina di
+**DOCUMENTI**, e il numero della fattura sta in un array **annidato** dentro ciascuno:
+
+```
+json.content[i].invoices[j].number   ===   «Asilo 2327/2026»     ← 100/100 elementi
+json.content[i].number               ===   undefined             ← 0/100   (dove leggeva il codice)
+```
+
+**NON era** `size`, **non era** `vatcodeSender`: escluso con un esperimento A/B a quattro celle.
+**Non era** il rate limit, l'utenza non abilitata, l'ambiente sandbox o un timeout: il log diceva
+`signin 200`, `findByUsername 200`, 3.311 documenti ricevuti.
+
+La correzione è in `src/lib/aruba/client.ts` (`etichetteDellElemento`) ed è già in produzione.
+⚠️ **Fallisce chiusa**: se sbagliasse ancora, non emette — non emette *male*.
+
+### La forma vera della risposta, campo per campo (misurata)
+
+Busta: `content`, `errorCode`, `errorDescription`, `first`, `last`, **`number`** *(⚠️ è il numero di
+PAGINA di Spring Data, non un numero di fattura)*, `numberOfElements`, `size`, `totalElements`,
+`totalPages`.
+
+Ogni elemento di `content[]`:
+
+| campo | contenuto |
+|---|---|
+| `filename` | `IT…xml.p7m` |
+| `idSdi` | `17898673698` |
+| `docType` · `invoiceType` | `FAT` · `FPR12` |
+| `sender` | `{countryCode, description, fiscalCode, vatCode}` — la cooperativa |
+| `receiver` | `{countryCode, description, fiscalCode, vatCode}` — **⚠️ un genitore reale** |
+| **`invoices[]`** | **`{number, invoiceDate, status, statusDescription}` ← IL NUMERO È QUI** |
+| `creationDate` · `lastUpdate` · `pddAvailable` · `signed` · `unsignedFile` · `id` · `username` | metadati |
+
+---
+
+## 2. 🔴 IL LIMITE ARUBA — leggere PRIMA di lanciare qualunque cosa
+
+Questo è il motivo per cui il lavoro non si è chiuso, e ha fatto perdere tre ore.
+
+- **`signin` È STROZZATO DURAMENTE, e più delle altre chiamate.** Misurato: un `signin` riuscito, e
+  **trenta secondi dopo** un secondo `signin` → `429`. Non «60 all'ora»: due login ravvicinati bastano.
+- **Anche i tentativi RIFIUTATI consumano.** Dopo cinque tentativi in tre ore il `429` arrivava
+  perfino sul `signin`, cioè sulla prima chiamata. **Non è un secchio che si riempie mentre bussi.**
+- **Una lettura del progressivo costa 7 pagine** (3.311 documenti ÷ 500 per pagina), per serie.
+  Il collaudo che legge *entrambe* le serie costa **1 signin + 14 GET**.
+- Il `429` arriva come **pagina HTML**, non come JSON.
+
+### La regola operativa che ne discende
+
+> **Un solo `signin` per sessione, e non si «prova prima con qualcosa di piccolo».**
+> Quella prova costa esattamente quanto quella vera, e brucia la successiva.
+
+Se si vede un `429`: **fermarsi almeno 45-60 minuti senza toccare niente**. Non fare probe di
+verifica: le probe sono il problema.
+
+---
+
+## 3. Cosa resta da fare, in ordine
+
+### Passo 1 — la lettura col codice di PRODOTTO (sola lettura)
+
+```bash
+COLLAUDO_REALE=1 npx vitest run --config vitest.collaudo.config.ts \
+  scripts/collaudo/numerazione-aruba.collaudo.ts
+```
+
+**Lanciarlo come PRIMA cosa della sessione**, senza aver fatto nessun'altra chiamata ad Aruba prima.
+Stampa solo due interi (nessun dato personale). Atteso: `Asilo` e `FPR` entrambi **> 1000** e
+**diversi fra loro**.
+
+- Se stampa i due numeri → la correzione è dimostrata anche in presa diretta. Si passa al passo 2.
+- Se dà `429` → aspettare un'ora **senza altre chiamate** e ripetere. Non c'è scorciatoia.
+- Se dà `ArubaNumerazioneError` con l'elenco delle chiavi → Aruba ha cambiato forma di nuovo, e le
+  chiavi nel messaggio dicono dove guardare (la correzione del 2026-09-02 le mette apposta nel log).
+
+Se serve solo la serie della fattura di prova, si può dimezzare il costo leggendo la sola `FPR`
+(commentare l'altra chiamata nel collaudo): 1 signin + 7 GET invece di 14.
+
+### Passo 2 — la fattura vera
+
+⚠️ **Non è automatizzabile e non va aggirata.** Non esiste sandbox per questo account (le credenziali
+demo sono un account separato mai richiesto), quindi l'unica prova è emettere davvero. **Il pulsante
+lo preme una persona in segreteria**: emettere chiamando la libreria col service-role scavalcherebbe
+il gate dell'app, cioè proverebbe una cosa diversa da quella che si vuole provare.
+
+**Il pagamento è già pronto e verificato:**
+
+| | |
+|---|---|
+| `pagamenti.id` | `85320395-e0f9-4422-bc65-f42ca0006e47` |
+| sede | Kidville **Aversa** (`429da920-2c1f-47a8-82ed-a26f63ee0591`) |
+| importo | **300,00 €** — già corretto da 330,00 il 2026-09-02 |
+| serie attesa | **`FPR`** (bambina nata il 07/12/2023 → compie 3 anni entro il 30 aprile) |
+| CF bambina · CF genitore | 16 caratteri entrambi ✓ |
+| `intestatario_fatture` | valorizzato ✓ |
+| fattura già presente | no ✓ |
+
+Configurazione della sede, verificata: `abilitato: true`, `ambiente: production`, `password_ref`
+presente, `fiscale_config` completa (cap · comune · provincia · email · piva · codice_fiscale ·
+denominazione · regime_fiscale).
+
+⚠️ **Due cose da guardare prima di premere:**
+1. `aruba_config.iva` ha **0 righe**. Verificare che sia voluto: il regime è esente Art. 10 DPR
+   633/72, quindi aliquota 0 è la cosa giusta, ma vale la pena confermarlo.
+2. `bollo_abilitato` non è impostato (`null`). L'importo è **300 € > 77,47 €**: se il bollo va
+   applicato, va acceso PRIMA. È una domanda per il commercialista, rimasta aperta dal 2026-08-10.
+
+### Passo 3 — verificare che il numero sia quello giusto
+
+Subito dopo l'emissione:
+
+```sql
+SELECT sezionale, anno, ultimo_numero, aggiornato_il
+FROM fatture_numerazione_sezionale ORDER BY anno DESC, sezionale;
+
+SELECT sezionale, numero, anno, progressivo_invio, sdi_stato, sdi_stato_label, aruba_filename
+FROM fatture_emesse ORDER BY creato_il DESC LIMIT 3;
+```
+
+Il numero allocato dev'essere **`max(letto da Aruba) + 1`** per `FPR` 2026. Se fosse `1`, **fermare
+tutto**: significa che il pavimento è stato letto come zero, ed è la collisione fiscale che tutto
+questo lavoro esiste per impedire.
+
+E il log applicativo, che racconta l'esito senza doverlo indovinare:
+
+```sql
+SELECT creato_il, livello, left(messaggio,200) AS messaggio,
+       contesto->'campi'->>'operazione' AS operazione, contesto->'campi'->>'esito' AS esito
+FROM app_log WHERE evento='fattura' AND creato_il > now() - interval '1 hour'
+ORDER BY creato_il DESC;
+```
+
+---
+
+## 4. Strumenti già pronti nel repo
+
+| file | a cosa serve |
+|---|---|
+| `scripts/collaudo/numerazione-aruba.collaudo.ts` | il codice di **prodotto** contro l'API vera, sola lettura |
+| `scripts/aruba-forma-elenco.mjs` | la **forma** della risposta: A/B a 4 celle, stampa solo i NOMI delle chiavi |
+| `scripts/aruba-prova-collegamento.mjs` | signin + una chiamata operativa (un account non abilitato supera il login e fallisce dopo) |
+| `scripts/aruba-campioni.mjs` | scarica campioni veri — `--out` **fuori dal repo**, che è pubblico |
+
+⚠️ **Ognuno di questi fa il proprio `signin`.** Lanciarne due di seguito significa `429` sul secondo.
+
+---
+
+## 5. Cosa NON va toccato, e perché
+
+- **La severità di `arubaUltimoNumeroFattura`.** Se non riesce a leggere, **lancia**: non degrada al
+  contatore interno, che per una serie nata sul gestionale di Aruba vale **zero**. Il 2026-09-02
+  quella severità ha fermato un'emissione e ha permesso di trovare il difetto in due minuti. Un
+  degrado «gentile» qui produce un numero di fattura già usato, cioè un illecito fiscale.
+- **La lettura una volta per LOTTO** (`TTL_ULTIMO_NUMERO_MS`, 5 minuti). Una rilettura per fattura
+  strozzerebbe un'emissione massiva a metà, lasciando la segreteria con metà delle rette fatturate.
+- **I mock dei test.** Fino al 2026-09-02 costruivano la risposta come `{invoices:[{number}]}`, cioè
+  **assumevano la forma che avrebbero dovuto dimostrare**, e sono rimasti verdi mentre in produzione
+  non si leggeva niente. Le fixture nuove riproducono la forma **misurata**: se si toccano, si toccano
+  dopo aver rimisurato, non prima.
+
+## 6. Riferimenti
+
+- `docs/fatturazione/tracciato-di-riferimento.md` — il tracciato XML campo per campo
+- PRD, changelog **2026-09-02** «La fattura cercava il proprio numero dove non c'era»
+- `src/lib/aruba/client.ts` → `etichetteDellElemento` (la testata spiega la forma e il perché)
+- `src/lib/aruba/emissione.ts` → i cinque messaggi d'errore distinti per `code`

@@ -157,6 +157,20 @@ test.describe('import in segreteria @solo-chromium', () => {
     // così non inquina il conteggio di Girasoli (appello docente) né di Tulipani.
     // (l'alunno importato viene ripulito dal seed al run successivo.)
     await page.locator('select').first().selectOption({ label: 'Nuovi Iscritti' });
+
+    // ── E DAL 2026-09-02 ESIGE ANCHE LA RETTA ────────────────────────────────
+    // Non è un campo in più da riempire per far tornare verde un test: è la
+    // guardia che impedisce a un bambino di nascere con `importo_retta_mensile`
+    // a 0, valore che la generazione mensile rilegge come «usa il default di
+    // sede» — 150 €/mese decisi da nessuno. Quando questa riga è stata aggiunta,
+    // in produzione c'erano 40 alunni in quello stato.
+    //
+    // Si usa l'`id` e non `.nth()`: i controlli di questa scheda sono uno per
+    // bambino e ce ne sono quattro per figlio (classe, retta, giorno, fatture).
+    // Un indice posizionale si romperebbe al prossimo campo aggiunto, e si
+    // romperebbe in silenzio — compilando il campo sbagliato.
+    await page.locator('#ricevuti-retta-0').fill('300');
+
     await page.getByRole('button', { name: 'Importa nelle anagrafiche' }).click();
 
     // Esito: import ok + credenziali + degrado email (RESEND non configurato).

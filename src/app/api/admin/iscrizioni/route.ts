@@ -722,7 +722,11 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
 })
 
 // PATCH: rifiuto o import nelle anagrafiche.
-// Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex }
+// Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex,
+//                rette: { [childIndex]: number>0 }, retteACarico: { [childIndex]: indiceFratello },
+//                intestatari: { [childIndex]: indiceAdulto }, giorniScadenza: { [childIndex]: 1..28 } }
+// I quattro campi economici sono nati il 2026-09-02: senza la retta il bambino
+// entrava a 0, che la generazione mensile rilegge come «default di sede» (150 €).
 // Body reject: { id, action:'reject' }
 export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextRequest) => {
   const auth = await requireStaff(request)

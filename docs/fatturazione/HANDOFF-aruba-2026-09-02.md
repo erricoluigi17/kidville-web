@@ -140,11 +140,39 @@ Configurazione della sede, verificata: `abilitato: true`, `ambiente: production`
 presente, `fiscale_config` completa (cap · comune · provincia · email · piva · codice_fiscale ·
 denominazione · regime_fiscale).
 
-⚠️ **Due cose da guardare prima di premere:**
-1. `aruba_config.iva` ha **0 righe**. Verificare che sia voluto: il regime è esente Art. 10 DPR
-   633/72, quindi aliquota 0 è la cosa giusta, ma vale la pena confermarlo.
-2. `bollo_abilitato` non è impostato (`null`). L'importo è **300 € > 77,47 €**: se il bollo va
-   applicato, va acceso PRIMA. È una domanda per il commercialista, rimasta aperta dal 2026-08-10.
+⚠️ **Due cose da guardare prima di premere** — ✅ **RISOLTE il 2026-09-02, e la seconda era scritta
+male proprio qui sotto:**
+
+1. ~~`aruba_config.iva` ha **0 righe**~~ → **è la configurazione GIUSTA, non una lacuna.** La chiave
+   `iva` è **assente** (non un array vuoto) in tutte e tre le sedi, e il codice tratta i due casi
+   allo stesso modo: `emissione.ts:877` non trova la causale, `fatturapa-xml.ts:487` applica il
+   default **aliquota 0 · Natura `N4` · «Esente Art. 10 DPR 633/72»**. È esattamente ciò che
+   riportano le fatture vere. **Aggiungere una riga a mano è il modo di sbagliare, non di
+   correggere.** Dimostrato end-to-end: la fixture di `__tests__/api/fattura-emissione.test.ts:121`
+   non ha la chiave `iva` — identica alla produzione — e il test asserisce `<Natura>N4</Natura>`
+   sull'XML davvero inviato.
+
+2. 🔴 ~~`bollo_abilitato` non è impostato (`null`)~~ → **quella chiave NON ESISTE.** Cercata in tutto
+   il repo il 2026-09-02: **zero occorrenze** in `src/`, `__tests__/`, `supabase/`. L'unica
+   occorrenza in tutto l'albero era **questa riga dell'handoff**, che quindi mandava a controllare
+   un interruttore immaginario.
+
+   La chiave vera è **`fiscale_config.bollo_enabled`**, letta da `src/lib/pagamenti/fiscale.ts:97`
+   (`if (!cfg?.bollo_enabled) return 0`). In produzione è **assente in tutte e tre le sedi** —
+   quindi *non impostato ⇒ spento ⇒ nessun `<DatiBollo>`*: la fattura da 300 € oggi **uscirebbe
+   senza bollo**. Non è un `null` ambiguo: è spento.
+
+   L'interruttore c'è nel pannello (`SettingsPanel.tsx:350`), è per **sede**, e acceso funziona in
+   entrambi i rami (test su e giù, non un mock piatto). ⚠️ Ma tocca anche le **ricevute**
+   (`ricevute.ts:118` e `:295`): è lo stesso interruttore, non se ne può accendere metà. E il bollo
+   **non viene riaddebitato** al genitore — il totale resta 300,00 € e i 2 € restano alla
+   cooperativa.
+
+   **Resta una domanda per il commercialista, e ora è ben posta:** *la cooperativa deve applicare la
+   marca da bollo virtuale da 2 € sulle fatture elettroniche esenti Art. 10 sopra 77,47 €?* Elemento
+   utile per rispondere: le fatture che la segreteria emette **a mano** dal pannello Aruba **non
+   riportano il bollo** (letto su due documenti veri il 2026-08-10). Se la risposta è NO,
+   l'interruttore resta spento e non si tocca niente.
 
 ### Passo 3 — verificare che il numero sia quello giusto
 

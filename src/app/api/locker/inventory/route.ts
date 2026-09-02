@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
-import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
@@ -85,6 +86,10 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
         // Ramo docente/staff (per classe): gate ruolo + gate classe + isolamento
         // per plesso.
         let plessiScope: string[] = [];
+        // Le sezioni della classe richiesta, per UUID: è l'identità vera, e le
+        // due letture qui sotto ci filtrano invece che sul NOME. `null` finché
+        // il ramo docente non l'ha risolta.
+        let sezioniClasse: string[] | null = null;
         if (classeSezione && !alunnoId) {
             const auth = await requireDocente(request);
             if (auth.response) return auth.response;
@@ -94,9 +99,6 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
             // `requireDocente` verifica il ruolo, non la classe. Sull'armadietto
             // il danno arrivava anche in scrittura — la UI cicla sugli alunni
             // così ottenuti e registra il carico per ciascuno.
-            const scopeErr = await assertClasseNomeInScope(admin, auth.user, classeSezione, { soloSezioniAssegnate: true });
-            if (scopeErr) return scopeErr;
-
             // `resolveScuoleAttive` e non `scuoleDiUtente`: quest'ultima non legge
             // nemmeno il cookie, quindi il SedeSelector della pagina Armadietto
             // era del tutto inerte (R70). Più la sede eventualmente dichiarata
@@ -108,6 +110,13 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
             if (sede.response) return sede.response;
             plessiScope = sede.plessi ?? [];
             if (plessiScope.length === 0) return NextResponse.json([]);
+
+            // Il gate e la traduzione nome→uuid, insieme. Il gate passava e le
+            // letture restavano vuote lo stesso, perché filtravano per NOME.
+            const classe = await risolviSezione(admin, auth.user, { nome: classeSezione }, plessiScope);
+            if (classe.response) return classe.response;
+            if (classe.sectionIds.length === 0) return NextResponse.json([]);
+            sezioniClasse = classe.sectionIds;
         }
 
         // ── Stock aggregato per singolo alunno ───────────────────────────────
@@ -134,7 +143,7 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
         if (classeSezione && mode === 'stock') {
             const { data: alunni, error: errA } = await supabase
                 .from('alunni').select('id, nome, cognome')
-                .eq('classe_sezione', classeSezione).eq('stato', 'iscritto').in('scuola_id', plessiScope);
+                .in('section_id', sezioniClasse ?? []).eq('stato', 'iscritto').in('scuola_id', plessiScope);
             if (errA) throw errA;
             const ids = (alunni ?? []).map(a => a.id);
             const { data: inv, error: errI } = await supabase
@@ -176,7 +185,7 @@ export const GET = withRoute('locker/inventory:GET', async (request: NextRequest
         if (classeSezione) {
             const { data: alunni, error: errA } = await supabase
                 .from('alunni').select('id, nome, cognome')
-                .eq('classe_sezione', classeSezione).eq('stato', 'iscritto').in('scuola_id', plessiScope);
+                .in('section_id', sezioniClasse ?? []).eq('stato', 'iscritto').in('scuola_id', plessiScope);
             if (errA) throw errA;
             const ids = (alunni ?? []).map(a => a.id);
             let q = supabase.from('armadietto').select('*').in('alunno_id', ids);

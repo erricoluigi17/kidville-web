@@ -6,6 +6,7 @@ import { loadResolveOptions, loadMensaConfig, resolveMenuConfigId } from '@/lib/
 import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { resolveMenuGiorno, type MenuGiorno } from '@/lib/mensa/resolveMenu'
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti'
+import { sezioniDiNome } from '@/lib/sezioni/risoluzione'
 import { allergeniAlunno, conflittiAllergie, allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { parseQuery } from '@/lib/validation/http'
 import { zDataYMD } from '@/lib/validation/common'
@@ -110,7 +111,19 @@ export const GET = withRoute('mensa/report:GET', async (request: NextRequest) =>
       .select('id, nome, cognome, classe_sezione, allergies, allergeni')
       .in('id', ids)
       .eq('scuola_id', scuolaId)
-    if (sezione) q = q.eq('classe_sezione', sezione)
+    if (sezione) {
+      // Per UUID, non per nome. Il gate del docente qui sopra confronta i NOMI
+      // (`nomiSezioniDiUtente`) ed è corretto così — la domanda è «questa classe
+      // è tua?» — ma il FILTRO deve reggere anche quando `alunni.classe_sezione`
+      // diverge da `sections.name`, che è ciò che il 2026-09-02 accadeva su
+      // cinque classi di Giugliano.
+      //
+      // ⚠️ Il raggruppamento più sotto resta per NOME (`classe_sezione`): il menu
+      // per classe è chiavato sul nome in `mensa_class_menu_assignment.classe`,
+      // che per progetto è un nome. Qui cambia solo CHI entra nel report.
+      const sezioni = await sezioniDiNome(supabase, sezione, [scuolaId])
+      q = q.in('section_id', sezioni)
+    }
 
     const { data: alunni, error: alunniErr } = await q
     if (alunniErr) {

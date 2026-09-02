@@ -9,6 +9,7 @@ import { agisceComeGenitore, eFamiglia } from '@/lib/auth/predicati-ruolo';
 import { requireParentOfStudent } from '@/lib/auth/require-parent';
 import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { resolveScuoleAttive, resolveScuolaScrittura, scuoleDiUtente } from '@/lib/auth/scope';
+import { sezioniDiNome } from '@/lib/sezioni/risoluzione';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
@@ -237,12 +238,22 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         // scope», e `.in('scuola_id', [])` risponde giustamente niente. La
         // guardia `if (plessi.length > 0)` che stava qui faceva l'opposto —
         // scope vuoto ⇒ nessun filtro ⇒ tutte le sedi.
+        //
+        // ⚠️ Qui la classe resta identificata per NOME in ingresso, e non è una
+        // dimenticanza: poche righe più sotto lo stesso `classe` serve a
+        // `target_classes.cs.{…}` — i destinatari di un broadcast, che per
+        // progetto sono NOMI e restano tali. Quello che cambia è come si trovano
+        // i BAMBINI: il nome si traduce in uuid con `sezioniDiNome`, e la
+        // lettura filtra `section_id`. Prima confrontava `alunni.classe_sezione`
+        // per uguaglianza esatta, e uno spazio di differenza dal nome della
+        // sezione bastava a non taggare nessuno.
         let studentIds: string[] = [];
         if (classe) {
+            const sezioni = await sezioniDiNome(supabase, classe, plessi);
             const alunniQ = supabase
                 .from('alunni')
                 .select('id')
-                .eq('classe_sezione', classe)
+                .in('section_id', sezioni)
                 .in('scuola_id', plessi);
             const { data: students, error: stErr } = await alunniQ;
             if (stErr) {

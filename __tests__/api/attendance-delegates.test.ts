@@ -30,6 +30,9 @@ vi.mock('@/lib/auth/require-staff', () => ({
 
 vi.mock('@/lib/auth/scope', () => ({
     assertClasseNomeInScope: vi.fn(async () => null),
+    // Il gemello per UUID: da quando la classe si identifica con `section_id`
+    // (2026-09-02) `risolviSezione` sceglie fra i due gate.
+    assertSezioneInScope: vi.fn(async () => null),
     // Scope di sede sulla query (l'isolamento vero è verificato in
     // `attendance-scope-sede.test.ts`, con un finto client che filtra davvero).
     resolveScuoleAttive: vi.fn(async () => ['sc-1']),
@@ -52,8 +55,19 @@ function client() {
             query.select = () => query
             query.eq = () => query
             query.in = () => query
-            query.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) =>
-                Promise.resolve({ data: h.errore ? null : h.righe, error: h.errore }).then(ok, ko)
+            query.then = (ok: (v: unknown) => unknown, ko?: (e: unknown) => unknown) => {
+                // `sections` risponde SEMPRE, e non con `h.righe`: è la
+                // traduzione nome→uuid che la route fa prima di leggere i
+                // delegati. Un mock piatto che le desse la stessa risposta di
+                // `delegates` farebbe uscire la route con l'elenco vuoto —
+                // cioè proverebbe il vuoto invece del comportamento, e
+                // `h.errore` (che vuole descrivere un guasto sui DELEGATI)
+                // finirebbe per descrivere un guasto sulle sezioni.
+                if (tabella === 'sections') {
+                    return Promise.resolve({ data: [{ id: 'sec-1' }], error: null }).then(ok, ko)
+                }
+                return Promise.resolve({ data: h.errore ? null : h.righe, error: h.errore }).then(ok, ko)
+            }
             return query
         },
     }

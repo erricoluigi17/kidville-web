@@ -14,6 +14,19 @@ import { creaCachePromesse } from '@/lib/rete/cache-promesse';
  * non è un problema di prestazioni, è un problema di isolamento fra sedi.
  */
 export interface SezioneDocente {
+  /**
+   * L'IDENTITÀ della sezione. `name` non lo è: fra sedi si ripete («2 ANNI A»
+   * esiste a Giugliano e ad Aversa), e rinominare una sezione lo cambia senza
+   * toccare `alunni.classe_sezione` — cioè svuota la classe agli occhi della
+   * maestra, con 200 e senza un log (misurato il 2026-09-02 su cinque sezioni
+   * di Giugliano). `/api/educator-sections` lo restituisce da sempre: era già
+   * qui, e nessuno lo usava.
+   *
+   * ⚠️ Facoltativo perché la risposta ha anche una forma vecchia (`sectionNames`,
+   * i soli nomi) che l'id non ce l'ha. Chi lo usa manda `sectionId` solo se c'è,
+   * e le route accettano entrambe le strade.
+   */
+  id?: string;
   name: string;
   school_type: string | null;
 }

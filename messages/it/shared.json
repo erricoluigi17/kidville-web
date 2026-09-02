@@ -287,6 +287,7 @@
   "erroreAutorizzazioniUscitaNonLette": "Non siamo riusciti a leggere chi ha firmato l’autorizzazione: riprova fra qualche minuto, l’elenco mostrato sarebbe incompleto",
   "erroreRegistroAlunniNonLetti": "Non siamo riusciti a leggere l’elenco degli alunni della sezione: il registro non è stato stampato. Riprova fra qualche minuto.",
   "erroreRegistroSezioneVuota": "In questa sezione non risulta nessun alunno: non c’è niente da stampare.",
+  "erroreRegistroClasseNonRisolta": "Questa classe non risulta fra le sedi attive: controlla la sede selezionata in alto e riprova.",
   "erroreRegistroNonGenerato": "Il registro non è stato generato: riprova fra qualche minuto.",
   "erroreCronNonAutorizzato": "Operazione riservata ai lavori automatici della piattaforma",
   "erroreImportIscrizioniNonEseguito": "Il giro automatico delle iscrizioni non è stato eseguito: riprova fra qualche minuto",

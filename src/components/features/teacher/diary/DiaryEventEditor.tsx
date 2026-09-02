@@ -12,6 +12,7 @@ import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
+import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 
 // =============================================================================
 // Compilazione del diario 0-6 per una sezione: stato + handler (useDiaryDay) e
@@ -99,7 +100,20 @@ const itemVariants = {
 
 // ─── Hook: stato e handler della giornata ─────────────────────────────────────
 
-export function useDiaryDay(userId: string | null, sezione: string | null, opts?: { onSaved?: () => void }) {
+export function useDiaryDay(
+    userId: string | null,
+    sezione: string | null,
+    opts?: {
+        onSaved?: () => void;
+        /**
+         * L'UUID della sezione: l'identità vera. Facoltativo perché
+         * `/admin/diary` sceglie la classe da un elenco di soli nomi, e perché
+         * la risposta vecchia di `educator-sections` l'id non ce l'ha — le route
+         * accettano entrambe le strade e le fanno finire sullo stesso filtro.
+         */
+        sectionId?: string;
+    },
+) {
     const t = useTranslations('teacherDiario');
     const [students, setStudents] = useState<DiaryStudent[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
@@ -133,10 +147,16 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
 
     const eventTypes: DiaryEventType[] = umoreEnabled ? [...ALL_EVENT_TYPES, 'umore'] : ALL_EVENT_TYPES;
 
+    // L'uuid quando c'è, il nome quando no. Prima si mandava sempre il nome, e
+    // le route filtravano `alunni.classe_sezione` per uguaglianza esatta: uno
+    // spazio di differenza dal nome della sezione e il diario si apriva senza
+    // nessun bambino, con 200 e senza un log.
+    const paramClasse = parametroClasse({ id: opts?.sectionId, name: sezione ?? '' });
+
     const fetchStudents = async () => {
         if (!sezione || !userId) return;
         try {
-            const res = await fetch(`/api/diary/students?sezione=${encodeURIComponent(sezione)}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
+            const res = await fetch(`/api/diary/students?${paramClasse}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 const mapped: DiaryStudent[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({
@@ -164,7 +184,7 @@ export function useDiaryDay(userId: string | null, sezione: string | null, opts?
         if (list.length === 0 || !sezione) { setSavedStudentIds(new Set()); return; }
         try {
             const today = todayISO();
-            const res = await fetch(`/api/diary/entries?sezione=${encodeURIComponent(sezione)}&date=${today}&userId=${userId}`);
+            const res = await fetch(`/api/diary/entries?${paramClasse}&date=${today}&userId=${userId}`);
             const entries = await res.json();
             if (!Array.isArray(entries)) { setSavedStudentIds(new Set()); return; }
 

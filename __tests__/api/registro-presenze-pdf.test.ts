@@ -21,10 +21,14 @@ const ALU_1 = 'a1a1a1a1-1111-4111-8111-aaaaaaaaaaaa'
 const ALU_2 = 'b2b2b2b2-2222-4222-8222-bbbbbbbbbbbb'
 const DOCENTE = 'e0e0e0e0-1111-4111-8111-eeeeeeeeeeee'
 const SEZIONE = '3 ANNI'
+const SEC = 'c1c1c1c1-1111-4111-8111-cccccccccccc'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
   assertClasseNomeInScope: vi.fn(),
+  // Il gemello per UUID: da quando la classe si identifica con `section_id`
+  // (2026-09-02) `risolviSezione` sceglie fra i due gate.
+  assertSezioneInScope: vi.fn(),
   resolveScuoleAttive: vi.fn(),
   db: {} as Record<string, Record<string, unknown>[]>,
 }))
@@ -41,6 +45,7 @@ vi.mock('next-intl', async (originale) => await originale())
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: h.requireDocente }))
 vi.mock('@/lib/auth/scope', () => ({
   assertClasseNomeInScope: h.assertClasseNomeInScope,
+  assertSezioneInScope: h.assertSezioneInScope,
   resolveScuoleAttive: h.resolveScuoleAttive,
 }))
 vi.mock('@/lib/supabase/server-client', async () => {
@@ -59,9 +64,12 @@ const richiesta = (query = `year=${ANNO}&month=${MESE}&sezione=${encodeURICompon
 beforeEach(() => {
   vi.clearAllMocks()
   h.db = {
+    // `sections` è la traduzione nome→uuid che la rotta fa prima di leggere gli
+    // alunni: senza questa riga uscirebbe un 404 e il test proverebbe il vuoto.
+    sections: [{ id: SEC, scuola_id: SEDE, name: SEZIONE }],
     alunni: [
-      { id: ALU_1, nome: 'Anna', cognome: 'Bianchi', classe_sezione: SEZIONE, scuola_id: SEDE },
-      { id: ALU_2, nome: 'Bruno', cognome: 'Verdi', classe_sezione: SEZIONE, scuola_id: SEDE },
+      { id: ALU_1, nome: 'Anna', cognome: 'Bianchi', section_id: SEC, classe_sezione: SEZIONE, scuola_id: SEDE },
+      { id: ALU_2, nome: 'Bruno', cognome: 'Verdi', section_id: SEC, classe_sezione: SEZIONE, scuola_id: SEDE },
     ],
     presenze: [
       // Un fatto del registro: l'appello di oggi, scritto dal docente.
@@ -86,6 +94,7 @@ beforeEach(() => {
   }
   h.requireDocente.mockResolvedValue({ user: { id: DOCENTE, role: 'educator', scuola_id: SEDE } })
   h.assertClasseNomeInScope.mockResolvedValue(null)
+  h.assertSezioneInScope.mockResolvedValue(null)
   h.resolveScuoleAttive.mockResolvedValue([SEDE])
 })
 
@@ -178,10 +187,15 @@ describe('GET /api/admin/registro-presenze/pdf — i conteggi', () => {
     // sede il registro di una sezione mescolerebbe i bambini di due scuole diverse — e la
     // maestra firmerebbe un foglio con dentro nomi di minori che non ha mai visto.
     const ALTRA_SEDE = 'cccccccc-0000-4000-8000-00000000000c'
+    // La sezione OMONIMA dell'altra sede esiste davvero in anagrafica: è ciò che
+    // rende il caso reale. La rotta risolve il nome DENTRO le sedi attive, e
+    // questa non lo è — quindi il suo uuid non entra nel filtro.
+    h.db.sections.push({ id: 'sec-altra', scuola_id: ALTRA_SEDE, name: SEZIONE })
     h.db.alunni.push({
       id: 'c3c3c3c3-3333-4333-8333-cccccccccccc',
       nome: 'Carla',
       cognome: 'Neri',
+      section_id: 'sec-altra',
       classe_sezione: SEZIONE,
       scuola_id: ALTRA_SEDE,
     })

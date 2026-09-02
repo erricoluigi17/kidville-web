@@ -8,6 +8,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route';
 import { calcolaOreAssenza } from '@/lib/primaria/oreAssenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
@@ -192,7 +193,7 @@ function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeeke
 
 // ─── Componente Principale ───────────────────────────────────────────────────
 
-export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
+export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: string; sectionId?: string }) {
     const t = useTranslations('teacherPresenze');
     const locale = useLocale();
     const now = new Date();
@@ -209,13 +210,19 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
     const days = getDays(year, month);
     const todayISO = toISO(now);
 
+    // L'uuid quando c'è, il nome quando no. ⚠️ Le due `fetch` qui sotto
+    // interpolavano `sezione` GREZZA, senza `encodeURIComponent`: un nome con
+    // spazi («4 ANNI A») o con una barra («NIDO 2026/2027») finiva nella query
+    // string così com'era. `parametroClasse` codifica sempre.
+    const paramClasse = parametroClasse({ id: sectionId, name: sezione });
+
     const fetchData = useCallback(async () => {
         try {
             // Carica SEMPRE tutti gli studenti della sezione + presenze del mese in parallelo.
             // Così i mesi senza presenze mostrano comunque la lista completa con celle vuote.
             const [studRes, presRes] = await Promise.all([
-                fetch(`/api/diary/students?sezione=${sezione}`, { cache: 'no-store' }).catch(() => null),
-                fetch(`/api/attendance/monthly?year=${year}&month=${month}&sezione=${sezione}`, { cache: 'no-store' }).catch(() => null),
+                fetch(`/api/diary/students?${paramClasse}`, { cache: 'no-store' }).catch(() => null),
+                fetch(`/api/attendance/monthly?year=${year}&month=${month}&${paramClasse}`, { cache: 'no-store' }).catch(() => null),
             ]);
             if (studRes?.ok && presRes) {
                 const allStudents: unknown = await studRes.json().catch(() => null);
@@ -233,7 +240,7 @@ export function MonthlyAttendanceTable({ sezione = '' }: { sezione?: string }) {
         } finally {
             setIsLoading(false);
         }
-    }, [year, month, sezione, t]);
+    }, [year, month, paramClasse, t]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 

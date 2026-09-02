@@ -12,6 +12,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
+import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { HeroCard } from '@/components/features/shell/HeroCard';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
 import { TeacherAgendaCard } from '@/components/features/teacher/TeacherAgendaCard';
@@ -167,16 +168,20 @@ function TeacherDashboardInner() {
   useEffect(() => {
     if (!activeSection || !userId) return;
     let active = true;
-    // La sede viaggia SEMPRE insieme al nome: le due route filtrano per
-    // `classe_sezione`, e senza `scuola_id` l'omonimia porterebbe dentro i
-    // bambini (e le note mediche) dell'altro plesso.
+    // La sede viaggia SEMPRE: con l'uuid della sezione l'omonimia fra plessi non
+    // può più portare dentro i bambini dell'altra sede, ma `scuola_id` resta
+    // perché è la sede DICHIARATA dal SedeSelector e le route la ri-validano.
     const sede = activeSection.scuolaId ? `&scuola_id=${activeSection.scuolaId}` : '';
-    const classe = encodeURIComponent(activeSection.name);
-    fetch(`/api/attendance/daily?data=${today}&sezione=${classe}&userId=${userId}${sede}`)
+    // Questa pagina aveva già l'identità della sezione — `activeSection.id`, che
+    // usa per la chip — e mandava al server il NOME. Le due route filtravano
+    // `alunni.classe_sezione` per uguaglianza esatta: uno spazio di differenza e
+    // la dashboard mostrava una classe vuota, con 200 e senza un log.
+    const classe = parametroClasse(activeSection);
+    fetch(`/api/attendance/daily?data=${today}&${classe}&userId=${userId}${sede}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setPresenze(d); })
       .catch(() => {});
-    fetch(`/api/diary/students?sezione=${classe}&userId=${userId}${sede}`)
+    fetch(`/api/diary/students?${classe}&userId=${userId}${sede}`)
       .then((r) => r.json())
       .then((d) => { if (active && Array.isArray(d)) setStudents(d); })
       .catch(() => {});

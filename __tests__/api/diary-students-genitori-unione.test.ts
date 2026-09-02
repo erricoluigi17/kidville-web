@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // a cui scrivere. Qui si verifica l'unione con l'anagrafica.
 
 const ALUNNO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const SEZIONE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 
 const h = vi.hoisted(() => ({
   requireDocente: vi.fn(),
@@ -13,6 +14,7 @@ const h = vi.hoisted(() => ({
   resolveScuoleAttive: vi.fn(),
   assertAlunnoInScope: vi.fn(),
   assertClasseNomeInScope: vi.fn(),
+  assertSezioneInScope: vi.fn(),
   righe: {} as Record<string, Record<string, unknown>[]>,
 }))
 
@@ -34,6 +36,9 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: h.resolveScuoleAttive,
   assertAlunnoInScope: h.assertAlunnoInScope,
   assertClasseNomeInScope: h.assertClasseNomeInScope,
+  // Il gemello per UUID: da quando la classe si identifica con `section_id`
+  // (2026-09-02) `risolviSezione` sceglie fra i due gate.
+  assertSezioneInScope: h.assertSezioneInScope,
 }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -61,8 +66,12 @@ beforeEach(() => {
   h.resolveScuoleAttive.mockResolvedValue(['sc-1'])
   h.assertAlunnoInScope.mockResolvedValue(null)
   h.assertClasseNomeInScope.mockResolvedValue(null)
+  h.assertSezioneInScope.mockResolvedValue(null)
   h.righe = {
-    alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', classe_sezione: 'Girasoli', note_mediche: null, consenso_privacy: true }],
+    // `sections` è la traduzione nome→uuid che la route fa prima di leggere:
+    // senza questa riga uscirebbe con `[]` e il test proverebbe il vuoto.
+    sections: [{ id: SEZIONE }],
+    alunni: [{ id: ALUNNO, nome: 'Bimbo', cognome: 'Rossi', section_id: SEZIONE, classe_sezione: 'Girasoli', note_mediche: null, consenso_privacy: true }],
     legame_genitori_alunni: [],
     student_parents: [{ student_id: ALUNNO, parent_id: 'p1' }],
     parents: [{ id: 'p1', auth_user_id: 'gen1' }],

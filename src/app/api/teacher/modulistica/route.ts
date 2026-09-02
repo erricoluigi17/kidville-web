@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireDocente } from '@/lib/auth/require-staff';
-import { assertAlunnoInScope, assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { assertAlunnoInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseData, parseMultipart, parseQuery } from '@/lib/validation/http';
@@ -50,21 +51,26 @@ export const GET = withRoute('teacher/modulistica:GET', async (request: NextRequ
     //    · per l'`educator` dev'essere anche una sezione ASSEGNATA
     //      (utenti_sezioni). Admin/coordinator/segreteria restano fuori dalla
     //      restrizione: per progetto vedono tutte le classi del proprio plesso.
-    const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className, {
-      soloSezioniAssegnate: true,
-    });
-    if (scopeErr) return scopeErr;
-
     // Difesa in profondità: il gate impedisce di NOMINARE una classe altrui, ma
-    // senza filtro per sede la `classe_sezione` omonima porterebbe dentro anche
-    // i bambini dell'altra sede.
+    // senza filtro per sede la sezione omonima porterebbe dentro anche i bambini
+    // dell'altra sede.
     const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+
+    // Il gate e la traduzione nome→uuid, insieme: erano due passi separati, e il
+    // secondo — il filtro — usava il NOME. Uno spazio di differenza fra
+    // `alunni.classe_sezione` e `sections.name` e la modulistica della classe
+    // usciva senza nessun bambino.
+    const classe = await risolviSezione(supabase, auth.user, { nome: className }, plessi);
+    if (classe.response) return classe.response;
+    // Il contratto della GET è un ARRAY (il «semaforo» per alunno): l'elenco
+    // vuoto è `[]`, non un oggetto.
+    if (classe.sectionIds.length === 0) return NextResponse.json([]);
 
     // 1. Carica gli alunni della classe — ristretti alle sedi consentite
     const { data: students, error: studErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome')
-      .eq('classe_sezione', className)
+      .in('section_id', classe.sectionIds)
       .in('scuola_id', plessi)
       .order('cognome');
 

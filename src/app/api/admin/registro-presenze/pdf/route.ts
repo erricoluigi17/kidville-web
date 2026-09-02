@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { createTranslator } from 'next-intl'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
-import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope'
+import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { risolviSezione } from '@/lib/sezioni/risoluzione'
 import { parseQuery } from '@/lib/validation/http'
 import { applicaCartaIntestata } from '@/lib/carta'
 import {
@@ -169,11 +170,6 @@ export const GET = withRoute('admin/registro-presenze/pdf:GET', async (request: 
     // Gate per SEZIONE ASSEGNATA: `requireDocente` verifica il RUOLO, non la classe.
     // Senza, un `educator` stamperebbe il registro mensile di qualunque classe del
     // proprio plesso, comprese quelle non sue. Risponde 400 con la sezione vuota.
-    const scopeErr = await assertClasseNomeInScope(supabase, auth.user, sezione, {
-      soloSezioniAssegnate: true,
-    })
-    if (scopeErr) return scopeErr
-
     const plessi = await resolveScuoleAttive(request, supabase, auth.user)
     if (plessi.length === 0) {
       return NextResponse.json(
@@ -182,10 +178,23 @@ export const GET = withRoute('admin/registro-presenze/pdf:GET', async (request: 
       )
     }
 
+    // Il gate e la traduzione nome→uuid, insieme. Il gate passava e la lettura
+    // restava vuota lo stesso, perché filtrava per NOME: la maestra riceveva un
+    // registro SENZA ALUNNI, che sembra un mese senza iscritti — esattamente ciò
+    // che il ramo d'errore qui sotto esiste per impedire.
+    const classe = await risolviSezione(supabase, auth.user, { nome: sezione }, plessi)
+    if (classe.response) return classe.response
+    if (classe.sectionIds.length === 0) {
+      return NextResponse.json(
+        { error: 'Classe non risolta nelle sedi attive', codice: 'REGISTRO_CLASSE_NON_RISOLTA' },
+        { status: 404 }
+      )
+    }
+
     const { data: alunniData, error: alunniError } = await supabase
       .from('alunni')
       .select('id, nome, cognome, classe_sezione')
-      .eq('classe_sezione', sezione)
+      .in('section_id', classe.sectionIds)
       .in('scuola_id', plessi)
     if (alunniError) {
       // PostgREST non lancia: senza questo ramo si proseguirebbe con un elenco vuoto e la

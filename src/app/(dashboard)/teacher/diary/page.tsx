@@ -11,7 +11,7 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { useDiaryDay, DiaryEventEditor } from '@/components/features/teacher/diary/DiaryEventEditor';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
-import { fetchEducatorSections, sezioniDallaRisposta } from '@/lib/sezioni/educator-sections-cache';
+import { fetchEducatorSections, sezioniDallaRisposta, type SezioneDocente } from '@/lib/sezioni/educator-sections-cache';
 
 // Pagina mobile del docente: chrome (header, selettore sezione, filtri) attorno
 // alla compilazione condivisa in DiaryEventEditor (usata anche da /admin/diary).
@@ -37,7 +37,7 @@ function TeacherDiaryInner() {
 
     // Sezioni assegnate al docente (utenti_sezioni via /api/educator-sections):
     // niente più sezione hardcoded; con più sezioni compare il selettore a pill.
-    const [sezioni, setSezioni] = useState<string[]>([]);
+    const [sezioni, setSezioni] = useState<SezioneDocente[]>([]);
     const [sezione, setSezione] = useState<string | null>(null);
     const [sezioniLoaded, setSezioniLoaded] = useState(false);
     // true se il docente ha SOLO sezioni primaria e l'admin ha disattivato
@@ -45,7 +45,10 @@ function TeacherDiaryInner() {
     const [soloPrimariaNascosta, setSoloPrimariaNascosta] = useState(false);
     const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
 
-    const day = useDiaryDay(userId, sezione);
+    // L'uuid della sezione scelta: è l'identità vera, e questa pagina l'aveva
+    // già nella risposta di `educator-sections` senza usarla.
+    const sectionId = sezioni.find((s) => s.name === sezione)?.id;
+    const day = useDiaryDay(userId, sezione, { sectionId });
 
     useEffect(() => {
         let active = true;
@@ -63,10 +66,9 @@ function TeacherDiaryInner() {
                 const raw = sezioniDallaRisposta(sec);
                 const primariaVisibile = conf?.diario_primaria_visibile === true; // fail-closed: primaria esposta solo se attivata dall'admin
                 const filtered = primariaVisibile ? raw : raw.filter(s => s.school_type !== 'primaria');
-                const names = filtered.map(s => s.name);
-                setSezioni(names);
-                setSezione(cur => cur ?? names[0] ?? null);
-                setSoloPrimariaNascosta(!primariaVisibile && raw.length > 0 && names.length === 0);
+                setSezioni(filtered);
+                setSezione(cur => cur ?? filtered[0]?.name ?? null);
+                setSoloPrimariaNascosta(!primariaVisibile && raw.length > 0 && filtered.length === 0);
             })
             .finally(() => { if (active) setSezioniLoaded(true); });
         return () => { active = false; };
@@ -134,18 +136,18 @@ function TeacherDiaryInner() {
             {/* Selettore sezione (solo con più sezioni assegnate) */}
             {sezioni.length > 1 && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {sezioni.map(name => (
+                    {sezioni.map(sez => (
                         <button
-                            key={name}
-                            onClick={() => switchSezione(name)}
+                            key={sez.id ?? sez.name}
+                            onClick={() => switchSezione(sez.name)}
                             className={`rounded-pill border px-3 py-1.5 font-maven text-xs font-semibold transition-colors ${
-                                sezione === name
+                                sezione === sez.name
                                     ? 'border-kidville-green/20 bg-kidville-green text-kidville-yellow'
                                     : 'border-kidville-line bg-white text-kidville-muted'
                             }`}
-                            aria-pressed={sezione === name}
+                            aria-pressed={sezione === sez.name}
                         >
-                            {name}
+                            {sez.name}
                         </button>
                     ))}
                 </div>

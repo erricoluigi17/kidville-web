@@ -153,8 +153,21 @@ describe('Home docente — chip di sezione con identità', () => {
       expect(chiamateA('/api/attendance/daily').some((u) => u.includes(`scuola_id=${SEDE_B}`))).toBe(true)
     })
     expect(chiamateA('/api/diary/students').some((u) => u.includes(`scuola_id=${SEDE_B}`))).toBe(true)
-    // Il nome viaggia ancora (le route lo usano come filtro), ma non è più solo.
-    expect(chiamateA('/api/diary/students').every((u) => u.includes('sezione=2+ANNI') || u.includes('sezione=2%20ANNI'))).toBe(true)
+
+    // ── Ciò che identifica la classe è l'UUID, e da qui in avanti è l'unica
+    // cosa che viaggia. Fino al 2026-09-02 partiva il NOME, e le route
+    // filtravano `alunni.classe_sezione` per uguaglianza esatta: due sezioni
+    // OMONIME in due sedi erano indistinguibili se non per `scuola_id`, e una
+    // classe il cui testo divergeva di uno spazio dal nome della sezione si
+    // apriva vuota — con 200 e senza un log.
+    //
+    // Si asserisce che ENTRAMBI gli uuid siano stati chiesti, uno per chip:
+    // con un solo `some()` il test resterebbe verde anche se il click sulla
+    // seconda chip non cambiasse la classe richiesta.
+    const urlDiario = chiamateA('/api/diary/students')
+    expect(urlDiario.some((u) => u.includes(`sectionId=${SEC_A}`))).toBe(true)
+    expect(urlDiario.some((u) => u.includes(`sectionId=${SEC_B}`))).toBe(true)
+    expect(urlDiario.every((u) => !u.includes('sezione='))).toBe(true)
   })
 
   it('una sola sede in elenco ⇒ etichetta senza suffisso di sede', async () => {

@@ -55,9 +55,9 @@ const dbBase = (): DBFinto => ({
     { id: 'sec-b2', scuola_id: SEDE_B, name: SOLO_B },
   ],
   alunni: [
-    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', codice_fiscale: 'CF-FINTO-A', classe_sezione: OMONIMA, scuola_id: SEDE_A },
-    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', codice_fiscale: 'CF-FINTO-B', classe_sezione: OMONIMA, scuola_id: SEDE_B },
-    { id: 'b3b3b3b3-3333-4333-8333-bbbbbbbbbbbb', nome: 'Gamma', cognome: 'Sede-B', codice_fiscale: 'CF-FINTO-B2', classe_sezione: SOLO_B, scuola_id: SEDE_B },
+    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', codice_fiscale: 'CF-FINTO-A', section_id: 'sec-a', classe_sezione: OMONIMA, scuola_id: SEDE_A },
+    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', codice_fiscale: 'CF-FINTO-B', section_id: 'sec-b', classe_sezione: OMONIMA, scuola_id: SEDE_B },
+    { id: 'b3b3b3b3-3333-4333-8333-bbbbbbbbbbbb', nome: 'Gamma', cognome: 'Sede-B', codice_fiscale: 'CF-FINTO-B2', section_id: 'sec-b2', classe_sezione: SOLO_B, scuola_id: SEDE_B },
   ],
   utenti_scuole: [],
   utenti_sezioni: [],

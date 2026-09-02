@@ -74,6 +74,10 @@ vi.mock('@/lib/auth/require-staff', () => ({
 vi.mock('@/lib/auth/scope', () => ({
   assertAlunnoInScope: vi.fn(async () => null),
   assertClasseNomeInScope: vi.fn(async () => null),
+  // Il gemello per UUID: da quando la classe si identifica con `section_id`
+  // (2026-09-02) `risolviSezione` sceglie fra i due, e un mock che ne conosce
+  // uno solo fa esplodere l'altro ramo invece di provarlo.
+  assertSezioneInScope: vi.fn(async () => null),
   resolveScuoleAttive: vi.fn(async () => [SEDE]),
   // Il vero `vedeTutteLeClassi`, non uno finto: è la funzione che decide se il motivo
   // dell'assenza esce da questa rotta (Q1), e riscriverla qui vorrebbe dire provare la
@@ -101,11 +105,18 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // L'unica `.single()` dell'handler è quella dell'upsert: risponde con la
       // riga INTERA, come farebbe PostgREST se il codice chiedesse `select *`.
       qb.single = async () => ({ data: RIGA_INTERA, error: null })
-      qb.then = (res: (v: unknown) => unknown) =>
-        Promise.resolve({
-          data: tabella === 'presenze' ? [{ ...RIGA_INTERA, alunni: { id: ALUNNO, nome: 'Bimbo', cognome: 'Test', classe_sezione: 'TEST Infanzia' } }] : [],
+      qb.then = (res: (v: unknown) => unknown) => {
+        // `sections` risponde: è la traduzione nome→uuid che `risolviSezione`
+        // fa prima di leggere le presenze. Senza questa riga la route esce
+        // legittimamente con `[]` e questo test proverebbe il vuoto.
+        if (tabella === 'sections') return Promise.resolve({ data: [{ id: SEZIONE }], error: null }).then(res)
+        return Promise.resolve({
+          data: tabella === 'presenze'
+            ? [{ ...RIGA_INTERA, alunni: { id: ALUNNO, nome: 'Bimbo', cognome: 'Test', section_id: SEZIONE, classe_sezione: 'TEST Infanzia' } }]
+            : [],
           error: null,
         }).then(res)
+      }
       return qb
     },
   })),

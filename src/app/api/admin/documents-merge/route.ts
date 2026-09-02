@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { assertClasseNomeInScope, resolveScuoleAttive } from '@/lib/auth/scope';
+import { resolveScuoleAttive } from '@/lib/auth/scope';
+import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -34,14 +35,17 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
     //    RUOLO, non il tenant: senza questo, una segreteria di Giugliano poteva
     //    chiedere una classe di Cesa e ottenere nome, cognome e CODICE FISCALE
     //    di quei bambini. Il nome-classe si risolve SOLO entro i propri plessi.
-    const scopeErr = await assertClasseNomeInScope(supabase, auth.user, className);
-    if (scopeErr) return scopeErr;
-
     // Difesa in profondità: il gate impedisce di nominare una classe altrui, ma
     // «2 ANNI» esiste sia ad Aversa sia a Cesa — con la sola `classe_sezione` la
     // query prenderebbe comunque gli OMONIMI dell'altra sede. Le sedi sono
     // quelle attive del SedeSelector (cookie), ri-validate contro le accessibili.
     const plessi = await resolveScuoleAttive(request, supabase, auth.user);
+
+    // Il gate e la traduzione nome→uuid, insieme: il secondo passo — il filtro —
+    // usava il NOME, che può divergere da `sections.name` senza che niente lo
+    // dica, e la stampa unione usciva senza nessun alunno.
+    const classe = await risolviSezione(supabase, auth.user, { nome: className }, plessi);
+    if (classe.response) return classe.response;
 
     // 1. Carica il template del form — SOLO se è di un plesso consentito.
     //    `forms_templates.scuola_id` è NOT NULL, quindi il vincolo è applicabile
@@ -67,7 +71,7 @@ export const GET = withRoute('admin/documents-merge:GET', async (request: NextRe
     const { data: students, error: studErr } = await supabase
       .from('alunni')
       .select('id, nome, cognome, codice_fiscale')
-      .eq('classe_sezione', className)
+      .in('section_id', classe.sectionIds)
       .in('scuola_id', plessi);
 
     if (studErr || !students) {

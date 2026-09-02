@@ -54,10 +54,10 @@ const dbBase = (): DBFinto => ({
   utenti_sezioni: [{ utente_id: 'ed1', section_id: 'sec-a' }],
   utenti_scuole: [],
   alunni: [
-    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, scuola_id: SEDE_A },
-    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, scuola_id: SEDE_B },
-    { id: ALU_A_ALTRA, nome: 'Delta', cognome: 'Sede-A', classe_sezione: ALTRA_DI_A, scuola_id: SEDE_A },
-    { id: 'b3b3b3b3-3333-4333-8333-bbbbbbbbbbbb', nome: 'Gamma', cognome: 'Sede-B', classe_sezione: SOLO_B, scuola_id: SEDE_B },
+    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', section_id: 'sec-a', classe_sezione: OMONIMA, scuola_id: SEDE_A },
+    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', section_id: 'sec-b', classe_sezione: OMONIMA, scuola_id: SEDE_B },
+    { id: ALU_A_ALTRA, nome: 'Delta', cognome: 'Sede-A', section_id: 'sec-a2', classe_sezione: ALTRA_DI_A, scuola_id: SEDE_A },
+    { id: 'b3b3b3b3-3333-4333-8333-bbbbbbbbbbbb', nome: 'Gamma', cognome: 'Sede-B', section_id: 'sec-b2', classe_sezione: SOLO_B, scuola_id: SEDE_B },
   ],
 })
 

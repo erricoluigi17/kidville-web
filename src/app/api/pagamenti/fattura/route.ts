@@ -12,6 +12,46 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 
+/**
+ * IL TEMPO MASSIMO DELLA FUNZIONE, DICHIARATO E NON EREDITATO.
+ *
+ * ─── IL CONTO, NEL CASO TIPICO: UN SOLO `429`, E SULL'UPLOAD ─────────────────
+ * Un'emissione parla con Aruba con un ritmo che Aruba impone (SLA §3: 12 ricerche
+ * al minuto per IP ⇒ una ogni 5 s, vedi `PAUSA_FRA_PAGINE_MS` in
+ * `src/lib/aruba/client.ts`):
+ *
+ *     1 `signin`
+ *   + 7 pagine di `findByUsername`, cioè 6 pause da 5 s        →   30 s
+ *   + la pausa prima dell'upload, della stessa durata          →    5 s
+ *   + 1 `upload`
+ *   + il `429` sull'upload: attesa e UN ritentativo            →   90 s
+ *                                                              ─────────
+ *                                    ~125 s di sola attesa, più le risposte
+ *
+ * ⚠️ NON È IL MASSIMO TEORICO, e chiamarlo «caso peggiore» sarebbe una di quelle
+ * frasi che dichiarano un tetto che non è un tetto. Anche la LETTURA ritenta una
+ * volta dopo un `429` (`paginaConRitentativo`, in `client.ts`): ogni pagina che lo
+ * prende aggiunge 90 s, e con abbastanza pagine sfortunate si sfonda qualunque
+ * valore si scriva qui.
+ *
+ * ─── PERCHÉ IL MASSIMO TEORICO NON È IL BUDGET CHE CONTA ─────────────────────
+ * Un `429` in lettura cade PRIMA che `prossimo_numero_fattura_sezionale` abbia
+ * scritto il contatore, e lì un troncamento non costa niente: nessun numero
+ * consumato, nessuna riga a registro, si ripreme e basta. DOPO l'allocazione un
+ * troncamento significa invece un numero bruciato, nessuna riga a registro e
+ * nessuno in grado di dire se la fattura sia partita — cioè il danno che tutto
+ * questo lavoro esiste per evitare.
+ *
+ * Quel tratto è il budget da coprire: pausa da 5 s + `signin` + `upload` + i 90 s
+ * dell'unico ritentativo + il secondo `upload`, cioè **~100 s più le risposte**
+ * (tetto di 30 s ciascuna, in pratica molto meno). Trecento secondi lo coprono con
+ * margine, senza dipendere da un default di piattaforma che nessuno ha scelto e
+ * che può cambiare con un aggiornamento del piano. È lo stesso ragionamento
+ * dell'import massivo, dove l'unico altro `maxDuration` del repository sta scritto
+ * per esteso (`src/app/api/iscrizione/import-massivo/route.ts`).
+ */
+export const maxDuration = 300
+
 // causale: il comportamento pre-esistente accetta qualsiasi tipo e la usa solo
 // se è una stringa non vuota → unknown().optional(), il typeof resta nell'handler.
 const postBodySchema = z.object({

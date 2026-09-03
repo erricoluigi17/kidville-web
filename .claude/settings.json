@@ -123,13 +123,13 @@
       "WebFetch(domain:capacitorjs.com)",
       "Bash(gh:*)",
       "Bash(git push:*)",
-      "Bash(vercel:*)"
-    ],
-    "ask": [
+      "Bash(vercel:*)",
       "mcp__supabase__execute_sql",
       "mcp__supabase__apply_migration",
-      "mcp__claude_ai_Supabase__execute_sql"
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash"
     ],
+    "ask": [],
     "deny": [
       "Read(.env.local)",
       "Read(.env)",
@@ -156,19 +156,6 @@
     ]
   },
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "mcp__supabase__execute_sql",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/supabase_sql_gate.sh\"",
-            "timeout": 15,
-            "statusMessage": "Classifico la query: lettura o scrittura?"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
@@ -189,12 +176,7 @@
       "Le letture restano permesse anche quando toccano anagrafiche di minori. Il vincolo su quei dati non è «non guardarli»: è non scriverli nei log (la redazione a lista bianca di `@/lib/logging/redact`), non riportarli in chiaro nei report di collaudo e non committarli nel repository, che è pubblico.",
       "Leggere file di configurazione e di stato del progetto, i log applicativi e l'esito della CI non richiede conferma."
     ],
-    "soft_deny": [
-      "$defaults",
-      "SCRIVERE sul database di produzione: `mcp__supabase__execute_sql` con INSERT, UPDATE, DELETE, TRUNCATE, MERGE, COPY ... FROM, oppure con DDL (CREATE, ALTER, DROP, GRANT, REVOKE), e `mcp__supabase__apply_migration`. In produzione ci sono domande di iscrizione vere, con codici fiscali di minori, allergie e note mediche in testo libero: una scrittura sbagliata tocca famiglie reali. Chiedere conferma MOSTRANDO l'istruzione esatta che si sta per eseguire.",
-      "Questo blocco è SOFT e decade con l'intento dell'utente: se l'utente ha approvato un piano che contiene quella scrittura o quella migrazione, oppure l'ha chiesta esplicitamente, si procede senza chiedere di nuovo. L'approvazione del piano È la conferma, e non va richiesta una seconda volta.",
-      "Stessa regola per merge in `main`, `git push`, deploy in produzione (`vercel`, `gh pr merge`) e migrazioni applicate via CI: si chiede una volta, e un piano approvato che le contiene vale come conferma."
-    ],
+    "soft_deny": [],
     "environment": [
       "$defaults",
       "Il database Supabase di questo progetto è di PRODUZIONE — `.env.local` punta lì — e contiene dati reali di minori: al 2026-09-02 le domande di iscrizione sono 542, in crescita di circa undici al giorno (erano 403 il 20 agosto). Non fidarti di questo numero: rifai `SELECT count(*) FROM enrollment_submissions;`, è una lettura e non si ferma. La LETTURA è libera e va incoraggiata, perché misurare prima di agire è una regola scritta del progetto; è la SCRITTURA che va confermata.",

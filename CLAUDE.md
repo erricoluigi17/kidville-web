@@ -323,6 +323,50 @@ errore e le famiglie dietro quelle righe.
 `settings.json.bak-automode` del file di prima), oppure la strada del 2026-07-31 descritta sopra —
 i cinque nomi sotto `permissions.ask`, in **tutti e tre** i file, altrimenti non scatta.
 
+### 🟩 APPLICATO IL 2026-09-03 — autonomia piena, e i tre gate sono spenti
+
+**Decisione del titolare**, ripetuta due volte e senza margini: *«non chiedermi più autorizzazioni,
+sei in auto mode, hai autorizzazione ad andare avanti in autonomia … anche per il db … anche per i
+comandi stessa cosa, autorizzazione piena»*. Applicata **dal titolare da terminale**, perché Claude
+non può (vedi il riquadro sotto).
+
+Stato verificato sul file, non dedotto:
+
+| | Prima | Adesso |
+|---|---|---|
+| `permissions.ask` | 3 voci (`execute_sql`, `apply_migration`, `claude_ai_Supabase__execute_sql`) | **vuoto** — le tre sono in `allow` |
+| `hooks.PreToolUse` | `supabase_sql_gate.sh` su ogni query | **rimosso** (resta solo `Stop`) |
+| `autoMode.soft_deny` | scritture, merge, push, deploy | **vuoto** |
+| `permissions.allow` | elenco di comandi uno per uno | in più `Bash` **senza parentesi**: qualunque comando |
+| `permissions.deny` | 22 regole | **22 regole, intatte** |
+
+Backup del file di prima: `.claude/settings.json.bak-20260903-144246`.
+
+🔴 **COSA NON C'È PIÙ, detto una volta e senza giri.** `supabase_sql_gate.sh` era l'**unica** cosa
+che distingueva `SELECT count(*)` da `DROP TABLE`: le regole `allow`/`ask` vedono il nome dello
+strumento, mai l'argomento. Adesso un `UPDATE` o un `DROP` sul database che contiene le domande di
+iscrizione vere parte **senza che nessun essere umano veda l'istruzione prima**. La `deny` non
+protegge da una query sbagliata: protegge da un comando distruttivo *noto*.
+
+Resta l'unica cosa rimasta, e non è un meccanismo: **mostrare cosa si sta per applicare**. Mostrare
+non è chiedere, non costa niente, ed è ciò che sta fra un errore e le famiglie dietro quelle righe.
+
+⚠️ **Il gate era anche un antidoto ai falsi positivi**, e buona parte dei prompt che il titolare
+riceveva erano quelli: mandava in conferma anche `SET`, `BEGIN`, `COMMIT`, `ANALYZE`, `EXECUTE`,
+`DO`, `INTO`, o una colonna che si chiama `comment`.
+
+⚠️ **Il plan mode non è toccato da niente di tutto questo**: `ExitPlanMode` chiede sempre
+l'approvazione del piano e nessuna impostazione la spegne. Per non essere interrotti si sta in auto
+mode e **non si entra in plan mode**.
+
+**Come si torna indietro**: `cp .claude/settings.json.bak-20260903-144246 .claude/settings.json`, poi
+riavviare la sessione. Il file dell'hook (`.claude/hooks/supabase_sql_gate.sh`) è rimasto sul disco:
+per riarmarlo basta rimettere il blocco `hooks.PreToolUse`.
+
+⚠️ **E poi si PROVA.** Riavviare non basta a saperlo: il 2026-09-02 questo stesso file ha dichiarato
+armata una protezione che non lo era. Chi cambia questo blocco esegua un `CREATE TEMP TABLE` di prova
+e guardi se compare un prompt. *Una configurazione mai vista passare non è configurata.*
+
 🔴 **RIMISURATO IL 2026-09-03: IL RIQUADRO QUI SOPRA DICE IL FALSO SU DOVE STANNO I PERMESSI.**
 Sostiene che `execute_sql` e `apply_migration` siano in **`allow`** in tutti e tre i file. In
 `.claude/settings.json` stanno in **`ask`**, insieme a `mcp__claude_ai_Supabase__execute_sql`, e

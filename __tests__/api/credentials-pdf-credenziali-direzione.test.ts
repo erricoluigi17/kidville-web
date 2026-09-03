@@ -1,3 +1,22 @@
+// @vitest-environment node
+//
+// ⚠️ AMBIENTE `node`, E NON È UNA PREFERENZA: IN jsdom QUESTO FILE ERA VERDE PER SBAGLIO.
+//
+// La route termina con `new NextResponse(data, …)` dove `data` è il Blob che
+// Supabase Storage restituisce. Il `Blob` di **jsdom NON ha `stream()`**; quello
+// di Node sì (misurato: jsdom `haStream:false`, node `haStream:true`). In
+// produzione gira Node, quindi jsdom qui non simulava il runtime vero — ne
+// simulava uno che non esiste.
+//
+// Il costo di quella distanza è stato misurato, non immaginato: in locale
+// (Node 24) i due casi «passa» erano VERDI, e in CI (Node 22) sono esplosi con
+// `TypeError: object.stream is not a function`. Il verde locale asseriva `200`
+// su un corpo che non erano i byte del PDF — cioè la cosa che il test dovrebbe
+// dimostrare.
+//
+// Da qui anche l'asserzione sui BYTE, non solo sullo stato: uno `status` giusto
+// con un corpo sbagliato è esattamente ciò che jsdom produceva.
+
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 /**
@@ -11,6 +30,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  * route era `assertUtenteInScope`, cioè la sede — e ad Aversa l'admin sta nella
  * stessa sede della segreteria.
  */
+/** I quattro byte d'apertura di un PDF: `%PDF`. */
+const PDF_FINTO = [37, 80, 68, 70]
+
 const h = vi.hoisted(() => {
   const stato = {
     requireStaff: vi.fn(),
@@ -33,7 +55,9 @@ const h = vi.hoisted(() => {
         from: () => ({
           download: async (chiave: string) => {
             stato.scaricati.push(chiave)
-            return { data: new Blob([new Uint8Array([37, 80, 68, 70])]), error: null }
+            // Un Blob, com'è quello vero di Supabase Storage — e in ambiente
+            // `node` ha `stream()`, che è ciò che `NextResponse` gli chiede.
+            return { data: new Blob([new Uint8Array(PDF_FINTO)]), error: null }
           },
         }),
       },
@@ -82,12 +106,16 @@ describe('credentials-pdf — il PDF di un account di Direzione non si scarica d
     },
   )
 
-  it('segreteria che chiede il PDF di una maestra del proprio plesso: passa', async () => {
+  it('segreteria che chiede il PDF di una maestra del proprio plesso: passa, e il PDF arriva davvero', async () => {
     h.requireStaff.mockResolvedValue({ user: { id: 'a1', role: 'segreteria', scuola_id: 's1' } })
     h.utente = { id: 'staff-1', scuola_id: 's1', ruolo: 'educator' }
     const res = await chiedi()
     expect(res.status).toBe(200)
     expect(h.scaricati).toEqual([CHIAVE])
+    // I BYTE, non solo lo stato: `%PDF` in testa. Un 200 con un corpo sbagliato
+    // è ciò che jsdom produceva, e nessuna asserzione sullo status lo vedeva.
+    expect(res.headers.get('Content-Type')).toBe('application/pdf')
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(PDF_FINTO))
   })
 
   it('admin che chiede il PDF di un admin: passa (non regredisce)', async () => {
@@ -95,6 +123,7 @@ describe('credentials-pdf — il PDF di un account di Direzione non si scarica d
     h.utente = { id: 'staff-1', scuola_id: 's1', ruolo: 'admin' }
     const res = await chiedi()
     expect(res.status).toBe(200)
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array(PDF_FINTO))
   })
 
   it('il PDF di un GENITORE non passa da questo gate (ramo diverso, non regredisce)', async () => {

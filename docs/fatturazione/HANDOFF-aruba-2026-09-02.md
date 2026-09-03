@@ -14,6 +14,20 @@
 
 ## 0. Stato al 2026-09-03 — le decisioni, il ritmo, e come si preme
 
+> ### ⚠️ 15:57 — la prima pressione è stata respinta: `0093` «deleghe non valide». FPR 1947 consumato.
+>
+> Con la PR #113 in produzione il titolare ha premuto: `signin`, 7 pagine, pausa, upload `HTTP 200`
+> con envelope `errorCode 0093`. A registro c'è **FPR 1947/26** con `sdi_stato 2` «Errore upload» e il
+> contatore è a 1947: **la prossima fattura sarà FPR 1948/26**, e il buco su 1947 va detto al
+> commercialista (la riga a registro lo documenta: mai trasmesso allo SdI).
+>
+> Causa: il §3.8 del documento di configurazione, rimandato come «scelta». Mandavamo `senderPIVA` a
+> 11 cifre nude su un TD01; l'utenza (misurata con `/auth/userInfo`) è il cedente `IT` + `03394870616`
+> e non ha multi-cedenti: Aruba non trovava nessun mittente delegato con quella stringa.
+> **Correzione (PR #114)**: `senderPIVA` non si manda più sui TD01. Dopo il deploy si ripreme «Riprova
+> fattura»: il pagamento è `scartata`, la riga 1947 è scartata (`sdi_stato 2`), quindi l'idempotenza
+> lascia passare e la RPC assegna 1948.
+
 Questa sezione è stata scritta il 2026-09-03 sul branch `fix/aruba-emissione-reale`. La
 configurazione con cui il software parla con Aruba è stata misurata voce per voce nel referto
 [`configurazione-aruba.md`](configurazione-aruba.md), che è la **fonte** di ogni numero qui sotto.

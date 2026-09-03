@@ -1348,9 +1348,11 @@ export async function emettiFatturaPagamento(
     let up: ArubaUploadResult
     try {
       const token = await ensureToken()
+      // NIENTE `senderPIVA`: il documento è un TD01 e il mittente è il cedente dell'XML, che
+      // è l'utenza stessa. Passarlo — e a 11 cifre nude — è ciò che il 2026-09-03 ha fatto
+      // respingere la prima fattura vera con `0093` «deleghe non valide» (vedi `arubaUpload`).
       up = await arubaUpload(cfg.ambiente, token, {
         dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
-        senderPIVA: cedente.piva,
       })
     } catch (e) {
       // `code` viene da `erroreAruba` (`'rete'`, o lo status quando una risposta

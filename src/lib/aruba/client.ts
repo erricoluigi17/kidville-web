@@ -443,7 +443,7 @@ export async function arubaRefresh(ambiente: string | undefined, refreshToken: s
 export async function arubaUpload(
   ambiente: string | undefined,
   accessToken: string,
-  params: { dataFileBase64: string; senderPIVA: string }
+  params: { dataFileBase64: string; senderPIVA?: string }
 ): Promise<ArubaUploadResult> {
   const { ws } = arubaBaseUrls(ambiente)
   const tentativo = (): Promise<EsitoEsterno> =>
@@ -453,9 +453,17 @@ export async function arubaUpload(
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json;charset=UTF-8',
       },
+      // `senderPIVA` SOLO se il chiamante lo passa, e allora deve essere `IT` + P.IVA. La doc
+      // (v1 §7.4) lo lega ai TD26 — «può essere utilizzato per specificare quale tra
+      // cedente e cessionario sia il mittente» — e prescrive «codice nazione e partita iva
+      // (es. IT99999999999)». Il 2026-09-03 alle 15:57 la PRIMA fattura vera (TD01) è stata
+      // respinta con `0093` «Errore deleghe non valide» perché lo mandavamo sempre, a 11 cifre
+      // nude: Aruba lo confrontava con l'utenza (`countryCode` + `vatCode`, misurati con
+      // `/auth/userInfo`: `IT` + `03394870616`) e non trovava nessun mittente delegato. Un
+      // numero della serie FPR (1947/26) è rimasto consumato a registro per questo.
       body: JSON.stringify({
         dataFile: params.dataFileBase64,
-        senderPIVA: params.senderPIVA,
+        ...(params.senderPIVA ? { senderPIVA: params.senderPIVA } : {}),
         skipExtraSchema: false,
       }),
     })

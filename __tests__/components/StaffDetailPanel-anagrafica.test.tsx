@@ -266,7 +266,21 @@ import { StaffDetailPanel, GRUPPI_ANAGRAFICA_PERSONALE, CAMPI_MOSTRATI_FUORI_DAI
 import { logClient } from '@/lib/logging/client'
 
 /** Monta la scheda e aspetta che la testata ci sia. */
-async function montaScheda() {
+/**
+ * `ruoloBersaglio` serve da quando il piede azioni dipende da CHI è aperto nella
+ * scheda e non solo da chi guarda: la Segreteria rigenera le credenziali di una
+ * maestra ma non quelle della Direzione.
+ */
+async function montaScheda(opzioni?: { ruoloBersaglio?: string }) {
+  if (opzioni?.ruoloBersaglio) {
+    fetchMock.mockImplementation((url: string) => {
+      const u = String(url)
+      if (u.includes('/api/admin/staff') && !u.includes('anagrafica')) {
+        return ok({ ...RISPOSTA_STAFF, data: [{ ...RISPOSTA_STAFF.data[0], ruolo: opzioni.ruoloBersaglio }] })
+      }
+      return serverPredefinito(url)
+    })
+  }
   const utils = render(<StaffDetailPanel staffId={STAFF_ID} onClose={vi.fn()} />)
   await waitFor(() => expect(screen.getByRole('heading', { name: /Bianchi Maria/i })).toBeInTheDocument())
   return utils
@@ -1149,12 +1163,45 @@ describe('scheda staff · il tab Incarico NON regredisce', () => {
     expect(screen.getByRole('button', { name: /Annulla/ })).toBeInTheDocument()
   })
 
-  it('alla Segreteria le azioni restano nascoste, con il motivo scritto', async () => {
+  /**
+   * ⚠️ QUESTO TEST DICEVA «alla Segreteria le azioni restano NASCOSTE», ed è
+   * cambiato il 2026-09-03 perché è cambiata la regola, non perché fosse comodo.
+   *
+   * Le azioni erano DUE dietro un interruttore solo. Adesso sono due poteri
+   * distinti: la modifica di ruolo/sede/classi resta della Direzione — è ciò che
+   * impedisce a una segreteria di promuovere un collega ad `admin` e prendersi
+   * per via indiretta ciò che le si nega — mentre la rigenerazione delle
+   * credenziali segue il BERSAGLIO. Qui il bersaglio è una `educator`.
+   */
+  it('alla Segreteria «Modifica» resta nascosta, «Rigenera credenziali» no', async () => {
     ruoloCorrente = 'segreteria'
     rispostaAnagrafica = anagraficaCompleta()
     await montaScheda()
     expect(screen.queryByRole('button', { name: /^Modifica$/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Rigenera credenziali/i })).toBeInTheDocument()
+    // Il motivo scritto è per chi NON ha nessuno dei due poteri: qui uno ce l'ha.
+    expect(screen.queryByText('Modifiche riservate alla Direzione')).not.toBeInTheDocument()
+  })
+
+  /**
+   * L'ALTRA METÀ, e senza di lei il test qui sopra proverebbe solo che il
+   * pulsante è comparso — non che sia comparso per la ragione giusta.
+   */
+  it('alla Segreteria che guarda un ACCOUNT DI DIREZIONE non resta nessuna delle due azioni', async () => {
+    ruoloCorrente = 'segreteria'
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda({ ruoloBersaglio: 'admin' })
+    expect(screen.queryByRole('button', { name: /^Modifica$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Rigenera credenziali/i })).not.toBeInTheDocument()
     expect(screen.getByText('Modifiche riservate alla Direzione')).toBeInTheDocument()
+  })
+
+  it("una cuoca non vede nessuna delle due azioni, su nessuno", async () => {
+    ruoloCorrente = 'cuoca'
+    rispostaAnagrafica = anagraficaCompleta()
+    await montaScheda()
+    expect(screen.queryByRole('button', { name: /^Modifica$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Rigenera credenziali/i })).not.toBeInTheDocument()
   })
 
   it('il piede azioni NON segue chi guarda l’anagrafica: comanderebbe su ciò che non si vede', async () => {

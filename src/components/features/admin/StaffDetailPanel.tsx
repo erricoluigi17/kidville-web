@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { puoRigenerareCredenzialiStaff } from '@/lib/auth/credenziali-staff';
+import type { AppRole } from '@/lib/auth/predicati-ruolo';
 import { useDateFormat } from '@/lib/i18n/date';
 import { dataCivile } from '@/i18n/config';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -519,6 +521,17 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   const labelRuolo = useLabelRuolo();
   const f = useDateFormat();
   const { userId, role, ready } = useSessionIdentity();
+  /**
+   * DUE POTERI, non uno. Fino al 2026-09-03 `canEdit` governava insieme la
+   * modifica di ruolo/sede/classi e la rigenerazione delle credenziali: sono
+   * cose diverse, e tenerle sotto lo stesso interruttore significava che
+   * concederne una concedeva l'altra.
+   *
+   * La modifica del ruolo resta della Direzione, ed è ciò che rende non
+   * aggirabile la riserva sulle credenziali: se la Segreteria potesse cambiare
+   * il ruolo di un collega, lo promuoverebbe ad `admin` e otterrebbe per via
+   * indiretta ciò che il server le nega.
+   */
   const canEdit = role === 'admin' || role === 'coordinator';
 
   const [loading, setLoading] = useState(true);
@@ -527,6 +540,20 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   const [schools, setSchools] = useState<School[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [asseg, setAsseg] = useState<Assegnazione[]>([]);
+
+  /**
+   * IL SECONDO POTERE, che dipende da CHI è aperto nella scheda e non solo da
+   * chi guarda: la Segreteria rigenera le credenziali di una maestra ma non
+   * quelle della Direzione, perché il PDF che riceve chi preme il pulsante
+   * contiene la password in chiaro.
+   *
+   * `member` è `null` finché la scheda carica → nessun pulsante, che è la
+   * risposta giusta: non si offre un comando su una persona che non si conosce
+   * ancora. Nascondere è comunque una CORTESIA — niente comandi destinati a
+   * finire in un 403 — non una difesa: il gate vero è
+   * `admin/regenerate-credentials`, e usa questo stesso predicato.
+   */
+  const canRigenerare = puoRigenerareCredenzialiStaff(role as AppRole, member?.ruolo ?? null);
 
   const [editMode, setEditMode] = useState(false);
   const [draft, setDraft] = useState<{ ruolo: string; scuola_id: string; section_ids: string[] }>({ ruolo: '', scuola_id: '', section_ids: [] });
@@ -1423,23 +1450,33 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
         )}
       </div>
 
-      {/* Footer azioni — solo Direzione (il server rifiuta comunque le scritture della
-          Segreteria) e solo sul tab INCARICO: «Modifica» apre ruolo, sede e classi,
-          cioè i campi di quel tab. Offrirlo mentre si guarda l'anagrafica sarebbe un
-          comando che agisce su ciò che non si sta guardando — e su questa scheda
-          l'anagrafica NON si modifica affatto (vedi il perimetro in testa al file). */}
-      {tab === 'incarico' && (canEdit ? (
+      {/* Footer azioni — DUE poteri distinti, e solo sul tab INCARICO: «Modifica»
+          apre ruolo, sede e classi, cioè i campi di quel tab. Offrirlo mentre si
+          guarda l'anagrafica sarebbe un comando che agisce su ciò che non si sta
+          guardando — e su questa scheda l'anagrafica NON si modifica affatto
+          (vedi il perimetro in testa al file).
+
+          «Modifica» è della Direzione. «Rigenera credenziali» segue il BERSAGLIO:
+          dal 2026-09-03 la Segreteria ce l'ha sullo staff del proprio plesso, non
+          sugli account di Direzione. La fascia «riservate» qui sotto compare
+          quando non resta NESSUNO dei due, che è l'unico caso in cui dire
+          «riservate» è vero. */}
+      {tab === 'incarico' && (canEdit || canRigenerare ? (
         <div className="space-y-2 border-t border-kidville-line p-5">
           {!editMode ? (
             <>
-              <button onClick={apri}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 active:scale-[0.98]">
-                <Pencil size={15} /> {t('staffDModifica')}
-              </button>
-              <button onClick={rigenera} disabled={regenBusy}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-pill border-2 border-kidville-green/40 font-barlow text-sm font-bold uppercase text-kidville-green transition-all hover:bg-kidville-green/5 disabled:opacity-50">
-                {regenBusy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />} {t('rigeneraCredenziali')}
-              </button>
+              {canEdit && (
+                <button onClick={apri}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 active:scale-[0.98]">
+                  <Pencil size={15} /> {t('staffDModifica')}
+                </button>
+              )}
+              {canRigenerare && (
+                <button onClick={rigenera} disabled={regenBusy}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-pill border-2 border-kidville-green/40 font-barlow text-sm font-bold uppercase text-kidville-green transition-all hover:bg-kidville-green/5 disabled:opacity-50">
+                  {regenBusy ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />} {t('rigeneraCredenziali')}
+                </button>
+              )}
             </>
           ) : (
             <div className="flex gap-2">

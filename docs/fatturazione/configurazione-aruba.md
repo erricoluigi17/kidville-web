@@ -10,7 +10,7 @@ documenta.* Non è una guida all'emissione (quella è
 
 | | |
 |---|---|
-| **A** | testuale dalla documentazione ufficiale (v1 1.21.0 · v2 2.2.0), citabile |
+| **A** | testuale dalla documentazione ufficiale (v1 1.21.0 · v2 «versione 2.2.0» in testata, changelog fino a 2.5.0 — §6), citabile |
 | **B** | da guide o manuali Aruba non-API (manuale «Utenza Premium») |
 | **C** | inferenza nostra: **non** è una fonte, è un'ipotesi dichiarata |
 
@@ -29,21 +29,33 @@ Metà delle righe qui sotto hanno **due** valori, perché in questo momento esis
 | | commit | dove |
 |---|---|---|
 | **Produzione** | `3eec8638` (punta di `origin/main`, PR #110); per `src/` è identico a `8bea8bfb`, ultimo commit su `client.ts` — `git diff --stat 8bea8bfb 3eec8638 -- src/` vuoto | deploy Production registrato su GitHub per `3eec8638`: stato `success`, 2026-09-02 21:37 UTC (deployment 6232374535), verificato con `gh api repos/erricoluigi17/kidville-web/deployments?sha=<sha>` e `…/deployments/<id>/statuses` |
-| **Locale** | `HEAD` di `fix/aruba-prima-fattura`, contiene `0b3a4380` | **non pushato** |
+| **Locale** | `0654b3b4` su `fix/aruba-emissione-reale` (worktree `kidville-web-aruba`), che per `src/lib/aruba/` coincide con `0b3a4380` — `git diff --stat 0b3a4380 0654b3b4 -- src/lib/aruba/` vuoto | **non pushato** |
 
 Verificato con `git merge-base --is-ancestor 0b3a4380 origin/main` → **falso**, e
 `git log --oneline -1 origin/main -- src/lib/aruba/client.ts` → `8bea8bfb`.
 
-**Convenzione sui numeri di riga.** Tutti i numeri di riga di questo documento sono del branch
-**locale** (`HEAD`, che per `src/lib/aruba/` coincide con `0b3a4380` — `git diff --stat 0b3a4380 HEAD
--- src/lib/aruba/` è vuoto; `emissione.ts` è **identico** nelle due versioni). Dove in produzione la
-stessa cosa sta a un'altra riga, la riga di produzione è indicata **fra parentesi**.
+**Convenzione sui numeri di riga.** Tutti i numeri di riga di questo documento sono quelli del
+commit **`0b3a4380`**, non della punta del branch: si rileggono con
+`git show 0b3a4380:src/lib/aruba/client.ts` e `git show 0b3a4380:src/lib/aruba/emissione.ts`.
+L'ancoraggio è al commit apposta, perché la punta si muove — `client.ts` sta cambiando **proprio
+ora**, vedi il riquadro qui sotto — e un numero di riga appeso a una punta mobile diventa falso
+senza che nessuno lo tocchi. Dove in produzione (`8bea8bfb`) la stessa cosa sta a un'altra riga, la
+riga di produzione è indicata **fra parentesi**; `emissione.ts` è **identico** nelle due versioni.
 
 La differenza non è cosmetica: **il ritmo delle chiamate e il ritentativo dopo un `429` esistono
 solo in locale.** In produzione le sette richieste della lettura del progressivo partono una
 dietro l'altra senza nessuna pausa, e un `429` non viene ritentato. Verificato:
 `git show 8bea8bfb:src/lib/aruba/client.ts | grep -n "429\|setTimeout\|ritent"` → **nessuna
 occorrenza**.
+
+> ⚠️ **Fotografia PRIMA delle correzioni.** Misurato il 2026-09-03 su `0b3a4380`. Lo stesso branch
+> sta ricevendo, mentre questo documento viene scritto, le correzioni di **§3.1, §3.2, §3.3, §3.5 e
+> §3.7**: pausa fra le pagine portata a **5 s** (= le 12/min documentate), **ritentativo unico**
+> dell'upload sul `429`, rifiuto di **trasporto** distinto dallo **scarto fiscale**, `maxDuration`
+> dichiarato sulla route, e la riga di `docs/env.md` riscritta. Le righe «In locale» di §1.3 e i «Task suggerito» di §3 descrivono lo
+> stato di `0b3a4380`, **non** quello successivo: sono la fotografia del problema, non quella del
+> rimedio. I numeri definitivi stanno nel PRD (changelog **2026-09-03**) e nell'handoff
+> ([`HANDOFF-aruba-2026-09-02.md`](HANDOFF-aruba-2026-09-02.md), §0 «Stato al 2026-09-03»).
 
 ---
 
@@ -75,7 +87,7 @@ occorrenza**.
 | **Un solo cedente per tre sedi** | 1 P.IVA, 1 codice fiscale, 1 denominazione, 1 comune per tutte e 3 le sedi | Il multi-cedente esiste per le utenze Premium · **B**; come l'API attribuisca la fattura al cedente **non è documentato** · **C** | `select count(distinct …)` su `fiscale_config` → **1** per ognuno dei quattro campi | nessuna, ed è la ragione per cui il multi-cedente **non è in gioco**. Ne segue che il contatore dei sezionali è **globale e non per sede** — la RPC `prossimo_numero_fattura_sezionale` ha chiave `(sezionale, anno)` e nessuna `scuola_id`, ed è coerente |
 | `bollo_enabled` | **chiave assente** in `fiscale_config` su tutte e 3 le sedi ⇒ bollo **spento** | Le docs API **non citano** `DatiBollo`: passa nel tracciato standard. Aruba **non assolve** il bollo — «va versato tramite F24, anche se inserito in fattura» · **B** | `select fiscale_config ? 'bollo_enabled'` → `false` × 3 · `src/lib/pagamenti/fiscale.ts:96-101` (`if (!cfg?.bollo_enabled) return 0`) | **Nessuna, ed è la decisione del titolare**: niente blocco `<DatiBollo>` (`fatturapa-xml.ts:518-523`). Se un domani si accendesse, la soglia è 77,47 € e l'importo 2 € (`fiscale.ts:73-74`), e **il bollo non viene riaddebitato al cliente** (non esiste l'interruttore: `fiscale.ts:103-125`) |
 | `IdTrasmittente` | `IT` + **`01879020517`**, cablato | «dovrà essere valorizzato con il codice fiscale dell'intermediario Aruba PEC S.p.A.: 01879020517» · **A** (docs v1 §7.1). Se non lo è, errore **0094**: «La fattura che stai inviando contiene ID e/o contatti dei trasmittenti differenti dai dati dell'intermediario Aruba PEC» · **A** (§7.6.1) | `fatturapa-xml.ts:75` (`ARUBA_PEC_PIVA`), scritto a `fatturapa-xml.ts:544-547` | nessuna |
-| `senderPIVA` (parametro dell'upload) | **sempre inviato**, valorizzato con la P.IVA del cedente | «Nel caso in cui la fattura che si intende trasmettere abbia TD26 (…) come 2.1.1.1 TipoDocumento, il campo senderPIVA può essere utilizzato per specificare quale tra il cedente/prestatore e il cessionario/committente sia il mittente della fattura» · **A** (docs v1 §7.4) | `client.ts:321` ← `emissione.ts:1142` | **Divergenza d'uso, innocua ma reale**: i nostri documenti sono `TD01` (`fatturapa-xml.ts:582`), non `TD26`. Lo inviamo dove la doc non lo chiede. Misurato: gli upload non sono ancora stati provati, quindi **non sappiamo** se sia ignorato o rifiutato (**C**) |
+| `senderPIVA` (parametro dell'upload) | **sempre inviato**, valorizzato con `cedente.piva` — cioè `fiscale_config.piva`: **11 caratteri, sole cifre, SENZA il prefisso `IT`** | «Nel caso in cui la fattura che si intende trasmettere abbia TD26 (…) come 2.1.1.1 TipoDocumento, il campo senderPIVA può essere utilizzato per specificare quale tra il cedente/prestatore e il cessionario/committente sia il mittente della fattura. **Il campo senderPIVA, nel caso in cui venga utilizzato, deve riportare il codice nazione e la partita iva del mittente (es. IT99999999999)** [nell'originale: virgolette e parentesi angolari attorno a `2.1.1.1 <TipoDocumento>`, uno spazio spurio in `cedente /prestatore` e uno prima della parentesi chiusa; qui normalizzati]» · **A** (docs v1 §7.4, tabella *Request fields*: le due frasi stanno nella **stessa cella**, una di seguito all'altra) | `client.ts:321` ← `emissione.ts:1142` · il valore lo compone `cedente.ts:414` (`senzaSpazi(primoNonVuoto(f.piva, a.piva))`) · `select length(fiscale_config->>'piva'), (fiscale_config->>'piva') ~ '^[0-9]{11}$' from admin_settings where scuola_id::text not like 'e2e%'` → **11, true** × 3: sole cifre, nessun `IT` | **Due divergenze distinte.** **(i) D'uso, innocua ma reale**: i nostri documenti sono `TD01` (`fatturapa-xml.ts:582`), non `TD26`. Lo inviamo dove la doc non lo chiede. **(ii) 🔶 Di formato**: la doc vuole **codice nazione + P.IVA**, noi mandiamo le **sole 11 cifre**. Misurato: l'unico upload mai fatto è il dry-run del 2026-08-10 (§4), che mandava `senderPIVA` a 11 cifre su un documento intestato a una P.IVA **estranea** → `HTTP 200`, `errorCode 0093`. Quindi il formato a 11 cifre **non** è stato respinto con un `0002` «parametri» — ma il rifiuto è arrivato sul **mittente**, non sul formato, e cosa faccia Aruba con la **nostra** P.IVA a 11 cifre (la ignori, l'accetti o la rifiuti) **non è misurato** (**C**). Vedi §3.8 |
 | Firma (`credential` / `domain`) | **non inviati affatto** (le chiavi non compaiono nel corpo JSON) | «I parametri "domain" e "credential" rappresentano rispettivamente il dominio e le credenziali di firma automatica se possedute dall'utente, in caso contrario lasciare tali campi vuoti o ometterli.» · **A** (docs v1 §7.4, testo sotto l'esempio di richiesta) ⇒ omessi = firma di Aruba | `client.ts:319-323`: il corpo contiene solo `dataFile`, `senderPIVA`, `skipExtraSchema` | **nessuna: l'omissione è esplicitamente ammessa** dalla doc, alla lettera, accanto al «lasciare vuoti». L'alternativa per file già firmati è `/services/invoice/uploadSigned`, che **non usiamo** |
 | `skipExtraSchema` | `false`, esplicito | «false di default. Se impostato a true non vengono effettuati i Controlli extraschema sincroni e i Controlli extraschema asincroni (…)» · **A** (docs v1 §7.4, tabella *Request fields*) | `client.ts:322` | nessuna: passiamo il default, cioè teniamo **accesi** i controlli extra-schema |
 
@@ -85,7 +97,7 @@ occorrenza**.
 |---|---|---|---|---|
 | `PAGINA_SIZE` | **500** | «`size` — default 10, **compreso tra 1 e 100**» · **A** (docs v1 §8.2) | `client.ts:392` | 🔶 **DIVERGENZA APERTA**: chiediamo cinque volte il massimo documentato. **Misurato che funziona** (2026-09-02: 3.311 documenti letti in 7 pagine), ma è comportamento non documentato: Aruba può ricondurlo a 100 in qualunque momento, **senza errore**. Se rispondesse con 100 documenti a fronte dei 500 chiesti, `client.ts:763-766` (in produzione `649-652`) tratterebbe la pagina 1 come **ULTIMA** (`ricevuti < PAGINA_SIZE`) e ritornerebbe il massimo di quei 100 documenti, **senza nessun log**: il `warn esito:'pagine-troncate'` **non scatta**, perché scatta solo dopo 20 pagine **piene**. E se la serie chiesta non comparisse fra quei 100, il ripiego sull'anno precedente (`client.ts:791-796`, prod `671-673`) legge un'altra pagina sola e può ritornare **0**: la RPC allocherebbe il numero **1** su una serie viva. L'involucro Spring porta `size`, `totalElements`, `totalPages` e `last` (rapporto §4) e il codice **non ne legge nessuno**. Vedi §5 riga 5 |
 | `PAGINE_MAX` | **20** (⇒ tetto 10.000 documenti/anno con `size` 500) | — | `client.ts:390` | nessuna. Superato il tetto si logga `warn esito:'pagine-troncate'` e si restituisce comunque un limite **inferiore** valido (`client.ts:767-778`, prod `653-665`) |
-| `PAUSA_FRA_PAGINE_MS` | 🔴 **NON ESISTE IN PRODUZIONE**. In locale: `1_100` ms | «Nr. massimo richieste per IP al minuto: **ricerca fatture inviate 12**» · **A** (SLA §3) | `client.ts:413` (locale) · `git show 8bea8bfb:…` → assente | 🔴 **La divergenza più grave del documento.** In produzione 7 GET partono senza pausa. Anche con la pausa locale, 7 GET in ~6,6 s valgono ~64 richieste/minuto di **frequenza istantanea**: sopra le 12/min documentate. La pausa attenua, **non riporta dentro il limite**. Vedi §2 e §3.1 |
+| `PAUSA_FRA_PAGINE_MS` | 🔴 **NON ESISTE IN PRODUZIONE**. In locale: `1_100` ms | «Nr. massimo richieste per IP al minuto: **ricerca fatture inviate 12**» · **A** (SLA §3) | `client.ts:413` (locale) · `git show 8bea8bfb:…` → assente | 🔴 **La divergenza più grave del documento.** In produzione 7 GET partono senza pausa: **~6 s misurati** (§2.3), cioè **~70/min**. Anche con la pausa locale il conto va fatto per intero — 6 attese × 1,1 s = 6,6 s **più** gli stessi ~6 s di tempo di risposta ≈ **12,6 s per 7 GET** — e fa **~33/min (una richiesta ogni ~2 s)** di **frequenza istantanea**, contro i **5 s** fra una richiesta e l'altra che valgono 12/min. La pausa dimezza la frequenza, **non riporta dentro il limite**. Vedi §2 e §3.1 |
 | `PAUSA_DOPO_429_MS` | 🔴 **NON ESISTE IN PRODUZIONE**. In locale: `90_000` ms | Nessun `Retry-After` né header `X-RateLimit-*` documentati. «il sistema non accoda né memorizza le richieste in eccesso. Qualsiasi chiamata eccedente la capacità massima viene rifiutata istantaneamente con un errore di superamento soglia (HTTP 429)» · **A** (Tiering §7.3.2); «La gestione della logica di rinvio (retry logic) è interamente a carico dell'integratore.» · **A** (§7.3) | `client.ts:415` (locale) | I 90 s sono **prudenza, non misura** — lo dice il commento stesso (`client.ts:406-411`). La finestra vera non è nota e non è stata cercata a tentativi, perché ogni sonda consuma quota |
 | Ritentativo sulla **lettura** | 🔴 **nessuno in produzione**. In locale: **uno solo**, e solo su `429` | Il retry è a carico dell'integratore · **A** | `client.ts:611-634` (locale) | Il «uno solo» è deliberato: il limite punisce la frequenza, insistere peggiora. Se anche il secondo tentativo trova il muro si **lancia**, e chi emette si ferma senza consumare numeri |
 | Ritentativo sull'**upload** | 🔴 **nessuno, in nessuna delle due versioni** | upload 30/min per IP · **A** | `client.ts:307-349`: nessun ciclo, nessuna attesa | 🔴 **Vedi §3.2**: un `429` sull'upload viene oggi scritto a registro come **scarto fiscale**, su una tabella WORM, con il numero già bruciato |
@@ -149,7 +161,7 @@ nomi delle variabili Vercel letto dall'orchestratore, non questa sonda.
 Aruba la fatturazione va «in modalità **locale/simulata**». **Non è vero, e non lo è mai stato**: il
 motore risponde `motivo:'non_configurato'` con HTTP **503** e non simula niente
 (`emissione.ts:366-371`). Una frase che promette un ripiego inesistente manda chi indaga nel posto
-sbagliato. → task suggerito in §3.7.
+sbagliato. → §3.7 — **corretta nello stesso branch** (`docs/env.md:79` ora dice 503 `non_configurato`).
 
 ---
 
@@ -195,10 +207,10 @@ cache è un'ottimizzazione opportunistica, **non una garanzia** — e il conto d
 | Limite (SLA §3 · **A**) | Cosa facciamo | Sta dentro? |
 |---|---|---|
 | **autenticazione 1/min per IP** | 1 signin per emissione **+ 1 signin per ogni tick del cron** | ✅ per **una** emissione. 🔴 **No** per due emissioni nello stesso minuto dallo stesso IP. ⚠️ E il software non è l'unico a consumare quel limite: il cron `fatture-sdi-sync` fa un **proprio `signin` a ogni tick** appena esistono fatture in volo (`sync/route.ts:173`, con `STATI_IN_VOLO = [1, 3, 5]` a `sync/route.ts:22`), con la **stessa utenza**. Dopo la prima fattura, un «Emetti» premuto nello stesso minuto di un tick (:00 / :30) può incontrare il limite 1/min — e a cache calda è esattamente il percorso di §3.3, dove il signin avviene **dopo** l'allocazione del numero. **Oggi non blocca: 0 righe in volo** (`select count(*) from fatture_emesse where sdi_stato in (1,3,5)` → `0`) |
-| **ricerca fatture inviate 12/min per IP** | 7 GET | 🔴 **No come frequenza.** In produzione, **misurato** il 2026-09-02 in `app_log` (§1.4): `signin` 14:56:07 → errore 14:56:14 e `signin` 14:56:25 → errore 14:56:31, cioè **7 GET in ~6 secondi per lettura** (≈ **70/min** istantanei). In produzione non c'è nessuna pausa (§0): quei sei secondi sono per intero il tempo di risposta delle richieste. Con la pausa locale di 1,1 s le sole attese fanno ~6,6 s (≈ 64/min). Il tetto è 12/min, cioè **una ogni 5 secondi** |
+| **ricerca fatture inviate 12/min per IP** | 7 GET | 🔴 **No come frequenza.** In produzione, **misurato** il 2026-09-02 in `app_log` (§1.4): `signin` 14:56:07 → errore 14:56:14 e `signin` 14:56:25 → errore 14:56:31, cioè **7 GET in ~6 secondi per lettura** (≈ **70/min** istantanei). In produzione non c'è nessuna pausa (§0): quei sei secondi sono per intero il tempo di risposta delle richieste. Con la pausa locale di 1,1 s le 6 attese fanno 6,6 s, **da sommare** agli stessi ~6 s di risposta: ~12,6 s per 7 GET, cioè **~33/min (una richiesta ogni ~2 s)**. Il tetto è 12/min, cioè **una ogni 5 secondi** |
 | **upload 30/min per IP** | 1 upload | ✅ in volume. ⚠️ Se i secchi fossero **condivisi**, l'upload è la **nona** richiesta della raffica — ed è esattamente il numero d'ordine su cui il 2026-09-02 è arrivato il `429` (**C**: che i secchi siano condivisi non è documentato) |
 | **file max 5 MB** (→ 413) | XML di una retta: qualche kB | ✅ |
-| **Tier 0: 60 upload/ora, 10.000/anno** (Tiering §7.3 · **A**) | 1 upload | ✅. ⚠️ Nota: il famoso «~60 richieste l'ora» è **questo** — il tier degli **upload**, non delle ricerche: il modello sbagliato applicato alla cosa sbagliata, ed è quello che ha fatto perdere tre ore. Ed è **ancora sparso ovunque**. Censito con `grep -rn -E "60 richieste\|richieste/ora\|60 chiamate\|richieste l.ora" src supabase docs scripts __tests__`: **cinque** occorrenze in `emissione.ts` (`26`, `158`, `925-926`, `969`, `972` — e la `972` è **il messaggio che legge la segreteria**); lo stesso modello sta nel `COMMENT` della RPC **applicato in produzione** (`supabase/migrations/20260809235620_fatture_numerazione_sezionale.sql:278`, e nei commenti `:31` e `:254`), in `scripts/aruba-campioni.mjs:70`, in `scripts/aruba-forma-elenco.mjs:47`, in tre intestazioni di test (`__tests__/lib/aruba/emissione-gate-numero.test.ts:17` e `:220`, `__tests__/api/fattura-emissione.test.ts:17`) e in `tracciato-di-riferimento.md:242`. Due occorrenze soltanto **lo smentiscono** invece di ripeterlo (`HANDOFF-aruba-2026-09-02.md:56` e `scripts/collaudo/numerazione-aruba.collaudo.ts:32`): chi bonificherà le altre parta da lì |
+| **Tier 0: 60 upload/ora, 10.000/anno** (Tiering §7.3 · **A**) | 1 upload | ✅. ⚠️ Nota: il famoso «~60 richieste l'ora» è **questo** — il tier degli **upload**, non delle ricerche: il modello sbagliato applicato alla cosa sbagliata, ed è quello che ha fatto perdere tre ore. Ed è **ancora sparso ovunque**. Censito con `grep -rn -E "60 richieste\|richieste/ora\|60 chiamate\|richieste l.ora" src supabase docs scripts __tests__`: **cinque** occorrenze in `emissione.ts` (`26`, `158`, `925-926`, `969`, `972` — e la `972` è **il messaggio che legge la segreteria**); lo stesso modello sta nel `COMMENT` della RPC **applicato in produzione** (`supabase/migrations/20260809235620_fatture_numerazione_sezionale.sql:278`, e nei commenti `:31` e `:254`), in `scripts/aruba-campioni.mjs:70`, in `scripts/aruba-forma-elenco.mjs:47`, in tre intestazioni di test (`__tests__/lib/aruba/emissione-gate-numero.test.ts:17` e `:220`, `__tests__/api/fattura-emissione.test.ts:17`) e in `tracciato-di-riferimento.md:242`. Due occorrenze soltanto **lo smentiscono** invece di ripeterlo (`HANDOFF-aruba-2026-09-02.md:55` e `scripts/collaudo/numerazione-aruba.collaudo.ts:32`): chi bonificherà le altre parta da lì |
 
 **La misura che conta più di tutte** (2026-09-02, macchina locale): **8 richieste accettate in 4,2
 secondi, la nona `429`, con corpo HTML**. È compatibile con un secchio da ~8 gettoni che si ricarica
@@ -221,12 +233,15 @@ consuma numeri**, ma non emette. Verificato:
 `git show 8bea8bfb:src/lib/aruba/client.ts | grep -n "429\|setTimeout\|ritent"` → nessuna occorrenza;
 `git merge-base --is-ancestor 0b3a4380 origin/main` → falso.
 
-**Task suggerito.** Portare il branch `fix/aruba-prima-fattura` in produzione (PR + merge) **prima**
+**Task suggerito.** Portare il branch `fix/aruba-emissione-reale` in produzione (PR + merge) **prima**
 di premere «Emetti». È già il piano; qui si dice **perché** non è opzionale.
 
-**E non basta**, va detto: anche con la pausa a 1,1 s restiamo a ~64 richieste/minuto contro un
-limite documentato di 12/min. Portarci davvero dentro vuol dire **5 secondi fra le pagine** = ~35 s
-per la sola lettura, il che chiama in causa §3.5.
+**E non basta**, va detto: anche con la pausa a 1,1 s restiamo a **~33 richieste/minuto — una ogni
+~2 s** — contro un limite documentato di 12/min, che vuol dire **una ogni 5 secondi**. Il conto,
+fatto con lo stesso metodo dappertutto: 6 attese × 1,1 s = 6,6 s **più** i ~6 s di tempo di risposta
+misurati in §2.3 ≈ 12,6 s per 7 GET. Senza pausa — cioè in produzione — gli stessi 7 GET stanno in
+~6 s, ≈ 70/min. Portarci davvero dentro vuol dire **5 secondi fra le pagine**: 6 × 5 s + ~6 s ≈
+**36 s** per la sola lettura, il che chiama in causa §3.5.
 
 ### 3.2 Un `429` (o un `401`) sull'upload viene scritto a registro come scarto fiscale 🔴
 
@@ -317,10 +332,38 @@ giusto:
 
 ### 3.7 Una riga di documentazione che dice il falso 🔶
 
-`docs/env.md:79` promette una «modalità locale/simulata» che non esiste (vedi §1.6). **Task
-suggerito**: correggere la riga in «Assenti → l'emissione risponde 503 `non_configurato` e nessuna
-fattura parte». Non è urgente per emettere, ed è precisamente il genere di frase che, lasciata lì,
-un giorno fa cercare un ripiego inesistente mentre la fattura non parte.
+`docs/env.md:79` prometteva una «modalità locale/simulata» che non esiste (vedi §1.6). **Corretto
+nello stesso branch**: la riga ora dice che senza le variabili l'emissione risponde 503
+`non_configurato` e nessuna fattura parte. Non era urgente per emettere, ma era precisamente il
+genere di frase che, lasciata lì, un giorno fa cercare un ripiego inesistente mentre la fattura non parte.
+
+### 3.8 `senderPIVA` viaggia in un formato diverso da quello documentato 🔶
+
+**Motivazione.** La doc v1 §7.4, nella **stessa cella** in cui spiega il campo e subito dopo la frase
+sui `TD26`, prescrive: «Il campo senderPIVA, nel caso in cui venga utilizzato, deve riportare il
+codice nazione e la partita iva del mittente (es. IT99999999999)» · **A** (citata in §1.2, con la
+nota sulle tre normalizzazioni rispetto all'originale). Noi mandiamo
+`cedente.piva`, cioè `fiscale_config.piva`: **11 cifre, senza il prefisso `IT`**
+(`emissione.ts:1142` → `client.ts:321`; il valore lo compone `cedente.ts:414`; misurato:
+`length(fiscale_config->>'piva')` = **11** su tutte e tre le sedi, sole cifre). È la divergenza (ii)
+di §1.2, e cade sull'**unico parametro che il nostro upload valorizza a mano**.
+
+Cosa faccia Aruba con un `senderPIVA` a 11 cifre e la **nostra** P.IVA non è misurato: può ignorarlo,
+accettarlo o rifiutarlo (**C**). L'unica misura che esiste (§4) l'ha mandato a 11 cifre e ha ricevuto
+`0093` «Errore deleghe non valide» — che è un rifiuto sul **mittente**, non sul formato: prova che la
+richiesta non è stata respinta con un `0002` «parametri», e **nient'altro** su questo punto.
+
+**Task suggerito.** Decidere **prima** di premere «Emetti», perché è una scelta e non un rattoppo.
+Tre strade, tutte difendibili:
+
+1. **Omettere** `senderPIVA` sui `TD01`: la doc lo lega ai `TD26` e dice che «può essere utilizzato»,
+   quindi non mandarlo è dentro la lettera della documentazione. Si tocca il corpo dell'upload
+   (`client.ts:319-323`).
+2. **Mandarlo come prescritto**, `IT` + P.IVA: è una riga, `emissione.ts:1142`.
+3. **Lasciarlo com'è** — legittimo, ma allora va scritto che è una decisione presa e non una svista.
+
+Le prime due muovono anche il test `__tests__/lib/aruba/client.test.ts:93`, che oggi **fissa** il
+corpo dell'upload con la P.IVA nuda e diventerebbe rosso: è il posto giusto dove vedere la scelta.
 
 ---
 
@@ -338,7 +381,8 @@ SdI?
 I parametri che la v1 documenta davvero per `POST /services/invoice/upload` sono **cinque**:
 `dataFile` (obbligatorio), `credential`, `domain`, `senderPIVA`, `skipExtraSchema`.
 
-**Nella v2 invece esiste**, ed è citato alla lettera (docs v2, versione dichiarata **2.2.0**, §7.4):
+**Nella v2 invece esiste**, ed è citato alla lettera (docs v2 §7.4; la pagina dichiara «versione
+2.2.0» in testata — sul numero di versione vedi §6):
 
 > «*false* di default. Se impostato a 'true' la fattura attraverserà le fasi di validazione ma non
 > verrà inviata a SdI»
@@ -353,10 +397,62 @@ host e sullo stesso path** di quello che chiamiamo noi — `https://ws.fatturazi
    una serie fiscale viva, e ce ne accorgiamo solo dallo SdI.
 
 Un parametro non documentato che, se ignorato, emette un documento fiscale **fuori registro** non è
-un dispositivo di sicurezza: è una scommessa. **Non si usa.** Resta una **miglioria futura**, e la
-strada per renderla usabile è misurarla, non dedurla: se un giorno si passerà davvero alla v2, si
-verificherà che la risposta a `dryRun: true` **non** contenga un `uploadFileName` — che è l'unica
-prova osservabile che nulla è stato trasmesso.
+un dispositivo di sicurezza: è una scommessa. **Non si usa.**
+
+**La misura che esiste già.** Questa domanda **non è vergine**, e trattarla come lavoro futuro
+sarebbe falso: `scripts/collaudo/upload-dryrun.mjs` sta nel repository dal **2026-08-10**
+(commit `69d45a3e`, PR #79) ed è già stato eseguito una volta.
+
+**Cosa fa**: un `signin`; un `findByUsername` per contare le fatture dell'anno; un
+`POST /services/invoice/upload` con `dryRun: true`, `skipExtraSchema: false` e `senderPIVA` a
+**11 cifre**; un secondo `findByUsername` per ricontare. Il documento caricato è un nostro XML valido
+in cui la **P.IVA del cedente è sostituita con una estranea, formalmente valida**
+(`upload-dryrun.mjs:79-87`): è quella sostituzione — **non** `dryRun` — a rendere il collaudo
+innocuo, perché un documento non intestato alla cooperativa non può diventare una fattura della
+cooperativa.
+
+**Esito, registrato nel corpo della PR #79**: `HTTP 200` · `errorCode 0093` «Errore deleghe non
+valide» · elenco delle fatture inviate **invariato** (5 prima, 5 dopo).
+
+**Cosa prova**: che l'endpoint **v1** accetta la chiave `dryRun` nel corpo — non rifiuta la richiesta
+per la chiave in più, non risponde `0002` «parametri» — e che con una P.IVA estranea il documento è
+stato **respinto dai controlli sincroni**: `0093` «Errore deleghe non valide» sta in §7.6.1
+«Controlli Sincroni» della doc v1, cioè fra gli esiti che si decidono *prima* di ogni presa in
+carico — «L'esito di tali controlli comporta la presa in carico o il rifiuto della fattura
+ricevuta» · **A** (docs v1 §7.6). È **questo** rifiuto sincrono a dire che nulla è partito: non il
+conteggio prima/dopo, che è saturo (vedi sotto), né l'assenza di un `uploadFileName`, che è un
+indizio.
+
+**Cosa NON prova, ed è il punto**: che `dryRun` sia **onorato**. Per costruzione dello script i due
+esiti restano **indistinguibili**: quel documento sarebbe stato respinto con `0093` anche senza
+`dryRun`, perché il rifiuto è sul mittente. «Non è partito niente» quindi non separa «il parametro ha
+funzionato» da «il parametro è stato ignorato e ha lavorato il rifiuto delle deleghe». La conclusione
+di sopra **non cambia**: `dryRun` non si usa.
+
+⚠️ **E lo script non va lanciato adesso.** Fa **1 `signin` + 2 `findByUsername` + 1 upload** contro
+limiti di **1/min** (autenticazione) e **12/min** (ricerca), e legge `.env.local`, che punta alla
+produzione. In questa fase la regola è **nessuna chiamata ad Aruba**: la finestra va lasciata libera
+per l'emissione vera. Qui lo script è stato **letto, non eseguito**.
+
+Resta una **miglioria futura**, e la strada per renderla usabile è **misurarla, non dedurla** — con
+quello script, che è la misura sicura perché rende il danno *impossibile* per costruzione invece che
+improbabile. La prova osservabile è il **conteggio prima/dopo** — che lo script già fa nella forma,
+ma che va reso vero prima di fidarsene (riquadro qui sotto); l'assenza di un `uploadFileName` nella
+risposta è un **indizio**, non una prova (nulla documenta che un `dryRun` onorato non ne restituisca
+uno).
+
+⚠️ **Ma quel conteggio, com'è scritto oggi, non è ancora una prova** — misurato leggendo lo script:
+`quanteInviate` chiede `page=1&size=5` e ritorna la **lunghezza dell'array** ricevuto
+(`upload-dryrun.mjs:62-69`), che con più di cinque documenti nell'anno vale **5 e basta**. E di
+documenti, il **2026-08-10**, l'anno ne aveva già ben più di cinque: la sola serie «Asilo» ne
+contava **2.327**, misurati — è scritto nel commento di `client.ts:642` di `0b3a4380`, commento
+introdotto proprio quel giorno da `c2a78c50` (PR #78), il giorno stesso del dry-run (PR #79). I
+**3.311** documenti in totale sono invece una misura del **2026-09-02** e non vanno prestati alla
+corsa di agosto. Comunque si prenda la data, «5 prima, 5 dopo» è un contatore **saturo**, non una
+misura: non avrebbe potuto mostrare un documento in più nemmeno se fosse partito. Chi riprenderà lo
+script legga invece `totalElements` dell'involucro — «Numero totale fatture trovate» · **A** (docs
+v1 §8.2, *Response fields*) — che è un conteggio vero, e che è lo stesso campo che il client di
+produzione **non legge** (§5 riga 5).
 
 ---
 
@@ -380,11 +476,21 @@ metà** nel codice, e mezzo meccanismo è più insidioso di nessun meccanismo.
 
 **Documentazione ufficiale** (interrogata il 2026-09-03):
 `https://fatturazioneelettronica.aruba.it/apidoc/docs.html` (v1, **1.21.0**) ·
-`https://fatturazioneelettronica.aruba.it/apidoc/v2/docs.html` (v2, **2.2.0**) ·
+`https://fatturazioneelettronica.aruba.it/apidoc/v2/docs.html` (v2, **vedi il riquadro qui sotto**) ·
 manuale «Gestione e utilizzo utenza Premium» v1.23 (**B**).
 Il rapporto della ricerca documentale **non è nel repository**; ogni citazione riportata qui è stata
-riverificata sulle pagine ufficiali il 2026-09-03. (Quel rapporto indicava la v2 come 2.5.0: la
-pagina dichiara **2.2.0**, ed è il numero usato in questo documento.)
+riverificata sulle pagine ufficiali il 2026-09-03.
+
+**Che versione sia la v2, detto per intero — i numeri sono due, ed entrambi stanno sulla pagina.**
+In **testata** e in **calce** la pagina dichiara «versione 2.2.0», e la riga finale è «Ultimo
+aggiornamento 2026-06-22 07:23:19 UTC». Il suo **changelog**, però, arriva a «**2.5.0 - dal
+22/06/2026**» — esattamente la data di quell'ultimo aggiornamento — mentre la voce «2.2.0 - dal
+28/10/2025» è vecchia di otto mesi. Il rapporto della ricerca documentale citava il **changelog**
+(2.5.0); questo documento cita la **testata** (2.2.0). **Non è un errore del rapporto**: sono due
+punti diversi della stessa pagina. Che sia la testata a essere rimasta indietro è la lettura più
+naturale delle due date, ma resta una nostra lettura (**C**): Aruba non lo dice da nessuna parte.
+Verificato sulla copia locale della pagina: riga 5 «versione 2.2.0», righe 206 e 3525 «2.5.0 - dal
+22/06/2026», ultima riga «Ultimo aggiornamento 2026-06-22 07:23:19 UTC».
 
 **Produzione** (sole `SELECT`, il 2026-09-03): `admin_settings` (3 sedi + E2E) · `cron.job` e
 `cron.job_run_details` · `vault.decrypted_secrets` (solo *presenza* e *forma*, mai i valori) ·
@@ -403,8 +509,14 @@ Aruba in produzione viene dall'elenco dei **nomi** su Vercel letto dall'orchestr
 `npx vitest run __tests__/api/health.test.ts` → **exit 0, 23/23 verdi** — che è la prova del difetto
 di §1.6, non della sua assenza.
 
+**Script del repository, letto e non eseguito**: `scripts/collaudo/upload-dryrun.mjs` (commit
+`69d45a3e`, 2026-08-10, PR #79 — `git log --format='%h %ci %s' -- scripts/collaudo/upload-dryrun.mjs`).
+L'esito della sua unica esecuzione viene dal **corpo della PR #79**, letto con
+`gh pr view 79 --json body` (§4). **Nessuna esecuzione dello script per scrivere questo documento.**
+
 **GitHub** (sole letture, il 2026-09-03): `gh api repos/erricoluigi17/kidville-web/deployments?sha=…`
-e `…/deployments/<id>/statuses`, per stabilire **quale commit** sia davvero in produzione (§0).
+e `…/deployments/<id>/statuses`, per stabilire **quale commit** sia davvero in produzione (§0) ·
+`gh pr view 79 --json body`, per l'esito misurato del dry-run (§4).
 
 **Codice**: `src/lib/aruba/{client,emissione,fatturapa-xml,stato}.ts` ·
 `src/lib/fatturazione/{sezionale,cedente}.ts` · `src/lib/pagamenti/fiscale.ts` ·

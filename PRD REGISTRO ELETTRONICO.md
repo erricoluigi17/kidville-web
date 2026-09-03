@@ -96,6 +96,179 @@
 
 ---
 
+## 🧾 Changelog — Nove richieste in pochi secondi contro un limite di dodici al minuto, e la prima fattura vera — 2026-09-03 (branch `fix/aruba-emissione-reale`)
+
+**Il fatto.** Il 2026-09-02 la lettura del progressivo da Aruba ha preso `429` alla **nona** richiesta,
+dopo otto accettate in **4,2 secondi**. Prima di premere «Emetti» su una fattura vera, la
+configurazione con cui questo software parla con Aruba è stata misurata voce per voce e confrontata
+con la documentazione ufficiale: il referto è **`docs/fatturazione/configurazione-aruba.md`**, nuovo
+in questo lavoro, ed è la fonte di ogni numero che segue.
+
+### I limiti che Aruba documenta — e non sono quelli che questo repo credeva
+
+| Limite | Valore documentato | Dove |
+|---|---|---|
+| Autenticazione (`/auth/signin`) | **1 richiesta al minuto per IP** | SLA §3 |
+| Ricerca fatture inviate (`findByUsername`) | **12 al minuto per IP** | SLA §3 |
+| Upload (`upload` / `uploadSigned`) | **30 al minuto per IP** | SLA §3 |
+| Volume degli upload | **Tier 0: 60 all'ora** e 10.000 all'anno, e contano **solo gli upload andati a buon fine** — quelli che generano un `uploadFileName` | Tiering §7.3 |
+| Come è fatto il limite | **leaky bucket** sulla frequenza istantanea + **TTL di un'ora** sulle chiavi di tracciamento: «Ogni singolo tentativo effettua un touch che resetta il timer del TTL a 1 ora»; l'eccedenza è rifiutata subito con `429`, «il sistema non accoda», e «la gestione della logica di rinvio (retry logic) è interamente a carico dell'integratore» | Tiering §7.3.2 («non accoda», retry) e §7.3.3 scenario 3 (il «touch» che azzera il TTL) |
+
+Fonte: `https://fatturazioneelettronica.aruba.it/apidoc/docs.html` (v1, riletta il 2026-09-03).
+
+Due conseguenze che valgono più della tabella. **Il famoso «~60 richieste all'ora» era il tier degli
+UPLOAD**, applicato per tre settimane alle ricerche: il modello giusto sulla cosa sbagliata, ed è
+quello che ha fatto perdere tre ore. E **anche i tentativi rifiutati contano**, perché ogni tentativo
+azzera il TTL: bussare più forte allunga l'attesa invece di accorciarla.
+
+### Quanto costa una emissione: nove richieste, e la nona è quella che emette
+
+| # | Chiamata | Perché |
+|---|---|---|
+| 1 | `POST /auth/signin` | il token vive dentro l'invocazione: ogni «Emetti» ne fa uno nuovo |
+| 2…8 | `GET /services/invoice/out/findByUsername` × **7** | 3.311 documenti del 2026 ÷ 500 per pagina = 7 pagine, lette **una volta per lotto** (`TTL_ULTIMO_NUMERO_MS`, 5 minuti) |
+| 9 | `POST /services/invoice/upload` | l'unica che emette davvero |
+
+Nove richieste in pochi secondi, e la nona è **esattamente** il numero d'ordine su cui il 2026-09-02
+è arrivato il `429`.
+
+### Cosa cambia nel codice
+
+- **`PAUSA_FRA_PAGINE_MS`: da 1.100 a 5.000 ms.** Non è più prudenza a occhio: dodici ricerche al
+  minuto vogliono dire **una ogni cinque secondi**. Costo dichiarato di una lettura completa:
+  7 pagine ≈ **36 s** (sei attese da 5 s più i ~6 s di risposte misurati in `app_log`), una volta per
+  lotto. Il timeout di `externalFetch` è per **singola** richiesta (30 s) e non cambia.
+- **Una pausa di 5 secondi prima dell'upload**, e **solo** se in quella invocazione il pavimento della
+  serie è stato letto dal vivo da Aruba. Se viene dalla cache non si aspetta niente: una pausa per
+  invocazione, non una per quota.
+- **`arubaUpload` ritenta UNA volta sul `429`**, dopo `PAUSA_DOPO_429_MS` (90 s), loggando `warn` con
+  `esito: 'limite-richieste'`. Una, non tre: su un limite di frequenza insistere è il modo di
+  peggiorarlo. **Nessun altro errore viene ritentato** — un `0034`, un `0092`, un `0094` non si
+  ripetono mai — e un esito riuscito nemmeno.
+- **Un rifiuto di TRASPORTO non è più uno scarto fiscale.** Fino a questo lavoro un `429` con corpo
+  HTML, un `401` da token scaduto o un `5xx` finivano in `fatture_emesse` con `sdi_stato 2`, etichetta «Errore
+  upload» e il blob HTML dentro `sdi_scarto_motivo` — su una tabella **WORM**, dove il trigger vieta
+  il `DELETE`: un limite di frequenza diventava un **rifiuto fiscale permanente**. Ora la riga si
+  scrive lo stesso (il numero è consumato e va documentato) ma con etichetta **«Trasporto fallito»** e
+  un motivo breve — `TRASPORTO <status>: esito ignoto, verificare sul pannello Aruba prima di
+  ripremere` — mai l'HTML; log `error` con `esito: 'upload-trasporto'`, e `sdi_stato` a **`null`**,
+  così il cron non la ripesca e nessuno la scambia per una fattura in volo. Lo **scarto di merito**
+  (risposta 2xx con envelope Aruba e `errorCode` diverso da `0000`) resta scritto come prima.
+- **Ripremere «Emetti» su una riga «Trasporto fallito» non è più un «già fatto».** Prima quella riga
+  (`sdi_stato` nullo) cadeva nel ramo `idempotente` con `ok: true`, e l'aggregato scriveva
+  `fattura_stato = 'in_attesa'` con `fattura_aruba_id` **`NULL`**: uno stato **senza uscita**, perché
+  `fattura/sync` ripesca solo `sdi_stato in (1, 3, 5)` **e** `aruba_filename not null`. Chi ripremeva
+  — e ripreme, perché l'interfaccia mostra «Riprova fattura» proprio sullo stato `scartata` in cui il
+  primo tentativo lascia il pagamento — si sentiva rispondere «fatto» su una fattura di cui nessuno
+  sa se sia partita. Ora il ramo riconosce quella riga da **`sdi_stato` nullo e `aruba_filename`
+  nullo insieme**, risponde **409** (non 200, non 502) col messaggio «non ripremere» più le **due vie
+  d'uscita manuali** — se sul pannello Aruba la fattura **non** risulta, si chiude la riga a mano con
+  `sdi_stato = 2` prima di riemettere; se **risulta**, la si completa con `aruba_filename` e
+  `sdi_stato = 1`, così la sincronizzazione la riprende — lascia il pagamento **`scartata`** e logga
+  `warn` con `esito: 'trasporto-in-sospeso'`. Che nessun secondo documento parta allo SdI funzionava
+  già ed è la ragione per cui quella riga resta viva: la novità è che ora la risposta **lo dice**.
+- **Un `0034` in risposta al NOSTRO ritentativo parla del PRIMO tentativo.** `0034` è «File già
+  inviato di recente», il dedup di Aruba sul contenuto del file: alla prima risposta parla di un
+  invio precedente e resta uno scarto di merito, ma se arriva alla **seconda** — dopo che siamo
+  stati noi a rimandare lo stesso file, passati il `429` e i 90 secondi — dice l'unica altra cosa
+  che può dire, cioè che il primo invio **era stato ricevuto**. Trattarlo come scarto scriverebbe
+  `sdi_stato 2` «Errore upload» su un documento che sta su Aruba (falso, e su una tabella WORM non
+  si corregge più) e, peggio, l'idempotenza esclude apposta le righe scartate: la pressione
+  successiva manderebbe allo SdI un **secondo** documento per la stessa retta. Ora è un rifiuto di
+  **trasporto a esito ignoto**, con motivo **«0034 dopo un 429»** — senza il prefisso `HTTP`, perché
+  non è uno status. A distinguerlo è un **campo del contratto** del client (`dopoRitentativo`,
+  alzato solo da quel ramo), non il solo `errorCode`: un HTTP non-2xx col corpo
+  `{"errorCode":"0034",…}` e nessun `429` di mezzo resta un rifiuto di trasporto ordinario e va
+  raccontato con il suo status, perché «0034 dopo un 429» su un `429` mai arrivato sarebbe una
+  falsità scritta in una colonna che il trigger WORM non lascia correggere. È una **guardia su un
+  caso non documentato**, non un comportamento atteso: la SLA descrive il `429` come un rifiuto
+  istantaneo che «non accoda», quindi se quella descrizione è esatta questo ramo non scatta mai, e
+  costa un booleano. Nello stesso giro il motivo di un `2xx` col corpo illeggibile diventa
+  `TRASPORTO <2xx> illeggibile: …` a registro e `HTTP <2xx> illeggibile` nel messaggio a schermo e
+  nel log, invece di un nudo «200» (un `200` dentro un motivo di **fallimento** viene letto come un
+  successo), e lo status del rifiuto viaggia nella chiave di log **`stato`** — l'unica
+  che `logger.ts` promuove alla colonna `app_log.stato_http`: chiamandola `status` restava dentro il
+  JSONB, leggibile ma non filtrabile, e «quanti `429` sull'upload questo mese» smetteva di essere
+  una query.
+- **Niente più eccezioni fuori controllo con il numero già allocato.** `ensureToken()` e
+  `arubaUpload()` stavano **fuori da ogni `try`**: un `429` sul signin a cache calda o un timeout (30 s,
+  il tetto del provider) risalivano alla route come **500 muto**, con un numero bruciato, nessuna riga
+  a registro e nessun modo di sapere se la fattura fosse partita. Ora l'eccezione è trattata come
+  rifiuto di trasporto: riga «Trasporto fallito», log `error` con `esito: 'upload-esito-ignoto'`, e
+  alla segreteria un messaggio che dice *non sappiamo se è partita: non ripremere, controlla su Aruba*.
+- **`export const maxDuration = 300`** su `POST /api/pagamenti/fattura`, col conto scritto accanto:
+  signin + 6 pause da 5 s fra le 7 pagine (30 s) + la pausa da 5 s + l'upload + un eventuale 90 s dopo
+  un `429` ≈ **125 s di sola attesa**, più le risposte: sotto i 300 con margine. Un tetto che nessuno ha scelto è un tetto che tronca la funzione nel punto peggiore —
+  cioè **dopo** l'upload.
+
+### Cosa cambia nel collaudo
+
+- **Un collaudo mirato su un solo pagamento** (`PAGAMENTO_ID` nell'ambiente; senza, si salta): genera
+  **in memoria** il documento esatto che partirebbe e lo verifica prima che qualcuno prema il
+  pulsante — XSD 1.2.3 valido, sezionale `FPR`, `<Natura>N4</Natura>` con «Esente Art. 10 DPR 633/72»,
+  **nessun `<DatiBollo>`**, `<ImportoTotaleDocumento>300.00`, `IdTrasmittente` di Aruba PEC,
+  `RegimeFiscale RF01`, `CodiceDestinatario 0000000`. **Non chiama Aruba e non chiama la RPC**: il
+  numero è un segnaposto, quindi il collaudo non consuma né quota né progressivi.
+- **Le fixture piatte, ultime eredi del contratto inventato.** In
+  `__tests__/lib/aruba/numerazione-sezionale.test.ts` l'helper delle risposte costruiva ancora
+  `{invoices:[{number}]}` senza la busta di Spring: **assumeva la forma che avrebbe dovuto
+  dimostrare**, ed è il motivo per cui il difetto del numero annidato è passato con la suite verde.
+  Ora la forma è quella **misurata**, e la prova che quei test mordono è averli visti diventare rossi
+  rimettendo apposta il vecchio codice.
+
+### Le decisioni del titolare (2026-09-03)
+
+1. **La prima fattura vera si emette sul pagamento da 300,00 €** di Kidville Aversa, con lo **sconto
+   residuo azzerato** (erano 30 € di «SCONTO FRATELLI»): in fattura va l'importo effettivamente
+   incassato.
+2. **Il bollo resta spento**, come le fatture che la segreteria emette a mano dal pannello Aruba:
+   `fiscale_config.bollo_enabled` è **assente** su tutte e tre le sedi, quindi nessun `<DatiBollo>`
+   entra nel documento. Se un giorno il commercialista dirà il contrario, l'interruttore c'è ed è per
+   sede — ma vale anche per le ricevute, e non se ne può accendere metà.
+3. **«Emetti» lo preme il titolare dall'app.** Non un agente, non uno script: emettere chiamando la
+   libreria col service-role scavalcherebbe il gate di ruolo, cioè proverebbe un'altra cosa.
+4. **Prima si merge**: branch → PR → merge → deploy, e solo dopo si preme. Il ritmo e i ritentativi
+   qui sopra **non esistono in produzione** finché il merge non è fatto.
+
+⚠️ **Quello che ancora non sappiamo, scritto qui perché non diventi una sorpresa.** La finestra vera
+del leaky bucket **non è nota** e non si è cercata a tentativi: ogni sonda consuma quota e brucia il
+tentativo successivo. I 5 secondi fra le pagine vengono da un limite documentato; i 90 secondi
+dell'attesa dopo un `429` sono il verso prudente, non una misura nostra.
+
+**Verifica.** Ogni modifica al codice di questo lavoro nasce da un test **visto rosso prima**: il
+ritentativo dell'upload (richiamato due volte quando la prima risposta è `429` e la seconda `0000`,
+mai su un `0092`, mai dopo il secondo `429`, con l'attesa misurata a timer finti), la pausa prima
+dell'upload che c'è dopo una lettura dal vivo e **non** c'è a cache calda, la riga «Trasporto fallito»
+che non contiene HTML, e l'eccezione dell'upload che non diventa più un 500 muto. Anche il **409**
+sulla seconda pressione e il **`0034` dopo il ritentativo** nascono da test visti rossi: «la riga di
+trasporto NON lascia partire un secondo documento allo SdI»
+(`__tests__/lib/aruba/emissione-upload-trasporto.test.ts`) pretende `httpStatus` **409**, nessun
+`in_attesa` fra gli `update` su `pagamenti` e la riga di log `trasporto-in-sospeso`; «429 poi 0034: è
+TRASPORTO — il primo file ERA stato ricevuto» con la sua controprova «0034 alla PRIMA risposta resta
+uno scarto di MERITO (nessun ritentativo di mezzo)»
+(`__tests__/lib/aruba/upload-ritmo-e-trasporto.test.ts`) tengono separati i due significati dello
+stesso codice; e «200 illeggibile: il motivo a registro dice «illeggibile», non «200»» fissa il
+motivo del `2xx` che non si riesce a leggere. Il gate (`eslint` · `tsc --noEmit` · `vitest` ·
+`build`) verde è la condizione della PR, e il merge è la condizione per premere «Emetti».
+
+**Stato.** La **prima emissione reale è prevista oggi, 2026-09-03**, dopo il merge. Al momento in cui
+questa riga è stata scritta `fatture_emesse` e `fatture_numerazione_sezionale` hanno **0 righe**
+(misurato con `SELECT` in produzione): nessuna fattura è mai partita da questo software. I due
+progressivi, invece, sono stati **letti dal vivo alle 12:32** con il collaudo di sola lettura (1
+signin + 7 GET, nessun `429`): **`Asilo 2026 = 2327`** e **`FPR 2026 = 1946`**, coincidenti con i due
+documenti campione del 2026-08-10 — quindi il numero atteso per la fattura di oggi è **«FPR
+1947/26»** e la verifica post-emissione può pretendere il valore esatto invece della sola metà
+grossolana «se è 1, fermare tutto». **L'esito dell'emissione sarà annotato qui dopo che sarà
+avvenuta**, non prima — la procedura per premere e le quattro query di verifica stanno in
+`docs/fatturazione/HANDOFF-aruba-2026-09-02.md`, §0 «Stato al 2026-09-03».
+
+⚠️ **Chi legge questo paragrafo in un giorno diverso non deve dedurre niente dalla data**: se l'esito
+non è ancora annotato qui sotto, l'emissione **non risulta avvenuta**, e la verifica è una riga —
+`select count(*) from fatture_emesse;` — che è una **lettura**, quindi non chiede conferma a nessuno.
+Questo repo ha già pagato due settimane per aver creduto a una frase invece che a un conteggio.
+
+---
+
 ## ⏱️ Changelog — Metà delle richieste ad Aruba chiedevano due volte le stesse pagine — 2026-09-02 (branch `fix/handoff-aruba`)
 
 **Il fatto.** Il collaudo di sola lettura che doveva dimostrare in presa diretta la correzione del
@@ -15405,7 +15578,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **P2 — Finalità accesso Fascicolo (DL-011)** | `puoAccedereFascicolo` | alunno | `fascicolo_accessi_audit.finalita` | ✅ Fatto: `finalita` cablata in list/download/upload + campo UI |
 | **P2 — Panic Alert push (DL-016)** | sessione | plesso alunno | — | ✅ Fatto: notifica simultanea Segreteria/Direzione + genitori (push P1, best-effort). Blocco-uscita UI/banner/clear = sequenziati |
 | **P2 — AES Fascicolo (DL-011) / Export MIUR (DL-012) / Account sospeso (DL-013)** | — | — | — | 🔶 Decisi: AES = at-rest gestita (no app-crypto); Export = XLSX+PDF (impl. sequenziata); sospensione rinviata a P3 |
-| **P3 — Fatturazione Elettronica Aruba/SDI (DL-017..020)** | `requireStaff` (emissione) / `x-cron-secret` (sync) | pagamento → scuola; genitore via `legame_genitori_alunni` (download PDF) | `fatture_emesse` (XML + stato SDI + numerazione) | ✅ Fatto (P3.1): client REST reale, XML FatturaPA (B2C/N4/no-bollo), numerazione interna, scarti polling + notifica Segreteria + copia cortesia PDF. Migrazione `20260741`. **Verifica live SDI gated su credenziali Aruba del committente** |
+| **P3 — Fatturazione Elettronica Aruba/SDI (DL-017..020)** | `requireStaff` (emissione) / `x-cron-secret` (sync) | pagamento → scuola; genitore via `legame_genitori_alunni` (download PDF) | `fatture_emesse` (XML + stato SDI + numerazione) | ✅ Fatto (P3.1): client REST reale, XML FatturaPA (B2C/N4/no-bollo), numerazione interna, scarti polling + notifica Segreteria + copia cortesia PDF. Migrazione `20260741`. **Credenziali di produzione presenti dal 2026-08; la **prima emissione reale** è prevista il 2026-09-03 (branch `fix/aruba-emissione-reale`), esito da annotare in changelog** |
 | **P3 — Pagamenti residui: sospensione moroso + vista categorie + ricevuta (DL-021..023)** | `requireStaff(['admin','coordinator'])` (sospensione) / guard `assertGenitoreNonSospeso` (azioni) | `assertAlunnoInScope`; genitore via `legame_genitori_alunni` | `logScrittura` (sospensione) | ✅ Fatto (P3.2): flag soft per-alunno (`alunni.sospeso`, migr. `20260742`) + banner/badge + enforcement su firme moduli; vista genitore a categorie; ricevuta PDF non fiscale. Login/letture preservati |
 | **P3 — Logica condizionale form (DL-024)** | — (motore puro) | — | — | ✅ Fatto (P3.3a): `src/lib/forms/conditional.ts` (eq/neq/contains/gt/lt); wizard mostra/nasconde + valida solo visibili + strip valori nascosti; editor condizione nel builder. Singola condizione per campo, nessuna migrazione |
 | **P3 — Delibera ammissioni + scoring (DL-025)** | `requireStaff` (delibera/override) | per `model_id` | `esito_da`/`esito_il` su `form_submissions` | ✅ Fatto (P3.3b): scoring applicato in live (migr. `20260743`), `calcolaDelibera` (soglia+posti), esito ammesso/lista/non + override, export PDF delibera, UI RankingTable |
@@ -16105,6 +16278,22 @@ La Segreteria dispone di un tool per generare qualsiasi tipologia di pagamento (
 > PDF al genitore. Credenziali mai esposte (env/vault). **La verifica live end-to-end con lo SDI è subordinata
 > alle credenziali Aruba DEMO/PROD del committente** (codice pronto, attivazione con flag + credenziali).
 
+> ### ⏳ Stato al 2026-09-03 — la prima fattura vera NON è ancora stata emessa
+>
+> | | |
+> |---|---|
+> | Fatture emesse da questo software | **0** — `select count(*)` su `fatture_emesse` **e** su `fatture_numerazione_sezionale`, misurato in produzione il 2026-09-03. Non è una stima: è un conteggio, e si rifà in una riga |
+> | Lettura del progressivo da Aruba | ✅ dimostrata **in presa diretta** il 2026-09-03 (due serie, progressivi > 1000, letti in **un solo** passaggio di pagine) — ma sull'**albero locale**, cioè sulla variante a un passaggio, non sul codice allora in produzione. 🔄 **Letti alle 12:32**, e stavolta stampati: **`Asilo 2026 = 2327`** · **`FPR 2026 = 1946`** (1 signin + 7 GET, nessun `429`) ⇒ il numero atteso per la prima fattura è **«FPR 1947/26»** |
+> | Generazione del documento | il collaudo che lo verifica **in memoria** sul pagamento reale — senza chiamare Aruba né la RPC — nasce in questo lavoro (`PAGAMENTO_ID`); il suo esito si legge nel referto, non qui |
+> | Emissione reale | 🔜 **prevista il 2026-09-03**, dopo il merge del branch `fix/aruba-emissione-reale`: la preme il **titolare dall'app**, su un pagamento da 300,00 € della sede di **Aversa**, serie **`FPR`**, **senza bollo** |
+> | Esito | ⏳ **verrà annotato qui dopo l'emissione**, con numero, `sdi_stato` e data. Finché questa riga dice «verrà annotato», l'emissione **non è avvenuta** |
+>
+> Il ritmo delle chiamate (5 s fra le pagine), il ritentativo unico dopo un `429`, la distinzione fra
+> rifiuto di trasporto e scarto fiscale e il `maxDuration` della route sono descritti nel **changelog
+> 2026-09-03**. La configurazione misurata voce per voce sta in
+> `docs/fatturazione/configurazione-aruba.md`; la procedura per premere e le query di verifica
+> post-emissione in `docs/fatturazione/HANDOFF-aruba-2026-09-02.md` §0.
+
 ## 1. Obiettivo del Modulo
 Il modulo di Fatturazione Elettronica estende le capacità finanziarie del sistema interfacciandosi
 nativamente con l'ecosistema Aruba. L'obiettivo è generare vere e proprie fatture elettroniche (in
@@ -16176,6 +16365,7 @@ garantisce che la piattaforma sia scalabile e totalmente personalizzabile per og
 • Dati Scuola: Inserimento dei dati di fatturazione dell'istituto (Partita IVA, Codice Fiscale, sede strutturata indirizzo/numero civico/CAP/comune/provincia, regime fiscale) necessari per la corretta generazione del tracciato XML. **✅ (2026-08-09)** in `admin_settings.fiscale_config`, che è la **fonte unica**: la leggono ricevute e attestazioni (`datiStruttura`) e da lì nasce il `CedentePrestatore` (`cedenteDaConfig`, `src/lib/fatturazione/cedente.ts`), che **rifiuta di comporre** un cedente incompleto invece di emettere una fattura con `<CAP></CAP>`.
   🔻 **Fino al 2026-08-09 questa riga diceva il falso**, e vale la pena lasciarlo scritto: dichiarava la sede strutturata «consumata dal `CedentePrestatore`» mentre il pannello Aruba raccoglieva la sede legale come **una stringa libera** (`aruba_config.fiscal.sede`) e l'emissione leggeva `fiscal.cap`/`fiscal.comune`, due chiavi che nessuno scriveva. L'XML usciva con CAP e comune vuoti — scarto SDI garantito — e il PRD diceva che era a posto.
 • Regime IVA: Pannello per mappare le causali di default (es. Retta = Esente IVA Art. 10). **✅ (P3.1)** campo `RegimeFiscale` (default RF01) nei dati fiscali; le fatture applicano comunque IVA 0%/Natura N4 fissa (DL-018).
+• ⏳ **Stato dell'emissione al 2026-09-03**: configurato non vuol dire emesso. Da questo pannello **non è mai partita una fattura**: `fatture_emesse` ha **0 righe** (misurato in produzione il 2026-09-03). La **prima emissione reale è prevista oggi**, dopo il merge del branch `fix/aruba-emissione-reale`, e la preme il titolare dall'app; l'esito verrà annotato nel riquadro «Stato al 2026-09-03» del **Modulo Fatturazione Elettronica** e nel changelog 2026-09-03. Configurazione misurata voce per voce: `docs/fatturazione/configurazione-aruba.md`; procedura e query di verifica: `docs/fatturazione/HANDOFF-aruba-2026-09-02.md` §0.
 
 ---
 

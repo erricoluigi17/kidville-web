@@ -323,6 +323,32 @@ errore e le famiglie dietro quelle righe.
 `settings.json.bak-automode` del file di prima), oppure la strada del 2026-07-31 descritta sopra —
 i cinque nomi sotto `permissions.ask`, in **tutti e tre** i file, altrimenti non scatta.
 
+🔴 **RIMISURATO IL 2026-09-03: IL RIQUADRO QUI SOPRA DICE IL FALSO SU DOVE STANNO I PERMESSI.**
+Sostiene che `execute_sql` e `apply_migration` siano in **`allow`** in tutti e tre i file. In
+`.claude/settings.json` stanno in **`ask`**, insieme a `mcp__claude_ai_Supabase__execute_sql`, e
+**`ask` batte `allow`**: chiedono conferma in ogni modalità, auto mode compreso. Qualcuno ce li ha
+rimessi dopo il 2026-08-03 e questo documento non l'ha seguito — che è, letteralmente, il difetto che
+il blocco del 2026-07-31 racconta di sé stesso. *Leggi il file, non il paragrafo.*
+
+I gate che oggi fermano una scrittura sono **tre**, indipendenti, e vanno tolti tutti e tre se si
+vuole l'autonomia piena:
+
+| | Dove | Vale fuori da auto mode? |
+|---|---|---|
+| 1 | `permissions.ask` in `.claude/settings.json` | sì |
+| 2 | `hooks.PreToolUse` → `.claude/hooks/supabase_sql_gate.sh` | **sì**, è scritto nel file stesso |
+| 3 | `autoMode.soft_deny` | no, solo in auto mode |
+
+Il **plan mode** non c'entra con nessuno dei tre: l'approvazione del piano *è* il plan mode
+(`ExitPlanMode` chiede sempre) e nessuna impostazione la spegne. Per non essere interrotti si sta in
+auto mode e non si entra in plan mode.
+
+⚠️ **Nessuno di questi tre lo può cambiare Claude**, e non per prudenza sua: il classificatore
+rifiuta ogni modifica alla propria configurazione, e l'autorizzazione a voce dell'utente **non la
+sblocca** — è un confine *hard*. Provato il 2026-09-03 su richiesta esplicita del titolare
+(«autorizzazione piena, anche per i comandi»): negato. Si fa a mano da terminale, e poi **si riavvia
+la sessione**.
+
 🔴 **VERIFICATO IL 2026-09-02, E IL LATO SCRITTURA NON ERA ARMATO.** Subito dopo aver scritto il
 blocco, nella stessa sessione, sono state eseguite due prove innocue: `CREATE TEMP TABLE` e
 `DROP TABLE IF EXISTS <nome inesistente>`. **Sono passate entrambe senza chiedere niente.** Il

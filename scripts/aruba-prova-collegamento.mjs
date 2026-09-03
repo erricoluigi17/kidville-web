@@ -101,6 +101,18 @@ async function signin({ auth }, username, password) {
  * Passo 2 — chiamata operativa in SOLA LETTURA. È questa che distingue un account abilitato
  * ai Web Service da uno che ha solo il pannello: `findByUsername` non invia niente allo SDI,
  * elenca soltanto ciò che è già stato emesso.
+ *
+ * ─── LA FORMA DELLA RISPOSTA, MISURATA IL 2026-09-02 ───────────────────────────
+ * È una PAGINA Spring Data — `{ content, number, size, numberOfElements, totalElements,
+ * totalPages, first, last }` — i cui elementi NON sono fatture: sono DOCUMENTI (`filename`,
+ * `idSdi`, `sender`, `receiver`), ognuno con le proprie fatture in un array ANNIDATO:
+ *
+ *     content[i].invoices[j].number  ===  «Asilo 2327/2026»
+ *
+ * ⚠️ `number` esiste anche sulla busta, ma è il numero di PAGINA. Perciò qui non si contano
+ * solo i documenti: si scende in `invoices[]` e si stampa il primo numero letto. Contare gli
+ * elementi dimostra che il Web Service risponde; leggere un numero dimostra che sappiamo
+ * ancora dove sta — ed è la seconda cosa che il 2026-09-02 non era più vera.
  */
 async function provaWebService({ ws }, token, username, anno) {
     const qs = new URLSearchParams({
@@ -132,17 +144,47 @@ async function provaWebService({ ws }, token, username, anno) {
         return false;
     }
     const testo = await res.text();
-    let quante = '?';
+    let j;
     try {
-        const j = JSON.parse(testo);
-        const env = j.value ?? j;
-        const inv = env.invoices ?? env.content ?? [];
-        quante = Array.isArray(inv) ? inv.length : '?';
+        j = JSON.parse(testo);
     } catch {
+        // Qui si arriva solo con un 2xx dal corpo NON JSON: un 429 ha `ok === false` ed è già
+        // stato stampato per intero nel ramo qui sopra. Del corpo si mostra un pezzo perché,
+        // non essendo JSON, non porta i campi della fattura; un JSON valido invece non si
+        // stampa mai — dentro c'è `receiver.fiscalCode`, cioè un genitore vero.
         console.log(`   ⚠ risposta non JSON: ${testo.slice(0, 300)}`);
         return false;
     }
-    console.log(`   ✓ WEB SERVICE ATTIVI — findByUsername ha risposto (${quante} documenti nel campione ${anno})`);
+    const env = j.value ?? j;
+    // `content` è la forma MISURATA (docs §4). `invoices` in cima NON è documentata: era la
+    // forma che questo file INVENTAVA fino al 2026-09-02 e resta solo come ripiego, da
+    // togliere il giorno in cui si misura che non serve. In entrambi i casi gli elementi
+    // sono DOCUMENTI.
+    const elenco = env.content ?? env.invoices;
+    // Senza `?? []`: una busta senza elenco deve finire QUI, non diventare un array vuoto
+    // che passa il controllo e stampa «0 documenti» come se fosse un dato.
+    if (!Array.isArray(elenco)) {
+        // Le CHIAVI, mai i valori: dicono dov'è finito l'elenco senza mostrare nessuno.
+        console.log(`   ⚠ nessun elenco in «content» né in «invoices»; chiavi: ${Object.keys(env).join(', ')}`);
+        return false;
+    }
+    let fatture = 0;
+    let esempio = null;
+    for (const doc of elenco) {
+        // `invoices` è un ARRAY (più `FatturaElettronicaBody` nello stesso file): si scorre tutto.
+        const dentro = Array.isArray(doc?.invoices) ? doc.invoices : [doc];
+        for (const f of dentro) {
+            if (!f || typeof f !== 'object' || f.number == null) continue;
+            fatture++;
+            if (esempio === null) esempio = String(f.number);
+        }
+    }
+    console.log(`   ✓ WEB SERVICE ATTIVI — findByUsername ha risposto (${elenco.length} documenti nel campione ${anno}, ${fatture} fatture dentro)`);
+    console.log(`     primo numero letto (${env.content ? 'content[].invoices[].number' : 'ripiego: invoices in cima'}): ${esempio ?? '(nessuno)'}`);
+    if (elenco.length > 0 && esempio === null) {
+        console.log('     ⚠️  documenti letti ma NESSUN numero: la forma è cambiata di nuovo e');
+        console.log(`         l'emissione si fermerebbe. Chiavi del primo elemento: ${Object.keys(elenco[0] ?? {}).join(', ')}`);
+    }
     return true;
 }
 
@@ -153,7 +195,7 @@ async function main() {
 
     if (!username || !password) {
         console.error('Mancano le credenziali. Servono, in `.env.local` o nell\'ambiente:');
-        console.error('  ARUBA_USERNAME   (per questa cooperativa: PROGEA03394870616)');
+        console.error('  ARUBA_USERNAME   (lo username dell\'utenza Premium del pannello Fatturazione Elettronica: non è scritto qui, il repository è pubblico)');
         console.error('  ARUBA_PASSWORD   (la password del pannello Fatturazione Elettronica)');
         console.error('');
         console.error('Nessun valore viene stampato da questo script.');
@@ -164,7 +206,7 @@ async function main() {
     const anno = new Date().getFullYear();
     let almenoUno = false;
 
-    console.log(`Utenza: ${username}   (password: letta, mai stampata)`);
+    console.log('Utenza e password: lette dall\'ambiente, mai stampate (questa uscita finisce nei referti, e il repository è pubblico).');
     console.log('');
 
     for (const nome of richiesti) {

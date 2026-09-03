@@ -76,6 +76,58 @@ export interface ArubaUploadResult {
   uploadFileName?: string
   errorCode: string
   errorDescription?: string
+  /**
+   * VERO quando il rifiuto è di TRASPORTO e non di MERITO — cioè quando **non si sa** se il
+   * documento sia arrivato ad Aruba.
+   *
+   * ─── LA DISTINZIONE HA UNA CONSEGUENZA FISCALE, NON ESTETICA ──────────────────────
+   * Uno SCARTO DI MERITO è Aruba che ha ricevuto il file, l'ha guardato e l'ha respinto:
+   * `0092` (XSD), `0094` (IdTrasmittente), `0034` (già inviato di recente). Arriva come `2xx`
+   * con l'envelope e un `errorCode` diverso da `0000`. È un fatto definitivo, e a registro va
+   * scritto come tale.
+   *
+   * Un RIFIUTO DI TRASPORTO è tutto il resto: `429` (che Aruba manda come pagina HTML),
+   * `401`/`403`, `5xx`, o un `2xx` con un corpo che non si riesce a leggere. Lì l'esito è
+   * IGNOTO — un `429` di norma arriva prima che il file venga elaborato, ma nessuno lo
+   * garantisce, e un `5xx` può benissimo essere sceso dopo l'accettazione.
+   *
+   * Con UNA eccezione, ed è l'unico posto in cui un `errorCode` sposta la classificazione:
+   * un `0034` arrivato in risposta al NOSTRO ritentativo dice che il primo invio ERA stato
+   * ricevuto, quindi è trasporto e non merito. Quel caso — e SOLO quello — si riconosce dal
+   * campo `dopoRitentativo` qui sotto, mai dal solo `errorCode`: vedi il ramo in fondo ad
+   * `arubaUpload`.
+   *
+   * Fino al 2026-09-03 i due casi erano indistinguibili per il chiamante, che scriveva
+   * `sdi_stato: 2` («Errore upload») con il blob HTML dentro `sdi_scarto_motivo`.
+   * `fatture_emesse` è WORM — il trigger vieta il `DELETE` — quindi un limite di frequenza
+   * diventava un **rifiuto fiscale permanente**, su un numero già consumato.
+   */
+  trasporto?: boolean
+  /**
+   * Lo status HTTP del rifiuto di trasporto (`429`, `401`, `500`, oppure `200` se il corpo
+   * era illeggibile). Assente sugli scarti di merito e sugli esiti riusciti. Non vale mai
+   * `0`: quando una risposta non c'è stata affatto questa funzione LANCIA, come sempre.
+   */
+  statoHttp?: number
+  /**
+   * VERO **solo** in un caso: il NOSTRO secondo invio (dopo un `429`) ha ricevuto un `0034`
+   * «File già inviato di recente» — il ramo `ritentato && errorCode === '0034'` in fondo ad
+   * `arubaUpload`. Un secondo `429`, o uno `0000` dopo il ritentativo, NON lo alzano.
+   *
+   * ─── PERCHÉ NON BASTA GUARDARE `errorCode` ───────────────────────────────────────
+   * Lì il `0034` («File già inviato di recente») parla del PRIMO tentativo, quello tornato
+   * indietro come `429`: dice che il documento ERA stato ricevuto, ed è l'unico modo in cui
+   * il chiamante può saperlo. Ma `0034` da solo non lo dimostra: il ramo `!esito.ok` copia
+   * nell'esito l'`errorCode` dell'envelope del rifiuto, quindi un HTTP non-2xx con corpo
+   * `{"errorCode":"0034",…}` e nessun `429` di mezzo esce con `trasporto: true`,
+   * `statoHttp: 400` e lo stesso `errorCode` — ed è un normale rifiuto di trasporto, che va
+   * raccontato con il suo status e non con una frase su un `429` che non è mai arrivato.
+   * Quella frase finisce in `fatture_emesse.sdi_scarto_motivo`, dove il trigger WORM vieta
+   * il `DELETE`: una falsità scritta lì non si corregge più.
+   *
+   * Assente in ogni altro esito — riuscito, scarto di merito, rifiuto di trasporto.
+   */
+  dopoRitentativo?: boolean
 }
 
 export interface ArubaInvoiceStatus {
@@ -138,10 +190,34 @@ const CORPO_DIAGNOSI_MAX = 200
  * nessun test se ne accorga. Una costante che rende invisibile una regola costa più di quanto
  * risparmi.
  */
+let richiesteSpese = 0
+
 function chiamaAruba(operazione: string, url: string, init: RequestInit): Promise<EsitoEsterno> {
+  // Il TENTATIVO conta, non l'esito: la doc di Aruba dice che «ogni singolo tentativo
+  // effettua un touch che resetta il timer del TTL», cioè anche una richiesta rifiutata
+  // consuma quota. Si incrementa PRIMA della chiamata, per lo stesso motivo.
+  richiesteSpese++
   // `campi.operazione` sovrascrive il default di `externalFetch` (il pattern del path): sulla
   // riga si legge `aruba:signin` invece di `/auth/signin`, ed è ciò che dice DI COSA si parla.
   return externalFetch('aruba', url, init, { evento: 'fattura', campi: { operazione } })
+}
+
+/**
+ * Quante richieste HTTP sono davvero partite verso Aruba da questo processo.
+ *
+ * ─── A COSA SERVE, E PERCHÉ NON È UNA METRICA ────────────────────────────────────
+ * `emissione.ts` deve sapere una cosa sola prima di lanciare l'upload: *abbiamo appena
+ * speso richieste al secchio di Aruba?* Se sì, l'upload va distanziato (vedi
+ * `PAUSA_FRA_PAGINE_MS`); se il pavimento della serie è arrivato dalla cache non è partito
+ * niente, e aspettare sarebbero cinque secondi buttati addosso a chi guarda lo schermo.
+ *
+ * Il predicato giusto è QUESTO — «è partita una richiesta» — e non «la cache era vuota»:
+ * sono la stessa cosa in produzione, ma solo il primo è una misura. Un contatore monotono,
+ * letto prima e dopo, risponde senza inventare niente. Non si azzera: si guarda la
+ * differenza.
+ */
+export function richiesteArubaSpese(): number {
+  return richiesteSpese
 }
 
 /**
@@ -207,8 +283,8 @@ function analizzaCorpo(grezzo: string): LetturaCorpo {
  * questa riga «Aruba ha risposto 200 senza dire niente» e «Aruba ha detto stato 0» sono lo
  * stesso dato per chi legge, e il secondo è un fatto mentre il primo è un guasto.
  */
-async function leggiCorpoJson(res: Response | undefined, operazione: string): Promise<Record<string, unknown>> {
-  if (!res) return {}
+async function leggiCorpoConDiagnosi(res: Response | undefined, operazione: string): Promise<LetturaCorpo> {
+  if (!res) return { oggetto: {}, problema: 'vuoto', testo: '' }
   let grezzo: string
   try {
     grezzo = await res.text()
@@ -219,11 +295,11 @@ async function leggiCorpoJson(res: Response | undefined, operazione: string): Pr
       esito: 'corpo-illeggibile',
       msg: `Aruba ${operazione}: risposta 2xx con corpo non leggibile`,
     }, e)
-    return {}
+    return { oggetto: {}, problema: 'non-json', testo: '' }
   }
 
   const lettura = analizzaCorpo(grezzo)
-  if (lettura.problema === null) return lettura.oggetto
+  if (lettura.problema === null) return lettura
 
   logEvento('fattura', 'warn', {
     operazione,
@@ -236,7 +312,18 @@ async function leggiCorpoJson(res: Response | undefined, operazione: string): Pr
         ? `Aruba ${operazione}: risposta 2xx con corpo vuoto`
         : `Aruba ${operazione}: risposta 2xx non interpretabile (${lettura.problema}): ${lettura.testo}`,
   })
-  return lettura.oggetto
+  return lettura
+}
+
+/**
+ * Come sopra, per i quattro chiamanti a cui la DIAGNOSI non serve: leggono i campi che
+ * trovano e proseguono coi valori mancanti (uno stato SDI `0`, un progressivo `0`), che è il
+ * degrado giusto per una lettura. L'unico che deve sapere se il corpo era leggibile è
+ * `arubaUpload`, perché lì «non ho capito la risposta» e «l'invio è riuscito» non possono
+ * essere lo stesso esito: c'è di mezzo un numero di fattura.
+ */
+async function leggiCorpoJson(res: Response | undefined, operazione: string): Promise<Record<string, unknown>> {
+  return (await leggiCorpoConDiagnosi(res, operazione)).oggetto
 }
 
 /** L'envelope di Aruba dentro un corpo d'ERRORE già letto da `externalFetch`. */
@@ -245,6 +332,50 @@ function envelopeDelRifiuto(corpo: string): Record<string, unknown> {
   const env = (lettura.oggetto.value as Record<string, unknown>) ?? lettura.oggetto
   return env
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IL RITMO. Non è una prudenza: è un numero che Aruba pubblica.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Quanto si aspetta fra una richiesta ad Aruba e la successiva.
+ *
+ * ─── LA MISURA, NON PIÙ LA PRUDENZA ──────────────────────────────────────────
+ * Fino al 2026-09-03 qui c'erano 1.100 ms e un commento onesto che li chiamava
+ * «prudenza, non misura»: la finestra vera non era nota e cercarla a tentativi
+ * avrebbe bruciato quota. La misura invece **esiste ed è pubblicata**: SLA §3
+ * della documentazione ufficiale (https://fatturazioneelettronica.aruba.it/apidoc/docs.html)
+ * dichiara, per IP e al minuto, **12 richieste** sulla ricerca delle fatture
+ * inviate, **30** sull'upload e **1** sull'autenticazione, con «una combinazione
+ * fra Leaky Bucket e TTL» che «rifiuta istantaneamente con HTTP 429» e «non
+ * accoda». Dodici al minuto è **una ogni cinque secondi**.
+ *
+ * Con 1.100 ms si stava a ~54 richieste al minuto: quattro volte e mezzo il
+ * limite dichiarato. Che l'osservazione del 2026-09-02 — 8 richieste accettate
+ * in 4,2 s e la nona `429` — sia compatibile con un bucket da 12/min non era una
+ * coincidenza: era il bucket.
+ *
+ * ─── QUANTO COSTA, DETTO PRIMA CHE QUALCUNO LO SCOPRA ────────────────────────
+ * Sette pagine ⇒ sei pause ⇒ **~30 secondi** per la sola lettura del pavimento
+ * della serie, UNA VOLTA PER LOTTO (la cache dura `TTL_ULTIMO_NUMERO_MS`, cinque
+ * minuti: vedi `emissione.ts`). Il tetto di tempo di `externalFetch` è per
+ * SINGOLA richiesta (30 s per il provider `aruba`) e non c'entra con questa
+ * attesa; quello che va dichiarato è il `maxDuration` della route, ed è fatto.
+ */
+export const PAUSA_FRA_PAGINE_MS = 5_000
+
+/**
+ * Quanto si aspetta dopo un `429` prima dell'unico ritentativo.
+ *
+ * Resta molto più lungo della pausa ordinaria, e deve: un `429` dice che il
+ * secchio è già vuoto, quindi non basta rispettare il ritmo — bisogna dargli il
+ * tempo di riempirsi. Il valore esatto della finestra di ricarica NON è
+ * documentato, e non si cerca a tentativi: ogni probe consuma quota e brucia il
+ * tentativo successivo.
+ */
+export const PAUSA_DOPO_429_MS = 90_000
+
+const attendi = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Le sei chiamate.
@@ -295,13 +426,18 @@ export async function arubaRefresh(ambiente: string | undefined, refreshToken: s
 /**
  * Upload del tracciato FatturaPA (non firmato; Aruba firma CAdES e invia allo SDI).
  *
- * L'UNICA che non lancia su un rifiuto HTTP, ed è deliberato: il chiamante scrive a registro
- * una riga `fatture_emesse` con `sdi_stato: 2` e il motivo. Perché quel motivo sia leggibile,
- * l'envelope si cerca ANCHE nel corpo d'errore — e se il corpo non è JSON (la pagina di
- * manutenzione di un proxy) ci finisce comunque il corpo, non la stringa «500».
+ * L'UNICA che non lancia su un rifiuto HTTP, ed è deliberato: al chiamante torna un esito con
+ * `ok: false` che dice DI CHE TIPO è il rifiuto. Uno SCARTO DI MERITO (`2xx` con envelope e
+ * `errorCode` ≠ `0000`) va a registro come «Errore upload» con `sdi_stato: 2`; un RIFIUTO DI
+ * TRASPORTO (`trasporto: true`: `429` sopravvissuto all'unico ritentativo, `401`/`403`, `5xx`,
+ * o un `2xx` illeggibile) va a registro come «Trasporto fallito» con `sdi_stato: null` e un
+ * motivo breve che NON contiene mai il corpo della risposta — la spiegazione sta nella JSDoc
+ * di `trasporto`, qui sopra. Il corpo del provider non si butta via lo stesso: resta in
+ * `errorDescription` per il log, dove l'envelope si cerca ANCHE nel corpo d'errore.
  *
- * Su una risposta MANCANTE (rete giù, DNS, TLS) invece si lancia, come faceva il `fetch` prima:
- * una fattura che non è nemmeno partita non deve finire a registro come «scartata da Aruba».
+ * Su una risposta MANCANTE (rete giù, DNS, TLS, tetto di tempo) invece si LANCIA, come faceva
+ * il `fetch` prima: è il chiamante — `emissione.ts` — a trattare l'eccezione come rifiuto di
+ * trasporto a esito ignoto, perché lì il numero di fattura è già stato allocato e va documentato.
  * La distinzione ha una conseguenza fiscale, non estetica.
  */
 export async function arubaUpload(
@@ -310,37 +446,136 @@ export async function arubaUpload(
   params: { dataFileBase64: string; senderPIVA: string }
 ): Promise<ArubaUploadResult> {
   const { ws } = arubaBaseUrls(ambiente)
-  const esito = await chiamaAruba('aruba:upload', `${ws}/services/invoice/upload`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json;charset=UTF-8',
-    },
-    body: JSON.stringify({
-      dataFile: params.dataFileBase64,
-      senderPIVA: params.senderPIVA,
-      skipExtraSchema: false,
-    }),
-  })
+  const tentativo = (): Promise<EsitoEsterno> =>
+    chiamaAruba('aruba:upload', `${ws}/services/invoice/upload`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json;charset=UTF-8',
+      },
+      body: JSON.stringify({
+        dataFile: params.dataFileBase64,
+        senderPIVA: params.senderPIVA,
+        skipExtraSchema: false,
+      }),
+    })
+
+  let esito = await tentativo()
+  /**
+   * VERO quando il file è partito DUE volte per mano nostra.
+   *
+   * Serve a una domanda sola, più in basso: un `0034` nella risposta è indistinguibile
+   * dall'uno all'altro tentativo, ma significa due cose opposte a seconda di quale dei
+   * due lo ha ricevuto. Senza questo booleano, quella distinzione non è ricostruibile.
+   */
+  let ritentato = false
+
+  // ── IL RITENTATIVO, E SOLO SUL 429 ────────────────────────────────────────────
+  // Stesso criterio di `paginaConRitentativo` (in lettura), e per la stessa ragione: il
+  // limite di Aruba punisce la FREQUENZA, quindi UNO solo — insistere è letteralmente il
+  // modo di peggiorare ciò che si sta cercando di risolvere.
+  //
+  // ⚠️ E SOLO SUL 429. Un `0092` (XSD), un `0094` (IdTrasmittente), un `0034` (già inviato)
+  // sono rifiuti di MERITO: ripetere lo stesso file produce lo stesso rifiuto, e il secondo
+  // tentativo costa una richiesta al secchio di tutti. Un esito RIUSCITO, poi, non si ritenta
+  // mai: sarebbe una seconda fattura allo SdI per la stessa retta.
+  //
+  // (Il `0034` cambia significato quando è la RISPOSTA a questo ritentativo, ed è il motivo
+  // del booleano qui sopra: vedi il ramo `ritentato && errorCode === '0034'` in fondo.)
+  if (esito.stato === 429) {
+    // Novanta secondi di silenzio dentro una richiesta HTTP sono indistinguibili da un
+    // blocco, per chi legge i log. Questa riga è ciò che li distingue.
+    logEvento('fattura', 'warn', {
+      operazione: 'aruba:upload',
+      provider: 'aruba',
+      esito: 'limite-richieste',
+      msg:
+        `Aruba ha risposto 429 all'upload della fattura: si attende ` +
+        `${Math.round(PAUSA_DOPO_429_MS / 1000)}s e si ritenta UNA volta sola`,
+    })
+    await attendi(PAUSA_DOPO_429_MS)
+    ritentato = true
+    esito = await tentativo()
+  }
+
+  // Nessuna risposta (rete, DNS, TLS, scadenza del tetto): si LANCIA, come ha sempre fatto.
+  // Il chiamante lo tratta come rifiuto di trasporto a esito ignoto — vedi `emissione.ts` —
+  // e la distinzione con «scartata da Aruba» ha una conseguenza fiscale, non estetica.
   if (esito.stato === 0) throw erroreAruba('upload', esito)
 
   if (!esito.ok) {
+    // RIFIUTO DI TRASPORTO. Il `429` sopravvissuto al ritentativo finisce qui, insieme a
+    // `401`/`403` e ai `5xx`: Aruba non ha detto niente sul MERITO del documento, e quindi
+    // nemmeno noi possiamo dirlo. `errorCode` ed `errorDescription` restano quelli di prima
+    // (il corpo del provider non si butta via, AGENTS.md regola 3), ma `trasporto` dice al
+    // chiamante di non scriverli come uno scarto fiscale.
     const env = envelopeDelRifiuto(esito.corpo)
     return {
       ok: false,
+      trasporto: true,
+      statoHttp: esito.stato,
       errorCode: String(env.errorCode ?? esito.stato),
-      // Il corpo grezzo come ripiego: è ciò che finisce in `fatture_emesse.sdi_scarto_motivo`
-      // e sotto gli occhi della segreteria. «500» non le dice se richiamare o riprovare.
       errorDescription: env.errorDescription
         ? String(env.errorDescription)
         : `HTTP ${esito.stato}: ${esito.corpo === '' ? '(nessun corpo nella risposta)' : esito.corpo}`,
     }
   }
 
-  const json = await leggiCorpoJson(esito.res, 'aruba:upload')
+  const lettura = await leggiCorpoConDiagnosi(esito.res, 'aruba:upload')
+  if (lettura.problema !== null) {
+    // UN `2xx` CHE NON SI SA LEGGERE NON È UN SUCCESSO. Prima si tornava `ok: true` con
+    // `uploadFileName` indefinito, e a registro finiva «Presa in carico» senza il nome file:
+    // il `sync` non poteva più ritrovare quel documento, e uno scarto SDI arrivato un'ora
+    // dopo non lo avrebbe saputo nessuno. Un documento fiscale che nessuno può rintracciare
+    // è peggio di un errore dichiarato.
+    return {
+      ok: false,
+      trasporto: true,
+      statoHttp: esito.stato,
+      errorCode: String(esito.stato),
+      errorDescription: `HTTP ${esito.stato} con corpo ${lettura.problema}: ${lettura.testo || '(vuoto)'}`,
+    }
+  }
+
+  const json = lettura.oggetto
   const env = (json.value as Record<string, unknown>) ?? json
   const errorCode = String(env.errorCode ?? '0000')
+
+  // ── UN `0034` DOPO UN NOSTRO RITENTATIVO PARLA DEL PRIMO TENTATIVO ────────────
+  // `0034` è «File già inviato di recente», il dedup di Aruba sul contenuto del file. Se
+  // arriva alla prima risposta parla di un invio PRECEDENTE e resta uno scarto di merito
+  // (vedi il caso di controprova nei test). Se arriva alla seconda — dopo che siamo stati
+  // noi a rimandare lo stesso file — dice l'unica altra cosa che può dire: il primo
+  // tentativo, quello tornato indietro come `429`, ERA stato ricevuto.
+  //
+  // Trattarlo come scarto scriverebbe a registro `sdi_stato 2` «Errore upload» su un
+  // documento che sta su Aruba: falso, e su una tabella WORM non si corregge più. Peggio:
+  // l'idempotenza esclude apposta le righe scartate (vanno ri-emesse), quindi la pressione
+  // successiva di «Emetti» manderebbe allo SdI un SECONDO documento per la stessa retta.
+  // «Esito ignoto» è la verità, ed è anche il verso giusto in cui sbagliare.
+  //
+  // ⚠️ È una GUARDIA su un caso non documentato, non un comportamento atteso: la SLA §3
+  // descrive il `429` come un rifiuto istantaneo che «non accoda», cioè emesso prima che
+  // il file venga elaborato. Se quella descrizione è esatta, questo ramo non scatta mai —
+  // e costa un booleano.
+  if (ritentato && errorCode === '0034') {
+    return {
+      ok: false,
+      trasporto: true,
+      statoHttp: esito.stato,
+      // L'unico posto che lo alza. Senza, il chiamante dovrebbe dedurre questo caso dal solo
+      // `errorCode` — e lo confonderebbe col `0034` dentro un rifiuto HTTP, dove nessuno ha
+      // ritentato niente.
+      dopoRitentativo: true,
+      errorCode: '0034',
+      errorDescription: env.errorDescription ? String(env.errorDescription) : undefined,
+    }
+  }
+
   return {
+    // SCARTO DI MERITO: `2xx`, envelope leggibile, `errorCode` fuori da `0000`. È l'unico
+    // caso in cui a registro va scritta la riga di scarto, perché è l'unico in cui Aruba ha
+    // davvero guardato il documento e l'ha respinto.
     ok: errorCode === '0000',
     uploadFileName: env.uploadFileName ? String(env.uploadFileName) : undefined,
     errorCode,
@@ -477,9 +712,17 @@ function etichetteDellElemento(elemento: unknown): unknown[] {
   return [doc.number]
 }
 
-/** Una pagina di `findByUsername`: il massimo, quanti documenti e quanti se ne sono CAPITI. */
+/** Una pagina di `findByUsername`: i massimi, quanti documenti e quanti se ne sono CAPITI. */
 interface EsitoPagina {
-  max: number
+  /**
+   * Il massimo trovato in questa pagina, **per ciascuna serie chiesta**.
+   *
+   * Era un intero solo, ed è diventato una mappa perché la pagina non appartiene
+   * a una serie: `findByUsername` non sa cosa sia un sezionale (vedi la testata di
+   * `paginaUltimoNumero`). Tenere un intero solo obbligava a riscaricare le stesse
+   * pagine una volta per serie — che è il motivo per cui il collaudo prendeva `429`.
+   */
+  massimi: Map<Sezionale, number>
   ricevuti: number
   /** Etichette nella forma attesa, di QUALUNQUE serie e anno: quante ne abbiamo capite. */
   leggibili: number
@@ -499,10 +742,24 @@ interface EsitoPagina {
   chiaviPrimoElemento: string[]
 }
 
+/**
+ * Una pagina di `findByUsername`, spogliata dei numeri di TUTTE le serie chieste.
+ *
+ * ─── LA RICHIESTA NON SA COSA SIA UN SEZIONALE ───────────────────────────────
+ * Si guardi la query qui sotto: `username`, `page`, `size`, `startDate`, `endDate`,
+ * al più `vatcodeSender`. **Il sezionale non c'è**, e non c'è perché Aruba non lo
+ * accetta: la selezione della serie è tutta nostra, e avviene DOPO, in memoria, su
+ * `numeroSezionaleDaEtichetta`. Ne segue un fatto che è costato un `429` per non
+ * essere stato notato: leggere «Asilo» e leggere «FPR» scaricava **le stesse identiche
+ * pagine, due volte**, per filtrarle in modo diverso. Metà delle richieste erano un
+ * duplicato esatto — su una serie da 3.311 documenti, sette GET buttate.
+ *
+ * Perciò le serie si passano INSIEME e si spoglia la pagina una volta sola.
+ */
 async function paginaUltimoNumero(
   ws: string,
   accessToken: string,
-  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string },
+  params: { username: string; anno: number; sezionali: readonly Sezionale[]; vatcodeSender?: string },
   pagina: number,
 ): Promise<EsitoPagina> {
   const qs = new URLSearchParams({
@@ -528,7 +785,7 @@ async function paginaUltimoNumero(
   // il numero lo estrae `etichetteDellElemento`, che scende dove serve.
   const documenti = (env.content ?? env.invoices ?? []) as unknown[]
 
-  let max = 0
+  const massimi = new Map<Sezionale, number>(params.sezionali.map((s) => [s, 0]))
   let leggibili = 0
   let campione = ''
   /** Le CHIAVI del primo elemento: la diagnosi del prossimo cambio di forma. */
@@ -540,11 +797,50 @@ async function paginaUltimoNumero(
     for (const etichetta of etichetteDellElemento(doc)) {
       if (etichettaNellaFormaAttesa(etichetta)) leggibili++
       else if (campione === '') campione = String(etichetta ?? '(vuoto)').slice(0, CAMPIONE_ETICHETTA_MAX)
-      const n = numeroSezionaleDaEtichetta(etichetta, params.sezionale, params.anno)
-      if (n !== null && n > max) max = n
+      // Una sola etichetta, confrontata con ogni serie chiesta: `numeroSezionaleDaEtichetta`
+      // risponde `null` a quelle che non sono sue, ed è la stessa domanda di prima —
+      // solo posta a tutte le serie invece che a una, senza riscaricare niente.
+      for (const sezionale of params.sezionali) {
+        const n = numeroSezionaleDaEtichetta(etichetta, sezionale, params.anno)
+        if (n !== null && n > (massimi.get(sezionale) ?? 0)) massimi.set(sezionale, n)
+      }
     }
   }
-  return { max, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento }
+  return { massimi, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento }
+}
+
+/**
+ * `paginaUltimoNumero` con UN solo ritentativo dopo un `429`.
+ *
+ * Uno, non tre: il limite di Aruba punisce la frequenza, quindi insistere è
+ * letteralmente il modo di peggiorare la situazione che si sta cercando di
+ * risolvere. Se anche il secondo tentativo trova il muro, si lancia — e chi
+ * emette si ferma, che è sempre la risposta giusta quando il progressivo non
+ * si è potuto leggere.
+ */
+async function paginaConRitentativo(
+  ws: string,
+  accessToken: string,
+  params: { username: string; anno: number; sezionali: readonly Sezionale[]; vatcodeSender?: string },
+  pagina: number,
+): Promise<EsitoPagina> {
+  try {
+    return await paginaUltimoNumero(ws, accessToken, params, pagina)
+  } catch (e) {
+    if ((e as { code?: unknown })?.code !== '429') throw e
+    logEvento('fattura', 'warn', {
+      operazione: 'aruba:findByUsername',
+      provider: 'aruba',
+      esito: 'limite-richieste',
+      anno: params.anno,
+      pagina,
+      msg:
+        `Aruba ha risposto 429 alla pagina ${pagina}: si attende ` +
+        `${Math.round(PAUSA_DOPO_429_MS / 1000)}s e si ritenta UNA volta sola`,
+    })
+    await attendi(PAUSA_DOPO_429_MS)
+    return await paginaUltimoNumero(ws, accessToken, params, pagina)
+  }
 }
 
 /**
@@ -600,12 +896,37 @@ async function paginaUltimoNumero(
  * il fatto che si sia potuto trovare in due minuti è merito di questo errore
  * esplicito — non del silenzio che c'era prima.
  */
-export async function arubaUltimoNumeroFattura(
+/**
+ * ─── PERCHÉ ESISTE LA VERSIONE AL PLURALE ────────────────────────────────────
+ * `arubaUltimoNumeroFattura` (qui sotto) è rimasta, e chiama questa con una serie
+ * sola: tutto il codice che la usa non ha dovuto cambiare. Ma chiamarla DUE volte,
+ * una per serie, scarica due volte le stesse pagine — perché la richiesta ad Aruba
+ * non contiene il sezionale, vedi la testata di `paginaUltimoNumero`. Il 2026-09-02
+ * il collaudo che leggeva entrambe le serie ha preso `429` esattamente lì: la prima
+ * serie era passata, la seconda ha chiesto di nuovo le stesse sette pagine e Aruba
+ * ha detto basta.
+ *
+ * Chi ha bisogno di più di una serie usi QUESTA, e le paghi una volta sola.
+ */
+export async function arubaUltimiNumeriFattura(
   ambiente: string | undefined,
   accessToken: string,
-  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string }
-): Promise<number> {
+  params: { username: string; anno: number; sezionali: readonly Sezionale[]; vatcodeSender?: string }
+): Promise<Map<Sezionale, number>> {
   const { ws } = arubaBaseUrls(ambiente)
+  const elencoSerie = params.sezionali.join('/')
+
+  /**
+   * Il ritmo si tiene sull'INTERA chiamata, non per anno né per serie: ad Aruba non
+   * importa da quale ciclo `for` del nostro codice esca una richiesta, importa quanto
+   * sono vicine fra loro. La prima non aspetta — sarebbe attesa buttata.
+   */
+  let primaRichiesta = true
+  const pagina = async (anno: number, sezionali: readonly Sezionale[], n: number): Promise<EsitoPagina> => {
+    if (!primaRichiesta) await attendi(PAUSA_FRA_PAGINE_MS)
+    primaRichiesta = false
+    return await paginaConRitentativo(ws, accessToken, { ...params, anno, sezionali }, n)
+  }
 
   /**
    * L'errore del formato incomprensibile. `name` a sé perché `get_runtime_errors` di
@@ -617,7 +938,7 @@ export async function arubaUltimoNumeroFattura(
   const erroreEtichette = (anno: number, ricevuti: number, campione: string, chiavi: string[]): Error => {
     const err = new Error(
       `Aruba findByUsername: ${ricevuti} documenti nell'anno ${anno} e nessuna etichetta nella forma attesa ` +
-        `«${params.sezionale} <numero>/<anno>» (primo valore non riconosciuto: «${campione}»). ` +
+        `«${elencoSerie} <numero>/<anno>» (primo valore non riconosciuto: «${campione}»). ` +
         // Le CHIAVI del primo elemento, non i valori: il 2026-09-02 il messaggio diceva
         // solo «(vuoto)», che è vero e inutile — non distingue «il campo è vuoto» da «il
         // campo non esiste più», e la seconda era la risposta giusta. Con l'elenco dei
@@ -630,27 +951,30 @@ export async function arubaUltimoNumeroFattura(
     return err
   }
 
-  const massimoDellAnno = async (anno: number): Promise<number> => {
-    let max = 0
+  const massimiDellAnno = async (anno: number, serie: readonly Sezionale[]): Promise<Map<Sezionale, number>> => {
+    const massimi = new Map<Sezionale, number>(serie.map((s) => [s, 0]))
     let ricevutiTotali = 0
     let leggibiliTotali = 0
     let campione = ''
     let chiavi: string[] = []
     /** Vero solo se sono arrivati documenti e non se n'è riconosciuto nemmeno uno. */
     const nessunaEtichettaCapita = () => ricevutiTotali > 0 && leggibiliTotali === 0
-    for (let pagina = 1; pagina <= PAGINE_MAX; pagina++) {
-      const { max: maxPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento } =
-        await paginaUltimoNumero(ws, accessToken, { ...params, anno }, pagina)
-      if (maxPagina > max) max = maxPagina
+    for (let n = 1; n <= PAGINE_MAX; n++) {
+      const { massimi: massimiPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento } =
+        await pagina(anno, serie, n)
+      for (const s of serie) {
+        const trovato = massimiPagina.get(s) ?? 0
+        if (trovato > (massimi.get(s) ?? 0)) massimi.set(s, trovato)
+      }
       ricevutiTotali += ricevuti
       leggibiliTotali += leggibili
       if (campione === '' && campionePagina !== '') campione = campionePagina
       if (chiavi.length === 0 && chiaviPrimoElemento.length > 0) chiavi = chiaviPrimoElemento
       if (ricevuti < PAGINA_SIZE) {
         if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
-        return max
+        return massimi
       }
-      if (pagina === PAGINE_MAX) {
+      if (n === PAGINE_MAX) {
         // Il tetto è stato toccato: l'elenco continua e noi smettiamo di guardarlo.
         // `warn` e non `error` perché il numero che restituiamo resta un limite
         // INFERIORE valido (il progressivo non torna indietro), ma se questa riga
@@ -660,17 +984,46 @@ export async function arubaUltimoNumeroFattura(
           provider: 'aruba',
           esito: 'pagine-troncate',
           anno,
-          msg: `Aruba findByUsername: superate ${PAGINE_MAX} pagine da ${PAGINA_SIZE} per la serie ${params.sezionale}; il massimo letto potrebbe non essere l'ultimo`,
+          msg: `Aruba findByUsername: superate ${PAGINE_MAX} pagine da ${PAGINA_SIZE} per le serie ${serie.join('/')}; il massimo letto potrebbe non essere l'ultimo`,
         })
       }
     }
     if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
-    return max
+    return massimi
   }
 
-  const corrente = await massimoDellAnno(params.anno)
-  if (corrente > 0) return corrente
-  return await massimoDellAnno(params.anno - 1)
+  const massimi = await massimiDellAnno(params.anno, params.sezionali)
+
+  // L'anno prima si guarda SOLO per le serie rimaste a zero, e solo se ce n'è
+  // qualcuna: se «Asilo» ha documenti quest'anno e «FPR» no, non ha senso
+  // riscaricare il 2025 anche per «Asilo». Il criterio resta quello di prima —
+  // «zero in questo anno» — applicato serie per serie invece che al mucchio.
+  const senzaDocumenti = params.sezionali.filter((s) => (massimi.get(s) ?? 0) === 0)
+  if (senzaDocumenti.length === 0) return massimi
+
+  const precedenti = await massimiDellAnno(params.anno - 1, senzaDocumenti)
+  for (const s of senzaDocumenti) massimi.set(s, precedenti.get(s) ?? 0)
+  return massimi
+}
+
+/**
+ * L'ultimo numero di UNA serie. Involucro su `arubaUltimiNumeriFattura`.
+ *
+ * Resta perché è quello che serve a chi emette una fattura sola, ed è la firma che
+ * tutto il resto del repo già usa. ⚠️ Chiamarla due volte per due serie costa il
+ * doppio delle richieste ad Aruba **per gli stessi identici dati**: se le serie sono
+ * più d'una, si usi la versione al plurale.
+ */
+export async function arubaUltimoNumeroFattura(
+  ambiente: string | undefined,
+  accessToken: string,
+  params: { username: string; anno: number; sezionale: Sezionale; vatcodeSender?: string }
+): Promise<number> {
+  const massimi = await arubaUltimiNumeriFattura(ambiente, accessToken, {
+    ...params,
+    sezionali: [params.sezionale],
+  })
+  return massimi.get(params.sezionale) ?? 0
 }
 
 /** Notifiche SDI relative a una fattura inviata. */

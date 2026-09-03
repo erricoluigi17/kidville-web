@@ -118,11 +118,29 @@ Le tre asserzioni che il passaggio garantisce, e che sono quelle che contano:
 
 La correzione non è più dimostrata soltanto contro una fixture: è dimostrata **in presa diretta**.
 
-⚠️ **Al prossimo lancio, NON filtrare l'output.** Il 2026-09-03 il comando è stato lanciato con un
-`| grep` che si è mangiato le due righe con i numeri: il test è passato, ma i due progressivi non
-sono stati letti da nessuno. Il collaudo li stampa (`Asilo 2026: ultimo numero letto = …`), e
-servono al Passo 3 per controllare che la fattura emessa porti `max + 1`. Rilanciare solo per
-rivederli costa un intero secchio: **si guarda l'output la prima volta**.
+🔴 **I DUE PROGRESSIVI NON SONO ANCORA STATI LETTI DA NESSUNO, E NON ERA COLPA DEL `grep`.**
+
+Questo riquadro prima diceva che il 2026-09-03 un `| grep` si era mangiato le due righe coi numeri.
+**Era la spiegazione comoda, ed era sbagliata.** La lettura è stata rifatta alle 07:39 catturando
+l'output **integrale su file, senza nessun filtro**: il test è passato di nuovo, e le due righe
+**non c'erano lo stesso**.
+
+La causa vera, misurata con un file di prova che stampava le due cose una accanto all'altra:
+**vitest intercetta `console.*` e in questa configurazione lo inghiotte**, mentre lascia passare
+`process.stdout.write`. Il collaudo usava `console.log`. Quindi quei numeri **non sono mai stati
+stampati** — non alle 00:10, non alle 07:39.
+
+**Costo dell'errore: due letture contro l'API vera, entrambe «passate» ed entrambe mute.** La
+seconda è stata spesa per riscoprire ciò che la prima aveva già fatto, perché la diagnosi del `grep`
+sembrava plausibile e non era stata verificata.
+
+✅ **Corretto**: il collaudo ora scrive con `process.stdout.write`. Al prossimo lancio i numeri si
+vedranno. Servono al Passo 3 per controllare che la fattura emessa porti `max + 1`; finché non si
+conoscono, di quel controllo resta solo la metà grossolana («se è `1`, fermare tutto»), che
+intercetta la collisione grave ma non un errore di un'unità.
+
+⚠️ E resta vero comunque: **non filtrare l'output**. Un valore non stampato è un valore perso —
+esiste solo durante la chiamata, e rivederlo costa un'altra finestra da un'ora.
 
 **Lanciarlo come PRIMA cosa della sessione**, senza nessun'altra chiamata ad Aruba prima.
 

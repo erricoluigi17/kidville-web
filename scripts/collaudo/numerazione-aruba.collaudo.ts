@@ -82,14 +82,26 @@ describe.skipIf(!ATTIVO || !USERNAME || !PASSWORD)('numerazione Aruba — il cod
     const asilo = massimi.get('Asilo') ?? 0
     const fpr = massimi.get('FPR') ?? 0
 
-    // Si stampa PRIMA di asserire. Il 2026-09-02 i due `console.log` stavano dopo
-    // entrambe le letture: quando la seconda lanciò, il numero della prima — che era
-    // già stato pagato in richieste — andò perso, e con esso l'unica cosa che quella
-    // esecuzione aveva davvero ottenuto. Un valore misurato non si butta via perché
-    // il passo dopo è andato male.
+    // ⚠️ `process.stdout.write` E NON `console.log`. Non è un vezzo: **vitest intercetta
+    // `console.*` e in questa configurazione lo INGHIOTTE**, mentre lascia passare la
+    // scrittura diretta. Misurato il 2026-09-03 con un file di prova che stampava le due
+    // cose una accanto all'altra: usciva solo la seconda.
+    //
+    // È costato DUE letture contro l'API vera, entrambe «passate» e entrambe mute. La
+    // prima volta la colpa fu data a un `| grep` nel comando; la seconda è stata catturata
+    // su file, senza nessun filtro, ed erano assenti lo stesso. La spiegazione comoda era
+    // sbagliata, e ha fatto spendere un secondo secchio per riscoprire la stessa cosa.
+    //
+    // Qui un valore non stampato è un valore PERSO: esiste solo durante la chiamata, e
+    // rivederlo costa un'altra finestra da un'ora.
+    //
+    // Si stampa PRIMA di asserire, per la stessa ragione: il 2026-09-02 le due righe
+    // stavano dopo entrambe le letture, la seconda lanciò, e il numero della prima — già
+    // pagato in richieste — andò perso.
+    //
     // Solo numeri: nessun nome, nessun codice fiscale.
-    console.log(`  Asilo ${anno}: ultimo numero letto = ${asilo}`)
-    console.log(`  FPR   ${anno}: ultimo numero letto = ${fpr}`)
+    process.stdout.write(`\n  Asilo ${anno}: ultimo numero letto = ${asilo}\n`)
+    process.stdout.write(`  FPR   ${anno}: ultimo numero letto = ${fpr}\n\n`)
 
     // ZERO è il valore che il difetto produceva quando la guardia non c'era, ed è il
     // valore che farebbe emettere «FPR 1/26» su una serie da millenovecento documenti.

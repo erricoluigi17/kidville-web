@@ -198,8 +198,11 @@ describe('emettiFatturaPagamento', () => {
       expect(esito.uploadFileName).toBe('IT12345678903_a1b2.xml.p7m')
     }
 
-    // upload chiamato con dataFile base64 e P.IVA mittente
+    // upload chiamato con il solo dataFile base64: NIENTE `senderPIVA` su un TD01. Il 2026-09-03
+    // la prima fattura vera è stata respinta da Aruba con `0093` «deleghe non valide» proprio per
+    // quel campo, mandato a 11 cifre nude (la doc lo vuole `IT`+P.IVA, e solo sui TD26).
     const uploadArgs = vi.mocked(arubaUpload).mock.calls[0]
+    expect('senderPIVA' in (uploadArgs[2] as object)).toBe(false)
     const dataFile = (uploadArgs[2] as { dataFileBase64: string }).dataFileBase64
     const decoded = Buffer.from(dataFile, 'base64').toString('utf-8')
     expect(decoded).toContain('<FormatoTrasmissione>FPR12</FormatoTrasmissione>')

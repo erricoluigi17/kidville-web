@@ -362,6 +362,13 @@ Tre strade, tutte difendibili:
 2. **Mandarlo come prescritto**, `IT` + P.IVA: è una riga, `emissione.ts:1142`.
 3. **Lasciarlo com'è** — legittimo, ma allora va scritto che è una decisione presa e non una svista.
 
+> ✅ **DECISO E MISURATO il 2026-09-03 alle 15:57, nel modo più caro**: la prima fattura vera (TD01,
+> `senderPIVA` a 11 cifre) è stata respinta con `0093` «Errore deleghe non valide», e **FPR 1947/26 è
+> rimasto consumato** a registro. `/auth/userInfo` dice che l'utenza è il cedente (`IT` + `03394870616`)
+> senza multi-cedenti. Presa la **strada 1**: `senderPIVA` **non si manda** sui TD01; resta opzionale
+> in `arubaUpload` per un futuro TD26, e allora **`IT` + P.IVA**. Il test di `client.test.ts` ora fissa
+> l'assenza della chiave.
+
 Le prime due muovono anche il test `__tests__/lib/aruba/client.test.ts:93`, che oggi **fissa** il
 corpo dell'upload con la P.IVA nuda e diventerebbe rosso: è il posto giusto dove vedere la scelta.
 

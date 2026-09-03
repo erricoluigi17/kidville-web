@@ -132,6 +132,24 @@ azzera il TTL: bussare più forte allunga l'attesa invece di accorciarla.
 Nove richieste in pochi secondi, e la nona è **esattamente** il numero d'ordine su cui il 2026-09-02
 è arrivato il `429`.
 
+### La prima pressione (2026-09-03, 15:57): `0093` «deleghe non valide», e la correzione
+
+Il titolare ha premuto «Riprova fattura» dall'app con il codice della PR #113 in produzione. Il giro
+ha fatto ciò che doveva — un `signin`, sette pagine distanziate, la pausa, l'upload: `HTTP 200` — e
+Aruba ha risposto **`0093` «Errore deleghe non valide»**. Scarto di **merito**, quindi a registro è
+finita la riga **FPR 1947/26** con `sdi_stato 2` «Errore upload»: **quel numero resta consumato** e
+la serie riparte da 1948. La riga lo documenta; il commercialista va avvisato del buco.
+
+La causa era già scritta in `docs/fatturazione/configurazione-aruba.md` §3.8, come scelta rimandata:
+l'upload mandava **sempre** `senderPIVA` con la P.IVA a **11 cifre nude**, mentre la doc di Aruba lo
+lega ai soli **TD26** e, «nel caso in cui venga utilizzato», lo vuole come **`IT` + P.IVA**. Misurato
+subito dopo con `/auth/userInfo` e `/auth/multicedenti` (3 richieste, nessun upload): l'utenza **è il
+cedente** (`countryCode IT`, `vatCode 03394870616`, nessun multi-cedente). Aruba confrontava
+`03394870616` con `IT03394870616`, non trovava nessun mittente delegato e rispondeva `0093`.
+**Correzione (PR #114)**: `senderPIVA` non si manda più sui TD01; `arubaUpload` lo accetta come
+parametro opzionale e lo mette nel corpo solo se passato. Test visto rosso: l'emissione chiamava
+l'upload con la chiave, ora no.
+
 ### Cosa cambia nel codice
 
 - **`PAUSA_FRA_PAGINE_MS`: da 1.100 a 5.000 ms.** Non è più prudenza a occhio: dodici ricerche al

@@ -79,7 +79,7 @@ describe('Aruba REST client (HTTP)', () => {
     fetchMock.mockResolvedValue(
       mockResponse({ uploadFileName: 'IT01879020517_abcde.xml.p7m', errorCode: '0000', errorDescription: 'OK' })
     )
-    const res = await arubaUpload('demo', 'AT', { dataFileBase64: 'PGZhdHR1cmE+', senderPIVA: '12345678903' })
+    const res = await arubaUpload('demo', 'AT', { dataFileBase64: 'PGZhdHR1cmE+' })
     expect(res.ok).toBe(true)
     expect(res.uploadFileName).toBe('IT01879020517_abcde.xml.p7m')
     expect(res.errorCode).toBe('0000')
@@ -90,7 +90,18 @@ describe('Aruba REST client (HTTP)', () => {
     expect(init.headers.Authorization).toBe('Bearer AT')
     const body = JSON.parse(init.body)
     expect(body.dataFile).toBe('PGZhdHR1cmE+')
-    expect(body.senderPIVA).toBe('12345678903')
+    // SENZA `senderPIVA`: la doc lo lega ai soli TD26 e, «nel caso in cui venga utilizzato», lo
+    // vuole come `IT` + P.IVA. Il 2026-09-03 alle 15:57 la prima fattura vera è stata respinta
+    // con `0093` «deleghe non valide» perché lo mandavamo a 11 cifre nude su un TD01: Aruba lo
+    // confrontava con l'utenza (`IT03394870616`) e non trovava nessun mittente delegato.
+    expect('senderPIVA' in body).toBe(false)
+  })
+
+  it('arubaUpload: `senderPIVA`, se passato (TD26), viaggia nel corpo COME dato — codice nazione compreso', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ uploadFileName: 'IT01879020517_abcde.xml.p7m', errorCode: '0000' }))
+    await arubaUpload('demo', 'AT', { dataFileBase64: 'x', senderPIVA: 'IT12345678903' })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.senderPIVA).toBe('IT12345678903')
   })
 
   it('arubaUpload: errorCode diverso da 0000 → ok=false con descrizione errore', async () => {

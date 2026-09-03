@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { arubaUltimoNumeroFattura, numeroSezionaleDaEtichetta } from '@/lib/aruba/client'
+import { arubaUltimoNumeroFattura, numeroSezionaleDaEtichetta, PAUSA_FRA_PAGINE_MS } from '@/lib/aruba/client'
 import { progressivoInvioFattura } from '@/lib/aruba/emissione'
 
 /**
@@ -88,21 +88,84 @@ describe('progressivoInvioFattura — un nome file diverso per ogni serie', () =
  * La lettura vera, con la rete finta.
  * ──────────────────────────────────────────────────────────────────────────── */
 
-function rispostaConNumeri(numeri: (string | number | null)[]): Response {
+/**
+ * Una pagina di `findByUsername` nella forma MISURATA il 2026-09-02.
+ *
+ * ─── PERCHÉ QUESTO HELPER È STATO RISCRITTO ──────────────────────────────────
+ * Fino a quel giorno produceva `{ invoices: [{ number }, …] }`: un elenco piatto di
+ * fatture, cioè **la stessa forma sbagliata che il codice si aspettava**. Mock e parser
+ * si davano ragione a vicenda, e i dieci test che passano di qui restavano verdi anche
+ * col parser rotto — misurato: rimettendo il vecchio `etichetteDellElemento` fallivano
+ * 2 casi su 24, e nessuno era di questi dieci.
+ * Oggi, con questa fixture, la stessa rottura fa fallire 8 dei dieci casi che passano di qui
+ * (10 su 24 nell'intero file, misurato il 2026-09-03: i due che restano verdi asseriscono
+ * un'eccezione o uno zero, che il parser rotto produce comunque).
+ *
+ * La forma vera è una PAGINA Spring Data i cui elementi non sono fatture ma DOCUMENTI
+ * (`filename`, `idSdi`, `sender`, `receiver`), ognuno con le proprie fatture in un array
+ * ANNIDATO. Il numero sta lì:
+ *
+ *     json.content[i].invoices[j].number  ===  «Asilo 2327/2026»
+ *
+ * ⚠️ La busta ha una chiave `number`, ma è il NUMERO DI PAGINA di Spring — sulla prima
+ * pagina, misurata, valeva `0`. Sta qui apposta: chi la leggesse da lì otterrebbe
+ * «pagina zero» e la scambierebbe per un progressivo.
+ *
+ * `totalElements` e `totalPages` sono calcolati come se le pagine precedenti fossero
+ * state piene, perché una fixture conosce solo la propria pagina. Il codice non li
+ * guarda: lo scorrimento si ferma sulla prima pagina non piena, contando i documenti.
+ */
+function rispostaConNumeri(numeri: (string | number | null)[], pagina = 0): Response {
+  /** = `PAGINA_SIZE` in `src/lib/aruba/client.ts`: sotto questa soglia lo scorrimento si ferma. */
+  const SIZE = 500
+  const content = numeri.map((n, i) => ({
+    filename: `IT01879020517_${String(i).padStart(5, '0')}.xml.p7m`,
+    idSdi: '17898673698',
+    invoices: [{ number: n, invoiceDate: '2026-09-01T00:00:00.000+0000', status: 'DELIVERED' }],
+  }))
+  const piena = content.length >= SIZE
   return {
     ok: true,
     status: 200,
-    text: async () => JSON.stringify({ invoices: numeri.map((n) => ({ number: n })) }),
+    text: async () =>
+      JSON.stringify({
+        content,
+        number: pagina, // ← numero di PAGINA, non di fattura
+        size: SIZE,
+        numberOfElements: content.length,
+        totalElements: pagina * SIZE + content.length,
+        totalPages: pagina + (piena ? 2 : 1),
+        first: pagina === 0,
+        last: !piena,
+      }),
   } as Response
+}
+
+/**
+ * Le pause fra una pagina e l'altra scattano tutte, senza che nessuno le aspetti davvero:
+ * qui si misura il RISULTATO, e la durata ha già il suo caso in `numerazione-un-passaggio.test.ts`.
+ * Il gestore agganciato PRIMA di muovere l'orologio serve a una cosa sola: un rifiuto che
+ * arriva mentre i timer avanzano non deve diventare un «Unhandled Rejection» in più nel
+ * referto (col parser rotto ne comparivano tre, accanto ai dieci test rossi veri). L'esito
+ * lo legge comunque l'`await` sotto, che rilancia.
+ */
+async function finoInFondo<T>(lavoro: Promise<T>): Promise<T> {
+  void lavoro.catch(() => undefined)
+  await vi.advanceTimersByTimeAsync(PAUSA_FRA_PAGINE_MS * 25)
+  return await lavoro
 }
 
 describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   beforeEach(() => {
+    vi.useFakeTimers()
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
   })
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
 
   const parametri = { username: 'utente@scuola.it', anno: 2026 } as const
 
@@ -129,14 +192,14 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     // Il vecchio codice chiedeva `page=1&size=500` e prendeva il massimo di quei 500,
     // senza che nessuno avesse mai verificato in che ORDINE Aruba li restituisce. Su una
     // serie da 2.327 documenti è il massimo di un pezzo qualunque dell'elenco.
-    const paginaPiena = (da: number) =>
-      rispostaConNumeri(Array.from({ length: 500 }, (_, i) => `Asilo ${da + i}/2026`))
+    const paginaPiena = (da: number, pagina: number) =>
+      rispostaConNumeri(Array.from({ length: 500 }, (_, i) => `Asilo ${da + i}/2026`), pagina)
     fetchMock
-      .mockResolvedValueOnce(paginaPiena(1))
-      .mockResolvedValueOnce(paginaPiena(501))
-      .mockResolvedValueOnce(rispostaConNumeri(['Asilo 1001/2026', 'Asilo 2327/2026']))
+      .mockResolvedValueOnce(paginaPiena(1, 0))
+      .mockResolvedValueOnce(paginaPiena(501, 1))
+      .mockResolvedValueOnce(rispostaConNumeri(['Asilo 1001/2026', 'Asilo 2327/2026'], 2))
 
-    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }))).toBe(2327)
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(String(fetchMock.mock.calls[2][0])).toContain('page=3')
   })
@@ -155,13 +218,13 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
       .mockResolvedValueOnce(rispostaConNumeri([]))
       .mockResolvedValueOnce(rispostaConNumeri(['Asilo 2327/2025']))
 
-    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }))).toBe(2327)
     expect(String(fetchMock.mock.calls[1][0])).toContain('startDate=2025-01-01')
   })
 
   it('nessun documento in due anni → 0 (la serie è davvero nuova)', async () => {
     fetchMock.mockResolvedValue(rispostaConNumeri([]))
-    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' })).toBe(0)
+    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }))).toBe(0)
   })
 
   it('ARUBA RISPONDE 200 E NON SE NE CAPISCE UN\'ETICHETTA → LANCIA, non «serie nuova»', async () => {
@@ -189,7 +252,7 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     // e questa serie non ha documenti» è un fatto. Qui `FPR` non ha nulla nel 2026 e
     // nemmeno nel 2025: la serie è davvero nuova e deve poter partire da 1.
     fetchMock.mockResolvedValue(rispostaConNumeri(['Asilo 2325/2026', 'Asilo 2327/2026']))
-    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' })).toBe(0)
+    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }))).toBe(0)
   })
 
   it('anche UNA SOLA etichetta capita basta a non lanciare (il resto è rumore del gestionale)', async () => {
@@ -203,7 +266,7 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     fetchMock
       .mockResolvedValueOnce(rispostaConNumeri([]))
       .mockResolvedValueOnce(rispostaConNumeri([1946, 1947]))
-    const errore = await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }).catch((e) => e)
+    const errore = await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }).catch((e) => e))
     expect(errore).toBeInstanceOf(Error)
     expect((errore as Error).name).toBe('ArubaNumerazioneError')
   })

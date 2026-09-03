@@ -1341,6 +1341,26 @@ export const CODICI_ERRORE = {
      * qualcuno che stava lavorando, e non se ne accorge nessuno finché non telefona.
      */
     RINVIO_CREDENZIALI_RISERVATO: 'erroreRinvioCredenzialiRiservato',
+    /**
+     * 403 — le credenziali di un account di DIREZIONE si rigenerano dalla
+     * Direzione (`admin/regenerate-credentials:POST`, `admin/credentials-pdf:GET`).
+     *
+     * Dal 2026-09-03 la Segreteria rigenera le credenziali dello staff del
+     * proprio plesso, ma non quelle di `admin`/`coordinator`: chi preme il
+     * pulsante riceve un PDF con la password IN CHIARO, e su un account di
+     * Direzione quello non sarebbe un recupero credenziali — sarebbe un
+     * passaggio di consegne.
+     */
+    CREDENZIALI_STAFF_RISERVATE: 'erroreCredenzialiStaffRiservate',
+    /**
+     * 403 — chi chiede il rinvio in blocco non ha nessun plesso associato.
+     *
+     * Non è un errore tecnico e non è un tentativo: è un account configurato a
+     * metà. Codice suo e non `SEDE_NON_ACCESSIBILE` perché quel contatore è un
+     * segnale di sicurezza — «hai chiesto una sede che non è tua» — e riempirlo
+     * di account senza sede lo renderebbe illeggibile proprio il giorno che serve.
+     */
+    RINVIO_NESSUN_PLESSO: 'erroreRinvioNessunPlesso',
     /** 500 — il registro degli inviti non si è potuto leggere. */
     REGISTRO_INVITI_NON_LETTO: 'erroreRegistroInvitiNonLetto',
     /** 500 — la sede indicata non si è potuta risolvere in un elenco di genitori. */

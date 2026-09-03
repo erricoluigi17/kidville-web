@@ -96,6 +96,94 @@
 
 ---
 
+## 🔑 Changelog — A Cesa non c'è nessuna Direzione, e per ogni password persa si telefonava — 2026-09-03 (branch `fix/aruba-prima-fattura`)
+
+**La richiesta**: «anche chi ha l'account segreteria deve poter rigenerare le credenziali sia ai
+genitori che allo staff».
+
+**Metà era già vera, e va detto perché la lezione è quella**: il ramo `parent` di
+`admin/regenerate-credentials` passa da `requireStaff`, che include `segreteria`, e non ha mai avuto
+un controllo di ruolo in più. La prova non è nel codice ma nei log: alle **06:31 del 2026-09-03** un
+account `segreteria` ha rigenerato le credenziali di un genitore e Resend ha risposto `200`. Prima
+di implementare, si misura se serve implementare.
+
+### Chi può cosa, da oggi
+
+| | rigenera credenziali GENITORE | rigenera credenziali STAFF | modifica ruolo/sede/classi |
+|---|---|---|---|
+| `admin`, `coordinator` | ✅ | ✅ chiunque | ✅ |
+| `segreteria` | ✅ (già prima) | ✅ **tranne** `admin`/`coordinator` | ❌ |
+| `educator`, `cuoca` | ❌ | ❌ | ❌ |
+
+Tutto resta confinato al **proprio plesso** (`assertParentInScope` / `assertUtenteInScope`).
+
+**Perché la Direzione è un'eccezione**, e non è prudenza astratta: dopo il reset il PDF con la
+password **in chiaro** viene notificato a *chi ha premuto il pulsante*, e `admin/credentials-pdf` era
+aperta a tutto lo staff in scope di sede. Ad Aversa e a Giugliano l'admin sta **nello stesso plesso**
+della segreteria: senza l'eccezione, resettare l'admin e leggerne la password sarebbe stato un
+passaggio di consegne, non un recupero credenziali.
+
+**Perché la modifica del ruolo NON si è aperta**: è ciò che rende non aggirabile la riserva qui
+sopra. Chi può cambiare il ruolo di una collega la promuove ad `admin` e da lì rigenera qualunque
+cosa. Le due riserve si tengono in piedi a vicenda.
+
+**Il perché della misura, in una tabella** (query del 2026-09-03 su `utenti`):
+
+| Sede | admin | coordinator | segreteria |
+|---|---|---|---|
+| Giugliano | 1 | — | 1 |
+| Aversa | 1 | — | 1 |
+| **Cesa** | **0** | **0** | **2** |
+
+### Il difetto trovato per strada: un filtro di sede che non ha mai filtrato
+
+Il rinvio credenziali **in blocco** (`admin/iscrizioni/rinvia-credenziali`, oggi aperto anche alla
+Segreteria) accettava uno `scuola_id` e lo risolveva con `parents.eq('scuola_id', …)`.
+**`parents` non ha quella colonna**: 27 colonne, verificate sullo schema di produzione. PostgREST
+rispondeva `42703` e la route dava **500 `RINVIO_SEDE_NON_RISOLTA`**. Il commento sopra la riga
+diceva il contrario di ciò che la route accanto scriveva già («`parents` non ha sede»).
+
+Invisibile perché l'unico che poteva chiamarla era l'admin multi-sede, che la sede non la passa mai:
+**un filtro rotto che nessuno usa resta verde per sempre.**
+
+Aprirlo senza ripararlo avrebbe mandato una segreteria di Cesa a riscrivere **528** password invece
+di 156:
+
+| Sede | famiglie candidate al rinvio |
+|---|---|
+| Giugliano | 275 |
+| Cesa | 156 |
+| Aversa | 97 |
+
+Ora il perimetro **non arriva più dal client**: parte da `scuoleDiUtente`, la sede del corpo può solo
+restringere (`restringiSedi`, confronto in forma canonica), e i genitori si risolvono **dai figli**
+con la join `student_parents → alunni.scuola_id`. Cambia anche per l'admin: «nessuna sede indicata»
+non vuol più dire *tutte le famiglie esistenti* ma *quelle dei propri plessi*.
+
+### Dove vive la regola
+
+`src/lib/auth/credenziali-staff.ts` → `puoRigenerareCredenzialiStaff(attore, ruoloBersaglio)`. Puro,
+quattro chiamanti: le due route e i due pannelli. Un bersaglio il cui ruolo **non si è riusciti a
+leggere** si nega — `utenti.ruolo` è NOT NULL, quindi `null` significa lettura fallita, e un guasto
+non deve diventare un permesso.
+
+### Verifiche
+
+`eslint` 0 · `tsc --noEmit` 0 · `vitest` **13.366 verdi** (erano 13.327: +39) · `npm run build` ok.
+Ogni gate nuovo ha la sua **controprova eseguita**: neutralizzato il predicato, i test di diniego
+diventano rossi; ripristinato, tornano verdi.
+
+**Codici d'errore nuovi**: `CREDENZIALI_STAFF_RISERVATE` (403), `RINVIO_NESSUN_PLESSO` (403),
+dichiarati in `CODICI_ERRORE` e tradotti in italiano e inglese.
+
+⚠️ **Un flake da tenere d'occhio, non introdotto qui**:
+`__tests__/components/CandidatureInsegnanti.test.tsx > «aprire una candidatura porta il FUOCO
+sull'intestazione del pannello»` è fallito **una volta** nella prima esecuzione della suite intera, e
+passa in isolamento e alla riesecuzione. È un'asserzione sul fuoco sotto carico parallelo, su un file
+che questo lavoro non tocca.
+
+---
+
 ## ⏱️ Changelog — Metà delle richieste ad Aruba chiedevano due volte le stesse pagine — 2026-09-02 (branch `fix/handoff-aruba`)
 
 **Il fatto.** Il collaudo di sola lettura che doveva dimostrare in presa diretta la correzione del

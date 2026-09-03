@@ -306,7 +306,7 @@
   "erroreLetturaFallita": "We could not read the data. Please try again shortly.",
   "erroreRinvioCredenzialiRiservato": "Resending credentials is reserved for the school office",
   "erroreCredenzialiStaffRiservate": "Credentials for a management account can only be reset by management",
-  "erroreRinvioNessunPlesso": "No site is linked to your account: there are no families to serve",
+  "erroreRinvioNessunPlesso": "No location is linked to your account: there are no families to serve",
   "erroreRegistroInvitiNonLetto": "The invitation register could not be read",
   "erroreRinvioSedeNonRisolta": "The selected location could not be resolved",
   "filtriTitolo": "Filters",

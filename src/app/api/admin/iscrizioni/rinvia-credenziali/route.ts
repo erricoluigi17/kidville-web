@@ -135,7 +135,7 @@ export const POST = withRoute('admin/iscrizioni/rinvia-credenziali:POST', async 
         logEvento('iscrizione', 'warn', { operazione: OPERAZIONE, esito: 'nessun-plesso' })
         return NextResponse.json(
             {
-                error: "Nessuna sede associata al tuo account: non c'è nessuna famiglia da servire",
+                error: "Nessuna sede associata al tuo account: non c’è nessuna famiglia da servire",
                 codice: 'RINVIO_NESSUN_PLESSO',
             },
             { status: 403 },

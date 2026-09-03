@@ -15,7 +15,8 @@ import { zUuid } from '@/lib/validation/common';
 import { buildCredentialsPdf } from '@/lib/pdf/credentials-pdf';
 import { enqueueNotifiche } from '@/lib/push/enqueue';
 import { withRoute } from '@/lib/logging/with-route';
-import { logEvento } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
+import { puoRigenerareCredenzialiStaff } from '@/lib/auth/credenziali-staff';
 import { formattaIstante } from '@/i18n/config';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
@@ -33,9 +34,18 @@ const postBodySchema = z.object({
  * via email. È il flusso di recupero credenziali presidiato dalla Segreteria:
  * nessun self-service "password dimenticata". Tracciato in audit (entita 'credenziali').
  *
- * ⚠️ AUTORIZZAZIONE (T3): i GENITORI possono essere resettati da tutto lo staff di
- * gestione (Segreteria inclusa); le credenziali dello STAFF, invece, solo dalla
- * Direzione (`admin`/`coordinator`) — controllo esplicito sotto.
+ * ⚠️ AUTORIZZAZIONE. I GENITORI possono essere resettati da tutto lo staff di
+ * gestione, Segreteria inclusa. Per lo STAFF la regola sta in un posto solo —
+ * `puoRigenerareCredenzialiStaff`, `@/lib/auth/credenziali-staff` — e dal
+ * 2026-09-03 dice: la Segreteria sì, tranne che sugli account di DIREZIONE
+ * (`admin`/`coordinator`).
+ *
+ * Fino a quel giorno la riserva copriva tutto lo staff, e la decisione di
+ * restringerla nasce da una misura: Cesa ha due segreterie e ZERO account di
+ * Direzione, quindi per una maestra che perdeva la password bisognava telefonare
+ * al titolare. L'eccezione sulla Direzione resta perché il PDF con la password IN
+ * CHIARO viene notificato a CHI PREME IL PULSANTE: su un account di Direzione
+ * non sarebbe un recupero credenziali, sarebbe un passaggio di consegne.
  *
  * AUTO-RIPARANTE (S6bis): se il genitore non ha ancora un'identità di accesso
  * completa (account auth, riga `utenti`, ponte `parents.auth_user_id`) la crea
@@ -50,15 +60,6 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   const b = await parseBody(request, postBodySchema);
   if ('response' in b) return b.response;
   const { targetKind, targetId } = b.data;
-
-  // Le credenziali dello STAFF sono un'operazione di Direzione (T3): la Segreteria
-  // può resettare le credenziali dei GENITORI, non quelle del personale.
-  if (targetKind === 'staff' && auth.user.role !== 'admin' && auth.user.role !== 'coordinator') {
-    return NextResponse.json(
-      { error: 'Credenziali staff: operazione riservata alla Direzione' },
-      { status: 403 }
-    );
-  }
 
   // IL CLIENT ARRIVA DAL FACTORY STRUMENTATO, non più da `createClient` di supabase-js: quello
   // non aveva né tetto di tempo né osservabilità, e da qui passa il RESET DI UNA PASSWORD — con
@@ -161,12 +162,71 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
   } else {
     // staff: utenti.id È l'auth.users id (FK utenti_id_fkey)
-    const { data } = await admin.from('utenti').select('id, email, nome, scuola_id').eq('id', targetId).maybeSingle();
+    //
+    // `ruolo` è nel select perché da qui in giù serve a DECIDERE, non a mostrare:
+    // dal 2026-09-03 la Segreteria rigenera le credenziali dello staff del proprio
+    // plesso ma non quelle della Direzione, e il ruolo del bersaglio è l'unico
+    // modo di saperlo. In `utenti` la colonna è NOT NULL: una riga vera lo porta
+    // sempre.
+    const { data, error: erroreUtente } = await admin
+      .from('utenti')
+      .select('id, email, nome, scuola_id, ruolo')
+      .eq('id', targetId)
+      .maybeSingle();
+    // PostgREST NON lancia: ritorna `{ error }` (AGENTS.md regola 7). Senza questa
+    // riga un guasto di lettura diventerebbe «ruolo assente» → 403: un diniego
+    // indistinguibile da un tentativo vero, che riempirebbe di rumore un contatore
+    // nato come segnale di sicurezza. E se il guasto fosse intermittente, la
+    // Segreteria vedrebbe «riservato alla Direzione» a caso, su colleghe che il
+    // giorno prima poteva servire.
+    if (erroreUtente) {
+      logErrore({ operazione: 'admin/regenerate-credentials:POST', stato: 500, evento: 'db' }, erroreUtente);
+      return NextResponse.json({ error: 'Errore interno' }, { status: 500 });
+    }
     if (!data) return NextResponse.json({ error: 'Utente staff non trovato' }, { status: 404 });
-    authId = (data as { id: string }).id;
-    email = firstEmail((data as { email: string | null }).email);
-    nome = (data as { nome: string | null }).nome;
-    sedeId = (data as { scuola_id: string | null }).scuola_id ?? null;
+    const riga = data as {
+      id: string;
+      email: string | null;
+      nome: string | null;
+      scuola_id: string | null;
+      ruolo: string | null;
+    };
+
+    /* ── IL GATE, e sta QUI e non in cima di proposito ────────────────────────
+     * L'ordine è «prima la sede, poi il ruolo»: `assertUtenteInScope` è già
+     * passato una quarantina di righe più su, quindi chi è fuori plesso ha già
+     * ricevuto «fuori dal tuo plesso» e non arriva mai a sapere che ruolo abbia
+     * quella persona. Anticipare questo controllo trasformerebbe la route in un
+     * modo per scoprire chi è admin in una sede che non è la propria.
+     *
+     * La riserva non è sparita rispetto al gate che stava in cima: si è
+     * ristretta. Prima escludeva la Segreteria da TUTTO lo staff — e a Cesa, che
+     * non ha nessun account di Direzione, questo lasciava due segreterie senza
+     * strumento. Ora esclude soltanto gli account la cui password vale il plesso.
+     */
+    if (!puoRigenerareCredenzialiStaff(auth.user.role, riga.ruolo)) {
+      // `warn` → persistito: il tentativo di resettare un account di Direzione è
+      // un segnale di sicurezza e deve lasciare traccia. Né l'uuid né il ruolo del
+      // bersaglio: basta sapere che è successo, e a chi (AGENTS.md regola 8).
+      logEvento('auth', 'warn', {
+        tipo: 'credenziali-staff-riservate',
+        azione: 'admin/regenerate-credentials:POST',
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+      });
+      return NextResponse.json(
+        {
+          error: 'Le credenziali di un account di Direzione si rigenerano dalla Direzione',
+          codice: 'CREDENZIALI_STAFF_RISERVATE',
+        },
+        { status: 403 },
+      );
+    }
+
+    authId = riga.id;
+    email = firstEmail(riga.email);
+    nome = riga.nome;
+    sedeId = riga.scuola_id ?? null;
   }
 
   if (!email) {

@@ -209,7 +209,9 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
   it('staff: usa utenti.id come auth id (nessuna riparazione identità)', async () => {
     // Le credenziali staff sono operazione di Direzione (T3): caller = admin.
     h.requireStaff.mockResolvedValue({ user: { id: 'dir-1', role: 'admin', scuola_id: 's1' } });
-    h.adminRow = { data: { id: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1', email: 'staff@x.it', nome: 'Anna' }, error: null };
+    // `ruolo` è nel finto perché in `utenti` è NOT NULL (verificato sullo schema di
+    // produzione): una riga vera lo porta sempre, e da qui in giù serve a DECIDERE.
+    h.adminRow = { data: { id: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1', email: 'staff@x.it', nome: 'Anna', ruolo: 'educator' }, error: null };
     const res = await POST(req({ targetKind: 'staff', targetId: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1' }));
     expect(res.status).toBe(200);
     expect(h.updates[0].id).toBe('e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1');
@@ -217,13 +219,108 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     expect(h.ensureIdentity).not.toHaveBeenCalled();
   });
 
-  it('staff + Segreteria → 403 (rigenerazione credenziali staff riservata alla Direzione, T3)', async () => {
-    // Caller di default = segreteria (beforeEach): può resettare i genitori, non lo staff.
-    const res = await POST(req({ targetKind: 'staff', targetId: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1' }));
+  /**
+   * ⚠️ QUI STAVA «staff + Segreteria → 403», e non è stato cancellato per far
+   * passare il codice nuovo: è il comportamento che il titolare ha deciso di
+   * cambiare il 2026-09-03, perché a Cesa non c'è nessun account di Direzione e
+   * due segreterie restavano senza strumento. La riserva NON è sparita — si è
+   * ristretta agli account di Direzione, ed è provata qui sotto.
+   */
+});
+
+describe('credenziali staff — la Segreteria sì, sulla Direzione no', () => {
+  beforeEach(() => {
+    h.requireStaff.mockReset();
+    h.sendEmail.mockReset();
+    h.sendEmail.mockResolvedValue({ ok: true });
+    h.logScrittura.mockReset();
+    h.ensureIdentity.mockReset();
+    h.updates.length = 0;
+    h.updateError = null;
+    h.utentiRuolo = { data: null, error: null };
+  });
+
+  /** L'attore, con il ruolo che si vuole provare. */
+  function come(role: string) {
+    h.requireStaff.mockResolvedValue({ user: { id: 'attore-1', role, scuola_id: 'sede-1' } });
+  }
+
+  /**
+   * Il bersaglio staff: è la riga che il ramo `else` della route legge da
+   * `utenti`. Il finto di questo file risponde `adminRow` a ogni select TRANNE
+   * `utenti`+`ruolo` (la guardia anti-lockout del ramo genitore), quindi il ramo
+   * staff legge di qui.
+   */
+  function bersaglioStaff(ruolo: string | null) {
+    h.adminRow = {
+      data: { id: 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1', email: 'p@x.it', nome: 'Rosa', scuola_id: 'sede-1', ruolo },
+      error: null,
+    };
+  }
+
+  const TARGET = 'e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1';
+
+  it.each(['educator', 'cuoca', 'segreteria'])('segreteria → %s: rigenera', async (ruolo) => {
+    come('segreteria');
+    bersaglioStaff(ruolo);
+    const res = await POST(req({ targetKind: 'staff', targetId: TARGET }));
+    expect(res.status).toBe(200);
+    expect(h.updates).toHaveLength(1);
+  });
+
+  it.each(['admin', 'coordinator'])('segreteria → %s: 403, e LA PASSWORD NON VIENE TOCCATA', async (ruolo) => {
+    come('segreteria');
+    bersaglioStaff(ruolo);
+    const res = await POST(req({ targetKind: 'staff', targetId: TARGET }));
     const data = await res.json();
     expect(res.status).toBe(403);
-    expect(data.error).toMatch(/Direzione/);
+    expect(data.codice).toBe('CREDENZIALI_STAFF_RISERVATE');
+    // Il controllo che conta: un 403 su una password GIÀ cambiata sarebbe il
+    // peggiore dei due mondi — l'operazione negata a schermo e compiuta nei fatti.
     expect(h.updates).toHaveLength(0);
     expect(h.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('admin → admin: continua a rigenerare (non regredisce)', async () => {
+    come('admin');
+    bersaglioStaff('admin');
+    const res = await POST(req({ targetKind: 'staff', targetId: TARGET }));
+    expect(res.status).toBe(200);
+    expect(h.updates).toHaveLength(1);
+  });
+
+  /**
+   * `utenti.ruolo` è NOT NULL: un `null` qui non è una riga incompleta, è una
+   * LETTURA ANDATA STORTA. Deve negare, non ammettere.
+   */
+  it('bersaglio senza ruolo leggibile: si nega, e non si tocca la password', async () => {
+    come('segreteria');
+    bersaglioStaff(null);
+    const res = await POST(req({ targetKind: 'staff', targetId: TARGET }));
+    expect(res.status).toBe(403);
+    expect(h.updates).toHaveLength(0);
+  });
+
+  /**
+   * PostgREST non lancia: ritorna `{ error }` (AGENTS.md regola 7). Un guasto di
+   * lettura deve dare 500, non 403: un diniego indistinguibile da un tentativo
+   * vero riempirebbe di rumore un contatore nato come segnale di sicurezza.
+   */
+  it('lettura di utenti in errore: 500, non 403 e non 200', async () => {
+    come('segreteria');
+    h.adminRow = { data: null, error: { code: '42703', message: 'colonna assente' } };
+    const res = await POST(req({ targetKind: 'staff', targetId: TARGET }));
+    expect(res.status).toBe(500);
+    expect(h.updates).toHaveLength(0);
+  });
+
+  it('segreteria → genitore: continua a rigenerare (§1.1, non regredisce)', async () => {
+    come('segreteria');
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-1', emails: ['g@x.it'], first_name: 'Mara', last_name: null }, error: null };
+    h.utentiRuolo = { data: { ruolo: 'genitore' }, error: null };
+    h.ensureIdentity.mockResolvedValue({ ok: true, authUserId: 'auth-1', createdAuth: false, createdUtenti: false, boundNow: false, scuolaId: 'sede-1' });
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1' }));
+    expect(res.status).toBe(200);
+    expect(h.updates).toHaveLength(1);
   });
 });

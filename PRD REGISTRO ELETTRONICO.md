@@ -92,32 +92,43 @@
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
-> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON copre l'area admin** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04, tre rotte fuori dalla sonda con la ragione scritta) |
+> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
 
 ---
 
-## ♿ Rilievo aperto — l'Alto Contrasto non copre l'area admin (misurato il 2026-09-04)
+## ♿ Rilievo aperto — l'Alto Contrasto non funziona su 7 rotte su 9 (misurato il 2026-09-04/05)
 
-Il crawler di contrasto, al suo **primo giro di CI** (PR #116), ha misurato le nove rotte
-autenticate. Sei — genitore e docente — si comportano come devono. Le tre della Segreteria
-(`/admin`, `/admin/students`, `/admin/pagamenti`) hanno fallito tutte e tre con lo stesso
-messaggio:
+Il crawler di contrasto, ai suoi primi tre giri di CI (PR #116), ha misurato le nove rotte
+autenticate. **Sette hanno fallito** con lo stesso messaggio — le tre della Segreteria, più
+`/parent`, `/parent/gallery`, `/parent/modulistica` e `/teacher/modulistica`:
 
 > «le due modalità danno lo stesso identico esito: il cookie non sta facendo niente»
 
 **Non è un difetto del crawler: è il crawler che ha misurato per la prima volta una cosa
-vera.** L'Alto Contrasto è dipinto a mano su **17 classi `kv-*` su 173**, e l'area admin le
-usa in **14 file su 122**: su quelle pagine il cookie non ha praticamente niente da
-ribaltare. Il difetto è **preesistente** — nessuno l'aveva mai misurato perché fino al
-2026-09-04 non esisteva uno strumento che guardasse le schermate autenticate.
+vera.** L'Alto Contrasto è dipinto a mano su **17 classi `kv-*` su 173**, e queste schermate
+non le usano: gli elementi **illeggibili restano illeggibili identici** con il cookie
+acceso — che è precisamente ciò per cui l'Alto Contrasto esiste. Il difetto è
+**preesistente**: nessuno l'aveva mai misurato perché fino al 2026-09-04 non esisteva uno
+strumento che guardasse le schermate dietro il login.
 
-**Decisione del titolare (2026-09-04)**: si rimanda, ma **scritto nero su bianco**. Le tre
-rotte sono commentate in `e2e/contrasto-schermate.spec.ts` **con la ragione accanto**, non
-cancellate: toglierle in silenzio sarebbe stato spegnere la sonda che le ha trovate. Si
-rimettono dentro quando l'Alto Contrasto coprirà la Segreteria, che è un lavoro a sé.
+⚠️ **E per due giri quattro di queste sette sono sembrate SANE.** A farle passare era lo
+**skip-link** `sr-only`: un rettangolo di **1×1 px** che nessuno vede, i cui stati `focus:`
+gli cambiano i colori. La sonda lo misurava (scartava solo ciò che è *minore* di 1 px) e
+quel fantasma produceva l'unica differenza fra le due modalità — oscillando fra un giro e
+l'altro, perché dipende da dove si trova il fuoco. Tolto dalla misura, il difetto è venuto
+fuori intero. *Una protezione che passa grazie a un elemento invisibile non stava
+proteggendo niente.*
 
-⚠️ Fino ad allora, chi usa l'Alto Contrasto **non lo ha davvero** sulle pagine di Segreteria.
-La baseline registrata copre le sole sei rotte misurate.
+**Decisione del titolare, presa due volte** (2026-09-04 su tre rotte, riconfermata il
+2026-09-05 quando il numero è salito a sette): si rimanda, ma **scritto nero su bianco**. Le
+sette rotte sono commentate in `e2e/contrasto-schermate.spec.ts` **con la ragione accanto**,
+non cancellate: toglierle in silenzio sarebbe stato spegnere la sonda che le ha trovate.
+Rientrano quando l'Alto Contrasto coprirà davvero quelle schermate — un lavoro a sé.
+
+⚠️ Fino ad allora, chi accende l'Alto Contrasto **non lo ha davvero** su sette schermate su
+nove. La baseline copre le due che funzionano (`/parent/pagamenti`, `/teacher`), e il
+crawler continua a sorvegliare quelle: è poco, ma è vero — e il giorno in cui l'Alto
+Contrasto verrà esteso, le altre sette si riaccendono togliendo un `//`.
 
 ## 🧾 Changelog — L'estratto conto non si era mai potuto caricare, e la fattura non sapeva a chi intestarsi — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
 

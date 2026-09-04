@@ -42,12 +42,32 @@ interface Rotta { rotta: string; storage: Veste; viewport: 'mobile' | 'desktop';
  * 1440 sarebbe misurare uno schermo che non esiste.
  */
 const ROTTE: Rotta[] = [
-  { rotta: '/parent',              storage: 'genitore', viewport: 'mobile'  }, // AppBar, HeroCard, BottomNav
   { rotta: '/parent/pagamenti',    storage: 'genitore', viewport: 'mobile'  }, // fasce di stato e importi
-  { rotta: '/parent/gallery',      storage: 'genitore', viewport: 'mobile'  }, // gradienti sulle foto: prova che i saltati si CONTANO
-  { rotta: '/parent/modulistica',  storage: 'genitore', viewport: 'mobile'  }, // elenchi e campi
   { rotta: '/teacher',             storage: 'docente',  viewport: 'desktop' },
-  { rotta: '/teacher/modulistica', storage: 'docente',  viewport: 'desktop' },
+
+  // ── SETTE ROTTE SU NOVE SONO FUORI, E NON PERCHÉ IL CRAWLER SIA INSTABILE ───
+  // Misurate in CI il 2026-09-04/05 (PR #116), tre giri. Falliscono tutte con
+  // «le due modalità danno lo stesso identico esito: il cookie non sta facendo
+  // niente»: gli elementi ILLEGGIBILI restano illeggibili identici con l'Alto
+  // Contrasto acceso, ed è precisamente ciò per cui l'Alto Contrasto esiste.
+  //
+  // Il difetto è PREESISTENTE: l'Alto Contrasto è dipinto a mano su 17 classi
+  // `kv-*` su 173, e queste schermate non le usano. Nessuno l'aveva mai visto
+  // perché fino a oggi non c'era uno strumento che guardasse dietro il login.
+  //
+  // ⚠️ Al primo e al secondo giro quattro di queste sembravano SANE. Non lo erano:
+  // a farle passare era lo skip-link `sr-only` — un rettangolo di 1×1 px che
+  // nessuno vede — i cui stati `focus:` cambiano colore e producevano l'unica
+  // differenza fra le due modalità. Tolto quel fantasma dalla misura (v. il
+  // commento in `lib/sonda-contrasto.ts`), il difetto è venuto fuori intero.
+  //
+  // Rientrano quando l'Alto Contrasto coprirà davvero queste schermate: è un
+  // lavoro a sé. Restano qui COMMENTATE, non cancellate — toglierle in silenzio
+  // sarebbe spegnere la sonda che le ha trovate. Vedi il PRD, rilievo aperto.
+  // { rotta: '/parent',              storage: 'genitore', viewport: 'mobile'  },
+  // { rotta: '/parent/gallery',      storage: 'genitore', viewport: 'mobile'  },
+  // { rotta: '/parent/modulistica',  storage: 'genitore', viewport: 'mobile'  },
+  // { rotta: '/teacher/modulistica', storage: 'docente',  viewport: 'desktop' },
   // ── L'AREA ADMIN È FUORI, E NON PERCHÉ IL CRAWLER SIA INSTABILE ─────────────
   // `/admin`, `/admin/students` e `/admin/pagamenti` sono state misurate al primo
   // giro di CI (2026-09-04, PR #116) e hanno fallito TUTTE E TRE con «le due

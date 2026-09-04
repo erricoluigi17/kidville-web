@@ -33,6 +33,29 @@
     "la pagina rende dipende legittimamente dai dati del seme. Serve a",
     "distinguere «pagina pulita» da «pagina vuota»."
   ],
-  "aggiornato": "2026-09-04",
-  "rotte": []
+  "aggiornato": "2026-09-05",
+  "rotte": [
+    {
+      "rotta": "/parent/pagamenti",
+      "nodiMinimi": 12,
+      "normale": 0,
+      "altoContrasto": 0,
+      "saltati": {
+        "gradiente": 0,
+        "composizione": 0,
+        "fondoIgnoto": 0
+      }
+    },
+    {
+      "rotta": "/teacher",
+      "nodiMinimi": 18,
+      "normale": 0,
+      "altoContrasto": 1,
+      "saltati": {
+        "gradiente": 0,
+        "composizione": 0,
+        "fondoIgnoto": 0
+      }
+    }
+  ]
 }

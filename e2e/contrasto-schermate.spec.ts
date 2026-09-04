@@ -67,6 +67,21 @@ interface Baseline { aggiornato: string; rotte: VoceBaseline[] }
 const baseline: Baseline = JSON.parse(fs.readFileSync(BASELINE, 'utf8'));
 const vocePer = (r: string) => baseline.rotte.find((v) => v.rotta === r);
 
+/**
+ * BOOTSTRAP — le voci misurate, raccolte per stamparle ASSEMBLATE alla fine.
+ *
+ * Perché serve: il job `e2e` è un check OBBLIGATORIO della branch protection su
+ * `main`. Una baseline vuota non costa «un giro di CI in più»: **blocca il
+ * merge** finché qualcuno non apre la PR, legge l'esito e riempie il file. È il
+ * prezzo di un check che nasce senza misure, ed è giusto pagarlo una volta —
+ * ma va pagato UNA volta e nel modo più corto possibile.
+ * Senza questa raccolta, chi apre la PR dovrebbe ricucire NOVE frammenti presi
+ * da nove messaggi d'errore diversi. Con: un blocco solo, da copiare e incollare.
+ * `workers: 1` e `fullyParallel: false` rendono l'accumulo affidabile — gli spec
+ * girano seriali in un processo solo.
+ */
+const raccolta: VoceBaseline[] = [];
+
 /** Ricopiato da `src/lib/accessibility/cookie.ts` — gli spec non importano da `src/`. */
 const CONTRAST_COOKIE = 'kv_contrast';
 
@@ -131,6 +146,8 @@ for (const { rotta, storage, viewport } of ROTTE) {
         altoContrasto: alto.fallimenti.length,
         saltati: normale.saltati,
       };
+      raccolta.push(misurato);
+
       if (!voce) {
         // Non si passa in silenzio: si FALLISCE stampando il JSON da incollare.
         // Una modalità «osserva e non può fallire» è decorazione, e resterebbe accesa.
@@ -185,4 +202,23 @@ test.describe('contrasto · controllo positivo', () => {
     // sarebbe 0 e questo test direbbe perché, invece di degradare in silenzio.
     expect(esito.esaminati, 'la sonda non ha esaminato nulla: probabile ReferenceError nella serializzazione').toBeGreaterThan(0);
   });
+});
+
+
+/**
+ * Stampa la baseline COMPLETA, e solo quando manca qualcosa: in regime normale
+ * non aggiunge una riga di rumore ai log della CI. Non sostituisce il rosso —
+ * il test fallisce comunque, perché una modalità che non può fallire è
+ * decorazione — ma trasforma «leggi nove errori e ricuci il JSON» in «copia
+ * questo blocco».
+ */
+test.afterAll(() => {
+  const mancanti = ROTTE.filter(({ rotta }) => !vocePer(rotta));
+  if (!mancanti.length || !raccolta.length) return;
+  const completa = { ...baseline, aggiornato: new Date().toISOString().slice(0, 10), rotte: raccolta };
+  console.log(
+    '\n════ BASELINE DI CONTRASTO — da incollare in docs/superpowers/contrasto-schermate-baseline.json ════\n' +
+      JSON.stringify(completa, null, 2) +
+      '\n════ fine ════\n',
+  );
 });

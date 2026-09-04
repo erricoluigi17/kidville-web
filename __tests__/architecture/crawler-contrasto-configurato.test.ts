@@ -105,4 +105,18 @@ describe('lock — il crawler di contrasto è configurato come deve', () => {
     expect(s).toContain("rgb(0, 0, 0)");
     expect(s, 'manca il controllo che le due passate diano esiti DIVERSI').toContain('not.toBe(insieme(normale))');
   });
+
+  it('il bootstrap stampa la baseline ASSEMBLATA, non nove frammenti', () => {
+    // Il job `e2e` è un check OBBLIGATORIO su `main`: una baseline vuota BLOCCA
+    // il merge finché non viene riempita. È il prezzo di un check che nasce
+    // senza misure, e va pagato una volta sola e nel modo più corto — non
+    // ricucendo nove messaggi d'errore. Se qualcuno toglie questa comodità, il
+    // costo torna addosso a chi apre la PR, e in silenzio.
+    const s = readFileSync(join(RADICE, SPEC), 'utf8');
+    expect(s, 'manca la raccolta delle voci misurate').toContain('raccolta.push(misurato)');
+    expect(s, 'manca l’assemblaggio finale in `afterAll`').toContain('test.afterAll(');
+    expect(s, 'la baseline assemblata non viene stampata').toContain('BASELINE DI CONTRASTO');
+    // …e non deve stampare nulla in regime normale: sarebbe rumore a ogni run.
+    expect(s, 'il blocco va stampato SOLO quando mancano voci').toContain('if (!mancanti.length');
+  });
 });

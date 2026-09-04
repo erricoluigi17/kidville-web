@@ -285,6 +285,28 @@ describe('POST /api/account/password — la scrittura, e il suo valore di ritorn
     expect(JSON.stringify(corpo)).not.toContain('known to be weak')
   })
 
+  it('400 PASSWORD_TROPPO_COMUNE quando GoTrue dice `weak_password`: è il rifiuto più frequente di tutti', async () => {
+    // MISURATO IN PRODUZIONE (04/09): 30 occorrenze su 20 utenti distinti in un
+    // giorno, 47 su 29 il giorno prima. È la protezione «leaked password» del
+    // provider: la password c'è, è lunga, ha lettera e cifra — ma compare in un
+    // elenco di credenziali rubate ad altri siti. Mandare queste persone su
+    // PASSWORD_RIFIUTATA («scegline una più lunga») le manda a rifare ciò che
+    // era già giusto: è il difetto che questo test esiste per impedire.
+    h.updateUserById.mockResolvedValue({
+      data: { user: null },
+      error: { status: 422, code: 'weak_password', message: 'Password is known to be weak and easy to guess' },
+    })
+
+    const res = await POST(req(BUONA) as never)
+
+    expect(res.status).toBe(400)
+    const corpo = await res.json()
+    expect(corpo).toMatchObject({ codice: 'PASSWORD_TROPPO_COMUNE' })
+    // La prosa inglese del provider non esce dall'interfaccia, nemmeno adesso che
+    // sappiamo che cosa dice.
+    expect(JSON.stringify(corpo)).not.toContain('known to be weak')
+  })
+
   it('500 PASSWORD_NON_SCRITTA su 5xx di GoTrue: il guasto è nostro, la password di prima vale ancora', async () => {
     h.updateUserById.mockResolvedValue({ data: { user: null }, error: { status: 500, message: 'Database error' } })
 

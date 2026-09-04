@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logEvento } from '@/lib/logging/logger';
+import { allineaIndirizzoAccesso, type EsitoAllineamento } from '@/lib/auth/indirizzo-accesso';
 import { passwordTemporanea } from '@/lib/auth/password-temporanea';
 
 // =============================================================================
@@ -53,6 +54,22 @@ export type EnsureParentIdentityResult =
        * corpo dell'email — con tre plessi, «Kidville» non identifica più niente.
        */
       scuolaId: string | null;
+      /**
+       * Che cosa si è trovato — e fatto — confrontando l'indirizzo dell'ANAGRAFICA
+       * con quello dell'ACCOUNT.
+       *
+       * ⚠️ NON È UN DETTAGLIO INTERNO, ed è il motivo per cui questo campo esiste
+       * invece di essere un effetto silenzioso: quando vale `allineato`, il login
+       * di una famiglia è appena stato spostato su un altro indirizzo. Chi ha
+       * premuto il pulsante deve poterlo leggere. Quando vale `in-uso-da-altri` o
+       * `non-riuscito`, l'indirizzo dell'account è ancora diverso da quello a cui
+       * si sta per spedire la password: chi chiama DEVE fermarsi, o rifarà la
+       * quattordicesima corsa a vuoto.
+       *
+       * `null` quando l'account è nato adesso: lì l'indirizzo è quello
+       * dell'anagrafica per costruzione, e non c'è niente da confrontare.
+       */
+      indirizzo: EsitoAllineamento | null;
     }
   | { ok: false; reason: 'no_email' | 'email_conflict' | 'error'; message: string };
 
@@ -512,6 +529,24 @@ export async function ensureParentIdentity(
       }
     }
 
+    // ─── IL PONTE C'ERA GIÀ, E FINO AL 2026-09-04 QUI NON SUCCEDEVA NIENTE ────
+    //
+    // Sopra, `if (!authUserId) { … }` risolve l'account per email e lo crea se
+    // manca. Ma dopo la prima volta quel ramo non viene più eseguito, e l'intera
+    // funzione non guardava mai se l'indirizzo dell'account fosse ancora quello
+    // dell'anagrafica. Non lo guardava nessuno, in tutto il repo.
+    //
+    // Il costo, misurato: 4 anagrafiche genitore divergenti, tutte con
+    // `last_sign_in_at` nullo, una con 13 rigenerazioni di credenziali in un
+    // giorno solo. L'email arrivava (va all'indirizzo dell'anagrafica), diceva
+    // «Email di accesso: <quello>», e GoTrue quell'indirizzo non lo conosceva.
+    //
+    // ⚠️ VINCE L'ANAGRAFICA (decisione del titolare, 2026-09-04). Due dei quattro
+    // casi lo confermano: i domini degli account erano `gmali.com` e `gmailm.com`,
+    // refusi di domini inesistenti, contro anagrafiche corrette. L'anagrafica è
+    // ciò che qualcuno mantiene; l'account è dove il refuso si era fossilizzato.
+    const indirizzo = createdAuth ? null : await allineaIndirizzoAccesso(admin, authUserId, email);
+
     // LA SEDE VIENE DAI FIGLI, non da chi preme il bottone (audit 2026-07-31, R6).
     const sede = await sedeDelGenitore(admin, parent.id, {
       dichiarata: opts.scuolaId ?? null,
@@ -539,6 +574,7 @@ export async function ensureParentIdentity(
       boundNow,
       password: createdAuth ? password : null,
       scuolaId,
+      indirizzo,
     };
   } catch (e) {
     return { ok: false, reason: 'error', message: e instanceof Error ? e.message : String(e) };

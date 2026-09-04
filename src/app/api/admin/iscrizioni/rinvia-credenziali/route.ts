@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
@@ -256,7 +257,7 @@ export const POST = withRoute('admin/iscrizioni/rinvia-credenziali:POST', async 
 
         const sede = await risolviContestoSede(admin, null, OPERAZIONE)
         const messaggio = messaggioCredenziali(
-            { nome: null, email, password: nuova.password, occasione: 'password-rigenerata' },
+            { nome: null, email, password: nuova.password, occasione: 'password-rigenerata', emessaIl: istanteEmissioneCredenziali() },
             sede,
         )
         const invio = await sendEmailDetailed({

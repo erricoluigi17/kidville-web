@@ -1,7 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
- * Il bucket delle credenziali non fallisce più in silenzio.
+ * Il bucket delle credenziali non fallisce più in silenzio — e non si crea più a
+ * ogni rigenerazione.
+ *
+ * ─── AGGIORNATO IL 2026-09-04, E LA STORIA QUI SOTTO RESTA PERCHÉ SPIEGA COME ──
+ *
+ * Il difetto raccontato più giù era vero e la sua correzione ha retto. Quello che
+ * non reggeva era la RICHIESTA: creare, a ogni singola rigenerazione, un bucket
+ * che esiste dal primo giorno. Misurato in produzione il 2026-09-04:
+ * **32 righe `error` in un giorno** con `BucketAlreadyExists`, `stato_http 400`.
+ *
+ * Non arrivavano da questa route — che già classificava bene, `info` per
+ * «esiste» — ma da `supabase-fetch.ts`, dove un 4xx sullo Storage è `error` per
+ * invariante dichiarata: *«un 4xx qui è una richiesta sbagliata scritta da noi»*.
+ * E aveva ragione: la richiesta sbagliata era chiederlo.
+ *
+ * Non si allenta l'invariante (varrebbe per tutto lo Storage): si toglie la
+ * richiesta. Un canale d'allarme pieno di allarmi falsi è un canale spento, ed è
+ * la prima cosa che AGENTS.md dice del rumore.
+ *
+ * Il fatto che questo file misura è quindi cambiato: non più «come si classifica
+ * l'errore di `createBucket`», ma **che `createBucket` non venga più chiamata**,
+ * e che il caso che il probe voleva prevenire — bucket assente — venga osservato
+ * dove si manifesta davvero, cioè sull'upload.
+ *
+ * ─── LA STORIA, che spiega perché il `.catch(() => {})` era sbagliato ─────────
  *
  * PERCHÉ QUESTO TEST ESISTE. La riga era
  * `await admin.storage.createBucket('credenziali', { public: false }).catch(() => {})`
@@ -27,6 +51,10 @@ const h = vi.hoisted(() => {
         logEvento: vi.fn(),
         /** Cosa risponde `createBucket`. `null` = creato senza errori. */
         erroreCreateBucket: null as { message: string } | null,
+        /** Quante volte la route ha chiesto di creare il bucket: deve restare 0. */
+        createBucketChiamato: 0,
+        /** Cosa risponde l'upload del PDF. `null` = caricato. */
+        erroreUpload: null as { message: string } | null,
         uploadChiamato: 0,
         /**
          * IL FINTO CLIENT, in una definizione sola, montata su DUE moduli.
@@ -57,11 +85,16 @@ const h = vi.hoisted(() => {
             storage: {
                 // La forma VERA di supabase-js: una promise che si risolve con `{ data, error }`,
                 // non una che rifiuta. È il punto di tutto il test.
-                createBucket: async () => ({ data: null, error: stato.erroreCreateBucket }),
+                createBucket: async () => {
+                    stato.createBucketChiamato += 1;
+                    return { data: null, error: stato.erroreCreateBucket };
+                },
                 from: () => ({
                     upload: async () => {
                         stato.uploadChiamato += 1;
-                        return { data: { path: 'x.pdf' }, error: null };
+                        return stato.erroreUpload
+                            ? { data: null, error: stato.erroreUpload }
+                            : { data: { path: 'x.pdf' }, error: null };
                     },
                 }),
             },
@@ -132,45 +165,48 @@ describe('regenerate-credentials — il bucket delle credenziali non tace più',
             createdAuth: false, createdUtenti: false, boundNow: false, password: null,
         });
         h.erroreCreateBucket = null;
+        h.createBucketChiamato = 0;
+        h.erroreUpload = null;
         h.uploadChiamato = 0;
     });
 
-    it('bucket già presente: una riga `info`, nessun falso allarme — e il PDF si carica lo stesso', async () => {
-        h.erroreCreateBucket = { message: 'The resource already exists' };
-
+    it('NON crea più il bucket a ogni rigenerazione: era la richiesta a essere sbagliata', async () => {
+        // 32 righe `error` in un giorno solo, tutte «BucketAlreadyExists», tutte
+        // per una domanda la cui risposta era nota dal primo giorno.
         const res = await POST(req());
         expect(res.status).toBe(200);
-
-        const righe = righeStorage();
-        expect(righe, 'il caso normale deve lasciare UNA riga, non zero e non due').toHaveLength(1);
-        expect(righe[0][1]).toBe('info');
-        expect(righe[0][2]).toMatchObject({ bucket: 'credenziali', esito: 'bucket-gia-presente' });
-        // A `info` non si passa l'oggetto d'errore: non è un guasto, è l'esito atteso.
-        expect(righe[0][3]).toBeUndefined();
-        // CONTROLLO POSITIVO: il ramo «già presente» non deve interrompere niente.
+        expect(h.createBucketChiamato, 'il bucket esiste: non si chiede').toBe(0);
+        expect(righeStorage(), 'e non si lascia rumore').toEqual([]);
+        // CONTROLLO POSITIVO: togliere la creazione non deve aver rotto il PDF.
         expect(h.uploadChiamato).toBe(1);
     });
 
-    it('bucket non creato per un motivo VERO: riga `error` con l’errore del provider allegato', async () => {
-        h.erroreCreateBucket = { message: 'new row violates row-level security policy' };
+    it('bucket davvero assente: l’allarme scatta dove il guasto si manifesta, cioè sull’upload', async () => {
+        // È il caso che il probe voleva prevenire. Prevenirlo costava 32 falsi
+        // allarmi al giorno; osservarlo costa una riga, e solo quando succede.
+        h.erroreUpload = { message: 'Bucket not found' };
 
         const res = await POST(req());
-        expect(res.status).toBe(200); // la password è già cambiata: la richiesta non fallisce
+        // La password è già cambiata: la richiesta non fallisce per un PDF.
+        expect(res.status).toBe(200);
 
         const righe = righeStorage();
         expect(righe).toHaveLength(1);
         expect(righe[0][1]).toBe('error');
-        expect(righe[0][2]).toMatchObject({ bucket: 'credenziali', esito: 'bucket-non-creato' });
+        expect(righe[0][2]).toMatchObject({ bucket: 'credenziali', esito: 'bucket-credenziali-assente' });
         // Il CORPO dell'errore non si butta via: è l'unica cosa che dice *perché*.
-        expect(righe[0][3]).toEqual({ message: 'new row violates row-level security policy' });
+        expect(righe[0][3]).toEqual({ message: 'Bucket not found' });
     });
 
-    it('nessun errore: nessuna riga di rumore', async () => {
-        h.erroreCreateBucket = null;
+    it('un errore di upload che NON è «bucket assente» resta un errore di upload', async () => {
+        // Non si etichetta come «bucket mancante» qualunque cosa vada storta: una
+        // diagnosi sbagliata manda a cercare nel posto sbagliato.
+        h.erroreUpload = { message: 'payload too large' };
 
         const res = await POST(req());
         expect(res.status).toBe(200);
-        expect(righeStorage(), 'il percorso felice non deve produrre righe `storage`').toEqual([]);
-        expect(h.uploadChiamato).toBe(1);
+        const righe = righeStorage();
+        expect(righe).toHaveLength(1);
+        expect(righe[0][2]).toMatchObject({ esito: 'pdf-credenziali-non-caricato' });
     });
 });

@@ -43,7 +43,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
         for (const occasione of OCCASIONI) {
             const password = passwordTemporanea()
             const { testo } = messaggioCredenziali(
-                { nome: 'Maria', email: 'a@b.test', password, occasione },
+                { nome: 'Maria', email: 'a@b.test', password, occasione, emessaIl: '4 settembre 2026 alle 14:32' },
                 SEDE,
             )
             const righe = testo.split('\n')
@@ -55,7 +55,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
 
     it('l\'etichetta resta, perché ci sono test che la cercano e occhi che la cercano', () => {
         const { testo } = messaggioCredenziali(
-            { nome: null, email: 'a@b.test', password: passwordTemporanea(), occasione: 'iscrizione-approvata' },
+            { nome: null, email: 'a@b.test', password: passwordTemporanea(), occasione: 'iscrizione-approvata', emessaIl: '4 settembre 2026 alle 14:32' },
             SEDE,
         )
         expect(testo).toContain('Password temporanea:')
@@ -68,7 +68,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
         for (let i = 0; i < 200; i++) {
             const password = passwordTemporanea()
             const m = messaggioCredenziali(
-                { nome: 'Maria', email: 'a@b.test', password, occasione: 'iscrizione-approvata' },
+                { nome: 'Maria', email: 'a@b.test', password, occasione: 'iscrizione-approvata', emessaIl: '4 settembre 2026 alle 14:32' },
                 SEDE,
             )
             expect(m.html).toContain(password)
@@ -81,7 +81,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
         // su un trattino farebbe copiare mezza password. Da oggi quello stile è un
         // requisito, non una scelta estetica, e questo test lo dichiara tale.
         const { html } = messaggioCredenziali(
-            { nome: null, email: 'a@b.test', password: passwordTemporanea(), occasione: 'iscrizione-approvata' },
+            { nome: null, email: 'a@b.test', password: passwordTemporanea(), occasione: 'iscrizione-approvata', emessaIl: '4 settembre 2026 alle 14:32' },
             SEDE,
         )
         expect(html).toContain('white-space:nowrap')
@@ -93,7 +93,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
         // a piacere — cioè di ignorare l'unica cosa che serve per entrare.
         for (const occasione of OCCASIONI) {
             const { testo, html } = messaggioCredenziali(
-                { nome: 'Maria', email: 'a@b.test', password: passwordTemporanea(), occasione },
+                { nome: 'Maria', email: 'a@b.test', password: passwordTemporanea(), occasione, emessaIl: '4 settembre 2026 alle 14:32' },
                 SEDE,
             )
             for (const corpo of [testo, html]) {
@@ -108,7 +108,7 @@ describe('la password si può copiare senza portarsi via altro', () => {
         // esattamente su una frase aggiunta di fretta che quella regola si perde.
         for (const occasione of OCCASIONI) {
             const { testo } = messaggioCredenziali(
-                { nome: 'Maria', email: 'a@b.test', password: passwordTemporanea(), occasione },
+                { nome: 'Maria', email: 'a@b.test', password: passwordTemporanea(), occasione, emessaIl: '4 settembre 2026 alle 14:32' },
                 SEDE,
             )
             expect(testo, occasione).not.toMatch(/\b(accedi|acceda|conserva|conservi|puoi|può inserire|hai richiesto)\b/i)

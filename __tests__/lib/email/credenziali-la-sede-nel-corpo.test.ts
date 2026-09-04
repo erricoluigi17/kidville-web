@@ -47,7 +47,7 @@ const CREDENZIALI = {
     nome: 'Maria',
     email: 'mamma@example.test',
     password: 'Segreta-finta-2026',
-    occasione: 'iscrizione-approvata',
+    occasione: 'iscrizione-approvata', emessaIl: '4 settembre 2026 alle 14:32',
 } as const
 
 const sedeDi = (nome: string) => ({ ...contestoSenzaSede(nome), indirizzo: 'Via di Prova 1', email: 'prova@example.test' })

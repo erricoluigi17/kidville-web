@@ -13,6 +13,7 @@
   "erroreAccettaTermini": "Per continuare devi accettare i Termini di servizio.",
   "erroreIdentita": "Identità non risolta: accedi di nuovo dal link ricevuto.",
   "erroreOperazione": "Operazione non riuscita. Riprova.",
+  "consensiComunqueSalvati": "Le spunte che hai messo sono già state salvate: non devi rimetterle.",
   "erroreRete": "Errore di rete. Riprova.",
   "nessunaPagina": "Questo modulo non contiene pagine.",
   "passo": "Passo {step} di {totale}",

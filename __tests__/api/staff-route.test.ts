@@ -7,7 +7,14 @@ import { SEDE_A, SEDE_B, NOME_SEDE_A, NOME_SEDE_B } from '../fixtures/sedi'
 // /api/admin/staff — RBAC del personale.
 //
 // GET: rubrica del personale + contesto per la UI (sedi, classi, assegnazioni).
-// PATCH: ruolo, sede e classi assegnate. Solo Direzione.
+// PATCH: ruolo, sede e classi assegnate.
+//
+// ⚠️ «Solo Direzione» diceva questa riga, ed è decaduto il 2026-09-04: la PATCH
+// ammette anche la SEGRETERIA, e le concede la sola SEDE. La riserva non è più
+// nel gate di rotta (`requireStaff`) ma in `puoModificareIncaricoStaff`, che
+// decide sui CAMPI dopo aver letto il ruolo del bersaglio. Il gate di rotta è il
+// primo dei due, non l'unico — e un'intestazione che ne nomina uno solo fa
+// cercare la regola dove non è più.
 //
 // ⚠️ ISOLAMENTO FRA SEDI (2026-07-31). Il GET restituiva nome, cognome, email e
 // sede di OGNI dipendente delle tre sedi, più la mappa completa delle 38 classi
@@ -170,8 +177,15 @@ describe('GET /api/admin/staff — la rubrica è del proprio plesso', () => {
     const res = await GET(getReq(`sedi_attive=${SEDE_A}`))
     const j = await res.json()
     expect(j.data.map((u: { id: string }) => u.id).sort()).toEqual([STAFF_A, ADMIN_A].sort())
-    // Le SEDI restano tutte quelle accessibili: servono alla tendina di
-    // riassegnazione, che la PATCH valida comunque contro `scuoleDiUtente`.
+    // Le SEDI restano tutte quelle ACCESSIBILI, e non solo quella attiva:
+    // servono a dare un NOME alla sede di ogni riga della rubrica, che con il
+    // solo plesso attivo si leggerebbe «—».
+    //
+    // ⚠️ NON sono le destinazioni di un trasferimento, e fino al 2026-09-04 qui
+    // c'era scritto che alimentavano quella tendina «che la PATCH valida
+    // comunque contro `scuoleDiUtente`»: nessuna delle due cose è più vera.
+    // Le destinazioni sono più LARGHE di queste (la Direzione sposta anche verso
+    // plessi che non sono suoi) e stanno in `GET /api/admin/sedi/destinazioni`.
     expect(j.schools.map((s: { id: string }) => s.id).sort()).toEqual([SEDE_A, SEDE_B].sort())
   })
 
@@ -241,11 +255,22 @@ describe('PATCH /api/admin/staff — il BERSAGLIO e le SEZIONI devono essere nel
     expect(h.db.utenti_sezioni).toHaveLength(2)
   })
 
-  it('403 se la sede di destinazione è fuori dai plessi della Direzione', async () => {
+  /* ⚠️ QUESTA REGOLA È CAMBIATA IL 2026-09-04, e la vecchia versione di questo
+     test diceva il contrario: «403 se la sede di destinazione è fuori dai plessi
+     della Direzione». Era il controllo giusto per una SCRITTURA NUOVA e quello
+     sbagliato per un TRASFERIMENTO — negava esattamente il caso per cui la
+     tendina della sede esiste: la Direzione che manda una maestra in un plesso
+     che non è fra i suoi. Ora la destinazione la decide `destinazioniConsentite`
+     (src/lib/sedi/trasferimento.ts): la Direzione muove fra tutte le sedi REALI,
+     la Segreteria solo dentro le proprie. Il perimetro sul BERSAGLIO non si è
+     mosso di un millimetro — resta `assertUtenteInScope`, e il test qui sopra
+     («403 sul dipendente di un'altra sede») è la sua prova.
+     Lo spostamento vero e proprio, con tutto ciò che si porta dietro, ha un file
+     suo: `__tests__/api/staff-trasferimento-sede.test.ts`. */
+  it('la Direzione sposta anche verso una sede che non è fra le proprie', async () => {
     const res = await PATCH(patchReq({ id: STAFF_A, scuola_id: SEDE_B }))
-    expect(res.status).toBe(403)
-    expect(h.db.utenti.find((u) => u.id === STAFF_A)!.scuola_id).toBe(SEDE_A)
-    expect(scrittureSu('utenti')).toHaveLength(0)
+    expect(res.status).toBe(200)
+    expect(h.db.utenti.find((u) => u.id === STAFF_A)!.scuola_id).toBe(SEDE_B)
   })
 
   it('500 se il DELETE delle assegnazioni fallisce: PostgREST non lancia, l\'errore va guardato', async () => {

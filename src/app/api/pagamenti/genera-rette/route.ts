@@ -200,6 +200,19 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
         .eq('scuola_id', scuolaId)
       alunniRaw = (retry.data ?? null) as unknown as typeof alunniRaw
     }
+    /**
+     * CHI PAGA PER CHI, ricavato dalla lettura che c'è già.
+     *
+     * ⚠️ Va calcolato PRIMA del filtro qui sotto: chi è a carico di un altro viene
+     * scartato dai candidati, e con lui sparirebbe l'informazione «X paga per
+     * qualcuno» — che è esattamente ciò che serve a riconoscere un anello.
+     */
+    const pagaPer = new Map<string, number>()
+    for (const a of alunniRaw || []) {
+      const carico = (a as { retta_a_carico_di?: string | null }).retta_a_carico_di
+      if (carico) pagaPer.set(carico, (pagaPer.get(carico) ?? 0) + 1)
+    }
+
     const alunni = (alunniRaw || [])
       .filter((a) => a.classe_sezione != null || a.section_id != null)
       // RETTA A CARICO DI UN FRATELLO — lo stesso filtro che ha la RPC dal
@@ -267,8 +280,51 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
 
     const candidati = alunni
       .filter((a) => !giaFatti.has(a.id) && iscrittoEntro(a, periodo))
-      .map((a) => ({ ...a, importo_previsto: importoRetta(a, rettaDefault) }))
+      .map((a) => {
+        const importoPrevisto = importoRetta(a, rettaDefault)
+        const quantiPagaPer = pagaPer.get(a.id) ?? 0
+        return {
+          ...a,
+          importo_previsto: importoPrevisto,
+          /**
+           * Quanti fratelli hanno la retta a carico di questo bambino: la sua riga
+           * è, da sola, il conto dell'intera famiglia.
+           */
+          paga_per: quantiPagaPer,
+          /**
+           * 🔴 IL CONTRASSEGNO CHE MANCAVA, e quanto è costato non averlo.
+           *
+           * Un importo fra 0 e 1 € oggi compare qui come «€ 0,01» e non lo nota
+           * nessuno. A Giugliano, misurato il 2026-09-04, un bambino con 0,01 €
+           * aveva a suo carico un fratello da 250 €: la famiglia è stata addebitata
+           * di UN CENTESIMO per settembre 2026, e nove mesi così sono 2.250 € che
+           * nessuno avrebbe mai chiesto. Nessun errore, nessun log — solo una riga
+           * che sembrava una riga qualunque.
+           *
+           * Lo zero non è compreso: sulla colonna significa «usa il default di
+           * sede», e infatti `importoRetta` lo ha già sostituito col default.
+           */
+          importo_simbolico: importoPrevisto > 0 && importoPrevisto < 1,
+        }
+      })
     const totale = candidati.reduce((s, a) => s + a.importo_previsto, 0)
+
+    // Una famiglia il cui unico pagante porta un importo simbolico: il conto di tutti
+    // i fratelli sta sotto l'euro. Va in `warn` con i soli CONTEGGI — mai nomi, mai
+    // codici fiscali (AGENTS.md, regola 8) — perché è l'unica riga da cui si può
+    // sapere, il mese dopo, che qualcosa è andato storto in silenzio.
+    const famiglieSospette = candidati.filter((c) => c.importo_simbolico && c.paga_per > 0).length
+    if (famiglieSospette > 0) {
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti/genera-rette:GET',
+        esito: 'famiglie-totale-sospetto',
+        scuola_id: scuolaId,
+        n: famiglieSospette,
+        msg:
+          'famiglie il cui unico pagante ha un importo sotto l’euro: la retta di tutti i ' +
+          'fratelli verrebbe addebitata per quella cifra',
+      })
+    }
 
     return NextResponse.json({
       success: true,

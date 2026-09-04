@@ -5,6 +5,8 @@ import { useTranslations } from 'next-intl';
 import { Users, Loader2, Pencil, Check, X, ShieldCheck, KeyRound } from 'lucide-react';
 import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { puoRigenerareCredenzialiStaff } from '@/lib/auth/credenziali-staff';
+import type { AppRole } from '@/lib/auth/predicati-ruolo';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface StaffUser { id: string; nome?: string; cognome?: string; email?: string; ruolo: string; scuola_id?: string; gradi?: string[] }
@@ -12,13 +14,25 @@ interface School { id: string; nome: string }
 interface Section { id: string; name: string; scuola_id: string }
 
 // Pannello gestione Staff RBAC (DL-028) — lista leggibile da tutto lo staff di
-// gestione (Segreteria inclusa, T3); le AZIONI (modifica, rigenera credenziali)
-// restano della Direzione: affordance nascoste ai non-Direzione, così nessun
-// bottone che finisce sempre in un alert 403 (il gate vero resta sul server).
+// gestione (Segreteria inclusa, T3).
+//
+// LE AZIONI SONO DUE, E DAL 2026-09-03 HANNO DUE REGOLE DIVERSE. «Modifica»
+// (ruolo, sede, classi) resta della Direzione. «Rigenera credenziali» segue il
+// BERSAGLIO: la Segreteria ce l'ha sullo staff del proprio plesso, non sugli
+// account di Direzione — il predicato è `puoRigenerareCredenzialiStaff`, lo
+// stesso che usa il server.
+//
+// Che «Modifica» resti alla Direzione non è un dettaglio residuo: è ciò che rende
+// non aggirabile l'altra riserva. Se la Segreteria potesse cambiare il ruolo di
+// una collega, la promuoverebbe ad `admin` e da lì rigenererebbe qualunque cosa.
+//
+// Le affordance si nascondono per CORTESIA — nessun bottone destinato a finire
+// sempre in un alert 403 — non per difesa: il gate vero resta sul server.
 export function StaffPanel({ userId }: { userId: string }) {
   const t = useTranslations('adminSettings');
   const labelRuolo = useLabelRuolo();
   const { role } = useSessionIdentity();
+  /** Modifica di ruolo/sede/classi: Direzione, e basta. */
   const canEdit = role === 'admin' || role === 'coordinator';
   const [staff, setStaff] = useState<StaffUser[]>([]);
   const [schools, setSchools] = useState<School[]>([]);
@@ -121,15 +135,17 @@ export function StaffPanel({ userId }: { userId: string }) {
                 {!isEditing ? (
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="px-2 py-0.5 rounded-full bg-kidville-cream text-kidville-green text-[11px] font-bold">{labelRuolo(u.ruolo)}</span>
-                    {/* Azioni solo Direzione: alla Segreteria (sola lettura) non si
-                        mostrano bottoni destinati a fallire col 403 del server. */}
+                    {/* «Rigenera» si valuta PER RIGA, perché dipende dal ruolo della
+                        persona che sta in quella riga: la stessa segreteria lo vede
+                        sulla maestra e non sull'admin. «Modifica» no: dipende solo
+                        da chi guarda. */}
+                    {puoRigenerareCredenzialiStaff(role as AppRole, u.ruolo) && (
+                      <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title={t('stRigeneraCredenziali')}>
+                        {regenId === u.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
+                      </button>
+                    )}
                     {canEdit && (
-                      <>
-                        <button onClick={() => rigenera(u)} disabled={regenId === u.id} className="text-kidville-muted hover:text-kidville-green disabled:opacity-40" title={t('stRigeneraCredenziali')}>
-                          {regenId === u.id ? <Loader2 size={15} className="animate-spin" /> : <KeyRound size={15} />}
-                        </button>
-                        <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title={t('stModifica')}><Pencil size={15} /></button>
-                      </>
+                      <button onClick={() => apri(u)} className="text-kidville-muted hover:text-kidville-green" title={t('stModifica')}><Pencil size={15} /></button>
                     )}
                   </div>
                 ) : (

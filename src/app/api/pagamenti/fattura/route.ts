@@ -121,9 +121,39 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
     const fuoriScopePag = await assertPagamentoInScope(supabase, auth.user, pagamento_id)
     if (fuoriScopePag) return fuoriScopePag
 
-    // causale personalizzata dalla Segreteria → persistita prima dell'emissione
-    if (typeof causale === 'string' && causale.trim()) {
-      await supabase.from('pagamenti').update({ fattura_causale: causale.trim() }).eq('id', pagamento_id)
+    // ─── LA CORREZIONE MANUALE, E COME SI TOGLIE ──────────────────────────────
+    // `pagamenti.fattura_causale` batte qualunque modello configurato: è una
+    // correzione che un umano scrive su QUESTO documento. Fino al 2026-09-04 si
+    // poteva solo scrivere, mai cancellare — e siccome il modale precompilava la
+    // casella con la descrizione del pagamento, ogni emissione ci lasciava dentro
+    // l'eco della descrizione. Quel pagamento restava congelato per sempre:
+    // cambiare il modello in Contabilità → Causali non aveva più alcun effetto su
+    // di lui, e nessuno poteva sapere perché.
+    //
+    //   stringa non vuota → si scrive la correzione
+    //   `null`           → si TOGLIE (il modale lo manda quando non si personalizza)
+    //   `undefined`      → non si tocca (chiamanti vecchi)
+    const scriviCausale =
+      typeof causale === 'string' && causale.trim()
+        ? causale.trim()
+        : causale === null
+          ? null
+          : undefined
+    if (scriviCausale !== undefined) {
+      // PostgREST NON LANCIA (AGENTS.md, regola 7): l'esito va guardato. Non è
+      // bloccante — la causale composta resta corretta anche senza questa riga — ma
+      // un fallimento muto qui rimetterebbe in circolo esattamente il difetto sopra.
+      const { error: errCausale } = await supabase
+        .from('pagamenti')
+        .update({ fattura_causale: scriviCausale })
+        .eq('id', pagamento_id)
+      if (errCausale) {
+        logEvento('fattura', 'warn', {
+          operazione: 'pagamenti/fattura:POST',
+          esito: scriviCausale === null ? 'causale-manuale-non-rimossa' : 'causale-manuale-non-salvata',
+          pagamento_id,
+        }, errCausale)
+      }
     }
 
     const esito = await emettiFatturaPagamento(supabase, pagamento_id, { id: auth.user.id })

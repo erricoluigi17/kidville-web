@@ -1623,7 +1623,39 @@ describe('coverage-lock isolamento fra sedi', () => {
             // un `includes` di JavaScript. Il `parents` letto dai due handler è la tabella
             // che per DDL non ha (e non deve avere) una sede propria — un genitore può
             // avere figli in due plessi — ed è letto per uid singolo, dopo la verifica.
-            routeConServiceRole: 302,
+            //
+            // 🔺 302 → 303 il 2026-09-04: è nata `admin/sedi/destinazioni:GET`, l'elenco
+            // dei plessi verso cui si può SPOSTARE un bambino. Nasce insieme al
+            // trasferimento di sede su `admin/students:PATCH`, e non è un doppione di
+            // `admin/sedi`: quella risponde «le sedi in cui LAVORI», questa «dove puoi
+            // PORTARE qualcuno», e per la Direzione la seconda è più larga della prima —
+            // il trasferimento fra plessi è esattamente il caso in cui la destinazione non
+            // è ancora fra le tue.
+            //
+            // NON porta esenzioni, e `handlerEsentati` resta fermo a 99 — che è il punto da
+            // guardare. Il file non contiene nessun `.from(` e nessun `.rpc(`: le due
+            // letture (`schools`, `scuole`) vivono in `src/lib/scuole/reali.ts`, chiamate
+            // da `destinazioniDiTrasferimento`, che è il solo posto dove la regola «chi può
+            // spostare, e verso dove» è scritta. Qui non c'è nessuna riga di una sede da
+            // isolare: c'è l'elenco delle sedi stesse, che è la cosa da cui l'isolamento si
+            // costruisce.
+            //
+            // ⚠️ IL +1 È MISURATO, NON DEDOTTO: spostando fuori dall'albero la cartella
+            // `src/app/api/admin/sedi/destinazioni/` questo lock torna a leggere
+            // esattamente `{302, 466, 99}`, cioè i tre valori precedenti — quindi il delta
+            // è tutto di questa rotta e nessun altro pezzo dell'albero si è mosso.
+            //
+            // 303 → 304 e 467 → 468 il 2026-09-04: è nata
+            // `pagamenti/fattura/anteprima:GET`, che mostra alla segreteria la causale che
+            // uscirà sulla fattura PRIMA di emetterla. Usa il service role come la POST
+            // gemella e porta lo STESSO gate di sede (`assertPagamentoInScope`): la sua
+            // risposta contiene il nome e il codice fiscale di un minore dentro la causale
+            // resa, quindi «solo un'anteprima» non è una ragione per allentare l'isolamento
+            // — è la ragione per cui il gate ci deve essere.
+            //
+            // `handlerEsentati` resta fermo a 99: nessuna esenzione, e non ne serve
+            // nessuna.
+            routeConServiceRole: 304,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1734,7 +1766,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // coincide col file (+1 route, +2 handler), ed è di nuovo il caso normale: va
             // detto ogni volta, o al giro dopo qualcuno prenderà la coincidenza del giro
             // precedente per una regola.
-            handlerControllati: 466,
+            //
+            // 🔺 466 → 467 il 2026-09-04: il solo `GET` di `admin/sedi/destinazioni`. Qui
+            // il passo coincide col file perché il file espone un metodo solo — e la
+            // coincidenza va detta, non dedotta, per la ragione scritta qui sopra.
+            handlerControllati: 468,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -63,13 +63,9 @@ import {
   ErroreSerieAmbigua,
   type Sezionale,
 } from '@/lib/fatturazione/sezionale'
-import { causaleFattura, CHIAVE_CONFIG_CAUSALI_FATTURA } from '@/lib/pagamenti/causale-fattura'
-import type { ConfigCausali } from '@/lib/pagamenti/causale'
-import { meseAnnoDaPeriodo } from '@/lib/pagamenti/periodo'
+import { componiCausalePagamento, type PagamentoPerCausale } from './causale-pagamento'
 import { leggiModuleConfig } from '@/lib/settings/module-config'
 import { annoFiscale, oggiFiscaleISO } from '@/lib/format/fiscal-date'
-import { formatEuro } from '@/lib/format/valuta'
-import { isoToIt } from '@/lib/format/data'
 import { logEvento } from '@/lib/logging/logger'
 
 export interface AttoreEmissione {
@@ -704,67 +700,22 @@ export async function emettiFatturaPagamento(
     }
   }
 
-  // 4. LA CAUSALE. Cascata: correzione manuale della segreteria sul pagamento →
-  //    modello della CATEGORIA → «Predefinito» → modello di fabbrica (che parte
-  //    dalla descrizione). I segnaposto parlano dell'ALUNNO: è il bambino che il
-  //    documento deve identificare, non chi paga.
-  //
-  // Fail-closed come il cedente, e per la stessa ragione: se questa lettura
-  // fallisce, `{}` significa «nessun modello configurato» e la causale ricade sul
-  // modello di fabbrica. Ma la causale è la DESCRIZIONE DELLA RIGA, cioè l'unico
-  // punto in cui il documento identifica il minore e ciò da cui dipende la
-  // detrazione del genitore: un guasto di lettura non può riscriverla in silenzio
-  // su un documento irreversibile. Nessun numero è ancora stato consumato.
-  const letturaCausali = await leggiModuleConfig(supabase, CHIAVE_CONFIG_CAUSALI_FATTURA, pag.scuola_id)
-  if (!letturaCausali.ok) {
-    logEvento('fattura', 'error', {
-      operazione: 'emettiFatturaPagamento:causali',
-      esito: 'causali-config-non-letta',
-      scuola_id: pag.scuola_id,
-      pagamento_id: pagamentoId,
-      msg:
-        'impossibile leggere i modelli di causale della sede: emissione fermata per non ' +
-        'scrivere sul documento una descrizione diversa da quella configurata',
-    })
+  // 4. LA CAUSALE. La compone `@/lib/aruba/causale-pagamento`, che è lo STESSO
+  //    codice chiamato da `/api/pagamenti/fattura/anteprima`: la segreteria deve
+  //    approvare esattamente il testo che parte. Cascata invariata (correzione
+  //    manuale → modello della CATEGORIA → «Predefinito» → modello di fabbrica) e
+  //    fail-closed invariato: se la configurazione non si legge, non si emette.
+  //    Nessun numero è ancora stato consumato.
+  const esitoCausale = await componiCausalePagamento(supabase, pag as PagamentoPerCausale, alunno)
+  if (!esitoCausale.ok) {
     return {
       ok: false,
-      motivo: 'errore',
-      messaggio:
-        'Impossibile leggere i modelli di causale della sede: la fattura non è stata emessa, ' +
-        'perché sarebbe uscita con una descrizione diversa da quella configurata. ' +
-        'Nessun numero è stato consumato. Riprova fra poco.',
-      httpStatus: 503,
+      motivo: esitoCausale.motivo,
+      messaggio: esitoCausale.messaggio,
+      httpStatus: esitoCausale.httpStatus,
     }
   }
-  const causaliCfg = letturaCausali.config as ConfigCausali
-  const categoria = (Array.isArray(pag.payment_categories) ? pag.payment_categories[0] : pag.payment_categories) as
-    | { slug?: string | null }
-    | null
-  const { mese, anno: annoCompetenza } = meseAnnoDaPeriodo(pag.periodo_competenza as string | null)
-  const nomeSede = await leggiNomeSede(supabase, pag.scuola_id)
-  const causaleBase =
-    causaleFattura({
-      config: causaliCfg,
-      slugCategoria: categoria?.slug,
-      // ⚠️ `pagamenti.fattura_causale` è — e da oggi RESTA — solo ciò che una
-      // persona ha scritto a mano (lo salva `pagamenti/fattura:POST`). Fino al
-      // 2026-08-09 l'emissione ci riscriveva dentro la causale composta: dalla
-      // seconda emissione in poi quel campo non era più una correzione umana ma
-      // l'eco della prima composizione, e cambiare il modello di categoria non
-      // aveva più alcun effetto. Il ri-scrittura è stata tolta (vedi il punto 6).
-      causaleManuale: pag.fattura_causale,
-      dati: {
-        descrizione: pag.descrizione as string | null,
-        nome: alunno?.nome,
-        cognome: alunno?.cognome,
-        codiceFiscale: alunno?.codice_fiscale,
-        sede: nomeSede,
-        mese,
-        anno: annoCompetenza,
-        importo: formatEuro(pag.importo),
-        scadenza: isoToIt(s(pag.scadenza)),
-      },
-    }) || s(pag.descrizione)
+  const causaleBase = esitoCausale.causale
 
   // 5. determina le quote di fatturazione
   const quote = await determinaQuoteFatturazione(
@@ -1637,32 +1588,6 @@ export async function emettiFatturaPagamento(
 /* ────────────────────────────────────────────────────────────────────────────
  * Letture accessorie: degradano da sole, e lo dicono.
  * ──────────────────────────────────────────────────────────────────────────── */
-
-/**
- * Il nome della sede, per il segnaposto `{sede}` delle causali.
- *
- * Best-effort dichiarato: se non si legge, la causale esce senza quel pezzo — il
- * motore di `renderCausale` omette il segmento invece di lasciare una parola
- * penzolante. Un documento fiscale non si blocca per il nome del plesso; ma il
- * guasto non passa in silenzio, perché PostgREST NON LANCIA e senza questa riga
- * l'errore sparirebbe nella destrutturazione (AGENTS.md, regola 7).
- */
-async function leggiNomeSede(supabase: SupabaseClient, scuolaId: string | null | undefined): Promise<string> {
-  if (!scuolaId) return ''
-  const { data, error } = await supabase.from('scuole').select('nome').eq('id', scuolaId).maybeSingle()
-  if (error) {
-    // Niente `msg` accanto a un errore: verrebbe redatto, e il messaggio di
-    // PostgREST è già la notizia (quale colonna o quale permesso manca). Il
-    // «cosa si perde» sta in `esito`, che resta leggibile in tabella.
-    logEvento('fattura', 'warn', {
-      operazione: 'emettiFatturaPagamento:nomeSede',
-      esito: 'sede-non-letta-causale-senza-sede',
-      scuola_id: scuolaId,
-    }, error)
-    return ''
-  }
-  return s((data as { nome?: string | null } | null)?.nome)
-}
 
 /** Provincia e numero civico del cessionario: due elementi FACOLTATIVI del tracciato. */
 interface ResidenzaEstesa {

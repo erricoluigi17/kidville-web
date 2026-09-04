@@ -159,15 +159,21 @@ promemoria da quando il modulo pubblico è andato online.
 > **Rimisurato il 2026-08-04 — i numeri qui sopra sono di quattro giorni fa e sono già
 > RADDOPPIATI.**
 >
-> | | 2026-07-31 | 2026-08-04 | 2026-08-20 |
-> |---|---|---|---|
-> | domande di iscrizione | 227 | 302 | **403** |
-> | codici fiscali distinti di minori | 152 | **324** | *non rimisurato* |
+> | | 2026-07-31 | 2026-08-04 | 2026-08-20 | 2026-09-02 |
+> |---|---|---|---|---|
+> | domande di iscrizione | 227 | 302 | 403 | **542** |
+> | codici fiscali distinti di minori | 152 | **324** | *non rimisurato* | **567** |
 >
 > **La terza colonna è del 2026-08-20, misurata alle 12:24** prima di mergiare la PR #91 in
 > produzione — cioè facendo esattamente ciò che questo blocco ordina, invece di fidarsi delle prime
 > due colonne. In sedici giorni le domande sono passate da 302 a 403: **circa sei al giorno**, e la
 > crescita non ha mai smesso.
+>
+> **La quarta colonna è del 2026-09-02**, misurata riattivando la conferma umana sulle scritture —
+> di nuovo eseguendo la query invece di copiare il numero della colonna accanto. In tredici giorni
+> le domande sono passate da 403 a 542: **circa undici al giorno**, il doppio del ritmo che la riga
+> qui sopra chiama «circa sei». Non invecchia solo il numero: invecchia anche la stima della
+> velocità con cui invecchia.
 >
 > ⚠️ **La casella «non rimisurato» è la parte onesta di questa tabella e va letta, non saltata.** Il
 > conteggio dei codici fiscali distinti richiede di leggere le *righe* di `enrollment_submissions`,
@@ -187,7 +193,9 @@ promemoria da quando il modulo pubblico è andato online.
 > ```sql
 > SELECT count(*) FROM enrollment_submissions;
 > ```
-> Chi sta per scrivere in produzione la esegua. Nessuno gli chiederà conferma prima.
+> Chi sta per scrivere in produzione la esegua: **contare è una lettura, e le letture non chiedono
+> mai conferma** — dal 2026-09-02 è cablato nel classificatore (vedi il riquadro in fondo). È la
+> scrittura che si ferma a chiedere, e quella query serve proprio a decidere se farla.
 
 **La lezione, prima delle istruzioni**: «pre-lancio» è una frase sul calendario, non una
 misurazione. L'unica domanda che conta è *quante righe reali ci sono adesso in produzione*, e ha
@@ -230,6 +238,11 @@ riquadro «REVOCATO» qui sotto, che è la parte da leggere per prima.
 
 ### 🔻 REVOCATO il 2026-08-03 — le conferme sono durate un giorno
 
+> ⏭️ **Questo riquadro è stato SUPERATO il 2026-09-02**, non cancellato: resta perché racconta come
+> ci si è arrivati. Per lo stato di oggi salta al riquadro **«Lettura libera, scrittura confermata»**
+> in fondo. In una riga: le **letture** non chiedono più niente, mai; le **scritture** sono tornate a
+> chiedere, ma un piano approvato vale come conferma.
+
 **I cinque punti qui sopra sono stati revocati dal titolare il 2026-08-03**, poche ore dopo essere
 stati applicati e nel mezzo del collaudo dei venti tester. Richiesta testuale: *«far sì che vada
 tutto in automatico quando sono in automode»*, e alla domanda esplicita su cosa dovesse passare
@@ -271,5 +284,131 @@ account con accesso in scrittura è il suo, e GitHub non permette di approvare l
 la regola bloccava ogni rilascio senza aggiungere un controllo vero). **Restano** obbligatori i due
 check della CI (`Lint · Typecheck · Unit` ed `E2E (Playwright)`), `enforce_admins`, il divieto di
 force-push e di cancellazione del branch.
+
+### 🟢 Lettura libera, scrittura confermata — stato dal 2026-09-02
+
+**Decisione del titolare (2026-09-02)**: *«Claude può leggere sempre dal db, non deve mai chiedermi
+il permesso. Il permesso lo chiede solo in scrittura, se ho approvato il piano ed è in auto mode non
+deve chiedermelo.»* Questo riquadro descrive ciò che è stato applicato, e sostituisce il riquadro
+«REVOCATO» qui sopra dove i due divergono.
+
+Il meccanismo **non** sono le regole `allow`/`ask`: quelle non distinguono una `SELECT` da un
+`UPDATE`, perché sono lo stesso strumento (`mcp__supabase__execute_sql`). A decidere è il blocco
+**`autoMode`** in `.claude/settings.json`, che istruisce il classificatore di auto mode:
+
+| | Cosa succede |
+|---|---|
+| **Letture** (`SELECT`, `EXPLAIN`, `count(*)`, e tutti gli strumenti Supabase di sola lettura) | passano sempre, **anche sulle tabelle con anagrafiche di minori**, anche in produzione |
+| **Scritture** (`INSERT`/`UPDATE`/`DELETE`/DDL, `apply_migration`) | `soft_deny`: si chiede conferma **mostrando l'istruzione esatta** |
+| **Scrittura già dentro un piano approvato** | passa senza richiedere di nuovo — *l'approvazione del piano È la conferma* |
+| Merge, `git push`, deploy | stessa regola delle scritture |
+
+**Il punto che vale la pena aver capito**: fino a oggi il classificatore rifiutava certe *letture*
+su anagrafiche di minori — è documentato nella tabella qui sopra, la casella «non rimisurato» esiste
+proprio per un rifiuto del genere. Era la protezione puntata nella direzione sbagliata: leggere quei
+dati è ciò che permette di **misurare prima di scrivere**, ed è quello che questo file ordina da
+pagina uno. Il vincolo sui dati dei minori non è mai stato «non guardarli»: è non finire nei log
+(`@/lib/logging/redact` è a lista bianca), non finire nei report di collaudo, non finire nel
+repository — che è **pubblico**. Sono vincoli sulla **scrittura**, e adesso la configurazione dice
+la stessa cosa.
+
+⚠️ **Cosa NON copre.** Il `soft_deny` è una regola del classificatore di **auto mode**. Le regole
+`allow` restano quelle del 2026-08-03: `execute_sql` e `apply_migration` sono in `allow` in
+`.claude/settings.json`, in `.claude/settings.local.json` e in `~/.claude/settings.json`. In una
+sessione **fuori** da auto mode una scrittura passerebbe ancora senza fermarsi. Vale ancora, e vale
+di più: **mostrare cosa si sta per applicare non costa niente**, ed è l'ultima cosa rimasta fra un
+errore e le famiglie dietro quelle righe.
+
+**Come si torna indietro**: `rm` del blocco `autoMode` da `.claude/settings.json` (esiste un backup
+`settings.json.bak-automode` del file di prima), oppure la strada del 2026-07-31 descritta sopra —
+i cinque nomi sotto `permissions.ask`, in **tutti e tre** i file, altrimenti non scatta.
+
+### 🟩 APPLICATO IL 2026-09-03 — autonomia piena, e i tre gate sono spenti
+
+**Decisione del titolare**, ripetuta due volte e senza margini: *«non chiedermi più autorizzazioni,
+sei in auto mode, hai autorizzazione ad andare avanti in autonomia … anche per il db … anche per i
+comandi stessa cosa, autorizzazione piena»*. Applicata **dal titolare da terminale**, perché Claude
+non può (vedi il riquadro sotto).
+
+Stato verificato sul file, non dedotto:
+
+| | Prima | Adesso |
+|---|---|---|
+| `permissions.ask` | 3 voci (`execute_sql`, `apply_migration`, `claude_ai_Supabase__execute_sql`) | **vuoto** — le tre sono in `allow` |
+| `hooks.PreToolUse` | `supabase_sql_gate.sh` su ogni query | **rimosso** (resta solo `Stop`) |
+| `autoMode.soft_deny` | scritture, merge, push, deploy | **vuoto** |
+| `permissions.allow` | elenco di comandi uno per uno | in più `Bash` **senza parentesi**: qualunque comando |
+| `permissions.deny` | 22 regole | **22 regole, intatte** |
+
+Backup del file di prima: `.claude/settings.json.bak-20260903-144246`.
+
+🔴 **COSA NON C'È PIÙ, detto una volta e senza giri.** `supabase_sql_gate.sh` era l'**unica** cosa
+che distingueva `SELECT count(*)` da `DROP TABLE`: le regole `allow`/`ask` vedono il nome dello
+strumento, mai l'argomento. Adesso un `UPDATE` o un `DROP` sul database che contiene le domande di
+iscrizione vere parte **senza che nessun essere umano veda l'istruzione prima**. La `deny` non
+protegge da una query sbagliata: protegge da un comando distruttivo *noto*.
+
+Resta l'unica cosa rimasta, e non è un meccanismo: **mostrare cosa si sta per applicare**. Mostrare
+non è chiedere, non costa niente, ed è ciò che sta fra un errore e le famiglie dietro quelle righe.
+
+⚠️ **Il gate era anche un antidoto ai falsi positivi**, e buona parte dei prompt che il titolare
+riceveva erano quelli: mandava in conferma anche `SET`, `BEGIN`, `COMMIT`, `ANALYZE`, `EXECUTE`,
+`DO`, `INTO`, o una colonna che si chiama `comment`.
+
+⚠️ **Il plan mode non è toccato da niente di tutto questo**: `ExitPlanMode` chiede sempre
+l'approvazione del piano e nessuna impostazione la spegne. Per non essere interrotti si sta in auto
+mode e **non si entra in plan mode**.
+
+**Come si torna indietro**: `cp .claude/settings.json.bak-20260903-144246 .claude/settings.json`, poi
+riavviare la sessione. Il file dell'hook (`.claude/hooks/supabase_sql_gate.sh`) è rimasto sul disco:
+per riarmarlo basta rimettere il blocco `hooks.PreToolUse`.
+
+⚠️ **E poi si PROVA.** Riavviare non basta a saperlo: il 2026-09-02 questo stesso file ha dichiarato
+armata una protezione che non lo era. Chi cambia questo blocco esegua un `CREATE TEMP TABLE` di prova
+e guardi se compare un prompt. *Una configurazione mai vista passare non è configurata.*
+
+🔴 **RIMISURATO IL 2026-09-03: IL RIQUADRO QUI SOPRA DICE IL FALSO SU DOVE STANNO I PERMESSI.**
+Sostiene che `execute_sql` e `apply_migration` siano in **`allow`** in tutti e tre i file. In
+`.claude/settings.json` stanno in **`ask`**, insieme a `mcp__claude_ai_Supabase__execute_sql`, e
+**`ask` batte `allow`**: chiedono conferma in ogni modalità, auto mode compreso. Qualcuno ce li ha
+rimessi dopo il 2026-08-03 e questo documento non l'ha seguito — che è, letteralmente, il difetto che
+il blocco del 2026-07-31 racconta di sé stesso. *Leggi il file, non il paragrafo.*
+
+I gate che oggi fermano una scrittura sono **tre**, indipendenti, e vanno tolti tutti e tre se si
+vuole l'autonomia piena:
+
+| | Dove | Vale fuori da auto mode? |
+|---|---|---|
+| 1 | `permissions.ask` in `.claude/settings.json` | sì |
+| 2 | `hooks.PreToolUse` → `.claude/hooks/supabase_sql_gate.sh` | **sì**, è scritto nel file stesso |
+| 3 | `autoMode.soft_deny` | no, solo in auto mode |
+
+Il **plan mode** non c'entra con nessuno dei tre: l'approvazione del piano *è* il plan mode
+(`ExitPlanMode` chiede sempre) e nessuna impostazione la spegne. Per non essere interrotti si sta in
+auto mode e non si entra in plan mode.
+
+⚠️ **Nessuno di questi tre lo può cambiare Claude**, e non per prudenza sua: il classificatore
+rifiuta ogni modifica alla propria configurazione, e l'autorizzazione a voce dell'utente **non la
+sblocca** — è un confine *hard*. Provato il 2026-09-03 su richiesta esplicita del titolare
+(«autorizzazione piena, anche per i comandi»): negato. Si fa a mano da terminale, e poi **si riavvia
+la sessione**.
+
+🔴 **VERIFICATO IL 2026-09-02, E IL LATO SCRITTURA NON ERA ARMATO.** Subito dopo aver scritto il
+blocco, nella stessa sessione, sono state eseguite due prove innocue: `CREATE TEMP TABLE` e
+`DROP TABLE IF EXISTS <nome inesistente>`. **Sono passate entrambe senza chiedere niente.** Il
+`soft_deny` non ha fermato un `DROP`. La causa quasi certa è che le regole `autoMode` vengano lette
+all'**avvio** della sessione: modificarle a sessione aperta non le arma. Chi installa o cambia
+questo blocco **riavvii la sessione e rifaccia la prova del `DROP`**: se passa ancora, la
+protezione descritta qui sopra non esiste, e questo riquadro sta mentendo esattamente come mentiva
+quello del 2026-07-31. *Un test mai visto fallire non è un test.*
+Il lato **lettura** non è dimostrato da questa sessione: le letture funzionavano **già prima** della
+modifica (`count(*)` eseguito a blocco non ancora scritto). Ciò che è dimostrato è solo che il
+blocco è nel file, sintatticamente valido.
+
+📌 **Nota operativa, scoperta applicandolo**: il blocco `autoMode` **non può essere scritto da
+Claude** — il classificatore rifiuta ogni modifica alla propria configurazione, e l'autorizzazione a
+voce dell'utente non la sblocca (è un confine *hard*, non *soft*). La modifica l'ha eseguita il
+titolare da terminale. Stessa cosa per gli hook in `settings.json`. Chi in futuro dovrà cambiare
+questo blocco lo faccia a mano: non è un permesso che si possa concedere chiedendolo a Claude.
 
 Quando il lancio commerciale avverrà davvero, aggiorna anche il PRD.

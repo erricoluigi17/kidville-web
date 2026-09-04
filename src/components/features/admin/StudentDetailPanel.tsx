@@ -2,12 +2,14 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { X, Archive, Save, AlertTriangle, Undo2, Users, Baby } from 'lucide-react';
+import { X, Archive, Save, AlertTriangle, Undo2, Users, Baby, Building2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
 import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
 import { AllergeniSelect } from './AllergeniSelect';
+import { useDestinazioniSede, altreSedi, nomeSede } from './destinazioni-sede';
+import { messaggioSoloCatalogo } from '@/lib/ui/esito-fetch';
 import { BadgeCoerenzaCf, badgeHaQualcosaDaDire } from '@/components/features/anagrafica/BadgeCoerenzaCf';
 import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
@@ -99,6 +101,14 @@ interface Student {
     genitori_separati?: boolean | null;
     retta_split_config?: { quote: { adult_id?: string; nome?: string; importo: number }[] } | null;
     intestatario_fatture?: { tipo: 'adult' | 'altro'; adult_id?: string; nome?: string; dati?: Record<string, string> } | null;
+    /**
+     * «La retta la paga il fratello»: uuid dell'altro bambino (self-FK su `alunni`).
+     *
+     * Arrivava già al client — la GET fa `select *` — ma non era nell'interfaccia, non
+     * era in `patchBodySchema` e non era in `allowedFields`: 44 alunni in produzione
+     * l'avevano valorizzata senza che nessuno potesse vederla né correggerla.
+     */
+    retta_a_carico_di?: string | null;
 }
 
 interface Sibling {
@@ -108,6 +118,9 @@ interface Sibling {
     data_nascita?: string;
     classe_sezione?: string | null;
     stato?: string;
+    /** Valorizzato = la retta di QUESTO fratello la paga qualcun altro. */
+    retta_a_carico_di?: string | null;
+    importo_retta_mensile?: number | null;
 }
 
 interface Props {
@@ -173,11 +186,69 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     const [studentTasks, setStudentTasks] = useState<Task[]>([]);
     const [tasksLoading, setTasksLoading] = useState(true);
 
+    /* ═══ LO SPOSTAMENTO DI SEDE ═══════════════════════════════════════════════
+     *
+     * ⚠️ NON È UN CAMPO DEL FORM, ed è la ragione per cui ha uno stato suo invece
+     * di una riga in `form`. I campi di questa scheda si scrivono e si salvano
+     * tutti insieme col bottone in fondo; questo è un'OPERAZIONE — il server
+     * azzera classe e gruppo mensa, e ciò che è già registrato resta sulla sede
+     * di partenza. Metterlo fra i campi significherebbe che chi apre la scheda
+     * per correggere un numero di telefono può spostare un bambino di plesso
+     * senza accorgersene, e che ogni salvataggio rimanda la sede corrente (che
+     * il server, giustamente, non conta come trasferimento).
+     *
+     * ⚠️ E NON PASSA DA `onSave`. Il contenitore
+     * (`/admin/students/[id]/page.tsx`) non legge il corpo della risposta e fa
+     * `setTimeout(goBack, 900)` ANCHE sul fallimento: il rifiuto
+     * `SEDE_NON_ACCESSIBILE` finirebbe in un «❌ Errore» generico mentre
+     * l'operatore viene sbattuto fuori dalla scheda. È il difetto già pagato su
+     * `onDelete`/`onArchive` in questo stesso file, e non si ripete: la chiamata
+     * la fa il pannello, l'esito resta sotto gli occhi di chi ha premuto.
+     */
+    const [sedeScelta, setSedeScelta] = useState('');
+    /** Primo clic: si mostra cosa si perde. Secondo clic: si sposta. */
+    const [confermaTrasferimento, setConfermaTrasferimento] = useState(false);
+    const [trasferimentoInCorso, setTrasferimentoInCorso] = useState(false);
+    const [erroreTrasferimento, setErroreTrasferimento] = useState<string | null>(null);
+    /** Il NOME della sede raggiunta, quando lo spostamento è andato a buon fine. */
+    const [sedeRaggiunta, setSedeRaggiunta] = useState<string | null>(null);
+    /**
+     * ⚠️ L'ELENCO SI LEGGE ANCHE PER UN BAMBINO ARCHIVIATO, e fino al 2026-09-04
+     * non era così. C'era scritto — qui, in tre righe — che per un archiviato la
+     * lettura sarebbe stata «una richiesta di rete che nessuno può usare»: la
+     * rotta rifiuta il trasferimento di un archiviato (409) e la scheda non gli
+     * offre il comando, quindi tanto valeva risparmiarsela.
+     *
+     * Quella frase era FALSA su un pezzo, ed è il pezzo che conta: le
+     * destinazioni non servono solo alla tendina, sono anche l'unica fonte da cui
+     * questa scheda risolve il NOME della sede in cui il bambino sta adesso — e
+     * quella riga la scheda la mostra a tutti, archiviati compresi. Spenta la
+     * lettura, `sedi` restava vuoto per sempre, il nome non si risolveva mai e la
+     * riga «Sede attuale» ripiegava su «Nessuna sede in archivio» PER SEMPRE, su
+     * un bambino che la sede in archivio ce l'ha eccome. Una bugia con l'aria di
+     * un fatto, servita in permanenza.
+     *
+     * Il costo del ripensamento è una richiesta di rete su una scheda che si apre
+     * di rado (i «non più iscritti»); il ricavo è che l'unica riga che quella
+     * scheda dice sulla sede smette di essere falsa. Il comando resta comunque
+     * negato all'archiviato: lo decide il ramo `archiviato` nel render, non
+     * l'assenza dell'elenco.
+     */
+    const destinazioni = useDestinazioniSede();
+
     // Sezioni della SEDE del bambino: una classe di un altro plesso non è una
     // destinazione possibile (il server la rifiuta da W2-C), quindi non deve
     // nemmeno comparire nella tendina. Senza sede sulla riga non si chiede nulla:
     // non esiste perimetro entro cui una classe sia lecita.
-    const sedeAlunno = student?.scuola_id ?? null;
+    //
+    // ⚠️ SI LEGGE DA `form`, NON DAL PROP, e dal 2026-09-04 è ciò che tiene insieme
+    // le due cose: dopo uno spostamento di sede il pannello non si smonta, e
+    // leggendo `student.scuola_id` la tendina «Classe / Sezione» continuerebbe a
+    // offrire le sezioni del plesso APPENA LASCIATO — cioè esattamente le classi
+    // che il server ha appena sganciato, e che rifiuterebbe al salvataggio
+    // successivo. All'apertura i due valori coincidono (`form` nasce da `student`),
+    // quindi per ogni altro percorso non cambia niente.
+    const sedeAlunno = ((form.scuola_id as string | null | undefined) ?? student?.scuola_id) ?? null;
     useEffect(() => {
         if (!sedeAlunno) return;
         let annullato = false;
@@ -428,6 +499,110 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
         }
     };
 
+    /**
+     * SPOSTA IL BAMBINO IN UN ALTRO PLESSO.
+     *
+     * ⚠️ IL CORPO È `{ id, scuola_id }` E BASTA. Chi ha scritto la rotta segnala
+     * che il form intero funzionerebbe lo stesso, ma il form intero rimanda
+     * anche `classe_sezione` — il nome della classe del plesso di PARTENZA — e
+     * la correttezza dipenderebbe dall'ordine in cui la rotta applica le sue
+     * scritture. Non mandare un dato è più solido che sperare che venga
+     * ignorato: qui non c'è niente da ignorare.
+     *
+     * IL SUCCESSO NON SI LOGGA DA QUI, e non è una dimenticanza rispetto ad
+     * AGENTS.md §5: lo spostamento di un minore fra plessi è già registrato
+     * SERVER-side (`logScrittura` + l'evento `multi_sede` di `admin/students:PATCH`),
+     * cioè dal lato che sa se la scrittura è davvero avvenuta. Una seconda riga
+     * dal browser conterebbe due volte lo stesso fatto — che è il motivo per cui
+     * `admin/sedi/destinazioni` non logga il proprio successo.
+     *
+     * I DUE GESTI SONO DUE BOTTONI DIVERSI, non lo stesso che cambia parola.
+     * «Sposta di sede» apre il riquadro delle conseguenze; «Conferma» esegue. È
+     * la lezione già scritta trenta righe più in basso, sul comando di ciclo di
+     * vita: «lo stesso bottone, nella stessa posizione, che fa due cose diverse
+     * a seconda di uno stato invisibile a chi lo preme» è una roulette. E la
+     * conferma si CHIUDE se si cambia destinazione, altrimenti il riquadro
+     * nominerebbe un plesso e il clic ne raggiungerebbe un altro.
+     */
+    const handleTrasferisci = async () => {
+        if (!sedeScelta) return;
+        setTrasferimentoInCorso(true);
+        setErroreTrasferimento(null);
+        /* ⚠️ E ANCHE L'ANNUNCIO DEL GIRO PRECEDENTE. Azzerare il solo errore
+         * lasciava a schermo, dopo uno spostamento riuscito seguito da uno
+         * rifiutato, «Spostato in Kidville Alfa…» E «Sede non accessibile»
+         * insieme, uno sotto l'altro: due righe che si contraddicono sull'esito
+         * dello spostamento di un minore, e nessuna delle due datata. I due
+         * riquadri sono un ESITO SOLO in due colori: si spengono insieme.
+         *
+         * ⚠️ LE GUARDIE SONO DUE, E OGNUNA CHIUDE IL DIFETTO DA SOLA. Misurato
+         * rompendole una alla volta: via entrambe, i due test di
+         * `StudentDetailPanel-trasferimento-sede` diventano rossi; via solo
+         * questa, la sequenza misurata resta verde (a spegnere l'annuncio è
+         * l'`onChange`); via solo quella dell'`onChange`, la sequenza misurata
+         * resta verde lo stesso — la spegne questa. La ridondanza è voluta e non
+         * è simmetrica: l'`onChange` copre anche il caso in cui si cambia
+         * destinazione e basta (l'annuncio nominava un ALTRO plesso, e resterebbe
+         * lì mentre se ne sceglie un altro), questa copre il caso in cui a
+         * ripartire è l'operazione — cioè fa sì che l'operazione possieda il
+         * proprio esito per intero, invece di dipendere dal gestore di un altro
+         * controllo. */
+        setSedeRaggiunta(null);
+        try {
+            const res = await fetch('/api/admin/students', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: student.id, scuola_id: sedeScelta }),
+            }).catch((err: unknown) => {
+                // La rete caduta è il caso in cui NON si sa se la scrittura è
+                // avvenuta: si dice, non si inghiotte (AGENTS.md §6).
+                logClient({
+                    livello: 'error',
+                    evento: 'fetch',
+                    messaggio: `trasferimento-sede-rete: ${nomeErrore(err)}`,
+                });
+                return null;
+            });
+            if (!res) {
+                setErroreTrasferimento(t('trasferimentoErrore'));
+                return;
+            }
+            if (!res.ok) {
+                // Lo STATO nel log, il MOTIVO a schermo: il corpo di un rifiuto
+                // può nominare una sede o un alunno, e nei log di questo repo
+                // non entrano.
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: 'trasferimento-sede-respinto',
+                    stato: res.status,
+                });
+                /* ⚠️ `messaggioSoloCatalogo` e NON `messaggioErrore`: la seconda,
+                 * quando il corpo non porta un codice, ripiega sulla PROSA del
+                 * server — e su questa rotta il ramo di guasto risponde
+                 * `err.message`, cioè il testo di PostgREST o di un'eccezione.
+                 * Tutti i rifiuti PREVISTI di un trasferimento un codice ce
+                 * l'hanno (`SEDE_NON_ACCESSIBILE`, `STATO_ALUNNO_ARCHIVIATO`,
+                 * `LETTURA_FALLITA`) e continuano a passare dal catalogo, quindi
+                 * si perde solo ciò che non andava mostrato: il nome di una
+                 * colonna, in italiano, dentro un'interfaccia che può essere in
+                 * inglese. */
+                setErroreTrasferimento(await messaggioSoloCatalogo(res, t('trasferimentoErrore')));
+                return;
+            }
+            /* Ciò che il server ha appena fatto, riflesso sulla scheda che resta
+             * aperta: sede nuova, classe azzerata. Senza, il pannello continuerebbe
+             * a mostrare la classe del plesso lasciato — un dato che in archivio non
+             * esiste più — e il salvataggio successivo proverebbe a riscriverla. */
+            setForm(prev => ({ ...prev, scuola_id: sedeScelta, classe_sezione: null }));
+            setSedeRaggiunta(nomeSede(destinazioni.sedi, sedeScelta) ?? '');
+            setConfermaTrasferimento(false);
+            setSedeScelta('');
+        } finally {
+            setTrasferimentoInCorso(false);
+        }
+    };
+
     const updateForm = (field: string, value: unknown) => {
         setForm(prev => ({ ...prev, [field]: value }));
     };
@@ -521,6 +696,38 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     const eraIn = typeof student.archiviato_classe_sezione === 'string' && student.archiviato_classe_sezione !== ''
         ? student.archiviato_classe_sezione
         : null;
+
+    /* Le destinazioni DIVERSE da quella attuale. «Spostare dove già sei» non è
+     * un'operazione, e offrirla è il modo di far credere che il comando sia rotto. */
+    const destinazioniPossibili = altreSedi(destinazioni.sedi, sedeAlunno);
+    const nomeSedeCorrente = nomeSede(destinazioni.sedi, sedeAlunno);
+
+    /**
+     * ⚠️ «NESSUNA SEDE IN ARCHIVIO» È UN FATTO SUL DATABASE — e fino al
+     * 2026-09-04 lo si affermava ogni volta che il NOME non si risolveva, che è
+     * un'altra cosa e succede in quattro stati che con l'archivio non c'entrano:
+     * elenco ancora in lettura, elenco non letto (guasto), sede fuori dalle
+     * destinazioni di chi guarda, e — il peggiore, perché permanente — bambino
+     * archiviato, per cui questa scheda l'elenco non lo chiedeva nemmeno.
+     *
+     * Un uuid a schermo non è la risposta (non dice niente a chi guarda e mette
+     * in circolo un identificativo di produzione), ma la risposta non è nemmeno
+     * inventare un fatto sull'archivio. Sono TRE frasi, e dicono tre cose:
+     *
+     *   · `scuola_id` assente          → «Nessuna sede in archivio». È vero.
+     *   · nome irrisolto, sto leggendo → «Sto leggendo le sedi…». È vero.
+     *   · nome irrisolto, ho finito    → «Sede non risolta». È vero, e non
+     *                                    contraddice il riquadro del guasto che
+     *                                    in quel caso gli sta accanto.
+     *
+     * È la stessa distinzione che il pannello del GENITORE fa già con
+     * `parentSedeFiglioSconosciuta`: qui la chiave è sua perché la terza frase,
+     * là, non deve mai poter dire «nessuna sede in archivio».
+     */
+    const sedeCorrenteTesto = sedeAlunno == null
+        ? t('trasferimentoSenzaSede')
+        : nomeSedeCorrente
+        ?? (destinazioni.stato === 'caricamento' ? t('trasferimentoCaricamento') : t('trasferimentoSedeNonRisolta'));
 
     const isPage = variant === 'page';
     const shellCls = isPage
@@ -930,6 +1137,7 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                         form={form as Record<string, unknown>}
                         updateForm={updateForm}
                         parents={student.student_parents}
+                        siblings={siblings}
                     />
 
                     {/* Famiglia e Delegati */}
@@ -1109,6 +1317,185 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                             </div>
                         )}
                     </section>
+
+                    {/* ══════════════════════════════════════════════════════════════
+                        SPOSTA DI SEDE — l'unica strada che non passi da una `UPDATE`
+                        a mano sul database delle anagrafiche di oltre seicento minori.
+
+                        ⚠️ TRE ESITI DI LETTURA, E IL TERZO NON SOMIGLIA AL SECONDO.
+                        «Il tuo ruolo non può» e «non sono riuscito a leggere l'elenco»
+                        sono due fatti diversi, e la rotta li distingue apposta
+                        (`motivo: 'nessuna-destinazione'` contro `500` +
+                        `LETTURA_FALLITA`). Mostrarli con la stessa frase sarebbe «una
+                        bugia con l'aria di un fatto» — le parole sono della testata di
+                        `src/lib/sedi/trasferimento.ts`, ed è la ragione per cui quella
+                        funzione restituisce `error` accanto a `sedi`. Solo il guasto
+                        offre «Riprova»: riprovare un divieto non cambia niente.
+
+                        ⚠️ E IL QUARTO CASO NON È NESSUNO DEI TRE: destinazioni lette,
+                        ma l'unica è quella in cui il bambino GIÀ si trova. È il caso
+                        ordinario della Segreteria — misurato il 2026-09-03: nessuna è
+                        associata a più di una sede — e il titolare l'ha confermato
+                        voluto, perché il trasferimento fra plessi passa dalla Direzione.
+                        Un menù con dentro solo la sede attuale sarebbe un comando che
+                        non può fare niente: qui si SPIEGA, e non si mostra.
+
+                        Il riquadro delle conseguenze sta SOTTO il comando, come quello
+                        dell'archiviazione: su WebKit un elemento che compare sopra un
+                        bottone lo fa risalire sotto il dito che sta per premerlo (25 px
+                        misurati su un altro modulo di questo repo, 48 su un terzo). */}
+                    <section data-testid="trasferimento-sede">
+                        <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
+                            <Building2 size={14} className="text-kidville-green" />
+                            {t('trasferimentoTitolo')}
+                        </h3>
+
+                        <div className="rounded-xl border border-kidville-line bg-kidville-cream p-3 space-y-3">
+                            <p className="font-maven text-xs text-kidville-ink">
+                                <span className="text-kidville-sub">{t('trasferimentoSedeAttuale')}: </span>
+                                <span className="font-semibold">{sedeCorrenteTesto}</span>
+                            </p>
+
+                            {archiviato ? (
+                                /* Il comando non si offre a chi riceverebbe un 409: la rotta
+                                   rifiuta il trasferimento di un archiviato, e il ritorno ha
+                                   una strada sua («Riporta fra gli iscritti», qui sotto). */
+                                <p data-testid="trasferimento-sede-spiegazione" className="font-maven text-xs text-kidville-sub">
+                                    {t('trasferimentoArchiviato')}
+                                </p>
+                            ) : destinazioni.stato === 'caricamento' ? (
+                                <p className="font-maven text-xs text-kidville-sub">{t('trasferimentoCaricamento')}</p>
+                            ) : destinazioni.stato === 'guasto' ? (
+                                /* `role="status"` e NON `alert`: questo guasto nasce dal
+                                   CARICAMENTO della scheda, non da un gesto di chi la
+                                   guarda. `alert` è assertivo — interrompe lo screen
+                                   reader a metà di ciò che sta leggendo — e in una scheda
+                                   aperta per correggere un numero di telefono
+                                   annuncerebbe un allarme su un comando che l'operatore
+                                   non ha nemmeno cercato. L'`alert` resta dov'è giusto:
+                                   sul rifiuto che segue il clic di conferma. */
+                                <div data-testid="trasferimento-sede-guasto" role="status" className="space-y-2">
+                                    <p className="font-maven text-xs text-kidville-warn-strong">{t('trasferimentoGuasto')}</p>
+                                    <button
+                                        type="button"
+                                        data-testid="trasferimento-sede-riprova"
+                                        onClick={destinazioni.ricarica}
+                                        className="min-h-[44px] rounded-pill border-2 border-kidville-green/40 px-4 font-barlow text-xs font-bold uppercase text-kidville-green hover:bg-kidville-green/5"
+                                    >
+                                        {t('trasferimentoRiprova')}
+                                    </button>
+                                </div>
+                            ) : destinazioniPossibili.length === 0 ? (
+                                <p data-testid="trasferimento-sede-spiegazione" className="font-maven text-xs text-kidville-sub">
+                                    {destinazioni.stato === 'nessuna' ? t('trasferimentoNessunaSede') : t('trasferimentoUnicaSede')}
+                                </p>
+                            ) : (
+                                <>
+                                    <p className="font-maven text-xs text-kidville-sub">{t('trasferimentoIntro')}</p>
+                                    <div>
+                                        {/* `text-kidville-sub` e non `muted`: quest'ultimo misura sotto AA (WCAG
+                                            1.4.3) ed è debito che il repo sta smaltendo — una riga
+                                            NUOVA non lo rifinanzia. */}
+                                        <label htmlFor="dettaglio-trasferimento-sede" className="font-maven text-xs text-kidville-sub mb-1 block">
+                                            {t('trasferimentoScegli')}
+                                        </label>
+                                        <select
+                                            id="dettaglio-trasferimento-sede"
+                                            name="trasferimento_sede"
+                                            value={sedeScelta}
+                                            onChange={(e) => {
+                                                setSedeScelta(e.target.value);
+                                                // Cambiata la destinazione, la conferma letta non vale più —
+                                                // e nemmeno l'esito del giro prima, che parlava di un altro plesso.
+                                                setConfermaTrasferimento(false);
+                                                setErroreTrasferimento(null);
+                                                setSedeRaggiunta(null);
+                                            }}
+                                            className="w-full min-h-[44px] border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green"
+                                        >
+                                            <option value="">{t('trasferimentoScegliVuoto')}</option>
+                                            {destinazioniPossibili.map((s) => (
+                                                <option key={s.id} value={s.id}>{s.nome}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        data-testid="trasferimento-sede-comando"
+                                        onClick={() => setConfermaTrasferimento(true)}
+                                        disabled={!sedeScelta || trasferimentoInCorso}
+                                        className="w-full min-h-[44px] rounded-pill bg-kidville-warn-soft text-kidville-warn-strong border-2 border-kidville-warn/40 font-barlow font-bold uppercase tracking-wide text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                                    >
+                                        <Building2 size={14} />
+                                        {t('trasferimentoComando')}
+                                    </button>
+
+                                    {confermaTrasferimento && (
+                                        <div data-testid="trasferimento-sede-conseguenze" className="rounded-xl border border-kidville-warn/40 bg-kidville-warn-soft p-3">
+                                            <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-warn-strong">
+                                                {t('trasferimentoConfermaTitolo', { destinazione: nomeSede(destinazioni.sedi, sedeScelta) ?? '' })}
+                                            </p>
+                                            <ul className="mt-1.5 list-disc space-y-1 pl-4 font-maven text-xs text-kidville-warn-strong">
+                                                <li>{t('trasferimentoPerdeClasse')}</li>
+                                                <li>{t('trasferimentoPerdeMensa')}</li>
+                                                <li>{t('trasferimentoStoricoResta')}</li>
+                                            </ul>
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    data-testid="trasferimento-sede-conferma"
+                                                    onClick={handleTrasferisci}
+                                                    disabled={trasferimentoInCorso}
+                                                    className="min-h-[44px] rounded-pill bg-kidville-warn-strong px-4 font-barlow text-xs font-bold uppercase text-kidville-white disabled:opacity-50"
+                                                >
+                                                    {trasferimentoInCorso ? t('trasferimentoInCorso') : t('trasferimentoConferma')}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setConfermaTrasferimento(false); setErroreTrasferimento(null); }}
+                                                    disabled={trasferimentoInCorso}
+                                                    className="min-h-[44px] px-2 text-xs font-maven font-bold text-kidville-muted hover:text-kidville-ink disabled:opacity-50"
+                                                >
+                                                    {t('annulla')}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            )}
+
+                            {/* ⚠️ LO SPAZIO DEI MESSAGGI È RISERVATO (`min-h`), non guadagnato
+                                al momento del bisogno: un riquadro che appare spinge in basso
+                                tutto ciò che sta sotto, e su WebKit è così che un bottone
+                                finisce sotto il dito di chi stava per premerne un altro. */}
+                            <div className="min-h-[1.25rem]">
+                                {/* ⚠️ I DUE INCHIOSTRI SONO QUELLI FORTI, misurati e non scelti a occhio.
+                                    Il verde `success` su questa fascia — `success-soft` al 30%
+                                    appiattito sulla crema — fa **2,95:1**, e il rosso `error` su
+                                    `error-soft` fa **3,70:1**: sotto i 4,5:1 di AA (WCAG 1.4.3)
+                                    entrambi, su testo `text-xs` che dice se un bambino è stato
+                                    spostato di plesso oppure no. `success-strong` fa 7,04:1 ed
+                                    `error-strong` 4,92:1 — esistono in `globals.css` esattamente per
+                                    questo. Il repo ha un debito su queste due famiglie e lo sta
+                                    smaltendo: una riga NUOVA non lo rifinanzia. I bordi restano sul
+                                    token debole: per un contorno la soglia è 3:1 (WCAG 1.4.11).
+                                    I due numeri non sono scritti a mano da nessuna parte: li CALCOLA
+                                    `__tests__/a11y/contrasto-token.test.ts` dai token di
+                                    `globals.css`, e se un giorno i token cambiano è quel file a
+                                    diventare rosso — non questo commento a invecchiare in silenzio. */}
+                                {sedeRaggiunta !== null && (
+                                    <p role="status" className="rounded-xl border border-kidville-success/30 bg-kidville-success-soft/30 p-2 font-maven text-xs text-kidville-success-strong">
+                                        {t('trasferimentoFatto', { destinazione: sedeRaggiunta })}
+                                    </p>
+                                )}
+                                {erroreTrasferimento && (
+                                    <p data-testid="trasferimento-sede-errore" role="alert" className="rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-2 font-maven text-xs text-kidville-error-strong">
+                                        {erroreTrasferimento}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </section>
                 </div>
 
                 {/* Footer actions */}
@@ -1260,7 +1647,13 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                     {erroreArchiviazione && (
                         <div
                             role="alert"
-                            className="rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-3 font-maven text-xs text-kidville-error"
+                            /* `error-strong` (4,92:1) e non `error` (3,70:1 su questa fascia): è la
+                               fascia PREGRESSA di questo file, raddrizzata il 2026-09-04 insieme a
+                               quella nuova dello spostamento di sede. Il lock
+                               `__tests__/a11y/contrasto-token.test.ts` guarda tutte le fasce rosse
+                               del file, e accenderlo lasciandone una storta sarebbe stato
+                               aggiungere un rosso invece di toglierne uno. */
+                            className="rounded-xl border border-kidville-error/40 bg-kidville-error-soft p-3 font-maven text-xs text-kidville-error-strong"
                         >
                             {erroreArchiviazione}
                         </div>

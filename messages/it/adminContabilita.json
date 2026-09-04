@@ -281,7 +281,7 @@
   "fatBtn_attesa_sdi": "In attesa SDI",
   "fatBtn_attesa_title": "Trasmessa allo SDI tramite Aruba, in attesa di esito",
   "fatBtn_causale_label": "Causale fattura",
-  "fatBtn_causale_ph": "Lascia vuoto per usare il template delle impostazioni",
+  "fatBtn_causale_ph": "La causale composta dal modello della sede",
   "fatBtn_emetti": "Emetti",
   "fatBtn_emetti_titolo": "Emetti fattura",
   "fatBtn_fattura": "Fattura",
@@ -859,5 +859,18 @@
   "caus_ph_mese": "Mese di competenza",
   "caus_ph_anno": "Anno",
   "caus_ph_importo": "Importo",
-  "caus_ph_scadenza": "Scadenza"
+  "caus_ph_scadenza": "Scadenza",
+  "fatBtn_anteprima_errore": "Impossibile leggere la causale configurata per questa sede: la fattura non si può emettere adesso. Riprova fra poco.",
+  "fatBtn_causale_caricamento": "Sto leggendo la causale configurata…",
+  "fatBtn_causale_troppo_lunga": "La causale supera i 200 caratteri del tracciato: sul documento uscirà tagliata.",
+  "fatBtn_origine_categoria": "Causale, dal modello della tipologia di pagamento",
+  "fatBtn_origine_fabbrica": "Causale, modello di base (questa sede non ne ha configurato uno)",
+  "fatBtn_origine_manuale": "Causale corretta a mano su questo pagamento",
+  "fatBtn_origine_predefinito": "Causale, dal modello «Predefinito» della sede",
+  "fatBtn_personalizza": "Personalizza per questa fattura",
+  "fatBtn_personalizza_hint": "Vale solo per questo documento. Per cambiare la causale di tutte le fatture di questa tipologia: Contabilità → Causali.",
+  "genrSimbolico": "importo simbolico",
+  "genrSimbolicoTitle": "Sotto un euro: se questo bambino non paga perché lo fa un fratello, indicalo nella sua scheda invece di lasciare una cifra finta.",
+  "genrSospetto": "paga per altri, ma sotto l’euro",
+  "genrSospettoTitle": "{n, plural, one {Questo bambino ha # fratello a suo carico} other {Questo bambino ha # fratelli a suo carico}} e un importo sotto l’euro: verrebbe addebitata quella cifra per tutta la famiglia. Controlla la sua scheda."
 }

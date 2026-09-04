@@ -305,6 +305,8 @@
   "erroreCorpoNonValido": "La richiesta non è valida. Ricarica la pagina e riprova.",
   "erroreLetturaFallita": "Non siamo riusciti a leggere i dati. Riprova fra poco.",
   "erroreRinvioCredenzialiRiservato": "Il rinvio delle credenziali è riservato alla Direzione",
+  "erroreCredenzialiStaffRiservate": "Le credenziali di un account di Direzione si rigenerano dalla Direzione",
+  "erroreRinvioNessunPlesso": "Nessuna sede associata al tuo account: non c’è nessuna famiglia da servire",
   "erroreRegistroInvitiNonLetto": "Il registro degli inviti non si è potuto leggere",
   "erroreRinvioSedeNonRisolta": "Non è stato possibile risolvere la sede indicata",
   "filtriTitolo": "Filtri",
@@ -334,5 +336,10 @@
   "passaA": "Passa a {ruolo}",
   "oraUsiComeAria": "Ora stai usando Kidville come {ruolo}",
   "profiloAttivo": "Profilo attivo",
-  "erroreCambioProfilo": "Non è stato possibile cambiare profilo. Riprova fra qualche istante: sei rimasto dove eri."
+  "erroreCambioProfilo": "Non è stato possibile cambiare profilo. Riprova fra qualche istante: sei rimasto dove eri.",
+  "erroreCausaleConfigNonLetta": "Non è stato possibile leggere la causale configurata per questa sede: la fattura non è stata emessa, e nessun numero è stato consumato",
+  "erroreIncaricoStaffRiservato": "Ruolo, fasce d’età e classi si cambiano dalla Direzione, come gli account di Direzione: la Segreteria può cambiare la sede",
+  "errorePagamentoInesistente": "Il pagamento non esiste più: la fattura non si può emettere",
+  "erroreRettaCicloFratelli": "Il collegamento fra fratelli formerebbe un anello, e alla fine non pagherebbe nessuno",
+  "erroreRettaFratelloNonDisponibile": "Il fratello indicato non è disponibile: dev’essere un bambino iscritto nella stessa sede"
 }

@@ -17,6 +17,7 @@ import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { assertConversazioneNonSospesa } from '@/lib/chat/sospensione-conversazione';
 import { assertTerminiAccettatiSeGenitore } from '@/lib/onboarding/consensi';
 import { firmaAllegatiChat, normalizzaAllegatoChat } from '@/lib/chat/allegati';
+import { sedeDiAlunno, sedeDiAccount } from '@/lib/anagrafiche/sedi';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
 const getQuerySchema = z.object({
@@ -135,6 +136,79 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
     }
 });
 
+/** Le tre colonne del thread che servono a questa route: due per il permesso, una per la sede. */
+type ThreadChat = { teacher_id: string | null; parent_id: string | null; student_id: string | null };
+
+/**
+ * LA SEDE DI UNA CONVERSAZIONE È QUELLA DEL SUO BAMBINO, NON QUELLA DI CHI SCRIVE.
+ *
+ * ─── COS'ERA, E PERCHÉ ERA SBAGLIATO ─────────────────────────────────────────
+ * Fino al 2026-09-03 la notifica di un nuovo messaggio nasceva con
+ * `utenti.scuola_id` DEL MITTENTE, letta apposta con una query che per giunta non
+ * controllava `{ error }`. Ma un genitore può avere due figli in due plessi —
+ * `parents` non ha `scuola_id`, ed è una scelta esplicita (vedi
+ * `admin/parents/route.ts`) — quindi `utenti.scuola_id` di un genitore è al più
+ * UNA delle sue sedi: quella con cui l'account è nato. Scrivendo alla maestra
+ * dell'ALTRO figlio, la notifica nasceva col plesso sbagliato. Lo stesso vale per
+ * un docente che lavora su più plessi.
+ *
+ * Misurato in produzione il 2026-09-03: **639 account genitore su 639** hanno
+ * `utenti.scuola_id` valorizzata — la lettura sbagliata non falliva mai, quindi
+ * decideva sempre — e in 6 di loro contraddice almeno un figlio.
+ *
+ * ─── NON È UN'ETICHETTA, DECIDE SE LA SPINTA PARTE ───────────────────────────
+ * `notificaEvento` gira la sede a `isNotificaAbilitata(supabase, tipo, scuolaId)`,
+ * che legge i toggle di QUEL plesso. Con la sede sbagliata è l'interruttore di
+ * Giugliano a decidere se parte la notifica di un messaggio che riguarda un
+ * bambino di Aversa — e la route risponde 201 comunque.
+ *
+ * ─── IL DATO CHE CE L'HA DAVVERO ─────────────────────────────────────────────
+ * Il bambino del thread NON è ambiguo: una conversazione parla sempre di UN
+ * bambino, e quel bambino ha UN plesso. Ripiego dichiarato: la sede dell'account
+ * del DOCENTE del thread — lo staff una sede propria ce l'ha sempre, i genitori
+ * no. `scuolaUnicaReale` NON entra in questa catena: è deprecata e con tre sedi
+ * risponde sempre `null`, cioè costerebbe una query per un anello morto.
+ *
+ * Best-effort per costruzione: il messaggio è GIÀ in tabella quando si arriva
+ * qui. Nessun ramo può far fallire l'invio — ma nessuno può nemmeno tacere.
+ */
+async function sedeDelThread(
+    supabase: Awaited<ReturnType<typeof createAdminClient>>,
+    thread: ThreadChat,
+    threadId: string,
+): Promise<string | null> {
+    // Le due letture (bambino → plesso, account del docente → plesso) stanno in
+    // `@/lib/anagrafiche/sedi`: erano scritte identiche in tre route, e in questo
+    // repo una regola valida per più strade vive in un posto solo. Lì dentro c'è
+    // anche il controllo di `{ error }` — PostgREST non lancia — e la riga di log
+    // che distingue «non ha un plesso» da «non ho potuto leggerlo».
+    const ctx = { gruppo: 'chat', operazione: 'chat/messages:POST', extra: { threadId } };
+
+    if (thread.student_id) {
+        const sede = await sedeDiAlunno(supabase, thread.student_id, ctx);
+        if (sede) return sede;
+    }
+
+    // Ripiego: il DOCENTE del thread, mai il mittente. Lo staff una sede propria
+    // ce l'ha sempre, i genitori no — e chiederla a chi preme è il difetto che
+    // questa funzione esiste per aver chiuso.
+    if (thread.teacher_id) {
+        const sede = await sedeDiAccount(supabase, thread.teacher_id, ctx);
+        if (sede) return sede;
+    }
+
+    // Senza plesso la notifica parte lo stesso — il destinatario è una persona
+    // precisa (la controparte del thread), non `staffScuola(sede)` — ma i toggle
+    // di plesso non si applicano e la riga non entra nei conteggi per sede.
+    // `error` perché a mancare è la NOSTRA anagrafica, non un dato dell'utente.
+    logEvento('chat', 'error', {
+        operazione: 'chat/messages:POST',
+        esito: 'sede-non-attribuibile',
+        threadId,
+    });
+    return null;
+}
+
 // POST /api/chat/messages
 // Body: { thread_id, sender_id, content, attachment_url?, attachment_type? }
 export const POST = withRoute('chat/messages:POST', async (request: Request) => {
@@ -162,9 +236,14 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
         // Autorizzazione: il mittente deve essere partecipante del thread indicato
         // (teacher_id o parent_id). Senza, un utente autenticato poteva iniettare
         // messaggi in conversazioni altrui.
+        // `student_id` non è una colonna «già che ci siamo»: è il dato da cui si
+        // ricava la SEDE della notifica, più in basso. Il thread si legge qui
+        // comunque, per l'autorizzazione: portarselo dietro costa zero, mentre
+        // una seconda lettura della stessa riga sarebbe una query in più su ogni
+        // messaggio inviato.
         const { data: thread, error: threadErr } = await supabase
             .from('chat_threads')
-            .select('teacher_id, parent_id')
+            .select('teacher_id, parent_id, student_id')
             .eq('id', thread_id)
             .maybeSingle();
 
@@ -286,13 +365,13 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
         try {
             const controparte = await controparteThread(supabase, thread_id, sender_id);
             if (controparte) {
-                const [nome, mittente] = await Promise.all([
+                const [nome, sedeConversazione] = await Promise.all([
                     nomeUtente(supabase, sender_id),
-                    supabase.from('utenti').select('scuola_id').eq('id', sender_id).maybeSingle(),
+                    sedeDelThread(supabase, thread as ThreadChat, thread_id),
                 ]);
                 await notificaEvento(supabase, {
                     tipo: controparte.versoGenitore ? 'chat_genitore' : 'chat_docente',
-                    scuolaId: (mittente.data?.scuola_id as string | undefined) ?? null,
+                    scuolaId: sedeConversazione,
                     utenteIds: [controparte.utenteId],
                     titolo: 'Nuovo messaggio in chat',
                     corpo: nome ? `Hai un nuovo messaggio da ${nome}` : 'Hai un nuovo messaggio',

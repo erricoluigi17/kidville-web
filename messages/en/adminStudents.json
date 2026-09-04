@@ -41,7 +41,6 @@
   "csvRuolo": "Role",
   "csvSede": "Location",
   "csvTelefono": "Phone",
-
   "thCognome": "Last name",
   "thNome": "First name",
   "thNascita": "Birth",
@@ -69,20 +68,17 @@
   "ordineDecrescente": "Descending order, tap to reverse",
   "allergie": "Allergies",
   "allergieNotePresenti": "Allergies/medical notes present",
-
   "cardApriScheda": "Open record of {nome}",
   "cardClassi": "{n, plural, one {# class} other {# classes}}",
   "selezionaRiga": "Select {nome}",
   "selezionaTuttiAlunni": "Select all visible pupils",
   "selezionaTuttiGenitori": "Select all visible parents",
-
   "bulkGruppoMensa": "Meal group…",
   "bulkAssegnaMensa": "Assign meal",
   "bulkSelezionati": "selected",
   "bulkSelezionaClasse": "Select class…",
   "bulkAssegna": "Assign",
   "bulkAnnulla": "Cancel",
-
   "secTitolo": "School Sections",
   "secConfigurate": "{n, plural, one {# section configured} other {# sections configured}}",
   "secNuova": "New Section",
@@ -99,7 +95,6 @@
   "secApri": "Open section",
   "secVuoto": "No sections configured",
   "secVuotoHint": "Click «New Section» to start",
-
   "sezBack": "All sections",
   "sezNonDisp": "Section unavailable",
   "sezNonDispHint": "The section does not exist or does not belong to your locations.",
@@ -125,14 +120,11 @@
   "sezInsegnantiErrore": "The reference teachers could not be loaded.",
   "sezAlunniErrore": "The students of this section could not be loaded.",
   "sezRiprova": "Retry",
-
   "multiCaricamento": "Loading sections…",
   "multiTuttiLivelli": "All levels",
   "multiLivelloClasse": "Level (class)",
   "multiNessunaDisp": "No section available.",
-
   "allergSelectLabel": "Allergens (for automatic match with the meal menu)",
-
   "linkedNatoIl": "Born on",
   "linkedLuogoNascita": "Place of Birth",
   "linkedCellulare": "Mobile",
@@ -142,13 +134,10 @@
   "linkedNumeroDoc": "Number:",
   "linkedNonSpecificato": "Not specified",
   "linkedVisualizzaAllegato": "View Attachment",
-
   "newTitolo": "Family Records Management",
   "newSottotitolo": "Add a new family: students, parents and delegates.",
-
   "staffPageTitolo": "Staff Management",
   "staffPageSottotitolo": "Staff roles, location and classes. Action reserved for Management.",
-
   "scadTabPersonale": "Staff",
   "scadTabScadenze": "Document expiry",
   "scadIntro": "Staff identity documents, sorted by urgency. The status is derived from the expiry date: there is no checkbox that can be left behind.",
@@ -196,18 +185,15 @@
   "scadSedeNonDisponibile": "Location unavailable",
   "scadSenzaNome": "No name",
   "scadElencoTroncato": "The staff list was truncated: some people are missing from this table. Please report it to support.",
-
   "compEyebrow": "Teaching",
   "compTitolo": "Competencies Certificate",
   "compSottotitolo": "End-of-fifth-grade primary document (M.D. 14/2024). Flow: drafts derive from the final assessment → assign A/B/C/D levels per competency → Management generates and signs the certificate → the parent finds it in Report Cards. It is not the report card: it uses a scale distinct from the summary judgements.",
-
   "detailPageBack": "Back to records",
   "detailPageSalvaOk": "Student updated successfully",
   "detailPageArchiviato": "{nome} has been moved to the former students list",
   "detailPageAnagAgg": "Record updated successfully",
   "detailPageNonDisp": "Record unavailable",
   "detailPageNonDispHint": "The student does not exist or does not belong to your locations.",
-
   "datiPersonali": "Personal Data",
   "detailNascitaCittadinanza": "Birth and Citizenship",
   "sezioneResidenza": "Residence",
@@ -262,7 +248,6 @@
   "detailNessuna": "— None —",
   "detailNessunGenitore": "No parent linked",
   "detailNessunaSezione": "No section",
-
   "detailSchedaAlunno": "Student Record",
   "detailDatiAnagrafici": "Personal Data",
   "detailClasseStato": "Class and Status",
@@ -316,7 +301,6 @@
   "detailRiattivaErrore": "The student could not be moved back to the enrolled list.",
   "detailPageRiattivato": "{nome} is enrolled again",
   "detailPageRiattivatoSenzaClasse": "{nome} is enrolled again: assign them a class from their record",
-
   "econDatiEconomici": "Financial Data",
   "econImportoRetta": "Monthly fee amount (€)",
   "econImportoPlaceholder": "E.g. 150.00",
@@ -345,7 +329,6 @@
   "econPhEmail": "Email",
   "econOpposizioneAde": "Opt-out from the tax authority expense report",
   "econOpposizioneHint": "If active, this student’s expenses stay out of the export of the report to the Revenue Agency (parents’ pre-filled return).",
-
   "staffDErrRete": "Network error: unable to load the staff record.",
   "staffDAzioneRiservata": "Action reserved for Management, or you cannot change your own role.",
   "staffDConfermaRigenera": "Regenerate the credentials of {nome}? The previous password will no longer be valid.",
@@ -359,7 +342,6 @@
   "staffDNessunaClassePerSede": "No class for this location.",
   "staffDModifica": "Edit",
   "staffDRiservate": "Changes reserved for Management",
-
   "staffTabIncarico": "Assignment",
   "staffTabAnagrafica": "Personal record",
   "staffTabDocumento": "ID document",
@@ -424,7 +406,6 @@
   "parentNessunAltroFamiliare": "No other family member configured.",
   "parentRigenerazione": "Regenerating…",
   "parentConfermaRigenera": "Regenerate the access credentials? The previous password will no longer be valid.",
-
   "compNessunaQuinta": "No fifth-grade class",
   "compNessunaQuintaHint": "The Competencies Certificate (M.D. 14/2024) is issued at the end of fifth grade of primary school. There are no fifth-grade classes in your locations: when there is one, it will appear here to create drafts from the final assessment, assign A/B/C/D levels and sign.",
   "compSelezionaClasse": "Select fifth-grade class…",
@@ -448,7 +429,6 @@
   "compProtNonRiuscita": "Protocol registration failed",
   "compProtOk": "Certificate registered as outgoing: no. {numero}.",
   "compPdfNonDisp": "PDF not available",
-
   "familyTabAlunno": "Student",
   "familyNuovoComponente": "New Member",
   "familyCorreggiAlunno": "Fix the highlighted student data.",
@@ -473,7 +453,6 @@
   "familySalvaAnagrafica": "Save record",
   "familyAggiungiComponente": "Add Member",
   "familyNuovoAdulto": "New Adult",
-
   "valNomeMin": "The first name must be at least 2 characters",
   "valCognomeMin": "The last name must be at least 2 characters",
   "valDataNonValida": "Invalid date",
@@ -483,7 +462,6 @@
   "valMin2": "At least 2 characters",
   "valCf16": "Tax code must be 16 characters",
   "valEmailNonValida": "Invalid email",
-
   "sFormCompilazioneAlunno": "Student Form",
   "sFormSedeSezione": "Location and Section",
   "sFormNessunaSede": "No location available",
@@ -500,7 +478,6 @@
   "sFormAmministrazione": "Administration & Billing",
   "sFormDettagliIntestatario": "Alternative Invoice Holder Details",
   "sFormNotaIntestatario": "Note: When saving the record, this subject will be registered as the invoice holder for the student.",
-
   "aFormCompilazioneAdulto": "Adult Form",
   "aFormRuoloFamiliare": "Family / Operational Role",
   "aFormRuoloDelegato": "Delegate",
@@ -681,5 +658,48 @@
   "spzViaMessaggi": "{n, plural, one {# chat message, text included} other {# chat messages, text included}}",
   "spzViaTitolo": "These go, and do not come back",
   "spzViaVideo": "{n, plural, one {# video of them alone} other {# videos of them alone}}",
-  "valBelfioreNonValido": "Invalid land registry code: pick the municipality from the list."
+  "valBelfioreNonValido": "Invalid land registry code: pick the municipality from the list.",
+  "econRettaACarico": "Or: paid by",
+  "econRettaACaricoHint": "This child’s fee is paid by the sibling indicated: future runs will no longer charge them. Fees already generated stay as they are.",
+  "econRettaIncoerente": "The fee is charged to a sibling, but an amount is still set here: saving will reset it to zero.",
+  "econRettaPagaLui": "— pays their own fee —",
+  "econRettaPagaPer": "You also pay the fee of:",
+  "econRettaSimbolica": "Token amount: if this child does not pay because a sibling does, select the sibling below instead of entering a fake figure.",
+  "parentSedeFiglio": "Location",
+  "parentSedeFiglioSconosciuta": "Location not resolved",
+  "parentSediFigliNota": "The location belongs to the child, not to the parent: a parent can have children at different locations. To move a child to another location, open their record.",
+  "sezRinomina": "Rename",
+  "sezRinominaAltraSede": "This class belongs to another location: select it in the locations menu to rename it.",
+  "sezRinominaAvviso": "The class name is also written in the timetable register, in the recipients of notices, news, gallery and forms, and in the canteen menu: it is not just a label.",
+  "sezRinominaConferma": "Save the new name",
+  "sezRinominaDuplicato": "A class with this name already exists in this location: choose a different name.",
+  "sezRinominaErrore": "Rename failed. Please try again.",
+  "sezRinominaInCorso": "Saving…",
+  "sezRinominaOggi": "The change is propagated automatically to all of them, within the same location: no archive keeps the old name. Rows whose key under the new name is already taken are skipped and flagged in the logs.",
+  "sezRinominaVuoto": "The name cannot be empty.",
+  "staffDSedeNessunaDestinazione": "Your role cannot move staff to another location: ask management.",
+  "staffDSedeUnicaDestinazione": "Your profile works at a single location, and it is the one this person is already at: there is no other location to move them to from here. Moving between locations is done by management.",
+  "staffDSpostaSede": "Move to another location",
+  "trasferimentoArchiviato": "This child is among the «no longer enrolled»: bring them back among the enrolled first, then move them to another location.",
+  "trasferimentoCaricamento": "Reading the locations…",
+  "trasferimentoComando": "Move to another location",
+  "trasferimentoConferma": "Confirm the move",
+  "trasferimentoConfermaTitolo": "What happens if you move them to {destinazione}",
+  "trasferimentoErrore": "We could not move the child.",
+  "trasferimentoFatto": "Moved to {destinazione}. Now assign the class and the meal group at the new location.",
+  "trasferimentoGuasto": "We could not read the list of locations. That does not mean there are none: please try again shortly.",
+  "trasferimentoInCorso": "Moving…",
+  "trasferimentoIntro": "Move the child to another location. Only the personal record moves: what is already recorded stays where it is.",
+  "trasferimentoNessunaSede": "Your role cannot move a child to another location: ask management.",
+  "trasferimentoPerdeClasse": "The class/section is cleared: it has to be assigned again by hand at the new location.",
+  "trasferimentoPerdeMensa": "The meal group is cleared: meal groups belong to a location and have to be assigned again by hand.",
+  "trasferimentoRiprova": "Try again",
+  "trasferimentoScegli": "Move to",
+  "trasferimentoScegliVuoto": "— Choose the location —",
+  "trasferimentoSedeAttuale": "Current location",
+  "trasferimentoSedeNonRisolta": "Location not resolved",
+  "trasferimentoSenzaSede": "No location on file",
+  "trasferimentoStoricoResta": "Invoices, attendance and meals already recorded stay with the location the child is leaving: invoice numbering is per location.",
+  "trasferimentoTitolo": "Move to another location",
+  "trasferimentoUnicaSede": "Your profile works at a single location, and it is the one the child is already at: there is no other location to move them to from here. Moving between locations is done by management."
 }

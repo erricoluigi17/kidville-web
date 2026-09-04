@@ -186,9 +186,38 @@ export function modelloCausale(
     slugCategoria: string | null | undefined,
     predefinito: string,
 ): string {
+    return risolviModelloCausale(config, slugCategoria, predefinito).modello
+}
+
+/**
+ * Da QUALE riga della configurazione viene il modello che si sta usando.
+ *
+ * Serve a una schermata che deve dirlo a chi sta per emettere un documento
+ * irreversibile: «questa causale viene dal modello della categoria» non è la stessa
+ * frase di «viene dal modello di fabbrica, perché nessuno ha configurato niente», e
+ * la seconda è un invito ad andare a configurare.
+ */
+export type OrigineModelloCausale = 'categoria' | 'predefinito' | 'fabbrica'
+
+/**
+ * La regola di risoluzione **e** il ramo che ha vinto, in un colpo solo.
+ *
+ * `modelloCausale` delega qui invece di ripetere la cascata: due copie che divergono
+ * manderebbero al genitore e alla fattura due stringhe diverse per lo stesso
+ * pagamento — è già successo, ed è la ragione per cui questa regola vive in un posto
+ * solo (v. la testata di `modelloCausale`).
+ */
+export function risolviModelloCausale(
+    config: ConfigCausali,
+    slugCategoria: string | null | undefined,
+    predefinito: string,
+): { modello: string; origine: OrigineModelloCausale } {
     const cfg = config && typeof config === 'object' ? config : {}
     const perCategoria = slugCategoria ? modelloUtile(cfg[slugCategoria]) : undefined
-    return perCategoria ?? modelloUtile(cfg[CHIAVE_CAUSALE_DEFAULT]) ?? predefinito
+    if (perCategoria) return { modello: perCategoria, origine: 'categoria' }
+    const perDefault = modelloUtile(cfg[CHIAVE_CAUSALE_DEFAULT])
+    if (perDefault) return { modello: perDefault, origine: 'predefinito' }
+    return { modello: predefinito, origine: 'fabbrica' }
 }
 
 /**

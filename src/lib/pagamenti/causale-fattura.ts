@@ -33,10 +33,11 @@
 
 import { causalePerTracciato } from '@/lib/aruba/fatturapa-xml'
 import {
-    modelloCausale,
     renderCausale,
+    risolviModelloCausale,
     type ConfigCausali,
     type DatiCausale,
+    type OrigineModelloCausale,
 } from './causale'
 
 /** La colonna JSONB di `admin_settings` che tiene i modelli di causale delle fatture. */
@@ -100,17 +101,34 @@ export interface IngressoCausaleFattura {
  * è il testo stesso (l'operazione è idempotente), e se qualcuno ci ha scritto `{nome}`
  * viene risolto invece di finire a stampa fra parentesi graffe.
  */
-export function causaleFattura({
+export function causaleFattura(ingresso: IngressoCausaleFattura): string {
+    return causaleFatturaConOrigine(ingresso).causale
+}
+
+/**
+ * Da dove viene la causale che si sta per emettere: `manuale` (una correzione scritta
+ * a mano su QUESTO pagamento), `categoria`, `predefinito` o `fabbrica`.
+ *
+ * Non è un dettaglio da schermata: fino al 2026-09-04 il modale «Emetti» precompilava
+ * la casella con la descrizione del pagamento e la spediva come correzione manuale, e
+ * chi premeva il pulsante annullava il modello configurato **senza vederlo**. Dire da
+ * quale riga viene il testo è ciò che rende quell'errore impossibile da ripetere in
+ * silenzio.
+ */
+export type OrigineCausaleFattura = 'manuale' | OrigineModelloCausale
+
+export function causaleFatturaConOrigine({
     config,
     slugCategoria,
     causaleManuale,
     dati,
-}: IngressoCausaleFattura): string {
+}: IngressoCausaleFattura): { causale: string; origine: OrigineCausaleFattura } {
     const manuale = typeof causaleManuale === 'string' && causaleManuale.trim() !== ''
         ? causaleManuale
         : undefined
-    const modello = manuale ?? modelloCausale(config, slugCategoria, DEFAULT_CAUSALE_FATTURA_TEMPLATE)
-    return renderCausale(modello, dati)
+    if (manuale) return { causale: renderCausale(manuale, dati), origine: 'manuale' }
+    const { modello, origine } = risolviModelloCausale(config, slugCategoria, DEFAULT_CAUSALE_FATTURA_TEMPLATE)
+    return { causale: renderCausale(modello, dati), origine }
 }
 
 /**

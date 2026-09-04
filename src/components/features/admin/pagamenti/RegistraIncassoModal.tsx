@@ -247,7 +247,7 @@ export function RegistraIncassoModal({ pagamento, userId, onClose, onDone }: Pro
                             <span className="flex items-center gap-1.5 font-maven text-sm text-kidville-success-strong font-bold">
                                 <SaveCheck size={17} /> {t('incPagamentoSaldato')}
                             </span>
-                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
+                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} />
                         </div>
                         <button onClick={onDone} className={cx(BTN_PRIMARY, 'w-full')}>
                             {t('incChiudi')}

@@ -635,6 +635,37 @@ const PAGINE_MAX = 20
 const PAGINA_SIZE = 500
 
 /**
+ * ─── IL LIMITE DI ARUBA È A RAFFICA, NON A SECCHIO ORARIO ────────────────────
+ * Misurato il 2026-09-02, col collaudo di sola lettura: `signin` + **7 GET
+ * riuscite** in **4,2 secondi**, e la GET successiva `429`. Un tetto di «~60
+ * richieste all'ora», che è quello che questo repo ha creduto fino a oggi, non
+ * spiega otto chiamate accettate in quattro secondi e la nona no: quello che si
+ * tocca è uno strozzamento sulla FREQUENZA, dentro una finestra breve.
+ *
+ * Spiega anche l'osservazione che sembrava incoerente — *un `signin`, trenta
+ * secondi, un secondo `signin` → `429`*: non era il secchio quasi pieno, erano
+ * due richieste troppo vicine.
+ *
+ * ⚠️ **Le costanti NON stanno più qui.** Dal 2026-09-03 `PAUSA_FRA_PAGINE_MS` e
+ * `PAUSA_DOPO_429_MS` sono dichiarate ed esportate in cima al file, e la pausa
+ * fra le pagine è salita da 1,1 s a **5 s**: non è prudenza in più, è la misura
+ * che Aruba pubblica (SLA §3, 12 ricerche al minuto per IP). Con 1,1 s si stava
+ * a ~54 richieste al minuto — quattro volte e mezzo il limite dichiarato — ed è
+ * quello che il 2026-09-02 prese il `429`.
+ *
+ * Questo commento resta perché racconta **come** lo si è scoperto, e perché la
+ * misura del 02/09 (7 GET in 4,2 s, la ottava rifiutata) è la prova che il
+ * limite è sulla FREQUENZA e non su un secchio orario. Chi un giorno misurerà
+ * la finestra vera cambi i due numeri **in cima al file**, non qui.
+ *
+ * ⚠️ Il 2026-09-04 questo blocco è stato trovato DUPLICATO: un merge senza
+ * conflitto aveva lasciato in vita entrambe le versioni delle costanti — la
+ * nuova a 5 s in cima e la vecchia a 1,1 s qui — e la seconda avrebbe vinto
+ * per chi legge dall'alto. Se ne è accorto `tsc` («Cannot redeclare»), non una
+ * persona: un auto-merge che non dà conflitto non è un auto-merge che ha capito.
+ */
+
+/**
  * Il progressivo dentro un'etichetta, **se e solo se** appartiene a QUESTA serie e
  * a QUEST'ANNO. Altrimenti `null`.
  *

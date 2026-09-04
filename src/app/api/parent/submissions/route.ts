@@ -7,7 +7,8 @@ import { assertGenitoreNonSospesoSalvoEssenziale } from '@/lib/pagamenti/sospens
 import { leggiSempreFirmabile } from '@/lib/forms/sempre-firmabile';
 import { persistSignedSubmission } from '@/lib/forms/persist-submission';
 import { notificaEvento } from '@/lib/notifiche/triggers';
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari';
+import { staffScuola } from '@/lib/notifiche/destinatari';
+import { sedeDiAlunno, sediDeiFigli } from '@/lib/anagrafiche/sedi';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
@@ -35,6 +36,84 @@ const postBodySchema = z.object({
 });
 
 const getQuerySchema = z.object({});
+
+/**
+ * LE SEGRETERIE DA AVVISARE: PRIMA QUELLA DEL MODULO, POI QUELLE DEI FIGLI.
+ * MAI QUELLA DELL'ACCOUNT.
+ *
+ * ─── COS'ERA ─────────────────────────────────────────────────────────────────
+ *     if (!scuolaId) scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(supabase))
+ *
+ * `auth.user.scuola_id` è la sede dell'ACCOUNT, cioè il plesso in cui l'account è
+ * stato aperto. Un genitore può avere due figli in due plessi — `parents` non ha
+ * `scuola_id`, ed è una scelta esplicita (vedi `admin/parents/route.ts`) — quindi
+ * quel valore è al più UNA delle sue sedi, e può non essere nessuna delle attuali.
+ * Misurato in produzione il 2026-09-03: **639 account genitore su 639** hanno
+ * `utenti.scuola_id` valorizzata — il ripiego non falliva mai, quindi decideva
+ * sempre — e in 6 contraddice almeno un figlio. `scuolaUnicaReale`, l'anello dopo,
+ * non veniva mai raggiunto: è deprecata e con tre sedi risponde comunque `null`.
+ *
+ * ─── E COS'ERA ANCORA, DOPO LA PRIMA CORREZIONE ──────────────────────────────
+ * La prima riscrittura dedusse la sede dai FIGLI e, con due plessi, avvisò
+ * ENTRAMBE le segreterie. Copre, ma risolve il problema sbagliato: **il modulo
+ * una sede certa ce l'ha**. `forms_templates.scuola_id` è NOT NULL (baseline riga
+ * 1732, riverificata in produzione il 2026-09-03), e `parent/forms:GET` elenca a
+ * una famiglia solo i moduli delle sedi dei suoi figli. Un genitore con figli a
+ * Giugliano e ad Aversa che firma un modulo DI AVERSA faceva arrivare «Modulo
+ * compilato ricevuto» anche alla segreteria di Giugliano, con un link a una
+ * modulistica che in quel plesso non esiste: la «Direzione senza titolo» che il
+ * commento di `segnalazioni:POST` dice di evitare. E per giunta spegneva il
+ * debounce senza motivo. La sede era a una `select` di distanza — la route
+ * leggeva GIÀ `forms_templates`, per il titolo, e non ne prendeva il plesso.
+ *
+ * ─── L'ORDINE, E PERCHÉ È QUESTO ─────────────────────────────────────────────
+ *  1. `forms_templates.scuola_id` — il dato certo, NOT NULL, di chi ha creato il
+ *     modulo. Con questo la sede è UNA, il ramo a due non si imbocca e il
+ *     debounce resta acceso.
+ *  2. la sede del BAMBINO, se il modulo è legato a uno.
+ *  3. le sedi dei FIGLI.
+ * I punti 2 e 3 restano perché il punto 1 può mancare: su un database non
+ * migrato la `select` fallisce in blocco (PostgREST `42703`), e degradare a
+ * «avviso le segreterie dei figli» è meglio che non avvisare nessuno.
+ *
+ * ─── PERCHÉ AL PUNTO 3 SI COPRONO TUTTE, INVECE DI RIFIUTARE ─────────────────
+ * Perché non si sta archiviando niente in un plesso: la compilazione è GIÀ
+ * salvata e `forms_submissions` non ha una `scuola_id` da sbagliare. Qui si
+ * decide soltanto CHI viene informato, e in un ramo di degradazione avvisare in
+ * più è meno grave che non avvisare. (Dove invece si SCRIVE una riga, la regola
+ * resta l'opposta: `segnalazioni:POST` rifiuta con 503 piuttosto che indovinare
+ * il plesso.)
+ *
+ * Elenco vuoto = «non lo so», e il chiamante non accoda niente: `staffScuola(null)`
+ * non avviserebbe nessuno, e una notifica senza destinatari è rumore che somiglia
+ * a un successo.
+ */
+async function sediDaAvvisare(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  sedeModulo: string | null,
+  studentId: string | null | undefined,
+  accountGenitore: string,
+): Promise<string[]> {
+  // Le due letture (bambino → plesso, figli → plessi) stanno in
+  // `@/lib/anagrafiche/sedi`: erano scritte identiche in tre route, e in questo
+  // repo una regola valida per più strade vive in un posto solo. Lì dentro c'è
+  // anche il controllo di `{ error }` — PostgREST non lancia — e la riga di log
+  // che distingue «non ha un plesso» da «non ho potuto leggerlo».
+  const ctx = { gruppo: 'modulistica', operazione: 'parent/submissions:POST' };
+
+  // 1) LA SEDE DEL MODULO. Non si deduce niente: è il plesso in cui il modulo è
+  //    stato creato, ed è l'unico che abbia una modulistica dove aprire il link.
+  if (sedeModulo) return [sedeModulo];
+
+  // 2) Il modulo è legato a un bambino: quel bambino ha UN plesso.
+  if (studentId) {
+    const sede = await sedeDiAlunno(supabase, studentId, ctx);
+    if (sede) return [sede];
+  }
+
+  // 3) Nessun bambino (o bambino senza plesso): le sedi sono quelle dei FIGLI.
+  return await sediDeiFigli(supabase, accountGenitore, ctx);
+}
 
 // POST: Sottoscrive e firma un modulo
 export const POST = withRoute('parent/submissions:POST', async (request: NextRequest) => {
@@ -97,26 +176,69 @@ export const POST = withRoute('parent/submissions:POST', async (request: NextReq
 
     // Notifica alla segreteria: modulo firmato ricevuto (best-effort).
     try {
-      let scuolaId: string | null = null;
-      if (student_id) {
-        const { data: alunno } = await supabase.from('alunni').select('scuola_id').eq('id', student_id).maybeSingle();
-        scuolaId = (alunno?.scuola_id as string | undefined) ?? null;
+      // TITOLO E SEDE DEL MODULO SI LEGGONO INSIEME, in una `select` sola.
+      // `forms_templates.scuola_id` è NOT NULL: il modulo un plesso ce l'ha
+      // sempre, ed è quello — non c'è niente da dedurre dai figli finché questa
+      // lettura riesce. `{ error }` va controllato (PostgREST non lancia): senza,
+      // «il modulo non ha sede» e «non ho potuto leggerlo» sarebbero lo stesso
+      // `null`, e solo uno dei due manda la notifica alla segreteria sbagliata.
+      const { data: tpl, error: tplErr } = await supabase
+        .from('forms_templates')
+        .select('title, scuola_id')
+        .eq('id', form_id)
+        .maybeSingle();
+      if (tplErr) {
+        logEvento('modulistica', 'warn', {
+          operazione: 'parent/submissions:POST',
+          esito: 'modulo-non-letto',
+          entita_id: form_id,
+          error_code: (tplErr as { code?: string }).code ?? null,
+        }, tplErr);
       }
-      if (!scuolaId) scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(supabase));
-      const destinatari = await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'segreteria']);
-      const { data: tpl } = await supabase.from('forms_templates').select('title').eq('id', form_id).maybeSingle();
-      await notificaEvento(supabase, {
-        tipo: 'modulo_compilato',
-        scuolaId,
-        utenteIds: destinatari,
-        titolo: 'Modulo compilato ricevuto',
-        corpo: `Ci sono nuove compilazioni per «${(tpl as { title?: string } | null)?.title ?? 'un modulo'}».`,
-        link: '/admin/modulistica',
-        entitaTipo: 'forms_template',
-        entitaId: form_id,
-        bufferMin: 60,
-        debounce: true,
-      });
+      const titolo = (tpl as { title?: string } | null)?.title ?? 'un modulo';
+      const sedeModulo = ((tpl as { scuola_id?: unknown } | null)?.scuola_id as string | null) ?? null;
+
+      const sedi = await sediDaAvvisare(supabase, sedeModulo, student_id, auth.user.id);
+      if (sedi.length === 0) {
+        // Niente notifica al buio: `staffScuola(null)` non avviserebbe nessuno e
+        // resterebbe una riga «accodata» senza destinatari, indistinguibile da un
+        // successo. `error` perché a mancare è la NOSTRA anagrafica — un genitore
+        // senza nemmeno un figlio con un plesso — non un dato dell'utente.
+        logEvento('modulistica', 'error', {
+          operazione: 'parent/submissions:POST',
+          esito: 'sede-non-attribuibile',
+          entita_id: form_id,
+        });
+      } else {
+        // ⚠️ IL DEBOUNCE SI SPEGNE QUANDO LE SEDI SONO PIÙ D'UNA, e non è una
+        // sfumatura: `notificaEvento` lo esegue come
+        //   delete from notifiche where tipo = ? and entita_id = ? and push_inviata_il is null
+        // senza filtro per sede né per destinatario. Con lo stesso `entitaId` (il
+        // `form_id`) su due chiamate, la seconda cancellerebbe la riga appena
+        // accodata per la prima segreteria — «avvisate entrambe» diventerebbe
+        // «avvisata solo l'ultima», e in silenzio.
+        //
+        // Da quando la sede la dà il MODULO, questo ramo è di sola degradazione:
+        // con la lettura di `forms_templates` riuscita la sede è una e il
+        // debounce resta ACCESO, che è il caso normale — collassa le raffiche di
+        // compilazioni dello stesso modulo in una notifica sola.
+        const collassaLeRaffiche = sedi.length === 1;
+        for (const scuolaId of sedi) {
+          const destinatari = await staffScuola(supabase, scuolaId, ['admin', 'coordinator', 'segreteria']);
+          await notificaEvento(supabase, {
+            tipo: 'modulo_compilato',
+            scuolaId,
+            utenteIds: destinatari,
+            titolo: 'Modulo compilato ricevuto',
+            corpo: `Ci sono nuove compilazioni per «${titolo}».`,
+            link: '/admin/modulistica',
+            entitaTipo: 'forms_template',
+            entitaId: form_id,
+            bufferMin: 60,
+            debounce: collassaLeRaffiche,
+          });
+        }
+      }
     } catch (e) {
       // Il modulo è acquisito, ma la segreteria non saprà che è arrivato: notifica persa.
       logEvento('notifica', 'error', {

@@ -505,7 +505,7 @@ export function TransazioniPanel({ userId, scuolaId, precompila }: Props) {
                                     {fatto.voci.map((v) => (
                                         <div key={v.id} className="flex items-center justify-between gap-2">
                                             <span className="flex-1 truncate font-maven text-sm text-kidville-ink">{v.descrizione ?? t('transVoceCap')}</span>
-                                            <FatturaButton pagamentoId={v.id} userId={userId} descrizione={v.descrizione ?? undefined} />
+                                            <FatturaButton pagamentoId={v.id} userId={userId} />
                                         </div>
                                     ))}
                                 </div>

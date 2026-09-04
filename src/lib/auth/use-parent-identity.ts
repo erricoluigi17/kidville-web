@@ -17,6 +17,15 @@ export interface FiglioAnagrafica {
   nome: string;
   cognome: string;
   classe_sezione: string | null;
+  /**
+   * La sede del bambino. Additivi e opzionali, perché un genitore può avere
+   * figli in DUE plessi: senza questi due campi il selettore mostra due chip
+   * indistinguibili quando le sezioni si chiamano uguale — e «2 ANNI» esiste
+   * davvero in più plessi. La GET li restituisce già
+   * (`api/parent/students/route.ts:39-69`): qui venivano scartati dal mapping.
+   */
+  scuola_id?: string | null;
+  scuola_nome?: string | null;
 }
 
 export interface ParentIdentity {
@@ -102,6 +111,8 @@ async function caricaFigli(parentId: string): Promise<FiglioAnagrafica[] | null>
       nome: typeof x.nome === 'string' ? x.nome : '',
       cognome: typeof x.cognome === 'string' ? x.cognome : '',
       classe_sezione: typeof x.classe_sezione === 'string' ? x.classe_sezione : null,
+      scuola_id: typeof x.scuola_id === 'string' ? x.scuola_id : null,
+      scuola_nome: typeof x.scuola_nome === 'string' ? x.scuola_nome : null,
     }));
 }
 

@@ -13,7 +13,17 @@ import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 const GEN_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GEN_INPUT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 
-interface Candidato { id: string; nome: string; cognome: string; classe_sezione?: string; importo_previsto?: number; importo_retta_mensile?: number; genitori_separati?: boolean }
+interface Candidato {
+    id: string; nome: string; cognome: string; classe_sezione?: string;
+    importo_previsto?: number; importo_retta_mensile?: number; genitori_separati?: boolean;
+    /**
+     * Importo fra 0 e 1 €: il ripiego che le famiglie hanno inventato per dire «non
+     * paga», perché lo zero sulla colonna significa il contrario.
+     */
+    importo_simbolico?: boolean;
+    /** Quanti fratelli hanno la retta a carico di questo bambino. */
+    paga_per?: number;
+}
 interface MesePreview { periodo: string; candidati: number; gia_generati: number; importo: number }
 interface Props { userId: string; scuolaId: string }
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
@@ -176,7 +186,23 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                                         <tr key={c.id} className={TROW}>
                                             <td className={cx(TD, 'font-semibold text-kidville-green')}>{c.nome} {c.cognome}</td>
                                             <td className={cx(TD, 'text-kidville-muted')}>{c.classe_sezione ?? '—'}</td>
-                                            <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(c.importo_previsto ?? c.importo_retta_mensile ?? 0)}</td>
+                                            {/* 🔴 IL CONTRASSEGNO. Un «€ 0,01» in mezzo a una
+                                                colonna di importi non lo nota nessuno: a
+                                                Giugliano una famiglia è stata addebitata di un
+                                                centesimo al mese invece di 250 € perché il
+                                                fratello che paga aveva un importo simbolico, e
+                                                l'anteprima lo mostrava come una riga qualunque. */}
+                                            <td className={cx(TD, 'text-right text-kidville-green')}>
+                                                {formatEuro(c.importo_previsto ?? c.importo_retta_mensile ?? 0)}
+                                                {c.importo_simbolico && (
+                                                    <span
+                                                        title={c.paga_per ? t('genrSospettoTitle', { n: c.paga_per }) : t('genrSimbolicoTitle')}
+                                                        className="ml-1.5 inline-block rounded-pill bg-kidville-yellow/25 px-1.5 py-0.5 font-maven text-[10px] font-bold text-kidville-ink align-middle"
+                                                    >
+                                                        {c.paga_per ? t('genrSospetto') : t('genrSimbolico')}
+                                                    </span>
+                                                )}
+                                            </td>
                                             <td className={cx(TD, 'text-xs')}>{c.genitori_separati ? <span className="text-kidville-warn">{t('genrSplit')}</span> : t('genrSingolo')}</td>
                                         </tr>
                                     ))}

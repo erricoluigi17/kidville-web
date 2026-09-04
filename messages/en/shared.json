@@ -305,6 +305,8 @@
   "erroreCorpoNonValido": "The request is not valid. Reload the page and try again.",
   "erroreLetturaFallita": "We could not read the data. Please try again shortly.",
   "erroreRinvioCredenzialiRiservato": "Resending credentials is reserved for the school office",
+  "erroreCredenzialiStaffRiservate": "Credentials for a management account can only be reset by management",
+  "erroreRinvioNessunPlesso": "No location is linked to your account: there are no families to serve",
   "erroreRegistroInvitiNonLetto": "The invitation register could not be read",
   "erroreRinvioSedeNonRisolta": "The selected location could not be resolved",
   "filtriTitolo": "Filters",
@@ -334,5 +336,10 @@
   "passaA": "Switch to {ruolo}",
   "oraUsiComeAria": "You are now using Kidville as {ruolo}",
   "profiloAttivo": "Active profile",
-  "erroreCambioProfilo": "We couldn’t switch profile. Please try again in a moment: you are still where you were."
+  "erroreCambioProfilo": "We couldn’t switch profile. Please try again in a moment: you are still where you were.",
+  "erroreCausaleConfigNonLetta": "The description configured for this location could not be read: the invoice was not issued, and no number was used up",
+  "erroreIncaricoStaffRiservato": "Role, age groups and assigned classes — and management accounts — can only be changed by management: the school office can change the location",
+  "errorePagamentoInesistente": "This payment no longer exists: the invoice cannot be issued",
+  "erroreRettaCicloFratelli": "This link between siblings would form a loop, and in the end nobody would pay",
+  "erroreRettaFratelloNonDisponibile": "The sibling indicated is not available: it must be an enrolled child at the same location"
 }

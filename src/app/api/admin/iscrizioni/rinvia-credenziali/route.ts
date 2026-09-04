@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
+import { restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { sendEmailDetailed } from '@/lib/email/send'
@@ -81,17 +83,19 @@ interface Esito {
 }
 
 export const POST = withRoute('admin/iscrizioni/rinvia-credenziali:POST', async (request: Request) => {
-    // Le credenziali in blocco sono un gesto della Direzione: `regenerate-credentials`
-    // quella riserva la conosce già per lo staff, e qui si riscrivono password di
-    // decine di famiglie in una volta sola.
+    /* ── CHI PUÒ, dal 2026-09-03 ────────────────────────────────────────────
+     * Il rinvio in blocco è aperto a tutto lo staff di gestione, Segreteria
+     * compresa (decisione del titolare). La riserva alla Direzione che stava qui
+     * non è stata tolta e basta: è stata SOSTITUITA da un confinamento per sede,
+     * poco più sotto — e quel confinamento è più stretto della riserva che
+     * rimpiazza, perché lega anche l'admin ai propri plessi.
+     *
+     * L'ordine dei due interventi non è indifferente: aprire il gate prima di
+     * riparare il perimetro avrebbe lasciato, anche solo per un commit, una
+     * segreteria di Cesa in grado di riscrivere 528 password invece di 156.
+     */
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    if (auth.user.role !== 'admin' && auth.user.role !== 'coordinator') {
-        return NextResponse.json(
-            { error: 'Rinvio credenziali in blocco: operazione riservata alla Direzione', codice: 'RINVIO_CREDENZIALI_RISERVATO' },
-            { status: 403 },
-        )
-    }
 
     const b = await parseBody(request, bodySchema)
     if ('response' in b) return b.response
@@ -107,18 +111,62 @@ export const POST = withRoute('admin/iscrizioni/rinvia-credenziali:POST', async 
         .eq('stato', 'inviata')
         .lt('rigenerazioni', MAX_RIGENERAZIONI)
         .order('inviato_il', { ascending: true })
-    if (b.data.scuola_id) {
-        // La sede si legge dai genitori: il registro non la porta.
-        const { data: dellaSede, error: erroreSede } = await admin
-            .from('parents')
-            .select('id')
-            .eq('scuola_id', b.data.scuola_id)
-        if (erroreSede) {
-            logEvento('iscrizione', 'error', { operazione: OPERAZIONE, esito: 'sede-non-risolta' }, erroreSede)
-            return NextResponse.json({ error: 'Sede non risolta', codice: 'RINVIO_SEDE_NON_RISOLTA' }, { status: 500 })
-        }
-        query = query.in('parent_id', (dellaSede ?? []).map((r) => String(r.id)))
+    /* ── IL PERIMETRO ────────────────────────────────────────────────────────
+     * Qui stava `parents.eq('scuola_id', …)`, e `parents` quella colonna NON CE
+     * L'HA: 27 colonne, verificate sullo schema di produzione il 2026-09-03. Il
+     * commento che accompagnava quella riga — «la sede si legge dai genitori» —
+     * diceva il falso, e la route accanto lo scriveva già al contrario
+     * (`regenerate-credentials`: «`parents` non ha sede»). PostgREST rispondeva
+     * `42703`, il ramo d'errore lo prendeva, e la route dava 500.
+     *
+     * Nessuno se n'era accorto perché l'unico che poteva chiamarla era l'admin
+     * multi-sede, che la sede non la passa mai: un filtro rotto che nessuno usa
+     * resta verde per sempre.
+     *
+     * Un genitore non HA una sede: ce l'hanno i suoi FIGLI, e possono averne due
+     * diverse. La join qui sotto è la stessa che `assertParentInScope` usa da
+     * sempre per rispondere alla stessa domanda.
+     */
+    const plessi = await scuoleDiUtente(admin, auth.user)
+    if (plessi.length === 0) {
+        // Non è un errore tecnico e non è un tentativo: è un account configurato a
+        // metà. Codice suo, per non sporcare il contatore di `SEDE_NON_ACCESSIBILE`,
+        // che è un segnale di sicurezza.
+        logEvento('iscrizione', 'warn', { operazione: OPERAZIONE, esito: 'nessun-plesso' })
+        return NextResponse.json(
+            {
+                error: "Nessuna sede associata al tuo account: non c’è nessuna famiglia da servire",
+                codice: 'RINVIO_NESSUN_PLESSO',
+            },
+            { status: 403 },
+        )
     }
+    // La sede del corpo può solo RESTRINGERE, mai allargare. `restringiSedi`
+    // confronta in forma canonica: la propria sede scritta in maiuscolo resta la
+    // propria (è il difetto del 2026-07-31, che con `===` sarebbe ricresciuto qui),
+    // e una sede altrui resta altrui.
+    const scope = restringiSedi(plessi, b.data.scuola_id)
+    if (!scope) return rifiutoSede('SEDE_NON_ACCESSIBILE')
+
+    const { data: dellaSede, error: erroreSede } = await admin
+        .from('student_parents')
+        .select('parent_id, alunni!inner(scuola_id)')
+        .in('alunni.scuola_id', scope)
+    if (erroreSede) {
+        // PostgREST non lancia: ritorna `{ error }` (AGENTS.md regola 7). Un
+        // perimetro letto a metà è peggio di un rinvio fallito — le famiglie
+        // rimaste fuori non lo saprebbe nessuno.
+        logEvento('iscrizione', 'error', { operazione: OPERAZIONE, esito: 'sede-non-risolta' }, erroreSede)
+        return NextResponse.json({ error: 'Sede non risolta', codice: 'RINVIO_SEDE_NON_RISOLTA' }, { status: 500 })
+    }
+    // SEMPRE, anche quando l'elenco è vuoto. Un perimetro vuoto è una risposta
+    // legittima — «nessuna famiglia da rimandare» — e la route la produce già da
+    // sola: `in('parent_id', [])` restituisce zero righe, il ciclo non gira e i
+    // contatori restano a zero. Un ritorno anticipato qui duplicherebbe la forma
+    // della risposta finale, ed è il modo in cui due risposte per lo stesso esito
+    // cominciano a divergere.
+    const idGenitori = [...new Set((dellaSede ?? []).map((r) => String(r.parent_id)))]
+    query = query.in('parent_id', idGenitori)
 
     const { data: righe, error } = await query
     if (error) {

@@ -96,6 +96,261 @@
 
 ---
 
+## 🏫 Changelog — Una famiglia che cambia plesso si spostava solo con una UPDATE a mano — 2026-09-03/04 (branch `fix/aruba-prima-fattura`)
+
+**La richiesta**, cinque punti: il selettore di sede nell'anagrafica di bambino, genitore e staff;
+un genitore con due figli in due sedi diverse; un errore di fattura; i nomi delle sezioni
+modificabili da segreteria e direzione; la segreteria che rigenera le credenziali.
+
+**Tre dei cinque erano già veri, in tutto o in parte, e trovarlo prima ha cambiato il lavoro:**
+
+| # | Chiesto | Stato misurato prima di scrivere codice |
+|---|---|---|
+| 5 | segreteria rigenera le credenziali | **già fatto**: `puoRigenerareCredenzialiStaff`, changelog qui sotto |
+| 4 | rinominare una sezione | **backend già completo**: `PATCH /api/admin/sections:206-310`, con allowlist zod, gate di sede, 409 sull'omonimia e audit. `requireStaff` ammette già segreteria **e** direzione: nessun permesso da cambiare. Manca il pulsante. |
+| 1 | selettore di sede sullo staff | **già a metà**: la PATCH accetta `scuola_id` e `StaffDetailPanel` ha già il `<select>` |
+| 3 | errore di fattura | **fuori da questo giro**: la foto non era allegata |
+
+### Il bambino: la sede si scartava in silenzio
+
+`PATCH /api/admin/students` valida con `patchBodySchema`, che **non contiene `scuola_id`**. Essendo
+un `z.object` non-strict, una sede inviata oggi viene **scartata senza errore**: la chiamata
+risponde `200` e non sposta niente. Non esisteva nessun punto dell'applicazione da cui spostare una
+persona di plesso: l'unica strada era una `UPDATE` a mano sul database che contiene le anagrafiche
+di **607 alunni** reali.
+
+Tre agganci si rompono cambiando `alunni.scuola_id` da solo, e vanno azzerati nella stessa
+istruzione: `section_id` **e** `classe_sezione`, `gruppo_mensa_id` (`gruppi_mensa` è
+`UNIQUE(scuola_id, nome)`), e la sede dell'account dei genitori.
+
+⚠️ **Sul primo dei tre serve precisione, perché la mezza verità qui è un tranello.** Letto dal
+database il 2026-09-04: il trigger è dichiarato
+`BEFORE INSERT OR UPDATE OF classe_sezione, section_id, scuola_id` — sul cambio di sede **parte**;
+è il *corpo* a non fare niente. Il corollario è quello che conta: **azzerare il solo `section_id`
+sarebbe peggio che non azzerare nulla**, perché il corpo scatterebbe (`section_id IS NULL`) e
+cercherebbe la sezione con `scuola_id = NEW.scuola_id`, cioè nella sede **nuova**, riagganciando il
+bambino alla sezione **omonima** di quel plesso — «2 ANNI» esiste in tutti e tre. Una classe scelta
+da nessuno, assegnata in silenzio. Con `classe_sezione` a NULL il blocco esterno è saltato.
+
+### Il genitore: la colonna non esiste, ed è la ragione per cui il punto 2 si può fare
+
+`parents` **non ha `scuola_id`** e non deve averlo: è precisamente ciò che permette a un genitore di
+avere figli in due plessi. La sede della famiglia vive su `alunni.scuola_id`. Quindi nessun selettore
+sull'anagrafica genitore: il selettore sta sul **figlio**, e la sede dell'account si **ricalcola da
+sé** (`riallineaSedeGenitori`) — tranne quando i figli sono in due plessi, dove l'esito è `ambigua` e
+**non si tocca niente**, perché scegliere sarebbe inventare un dato.
+
+Cinque route decidevano la sede guardando `auth.user.scuola_id`, cioè il plesso in cui l'**account**
+è stato aperto: `parent/submissions`, `parent/onboarding`, `chat/messages`,
+`chat/threads/[id]/sospendi`, `segnalazioni`. Misurato: **639 account genitore su 639** hanno quel
+campo valorizzato — il ripiego non falliva mai, quindi decideva sempre — e in **6** contraddice
+almeno un figlio. Ora la sede viene dai figli, con una regola diversa a seconda di cosa si sta
+facendo: dove si **scrive una riga** si **rifiuta** invece di indovinare (archiviare nel plesso
+sbagliato è silenzioso e permanente); dove si decide solo **chi viene informato** si coprono tutte le
+sedi coinvolte. In `parent/submissions` la sede è quella del **modulo** (`forms_templates.scuola_id`
+è `NOT NULL`), non dei figli: un modulo di Aversa non deve svegliare la segreteria di Cesa.
+
+`ChildSwitcher` mostra ora la **sede** accanto alla classe, ma **solo quando i figli stanno in plessi
+diversi**: con figli nello stesso plesso è rumore, e due chip che cambiano altezza su WebKit fanno
+risalire il pulsante sotto il dito.
+
+### La sezione: rinominarla faceva sparire il registro
+
+Il trigger `trg_sections_propaga_rinomina` aggiornava **una tabella su sette**. Le altre sei
+tengono il nome della classe come **testo**, e nessuno le toccava. Misurato il 2026-09-03:
+
+⚠️ **La tabella qui sotto è stata CORRETTA il 2026-09-04, e l'errore vale più dei numeri.** La
+prima versione dava a `galleria_media_v2` **101** righe e a `news_posts` **3**: erano i totali delle
+tabelle, non le righe che una rinomina intacca. Rimisurato con la domanda giusta — *quante righe
+hanno davvero un destinatario per classe* — sono **zero** in entrambe. Le colonne c'erano, il dato
+dentro no. Un conteggio giusto sulla domanda sbagliata è indistinguibile da una misura, e faceva
+sembrare il rischio quattro volte più grande di quello che è.
+
+| Tabella | Righe a rischio | Cosa succede rinominando |
+|---|---|---|
+| `registro_orario` | **14** | `classe_sezione` è parte della chiave di upsert: lezioni, argomenti, compiti e **firme storiche** diventano irraggiungibili, e il registro riparte da zero |
+| `avvisi` | **10** (su 12) | destinatari per nome in un `text[]`: un avviso che li perde **non dà nessun errore** |
+| `mensa_class_menu_assignment` | **1** | la classe perde il menu e ricade sul legacy di sede |
+| `galleria_media_v2` | **0** (su 208) | la colonna c'è e la funzionalità pure: nessuno l'ha ancora usata per classe |
+| `news_posts` | **0** (su 3) | idem |
+| `forms_templates` | **0** (tabella vuota) | idem |
+| `alunni` | **625**, di cui **12 senza `section_id`** | i 12 non venivano raggiunti nemmeno prima |
+
+**Il totale oggi è 25 righe, non 131.** La migrazione resta pienamente giustificata: 14 di quelle 25
+sono il registro storico di una classe, e le tre tabelle a zero sono a zero *finché nessuno usa una
+funzionalità che esiste già* — il giorno in cui la si usa, il difetto torna intero.
+
+Il guasto degli avvisi **è già successo**: `20260801104252_avvisi_target_classes_nomi.sql`, dieci
+alunni e zero destinatari raggiunti.
+
+**La cosa più pericolosa della migrazione non è ciò che ripara, ma ciò che potrebbe rompere**: ogni
+`UPDATE` filtra per `scuola_id = NEW.scuola_id`. L'omonimia fra plessi è lecita e voluta (in
+produzione `2annia` e `2annib` esistono in due sedi): una propagazione che dimentica la sede non
+lascia indietro dei dati, li **riscrive nel plesso sbagliato, in silenzio**. Il lock
+`__tests__/architecture/rinomina-sezione-propaga-ovunque.test.ts` lo verifica istruzione per
+istruzione.
+
+### Chi può spostare, e verso dove (decisioni del titolare)
+
+| | Destinazioni |
+|---|---|
+| `admin`, `coordinator` (Direzione) | **tutte le sedi reali**, comprese quelle non proprie — è il caso d'uso |
+| `segreteria` | solo le sedi a cui ha già accesso |
+| chiunque altro | nessuna (fail-closed) |
+
+Misurato: **nessuna segreteria è associata a più di una sede**, quindi in pratica per lei l'elenco
+avrà sempre una destinazione sola. **È voluto e confermato**: il trasferimento fra plessi passa dalla
+Direzione, e l'interfaccia lo spiega invece di mostrare un menù vuoto. Chi si sposta deve comunque
+essere già nel perimetro di chi lo sposta (`assertAlunnoInScope` / `assertUtenteInScope`): la
+Direzione decide il **dove**, non allarga il **chi**.
+
+Spostando **si sposta solo l'anagrafica**: classe e gruppo mensa si azzerano e si riassegnano a mano;
+fatture, presenze e mensa restano sulla sede vecchia. La numerazione fiscale è per sede
+(`fatture_emesse UNIQUE(scuola_id, anno, numero)`): le fatture emesse non possono seguire il bambino.
+
+### ⏳ Cosa NON è ancora entrato, al 2026-09-04
+
+Questa sezione esiste perché un PRD che dichiara fatto ciò che non lo è, è il difetto che questo
+repo ha già pagato per due settimane.
+
+- ✅ **La migrazione della rinomina È APPLICATA** (2026-09-04). E la trappola si è presentata
+  puntuale: il file locale si chiamava `20260903145106_…`, `schema_migrations` ha registrato
+  **`20260904094442`**. Il file è stato **rinominato** a quel timestamp; committare il nome locale
+  avrebbe armato una riapplicazione.
+  **Provata sulla sede demo, non dedotta**: rinominando `TEST 1A GIU`, `app_log` ha registrato
+  `alunni: 10 · registro_orario: 14 · avvisi: 5 · saltate: 0 · tabelle_assenti: []`. Le 14 righe di
+  registro sono quelle che **prima sarebbero rimaste indietro**, e i 5 avvisi altrettanti
+  destinatari che sarebbero diventati orfani in silenzio. Il nome è stato riportato com'era, e la
+  prova ha lasciato una cosa in più di com'era: il registro di quella classe, che divergeva dal
+  2026-09-02 (`TEST 1A` contro `TEST 1A GIU`), **adesso è allineato**.
+  `get_advisors`: **0 ERROR** (restano solo INFO e due WARN preesistenti).
+- ✅ **Il backend del trasferimento è entrato** (aggiornato il 2026-09-04): `scuola_id` è nello
+  schema di `PATCH /api/admin/students`, con azzeramento di classe e gruppo mensa e riallineamento
+  della sede dei genitori; `PATCH /api/admin/staff` accetta il cambio di **sede** anche dalla
+  Segreteria — mentre **ruolo, gradi e classi restano alla Direzione**, perché sono autorizzazione
+  e non anagrafica: `utenti.gradi` è metà del gate di `requireFunzione`, e `utenti_sezioni` decide
+  *quali bambini* vede un `educator`. C'è anche `GET /api/admin/sedi/destinazioni`.
+  ⏳ **Manca l'interfaccia** di entrambe.
+- 🔴 **Lo spostamento dello staff sgancia le classi del plesso lasciato**, e serviva: misurate
+  **65 righe** di `utenti_sezioni` che sarebbero rimaste attaccate alla sede vecchia, su **51
+  persone** delle 75 dello staff. Due erano **già** disallineate — un educator e un admin di
+  Giugliano agganciati a una sezione della sede demo, quindi a bambini finti: sporcizia, non
+  esposizione di dati veri.
+- ✅ **Il pulsante di rinomina è entrato** (2026-09-04), nel dettaglio della sezione. L'avviso che
+  mostra era deliberatamente **spezzato in due**: una parte durevole («il nome è scritto anche nel
+  registro, nei destinatari e nel menu della mensa: non è un'etichetta») e una **deperibile**, vera
+  solo finché la migrazione non fosse stata applicata.
+  **Applicata la migrazione, la seconda metà è stata riscritta lo stesso giorno** — e non per
+  diligenza: il test l'ha resa **rossa**, che è precisamente il motivo per cui era una chiave a
+  parte. Il test però non è stato semplicemente aggiornato: ora l'avviso è legato alla **presenza
+  della migrazione nel repo**, non a una data. Se qualcuno la togliesse, la promessa diventerebbe
+  falsa e il lock lo direbbe — provato spostando il file fuori dall'albero e guardandolo diventare
+  rosso. *Una chiave deperibile senza un custode è un testo che invecchia in silenzio, ed è così che
+  questo file ha mentito per due settimane.*
+- **31 account genitore** (19 con un figlio legato solo per via runtime, 12 con account e zero figli
+  in anagrafica) non permettono di dedurre la sede: decisione del titolare, **si sanano i dati**, non
+  il codice.
+- Due prove del lock della rinomina si lasciano ancora aggirare (filtro di sede dentro una
+  sottoquery; lista nera delle parole nel log invece di un controllo strutturale).
+
+## 🔑 Changelog — A Cesa non c'è nessuna Direzione, e per ogni password persa si telefonava — 2026-09-03 (branch `fix/aruba-prima-fattura`)
+
+**La richiesta**: «anche chi ha l'account segreteria deve poter rigenerare le credenziali sia ai
+genitori che allo staff».
+
+**Metà era già vera, e va detto perché la lezione è quella**: il ramo `parent` di
+`admin/regenerate-credentials` passa da `requireStaff`, che include `segreteria`, e non ha mai avuto
+un controllo di ruolo in più. La prova non è nel codice ma nei log: alle **06:31 del 2026-09-03** un
+account `segreteria` ha rigenerato le credenziali di un genitore e Resend ha risposto `200`. Prima
+di implementare, si misura se serve implementare.
+
+### Chi può cosa, da oggi
+
+| | rigenera credenziali GENITORE | rigenera credenziali STAFF | modifica ruolo/sede/classi |
+|---|---|---|---|
+| `admin`, `coordinator` | ✅ | ✅ chiunque | ✅ |
+| `segreteria` | ✅ (già prima) | ✅ **tranne** `admin`/`coordinator` | ❌ |
+| `educator`, `cuoca` | ❌ | ❌ | ❌ |
+
+Tutto resta confinato al **proprio plesso** (`assertParentInScope` / `assertUtenteInScope`).
+
+> 📌 **Rettifica del 2026-09-04 — l'ultima colonna si è spaccata in due.** Dal changelog sul
+> trasferimento di sede, la Segreteria può cambiare la **sede** di un membro dello staff; **ruolo,
+> gradi e classi** restano alla Direzione. La distinzione non è una concessione a metà: la sede dice
+> *dove* lavora una persona, gli altri tre dicono *cosa può fare* — `utenti.gradi` è metà del gate
+> di `requireFunzione`, e `utenti_sezioni` decide **quali bambini** vede un `educator`. Il divieto
+> sul ruolo resta esattamente per la ragione scritta qui sotto: è ciò che rende non aggirabile la
+> riserva sulle credenziali.
+>
+> ⚠️ E resta vero un fatto misurato: **nessuna segreteria è associata a più di una sede**, quindi in
+> pratica il suo elenco di destinazioni contiene solo il plesso in cui già si trova. Il permesso c'è,
+> il corridoio è largo un passo — **voluto e confermato dal titolare**: il trasferimento fra plessi
+> passa dalla Direzione.
+
+**Perché la Direzione è un'eccezione**, e non è prudenza astratta: dopo il reset il PDF con la
+password **in chiaro** viene notificato a *chi ha premuto il pulsante*, e `admin/credentials-pdf` era
+aperta a tutto lo staff in scope di sede. Ad Aversa e a Giugliano l'admin sta **nello stesso plesso**
+della segreteria: senza l'eccezione, resettare l'admin e leggerne la password sarebbe stato un
+passaggio di consegne, non un recupero credenziali.
+
+**Perché la modifica del ruolo NON si è aperta**: è ciò che rende non aggirabile la riserva qui
+sopra. Chi può cambiare il ruolo di una collega la promuove ad `admin` e da lì rigenera qualunque
+cosa. Le due riserve si tengono in piedi a vicenda.
+
+**Il perché della misura, in una tabella** (query del 2026-09-03 su `utenti`):
+
+| Sede | admin | coordinator | segreteria |
+|---|---|---|---|
+| Giugliano | 1 | — | 1 |
+| Aversa | 1 | — | 1 |
+| **Cesa** | **0** | **0** | **2** |
+
+### Il difetto trovato per strada: un filtro di sede che non ha mai filtrato
+
+Il rinvio credenziali **in blocco** (`admin/iscrizioni/rinvia-credenziali`, oggi aperto anche alla
+Segreteria) accettava uno `scuola_id` e lo risolveva con `parents.eq('scuola_id', …)`.
+**`parents` non ha quella colonna**: 27 colonne, verificate sullo schema di produzione. PostgREST
+rispondeva `42703` e la route dava **500 `RINVIO_SEDE_NON_RISOLTA`**. Il commento sopra la riga
+diceva il contrario di ciò che la route accanto scriveva già («`parents` non ha sede»).
+
+Invisibile perché l'unico che poteva chiamarla era l'admin multi-sede, che la sede non la passa mai:
+**un filtro rotto che nessuno usa resta verde per sempre.**
+
+Aprirlo senza ripararlo avrebbe mandato una segreteria di Cesa a riscrivere **528** password invece
+di 156:
+
+| Sede | famiglie candidate al rinvio |
+|---|---|
+| Giugliano | 275 |
+| Cesa | 156 |
+| Aversa | 97 |
+
+Ora il perimetro **non arriva più dal client**: parte da `scuoleDiUtente`, la sede del corpo può solo
+restringere (`restringiSedi`, confronto in forma canonica), e i genitori si risolvono **dai figli**
+con la join `student_parents → alunni.scuola_id`. Cambia anche per l'admin: «nessuna sede indicata»
+non vuol più dire *tutte le famiglie esistenti* ma *quelle dei propri plessi*.
+
+### Dove vive la regola
+
+`src/lib/auth/credenziali-staff.ts` → `puoRigenerareCredenzialiStaff(attore, ruoloBersaglio)`. Puro,
+quattro chiamanti: le due route e i due pannelli. Un bersaglio il cui ruolo **non si è riusciti a
+leggere** si nega — `utenti.ruolo` è NOT NULL, quindi `null` significa lettura fallita, e un guasto
+non deve diventare un permesso.
+
+### Verifiche
+
+`eslint` 0 · `tsc --noEmit` 0 · `vitest` **13.366 verdi** (erano 13.327: +39) · `npm run build` ok.
+Ogni gate nuovo ha la sua **controprova eseguita**: neutralizzato il predicato, i test di diniego
+diventano rossi; ripristinato, tornano verdi.
+
+**Codici d'errore nuovi**: `CREDENZIALI_STAFF_RISERVATE` (403), `RINVIO_NESSUN_PLESSO` (403),
+dichiarati in `CODICI_ERRORE` e tradotti in italiano e inglese.
+
+⚠️ **Un flake da tenere d'occhio, non introdotto qui**:
+`__tests__/components/CandidatureInsegnanti.test.tsx > «aprire una candidatura porta il FUOCO
+sull'intestazione del pannello»` è fallito **una volta** nella prima esecuzione della suite intera, e
+passa in isolamento e alla riesecuzione. È un'asserzione sul fuoco sotto carico parallelo, su un file
+che questo lavoro non tocca.
 ## 🧾 Changelog — Nove richieste in pochi secondi contro un limite di dodici al minuto, e la prima fattura vera — 2026-09-03 (branch `fix/aruba-emissione-reale`)
 
 **Il fatto.** Il 2026-09-02 la lettura del progressivo da Aruba ha preso `429` alla **nona** richiesta,
@@ -344,6 +599,144 @@ che ha lasciato passare il difetto originale. Gate: eslint 0, `tsc` 0, **13.334 
 **Resta aperto**: la lettura in presa diretta contro l'API vera, che va rifatta come **prima** cosa
 di una sessione (l'handoff `docs/fatturazione/HANDOFF-aruba-2026-09-02.md` dice come), e l'emissione
 della prima fattura vera, che deve premerla una persona in segreteria.
+
+---
+
+## 🧾 Changelog — La causale che nessuno ha mai emesso, e il fratello che paga senza che si veda — 2026-09-04 (branch `fix/aruba-prima-fattura`)
+
+**Il fatto.** La fattura **FPR 1948/26**, trasmessa allo SDI il 2026-09-03, è uscita con
+`Retta 09/2026`. Kidville Aversa aveva configurato il modello coi segnaposti — «Pagamento retta del
+mese di {mese} {anno}. Per il figlio minore {nome_completo} C. F. {codice_fiscale}» — e quel modello
+non è mai arrivato sul documento.
+
+**La causa radice, e non era dove la si cercava.** `emissione.ts` leggeva la configurazione, dalla
+sede giusta, e la applicava: quel percorso era corretto. Il difetto stava **una schermata prima**.
+`FatturaButton.tsx` precompilava la casella «Causale fattura» con `pagamenti.descrizione`
+(`useState(descrizione ?? '')`) e la spediva come **correzione manuale della segreteria** — che per
+progetto batte qualunque modello (`causale-fattura.ts`). Chi premeva «Emetti» senza svuotare il
+campo, cioè chiunque, annullava la configurazione senza saperlo e senza poterlo vedere.
+
+🔴 **Il segnaposto di quella stessa casella recitava «Lascia vuoto per usare il template delle
+impostazioni».** L'interfaccia descriveva, parola per parola, il comportamento che si impediva da
+sola.
+
+**Aggravante, e spiega perché non bastava correggere la precompilazione.** `pagamenti/fattura:POST`
+salvava quella stringa in `pagamenti.fattura_causale` e **non la azzerava mai**: dal primo «Emetti»
+in poi quel pagamento era congelato, e cambiare il modello in Contabilità → Causali non avrebbe più
+avuto alcun effetto su di lui. In produzione erano **5 righe**, tutte e cinque con `fattura_causale`
+**identico** a `descrizione` — non correzioni umane, l'eco del difetto. Azzerate il 2026-09-04.
+
+**Perché nessun test se n'era accorto**: `FatturaButton` non ne aveva **nessuno**. I test della
+composizione erano corretti, verdi, e misuravano l'altra metà della catena.
+
+### Cosa c'è adesso
+
+| | dove |
+|---|---|
+| composizione della causale, un posto solo | `src/lib/aruba/causale-pagamento.ts` (`componiCausalePagamento`) |
+| anteprima, stesso codice dell'emissione | `GET /api/pagamenti/fattura/anteprima` |
+| il modale, in sola lettura + «Personalizza» | `src/components/features/admin/pagamenti/FatturaButton.tsx` |
+| la correzione manuale si può TOGLIERE (`causale: null`) | `src/app/api/pagamenti/fattura/route.ts` |
+| lock: un solo motore | `__tests__/architecture/causale-fattura-un-motore-solo.test.ts` |
+
+Il modale mostra la causale **già resa**, dice **da dove viene** (modello della tipologia ·
+Predefinito della sede · modello di base · corretta a mano) e quanto è lunga **sul tracciato**
+(`€`→`EUR`: 1 carattere diventa 3), sempre a schermo. «Personalizza per questa fattura» sblocca la
+casella; senza, parte `causale: null`, che **toglie** una correzione vecchia invece di lasciarla lì.
+Se il testo torna identico all'anteprima si manda `null` lo stesso: non si congela un pagamento per
+un testo che non corregge niente.
+
+⚠️ **Anteprima fallita ⇒ «Emetti» bloccato**, con l'errore a schermo. Emettere alla cieca su un
+documento irreversibile non è un ripiego accettabile.
+
+⚠️ **L'anteprima NON ricalcola nel browser**, e non è un dettaglio d'architettura: sarebbe peggio del
+difetto che chiude — la segreteria approverebbe un testo e ne spedirebbe un altro — e la divergenza
+non darebbe **nessun errore**, perché `renderCausale` omette con grazia i segmenti coi segnaposto
+vuoti. La grazia è proprio ciò che la renderebbe invisibile.
+
+🔻 **Tolta anche una sorgente sbagliata trovata per strada**: `MovimentoDialog.tsx` passava
+`movimento.causale` — il **testo grezzo della riga dell'estratto conto bancario** — a precompilare
+la causale di una fattura elettronica. La prop `descrizione` è sparita da tutti e sette i punti in
+cui `FatturaButton` è montato.
+
+### «La retta la paga il fratello», dalla scheda dell'alunno
+
+`alunni.retta_a_carico_di` esiste dal 2026-08-16 ed è rispettata da **entrambe** le strade che
+generano le rette. Ma si poteva valorizzare **solo** dall'import delle iscrizioni: non era né in
+`patchBodySchema` né in `allowedFields` di `admin/students`. In produzione **44 alunni** ce
+l'avevano — 37 alla sola Giugliano — senza che nessuna schermata la mostrasse. La route dell'import
+lo sapeva già: il suo messaggio d'errore diceva *«Va corretto dalla scheda dell'alunno»*, una
+schermata che non esisteva.
+
+Adesso c'è, in `StudentEconomicSection`: tendina «Oppure: la paga …» coi soli fratelli **iscritti**
+e non già a carico di un terzo (le opzioni vengono da `student.siblings`, già caricato: nessuna
+query nuova). Sceglierne uno **blocca** l'importo e lo porta a 0; «— paga la propria retta —» lo
+riapre.
+
+**La coppia legame/importo la scrive il SERVER, nella stessa update.** Sono due facce dello stesso
+fatto: lasciarle al client vuol dire lasciarle divergere, ed è la coppia che in produzione era già
+incoerente su tre righe. ⚠️ Lo zero **non** scende sui pagamenti già generati —
+`riallineaImportoRetteFuture` rifiuta gli zeri di proposito, perché sulla colonna significa «usa il
+default di sede» e su un pagamento significherebbe «non deve niente».
+
+Quattro guardie lato server, perché qui i due alunni sono **righe indipendenti** (nell'import erano
+indici della stessa domanda): esiste · stessa sede · iscritto e non archiviato · non forma catene
+(`RETTA_CICLO_FRATELLI`, 409) né anelli. E sulla scheda di **chi paga** compare, **in sola lettura**,
+«Paghi anche la retta di: …»: la stessa relazione modificabile da due schermate sarebbe una doppia
+strada per lo stesso dato, ma vedere il legame da entrambi i lati è ciò che è mancato al caso qui
+sotto.
+
+### 🔴 Quello che è saltato fuori cercando gli 0,01 €, e vale 250 € al mese
+
+Cinque alunni avevano un importo simbolico — il ripiego che le famiglie hanno inventato per dire
+«non paga», perché lo zero sulla colonna significa il contrario. Cercando di riallinearli:
+
+| | situazione | esito |
+|---|---|---|
+| `f75f88c7` (Giugliano) | due fratelli, uno solo paga davvero (450 €) | ✅ candidato unico → riallineato |
+| `97b9efbb` (Giugliano) | il fratello da **250 €** è marcato a carico di **lui**, che ha 0,01 € | 🔴 legame **ROVESCIATO** |
+| tre alunni (Giugliano, Cesa ×2) | **nessun** fratello collegato | ❌ non deducibile: restano, contrassegnati |
+
+Sul secondo: i generatori saltano chi è a carico di un altro, quindi il fratello da 250 € **non
+generava nulla** e la famiglia è stata addebitata di **0,01 € per settembre 2026** (misurato: una
+riga, importo `0.01`). Nove mesi di anno scolastico sono **2.250 €** che nessuno avrebbe mai
+chiesto. Nessun errore, nessun log, nessuna schermata — perché quel campo non compariva da nessuna
+parte.
+
+**Non è stato raddrizzato**, ed è una scelta: cambia quanto una famiglia vera deve pagare, e lo
+conferma una persona dall'interfaccia che questo lavoro costruisce. È anche l'unico dei tre
+«incoerenti» **escluso** dall'azzeramento in produzione — azzerarlo avrebbe cementato la perdita e
+cancellato l'unico numero da cui si capisce quanto vale.
+
+### La rete, perché un anello si veda il mese dopo e non fra un anno
+
+L'anteprima di **Genera rette** contrassegna ora l'importo simbolico e dice per quanti fratelli quel
+bambino paga («paga per altri, ma sotto l'euro»); la scheda dell'alunno avvisa quando l'importo è
+fra 0 e 1 € o quando il legame c'è ma l'importo non è zero. E la route logga in `warn` il
+**conteggio** delle famiglie a totale sospetto — solo numeri e uuid di sede, mai nomi né codici
+fiscali (regola 8).
+
+### Le scritture in produzione, mostrate prima di eseguirle
+
+| | prima | dopo |
+|---|---|---|
+| pagamenti con `fattura_causale` = `descrizione` | 5 | **0** |
+| alunni a carico di un fratello con importo ≠ 0 | 3 | **1** (l'anello, escluso apposta) |
+| alunni con importo fra 0 e 1 € | 5 | **4** |
+
+### Cosa NON è stato toccato, e va detto
+
+- **FPR 1948/26 resta com'è**: il documento è fiscalmente valido, la causale è brutta, non illecita.
+  Correggerla vorrebbe dire una nota di variazione, che è una decisione fiscale.
+- ⚠️ **FPR 1947/26 ha bruciato un numero** — `sdi_stato = 2`, «Errore upload», stesso pagamento,
+  27 minuti prima: nel sezionale FPR 2026 **c'è un buco**, e non lo ha causato questo lavoro.
+- **La precedenza della causale manuale non cambia.** È giusta: chi scrive a mano sta correggendo
+  *quel* documento. Cambia **chi** produce la stringa manuale.
+
+**Verifica.** `eslint 0` · `tsc 0` · `vitest 13.627` (1.077 file, tutti verdi) · `build` ok.
+🔴 **Prova del fuoco**, due volte: rimesso `setCausale(descrizione ?? '')` in `FatturaButton` → 6
+test su 8 rossi; tolto l'azzeramento dell'importo e il filtro sui ritirati nella tendina → 3 su 8
+rossi. *Un test mai visto fallire non è un test.*
 
 ---
 
@@ -3450,6 +3843,11 @@ ogni aggiornamento**. Gli altri 26 sono marcati `attivo = false`.
 4. **Il trigger `sync_alunno_section_id` NON si riattiva sul cambio di sola sede** (solo su INSERT,
    o se cambia `classe_sezione`, o se `section_id` è `NULL`). Spostare `Collaudo ProvaAversa` di
    sede lo avrebbe lasciato **dentro la sezione vera di Aversa, in silenzio**.
+   > 📌 *Rettifica del 2026-09-04*: la conclusione pratica qui sopra è giusta, la formulazione no.
+   > Il trigger **si riattiva** — è dichiarato `UPDATE OF classe_sezione, section_id, scuola_id` —
+   > ed è il suo *corpo* a non fare niente. La differenza conta dal giorno in cui si è potuto
+   > spostare un bambino di sede: azzerare il solo `section_id` fa scattare il corpo, che riaggancia
+   > il bambino alla sezione **omonima della sede nuova**. Vanno azzerati entrambi.
 
 ### Due misure che smentiscono quanto si dava per buono
 
@@ -8942,9 +9340,13 @@ vengono da `caus_ph_<chiave>` nei cataloghi `it`/`en` (con `PLACEHOLDER_CAUSALE.
 perché il resto del pannello è tradotto e in inglese si leggeva «Del/della minore» in mezzo a testi
 inglesi.
 
-Resta da fare, e non è in questo lavoro: **applicare la migrazione**
-`20260809235457_fattura_causali_config.sql`. `causaleFattura()` è invece già agganciata
-all'emissione (`src/lib/aruba/emissione.ts:463`).
+~~Resta da fare, e non è in questo lavoro: applicare la migrazione
+`20260809235457_fattura_causali_config.sql`.~~ ⚠️ **Corretto il 2026-09-04: la migrazione È
+APPLICATA dall'11/08/2026**, e lo dice la tabella qui sopra in questo stesso changelog
+(«✅ Applicata in produzione — verificato con `list_migrations`»). Due righe dello stesso testo si
+contraddicevano da quasi un mese: chi leggeva l'ultima andava ad applicare una migrazione già
+applicata. `causaleFattura()` è agganciata all'emissione, oggi attraverso
+`src/lib/aruba/causale-pagamento.ts` (v. changelog del 2026-09-04).
 
 ---
 

@@ -281,7 +281,7 @@
   "fatBtn_attesa_sdi": "Awaiting SDI",
   "fatBtn_attesa_title": "Transmitted to the SDI via Aruba, awaiting outcome",
   "fatBtn_causale_label": "Invoice reference",
-  "fatBtn_causale_ph": "Leave empty to use the settings template",
+  "fatBtn_causale_ph": "The description composed from this location’s template",
   "fatBtn_emetti": "Issue",
   "fatBtn_emetti_titolo": "Issue invoice",
   "fatBtn_fattura": "Invoice",
@@ -859,5 +859,18 @@
   "caus_ph_mese": "Month covered",
   "caus_ph_anno": "Year",
   "caus_ph_importo": "Amount",
-  "caus_ph_scadenza": "Due date"
+  "caus_ph_scadenza": "Due date",
+  "fatBtn_anteprima_errore": "The description configured for this location could not be read: the invoice cannot be issued right now. Try again shortly.",
+  "fatBtn_causale_caricamento": "Loading the configured description…",
+  "fatBtn_causale_troppo_lunga": "The description exceeds the 200 characters allowed by the format: it will be truncated on the document.",
+  "fatBtn_origine_categoria": "Description, from the payment type template",
+  "fatBtn_origine_fabbrica": "Description, base template (this location has not configured one)",
+  "fatBtn_origine_manuale": "Description manually corrected on this payment",
+  "fatBtn_origine_predefinito": "Description, from this location’s “Default” template",
+  "fatBtn_personalizza": "Customise for this invoice",
+  "fatBtn_personalizza_hint": "Applies to this document only. To change the description for every invoice of this type: Accounting → Descriptions.",
+  "genrSimbolico": "token amount",
+  "genrSimbolicoTitle": "Below one euro: if this child does not pay because a sibling does, set that on their record instead of leaving a fake figure.",
+  "genrSospetto": "pays for others, but under a euro",
+  "genrSospettoTitle": "{n, plural, one {This child has # sibling charged to them} other {This child has # siblings charged to them}} and an amount below one euro: that figure would be billed for the whole family. Check their record."
 }

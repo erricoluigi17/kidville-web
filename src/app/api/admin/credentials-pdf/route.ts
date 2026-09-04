@@ -7,11 +7,39 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { requireEnv } from '@/lib/security/require-env';
 import { parseQuery } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
+import { puoRigenerareCredenzialiStaff } from '@/lib/auth/credenziali-staff';
 
+/* ⚠️ CHI SCRIVE UN TEST PER QUESTA ROUTE: DICHIARA `// @vitest-environment node`.
+ *
+ * L'ultima riga della route è `new NextResponse(data, …)` dove `data` è il Blob
+ * dello Storage. Il `Blob` di **jsdom non ha `stream()`**, quello di Node sì —
+ * e `vitest.config.ts` mette TUTTO in jsdom per impostazione predefinita.
+ *
+ * In jsdom il corpo che esce non è il PDF: è la stringa `[object Blob]`, e un
+ * test che guarda solo lo `status` resta VERDE. Su Node 22 (la CI) la stessa
+ * chiamata esplode con `TypeError: object.stream is not a function`, quindi il
+ * difetto si manifesta in un solo ambiente su due.
+ *
+ * È già successo due volte: `credentials-pdf-scope-sede.test.ts` porta la stessa
+ * avvertenza in testa dal giorno in cui è stato scritto, e il 2026-09-03
+ * `credentials-pdf-credenziali-direzione.test.ts` ci è ricascato lo stesso —
+ * perché l'avvertenza stava in un file di test, cioè dove la legge solo chi apre
+ * QUEL file. Adesso sta qui, dove la legge chiunque tocchi la route.
+ *
+ * E si asserisce sui BYTE, non sullo stato: `status` giusto e corpo sbagliato è
+ * esattamente ciò che jsdom produce.
+ */
 // GET /api/admin/credentials-pdf?key=<uuid>-<timestamp>.pdf
 // Scarica il PDF credenziali dal bucket privato. Riservato allo staff (il link è
 // consegnato nel centro notifiche della segreteria dopo la rigenerazione).
+//
+// ⚠️ DUE CONTROLLI, NON UNO (2026-09-03). La SEDE dice se quel destinatario è tuo;
+// il RUOLO dice se la sua password è cosa tua. Sono domande diverse, e ad Aversa
+// davano già risposte diverse: l'admin è nello stesso plesso della segreteria,
+// quindi la sola sede non separava niente. Il gate di ruolo è lo STESSO di
+// `admin/regenerate-credentials` — `puoRigenerareCredenzialiStaff` — perché due
+// porte sulla stessa stanza si chiudono insieme o non si chiudono.
 //
 // ⚠️ ISOLAMENTO FRA SEDI (2026-07-31). Fino a oggi l'autorizzazione era delegata
 // alla FORMA della chiave: la regex impediva il path traversal, e l'entropia di
@@ -61,7 +89,7 @@ export const GET = withRoute('admin/credentials-pdf:GET', async (request: NextRe
   // `parents.id`), quindi la discriminazione è per esistenza.
   const { data: utente, error: errUtente } = await admin
     .from('utenti')
-    .select('id, scuola_id')
+    .select('id, scuola_id, ruolo')
     .eq('id', targetId)
     .maybeSingle();
   if (errUtente) {
@@ -75,6 +103,40 @@ export const GET = withRoute('admin/credentials-pdf:GET', async (request: NextRe
   if (utente) {
     const fuoriScope = await assertUtenteInScope(admin, auth.user, targetId);
     if (fuoriScope) return fuoriScope;
+
+    /* ── LA STESSA REGOLA DI `regenerate-credentials`, e per la stessa ragione ──
+     * Qui dentro c'è la password IN CHIARO. Chiudere il reset e lasciare aperto
+     * il download non è chiudere: la chiave viaggia in una notifica, e una
+     * notifica si inoltra, si legge su uno schermo condiviso, e resta nel centro
+     * notifiche per sempre.
+     *
+     * Fino al 2026-09-03 l'unica difesa era la SEDE — e ad Aversa e a Giugliano
+     * l'admin sta nello stesso plesso della segreteria, quindi la sede non
+     * separava niente. La riserva sul ruolo non poteva vivere solo sull'altra
+     * route: due porte sulla stessa stanza si chiudono insieme o non si chiudono.
+     *
+     * PRIMA del download, non dopo: un 403 su un file già letto sarebbe un
+     * diniego a cose fatte.
+     */
+    const ruoloBersaglio = (utente.ruolo as string | null) ?? null;
+    if (!puoRigenerareCredenzialiStaff(auth.user.role, ruoloBersaglio)) {
+      // `warn` → persistito: è un segnale di sicurezza. Né l'uuid né il ruolo del
+      // bersaglio: basta sapere che è successo, e a chi (AGENTS.md regola 8).
+      logEvento('auth', 'warn', {
+        tipo: 'credenziali-staff-riservate',
+        azione: 'admin/credentials-pdf:GET',
+        utente: auth.user.id,
+        ruolo: auth.user.role,
+      });
+      return NextResponse.json(
+        {
+          error: 'Le credenziali di un account di Direzione si rigenerano dalla Direzione',
+          codice: 'CREDENZIALI_STAFF_RISERVATE',
+        },
+        { status: 403 },
+      );
+    }
+
     sedeTarget = (utente.scuola_id as string | null) ?? null;
   } else {
     const { data: genitore, error: errParent } = await admin

@@ -3,7 +3,11 @@ import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
 import { notificaEvento } from '@/lib/notifiche/triggers'
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+// `scuolaUnicaReale` NON si importa più: era l'ultimo anello della vecchia
+// catena, è deprecata (con tre sedi risponde sempre `null`) e un import che
+// nessuno usa fa uscire `eslint --max-warnings 0` con 1.
+import { staffScuola } from '@/lib/notifiche/destinatari'
+import { sedeDiAlunno, sedeDiAccount } from '@/lib/anagrafiche/sedi'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -81,14 +85,55 @@ export const POST = withRoute('chat/threads/[id]/sospendi:POST', async (request:
     }
     if (attiva) return NextResponse.json({ error: 'Conversazione già sospesa' }, { status: 409 })
 
-    // 3) scuola_id (best-effort): dall'account, poi dal bambino del thread, poi
-    //    l'unica sede reale. Serve per notificare la Direzione della sede giusta.
-    let scuolaId: string | null = auth.user.scuola_id ?? null
-    if (!scuolaId && thread.student_id) {
-      const { data: al } = await supabase.from('alunni').select('scuola_id').eq('id', thread.student_id).maybeSingle()
-      scuolaId = (al?.scuola_id as string | null) ?? null
+    // ── 3) LA SEDE È QUELLA DEL BAMBINO DEL THREAD, NON QUELLA DI CHI PREME ──
+    //
+    // Fino al 2026-09-03 l'ordine era rovesciato:
+    //   `auth.user.scuola_id ?? sede del bambino ?? scuolaUnicaReale(…)`
+    // cioè la sede dell'ACCOUNT per prima e il bambino solo come ripiego. Ma un
+    // genitore può avere due figli in due plessi — `parents` non ha `scuola_id`,
+    // ed è una scelta esplicita (vedi `admin/parents/route.ts`) — quindi
+    // `utenti.scuola_id` di un genitore è al più UNA delle sue sedi: quella con
+    // cui l'account è nato. Sospendendo la conversazione col docente dell'ALTRO
+    // figlio, la riga nasceva nel plesso sbagliato e la notifica «Conversazione
+    // sospesa» andava a una Direzione che su quel thread non ha titolo, mentre
+    // quella competente non sapeva niente. Lo stesso vale per un docente che
+    // lavora su più plessi.
+    //
+    // Il bambino del thread NON è ambiguo: una conversazione parla sempre di UN
+    // bambino, e quel bambino ha UN plesso. È il dato che ce l'ha davvero.
+    //
+    // Ripiego dichiarato: la sede dell'account del DOCENTE del thread — lo staff
+    // una sede propria ce l'ha sempre, i genitori no. `scuolaUnicaReale` è
+    // DEPRECATA (con tre sedi risponde sempre `null`): non ripiega più, e
+    // interrogarla costava una query e una riga di `warn` per un anello morto.
+    //
+    // Le due letture stanno in `@/lib/anagrafiche/sedi`: erano scritte identiche
+    // in quattro punti (qui, `chat/messages`, `parent/onboarding`,
+    // `parent/submissions`), e in questo repo una regola valida per più strade
+    // vive in un posto solo. Lì dentro c'è anche il controllo di `{ error }` —
+    // PostgREST non lancia — e la riga di log che distingue «non ha un plesso»
+    // da «non ho potuto leggerlo».
+    const ctxSede = { gruppo: 'chat', operazione: OP, extra: { threadId } }
+    let scuolaId: string | null = null
+    if (thread.student_id) {
+      scuolaId = await sedeDiAlunno(supabase, thread.student_id, ctxSede)
     }
-    if (!scuolaId) scuolaId = await scuolaUnicaReale(supabase)
+    if (!scuolaId && thread.teacher_id) {
+      scuolaId = await sedeDiAccount(supabase, thread.teacher_id, ctxSede)
+    }
+    if (!scuolaId) {
+      // La sospensione si scrive LO STESSO — bloccarla perché manca un plesso
+      // significherebbe lasciare due persone dentro una conversazione che una
+      // delle due ha chiesto di fermare, ed è una tutela, non un adempimento.
+      // Ma `staffScuola(null)` non avviserà nessuna Direzione: senza questa riga
+      // «nessuno ha moderato» e «nessuno è stato avvisato» sarebbero
+      // indistinguibili. `error` perché è l'anagrafica nostra a essere monca.
+      logEvento('chat', 'error', {
+        operazione: OP,
+        esito: 'sede-non-attribuibile',
+        threadId,
+      })
+    }
 
     // 4) INSERT della sospensione (append-only). PostgREST NON lancia: si legge
     //    il valore di ritorno.

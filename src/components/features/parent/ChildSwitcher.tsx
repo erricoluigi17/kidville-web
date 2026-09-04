@@ -16,6 +16,30 @@ function initials(nome: string, cognome: string) {
 }
 
 /**
+ * I FIGLI STANNO IN PLESSI DIVERSI?
+ *
+ * Un genitore può avere due figli in due sedi — `parents` non ha `scuola_id`, ed
+ * è una scelta esplicita che serve proprio a permetterlo. Finché le sedi
+ * coincidono, scriverne il nome è rumore: la sede è la stessa di sempre e
+ * occupa spazio in un chip che ne ha poco. Quando invece divergono, senza il
+ * nome i due chip sono INDISTINGUIBILI ogni volta che le sezioni si chiamano
+ * uguale — e «2 ANNI» esiste davvero in più plessi di Kidville.
+ *
+ * Il confronto è su `scuola_id` normalizzato: in Postgres `uuid` è un tipo, e
+ * 'AAAA…' è lo stesso valore di 'aaaa…'. Chi non ha sede (dato mancante) non
+ * conta come «un plesso in più», altrimenti un campo a `null` accenderebbe
+ * l'etichetta per tutti.
+ */
+function sediDivergono(figli: readonly Figlio[]): boolean {
+  const sedi = new Set(
+    figli
+      .map((f) => (typeof f.scuola_id === 'string' ? f.scuola_id.trim().toLowerCase() : ''))
+      .filter((v) => v.length > 0),
+  );
+  return sedi.size > 1;
+}
+
+/**
  * Selettore del figlio per i genitori con più figli — chip ad avatar orizzontali
  * (design DR KvUI.ChildSwitcher). Persiste la scelta in localStorage
  * (kv_student_id) e ricarica, così tutte le pagine genitore mostrano il figlio
@@ -42,6 +66,14 @@ export function ChildSwitcher() {
 
   // Niente da scegliere: non mostrare nulla.
   if (!ready || figli.length < 2) return null;
+
+  // Si decide UNA volta per l'intero elenco, non per chip: l'etichetta o c'è
+  // per tutti o non c'è per nessuno, così l'altezza della riga è la stessa
+  // dall'inizio alla fine. ⚠️ Su WebKit un elemento che cambia altezza fa
+  // risalire il pulsante sotto il dito mentre lo si sta premendo: è un difetto
+  // già pagato due volte in questo repo, e il modo di non ripagarlo è non far
+  // comparire e sparire niente in risposta a un tocco.
+  const mostraSede = sediDivergono(figli);
 
   const onSelect = (id: string) => {
     if (!id || id === studentId) return;
@@ -86,6 +118,13 @@ export function ChildSwitcher() {
             onClick={() => onSelect(f.id)}
             role="tab"
             aria-selected={on}
+            // Il nome della sede sta nell'etichetta accessibile di OGNI chip,
+            // non solo di quello aperto: i chip chiusi mostrano due iniziali, e
+            // due fratelli hanno lo stesso cognome. Chi naviga a voce, senza
+            // questo, sceglie fra due bottoni che si chiamano uguale.
+            aria-label={
+              mostraSede && f.scuola_nome ? `${f.nome} ${f.cognome} — ${f.scuola_nome}` : undefined
+            }
             className={`flex flex-shrink-0 items-center gap-2.5 rounded-pill transition-all ${
               on ? 'bg-kidville-green' : 'bg-kidville-white'
             }`}
@@ -102,9 +141,11 @@ export function ChildSwitcher() {
                 <span className="block font-barlow text-sm font-extrabold uppercase leading-none tracking-wide text-white">
                   {f.nome}
                 </span>
-                {f.classe_sezione && (
+                {(f.classe_sezione || (mostraSede && f.scuola_nome)) && (
                   <span className="block font-maven text-[10.5px] font-semibold text-kidville-yellow-ink">
-                    {f.classe_sezione}
+                    {[f.classe_sezione, mostraSede ? f.scuola_nome : null]
+                      .filter(Boolean)
+                      .join(' · ')}
                   </span>
                 )}
               </span>

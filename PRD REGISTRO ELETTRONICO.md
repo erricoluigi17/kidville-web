@@ -92,7 +92,120 @@
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
-> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+
+---
+
+## 🎨 Changelog — Gli elementi neri non erano nel CSS: l'app non aveva mai detto al sistema di essere chiara — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
+
+**Segnalazione**: «in alcune parti dell'app sono comparsi elementi in nero, non rispecchia più il
+design originale né il brand; e alcune scritte sono poco visibili perché il colore è troppo simile
+allo sfondo». Osservato su **iPhone e Android**, nelle aree genitore, docente e login.
+
+Non era un difetto: erano **quattro**, e il più probabile non stava in `src/`.
+
+### Le ipotesi escluse, con la prova — perché è la metà del lavoro
+
+| Ipotesi | Esito |
+|---|---|
+| Token shadcn/ui neri non rimappati | **Falsa** — shadcn non esiste nel repo: nessun `--foreground`/`--primary`, nessun `components.json`, nessuna dipendenza Radix/cva |
+| Dark mode CSS che segue il sistema | **Falsa** — zero classi `dark:`, zero `@media (prefers-color-scheme)` nell'app |
+| `backgroundColor` nero di default di Capacitor | **Falsa** — `#FEF1E4` in `capacitor.config.ts:51,54,94`, e davvero applicato (`CAPBridgeViewController.swift:308-310`, anche sullo `scrollView`) |
+| Splash iOS scuro | **Falsa** — le tre varianti «dark» hanno lo **stesso md5** delle chiare |
+| Pagine pubbliche a basso contrasto | **Falsa** — `/iscrizione` e `/auth/login` misurate col contrasto calcolato dal browser: **0 fallimenti in entrambe le modalità** |
+
+### 1 · `color-scheme` non era mai stato dichiarato
+
+`grep` su tutte le 1670 righe di `globals.css`: nessun `color-scheme` su `html` o `:root`, e
+`layout.tsx` esportava `viewport` senza `colorScheme` né `themeColor`. Col telefono in tema scuro è
+il **sistema operativo** a disegnare i controlli nativi — tendine dei `<select>`, date/time picker,
+autofill, selezione del testo, cursore, scrollbar — con fondo scuro e testo chiaro **dentro campi
+che l'app dipinge bianchi**. Superficie esposta: **463 `<input>` e 152 `<select>`**. Spiega entrambi
+i sintomi, su entrambe le piattaforme, e spiega «in *alcune* parti»: va nero solo ciò che disegna il
+sistema.
+
+Che il sintomo fosse già stato incontrato lo dicevano **due toppe locali** `[color-scheme:light]` su
+due soli campi data in `FieldRenderer.tsx` — curavano il punto, non la causa — e un
+`colorScheme: 'dark'` in `SubmissionsTable.tsx:223` che produceva **oggi, in produzione**, un
+calendario nativo nero su campo bianco.
+
+### 2 · Android: il tema DayNight ridipingeva il decor view a ogni rotta
+
+`AppTheme.NoActionBar` ereditava da `Theme.AppCompat.DayNight`. Capacitor, dentro
+`SystemBars.setStyle()`, dipinge il decor view con `android:windowBackground` — che di notte
+risolve su `background_material_dark`, **#303030**. E `setStyle` viene chiamato **a ogni cambio di
+rotta** (`NativeInit.tsx` → `status-bar.ts`): il grigio quasi nero rientrava in scena di continuo.
+La funzione scritta per *migliorare* il contrasto della status bar era il grilletto.
+`colors.xml` **non esisteva**: i tre nomi erano già referenziati ma risolvevano sui default Material
+della libreria Capacitor — indaco `#3F51B5` e rosa `#FF4081`. `colorAccent` tinge cursore e maniglie
+di selezione: si vedevano rosa dentro un'app verde.
+
+### 3 · iOS: nessuna dichiarazione di stile d'interfaccia
+
+`UIUserInterfaceStyle` assente da `Info.plist` — l'app seguiva il tema del telefono, ed è la
+condizione che abilita tutto il ramo iOS. E `LaunchScreen.storyboard:18` usava
+`systemBackgroundColor`, che vale `#000000` in tema scuro: nero vero all'apertura.
+
+### 4 · I colori cablati fuori dai token
+
+Il lock che vieta i colori letterali copriva **solo `admin`**: le aree segnalate non erano protette
+da niente. **81 utility grigie di serie in sei file**, fra cui `text-gray-400` a 2,29:1 sul crema.
+E tre classi che Tailwind **non genera** — `border-gray-150` ×2 e `hover:bg-gray-250` — cioè bordi
+che qualcuno credeva di aver messo e che non c'erano (`grep` sul CSS compilato: **0**).
+
+### 5 · `muted` non è più un inchiostro
+
+`--color-kidville-muted` era `#9AA6A2`: 2,51:1 su bianco, 2,27:1 sul crema, **1098 usi in 171 file**.
+Portarlo ad AA non si poteva: la fascia peggiore non è il crema ma `cream-dark` `#F6E4D2`, e per
+arrivare a 4,5:1 là servirebbe `#5F6764` — cioè `sub` `#55615C` a meno di mezzo punto. **Fra `hint`
+e `sub` l'intervallo è vuoto.** Scurirlo fin lì avrebbe reso `muted` identico a `sub` mentre 1098
+punti continuavano a chiamarlo `muted`: il debito sarebbe sparito dai numeri senza che nessuno
+avesse riletto una riga.
+
+Il valore scelto è **`#7B8582`**, finestra **[3,07 su cream-dark · 3,80 su bianco]**: sopra i 3:1 di
+WCAG 1.4.11 — quindi un token **non testuale** valido, che chiude un difetto mai contato (i 37
+`border-kidville-muted` stavano sotto soglia) — e **sotto** i 4,5:1 di 1.4.3, apposta, così tutte e
+cinque le sonde «muted non è un inchiostro» restano vere **senza abbassare una soglia**.
+
+### 6 · Una riga che mentiva, e la ragione per cui poteva mentire
+
+`[data-contrast="high"]` ridefiniva `--color-kidville-muted: #E0E0E0`. Non ha mai ribaltato niente:
+`grep -rn "var(--color-kidville-muted" src/` restituisce **zero**, e le utility Tailwind portano
+l'hex inlinato da `@theme inline`. Rimossa.
+
+**È la scoperta strutturale del giro, e vale oltre questo caso**: gli override dei token dentro
+`[data-contrast="high"]` **non raggiungono nessuna classe Tailwind**. L'Alto Contrasto è dipinto
+superficie per superficie a mano — 141 regole in `globals.css`, che agganciano 17 classi `kv-*` su
+81 usate. Misurato col browser: `bg-kidville-cream` resta `rgb(254,241,228)` in entrambe le
+modalità. Era già scritto in `contrasto-cascata.test.tsx:171-179`, e non era stato letto.
+
+### 7 · L'Alto contrasto smette di essere un comando
+
+Stava accanto a «Esci» in **cinque menu rapidi**. Ma è uno STATO: cookie con `max-age` di un anno,
+sopravvive al logout, ridipinge tutta l'app. Aveva `aria-pressed` — lo screen reader lo sapeva,
+l'occhio no. Ora è `ContrastSwitch` (`role="switch"`, binario visibile) in `/parent/profilo`,
+`/teacher/profilo`, `/admin/impostazioni`. Il gemello pubblico **resta** sulle pagine pubbliche —
+chi non ha fatto l'accesso non ha impostazioni, ed è la baseline AgID — con lo stesso segno di stato
+che gli mancava.
+
+### 8 · Due reti perché non rientri
+
+- **`palette-di-serie`** — nessun colore della palette di serie di Tailwind in tutto `src/`. Debito
+  dichiarato: 76 occorrenze in 11 file, con la motivazione accanto a ciascuna. Include una sonda per
+  le **tinte che non esistono**.
+- **`token-alto-contrasto-non-inerti`** — ogni token ridefinito in Alto Contrasto deve avere almeno
+  un `var()` che lo legge. 27 ridefiniti, **2 inerti** dichiarati. Precedente: `warn-strong: #FFB300`,
+  inerte fino al 2026-08-02.
+
+**Otto prove negative, tutte viste fallire**, fra cui la sola che conta davvero: togliere *una*
+occorrenza da un file del debito deve diventare rosso — altrimenti il credito non speso si accumula
+ed è lo spazio in cui il difetto rientra restando verde.
+
+### Gate
+`eslint` 0 errori · **13.805 test verdi** (13.795 + 10 nuovi) · `build` verde.
+⏳ **Non ancora verificato**: la prova su emulatore Android e simulatore iOS **forzati in tema
+scuro**, che è l'unica che dimostra i punti 1-3. È scritta come criterio di accettazione, non come
+fatto compiuto.
 
 ---
 
@@ -1043,9 +1156,20 @@ px**, l'unica via d'uscita) l'aveva causato la correzione del giro 1 — era da 
 non l'*area*. E la causa radice di due rilievi su tre non era il colore ma lo **spessore**: contorno
 da 1px e stroke reso a 1,25px, che a schermo arrivano mescolati al fondo.
 
-⚠️ **Rilievo aperto, non risolto**: la login è nera, l'interstiziale che la segue di un secondo è
-crema — **19,9:1 di salto di luminanza**. Correggerlo significa ridisegnare la login, che è la porta
-d'ingresso di tutte le 560 famiglie: è una decisione, non una rifinitura di fine serata.
+~~⚠️ **Rilievo aperto, non risolto**: la login è nera, l'interstiziale che la segue di un secondo è
+crema — **19,9:1 di salto di luminanza**.~~
+
+✅ **CHIUSO il 2026-09-04, e non da una correzione: era già chiuso e nessuno l'aveva riletto.** La
+prova non è una misura ma il codice. `src/app/auth/login/page.module.css:51` dichiara
+`background: var(--color-kidville-cream)`; `src/components/ui/PageLoader.module.css:17` dichiara
+`background: var(--color-kidville-cream, #FEF1E4)`. **È la stessa variabile.** In luce normale sono
+entrambi `#FEF1E4`; in Alto Contrasto entrambi neri, perché `[data-contrast="high"]` rimappa
+`--color-kidville-cream` a `#000000` e la login ha in più la sua regola esplicita. Il salto è **0
+per costruzione**, non per coincidenza.
+Il crema era entrato nella login il **2026-07-16** (`a9f10d9a`), cioè *prima* che questo rilievo
+venisse scritto qui. È rimasto aperto sette settimane perché descriveva uno stato che non esisteva
+più — la stessa specie di difetto dei numeri copiati che invecchiano: **un documento va riletto
+contro il codice, non contro sé stesso.**
 
 ### Coda: il modulo pubblico saltava sotto il dito, su iPhone, da nove giorni
 

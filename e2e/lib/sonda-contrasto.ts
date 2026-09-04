@@ -166,8 +166,25 @@ export function sondaDom(opzioni: { autotest: boolean }): EsitoSonda {
   for (const el of Array.from(document.querySelectorAll('body *'))) {
     const st = getComputedStyle(el);
     if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) continue;
+    // ── GLI `sr-only` NON SI MISURANO, E NON È UNO SCONTO ───────────────────────
+    // Tailwind rende invisibile un elemento per soli screen reader con
+    // `clip-path:inset(50%)` su un rettangolo di **1×1 px** — non con `display`,
+    // `visibility` o `opacity`, che i tre controlli qui sopra intercettano. Con la
+    // soglia scritta come `< 1` quel rettangolo passava per un capello, e il suo
+    // contrasto veniva misurato: bianco su crema, 1.11:1.
+    //
+    // Il guaio non era il numero, era che **oscillava**. Lo skip-link ha stati
+    // `focus:` che gli cambiano i colori: a fuoco è verde su giallo e passa, non a
+    // fuoco è bianco su crema e fallisce — e se sia a fuoco dipende da cosa la
+    // pagina ha fatto prima. Al primo giro di CI (PR #116) `/parent/pagamenti`
+    // misurava 1, al secondo 2, con lo stesso codice: un test che oscilla è un test
+    // che si impara a ignorare.
+    //
+    // Nessuno vede un rettangolo di 1×1 px ritagliato al 50%: misurarne il
+    // contrasto è misurare un fantasma. Chi ha bisogno di quel testo lo ascolta.
+    if (st.clipPath && st.clipPath !== 'none') continue;
     const r = el.getBoundingClientRect();
-    if (r.width < 1 || r.height < 1) continue;
+    if (r.width <= 1 || r.height <= 1) continue;
     // Solo i nodi con testo PROPRIO: altrimenti ogni antenato conterebbe di nuovo
     // il testo dei figli, e il numero dipenderebbe dalla profondità del markup.
     let ha = false;

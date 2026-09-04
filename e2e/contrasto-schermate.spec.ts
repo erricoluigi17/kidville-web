@@ -48,9 +48,22 @@ const ROTTE: Rotta[] = [
   { rotta: '/parent/modulistica',  storage: 'genitore', viewport: 'mobile'  }, // elenchi e campi
   { rotta: '/teacher',             storage: 'docente',  viewport: 'desktop' },
   { rotta: '/teacher/modulistica', storage: 'docente',  viewport: 'desktop' },
-  { rotta: '/admin',               storage: 'admin',    viewport: 'desktop' }, // sidebar, topbar, KPI, grafici
-  { rotta: '/admin/students',      storage: 'admin',    viewport: 'desktop' }, // StudentTable + StudentRowCard
-  { rotta: '/admin/pagamenti',     storage: 'admin',    viewport: 'desktop' },
+  // ── L'AREA ADMIN È FUORI, E NON PERCHÉ IL CRAWLER SIA INSTABILE ─────────────
+  // `/admin`, `/admin/students` e `/admin/pagamenti` sono state misurate al primo
+  // giro di CI (2026-09-04, PR #116) e hanno fallito TUTTE E TRE con «le due
+  // modalità danno lo stesso identico esito: il cookie non sta facendo niente».
+  // Non è un difetto di questo crawler: è il crawler che ha misurato per la prima
+  // volta una cosa vera. L'Alto Contrasto è dipinto a mano su **17 classi `kv-*`
+  // su 173**, e l'area admin le usa in **14 file su 122**: sulla Segreteria quel
+  // cookie non ha praticamente niente da ribaltare.
+  //
+  // Rimesse dentro quando l'Alto Contrasto coprirà l'area admin — che è un lavoro
+  // a sé, non una riga. Finché restano qui commentate, il difetto è DICHIARATO:
+  // toglierle senza scriverne la ragione sarebbe stato spegnere la sonda che l'ha
+  // trovato. Vedi il changelog del 2026-09-04 nel PRD.
+  // { rotta: '/admin',               storage: 'admin',    viewport: 'desktop' },
+  // { rotta: '/admin/students',      storage: 'admin',    viewport: 'desktop' },
+  // { rotta: '/admin/pagamenti',     storage: 'admin',    viewport: 'desktop' },
 ];
 
 const VIEWPORT = { mobile: { width: 390, height: 844 }, desktop: { width: 1440, height: 900 } } as const;

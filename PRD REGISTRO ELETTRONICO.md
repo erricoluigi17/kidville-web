@@ -92,9 +92,32 @@
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
-> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON copre l'area admin** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04, tre rotte fuori dalla sonda con la ragione scritta) |
 
 ---
+
+## ♿ Rilievo aperto — l'Alto Contrasto non copre l'area admin (misurato il 2026-09-04)
+
+Il crawler di contrasto, al suo **primo giro di CI** (PR #116), ha misurato le nove rotte
+autenticate. Sei — genitore e docente — si comportano come devono. Le tre della Segreteria
+(`/admin`, `/admin/students`, `/admin/pagamenti`) hanno fallito tutte e tre con lo stesso
+messaggio:
+
+> «le due modalità danno lo stesso identico esito: il cookie non sta facendo niente»
+
+**Non è un difetto del crawler: è il crawler che ha misurato per la prima volta una cosa
+vera.** L'Alto Contrasto è dipinto a mano su **17 classi `kv-*` su 173**, e l'area admin le
+usa in **14 file su 122**: su quelle pagine il cookie non ha praticamente niente da
+ribaltare. Il difetto è **preesistente** — nessuno l'aveva mai misurato perché fino al
+2026-09-04 non esisteva uno strumento che guardasse le schermate autenticate.
+
+**Decisione del titolare (2026-09-04)**: si rimanda, ma **scritto nero su bianco**. Le tre
+rotte sono commentate in `e2e/contrasto-schermate.spec.ts` **con la ragione accanto**, non
+cancellate: toglierle in silenzio sarebbe stato spegnere la sonda che le ha trovate. Si
+rimettono dentro quando l'Alto Contrasto coprirà la Segreteria, che è un lavoro a sé.
+
+⚠️ Fino ad allora, chi usa l'Alto Contrasto **non lo ha davvero** sulle pagine di Segreteria.
+La baseline registrata copre le sole sei rotte misurate.
 
 ## 🧾 Changelog — L'estratto conto non si era mai potuto caricare, e la fattura non sapeva a chi intestarsi — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
 

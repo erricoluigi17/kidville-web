@@ -54,7 +54,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
             {/* Drop zone */}
             <div
                 className={`relative border-2 border-dashed rounded-3xl p-8 text-center transition-all cursor-pointer ${
-                    dragOver ? 'border-kidville-green bg-kidville-cream/50 scale-[1.01]' : 'border-gray-200 hover:border-kidville-green/50 hover:bg-kidville-cream/20'
+                    dragOver ? 'border-kidville-green bg-kidville-cream/50 scale-[1.01]' : 'border-kidville-line hover:border-kidville-green/50 hover:bg-kidville-cream/20'
                 }`}
                 onDragOver={e => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
@@ -71,7 +71,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                         <p className="font-barlow font-bold text-sm text-kidville-green uppercase">
                             {dragOver ? t('mediaRilasciaQui') : t('mediaTrascinaFotoVideo')}
                         </p>
-                        <p className="font-maven text-xs text-gray-400 mt-1">{t('mediaOppureClicca')}</p>
+                        <p className="font-maven text-xs text-kidville-sub mt-1">{t('mediaOppureClicca')}</p>
                     </div>
                 </div>
             </div>
@@ -96,7 +96,7 @@ export function MediaUploader({ onUpload, uploading }: Props) {
                         <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
                             {previews.map((p, idx) => (
                                 <motion.div key={idx} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-                                    className="relative aspect-square rounded-xl overflow-hidden bg-gray-100 group">
+                                    className="relative aspect-square rounded-xl overflow-hidden bg-kidville-neutral-soft group">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
                                     <img src={p.preview} alt="" className="w-full h-full object-cover" />
                                     <button onClick={(e) => { e.stopPropagation(); removeFile(idx); }} aria-label={t('galleryRimuoviFile')}

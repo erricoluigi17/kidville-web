@@ -23,7 +23,7 @@ export function SemaforoAutorizzazione({ autorizzato, quotaOk, compact }: Props)
 
     return (
         <div className="flex items-center gap-3">
-            <span className={`w-3 h-3 rounded-full ${verde ? 'bg-kidville-success' : 'bg-gray-300'}`} />
+            <span className={`w-3 h-3 rounded-full ${verde ? 'bg-kidville-success' : 'bg-kidville-muted'}`} />
             <span className="flex items-center gap-1 font-maven text-xs" title={t('autorizzazioneFirmata')}>
                 <FileSignature size={13} className={autorizzato ? 'text-kidville-success' : 'text-kidville-muted'} />
                 {autorizzato ? t('firmata') : t('nonFirmata')}

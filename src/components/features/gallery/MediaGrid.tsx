@@ -111,7 +111,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
             <div className="flex flex-col items-center justify-center py-16 text-center">
                 <div className="w-20 h-20 bg-kidville-cream rounded-full flex items-center justify-center mb-4 text-4xl">📷</div>
                 <p className="font-barlow font-bold text-lg text-kidville-green uppercase mb-1">{t('galleryVuotoTitolo')}</p>
-                <p className="font-maven text-sm text-gray-400">{t('galleryVuotoCorpo')}</p>
+                <p className="font-maven text-sm text-kidville-sub">{t('galleryVuotoCorpo')}</p>
             </div>
         );
     }
@@ -129,7 +129,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: idx * 0.04, duration: 0.25 }}
-                        className="relative group aspect-square rounded-2xl overflow-hidden bg-gray-100 cursor-pointer shadow-sm border border-white/40"
+                        className="relative group aspect-square rounded-2xl overflow-hidden bg-kidville-neutral-soft cursor-pointer shadow-sm border border-white/40"
                         onClick={() => {
                             setLightbox(item);
                             setEditMode(false);
@@ -137,7 +137,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         }}
                     >
                         {item.file_type === 'video' ? (
-                            <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                            <div className="w-full h-full bg-kidville-ink flex items-center justify-center">
                                 <Play size={32} className="text-white/80" strokeWidth={1.5} />
                             </div>
                         ) : item.file_url ? (
@@ -193,7 +193,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             window.open(url, '_blank');
                                         }
                                     }}
-                                    className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-gray-100"
+                                    className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaScarica')}
                                 >
                                     <Download size={12} strokeWidth={2.5} />
@@ -221,7 +221,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                             }
                                         }
                                     }}
-                                    className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-gray-100"
+                                    className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaCondividi')}
                                 >
                                     <Share2 size={12} strokeWidth={2.5} />
@@ -245,7 +245,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                     {currentIndex > 0 && (
                         <button
                             onClick={handlePrev}
-                            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-gray-150"
+                            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-kidville-line"
                             title={t('mediaPrecedente')}
                         >
                             <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
@@ -254,7 +254,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                     {currentIndex < items.length - 1 && (
                         <button
                             onClick={handleNext}
-                            className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-gray-150"
+                            className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-kidville-line"
                             title={t('mediaSuccessiva')}
                         >
                             <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
@@ -272,7 +272,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                     </span>
                                 </div>
                             ) : lightbox.file_type === 'video' ? (
-                                <video src={urlVisore} controls className="w-full max-h-[55vh] rounded-xl bg-zinc-900" />
+                                <video src={urlVisore} controls className="w-full max-h-[55vh] rounded-xl bg-black" />
                             ) : (
                                 /* eslint-disable-next-line @next/next/no-img-element */
                                 <img src={urlVisore} alt={lightbox.caption ?? t('galleryAltFoto')}
@@ -316,7 +316,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
                                                             isTagged
                                                                 ? 'bg-kidville-success-soft border-kidville-success text-kidville-success font-semibold shadow-sm'
-                                                                : 'bg-white border-gray-200 text-gray-400 hover:bg-gray-50'
+                                                                : 'bg-white border-kidville-line text-kidville-sub hover:bg-kidville-cream'
                                                         }`}
                                                     >
                                                         <input
@@ -341,7 +341,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                         <div className="flex items-center justify-end gap-2 pt-2 border-t border-kidville-green/10">
                                             <button
                                                 onClick={() => setEditMode(false)}
-                                                className="px-3 py-1 bg-gray-100 hover:bg-gray-250 rounded-lg text-xs font-semibold text-gray-500 transition-colors"
+                                                className="px-3 py-1 bg-kidville-neutral-soft hover:bg-kidville-cream-dark rounded-lg text-xs font-semibold text-kidville-sub transition-colors"
                                             >
                                                 {t('galleryAnnulla')}
                                             </button>
@@ -368,7 +368,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                 ) : (
                                     <div className="flex flex-wrap gap-1.5">
                                         {(lightbox.tag_students ?? []).length === 0 ? (
-                                            <span className="text-xs text-gray-400 italic">{t('galleryNessunTaggato')}</span>
+                                            <span className="text-xs text-kidville-sub italic">{t('galleryNessunTaggato')}</span>
                                         ) : (
                                             (lightbox.tag_students ?? []).map((id) => {
                                                 const student = students.find((s) => s.id === id);

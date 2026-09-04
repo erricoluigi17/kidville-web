@@ -68,7 +68,7 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
         onClick={(e) => { e.stopPropagation(); setOpen(v => !v) }}
         className="p-1 rounded-md transition-all"
         style={{ color: 'rgba(0,106,95,0.7)' }}
-        onMouseOver={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgb(129,140,248)' }}
+        onMouseOver={e => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--color-kidville-green)' }}
         onMouseOut={e => { (e.currentTarget as HTMLButtonElement).style.color = 'rgba(0,106,95,0.7)' }}
       >
         <Info className="w-3.5 h-3.5" />
@@ -83,10 +83,10 @@ function AdjustmentTooltip({ adjustments }: { adjustments: ManualAdjustment[] })
             transition={{ duration: 0.15 }}
             className="absolute right-0 bottom-full mb-2 z-50 w-64 p-3 rounded-xl space-y-2 pointer-events-auto"
             style={{
-              background: 'rgba(15, 18, 36, 0.97)',
+              background: 'var(--color-kidville-white)',
               border: '1px solid var(--color-kidville-line)',
               backdropFilter: 'blur(24px)',
-              boxShadow: '0 16px 48px rgba(0,0,0,0.5)',
+              boxShadow: '0 16px 48px -18px rgba(0, 84, 75, 0.28)',
             }}
           >
             <p className="text-[10px] font-bold text-kidville-muted uppercase tracking-widest mb-1.5">

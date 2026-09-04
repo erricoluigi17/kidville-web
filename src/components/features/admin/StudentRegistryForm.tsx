@@ -347,7 +347,7 @@ export function StudentRegistryForm() {
     };
 
     return (
-        <div className="w-full max-w-4xl mx-auto p-8 bg-white/5 backdrop-blur-lg border border-white/10 rounded-3xl shadow-xl relative">
+        <div className="w-full max-w-4xl mx-auto p-8 bg-white/5 backdrop-blur-lg border border-kidville-line rounded-3xl shadow-xl relative">
             
             {/* Custom Toast */}
             <AnimatePresence>

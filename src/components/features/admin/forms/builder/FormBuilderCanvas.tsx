@@ -92,7 +92,7 @@ export function FormBuilderCanvas({
             isOver
               ? 'border-kidville-green/60 bg-kidville-green/5'
               : fieldIds.length === 0
-              ? 'border-kidville-line bg-white/[0.015]'
+              ? 'border-kidville-line bg-kidville-cream/40'
               : 'border-transparent'
           }`}
         >

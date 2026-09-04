@@ -312,7 +312,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                         transition={{ duration: 0.25 }}
                         className="overflow-hidden"
                     >
-                        <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-black/5 rounded-b-3xl">
+                        <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-kidville-cream-dark rounded-b-3xl">
                             <MediaGrid items={photos} showActions />
                         </div>
                     </motion.div>

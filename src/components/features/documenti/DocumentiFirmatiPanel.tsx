@@ -430,7 +430,7 @@ function PannelloDettaglio({
   const t = useTranslations('documenti');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-kidville-ink/40 p-0 sm:items-center sm:p-6">
       <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-kidville-white p-5 sm:rounded-3xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 className="font-barlow text-lg font-black text-kidville-ink">

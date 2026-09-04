@@ -290,7 +290,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
 
             {/* Mapping ETL (read-only, solo se presente) */}
             {field.db_mapping && (
-              <div className="pt-3 border-t border-white/[0.05]">
+              <div className="pt-3 border-t border-kidville-line">
                 <p className="text-[10px] font-semibold text-kidville-muted uppercase tracking-wider mb-1.5">
                   {t('ppMappingEtl')}
                 </p>
@@ -304,7 +304,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
             )}
 
             {/* Logica condizionale (DL-024) */}
-            <section className="space-y-2 pt-3 border-t border-white/[0.05]">
+            <section className="space-y-2 pt-3 border-t border-kidville-line">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <GitBranch className="w-3.5 h-3.5 text-kidville-green" />
@@ -363,7 +363,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
             </section>
 
             {/* Field type (read-only) */}
-            <div className="pt-3 border-t border-white/[0.05]">
+            <div className="pt-3 border-t border-kidville-line">
               <p className="text-[10px] text-kidville-muted">
                 {t('ppTipoCampo')} <span className="text-kidville-muted font-mono">{field.type}</span>
               </p>

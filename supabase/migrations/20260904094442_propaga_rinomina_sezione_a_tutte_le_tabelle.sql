@@ -122,8 +122,9 @@
 --   mensa_class_menu_assignment            0       0     0     0    0
 --
 -- Le caselle a zero non sono un argomento per lasciare la tabella fuori: sono la
--- fotografia di oggi. `galleria_media_v2` ha 101 righe con `target_classes` a
--- NULL, `news_posts` 3, `forms_templates` è vuota — appena qualcuno userà quelle
+-- fotografia di oggi. `galleria_media_v2` ha 208 righe con `target_classes` a
+-- NULL (erano 101 il 03/09: la tabella cresce, la casella resta a zero),
+-- `news_posts` 3, `forms_templates` è vuota — appena qualcuno userà quelle
 -- schermate le caselle si riempiranno, e il difetto arriverebbe con loro.
 --
 -- Due misure che vale la pena leggere due volte:
@@ -461,11 +462,21 @@ BEGIN
       ]::text[], NULL))
     )
   )
+  -- ⚠️ IL LIVELLO NON RETROCEDE. `app_log` deduplica per `(fingerprint, giorno)`:
+  -- due rinomine della stessa sezione nello stesso giorno UTC finiscono sulla
+  -- stessa riga. Con `livello = excluded.livello` la seconda, andata liscia,
+  -- cancellava il `warn` della prima — cioè proprio la segnalazione che alcune
+  -- righe non avevano preso il nome nuovo perché la chiave era occupata. Il
+  -- `contesto` invece si sovrascrive di proposito: i conteggi dell'ULTIMA
+  -- rinomina sono quelli che descrivono lo stato di adesso. Rilievo del critico,
+  -- 2026-09-04.
   ON CONFLICT (fingerprint, giorno) DO UPDATE
     SET occorrenze     = public.app_log.occorrenze + 1,
         visto_l_ultima = now(),
-        livello        = excluded.livello,
-        messaggio      = excluded.messaggio,
+        livello        = CASE WHEN public.app_log.livello = 'warn' OR excluded.livello = 'warn'
+                              THEN 'warn' ELSE excluded.livello END,
+        messaggio      = CASE WHEN public.app_log.livello = 'warn' AND excluded.livello <> 'warn'
+                              THEN public.app_log.messaggio ELSE excluded.messaggio END,
         contesto       = excluded.contesto;
 
   RETURN NULL;

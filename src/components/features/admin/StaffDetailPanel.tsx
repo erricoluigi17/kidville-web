@@ -10,14 +10,15 @@ import {
 import { RUOLI_ASSEGNABILI, useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { puoRigenerareCredenzialiStaff } from '@/lib/auth/credenziali-staff';
-import type { AppRole } from '@/lib/auth/predicati-ruolo';
+import { RUOLI_DIREZIONE, type AppRole } from '@/lib/auth/predicati-ruolo';
 import { useDateFormat } from '@/lib/i18n/date';
 import { dataCivile } from '@/i18n/config';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Tabs } from '@/components/ui/cockpit';
 import { PERSONALE_FIELDS, PERSONALE_LIMITI } from '@/lib/forms/personale-template';
 import { caricaFile } from '@/lib/upload/carica-file';
-import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { messaggioDaCorpo, messaggioSoloCatalogo } from '@/lib/ui/esito-fetch';
+import { useDestinazioniSede, altreSedi, nomeSede, stessaSede } from './destinazioni-sede';
 import { giorniResidui, sogliaRaggiunta } from '@/lib/anagrafica/scadenze';
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
@@ -534,6 +535,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
    */
   const canEdit = role === 'admin' || role === 'coordinator';
 
+
   const [loading, setLoading] = useState(true);
   const [errore, setErrore] = useState<string | null>(null);
   const [member, setMember] = useState<StaffMember | null>(null);
@@ -555,9 +557,59 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
    */
   const canRigenerare = puoRigenerareCredenzialiStaff(role as AppRole, member?.ruolo ?? null);
 
+  /* ═══ IL TERZO POTERE: SPOSTARE DI SEDE ═════════════════════════════════════
+   *
+   * Dal 2026-09-04 `admin/staff:PATCH` ammette anche la Segreteria, ma le concede
+   * la SOLA sede: ruolo, fasce d'età, classi e qualunque modifica a un account di
+   * Direzione restano riservati (`INCARICO_STAFF_RISERVATO`). Fino a questo lavoro
+   * quel permesso era irraggiungibile — «Modifica» dipendeva da `canEdit`, e la
+   * Segreteria non vedeva nemmeno il pulsante — cioè un permesso concesso lato
+   * server che nella pratica non esisteva, con la `UPDATE` a mano come unica strada.
+   *
+   * ⚠️ NON SI ALLARGA `canEdit`, e la ragione è doppia.
+   *
+   *  1. Sarebbe una TRAPPOLA. Il server calcola i cambi per DIFFERENZA rispetto a
+   *     com'è messo il bersaglio: una segretaria che aprisse la scheda intera e
+   *     toccasse anche una classe si vedrebbe rifiutare il salvataggio INTERO —
+   *     sede compresa — con un 403 che parla di un campo che non voleva cambiare.
+   *     Un comando che si può premere ma non si può usare è peggio di un comando
+   *     assente.
+   *  2. `canEdit` governa anche il RUOLO, ed è la riserva che tiene in piedi
+   *     l'altra: chi può cambiare il ruolo di una collega la promuove ad `admin` e
+   *     da lì ne rigenera le credenziali, ottenendo per via indiretta ciò che il
+   *     server le nega (vedi `puoRigenerareCredenzialiStaff`).
+   *
+   * Perciò la Segreteria ha un comando SUO, che apre la sola tendina della sede.
+   *
+   * ⚠️ E IL PERMESSO DIPENDE DAL BERSAGLIO, non solo da chi guarda — stessa forma
+   * di `canRigenerare` qui sotto, e per una ragione precisa:
+   * `puoModificareIncaricoStaff` nega alla Segreteria QUALUNQUE modifica a un
+   * account di Direzione (`bersaglio-direzione`), sede compresa. Senza questa
+   * metà, una segretaria che apre la scheda della direttrice vedrebbe un comando
+   * destinato a un 403 — cioè la trappola che questo blocco esiste per evitare.
+   * `member === null` (scheda in caricamento) ⇒ nessun comando: non si offre
+   * un'azione su una persona che ancora non si conosce.
+   *
+   * Nascondere resta una CORTESIA, non una difesa: il gate vero è la rotta.
+   */
+  const bersaglioDirezione = member != null && (RUOLI_DIREZIONE as readonly string[]).includes(member.ruolo);
+  const canSpostareSede = canEdit || (role === 'segreteria' && member != null && !bersaglioDirezione);
+
   const [editMode, setEditMode] = useState(false);
+  /**
+   * `true` quando la modifica aperta è la SOLA sede: è la modalità della
+   * Segreteria. Non è un vezzo di presentazione — decide anche il CORPO che parte
+   * (`{ id, scuola_id }` e nient'altro), perché mandare `ruolo` e `section_ids`
+   * identici a quelli in archivio significherebbe far dipendere il permesso dal
+   * fatto che il confronto lato server torni pari. Se `asseg` fosse arrivato
+   * incompleto — una lettura fallita, un ritardo — `stessoInsieme` direbbe di no e
+   * la segretaria si vedrebbe un 403 su un campo che non ha toccato.
+   */
+  const [soloSede, setSoloSede] = useState(false);
   const [draft, setDraft] = useState<{ ruolo: string; scuola_id: string; section_ids: string[] }>({ ruolo: '', scuola_id: '', section_ids: [] });
   const [saving, setSaving] = useState(false);
+  /** Il rifiuto del server, IN PAGINA. Vedi `salva()` per il perché non è più un `alert()`. */
+  const [erroreIncarico, setErroreIncarico] = useState<string | null>(null);
   const [regenBusy, setRegenBusy] = useState(false);
 
   const [tab, setTab] = useState<'incarico' | 'anagrafica' | 'documento'>('incarico');
@@ -571,6 +623,25 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   const idBase = useId();
   const idRuolo = `${idBase}-ruolo`;
   const idSede = `${idBase}-sede`;
+
+  /**
+   * LE SEDI DELLA TENDINA, e perché non sono più `j.schools`.
+   *
+   * ⚠️ Fino al 2026-09-04 la tendina si riempiva con le sedi che
+   * `admin/staff:GET` restituisce, cioè quelle in cui l'utente LAVORA. Per una
+   * direttrice di Giugliano sono due sedi su tre, e la terza — l'unica che serve,
+   * perché un trasferimento è per definizione verso un plesso in cui la persona
+   * NON è ancora — semplicemente non compariva. Nessun errore, nessun log: una
+   * voce assente non fa rumore.
+   *
+   * `ready` nella condizione, non solo il permesso: prima che l'identità di
+   * sessione sia risolta l'intestazione `x-user-id` non c'è, e la lettura
+   * partirebbe due volte — una anonima e una buona.
+   */
+  const destinazioni = useDestinazioniSede({
+    intestazioni: userId ? { 'x-user-id': userId } : undefined,
+    abilitato: canSpostareSede && ready,
+  });
   /**
    * Il ricovero del fuoco quando «Riprova» smonta se stesso, e la bandierina che
    * dice che il gesto c'è stato davvero. Il perché sta su `riprovaAnagrafica`.
@@ -806,36 +877,71 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
     void caricaAnagrafica();
   }, [ready, load, caricaAnagrafica]);
 
-  const apri = () => {
+  /** Apre la modifica dell'incarico intero (Direzione). */
+  const apri = (soloLaSede = false) => {
     if (!member) return;
     setDraft({
       ruolo: member.ruolo,
       scuola_id: member.scuola_id ?? '',
       section_ids: asseg.filter((a) => a.utente_id === staffId).map((a) => a.section_id),
     });
+    setErroreIncarico(null);
+    setSoloSede(soloLaSede);
     setEditMode(true);
   };
 
   const salva = async () => {
     setSaving(true);
+    setErroreIncarico(null);
     try {
+      /* ⚠️ DUE CORPI, e la differenza non è cosmetica.
+       *
+       * In modalità «solo sede» parte il MINIMO — `{ id, scuola_id }` — perché
+       * mandare `ruolo` e `section_ids` uguali a quelli in archivio farebbe
+       * dipendere il permesso della Segreteria dal fatto che il confronto lato
+       * server torni pari: `asseg` arriva da una lettura che può fallire o
+       * arrivare tardi, e un elenco di classi incompleto diventerebbe un 403 su
+       * un campo che nessuno ha toccato. Non mandare un dato è più solido che
+       * sperare che risulti identico. */
+      const corpo = soloSede
+        ? { id: staffId, scuola_id: draft.scuola_id || undefined }
+        : { id: staffId, ruolo: draft.ruolo, scuola_id: draft.scuola_id || undefined, section_ids: draft.section_ids };
       const res = await fetch('/api/admin/staff', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...(userId ? { 'x-user-id': userId } : {}) },
-        body: JSON.stringify({ id: staffId, ruolo: draft.ruolo, scuola_id: draft.scuola_id || undefined, section_ids: draft.section_ids }),
+        body: JSON.stringify(corpo),
       });
-      if (res.status === 403) { alert(t('staffDAzioneRiservata')); return; }
-      // Stessa decisione della fascia di `load()`, e per lo stesso motivo: il
-      // `PATCH` di `admin/staff` risponde con la prosa di PostgREST, che qui
-      // finiva dentro un `alert()` — cioè la finestra che la Direzione deve
-      // leggere e chiudere per capire se il ruolo è stato salvato. Il ripiego
-      // tradotto c'era già ed era la riga accanto; il motivo va nel log.
+      /* ⚠️ IL RIFIUTO NON STA PIÙ IN UN `alert()`, e il motivo non è lo stile.
+       *
+       * Qui c'erano due `alert()`: uno con la frase «azione riservata» per ogni
+       * 403 e uno generico per tutto il resto. Il primo buttava via il CODICE che
+       * il server manda apposta — `INCARICO_STAFF_RISERVATO` e
+       * `SEDE_NON_ACCESSIBILE` dicono due cose diverse a chi ha appena premuto — e
+       * il secondo, quando la rotta rispondeva con la prosa di PostgREST, poteva
+       * mettere il nome di una colonna dentro una finestra modale. Adesso il testo
+       * viene dal CATALOGO (quindi esiste anche in inglese) e resta in pagina,
+       * sotto gli occhi di chi ha premuto, dentro un `role="alert"`.
+       *
+       * Lo STATO va nel log, il corpo no: un rifiuto può nominare una sede o una
+       * persona, e nei log di questo repo non entrano. */
       if (!res.ok) {
-        alert(t('erroreSalvataggio'));
         logClient({ livello: 'warn', evento: 'react', messaggio: 'staff-salvataggio-non-riuscito', route: ROUTE_LOG, stato: res.status });
+        /* ⚠️ `messaggioSoloCatalogo` e NON `messaggioErrore`, ed è la differenza
+         * fra le due che conta: la seconda, quando il corpo non porta un codice,
+         * ripiega sulla PROSA DEL SERVER — e la prosa di questa rotta è
+         * `{ error: error.message }`, cioè il testo di PostgREST
+         * («null value in column "scuola_id" violates not-null constraint»).
+         * Quel testo è documentazione interna, è italiano per costruzione e può
+         * nominare una colonna: è esattamente ciò che i due `alert()` di prima
+         * NON mostravano mai, ed è misurato in
+         * `StaffDetailPanel-anagrafica.test.tsx` («la Direzione non legge
+         * PostgREST»). Il codice dichiarato continua a vincere: è il solo modo
+         * che ha il server di farsi capire anche in inglese. */
+        setErroreIncarico(await messaggioSoloCatalogo(res, res.status === 403 ? t('staffDAzioneRiservata') : t('erroreSalvataggio')));
         return;
       }
       setEditMode(false);
+      setSoloSede(false);
       await load();
     } finally {
       setSaving(false);
@@ -1107,7 +1213,56 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
   }
 
   const initials = `${member.nome?.[0] ?? ''}${member.cognome?.[0] ?? ''}`.toUpperCase() || '—';
-  const sedeNome = member.scuola_id ? (schools.find((s) => s.id === member.scuola_id)?.nome ?? '—') : '—';
+  /**
+   * Il nome della sede in cui la persona sta ADESSO. Si guarda prima l'elenco
+   * delle destinazioni (che per la Direzione copre tutte le sedi reali) e solo
+   * dopo `schools`, che porta le sole sedi dell'utente: senza il primo, la sede
+   * di un collega di un plesso che non è il tuo si leggerebbe «—» anche quando la
+   * riga in archivio ce l'ha eccome.
+   */
+  const sedeNome = nomeSede(destinazioni.sedi, member.scuola_id)
+    ?? (member.scuola_id ? (schools.find((s) => s.id === member.scuola_id)?.nome ?? '—') : '—');
+  /** L'elenco della tendina: TUTTE le destinazioni, sede attuale compresa —
+   *  toglierla farebbe partire un salvataggio senza sede a chi apre e salva. */
+  const sediDoveSpostare = destinazioni.sedi;
+  /** Le destinazioni DIVERSE da quella attuale: se sono zero non c'è dove spostare. */
+  const altroveDaQui = altreSedi(destinazioni.sedi, member.scuola_id);
+  /**
+   * ⚠️ NON C'È DOVE SPOSTARE, E L'ELENCO L'HA GIÀ DETTO.
+   *
+   * Misurato il 2026-09-04 con una segreteria a UNA SOLA SEDE — cioè il caso
+   * ordinario, non un limite: nessuna segreteria risulta associata a più di una
+   * sede. Il comando «Sposta di sede» compariva lo stesso e apriva una modalità
+   * la cui unica sostanza era la spiegazione «da qui non c'è nessun'altra sede»,
+   * con accanto un pulsante **Salva** che mandava `{ id, scuola_id: <la sede in
+   * cui la persona già sta> }` — un PATCH che il server accetta come no-op. Un
+   * vicolo cieco con dentro un Salva: si preme, non succede niente, e non
+   * succede niente anche quando ha funzionato.
+   *
+   * La scheda del BAMBINO risolveva già bene lo stesso caso — spiega, e il
+   * comando non lo mostra. Qui si fa lo stesso, con una differenza che conta:
+   * la spiegazione PRENDE IL POSTO del comando, non sparisce con lui. Togliere
+   * un vicolo cieco e togliere una risposta sono due cose diverse.
+   *
+   * `'ok'` **e** `'nessuna'`: sono due divieti diversi (una sola sede in elenco
+   * contro nessuna sede in elenco) e la spiegazione infatti cambia, ma il fatto
+   * è lo stesso — non c'è dove andare. `'caricamento'` e `'guasto'` NO: lì non
+   * si sa ancora, e il comando resta (il guasto porta con sé il «Riprova» che
+   * solo la modalità di modifica mostra). Quella finestra la copre il secondo
+   * presidio, sul Salva.
+   */
+  const nessunAltroPlesso =
+    (destinazioni.stato === 'ok' || destinazioni.stato === 'nessuna') && altroveDaQui.length === 0;
+  /**
+   * ⚠️ IL SECONDO PRESIDIO: in modalità «solo sede» il salvataggio ha UN mestiere
+   * solo, e senza un cambio di sede non ne ha nessuno. Serve alla finestra in cui
+   * il comando si offre legittimamente (elenco in lettura, o non letto) e la
+   * tendina non c'è ancora: senza, «Salva» resterebbe premibile e manderebbe il
+   * PATCH a vuoto. Non vale per la Direzione, il cui salvataggio porta anche
+   * ruolo e classi e quindi ha da fare pure a sede ferma.
+   */
+  const spostamentoSenzaCambio =
+    soloSede && (draft.scuola_id === '' || stessaSede(draft.scuola_id, member.scuola_id));
   const classiAssegnate = asseg
     .filter((a) => a.utente_id === staffId)
     .map((a) => sections.find((s) => s.id === a.section_id)?.name)
@@ -1239,27 +1394,67 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                    telefono raddoppia un bersaglio piccolo. */
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label htmlFor={idRuolo} className="mb-1 block font-maven text-xs text-kidville-sub">{t('campoRuolo')}</label>
-                    <select id={idRuolo} value={draft.ruolo} onChange={(e) => setDraft({ ...draft, ruolo: e.target.value })}
-                      className={TENDINA_44}>
-                      {/* `labelRuolo(r.value)` e non `r.label`: `RUOLI_ASSEGNABILI`
-                          porta le etichette ITALIANE cablate, e sono le stesse cinque
-                          parole che la pillola in sola lettura di due righe più su
-                          traduce già con `useLabelRuolo`. Lasciare `r.label` qui
-                          significava che in inglese la tendina mostrava «Docente»
-                          mentre il pannello accanto mostrava «Teacher» per lo stesso
-                          ruolo: non una schermata mezza tradotta, una schermata che
-                          si contraddice. Il ripiego resta l'italiano, mai la chiave. */}
-                      {RUOLI_ASSEGNABILI.map((r) => <option key={r.value} value={r.value}>{labelRuolo(r.value)}</option>)}
-                    </select>
+                    {/* ⚠️ IL RUOLO RESTA IN SOLA LETTURA PER LA SEGRETERIA, e non
+                        è una limitazione di cortesia: il server rifiuterebbe il
+                        cambio (`INCARICO_STAFF_RISERVATO`) insieme alla sede, e
+                        chi può cambiare un ruolo può promuovere una collega ad
+                        `admin` e da lì rigenerarne le credenziali. La stessa
+                        pillola di `!editMode`, non un `<select>` disabilitato: un
+                        controllo spento continua a promettere che un giorno si
+                        accenda. */}
+                    {soloSede ? (
+                      <>
+                        <span className="mb-1 block font-maven text-xs text-kidville-sub">{t('campoRuolo')}</span>
+                        <span className="inline-block rounded-full bg-kidville-cream px-2.5 py-1 font-maven text-xs font-bold text-kidville-green">{labelRuolo(member.ruolo)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <label htmlFor={idRuolo} className="mb-1 block font-maven text-xs text-kidville-sub">{t('campoRuolo')}</label>
+                        <select id={idRuolo} name="incarico_ruolo" value={draft.ruolo} onChange={(e) => setDraft({ ...draft, ruolo: e.target.value })}
+                          className={TENDINA_44}>
+                          {/* `labelRuolo(r.value)` e non `r.label`: `RUOLI_ASSEGNABILI`
+                              porta le etichette ITALIANE cablate, e sono le stesse cinque
+                              parole che la pillola in sola lettura di due righe più su
+                              traduce già con `useLabelRuolo`. Lasciare `r.label` qui
+                              significava che in inglese la tendina mostrava «Docente»
+                              mentre il pannello accanto mostrava «Teacher» per lo stesso
+                              ruolo: non una schermata mezza tradotta, una schermata che
+                              si contraddice. Il ripiego resta l'italiano, mai la chiave. */}
+                          {RUOLI_ASSEGNABILI.map((r) => <option key={r.value} value={r.value}>{labelRuolo(r.value)}</option>)}
+                        </select>
+                      </>
+                    )}
                   </div>
                   <div>
+                    {/* ⚠️ TRE ESITI DI LETTURA, E NON SI RIDUCONO A DUE. Una
+                        tendina vuota davanti a un guasto direbbe «non ci sono
+                        sedi», che è una bugia con l'aria di un fatto — la rotta
+                        distingue apposta `nessuna-destinazione` da
+                        `LETTURA_FALLITA`. E una tendina con la sola sede attuale è
+                        un comando che non può fare niente: è il caso ordinario
+                        della Segreteria, e si SPIEGA. */}
                     <label htmlFor={idSede} className="mb-1 block font-maven text-xs text-kidville-sub">{t('campoSede')}</label>
-                    <select id={idSede} value={draft.scuola_id} onChange={(e) => setDraft({ ...draft, scuola_id: e.target.value })}
-                      className={TENDINA_44}>
-                      <option value="">—</option>
-                      {schools.map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
-                    </select>
+                    {destinazioni.stato === 'caricamento' ? (
+                      <p className="font-maven text-xs text-kidville-sub">{t('trasferimentoCaricamento')}</p>
+                    ) : destinazioni.stato === 'guasto' ? (
+                      <div data-testid="staff-sede-guasto" role="status" className="space-y-2">
+                        <p className="font-maven text-xs text-kidville-warn-strong">{t('trasferimentoGuasto')}</p>
+                        <button type="button" data-testid="staff-sede-riprova" onClick={destinazioni.ricarica}
+                          className="min-h-[44px] rounded-pill border-2 border-kidville-green/40 px-4 font-barlow text-xs font-bold uppercase text-kidville-green hover:bg-kidville-green/5">
+                          {t('trasferimentoRiprova')}
+                        </button>
+                      </div>
+                    ) : altroveDaQui.length === 0 ? (
+                      <p data-testid="staff-sede-spiegazione" className="font-maven text-xs text-kidville-sub">
+                        {destinazioni.stato === 'nessuna' ? t('staffDSedeNessunaDestinazione') : t('staffDSedeUnicaDestinazione')}
+                      </p>
+                    ) : (
+                      <select id={idSede} name="incarico_sede" value={draft.scuola_id} onChange={(e) => setDraft({ ...draft, scuola_id: e.target.value })}
+                        className={TENDINA_44}>
+                        <option value="">—</option>
+                        {sediDoveSpostare.map((s) => <option key={s.id} value={s.id}>{s.nome}</option>)}
+                      </select>
+                    )}
                   </div>
                 </div>
               )}
@@ -1280,7 +1475,16 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
             {/* Classi assegnate */}
             <section>
               <h3 className="mb-2 font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('staffDClassiAssegnate')}</h3>
-              {!editMode ? (
+              {/* ⚠️ `!editMode || soloSede`: in modalità «solo sede» le classi
+                  restano PILLOLE, non bottoni. Non è coerenza estetica — il
+                  server rifiuta il cambio di classi alla Segreteria, e siccome
+                  calcola i permessi sul corpo INTERO, una classe toccata per
+                  sbaglio farebbe fallire anche lo spostamento di sede con un 403
+                  che parla d'altro. E c'è la metà che conta di più: quando lo
+                  spostamento riesce, `admin/staff:PATCH` SGANCIA da solo le
+                  classi del plesso lasciato. Offrire di sceglierle prima di
+                  partire sarebbe offrire un lavoro che il server sta per buttare. */}
+              {!editMode || soloSede ? (
                 classiAssegnate.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {classiAssegnate.map((n) => (
@@ -1460,17 +1664,39 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
           dal 2026-09-03 la Segreteria ce l'ha sullo staff del proprio plesso, non
           sugli account di Direzione. La fascia «riservate» qui sotto compare
           quando non resta NESSUNO dei due, che è l'unico caso in cui dire
-          «riservate» è vero. */}
-      {tab === 'incarico' && (canEdit || canRigenerare ? (
+          «riservate» è vero.
+
+          ⚠️ E DAL 2026-09-04 I POTERI SONO TRE. La Segreteria sposta di SEDE — il
+          server glielo concede e le nega tutto il resto — e fino a qui quel
+          permesso era irraggiungibile: senza `canEdit` non vedeva nemmeno il
+          pulsante, e l'unica strada rimasta era una `UPDATE` a mano sul database.
+          Il suo comando è SEPARATO da «Modifica» e non un allargamento di quello:
+          il server calcola i permessi sul corpo intero, quindi una scheda che le
+          aprisse anche ruolo e classi le farebbe rifiutare il salvataggio —
+          spostamento compreso — per un campo che non voleva toccare. */}
+      {tab === 'incarico' && (canEdit || canSpostareSede || canRigenerare ? (
         <div className="space-y-2 border-t border-kidville-line p-5">
           {!editMode ? (
             <>
               {canEdit && (
-                <button onClick={apri}
+                <button onClick={() => apri(false)}
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 active:scale-[0.98]">
                   <Pencil size={15} /> {t('staffDModifica')}
                 </button>
               )}
+              {/* O IL COMANDO, O LA RAGIONE PER CUI NON C'È — mai un comando che
+                  apre un vicolo cieco, e mai un silenzio al posto di una
+                  risposta. Vedi `nessunAltroPlesso`. */}
+              {!canEdit && canSpostareSede && (nessunAltroPlesso ? (
+                <p data-testid="staff-sposta-sede-spiegazione" className="font-maven text-xs leading-relaxed text-kidville-sub">
+                  {destinazioni.stato === 'nessuna' ? t('staffDSedeNessunaDestinazione') : t('staffDSedeUnicaDestinazione')}
+                </p>
+              ) : (
+                <button onClick={() => apri(true)} data-testid="staff-sposta-sede"
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 active:scale-[0.98]">
+                  <Pencil size={15} /> {t('staffDSpostaSede')}
+                </button>
+              ))}
               {canRigenerare && (
                 <button onClick={rigenera} disabled={regenBusy}
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-pill border-2 border-kidville-green/40 font-barlow text-sm font-bold uppercase text-kidville-green transition-all hover:bg-kidville-green/5 disabled:opacity-50">
@@ -1480,7 +1706,7 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
             </>
           ) : (
             <div className="flex gap-2">
-              <button onClick={salva} disabled={saving}
+              <button onClick={salva} disabled={saving || spostamentoSenzaCambio} data-testid="staff-sede-salva"
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded-pill bg-kidville-green font-barlow text-sm font-black uppercase tracking-wide text-kidville-yellow transition-all hover:opacity-90 disabled:opacity-50">
                 {saving ? <Loader2 size={16} className="animate-spin" /> : <><Check size={16} /> {t('salva')}</>}
               </button>
@@ -1493,12 +1719,25 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
                   bordo resta `error`: per un contorno la soglia è 3:1 (WCAG 1.4.11)
                   e 4,23 la supera. Così i rossi della scheda tornano a essere uno
                   solo, che è la stessa cura già fatta sui due grigi. */}
-              <button onClick={() => setEditMode(false)} disabled={saving}
+              <button onClick={() => { setEditMode(false); setSoloSede(false); setErroreIncarico(null); }} disabled={saving}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded-pill border-2 border-kidville-line font-barlow text-sm font-bold uppercase text-kidville-sub transition-all hover:border-kidville-error hover:text-kidville-error-strong disabled:opacity-50">
                 <X size={16} /> {t('annulla')}
               </button>
             </div>
           )}
+          {/* ⚠️ SPAZIO RISERVATO, non guadagnato al bisogno: un messaggio che
+              compare sopra o accanto a un bottone lo fa muovere, e su WebKit è
+              così che il dito che stava per premere «Salva» finisce su
+              «Annulla». Il riquadro sta SOTTO i comandi e l'altezza minima è già
+              lì prima che serva. */}
+          <div className="min-h-[1.25rem]">
+            {erroreIncarico && (
+              <p data-testid="staff-sede-errore" role="alert"
+                className="rounded-card border border-kidville-error/40 bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">
+                {erroreIncarico}
+              </p>
+            )}
+          </div>
         </div>
       ) : (
         <div className="flex items-center gap-1.5 border-t border-kidville-line px-5 py-3 font-maven text-[11px] text-kidville-sub">

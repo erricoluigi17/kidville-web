@@ -233,6 +233,30 @@ function serverPredefinito(url: string) {
       },
     })
   }
+  /**
+   * ⚠️ LA TENDINA DELLA SEDE NON SI RIEMPIE PIÙ DA `RISPOSTA_STAFF.schools`.
+   *
+   * Dal 2026-09-04 le destinazioni le decide `GET /api/admin/sedi/destinazioni`:
+   * `j.schools` porta le sedi in cui l'utente LAVORA, e per un trasferimento
+   * quello è per definizione l'insieme sbagliato — la sede d'arrivo è quella in
+   * cui la persona NON è ancora. Senza questa riga il finto server risponde
+   * `{ success: true }` senza `data`, il pannello legge un GUASTO (che è la
+   * risposta giusta a un corpo illeggibile: «vuoto» e «rotto» non sono la stessa
+   * cosa) e la tendina non compare affatto — non un difetto della scheda, un
+   * buco di questo mock.
+   */
+  if (u.includes('/api/admin/sedi/destinazioni')) {
+    return ok({
+      success: true,
+      // Due sedi: senza una destinazione DIVERSA da quella attuale la scheda
+      // spiegherebbe che non c'è dove spostare, invece di offrire la tendina.
+      data: [
+        { id: 'sc-giugliano', nome: 'Kidville Giugliano' },
+        { id: 'sc-aversa', nome: 'Kidville Aversa' },
+      ],
+      motivo: 'ok',
+    })
+  }
   if (u.includes('/api/admin/staff')) return ok(RISPOSTA_STAFF)
   return ok({ success: true })
 }
@@ -2392,7 +2416,18 @@ describe('scheda staff · a schermo non finisce MAI la prosa del database', () =
     expect(JSON.stringify(chiamate)).not.toContain('maria.bianchi@example.test')
   })
 
-  it('anche l’alert del SALVATAGGIO è tradotto: la Direzione non legge PostgREST', async () => {
+  /**
+   * ⚠️ IL RIFIUTO DEL SALVATAGGIO NON STA PIÙ IN UN `alert()`, dal 2026-09-04.
+   *
+   * La regola misurata qui non è cambiata di una virgola — «a schermo non finisce
+   * MAI la prosa del database» — è cambiato DOVE si legge, e in meglio: una
+   * finestra modale si chiude e non lascia niente, mentre il riquadro resta sotto
+   * gli occhi di chi ha premuto, dentro un `role="alert"`. Il motivo del cambio è
+   * un terzo fatto: il server manda un CODICE (`INCARICO_STAFF_RISERVATO`,
+   * `SEDE_NON_ACCESSIBILE`) e i due `alert()` lo buttavano via, mostrando la stessa
+   * frase per rifiuti diversi.
+   */
+  it('anche il rifiuto del SALVATAGGIO è tradotto, e sta in pagina: la Direzione non legge PostgREST', async () => {
     rispostaAnagrafica = anagraficaCompleta()
     const { container } = await montaScheda()
     fireEvent.click(screen.getByRole('button', { name: /^Modifica$/ }))
@@ -2404,10 +2439,14 @@ describe('scheda staff · a schermo non finisce MAI la prosa del database', () =
       return serverPredefinito(String(url))
     })
     fireEvent.click(screen.getByRole('button', { name: /Salva/i }))
-    await waitFor(() => expect(vi.mocked(globalThis.alert)).toHaveBeenCalled())
-    const detto = vi.mocked(globalThis.alert).mock.calls.map(([m]) => String(m)).join(' | ')
-    expect(detto).toContain('Errore nel salvataggio')
-    expect(detto).not.toContain('not-null constraint')
+    const riquadro = await screen.findByTestId('staff-sede-errore')
+    expect(riquadro.getAttribute('role')).toBe('alert')
+    expect(riquadro).toHaveTextContent('Errore nel salvataggio')
+    expect(riquadro.textContent).not.toContain('not-null constraint')
+    expect(document.body.textContent).not.toContain('not-null constraint')
+    // E il motivo non si butta: lo stato va nel log, il corpo no.
+    const chiamate = vi.mocked(logClient).mock.calls.map(([a]) => a as unknown as Record<string, unknown>)
+    expect(chiamate.some((c) => c.messaggio === 'staff-salvataggio-non-riuscito' && c.stato === 500)).toBe(true)
   })
 
   it('e quello delle CREDENZIALI: «l’email non è partita» resta scritto, il testo del provider no', async () => {

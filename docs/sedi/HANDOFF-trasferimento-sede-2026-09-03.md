@@ -6,6 +6,42 @@ Questo documento basta da solo: chi riprende il lavoro non ha bisogno della chat
 
 ---
 
+## 0. STATO — aggiornato il 2026-09-04
+
+**Commit `2c383cb1`** su `fix/aruba-prima-fattura` (non pushato). Gate al momento del commit:
+eslint 0 · tsc 0 · **vitest 13.464/13.464** · build ok.
+
+### ✅ Fatto, revisionato da un critico e corretto
+
+| Task | Cosa |
+|---|---|
+| **T1** | `src/lib/sedi/trasferimento.ts` (destinazioni consentite, fail-closed) e `src/lib/anagrafiche/riallinea-sede-genitori.ts`. Critico: NON-A su 4 punti → corretti tutti, 42 test. |
+| **T2** | La migrazione `20260903145106_…` che propaga la rinomina a 7 tabelle. Critico: **nessun difetto sul SQL**; 2 rilievi sul lock, ancora aperti. **NON APPLICATA.** |
+| **T3** | Genitore multi-sede: 5 route + `ChildSwitcher` + il modulo condiviso `src/lib/anagrafiche/sedi.ts`. Critico: NON-A su 5 punti → corretti tutti. |
+
+### ⏳ Resta da fare
+
+1. **Applicare la migrazione** (T2) — e subito dopo **rinominare il file** alla versione che
+   `schema_migrations` registra: `apply_migration` sceglie il proprio timestamp, e committare il
+   nome locale arma una riapplicazione.
+2. **Chiudere due buchi del lock** della rinomina: il filtro di sede si soddisfa anche stando
+   dentro una sottoquery (mutazione dimostrata: il lock resta verde mentre la rinomina
+   riscriverebbe il registro di tutte le sedi), e la prova sui dati personali è una lista nera di
+   cinque parole invece di un controllo strutturale.
+3. **T4** — `PATCH /api/admin/students`: `scuola_id` nello schema (oggi è **scartato in silenzio**),
+   azzeramento di `section_id`/`classe_sezione`/`gruppo_mensa_id`, `riallineaSedeGenitori`, audit.
+   Più `GET /api/admin/sedi/destinazioni`.
+4. **T5** — `PATCH /api/admin/staff`: aprire il cambio di **sede** alla segreteria tenendo il cambio
+   di **ruolo** alla Direzione, destinazioni da T1, e pulizia delle `utenti_sezioni` della sede
+   vecchia (oggi restano attaccate).
+5. **T6** — l'interfaccia del selettore, in `StudentDetailPanel` e `ParentDetailPanel`.
+6. **T7** — il pulsante di rinomina della sezione (il backend è pronto da prima).
+7. **Sanare 31 account genitore** (decisione del titolare: si sanano i dati, non il codice) —
+   misurato: **21 legami** da riportare in `student_parents` per **19 account**, e **12 account**
+   con anagrafica e zero figli. Nessuno punta a un alunno inesistente.
+
+---
+
 ## 1. Perché
 
 Kidville ha tre sedi reali (Giugliano, Aversa, Cesa) più la sede fittizia E2E. Oggi **la sede di
@@ -56,9 +92,17 @@ strict, un `scuola_id` inviato oggi viene **scartato senza errore**: risponde 20
 niente. `allowedFields` (riga 695) ha `section_id`, `classe_sezione`, `gruppo_mensa_id` — la sede no.
 
 Tre agganci si rompono cambiando `alunni.scuola_id` da solo:
-1. **`section_id` / `classe_sezione`** — il trigger `sync_alunno_section_id` riparte solo su
-   INSERT, su cambio di `classe_sezione`, o se `section_id` è NULL: cambiando **solo** la sede il
-   bambino **resta agganciato alla sezione del plesso di prima**. Vanno azzerati nella stessa UPDATE.
+1. **`section_id` / `classe_sezione`** — vanno azzerati **entrambi**, nella stessa UPDATE.
+   ⚠️ **Questa riga è stata corretta il 2026-09-04: la versione di prima era imprecisa, e
+   l'imprecisione era un tranello.** Letto dal database: il trigger è dichiarato
+   `BEFORE INSERT OR UPDATE OF classe_sezione, section_id, scuola_id`, quindi sul cambio di sede
+   **parte** — è il suo *corpo* a non fare niente, perché la condizione interna chiede
+   `INSERT` o `classe_sezione` cambiata o `section_id IS NULL`.
+   Il corollario è ciò che conta: **azzerare il solo `section_id` sarebbe peggio che non azzerare
+   nulla.** Il corpo scatterebbe (`section_id IS NULL`), cercherebbe in `sections` la riga con
+   `scuola_id = NEW.scuola_id` — la sede NUOVA — e riaggancerebbe il bambino alla sezione
+   **omonima** di quel plesso: «2 ANNI» esiste in tutti e tre. Una classe scelta da nessuno,
+   assegnata in silenzio. Con `classe_sezione` a NULL il blocco esterno è saltato per intero.
 2. **`gruppo_mensa_id`** — punta a `gruppi_mensa`, che è `UNIQUE(scuola_id, nome)`: va azzerato.
 3. **La sede dei genitori** — `utenti.scuola_id` è `NOT NULL` ed è derivato dai figli da
    `sedeDelGenitore()` (`src/lib/auth/parent-identity.ts:280`), ma **oggi nessuno lo ricalcola dopo**.

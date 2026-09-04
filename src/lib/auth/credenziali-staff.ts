@@ -31,14 +31,22 @@ import type { AppRole } from './predicati-ruolo'
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * I ruoli che questa funzione riconosce come bersaglio. Fuori da qui: si nega.
+ * I ruoli che questi predicati riconoscono come bersaglio. Fuori da qui: si nega.
  *
  * L'elenco è scritto a mano e non derivato da `AppRole` di proposito: il
  * bersaglio arriva dal DATABASE come `string`, non come union type, e un ruolo
  * nuovo aggiunto alla colonna senza passare da qui deve essere NEGATO finché
  * qualcuno non decide cosa farne — non ammesso perché «è comunque uno staff».
+ *
+ * ESPORTATO dal 2026-09-04 perché lo usa anche `incarico-staff.ts`, che sta
+ * accanto e risponde alla domanda gemella («chi può cambiare ruolo, gradi,
+ * classi e sede di chi»). Le due riserve si tengono in piedi a vicenda, e il
+ * vocabolario dei ruoli-bersaglio dev'essere lo STESSO: due copie divergono, e
+ * la prima a divergere sarebbe quella che nessuno sta guardando.
  */
-const RUOLI_NOTI = new Set<string>(['admin', 'coordinator', 'segreteria', 'educator', 'cuoca', 'genitore'])
+export const RUOLI_BERSAGLIO_NOTI = new Set<string>([
+  'admin', 'coordinator', 'segreteria', 'educator', 'cuoca', 'genitore',
+])
 
 /** Gli account la cui password vale l'intero plesso: solo la Direzione li tocca. */
 const DIREZIONE = new Set<string>(['admin', 'coordinator'])
@@ -49,7 +57,7 @@ export function puoRigenerareCredenzialiStaff(
 ): boolean {
   // Si nega ciò che non si è riusciti a leggere. Un `maybeSingle()` che torna
   // `null` — per assenza o per guasto — non deve mai diventare un permesso.
-  if (!ruoloBersaglio || !RUOLI_NOTI.has(ruoloBersaglio)) return false
+  if (!ruoloBersaglio || !RUOLI_BERSAGLIO_NOTI.has(ruoloBersaglio)) return false
   if (attore === 'admin' || attore === 'coordinator') return true
   if (attore === 'segreteria') return !DIREZIONE.has(ruoloBersaglio)
   return false

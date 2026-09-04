@@ -83,6 +83,18 @@ export const GET = withRoute('admin/students/[id]:GET', async (
             data_nascita: string | null;
             classe_sezione: string | null;
             stato: string | null;
+            /**
+             * Chi paga la retta di QUESTO fratello.
+             *
+             * Serve alla scheda per due cose diverse: popolare la tendina «la paga il
+             * fratello» con i soli candidati che non sono già a carico di qualcun altro,
+             * e mostrare — in sola lettura — quando è questo bambino a pagare per lui.
+             * 🔴 Il secondo è il motivo per cui c'è: a Giugliano, il 2026-09-04, un
+             * legame ROVESCIATO faceva addebitare a una famiglia 0,01 € al mese invece
+             * di 250, e non compariva in nessuna schermata.
+             */
+            retta_a_carico_di: string | null;
+            importo_retta_mensile: number | null;
         };
         let siblings: SiblingRow[] = [];
 
@@ -98,7 +110,9 @@ export const GET = withRoute('admin/students/[id]:GET', async (
                         cognome,
                         data_nascita,
                         classe_sezione,
-                        stato
+                        stato,
+                        retta_a_carico_di,
+                        importo_retta_mensile
                     )
                 `)
                 .in('parent_id', parentIds)

@@ -90,7 +90,7 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                     )}
                     {saldato ? (
                         <>
-                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} descrizione={pagamento.descrizione} />
+                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} />
                             <a href={`/api/pagamenti/ricevuta?pagamento_id=${pagamento.id}&userId=${userId}`}
                                 className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
                                 <Download size={13} /> {t('drawerRicevuta')}

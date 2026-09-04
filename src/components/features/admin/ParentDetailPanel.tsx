@@ -9,6 +9,7 @@ import { BadgeCoerenzaCf } from '@/components/features/anagrafica/BadgeCoerenzaC
 import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/features/anagrafica/LuogoNascitaFields';
 import { verificaCoerenza } from '@/lib/fiscale/coerenza';
 import { eCfGenitoreDuplicato } from '@/lib/anagrafiche/errori-cf';
+import { useDestinazioniSede, nomeSede } from './destinazioni-sede';
 
 /**
  * ⚠️ `parents.fiscal_code` È UNIQUE, e questa è la scheda da cui si correggono i
@@ -52,6 +53,19 @@ interface LinkedChild {
     nome: string;
     cognome: string;
     classe_sezione?: string | null;
+    /**
+     * La sede del BAMBINO (`alunni.scuola_id`), che arriva dal `alunni (*)` del
+     * fascicolo genitore.
+     *
+     * ⚠️ NON ESISTE LA SEDE DEL GENITORE, e non è una mancanza da colmare:
+     * `parents` non ha `scuola_id`, ed è precisamente ciò che permette a una madre
+     * di avere un figlio a Cesa e uno ad Aversa — in produzione sono quattro le
+     * famiglie in questa condizione. Il giorno in cui questa colonna nascesse sul
+     * genitore, metà di quelle famiglie risulterebbe nel plesso sbagliato.
+     * Perciò qui la sede si LEGGE dai figli e non si scrive da nessuna parte:
+     * `corpoGenitoreDaSalvare` è una lista bianca e `scuola_id` non è nell'elenco.
+     */
+    scuola_id?: string | null;
     student_parents?: ChildStudentParent[];
 }
 
@@ -194,6 +208,26 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
      */
     const radiceId = `genitore-${useId().replace(/[^A-Za-z0-9_-]+/g, '-')}`;
     const idBadgeCf = `${radiceId}-badge-cf`;
+
+    /**
+     * I figli collegati. Il calcolo sta QUI, sopra il `return` condizionale, perché
+     * da lui dipende un hook: senza figli non c'è nessun nome di sede da risolvere e
+     * l'elenco delle sedi non si chiede affatto.
+     */
+    const figli = useMemo(
+        () => (parent?.student_parents ?? []).map((sp) => sp.alunni).filter((c): c is LinkedChild => Boolean(c)),
+        [parent],
+    );
+
+    /**
+     * L'anagrafica delle sedi serve QUI per una ragione sola: tradurre l'uuid di
+     * `alunni.scuola_id` nel NOME del plesso. Non c'è nessuna tendina da riempire e
+     * non c'è niente da spostare da questa scheda — la sede è del bambino.
+     * `admin/sedi/destinazioni` e non `admin/sedi` perché per la Direzione la prima
+     * copre tutte le sedi reali: un figlio in un plesso che non è fra quelli
+     * dell'utente resterebbe altrimenti senza nome.
+     */
+    const destinazioni = useDestinazioniSede({ abilitato: figli.length > 0 });
 
     useEffect(() => {
         if (!parentBasicInfo) return;
@@ -346,12 +380,7 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
         }
     };
 
-    const getChildrenTabs = (): LinkedChild[] => {
-        if (!parent?.student_parents) return [];
-        return parent.student_parents.map(sp => sp.alunni).filter((c): c is LinkedChild => Boolean(c));
-    };
-
-    const children = getChildrenTabs();
+    const children = figli;
 
     const isPage = variant === 'page';
     const shellCls = isPage
@@ -610,9 +639,24 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                             </div>
                         </section>
 
-                        {/* Figli Collegati */}
+                        {/* ══════════════════════════════════════════════════════════════
+                            FIGLI COLLEGATI — e la SEDE DI CIASCUNO, in sola lettura.
+
+                            ⚠️ QUI NON C'È NESSUN SELETTORE DI SEDE, ed è una decisione di
+                            modello dati, non di ingombro. `parents` non ha `scuola_id` e
+                            non deve averla: è ciò che permette a un genitore di avere
+                            figli in due plessi diversi (in produzione sono quattro le
+                            famiglie in questa condizione). Un selettore qui obbligherebbe
+                            a sceglierne uno, e da lì metà di quelle famiglie risulterebbe
+                            altrove.
+
+                            Ma nasconderla sarebbe l'errore opposto: senza la sede accanto
+                            a ogni figlio, l'unica lettura possibile di questa scheda è
+                            «questa famiglia sta a Giugliano» — che per quattro famiglie è
+                            falsa. Si mostra il fatto e si dice dove si agisce: sulla
+                            scheda del BAMBINO, che ha il comando «Sposta di sede». */}
                         {children.length > 0 && (
-                            <section>
+                            <section data-testid="parent-sedi-figli">
                                 <h3 className="font-barlow font-bold text-kidville-green uppercase text-xs tracking-wide mb-3 flex items-center gap-2">
                                     <User size={12} className="text-kidville-green" />
                                     {t('parentAlunniCollegati')}
@@ -622,11 +666,18 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                     {children.map((child) => {
                                         const otherParents = child.student_parents?.filter((sp) => sp.parents?.id !== parent?.id) || [];
                                         const isExpanded = expandedChild === child.id;
+                                        /* Il NOME del plesso, mai il suo uuid: un uuid a schermo
+                                           non dice niente a chi guarda e mette in circolo un
+                                           identificativo di produzione dove non serve. Quando non
+                                           si risolve — sede fuori dalle destinazioni di chi
+                                           guarda, elenco non ancora letto, bambino senza sede in
+                                           archivio — si scrive che manca. */
+                                        const sedeFiglio = nomeSede(destinazioni.sedi, child.scuola_id);
 
                                         return (
-                                            <div key={child.id} className="bg-kidville-cream border border-kidville-line rounded-xl overflow-hidden transition-all">
+                                            <div key={child.id} data-testid={`parent-figlio-${child.id}`} className="bg-kidville-cream border border-kidville-line rounded-xl overflow-hidden transition-all">
                                                 {/* Header Figlio */}
-                                                <div 
+                                                <div
                                                     className={`p-4 flex items-center justify-between cursor-pointer hover:bg-kidville-line ${isExpanded ? 'bg-kidville-green/5 border-b border-kidville-green/10' : ''}`}
                                                     onClick={() => setExpandedChild(isExpanded ? null : child.id)}
                                                 >
@@ -636,6 +687,10 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                                         </h4>
                                                         <p className="font-maven text-xs text-kidville-muted mt-0.5">
                                                             {child.classe_sezione || t('detailNessunaSezione')}
+                                                        </p>
+                                                        <p className="font-maven text-xs text-kidville-sub mt-0.5">
+                                                            <span>{t('parentSedeFiglio')}: </span>
+                                                            <span className="font-semibold">{sedeFiglio ?? t('parentSedeFiglioSconosciuta')}</span>
                                                         </p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
@@ -688,6 +743,13 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                         );
                                     })}
                                 </div>
+
+                                {/* Il rimando. Non è cortesia: senza, chi cerca «dove si
+                                    cambia la sede» conclude che il comando manchi, e la
+                                    strada che resta è la `UPDATE` a mano sul database. */}
+                                <p data-testid="parent-sedi-figli-nota" className="mt-3 font-maven text-xs text-kidville-sub">
+                                    {t('parentSediFigliNota')}
+                                </p>
                             </section>
                         )}
                     </div>

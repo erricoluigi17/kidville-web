@@ -4,7 +4,10 @@ import { z } from 'zod';
 import { STATO_ISCRITTO } from '@/lib/alunni/stato';
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
-import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente } from '@/lib/auth/scope';
+import { resolveScuoleAttive, resolveScuolaScrittura, assertAlunnoInScope, scuoleDiUtente, formaConfronto } from '@/lib/auth/scope';
+import { rifiutoSede } from '@/lib/auth/rifiuto-sede';
+import { destinazioneConsentita, destinazioniDiTrasferimento } from '@/lib/sedi/trasferimento';
+import { riallineaSedeGenitori } from '@/lib/anagrafiche/riallinea-sede-genitori';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { colonnaSconosciuta, linkOrCreateParent } from '@/lib/anagrafiche/parents';
@@ -137,6 +140,26 @@ const patchBodySchema = z.object({
     gruppo_mensa_id: z.unknown().optional(),
     // update singolo
     id: z.string().optional(),
+    /**
+     * LA SEDE DI DESTINAZIONE — cioè il TRASFERIMENTO fra plessi.
+     *
+     * ⚠️ QUESTA RIGA NON È DECORATIVA, ed è la terza volta che questo file paga la
+     * stessa lezione (vedi `codice_belfiore_nascita`, qui sotto e sul gemello in
+     * `postBodySchema`). Fino al 2026-09-04 `scuola_id` NON era nello schema: essendo
+     * uno `z.object` non strict, zod la scartava PRIMA dell'handler — senza errore e
+     * senza log — e la route rispondeva **200 su un trasferimento mai avvenuto**.
+     * L'unica strada per spostare un bambino era una `UPDATE` a mano sul database che
+     * contiene le anagrafiche di oltre seicento minori.
+     *
+     * ⚠️ E NON STA IN `allowedFields`, di proposito: da lì passerebbe dritta
+     * all'UPDATE senza che nessuno abbia detto se quella destinazione è consentita a
+     * chi la chiede. La valida `destinazioniConsentite` (vedi l'handler), non
+     * `resolveScuolaScrittura`.
+     *
+     * `null` non è un trasferimento: `alunni.scuola_id` è la sede di un bambino, non
+     * un campo che si svuota.
+     */
+    scuola_id: z.string().nullable().optional(),
     // allowlist campi aggiornabili (stessa lista di `allowedFields` nell'handler)
     classe_sezione: z.unknown().optional(),
     stato: z.unknown().optional(),
@@ -169,6 +192,11 @@ const patchBodySchema = z.object({
     usa_pannolino: z.unknown().optional(),
     section_id: z.unknown().optional(),
     importo_retta_mensile: z.unknown().optional(),
+    // «La retta la paga il fratello». Self-FK su `alunni` (migrazione 20260816200528),
+    // finora scrivibile SOLO dall'import delle iscrizioni: senza questa riga zod la
+    // toglie dal corpo prima ancora di `allowedFields`, e la PATCH risponde 200 su un
+    // campo mai scritto — lo stesso difetto già pagato con `codice_belfiore_nascita`.
+    retta_a_carico_di: z.unknown().optional(),
     opposizione_ade: z.unknown().optional(),
     // ─── I TRE CONSENSI FOTOGRAFICI, uno per CANALE ──────────────────────────
     // Sono distinti perché il consenso alla pubblicazione è granulare per canale
@@ -694,6 +722,7 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 const updates: Record<string, unknown> = {};
                 const allowedFields = ['classe_sezione', 'stato', 'note_mediche', 'bes', 'note_bes', 'nome', 'cognome', 'data_nascita', 'codice_fiscale', 'gender', 'citizenship', 'birth_nation', 'birth_province', 'birth_city', 'codice_belfiore_nascita', 'residence_address', 'residence_street_number', 'residence_city', 'residence_province', 'zip_code', 'allergies', 'allergeni', 'invoice_holder_type', 'invoice_holder_details', 'is_bes_dsa', 'usa_pannolino', 'section_id',
                     'importo_retta_mensile', 'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'opposizione_ade',
+                    'retta_a_carico_di',
                     // I tre consensi fotografici, uno per canale: galleria riservata,
                     // sito pubblico, social. Vanno tutti e tre in allowlist — con solo
                     // il primo, la revoca degli altri due non aveva nessuna strada.
@@ -703,6 +732,16 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 for (const field of allowedFields) {
                     if (body[field] !== undefined) updates[field] = body[field];
                 }
+
+                /**
+                 * LA SEDE CHIESTA, tenuta FUORI da `updates` finché non è validata.
+                 *
+                 * Non passa da `allowedFields` perché `allowedFields` è una copia diretta
+                 * nel payload: ciò che entra lì viene scritto. Una sede si scrive solo dopo
+                 * che qualcuno ha detto che quella destinazione è consentita a chi la chiede,
+                 * e quel qualcuno è `destinazioniConsentite` — vedi più sotto.
+                 */
+                const sedeChiesta = typeof body.scuola_id === 'string' ? body.scuola_id.trim() : '';
 
                 /**
                  * Una sola risposta, DUE punti di uscita: qui (il client non ha chiesto
@@ -715,7 +754,11 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 const nessunCampoDaAggiornare = () =>
                     NextResponse.json({ error: 'Nessun campo da aggiornare' }, { status: 400 });
 
-                if (Object.keys(updates).length === 0) {
+                // ⚠️ `|| sedeChiesta` NON è una precauzione: senza, il corpo minimo del
+                // trasferimento — `{ id, scuola_id }`, che è esattamente ciò che manda un
+                // pulsante «Sposta di sede» — lascerebbe `updates` vuoto e la route
+                // risponderebbe «Nessun campo da aggiornare» a una richiesta legittima.
+                if (Object.keys(updates).length === 0 && sedeChiesta === '') {
                     return nessunCampoDaAggiornare();
                 }
 
@@ -781,12 +824,329 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     );
                 }
 
+                /* ═══ «LA RETTA LA PAGA IL FRATELLO» ═════════════════════════════════
+                 *
+                 * `alunni.retta_a_carico_di` è una self-FK: la retta di questo bambino la
+                 * paga un altro bambino della stessa famiglia. Entrambe le strade che
+                 * generano le rette saltano chi ce l'ha valorizzata (la RPC
+                 * `genera_rette_mensili` e l'anteprima TS, congelate insieme dal lock
+                 * `retta-a-carico-due-strade`).
+                 *
+                 * ─── PERCHÉ LE GUARDIE STANNO QUI E NON NEL CLIENT ──────────────────
+                 * Nell'import i fratelli sono indici della STESSA domanda, e il controllo
+                 * è banale (`admin/iscrizioni:PATCH`). In anagrafica sono due righe
+                 * indipendenti, aggiornabili da due segreterie in due momenti: l'unico
+                 * posto che vede entrambe è il server.
+                 *
+                 * 🔴 E l'anello non è teorico. Misurato a Giugliano il 2026-09-04: un
+                 * bambino con retta 250 € marcato a carico di un fratello che aveva
+                 * 0,01 €. Nessuno dei due generava la propria retta per intero, e la
+                 * famiglia è stata addebitata di UN CENTESIMO per settembre 2026. Nessun
+                 * errore, nessun log: un anello rovesciato non fa rumore, fa silenzio.
+                 */
+                if ('retta_a_carico_di' in updates) {
+                    const pagante = typeof updates.retta_a_carico_di === 'string' && updates.retta_a_carico_di.trim() !== ''
+                        ? updates.retta_a_carico_di.trim()
+                        : null;
+
+                    if (pagante === null) {
+                        // Togliere il legame è sempre lecito: il bambino torna a pagare la
+                        // propria retta. L'importo NON si tocca — lo decide chi salva la
+                        // scheda, e uno zero rimasto lì significherebbe «default di sede».
+                        updates.retta_a_carico_di = null;
+                    } else {
+                        // ⚠️ I codici si scrivono LETTERALI a ogni uscita, non passati a un
+                        // aiutante: il lock `errori-con-codice` non sa leggere una variabile,
+                        // e un codice che il lock non vede è un codice che nessuno garantisce
+                        // sia tradotto in entrambe le lingue.
+                        const segnala = (esito: string) => logEvento('pagamento', 'warn', {
+                            operazione: 'admin/students:PATCH',
+                            azione: 'retta-a-carico-di',
+                            esito,
+                            alunno: id,
+                        });
+
+                        if (pagante === id) {
+                            segnala('RETTA_FRATELLO_NON_DISPONIBILE');
+                            return NextResponse.json(
+                                {
+                                    error: 'Un bambino non può pagare la retta di sé stesso.',
+                                    codice: 'RETTA_FRATELLO_NON_DISPONIBILE',
+                                },
+                                { status: 400 },
+                            );
+                        }
+
+                        const { data: chiPaga, error: errPagante } = await supabase
+                            .from('alunni')
+                            .select('id, scuola_id, stato, archiviato_il, retta_a_carico_di')
+                            .eq('id', pagante)
+                            .maybeSingle();
+
+                        // Colonna assente = DB non migrato (E2E della CI): non si nega, si
+                        // lascia cadere il campo — il ciclo di resilienza dell'UPDATE lo
+                        // scarterà da solo. Negare qui trasformerebbe un ambiente vecchio
+                        // in un divieto, che è un'altra cosa.
+                        const colonnaMancante = colonnaSconosciuta(errPagante as { code?: string; message?: string } | null);
+                        if (colonnaMancante) {
+                            delete updates.retta_a_carico_di;
+                        } else if (errPagante) {
+                            // PostgREST NON LANCIA: senza questo ramo un guasto di lettura
+                            // sarebbe indistinguibile da «il fratello non esiste», e la
+                            // segreteria andrebbe a cercare un bambino che invece c'è.
+                            logEvento('pagamento', 'error', {
+                                operazione: 'admin/students:PATCH',
+                                azione: 'retta-a-carico-di',
+                                esito: 'pagante-non-letto',
+                                alunno: id,
+                            }, errPagante);
+                            return NextResponse.json(
+                                { error: 'Non è stato possibile verificare il fratello indicato: niente è stato salvato. Riprova fra poco.', codice: 'LETTURA_FALLITA' },
+                                { status: 500 },
+                            );
+                        } else {
+                            const riga = chiPaga as {
+                                scuola_id?: string | null
+                                stato?: string | null
+                                archiviato_il?: string | null
+                                retta_a_carico_di?: string | null
+                            } | null;
+                            const sedeAlunno = (prima.scuola_id as string | null) ?? null;
+                            const stessaSede = !!riga?.scuola_id && !!sedeAlunno
+                                && formaConfronto(riga.scuola_id) === formaConfronto(sedeAlunno);
+
+                            if (!riga || !stessaSede || riga.stato !== 'iscritto' || riga.archiviato_il != null) {
+                                // Un solo messaggio per i quattro casi, di proposito: dire
+                                // «quel bambino è ritirato» a chi ha in mano una tendina
+                                // dell'INTERFACCIA significa raccontare l'anagrafica di un
+                                // minore a chi potrebbe non avere titolo per vederla.
+                                segnala('RETTA_FRATELLO_NON_DISPONIBILE');
+                                return NextResponse.json(
+                                    {
+                                        error: 'Il fratello indicato non è disponibile: dev’essere un bambino iscritto nella stessa sede.',
+                                        codice: 'RETTA_FRATELLO_NON_DISPONIBILE',
+                                    },
+                                    { status: 400 },
+                                );
+                            }
+                            if (riga.retta_a_carico_di != null) {
+                                segnala('RETTA_CICLO_FRATELLI');
+                                return NextResponse.json(
+                                    {
+                                        error: 'quel fratello ha a sua volta la retta a carico di un altro',
+                                        codice: 'RETTA_CICLO_FRATELLI',
+                                    },
+                                    { status: 409 },
+                                );
+                            }
+
+                            // L'ANELLO: se qualcuno ha già la retta a carico di QUESTO
+                            // bambino, metterlo a carico di un terzo lo toglie dai
+                            // generatori insieme a chi dipende da lui.
+                            const { data: aSuoCarico, error: errFigli } = await supabase
+                                .from('alunni')
+                                .select('id')
+                                .eq('retta_a_carico_di', id)
+                                .limit(1);
+                            if (errFigli && !colonnaSconosciuta(errFigli as { code?: string; message?: string } | null)) {
+                                logEvento('pagamento', 'error', {
+                                    operazione: 'admin/students:PATCH',
+                                    azione: 'retta-a-carico-di',
+                                    esito: 'figli-a-carico-non-letti',
+                                    alunno: id,
+                                }, errFigli);
+                                return NextResponse.json(
+                                    { error: 'Non è stato possibile verificare chi dipende da questo bambino: niente è stato salvato. Riprova fra poco.', codice: 'LETTURA_FALLITA' },
+                                    { status: 500 },
+                                );
+                            }
+                            if ((aSuoCarico?.length ?? 0) > 0) {
+                                segnala('RETTA_CICLO_FRATELLI');
+                                return NextResponse.json(
+                                    {
+                                        error: 'questo bambino paga già la retta di un fratello',
+                                        codice: 'RETTA_CICLO_FRATELLI',
+                                    },
+                                    { status: 409 },
+                                );
+                            }
+
+                            // Le due facce dello stesso fatto, scritte insieme. Separarle è
+                            // come sono nate le righe incoerenti che stanno in produzione:
+                            // «a carico di un fratello» con ancora un importo addosso.
+                            // ⚠️ Lo ZERO qui non si propaga ai pagamenti già generati:
+                            // `riallineaImportoRetteFuture` rifiuta gli zeri di proposito
+                            // (sulla colonna significa «default di sede», su un pagamento
+                            // significherebbe «non deve niente»).
+                            updates.importo_retta_mensile = 0;
+                        }
+                    }
+                }
+
+                /* ═══ IL TRASFERIMENTO DI SEDE ═══════════════════════════════════════
+                 *
+                 * ─── PERCHÉ NON `resolveScuolaScrittura` ────────────────────────────
+                 *
+                 * Quella funzione risolve la sede di una riga NUOVA e pretende che sia
+                 * fra quelle dell'utente: fuori scope risponde 403. Su un trasferimento
+                 * negherebbe esattamente il caso per cui questo codice esiste — il
+                 * bambino che passa a un plesso in cui NON è ancora. La regola giusta è
+                 * un'altra e vive in `src/lib/sedi/trasferimento.ts`: la Direzione muove
+                 * fra tutte le sedi REALI, la Segreteria solo dentro le proprie (se
+                 * potesse spostare altrove, manderebbe un'anagrafica in un plesso che poi
+                 * non può nemmeno più leggere).
+                 *
+                 * Il BERSAGLIO resta protetto da `assertAlunnoInScope`, poche righe sopra:
+                 * qui si decide solo il DOVE.
+                 *
+                 * ─── LA STESSA SEDE NON È UN TRASFERIMENTO ──────────────────────────
+                 *
+                 * La scheda salva il form INTERO, quindi rimanda sempre la sede corrente.
+                 * Se contasse come trasferimento, ogni salvataggio di una scheda
+                 * sgancerebbe il bambino dalla sua classe. Il confronto passa da
+                 * `formaConfronto` perché in Postgres `uuid` è un TIPO e `'AAAA…'` è lo
+                 * stesso valore di `'aaaa…'`, mentre in JavaScript sono due stringhe
+                 * diverse — questo repo ha già pagato quel difetto con un 403 sulla
+                 * PROPRIA sede.
+                 */
+                const sedeAttuale = (prima.scuola_id as string | null) ?? null;
+                const trasferimento = sedeChiesta !== ''
+                    && (!sedeAttuale || formaConfronto(sedeChiesta) !== formaConfronto(sedeAttuale));
+                /** La sede d'arrivo in forma CANONICA (letta da `schools`), o `null`. */
+                let sedeArrivo: string | null = null;
+
+                if (trasferimento) {
+                    // Un bambino archiviato non si sposta: sganciato dalla classe e fuori
+                    // dagli elenchi, cambiargli plesso lo consegnerebbe a una segreteria
+                    // che non ha nessun modo di vederlo. Il ritorno ha una rotta sua
+                    // (`admin/students/riattiva`), e viene prima.
+                    if (prima.archiviato_il != null) {
+                        logEvento('multi_sede', 'warn', {
+                            operazione: 'admin/students:PATCH',
+                            azione: 'trasferimento-sede',
+                            esito: 'trasferimento-su-archiviato-rifiutato',
+                            alunno: id,
+                            ruolo: auth.user.role,
+                        });
+                        return NextResponse.json(
+                            {
+                                error: 'Questo bambino è fra i «non più iscritti»: non si sposta di sede da qui. Riportalo prima fra gli iscritti con «Riporta fra gli iscritti».',
+                                codice: 'STATO_ALUNNO_ARCHIVIATO',
+                            },
+                            { status: 409 },
+                        );
+                    }
+
+                    const dest = await destinazioniDiTrasferimento(supabase, auth.user, 'admin/students:PATCH');
+                    if (dest.error) {
+                        // «Vuoto» e «rotto» non sono la stessa cosa: senza l'elenco delle
+                        // sedi non si sposta niente, e non lo si spaccia per «destinazione
+                        // non consentita» — sarebbe un guasto travestito da divieto.
+                        return NextResponse.json(
+                            {
+                                error: 'Non è stato possibile leggere le sedi di destinazione: il bambino non è stato spostato. Riprova fra poco.',
+                                codice: 'LETTURA_FALLITA',
+                            },
+                            { status: 500 },
+                        );
+                    }
+                    const consentita = destinazioneConsentita(dest.sedi, sedeChiesta);
+                    if (!consentita) {
+                        // Segnale di sicurezza: qualcuno ha chiesto di portare un minore in
+                        // un plesso che non gli compete. Va contato.
+                        logEvento('multi_sede', 'warn', {
+                            operazione: 'admin/students:PATCH',
+                            azione: 'trasferimento-sede',
+                            esito: 'trasferimento-destinazione-negata',
+                            alunno: id,
+                            utente: auth.user.id,
+                            ruolo: auth.user.role,
+                            n: dest.sedi.length,
+                        });
+                        return rifiutoSede('SEDE_NON_ACCESSIBILE');
+                    }
+                    // Ciò che si scrive è il valore LETTO dal database, mai la stringa
+                    // arrivata dal client.
+                    sedeArrivo = consentita.id;
+                    updates.scuola_id = consentita.id;
+
+                    /* ─── COSA NON SEGUE IL BAMBINO, e perché va azzerato QUI ────────
+                     *
+                     * Decisione del titolare (2026-09-03): si sposta la sola anagrafica;
+                     * classe e gruppo mensa si riassegnano a mano nella sede nuova.
+                     *
+                     * Non è solo una regola di prodotto, è un vincolo tecnico — e va detto
+                     * con precisione, perché la formulazione comoda è sbagliata.
+                     *
+                     * ⚠️ IL TRIGGER `trg_alunni_sync_section` **PARTE ECCOME** sul cambio di
+                     * sede: è dichiarato `BEFORE INSERT OR UPDATE OF classe_sezione,
+                     * section_id, scuola_id` (letto da `pg_trigger` in produzione il
+                     * 2026-09-04). È il suo CORPO a non fare niente: risolve il nome della
+                     * classe solo se `classe_sezione` è valorizzata E una fra «è un INSERT»,
+                     * «il nome è cambiato», «`section_id` è NULL». Scrivendo la sola
+                     * `scuola_id`, il nome resta quello di prima e `section_id` non è NULL:
+                     * nessuna delle tre condizioni scatta, e **il bambino resta agganciato
+                     * alla sezione del plesso di partenza** — presente nel registro di una
+                     * maestra che non è più la sua, invisibile nel plesso dove è appena
+                     * arrivato. Chi un giorno leggesse «il trigger non parte» andrebbe a
+                     * correggere la dichiarazione del trigger, che è già giusta.
+                     *
+                     * ⚠️ E NON BASTA AZZERARE `section_id` DA SOLO: con `classe_sezione`
+                     * ancora valorizzata il corpo del trigger scatta (`section_id IS NULL`)
+                     * e RIAGGANCIA il bambino alla sezione OMONIMA della sede nuova — «2
+                     * ANNI» esiste in tutti e tre i plessi. Una classe scelta da nessuno,
+                     * assegnata in silenzio: l'opposto della decisione del titolare. Con
+                     * `classe_sezione` a NULL il corpo è saltato per intero.
+                     *
+                     * `gruppo_mensa_id` punta a `gruppi_mensa`, che è `UNIQUE(scuola_id,
+                     * nome)`: un turno che nella sede nuova non esiste, e che la cucina
+                     * sbagliata continuerebbe a contare.
+                     *
+                     * NELLA STESSA UPDATE, non in un secondo giro: fra le due scritture
+                     * ci sarebbe una finestra in cui il bambino è già altrove e ancora
+                     * agganciato alla vecchia sezione.
+                     */
+                    const rimandatiIndietro = ['section_id', 'classe_sezione', 'gruppo_mensa_id']
+                        .filter((k) => {
+                            const v = body[k];
+                            return v !== undefined && v !== null && v !== '';
+                        });
+                    if (rimandatiIndietro.length > 0) {
+                        // Il form intero rimanda la classe che c'era: si azzera lo stesso —
+                        // una sezione del plesso di partenza nel plesso d'arrivo non esiste —
+                        // ma non in silenzio. La riga di ritorno porta i `null`, così chi
+                        // guarda la scheda vede subito com'è finita.
+                        logEvento('multi_sede', 'warn', {
+                            operazione: 'admin/students:PATCH',
+                            azione: 'trasferimento-sede',
+                            esito: 'trasferimento-classe-azzerata',
+                            alunno: id,
+                            n: rimandatiIndietro.length,
+                        });
+                    }
+                    updates.section_id = null;
+                    updates.classe_sezione = null;
+                    updates.gruppo_mensa_id = null;
+                }
+
+                // ⚠️ IL SECONDO GIRO DELLA STESSA GUARDIA, e serve. Sopra si è lasciato
+                // passare il corpo `{ id, scuola_id }` perché la sede POTEVA essere un
+                // trasferimento; se non lo era — la scheda ha rimandato la sede corrente e
+                // nient'altro — `updates` è ancora vuoto, e senza questa riga partirebbe
+                // una UPDATE con il payload VUOTO: un 500 al posto del 400 onesto che
+                // questa route dava prima.
+                if (Object.keys(updates).length === 0) {
+                    return nessunCampoDaAggiornare();
+                }
+
                 // Riassegnazioni di classe: la destinazione deve stare NELLA
                 // SEDE dell'alunno. `section_id` è in allowlist e il trigger DB
                 // non lo corregge (risolve solo su INSERT, su cambio del nome o
                 // su `section_id` NULL): scrivendo il solo uuid, un bambino di
                 // una sede finiva puntato alla sezione di un'altra.
-                const sedeAlunno = (prima.scuola_id as string | null) ?? null;
+                // ⚠️ Dopo un trasferimento i tre campi sono `null`, quindi qui non
+                // si valida niente: è voluto — la classe si riassegna a mano, dopo.
+                const sedeAlunno = sedeAttuale;
                 const nuovaSezione = typeof updates.section_id === 'string' && updates.section_id !== ''
                     ? updates.section_id : null;
                 const nuovaClasse = typeof updates.classe_sezione === 'string' && updates.classe_sezione.trim() !== ''
@@ -831,6 +1191,14 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                 for (;;) {
                     const col = colonnaSconosciuta(error as { code?: string; message?: string } | null);
                     if (!col || !(col in updates) || patchAttempts >= 5) break;
+                    // ⚠️ LA SEDE NON SI SCARTA MAI. La resilienza qui sotto toglie la
+                    // colonna sconosciuta e riprova, e va benissimo per un campo in più
+                    // su un DB non migrato. Ma se scartasse `scuola_id` durante un
+                    // trasferimento, l'UPDATE riuscirebbe senza spostare nessuno e la
+                    // route risponderebbe **200 su un trasferimento mai avvenuto**: cioè
+                    // il difetto di partenza, rientrato da una porta laterale. Si esce dal
+                    // ciclo lasciando `error` valorizzato → 500, che è rumoroso e vero.
+                    if (trasferimento && col === 'scuola_id') break;
                     delete updates[col];
                     logEvento('anagrafica', 'warn', {
                         operazione: 'admin/students:PATCH',
@@ -875,15 +1243,74 @@ export const PATCH = withRoute('admin/students:PATCH', async (request: NextReque
                     await riallineaImportoRetteFuture(supabase, id as string, updates.importo_retta_mensile as number | null);
                 }
 
+                if (trasferimento) {
+                    /* ─── IL GENITORE SEGUE I FIGLI ──────────────────────────────────
+                     *
+                     * `parents` non ha una colonna sede, e non deve averla: un genitore
+                     * può avere legittimamente due figli in due plessi. Ma l'ACCOUNT di
+                     * login ce l'ha — `utenti.scuola_id` è NOT NULL, ed è la sede con cui
+                     * vengono registrate la richiesta GDPR di cancellazione e la notifica
+                     * dei moduli firmati. Fino a oggi nessuno lo ricalcolava dopo uno
+                     * spostamento, per il semplice motivo che spostare non si poteva.
+                     *
+                     * FAIL-OPEN: gira DOPO che il bambino è già nella sede nuova, quindi
+                     * un suo guasto non deve far fallire l'operazione — che a quel punto
+                     * sarebbe riuscita a metà. Fail-open non vuol dire muto: la funzione
+                     * scrive il proprio riepilogo, e l'eccezione (che PostgREST non lancia,
+                     * ma la rete sì) finisce comunque in un log.
+                     */
+                    let riepilogo = { aggiornati: 0, invariati: 0, ambigui: 0, saltati: 0 };
+                    try {
+                        riepilogo = await riallineaSedeGenitori(supabase, [id]);
+                    } catch (e) {
+                        logErrore({ operazione: 'admin/students:PATCH', evento: 'riallineo_sede_genitori' }, e);
+                    }
+
+                    // Il SUCCESSO si logga: con i soli errori, «nessun log» non distingue
+                    // «tutto ok» da «non è mai partito niente» — ed è l'ambiguità che ha
+                    // nascosto per mesi il guasto delle email delle credenziali.
+                    logEvento('multi_sede', 'info', {
+                        operazione: 'admin/students:PATCH',
+                        azione: 'trasferimento-sede',
+                        esito: 'trasferimento-sede-eseguito',
+                        alunno: id,
+                        sede: sedeArrivo,
+                        sede_precedente: sedeAttuale,
+                        utente: auth.user.id,
+                        ruolo: auth.user.role,
+                        ...riepilogo,
+                    });
+                }
+
                 await logScrittura(supabase, {
                     attore: auth.user,
                     entitaTipo: 'alunni',
                     entitaId: id,
+                    /* ⚠️ `azione` ha TRE valori ammessi e basta. In produzione esiste
+                     * `audit_scritture_docente_azione_check CHECK (azione = ANY
+                     * (ARRAY['insert','update','delete']))` — verificato su `pg_constraint`
+                     * il 2026-09-04. Un `'trasferimento-sede'` qui sarebbe passato in tutti
+                     * i test (nessun finto client emula i CHECK) e in produzione avrebbe
+                     * prodotto un `23514` che `logScrittura` inghiotte per progetto: la riga
+                     * d'audit dell'operazione più delicata dell'anagrafica non sarebbe MAI
+                     * esistita. È lo stesso guasto che per sei chiamanti ha reso inesistente
+                     * l'audit dei legami genitore↔figlio (vedi `normalizzaEntita`).
+                     * Il trasferimento si riconosce da `valore_dopo`, non dall'azione. */
                     azione: 'update',
-                    scuolaId: (data?.scuola_id as string) ?? null,
+                    /* La sede di PARTENZA, non quella d'arrivo, e non è un dettaglio:
+                     * `admin/audit` filtra le righe per le sedi di chi guarda, e
+                     * `assertAlunnoInScope` garantisce che chi ha spostato avesse in
+                     * perimetro la sede di PARTENZA — non necessariamente quella d'arrivo
+                     * (la Direzione muove anche verso plessi che non sono suoi). Con la
+                     * sede d'arrivo, la traccia sarebbe invisibile proprio a chi l'ha
+                     * scritta e al plesso che il bambino ha lasciato. L'arrivo sta in
+                     * `valore_dopo`, e `valore_prima` porta la riga di prima per intero. */
+                    scuolaId: trasferimento ? sedeAttuale : ((data?.scuola_id as string) ?? null),
                     sectionId: (data?.section_id as string) ?? null,
                     valorePrima: prima ?? null,
-                    valoreDopo: updates,
+                    valoreDopo: trasferimento
+                        ? { ...updates, trasferimento_sede: { da: sedeAttuale, a: sedeArrivo } }
+                        : updates,
                 });
 
                 // Allergie cambiate → avvisa cuoca/segreteria (best-effort,

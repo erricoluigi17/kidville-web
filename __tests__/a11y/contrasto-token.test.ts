@@ -202,6 +202,20 @@ describe('S16 · le fasce d\'errore usano il token forte', () => {
     // elenco non avrebbe misurato niente (`trovate.length` a zero, che il
     // controllo positivo fa fallire). Le due cose andavano fatte insieme.
     'src/components/features/admin/StaffDetailPanel.tsx',
+    // Entrato il 2026-09-04, con la stessa forma e per la stessa ragione della
+    // riga qui sopra: la scheda del BAMBINO aveva anche lei due fasce rosse su
+    // `error-soft`, entrambe con l'inchiostro DEBOLE a **3,70:1** — quella
+    // nuova dell'esito dello spostamento di sede e quella, già lì, del rifiuto
+    // dell'archiviazione. Una riga nuova non rifinanzia un debito vecchio: si
+    // sono raddrizzate insieme, perché il lock guarda TUTTE le fasce del file e
+    // aggiungerlo lasciandone una storta sarebbe stato aggiungere un rosso.
+    //
+    // ⚠️ IL DEBITO CHE RESTA, DICHIARATO E NON NASCOSTO: nel blocco delle
+    // segnalazioni la stessa scheda porta ancora `text-kidville-success` su
+    // `bg-kidville-success-soft/50` e su `/20` (le pillole «Risolto» e la nota
+    // di chiusura). Sono PREGRESSE, non hanno `role="alert"` e questo
+    // rilevatore non le vede: chi le raddrizzerà tolga anche questo capoverso.
+    'src/components/features/admin/StudentDetailPanel.tsx',
   ]
 
   it.each(CON_FASCIA)('%s: la fascia su `error-soft` porta `error-strong`', (f) => {
@@ -214,7 +228,65 @@ describe('S16 · le fasce d\'errore usano il token forte', () => {
       expect(classi).not.toContain('text-kidville-error')
     }
   })
+})
 
+// =============================================================================
+// L'ESITO DI UNO SPOSTAMENTO DI SEDE (2026-09-04).
+//
+// La fascia rossa la coglie `CON_FASCIA` qui sopra, perché ha `role="alert"`.
+// Quella VERDE no — è un `role="status"` — e senza queste righe l'unico rilievo
+// sul successo sarebbe l'occhio di chi rilegge il diff. È testo `text-xs` che
+// dice a un'operatrice se il bambino è stato spostato di plesso o no.
+//
+// ⚠️ SI MISURA IL COLORE CHE SI VEDE, non il token. La fascia è
+// `bg-kidville-success-soft/30` sopra `bg-kidville-cream`: misurare il token
+// pieno direbbe 3,49:1 — un numero vero su un colore che a schermo non c'è.
+// Appiattito sulla crema fa **2,95:1**, ed è il numero del rilievo.
+// =============================================================================
+describe('S16 · lo spostamento di sede — anche la fascia VERDE sta sopra AA', () => {
+  /** Un colore con alpha appiattito sulla superficie opaca che gli sta sotto. */
+  const su = (colore: string, sotto: string, alpha: number) => {
+    const [sopra, fondo] = [rgb(colore), rgb(sotto)]
+    const misto = (i: number) => Math.round(sopra[i] * alpha + fondo[i] * (1 - alpha))
+    return `#${[0, 1, 2].map((i) => misto(i).toString(16).padStart(2, '0')).join('').toUpperCase()}`
+  }
+
+  /** La superficie vera della fascia di successo: `success-soft` al 30% sulla crema. */
+  const FASCIA = su(T['success-soft'], T.cream, 0.3)
+
+  it('CONTROLLO POSITIVO: la sonda dell\'alpha non inventa — 0% è la crema, 100% è il token', () => {
+    expect(su(T['success-soft'], T.cream, 0)).toBe(T.cream)
+    expect(su(T['success-soft'], T.cream, 1)).toBe(T['success-soft'])
+  })
+
+  it('CONTROLLO POSITIVO: `success` su quella fascia è 2,95:1 (è il difetto), `success-strong` 7,04:1', () => {
+    expect(contrasto(T.success, FASCIA)).toBe(2.95)
+    expect(contrasto(T['success-strong'], FASCIA)).toBe(7.04)
+    expect(contrasto(T.success, FASCIA)).toBeLessThan(4.5)
+    expect(contrasto(T['success-strong'], FASCIA)).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('StudentDetailPanel: la fascia di esito su `success-soft` porta l\'inchiostro FORTE', () => {
+    const trovate = Array.from(
+      codice('src/components/features/admin/StudentDetailPanel.tsx').matchAll(
+        /<[a-zA-Z]+[^>]*\brole="status"[^>]*>/g,
+      ),
+    )
+      .map((m) => m[0].match(/className="([^"]*)"/)?.[1] ?? '')
+      .filter((c) => c.includes('bg-kidville-success-soft'))
+      .map((c) => c.split(/\s+/))
+    // Controllo POSITIVO: la fascia esiste. Se sparisce, questo test deve
+    // diventare rosso e non passare a vuoto.
+    expect(trovate.length, 'nessun role="status" su bg-kidville-success-soft').toBeGreaterThan(0)
+    for (const classi of trovate) {
+      expect(classi).toContain('text-kidville-success-strong')
+      expect(classi).not.toContain('text-kidville-success')
+    }
+  })
+})
+
+// =============================================================================
+describe('S16 · il badge «Adesione»', () => {
   it('/admin/avvisi: il badge «Adesione» passa da `info` a `info-strong`', () => {
     const src = codice('src/app/(dashboard)/admin/avvisi/page.tsx')
     expect(src).toContain('bg-kidville-info-soft')          // controllo positivo

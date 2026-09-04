@@ -152,6 +152,34 @@ export const CODICI_ERRORE = {
     RETTA_ZERO: 'erroreRettaZero',
     /** 400 — «la paga il fratello», ma il fratello indicato non è di questa domanda. */
     RETTA_FRATELLO_NON_VALIDO: 'erroreRettaFratelloNonValido',
+    /**
+     * 400 — «la paga il fratello» dall'ANAGRAFICA, e il bambino indicato non va bene.
+     *
+     * Codice distinto da `RETTA_FRATELLO_NON_VALIDO` di proposito: là il fatto è
+     * «non è fra i bambini di questa domanda», qui è «non è un iscritto della stessa
+     * sede». Riusare il codice dell'import darebbe alla segreteria una frase che
+     * parla di una domanda d'iscrizione che non ha davanti — un messaggio sbagliato
+     * con l'aria di essere a posto.
+     *
+     * Il testo NON dice quale delle quattro condizioni è caduta (non esiste, altra
+     * sede, ritirato, archiviato): la tendina la disegna l'interfaccia, e dettagliare
+     * racconterebbe l'anagrafica di un minore a chi potrebbe non avere titolo.
+     */
+    RETTA_FRATELLO_NON_DISPONIBILE: 'erroreRettaFratelloNonDisponibile',
+    /**
+     * 409 — il legame «paga il fratello» formerebbe una CATENA o un ANELLO.
+     *
+     * 🔴 Non è teorico. Misurato a Giugliano il 2026-09-04: un bambino con retta
+     * 250 € marcato a carico di un fratello che aveva 0,01 €. Entrambe le strade che
+     * generano le rette saltano chi è a carico di un altro, quindi la famiglia è
+     * stata addebitata di UN CENTESIMO per settembre 2026 — nove mesi così sono 2.250 €
+     * che nessuno avrebbe mai chiesto, e nessun errore da nessuna parte.
+     *
+     * Porta il DETTAGLIO: «il fratello è a sua volta a carico di un altro» e «questo
+     * bambino paga già per qualcuno» sono due situazioni diverse, e chi deve
+     * districarle ha bisogno di sapere quale delle due ha davanti.
+     */
+    RETTA_CICLO_FRATELLI: 'erroreRettaCicloFratelli',
     /** 400 — il fratello indicato non paga a sua volta: la catena non finisce mai. */
     RETTA_FRATELLO_SENZA_CIFRA: 'erroreRettaFratelloSenzaCifra',
     /** 400 — l'adulto scelto per le fatture non è fra quelli della domanda. */
@@ -616,6 +644,27 @@ export const CODICI_ERRORE = {
     TROPPE_SEDI: 'erroreTroppeSedi',
     CORPO_NON_VALIDO: 'erroreCorpoNonValido',
     LETTURA_FALLITA: 'erroreLetturaFallita',
+    /**
+     * 404 — il pagamento di cui si chiede l'anteprima della fattura non c'è più.
+     *
+     * ⚠️ Il TESTO non è «Pagamento non trovato», ed è deliberato: quella frase è
+     * scritta a mano in quattordici punti di `src/app/api/pagamenti/**` senza codice,
+     * e il lock `errori-con-codice` — giustamente — pretende che la frase di un
+     * codice non viaggi mai senza il suo codice. Dare a questo codice quella frase
+     * significherebbe rendere rossi quattordici file che questo lavoro non tocca.
+     * Quando qualcuno vorrà dare un codice anche a loro, li unirà; fino ad allora
+     * questa frase è sua e di nessun altro.
+     */
+    PAGAMENTO_INESISTENTE: 'errorePagamentoInesistente',
+    /**
+     * 503 — i modelli di causale della sede non si sono potuti leggere.
+     *
+     * FAIL-CLOSED, e la frase lo dice: la causale è la descrizione della riga, cioè
+     * l'unico punto in cui la fattura identifica il minore e ciò da cui dipende la
+     * detrazione del genitore. Un guasto di lettura non può riscriverla in silenzio
+     * su un documento che si corregge solo con una nota di variazione.
+     */
+    CAUSALE_CONFIG_NON_LETTA: 'erroreCausaleConfigNonLetta',
     /**
      * 404 — la candidatura chiesta per id non è apribile dal cockpit.
      *
@@ -1353,6 +1402,21 @@ export const CODICI_ERRORE = {
      */
     CREDENZIALI_STAFF_RISERVATE: 'erroreCredenzialiStaffRiservate',
     /**
+     * 403 — l'incarico che si sta modificando è riservato alla Direzione
+     * (`admin/staff:PATCH`).
+     *
+     * Dal 2026-09-04 la Segreteria sposta di SEDE un membro dello staff, ma non
+     * ne cambia ruolo, fasce d'età o classi, e non tocca affatto un account di
+     * `admin`/`coordinator`. Un codice solo per i tre dinieghi perché a schermo
+     * la frase è la stessa — «questo lo fa la Direzione» — mentre il motivo
+     * preciso serve a chi legge i log, e lì ci resta.
+     *
+     * ⚠️ È la METÀ di `CREDENZIALI_STAFF_RISERVATE`, non un suo doppione: chi
+     * potesse promuovere una collega ad `admin` otterrebbe per via indiretta ciò
+     * che quel codice le nega. Le due riserve si tengono in piedi a vicenda.
+     */
+    INCARICO_STAFF_RISERVATO: 'erroreIncaricoStaffRiservato',
+    /**
      * 403 — chi chiede il rinvio in blocco non ha nessun plesso associato.
      *
      * Non è un errore tecnico e non è un tentativo: è un account configurato a
@@ -1522,6 +1586,8 @@ export type CodiceErrore = keyof typeof CODICI_ERRORE;
  * qui si comporrà «frase tradotta + elenco» e la coda italiana sparirà.
  */
 export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErrore>([
+    // Catena e anello sono due guai diversi e si sciolgono in modi diversi.
+    'RETTA_CICLO_FRATELLI',
     'CLASSI_FUORI_SEDE',
     // I cinque della retta all'import portano tutti il NUMERO DEL BAMBINO
     // («Bambino 2: …»), che il catalogo non può conoscere. Con tre figli nella

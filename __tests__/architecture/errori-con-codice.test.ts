@@ -110,9 +110,17 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * sono debito: sono la sua estinzione. `MAX_FILE` non si muove, il file resta in elenco con
  * cinque risposte ancora da convertire (misurate, non stimate: dichiararne quattro rende
  * rosso il test qui sotto).
+ *
+ * 2026-09-04 · −2 (1436 → 1434), e il debito è stato PAGATO. Lo spostamento di sede in
+ * `admin/staff:PATCH` ha portato con sé nove controlli `{ error }` di PostgREST in più: scritti
+ * a mano sarebbero state nove risposte nuove senza codice, dentro un file già in elenco. Passano
+ * tutte da un `erroreDb(operazione, evento, error)` locale — una risposta sola, un `logErrore`
+ * solo, e l'`evento` che dice QUALE lettura o scrittura è stata respinta. Il file scende da 7 a
+ * 5: restano i due `Internal Server Error` dei `catch`, il 404 «Utente non trovato» e il 403 del
+ * self-lockout. `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero.
  */
 const MAX_FILE = 278;
-const MAX_OCCORRENZE = 1436;
+const MAX_OCCORRENZE = 1434;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

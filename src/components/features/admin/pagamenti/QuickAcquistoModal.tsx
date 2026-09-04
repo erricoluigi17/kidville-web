@@ -223,7 +223,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                             {error && <p className="font-maven text-xs text-kidville-error-strong mb-3">{error}</p>}
                             {giaPagato && (
                                 <div className="flex justify-center my-3">
-                                    <FatturaButton pagamentoId={creato.id} userId={userId} fatturaStato={creato.fattura_stato} descrizione={descrizione} />
+                                    <FatturaButton pagamentoId={creato.id} userId={userId} fatturaStato={creato.fattura_stato} />
                                 </div>
                             )}
                             <button type="button" onClick={onDone} className={cx(BTN_PRIMARY, 'mt-2 w-full')}>
@@ -332,7 +332,7 @@ export function QuickAcquistoModal({ alunno, categoria, userId, scuolaId, onClos
                     userId={userId}
                     scuolaId={scuolaId}
                     categoriaId={categoria.id}
-                    descrizione={descrizione}
+                   
                     importoTotale={importo}
                     obbligatorio={obbligatorio}
                     onClose={() => setRateizza(false)}

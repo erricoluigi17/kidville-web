@@ -491,7 +491,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     <button onClick={() => setSelected(p)}
                                                         className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
                                                 ) : p ? (
-                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
+                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} />
                                                 ) : null}
                                                 {p && (
                                                     <button onClick={() => setDrawer(p)} title={t('dashDettagli')} className={ICON_BTN}><Eye size={15} /></button>
@@ -602,7 +602,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                     <button onClick={() => setSelected(p)}
                                                         className={BTN_PRIMARY_SM}>{t('dashIncassa')}</button>
                                                 ) : (
-                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} descrizione={p.descrizione} />
+                                                    <FatturaButton pagamentoId={p.id} userId={userId} fatturaStato={p.fattura_stato} />
                                                 )}
                                                 {p.tipo === 'singolo' && p.stato !== 'pagato' && (
                                                     <button onClick={() => { const a = alunnoById.get(p.alunno_id); if (a) setRateizza({ alunno: a, pagamento: p }); }} title={t('dashDividiAcconti')} className={ICON_BTN}><Layers size={15} /></button>

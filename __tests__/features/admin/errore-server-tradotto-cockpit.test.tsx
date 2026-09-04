@@ -119,6 +119,30 @@ describe('cockpit — il rifiuto del server si legge nella lingua dell’interfa
   });
 });
 
+/**
+ * `fetch` per i due casi di `FatturaButton`: l'ANTEPRIMA riesce, la POST fallisce.
+ *
+ * ⚠️ Dal 2026-09-04 il modale «Emetti» non emette alla cieca: chiede prima
+ * `/api/pagamenti/fattura/anteprima` — cioè lo stesso codice che compone la causale
+ * dell'emissione — e finché non ha una risposta il pulsante resta disabilitato. Un
+ * `fetch` stubbato che fallisce per TUTTO non arriverebbe mai alla POST, e questi due
+ * casi misurerebbero il blocco invece della traduzione del rifiuto.
+ */
+function fetchConAnteprima(rispostaPost: { ok: boolean; status: number; corpo: unknown }) {
+  return vi.fn(async (url: string | URL | Request) => {
+    if (String(url).includes('/anteprima')) {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { causale: 'Retta — anteprima', origine: 'categoria', lunghezza: 18, limite: 200, eccede: false },
+        }),
+      };
+    }
+    return { ok: rispostaPost.ok, status: rispostaPost.status, json: async () => rispostaPost.corpo };
+  });
+}
+
 describe('cockpit — un rifiuto senza `error` non mostra la stringa «undefined»', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -132,14 +156,13 @@ describe('cockpit — un rifiuto senza `error` non mostra la stringa «undefined
   it('FatturaButton: il 500 con corpo vuoto porta la frase di ripiego, non «undefined»', async () => {
     const avvisi: string[] = [];
     vi.stubGlobal('alert', vi.fn((m: string) => { avvisi.push(m); }));
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({ ok: false, status: 500, json: async () => ({}) })),
-    );
+    vi.stubGlobal('fetch', fetchConAnteprima({ ok: false, status: 500, corpo: {} }));
 
     render(<FatturaButton pagamentoId="p1" userId="u1" />);
     fireEvent.click(screen.getByRole('button', { name: new RegExp(itContabilita.fatBtn_invia) }));
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(itContabilita.fatBtn_emetti) }));
+    const emetti = await screen.findByRole('button', { name: new RegExp(itContabilita.fatBtn_emetti) });
+    await waitFor(() => expect((emetti as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(emetti);
 
     await waitFor(() => expect(avvisi).toHaveLength(1));
     // Il difetto era letterale: `alert(j.error)` con `error` assente stampava
@@ -157,16 +180,14 @@ describe('cockpit — un rifiuto senza `error` non mostra la stringa «undefined
     vi.stubGlobal('alert', vi.fn((m: string) => { avvisi.push(m); }));
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 403,
-        json: async () => ({ error: PROSA_DEL_SERVER, codice: 'SEDE_NON_ACCESSIBILE' }),
-      })),
+      fetchConAnteprima({ ok: false, status: 403, corpo: { error: PROSA_DEL_SERVER, codice: 'SEDE_NON_ACCESSIBILE' } }),
     );
 
     render(<FatturaButton pagamentoId="p1" userId="u1" />);
     fireEvent.click(screen.getByRole('button', { name: new RegExp(itContabilita.fatBtn_invia) }));
-    fireEvent.click(screen.getByRole('button', { name: new RegExp(itContabilita.fatBtn_emetti) }));
+    const emetti = await screen.findByRole('button', { name: new RegExp(itContabilita.fatBtn_emetti) });
+    await waitFor(() => expect((emetti as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(emetti);
 
     await waitFor(() => expect(avvisi).toHaveLength(1));
     expect(avvisi[0]).toBe(en.erroreSedeNonAccessibile);

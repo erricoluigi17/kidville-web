@@ -336,5 +336,10 @@
   "passaA": "Passa a {ruolo}",
   "oraUsiComeAria": "Ora stai usando Kidville come {ruolo}",
   "profiloAttivo": "Profilo attivo",
-  "erroreCambioProfilo": "Non è stato possibile cambiare profilo. Riprova fra qualche istante: sei rimasto dove eri."
+  "erroreCambioProfilo": "Non è stato possibile cambiare profilo. Riprova fra qualche istante: sei rimasto dove eri.",
+  "erroreCausaleConfigNonLetta": "Non è stato possibile leggere la causale configurata per questa sede: la fattura non è stata emessa, e nessun numero è stato consumato",
+  "erroreIncaricoStaffRiservato": "Ruolo, fasce d’età e classi si cambiano dalla Direzione, come gli account di Direzione: la Segreteria può cambiare la sede",
+  "errorePagamentoInesistente": "Il pagamento non esiste più: la fattura non si può emettere",
+  "erroreRettaCicloFratelli": "Il collegamento fra fratelli formerebbe un anello, e alla fine non pagherebbe nessuno",
+  "erroreRettaFratelloNonDisponibile": "Il fratello indicato non è disponibile: dev’essere un bambino iscritto nella stessa sede"
 }

@@ -28,21 +28,39 @@ interface Tutore { adult_id: string; nome: string; cognome: string; email: strin
 
 interface ParentOption { id: string; nome: string; relazione: string }
 
+/** Un fratello, come lo manda `GET /api/admin/students/[id]` (genitore condiviso). */
+interface Fratello {
+    id: string;
+    nome: string;
+    cognome: string;
+    stato?: string;
+    classe_sezione?: string | null;
+    /** Valorizzato = la retta di QUESTO fratello la paga già qualcun altro. */
+    retta_a_carico_di?: string | null;
+    importo_retta_mensile?: number | null;
+}
+
 interface Props {
     alunnoId: string;
     form: Record<string, unknown>;
     updateForm: (field: string, value: unknown) => void;
     // opzioni intestatario derivate dagli adulti collegati (anagrafica parents)
     parents?: { relation_type: string; parents?: { id: string; first_name?: string; last_name?: string } }[];
+    /**
+     * I fratelli già caricati dalla scheda (`StudentDetailPanel`), non richiesti di
+     * nuovo: la GET del dettaglio li calcola per genitore condiviso, con dedup.
+     */
+    siblings?: Fratello[];
 }
 
 const inputCls =
     'w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
 const labelCls = 'font-maven text-xs text-kidville-muted mb-1 block';
 
-export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: Props) {
+export function StudentEconomicSection({ alunnoId, form, updateForm, parents, siblings }: Props) {
     const t = useTranslations('adminStudents');
     const importo = Number(form.importo_retta_mensile ?? 0);
+    const aCaricoDi = (form.retta_a_carico_di as string | null) ?? null;
     const separati = !!form.genitori_separati;
     const split = (form.retta_split_config as SplitConfig | null) ?? null;
     const intestatario = (form.intestatario_fatture as Intestatario | null) ?? null;
@@ -150,6 +168,38 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
     // avvisare che una quota non è fatturabile senza CF del genitore intestatario.
     const cfByAdult = new Map(tutori.map((tt) => [tt.adult_id, tt.has_fiscal_code !== false]));
 
+    /**
+     * I fratelli che possono PAGARE: iscritti, e non già a carico di un terzo.
+     *
+     * Chi è a sua volta a carico di qualcuno non genera rette: metterglielo addosso
+     * formerebbe una catena in fondo alla quale non paga nessuno. Il server la
+     * rifiuta (`RETTA_CICLO_FRATELLI`), ma un'opzione che verrà rifiutata non si
+     * offre.
+     */
+    const candidatiPaganti = (siblings ?? []).filter(
+        (f) => f.id !== alunnoId && (f.stato ?? 'iscritto') === 'iscritto' && f.retta_a_carico_di == null,
+    );
+
+    /** I fratelli la cui retta la paga QUESTO bambino. Sola lettura. */
+    const pagaPer = (siblings ?? []).filter((f) => f.retta_a_carico_di === alunnoId);
+
+    /**
+     * I due modi in cui la retta di un bambino può essere sbagliata SENZA che nulla
+     * dia errore, entrambi misurati in produzione il 2026-09-04:
+     *
+     *  · un importo SIMBOLICO (fra 0 e 1 €) — cinque bambini veri, il ripiego che le
+     *    famiglie hanno inventato per dire «non paga», perché lo zero sulla colonna
+     *    significa il contrario («usa il default di sede», cioè 150 €);
+     *  · il legame valorizzato CON un importo ancora addosso — tre bambini: le due
+     *    facce dello stesso fatto che divergono, ed è così che è nato l'anello
+     *    rovesciato da 250 €/mese.
+     */
+    const avvisoRetta = aCaricoDi && importo !== 0
+        ? t('econRettaIncoerente')
+        : !aCaricoDi && importo > 0 && importo < 1
+            ? t('econRettaSimbolica')
+            : '';
+
     const setIntestatario = (val: Intestatario | null) => updateForm('intestatario_fatture', val);
 
     return (
@@ -161,18 +211,74 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents }: 
 
             {/* Retta mensile */}
             <div className="mb-4">
-                <label className={labelCls}>{t('econImportoRetta')}</label>
+                <label className={labelCls} htmlFor={`retta-${alunnoId}`}>{t('econImportoRetta')}</label>
                 <input
+                    id={`retta-${alunnoId}`}
                     type="number"
                     min={0}
                     step="0.01"
                     value={importo || ''}
+                    disabled={!!aCaricoDi}
                     onChange={(e) => updateForm('importo_retta_mensile', e.target.value === '' ? 0 : Number(e.target.value))}
                     placeholder={t('econImportoPlaceholder')}
                     className={inputCls}
                 />
                 <p className="font-maven text-[11px] text-kidville-muted mt-1">
                     {t('econScontoFratelliPre')}<strong>{t('econScontoFratelliBold')}</strong>{t('econScontoFratelliPost')}
+                </p>
+
+                {/* ─── «OPPURE: LA PAGA …» ────────────────────────────────────────
+                    `alunni.retta_a_carico_di`: entrambe le strade che generano le
+                    rette saltano chi ce l'ha valorizzata. Fino al 2026-09-04 si
+                    poteva scrivere solo dall'import: 44 alunni in produzione ce
+                    l'avevano, e nessuna schermata lo diceva.
+
+                    ⚠️ Solo i fratelli ISCRITTI, e solo quelli che non sono già a
+                    carico di qualcun altro: una catena finisce con nessuno che paga,
+                    e il server la rifiuta comunque (`RETTA_CICLO_FRATELLI`). Meglio
+                    non offrirla. */}
+                {candidatiPaganti.length > 0 && (
+                    <div className="mt-3">
+                        <label className={labelCls} htmlFor={`acarico-${alunnoId}`}>{t('econRettaACarico')}</label>
+                        <select
+                            id={`acarico-${alunnoId}`}
+                            value={aCaricoDi ?? ''}
+                            onChange={(e) => {
+                                const scelto = e.target.value || null;
+                                updateForm('retta_a_carico_di', scelto);
+                                // Le due facce dello stesso fatto, mosse insieme. Togliendo
+                                // il legame NON si tocca l'importo: uno zero su questa
+                                // colonna significa «usa il default di sede», e sceglierlo
+                                // al posto dell'operatore vorrebbe dire decidere una retta.
+                                if (scelto) updateForm('importo_retta_mensile', 0);
+                            }}
+                            className={inputCls}
+                        >
+                            <option value="">{t('econRettaPagaLui')}</option>
+                            {candidatiPaganti.map((f) => (
+                                <option key={f.id} value={f.id}>
+                                    {`${f.nome} ${f.cognome}`.trim()}{f.classe_sezione ? ` — ${f.classe_sezione}` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        <p className="font-maven text-[11px] text-kidville-sub mt-1">{t('econRettaACaricoHint')}</p>
+                    </div>
+                )}
+
+                {/* Il lato di CHI PAGA, in sola lettura: la stessa relazione modificabile
+                    da due schermate è una doppia strada per lo stesso dato. Serve solo a
+                    far vedere un legame ROVESCIATO guardando UNA delle due schede — è
+                    ciò che è mancato al caso di Giugliano da 250 €/mese. */}
+                {pagaPer.length > 0 && (
+                    <p className="font-maven text-[11px] text-kidville-green mt-2 font-semibold">
+                        {t('econRettaPagaPer')} {pagaPer.map((f) => `${f.nome} ${f.cognome}`.trim()).join(', ')}
+                    </p>
+                )}
+
+                {/* ⚠️ I due avvisi. Live region unica, montata sempre: un `role="alert"`
+                    inserito nel DOM col testo già dentro spesso resta muto. */}
+                <p role="alert" className="font-maven text-[11px] text-kidville-error mt-2">
+                    {avvisoRetta}
                 </p>
             </div>
 

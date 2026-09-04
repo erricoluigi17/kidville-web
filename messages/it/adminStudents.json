@@ -41,7 +41,6 @@
   "csvRuolo": "Ruolo",
   "csvSede": "Sede",
   "csvTelefono": "Telefono",
-
   "thCognome": "Cognome",
   "thNome": "Nome",
   "thNascita": "Nascita",
@@ -69,20 +68,17 @@
   "ordineDecrescente": "Ordine decrescente, tocca per invertire",
   "allergie": "Allergie",
   "allergieNotePresenti": "Allergie/note mediche presenti",
-
   "cardApriScheda": "Apri scheda di {nome}",
   "cardClassi": "{n, plural, one {# classe} other {# classi}}",
   "selezionaRiga": "Seleziona {nome}",
   "selezionaTuttiAlunni": "Seleziona tutti gli alunni visibili",
   "selezionaTuttiGenitori": "Seleziona tutti i genitori visibili",
-
   "bulkGruppoMensa": "Gruppo mensa…",
   "bulkAssegnaMensa": "Assegna mensa",
   "bulkSelezionati": "selezionati",
   "bulkSelezionaClasse": "Seleziona classe…",
   "bulkAssegna": "Assegna",
   "bulkAnnulla": "Annulla",
-
   "secTitolo": "Sezioni Scolastiche",
   "secConfigurate": "{n, plural, one {# sezione configurata} other {# sezioni configurate}}",
   "secNuova": "Nuova Sezione",
@@ -99,7 +95,6 @@
   "secApri": "Apri la sezione",
   "secVuoto": "Nessuna sezione configurata",
   "secVuotoHint": "Clicca «Nuova Sezione» per iniziare",
-
   "sezBack": "Tutte le sezioni",
   "sezNonDisp": "Sezione non disponibile",
   "sezNonDispHint": "La sezione non esiste o non appartiene ai tuoi plessi.",
@@ -125,14 +120,11 @@
   "sezInsegnantiErrore": "Non è stato possibile caricare gli insegnanti.",
   "sezAlunniErrore": "Non è stato possibile caricare gli alunni di questa sezione.",
   "sezRiprova": "Riprova",
-
   "multiCaricamento": "Caricamento sezioni…",
   "multiTuttiLivelli": "Tutti i livelli",
   "multiLivelloClasse": "Livello (classe)",
   "multiNessunaDisp": "Nessuna sezione disponibile.",
-
   "allergSelectLabel": "Allergeni (per match automatico col menu mensa)",
-
   "linkedNatoIl": "Nato/a il",
   "linkedLuogoNascita": "Luogo di Nascita",
   "linkedCellulare": "Cellulare",
@@ -142,13 +134,10 @@
   "linkedNumeroDoc": "Numero:",
   "linkedNonSpecificato": "Non specificato",
   "linkedVisualizzaAllegato": "Visualizza Allegato",
-
   "newTitolo": "Gestione Anagrafica Famiglia",
   "newSottotitolo": "Inserimento nuova famiglia: alunni, genitori e delegati.",
-
   "staffPageTitolo": "Gestione Staff",
   "staffPageSottotitolo": "Ruoli, sede e classi del personale. Azione riservata alla Direzione.",
-
   "scadTabPersonale": "Personale",
   "scadTabScadenze": "Scadenze documenti",
   "scadIntro": "I documenti d’identità del personale, ordinati per urgenza. Lo stato è calcolato dalla data di scadenza: non esiste una casella da spuntare che possa restare indietro.",
@@ -196,18 +185,15 @@
   "scadSedeNonDisponibile": "Sede non disponibile",
   "scadSenzaNome": "Senza nome",
   "scadElencoTroncato": "L’elenco del personale è stato troncato: alcune persone non compaiono qui. Segnalalo all’assistenza.",
-
   "compEyebrow": "Didattica",
   "compTitolo": "Certificato delle Competenze",
   "compSottotitolo": "Documento di fine classe quinta primaria (D.M. 14/2024). Flusso: le bozze derivano dallo scrutinio finale → si assegnano i livelli A/B/C/D per competenza → la Direzione genera e firma il certificato → il genitore lo trova in Pagelle. Non è la pagella: usa una scala distinta dai giudizi sintetici.",
-
   "detailPageBack": "Torna all’anagrafica",
   "detailPageSalvaOk": "Alunno aggiornato con successo",
   "detailPageArchiviato": "{nome} è stato spostato fra gli alunni non più iscritti",
   "detailPageAnagAgg": "Anagrafica aggiornata con successo",
   "detailPageNonDisp": "Anagrafica non disponibile",
   "detailPageNonDispHint": "L’alunno non esiste o non appartiene ai tuoi plessi.",
-
   "datiPersonali": "Dati Personali",
   "detailNascitaCittadinanza": "Nascita e Cittadinanza",
   "sezioneResidenza": "Residenza",
@@ -262,7 +248,6 @@
   "detailNessuna": "— Nessuna —",
   "detailNessunGenitore": "Nessun genitore collegato",
   "detailNessunaSezione": "Nessuna sezione",
-
   "detailSchedaAlunno": "Scheda Alunno",
   "detailDatiAnagrafici": "Dati Anagrafici",
   "detailClasseStato": "Classe e Stato",
@@ -316,7 +301,6 @@
   "detailRiattivaErrore": "Non è stato possibile riportare l’alunno fra gli iscritti.",
   "detailPageRiattivato": "{nome} è di nuovo fra gli iscritti",
   "detailPageRiattivatoSenzaClasse": "{nome} è di nuovo fra gli iscritti: assegnagli una classe dalla sua scheda",
-
   "econDatiEconomici": "Dati Economici",
   "econImportoRetta": "Importo retta mensile (€)",
   "econImportoPlaceholder": "Es: 150.00",
@@ -345,7 +329,6 @@
   "econPhEmail": "Email",
   "econOpposizioneAde": "Opposizione alla comunicazione spese AdE",
   "econOpposizioneHint": "Se attiva, le spese di questo alunno restano fuori dall’export della comunicazione all’Agenzia delle Entrate (precompilata dei genitori).",
-
   "staffDErrRete": "Errore di rete: impossibile caricare la scheda staff.",
   "staffDAzioneRiservata": "Azione riservata alla Direzione, oppure non puoi modificare il tuo stesso ruolo.",
   "staffDConfermaRigenera": "Rigenerare le credenziali di {nome}? La password precedente non sarà più valida.",
@@ -359,7 +342,6 @@
   "staffDNessunaClassePerSede": "Nessuna classe per questa sede.",
   "staffDModifica": "Modifica",
   "staffDRiservate": "Modifiche riservate alla Direzione",
-
   "staffTabIncarico": "Incarico",
   "staffTabAnagrafica": "Anagrafica",
   "staffTabDocumento": "Documento",
@@ -424,7 +406,6 @@
   "parentNessunAltroFamiliare": "Nessun altro familiare configurato.",
   "parentRigenerazione": "Rigenerazione…",
   "parentConfermaRigenera": "Rigenerare le credenziali di accesso? La password precedente non sarà più valida.",
-
   "compNessunaQuinta": "Nessuna classe quinta",
   "compNessunaQuintaHint": "Il Certificato delle Competenze (D.M. 14/2024) si rilascia a fine classe quinta di primaria. Nei tuoi plessi non risultano classi quinte: quando ce ne sarà una, comparirà qui per creare le bozze dallo scrutinio finale, assegnare i livelli A/B/C/D e firmare.",
   "compSelezionaClasse": "Seleziona classe quinta…",
@@ -448,7 +429,6 @@
   "compProtNonRiuscita": "Protocollazione non riuscita",
   "compProtOk": "Certificato protocollato in uscita: n. {numero}.",
   "compPdfNonDisp": "PDF non disponibile",
-
   "familyTabAlunno": "Alunno",
   "familyNuovoComponente": "Nuovo Componente",
   "familyCorreggiAlunno": "Correggi i dati dell’alunno evidenziati.",
@@ -473,7 +453,6 @@
   "familySalvaAnagrafica": "Salva anagrafica",
   "familyAggiungiComponente": "Aggiungi Componente",
   "familyNuovoAdulto": "Nuovo Adulto",
-
   "valNomeMin": "Il nome deve avere almeno 2 caratteri",
   "valCognomeMin": "Il cognome deve avere almeno 2 caratteri",
   "valDataNonValida": "Data non valida",
@@ -483,7 +462,6 @@
   "valMin2": "Almeno 2 caratteri",
   "valCf16": "CF deve essere 16 caratteri",
   "valEmailNonValida": "Email non valida",
-
   "sFormCompilazioneAlunno": "Compilazione Alunno",
   "sFormSedeSezione": "Sede e Sezione",
   "sFormNessunaSede": "Nessuna sede disponibile",
@@ -500,7 +478,6 @@
   "sFormAmministrazione": "Amministrazione & Fatturazione",
   "sFormDettagliIntestatario": "Dettagli Intestatario Fattura Alternativo",
   "sFormNotaIntestatario": "Nota: Salvando l’anagrafica, questo soggetto verrà registrato come intestatario della fattura per l’alunno.",
-
   "aFormCompilazioneAdulto": "Compilazione Adulto",
   "aFormRuoloFamiliare": "Ruolo Familiare / Operativo",
   "aFormRuoloDelegato": "Delegato/a",
@@ -681,5 +658,48 @@
   "spzViaMessaggi": "{n, plural, one {# messaggio di chat, testo compreso} other {# messaggi di chat, testo compreso}}",
   "spzViaTitolo": "Se ne vanno, e non tornano indietro",
   "spzViaVideo": "{n, plural, one {# video solo suo} other {# video solo suoi}}",
-  "valBelfioreNonValido": "Codice catastale non valido: scegli il comune dalla tendina."
+  "valBelfioreNonValido": "Codice catastale non valido: scegli il comune dalla tendina.",
+  "econRettaACarico": "Oppure: la paga",
+  "econRettaACaricoHint": "La retta di questo bambino la paga il fratello indicato: nelle generazioni future non gli verrà più addebitata. Le rette già generate restano come sono.",
+  "econRettaIncoerente": "La retta è a carico di un fratello, ma qui c’è ancora un importo: salvando, l’importo viene azzerato.",
+  "econRettaPagaLui": "— paga la propria retta —",
+  "econRettaPagaPer": "Paghi anche la retta di:",
+  "econRettaSimbolica": "Importo simbolico: se questo bambino non paga perché lo fa un fratello, indicalo qui sotto invece di scrivere una cifra finta.",
+  "parentSedeFiglio": "Sede",
+  "parentSedeFiglioSconosciuta": "Sede non risolta",
+  "parentSediFigliNota": "La sede è del bambino, non del genitore: un genitore può avere figli in plessi diversi. Per spostare un bambino di sede apri la sua scheda.",
+  "sezRinomina": "Rinomina",
+  "sezRinominaAltraSede": "Questa classe è di un altro plesso: selezionalo nel menù delle sedi per rinominarla.",
+  "sezRinominaAvviso": "Il nome della classe è scritto anche nel registro orario, nei destinatari di avvisi, news, galleria e moduli, e nel menu della mensa: non è solo un’etichetta.",
+  "sezRinominaConferma": "Salva il nuovo nome",
+  "sezRinominaDuplicato": "In questa sede c’è già una classe che si chiama così: scegli un altro nome.",
+  "sezRinominaErrore": "Rinomina non riuscita. Riprova.",
+  "sezRinominaInCorso": "Salvataggio…",
+  "sezRinominaOggi": "Il cambio viene propagato automaticamente a tutti, nella stessa sede: nessun archivio resta col nome vecchio. Le righe la cui chiave col nome nuovo fosse già occupata vengono saltate e segnalate nei log.",
+  "sezRinominaVuoto": "Il nome non può essere vuoto.",
+  "staffDSedeNessunaDestinazione": "Il tuo ruolo non consente di spostare di sede il personale: chiedi alla Direzione.",
+  "staffDSedeUnicaDestinazione": "Il tuo profilo lavora su un plesso solo, ed è quello in cui questa persona già si trova: da qui non c’è nessun’altra sede in cui spostarla. Il trasferimento fra plessi lo fa la Direzione.",
+  "staffDSpostaSede": "Sposta di sede",
+  "trasferimentoArchiviato": "Questo bambino è fra i «non più iscritti»: riportalo prima fra gli iscritti, poi spostalo di sede.",
+  "trasferimentoCaricamento": "Sto leggendo le sedi…",
+  "trasferimentoComando": "Sposta di sede",
+  "trasferimentoConferma": "Conferma lo spostamento",
+  "trasferimentoConfermaTitolo": "Cosa succede spostandolo in {destinazione}",
+  "trasferimentoErrore": "Non è stato possibile spostare il bambino.",
+  "trasferimentoFatto": "Spostato in {destinazione}. Ora assegna la classe e il gruppo mensa nel plesso nuovo.",
+  "trasferimentoGuasto": "Non siamo riusciti a leggere l’elenco delle sedi. Non vuol dire che non ce ne siano: riprova fra poco.",
+  "trasferimentoInCorso": "Spostamento in corso…",
+  "trasferimentoIntro": "Sposta il bambino in un altro plesso. Si sposta la sola anagrafica: quello che è già registrato resta dov’è.",
+  "trasferimentoNessunaSede": "Il tuo ruolo non consente di spostare un bambino di sede: chiedi alla Direzione.",
+  "trasferimentoPerdeClasse": "La classe/sezione viene azzerata: va riassegnata a mano nel plesso nuovo.",
+  "trasferimentoPerdeMensa": "Il gruppo mensa viene azzerato: i turni sono per sede e vanno riassegnati a mano.",
+  "trasferimentoRiprova": "Riprova",
+  "trasferimentoScegli": "Sposta in",
+  "trasferimentoScegliVuoto": "— Scegli il plesso —",
+  "trasferimentoSedeAttuale": "Sede attuale",
+  "trasferimentoSedeNonRisolta": "Sede non risolta",
+  "trasferimentoSenzaSede": "Nessuna sede in archivio",
+  "trasferimentoStoricoResta": "Fatture, presenze e mensa già registrate restano sulla sede di partenza: la numerazione fiscale è per sede.",
+  "trasferimentoTitolo": "Sposta di sede",
+  "trasferimentoUnicaSede": "Il tuo profilo lavora su un plesso solo, ed è quello in cui il bambino già si trova: da qui non c’è nessun’altra sede in cui spostarlo. Il trasferimento fra plessi lo fa la Direzione."
 }

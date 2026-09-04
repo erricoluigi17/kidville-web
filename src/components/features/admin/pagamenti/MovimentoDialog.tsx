@@ -241,7 +241,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                 className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
                 <Download size={13} /> {t('movdlgRicevuta')}
               </a>
-              <FatturaButton pagamentoId={movimento.pagamento_id} userId={userId} descrizione={movimento.causale ?? undefined} />
+              <FatturaButton pagamentoId={movimento.pagamento_id} userId={userId} />
             </div>
           ) : (
             <p className="flex items-center gap-1.5 rounded-card bg-kidville-cream/60 px-3 py-2 font-maven text-xs text-kidville-sub">

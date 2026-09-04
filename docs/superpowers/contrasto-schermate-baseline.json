@@ -1,0 +1,25 @@
+{
+  "_leggimi": [
+    "Fallimenti di contrasto NOTI, per rotta e per modalità. Li misura",
+    "`e2e/contrasto-schermate.spec.ts`, che gira SOLO IN CI: in locale",
+    "`.env.local` punta al database di PRODUZIONE e `npm run e2e` è in `deny`.",
+    "",
+    "REGOLA D'ORO: questi numeri possono solo SCENDERE. Il confronto è ESATTO,",
+    "non un tetto: se un numero scende e nessuno lo aggiorna, il test è rosso.",
+    "È voluto. Il credito non speso è lo spazio in cui il difetto rientra",
+    "restando verde, ed è già successo in questo repo (l'allowlist di `muted`",
+    "aveva 73 occorrenze di slack e 5 voci morte).",
+    "",
+    "COME SI RIEMPIE: si apre una PR con questo file a `rotte: []`. Il crawler",
+    "fallisce su ogni rotta STAMPANDO la voce da incollare, più il dettaglio dei",
+    "primi 20 fallimenti. Si incolla, e il secondo giro è verde.",
+    "Fallisce invece di osservare in silenzio: una modalità che non può fallire",
+    "è decorazione, e resterebbe accesa per sempre.",
+    "",
+    "`nodiMinimi` è un PAVIMENTO, non una corrispondenza: quanti nodi di testo",
+    "la pagina rende dipende legittimamente dai dati del seme. Serve a",
+    "distinguere «pagina pulita» da «pagina vuota»."
+  ],
+  "aggiornato": "2026-09-04",
+  "rotte": []
+}

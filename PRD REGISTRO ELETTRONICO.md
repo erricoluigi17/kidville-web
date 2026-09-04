@@ -380,6 +380,105 @@ secondo · `build` verde · APK Android compilato, installato e verificato sull'
 
 ---
 
+## 🔑 Changelog — Tredici password in un giorno alla stessa famiglia, e nessuna era per l'indirizzo del suo account — 2026-09-04 (branch `fix/accessi-genitori`)
+
+**La richiesta**, due lamentele che sembravano una sola: ci sono famiglie che non entrano
+nonostante le credenziali siano state rigenerate più volte; e quando un genitore reimposta la
+password, il sistema ne rifiuta alcune che pure rispettano tutti i requisiti dichiarati.
+
+**Erano due guasti distinti, e nessuno dei due riguardava la password.**
+
+### 1. L'indirizzo dell'anagrafica non era quello dell'account, e nessuno li confrontava
+
+Misurato in produzione il 2026-09-04: **4 anagrafiche genitore** hanno `parents.emails[1]` diverso
+da `auth.users.email`. Tutte e quattro con `last_sign_in_at` mai valorizzato — *nessuna di quelle
+famiglie è mai entrata* — e una di loro ha ricevuto **13 rigenerazioni di credenziali in un solo
+giorno**, tutte a vuoto.
+
+Il meccanismo, per intero, perché sembra un problema di password e non lo è:
+
+1. la rotta prende l'indirizzo da `parents.emails`, cioè quello dell'ANAGRAFICA, e lì manda
+   l'email. **L'email quindi arriva davvero**: è il motivo per cui le famiglie insistono;
+2. dentro, dice «Email di accesso: *quell'indirizzo*»;
+3. la password però viene scritta sull'account risolto da `parents.auth_user_id`, che vive su un
+   indirizzo diverso;
+4. la famiglia digita quello che ha letto, GoTrue non lo conosce, «credenziali non valide»;
+5. si rigenera. Cambia la password, non l'indirizzo. **Nessun numero di rigenerazioni potrà mai
+   ripararlo.**
+
+La causa è a `src/lib/auth/parent-identity.ts`: `if (!authUserId) { …risolvi per email… }`. Quando
+il ponte esiste già — cioè sempre, dopo la prima volta — quel blocco viene saltato per intero. In
+tutto il repo non esisteva **un solo `updateUserById({ email })`**: `PATCH /api/admin/parents`
+correggeva l'anagrafica e non propagava niente a nessuno. È lì che la divergenza nasceva.
+
+⚠️ **Due dei quattro casi dicono da soli chi ha ragione**: i domini degli *account* erano
+`gmali.com` e `gmailm.com` — refusi di domini che non esistono — contro anagrafiche corrette.
+L'anagrafica è ciò che qualcuno mantiene; l'account è dove il refuso si era fossilizzato il giorno
+in cui è nato, e dove nessuno poteva più vederlo. **Decisione del titolare: vince l'anagrafica, e
+l'account la segue da solo.** Il rovescio va detto: se il refuso sta nell'anagrafica, l'accesso si
+sposta su un indirizzo sbagliato — nessun programma può sapere quale dei due la famiglia usi. Si è
+tolto il silenzio, non il rischio: ogni spostamento lascia una riga di log e viene **dichiarato**
+a chi ha premuto il pulsante.
+
+Nuovo `src/lib/auth/indirizzo-accesso.ts`, chiamato da `ensureParentIdentity` e da
+`PATCH /api/admin/parents`. E `POST /api/admin/regenerate-credentials` ora **si ferma con 409** —
+prima di generare la password — quando l'indirizzo resta divergente: una password non scritta è un
+fastidio, una password scritta e mandata all'indirizzo sbagliato è una famiglia chiusa fuori che
+prima almeno poteva ancora usare la vecchia.
+
+### 2. Ogni rigenerazione uccideva la precedente, e nessuno lo diceva
+
+Sempre dai log del 04/09: **9 persone** hanno ricevuto fra 2 e 13 emissioni, e per 6 di loro il
+login riesce entro pochi minuti dall'**ultima**. Tutte le precedenti erano corse a vuoto — una
+corsa fra due persone che non si vedono: la famiglia telefona, la Segreteria preme «Rigenera», la
+famiglia intanto sta digitando la password dell'email che ha già aperto, e quella in
+quell'istante ha appena smesso di funzionare. In casella, tredici messaggi con lo stesso oggetto e
+nessun modo di sapere quale valga.
+
+Ora email e PDF portano **quando** la password è stata generata e, quando è una rigenerazione,
+che **annulla le precedenti**. La distinzione la fa `OccasioneCredenziali`, che era già un'unione
+chiusa: alla prima emissione non c'è nessuna password precedente, e dirlo farebbe dubitare di
+qualcosa che non è mai esistito.
+
+### 3. La password rifiutata: non era una nostra regola, era HaveIBeenPwned
+
+Nel codice non esiste alcun dizionario. GoTrue rispondeva **`422 weak_password`** — protezione
+«leaked password» attiva sul progetto — a **20 utenti distinti in un giorno** (30 occorrenze), 29
+il giorno prima, 20 quello prima ancora. Sono password da dieci caratteri, con maiuscola e cifra,
+respinte perché compaiono in elenchi di credenziali rubate ad altri servizi.
+
+`POST /api/account/password` collassava ogni 4xx del provider in un unico `PASSWORD_RIFIUTATA`, la
+cui frase consigliava una password «più lunga e con almeno una lettera e una cifra»: **requisiti
+già soddisfatti, con i tre criteri della schermata verdi sotto gli occhi**. Un rifiuto che indica
+il rimedio sbagliato manda a sbattere due volte. `POST /api/parent/onboarding` era peggio: non
+dichiarava **nessun** `codice`, quindi la pagina — che passa da `soloCatalogoDaCorpo` — mostrava
+il generico «Operazione non riuscita. Riprova.».
+
+Nuovo codice `PASSWORD_TROPPO_COMUNE` con la sua frase in entrambe le lingue, classificazione in
+un modulo solo (`rifiuto-provider-password.ts`, condiviso dalle due rotte), e `error_code` del
+provider nel log — enumerato, già in chiaro per dichiarazione in `redact.ts` — così i rifiuti di
+una giornata smettono di essere una massa indistinta.
+
+**Decisione del titolare: la protezione HaveIBeenPwned va spenta** dal pannello Supabase
+(*Authentication → Password settings → Prevent use of leaked passwords*). Si verifica dagli
+advisor: fino al 04/09 `auth_leaked_password_protection` **non** compariva, ed era proprio quello
+il segno che la protezione era accesa; a spegnimento avvenuto deve ricomparire. Il messaggio
+corretto resta comunque, perché gli altri 4xx passano dallo stesso ramo e perché una protezione
+riaccesa un giorno riporterebbe il buio identico.
+
+### 4. Trentadue allarmi falsi al giorno, sul canale che deve dire i guasti veri
+
+`/api/admin/regenerate-credentials` chiedeva a ogni rigenerazione di creare il bucket
+`credenziali`, che esiste dal primo giorno: **32 righe `error` in un giorno** con
+`BucketAlreadyExists`. Non le scriveva la rotta — che classificava bene — ma `supabase-fetch.ts`,
+dove un 4xx sullo Storage è `error` per invariante dichiarata: *«un 4xx qui è una richiesta
+sbagliata scritta da noi»*. E aveva ragione: la richiesta sbagliata era chiederlo. L'invariante non
+si allenta (varrebbe per tutto lo Storage): si è tolta la domanda, e il caso che il probe voleva
+prevenire — bucket assente — si osserva ora **sull'upload**, dove costa una riga sola e solo
+quando succede davvero.
+
+---
+
 ## 🏫 Changelog — Una famiglia che cambia plesso si spostava solo con una UPDATE a mano — 2026-09-03/04 (branch `fix/aruba-prima-fattura`)
 
 **La richiesta**, cinque punti: il selettore di sede nell'anagrafica di bambino, genitore e staff;

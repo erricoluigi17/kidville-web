@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
@@ -1305,6 +1306,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
               email: adultEmail,
               password: identita.password,
               occasione: 'iscrizione-approvata',
+              emessaIl: istanteEmissioneCredenziali(),
             }, sede)
             const invio = await sendEmailDetailed({
               to: adultEmail,

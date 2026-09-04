@@ -367,13 +367,20 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
             const body = await res.json();
             if (!res.ok) throw new Error(body.error || t('errore'));
             setRegen('done');
-            setRegenMsg(
-                body.pdf_notifica
-                    ? t('credEmailPdf')
-                    : body.email_inviata
-                        ? t('credEmailInviata')
-                        : body.warning || t('credRigenerate')
-            );
+            const esito = body.pdf_notifica
+                ? t('credEmailPdf')
+                : body.email_inviata
+                    ? t('credEmailInviata')
+                    : body.warning || t('credRigenerate');
+            // ⚠️ SE IL LOGIN DI QUESTA FAMIGLIA HA CAMBIATO INDIRIZZO, SI DICE.
+            //
+            // L'indirizzo dell'account viene riportato su quello dell'anagrafica
+            // (decisione del 2026-09-04, dopo aver misurato 4 famiglie che non
+            // potevano entrare e una con 13 rigenerazioni a vuoto in un giorno).
+            // È la cosa giusta da fare, ma è anche una modifica al modo in cui
+            // qualcuno accede: chi ha premuto il pulsante deve leggerla adesso,
+            // non scoprirla la prossima volta che quella famiglia telefona.
+            setRegenMsg(body.indirizzoSpostato ? `${esito} ${body.indirizzoSpostato}` : esito);
         } catch (e) {
             setRegen('error');
             setRegenMsg((e as Error).message);

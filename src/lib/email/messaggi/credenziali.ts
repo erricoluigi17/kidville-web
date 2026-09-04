@@ -81,6 +81,18 @@ export interface DatiCredenziali {
     email: string
     password: string
     occasione: OccasioneCredenziali
+    /**
+     * Quando questa password è stata generata, GIÀ FORMATTATO per un essere umano
+     * («4 settembre 2026 alle 14:32»). Come `avvenutoIl` nella 12: questi
+     * generatori sono funzioni pure e non conoscono né fusi orari né locale.
+     *
+     * ⚠️ NON È UN ORPELLO. Misurato in produzione il 2026-09-04: 9 persone hanno
+     * ricevuto fra 2 e 13 emissioni di credenziali, e per 6 di loro il login
+     * riesce solo dopo l'ULTIMA. Con tredici messaggi identici in casella, e lo
+     * stesso oggetto su tutti, l'istante è l'unica cosa che permette di
+     * riconoscere quello che vale.
+     */
+    emessaIl: string
 }
 
 export const OGGETTO_CREDENZIALI = 'Credenziali di accesso — Kidville'
@@ -99,6 +111,17 @@ export function messaggioCredenziali(d: DatiCredenziali, sede: ContestoSede): Me
         saluto,
         p(h`${esc(apertura)} le credenziali per accedere all'area riservata di <strong>${esc(sede.nome)}</strong>. Vanno conservate in un posto sicuro.`),
         riquadroCredenziali(d.email, d.password),
+        // ⚠️ QUANDO, e CHE COSA ANNULLA — le due righe che spiegano tredici corse
+        // a vuoto. Quando la Segreteria rigenera mentre la famiglia sta digitando,
+        // la password che ha in mano muore in quell'istante e nessuno glielo dice.
+        // L'`occasione` distingue i due casi: alla prima emissione non c'è nessuna
+        // password precedente, e dire che se ne annullano farebbe dubitare di
+        // qualcosa che non è mai esistito.
+        p(
+            d.occasione === 'password-rigenerata'
+                ? h`Password generata il <strong>${esc(d.emessaIl)}</strong>. <strong>Annulla quelle inviate prima:</strong> se in casella ce ne sono altre, vale solo questa.`
+                : h`Password generata il <strong>${esc(d.emessaIl)}</strong>.`,
+        ),
         avviso('info', h`Si entra con la password qui sopra, e subito dopo il sistema ne fa scegliere una nuova. Quella temporanea serve solo per la prima volta.`),
         bottone(login, 'Vai all\'area riservata'),
         linkDiScorta(login, 'Se il bottone non funziona, l\'accesso avviene da'),
@@ -141,6 +164,13 @@ export function messaggioCredenziali(d: DatiCredenziali, sede: ContestoSede): Me
             d.email,
             'Password temporanea:',
             d.password,
+            '',
+            // Fuori dal blocco etichetta/valore qui sopra: quel valore sta da solo
+            // sulla sua riga per una ragione misurata (30 famiglie su 67, 22/08), e
+            // niente deve avvicinarglisi.
+            d.occasione === 'password-rigenerata'
+                ? `Password generata il ${d.emessaIl}. Annulla quelle inviate prima: se in casella ce ne sono altre, vale solo questa.`
+                : `Password generata il ${d.emessaIl}.`,
             '',
             'Si entra con la password qui sopra, e subito dopo il sistema ne fa scegliere una nuova. Quella temporanea serve solo per la prima volta.',
             '',

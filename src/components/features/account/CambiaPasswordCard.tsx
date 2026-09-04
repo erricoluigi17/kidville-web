@@ -120,7 +120,13 @@ function campoAccusato(codice: string | null): CampoPassword | null {
     codice === 'PASSWORD_SENZA_CIFRA' ||
     codice === 'PASSWORD_CON_SPAZI_AI_BORDI' ||
     codice === 'PASSWORD_UGUALE_ALLA_PRECEDENTE' ||
-    codice === 'PASSWORD_RIFIUTATA'
+    codice === 'PASSWORD_RIFIUTATA' ||
+    // ⚠️ È il campo «nuova» anche qui, ma per un motivo diverso da tutti gli altri:
+    // la password che l'utente ha scritto NON viola nessuno dei tre criteri, che
+    // restano verdi. Quello che va cambiato è la PAROLA, non la misura — e se il
+    // campo non venisse accusato, l'unica cosa a schermo sarebbe un messaggio
+    // senza un posto dove guardare.
+    codice === 'PASSWORD_TROPPO_COMUNE'
   ) {
     return 'nuova'
   }

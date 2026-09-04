@@ -53,6 +53,7 @@
  * chiede la seconda email.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { sincronizzaLegamiRuntime } from '@/lib/anagrafiche/legami'
 import { ensureParentIdentity, sedeDelGenitore } from '@/lib/auth/parent-identity'
 import { rigeneraPasswordPerInvito } from '@/lib/auth/password-invito'
@@ -321,7 +322,7 @@ async function spedisci(supabase: SupabaseClient, s: Spedizione): Promise<EsitoI
 
   const sede = await risolviContestoSede(supabase, s.scuolaId, OPERAZIONE)
   const messaggio = messaggioCredenziali(
-    { nome: s.nome, email: s.email, password, occasione: 'iscrizione-approvata' },
+    { nome: s.nome, email: s.email, password, occasione: 'iscrizione-approvata', emessaIl: istanteEmissioneCredenziali() },
     sede,
   )
   const invio = await sendEmailDetailed({

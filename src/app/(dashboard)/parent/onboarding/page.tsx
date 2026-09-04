@@ -71,7 +71,14 @@ function Inner() {
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         // Niente prosa del server: è italiana per costruzione (T10-F1).
-        setError(soloCatalogoDaCorpo(j, t('erroreOperazione')));
+        const frase = soloCatalogoDaCorpo(j, t('erroreOperazione'));
+        // ⚠️ «I consensi sono salvi» è una rassicurazione che vale SOLO qui, e per
+        // questo non sta nella frase di catalogo: quella è condivisa con il cambio
+        // password, dove di consensi non ce ne sono. Il server la dichiara come
+        // fatto (`consensi_salvati`), la pagina la traduce. Senza, chi vede il
+        // rifiuto crede di aver perso anche le spunte appena messe, e le rimette.
+        const consensiSalvi = (j as { consensi_salvati?: unknown })?.consensi_salvati === true;
+        setError(consensiSalvi ? `${frase} ${t('consensiComunqueSalvati')}` : frase);
         return;
       }
       router.push('/parent');

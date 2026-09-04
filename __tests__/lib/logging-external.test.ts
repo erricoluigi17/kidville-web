@@ -541,7 +541,7 @@ describe('email/send', () => {
         const { messaggioCredenziali } = await import('@/lib/email/messaggi/credenziali');
         const { contestoSenzaSede } = await import('@/lib/email/contesto');
         const text = messaggioCredenziali(
-            { nome: 'Maria', email: 'mamma@example.com', password: 'Segreta.2026!', occasione: 'iscrizione-approvata' },
+            { nome: 'Maria', email: 'mamma@example.com', password: 'Segreta.2026!', occasione: 'iscrizione-approvata', emessaIl: '4 settembre 2026 alle 14:32' },
             contestoSenzaSede(),
         ).testo;
         // Controllo POSITIVO: la password DEVE stare nel corpo (è il punto

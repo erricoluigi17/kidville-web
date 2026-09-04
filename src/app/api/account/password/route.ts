@@ -6,6 +6,7 @@ import { parseBody } from '@/lib/validation/http'
 import { impostaPayloadEsito } from '@/lib/logging/context'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { classificaRifiutoPassword, codiceProviderPerLog } from '@/lib/auth/rifiuto-provider-password'
 import { clientIp, rateLimit } from '@/lib/security/rate-limit'
 import {
   LUNGHEZZA_MINIMA_PASSWORD,
@@ -335,15 +336,47 @@ export const POST = withRoute('account/password:POST', async (request: Request) 
       // 4xx = la password non va bene (l'utente può sceglierne un'altra); tutto il
       // resto — 5xx, o un errore senza status, che in produzione si è già visto — è un
       // guasto nostro. Il messaggio di GoTrue resta nel log, mai nella risposta.
-      const colpaDellaPassword = typeof stato === 'number' && stato >= 400 && stato < 500
+      //
+      // ⚠️ I 4xx NON SONO TUTTI UGUALI, e trattarli come tali è costato 30 rifiuti
+      // al giorno. Misurato il 2026-09-04 su `app_log`: `422 weak_password` —
+      // password presente in elenchi di credenziali rubate — colpiva **20 utenti
+      // distinti in un giorno** (29 il giorno prima), e tutti leggevano la frase di
+      // `PASSWORD_RIFIUTATA`, che consiglia una password «più lunga e con almeno una
+      // lettera e una cifra»: requisiti che avevano GIÀ soddisfatto, con i tre
+      // criteri della schermata verdi sotto gli occhi. Un rifiuto che indica il
+      // rimedio sbagliato manda a sbattere due volte.
+      //
+      // La classificazione sta in un modulo solo (`rifiuto-provider-password.ts`)
+      // perché la stessa domanda vive anche in `parent/onboarding`, e la stessa
+      // domanda posta in due posti diverge.
+      const rifiuto = classificaRifiutoPassword(erroreScrittura)
+      const colpaDellaPassword = rifiuto !== 'guasto'
       logEvento('credenziali', colpaDellaPassword ? 'info' : 'error', {
         operazione: 'account/password:POST',
-        esito: colpaDellaPassword ? 'password-rifiutata-dal-provider' : 'password-non-scritta',
+        // L'esito distingue i due rifiuti: senza, le trenta occorrenze di una
+        // giornata restano una massa indistinta e nessuno può accorgersi che
+        // diciannove su venti hanno lo stesso motivo.
+        esito: rifiuto === 'password-nota'
+          ? 'password-nota-alle-liste'
+          : colpaDellaPassword ? 'password-rifiutata-dal-provider' : 'password-non-scritta',
         tipo: origine,
         entita_id: authUserId,
         stato: typeof stato === 'number' ? stato : undefined,
+        // `error_code` è un enumerato ed è già dichiarato in chiaro in `redact.ts`:
+        // è la sola parte dell'errore del provider che si possa registrare così.
+        // La prosa inglese resta dov'era, dentro `logEvento(..., erroreScrittura)`.
+        error_code: codiceProviderPerLog(erroreScrittura),
       }, erroreScrittura)
       if (!colpaDellaPassword) return nonScritta()
+      if (rifiuto === 'password-nota') {
+        return NextResponse.json(
+          {
+            error: 'Questa password compare in elenchi di password rubate: sceglierne un\'altra.',
+            codice: 'PASSWORD_TROPPO_COMUNE',
+          },
+          { status: 400 },
+        )
+      }
       return NextResponse.json(
         { error: 'Questa password non è stata accettata: sceglierne un\'altra.', codice: 'PASSWORD_RIFIUTATA' },
         { status: 400 },

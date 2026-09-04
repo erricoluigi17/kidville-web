@@ -185,6 +185,77 @@ describe('POST /api/admin/regenerate-credentials (DL-005)', () => {
     expect(h.updates).toHaveLength(0);
   });
 
+  // ── L'INDIRIZZO DELL'ACCOUNT, che fino al 2026-09-04 nessuno guardava ──────
+  //
+  // Misurato in produzione quel giorno: 4 anagrafiche genitore con
+  // `parents.emails[1]` diverso da `auth.users.email`, tutte con
+  // `last_sign_in_at` nullo, **una con 13 rigenerazioni in un solo giorno**.
+  // L'email arrivava (parte verso l'indirizzo dell'anagrafica), diceva «Email di
+  // accesso: <quello>», e GoTrue quell'indirizzo non lo conosceva. Rigenerare
+  // cambiava la password e non l'indirizzo: la tredicesima corsa era identica
+  // alla prima.
+
+  it("l'indirizzo dell'account è stato spostato: la risposta lo DICE, non lo tace", async () => {
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-1', emails: ['giusto@x.it'], first_name: 'Mara', last_name: null }, error: null };
+    h.utentiRuolo = { data: { ruolo: 'genitore' }, error: null };
+    h.ensureIdentity.mockResolvedValue({
+      ok: true, authUserId: 'auth-1', email: 'giusto@x.it', createdAuth: false, createdUtenti: false,
+      boundNow: false, password: null, scuolaId: 'sede-1',
+      indirizzo: { stato: 'allineato', da: 'vecchio@y.it', a: 'giusto@x.it', copiaApplicativaIndietro: false },
+    });
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1' }));
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    // Il login di una famiglia è appena cambiato indirizzo: chi ha premuto il
+    // pulsante deve leggerlo, non scoprirlo.
+    expect(String(j.indirizzoSpostato ?? '')).toContain('vecchio@y.it');
+    expect(String(j.indirizzoSpostato ?? '')).toContain('giusto@x.it');
+    expect(h.updates).toHaveLength(1);
+  });
+
+  it("indirizzo ancora divergente perché occupato da un altro account → 409, e la password NON si tocca", async () => {
+    // È IL TEST CHE VALE L'INTERA CORREZIONE. Se si procedesse, si scriverebbe
+    // una password su un account e si spedirebbe a un indirizzo che non è il suo:
+    // la quattordicesima corsa a vuoto, con la password precedente distrutta.
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-1', emails: ['g@x.it'], first_name: 'Mara', last_name: null }, error: null };
+    h.utentiRuolo = { data: { ruolo: 'genitore' }, error: null };
+    h.ensureIdentity.mockResolvedValue({
+      ok: true, authUserId: 'auth-1', email: 'g@x.it', createdAuth: false, createdUtenti: false,
+      boundNow: false, password: null, scuolaId: 'sede-1', indirizzo: { stato: 'in-uso-da-altri' },
+    });
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1' }));
+    expect(res.status).toBe(409);
+    expect(h.updates, 'nessuna password scritta').toHaveLength(0);
+    expect(String((await res.json()).error)).toMatch(/indirizzo/i);
+  });
+
+  it('se la riscrittura dell’indirizzo non è riuscita si ferma: la divergenza è ancora lì', async () => {
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-1', emails: ['g@x.it'], first_name: 'Mara', last_name: null }, error: null };
+    h.utentiRuolo = { data: { ruolo: 'genitore' }, error: null };
+    h.ensureIdentity.mockResolvedValue({
+      ok: true, authUserId: 'auth-1', email: 'g@x.it', createdAuth: false, createdUtenti: false,
+      boundNow: false, password: null, scuolaId: 'sede-1',
+      indirizzo: { stato: 'non-riuscito', dettaglio: 'la scrittura sull’account non è riuscita' },
+    });
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1' }));
+    expect(res.status).toBe(409);
+    expect(h.updates).toHaveLength(0);
+  });
+
+  it('un indirizzo che NON si è potuto leggere non ferma niente: non sappiamo che diverga', async () => {
+    // Un guasto di lettura non è una divergenza. Fermarsi qui vorrebbe dire
+    // bloccare l'invio di credenziali a tutti ogni volta che GoTrue tossisce.
+    h.adminRow = { data: { id: 'p1', auth_user_id: 'auth-1', emails: ['g@x.it'], first_name: 'Mara', last_name: null }, error: null };
+    h.utentiRuolo = { data: { ruolo: 'genitore' }, error: null };
+    h.ensureIdentity.mockResolvedValue({
+      ok: true, authUserId: 'auth-1', email: 'g@x.it', createdAuth: false, createdUtenti: false,
+      boundNow: false, password: null, scuolaId: 'sede-1', indirizzo: { stato: 'sconosciuto' },
+    });
+    const res = await POST(req({ targetKind: 'parent', targetId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1' }));
+    expect(res.status).toBe(200);
+    expect(h.updates).toHaveLength(1);
+  });
+
   it('riparazione identità fallita → 500 (niente reset)', async () => {
     h.adminRow = { data: { id: 'p1', auth_user_id: null, emails: ['p@x.it'], first_name: 'Mario', last_name: null }, error: null };
     h.ensureIdentity.mockResolvedValue({ ok: false, reason: 'error', message: 'boom' });

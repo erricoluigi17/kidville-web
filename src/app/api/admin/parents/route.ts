@@ -7,6 +7,8 @@ import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { colonnaSconosciuta, linkOrCreateParent } from '@/lib/anagrafiche/parents';
+import { allineaIndirizzoAccesso } from '@/lib/auth/indirizzo-accesso';
+import { firstEmail } from '@/lib/auth/parent-identity';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { selectResiliente } from '@/lib/supabase/select-resiliente';
@@ -272,6 +274,40 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
 
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
+        // ─── È QUI CHE LA DIVERGENZA NASCEVA ──────────────────────────────────
+        //
+        // L'account di accesso viene creato con l'indirizzo che c'è in quel
+        // momento. Poi la Segreteria corregge un refuso, o la famiglia cambia
+        // casella, e fino al 2026-09-04 questa rotta scriveva `parents.emails` e
+        // basta: in tutto il repo non esisteva un solo `updateUserById({ email })`.
+        //
+        // Da lì in avanti l'anagrafica diceva una cosa e il login ne voleva
+        // un'altra, senza che la differenza si vedesse da nessuna parte — le
+        // credenziali partono verso l'indirizzo dell'anagrafica, quindi ARRIVANO,
+        // e la famiglia legge «credenziali non valide». Misurato quel giorno: 4
+        // anagrafiche così, nessuna delle quali era mai entrata, una con 13
+        // rigenerazioni in un giorno solo.
+        //
+        // L'allineamento NON può far fallire il salvataggio: l'anagrafica è il dato
+        // che la Segreteria stava correggendo, e perderlo perché GoTrue non ha
+        // risposto sarebbe un rimedio peggiore del male. Ma non è nemmeno muto:
+        // quando il login resta indietro, la risposta lo dice.
+        let indirizzoSpostato: string | null = null;
+        let avvisoIndirizzo: string | null = null;
+        const authIdGenitore = (prima as { auth_user_id?: string | null } | null)?.auth_user_id ?? null;
+        if ('emails' in updates && authIdGenitore) {
+            const esito = await allineaIndirizzoAccesso(supabase, authIdGenitore, firstEmail(updates.emails));
+            if (esito.stato === 'allineato') {
+                indirizzoSpostato = `L'indirizzo di accesso è stato spostato da ${esito.da} a ${esito.a}: la famiglia entrerà con il nuovo.`;
+            } else if (esito.stato === 'in-uso-da-altri') {
+                avvisoIndirizzo =
+                    "L'anagrafica è stata salvata, ma l'indirizzo di accesso NON è cambiato: quell'indirizzo appartiene già a un altro account. Finché resta così, la famiglia deve continuare a entrare con il vecchio.";
+            } else if (esito.stato === 'non-riuscito') {
+                avvisoIndirizzo =
+                    "L'anagrafica è stata salvata, ma non è stato possibile aggiornare l'indirizzo di accesso: la famiglia deve continuare a entrare con il vecchio. Riprovare a salvare fra qualche minuto.";
+            }
+        }
+
         await logScrittura(supabase, {
             attore: auth.user,
             entitaTipo: 'genitori',
@@ -284,7 +320,12 @@ export const PATCH = withRoute('admin/parents:PATCH', async (request: NextReques
             valoreDopo: updates,
         });
 
-        return NextResponse.json({ success: true, data });
+        return NextResponse.json({
+            success: true,
+            data,
+            ...(indirizzoSpostato ? { indirizzoSpostato } : {}),
+            ...(avvisoIndirizzo ? { avvisoIndirizzo } : {}),
+        });
     } catch (err) {
         logErrore({ operazione: 'admin/parents:PATCH', stato: 500 }, err);
         return NextResponse.json({ error: 'Errore interno del server' }, { status: 500 });

@@ -10,6 +10,7 @@ import { sediDeiFigli } from '@/lib/anagrafiche/sedi'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { classificaRifiutoPassword, codiceProviderPerLog } from '@/lib/auth/rifiuto-provider-password'
 import {
   valutaPasswordNuova,
   LUNGHEZZA_MINIMA_PASSWORD,
@@ -286,22 +287,70 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
         // vista in produzione il 31/07), e `status ${…}` da solo non spiega
         // niente. Stessa normalizzazione di parent-identity.ts e backfill.ts.
         const stato = (pwErr as { status?: number }).status
+        // 4xx di GoTrue = la password non va bene (l'utente può cambiarla);
+        // tutto il resto è un guasto nostro. In entrambi i casi i consensi
+        // sono già salvati e l'onboarding è ripetibile: l'update è idempotente.
+        //
+        // ⚠️ I 4xx NON SONO TUTTI UGUALI. `422 weak_password` — password presente
+        // in elenchi di credenziali rubate — è il rifiuto più frequente di questa
+        // route (misurato il 2026-09-04: 5 occorrenze su 2 utenti, 9 su 3 il giorno
+        // prima), e il suo rimedio è l'unico che NON riguarda la forma della
+        // password. La classificazione sta in `rifiuto-provider-password.ts`,
+        // condivisa con `POST /api/account/password`: la stessa domanda posta in
+        // due posti diverge, e si vede come due utenti che leggono due frasi
+        // diverse per lo stesso identico rifiuto.
+        const rifiuto = classificaRifiutoPassword(pwErr)
         logEvento('auth', 'error', {
           operazione: 'parent/onboarding:POST',
           esito: 'password-onboarding-non-impostata',
           stato: typeof stato === 'number' ? stato : undefined,
+          // Enumerato, già in chiaro per dichiarazione in `redact.ts`: senza, i
+          // rifiuti di una giornata restano una massa indistinta.
+          error_code: codiceProviderPerLog(pwErr),
         }, pwErr)
-        // 4xx di GoTrue = la password non va bene (l'utente può cambiarla);
-        // tutto il resto è un guasto nostro. In entrambi i casi i consensi
-        // sono già salvati e l'onboarding è ripetibile: l'update è idempotente.
-        const client = typeof stato === 'number' && stato >= 400 && stato < 500
+        // ⚠️ IL `codice` NON È FACOLTATIVO. La pagina passa da
+        // `soloCatalogoDaCorpo`, che senza codice mostra il generico «Operazione
+        // non riuscita. Riprova.»: fino al 2026-09-04 questa route non ne
+        // dichiarava nessuno, e ogni rifiuto arrivava a schermo muto.
+        //
+        // Il rassicurante «i consensi sono stati salvati» NON entra nella frase di
+        // catalogo — quella è condivisa con l'altra route, dove i consensi non
+        // c'entrano — ma esce come `consensi_salvati`, che la pagina compone con
+        // la propria traduzione.
+        //
+        // ⚠️ TRE `return` E NON UNA VARIABILE `codice`. Il lock
+        // `__tests__/architecture/errori-con-codice.test.ts` legge il sorgente e
+        // pretende una stringa LETTERALE: solo così può verificare che il codice
+        // sia dichiarato in `CODICI_ERRORE` e tradotto in entrambe le lingue. Un
+        // ternario gli è opaco, e un codice mai tradotto passerebbe inosservato
+        // fino a comparire a schermo come tale.
+        if (rifiuto === 'password-nota') {
+          return NextResponse.json(
+            {
+              error: 'La password non è stata accettata: sceglierne un\'altra. I consensi sono stati salvati.',
+              codice: 'PASSWORD_TROPPO_COMUNE',
+              consensi_salvati: true,
+            },
+            { status: 400 },
+          )
+        }
+        if (rifiuto === 'password-non-accettata') {
+          return NextResponse.json(
+            {
+              error: 'La password non è stata accettata: sceglierne un\'altra. I consensi sono stati salvati.',
+              codice: 'PASSWORD_RIFIUTATA',
+              consensi_salvati: true,
+            },
+            { status: 400 },
+          )
+        }
         return NextResponse.json(
           {
-            error: client
-              ? 'La password non è stata accettata: sceglierne un\'altra. I consensi sono stati salvati.'
-              : 'Consensi salvati, ma non è stato possibile impostare la password: riprovare fra poco.',
+            error: 'Consensi salvati, ma non è stato possibile impostare la password: riprovare fra poco.',
+            codice: 'PASSWORD_NON_SCRITTA',
+            consensi_salvati: true,
           },
-          { status: client ? 400 : 500 },
+          { status: 500 },
         )
       }
       // Regola 5: gli eventi critici loggano anche il SUCCESSO. Senza questa

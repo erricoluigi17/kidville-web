@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { createAdminClient } from '@/lib/supabase/server-client';
 import { z } from 'zod';
 import { requireStaff } from '@/lib/auth/require-staff';
@@ -93,6 +94,8 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   // niente, e un genitore che riceve le credenziali del plesso sbagliato non ha
   // modo di accorgersene.
   let sedeId: string | null = null;
+  /** Dichiarazione per l'operatore quando il login è stato spostato di indirizzo. */
+  let indirizzoSpostato: string | null = null;
 
   if (targetKind === 'parent') {
     const { data } = await admin
@@ -135,6 +138,52 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     }
     authId = identita.authUserId;
     identitaCreata = identita.createdAuth || identita.createdUtenti || identita.boundNow;
+
+    // ─── L'INDIRIZZO DELL'ACCOUNT DEVE ESSERE QUELLO A CUI SI SPEDISCE ────────
+    //
+    // `ensureParentIdentity` ha appena provato a portarli sullo stesso valore. Se
+    // NON c'è riuscita, l'account vive ancora altrove: scrivere la password qui e
+    // spedirla all'indirizzo dell'anagrafica è esattamente il difetto che ha
+    // prodotto 13 rigenerazioni a vuoto per una sola famiglia (misurato il
+    // 2026-09-04), ognuna delle quali distruggeva anche la password precedente.
+    //
+    // Ci si ferma PRIMA di `randomPassword()`: una password non scritta è un
+    // fastidio, una password scritta e mandata all'indirizzo sbagliato è una
+    // famiglia chiusa fuori che prima almeno poteva ancora usare la vecchia.
+    //
+    // `sconosciuto` NON ferma: un guasto di lettura non è una divergenza, e
+    // trattarlo come tale bloccherebbe le credenziali di tutti ogni volta che
+    // GoTrue tossisce.
+    //
+    // Due codici e due `return`, non un ternario: il lock `errori-con-codice`
+    // legge il sorgente e pretende un LETTERALE, e soprattutto i due rimedi sono
+    // opposti — là si sistemano due anagrafiche, qui si riprova fra un minuto.
+    const statoIndirizzo = identita.indirizzo?.stato;
+    if (statoIndirizzo === 'in-uso-da-altri') {
+      return NextResponse.json(
+        {
+          error:
+            "L'indirizzo di questa anagrafica appartiene già a un altro account: le credenziali non sono state inviate perché la famiglia riceverebbe una password per un indirizzo con cui non può entrare. Unificare le anagrafiche, oppure indicare un indirizzo diverso.",
+          codice: 'CREDENZIALI_INDIRIZZO_IN_USO',
+        },
+        { status: 409 }
+      );
+    }
+    if (statoIndirizzo === 'non-riuscito') {
+      return NextResponse.json(
+        {
+          error:
+            "Non è stato possibile allineare l'indirizzo di accesso a quello dell'anagrafica: le credenziali non sono state inviate, perché la famiglia riceverebbe una password per un indirizzo con cui non può entrare. La password precedente resta valida. Riprovare fra qualche minuto.",
+          codice: 'CREDENZIALI_INDIRIZZO_NON_ALLINEATO',
+        },
+        { status: 409 }
+      );
+    }
+    // Il login di questa famiglia è appena cambiato indirizzo: si dichiara a chi ha
+    // premuto il pulsante, invece di lasciarglielo scoprire.
+    if (identita.indirizzo?.stato === 'allineato') {
+      indirizzoSpostato = `L'indirizzo di accesso è stato spostato da ${identita.indirizzo.da} a ${identita.indirizzo.a}, che è quello in anagrafica.`;
+    }
     // Risolta dai FIGLI dentro `ensureParentIdentity`, non da chi preme il bottone.
     sedeId = identita.scuolaId;
 
@@ -248,7 +297,7 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
   // dipendente, e prima aveva pure un oggetto diverso dagli altri tre punti
   // («Le tue credenziali Kidville» invece di «Credenziali di accesso — Kidville»).
   const messaggio = messaggioCredenziali(
-    { nome, email, password, occasione: 'password-rigenerata' },
+    { nome, email, password, occasione: 'password-rigenerata', emessaIl: istanteEmissioneCredenziali() },
     sede,
   );
   const invio = await sendEmailDetailed({
@@ -272,34 +321,49 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
       password,
       loginUrl,
       generatedAt: formattaIstante(new Date(), 'it', { day: 'numeric', month: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' }),
+      // Da questa rotta si esce SEMPRE riscrivendo una password che c'era già:
+      // il foglio deve dire la stessa cosa dell'email, o chi ha due fogli in mano
+      // non sa quale sia quello buono.
+      annullaPrecedenti: true,
     });
-    // Assicura il bucket privato. Idempotente: in tutti gli ambienti il bucket ESISTE già, e
-    // il 409 «resource already exists» è l'esito ATTESO — si registra a `info` e si tira
-    // dritto (AGENTS.md regola 6: un errore ignorabile si logga spiegando perché).
+    // ─── IL BUCKET NON SI CREA PIÙ A OGNI RIGENERAZIONE ──────────────────────
     //
-    // Qui prima c'era `.catch(() => {})`, ed era sbagliato due volte. Primo: lo Storage NON
-    // lancia, ritorna `{ error }` (regola 7), quindi quel catch non ha mai intercettato
-    // niente — l'errore veniva scartato dal fatto stesso di non guardarlo. Secondo: questo è
-    // il percorso delle CREDENZIALI, cioè il difetto storico da cui nasce l'intera regola 6.
-    // Se il bucket non si può creare, l'upload sotto fallisce e la Segreteria vede un PDF che
-    // non arriva: il motivo va detto QUI, dove si sa ancora qual è.
-    const creazioneBucket = await admin.storage.createBucket('credenziali', { public: false });
-    if (creazioneBucket.error) {
-      const giaPresente = /exist/i.test(creazioneBucket.error.message ?? '');
+    // Qui c'era `createBucket('credenziali')`, con la sua classificazione corretta
+    // («esiste» → `info`). Il problema non era la classificazione: era la DOMANDA.
+    // Misurato in produzione il 2026-09-04: **32 righe `error` in un giorno** con
+    // `BucketAlreadyExists`, `stato_http 400` — e non le scriveva questa route, le
+    // scriveva `supabase-fetch.ts`, dove un 4xx sullo Storage è `error` per
+    // invariante dichiarata: «un 4xx qui è una richiesta sbagliata scritta da noi».
+    //
+    // Aveva ragione. La richiesta sbagliata era chiedere, a ogni singola
+    // rigenerazione, di creare un bucket che esiste dal primo giorno. Non si
+    // allenta l'invariante — varrebbe per tutto lo Storage: si toglie la domanda.
+    // Un canale d'allarme pieno di allarmi falsi è un canale spento.
+    //
+    // Il caso che quella chiamata voleva prevenire — bucket assente — non è
+    // scomparso: è stato spostato dove si manifesta, cioè sull'upload, dove costa
+    // una riga sola e solo quando succede davvero.
+    const pdfKey = `${targetId}-${Date.now()}.pdf`;
+    const up = await admin.storage.from('credenziali').upload(pdfKey, pdf, { contentType: 'application/pdf', upsert: true });
+    if (up.error) {
+      // Lo Storage NON lancia, ritorna `{ error }` (AGENTS.md regola 7): il valore
+      // di ritorno si guarda. E il corpo dell'errore non si butta via — è l'unica
+      // cosa che dice *perché* il PDF non c'è.
+      const bucketAssente = /bucket not found|not found.*bucket/i.test(up.error.message ?? '');
       logEvento(
         'storage',
-        giaPresente ? 'info' : 'error',
+        'error',
         {
           operazione: 'admin/regenerate-credentials:POST',
           bucket: 'credenziali',
-          esito: giaPresente ? 'bucket-gia-presente' : 'bucket-non-creato',
+          // Due esiti distinti perché mandano a cercare in due posti diversi: uno
+          // è «manca il contenitore», l'altro «il contenitore c'è e il file no».
+          esito: bucketAssente ? 'bucket-credenziali-assente' : 'pdf-credenziali-non-caricato',
         },
-        giaPresente ? undefined : creazioneBucket.error,
+        up.error,
       );
+      throw up.error;
     }
-    const pdfKey = `${targetId}-${Date.now()}.pdf`;
-    const up = await admin.storage.from('credenziali').upload(pdfKey, pdf, { contentType: 'application/pdf', upsert: true });
-    if (up.error) throw up.error;
     await enqueueNotifiche(admin, {
       utenteIds: [auth.user.id],
       tipo: 'credenziali',
@@ -340,6 +404,7 @@ export const POST = withRoute('admin/regenerate-credentials:POST', async (reques
     email_inviata: emailed,
     identita_creata: identitaCreata,
     pdf_notifica: pdfPronto,
+    ...(indirizzoSpostato ? { indirizzoSpostato } : {}),
     ...(emailed
       ? {}
       : { warning: `Email non inviata: ${invio.error ?? 'motivo sconosciuto'}. Comunicare le credenziali manualmente (PDF disponibile).` }),

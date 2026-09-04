@@ -201,11 +201,49 @@ che gli mancava.
 occorrenza da un file del debito deve diventare rosso — altrimenti il credito non speso si accumula
 ed è lo spazio in cui il difetto rientra restando verde.
 
+### 9 · Secondo giro — il debito azzerato, e la prova sul dispositivo
+
+Decisione del titolare, in quattro parole: «devono restare solo i colori del brand».
+
+- **Palette di serie: da 76 occorrenze in 11 file a ZERO.** Nessuna sostituzione inventata: ognuna
+  aveva già il proprio token — `red`→`error`, `amber`→`warn`, `blue`→`info`, `yellow`→la scala
+  gialla, `orange`→`warn` (era già mescolato a `kidville-warn` **nello stesso className**), e
+  `pink`→ le tinte per grado. Qui c'era un difetto vero: il nido era **rosa**, un colore che nella
+  palette non esiste, e la **primaria portava il blu, cioè la tinta del nido**. I gradi ora
+  coincidono con `--kv-grade-*`, che `globals.css` dichiara da sempre.
+- **`PrimariaParentView.tsx` riscritto, non cancellato** (40 occorrenze), per scelta esplicita.
+- **`neutral` allineato a `muted`** (`#8A958F` → `#7B8582`): sarebbe rimasto l'unico grigio sotto i
+  3:1 di WCAG 1.4.11 — 2,50:1 su `cream-dark` — e per giunta sul contorno di ogni campo. Due
+  controlli positivi hanno smesso di reggere, ed è una buona notizia: asserivano che `neutral` NON
+  passasse sulla crema. Non sono stati allentati ma **ripuntati**, e la prova che la sonda vede un
+  colore sotto soglia è passata su `line` (1,23:1).
+- **Il crawler di contrasto Playwright** (`e2e/contrasto-schermate.spec.ts`): nove rotte
+  autenticate, due modalità, firme invece di nodi, sfondi non calcolabili saltati **e contati**,
+  tre asserzioni di attivazione dell'Alto Contrasto più una di aggregato, `retries: 0` e spec
+  escluso da `chromium`. Validato in locale da due lock in vitest, perché il crawler in locale non
+  si può eseguire. Cinque prove negative, tutte viste fallire.
+
+### La prova sul dispositivo — Android, con la sua controprova
+
+Emulatore `KV-api33` **forzato in tema scuro**. Una pagina di collaudo con `<select>`, data e ora,
+caricata dentro l'app Kidville. Stessa pagina, stesso emulatore, stesso tema di sistema: cambia una
+riga di `styles.xml`.
+
+| `AppTheme.NoActionBar` | la pagina dentro l'app dichiara |
+|---|---|
+| `Theme.AppCompat.Light` (la correzione) | **`light — telefono CHIARO`** |
+| `Theme.AppCompat.DayNight` (com'era) | **`light — telefono SCURO`** |
+
+⚠️ **E una affermazione del punto 1 va corretta.** Era stato scritto che `color-scheme: light`
+avrebbe risolto le tendine native. Misurato: in **Chrome** su Android la tendina del `<select>`
+resta scura anche con `color-scheme: light` dichiarato — quella la disegna il sistema col tema
+dell'**app ospite**, non della pagina. Non smentisce la correzione web (che resta giusta e copre
+autofill, cursore, scrollbar, il canvas): **sposta il peso sulla correzione Android**, che diventa
+la principale. Era un'ipotesi ragionata; ora è una misura.
+
 ### Gate
-`eslint` 0 errori · **13.805 test verdi** (13.795 + 10 nuovi) · `build` verde.
-⏳ **Non ancora verificato**: la prova su emulatore Android e simulatore iOS **forzati in tema
-scuro**, che è l'unica che dimostra i punti 1-3. È scritta come criterio di accettazione, non come
-fatto compiuto.
+`eslint` 0 errori · **13.807 test verdi** al giro precedente, **4.375** nelle aree toccate al
+secondo · `build` verde · APK Android compilato, installato e verificato sull'emulatore.
 
 ---
 

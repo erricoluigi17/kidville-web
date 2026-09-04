@@ -102,19 +102,31 @@ valori letterali).
 
 ## 4. Debito residuo, dichiarato
 
-1. **`neutral` `#8A958F` è ora il grigio più debole della scala** (2,79 sul crema), ed è quello che
-   dipinge il contorno dei campi a riposo. Sotto i 3:1 di WCAG 1.4.11 sulle fasce più scure. Le
-   regole per-superficie di `globals.css` oggi lo rattoppano campo per campo; la scelta pulita
-   sarebbe allinearlo a `#7B8582`, ma tocca il modulo-specchio `chart-colors.ts` e un'asserzione di
-   valore esatto. **Dichiarato, non nascosto.**
-2. **76 colori di serie in 11 file**, congelati in `palette-di-serie.test.ts` con la motivazione
-   accanto a ciascuno. `pink` e `orange` non hanno un token: serve una decisione di design.
-3. **`PrimariaParentView.tsx`** — 40 di quei 76, in un file che **nessuna rotta monta**. Il rimedio
-   giusto è cancellarlo, non ridipingerlo. È una cancellazione: si decide, non si fa per inerzia.
-4. **2 dichiarazioni inerti** nel blocco Alto Contrasto (`success-strong`, `info-strong`).
-5. **Il crawler di contrasto in Playwright non è stato scritto.** È l'unica cosa che misurerebbe il
-   contrasto **vero** sulle schermate autenticate, nelle due modalità — dove nessuno ha mai
-   misurato. Il disegno è nel piano di sessione.
+Aggiornato dopo il secondo giro del 2026-09-04 («devono restare solo i colori del brand»).
+
+1. ✅ **`neutral` allineato a `muted`** (`#8A958F` → `#7B8582`). Sarebbe rimasto l'unico grigio della
+   scala sotto i 3:1 di WCAG 1.4.11 — 2,50:1 su `cream-dark` — e per giunta sul contorno di ogni
+   campo. Aggiornati insieme il modulo-specchio `chart-colors.ts` e i quattro test che ne
+   asserivano il valore. La scala ha ora **un solo** grigio non testuale, non due che si
+   somigliano senza coincidere.
+2. ✅ **Palette di serie: zero.** Le 76 occorrenze in 11 file sono state tutte bonificate. `pink` e
+   `orange` avevano un token e non si sapeva: `pink` erano le **tinte per grado** (`--kv-grade-*`,
+   dichiarate da sempre in `globals.css`) — e lì c'era un difetto vero, il nido era rosa e la
+   primaria portava il blu, cioè la tinta del nido; `orange` era già mescolato a `kidville-warn`
+   **nello stesso className**. Il lock `palette-di-serie` è a debito **ZERO** e asserisce che la
+   misura sia vuota, non che stia sotto un tetto.
+3. ✅ **`PrimariaParentView.tsx` riscritto**, non cancellato — scelta esplicita del titolare. Resta
+   codice che nessuna rotta monta, ma non è più codice che si riuserebbe portandosi dietro il debito.
+4. ⏳ **2 dichiarazioni inerti** nel blocco Alto Contrasto (`success-strong`, `info-strong`),
+   congelate e contate dal lock `token-alto-contrasto-non-inerti`. Toglierle è una scelta che
+   riguarda l'Alto Contrasto degli stati «successo» e «informazione»: si fa guardando quelle fasce,
+   non cancellando una riga.
+5. ✅ **Il crawler di contrasto Playwright è stato scritto**: `e2e/contrasto-schermate.spec.ts`,
+   nove rotte autenticate × due modalità, firme invece di nodi, sfondi non calcolabili saltati **e
+   contati**, `retries: 0` e spec escluso da `chromium`. Validato in locale da due lock in vitest,
+   perché il crawler in locale non si può eseguire. **La baseline è ancora vuota**: si riempie in
+   due giri di CI, e il crawler fallisce stampando la voce da incollare invece di osservare in
+   silenzio.
 
 ---
 
@@ -127,6 +139,18 @@ tema Android da `DayNight` a `Light` con `windowBackground` esplicito.
 Non è una preferenza estetica: finché non era dichiarato, il **sistema operativo** disegnava da sé i
 controlli nativi dentro campi che l'app dipinge bianchi — 463 `<input>` e 152 `<select>`.
 
-⏳ **Da verificare, e non ancora fatto**: la prova su emulatore Android e simulatore iOS **forzati in
-tema scuro**. È l'unica che dimostra i punti 1-3 del changelog. Finché non è fatta, quelle
-correzioni sono ragionate, non provate.
+✅ **Provato su emulatore e simulatore, il 2026-09-04, con la controprova.** Stessa pagina di
+collaudo (un `<select>`, una data, un'ora), stesso dispositivo, stesso tema scuro di sistema —
+cambia solo la riga corretta:
+
+| | con la correzione | com'era prima |
+|---|---|---|
+| **Android** — `styles.xml`: `Light` vs `DayNight` | `light — telefono CHIARO` | `light — telefono SCURO` |
+| **iOS** — `Info.plist`: con e senza `UIUserInterfaceStyle` | `light — telefono CHIARO` | `light — telefono SCURO` |
+
+⚠️ **E una correzione a ciò che questa spec diceva prima.** Era scritto che `color-scheme: light`
+avrebbe risolto le tendine native. Misurato su Android: in **Chrome** la tendina del `<select>`
+resta scura anche con `color-scheme: light` dichiarato — quella la disegna il sistema col tema
+dell'**app ospite**, non della pagina. Non smentisce la dichiarazione web, che resta giusta e copre
+autofill, cursore, scrollbar e il canvas: **sposta il peso sul tema nativo**, che è la correzione
+principale. Era un'ipotesi ragionata; ora è una misura, e la misura ha corretto il ragionamento.

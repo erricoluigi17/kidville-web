@@ -183,11 +183,11 @@ export function StoricoPagamenti({ userId }: Props) {
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 
             {loading ? (
-                <p className="font-maven text-sm text-kidville-muted text-center py-8">{t('caricamento')}</p>
+                <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('caricamento')}</p>
             ) : error ? (
                 <p className="font-maven text-sm text-kidville-error text-center py-8">{error}</p>
             ) : pagamenti.length === 0 ? (
-                <p className="font-maven text-sm text-kidville-muted text-center py-8">{t('nessunPagamento')}</p>
+                <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('nessunPagamento')}</p>
             ) : (
                 gruppi.map((g) => (
                     <Section key={g.categoria} title={g.categoria} icon={<span className="text-base leading-none">{g.icona ?? '📁'}</span>}>

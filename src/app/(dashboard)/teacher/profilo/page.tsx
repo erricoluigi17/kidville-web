@@ -3,6 +3,7 @@
 import { useTranslations } from 'next-intl'
 import { IdCard } from 'lucide-react'
 import { CambiaPasswordCard } from '@/components/features/account/CambiaPasswordCard'
+import { ContrastSwitch } from '@/components/ui/ContrastSwitch'
 
 /**
  * IL PROFILO DEL DOCENTE — la gemella magra di quello del genitore.
@@ -59,6 +60,9 @@ export default function TeacherProfiloPage() {
         </p>
         <CambiaPasswordCard origine="self-service" />
       </section>
+
+      {/* Accessibilita: vedi il commento in `ContrastSwitch`. */}
+      <ContrastSwitch />
     </div>
   )
 }

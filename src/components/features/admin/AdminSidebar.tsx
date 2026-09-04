@@ -6,7 +6,6 @@ import { useTranslations } from 'next-intl';
 import { useAdminIdentity } from '@/lib/context/admin-identity';
 import { motion } from 'framer-motion';
 import { LogoutMenuButton } from '@/components/ui/LogoutMenuButton';
-import { ContrastMenuButton } from '@/components/ui/ContrastMenuButton';
 import { NAV_GROUPS, activeHref, visibleItem } from './admin-nav-config';
 
 // Voce "Esci" in fondo alla sidebar (il cockpit desktop ha il menu account nella
@@ -16,8 +15,6 @@ const LOGOUT_ROW_CLS =
   'flex w-full items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm font-semibold text-kidville-error transition-colors hover:bg-kidville-error-soft';
 
 // Stessa riga del logout, in tinta neutra: l'alto contrasto non è un'azione distruttiva.
-const CONTRAST_ROW_CLS =
-  'flex w-full items-center gap-3 rounded-xl px-4 py-3 font-maven text-sm font-semibold text-kidville-ink transition-colors hover:bg-kidville-green-soft';
 
 // Sidebar desktop UNICA del cockpit Direzione/Segreteria. La config a gruppi
 // (NAV_GROUPS + activeHref + visibleItem) è condivisa con bottom-nav e sheet
@@ -93,7 +90,6 @@ export function AdminSidebar() {
         })}
       </nav>
       <div className="mt-auto border-t border-kidville-line px-3 py-3">
-        <ContrastMenuButton className={CONTRAST_ROW_CLS} />
         <LogoutMenuButton className={LOGOUT_ROW_CLS} />
       </div>
     </aside>

@@ -159,7 +159,7 @@ export function SubmissionsTable() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder={t('subCercaPlaceholder')}
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-muted text-sm focus:outline-none transition-colors"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-kidville-ink placeholder-kidville-hint text-sm focus:outline-none transition-colors"
             style={{
               background: 'var(--color-kidville-white)',
               border: '1px solid var(--color-kidville-line)',

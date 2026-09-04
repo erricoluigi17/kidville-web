@@ -148,7 +148,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                immagine rotta e ripartirebbe con una richiesta sulla pagina
                                stessa. Meglio dirlo. */
                             <div className="w-full h-full bg-kidville-cream flex flex-col items-center justify-center gap-1 px-2 text-center">
-                                <ImageOff size={22} className="text-kidville-green/40" strokeWidth={1.5} />
+                                <ImageOff size={22} className="text-kidville-green/70" strokeWidth={1.5} />
                                 <span className="font-maven text-[10px] leading-tight text-kidville-green/60">
                                     {t('galleryAnteprimaNonDisponibile')}
                                 </span>
@@ -266,7 +266,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             {!urlVisore ? (
                                 /* Firma non riuscita: si dice, non si mostra un riquadro rotto. */
                                 <div className="w-full min-h-[35vh] rounded-xl bg-kidville-cream flex flex-col items-center justify-center gap-2 px-6 text-center">
-                                    <ImageOff size={32} className="text-kidville-green/40" strokeWidth={1.5} />
+                                    <ImageOff size={32} className="text-kidville-green/70" strokeWidth={1.5} />
                                     <span className="font-maven text-sm text-kidville-green/70">
                                         {t('galleryAnteprimaNonDisponibile')}
                                     </span>

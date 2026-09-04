@@ -793,7 +793,7 @@ function ContenutoModulistica() {
                 <div className="bg-kidville-cream/40 p-5 rounded-card border-2 border-dashed border-kidville-green/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div className="space-y-1">
                     <h4 className="font-barlow font-bold text-lg text-kidville-green uppercase tracking-wide flex items-center gap-1.5">
-                      <Shield size={18} className="text-kidville-yellow" /> {t('modulisticaFesTitolo')}
+                      <Shield size={18} className="text-kidville-yellow-strong" /> {t('modulisticaFesTitolo')}
                     </h4>
                     <p className="font-maven text-xs text-kidville-muted max-w-md leading-relaxed">
                       {t('modulisticaFesTesto')}

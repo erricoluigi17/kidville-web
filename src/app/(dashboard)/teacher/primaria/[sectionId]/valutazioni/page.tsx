@@ -177,7 +177,7 @@ export default function ValutazioniPage() {
 
       <div className="rounded-card bg-white p-5 shadow-sm">
         <h2 className="font-barlow text-lg font-bold text-kidville-ink mb-3 flex items-center gap-2">
-          <Star size={18} className="text-kidville-yellow" /> {t('valutazioniTitolo')}
+          <Star size={18} className="text-kidville-yellow-strong" /> {t('valutazioniTitolo')}
         </h2>
 
         <div className="grid grid-cols-2 gap-2 mb-3">

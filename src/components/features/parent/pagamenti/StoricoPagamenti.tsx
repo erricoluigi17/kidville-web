@@ -149,7 +149,7 @@ export function StoricoPagamenti({ userId }: Props) {
             {!loading && !error && totaleDovuto > 0 && (
                 <div className="rounded-[22px] p-[18px]" style={{ background: 'linear-gradient(135deg, var(--color-kidville-green), var(--color-kidville-green-dark))' }}>
                     <p className="font-maven text-[12.5px] text-white">{t('totaleDaSaldare')}</p>
-                    <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow">
+                    <p className="font-barlow font-black text-[40px] leading-none text-kidville-yellow-ink">
                         {formatEuro(totaleDovuto)}
                     </p>
                     <p className="font-maven text-xs text-white mt-1">

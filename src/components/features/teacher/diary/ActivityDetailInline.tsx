@@ -176,7 +176,7 @@ function ActivityAccordion({
                                     onChange={e => onChange({ descrizione: e.target.value })}
                                     placeholder={t('descriviAttivita', { tipo: label.toLowerCase() })}
                                     rows={2}
-                                    className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-muted resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
+                                    className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-hint resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
                                 />
                             </div>
 

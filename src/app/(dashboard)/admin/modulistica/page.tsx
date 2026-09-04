@@ -608,7 +608,7 @@ function ModulisticaInner() {
                           className={`text-left p-3 rounded-xl border-2 transition-all ${active ? 'border-kidville-green bg-kidville-green-light' : 'border-kidville-line hover:border-kidville-muted'}`}
                         >
                           <span className="flex items-center gap-1.5 font-barlow font-bold text-sm uppercase text-kidville-green">
-                            {tipo === 'autorizzazione' && <Shield size={14} className="text-kidville-yellow" />}
+                            {tipo === 'autorizzazione' && <Shield size={14} className="text-kidville-yellow-strong" />}
                             {t(meta.labelKey)}
                             {meta.otp && <span className="ml-auto text-[9px] bg-kidville-green text-kidville-yellow px-1.5 py-0.5 rounded-full tracking-wider">OTP</span>}
                           </span>

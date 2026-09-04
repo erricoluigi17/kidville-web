@@ -200,7 +200,7 @@ describe('§0 · la sonda misura davvero', () => {
     expect(TOKEN.green).toBe('#006A5F')
     expect(TOKEN.yellow).toBe('#FDC400')
     expect(TOKEN.cream).toBe('#FEF1E4')
-    expect(contrasto(TOKEN.muted, '#FFFFFF')).toBe(2.51)
+    expect(contrasto(TOKEN.muted, '#FFFFFF')).toBe(3.8)
     expect(contrasto(TOKEN.sub, '#FFFFFF')).toBe(6.46)
     expect(contrasto(TOKEN['error-strong'], TOKEN['error-soft'])).toBe(4.92)
   })

@@ -165,19 +165,9 @@ function quantiSegnaposto(rel: string): number {
  * (costruttore di moduli, graduatorie, chat, diario). Il numero può solo scendere;
  * un file che non è in elenco è rosso subito.
  */
-const SEGNAPOSTO_NOTI: { path: string; n: number }[] = [
-  { path: 'src/app/(dashboard)/admin/forms/builder/page.tsx', n: 1 },
-  { path: 'src/components/features/admin/forms/builder/PropertiesPanel.tsx', n: 8 },
-  { path: 'src/components/features/admin/forms/rankings/RankingAdjustModal.tsx', n: 1 },
-  { path: 'src/components/features/admin/forms/rankings/RankingTable.tsx', n: 1 },
-  { path: 'src/components/features/admin/forms/submissions/SubmissionsTable.tsx', n: 1 },
-  { path: 'src/components/features/chat/ChatInput.tsx', n: 1 },
-  { path: 'src/components/features/gallery/StudentTagger.tsx', n: 1 },
-  { path: 'src/components/features/news/NewsFeedList.tsx', n: 1 },
-  { path: 'src/components/features/teacher/diary/ActivityDetailInline.tsx', n: 1 },
-];
-const TETTO_SEGNAPOSTO_FILE = 9;
-const TETTO_SEGNAPOSTO_OCCORRENZE = 16;
+const SEGNAPOSTO_NOTI: { path: string; n: number }[] = [];
+const TETTO_SEGNAPOSTO_FILE = 0;
+const TETTO_SEGNAPOSTO_OCCORRENZE = 0;
 
 const CSS = file(/\.css$/);
 const TSX = file(/\.tsx?$/);
@@ -189,8 +179,8 @@ describe('lock — `muted` non è un inchiostro, nemmeno nei formati che l’alt
     const muted = tokenTema('muted');
     const sub = tokenTema('sub');
     // I due numeri del rilievo T09-F2 e del segnaposto della login, ricalcolati qui.
-    expect(contrasto(muted, tokenTema('cream'))).toBe(2.27);
-    expect(contrasto(muted, tokenTema('white'))).toBe(2.51);
+    expect(contrasto(muted, tokenTema('cream'))).toBe(3.43);
+    expect(contrasto(muted, tokenTema('white'))).toBe(3.8);
     expect(contrasto(sub, tokenTema('cream'))).toBeGreaterThanOrEqual(4.5);
     expect(contrasto(sub, tokenTema('white'))).toBeGreaterThanOrEqual(4.5);
     // Taratura della formula: se fosse sbagliata, questa riga cadrebbe per prima.
@@ -221,7 +211,17 @@ describe('lock — `muted` non è un inchiostro, nemmeno nei formati che l’alt
     ].join('\n');
     expect((mascheraCommentiTs(finto).match(RE_PLACEHOLDER) ?? []).length).toBe(2);
     // E sul repo vero: la misura non è vuota. Una sonda cieca farebbe passare tutto.
-    expect(MISURA_SEGNAPOSTO.length, 'la sonda non trova NESSUN segnaposto: guarda altrove').toBeGreaterThan(0);
+    // Il debito è a ZERO dal 2026-09-04: tutti e 18 i segnaposti sono passati a
+    // `hint` (#65716C, 5,08:1 sul bianco), il token nato apposta per il
+    // suggerimento dentro un campo. L'asserzione si INVERTE e si irrigidisce:
+    // prima passava con qualunque numero > 0, ora passa solo con 0.
+    // Che la sonda non sia cieca lo prova la riga qui sopra sul sorgente finto,
+    // più i due elenchi di file, che devono restare non vuoti.
+    expect(TSX.length, 'nessun .ts/.tsx sotto src/: la sonda guarda altrove').toBeGreaterThan(0);
+    expect(
+      MISURA_SEGNAPOSTO,
+      'un segnaposto è tornato a `muted`: la destinazione è `hint`, non `muted`',
+    ).toEqual([]);
     expect(CSS.length, 'nessun file .css trovato sotto src/: la sonda guarda altrove').toBeGreaterThan(0);
   });
 
@@ -304,9 +304,25 @@ describe('lock — `muted` non è un inchiostro, nemmeno nei formati che l’alt
   it('l’Alto Contrasto NON protegge le utility: `@theme inline` inlina l’hex', () => {
     const css = fs.readFileSync(path.join(RADICE, 'src/app/globals.css'), 'utf8');
     expect(css).toContain('@theme inline');
-    // La rimappatura in HC esiste (e serve ai CSS module)…
+    // La rimappatura in HC esiste, e serve ai CSS module — ma il token da
+    // guardare è `sub`, non `muted`. Fino al 2026-09-04 questa riga asseriva
+    // `--color-kidville-muted: #E0E0E0`, che era una DICHIARAZIONE INERTE:
+    // `var(--color-kidville-muted)` non esiste in src/, quindi quella riga non
+    // ribaltava niente e il test citava una prova morta. `sub` invece è letto da
+    // tre file, ed è verificato qui sotto — altrimenti sarebbe inerte pure lui.
     const hc = css.slice(css.indexOf('[data-contrast="high"]'));
-    expect(hc).toMatch(/--color-kidville-muted\s*:\s*#E0E0E0/i);
+    expect(hc).toMatch(/--color-kidville-sub\s*:\s*#E0E0E0/i);
+    expect(
+      hc.split('\n').some((r) => /^\s*--color-kidville-muted\s*:/.test(r)),
+      '`muted` è tornato nel blocco HC: o qualcuno ha aggiunto un `var()` che lo legge, e allora va bene, oppure è di nuovo una riga che mente',
+    ).toBe(false);
+    const lettoriSub = ['src/app/auth/login/page.module.css', 'src/components/ui/PageLoader.module.css']
+      .map((f) => fs.readFileSync(path.join(RADICE, f), 'utf8'))
+      .filter((t) => t.includes('var(--color-kidville-sub'));
+    expect(
+      lettoriSub.length,
+      'nessun CSS module legge `sub`: allora anche QUESTA ridefinizione è inerte, come lo era quella di `muted`',
+    ).toBeGreaterThan(0);
     // …ma non basta: restano le regole scritte a mano, superficie per superficie.
     expect(
       (css.match(/\[data-contrast="high"\][^{]*\.text-kidville-muted/g) ?? []).length,

@@ -137,7 +137,7 @@ function TeacherNewsContent() {
             <p className="rounded-card bg-kidville-cream-dark px-4 py-8 text-center font-maven text-sm text-kidville-sub">{t('newsNonDisponibili')}</p>
           ) : posts.length === 0 ? (
             <div role="status" className="kv-news-onbody flex flex-col items-center justify-center py-12 text-center">
-              <Newspaper size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
+              <Newspaper size={40} className="mb-3 text-kidville-green/70" strokeWidth={1.6} />
               <p className="font-maven text-sm text-kidville-sub">{t('newsNessunContenuto')}</p>
             </div>
           ) : (

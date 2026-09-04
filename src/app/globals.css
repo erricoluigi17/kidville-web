@@ -76,7 +76,27 @@
   /* ── Testo / linee ── */
   --color-kidville-ink: #1F3D38;
   --color-kidville-sub: #55615C;   /* testo secondario (design --kv-sub) */
-  --color-kidville-muted: #9AA6A2;
+  /* ── `muted` NON e un inchiostro (2026-09-04) ────────────────────────────
+     Era #9AA6A2: 2,51:1 sul bianco e 2,27:1 sul crema, cioe sotto i 4,5:1 di
+     WCAG 1.4.3 su OGNI fascia chiara del tema — ed era il colore con cui in
+     questo repo si scrive «testo secondario», 1098 volte in 171 file.
+     Portarlo ad AA non si poteva: la fascia peggiore non e il crema ma
+     `cream-dark` #F6E4D2, e per arrivare a 4,5:1 la' servirebbe #5F6764, che e
+     `sub` #55615C a meno di mezzo punto. Fra `hint` e `sub` l'intervallo e
+     VUOTO. Scurirlo fin la' avrebbe reso `muted` identico a `sub` mentre 1098
+     punti continuavano a chiamarlo `muted`: il debito sarebbe sparito dai
+     numeri senza che nessuno avesse riletto una riga.
+     Il valore di oggi sceglie l'altra strada, misurato su tutte e 13 le fasce
+     chiare del tema:  finestra [3,07 su cream-dark  ·  3,80 su bianco]
+       > 3,0 di WCAG 1.4.11  => e un token NON TESTUALE valido: bordi, divisori,
+             glifi decorativi. Chiude un difetto mai contato prima: i 37
+             `border-kidville-muted` stavano sotto i 3:1 richiesti.
+       < 4,5 di WCAG 1.4.3   => APPOSTA. Le cinque sonde «muted non e un
+             inchiostro» restano vere con la soglia che hanno oggi: non si
+             abbassa nessun tetto, e il lock guadagna una ragione in piu'.
+     Per il TESTO la destinazione resta `sub` (5,82 sul crema). Questa riga non
+     salda il debito: ne riduce il danno mentre lo si smaltisce. */
+  --color-kidville-muted: #7B8582;
   --color-kidville-line: #EFE7DC;
 
   /* ── Il SUGGERIMENTO dentro un campo (2026-08-11) ──────────────────────────
@@ -436,7 +456,14 @@ body {
   --color-kidville-neutral-soft: #1A1A1A;
   --color-kidville-ink: #FFFFFF;
   --color-kidville-sub: #E0E0E0;
-  --color-kidville-muted: #E0E0E0;
+  /* `--color-kidville-muted` NON compare piu' qui (2026-09-04). Ci stava a
+     #E0E0E0, ed era una DICHIARAZIONE INERTE: nessun `var(--color-kidville-muted)`
+     esiste in src/ (verificato con grep), e la utility `.text-kidville-muted`
+     porta l'hex dentro di se' perche' i token stanno in `@theme inline`. Quella
+     riga non ha mai ribaltato niente: diceva una cosa che non accadeva. E' la
+     stessa specie di `--color-kidville-warn-strong: #FFB300`, rimasto qui inerte
+     fino al 2026-08-02 (vedi il commento poco sopra). Se un giorno un CSS module
+     leggesse `muted` con `var()`, questa riga va rimessa — e allora sara' viva. */
   --color-kidville-line: #8A8A8A;
 }
 [data-contrast="high"] body {

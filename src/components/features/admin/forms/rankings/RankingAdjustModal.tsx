@@ -283,7 +283,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                       onChange={e => setReason(e.target.value)}
                       rows={2}
                       placeholder={t('radjMotivazionePlaceholder')}
-                      className="w-full pl-9 pr-3 py-2.5 rounded-lg text-kidville-ink placeholder-kidville-muted text-sm resize-none focus:outline-none"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-lg text-kidville-ink placeholder-kidville-hint text-sm resize-none focus:outline-none"
                       style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     />
                   </div>

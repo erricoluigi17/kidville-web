@@ -548,7 +548,7 @@ function FormBuilderInner() {
             <input
               value={formTitle}
               onChange={e => setFormTitle(e.target.value)}
-              className="bg-transparent text-base font-semibold text-kidville-green focus:outline-none border-b border-transparent focus:border-kidville-green/50 transition-colors w-64 pb-0.5 placeholder-kidville-muted"
+              className="bg-transparent text-base font-semibold text-kidville-green focus:outline-none border-b border-transparent focus:border-kidville-green/50 transition-colors w-64 pb-0.5 placeholder-kidville-hint"
               placeholder={t('bldNomeModelloPlaceholder')}
             />
           </div>

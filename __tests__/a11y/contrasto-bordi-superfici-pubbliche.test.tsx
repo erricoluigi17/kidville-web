@@ -459,8 +459,17 @@ describe('S19 §1 · il contorno di un campo si vede (WCAG 1.4.11 — 3:1)', () 
       const b = coloreBordo(el, false, senzaFix)!
       return [nome, contrasto(b, sfondo(el, false, senzaFix))] as const
     })
-    // Tutti sotto soglia, nessuno escluso: è la fotografia del difetto.
-    expect(deboli.filter(([, r]) => r >= 3)).toEqual([])
+    // Tutti sotto soglia TRANNE UNO, e l'eccezione non erode il controllo: il
+    // 2026-09-04 `--color-kidville-muted` è passato da #9AA6A2 a #7B8582, cioè
+    // da 2,51:1 a 3,80:1 sul bianco. Quel checkbox regge ora i 3:1 di WCAG
+    // 1.4.11 GRAZIE AL TOKEN, non grazie alle regole che questo test toglie.
+    // Il valore è asserito esatto sotto: se il token tornasse indietro, cade.
+    const CORRETTI_DAL_TOKEN = new Set(['StudentDetailPanel (checkbox)'])
+    expect(deboli.filter(([n, r]) => r >= 3 && !CORRETTI_DAL_TOKEN.has(n))).toEqual([])
+    expect(
+      deboli.find(([n]) => CORRETTI_DAL_TOKEN.has(n))?.[1],
+      'il bordo `muted` deve reggere i 3:1 DA SOLO, senza le regole sui controlli',
+    ).toBe(3.8)
     expect(deboli.find(([n]) => n === '/admin/impostazioni')?.[1]).toBe(1.23)
   })
 
@@ -542,14 +551,14 @@ function intestazioniSidebar(hc = false): HTMLElement[] {
 }
 
 describe('S19 §2 · sidebar admin — l\'Alto Contrasto arriva anche alle intestazioni', () => {
-  it('CONTROLLO POSITIVO: `muted` su bianco è 2,51:1, e senza la regola HC resta identico', () => {
-    expect(contrasto(T.muted, '#FFFFFF')).toBe(2.51)
+  it('CONTROLLO POSITIVO: `muted` su bianco è 3,80:1, e senza la regola HC resta identico', () => {
+    expect(contrasto(T.muted, '#FFFFFF')).toBe(3.8)
     const senzaFix = REGOLE.filter((r) => !/\.kv-admin-nav \.text-kidville-(muted|sub|ink)/.test(r.sel))
     const el = monta(
       '<aside class="bg-kidville-white"><nav class="kv-admin-nav"><p id="sonda" class="text-kidville-muted">ANAGRAFICA</p></nav></aside>',
       true,
     )
-    expect(contrasto(coloreTesto(el, true, senzaFix), sfondo(el, true, senzaFix))).toBe(2.51)
+    expect(contrasto(coloreTesto(el, true, senzaFix), sfondo(el, true, senzaFix))).toBe(3.8)
   })
 
   it('le intestazioni ci sono, e nessuna usa più `text-kidville-muted`', () => {
@@ -677,7 +686,7 @@ describe('S19 §3 · pagine pubbliche — l\'Alto Contrasto esiste anche prima d
     const normale = misuraSenza(false)
     const alto = misuraSenza(true)
     expect(alto, 'è il difetto: attivare l\'aiuto non cambia niente').toEqual(normale)
-    expect(contrasto(alto.fg, alto.bg)).toBe(2.51)
+    expect(contrasto(alto.fg, alto.bg)).toBe(3.8)
   })
 
   it.each(RESE)('%s: in Alto Contrasto nessuna coppia testo/fondo sotto AA', (rotta, fabbrica) => {

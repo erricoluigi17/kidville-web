@@ -74,7 +74,7 @@ export function GalleryTodayCard({ studentId, parentId, href }: Props) {
           </p>
         </div>
         <Badge tone="unread">+{total}</Badge>
-        <ChevronRight size={18} className="text-kidville-green/40" />
+        <ChevronRight size={18} className="text-kidville-green/70" />
       </Card>
     </Link>
   )

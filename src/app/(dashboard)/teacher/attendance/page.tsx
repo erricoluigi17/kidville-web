@@ -663,7 +663,7 @@ function TeacherAttendanceContent() {
                             key={tab.id}
                             id={`tab-attendance-${tab.id}`}
                             onClick={() => handleTabChange(tab.id)}
-                            className={`relative flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-sm font-semibold transition-all duration-200 ${isActive ? 'text-kidville-yellow' : 'text-kidville-muted hover:text-kidville-green'}`}
+                            className={`relative flex items-center gap-2 rounded-pill px-4 py-2 font-maven text-sm font-semibold transition-all duration-200 ${isActive ? 'text-kidville-yellow-ink' : 'text-kidville-muted hover:text-kidville-green'}`}
                         >
                             {isActive && (
                                 <motion.div

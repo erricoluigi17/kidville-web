@@ -87,29 +87,20 @@ function colori(rel: string): string[] {
  * Nessuna di queste è un grigio: i grigi sono stati bonificati tutti lo stesso
  * giorno. Sono colori SEMANTICI di serie dove il tema ha già il proprio token.
  */
-const DEBITO: { path: string; n: number; nota: string }[] = [
-  // Il file peggiore, e non si vede: nessuna rotta lo monta (le sue uniche tre
-  // menzioni in src/ sono commenti). Il rimedio giusto è cancellarlo, non
-  // ridipingerlo — ma è una cancellazione, e si decide con chi tiene il repo.
-  { path: 'src/components/features/parent/PrimariaParentView.tsx', n: 40, nota: 'codice morto: nessun import' },
-  // `red-*` → esistono `error-soft` #FDECEC e `error-strong` #C62828
-  { path: 'src/components/features/admin/iscrizioni/RinviaCredenziali.tsx', n: 8, nota: 'red/amber → error/warn' },
-  { path: 'src/components/features/documenti/DocumentiFirmatiPanel.tsx', n: 6, nota: 'red → error' },
-  { path: 'src/components/features/parent/mensa/MensaCalendar.tsx', n: 3, nota: 'red → error' },
-  { path: 'src/components/features/teacher/CheckoutModal.tsx', n: 1, nota: 'red → error' },
-  // `yellow-*` di serie ≠ giallo di brand: esistono `yellow-soft` e `yellow-strong`
-  { path: 'src/components/features/teacher/diary/ActivityDetailInline.tsx', n: 3, nota: 'yellow → yellow-soft/strong' },
-  // `blue-*` → esistono `info-soft` #E9F1FB e `info-strong` #1D4FA8
-  { path: 'src/components/features/avvisi/AvvisoDetailsContent.tsx', n: 2, nota: 'blue → info' },
-  // `pink-*` e `orange-*` NON hanno un token: servono una decisione di design
-  // prima di una sostituzione. Congelati, non nascosti.
-  { path: 'src/app/(dashboard)/parent/diary/page.tsx', n: 4, nota: 'pink: manca il token, serve una scelta di design' },
-  { path: 'src/components/features/admin/SectionsView.tsx', n: 3, nota: 'pink: manca il token' },
-  { path: 'src/components/features/admin/ScrollableAdultForm.tsx', n: 1, nota: 'pink: manca il token' },
-  { path: 'src/components/features/teacher/tasks/TaskCard.tsx', n: 5, nota: 'orange: manca il token' },
-];
-const TETTO_FILE = 11;
-const TETTO_OCCORRENZE = 76;
+/**
+ * DEBITO DICHIARATO — **VUOTO dal 2026-09-04**.
+ * La misura di partenza era 76 occorrenze in 11 file. Sono state bonificate tutte
+ * nello stesso giro, su decisione del titolare: «devono restare solo i colori del
+ * brand». Le sostituzioni non sono state inventate — ognuna aveva gia' il proprio
+ * token: `red`→`error`, `amber`→`warn`, `blue`→`info`, `yellow`→la scala gialla,
+ * `orange`→`warn` (era gia' mescolato a `kidville-warn` nello stesso className),
+ * `pink`→ le tinte per grado, che `globals.css:136-138` dichiara da sempre.
+ * La lista resta qui, vuota e col suo meccanismo intatto: se un giorno serve di
+ * nuovo, si riapre — ma il tetto e' ZERO e non risale.
+ */
+const DEBITO: { path: string; n: number; nota: string }[] = [];
+const TETTO_FILE = 0;
+const TETTO_OCCORRENZE = 0;
 
 const MISURA = sorgenti()
   .map((p) => ({ path: p, n: colori(p).length }))
@@ -141,6 +132,14 @@ describe('lock — nessun colore della palette di serie di Tailwind in src/', ()
     expect(doppi, 'stesso file due volte: il conteggio non sarebbe più leggibile').toEqual([]);
     expect(DEBITO.reduce((s, v) => s + v.n, 0)).toBe(TETTO_OCCORRENZE);
     expect(DEBITO.length).toBe(TETTO_FILE);
+    // Debito a ZERO: la misura sul repo vero deve essere vuota. E' l'asserzione
+    // piu' forte che questo lock possa fare, e sostituisce i tetti: prima
+    // passava con qualunque numero <= 76, ora solo con 0.
+    expect(
+      MISURA,
+      'Colori della palette di serie di Tailwind in src/. Il debito e stato azzerato il ' +
+        '2026-09-04: non si riapre. Usa i token `kidville-*`.',
+    ).toEqual([]);
   });
 
   it('ogni voce esiste ancora e ha ESATTAMENTE il numero dichiarato', () => {

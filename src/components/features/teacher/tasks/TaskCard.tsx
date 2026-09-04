@@ -284,7 +284,7 @@ export function TaskCard({
             className={`w-full backdrop-blur-xl rounded-3xl border shadow-sm transition-all duration-200 overflow-hidden relative
                 ${task.status === 'approved' ? 'opacity-80' : ''}
                 ${isUpdated 
-                    ? 'bg-kidville-warn-soft/70 border-orange-500 ring-4 ring-orange-500/30 shadow-lg shadow-orange-500/20' 
+                    ? 'bg-kidville-warn-soft/70 border-kidville-warn ring-4 ring-kidville-warn/30 shadow-lg shadow-kidville-warn/20' 
                     : task.status === 'approved' 
                         ? 'bg-white border-kidville-line' 
                         : 'bg-white border-white/60'}
@@ -294,7 +294,7 @@ export function TaskCard({
             <div className={`h-0.5 w-full ${task.status === 'todo' ? 'bg-kidville-cream-dark' : task.status === 'in_progress' ? 'bg-kidville-warn' : task.status === 'completed' ? 'bg-kidville-info' : 'bg-kidville-success'}`} />
 
             {isUpdated && (
-                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b from-orange-400 via-orange-500 to-kidville-warn animate-pulse z-10" />
+                <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-gradient-to-b from-kidville-warn-soft via-kidville-warn to-kidville-warn-strong animate-pulse z-10" />
             )}
 
             <div className={`p-5 ${isUpdated ? 'pl-7' : ''}`}>

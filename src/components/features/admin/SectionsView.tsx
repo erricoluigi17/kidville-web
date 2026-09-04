@@ -40,9 +40,16 @@ interface Student {
 }
 
 export const schoolTypeConfig = {
-    nido: { label: 'Nido', icon: Baby, color: 'text-pink-500', bg: 'bg-pink-500/10', border: 'border-pink-500/30' },
+    // Le tinte per grado sono dichiarate in `globals.css` come `--kv-grade-*`, e
+    // coincidono con tre token del tema: nido = `kidville-info`, infanzia =
+    // `kidville-green`, primaria = `kidville-warn`. Fino al 2026-09-04 qui il nido
+    // era ROSA — un colore che nella palette non esiste — e la primaria portava il
+    // blu, cioe' la tinta del nido. Riallineati alla fonte.
+    // (I valori esadecimali NON si scrivono qui nemmeno in commento: il lock
+    //  `design-tokens-admin` non maschera i commenti, ed e' giusto cosi'.)
+    nido: { label: 'Nido', icon: Baby, color: 'text-kidville-info', bg: 'bg-kidville-info/10', border: 'border-kidville-info/30' },
     infanzia: { label: 'Infanzia', icon: GraduationCap, color: 'text-kidville-green', bg: 'bg-kidville-green/10', border: 'border-kidville-green/30' },
-    primaria: { label: 'Primaria', icon: BookOpen, color: 'text-kidville-info', bg: 'bg-kidville-info/10', border: 'border-kidville-info/30' },
+    primaria: { label: 'Primaria', icon: BookOpen, color: 'text-kidville-warn', bg: 'bg-kidville-warn/10', border: 'border-kidville-warn/30' },
 };
 
 // Etichetta tradotta del grado scolastico (schoolTypeConfig.label resta come

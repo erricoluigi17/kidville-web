@@ -40,7 +40,7 @@ const ACTIVITY_TYPES = [
 const PARTICIPATION_LEVELS = [
     { value: 'non_fatta',  bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     border: 'border-kidville-error/25' },
     { value: 'difficolta', bg: 'bg-kidville-warn-soft/80',  text: 'text-kidville-warn',  border: 'border-kidville-warn/60' },
-    { value: 'aiuto',      bg: 'bg-yellow-100/80',  text: 'text-yellow-700',  border: 'border-yellow-200/60' },
+    { value: 'aiuto',      bg: 'bg-kidville-yellow-soft/80',  text: 'text-kidville-yellow-strong',  border: 'border-kidville-yellow/40/60' },
     { value: 'autonomia',  bg: 'bg-kidville-success-soft/80', text: 'text-kidville-success', border: 'border-kidville-success/60' },
 ] as const;
 

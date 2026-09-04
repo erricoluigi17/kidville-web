@@ -303,7 +303,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
         </div>
       )}
       {!authError && (saldo != null && saldo <= 0) && (
-        <div className="mb-3 px-3 py-2 rounded-xl bg-red-50 border border-red-200 font-maven text-xs text-red-600">
+        <div className="mb-3 px-3 py-2 rounded-xl bg-kidville-error-soft border border-kidville-error/40 font-maven text-xs text-kidville-error-strong">
           {t('saldoEsaurito')}
         </div>
       )}

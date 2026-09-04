@@ -116,15 +116,20 @@ afterEach(() => cleanup());
 // bianco su crema è 1,11:1, quindi quel contorno è l'unico indizio del bordo.
 // =============================================================================
 describe('§1 · Il contorno della card di scelta su superficie crema', () => {
-    it('1a · i numeri: `neutral` non passa sulla crema, `sub` sì (e su entrambi i lati)', () => {
+    it('1a · i numeri: dal 2026-09-04 `neutral` passa su ENTRAMBE le superfici, come `sub`', () => {
         const crema = token('cream');
         const bianco = token('white');
         expect([crema, bianco]).toEqual(['#FEF1E4', '#FFFFFF']);
 
-        // Il difetto, in una riga: lo STESSO colore passa sul bianco e non sulla crema.
+        // Il difetto era, in una riga: lo STESSO colore passava sul bianco e non
+        // sulla crema. CHIUSO il 2026-09-04 allineando `--color-kidville-neutral`
+        // a `muted`: ora regge su ENTRAMBE le superfici, ed e' questo che si
+        // asserisce. Il controllo positivo — che la sonda sappia vedere un colore
+        // sotto soglia — resta due righe piu' giu' su `line`, che sta a 1,23:1.
         expect(contrasto(token('neutral'), bianco)).toBeGreaterThanOrEqual(3);
-        expect(contrasto(token('neutral'), crema)).toBeLessThan(3);
-        expect(contrasto(token('neutral'), crema)).toBe(2.79);
+        expect(contrasto(token('neutral'), crema)).toBeGreaterThanOrEqual(3);
+        expect(contrasto(token('line'), bianco)).toBeLessThan(3);
+        expect(contrasto(token('neutral'), crema)).toBe(3.43);
 
         // Il rimedio: `sub` si vede da entrambi i lati del confine.
         expect(contrasto(token('sub'), crema)).toBe(5.82);

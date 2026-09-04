@@ -257,13 +257,13 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
 
     const statsBlock = mainTab === 'letture' ? (
         <div className="grid grid-cols-2 gap-3">
-            <div className="bg-gradient-to-br from-blue-50 to-kidville-info-soft border border-kidville-info/60 p-4 rounded-3xl">
+            <div className="bg-gradient-to-br from-kidville-info-soft to-kidville-info-soft border border-kidville-info/60 p-4 rounded-3xl">
                 <div className="flex items-center gap-2 text-kidville-info mb-1">
                     <Eye size={16} strokeWidth={1.5} />
                     <span className="font-maven text-[10px] font-bold uppercase tracking-wider">{t('statLetti')}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
-                    <span className="font-barlow font-black text-2xl text-blue-900">{readCount}</span>
+                    <span className="font-barlow font-black text-2xl text-kidville-info-strong">{readCount}</span>
                     <span className="font-maven text-xs text-kidville-info/60">{t('statSuTotale', { total: totalTarget, pct: readPercentage })}</span>
                 </div>
             </div>

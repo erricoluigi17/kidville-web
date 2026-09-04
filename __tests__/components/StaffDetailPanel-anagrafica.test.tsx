@@ -2188,8 +2188,8 @@ describe('scheda staff · il PERIMETRO della pillola che assegna una classe', ()
     const bordo = bordoRisolto(pillola, CSS_GLOBALS)
     expect(bordo, 'nessuna regola di globals.css tocca il bordo della pillola').not.toBeNull()
     // Il numero, non la soglia: `neutral` #8A958F su bianco. Era #EFE7DC → 1,23:1.
-    expect(bordo).toBe('#8A958F')
-    expect(contrasto(bordo as string, '#FFFFFF')).toBe(3.1)
+    expect(bordo).toBe('#7B8582')
+    expect(contrasto(bordo as string, '#FFFFFF')).toBe(3.8)
     expect(contrasto(bordo as string, '#FFFFFF')).toBeGreaterThanOrEqual(3)
   })
 

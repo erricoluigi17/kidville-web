@@ -37,7 +37,7 @@ export const TONE_HEX = {
   warn: '#E6720A',
   error: '#E53935',
   success: '#43A047',
-  neutral: '#8A958F',
+  neutral: '#7B8582',
   yellow: '#FDC400',
 } as const;
 

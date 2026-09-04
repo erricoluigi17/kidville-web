@@ -272,7 +272,7 @@ export function DocumentiFirmatiPanel({ conFiltroSede = false }: { conFiltroSede
       )}
 
       {errore && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-kidville-error bg-kidville-error-soft px-3 py-2 text-sm text-kidville-error-strong">
           <span>{errore}</span>
           <button type="button" onClick={() => void carica()} className="font-bold underline">
             {t('riprova')}
@@ -463,7 +463,7 @@ function PannelloDettaglio({
             )}
 
             {dettaglio.fileAssente && dettaglio.fonte !== 'modulo_firmato' && (
-              <p className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <p className="rounded-xl border border-kidville-error bg-kidville-error-soft px-3 py-2 text-sm text-kidville-error-strong">
                 {t('dettaglioFileMancante')}
               </p>
             )}

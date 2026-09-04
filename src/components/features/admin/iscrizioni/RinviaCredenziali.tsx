@@ -111,7 +111,7 @@ export function RinviaCredenziali() {
             </div>
 
             {errore && (
-                <p role="alert" className="text-sm font-maven text-red-700 bg-red-50 rounded-xl px-3 py-2">
+                <p role="alert" className="text-sm font-maven text-kidville-error-strong bg-kidville-error-soft rounded-xl px-3 py-2">
                     {errore}
                 </p>
             )}
@@ -153,26 +153,26 @@ export function RinviaCredenziali() {
                         </p>
                     )}
                     {esito.falliti > 0 && (
-                        <p className="text-red-700">{esito.falliti} non {esito.falliti === 1 ? 'è partita' : 'sono partite'}.</p>
+                        <p className="text-kidville-error-strong">{esito.falliti} non {esito.falliti === 1 ? 'è partita' : 'sono partite'}.</p>
                     )}
                     {esito.daConsegnareAMano.length > 0 && (
-                        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 space-y-1">
+                        <div className="rounded-lg bg-kidville-warn-soft border border-kidville-warn/40 px-3 py-2 space-y-1">
                             {/*
                               * L'email non è partita, ma la password è già stata cambiata: quella
                               * vecchia non funziona più e la nuova non la sa nessuno. Sta qui, una
                               * volta sola, perché chi ha premuto ha la famiglia al telefono adesso.
                               */}
-                            <p className="font-bold text-amber-900">
+                            <p className="font-bold text-kidville-warn-strong">
                                 Queste vanno dette a voce: l’email non è partita, ma la password è già cambiata.
                             </p>
                             <ul className="space-y-1">
                                 {esito.daConsegnareAMano.map((c) => (
-                                    <li key={c.email} className="font-mono text-xs text-amber-900">
+                                    <li key={c.email} className="font-mono text-xs text-kidville-warn-strong">
                                         {c.email} → {c.password}
                                     </li>
                                 ))}
                             </ul>
-                            <p className="text-xs text-amber-800">
+                            <p className="text-xs text-kidville-warn-strong">
                                 Non restano scritte da nessuna parte: chiudendo questa pagina spariscono.
                             </p>
                         </div>

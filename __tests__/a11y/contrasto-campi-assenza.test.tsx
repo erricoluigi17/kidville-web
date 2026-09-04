@@ -640,9 +640,10 @@ describe('a11y §3 · le frasi di /parent/attendance si leggono (WCAG 1.4.3)', (
 // =============================================================================
 describe('a11y §4 · su fondo crema si vede dove comincia il campo (WCAG 1.4.11)', () => {
     it('CONTROLLO POSITIVO: la sonda riproduce i due numeri che il repo ha già misurato', () => {
-        // `Btn.tsx` li scrive testualmente: «3,10:1 su bianco, 2,79:1 su crema».
-        expect(contrasto(T.neutral, T.white)).toBe(3.1);
-        expect(contrasto(T.neutral, T.cream)).toBe(2.79);
+        // `Btn.tsx` li scrive testualmente: «3,10:1 su bianco, 2,79:1 su crema» — numeri di PRIMA del 2026-09-04,
+        // quando `neutral` valeva #8A958F; oggi vale come `muted` e fa 3,80 / 3,43.
+        expect(contrasto(T.neutral, T.white)).toBe(3.8);
+        expect(contrasto(T.neutral, T.cream)).toBe(3.43);
         // …e il riempimento del campo non è un indizio: bianco su crema.
         expect(contrasto(T.white, T.cream)).toBeLessThan(1.2);
     });

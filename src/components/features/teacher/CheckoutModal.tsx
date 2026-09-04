@@ -76,7 +76,7 @@ export function CheckoutModal({ studentName, delegates, onClose, onConfirmChecko
                     <button
                         onClick={handlePanic}
                         disabled={isPanicLoading}
-                        className="w-full h-12 font-barlow font-bold text-lg rounded-pill bg-kidville-error text-white flex items-center justify-center gap-2 hover:bg-red-700 transition-colors disabled:opacity-50"
+                        className="w-full h-12 font-barlow font-bold text-lg rounded-pill bg-kidville-error text-white flex items-center justify-center gap-2 hover:bg-kidville-error-strong transition-colors disabled:opacity-50"
                     >
                         <AlertTriangle size={20} />
                         {isPanicLoading ? t('invioAllarme') : t('panicAlert')}

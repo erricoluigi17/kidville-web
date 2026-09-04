@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import type { AppUser } from '@/lib/auth/require-staff';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { ensureParentIdentity, firstEmail } from '@/lib/auth/parent-identity';
@@ -291,6 +292,7 @@ export async function linkOrCreateParent(
           email: identita.email,
           password: identita.password,
           occasione: 'inserimento-anagrafica',
+          emessaIl: istanteEmissioneCredenziali(),
         }, sede);
         const invio = await sendEmailDetailed({
           to: identita.email,

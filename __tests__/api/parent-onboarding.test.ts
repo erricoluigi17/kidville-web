@@ -331,6 +331,49 @@ describe('POST /api/parent/onboarding', () => {
     expect(esitiLoggati('info')).not.toContain('password-onboarding-impostata')
   })
 
+  it('il rifiuto di GoTrue porta un CODICE: senza, il genitore legge «Operazione non riuscita»', async () => {
+    // La pagina dell'onboarding passa da `soloCatalogoDaCorpo`, che mostra la prosa
+    // del server MAI e la frase tradotta SOLO se il corpo dichiara un `codice`.
+    // Questa route non ne dichiarava nessuno: quindi ogni rifiuto della password —
+    // il più frequente dei quali, misurato il 04/09, è `weak_password` — arrivava
+    // a schermo come il generico «Operazione non riuscita. Riprova.», che non dice
+    // né che cosa è successo né che i consensi sono salvi.
+    h.pwErr = { name: 'AuthApiError', message: 'boom', status: 400, code: 'validation_failed' }
+
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: PASSWORD_VALIDA }))
+
+    expect(res.status).toBe(400)
+    const j = await res.json()
+    expect(j.codice).toBe('PASSWORD_RIFIUTATA')
+    // I consensi sono salvi, e la pagina deve poterlo dire con la PROPRIA
+    // traduzione: la frase di catalogo è condivisa con l'altra route e non può
+    // parlare di consensi.
+    expect(j.consensi_salvati).toBe(true)
+  })
+
+  it('`weak_password` prende il proprio codice: è il rifiuto più frequente, e il rimedio è diverso', async () => {
+    // Misurato il 2026-09-04 su questa stessa route: 5 occorrenze su 2 utenti, 9 su 3
+    // il giorno prima. Sono password lunghe, con lettera e cifra, respinte perché
+    // compaiono in elenchi di credenziali rubate ad altri siti. Dire a queste
+    // persone di sceglierne una «più lunga» le manda a sbattere una seconda volta.
+    h.pwErr = { name: 'AuthApiError', message: 'Password is known to be weak and easy to guess', status: 422, code: 'weak_password' }
+
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: PASSWORD_VALIDA }))
+
+    expect(res.status).toBe(400)
+    const j = await res.json()
+    expect(j.codice).toBe('PASSWORD_TROPPO_COMUNE')
+    expect(j.consensi_salvati).toBe(true)
+    // La prosa inglese del provider non esce mai dall'interfaccia.
+    expect(JSON.stringify(j)).not.toContain('known to be weak')
+  })
+
+  it('un guasto del provider dichiara PASSWORD_NON_SCRITTA, non «scegline un altra»', async () => {
+    h.pwErr = { name: 'AuthRetryableFetchError', message: 'service unavailable', status: 503 }
+    const res = await POST(req({ consensi: { privacy: true, termini: true }, password: PASSWORD_VALIDA }))
+    expect((await res.json()).codice).toBe('PASSWORD_NON_SCRITTA')
+  })
+
   it('guasto di GoTrue (5xx) ⇒ 500, e i consensi restano salvati (l onboarding è ripetibile)', async () => {
     h.pwErr = { name: 'AuthRetryableFetchError', message: 'service unavailable', status: 503 }
 

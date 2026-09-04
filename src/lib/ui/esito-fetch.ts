@@ -1536,6 +1536,46 @@ export const CODICI_ERRORE = {
      */
     PASSWORD_RIFIUTATA: 'errorePasswordRifiutata',
     /**
+     * 400 — GoTrue ha respinto la password perché COMPARE IN ELENCHI DI PASSWORD
+     * RUBATE ad altri siti (`422 weak_password`, protezione «leaked password»).
+     *
+     * ⚠️ È IL RIFIUTO PIÙ FREQUENTE DI TUTTI, e fino al 2026-09-04 non aveva un
+     * codice suo: cadeva in `PASSWORD_RIFIUTATA`, la cui frase manda a scegliere
+     * una password «più lunga e con almeno una lettera e una cifra». Misurato in
+     * produzione quel giorno: **30 rifiuti su 20 utenti distinti**, 47 su 29 il
+     * giorno prima. Tutte password da dieci caratteri, con maiuscola e cifra —
+     * cioè persone mandate a correggere requisiti che avevano già soddisfatto,
+     * con i tre criteri della schermata verdi sotto gli occhi.
+     *
+     * PERCHÉ MERITA UN CODICE PROPRIO E NON BASTA `PASSWORD_RIFIUTATA`: il rimedio
+     * è diverso, ed è l'unico caso in cui la forma della password NON è il
+     * problema. Dire «più lunga» a chi ha scritto una parola comune di dodici
+     * lettere lo manda a scriverne una di quindici — che sarà respinta uguale.
+     * La frase deve dire l'unica cosa che risolve: cambiare *parola*, non misura.
+     */
+    PASSWORD_TROPPO_COMUNE: 'errorePasswordTroppoComune',
+    /**
+     * 409 — le credenziali NON sono state inviate perché l'indirizzo dell'anagrafica
+     * è già di un altro account, e quello di accesso è quindi rimasto un altro.
+     *
+     * PERCHÉ È UN RIFIUTO E NON UN AVVISO: spedire qui vorrebbe dire scrivere una
+     * password su un account e mandarla a un indirizzo che non è il suo. È il
+     * difetto misurato il 2026-09-04 — 4 famiglie mai entrate, una con 13
+     * rigenerazioni in un giorno — e ogni corsa distruggeva anche la password
+     * precedente. Meglio non spedire niente che spedire una cosa che non funziona.
+     */
+    CREDENZIALI_INDIRIZZO_IN_USO: 'erroreCredenzialiIndirizzoInUso',
+    /**
+     * 409 — stesso rifiuto del precedente, ma per un guasto invece che per un
+     * conflitto: l'indirizzo di accesso non si è potuto riallineare.
+     *
+     * NON riusa il codice qui sopra perché il rimedio è opposto: là bisogna
+     * sistemare due anagrafiche, qui basta riprovare fra qualche minuto. Dire
+     * «unificare le anagrafiche» a chi ha solo incontrato un provider lento lo
+     * manderebbe a cercare un problema che non esiste.
+     */
+    CREDENZIALI_INDIRIZZO_NON_ALLINEATO: 'erroreCredenzialiIndirizzoNonAllineato',
+    /**
      * 500 — GoTrue non ha potuto scrivere (5xx): guasto suo, non della password.
      *
      * NON riusa `PASSWORD_RIFIUTATA`: quella frase manda a sceglierne un'altra, cioè

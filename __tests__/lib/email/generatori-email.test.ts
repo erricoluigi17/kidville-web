@@ -73,7 +73,7 @@ function tutti(sede: ContestoSede): { nome: string; m: Messaggio; dati: string[]
     return [
         {
             nome: '01 credenziali',
-            m: messaggioCredenziali({ nome: M.nome, email: M.email, password: M.password, occasione: 'iscrizione-approvata' }, sede),
+            m: messaggioCredenziali({ nome: M.nome, email: M.email, password: M.password, occasione: 'iscrizione-approvata', emessaIl: '4 settembre 2026 alle 14:32' }, sede),
             dati: [M.nome, M.email, M.password],
         },
         {
@@ -228,7 +228,7 @@ describe('i generatori di email — niente si apre', () => {
     /** Gli stessi generatori, ma con il payload in OGNI campo stringa. */
     function tuttiOstili(): { nome: string; m: Messaggio }[] {
         return [
-            { nome: '01', m: messaggioCredenziali({ nome: OSTILE, email: OSTILE, password: OSTILE, occasione: 'anagrafica-personale-approvata' }, sede) },
+            { nome: '01', m: messaggioCredenziali({ nome: OSTILE, email: OSTILE, password: OSTILE, occasione: 'anagrafica-personale-approvata', emessaIl: '4 settembre 2026 alle 14:32' }, sede) },
             { nome: '02', m: messaggioCodiceVerifica({ codice: OSTILE, operazione: { libera: OSTILE }, minuti: 10 }, sede) },
             {
                 nome: '03', m: messaggioSollecito({
@@ -305,7 +305,7 @@ describe('riservatezza — cosa non entra mai in un\'email', () => {
 
 describe('01 credenziali — la forma impersonale, che è il requisito più duro', () => {
     const m = (nome?: string | null) =>
-        messaggioCredenziali({ nome, email: 'a@b.test', password: 'Segreta-finta-2026', occasione: 'anagrafica-personale-approvata' }, GIUGLIANO)
+        messaggioCredenziali({ nome, email: 'a@b.test', password: 'Segreta-finta-2026', occasione: 'anagrafica-personale-approvata', emessaIl: '4 settembre 2026 alle 14:32' }, GIUGLIANO)
 
     it('nessuna seconda persona singolare, in nessuna delle quattro occasioni', () => {
         // Questa email va a un genitore (a cui diamo del «tu») E a una maestra (a
@@ -313,7 +313,7 @@ describe('01 credenziali — la forma impersonale, che è il requisito più duro
         // il gemello testuale, che è il corpo senza marcatori intorno.
         const occasioni = ['iscrizione-approvata', 'inserimento-anagrafica', 'password-rigenerata', 'anagrafica-personale-approvata'] as const
         for (const occasione of occasioni) {
-            const t = messaggioCredenziali({ nome: 'Maria', email: 'a@b.test', password: 'x', occasione }, GIUGLIANO).testo
+            const t = messaggioCredenziali({ nome: 'Maria', email: 'a@b.test', password: 'x', occasione, emessaIl: '4 settembre 2026 alle 14:32' }, GIUGLIANO).testo
             // Il corpo, senza il piè di pagina (che porta «Ricevi questo messaggio»
             // solo nelle altre email: qui il motivo è già impersonale).
             expect(t, occasione).not.toMatch(/\b(accedi|acceda|conserva|conservi|puoi|può inserire|hai richiesto)\b/i)

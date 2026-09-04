@@ -13,6 +13,7 @@
   "erroreAccettaTermini": "To continue you must accept the Terms of Service.",
   "erroreIdentita": "Identity not resolved: sign in again from the link you received.",
   "erroreOperazione": "The operation failed. Please try again.",
+  "consensiComunqueSalvati": "The boxes you ticked have already been saved: you don\u2019t need to tick them again.",
   "erroreRete": "Network error. Please try again.",
   "nessunaPagina": "This form has no pages.",
   "passo": "Step {step} of {totale}",

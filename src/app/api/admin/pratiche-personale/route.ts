@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, type AppUser } from '@/lib/auth/require-staff'
@@ -1764,6 +1765,7 @@ async function approva(
       email,
       password: identita.password,
       occasione: 'anagrafica-personale-approvata',
+      emessaIl: istanteEmissioneCredenziali(),
     }, sede)
     const invio = await sendEmailDetailed({
       to: email,

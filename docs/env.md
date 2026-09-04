@@ -76,7 +76,7 @@ a iOS passa da FCM, quindi lato server bastano le `FCM_*`.
 
 | Variabile | Descrizione |
 |---|---|
-| `ARUBA_USERNAME` / `ARUBA_PASSWORD` | Credenziali Aruba Fatturazione (SDI, P3.1). Assenti → fatturazione in modalità locale/simulata. **Segreti.** |
+| `ARUBA_USERNAME` / `ARUBA_PASSWORD` | Credenziali Aruba Fatturazione elettronica (SDI, P3.1). Assenti → l'emissione risponde **HTTP 503** con `motivo: 'non_configurato'` («Fatturazione Aruba non configurata o credenziali mancanti») e logga a livello **`error`** con `esito: 'credenziali-non-configurate'`: **nessuna fattura parte, e non esiste nessuna modalità locale o simulata** — `resolveArubaCredentials` (`src/lib/aruba/client.ts`) ritorna `null` ed `emettiFatturaPagamento` si ferma **prima** di allocare il numero. L'indispensabile è **`ARUBA_PASSWORD`**, risolta lato server dal `password_ref` di `admin_settings.aruba_config` (che oggi vale proprio `ARUBA_PASSWORD`) ed elencata fra le variabili critiche del preflight; **`ARUBA_USERNAME`** è solo il **ripiego** di `aruba_config.username`, che in produzione è valorizzato su tutte e tre le sedi. 🔻 Fino al 2026-09-03 questa riga prometteva una «modalità locale/simulata» **che non è mai esistita**: mandava chi indagava a cercare un ripiego inesistente mentre la fattura non partiva (vedi `docs/fatturazione/configurazione-aruba.md` §3.7). **Segreti.** |
 | `SIDI_USERNAME` / `SIDI_PASSWORD` / `SIDI_CODICE_MECCANOGRAFICO` | Credenziali SIDI/Piattaforma Unica (P5). Assenti → export/sync disattivati con messaggio esplicito. **Segreti.** |
 | `ANTHROPIC_API_KEY` | Traduzione messaggi chat via Claude. Assente → traduzione disabilitata. **Segreto.** |
 | `NEXT_PUBLIC_CF_API_KEY` | API esterna di verifica codice fiscale (client). Assente → verifica locale. |

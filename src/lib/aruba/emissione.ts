@@ -23,8 +23,8 @@
  *     si rilegge da Aruba e la lettura è BLOCCANTE — non «best-effort col contatore
  *     interno», che su una serie nata fuori da questo database vale zero e farebbe
  *     uscire un «1». Ma si rilegge UNA VOLTA PER LOTTO, non una per fattura: Aruba
- *     strozza a ~60 richieste l'ora e la rilettura per-fattura spezzava a metà
- *     l'emissione delle rette del mese (vedi `TTL_ULTIMO_NUMERO_MS`).
+ *     limita le ricerche a 12 al minuto per IP (SLA §3) e la rilettura per-fattura
+ *     spezzava a metà l'emissione delle rette del mese (vedi `TTL_ULTIMO_NUMERO_MS`).
  *
  *  3. L'ANAGRAFICA — DEL CEDENTE **E DEL CESSIONARIO**. La prima arriva da
  *     `admin_settings.fiscale_config` via `cedenteDaConfig`, la seconda da `parents`
@@ -40,7 +40,16 @@
  * di lei un fallimento non costa un errore: costa un buco nel registro fiscale.
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { arubaSignin, arubaUpload, arubaUltimoNumeroFattura, resolveArubaCredentials, type ArubaConfig } from './client'
+import {
+  arubaSignin,
+  arubaUpload,
+  arubaUltimoNumeroFattura,
+  resolveArubaCredentials,
+  richiesteArubaSpese,
+  PAUSA_FRA_PAGINE_MS,
+  type ArubaConfig,
+  type ArubaUploadResult,
+} from './client'
 import { buildFatturaElettronicaXml, causalePerTracciato, verificaCoerenzaIva, LIMITI, type IvaFattura } from './fatturapa-xml'
 import { mapStatoAruba } from './stato'
 import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamenti/intestatari'
@@ -75,6 +84,18 @@ export interface EsitoQuota {
   uploadFileName?: string
   motivo?: 'intestatario_mancante' | 'scartata' | 'idempotente' | 'numerazione' | 'configurazione' | 'errore'
   messaggio?: string
+  /**
+   * Lo status HTTP che l'aggregato deve restituire per QUESTA quota, quando la mappa per
+   * `motivo` non basta.
+   *
+   * Serve a un caso solo, e vale la pena nominarlo: un RIFIUTO DI TRASPORTO di Aruba (429
+   * sopravvissuto al ritentativo, 401, 5xx, timeout) esce con `motivo: 'errore'`, che la mappa
+   * traduce in **500 «Internal Server Error»** — una bugia, perché il guasto non è nostro, e
+   * un invito a ripremere «Emetti» su un numero già consumato. `502` dice la cosa vera: il
+   * gateway non ha concluso. Il ramo `'errore'` resta a 500 per ciò che 500 è davvero, cioè
+   * l'XML che non si è saputo comporre.
+   */
+  httpStatus?: number
 }
 
 export type EsitoEmissione =
@@ -150,8 +171,9 @@ export function progressivoInvioFattura(sezionale: Sezionale, numero: number, an
  * Quanto resta valida una lettura del progressivo prima di rifarla.
  *
  * ─── IL DIFETTO CHE QUESTA CACHE CHIUDE, misurato e scritto in questo stesso repo ──
- * `docs/fatturazione/tracciato-di-riferimento.md`, ultima sezione: «Aruba strozza a
- * circa **60 richieste l'ora** (leaky bucket) e risponde **429 con una pagina HTML**…
+ * `docs/fatturazione/tracciato-di-riferimento.md`, ultima sezione: «Aruba strozza
+ * (leaky bucket — oggi si sa: **12 ricerche al minuto per IP**, SLA §3, non «60 l'ora»,
+ * che è il tier degli UPLOAD) e risponde **429 con una pagina HTML**…
  * l'ultimo numero emesso si legge **una volta per lotto**, mai una volta per fattura,
  * altrimenti un'emissione massiva si interrompe a metà.» Fino al 2026-08-10 il motore
  * faceva esattamente il contrario, e con un commento che lo rivendicava: una lettura
@@ -218,6 +240,93 @@ function memorizzaPavimento(chiave: string, valore: number): void {
  */
 export function svuotaCacheUltimoNumeroAruba(): void {
   cacheUltimoNumero.clear()
+}
+
+const attendi = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * RIFIUTO DI TRASPORTO ≠ SCARTO DI MERITO.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * L'etichetta di stato di una riga scritta a registro quando **non si sa** se il documento
+ * sia arrivato allo SdI.
+ *
+ * Non è «Errore upload» e non porta `sdi_stato: 2`: quei due dicono «Aruba ha guardato il
+ * documento e l'ha respinto», che di fronte a un `429`, a un `401` o a un timeout è
+ * un'affermazione FALSA — e `fatture_emesse` è WORM, quindi una falsità scritta lì non si
+ * corregge più. La riga c'è lo stesso, e deve esserci: il numero È stato consumato, e senza
+ * riga quel progressivo sparirebbe dai radar di chiunque.
+ */
+const LABEL_TRASPORTO = 'Trasporto fallito'
+
+/** Quanto può essere lungo `sdi_scarto_motivo` per un rifiuto di trasporto. */
+const MOTIVO_TRASPORTO_MAX = 200
+
+/**
+ * Il motivo che la segreteria legge in tabella. Corto, e **mai** il corpo del provider:
+ * il `429` di Aruba è una pagina HTML intera, e fino al 2026-09-03 finiva dentro questa
+ * colonna. Il corpo non si perde — `externalFetch` lo mette in `app_log` con lo status —
+ * ma non è quello che serve a chi deve decidere se ripremere «Emetti».
+ */
+function motivoTrasporto(quale: string): string {
+  return `TRASPORTO ${quale}: esito ignoto, verificare sul pannello Aruba prima di ripremere`.slice(
+    0,
+    MOTIVO_TRASPORTO_MAX,
+  )
+}
+
+/**
+ * Il messaggio per chi ha appena premuto «Emetti».
+ *
+ * Dice l'unica cosa che conta e che nessun altro messaggio di questo file dice: **non
+ * ripremere**. Ogni altro fallimento dell'emissione si chiude con «nessun numero è stato
+ * consumato», e ripremere è la risposta giusta; qui no. Il numero c'è, il documento
+ * potrebbe essere partito, e un secondo tentativo produrrebbe una seconda fattura per la
+ * stessa retta — che si corregge solo con una nota di variazione.
+ */
+function messaggioTrasporto(numeroFattura: string, quale: string): string {
+  return (
+    `Aruba non ha concluso l’invio della fattura ${numeroFattura} (${quale}) e non sappiamo se il ` +
+    'documento sia partito. Il numero è comunque stato consumato. NON ripremere «Emetti»: ' +
+    'controlla prima sul pannello Aruba se la fattura risulta trasmessa.'
+  )
+}
+
+/**
+ * La riga di trasporto NON è stata scritta a registro: due fatti, DUE righe.
+ *
+ * ⚠️ Perché non una sola con `erroreConCausa`, come altrove in questo file. Negli altri
+ * punti il motivo del provider viaggia già nel campo `msg`, quindi mettere l'errore di
+ * PostgREST come errore principale non perde niente. Qui no: nel ramo dell'ECCEZIONE il
+ * corpo della risposta di Aruba esiste solo dentro l'errore catturato, e `logEvento` fa
+ * vincere l'errore sui campi — passare l'errore del database al suo posto BUTTEREBBE VIA
+ * il motivo del provider, che è precisamente ciò che AGENTS.md regola 3 vieta.
+ *
+ * Con due righe nessuno dei due sparisce: la prima dice cosa ha risposto Aruba, la seconda
+ * che quel fatto non è finito a registro — e ognuna porta il proprio `code` nella colonna
+ * `codice`, dove si interroga.
+ */
+function segnalaTrasportoNonRegistrato(
+  scuolaId: string,
+  numero: number,
+  anno: number,
+  numeroFattura: string,
+  quale: string,
+  errore: unknown,
+): void {
+  const detto =
+    `fattura ${numeroFattura}: invio ad Aruba dall'esito IGNOTO (${quale}) e la riga di trasporto ` +
+    'NON è stata scritta a registro — il numero risulta consumato e non lo documenta niente'
+  logEvento('fattura', 'error', {
+    operazione: 'emettiFatturaPagamento:upload',
+    esito: 'trasporto-non-registrato',
+    provider: 'aruba',
+    scuola_id: scuolaId,
+    numero,
+    anno,
+    msg: detto,
+  }, erroreConCausa(detto, errore))
 }
 
 /**
@@ -654,6 +763,13 @@ export async function emettiFatturaPagamento(
   // Quindi FAIL-CLOSED, come il cedente e come il cessionario: se l'idempotenza
   // non è VERIFICABILE, non si emette. Un'emissione mancata si rifà con un clic;
   // una fattura doppia no.
+  //
+  // ⚠️ E NON TUTTE LE RIGHE VIVE RACCONTANO LA STESSA COSA. Una riga «Trasporto
+  // fallito» (`sdi_stato` nullo, nessun nome file) blocca il secondo documento
+  // come le altre — ed è per questo che nasce con `sdi_stato: null` — ma NON è una
+  // fattura inviata: nessuno sa se sia partita. Va riconosciuta qui sotto e
+  // raccontata per quello che è, altrimenti la seconda pressione riceve un «già
+  // fatto» e il pagamento finisce in un «in attesa» che nessun `sync` chiuderà.
   const { data: esistenti, error: errEsistenti } = await supabase
     .from('fatture_emesse')
     .select('id, numero, sezionale, aruba_filename, sdi_stato, quota_adult_id')
@@ -694,9 +810,27 @@ export async function emettiFatturaPagamento(
   // La serie e l'anno sono gli stessi per tutte le quote di questo pagamento (li
   // decide il MINORE, non chi paga): una chiave sola, e una lettura sola.
   const chiaveSerie = chiaveSerieAruba(cfg.ambiente, creds.username, sezionale, anno)
+
+  /**
+   * ─── IL RITMO PRIMA DELL'UPLOAD ─────────────────────────────────────────────
+   * L'upload partiva SUBITO dopo l'ultima pagina di `findByUsername`: dentro la
+   * stessa finestra del leaky bucket che aveva appena risposto a sette GET. Un
+   * `429` lì costa un numero già allocato dalla RPC — un buco nel registro
+   * fiscale — e lascia il pagamento «scartata».
+   *
+   * Il predicato non è «la cache era vuota», è «sono partite davvero delle
+   * richieste»: le due cose coincidono in produzione, ma solo la seconda è una
+   * misura, e la misura ce l'ha il client (`richiesteArubaSpese`). Se il
+   * pavimento arriva dalla cache non si è speso niente, e i cinque secondi
+   * sarebbero solo cinque secondi passati da qualcuno a guardare una rotellina.
+   *
+   * Una sola pausa per invocazione: il flag si spegne quando la si paga.
+   */
+  let ritmoDaPagare = false
   const leggiPavimentoSerie = async (): Promise<number> => {
     const inCache = pavimentoInCache(chiaveSerie)
     if (inCache !== null) return inCache
+    const spesePrima = richiesteArubaSpese()
     const token = await ensureToken()
     const letto = await arubaUltimoNumeroFattura(cfg.ambiente, token, {
       username: creds.username,
@@ -704,6 +838,7 @@ export async function emettiFatturaPagamento(
       sezionale,
       vatcodeSender: cedente.piva || undefined,
     })
+    if (richiesteArubaSpese() > spesePrima) ritmoDaPagare = true
     memorizzaPavimento(chiaveSerie, letto)
     return letto
   }
@@ -717,6 +852,62 @@ export async function emettiFatturaPagamento(
       return r.quota_adult_id === q.adultId || (!multi && r.quota_adult_id == null)
     })
     if (gia) {
+      // ── UNA RIGA «TRASPORTO FALLITO» NON È UNA FATTURA INVIATA ───────────────
+      // Si riconosce da due colonne insieme: `sdi_stato` nullo E nessun nome file.
+      // Basta, e vale la pena scrivere perché: dentro questo file `sdi_stato` lo
+      // scrivono quattro INSERT e nessun'altra — `1` quando Aruba ha risposto
+      // `0000`, `2` sullo scarto di merito, `null` soltanto nei due rami del rifiuto
+      // di trasporto; e `fattura/sync`, l'unico altro scrittore, ci mette sempre un
+      // numero (e non guarda nemmeno queste righe: filtra `sdi_stato in (1,3,5)` con
+      // `aruba_filename not null`). In produzione, poi, `fatture_emesse` è vuota:
+      // non c'è uno storico di righe di altra forma da interpretare.
+      //
+      // ⚠️ PERCHÉ NON BASTAVA NON RIEMETTERE. Lo `sdi_stato: null` tiene la riga viva
+      // e blocca il secondo documento — quella parte funzionava, ed è giusta. Ma la
+      // riga cadeva nel ramo `idempotente` con `ok: true`, e l'aggregato di fondo
+      // scriveva `fattura_stato = 'in_attesa'` con `fattura_aruba_id = null`: uno
+      // stato senza uscita, perché `fattura/sync` non ripesca una riga senza nome
+      // file e `aggregaFatturaStato` la terrebbe «in attesa» per sempre. Chi ripreme
+      // «Emetti» — e ripreme, perché la UI mostra «Riprova» proprio sullo stato
+      // `scartata` in cui il primo tentativo lascia il pagamento — si sentiva
+      // rispondere «fatto» su una fattura di cui nessuno sa se sia partita.
+      if (gia.sdi_stato == null && gia.aruba_filename == null) {
+        // `esito` è in lista bianca e resta in chiaro in tabella: «quante volte si è
+        // ripremuto su una fattura dall'esito ignoto» diventa una query. Numeri e
+        // uuid passano in chiaro; niente altro serve, e niente altro ci va.
+        logEvento('fattura', 'warn', {
+          operazione: 'emettiFatturaPagamento:idempotenza',
+          esito: 'trasporto-in-sospeso',
+          provider: 'aruba',
+          scuola_id: pag.scuola_id,
+          pagamento_id: pagamentoId,
+          numero: gia.numero,
+          msg:
+            'ripremuto «Emetti» su una fattura con esito di trasporto ignoto: nessun secondo ' +
+            'documento è stato inviato; il pagamento resta da verificare sul pannello Aruba',
+        })
+        const numeroFattura = gia.sezionale ? `${gia.sezionale} ${gia.numero}` : String(gia.numero)
+        esiti.push({
+          adultId: q.adultId,
+          label: q.label,
+          // `ok: false` è la parte che conta: l'aggregato lascia il pagamento
+          // `scartata` (dov'era) invece di inventargli un «in attesa», e la route
+          // risponde 409 invece di 200.
+          ok: false,
+          numero: gia.numero,
+          numeroFattura,
+          motivo: 'errore',
+          // 409 e non 502: il gateway non c'entra, il conflitto è con una riga che è
+          // già a registro e che qualcuno deve chiudere prima di riprovare.
+          httpStatus: 409,
+          messaggio:
+            messaggioTrasporto(numeroFattura, 'esito ignoto') +
+            ' Se sul pannello Aruba la fattura NON risulta, la riga «Trasporto fallito» a registro ' +
+            'va chiusa a mano (sdi_stato = 2) prima di riemettere; se risulta, va completata con il ' +
+            'nome file (aruba_filename) e sdi_stato = 1, così la sincronizzazione la riprende.',
+        })
+        continue
+      }
       esiti.push({
         adultId: q.adultId,
         label: q.label,
@@ -917,11 +1108,14 @@ export async function emettiFatturaPagamento(
       const messaggioNumerazione = (() => {
         switch (codiceProvider) {
           case '429':
-            // Non è un guasto: è il secchio pieno (~60 richieste l'ora, e il 429
-            // arriva come pagina HTML). La risposta giusta è aspettare.
+            // Non è un guasto: è il secchio pieno (12 ricerche al minuto per IP e un
+            // login al minuto, SLA §3 di Aruba; il 429 arriva come pagina HTML). Il
+            // codice ha già aspettato 90 s e ritentato una volta: la risposta giusta,
+            // adesso, è aspettare di più — e non insistere, perché ogni tentativo
+            // azzera la finestra di un'ora.
             return (
-              'Aruba ha risposto «troppe richieste» (limite di circa 60 chiamate l’ora). ' +
-              `${nienteEmesso} Riprova fra qualche minuto.`
+              'Aruba ha risposto «troppe richieste» (limite di 12 ricerche e 1 accesso al minuto). ' +
+              `${nienteEmesso} Aspetta almeno un’ora senza ripremere, poi riprova.`
             )
           case '401':
           case '403':
@@ -1086,12 +1280,139 @@ export async function emettiFatturaPagamento(
       bollo_virtuale: bolloImporto > 0,
     }
 
-    // invio Aruba (token condiviso fra le quote)
-    const token = await ensureToken()
-    const up = await arubaUpload(cfg.ambiente, token, {
-      dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
-      senderPIVA: cedente.piva,
-    })
+    // ── IL RITMO, PRIMA DI SPENDERE L'ULTIMA RICHIESTA ───────────────────────
+    // Se il pavimento è appena stato letto da Aruba, il secchio è stato toccato
+    // adesso: l'upload si tiene a distanza. Una volta per invocazione, non una
+    // per quota — le quote successive usano il token e il pavimento già in mano.
+    if (ritmoDaPagare) {
+      ritmoDaPagare = false
+      await attendi(PAUSA_FRA_PAGINE_MS)
+    }
+
+    // ── L'INVIO, E LA RETE CHE FINALMENTE C'È SOTTO ──────────────────────────
+    // `ensureToken()` e `arubaUpload()` stavano FUORI da ogni `try`, con il numero
+    // già allocato. Un `429` sul `signin`, il tetto di 30 s del provider o una rete
+    // caduta risalivano fino al `catch` della route: **500 «Internal Server Error»**,
+    // nessuna riga a registro, e — la parte peggiore — nessuno in grado di dire se la
+    // fattura fosse partita. Un timeout a trenta secondi non significa che Aruba non
+    // abbia ricevuto il file.
+    let up: ArubaUploadResult
+    try {
+      const token = await ensureToken()
+      // NIENTE `senderPIVA`: il documento è un TD01 e il mittente è il cedente dell'XML, che
+      // è l'utenza stessa. Passarlo — e a 11 cifre nude — è ciò che il 2026-09-03 ha fatto
+      // respingere la prima fattura vera con `0093` «deleghe non valide» (vedi `arubaUpload`).
+      up = await arubaUpload(cfg.ambiente, token, {
+        dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
+      })
+    } catch (e) {
+      // `code` viene da `erroreAruba` (`'rete'`, o lo status quando una risposta
+      // c'era). Finisce nel motivo a registro perché «rete» e «429» mandano a
+      // guardare in due posti diversi, e la colonna è l'unica cosa che resta.
+      const quale = String((e as { code?: unknown } | null)?.code ?? 'ignoto')
+      const motivo = motivoTrasporto(quale)
+      const { error: errTrasporto } = await supabase
+        .from('fatture_emesse')
+        .insert({ ...baseRow, sdi_stato: null, sdi_stato_label: LABEL_TRASPORTO, sdi_scarto_motivo: motivo })
+      // `withRoute` NON vede le eccezioni catturate: senza questa riga il caso più
+      // velenoso del file resterebbe muto. Il corpo del provider viaggia dentro `e`
+      // (il client lo conserva) e DEVE restare il messaggio della riga — è l'unica
+      // cosa che distingue un token scaduto da una rete caduta. Per questo `e` va
+      // passato SEMPRE: se anche l'INSERT è fallito, quel fatto ha una riga sua.
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento:upload',
+        esito: 'upload-esito-ignoto',
+        provider: 'aruba',
+        scuola_id: pag.scuola_id,
+        numero,
+        anno,
+      }, e)
+      if (errTrasporto) {
+        segnalaTrasportoNonRegistrato(pag.scuola_id, numero, anno, numeroFattura, quale, errTrasporto)
+      }
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        numero,
+        numeroFattura,
+        motivo: 'errore',
+        httpStatus: 502,
+        messaggio: messaggioTrasporto(numeroFattura, quale),
+      })
+      continue
+    }
+
+    if (up.trasporto) {
+      // RIFIUTO DI TRASPORTO: Aruba ha risposto, ma non sul MERITO del documento
+      // (429 sopravvissuto al ritentativo, 401/403, 5xx, o un 2xx illeggibile).
+      // A registro sì — il numero è consumato — ma senza `sdi_stato: 2`, che
+      // significa «scartata» e qui sarebbe falso.
+      // ── COME SI CHIAMA IL GUASTO, NELLA COLONNA CHE LEGGE LA SEGRETERIA ────
+      // `sdi_scarto_motivo` è l'unica cosa davanti a chi deve decidere se ripremere:
+      // deve nominare il guasto, non stampare un numero che dice il contrario.
+      //  · un `0034` arrivato in risposta al NOSTRO ritentativo porta uno status `2xx`, ma
+      //    la notizia non è lo status: è che il primo invio era stato ricevuto. «TRASPORTO
+      //    200» lo nasconderebbe. A dirlo è `up.dopoRitentativo`, un campo del contratto del
+      //    client, e NON `up.errorCode === '0034'`: il ramo `!esito.ok` di `client.ts` copia
+      //    nell'esito l'`errorCode` dell'envelope del rifiuto, quindi un HTTP non-2xx col
+      //    corpo `{"errorCode":"0034",…}` e nessun `429` di mezzo arriva qui identico — ed è
+      //    un rifiuto di trasporto ordinario, da raccontare col suo status. Guardare il solo
+      //    `errorCode` scriverebbe «TRASPORTO 0034 dopo un 429» su un `429` mai arrivato:
+      //    una frase falsa, in una colonna dove il trigger WORM vieta il `DELETE`;
+      //  · un `2xx` con il corpo illeggibile è il caso peggiore da raccontare con un
+      //    numero solo — «TRASPORTO 200: esito ignoto» mette un 200 dentro un motivo di
+      //    fallimento, e chi legge lo associa a un successo.
+      // Tutto il resto (429, 401/403, 5xx) è già parlante con il suo numero.
+      const quale = up.dopoRitentativo
+        ? '0034 dopo un 429'
+        : up.statoHttp !== undefined && up.statoHttp >= 200 && up.statoHttp < 300
+          ? `${up.statoHttp} illeggibile`
+          : String(up.statoHttp ?? 'ignoto')
+      // Il prefisso «HTTP» ha senso solo quando `quale` È uno status: «HTTP 0034 dopo un
+      // 429» sarebbe la stessa specie di frase falsa che le righe qui sopra evitano.
+      const detto = up.dopoRitentativo ? quale : `HTTP ${quale}`
+      const motivo = motivoTrasporto(quale)
+      const { error: errTrasporto } = await supabase
+        .from('fatture_emesse')
+        .insert({ ...baseRow, sdi_stato: null, sdi_stato_label: LABEL_TRASPORTO, sdi_scarto_motivo: motivo })
+      // LA CHIAVE È `stato`, E IL NOME NON È INTERCAMBIABILE. `logger.ts` promuove alla
+      // colonna `app_log.stato_http` una sola chiave — `numeroDi(campi, 'stato')` — e solo
+      // se il valore è un numero. Chiamandola `status` il 429 restava dentro il JSONB
+      // `contesto.campi`: leggibile, ma non filtrabile, e «quanti 429 sull'upload questo
+      // mese» smetteva di essere una query. Niente `?? 0`, poi: qui `statoHttp` è sempre
+      // valorizzato (il ramo `!esito.ok` e quello del 2xx illeggibile in `client.ts` lo
+      // riempiono entrambi; senza risposta si LANCIA e si finisce nel `catch` sopra), e
+      // uno zero in quella colonna sarebbe uno status HTTP che non esiste.
+      //
+      // Il CORPO della risposta (per il 429 una pagina HTML intera) è già in `app_log` per
+      // mano di `externalFetch`: non si ricopia qui, e non entra mai nella colonna che la
+      // segreteria legge.
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento:upload',
+        esito: 'upload-trasporto',
+        provider: 'aruba',
+        scuola_id: pag.scuola_id,
+        stato: up.statoHttp,
+        numero,
+        anno,
+        msg: `fattura ${numeroFattura}: Aruba non ha concluso l'invio (${detto}); esito ignoto, numero consumato`,
+      })
+      if (errTrasporto) {
+        segnalaTrasportoNonRegistrato(pag.scuola_id, numero, anno, numeroFattura, detto, errTrasporto)
+      }
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        numero,
+        numeroFattura,
+        motivo: 'errore',
+        httpStatus: 502,
+        messaggio: messaggioTrasporto(numeroFattura, detto),
+      })
+      continue
+    }
 
     if (!up.ok) {
       const { error: errScarto } = await supabase
@@ -1228,12 +1549,17 @@ export async function emettiFatturaPagamento(
       ok: false,
       motivo: motivoAgg,
       messaggio: first?.messaggio ?? 'Emissione non riuscita',
+      // `first.httpStatus` vince sulla mappa quando la quota lo dichiara: serve al
+      // RIFIUTO DI TRASPORTO, che esce con `motivo: 'errore'` ma non è un guasto
+      // nostro — 500 direbbe «Internal Server Error» su un 429 di Aruba, e
+      // inviterebbe a ripremere «Emetti» su un numero già consumato.
       httpStatus:
-        motivoAgg === 'intestatario_mancante' ? 422
+        first?.httpStatus
+        ?? (motivoAgg === 'intestatario_mancante' ? 422
         : motivoAgg === 'numerazione_non_allineata' ? 503
         : motivoAgg === 'non_configurato' ? 503
         : motivoAgg === 'errore' ? 500
-        : 502,
+        : 502),
       quote: multi ? esiti : undefined,
     }
   }

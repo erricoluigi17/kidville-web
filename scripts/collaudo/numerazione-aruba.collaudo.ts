@@ -39,6 +39,13 @@ import { arubaSignin, arubaUltimiNumeriFattura } from '@/lib/aruba/client'
  * serie e mette una pausa fra una pagina e l'altra. Costo: **1 signin + 7 GET** su
  * 3.311 documenti, invece di 1 + 14.
  *
+ * ⏱️ QUANTO DURA, dal 2026-09-03: la pausa fra le pagine è salita da 1,1 s a **5 s**, che
+ * è la misura pubblicata da Aruba (SLA §3: 12 ricerche al minuto per IP) e non più una
+ * prudenza. Sette pagine ⇒ sei pause ⇒ **~35 secondi** in tutto, contro i ~7 di prima.
+ * Non è lentezza da correggere: con 1,1 s si stava a ~54 richieste al minuto, cioè quattro
+ * volte e mezzo il limite dichiarato — ed è quello che, il 2026-09-02, prese il `429`.
+ * Chi lancia questo collaudo metta in conto mezzo minuto di apparente silenzio.
+ *
  * ESECUZIONE — come PRIMA cosa della sessione, senza altre chiamate ad Aruba prima.
  *
  *   COLLAUDO_REALE=1 npx vitest run --config vitest.collaudo.config.ts \

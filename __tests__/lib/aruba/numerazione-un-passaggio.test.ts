@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { arubaUltimiNumeriFattura, arubaUltimoNumeroFattura } from '@/lib/aruba/client'
+import {
+  arubaUltimiNumeriFattura,
+  arubaUltimoNumeroFattura,
+  PAUSA_FRA_PAGINE_MS,
+} from '@/lib/aruba/client'
 
 /**
  * UN SOLO PASSAGGIO PER TUTTE LE SERIE, E UN RITMO CHE ARUBA REGGE.
@@ -22,6 +26,15 @@ import { arubaUltimiNumeriFattura, arubaUltimoNumeroFattura } from '@/lib/aruba/
  * con dentro sia un bambino del nido sia uno della fascia FPR faceva la stessa raffica
  * di quattordici richieste, e `arubaUltimoNumeroFattura` LANCIA — quindi il lotto si
  * sarebbe fermato a metà, con parte delle famiglie fatturate e parte no.
+ *
+ * ─── L'OROLOGIO QUI È FINTO, E NON PER FRETTA ───────────────────────────────────────
+ * Dal 2026-09-03 `PAUSA_FRA_PAGINE_MS` vale **cinque secondi**, che è la misura pubblicata
+ * da Aruba (SLA §3: 12 ricerche al minuto per IP) e non più una prudenza. Con l'orologio
+ * vero, questi casi passerebbero i loro cinque o dieci secondi a dormire davvero — e
+ * un'attesa vera non prova NIENTE di più di un'attesa finta: `advanceTimersByTimeAsync`
+ * permette anzi di asserire il valore ESATTO, cioè «un millisecondo prima non è ancora
+ * partita». La costante si importa, non si riscrive: un numero copiato qui resterebbe
+ * verde il giorno in cui quello di produzione cambia.
  */
 
 /** Una pagina di `findByUsername` nella forma MISURATA: documenti con `invoices` annidato. */
@@ -54,9 +67,20 @@ function troppeRichieste(): Response {
   } as Response
 }
 
+/**
+ * Fa girare lo scorrimento fino in fondo con l'orologio finto: le pause fra le pagine
+ * scattano tutte, senza che nessuno le aspetti davvero. Il margine è largo di proposito —
+ * qui si misura il RISULTATO, non la durata (quella ha il suo caso, più sotto).
+ */
+async function finoInFondo<T>(lavoro: Promise<T>): Promise<T> {
+  await vi.advanceTimersByTimeAsync(PAUSA_FRA_PAGINE_MS * 25)
+  return await lavoro
+}
+
 describe('arubaUltimiNumeriFattura — le pagine si scaricano UNA volta sola', () => {
   let fetchMock: ReturnType<typeof vi.fn>
   beforeEach(() => {
+    vi.useFakeTimers()
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
   })
@@ -75,10 +99,9 @@ describe('arubaUltimiNumeriFattura — le pagine si scaricano UNA volta sola', (
       .mockResolvedValueOnce(paginaPiena(501, 'Asilo', '2026'))
       .mockResolvedValueOnce(pagina(['Asilo 2327/2026', 'FPR 1946/26', 'FPR 1900/26']))
 
-    const massimi = await arubaUltimiNumeriFattura('demo', 'AT', {
-      ...parametri,
-      sezionali: ['Asilo', 'FPR'],
-    })
+    const massimi = await finoInFondo(
+      arubaUltimiNumeriFattura('demo', 'AT', { ...parametri, sezionali: ['Asilo', 'FPR'] }),
+    )
 
     expect(massimi.get('Asilo')).toBe(2327)
     expect(massimi.get('FPR')).toBe(1946)
@@ -94,10 +117,9 @@ describe('arubaUltimiNumeriFattura — le pagine si scaricano UNA volta sola', (
       .mockResolvedValueOnce(pagina(['Asilo 2327/2026']))
       .mockResolvedValueOnce(pagina(['FPR 1946/25', 'Asilo 9999/2025']))
 
-    const massimi = await arubaUltimiNumeriFattura('demo', 'AT', {
-      ...parametri,
-      sezionali: ['Asilo', 'FPR'],
-    })
+    const massimi = await finoInFondo(
+      arubaUltimiNumeriFattura('demo', 'AT', { ...parametri, sezionali: ['Asilo', 'FPR'] }),
+    )
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[1][0])).toContain('startDate=2025-01-01')
@@ -109,7 +131,10 @@ describe('arubaUltimiNumeriFattura — le pagine si scaricano UNA volta sola', (
 
   it('l\'involucro a una serie sola resta quello di prima', async () => {
     fetchMock.mockResolvedValue(pagina(['Asilo 2325/2026', 'FPR 1946/26', 'Asilo 2327/2026']))
-    expect(await arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' })).toBe(2327)
+    const massimo = await finoInFondo(
+      arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }),
+    )
+    expect(massimo).toBe(2327)
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
@@ -127,19 +152,28 @@ describe('il ritmo verso Aruba', () => {
 
   const parametri = { username: 'utente@scuola.it', anno: 2026 } as const
 
-  it('fra una pagina e l\'altra ci passa del tempo (e la PRIMA non aspetta)', async () => {
+  it('fra una pagina e l\'altra passa ESATTAMENTE PAUSA_FRA_PAGINE_MS (e la PRIMA non aspetta)', async () => {
+    vi.useFakeTimers()
     fetchMock
       .mockResolvedValueOnce(paginaPiena(1, 'Asilo', '2026'))
       .mockResolvedValueOnce(pagina(['Asilo 2327/2026']))
 
-    const inizio = Date.now()
-    await arubaUltimiNumeriFattura('demo', 'AT', { ...parametri, sezionali: ['Asilo'] })
-    const trascorso = Date.now() - inizio
+    const attesa = arubaUltimiNumeriFattura('demo', 'AT', { ...parametri, sezionali: ['Asilo'] })
 
-    // Due pagine ⇒ UNA pausa sola. Senza il ritmo questo valore è ~0, ed è la raffica
-    // che Aruba rifiuta. La soglia sta sotto la pausa vera: qui si prova che una
-    // pausa C'È, non quanto duri al millisecondo.
-    expect(trascorso).toBeGreaterThan(500)
+    // La PRIMA non aspetta: senza muovere l'orologio è già partita. Sarebbe attesa
+    // buttata, e su una route che qualcuno sta guardando sono cinque secondi veri.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Un millisecondo prima della scadenza la seconda non è ancora partita: è questa
+    // mezza asserzione a distinguere «c'è una pausa» da «la pausa dura quanto deve».
+    // Il vecchio `expect(trascorso).toBeGreaterThan(500)` sarebbe rimasto verde anche
+    // se qualcuno avesse riportato la costante a 600 ms — cioè al difetto.
+    await vi.advanceTimersByTimeAsync(PAUSA_FRA_PAGINE_MS - 1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(1)
+    await attesa
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 

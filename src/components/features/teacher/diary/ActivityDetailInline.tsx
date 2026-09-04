@@ -40,7 +40,7 @@ const ACTIVITY_TYPES = [
 const PARTICIPATION_LEVELS = [
     { value: 'non_fatta',  bg: 'bg-kidville-error-soft',     text: 'text-kidville-error',     border: 'border-kidville-error/25' },
     { value: 'difficolta', bg: 'bg-kidville-warn-soft/80',  text: 'text-kidville-warn',  border: 'border-kidville-warn/60' },
-    { value: 'aiuto',      bg: 'bg-yellow-100/80',  text: 'text-yellow-700',  border: 'border-yellow-200/60' },
+    { value: 'aiuto',      bg: 'bg-kidville-yellow-soft/80',  text: 'text-kidville-yellow-strong',  border: 'border-kidville-yellow/40/60' },
     { value: 'autonomia',  bg: 'bg-kidville-success-soft/80', text: 'text-kidville-success', border: 'border-kidville-success/60' },
 ] as const;
 
@@ -176,7 +176,7 @@ function ActivityAccordion({
                                     onChange={e => onChange({ descrizione: e.target.value })}
                                     placeholder={t('descriviAttivita', { tipo: label.toLowerCase() })}
                                     rows={2}
-                                    className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-muted resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
+                                    className="w-full px-3 py-2.5 rounded-xl bg-kidville-cream border border-kidville-line font-maven text-sm text-kidville-green placeholder:text-kidville-hint resize-none focus:outline-none focus:ring-2 focus:ring-kidville-info/40 focus:border-kidville-info/60 transition-all duration-200"
                                 />
                             </div>
 

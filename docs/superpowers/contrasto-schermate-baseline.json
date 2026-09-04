@@ -1,0 +1,61 @@
+{
+  "_leggimi": [
+    "Fallimenti di contrasto NOTI, per rotta e per modalità. Li misura",
+    "`e2e/contrasto-schermate.spec.ts`, che gira SOLO IN CI: in locale",
+    "`.env.local` punta al database di PRODUZIONE e `npm run e2e` è in `deny`.",
+    "",
+    "REGOLA D'ORO: questi numeri possono solo SCENDERE. Il confronto è ESATTO,",
+    "non un tetto: se un numero scende e nessuno lo aggiorna, il test è rosso.",
+    "È voluto. Il credito non speso è lo spazio in cui il difetto rientra",
+    "restando verde, ed è già successo in questo repo (l'allowlist di `muted`",
+    "aveva 73 occorrenze di slack e 5 voci morte).",
+    "",
+    "⚠️ FINCHÉ `rotte` È VUOTO, IL MERGE SU `main` È BLOCCATO. Non è un effetto",
+    "collaterale ed è giusto saperlo prima: `npm run e2e` è `playwright test`",
+    "senza `--project`, quindi esegue anche il progetto `contrasto`; e il job",
+    "`e2e` è un check OBBLIGATORIO della branch protection su `main`. Un check",
+    "che nasce senza misure è rosso per costruzione, e va riempito una volta.",
+    "",
+    "COME SI RIEMPIE, in un solo copia-incolla:",
+    "  1. si apre la PR con questo file a `rotte: []`;",
+    "  2. il progetto `contrasto` fallisce su ogni rotta, e ALLA FINE stampa la",
+    "     baseline COMPLETA e già assemblata, fra le righe",
+    "     «════ BASELINE DI CONTRASTO ════» e «════ fine ════»;",
+    "  3. si incolla quel blocco qui dentro, si committa, e il giro dopo è verde.",
+    "Il blocco assemblato esiste apposta: senza, andrebbero ricuciti nove",
+    "frammenti presi da nove messaggi d'errore diversi. In regime normale non",
+    "viene stampato, così non aggiunge rumore a ogni run.",
+    "",
+    "Il crawler FALLISCE invece di osservare in silenzio: una modalità che non",
+    "può fallire è decorazione, e resterebbe accesa per sempre.",
+    "",
+    "`nodiMinimi` è un PAVIMENTO, non una corrispondenza: quanti nodi di testo",
+    "la pagina rende dipende legittimamente dai dati del seme. Serve a",
+    "distinguere «pagina pulita» da «pagina vuota»."
+  ],
+  "aggiornato": "2026-09-05",
+  "rotte": [
+    {
+      "rotta": "/parent/pagamenti",
+      "nodiMinimi": 12,
+      "normale": 0,
+      "altoContrasto": 0,
+      "saltati": {
+        "gradiente": 0,
+        "composizione": 0,
+        "fondoIgnoto": 0
+      }
+    },
+    {
+      "rotta": "/teacher",
+      "nodiMinimi": 18,
+      "normale": 0,
+      "altoContrasto": 1,
+      "saltati": {
+        "gradiente": 0,
+        "composizione": 0,
+        "fondoIgnoto": 0
+      }
+    }
+  ]
+}

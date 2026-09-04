@@ -4,6 +4,12 @@ import { useEffect, useState, useCallback } from 'react';
 import { useTranslations } from 'next-intl';
 import { Euro, Users2, FileText, Crown } from 'lucide-react';
 import { formatEuro } from '@/lib/format/valuta';
+import {
+    CAMPI_CESSIONARIO,
+    ETICHETTE_CAMPO_CESSIONARIO,
+    validaCessionario,
+    type ErroriCessionario,
+} from '@/lib/fatturazione/cessionario';
 
 // Identità app-level (M4, session-only): userId da query param, poi sessione
 // persistita da useSessionIdentity (kv_user_id). Nessun fallback demo:
@@ -21,8 +27,63 @@ function currentUserId(): string | null {
 
 interface QuotaConfig { adult_id?: string; nome?: string; importo: number }
 interface SplitConfig { quote: QuotaConfig[] }
-interface IntestatarioAltro { nome?: string; cf?: string; indirizzo?: string; email?: string }
+/**
+ * L'intestatario «Altro»: contratto condiviso con il backend, non una forma libera.
+ *
+ * ⚠️ Fino al 2026-09-04 qui c'erano quattro campi — `nome`, `cf`, `indirizzo`,
+ * `email` — e **non bastavano per una fattura elettronica**: per un cessionario
+ * persona fisica il tracciato pretende `CodiceFiscale`, `Nome`, `Cognome` e la
+ * `Sede` completa (`Indirizzo`, `CAP`, `Comune`), tutti NON facoltativi. Mancavano
+ * CAP e comune, e il **cognome**, che nel tracciato è un elemento distinto dal nome:
+ * spaccare «Della Valle Ottavio» in due è esattamente la deduzione che questo repo
+ * non fa (nome inventato: 0 riscontri su `alunni`, `parents` ed
+ * `enrollment_submissions` — il repository è pubblico e un esempio si conta prima di
+ * scriverlo). Chi compilava questa schermata usciva convinto di aver impostato un
+ * intestatario, e il numero di fattura si sarebbe bruciato lo stesso
+ * (`prossimo_numero_fattura_sezionale` scrive il contatore prima dell'upload).
+ *
+ * `email` resta ma è **fuori dal tracciato SdI**: serve a recapitare, non a
+ * fatturare, ed è etichettata come tale perché nessuno la scambi per un dato che
+ * completa l'intestatario.
+ */
+interface IntestatarioAltro {
+    nome?: string;
+    cognome?: string;
+    cf?: string;
+    indirizzo?: string;
+    cap?: string;
+    comune?: string;
+    provincia?: string;
+    civico?: string;
+    email?: string;
+}
 interface Intestatario { tipo: 'adult' | 'altro'; adult_id?: string; nome?: string; dati?: IntestatarioAltro }
+
+/**
+ * Le caselle di «Altro», nell'ordine in cui si compilano. Quali siano obbligatorie
+ * NON lo decide questa schermata: lo decide `validaCessionario`, la stessa funzione
+ * che gira nell'anteprima e nell'emissione fail-closed. Una regola, tre posti.
+ */
+interface CampoAltro {
+    chiave: keyof IntestatarioAltro;
+    etichetta: string;
+    /** Occupa entrambe le colonne della griglia. */
+    largo?: boolean;
+    /** Fuori da `CAMPI_CESSIONARIO`: la sua assenza non impedisce di fatturare. */
+    facoltativo?: boolean;
+}
+
+const CAMPI_ALTRO: CampoAltro[] = [
+    { chiave: 'nome', etichetta: 'econIntNome' },
+    { chiave: 'cognome', etichetta: 'econIntCognome' },
+    { chiave: 'cf', etichetta: 'econIntCf', largo: true },
+    { chiave: 'indirizzo', etichetta: 'econIntIndirizzo', largo: true },
+    { chiave: 'civico', etichetta: 'econIntCivico', facoltativo: true },
+    { chiave: 'cap', etichetta: 'econIntCap' },
+    { chiave: 'comune', etichetta: 'econIntComune' },
+    { chiave: 'provincia', etichetta: 'econIntProvincia', facoltativo: true },
+    { chiave: 'email', etichetta: 'econIntEmail', facoltativo: true, largo: true },
+];
 
 interface Tutore { adult_id: string; nome: string; cognome: string; email: string; percentuale: number | null; has_fiscal_code?: boolean }
 
@@ -55,7 +116,24 @@ interface Props {
 
 const inputCls =
     'w-full border-2 border-kidville-line rounded-xl px-3 py-2 font-maven text-sm text-kidville-green focus:outline-none focus:border-kidville-green';
-const labelCls = 'font-maven text-xs text-kidville-muted mb-1 block';
+/**
+ * ⚠️ L'inchiostro delle etichette era `muted`, che **non raggiunge** i 4,5:1 che
+ * WCAG 1.4.3 chiede per il testo; `sub` li raggiunge. I valori stanno in
+ * `@theme inline` di `src/app/globals.css` e si leggono lì: copiarli qui vorrebbe
+ * dire che questo commento diventa falso il giorno in cui il token cambia, ed è la
+ * trappola che questo repo paga da anni. La misura vera la fa
+ * `__tests__/a11y/contrasto-token.test.ts`.
+ *
+ * Cambiare il token QUI, invece di affiancare una costante nuova per le sole caselle
+ * dell'intestatario, è ciò che tiene le etichette della sezione uniformi: altrimenti
+ * «Importo retta mensile» resterebbe grigio chiaro accanto a «Nome» scuro, un metro
+ * diverso per lo stesso tipo di testo nella stessa schermata.
+ *
+ * E il lock `testo-muted-allowlist` da solo non avrebbe protetto qui: conta le
+ * occorrenze **testuali** della classe nel file, quindi delle etichette scritte
+ * passando per questa costante gli sarebbero sfuggite restando illeggibili a schermo.
+ */
+const labelCls = 'font-maven text-xs text-kidville-sub mb-1 block';
 
 export function StudentEconomicSection({ alunnoId, form, updateForm, parents, siblings }: Props) {
     const t = useTranslations('adminStudents');
@@ -201,6 +279,54 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
             : '';
 
     const setIntestatario = (val: Intestatario | null) => updateForm('intestatario_fatture', val);
+
+    /**
+     * ─── L'INTESTATARIO «ALTRO», VALIDATO MENTRE SI SCRIVE ────────────────────
+     *
+     * La regola non è riscritta qui: è `validaCessionario`, importata dal modulo
+     * puro `@/lib/fatturazione/cessionario` — lo stesso che decide nell'anteprima e
+     * nell'emissione. Se questa schermata dicesse «va bene» e l'emissione dicesse di
+     * no, il difetto tornerebbe identico con la suite verde davanti.
+     *
+     * Anche i nomi dei campi nell'avviso vengono da lì (`ETICHETTE_CAMPO_CESSIONARIO`,
+     * nell'ordine di `CAMPI_CESSIONARIO`): chi legge «manca il CAP» qui e «manca il
+     * CAP» al momento di emettere deve poter capire che è la stessa cosa, non due
+     * controlli diversi che si somigliano.
+     *
+     * ⚠️ DEBITO DICHIARATO, non una svista: quelle etichette sono **in italiano fisso**,
+     * quindi con l'interfaccia in inglese l'avviso nomina i campi in italiano mentre le
+     * caselle sopra sono tradotte. È voluto — sono le stesse parole di
+     * `messaggioCessionarioIncompleto`, che la segreteria rileggerà davanti allo scarto,
+     * e due vocabolari per la stessa regola sarebbero peggio di uno solo un po' fuori
+     * lingua.
+     *
+     * Se un giorno vanno localizzate, si localizzano in `cessionario.ts`, così che il
+     * cambio valga in tutti e tre i posti. **Non** rimpiazzandole qui con `econIntCf` /
+     * `econIntCap`: sono in catalogo a un passo, è la scorciatoia che verrebbe naturale,
+     * e riporterebbe il messaggio dell'avviso a divergere da quello dell'emissione —
+     * cioè esattamente il difetto che questo blocco esiste per non far tornare.
+     */
+    const datiAltro = intestatario?.tipo === 'altro' ? intestatario.dati ?? {} : null;
+    const erroriAltro: ErroriCessionario = datiAltro
+        ? validaCessionario({
+            codice_fiscale: datiAltro.cf,
+            nome: datiAltro.nome,
+            cognome: datiAltro.cognome,
+            indirizzo: datiAltro.indirizzo,
+            cap: datiAltro.cap,
+            comune: datiAltro.comune,
+        })
+        : {};
+    const campiDaCorreggere = CAMPI_CESSIONARIO.filter((c) => erroriAltro[c] !== undefined);
+    const avvisoIntestatario = campiDaCorreggere.length > 0
+        ? t('econIntIncompleto', {
+            campi: campiDaCorreggere
+                .map((c) => (erroriAltro[c] === 'formato'
+                    ? t('econIntCampoFormato', { campo: ETICHETTE_CAMPO_CESSIONARIO[c] })
+                    : ETICHETTE_CAMPO_CESSIONARIO[c]))
+                .join(', '),
+        })
+        : '';
 
     return (
         <section className="pt-4 border-t border-kidville-line">
@@ -381,10 +507,11 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
 
             {/* Intestatario fatture (eccezione per questo figlio, vince sul default) */}
             <div>
-                <label className={`${labelCls} flex items-center gap-1`}>
+                <label className={`${labelCls} flex items-center gap-1`} htmlFor={`intestatario-${alunnoId}`}>
                     <FileText size={12} /> {t('econIntestatarioFatture')} <span className="font-normal text-kidville-muted/80">{t('econEccezioneFiglio')}</span>
                 </label>
                 <select
+                    id={`intestatario-${alunnoId}`}
                     value={intestatario?.tipo === 'altro' ? '__altro__' : intestatario?.adult_id ?? ''}
                     onChange={(e) => {
                         const v = e.target.value;
@@ -403,27 +530,54 @@ export function StudentEconomicSection({ alunnoId, form, updateForm, parents, si
                 </select>
 
                 {intestatario?.tipo === 'altro' && (
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                        {([
-                            ['nome', t('econPhNomeCognome')],
-                            ['cf', t('econPhCf')],
-                            ['indirizzo', t('econPhIndirizzo')],
-                            ['email', t('econPhEmail')],
-                        ] as const).map(([k, ph]) => (
-                            <input
-                                key={k}
-                                type="text"
-                                value={(intestatario.dati?.[k] as string) ?? ''}
-                                onChange={(e) =>
-                                    setIntestatario({
-                                        tipo: 'altro',
-                                        dati: { ...intestatario.dati, [k]: e.target.value },
-                                    })
-                                }
-                                placeholder={ph}
-                                className={inputCls}
-                            />
-                        ))}
+                    <div className="mt-2 space-y-2">
+                        <p className="font-maven text-[11px] text-kidville-sub">{t('econIntObbligatori')}</p>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            {CAMPI_ALTRO.map((c) => (
+                                <div key={c.chiave} className={c.largo ? 'col-span-2' : undefined}>
+                                    <label className={labelCls} htmlFor={`intestatario-${c.chiave}-${alunnoId}`}>
+                                        {t(c.etichetta)}{c.facoltativo ? ` ${t('econIntFacoltativo')}` : ''}
+                                    </label>
+                                    <input
+                                        id={`intestatario-${c.chiave}-${alunnoId}`}
+                                        type={c.chiave === 'email' ? 'email' : 'text'}
+                                        value={intestatario.dati?.[c.chiave] ?? ''}
+                                        onChange={(e) =>
+                                            setIntestatario({
+                                                tipo: 'altro',
+                                                dati: { ...intestatario.dati, [c.chiave]: e.target.value },
+                                            })
+                                        }
+                                        className={inputCls}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* ⚠️ Live region montata SEMPRE, vuota quando non c'è niente da
+                            dire: un `role="alert"` inserito nel DOM col testo già dentro
+                            spesso resta muto (stessa scelta dell'avviso della retta). */}
+                        <p
+                            role="alert"
+                            data-testid="avviso-intestatario-altro"
+                            className="font-maven text-[11px] text-kidville-error"
+                        >
+                            {avvisoIntestatario}
+                        </p>
+
+                        {/* Il silenzio da solo non distingue «i dati bastano» da «il
+                            controllo non è mai partito»: la conferma positiva sì. */}
+                        {avvisoIntestatario === '' && (
+                            <p
+                                data-testid="intestatario-altro-completo"
+                                className="font-maven text-[11px] font-semibold text-kidville-green"
+                            >
+                                {t('econIntCompleto')}
+                            </p>
+                        )}
+
+                        <p className="font-maven text-[11px] text-kidville-sub">{t('econIntEmailFuoriFattura')}</p>
                     </div>
                 )}
             </div>

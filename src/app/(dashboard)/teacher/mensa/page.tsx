@@ -128,7 +128,7 @@ function MensaDocente() {
             onClick={aggiorna}
             disabled={loading}
             title={t('mensaAggiorna')}
-            className="w-8 h-8 rounded-full bg-white border-2 border-gray-200 flex items-center justify-center text-kidville-green disabled:opacity-40"
+            className="w-8 h-8 rounded-full bg-white border-2 border-kidville-line flex items-center justify-center text-kidville-green disabled:opacity-40"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>

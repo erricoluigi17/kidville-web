@@ -107,9 +107,9 @@ una `SELECT` da un `UPDATE`, perché passano dallo stesso strumento.
 passato senza fermarsi, perché le regole `autoMode` si leggono all'**avvio** della sessione. Prima
 di fidarsi di questo paragrafo, riavviare e rifare la prova — istruzioni in `CLAUDE.md`.
 🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**.
-**542 domande di iscrizione, misurate il 2026-09-02** — erano 403 il 20 agosto, 302 il 4 agosto, 227
-il 31 luglio: **circa undici al giorno**, il doppio del ritmo che questa riga stimava un mese fa, e
-mentre leggi sono già di più. Non copiare questo numero: rifai il conteggio, è una query sola — ed è
+**583 domande di iscrizione, misurate il 2026-09-04** — erano 542 il 2 settembre, 403 il 20 agosto,
+302 il 4 agosto, 227 il 31 luglio: **circa venti al giorno**, e non è la prima volta che questa riga
+trova il proprio ritmo raddoppiato. Mentre leggi sono già di più. Non copiare questo numero: rifai il conteggio, è una query sola — ed è
 una **lettura**, quindi non ti fermerà nessuno. Chi lavora qui mostri comunque cosa sta per
 applicare: *mostrare* non è *chiedere*, non costa niente, ed è l'unica cosa rimasta fra un errore e
 le famiglie che stanno dietro quelle righe.

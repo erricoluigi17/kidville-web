@@ -55,7 +55,7 @@ export function HeroCard({
         {loading ? (
           // Placeholder discreto: evita il flash del fallback prima che il
           // titolo (es. nome del figlio) sia risolto.
-          <div className="h-9 w-44 max-w-full animate-pulse rounded-lg bg-black/5" aria-hidden="true" />
+          <div className="h-9 w-44 max-w-full animate-pulse rounded-lg bg-kidville-green/15" aria-hidden="true" />
         ) : (
           <h1
             className="whitespace-pre-line font-barlow font-black uppercase leading-[0.98] tracking-tight text-kidville-green"

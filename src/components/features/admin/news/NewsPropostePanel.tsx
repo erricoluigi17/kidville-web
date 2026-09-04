@@ -76,7 +76,7 @@ export function NewsPropostePanel({ userId }: Props) {
   if (proposte.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <Inbox size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
+        <Inbox size={40} className="mb-3 text-kidville-green/70" strokeWidth={1.6} />
         <p className="font-maven text-sm text-kidville-sub">{t('proposteVuoto')}</p>
       </div>
     );

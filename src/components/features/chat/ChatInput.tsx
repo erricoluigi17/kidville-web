@@ -166,7 +166,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                         disabled={disabled}
                         rows={1}
                         placeholder={placeholder ?? t('chatInputPlaceholder')}
-                        className="w-full resize-none rounded-[22px] border border-kidville-line bg-white px-4 py-2.5 font-maven text-[13.5px] text-kidville-ink placeholder:text-kidville-muted focus:border-kidville-green focus:outline-none focus:ring-[3px] focus:ring-kidville-green/12 transition-all disabled:opacity-50 max-h-32 overflow-y-auto"
+                        className="w-full resize-none rounded-[22px] border border-kidville-line bg-white px-4 py-2.5 font-maven text-[13.5px] text-kidville-ink placeholder:text-kidville-hint focus:border-kidville-green focus:outline-none focus:ring-[3px] focus:ring-kidville-green/12 transition-all disabled:opacity-50 max-h-32 overflow-y-auto"
                         style={{ minHeight: '44px' }}
                     />
                 </div>

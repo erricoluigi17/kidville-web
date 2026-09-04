@@ -83,7 +83,7 @@ export function CompitiList({ lezioni }: { lezioni: Lezione[] }) {
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
       <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
-        <ClipboardList size={18} className="text-kidville-yellow" /> {t('compitiTitolo')}
+        <ClipboardList size={18} className="text-kidville-yellow-strong" /> {t('compitiTitolo')}
       </h3>
       {giorni.length === 0 ? (
         <p className="font-maven text-sm text-kidville-muted">{t('compitiVuoto')}</p>

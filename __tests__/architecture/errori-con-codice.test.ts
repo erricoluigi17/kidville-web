@@ -118,9 +118,17 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * solo, e l'`evento` che dice QUALE lettura o scrittura è stata respinta. Il file scende da 7 a
  * 5: restano i due `Internal Server Error` dei `catch`, il 404 «Utente non trovato» e il 403 del
  * self-lockout. `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero.
+ *
+ * 2026-09-04 · −1 (1434 → 1433). `pagamenti/riconciliazione:POST` impara a ricevere il file
+ * della banca com'è (.xls/.xlsx/.csv, in multipart) e nasce con QUATTRO risposte nuove — file
+ * assente, tipo non ammesso, oltre il tetto, illeggibile — tutte e quattro CON codice: non
+ * entrano nel conteggio, perché una risposta con codice non è debito. In più è stata convertita
+ * quella che c'era già («Nessun accredito riconosciuto») → `ESTRATTO_CONTO_SENZA_ACCREDITI`, e
+ * il file scende da 9 a 8: restano i sei 500/503 di PostgREST e i due `Internal Server Error`
+ * dei `catch`. `MAX_FILE` non si muove: la voce resta in elenco.
  */
 const MAX_FILE = 278;
-const MAX_OCCORRENZE = 1434;
+const MAX_OCCORRENZE = 1433;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

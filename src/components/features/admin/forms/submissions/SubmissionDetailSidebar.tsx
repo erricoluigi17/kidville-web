@@ -103,7 +103,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
             transition={{ duration: 0.18 }}
             onClick={onClose}
             className="fixed inset-0 z-40"
-            style={{ background: 'rgba(3, 5, 18, 0.55)' }}
+            style={{ background: 'color-mix(in srgb, var(--color-kidville-ink) 40%, transparent)' }}
           />
 
           {/* Slide-over */}
@@ -115,7 +115,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
             transition={{ type: 'spring', stiffness: 340, damping: 36 }}
             className="fixed right-0 top-0 bottom-0 z-50 flex flex-col w-full max-w-[460px]"
             style={{
-              background: 'rgba(8, 11, 26, 0.97)',
+              background: 'var(--color-kidville-white)',
               borderLeft: '1px solid var(--color-kidville-line)',
               backdropFilter: 'blur(28px)',
             }}
@@ -137,7 +137,7 @@ export function SubmissionDetailSidebar({ submission, onClose, onToggleGestita }
               <button
                 onClick={onClose}
                 aria-label={t('sdsChiudi')}
-                className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-white/[0.08] transition-all flex-shrink-0"
+                className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all flex-shrink-0"
               >
                 <X className="w-4.5 h-4.5" />
               </button>

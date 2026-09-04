@@ -93,7 +93,7 @@ export function StudentTagger({ students, selectedIds, onToggle, onSelectAll, on
                     placeholder={t('galleryCercaPlaceholder')}
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-9 pr-8 py-2 bg-kidville-cream border border-kidville-line focus:outline-none focus:ring-1 focus:ring-kidville-green rounded-xl font-maven text-xs text-kidville-ink transition-all placeholder:text-kidville-muted"
+                    className="w-full pl-9 pr-8 py-2 bg-kidville-cream border border-kidville-line focus:outline-none focus:ring-1 focus:ring-kidville-green rounded-xl font-maven text-xs text-kidville-ink transition-all placeholder:text-kidville-hint"
                 />
                 {searchTerm && (
                     <button

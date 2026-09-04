@@ -101,7 +101,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
               <input
                 value={field.label}
                 onChange={e => patch({ label: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 focus:bg-kidville-green/5 transition-all"
+                className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 focus:bg-kidville-green/5 transition-all"
                 placeholder={t('ppNomeCampoPlaceholder')}
               />
             </section>
@@ -115,7 +115,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                 <input
                   value={field.placeholder ?? ''}
                   onChange={e => patch({ placeholder: e.target.value })}
-                  className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 transition-all"
+                  className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 transition-all"
                   placeholder={t('ppSegnapostoPlaceholder')}
                 />
               </section>
@@ -182,7 +182,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                         value={opt.label}
                         onChange={e => setOptionLabel(idx, e.target.value)}
                         placeholder={t('ppOpzioneN', { n: idx + 1 })}
-                        className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 transition-all"
+                        className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 transition-all"
                       />
                       <input
                         type="number"
@@ -228,7 +228,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                     value={field.text ?? ''}
                     onChange={e => patch({ text: e.target.value })}
                     placeholder={t('ppTestoConsensoPlaceholder')}
-                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 transition-all resize-none"
+                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 transition-all resize-none"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -239,7 +239,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                     value={field.link ?? ''}
                     onChange={e => patch({ link: e.target.value })}
                     placeholder={t('ppLinkInformativaPlaceholder')}
-                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 transition-all"
+                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 transition-all"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -250,7 +250,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                     value={field.link_label ?? ''}
                     onChange={e => patch({ link_label: e.target.value })}
                     placeholder={t('ppEtichettaLinkPlaceholder')}
-                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 transition-all"
+                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 transition-all"
                   />
                 </div>
               </section>
@@ -267,7 +267,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                     value={field.accept ?? ''}
                     onChange={e => patch({ accept: e.target.value })}
                     placeholder=".pdf,.jpg,.png"
-                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60 transition-all"
+                    className="w-full px-3 py-2 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60 transition-all"
                   />
                   <p className="text-[10px] text-kidville-muted">{t('ppEstensioniHint')}</p>
                 </div>
@@ -290,7 +290,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
 
             {/* Mapping ETL (read-only, solo se presente) */}
             {field.db_mapping && (
-              <div className="pt-3 border-t border-white/[0.05]">
+              <div className="pt-3 border-t border-kidville-line">
                 <p className="text-[10px] font-semibold text-kidville-muted uppercase tracking-wider mb-1.5">
                   {t('ppMappingEtl')}
                 </p>
@@ -304,7 +304,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
             )}
 
             {/* Logica condizionale (DL-024) */}
-            <section className="space-y-2 pt-3 border-t border-white/[0.05]">
+            <section className="space-y-2 pt-3 border-t border-kidville-line">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5">
                   <GitBranch className="w-3.5 h-3.5 text-kidville-green" />
@@ -355,7 +355,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
                       value={String(field.condition.value ?? '')}
                       onChange={e => patchCondition({ value: e.target.value })}
                       placeholder={t('ppValoreConfronto')}
-                      className="w-full px-2.5 py-1.5 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-muted focus:outline-none focus:border-kidville-green/60"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-kidville-cream border border-kidville-line text-sm text-kidville-green placeholder-kidville-hint focus:outline-none focus:border-kidville-green/60"
                     />
                   </div>
                 )
@@ -363,7 +363,7 @@ export function PropertiesPanel({ field, onChange, campiDisponibili = [] }: Prop
             </section>
 
             {/* Field type (read-only) */}
-            <div className="pt-3 border-t border-white/[0.05]">
+            <div className="pt-3 border-t border-kidville-line">
               <p className="text-[10px] text-kidville-muted">
                 {t('ppTipoCampo')} <span className="text-kidville-muted font-mono">{field.type}</span>
               </p>

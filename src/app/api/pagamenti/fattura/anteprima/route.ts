@@ -26,13 +26,17 @@ import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import {
   componiCausalePagamento,
   SELECT_PAGAMENTO_CAUSALE,
   type PagamentoPerCausale,
 } from '@/lib/aruba/causale-pagamento'
 import { VINCOLO_CAUSALE_FATTURAPA } from '@/lib/pagamenti/causale-fattura'
+import {
+  componiIntestatarioPagamento,
+  INTESTATARIO_ANTEPRIMA_VUOTO,
+} from '@/lib/aruba/intestatario-pagamento'
 
 const getQuerySchema = z.object({ pagamento_id: zUuid })
 
@@ -91,6 +95,46 @@ export const GET = withRoute('pagamenti/fattura/anteprima:GET', async (request: 
     // costante sola proprio perché il difetto del 2026-08-10 nacque prendendo solo il
     // numero e contando ciò che si aveva sottomano.
     const lunghezza = VINCOLO_CAUSALE_FATTURAPA.perTracciato(esito.causale).length
+
+    // ── CHI intesta, dallo STESSO pagamento appena letto ──────────────────────
+    // Non è una route a parte di proposito: il dialogo «Emetti» deve fare un solo
+    // giro, e causale e intestatario devono nascere dalla stessa lettura dello
+    // stesso pagamento — due letture separate possono contraddirsi su un
+    // documento che si corregge solo con una nota di variazione. Le quote non si
+    // ricalcolano qui: `componiIntestatarioPagamento` chiama la stessa
+    // `determinaQuoteFatturazione` dell'emissione.
+    //
+    // ⚠️ FAIL-OPEN, E NON PER SIMMETRIA. Il selettore è un AIUTO: la cosa che
+    // questa route deve garantire è che chi sta per emettere veda il testo che
+    // partirà. Se il blocco dell'intestatario lanciasse — una lettura inattesa,
+    // una forma di dato che non avevamo previsto — un `catch` più in fuori
+    // risponderebbe 500 e la causale non uscirebbe affatto: un guasto
+    // nell'accessorio spegnerebbe la cosa principale, che è esattamente il
+    // difetto che questa route è nata per chiudere.
+    //
+    // `withRoute` NON vede le eccezioni catturate (AGENTS.md, regola 6): senza la
+    // riga di log qui sotto il guasto sarebbe muto, e «nessun candidato» non si
+    // distinguerebbe da «nessuno l'ha potuto calcolare». Livello `error`: un
+    // lancio inatteso è un difetto NOSTRO, non una degradazione prevista.
+    let intestatario = INTESTATARIO_ANTEPRIMA_VUOTO
+    try {
+      intestatario = await componiIntestatarioPagamento(supabase, {
+        id: pagamentoId,
+        importo: (pag as { importo?: number | string | null }).importo,
+        alunno_id: (pag as { alunno_id?: string | null }).alunno_id,
+        // L'alunno annidato è già dentro `pag`: il blocco lo espone da lì, così
+        // il nome del bambino nella risposta e quello nella causale vengono
+        // dalla stessa riga e non possono contraddirsi.
+        alunni: (pag as { alunni?: unknown }).alunni as never,
+      })
+    } catch (e) {
+      logEvento('fattura', 'error', {
+        operazione: 'pagamenti/fattura/anteprima:GET',
+        esito: 'intestatario-non-composto',
+        pagamento_id: pagamentoId,
+      }, e)
+    }
+
     return NextResponse.json({
       success: true,
       data: {
@@ -99,6 +143,7 @@ export const GET = withRoute('pagamenti/fattura/anteprima:GET', async (request: 
         lunghezza,
         limite: VINCOLO_CAUSALE_FATTURAPA.limiteCaratteri,
         eccede: lunghezza > VINCOLO_CAUSALE_FATTURAPA.limiteCaratteri,
+        intestatario,
       },
     })
   } catch (err) {

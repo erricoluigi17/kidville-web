@@ -67,7 +67,7 @@
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -92,7 +92,291 @@
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
-> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
+> | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## ♿ Rilievo aperto — l'Alto Contrasto non funziona su 7 rotte su 9 (misurato il 2026-09-04/05)
+
+Il crawler di contrasto, ai suoi primi tre giri di CI (PR #116), ha misurato le nove rotte
+autenticate. **Sette hanno fallito** con lo stesso messaggio — le tre della Segreteria, più
+`/parent`, `/parent/gallery`, `/parent/modulistica` e `/teacher/modulistica`:
+
+> «le due modalità danno lo stesso identico esito: il cookie non sta facendo niente»
+
+**Non è un difetto del crawler: è il crawler che ha misurato per la prima volta una cosa
+vera.** L'Alto Contrasto è dipinto a mano su **17 classi `kv-*` su 173**, e queste schermate
+non le usano: gli elementi **illeggibili restano illeggibili identici** con il cookie
+acceso — che è precisamente ciò per cui l'Alto Contrasto esiste. Il difetto è
+**preesistente**: nessuno l'aveva mai misurato perché fino al 2026-09-04 non esisteva uno
+strumento che guardasse le schermate dietro il login.
+
+⚠️ **E per due giri quattro di queste sette sono sembrate SANE.** A farle passare era lo
+**skip-link** `sr-only`: un rettangolo di **1×1 px** che nessuno vede, i cui stati `focus:`
+gli cambiano i colori. La sonda lo misurava (scartava solo ciò che è *minore* di 1 px) e
+quel fantasma produceva l'unica differenza fra le due modalità — oscillando fra un giro e
+l'altro, perché dipende da dove si trova il fuoco. Tolto dalla misura, il difetto è venuto
+fuori intero. *Una protezione che passa grazie a un elemento invisibile non stava
+proteggendo niente.*
+
+**Decisione del titolare, presa due volte** (2026-09-04 su tre rotte, riconfermata il
+2026-09-05 quando il numero è salito a sette): si rimanda, ma **scritto nero su bianco**. Le
+sette rotte sono commentate in `e2e/contrasto-schermate.spec.ts` **con la ragione accanto**,
+non cancellate: toglierle in silenzio sarebbe stato spegnere la sonda che le ha trovate.
+Rientrano quando l'Alto Contrasto coprirà davvero quelle schermate — un lavoro a sé.
+
+⚠️ Fino ad allora, chi accende l'Alto Contrasto **non lo ha davvero** su sette schermate su
+nove. La baseline copre le due che funzionano (`/parent/pagamenti`, `/teacher`), e il
+crawler continua a sorvegliare quelle: è poco, ma è vero — e il giorno in cui l'Alto
+Contrasto verrà esteso, le altre sette si riaccendono togliendo un `//`.
+
+## 🧾 Changelog — L'estratto conto non si era mai potuto caricare, e la fattura non sapeva a chi intestarsi — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
+
+**Segnalazione**: «ho provato a caricare un estratto conto, ma legge solo file csv». Chiesto anche
+che il portale leggesse **chi ha fatto il bonifico** e lo proponesse come intestatario della fattura.
+
+Misurando invece di dedurre, i difetti erano **tre**, e nessuno dei tre era quello segnalato.
+
+**1. Non leggeva nemmeno il CSV.** Eseguito `parseCsv` sul file vero della banca: **0 movimenti su
+65**, 68 righe «scartate», e come intestazioni la riga del rapporto e dell'IBAN. Due cause che si
+sommano: il parser assume che la prima riga sia sempre l'intestazione (nel file della banca le prime
+quattro sono preambolo, e l'intestazione vera è spezzata su due righe), e le date hanno l'anno a due
+cifre. Togliendo solo il preambolo restano 0.
+
+**2. La funzione non aveva mai importato una riga in vita sua.**
+`select count(*) from riconciliazione_movimenti` → **0**. In produzione dal 19 luglio: non è che
+l'estratto conto si leggesse male, non si è mai potuto leggere. Il lato buono è che non c'era niente
+da migrare.
+
+**3. La fatturazione era ferma per il 92% dei bambini.** Cercando dove mettere l'intestatario
+suggerito: **579 alunni su 630** non ne avevano nessuno risolvibile, e per loro «Fattura» rispondeva
+**422**. La controprova sono le **3 fatture emesse in tutto** contro 93 pagamenti saldati. I dati
+c'erano — 671 genitori su 735 hanno già tutto ciò che lo SdI pretende — mancava la **designazione**,
+che nessuno ha mai fatto a mano 630 volte. *La funzione richiesta non era un accessorio: era ciò che
+sblocca la fatturazione.*
+
+### Il nome di chi paga sta dentro la descrizione
+Non è una colonna: sta fra ` DA ` e il primo marcatore fra `PER` · `COMM` · `SPESE` · `TRN`.
+Misurato su **6.775 accrediti reali**: 6.764 estratti, il **99,84%**. Gli undici falliti sono
+competenze e storni, che un ordinante non ce l'hanno. I casi limite sono tutti veri: 207 conti
+cointestati, ordine cognome/nome variabile, e spazi spuri che la banca inserisce a capo dentro le
+parole. **Il nome non si spezza per congettura**: il doppio spazio separa due persone in alcuni casi
+e in altri è spurio.
+
+### Sei trappole misurate, ognuna con un test che morde
+- **`Data Operaz.` ≠ `Data Valuta` in 797 righe su 9.000**, e la risoluzione dei sinonimi sceglieva
+  la colonna sbagliata. La data entra nell'impronta anti-duplicato: sarebbe stato permanente.
+- **`EUR` non era fra i sinonimi di importo** → zero movimenti anche trovata l'intestazione.
+- **Il testo formattato dell'`.xls` è in ordine americano**: il 6 agosto diventa 8 giugno.
+- **`cellDates` costruisce le date in ora locale**: `toISOString()` dava il giorno prima a Roma, e
+  sarebbe stato **verde in CI a UTC**.
+- **`blankrows: false`** fa scivolare gli indici: ogni «riga N» mentirebbe.
+- **`31/02/2026` passava** e diventava `22008` a Postgres: un 500 su un errore d'input.
+
+Due trovate in corso d'opera: `sheet_to_json` restituisce array **sparsi** (`.map()` sui buchi li
+ricopia), e `raw: true` impedisce che un `.xls`-che-è-HTML faccia leggere `150,00` come quindicimila.
+
+### L'intestatario si propone, l'operatore conferma
+Il motore della proposta vive in **un posto solo** (`intestatario-pagamento.ts`, gemello di
+`causale-pagamento.ts`, con lock): un'anteprima che ricalcolasse per conto suo farebbe approvare un
+nome e spedirne un altro — è la lezione della FPR 1948/26. I candidati sono **solo i genitori di quel
+bambino**, non i 735 dell'archivio: qui un omonimo non sbaglia una classe, manda all'Agenzia delle
+Entrate una fattura intestata a un estraneo.
+
+Abbinamento **solo per uguaglianza, mai per somiglianza** — la regola era già scritta in
+`iscrizioni/import/abbinamento.ts`. Misurato: su 60 ordinanti, **42 esatti e unici, zero ambigui**.
+Il `motivo` ha **quattro** valori e non uno: con un valore solo l'interfaccia avrebbe detto «è
+l'intestatario sulla scheda» anche quando la scheda non c'entra.
+
+`intestatario_fatture.tipo='altro'` era **compilabile e ignorato in silenzio** dal 2026-07-18: ora è
+onorato da fattura, ricevuta, attestazione 730 ed export AdE, e ha i campi che lo SdI pretende
+(mancavano cognome, CAP e comune). Su pagamento ripartito fra genitori separati si **rifiuta con
+409**: l'ordinante dice chi ha spostato il denaro, non come si ripartisce il costo.
+
+### Una falla preesistente, chiusa nello stesso lavoro
+L'idempotenza confronta `quota_adult_id`: emettere per il genitore A, riaprire e scegliere B faceva
+partire **una seconda fattura vera per la stessa retta**. Esisteva già — bastava che l'anagrafica
+cambiasse fra due clic — e il selettore la rendeva raggiungibile in due. Esiste un indice UNIQUE
+parziale, ma `quota_adult_id` è *dentro* la chiave (due intestatari = due chiavi diverse) e
+l'INSERT arriva **dopo** l'upload ad Aruba, cioè a documento già partito: la guardia di codice resta
+l'unica difesa, e ora c'è.
+
+### Tre test che non provavano quello che dichiaravano
+Trovati **durante** il lavoro, ed è la parte che vale di più:
+- un commento attribuiva alla forma dell'algoritmo una protezione che sul file vero dà la lista dei
+  sinonimi — e il caso che la forma protegge davvero non era coperto;
+- «la colonna Ordinante vince anche quando è vuota» non aveva test;
+- l'asserzione sul BOM era una **tautologia**: in JS quel carattere è già spazio per `trim()`. Il
+  caso vero è il BOM **in mezzo** a un'intestazione, che fa sparire la colonna.
+
+E un punto cieco di un lock di accessibilità: conta le occorrenze **testuali** della classe, quindi
+nove etichette che prendevano il colore da una costante condivisa sarebbero rimaste illeggibili a
+schermo **senza far scattare niente**.
+
+### Verificato, non dichiarato
+`Conti-16.xls` e `Conti-16.csv` → **65 movimenti ciascuno**, ordinante su 65 su 65, **le stesse 65
+impronte**: le due strade convergono. Attraverso la route: **200**, e ricaricando lo stesso file
+**0 nuovi · 65 duplicati**. `Conti-15.xls` (2,1 MB, 9.004 righe) → 6.775 movimenti in 421 ms, 34
+INSERT a blocchi di 200, **zero** ricerche con la lista di impronte (che avrebbe costruito una URL da
+450 KB, rifiutata da PostgREST). Su tutti e 16 gli export della banca: **10.555 movimenti, 0 scarti,
+0 troncamenti, 0 righe illeggibili**.
+
+`hashMovimento`, `norm()` e la causale intera non sono stati toccati: un esecutore che li aveva
+riscritti in forma equivalente li ha **ripristinati identici**, perché «non si tocca» vale anche per
+una riscrittura che non cambia il risultato.
+
+**Nessuna migrazione.** Il conteggio delle domande di iscrizione in `CLAUDE.md`/`AGENTS.md` è
+rimisurato: **583**, contro le 542 di due giorni prima — circa venti al giorno, di nuovo il doppio
+della stima precedente.
+
+## 🎨 Changelog — Gli elementi neri non erano nel CSS: l'app non aveva mai detto al sistema di essere chiara — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
+
+**Segnalazione**: «in alcune parti dell'app sono comparsi elementi in nero, non rispecchia più il
+design originale né il brand; e alcune scritte sono poco visibili perché il colore è troppo simile
+allo sfondo». Osservato su **iPhone e Android**, nelle aree genitore, docente e login.
+
+Non era un difetto: erano **quattro**, e il più probabile non stava in `src/`.
+
+### Le ipotesi escluse, con la prova — perché è la metà del lavoro
+
+| Ipotesi | Esito |
+|---|---|
+| Token shadcn/ui neri non rimappati | **Falsa** — shadcn non esiste nel repo: nessun `--foreground`/`--primary`, nessun `components.json`, nessuna dipendenza Radix/cva |
+| Dark mode CSS che segue il sistema | **Falsa** — zero classi `dark:`, zero `@media (prefers-color-scheme)` nell'app |
+| `backgroundColor` nero di default di Capacitor | **Falsa** — `#FEF1E4` in `capacitor.config.ts:51,54,94`, e davvero applicato (`CAPBridgeViewController.swift:308-310`, anche sullo `scrollView`) |
+| Splash iOS scuro | **Falsa** — le tre varianti «dark» hanno lo **stesso md5** delle chiare |
+| Pagine pubbliche a basso contrasto | **Falsa** — `/iscrizione` e `/auth/login` misurate col contrasto calcolato dal browser: **0 fallimenti in entrambe le modalità** |
+
+### 1 · `color-scheme` non era mai stato dichiarato
+
+`grep` su tutte le 1670 righe di `globals.css`: nessun `color-scheme` su `html` o `:root`, e
+`layout.tsx` esportava `viewport` senza `colorScheme` né `themeColor`. Col telefono in tema scuro è
+il **sistema operativo** a disegnare i controlli nativi — tendine dei `<select>`, date/time picker,
+autofill, selezione del testo, cursore, scrollbar — con fondo scuro e testo chiaro **dentro campi
+che l'app dipinge bianchi**. Superficie esposta: **463 `<input>` e 152 `<select>`**. Spiega entrambi
+i sintomi, su entrambe le piattaforme, e spiega «in *alcune* parti»: va nero solo ciò che disegna il
+sistema.
+
+Che il sintomo fosse già stato incontrato lo dicevano **due toppe locali** `[color-scheme:light]` su
+due soli campi data in `FieldRenderer.tsx` — curavano il punto, non la causa — e un
+`colorScheme: 'dark'` in `SubmissionsTable.tsx:223` che produceva **oggi, in produzione**, un
+calendario nativo nero su campo bianco.
+
+### 2 · Android: il tema DayNight ridipingeva il decor view a ogni rotta
+
+`AppTheme.NoActionBar` ereditava da `Theme.AppCompat.DayNight`. Capacitor, dentro
+`SystemBars.setStyle()`, dipinge il decor view con `android:windowBackground` — che di notte
+risolve su `background_material_dark`, **#303030**. E `setStyle` viene chiamato **a ogni cambio di
+rotta** (`NativeInit.tsx` → `status-bar.ts`): il grigio quasi nero rientrava in scena di continuo.
+La funzione scritta per *migliorare* il contrasto della status bar era il grilletto.
+`colors.xml` **non esisteva**: i tre nomi erano già referenziati ma risolvevano sui default Material
+della libreria Capacitor — indaco `#3F51B5` e rosa `#FF4081`. `colorAccent` tinge cursore e maniglie
+di selezione: si vedevano rosa dentro un'app verde.
+
+### 3 · iOS: nessuna dichiarazione di stile d'interfaccia
+
+`UIUserInterfaceStyle` assente da `Info.plist` — l'app seguiva il tema del telefono, ed è la
+condizione che abilita tutto il ramo iOS. E `LaunchScreen.storyboard:18` usava
+`systemBackgroundColor`, che vale `#000000` in tema scuro: nero vero all'apertura.
+
+### 4 · I colori cablati fuori dai token
+
+Il lock che vieta i colori letterali copriva **solo `admin`**: le aree segnalate non erano protette
+da niente. **81 utility grigie di serie in sei file**, fra cui `text-gray-400` a 2,29:1 sul crema.
+E tre classi che Tailwind **non genera** — `border-gray-150` ×2 e `hover:bg-gray-250` — cioè bordi
+che qualcuno credeva di aver messo e che non c'erano (`grep` sul CSS compilato: **0**).
+
+### 5 · `muted` non è più un inchiostro
+
+`--color-kidville-muted` era `#9AA6A2`: 2,51:1 su bianco, 2,27:1 sul crema, **1098 usi in 171 file**.
+Portarlo ad AA non si poteva: la fascia peggiore non è il crema ma `cream-dark` `#F6E4D2`, e per
+arrivare a 4,5:1 là servirebbe `#5F6764` — cioè `sub` `#55615C` a meno di mezzo punto. **Fra `hint`
+e `sub` l'intervallo è vuoto.** Scurirlo fin lì avrebbe reso `muted` identico a `sub` mentre 1098
+punti continuavano a chiamarlo `muted`: il debito sarebbe sparito dai numeri senza che nessuno
+avesse riletto una riga.
+
+Il valore scelto è **`#7B8582`**, finestra **[3,07 su cream-dark · 3,80 su bianco]**: sopra i 3:1 di
+WCAG 1.4.11 — quindi un token **non testuale** valido, che chiude un difetto mai contato (i 37
+`border-kidville-muted` stavano sotto soglia) — e **sotto** i 4,5:1 di 1.4.3, apposta, così tutte e
+cinque le sonde «muted non è un inchiostro» restano vere **senza abbassare una soglia**.
+
+### 6 · Una riga che mentiva, e la ragione per cui poteva mentire
+
+`[data-contrast="high"]` ridefiniva `--color-kidville-muted: #E0E0E0`. Non ha mai ribaltato niente:
+`grep -rn "var(--color-kidville-muted" src/` restituisce **zero**, e le utility Tailwind portano
+l'hex inlinato da `@theme inline`. Rimossa.
+
+**È la scoperta strutturale del giro, e vale oltre questo caso**: gli override dei token dentro
+`[data-contrast="high"]` **non raggiungono nessuna classe Tailwind**. L'Alto Contrasto è dipinto
+superficie per superficie a mano — 141 regole in `globals.css`, che agganciano 17 classi `kv-*` su
+81 usate. Misurato col browser: `bg-kidville-cream` resta `rgb(254,241,228)` in entrambe le
+modalità. Era già scritto in `contrasto-cascata.test.tsx:171-179`, e non era stato letto.
+
+### 7 · L'Alto contrasto smette di essere un comando
+
+Stava accanto a «Esci» in **cinque menu rapidi**. Ma è uno STATO: cookie con `max-age` di un anno,
+sopravvive al logout, ridipinge tutta l'app. Aveva `aria-pressed` — lo screen reader lo sapeva,
+l'occhio no. Ora è `ContrastSwitch` (`role="switch"`, binario visibile) in `/parent/profilo`,
+`/teacher/profilo`, `/admin/impostazioni`. Il gemello pubblico **resta** sulle pagine pubbliche —
+chi non ha fatto l'accesso non ha impostazioni, ed è la baseline AgID — con lo stesso segno di stato
+che gli mancava.
+
+### 8 · Due reti perché non rientri
+
+- **`palette-di-serie`** — nessun colore della palette di serie di Tailwind in tutto `src/`. Debito
+  dichiarato: 76 occorrenze in 11 file, con la motivazione accanto a ciascuna. Include una sonda per
+  le **tinte che non esistono**.
+- **`token-alto-contrasto-non-inerti`** — ogni token ridefinito in Alto Contrasto deve avere almeno
+  un `var()` che lo legge. 27 ridefiniti, **2 inerti** dichiarati. Precedente: `warn-strong: #FFB300`,
+  inerte fino al 2026-08-02.
+
+**Otto prove negative, tutte viste fallire**, fra cui la sola che conta davvero: togliere *una*
+occorrenza da un file del debito deve diventare rosso — altrimenti il credito non speso si accumula
+ed è lo spazio in cui il difetto rientra restando verde.
+
+### 9 · Secondo giro — il debito azzerato, e la prova sul dispositivo
+
+Decisione del titolare, in quattro parole: «devono restare solo i colori del brand».
+
+- **Palette di serie: da 76 occorrenze in 11 file a ZERO.** Nessuna sostituzione inventata: ognuna
+  aveva già il proprio token — `red`→`error`, `amber`→`warn`, `blue`→`info`, `yellow`→la scala
+  gialla, `orange`→`warn` (era già mescolato a `kidville-warn` **nello stesso className**), e
+  `pink`→ le tinte per grado. Qui c'era un difetto vero: il nido era **rosa**, un colore che nella
+  palette non esiste, e la **primaria portava il blu, cioè la tinta del nido**. I gradi ora
+  coincidono con `--kv-grade-*`, che `globals.css` dichiara da sempre.
+- **`PrimariaParentView.tsx` riscritto, non cancellato** (40 occorrenze), per scelta esplicita.
+- **`neutral` allineato a `muted`** (`#8A958F` → `#7B8582`): sarebbe rimasto l'unico grigio sotto i
+  3:1 di WCAG 1.4.11 — 2,50:1 su `cream-dark` — e per giunta sul contorno di ogni campo. Due
+  controlli positivi hanno smesso di reggere, ed è una buona notizia: asserivano che `neutral` NON
+  passasse sulla crema. Non sono stati allentati ma **ripuntati**, e la prova che la sonda vede un
+  colore sotto soglia è passata su `line` (1,23:1).
+- **Il crawler di contrasto Playwright** (`e2e/contrasto-schermate.spec.ts`): nove rotte
+  autenticate, due modalità, firme invece di nodi, sfondi non calcolabili saltati **e contati**,
+  tre asserzioni di attivazione dell'Alto Contrasto più una di aggregato, `retries: 0` e spec
+  escluso da `chromium`. Validato in locale da due lock in vitest, perché il crawler in locale non
+  si può eseguire. Cinque prove negative, tutte viste fallire.
+
+### La prova sul dispositivo — Android, con la sua controprova
+
+Emulatore `KV-api33` **forzato in tema scuro**. Una pagina di collaudo con `<select>`, data e ora,
+caricata dentro l'app Kidville. Stessa pagina, stesso emulatore, stesso tema di sistema: cambia una
+riga di `styles.xml`.
+
+| `AppTheme.NoActionBar` | la pagina dentro l'app dichiara |
+|---|---|
+| `Theme.AppCompat.Light` (la correzione) | **`light — telefono CHIARO`** |
+| `Theme.AppCompat.DayNight` (com'era) | **`light — telefono SCURO`** |
+
+⚠️ **E una affermazione del punto 1 va corretta.** Era stato scritto che `color-scheme: light`
+avrebbe risolto le tendine native. Misurato: in **Chrome** su Android la tendina del `<select>`
+resta scura anche con `color-scheme: light` dichiarato — quella la disegna il sistema col tema
+dell'**app ospite**, non della pagina. Non smentisce la correzione web (che resta giusta e copre
+autofill, cursore, scrollbar, il canvas): **sposta il peso sulla correzione Android**, che diventa
+la principale. Era un'ipotesi ragionata; ora è una misura.
+
+### Gate
+`eslint` 0 errori · **13.807 test verdi** al giro precedente, **4.375** nelle aree toccate al
+secondo · `build` verde · APK Android compilato, installato e verificato sull'emulatore.
 
 ---
 
@@ -1142,9 +1426,20 @@ px**, l'unica via d'uscita) l'aveva causato la correzione del giro 1 — era da 
 non l'*area*. E la causa radice di due rilievi su tre non era il colore ma lo **spessore**: contorno
 da 1px e stroke reso a 1,25px, che a schermo arrivano mescolati al fondo.
 
-⚠️ **Rilievo aperto, non risolto**: la login è nera, l'interstiziale che la segue di un secondo è
-crema — **19,9:1 di salto di luminanza**. Correggerlo significa ridisegnare la login, che è la porta
-d'ingresso di tutte le 560 famiglie: è una decisione, non una rifinitura di fine serata.
+~~⚠️ **Rilievo aperto, non risolto**: la login è nera, l'interstiziale che la segue di un secondo è
+crema — **19,9:1 di salto di luminanza**.~~
+
+✅ **CHIUSO il 2026-09-04, e non da una correzione: era già chiuso e nessuno l'aveva riletto.** La
+prova non è una misura ma il codice. `src/app/auth/login/page.module.css:51` dichiara
+`background: var(--color-kidville-cream)`; `src/components/ui/PageLoader.module.css:17` dichiara
+`background: var(--color-kidville-cream, #FEF1E4)`. **È la stessa variabile.** In luce normale sono
+entrambi `#FEF1E4`; in Alto Contrasto entrambi neri, perché `[data-contrast="high"]` rimappa
+`--color-kidville-cream` a `#000000` e la login ha in più la sua regola esplicita. Il salto è **0
+per costruzione**, non per coincidenza.
+Il crema era entrato nella login il **2026-07-16** (`a9f10d9a`), cioè *prima* che questo rilievo
+venisse scritto qui. È rimasto aperto sette settimane perché descriveva uno stato che non esisteva
+più — la stessa specie di difetto dei numeri copiati che invecchiano: **un documento va riletto
+contro il codice, non contro sé stesso.**
 
 ### Coda: il modulo pubblico saltava sotto il dito, su iPhone, da nove giorni
 

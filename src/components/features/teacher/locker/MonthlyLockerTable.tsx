@@ -131,8 +131,8 @@ export function MonthlyLockerTable({
                         id="material-filter-btn"
                         onClick={() => setDropdownOpen(o => !o)}
                         className="flex items-center gap-2 px-4 py-2 rounded-xl
-                                   bg-kidville-cream border border-white/10 text-sm text-kidville-green/80
-                                   hover:bg-kidville-cream hover:border-white/20
+                                   bg-kidville-cream border border-kidville-line text-sm text-kidville-green/80
+                                   hover:bg-kidville-cream hover:border-kidville-green/50
                                    transition-all duration-300 min-w-[180px]"
                     >
                         <span className="flex-1 text-left">
@@ -146,7 +146,7 @@ export function MonthlyLockerTable({
                     {dropdownOpen && (
                         <div
                             className="absolute right-0 z-50 mt-2 w-56 rounded-2xl
-                                       bg-kidville-cream/95 backdrop-blur-xl border border-white/10
+                                       bg-kidville-cream/95 backdrop-blur-xl border border-kidville-line
                                        shadow-2xl overflow-hidden"
                         >
                             {allMaterials.map(mat => (
@@ -185,23 +185,23 @@ export function MonthlyLockerTable({
                 <div className="overflow-x-auto">
                     <table className="min-w-full text-sm">
                         <thead>
-                            <tr className="border-b border-white/10">
+                            <tr className="border-b border-kidville-line">
                                 {!hideStudentColumn && (
                                     <th className="sticky left-0 z-10 bg-white/80 backdrop-blur-sm
                                                    text-left px-4 py-3 text-xs font-semibold
-                                                   text-kidville-muted uppercase tracking-wider whitespace-nowrap">
+                                                   text-kidville-sub uppercase tracking-wider whitespace-nowrap">
                                         {t('lockerTableStudente')}
                                     </th>
                                 )}
                                 <th className="px-4 py-3 text-left text-xs font-semibold
-                                               text-kidville-muted uppercase tracking-wider whitespace-nowrap">
+                                               text-kidville-sub uppercase tracking-wider whitespace-nowrap">
                                     {t('lockerTableMateriale')}
                                 </th>
                                 {days.map(d => (
                                     <th
                                         key={d}
                                         className="px-2 py-3 text-center text-xs font-semibold
-                                                   text-kidville-muted uppercase tracking-wider w-8"
+                                                   text-kidville-sub uppercase tracking-wider w-8"
                                     >
                                         {d}
                                     </th>
@@ -209,14 +209,14 @@ export function MonthlyLockerTable({
                             </tr>
                         </thead>
 
-                        <tbody className="divide-y divide-white/5">
+                        <tbody className="divide-y divide-kidville-line">
                             {filteredStudents.map(student =>
                                 visibleMaterials.map((mat, mIdx) => (
                                     <tr
                                         key={`${student.id}-${mat}`}
                                         className={`transition-colors duration-150
-                                                    ${mIdx % 2 === 0 ? 'bg-white/[0.02]' : ''} 
-                                                    hover:bg-white/[0.04]`}
+                                                    ${mIdx % 2 === 0 ? 'bg-kidville-cream/40' : ''} 
+                                                    hover:bg-kidville-cream`}
                                     >
                                         {/* Colonna studente — solo sulla prima riga del materiale */}
                                         {!hideStudentColumn && (
@@ -240,7 +240,7 @@ export function MonthlyLockerTable({
                                         {/* Colonna materiale */}
                                         <td className="px-4 py-3 whitespace-nowrap">
                                             <span className="text-xs font-medium text-kidville-muted bg-kidville-cream
-                                                            border border-white/10 rounded-full px-2.5 py-1">
+                                                            border border-kidville-line rounded-full px-2.5 py-1">
                                                 {mat}
                                             </span>
                                         </td>
@@ -279,7 +279,7 @@ export function MonthlyLockerTable({
                 </div>
 
                 {/* Legenda */}
-                <div className="flex items-center gap-6 px-4 py-3 border-t border-white/5">
+                <div className="flex items-center gap-6 px-4 py-3 border-t border-kidville-line">
                     <div className="flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4 text-kidville-success/90 drop-shadow-[0_0_6px_rgba(52,211,153,0.5)]" />
                         <span className="text-xs text-kidville-muted">{t('lockerTablePortato')}</span>

@@ -132,20 +132,40 @@ export function cessionarioCompleto(a: AnagraficaCessionario): boolean {
 }
 
 /**
+ * DOVE si corregge, in due varianti — perché un messaggio che manda nel posto
+ * sbagliato costa più di un messaggio generico.
+ *
+ * L'intestatario di una fattura può venire da due archivi diversi: la riga
+ * `parents` di un genitore, oppure i campi digitati sulla scheda del bambino
+ * (`intestatario_fatture.tipo = 'altro'`) o al momento dell'emissione. Il testo
+ * storico nomina solo il primo: su un intestatario digitato manderebbe a cercare
+ * un genitore che per quel documento non c'entra niente.
+ */
+export const DOVE_ANAGRAFICA_GENITORE = 'completali nell’anagrafica del genitore prima di emettere la fattura.'
+export const DOVE_SCHEDA_BAMBINO =
+  'completali sulla scheda del bambino, in Dati economici → Intestatario fatture, prima di emettere la fattura.'
+
+/**
  * Il messaggio che la segreteria legge, e che dice DOVE si corregge.
  *
  * `nomeVisibile` è già sotto gli occhi di chi opera (è la riga del pagamento che ha
  * appena cliccato): nel LOG invece non ci va mai — lì entrano solo gli uuid e i
  * booleani, perché quello è un dato personale.
+ *
+ * `dove` ha per difetto il testo di sempre: nessuno dei chiamanti esistenti cambia.
  */
-export function messaggioCessionarioIncompleto(errori: ErroriCessionario, nomeVisibile: string): string {
+export function messaggioCessionarioIncompleto(
+    errori: ErroriCessionario,
+    nomeVisibile: string,
+    dove: string = DOVE_ANAGRAFICA_GENITORE,
+): string {
     const campi = CAMPI_CESSIONARIO.filter((c) => errori[c] !== undefined)
     const elenco = campi
         .map((c) => (errori[c] === 'formato' ? `${ETICHETTE_CAMPO_CESSIONARIO[c]} (formato)` : ETICHETTE_CAMPO_CESSIONARIO[c]))
         .join(', ')
     return (
         `Dati fiscali incompleti o non validi per ${nomeVisibile} (${elenco}): ` +
-        'completali nell’anagrafica del genitore prima di emettere la fattura. ' +
+        `${dove} ` +
         'Nessun numero è stato consumato.'
     )
 }

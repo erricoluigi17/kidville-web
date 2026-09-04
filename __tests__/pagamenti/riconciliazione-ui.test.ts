@@ -124,3 +124,31 @@ describe('SEMAFORO / FILTRI', () => {
     expect(ids).toEqual(expect.arrayContaining(['', 'da_abbinare', 'suggerito', 'confermato', 'ignorato']))
   })
 })
+
+/**
+ * I CONTATORI ONESTI ARRIVANO FINO AL TOAST.
+ *
+ * Sull'estratto annuale le USCITE sono 2.225 righe: finite dentro «scartate» avrebbero
+ * detto all'operatore «2.225 righe scartate» su un import perfettamente riuscito — e un
+ * numero che allarma su un esito corretto è un numero che si impara a ignorare.
+ * Le RIGHE TRONCATE sono l'opposto: sono una perdita vera, e vanno IN EVIDENZA.
+ */
+describe('riepilogoImport — uscite ignorate e righe non lette', () => {
+  const base: EsitoImport = { nuovi: 0, duplicati: 0, scartate: 0, suggeriti: 0, da_abbinare: 0 }
+
+  it('le uscite compaiono solo quando ce ne sono', () => {
+    expect(riepilogoImport({ ...base, nuovi: 2, uscite: 3 })).toContain('3 uscite ignorate')
+    expect(riepilogoImport({ ...base, nuovi: 2, uscite: 0 })).not.toContain('uscite')
+    expect(riepilogoImport({ ...base, nuovi: 2 })).not.toContain('uscite')
+  })
+
+  it('una sola uscita si dice al singolare', () => {
+    expect(riepilogoImport({ ...base, nuovi: 2, uscite: 1 })).toContain('1 uscita ignorata')
+  })
+
+  it('le righe TRONCATE si dicono in evidenza, e solo quando ci sono', () => {
+    const t = riepilogoImport({ ...base, nuovi: 20000, troncate: 4 })
+    expect(t).toContain('4 righe NON lette')
+    expect(riepilogoImport({ ...base, nuovi: 2, troncate: 0 })).not.toContain('NON lette')
+  })
+})

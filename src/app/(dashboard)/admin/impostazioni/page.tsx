@@ -9,6 +9,7 @@ import {
     UtensilsCrossed, BookOpenCheck, BellRing, Percent, Building2, KeyRound,
 } from 'lucide-react';
 import { CambiaPasswordCard } from '@/components/features/account/CambiaPasswordCard';
+import { ContrastSwitch } from '@/components/ui/ContrastSwitch';
 import { SettingsPanel } from '@/components/features/admin/settings/SettingsPanel';
 import { RetteSettings } from '@/components/features/admin/settings/RetteSettings';
 import { DidatticaPrimariaPanel } from '@/components/features/admin/primaria/DidatticaPrimariaPanel';
@@ -235,6 +236,7 @@ function Inner() {
                             Le misure stanno in
                             `__tests__/a11y/contrasto-barra-forza-password.test.ts`. */}
                         {sezione === 'account' && (
+                          <>
                             <section className="max-w-md rounded-2xl bg-kidville-white p-5 shadow-sm">
                                 <h2 className="mb-1 font-barlow text-sm font-extrabold uppercase text-kidville-green">
                                     {tPwd('sezioneTitolo')}
@@ -244,6 +246,9 @@ function Inner() {
                                 </p>
                                 <CambiaPasswordCard origine="self-service" />
                             </section>
+                            {/* Accessibilita: vedi il commento in `ContrastSwitch`. */}
+                            <div className="mt-4 max-w-md"><ContrastSwitch /></div>
+                          </>
                         )}
                         {userId && sezione === 'pagamenti' && conSede(t('sedeRequiredPagamenti'), (sid) => <SettingsPanel userId={userId} scuolaId={sid} />)}
                         {userId && sezione === 'rette' && conSede(t('sedeRequiredRette'), (sid) => <RetteSettings userId={userId} scuolaId={sid} />)}

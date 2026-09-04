@@ -457,7 +457,7 @@ export const ScrollableAdultForm = forwardRef<AdultFormHandle, { defaultRole?: s
 
                 {/* Contatti */}
                 <section>
-                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-pink-500 pl-3">
+                    <h3 className="text-lg font-bold text-kidville-green mb-4 flex items-center gap-2 border-l-4 border-kidville-yellow-strong pl-3">
                         {t('aFormContattiAccesso')}
                     </h3>
                     <div className="grid grid-cols-2 gap-6">

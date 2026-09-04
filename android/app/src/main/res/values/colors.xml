@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Colori di brand Kidville (Clay Village), 2026-09-04.
+
+  Questo file NON esisteva. I tre nomi qui sotto erano gia referenziati da
+  styles.xml, ma risolvevano sulla libreria Capacitor
+  (@capacitor/android/.../res/values/colors.xml), cioe sui default Material:
+  indaco #3F51B5 e rosa #FF4081. Non sono colori di questa app, e colorAccent
+  in particolare tinge il cursore di testo, le maniglie di selezione e gli
+  accenti dei picker nativi: si vedevano rosa dentro un'app verde.
+  Le risorse dell'app vincono su quelle delle librerie, quindi bastano questi.
+-->
+<resources>
+    <!-- Palette Clay Village, la stessa di globals.css -->
+    <color name="kv_cream">#FEF1E4</color>
+    <color name="kv_green">#006A5F</color>
+    <color name="kv_green_dark">#00544B</color>
+    <color name="kv_yellow">#FDC400</color>
+
+    <!-- Override dei default Material della libreria Capacitor -->
+    <color name="colorPrimary">#006A5F</color>
+    <color name="colorPrimaryDark">#00544B</color>
+    <color name="colorAccent">#006A5F</color>
+</resources>

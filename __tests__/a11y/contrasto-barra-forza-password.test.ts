@@ -182,7 +182,10 @@ describe('a11y · la sonda legge davvero il sorgente', () => {
     // rotto che restituisce sempre un numero grande.
     expect(contrasto(token('line'), CARTA())).toBeLessThan(3)
     expect(contrasto(token('muted'), CARTA())).toBeLessThan(4.5)
-    expect(contrasto(token('neutral'), FONDO_BLOCCO.hex)).toBeLessThan(3)
+    // `neutral` non e' piu' sotto soglia: dal 2026-09-04 vale #7B8582 come `muted`.
+    // Che la sonda veda davvero un colore sotto soglia resta provato dalle due righe
+    // qui sopra (`line` sotto 3, `muted` sotto 4,5), che sono ancora vere.
+    expect(contrasto(token('neutral'), FONDO_BLOCCO.hex)).toBeGreaterThanOrEqual(3)
   })
 })
 

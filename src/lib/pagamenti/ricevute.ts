@@ -10,6 +10,7 @@ import {
     type FiscaleConfig,
 } from './fiscale'
 import { determinaQuoteFatturazione, resolveParentRegistry } from './intestatari'
+import { nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { annoFiscale } from '@/lib/format/fiscal-date'
 
 // Emissione ricevute NUMERATE (registro ricevute_emesse):
@@ -97,8 +98,19 @@ export async function emettiORecuperaRicevuta(
             { id: pagamento.id, importo: Number(pagamento.importo) },
             alunno,
         )
-        const reg = quote.length > 0 ? await resolveParentRegistry(supabase, quote[0].adultId) : null
-        if (reg) {
+        // La quota può portare l'anagrafica al seguito (intestatario digitato sulla
+        // scheda del bambino): lì non c'è nessuna riga `parents` da rileggere, ed è
+        // la STESSA quota che la fattura elettronica userà. Se qui si ripiegasse su
+        // «Famiglia ⟨cognome⟩», la ricevuta e la fattura dello stesso incasso
+        // porterebbero due intestatari diversi.
+        const digitata = quote[0]?.anagrafica ?? null
+        const reg = !digitata && quote.length > 0 ? await resolveParentRegistry(supabase, quote[0].adultId) : null
+        if (digitata) {
+            intestatario = {
+                nome: nomeDaAnagrafica(digitata) || `Famiglia ${alunno.cognome ?? ''}`.trim(),
+                codice_fiscale: digitata.codice_fiscale ?? null,
+            }
+        } else if (reg) {
             intestatario = {
                 nome: [reg.first_name, reg.last_name].filter(Boolean).join(' '),
                 codice_fiscale: reg.fiscal_code,

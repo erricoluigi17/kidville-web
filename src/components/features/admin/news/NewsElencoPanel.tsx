@@ -175,7 +175,7 @@ export function NewsElencoPanel({ userId, onModifica }: Props) {
         </p>
       ) : posts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-12 text-center">
-          <Newspaper size={40} className="mb-3 text-kidville-green/40" strokeWidth={1.6} />
+          <Newspaper size={40} className="mb-3 text-kidville-green/70" strokeWidth={1.6} />
           <p className="font-maven text-sm text-kidville-sub">{t('elencoVuoto')}</p>
         </div>
       ) : (

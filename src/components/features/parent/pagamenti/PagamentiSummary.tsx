@@ -92,13 +92,13 @@ export function PagamentiSummary({ userId, href }: Props) {
                     style={{ background: 'linear-gradient(135deg, var(--color-kidville-green) 0%, var(--color-kidville-green-dark) 100%)' }}
                 >
                     <span className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[14px]" style={{ background: 'rgba(255,255,255,0.15)' }}>
-                        <Euro size={20} className="text-kidville-yellow" />
+                        <Euro size={20} className="text-kidville-yellow-ink" />
                     </span>
                     <div className="min-w-0 flex-1">
                         <p className="font-maven text-[11.5px] font-semibold" style={{ color: 'rgba(255,255,255,0.78)' }}>
                             {t('totaleDaPagare')}
                         </p>
-                        <p className="font-barlow text-2xl font-black leading-none text-kidville-yellow">
+                        <p className="font-barlow text-2xl font-black leading-none text-kidville-yellow-ink">
                             {formatEuro(daPagare)}
                         </p>
                         {prossima && (
@@ -124,7 +124,7 @@ export function PagamentiSummary({ userId, href }: Props) {
                     <p className="font-barlow text-base font-black uppercase leading-none text-kidville-green">{t('inRegola')}</p>
                     <p className="mt-1 font-maven text-[12px] text-kidville-green/70">{t('nessunaQuota')}</p>
                 </div>
-                <ChevronRight size={20} className="flex-shrink-0 text-kidville-green/40" />
+                <ChevronRight size={20} className="flex-shrink-0 text-kidville-green/70" />
             </div>
         </Link>
     );

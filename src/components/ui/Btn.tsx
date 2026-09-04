@@ -16,7 +16,8 @@ export type BtnSize = 'sm' | 'md' | 'lg'
  * La coppia dichiarata qui sotto vale **5,75:1** (`sub` #55615C su
  * `neutral-soft` #F0F2F1) ed è neutra di proposito: «spento» è UNO stato, e
  * dipingerlo con la tinta della variante lo renderebbe indistinguibile dal
- * pulsante attivo. Il contorno `neutral` (3,10:1 su bianco, 2,79:1 su crema)
+ * pulsante attivo. Il contorno `neutral` (dal 2026-09-04 vale come `muted`:
+ * 3,80:1 su bianco, 3,43:1 su crema — prima erano 3,10 e 2,79)
  * serve a che si veda ancora dove comincia il comando.
  * ⚠️ Nessuna alfa nei quattro token: un fondo semitrasparente cambia con la
  * superficie sotto, ed è esattamente il difetto che si sta chiudendo.

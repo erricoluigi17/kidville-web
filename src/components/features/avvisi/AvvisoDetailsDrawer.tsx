@@ -43,10 +43,10 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                         animate={{ x: 0 }}
                         exit={{ x: '100%' }}
                         transition={{ type: 'spring', damping: 25, stiffness: 220 }}
-                        className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white/95 backdrop-blur-xl shadow-2xl z-50 flex flex-col h-full border-l border-gray-100"
+                        className="fixed right-0 top-0 bottom-0 w-full max-w-md bg-white/95 backdrop-blur-xl shadow-2xl z-50 flex flex-col h-full border-l border-kidville-line"
                     >
                         {/* Header */}
-                        <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between bg-white">
+                        <div className="px-6 py-5 border-b border-kidville-line flex items-start justify-between bg-white">
                             <div>
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-barlow font-bold uppercase tracking-wider bg-kidville-info-soft text-kidville-info">
                                     {isAdesione ? t('adesioneInterattiva') : t('presaVisione')}
@@ -54,14 +54,14 @@ export function AvvisoDetailsDrawer({ open, avviso, onClose, availableClasses = 
                                 <h2 className="font-barlow font-black text-xl text-kidville-green uppercase tracking-wide mt-1.5 line-clamp-1">
                                     {avviso.titolo}
                                 </h2>
-                                <p className="font-maven text-xs text-gray-400 mt-0.5">
+                                <p className="font-maven text-xs text-kidville-sub mt-0.5">
                                     {avviso.target_scope === 'globale' ? t('targetIstituto') : t('targetClassi', { classi: avviso.target_classes?.join(', ') || '' })}
                                 </p>
                             </div>
                             <button
                                 onClick={onClose}
                                 aria-label={t('chiudiDettaglio')}
-                                className="w-8 h-8 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors"
+                                className="w-8 h-8 rounded-xl bg-kidville-cream hover:bg-kidville-neutral-soft flex items-center justify-center text-kidville-sub hover:text-kidville-green transition-colors"
                             >
                                 <X size={16} strokeWidth={1.5} />
                             </button>

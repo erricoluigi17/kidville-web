@@ -135,7 +135,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
             transition={{ duration: 0.18 }}
             onClick={handleClose}
             className="fixed inset-0 z-40"
-            style={{ background: 'rgba(3, 5, 18, 0.6)' }}
+            style={{ background: 'color-mix(in srgb, var(--color-kidville-ink) 40%, transparent)' }}
           />
 
           <motion.div
@@ -149,10 +149,10 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
             <div
               className="rounded-2xl overflow-hidden"
               style={{
-                background: 'rgba(8, 11, 26, 0.97)',
+                background: 'var(--color-kidville-white)',
                 border: '1px solid var(--color-kidville-line)',
                 backdropFilter: 'blur(28px)',
-                boxShadow: '0 30px 80px rgba(0,0,0,0.55)',
+                boxShadow: '0 30px 80px -30px rgba(0, 84, 75, 0.35)',
               }}
             >
               {/* Header */}
@@ -167,7 +167,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                 <button
                   onClick={handleClose}
                   aria-label={t('radjChiudi')}
-                  className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-white/[0.08] transition-all"
+                  className="p-1.5 rounded-lg text-kidville-muted hover:text-kidville-green hover:bg-kidville-cream transition-all"
                 >
                   <X className="w-4.5 h-4.5" />
                 </button>
@@ -283,7 +283,7 @@ export function RankingAdjustModal({ submission, label, onClose, onApplied }: Pr
                       onChange={e => setReason(e.target.value)}
                       rows={2}
                       placeholder={t('radjMotivazionePlaceholder')}
-                      className="w-full pl-9 pr-3 py-2.5 rounded-lg text-kidville-ink placeholder-kidville-muted text-sm resize-none focus:outline-none"
+                      className="w-full pl-9 pr-3 py-2.5 rounded-lg text-kidville-ink placeholder-kidville-hint text-sm resize-none focus:outline-none"
                       style={{ background: 'var(--color-kidville-white)', border: '1px solid var(--color-kidville-line)' }}
                     />
                   </div>

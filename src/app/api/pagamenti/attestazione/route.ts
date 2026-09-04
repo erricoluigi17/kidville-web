@@ -8,6 +8,7 @@ import { zUuid } from '@/lib/validation/common'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { resolveParentRegistry } from '@/lib/pagamenti/intestatari'
+import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { buildAttestazionePdf } from '@/lib/pagamenti/pdf'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { withRoute } from '@/lib/logging/with-route'
@@ -80,11 +81,20 @@ export const GET = withRoute('pagamenti/attestazione:GET', async (request: Reque
     const fiscale = (await getModuleConfig(supabase, 'fiscale_config', alunno.scuola_id)) as FiscaleConfig
     const aruba = (await getModuleConfig(supabase, 'aruba_config', alunno.scuola_id)) as ArubaFiscalConfig
 
+    // L'intestatario può essere una persona DIGITATA sulla scheda del bambino
+    // (`tipo: 'altro'`), che non ha nessuna riga `parents` da rileggere. Leggere
+    // solo `adult_id` faceva ricadere l'attestazione su «Famiglia ⟨cognome⟩»:
+    // questo PDF è quello che il genitore allega al 730, e l'intestatario decide
+    // chi ottiene la detrazione.
+    const digitata = anagraficaDaScheda(alunno.intestatario_fatture)
     const intestatarioCfg = alunno.intestatario_fatture as { adult_id?: string | null } | null
-    const reg = await resolveParentRegistry(supabase, intestatarioCfg?.adult_id)
-    const intestatario = reg
-      ? { nome: [reg.first_name, reg.last_name].filter(Boolean).join(' '), codice_fiscale: reg.fiscal_code }
-      : { nome: `Famiglia ${alunno.cognome ?? ''}`.trim() }
+    const reg = digitata ? null : await resolveParentRegistry(supabase, intestatarioCfg?.adult_id)
+    const famiglia = { nome: `Famiglia ${alunno.cognome ?? ''}`.trim() }
+    const intestatario = digitata
+      ? { nome: nomeDaAnagrafica(digitata) || famiglia.nome, codice_fiscale: digitata.codice_fiscale ?? null }
+      : reg
+        ? { nome: [reg.first_name, reg.last_name].filter(Boolean).join(' '), codice_fiscale: reg.fiscal_code }
+        : famiglia
 
     const pdf = buildAttestazionePdf({
       anno,

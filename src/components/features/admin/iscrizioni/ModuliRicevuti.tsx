@@ -766,7 +766,7 @@ function DetailPanel({
                         value={rette[String(i)] ?? ''}
                         onChange={e => setRette({ ...rette, [String(i)]: e.target.value })}
                         placeholder={t('ricevutiRettaPlaceholder')}
-                        className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green disabled:bg-kidville-cream disabled:text-kidville-muted"
+                        className="w-full mt-1 px-3 py-2 rounded-lg border border-kidville-line text-sm bg-white focus:outline-none focus:border-kidville-green disabled:bg-kidville-cream disabled:text-kidville-sub"
                       />
                     </div>
                     {children.length > 1 && (

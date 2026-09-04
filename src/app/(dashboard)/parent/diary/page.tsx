@@ -287,11 +287,11 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                 className="w-full flex items-center justify-between px-5 py-4"
             >
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-pink-50 border border-pink-100 flex items-center justify-center">
-                        <Camera size={18} className="text-pink-500" strokeWidth={1.5} />
+                    <div className="w-10 h-10 rounded-2xl bg-kidville-yellow-soft border border-kidville-line flex items-center justify-center">
+                        <Camera size={18} className="text-kidville-yellow-strong" strokeWidth={1.5} />
                     </div>
                     <div>
-                        <p className="font-barlow font-black text-sm uppercase tracking-wide text-pink-600">
+                        <p className="font-barlow font-black text-sm uppercase tracking-wide text-kidville-yellow-strong">
                             {t('fotoTitolo')}
                         </p>
                         <p className="font-maven text-[11px] text-kidville-muted">
@@ -312,7 +312,7 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                         transition={{ duration: 0.25 }}
                         className="overflow-hidden"
                     >
-                        <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-black/5 rounded-b-3xl">
+                        <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-kidville-cream-dark rounded-b-3xl">
                             <MediaGrid items={photos} showActions />
                         </div>
                     </motion.div>

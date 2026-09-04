@@ -317,7 +317,7 @@ export default function ScrutinioPage() {
                           value={giudizi[a.id]?.[m.id] || ''}
                           disabled={!canEdit(m.id)}
                           onChange={(e) => setGiudizio(a.id, m.id, e.target.value)}
-                          className="font-maven rounded-lg border border-kidville-line px-1.5 py-1 text-xs disabled:bg-kidville-cream disabled:text-kidville-muted"
+                          className="font-maven rounded-lg border border-kidville-line px-1.5 py-1 text-xs disabled:bg-kidville-cream disabled:text-kidville-sub"
                         >
                           <option value="">—</option>
                           {scala.map((g) => <option key={g} value={g}>{g}</option>)}

@@ -85,7 +85,7 @@ export function DraggableField({ field, isSelected, onClick, onDelete }: Props) 
         className={`group flex items-center gap-3 px-3 py-3 rounded-xl border cursor-pointer transition-all ${
           isSelected
             ? 'border-kidville-green/60 bg-kidville-success-soft shadow-lg shadow-kidville-green/10'
-            : 'border-kidville-line bg-white hover:border-white/20 hover:bg-white/[0.06]'
+            : 'border-kidville-line bg-white hover:border-kidville-green/50 hover:bg-kidville-cream'
         }`}
       >
         {/* Drag handle */}

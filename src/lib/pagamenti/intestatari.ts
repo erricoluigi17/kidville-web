@@ -1,5 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
+import {
+  anagraficaDaIntestatarioAltro,
+  anagraficaDaPersonaScelta,
+  type AnagraficaFatturabile,
+  type IntestatarioScelto,
+} from '@/lib/fatturazione/intestatario-scelto'
 
 // =============================================================================
 // Risolutore intestatari fattura + ripartizione in quote (genitori separati).
@@ -42,10 +48,86 @@ export async function resolveParentRegistry(
 }
 
 export interface Quota {
-  adultId: string
+  /**
+   * `parents.id` OPPURE `utenti.id` (li unifica `resolveParentRegistry`).
+   *
+   * `null` quando l'intestatario NON è una riga d'anagrafica ma una persona
+   * indicata a mano: allora non c'è niente da rileggere, e la fonte è
+   * `anagrafica` qui sotto.
+   */
+  adultId: string | null
   importo: number
   /** Etichetta leggibile (es. "Mamma", "Papà", nome) — vuota per quota unica. */
   label: string
+  /**
+   * L'anagrafica dell'intestatario quando non viene da `parents`: il ramo
+   * `intestatario_fatture.tipo = 'altro'` della scheda del bambino, o la persona
+   * digitata al momento dell'emissione. Presente ⇒ `adultId` è `null`, e
+   * l'emissione salta `resolveParentRegistry` scrivendo `quota_adult_id: null`.
+   */
+  anagrafica?: AnagraficaFatturabile | null
+}
+
+/**
+ * L'esito dell'applicazione di una scelta manuale alle quote calcolate.
+ * `conflitto_quote` non è un errore tecnico: è un rifiuto di merito, e chi lo
+ * riceve deve poterlo distinguere da un guasto.
+ */
+export type EsitoIntestatarioScelto =
+  | { ok: true; quote: Quota[] }
+  | { ok: false; motivo: 'conflitto_quote' }
+
+/**
+ * Applica alle quote l'intestatario scelto a mano.
+ *
+ *   nessuna quota → ACCETTA: ne crea UNA con l'intestatario scelto e il totale
+ *   una quota      → ACCETTA: sostituisce l'intestatario, lascia importo ed etichetta
+ *   due o più      → RIFIUTA: `conflitto_quote`
+ *
+ * ─── PERCHÉ CON I GENITORI SEPARATI SI RIFIUTA, invece di far vincere la scelta ─
+ *
+ *  1. FISCALE. La ripartizione esiste perché ciascun genitore riceva un documento
+ *     per la PROPRIA quota, e la detrazione si porta sulla fattura intestata a chi
+ *     ha pagato. Un documento unico cancella la detrazione dell'altro genitore.
+ *     L'ordinante di un bonifico dice CHI HA SPOSTATO IL DENARO, non COME SI
+ *     RIPARTISCE IL COSTO: sono due domande diverse, e solo la seconda decide qui.
+ *
+ *  2. FORZA DELLE FONTI. Lo split è configurato per-figlio da una persona, a volte
+ *     ricalcato su un accordo di separazione; una proposta dall'ordinante è una
+ *     deduzione da un estratto conto. La fonte debole non sovrascrive la forte in
+ *     silenzio — è la stessa famiglia di difetto che il 2026-09-03 ha prodotto la
+ *     FPR 1948/26, dove una casella precompilata batteva il modello configurato.
+ *
+ *  3. LA VIA D'USCITA ESISTE GIÀ, e il messaggio del 409 la nomina: si modificano
+ *     le `pagamenti_quote` nell'editor di Segreteria. Non si sta chiudendo una
+ *     porta, si sta indicando quella giusta.
+ *
+ * Il rifiuto vive QUI, lato server, e resta valido anche se l'interfaccia non
+ * offrirà mai il comando su un pagamento ripartito: un client vecchio o una
+ * chiamata a mano non devono poterlo aggirare.
+ *
+ * Funzione PURA: la regola si prova senza Supabase, e `determinaQuoteFatturazione`
+ * — che ha quattro chiamanti — non cambia firma.
+ */
+export function applicaIntestatarioScelto(
+  quote: Quota[],
+  scelto: IntestatarioScelto | null | undefined,
+  totale: number,
+): EsitoIntestatarioScelto {
+  if (!scelto) return { ok: true, quote }
+  if (quote.length > 1) return { ok: false, motivo: 'conflitto_quote' }
+
+  const base = quote[0]
+  const importo = base ? base.importo : round2(totale)
+  const label = base ? base.label : ''
+
+  if (scelto.tipo === 'adult') {
+    return { ok: true, quote: [{ adultId: scelto.adult_id, importo, label }] }
+  }
+  return {
+    ok: true,
+    quote: [{ adultId: null, importo, label, anagrafica: anagraficaDaPersonaScelta(scelto) }],
+  }
 }
 
 interface Voce {
@@ -81,7 +163,12 @@ export interface AlunnoQuoteInput {
   id?: string | null
   genitori_separati?: boolean | null
   retta_split_config?: { quote?: { adult_id: string; importo: number | string; etichetta?: string | null }[] } | null
-  intestatario_fatture?: { adult_id?: string | null } | null
+  /**
+   * `alunni.intestatario_fatture`, nelle DUE forme che la scheda del bambino sa
+   * scrivere: `{ tipo: 'adult', adult_id }` e `{ tipo: 'altro', dati: {…} }`.
+   * Le righe più vecchie non hanno `tipo` e portano solo `adult_id`.
+   */
+  intestatario_fatture?: { tipo?: string | null; adult_id?: string | null; dati?: unknown } | null
 }
 
 /**
@@ -90,7 +177,7 @@ export interface AlunnoQuoteInput {
  * eccezione per-figlio. Retry-less sulla colonna: se `intestatario_default` non
  * esiste (DB E2E CI non migrato, 42703) → `null`, così si cade sul fallback.
  */
-async function intestatarioDefaultFamiglia(
+export async function intestatarioDefaultFamiglia(
   supabase: SupabaseClient,
   alunnoId: string,
 ): Promise<string | null> {
@@ -106,6 +193,124 @@ async function intestatarioDefaultFamiglia(
     .maybeSingle()
   if (def.error) return null // colonna assente (42703) o errore → fallback
   return (def.data as { id?: string } | null)?.id ?? null
+}
+
+/**
+ * CHI sono i genitori di un bambino, nelle DUE sorgenti — in un posto solo.
+ *
+ * `student_parents` (anagrafica, spazio `parents.id`) unito al ponte runtime
+ * `legame_genitori_alunni` (spazio `utenti.id`): è la stessa unione del passo 2c
+ * della cascata, e con la sola anagrafica i tutori di un bambino importato dal
+ * modulo pubblico «non risultavano» — difetto già pagato una volta.
+ *
+ * ⚠️ `completo` copre la lettura di `student_parents` E la risoluzione del ponte
+ * in `parents.id`: se una delle due non risponde, chi usa questo insieme per
+ * RIFIUTARE riceve «non lo so», non «no». Resta scoperta la lettura INTERNA di
+ * `legame_genitori_alunni` dentro `getGenitoriDiAlunno`, che degrada per conto
+ * suo (logga e restituisce ciò che ha): in una giornata in cui fallisce quella,
+ * un genitore noto al SOLO ponte runtime non comparirebbe qui. Chi usa questo
+ * insieme per RIFIUTARE deve saperlo: il costo di quel caso è un messaggio di
+ * troppo, non un documento fiscale sbagliato, e la lettura fallita lascia
+ * comunque la sua riga di log.
+ */
+export interface GenitoriDiAlunno {
+  /**
+   * `parents.id` — l'UNICO elenco che conta per confrontare un intestatario
+   * scelto, e l'unione delle due sorgenti già RISOLTA nello stesso spazio:
+   * l'anagrafica (`student_parents.parent_id`) più il ponte runtime, portato di
+   * là con `parents.auth_user_id`.
+   *
+   * ⚠️ LA RISOLUZIONE STA QUI, E NON DAL CHIAMANTE. Finché il ponte restava
+   * nello spazio `utenti.id`, l'anteprima esponeva un genitore col suo
+   * `parents.id` (risolto per conto suo) e l'emissione confrontava quello stesso
+   * id con un elenco che non lo conteneva: l'app offriva una scelta e poi la
+   * rifiutava con 422, dando la colpa a chi aveva premuto. Due mappe della
+   * stessa cosa divergono appena qualcuno le calcola in due posti.
+   */
+  parentIds: string[]
+  /** `utenti.id` dal ponte runtime: resta esposto perché una chiamata a mano può parlarlo. */
+  accountIds: string[]
+  /** `student_parents` ha risposto: si può concludere «non è un genitore». */
+  completo: boolean
+  /** `student_parents.relation_type`, per `parents.id`. */
+  relazioni: Map<string, string | null>
+  /** Le righe `parents` dei genitori noti dal solo ponte, già lette. */
+  registriDalPonte: ParentRegistryConPonte[]
+}
+
+/** Una riga `parents` con il ponte, per chi deve unire i due spazi d'identità. */
+export interface ParentRegistryConPonte extends ParentRegistry {
+  auth_user_id?: string | null
+}
+
+/** Le colonne che servono a chi mostra un candidato: il registro più il ponte. */
+export const REG_COLS_CON_PONTE = `${REG_COLS}, auth_user_id`
+
+export async function identitaGenitoriDiAlunno(
+  supabase: SupabaseClient,
+  alunnoId: string,
+): Promise<GenitoriDiAlunno> {
+  const relazioni = new Map<string, string | null>()
+  const { data, error } = await supabase
+    .from('student_parents')
+    .select('parent_id, relation_type')
+    .eq('student_id', alunnoId)
+  const righe = ((data ?? []) as { parent_id?: string | null; relation_type?: string | null }[]).filter(
+    (r) => typeof r.parent_id === 'string',
+  )
+  for (const r of righe) relazioni.set(r.parent_id as string, r.relation_type ?? null)
+  const accountIds = await getGenitoriDiAlunno(supabase, alunnoId)
+  const parentIds = new Set(righe.map((r) => r.parent_id as string))
+
+  // Il ponte, portato nello spazio del REGISTRO. `getGenitoriDiAlunno` scarta i
+  // `parents` senza account, quindi questo giro aggiunge solo chi un account ce
+  // l'ha — ed è esattamente chi l'anteprima mostra fra i candidati.
+  let registriDalPonte: ParentRegistryConPonte[] = []
+  let ponteLetto = true
+  if (accountIds.length > 0) {
+    const ponte = await supabase.from('parents').select(REG_COLS_CON_PONTE).in('auth_user_id', accountIds)
+    // PostgREST NON LANCIA (AGENTS.md, regola 7). Se questa lettura fallisce non
+    // si può concludere «non è un genitore»: chi decide un'emissione non deve
+    // leggere «no» dove la verità è «non lo so».
+    ponteLetto = !ponte.error
+    registriDalPonte = (ponte.data ?? []) as ParentRegistryConPonte[]
+    for (const p of registriDalPonte) if (p.id) parentIds.add(p.id)
+  }
+
+  return {
+    parentIds: [...parentIds],
+    accountIds,
+    completo: !error && ponteLetto,
+    relazioni,
+    registriDalPonte,
+  }
+}
+
+/**
+ * L'adulto scelto a mano è un genitore di QUEL bambino?
+ *
+ * `null` = non si è potuto stabilire (la lettura non ha risposto): chi decide
+ * un'emissione non deve poter leggere «no» dove la verità è «non lo so».
+ * L'`adultId` può arrivare in entrambi gli spazi d'identità e si confronta con
+ * l'insieme GIÀ RISOLTO da `identitaGenitoriDiAlunno` — la stessa risoluzione
+ * che alimenta i candidati dell'anteprima. È il punto: finché le due liste
+ * venivano da due letture diverse, l'app proponeva un genitore e poi lo
+ * rifiutava (6 famiglie in produzione, di cui 4 con riga `parents`).
+ * La select estesa vive in `REG_COLS_CON_PONTE` e resta separata da `REG_COLS`:
+ * aggiungere `auth_user_id` a quest'ultima farebbe fallire l'INTERA select con
+ * `42703` sui database non migrati, su quattro strade che oggi funzionano.
+ */
+export async function adultoEGenitoreDi(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  adultId: string,
+): Promise<boolean | null> {
+  const g = await identitaGenitoriDiAlunno(supabase, alunnoId)
+  // Entrambi gli spazi: `parentIds` è già l'unione risolta (anagrafica + ponte),
+  // `accountIds` copre chi arriva con l'id dell'account — sono la stessa persona
+  // e devono valere tutti e due.
+  if (g.parentIds.includes(adultId) || g.accountIds.includes(adultId)) return true
+  return g.completo ? false : null
 }
 
 /**
@@ -178,7 +383,20 @@ export async function determinaQuoteFatturazione(
   }
 
   // 3) Eccezione per-figlio → intestatario unico (vince sul default famiglia).
-  const adultId = alunno.intestatario_fatture?.adult_id
+  //
+  // ⚠️ IL RAMO `'altro'` NON RICADE SUL DEFAULT DI FAMIGLIA, e non è prudenza:
+  // fino al 2026-09-04 questa cascata leggeva `adult_id` e basta, quindi una
+  // scelta esplicita di «intesta a un'altra persona» veniva SALTATA e la fattura
+  // usciva a nome del genitore marcato di default — o non usciva affatto (422),
+  // senza che nulla lo dicesse. Qui la scelta passa con la sua anagrafica al
+  // seguito, anche INCOMPLETA: a fermarla è `validaCessionario` in emissione,
+  // che nomina i campi mancanti. Ripiegare sarebbe rifare il difetto di oggi in
+  // un posto nuovo.
+  const intest = alunno.intestatario_fatture
+  if (intest?.tipo === 'altro') {
+    return [{ adultId: null, importo: totale, label: '', anagrafica: anagraficaDaIntestatarioAltro(intest.dati) }]
+  }
+  const adultId = intest?.adult_id
   if (adultId) return [{ adultId, importo: totale, label: '' }]
 
   // 4) DEFAULT FAMIGLIA → parents.intestatario_default fra i genitori del bambino.

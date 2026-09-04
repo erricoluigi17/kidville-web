@@ -130,7 +130,7 @@ function ParentGalleryContent() {
                             className="flex flex-col items-center justify-center py-16 gap-4 bg-white rounded-2xl border border-kidville-green/10 shadow-sm"
                         >
                             <div className="w-16 h-16 rounded-full bg-kidville-green/10 flex items-center justify-center">
-                                <ImageOff className="w-8 h-8 text-kidville-green/40" />
+                                <ImageOff className="w-8 h-8 text-kidville-green/70" />
                             </div>
                             <div className="text-center">
                                 <p className="font-barlow font-bold text-kidville-green/60 text-sm uppercase tracking-wide">

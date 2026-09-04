@@ -38,7 +38,7 @@ export function BulkAssignBar({
     return (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-full max-w-2xl px-4 space-y-2">
             {showMensa && (
-                <div className="bg-kidville-green/95 rounded-2xl shadow-xl p-3 flex items-center gap-3">
+                <div className="bg-kidville-green rounded-2xl shadow-xl p-3 flex items-center gap-3">
                     <UtensilsCrossed size={16} className="text-kidville-yellow" />
                     <div className="relative flex-1">
                         <select
@@ -51,7 +51,7 @@ export function BulkAssignBar({
                                 <option key={g.id} value={g.id} className="text-kidville-green">{g.nome}</option>
                             ))}
                         </select>
-                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-kidville-yellow/60 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-kidville-yellow pointer-events-none" />
                     </div>
                     <button
                         onClick={onAssignMensa}
@@ -69,14 +69,14 @@ export function BulkAssignBar({
                     <span className="font-barlow font-black text-lg text-kidville-yellow">
                         {selectedCount}
                     </span>
-                    <span className="font-maven text-xs text-kidville-yellow/80">
+                    <span className="font-maven text-xs text-kidville-yellow">
                         {t('bulkSelezionati')}
                     </span>
                 </div>
 
                 {/* Freccia + Dropdown classe */}
                 <div className="flex-1 flex items-center gap-2">
-                    <span className="text-kidville-yellow/60 font-maven text-sm">→</span>
+                    <span className="text-kidville-yellow font-maven text-sm">→</span>
                     <div className="relative flex-1">
                         <select
                             value={targetClass}
@@ -90,7 +90,7 @@ export function BulkAssignBar({
                                 </option>
                             ))}
                         </select>
-                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-kidville-yellow/60 pointer-events-none" />
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-kidville-yellow pointer-events-none" />
                     </div>
                 </div>
 
@@ -110,7 +110,7 @@ export function BulkAssignBar({
                 {/* Annulla selezione */}
                 <button
                     onClick={onClear}
-                    className="text-kidville-yellow/60 hover:text-kidville-yellow text-xs font-maven underline"
+                    className="text-kidville-yellow hover:text-kidville-yellow text-xs font-maven underline"
                 >
                     {t('bulkAnnulla')}
                 </button>

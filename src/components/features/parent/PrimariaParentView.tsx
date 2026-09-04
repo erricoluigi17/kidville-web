@@ -54,7 +54,7 @@ export function PrimariaParentView({
       {/* Pagelle (documento di valutazione) */}
       {pagelle.length > 0 && (
         <section className="rounded-card bg-white p-5 shadow-sm">
-          <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2 mb-3">
+          <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
             <FileText size={18} className="text-kidville-green" /> {t('viewPagelleTitolo')}
           </h3>
           <div className="space-y-3">
@@ -82,7 +82,7 @@ export function PrimariaParentView({
             <div key={n.id} className="mb-2 flex items-center justify-between gap-3 rounded-card bg-white p-3">
               <div>
                 <span className={`rounded-pill px-2 py-0.5 text-[11px] font-maven ${CAT_CLS[n.categoria] ?? ''}`}>{CAT_LABEL_KEY[n.categoria] ? t(CAT_LABEL_KEY[n.categoria]) : n.categoria}</span>
-                <p className="font-maven text-sm text-gray-700 mt-1">{n.testo}</p>
+                <p className="font-maven text-sm text-kidville-ink mt-1">{n.testo}</p>
               </div>
               <button onClick={() => onSign(n.id)} disabled={signing === n.id} className="font-maven inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
                 <PenLine size={12} /> {signing === n.id ? '…' : t('firma')}
@@ -100,21 +100,21 @@ export function PrimariaParentView({
 
       {/* Valutazioni (giudizi, no voti numerici) */}
       <section className="rounded-card bg-white p-5 shadow-sm">
-        <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2 mb-3">
+        <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
           <Award size={18} className="text-kidville-yellow" /> {t('viewValutazioni')}
         </h3>
         {valutazioni.length === 0 ? (
-          <p className="font-maven text-sm text-gray-400">{t('viewNessunaValutazione')}</p>
+          <p className="font-maven text-sm text-kidville-sub">{t('viewNessunaValutazione')}</p>
         ) : (
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-kidville-line">
             {valutazioni.map((v) => (
               <li key={v.id} className="py-2.5">
                 <div className="flex items-center gap-2">
-                  <span className="font-maven text-sm font-semibold text-gray-800">{v.materia}</span>
-                  <span className="text-xs text-gray-400 capitalize">{v.tipo}</span>
-                  <span className="text-xs text-gray-300">{f.dataBreve(v.creato_il)}</span>
+                  <span className="font-maven text-sm font-semibold text-kidville-ink">{v.materia}</span>
+                  <span className="text-xs text-kidville-sub capitalize">{v.tipo}</span>
+                  <span className="text-xs text-kidville-hint">{f.dataBreve(v.creato_il)}</span>
                 </div>
-                {v.argomento && <p className="font-maven text-xs text-gray-500 mt-0.5">{t('viewArgomento', { value: v.argomento })}</p>}
+                {v.argomento && <p className="font-maven text-xs text-kidville-sub mt-0.5">{t('viewArgomento', { value: v.argomento })}</p>}
                 <p className="font-maven text-sm text-kidville-green mt-0.5">
                   {v.giudizio_sintetico || v.giudizio_testo || '—'}
                 </p>
@@ -179,11 +179,11 @@ function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScruti
   };
 
   return (
-    <div className="rounded-card border border-gray-100 p-3">
+    <div className="rounded-card border border-kidville-line p-3">
       <div className="flex items-center justify-between gap-2">
         <div>
-          <p className="font-maven text-sm font-semibold text-gray-800">{pagella.periodo}</p>
-          <p className="font-maven text-xs text-gray-400">
+          <p className="font-maven text-sm font-semibold text-kidville-ink">{pagella.periodo}</p>
+          <p className="font-maven text-xs text-kidville-sub">
             {pagella.anno}{pagella.chiusoIl ? ` · ${f.dataBreve(pagella.chiusoIl)}` : ''}
           </p>
         </div>
@@ -205,7 +205,7 @@ function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScruti
 
       {!firmato && step === 'otp' && (
         <div className="mt-2 flex flex-col gap-1.5">
-          <p className="font-maven text-[11px] text-gray-500">{t('viewOtpPagella')}</p>
+          <p className="font-maven text-[11px] text-kidville-sub">{t('viewOtpPagella')}</p>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -213,12 +213,12 @@ function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScruti
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder={t('codicePlaceholder')}
-              className="font-maven w-28 rounded-pill border border-gray-200 px-3 py-1.5 text-xs tracking-widest"
+              className="font-maven w-28 rounded-pill border border-kidville-line px-3 py-1.5 text-xs tracking-widest"
             />
             <button onClick={conferma} disabled={busy || code.length < 4} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
               {busy ? '…' : t('conferma')}
             </button>
-            <button onClick={() => { setStep('idle'); setCode(''); setErr(''); }} className="font-maven rounded-pill bg-gray-100 px-3 py-1.5 text-xs text-gray-500">
+            <button onClick={() => { setStep('idle'); setCode(''); setErr(''); }} className="font-maven rounded-pill bg-kidville-neutral-soft px-3 py-1.5 text-xs text-kidville-sub">
               {t('annulla')}
             </button>
           </div>
@@ -227,25 +227,25 @@ function PagellaCard({ pagella, onScarica, onRequestOtp, onFirma, onCaricaScruti
       {err && <p className="font-maven text-[11px] text-kidville-error mt-1">{err}</p>}
 
       {firmato && open && view && (
-        <div className="mt-3 border-t border-gray-100 pt-3">
-          <ul className="divide-y divide-gray-100">
+        <div className="mt-3 border-t border-kidville-line pt-3">
+          <ul className="divide-y divide-kidville-line">
             {view.discipline.map((d) => (
               <li key={d.materia} className="flex items-center justify-between py-1.5">
-                <span className="font-maven text-sm text-gray-700">{d.materia}</span>
+                <span className="font-maven text-sm text-kidville-ink">{d.materia}</span>
                 <span className="font-maven text-sm font-semibold text-kidville-green">{d.giudizio}</span>
               </li>
             ))}
           </ul>
           {view.comportamento && (
             <div className="mt-2">
-              <p className="font-maven text-[11px] font-semibold text-gray-500">{t('viewComportamento')}</p>
-              <p className="font-maven text-sm text-gray-700">{view.comportamento}</p>
+              <p className="font-maven text-[11px] font-semibold text-kidville-sub">{t('viewComportamento')}</p>
+              <p className="font-maven text-sm text-kidville-ink">{view.comportamento}</p>
             </div>
           )}
           {view.giudizioGlobale && (
             <div className="mt-2">
-              <p className="font-maven text-[11px] font-semibold text-gray-500">{t('viewGiudizioGlobale')}</p>
-              <p className="font-maven text-sm text-gray-700">{view.giudizioGlobale}</p>
+              <p className="font-maven text-[11px] font-semibold text-kidville-sub">{t('viewGiudizioGlobale')}</p>
+              <p className="font-maven text-sm text-kidville-ink">{view.giudizioGlobale}</p>
             </div>
           )}
         </div>
@@ -280,7 +280,7 @@ function AssenzeCard({ assenze, onGiustifica, onRequestGiustificaOtp, onComunica
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2">
+        <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2">
           <CalendarOff size={18} className="text-kidville-error" /> {t('viewAssenzeDaGiustificare')}
         </h3>
         <button onClick={() => setShowForm((v) => !v)} className="font-maven inline-flex items-center gap-1 rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow">
@@ -290,9 +290,9 @@ function AssenzeCard({ assenze, onGiustifica, onRequestGiustificaOtp, onComunica
 
       {showForm && (
         <div className="mb-3 rounded-card bg-kidville-cream/50 p-3 flex flex-col gap-2">
-          <p className="font-maven text-xs text-gray-500">{t('viewComunicaAssenzaHint')}</p>
-          <DateField value={data} onChange={setData} aria-label={t('viewComunicaAssenzaDataAria')} className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm" />
-          <input type="text" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={t('viewComunicaMotivoPlaceholder')} className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm" />
+          <p className="font-maven text-xs text-kidville-sub">{t('viewComunicaAssenzaHint')}</p>
+          <DateField value={data} onChange={setData} aria-label={t('viewComunicaAssenzaDataAria')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
+          <input type="text" value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder={t('viewComunicaMotivoPlaceholder')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
           <button onClick={comunica} disabled={busy} className="font-maven self-start rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50">
             {busy ? t('viewInvio') : t('viewInvia')}
           </button>
@@ -301,7 +301,7 @@ function AssenzeCard({ assenze, onGiustifica, onRequestGiustificaOtp, onComunica
       {msg && <p className="font-maven text-xs text-kidville-success mb-2">{msg}</p>}
 
       {assenze.length === 0 ? (
-        <p className="font-maven text-sm text-gray-400">{t('viewNessunaAssenzaRecente')}</p>
+        <p className="font-maven text-sm text-kidville-sub">{t('viewNessunaAssenzaRecente')}</p>
       ) : (
         <ul className="space-y-2">
           {assenze.map((a) => (
@@ -354,7 +354,7 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
   return (
     <li className="rounded-card bg-kidville-cream/40 p-3">
       <div className="flex items-center justify-between">
-        <span className="font-maven text-sm text-gray-800">
+        <span className="font-maven text-sm text-kidville-ink">
           <b>{STATO_ASSENZA_KEY[assenza.stato] ? t(STATO_ASSENZA_KEY[assenza.stato]) : assenza.stato}</b> · {giorno}
         </span>
         {assenza.giustificata ? (
@@ -366,7 +366,7 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
         )}
       </div>
       {assenza.giustificata ? (
-        assenza.giustificazione_testo && <p className="font-maven text-xs text-gray-500 mt-1">{assenza.giustificazione_testo}</p>
+        assenza.giustificazione_testo && <p className="font-maven text-xs text-kidville-sub mt-1">{assenza.giustificazione_testo}</p>
       ) : step === 'motivo' ? (
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -374,7 +374,7 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
             value={motivo}
             onChange={(e) => setMotivo(e.target.value)}
             placeholder={t('viewMotivazionePlaceholder')}
-            className="font-maven flex-1 rounded-pill border border-gray-200 px-3 py-1.5 text-xs"
+            className="font-maven flex-1 rounded-pill border border-kidville-line px-3 py-1.5 text-xs"
           />
           <button onClick={richiediCodice} disabled={busy} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
             {busy ? '…' : t('viewGiustifica')}
@@ -382,7 +382,7 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
         </div>
       ) : (
         <div className="mt-2 flex flex-col gap-1.5">
-          <p className="font-maven text-[11px] text-gray-500">{t('viewOtpGiustifica')}</p>
+          <p className="font-maven text-[11px] text-kidville-sub">{t('viewOtpGiustifica')}</p>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -390,12 +390,12 @@ function AssenzaRow({ assenza, onGiustifica, onRequestGiustificaOtp }: {
               value={code}
               onChange={(e) => setCode(e.target.value)}
               placeholder={t('codicePlaceholder')}
-              className="font-maven w-28 rounded-pill border border-gray-200 px-3 py-1.5 text-xs tracking-widest"
+              className="font-maven w-28 rounded-pill border border-kidville-line px-3 py-1.5 text-xs tracking-widest"
             />
             <button onClick={conferma} disabled={busy || code.length < 4} className="font-maven rounded-pill bg-kidville-green px-3 py-1.5 text-xs text-kidville-yellow disabled:opacity-50">
               {busy ? '…' : t('conferma')}
             </button>
-            <button onClick={() => { setStep('motivo'); setCode(''); setErr(''); }} className="font-maven rounded-pill bg-gray-100 px-3 py-1.5 text-xs text-gray-500">
+            <button onClick={() => { setStep('motivo'); setCode(''); setErr(''); }} className="font-maven rounded-pill bg-kidville-neutral-soft px-3 py-1.5 text-xs text-kidville-sub">
               {t('annulla')}
             </button>
           </div>
@@ -428,10 +428,10 @@ function ImpreparatoForm({ materie, onImpreparato }: {
 
   return (
     <section className="rounded-card bg-white p-5 shadow-sm">
-      <h3 className="font-barlow text-lg font-bold text-gray-800 flex items-center gap-2 mb-3">
+      <h3 className="font-barlow text-lg font-bold text-kidville-ink flex items-center gap-2 mb-3">
         <Hand size={18} className="text-kidville-warn" /> {t('viewDichiaraImpreparato')}
       </h3>
-      <p className="font-maven text-xs text-gray-500 mb-3">
+      <p className="font-maven text-xs text-kidville-sub mb-3">
         {t('viewDichiaraImpreparatoHint')}
       </p>
       <div className="flex flex-col gap-2">
@@ -439,9 +439,9 @@ function ImpreparatoForm({ materie, onImpreparato }: {
           value={data}
           onChange={setData}
           aria-label={t('viewImpreparatoDataAria')}
-          className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+          className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
         />
-        <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm">
+        <select value={materiaId} onChange={(e) => setMateriaId(e.target.value)} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm">
           <option value="">{t('viewMateriaFacoltativa')}</option>
           {materie.map((m) => <option key={m.id} value={m.id}>{m.nome}</option>)}
         </select>
@@ -450,7 +450,7 @@ function ImpreparatoForm({ materie, onImpreparato }: {
           value={motivo}
           onChange={(e) => setMotivo(e.target.value)}
           placeholder={t('viewMotivoFacoltativo')}
-          className="font-maven rounded-pill border border-gray-200 px-3 py-1.5 text-sm"
+          className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
         />
         {msg && <p className="font-maven text-xs text-kidville-success">{msg}</p>}
         <button onClick={invia} disabled={busy} className="font-maven self-start rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow disabled:opacity-50">

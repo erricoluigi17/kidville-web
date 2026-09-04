@@ -5,6 +5,7 @@ import { LinkInterno } from '@/components/ui/LinkInterno';
 import { IdCard, ShieldCheck, FileText, LifeBuoy, Loader2, AlertTriangle, Trash2, RotateCcw, Fingerprint, KeyRound, ChevronDown } from 'lucide-react';
 import { useTranslations } from 'next-intl';
 import { CambiaPasswordCard } from '@/components/features/account/CambiaPasswordCard';
+import { ContrastSwitch } from '@/components/ui/ContrastSwitch';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { doLogout } from '@/lib/auth/logout';
 import { LanguageSwitcher } from '@/components/features/i18n/LanguageSwitcher';
@@ -259,6 +260,11 @@ function Inner() {
           </div>
         </section>
       )}
+
+      {/* Accessibilita. Sta QUI e non piu' nel menu rapido: e' uno stato che dura
+          un anno, non un comando, e prima si accendeva con un tocco senza dare
+          alcun segno di essere acceso. */}
+      <ContrastSwitch />
 
       {/* Cancellazione account */}
       <section className="rounded-card border-t-4 border-kidville-error bg-white p-5 shadow-sm">

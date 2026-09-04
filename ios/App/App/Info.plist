@@ -102,5 +102,12 @@
 			</array>
 		</dict>
 	</array>
+	<!-- Kidville e un'app SOLO CHIARA (2026-09-04). Senza questa chiave l'app
+	     seguiva il tema del telefono: la trait collection della WKWebView
+	     diventava scura, e da li discendevano i controlli nativi scuri dentro
+	     campi bianchi e il LaunchScreen nero. Un tema scuro non esiste in
+	     questa app: zero classi dark:, zero @media prefers-color-scheme. -->
+	<key>UIUserInterfaceStyle</key>
+	<string>Light</string>
 </dict>
 </plist>

@@ -218,13 +218,13 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
         return (
             <div className="flex flex-col items-center justify-center py-20 gap-3">
                 <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
-                <p className="font-maven text-xs text-gray-400">{t('analisiInCorso')}</p>
+                <p className="font-maven text-xs text-kidville-sub">{t('analisiInCorso')}</p>
             </div>
         );
     }
 
     const tabsBlock = isAdesione ? (
-        <div className="flex border-b border-gray-100 bg-white gap-4">
+        <div className="flex border-b border-kidville-line bg-white gap-4">
             <button
                 onClick={() => {
                     setMainTab('letture');
@@ -233,7 +233,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 className={`py-3 text-xs font-barlow font-bold uppercase tracking-wider border-b-2 transition-all ${
                     mainTab === 'letture'
                         ? 'border-kidville-green text-kidville-green'
-                        : 'border-transparent text-gray-400 hover:text-gray-600'
+                        : 'border-transparent text-kidville-sub hover:text-kidville-green'
                 }`}
             >
                 {t('tabStatoLettura')}
@@ -247,7 +247,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 className={`py-3 text-xs font-barlow font-bold uppercase tracking-wider border-b-2 transition-all ${
                     mainTab === 'adesioni'
                         ? 'border-kidville-green text-kidville-green'
-                        : 'border-transparent text-gray-400 hover:text-gray-600'
+                        : 'border-transparent text-kidville-sub hover:text-kidville-green'
                 }`}
             >
                 {t('tabAdesioni')}
@@ -257,25 +257,25 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
 
     const statsBlock = mainTab === 'letture' ? (
         <div className="grid grid-cols-2 gap-3">
-            <div className="bg-gradient-to-br from-blue-50 to-kidville-info-soft border border-kidville-info/60 p-4 rounded-3xl">
+            <div className="bg-gradient-to-br from-kidville-info-soft to-kidville-info-soft border border-kidville-info/60 p-4 rounded-3xl">
                 <div className="flex items-center gap-2 text-kidville-info mb-1">
                     <Eye size={16} strokeWidth={1.5} />
                     <span className="font-maven text-[10px] font-bold uppercase tracking-wider">{t('statLetti')}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
-                    <span className="font-barlow font-black text-2xl text-blue-900">{readCount}</span>
+                    <span className="font-barlow font-black text-2xl text-kidville-info-strong">{readCount}</span>
                     <span className="font-maven text-xs text-kidville-info/60">{t('statSuTotale', { total: totalTarget, pct: readPercentage })}</span>
                 </div>
             </div>
 
-            <div className="bg-gradient-to-br from-gray-50 to-gray-100/30 border border-gray-200/40 p-4 rounded-3xl">
-                <div className="flex items-center gap-2 text-gray-500 mb-1">
+            <div className="bg-gradient-to-br from-kidville-cream to-kidville-cream-dark/30 border border-kidville-line p-4 rounded-3xl">
+                <div className="flex items-center gap-2 text-kidville-sub mb-1">
                     <AlertCircle size={16} strokeWidth={1.5} />
                     <span className="font-maven text-[10px] font-bold uppercase tracking-wider">{t('statNonLetti')}</span>
                 </div>
                 <div className="flex items-baseline gap-1.5">
-                    <span className="font-barlow font-black text-2xl text-gray-700">{unreadCount}</span>
-                    <span className="font-maven text-xs text-gray-500/60">{t('statFamiglie')}</span>
+                    <span className="font-barlow font-black text-2xl text-kidville-ink">{unreadCount}</span>
+                    <span className="font-maven text-xs text-kidville-sub">{t('statFamiglie')}</span>
                 </div>
             </div>
         </div>
@@ -293,11 +293,11 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                     <span className="font-barlow font-black text-lg text-kidville-success">{siCount}</span>
                 </div>
                 <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
-                    <div className="flex items-center justify-center text-gray-500 gap-1 mb-0.5">
+                    <div className="flex items-center justify-center text-kidville-sub gap-1 mb-0.5">
                         <ThumbsDown size={12} strokeWidth={1.5} />
                         <span className="font-maven text-[9px] font-bold uppercase">{t('no')}</span>
                     </div>
-                    <span className="font-barlow font-black text-lg text-gray-600">{noCount}</span>
+                    <span className="font-barlow font-black text-lg text-kidville-sub">{noCount}</span>
                 </div>
                 <div className="bg-white/80 rounded-2xl p-2.5 text-center border border-kidville-info/30">
                     <div className="flex items-center justify-center text-kidville-warn gap-1 mb-0.5">
@@ -311,9 +311,9 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
     );
 
     const filtersBlock = (
-        <div className="bg-gray-50 border border-gray-100 p-4 rounded-3xl space-y-3">
+        <div className="bg-kidville-cream border border-kidville-line p-4 rounded-3xl space-y-3">
             <div className="flex items-center justify-between">
-                <span className="font-barlow font-bold text-xs text-gray-500 uppercase tracking-wider">{t('filtri')}</span>
+                <span className="font-barlow font-bold text-xs text-kidville-sub uppercase tracking-wider">{t('filtri')}</span>
                 {(selectedClass !== 'all' || selectedResponse !== 'given' || searchQuery) && (
                     <button
                         onClick={() => {
@@ -331,11 +331,11 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             {mainTab === 'letture' ? (
                 <div className="grid grid-cols-1 gap-2">
                     <div>
-                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">{t('classe')}</label>
+                        <label className="font-maven font-medium text-[9px] text-kidville-sub uppercase tracking-wide mb-1 block">{t('classe')}</label>
                         <select
                             value={selectedClass}
                             onChange={e => setSelectedClass(e.target.value)}
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
+                            className="w-full bg-white border border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                         >
                             <option value="all">{t('tutteLeClassi')}</option>
                             {targetClasses.map(c => (
@@ -347,11 +347,11 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             ) : (
                 <div className="grid grid-cols-2 gap-2">
                     <div>
-                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">{t('classe')}</label>
+                        <label className="font-maven font-medium text-[9px] text-kidville-sub uppercase tracking-wide mb-1 block">{t('classe')}</label>
                         <select
                             value={selectedClass}
                             onChange={e => setSelectedClass(e.target.value)}
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
+                            className="w-full bg-white border border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                         >
                             <option value="all">{t('tutteLeClassi')}</option>
                             {targetClasses.map(c => (
@@ -360,11 +360,11 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                         </select>
                     </div>
                     <div>
-                        <label className="font-maven font-medium text-[9px] text-gray-400 uppercase tracking-wide mb-1 block">{t('risposta')}</label>
+                        <label className="font-maven font-medium text-[9px] text-kidville-sub uppercase tracking-wide mb-1 block">{t('risposta')}</label>
                         <select
                             value={selectedResponse}
                             onChange={e => setSelectedResponse(e.target.value)}
-                            className="w-full bg-white border border-gray-200 rounded-xl px-3 py-2 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
+                            className="w-full bg-white border border-kidville-line rounded-xl px-3 py-2 font-maven text-xs text-kidville-sub focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                         >
                             <option value="given">{t('optRisposteDate')}</option>
                             <option value="si">{t('optAderitoSi')}</option>
@@ -377,12 +377,12 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
 
             {/* Search */}
             <div className="relative">
-                <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-kidville-sub" />
                 <input
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     placeholder={t('cercaPlaceholder')}
-                    className="w-full bg-white border border-gray-200 rounded-xl pl-9 pr-3 py-1.5 font-maven text-xs text-gray-600 focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
+                    className="w-full bg-white border border-kidville-line rounded-xl pl-9 pr-3 py-1.5 font-maven text-xs text-kidville-sub focus:outline-none focus:ring-2 focus:ring-kidville-green/20"
                 />
             </div>
         </div>
@@ -393,11 +393,11 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
             {mainTab === 'letture' ? (
                 <div className="space-y-3">
                     {/* Sub tabs Letti / Non letti */}
-                    <div className="flex bg-gray-100 rounded-2xl p-1 gap-1">
+                    <div className="flex bg-kidville-neutral-soft rounded-2xl p-1 gap-1">
                         <button
                             onClick={() => setReadSubTab('letti')}
                             className={`flex-1 py-2 font-maven text-xs font-semibold rounded-xl transition-all ${
-                                readSubTab === 'letti' ? 'bg-white text-kidville-green shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                readSubTab === 'letti' ? 'bg-white text-kidville-green shadow-sm' : 'text-kidville-sub hover:text-kidville-ink'
                             }`}
                         >
                             {t('subTabLetti', { count: filteredLetti.length })}
@@ -405,7 +405,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                         <button
                             onClick={() => setReadSubTab('non_letti')}
                             className={`flex-1 py-2 font-maven text-xs font-semibold rounded-xl transition-all ${
-                                readSubTab === 'non_letti' ? 'bg-white text-kidville-green shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                                readSubTab === 'non_letti' ? 'bg-white text-kidville-green shadow-sm' : 'text-kidville-sub hover:text-kidville-ink'
                             }`}
                         >
                             {t('subTabNonLetti', { count: filteredNonLetti.length })}
@@ -416,17 +416,17 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                     <div className={`space-y-2 ${listMaxH} overflow-y-auto pr-1`}>
                         {readSubTab === 'letti' ? (
                             filteredLetti.length === 0 ? (
-                                <p className="font-maven text-xs text-gray-400 text-center py-6">{t('nessunaLettura')}</p>
+                                <p className="font-maven text-xs text-kidville-sub text-center py-6">{t('nessunaLettura')}</p>
                             ) : (
                                 filteredLetti.map(item => (
-                                    <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-2xl shadow-sm hover:border-gray-200 transition-colors">
+                                    <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-kidville-line rounded-2xl shadow-sm hover:border-kidville-green/50 transition-colors">
                                         <div className="min-w-0">
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase truncate">{item.studentName}</p>
-                                            <p className="font-maven text-[10px] text-gray-400 mt-0.5 truncate">
+                                            <p className="font-maven text-[10px] text-kidville-sub mt-0.5 truncate">
                                                 {t('genitoreClasse', { genitore: item.parentName, classe: item.classe })}
                                             </p>
                                         </div>
-                                        <span className="font-maven text-[9px] text-gray-400 bg-gray-50 border border-gray-100 rounded-lg px-2 py-1 flex-shrink-0 text-right">
+                                        <span className="font-maven text-[9px] text-kidville-sub bg-kidville-cream border border-kidville-line rounded-lg px-2 py-1 flex-shrink-0 text-right">
                                             {item.lettoIl.split(',')[0]}
                                         </span>
                                     </div>
@@ -434,13 +434,13 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                             )
                         ) : (
                             filteredNonLetti.length === 0 ? (
-                                <p className="font-maven text-xs text-gray-400 text-center py-6">{t('tutteHannoLetto')}</p>
+                                <p className="font-maven text-xs text-kidville-sub text-center py-6">{t('tutteHannoLetto')}</p>
                             ) : (
                                 filteredNonLetti.map(item => (
-                                    <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-2xl shadow-sm hover:border-gray-200 transition-colors">
+                                    <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-kidville-line rounded-2xl shadow-sm hover:border-kidville-green/50 transition-colors">
                                         <div>
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase">{item.studentName}</p>
-                                            <p className="font-maven text-[10px] text-gray-400 mt-0.5">{t('soloClasse', { classe: item.classe })}</p>
+                                            <p className="font-maven text-[10px] text-kidville-sub mt-0.5">{t('soloClasse', { classe: item.classe })}</p>
                                         </div>
                                         <span className="flex items-center gap-1 font-maven text-[9px] font-bold text-kidville-warn bg-kidville-warn-soft border border-kidville-warn/30 rounded-lg px-2 py-1">
                                             <AlertCircle size={10} /> {t('badgeDaLeggere')}
@@ -455,23 +455,23 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                 // List rendering for Adesioni
                 <div className="space-y-2">
                     <div className="flex items-center justify-between px-1">
-                        <span className="font-barlow font-bold text-[10px] text-gray-400 uppercase tracking-wider">
+                        <span className="font-barlow font-bold text-[10px] text-kidville-sub uppercase tracking-wider">
                             {selectedResponse === 'given' ? t('titoloRisposteRicevute') :
                              selectedResponse === 'si' ? t('optAderitoSi') :
                              selectedResponse === 'no' ? t('optDeclinatoNo') : t('titoloNessunaRisposta')}
                         </span>
-                        <span className="font-maven text-[10px] text-gray-400 font-medium">{t('totale', { count: filteredAdesioni.length })}</span>
+                        <span className="font-maven text-[10px] text-kidville-sub font-medium">{t('totale', { count: filteredAdesioni.length })}</span>
                     </div>
 
                     <div className={`space-y-2 ${listMaxHAdesioni} overflow-y-auto pr-1`}>
                         {filteredAdesioni.length === 0 ? (
-                            <p className="font-maven text-xs text-gray-400 text-center py-8">{t('nessunaAdesione')}</p>
+                            <p className="font-maven text-xs text-kidville-sub text-center py-8">{t('nessunaAdesione')}</p>
                         ) : (
                             filteredAdesioni.map(item => (
-                                <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-2xl shadow-sm hover:border-gray-200 transition-colors">
+                                <div key={item.studentId} className="flex items-center justify-between p-3 bg-white border border-kidville-line rounded-2xl shadow-sm hover:border-kidville-green/50 transition-colors">
                                     <div className="min-w-0">
                                         <p className="font-barlow font-bold text-xs text-kidville-green uppercase truncate">{item.studentName}</p>
-                                        <p className="font-maven text-[10px] text-gray-400 mt-0.5 truncate">
+                                        <p className="font-maven text-[10px] text-kidville-sub mt-0.5 truncate">
                                             {t('genitoreClasse', { genitore: item.parentName, classe: item.classe })}
                                         </p>
                                     </div>
@@ -479,7 +479,7 @@ export function AvvisoDetailsContent({ avviso, availableClasses = [], userId, la
                                         item.risposta === 'si'
                                             ? 'bg-kidville-success-soft border-kidville-success/30 text-kidville-success'
                                             : item.risposta === 'no'
-                                                ? 'bg-gray-100 border-gray-200 text-gray-600'
+                                                ? 'bg-kidville-neutral-soft border-kidville-line text-kidville-sub'
                                                 : 'bg-kidville-warn-soft border-kidville-warn/30 text-kidville-warn'
                                     }`}>
                                         {item.risposta === 'si' && <><ThumbsUp size={10} /> {t('badgeSiAderisco')}</>}

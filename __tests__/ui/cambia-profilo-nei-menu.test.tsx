@@ -12,9 +12,17 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
  * Qui si monta la NAVIGAZIONE VERA delle tre aree e si guarda se la voce c'è.
  *
  * ─── E L'ORDINE È PARTE DEL REQUISITO ───────────────────────────────────────
- * Sopra «Alto contrasto», che è una preferenza. Lontano da «Esci», che è
- * distruttivo: chi cerca «cambia veste» col pollice, di fretta, non deve
- * trovarsi il logout sotto il dito.
+ * Lontano da «Esci», che è distruttivo: chi cerca «cambia veste» col pollice,
+ * di fretta, non deve trovarsi il logout sotto il dito.
+ *
+ * ⚠️ Fino al 2026-09-04 l'ancora dell'ordine era «Alto contrasto», che stava fra
+ * «Passa a…» ed «Esci». Non c'è più in questi menu: è diventato un interruttore
+ * con lo stato visibile nelle pagine impostazioni (`ContrastSwitch`), perché è
+ * uno STATO che dura un anno e non un comando, e in un menu rapido si accendeva
+ * per sbaglio senza dare segno di essere acceso. L'asserzione sull'ordine non è
+ * stata tolta: è stata SPOSTATA su «Esci», e accanto le si è aggiunto il
+ * controllo che «Alto contrasto» in questi menu NON ci sia — così un
+ * ripensamento distratto diventa rosso invece che silenzioso.
  */
 
 // Riferimenti STABILI: `useSearchParams` e `useRouter` finiscono nelle deps degli
@@ -126,17 +134,19 @@ async function apriMenu(nome: RegExp) {
   fireEvent.click(await screen.findByRole('button', { name: nome }));
 }
 
-describe('la voce «Passa a…» è nei tre menu, sopra «Alto contrasto» e lontano da «Esci»', () => {
+describe('la voce «Passa a…» è nei tre menu, lontano da «Esci», e l’alto contrasto non c’è più', () => {
   it('menu Famiglia (BottomNav genitore)', async () => {
     render(<AccessibilityProvider><BottomNav /></AccessibilityProvider>);
     await apriMenu(/Apri il menu|Menu/i);
 
     const passa = await screen.findByRole('button', { name: /Passa a Docente/i });
-    const contrasto = screen.getByRole('button', { name: /Alto contrasto/i });
     const esci = screen.getByRole('button', { name: /Esci/i });
 
-    expect(precede(passa, contrasto), '«Passa a…» deve stare SOPRA «Alto contrasto»').toBe(true);
-    expect(precede(contrasto, esci), '«Esci» resta l’ultima, e lontana').toBe(true);
+    expect(precede(passa, esci), '«Esci» resta l’ultima, e lontana').toBe(true);
+    expect(
+      screen.queryByRole('button', { name: /Alto contrasto/i }),
+      '«Alto contrasto» non torna nel menu rapido: è un interruttore delle impostazioni',
+    ).toBeNull();
   });
 
   it('menu Docente (TeacherBottomNav)', async () => {
@@ -145,11 +155,10 @@ describe('la voce «Passa a…» è nei tre menu, sopra «Alto contrasto» e lon
     await apriMenu(/Apri il menu|Menu/i);
 
     const passa = await screen.findByRole('button', { name: /Passa a Genitore/i });
-    const contrasto = screen.getByRole('button', { name: /Alto contrasto/i });
     const esci = screen.getByRole('button', { name: /Esci/i });
 
-    expect(precede(passa, contrasto)).toBe(true);
-    expect(precede(contrasto, esci)).toBe(true);
+    expect(precede(passa, esci)).toBe(true);
+    expect(screen.queryByRole('button', { name: /Alto contrasto/i })).toBeNull();
   });
 
   it('menu Direzione (AdminMenuSheet)', async () => {
@@ -163,11 +172,10 @@ describe('la voce «Passa a…» è nei tre menu, sopra «Alto contrasto» e lon
     );
 
     const passa = await screen.findByRole('button', { name: /Passa a Genitore/i });
-    const contrasto = screen.getByRole('button', { name: /Alto contrasto/i });
     const esci = screen.getByRole('button', { name: /Esci/i });
 
-    expect(precede(passa, contrasto)).toBe(true);
-    expect(precede(contrasto, esci)).toBe(true);
+    expect(precede(passa, esci)).toBe(true);
+    expect(screen.queryByRole('button', { name: /Alto contrasto/i })).toBeNull();
   });
 
   it('CONTROLLO NEGATIVO: con un profilo solo i tre menu non mostrano niente in più', async () => {
@@ -178,7 +186,9 @@ describe('la voce «Passa a…» è nei tre menu, sopra «Alto contrasto» e lon
 
     // POSITIVO prima del negativo: il menu si è davvero aperto, altrimenti
     // «non trovo la voce» sarebbe vero anche su una schermata vuota.
-    expect(await screen.findByRole('button', { name: /Alto contrasto/i })).toBeInTheDocument();
+    // L'ancora positiva era «Alto contrasto»; dal 2026-09-04 non è più in questi
+    // menu, quindi il segno che il menu si è davvero aperto è «Esci».
+    expect(await screen.findByRole('button', { name: /Esci/i })).toBeInTheDocument();
     await waitFor(() =>
       expect(fetchMock.mock.calls.some((c) => String(c[0]).includes('/api/me'))).toBe(true),
     );

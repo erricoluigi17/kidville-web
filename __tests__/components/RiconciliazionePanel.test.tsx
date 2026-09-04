@@ -77,15 +77,17 @@ describe('RiconciliazionePanel — lista a semaforo', () => {
     expect(screen.getByText(/Bonifico del/)).toBeInTheDocument();
   });
 
-  it('mantiene l\'import CSV e il riepilogo esito', async () => {
+  it('mantiene l\'import dell\'estratto conto e il riepilogo esito', async () => {
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
-    expect(screen.getByText(/Importa CSV estratto conto/)).toBeInTheDocument();
+    // Il testo dice «estratto conto», non più «CSV»: la porta accetta anche .xls e .xlsx,
+    // e un bottone che promette un solo formato fa credere che gli altri non si possano.
+    expect(screen.getByText(/Importa estratto conto/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
   });
 
-  it('A1: «Importa CSV» è un BOTTONE raggiungibile da tastiera con nome accessibile', () => {
+  it('A1: «Importa estratto conto» è un BOTTONE raggiungibile da tastiera con nome accessibile', () => {
     const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
-    const btn = screen.getByRole('button', { name: /Importa CSV estratto conto/ });
+    const btn = screen.getByRole('button', { name: /Importa estratto conto/ });
     expect(btn.tagName).toBe('BUTTON');
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     expect(input).toBeTruthy();
@@ -97,9 +99,9 @@ describe('RiconciliazionePanel — lista a semaforo', () => {
     expect(clickSpy).toHaveBeenCalled();
   });
 
-  it('A5: il CTA «Importa CSV» è bianco su verde (AA), non giallo', () => {
+  it('A5: il CTA «Importa estratto conto» è bianco su verde (AA), non giallo', () => {
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
-    const btn = screen.getByRole('button', { name: /Importa CSV estratto conto/ });
+    const btn = screen.getByRole('button', { name: /Importa estratto conto/ });
     expect(btn.className).toContain('text-kidville-white');
     expect(btn.className).not.toContain('text-kidville-yellow');
   });
@@ -223,5 +225,85 @@ describe('RiconciliazionePanel — Incasso unico (multi-CF)', () => {
     fireEvent.click(screen.getByText(/BONIFICO FAMIGLIA ROSSI/).closest('button')!);
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Apri Incasso unico/ })).toBeNull();
+  });
+});
+
+/**
+ * IL FILE DELLA BANCA PARTE COM'È — e la trappola sta nell'header.
+ *
+ * `hdr(userId)` imposta `Content-Type: application/json`. Passato insieme a un `FormData`
+ * il browser NON scrive più il proprio boundary, e la richiesta arriva al server come un
+ * multipart senza delimitatore: illeggibile. Con un mock piatto — uno che risponde 200 a
+ * tutto — questo non si vede: lo status è verde e il file non è mai partito.
+ *
+ * Quindi qui non si guarda l'esito: si guarda ciò che è stato SPEDITO.
+ */
+describe('RiconciliazionePanel — l’estratto conto si carica com’è', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  const postDi = (fetchMock: ReturnType<typeof vi.fn>) =>
+    fetchMock.mock.calls.find(([u, o]) =>
+      String(u).includes('/api/pagamenti/riconciliazione') && (o as { method?: string })?.method === 'POST');
+
+  it('l’input accetta .csv, .xls e .xlsx (non solo il CSV)', () => {
+    vi.stubGlobal('fetch', stubFetch());
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    const accept = (container.querySelector('input[type="file"]') as HTMLInputElement).accept;
+    expect(accept).toContain('.csv');
+    expect(accept).toContain('.xls');
+    expect(accept).toContain('.xlsx');
+    expect(accept).toContain('application/vnd.ms-excel');
+  });
+
+  it('il file parte come FormData e NESSUN Content-Type viene impostato a mano', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { nuovi: 1, duplicati: 0, scartate: 0, suggeriti: 0, da_abbinare: 1 } }) };
+      }
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: movimenti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['\u00d0\u00cf\u0011\u00e0'], 'Conti.xls', { type: 'application/vnd.ms-excel' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(postDi(fetchMock)).toBeTruthy());
+    const [, opzioni] = postDi(fetchMock) as [string, { body: unknown; headers: Record<string, string> }];
+    expect(opzioni.body).toBeInstanceOf(FormData);
+    // il boundary lo scrive il browser: se lo si sovrascrive, la richiesta è irricevibile
+    const chiavi = Object.keys(opzioni.headers ?? {}).map((k) => k.toLowerCase());
+    expect(chiavi).not.toContain('content-type');
+    expect(chiavi).toContain('x-user-id');
+    const fd = opzioni.body as FormData;
+    expect(fd.get('file')).toBeInstanceOf(File);
+    expect(fd.get('scuola_id')).toBe('s1');
+  });
+
+  it('oltre il tetto della piattaforma il file NON parte, e lo si dice', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: movimenti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    // Oltre il tetto risponde Vercel, in `text/plain`: non c'è nessun JSON da leggere.
+    const grosso = new File(['x'], 'Enorme.xls', { type: 'application/vnd.ms-excel' });
+    Object.defineProperty(grosso, 'size', { value: 5_000_000 });
+    fireEvent.change(input, { target: { files: [grosso] } });
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('alert').textContent).toMatch(/4 MB/);
+    expect(postDi(fetchMock)).toBeUndefined();
   });
 });

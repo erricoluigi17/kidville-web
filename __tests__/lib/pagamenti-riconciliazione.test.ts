@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { estraiCodiciFiscali, hashMovimento, parseCsv, suggerisciMatch } from '@/lib/pagamenti/riconciliazione'
+import { estraiCodiciFiscali, hashMovimento, parseCsv, preparaAperti, suggerisciMatch, suggerisciMatchPreparato } from '@/lib/pagamenti/riconciliazione'
 
 // CF SINTETICI (formato valido, persone inesistenti) — repo pubblico, mai PII reale.
 const CF_MARIO = 'RSSMRA85T10A562S'
@@ -14,14 +14,17 @@ describe('parseCsv', () => {
     const csv = [
       'Data;Entrate;Descrizione;Ordinante',
       '05/09/2026;150,00;BONIFICO RETTA SETTEMBRE ROSSI MARIO;ROSSI GIUSEPPE',
-      '06/09/2026;-30,00;PAGAMENTO POS;—',            // uscita → scartata
+      '06/09/2026;-30,00;PAGAMENTO POS;—',            // uscita → NON scartata: contata a parte
       '07/09/2026;1.234,56;SALDO GITA;BIANCHI',
     ].join('\n')
     const r = parseCsv(csv)
     expect(r.movimenti).toHaveLength(2)
     expect(r.movimenti[0]).toMatchObject({ data_operazione: '2026-09-05', importo: 150 })
     expect(r.movimenti[1].importo).toBe(1234.56)
-    expect(r.scartate).toBe(1)
+    // ⚠️ Cambiato di proposito: l'uscita non è una riga «scartata». Prima ci finiva dentro, e
+    // sull'estratto annuale l'operatore leggeva «2.225 righe scartate» su un import riuscito.
+    expect(r.scartate).toBe(0)
+    expect(r.uscite).toBe(1)
   })
 
   it('separatore , con virgolette e date ISO', () => {
@@ -226,5 +229,143 @@ describe('suggerisciMatch — abbinamento per codice fiscale', () => {
     expect(r.suggerimenti[0].pagamento_id).toBe('p1')
     expect(r.suggerimenti[0].cf_match).toBeFalsy()
     expect(r.stato).toBe('da_abbinare') // solo importo (50) < soglia: non elevato
+  })
+})
+
+/**
+ * IL VETTORE D'ORO — l'unico modo di sorvegliare un'impronta.
+ *
+ * Il test qui sopra («stabile e sensibile ai campi chiave») confronta l'hash CON SÉ STESSO:
+ * resterebbe verde anche riscrivendo `norm()` da capo, e con lui tornerebbero importabili
+ * tutti i movimenti già in registro — cioè il doppio import, in silenzio, su un archivio che
+ * da oggi non è più vuoto. Qui invece si asserisce l'ESADECIMALE LETTERALE.
+ *
+ * Se questa riga diventa rossa non si aggiorna il numero: si rimette a posto `norm()`.
+ */
+describe('hashMovimento — vettore d’oro', () => {
+  const MOVIMENTO = {
+    data_operazione: '2026-08-06',
+    importo: 150,
+    causale: 'BONIFICO A VOSTRO FAVORE DA  FABBRI GIULIA PER  RETTA SETTEMBRE TRN 1',
+    controparte: '',
+  }
+  const ORO = 'ea6c9c7fe8a2c12438e6bb31ffb678231e512d3bf4daae20d6125b69d75b6482'
+
+  it('l’impronta di un movimento fisso è ESATTAMENTE questa', () => {
+    expect(hashMovimento(MOVIMENTO)).toBe(ORO)
+  })
+
+  it('valorizzare la controparte NON cambia l’impronta', () => {
+    // L'ordinante entra in `controparte`, che è FUORI dall'hash: altrimenti i movimenti
+    // importati prima che l'ordinante si leggesse tornerebbero tutti nuovi.
+    expect(hashMovimento({ ...MOVIMENTO, controparte: 'FABBRI GIULIA' })).toBe(ORO)
+  })
+
+  it('la causale INTERA è dentro l’impronta: accorciarla la cambia', () => {
+    expect(hashMovimento({ ...MOVIMENTO, causale: 'BONIFICO A VOSTRO FAVORE' })).not.toBe(ORO)
+  })
+
+  /**
+   * ⚠️ IL SECONDO VETTORE ESISTE PERCHÉ IL PRIMO È CIECO, e vale la pena dire dove.
+   *
+   * `MOVIMENTO` qui sopra è tutto ASCII: `normalize('NFD')` non lo cambia e lo strip dei
+   * segni combinanti non ha niente da togliere. Togliendo `.replace(/[\u0300-\u036F]/g,'')`
+   * da `norm()` quel vettore resta VERDE — misurato: l'intera suite resta verde. Cioè il
+   * passo che rende l'impronta indipendente dagli accenti non era sorvegliato da nessuno.
+   *
+   * Non è teoria: durante questo lavoro quella riga è stata riscritta con gli escape
+   * `\u0300-\u036F` e poi ripristinata. La riscrittura era equivalente — ma se non lo fosse
+   * stata, ogni causale con una lettera accentata avrebbe cambiato impronta e sarebbe
+   * tornata importabile come nuova, in silenzio.
+   *
+   * Oggi 0 causali su 6.840 hanno caratteri non ASCII, quindi non c'è esposizione viva.
+   * Un lock non serve per oggi.
+   */
+  const CON_ACCENTI = {
+    data_operazione: '2026-05-06',
+    importo: 150,
+    causale: 'BONIFICO A VOSTRO FAVORE DA  PERLINI TOMMASO PER  RETTA MAGGIO GIÀ VERSATA PERÒ IN RITARDO',
+    controparte: '',
+  }
+  /** `sha256('2026-05-06|150.00|…gia versata pero in ritardo')` — accenti GIÀ tolti. */
+  const ORO_ACCENTI = '8838b5cafe51a84b22d3c2c36ec73ecd8d8fa675f508e3366f342ace54e62de2'
+
+  it('gli ACCENTI si tolgono prima dell’impronta: À e Ò non la cambiano', () => {
+    // Senza lo strip dei segni combinanti l'impronta sarebbe `989c18f6…2ea8`: un numero
+    // diverso, e ogni bonifico con un accento in causale tornerebbe «nuovo».
+    expect(hashMovimento(CON_ACCENTI)).toBe(ORO_ACCENTI)
+  })
+
+  it('«GIÀ» e «GIA» sono lo STESSO movimento: l’accento non fa un doppione', () => {
+    // La PROPRIETÀ, non una seconda copia del numero. Un test che confrontasse la forma
+    // ASCII col letterale resterebbe verde anche togliendo lo strip — l'ho verificato
+    // mutando `norm()` — perché su una causale senza accenti quel passo non fa niente:
+    // sarebbe un lock che guarda dalla parte sbagliata. Qui invece si confrontano le DUE
+    // forme fra loro, ed è l'uguaglianza che cade per prima quando lo strip sparisce.
+    const senzaAccenti = { ...CON_ACCENTI, causale: CON_ACCENTI.causale.replace('GIÀ', 'GIA').replace('PERÒ', 'PERO') }
+    expect(hashMovimento(CON_ACCENTI)).toBe(hashMovimento(senzaAccenti))
+    expect(hashMovimento(senzaAccenti)).toBe(ORO_ACCENTI)
+  })
+})
+
+describe('parseCsv — il guscio sopra il lettore multi-formato', () => {
+  const CSV_BANCA = [
+    'Rapporto IT 00 X 00000 00000 000000000000 - CONTO DI PROVA',
+    ';;;;',
+    'Data;;Descrizione;EUR;Caus.',
+    'Operaz.;Valuta',
+    '06/08/26;06/08/26;BONIFICO A VOSTRO FAVORE DA  PERLINI CARLO PER  RETTA TRN 9;150,00;048',
+    '07/08/26;07/08/26;PAGAMENTO POS;-30,00;048',
+  ].join('\n')
+
+  it('il CSV della banca (preambolo, riga di soli separatori, intestazione su due righe) si legge', () => {
+    const r = parseCsv(CSV_BANCA)
+    expect(r.movimenti).toHaveLength(1)
+    expect(r.movimenti[0].data_operazione).toBe('2026-08-06')
+    expect(r.intestazioni).toEqual(['Data Operaz.', 'Valuta', 'Descrizione', 'EUR', 'Caus.'])
+  })
+
+  it('l’ordinante arriva dalla descrizione e la causale resta INTERA', () => {
+    const r = parseCsv(CSV_BANCA)
+    expect(r.movimenti[0].controparte).toBe('PERLINI CARLO')
+    expect(r.movimenti[0].causale).toBe('BONIFICO A VOSTRO FAVORE DA  PERLINI CARLO PER  RETTA TRN 9')
+  })
+
+  it('le uscite si contano a parte dalle righe illeggibili', () => {
+    const r = parseCsv(CSV_BANCA)
+    expect(r.uscite).toBe(1)
+    expect(r.scartate).toBe(0)
+    expect(r.senzaOrdinante).toBe(0)
+    expect(r.troncate).toBe(0)
+  })
+})
+
+describe('suggerisciMatchPreparato — la strada veloce dà gli stessi risultati', () => {
+  const aperti = [
+    { id: 'p1', descrizione: 'Retta Settembre', importo: 150, importo_pagato: 0, periodo_competenza: '2026-09-01', alunno_nome: 'Giulia Fabbri', codice_fiscale: CF_MARIO, alunno_id: 'a1' },
+    { id: 'p2', descrizione: 'Retta Settembre', importo: 150, importo_pagato: 30, periodo_competenza: '2026-09-01', intestatario_nome: 'Luca Bianchi', codice_fiscale: CF_LIA, alunno_id: 'a2' },
+    { id: 'p3', descrizione: 'Gita zoo', importo: 25, importo_pagato: 0, alunno_nome: 'Carlo Perlini', alunno_id: 'a3' },
+    { id: 'p4', descrizione: 'Mensa', importo: 120, importo_pagato: null, periodo_competenza: '2026-10-01', alunno_nome: 'Giulia Fabbri', alunno_id: 'a1' },
+  ]
+  const movimenti = [
+    { data_operazione: '2026-09-05', importo: 150, causale: 'BONIFICO RETTA SETTEMBRE GIULIA FABBRI', controparte: 'FABBRI GIULIA' },
+    { data_operazione: '2026-09-06', importo: 25, causale: 'GITA ZOO CARLO PERLINI', controparte: '' },
+    { data_operazione: '2026-09-07', importo: 999, causale: `BONIFICO ${CF_MARIO} E ${CF_LIA}`, controparte: '' },
+    { data_operazione: '2026-10-01', importo: 120, causale: 'MENSA OTTOBRE 2026-10', controparte: 'PERLINI CARLO' },
+    { data_operazione: '2026-11-01', importo: 7, causale: 'NIENTE DI RICONOSCIBILE', controparte: '' },
+  ]
+
+  it('LOCK DI EQUIVALENZA: stesso risultato, movimento per movimento', () => {
+    const preparati = preparaAperti(aperti)
+    for (const m of movimenti) {
+      expect(suggerisciMatchPreparato(m, preparati)).toEqual(suggerisciMatch(m, aperti))
+    }
+  })
+
+  it('gli `aperti` preparati si riusano su più movimenti senza consumarsi', () => {
+    const preparati = preparaAperti(aperti)
+    const primo = suggerisciMatchPreparato(movimenti[0], preparati)
+    suggerisciMatchPreparato(movimenti[2], preparati)
+    expect(suggerisciMatchPreparato(movimenti[0], preparati)).toEqual(primo)
   })
 })

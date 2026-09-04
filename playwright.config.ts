@@ -106,7 +106,38 @@ export default defineConfig({
        * sembrano la prova e non lo sono (run 31276444497: 47·48·49 qui e
        * 65·66·67 su `smoke-artefatto`, gli stessi tre test due volte).
        */
-      testIgnore: ['**/primaria-360/**', /smoke-artefatto\.spec\.ts$/],
+      testIgnore: [
+        '**/primaria-360/**',
+        /smoke-artefatto\.spec\.ts$/,
+        // TERZA esclusione, per la stessa ragione della seconda, e vale la pena
+        // dirla per esteso perche' e' la trappola che il crawler esiste per
+        // evitare: senza questa riga `contrasto-schermate.spec.ts` girerebbe DUE
+        // volte — una nel progetto `contrasto` con `retries: 0`, e una qui con i
+        // `retries: 2` ereditati. La seconda e' dove un crawler instabile
+        // sparirebbe dentro i ripescaggi, senza che nessuno conti i ripescati.
+        /contrasto-schermate\.spec\.ts$/,
+      ],
+      use: { ...devices['Desktop Chrome'] },
+      dependencies: ['setup'],
+    },
+    {
+      /**
+       * CRAWLER DI CONTRASTO — misura il colore vero delle schermate autenticate
+       * nelle due modalita'. Progetto suo per una ragione sola, ed e' `retries`.
+       *
+       * `retries: 0` ESPLICITO, contro i `retries: 2` della config. Un fallimento
+       * di contrasto non e' un caso: e' un colore sbagliato, e sara' lo stesso
+       * anche al terzo tentativo. Con i ripescaggi accesi un rosso su tre
+       * passerebbe per verde e nessuno conta i ripescati — e' successo in questo
+       * repo il 24/08 e l'01/09, due job «success» con dentro dei falliti.
+       * Il crawler e' scritto per essere deterministico (conta le FIRME, non i
+       * nodi, cosi' il numero non dipende dal volume dei dati seminati): se
+       * diventasse instabile la risposta e' toglierlo dall'elenco con la ragione
+       * scritta, non avvolgerlo in un retry.
+       */
+      name: 'contrasto',
+      testMatch: /contrasto-schermate\.spec\.ts$/,
+      retries: 0,
       use: { ...devices['Desktop Chrome'] },
       dependencies: ['setup'],
     },

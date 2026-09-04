@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import { interpretaFogli, tabellaDaTesto } from './estratto-conto/tabella'
 
 // Riconciliazione bancaria: parser CSV (formati export banca italiani) e
 // matcher sui pagamenti aperti. Funzioni PURE: l'I/O vive nelle route.
@@ -43,97 +44,57 @@ export interface Suggerimento {
     alunno_id?: string | null
 }
 
-const SINONIMI: Record<keyof MappingCsv, string[]> = {
-    data: ['data', 'data operazione', 'data contabile', 'data valuta', 'valuta', 'date'],
-    importo: ['importo', 'entrate', 'accrediti', 'avere', 'amount', 'importo eur', 'importo (eur)'],
-    causale: ['causale', 'descrizione', 'descrizione operazione', 'descrizione estesa', 'description', 'dettagli'],
-    controparte: ['controparte', 'ordinante', 'beneficiario/ordinante', 'beneficiario', 'nome ordinante'],
-}
-
+/**
+ * ⚠️ `norm()` NON SI TOCCA. È dentro `hashMovimento`, cioè dentro l'impronta che impedisce
+ * il doppio import: cambiarla cambierebbe TUTTE le impronte già scritte, e ogni movimento
+ * già in registro tornerebbe importabile. Per confrontare le INTESTAZIONI di un foglio
+ * esiste una funzione separata, `normIntestazione` — sono due mestieri diversi che si
+ * assomigliano, ed è esattamente per questo che stanno in due posti.
+ */
 const norm = (s: string) =>
     s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim()
 
-/** Split di una riga CSV con supporto alle virgolette. */
-function splitRiga(riga: string, sep: string): string[] {
-    const out: string[] = []
-    let cur = ''
-    let inQuote = false
-    for (let i = 0; i < riga.length; i++) {
-        const ch = riga[i]
-        if (ch === '"') {
-            if (inQuote && riga[i + 1] === '"') { cur += '"'; i++ } else inQuote = !inQuote
-        } else if (ch === sep && !inQuote) {
-            out.push(cur)
-            cur = ''
-        } else {
-            cur += ch
-        }
-    }
-    out.push(cur)
-    return out.map((c) => c.trim())
-}
-
-function parseImporto(raw: string): number | null {
-    let s = raw.replace(/[€\s+]/g, '')
-    if (!s) return null
-    // "1.234,56" → it; "1234.56" → en; "150,00" → it
-    if (s.includes(',') ) s = s.replace(/\./g, '').replace(',', '.')
-    const n = Number(s)
-    return Number.isFinite(n) ? Math.round(n * 100) / 100 : null
-}
-
-function parseData(raw: string): string | null {
-    const s = raw.trim().slice(0, 10)
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
-    const it = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})$/.exec(s)
-    if (it) return `${it[3]}-${it[2].padStart(2, '0')}-${it[1].padStart(2, '0')}`
-    return null
-}
-
-// Cap prudenziale: gli estratti conto mensili stanno ampiamente sotto.
-const MAX_RIGHE = 2000
-
-export function parseCsv(contenuto: string, mapping?: MappingCsv): {
+/**
+ * L'esito di una lettura: i movimenti e i CONTATORI, tenuti separati.
+ *
+ * I tre campi in coda sono opzionali perché la firma di `parseCsv` non doveva cambiare per
+ * i chiamanti di ieri — ma il guscio li valorizza sempre. `uscite` e `scartate` insieme
+ * sarebbero un numero solo che non dice niente: sull'estratto annuale vero le uscite sono
+ * 2.225 righe capite benissimo e non importabili, e leggerle come «scartate» vuol dire
+ * leggere un allarme su un import riuscito.
+ */
+export interface EsitoParseCsv {
     movimenti: MovimentoCsv[]
+    /** Righe dopo l'intestazione senza data o senza importo leggibile. */
     scartate: number
+    /** Le intestazioni come sono state risolte (già unite, se erano su due righe). */
     intestazioni: string[]
-} {
-    const righe = contenuto.split(/\r?\n/).filter((r) => r.trim().length > 0)
-    if (righe.length < 2) return { movimenti: [], scartate: 0, intestazioni: [] }
+    /** Righe leggibilissime con importo ≤ 0: sono addebiti, non si importano. */
+    uscite?: number
+    /** Righe oltre il tetto: il troncamento non è più silenzioso. */
+    troncate?: number
+    /** Movimenti rimasti senza controparte: il campanello se la banca cambia forma. */
+    senzaOrdinante?: number
+}
 
-    const sep = righe[0].includes(';') ? ';' : ','
-    const intestazioni = splitRiga(righe[0], sep)
-    const normHeaders = intestazioni.map(norm)
-
-    const indice = (campo: keyof MappingCsv): number => {
-        if (mapping?.[campo]) return normHeaders.indexOf(norm(mapping[campo]!))
-        const sinonimi = SINONIMI[campo]
-        let idx = normHeaders.findIndex((h) => sinonimi.includes(h))
-        if (idx === -1) idx = normHeaders.findIndex((h) => sinonimi.some((s) => h.includes(s)))
-        return idx
-    }
-
-    const iData = indice('data')
-    const iImporto = indice('importo')
-    const iCausale = indice('causale')
-    const iControparte = indice('controparte')
-    if (iData === -1 || iImporto === -1) return { movimenti: [], scartate: righe.length - 1, intestazioni }
-
-    const movimenti: MovimentoCsv[] = []
-    let scartate = 0
-    for (const riga of righe.slice(1, MAX_RIGHE + 1)) {
-        const celle = splitRiga(riga, sep)
-        const data = parseData(celle[iData] ?? '')
-        const importo = parseImporto(celle[iImporto] ?? '')
-        if (!data || importo == null || importo <= 0) { scartate++; continue }
-        movimenti.push({
-            data_operazione: data,
-            importo,
-            causale: (iCausale >= 0 ? celle[iCausale] : '') ?? '',
-            controparte: (iControparte >= 0 ? celle[iControparte] : '') ?? '',
-        })
-    }
-    return { movimenti, scartate, intestazioni }
+/**
+ * IL TESTO DI UN CSV → I MOVIMENTI. Oggi è un GUSCIO, e il motivo vale la pena dirlo.
+ *
+ * Fino a ieri qui viveva un secondo interprete, scritto solo per il CSV: sinonimi propri,
+ * separatore dedotto dalla prima riga, intestazione su una riga sola. Sul file vero della
+ * banca dava **zero movimenti su 65** — e la copia CSV di ogni regola divergeva da quella
+ * Excel al primo ritocco. L'interprete è uno solo (`estratto-conto/tabella.ts`): un CSV è
+ * una matrice di celle di stringhe, un foglio Excel una matrice di celle di numeri, e la
+ * differenza finisce lì.
+ *
+ * La firma resta identica: chi passava di qui non se ne accorge.
+ */
+export function parseCsv(contenuto: string, mapping?: MappingCsv): EsitoParseCsv {
+    const { movimenti, scartate, uscite, troncate, senzaOrdinante, intestazioni } = interpretaFogli(
+        [{ nome: 'csv', righe: tabellaDaTesto(contenuto) }],
+        { mapping },
+    )
+    return { movimenti, scartate, intestazioni, uscite, troncate, senzaOrdinante }
 }
 
 /** Impronta anti re-import: stesso movimento (data+importo+causale) = stesso hash. */
@@ -193,6 +154,57 @@ export interface RisultatoMatch {
 }
 
 /**
+ * UN PAGAMENTO APERTO CON I SUOI SEGNALI GIÀ CALCOLATI.
+ *
+ * Non è un'ottimizzazione a occhio: sull'estratto annuale vero sono **6.775 accrediti ×
+ * 545 pagamenti aperti = 3,7 milioni di confronti**, e dentro ognuno c'era una `norm()` —
+ * cioè un `normalize('NFD')` — rifatta ogni volta sugli stessi nomi, sulle stesse
+ * descrizioni, sugli stessi periodi. I nomi dei pagamenti aperti non cambiano fra un
+ * movimento e l'altro: si normalizzano UNA volta, all'inizio.
+ */
+export interface PagamentoPreparato {
+    id: string
+    alunnoId: string | null
+    /** Residuo, arrotondato al centesimo come lo era nel ciclo. */
+    residuo: number
+    /** I token (>2 caratteri) di ogni nome, già normalizzati: uno per alunno, uno per intestatario. */
+    tokenNomi: string[][]
+    /** Il mese italiano del periodo di competenza, già risolto. */
+    mese: string | null
+    /** L'anno-mese `YYYY-MM` del periodo di competenza. */
+    ym: string | null
+    /** La descrizione normalizzata, o `null` quando il pagamento non ne ha una. */
+    descrizioneNorm: string | null
+    /** Il CF dell'alunno in MAIUSCOLO, o `null`. */
+    cf: string | null
+}
+
+/**
+ * I pagamenti aperti, normalizzati una volta sola.
+ *
+ * Il risultato è di sola lettura per progetto: si passa allo stesso `suggerisciMatchPreparato`
+ * per ogni movimento del file, e nessuna chiamata lo consuma o lo modifica.
+ */
+export function preparaAperti(aperti: PagamentoAperto[]): PagamentoPreparato[] {
+    return aperti.map((p) => {
+        const nomi = [p.alunno_nome, p.intestatario_nome].filter(Boolean) as string[]
+        const mese = p.periodo_competenza ? MESI_IT[new Date(p.periodo_competenza).getMonth()] ?? null : null
+        return {
+            id: p.id,
+            alunnoId: p.alunno_id ?? null,
+            residuo: Math.round((Number(p.importo) - Number(p.importo_pagato || 0)) * 100) / 100,
+            tokenNomi: nomi.map((n) => norm(n).split(' ').filter((t) => t.length > 2)),
+            mese,
+            ym: p.periodo_competenza ? p.periodo_competenza.slice(0, 7) : null,
+            // ⚠️ `p.descrizione` VUOTA non è `''` normalizzato: è «nessuna descrizione».
+            //    `testo.includes('')` è sempre vero, e regalerebbe 10 punti a chiunque.
+            descrizioneNorm: p.descrizione ? norm(p.descrizione) : null,
+            cf: p.codice_fiscale ? String(p.codice_fiscale).toUpperCase() : null,
+        }
+    })
+}
+
+/**
  * Score di un pagamento aperto rispetto al movimento:
  *   +1000 CF dell'alunno nel movimento (DOMINANTE) · +50 residuo esattamente uguale
  *   +25 nome (alunno/intestatario) in causale · +15 mese di competenza citato
@@ -200,8 +212,12 @@ export interface RisultatoMatch {
  * "suggerito" con best ≥ 60 E distacco ≥ 20 dal secondo, OPPURE con almeno un CF agganciato.
  * Un CF forza lo stato a 'suggerito' (giallo): MAI auto-conferma. Solo i pagamenti in `aperti`
  * (residuo aperto) sono candidati: un CF che punta a un alunno senza voce aperta NON eleva nulla.
+ *
+ * Questa è la strada VELOCE: prende i pagamenti già preparati. `suggerisciMatch` qui sotto
+ * resta il guscio a una riga, e un test di equivalenza sorveglia che le due strade dicano la
+ * stessa cosa — perché due strade che possono divergere, prima o poi divergono.
  */
-export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): RisultatoMatch {
+export function suggerisciMatchPreparato(mov: MovimentoCsv, aperti: PagamentoPreparato[]): RisultatoMatch {
     const testo = norm(`${mov.causale} ${mov.controparte}`)
     const cfSet = new Set(estraiCodiciFiscali(`${mov.causale} ${mov.controparte}`))
     const candidati: Suggerimento[] = []
@@ -211,34 +227,28 @@ export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): R
     for (const p of aperti) {
         let score = 0
         const motivi: string[] = []
-        const residuo = Math.round((Number(p.importo) - Number(p.importo_pagato || 0)) * 100) / 100
-        if (residuo === mov.importo) { score += 50; motivi.push('importo esatto') }
+        if (p.residuo === mov.importo) { score += 50; motivi.push('importo esatto') }
 
-        const nomi = [p.alunno_nome, p.intestatario_nome].filter(Boolean) as string[]
-        const nomeTrovato = nomi.some((n) => {
-            const tokens = norm(n).split(' ').filter((t) => t.length > 2)
-            return tokens.length > 0 && tokens.every((t) => testo.includes(t))
-        })
+        const nomeTrovato = p.tokenNomi.some(
+            (tokens) => tokens.length > 0 && tokens.every((t) => testo.includes(t)),
+        )
         if (nomeTrovato) { score += 25; motivi.push('nome in causale') }
 
-        if (p.periodo_competenza) {
-            const d = new Date(p.periodo_competenza)
-            const mese = MESI_IT[d.getMonth()]
-            const ym = p.periodo_competenza.slice(0, 7)
-            if ((mese && testo.includes(mese)) || testo.includes(ym)) { score += 15; motivi.push('periodo citato') }
+        if (p.ym !== null) {
+            if ((p.mese && testo.includes(p.mese)) || testo.includes(p.ym)) { score += 15; motivi.push('periodo citato') }
         }
 
-        if (p.descrizione && testo.includes(norm(p.descrizione))) { score += 10; motivi.push('descrizione in causale') }
+        if (p.descrizioneNorm !== null && testo.includes(p.descrizioneNorm)) { score += 10; motivi.push('descrizione in causale') }
 
-        const cfMatch = !!p.codice_fiscale && cfSet.has(String(p.codice_fiscale).toUpperCase())
+        const cfMatch = p.cf !== null && cfSet.has(p.cf)
         if (cfMatch) {
             score += CF_BONUS
             motivi.push('codice fiscale')
-            cfMatches.push({ pagamento_id: p.id, alunno_id: p.alunno_id ?? null })
-            if (p.alunno_id) alunniConCf.add(p.alunno_id)
+            cfMatches.push({ pagamento_id: p.id, alunno_id: p.alunnoId })
+            if (p.alunnoId) alunniConCf.add(p.alunnoId)
         }
 
-        if (score > 0) candidati.push({ pagamento_id: p.id, score, motivi, alunno_id: p.alunno_id ?? null, ...(cfMatch ? { cf_match: true } : {}) })
+        if (score > 0) candidati.push({ pagamento_id: p.id, score, motivi, alunno_id: p.alunnoId, ...(cfMatch ? { cf_match: true } : {}) })
     }
 
     candidati.sort((a, b) => b.score - a.score)
@@ -262,4 +272,15 @@ export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): R
         out.cf_match = cfMatches
     }
     return out
+}
+
+/**
+ * Il guscio di sempre: prepara e cerca in un colpo solo.
+ *
+ * Resta esportato con la firma di ieri perché è quello che usano i test e chi cerca il
+ * match di UN movimento. Su un file intero si chiama `preparaAperti` una volta e poi
+ * `suggerisciMatchPreparato` per ogni riga.
+ */
+export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): RisultatoMatch {
+    return suggerisciMatchPreparato(mov, preparaAperti(aperti))
 }

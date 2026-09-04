@@ -50,7 +50,14 @@ import { AccessibilityContext } from '@/lib/accessibility/context'
 // — ed è il motivo per cui il numero si cambia QUI e in nessun altro posto.
 const CLASSI =
   'inline-flex items-center gap-2 whitespace-nowrap rounded-pill border border-kidville-green px-3.5 py-3 ' +
-  'font-maven text-sm font-semibold text-kidville-green transition-colors hover:bg-kidville-green-soft'
+  'font-maven text-sm font-semibold transition-colors'
+
+// Lo STATO ACCESO si vede (2026-09-04). Prima c'era solo `aria-pressed`: lo
+// screen reader sapeva che era attivo, l'occhio no — e siccome il cookie dura un
+// anno, chi lo accendeva per sbaglio non aveva alcun segno da cui risalire.
+// Acceso = pillola piena; spento = solo contorno.
+const CLASSI_ACCESO = 'bg-kidville-green text-kidville-yellow-ink'
+const CLASSI_SPENTO = 'text-kidville-green hover:bg-kidville-green-soft'
 
 /**
  * ⚠️ Legge il contesto DIRETTAMENTE invece di passare da `useAccessibility()`,
@@ -74,7 +81,12 @@ export function PublicContrastButton() {
   const ctx = useContext(AccessibilityContext)
   if (!ctx) return null
   return (
-    <button type="button" onClick={ctx.toggle} aria-pressed={ctx.highContrast} className={CLASSI}>
+    <button
+      type="button"
+      onClick={ctx.toggle}
+      aria-pressed={ctx.highContrast}
+      className={`${CLASSI} ${ctx.highContrast ? CLASSI_ACCESO : CLASSI_SPENTO}`}
+    >
       <Contrast size={16} strokeWidth={2.2} className="shrink-0" aria-hidden="true" />
       <span>{t('altoContrasto')}</span>
     </button>

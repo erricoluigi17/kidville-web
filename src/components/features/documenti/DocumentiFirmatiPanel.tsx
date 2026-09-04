@@ -272,7 +272,7 @@ export function DocumentiFirmatiPanel({ conFiltroSede = false }: { conFiltroSede
       )}
 
       {errore && (
-        <div className="flex items-center justify-between gap-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-kidville-error bg-kidville-error-soft px-3 py-2 text-sm text-kidville-error-strong">
           <span>{errore}</span>
           <button type="button" onClick={() => void carica()} className="font-bold underline">
             {t('riprova')}
@@ -430,7 +430,7 @@ function PannelloDettaglio({
   const t = useTranslations('documenti');
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-kidville-ink/40 p-0 sm:items-center sm:p-6">
       <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-t-3xl bg-kidville-white p-5 sm:rounded-3xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <h2 className="font-barlow text-lg font-black text-kidville-ink">
@@ -463,7 +463,7 @@ function PannelloDettaglio({
             )}
 
             {dettaglio.fileAssente && dettaglio.fonte !== 'modulo_firmato' && (
-              <p className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
+              <p className="rounded-xl border border-kidville-error bg-kidville-error-soft px-3 py-2 text-sm text-kidville-error-strong">
                 {t('dettaglioFileMancante')}
               </p>
             )}

@@ -172,7 +172,7 @@ export function NewsFeedList({ parentId, studentId, onCount }: Props) {
             onChange={(e) => setQ(e.target.value)}
             placeholder={t('cercaPlaceholder')}
             aria-label={t('cercaAria')}
-            className="min-w-0 flex-1 bg-transparent font-maven text-sm text-kidville-ink outline-none placeholder:text-kidville-muted"
+            className="min-w-0 flex-1 bg-transparent font-maven text-sm text-kidville-ink outline-none placeholder:text-kidville-hint"
           />
           {q && (
             <button type="button" onClick={azzeraRicerca} aria-label={t('cancellaRicerca')} className="text-kidville-muted">

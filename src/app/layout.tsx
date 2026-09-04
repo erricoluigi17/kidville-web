@@ -63,6 +63,16 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  // Kidville e un'app SOLO CHIARA. Senza questa dichiarazione il sistema
+  // operativo, col telefono in tema scuro, disegna da se i controlli nativi
+  // (tendine dei select, date/time picker, autofill, selezione testo) con
+  // fondo scuro dentro campi che l'app dipinge bianchi. Il gemello autorevole
+  // e `html { color-scheme: light }` in globals.css: questo meta vale prima
+  // che il CSS sia arrivato. Vedi il commento esteso la.
+  colorScheme: "light",
+  // Colore della barra del browser (Android/PWA). Allineato a
+  // `manifest.ts` e alla status bar nativa (`native-shell.ts:92`).
+  themeColor: "#006A5F",
 };
 
 export default async function RootLayout({

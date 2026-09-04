@@ -9,10 +9,26 @@
         <item name="colorAccent">@color/colorAccent</item>
     </style>
 
-    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!--
+      Parent LIGHT, non DayNight (2026-09-04). Era Theme.AppCompat.DayNight.
+      Kidville e un'app SOLO CHIARA: un tema scuro non esiste, e values-night/
+      non esiste. Ma con DayNight, col telefono in tema scuro, android:windowBackground
+      risolveva su background_material_dark = #303030 (grigio quasi nero), e
+      Capacitor lo dipinge sul decor view dentro SystemBars.setStyle():
+      decorView.setBackgroundColor(getThemeColor(ctx, android.R.attr.windowBackground)).
+      Quella chiamata parte a OGNI cambio di rotta (NativeInit.tsx -> status-bar.ts),
+      quindi il grigio scuro rientrava in scena di continuo. Era l'origine degli
+      "elementi neri comparsi" su Android.
+      android:windowBackground e ora dichiarato ESPLICITAMENTE sul crema di pagina:
+      cosi non dipende piu da quale variante del tema il sistema decide di risolvere.
+      (android:background sotto e un'altra cosa: e lo sfondo della view, non della
+      finestra, e Capacitor non legge quello.)
+    -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
+        <item name="android:windowBackground">@color/kv_cream</item>
     </style>
 
 

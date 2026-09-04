@@ -131,6 +131,31 @@
   --kv-subj-mensa: #006A5F;
 }
 
+/* =============================================================================
+   Schema di colore DICHIARATO (2026-09-04). Kidville e un'app SOLO CHIARA: un
+   tema scuro non esiste e non e mai esistito (zero classi `dark:`, zero
+   @media prefers-color-scheme in src/).
+   Finche `color-scheme` restava non dichiarato, pero, il sistema operativo si
+   riteneva autorizzato a disegnare da se i controlli nativi quando il telefono
+   e in tema scuro: tendina dei <select>, date/time picker, barra di autofill,
+   menu di selezione del testo, cursore, scrollbar - fondo scuro e testo chiaro
+   DENTRO campi che l'app dipinge bianchi. Superficie esposta: 463 <input> e
+   152 <select>. Era l'origine degli "elementi neri comparsi" su iPhone e
+   Android, e delle scritte troppo simili allo sfondo dentro quei controlli.
+   Che il sintomo fosse gia stato incontrato lo dimostravano due toppe locali
+   `[color-scheme:light]` su due soli campi data in FieldRenderer.tsx: curavano
+   il punto, non la causa. Sono state rimosse perche ora ridondanti.
+   Vale ANCHE in Alto Contrasto, e non e una svista: la i campi restano BIANCHI
+   (`bg-kidville-white` e una utility con l'hex inlinato da `@theme inline`, che
+   il rimappaggio dei token non tocca), ricevono un bordo nero - la regola
+   `input[class*="border-kidville-line"]` piu sotto - e il segnaposto va a
+   #595959. Un `color-scheme: dark` la dipingerebbe controlli di sistema scuri
+   dentro campi chiari: esattamente il difetto che questa riga chiude.
+   ============================================================================= */
+html {
+  color-scheme: light;
+}
+
 body {
   background-color: var(--color-kidville-cream);
   color: var(--color-kidville-green);

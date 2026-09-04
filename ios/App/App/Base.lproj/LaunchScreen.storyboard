@@ -15,7 +15,8 @@
                     <imageView key="view" userInteractionEnabled="NO" contentMode="scaleAspectFill" horizontalHuggingPriority="251" verticalHuggingPriority="251" image="Splash" id="snD-IY-ifK">
                         <rect key="frame" x="0.0" y="0.0" width="375" height="667"/>
                         <autoresizingMask key="autoresizingMask"/>
-                        <color key="backgroundColor" systemColor="systemBackgroundColor"/>
+                        <!-- Crema #FEF1E4 ESPLICITO, non systemBackgroundColor (2026-09-04): quello e dinamico e vale #000000 in tema scuro, cioe nero vero all'apertura dell'app. Stesso valore di capacitor.config.ts e di globals.css. -->
+                        <color key="backgroundColor" red="0.99607843137254903" green="0.94509803921568625" blue="0.89411764705882357" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                     </imageView>
                 </viewController>
                 <placeholder placeholderIdentifier="IBFirstResponder" id="iYj-Kq-Ea1" userLabel="First Responder" sceneMemberID="firstResponder"/>
@@ -25,8 +26,5 @@
     </scenes>
     <resources>
         <image name="Splash" width="1366" height="1366"/>
-        <systemColor name="systemBackgroundColor">
-            <color white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-        </systemColor>
     </resources>
 </document>

@@ -1028,8 +1028,12 @@ export function FieldRenderer({
         )
       )}
 
+      {/* Nessun `[color-scheme:light]` sui campi qui sotto: dal 2026-09-04 lo
+          schema chiaro e dichiarato una volta sola su `html` in globals.css,
+          per tutti i 463 input e i 152 select dell'app. Non riaggiungerlo per
+          un campo solo: era proprio la toppa locale che nascondeva la causa. */}
       {field.type === 'date' && (
-        <input id={field.id} type="date" className={`${campoClasse} [color-scheme:light]`} {...autoCompleteProps} {...ariaProps} {...register(field.id, rules)} />
+        <input id={field.id} type="date" className={campoClasse} {...autoCompleteProps} {...ariaProps} {...register(field.id, rules)} />
       )}
 
       {field.type === 'textarea' && (
@@ -1534,7 +1538,7 @@ function SelectField({
       // non quella scritta dopo nella stringa.
       className={`${FIELD_STRUTTURA} ${bordo} ${
         vuoto ? 'text-kidville-hint italic' : 'text-kidville-green not-italic'
-      } [color-scheme:light]`}
+      }`}
       defaultValue=""
       {...autoCompleteProps}
       {...ariaProps}

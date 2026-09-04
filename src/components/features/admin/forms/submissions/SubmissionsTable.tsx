@@ -220,7 +220,10 @@ export function SubmissionsTable() {
           style={{
             background: 'var(--color-kidville-white)',
             border: '1px solid var(--color-kidville-line)',
-            colorScheme: 'dark',
+            // `colorScheme: 'dark'` stava qui e disegnava il calendario nativo
+            // NERO dentro un campo bianco. Rimosso il 2026-09-04: lo schema
+            // dello schermo lo dichiara `html { color-scheme: light }` in
+            // globals.css, una volta per tutta l'app.
           }}
         />
 

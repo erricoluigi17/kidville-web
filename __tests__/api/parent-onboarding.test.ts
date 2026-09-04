@@ -14,7 +14,10 @@ const h = vi.hoisted(() => ({
   parent: { id: 'p1', auth_user_id: 'auth-1' } as Record<string, unknown> | null,
   parentNotFound: false,
   updates: [] as Array<Record<string, unknown>>,
+  /** OGNI `.eq` vista su `parents`, da qualunque catena: serve al «mai per `id`». */
   eqCalls: [] as Array<[string, unknown]>,
+  /** Solo le `.eq` della catena che parte da `.update()`: il WHERE dell'UPDATE. */
+  updateEqCalls: [] as Array<[string, unknown]>,
   pwUpdates: [] as Array<{ uid: string; attrs: unknown }>,
   consensiInserts: [] as Array<Record<string, unknown>>,
   consensiInsertErr: null as unknown,
@@ -34,14 +37,36 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     auth: { admin: { updateUserById: async (uid: string, attrs: unknown) => { h.pwUpdates.push({ uid, attrs }); return { data: h.pwErr ? null : {}, error: h.pwErr } } } },
     from: (table: string) => {
-      const b: Record<string, unknown> = {}
-      b.update = (row: Record<string, unknown>) => { h.updates.push(row); return b }
-      b.eq = (col: string, val: unknown) => { if (table === 'parents') h.eqCalls.push([col, val]); return b }
-      b.select = () => b
-      b.maybeSingle = async () => ({
+      const maybeSingle = async () => ({
         data: h.parentUpdateErr || h.parentNotFound ? null : h.parent,
         error: h.parentUpdateErr,
       })
+
+      // ⚠️ DUE CATENE, DUE ACCUMULATORI — e non è pignoleria (2026-09-03).
+      //
+      // Fino a oggi `b.update()` restituiva `b`, cioè LO STESSO builder della
+      // lettura, e ogni `.eq` finiva in un unico `eqCalls`. Da quando la route
+      // deduce la sede dai FIGLI passa da `getFigliDiGenitore`, che legge il
+      // ponte con `from('parents').select('id').eq('auth_user_id', accountId)`
+      // (`src/lib/anagrafiche/legami.ts:83-84`): la sua `.eq` riempiva
+      // `eqCalls` al posto di quella dell'UPDATE. Risultato misurato:
+      // cancellando `.eq('auth_user_id', auth.user.id)` dall'UPDATE di
+      // `parents` — cioè riscrivendo i consensi GDPR di TUTTI i genitori, senza
+      // WHERE — la suite restava verde 28 su 28. Un accumulatore che mescola
+      // due catene non misura nessuna delle due.
+      const catenaUpdate: Record<string, unknown> = {}
+      catenaUpdate.eq = (col: string, val: unknown) => {
+        if (table === 'parents') { h.eqCalls.push([col, val]); h.updateEqCalls.push([col, val]) }
+        return catenaUpdate
+      }
+      catenaUpdate.select = () => catenaUpdate
+      catenaUpdate.maybeSingle = maybeSingle
+
+      const b: Record<string, unknown> = {}
+      b.update = (row: Record<string, unknown>) => { h.updates.push(row); return catenaUpdate }
+      b.eq = (col: string, val: unknown) => { if (table === 'parents') h.eqCalls.push([col, val]); return b }
+      b.select = () => b
+      b.maybeSingle = maybeSingle
       b.insert = (rows: Record<string, unknown> | Record<string, unknown>[]) => {
         const arr = Array.isArray(rows) ? rows : [rows]
         if (table === 'consensi_accettazioni') h.consensiInserts.push(...arr)
@@ -61,7 +86,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.requireUser.mockResolvedValue({ user: { id: 'p1', role: 'genitore' } })
   h.parent = { id: 'p1', auth_user_id: 'auth-1' }
-  h.updates = []; h.eqCalls = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null; h.parentNotFound = false; h.pwErr = null
+  h.updates = []; h.eqCalls = []; h.updateEqCalls = []; h.pwUpdates = []; h.consensiInserts = []; h.consensiInsertErr = null; h.parentUpdateErr = null; h.parentNotFound = false; h.pwErr = null
 })
 
 /**
@@ -222,7 +247,38 @@ describe('POST /api/parent/onboarding', () => {
 
   it('aggiorna parents per auth_user_id, MAI per id (auth.user.id è utenti.id, non parents.id — verificato in produzione: 0 genitori su 46 coincidevano, onboarding non ha mai scritto nulla)', async () => {
     await POST(req({ consensi: { privacy: true, termini: true } }))
-    expect(h.eqCalls).toEqual([['auth_user_id', 'p1']])
+    // ⚠️ QUESTA ASSERZIONE È STATA ALLARGATA IL 2026-09-03 E RISTRETTA LO STESSO
+    // GIORNO, E VA LETTO PERCHÉ — è la storia di un lock abbassato in silenzio.
+    //
+    // Diceva `expect(h.eqCalls).toEqual([['auth_user_id', 'p1']])`. Da quando la
+    // notifica «onboarding completato» deduce la sede dai FIGLI, la route passa
+    // da `getFigliDiGenitore`, che legge il ponte con
+    // `from('parents').select('id').eq('auth_user_id', accountId)`
+    // (`src/lib/anagrafiche/legami.ts:83-84`): su `parents` le `.eq` diventano
+    // due, ed è corretto che lo siano. L'asserzione fu quindi allargata a «ogni
+    // `.eq` su `parents` è per `auth_user_id`, mai per `id`».
+    //
+    // Quella riscrittura ha però buttato via un invariante che il `toEqual`
+    // garantiva SENZA dirlo: che l'UPDATE avesse esattamente UNA `.eq`, la
+    // propria. MISURATO: togliendo `.eq('auth_user_id', auth.user.id)`
+    // dall'UPDATE di `parents` — cioè riscrivendo i consensi GDPR di TUTTI i
+    // genitori, senza WHERE — la suite restava verde 28 su 28, perché la `.eq`
+    // del ponte riempiva l'accumulatore al posto di quella mancante.
+    //
+    // Adesso le due catene hanno due accumulatori (vedi l'harness) e si asserisce
+    // su entrambi i fronti:
+    //  · `updateEqCalls` — il WHERE dell'UPDATE c'è, ed è UNO SOLO;
+    //  · `eqCalls` — nessuna `.eq` su `parents`, in nessuna catena, usa `id`.
+    // Il difetto storico (0 genitori su 46 con `parents.id === utenti.id`, cioè
+    // un onboarding che non scriveva mai niente) resta impossibile da ripiantare,
+    // e quello nuovo — l'UPDATE senza WHERE — pure.
+    expect(h.updateEqCalls).toEqual([['auth_user_id', 'p1']])
+    expect(h.eqCalls.length).toBeGreaterThan(0)
+    expect(h.eqCalls.map(([col]) => col)).not.toContain('id')
+    for (const [col, val] of h.eqCalls) {
+      expect(col).toBe('auth_user_id')
+      expect(val).toBe('p1')
+    }
   })
 
   it('404 se nessuna riga parents ha questo auth_user_id — non dichiara successo su un update che non ha aggiornato nulla', async () => {

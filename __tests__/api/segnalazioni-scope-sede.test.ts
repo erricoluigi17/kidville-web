@@ -568,3 +568,107 @@ describe('POST /api/segnalazioni — la riga nasce in un plesso, e la moderazion
     expect(segnalazioniScritte()).toEqual([])
   })
 })
+
+// =============================================================================
+// IL QUARTO ANELLO: `segnalante.scuola_id`, CIOÈ LA SEDE DELL'ACCOUNT.
+//
+// I casi qui sopra provano che la riga non nasce mai senza plesso. Nessuno di
+// loro, però, ha mai visto scattare il TERZO termine della catena:
+//
+//     acc.scuolaId ?? (sedi.length === 1 ? sedi[0] : null)
+//                  ?? segnalante.scuola_id            ← questo
+//                  ?? await scuolaUnicaReale(supabase)
+//
+// perché `comeGenitore()` mette `scuola_id: null` sull'account, con la
+// motivazione — scritta a chiare lettere in questo file — che «un genitore non
+// ha un plesso proprio».
+//
+// ─── QUELLA PREMESSA È FALSA, ED È STATA MISURATA ────────────────────────────
+// In produzione, il 2026-09-03: **639 account genitore su 639** hanno
+// `utenti.scuola_id` valorizzata. Zero a `null`. La colonna che i test
+// immaginano vuota è piena al cento per cento, quindi il ramo che nessun caso
+// visitava è quello che in produzione DECIDE — sempre, ogni volta che l'oggetto
+// non porta la propria sede. E in sei di quegli account la sede dell'account
+// contraddice almeno un figlio.
+//
+// `utenti.scuola_id` per un genitore è al più UNA delle sue sedi: quella con cui
+// l'account è nato. Non è la sede della segnalazione, non è la sede del figlio
+// di cui si parla — è un residuo della creazione dell'account. Sceglierla
+// significa archiviare la riga in un plesso tirato a sorte fra due, che è
+// esattamente ciò che le settanta righe di commento in testa a `route.ts`
+// dichiarano di non voler fare («mai indovinare la sede di una scrittura»).
+//
+// Il rifiuto 503 esiste già ed è la risposta giusta: qui si pretende che ci si
+// arrivi anche quando l'account una sede ce l'ha.
+// =============================================================================
+describe('POST /api/segnalazioni — la sede dell’ACCOUNT non è la sede della segnalazione', () => {
+  /** Come in produzione: l'account del genitore porta una sede (639 su 639). */
+  const comeGenitoreDiDuePlessiConAccountInA = () => {
+    comeGenitoreDiDuePlessi()
+    h.requireUser.mockResolvedValue({ user: { id: GENITORE_A, role: 'genitore', scuola_id: SEDE_A } })
+  }
+
+  it('genitore con figli in DUE plessi e account nato in A: plesso non attribuibile ⇒ 503, non «A»', async () => {
+    comeGenitoreDiDuePlessiConAccountInA()
+    conDocenteSenzaPlesso()
+    h.db.legame_genitori_alunni.push({ genitore_id: GENITORE_A, alunno_id: ALUNNO_SENZA_SEDE })
+    conThreadSu(ALUNNO_SENZA_SEDE)
+
+    const res = await POST(req({ tipo_oggetto: 'messaggio_chat', oggetto_id: MESSAGGIO, categoria: 'spam' }))
+
+    // Fra A e B non c'è niente che scelga: `utenti.scuola_id` non è una
+    // risposta, è il plesso in cui è stato aperto l'account.
+    expect(res.status).toBe(503)
+    expect(segnalazioniScritte()).toEqual([])
+    expect(h.notificaEvento.mock.calls.length).toBe(0)
+  })
+
+  it('…e il log resta `error` con i soli conteggi, come nel caso senza sede sull’account', async () => {
+    comeGenitoreDiDuePlessiConAccountInA()
+    conDocenteSenzaPlesso()
+    h.db.legame_genitori_alunni.push({ genitore_id: GENITORE_A, alunno_id: ALUNNO_SENZA_SEDE })
+    conThreadSu(ALUNNO_SENZA_SEDE)
+
+    await POST(req({ tipo_oggetto: 'messaggio_chat', oggetto_id: MESSAGGIO, categoria: 'spam' }))
+
+    const riga = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'sede-non-attribuibile',
+    )
+    expect(riga).toBeDefined()
+    expect(riga![1]).toBe('error')
+    expect(riga![2]).toMatchObject({ sedi: 2 })
+  })
+
+  it('vale anche per lo STAFF bi-sede: la sede primaria non decide dove va la segnalazione', async () => {
+    // Una segreteria che lavora su A e B, con A come sede primaria. Il thread
+    // parla di un bambino senza plesso e la maestra non ne ha uno: fra A e B
+    // non c'è niente che scelga, e `scuola_id: SEDE_A` sarebbe una moneta.
+    h.requireUser.mockResolvedValue({ user: { id: DOCENTE_A, role: 'segreteria', scuola_id: SEDE_A } })
+    h.scuoleDiUtente.mockResolvedValue([SEDE_A, SEDE_B])
+    conDocenteSenzaPlesso()
+    h.db.chat_messages = [{ id: MESSAGGIO, thread_id: THREAD }]
+    h.db.chat_threads = [
+      { id: THREAD, teacher_id: DOCENTE_A, parent_id: GENITORE_A, student_id: ALUNNO_SENZA_SEDE },
+    ]
+
+    const res = await POST(req({ tipo_oggetto: 'messaggio_chat', oggetto_id: MESSAGGIO, categoria: 'spam' }))
+
+    expect(res.status).toBe(503)
+    expect(segnalazioniScritte()).toEqual([])
+  })
+
+  it('CONTROLLO NEGATIVO — con UNA sola sede non cambia niente: 201, e la riga nasce lì', async () => {
+    // Il ramo `sedi.length === 1` resta l'unico caso in cui non si indovina:
+    // togliere il quarto anello non deve trasformarlo in un rifiuto.
+    comeGenitore()
+    h.requireUser.mockResolvedValue({ user: { id: GENITORE_A, role: 'genitore', scuola_id: SEDE_A } })
+    conDocenteSenzaPlesso()
+    h.db.legame_genitori_alunni.push({ genitore_id: GENITORE_A, alunno_id: ALUNNO_SENZA_SEDE })
+    conThreadSu(ALUNNO_SENZA_SEDE)
+
+    const res = await POST(req({ tipo_oggetto: 'messaggio_chat', oggetto_id: MESSAGGIO, categoria: 'spam' }))
+
+    expect(res.status).toBe(201)
+    expect(rigaScritta().scuola_id).toBe(SEDE_A)
+  })
+})

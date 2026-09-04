@@ -5,7 +5,8 @@ import { requireUser } from '@/lib/auth/require-staff'
 import { consensiMancanti, CONSENSI_RICHIESTI } from '@/lib/onboarding/consensi'
 import { VERSIONE_PRIVACY, VERSIONE_TERMINI } from '@/lib/legal/versioni'
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers'
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+import { staffScuola } from '@/lib/notifiche/destinatari'
+import { sediDeiFigli } from '@/lib/anagrafiche/sedi'
 import { parseBody } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -14,6 +15,71 @@ import {
   LUNGHEZZA_MINIMA_PASSWORD,
   type CodiceRegolaPassword,
 } from '@/lib/auth/regole-password'
+
+/**
+ * LE SEGRETERIE DA AVVISARE: QUELLE DEI FIGLI, MAI QUELLA DELL'ACCOUNT.
+ *
+ * ─── COS'ERA ─────────────────────────────────────────────────────────────────
+ *     const scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(admin))
+ *
+ * `auth.user.scuola_id` è la sede dell'ACCOUNT: il plesso in cui l'account è
+ * stato aperto. Un genitore può avere due figli in due plessi — `parents` non ha
+ * `scuola_id`, ed è una scelta esplicita (vedi `admin/parents/route.ts`) — quindi
+ * quel valore è al più UNA delle sue sedi, e può non essere nessuna delle
+ * attuali. La segreteria dell'altro plesso non sapeva mai che quella famiglia
+ * aveva completato la registrazione: nessun errore, nessun log, solo una
+ * notifica che non arriva.
+ *
+ * `scuolaUnicaReale`, l'anello successivo, è DEPRECATA e con tre sedi risponde
+ * sempre `null`: non era un ripiego, era un anello morto.
+ *
+ * ─── PERCHÉ QUI SI COPRONO TUTTE ─────────────────────────────────────────────
+ * Perché non si sta archiviando niente in un plesso: i consensi sono già scritti
+ * su `parents`, che una sede non ce l'ha. Qui si decide soltanto CHI viene
+ * informato, e una famiglia seguita da due plessi li riguarda entrambi. Dove
+ * invece si SCRIVE una riga la regola resta l'opposta: `segnalazioni:POST`
+ * rifiuta piuttosto che indovinare il plesso.
+ *
+ * ─── IL RIPIEGO CHE RESTA ────────────────────────────────────────────────────
+ * L'onboarding si può completare PRIMA che il legame col figlio sia scritto: lì
+ * non c'è nessuna sede da dedurre, e non avvisare nessuno sarebbe peggio che
+ * avvisare la sede dell'account. Si usa quella, ma **lo si scrive nei log**:
+ * è una deduzione, non un dato, e chi legge i log deve poterle distinguere.
+ */
+async function sediDaAvvisare(
+  admin: Awaited<ReturnType<typeof createAdminClient>>,
+  accountGenitore: string,
+  sedeAccount: string | null,
+): Promise<string[]> {
+  // La lettura (figli → plessi) sta in `@/lib/anagrafiche/sedi`: era scritta
+  // identica in tre route, e in questo repo una regola valida per più strade vive
+  // in un posto solo. Lì dentro c'è anche il controllo di `{ error }` — PostgREST
+  // non lancia — e la riga di `warn` col solo CONTEGGIO dei figli, mai gli uuid.
+  const sedi = await sediDeiFigli(admin, accountGenitore, {
+    gruppo: 'multi_sede',
+    operazione: 'parent/onboarding:POST',
+  })
+  if (sedi.length > 0) return sedi
+
+  if (sedeAccount) {
+    logEvento('multi_sede', 'info', {
+      operazione: 'parent/onboarding:POST',
+      esito: 'sede-onboarding-dedotta-dall-account',
+      sede: sedeAccount,
+    })
+    return [sedeAccount]
+  }
+
+  // Né figli né sede sull'account: non si inventa un plesso. Il chiamante non
+  // accoda niente, e la riga qui sotto è ciò che distingue «nessun destinatario»
+  // da «la notifica non è mai partita».
+  logEvento('multi_sede', 'warn', {
+    operazione: 'parent/onboarding:POST',
+    esito: 'sede-onboarding-non-determinabile',
+    utente: accountGenitore,
+  })
+  return []
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 const postBodySchema = z.object({
@@ -250,20 +316,24 @@ export const POST = withRoute('parent/onboarding:POST', async (request: Request)
 
     // Notifica alla segreteria: onboarding completato (best-effort).
     try {
-      const scuolaId = auth.user.scuola_id ?? (await scuolaUnicaReale(admin))
-      const destinatari = await staffScuola(admin, scuolaId, ['admin', 'coordinator', 'segreteria'])
+      const sedi = await sediDaAvvisare(admin, auth.user.id, auth.user.scuola_id ?? null)
       const nome = await nomeUtente(admin, auth.user.id)
-      await notificaEvento(admin, {
-        tipo: 'onboarding_completato',
-        scuolaId,
-        utenteIds: destinatari,
-        titolo: 'Onboarding genitore completato',
-        corpo: `${nome ?? 'Un genitore'} ha completato la registrazione iniziale.`,
-        link: '/admin/students',
-        entitaTipo: 'onboarding',
-        entitaId: auth.user.id,
-        bufferMin: 60,
-      })
+      // Una notifica per sede: `notificaEvento` archivia la riga CON il plesso,
+      // quindi due segreterie sono due righe, non una con due destinatari.
+      for (const scuolaId of sedi) {
+        const destinatari = await staffScuola(admin, scuolaId, ['admin', 'coordinator', 'segreteria'])
+        await notificaEvento(admin, {
+          tipo: 'onboarding_completato',
+          scuolaId,
+          utenteIds: destinatari,
+          titolo: 'Onboarding genitore completato',
+          corpo: `${nome ?? 'Un genitore'} ha completato la registrazione iniziale.`,
+          link: '/admin/students',
+          entitaTipo: 'onboarding',
+          entitaId: auth.user.id,
+          bufferMin: 60,
+        })
+      }
     } catch (e) {
       logEvento('notifica', 'error', {
         operazione: 'parent/onboarding:POST',

@@ -10,7 +10,7 @@ import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { getFigliDiGenitore, genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { notificaEvento } from '@/lib/notifiche/triggers'
-import { staffScuola, scuolaUnicaReale } from '@/lib/notifiche/destinatari'
+import { staffScuola } from '@/lib/notifiche/destinatari'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -492,18 +492,38 @@ export const POST = withRoute('segnalazioni:POST', async (request: Request) => {
       return NextResponse.json({ error: 'Non sei autorizzato a segnalare questo contenuto' }, { status: 403 })
     }
 
-    // La sede della riga, in ordine di attendibilità: quella dell'OGGETTO
-    // (il media, il bambino del diario, il bambino del thread di chat, il
-    // bambino della sezione in comune), poi l'unica sede del segnalante, poi la
-    // sua sede primaria. `scuolaUnicaReale` resta ultimo e ormai restituisce
-    // `null` con tre plessi: è la rete che non prende più niente.
+    // La sede della riga, e sono DUE termini soli: quella dell'OGGETTO (il
+    // media, il bambino del diario, il bambino del thread di chat, il bambino
+    // della sezione in comune), e — solo se l'oggetto tace — l'unica sede del
+    // segnalante.
     //
     // Il ramo `sedi.length === 1` non è un ripiego di comodo: è l'unico caso in
     // cui NON si sta indovinando — se di plessi ce n'è uno solo, quello è. Con
     // due o più si tace, perché una segnalazione archiviata nel plesso sbagliato
     // la legge una Direzione che su quel contenuto non ha titolo.
-    const scuolaId =
-      acc.scuolaId ?? (sedi.length === 1 ? sedi[0] : null) ?? segnalante.scuola_id ?? (await scuolaUnicaReale(supabase))
+    //
+    // ── VIA IL TERZO E IL QUARTO ANELLO (2026-09-03) ─────────────────────────
+    // Erano `?? segnalante.scuola_id ?? (await scuolaUnicaReale(supabase))`, e
+    // il primo dei due è quello che faceva danno: `utenti.scuola_id` è la sede
+    // dell'ACCOUNT, cioè il plesso in cui l'account è stato aperto, non il
+    // plesso della cosa segnalata. Per un genitore con figli in due sedi è una
+    // delle due, scelta a caso; per uno staff bi-sede è la sua primaria.
+    //
+    // ⚠️ Il commento che stava qui dava per scontato l'opposto — «poi la sua
+    // sede primaria», come se fosse un'informazione. E i casi di
+    // `segnalazioni-scope-sede.test.ts` non hanno mai visto scattare quel ramo,
+    // perché mettevano `scuola_id: null` sull'account del genitore, «visto che
+    // un genitore non ha un plesso proprio». Misurato in produzione il
+    // 2026-09-03: **639 account genitore su 639** hanno `utenti.scuola_id`
+    // valorizzata, e in 6 di loro contraddice almeno un figlio. Il ramo che
+    // nessun test visitava era quello che in produzione decideva sempre.
+    //
+    // `scuolaUnicaReale` se ne va con lui: è DEPRECATA e con tre sedi risponde
+    // sempre `null` — un anello morto che costava una query e una riga di warn.
+    //
+    // Restando `null`, si cade nel rifiuto 503 qui sotto, che è la risposta che
+    // questa route dichiara di voler dare da quando esiste.
+    const scuolaId = acc.scuolaId ?? (sedi.length === 1 ? sedi[0] : null)
 
     // NESSUNA RIGA SENZA PLESSO. Era il guasto: `scuola_id: null` passava,
     // `staffScuola(null)` non avvisava nessuna Direzione e

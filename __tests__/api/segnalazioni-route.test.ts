@@ -49,6 +49,17 @@ const h = vi.hoisted(() => ({
   media: null as Record<string, unknown> | null,
   voce: null as Record<string, unknown> | null,
   legameSingle: null as Record<string, unknown> | null,
+  /**
+   * La riga di `alunni` letta per UUID — cioè la SEDE del bambino.
+   *
+   * ⚠️ Prima non c'era, e per `messaggio_chat`/`utente` la catena della sede
+   * arrivava fino in fondo a `scuolaUnicaReale()`, qui mockata a `'sc-1'`.
+   * Quella funzione è DEPRECATA e in produzione, con tre sedi, risponde sempre
+   * `null`: quattro casi di questo file erano verdi grazie a un valore che il
+   * codice vero non può ottenere. Il bambino la sede ce l'ha davvero, ed è da lì
+   * che la route la prende: il finto client deve saperla dare.
+   */
+  alunnoRiga: { scuola_id: 'sc-1' } as Record<string, unknown> | null,
   threadsList: [] as Array<Record<string, unknown>>,
   legamiList: [] as Array<Record<string, unknown>>,
   alunniList: [] as Array<Record<string, unknown>>,
@@ -86,6 +97,7 @@ function resolveSingle(s: { table: string; mode: string }) {
   if (t === 'galleria_media_v2') return { data: h.media, error: null }
   if (t === 'eventi_diario') return { data: h.voce, error: null }
   if (t === 'legame_genitori_alunni') return { data: h.legameSingle, error: null }
+  if (t === 'alunni') return { data: h.alunnoRiga, error: null }
   return { data: null, error: null }
 }
 
@@ -169,9 +181,14 @@ beforeEach(() => {
   h.media = { is_broadcast: false, tag_students: [STUDENT], scuola_id: 'sc-1' }
   h.voce = { alunno_id: STUDENT }
   h.legameSingle = { genitore_id: PARENT }
-  h.threadsList = [{ id: THREAD }]
+  h.alunnoRiga = { scuola_id: 'sc-1' }
+  // `student_id` e `scuola_id` NON sono decorazioni della fixture: sono le due
+  // colonne da cui la route ricava DOVE archiviare la segnalazione. Senza, la
+  // catena arrivava fino a `scuolaUnicaReale()` — deprecata, e in produzione
+  // sempre `null` con tre sedi — e questi casi misuravano un mondo che non c'è.
+  h.threadsList = [{ id: THREAD, student_id: STUDENT }]
   h.legamiList = [{ alunno_id: STUDENT }]
-  h.alunniList = [{ section_id: SEC }]
+  h.alunniList = [{ section_id: SEC, scuola_id: 'sc-1' }]
   h.utentiSezioni = [{ section_id: SEC }]
 })
 
@@ -296,7 +313,9 @@ describe('POST /api/segnalazioni — inserimento e notifica', () => {
   it('201 utente valido per sezione in comune anche senza thread pregresso', async () => {
     h.threadsList = []
     h.legamiList = [{ alunno_id: STUDENT }]
-    h.alunniList = [{ section_id: SEC }]
+    // La sezione che fa da ponte porta con sé il plesso del bambino: è lui a dire
+    // in quale Direzione va moderato il rapporto.
+    h.alunniList = [{ section_id: SEC, scuola_id: 'sc-1' }]
     h.utentiSezioni = [{ section_id: SEC }]
     const res = await POST(postReq({ tipo_oggetto: 'utente', segnalato_id: TEACHER, categoria: 'spam' }))
     expect(res.status).toBe(201)

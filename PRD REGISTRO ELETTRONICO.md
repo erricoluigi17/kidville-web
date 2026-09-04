@@ -96,6 +96,119 @@
 
 ---
 
+## 🏫 Changelog — Una famiglia che cambia plesso si spostava solo con una UPDATE a mano — 2026-09-03/04 (branch `fix/aruba-prima-fattura`)
+
+**La richiesta**, cinque punti: il selettore di sede nell'anagrafica di bambino, genitore e staff;
+un genitore con due figli in due sedi diverse; un errore di fattura; i nomi delle sezioni
+modificabili da segreteria e direzione; la segreteria che rigenera le credenziali.
+
+**Tre dei cinque erano già veri, in tutto o in parte, e trovarlo prima ha cambiato il lavoro:**
+
+| # | Chiesto | Stato misurato prima di scrivere codice |
+|---|---|---|
+| 5 | segreteria rigenera le credenziali | **già fatto**: `puoRigenerareCredenzialiStaff`, changelog qui sotto |
+| 4 | rinominare una sezione | **backend già completo**: `PATCH /api/admin/sections:206-310`, con allowlist zod, gate di sede, 409 sull'omonimia e audit. `requireStaff` ammette già segreteria **e** direzione: nessun permesso da cambiare. Manca il pulsante. |
+| 1 | selettore di sede sullo staff | **già a metà**: la PATCH accetta `scuola_id` e `StaffDetailPanel` ha già il `<select>` |
+| 3 | errore di fattura | **fuori da questo giro**: la foto non era allegata |
+
+### Il bambino: la sede si scartava in silenzio
+
+`PATCH /api/admin/students` valida con `patchBodySchema`, che **non contiene `scuola_id`**. Essendo
+un `z.object` non-strict, una sede inviata oggi viene **scartata senza errore**: la chiamata
+risponde `200` e non sposta niente. Non esisteva nessun punto dell'applicazione da cui spostare una
+persona di plesso: l'unica strada era una `UPDATE` a mano sul database che contiene le anagrafiche
+di **607 alunni** reali.
+
+Tre agganci si rompono cambiando `alunni.scuola_id` da solo, e vanno azzerati nella stessa
+istruzione: `section_id`/`classe_sezione` (il trigger `sync_alunno_section_id` **non riparte** se
+cambia solo la sede, e il bambino resta agganciato alla sezione del plesso di prima),
+`gruppo_mensa_id` (`gruppi_mensa` è `UNIQUE(scuola_id, nome)`), e la sede dell'account dei genitori.
+
+### Il genitore: la colonna non esiste, ed è la ragione per cui il punto 2 si può fare
+
+`parents` **non ha `scuola_id`** e non deve averlo: è precisamente ciò che permette a un genitore di
+avere figli in due plessi. La sede della famiglia vive su `alunni.scuola_id`. Quindi nessun selettore
+sull'anagrafica genitore: il selettore sta sul **figlio**, e la sede dell'account si **ricalcola da
+sé** (`riallineaSedeGenitori`) — tranne quando i figli sono in due plessi, dove l'esito è `ambigua` e
+**non si tocca niente**, perché scegliere sarebbe inventare un dato.
+
+Cinque route decidevano la sede guardando `auth.user.scuola_id`, cioè il plesso in cui l'**account**
+è stato aperto: `parent/submissions`, `parent/onboarding`, `chat/messages`,
+`chat/threads/[id]/sospendi`, `segnalazioni`. Misurato: **639 account genitore su 639** hanno quel
+campo valorizzato — il ripiego non falliva mai, quindi decideva sempre — e in **6** contraddice
+almeno un figlio. Ora la sede viene dai figli, con una regola diversa a seconda di cosa si sta
+facendo: dove si **scrive una riga** si **rifiuta** invece di indovinare (archiviare nel plesso
+sbagliato è silenzioso e permanente); dove si decide solo **chi viene informato** si coprono tutte le
+sedi coinvolte. In `parent/submissions` la sede è quella del **modulo** (`forms_templates.scuola_id`
+è `NOT NULL`), non dei figli: un modulo di Aversa non deve svegliare la segreteria di Cesa.
+
+`ChildSwitcher` mostra ora la **sede** accanto alla classe, ma **solo quando i figli stanno in plessi
+diversi**: con figli nello stesso plesso è rumore, e due chip che cambiano altezza su WebKit fanno
+risalire il pulsante sotto il dito.
+
+### La sezione: rinominarla faceva sparire il registro
+
+Il trigger `trg_sections_propaga_rinomina` aggiornava **una tabella su sette**. Le altre sei
+tengono il nome della classe come **testo**, e nessuno le toccava. Misurato il 2026-09-03:
+
+| Tabella | Righe | Cosa succedeva rinominando |
+|---|---|---|
+| `registro_orario` | 14 | `classe_sezione` è parte della chiave di upsert: lezioni, argomenti, compiti e **firme storiche** diventano irraggiungibili, e il registro riparte da zero |
+| `galleria_media_v2` | 101 | destinatari per nome in un `text[]` |
+| `avvisi` | 12 (10 con destinatari) | idem — e un avviso che perde i destinatari **non dà nessun errore** |
+| `news_posts` | 3 | idem |
+| `mensa_class_menu_assignment` | 1 | la classe perde il menu e ricade sul legacy di sede |
+| `forms_templates` | 0 | idem (oggi vuota, la regola resta) |
+| `alunni` | 607, di cui **10 senza `section_id`** | i 10 non venivano raggiunti nemmeno prima |
+
+Il guasto degli avvisi **è già successo**: `20260801104252_avvisi_target_classes_nomi.sql`, dieci
+alunni e zero destinatari raggiunti.
+
+**La cosa più pericolosa della migrazione non è ciò che ripara, ma ciò che potrebbe rompere**: ogni
+`UPDATE` filtra per `scuola_id = NEW.scuola_id`. L'omonimia fra plessi è lecita e voluta (in
+produzione `2annia` e `2annib` esistono in due sedi): una propagazione che dimentica la sede non
+lascia indietro dei dati, li **riscrive nel plesso sbagliato, in silenzio**. Il lock
+`__tests__/architecture/rinomina-sezione-propaga-ovunque.test.ts` lo verifica istruzione per
+istruzione.
+
+### Chi può spostare, e verso dove (decisioni del titolare)
+
+| | Destinazioni |
+|---|---|
+| `admin`, `coordinator` (Direzione) | **tutte le sedi reali**, comprese quelle non proprie — è il caso d'uso |
+| `segreteria` | solo le sedi a cui ha già accesso |
+| chiunque altro | nessuna (fail-closed) |
+
+Misurato: **nessuna segreteria è associata a più di una sede**, quindi in pratica per lei l'elenco
+avrà sempre una destinazione sola. **È voluto e confermato**: il trasferimento fra plessi passa dalla
+Direzione, e l'interfaccia lo spiega invece di mostrare un menù vuoto. Chi si sposta deve comunque
+essere già nel perimetro di chi lo sposta (`assertAlunnoInScope` / `assertUtenteInScope`): la
+Direzione decide il **dove**, non allarga il **chi**.
+
+Spostando **si sposta solo l'anagrafica**: classe e gruppo mensa si azzerano e si riassegnano a mano;
+fatture, presenze e mensa restano sulla sede vecchia. La numerazione fiscale è per sede
+(`fatture_emesse UNIQUE(scuola_id, anno, numero)`): le fatture emesse non possono seguire il bambino.
+
+### ⏳ Cosa NON è ancora entrato, al 2026-09-04
+
+Questa sezione esiste perché un PRD che dichiara fatto ciò che non lo è, è il difetto che questo
+repo ha già pagato per due settimane.
+
+- **La migrazione della rinomina NON è applicata** al database (`20260903145106_…`): scritta,
+  revisionata, lock verde, **mai eseguita**. Va applicata con `apply_migration`, e **subito dopo il
+  file va rinominato** alla versione che `schema_migrations` avrà registrato — `apply_migration`
+  sceglie il proprio timestamp, e committare il nome locale arma una riapplicazione.
+- **Il selettore di sede non c'è ancora**: mancano la scrittura di `scuola_id` in
+  `PATCH /api/admin/students`, l'apertura del cambio di sede alla segreteria in
+  `PATCH /api/admin/staff` (con il cambio di **ruolo** che resta alla Direzione), e l'interfaccia
+  di entrambe.
+- **Il pulsante di rinomina non c'è ancora**: il backend è pronto da prima di questo lavoro.
+- **31 account genitore** (19 con un figlio legato solo per via runtime, 12 con account e zero figli
+  in anagrafica) non permettono di dedurre la sede: decisione del titolare, **si sanano i dati**, non
+  il codice.
+- Due prove del lock della rinomina si lasciano ancora aggirare (filtro di sede dentro una
+  sottoquery; lista nera delle parole nel log invece di un controllo strutturale).
+
 ## 🔑 Changelog — A Cesa non c'è nessuna Direzione, e per ogni password persa si telefonava — 2026-09-03 (branch `fix/aruba-prima-fattura`)
 
 **La richiesta**: «anche chi ha l'account segreteria deve poter rigenerare le credenziali sia ai

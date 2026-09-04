@@ -2,19 +2,36 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
-import { parseBody, parseQuery } from '@/lib/validation/http'
+import { parseBody, parseData, parseMultipart, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import {
   hashMovimento,
   parseCsv,
-  suggerisciMatch,
+  preparaAperti,
+  suggerisciMatchPreparato,
+  type MappingCsv,
+  type MovimentoCsv,
   type PagamentoAperto,
 } from '@/lib/pagamenti/riconciliazione'
+import { leggiEstrattoConto } from '@/lib/pagamenti/estratto-conto/lettura'
+import { interpretaFogli } from '@/lib/pagamenti/estratto-conto/tabella'
+import type { Formato } from '@/lib/pagamenti/estratto-conto/tipi'
+import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piattaforma'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
+
+/**
+ * L'ESTRATTO ANNUALE È 9.004 RIGHE, e le legge tutte in una richiesta sola.
+ *
+ * Il default di una Function è 10 secondi: con 6.775 accrediti da confrontare con i 545
+ * pagamenti aperti, il taglio arriverebbe a metà dell'INSERT — cioè con parte dei movimenti
+ * già scritti e nessuna risposta. Gli unici altri due `maxDuration` del repository stanno su
+ * `api/pagamenti/fattura` e `api/iscrizione/import-massivo`, per la stessa ragione.
+ */
+export const maxDuration = 300
 
 const zUuidQueryOpzionale = z.preprocess((v) => (v === '' ? undefined : v), zUuid.optional())
 // `z.iso.date()` valida una data ISO REALE (giorno/mese esistenti), non solo la forma YYYY-MM-DD:
@@ -34,20 +51,260 @@ const getQuerySchema = z.object({
   a: zDataQueryOpzionale,
 })
 
+const OPERAZIONE_POST = 'pagamenti/riconciliazione:POST'
+
+const mappingSchema = z.object({
+  data: z.string().max(80).optional(),
+  importo: z.string().max(80).optional(),
+  causale: z.string().max(80).optional(),
+  controparte: z.string().max(80).optional(),
+})
+
+/**
+ * IL RAMO JSON — resta, e costa dieci righe.
+ *
+ * ⚠️ **IL BASE64 NON SI ACCETTA IN NESSUNA FORMA, e non è una preferenza di stile.**
+ * `Conti-15.xls` pesa 2.182.144 byte: in base64 diventa 2,91 MB e sfonda sia questo
+ * `max()` sia il tetto di 4 MB della piattaforma (`src/lib/upload/limite-piattaforma.ts`),
+ * oltre il quale Vercel risponde 413 in `text/plain` — la route non parte nemmeno e il
+ * client non ha un JSON da leggere. E terrebbe tre copie del file in RAM.
+ * Il file si manda in **multipart**. Questo ramo serve a incollare un CSV da uno script.
+ */
 const postBodySchema = z.object({
   filename: z.string().max(200).optional(),
   // contenuto CSV in chiaro: PII bancarie → si persistono SOLO i movimenti normalizzati
   contenuto: z.string().min(1).max(2_000_000),
-  mapping: z
-    .object({
-      data: z.string().max(80).optional(),
-      importo: z.string().max(80).optional(),
-      causale: z.string().max(80).optional(),
-      controparte: z.string().max(80).optional(),
-    })
-    .optional(),
+  mapping: mappingSchema.optional(),
   scuola_id: zUuid.nullish(),
 })
+
+/**
+ * Il `mapping` in multipart viaggia come STRINGA JSON: un `FormData` non ha oggetti.
+ *
+ * Se non si legge non si fa cadere l'import — i sinonimi automatici riconoscono da soli il
+ * formato della banca — ma **si logga**: un mapping scritto a mano e ignorato in silenzio
+ * farebbe cercare il difetto nelle colonne del file, che sono a posto.
+ */
+const zMappingMultipart = z.preprocess((v) => {
+  if (typeof v !== 'string' || v.trim() === '') return undefined
+  try {
+    return JSON.parse(v)
+  } catch (errore) {
+    logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'mapping_non_leggibile' }, errore)
+    return undefined
+  }
+}, mappingSchema.optional())
+
+const zScuolaMultipart = z.preprocess((v) => (v === '' || v === null ? undefined : v), zUuid.optional())
+
+const uploadSchema = z.object({
+  file: z.instanceof(File, { error: 'Nessun estratto conto ricevuto' }),
+  scuola_id: zScuolaMultipart,
+  mapping: zMappingMultipart,
+})
+
+/**
+ * I TRE TIPI CHE UNA BANCA DICHIARA — e il nome del file, che vale quanto loro.
+ *
+ * Il MIME dichiarato dal client non è mai una prova: su un `.xls` scaricato dall'home
+ * banking arriva regolarmente `application/octet-stream`. La prova vera è che il lettore
+ * riesca ad aprirlo, e arriva due passi più sotto. Qui si scarta ciò che è palesemente
+ * altro — un PDF, una foto — prima di leggerne i byte.
+ */
+const MIME_ESTRATTO = [
+  'text/csv',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+] as const
+const ESTENSIONI_ESTRATTO = /\.(csv|xls|xlsx)$/i
+
+/**
+ * Righe CHIESTE per pagina nella finestra di dedup.
+ *
+ * ⚠️ Non sta «sotto» il `db-max-rows` di PostgREST: ci COINCIDE — `supabase/config.toml`
+ * dichiara `max_rows = 1000`. Chiederne di più non ne restituirebbe di più, chiederne di
+ * meno moltiplicherebbe i round-trip. Ma quel numero è una riga di CONFIGURAZIONE, non una
+ * costante di questo codice: può scendere senza che nessuno tocchi questo file, e il ciclo
+ * qui sotto non deve dipenderne (avanza di quante righe ha RICEVUTO, non di quante ne ha
+ * chieste). Stessa scelta, e stessa motivazione, di `src/lib/avvisi/statistiche.ts`.
+ */
+const BLOCCO_DEDUP = 1000
+/**
+ * Il tetto dei round-trip. Col `db-max-rows` di oggi sono 100.000 righe di registro nella
+ * finestra di UN estratto conto — undici volte l'annuale intero, che ne ha 9.004. Se un
+ * `db-max-rows` più basso lo facesse mordere davvero, il log `dedup-finestra-troncata` lo
+ * dice a livello `error`: una finestra letta a metà fa passare per NUOVI dei movimenti già
+ * in registro, e non deve mai succedere in silenzio.
+ */
+const MAX_PAGINE_DEDUP = 100
+/** Righe per INSERT: la taglia già usata da `iscrizioni/elenco`, qui con i `suggerimenti` in JSONB. */
+const BLOCCO_INSERT = 200
+
+/**
+ * IL CORPO, LETTO MA NON ANCORA INTERPRETATO.
+ *
+ * Le due fasi sono separate di proposito. La PRIMA (`apriCorpo`) prende i campi e respinge
+ * ciò che è palesemente sbagliato — niente file, troppo grande, tipo non ammesso — e
+ * consegna anche la SEDE dichiarata. La SECONDA (`interpretaCorpo`) apre davvero il foglio,
+ * ed è la parte cara: 2,1 MB di BIFF8 e 9.004 righe.
+ *
+ * In mezzo ci sta il passo che decide se questa scrittura è ammessa: `resolveScuolaScrittura`.
+ * Interpretare prima vorrebbe dire spendere quel lavoro per poi scoprire che la sede non era
+ * stata dichiarata — e con tre plessi quella risposta è un 400 normale, non un caso limite.
+ */
+type CorpoAperto =
+  | { tipo: 'json'; contenuto: string; mapping?: MappingCsv; filename: string | null; scuolaId?: string | null }
+  | { tipo: 'file'; file: File; mapping?: MappingCsv; filename: string | null; scuolaId?: string | null }
+
+/** Quello che la route ottiene una volta interpretato il corpo, comunque sia arrivato. */
+interface CorpoImport {
+  movimenti: MovimentoCsv[]
+  scartate: number
+  uscite: number
+  troncate: number
+  senzaOrdinante: number
+  formato: Formato
+  byte: number
+}
+
+/** Il corpo è multipart quando lo dichiara: tutto il resto è il ramo JSON di sempre. */
+const È_MULTIPART = /^\s*multipart\/form-data\s*(;|$)/i
+
+/**
+ * FASE 1 — i campi, e i rifiuti nell'ordine che costa meno.
+ *
+ * Prima la dimensione (un confronto), poi il tipo (una regex). Aprire un foglio da 4 MB per
+ * scoprire che era un PDF è lavoro sprecato su una richiesta che andava respinta subito.
+ */
+async function apriCorpo(request: Request): Promise<CorpoAperto | { response: NextResponse }> {
+  const contentType = request.headers.get('content-type') ?? ''
+
+  if (!È_MULTIPART.test(contentType)) {
+    const b = await parseBody(request, postBodySchema)
+    if ('response' in b) return { response: b.response }
+    return {
+      tipo: 'json',
+      contenuto: b.data.contenuto,
+      mapping: b.data.mapping,
+      filename: b.data.filename ?? null,
+      scuolaId: b.data.scuola_id,
+    }
+  }
+
+  const form = await parseMultipart(request)
+  if ('response' in form) return { response: form.response }
+  // ⚠️ Il campo assente ha un codice SUO, e non è pignoleria: il 400 generico di zod
+  // («Dati non validi») è l'unico rifiuto di questa porta che l'operatore leggerebbe senza
+  // capire che cosa deve fare — mentre qui la cosa da fare è una sola, e si può dire.
+  if (!(form.data.get('file') instanceof File)) {
+    logEvento('pagamento', 'warn', { operazione: OPERAZIONE_POST, esito: 'estratto-conto-assente' })
+    return {
+      response: NextResponse.json(
+        { error: 'Nessun estratto conto ricevuto: scegli il file da caricare', codice: 'ESTRATTO_CONTO_ASSENTE' },
+        { status: 400 },
+      ),
+    }
+  }
+  const parsed = parseData(uploadSchema, {
+    file: form.data.get('file'),
+    scuola_id: form.data.get('scuola_id'),
+    mapping: form.data.get('mapping'),
+  })
+  if ('response' in parsed) return { response: parsed.response }
+  const { file, scuola_id: scuolaId, mapping } = parsed.data
+
+  if (file.size > LIMITE_UPLOAD_BYTE) {
+    logEvento('pagamento', 'warn', {
+      operazione: OPERAZIONE_POST,
+      esito: 'estratto-conto-troppo-grande',
+      byte: file.size,
+    })
+    return {
+      response: NextResponse.json(
+        {
+          error: `L’estratto conto è troppo grande: può pesare al massimo ${LIMITE_UPLOAD_MB} MB`,
+          codice: 'ESTRATTO_CONTO_TROPPO_GRANDE',
+        },
+        { status: 413 },
+      ),
+    }
+  }
+
+  const tipoDichiarato = (file.type || '').toLowerCase()
+  const nomeAmmesso = ESTENSIONI_ESTRATTO.test(file.name || '')
+  if (!nomeAmmesso && !(MIME_ESTRATTO as readonly string[]).includes(tipoDichiarato)) {
+    // Il TIPO sì, il NOME del file NO: un estratto conto scaricato dall'home banking si
+    // chiama spesso col numero di rapporto, e a volte col cognome dell'intestatario.
+    logEvento('pagamento', 'warn', {
+      operazione: OPERAZIONE_POST,
+      esito: 'estratto-conto-tipo-non-ammesso',
+      mime: tipoDichiarato || 'assente',
+      byte: file.size,
+    })
+    return {
+      response: NextResponse.json(
+        {
+          error: 'Questo tipo di file non si può caricare: serve un estratto conto .csv, .xls o .xlsx',
+          codice: 'ESTRATTO_CONTO_TIPO_NON_AMMESSO',
+        },
+        { status: 415 },
+      ),
+    }
+  }
+
+  return { tipo: 'file', file, mapping, filename: file.name || null, scuolaId }
+}
+
+/** FASE 2 — si apre il foglio davvero. È il passo caro, e si fa a sede già decisa. */
+async function interpretaCorpo(corpo: CorpoAperto): Promise<CorpoImport | { response: NextResponse }> {
+  if (corpo.tipo === 'json') {
+    const letto = parseCsv(corpo.contenuto, corpo.mapping)
+    return {
+      movimenti: letto.movimenti,
+      scartate: letto.scartate,
+      uscite: letto.uscite ?? 0,
+      troncate: letto.troncate ?? 0,
+      senzaOrdinante: letto.senzaOrdinante ?? 0,
+      formato: 'csv',
+      byte: corpo.contenuto.length,
+    }
+  }
+
+  const { file } = corpo
+  const dati = await file.arrayBuffer()
+  let letto
+  try {
+    letto = leggiEstrattoConto(dati, { nomeFile: file.name })
+  } catch (errore) {
+    // Difetto del FILE, non guasto del server: 400, e `warn` — non `error`, che è il canale
+    // dove si cercano i guasti veri.
+    logEvento('pagamento', 'warn', {
+      operazione: OPERAZIONE_POST,
+      esito: 'estratto-conto-illeggibile',
+      byte: file.size,
+    }, errore)
+    return {
+      response: NextResponse.json(
+        {
+          error: 'Il file è arrivato ma non si apre come estratto conto: controlla che sia il file giusto',
+          codice: 'ESTRATTO_CONTO_ILLEGGIBILE',
+        },
+        { status: 400 },
+      ),
+    }
+  }
+
+  const esito = interpretaFogli(letto.fogli, { mapping: corpo.mapping, date1904: letto.date1904 })
+  return {
+    movimenti: esito.movimenti,
+    scartate: esito.scartate,
+    uscite: esito.uscite,
+    troncate: esito.troncate,
+    senzaOrdinante: esito.senzaOrdinante,
+    formato: letto.formato,
+    byte: file.size,
+  }
+}
 
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
 
@@ -131,27 +388,57 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
   }
 })
 
-// POST /api/pagamenti/riconciliazione — import CSV estratto conto (staff).
-// Parse + hash anti re-import GLOBALE + suggerimenti calcolati SUBITO sui pagamenti aperti di
-// TUTTE le sedi (aggancio per codice fiscale, poi importo/nome/periodo/descrizione). I movimenti
-// nascono senza sede (scuola_id null): la sede si assegna alla conferma. Nessuna conferma automatica.
+// POST /api/pagamenti/riconciliazione — import dell'estratto conto (staff).
+//
+// ─── L'ORDINE DEI PASSI, E PERCHÉ NON SI CAMBIA ──────────────────────────────
+//   1. gate di ruolo        chi bussa — PRIMA di leggere il corpo (lock `corpo-letto-dopo-il-gate`)
+//   2. il corpo             multipart o JSON secondo il `content-type`; dimensione, tipo, lettura
+//   3. la sede di scrittura DICHIARATA (arriva col corpo), mai indovinata
+//   4. dedup                per FINESTRA DI DATE, paginata
+//   5. suggerimenti         sui pagamenti aperti PREPARATI una volta sola
+//   6. INSERT a blocchi     e l'audit, e il log di successo coi conteggi
+//
+// ⚠️ La sede arriva DENTRO il corpo (`scuola_id`), quindi il passo 3 non può stare prima del
+// 2: leggerla dalla query invece che dal corpo cambierebbe il contratto del ramo JSON, che
+// è in uso. Il vincolo che conta — non bufferizzare megabyte da chi non si è ancora
+// identificato — è il passo 1, ed è rispettato.
+//
+// I movimenti nascono senza sede (scuola_id null): la sede si assegna alla conferma, e
+// nessun abbinamento si auto-conferma mai.
 export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: Request) => {
   try {
     const auth = await requireStaff(request)
     if (auth.response) return auth.response
-    const b = await parseBody(request, postBodySchema)
-    if ('response' in b) return b.response
-    const body = b.data
+
+    const aperto = await apriCorpo(request)
+    if ('response' in aperto) return aperto.response
+    const filename = aperto.filename
 
     const supabase = await createAdminClient()
-    const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, body.scuola_id ?? undefined)
+    const sw = await resolveScuolaScrittura(request as NextRequest, supabase, auth.user, aperto.scuolaId ?? undefined)
     if (sw.response) return sw.response
     const scuolaId = sw.scuolaId as string
 
-    const { movimenti, scartate } = parseCsv(body.contenuto, body.mapping)
+    const corpo = await interpretaCorpo(aperto)
+    if ('response' in corpo) return corpo.response
+    const { movimenti, scartate, uscite, troncate, senzaOrdinante, formato } = corpo
+
     if (movimenti.length === 0) {
+      // Non è un guasto ed è un rifiuto: «zero movimenti» da solo non distingue il file
+      // sbagliato dal file vuoto, quindi si dichiara che cosa il lettore ha visto.
+      logEvento('pagamento', 'warn', {
+        operazione: OPERAZIONE_POST,
+        esito: 'estratto-conto-senza-accrediti',
+        formato,
+        scartate,
+        uscite,
+        byte: corpo.byte,
+      })
       return NextResponse.json(
-        { error: 'Nessun accredito riconosciuto nel file: controlla intestazioni/mapping o il separatore' },
+        {
+          error: 'Nessun accredito riconosciuto nel file: controlla le intestazioni delle colonne o il separatore',
+          codice: 'ESTRATTO_CONTO_SENZA_ACCREDITI',
+        },
         { status: 400 },
       )
     }
@@ -162,24 +449,95 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       .map((m) => ({ m, hash: hashMovimento(m) }))
       .filter(({ hash }) => (visti.has(hash) ? false : (visti.add(hash), true)))
 
-    // DEDUP GLOBALE: l'UNIQUE su hash_movimento è ora globale (non più per sede) e l'estratto
-    // conto è unico → il controllo anti re-import NON filtra per scuola_id (dedup su tutto il registro).
-    const { data: giaRows, error: errEsistenti } = await supabase
-      .from('riconciliazione_movimenti')
-      .select('hash_movimento')
-      .in('hash_movimento', conHash.map((x) => x.hash))
-    if (errEsistenti) {
-      if (SCHEMA_MANCANTE.has(errEsistenti.code ?? '')) {
+    // DEDUP GLOBALE: l'UNIQUE su hash_movimento è globale (non per sede) e l'estratto conto è
+    // unico → il controllo anti re-import NON filtra per scuola_id. La finestra è quella delle
+    // date del file: la data è dentro l'hash, quindi un duplicato non può stare fuori.
+    const date = conHash.map(({ m }) => m.data_operazione).sort()
+
+    /**
+     * GLI HASH GIÀ IN REGISTRO, cercati per FINESTRA DI DATE e non per lista.
+     *
+     * ⚠️ Sta QUI DENTRO, e non come funzione di modulo, per una ragione precisa: è una query
+     * su `riconciliazione_movimenti` DELIBERATAMENTE senza filtro di sede, e il lock
+     * `isolamento-sede-coverage` la legge insieme all'handler che la contiene — cioè insieme
+     * al suo `resolveScuolaScrittura`. Portandola fuori diventerebbe una lettura di sede
+     * «di nessuno», e l'unico modo di farla passare sarebbe una voce di allowlist: una
+     * protezione spenta per un dettaglio di forma.
+     *
+     * ─── PERCHÉ NON `.in('hash_movimento', […])` ──────────────────────────────
+     * L'estratto annuale ha 6.775 accrediti: 6.775 sha256 da 64 caratteri in un `.in()` fanno
+     * una query string da oltre **450 KB**, che PostgREST rifiuta prima ancora di guardarla.
+     * Il controllo anti-doppio-import salterebbe per intero — sull'unico file su cui serve.
+     *
+     * La finestra funziona perché **la data è DENTRO l'hash**: due movimenti con lo stesso
+     * hash hanno per forza la stessa data, quindi un duplicato del file sta certamente fra il
+     * minimo e il massimo delle date del file. Una query invece di sessantotto.
+     *
+     * ─── E PERCHÉ SI PAGINA ───────────────────────────────────────────────────
+     * PostgREST tronca le risposte lunghe (`db-max-rows`) **senza dirlo**: la pagina arriva
+     * corta e sembra la fine dell'elenco. Gli hash mancanti diventerebbero movimenti «nuovi»,
+     * cioè doppioni scritti in registro. Quindi non si guarda quanto è corta la pagina: si
+     * avanza di quante righe sono ARRIVATE e ci si ferma solo su una pagina VUOTA — l'unico
+     * segnale che un tetto del server non può falsificare. L'ordine è `hash_movimento`, che è
+     * UNIVOCO: un ordine totale, in cui nessuna riga può scivolare da una pagina all'altra.
+     *
+     * ─── E PERCHÉ NON FILTRA PER SEDE ─────────────────────────────────────────
+     * L'UNIQUE su `hash_movimento` è globale e l'estratto conto della banca è uno solo per
+     * tutte e tre le sedi: un movimento già importato da un'altra segreteria è un duplicato,
+     * non un movimento nuovo. Filtrando per sede lo si riscriverebbe.
+     */
+    const hashGiaInRegistro = async (
+      dal: string,
+      al: string,
+    ): Promise<{ hash: Set<string> } | { errore: { code?: string; message?: string } }> => {
+      const trovati = new Set<string>()
+      let letto = 0
+      for (let pagina = 0; pagina < MAX_PAGINE_DEDUP; pagina++) {
+        const { data, error } = await supabase
+          .from('riconciliazione_movimenti')
+          .select('hash_movimento')
+          .gte('data_operazione', dal)
+          .lte('data_operazione', al)
+          .order('hash_movimento', { ascending: true })
+          .range(letto, letto + BLOCCO_DEDUP - 1)
+        if (error) return { errore: error }
+        const pagineRighe = (data || []) as { hash_movimento: string }[]
+        for (const r of pagineRighe) trovati.add(r.hash_movimento)
+        // ⚠️ SI AVANZA DI QUANTE RIGHE SONO ARRIVATE, e ci si ferma solo su una pagina
+        // VUOTA. La regola di prima — «pagina più corta del blocco ⇒ fine dei dati» —
+        // scambiava il TRONCAMENTO del server per la fine dell'elenco: con un
+        // `db-max-rows` di 500 si leggeva una pagina sola, si riconoscevano 500 duplicati
+        // e gli altri 6.275 passavano per NUOVI. In produzione l'UNIQUE su
+        // `hash_movimento` lo trasformerebbe in un fallimento a metà scrittura, con una
+        // riga orfana in `riconciliazione_import` e un import che fallisce a ogni
+        // ritentativo. Il tetto del server non si indovina: non lo si guarda affatto.
+        if (pagineRighe.length === 0) return { hash: trovati }
+        letto += pagineRighe.length
+      }
+      // Oltre il tetto: la finestra è stata letta solo in parte. Non si nasconde — un
+      // duplicato che passasse da qui verrebbe scritto due volte e nessuno lo saprebbe.
+      logEvento('pagamento', 'error', {
+        operazione: OPERAZIONE_POST,
+        esito: 'dedup-finestra-troncata',
+        n: trovati.size,
+      })
+      return { hash: trovati }
+    }
+
+    const registro = await hashGiaInRegistro(date[0], date[date.length - 1])
+    if ('errore' in registro) {
+      if (SCHEMA_MANCANTE.has(registro.errore.code ?? '')) {
         return NextResponse.json({ error: 'Riconciliazione non ancora disponibile.' }, { status: 503 })
       }
+      logErrore({ operazione: OPERAZIONE_POST, evento: 'dedup_finestra_fallita', stato: 500 }, registro.errore)
       return NextResponse.json({ error: 'Errore nel controllo duplicati' }, { status: 500 })
     }
-    const gia = new Set(((giaRows || []) as { hash_movimento: string }[]).map((r) => r.hash_movimento))
+    const gia = registro.hash
     const nuovi = conHash.filter(({ hash }) => !gia.has(hash))
     const duplicati = conHash.length - nuovi.length
     // Un secondo bonifico identico non deve sparire in silenzio: si logga QUANTI ne saltiamo.
     if (duplicati > 0) {
-      logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:POST', esito: 'duplicati_saltati', duplicati })
+      logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'duplicati_saltati', duplicati })
     }
 
     // Pagamenti aperti di TUTTE le sedi: l'estratto conto è globale e questo è un client
@@ -203,7 +561,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
     let apertiRaw: unknown[] | null = primaSelezione.data
     let errAperti = primaSelezione.error
     if (errAperti?.code === '42703') {
-      logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:POST', esito: 'degradazione_cf_aperti' })
+      logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_cf_aperti' })
       const senzaCf = await supabase
         .from('pagamenti')
         .select(APERTI_SELECT_BASE)
@@ -212,7 +570,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       errAperti = senzaCf.error
     }
     if (errAperti) {
-      logErrore({ operazione: 'pagamenti/riconciliazione:POST', evento: 'aperti_select_fallita', stato: 500 }, errAperti)
+      logErrore({ operazione: OPERAZIONE_POST, evento: 'aperti_select_fallita', stato: 500 }, errAperti)
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti aperti' }, { status: 500 })
     }
     const aperti: PagamentoAperto[] = ((apertiRaw || []) as unknown as {
@@ -237,18 +595,22 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         `${p.alunno_nome ?? '—'} · ${p.descrizione ?? '—'} (residuo ${formatEuro(Number(p.importo) - Number(p.importo_pagato || 0))})`,
       ]),
     )
+    // ⚠️ UNA VOLTA SOLA. Sull'estratto annuale sono 6.775 accrediti × 545 pagamenti aperti =
+    // 3,7 milioni di confronti: normalizzare i nomi DENTRO il ciclo significava rifare
+    // `normalize('NFD')` sugli stessi nomi milioni di volte.
+    const apertiPreparati = preparaAperti(aperti)
 
     // Il movimento nasce SENZA sede (scuola_id null): la sede si assegna alla conferma.
     // DEGRADAZIONE CI: sul DB E2E non migrato scuola_id è ancora NOT NULL → 23502; si ritenta
     // con la sede risolta dell'operatore (`resolveScuolaScrittura`).
-    const impBase = { filename: body.filename ?? null, righe_totali: nuovi.length, caricato_da: auth.user.id }
+    const impBase = { filename: filename, righe_totali: nuovi.length, caricato_da: auth.user.id }
     let { data: imp, error: errImp } = await supabase
       .from('riconciliazione_import')
       .insert({ ...impBase, scuola_id: null })
       .select()
       .single()
     if (errImp?.code === '23502') {
-      logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:POST', esito: 'degradazione_scuola_id_import' })
+      logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_scuola_id_import' })
       ;({ data: imp, error: errImp } = await supabase
         .from('riconciliazione_import')
         .insert({ ...impBase, scuola_id: scuolaId })
@@ -256,13 +618,14 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         .single())
     }
     if (errImp || !imp) {
+      logErrore({ operazione: OPERAZIONE_POST, evento: 'import_non_creato', stato: 500 }, errImp)
       return NextResponse.json({ error: "Errore nella creazione dell'import" }, { status: 500 })
     }
 
     let suggeriti = 0
     let conCf = 0
     const righe = nuovi.map(({ m, hash }) => {
-      const s = suggerisciMatch(m, aperti)
+      const s = suggerisciMatchPreparato(m, apertiPreparati)
       if (s.stato === 'suggerito') suggeriti++
       if (s.cf_match && s.cf_match.length > 0) conCf++
       return {
@@ -277,14 +640,33 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         suggerimenti: s.suggerimenti.map((x) => ({ ...x, label: labels.get(x.pagamento_id) ?? null })),
       }
     })
-    if (righe.length > 0) {
-      let { error: errIns } = await supabase.from('riconciliazione_movimenti').insert(righe)
+    // A BLOCCHI. Un solo INSERT da 6.775 righe che portano anche i `suggerimenti` in JSONB è
+    // un corpo di svariati megabyte: la richiesta a PostgREST muore per dimensione, e con lei
+    // l'import intero. Il ritentativo su 23502 (DB E2E non migrato) resta DENTRO il ciclo.
+    for (let i = 0; i < righe.length; i += BLOCCO_INSERT) {
+      const blocco = righe.slice(i, i + BLOCCO_INSERT)
+      let { error: errIns } = await supabase.from('riconciliazione_movimenti').insert(blocco)
       if (errIns?.code === '23502') {
-        logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:POST', esito: 'degradazione_scuola_id_movimenti' })
-        const righeConSede = righe.map((r) => ({ ...r, scuola_id: scuolaId }))
-        ;({ error: errIns } = await supabase.from('riconciliazione_movimenti').insert(righeConSede))
+        logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_scuola_id_movimenti' })
+        const bloccoConSede = blocco.map((r) => ({ ...r, scuola_id: scuolaId }))
+        ;({ error: errIns } = await supabase.from('riconciliazione_movimenti').insert(bloccoConSede))
       }
-      if (errIns) return NextResponse.json({ error: 'Errore nel salvataggio dei movimenti' }, { status: 500 })
+      if (errIns) {
+        logErrore({ operazione: OPERAZIONE_POST, evento: 'movimenti_non_salvati', stato: 500 }, errIns)
+        // Un blocco fallito a metà lascia scritti quelli PRIMA, e questo è il fatto che serve
+        // sapere: «errore nel salvataggio» da solo non distingue «niente scritto» da «metà
+        // scritto», e le due cose si riparano in modi opposti. Si dichiara solo quando è
+        // successo davvero, per non aggiungere una riga a ogni fallimento del primo blocco.
+        if (i > 0) {
+          logEvento('pagamento', 'error', {
+            operazione: OPERAZIONE_POST,
+            esito: 'movimenti-scritti-a-meta',
+            scritti: i,
+            totali: righe.length,
+          })
+        }
+        return NextResponse.json({ error: 'Errore nel salvataggio dei movimenti' }, { status: 500 })
+      }
     }
 
     await logScrittura(supabase, {
@@ -293,18 +675,27 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       entitaId: (imp as { id: string }).id,
       azione: 'insert',
       scuolaId,
-      valoreDopo: { filename: body.filename ?? null, nuovi: righe.length, duplicati },
+      valoreDopo: { filename: filename, nuovi: righe.length, duplicati },
     })
 
     // Log di SUCCESSO con i soli CONTEGGI (mai PII: niente causale/CF/nomi). 'pagamento' è un
     // evento persistito → il successo dell'import resta tracciato, non solo gli errori.
+    //
+    // ⚠️ `senza_ordinante` è il campanello: se la banca cambia la forma della descrizione, il
+    // nome di chi paga smette di uscirne e questo numero salta da 11 a seimila. Va guardato al
+    // primo import di ogni mese — senza, il degrado sarebbe invisibile, perché l'import
+    // continuerebbe a riuscire.
     logEvento('pagamento', 'info', {
-      operazione: 'pagamenti/riconciliazione:POST',
+      operazione: OPERAZIONE_POST,
       esito: 'import_ok',
+      formato,
       totali: movimenti.length,
       nuovi: righe.length,
       duplicati,
       scartate,
+      uscite,
+      troncate,
+      senza_ordinante: senzaOrdinante,
       suggeriti,
       con_cf: conCf,
     })
@@ -316,13 +707,16 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         nuovi: righe.length,
         duplicati,
         scartate,
+        uscite,
+        troncate,
+        senza_ordinante: senzaOrdinante,
         suggeriti,
         con_cf: conCf,
         da_abbinare: righe.length - suggeriti,
       },
     })
   } catch (err) {
-    logErrore({ operazione: 'pagamenti/riconciliazione:POST', stato: 500 }, err)
+    logErrore({ operazione: OPERAZIONE_POST, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 })

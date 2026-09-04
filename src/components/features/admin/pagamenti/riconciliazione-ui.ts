@@ -61,6 +61,12 @@ export interface EsitoImport {
   suggeriti: number
   con_cf?: number
   da_abbinare: number
+  /** Addebiti: righe capite benissimo e non importabili per progetto. */
+  uscite?: number
+  /** Righe oltre il tetto del lettore: NON sono state lette. */
+  troncate?: number
+  /** Movimenti senza ordinante: il campanello che suona se la banca cambia formato. */
+  senza_ordinante?: number
 }
 
 /** Il PRIMO suggerimento è un aggancio per CF? → badge «CF» sulla riga. */
@@ -72,17 +78,33 @@ export function suggerimentoPrincipaleCf(sugg?: SuggerimentoUi[] | null): boolea
 const plurale = (n: number, uno: string, molti: string): string => `${n} ${n === 1 ? uno : molti}`
 
 /**
- * Testo del toast di riepilogo import CSV, con singolare/plurale corretti (E2):
+ * Testo del toast di riepilogo import, con singolare/plurale corretti (E2):
  * «1 nuovo movimento (1 con suggerimento) · 1 già visto · 1 riga scartata».
  * Il dettaglio «per codice fiscale» compare solo se `con_cf > 0`.
+ *
+ * ─── I DUE PEZZI IN CODA, E PERCHÉ NON SONO LA STESSA COSA ──────────────────
+ * Le USCITE sono addebiti: righe capite benissimo e non importabili per progetto. Sul file
+ * annuale vero sono 2.225, e finché finivano dentro «scartate» l'operatore leggeva «2.225
+ * righe scartate» su un import perfettamente riuscito — cioè un allarme su un esito
+ * corretto, che è il modo più rapido di insegnare a qualcuno a non leggere più il toast.
+ * Si dicono, ma solo quando ci sono, e con la parola giusta: **ignorate**, non scartate.
+ *
+ * Le TRONCATE sono l'opposto: righe che il lettore non ha nemmeno guardato, perché oltre il
+ * suo tetto. Sono una PERDITA, e il vecchio troncamento era silenzioso. Vanno in evidenza.
  */
 export function riepilogoImport(e: EsitoImport): string {
   const cf = e.con_cf ? `, ${e.con_cf} per codice fiscale` : ''
   const suggeriti = `${plurale(e.suggeriti, 'con suggerimento', 'con suggerimenti')}${cf}`
+  const uscite = e.uscite ? ` · ${plurale(e.uscite, 'uscita ignorata', 'uscite ignorate')}` : ''
+  const troncate = e.troncate
+    ? ` · ⚠️ ${plurale(e.troncate, 'riga NON letta', 'righe NON lette')} (limite)`
+    : ''
   return (
     `${plurale(e.nuovi, 'nuovo movimento', 'nuovi movimenti')} (${suggeriti})` +
     ` · ${plurale(e.duplicati, 'già visto', 'già visti')}` +
-    ` · ${plurale(e.scartate, 'riga scartata', 'righe scartate')}`
+    ` · ${plurale(e.scartate, 'riga scartata', 'righe scartate')}` +
+    uscite +
+    troncate
   )
 }
 

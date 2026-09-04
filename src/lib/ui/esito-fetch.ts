@@ -185,6 +185,37 @@ export const CODICI_ERRORE = {
     /** 400 — l'adulto scelto per le fatture non è fra quelli della domanda. */
     INTESTATARIO_NON_VALIDO: 'erroreIntestatarioNonValido',
     /**
+     * 409 — si è scelto un intestatario per un pagamento RIPARTITO fra due genitori.
+     *
+     * Non si scavalca la ripartizione, e non è prudenza: con i genitori separati la
+     * ripartizione esiste perché ciascuno riceva un documento per la propria quota, e
+     * la detrazione si porta sulla fattura intestata a chi ha pagato. Un documento
+     * unico cancella la detrazione dell'altro genitore. La via d'uscita esiste — si
+     * modificano le quote del pagamento — e il messaggio la nomina.
+     */
+    INTESTATARIO_IN_CONFLITTO_CON_QUOTE: 'erroreIntestatarioInConflittoConQuote',
+    /**
+     * 409 — questo pagamento ha già una fattura VIVA, e l'intestatario non è quello.
+     *
+     * 🔴 È la guardia che impedisce una SECONDA fattura vera per la stessa retta:
+     * l'idempotenza confronta `quota_adult_id`, quindi emettere per il genitore A e
+     * poi scegliere B non trovava nessuna riga corrispondente. Misurato il 2026-09-04:
+     * il database non la ferma — l'indice unico ha `quota_adult_id` nella chiave, e
+     * l'INSERT arriva comunque dopo l'upload. La guardia di codice è l'unica difesa.
+     */
+    FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO: 'erroreFatturaGiaEmessaAltroIntestatario',
+    /**
+     * 422 — l'adulto scelto come intestatario non è un genitore di quel bambino.
+     *
+     * Non protegge da un operatore che vuole sbagliare (col ramo «altra persona» si
+     * digita chiunque): protegge da un BUG DEL CLIENT — il modale che rimanda
+     * l'`adult_id` del pagamento precedente — che farebbe partire una fattura col
+     * codice fiscale e la residenza di un'altra famiglia. Codice distinto da
+     * `INTESTATARIO_NON_VALIDO` di proposito: quello parla di «questa domanda»
+     * d'iscrizione, che qui la segreteria non ha davanti.
+     */
+    INTESTATARIO_NON_DEL_BAMBINO: 'erroreIntestatarioNonDelBambino',
+    /**
      * 500 — non è stato possibile leggere le sezioni per validare i destinatari.
      * È un guasto NOSTRO, e va detto come tale: prima del 2026-08-01 un errore di
      * lettura sarebbe uscito come «nessuna classe trovata», cioè un 400 che accusa
@@ -1545,6 +1576,24 @@ export const CODICI_ERRORE = {
      * valida**. Senza, resta il dubbio peggiore — di essere rimasto fuori.
      */
     PASSWORD_NON_SCRITTA: 'errorePasswordNonScritta',
+    /**
+     * ─── L'ESTRATTO CONTO DELLA BANCA ───────────────────────────────────────
+     * Cinque rifiuti che l'operatore di segreteria può incontrare caricando il file,
+     * e che senza codice uscirebbero in italiano dentro un'interfaccia inglese.
+     * Sono separati di proposito: «troppo grande», «tipo sbagliato», «non si apre» e
+     * «non ci sono accrediti» si riparano in quattro modi diversi, e una frase sola
+     * («import fallito») costringerebbe a indovinare quale.
+     */
+    /** 400 — nessun file nella richiesta multipart. */
+    ESTRATTO_CONTO_ASSENTE: 'erroreEstrattoContoAssente',
+    /** 415 — non è un .csv/.xls/.xlsx né per nome né per tipo dichiarato. */
+    ESTRATTO_CONTO_TIPO_NON_AMMESSO: 'erroreEstrattoContoTipoNonAmmesso',
+    /** 413 — oltre il tetto di piattaforma (4 MB), che non è il nostro ma vince lo stesso. */
+    ESTRATTO_CONTO_TROPPO_GRANDE: 'erroreEstrattoContoTroppoGrande',
+    /** 400 — i byte sono arrivati, ma non si aprono come foglio di calcolo. */
+    ESTRATTO_CONTO_ILLEGGIBILE: 'erroreEstrattoContoIlleggibile',
+    /** 400 — il file si apre ma non ha nessun accredito riconoscibile. */
+    ESTRATTO_CONTO_SENZA_ACCREDITI: 'erroreEstrattoContoSenzaAccrediti',
     /* ⚠️ Il tetto di frequenza dei tentativi NON prende un codice nuovo: è già
      * `TROPPE_RICHIESTE`, dichiarato più in alto in questo stesso file e tradotto
      * nelle due lingue. Un `PASSWORD_TROPPE_RICHIESTE` accanto direbbe la stessa

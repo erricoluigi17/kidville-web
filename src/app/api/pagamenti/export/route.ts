@@ -10,6 +10,7 @@ import { logScrittura } from '@/lib/audit/scrittura'
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { calcolaAttestazione, type VoceAttestazione } from '@/lib/pagamenti/attestazione'
 import { resolveParentRegistry, type ParentRegistry } from '@/lib/pagamenti/intestatari'
+import { anagraficaDaScheda, nomeDaAnagrafica } from '@/lib/fatturazione/intestatario-scelto'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
 
@@ -138,7 +139,7 @@ interface AlunnoAde {
   cognome?: string | null
   codice_fiscale?: string | null
   opposizione_ade?: boolean | null
-  intestatario_fatture?: { adult_id?: string | null } | null
+  intestatario_fatture?: { tipo?: string | null; adult_id?: string | null; dati?: unknown } | null
 }
 interface IncassoAde {
   importo: number
@@ -219,7 +220,15 @@ async function exportAde(
       continue
     }
 
-    const adultId = al.intestatario_fatture?.adult_id ?? null
+    // L'intestatario DIGITATO sulla scheda (`tipo: 'altro'`) non ha una riga
+    // `parents`: leggere solo `adult_id` escludeva la riga per «codice fiscale del
+    // pagatore mancante» — cioè toglieva a quella famiglia la detrazione, con una
+    // motivazione che descriveva il nostro codice invece del suo caso.
+    // ⚠️ L'opposizione della famiglia resta dov'è, PRIMA di qui: un intestatario
+    // digitato non deve poter far comunicare all'Agenzia delle Entrate una spesa
+    // che qualcuno ha chiesto di non comunicare.
+    const digitata = anagraficaDaScheda(al.intestatario_fatture)
+    const adultId = digitata ? null : al.intestatario_fatture?.adult_id ?? null
     let reg: ParentRegistry | null = null
     if (adultId) {
       if (regCache.has(adultId)) reg = regCache.get(adultId) ?? null
@@ -228,7 +237,8 @@ async function exportAde(
         regCache.set(adultId, reg)
       }
     }
-    if (!reg?.fiscal_code) {
+    const cfPagatore = digitata ? (digitata.codice_fiscale ?? '') : (reg?.fiscal_code ?? '')
+    if (!cfPagatore) {
       escluse.push({ Alunno: nome, Motivo: 'codice fiscale del pagatore mancante', 'Importo €': r.detraibile })
       continue
     }
@@ -236,8 +246,10 @@ async function exportAde(
     daComunicare.push({
       'CF alunno': al.codice_fiscale ?? '',
       Alunno: nome,
-      'CF pagatore': reg.fiscal_code,
-      Pagatore: [reg.first_name, reg.last_name].filter(Boolean).join(' '),
+      'CF pagatore': cfPagatore,
+      Pagatore: digitata
+        ? nomeDaAnagrafica(digitata)
+        : [reg?.first_name, reg?.last_name].filter(Boolean).join(' '),
       'Importo comunicabile €': r.detraibile,
       Anno: anno,
     })

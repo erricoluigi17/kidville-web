@@ -52,10 +52,20 @@ import {
 } from './client'
 import { buildFatturaElettronicaXml, causalePerTracciato, verificaCoerenzaIva, LIMITI, type IvaFattura } from './fatturapa-xml'
 import { mapStatoAruba } from './stato'
-import { determinaQuoteFatturazione, resolveParentRegistry } from '@/lib/pagamenti/intestatari'
+import {
+  adultoEGenitoreDi,
+  applicaIntestatarioScelto,
+  determinaQuoteFatturazione,
+  resolveParentRegistry,
+} from '@/lib/pagamenti/intestatari'
 import { bolloDovuto, type FiscaleConfig } from '@/lib/pagamenti/fiscale'
 import { cedenteDaConfig, type FiscalAruba } from '@/lib/fatturazione/cedente'
-import { validaCessionario, messaggioCessionarioIncompleto } from '@/lib/fatturazione/cessionario'
+import {
+  validaCessionario,
+  messaggioCessionarioIncompleto,
+  DOVE_SCHEDA_BAMBINO,
+} from '@/lib/fatturazione/cessionario'
+import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 import {
   annoScolasticoDiCompetenza,
   formattaNumeroFattura,
@@ -74,7 +84,8 @@ export interface AttoreEmissione {
 
 /** Esito di una singola quota (riportato al chiamante per il caso multi-quota). */
 export interface EsitoQuota {
-  adultId: string
+  /** `null` quando l'intestatario è una persona indicata a mano, non una riga `parents`. */
+  adultId: string | null
   label: string
   ok: boolean
   /** Il progressivo dentro il sezionale (2328), non il numero completo. */
@@ -82,7 +93,15 @@ export interface EsitoQuota {
   /** Il numero come sta scritto sul documento: «Asilo 2328/2026». */
   numeroFattura?: string
   uploadFileName?: string
-  motivo?: 'intestatario_mancante' | 'scartata' | 'idempotente' | 'numerazione' | 'configurazione' | 'errore'
+  motivo?:
+    | 'intestatario_mancante'
+    | 'scartata'
+    | 'idempotente'
+    /** Esiste già un documento VIVO per questo pagamento, intestato a un'altra persona. */
+    | 'gia_emessa_altro_intestatario'
+    | 'numerazione'
+    | 'configurazione'
+    | 'errore'
   messaggio?: string
   /**
    * Lo status HTTP che l'aggregato deve restituire per QUESTA quota, quando la mappa per
@@ -110,6 +129,12 @@ export type EsitoEmissione =
         | 'periodo_competenza_mancante'
         | 'numerazione_non_allineata'
         | 'intestatario_mancante'
+        /** 409 — l'intestatario scelto contro un pagamento RIPARTITO fra due genitori. */
+        | 'intestatario_in_conflitto'
+        /** 422 — l'adulto scelto non è un genitore di questo bambino. */
+        | 'intestatario_non_del_bambino'
+        /** 409 — c'è già una fattura viva per questo pagamento, intestata ad altri. */
+        | 'gia_emessa_altro_intestatario'
         | 'scartata'
         | 'errore'
       messaggio: string
@@ -125,11 +150,31 @@ interface AlunnoNested {
   data_nascita?: string | null
   genitori_separati?: boolean | null
   retta_split_config?: { quote?: { adult_id: string; importo: number | string; etichetta?: string | null }[] } | null
-  intestatario_fatture?: { tipo?: string; nome?: string; adult_id?: string } | null
+  intestatario_fatture?: { tipo?: string; nome?: string; adult_id?: string; dati?: unknown } | null
+}
+
+/** Le opzioni dell'emissione: tutte facoltative, e assenti = comportamento di sempre. */
+export interface OpzioniEmissione {
+  /**
+   * L'intestatario indicato a mano dalla segreteria, che sostituisce (o FORNISCE)
+   * quello della cascata. Assente ⇒ percorso identico a prima, e sono sei
+   * chiamanti più otto file di test a dipendere da questo.
+   */
+  intestatarioScelto?: IntestatarioScelto | null
 }
 
 function s(v: unknown): string {
   return v == null ? '' : String(v)
+}
+
+/**
+ * Un codice fiscale ridotto alla forma in cui due copie si possono confrontare:
+ * maiuscolo, senza spazi. La stessa pulizia di `codiceFiscaleIntestatarioValido`
+ * — se le due divergessero, «stessa persona» dipenderebbe da come qualcuno ha
+ * digitato uno spazio.
+ */
+function cfNormalizzato(v: unknown): string {
+  return s(v).trim().toUpperCase().replace(/\s+/g, '')
 }
 
 /**
@@ -382,7 +427,8 @@ function segnalaStatoNonAggiornato(
 export async function emettiFatturaPagamento(
   supabase: SupabaseClient,
   pagamentoId: string,
-  attore: AttoreEmissione
+  attore: AttoreEmissione,
+  opzioni: OpzioniEmissione = {}
 ): Promise<EsitoEmissione> {
   // 1. pagamento + alunno (con i campi split, il CF e la data di nascita del minore)
   //    + slug della categoria, che decide il MODELLO di causale.
@@ -718,7 +764,7 @@ export async function emettiFatturaPagamento(
   const causaleBase = esitoCausale.causale
 
   // 5. determina le quote di fatturazione
-  const quote = await determinaQuoteFatturazione(
+  const quoteCascata = await determinaQuoteFatturazione(
     supabase,
     { id: pag.id, importo: pag.importo },
     {
@@ -728,6 +774,91 @@ export async function emettiFatturaPagamento(
       intestatario_fatture: alunno?.intestatario_fatture,
     }
   )
+
+  // 5-bis. L'INTESTATARIO SCELTO A MANO, se c'è.
+  //
+  // ⚠️ STA QUI, PRIMA del 422 «intestatario non impostato», e l'ordine è tutto il
+  // punto: fino al 2026-09-04 quel rifiuto scattava su `quote.length === 0`, cioè
+  // sul caso in cui la scelta serve DI PIÙ. Misurato lo stesso giorno: 88
+  // pagamenti saldati su 93 rispondono così, e 579 alunni su 630 non hanno alcun
+  // intestatario risolvibile. Con il controllo prima, il selettore non sarebbe mai
+  // arrivato a decidere niente.
+  //
+  // La regola vive in `applicaIntestatarioScelto` (pura, provata senza Supabase) e
+  // non in questa funzione: `determinaQuoteFatturazione` ha quattro chiamanti e
+  // non deve cambiare firma per una decisione che riguarda solo l'emissione.
+  const scelta = applicaIntestatarioScelto(quoteCascata, opzioni.intestatarioScelto, Number(pag.importo))
+  if (!scelta.ok) {
+    // 409 e non 400: la richiesta è ben formata, è la SITUAZIONE che la rifiuta.
+    // Nessun numero è ancora stato consumato — la RPC è duecento righe più in giù.
+    return {
+      ok: false,
+      motivo: 'intestatario_in_conflitto',
+      messaggio:
+        'Questo pagamento è ripartito fra due genitori: l’intestatario non si può scegliere qui, ' +
+        'perché ciascuno deve ricevere la fattura della PROPRIA quota (è da lì che passa la sua ' +
+        'detrazione). Per cambiare chi paga, modifica le quote del pagamento nell’editor di ' +
+        'Segreteria. Nessun numero è stato consumato.',
+      httpStatus: 409,
+    }
+  }
+  const quote = scelta.quote
+
+  // ── L'ADULTO SCELTO DEV'ESSERE UN GENITORE DI QUESTO BAMBINO ─────────────
+  // Contro un operatore che vuole sbagliare non protegge niente: col ramo
+  // `persona` si digita chiunque. Contro un BUG DEL CLIENT è l'unica rete —
+  // il modale che rimanda l'`adult_id` del pagamento precedente farebbe partire
+  // una fattura col codice fiscale e la residenza di un'altra famiglia, e si
+  // corregge solo con una nota di variazione. `resolveParentRegistry` risolve
+  // qualunque `parents.id`: da solo non lo impedisce.
+  //
+  // Vale SOLO sulla scelta esplicita. Le quote della cascata (l'ordinante di un
+  // ordine divise, una quota esplicita dei genitori separati) vengono dai NOSTRI
+  // dati: rifiutarle perché la tabella dei legami è incompleta spegnerebbe
+  // l'emissione su una nostra lacuna d'archivio.
+  const sceltoAdult = opzioni.intestatarioScelto?.tipo === 'adult' ? opzioni.intestatarioScelto.adult_id : null
+  if (sceltoAdult) {
+    const eGenitore = await adultoEGenitoreDi(supabase, s(alunno?.id ?? pag.alunno_id), sceltoAdult)
+    if (eGenitore === null) {
+      // «Non lo so» non è «no»: qui la lettura dei legami non ha risposto, e
+      // rispondere «non è un genitore» sarebbe un'affermazione senza misura.
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento:intestatarioScelto',
+        esito: 'legami-non-verificabili',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+      })
+      return {
+        ok: false,
+        motivo: 'errore',
+        messaggio:
+          'Non è stato possibile verificare che l’intestatario scelto sia un genitore di questo ' +
+          'bambino: l’emissione è stata fermata. Nessun numero è stato consumato — riprova fra poco.',
+        httpStatus: 503,
+      }
+    }
+    if (!eGenitore) {
+      logEvento('fattura', 'warn', {
+        operazione: 'emettiFatturaPagamento:intestatarioScelto',
+        esito: 'intestatario-non-del-bambino',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+        msg:
+          'l’adulto indicato come intestatario non risulta fra i genitori del bambino: ' +
+          'emissione fermata prima di allocare il numero',
+      })
+      return {
+        ok: false,
+        motivo: 'intestatario_non_del_bambino',
+        messaggio:
+          'L’intestatario scelto non risulta fra i genitori di questo bambino: la fattura non è ' +
+          'stata emessa. Se deve intestarla a un’altra persona, indicane l’anagrafica per esteso. ' +
+          'Nessun numero è stato consumato.',
+        httpStatus: 422,
+      }
+    }
+  }
+
   if (quote.length === 0)
     return {
       ok: false,
@@ -772,7 +903,7 @@ export async function emettiFatturaPagamento(
   // fatto» e il pagamento finisce in un «in attesa» che nessun `sync` chiuderà.
   const { data: esistenti, error: errEsistenti } = await supabase
     .from('fatture_emesse')
-    .select('id, numero, sezionale, aruba_filename, sdi_stato, quota_adult_id')
+    .select('id, numero, sezionale, anno, aruba_filename, sdi_stato, quota_adult_id, intestatario')
     .eq('pagamento_id', pagamentoId)
   if (errEsistenti) {
     logEvento('fattura', 'error', {
@@ -795,9 +926,18 @@ export async function emettiFatturaPagamento(
     id: string
     numero: number
     sezionale: string | null
+    /** L'anno del SEZIONALE di quella riga, che non è per forza quello di oggi. */
+    anno: number | null
     aruba_filename: string | null
     sdi_stato: number | null
     quota_adult_id: string | null
+    /**
+     * Lo snapshot dell'intestatario com'era al momento dell'invio. Porta il
+     * CODICE FISCALE — misurato: 3 righe su 3 in produzione ce l'hanno — ed è la
+     * sola cosa che dica CHI è l'intestatario di una riga con `quota_adult_id`
+     * nullo, cioè di ogni fattura a una persona digitata.
+     */
+    intestatario: { nome?: string | null; cognome?: string | null; codice_fiscale?: string | null } | null
   }[]
 
   // 7. emissione indipendente per quota
@@ -843,14 +983,165 @@ export async function emettiFatturaPagamento(
     return letto
   }
 
+  /**
+   * Le righe VIVE: tutto ciò che non è uno scarto SDI (2/4/9). Una riga scartata
+   * non blocca niente — riemettere dopo uno scarto è l'unica via d'uscita che
+   * esista — mentre una riga viva è un documento fiscale in circolazione.
+   */
+  const viveNonScartate = righeEsistenti.filter(
+    (r) => !(r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto)
+  )
+
   const esiti: EsitoQuota[] = []
   for (const q of quote) {
+    // ── L'ANAGRAFICA SI LEGGE PRIMA DELL'IDEMPOTENZA, e il motivo è il CF ─────
+    // `resolveParentRegistry` è una lettura senza effetti e sta ampiamente sopra
+    // l'allocazione del numero: anticiparla costa una query sul ramo idempotente
+    // e mette in mano il CODICE FISCALE di chi si sta per fatturare, che è
+    // l'unica prova d'identità quando a registro `quota_adult_id` è nullo.
+    // L'ESITO di questa lettura si giudica più in basso, al suo posto: una quota
+    // già emessa resta «già fatto» anche se la riga d'anagrafica nel frattempo
+    // è sparita — il documento è partito lo stesso.
+    const regQuota = q.anagrafica ? null : await resolveParentRegistry(supabase, q.adultId)
+    const cfEmesso = cfNormalizzato(q.anagrafica ? q.anagrafica.codice_fiscale : regQuota?.fiscal_code)
+
     // idempotenza: esiste già una riga non-scartata per questa quota?
-    const gia = righeEsistenti.find((r) => {
-      const scartata = r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto
-      if (scartata) return false
-      return r.quota_adult_id === q.adultId || (!multi && r.quota_adult_id == null)
+    //
+    // ⚠️ L'UGUAGLIANZA VALE FRA DUE UUID, O FRA DUE CODICI FISCALI. Il confronto
+    // era `r.quota_adult_id === q.adultId`, e da quando `adultId` può essere
+    // `null` — l'intestatario digitato, che a registro scrive `quota_adult_id:
+    // null` — quel confronto direbbe «stessa quota» fra due persone diverse solo
+    // perché di nessuna delle due c'è una riga d'anagrafica. `null === null` non
+    // è una prova d'identità, è l'assenza di entrambe le prove.
+    //
+    // La prova, lì, la dà lo SNAPSHOT: `fatture_emesse.intestatario` porta il
+    // codice fiscale, cioè l'identificatore che usa il fisco stesso (misurato: 3
+    // righe su 3 in produzione ce l'hanno, e il ramo `persona`/`altro` lo scrive
+    // sempre). Senza questo confronto ogni riemissione di una fattura
+    // `persona`/`altro` — un timeout, un secondo clic — prenderebbe un 409 che
+    // manda dal commercialista per un documento che non è mai partito.
+    //
+    // ─── E LA RIGA MUTA, che è un caso a parte e non si accorpa ──────────────
+    // Una riga viva senza `quota_adult_id` E senza snapshot del codice fiscale è
+    // una riga LEGACY: scritta prima che quelle colonne esistessero, non dice
+    // niente su CHI. Lì il ripiego storico resta — quota unica, nessuna scelta
+    // esplicita, quella riga È la fattura di questo pagamento — ed è il
+    // comportamento che `emissione-idempotenza.test.ts` fissa da PR #81.
+    // Il predicato guarda la RIGA, non entrambe le parti: che il codice fiscale
+    // ce l'abbiamo noi o no non cambia quanto quella riga sa dire, cioè niente.
+    //
+    // Il ripiego NON è più quello di prima, però, ed è la differenza che conta:
+    // valeva su OGNI riga con `quota_adult_id` nullo, quindi anche su quelle che
+    // il codice fiscale ce l'hanno, e diceva «già fatto» pure quando la scheda
+    // `altro` era cambiata fra due clic. Ora vale solo dove non c'è NIENTE da
+    // confrontare. E cade comunque davanti a una scelta esplicita: chi sceglie ha
+    // espresso un'intenzione precisa, e su una riga muta non gli si può
+    // rispondere «è già la tua» — quello lo decide lui, guardando il documento.
+    //
+    // Nessuno dei due rami fa partire un secondo documento: la differenza fra
+    // «già fatto» e 409 è solo COSA si dice a chi ha premuto il pulsante. Per
+    // questo la riga muta sceglie il messaggio meno dannoso dei due.
+    const gia = viveNonScartate.find((r) => {
+      if (q.adultId != null && r.quota_adult_id === q.adultId) return true
+      if (multi || r.quota_adult_id != null) return false
+      const cfRiga = cfNormalizzato(r.intestatario?.codice_fiscale)
+      // Due codici fiscali in mano: decide il confronto, e non c'è altro da dire.
+      if (cfRiga !== '' && cfEmesso !== '') return cfRiga === cfEmesso
+      // La riga sa CHI è, noi no: non le si può rispondere «è già la tua» senza
+      // saperlo. Si ferma, e il messaggio dice che non si è potuto stabilire.
+      if (cfRiga !== '') return false
+      // La riga è muta: il ripiego storico, che cade davanti a una scelta.
+      return !opzioni.intestatarioScelto
     })
+
+    // ── 🔴 UNA SECONDA FATTURA PER LA STESSA RETTA, INTESTATA A UN ALTRO ──────
+    // L'idempotenza qui sopra confronta `quota_adult_id`. Se il documento è già
+    // uscito per il genitore A e adesso si emette per B, nessuna riga viva
+    // corrisponde: `gia` resta `undefined` e parte un SECONDO documento fiscale
+    // vero per la stessa retta — che si corregge solo con una nota di variazione.
+    // La falla esisteva già (bastava che `intestatario_fatture` cambiasse fra due
+    // clic); il selettore la mette a portata di mouse. Vale anche nel verso
+    // opposto: con `quota_adult_id` NULL a registro, scegliere un genitore faceva
+    // passare la quota per «già emessa» e NON riemetteva.
+    //
+    // ⚠️ E IL DATABASE NON LA FERMA — misurato su `pg_indexes` il 2026-09-04.
+    // `fatture_emesse_pagamento_quota_uidx` È unico e parziale, ma la sua chiave è
+    // `(pagamento_id, COALESCE(quota_adult_id, '00000000-…'))`: due intestatari
+    // diversi sono DUE CHIAVI diverse e l'INSERT passa. E anche se rifiutasse,
+    // arriverebbe dopo l'upload, cioè a documento già partito. **Questa guardia di
+    // codice è l'unica difesa che esista.**
+    //
+    // Solo nel caso a quota UNICA: coi genitori separati le quote sono per
+    // definizione più d'una e ciascuna ha la sua riga, quindi il confronto per
+    // `quota_adult_id` lì è quello giusto.
+    if (!multi && !gia && viveNonScartate.length > 0) {
+      // Il messaggio deve essere vero in TUTTI i casi in cui la guardia scatta, e
+      // sono quattro. Dire «intestata a un'altra persona» quando il registro non
+      // nomina nessuno sarebbe un'affermazione senza misura; dire «serve una nota
+      // di variazione» su una fattura che forse non è mai partita manderebbe dal
+      // commercialista invece che sul pannello di Aruba.
+      const vivaAltrui = viveNonScartate.find((r) => {
+        if (r.quota_adult_id != null && r.quota_adult_id !== q.adultId) return true
+        const cfRiga = cfNormalizzato(r.intestatario?.codice_fiscale)
+        return cfRiga !== '' && cfEmesso !== '' && cfRiga !== cfEmesso
+      })
+      const viva = vivaAltrui ?? viveNonScartate[0]
+      // ⚠️ L'ANNO È QUELLO DELLA RIGA, non quello di oggi: `annoFiscale()` su una
+      // fattura del 2025 manderebbe a cercare un numero che in quel sezionale non
+      // esiste. Il ripiego sull'anno corrente vale solo per le righe che non lo
+      // portano affatto.
+      const annoViva = viva.anno ?? anno
+      const numeroViva = viva.sezionale
+        ? `${viva.sezionale} ${viva.numero}/${annoViva}`
+        : `${viva.numero}/${annoViva}`
+      // Le due colonne insieme (nessuno stato SDI E nessun nome file) sono la
+      // firma di un RIFIUTO DI TRASPORTO: nessuno sa se il documento sia partito.
+      const sospesa = viva.sdi_stato == null && viva.aruba_filename == null
+      // Nessun adulto a registro E nessun codice fiscale nello snapshot: è una
+      // riga legacy, e di lei il registro davvero non sa dire niente.
+      const senzaTraccia =
+        !vivaAltrui && viva.quota_adult_id == null && cfNormalizzato(viva.intestatario?.codice_fiscale) === ''
+      const dettaglio = sospesa
+        ? 'dall’esito di trasporto ignoto (nessuno sa se sia partita)'
+        : vivaAltrui
+          ? 'intestata a un’altra persona'
+          : senzaTraccia
+            ? 'e a registro non risulta a chi sia intestata'
+            : 'e non è possibile stabilire se sia intestata alla stessa persona'
+      const cosaFare = sospesa
+        ? 'Prima di riemettere, verifica su Aruba se quel documento risulta e chiudi la riga a registro.'
+        : 'L’intestatario di una fattura emessa si cambia solo con una nota di variazione: ' +
+          'una seconda fattura per la stessa retta non si emette.'
+      // `esito` è in lista bianca e resta in chiaro in tabella: «quante volte si è
+      // tentato un secondo documento» diventa una query. Nessun nome, nessun uuid
+      // di persona: solo numeri e l'uuid del pagamento.
+      logEvento('fattura', 'warn', {
+        operazione: 'emettiFatturaPagamento:idempotenza',
+        esito: 'seconda-fattura-altro-intestatario-fermata',
+        provider: 'aruba',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+        numero: viva.numero,
+        anno,
+        msg:
+          'tentata l’emissione di un secondo documento per un pagamento che ne ha già uno vivo, ' +
+          'con un intestatario diverso: fermata prima di allocare il numero',
+      })
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        numero: viva.numero,
+        numeroFattura: numeroViva,
+        motivo: 'gia_emessa_altro_intestatario',
+        httpStatus: 409,
+        messaggio:
+          `Questo pagamento ha già una fattura viva (${numeroViva}) ${dettaglio}. ` +
+          `${cosaFare} Nessun numero è stato consumato.`,
+      })
+      continue
+    }
+
     if (gia) {
       // ── UNA RIGA «TRASPORTO FALLITO» NON È UNA FATTURA INVIATA ───────────────
       // Si riconosce da due colonne insieme: `sdi_stato` nullo E nessun nome file.
@@ -931,53 +1222,132 @@ export async function emettiFatturaPagamento(
     // 2026-08-10 su `parents`: 22 righe con un `fiscal_code` valorizzato, 21 delle
     // quali NON hanno la forma di un codice fiscale (venti a 14 caratteri, una a
     // due). Quattordici caratteri alfanumerici passano lo XSD e li scarta lo SDI.
-    const reg = await resolveParentRegistry(supabase, q.adultId)
-    if (!reg) {
-      esiti.push({
-        adultId: q.adultId,
-        label: q.label,
-        ok: false,
-        motivo: 'intestatario_mancante',
-        messaggio:
-          `Intestatario «${q.label || 'genitore'}» non trovato in anagrafica: ` +
-          'nessun numero è stato consumato.',
-      })
-      continue
+    //
+    // ── L'UNICO PUNTO DI BIFORCAZIONE, e da qui in giù non esiste più `reg` ───
+    // L'intestatario può venire da due posti: una riga `parents` (il caso di
+    // sempre) oppure un'anagrafica digitata — il ramo `intestatario_fatture.tipo
+    // = 'altro'` della scheda, o la persona scelta al momento dell'emissione.
+    // Le due strade si uniscono QUI, in un solo oggetto `intest`: più in basso il
+    // blocco `cessionario:` dell'XML e `baseRow.intestatario` leggono quello e
+    // nient'altro. Se si biforcassero anche là, una migrazione a metà darebbe un
+    // XML con un intestatario e un registro con un altro — sullo stesso documento.
+    let intest: {
+      nome: string
+      cognome: string
+      codiceFiscale: string
+      indirizzo: string
+      cap: string
+      comune: string
+      provincia?: string
+      numeroCivico?: string
+      /** `parents.id` a registro, o `null` per un'anagrafica senza riga d'archivio. */
+      registryId: string | null
     }
-    const erroriCessionario = validaCessionario({
-      codice_fiscale: reg.fiscal_code,
-      nome: reg.first_name,
-      cognome: reg.last_name,
-      indirizzo: reg.residence_address,
-      cap: reg.zip_code,
-      comune: reg.residence_city,
-    })
-    if (Object.keys(erroriCessionario).length > 0) {
-      const nome = [reg.first_name, reg.last_name].filter(Boolean).join(' ') || q.label || 'intestatario'
-      // Nei campi del log entrano solo uuid e NUMERI: il nome e il codice fiscale
-      // del genitore sono dati personali e non ci vanno mai (`redact` li chiuderebbe
-      // comunque). Il `msg` dice QUALI campi, non di CHI: chi opera ha già il nome
-      // sotto gli occhi, nella riga del pagamento su cui ha appena cliccato.
-      logEvento('fattura', 'error', {
-        operazione: 'emettiFatturaPagamento:cessionario',
-        esito: 'cessionario-incompleto',
-        scuola_id: pag.scuola_id,
-        pagamento_id: pagamentoId,
-        campi_mancanti: Object.keys(erroriCessionario).length,
-        msg:
-          `anagrafica dell'intestatario incompleta o non valida (${Object.keys(erroriCessionario).join(', ')}): ` +
-          'la fattura NON è stata emessa e nessun numero è stato consumato',
+
+    if (q.anagrafica) {
+      // Nessuna riga da rileggere: quel payload È la fonte. Quindi niente
+      // `resolveParentRegistry` e niente `leggiResidenzaEstesa` — provincia e
+      // civico arrivano già insieme al resto. Le difese sono `validaCessionario`
+      // qui sotto e lo snapshot in `fatture_emesse.intestatario`.
+      const erroriDigitati = validaCessionario(q.anagrafica)
+      if (Object.keys(erroriDigitati).length > 0) {
+        const nomeDigitato =
+          [q.anagrafica.nome, q.anagrafica.cognome].filter(Boolean).join(' ') || q.label || 'intestatario'
+        logEvento('fattura', 'error', {
+          operazione: 'emettiFatturaPagamento:cessionario',
+          // Valore distinto da `cessionario-incompleto`: le due situazioni si
+          // riparano in due posti diversi, e in tabella la differenza si interroga.
+          esito: 'cessionario-digitato-incompleto',
+          scuola_id: pag.scuola_id,
+          pagamento_id: pagamentoId,
+          campi_mancanti: Object.keys(erroriDigitati).length,
+          msg:
+            `intestatario indicato a mano incompleto o non valido (${Object.keys(erroriDigitati).join(', ')}): ` +
+            'la fattura NON è stata emessa e nessun numero è stato consumato',
+        })
+        esiti.push({
+          adultId: q.adultId,
+          label: q.label,
+          ok: false,
+          motivo: 'intestatario_mancante',
+          // Il testo di sempre manderebbe a correggere «l'anagrafica del
+          // genitore», che per questo documento non c'entra niente.
+          messaggio: messaggioCessionarioIncompleto(erroriDigitati, nomeDigitato, DOVE_SCHEDA_BAMBINO),
+        })
+        continue
+      }
+      intest = {
+        nome: s(q.anagrafica.nome),
+        cognome: s(q.anagrafica.cognome),
+        codiceFiscale: s(q.anagrafica.codice_fiscale),
+        indirizzo: s(q.anagrafica.indirizzo),
+        cap: s(q.anagrafica.cap),
+        comune: s(q.anagrafica.comune),
+        provincia: s(q.anagrafica.provincia).trim() || undefined,
+        numeroCivico: s(q.anagrafica.numero_civico).trim() || undefined,
+        registryId: null,
+      }
+    } else {
+      // Già letta sopra, prima dell'idempotenza: il codice fiscale serviva lì.
+      const reg = regQuota
+      if (!reg) {
+        esiti.push({
+          adultId: q.adultId,
+          label: q.label,
+          ok: false,
+          motivo: 'intestatario_mancante',
+          messaggio:
+            `Intestatario «${q.label || 'genitore'}» non trovato in anagrafica: ` +
+            'nessun numero è stato consumato.',
+        })
+        continue
+      }
+      const erroriCessionario = validaCessionario({
+        codice_fiscale: reg.fiscal_code,
+        nome: reg.first_name,
+        cognome: reg.last_name,
+        indirizzo: reg.residence_address,
+        cap: reg.zip_code,
+        comune: reg.residence_city,
       })
-      esiti.push({
-        adultId: q.adultId,
-        label: q.label,
-        ok: false,
-        motivo: 'intestatario_mancante',
-        messaggio: messaggioCessionarioIncompleto(erroriCessionario, nome),
-      })
-      continue
+      if (Object.keys(erroriCessionario).length > 0) {
+        const nome = [reg.first_name, reg.last_name].filter(Boolean).join(' ') || q.label || 'intestatario'
+        // Nei campi del log entrano solo uuid e NUMERI: il nome e il codice fiscale
+        // del genitore sono dati personali e non ci vanno mai (`redact` li chiuderebbe
+        // comunque). Il `msg` dice QUALI campi, non di CHI: chi opera ha già il nome
+        // sotto gli occhi, nella riga del pagamento su cui ha appena cliccato.
+        logEvento('fattura', 'error', {
+          operazione: 'emettiFatturaPagamento:cessionario',
+          esito: 'cessionario-incompleto',
+          scuola_id: pag.scuola_id,
+          pagamento_id: pagamentoId,
+          campi_mancanti: Object.keys(erroriCessionario).length,
+          msg:
+            `anagrafica dell'intestatario incompleta o non valida (${Object.keys(erroriCessionario).join(', ')}): ` +
+            'la fattura NON è stata emessa e nessun numero è stato consumato',
+        })
+        esiti.push({
+          adultId: q.adultId,
+          label: q.label,
+          ok: false,
+          motivo: 'intestatario_mancante',
+          messaggio: messaggioCessionarioIncompleto(erroriCessionario, nome),
+        })
+        continue
+      }
+      const residenza = await leggiResidenzaEstesa(supabase, reg.id, pag.scuola_id)
+      intest = {
+        nome: s(reg.first_name),
+        cognome: s(reg.last_name),
+        codiceFiscale: s(reg.fiscal_code),
+        indirizzo: s(reg.residence_address),
+        cap: s(reg.zip_code),
+        comune: s(reg.residence_city),
+        provincia: residenza.provincia,
+        numeroCivico: residenza.numeroCivico,
+        registryId: reg.id,
+      }
     }
-    const residenza = await leggiResidenzaEstesa(supabase, reg.id, pag.scuola_id)
 
     // ── LA CAUSALE DI QUESTA QUOTA ───────────────────────────────────────────
     // Il separatore è « - » e non un trattino lungo: «—» (U+2014) sta fuori da
@@ -985,7 +1355,7 @@ export async function emettiFatturaPagamento(
     // ogni fattura del ramo multi-quota nasceva formalmente invalida. Il
     // generatore ora translittera comunque, ma un carattere che il tracciato non
     // ammette non si scrive di proposito nel sorgente.
-    const causale = multi ? `${causaleBase} - quota ${q.label || reg.first_name || 'genitore'}` : causaleBase
+    const causale = multi ? `${causaleBase} - quota ${q.label || intest.nome || 'genitore'}` : causaleBase
     // IL TAGLIO SI MISURA DOVE IL TESTO VA A FINIRE DAVVERO — e da oggi va in un
     // posto solo: `<Descrizione>` della riga (2.2.1.4, 1.000 caratteri). Il gate
     // guardava i 200 di `<Causale>` (2.1.1.11), che questo motore NON scrive più:
@@ -1198,15 +1568,15 @@ export async function emettiFatturaPagamento(
         data: dataDocumento,
         cedente,
         cessionario: {
-          codiceFiscale: s(reg.fiscal_code),
-          nome: s(reg.first_name),
-          cognome: s(reg.last_name),
+          codiceFiscale: intest.codiceFiscale,
+          nome: intest.nome,
+          cognome: intest.cognome,
           sede: {
-            indirizzo: s(reg.residence_address),
-            numeroCivico: residenza.numeroCivico,
-            cap: s(reg.zip_code),
-            comune: s(reg.residence_city),
-            provincia: residenza.provincia,
+            indirizzo: intest.indirizzo,
+            numeroCivico: intest.numeroCivico,
+            cap: intest.cap,
+            comune: intest.comune,
+            provincia: intest.provincia,
             nazione: 'IT',
           },
         },
@@ -1271,12 +1641,12 @@ export async function emettiFatturaPagamento(
       progressivo_invio: progressivoInvio,
       causale,
       importo: importoQuota,
-      intestatario: { nome: reg.first_name, cognome: reg.last_name, codice_fiscale: reg.fiscal_code },
+      intestatario: { nome: intest.nome, cognome: intest.cognome, codice_fiscale: intest.codiceFiscale },
       xml_inviato: xml,
       creato_da: attore.id,
       quota_adult_id: q.adultId,
       quota_label: q.label || null,
-      parent_registry_id: reg.id,
+      parent_registry_id: intest.registryId,
       bollo_virtuale: bolloImporto > 0,
     }
 
@@ -1538,6 +1908,9 @@ export async function emettiFatturaPagamento(
     const first = esiti[0]
     const motivoAgg =
       first?.motivo === 'intestatario_mancante' ? 'intestatario_mancante'
+      // Non è uno scarto e non è un guasto: è un documento che esiste già. Il
+      // codice suo serve alla route per mandare al client il `codice` tradotto.
+      : first?.motivo === 'gia_emessa_altro_intestatario' ? 'gia_emessa_altro_intestatario'
       : first?.motivo === 'numerazione' ? 'numerazione_non_allineata'
       // Una riga IVA incoerente è una CONFIGURAZIONE da correggere, non uno scarto
       // del provider: 503 come il cedente incompleto, e lo stesso invito a
@@ -1556,6 +1929,7 @@ export async function emettiFatturaPagamento(
       httpStatus:
         first?.httpStatus
         ?? (motivoAgg === 'intestatario_mancante' ? 422
+        : motivoAgg === 'gia_emessa_altro_intestatario' ? 409
         : motivoAgg === 'numerazione_non_allineata' ? 503
         : motivoAgg === 'non_configurato' ? 503
         : motivoAgg === 'errore' ? 500

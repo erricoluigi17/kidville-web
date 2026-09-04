@@ -341,5 +341,13 @@
   "erroreIncaricoStaffRiservato": "Role, age groups and assigned classes — and management accounts — can only be changed by management: the school office can change the location",
   "errorePagamentoInesistente": "This payment no longer exists: the invoice cannot be issued",
   "erroreRettaCicloFratelli": "This link between siblings would form a loop, and in the end nobody would pay",
-  "erroreRettaFratelloNonDisponibile": "The sibling indicated is not available: it must be an enrolled child at the same location"
+  "erroreRettaFratelloNonDisponibile": "The sibling indicated is not available: it must be an enrolled child at the same location",
+  "erroreEstrattoContoAssente": "No bank statement received: choose the file to upload and try again.",
+  "erroreEstrattoContoTipoNonAmmesso": "This file type cannot be uploaded: a .csv, .xls or .xlsx bank statement is required.",
+  "erroreEstrattoContoTroppoGrande": "This bank statement is too large: it can weigh up to 4 MB. Export a shorter period and try again.",
+  "erroreEstrattoContoIlleggibile": "The file arrived but cannot be opened as a bank statement: check that it is the file downloaded from your bank and try again.",
+  "erroreEstrattoContoSenzaAccrediti": "No credit transaction recognized in the file: check the column headers or the separator.",
+  "erroreIntestatarioInConflittoConQuote": "This payment is split between two parents: the invoice holder is not chosen here, you change the payment shares instead",
+  "erroreFatturaGiaEmessaAltroIntestatario": "This payment already has a live invoice: the holder of an issued invoice can only be changed with a credit note",
+  "erroreIntestatarioNonDelBambino": "The invoice holder you selected is not one of this child’s parents: enter their full details, or pick a different one"
 }

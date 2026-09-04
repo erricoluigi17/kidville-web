@@ -7,6 +7,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 import { jsPDF } from 'jspdf'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -57,7 +58,31 @@ export const maxDuration = 300
 const postBodySchema = z.object({
   pagamento_id: zUuid,
   causale: z.unknown().optional(),
+  /**
+   * L'intestatario scelto a mano dalla segreteria. ASSENTE = comportamento di
+   * sempre: la cascata di `determinaQuoteFatturazione` decide da sola.
+   *
+   * L'unione discriminata rende irrappresentabile l'ibrido «adult_id + campi
+   * anagrafici»: sul ramo `adult` viaggia solo l'id, e nome, codice fiscale e
+   * residenza si rileggono da `parents` lato server. Accettare l'anagrafica dal
+   * client per una persona che abbiamo in archivio vorrebbe dire lasciar
+   * intestare una fattura a un genitore vero con un codice fiscale forgiato dal
+   * browser.
+   */
+  intestatario: zIntestatarioScelto.optional(),
 })
+
+/**
+ * I due rifiuti che nascono con il selettore, e i loro codici.
+ *
+ * Costanti LOCALI e letterali, non un accesso a una mappa: il lock
+ * `errori-con-codice` risolve `codice: X` solo se `X` è una stringa nel corpo
+ * oppure un `const X = '…'` di QUESTO file. Un valore che il lock non sa leggere
+ * è un valore che nessuno controlla.
+ */
+const CODICE_CONFLITTO_QUOTE = 'INTESTATARIO_IN_CONFLITTO_CON_QUOTE'
+const CODICE_GIA_EMESSA_ALTRO = 'FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO'
+const CODICE_NON_DEL_BAMBINO = 'INTESTATARIO_NON_DEL_BAMBINO'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
@@ -111,7 +136,7 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
 
     const b = await parseBody(request, postBodySchema)
     if ('response' in b) return b.response
-    const { pagamento_id, causale } = b.data
+    const { pagamento_id, causale, intestatario } = b.data
 
     const supabase = await createAdminClient()
 
@@ -156,8 +181,37 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
       }
     }
 
-    const esito = await emettiFatturaPagamento(supabase, pagamento_id, { id: auth.user.id })
+    // ⚠️ L'intestatario scelto NON viene scritto su `alunni.intestatario_fatture`:
+    // vale per QUESTO documento e basta. Persisterlo qui vorrebbe dire che una
+    // fattura andata storta lascia dietro di sé un intestatario nuovo su tutte le
+    // rette future del bambino, senza che nessuno l'abbia deciso. La scheda si
+    // cambia dalla scheda.
+    const esito = await emettiFatturaPagamento(supabase, pagamento_id, { id: auth.user.id }, {
+      intestatarioScelto: intestatario,
+    })
     if (!esito.ok) {
+      // I due rifiuti del selettore nascono CON il codice: senza, l'utente inglese
+      // leggerebbe la prosa italiana del server (lock `errori-con-codice`). Gli
+      // altri restano come sono — il loro debito è dichiarato in allowlist e si
+      // paga a parte, non di straforo dentro un lavoro che parla d'altro.
+      if (esito.motivo === 'intestatario_in_conflitto') {
+        return NextResponse.json(
+          { error: esito.messaggio, codice: CODICE_CONFLITTO_QUOTE, data: { motivo: esito.motivo } },
+          { status: esito.httpStatus }
+        )
+      }
+      if (esito.motivo === 'gia_emessa_altro_intestatario') {
+        return NextResponse.json(
+          { error: esito.messaggio, codice: CODICE_GIA_EMESSA_ALTRO, data: { motivo: esito.motivo } },
+          { status: esito.httpStatus }
+        )
+      }
+      if (esito.motivo === 'intestatario_non_del_bambino') {
+        return NextResponse.json(
+          { error: esito.messaggio, codice: CODICE_NON_DEL_BAMBINO, data: { motivo: esito.motivo } },
+          { status: esito.httpStatus }
+        )
+      }
       return NextResponse.json(
         { error: esito.messaggio, data: { motivo: esito.motivo } },
         { status: esito.httpStatus }

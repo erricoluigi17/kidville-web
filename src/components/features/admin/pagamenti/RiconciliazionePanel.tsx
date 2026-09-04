@@ -13,6 +13,7 @@ import { MovimentoDialog } from './MovimentoDialog';
 import type { PrecompilaTransazione } from './TransazioniPanel';
 import { BTN_PRIMARY_AA } from './ui';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { LIMITE_UPLOAD_BYTE } from '@/lib/upload/limite-piattaforma';
 import {
   SEMAFORO,
   FILTRI,
@@ -39,8 +40,22 @@ interface Props {
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
 /**
+ * ⚠️ GLI HEADER DI UN UPLOAD: SOLO L'IDENTITÀ, MAI IL `Content-Type`.
+ *
+ * `hdr()` qui sopra imposta `Content-Type: application/json`. Passarlo insieme a un
+ * `FormData` è il modo più rapido di rompere un upload: il browser, vedendo l'header già
+ * scritto, NON aggiunge il proprio `boundary=…`, e il server riceve un multipart senza
+ * delimitatore — cioè niente. E non si vede: la richiesta parte, il tipo è quello che si è
+ * chiesto, e in un test con un mock piatto lo status resta 200.
+ *
+ * Per questo è una funzione a sé e non un `hdr()` con un flag: due chiamate diverse per due
+ * cose diverse, invece di un parametro che un giorno qualcuno dimentica.
+ */
+const hdrFile = (u: string) => ({ 'x-user-id': u });
+
+/**
  * Vista Riconciliazione bancaria — lista a SEMAFORO del registro cumulativo.
- * Import CSV dell'estratto conto, poi ogni movimento è una riga colorata per stato
+ * Import dell'estratto conto (.xls/.xlsx/.csv), poi ogni movimento è una riga colorata per stato
  * (verde=confermato · giallo=suggerito · rosso=da abbinare · grigio=ignorato):
  * cliccando si apre il popup centrale (MovimentoDialog) con suggerimenti, ricerca
  * manuale, conferma/ignora/riapri e — a saldo avvenuto — ricevuta/fattura.
@@ -62,7 +77,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
 
   // Ref alla riga cliccata: ripristino del focus alla chiusura del dialog (WCAG 2.4.3).
   const triggerRef = useRef<HTMLButtonElement | null>(null);
-  // Import CSV: il trigger è un <button> (A1) che aziona via ref l'input file, così
+  // Import estratto conto: il trigger è un <button> (A1) che aziona via ref l'input file, così
   // il controllo resta raggiungibile e attivabile da tastiera (Tab + Invio/Spazio).
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -106,16 +121,36 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     setFiltro(id);
   };
 
+  /**
+   * Il file della banca parte COM'È: `.xls`, `.xlsx` o `.csv`, in multipart.
+   *
+   * Prima c'era `await file.text()` e un JSON: il `.xls` vero è un binario BIFF8 da 2,1 MB,
+   * letto come testo diventava spazzatura, e in JSON (o peggio in base64, 2,91 MB) sfondava
+   * il tetto di 4 MB della piattaforma. Il file non si legge più qui: lo legge il server.
+   */
   const upload = async (file: File) => {
+    // ⚠️ La guardia sta PRIMA della partenza, e non è un doppione di quella del server:
+    // oltre il tetto di piattaforma la risposta non è nostra — è un 413 di Vercel in
+    // `text/plain`, senza JSON da leggere — quindi il messaggio dovrebbe uscire da qui
+    // comunque. Meglio non partire affatto.
+    if (file.size > LIMITE_UPLOAD_BYTE) {
+      setEsito(null);
+      setError(t('reconFileTroppoGrande'));
+      return;
+    }
     setBusy(true);
     setError(null);
     setEsito(null);
     try {
-      const contenuto = await file.text();
+      const corpo = new FormData();
+      corpo.append('file', file);
+      corpo.append('scuola_id', scuolaId);
       const r = await fetch('/api/pagamenti/riconciliazione', {
         method: 'POST',
-        headers: hdr(userId),
-        body: JSON.stringify({ filename: file.name, contenuto, scuola_id: scuolaId }),
+        // ⚠️ `hdrFile`, MAI `hdr`: con un `Content-Type` scritto a mano il browser non
+        // aggiunge il boundary e il multipart arriva illeggibile. Vedi la nota su `hdrFile`.
+        headers: hdrFile(userId),
+        body: corpo,
       });
       const j = await r.json();
       if (!r.ok || !j.success) { setError(messaggioDaCorpo(j, t('reconErroreImport'))); return; }
@@ -175,7 +210,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} className={BTN_PRIMARY_AA}>
         <Upload size={14} /> {busy ? t('reconElaboro') : t('reconImportaCsv')}
       </button>
-      <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="sr-only" tabIndex={-1} aria-hidden="true" disabled={busy}
+      {/* I tre formati in cui una banca esporta davvero, per estensione E per MIME: su un
+          `.xls` scaricato dall'home banking il browser dichiara spesso
+          `application/octet-stream`, e un `accept` solo-MIME lo nasconderebbe dal selettore. */}
+      <input ref={fileInputRef} type="file"
+        accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        className="sr-only" tabIndex={-1} aria-hidden="true" disabled={busy}
         onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
       <p className="mt-1 font-maven text-[11px] text-kidville-sub">
         {t('reconColonne')}

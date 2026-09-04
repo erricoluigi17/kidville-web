@@ -67,7 +67,7 @@
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, abbinamento per codice fiscale), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -95,6 +95,105 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale |
 
 ---
+
+## 🧾 Changelog — L'estratto conto non si era mai potuto caricare, e la fattura non sapeva a chi intestarsi — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
+
+**Segnalazione**: «ho provato a caricare un estratto conto, ma legge solo file csv». Chiesto anche
+che il portale leggesse **chi ha fatto il bonifico** e lo proponesse come intestatario della fattura.
+
+Misurando invece di dedurre, i difetti erano **tre**, e nessuno dei tre era quello segnalato.
+
+**1. Non leggeva nemmeno il CSV.** Eseguito `parseCsv` sul file vero della banca: **0 movimenti su
+65**, 68 righe «scartate», e come intestazioni la riga del rapporto e dell'IBAN. Due cause che si
+sommano: il parser assume che la prima riga sia sempre l'intestazione (nel file della banca le prime
+quattro sono preambolo, e l'intestazione vera è spezzata su due righe), e le date hanno l'anno a due
+cifre. Togliendo solo il preambolo restano 0.
+
+**2. La funzione non aveva mai importato una riga in vita sua.**
+`select count(*) from riconciliazione_movimenti` → **0**. In produzione dal 19 luglio: non è che
+l'estratto conto si leggesse male, non si è mai potuto leggere. Il lato buono è che non c'era niente
+da migrare.
+
+**3. La fatturazione era ferma per il 92% dei bambini.** Cercando dove mettere l'intestatario
+suggerito: **579 alunni su 630** non ne avevano nessuno risolvibile, e per loro «Fattura» rispondeva
+**422**. La controprova sono le **3 fatture emesse in tutto** contro 93 pagamenti saldati. I dati
+c'erano — 671 genitori su 735 hanno già tutto ciò che lo SdI pretende — mancava la **designazione**,
+che nessuno ha mai fatto a mano 630 volte. *La funzione richiesta non era un accessorio: era ciò che
+sblocca la fatturazione.*
+
+### Il nome di chi paga sta dentro la descrizione
+Non è una colonna: sta fra ` DA ` e il primo marcatore fra `PER` · `COMM` · `SPESE` · `TRN`.
+Misurato su **6.775 accrediti reali**: 6.764 estratti, il **99,84%**. Gli undici falliti sono
+competenze e storni, che un ordinante non ce l'hanno. I casi limite sono tutti veri: 207 conti
+cointestati, ordine cognome/nome variabile, e spazi spuri che la banca inserisce a capo dentro le
+parole. **Il nome non si spezza per congettura**: il doppio spazio separa due persone in alcuni casi
+e in altri è spurio.
+
+### Sei trappole misurate, ognuna con un test che morde
+- **`Data Operaz.` ≠ `Data Valuta` in 797 righe su 9.000**, e la risoluzione dei sinonimi sceglieva
+  la colonna sbagliata. La data entra nell'impronta anti-duplicato: sarebbe stato permanente.
+- **`EUR` non era fra i sinonimi di importo** → zero movimenti anche trovata l'intestazione.
+- **Il testo formattato dell'`.xls` è in ordine americano**: il 6 agosto diventa 8 giugno.
+- **`cellDates` costruisce le date in ora locale**: `toISOString()` dava il giorno prima a Roma, e
+  sarebbe stato **verde in CI a UTC**.
+- **`blankrows: false`** fa scivolare gli indici: ogni «riga N» mentirebbe.
+- **`31/02/2026` passava** e diventava `22008` a Postgres: un 500 su un errore d'input.
+
+Due trovate in corso d'opera: `sheet_to_json` restituisce array **sparsi** (`.map()` sui buchi li
+ricopia), e `raw: true` impedisce che un `.xls`-che-è-HTML faccia leggere `150,00` come quindicimila.
+
+### L'intestatario si propone, l'operatore conferma
+Il motore della proposta vive in **un posto solo** (`intestatario-pagamento.ts`, gemello di
+`causale-pagamento.ts`, con lock): un'anteprima che ricalcolasse per conto suo farebbe approvare un
+nome e spedirne un altro — è la lezione della FPR 1948/26. I candidati sono **solo i genitori di quel
+bambino**, non i 735 dell'archivio: qui un omonimo non sbaglia una classe, manda all'Agenzia delle
+Entrate una fattura intestata a un estraneo.
+
+Abbinamento **solo per uguaglianza, mai per somiglianza** — la regola era già scritta in
+`iscrizioni/import/abbinamento.ts`. Misurato: su 60 ordinanti, **42 esatti e unici, zero ambigui**.
+Il `motivo` ha **quattro** valori e non uno: con un valore solo l'interfaccia avrebbe detto «è
+l'intestatario sulla scheda» anche quando la scheda non c'entra.
+
+`intestatario_fatture.tipo='altro'` era **compilabile e ignorato in silenzio** dal 2026-07-18: ora è
+onorato da fattura, ricevuta, attestazione 730 ed export AdE, e ha i campi che lo SdI pretende
+(mancavano cognome, CAP e comune). Su pagamento ripartito fra genitori separati si **rifiuta con
+409**: l'ordinante dice chi ha spostato il denaro, non come si ripartisce il costo.
+
+### Una falla preesistente, chiusa nello stesso lavoro
+L'idempotenza confronta `quota_adult_id`: emettere per il genitore A, riaprire e scegliere B faceva
+partire **una seconda fattura vera per la stessa retta**. Esisteva già — bastava che l'anagrafica
+cambiasse fra due clic — e il selettore la rendeva raggiungibile in due. Esiste un indice UNIQUE
+parziale, ma `quota_adult_id` è *dentro* la chiave (due intestatari = due chiavi diverse) e
+l'INSERT arriva **dopo** l'upload ad Aruba, cioè a documento già partito: la guardia di codice resta
+l'unica difesa, e ora c'è.
+
+### Tre test che non provavano quello che dichiaravano
+Trovati **durante** il lavoro, ed è la parte che vale di più:
+- un commento attribuiva alla forma dell'algoritmo una protezione che sul file vero dà la lista dei
+  sinonimi — e il caso che la forma protegge davvero non era coperto;
+- «la colonna Ordinante vince anche quando è vuota» non aveva test;
+- l'asserzione sul BOM era una **tautologia**: in JS quel carattere è già spazio per `trim()`. Il
+  caso vero è il BOM **in mezzo** a un'intestazione, che fa sparire la colonna.
+
+E un punto cieco di un lock di accessibilità: conta le occorrenze **testuali** della classe, quindi
+nove etichette che prendevano il colore da una costante condivisa sarebbero rimaste illeggibili a
+schermo **senza far scattare niente**.
+
+### Verificato, non dichiarato
+`Conti-16.xls` e `Conti-16.csv` → **65 movimenti ciascuno**, ordinante su 65 su 65, **le stesse 65
+impronte**: le due strade convergono. Attraverso la route: **200**, e ricaricando lo stesso file
+**0 nuovi · 65 duplicati**. `Conti-15.xls` (2,1 MB, 9.004 righe) → 6.775 movimenti in 421 ms, 34
+INSERT a blocchi di 200, **zero** ricerche con la lista di impronte (che avrebbe costruito una URL da
+450 KB, rifiutata da PostgREST). Su tutti e 16 gli export della banca: **10.555 movimenti, 0 scarti,
+0 troncamenti, 0 righe illeggibili**.
+
+`hashMovimento`, `norm()` e la causale intera non sono stati toccati: un esecutore che li aveva
+riscritti in forma equivalente li ha **ripristinati identici**, perché «non si tocca» vale anche per
+una riscrittura che non cambia il risultato.
+
+**Nessuna migrazione.** Il conteggio delle domande di iscrizione in `CLAUDE.md`/`AGENTS.md` è
+rimisurato: **583**, contro le 542 di due giorni prima — circa venti al giorno, di nuovo il doppio
+della stima precedente.
 
 ## 🎨 Changelog — Gli elementi neri non erano nel CSS: l'app non aveva mai detto al sistema di essere chiara — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
 

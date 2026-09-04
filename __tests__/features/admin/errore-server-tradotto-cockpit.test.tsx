@@ -154,8 +154,8 @@ describe('cockpit — un rifiuto senza `error` non mostra la stringa «undefined
   });
 
   it('FatturaButton: il 500 con corpo vuoto porta la frase di ripiego, non «undefined»', async () => {
-    const avvisi: string[] = [];
-    vi.stubGlobal('alert', vi.fn((m: string) => { avvisi.push(m); }));
+    const chiamateAlert = vi.fn();
+    vi.stubGlobal('alert', chiamateAlert);
     vi.stubGlobal('fetch', fetchConAnteprima({ ok: false, status: 500, corpo: {} }));
 
     render(<FatturaButton pagamentoId="p1" userId="u1" />);
@@ -164,20 +164,20 @@ describe('cockpit — un rifiuto senza `error` non mostra la stringa «undefined
     await waitFor(() => expect((emetti as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(emetti);
 
-    await waitFor(() => expect(avvisi).toHaveLength(1));
     // Il difetto era letterale: `alert(j.error)` con `error` assente stampava
-    // la parola «undefined» a una segretaria.
-    // `String(...)` di proposito: col difetto rimesso, `alert(j.error)` passa
-    // `undefined` — e un `toContain` su `undefined` fallirebbe con un errore di
-    // tipo invece che con la misura. Così il rosso dice cosa è andato storto.
-    expect(String(avvisi[0])).not.toContain('undefined');
-    expect(avvisi[0]).toBe(itContabilita.fatBtn_err_emissione);
+    // la parola «undefined» a una segretaria. Dal 2026-09-04 il rifiuto non passa
+    // più da una finestrella di sistema — un 409 che spiega una regola fiscale
+    // dentro un `alert()` non si legge, non si copia e non si traduce — ma la
+    // misura è la stessa: il testo che finisce SOTTO GLI OCCHI di chi opera.
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(itContabilita.fatBtn_err_emissione));
+    expect(String(screen.getByRole('alert').textContent)).not.toContain('undefined');
+    expect(chiamateAlert).not.toHaveBeenCalled();
   });
 
   it('FatturaButton: con un codice dichiarato e lang="en" l’avviso è in inglese', async () => {
     document.documentElement.setAttribute('lang', 'en');
-    const avvisi: string[] = [];
-    vi.stubGlobal('alert', vi.fn((m: string) => { avvisi.push(m); }));
+    const chiamateAlert = vi.fn();
+    vi.stubGlobal('alert', chiamateAlert);
     vi.stubGlobal(
       'fetch',
       fetchConAnteprima({ ok: false, status: 403, corpo: { error: PROSA_DEL_SERVER, codice: 'SEDE_NON_ACCESSIBILE' } }),
@@ -189,8 +189,8 @@ describe('cockpit — un rifiuto senza `error` non mostra la stringa «undefined
     await waitFor(() => expect((emetti as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(emetti);
 
-    await waitFor(() => expect(avvisi).toHaveLength(1));
-    expect(avvisi[0]).toBe(en.erroreSedeNonAccessibile);
-    expect(avvisi[0]).not.toContain('Sede');
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(en.erroreSedeNonAccessibile));
+    expect(screen.getByRole('alert').textContent).not.toContain('Sede');
+    expect(chiamateAlert).not.toHaveBeenCalled();
   });
 });

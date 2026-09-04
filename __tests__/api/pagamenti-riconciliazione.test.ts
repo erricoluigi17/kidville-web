@@ -43,6 +43,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.lte = () => b
       b.order = () => b
       b.limit = () => b
+      // `.range()` — la dedup non chiede più una lista di 6.779 hash (una URL da 450 KB che
+      // PostgREST rifiuta) ma la finestra di date, letta a pagine. Il finto qui restituisce
+      // tutto in una pagina sola: `h.esistenti` sta sempre sotto il blocco.
+      b.range = () => b
       b.maybeSingle = async () => ({
         data: table === 'riconciliazione_movimenti' ? h.movimento : table === 'pagamenti' ? h.pagamento : null,
         error: null,

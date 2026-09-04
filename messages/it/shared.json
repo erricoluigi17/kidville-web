@@ -341,5 +341,13 @@
   "erroreIncaricoStaffRiservato": "Ruolo, fasce d’età e classi si cambiano dalla Direzione, come gli account di Direzione: la Segreteria può cambiare la sede",
   "errorePagamentoInesistente": "Il pagamento non esiste più: la fattura non si può emettere",
   "erroreRettaCicloFratelli": "Il collegamento fra fratelli formerebbe un anello, e alla fine non pagherebbe nessuno",
-  "erroreRettaFratelloNonDisponibile": "Il fratello indicato non è disponibile: dev’essere un bambino iscritto nella stessa sede"
+  "erroreRettaFratelloNonDisponibile": "Il fratello indicato non è disponibile: dev’essere un bambino iscritto nella stessa sede",
+  "erroreEstrattoContoAssente": "Nessun estratto conto ricevuto: scegli il file da caricare e riprova.",
+  "erroreEstrattoContoTipoNonAmmesso": "Questo tipo di file non si può caricare: serve un estratto conto .csv, .xls o .xlsx.",
+  "erroreEstrattoContoTroppoGrande": "L’estratto conto è troppo grande: può pesare al massimo 4 MB. Esporta un periodo più corto e riprova.",
+  "erroreEstrattoContoIlleggibile": "Il file è arrivato ma non si apre come estratto conto: controlla che sia il file scaricato dalla banca e riprova.",
+  "erroreEstrattoContoSenzaAccrediti": "Nessun accredito riconosciuto nel file: controlla le intestazioni delle colonne o il separatore.",
+  "erroreIntestatarioInConflittoConQuote": "Questo pagamento è ripartito fra due genitori: l’intestatario non si sceglie qui, si modificano le quote del pagamento",
+  "erroreFatturaGiaEmessaAltroIntestatario": "Questo pagamento ha già una fattura viva: l’intestatario di una fattura emessa si cambia solo con una nota di variazione",
+  "erroreIntestatarioNonDelBambino": "L’intestatario scelto non risulta fra i genitori di questo bambino: indica l’anagrafica per esteso, oppure scegline un altro"
 }

@@ -4,7 +4,7 @@ import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Copy, Check, Info, Landmark, Banknote, Building2, MapPin } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { BTN_COPIA_AA, CausaleBonifico, type VoceCausale } from './CausaleBonifico';
+import { BTN_COPIA_AA, CAMPO_COPIABILE, CausaleBonifico, ETICHETTA, type VoceCausale } from './CausaleBonifico';
 
 /**
  * Le coordinate di UNA sede, come le compone il server (`GET /api/pagamenti` →
@@ -85,8 +85,13 @@ export function raggruppaPerConto(sedi: SedeBonifico[], voci: VoceCausale[]): Bl
 type Metodo = 'bonifico' | 'contanti';
 const METODI: Metodo[] = ['bonifico', 'contanti'];
 
-/** Etichetta di un campo del conto: piccola, quieta, sempre SOPRA il suo valore. */
-const ETICHETTA = 'font-maven text-[11px] uppercase tracking-[0.08em] text-kidville-sub';
+/**
+ * La scatola dell'icona nelle righe «icona + testo». Larghezza FISSA e centratura:
+ * due misure d'icona diverse (16 e 14) con lo stesso `gap` sfalsavano di due pixel il
+ * margine sinistro del testo fra una riga e quella sotto — misurato, x84 contro x80.
+ * Una sola colonna di testo per blocco.
+ */
+const SCATOLA_ICONA = 'mt-[2px] flex w-4 shrink-0 justify-center';
 
 /**
  * «Come pagare» — bonifico o contanti, con l'intestatario e l'IBAN della propria
@@ -131,7 +136,8 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
     const blocchi = raggruppaPerConto(sedi, voci);
     // I nomi delle sedi si mostrano solo quando ce n'è più d'una in pagina:
     // ripetere l'unico plesso della famiglia sarebbe rumore.
-    const mostraNomi = blocchi.reduce((n, b) => n + b.nomi.length, 0) > 1;
+    const nomiSedi = blocchi.flatMap((b) => b.nomi);
+    const mostraNomi = nomiSedi.length > 1;
 
     const idTab = (m: Metodo) => `${idBase}-tab-${m}`;
     const idPannello = (m: Metodo) => `${idBase}-panel-${m}`;
@@ -216,13 +222,29 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
 
     /**
      * Titolo di un passo. Il numero non è un vezzo: dice che le due cose vanno fatte
-     * TUTTE E DUE, e in quest'ordine. Il pallino porta `bg-kidville-green`, che è la
-     * classe su cui la regola d'Alto Contrasto della card lo ribalta in giallo pieno
-     * con la cifra nera — nessuna superficie nuova da dipingere a mano.
+     * TUTTE E DUE, e in quest'ordine.
+     *
+     * TONDO, NON MAIUSCOLO (2026-09-05, terzo giro). Era `text-[13px] font-extrabold
+     * uppercase`: identico — stessa taglia, stesso peso, stesso carattere — al tab e
+     * al bottone di copia. «Il conto» e «La causale» sono intestazioni e si leggevano
+     * come comandi: a colpo d'occhio la card sembrava avere sei pulsanti invece di
+     * quattro. Il maiuscolo resta a occhiello di card, tab e bottoni: TRE livelli,
+     * non cinque. 15px, cioè un gradino sopra il titolo delle voci che il passo
+     * contiene (14px): un'intestazione non può essere più piccola dei propri figli.
+     *
+     * LA PASTIGLIA NON È PIÙ VERDE (quinto giro, 2026-09-05). Portava
+     * `bg-kidville-green`, cioè proprio l'aggancio su cui l'Alto Contrasto riempie di
+     * GIALLO con l'inchiostro nero — il segnale che nella card vuol dire «questo si
+     * preme». Con le due pastiglie, l'occhiello e i tre importi, il giallo lo
+     * portavano dieci elementi di cui quattro premibili: un accento che accenta tutto
+     * non accenta niente, ed è il difetto che questo repo ha corretto sul popup della
+     * riconciliazione il giorno prima. Crema col filetto: in Alto Contrasto diventa un
+     * disco grigio scurissimo contornato di bianco con la cifra bianca — la stessa
+     * voce dei tab NON attivi, cioè struttura, non comando.
      */
     const passo = (numero: string, titolo: string) => (
-        <p className="flex items-center gap-2 font-barlow text-[13px] font-extrabold uppercase tracking-[0.06em] text-kidville-green">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-pill bg-kidville-green font-barlow text-[11px] font-black text-kidville-white">
+        <p className="flex items-center gap-2 font-barlow text-[15px] font-bold leading-snug text-kidville-ink">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-pill border border-kidville-line bg-kidville-cream font-barlow text-xs font-black text-kidville-ink">
                 {numero}
             </span>
             {titolo}
@@ -230,19 +252,32 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
     );
 
     return (
+        // NIENTE OMBRA (quinto giro, 2026-09-05). Misurato sui pixel della pagina
+        // intera: tutte le card passano di netto dal crema del fondo (254,241,228) al
+        // filetto (239,231,220) — «Totale famiglia» a y=735, le quattro card
+        // dell'elenco a y=3567/3763/4039/4307 — mentre questa sfumava su SEI pixel.
+        // Era l'unica card sollevata della pagina, e il commento che giustificava
+        // l'ombra («la stessa delle altre card del genitore») era smentito dai pixel.
+        // Se il filetto su bianco è davvero troppo debole (1,23:1) si cambia il TOKEN
+        // per tutte le card, non si aggiunge qui un'elevazione che il resto non ha.
         <div className="kv-come-pagare rounded-card border border-kidville-line bg-kidville-white p-4">
             <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">
                 {t('comePagareTitolo')}
             </p>
-            {/* `text-pretty` (text-wrap: pretty) e non un a-capo scritto a mano: toglie
-                la riga orfana — «e la causale.» da sola in fondo — senza congelare DOVE
-                cade l'a-capo, che dipende dalla larghezza dello schermo e dalla lingua. */}
-            <p className="mt-1 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">{t('comePagareIntro')}</p>
+            {/* SOPRA I TAB NON C'È PIÙ NIENTE (2026-09-05, quarto giro). C'era
+                «Scegli il metodo. Per il bonifico servono due cose: il conto e la
+                causale.», e restava in testa anche col tab «Contanti» attivo: metà
+                della frase descriveva un pannello in quel momento nascosto, mentre
+                sotto si leggeva «In segreteria, negli orari di apertura».
+                La prima metà — «scegli il metodo» — la dicono già i due tab, che sono
+                lì sotto e si chiamano «Bonifico» e «Contanti»: era una didascalia di
+                sé stessi. La seconda metà è diventata la prima riga DENTRO il pannello
+                del bonifico, dove serve e dove si nasconde insieme a lui. */}
 
             <div
                 role="tablist"
                 aria-label={t('ariaMetodoPagamento')}
-                className="mt-4 flex gap-1 rounded-pill bg-kidville-cream p-1"
+                className="mt-3 flex gap-1 rounded-pill bg-kidville-cream p-1"
             >
                 {tab('bonifico', t('metodoBonifico'), Landmark)}
                 {tab('contanti', t('metodoContanti'), Banknote)}
@@ -255,8 +290,17 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 id={idPannello('bonifico')}
                 aria-labelledby={idTab('bonifico')}
                 hidden={metodo !== 'bonifico'}
-                className="mt-4 space-y-6"
+                className="mt-4"
             >
+                {/* Quello che serve PER IL BONIFICO si dice dentro il pannello del
+                    bonifico, e con lui si nasconde: è la stessa frase di prima, senza
+                    la mezza riga che descriveva la scelta già fatta dai tab.
+                    14px e non 12: è il corpo del testo di una card che un genitore
+                    legge sul telefono prima di spostare dei soldi. */}
+                <p className="font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
+                    {t('comePagareIntro')}
+                </p>
+                <div className="mt-3 space-y-6">
                 {blocchi.map((b) => {
                     const copiatoQui = copiato === b.chiave;
                     // Legato a una costante e non letto da `b` dentro il ramo: così
@@ -266,10 +310,34 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                         <div key={b.chiave}>
                             {passo('1', t('passoConto'))}
 
-                            <div className="mt-2 rounded-input border border-kidville-line">
+                            {/* IL RIQUADRO DEL CONTO È LA STESSA SCATOLA DELLA CAUSALE
+                                (quinto giro, 2026-09-05): chip crema, `rounded-input`,
+                                `p-3`, bordo trasparente. I due passi sono fratelli e
+                                devono avere la stessa quota — prima erano un riquadro
+                                bianco bordato E SOLLEVATO accanto a tre chip crema
+                                piatte, cioè due elevazioni diverse nella stessa colonna.
+
+                                Il bordo trasparente non è un vezzo: senza, la scatola
+                                col bordo e quella senza hanno margini interni diversi di
+                                un pixel, e la colonna dei quattro comandi si sfalsava
+                                (misurato: «COPIA L'IBAN» x[60..655], i tre «COPIA»
+                                x[58..657]).
+
+                                E il fondo crema fa un lavoro che il bianco su bianco non
+                                faceva: separa il riquadro dalla card SENZA dipendere da
+                                un filetto #EFE7DC che su bianco vale 1,23:1 — cioè che su
+                                un telefono in pieno sole non si vede. */}
+                            <div className="mt-2 rounded-input border border-transparent bg-kidville-cream p-3">
                                 {mostraNomi && b.nomi.length > 0 && (
-                                    <p className="flex items-center gap-2 border-b border-kidville-line px-3 py-2 font-maven text-[11px] leading-relaxed text-pretty text-kidville-sub">
-                                        <Building2 size={14} className="shrink-0" aria-hidden="true" />
+                                    // INCHIOSTRO PIENO, non `sub`, e 12px invece di 11: questa riga
+                                    // compare SOLO quando in pagina c'è più di un plesso, e allora è
+                                    // la riga che dice su quale conto va il bonifico. Era il testo
+                                    // più piccolo e più chiaro della card: gerarchia rovesciata,
+                                    // l'informazione che discrimina era quella che si vedeva meno.
+                                    <p className="mb-3 flex items-start gap-2 font-maven text-xs leading-relaxed text-pretty text-kidville-ink">
+                                        <span className={SCATOLA_ICONA} aria-hidden="true">
+                                            <Building2 size={16} />
+                                        </span>
                                         {/* `count` non è decorativo: un blocco può fondere due plessi e
                                             quello accanto averne uno solo, nella stessa pagina. */}
                                         <span className="min-w-0 break-words">
@@ -278,11 +346,17 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                     </p>
                                 )}
 
-                                <div className="space-y-3 p-3">
+                                <div className="space-y-3">
                                     <div>
                                         <p className={ETICHETTA}>{t('intestatoA')}</p>
                                         {b.intestatario ? (
-                                            <p className="mt-1 break-words font-maven text-[15px] font-bold leading-snug text-kidville-ink sm:text-base">
+                                            // 15px FISSI, senza il `sm:text-base` di prima: su desktop
+                                            // l'intestatario cresceva a 16 e l'IBAN restava a 14, cioè
+                                            // il nome del beneficiario finiva due punti sopra le
+                                            // coordinate su cui i soldi si muovono davvero. Il campo
+                                            // dell'IBAN non può crescere — a 16px mono la stringa non
+                                            // entra più su una riga sola — quindi a scendere è l'altro.
+                                            <p className="mt-1 break-words font-maven text-[15px] font-bold leading-snug text-kidville-ink">
                                                 {b.intestatario}
                                             </p>
                                         ) : (
@@ -296,33 +370,55 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                     {iban ? (
                                         <div>
                                             <p className={ETICHETTA}>{t('ibanEtichetta')}</p>
-                                            {/* NIENTE `break-all` (e niente bottone di fianco): l'IBAN
-                                                arriva dal server già a gruppi di quattro separati da
-                                                spazi, e con il ritorno a capo normale può spezzarsi
-                                                SOLO lì. Un IBAN tagliato a metà di un gruppo si
-                                                ricopia sbagliato a mano. */}
-                                            <p className="mt-1 font-mono text-sm font-bold leading-snug text-kidville-ink sm:text-base">
+                                            {/* L'IBAN HA LA FORMA DEL CAMPO DA CUI SI COPIA, e non è
+                                                un vezzo: nella card ci sono due sole cose da copiare
+                                                e finché una sola aveva l'aspetto di un campo — la
+                                                causale, quella secondaria — chi guardava per tre
+                                                secondi non riconosceva l'IBAN come «il rettangolo da
+                                                prendere»: lo distingueva solo il peso del carattere.
+                                                BIANCO dentro la chip crema, esattamente come la
+                                                causale: ora che i due passi hanno la stessa scatola,
+                                                anche i due campi da copiare hanno la stessa pelle —
+                                                prima erano uno crema-su-bianco e l'altro
+                                                bianco-su-crema, cioè la stessa idea detta in due modi.
+
+                                                Resta a 14px e NIENTE `break-all`: l'IBAN arriva dal
+                                                server già a gruppi di quattro separati da spazi, e
+                                                con il ritorno a capo normale può spezzarsi SOLO lì.
+                                                Un IBAN tagliato a metà di un gruppo si ricopia
+                                                sbagliato a mano. */}
+                                            <p className={`mt-1 bg-kidville-white font-mono text-sm font-bold ${CAMPO_COPIABILE}`}>
                                                 {iban}
                                             </p>
                                         </div>
                                     ) : (
-                                        <p className="flex items-start gap-2 font-maven text-[11px] leading-relaxed text-pretty text-kidville-sub">
-                                            <Info size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
+                                        // 14px: nella variante senza coordinate questa È la card.
+                                        <p className="flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
+                                            <span className={SCATOLA_ICONA} aria-hidden="true">
+                                                <Info size={16} />
+                                            </span>
                                             <span>{t('ibanNonDisponibile')}</span>
                                         </p>
                                     )}
                                 </div>
 
                                 {iban && (
-                                    <div className="px-3 pb-3">
+                                    // `sm:justify-end`: da qui in su TUTTI i comandi della card —
+                                    // questo e i tre «Copia» delle causali — condividono un margine
+                                    // solo. Prima erano quattro bottoni con due allineamenti: questo
+                                    // a bandiera sinistra, gli altri a bandiera destra.
+                                    // `mt-3` come nella chip della causale: stessa aria fra il campo
+                                    // e il comando che lo copia, nei due passi.
+                                    <div className="mt-3 flex sm:justify-end">
                                         {/* Il testo visibile È il nome accessibile: nessun `aria-label`
                                             che dica una cosa diversa da quella scritta (WCAG 2.5.3).
-                                            `w-full sm:w-auto`: sul telefono prende la riga intera —
-                                            così premerlo non toglie spazio all'IBAN — ma su desktop
-                                            un bottone largo 680px sarebbe una fascia, non un comando. */}
+                                            `w-full sm:w-auto` (dalla forma condivisa): sul telefono
+                                            prende la riga intera — così premerlo non toglie spazio
+                                            all'IBAN — ma su desktop un bottone largo quanto la card
+                                            sarebbe una fascia, non un comando. */}
                                         <button
                                             type="button"
-                                            className={`${BTN_COPIA_AA} w-full sm:w-auto`}
+                                            className={BTN_COPIA_AA}
                                             onClick={() => copiaIban(b.chiave, iban)}
                                         >
                                             {copiatoQui
@@ -340,6 +436,7 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                         </div>
                     );
                 })}
+                </div>
             </div>
 
             <div
@@ -349,15 +446,52 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 hidden={metodo !== 'contanti'}
                 className="mt-4 space-y-3"
             >
+                {/* LE ICONE NON SONO VERDI (quinto giro, 2026-09-05). Lo erano qui e nere
+                    nel pannello del bonifico, per la stessa identica riga: due pannelli
+                    della stessa card che dicevano lo stesso fatto con due colori. E in
+                    Alto Contrasto `.text-kidville-green` diventa #FFE500: due icone
+                    decorative accendevano il segnale che nella card vuol dire «premimi».
+                    Ereditano l'inchiostro della riga, come tutte le altre. */}
                 <p className="flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-ink">
-                    <MapPin size={16} className="mt-[3px] shrink-0 text-kidville-green" aria-hidden="true" />
+                    <span className={SCATOLA_ICONA} aria-hidden="true">
+                        <MapPin size={16} />
+                    </span>
                     <span>{t('contantiTesto')}</span>
                 </p>
-                <p className="flex items-start gap-2 rounded-input bg-kidville-cream px-3 py-3 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">
-                    <Info size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
+                {/* QUALE segreteria: «in segreteria» da solo, per una famiglia con figli
+                    in due plessi, non è un'indicazione. Compare con la stessa condizione
+                    della riga dei plessi nel pannello del bonifico — e con la stessa
+                    scatola d'icona, così le due righe condividono UNA colonna di testo.
+                    STESSA FRASE dell'altro pannello, e non una seconda formulazione: è
+                    lo stesso fatto («questi sono i plessi di cui stiamo parlando») e
+                    scriverlo in due modi diversi nella stessa card è il difetto da cui
+                    nascono le divergenze, non un arricchimento. */}
+                {mostraNomi && (
+                    <p className="flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-ink">
+                        <span className={SCATOLA_ICONA} aria-hidden="true">
+                            <Building2 size={16} />
+                        </span>
+                        <span className="min-w-0 break-words">
+                            {t('sediDelBlocco', { count: nomiSedi.length, sedi: nomiSedi.join(' · ') })}
+                        </span>
+                    </p>
+                )}
+                <p className="flex items-start gap-2 rounded-input bg-kidville-cream px-3 py-3 font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
+                    <span className={SCATOLA_ICONA} aria-hidden="true">
+                        <Info size={16} />
+                    </span>
                     <span>{t('contantiNota730')}</span>
                 </p>
             </div>
+
+            {/* L'esito della copia detto A VOCE, non solo con l'etichetta del bottone che
+                cambia. La regione è montata SEMPRE, anche vuota: un `aria-live` che
+                compare insieme al proprio testo, nei lettori di schermo, spesso non
+                annuncia niente — ed è l'errore che rende inutili metà delle conferme
+                «copiato» in giro per il web. */}
+            <p role="status" aria-live="polite" className="sr-only">
+                {copiato ? t('copiato') : ''}
+            </p>
         </div>
     );
 }

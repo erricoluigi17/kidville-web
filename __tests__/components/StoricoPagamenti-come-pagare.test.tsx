@@ -55,6 +55,19 @@ const VOCE_PARZIALE = {
 
 const SEDI = [{ id: 'sede-1', nome: 'Plesso Uno', iban: IBAN_LEGGIBILE, intestatario: 'Cooperativa Esempio soc. coop.' }];
 
+/**
+ * Il campo di una causale, cercato PER CONTENUTO — vedi `CausaleBonifico.test.tsx`.
+ * A schermo la causale è spezzata in gruppi non spezzabili (`whitespace-nowrap`) e
+ * `getByText` guarda solo i figli-testo diretti; il `textContent` è insieme il modo
+ * di trovarla e la proprietà che conta (si legge esattamente ciò che si copia).
+ */
+function campoCausale(causale: string): HTMLElement {
+    const campi = [...document.querySelectorAll<HTMLElement>('.kv-campo-copiabile')];
+    const trovato = campi.find((c) => c.textContent === causale);
+    if (!trovato) throw new Error(`nessun campo con la causale «${causale}» fra i ${campi.length} presenti`);
+    return trovato;
+}
+
 /** Il corpo del GET: `data` + `sedi`. `sedi` assente = risposta del backend vecchio. */
 let corpo: Record<string, unknown> = {};
 
@@ -82,7 +95,7 @@ describe('StoricoPagamenti — «Come pagare» con le coordinate della sede', ()
         expect(screen.getByRole('tab', { name: 'Bonifico' })).toBeInTheDocument();
         expect(screen.getByRole('tab', { name: 'Contanti' })).toBeInTheDocument();
         // La causale resta dov'era: ora è dentro la card, non accanto.
-        expect(screen.getByText(VOCE.causale_suggerita)).toBeInTheDocument();
+        expect(campoCausale(VOCE.causale_suggerita)).toBeInTheDocument();
     });
 
     it('senza `sedi` nella risposta la card resta e rimanda alla segreteria', async () => {
@@ -93,7 +106,7 @@ describe('StoricoPagamenti — «Come pagare» con le coordinate della sede', ()
         expect(
             screen.getByText('Le coordinate bancarie non sono ancora disponibili: chiedile in segreteria.'),
         ).toBeInTheDocument();
-        expect(screen.getByText(VOCE.causale_suggerita)).toBeInTheDocument();
+        expect(campoCausale(VOCE.causale_suggerita)).toBeInTheDocument();
     });
 
     it('senza voci aperte la card non compare', async () => {

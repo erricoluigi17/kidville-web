@@ -196,7 +196,14 @@ export function StoricoPagamenti({ userId }: Props) {
             {/* «Come pagare»: bonifico (intestatario + IBAN della propria sede, con
                 le causali dentro) o contanti. `ComePagare` rende `null` da solo
                 quando non c'è nessuna voce aperta: la condizione resta quella della
-                card della causale che sostituisce. */}
+                card della causale che sostituisce.
+
+                La card porta la stessa pelle delle sorelle di questa pagina —
+                `rounded-card border border-kidville-line`, fondo bianco, `p-4` e
+                NESSUNA ombra: misurato sui pixel, «Totale famiglia» qui sopra e le
+                card dell'elenco qui sotto passano di netto dal crema del fondo al
+                filetto, senza sfumatura. Un'elevazione in più su una sola card la
+                farebbe sembrare incollata invece che nata qui. */}
             {!loading && !error && <ComePagare sedi={sedi} voci={vociCausale} />}
 
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>

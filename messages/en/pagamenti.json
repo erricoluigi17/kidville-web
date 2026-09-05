@@ -39,7 +39,7 @@
   "copia": "Copy",
   "cfNonDisponibile": "Tax code not available: please still include the child’s first and last name in the reference.",
   "comePagareTitolo": "How to pay",
-  "comePagareIntro": "Choose a method. A bank transfer needs two things: the account and the reference.",
+  "comePagareIntro": "A bank transfer needs two things: the account and the reference.",
   "metodoBonifico": "Bank transfer",
   "metodoContanti": "Cash",
   "intestatoA": "Account holder",

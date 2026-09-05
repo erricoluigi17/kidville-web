@@ -615,7 +615,7 @@
   "movdlgNessunPagamentoCorrisponde": "Nessun pagamento aperto corrisponde.",
   "movdlgNessunaCausale": "Nessuna causale",
   "movdlgOperazioneNonPossibile": "Operazione non possibile in questo momento",
-  "movdlgOrdinante": "Intestato a",
+  "movdlgOrdinante": "Ordinante",
   "movdlgRiapri": "Riapri",
   "movdlgRicevuta": "Ricevuta",
   "movdlgRicevutaFatturaSaldo": "Ricevuta e fattura disponibili a saldo avvenuto.",
@@ -915,7 +915,7 @@
   "movdlgFatturaGiaEmessa": "Fattura già emessa per questo pagamento.",
   "reconErroreFiltro": "Filtro non valido: ricarica la pagina.",
   "reconFatturazioneNonDisponibile": "Stato di fatturazione non disponibile in questo momento: la lista non è filtrata. Riprova fra poco.",
-  "reconFatturazioneTroncata": "Mostrate le prime {n, plural, one {# riga} other {# righe}}: ce ne sono altre.",
+  "reconFatturazioneTroncata": "{n, plural, one {Mostrata la prima riga} other {Mostrate le prime # righe}}: ce ne sono altre.",
   "reconGruppoStato": "Stato",
   "reconGruppoFatturazione": "Fatturazione",
   "movdlgCausale": "Causale",
@@ -924,6 +924,6 @@
   "movdlgFatturaInAttesa": "Fattura inviata: si attende la conferma del Sistema di Interscambio.",
   "movdlgFatturaScartata": "Fattura scartata dal Sistema di Interscambio: correggi i dati e rinviala.",
   "movdlgFatturaDaEmettere": "Pagamento saldato: la fattura non è ancora stata emessa.",
-  "reconFatturaEmessa": "Fattura {numeri}",
+  "reconFatturaEmessa": "{n, plural, one {Fattura} other {Fatture}} {numeri}",
   "reconFatturaScartata": "Scartata, da riemettere"
 }

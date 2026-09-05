@@ -411,11 +411,12 @@ describe('MovimentoDialog — forma, bersagli e àncore di stile', () => {
     vi.stubGlobal('fetch', rispostaPagamento('emessa'));
     render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
     expect(screen.getByText('Causale')).toBeInTheDocument();
-    // «Intestato a», non «Ordinante:»: è la parola che la stessa famiglia legge
-    // nell'email di sollecito, e nessun altro occhiello della schermata porta i
-    // due punti. Due nomi per lo stesso campo sono due campi, per chi legge.
-    expect(screen.getByText('Intestato a')).toBeInTheDocument();
-    expect(screen.queryByText(/Ordinante/)).toBeNull();
+    // «Ordinante», senza i due punti: è CHI HA FATTO il bonifico. Non «Intestato a»,
+    // che nel resto del prodotto (card del genitore, email di sollecito) è il
+    // BENEFICIARIO del conto: il tester localizzazione (2026-09-05) ha trovato
+    // l'inglese invertito («Payable to»). Nessun occhiello porta i due punti.
+    expect(screen.getByText('Ordinante')).toBeInTheDocument();
+    expect(screen.queryByText(/Ordinante:/)).toBeNull();
     expect(screen.getByText('Mario Rossi')).toBeInTheDocument();
   });
 

@@ -344,7 +344,7 @@ const TONO_DA_FATTURA: Partial<Record<StatoFattura, TonoFatturazione>> = {
 export interface ChipFatturazioneUi {
   labelKey: string
   /** Valori per `t(labelKey, params)`: c'è solo quando l'etichetta ha un segnaposto. */
-  params?: Record<string, string>
+  params?: Record<string, string | number>
   tono: TonoFatturazione
   hcClass: string
   bg: string
@@ -396,7 +396,7 @@ export function chipFatturazione(
     // segnaposto vuoto sarebbe una frase troncata a metà.
     return numeri.length === 0
       ? { tono: 'fatturata', ...CHIP_FATTURAZIONE.fatturata }
-      : { tono: 'fatturata', ...CHIP_FATTURAZIONE.fatturata, labelKey: 'reconFatturaEmessa', params: { numeri: numeri.join(' · ') } }
+      : { tono: 'fatturata', ...CHIP_FATTURAZIONE.fatturata, labelKey: 'reconFatturaEmessa', params: { n: numeri.length, numeri: numeri.join(' · ') } }
   }
   // «Scartata, da riemettere», non la sola parola «Scartata»: è l'unico stato in
   // cui qualcuno DEVE rifare il lavoro, e l'etichetta lo dice invece di lasciarlo

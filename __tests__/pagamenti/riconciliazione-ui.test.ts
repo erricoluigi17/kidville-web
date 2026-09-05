@@ -254,7 +254,9 @@ describe('chipFatturazione — due fonti sulla stessa riga', () => {
     }))
     expect(c?.tono).toBe('fatturata')
     expect(c?.labelKey).toBe('reconFatturaEmessa')
-    expect(c?.params).toEqual({ numeri: 'FPR 1947/26' })
+    // `n` è il conteggio per il plurale ICU («Fattura»/«Fatture»): un chip con un solo
+    // documento dice «Fattura», con due dice «Fatture» — tester localizzazione, 2026-09-05.
+    expect(c?.params).toEqual({ n: 1, numeri: 'FPR 1947/26' })
     // la chiave secca perde: con un numero in mano, «Fatturata» è vero e inutile
     expect(c?.labelKey).not.toBe('reconChipFatturata')
   })
@@ -264,7 +266,7 @@ describe('chipFatturazione — due fonti sulla stessa riga', () => {
       fattura: { stato: 'emessa', numeri: ['FPR 7/26', 'Asilo 2328/2026'] },
       fattura_stato: 'emessa',
     }))
-    expect(c?.params).toEqual({ numeri: 'FPR 7/26 · Asilo 2328/2026' })
+    expect(c?.params).toEqual({ n: 2, numeri: 'FPR 7/26 · Asilo 2328/2026' })
   })
 
   it('documento emesso ma nessun numero leggibile → si ripiega su «Fatturata», mai su «Fattura »', () => {
@@ -490,10 +492,13 @@ describe('FILTRI_FATTURA — l’etichetta nomina gli stati che contiene', () =>
   })
 
   it('l’etichetta dell’ordinante è quella delle email di sollecito, senza due punti', () => {
-    expect(catalogo('it').movdlgOrdinante).toBe('Intestato a')
+    // «Ordinante», non «Intestato a»: nel popup quella riga è CHI HA FATTO il bonifico, mentre
+    // «Intestato a» nel resto del prodotto (card del genitore, email) è il BENEFICIARIO del conto.
+    // Il tester localizzazione (2026-09-05, sera) ha trovato l'inglese invertito («Payable to»).
+    expect(catalogo('it').movdlgOrdinante).toBe('Ordinante')
     // gli altri occhielli non portano i due punti: neanche questo
     expect(catalogo('it').movdlgOrdinante).not.toContain(':')
-    expect(catalogo('en').movdlgOrdinante).toBe('Payable to')
+    expect(catalogo('en').movdlgOrdinante).toBe('Payer')
   })
 })
 

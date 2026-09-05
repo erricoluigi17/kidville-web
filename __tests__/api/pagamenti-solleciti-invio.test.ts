@@ -249,3 +249,86 @@ describe('POST /api/pagamenti/solleciti/run', () => {
     expect(h.enqueueNotifiche).toHaveBeenCalledTimes(1)
   })
 })
+
+// =============================================================================
+// IL RIQUADRO «DATI PER IL BONIFICO» VIENE DALLO STESSO MOTORE DELLA PAGINA.
+//
+// IBAN e intestatario del sollecito e quelli della card «Come pagare» del
+// genitore sono le stesse due righe, lette dalla stessa configurazione: se le
+// leggessero due volte divergerebbero al primo cambio, e nessuno se ne
+// accorgerebbe — perché entrambe continuerebbero ad avere l'aria di essere
+// giuste. `coordinateBonificoSede` è il posto unico; qui si misura che il
+// riquadro che parte davvero non cambia di una riga.
+// =============================================================================
+describe('POST /api/pagamenti/solleciti — le coordinate del bonifico', () => {
+  // IBAN SINTETICO: l'esempio pubblico della Banca d'Italia, e la sua variante
+  // con una cifra cambiata. Nessuno dei due appartiene a un conto reale.
+  const IBAN_OK = 'IT60X0542811101000000123456'
+  const IBAN_LEGGIBILE = 'IT60 X054 2811 1010 0000 0123 456'
+  const IBAN_STORTO = 'IT60X0542811101000000123457'
+
+  const htmlInviato = () => (h.sendEmailDetailed.mock.calls[0][0] as { html?: string }).html ?? ''
+  /**
+   * Il pezzo di email che segue l'etichetta «Intestato a».
+   *
+   * ⚠️ NON basta cercare la denominazione nell'HTML intero: la stessa stringa
+   * firma anche la prosa del sollecito (`{scuola}` nei modelli), quindi un
+   * `toContain` sull'intero messaggio resterebbe verde anche con la riga
+   * «Intestato a» sparita — misurato rompendo il codice apposta. Senza
+   * l'etichetta l'`indexOf` vale -1 e questa fetta resta vuota: rosso, come
+   * dev'essere.
+   */
+  const dopoIntestatario = () => {
+    const html = htmlInviato()
+    const i = html.indexOf('Intestato a')
+    return i < 0 ? '' : html.slice(i)
+  }
+
+  it('IBAN valido: nel riquadro esce a gruppi di quattro, con l’intestatario', async () => {
+    h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'Coop La Favola', iban: IBAN_OK }, aruba_config: {} }
+    expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(200)
+    expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
+    expect(htmlInviato()).toContain(IBAN_LEGGIBILE)
+    expect(dopoIntestatario()).toContain('Coop La Favola')
+  })
+
+  it('IBAN con una cifra sbagliata: la riga IBAN non compare affatto', async () => {
+    // Mostrarlo sarebbe peggio che ometterlo: l'errore lo scoprirebbe la
+    // famiglia dopo aver mandato i soldi da qualche altra parte.
+    h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'Kidville', iban: IBAN_STORTO }, aruba_config: {} }
+    expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(200)
+    const html = htmlInviato()
+    expect(html).not.toContain(IBAN_STORTO)
+    expect(html).not.toContain('IT60')
+    // Il resto del riquadro resta: importo, causale, intestatario.
+    expect(html).toContain('Intestato a')
+  })
+
+  it('denominazione assente: nessun intestatario inventato, e il resto parte lo stesso', async () => {
+    h.settingsRow = { solleciti_config: {}, fiscale_config: {}, aruba_config: {} }
+    expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(200)
+    const html = htmlInviato()
+    expect(html).not.toContain('Intestato a')
+    expect(html).toContain('Dati per il bonifico')
+  })
+
+  it('la denominazione arriva anche da `aruba_config.fiscal.ragione_sociale`', async () => {
+    h.settingsRow = {
+      solleciti_config: {},
+      fiscale_config: {},
+      aruba_config: { fiscal: { ragione_sociale: 'La Favola societa cooperativa', piva: '01234567890' } },
+    }
+    expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(200)
+    expect(dopoIntestatario()).toContain('La Favola societa cooperativa')
+  })
+
+  it('una sede che si chiama DAVVERO «La Segreteria» mostra comunque «Intestato a»', async () => {
+    // Il ripiego per il testo dell'email è la stringa «La Segreteria», e finché
+    // l'intestatario si deduceva da lì un dato legittimo identico al ripiego
+    // veniva scambiato per «non configurato»: la riga spariva. Un valore
+    // sentinella che collide con un valore vero è un difetto, non un caso limite.
+    h.settingsRow = { solleciti_config: {}, fiscale_config: { denominazione: 'La Segreteria', iban: IBAN_OK }, aruba_config: {} }
+    expect((await POST(post({ pagamento_ids: [PID] }))).status).toBe(200)
+    expect(htmlInviato()).toContain('Intestato a')
+  })
+})

@@ -126,6 +126,11 @@ describe('GET /api/pagamenti — perimetro di sede del ramo staff', () => {
 
     expect(res.status).toBe(200)
     const j = await res.json()
-    expect(j).toEqual({ success: true, data: [] })
+    // `sedi: []` fa parte dell'invariante, non è un campo in più da tollerare:
+    // le coordinate del bonifico escono UNA per sede delle righe restituite, e
+    // con lo scope vuoto non c'è nessuna riga — quindi nemmeno una sede da
+    // nominare. Un elenco non vuoto qui direbbe a chi non può vedere niente
+    // quali plessi esistono.
+    expect(j).toEqual({ success: true, data: [], sedi: [] })
   })
 })

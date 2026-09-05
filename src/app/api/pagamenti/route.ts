@@ -15,6 +15,10 @@ import { logErrore } from '@/lib/logging/logger'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { renderCausale, modelloCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
+// Le coordinate del bonifico si compongono in UN posto solo (lo usa anche il
+// motore dei solleciti): la pagina e l'email devono dire lo stesso IBAN e lo
+// stesso intestatario. Lock: `coordinate-bonifico-un-motore-solo`.
+import { coordinateBonificoSede } from '@/lib/pagamenti/coordinate-bonifico'
 import { meseAnnoDaPeriodo } from '@/lib/pagamenti/periodo'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
@@ -125,7 +129,11 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       // sola tabella runtime i genitori arrivati dall'import iscrizioni vedevano
       // una lista vuota — nessuna retta, nessuna scadenza, nessun sollecito.
       figli = await getFigliDiGenitore(supabase, user.id)
-      if (figli.length === 0) return NextResponse.json({ success: true, data: [] })
+      // `sedi: []` anche qui: la forma della risposta non può dipendere da
+      // QUANTO c'è dentro. Senza, la card «Come pagare» riceverebbe `undefined`
+      // proprio nel caso in cui non ha niente da mostrare, e il componente
+      // andrebbe scritto per due risposte diverse invece che per una.
+      if (figli.length === 0) return NextResponse.json({ success: true, data: [], sedi: [] })
     }
 
     // Costruttore della query parametrizzato sul SELECT: il ramo di retry lo
@@ -234,13 +242,32 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // con eventuale `default`. `getModuleConfig` degrada da solo (config assente o
     // colonna mancante sul DB E2E CI → `{}`, quindi si ricade sul predefinito) e
     // non solleva: qui non serve altro rumore. Una sola lettura per sede distinta.
+    //
+    // Nello stesso giro escono le COORDINATE DEL BONIFICO della sede — IBAN e
+    // intestatario — che vivono nella stessa riga di `admin_settings` e servono
+    // alla stessa card: la causale dice cosa scrivere, queste due righe dicono
+    // dove mandare i soldi e a chi. Le compone `coordinateBonificoSede`, lo
+    // stesso motore che riempie il riquadro «Dati per il bonifico» dei
+    // solleciti: due letture separate direbbero due IBAN diversi alla stessa
+    // famiglia, e la divergenza si scoprirebbe solo a bonifico partito.
+    //
+    // Il perimetro resta quello delle righe già filtrate: nessuna sede in più.
     const causaliBySede: Record<string, Partial<Record<string, string>>> = {}
+    const sedi: { id: string; nome: string; iban: string | null; intestatario: string | null }[] = []
     for (const sid of scuolaIds) {
       causaliBySede[sid] = await getModuleConfig<Record<string, string>>(supabase, 'causali_config', sid)
+      const coordinate = await coordinateBonificoSede(supabase, sid, { operazione: 'pagamenti:GET' })
+      sedi.push({
+        id: sid,
+        nome: nomiSedi[sid] ?? '',
+        iban: coordinate.iban,
+        intestatario: coordinate.intestatario,
+      })
     }
 
     return NextResponse.json({
       success: true,
+      sedi,
       data: rowsArricchite.map((r) => {
         const sede = nomiSedi[r.scuola_id] ?? null
         // Causale consigliata: modello della categoria (per slug) → `default` → predefinito.

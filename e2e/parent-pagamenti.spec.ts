@@ -60,4 +60,39 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page, browse
   const resp = await page.request.get(href!);
   expect(resp.status()).toBe(200);
   expect(resp.headers()['content-type']).toContain('application/pdf');
+
+  /**
+   * «COME PAGARE» (spec 2026-09-05) — la pagina diceva CHE COSA scrivere nella
+   * causale e mai DOVE mandare i soldi.
+   *
+   * Le attese stanno in coda a QUESTO test, e non in uno nuovo, per una ragione
+   * misurata: la card si rende dalla stessa risposta di `/api/pagamenti` che su
+   * WebKit non arriva a schermo (il `fixme` in testa a questo file). Un test
+   * separato sarebbe rosso su WebKit per la stessa causa già dichiarata lì —
+   * cioè un secondo sintomo dello stesso difetto, non una seconda informazione.
+   */
+  await expect(page.getByText('Come pagare')).toBeVisible();
+
+  /**
+   * IL RIPIEGO È IL RAMO CHE LA CI PUÒ DAVVERO COLLAUDARE, ed è quello che conta.
+   *
+   * `scripts/seed-e2e.mjs:476` scrive in `admin_settings` soltanto `diario_config`
+   * e `avvisi_config`: `fiscale_config` non c'è. Quindi `coordinateBonificoSede`
+   * restituisce `iban: null` e il pannello Bonifico — attivo di default — mostra
+   * l'invito a chiedere le coordinate in segreteria invece di un IBAN inventato.
+   *
+   * È esattamente ciò che vedrà anche una sede di PRODUZIONE finché l'IBAN non
+   * viene compilato in Impostazioni → Fiscale (PRD, «Da fare»): questo test
+   * garantisce che quella condizione resti una frase utile e non una card vuota
+   * o un crash.
+   */
+  await expect(page.getByText('Le coordinate bancarie non sono ancora disponibili')).toBeVisible();
+
+  // I contanti sono un tab vero (WAI-ARIA), non un paragrafo: si può arrivarci da
+  // tastiera. Il suo pannello dice DOVE si paga e — nella stessa schermata — che i
+  // contanti NON sono detraibili (L. 160/2019). Dire la prima cosa senza la seconda
+  // costerebbe al genitore la detrazione, in silenzio.
+  await page.getByRole('tab', { name: 'Contanti' }).click();
+  await expect(page.getByText('In segreteria, negli orari di apertura')).toBeVisible();
+  await expect(page.getByText('non sono detraibili')).toBeVisible();
 });

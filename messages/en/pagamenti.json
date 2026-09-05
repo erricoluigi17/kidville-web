@@ -37,5 +37,17 @@
   "questoPagamento": "this payment",
   "copiato": "Copied",
   "copia": "Copy",
-  "cfNonDisponibile": "Tax code not available: please still include the child’s first and last name in the reference."
+  "cfNonDisponibile": "Tax code not available: please still include the child’s first and last name in the reference.",
+  "comePagareTitolo": "How to pay",
+  "comePagareIntro": "You can pay by bank transfer or in cash. For a transfer, use the reference of the item you’re paying: that is what matches your payment automatically.",
+  "metodoBonifico": "Bank transfer",
+  "metodoContanti": "Cash",
+  "intestatoA": "Account holder",
+  "ibanEtichetta": "IBAN",
+  "ariaCopiaIban": "Copy the IBAN",
+  "intestatarioNonDisponibile": "Account holder not available",
+  "ibanNonDisponibile": "Bank details are not available yet: please ask the school office.",
+  "contantiTesto": "At the school office during opening hours: you get the receipt straight away.",
+  "contantiNota730": "Cash payments are not deductible in your Italian income tax return (Law 160/2019): use a bank transfer if you want the deduction.",
+  "sediDelBlocco": "{count, plural, one {For the location {sedi}} other {For the locations {sedi}}}"
 }

@@ -9,12 +9,15 @@ import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { isoToIt } from '@/lib/format/data';
 import { formatEuro } from '@/lib/format/valuta';
 import { PushOptIn } from './PushOptIn';
-import { CausaleBonifico, type VoceCausale } from './CausaleBonifico';
+import { type VoceCausale } from './CausaleBonifico';
+import { ComePagare, type SedeBonifico } from './ComePagare';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Pagamento {
     id: string;
     alunno_id?: string;
+    /** Sede della voce: decide su QUALE conto va pagata (card «Come pagare»). */
+    scuola_id?: string;
     descrizione: string;
     importo: number;
     importo_pagato: number;
@@ -59,6 +62,10 @@ const STATI: Record<string, { labelKey: string; cls: string }> = {
 export function StoricoPagamenti({ userId }: Props) {
     const t = useTranslations('pagamenti');
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
+    // Coordinate del bonifico per sede (`GET /api/pagamenti` → `sedi`). Ripiego a
+    // elenco vuoto: un backend più vecchio, o il DB della CI senza `fiscale_config`,
+    // non manda il campo — e la card deve restare, rimandando alla segreteria.
+    const [sedi, setSedi] = useState<SedeBonifico[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const idsRef = useRef<string>('');
@@ -69,6 +76,7 @@ export function StoricoPagamenti({ userId }: Props) {
             const j = res ? await res.json().catch(() => null) : null;
             if (j?.success) {
                 setPagamenti(j.data);
+                setSedi(Array.isArray(j.sedi) ? (j.sedi as SedeBonifico[]) : []);
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
                 setError(null);
             } else if (j) {
@@ -128,6 +136,7 @@ export function StoricoPagamenti({ userId }: Props) {
         .filter((p) => residuoRiga(p) > 0)
         .map((p) => ({
             id: p.id,
+            scuola_id: p.scuola_id ?? '',
             causale: p.causale_suggerita ?? '',
             nome: p.alunni?.nome ?? '',
             cognome: p.alunni?.cognome ?? '',
@@ -176,9 +185,11 @@ export function StoricoPagamenti({ userId }: Props) {
                 </div>
             )}
 
-            {!loading && !error && vociCausale.length > 0 && (
-                <CausaleBonifico voci={vociCausale} />
-            )}
+            {/* «Come pagare»: bonifico (intestatario + IBAN della propria sede, con
+                le causali dentro) o contanti. `ComePagare` rende `null` da solo
+                quando non c'è nessuna voce aperta: la condizione resta quella della
+                card della causale che sostituisce. */}
+            {!loading && !error && <ComePagare sedi={sedi} voci={vociCausale} />}
 
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 

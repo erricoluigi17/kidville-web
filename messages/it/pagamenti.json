@@ -37,5 +37,17 @@
   "questoPagamento": "questo pagamento",
   "copiato": "Copiato",
   "copia": "Copia",
-  "cfNonDisponibile": "Codice fiscale non disponibile: indica comunque il nome e cognome del bambino nella causale."
+  "cfNonDisponibile": "Codice fiscale non disponibile: indica comunque il nome e cognome del bambino nella causale.",
+  "comePagareTitolo": "Come pagare",
+  "comePagareIntro": "Puoi pagare con bonifico o in contanti. Per il bonifico usa la causale della voce che stai pagando: serve all’abbinamento automatico.",
+  "metodoBonifico": "Bonifico",
+  "metodoContanti": "Contanti",
+  "intestatoA": "Intestato a",
+  "ibanEtichetta": "IBAN",
+  "ariaCopiaIban": "Copia l’IBAN",
+  "intestatarioNonDisponibile": "Intestatario non disponibile",
+  "ibanNonDisponibile": "Le coordinate bancarie non sono ancora disponibili: chiedile in segreteria.",
+  "contantiTesto": "In segreteria, negli orari di apertura: ricevi subito la ricevuta.",
+  "contantiNota730": "I pagamenti in contanti non sono detraibili nella dichiarazione dei redditi (L. 160/2019): per la detrazione usa il bonifico.",
+  "sediDelBlocco": "{count, plural, one {Per la sede {sedi}} other {Per le sedi {sedi}}}"
 }

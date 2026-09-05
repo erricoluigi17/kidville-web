@@ -67,7 +67,7 @@
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta), **stato di fatturazione sul registro riconciliazione** (chip «Da fatturare»/«In attesa SDI»/«Fatturata»/«Scartata» derivato da `pagamenti.fattura_stato` sulle sole righe confermate della propria sede + filtro «Da fatturare», **nessuna colonna nuova**), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -129,6 +129,132 @@ Rientrano quando l'Alto Contrasto coprirà davvero quelle schermate — un lavor
 nove. La baseline copre le due che funzionano (`/parent/pagamenti`, `/teacher`), e il
 crawler continua a sorvegliare quelle: è poco, ma è vero — e il giorno in cui l'Alto
 Contrasto verrà esteso, le altre sette si riaccendono togliendo un `//`.
+
+## 🧾 Changelog — La riga verde non dice mai «fatturato», e il genitore non sa dove mandare i soldi — 2026-09-05 (branch `feat/riconciliazione-fatturato-e-come-pagare`)
+
+Due difetti che vivevano alle due estremità dello stesso movimento di denaro: chi incassa non
+sapeva quali incassi restassero da fatturare, chi paga non sapeva su quale conto pagare.
+
+### 1. In riconciliazione, dopo la fattura, non succedeva niente
+
+Il registro dei movimenti bancari ha **quattro stati e soli quattro**
+(`CHECK (stato IN ('da_abbinare','suggerito','confermato','ignorato'))`,
+`20260710150000_contabilita_riconciliazione.sql:32`). La riga diventava verde alla conferma
+dell'abbinamento e **restava identica per sempre**: l'emissione della fattura scrive su
+`pagamenti.fattura_stato` e mai sul movimento. Misurata, la catena si spezzava in **tre** punti,
+tutti a valle della fattura:
+
+- `GET /api/pagamenti/riconciliazione` selezionava undici colonne del movimento e **nessun campo di
+  fatturazione**. La query batch su `pagamenti` che già faceva (`id, scuola_id`) serviva solo a
+  minimizzare i nomi dei minori nei suggerimenti;
+- `MovimentoDialog` montava `<FatturaButton pagamentoId userId />` **senza `fatturaStato`**, e
+  `FatturaButton:186` parte da `'non_richiesta'`: il pulsante diceva «Invia fattura» anche quando la
+  fattura era già uscita. Il dialog **aveva già il dato in mano** — la risposta di
+  `/api/pagamenti/[id]` porta `fattura_stato` — e ne teneva solo `stato`;
+- non esisteva **nessun filtro** «confermati da fatturare».
+
+Le due conseguenze non sono simmetriche, e vale la pena dirlo. **Fatturare due volte** era
+*contenuto*: la guardia di idempotenza e l'indice `fatture_emesse_pagamento_quota_uidx` fermano il
+secondo documento — l'operatore riceveva un 409 incomprensibile, non un doppione. **Saltare una
+fattura** era *reale e non mitigato*: su un registro globale di centinaia di righe verdi
+indistinguibili nessuno poteva dire quali restassero da fatturare, e un incasso non fatturato non
+produce nessun errore, nessun log e nessun sintomo. Il silenzio era il difetto.
+
+### 2. Il genitore vedeva la causale, ma non l'IBAN né a chi è intestato il conto
+
+`/parent/pagamenti` mostrava il totale dovuto, le voci e la card «Causale consigliata per il
+bonifico»: diceva **che cosa** scrivere e mai **dove** mandare i soldi. Eppure l'IBAN esisteva già
+in Impostazioni → Fiscale (`admin_settings.fiscale_config.iban`, validato mod-97), e le email di
+sollecito lo mostravano già nel riquadro «Dati per il bonifico», intestatario compreso. Il dato
+c'era: usciva solo per email, e solo a chi era in ritardo.
+
+### Cosa cambia
+
+**«Fatturato» è un chip derivato sulla riga verde, non un quinto stato.** Un quinto stato avrebbe
+rotto il `CHECK` del DB, i filtri `?stato=` validati da zod e l'invariante «stato del movimento =
+enum del DB». Il dato è derivato — `movimento.pagamento_id → pagamenti.fattura_stato` — e derivato
+resta: il GET lo calcola con la query batch **che già faceva**, estesa ai `pagamento_id` dei
+confermati e alla colonna `fattura_stato`. La riga esce con `pagamento_stato` e `fattura_stato`
+**solo se confermata e di una sede attiva** dell'operatore, altrimenti `null`: è la stessa
+minimizzazione già applicata ai nomi nei suggerimenti, perché un operatore non deve leggere «da
+fatturare» dove non può agire. Il chip lo decide una funzione pura, `chipFatturazione`:
+`in_attesa` → «In attesa SDI» · `emessa` → «Fatturata» · `scartata` → «Scartata» · `non_richiesta`
+con pagamento saldato → «Da fatturare» · altrimenti niente.
+
+**Un sottofiltro «Fatturazione»** (`?fattura=da_fatturare|fatturate`) si applica in memoria dopo
+l'arricchimento e si compone con `?stato=`: sceglierlo forza `stato=confermato`, perché la
+fatturazione vive solo sui confermati e un filtro che non trova mai niente si legge come un guasto.
+
+**Il dialog passa al pulsante ciò che aveva già in mano**: `fattura_stato` arriva a `FatturaButton`
+e a `FatturaChip`, `onEmessa={onDone}` aggiorna la lista dopo l'emissione, e quando la fattura è già
+uscita lo si dice in una riga invece di offrire un pulsante che darà 409.
+
+**«Come pagare» al genitore, e un motore solo per IBAN e intestatario.** Il nuovo
+`coordinateBonificoSede()` (`src/lib/pagamenti/coordinate-bonifico.ts`) legge `fiscale_config` e
+`aruba_config`, prende la denominazione da `datiStruttura` e l'IBAN da `ibanLeggibile`: assente o
+non valido ⇒ `null`, **mai un IBAN sbagliato a schermo**. Lo usano **sia** `GET /api/pagamenti`
+(che ora risponde anche `sedi: [{ id, nome, iban, intestatario }]`) **sia** il motore dei solleciti,
+e un lock architetturale (`coordinate-bonifico-un-motore-solo`) impedisce che ne nascano due copie:
+due letture separate direbbero due IBAN diversi alla stessa famiglia, e la divergenza si scoprirebbe
+solo a bonifico partito. La card ha due segmenti — **Bonifico** (Intestato a · IBAN a gruppi di
+quattro con «Copia» · le causali per voce, cioè la card di prima incorporata) e **Contanti** (in
+segreteria, ricevuta subito, **non detraibili**, L. 160/2019). Le sedi con le stesse coordinate si
+mostrano una volta sola: il conto è uno per la cooperativa, ma la configurazione è per sede e il
+codice non può darlo per scontato. **Senza IBAN la card non sparisce**: dice di chiederlo in
+segreteria.
+
+Trovato per strada e corretto: il pannello di riconciliazione **ricaricava in loop** (1.470 GET in
+300 ms, misurati) perché `t` di next-intl stava fra le dipendenze di `load` e non è stabile fra
+render. Invisibile perché ogni asserzione guardava «almeno una fetch», mai «quante». E il ripiego
+`'La Segreteria'` dei solleciti era **anche** il modo di dire «non configurato»: una sede la cui
+denominazione fiscale fosse davvero «La Segreteria» perdeva in silenzio la riga «Intestato a».
+
+**Nessuna migrazione, nessuna colonna nuova, nessuna variabile d'ambiente**: tutto è derivato da
+colonne che esistono già.
+
+### La rete
+
+**12 file di test, 145 verdi**, di cui **6 file nuovi con 47 test**; suite intera **14.117**. Ogni
+comportamento è nato da un test visto **rosso** e citato per esteso: il dialog senza `fatturaStato`
+(`expected undefined to be 'emessa'`), il GET senza `fattura_stato` (`expected undefined to be
+'pagato'`), la risposta senza `sedi` (`TypeError: sedi is not iterable`), il componente inesistente
+(`Failed to resolve import "…/ComePagare"`).
+
+Contro la trappola del **mock piatto** — un finto client che risponde uguale a ogni tabella è verde
+con **e senza** la correzione — sono state fatte le controprove: rotte apposta, una alla volta, la
+guardia «sede attiva» e la guardia «stato confermato» (entrambe tornate rosse con `expected 'pagato'
+to be null`); sostituito `sid` con `scuolaIds[0]` nel loop per sede (rosso: il finto client filtra
+davvero); nove mutazioni deliberate sulla card del genitore (l'àncora Alto Contrasto, la fusione dei
+conti, la tastiera dei tab, i 44 px, l'IBAN compatto negli appunti). Due test sono stati **riscritti
+perché non mordevano**: uno passava anche senza la correzione perché la denominazione firma anche la
+prosa dell'email, l'altro perché una sola riga confermata bastava a produrre il risultato atteso col
+solo `?stato=`.
+
+Un test **esistente** è stato riparato dopo essere stato smascherato: l'iniezione d'errore del
+degrado prudente scattava su `cols === 'id, scuola_id'` a uguaglianza esatta, e allargando la select
+ha smesso di scattare **in silenzio**, misurando il ramo felice mentre credeva di misurare il
+degrado.
+
+E2E (girano in CI): «Come pagare» visibile sulla pagina del genitore, il tab «Contanti» che mostra
+il proprio testo, e — poiché il DB della CI **non ha** `fiscale_config` — il ripiego «Le coordinate
+bancarie non sono ancora disponibili», che è il ramo che vedrà anche produzione finché l'IBAN non
+sarà compilato. In `admin-contabilita`, la pill «Da fatturare» nella vista riconciliazione.
+
+### Cosa NON è stato fatto, e perché
+
+- **Nessun campo «intestatario»**: decisione del titolare. È la denominazione del cedente, la stessa
+  che firma le fatture e le email — un campo in più sarebbe una seconda verità da tenere allineata.
+- ⏳ **L'IBAN va compilato sulle tre sedi** in Impostazioni → Fiscale. Finché è vuoto, la card del
+  genitore rimanda alla segreteria (e i solleciti fanno come oggi). **Lo fa il titolare dopo il
+  deploy**: è un dato di configurazione, non di codice, e non va in un file di un repository
+  pubblico.
+- Le **etichette del semaforo** e dei filtri per stato della riconciliazione restano in italiano
+  cablato: è un gap pre-esistente, il gruppo nuovo è invece tutto a catalogo. Si chiude a parte.
+- Le pill dei filtri restano a ~30 px di altezza, sotto i 44 px di target touch: alzarle
+  toccherebbe anche il gruppo «stato» già in produzione, e non si fa di nascosto dentro questo
+  lavoro.
+- `emissione.ts` e la route `[id]` non si toccano; nessun interruttore «contanti sì/no» per sede,
+  perché oggi tutte e tre le sedi accettano entrambi i metodi.
 
 ## 🧾 Changelog — L'estratto conto non si era mai potuto caricare, e la fattura non sapeva a chi intestarsi — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
 
@@ -6394,6 +6520,13 @@ Sedici punti d'invio hanno smesso di comporre testo a mano e chiedono l'email al
 
 - Mettere l'**IBAN** in Impostazioni → Dati fiscali: finché è vuoto il riquadro bonifico mostra
   importo, causale e intestatario, cioè quello che il sollecito manda oggi.
+  ⚠️ **Dal 2026-09-05 questa voce non riguarda più le sole email.** Lo stesso IBAN compare adesso
+  anche **al genitore**, nella card «Come pagare» di `/parent/pagamenti` (branch
+  `feat/riconciliazione-fatturato-e-come-pagare`): è la stessa `admin_settings.fiscale_config.iban`,
+  letta dallo stesso motore. Finché resta vuoto, la card **non sparisce** — dice «Le coordinate
+  bancarie non sono ancora disponibili: chiedile in segreteria», che è vero ma è un giro in più per
+  la famiglia. **Va compilato su tutte e tre le sedi** (Giugliano, Aversa, Cesa): la configurazione è
+  per sede, e una sede senza IBAN resta muta anche se le altre due ce l'hanno.
 - Il bottone **Google Play** punta all'indirizzo definitivo, che al 2026-08-15 risponde **404**
   perché l'app è ancora nel canale di test chiuso. Scelta esplicita del titolare, che conosceva il
   404 quando ha scelto.

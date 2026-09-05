@@ -6,13 +6,17 @@ import { Copy, Check, Info } from 'lucide-react';
 import { logClient } from '@/lib/logging/client';
 
 // CTA primaria AA della feature: BIANCO su verde (≈6,5:1) invece del giallo-su-verde
-// del `Btn` primary dell'app (~4:1, sotto AA). Locale al componente per non toccare
-// il `Btn` globale.
-const BTN_COPIA_AA =
+// del `Btn` primary dell'app (~4:1, sotto AA). Locale alla feature per non toccare
+// il `Btn` globale — ESPORTATA perché la usa anche il bottone «Copia l'IBAN» di
+// `ComePagare`, che vive dentro questa stessa card: due copie della stessa costante
+// sarebbero due CTA che divergono al primo ritocco.
+export const BTN_COPIA_AA =
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-pill font-barlow font-extrabold uppercase tracking-[0.05em] transition-transform active:scale-95 disabled:opacity-45 disabled:pointer-events-none h-9 px-4 text-[13px] bg-kidville-green text-kidville-white hover:bg-kidville-green-dark';
 
 export interface VoceCausale {
     id: string;
+    /** Sede a cui la voce appartiene: decide SU QUALE CONTO va pagata (`ComePagare`). */
+    scuola_id: string;
     /** Causale già COMPOSTA dal server col modello per-categoria (admin_settings.causali_config). */
     causale: string;
     nome: string;
@@ -27,7 +31,13 @@ export interface VoceCausale {
 // (riconciliazione). Se il CF del bambino manca, il server lo omette dalla causale e
 // una nota invita a indicare comunque il nome. Il CF è del PROPRIO figlio: dato del
 // genitore, lecito da mostrargli.
-export function CausaleBonifico({ voci }: { voci: VoceCausale[] }) {
+//
+// `incorporata`: la stessa lista dentro un'altra card (il pannello «Bonifico» di
+// `ComePagare`). Toglie SOLO il guscio — bordo, fondo, padding — e l'occhiello:
+// due card annidate darebbero due bordi e due titoli per una cosa sola. Senza la
+// prop il componente resta byte per byte quello di prima, ed è il motivo per cui
+// i test storici di questa card non si toccano.
+export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausale[]; incorporata?: boolean }) {
     const t = useTranslations('pagamenti');
     const [copiato, setCopiato] = useState<string | null>(null);
     if (voci.length === 0) return null;
@@ -51,10 +61,12 @@ export function CausaleBonifico({ voci }: { voci: VoceCausale[] }) {
     };
 
     return (
-        <div className="rounded-card border border-kidville-line bg-kidville-white p-4">
-            <p className="font-barlow font-bold uppercase text-xs tracking-wide text-kidville-green mb-1">
-                {t('causaleTitolo')}
-            </p>
+        <div className={incorporata ? '' : 'rounded-card border border-kidville-line bg-kidville-white p-4'}>
+            {!incorporata && (
+                <p className="font-barlow font-bold uppercase text-xs tracking-wide text-kidville-green mb-1">
+                    {t('causaleTitolo')}
+                </p>
+            )}
             <p className="font-maven text-xs text-kidville-sub mb-3">
                 {t('causaleIntro')}
             </p>

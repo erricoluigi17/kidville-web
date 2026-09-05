@@ -28,6 +28,19 @@ export interface SuggerimentoUi {
   alunno_id?: string | null
 }
 
+/**
+ * Lo stato della FATTURA di un movimento già abbinato, come lo calcola il GET.
+ *
+ * Tre stati, non due: `emessa` porta i numeri dei documenti (uno per quota, quindi più
+ * d'uno sui pagamenti ripartiti fra due genitori), `scartata` è un tentativo fallito da
+ * riemettere, `da_fatturare` è un bonifico incassato per cui non è mai partito niente.
+ * Confondere le ultime due farebbe sembrare «da fare» un lavoro già fatto e finito male.
+ */
+export interface FatturaMovimentoUi {
+  stato: 'emessa' | 'scartata' | 'da_fatturare'
+  numeri: string[]
+}
+
 /** Una riga del registro movimenti (GET /api/pagamenti/riconciliazione). */
 export interface MovimentoUi {
   id: string
@@ -41,6 +54,12 @@ export interface MovimentoUi {
   suggerimenti?: SuggerimentoUi[] | null
   pagamento_id?: string | null
   confermato_il?: string | null
+  /**
+   * Presente solo sulle righe già abbinate. `null` significa «non lo so» — la lettura di
+   * `fatture_emesse` è fallita — ed è diverso da `da_fatturare`: in quel caso non si mostra
+   * nessun chip, invece di dichiarare uno stato che non è stato verificato.
+   */
+  fattura?: FatturaMovimentoUi | null
 }
 
 /** Un pagamento aperto (fonte della ricerca manuale): GET /api/pagamenti?solo_aperti=true. */

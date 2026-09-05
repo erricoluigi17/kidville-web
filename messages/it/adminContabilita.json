@@ -903,5 +903,8 @@
   "fatBtn_int_ricorda": "Ricorda questo intestatario sulla scheda di {bambino}",
   "fatBtn_int_ricorda_generico": "Ricorda questo intestatario sulla scheda del bambino",
   "fatBtn_int_ricorda_hint": "Si salva solo se la fattura viene emessa: un documento rifiutato non lascia dietro nessuna modifica.",
-  "fatBtn_int_ricorda_errore": "La fattura è stata emessa, ma l’intestatario non è stato salvato sulla scheda del bambino: aprila e impostalo a mano."
+  "fatBtn_int_ricorda_errore": "La fattura è stata emessa, ma l’intestatario non è stato salvato sulla scheda del bambino: aprila e impostalo a mano.",
+  "reconFatturaEmessa": "Fattura {numeri}",
+  "reconFatturaScartata": "Scartata, da riemettere",
+  "reconFatturaDaFatturare": "Da fatturare"
 }

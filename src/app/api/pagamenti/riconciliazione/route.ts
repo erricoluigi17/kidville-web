@@ -491,17 +491,37 @@ function dettaglioErrore(e: unknown): { error_code: string; stato_errore?: numbe
  * `da_fatturare` pretende anche il pagamento SALDATO: su un pagamento parziale la fattura non
  * si emette, e mostrarlo fra i «da fatturare» manderebbe l'operatore contro un rifiuto.
  */
+/**
+ * I DOCUMENTI vincono sul riassunto, come nel chip.
+ *
+ * Le due fonti possono divergere davvero: `emissione.ts` documenta che l'`update` del
+ * riassunto su `pagamenti` può fallire lasciando `fatture_emesse` avanti e `fattura_stato`
+ * indietro. Se il filtro leggesse solo il riassunto, una riga che il chip dichiara
+ * «Scartata, da riemettere» non comparirebbe fra i «da fatturare» — l'operatore vedrebbe
+ * l'invito a rifare un lavoro che il filtro nasconde. Quando `fattura` è `null` (lettura dei
+ * documenti fallita) o assente (riga non abbinata) si ripiega sul riassunto.
+ */
+function fatturaGiaFatta(r: MovimentoArricchito): boolean {
+  const doc = r.fattura as FatturaMovimento | null | undefined
+  if (doc) return doc.stato === 'emessa'
+  return FATTURA_FATTA.has(r.fattura_stato ?? '')
+}
+
+function fatturaDaFare(r: MovimentoArricchito): boolean {
+  const doc = r.fattura as FatturaMovimento | null | undefined
+  if (doc) return doc.stato !== 'emessa'
+  return FATTURA_DA_FARE.has(r.fattura_stato ?? '')
+}
+
 function filtraFattura(
   righe: MovimentoArricchito[],
   fattura: 'da_fatturare' | 'fatturate' | undefined,
 ): MovimentoArricchito[] {
   if (!fattura) return righe
   if (fattura === 'da_fatturare') {
-    return righe.filter(
-      (r) => r.stato === 'confermato' && r.pagamento_stato === 'pagato' && FATTURA_DA_FARE.has(r.fattura_stato ?? ''),
-    )
+    return righe.filter((r) => r.stato === 'confermato' && r.pagamento_stato === 'pagato' && fatturaDaFare(r))
   }
-  return righe.filter((r) => FATTURA_FATTA.has(r.fattura_stato ?? ''))
+  return righe.filter((r) => fatturaGiaFatta(r))
 }
 
 const OPERAZIONE_GET = 'pagamenti/riconciliazione:GET'

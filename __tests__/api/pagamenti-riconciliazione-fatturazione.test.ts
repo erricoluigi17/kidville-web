@@ -127,6 +127,11 @@ const mov = (n: number, stato: string, pagamentoId: string | null, extra: Record
 })
 
 /** Riga di `pagamenti`: qui vivono `stato` (del pagamento) e `fattura_stato`. */
+/** Un documento in `fatture_emesse` per il pagamento dato: `sdi` 1 = vivo, 2 = scartato dallo SDI. */
+const doc = (pagamentoId: string, sdi: number | null, numero = 1947) => ({
+  pagamento_id: pagamentoId, numero, anno: 2026, sezionale: 'FPR', sdi_stato: sdi, quota_adult_id: null,
+})
+
 const pag = (n: number, statoPagamento: string, fatturaStato: string | null, scuolaId: string | null = 'sc-1') => ({
   id: PID(n),
   scuola_id: scuolaId,
@@ -211,6 +216,9 @@ describe('GET /api/pagamenti/riconciliazione — stato di fatturazione della rig
       pag(4, 'pagato', 'in_attesa'),
       pag(5, 'pagato', 'emessa'),
     ]
+    // I documenti coerenti col riassunto: lo scarto della 2, le fatture vive della 4 e della 5.
+    // Il filtro legge PRIMA i documenti (come il chip) e solo in loro assenza il riassunto.
+    h.db.fatture_emesse = [doc(PID(2), 2), doc(PID(4), 1), doc(PID(5), 1)]
 
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID(1), MID(2)])
@@ -231,6 +239,7 @@ describe('GET /api/pagamenti/riconciliazione — stato di fatturazione della rig
       pag(4, 'pagato', 'in_attesa'),
       pag(5, 'pagato', 'emessa'),
     ]
+    h.db.fatture_emesse = [doc(PID(2), 2), doc(PID(4), 1), doc(PID(5), 1)]
 
     const j = await (await get('?fattura=fatturate')).json()
     expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID(4), MID(5)])
@@ -245,6 +254,7 @@ describe('GET /api/pagamenti/riconciliazione — stato di fatturazione della rig
       mov(6, 'suggerito', null),    // cade sul filtro STATO
     ]
     h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta'), pag(5, 'pagato', 'emessa')]
+    h.db.fatture_emesse = [doc(PID(5), 1)]
 
     const j = await (await get('?stato=confermato&fattura=da_fatturare')).json()
     expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID(1)])
@@ -438,6 +448,7 @@ describe('GET /api/pagamenti/riconciliazione — il degrado non dice mai «nient
   it('batch riuscita: `fatturazione_disponibile` è true e il filtro si applica davvero', async () => {
     registro(3)
     h.db.pagamenti[1].fattura_stato = 'emessa'
+    h.db.fatture_emesse = [doc(PID_N(1), 1)]
 
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.fatturazione_disponibile).toBe(true)
@@ -512,5 +523,48 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.troncato).toBeUndefined()
     expect(h.eventi.some((e) => e.campi.esito === 'fatturazione_finestra_piena')).toBe(false)
+  })
+})
+
+describe('GET /api/pagamenti/riconciliazione — il filtro legge i DOCUMENTI quando ci sono, come il chip', () => {
+  // Le due fonti possono divergere davvero: `emissione.ts` documenta che l'`update` del
+  // riassunto su `pagamenti` può fallire lasciando `fatture_emesse` avanti e
+  // `fattura_stato` indietro. Il chip legge i documenti; se il filtro leggesse solo il
+  // riassunto, una riga «Scartata, da riemettere» NON comparirebbe fra i «da fatturare»
+  // — cioè il chip inviterebbe a rifare un lavoro che il filtro nasconde.
+  const documento = (i: number, sdi: number | null) => ({
+    pagamento_id: PID_N(i), numero: 1947 + i, anno: 2026, sezionale: 'FPR', sdi_stato: sdi, quota_adult_id: null,
+  })
+
+  it('riassunto «emessa» ma documento SCARTATO dallo SDI → sta fra i «da fatturare», non fra le «fatturate»', async () => {
+    registro(2, 'emessa')
+    // riga 0: unico documento, scartato (sdi_stato 2). riga 1: documento vivo (sdi_stato 1).
+    h.db.fatture_emesse = [documento(0, 2), documento(1, 1)]
+
+    const daFare = await (await get('?fattura=da_fatturare')).json()
+    expect(daFare.data.map((r: { id: string }) => r.id)).toEqual([MID_N(0)])
+    expect(daFare.data[0].fattura).toEqual({ stato: 'scartata', numeri: [] })
+
+    const fatte = await (await get('?fattura=fatturate')).json()
+    expect(fatte.data.map((r: { id: string }) => r.id)).toEqual([MID_N(1)])
+  })
+
+  it('riassunto «non_richiesta» ma documento VIVO → sta fra le «fatturate»: i documenti vincono in entrambi i versi', async () => {
+    registro(1, 'non_richiesta')
+    h.db.fatture_emesse = [documento(0, 1)]
+
+    const daFare = await (await get('?fattura=da_fatturare')).json()
+    expect(daFare.data).toHaveLength(0)
+    const fatte = await (await get('?fattura=fatturate')).json()
+    expect(fatte.data.map((r: { id: string }) => r.id)).toEqual([MID_N(0)])
+  })
+
+  it('senza documenti leggibili (`fattura: null`) il filtro ripiega sul riassunto, come prima', async () => {
+    registro(2, 'scartata')
+    h.errori.fatture_emesse = { code: '08006', message: 'connection failure' }
+
+    const daFare = await (await get('?fattura=da_fatturare')).json()
+    expect(daFare.data).toHaveLength(2)
+    expect(daFare.data[0].fattura).toBeNull()
   })
 })

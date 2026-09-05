@@ -289,10 +289,11 @@ rimessa la `.in()` unica al posto dei blocchi → **1 rosso**, quello dei 250 pa
 
 - **Nessun campo «intestatario»**: decisione del titolare. È la denominazione del cedente, la stessa
   che firma le fatture e le email — un campo in più sarebbe una seconda verità da tenere allineata.
-- ⏳ **L'IBAN va compilato sulle tre sedi** in Impostazioni → Fiscale. Finché è vuoto, la card del
-  genitore rimanda alla segreteria (e i solleciti fanno come oggi). **Lo fa il titolare dopo il
-  deploy**: è un dato di configurazione, non di codice, e non va in un file di un repository
-  pubblico.
+- ✅ **L'IBAN è compilato sulle tre sedi** (2026-09-05, sera). Prima del rilascio era presente solo
+  su Aversa: su Giugliano e Cesa è stato copiato da lì con un `UPDATE` mostrato prima di eseguirlo
+  (il conto è uno per la cooperativa), e verificato con il mod-97 in SQL: 27 caratteri, valido su
+  tutte e tre. La sede E2E resta vuota di proposito (è il caso «chiedile in segreteria» che la CI
+  esercita). Il valore non sta in nessun file del repository, che è pubblico.
 - Le **etichette del semaforo** e dei filtri per stato della riconciliazione restano in italiano
   cablato: è un gap pre-esistente, il gruppo nuovo è invece tutto a catalogo. Si chiude a parte.
 - Le pill dei filtri restano a ~30 px di altezza, sotto i 44 px di target touch: alzarle

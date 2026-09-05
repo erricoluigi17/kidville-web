@@ -1727,3 +1727,103 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
   border-style: double;
   border-width: 4px;
 }
+
+/* =============================================================================
+   IL CHIP DI FATTURAZIONE DELLA RICONCILIAZIONE (05/09/2026).
+
+   `RiconciliazionePanel` posa sulla riga confermata — fondo VERDE PIENO — un chip
+   che dice a che punto è la fattura: «Fatturata», «In attesa SDI», «Scartata»,
+   «Da fatturare». In luce normale sono carta bianca con inchiostro di funzione
+   (green 6,51:1 · warn-strong 5,61:1 · error-strong 5,62:1) e, per l'unico che
+   chiede di agire, giallo pieno su inchiostro (7,33:1).
+
+   In Alto Contrasto niente di tutto questo si ribalta da solo: `@theme inline`
+   INLINA l'hex dentro le utility, quindi ridefinire `--color-kidville-*` sotto
+   `[data-contrast="high"]` non tocca `.bg-kidville-white` né `.text-kidville-green`
+   — è la stessa lezione già scritta sopra per `.kv-recon-row--suggerito` e per
+   `.kv-news-onbody`. Una superficie nuova, qui, o si dipinge a mano o non esiste.
+
+   Il linguaggio è quello del tema: carta bianca, inchiostro nero (21:1), e un
+   CONTORNO nero da 2px — che è ciò che stacca il chip dal fondo della riga, dato
+   che in Alto Contrasto il colore non può più farlo.
+
+   L'eccezione è «Da fatturare», e non è un vezzo: è l'unico chip che chiede
+   un'azione, e perderlo dentro una fila di bianchi identici toglierebbe la
+   ragione per cui è stato aggiunto. Prende lo stesso giallo brillante che il tema
+   usa già come segnale (#FFE500, 16,46:1 sul nero), con lo stesso contorno.
+   La variante sta DOPO la regola comune: stessa specificità, vince l'ultima.
+
+   Non-layered → vince sulle utility Tailwind senza `!important`.
+   Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`.
+   ============================================================================= */
+[data-contrast="high"] .kv-recon-chip {
+  background: #FFFFFF;
+  color: #000000;
+  box-shadow: inset 0 0 0 2px #000000;
+}
+[data-contrast="high"] .kv-recon-chip--da-fatturare {
+  background: #FFE500;
+}
+
+/* =============================================================================
+   «Come pagare» — la card del genitore in /parent/pagamenti (`ComePagare`).
+
+   Perché serve una regola dedicata, e non basta il rimappaggio dei token: i token
+   stanno in `@theme inline`, che INLINA l'hex dentro l'utility. `bg-kidville-white`
+   resta #FFFFFF anche in Alto Contrasto, `text-kidville-green` resta #006A5F: la
+   card nuova sarebbe una macchia chiara sul body nero, con dentro un verde a
+   3,2:1. Si dipinge quindi a mano, con lo stesso linguaggio di `.kv-appbar` e
+   `.kv-news-onbody` — fondo nero, bordo bianco 2px, accento GIALLO su ciò che si
+   può toccare. Regole non-layered → vincono sulle utility senza `!important`.
+
+   Dentro ci vive anche `CausaleBonifico incorporata`: le sue chip crema e il testo
+   verde della causale sono coperti dalle stesse regole (i selettori sono sui
+   discendenti), quindi non serve una seconda ancora. */
+[data-contrast="high"] .kv-come-pagare {
+  background: #000000;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-come-pagare .text-kidville-ink,
+[data-contrast="high"] .kv-come-pagare .text-kidville-sub {
+  color: #FFFFFF;
+}
+/* Occhiello «COME PAGARE» e testo della causale: verde inlinato su fondo nero
+   (3,23:1, sotto AA) → giallo, come i link di `.kv-news-onbody`. */
+[data-contrast="high"] .kv-come-pagare .text-kidville-green {
+  color: #FFE500;
+}
+[data-contrast="high"] .kv-come-pagare .border-kidville-line {
+  border-color: #FFFFFF;
+}
+/* Le superfici crema (barra dei tab, chip delle causali, nota dei contanti)
+   sono hex inlinati chiari: diventano il grigio scurissimo già usato altrove,
+   così restano DISTINTE dal fondo della card senza tornare chiare. */
+[data-contrast="high"] .kv-come-pagare .bg-kidville-cream {
+  background-color: #1A1A1A;
+}
+/* I due tab. Base: nero con contorno bianco. */
+[data-contrast="high"] .kv-come-pagare [role="tab"] {
+  background-color: #000000;
+  color: #FFFFFF;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+}
+/* Il CTA «Copia» (`.bg-kidville-green`, bianco su verde in luce normale) e il tab
+   attivo, che porta le stesse classi: pieno GIALLO con inchiostro nero. Il
+   `color` qui batte l'utility `.text-kidville-white` sullo stesso elemento
+   (0,3,0 contro 0,1,0, e non-layered contro layered). */
+[data-contrast="high"] .kv-come-pagare .bg-kidville-green {
+  background-color: #FFE500;
+  color: #000000;
+}
+/* …e il tab attivo si distingue ANCHE senza colore: pieno + sottolineatura
+   contro contorno vuoto. Chi non separa il giallo dal bianco legge lo stato
+   dalla forma. Specificità (0,4,0): vince sulle due regole qui sopra. */
+[data-contrast="high"] .kv-come-pagare [role="tab"][aria-selected="true"] {
+  background-color: #FFE500;
+  color: #000000;
+  box-shadow: inset 0 0 0 2px #FFE500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

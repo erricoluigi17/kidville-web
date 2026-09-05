@@ -7,8 +7,12 @@ import {
   riepilogoImport,
   SEMAFORO,
   FILTRI,
+  chipFatturazione,
+  CHIP_FATTURAZIONE,
+  FILTRI_FATTURA,
   type SuggerimentoUi,
   type EsitoImport,
+  type MovimentoUi,
 } from '@/components/features/admin/pagamenti/riconciliazione-ui'
 
 // Logica PURA della lista a semaforo (Riconciliazione v2, lato UI). Contano tre
@@ -150,5 +154,110 @@ describe('riepilogoImport — uscite ignorate e righe non lette', () => {
     const t = riepilogoImport({ ...base, nuovi: 20000, troncate: 4 })
     expect(t).toContain('4 righe NON lette')
     expect(riepilogoImport({ ...base, nuovi: 2, troncate: 0 })).not.toContain('NON lette')
+  })
+})
+
+/**
+ * ─── IL CHIP DI FATTURAZIONE, E PERCHÉ NON È UN QUINTO STATO ─────────────────
+ *
+ * Il registro ha quattro stati e SOLI quattro (`CHECK (stato IN (…))` sul DB):
+ * la riga diventa verde alla conferma e resta identica per sempre, anche dopo
+ * l'emissione della fattura — che scrive su `pagamenti.fattura_stato`, mai sul
+ * movimento. Su un registro globale con centinaia di righe verdi indistinguibili
+ * nessuno può dire quali restano da fatturare: SALTARE una fattura è il difetto
+ * reale, e non è mitigato da niente (fatturare due volte lo ferma la guardia di
+ * idempotenza dell'emissione, saltarla non la ferma nessuno).
+ *
+ * Il dato è DERIVATO — `movimento.pagamento_id → pagamenti.fattura_stato` — e
+ * derivato resta: nessuna colonna nuova su un registro append-only. Qui si blocca
+ * la tabella di verità della funzione che lo traduce in un chip.
+ *
+ * ⚠️ «Da fatturare» è l'UNICO caso che dipende da due campi insieme: la fattura
+ * non richiesta su un pagamento NON saldato non è un invito ad agire, è rumore.
+ */
+describe('chipFatturazione — tabella di verità', () => {
+  const mov = (extra: Partial<MovimentoUi>): MovimentoUi => ({
+    id: 'm1', data_operazione: '2026-10-05', importo: 150, causale: 'Bonifico',
+    stato: 'confermato', pagamento_id: 'pg1', ...extra,
+  })
+
+  it('in_attesa → «In attesa SDI» (a prescindere dallo stato del pagamento)', () => {
+    const c = chipFatturazione(mov({ fattura_stato: 'in_attesa', pagamento_stato: 'pagato' }))
+    expect(c?.tono).toBe('attesa')
+    expect(c?.labelKey).toBe('reconChipAttesaSdi')
+    expect(chipFatturazione(mov({ fattura_stato: 'in_attesa', pagamento_stato: 'parziale' }))?.tono).toBe('attesa')
+  })
+
+  it('emessa → «Fatturata»', () => {
+    const c = chipFatturazione(mov({ fattura_stato: 'emessa', pagamento_stato: 'pagato' }))
+    expect(c?.tono).toBe('fatturata')
+    expect(c?.labelKey).toBe('reconChipFatturata')
+  })
+
+  it('scartata → «Scartata» (lo SdI ha rifiutato: va rifatta, non è un dettaglio)', () => {
+    const c = chipFatturazione(mov({ fattura_stato: 'scartata', pagamento_stato: 'pagato' }))
+    expect(c?.tono).toBe('scartata')
+    expect(c?.labelKey).toBe('reconChipScartata')
+  })
+
+  it('non_richiesta + pagamento SALDATO → «Da fatturare» (l’unico chip che chiede di agire)', () => {
+    const c = chipFatturazione(mov({ fattura_stato: 'non_richiesta', pagamento_stato: 'pagato' }))
+    expect(c?.tono).toBe('da_fatturare')
+    expect(c?.labelKey).toBe('reconChipDaFatturare')
+  })
+
+  it('non_richiesta + pagamento NON saldato → nessun chip (parziale/non_pagato/assente)', () => {
+    for (const p of ['parziale', 'non_pagato', 'annullato', null, undefined]) {
+      expect(chipFatturazione(mov({ fattura_stato: 'non_richiesta', pagamento_stato: p }))).toBeNull()
+    }
+  })
+
+  it('senza campi di fatturazione → nessun chip (riga non confermata o di un’altra sede)', () => {
+    expect(chipFatturazione(mov({ stato: 'suggerito', pagamento_id: null }))).toBeNull()
+    expect(chipFatturazione(mov({ fattura_stato: null, pagamento_stato: null }))).toBeNull()
+    expect(chipFatturazione(mov({ stato: 'da_abbinare' }))).toBeNull()
+    expect(chipFatturazione(mov({ stato: 'ignorato' }))).toBeNull()
+  })
+
+  it('uno stato di fatturazione sconosciuto non inventa un chip', () => {
+    expect(chipFatturazione(mov({ fattura_stato: 'boh' as never, pagamento_stato: 'pagato' }))).toBeNull()
+  })
+})
+
+/**
+ * La PELLE del chip vive sopra il fondo VERDE della riga confermata: qui gli
+ * sfondi pieni non sono un vezzo, sono l'unica cosa che tiene il contrasto.
+ * `bg-kidville-white/70` su verde scenderebbe sotto AA — la stessa lezione già
+ * pagata dal semaforo (varianti PIENE, mai opacità Tailwind).
+ */
+describe('CHIP_FATTURAZIONE / FILTRI_FATTURA', () => {
+  it('ogni tono ha fondo PIENO e ancora HC, nessuna opacità e nessun «muted»', () => {
+    for (const tono of ['fatturata', 'attesa', 'scartata', 'da_fatturare'] as const) {
+      const p = CHIP_FATTURAZIONE[tono]
+      expect(p.bg).toMatch(/^bg-kidville-/)
+      expect(p.bg).not.toMatch(/\//)
+      expect(p.testo).not.toMatch(/\//)
+      expect(p.testo).not.toContain('text-kidville-muted')
+      expect(p.hcClass).toContain('kv-recon-chip--')
+    }
+  })
+
+  it('i tre chip informativi sono su carta bianca; «Da fatturare» è giallo pieno su inchiostro (7,3:1)', () => {
+    expect(CHIP_FATTURAZIONE.fatturata.bg).toBe('bg-kidville-white')
+    expect(CHIP_FATTURAZIONE.fatturata.testo).toBe('text-kidville-green')
+    expect(CHIP_FATTURAZIONE.attesa.testo).toBe('text-kidville-warn-strong')
+    expect(CHIP_FATTURAZIONE.scartata.testo).toBe('text-kidville-error-strong')
+    expect(CHIP_FATTURAZIONE.da_fatturare.bg).toBe('bg-kidville-yellow')
+    expect(CHIP_FATTURAZIONE.da_fatturare.testo).toBe('text-kidville-ink')
+  })
+
+  it('il sottofiltro di fatturazione ha «Tutte» (id vuoto) più i due tagli utili', () => {
+    expect(FILTRI_FATTURA[0].id).toBe('')
+    expect(FILTRI_FATTURA.map((f) => f.id)).toEqual(['', 'da_fatturare', 'fatturate'])
+    // le etichette sono CHIAVI di catalogo, non testo cablato (a differenza di FILTRI,
+    // gap pre-esistente annotato nello spec)
+    expect(FILTRI_FATTURA.map((f) => f.labelKey)).toEqual([
+      'reconFiltroTutte', 'reconFiltroDaFatturare', 'reconFiltroFatturate',
+    ])
   })
 })

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { ChevronRight, Landmark, RefreshCw, Upload } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Clock, FileCheck, Landmark, RefreshCw, Receipt, Upload } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
@@ -17,12 +17,15 @@ import { LIMITE_UPLOAD_BYTE } from '@/lib/upload/limite-piattaforma';
 import {
   SEMAFORO,
   FILTRI,
+  FILTRI_FATTURA,
+  chipFatturazione,
   suggerimentoPrincipaleCf,
   riepilogoImport,
   type MovimentoUi,
   type PagamentoApertoUi,
   type EsitoImport,
   type StatoMovimento,
+  type TonoFatturazione,
 } from './riconciliazione-ui';
 
 interface Props {
@@ -54,6 +57,23 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
 const hdrFile = (u: string) => ({ 'x-user-id': u });
 
 /**
+ * Il glifo di ogni chip di fatturazione. Sta QUI e non nella mappa della pelle
+ * perché `riconciliazione-ui.ts` è un modulo `.ts`: la logica pura non importa
+ * componenti React. Mappa STATICA — nessuna icona costruita da un dato.
+ */
+const ICONA_CHIP: Record<TonoFatturazione, typeof FileCheck> = {
+  fatturata: FileCheck,
+  attesa: Clock,
+  scartata: AlertTriangle,
+  da_fatturare: Receipt,
+};
+
+/** Pill dei filtri (stato e fatturazione): stessa pelle, un solo posto. */
+const PILL_FILTRO = 'rounded-pill px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-[0.03em] transition-colors';
+const PILL_FILTRO_ON = 'bg-kidville-green text-kidville-white';
+const PILL_FILTRO_OFF = 'bg-kidville-white text-kidville-sub ring-[1.5px] ring-inset ring-kidville-line hover:ring-kidville-green';
+
+/**
  * Vista Riconciliazione bancaria — lista a SEMAFORO del registro cumulativo.
  * Import dell'estratto conto (.xls/.xlsx/.csv), poi ogni movimento è una riga colorata per stato
  * (verde=confermato · giallo=suggerito · rosso=da abbinare · grigio=ignorato):
@@ -72,7 +92,27 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   const [busy, setBusy] = useState(false);
   const [esito, setEsito] = useState<EsitoImport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * ⚠️ L'ERRORE DI RETE DEI MOVIMENTI È UN FLAG, NON UNA STRINGA — e non è
+   * pignoleria: è ciò che ferma un ciclo di richieste senza fine.
+   *
+   * `load` finiva con `setError(t('reconErroreReteMovimenti'))`, quindi `t`
+   * doveva stare fra le sue dipendenze. Ma `t` di next-intl **non è garantito
+   * stabile fra un render e l'altro**: quando cambia identità, `load` cambia,
+   * l'effetto rigira, il `finally` fa `setLoading(false)`, si ri-renderizza, e
+   * si ricomincia. Misurato sul banco di prova (dove `useTranslations` è un mock
+   * che ricrea `t` ogni volta): **1.470 GET in 300 ms, senza che nessuno
+   * cliccasse niente**. Nessun test se n'era mai accorto, perché nessuno contava
+   * le richieste — si guardava solo che ce ne fosse almeno una.
+   *
+   * Il rimedio è togliere la traduzione dal caricamento: `load` alza un flag, il
+   * testo lo sceglie il JSX. Così `load` dipende solo dai suoi veri ingressi.
+   */
+  const [erroreRete, setErroreRete] = useState(false);
   const [filtro, setFiltro] = useState<'' | StatoMovimento>('');
+  // Sottofiltro «Fatturazione»: si compone col filtro per stato e vale solo sui
+  // confermati (gli unici su cui la fatturazione esista).
+  const [fattura, setFattura] = useState<'' | 'da_fatturare' | 'fatturate'>('');
   const [selezionato, setSelezionato] = useState<MovimentoUi | null>(null);
 
   // Ref alla riga cliccata: ripristino del focus alla chiusura del dialog (WCAG 2.4.3).
@@ -95,15 +135,17 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     };
     try {
       const statoQ = filtro ? `&stato=${filtro}` : '';
+      const fatturaQ = fattura ? `&fattura=${fattura}` : '';
       const [movRes, apRes] = await Promise.all([
-        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
+        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}${fatturaQ}`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
         fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}&solo_aperti=true`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
       ]);
       if (movRes?.success) {
         setMovimenti((movRes.data ?? []) as MovimentoUi[]);
         setDisponibile(movRes.disponibile !== false);
+        setErroreRete(false);
       } else if (movRes === null) {
-        setError(t('reconErroreReteMovimenti'));
+        setErroreRete(true);
       }
       if (apRes?.success) {
         setAperti(((apRes.data ?? []) as PagamentoApertoUi[]).filter((p) => p.tipo !== 'padre'));
@@ -111,14 +153,35 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     } finally {
       setLoading(false);
     }
-  }, [userId, scuolaId, filtro, t]);
+  }, [userId, scuolaId, filtro, fattura]);
 
   useEffect(() => { load(); }, [load]);
 
+  /**
+   * Cambio del filtro per STATO. Se il nuovo stato non è «confermato», il
+   * sottofiltro di fatturazione si azzera: «suggeriti da fatturare» non esiste —
+   * la fatturazione vive solo sui confermati — e un filtro che non trova mai
+   * niente si legge come un guasto del prodotto, non come una scelta.
+   * I due `setState` stanno nello stesso gestore: React li accorpa in un render
+   * solo, quindi il GET riparte UNA volta (nessun refetch doppio).
+   */
   const cambiaFiltro = (id: '' | StatoMovimento) => {
     if (id === filtro) return;
     setLoading(true);
     setFiltro(id);
+    if (id !== 'confermato') setFattura('');
+  };
+
+  /**
+   * Cambio del sottofiltro FATTURAZIONE. Sceglierne uno forza `stato=confermato`
+   * nel GET (e accende la pill corrispondente: la lista mostra davvero quelli).
+   * «Tutte» toglie solo il parametro e lascia lo stato dov'è.
+   */
+  const cambiaFattura = (id: '' | 'da_fatturare' | 'fatturate') => {
+    if (id === fattura) return;
+    setLoading(true);
+    setFattura(id);
+    if (id) setFiltro('confermato');
   };
 
   /**
@@ -227,7 +290,11 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {riepilogoImport(esito)}
         </p>
       )}
-      {error && <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">{error}</p>}
+      {(error || erroreRete) && (
+        <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">
+          {error ?? t('reconErroreReteMovimenti')}
+        </p>
+      )}
 
       {/* Filtri per stato (sul GET via ?stato=) */}
       <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
@@ -235,11 +302,23 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           const attivo = f.id === filtro;
           return (
             <button key={f.id || 'tutti'} type="button" onClick={() => cambiaFiltro(f.id)} aria-pressed={attivo}
-              className={cx(
-                'rounded-pill px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-[0.03em] transition-colors',
-                attivo ? 'bg-kidville-green text-kidville-white' : 'bg-kidville-white text-kidville-sub ring-[1.5px] ring-inset ring-kidville-line hover:ring-kidville-green',
-              )}>
+              className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
               {f.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Sottofiltro «Fatturazione» (?fattura=), componibile col precedente: è la
+          risposta a «quali confermati restano da fatturare?», che su un registro
+          di righe verdi indistinguibili non aveva nessuna risposta. */}
+      <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltroFatturazione')}>
+        {FILTRI_FATTURA.map((f) => {
+          const attivo = f.id === fattura;
+          return (
+            <button key={f.id || 'tutte'} type="button" onClick={() => cambiaFattura(f.id)} aria-pressed={attivo}
+              className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+              {t(f.labelKey)}
             </button>
           );
         })}
@@ -258,6 +337,8 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {movimenti.map((m) => {
             const s = SEMAFORO[m.stato] ?? SEMAFORO.da_abbinare;
             const cf = suggerimentoPrincipaleCf(m.suggerimenti);
+            const fat = chipFatturazione(m);
+            const IconaChip = fat ? ICONA_CHIP[fat.tono] : null;
             return (
               <li key={m.id}>
                 <button
@@ -278,6 +359,18 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                       {cf && (
                         <span className="inline-flex items-center rounded-pill bg-kidville-white px-1.5 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
                           {t('reconBadgeCf')}
+                        </span>
+                      )}
+                      {/* Chip di fatturazione: fondo PIENO (mai opacità) perché vive
+                          sopra il verde della riga confermata. `kv-recon-chip` è
+                          l'àncora dell'override Alto Contrasto in globals.css. */}
+                      {fat && IconaChip && (
+                        <span className={cx(
+                          'kv-recon-chip inline-flex items-center gap-1 rounded-pill px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none tracking-[0.03em]',
+                          fat.bg, fat.testo, fat.hcClass,
+                        )}>
+                          <IconaChip size={12} aria-hidden="true" />
+                          {t(fat.labelKey)}
                         </span>
                       )}
                       <span className={cx('font-barlow text-[11px] font-extrabold uppercase tracking-wide', s.testo)}>{s.label}</span>

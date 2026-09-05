@@ -17,6 +17,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { Check, Download, FileText, Search, X, Users } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
+import { FatturaChip } from './FatturaChip';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
@@ -71,6 +72,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
   // Stato del pagamento collegato: serve solo ai movimenti confermati per capire
   // se mostrare Ricevuta (saldato) o la nota «Disponibile a saldo avvenuto».
   const [pagamentoStato, setPagamentoStato] = useState<string | null>(null);
+  /**
+   * Stato di FATTURAZIONE del pagamento collegato. Arrivava già nella stessa
+   * risposta e veniva buttato via: senza, `FatturaButton` riparte da
+   * `'non_richiesta'` e dice «Invia fattura» anche su un pagamento già
+   * fatturato — chi lo preme riceve un 409 che non spiega niente.
+   */
+  const [pagamentoFattura, setPagamentoFattura] = useState<string | null>(null);
   const [loadingPag, setLoadingPag] = useState(movimento.stato === 'confermato' && !!movimento.pagamento_id);
 
   const stato = movimento.stato;
@@ -90,7 +98,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       try {
         const r = await fetch(`/api/pagamenti/${movimento.pagamento_id}?userId=${userId}`, { headers: hdr(userId) });
         const j = await r.json();
-        if (active && j?.success) setPagamentoStato((j.data as { stato?: string } | null)?.stato ?? null);
+        if (active && j?.success) {
+          const d = j.data as { stato?: string; fattura_stato?: string } | null;
+          setPagamentoStato(d?.stato ?? null);
+          // Assente su una risposta più vecchia: si degrada a `null` e il
+          // pulsante torna a comportarsi come prima, senza rompersi.
+          setPagamentoFattura(d?.fattura_stato ?? null);
+        }
       } catch (err) {
         // Il dialog resta usabile senza lo stato: si logga, non si rompe.
         logClient({ livello: 'error', evento: 'fetch', messaggio: `pagamento-stato-ricevuta-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
@@ -236,13 +250,29 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           {loadingPag ? (
             <p className="font-maven text-sm text-kidville-sub">{t('movdlgCaricamento')}</p>
           ) : saldato && movimento.pagamento_id ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <a href={`/api/pagamenti/ricevuta?pagamento_id=${movimento.pagamento_id}&userId=${userId}`}
-                className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
-                <Download size={13} /> {t('movdlgRicevuta')}
-              </a>
-              <FatturaButton pagamentoId={movimento.pagamento_id} userId={userId} />
-            </div>
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <a href={`/api/pagamenti/ricevuta?pagamento_id=${movimento.pagamento_id}&userId=${userId}`}
+                  className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
+                  <Download size={13} /> {t('movdlgRicevuta')}
+                </a>
+                {/* Lo stato della fattura si DICE prima di offrire il pulsante:
+                    chi guarda deve sapere se il documento è già uscito. */}
+                <FatturaChip stato={pagamentoStato ?? ''} fatturaStato={pagamentoFattura} />
+                <FatturaButton
+                  pagamentoId={movimento.pagamento_id}
+                  userId={userId}
+                  fatturaStato={pagamentoFattura ?? undefined}
+                  onEmessa={onDone}
+                />
+              </div>
+              {/* Fattura già partita: la riga toglie l'ambiguità al pulsante, che
+                  in questo caso offre il download e non l'emissione. «Scartata»
+                  NON compare qui — quella va rifatta. */}
+              {(pagamentoFattura === 'in_attesa' || pagamentoFattura === 'emessa') && (
+                <p className="font-maven text-xs text-kidville-sub">{t('movdlgFatturaGiaEmessa')}</p>
+              )}
+            </>
           ) : (
             <p className="flex items-center gap-1.5 rounded-card bg-kidville-cream/60 px-3 py-2 font-maven text-xs text-kidville-sub">
               <FileText size={14} /> {t('movdlgRicevutaFatturaSaldo')}

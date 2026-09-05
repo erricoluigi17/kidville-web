@@ -903,5 +903,14 @@
   "fatBtn_int_ricorda": "Remember this holder on {bambino}’s record",
   "fatBtn_int_ricorda_generico": "Remember this holder on the child’s record",
   "fatBtn_int_ricorda_hint": "It is saved only if the invoice is issued: a rejected document leaves no change behind.",
-  "fatBtn_int_ricorda_errore": "The invoice was issued, but the holder was not saved on the child’s record: open it and set it by hand."
+  "fatBtn_int_ricorda_errore": "The invoice was issued, but the holder was not saved on the child’s record: open it and set it by hand.",
+  "reconChipFatturata": "Invoiced",
+  "reconChipAttesaSdi": "Awaiting SDI",
+  "reconChipScartata": "Rejected",
+  "reconChipDaFatturare": "To invoice",
+  "reconFiltroFatturazione": "Filter by invoicing",
+  "reconFiltroTutte": "All",
+  "reconFiltroDaFatturare": "To invoice",
+  "reconFiltroFatturate": "Invoiced",
+  "movdlgFatturaGiaEmessa": "An invoice has already been issued for this payment."
 }

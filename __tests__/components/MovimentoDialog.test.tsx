@@ -4,9 +4,25 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MovimentoDialog } from '@/components/features/admin/pagamenti/MovimentoDialog';
 import type { MovimentoUi, PagamentoApertoUi } from '@/components/features/admin/pagamenti/riconciliazione-ui';
 
-// FatturaButton fa fetch proprie: stub per isolare il dialog.
+/**
+ * FatturaButton fa fetch proprie: stub per isolare il dialog.
+ *
+ * ⚠️ IL MOCK REGISTRA LE PROPS, e non è un dettaglio: il difetto che questo file
+ * blocca è *una prop non passata*. Uno stub che rende soltanto un segnaposto è
+ * verde con e senza la correzione — `<FatturaButton pagamentoId userId />` e
+ * `<FatturaButton … fatturaStato="emessa" />` producono lo stesso `<span>`.
+ */
+const spiaFattura = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
-  FatturaButton: () => <span data-testid="fattura-button" />,
+  FatturaButton: (props: Record<string, unknown>) => {
+    spiaFattura.props.push(props);
+    return (
+      <button type="button" data-testid="fattura-button"
+        onClick={() => (props.onEmessa as (() => void) | undefined)?.()}>
+        Emetti fattura
+      </button>
+    );
+  },
 }));
 
 // Etichette dei pagamenti aperti volutamente DISTINTE da quelle dei suggerimenti,
@@ -175,5 +191,108 @@ describe('MovimentoDialog', () => {
     render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
     await waitFor(() => expect(screen.getByText(/a saldo avvenuto/i)).toBeInTheDocument());
     expect(screen.queryByRole('link', { name: /Ricevuta/ })).toBeNull();
+  });
+});
+
+/**
+ * ─── IL DIALOG AVEVA GIÀ `fattura_stato` IN MANO, E LO BUTTAVA VIA ───────────
+ *
+ * La risposta di `/api/pagamenti/[id]` porta `stato` **e** `fattura_stato`: il
+ * dialog ne teneva solo il primo, e montava `<FatturaButton pagamentoId userId />`
+ * nudo. `FatturaButton` parte da `'non_richiesta'`, quindi diceva «Invia fattura»
+ * anche su un pagamento già fatturato: chi lo premeva riceveva un 409 che non
+ * spiega niente — o, con un intestatario diverso, passava per il ramo «altro
+ * intestatario» e la guardia di idempotenza non c'entrava più.
+ *
+ * Qui si asserisce sulle PROPS ricevute, non sulla presenza di un segnaposto: è
+ * l'unica forma in cui «non è stata passata una prop» è un test che fallisce.
+ */
+describe('MovimentoDialog — stato della fattura al pulsante', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; });
+
+  const confermato: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
+  const rispostaPagamento = (fattura_stato: string | null) =>
+    vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/pg1')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+
+  it('fattura già emessa → il pulsante riceve fatturaStato="emessa" (non riparte da «non richiesta»)', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('emessa'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    await waitFor(() => expect(spiaFattura.props.at(-1)?.fatturaStato).toBe('emessa'));
+    expect(spiaFattura.props.at(-1)?.pagamentoId).toBe('pg1');
+  });
+
+  it('fattura in attesa SDI → fatturaStato="in_attesa"', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('in_attesa'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    await waitFor(() => expect(spiaFattura.props.at(-1)?.fatturaStato).toBe('in_attesa'));
+  });
+
+  it('dopo l’emissione la lista si aggiorna: onEmessa è agganciato a onDone', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('non_richiesta'));
+    const onDone = vi.fn();
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={onDone} returnFocusRef={ref()} />);
+
+    fireEvent.click(await screen.findByTestId('fattura-button'));
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it('con la fattura già uscita lo si DICE, e si mostra il chip di stato', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('emessa'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    expect(await screen.findByText(/Fattura già emessa per questo pagamento/)).toBeInTheDocument();
+    // il chip di FatturaChip (non mockato) dice lo stato in una parola
+    expect(screen.getByText('Fatturata')).toBeInTheDocument();
+  });
+
+  it('fattura in attesa → la stessa riga (il documento è partito, non si rifà)', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('in_attesa'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    expect(await screen.findByText(/Fattura già emessa per questo pagamento/)).toBeInTheDocument();
+    expect(screen.getByText('In attesa SDI')).toBeInTheDocument();
+  });
+
+  it('fattura NON richiesta → nessuna riga «già emessa», e il chip invita a fatturare', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('non_richiesta'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    expect(screen.queryByText(/Fattura già emessa/)).toBeNull();
+    expect(spiaFattura.props.at(-1)?.fatturaStato).toBe('non_richiesta');
+    expect(screen.getByText('Da fatturare')).toBeInTheDocument();
+  });
+
+  it('fattura SCARTATA → nessuna riga «già emessa» (va rifatta), ma lo stato arriva al pulsante', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('scartata'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    await waitFor(() => expect(spiaFattura.props.at(-1)?.fatturaStato).toBe('scartata'));
+    expect(screen.queryByText(/Fattura già emessa/)).toBeNull();
+    expect(screen.getByText('Scartata')).toBeInTheDocument();
+  });
+
+  it('risposta senza `fattura_stato` (server più vecchio) → si degrada, nessun crash', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/pg1')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato' } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    expect(spiaFattura.props.at(-1)?.fatturaStato).toBeUndefined();
+    expect(screen.queryByText(/Fattura già emessa/)).toBeNull();
   });
 });

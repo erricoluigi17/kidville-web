@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { RiconciliazionePanel } from '@/components/features/admin/pagamenti/RiconciliazionePanel';
 
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
@@ -305,5 +305,165 @@ describe('RiconciliazionePanel — l’estratto conto si carica com’è', () =>
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     expect(screen.getByRole('alert').textContent).toMatch(/4 MB/);
     expect(postDi(fetchMock)).toBeUndefined();
+  });
+});
+
+/**
+ * ─── LA RIGA VERDE NON DICEVA MAI «FATTURATO» ────────────────────────────────
+ *
+ * Fino a oggi la riga diventava verde alla conferma e restava identica per
+ * sempre: l'emissione scrive su `pagamenti.fattura_stato` e mai sul movimento.
+ * Su un registro globale di centinaia di righe verdi indistinguibili, «quali
+ * restano da fatturare?» non aveva risposta — e SALTARE una fattura non lo ferma
+ * nessuna guardia (fatturare due volte sì).
+ *
+ * Le fixture qui sotto portano i due campi DERIVATI del contratto nuovo
+ * (`pagamento_stato`, `fattura_stato`), valorizzati dal server solo sui
+ * confermati della propria sede: la riga suggerita li ha assenti, ed è
+ * esattamente il caso che dimostra che il chip non nasce dal nulla.
+ */
+const movimentiFatt = [
+  { id: 'mf1', data_operazione: '2026-10-05', importo: 150, causale: 'Bonifico da fatturare', controparte: '', stato: 'confermato', pagamento_id: 'pg1', suggerimenti: [], pagamento_stato: 'pagato', fattura_stato: 'non_richiesta' },
+  { id: 'mf2', data_operazione: '2026-10-06', importo: 200, causale: 'Bonifico gia fatturato', controparte: '', stato: 'confermato', pagamento_id: 'pg2', suggerimenti: [], pagamento_stato: 'pagato', fattura_stato: 'emessa' },
+  { id: 'mf3', data_operazione: '2026-10-07', importo: 90, causale: 'Bonifico solo suggerito', controparte: '', stato: 'suggerito', pagamento_id: null, suggerimenti: [], pagamento_stato: null, fattura_stato: null },
+  { id: 'mf4', data_operazione: '2026-10-08', importo: 70, causale: 'Bonifico confermato non saldato', controparte: '', stato: 'confermato', pagamento_id: 'pg4', suggerimenti: [], pagamento_stato: 'parziale', fattura_stato: 'non_richiesta' },
+];
+
+/** La riga (è un `<button>`) che porta quella causale. */
+const rigaDi = (causale: string) =>
+  screen.getByText(new RegExp(causale)).closest('button') as HTMLButtonElement;
+
+describe('RiconciliazionePanel — chip di fatturazione sulla riga', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', stubFetch(movimentiFatt)); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  it('confermato + saldato + fattura non richiesta → chip «Da fatturare» giallo su inchiostro', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    const chip = rigaDi('Bonifico da fatturare').querySelector('.kv-recon-chip') as HTMLElement;
+    expect(chip, 'la riga da fatturare deve portare il chip').toBeTruthy();
+    expect(chip.textContent).toContain('Da fatturare');
+    expect(chip.className).toContain('bg-kidville-yellow');
+    expect(chip.className).toContain('text-kidville-ink');
+    expect(chip.className).toContain('kv-recon-chip--da-fatturare');
+  });
+
+  it('fattura emessa → chip «Fatturata» su carta bianca (leggibile sul verde della riga)', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico gia fatturato/)).toBeInTheDocument());
+
+    const chip = rigaDi('Bonifico gia fatturato').querySelector('.kv-recon-chip') as HTMLElement;
+    expect(chip.textContent).toContain('Fatturata');
+    expect(chip.className).toContain('bg-kidville-white');
+    expect(chip.className).toContain('text-kidville-green');
+  });
+
+  it('riga suggerita → nessun chip (il server non le manda i campi di fatturazione)', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico solo suggerito/)).toBeInTheDocument());
+    expect(rigaDi('Bonifico solo suggerito').querySelector('.kv-recon-chip')).toBeNull();
+  });
+
+  it('confermato ma NON saldato → nessun chip (una fattura non richiesta lì è rumore)', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico confermato non saldato/)).toBeInTheDocument());
+    expect(rigaDi('Bonifico confermato non saldato').querySelector('.kv-recon-chip')).toBeNull();
+  });
+
+  it('nessun chip usa opacità o il grigio `muted` (sta sopra un fondo pieno verde)', async () => {
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    const chips = [...container.querySelectorAll('.kv-recon-chip')] as HTMLElement[];
+    expect(chips.length).toBe(2); // solo le due righe fatturabili/fatturate
+    for (const c of chips) {
+      expect(c.className).not.toContain('text-kidville-muted');
+      expect(c.className).not.toMatch(/bg-kidville-[a-z-]+\//);
+      expect(c.className).not.toMatch(/text-kidville-[a-z-]+\//);
+    }
+  });
+});
+
+describe('RiconciliazionePanel — sottofiltro «Fatturazione»', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  const getMovimenti = (m: ReturnType<typeof vi.fn>) =>
+    m.mock.calls.filter(([u, o]) =>
+      String(u).includes('/api/pagamenti/riconciliazione') && (o as { method?: string })?.method === undefined);
+
+  it('«Da fatturare» chiede al server i CONFERMATI con ?fattura=da_fatturare, in UNA sola richiesta', async () => {
+    const fetchMock = stubFetch(movimentiFatt);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+    const prima = getMovimenti(fetchMock).length;
+
+    const gruppo = screen.getByRole('group', { name: 'Filtra per fatturazione' });
+    fireEvent.click(within(gruppo).getByRole('button', { name: 'Da fatturare' }));
+
+    await waitFor(() => expect(getMovimenti(fetchMock).length).toBe(prima + 1));
+    const ultima = String(getMovimenti(fetchMock).at(-1)?.[0]);
+    expect(ultima).toContain('stato=confermato');
+    expect(ultima).toContain('fattura=da_fatturare');
+    // la pill scelta si dichiara premuta (nessun stato solo cromatico)
+    expect(within(gruppo).getByRole('button', { name: 'Da fatturare' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('«Fatturate» compone lo stesso taglio sui confermati', async () => {
+    const fetchMock = stubFetch(movimentiFatt);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    const gruppo = screen.getByRole('group', { name: 'Filtra per fatturazione' });
+    fireEvent.click(within(gruppo).getByRole('button', { name: 'Fatturate' }));
+
+    await waitFor(() => expect(String(getMovimenti(fetchMock).at(-1)?.[0])).toContain('fattura=fatturate'));
+    expect(String(getMovimenti(fetchMock).at(-1)?.[0])).toContain('stato=confermato');
+  });
+
+  /**
+   * ⚠️ IL PANNELLO RICARICAVA IN LOOP, E NESSUN TEST POTEVA VEDERLO.
+   *
+   * `load` aveva `t` fra le dipendenze (serviva per un messaggio d'errore). `t`
+   * non è garantito stabile fra un render e l'altro — sul banco di prova il mock
+   * di `useTranslations` ne crea uno nuovo ogni volta — quindi: effetto → fetch →
+   * `setLoading(false)` → render → nuovo `t` → nuovo `load` → effetto. Misurato
+   * prima della correzione: **1.470 GET in 300 ms di quiete assoluta**.
+   *
+   * Restava invisibile perché ogni asserzione sulle fetch guardava «ce n'è almeno
+   * una», mai «quante». Qui si guarda il numero, in una finestra in cui l'utente
+   * non tocca niente: è l'unica forma in cui questo difetto è dicibile.
+   */
+  it('a riposo il pannello NON richiama il server: nessun ciclo di ricarica', async () => {
+    const fetchMock = stubFetch(movimentiFatt);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    const subito = fetchMock.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 250));
+    expect(fetchMock.mock.calls.length).toBe(subito);
+  });
+
+  it('scegliere uno stato diverso da «Confermati» AZZERA il sottofiltro (niente ?fattura= appeso)', async () => {
+    const fetchMock = stubFetch(movimentiFatt);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    const gruppo = screen.getByRole('group', { name: 'Filtra per fatturazione' });
+    fireEvent.click(within(gruppo).getByRole('button', { name: 'Da fatturare' }));
+    await waitFor(() => expect(String(getMovimenti(fetchMock).at(-1)?.[0])).toContain('fattura=da_fatturare'));
+
+    // ⚠️ «Suggeriti» e «da fatturare» non possono valere insieme: il taglio di
+    // fatturazione esiste solo sui confermati. Restare appeso darebbe un elenco
+    // sempre vuoto, e un filtro che non trova mai niente si legge come un guasto.
+    fireEvent.click(screen.getByRole('button', { name: 'Suggeriti' }));
+    await waitFor(() => expect(String(getMovimenti(fetchMock).at(-1)?.[0])).toContain('stato=suggerito'));
+    expect(String(getMovimenti(fetchMock).at(-1)?.[0])).not.toContain('fattura=');
+    expect(within(screen.getByRole('group', { name: 'Filtra per fatturazione' })).getByRole('button', { name: 'Tutte' }))
+      .toHaveAttribute('aria-pressed', 'true');
   });
 });

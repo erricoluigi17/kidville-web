@@ -26,6 +26,25 @@ test('lo scadenzario mostra KPI e agenda; le viste sono deep-linkabili', async (
   await expect(page.getByText('Solleciti di pagamento').first()).toBeVisible({ timeout: 15_000 });
   await page.goto('/admin/pagamenti?vista=riconciliazione');
   await expect(page.getByText('Riconciliazione bancaria').first()).toBeVisible({ timeout: 15_000 });
+
+  /**
+   * SOTTOFILTRO «FATTURAZIONE» (spec 2026-09-05): su un registro di righe verdi
+   * indistinguibili non esisteva nessuna risposta a «quali confermati restano da
+   * fatturare?». La pill vive FUORI dal ramo condizionale del pannello, quindi
+   * c'è anche sul DB CI non migrato, dove la lista dei movimenti mostra il proprio
+   * empty-state: è il filtro a dover esistere sempre, non le righe.
+   *
+   * `exact: true` non è pedanteria. `getByRole` cerca il nome accessibile per
+   * SOTTOSTRINGA, e «Da fatturare» compare in tre posti diversi di questa app:
+   * il KPI dello scadenzario (un `<div>`, quindi fuori dal ruolo `button`), il
+   * chip di fatturazione — che sta DENTRO il `<button>` della riga, e quindi ne
+   * entra nel nome accessibile — e questa pill. Senza `exact`, il giorno in cui
+   * la CI avesse un movimento confermato da fatturare questo locator diventerebbe
+   * ambiguo e il test morirebbe per strict mode, non per un difetto del prodotto.
+   */
+  await expect(
+    page.getByRole('button', { name: 'Da fatturare', exact: true }),
+  ).toBeVisible({ timeout: 15_000 });
 });
 
 test('i KPI restano leggibili su viewport mobile', async ({ page }) => {

@@ -45,6 +45,19 @@ const zDataQueryOpzionale = z.preprocess(
 
 const getQuerySchema = z.object({
   stato: z.enum(['da_abbinare', 'suggerito', 'confermato', 'ignorato']).or(z.literal('')).optional(),
+  /**
+   * IL FILTRO DI FATTURAZIONE NON È UN QUINTO STATO DEL MOVIMENTO.
+   *
+   * Il registro ha quattro stati e soli quattro (`CHECK (stato IN (…))` sul DB): «fatturato»
+   * non ci entra, e non deve entrarci — è un dato del PAGAMENTO abbinato, non del movimento
+   * bancario. Perciò vive su un parametro suo, che si COMPONE con `?stato=` invece di
+   * sostituirlo: la schermata manda `?stato=confermato&fattura=da_fatturare`.
+   *
+   * Nessun `.or(z.literal(''))` qui, a differenza di `stato`: il vuoto è un valore che la UI
+   * non manda mai per questo filtro, e accettarlo significherebbe far passare in silenzio un
+   * `?fattura=` costruito male. Un 400 lo dice.
+   */
+  fattura: z.enum(['da_fatturare', 'fatturate']).optional(),
   import_id: zUuidQueryOpzionale,
   // Intervallo su data_operazione (estremi inclusi).
   da: zDataQueryOpzionale,
@@ -309,9 +322,82 @@ async function interpretaCorpo(corpo: CorpoAperto): Promise<CorpoImport | { resp
 const SCHEMA_MANCANTE = new Set(['42P01', '42703', 'PGRST204', 'PGRST205'])
 
 interface SuggerimentoRiga { pagamento_id: string; label?: string | null; [k: string]: unknown }
-interface MovimentoRiga { suggerimenti?: SuggerimentoRiga[] | null; [k: string]: unknown }
+interface MovimentoRiga {
+  suggerimenti?: SuggerimentoRiga[] | null
+  stato?: string | null
+  pagamento_id?: string | null
+  [k: string]: unknown
+}
 
-// GET /api/pagamenti/riconciliazione?stato=&import_id=&da=&a= — registro movimenti (staff).
+/** I quattro valori che `pagamenti.fattura_stato` può assumere (baseline, colonna non nullable in pratica). */
+type FatturaStato = 'non_richiesta' | 'in_attesa' | 'emessa' | 'scartata'
+const FATTURA_STATI = new Set<string>(['non_richiesta', 'in_attesa', 'emessa', 'scartata'])
+
+/**
+ * La riga che esce dal GET: il movimento com'è in registro, PIÙ due campi DERIVATI dal
+ * pagamento abbinato. Derivati e basta: non esiste nessuna colonna `fattura_stato` su
+ * `riconciliazione_movimenti`, e non deve nascere — il registro è append-only e duplicare
+ * lì lo stato della fattura vorrebbe dire tenerlo allineato per sempre.
+ */
+interface MovimentoArricchito extends MovimentoRiga {
+  pagamento_stato: string | null
+  fattura_stato: FatturaStato | null
+}
+
+/**
+ * I DUE CAMPI ESCONO SEMPRE, ANCHE A `null` — e «sempre» è la parte che conta.
+ *
+ * Se comparissero solo sulle righe che hanno qualcosa da dire, il client non potrebbe
+ * distinguere «questa riga non è fatturabile» da «questa risposta non porta l'informazione»
+ * (batch fallito, nessun pagamento da risolvere, campo non ancora implementato). Sono due
+ * significati opposti che si leggerebbero uguali: `undefined` per entrambi. Con il campo
+ * sempre presente, `null` vuol dire una cosa sola — «non lo so, o non ti riguarda».
+ */
+function conFatturazione(
+  r: MovimentoRiga,
+  pagamentoStato: string | null = null,
+  fatturaStato: FatturaStato | null = null,
+): MovimentoArricchito {
+  return { ...r, pagamento_stato: pagamentoStato, fattura_stato: fatturaStato }
+}
+
+/**
+ * Un valore fuori dai quattro noti diventa `null`, non passa così com'è.
+ * Chi legge questo campo decide che cosa mostrare in segreteria: meglio «non lo so» che una
+ * pill con dentro una stringa che nessuno ha previsto.
+ */
+function normalizzaFattura(v: unknown): FatturaStato | null {
+  return typeof v === 'string' && FATTURA_STATI.has(v) ? (v as FatturaStato) : null
+}
+
+/** Fattura ancora da fare: mai emessa, oppure emessa e SCARTATA dallo SDI (va rifatta). */
+const FATTURA_DA_FARE = new Set<string>(['non_richiesta', 'scartata'])
+/** Fattura già partita: in viaggio verso lo SDI o consegnata. Non si rifà. */
+const FATTURA_FATTA = new Set<string>(['in_attesa', 'emessa'])
+
+/**
+ * Il filtro si applica IN MEMORIA, dopo l'arricchimento, e non può essere altrimenti: il dato
+ * su cui filtra non sta su `riconciliazione_movimenti` ma su `pagamenti`, e PostgREST non
+ * filtra una tabella per una colonna dell'altra senza una join che qui non esiste (il legame
+ * è `pagamento_id`, nullable). Il costo è nullo: le righe sono al massimo 500 (`.limit(500)`).
+ *
+ * `da_fatturare` pretende anche il pagamento SALDATO: su un pagamento parziale la fattura non
+ * si emette, e mostrarlo fra i «da fatturare» manderebbe l'operatore contro un rifiuto.
+ */
+function filtraFattura(
+  righe: MovimentoArricchito[],
+  fattura: 'da_fatturare' | 'fatturate' | undefined,
+): MovimentoArricchito[] {
+  if (!fattura) return righe
+  if (fattura === 'da_fatturare') {
+    return righe.filter(
+      (r) => r.stato === 'confermato' && r.pagamento_stato === 'pagato' && FATTURA_DA_FARE.has(r.fattura_stato ?? ''),
+    )
+  }
+  return righe.filter((r) => FATTURA_FATTA.has(r.fattura_stato ?? ''))
+}
+
+// GET /api/pagamenti/riconciliazione?stato=&fattura=&import_id=&da=&a= — registro movimenti (staff).
 // Registro CUMULATIVO GLOBALE: l'estratto conto della banca è unico e cross-sede, quindi ogni
 // segreteria vede TUTTE le RIGHE bancarie (data/importo/causale/controparte/stato, ogni stato):
 // è l'estratto conto condiviso del titolare. La sede si assegna solo alla conferma, quindi filtrare
@@ -320,6 +406,13 @@ interface MovimentoRiga { suggerimenti?: SuggerimentoRiga[] | null; [k: string]:
 // minore (label). Quello è arricchimento identificante: si mostra SOLO per le PROPRIE sedi. Sotto,
 // dopo aver caricato le righe, si risolve la sede di ogni pagamento citato (una query batch) e si
 // tengono nei suggerimenti solo quelli in sede attiva; la riga bancaria resta invece globale.
+//
+// LA STESSA QUERY BATCH PORTA LO STATO DI FATTURAZIONE (2026-09-05). Il movimento confermato
+// non dice se la fattura è uscita — quel dato vive su `pagamenti.fattura_stato`, che `emissione.ts`
+// scrive e che sul registro non arriva mai. La batch, estesa ai `pagamento_id` dei confermati e
+// alle colonne `stato, fattura_stato`, restituisce `pagamento_stato` e `fattura_stato` su ogni
+// riga (`null` fuori dalle proprie sedi, come i label), e `?fattura=` filtra in memoria. Nessuna
+// query in più, nessuna colonna nuova sul registro.
 export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
@@ -346,42 +439,76 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     }
     const righe = (data || []) as MovimentoRiga[]
 
-    // Pagamenti citati dai suggerimenti: se nessuno, niente arricchimento da minimizzare.
-    const pagIds = [...new Set(
-      righe.flatMap((r) => (r.suggerimenti ?? []).map((s) => s.pagamento_id)).filter(Boolean),
-    )]
-    if (pagIds.length === 0) return NextResponse.json({ success: true, data: righe })
+    // I PAGAMENTI DA RISOLVERE SONO DUE INSIEMI, e servono due cose diverse.
+    //   · quelli citati dai SUGGERIMENTI → per minimizzare i label (nomi di minori);
+    //   · quelli abbinati alle righe CONFERMATE → per dire se la fattura è già uscita.
+    // Un movimento confermato non ha più suggerimenti da mostrare (l'abbinamento è fatto), ma
+    // ha `pagamento_id`: senza questa seconda metà la riga verde resterebbe muta, che è
+    // esattamente il difetto — su un registro di centinaia di righe verdi indistinguibili
+    // nessuno può dire quali restano da fatturare, e una fattura saltata non se ne accorge nessuno.
+    const confermateConPagamento = righe.filter(
+      (r) => r.stato === 'confermato' && typeof r.pagamento_id === 'string' && r.pagamento_id !== '',
+    )
+    const pagIds = [...new Set([
+      ...righe.flatMap((r) => (r.suggerimenti ?? []).map((s) => s.pagamento_id)),
+      ...confermateConPagamento.map((r) => r.pagamento_id as string),
+    ].filter(Boolean))]
+    // Nessun pagamento citato da nessuna parte: niente da risolvere, ma i due campi escono lo stesso.
+    if (pagIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        data: filtraFattura(righe.map((r) => conFatturazione(r)), q.data.fattura),
+      })
+    }
 
     const sediAttive = new Set(await resolveScuoleAttive(request, supabase, auth.user))
     const { data: pagSedi, error: errSedi } = await supabase
       .from('pagamenti')
-      .select('id, scuola_id')
+      .select('id, scuola_id, stato, fattura_stato')
       .in('id', pagIds)
     if (errSedi || !pagSedi) {
-      // Degrado prudente: senza la mappa sede non distinguiamo le proprie sedi dalle altre →
-      // togliamo l'arricchimento identificante (il nome) da TUTTI i suggerimenti. Meglio ometterlo
-      // che rischiare di esporre il nome di un minore di un altro plesso.
+      // UNA query fallita, DUE conseguenze distinte — e ognuna ha il suo nome in `app_log`,
+      // perché chi indaga cerca il sintomo che ha visto, non la causa che ancora non conosce:
+      //   · senza la mappa sede non distinguiamo le proprie sedi dalle altre → si toglie
+      //     l'arricchimento identificante (il nome) da TUTTI i suggerimenti. Meglio ometterlo
+      //     che rischiare di esporre il nome di un minore di un altro plesso;
+      //   · senza `fattura_stato` la riga confermata non può dire se è già fatturata → i due
+      //     campi escono `null`, e la schermata non mostra nessuna pill. Mai inventare
+      //     «da fatturare» su una riga la cui fattura potrebbe essere già partita.
+      // Un `esito` solo renderebbe invisibile uno dei due sintomi.
       logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:GET', esito: 'sedi_suggerimenti_non_risolte' }, errSedi)
+      logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:GET', esito: 'fatturazione_movimenti_non_risolta' }, errSedi)
       const oscurati = righe.map((r) =>
-        r.suggerimenti ? { ...r, suggerimenti: r.suggerimenti.map((s) => ({ ...s, label: null })) } : r,
+        conFatturazione(
+          r.suggerimenti ? { ...r, suggerimenti: r.suggerimenti.map((s) => ({ ...s, label: null })) } : r,
+        ),
       )
-      return NextResponse.json({ success: true, data: oscurati })
+      return NextResponse.json({ success: true, data: filtraFattura(oscurati, q.data.fattura) })
     }
-    const sedeDi = new Map(
-      (pagSedi as { id: string; scuola_id: string | null }[]).map((p) => [p.id, p.scuola_id]),
-    )
-    const minimizzate = righe.map((r) =>
-      r.suggerimenti
+    interface PagamentoAbbinato { id: string; scuola_id: string | null; stato: string | null; fattura_stato: string | null }
+    const pagDi = new Map((pagSedi as PagamentoAbbinato[]).map((p) => [p.id, p]))
+    const minimizzate = righe.map((r) => {
+      const conSuggerimenti = r.suggerimenti
         ? {
             ...r,
             suggerimenti: r.suggerimenti.filter((s) => {
-              const sede = sedeDi.get(s.pagamento_id)
+              const sede = pagDi.get(s.pagamento_id)?.scuola_id
               return sede != null && sediAttive.has(sede)
             }),
           }
-        : r,
-    )
-    return NextResponse.json({ success: true, data: minimizzate })
+        : r
+      // Stessa minimizzazione dei label, stessa ragione: lo stato di fatturazione si mostra
+      // SOLO sulle proprie sedi. Un operatore non deve leggere «da fatturare» su un plesso su
+      // cui non può agire — e la riga bancaria resta comunque globale, come oggi.
+      const pag = r.stato === 'confermato' && typeof r.pagamento_id === 'string'
+        ? pagDi.get(r.pagamento_id)
+        : undefined
+      const visibile = pag != null && pag.scuola_id != null && sediAttive.has(pag.scuola_id)
+      return visibile
+        ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato))
+        : conFatturazione(conSuggerimenti)
+    })
+    return NextResponse.json({ success: true, data: filtraFattura(minimizzate, q.data.fattura) })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/riconciliazione:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

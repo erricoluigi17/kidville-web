@@ -41,7 +41,18 @@ export interface MovimentoUi {
   suggerimenti?: SuggerimentoUi[] | null
   pagamento_id?: string | null
   confermato_il?: string | null
+  /**
+   * Stato del pagamento collegato (`pagamenti.stato`), DERIVATO dal server e
+   * valorizzato solo sui movimenti confermati di una sede dell'operatore.
+   * Serve a un caso solo: distinguere «da fatturare» (saldato) dal rumore.
+   */
+  pagamento_stato?: string | null
+  /** Stato di fatturazione del pagamento collegato, stessa minimizzazione. */
+  fattura_stato?: StatoFattura | null
 }
+
+/** Gli stati di `pagamenti.fattura_stato` (colonna esistente, nessuna migrazione). */
+export type StatoFattura = 'non_richiesta' | 'in_attesa' | 'emessa' | 'scartata'
 
 /** Un pagamento aperto (fonte della ricerca manuale): GET /api/pagamenti?solo_aperti=true. */
 export interface PagamentoApertoUi {
@@ -170,4 +181,84 @@ export const FILTRI: { id: '' | StatoMovimento; label: string }[] = [
   { id: 'suggerito', label: 'Suggeriti' },
   { id: 'confermato', label: 'Confermati' },
   { id: 'ignorato', label: 'Ignorati' },
+]
+
+// ─── FATTURAZIONE: UN CHIP SULLA RIGA VERDE, NON UN QUINTO STATO ─────────────
+//
+// Il registro ha quattro stati e soli quattro (`CHECK` sul DB): la riga diventa
+// verde alla conferma e resta identica per sempre, anche dopo l'emissione — che
+// scrive su `pagamenti.fattura_stato` e mai sul movimento. Su centinaia di righe
+// verdi indistinguibili nessuno può dire quali restano da fatturare, e SALTARE
+// una fattura non lo ferma nessuno (fatturare due volte sì: c'è la guardia di
+// idempotenza dell'emissione). Il dato è DERIVATO e derivato resta.
+
+/** I quattro «tono» del chip: la chiave della pelle, non un testo. */
+export type TonoFatturazione = 'fatturata' | 'attesa' | 'scartata' | 'da_fatturare'
+
+/**
+ * Pelle del chip. Fondi PIENI, mai opacità: il chip vive sopra il fondo VERDE
+ * della riga confermata, e `bg-kidville-white/70` su verde scende sotto AA (la
+ * lezione già pagata dal semaforo). `hcClass` è l'àncora dell'override Alto
+ * Contrasto in `globals.css`: `@theme inline` INLINA l'hex nelle utility, quindi
+ * ridefinire i token sotto `[data-contrast="high"]` non ribalta nessuna classe —
+ * la superficie si dipinge a mano, fuori da ogni `@layer`.
+ *
+ * Contrasti MISURATI (luce normale, WCAG 2.x §1.4.3):
+ *  · fatturata    white + green        → 6,51:1
+ *  · attesa       white + warn-strong  → 5,61:1
+ *  · scartata     white + error-strong → 5,62:1
+ *  · da_fatturare yellow + ink         → 7,33:1
+ */
+export const CHIP_FATTURAZIONE: Record<TonoFatturazione, {
+  labelKey: string
+  hcClass: string
+  bg: string
+  testo: string
+}> = {
+  fatturata: { labelKey: 'reconChipFatturata', hcClass: 'kv-recon-chip--fatturata', bg: 'bg-kidville-white', testo: 'text-kidville-green' },
+  attesa: { labelKey: 'reconChipAttesaSdi', hcClass: 'kv-recon-chip--attesa', bg: 'bg-kidville-white', testo: 'text-kidville-warn-strong' },
+  scartata: { labelKey: 'reconChipScartata', hcClass: 'kv-recon-chip--scartata', bg: 'bg-kidville-white', testo: 'text-kidville-error-strong' },
+  da_fatturare: { labelKey: 'reconChipDaFatturare', hcClass: 'kv-recon-chip--da-fatturare', bg: 'bg-kidville-yellow', testo: 'text-kidville-ink' },
+}
+
+/** Da quale stato di fatturazione nasce quale tono (gli sconosciuti: nessuno). */
+const TONO_DA_FATTURA: Partial<Record<StatoFattura, TonoFatturazione>> = {
+  in_attesa: 'attesa',
+  emessa: 'fatturata',
+  scartata: 'scartata',
+}
+
+/**
+ * Il chip di fatturazione di una riga, o `null` se non se ne mostra nessuno.
+ *
+ * Guarda SOLO i due campi derivati: il server li valorizza esclusivamente sui
+ * movimenti confermati di una sede dell'operatore (stessa minimizzazione delle
+ * label dei suggerimenti), quindi su una riga suggerita/ignorata arrivano `null`
+ * e il chip non nasce — senza duplicare qui la regola di visibilità del server.
+ *
+ * ⚠️ «Da fatturare» è l'unico caso che pretende DUE campi: `non_richiesta` su un
+ * pagamento non ancora saldato non è un invito ad agire, è rumore su una riga che
+ * non si può fatturare.
+ */
+export function chipFatturazione(
+  m: Pick<MovimentoUi, 'fattura_stato' | 'pagamento_stato'>,
+): { labelKey: string; tono: TonoFatturazione; hcClass: string; bg: string; testo: string } | null {
+  const fs = m.fattura_stato
+  if (!fs) return null
+  const tono: TonoFatturazione | undefined =
+    fs === 'non_richiesta' ? (m.pagamento_stato === 'pagato' ? 'da_fatturare' : undefined) : TONO_DA_FATTURA[fs]
+  if (!tono) return null
+  return { tono, ...CHIP_FATTURAZIONE[tono] }
+}
+
+/**
+ * Sottofiltro «Fatturazione», componibile col filtro per stato: passato al GET
+ * come `?fattura=`. I due tagli utili sono asimmetrici per progetto — «da
+ * fatturare» è la lista di lavoro, «fatturate» è la verifica — e implicano
+ * entrambi i CONFERMATI, gli unici su cui la fatturazione esista.
+ */
+export const FILTRI_FATTURA: { id: '' | 'da_fatturare' | 'fatturate'; labelKey: string }[] = [
+  { id: '', labelKey: 'reconFiltroTutte' },
+  { id: 'da_fatturare', labelKey: 'reconFiltroDaFatturare' },
+  { id: 'fatturate', labelKey: 'reconFiltroFatturate' },
 ]

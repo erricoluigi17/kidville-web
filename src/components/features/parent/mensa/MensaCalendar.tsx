@@ -319,7 +319,7 @@ export function MensaCalendar({ userId, studentId }: Props) {
       ) : (
         <div className="space-y-2.5">
           {giorni.length === 0 && (
-            <p className="font-maven text-sm text-kidville-muted text-center py-8">{t('nessunGiorno')}</p>
+            <p className="font-maven text-sm text-kidville-sub text-center py-8">{t('nessunGiorno')}</p>
           )}
           {giorni.map((g, idx) => {
             const d = new Date(`${g.data}T00:00:00Z`);

@@ -4,7 +4,7 @@ import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Copy, Check, Info, Landmark, Banknote, Building2, MapPin } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { BTN_COPIA_AA, CAMPO_COPIABILE, CausaleBonifico, type VoceCausale } from './CausaleBonifico';
+import { BTN_COPIA_AA, CausaleBonifico, type VoceCausale } from './CausaleBonifico';
 
 /**
  * Le coordinate di UNA sede, come le compone il server (`GET /api/pagamenti` →
@@ -130,11 +130,8 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
 
     const blocchi = raggruppaPerConto(sedi, voci);
     // I nomi delle sedi si mostrano solo quando ce n'è più d'una in pagina:
-    // ripetere l'unico plesso della famiglia sarebbe rumore. Lo stesso elenco serve
-    // ai contanti, dove la domanda è la stessa («in quale segreteria?») ma non c'è
-    // nessun blocco per conto da cui leggerla: i plessi si prendono da tutti.
-    const nomiSedi = blocchi.flatMap((b) => b.nomi);
-    const mostraNomi = nomiSedi.length > 1;
+    // ripetere l'unico plesso della famiglia sarebbe rumore.
+    const mostraNomi = blocchi.reduce((n, b) => n + b.nomi.length, 0) > 1;
 
     const idTab = (m: Metodo) => `${idBase}-tab-${m}`;
     const idPannello = (m: Metodo) => `${idBase}-panel-${m}`;
@@ -303,28 +300,8 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                                 arriva dal server già a gruppi di quattro separati da
                                                 spazi, e con il ritorno a capo normale può spezzarsi
                                                 SOLO lì. Un IBAN tagliato a metà di un gruppo si
-                                                ricopia sbagliato a mano.
-
-                                                Dal 2026-09-05 porta lo stesso VESTITO della causale
-                                                (`CAMPO_COPIABILE`): nella card ci sono due sole cose
-                                                da copiare e prima ne aveva l'aspetto una sola — quella
-                                                sbagliata. Il fondo è crema perché qui il contenitore
-                                                è bianco (nella lista delle causali è il contrario):
-                                                la forma è la stessa, il fondo lo dà chi lo ospita.
-
-                                                `text-[13px]` FISSO, e non `text-sm sm:text-base`: il
-                                                campo aggiunge 24px di respiro laterale, e un IBAN
-                                                italiano — 27 caratteri più 6 spazi — non ci stava più
-                                                su una riga. Né a 390px (usciva «… 0123 / 456», con un
-                                                gruppo orfano) né, alla misura successiva, a 1280:
-                                                perché QUI la card non si allarga, la colonna del
-                                                genitore la tiene a 398px contro 358, e `sm:text-base`
-                                                ingrandiva il testo senza dargli spazio. A 13px sono
-                                                235px su 250 disponibili: entra su una riga ovunque.
-                                                `text-balance` resta come rete per un IBAN estero più
-                                                lungo del nostro (Malta, Polonia): due righe bilanciate
-                                                invece di una piena e una da quattro caratteri. */}
-                                            <p className={`${CAMPO_COPIABILE} mt-1 bg-kidville-cream text-[13px] font-bold text-balance`}>
+                                                ricopia sbagliato a mano. */}
+                                            <p className="mt-1 font-mono text-sm font-bold leading-snug text-kidville-ink sm:text-base">
                                                 {iban}
                                             </p>
                                         </div>
@@ -376,25 +353,6 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                     <MapPin size={16} className="mt-[3px] shrink-0 text-kidville-green" aria-hidden="true" />
                     <span>{t('contantiTesto')}</span>
                 </p>
-                {/* IN QUALE segreteria. Non è un ornamento: una famiglia con due figli in
-                    due plessi leggeva «in segreteria» e non sapeva dove presentarsi — e i
-                    nomi erano già in pagina, tre centimetri più su, nel blocco del conto.
-                    Con un plesso solo resta muto: ripetere l'unica sede della famiglia
-                    sarebbe rumore, esattamente come là.
-
-                    STESSA CHIAVE del blocco del conto (`sediDelBlocco`), e non una nuova:
-                    la frase da dire è la stessa — «questo vale per queste sedi» — e con la
-                    stessa icona si legge come la stessa cosa, che è ciò che è. Una stringa
-                    nuova avrebbe voluto dire una traduzione in più da tenere allineata fra
-                    it ed en per non dire niente di diverso. */}
-                {mostraNomi && nomiSedi.length > 0 && (
-                    <p className="flex items-start gap-2 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">
-                        <Building2 size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
-                        <span className="min-w-0 break-words">
-                            {t('sediDelBlocco', { count: nomiSedi.length, sedi: nomiSedi.join(' · ') })}
-                        </span>
-                    </p>
-                )}
                 <p className="flex items-start gap-2 rounded-input bg-kidville-cream px-3 py-3 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">
                     <Info size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
                     <span>{t('contantiNota730')}</span>

@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import {
   suggerimentoPrincipaleCf,
   movimentoMultiCf,
@@ -9,6 +11,8 @@ import {
   FILTRI,
   chipFatturazione,
   CHIP_FATTURAZIONE,
+  classiChipFatturazione,
+  FRASE_FATTURAZIONE,
   FILTRI_FATTURA,
   type SuggerimentoUi,
   type EsitoImport,
@@ -259,5 +263,225 @@ describe('CHIP_FATTURAZIONE / FILTRI_FATTURA', () => {
     expect(FILTRI_FATTURA.map((f) => f.labelKey)).toEqual([
       'reconFiltroTutte', 'reconFiltroDaFatturare', 'reconFiltroFatturate',
     ])
+  })
+})
+
+/**
+ * ─── UN SOLO VESTITO PER LO STESSO STATO (2026-09-05) ────────────────────────
+ *
+ * Fino a oggi «Fatturata» aveva DUE facce: sulla riga era carta bianca con
+ * inchiostro verde e un glifo; dentro il popup era un `Badge tone="success"`,
+ * cioè oliva su verde tenue, senza glifo. E «Da fatturare», che sulla riga è
+ * giallo pieno — l'unico chip che chiede di agire — nel popup era grigio.
+ * Lo stesso dato, letto in due punti della stessa schermata, diceva due cose.
+ *
+ * `classiChipFatturazione` è l'unico posto in cui quel vestito esiste. L'unica
+ * differenza ammessa è il FILETTO: sulla riga il chip sta su un fondo pieno e si
+ * stacca da sé; sulla carta bianca del popup «Fatturata» (fondo bianco) sparirebbe
+ * dentro la card — quindi prende `border-current`, cioè l'inchiostro del tono
+ * stesso, che resta a norma senza una seconda tabella di colori da tenere allineata.
+ */
+describe('classiChipFatturazione — un vestito solo, riga e popup', () => {
+  const toni = ['fatturata', 'attesa', 'scartata', 'da_fatturare'] as const
+
+  it('porta sempre l’àncora `kv-recon-chip`, la pelle del tono e la sua classe HC', () => {
+    for (const tono of toni) {
+      const c = CHIP_FATTURAZIONE[tono]
+      const classi = classiChipFatturazione(c)
+      expect(classi).toContain('kv-recon-chip')
+      expect(classi).toContain(c.bg)
+      expect(classi).toContain(c.testo)
+      expect(classi).toContain(c.hcClass)
+      expect(classi).toContain('rounded-pill')
+      expect(classi).toContain('font-barlow')
+    }
+  })
+
+  /**
+   * ⚠️ SULLA CARTA CAMBIA LA FORMA, MAI LA PELLE — ed è una correzione del
+   * 2026-09-05, non il contratto di sempre. Fino a ieri il chip sulla carta era
+   * la stessa identica pillola della riga più un filetto: accanto ai due pulsanti
+   * del riquadro «Documenti» (stessa pillola, stesso filetto verde, stessa
+   * altezza) diventava il terzo di tre oggetti uguali, e l'unico che non si preme.
+   *
+   * Cambia SOLO la geometria — angoli quadri, padding stretto — perché il colore
+   * è l'informazione (a che punto è la fattura) e va tenuto identico nei due posti.
+   */
+  it('su CARTA cambia la FORMA (etichetta, non pillola) ma non la pelle', () => {
+    for (const tono of toni) {
+      const c = CHIP_FATTURAZIONE[tono]
+      const riga = classiChipFatturazione(c).split(' ')
+      const carta = classiChipFatturazione(c, true).split(' ')
+      // la pelle — fondo, inchiostro, àncora HC, carattere — è la stessa
+      for (const invariante of [c.bg, c.testo, c.hcClass, 'kv-recon-chip', 'font-barlow', 'text-[11px]']) {
+        expect(riga, `sulla riga manca ${invariante}`).toContain(invariante)
+        expect(carta, `sulla carta manca ${invariante}`).toContain(invariante)
+      }
+      // …e la differenza è tutta e sola di geometria
+      const inPiu = carta.filter((x) => !riga.includes(x)).sort()
+      const inMeno = riga.filter((x) => !carta.includes(x)).sort()
+      expect(inPiu).toEqual(['border-[1.5px]', 'border-current', 'px-2', 'py-1', 'rounded-md'])
+      expect(inMeno).toEqual(['px-3', 'py-1.5', 'rounded-pill'])
+    }
+  })
+
+  it('sulla riga NON c’è filetto (il fondo pieno lo stacca già da sé)', () => {
+    expect(classiChipFatturazione(CHIP_FATTURAZIONE.fatturata)).not.toContain('border-')
+  })
+
+  it('nessuna opacità e nessun grigio `muted`, in nessuna delle due forme', () => {
+    for (const tono of toni) {
+      const forme = [classiChipFatturazione(CHIP_FATTURAZIONE[tono]), classiChipFatturazione(CHIP_FATTURAZIONE[tono], true)]
+      for (const classi of forme) {
+        expect(classi).not.toContain('text-kidville-muted')
+        expect(classi).not.toMatch(/(?:bg|text|border)-kidville-[a-z-]+\//)
+      }
+    }
+  })
+})
+
+/**
+ * ─── LA FRASE È PARTE DELLO STATO, NON UN DI PIÙ ─────────────────────────────
+ *
+ * Il popup diceva «Fattura già emessa per questo pagamento» anche quando la
+ * fattura era «in attesa SDI» — che è FALSO: il documento è partito, la risposta
+ * dello SdI non è arrivata, e finché non arriva non è emesso niente. E su
+ * «scartata» — l'unico stato che pretende che qualcuno rifaccia il lavoro — non
+ * diceva NULLA: un chip rosso e nessuna istruzione.
+ *
+ * Quattro toni, quattro frasi: una tabella TOTALE, così un tono nuovo non può
+ * nascere muto né ereditare per sbaglio la frase di un altro.
+ */
+describe('FRASE_FATTURAZIONE — una frase per ogni tono, nessuna muta', () => {
+  it('copre tutti e quattro i toni con chiavi di catalogo distinte', () => {
+    const toni = ['fatturata', 'attesa', 'scartata', 'da_fatturare'] as const
+    const chiavi = toni.map((t) => FRASE_FATTURAZIONE[t])
+    expect(chiavi.every((k) => typeof k === 'string' && k.length > 0)).toBe(true)
+    expect(new Set(chiavi).size, 'quattro stati, quattro frasi diverse').toBe(4)
+  })
+
+  it('«in attesa» NON riusa la frase di «emessa» (era il testo falso)', () => {
+    expect(FRASE_FATTURAZIONE.attesa).not.toBe(FRASE_FATTURAZIONE.fatturata)
+  })
+})
+
+/**
+ * ─── IL VOCABOLARIO DEI FILTRI È QUELLO DEI CHIP (2026-09-05) ────────────────
+ *
+ * Il gruppo «Fatturazione» parlava TRE parole — Tutte · Da fatturare · Fatturate —
+ * mentre i chip delle righe ne parlano QUATTRO: Da fatturare, Fatturata, In attesa
+ * SDI, Scartata. Non è un dettaglio di lessico: premendo «Da fatturare» la lista
+ * restituiva una riga col chip «SCARTATA», cioè un'etichetta diversa da quella
+ * chiesta, e un filtro che risponde un'altra parola si legge come rotto.
+ *
+ * I due tagli del server sono e restano due (`z.enum(['da_fatturare','fatturate'])`
+ * in `api/pagamenti/riconciliazione`): «da fatturare» comprende le SCARTATE (una
+ * fattura respinta va rifatta) e «fatturate» comprende le IN ATTESA (il documento
+ * è partito). Non potendo spaccare i tagli senza toccare la rotta, si dicono per
+ * intero: l'etichetta nomina tutti gli stati che il suo bidone contiene.
+ */
+describe('FILTRI_FATTURA — l’etichetta nomina gli stati che contiene', () => {
+  const catalogo = (lingua: 'it' | 'en'): Record<string, string> =>
+    JSON.parse(
+      readFileSync(join(process.cwd(), 'messages', lingua, 'adminContabilita.json'), 'utf8'),
+    ) as Record<string, string>
+
+  it('«da fatturare» dice anche le SCARTATE (sono nel suo bidone, e vanno rifatte)', () => {
+    const etichetta = catalogo('it')[FILTRI_FATTURA[1].labelKey]
+    expect(etichetta.toLowerCase()).toContain('da fatturare')
+    expect(
+      etichetta.toLowerCase(),
+      'il filtro restituisce anche le scartate: se non lo dice, l’etichetta mente',
+    ).toContain('scartat')
+  })
+
+  it('«fatturate» dice anche le IN ATTESA (il documento è partito, non è tornato)', () => {
+    const etichetta = catalogo('it')[FILTRI_FATTURA[2].labelKey]
+    expect(etichetta.toLowerCase()).toContain('fatturate')
+    expect(etichetta.toLowerCase()).toContain('attesa')
+  })
+
+  it('l’etichetta dell’ordinante è quella delle email di sollecito, senza due punti', () => {
+    expect(catalogo('it').movdlgOrdinante).toBe('Intestato a')
+    // gli altri occhielli non portano i due punti: neanche questo
+    expect(catalogo('it').movdlgOrdinante).not.toContain(':')
+    expect(catalogo('en').movdlgOrdinante).toBe('Payable to')
+  })
+})
+
+/**
+ * ─── LE CHIAVI CHE LA SCHERMATA CHIEDE DEVONO ESISTERE, IN TUTT'E DUE LE LINGUE
+ *
+ * Una chiave assente non esplode: next-intl scrive a schermo il suo NOME —
+ * «adminContabilita.movdlgCausale» — e una schermata di contabilità si mette a
+ * parlare in gergo di programmazione davanti alla segreteria. È successo, ed è
+ * finito dentro le misure del collaudo (`"testo": "adminContabilita.movdlgCausale"`).
+ *
+ * Qui si raccolgono le chiavi dai TRE file dell'elemento — quelle chiamate come
+ * `t('nome')` e quelle che viaggiano nelle tabelle (`labelKey`, `FRASE_FATTURAZIONE`)
+ * — e si pretende che esistano in `it` E in `en`.
+ */
+describe('i testi della Riconciliazione esistono in italiano e in inglese', () => {
+  const sorgenti = [
+    'src/components/features/admin/pagamenti/riconciliazione-ui.ts',
+    'src/components/features/admin/pagamenti/RiconciliazionePanel.tsx',
+    'src/components/features/admin/pagamenti/MovimentoDialog.tsx',
+  ]
+  const chiaviUsate = (): string[] => {
+    const out = new Set<string>()
+    for (const f of sorgenti) {
+      const testo = readFileSync(join(process.cwd(), f), 'utf8')
+      for (const m of testo.matchAll(/\bt\(\s*'([a-zA-Z][A-Za-z0-9]*)'/g)) out.add(m[1])
+    }
+    // le chiavi che non compaiono come letterale dentro `t(...)`: viaggiano nelle tabelle
+    for (const p of Object.values(CHIP_FATTURAZIONE)) out.add(p.labelKey)
+    for (const k of Object.values(FRASE_FATTURAZIONE)) out.add(k)
+    for (const f of FILTRI_FATTURA) out.add(f.labelKey)
+    return [...out]
+  }
+
+  it('nessuna chiave orfana: tutte stanno in it e in en', () => {
+    const usate = chiaviUsate()
+    // CONTROLLO POSITIVO: se l'estrattore smettesse di pescare direbbe «tutto a posto»
+    // su un elenco vuoto. Le chiavi di questa schermata sono decine, non tre.
+    expect(usate.length, 'l’estrattore delle chiavi non sta più pescando niente').toBeGreaterThan(25)
+    const it_ = JSON.parse(readFileSync(join(process.cwd(), 'messages/it/adminContabilita.json'), 'utf8')) as Record<string, string>
+    const en_ = JSON.parse(readFileSync(join(process.cwd(), 'messages/en/adminContabilita.json'), 'utf8')) as Record<string, string>
+    expect(usate.filter((k) => !(k in it_)), 'chiavi senza testo italiano').toEqual([])
+    expect(usate.filter((k) => !(k in en_)), 'chiavi senza testo inglese').toEqual([])
+  })
+})
+
+/**
+ * ─── IL CHIP SULLA CARTA NON DEVE SEMBRARE UN PULSANTE ───────────────────────
+ *
+ * Nel popup «fatturata» il chip di stato era disegnato come i due pulsanti che
+ * stanno sessanta pixel più sotto: stessa pillola, stesso filetto, stesso
+ * inchiostro, stessa altezza. Uno dei tre non si preme e niente lo diceva.
+ *
+ * Sulla RIGA il chip resta una pillola — lì convive con l'etichetta di stato, non
+ * con dei comandi. Sulla CARTA diventa un'etichetta: angoli quadri e più stretta.
+ */
+describe('classiChipFatturazione — sulla carta è un’etichetta, non un comando', () => {
+  const toni = ['fatturata', 'attesa', 'scartata', 'da_fatturare'] as const
+
+  it('sulla carta perde la forma della pillola (e quindi quella del pulsante)', () => {
+    for (const tono of toni) {
+      const carta = classiChipFatturazione(CHIP_FATTURAZIONE[tono], true)
+      expect(carta).toContain('rounded-md')
+      expect(carta, 'una pillola accanto a due pulsanti a pillola è un pulsante').not.toContain('rounded-pill')
+      expect(carta).toContain('px-2')
+      expect(carta).toContain('py-1')
+      // il filetto resta: sulla carta bianca «Fatturata» (fondo bianco) sparirebbe
+      expect(carta).toContain('border-current')
+    }
+  })
+
+  it('sulla riga resta una pillola: lì non c’è nessun pulsante con cui confondersi', () => {
+    for (const tono of toni) {
+      const riga = classiChipFatturazione(CHIP_FATTURAZIONE[tono])
+      expect(riga).toContain('rounded-pill')
+      expect(riga).not.toContain('rounded-md')
+    }
   })
 })

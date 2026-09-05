@@ -249,6 +249,61 @@ export const CHIP_FATTURAZIONE: Record<TonoFatturazione, {
   da_fatturare: { labelKey: 'reconChipDaFatturare', hcClass: 'kv-recon-chip--da-fatturare', bg: 'bg-kidville-yellow', testo: 'text-kidville-ink' },
 }
 
+/**
+ * La forma del chip, in un posto solo — riga della lista E popup del movimento.
+ *
+ * Fino al 2026-09-05 lo stesso dato aveva DUE facce: sulla riga «Fatturata» era
+ * carta bianca con inchiostro verde e un glifo, dentro il popup era un `Badge`
+ * generico (oliva su verde tenue, senza glifo), e «Da fatturare» — l'unico chip
+ * che chiede di agire — passava dal giallo pieno al grigio. Due vestiti per lo
+ * stesso stato, nella stessa schermata, a due centimetri di distanza.
+ *
+ * `suCarta` è l'unica differenza ammessa, ed è una differenza di FORMA, mai di
+ * pelle: fondo, inchiostro e àncora HC restano identici, perché sono il dato.
+ *
+ *  · sulla RIGA è una PILLOLA: sta accanto all'etichetta di stato, sopra un fondo
+ *    pieno che lo stacca da sé, e lì non c'è nessun comando con cui confondersi;
+ *  · sulla CARTA del popup è un'ETICHETTA — angoli quadri, padding stretto, più
+ *    il filetto `border-current` (l'inchiostro del tono stesso) senza cui il chip
+ *    «Fatturata», che ha fondo bianco, sparirebbe dentro la card.
+ *
+ * La forma quadra non è un gusto: nel riquadro «Documenti» il chip conviveva con
+ * «Ricevuta» e «Invia fattura» — stessa pillola, stesso filetto, stessa altezza —
+ * ed era il terzo di tre oggetti identici, l'unico che non si preme. La differenza
+ * di geometria è ciò che lo dice anche a chi il colore non lo separa.
+ */
+export function classiChipFatturazione(
+  pelle: Pick<(typeof CHIP_FATTURAZIONE)[TonoFatturazione], 'bg' | 'testo' | 'hcClass'>,
+  suCarta = false,
+): string {
+  return [
+    // `kv-recon-chip` è l'àncora dell'override Alto Contrasto in globals.css.
+    'kv-recon-chip inline-flex items-center gap-1.5',
+    suCarta ? 'rounded-md border-[1.5px] border-current px-2 py-1' : 'rounded-pill px-3 py-1.5',
+    'font-barlow text-[11px] font-extrabold uppercase leading-none tracking-[0.03em]',
+    pelle.bg,
+    pelle.testo,
+    pelle.hcClass,
+  ].filter(Boolean).join(' ')
+}
+
+/**
+ * La FRASE che accompagna il chip nel popup: una per tono, nessuna condivisa.
+ *
+ * Il popup scriveva «Fattura già emessa per questo pagamento» anche su una
+ * fattura «in attesa SDI» — che è falso: il documento è partito, la risposta non
+ * è arrivata, e può ancora tornare indietro scartato. E su «scartata», l'unico
+ * stato in cui qualcuno DEVE rifare il lavoro, non diceva niente: un chip rosso e
+ * nessuna istruzione. Un `Record` totale sui quattro toni, così un tono nuovo non
+ * può nascere muto né ereditare per sbaglio la frase di un altro.
+ */
+export const FRASE_FATTURAZIONE: Record<TonoFatturazione, string> = {
+  fatturata: 'movdlgFatturaGiaEmessa',
+  attesa: 'movdlgFatturaInAttesa',
+  scartata: 'movdlgFatturaScartata',
+  da_fatturare: 'movdlgFatturaDaEmettere',
+}
+
 /** Da quale stato di fatturazione nasce quale tono (gli sconosciuti: nessuno). */
 const TONO_DA_FATTURA: Partial<Record<StatoFattura, TonoFatturazione>> = {
   in_attesa: 'attesa',
@@ -284,6 +339,22 @@ export function chipFatturazione(
  * come `?fattura=`. I due tagli utili sono asimmetrici per progetto — «da
  * fatturare» è la lista di lavoro, «fatturate» è la verifica — e implicano
  * entrambi i CONFERMATI, gli unici su cui la fatturazione esista.
+ *
+ * ⚠️ DUE BIDONI, QUATTRO CHIP: L'ETICHETTA LI DEVE NOMINARE TUTTI.
+ *
+ * I chip delle righe dicono quattro parole (Da fatturare · Fatturata · In attesa
+ * SDI · Scartata), i tagli del server sono due e li aggregano a coppie:
+ * `da_fatturare` comprende le SCARTATE (una fattura respinta va rifatta) e
+ * `fatturate` comprende le IN ATTESA (il documento è partito, la risposta no).
+ * Finché le etichette dicevano solo «Da fatturare» e «Fatturate», premere la prima
+ * restituiva una riga col chip «SCARTATA»: un filtro che risponde una parola
+ * diversa da quella chiesta si legge come rotto, anche quando ha ragione.
+ *
+ * Gli `id` NON si allargano senza toccare la rotta: `?fattura=` è validato da
+ * `z.enum(['da_fatturare','fatturate'])` in `api/pagamenti/riconciliazione`, e un
+ * valore in più tornerebbe 400 — cioè un filtro che non filtra. Si allarga
+ * l'etichetta, che è ciò che mancava: dice per intero cosa c'è nel suo bidone.
+ * Lock: `__tests__/pagamenti/riconciliazione-ui.test.ts`.
  */
 export const FILTRI_FATTURA: { id: '' | 'da_fatturare' | 'fatturate'; labelKey: string }[] = [
   { id: '', labelKey: 'reconFiltroTutte' },

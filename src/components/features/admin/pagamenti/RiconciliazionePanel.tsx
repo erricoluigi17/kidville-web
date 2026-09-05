@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { AlertTriangle, ChevronRight, Clock, FileCheck, Landmark, RefreshCw, Receipt, Upload } from 'lucide-react';
+import { ChevronRight, Landmark, RefreshCw, Upload } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { MovimentoDialog } from './MovimentoDialog';
+import { ChipFatturazione, MovimentoDialog } from './MovimentoDialog';
 import type { PrecompilaTransazione } from './TransazioniPanel';
 import { BTN_PRIMARY_AA } from './ui';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
@@ -26,7 +26,6 @@ import {
   type EsitoImport,
   type RispostaMovimenti,
   type StatoMovimento,
-  type TonoFatturazione,
 } from './riconciliazione-ui';
 
 interface Props {
@@ -57,22 +56,25 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
  */
 const hdrFile = (u: string) => ({ 'x-user-id': u });
 
-/**
- * Il glifo di ogni chip di fatturazione. Sta QUI e non nella mappa della pelle
- * perché `riconciliazione-ui.ts` è un modulo `.ts`: la logica pura non importa
- * componenti React. Mappa STATICA — nessuna icona costruita da un dato.
- */
-const ICONA_CHIP: Record<TonoFatturazione, typeof FileCheck> = {
-  fatturata: FileCheck,
-  attesa: Clock,
-  scartata: AlertTriangle,
-  da_fatturare: Receipt,
-};
-
 /** Pill dei filtri (stato e fatturazione): stessa pelle, un solo posto. */
 const PILL_FILTRO = 'rounded-pill px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-[0.03em] transition-colors';
 const PILL_FILTRO_ON = 'bg-kidville-green text-kidville-white';
 const PILL_FILTRO_OFF = 'bg-kidville-white text-kidville-sub ring-[1.5px] ring-inset ring-kidville-line hover:ring-kidville-green';
+
+/**
+ * L'OCCHIELLO CHE DICE DI CHE FILTRO SI TRATTA.
+ *
+ * I due gruppi di pillole hanno la stessa pelle e stanno uno sotto l'altro: a
+ * schermo sembravano una fila sola andata a capo, e i due assi si distinguevano
+ * per una lettera — «Tutti» (stato) contro «Tutte» (fatturazione). L'unica cosa
+ * che diceva quale fosse quale era l'`aria-label` del gruppo: un testo che chi
+ * vede non legge mai.
+ *
+ * È `aria-hidden` di proposito: il gruppo ha già la sua etichetta accessibile,
+ * più esplicita di questa, e sentirsi annunciare due volte lo stesso concetto è
+ * rumore. Sta FUORI dal `role="group"`, perché non è uno dei filtri.
+ */
+const OCCHIELLO_FILTRO = 'mb-1.5 block font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em] text-kidville-green';
 
 /**
  * Vista Riconciliazione bancaria — lista a SEMAFORO del registro cumulativo.
@@ -313,10 +315,21 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     <div>
       <SectionTitle icon={Landmark} title={t('reconTitolo')}
         sub={t('reconSottotitolo')}
+        /* Bottone-icona: 44×44 (era 30) e inchiostro `sub` (6,46:1) al posto di
+           `muted`, che su bianco vale 3,80:1 — sotto AA, e con l'aria di un
+           comando spento. Sta fuori dalla `ul`, cioè fuori dal ritaglio che la
+           sonda misura: nessuna misura l'aveva mai guardato, ed è esattamente il
+           posto in cui un difetto sopravvive.
+
+           ⚠️ `shrink-0` NON È DECORATIVO: è un figlio del flex di `SectionTitle`,
+           e un figlio flex si stringe di default. MISURATO sul PNG a pagina intera
+           del collaudo: 20×44 css px su telefono — rapporto 0,45, cioè una capsula
+           verticale schiacciata dove il codice chiede un cerchio. `h-11 w-11`
+           dichiara la taglia, `shrink-0` è ciò che gliela lascia. */
         action={
           <button onClick={() => { setLoading(true); load(); }} aria-label={t('reconAggiorna')}
-            className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
-            <RefreshCw size={14} />
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-pill border-[1.5px] border-kidville-line text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green">
+            <RefreshCw size={16} />
           </button>
         } />
 
@@ -351,31 +364,37 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       )}
 
       {/* Filtri per stato (sul GET via ?stato=) */}
-      <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
-        {FILTRI.map((f) => {
-          const attivo = f.id === filtro;
-          return (
-            <button key={f.id || 'tutti'} type="button" onClick={() => cambiaFiltro(f.id)} aria-pressed={attivo}
-              className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
-              {f.label}
-            </button>
-          );
-        })}
+      <div className="mt-5">
+        <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoStato')}</span>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
+          {FILTRI.map((f) => {
+            const attivo = f.id === filtro;
+            return (
+              <button key={f.id || 'tutti'} type="button" onClick={() => cambiaFiltro(f.id)} aria-pressed={attivo}
+                className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Sottofiltro «Fatturazione» (?fattura=), componibile col precedente: è la
           risposta a «quali confermati restano da fatturare?», che su un registro
           di righe verdi indistinguibili non aveva nessuna risposta. */}
-      <div className="mt-2 flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltroFatturazione')}>
-        {FILTRI_FATTURA.map((f) => {
-          const attivo = f.id === fattura;
-          return (
-            <button key={f.id || 'tutte'} type="button" onClick={() => cambiaFattura(f.id)} aria-pressed={attivo}
-              className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
-              {t(f.labelKey)}
-            </button>
-          );
-        })}
+      <div className="mt-3">
+        <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoFatturazione')}</span>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltroFatturazione')}>
+          {FILTRI_FATTURA.map((f) => {
+            const attivo = f.id === fattura;
+            return (
+              <button key={f.id || 'tutte'} type="button" onClick={() => cambiaFattura(f.id)} aria-pressed={attivo}
+                className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+                {t(f.labelKey)}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Il filtro chiesto NON è stato applicato: la lista che segue è intera.
@@ -410,43 +429,87 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
             const s = SEMAFORO[m.stato] ?? SEMAFORO.da_abbinare;
             const cf = suggerimentoPrincipaleCf(m.suggerimenti);
             const fat = chipFatturazione(m);
-            const IconaChip = fat ? ICONA_CHIP[fat.tono] : null;
             return (
               <li key={m.id}>
                 <button
                   type="button"
                   onClick={(e) => { triggerRef.current = e.currentTarget; setSelezionato(m); }}
-                  className={cx('kv-recon-row block w-full rounded-card p-3 text-left transition hover:brightness-95', s.bg, s.hcClass)}
+                  className={cx('kv-recon-row relative block w-full rounded-card p-3 pr-9 text-left transition hover:brightness-95', s.bg, s.hcClass)}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0">
-                      <span className={cx('block font-maven text-sm font-bold', s.testo)}>
+                  {/* ── IL CHEVRON HA UN CORRIDOIO SUO, E UNO SOLO ───────────
+                      Stava nel flusso, quindi ogni riga gli cedeva una fetta
+                      diversa: su mobile si portava via 24px alla causale della
+                      riga della cifra, su desktop si infilava fra la colonna di
+                      stato e il bordo. Adesso è FUORI dal flusso, centrato
+                      sull'altezza della card (l'affordance «questa riga si apre»
+                      appartiene alla riga intera, non a una delle sue tre righe di
+                      testo), e il corridoio glielo riserva il `pr-9` del bottone:
+                      24px dal contenuto al bordo, identici per tutte le righe.
+                      MISURATO: su telefono la colonna del testo resta 262px, cioè
+                      esattamente quella di prima — il corridoio unico non si paga
+                      con la causale — e su desktop passa da 568 a 672px.
+                      `pointer-events-none` perché il bersaglio è il bottone. */}
+                  <ChevronRight size={16} aria-hidden="true"
+                    className={cx('pointer-events-none absolute right-3 top-1/2 -translate-y-1/2', s.testo)} />
+                  {/* ── IL RITMO DELLA RIGA, IN UNA STRUTTURA SOLA ───────────
+                      Due fratelli soli: il testo e il gruppo di stato. Non due
+                      copie per due breakpoint — due copie dello stesso chip
+                      sarebbero due posti da cui un giorno diverge.
+
+                      MOBILE (`flex-wrap`): riga 1 = testo, riga 2 = il gruppo di
+                      stato, che va a capo da solo perché `basis-full`.
+
+                      DESKTOP (`sm:flex-nowrap`): il gruppo di stato è una colonna
+                      di larghezza dichiarata, così la causale si tronca sempre
+                      allo stesso punto invece che a un punto diverso per riga —
+                      su quella con «IN ATTESA SDI» spariva il cognome della
+                      famiglia, che è il dato con cui si decide.
+
+                      ⚠️ 176px (`sm:min-w-44`) E NON PIÙ 280. MISURATO sul server
+                      di collaudo a 1280px: il gruppo più largo dell'intera lista —
+                      chip «IN ATTESA SDI» + «CONFERMATO» — occupa 167px. I 113
+                      restanti erano fondo verde vuoto fra la causale troncata e il
+                      chip: una riga tagliata con un quarto di riga libera accanto
+                      non si legge come una scelta, si legge come un guasto. Con
+                      176 la colonna resta unica e allineata, e la causale passa da
+                      568 a 672px — sono i cento pixel in cui sta il cognome della
+                      famiglia.
+
+                      È un MINIMO e non una larghezza fissa, di proposito: con
+                      `w-44` un'etichetta più lunga (una traduzione, uno stato
+                      nuovo) traboccherebbe dalla sua colonna sopra la causale,
+                      in silenzio. Il minimo compra l'allineamento su tutte le
+                      righe di oggi e lascia crescere quella che un giorno non ci
+                      starà — perdendo un po' di causale, non la leggibilità.
+
+                      `min-w-0` sulla colonna del testo non è ornamentale: senza,
+                      un figlio `truncate` tiene la colonna larga quanto il testo
+                      intero e il troncamento non avviene mai. */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 sm:flex-nowrap sm:gap-x-4">
+                    <span className="min-w-0 flex-1">
+                      <span className={cx('block whitespace-nowrap font-maven text-sm font-bold', s.testo)}>
                         {formatEuro(m.importo)} · {dataIt(m.data_operazione)}
                       </span>
-                      <span className={cx('mt-0.5 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
+                      <span className={cx('mt-1 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
                         {m.causale || t('reconNessunaCausale')}{m.controparte ? ` · ${m.controparte}` : ''}
                       </span>
                     </span>
-                    <span className="flex shrink-0 items-center gap-2">
+                    <span className="flex basis-full items-center gap-2 sm:min-w-44 sm:basis-auto sm:shrink-0 sm:justify-end">
                       {cf && (
-                        <span className="inline-flex items-center rounded-pill bg-kidville-white px-1.5 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
+                        /* `kv-recon-badge-cf` è l'àncora dell'Alto Contrasto: senza,
+                           il badge resta carta bianca con inchiostro verde (3,23:1
+                           una volta che la riga è nera) mentre tutto il resto è
+                           passato a carta/inchiostro netti. */
+                        <span className="kv-recon-badge-cf inline-flex items-center rounded-pill bg-kidville-white px-2 py-1 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
                           {t('reconBadgeCf')}
                         </span>
                       )}
-                      {/* Chip di fatturazione: fondo PIENO (mai opacità) perché vive
-                          sopra il verde della riga confermata. `kv-recon-chip` è
-                          l'àncora dell'override Alto Contrasto in globals.css. */}
-                      {fat && IconaChip && (
-                        <span className={cx(
-                          'kv-recon-chip inline-flex items-center gap-1 rounded-pill px-2 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none tracking-[0.03em]',
-                          fat.bg, fat.testo, fat.hcClass,
-                        )}>
-                          <IconaChip size={12} aria-hidden="true" />
-                          {t(fat.labelKey)}
-                        </span>
-                      )}
+                      {/* Chip di fatturazione: LO STESSO componente del popup, così
+                          lo stesso stato non può avere due facce. Fondo PIENO (mai
+                          opacità) perché vive sopra il verde della riga confermata,
+                          e senza filetto: qui a staccarlo basta il fondo. */}
+                      {fat && <ChipFatturazione fat={fat} />}
                       <span className={cx('font-barlow text-[11px] font-extrabold uppercase tracking-wide', s.testo)}>{s.label}</span>
-                      <ChevronRight size={16} className={s.testo} aria-hidden="true" />
                     </span>
                   </div>
                 </button>

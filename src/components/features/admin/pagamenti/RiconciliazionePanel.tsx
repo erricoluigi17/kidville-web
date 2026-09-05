@@ -6,6 +6,7 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { ChevronRight, Landmark, RefreshCw, Upload } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
+import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -23,6 +24,7 @@ import {
   type PagamentoApertoUi,
   type EsitoImport,
   type StatoMovimento,
+  type FatturaMovimentoUi,
 } from './riconciliazione-ui';
 
 interface Props {
@@ -52,6 +54,17 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
  * cose diverse, invece di un parametro che un giorno qualcuno dimentica.
  */
 const hdrFile = (u: string) => ({ 'x-user-id': u });
+
+/**
+ * Il tono del chip della fattura. `success`/`error`/`neutral` del `Badge` portano già le
+ * varianti `-strong` del testo, verificate AA sui fondi soft: qui si sceglie solo QUALE
+ * dei tre, così i tre stati non possono finire dello stesso colore per distrazione.
+ */
+const TONO_FATTURA: Record<FatturaMovimentoUi['stato'], 'success' | 'error' | 'neutral'> = {
+  emessa: 'success',
+  scartata: 'error',
+  da_fatturare: 'neutral',
+};
 
 /**
  * Vista Riconciliazione bancaria — lista a SEMAFORO del registro cumulativo.
@@ -258,6 +271,10 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {movimenti.map((m) => {
             const s = SEMAFORO[m.stato] ?? SEMAFORO.da_abbinare;
             const cf = suggerimentoPrincipaleCf(m.suggerimenti);
+            // Solo sulle righe già abbinate (`pagamento_id` lo scrive la conferma): su una
+            // riga ancora da lavorare non esiste nessun pagamento da fatturare. E `null` —
+            // la lettura fallita — non diventa un chip: non si dichiara ciò che non si sa.
+            const fattura = m.pagamento_id ? m.fattura ?? null : null;
             return (
               <li key={m.id}>
                 <button
@@ -275,6 +292,17 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
+                      {fattura && (
+                        <Badge tone={TONO_FATTURA[fattura.stato]}>
+                          {fattura.stato === 'emessa'
+                            // Il numero c'è sempre (`numero` è NOT NULL): il ripiego copre
+                            // solo una riga illeggibile, e dice «non lo mostro», non «zero».
+                            ? t('reconFatturaEmessa', { numeri: fattura.numeri.join(' · ') || '—' })
+                            : fattura.stato === 'scartata'
+                              ? t('reconFatturaScartata')
+                              : t('reconFatturaDaFatturare')}
+                        </Badge>
+                      )}
                       {cf && (
                         <span className="inline-flex items-center rounded-pill bg-kidville-white px-1.5 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
                           {t('reconBadgeCf')}

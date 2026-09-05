@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { getGenitoriDiAlunno } from '@/lib/anagrafiche/legami'
+import { getGenitoriDiAlunno, getGenitoriDiAlunnoEsito } from '@/lib/anagrafiche/legami'
 import {
   anagraficaDaIntestatarioAltro,
   anagraficaDaPersonaScelta,
@@ -203,15 +203,33 @@ export async function intestatarioDefaultFamiglia(
  * della cascata, e con la sola anagrafica i tutori di un bambino importato dal
  * modulo pubblico «non risultavano» — difetto già pagato una volta.
  *
- * ⚠️ `completo` copre la lettura di `student_parents` E la risoluzione del ponte
- * in `parents.id`: se una delle due non risponde, chi usa questo insieme per
- * RIFIUTARE riceve «non lo so», non «no». Resta scoperta la lettura INTERNA di
- * `legame_genitori_alunni` dentro `getGenitoriDiAlunno`, che degrada per conto
- * suo (logga e restituisce ciò che ha): in una giornata in cui fallisce quella,
- * un genitore noto al SOLO ponte runtime non comparirebbe qui. Chi usa questo
- * insieme per RIFIUTARE deve saperlo: il costo di quel caso è un messaggio di
- * troppo, non un documento fiscale sbagliato, e la lettura fallita lascia
- * comunque la sua riga di log.
+ * ⚠️ `completo` copre TUTTE E CINQUE le letture: `student_parents` qui sotto, la
+ * risoluzione del ponte in `parents.id`, e — dal 2026-09-05 — le tre interne a
+ * `getGenitoriDiAlunnoEsito` (`legame_genitori_alunni`, `student_parents`,
+ * `parents`). Se una qualsiasi non risponde, chi usa questo insieme per
+ * RIFIUTARE riceve «non lo so», non «no».
+ *
+ * La lettura runtime era l'ultima scoperta, ed era quella che costava di più:
+ * degradava per conto suo (loggava e restituiva ciò che aveva), quindi in una
+ * giornata in cui falliva `legame_genitori_alunni` un genitore noto al SOLO
+ * ponte runtime non compariva qui — e `adultoEGenitoreDi` rispondeva `false`,
+ * cioè un **422** «l'intestatario scelto non risulta fra i genitori di questo
+ * bambino» dove la verità era «riprova fra poco» (503). Un guasto del database
+ * usciva dallo schermo come un'affermazione sull'anagrafica di una famiglia,
+ * per giunta proprio sull'adulto che l'anteprima aveva appena proposto.
+ *
+ * «Schema assente» (`SCHEMA_ASSENTE`, DB E2E della CI mai migrato) non abbassa
+ * `completo` per le TRE letture interne a `getGenitoriDiAlunnoEsito`: là quella
+ * sorgente non esiste e non ha legami da dare, e trattarla da guasto
+ * significherebbe 503 su ogni emissione con intestatario scelto.
+ *
+ * ⚠️ Le DUE letture PROPRIE di questa funzione — `student_parents` qui sotto e
+ * il ponte `parents` con `REG_COLS_CON_PONTE` — quella distinzione non la fanno:
+ * abbassano `completo` per QUALUNQUE errore, «schema assente» compreso, perché
+ * pesano `error` e `ponte.error` nudi, senza passare da `livelloPerErrore`.
+ * È preesistente e resta un rilievo APERTO, non coperto qui: dove quelle due
+ * tabelle non esistono, un'emissione con intestatario scelto risponde 503 e non
+ * 422. Chi lo chiuderà porti anche queste due sotto `livelloPerErrore`.
  */
 export interface GenitoriDiAlunno {
   /**
@@ -230,7 +248,7 @@ export interface GenitoriDiAlunno {
   parentIds: string[]
   /** `utenti.id` dal ponte runtime: resta esposto perché una chiamata a mano può parlarlo. */
   accountIds: string[]
-  /** `student_parents` ha risposto: si può concludere «non è un genitore». */
+  /** TUTTE le letture hanno risposto: si può concludere «non è un genitore». */
   completo: boolean
   /** `student_parents.relation_type`, per `parents.id`. */
   relazioni: Map<string, string | null>
@@ -259,12 +277,15 @@ export async function identitaGenitoriDiAlunno(
     (r) => typeof r.parent_id === 'string',
   )
   for (const r of righe) relazioni.set(r.parent_id as string, r.relation_type ?? null)
-  const accountIds = await getGenitoriDiAlunno(supabase, alunnoId)
+  // La variante `…Esito` e non `getGenitoriDiAlunno`: qui l'insieme serve a
+  // RIFIUTARE, e un elenco corto per un guasto di lettura non è un elenco corto,
+  // è un'informazione che non c'è.
+  const { genitori: accountIds, completo: legamiCompleti } = await getGenitoriDiAlunnoEsito(supabase, alunnoId)
   const parentIds = new Set(righe.map((r) => r.parent_id as string))
 
-  // Il ponte, portato nello spazio del REGISTRO. `getGenitoriDiAlunno` scarta i
-  // `parents` senza account, quindi questo giro aggiunge solo chi un account ce
-  // l'ha — ed è esattamente chi l'anteprima mostra fra i candidati.
+  // Il ponte, portato nello spazio del REGISTRO. `getGenitoriDiAlunnoEsito`
+  // scarta i `parents` senza account, quindi questo giro aggiunge solo chi un
+  // account ce l'ha — ed è esattamente chi l'anteprima mostra fra i candidati.
   let registriDalPonte: ParentRegistryConPonte[] = []
   let ponteLetto = true
   if (accountIds.length > 0) {
@@ -280,7 +301,7 @@ export async function identitaGenitoriDiAlunno(
   return {
     parentIds: [...parentIds],
     accountIds,
-    completo: !error && ponteLetto,
+    completo: !error && ponteLetto && legamiCompleti,
     relazioni,
     registriDalPonte,
   }

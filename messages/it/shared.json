@@ -352,5 +352,8 @@
   "erroreEstrattoContoSenzaAccrediti": "Nessun accredito riconosciuto nel file: controlla le intestazioni delle colonne o il separatore.",
   "erroreIntestatarioInConflittoConQuote": "Questo pagamento è ripartito fra due genitori: l’intestatario non si sceglie qui, si modificano le quote del pagamento",
   "erroreFatturaGiaEmessaAltroIntestatario": "Questo pagamento ha già una fattura viva: l’intestatario di una fattura emessa si cambia solo con una nota di variazione",
-  "erroreIntestatarioNonDelBambino": "L’intestatario scelto non risulta fra i genitori di questo bambino: indica l’anagrafica per esteso, oppure scegline un altro"
+  "erroreIntestatarioNonDelBambino": "L’intestatario scelto non risulta fra i genitori di questo bambino: indica l’anagrafica per esteso, oppure scegline un altro",
+  "erroreBonificoGiaFatturato": "Questo bonifico ha già pagato una voce fatturata: spostarlo su un’altra lascerebbe quel documento senza l’incasso che lo giustifica. Una fattura emessa si annulla solo con una nota di variazione.",
+  "erroreBonificoFatturaNonVerificabile": "Non è stato possibile verificare se questo bonifico sia già stato fatturato: l’abbinamento è stato fermato per non rischiare un secondo documento. Riprova fra qualche minuto.",
+  "erroreFatturaRigaVivaEstraneaAlleQuote": "Questo pagamento ha già una fattura viva che non corrisponde alle quote di oggi: nessuna quota è stata emessa. Quella fattura si chiude solo con una nota di variazione."
 }

@@ -120,7 +120,7 @@ export function preferibile(a: Domanda, b: Domanda): boolean {
  *
  * La regola resta intatta: **il programma continua a non indovinare**. Cambia
  * che ora esiste il posto in cui una persona scrive la risposta, e resta scritto
- * chi l'ha data e quando. Un `if` nel codice per il caso «Palma» sarebbe la
+ * chi l'ha data e quando. Un `if` nel codice per il caso «FABBRI TOMMASO» sarebbe la
  * stessa decisione presa peggio: invisibile, senza data e senza nome.
  */
 export interface DecisioneSegreteria {

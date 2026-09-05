@@ -6,12 +6,15 @@
  * lo scrive nel form pubblico, la segreteria lo scrive nell'elenco di classe in
  * Excel. Misurato il 2026-08-16 sul file vero di Giugliano (338 righe) contro le
  * 221 domande già arrivate: 14 nomi hanno spazi doppi o in coda, uno è tutto in
- * minuscolo, uno ha un'annotazione fra parentesi — `ESPOSITO ANDREA (CIRO)` — e
+ * minuscolo, uno ha un'annotazione fra parentesi — `GIRASOLI FEDERICO (RICO)` — e
  * uno ha nome e cognome invertiti rispetto al foglio.
+ *
+ * I nomi degli esempi sono INVENTATI (il repository è pubblico): cambiano i nomi,
+ * non le difformità di scrittura, che sono quelle misurate.
  *
  * ─── LA RIGA CHE SEPARA UNA GRAFIA DA UN ERRORE ─────────────────────────────
  * Queste funzioni tolgono le differenze di SCRITTURA: maiuscole, accenti,
- * apostrofi, spazi, parentesi. Non toccano gli ERRORI. `DIECO` per `DIEGO` non è
+ * apostrofi, spazi, parentesi. Non toccano gli ERRORI. `EMNA` per `EMMA` non è
  * una grafia diversa: è un refuso, e va corretto da una persona.
  *
  * `similitudine` non serve a decidere: serve solo a comporre i tre nomi più
@@ -31,7 +34,7 @@ export function normalizzaNome(valore: string | null | undefined): string {
   if (valore === null || valore === undefined) return ''
   return String(valore)
     .normalize('NFD')
-    // via i segni diacritici staccati dalla NFD: CÉLINE → CELINE
+    // via i segni diacritici staccati dalla NFD: NOÉMIE → NOEMIE
     .replace(/[̀-ͯ]/g, '')
     .toUpperCase()
     // le annotazioni fra parentesi sono note della segreteria, non parti del nome
@@ -44,9 +47,9 @@ export function normalizzaNome(valore: string | null | undefined): string {
 }
 
 /**
- * Il nome normalizzato e saldato: serve a far cadere insieme `DESIO GIUNTO` e
- * `De Sio Giunto`, `GIULIA RITA` e `GiuliaRita` — cioè lo stesso nome con gli
- * spazi messi in un altro punto.
+ * Il nome normalizzato e saldato: serve a far cadere insieme `DELPRATO ORZATELLI`
+ * e `Del Prato Orzatelli`, `ANNA LUCIA` e `AnnaLucia` — cioè lo stesso nome con
+ * gli spazi messi in un altro punto.
  */
 export function senzaSpazi(valore: string | null | undefined): string {
   return normalizzaNome(valore).replace(/ /g, '')
@@ -54,8 +57,8 @@ export function senzaSpazi(valore: string | null | undefined): string {
 
 /**
  * Le parole del nome, come insieme: due nomi con le stesse parole in ordine
- * diverso sono la stessa persona scritta al contrario (`Njambe Charmant` nel
- * form, `CHARMANT NJAMBE` nel foglio).
+ * diverso sono la stessa persona scritta al contrario (`Zafferani Leonardo` nel
+ * form, `LEONARDO ZAFFERANI` nel foglio).
  */
 export function tokenNome(valore: string | null | undefined): Set<string> {
   const n = normalizzaNome(valore)

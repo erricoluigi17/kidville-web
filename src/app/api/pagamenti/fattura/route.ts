@@ -83,6 +83,13 @@ const postBodySchema = z.object({
 const CODICE_CONFLITTO_QUOTE = 'INTESTATARIO_IN_CONFLITTO_CON_QUOTE'
 const CODICE_GIA_EMESSA_ALTRO = 'FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO'
 const CODICE_NON_DEL_BAMBINO = 'INTESTATARIO_NON_DEL_BAMBINO'
+/**
+ * 409 — multi-quota: a registro c'è una fattura viva che non corrisponde alle
+ * quote di oggi. Codice distinto da `FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO`
+ * perché diverso è ciò che chi lo riceve deve andare a guardare: là
+ * l'intestatario scelto, qui le QUOTE del pagamento (e la fattura di ieri).
+ */
+const CODICE_RIGA_ESTRANEA = 'FATTURA_RIGA_VIVA_ESTRANEA_ALLE_QUOTE'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
@@ -203,6 +210,12 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
       if (esito.motivo === 'gia_emessa_altro_intestatario') {
         return NextResponse.json(
           { error: esito.messaggio, codice: CODICE_GIA_EMESSA_ALTRO, data: { motivo: esito.motivo } },
+          { status: esito.httpStatus }
+        )
+      }
+      if (esito.motivo === 'quota_estranea') {
+        return NextResponse.json(
+          { error: esito.messaggio, codice: CODICE_RIGA_ESTRANEA, data: { motivo: esito.motivo } },
           { status: esito.httpStatus }
         )
       }

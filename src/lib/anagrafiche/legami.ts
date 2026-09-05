@@ -105,26 +105,55 @@ export async function getFigliDiGenitore(
 }
 
 /**
- * Verso INVERSO dell'unione: alunno → ACCOUNT genitore (`utenti.id`).
+ * Verso INVERSO dell'unione: alunno → ACCOUNT genitore (`utenti.id`), CON il
+ * verdetto sulla completezza.
+ *
  * Serve a chi elenca i tutori di un bambino (diario, chat lato docente,
- * destinatari). Stessa semantica di `getFigliDiGenitore`, stessa doppia
+ * destinatari). Stessa semantica di `getFigliDiGenitoreEsito`, stessa doppia
  * sorgente; qui il ponte si percorre al contrario (`student_parents.parent_id`
  * → `parents.auth_user_id`).
+ *
+ * ─── PERCHÉ ANCHE QUESTO VERSO HA BISOGNO DI `completo` ─────────────────────
+ *
+ * Le tre letture qui sotto possono fallire, e PostgREST non lancia: ritorna
+ * `{ error }`. Per un anno il verso inverso ha loggato un `warn` e proseguito,
+ * quindi un guasto usciva come «questo adulto NON è un genitore di questo
+ * bambino» — un'affermazione senza misura. Su `adultoEGenitoreDi` quel `false`
+ * diventava un **422** in faccia alla Segreteria («l'intestatario scelto non
+ * risulta fra i genitori»), dove la verità era «non lo so» e la risposta giusta
+ * è un **503** che invita a riprovare: la differenza fra un rifiuto di merito e
+ * un guasto del database.
+ *
+ * Chi ELENCA può ignorare il flag (mostrerà meno destinatari, non i destinatari
+ * di un altro bambino): per loro resta `getGenitoriDiAlunno`, invariata.
+ * Chi RIFIUTA deve guardarlo.
+ *
+ * «Schema assente» (`SCHEMA_ASSENTE`, DB E2E della CI mai migrato) NON abbassa
+ * `completo`: là quella sorgente non esiste e non ha legami da dare — trattarla
+ * da guasto significherebbe 503 su ogni emissione in CI.
  *
  * Un `parents` SENZA account (`auth_user_id` nullo) non produce nulla: non
  * esiste un `utenti.id` da restituire, e inventarne uno romperebbe ogni
  * chiamante (che con quell'id legge `utenti`, manda notifiche, apre chat).
  *
  * In BLOCCO (3 query fisse, mai N+1): i chiamanti hanno tipicamente in mano
- * un'intera classe.
+ * un'intera classe. Il verdetto è quello dell'intera lettura, non del singolo
+ * alunno: le tre query sono per blocco, e un guasto le riguarda tutte.
  */
-export async function getGenitoriDiAlunni(
+export async function getGenitoriDiAlunniEsito(
   supabase: SupabaseClient,
   alunnoIds: string[],
-): Promise<Map<string, string[]>> {
+): Promise<{ perAlunno: Map<string, string[]>; completo: boolean }> {
   const perAlunno = new Map<string, string[]>();
   const unici = [...new Set((alunnoIds ?? []).filter(Boolean))];
-  if (unici.length === 0) return perAlunno;
+  if (unici.length === 0) return { perAlunno, completo: true };
+
+  let completo = true;
+  /** Un errore che NON è «schema assente» rende l'elenco inaffidabile. */
+  const registra = (esito: string, tabella: string, n: number, err: unknown) => {
+    segnalaLetturaLegami(esito, tabella, n, err);
+    if (livelloPerErrore(err) !== 'info') completo = false;
+  };
 
   const aggiungi = (alunnoId: unknown, accountId: unknown) => {
     if (typeof alunnoId !== 'string' || typeof accountId !== 'string') return;
@@ -137,14 +166,14 @@ export async function getGenitoriDiAlunni(
     .from('legame_genitori_alunni')
     .select('alunno_id, genitore_id')
     .in('alunno_id', unici);
-  if (errRuntime) segnalaLetturaLegami('genitori-runtime-non-letti', 'legame_genitori_alunni', unici.length, errRuntime);
+  if (errRuntime) registra('genitori-runtime-non-letti', 'legame_genitori_alunni', unici.length, errRuntime);
   for (const r of runtime ?? []) aggiungi(r.alunno_id, r.genitore_id);
 
   const { data: sp, error: errSp } = await supabase
     .from('student_parents')
     .select('student_id, parent_id')
     .in('student_id', unici);
-  if (errSp) segnalaLetturaLegami('genitori-anagrafica-non-letti', 'student_parents', unici.length, errSp);
+  if (errSp) registra('genitori-anagrafica-non-letti', 'student_parents', unici.length, errSp);
   const righe = (sp ?? []) as { student_id?: unknown; parent_id?: unknown }[];
   const parentIds = [...new Set(righe.map((r) => r.parent_id).filter((v): v is string => typeof v === 'string'))];
   if (parentIds.length > 0) {
@@ -152,7 +181,7 @@ export async function getGenitoriDiAlunni(
       .from('parents')
       .select('id, auth_user_id')
       .in('id', parentIds);
-    if (errPonti) segnalaLetturaLegami('genitori-ponte-non-letto', 'parents', parentIds.length, errPonti);
+    if (errPonti) registra('genitori-ponte-non-letto', 'parents', parentIds.length, errPonti);
     const accountPerParent = new Map<string, string>();
     for (const p of (ponti ?? []) as { id?: unknown; auth_user_id?: unknown }[]) {
       if (typeof p.id === 'string' && typeof p.auth_user_id === 'string') {
@@ -165,16 +194,44 @@ export async function getGenitoriDiAlunni(
     }
   }
 
-  return perAlunno;
+  return { perAlunno, completo };
 }
 
-/** Account genitore (`utenti.id`) collegati a UN alunno, unione runtime+anagrafica. */
+/**
+ * Alunno → account genitore, in blocco. Wrapper storico: scarta il verdetto.
+ * Chi decide un RIFIUTO usi `getGenitoriDiAlunniEsito`.
+ */
+export async function getGenitoriDiAlunni(
+  supabase: SupabaseClient,
+  alunnoIds: string[],
+): Promise<Map<string, string[]>> {
+  return (await getGenitoriDiAlunniEsito(supabase, alunnoIds)).perAlunno;
+}
+
+/**
+ * Account genitore (`utenti.id`) collegati a UN alunno, unione runtime+anagrafica,
+ * CON il verdetto sulla completezza. `completo: false` = «l'elenco può essere
+ * corto»: non se ne può concludere che un adulto non sia un genitore.
+ */
+export async function getGenitoriDiAlunnoEsito(
+  supabase: SupabaseClient,
+  alunnoId: string,
+): Promise<{ genitori: string[]; completo: boolean }> {
+  const { perAlunno, completo } = await getGenitoriDiAlunniEsito(supabase, [alunnoId]);
+  return { genitori: perAlunno.get(alunnoId) ?? [], completo };
+}
+
+/**
+ * Account genitore (`utenti.id`) collegati a UN alunno, unione runtime+anagrafica.
+ * Wrapper storico dei sei chiamanti che ELENCANO (solleciti, mensa, merch,
+ * diario, modulistica, `determinaQuoteFatturazione` in `intestatari.ts`): il
+ * verdetto non li riguarda.
+ */
 export async function getGenitoriDiAlunno(
   supabase: SupabaseClient,
   alunnoId: string,
 ): Promise<string[]> {
-  const mappa = await getGenitoriDiAlunni(supabase, [alunnoId]);
-  return mappa.get(alunnoId) ?? [];
+  return (await getGenitoriDiAlunnoEsito(supabase, alunnoId)).genitori;
 }
 
 /**

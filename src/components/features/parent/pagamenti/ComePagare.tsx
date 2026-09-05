@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Copy, Check, Info, Landmark, Banknote } from 'lucide-react';
+import { Copy, Check, Info, Landmark, Banknote, Building2, MapPin } from 'lucide-react';
 import { logClient } from '@/lib/logging/client';
 import { BTN_COPIA_AA, CausaleBonifico, type VoceCausale } from './CausaleBonifico';
 
@@ -85,6 +85,9 @@ export function raggruppaPerConto(sedi: SedeBonifico[], voci: VoceCausale[]): Bl
 type Metodo = 'bonifico' | 'contanti';
 const METODI: Metodo[] = ['bonifico', 'contanti'];
 
+/** Etichetta di un campo del conto: piccola, quieta, sempre SOPRA il suo valore. */
+const ETICHETTA = 'font-maven text-[11px] uppercase tracking-[0.08em] text-kidville-sub';
+
 /**
  * «Come pagare» — bonifico o contanti, con l'intestatario e l'IBAN della propria
  * sede e le causali per voce incorporate.
@@ -98,6 +101,23 @@ const METODI: Metodo[] = ['bonifico', 'contanti'];
  * insieme si dichiara che NON sono detraibili (L. 160/2019, la stessa regola che
  * `metodoTracciabile` applica in contabilità): dire la prima cosa senza la
  * seconda costerebbe al genitore la detrazione, in silenzio.
+ *
+ * ─── IL SECONDO GIRO (2026-09-05), dalle schermate a 390px ────────────────────
+ * Quattro cose che il disegno di partenza sbagliava, e come sono state raddrizzate:
+ *  1. L'IBAN andava a capo IN MEZZO a un gruppo di quattro («…1010 00 / 00 0123
+ *     456») perché il bottone gli stava accanto e gli mangiava la riga — e il
+ *     punto di rottura CAMBIAVA fra «Copia» e «Copiato». Oggi il valore ha la
+ *     riga tutta per sé, senza `break-all`: l'unico posto dove può andare a capo
+ *     è lo spazio fra un gruppo e l'altro. Il bottone sta sotto, a tutta larghezza.
+ *  2. «Intestato a» era un'etichetta a sinistra col valore allineato a DESTRA:
+ *     su un telefono la ragione sociale andava a capo lasciando «soc. coop.» orfano
+ *     su una riga sua, con il margine sinistro frastagliato. Oggi è etichetta sopra,
+ *     valore sotto, entrambi a bandiera sinistra.
+ *  3. La card diceva due volte la stessa cosa: l'introduzione spiegava la causale e
+ *     cinque righe dopo la spiegava di nuovo. Oggi l'introduzione ANNUNCIA i due
+ *     passi — il conto e la causale — e ciascun passo ha il proprio titolo numerato.
+ *  4. La riga dei plessi galleggiava sopra il riquadro, in maiuscolo su nomi propri.
+ *     Oggi è la prima riga DENTRO il riquadro, in tondo, con la sua icona.
  */
 export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCausale[] }) {
     const t = useTranslations('pagamenti');
@@ -176,23 +196,45 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 tabIndex={attivo ? 0 : -1}
                 onClick={() => setMetodo(m)}
                 onKeyDown={(e) => suTasto(e, m)}
-                className={`flex min-h-[44px] flex-1 items-center justify-center gap-1.5 rounded-pill px-3 font-barlow text-[13px] font-extrabold uppercase tracking-[0.05em] motion-safe:transition-colors ${
+                className={`flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-pill px-3 font-barlow text-[13px] font-extrabold uppercase tracking-[0.05em] motion-safe:transition-colors ${
                     attivo ? 'bg-kidville-green text-kidville-white' : 'text-kidville-sub hover:text-kidville-green'
                 }`}
             >
-                <Icona size={15} aria-hidden="true" /> {etichetta}
+                <Icona size={16} aria-hidden="true" /> {etichetta}
             </button>
         );
     };
 
+    /**
+     * Titolo di un passo. Il numero non è un vezzo: dice che le due cose vanno fatte
+     * TUTTE E DUE, e in quest'ordine. Il pallino porta `bg-kidville-green`, che è la
+     * classe su cui la regola d'Alto Contrasto della card lo ribalta in giallo pieno
+     * con la cifra nera — nessuna superficie nuova da dipingere a mano.
+     */
+    const passo = (numero: string, titolo: string) => (
+        <p className="flex items-center gap-2 font-barlow text-[13px] font-extrabold uppercase tracking-[0.06em] text-kidville-green">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-pill bg-kidville-green font-barlow text-[11px] font-black text-kidville-white">
+                {numero}
+            </span>
+            {titolo}
+        </p>
+    );
+
     return (
         <div className="kv-come-pagare rounded-card border border-kidville-line bg-kidville-white p-4">
-            <p className="font-barlow font-bold uppercase text-xs tracking-wide text-kidville-green mb-1">
+            <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">
                 {t('comePagareTitolo')}
             </p>
-            <p className="font-maven text-xs text-kidville-sub">{t('comePagareIntro')}</p>
+            {/* `text-pretty` (text-wrap: pretty) e non un a-capo scritto a mano: toglie
+                la riga orfana — «e la causale.» da sola in fondo — senza congelare DOVE
+                cade l'a-capo, che dipende dalla larghezza dello schermo e dalla lingua. */}
+            <p className="mt-1 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">{t('comePagareIntro')}</p>
 
-            <div role="tablist" className="mt-3 flex gap-1 rounded-pill bg-kidville-cream p-1">
+            <div
+                role="tablist"
+                aria-label={t('ariaMetodoPagamento')}
+                className="mt-4 flex gap-1 rounded-pill bg-kidville-cream p-1"
+            >
                 {tab('bonifico', t('metodoBonifico'), Landmark)}
                 {tab('contanti', t('metodoContanti'), Banknote)}
             </div>
@@ -204,7 +246,7 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 id={idPannello('bonifico')}
                 aria-labelledby={idTab('bonifico')}
                 hidden={metodo !== 'bonifico'}
-                className="mt-3 space-y-4"
+                className="mt-4 space-y-6"
             >
                 {blocchi.map((b) => {
                     const copiatoQui = copiato === b.chiave;
@@ -212,62 +254,80 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                     // TypeScript lo restringe da solo e non serve nessun cast.
                     const iban = b.iban;
                     return (
-                        <div key={b.chiave} className="space-y-2">
-                            {mostraNomi && b.nomi.length > 0 && (
-                                <p className="font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-sub">
-                                    {/* `count` non è decorativo: un blocco può fondere due plessi e
-                                        quello accanto averne uno solo, nella stessa pagina. */}
-                                    {t('sediDelBlocco', { count: b.nomi.length, sedi: b.nomi.join(' · ') })}
-                                </p>
-                            )}
+                        <div key={b.chiave}>
+                            {passo('1', t('passoConto'))}
 
-                            <div className="rounded-[14px] border border-kidville-line px-3 py-2.5">
-                                <div className="flex items-baseline justify-between gap-3">
-                                    <span className="font-maven text-[11px] uppercase tracking-wide text-kidville-sub">
-                                        {t('intestatoA')}
-                                    </span>
-                                    {b.intestatario ? (
-                                        <span className="min-w-0 flex-1 text-right font-maven text-sm font-bold text-kidville-ink break-words">
-                                            {b.intestatario}
+                            <div className="mt-2 rounded-input border border-kidville-line">
+                                {mostraNomi && b.nomi.length > 0 && (
+                                    <p className="flex items-center gap-2 border-b border-kidville-line px-3 py-2 font-maven text-[11px] leading-relaxed text-pretty text-kidville-sub">
+                                        <Building2 size={14} className="shrink-0" aria-hidden="true" />
+                                        {/* `count` non è decorativo: un blocco può fondere due plessi e
+                                            quello accanto averne uno solo, nella stessa pagina. */}
+                                        <span className="min-w-0 break-words">
+                                            {t('sediDelBlocco', { count: b.nomi.length, sedi: b.nomi.join(' · ') })}
                                         </span>
+                                    </p>
+                                )}
+
+                                <div className="space-y-3 p-3">
+                                    <div>
+                                        <p className={ETICHETTA}>{t('intestatoA')}</p>
+                                        {b.intestatario ? (
+                                            <p className="mt-1 break-words font-maven text-[15px] font-bold leading-snug text-kidville-ink sm:text-base">
+                                                {b.intestatario}
+                                            </p>
+                                        ) : (
+                                            // Un'assenza non si scrive col peso di un valore.
+                                            <p className="mt-1 break-words font-maven text-sm leading-snug text-pretty text-kidville-sub">
+                                                {t('intestatarioNonDisponibile')}
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    {iban ? (
+                                        <div>
+                                            <p className={ETICHETTA}>{t('ibanEtichetta')}</p>
+                                            {/* NIENTE `break-all` (e niente bottone di fianco): l'IBAN
+                                                arriva dal server già a gruppi di quattro separati da
+                                                spazi, e con il ritorno a capo normale può spezzarsi
+                                                SOLO lì. Un IBAN tagliato a metà di un gruppo si
+                                                ricopia sbagliato a mano. */}
+                                            <p className="mt-1 font-mono text-sm font-bold leading-snug text-kidville-ink sm:text-base">
+                                                {iban}
+                                            </p>
+                                        </div>
                                     ) : (
-                                        // Un'assenza non si scrive col peso di un valore.
-                                        <span className="min-w-0 flex-1 text-right font-maven text-sm text-kidville-sub break-words">
-                                            {t('intestatarioNonDisponibile')}
-                                        </span>
+                                        <p className="flex items-start gap-2 font-maven text-[11px] leading-relaxed text-pretty text-kidville-sub">
+                                            <Info size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
+                                            <span>{t('ibanNonDisponibile')}</span>
+                                        </p>
                                     )}
                                 </div>
 
-                                {iban ? (
-                                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-kidville-line pt-2">
-                                        <div className="min-w-0">
-                                            <span className="block font-maven text-[11px] uppercase tracking-wide text-kidville-sub">
-                                                {t('ibanEtichetta')}
-                                            </span>
-                                            <span className="block font-mono text-sm font-bold text-kidville-ink break-all">
-                                                {iban}
-                                            </span>
-                                        </div>
+                                {iban && (
+                                    <div className="px-3 pb-3">
+                                        {/* Il testo visibile È il nome accessibile: nessun `aria-label`
+                                            che dica una cosa diversa da quella scritta (WCAG 2.5.3).
+                                            `w-full sm:w-auto`: sul telefono prende la riga intera —
+                                            così premerlo non toglie spazio all'IBAN — ma su desktop
+                                            un bottone largo 680px sarebbe una fascia, non un comando. */}
                                         <button
                                             type="button"
-                                            className={BTN_COPIA_AA}
+                                            className={`${BTN_COPIA_AA} w-full sm:w-auto`}
                                             onClick={() => copiaIban(b.chiave, iban)}
-                                            aria-label={t('ariaCopiaIban')}
                                         >
                                             {copiatoQui
-                                                ? <><Check size={14} /> {t('copiato')}</>
-                                                : <><Copy size={14} /> {t('copia')}</>}
+                                                ? <><Check size={15} aria-hidden="true" /> {t('copiato')}</>
+                                                : <><Copy size={15} aria-hidden="true" /> {t('copiaIban')}</>}
                                         </button>
                                     </div>
-                                ) : (
-                                    <p className="mt-2 flex items-start gap-1 border-t border-kidville-line pt-2 font-maven text-[11px] text-kidville-sub">
-                                        <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-                                        <span>{t('ibanNonDisponibile')}</span>
-                                    </p>
                                 )}
                             </div>
 
-                            <CausaleBonifico voci={b.voci} incorporata />
+                            <div className="mt-4">{passo('2', t('passoCausale'))}</div>
+                            <div className="mt-2">
+                                <CausaleBonifico voci={b.voci} incorporata />
+                            </div>
                         </div>
                     );
                 })}
@@ -278,11 +338,14 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 id={idPannello('contanti')}
                 aria-labelledby={idTab('contanti')}
                 hidden={metodo !== 'contanti'}
-                className="mt-3 space-y-2"
+                className="mt-4 space-y-3"
             >
-                <p className="font-maven text-sm text-kidville-ink">{t('contantiTesto')}</p>
-                <p className="flex items-start gap-1.5 rounded-[14px] bg-kidville-cream px-3 py-2.5 font-maven text-xs text-kidville-sub">
-                    <Info size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+                <p className="flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-ink">
+                    <MapPin size={16} className="mt-[3px] shrink-0 text-kidville-green" aria-hidden="true" />
+                    <span>{t('contantiTesto')}</span>
+                </p>
+                <p className="flex items-start gap-2 rounded-input bg-kidville-cream px-3 py-3 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">
+                    <Info size={14} className="mt-[2px] shrink-0" aria-hidden="true" />
                     <span>{t('contantiNota730')}</span>
                 </p>
             </div>

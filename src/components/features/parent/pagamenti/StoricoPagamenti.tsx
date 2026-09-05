@@ -132,12 +132,20 @@ export function StoricoPagamenti({ userId }: Props) {
     // COMPOSTA DAL SERVER col modello per-categoria (la segreteria può personalizzarla);
     // qui la si mostra soltanto. Le voci senza causale (server non l'ha prodotta) si
     // scartano. Zero nuove fetch: usa i dati già in memoria.
+    //
+    // `importo` è il RESIDUO (`residuoRiga`, la stessa fonte del totale da saldare in
+    // cima), non l'importo pieno: per una voce parziale i due numeri divergono, ed è
+    // quello residuo la cifra che il genitore digita nel bonifico. Nell'elenco qui
+    // sotto resta l'importo pieno con «(resta …)» accanto — sono due letture diverse
+    // dello stesso pagamento, e la card è quella che dice «paga questo».
     const vociCausale: VoceCausale[] = pagamenti
         .filter((p) => residuoRiga(p) > 0)
         .map((p) => ({
             id: p.id,
             scuola_id: p.scuola_id ?? '',
             causale: p.causale_suggerita ?? '',
+            descrizione: p.descrizione,
+            importo: residuoRiga(p),
             nome: p.alunni?.nome ?? '',
             cognome: p.alunni?.cognome ?? '',
             hasCf: !!p.alunni?.codice_fiscale,

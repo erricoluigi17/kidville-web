@@ -42,16 +42,25 @@ const VOCE = {
     alunni: { nome: 'Mara', cognome: 'Bianchi', codice_fiscale: 'ABCDEF00A00A000A' },
 };
 
+/** Voce PARZIALE: pagati 20 su 60, restano 40. Serve a distinguere residuo da importo. */
+const VOCE_PARZIALE = {
+    ...VOCE,
+    id: 'p2',
+    descrizione: 'Mensa Settembre',
+    importo: 60,
+    importo_pagato: 20,
+    stato: 'parziale',
+    causale_suggerita: 'Mensa Settembre 2026 - per il minore Mara Bianchi - PLESSO UNO',
+};
+
+const SEDI = [{ id: 'sede-1', nome: 'Plesso Uno', iban: IBAN_LEGGIBILE, intestatario: 'Cooperativa Esempio soc. coop.' }];
+
 /** Il corpo del GET: `data` + `sedi`. `sedi` assente = risposta del backend vecchio. */
 let corpo: Record<string, unknown> = {};
 
 beforeEach(() => {
     vi.clearAllMocks();
-    corpo = {
-        success: true,
-        data: [VOCE],
-        sedi: [{ id: 'sede-1', nome: 'Plesso Uno', iban: IBAN_LEGGIBILE, intestatario: 'Cooperativa Esempio soc. coop.' }],
-    };
+    corpo = { success: true, data: [VOCE], sedi: SEDI };
     vi.stubGlobal(
         'fetch',
         vi.fn(async (url: string) => {
@@ -93,5 +102,18 @@ describe('StoricoPagamenti — «Come pagare» con le coordinate della sede', ()
 
         expect(await screen.findByText('Retta Settembre')).toBeInTheDocument();
         expect(screen.queryByText('Come pagare')).toBeNull();
+    });
+
+    it('ogni riga della causale porta la propria voce e il RESIDUO, non l’importo pieno', async () => {
+        corpo = { success: true, data: [VOCE, VOCE_PARZIALE], sedi: SEDI };
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Come pagare')).toBeInTheDocument();
+        // «Mensa Settembre» compare due volte: nella card e nell'elenco sotto.
+        expect(screen.getAllByText('Mensa Settembre').length).toBeGreaterThanOrEqual(2);
+        // Nella card l'importo è il RESIDUO (60 − 20 = 40): è quanto va versato oggi.
+        // Nell'elenco resta l'importo pieno, «€ 60,00», con «(resta …)» accanto: due
+        // numeri diversi che dicono due cose diverse, e quello da bonificare è qui.
+        expect(screen.getAllByText('€ 40,00').length).toBeGreaterThanOrEqual(1);
     });
 });

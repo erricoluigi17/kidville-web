@@ -41,6 +41,8 @@ const VOCE_UNO: VoceCausale = {
     id: 'p1',
     scuola_id: 'sede-1',
     causale: 'Retta Settembre 2026 - per il minore Mara Bianchi - PLESSO UNO',
+    descrizione: 'Retta Settembre 2026',
+    importo: 250,
     nome: 'Mara',
     cognome: 'Bianchi',
     hasCf: true,
@@ -49,6 +51,8 @@ const VOCE_DUE: VoceCausale = {
     id: 'p2',
     scuola_id: 'sede-2',
     causale: 'Retta Settembre 2026 - per il minore Ugo Verdi - PLESSO DUE',
+    descrizione: 'Retta Settembre 2026 (Ugo)',
+    importo: 90.5,
     nome: 'Ugo',
     cognome: 'Verdi',
     hasCf: true,
@@ -69,7 +73,9 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
 
         expect(screen.getByText('Come pagare')).toBeInTheDocument();
-        expect(screen.getByRole('tablist')).toBeInTheDocument();
+        // La lista dei metodi ha un nome proprio: «tablist» senza nome è un gruppo
+        // anonimo per chi naviga a voce.
+        expect(screen.getByRole('tablist', { name: 'Metodo di pagamento' })).toBeInTheDocument();
 
         const bonifico = screen.getByRole('tab', { name: 'Bonifico' });
         const contanti = screen.getByRole('tab', { name: 'Contanti' });
@@ -214,10 +220,68 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         expect(container.firstElementChild).toHaveClass('kv-come-pagare');
     });
 
-    it('a11y: i comandi principali arrivano a 44px di lato', () => {
+    it('a11y: ogni comando della card arriva a 44px di lato', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        const comandi = [...container.querySelectorAll('button')];
+        // Tab (2) + «Copia l'IBAN» + una causale: nessuno sotto la soglia del dito.
+        expect(comandi.length).toBeGreaterThanOrEqual(4);
+        for (const c of comandi) expect(c.className).toContain('min-h-[44px]');
+    });
+
+    /* ────────────────────────────────────────────────────────────────────────
+       Il secondo giro (2026-09-05): quello che le schermate hanno mostrato.
+       ──────────────────────────────────────────────────────────────────────── */
+
+    it('l’IBAN non si spezza dentro un gruppo di quattro', () => {
         render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
-        for (const tab of screen.getAllByRole('tab')) {
-            expect(tab.className).toContain('min-h-[44px]');
+        const iban = screen.getByText(IBAN_LEGGIBILE);
+        // Misurato sulla schermata a 390px: con `break-all` l'IBAN andava a capo
+        // in mezzo a un gruppo («…1010 0000 / 0123 456» e, col bottone accanto più
+        // largo, «…1010 00 / 00 0123 456») — cioè la riga cambiava PREMENDO
+        // «Copia». Senza `break-all` il ritorno a capo cade solo sugli spazi, che
+        // nell'IBAN stanno esattamente fra un gruppo di quattro e l'altro.
+        expect(iban.className).not.toContain('break-all');
+        expect(iban.className).toContain('font-mono');
+    });
+
+    it('il bottone dice CHE COSA copia e prende tutta la riga sotto l’IBAN', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        const copia = screen.getByRole('button', { name: 'Copia l’IBAN' });
+        // Il testo visibile È il nome accessibile: niente `aria-label` che dica una
+        // cosa diversa da quella scritta (WCAG 2.5.3).
+        expect(copia).toHaveTextContent('Copia l’IBAN');
+        expect(copia).not.toHaveAttribute('aria-label');
+        // A tutta larghezza, su una riga sua: così premerlo non rimpicciolisce lo
+        // spazio dell'IBAN e non lo fa andare a capo in un punto diverso.
+        expect(copia.className).toContain('w-full');
+    });
+
+    it('il bonifico è raccontato in due passi numerati', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        // L'introduzione annuncia i due passi invece di ripetere, cinque righe più
+        // in basso, la stessa frase sulla causale.
+        expect(screen.getByText(/servono due cose: il conto e la causale/i)).toBeInTheDocument();
+        expect(screen.getByText('Il conto')).toBeInTheDocument();
+        expect(screen.getByText('La causale')).toBeInTheDocument();
+        expect(screen.getByText('1')).toBeInTheDocument();
+        expect(screen.getByText('2')).toBeInTheDocument();
+    });
+
+    it('la riga dei plessi sta DENTRO il riquadro del conto, non appesa sopra', () => {
+        render(<ComePagare sedi={[SEDE_UNO, SEDE_DUE]} voci={[VOCE_UNO, VOCE_DUE]} />);
+        const sedi = screen.getByText('Per le sedi Plesso Uno · Plesso Due');
+        const iban = screen.getByText(IBAN_LEGGIBILE);
+        const riquadro = iban.closest('.rounded-input');
+        expect(riquadro).not.toBeNull();
+        expect(riquadro?.contains(sedi)).toBe(true);
+    });
+
+    it('nessun movimento gratuito: la pressione è condizionata a `motion-safe`', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        for (const b of container.querySelectorAll('button')) {
+            if (b.className.includes('scale-95')) {
+                expect(b.className).toContain('motion-safe:active:scale-95');
+            }
         }
     });
 });

@@ -1827,3 +1827,23 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+/* IL CAMPO DELLA CAUSALE (2026-09-05). La riga della causale ha ora un campo
+   `bg-kidville-white` dentro la chip crema: dice «questo testo si incolla lì»,
+   e in luce normale è bianco su crema, inchiostro `ink` a 11,8:1.
+
+   In Alto Contrasto sarebbe stato il difetto peggiore possibile, ed è il motivo
+   per cui questa regola nasce insieme al campo e non dopo: `bg-kidville-white`
+   porta l'hex #FFFFFF INLINATO da `@theme inline` e in HC resta BIANCO, mentre
+   la regola qui sopra porta `.text-kidville-ink` a #FFFFFF. Bianco su bianco:
+   1,00:1, cioè il testo da copiare — l'unica cosa che il genitore non può
+   perdere — sarebbe stato invisibile proprio nella modalità pensata per chi
+   fatica a leggere. Si dipinge quindi a mano: fondo nero (21:1 col testo) e un
+   filetto grigio #8A8A8A (6,4:1 sul nero, sopra i 3:1 di WCAG 1.4.11) che lo
+   stacca dal #1A1A1A della chip che lo contiene — perché in Alto Contrasto due
+   neri vicini non si separano più col colore, si separano col contorno.
+   Il selettore è DISCENDENTE: la card stessa porta `bg-kidville-white` sulla
+   propria radice, e lì il fondo nero glielo dà già `.kv-come-pagare`. */
+[data-contrast="high"] .kv-come-pagare .bg-kidville-white {
+  background-color: #000000;
+  box-shadow: inset 0 0 0 1px #8A8A8A;
+}

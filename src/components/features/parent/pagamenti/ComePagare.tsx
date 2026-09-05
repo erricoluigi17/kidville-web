@@ -3,7 +3,7 @@
 import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Copy, Check, Info, Landmark, Banknote, Building2, MapPin } from 'lucide-react';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { BTN_COPIA_AA, CausaleBonifico, type VoceCausale } from './CausaleBonifico';
 
 /**
@@ -169,14 +169,23 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
             await navigator.clipboard.writeText(iban.replace(/\s+/g, ''));
             setCopiato(chiave);
             setTimeout(() => setCopiato(null), 2000);
-        } catch {
-            // `navigator.clipboard` negato (contesto non sicuro / permesso rifiutato):
-            // non è un guasto del prodotto ma non si ingoia in silenzio (AGENTS: niente
-            // catch muto). Nessun dato personale nel messaggio: l'IBAN non ci entra.
+        } catch (err) {
+            // `navigator.clipboard` dice di no per motivi DIVERSI e distinguibili, e
+            // ognuno vuole una correzione diversa: `NotAllowedError` (permesso negato,
+            // o gesto utente non riconosciuto), `SecurityError` (contesto non sicuro:
+            // http, iframe senza `clipboard-write`), oppure l'API che dentro una
+            // WebView non esiste affatto — e quest'ultima è l'unica che riguarda
+            // l'app nativa, cioè il posto da cui la card viene letta di più.
+            //
+            // Il `catch` senza binding buttava via esattamente la parola che li
+            // separa: restava «non è riuscita», che è ciò che si sapeva già. Nessun
+            // dato personale nel messaggio — l'IBAN non ci entra, e `nomeErrore`
+            // restituisce SOLO il nome della classe d'errore, mai il testo del
+            // provider.
             logClient({
                 livello: 'warn',
                 evento: 'js',
-                messaggio: 'copia IBAN negli appunti non riuscita',
+                messaggio: `copia-iban-non-riuscita: ${nomeErrore(err)}`,
                 route: '/parent/pagamenti',
             });
         }

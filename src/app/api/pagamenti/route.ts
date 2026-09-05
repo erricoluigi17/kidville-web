@@ -11,7 +11,7 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive, assertAlunnoInScope } from '@/lib/auth/scope'
 import { getFigliDiGenitore } from '@/lib/anagrafiche/legami'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 import { getModuleConfig } from '@/lib/settings/module-config'
 import { renderCausale, modelloCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
@@ -94,6 +94,20 @@ type PagamentoGetRow = {
   [k: string]: unknown
 }
 
+/**
+ * Questa risposta non si mette in cache, e da quando porta le coordinate del
+ * bonifico la ragione è doppia: dentro ci sono le voci di pagamento dei figli di
+ * UNA famiglia (importi, scadenze, nome e codice fiscale del minore dentro la
+ * causale) e l'IBAN su cui quella famiglia sta per mandare i soldi. `private`
+ * tiene fuori ogni cache condivisa — CDN, proxy — e `no-store` impedisce anche al
+ * browser di lasciarne una copia sul disco: su un telefono di famiglia la
+ * schermata successiva può guardarla un'altra persona.
+ *
+ * Sta su TUTTE le uscite del GET, non solo su quella piena: un'intestazione che
+ * dipende da quanto c'è nel corpo è una regola che nessuno riesce a ricordare.
+ */
+const SENZA_CACHE = { 'Cache-Control': 'private, no-store' } as const
+
 // GET /api/pagamenti
 //   staff  -> tutti i pagamenti (filtri: alunno_id, stato, categoria_id, scuola_id, gruppo, periodo)
 //   parent -> solo i pagamenti dei propri figli; per gli split, solo se ha una quota
@@ -133,7 +147,7 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       // QUANTO c'è dentro. Senza, la card «Come pagare» riceverebbe `undefined`
       // proprio nel caso in cui non ha niente da mostrare, e il componente
       // andrebbe scritto per due risposte diverse invece che per una.
-      if (figli.length === 0) return NextResponse.json({ success: true, data: [], sedi: [] })
+      if (figli.length === 0) return NextResponse.json({ success: true, data: [], sedi: [] }, { headers: SENZA_CACHE })
     }
 
     // Costruttore della query parametrizzato sul SELECT: il ramo di retry lo
@@ -172,7 +186,10 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
       // PostgREST non lancia: il catch qui sotto non scatterebbe mai. La riga di errore
       // (con lo stack e la marca anti-doppione per `withRoute`) va emessa qui.
       logErrore({ operazione: 'pagamenti:GET', stato: 500, evento: 'db' }, error)
-      return NextResponse.json({ error: 'Errore nel recupero dei pagamenti', details: error.message }, { status: 500 })
+      return NextResponse.json(
+        { error: 'Errore nel recupero dei pagamenti', details: error.message },
+        { status: 500, headers: SENZA_CACHE },
+      )
     }
 
     let rows = (data ?? []) as unknown as PagamentoGetRow[]
@@ -252,16 +269,70 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // famiglia, e la divergenza si scoprirebbe solo a bonifico partito.
     //
     // Il perimetro resta quello delle righe già filtrate: nessuna sede in più.
+    //
+    // ⚠️ MA NON PER TUTTI I CHIAMANTI. Le coordinate esistono per la card «Come
+    // pagare» del genitore. Questa stessa route serve anche il pannello dei
+    // pagamenti aperti della segreteria (`?solo_aperti=true`), che riempie una
+    // tabella di righe da incassare: lì l'IBAN non lo guarda nessuno, e ogni sede
+    // in elenco costerebbe DUE letture in più di `admin_settings` — più le due
+    // righe di log che ne conseguono, una al giorno per sede, su un percorso dove
+    // non dicono niente a nessuno.
+    //
+    // La condizione è scritta come «quando NON servono» di proposito: un
+    // chiamante non previsto — per esempio una docente che è anche genitore e sta
+    // guardando in veste di lavoro — ricade nel comportamento generoso, non nel
+    // vuoto. `sedi: []` significa quindi due cose diverse ma innocue per chi
+    // legge la risposta — «nessuna sede in elenco» e «non le hai chieste» — e la
+    // card sa già mostrare il ripiego in entrambi i casi: la forma della risposta
+    // non cambia mai, che è la regola dichiarata al ritorno anticipato più su.
+    const soloAperti = isStaff && qData?.solo_aperti === 'true'
+
+    // Le letture di una sede vanno INSIEME: causale e coordinate abitano la
+    // stessa riga di `admin_settings` e nessuna delle due dipende dall'altra. In
+    // sequenza erano tre round-trip per sede, in fila uno dietro l'altro, su una
+    // pagina che il genitore apre spesso.
+    const perSede = await Promise.all(
+      scuolaIds.map(async (sid) => {
+        const [causali, coordinate] = await Promise.all([
+          getModuleConfig<Record<string, string>>(supabase, 'causali_config', sid),
+          soloAperti ? null : coordinateBonificoSede(supabase, sid, { operazione: 'pagamenti:GET' }),
+        ])
+        return { sid, causali, coordinate }
+      }),
+    )
+
     const causaliBySede: Record<string, Partial<Record<string, string>>> = {}
     const sedi: { id: string; nome: string; iban: string | null; intestatario: string | null }[] = []
-    for (const sid of scuolaIds) {
-      causaliBySede[sid] = await getModuleConfig<Record<string, string>>(supabase, 'causali_config', sid)
-      const coordinate = await coordinateBonificoSede(supabase, sid, { operazione: 'pagamenti:GET' })
+    for (const { sid, causali, coordinate } of perSede) {
+      causaliBySede[sid] = causali
+      if (!coordinate) continue
       sedi.push({
         id: sid,
         nome: nomiSedi[sid] ?? '',
         iban: coordinate.iban,
         intestatario: coordinate.intestatario,
+      })
+    }
+
+    // QUANTE VOLTE LA CARD È USCITA COL RIPIEGO. Senza questa riga, «l'IBAN manca
+    // su due sedi su tre» è una cosa che si scopre solo aprendo l'app con
+    // l'account di una famiglia: le righe per-sede del motore dicono CHE manca,
+    // questa dice QUANTO pesa sul servito. Solo conteggi — nessun IBAN, nessun
+    // nome di sede, nessun uuid di bambino — e `app_log` deduplica per giorno,
+    // che è la granularità giusta per una domanda di questo tipo.
+    //
+    // ⚠️ I CAMPI NON POSSONO CHIAMARSI `sedi_con_iban`: `iban` è una radice
+    // segreta di `redact()` e la corrispondenza è per CONTENIMENTO, quindi anche
+    // un numero sotto quel nome esce `[redatto]` — la riga sarebbe uscita ogni
+    // giorno senza dire l'unica cosa che ha da dire. `coordinate` descrive lo
+    // stesso fatto e lascia la difesa sull'IBAN dov'è. Misurato dal test, non
+    // dedotto.
+    if (sedi.length > 0) {
+      logEvento('pagamento', 'info', {
+        operazione: 'pagamenti:GET',
+        esito: 'coordinate-bonifico',
+        sedi_con_coordinate: sedi.filter((s) => s.iban !== null).length,
+        sedi_senza_coordinate: sedi.filter((s) => s.iban === null).length,
       })
     }
 
@@ -294,10 +365,10 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
         })
         return { ...r, scuola_nome: sede, causale_suggerita }
       }),
-    })
+    }, { headers: SENZA_CACHE })
   } catch (err) {
     logErrore({ operazione: 'pagamenti:GET', stato: 500 }, err)
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500, headers: SENZA_CACHE })
   }
 })
 

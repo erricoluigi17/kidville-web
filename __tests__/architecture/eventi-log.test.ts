@@ -243,6 +243,25 @@ const DEROGHE_INFO_NON_PERSISTITI = new Map<string, string>([
     // documento, azione, ip e user-agent. Persistere anche su `app_log` produrrebbe
     // un doppione più povero della riga che l'audit ha già. I dinieghi restano `warn`.
     ['fascicolo', "gli `info` sono letture di elenco (conteggi e uuid). L'accesso a un documento sanitario è registrato in `fascicolo_accessi_audit`, non qui: su `app_log` sarebbe un doppione più povero. I dinieghi sono `warn`."],
+    // `fiscale` (2026-09-05): l'UNICO `info` di questo canale è
+    // `dati-struttura-mancanti` chiamato con `livello: 'info'`, e ce n'è un solo
+    // chiamante — `coordinateBonificoSede`, che compone l'intestatario del conto
+    // per la card «Come pagare». Non è un successo di dominio: è la stessa
+    // configurazione incompleta che, per chi EMETTE un documento, continua a
+    // uscire a `error` (default invariato) e quindi si persiste per livello.
+    //
+    // Perché non basta lasciarla `error` per tutti: quella riga partiva a OGNI
+    // `GET /api/pagamenti` — la pagina del genitore, alta frequenza — anche per
+    // sedi che in `admin_settings` la riga non ce l'hanno affatto (Demo, E2E).
+    // Un `error` al giorno per sede su un percorso che degrada benissimo non
+    // aggiunge una notizia: consuma la credibilità degli `error` veri.
+    //
+    // E il buco NON diventa invisibile, che sarebbe la trappola descritta in
+    // testa a questo lock: sullo stesso percorso restano tre segnali `warn`/
+    // `error` — `iban-non-configurato`, `iban-non-valido`,
+    // `coordinate-non-leggibili` — che si persistono per livello e che prima non
+    // esistevano affatto. Si è tolto rumore e aggiunto segnale, non il contrario.
+    ['fiscale', "l'unico `info` è `dati-struttura-mancanti` abbassato da `coordinateBonificoSede` (lettura informativa ad alta frequenza, degrado pulito). Per chi emette documenti resta `error` e si persiste. Il buco è coperto dai tre `warn`/`error` sull'IBAN dello stesso percorso."],
 ]);
 
 describe('vocabolario chiuso degli eventi di log', () => {

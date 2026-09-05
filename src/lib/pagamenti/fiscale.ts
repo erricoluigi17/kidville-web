@@ -130,6 +130,25 @@ export interface ContestoStruttura {
     operazione: string
     /** La sede di cui mancano i dati. Senza, si sa CHE manca ma non A CHI. */
     scuolaId?: string | null
+    /**
+     * Quanto pesa il buco PER CHI CHIAMA. Default `error`, e il default non si
+     * tocca: chi non sceglie non deve poter abbassare l'allarme per distrazione.
+     *
+     * ─── PERCHÉ ESISTE (collaudo 2026-09-05, rilievo b) ────────────────────
+     * «Configurazione mancante = incidente» (AGENTS.md §4) è stato scritto per
+     * chi EMETTE un documento: la ricevuta esce anonima, e resta. Da quando
+     * l'intestatario del conto compare anche nella card «Come pagare», questa
+     * stessa funzione gira a OGNI apertura di `/parent/pagamenti` — percorso ad
+     * alta frequenza che degrada da solo («chiedile in segreteria») — e per sedi
+     * che in `admin_settings` la riga non ce l'hanno affatto (Demo, E2E). Lì un
+     * `error` al giorno per sede non aggiunge una notizia: consuma la
+     * credibilità degli `error` veri, ed è così che un allarme smette di essere
+     * letto.
+     *
+     * Il buco continua a vedersi — la riga esce comunque, con gli stessi campi:
+     * cambia solo quanto forte lo si grida.
+     */
+    livello?: 'error' | 'info'
 }
 
 /**
@@ -181,7 +200,7 @@ export function datiStruttura(
     // che ne esce non è utilizzabile. Nel log finiscono solo BOOLEANI e l'uuid
     // della sede — i dati fiscali non ci entrano, né servirebbero a nessuno lì.
     if (dati.denominazione.trim() === '' || dati.piva.trim() === '') {
-        logEvento('fiscale', 'error', {
+        logEvento('fiscale', ctx?.livello ?? 'error', {
             operazione: ctx?.operazione ?? 'datiStruttura',
             esito: 'dati-struttura-mancanti',
             scuola_id: ctx?.scuolaId ?? '',

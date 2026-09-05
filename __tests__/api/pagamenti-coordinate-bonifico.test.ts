@@ -46,8 +46,15 @@ const h = vi.hoisted(() => ({
   figli: vi.fn(async () => [] as string[]),
   db: {} as DBFinto,
   tabelle: [] as string[],
+  logEvento: vi.fn(),
 }))
 
+// Il logger vero con la sola `logEvento` sostituita: `withRoute` continua a
+// girare per intero, e qui si misurano le CHIAMATE, non il testo della riga.
+vi.mock('@/lib/logging/logger', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/logger')>()
+  return { ...actual, logEvento: h.logEvento }
+})
 vi.mock('@/lib/auth/require-staff', () => ({ requireUser: h.requireUser, requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: (...a: unknown[]) => h.sediAttive(...(a as [])),
@@ -62,6 +69,8 @@ vi.mock('@/lib/supabase/server-client', async () => {
 })
 
 import { GET } from '@/app/api/pagamenti/route'
+// La redazione VERA: è lei a decidere cosa di una riga si legge davvero in `app_log`.
+import { redact } from '@/lib/logging/redact'
 
 const url = (qs = '') =>
   new Request(`http://localhost/api/pagamenti?${qs}`) as unknown as import('next/server').NextRequest
@@ -183,5 +192,128 @@ describe('GET /api/pagamenti — le coordinate del bonifico, una per sede', () =
       causale_suggerita: `Retta Settembre 2026 - per il minore Mara Bianchi - ${CF} - ALFA`,
       residuo: 150,
     })
+  })
+})
+
+/** Quante volte è stata interrogata `admin_settings` in questa richiesta. */
+const lettureImpostazioni = () => h.tabelle.filter((t) => t === 'admin_settings').length
+
+/** Le chiamate a `logEvento` del gruppo `pagamento` con quell'esito. */
+type ChiamataLog = [string, string, Record<string, unknown>]
+const riepiloghi = () =>
+  (h.logEvento.mock.calls as ChiamataLog[]).filter(
+    (c) => c[0] === 'pagamento' && c[2]?.esito === 'coordinate-bonifico',
+  )
+
+// =============================================================================
+// LE COORDINATE SI LEGGONO SOLO PER CHI LE GUARDA (collaudo 2026-09-05, rilievo c)
+//
+// L'IBAN è nato per la card «Come pagare» del genitore. Ma `GET /api/pagamenti`
+// serve anche il pannello dei pagamenti aperti della segreteria, che la chiama
+// con `?solo_aperti=true` per riempire una tabella di righe da incassare: lì
+// nessuno guarda l'IBAN, e ogni sede in elenco costava due letture in più di
+// `admin_settings`.
+//
+// La condizione dice quando NON servono, non quando servono: così un chiamante
+// non previsto (una docente che è anche genitore e sta guardando in veste di
+// lavoro) ricade nel comportamento generoso, non nel vuoto.
+// =============================================================================
+describe('GET /api/pagamenti — le coordinate si leggono solo dove servono', () => {
+  it('staff con `?solo_aperti=true`: `sedi` vuoto e NESSUNA lettura in più di `admin_settings`', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: STAFF, role: 'segreteria' } })
+    const j = await (await GET(url('solo_aperti=true'))).json()
+
+    // Le righe ci sono (sono tutte da pagare): a mancare sono le sole coordinate.
+    expect(j.data).toHaveLength(2)
+    expect(j.sedi).toEqual([])
+    // Una lettura per sede — `causali_config`, che serve alla causale di ogni
+    // riga — e nient'altro: con le coordinate sarebbero tre per sede.
+    expect(lettureImpostazioni()).toBe(2)
+    expect(riepiloghi()).toEqual([])
+  })
+
+  it('lo stesso staff SENZA `solo_aperti`: le coordinate tornano, e con loro le tre letture', async () => {
+    // Il controllo negativo del test qui sopra: senza, «zero letture» e «zero
+    // coordinate» avrebbero lo stesso colore anche se la route fosse rotta.
+    h.requireUser.mockResolvedValue({ user: { id: STAFF, role: 'segreteria' } })
+    const j = await (await GET(url())).json()
+    expect(j.sedi).toHaveLength(2)
+    expect(lettureImpostazioni()).toBe(6)
+  })
+
+  it('il genitore le riceve anche con `?solo_aperti=true` in coda alla query', async () => {
+    // Il ramo genitore ignora i filtri dello staff: la card «Come pagare» non
+    // può dipendere da cosa c'è scritto nella query string.
+    const j = await (await GET(url('solo_aperti=true'))).json()
+    expect(j.sedi).toHaveLength(2)
+  })
+
+  it('chi non è staff né genitore attivo (docente in veste di lavoro) le riceve comunque', async () => {
+    h.requireUser.mockResolvedValue({ user: { id: GENITORE, role: 'educator' } })
+    const j = await (await GET(url())).json()
+    expect(j.sedi).toHaveLength(2)
+  })
+})
+
+// ─── LA RISPOSTA PORTA UN IBAN: NON SI METTE IN CACHE (rilievo d) ────────────
+describe('GET /api/pagamenti — `Cache-Control` sulla risposta che porta le coordinate', () => {
+  it('la risposta piena dichiara `private, no-store`', async () => {
+    const res = await GET(url())
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+
+  it('anche il ritorno anticipato del genitore senza figli lo dichiara', async () => {
+    // È la stessa risposta, con dentro meno roba: se l'intestazione dipendesse da
+    // QUANTO c'è nel corpo, sarebbe una regola che nessuno può ricordare.
+    h.figli.mockResolvedValue([])
+    const res = await GET(url())
+    expect(res.headers.get('Cache-Control')).toBe('private, no-store')
+  })
+})
+
+// ─── QUANTE VOLTE LA CARD È USCITA COL RIPIEGO (rilievo f) ──────────────────
+// Senza questa riga, «l'IBAN manca su due sedi su tre» è una cosa che si scopre
+// solo aprendo l'app con l'account di una famiglia. `app_log` deduplica per
+// giorno: è una riga al giorno, ed è esattamente la granularità che serve.
+describe('GET /api/pagamenti — il riepilogo delle coordinate servite', () => {
+  it('una sede con IBAN e una senza → i due conteggi, e nessun dato di nessuno', async () => {
+    await GET(url())
+    expect(riepiloghi()).toHaveLength(1)
+    const [evento, livello, campi] = riepiloghi()[0]
+    expect(evento).toBe('pagamento')
+    expect(livello).toBe('info')
+    expect(campi).toMatchObject({
+      operazione: 'pagamenti:GET',
+      esito: 'coordinate-bonifico',
+      sedi_con_coordinate: 1,
+      sedi_senza_coordinate: 1,
+    })
+    // Né l'IBAN, né i nomi delle sedi, né gli uuid dei bambini.
+    const testo = JSON.stringify(campi)
+    expect(testo).not.toContain(IBAN_A)
+    expect(testo).not.toContain(IBAN_A_LEGGIBILE)
+    expect(testo).not.toContain(NOME_SEDE_A)
+    expect(testo).not.toContain(ALU_A)
+
+    // E i due conteggi si RILEGGONO in tabella. Non è una formalità: i primi
+    // nomi erano `sedi_con_iban` / `sedi_senza_iban` e uscivano **`[redatto]`**,
+    // perché `iban` è una RADICE SEGRETA di `redact()` e la corrispondenza è per
+    // contenimento — vale anche sui numeri, e il redatto secco cancella pure la
+    // forma. La riga sarebbe finita in `app_log` tutti i giorni senza dire
+    // l'unica cosa che aveva da dire, e nessun test se ne sarebbe accorto.
+    // Perciò `coordinate`, che descrive la stessa cosa e non tocca la radice: la
+    // difesa sull'IBAN resta intatta, ed è il verso giusto in cui cedere.
+    expect(redact(campi)).toMatchObject({
+      esito: 'coordinate-bonifico',
+      operazione: 'pagamenti:GET',
+      sedi_con_coordinate: 1,
+      sedi_senza_coordinate: 1,
+    })
+  })
+
+  it('nessuna sede → nessuna riga (un conteggio di zero non è una notizia)', async () => {
+    h.db.pagamenti = []
+    await GET(url())
+    expect(riepiloghi()).toEqual([])
   })
 })

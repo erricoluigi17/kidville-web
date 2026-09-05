@@ -54,6 +54,34 @@ export interface MovimentoUi {
 /** Gli stati di `pagamenti.fattura_stato` (colonna esistente, nessuna migrazione). */
 export type StatoFattura = 'non_richiesta' | 'in_attesa' | 'emessa' | 'scartata'
 
+/**
+ * La risposta del GET del registro — e i tre campi che raccontano ciò che il
+ * server NON ha potuto fare.
+ *
+ * `data` da sola non basta a leggere una risposta: un elenco vuoto può voler dire
+ * «filtrato, e non c'è niente» oppure «non ho potuto filtrare». Fino al 2026-09-05
+ * le due cose arrivavano identiche, e a schermo diventavano la stessa frase —
+ * «Nessun movimento in questo stato», cioè «non c'è niente da fatturare» detto
+ * dalla schermata che esiste per non far saltare una fattura.
+ */
+export interface RispostaMovimenti {
+  success?: boolean
+  data?: MovimentoUi[]
+  /** `false` = la tabella del registro non esiste ancora su questo database. */
+  disponibile?: boolean
+  /**
+   * `false` = lo stato di fatturazione non è stato letto (query batch caduta): le
+   * righe arrivano NON filtrate, e la schermata deve dirlo invece di mostrarle
+   * come se il filtro avesse lavorato. Assente ⇒ disponibile.
+   */
+  fatturazione_disponibile?: boolean
+  /** `true` = la finestra del server era piena: ci sono altre righe oltre a queste. */
+  troncato?: boolean
+  /** Il corpo del rifiuto, quando `success` non è `true` (`{ error, codice }`). */
+  error?: unknown
+  codice?: unknown
+}
+
 /** Un pagamento aperto (fonte della ricerca manuale): GET /api/pagamenti?solo_aperti=true. */
 export interface PagamentoApertoUi {
   id: string

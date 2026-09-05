@@ -912,5 +912,8 @@
   "reconFiltroTutte": "Tutte",
   "reconFiltroDaFatturare": "Da fatturare",
   "reconFiltroFatturate": "Fatturate",
-  "movdlgFatturaGiaEmessa": "Fattura già emessa per questo pagamento."
+  "movdlgFatturaGiaEmessa": "Fattura già emessa per questo pagamento.",
+  "reconErroreFiltro": "Filtro non valido: ricarica la pagina.",
+  "reconFatturazioneNonDisponibile": "Stato di fatturazione non disponibile in questo momento: la lista non è filtrata. Riprova fra poco.",
+  "reconFatturazioneTroncata": "Mostrate le prime {n, plural, one {# riga} other {# righe}}: ce ne sono altre."
 }

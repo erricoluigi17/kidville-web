@@ -24,6 +24,7 @@ import {
   type MovimentoUi,
   type PagamentoApertoUi,
   type EsitoImport,
+  type RispostaMovimenti,
   type StatoMovimento,
   type TonoFatturazione,
 } from './riconciliazione-ui';
@@ -109,6 +110,27 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * testo lo sceglie il JSX. Così `load` dipende solo dai suoi veri ingressi.
    */
   const [erroreRete, setErroreRete] = useState(false);
+  /**
+   * IL CORPO del rifiuto, non il suo testo già tradotto — per la stessa ragione
+   * per cui `erroreRete` è un flag: `messaggioDaCorpo` vuole un `fallback`
+   * tradotto, e chiamare `t` dentro `load` rimetterebbe `t` fra le dipendenze
+   * del `useCallback` (1.470 GET in 300 ms, misurati). Qui si conserva ciò che
+   * il server ha detto; la lingua la sceglie il JSX, che si ri-renderizza da sé.
+   *
+   * Fino a oggi un `success: false` non alzava NIENTE: né errore né log. Un 400
+   * sul sottofiltro — cioè un filtro che non ha filtrato — si vedeva come una
+   * lista qualunque.
+   */
+  const [rifiuto, setRifiuto] = useState<{ error?: unknown; codice?: unknown } | null>(null);
+  /**
+   * Il server sa dire se la fatturazione è filtrabile, e quando non lo è manda
+   * le righe NON filtrate (`fatturazione_disponibile: false`). Senza questo
+   * campo il degrado arrivava come una lista vuota, e la schermata scriveva
+   * «Nessun movimento in questo stato»: cioè «non c'è niente da fatturare».
+   */
+  const [fatturazioneDisponibile, setFatturazioneDisponibile] = useState(true);
+  /** La finestra del server era piena: ci sono altre righe oltre a queste. */
+  const [troncato, setTroncato] = useState(false);
   const [filtro, setFiltro] = useState<'' | StatoMovimento>('');
   // Sottofiltro «Fatturazione»: si compone col filtro per stato e vale solo sui
   // confermati (gli unici su cui la fatturazione esista).
@@ -137,15 +159,31 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       const statoQ = filtro ? `&stato=${filtro}` : '';
       const fatturaQ = fattura ? `&fattura=${fattura}` : '';
       const [movRes, apRes] = await Promise.all([
-        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}${fatturaQ}`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
+        // ⚠️ LO STATO HTTP NON SI BUTTA VIA. Con `.then((r) => r.json())` il numero
+        // che distingue un 400 (filtro sbagliato) da un 500 (server rotto) spariva
+        // prima di poter essere né mostrato né loggato.
+        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}${fatturaQ}`, { headers: hdr(userId) })
+          .then(async (r) => ({ stato: r.status, corpo: (await r.json()) as RispostaMovimenti }))
+          .catch(onErr),
         fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}&solo_aperti=true`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
       ]);
-      if (movRes?.success) {
-        setMovimenti((movRes.data ?? []) as MovimentoUi[]);
-        setDisponibile(movRes.disponibile !== false);
+      if (movRes?.corpo?.success) {
+        setMovimenti((movRes.corpo.data ?? []) as MovimentoUi[]);
+        setDisponibile(movRes.corpo.disponibile !== false);
+        // Assente = disponibile: una risposta che non parla di fatturazione non è
+        // una risposta che l'ha persa (rotte vecchie, cache, ramo «schema assente»).
+        setFatturazioneDisponibile(movRes.corpo.fatturazione_disponibile !== false);
+        setTroncato(movRes.corpo.troncato === true);
+        setRifiuto(null);
         setErroreRete(false);
       } else if (movRes === null) {
         setErroreRete(true);
+      } else {
+        // Il server ha RIFIUTATO. Prima non succedeva niente: nessun messaggio,
+        // nessun log, e l'operatore restava davanti a una lista che sembrava
+        // filtrata. Il corpo si conserva per il testo, lo `stato` va nel log.
+        setRifiuto((movRes.corpo ?? {}) as { error?: unknown; codice?: unknown });
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'riconciliazione-movimenti-rifiutati', route: '/admin/pagamenti', stato: movRes.stato });
       }
       if (apRes?.success) {
         setAperti(((apRes.data ?? []) as PagamentoApertoUi[]).filter((p) => p.tipo !== 'padre'));
@@ -253,7 +291,23 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     setSelezionato(null);
   }, [userId, onIncassoUnico]);
 
-  const vuoto = !loading && disponibile && movimenti.length === 0;
+  /**
+   * Il rifiuto del server, tradotto qui e non dentro `load` (vedi `rifiuto`).
+   * `messaggioDaCorpo` è pura: preferisce il codice di catalogo, poi la prosa del
+   * server, e in ultimo il ripiego — che dice cosa fare, non «errore».
+   */
+  const messaggioRifiuto = rifiuto ? messaggioDaCorpo(rifiuto, t('reconErroreFiltro')) : null;
+  /**
+   * L'avviso si mostra SOLO col sottofiltro acceso: senza, non c'è nessun filtro
+   * sospeso da dichiarare e la fascia sarebbe rumore su una lista già corretta.
+   */
+  const avvisoFatturazione = !fatturazioneDisponibile && fattura !== '';
+  /**
+   * ⚠️ «Nessun movimento in questo stato» è una AFFERMAZIONE, e si può fare solo
+   * quando si sa che è vera. Con un rifiuto in corso o col filtro non applicato
+   * non lo sappiamo: lì parla la fascia, non il vuoto.
+   */
+  const vuoto = !loading && disponibile && !messaggioRifiuto && !avvisoFatturazione && movimenti.length === 0;
 
   return (
     <div>
@@ -290,9 +344,9 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {riepilogoImport(esito)}
         </p>
       )}
-      {(error || erroreRete) && (
+      {(error || erroreRete || messaggioRifiuto) && (
         <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">
-          {error ?? t('reconErroreReteMovimenti')}
+          {error ?? messaggioRifiuto ?? t('reconErroreReteMovimenti')}
         </p>
       )}
 
@@ -323,6 +377,24 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           );
         })}
       </div>
+
+      {/* Il filtro chiesto NON è stato applicato: la lista che segue è intera.
+          Dirlo è l'unica alternativa onesta a un elenco vuoto che significherebbe
+          «non c'è niente da fatturare» — che è il falso negativo peggiore di questa
+          schermata: una fattura saltata non la ferma nessuna guardia. */}
+      {avvisoFatturazione && (
+        <p role="alert" className="mt-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+          {t('reconFatturazioneNonDisponibile')}
+        </p>
+      )}
+      {/* La finestra del server era piena: ce ne sono altre. Senza questa riga
+          l'elenco sembrerebbe completo, ed è esattamente come si salta una fattura
+          vecchia — quelle in fondo, cioè quelle che nessuno ha ancora fatto. */}
+      {troncato && !loading && (
+        <p role="status" className="mt-2 font-maven text-[11px] text-kidville-sub">
+          {t('reconFatturazioneTroncata', { n: movimenti.length })}
+        </p>
+      )}
 
       {loading ? (
         <p className="py-8 text-center font-maven text-sm text-kidville-sub">{t('reconCaricamento')}</p>

@@ -6,6 +6,17 @@ vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
   FatturaButton: () => <span data-testid="fattura-button" />,
 }));
 
+/**
+ * `logClient` è spiato, il resto del modulo resta VERO: `nomeErrore` serve davvero
+ * al pannello, e un mock intero lo sostituirebbe con `undefined` facendo passare
+ * il test per la ragione sbagliata.
+ */
+const logSpy = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/logging/client', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/logging/client')>();
+  return { ...vero, logClient: logSpy };
+});
+
 const movimenti = [
   { id: 'm1', data_operazione: '2026-10-05', importo: 150, causale: 'Bonifico retta', controparte: 'Mario Rossi', stato: 'suggerito', pagamento_id: null, suggerimenti: [{ pagamento_id: 'p1', score: 1000, motivi: ['codice fiscale'], cf_match: true, alunno_id: 'a1', label: 'Mara Bianchi · Retta' }] },
   { id: 'm2', data_operazione: '2026-10-06', importo: 60, causale: 'Mensa', controparte: '', stato: 'da_abbinare', pagamento_id: null, suggerimenti: [] },
@@ -465,5 +476,111 @@ describe('RiconciliazionePanel — sottofiltro «Fatturazione»', () => {
     expect(String(getMovimenti(fetchMock).at(-1)?.[0])).not.toContain('fattura=');
     expect(within(screen.getByRole('group', { name: 'Filtra per fatturazione' })).getByRole('button', { name: 'Tutte' }))
       .toHaveAttribute('aria-pressed', 'true');
+  });
+});
+
+/**
+ * ─── «NESSUN MOVIMENTO IN QUESTO STATO» ERA UNA BUGIA ────────────────────────
+ *
+ * Quando la query batch sui pagamenti cade, il server non sa più dire se una riga
+ * verde sia fatturata: `fattura_stato` esce `null` PER COSTRUZIONE. Con il
+ * sottofiltro «Da fatturare» acceso, l'elenco usciva vuoto e la schermata scriveva
+ * «Nessun movimento in questo stato» — cioè **«non c'è niente da fatturare»**, la
+ * frase esatta che questa funzione esiste per non far mai dire per sbaglio.
+ *
+ * Il server adesso lo dichiara (`fatturazione_disponibile: false`, righe NON
+ * filtrate); qui si verifica che la schermata lo DICA all'operatore invece di
+ * mostrare una lista che sembra filtrata — e che quando il server RIFIUTA
+ * (`success: false`) l'utente veda un errore invece del silenzio.
+ */
+describe('RiconciliazionePanel — quando il filtro di fatturazione non si può applicare', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  /** Un finto server che risponde alla GET dei movimenti con un corpo scelto dal test. */
+  const fetchCon = (corpo: Record<string, unknown>, ok = true, status = 200) =>
+    vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === undefined) {
+        return { ok, status, json: async () => corpo };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+
+  /** Accende «Da fatturare» e aspetta che la richiesta col sottofiltro sia partita. */
+  const accendiDaFatturare = async (fetchMock: ReturnType<typeof vi.fn>) => {
+    const gruppo = screen.getByRole('group', { name: 'Filtra per fatturazione' });
+    fireEvent.click(within(gruppo).getByRole('button', { name: 'Da fatturare' }));
+    await waitFor(() => expect(
+      fetchMock.mock.calls.some(([u]) => String(u).includes('fattura=da_fatturare')),
+    ).toBe(true));
+  };
+
+  it('sottofiltro attivo + `fatturazione_disponibile:false` → fascia d’avviso, e MAI «Nessun movimento in questo stato»', async () => {
+    // Registro vuoto: è il caso in cui la vecchia frase compariva davvero. Se la
+    // schermata continuasse a scriverla, direbbe «non c'è niente da fatturare»
+    // proprio mentre il server ha dichiarato di non aver potuto guardare.
+    const fetchMock = fetchCon({ success: true, data: [], fatturazione_disponibile: false });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Filtra per fatturazione' })).toBeInTheDocument());
+
+    await accendiDaFatturare(fetchMock);
+
+    await waitFor(() => expect(
+      screen.getByText(/Stato di fatturazione non disponibile/),
+    ).toBeInTheDocument());
+    expect(screen.getByText(/Stato di fatturazione non disponibile/).closest('[role="alert"]')).toBeTruthy();
+    expect(screen.queryByText(/Nessun movimento in questo stato/)).toBeNull();
+  });
+
+  it('la fascia compare SOLO col sottofiltro acceso: senza, non c’è niente di sospeso da dire', async () => {
+    const fetchMock = fetchCon({ success: true, data: movimentiFatt, fatturazione_disponibile: false });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    expect(screen.queryByText(/Stato di fatturazione non disponibile/)).toBeNull();
+  });
+
+  it('`success:false` → il rifiuto del server si legge a schermo e finisce in un logClient con lo status', async () => {
+    const fetchMock = fetchCon({ error: 'Filtro non riconosciuto' }, false, 400);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('alert').textContent).toContain('Filtro non riconosciuto');
+    // Un 400 che nessuno logga è un 400 che non è mai successo: lo `stato` è
+    // l'unica cosa che distingue un filtro sbagliato da un guasto del server.
+    expect(logSpy).toHaveBeenCalledWith(expect.objectContaining({ livello: 'warn', stato: 400 }));
+    // …e l'elenco non finge di essere vuoto.
+    expect(screen.queryByText(/Nessun movimento/)).toBeNull();
+  });
+
+  it('rifiuto senza prosa → il ripiego dice cosa fare, non «errore»', async () => {
+    const fetchMock = fetchCon({ success: false }, false, 400);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('alert').textContent).toMatch(/Filtro non valido/);
+  });
+
+  it('`troncato:true` → si dice quante righe sono uscite, invece di lasciar credere che siano tutte', async () => {
+    const fetchMock = fetchCon({ success: true, data: movimentiFatt, fatturazione_disponibile: true, troncato: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    expect(screen.getByText(/Mostrate le prime 4 righe/)).toBeInTheDocument();
+  });
+
+  it('risposta normale: nessuna fascia, nessuna nota (le tre aggiunte non fanno rumore)', async () => {
+    const fetchMock = fetchCon({ success: true, data: movimentiFatt, fatturazione_disponibile: true });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    expect(screen.queryByText(/Stato di fatturazione non disponibile/)).toBeNull();
+    expect(screen.queryByText(/Mostrate le prime/)).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

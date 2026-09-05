@@ -1,5 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// Solo `logClient` è finto: `nomeErrore` resta quello vero, perché è LUI la cosa
+// misurata — un mock che restituisse il nome giusto proverebbe solo sé stesso.
+vi.mock('@/lib/logging/client', async (importActual) => {
+    const actual = await importActual<typeof import('@/lib/logging/client')>();
+    return { ...actual, logClient: vi.fn() };
+});
+
+import { logClient } from '@/lib/logging/client';
 import { ComePagare, type SedeBonifico } from '@/components/features/parent/pagamenti/ComePagare';
 import type { VoceCausale } from '@/components/features/parent/pagamenti/CausaleBonifico';
 
@@ -132,6 +141,49 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         // home banking accetta. A schermo resta quella a gruppi di quattro.
         expect(scrivi).toHaveBeenCalledWith(IBAN_COMPATTO);
         expect(await screen.findByText('Copiato')).toBeInTheDocument();
+        // La strada felice non scrive niente: un log a ogni copia riuscita
+        // seppellirebbe le poche righe che raccontano il guasto.
+        expect(logClient).not.toHaveBeenCalled();
+    });
+
+    // ─── QUANDO GLI APPUNTI DICONO DI NO (collaudo 2026-09-05, rilievo e) ────
+    // `navigator.clipboard.writeText` fallisce per motivi diversi e distinguibili:
+    // `NotAllowedError` (permesso negato o gesto utente non riconosciuto),
+    // `SecurityError` (contesto non sicuro: http, iframe senza permesso), o
+    // l'assenza dell'API dentro una WebView. Il `catch` senza binding buttava via
+    // proprio la parola che distingue i tre casi — e sono tre correzioni diverse.
+    it('appunti negati: la CAUSA finisce nel log, l’IBAN mai', () => {
+        scrivi.mockRejectedValueOnce(
+            Object.assign(new Error('Write permission denied.'), { name: 'NotAllowedError' }),
+        );
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
+
+        return Promise.resolve().then(() => {
+            expect(logClient).toHaveBeenCalledTimes(1);
+            const riga = vi.mocked(logClient).mock.calls[0][0];
+            expect(riga.livello).toBe('warn');
+            expect(riga.messaggio).toContain('NotAllowedError');
+            // Nessuna coordinata bancaria nel log, in nessuna delle due forme.
+            const testo = JSON.stringify(riga);
+            expect(testo).not.toContain(IBAN_COMPATTO);
+            expect(testo).not.toContain(IBAN_LEGGIBILE);
+        });
+    });
+
+    it('appunti assenti del tutto (WebView senza API): la riga esce lo stesso', () => {
+        // `nomeErrore` ripiega su `errore` quando ciò che è stato lanciato non è un
+        // `Error`: la riga resta, e resta distinguibile da quella con il nome vero.
+        scrivi.mockRejectedValueOnce('undefined is not an object');
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
+
+        return Promise.resolve().then(() => {
+            expect(logClient).toHaveBeenCalledTimes(1);
+            expect(vi.mocked(logClient).mock.calls[0][0].messaggio).toContain('errore');
+        });
     });
 
     it('senza IBAN configurato: nota di ripiego e nessun bottone di copia', () => {

@@ -912,5 +912,8 @@
   "reconFiltroTutte": "All",
   "reconFiltroDaFatturare": "To invoice",
   "reconFiltroFatturate": "Invoiced",
-  "movdlgFatturaGiaEmessa": "An invoice has already been issued for this payment."
+  "movdlgFatturaGiaEmessa": "An invoice has already been issued for this payment.",
+  "reconErroreFiltro": "Invalid filter: reload the page.",
+  "reconFatturazioneNonDisponibile": "Invoicing status is unavailable right now: the list is not filtered. Try again shortly.",
+  "reconFatturazioneTroncata": "Showing the first {n, plural, one {# row} other {# rows}}: there are more."
 }

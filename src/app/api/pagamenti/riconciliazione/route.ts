@@ -376,6 +376,111 @@ const FATTURA_DA_FARE = new Set<string>(['non_richiesta', 'scartata'])
 const FATTURA_FATTA = new Set<string>(['in_attesa', 'emessa'])
 
 /**
+ * ─── LA BATCH VA A BLOCCHI, E NON È UNA MICRO-OTTIMIZZAZIONE ────────────────
+ *
+ * `.in('id', pagIds)` finisce nella QUERY STRING, e un uuid costa ~39 byte una volta
+ * codificato. Misurato con un finto PostgREST: 200 id passano (8,2 KB di sola request
+ * line), 500 fanno rispondere **431 Request Header Fields Too Large** — 8 KB è il default
+ * di nginx per la request line, ed è il muro che si incontra per primo. Il 431 non è un
+ * errore PostgREST: arriva senza `code`, con un corpo che non è JSON, quindi il ramo di
+ * degrado scattava con un messaggio VUOTO in `app_log`.
+ *
+ * Oggi in produzione i soli suggerimenti citano già 208 pagamenti distinti. Con i
+ * `pagamento_id` dei confermati aggiunti a quell'insieme (2026-09-05) il numero cresce
+ * insieme al registro: il tetto non era teorico, era il prossimo import.
+ *
+ * 100 per blocco tiene la request line sotto i 4 KB con ogni margine, e i blocchi partono
+ * INSIEME (`Promise.all`): il costo in latenza è quello di una query sola.
+ */
+const BLOCCO_PAGAMENTI = 100
+
+/** La finestra di sempre del registro (nessun filtro di fatturazione). */
+const LIMITE_REGISTRO = 500
+
+/**
+ * La finestra quando `?fattura=` è attivo — e perché è un numero diverso.
+ *
+ * Il filtro di fatturazione lavora IN MEMORIA (il dato sta su `pagamenti`, non sul
+ * registro), quindi si applica a ciò che la query ha già portato a casa. Con 500 righe
+ * lette per data decrescente, il giorno in cui i confermati passano 500 le righe più
+ * vecchie — cioè proprio quelle dimenticate, le sole che «Da fatturare» esiste per
+ * trovare — sparirebbero dall'elenco senza nessun segnale. La lista di lavoro deve
+ * guardare tutto il registro, non la sua ultima pagina.
+ */
+const LIMITE_FATTURAZIONE = 5000
+
+/**
+ * `max_rows` di PostgREST: il taglio che il server applica DA SOLO, senza dirlo.
+ *
+ * È il motivo per cui il troncamento non si può dedurre dal solo `limit` chiesto: si può
+ * chiedere 5.001 righe e riceverne 1.000 senza nessun errore e nessun header che lo
+ * dichiari. Ricevere esattamente `max_rows` righe è l'unico indizio che resta.
+ */
+const MAX_ROWS_POSTGREST = 1000
+
+/**
+ * La finestra è piena? (solo quando il filtro di fatturazione è attivo)
+ *
+ * Due condizioni, per due tagli diversi: la riga in più che chiediamo NOI (ne arriva una
+ * oltre il limite ⇒ ce n'erano altre) e il taglio SILENZIOSO di PostgREST (esattamente
+ * `max_rows` righe). La seconda ha un falso positivo dichiarato — un registro con esatte
+ * 1.000 righe confermate direbbe «ce ne sono altre» — e va bene così: invita a restringere
+ * il periodo, mentre il falso negativo (righe sparite in silenzio) è il difetto stesso.
+ */
+function finestraPiena(righeLette: number): boolean {
+  return righeLette > LIMITE_FATTURAZIONE || righeLette === MAX_ROWS_POSTGREST
+}
+
+interface PagamentoAbbinato { id: string; scuola_id: string | null; stato: string | null; fattura_stato: string | null }
+
+/**
+ * Spezza un elenco di id in blocchi, li chiede TUTTI INSIEME e riunisce le righe.
+ *
+ * ⚠️ UN BLOCCO CADUTO = BATCH CADUTA, e non è pigrizia: con una risposta metà arricchita
+ * le righe del blocco perduto uscirebbero indistinguibili da quelle che non hanno davvero
+ * una fattura — cioè «da fatturare» detto per ignoranza, sulle righe di cui non sappiamo
+ * niente. Meglio dichiarare l'intero degrado (`fatturazione_disponibile: false`) che
+ * mentire su una metà che nessuno può riconoscere.
+ *
+ * PostgREST non lancia: l'errore sta nel valore di ritorno, e si guarda blocco per blocco.
+ *
+ * Qui c'è SOLO il taglio: la query la scrive l'handler, e non per stile. Un `.from()` a
+ * livello di modulo esce dal perimetro di `__tests__/architecture/isolamento-sede-coverage`,
+ * che ragiona per handler — la lettura resterebbe non dichiarata, cioè invisibile proprio
+ * al lock che esiste per vederla.
+ */
+async function aBlocchi<T>(
+  ids: string[],
+  chiedi: (blocco: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<{ righe: T[] | null; errore: unknown }> {
+  const blocchi: string[][] = []
+  for (let i = 0; i < ids.length; i += BLOCCO_PAGAMENTI) blocchi.push(ids.slice(i, i + BLOCCO_PAGAMENTI))
+  const esiti = await Promise.all(blocchi.map((blocco) => chiedi(blocco)))
+  const caduto = esiti.find((e) => e.error != null || e.data == null)
+  if (caduto) return { righe: null, errore: caduto.error ?? null }
+  return { righe: esiti.flatMap((e) => e.data ?? []), errore: null }
+}
+
+/**
+ * Il codice di un errore, per la riga di log — mai la sua prosa.
+ *
+ * `error_code` è in lista bianca (`@/lib/logging/redact`) e passa in chiaro solo se ha la
+ * forma di un enumerato: ci sta `PGRST301`, non ci sta un messaggio con gli spazi. I numeri
+ * passano per tipo, quindi lo status (quando c'è: il 431 non è un errore PostgREST e un
+ * `code` non ce l'ha) esce sotto `stato_errore`.
+ *
+ * Il perché di tutto questo: le due righe del degrado erano `info` senza codice, e sul 431
+ * misurato il messaggio persistito era VUOTO — cioè una riga in `app_log` che diceva soltanto
+ * «è andata male», su un canale in cui nessuno guarda gli `info`.
+ */
+function dettaglioErrore(e: unknown): { error_code: string; stato_errore?: number } {
+  const err = e as { code?: unknown; status?: unknown } | null
+  const codice = typeof err?.code === 'string' && err.code.trim() !== '' ? err.code.trim() : 'sconosciuto'
+  const stato = typeof err?.status === 'number' && Number.isFinite(err.status) ? err.status : undefined
+  return stato === undefined ? { error_code: codice } : { error_code: codice, stato_errore: stato }
+}
+
+/**
  * Il filtro si applica IN MEMORIA, dopo l'arricchimento, e non può essere altrimenti: il dato
  * su cui filtra non sta su `riconciliazione_movimenti` ma su `pagamenti`, e PostgREST non
  * filtra una tabella per una colonna dell'altra senza una join che qui non esiste (il legame
@@ -413,6 +518,14 @@ function filtraFattura(
 // alle colonne `stato, fattura_stato`, restituisce `pagamento_stato` e `fattura_stato` su ogni
 // riga (`null` fuori dalle proprie sedi, come i label), e `?fattura=` filtra in memoria. Nessuna
 // query in più, nessuna colonna nuova sul registro.
+//
+// ─── E TRE COSE CHE IL PRIMO GIRO AVEVA SBAGLIATO (2026-09-05, tre report) ───────────────
+//  1. LA BATCH VA A BLOCCHI (`BLOCCO_PAGAMENTI`): una `.in()` con 500 uuid sfonda gli 8 KB
+//     della request line e torna 431 — cioè degrado, cioè lista vuota.
+//  2. IL DEGRADO NON FILTRA (vedi il ramo `errSedi`): su righe il cui `fattura_stato` è null
+//     PER COSTRUZIONE, `?fattura=da_fatturare` rispondeva «niente da fatturare».
+//  3. LA FINESTRA SEGUE IL FILTRO (`LIMITE_FATTURAZIONE`, `troncato`): filtrare in memoria
+//     dopo 500 righe nascondeva le più vecchie, che sono esattamente quelle dimenticate.
 export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: NextRequest) => {
   try {
     const auth = await requireStaff(request)
@@ -422,12 +535,29 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
 
     const supabase = await createAdminClient()
 
+    /**
+     * IL FILTRO DI FATTURAZIONE CAMBIA LA FINESTRA, non solo ciò che si tiene.
+     *
+     * Filtrando in memoria dopo un `.limit(500)`, «Da fatturare» rispondeva sulle ultime
+     * 500 righe per data: le più vecchie — quelle che nessuno ha fatturato, cioè le sole
+     * che questa lista serve a trovare — restavano fuori senza un segnale. Quindi quando
+     * `?fattura=` è attivo si restringe alla riga che può portare quel dato
+     * (`stato=confermato`, gli unici su cui la fatturazione esista) e si alza il tetto.
+     */
+    const filtroFattura = q.data.fattura
+    const limiteChiesto = filtroFattura ? LIMITE_FATTURAZIONE + 1 : LIMITE_REGISTRO
     let query = supabase
       .from('riconciliazione_movimenti')
       .select('id, import_id, scuola_id, data_operazione, importo, causale, controparte, stato, suggerimenti, pagamento_id, confermato_il')
       .order('data_operazione', { ascending: false })
-      .limit(500)
-    if (q.data.stato) query = query.eq('stato', q.data.stato)
+      .limit(limiteChiesto)
+    // `?fattura=` implica `stato=confermato` e lo IMPONE. Non contraddice `?stato=`: la
+    // fatturazione esiste solo sui confermati, quindi ogni altra combinazione darebbe zero
+    // righe anche filtrando in memoria (l'interfaccia infatti azzera il sottofiltro quando
+    // si sceglie un altro stato). Imporlo qui serve alla FINESTRA: restringere la query è
+    // ciò che permette di alzarne il tetto senza leggere tutto il registro.
+    const statoRichiesto = filtroFattura ? 'confermato' : q.data.stato
+    if (statoRichiesto) query = query.eq('stato', statoRichiesto)
     if (q.data.import_id) query = query.eq('import_id', q.data.import_id)
     if (q.data.da) query = query.gte('data_operazione', q.data.da)
     if (q.data.a) query = query.lte('data_operazione', q.data.a)
@@ -437,7 +567,39 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
       if (SCHEMA_MANCANTE.has(error.code ?? '')) return NextResponse.json({ success: true, data: [], disponibile: false })
       return NextResponse.json({ error: 'Errore nel recupero dei movimenti' }, { status: 500 })
     }
-    const righe = (data || []) as MovimentoRiga[]
+    const lette = (data || []) as MovimentoRiga[]
+    // La riga in più chiesta sopra non si mostra: serve solo a sapere che c'era.
+    const troncato = Boolean(filtroFattura) && finestraPiena(lette.length)
+    const righe = lette.length > LIMITE_FATTURAZIONE ? lette.slice(0, LIMITE_FATTURAZIONE) : lette
+    if (troncato) {
+      // `warn`, non `info`: la lista di lavoro sta nascondendo delle righe, e chi la usa
+      // per non saltare una fattura deve poterlo sapere anche dai log, non solo a schermo.
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti/riconciliazione:GET',
+        esito: 'fatturazione_finestra_piena',
+        righe: righe.length,
+        // `tipo` è in lista bianca (`redact`) e dice QUALE taglio è pieno: una chiave
+        // fuori lista uscirebbe `[redatto:str/12]`, cioè un campo che occupa posto e
+        // non risponde a niente.
+        tipo: filtroFattura ?? '',
+      })
+    }
+
+    /**
+     * La risposta del GET, in un posto solo.
+     *
+     * `fatturazione_disponibile` esce SEMPRE, per la stessa ragione per cui escono sempre
+     * `pagamento_stato` e `fattura_stato`: senza, il client non può distinguere «filtrato,
+     * e non c'è niente» da «non ho potuto filtrare» — e le due cose a schermo diventavano
+     * la stessa frase, «Nessun movimento in questo stato».
+     */
+    const rispondi = (dati: MovimentoArricchito[], fatturazioneDisponibile: boolean) =>
+      NextResponse.json({
+        success: true,
+        data: dati,
+        fatturazione_disponibile: fatturazioneDisponibile,
+        ...(troncato ? { troncato: true } : {}),
+      })
 
     // I PAGAMENTI DA RISOLVERE SONO DUE INSIEMI, e servono due cose diverse.
     //   · quelli citati dai SUGGERIMENTI → per minimizzare i label (nomi di minori);
@@ -453,19 +615,18 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
       ...righe.flatMap((r) => (r.suggerimenti ?? []).map((s) => s.pagamento_id)),
       ...confermateConPagamento.map((r) => r.pagamento_id as string),
     ].filter(Boolean))]
-    // Nessun pagamento citato da nessuna parte: niente da risolvere, ma i due campi escono lo stesso.
+    // Nessun pagamento citato da nessuna parte: niente da risolvere, ma i due campi escono
+    // lo stesso — e la fatturazione è «disponibile»: non c'è nessun guasto da dichiarare,
+    // il filtro ha guardato tutto ciò che c'era.
     if (pagIds.length === 0) {
-      return NextResponse.json({
-        success: true,
-        data: filtraFattura(righe.map((r) => conFatturazione(r)), q.data.fattura),
-      })
+      return rispondi(filtraFattura(righe.map((r) => conFatturazione(r)), filtroFattura), true)
     }
 
     const sediAttive = new Set(await resolveScuoleAttive(request, supabase, auth.user))
-    const { data: pagSedi, error: errSedi } = await supabase
-      .from('pagamenti')
-      .select('id, scuola_id, stato, fattura_stato')
-      .in('id', pagIds)
+    // A BLOCCHI DI `BLOCCO_PAGAMENTI`, mai in una `.in()` sola: gli id finiscono nella query
+    // string, e 500 uuid la fanno rifiutare con un 431 (vedi la nota sulla costante).
+    const { righe: pagSedi, errore: errSedi } = await aBlocchi<PagamentoAbbinato>(pagIds, (blocco) =>
+      supabase.from('pagamenti').select('id, scuola_id, stato, fattura_stato').in('id', blocco))
     if (errSedi || !pagSedi) {
       // UNA query fallita, DUE conseguenze distinte — e ognuna ha il suo nome in `app_log`,
       // perché chi indaga cerca il sintomo che ha visto, non la causa che ancora non conosce:
@@ -476,17 +637,42 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
       //     campi escono `null`, e la schermata non mostra nessuna pill. Mai inventare
       //     «da fatturare» su una riga la cui fattura potrebbe essere già partita.
       // Un `esito` solo renderebbe invisibile uno dei due sintomi.
-      logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:GET', esito: 'sedi_suggerimenti_non_risolte' }, errSedi)
-      logEvento('pagamento', 'info', { operazione: 'pagamenti/riconciliazione:GET', esito: 'fatturazione_movimenti_non_risolta' }, errSedi)
+      //
+      // ⚠️ `warn`, non più `info`, e col CODICE dell'errore accanto. Un `info` è un fatto
+      // normale — qui invece la schermata sta perdendo un dato — e senza codice la riga in
+      // `app_log` diceva soltanto «è andata male»: sul 431 misurato (query string troppo
+      // lunga, vedi `BLOCCO_PAGAMENTI`) il messaggio persistito era perfino vuoto.
+      const dettaglio = dettaglioErrore(errSedi)
+      logEvento('pagamento', 'warn', { operazione: 'pagamenti/riconciliazione:GET', esito: 'sedi_suggerimenti_non_risolte', ...dettaglio }, errSedi)
+      logEvento('pagamento', 'warn', {
+        operazione: 'pagamenti/riconciliazione:GET',
+        esito: 'fatturazione_movimenti_non_risolta',
+        ...dettaglio,
+        // Quante righe verdi restano senza stato di fatturazione: è la misura del buco,
+        // e distingue «due righe» da «tutto il registro».
+        confermate_senza_stato: confermateConPagamento.length,
+      }, errSedi)
       const oscurati = righe.map((r) =>
         conFatturazione(
           r.suggerimenti ? { ...r, suggerimenti: r.suggerimenti.map((s) => ({ ...s, label: null })) } : r,
         ),
       )
-      return NextResponse.json({ success: true, data: filtraFattura(oscurati, q.data.fattura) })
+      /**
+       * ⚠️ QUI NON SI FILTRA, ED È IL CUORE DELLA CORREZIONE.
+       *
+       * Su queste righe `fattura_stato` è `null` PER COSTRUZIONE — non perché la fattura
+       * manchi, ma perché non l'abbiamo potuta leggere. Applicarci `filtraFattura` con
+       * `?fattura=da_fatturare` restituiva l'elenco VUOTO, che a schermo diventava «Nessun
+       * movimento in questo stato»: cioè «non c'è niente da fatturare», detto proprio dalla
+       * funzione nata per impedire che una fattura venga saltata. `null` vuol dire «non lo
+       * so» e non si può leggere come «no».
+       *
+       * Si risponde con le righe NON filtrate e `fatturazione_disponibile: false`: il client
+       * mostra la lista intera e dice, sopra, che il filtro non è stato applicato.
+       */
+      return rispondi(oscurati, false)
     }
-    interface PagamentoAbbinato { id: string; scuola_id: string | null; stato: string | null; fattura_stato: string | null }
-    const pagDi = new Map((pagSedi as PagamentoAbbinato[]).map((p) => [p.id, p]))
+    const pagDi = new Map(pagSedi.map((p) => [p.id, p]))
     const minimizzate = righe.map((r) => {
       const conSuggerimenti = r.suggerimenti
         ? {
@@ -508,7 +694,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
         ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato))
         : conFatturazione(conSuggerimenti)
     })
-    return NextResponse.json({ success: true, data: filtraFattura(minimizzate, q.data.fattura) })
+    return rispondi(filtraFattura(minimizzate, filtroFattura), true)
   } catch (err) {
     logErrore({ operazione: 'pagamenti/riconciliazione:GET', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

@@ -22,6 +22,8 @@ import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piatta
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
+import { mapStatoAruba } from '@/lib/aruba/stato'
+import { formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
 
 /**
  * L'ESTRATTO ANNUALE È 9.004 RIGHE, e le legge tutte in una richiesta sola.
@@ -502,6 +504,92 @@ function filtraFattura(
   return righe.filter((r) => FATTURA_FATTA.has(r.fattura_stato ?? ''))
 }
 
+const OPERAZIONE_GET = 'pagamenti/riconciliazione:GET'
+
+/** Le sole colonne di `fatture_emesse` che servono al chip: nessun intestatario, nessun XML. */
+const FATTURE_SELECT = 'pagamento_id, numero, anno, sezionale, sdi_stato, quota_adult_id'
+
+interface RigaFatturaMovimento {
+  pagamento_id: string
+  numero: number | null
+  anno: number | null
+  sezionale: string | null
+  sdi_stato: number | null
+  quota_adult_id: string | null
+}
+
+/** Lo stato della fatturazione di UN movimento già abbinato, come lo legge la lista. */
+interface FatturaMovimento {
+  stato: 'emessa' | 'scartata' | 'da_fatturare'
+  numeri: string[]
+}
+
+/**
+ * IL NUMERO SCRITTO COM'È SUL DOCUMENTO — e le righe storiche che non hanno un sezionale.
+ *
+ * `formattaNumeroFattura` LANCIA su un sezionale che non sia `Asilo` o `FPR`, e in
+ * `fatture_emesse` la colonna è nullable: le righe scritte prima del 09/08 non ce l'hanno.
+ * Farla lanciare qui vorrebbe dire un 500 sull'INTERA lista dei movimenti per una riga
+ * vecchia — la lista sparirebbe per colpa di un'etichetta. Quindi il sezionale si verifica
+ * prima di chiamarla, e senza si ripiega su `numero/anno`, che è come quel documento è
+ * sempre stato citato.
+ */
+function numeroLeggibile(r: RigaFatturaMovimento): string | null {
+  const numero = Number(r.numero)
+  const anno = Number(r.anno)
+  if (!Number.isInteger(numero) || numero < 1) return null
+  if (!Number.isInteger(anno) || anno < 1000 || anno > 9999) return null
+  if (r.sezionale === 'Asilo' || r.sezionale === 'FPR') {
+    return formattaNumeroFattura(r.sezionale, numero, anno)
+  }
+  return `${numero}/${anno}`
+}
+
+/**
+ * Da righe di `fatture_emesse` allo stato per PAGAMENTO.
+ *
+ * Le righe VIVE sono quelle che non sono uno scarto SDI (2/4/9), stessa definizione di
+ * `emissione.ts`: uno scarto non è un documento in circolazione, è un tentativo fallito che
+ * si riemette. Poi una riga per QUOTA, tenendo il numero massimo (un pagamento ripartito fra
+ * due genitori ha due fatture, e una quota riemessa dopo uno scarto non deve comparire due
+ * volte) — la stessa regola di `pagamenti/fattura/list`.
+ *
+ * ⚠️ «Nessuna riga viva» e «nessuna riga affatto» sono stati DIVERSI: la prima è una fattura
+ * scartata da riemettere, la seconda un bonifico che non è mai stato fatturato. Confonderle
+ * farebbe sembrare «da fare» un lavoro già fatto e finito male.
+ */
+function fattureDeiPagamenti(righe: RigaFatturaMovimento[]): Map<string, FatturaMovimento> {
+  // pagamento → (quota → riga viva col numero più alto). La mappa esiste anche quando è
+  // VUOTA: è la differenza fra «tutte scartate» e «mai fatturato».
+  const vivePerPagamento = new Map<string, Map<string, RigaFatturaMovimento>>()
+  for (const r of righe) {
+    const pid = r.pagamento_id
+    if (typeof pid !== 'string' || pid === '') continue
+    let vive = vivePerPagamento.get(pid)
+    if (!vive) {
+      vive = new Map<string, RigaFatturaMovimento>()
+      vivePerPagamento.set(pid, vive)
+    }
+    if (r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto) continue
+    const quota = r.quota_adult_id ?? '__unica__'
+    const corrente = vive.get(quota)
+    if (!corrente || Number(r.numero ?? 0) >= Number(corrente.numero ?? 0)) vive.set(quota, r)
+  }
+  const out = new Map<string, FatturaMovimento>()
+  for (const [pid, vive] of vivePerPagamento) {
+    if (vive.size === 0) {
+      out.set(pid, { stato: 'scartata', numeri: [] })
+      continue
+    }
+    const numeri = [...vive.values()]
+      .sort((a, b) => Number(a.numero ?? 0) - Number(b.numero ?? 0))
+      .map(numeroLeggibile)
+      .filter((n): n is string => n !== null)
+    out.set(pid, { stato: 'emessa', numeri })
+  }
+  return out
+}
+
 // GET /api/pagamenti/riconciliazione?stato=&fattura=&import_id=&da=&a= — registro movimenti (staff).
 // Registro CUMULATIVO GLOBALE: l'estratto conto della banca è unico e cross-sede, quindi ogni
 // segreteria vede TUTTE le RIGHE bancarie (data/importo/causale/controparte/stato, ogni stato):
@@ -570,20 +658,105 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     const lette = (data || []) as MovimentoRiga[]
     // La riga in più chiesta sopra non si mostra: serve solo a sapere che c'era.
     const troncato = Boolean(filtroFattura) && finestraPiena(lette.length)
-    const righe = lette.length > LIMITE_FATTURAZIONE ? lette.slice(0, LIMITE_FATTURAZIONE) : lette
+    const finestra = lette.length > LIMITE_FATTURAZIONE ? lette.slice(0, LIMITE_FATTURAZIONE) : lette
     if (troncato) {
       // `warn`, non `info`: la lista di lavoro sta nascondendo delle righe, e chi la usa
       // per non saltare una fattura deve poterlo sapere anche dai log, non solo a schermo.
       logEvento('pagamento', 'warn', {
-        operazione: 'pagamenti/riconciliazione:GET',
+        operazione: OPERAZIONE_GET,
         esito: 'fatturazione_finestra_piena',
-        righe: righe.length,
+        righe: finestra.length,
         // `tipo` è in lista bianca (`redact`) e dice QUALE taglio è pieno: una chiave
         // fuori lista uscirebbe `[redatto:str/12]`, cioè un campo che occupa posto e
         // non risponde a niente.
         tipo: filtroFattura ?? '',
       })
     }
+
+    // ─── LO STATO DELLA FATTURA, DAI DOCUMENTI (2026-09-05, fusione con la PR #118) ──
+    //
+    // Sono DUE letture e due domande diverse, e nessuna delle due sostituisce l'altra:
+    //   · `pagamenti.fattura_stato` (la batch qui sotto) è il riassunto scritto
+    //     dall'emissione: dice «in attesa» / «da fatturare» e, con lo stato del
+    //     pagamento, se c'è davvero qualcosa da fare;
+    //   · `fatture_emesse` (questa) sono i DOCUMENTI registrati, quota per quota, col
+    //     loro NUMERO — «Fattura FPR 1947/26» dice quale documento cercare, «Fatturata»
+    //     no — e con lo stato SdI vero, che su un riassunto fermo a `emessa` non si vede.
+    //
+    // Le due sono INDIPENDENTI di proposito: se cade solo questa il chip ripiega sugli
+    // stati del pagamento (`fatturazione_disponibile` resta `true`, il filtro ha
+    // lavorato); se cade solo la batch valgono i documenti e il degrado dichiarato.
+    // Confonderle in una sola lettura vorrebbe dire perdere entrambe insieme.
+    //
+    // «Già abbinato» è `pagamento_id != null` (lo scrive solo la conferma). Per quelle
+    // righe si legge `fatture_emesse` una volta per l'intera pagina — mai una query per
+    // riga: 500 movimenti confermati farebbero 500 round-trip su una lista che oggi ne fa
+    // una. Se nessuna riga è abbinata non si interroga affatto.
+    //
+    // Si leggono solo NUMERO e STATO: nessun intestatario, nessun importo, nessun XML.
+    // La riga bancaria è globale per tutte le segreterie (l'estratto conto è uno), quindi
+    // ciò che si aggiunge qui deve restare non identificante — il nome del minore vive nei
+    // `suggerimenti`, ed è lì che continua a essere filtrato per sede.
+    //
+    // ⚠️ A BLOCCHI, con lo STESSO helper della batch su `pagamenti` (`aBlocchi`), e non
+    // per simmetria: gli id finiscono nella query string, e con `?fattura=` la finestra
+    // sale a `LIMITE_FATTURAZIONE` — cioè fino a 5.000 pagamenti abbinati, dove una `.in()`
+    // sola sfonderebbe gli 8 KB della request line e tornerebbe 431 (vedi la nota su
+    // `BLOCCO_PAGAMENTI`). Sotto i 100 id resta una query sola, come prima.
+    //
+    // ⚠️ LIMITE DICHIARATO, perché nessuno lo scopra da solo: PostgREST tronca le risposte
+    // lunghe (`db-max-rows`, oggi 1000) SENZA dirlo. Ogni blocco chiede al massimo 100
+    // pagamenti, quindi morderebbe solo se quei 100 avessero in media più di dieci righe di
+    // fattura a testa (quote di genitori separati + riemissioni dopo uno scarto); allora le
+    // righe non arrivate diventerebbero «da fatturare» — un «no» falso e silenzioso. Il
+    // rilevatore, se un giorno servisse, è `{ count: 'exact' }` confrontato con le righe
+    // ricevute, e il degrado onesto è lo stesso della lettura fallita: `fattura: null`.
+    const pagamentiAbbinati = [...new Set(
+      finestra
+        .map((r) => r.pagamento_id)
+        .filter((v): v is string => typeof v === 'string' && v !== ''),
+    )]
+    // `null` non è «da fatturare»: è «non lo so». Sono due chip diversi, e uno dei due
+    // sarebbe una bugia detta con sicurezza.
+    let fattureDi: Map<string, FatturaMovimento> | null = new Map()
+    if (pagamentiAbbinati.length > 0) {
+      const { righe: fatture, errore: errFatture } = await aBlocchi<RigaFatturaMovimento>(
+        pagamentiAbbinati,
+        (blocco) => supabase.from('fatture_emesse').select(FATTURE_SELECT).in('pagamento_id', blocco),
+      )
+      if (errFatture || !fatture) {
+        fattureDi = null
+        const codice = (errFatture as { code?: string } | null)?.code ?? ''
+        // Sul DB E2E della CI la colonna `sezionale` può non esistere: è una
+        // configurazione attesa, non un guasto. Tutto il resto sì.
+        if (SCHEMA_MANCANTE.has(codice)) {
+          logEvento('pagamento', 'info', {
+            operazione: OPERAZIONE_GET,
+            esito: 'fatture_movimenti_schema_assente',
+            n: pagamentiAbbinati.length,
+          }, errFatture)
+        } else {
+          logEvento('pagamento', 'warn', {
+            operazione: OPERAZIONE_GET,
+            esito: 'fatture_movimenti_non_risolte',
+            n: pagamentiAbbinati.length,
+          }, errFatture)
+        }
+      } else {
+        fattureDi = fattureDeiPagamenti(fatture)
+      }
+    }
+    // L'arricchimento sta QUI, prima di ogni uscita: sotto ce ne sono tre (nessun
+    // pagamento da risolvere, sedi non risolte, elenco minimizzato) e la fattura deve
+    // comparire su tutte e tre. Una riga NON abbinata non porta il campo affatto: assente e
+    // «da fatturare» sono cose diverse anche per il client.
+    const righe: MovimentoRiga[] = finestra.map((r) => {
+      const pid = typeof r.pagamento_id === 'string' && r.pagamento_id !== '' ? r.pagamento_id : null
+      if (!pid) return r
+      if (fattureDi === null) return { ...r, fattura: null }
+      return { ...r, fattura: fattureDi.get(pid) ?? { stato: 'da_fatturare', numeri: [] } }
+    })
+
 
     /**
      * La risposta del GET, in un posto solo.
@@ -643,9 +816,9 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
       // `app_log` diceva soltanto «è andata male»: sul 431 misurato (query string troppo
       // lunga, vedi `BLOCCO_PAGAMENTI`) il messaggio persistito era perfino vuoto.
       const dettaglio = dettaglioErrore(errSedi)
-      logEvento('pagamento', 'warn', { operazione: 'pagamenti/riconciliazione:GET', esito: 'sedi_suggerimenti_non_risolte', ...dettaglio }, errSedi)
+      logEvento('pagamento', 'warn', { operazione: OPERAZIONE_GET, esito: 'sedi_suggerimenti_non_risolte', ...dettaglio }, errSedi)
       logEvento('pagamento', 'warn', {
-        operazione: 'pagamenti/riconciliazione:GET',
+        operazione: OPERAZIONE_GET,
         esito: 'fatturazione_movimenti_non_risolta',
         ...dettaglio,
         // Quante righe verdi restano senza stato di fatturazione: è la misura del buco,
@@ -696,7 +869,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     })
     return rispondi(filtraFattura(minimizzate, filtroFattura), true)
   } catch (err) {
-    logErrore({ operazione: 'pagamenti/riconciliazione:GET', stato: 500 }, err)
+    logErrore({ operazione: OPERAZIONE_GET, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 })

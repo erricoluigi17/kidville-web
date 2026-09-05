@@ -1641,6 +1641,43 @@ export const CODICI_ERRORE = {
      * elenco ha già prodotto un codice riusato per sbaglio (vedi
      * `NEWS_FILE_SOSTITUITI_NON_RIMOSSI`). Chi scriverà `POST /api/account/password`
      * usi quello. */
+    /**
+     * ─── LO STESSO BONIFICO SU UNA VOCE GIÀ FATTURATA ───────────────────────
+     * 409 — il movimento bancario porta ancora il pagamento a cui era abbinato, e
+     * quel pagamento ha una fattura VIVA. Riabbinarlo a un'altra voce lascerebbe
+     * quel documento senza l'incasso che lo giustifica.
+     *
+     * La prosa del server porta il NUMERO della fattura, che il catalogo non può
+     * conoscere: per questo il codice sta anche in `CODICI_CON_DETTAGLIO`. Senza
+     * il numero la segreteria sa che c'è una fattura di mezzo e non sa quale.
+     */
+    BONIFICO_GIA_FATTURATO: 'erroreBonificoGiaFatturato',
+    /**
+     * 503 — se quella fattura ci sia non si è potuto LEGGERE (PostgREST ha
+     * risposto con un errore): fail-closed, non si riabbina.
+     *
+     * NON riusa il codice qui sopra, ed è la differenza che conta per chi legge:
+     * là c'è un documento e il rimedio è fiscale (una nota di variazione), qui
+     * non si sa niente e il rimedio è riprovare fra un minuto. Dire «c'è già una
+     * fattura» quando non lo si è potuto verificare manderebbe dal
+     * commercialista per un guasto di lettura.
+     */
+    BONIFICO_FATTURA_NON_VERIFICABILE: 'erroreBonificoFatturaNonVerificabile',
+    /**
+     * ─── LE QUOTE DI OGGI NON SONO QUELLE DELLA FATTURA DI IERI ─────────────
+     * 409 — il pagamento è ripartito fra più intestatari e a registro c'è già una
+     * fattura VIVA che non corrisponde a nessuna di quelle quote: intestatario
+     * ignoto, un adulto che oggi non ha quota, oppure il suo importo di ieri (la
+     * fattura intera da 150 € contro la quota da 75 € della stessa persona).
+     *
+     * Codice distinto da `FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO` perché diverso è
+     * il posto in cui si ripara: là si è scelto l'intestatario sbagliato, qui
+     * sono le QUOTE del pagamento ad essere cambiate dopo l'emissione — e la
+     * fattura di ieri va chiusa con una nota di variazione prima di emettere
+     * quelle nuove. Un codice solo per due situazioni manderebbe metà di chi lo
+     * riceve a guardare la cosa sbagliata.
+     */
+    FATTURA_RIGA_VIVA_ESTRANEA_ALLE_QUOTE: 'erroreFatturaRigaVivaEstraneaAlleQuote',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;
@@ -1687,6 +1724,10 @@ export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErr
     'RETTA_FRATELLO_NON_VALIDO',
     'RETTA_FRATELLO_SENZA_CIFRA',
     'INTESTATARIO_NON_VALIDO',
+    // Il NUMERO della fattura viva («Asilo 2328/2026»): senza, chi riceve il
+    // rifiuto sa che c'è un documento di mezzo e non sa quale andare a guardare
+    // — cioè non può fare la sola cosa che il messaggio gli chiede.
+    'BONIFICO_GIA_FATTURATO',
 ]);
 
 const CATALOGHI: Record<Locale, Record<string, string>> = {

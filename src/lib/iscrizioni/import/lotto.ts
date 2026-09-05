@@ -12,8 +12,9 @@
  * 2026-08-16 sulle 198 domande di Giugliano, raggruppando per codice fiscale
  * dell'adulto si formano 37 famiglie, e il legame regge dove il cognome
  * fallirebbe:
- *   · `DE CURTIS SARA` e `DE CURTIS SOFIA` stanno in DUE domande separate;
- *   · una famiglia ha un figlio `MAZZEI` e uno `TESONE` sotto lo stesso genitore.
+ *   · `PIOVANELLI GRETA` e `PIOVANELLI ASIA` stanno in DUE domande separate;
+ *   · una famiglia ha un figlio `VELLUTINI` e uno `NEBBIOLI` sotto lo stesso genitore.
+ *   (I nomi sono INVENTATI, il repository è pubblico; i due casi no.)
  * Un raggruppamento per cognome avrebbe sbagliato in entrambi i casi — e nel
  * secondo avrebbe attribuito a un bambino la retta di un estraneo.
  *
@@ -186,11 +187,11 @@ export function fratelliDi(
     // `abbina` — non con un confronto più stretto.
     //
     // Misurato il 2026-08-16 durante la prova a vuoto: qui c'era `normalizzaNome(r.nome) === k`,
-    // e `DE SIO GIUNTO IDA` risultava «rimando cieco» pur avendo il fratello
-    // THIAGO nell'elenco, perché la segreteria l'ha scritto `DESIO GIUNTO` tutto
-    // attaccato. Due metri diversi sullo stesso confronto producono un «da
-    // controllare» che non ha nessuna ragione di esistere — e che la segreteria
-    // avrebbe dovuto risolvere a mano per niente.
+    // e `DEL PRATO ORZATELLI GIULIA` risultava «rimando cieco» pur avendo il
+    // fratello `SAMUELE` nell'elenco, perché la segreteria l'ha scritto
+    // `DELPRATO ORZATELLI` tutto attaccato. Due metri diversi sullo stesso
+    // confronto producono un «da controllare» che non ha nessuna ragione di
+    // esistere — e che la segreteria avrebbe dovuto risolvere a mano per niente.
     const righe: RigaElenco[] = []
     for (const b2 of insieme.values()) {
       const e = abbina(b2.nome, b2.cognome, elenco)

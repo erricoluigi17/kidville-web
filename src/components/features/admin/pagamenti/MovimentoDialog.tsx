@@ -99,7 +99,10 @@ export function ChipFatturazione({ fat, suCarta = false }: {
   return (
     <span className={classiChipFatturazione(fat, suCarta)}>
       <Icona size={13} aria-hidden="true" />
-      {t(fat.labelKey)}
+      {/* `params` c'è solo quando l'etichetta ha un segnaposto («Fattura {numeri}»):
+          passarli sempre è innocuo, ometterli quando servono farebbe LANCIARE
+          next-intl — cioè l'intera lista al posto di un chip. */}
+      {t(fat.labelKey, fat.params)}
     </span>
   );
 }

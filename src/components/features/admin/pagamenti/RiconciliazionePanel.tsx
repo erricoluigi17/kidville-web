@@ -428,6 +428,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {movimenti.map((m) => {
             const s = SEMAFORO[m.stato] ?? SEMAFORO.da_abbinare;
             const cf = suggerimentoPrincipaleCf(m.suggerimenti);
+            // Una funzione sola per i due dati che raccontano la fattura: i DOCUMENTI
+            // registrati (`m.fattura`, col numero) e il riassunto scritto sul pagamento
+            // (`m.fattura_stato`). Dentro sta anche la guardia su `pagamento_id`: su una
+            // riga ancora da lavorare non esiste nessun pagamento da fatturare, e la
+            // lettura fallita (`null`) non diventa un chip — non si dichiara ciò che non
+            // si sa.
             const fat = chipFatturazione(m);
             return (
               <li key={m.id}>

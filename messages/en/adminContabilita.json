@@ -923,5 +923,7 @@
   "movdlgChiudiDettaglio": "Close the transaction",
   "movdlgFatturaInAttesa": "Invoice sent: awaiting confirmation from the Interchange System.",
   "movdlgFatturaScartata": "Invoice rejected by the Interchange System: fix the details and send it again.",
-  "movdlgFatturaDaEmettere": "Payment settled: the invoice has not been issued yet."
+  "movdlgFatturaDaEmettere": "Payment settled: the invoice has not been issued yet.",
+  "reconFatturaEmessa": "Invoice {numeri}",
+  "reconFatturaScartata": "Rejected, to be reissued"
 }

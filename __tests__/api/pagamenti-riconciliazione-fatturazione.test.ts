@@ -353,6 +353,73 @@ describe('GET /api/pagamenti/riconciliazione — la batch su `pagamenti` va a BL
   })
 })
 
+/**
+ * ─── LA SECONDA LETTURA: `fatture_emesse`, E VA A BLOCCHI ANCHE LEI ──────────
+ *
+ * La fusione con la PR #118 (2026-09-05) ha aggiunto una lettura sui DOCUMENTI accanto
+ * alla batch su `pagamenti`. Quella lettura era nata con una `.in()` sola, ed era corretta
+ * finché la finestra era 500 righe: con `?fattura=` la finestra sale a 5.000, cioè fino a
+ * 5.000 uuid nella query string — lo stesso muro degli 8 KB che aveva già prodotto un 431
+ * (vedi `BLOCCO_PAGAMENTI`). Qui si verifica che il taglio ci sia davvero, e che sotto i
+ * 100 id resti UNA query sola: la fusione non doveva pagare la correttezza con un round-trip
+ * per riga.
+ */
+describe('GET /api/pagamenti/riconciliazione — anche `fatture_emesse` va a BLOCCHI', () => {
+  const letture = () => h.chiamate.filter((c) => c.tabella === 'fatture_emesse')
+
+  it('250 pagamenti abbinati → TRE letture di fatture_emesse (100 · 100 · 50), nessun id perso', async () => {
+    registro(250)
+    h.db.fatture_emesse = []
+
+    await get()
+    const blocchi = letture()
+    expect(blocchi).toHaveLength(3)
+    expect(blocchi.map((c) => idDi(c).length)).toEqual([100, 100, 50])
+    expect(new Set(blocchi.flatMap(idDi)).size).toBe(250)
+    // il filtro è sul pagamento, e le colonne sono solo quelle del chip
+    expect(blocchi[0].filtri.find((f) => f.op === 'in')?.col).toBe('pagamento_id')
+    expect(blocchi[0].cols).toContain('sezionale')
+    expect(blocchi[0].cols).not.toContain('intestatario')
+  })
+
+  it('sotto i 100 pagamenti resta UNA lettura sola (la fusione non aggiunge round-trip)', async () => {
+    registro(3)
+    h.db.fatture_emesse = []
+
+    await get()
+    expect(letture()).toHaveLength(1)
+  })
+
+  it('la lettura guarda la FINESTRA già tagliata, non le righe scartate dal troncamento', async () => {
+    // 1.000 righe lette (`max_rows` di PostgREST) e finestra piena: i documenti si
+    // chiedono per le righe che escono davvero, non per quelle che nessuno vedrà.
+    registro(1000)
+    h.db.fatture_emesse = []
+
+    const j = await (await get('?fattura=da_fatturare')).json()
+    expect(j.troncato).toBe(true)
+    expect(new Set(letture().flatMap(idDi)).size).toBe(1000)
+  })
+
+  it('solo `fatture_emesse` caduta → il chip ripiega sul pagamento e il filtro RESTA applicato', async () => {
+    // Le due letture sono indipendenti: qui la batch su `pagamenti` è andata, quindi
+    // `fatturazione_disponibile` resta `true` e «da fatturare» continua a filtrare —
+    // dichiarare il degrado dell'intera fatturazione sarebbe stato dire più del vero.
+    registro(2)
+    h.errori.fatture_emesse = { code: '08006', message: 'connection failure' }
+
+    const res = await get('?fattura=da_fatturare')
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.fatturazione_disponibile).toBe(true)
+    expect(j.data).toHaveLength(2)
+    expect(j.data[0].fattura).toBeNull()
+    expect(j.data[0].fattura_stato).toBe('non_richiesta')
+    const warn = h.eventi.find((e) => e.campi.esito === 'fatture_movimenti_non_risolte')
+    expect(warn?.livello).toBe('warn')
+  })
+})
+
 describe('GET /api/pagamenti/riconciliazione — il degrado non dice mai «niente da fatturare»', () => {
   it('batch caduta CON ?fattura=da_fatturare: le righe NON sono filtrate, e il campo lo dichiara', async () => {
     registro(3)

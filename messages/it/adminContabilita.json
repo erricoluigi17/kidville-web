@@ -923,5 +923,7 @@
   "movdlgChiudiDettaglio": "Chiudi il movimento",
   "movdlgFatturaInAttesa": "Fattura inviata: si attende la conferma del Sistema di Interscambio.",
   "movdlgFatturaScartata": "Fattura scartata dal Sistema di Interscambio: correggi i dati e rinviala.",
-  "movdlgFatturaDaEmettere": "Pagamento saldato: la fattura non è ancora stata emessa."
+  "movdlgFatturaDaEmettere": "Pagamento saldato: la fattura non è ancora stata emessa.",
+  "reconFatturaEmessa": "Fattura {numeri}",
+  "reconFatturaScartata": "Scartata, da riemettere"
 }

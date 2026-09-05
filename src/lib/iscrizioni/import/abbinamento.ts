@@ -13,22 +13,25 @@
  *
  * ─── PERCHÉ NON C'È UNA SOGLIA DI SOMIGLIANZA ───────────────────────────────
  * Sarebbe comodo dire «se somigliano al 90% è lui». Sul file vero di Giugliano
- * quella soglia avrebbe abbinato `GRAZIOSO DIECO` a `Grazioso Diego` (giusto) ma
- * anche `NIOLA NICOLE` a `Nola Nicole` e `SHEMBER` a `Schember` — tutti refusi
+ * quella soglia avrebbe abbinato `SALICETTI EMNA` a `Salicetti Emma` (giusto) ma
+ * anche `PIOVANELLI GRETA` a `Povanelli Greta` e `SHERMONI` a `Schermoni` — tutti refusi
  * che qualcuno deve correggere UNA VOLTA nel file, invece che vederli sopravvivere
  * per sempre dentro un algoritmo che li perdona in silenzio. E soprattutto: la
  * stessa soglia, su due fratelli con nomi simili, sbaglia bambino.
  *
  * Quindi si abbina solo per UGUAGLIANZA, provata in tre forme che sono la stessa
  * scrittura in tre modi (§`normalizza.ts`):
- *   1. il nome normalizzato                     `De rosa Christian` = `DE ROSA CHRISTIAN`
- *   2. le stesse parole in ordine diverso       `Njambe Charmant`   = `CHARMANT NJAMBE`
- *   3. lo stesso nome con gli spazi altrove     `GiuliaRita`        = `GIULIA RITA`
- *                                               `De Sio Giunto`     = `DESIO GIUNTO`
+ *   1. il nome normalizzato                     `Corbezzi edoardo`    = `CORBEZZI EDOARDO`
+ *   2. le stesse parole in ordine diverso       `Zafferani Leonardo`  = `LEONARDO ZAFFERANI`
+ *   3. lo stesso nome con gli spazi altrove     `AnnaLucia`           = `ANNA LUCIA`
+ *                                               `Del Prato Orzatelli` = `DELPRATO ORZATELLI`
  *
  * Tutto il resto va alla segreteria con i tre nomi più somiglianti allegati:
  * misurato, sono 6 domande su 221 al primo giro, e in cambio nessun bambino
  * finisce nella classe di un altro.
+ *
+ * (I nomi degli esempi sono INVENTATI: il repository è pubblico. Le forme —
+ * refuso, inversione, saldatura — sono quelle misurate sul file vero.)
  */
 import { normalizzaNome, senzaSpazi, similitudine, stessiToken, tokenNome } from './normalizza'
 

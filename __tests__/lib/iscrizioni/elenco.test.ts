@@ -99,16 +99,16 @@ describe('leggiElenco — le difformità si mostrano, non si correggono', () => 
   })
 
   it('segnala gli spazi di troppo, senza scartare la riga', () => {
-    const e = leggiElenco(workbook({ MICRONIDO: [['NOME', 'RETTA'], ['MIRAGLIA  ANIELLO ', 330]] }))
+    const e = leggiElenco(workbook({ MICRONIDO: [['NOME', 'RETTA'], ['LUMINELLI  DAVIDE ', 330]] }))
     expect(e.anomalie.some((x) => x.genere === 'spazi-anomali')).toBe(true)
-    expect(e.righe[0].nomeNorm).toBe('MIRAGLIA ANIELLO')
+    expect(e.righe[0].nomeNorm).toBe('LUMINELLI DAVIDE')
   })
 
   it('segnala lo stesso nome in due fogli diversi, e dice dove', () => {
     const e = leggiElenco(
       workbook({
-        '2 ANNI B': [['NOME', 'RETTA'], ['PALMA ANDREA', 300]],
-        '2 ANNI C': [['NOME', 'RETTA'], ['PALMA ANDREA', 300]],
+        '2 ANNI B': [['NOME', 'RETTA'], ['FABBRI TOMMASO', 300]],
+        '2 ANNI C': [['NOME', 'RETTA'], ['FABBRI TOMMASO', 300]],
       }),
     )
     const ripetuti = e.anomalie.filter((x) => x.genere === 'nome-ripetuto')

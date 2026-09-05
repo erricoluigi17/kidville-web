@@ -99,6 +99,13 @@ export interface EsitoQuota {
     | 'idempotente'
     /** Esiste già un documento VIVO per questo pagamento, intestato a un'altra persona. */
     | 'gia_emessa_altro_intestatario'
+    /**
+     * 409 — nel ramo MULTI-QUOTA, a registro c'è una riga viva che non corrisponde
+     * a nessuna quota di oggi (intestatario ignoto, un adulto che oggi non ha
+     * quota, o l'importo di ieri). Vale per TUTTE le quote: finché quel documento
+     * è vivo, nessuna di loro si può emettere.
+     */
+    | 'quota_estranea'
     | 'numerazione'
     | 'configurazione'
     | 'errore'
@@ -135,6 +142,8 @@ export type EsitoEmissione =
         | 'intestatario_non_del_bambino'
         /** 409 — c'è già una fattura viva per questo pagamento, intestata ad altri. */
         | 'gia_emessa_altro_intestatario'
+        /** 409 — multi-quota: una riga viva a registro non corrisponde alle quote di oggi. */
+        | 'quota_estranea'
         | 'scartata'
         | 'errore'
       messaggio: string
@@ -903,7 +912,7 @@ export async function emettiFatturaPagamento(
   // fatto» e il pagamento finisce in un «in attesa» che nessun `sync` chiuderà.
   const { data: esistenti, error: errEsistenti } = await supabase
     .from('fatture_emesse')
-    .select('id, numero, sezionale, anno, aruba_filename, sdi_stato, quota_adult_id, intestatario')
+    .select('id, numero, sezionale, anno, aruba_filename, sdi_stato, quota_adult_id, importo, intestatario')
     .eq('pagamento_id', pagamentoId)
   if (errEsistenti) {
     logEvento('fattura', 'error', {
@@ -931,6 +940,16 @@ export async function emettiFatturaPagamento(
     aruba_filename: string | null
     sdi_stato: number | null
     quota_adult_id: string | null
+    /**
+     * L'importo di QUELLA riga — `numeric(10,2) NOT NULL` a schema, quindi in
+     * produzione c'è sempre, e PostgREST può restituirlo come numero o come
+     * stringa (lo stesso motivo per cui le quote passano da `Number()`).
+     *
+     * Serve al confronto multi-quota: `quota_adult_id` da solo dice CHI, non
+     * QUANTO, e una fattura intera da 150 € intestata ad A è indistinguibile
+     * dalla quota da 75 € dello stesso A se si guarda il solo intestatario.
+     */
+    importo: number | string | null
     /**
      * Lo snapshot dell'intestatario com'era al momento dell'invio. Porta il
      * CODICE FISCALE — misurato: 3 righe su 3 in produzione ce l'hanno — ed è la
@@ -992,8 +1011,113 @@ export async function emettiFatturaPagamento(
     (r) => !(r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto)
   )
 
+  // ── 🔴 MULTI-QUOTA: UNA RIGA VIVA CHE NON C'ENTRA CON LE QUOTE DI OGGI ───────
+  // La guardia qui sotto (`gia_emessa_altro_intestatario`) è esclusa dal ramo
+  // multi con un `!multi`, e la ragione dichiarata è che «coi genitori separati
+  // ciascuna quota ha la sua riga, quindi il confronto per `quota_adult_id` è
+  // quello giusto». È vero finché le quote di oggi sono quelle di ieri. Quando
+  // non lo sono, il confronto per solo intestatario non vede niente:
+  //
+  //   giorno 1 — pagamento da 150 €, quota unica: la fattura esce INTERA ad A
+  //              (`quota_adult_id = A`, `importo = 150`);
+  //   giorno 2 — si scopre che i genitori sono separati e si ripartisce 75/75.
+  //              La quota di A trova la riga di A e passa per «già fatto»; la
+  //              quota di B non trova niente e parte un SECONDO documento vero.
+  //
+  // Per un pagamento da 150 € allo SDI risultano 150 + 75 = 225 €, e la sola via
+  // d'uscita è una nota di variazione. Il database non lo ferma: la chiave di
+  // `fatture_emesse_pagamento_quota_uidx` contiene `quota_adult_id`, quindi due
+  // intestatari sono due chiavi diverse — e l'INSERT arriverebbe comunque dopo
+  // l'upload, cioè a documento partito.
+  //
+  // Perciò, PRIMA del ciclo (l'ultimo punto sicuro: la RPC che alloca il numero
+  // sta dentro), si confrontano le righe vive con le quote di oggi. Una riga è
+  // ESTRANEA se non dice a chi è intestata, se è di un adulto che oggi non ha
+  // quota, oppure se è del suo adulto ma con l'importo di ieri: tre modi diversi
+  // di dire che quel documento non è la fattura di nessuna di queste quote.
+  // Basta trovarne una e si ferma TUTTO — anche le quote che oggi combaciano —
+  // perché finché quel documento è vivo l'unica cosa da fare è chiuderlo.
+  //
+  // ⚠️ L'IMPORTO SI CONFRONTA IN CENTESIMI INTERI. `numeric(10,2)` arriva da
+  // PostgREST come numero o come stringa, e in virgola mobile 75.1 + 0 non è
+  // sempre 75.1: un falso «diverso» qui manderebbe dal commercialista per una
+  // riemissione legittima.
+  const centesimi = (v: number | string) => Math.round(Number(v) * 100)
+  const correnti = new Map<string, number>()
+  if (multi) for (const q of quote) if (q.adultId != null) correnti.set(q.adultId, centesimi(q.importo))
+  const rigaEstranea = !multi
+    ? undefined
+    : viveNonScartate.find((r) => {
+        // `null` non è una prova d'identità: è l'assenza della prova. Nel ramo
+        // multi non esiste una riga «di tutti», quindi non le si può attribuire
+        // nessuna di queste quote.
+        if (r.quota_adult_id == null) return true
+        const atteso = correnti.get(r.quota_adult_id)
+        if (atteso === undefined) return true
+        // `importo` è NOT NULL a schema: assente vuol dire che la colonna non è
+        // stata letta, e quel caso è già fermato sopra — la SELECT intera
+        // fallisce con `42703` e si esce 503 (`idempotenza-non-verificabile`).
+        // Qui non si inventa una divergenza da un valore che non c'è.
+        if (r.importo == null) return false
+        return centesimi(r.importo) !== atteso
+      })
+
+  // Il numero e la prosa si compongono UNA VOLTA per tutte le quote: due copie
+  // della stessa frase sono due frasi che prima o poi divergono.
+  // ⚠️ L'ANNO È QUELLO DELLA RIGA, non quello di oggi: `annoFiscale()` su una
+  // fattura del 2025 manderebbe a cercare un numero che in quel sezionale non
+  // esiste. Stesso formato della guardia a quota unica, qui sotto.
+  const annoEstranea = rigaEstranea ? rigaEstranea.anno ?? anno : anno
+  const numeroEstranea = !rigaEstranea
+    ? ''
+    : rigaEstranea.sezionale
+      ? `${rigaEstranea.sezionale} ${rigaEstranea.numero}/${annoEstranea}`
+      : `${rigaEstranea.numero}/${annoEstranea}`
+  const messaggioEstranea = !rigaEstranea
+    ? ''
+    : `Questo pagamento ha già una fattura viva (${numeroEstranea}) che NON corrisponde alle quote ` +
+      'di oggi: è intestata a un’altra persona, oppure porta un importo diverso da quello che ' +
+      'quella persona deve adesso. Nessuna delle quote è stata emessa. L’intestazione e ' +
+      'l’importo di una fattura emessa si correggono solo con una nota di variazione: una ' +
+      'seconda fattura per la stessa retta non si emette. Nessun numero è stato consumato.'
+  if (rigaEstranea) {
+    // Una riga sola per tentativo, non una per quota. `esito` è in lista bianca e
+    // resta in chiaro in tabella: «quante volte si è tentato di emettere quote
+    // nuove sopra una fattura viva» diventa una query. Nei campi solo uuid e
+    // numeri — `n_quote` è un conteggio, `numero` il progressivo del documento.
+    logEvento('fattura', 'warn', {
+      operazione: 'emettiFatturaPagamento:multi-quota',
+      esito: 'riga-viva-estranea-fermata',
+      provider: 'aruba',
+      scuola_id: pag.scuola_id,
+      pagamento_id: pagamentoId,
+      numero: rigaEstranea.numero,
+      anno: annoEstranea,
+      n_quote: quote.length,
+      msg:
+        'a registro c’è una fattura viva che non corrisponde a nessuna delle quote di oggi ' +
+        '(intestatario o importo diversi): emissione fermata su TUTTE le quote, prima di ' +
+        'allocare qualunque numero',
+    })
+  }
+
   const esiti: EsitoQuota[] = []
   for (const q of quote) {
+    // Il 409 vale per ogni quota, e sta prima di qualunque lettura: nessun numero,
+    // nessun upload, nessuna riga a registro.
+    if (rigaEstranea) {
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        numero: rigaEstranea.numero,
+        numeroFattura: numeroEstranea,
+        motivo: 'quota_estranea',
+        httpStatus: 409,
+        messaggio: messaggioEstranea,
+      })
+      continue
+    }
     // ── L'ANAGRAFICA SI LEGGE PRIMA DELL'IDEMPOTENZA, e il motivo è il CF ─────
     // `resolveParentRegistry` è una lettura senza effetti e sta ampiamente sopra
     // l'allocazione del numero: anticiparla costa una query sul ramo idempotente
@@ -1911,6 +2035,10 @@ export async function emettiFatturaPagamento(
       // Non è uno scarto e non è un guasto: è un documento che esiste già. Il
       // codice suo serve alla route per mandare al client il `codice` tradotto.
       : first?.motivo === 'gia_emessa_altro_intestatario' ? 'gia_emessa_altro_intestatario'
+      // Stessa famiglia del precedente — un documento che esiste già — ma un
+      // motivo suo: la route lo traduce in un `codice` diverso, perché diverso è
+      // ciò che chi legge deve andare a guardare (le QUOTE, non l'intestatario).
+      : first?.motivo === 'quota_estranea' ? 'quota_estranea'
       : first?.motivo === 'numerazione' ? 'numerazione_non_allineata'
       // Una riga IVA incoerente è una CONFIGURAZIONE da correggere, non uno scarto
       // del provider: 503 come il cedente incompleto, e lo stesso invito a
@@ -1930,6 +2058,7 @@ export async function emettiFatturaPagamento(
         first?.httpStatus
         ?? (motivoAgg === 'intestatario_mancante' ? 422
         : motivoAgg === 'gia_emessa_altro_intestatario' ? 409
+        : motivoAgg === 'quota_estranea' ? 409
         : motivoAgg === 'numerazione_non_allineata' ? 503
         : motivoAgg === 'non_configurato' ? 503
         : motivoAgg === 'errore' ? 500

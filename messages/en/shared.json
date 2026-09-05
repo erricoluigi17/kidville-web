@@ -352,5 +352,8 @@
   "erroreEstrattoContoSenzaAccrediti": "No credit transaction recognized in the file: check the column headers or the separator.",
   "erroreIntestatarioInConflittoConQuote": "This payment is split between two parents: the invoice holder is not chosen here, you change the payment shares instead",
   "erroreFatturaGiaEmessaAltroIntestatario": "This payment already has a live invoice: the holder of an issued invoice can only be changed with a credit note",
-  "erroreIntestatarioNonDelBambino": "The invoice holder you selected is not one of this child’s parents: enter their full details, or pick a different one"
+  "erroreIntestatarioNonDelBambino": "The invoice holder you selected is not one of this child’s parents: enter their full details, or pick a different one",
+  "erroreBonificoGiaFatturato": "This bank transfer has already paid an invoiced item: moving it to another one would leave that document without the payment that backs it. An issued invoice can only be cancelled with a credit note.",
+  "erroreBonificoFatturaNonVerificabile": "We could not check whether this bank transfer has already been invoiced: the match was stopped to avoid risking a second document. Please try again in a few minutes.",
+  "erroreFatturaRigaVivaEstraneaAlleQuote": "This payment already has a live invoice that does not match today’s shares: no share was issued. That invoice can only be closed with a credit note."
 }

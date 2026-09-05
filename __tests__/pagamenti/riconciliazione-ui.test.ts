@@ -229,6 +229,94 @@ describe('chipFatturazione — tabella di verità', () => {
 })
 
 /**
+ * ─── LA FUSIONE DELLE DUE FONTI (2026-09-05) ─────────────────────────────────
+ *
+ * Sulla stessa riga arrivano due dati che parlano della stessa fattura:
+ *  · `fattura` — i DOCUMENTI registrati in `fatture_emesse`, col loro NUMERO;
+ *  · `fattura_stato` — il riassunto che l'emissione scrive su `pagamenti`.
+ *
+ * Il chip deve dire il NUMERO quando c'è, perché è ciò con cui si cerca il documento:
+ * «Fatturata» è vero e inutile, «Fattura FPR 1947/26» si va a prendere. Questo blocco
+ * esiste perché le due fonti convivono: prima della fusione la riga aveva una fonte sola
+ * e queste asserzioni non erano nemmeno esprimibili.
+ */
+describe('chipFatturazione — due fonti sulla stessa riga', () => {
+  const mov = (extra: Partial<MovimentoUi>): MovimentoUi => ({
+    id: 'm1', data_operazione: '2026-10-05', importo: 150, causale: 'Bonifico',
+    stato: 'confermato', pagamento_id: 'pg1', ...extra,
+  })
+
+  it('documento emesso → «Fattura FPR 1947/26», MAI il generico «Fatturata»', () => {
+    const c = chipFatturazione(mov({
+      fattura: { stato: 'emessa', numeri: ['FPR 1947/26'] },
+      fattura_stato: 'emessa',
+      pagamento_stato: 'pagato',
+    }))
+    expect(c?.tono).toBe('fatturata')
+    expect(c?.labelKey).toBe('reconFatturaEmessa')
+    expect(c?.params).toEqual({ numeri: 'FPR 1947/26' })
+    // la chiave secca perde: con un numero in mano, «Fatturata» è vero e inutile
+    expect(c?.labelKey).not.toBe('reconChipFatturata')
+  })
+
+  it('due quote → i due numeri nello stesso chip, uniti da « · »', () => {
+    const c = chipFatturazione(mov({
+      fattura: { stato: 'emessa', numeri: ['FPR 7/26', 'Asilo 2328/2026'] },
+      fattura_stato: 'emessa',
+    }))
+    expect(c?.params).toEqual({ numeri: 'FPR 7/26 · Asilo 2328/2026' })
+  })
+
+  it('documento emesso ma nessun numero leggibile → si ripiega su «Fatturata», mai su «Fattura »', () => {
+    const c = chipFatturazione(mov({ fattura: { stato: 'emessa', numeri: [] }, fattura_stato: 'emessa' }))
+    expect(c?.tono).toBe('fatturata')
+    expect(c?.labelKey).toBe('reconChipFatturata')
+    expect(c?.params).toBeUndefined()
+  })
+
+  it('documento SCARTATO → «Scartata, da riemettere» anche se il pagamento dice «emessa»', () => {
+    // È il caso che il solo `fattura_stato` sbagliava: il riassunto resta a `emessa`
+    // mentre lo SdI ha respinto il documento, e «Fatturata» direbbe «fatto» di un
+    // lavoro da rifare.
+    const c = chipFatturazione(mov({
+      fattura: { stato: 'scartata', numeri: [] },
+      fattura_stato: 'emessa',
+      pagamento_stato: 'pagato',
+    }))
+    expect(c?.tono).toBe('scartata')
+    expect(c?.labelKey).toBe('reconFatturaScartata')
+  })
+
+  it('nessun documento (`da_fatturare`) non basta a chiedere di agire: decidono i due campi del pagamento', () => {
+    const senzaDocumenti = { stato: 'da_fatturare' as const, numeri: [] }
+    // saldato e mai fatturato → invito ad agire
+    expect(chipFatturazione(mov({ fattura: senzaDocumenti, fattura_stato: 'non_richiesta', pagamento_stato: 'pagato' }))?.tono)
+      .toBe('da_fatturare')
+    // pagamento parziale → nessun chip: l'emissione rifiuterebbe
+    expect(chipFatturazione(mov({ fattura: senzaDocumenti, fattura_stato: 'non_richiesta', pagamento_stato: 'parziale' })))
+      .toBeNull()
+    // documento partito e in viaggio verso lo SdI: lo dice solo il riassunto
+    expect(chipFatturazione(mov({ fattura: senzaDocumenti, fattura_stato: 'in_attesa', pagamento_stato: 'pagato' }))?.tono)
+      .toBe('attesa')
+  })
+
+  it('lettura dei documenti fallita (`fattura: null`) → si ripiega sul riassunto, non si tace', () => {
+    const c = chipFatturazione(mov({ fattura: null, fattura_stato: 'emessa', pagamento_stato: 'pagato' }))
+    expect(c?.tono).toBe('fatturata')
+    expect(c?.labelKey).toBe('reconChipFatturata')
+  })
+
+  it('senza `pagamento_id` il documento non conta: nessun chip col numero di roba d’altri', () => {
+    const c = chipFatturazione(mov({
+      pagamento_id: null,
+      stato: 'suggerito',
+      fattura: { stato: 'emessa', numeri: ['FPR 1/26'] },
+    }))
+    expect(c).toBeNull()
+  })
+})
+
+/**
  * La PELLE del chip vive sopra il fondo VERDE della riga confermata: qui gli
  * sfondi pieni non sono un vezzo, sono l'unica cosa che tiene il contrasto.
  * `bg-kidville-white/70` su verde scenderebbe sotto AA — la stessa lezione già

@@ -41,9 +41,13 @@ test('lo scadenzario mostra KPI e agenda; le viste sono deep-linkabili', async (
    * entra nel nome accessibile — e questa pill. Senza `exact`, il giorno in cui
    * la CI avesse un movimento confermato da fatturare questo locator diventerebbe
    * ambiguo e il test morirebbe per strict mode, non per un difetto del prodotto.
+   *
+   * L'etichetta è «Da fatturare e scartate» (chiave `reconFiltroDaFatturare`): dal
+   * loop critico del 2026-09-05 la pill dice anche che raccoglie gli scarti SdI,
+   * che vanno rifatti. Il nome qui deve seguire il catalogo, non il contrario.
    */
   await expect(
-    page.getByRole('button', { name: 'Da fatturare', exact: true }),
+    page.getByRole('button', { name: 'Da fatturare e scartate', exact: true }),
   ).toBeVisible({ timeout: 15_000 });
 });
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 
 // Solo `logClient` è finto: `nomeErrore` resta quello vero, perché è LUI la cosa
 // misurata — un mock che restituisse il nome giusto proverebbe solo sé stesso.
@@ -78,6 +78,18 @@ beforeEach(() => {
 });
 
 describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
+    /**
+     * ⚠️ Le asserzioni sui NOMI DEI PLESSI passano da qui, non da `screen`.
+     *
+     * I due pannelli restano ENTRAMBI nel DOM (quello inattivo con `hidden`) e
+     * `getByText` non filtra per visibilità: da quando la riga dei plessi compare
+     * anche nel pannello dei contanti — stessa frase, stessa chiave — un
+     * `screen.getByText('Per le sedi …')` trova due nodi e fallisce, oppure (peggio,
+     * ed è il caso che conta) PASSA pescando quello del pannello sbagliato senza
+     * misurare niente. `getByRole('tabpanel')` rende invece solo quello esposto.
+     */
+    const pannelloAttivo = () => within(screen.getByRole('tabpanel'));
+
     it('rende i due metodi come tab, con «Bonifico» attivo di default', () => {
         render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
 
@@ -210,7 +222,7 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         expect(screen.getAllByText('Intestato a')).toHaveLength(1);
         expect(screen.getAllByRole('button', { name: 'Copia l’IBAN' })).toHaveLength(1);
         // …ma il blocco dice per quali plessi vale, al plurale giusto.
-        expect(screen.getByText('Per le sedi Plesso Uno · Plesso Due')).toBeInTheDocument();
+        expect(pannelloAttivo().getByText('Per le sedi Plesso Uno · Plesso Due')).toBeInTheDocument();
         // Le causali di entrambe le sedi restano, sotto lo stesso conto.
         expect(screen.getByText(VOCE_UNO.causale)).toBeInTheDocument();
         expect(screen.getByText(VOCE_DUE.causale)).toBeInTheDocument();
@@ -229,8 +241,8 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         expect(screen.getAllByRole('button', { name: 'Copia l’IBAN' })).toHaveLength(2);
         // Un blocco per plesso ⇒ singolare, nella stessa pagina in cui l'altro caso
         // di prova ha il plurale: il `count` non è decorativo.
-        expect(screen.getByText('Per la sede Plesso Uno')).toBeInTheDocument();
-        expect(screen.getByText('Per la sede Plesso Due')).toBeInTheDocument();
+        expect(pannelloAttivo().getByText('Per la sede Plesso Uno')).toBeInTheDocument();
+        expect(pannelloAttivo().getByText('Per la sede Plesso Due')).toBeInTheDocument();
     });
 
     it('una sede sola: nessuna riga di plesso, sarebbe rumore', () => {
@@ -294,6 +306,18 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         // nell'IBAN stanno esattamente fra un gruppo di quattro e l'altro.
         expect(iban.className).not.toContain('break-all');
         expect(iban.className).toContain('font-mono');
+        // …e non deve nemmeno lasciare un gruppo ORFANO su una riga sua. Quando
+        // l'IBAN è entrato nel campo copiabile, i 24px di respiro laterale gliene
+        // hanno tolti abbastanza da mandarlo a capo: «… 0000 0123 / 456».
+        // `text-[13px]` lo rimette su una riga sola (235px su 250 disponibili);
+        // `text-balance` è la rete per un IBAN estero più lungo del nostro.
+        expect(iban.className).toContain('text-balance');
+        expect(iban.className).toContain('text-[13px]');
+        // Nessun `sm:text-base`: la card NON si allarga su desktop — la colonna del
+        // genitore la tiene a 398px contro 358 — quindi ingrandire il testo al
+        // breakpoint gli toglieva la riga senza dargli spazio, e a 1280 l'IBAN
+        // usciva su due righe. Misurato sulle fotografie dei due giri.
+        expect(iban.className).not.toContain('sm:text-base');
     });
 
     it('il bottone dice CHE COSA copia e prende tutta la riga sotto l’IBAN', () => {
@@ -321,9 +345,14 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
 
     it('la riga dei plessi sta DENTRO il riquadro del conto, non appesa sopra', () => {
         render(<ComePagare sedi={[SEDE_UNO, SEDE_DUE]} voci={[VOCE_UNO, VOCE_DUE]} />);
-        const sedi = screen.getByText('Per le sedi Plesso Uno · Plesso Due');
+        const sedi = pannelloAttivo().getByText('Per le sedi Plesso Uno · Plesso Due');
         const iban = screen.getByText(IBAN_LEGGIBILE);
-        const riquadro = iban.closest('.rounded-input');
+        // Si risale al riquadro dal BORDO e non più dal raggio: da quando l'IBAN sta
+        // in un campo copiabile, `rounded-input` non è più univoca dentro il blocco
+        // — `closest('.rounded-input')` si fermava al campo, cioè a sé stesso, e il
+        // test falliva pur essendo il markup giusto. Il riquadro del conto è l'unica
+        // cosa qui dentro che porta un bordo `border-kidville-line`.
+        const riquadro = iban.closest('.border-kidville-line');
         expect(riquadro).not.toBeNull();
         expect(riquadro?.contains(sedi)).toBe(true);
     });
@@ -335,5 +364,56 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
                 expect(b.className).toContain('motion-safe:active:scale-95');
             }
         }
+    });
+
+    /* ────────────────────────────────────────────────────────────────────────
+       Il terzo giro (2026-09-05), dalle schermate a 390px e 1280px.
+       ──────────────────────────────────────────────────────────────────────── */
+
+    it('l’IBAN sta in un CAMPO copiabile, con lo stesso vestito della causale', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        const iban = screen.getByText(IBAN_LEGGIBILE);
+        // Nella card ci sono due sole cose da copiare — l'IBAN e la causale — e
+        // nella versione precedente si vestivano in modo diverso: la causale in un
+        // campo chiaro riquadrato, l'IBAN come testo nudo. Chi guarda per tre
+        // secondi cerca «il rettangolo da cui si copia»: ce n'era uno solo, e non
+        // era quello per cui la card esiste. Stesso vestito ⇒ stessa promessa.
+        expect(iban.className).toContain('bg-kidville-cream');
+        expect(iban.className).toContain('rounded-input');
+        expect(iban.className).toContain('font-mono');
+    });
+
+    it('nessun raggio fuori scala: solo `card` (16), `input` (12) e `pill`', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        expect(container.innerHTML).not.toMatch(/rounded-\[/);
+    });
+
+    it('entrambi i campi copiabili portano l’ancora dell’Alto Contrasto', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        // `@theme inline` INLINA l'hex dentro le utility: né `bg-kidville-white` né
+        // `bg-kidville-cream` si ribaltano da soli. Senza questa classe, in Alto
+        // Contrasto un campo resterebbe bianco su testo bianco e l'altro sarebbe un
+        // #1A1A1A che sul nero della card non si stacca (1,15:1) — il testo si
+        // leggerebbe, il RETTANGOLO no. La regola sta in fondo a `globals.css`.
+        expect(screen.getByText(IBAN_LEGGIBILE).className).toContain('kv-campo-copiabile');
+        expect(screen.getByText(VOCE_UNO.causale).className).toContain('kv-campo-copiabile');
+    });
+
+    it('contanti con più plessi: dice IN QUALE segreteria, non «in segreteria»', () => {
+        render(<ComePagare sedi={[SEDE_UNO, SEDE_DUE]} voci={[VOCE_UNO, VOCE_DUE]} />);
+        fireEvent.click(screen.getByRole('tab', { name: 'Contanti' }));
+        // Il difetto è di prodotto, non di grafica: una famiglia con due figli in
+        // due plessi legge «in segreteria» e non sa a QUALE presentarsi. I nomi
+        // sono già in pagina (il blocco del conto li elenca): tacerli qui è una
+        // scelta, e la scelta era sbagliata.
+        expect(pannelloAttivo().getByText(/Plesso Uno · Plesso Due/)).toBeInTheDocument();
+        expect(pannelloAttivo().getByText(/non sono detraibili/)).toBeInTheDocument();
+    });
+
+    it('contanti con un plesso solo: nessun elenco, sarebbe rumore', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        fireEvent.click(screen.getByRole('tab', { name: 'Contanti' }));
+        expect(pannelloAttivo().getByText(/negli orari di apertura/)).toBeInTheDocument();
+        expect(pannelloAttivo().queryByText(/Plesso Uno/)).toBeNull();
     });
 });

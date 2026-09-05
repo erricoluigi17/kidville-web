@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// Solo `logClient` è finto: `nomeErrore` resta quello vero, perché è LUI la cosa
+// misurata — un mock che restituisse il nome giusto proverebbe soltanto sé stesso.
+vi.mock('@/lib/logging/client', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/client')>();
+  return { ...actual, logClient: vi.fn() };
+});
+
+import { logClient } from '@/lib/logging/client';
 import { CausaleBonifico } from '@/components/features/parent/pagamenti/CausaleBonifico';
 
 // La causale ora è COMPOSTA DAL SERVER (modello per-categoria) e passata già pronta:
@@ -117,5 +126,80 @@ describe('CausaleBonifico — la riga si riconosce dalla voce, non dalla causale
     // dire ancora di quale voce si parla, altrimenti in una lista di tre bottoni
     // identici si perde il riferimento.
     expect(await screen.findByRole('button', { name: 'Copiato: causale di Mara Bianchi' })).toBeInTheDocument();
+  });
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+   Il terzo giro (2026-09-05), misurato sulle schermate a 390px e a 1280px del
+   giro precedente. Tre cose che le fotografie mostrano e il codice non diceva.
+   ──────────────────────────────────────────────────────────────────────────── */
+describe('CausaleBonifico — la riga sta su due piani, non su quattro', () => {
+  it('il campo della causale è MONOSPAZIATO: nel codice fiscale 0 e O si distinguono', () => {
+    render(<CausaleBonifico voci={voci} />);
+    const campo = screen.getByText(voci[0].causale);
+    // La causale porta dentro un codice fiscale — cifre e lettere mescolate. In un
+    // carattere proporzionale «0» e «O», «1» e «l» hanno la stessa forma: chi la
+    // RICOPIA A MANO (chi paga allo sportello, o da un altro dispositivo) sbaglia
+    // e il bonifico non si abbina più. È la stessa ragione per cui l'IBAN è mono.
+    expect(campo.className).toContain('font-mono');
+  });
+
+  it('voce e importo stanno ACCANTO, non ai due estremi della riga', () => {
+    render(<CausaleBonifico voci={voci} />);
+    const titolo = screen.getByText('Retta Settembre 2026');
+    const riga = titolo.parentElement as HTMLElement;
+    // A 1280px `justify-between` apriva 350px di vuoto fra «Retta Settembre 2026»
+    // e «€ 300,00»: due metà della stessa informazione — che cosa, e quanto — con
+    // un buco in mezzo che l'occhio deve saltare. E nell'elenco dei pagamenti più
+    // sotto, nella stessa pagina, l'importo sta a SINISTRA sotto la descrizione.
+    expect(riga.className).not.toContain('justify-between');
+    expect(riga).toContainElement(screen.getByText('€ 250,00'));
+  });
+
+  it('il campo prende la riga intera a OGNI larghezza, il comando sta sotto a destra', () => {
+    render(<CausaleBonifico voci={voci} />);
+    const campo = screen.getByText(voci[0].causale);
+    const [bottone] = screen.getAllByRole('button', { name: /Copia la causale/ });
+    const riga = campo.parentElement as HTMLElement;
+    expect(riga).toContainElement(bottone);
+    expect(riga.className).toContain('flex-col');
+    expect(riga.className).toContain('items-end');
+    // NIENTE `sm:flex-row`: affiancarli è stato provato e tolto, perché «su desktop
+    // c'è spazio» qui è falso. La pagina del genitore tiene il contenuto in una
+    // colonna stretta e la card misura 398px a 1280 contro 358px a 390 — quaranta
+    // pixel, non seicento. Il bottone di fianco toglieva al campo 150px SEMPRE, e
+    // la causale usciva su cinque righe invece di tre: la riga si ALLUNGAVA.
+    expect(riga.className).not.toContain('sm:flex-row');
+    expect(campo.className).toContain('w-full');
+  });
+
+  it('nessun raggio fuori scala: solo `card` (16), `input` (12) e `pill`', () => {
+    const { container } = render(<CausaleBonifico voci={voci} />);
+    // `rounded-[8px]` era un quarto valore, scritto a mano, che non sta nella
+    // scala dei token (`--radius-card` · `--radius-input` · `--radius-pill`).
+    expect(container.innerHTML).not.toMatch(/rounded-\[/);
+  });
+
+  it('appunti negati: la CAUSA finisce nel log (non solo «non riuscita»)', () => {
+    scrivi.mockRejectedValueOnce(
+      Object.assign(new Error('Write permission denied.'), { name: 'NotAllowedError' }),
+    );
+    render(<CausaleBonifico voci={voci} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copia la causale di Mara Bianchi' }));
+
+    return Promise.resolve().then(() => {
+      expect(logClient).toHaveBeenCalledTimes(1);
+      const riga = vi.mocked(logClient).mock.calls[0][0];
+      expect(riga.livello).toBe('warn');
+      // `NotAllowedError` (permesso), `SecurityError` (contesto non sicuro) e
+      // l'API assente dentro una WebView sono tre guasti diversi con tre
+      // correzioni diverse: il `catch` senza binding li appiattiva in uno solo.
+      expect(riga.messaggio).toContain('NotAllowedError');
+      // Nessun dato personale: la causale porta nome, cognome e CF di un minore.
+      const testo = JSON.stringify(riga);
+      expect(testo).not.toContain('Mara');
+      expect(testo).not.toContain('ABCDEF00A00A000A');
+    });
   });
 });

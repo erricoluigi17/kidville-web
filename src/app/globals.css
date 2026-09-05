@@ -1847,3 +1847,27 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
   background-color: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
 }
+
+/* I DUE CAMPI DA CUI SI COPIA (2026-09-05) — l'IBAN e la causale.
+
+   In luce normale hanno la stessa forma e due fondi diversi, perché stanno in due
+   contenitori diversi: la causale è bianca dentro una chip crema, l'IBAN è crema
+   dentro il riquadro bianco del conto. In Alto Contrasto quella differenza non
+   serve più a niente e anzi si rovescia: `bg-kidville-white` resterebbe BIANCO su
+   testo portato a bianco (1,00:1, invisibile — è la regola qui sopra), e
+   `bg-kidville-cream` diventa #1A1A1A, che sul nero della card vale 1,15:1: il
+   testo si leggerebbe, ma il RETTANGOLO sparirebbe, e con lui l'unica cosa che
+   dice «da qui si copia». In Alto Contrasto due neri vicini non si separano più
+   col colore: si separano col contorno.
+
+   Perciò l'aggancio non è il fondo ma la classe che i due campi condividono
+   (`CAMPO_COPIABILE` in `CausaleBonifico.tsx`): stesso nero e stesso filetto
+   #8A8A8A (6,4:1 sul nero, sopra i 3:1 di WCAG 1.4.11) per tutti e due, qualunque
+   fondo abbiano di giorno. Sta DOPO la regola su `.bg-kidville-white`, che ha la
+   stessa specificità (0,2,0) e dice la stessa cosa: sul campo della causale le due
+   coincidono, e non c'è nessun conflitto da dirimere.
+   Non-layered → vince sulle utility Tailwind senza `!important`. */
+[data-contrast="high"] .kv-come-pagare .kv-campo-copiabile {
+  background-color: #000000;
+  box-shadow: inset 0 0 0 1px #8A8A8A;
+}

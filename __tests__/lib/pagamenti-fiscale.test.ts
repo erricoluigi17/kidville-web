@@ -178,6 +178,49 @@ describe('datiStruttura — la configurazione fiscale mancante è un incidente',
     expect(JSON.stringify(campi)).not.toContain('RSSMRA80A01F839X')
     for (const v of Object.values(campi)) expect(['string', 'boolean']).toContain(typeof v)
   })
+
+  // ─── LO STESSO BUCO, DUE GRAVITÀ DIVERSE (collaudo 2026-09-05, rilievo b) ───
+  //
+  // «Configurazione mancante = error» (AGENTS.md §4) è la regola giusta per chi
+  // EMETTE: la ricevuta, l'attestazione e la fattura escono anonime, e quel
+  // documento resta. Ma da quando la card «Come pagare» compone l'intestatario
+  // del conto, la stessa funzione gira a OGNI apertura di `/parent/pagamenti` —
+  // percorso ad alta frequenza, che degrada da solo mostrando «chiedi in
+  // segreteria» — e per sedi che in `admin_settings` la riga non ce l'hanno
+  // proprio (Demo, E2E). Lì un `error` al giorno per sede non aggiunge una
+  // notizia: toglie credibilità agli `error` veri, che è il modo in cui un
+  // allarme smette di essere letto.
+  //
+  // Il livello lo dichiara il CHIAMANTE, e il default resta `error`: chi non
+  // sceglie non può abbassare l'allarme per distrazione.
+  it('`livello: "info"` abbassa la riga senza cambiarne il contenuto', () => {
+    datiStruttura(null, null, { operazione: 'pagamenti:GET', scuolaId: 'sede-1', livello: 'info' })
+    expect(h.logEvento).toHaveBeenCalledTimes(1)
+    expect(h.logEvento).toHaveBeenCalledWith(
+      'fiscale',
+      'info',
+      expect.objectContaining({
+        operazione: 'pagamenti:GET',
+        esito: 'dati-struttura-mancanti',
+        scuola_id: 'sede-1',
+        denominazione_presente: false,
+        piva_presente: false,
+      }),
+    )
+  })
+
+  it('senza `livello` resta `error`: i chiamanti che emettono documenti non cambiano', () => {
+    datiStruttura(null, null, { operazione: 'pagamenti/ricevuta:GET' })
+    expect(h.logEvento.mock.calls[0][1]).toBe('error')
+  })
+
+  it('con `livello: "info"` e configurazione completa non esce comunque niente', () => {
+    datiStruttura({ denominazione: 'Cooperativa', piva: '01234567890' }, null, {
+      operazione: 'pagamenti:GET',
+      livello: 'info',
+    })
+    expect(h.logEvento).not.toHaveBeenCalled()
+  })
 })
 
 describe('CATEGORIE_ESCLUSE_ADE', () => {

@@ -6,11 +6,10 @@ import { useDateFormat } from '@/lib/i18n/date';
 import { ChevronRight, Landmark, RefreshCw, Upload } from 'lucide-react';
 import { SectionTitle } from '@/components/ui/cockpit';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
-import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { MovimentoDialog } from './MovimentoDialog';
+import { ChipFatturazione, MovimentoDialog } from './MovimentoDialog';
 import type { PrecompilaTransazione } from './TransazioniPanel';
 import { BTN_PRIMARY_AA } from './ui';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
@@ -18,13 +17,15 @@ import { LIMITE_UPLOAD_BYTE } from '@/lib/upload/limite-piattaforma';
 import {
   SEMAFORO,
   FILTRI,
+  FILTRI_FATTURA,
+  chipFatturazione,
   suggerimentoPrincipaleCf,
   riepilogoImport,
   type MovimentoUi,
   type PagamentoApertoUi,
   type EsitoImport,
+  type RispostaMovimenti,
   type StatoMovimento,
-  type FatturaMovimentoUi,
 } from './riconciliazione-ui';
 
 interface Props {
@@ -55,16 +56,25 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
  */
 const hdrFile = (u: string) => ({ 'x-user-id': u });
 
+/** Pill dei filtri (stato e fatturazione): stessa pelle, un solo posto. */
+const PILL_FILTRO = 'rounded-pill px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-[0.03em] transition-colors';
+const PILL_FILTRO_ON = 'bg-kidville-green text-kidville-white';
+const PILL_FILTRO_OFF = 'bg-kidville-white text-kidville-sub ring-[1.5px] ring-inset ring-kidville-line hover:ring-kidville-green';
+
 /**
- * Il tono del chip della fattura. `success`/`error`/`neutral` del `Badge` portano già le
- * varianti `-strong` del testo, verificate AA sui fondi soft: qui si sceglie solo QUALE
- * dei tre, così i tre stati non possono finire dello stesso colore per distrazione.
+ * L'OCCHIELLO CHE DICE DI CHE FILTRO SI TRATTA.
+ *
+ * I due gruppi di pillole hanno la stessa pelle e stanno uno sotto l'altro: a
+ * schermo sembravano una fila sola andata a capo, e i due assi si distinguevano
+ * per una lettera — «Tutti» (stato) contro «Tutte» (fatturazione). L'unica cosa
+ * che diceva quale fosse quale era l'`aria-label` del gruppo: un testo che chi
+ * vede non legge mai.
+ *
+ * È `aria-hidden` di proposito: il gruppo ha già la sua etichetta accessibile,
+ * più esplicita di questa, e sentirsi annunciare due volte lo stesso concetto è
+ * rumore. Sta FUORI dal `role="group"`, perché non è uno dei filtri.
  */
-const TONO_FATTURA: Record<FatturaMovimentoUi['stato'], 'success' | 'error' | 'neutral'> = {
-  emessa: 'success',
-  scartata: 'error',
-  da_fatturare: 'neutral',
-};
+const OCCHIELLO_FILTRO = 'mb-1.5 block font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em] text-kidville-green';
 
 /**
  * Vista Riconciliazione bancaria — lista a SEMAFORO del registro cumulativo.
@@ -85,7 +95,48 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   const [busy, setBusy] = useState(false);
   const [esito, setEsito] = useState<EsitoImport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * ⚠️ L'ERRORE DI RETE DEI MOVIMENTI È UN FLAG, NON UNA STRINGA — e non è
+   * pignoleria: è ciò che ferma un ciclo di richieste senza fine.
+   *
+   * `load` finiva con `setError(t('reconErroreReteMovimenti'))`, quindi `t`
+   * doveva stare fra le sue dipendenze. Ma `t` di next-intl **non è garantito
+   * stabile fra un render e l'altro**: quando cambia identità, `load` cambia,
+   * l'effetto rigira, il `finally` fa `setLoading(false)`, si ri-renderizza, e
+   * si ricomincia. Misurato sul banco di prova (dove `useTranslations` è un mock
+   * che ricrea `t` ogni volta): **1.470 GET in 300 ms, senza che nessuno
+   * cliccasse niente**. Nessun test se n'era mai accorto, perché nessuno contava
+   * le richieste — si guardava solo che ce ne fosse almeno una.
+   *
+   * Il rimedio è togliere la traduzione dal caricamento: `load` alza un flag, il
+   * testo lo sceglie il JSX. Così `load` dipende solo dai suoi veri ingressi.
+   */
+  const [erroreRete, setErroreRete] = useState(false);
+  /**
+   * IL CORPO del rifiuto, non il suo testo già tradotto — per la stessa ragione
+   * per cui `erroreRete` è un flag: `messaggioDaCorpo` vuole un `fallback`
+   * tradotto, e chiamare `t` dentro `load` rimetterebbe `t` fra le dipendenze
+   * del `useCallback` (1.470 GET in 300 ms, misurati). Qui si conserva ciò che
+   * il server ha detto; la lingua la sceglie il JSX, che si ri-renderizza da sé.
+   *
+   * Fino a oggi un `success: false` non alzava NIENTE: né errore né log. Un 400
+   * sul sottofiltro — cioè un filtro che non ha filtrato — si vedeva come una
+   * lista qualunque.
+   */
+  const [rifiuto, setRifiuto] = useState<{ error?: unknown; codice?: unknown } | null>(null);
+  /**
+   * Il server sa dire se la fatturazione è filtrabile, e quando non lo è manda
+   * le righe NON filtrate (`fatturazione_disponibile: false`). Senza questo
+   * campo il degrado arrivava come una lista vuota, e la schermata scriveva
+   * «Nessun movimento in questo stato»: cioè «non c'è niente da fatturare».
+   */
+  const [fatturazioneDisponibile, setFatturazioneDisponibile] = useState(true);
+  /** La finestra del server era piena: ci sono altre righe oltre a queste. */
+  const [troncato, setTroncato] = useState(false);
   const [filtro, setFiltro] = useState<'' | StatoMovimento>('');
+  // Sottofiltro «Fatturazione»: si compone col filtro per stato e vale solo sui
+  // confermati (gli unici su cui la fatturazione esista).
+  const [fattura, setFattura] = useState<'' | 'da_fatturare' | 'fatturate'>('');
   const [selezionato, setSelezionato] = useState<MovimentoUi | null>(null);
 
   // Ref alla riga cliccata: ripristino del focus alla chiusura del dialog (WCAG 2.4.3).
@@ -108,15 +159,33 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     };
     try {
       const statoQ = filtro ? `&stato=${filtro}` : '';
+      const fatturaQ = fattura ? `&fattura=${fattura}` : '';
       const [movRes, apRes] = await Promise.all([
-        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
+        // ⚠️ LO STATO HTTP NON SI BUTTA VIA. Con `.then((r) => r.json())` il numero
+        // che distingue un 400 (filtro sbagliato) da un 500 (server rotto) spariva
+        // prima di poter essere né mostrato né loggato.
+        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}${fatturaQ}`, { headers: hdr(userId) })
+          .then(async (r) => ({ stato: r.status, corpo: (await r.json()) as RispostaMovimenti }))
+          .catch(onErr),
         fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}&solo_aperti=true`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
       ]);
-      if (movRes?.success) {
-        setMovimenti((movRes.data ?? []) as MovimentoUi[]);
-        setDisponibile(movRes.disponibile !== false);
+      if (movRes?.corpo?.success) {
+        setMovimenti((movRes.corpo.data ?? []) as MovimentoUi[]);
+        setDisponibile(movRes.corpo.disponibile !== false);
+        // Assente = disponibile: una risposta che non parla di fatturazione non è
+        // una risposta che l'ha persa (rotte vecchie, cache, ramo «schema assente»).
+        setFatturazioneDisponibile(movRes.corpo.fatturazione_disponibile !== false);
+        setTroncato(movRes.corpo.troncato === true);
+        setRifiuto(null);
+        setErroreRete(false);
       } else if (movRes === null) {
-        setError(t('reconErroreReteMovimenti'));
+        setErroreRete(true);
+      } else {
+        // Il server ha RIFIUTATO. Prima non succedeva niente: nessun messaggio,
+        // nessun log, e l'operatore restava davanti a una lista che sembrava
+        // filtrata. Il corpo si conserva per il testo, lo `stato` va nel log.
+        setRifiuto((movRes.corpo ?? {}) as { error?: unknown; codice?: unknown });
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'riconciliazione-movimenti-rifiutati', route: '/admin/pagamenti', stato: movRes.stato });
       }
       if (apRes?.success) {
         setAperti(((apRes.data ?? []) as PagamentoApertoUi[]).filter((p) => p.tipo !== 'padre'));
@@ -124,14 +193,35 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     } finally {
       setLoading(false);
     }
-  }, [userId, scuolaId, filtro, t]);
+  }, [userId, scuolaId, filtro, fattura]);
 
   useEffect(() => { load(); }, [load]);
 
+  /**
+   * Cambio del filtro per STATO. Se il nuovo stato non è «confermato», il
+   * sottofiltro di fatturazione si azzera: «suggeriti da fatturare» non esiste —
+   * la fatturazione vive solo sui confermati — e un filtro che non trova mai
+   * niente si legge come un guasto del prodotto, non come una scelta.
+   * I due `setState` stanno nello stesso gestore: React li accorpa in un render
+   * solo, quindi il GET riparte UNA volta (nessun refetch doppio).
+   */
   const cambiaFiltro = (id: '' | StatoMovimento) => {
     if (id === filtro) return;
     setLoading(true);
     setFiltro(id);
+    if (id !== 'confermato') setFattura('');
+  };
+
+  /**
+   * Cambio del sottofiltro FATTURAZIONE. Sceglierne uno forza `stato=confermato`
+   * nel GET (e accende la pill corrispondente: la lista mostra davvero quelli).
+   * «Tutte» toglie solo il parametro e lascia lo stato dov'è.
+   */
+  const cambiaFattura = (id: '' | 'da_fatturare' | 'fatturate') => {
+    if (id === fattura) return;
+    setLoading(true);
+    setFattura(id);
+    if (id) setFiltro('confermato');
   };
 
   /**
@@ -203,16 +293,43 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     setSelezionato(null);
   }, [userId, onIncassoUnico]);
 
-  const vuoto = !loading && disponibile && movimenti.length === 0;
+  /**
+   * Il rifiuto del server, tradotto qui e non dentro `load` (vedi `rifiuto`).
+   * `messaggioDaCorpo` è pura: preferisce il codice di catalogo, poi la prosa del
+   * server, e in ultimo il ripiego — che dice cosa fare, non «errore».
+   */
+  const messaggioRifiuto = rifiuto ? messaggioDaCorpo(rifiuto, t('reconErroreFiltro')) : null;
+  /**
+   * L'avviso si mostra SOLO col sottofiltro acceso: senza, non c'è nessun filtro
+   * sospeso da dichiarare e la fascia sarebbe rumore su una lista già corretta.
+   */
+  const avvisoFatturazione = !fatturazioneDisponibile && fattura !== '';
+  /**
+   * ⚠️ «Nessun movimento in questo stato» è una AFFERMAZIONE, e si può fare solo
+   * quando si sa che è vera. Con un rifiuto in corso o col filtro non applicato
+   * non lo sappiamo: lì parla la fascia, non il vuoto.
+   */
+  const vuoto = !loading && disponibile && !messaggioRifiuto && !avvisoFatturazione && movimenti.length === 0;
 
   return (
     <div>
       <SectionTitle icon={Landmark} title={t('reconTitolo')}
         sub={t('reconSottotitolo')}
+        /* Bottone-icona: 44×44 (era 30) e inchiostro `sub` (6,46:1) al posto di
+           `muted`, che su bianco vale 3,80:1 — sotto AA, e con l'aria di un
+           comando spento. Sta fuori dalla `ul`, cioè fuori dal ritaglio che la
+           sonda misura: nessuna misura l'aveva mai guardato, ed è esattamente il
+           posto in cui un difetto sopravvive.
+
+           ⚠️ `shrink-0` NON È DECORATIVO: è un figlio del flex di `SectionTitle`,
+           e un figlio flex si stringe di default. MISURATO sul PNG a pagina intera
+           del collaudo: 20×44 css px su telefono — rapporto 0,45, cioè una capsula
+           verticale schiacciata dove il codice chiede un cerchio. `h-11 w-11`
+           dichiara la taglia, `shrink-0` è ciò che gliela lascia. */
         action={
           <button onClick={() => { setLoading(true); load(); }} aria-label={t('reconAggiorna')}
-            className="rounded-pill border-[1.5px] border-kidville-line p-2 text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">
-            <RefreshCw size={14} />
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-pill border-[1.5px] border-kidville-line text-kidville-sub transition-colors hover:border-kidville-green hover:text-kidville-green">
+            <RefreshCw size={16} />
           </button>
         } />
 
@@ -240,23 +357,65 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {riepilogoImport(esito)}
         </p>
       )}
-      {error && <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">{error}</p>}
+      {(error || erroreRete || messaggioRifiuto) && (
+        <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">
+          {error ?? messaggioRifiuto ?? t('reconErroreReteMovimenti')}
+        </p>
+      )}
 
       {/* Filtri per stato (sul GET via ?stato=) */}
-      <div className="mt-4 flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
-        {FILTRI.map((f) => {
-          const attivo = f.id === filtro;
-          return (
-            <button key={f.id || 'tutti'} type="button" onClick={() => cambiaFiltro(f.id)} aria-pressed={attivo}
-              className={cx(
-                'rounded-pill px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-[0.03em] transition-colors',
-                attivo ? 'bg-kidville-green text-kidville-white' : 'bg-kidville-white text-kidville-sub ring-[1.5px] ring-inset ring-kidville-line hover:ring-kidville-green',
-              )}>
-              {f.label}
-            </button>
-          );
-        })}
+      <div className="mt-5">
+        <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoStato')}</span>
+        {/* `kv-cockpit-tabs`: la regola di Alto Contrasto delle pill con `aria-pressed` esiste
+            già in globals.css e disegna il contorno che qui, in HC, restava a 1,23:1. */}
+        <div className="kv-cockpit-tabs flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
+          {FILTRI.map((f) => {
+            const attivo = f.id === filtro;
+            return (
+              <button key={f.id || 'tutti'} type="button" onClick={() => cambiaFiltro(f.id)} aria-pressed={attivo}
+                className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
+
+      {/* Sottofiltro «Fatturazione» (?fattura=), componibile col precedente: è la
+          risposta a «quali confermati restano da fatturare?», che su un registro
+          di righe verdi indistinguibili non aveva nessuna risposta. */}
+      <div className="mt-3">
+        <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoFatturazione')}</span>
+        <div className="kv-cockpit-tabs flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltroFatturazione')}>
+          {FILTRI_FATTURA.map((f) => {
+            const attivo = f.id === fattura;
+            return (
+              <button key={f.id || 'tutte'} type="button" onClick={() => cambiaFattura(f.id)} aria-pressed={attivo}
+                className={cx(PILL_FILTRO, attivo ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+                {t(f.labelKey)}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Il filtro chiesto NON è stato applicato: la lista che segue è intera.
+          Dirlo è l'unica alternativa onesta a un elenco vuoto che significherebbe
+          «non c'è niente da fatturare» — che è il falso negativo peggiore di questa
+          schermata: una fattura saltata non la ferma nessuna guardia. */}
+      {avvisoFatturazione && (
+        <p role="alert" className="mt-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+          {t('reconFatturazioneNonDisponibile')}
+        </p>
+      )}
+      {/* La finestra del server era piena: ce ne sono altre. Senza questa riga
+          l'elenco sembrerebbe completo, ed è esattamente come si salta una fattura
+          vecchia — quelle in fondo, cioè quelle che nessuno ha ancora fatto. */}
+      {troncato && !loading && (
+        <p role="status" className="mt-2 font-maven text-[11px] text-kidville-sub">
+          {t('reconFatturazioneTroncata', { n: movimenti.length })}
+        </p>
+      )}
 
       {loading ? (
         <p className="py-8 text-center font-maven text-sm text-kidville-sub">{t('reconCaricamento')}</p>
@@ -271,45 +430,94 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {movimenti.map((m) => {
             const s = SEMAFORO[m.stato] ?? SEMAFORO.da_abbinare;
             const cf = suggerimentoPrincipaleCf(m.suggerimenti);
-            // Solo sulle righe già abbinate (`pagamento_id` lo scrive la conferma): su una
-            // riga ancora da lavorare non esiste nessun pagamento da fatturare. E `null` —
-            // la lettura fallita — non diventa un chip: non si dichiara ciò che non si sa.
-            const fattura = m.pagamento_id ? m.fattura ?? null : null;
+            // Una funzione sola per i due dati che raccontano la fattura: i DOCUMENTI
+            // registrati (`m.fattura`, col numero) e il riassunto scritto sul pagamento
+            // (`m.fattura_stato`). Dentro sta anche la guardia su `pagamento_id`: su una
+            // riga ancora da lavorare non esiste nessun pagamento da fatturare, e la
+            // lettura fallita (`null`) non diventa un chip — non si dichiara ciò che non
+            // si sa.
+            const fat = chipFatturazione(m);
             return (
               <li key={m.id}>
                 <button
                   type="button"
                   onClick={(e) => { triggerRef.current = e.currentTarget; setSelezionato(m); }}
-                  className={cx('kv-recon-row block w-full rounded-card p-3 text-left transition hover:brightness-95', s.bg, s.hcClass)}
+                  className={cx('kv-recon-row relative block w-full rounded-card p-3 pr-9 text-left transition hover:brightness-95', s.bg, s.hcClass)}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0">
-                      <span className={cx('block font-maven text-sm font-bold', s.testo)}>
+                  {/* ── IL CHEVRON HA UN CORRIDOIO SUO, E UNO SOLO ───────────
+                      Stava nel flusso, quindi ogni riga gli cedeva una fetta
+                      diversa: su mobile si portava via 24px alla causale della
+                      riga della cifra, su desktop si infilava fra la colonna di
+                      stato e il bordo. Adesso è FUORI dal flusso, centrato
+                      sull'altezza della card (l'affordance «questa riga si apre»
+                      appartiene alla riga intera, non a una delle sue tre righe di
+                      testo), e il corridoio glielo riserva il `pr-9` del bottone:
+                      24px dal contenuto al bordo, identici per tutte le righe.
+                      MISURATO: su telefono la colonna del testo resta 262px, cioè
+                      esattamente quella di prima — il corridoio unico non si paga
+                      con la causale — e su desktop passa da 568 a 672px.
+                      `pointer-events-none` perché il bersaglio è il bottone. */}
+                  <ChevronRight size={16} aria-hidden="true"
+                    className={cx('pointer-events-none absolute right-3 top-1/2 -translate-y-1/2', s.testo)} />
+                  {/* ── IL RITMO DELLA RIGA, IN UNA STRUTTURA SOLA ───────────
+                      Due fratelli soli: il testo e il gruppo di stato. Non due
+                      copie per due breakpoint — due copie dello stesso chip
+                      sarebbero due posti da cui un giorno diverge.
+
+                      MOBILE (`flex-wrap`): riga 1 = testo, riga 2 = il gruppo di
+                      stato, che va a capo da solo perché `basis-full`.
+
+                      DESKTOP (`sm:flex-nowrap`): il gruppo di stato è una colonna
+                      di larghezza dichiarata, così la causale si tronca sempre
+                      allo stesso punto invece che a un punto diverso per riga —
+                      su quella con «IN ATTESA SDI» spariva il cognome della
+                      famiglia, che è il dato con cui si decide.
+
+                      ⚠️ 176px (`sm:min-w-44`) E NON PIÙ 280. MISURATO sul server
+                      di collaudo a 1280px: il gruppo più largo dell'intera lista —
+                      chip «IN ATTESA SDI» + «CONFERMATO» — occupa 167px. I 113
+                      restanti erano fondo verde vuoto fra la causale troncata e il
+                      chip: una riga tagliata con un quarto di riga libera accanto
+                      non si legge come una scelta, si legge come un guasto. Con
+                      176 la colonna resta unica e allineata, e la causale passa da
+                      568 a 672px — sono i cento pixel in cui sta il cognome della
+                      famiglia.
+
+                      È un MINIMO e non una larghezza fissa, di proposito: con
+                      `w-44` un'etichetta più lunga (una traduzione, uno stato
+                      nuovo) traboccherebbe dalla sua colonna sopra la causale,
+                      in silenzio. Il minimo compra l'allineamento su tutte le
+                      righe di oggi e lascia crescere quella che un giorno non ci
+                      starà — perdendo un po' di causale, non la leggibilità.
+
+                      `min-w-0` sulla colonna del testo non è ornamentale: senza,
+                      un figlio `truncate` tiene la colonna larga quanto il testo
+                      intero e il troncamento non avviene mai. */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-2 sm:flex-nowrap sm:gap-x-4">
+                    <span className="min-w-0 flex-1">
+                      <span className={cx('block whitespace-nowrap font-maven text-sm font-bold', s.testo)}>
                         {formatEuro(m.importo)} · {dataIt(m.data_operazione)}
                       </span>
-                      <span className={cx('mt-0.5 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
+                      <span className={cx('mt-1 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
                         {m.causale || t('reconNessunaCausale')}{m.controparte ? ` · ${m.controparte}` : ''}
                       </span>
                     </span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      {fattura && (
-                        <Badge tone={TONO_FATTURA[fattura.stato]}>
-                          {fattura.stato === 'emessa'
-                            // Il numero c'è sempre (`numero` è NOT NULL): il ripiego copre
-                            // solo una riga illeggibile, e dice «non lo mostro», non «zero».
-                            ? t('reconFatturaEmessa', { numeri: fattura.numeri.join(' · ') || '—' })
-                            : fattura.stato === 'scartata'
-                              ? t('reconFatturaScartata')
-                              : t('reconFatturaDaFatturare')}
-                        </Badge>
-                      )}
+                    <span className="flex basis-full items-center gap-2 sm:min-w-44 sm:basis-auto sm:shrink-0 sm:justify-end">
                       {cf && (
-                        <span className="inline-flex items-center rounded-pill bg-kidville-white px-1.5 py-0.5 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
+                        /* `kv-recon-badge-cf` è l'àncora dell'Alto Contrasto: senza,
+                           il badge resta carta bianca con inchiostro verde (3,23:1
+                           una volta che la riga è nera) mentre tutto il resto è
+                           passato a carta/inchiostro netti. */
+                        <span className="kv-recon-badge-cf inline-flex items-center rounded-pill bg-kidville-white px-2 py-1 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-green ring-[1.5px] ring-inset ring-kidville-green">
                           {t('reconBadgeCf')}
                         </span>
                       )}
+                      {/* Chip di fatturazione: LO STESSO componente del popup, così
+                          lo stesso stato non può avere due facce. Fondo PIENO (mai
+                          opacità) perché vive sopra il verde della riga confermata,
+                          e senza filetto: qui a staccarlo basta il fondo. */}
+                      {fat && <ChipFatturazione fat={fat} />}
                       <span className={cx('font-barlow text-[11px] font-extrabold uppercase tracking-wide', s.testo)}>{s.label}</span>
-                      <ChevronRight size={16} className={s.testo} aria-hidden="true" />
                     </span>
                   </div>
                 </button>

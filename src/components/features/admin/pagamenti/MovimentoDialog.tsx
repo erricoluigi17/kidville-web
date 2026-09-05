@@ -214,9 +214,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
    * su una risposta vecchia è `null` → nessun chip, nessuna frase, e le azioni
    * restano quelle di prima (degradazione pulita).
    */
+  // Gli stessi campi della riga: così il popup dice «Fattura FPR 1947/26» come la lista,
+  // e non un generico «Fatturata» a due centimetri dal numero del documento.
   const fat = chipFatturazione({
     fattura_stato: (pagamentoFattura as StatoFattura | null) ?? null,
     pagamento_stato: pagamentoStato,
+    fattura: movimento.fattura ?? null,
+    pagamento_id: movimento.pagamento_id ?? null,
   });
 
   return (

@@ -2132,5 +2132,6 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > a,
 [data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > div > button {
   background: #000000;
-  box-shadow: inset 0 0 0 2px #FFFFFF;
+  /* 1,5px come «Ricevuta», che gli sta accanto con lo stesso rango: due fratelli, un solo peso. */
+  box-shadow: inset 0 0 0 1.5px #FFFFFF;
 }

@@ -254,7 +254,10 @@ describe('globals.css — la pelle del pulsante fattura nel popup', () => {
    */
   it('il pulsante «fatturata» in HC non dichiara un inchiostro che non verrebbe mai applicato', () => {
     const b = blocco('[data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > a,');
-    expect(b).toMatch(/box-shadow:[^;]*2px\s+#(?:FFFFFF|FFF)\b/i);
+    // 1,5px e non 2: il tester design (2026-09-05, sera) ha misurato «Ricevuta» a 1,5px e
+    // «Fattura» a 2px, fratelli nella stessa riga a 12px di distanza. Un solo peso per
+    // due comandi di pari rango; il contorno bianco su nero resta il segnale.
+    expect(b).toMatch(/box-shadow:[^;]*1\.5px\s+#(?:FFFFFF|FFF)\b/i);
     expect(b, 'una dichiarazione che perde la cascata è peggio di nessuna dichiarazione').not.toMatch(/color:/i);
   });
 

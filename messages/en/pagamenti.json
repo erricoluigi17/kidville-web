@@ -53,5 +53,6 @@
   "passoCausale": "The reference",
   "copiaIban": "Copy the IBAN",
   "ariaMetodoPagamento": "Payment method",
-  "ariaCopiatoCausale": "Copied: reference for {nome}"
+  "ariaCopiatoCausale": "Copied: reference for {nome}",
+  "causaleEtichetta": "Reference"
 }

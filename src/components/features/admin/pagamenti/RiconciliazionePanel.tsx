@@ -366,7 +366,9 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       {/* Filtri per stato (sul GET via ?stato=) */}
       <div className="mt-5">
         <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoStato')}</span>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
+        {/* `kv-cockpit-tabs`: la regola di Alto Contrasto delle pill con `aria-pressed` esiste
+            già in globals.css e disegna il contorno che qui, in HC, restava a 1,23:1. */}
+        <div className="kv-cockpit-tabs flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltraPerStato')}>
           {FILTRI.map((f) => {
             const attivo = f.id === filtro;
             return (
@@ -384,7 +386,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           di righe verdi indistinguibili non aveva nessuna risposta. */}
       <div className="mt-3">
         <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoFatturazione')}</span>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltroFatturazione')}>
+        <div className="kv-cockpit-tabs flex flex-wrap gap-1.5" role="group" aria-label={t('reconFiltroFatturazione')}>
           {FILTRI_FATTURA.map((f) => {
             const attivo = f.id === fattura;
             return (

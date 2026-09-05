@@ -53,5 +53,6 @@
   "passoCausale": "La causale",
   "copiaIban": "Copia l’IBAN",
   "ariaMetodoPagamento": "Metodo di pagamento",
-  "ariaCopiatoCausale": "Copiato: causale di {nome}"
+  "ariaCopiatoCausale": "Copiato: causale di {nome}",
+  "causaleEtichetta": "Causale"
 }

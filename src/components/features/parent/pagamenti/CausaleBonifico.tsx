@@ -355,7 +355,9 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
                                 cambio di valore di una chiave ESISTENTE arriva alla pagina), e
                                 una chiave nuova uscirebbe a schermo come `pagamenti.<chiave>`.
                                 Si aggiunge al primo riavvio del server. */}
-                            <p className={`mt-3 bg-kidville-white font-maven text-sm ${CAMPO_COPIABILE}`}>
+                            {/* L'occhiello che «Intestato a» e «IBAN» hanno già: tre campi, una sola etichetta. */}
+                            <p className={`mt-3 ${ETICHETTA}`}>{t('causaleEtichetta')}</p>
+                            <p className={`mt-1 bg-kidville-white font-maven text-sm ${CAMPO_COPIABILE}`}>
                                 <CausaleLeggibile causale={causale} />
                             </p>
                             {!v.hasCf && (

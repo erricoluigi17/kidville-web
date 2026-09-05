@@ -67,7 +67,7 @@
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **stato della fattura su ogni riga di movimento** — «Fattura FPR 1947/26» · «Scartata, da riemettere» · «Da fatturare», con una sola lettura per pagina — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -129,6 +129,184 @@ Rientrano quando l'Alto Contrasto coprirà davvero quelle schermate — un lavor
 nove. La baseline copre le due che funzionano (`/parent/pagamenti`, `/teacher`), e il
 crawler continua a sorvegliare quelle: è poco, ma è vero — e il giorno in cui l'Alto
 Contrasto verrà esteso, le altre sette si riaccendono togliendo un `//`.
+
+## 🧾 Changelog — La lista dei bonifici non diceva quali fossero già fatturati, e una guardia si scavalcava ripartendo la retta — 2026-09-05 (branch `feat/fatture-movimenti-e-guardie`)
+
+**Segnalazione**: l'handoff del 5 settembre, «Il controllo sui bonifici già fatturati, e sei code
+lasciate aperte», che dopo il rilascio della PR #116 lasciava una lista di lavori. Lo scope l'ha
+deciso il titolare: **dentro** sei — 1a, 1b, 2, 3a, 3b, 3c — più un settimo (2bis) emerso strada
+facendo; **fuori** l'Alto Contrasto sulle sette schermate («deciso di rimandare», il riquadro qui
+sopra) e la sezione 4, che non è codice.
+
+Misurando invece di dedurre, dei due buchi che l'handoff dava per aperti **uno non esisteva e
+l'altro c'era davvero**: la guardia del riabbinamento era irraggiungibile dall'interfaccia, mentre
+la guardia contro il secondo documento si scavalcava sul serio ripartendo una retta fra due
+genitori. E la bonifica dei nomi veri, chiesta su un file solo, ha finito per toccarne **altri
+sei**, più questo PRD.
+
+### 1 · (1a) Lo stato della fattura si legge dalla lista, senza aprire niente
+Nella Riconciliazione bancaria ogni movimento già abbinato porta ora un chip: «Fattura FPR 1947/26»
+(verde, coi numeri di tutte le quote uniti da « · »), «Scartata, da riemettere» (rosso) o «Da
+fatturare» (neutro). **Tre stati, non due**: uno scarto SdI non è una fattura viva, ma non è nemmeno
+«mai emessa». Prima, per sapere se un bonifico confermato fosse stato fatturato, si apriva il popup
+uno per uno.
+
+Costa **una query per pagina** — le fatture lette in blocco sui soli `pagamento_id` presenti, mai una
+per riga — e nessuna query se in pagina non c'è niente di abbinato. Sei colonne lette (numero, anno,
+sezionale, stato SdI, quota, pagamento): nessun intestatario, nessun importo. Le righe si deduplicano
+per quota tenendo il numero più alto, e quel caso in produzione esiste già: l'unico pagamento con due
+righe è uno scarto seguito da riemissione. Se la lettura fallisce non si scrive niente:
+`fattura: null` è **«non lo so»**, e un «Da fatturare» sbagliato sarebbe una bugia detta con sicurezza; il
+degrado lascia un `warn` — o un `info` quando il codice dice che il DB della CI non è migrato — coi
+soli conteggi. Misurato il 2026-09-05: `riconciliazione_movimenti` ha **239 righe** (l'handoff ne
+dava 0), di cui 1 abbinata e con fattura viva; `fatture_emesse` **5 righe su 4 pagamenti**, 1 scarto,
+0 senza sezionale. **23 test nuovi**, col mock che pilota la tabella e conta le chiamate: «una sola
+lettura» è un'asserzione, non una speranza.
+
+### 2 · (1b) Un bonifico non si fattura due volte, e la prova parte dal movimento
+La fattura si emette per `pagamento_id`, e la guardia contro il secondo documento confronta le righe
+vive **dello stesso pagamento**: non vede niente quando è il bonifico a cambiare pagamento sotto di
+lei. Ma **il «buco del riabbinamento» non esisteva**, ed è stato escluso leggendo la route invece di
+dedurlo: `ignora` e `riapri` rispondono 409 su un movimento confermato, lo storno dell'incasso non
+tocca la tabella, l'hash del movimento è unico globale. Resterebbe una riapertura fatta a mano dopo
+uno storno — e per quella ora c'è una guardia.
+
+`PATCH /api/pagamenti/riconciliazione/[id]` legge anche il `pagamento_id` del movimento e, **prima di
+ogni altra lettura e di ogni scrittura**, se il bonifico portava già un pagamento diverso interroga le
+fatture di quello vecchio: riga viva → **409 `BONIFICO_GIA_FATTURATO`** col numero del documento e un
+`warn`; lettura fallita → **503 `BONIFICO_FATTURA_NON_VERIFICABILE`**, fail-closed. Solo gli scarti
+non bloccano: dopo uno scarto si riemette. Zero insert e zero update quando la guardia scatta,
+asserito contando le scritture del finto; l'allowlist `errori-senza-codice` non cresce. **16 test
+nuovi**, e il primo che percorre l'emissione dal `pagamento_id` di un movimento confermato chiude
+anche un buco di misura preesistente: sul ramo «trasporto ignoto, stesso intestatario» nessun test
+contava le allocazioni di numero, cioè «nessun numero è stato consumato» lì non era un'asserzione.
+Adesso lo è. La guardia esistente non è stata smentita: `emissione.ts` non è stato corretto per
+questo.
+
+### 3 · (2) Nomi veri di bambini fuori dal file che li dichiarava
+`abbinamento.test.ts` dichiarava in testa che i suoi casi erano «righe vere» dell'elenco di una sede:
+**17 voci di fixture, 16 chiamate dirette, 6 coppie dell'`it.each` e 6 righe degli attrezzi**
+contenevano nomi di bambini reali, in un repository pubblico, dal 17 agosto (PR #89). Sostituiti con
+nomi inventati, ognuno **contato a zero in produzione** su `parents.last_name` e `alunni.cognome`
+prima di scriverlo: 26 cognomi, 30 col ricontrollo del critico.
+
+Non è un rinomino meccanico, perché **ogni asserzione dipende dalla stringa**: le sei coppie
+«somiglia ma non è uguale» pretendono che la riga attesa sia il massimo assoluto di similarità fra le
+17 voci, e i nomi nuovi sono stati progettati per esserlo — margine misurato fra **0,445 e 0,677** sul
+secondo classificato, nessun pareggio, con le soglie a **0,846** (> 0,8) e **0,077** (< 0,3). Le
+difformità di scrittura restano quelle vere: apostrofo dritto e curvo, spazi doppi, parentesi
+staccata e attaccata, grafia minuscola, cognome saldato, ordine invertito, stesso bambino su due
+fogli. Che il file continui a mordere lo dimostrano **undici mutazioni** ai sorgenti, ognuna rossa
+esattamente dove doveva, coi file ripristinati identici (`sha256`); una dodicesima ha scoperto per
+strada che la riga dell'apostrofo in `normalizza.ts` è **ridondante**.
+
+### 4 · (2bis) Gli stessi nomi erano anche altrove, e un elenco di token non basta
+Il critico del lavoro precedente non si è fermato al file segnalato: con **43 token distintivi** ha
+trovato gli stessi nomi in altri **sei file** — i quattro sorgenti dell'import e due test della stessa
+cartella, uno dei quali alla riga 8 dichiarava «nomi INVENTATI» e ne aveva due veri — più **quattro
+righe di questo PRD**, bonificate qui. Nei quattro sorgenti è cambiato **solo il commento**: lo prova
+l'impronta `sha256` del JS emesso senza commenti, identica prima e dopo e sensibile a un solo
+carattere di codice. Nei due test ogni asserzione è rimasta vincolante: otto mutazioni le hanno rese
+rosse una per una, con ripristino byte-identico.
+
+La parte che vale di più è il **setaccio indipendente**: 207 candidati estratti dai sei file e contati
+in produzione con una query sola hanno trovato **quattro cognomi veri che nessuno dei due elenchi
+conteneva** — uno con 3 alunni, uno con 1 genitore e 2 alunni, due con 1-3 riscontri — e un commento
+con un cognome che ha 4 genitori e 4 alunni. *Un elenco di token è un punto di partenza, non una
+garanzia: si conta in produzione ciò che si sta per scrivere, non ciò che si ricorda.*
+
+### 5 · (3a) Mensa, lo stato vuoto era scritto a 3,43:1
+`MensaCalendar.tsx` dipingeva con `text-kidville-muted` (#7B8582) l'unica frase presente a schermo
+quando la settimana non ha giorni configurati: **3,43:1** sul crema, sotto i 4,5:1 di WCAG 1.4.3.
+Quando quella riga non si legge, la pagina non sembra vuota: sembra rotta. È lo stesso difetto
+corretto sui pagamenti nel lavoro precedente, che l'aveva segnalato qui senza toccarlo per non
+allargare il perimetro a rilascio in corso. Corretto in `text-kidville-sub` (#55615C, **5,82:1**):
+un solo attributo, nessun catalogo toccato, debito del file da 5 a 4 occorrenze e lock verde
+**senza** che l'allowlist venga riscritta.
+
+Il test nuovo ha due asserzioni di natura diversa — la **classe** e il **valore**, riletto dai token
+di `globals.css` e ricalcolato sul posto — e la controprova lo mostra: schiarendo il token a #8A9490
+cade solo la seconda (2,82:1). Restano nel file **quattro** occorrenze di `muted`, tutte testo letto
+da un genitore (l'intervallo della settimana a 3,43, «Mensa chiusa» a 3,80, «Menu non ancora
+pubblicato» a 3,80/3,35, «inserito dalla segreteria» a 3,35 su `success-soft/70`): dichiarate, non
+corrette.
+
+### 6 · (3b) La guardia contro il secondo documento non copriva le quote
+Valeva **solo a quota unica**, e nel ramo dei genitori separati l'idempotenza confrontava il solo
+intestatario. Bastava questo: una retta da **150 €** fatturata intera al genitore A, poi ripartita
+**75/75** fra A e B, si ripreme «Emetti» — la quota di A passa per «già fatto», quella di B alloca un
+numero e manda allo SdI un secondo documento vero: **225 € fatturati per una retta da 150**. Il test
+scritto prima della correzione lo mostra alla lettera. Il database non lo impediva — `quota_adult_id`
+è *dentro* la chiave dell'indice unico, due intestatari fanno due chiavi — e l'INSERT arriva comunque
+**dopo** l'upload.
+
+Ora, prima del ciclo delle quote, le righe vive si confrontano con le quote correnti, con la regola
+**rafforzata dal titolare**: una riga è estranea se non dice a chi è intestata, se è di un adulto che
+oggi non ha quota, **oppure** se è del suo adulto ma con l'importo di ieri (confronto in centesimi
+interi). Basta una riga estranea e si fermano **tutte** le quote: 409, nessun numero consumato,
+nessun upload, nessuna riga a registro, un `warn` con soli uuid e numeri. Uno scarto non blocca.
+Misurato: `fatture_emesse` 5 righe, 0 senza quota e 0 senza importo, 3 alunni con genitori separati,
+1 pagamento con quote esplicite ancora `da_pagare` e 0 righe a registro — **la guardia arriva prima
+del caso, non dopo**. 13 test nuovi; quattro mutazioni rendono rosso un ramo ciascuna.
+
+### 7 · (3c) «Non lo so» non è «no», e la differenza la pagava la Segreteria
+La lettura dei legami genitore-figlio falliva, la funzione loggava e restituiva ciò che aveva, e
+**nessun verdetto risaliva la catena**: `adultoEGenitoreDi` rispondeva `false` invece di `null`, e
+l'emissione rispondeva **422 «l'intestatario non risulta fra i genitori»** invece di **503 «non è
+stato possibile verificare, riprova»**. Un guasto del database usciva dallo schermo come
+un'affermazione sull'anagrafica di una famiglia — e proprio sull'adulto che l'anteprima aveva appena
+proposto.
+
+Aggiunte le due varianti «con esito», sul modello di quella che già esisteva per i figli:
+`completo=false` se una delle tre letture fallisce con un codice che **non** sia «schema assente» (sul
+DB della CI, mai migrato, non è un guasto e non degrada niente). Il verdetto di completezza copre ora
+**cinque letture invece di due**, e le funzioni storiche restano wrapper a firma e valore identici,
+così i **sei** chiamanti diretti che elencano non cambiano comportamento: mostrano meno destinatari,
+non i destinatari di un altro bambino. **16 test nuovi**, 8 rossi prima; tre coprono il caso opposto
+— la CI non migrata resta a 422, e un intestatario che *è* un genitore passa il gate anche con la
+lettura giù — così «rispondi sempre 503» non passerebbe. Nessun numero di fattura consumato in
+nessuno dei due rami: la RPC del progressivo è asserita **non** chiamata.
+
+### Gate
+`npx eslint . --max-warnings 0` → exit 0 · `npx tsc --noEmit` → exit 0 · `npm run build` → exit 0
+(2.535 file JS verificati dal postbuild `verifica-artefatto`) · `npx vitest run` → **14.100 test
+verdi su 1.111 file**, più **3 rossi ambientali** nel lock
+`__tests__/architecture/migrazioni-senza-sede-cablata.test.ts`: scansiona `.claude/` sul filesystem
+e ci trova i documenti di un worktree di un'altra sessione (`.claude/worktrees/…`, ignorato da git
+e assente in CI). Nessuno dei file in errore è di questo branch.
+
+### Rilievi aperti
+Nessuno è bloccante: sono tutti fuori dal perimetro dei sette task, e stanno qui per non perderli.
+- Dopo un 409 di una delle due guardie l'aggregato scrive `fattura_stato = 'scartata'` anche se il
+  documento di ieri è vivo (`emissione.ts`); vale per entrambe.
+- `FATTURA_GIA_EMESSA_ALTRO_INTESTATARIO` e `FATTURA_RIGA_VIVA_ESTRANEA_ALLE_QUOTE` non sono in
+  `CODICI_CON_DETTAGLIO`: in inglese il numero della fattura non si vede. `BONIFICO_GIA_FATTURATO`
+  invece ce l'ha.
+- Le due letture proprie di `identitaGenitoriDiAlunno` pesano l'errore nudo, senza `livelloPerErrore`,
+  e abbassano `completo` anche quando lo schema è semplicemente assente.
+- **Nessun lock impedisce un nome vero in un commento `.ts`**: `pii-nei-file-tracciati` guarda i
+  documenti, non i sorgenti (scelta documentata, 174 falsi positivi), e un lock non può contenere
+  l'elenco dei nomi da vietare — finirebbe nel repository pubblico. La storia di git conserva i nomi
+  vecchi: per decisione del titolare non è stata riscritta.
+- Un cognome molto diffuso (9 genitori, 9 alunni) è usato come nome generico in 16 file preesistenti;
+  il cognome italiano più generico di tutti — oggi 0 e 0 — sta nei due test bonificati qui e, come
+  nome generico, in altri **56** file di test (58 al `git grep`, meno i due) e in **13** file fra
+  `src/` ed `e2e/`.
+- Le quattro occorrenze `muted` residue nel calendario mensa, e il badge «inserito dalla segreteria»
+  che compare anche su una prenotazione disdetta (la condizione guarda solo l'origine).
+- La lettura in blocco delle fatture è troncata da PostgREST a 1000 righe — dichiarato nel codice,
+  oggi irraggiungibile — e su un viewport da 360 px il chip con due numeri può stringere la colonna
+  sinistra.
+- La riga dell'apostrofo in `normalizza.ts` è ridondante: il filtro successivo fa già lo stesso
+  lavoro. Non toccata.
+- Chi in futuro riaprirà i movimenti confermati deve sapere della guardia nuova: il `pagamento_id` va
+  azzerato, oppure lasciato apposta.
+
+**Il metodo**: un ciclo esecutore (Opus 5) + critico (Fable 5.1), un task per esecutore su perimetri
+disgiunti; il critico rilegge il diff, rilancia i test e **rompe apposta il codice** per vedere le
+prove diventare rosse, e quando il verdetto è NON OK il task di correzione va a un esecutore **nuovo**,
+senza tetto di tornate. Tornate effettive: **due** per lo stato vuoto della mensa, per i legami non
+verificabili e per i nomi rimasti negli altri sei file; **una** per gli altri quattro.
 
 ## 🧾 Changelog — L'estratto conto non si era mai potuto caricare, e la fattura non sapeva a chi intestarsi — 2026-09-04 (branch `feat/estratto-conto-xls-intestatario`)
 
@@ -5615,17 +5793,17 @@ l'anteprima TypeScript, tenute insieme dal lock `retta-a-carico-due-strade`.
 
 🔑 **La famiglia si riconosce dal codice fiscale del genitore, mai dal cognome.** Raggruppando per
 CF adulto si formano 37 famiglie a Giugliano, e il legame regge dove il cognome fallirebbe: due
-sorelle in *due domande separate*, e una famiglia con un figlio `MAZZEI` e uno `TESONE` sotto lo
+sorelle in *due domande separate*, e una famiglia con un figlio `VELLUTINI` e uno `NEBBIOLI` sotto lo
 stesso genitore.
 
 🔑 **Il confronto approssimato non decide mai una classe.** Si abbina solo per uguaglianza — esatta,
-a parole invertite (`Njambe Charmant` = `CHARMANT NJAMBE`), o con gli spazi altrove
-(`De Sio Giunto` = `DESIO GIUNTO`). Un refuso vero come `DIECO` per `DIEGO` va alla segreteria coi
+a parole invertite (`Zafferani Leonardo` = `LEONARDO ZAFFERANI`), o con gli spazi altrove
+(`Del Prato Orzatelli` = `DELPRATO ORZATELLI`). Un refuso vero come `EMNA` per `EMMA` va alla segreteria coi
 tre nomi più somiglianti allegati, non indovinato: un bambino nella classe sbagliata non produce
 nessun errore, se ne accorge la maestra a settembre.
 
 🔑 **Un difetto trovato dalla prova a vuoto, non da un test**: i fratelli si cercavano nell'elenco
-con un metro più stretto di quello del bambino, e `DE SIO GIUNTO IDA` risultava «rimando cieco» pur
+con un metro più stretto di quello del bambino, e `DEL PRATO ORZATELLI GIULIA` risultava «rimando cieco» pur
 avendo il fratello in elenco. Corretto: un solo metro, `abbina`.
 
 🔴 **Il file con 338 nomi di minori era nella radice del repo, non tracciato ma nemmeno escluso** —

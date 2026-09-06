@@ -59,11 +59,21 @@ vi.mock('@/lib/logging/logger', () => ({
   logEvento: (...args: unknown[]) => { h.log.push({ fn: 'logEvento', args }) },
 }))
 
-/** Le sole chiamate a `logErrore`, con i campi già estratti. */
+/**
+ * Le sole chiamate a `logErrore`, con i campi già estratti.
+ *
+ * `message` è nel tipo perché le asserzioni lo pretendono, e lo pretendono per la
+ * regola 3 di «Logging obbligatorio»: il corpo dell'errore di un provider esterno
+ * non si butta mai via. `42P10` da solo dice che una chiave non corrisponde a un
+ * indice; `42P10 "there is no unique or exclusion constraint…"` dice QUALE.
+ */
 const erroriLoggati = () =>
   h.log
     .filter((r) => r.fn === 'logErrore')
-    .map((r) => ({ campi: r.args[0] as Record<string, unknown>, errore: r.args[1] as { code?: string } }))
+    .map((r) => ({
+      campi: r.args[0] as Record<string, unknown>,
+      errore: r.args[1] as { code?: string; message?: string },
+    }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({ from }),
@@ -146,7 +156,13 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
       stato: 500,
       evento: 'schema',
     })
-    expect(errore.errore).toMatchObject({ code: '42P10' })
+    // Il CORPO, non solo il codice: passare `{ code: error.code }` al logger
+    // lascerebbe verde tutto il resto di questo file e butterebbe via la frase che
+    // dice quale indice manca — il difetto delle email 403, in un'altra stanza.
+    expect(errore.errore).toMatchObject({
+      code: '42P10',
+      message: expect.stringContaining('unique or exclusion'),
+    })
   })
 
   it('un errore che NON è 42P10 si logga come `db`, e sul ramo delle variazioni', async () => {
@@ -171,7 +187,10 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
       stato: 500,
       evento: 'db',
     })
-    expect(errore.errore).toMatchObject({ code: '23505' })
+    expect(errore.errore).toMatchObject({
+      code: '23505',
+      message: expect.stringContaining('duplicate key value'),
+    })
   })
 
   it('rotazione e variazioni insieme: due tabelle, due chiavi, e menu_config_id nelle righe', async () => {

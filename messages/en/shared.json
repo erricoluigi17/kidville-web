@@ -361,5 +361,7 @@
   "erroreLegameNonSalvato": "The link was not saved: nothing was changed. Please try again shortly.",
   "erroreLegameMezzoTolto": "The change went through only halfway: access to the child’s data has already been removed, but the link in the records is still there. Try unlinking again in a few moments: until then the family list shows an adult who can no longer see the child’s payments and notes.",
   "erroreLegameAdultoForseCreato": "The adult’s record may already have been saved, but the link to the child is not confirmed: reload the page and check the family before trying again, so you do not create a duplicate record and a second credentials email.",
-  "erroreLegameAdultoNonIndicato": "Choose the adult to link: pick one from the archive, or fill in their details."
+  "erroreLegameAdultoNonIndicato": "Choose the adult to link: pick one from the archive, or fill in their details.",
+  "erroreMenuNonSalvato": "The menu could not be saved. Try again; if the error persists, report it.",
+  "erroreGiudizioNonSalvato": "The assessment fragment could not be saved. Try again; if the error persists, report it."
 }

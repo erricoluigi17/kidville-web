@@ -68,7 +68,7 @@
 > | **Presenze** | ✅ Operativo | `/teacher/attendance`, `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*`, `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP) |
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
-> | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
+> | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
@@ -251,6 +251,269 @@ Rientrano quando l'Alto Contrasto coprirà davvero quelle schermate — un lavor
 nove. La baseline copre le due che funzionano (`/parent/pagamenti`, `/teacher`), e il
 crawler continua a sorvegliare quelle: è poco, ma è vero — e il giorno in cui l'Alto
 Contrasto verrà esteso, le altre sette si riaccendono togliendo un `//`.
+
+## 🍽️ Changelog — Il menu della mensa non si salvava in nessuna sede, e nessun test poteva vederlo — 2026-09-06 (branch `fix/menu-mensa-onconflict`)
+
+Il 2026-09-05 la segreteria di Kidville Cesa ha provato **nove volte** a salvare il menu della
+mensa. Nove volte ha ricevuto lo stesso errore, e a schermo lo ha letto in inglese dentro un
+`alert()`: *«there is no unique or exclusion constraint matching the ON CONFLICT
+specification»*.
+
+**Non era un difetto di Cesa.** `ON CONFLICT (colonne)` **non infersce un indice PARZIALE**:
+Postgres pretende un `WHERE` che implichi il predicato dell'indice, e PostgREST non ha modo di
+mandarlo — il parametro è `on_conflict=<colonne>` e basta. I quattro indici che coprivano le
+righe del menu erano **tutti parziali**: `uidx_mensa_rot_legacy` e `uidx_mensa_ovr_legacy`
+(`… WHERE menu_config_id IS NULL`), `uidx_mensa_rot_menu` e `uidx_mensa_ovr_menu`
+(`… WHERE menu_config_id IS NOT NULL`). Erano rotti **tutti e quattro i rami** — rotazione e
+variazioni × menu unico e multi-menu — in ogni sede. Cesa se n'è accorta per un motivo solo:
+è la sede che in quei giorni stava configurando il menu.
+
+**Da quando.** Non da sempre. La *data* si può dire; **l'esecutore no**, e la prima stesura di
+questa voce lo dava per certo. A far cadere
+`DROP CONSTRAINT mensa_menu_rotazione_scuola_id_settimana_giorno_settimana_key` e
+`… mensa_menu_override_scuola_id_data_key` — due vincoli **semplici, e quindi inferibili** — per
+sostituirli con i quattro indici parziali ci sono **due candidati che fanno la stessa identica
+cosa**, riga per riga:
+
+- la migrazione del multi-menu, `supabase/migrations_archive/20260612_mensa_multi_menu.sql`;
+- la route `src/app/api/admin/apply-mensa-multi-menu-migration/route.ts`, che ripete gli stessi
+  due `DROP CONSTRAINT` e le stesse quattro `CREATE UNIQUE INDEX … WHERE menu_config_id IS
+  (NOT) NULL`.
+
+**Quale dei due sia davvero girato in produzione non è recuperabile**: `CREATE INDEX` non lascia
+nel catalogo la firma di chi l'ha eseguito, e la route non scriveva un log che sia sopravvissuto.
+È lo stesso standard applicato più sotto alle 25 righe di Giugliano — *l'autore esatto è
+irrecuperabile, e va detto invece di indovinarlo* — e vale anche qui.
+
+Ciò che resta **misurato** è la data limite: i quattro indici parziali sono già nel dump di
+baseline del **2026-07-04**. Da quel giorno — o da prima — l'upsert non ha più avuto un arbitro,
+e ci sono rimasti fino al 2026-09-06.
+
+### Come lo si è visto
+
+In `app_log`, il 2026-09-05, due righe e non di più — perché `app_log` deduplica per
+`(fingerprint, giorno)` e tiene il conto in `occorrenze`:
+
+| evento | codice | stato | occorrenze | finestra (ora italiana) | sede | ruolo |
+|---|---|---|---|---|---|---|
+| `db` | `42P10` | 400 | **9** | 08:58 → 11:47 | Kidville Cesa | `segreteria` |
+| `route` | — | 500 | **9** | 08:58 → 11:47 | Kidville Cesa | `segreteria` |
+
+Entrambe `sorgente: server`. Sono **nove tentativi**, non nove righe: il battito di `app_log`
+è vita, non contenuto.
+
+### Quanto era largo — misurato il 2026-09-06 alle 14:07 UTC
+
+⚠️ **Qui sotto ci sono due colonne di bambini e non una, e non è pedanteria**: nella prima
+stesura di questa voce c'era il solo «193» per Cesa, e chi rifaceva il conto con un `count(*)`
+nudo ne trovava **194**. Non era un numero che si muoveva: erano **due domande diverse a cui
+nessuno aveva scritto la domanda**. Perciò qui c'è la query, non solo il numero — un numero
+senza la sua query invecchia in silenzio, uno con la query si rifà in due secondi.
+
+```sql
+SELECT s.nome,
+       count(a.id)                                       AS tutti,
+       count(a.id) FILTER (WHERE a.archiviato_il IS NULL) AS non_archiviati,
+       (SELECT count(*) FROM mensa_menu_rotazione r WHERE r.scuola_id = s.id) AS rotazione,
+       (SELECT count(*) FROM mensa_menu_override  o WHERE o.scuola_id = s.id) AS variazioni
+FROM schools s LEFT JOIN alunni a ON a.scuola_id = s.id
+GROUP BY s.nome ORDER BY s.nome;
+```
+
+| sede | bambini (tutti) | di cui **non archiviati** | righe di rotazione | variazioni |
+|---|---|---|---|---|
+| Kidville Cesa | 194 | **193** | **0** | **0** |
+| Kidville Aversa | 105 | **105** | **0** | **0** |
+| Kidville Giugliano | 311 | **305** | 20 | 5 |
+
+**Quella che conta per il danno è la seconda**: un bambino archiviato non apre l'app, quindi non
+resta senza menu. La prima serve a rendere il conto ripetibile — chi la rifà trova **610** in
+totale, non 603, e adesso sa perché.
+
+Le 25 righe di Giugliano non sono un menu vero. Le 20 di rotazione appartengono **tutte** al
+menu «Menu classe TEST (demo App Review)», creato il 2026-08-04 per la revisione degli store;
+le 5 variazioni sono del menu unico e non sono più state toccate dal 2026-07-26. **«menu nido»,
+l'unico menu vero, creato il 2026-07-06, non ha mai avuto una riga**: zero rotazioni e zero
+variazioni, misurate oggi. In tutto, **603 bambini non archiviati nelle tre sedi reali e nessuna
+delle tre con un menu vero in app**.
+
+⚠️ **Quelle 25 righe non vengono dal `PUT`, e il fatto che esistano non contraddice niente.**
+Sono state scritte dopo che i quattro indici parziali esistevano — il baseline che li contiene è
+del 2026-07-04 — quindi la domanda è legittima: se il salvataggio prendeva `42P10` sempre, come
+ci sono arrivate? La risposta è che **`42P10` colpisce solo chi usa quella chiave di conflitto**,
+e gli altri percorsi di scrittura in casa non la usano affatto:
+`scripts/seed-screenshot-play.mjs:307` fa `upsert(menu, { onConflict: 'id' })` — la **chiave
+primaria**, un indice non parziale e quindi perfettamente inferibile — e
+`scripts/seed-e2e.mjs:859` fa un `.insert()` **nudo**, senza `onConflict`. Nessuno dei due può
+prendere `42P10`.
+
+Nessuno dei due, però, spiega *esattamente* quelle 25 righe: al commit `fc7c94a8` (2026-08-03)
+il seed di scena scriveva `menu_config_id: null`, mentre le 20 rotazioni ne portano uno. E
+`mensa_menu_rotazione` e `mensa_menu_override` **non hanno una colonna che registri chi ha
+scritto**: l'autore esatto è **irrecuperabile**, e va detto invece di indovinarlo. Ciò che è
+misurato è che oggi non esiste un menu vero in nessuna sede, e che la strada del salvataggio era
+chiusa per tutti e quattro i rami.
+
+**E il controllo allergeni delle 07:00 confronta contro il vuoto.** Il cron
+`/api/mensa/allergie-check` incrocia gli allergeni del bambino con quelli **del menu del
+giorno**: senza menu non ha nulla da confrontare e scrive `alert: 0`. In `app_log`: **31
+esecuzioni con esito `ok` dal 2026-08-07 al 2026-09-06, e `alert: 0` in tutte e 31 — mai una
+volta diverso da zero.** Quello zero non è una prova di sicurezza alimentare: è l'assenza del
+confronto.
+
+### Perché nessuno se n'era accorto
+
+`PUT /api/mensa/menu` **non aveva nessun test**. Verificato sul commit `f3071f08`
+(2026-09-02): di quella route i test importavano il `GET` (in
+`__tests__/api/veste-di-famiglia-scope-mensa.test.ts`) e il `DELETE` (in
+`__tests__/api/mensa-config-scope-sede.test.ts`), il `PUT` **mai**. E un test coi mock non
+avrebbe potuto trovarlo comunque: **il vincolo vive nel database, e un mock dice sempre di sì**.
+
+### Cosa è cambiato
+
+**Una sola chiave di conflitto per tabella, in una costante condivisa.**
+`src/lib/mensa/chiave-menu.ts` esporta `CHIAVE_ROTAZIONE` e `CHIAVE_OVERRIDE`, sempre complete
+di `menu_config_id`: il ramo a runtime che sceglieva fra due chiavi è sparito — sbagliava
+comunque, in tutti e quattro i casi.
+
+**Quattro indici UNIQUE non parziali, con `NULLS NOT DISTINCT`** (migrazioni `20260906122753`
+e `20260906122807`, applicate in produzione il 2026-09-06, `get_advisors` senza ERROR). Sono
+`uidx_mensa_rot_chiave`, `uidx_mensa_ovr_chiave`, `uidx_registro_orario_chiave` e
+`uq_giudizio_template_chiave`, e sostituiscono **sei indici parziali più un vincolo**. La
+clausola non è un dettaglio: `menu_config_id` è nullable, e per Postgres due `NULL` sono
+diversi — un indice creato senza avrebbe fatto sparire il `42P10` e prodotto **duplicati
+silenziosi** al posto suo. La garanzia per il menu unico non cambia (una riga per sede,
+settimana e giorno): cambia il modo di esprimerla.
+
+**Il fallimento diventa una riga di log e un codice stabile.** Non più la prosa inglese di
+PostgREST dentro un `alert()`: la route logga l'errore con il suo codice e risponde
+`MENU_NON_SALVATO`, e l'interfaccia mostra un messaggio tradotto.
+
+**Un lock nuovo, `onconflict-arbitro`**, che confronta ogni `onConflict` di `src/` con una
+fotografia versionata degli indici reali (212 indici UNIQUE al 2026-09-06,
+`__tests__/fixtures/indici-unici-snapshot.json`, con `sha256` e istante dello scatto). Gira
+offline, quindi in CI: un `onConflict` che punta a un indice parziale, a un indice su
+espressione o a un UNIQUE nullable senza `NULLS NOT DISTINCT` fa cadere la suite prima che lo
+scopra una segretaria. Non è la prima volta che questa categoria si ripresenta: il 2026-09-01
+era toccato all'Armadietto, con lo stesso meccanismo e lo stesso silenzio.
+
+### Due cose trovate strada facendo, che nessuno cercava
+
+**(a) `giudizio_template` aveva lo stesso difetto, dormiente.** Anche i suoi due indici erano
+parziali e anche loro venivano dalla baseline: `uq_giudizio_template_scuola`
+(`… WHERE scuola_id IS NOT NULL`) e `uq_giudizio_template_global` (`… WHERE scuola_id IS
+NULL`). La prima segretaria che avesse salvato un frammento di giudizio **per una sede**
+avrebbe preso lo stesso `42P10`. Non è mai successo per un motivo solo, misurato: la tabella ha
+**9 righe, tutte e 9 con `scuola_id` nullo**. Nessuno aveva ancora provato.
+
+**(b) `unique_registro_orario` era un caso peggiore, ed è quello da capire.** Lì l'indice
+c'era **ed era inferibile**: nessun errore, nessun `42P10`, niente in `app_log`. Ma
+`registro_orario.scuola_id` è nullable e il vincolo non era `NULLS NOT DISTINCT`: per Postgres
+due `NULL` sono diversi, quindi una riga di registro **senza sede** non sarebbe mai stata
+trovata dall'upsert e si sarebbe **duplicata a ogni salvataggio** invece di aggiornarsi.
+Duplicati silenziosi al posto di un errore rumoroso — il primo salvataggio sembra funzionare,
+il secondo raddoppia, e ci si accorge del guasto mesi dopo. Oggi non mordeva (misurate 14 righe,
+**zero senza sede**), ed è esattamente per questo che si è chiuso adesso: un difetto che non
+morde ancora è l'unico che si può correggere senza fretta.
+
+### I sette debiti dichiarati
+
+1. **Il `PUT` non è transazionale.** Scrive rotazione e variazioni in **due istruzioni senza
+   transazione**: se la prima riesce e la seconda no, resta un salvataggio a metà con una
+   risposta 500.
+2. **Il «menu unico» resta un `menu_config_id NULL`.** Il modello pulito — un vero menu
+   «Standard» per sede e `NOT NULL` sulla colonna — è rimandato: tocca dati di produzione e
+   l'interfaccia.
+3. **Il `PUT` non verifica la sede del `menu_config_id` che riceve** (difetto **preesistente**,
+   non introdotto da questo lavoro; rilievo della revisione di qualità del 2026-09-06). Il
+   `DELETE` passa da `assertConfigMensaInScope`, il `PUT` no: la sede delle righe è quella
+   dell'utente (`resolveScuolaScrittura`, e va bene), ma il `menu_config_id` arriva dal client
+   senza che nessuno controlli che appartenga a quella sede. Con l'uuid del menu di un altro
+   plesso in mano, chi lavora nella sede A scrive righe `scuola_id = A` appese a un menu di B.
+   **Non è una fuga di dati** — in lettura quelle righe non le trova nessuno, perché
+   `resolveMenuConfigId` per la sede A non restituirà mai un menu di B. È peggio in un modo più
+   silenzioso: la `DELETE` di `mensa/menu-config` conta le rotazioni collegate **filtrando per
+   la propria sede**, quindi non le vede e lascia cancellare il menu di B; la FK è
+   `ON DELETE SET NULL`, e quelle righe diventano di colpo righe del **menu unico della sede A**
+   — cioè compaiono in tavola. Chiuderlo è un lavoro a sé: il `PUT` deve passare da
+   `assertConfigMensaInScope` sul `menu_config_id`, con un test che lo provi.
+4. **La sincronizzazione offline del diario scrive su una tabella che non esiste** (trovata dal
+   lock nuovo il 2026-09-06). `src/lib/offline/syncEngine.ts:142` fa
+   `upsert(payload, { onConflict: 'id' })` su **`daily_routines`**, che in produzione non c'è —
+   il diario vero è `eventi_diario`. La route `/api/diary` lo sa e lo dichiara dal 2026-08-04
+   (`src/app/api/diary/route.ts:15-25`, degrada in 503 dichiarato); il motore offline no, e
+   inghiotte il `PGRST205` in un `catch { logSync('sync-diario-fallito') }`. ⚠️ **Ma non c'è
+   nessuna perdita di dati in corso, e va detto perché la lettura opposta sarebbe allarmante e
+   falsa**: quel codice è **morto due volte** — `saveLocalDiaryEntry` non ha nessun chiamante,
+   `syncPendingDiaryEntries` ha come unico chiamante proprio quella funzione morta, e `db.diario`
+   viene scritto solo lì dentro; anche chiamandola, la coda sarebbe vuota e si uscirebbe prima
+   dell'upsert. È dichiarato come eccezione nel lock, con la ragione scritta e l'istruzione di
+   toglierla **quando quel codice morto sparirà, non quando la tabella verrà creata**.
+5. **`migrazioni-complete` è cieco nell'unica direzione in cui serve**, ed è la scoperta più
+   scomoda di questo giro. Con le due migrazioni del 2026-09-06 **applicate in produzione e non
+   ancora fotografate**, quel lock era **verde, 11 prove su 11**. Non è rotto: è cieco in un
+   verso solo. Gira offline sulla propria fotografia
+   (`__tests__/fixtures/migrazioni-applicate-snapshot.json`), e un file di migrazione col
+   timestamp **posteriore** all'istante dello scatto è indistinguibile, da lì dentro, da una
+   migrazione **scritta e non ancora applicata** — che è il caso legittimo per cui esiste
+   `IN_CODA`. Il suo commento racconta per esteso il verso opposto (file più **vecchi** della
+   fotografia, l'incidente del 2026-08-04) e ha una prova dedicata; **questo verso non ha nessuna
+   guardia**. Cioè: è verde per costruzione proprio nel momento in cui servirebbe di più, subito
+   dopo un `apply_migration`.
+   ⚠️ **A farlo emergere non è stato lui, ma un altro lock.** `onconflict-arbitro` una guardia di
+   freschezza ce l'ha (`posterioriCheContengono`) ed è diventato rosso; senza quel rosso nessuno
+   avrebbe guardato la fotografia delle migrazioni. E quella guardia copre solo le migrazioni che
+   nominano `unique` o `primary key`: una migrazione che non ne parla oggi **non la vede nessuno
+   dei due**.
+   Il rimedio è della stessa forma già in casa: una guardia di freschezza su
+   `migrazioni-complete` che confronti l'istante dello scatto (`generato_alle`, che la fotografia
+   già porta) con i file di `supabase/migrations/` posteriori, e pretenda che siano dichiarati in
+   `IN_CODA` con la loro ragione invece di essere dedotti tali. Non è stato fatto qui perché è
+   fuori dallo scopo della correzione della mensa — quindi è scritto, invece che fatto.
+   ⚠️ Il lock **non** è una decorazione e non va indebolito: verificato il 2026-09-06 che morda
+   ancora, mettendo una migrazione finta nella fotografia e vedendolo cadere su *«ogni migrazione
+   applicata in produzione ha il suo file nel repo»*.
+6. **Nel builder del menu il pulsante può non fare niente, in silenzio** (difetto
+   **preesistente**, non introdotto da questo lavoro; rilievo della revisione finale del
+   2026-09-06). In `src/components/features/admin/mensa/MenuBuilder.tsx` ci sono **cinque**
+   `const j = await res.json()` senza `try` — righe 103, 146, 181, 203, 210, cioè il caricamento,
+   il salvataggio delle sezioni, quello della rotazione, l'aggiunta di una variazione e la sua
+   rimozione. Finché la risposta è JSON va tutto bene; quando non lo è — un 502 di Vercel, un
+   redirect del middleware, un gateway timeout, una pagina d'errore HTML — `json()` **lancia**
+   dentro un handler `async` che nessuno avvolge (quello di riga 103 sta in un `try`/`finally`
+   **senza `catch`**, che non trattiene niente). Non compare nessun avviso, non cambia nessuno
+   stato: **il pulsante semplicemente non fa niente**, e la segretaria non ha modo di sapere se
+   ha salvato. È lo stesso silenzio che questo lavoro ha appena tolto dal database, un piano più
+   in su. ⚠️ `messaggioErrore` di `@/lib/ui/esito-fetch` quel `try/catch` ce l'ha già, ma **qui
+   non è utilizzabile**: il corpo serve prima per `j.success`, e uno stream si consuma una volta
+   sola (è il motivo per cui questo file importa `messaggioDaCorpo`). Il rimedio è un
+   `try/catch` attorno alle cinque chiamate, con un messaggio all'utente nel ramo d'errore.
+7. **Il `PUT` risponde «salvato» anche quando non ha scritto niente** (difetto **preesistente**;
+   stessa revisione). In `src/app/api/mensa/menu/route.ts` le due scritture sono protette da
+   `if (body.rotazione && body.rotazione.length > 0)` e `if (body.override && body.override.length
+   > 0)`; se **entrambi** gli elenchi arrivano vuoti nessuno dei due rami parte e la route esce
+   comunque con `return NextResponse.json({ success: true })`. L'interfaccia legge `j.success` e
+   mostra la spunta verde: **un «salvato» che non ha salvato**.
+   ⚠️ **E si può raggiungere oggi**, verificato leggendo il codice il 2026-09-06: `salvaRotazione`
+   costruisce `rows` solo dai giorni in cui c'è qualcosa (`if (rot[key] || ing[key] || alg[key])`),
+   il pulsante «Salva» non è mai `disabled`, e su una settimana ancora vuota l'elenco esce `[]`.
+   Chi apre una settimana nuova, non compila nulla e preme Salva vede la spunta verde. Non è un
+   percorso in cui si perdano dati — non c'era niente da scrivere — ma è la spunta verde che
+   insegna a fidarsi, ed è quella che poi non si distingue da un salvataggio vero fallito.
+   Il rimedio è distinguere i due casi: `400` (o un esito dichiarato «niente da salvare») quando
+   il corpo non porta né rotazione né variazioni, invece di un `success` indistinguibile.
+
+### Gate
+
+`eslint` 0 · `tsc` 0 · `npm run build` ok · `vitest` **14.834 verdi su 1141 file** — rieseguito
+per intero il 2026-09-06 **dopo aver fuso `origin/main`** nel ramo, che porta prove nuove mai
+girate insieme alle nostre; prima della fusione erano 14.749 su 1139 file. Le due
+fotografie versionate (indici e migrazioni) sono state rigenerate dal catalogo di produzione in
+sola lettura, e la trascrizione è stata verificata **contro il database e non contro sé stessa**:
+`md5` di una forma canonica calcolato dal DB e in locale, identico su entrambi i lati. Il lock si
+è visto **cadere** prima di fidarsene — tolto `NULLS NOT DISTINCT` da una voce della fotografia
+(con lo `sha256` ricalcolato, perché a cadere fosse la prova giusta) e cambiata una colonna in
+`CHIAVE_OVERRIDE` — e ogni prova è stata annullata con la modifica inversa.
 
 ## 👪 Changelog — Un bambino senza classe restava visibile e non funzionante, e i legami di famiglia si potevano solo guardare — 2026-09-05/06 (branch `feat/famiglie-foto-e-candidature`)
 

@@ -25,6 +25,17 @@ export const GET = withRoute('admin/setup-registro:GET', async (request: Request
         const steps: string[] = [];
         const errors: string[] = [];
 
+        // ⚠️ QUESTO SQL È STORIA, NON LO SCHEMA DI OGGI (2026-09-06), E SBAGLIA DUE VOLTE.
+        // Il `CONSTRAINT unique_registro_orario UNIQUE (classe_sezione, data, ora_lezione)` scritto
+        // qui sotto NON ESISTE PIÙ — e non esisteva già più in questa forma: la migrazione del
+        // 2026-07-30 gli aggiunse `scuola_id`, senza il quale tre sedi con classi omonime si
+        // sovrascrivono il registro a vicenda; quella del 2026-09-06 lo ha poi sostituito del tutto
+        // con l'indice `uidx_registro_orario_chiave (scuola_id, classe_sezione, data, ora_lezione)`,
+        // che porta in più `NULLS NOT DISTINCT`: `scuola_id` è nullable, e senza quella clausola una
+        // riga senza sede non ritroverebbe mai sé stessa e ogni salvataggio ne inserirebbe una nuova
+        // invece di aggiornarla. Vedi `20260730141828_registro_orario_unique_per_sede.sql` e
+        // `20260906122753_chiave_conflitto_unica_mensa_e_registro.sql`. Questa route risponde 404
+        // fuori dai test (`sealDangerous`): rieseguirla ricreerebbe un vincolo che non vogliamo più.
         // 1. Crea tabella registro_orario
         const createRegistro = await supabase.rpc('exec_sql', {
             sql: `

@@ -1753,6 +1753,21 @@ export const CODICI_ERRORE = {
      * manca, non di aspettare.
      */
     LEGAME_ADULTO_NON_INDICATO: 'erroreLegameAdultoNonIndicato',
+    /**
+     * 500 — il menu della mensa non è stato scritto. Copre sia il guasto di scrittura sia
+     * `42P10` (l'indice che la route usa come arbitro non c'è: migrazione mancante). Il
+     * motivo vero resta nel log: fino al 2026-09-06 usciva a schermo, in inglese.
+     */
+    MENU_NON_SALVATO: 'erroreMenuNonSalvato',
+    /**
+     * 500 — il frammento di giudizio della Primaria non è stato scritto. Stessa forma e
+     * stessa ragione di `MENU_NON_SALVATO`, su una strada dove il difetto non è ancora
+     * morso: `giudizio_template` ha nove righe, tutte globali, e nessuno ha ancora
+     * salvato un frammento per una sede — la prima che ci prova prende il `42P10` della
+     * mensa. Il codice NON è condiviso con il menu perché il rimedio è lo stesso ma la
+     * cosa non salvata no: a schermo deve restare scritto CHE COSA non è stato salvato.
+     */
+    GIUDIZIO_NON_SALVATO: 'erroreGiudizioNonSalvato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

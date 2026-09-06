@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
   "generato_il": "2026-09-06",
-  "generato_alle": "2026-09-06T01:32:50Z",
-  "sha256": "9bc51cf713fd04dc42344bd7f66d0251ea4c292333863073643c5b77b8f182d4",
+  "generato_alle": "2026-09-06T13:52:04Z",
+  "sha256": "427498759cad0c1b24e18d88dac4f82c19ebcc8589b562063ffefa5320e6e97a",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -591,6 +591,14 @@
     {
       "version": "20260906013119",
       "name": "candidature_etichetta_selezione"
+    },
+    {
+      "version": "20260906122753",
+      "name": "chiave_conflitto_unica_mensa_e_registro"
+    },
+    {
+      "version": "20260906122807",
+      "name": "giudizio_template_chiave_conflitto_unica"
     }
   ]
 }

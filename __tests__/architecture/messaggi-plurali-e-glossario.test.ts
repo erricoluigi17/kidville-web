@@ -10,13 +10,42 @@ import { createTranslator } from 'use-intl'
  * che sono tre difetti diversi con la stessa firma: **non fanno rumore da nessuna
  * parte**. Il gate era verde con 3424 test mentre l'interfaccia scriveva «1 alunni».
  *
- *  1. PLURALI. Dieci contatori erano scritti come concatenazioni già formate
+ *  1. PLURALI. Dieci contatori — i dieci che il collaudo trovò ALLORA, non quanti
+ *     ne sorveglia oggi l'elenco `CONTATORI`, che è cresciuto — erano scritti come
+ *     concatenazioni già formate
  *     (`"{n} alunni"`): con un solo elemento l'app scriveva «1 alunni» in italiano
  *     e «1 students» in inglese. Nessuno strumento poteva vederlo, perché `{n}` è
- *     sintatticamente identico a un segnaposto qualunque — e il mock di next-intl
- *     in `test/setup.ts` restituisce la stringa GREZZA, quindi nessun unit test
- *     legge mai il testo che leggerà l'utente. Qui il testo si rende davvero, con
- *     il formattatore ICU vero (`use-intl`, la libreria che sta sotto next-intl).
+ *     sintatticamente identico a un segnaposto qualunque. Qui il testo si rende
+ *     davvero, in ENTRAMBE le lingue, con il formattatore ICU vero (`use-intl`, la
+ *     libreria che sta sotto next-intl).
+ *
+ *     ⚠️ RIMISURATO IL 2026-09-06, e questa riga diceva il falso. Fino a oggi qui
+ *     c'era scritto che «il mock di next-intl in test/setup.ts restituisce la
+ *     stringa GREZZA»: dal 2026-08-20 NON è più vero — quel mock (test/setup.ts,
+ *     ~181-193) formatta con `IntlMessageFormat`, quindi un plurale ITALIANO rotto
+ *     oggi un unit test lo vedrebbe. **Ma solo quando il punto di chiamata passa
+ *     dei valori**, ed è il mock stesso a dichiararlo:
+ *     `valori === undefined ? resolve(ns, key) : formatta(…)`. Un `t('chiave')`
+ *     senza secondo argomento resta byte per byte la stringa del catalogo, ICU
+ *     compreso — e quelle chiavi restano scoperte **anche in italiano**. Vale per
+ *     `reconFatturaEmessa`, che è chiamata coi params e quindi un unit test la
+ *     renderebbe davvero; non vale in generale, e scriverlo in generale sarebbe
+ *     stato il secondo motivo falso in questo stesso paragrafo.
+ *     Ciò che il mock non fa MAI è cambiare lingua:
+ *     carica il solo `messages/it` (test/setup.ts:146) e usa un locale FISSO `'it'`
+ *     (test/setup.ts:183). Il motivo vero per cui questo lock serve è quello, e va
+ *     scritto giusto: **nessun unit test rende mai queste stringhe in inglese**.
+ *     Misurato: i due test che aprono `messages/en/adminContabilita.json` —
+ *     `__tests__/pagamenti/riconciliazione-ui.test.ts` («nessuna chiave orfana:
+ *     tutte stanno in it e in en») e `QuickAcquistoModal-a11y` — ne controllano la
+ *     PRESENZA delle chiavi, non il testo reso; l'unico test che costruisce un
+ *     traduttore inglese (`StaffDetailPanel-anagrafica`) non tocca questo namespace.
+ *     Citati per NOME e non per riga: il numero di riga del primo si è spostato
+ *     (542 → 545) nei venti minuti in cui scrivevo questo commento, perché un'altra
+ *     sessione stava lavorando sullo stesso albero.
+ *     Un motivo scritto falso è il modo in cui un lock si sfila da solo: chi legge
+ *     «tanto l'ICU nei test non si formatta», scopre che si formatta, e ne conclude
+ *     che il lock è un doppione da togliere.
  *
  *  2. GLOSSARIO. Lo stesso tipo di avviso si chiamava «Acknowledgement» nell'elenco
  *     e «Read receipt» nella modale che lo crea: due nomi per la stessa cosa, nella
@@ -117,9 +146,17 @@ function rende(
 }
 
 /**
- * I dieci contatori di F3. `extra` porta le variabili non numeriche che il
- * messaggio richiede: senza, il formattatore lancerebbe e il rosso parlerebbe di
- * un difetto che non c'è.
+ * I contatori di F3. `extra` porta le variabili non numeriche che il messaggio
+ * richiede: senza, il formattatore lancerebbe e il rosso parlerebbe di un difetto
+ * che non c'è.
+ *
+ * ⚠️ SENZA UN NUMERO NEL NOME, E NON per pigrizia: fino al 2026-09-06 qui c'era
+ * scritto «i dieci contatori» e l'elenco ne aveva QUINDICI — la deriva era già
+ * iniziata a tredici. In un file che spende quaranta righe a spiegare che un
+ * motivo scritto falso è il modo in cui un lock si sfila da solo, «dieci» su
+ * quindici è la stessa specie di bugia, e sarebbe tornata falsa alla prossima
+ * voce aggiunta. Il numero si conta guardando l'array: scriverlo qui accanto
+ * significa soltanto prometterne la manutenzione a qualcuno che non passerà.
  */
 const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: Record<string, unknown> }> = [
     { ns: 'adminStudents', chiave: 'contAlunni', variabile: 'n' },
@@ -139,6 +176,19 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     { ns: 'teacherPrimaria', chiave: 'scrutinioImportateErrori', variabile: 'count' },
     { ns: 'teacherPrimaria', chiave: 'scrutinioPagelleGenerate', variabile: 'totale', extra: { generate: 1 } },
     { ns: 'adminPrimaria', chiave: 'orarioAttivo', variabile: 'giorni', extra: { modello: 40 } },
+    // ── 2026-09-06 · IL PLURALE DEL CHIP DI FATTURAZIONE ────────────────────
+    // Il RICONOSCITORE DI FORMA qui sotto non può trovarle, e non per una svista:
+    // salta PER COSTRUZIONE ogni stringa che apre un blocco `plural`
+    // (`APRE_BLOCCO_ICU`), che è esattamente la forma di queste due. Un contatore
+    // esce dal perimetro automatico nel momento in cui viene portato a ICU — e da
+    // lì in avanti nessuno verifica più che le sue due clausole dicano davvero
+    // cose diverse. Il perimetro a mano resta l'unico posto in cui riscriverle
+    // tutte e due uguali fa rumore.
+    // `extra.numeri` serve perché senza quel segnaposto il formattatore lancia; il
+    // valore è scelto SENZA un «2» isolato, che il confronto d'invarianza qui sotto
+    // sostituisce con un «1» (`due.replace(/\b2\b/, '1')`).
+    { ns: 'adminContabilita', chiave: 'reconFatturaEmessa', variabile: 'n', extra: { numeri: 'FPR 1/26' } },
+    { ns: 'adminContabilita', chiave: 'reconFatturazioneTroncata', variabile: 'n' },
 ]
 
 /**
@@ -224,7 +274,7 @@ function nomiPropriNegliEsempi(testo: string): string[] {
 }
 
 describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () => {
-    it('i dieci contatori rendono un SINGOLARE diverso dal plurale, in italiano e in inglese', () => {
+    it('i contatori rendono un SINGOLARE diverso dal plurale, in italiano e in inglese', () => {
         const guasti: string[] = []
         const eccezioniSmentite: string[] = []
         for (const lingua of LINGUE) {
@@ -250,8 +300,11 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         expect(
             guasti,
             `Contatori senza forma singolare:\n  ${guasti.join('\n  ')}\n` +
-            `Con un solo elemento l'interfaccia scrive «1 alunni». Il mock di next-intl in ` +
-            `test/setup.ts NON interpreta ICU: nessun unit test può accorgersene, solo questo lock.`,
+            `Con un solo elemento l'interfaccia scrive «1 alunni». Dal 2026-08-20 il mock di ` +
+            `next-intl (test/setup.ts) l'ICU lo interpreta davvero, ma solo quando il punto di ` +
+            `chiamata passa dei valori (t('chiave') senza secondo argomento resta grezza) e su ` +
+            `UNA LINGUA SOLA: carica il solo messages/it e formatta con locale fisso 'it'. Un ` +
+            `plurale INGLESE rotto non lo vede nessun unit test — solo questo lock.`,
         ).toEqual([])
         expect(
             eccezioniSmentite,

@@ -103,7 +103,7 @@
   "spFiscaleErrEmail": "Scrivi un indirizzo email valido (o lascia il campo vuoto): finisce sulla fattura, nei Contatti di chi emette.",
   "spFiscaleIban": "IBAN per i bonifici delle famiglie",
   "spFiscaleIbanPlaceholder": "IT00A0000000000000000000000",
-  "spFiscaleIbanHint": "Compare nel riquadro «Dati per il bonifico» dei promemoria e dei solleciti di pagamento. Se lo lasci vuoto, quelle email mostrano solo importo, causale e intestatario — come fanno oggi.",
+  "spFiscaleIbanHint": "Compare nel riquadro «Dati per il bonifico» dei promemoria e dei solleciti di pagamento, e nella pagina Pagamenti del genitore, nel riquadro «Come pagare». Se lo lasci vuoto, quelle email mostrano solo importo, causale e intestatario — come fanno oggi, e la pagina del genitore rimanda alla segreteria.",
   "spFiscaleErrIban": "Le cifre di controllo di questo IBAN non tornano: rileggilo. Finisce in un promemoria di pagamento, e chi lo riceve lo copia nell’home banking.",
   "spFiscaleCorreggi": "Correggi i campi segnalati: così com’è, lo SDI scarterebbe la fattura.",
   "spBolloAttiva": "Applica l’imposta di bollo di 2 € sulle fatture esenti IVA sopra i 77,47 €",

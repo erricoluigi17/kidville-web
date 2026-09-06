@@ -9,12 +9,15 @@ import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { isoToIt } from '@/lib/format/data';
 import { formatEuro } from '@/lib/format/valuta';
 import { PushOptIn } from './PushOptIn';
-import { CausaleBonifico, type VoceCausale } from './CausaleBonifico';
+import { type VoceCausale } from './CausaleBonifico';
+import { ComePagare, type SedeBonifico } from './ComePagare';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 interface Pagamento {
     id: string;
     alunno_id?: string;
+    /** Sede della voce: decide su QUALE conto va pagata (card «Come pagare»). */
+    scuola_id?: string;
     descrizione: string;
     importo: number;
     importo_pagato: number;
@@ -59,6 +62,10 @@ const STATI: Record<string, { labelKey: string; cls: string }> = {
 export function StoricoPagamenti({ userId }: Props) {
     const t = useTranslations('pagamenti');
     const [pagamenti, setPagamenti] = useState<Pagamento[]>([]);
+    // Coordinate del bonifico per sede (`GET /api/pagamenti` → `sedi`). Ripiego a
+    // elenco vuoto: un backend più vecchio, o il DB della CI senza `fiscale_config`,
+    // non manda il campo — e la card deve restare, rimandando alla segreteria.
+    const [sedi, setSedi] = useState<SedeBonifico[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const idsRef = useRef<string>('');
@@ -69,6 +76,7 @@ export function StoricoPagamenti({ userId }: Props) {
             const j = res ? await res.json().catch(() => null) : null;
             if (j?.success) {
                 setPagamenti(j.data);
+                setSedi(Array.isArray(j.sedi) ? (j.sedi as SedeBonifico[]) : []);
                 idsRef.current = j.data.map((p: Pagamento) => p.id).join(',');
                 setError(null);
             } else if (j) {
@@ -120,20 +128,37 @@ export function StoricoPagamenti({ userId }: Props) {
     }
     const mostraTotaleFamiglia = perFiglio.size >= 2;
 
-    // Causale consigliata per il bonifico: UNA per voce ancora aperta. La stringa è
-    // COMPOSTA DAL SERVER col modello per-categoria (la segreteria può personalizzarla);
-    // qui la si mostra soltanto. Le voci senza causale (server non l'ha prodotta) si
-    // scartano. Zero nuove fetch: usa i dati già in memoria.
+    // Le voci APERTE che alimentano «Come pagare»: una per pagamento con residuo > 0.
+    // Zero nuove fetch, usa i dati già in memoria.
+    //
+    // ⚠️ IL FILTRO SULLA CAUSALE NON C'È PIÙ (rilievo 1 del collaudo, 2026-09-06).
+    // C'era `.filter((v) => v.causale.trim() !== '')`, e quando il server non produceva
+    // nessuna causale — modello per-categoria non configurato, o righe più vecchie del
+    // motore che la compone — l'elenco restava VUOTO e `ComePagare` non si rendeva
+    // affatto: sparivano l'IBAN, l'intestatario e i contanti, cioè le tre cose per cui
+    // la card è nata, mentre lo spec del 2026-09-05 promette a parole sue che la card
+    // «non sparisce mai». Il filtro guardava il dato sbagliato: quello che decide se
+    // c'è qualcosa da pagare è il RESIDUO, non la causale suggerita.
+    // La voce senza causale arriva con la stringa vuota, e `CausaleBonifico` mette al
+    // suo posto la riga che dice al genitore cosa scrivere a mano.
+    //
+    // `importo` è il RESIDUO (`residuoRiga`, la stessa fonte del totale da saldare in
+    // cima), non l'importo pieno: per una voce parziale i due numeri divergono, ed è
+    // quello residuo la cifra che il genitore digita nel bonifico. Nell'elenco qui
+    // sotto resta l'importo pieno con «(resta …)» accanto — sono due letture diverse
+    // dello stesso pagamento, e la card è quella che dice «paga questo».
     const vociCausale: VoceCausale[] = pagamenti
         .filter((p) => residuoRiga(p) > 0)
         .map((p) => ({
             id: p.id,
+            scuola_id: p.scuola_id ?? '',
             causale: p.causale_suggerita ?? '',
+            descrizione: p.descrizione,
+            importo: residuoRiga(p),
             nome: p.alunni?.nome ?? '',
             cognome: p.alunni?.cognome ?? '',
             hasCf: !!p.alunni?.codice_fiscale,
-        }))
-        .filter((v) => v.causale.trim() !== '');
+        }));
 
     return (
         <div className="space-y-5">
@@ -176,9 +201,18 @@ export function StoricoPagamenti({ userId }: Props) {
                 </div>
             )}
 
-            {!loading && !error && vociCausale.length > 0 && (
-                <CausaleBonifico voci={vociCausale} />
-            )}
+            {/* «Come pagare»: bonifico (intestatario + IBAN della propria sede, con
+                le causali dentro) o contanti. `ComePagare` rende `null` da solo
+                quando non c'è nessuna voce aperta — e QUELLA è l'unica condizione:
+                dal 2026-09-06 la card segue il residuo, non la causale suggerita.
+
+                La card porta la stessa pelle delle sorelle di questa pagina —
+                `rounded-card border border-kidville-line`, fondo bianco, `p-4` e
+                NESSUNA ombra: misurato sui pixel, «Totale famiglia» qui sopra e le
+                card dell'elenco qui sotto passano di netto dal crema del fondo al
+                filetto, senza sfumatura. Un'elevazione in più su una sola card la
+                farebbe sembrare incollata invece che nata qui. */}
+            {!loading && !error && <ComePagare sedi={sedi} voci={vociCausale} />}
 
             <div className="flex justify-end"><PushOptIn userId={userId} /></div>
 

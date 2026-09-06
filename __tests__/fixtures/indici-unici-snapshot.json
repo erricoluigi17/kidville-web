@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
   "generato_il": "2026-09-06",
-  "generato_alle": "2026-09-06T11:47:50Z",
-  "sha256": "ffee99d90368bcc6a9afd4ae38a882d1a109f83c6ed6fbfb57fe5febbfe77d20",
+  "generato_alle": "2026-09-06T13:49:29Z",
+  "sha256": "69d2acb6d89fe4806c6c97505039d1568855c56b66dba7c24445473ef3c18cd5",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -819,22 +819,10 @@
     },
     {
       "tabella": "giudizio_template",
-      "indice": "uq_giudizio_template_global",
-      "parziale": true,
+      "indice": "uq_giudizio_template_chiave",
+      "parziale": false,
       "con_espressioni": false,
-      "nulls_not_distinct": false,
-      "ha_colonna_nullable": false,
-      "colonne": [
-        "dimensione",
-        "valore"
-      ]
-    },
-    {
-      "tabella": "giudizio_template",
-      "indice": "uq_giudizio_template_scuola",
-      "parziale": true,
-      "con_espressioni": false,
-      "nulls_not_distinct": false,
+      "nulls_not_distinct": true,
       "ha_colonna_nullable": true,
       "colonne": [
         "dimensione",
@@ -1162,22 +1150,10 @@
     },
     {
       "tabella": "mensa_menu_override",
-      "indice": "uidx_mensa_ovr_legacy",
-      "parziale": true,
+      "indice": "uidx_mensa_ovr_chiave",
+      "parziale": false,
       "con_espressioni": false,
-      "nulls_not_distinct": false,
-      "ha_colonna_nullable": true,
-      "colonne": [
-        "data",
-        "scuola_id"
-      ]
-    },
-    {
-      "tabella": "mensa_menu_override",
-      "indice": "uidx_mensa_ovr_menu",
-      "parziale": true,
-      "con_espressioni": false,
-      "nulls_not_distinct": false,
+      "nulls_not_distinct": true,
       "ha_colonna_nullable": true,
       "colonne": [
         "data",
@@ -1198,23 +1174,10 @@
     },
     {
       "tabella": "mensa_menu_rotazione",
-      "indice": "uidx_mensa_rot_legacy",
-      "parziale": true,
+      "indice": "uidx_mensa_rot_chiave",
+      "parziale": false,
       "con_espressioni": false,
-      "nulls_not_distinct": false,
-      "ha_colonna_nullable": true,
-      "colonne": [
-        "giorno_settimana",
-        "scuola_id",
-        "settimana"
-      ]
-    },
-    {
-      "tabella": "mensa_menu_rotazione",
-      "indice": "uidx_mensa_rot_menu",
-      "parziale": true,
-      "con_espressioni": false,
-      "nulls_not_distinct": false,
+      "nulls_not_distinct": true,
       "ha_colonna_nullable": true,
       "colonne": [
         "giorno_settimana",
@@ -1864,10 +1827,10 @@
     },
     {
       "tabella": "registro_orario",
-      "indice": "unique_registro_orario",
+      "indice": "uidx_registro_orario_chiave",
       "parziale": false,
       "con_espressioni": false,
-      "nulls_not_distinct": false,
+      "nulls_not_distinct": true,
       "ha_colonna_nullable": true,
       "colonne": [
         "classe_sezione",

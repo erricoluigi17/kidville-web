@@ -553,7 +553,20 @@ function intestazioniSidebar(hc = false): HTMLElement[] {
 describe('S19 §2 · sidebar admin — l\'Alto Contrasto arriva anche alle intestazioni', () => {
   it('CONTROLLO POSITIVO: `muted` su bianco è 3,80:1, e senza la regola HC resta identico', () => {
     expect(contrasto(T.muted, '#FFFFFF')).toBe(3.8)
-    const senzaFix = REGOLE.filter((r) => !/\.kv-admin-nav \.text-kidville-(muted|sub|ink)/.test(r.sel))
+    // ⚠️ 2026-09-06 — DA TOGLIERE SONO DUE REGOLE, NON PIÙ UNA.
+    // Fra `muted` e la carta bianca adesso ci stanno due cose: la regola
+    // per-superficie di `.kv-admin-nav` (che questo controllo è nato per
+    // provare) e la RETE GENERICA `[data-contrast="high"] .text-kidville-muted`
+    // aggiunta al blocco «gli inchiostri di stato» di `globals.css` dopo che il
+    // crawler di contrasto ha misurato le stesse 3,80:1 su `/parent/pagamenti`.
+    // Togliendo solo la prima il difetto NON torna — e un controllo positivo che
+    // non riesce più a vedere il difetto non sta certificando niente.
+    const senzaFix = REGOLE.filter(
+      (r) =>
+        !/\.kv-admin-nav \.text-kidville-(muted|sub|ink)/.test(r.sel) &&
+        r.sel !== '[data-contrast="high"] .text-kidville-muted',
+    )
+    expect(senzaFix.length, 'il filtro toglie entrambe').toBeLessThan(REGOLE.length - 1)
     const el = monta(
       '<aside class="bg-kidville-white"><nav class="kv-admin-nav"><p id="sonda" class="text-kidville-muted">ANAGRAFICA</p></nav></aside>',
       true,
@@ -676,8 +689,20 @@ const rendi = (fabbrica: () => React.ReactElement, hc: boolean) => montaReact(fa
 
 describe('S19 §3 · pagine pubbliche — l\'Alto Contrasto esiste anche prima del login', () => {
   it('CONTROLLO POSITIVO: senza le regole `.kv-public` la pagina NON cambia di un pixel', () => {
-    const senzaFix = REGOLE.filter((r) => !r.sel.includes('.kv-public'))
+    // ⚠️ 2026-09-06 — anche qui le regole da togliere sono DUE famiglie, non una.
+    // Oltre a `.kv-public` esiste ora la RETE GENERICA degli inchiostri di stato
+    // (`[data-contrast="high"] .text-kidville-{muted,error,success,info}`, blocco
+    // nuovo di `globals.css`): con quella in piedi, spegnere `.kv-public` non
+    // riporta più il difetto, e questo controllo diventerebbe una guardia vacua.
+    // Che le due si sovrappongano è VOLUTO — `.kv-public` è (0,3,0) e vince
+    // comunque — ma il controllo deve poter vedere la pagina NUDA.
+    const RETE_GENERICA = /^\[data-contrast="high"\] \.text-kidville-(muted|error|success|info)$/
+    const senzaFix = REGOLE.filter((r) => !r.sel.includes('.kv-public') && !RETE_GENERICA.test(r.sel))
     expect(senzaFix.length, 'il filtro toglie qualcosa').toBeLessThan(REGOLE.length)
+    expect(
+      REGOLE.filter((r) => RETE_GENERICA.test(r.sel)).length,
+      'la rete generica non c’è più: questo filtro sta togliendo il nulla',
+    ).toBe(4)
     const html = GUSCIO_LEGALE('<p id="sonda" class="text-kidville-muted">Versione: 1</p>')
     const misuraSenza = (hc: boolean) => {
       const el = monta(html, hc)

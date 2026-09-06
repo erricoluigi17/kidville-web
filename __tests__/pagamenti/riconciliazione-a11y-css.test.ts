@@ -360,3 +360,74 @@ describe('globals.css — il chip «Scartata» in Alto Contrasto', () => {
     expect(css).not.toContain('[data-contrast="high"] .kv-recon-chip--attesa');
   });
 });
+
+/**
+ * ─── LA ✕ «CHIUDI IL MOVIMENTO» SPARIVA SOTTO IL DITO (2026-09-06) ───────────
+ *
+ * RILIEVO (b) del collaudo, MISURATO: in Alto Contrasto il glifo della ✕ in
+ * hover valeva **1,12:1**. In luce normale lo stesso hover vale 10,48:1.
+ *
+ * La causa non è un colore sbagliato ma due regole che non si parlano. Il
+ * bottone è `text-kidville-sub … hover:bg-kidville-neutral-soft
+ * hover:text-kidville-ink`:
+ *   · a riposo, sulla card nera del popup, il glifo lo porta a BIANCO
+ *     `[data-contrast="high"] .kv-recon-dialog .text-kidville-sub:not(.kv-recon-chip)`
+ *     — specificità (0,4,0);
+ *   · in hover, `hover:text-kidville-ink` vorrebbe scurirlo, ma è una utility
+ *     (0,2,0) e PERDE, mentre `hover:bg-kidville-neutral-soft` — che nessuno
+ *     contende — accende il fondo #F0F2F1, hex inlinato da `@theme inline` che
+ *     in Alto Contrasto non si ribalta.
+ * Risultato: glifo bianco su carta quasi bianca. Il comando c'è, risponde, e
+ * non si vede — proprio nel momento in cui l'utente ci sta sopra.
+ *
+ * Il rimedio è dichiarare la COPPIA, come fa il resto del blocco HC: in hover la
+ * ✕ diventa carta bianca con glifo nero, 21:1 — la stessa grammatica di
+ * `.kv-recon-chip`. NON gialla: dentro questo popup il giallo è riservato a ciò
+ * che si può premere davvero (il CTA della fattura), e il lock qui sopra lo
+ * pretende.
+ */
+describe('globals.css — la ✕ del popup risponde al mouse anche in Alto Contrasto', () => {
+  const SEL = '[data-contrast="high"] .kv-recon-dialog .hover\\:bg-kidville-neutral-soft:hover';
+
+  it('CONTROLLO POSITIVO: è la coppia di oggi a essere illeggibile (1,12:1)', () => {
+    // Bianco su `neutral-soft`: se questo numero cambiasse, tutto il resto di
+    // questo blocco starebbe difendendo un difetto che non esiste più.
+    expect(css).toContain('--color-kidville-neutral-soft: #F0F2F1');
+    const l = (h: string) => {
+      const c = [0, 2, 4].map((i) => parseInt(h.slice(1 + i, 3 + i), 16) / 255)
+        .map((s) => (s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const cr = (a: string, b: string) => {
+      const [x, y] = [l(a), l(b)].sort((p, q) => q - p);
+      return Math.round(((x + 0.05) / (y + 0.05)) * 100) / 100;
+    };
+    expect(cr('#FFFFFF', '#F0F2F1')).toBe(1.12);
+    expect(cr('#000000', '#FFFFFF')).toBe(21);
+  });
+
+  it('in hover la ✕ si ribalta: carta bianca, glifo nero (21:1)', () => {
+    const i = css.indexOf(SEL);
+    expect(i, `manca la regola \`${SEL}\``).toBeGreaterThan(-1);
+    const b = css.slice(i, css.indexOf('}', i));
+    expect(b).toMatch(/background:\s*#(?:FFFFFF|FFF)\b/i);
+    expect(b).toMatch(/color:\s*#(?:000000|000)\b/i);
+  });
+
+  it('…e sta DOPO la regola che gli aveva imposto il bianco, o non vincerebbe', () => {
+    // Stessa specificità (0,4,0) di
+    // `.kv-recon-dialog .text-kidville-sub:not(.kv-recon-chip)`: a parità vince
+    // l'ultima scritta, e questa deve essere l'ultima.
+    expect(css.indexOf(SEL)).toBeGreaterThan(
+      css.indexOf('[data-contrast="high"] .kv-recon-dialog .text-kidville-sub:not(.kv-recon-chip)'),
+    );
+  });
+
+  it('non usa il giallo: dentro il popup è il colore di ciò che si preme', () => {
+    const i = css.indexOf(SEL);
+    // Senza questa riga il test passerebbe A VUOTO se la regola sparisse:
+    // `slice(-1, -1)` è la stringa vuota, e nella stringa vuota il giallo non c'è.
+    expect(i, `manca la regola \`${SEL}\``).toBeGreaterThan(-1);
+    expect(css.slice(i, css.indexOf('}', i))).not.toMatch(/#FFE500/i);
+  });
+});

@@ -432,11 +432,11 @@ function TeacherDashboardInner() {
                 <Link key={s.key} href={withUser(s.href)}
                   className="flex flex-col rounded-2xl bg-white p-3.5"
                   style={{ boxShadow: '0 1px 2px rgba(0,84,75,.04), 0 8px 22px -16px rgba(0,84,75,.28)' }}>
-                  <span className="mb-2.5 flex h-9 w-9 items-center justify-center rounded-xl"
+                  <span className="kv-tinta-inline-pastiglia mb-2.5 flex h-9 w-9 items-center justify-center rounded-xl"
                     style={{ background: s.tint + '18', color: s.tint }}>
                     <Icon size={20} />
                   </span>
-                  <span className="font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{t(`shortcut_${s.key}_eyebrow`)}</span>
+                  <span className="kv-tinta-inline font-barlow text-[10px] font-bold uppercase tracking-[0.08em]" style={{ color: s.tint }}>{t(`shortcut_${s.key}_eyebrow`)}</span>
                   <span className="font-barlow text-[15px] font-extrabold uppercase leading-tight text-kidville-green">{t(`shortcut_${s.key}_title`)}</span>
                   <span className="mt-0.5 font-maven text-[11.5px] leading-snug text-kidville-ink">{detail}</span>
                 </Link>

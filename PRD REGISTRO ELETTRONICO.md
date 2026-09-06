@@ -169,26 +169,57 @@ In `app_log`, il 2026-09-05, due righe e non di più — perché `app_log` dedup
 Entrambe `sorgente: server`. Sono **nove tentativi**, non nove righe: il battito di `app_log`
 è vita, non contenuto.
 
-### Quanto era largo — misurato il 2026-09-06
+### Quanto era largo — misurato il 2026-09-06 alle 14:07 UTC
 
-| sede | bambini non archiviati | righe di rotazione | variazioni |
-|---|---|---|---|
-| Kidville Cesa | 193 | **0** | **0** |
-| Kidville Aversa | 105 | **0** | **0** |
-| Kidville Giugliano | 305 | 20 | 5 |
+⚠️ **Qui sotto ci sono due colonne di bambini e non una, e non è pedanteria**: nella prima
+stesura di questa voce c'era il solo «193» per Cesa, e chi rifaceva il conto con un `count(*)`
+nudo ne trovava **194**. Non era un numero che si muoveva: erano **due domande diverse a cui
+nessuno aveva scritto la domanda**. Perciò qui c'è la query, non solo il numero — un numero
+senza la sua query invecchia in silenzio, uno con la query si rifà in due secondi.
+
+```sql
+SELECT s.nome,
+       count(a.id)                                       AS tutti,
+       count(a.id) FILTER (WHERE a.archiviato_il IS NULL) AS non_archiviati,
+       (SELECT count(*) FROM mensa_menu_rotazione r WHERE r.scuola_id = s.id) AS rotazione,
+       (SELECT count(*) FROM mensa_menu_override  o WHERE o.scuola_id = s.id) AS variazioni
+FROM schools s LEFT JOIN alunni a ON a.scuola_id = s.id
+GROUP BY s.nome ORDER BY s.nome;
+```
+
+| sede | bambini (tutti) | di cui **non archiviati** | righe di rotazione | variazioni |
+|---|---|---|---|---|
+| Kidville Cesa | 194 | **193** | **0** | **0** |
+| Kidville Aversa | 105 | **105** | **0** | **0** |
+| Kidville Giugliano | 311 | **305** | 20 | 5 |
+
+**Quella che conta per il danno è la seconda**: un bambino archiviato non apre l'app, quindi non
+resta senza menu. La prima serve a rendere il conto ripetibile — chi la rifà trova **610** in
+totale, non 603, e adesso sa perché.
 
 Le 25 righe di Giugliano non sono un menu vero. Le 20 di rotazione appartengono **tutte** al
 menu «Menu classe TEST (demo App Review)», creato il 2026-08-04 per la revisione degli store;
 le 5 variazioni sono del menu unico e non sono più state toccate dal 2026-07-26. **«menu nido»,
 l'unico menu vero, creato il 2026-07-06, non ha mai avuto una riga**: zero rotazioni e zero
-variazioni, misurate oggi. In tutto, **603 bambini nelle tre sedi reali e nessuna delle tre con
-un menu vero in app**.
+variazioni, misurate oggi. In tutto, **603 bambini non archiviati nelle tre sedi reali e nessuna
+delle tre con un menu vero in app**.
 
-⚠️ **Da dove vengano quelle 25 righe non è ricostruibile, e non gliele si attribuisce.**
-`mensa_menu_rotazione` e `mensa_menu_override` non hanno una colonna che dica chi ha scritto;
-le righe sono anteriori alla finestra dei `42P10` e i loro `id` non seguono lo schema dei seed
-di scena. Ciò che è misurato è che oggi non esiste un menu vero in nessuna sede — non che quelle
-righe siano passate dal salvataggio.
+⚠️ **Quelle 25 righe non vengono dal `PUT`, e il fatto che esistano non contraddice niente.**
+Sono state scritte dopo che i quattro indici parziali esistevano — il baseline che li contiene è
+del 2026-07-04 — quindi la domanda è legittima: se il salvataggio prendeva `42P10` sempre, come
+ci sono arrivate? La risposta è che **`42P10` colpisce solo chi usa quella chiave di conflitto**,
+e gli altri percorsi di scrittura in casa non la usano affatto:
+`scripts/seed-screenshot-play.mjs:307` fa `upsert(menu, { onConflict: 'id' })` — la **chiave
+primaria**, un indice non parziale e quindi perfettamente inferibile — e
+`scripts/seed-e2e.mjs:859` fa un `.insert()` **nudo**, senza `onConflict`. Nessuno dei due può
+prendere `42P10`.
+
+Nessuno dei due, però, spiega *esattamente* quelle 25 righe: al commit `fc7c94a8` (2026-08-03)
+il seed di scena scriveva `menu_config_id: null`, mentre le 20 rotazioni ne portano uno. E
+`mensa_menu_rotazione` e `mensa_menu_override` **non hanno una colonna che registri chi ha
+scritto**: l'autore esatto è **irrecuperabile**, e va detto invece di indovinarlo. Ciò che è
+misurato è che oggi non esiste un menu vero in nessuna sede, e che la strada del salvataggio era
+chiusa per tutti e quattro i rami.
 
 **E il controllo allergeni delle 07:00 confronta contro il vuoto.** Il cron
 `/api/mensa/allergie-check` incrocia gli allergeni del bambino con quelli **del menu del
@@ -252,7 +283,7 @@ il secondo raddoppia, e ci si accorge del guasto mesi dopo. Oggi non mordeva (mi
 **zero senza sede**), ed è esattamente per questo che si è chiuso adesso: un difetto che non
 morde ancora è l'unico che si può correggere senza fretta.
 
-### I quattro debiti dichiarati
+### I cinque debiti dichiarati
 
 1. **Il `PUT` non è transazionale.** Scrive rotazione e variazioni in **due istruzioni senza
    transazione**: se la prima riesce e la seconda no, resta un salvataggio a metà con una
@@ -285,17 +316,30 @@ morde ancora è l'unico che si può correggere senza fretta.
    viene scritto solo lì dentro; anche chiamandola, la coda sarebbe vuota e si uscirebbe prima
    dell'upsert. È dichiarato come eccezione nel lock, con la ragione scritta e l'istruzione di
    toglierla **quando quel codice morto sparirà, non quando la tabella verrà creata**.
-
-### Quello che è stato trovato verificando, e che nessuno cercava
-
-Il lock `migrazioni-complete` era **verde** con le due migrazioni del 2026-09-06 applicate e non
-ancora fotografate — e non è un lock rotto: è cieco in una direzione sola. Un file di migrazione
-col timestamp **posteriore** all'istante dello scatto è indistinguibile, offline, da una
-migrazione scritta e non ancora applicata — che è il caso legittimo per cui esiste `IN_CODA`. Il
-suo commento racconta per esteso il caso opposto (file più **vecchi** della fotografia) e ha una
-prova dedicata; questo verso non ha nessuna guardia. A far guardare è stato `onconflict-arbitro`,
-che una guardia di freschezza ce l'ha. Verificato che `migrazioni-complete` morda ancora: una
-migrazione finta nella fotografia lo fa cadere.
+5. **`migrazioni-complete` è cieco nell'unica direzione in cui serve**, ed è la scoperta più
+   scomoda di questo giro. Con le due migrazioni del 2026-09-06 **applicate in produzione e non
+   ancora fotografate**, quel lock era **verde, 11 prove su 11**. Non è rotto: è cieco in un
+   verso solo. Gira offline sulla propria fotografia
+   (`__tests__/fixtures/migrazioni-applicate-snapshot.json`), e un file di migrazione col
+   timestamp **posteriore** all'istante dello scatto è indistinguibile, da lì dentro, da una
+   migrazione **scritta e non ancora applicata** — che è il caso legittimo per cui esiste
+   `IN_CODA`. Il suo commento racconta per esteso il verso opposto (file più **vecchi** della
+   fotografia, l'incidente del 2026-08-04) e ha una prova dedicata; **questo verso non ha nessuna
+   guardia**. Cioè: è verde per costruzione proprio nel momento in cui servirebbe di più, subito
+   dopo un `apply_migration`.
+   ⚠️ **A farlo emergere non è stato lui, ma un altro lock.** `onconflict-arbitro` una guardia di
+   freschezza ce l'ha (`posterioriCheContengono`) ed è diventato rosso; senza quel rosso nessuno
+   avrebbe guardato la fotografia delle migrazioni. E quella guardia copre solo le migrazioni che
+   nominano `unique` o `primary key`: una migrazione che non ne parla oggi **non la vede nessuno
+   dei due**.
+   Il rimedio è della stessa forma già in casa: una guardia di freschezza su
+   `migrazioni-complete` che confronti l'istante dello scatto (`generato_alle`, che la fotografia
+   già porta) con i file di `supabase/migrations/` posteriori, e pretenda che siano dichiarati in
+   `IN_CODA` con la loro ragione invece di essere dedotti tali. Non è stato fatto qui perché è
+   fuori dallo scopo della correzione della mensa — quindi è scritto, invece che fatto.
+   ⚠️ Il lock **non** è una decorazione e non va indebolito: verificato il 2026-09-06 che morda
+   ancora, mettendo una migrazione finta nella fotografia e vedendolo cadere su *«ogni migrazione
+   applicata in produzione ha il suo file nel repo»*.
 
 ### Gate
 

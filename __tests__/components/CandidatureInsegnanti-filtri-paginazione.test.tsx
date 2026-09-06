@@ -85,6 +85,36 @@ const TUTTE: Finta[] = Array.from({ length: 120 }, (_, i) => {
     candidature_sedi: [{ scuola_id: SEDE, stato }],
   }
 })
+/*
+ * ⚠️ PERCHÉ QUESTO FILE HA ATTESE LUNGHE, E PERCHÉ NON COSTANO NIENTE.
+ *
+ * Questi sei test rendono 120 candidature e ripremono «Mostra altre» fino in
+ * fondo: sono pesanti per costruzione. Le attese sono a 20 s perché in CI la
+ * macchina è lenta e mille file girano insieme — ma sono tutte attese di
+ * OCCORRENZA, che si risolvono appena la condizione è vera: il timeout è margine,
+ * non costo.
+ *
+ * La distinzione è tutto, ed è costata un rosso in CI. Fino al 2026-09-06
+ * `caricaTutte()` aspettava che «Mostra altre» tornasse premibile, con un
+ * `.catch(() => undefined)` per il caso in cui non tornava — ma all'ultimo giro
+ * il pulsante non torna premibile: SPARISCE, perché la paginazione è finita.
+ * Quell'attesa scadeva quindi per intero a ogni esecuzione, e il suo timeout era
+ * costo fisso. Misurato su questa macchina, `--reporter=verbose`:
+ *
+ *                                                  prima      dopo
+ *     «Rifiutata» + «Mostra altre» fino in fondo   11.034 ms   3.863 ms
+ *     la chiave dei filtri in OGNI richiesta       10.283 ms   3.118 ms
+ *     il file intero                               29,9 s      15,6 s
+ *
+ * In CI i primi due avevano sforato il `testTimeout` GLOBALE di 20 s
+ * (`vitest.config.ts`), con il messaggio più fuorviante possibile — «expected
+ * [ 50 righe ] to have a length of +0» — che sembra un difetto funzionale e non
+ * lo era.
+ *
+ * Un `waitFor` che DEVE poter non avverarsi va scritto in modo che si avveri in
+ * tutti gli esiti buoni, non allungato: allungarlo paga il timeout ogni volta.
+ */
+
 const RIFIUTATE = TUTTE.filter((c) => c.stato === 'rifiutata')
 
 /** Ogni URL d'elenco osservata: prova che la chiave dei filtri viaggia davvero. */
@@ -96,6 +126,35 @@ function fetchFinto(input: RequestInfo | URL) {
   const url = String(input)
   if (!url.includes('/api/admin/candidature-insegnanti')) {
     return Promise.resolve({ ok: true, status: 200, json: async () => ({}) })
+  }
+  // ⚠️ LA ROTTA DELLE ETICHETTE È UN'ALTRA, e questo finto deve saperlo.
+  //
+  // Dal 2026-09-05 `carica()` chiede PRIMA `…/candidature-insegnanti/etichetta`
+  // (la mappa `id → etichetta` delle candidature in scope) e POI l'elenco. Fino al
+  // 2026-09-06 questo finto rispondeva alle DUE rotte con lo stesso corpo: la
+  // lettura delle etichette si prendeva l'elenco intero delle candidature, che ha
+  // `data` come array e quindi passava per una mappa valida — un «mock piatto»,
+  // che in questo repo ha già lasciato passare un difetto con 13.254 test verdi.
+  //
+  // Non era solo finto: era LENTO. Un elenco da 50 righe al posto di una mappa,
+  // ricostruito a ogni «Mostra altre», ha portato questo file a ~30 s in locale e
+  // l'ha fatto SCADERE IN CI — dove la macchina è più lenta — su due `waitFor`,
+  // con il messaggio più fuorviante possibile: «expected [ 50 righe ] to have a
+  // length of +0», cioè un difetto funzionale che non c'era.
+  //
+  // In guasto risponde 503 come l'elenco: se il server non risponde, non risponde
+  // a nessuna delle due.
+  if (url.includes('/etichetta')) {
+    if (elencoInGuasto) {
+      return Promise.resolve({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: 'non disponibile', codice: 'CANDIDATURE_OPERAZIONE_NON_RIUSCITA' }),
+      })
+    }
+    // Nessuna candidatura etichettata: è lo stato reale di 462 righe su 462 al
+    // 2026-09-06, e il filtro per etichetta questo file non lo esercita.
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ data: [], total: 0 }) })
   }
   urlChieste.push(url)
   if (elencoInGuasto) {
@@ -151,9 +210,26 @@ async function caricaTutte() {
     const bottone = screen.queryByRole('button', { name: 'Mostra altre candidature' })
     if (!bottone) return
     fireEvent.click(bottone)
-    await waitFor(() => expect(screen.queryByRole('button', { name: /Mostra altre/ })).not.toBeDisabled(), {
-      timeout: 8000,
-    }).catch(() => undefined)
+    // ⚠️ L'ATTESA COPRE ENTRAMBI GLI ESITI, e la differenza vale secondi.
+    //
+    // Fino al 2026-09-06 qui si aspettava SOLO che il pulsante tornasse
+    // premibile, con un `.catch(() => undefined)` a raccogliere il caso in cui
+    // non tornava. Ma all'ULTIMO giro il pulsante non torna premibile: sparisce,
+    // perché la paginazione è finita — quindi l'attesa scadeva per intero, ogni
+    // volta, e il timeout diventava COSTO FISSO invece che margine di sicurezza.
+    // È la ragione per cui i due test che arrivano in fondo alla paginazione
+    // duravano ~10 s l'uno, ed è ciò che li ha fatti sforare in CI.
+    //
+    // Adesso l'attesa si avvera in tutti e due i casi buoni — il pulsante è
+    // sparito, oppure è tornato premibile — e resta capace di fallire nell'unico
+    // caso cattivo: un pulsante che resta disabilitato per sempre.
+    await waitFor(
+      () => {
+        const ancora = screen.queryByRole('button', { name: /Mostra altre/ })
+        if (ancora !== null) expect(ancora).not.toBeDisabled()
+      },
+      { timeout: 20000 },
+    )
     await waitFor(() => expect(cognomiVisibili().length).toBeGreaterThan(0))
   }
   throw new Error('«Mostra altre» non è mai sparito: la paginazione non termina')
@@ -182,7 +258,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
         expect(screen.getByTestId('conteggio-risultati')).toHaveTextContent(
           `${RIFIUTATE.length} risultati su ${TUTTE.length}`,
         ),
-      { timeout: 8000 },
+      { timeout: 20000 },
     )
     await caricaTutte()
 
@@ -221,7 +297,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
         expect(screen.getByTestId('conteggio-risultati')).toHaveTextContent(
           `${RIFIUTATE.length} risultati su ${TUTTE.length}`,
         ),
-      { timeout: 8000 },
+      { timeout: 20000 },
     )
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Mostra altre candidature' })).not.toBeDisabled(),
@@ -237,7 +313,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
         expect(screen.getByTestId('conteggio-risultati')).toHaveTextContent(
           `${RIFIUTATE.length} risultati su ${TUTTE.length}`,
         ),
-      { timeout: 8000 },
+      { timeout: 20000 },
     )
     await caricaTutte()
 
@@ -278,7 +354,7 @@ describe('CandidatureInsegnanti — filtro server e paginazione insieme', () => 
     // questo repo non è un test. Qui l'attesa non nasconde niente: la condizione
     // misurata è definitiva (le righe vecchie non tornano più), quindi aspettare
     // di più non può far passare un difetto.
-    await waitFor(() => expect(cognomiVisibili()).toHaveLength(0), { timeout: 8000 })
+    await waitFor(() => expect(cognomiVisibili()).toHaveLength(0), { timeout: 20000 })
     // Nessuna riga del vecchio insieme è sopravvissuta a un filtro che non è
     // mai stato applicato.
     expect(screen.queryByText(/^Attesa /)).toBeNull()

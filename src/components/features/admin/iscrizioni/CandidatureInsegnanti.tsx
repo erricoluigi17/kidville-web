@@ -808,6 +808,23 @@ export function CandidatureInsegnanti() {
    * filtro acceso, un `{}` al posto di un errore mostrerebbe zero candidature
    * dicendo che non ce ne sono.
    */
+  /**
+   * Due mappe dicono la stessa cosa? Serve a non ridisegnare l'elenco quando la
+   * rilettura non ha portato niente di nuovo — il caso normale.
+   *
+   * Confronto per VALORE e non per riferimento: `leggiEtichette` costruisce un
+   * oggetto nuovo a ogni lettura, quindi il riferimento è sempre diverso e non
+   * direbbe niente. Le chiavi sono gli `id` delle candidature in scope (462 al
+   * 2026-09-06): un giro su quelle costa incomparabilmente meno di un ridisegno.
+   */
+  function stessaMappa(a: MappaEtichette, b: MappaEtichette): boolean {
+    if (a.troncata !== b.troncata || a.colonnaAssente !== b.colonnaAssente) return false
+    const chiaviA = Object.keys(a.perId)
+    const chiaviB = Object.keys(b.perId)
+    if (chiaviA.length !== chiaviB.length) return false
+    return chiaviA.every((k) => a.perId[k] === b.perId[k])
+  }
+
   async function leggiEtichette(sediKey: string): Promise<MappaEtichette | null> {
     try {
       const res = await fetch(`${API}/etichetta`, { headers: { 'x-sedi': sediKey } })
@@ -966,10 +983,45 @@ export function CandidatureInsegnanti() {
     setRicaricaInVolo(true)
     setElencoTroncato(false)
     try {
+      /*
+       * ─── LE DUE LETTURE PARTONO INSIEME, e non è micro-ottimizzazione ──────
+       *
+       * `carica()` fa due richieste: la mappa delle etichette e la prima pagina
+       * dell'elenco. Fino al 2026-09-06 la seconda partiva solo DOPO che la prima
+       * era tornata, e chi guarda lo schermo aspettava la SOMMA dei due tempi
+       * invece del maggiore — su una rotta che scandaglia tutte le candidature in
+       * scope (462 al 2026-09-06) non è un dettaglio.
+       *
+       * Misurato dove il costo si vede: `CandidatureInsegnanti-filtri-paginazione`
+       * passava da 23,5 s (prima che le etichette esistessero) a 29,3 s, ed è il
+       * file che ha fatto FALLIRE la CI — dove la macchina è più lenta — su due
+       * `waitFor`, con un messaggio che sembrava un difetto funzionale e non lo
+       * era.
+       *
+       * ⚠️ SOLO QUANDO L'ETICHETTA NON FILTRA. Col filtro acceso la mappa non è un
+       * ornamento della riga: è ciò che DECIDE quali righe chiedere, e se manca o
+       * è troncata non si chiede niente affatto (vedi il ramo qui sotto). Lì la
+       * sequenza è la cosa giusta: chiedere un elenco che si sta per buttare via
+       * sarebbe lavoro sprecato per il server, non tempo risparmiato.
+       */
+      const coda = chiave ? `&${chiave}` : ''
+      const urlElenco = `${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`
+      const pElenco =
+        etichettaSel === ''
+          ? fetch(urlElenco, { headers: { 'x-sedi': sediKey } })
+          : null
+
       const mappa = await leggiEtichette(sediKey)
       if (mio !== gettoneElenco.current) return
       setEtichetteFallite(mappa === null)
-      if (mappa) setEtichette(mappa)
+      // ⚠️ SOLO SE È CAMBIATA DAVVERO. `leggiEtichette` costruisce ogni volta un
+      // oggetto NUOVO, e `setEtichette(mappa)` con un riferimento nuovo fa
+      // ridisegnare l'elenco intero anche quando la mappa dice le stesse identiche
+      // cose — cioè quasi sempre, perché fra due ricariche le etichette non
+      // cambiano da sole. Con 50 righe a schermo il ridisegno si sente, ed è la
+      // parte del costo che la parallelizzazione qui sopra NON toglie (le due
+      // letture erano già simultanee: a pesare era il render).
+      if (mappa) setEtichette((prec) => (stessaMappa(prec, mappa) ? prec : mappa))
 
       // ─── IL RAMO DEL FILTRO PER ETICHETTA ───────────────────────────────────
       // L'etichetta la filtra il SUO server (`…/etichetta:GET`), che risponde con
@@ -1004,10 +1056,9 @@ export function CandidatureInsegnanti() {
         return
       }
 
-      const coda = chiave ? `&${chiave}` : ''
-      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`, {
-        headers: { 'x-sedi': sediKey },
-      })
+      // Partita insieme alla mappa, qui sopra: `pElenco` non è mai `null` in questo
+      // punto, perché il ramo del filtro per etichetta esce con un `return`.
+      const res = await pElenco!
       if (!res.ok) {
         const messaggio = await messaggioErrore(res, t('candErroreElenco'))
         if (mio === gettoneElenco.current) {

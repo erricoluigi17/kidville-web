@@ -75,9 +75,35 @@ describe('lock — il crawler di contrasto è configurato come deve', () => {
         expect(Number.isInteger(v[k]) && v[k] >= 0, `${v.rotta}: ${k} non è un intero ≥ 0`).toBe(true);
       }
       expect(v.nodiMinimi, `${v.rotta}: nodiMinimi a 0 renderebbe indistinguibile «pulita» da «vuota»`).toBeGreaterThan(0);
-      for (const k of ['gradiente', 'composizione', 'fondoIgnoto']) {
-        expect(Number.isInteger(v.saltati?.[k]), `${v.rotta}: saltati.${k} mancante`).toBe(true);
+      // ── I SALTATI, ED È UN CICLO SU DUE GRUPPI, NON SU UNO ──────────────────
+      // Fino al 2026-09-06 questo ciclo guardava il solo `saltati`, mentre lo spec
+      // pretendeva già `saltatiAlto` (`toEqual(voce.saltatiAlto)`): una voce scritta
+      // a mano senza quel campo passava DI QUI in verde e falliva in CI con
+      // `toEqual(undefined)` — cioè esattamente il giro di CI sprecato che questo
+      // lock, per sua stessa testata, esiste per evitare.
+      // `-1` è ammesso, ed è l'unico numero negativo che significa qualcosa:
+      // «mai misurato». Un contatore non può essere negativo, quindi non può essere
+      // scambiato per una misura vera; lo riempie il primo giro di CI.
+      for (const gruppo of ['saltati', 'saltatiAlto']) {
+        for (const k of ['gradiente', 'composizione', 'fondoIgnoto']) {
+          expect(
+            Number.isInteger(v[gruppo]?.[k]) && v[gruppo][k] >= -1,
+            `${v.rotta}: ${gruppo}.${k} mancante o non è un intero ≥ -1 (−1 = «mai misurato»)`,
+          ).toBe(true);
+        }
       }
+
+      // ── LA PROVA POSITIVA È OBBLIGATORIA, E NON PUÒ RESTARE UN SEGNAPOSTO ───
+      // Senza, una rotta misurata sul GUSCIO passerebbe in silenzio: si
+      // incollerebbero i numeri del guscio e resterebbe cieca per sempre, senza
+      // nemmeno un rosso. Il criterio dice quale superficie va in scena SOLO a dati
+      // arrivati, e quanti nodi la sonda deve contare fra i saltati per quella
+      // superficie. Lo spec lo pretende a ogni run, sulle DUE passate.
+      const pp = v.provaPositiva;
+      expect(pp, `${v.rotta}: manca \`provaPositiva\`. Una rotta senza criterio può essere misurata sul guscio e nessuno se ne accorge: v. il \`_leggimi\` della baseline.`).toBeTruthy();
+      expect(['gradiente', 'composizione', 'fondoIgnoto'], `${v.rotta}: provaPositiva.saltato non è uno dei tre contatori`).toContain(pp?.saltato);
+      expect(Number.isInteger(pp?.minimo) && pp.minimo >= 1, `${v.rotta}: provaPositiva.minimo deve essere un intero ≥ 1. Il segnaposto \`-1\` che il bootstrap stampa va SOSTITUITO con il criterio vero, altrimenti la rotta resta cieca.`).toBe(true);
+      expect((pp?.perche ?? '').length, `${v.rotta}: provaPositiva.perche deve dire QUALE superficie e perché compare solo a dati arrivati`).toBeGreaterThan(60);
     }
   });
 
@@ -104,6 +130,52 @@ describe('lock — il crawler di contrasto è configurato come deve', () => {
     expect(s).toContain('toBeNull()');
     expect(s).toContain("rgb(0, 0, 0)");
     expect(s, 'manca il controllo che le due passate diano esiti DIVERSI').toContain('not.toBe(insieme(normale))');
+  });
+
+  it('lo spec PRETENDE la prova positiva, sulle due passate', () => {
+    // Il criterio scritto in prosa dentro il `_leggimi` valeva per una rotta su
+    // due, e la seconda sarebbe fallita in SILENZIO: se al primo giro fosse stata
+    // misurata sul guscio, si sarebbero incollati i numeri del guscio e nessuno
+    // avrebbe avuto niente da leggere. Portarlo dentro la voce non basta — deve
+    // esistere l'expect che lo applica, altrimenti è di nuovo prosa.
+    const s = readFileSync(join(RADICE, SPEC), 'utf8');
+    expect(s, 'lo spec non legge `voce.provaPositiva`: il criterio resterebbe un commento').toContain('voce.provaPositiva');
+    expect(s, 'manca l’expect che pretende il criterio').toContain('toBeGreaterThanOrEqual(pp.minimo)');
+    // …e su ENTRAMBE le passate: una superficie che sparisce solo in Alto
+    // Contrasto è precisamente il caso che `saltatiAlto` esiste per prendere.
+    expect(s, 'il criterio va preteso anche sulla passata in Alto Contrasto').toMatch(/\['ALTO CONTRASTO', alto\]/);
+  });
+
+  it('il blocco «da incollare» esce SOLO dal bootstrap, mai coi numeri peggiorati', () => {
+    // `daIncollare` è nato per la baseline VUOTA: un blocco solo da copiare invece
+    // di nove frammenti. Appeso anche alle expect a regime, serviva su un piatto il
+    // numero MISURATO — cioè quello peggiorato — proprio sotto la riga che dice «se
+    // è SALITO hai aggiunto un contrasto sotto soglia». È la trappola che questo
+    // repo si è già scritto in memoria come «abbassare la soglia di un lock lo
+    // trasforma in decorazione», in forma nuova: non si abbassa una soglia, si
+    // offre il valore alzato.
+    const s = readFileSync(join(RADICE, SPEC), 'utf8');
+    expect(s, 'manca il riconoscimento dei segnaposto').toContain('function haSegnaposto(');
+    expect(s, '`daIncollare` non è condizionato al bootstrap').toContain('const daIncollare = inBootstrap ?');
+    // Una sola sorgente per quel blocco: se ne comparisse una seconda, incondizionata,
+    // la condizione qui sopra sarebbe vera e inutile insieme.
+    expect(s.match(/Voce misurata in questa run/g) ?? [], 'il blocco da incollare è costruito in più punti: uno solo può essere condizionato').toHaveLength(1);
+  });
+
+  it('la quiete di rete si aspetta PRIMA del ciclo di stabilità', () => {
+    // I due coprono momenti DIVERSI e non sono alternativi: il ciclo guarda il
+    // rendering DOPO la risposta, `networkidle` la quiete PRIMA. Col solo ciclo, il
+    // confine sta a `PASSO_STABILITA_MS` esatti — una fetch che risponde a 499 ms fa
+    // leggere 18, 36, 36 (la pagina vera), una che risponde a 501 ms fa leggere
+    // 18, 18 e chiama «stabile» il guscio. Su una macchina carica della CI mezzo
+    // secondo è un budget sottile: `/teacher` risolve l'identità e poi fa TRE fetch
+    // prima che il conteggio si muova.
+    const s = readFileSync(join(RADICE, SPEC), 'utf8');
+    const rete = s.indexOf("waitForLoadState('networkidle'");
+    const ciclo = s.indexOf('while (Date.now() < scadenza)');
+    expect(rete, 'manca l’attesa della quiete di rete prima del ciclo').toBeGreaterThan(-1);
+    expect(ciclo, 'manca il ciclo di stabilità: il lock guarda altrove').toBeGreaterThan(-1);
+    expect(rete, '`networkidle` deve stare PRIMA del ciclo: dopo non coprirebbe niente').toBeLessThan(ciclo);
   });
 
   it('il bootstrap stampa la baseline ASSEMBLATA, non nove frammenti', () => {

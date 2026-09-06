@@ -2,7 +2,7 @@
 
 import { useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Copy, Check, Info, Landmark, Banknote, Building2, MapPin } from 'lucide-react';
+import { Copy, Check, Info, Landmark, Banknote, Building2, MapPin, AlertTriangle } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { BTN_COPIA_AA, CAMPO_COPIABILE, CausaleBonifico, ETICHETTA, type VoceCausale } from './CausaleBonifico';
 
@@ -82,6 +82,17 @@ export function raggruppaPerConto(sedi: SedeBonifico[], voci: VoceCausale[]): Bl
     return blocchi;
 }
 
+/**
+ * L'IBAN nella forma ELETTRONICA (ISO 13616, senza spazi).
+ *
+ * Serve in DUE posti che non possono divergere: quello che il bottone mette negli
+ * appunti, e quello che sente chi naviga con un lettore di schermo (vedi il campo
+ * dell'IBAN più sotto). Erano due `replace` scritti in punti diversi, e il giorno in
+ * cui uno dei due cambiasse, chi ascolta detterebbe al telefono un IBAN diverso da
+ * quello che il bottone copia.
+ */
+const ibanElettronico = (iban: string) => iban.replace(/\s+/g, '');
+
 type Metodo = 'bonifico' | 'contanti';
 const METODI: Metodo[] = ['bonifico', 'contanti'];
 
@@ -128,15 +139,43 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
     const t = useTranslations('pagamenti');
     const idBase = useId();
     const [metodo, setMetodo] = useState<Metodo>('bonifico');
-    const [copiato, setCopiato] = useState<string | null>(null);
+    /**
+     * L'esito dell'ultima copia: QUALE conto, e se è andata a buon fine.
+     *
+     * Prima era il solo `chiave` del conto copiato, e il fallimento non aveva dove
+     * stare: `navigator.clipboard` rifiutava (o dentro una WebView non esisteva
+     * affatto), il `catch` scriveva la riga di log e a schermo non cambiava niente —
+     * né l'etichetta del bottone né la regione viva, che restava vuota.
+     */
+    const [esito, setEsito] = useState<{ chiave: string; ok: boolean } | null>(null);
     const tabRefs = useRef<Record<Metodo, HTMLButtonElement | null>>({ bonifico: null, contanti: null });
 
     if (voci.length === 0) return null;
 
     const blocchi = raggruppaPerConto(sedi, voci);
-    // I nomi delle sedi si mostrano solo quando ce n'è più d'una in pagina:
-    // ripetere l'unico plesso della famiglia sarebbe rumore.
     const nomiSedi = blocchi.flatMap((b) => b.nomi);
+    /**
+     * IL NOME DEL PLESSO DENTRO IL BLOCCO — e la condizione guarda i BLOCCHI, non i
+     * nomi (rilievo 2 del collaudo, 2026-09-06).
+     *
+     * Guardava `nomiSedi.length > 1`, e c'era un caso in cui le due misure divergono:
+     * una sede descritta dal server più delle voci di una sede che il server NON ha
+     * descritto. I blocchi diventano due — due riquadri «1 Il conto / 2 La causale»,
+     * uno con l'IBAN e uno col ripiego — ma i nomi restano uno solo, quindi nessuno
+     * dei due diceva di chi era. Due scatole identiche e nessuna etichetta.
+     *
+     * Resta dentro anche il caso opposto (un blocco solo che fonde DUE plessi con le
+     * stesse coordinate): lì i blocchi sono uno, ma i nomi da dire sono due.
+     * Con un blocco solo e un nome solo la riga non compare: sarebbe rumore.
+     */
+    const mostraSedeNelBlocco = blocchi.length > 1 || nomiSedi.length > 1;
+    /**
+     * Nel pannello dei CONTANTI la domanda è un'altra — «in quale segreteria vado?» —
+     * e ha una risposta utile solo se i plessi NOMINATI sono più d'uno. Un blocco
+     * senza nome non aggiunge una segreteria: aggiunge un'incognita, e scrivere «Per
+     * la sede Plesso Uno» mentre metà delle voci sono di un plesso ignoto sarebbe una
+     * mezza verità detta con la faccia di un'indicazione.
+     */
     const mostraNomi = nomiSedi.length > 1;
 
     const idTab = (m: Metodo) => `${idBase}-tab-${m}`;
@@ -167,14 +206,18 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
         }
     };
 
-    const copiaIban = async (chiave: string, iban: string) => {
+    const copiaIban = async (chiave: string, ibanCompatto: string) => {
         // Negli appunti va la forma ELETTRONICA dell'IBAN (ISO 13616, senza spazi):
-        // è quella che ogni home banking accetta. A schermo resta quella a gruppi
-        // di quattro, che è quella che si rilegge.
+        // è quella che ogni home banking accetta, ed è la STESSA stringa che sente
+        // chi naviga con un lettore di schermo (`ibanElettronico`, un posto solo).
+        // A schermo resta quella a gruppi di quattro, che è quella che si rilegge.
         try {
-            await navigator.clipboard.writeText(iban.replace(/\s+/g, ''));
-            setCopiato(chiave);
-            setTimeout(() => setCopiato(null), 2000);
+            await navigator.clipboard.writeText(ibanCompatto);
+            setEsito({ chiave, ok: true });
+            // Solo la CONFERMA svanisce da sola. L'aggiornamento è funzionale perché
+            // il timer di una copia riuscita non deve cancellare l'avviso di un
+            // fallimento arrivato nel frattempo.
+            setTimeout(() => setEsito((e) => (e?.ok && e.chiave === chiave ? null : e)), 2000);
         } catch (err) {
             // `navigator.clipboard` dice di no per motivi DIVERSI e distinguibili, e
             // ognuno vuole una correzione diversa: `NotAllowedError` (permesso negato,
@@ -194,7 +237,44 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 messaggio: `copia-iban-non-riuscita: ${nomeErrore(err)}`,
                 route: '/parent/pagamenti',
             });
+            // …e l'avviso a chi ha premuto: il log lo legge chi ha accesso ad
+            // `app_log`, non il genitore. NESSUN timer — dentro una WebView senza
+            // `navigator.clipboard` la copia fallirà ogni volta, e un avviso che
+            // sparisce dopo due secondi lascia la persona dov'era. Se ne va al primo
+            // esito nuovo.
+            setEsito({ chiave, ok: false });
         }
+    };
+
+    /**
+     * Il nome accessibile del comando «Copia l'IBAN» (rilievo 4 del collaudo).
+     *
+     * Con due conti c'erano DUE bottoni con lo stesso identico nome, e la conferma
+     * diceva soltanto «Copiato»: chi naviga a voce non poteva né sceglierne uno né
+     * sapere quale avesse risposto. Il comando fratello, dieci righe più sotto nella
+     * stessa card, distingue da sempre («Copiato: causale di Mara Bianchi»).
+     *
+     *  · a riposo e con UN conto solo: `undefined`, cioè NESSUN `aria-label`. Il
+     *    testo visibile è il nome (WCAG 2.5.3) e il plesso sarebbe rumore.
+     *  · a riposo con più conti: il nome CONTIENE il testo visibile e aggiunge il
+     *    plesso — «Copia l'IBAN della sede Plesso Uno» — così il comando vocale
+     *    funziona su tutti e due i bottoni.
+     *  · a copia avvenuta: dice sempre CHE COSA è stato copiato, perché «Copiato» da
+     *    solo, in una card con due comandi, non dice quale dei due ha risposto.
+     *
+     * `count` non è decorativo, ed è la stessa ragione per cui ce l'ha `sediDelBlocco`:
+     * un blocco può fondere due plessi e quello accanto averne uno solo, nella stessa
+     * pagina. E la parola «sede» ci sta per esteso — non solo dentro il segnaposto —
+     * perché il lock `glossario-sede` pretende che l'inglese dica «location» quando
+     * l'italiano dice «sede»: è il modo in cui il repo impedisce che nasca la terza
+     * traduzione della stessa parola.
+     */
+    const nomeComandoIban = (b: BloccoConto, copiatoQui: boolean): string | undefined => {
+        const sedi = b.nomi.join(' · ');
+        const count = b.nomi.length;
+        const conSede = mostraSedeNelBlocco && count > 0;
+        if (copiatoQui) return conSede ? t('ariaCopiatoIbanSede', { count, sedi }) : t('ariaCopiatoIban');
+        return conSede ? t('ariaCopiaIbanSede', { count, sedi }) : undefined;
     };
 
     const tab = (m: Metodo, etichetta: string, Icona: typeof Landmark) => {
@@ -302,7 +382,7 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 </p>
                 <div className="mt-3 space-y-6">
                 {blocchi.map((b) => {
-                    const copiatoQui = copiato === b.chiave;
+                    const copiatoQui = esito?.ok === true && esito.chiave === b.chiave;
                     // Legato a una costante e non letto da `b` dentro il ramo: così
                     // TypeScript lo restringe da solo e non serve nessun cast.
                     const iban = b.iban;
@@ -328,20 +408,26 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                 un filetto #EFE7DC che su bianco vale 1,23:1 — cioè che su
                                 un telefono in pieno sole non si vede. */}
                             <div className="mt-2 rounded-input border border-transparent bg-kidville-cream p-3">
-                                {mostraNomi && b.nomi.length > 0 && (
+                                {mostraSedeNelBlocco && (
                                     // INCHIOSTRO PIENO, non `sub`, e 12px invece di 11: questa riga
-                                    // compare SOLO quando in pagina c'è più di un plesso, e allora è
-                                    // la riga che dice su quale conto va il bonifico. Era il testo
-                                    // più piccolo e più chiaro della card: gerarchia rovesciata,
+                                    // compare SOLO quando i riquadri sono più d'uno, e allora è la
+                                    // riga che dice su quale conto va il bonifico. Era il testo più
+                                    // piccolo e più chiaro della card: gerarchia rovesciata,
                                     // l'informazione che discrimina era quella che si vedeva meno.
                                     <p className="mb-3 flex items-start gap-2 font-maven text-xs leading-relaxed text-pretty text-kidville-ink">
                                         <span className={SCATOLA_ICONA} aria-hidden="true">
                                             <Building2 size={16} />
                                         </span>
                                         {/* `count` non è decorativo: un blocco può fondere due plessi e
-                                            quello accanto averne uno solo, nella stessa pagina. */}
+                                            quello accanto averne uno solo, nella stessa pagina.
+                                            E il blocco di ripiego non ha NESSUN nome — sono le voci di
+                                            una sede che il server non ha descritto: lo si dice, invece
+                                            di lasciare una scatola anonima accanto a una etichettata.
+                                            Un'assenza dichiarata è un'informazione; un vuoto no. */}
                                         <span className="min-w-0 break-words">
-                                            {t('sediDelBlocco', { count: b.nomi.length, sedi: b.nomi.join(' · ') })}
+                                            {b.nomi.length > 0
+                                                ? t('sediDelBlocco', { count: b.nomi.length, sedi: b.nomi.join(' · ') })
+                                                : t('sedeNonIndicata')}
                                         </span>
                                     </p>
                                 )}
@@ -387,7 +473,33 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                                 con il ritorno a capo normale può spezzarsi SOLO lì.
                                                 Un IBAN tagliato a metà di un gruppo si ricopia
                                                 sbagliato a mano. */}
-                                            <p className={`mt-1 bg-kidville-white font-mono text-sm font-bold ${CAMPO_COPIABILE}`}>
+                                            {/* ⚠️ DUE LETTURE DELLO STESSO IBAN (rilievo 3 del collaudo
+                                                di accessibilità, 2026-09-06). I gruppi di quattro sono
+                                                giusti per chi GUARDA e pessimi per chi ASCOLTA: un
+                                                lettore di schermo pronuncia «2811» come
+                                                «duemilaottocentoundici», e chi trascrive a mano deve
+                                                ricomporre le cifre da sei numeri cardinali.
+
+                                                Il repo lo ha già risolto una volta, sui nomi dei file
+                                                (`FieldRenderer`, il campo del curriculum): la stringa
+                                                INTERA in un nodo `sr-only`, i pezzi impaginati in
+                                                `aria-hidden`. Qui l'intero è la forma ELETTRONICA — la
+                                                stessa, byte per byte, che il bottone mette negli
+                                                appunti (`ibanElettronico`): chi ascolta e chi copia
+                                                ricevono una stringa sola, e non possono divergere.
+
+                                                ⚠️ E IL NODO `sr-only` STA FUORI DAL CAMPO, non dentro.
+                                                `sr-only` è `clip`-ato, non `display:none` — e2e/fixtures.ts
+                                                lo documenta per esteso — quindi dentro il campo finirebbe
+                                                nella SELEZIONE: chi seleziona l'IBAN col dito invece di
+                                                premere il bottone (cioè metà delle persone) incollerebbe
+                                                in banca l'IBAN due volte, in due forme diverse. È lo
+                                                stesso prezzo che questa card ha già rifiutato di pagare
+                                                sulla causale, quando ha buttato via la versione coi
+                                                caratteri sostituiti. Il campo resta puro: dentro c'è
+                                                l'IBAN e nient'altro, ed è ciò che il test misura. */}
+                                            <span className="sr-only">{ibanElettronico(iban)}</span>
+                                            <p aria-hidden="true" className={`mt-1 bg-kidville-white font-mono text-sm font-bold ${CAMPO_COPIABILE}`}>
                                                 {iban}
                                             </p>
                                         </div>
@@ -410,8 +522,13 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                     // `mt-3` come nella chip della causale: stessa aria fra il campo
                                     // e il comando che lo copia, nei due passi.
                                     <div className="mt-3 flex sm:justify-end">
-                                        {/* Il testo visibile È il nome accessibile: nessun `aria-label`
-                                            che dica una cosa diversa da quella scritta (WCAG 2.5.3).
+                                        {/* ⚠️ IL NOME ACCESSIBILE NON È PIÙ SEMPRE IL SOLO TESTO
+                                            VISIBILE, e questa riga lo diceva fino al 2026-09-06: con
+                                            due conti c'erano due bottoni con lo stesso identico nome.
+                                            Oggi `nomeComandoIban` aggiunge il plesso QUANDO serve, e il
+                                            nome CONTIENE sempre il testo scritto sopra — che è ciò che
+                                            WCAG 2.5.3 chiede davvero: un comando vocale «copia l'IBAN»
+                                            continua a funzionare, e i due bottoni si distinguono.
                                             `w-full sm:w-auto` (dalla forma condivisa): sul telefono
                                             prende la riga intera — così premerlo non toglie spazio
                                             all'IBAN — ma su desktop un bottone largo quanto la card
@@ -419,7 +536,13 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                                         <button
                                             type="button"
                                             className={BTN_COPIA_AA}
-                                            onClick={() => copiaIban(b.chiave, iban)}
+                                            onClick={() => copiaIban(b.chiave, ibanElettronico(iban))}
+                                            // Con UN conto solo resta `undefined`: il testo visibile è
+                                            // il nome (WCAG 2.5.3). Con due conti il nome aggiunge il
+                                            // plesso — due bottoni identici non si possono né scegliere
+                                            // né distinguere a voce — e a copia avvenuta dice sempre
+                                            // CHE COSA è finito negli appunti.
+                                            aria-label={nomeComandoIban(b, copiatoQui)}
                                         >
                                             {copiatoQui
                                                 ? <><Check size={15} aria-hidden="true" /> {t('copiato')}</>
@@ -459,9 +582,14 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                     <span>{t('contantiTesto')}</span>
                 </p>
                 {/* QUALE segreteria: «in segreteria» da solo, per una famiglia con figli
-                    in due plessi, non è un'indicazione. Compare con la stessa condizione
-                    della riga dei plessi nel pannello del bonifico — e con la stessa
-                    scatola d'icona, così le due righe condividono UNA colonna di testo.
+                    in due plessi, non è un'indicazione.
+                    ⚠️ LA CONDIZIONE NON È PIÙ LA STESSA della riga dei plessi nel pannello
+                    del bonifico, e fino al 2026-09-06 questa riga diceva che lo era: là
+                    basta che i BLOCCHI siano più d'uno (due riquadri identici vanno
+                    etichettati comunque, anche quando uno dei due plessi non ha nome),
+                    qui servono due plessi NOMINATI — una segreteria senza nome non è un
+                    posto dove andare. Stessa frase, stessa scatola d'icona, condizioni
+                    diverse perché rispondono a due domande diverse.
                     STESSA FRASE dell'altro pannello, e non una seconda formulazione: è
                     lo stesso fatto («questi sono i plessi di cui stiamo parlando») e
                     scriverlo in due modi diversi nella stessa card è il difetto da cui
@@ -488,9 +616,42 @@ export function ComePagare({ sedi, voci }: { sedi: SedeBonifico[]; voci: VoceCau
                 cambia. La regione è montata SEMPRE, anche vuota: un `aria-live` che
                 compare insieme al proprio testo, nei lettori di schermo, spesso non
                 annuncia niente — ed è l'errore che rende inutili metà delle conferme
-                «copiato» in giro per il web. */}
-            <p role="status" aria-live="polite" className="sr-only">
-                {copiato ? t('copiato') : ''}
+                «copiato» in giro per il web.
+
+                DICE ANCHE QUALE CONTO (rilievo 4): «Copiato» da solo, in una card che
+                ha due comandi di copia — e con due conti ne ha tre o quattro — non
+                dice quale dei due ha risposto. Il fratello della causale lo fa da
+                sempre («Copiato: causale di Mara Bianchi»).
+
+                E DICE IL FALLIMENTO (rilievo 5), diventando VISIBILE quando la copia
+                non riesce: un bottone che non fa niente non è un riscontro per
+                nessuno, né per chi ascolta né per chi guarda. Una riga sola per due
+                destinatari — due meccanismi separati divergerebbero al primo ritocco.
+
+                L'inchiostro è `ink` e non `error`: in Alto Contrasto
+                `.kv-come-pagare .text-kidville-ink` va a #FFFFFF (globals.css), mentre
+                il rosso resterebbe l'hex inlinato da `@theme inline` — un rosso su
+                nero, sotto AA, proprio nella modalità pensata per chi fatica a
+                leggere. Il segnale lo fa la forma del triangolo, senza colore. */}
+            <p
+                role="status"
+                aria-live="polite"
+                className={
+                    esito && !esito.ok
+                        ? 'mt-3 flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-ink'
+                        : 'sr-only'
+                }
+            >
+                {esito === null ? '' : esito.ok ? (
+                    nomeComandoIban(blocchi.find((b) => b.chiave === esito.chiave) ?? blocchi[0], true)
+                ) : (
+                    <>
+                        <span className={SCATOLA_ICONA} aria-hidden="true">
+                            <AlertTriangle size={16} />
+                        </span>
+                        <span>{t('copiaFallitaIban')}</span>
+                    </>
+                )}
             </p>
         </div>
     );

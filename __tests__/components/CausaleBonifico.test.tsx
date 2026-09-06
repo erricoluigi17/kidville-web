@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+
+// Solo `logClient` è finto: `nomeErrore` resta quello vero, perché è LUI la cosa
+// misurata — un mock che restituisse il nome giusto proverebbe solo sé stesso.
+// (Stessa forma di `ComePagare.test.tsx`: i due comandi di copia sono fratelli.)
+vi.mock('@/lib/logging/client', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/logging/client')>();
+  return { ...actual, logClient: vi.fn() };
+});
+
+import { logClient } from '@/lib/logging/client';
 import { CausaleBonifico, segmentiCausale } from '@/components/features/parent/pagamenti/CausaleBonifico';
 
 // La causale ora è COMPOSTA DAL SERVER (modello per-categoria) e passata già pronta:
@@ -379,5 +389,91 @@ describe('CausaleBonifico — il fuoco da tastiera si vede, e il blocco si allin
     // due colonne distanti un pixel (367,5 contro 368,5). Un bordo trasparente
     // costa niente e li rimette sulla stessa verticale.
     expect(li?.className).toContain('border-transparent');
+  });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   IL SESTO GIRO (2026-09-06) — i rilievi dei collaudi frontend e accessibilità.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * RILIEVO 1 — la voce senza causale spariva, e con lei (quando era l'unica) tutta
+ * la card «Come pagare»: IBAN e intestatario compresi. Lo spec del 2026-09-05
+ * promette il contrario a parole sue — la card «non sparisce mai».
+ *
+ * La causale manca quando il server non l'ha prodotta: modello per-categoria non
+ * configurato, o una riga più vecchia del motore che la compone.
+ */
+describe('CausaleBonifico — la voce senza causale non sparisce (rilievo 1)', () => {
+  const SENZA_CAUSALE = [{ ...voci[0], causale: '' }];
+
+  it('resta la riga con la voce e il residuo, e una riga dice cosa scrivere', () => {
+    render(<CausaleBonifico voci={SENZA_CAUSALE} />);
+
+    expect(screen.getByText('Retta Settembre 2026')).toBeInTheDocument();
+    expect(screen.getByText('€ 250,00')).toBeInTheDocument();
+    // L'occhiello «Causale» resta: è l'assenza a non avere il peso di un valore,
+    // esattamente come per «Intestato a» nel riquadro del conto.
+    expect(screen.getByText('Causale')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Causale non disponibile: nel bonifico indica il nome e il cognome del bambino e la voce da pagare.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Copia la causale/ })).toBeNull();
+  });
+
+  it('senza NESSUNA causale l’introduzione non promette una copia impossibile', () => {
+    render(<CausaleBonifico voci={SENZA_CAUSALE} />);
+    // «Copiala così com'è» davanti a zero campi copiabili è un'istruzione per una
+    // cosa che non c'è.
+    expect(screen.queryByText(/Copiala così com’è/)).toBeNull();
+  });
+
+  it('basta UNA causale perché l’introduzione torni vera', () => {
+    render(<CausaleBonifico voci={[voci[0], { ...voci[1], causale: '' }]} />);
+    expect(screen.getByText(/Copiala così com’è/)).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Copia la causale/ })).toHaveLength(1);
+  });
+
+  it('senza causale non si ripete anche la nota del codice fiscale', () => {
+    // `cfNonDisponibile` dice «indica comunque il nome e cognome del bambino nella
+    // causale»: con la causale assente lo dice già la riga di sopra, e due righe che
+    // chiedono la stessa cosa si leggono come due cose da fare.
+    render(<CausaleBonifico voci={[{ ...voci[1], causale: '' }]} />);
+    expect(screen.queryByText(/Codice fiscale non disponibile/)).toBeNull();
+  });
+});
+
+/**
+ * RILIEVO 5 — se la copia fallisce, chi non vede non lo sa: il bottone non cambia
+ * etichetta e la regione viva resta vuota. Vale per i due comandi della card, e il
+ * fallimento è la regola dentro una WebView senza `navigator.clipboard`.
+ */
+describe('CausaleBonifico — la copia che non riesce non resta muta (rilievo 5)', () => {
+  it('lo dice la regione viva, e lo dice anche a schermo', async () => {
+    scrivi.mockRejectedValueOnce(Object.assign(new Error('nope'), { name: 'NotAllowedError' }));
+    render(<CausaleBonifico voci={voci} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copia la causale di Mara Bianchi' }));
+
+    const avviso = await screen.findByText('Copia non riuscita: seleziona la causale qui sopra e copiala a mano.');
+    const regione = avviso.closest('[role="status"]');
+    expect(regione).not.toBeNull();
+    expect(regione?.className).not.toContain('sr-only');
+  });
+
+  it('nel log finisce la CAUSA, mai la causale — che porta il nome di un minore', async () => {
+    scrivi.mockRejectedValueOnce(Object.assign(new Error('nope'), { name: 'SecurityError' }));
+    render(<CausaleBonifico voci={voci} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Copia la causale di Mara Bianchi' }));
+    await screen.findByText('Copia non riuscita: seleziona la causale qui sopra e copiala a mano.');
+
+    const riga = JSON.stringify(vi.mocked(logClient).mock.calls[0][0]);
+    expect(riga).toContain('SecurityError');
+    expect(riga).not.toContain('Mara');
+    expect(riga).not.toContain('Bianchi');
+    expect(riga).not.toContain('ABCDEF00A00A000A');
   });
 });

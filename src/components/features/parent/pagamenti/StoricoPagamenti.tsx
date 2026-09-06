@@ -128,10 +128,19 @@ export function StoricoPagamenti({ userId }: Props) {
     }
     const mostraTotaleFamiglia = perFiglio.size >= 2;
 
-    // Causale consigliata per il bonifico: UNA per voce ancora aperta. La stringa è
-    // COMPOSTA DAL SERVER col modello per-categoria (la segreteria può personalizzarla);
-    // qui la si mostra soltanto. Le voci senza causale (server non l'ha prodotta) si
-    // scartano. Zero nuove fetch: usa i dati già in memoria.
+    // Le voci APERTE che alimentano «Come pagare»: una per pagamento con residuo > 0.
+    // Zero nuove fetch, usa i dati già in memoria.
+    //
+    // ⚠️ IL FILTRO SULLA CAUSALE NON C'È PIÙ (rilievo 1 del collaudo, 2026-09-06).
+    // C'era `.filter((v) => v.causale.trim() !== '')`, e quando il server non produceva
+    // nessuna causale — modello per-categoria non configurato, o righe più vecchie del
+    // motore che la compone — l'elenco restava VUOTO e `ComePagare` non si rendeva
+    // affatto: sparivano l'IBAN, l'intestatario e i contanti, cioè le tre cose per cui
+    // la card è nata, mentre lo spec del 2026-09-05 promette a parole sue che la card
+    // «non sparisce mai». Il filtro guardava il dato sbagliato: quello che decide se
+    // c'è qualcosa da pagare è il RESIDUO, non la causale suggerita.
+    // La voce senza causale arriva con la stringa vuota, e `CausaleBonifico` mette al
+    // suo posto la riga che dice al genitore cosa scrivere a mano.
     //
     // `importo` è il RESIDUO (`residuoRiga`, la stessa fonte del totale da saldare in
     // cima), non l'importo pieno: per una voce parziale i due numeri divergono, ed è
@@ -149,8 +158,7 @@ export function StoricoPagamenti({ userId }: Props) {
             nome: p.alunni?.nome ?? '',
             cognome: p.alunni?.cognome ?? '',
             hasCf: !!p.alunni?.codice_fiscale,
-        }))
-        .filter((v) => v.causale.trim() !== '');
+        }));
 
     return (
         <div className="space-y-5">
@@ -195,8 +203,8 @@ export function StoricoPagamenti({ userId }: Props) {
 
             {/* «Come pagare»: bonifico (intestatario + IBAN della propria sede, con
                 le causali dentro) o contanti. `ComePagare` rende `null` da solo
-                quando non c'è nessuna voce aperta: la condizione resta quella della
-                card della causale che sostituisce.
+                quando non c'è nessuna voce aperta — e QUELLA è l'unica condizione:
+                dal 2026-09-06 la card segue il residuo, non la causale suggerita.
 
                 La card porta la stessa pelle delle sorelle di questa pagina —
                 `rounded-card border border-kidville-line`, fondo bianco, `p-4` e

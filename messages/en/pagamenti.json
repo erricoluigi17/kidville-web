@@ -54,5 +54,12 @@
   "copiaIban": "Copy the IBAN",
   "ariaMetodoPagamento": "Payment method",
   "ariaCopiatoCausale": "Copied: reference for {nome}",
-  "causaleEtichetta": "Reference"
+  "causaleEtichetta": "Reference",
+  "causaleNonDisponibile": "Reference not available: in the transfer, state the child’s first and last name and the item you are paying.",
+  "sedeNonIndicata": "Location not specified",
+  "ariaCopiaIbanSede": "{count, plural, one {Copy the IBAN for the location {sedi}} other {Copy the IBAN for the locations {sedi}}}",
+  "ariaCopiatoIban": "Copied: IBAN",
+  "ariaCopiatoIbanSede": "{count, plural, one {Copied: IBAN for the location {sedi}} other {Copied: IBAN for the locations {sedi}}}",
+  "copiaFallitaIban": "Copy failed: select the IBAN above and copy it manually.",
+  "copiaFallitaCausale": "Copy failed: select the reference above and copy it manually."
 }

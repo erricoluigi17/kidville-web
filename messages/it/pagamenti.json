@@ -54,5 +54,12 @@
   "copiaIban": "Copia l’IBAN",
   "ariaMetodoPagamento": "Metodo di pagamento",
   "ariaCopiatoCausale": "Copiato: causale di {nome}",
-  "causaleEtichetta": "Causale"
+  "causaleEtichetta": "Causale",
+  "causaleNonDisponibile": "Causale non disponibile: nel bonifico indica il nome e il cognome del bambino e la voce da pagare.",
+  "sedeNonIndicata": "Sede non indicata",
+  "ariaCopiaIbanSede": "{count, plural, one {Copia l’IBAN della sede {sedi}} other {Copia l’IBAN delle sedi {sedi}}}",
+  "ariaCopiatoIban": "Copiato: IBAN",
+  "ariaCopiatoIbanSede": "{count, plural, one {Copiato: IBAN della sede {sedi}} other {Copiato: IBAN delle sedi {sedi}}}",
+  "copiaFallitaIban": "Copia non riuscita: seleziona l’IBAN qui sopra e copialo a mano.",
+  "copiaFallitaCausale": "Copia non riuscita: seleziona la causale qui sopra e copiala a mano."
 }

@@ -155,9 +155,16 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         // Negli appunti va la forma ELETTRONICA (senza spazi): è quella che ogni
         // home banking accetta. A schermo resta quella a gruppi di quattro.
         expect(scrivi).toHaveBeenCalledWith(IBAN_COMPATTO);
-        // DUE volte, ed è voluto: l'etichetta del bottone e la regione viva che lo
+        // DUE riscontri, ed è voluto: l'etichetta del bottone e la regione viva che lo
         // dice a chi non vede il bottone cambiare (vedi il caso dedicato più sotto).
-        expect(await screen.findAllByText('Copiato')).toHaveLength(2);
+        //
+        // ⚠️ NON DICONO LA STESSA COSA, dal 2026-09-06 (rilievo 4 del collaudo): il
+        // bottone si è già identificato da sé — è quello che la persona ha premuto —
+        // mentre la regione parla da sola, e «Copiato» in una card con più comandi di
+        // copia non dice QUALE ha risposto. L'asserzione contava due nodi con lo
+        // stesso testo; ora nomina i due testi, che è la cosa che conta davvero.
+        expect(await screen.findByRole('button', { name: 'Copiato: IBAN' })).toHaveTextContent('Copiato');
+        expect(screen.getAllByRole('status').some((r) => r.textContent === 'Copiato: IBAN')).toBe(true);
         // La strada felice non scrive niente: un log a ogni copia riuscita
         // seppellirebbe le poche righe che raccontano il guasto.
         expect(logClient).not.toHaveBeenCalled();
@@ -225,7 +232,13 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         // Un solo IBAN a schermo, un solo «Intestato a», un solo bottone di copia.
         expect(screen.getAllByText(IBAN_LEGGIBILE)).toHaveLength(1);
         expect(screen.getAllByText('Intestato a')).toHaveLength(1);
-        expect(screen.getAllByRole('button', { name: 'Copia l’IBAN' })).toHaveLength(1);
+        // Un comando solo — ed è il nome accessibile a dire per quali plessi vale
+        // (rilievo 4, 2026-09-06): il testo visibile resta «Copia l'IBAN», il nome lo
+        // contiene e aggiunge i plessi, così due comandi non possono più confondersi.
+        expect(screen.getAllByRole('button', { name: /^Copia l’IBAN/ })).toHaveLength(1);
+        expect(
+            screen.getByRole('button', { name: 'Copia l’IBAN delle sedi Plesso Uno · Plesso Due' }),
+        ).toHaveTextContent('Copia l’IBAN');
         // …ma il blocco dice per quali plessi vale, al plurale giusto.
         // Scopata al pannello VISIBILE: la stessa frase vive anche nel pannello dei
         // contanti, che è nel DOM ma nascosto — è lo stesso fatto detto una volta sola
@@ -246,7 +259,12 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
 
         expect(screen.getByText(IBAN_LEGGIBILE)).toBeInTheDocument();
         expect(screen.getByText(IBAN_ALTRO)).toBeInTheDocument();
-        expect(screen.getAllByRole('button', { name: 'Copia l’IBAN' })).toHaveLength(2);
+        // Due comandi, e da qui in avanti con DUE nomi diversi: prima erano due
+        // bottoni con lo stesso identico nome accessibile, cioè indistinguibili per
+        // chi naviga a voce (rilievo 4, 2026-09-06).
+        expect(screen.getAllByRole('button', { name: /^Copia l’IBAN/ })).toHaveLength(2);
+        expect(screen.getByRole('button', { name: 'Copia l’IBAN della sede Plesso Uno' })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Copia l’IBAN della sede Plesso Due' })).toBeInTheDocument();
         // Un blocco per plesso ⇒ singolare, nella stessa pagina in cui l'altro caso
         // di prova ha il plurale: il `count` non è decorativo.
         expect(screen.getByText('Per la sede Plesso Uno')).toBeInTheDocument();
@@ -478,8 +496,10 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         for (const r of regioni) expect(r.textContent).toBe('');
 
         fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
-        expect(await screen.findByRole('button', { name: 'Copiato' })).toBeInTheDocument();
-        expect(screen.getAllByRole('status').some((r) => r.textContent === 'Copiato')).toBe(true);
+        // «Copiato: IBAN» e non «Copiato» (rilievo 4, 2026-09-06): la regione parla da
+        // sola, e in una card con più comandi di copia deve dire quale ha risposto.
+        expect(await screen.findByRole('button', { name: 'Copiato: IBAN' })).toBeInTheDocument();
+        expect(screen.getAllByRole('status').some((r) => r.textContent === 'Copiato: IBAN')).toBe(true);
     });
 
     it('contanti: le due righe icona+testo condividono UNA colonna', () => {
@@ -621,5 +641,235 @@ describe('ComePagare — bonifico o contanti, con intestatario e IBAN', () => {
         for (const s of pannello.querySelectorAll<HTMLElement>('span.shrink-0')) {
             expect(s.className).not.toContain('text-kidville-green');
         }
+    });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+   IL SESTO GIRO (2026-09-06) — i cinque rilievi dei collaudi frontend e
+   accessibilità. Sono minori uno per uno, ma tre riguardano chi non vede e uno
+   contraddice una promessa scritta nello spec.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * RILIEVO 1 — la card spariva TUTTA quando il server non produceva la causale.
+ *
+ * Lo spec del 2026-09-05 promette il contrario, e con parole sue: «Come pagare» è
+ * una card sola, e NON SPARISCE MAI; con un residuo aperto la card c'è, e senza
+ * IBAN «resta e dice di chiederlo in segreteria». La causale mancante non era
+ * prevista da nessuna parte, e portava via con sé l'IBAN e l'intestatario — cioè
+ * proprio le due cose per cui la card è nata.
+ */
+const VOCE_SENZA_CAUSALE: VoceCausale = { ...VOCE_UNO, causale: '' };
+
+describe('ComePagare — senza causale la card RESTA (rilievo 1)', () => {
+    it('il conto resta a schermo, e al posto della causale c’è una riga che dice cosa scrivere', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_SENZA_CAUSALE]} />);
+
+        expect(container.firstChild).not.toBeNull();
+        expect(screen.getByText('Come pagare')).toBeInTheDocument();
+        expect(screen.getByText(IBAN_LEGGIBILE)).toBeInTheDocument();
+        expect(screen.getByText(INTESTATARIO)).toBeInTheDocument();
+        // Un vuoto non è un ripiego: la riga dice al genitore che cosa scrivere lui.
+        expect(
+            screen.getByText(
+                'Causale non disponibile: nel bonifico indica il nome e il cognome del bambino e la voce da pagare.',
+            ),
+        ).toBeInTheDocument();
+        // …e non resta un comando che copierebbe una stringa vuota.
+        expect(screen.queryByRole('button', { name: /Copia la causale/ })).toBeNull();
+    });
+
+    it('con una causale su due, l’altra riga resta esattamente dov’era', () => {
+        render(
+            <ComePagare
+                sedi={[SEDE_UNO]}
+                voci={[VOCE_UNO, { ...VOCE_UNO, id: 'p3', descrizione: 'Mensa Settembre 2026', causale: '' }]}
+            />,
+        );
+
+        expect(campoCausale(VOCE_UNO.causale)).toBeInTheDocument();
+        expect(screen.getByText('Mensa Settembre 2026')).toBeInTheDocument();
+        // Un solo «Copia»: quello della voce che una causale ce l'ha.
+        expect(screen.getAllByRole('button', { name: /Copia la causale/ })).toHaveLength(1);
+    });
+});
+
+/**
+ * RILIEVO 2 — due riquadri «1 Il conto / 2 La causale» identici, e nessuna riga
+ * che dica a quale plesso appartengano.
+ *
+ * Succede con UNA sede descritta e delle voci di una sede che il server non ha
+ * descritto: i blocchi diventano due, ma i NOMI restano uno solo — e la condizione
+ * di allora (`nomiSedi.length > 1`) guardava i nomi, non i blocchi.
+ */
+describe('ComePagare — ogni blocco dice di quale plesso parla (rilievo 2)', () => {
+    const VOCE_ORFANA: VoceCausale = { ...VOCE_DUE, id: 'p9', scuola_id: 'sede-che-il-server-non-descrive' };
+
+    it('una sede descritta e una no: due blocchi, e nessuno dei due è anonimo', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO, VOCE_ORFANA]} />);
+        const pannello = screen.getByRole('tabpanel');
+
+        expect(within(pannello).getAllByText('Il conto')).toHaveLength(2);
+        expect(within(pannello).getByText('Per la sede Plesso Uno')).toBeInTheDocument();
+        // Il plesso dell'altro blocco non si sa: lo si DICE, invece di tacere.
+        expect(within(pannello).getByText('Sede non indicata')).toBeInTheDocument();
+    });
+
+    it('un blocco solo: il nome del plesso non compare, sarebbe rumore', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        expect(screen.queryByText(/^Per l[ae] sed/)).toBeNull();
+        expect(screen.queryByText('Sede non indicata')).toBeNull();
+    });
+
+    it('nei contanti il plesso resta taciuto se il secondo blocco non ha un nome', () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO, VOCE_ORFANA]} />);
+        fireEvent.click(screen.getByRole('tab', { name: 'Contanti' }));
+        // «Per la sede Plesso Uno» qui sarebbe una mezza verità: le voci dell'altro
+        // blocco non sono di quel plesso, e quale sia non lo sa nessuno. La domanda
+        // dei contanti è «in quale segreteria vado», e ha una risposta utile solo
+        // quando i plessi NOMINATI sono più d'uno.
+        expect(within(screen.getByRole('tabpanel')).queryByText(/^Per l[ae] sed/)).toBeNull();
+    });
+});
+
+/**
+ * RILIEVO 3 — l'IBAN a gruppi di quattro è illeggibile per chi ascolta: i lettori
+ * di schermo pronunciano «2811» come «duemilaottocentoundici», e chi trascrive a
+ * mano deve ricostruire le cifre. La resa a gruppi resta giusta per chi guarda.
+ *
+ * Il repo lo ha già risolto una volta, per i nomi dei file (`FieldRenderer`): la
+ * stringa INTERA in un nodo `sr-only`, i pezzi impaginati in `aria-hidden`.
+ *
+ * ⚠️ QUI IL NODO `sr-only` STA FUORI DAL CAMPO DA COPIARE, e non è un dettaglio:
+ * `sr-only` è `clip`-ato, non `display:none` (e2e/fixtures.ts lo documenta), quindi
+ * dentro il campo finirebbe nella SELEZIONE — cioè negli appunti di chi il campo lo
+ * seleziona col dito invece di premere il bottone. È lo stesso prezzo che questa
+ * card ha già rifiutato di pagare sulla causale, quando ha buttato via la versione
+ * coi caratteri sostituiti.
+ */
+describe('ComePagare — l’IBAN si può anche ASCOLTARE (rilievo 3)', () => {
+    it('chi ascolta riceve la forma elettronica, chi guarda i gruppi di quattro', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        const perAscolto = [...container.querySelectorAll('.sr-only')].map((n) => n.textContent);
+        expect(perAscolto).toContain(IBAN_COMPATTO);
+
+        // I gruppi di quattro sono impaginazione: fuori dall'albero accessibile,
+        // altrimenti l'IBAN si sente DUE volte, e la seconda coi numeri cardinali.
+        const visibile = screen.getByText(IBAN_LEGGIBILE);
+        expect(visibile).toHaveAttribute('aria-hidden', 'true');
+    });
+
+    it('nel campo da copiare non entra la copia per chi ascolta', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        // Il campo si cerca PER CLASSE e non col testo: se un giorno lo `sr-only`
+        // finisse dentro, `getByText` pescherebbe lo `span` interno e il rosso
+        // parlerebbe di una classe mancante invece che del difetto vero. Così il
+        // messaggio mostra i due IBAN incollati uno all'altro, che è la cosa che il
+        // genitore si ritroverebbe nell'home banking.
+        const campo = container.querySelector<HTMLElement>('.kv-campo-copiabile.font-mono');
+        expect(campo).not.toBeNull();
+        // La prova che vale: chi seleziona il campo col dito — invece di premere il
+        // bottone — incolla in banca l'IBAN e NIENT'ALTRO. Non l'IBAN due volte, in
+        // due forme diverse, perché `sr-only` è `clip`-ato e non `display:none`.
+        expect(campo?.textContent).toBe(IBAN_LEGGIBILE);
+    });
+
+    it('si sente ESATTAMENTE ciò che il bottone copia', () => {
+        const { container } = render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
+
+        // Una stringa sola, usata per tutti e due: se un giorno divergessero, chi
+        // ascolta detterebbe al telefono un IBAN diverso da quello degli appunti.
+        expect(scrivi).toHaveBeenCalledWith(IBAN_COMPATTO);
+        expect([...container.querySelectorAll('.sr-only')].map((n) => n.textContent)).toContain(IBAN_COMPATTO);
+    });
+});
+
+/**
+ * RILIEVO 4 — con due conti c'erano due bottoni con lo STESSO nome accessibile
+ * («Copia l'IBAN»), e la conferma diceva solo «Copiato». Il comando fratello,
+ * nella stessa card, distingue già («Copiato: causale di Mara Bianchi»).
+ */
+describe('ComePagare — due conti, due comandi distinguibili (rilievo 4)', () => {
+    const SEDE_ALTRO_CONTO: SedeBonifico = {
+        ...SEDE_DUE,
+        iban: IBAN_ALTRO,
+        intestatario: 'Altra Cooperativa soc. coop.',
+    };
+
+    it('i due «Copia l’IBAN» dicono di quale conto sono', () => {
+        render(<ComePagare sedi={[SEDE_UNO, SEDE_ALTRO_CONTO]} voci={[VOCE_UNO, VOCE_DUE]} />);
+
+        const uno = screen.getByRole('button', { name: 'Copia l’IBAN della sede Plesso Uno' });
+        const due = screen.getByRole('button', { name: 'Copia l’IBAN della sede Plesso Due' });
+        // Il nome accessibile CONTIENE il testo visibile (WCAG 2.5.3): chi comanda a
+        // voce dice «copia l'IBAN» e il comando risponde.
+        expect(uno).toHaveTextContent('Copia l’IBAN');
+        expect(due).toHaveTextContent('Copia l’IBAN');
+    });
+
+    it('la conferma dice QUALE conto è finito negli appunti', async () => {
+        render(<ComePagare sedi={[SEDE_UNO, SEDE_ALTRO_CONTO]} voci={[VOCE_UNO, VOCE_DUE]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN della sede Plesso Due' }));
+
+        expect(scrivi).toHaveBeenCalledWith(IBAN_ALTRO.replace(/\s+/g, ''));
+        expect(await screen.findByRole('button', { name: 'Copiato: IBAN della sede Plesso Due' })).toBeInTheDocument();
+        expect(screen.getAllByRole('status').some((r) => r.textContent === 'Copiato: IBAN della sede Plesso Due')).toBe(true);
+    });
+
+    it('con un conto solo il nome resta il testo visibile, e la conferma dice cosa', async () => {
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        const copia = screen.getByRole('button', { name: 'Copia l’IBAN' });
+        // Nessun `aria-label` a riposo: il testo visibile È il nome (WCAG 2.5.3), e
+        // con un conto solo il plesso sarebbe rumore.
+        expect(copia).not.toHaveAttribute('aria-label');
+
+        fireEvent.click(copia);
+        // A copia avvenuta il nome dice ancora CHE COSA è stato copiato, come fa il
+        // fratello della causale: «Copiato» da solo, in una card con due comandi,
+        // non dice quale dei due ha risposto.
+        expect(await screen.findByRole('button', { name: 'Copiato: IBAN' })).toBeInTheDocument();
+    });
+});
+
+/**
+ * RILIEVO 5 — se la copia fallisce non succedeva NIENTE di percepibile: il bottone
+ * non cambiava etichetta e la regione viva restava vuota. Restava solo la riga nel
+ * log, che il genitore non legge.
+ *
+ * Il fallimento è la regola dentro una WebView senza `navigator.clipboard`, cioè
+ * nell'app nativa: il posto da cui questa card viene letta di più.
+ */
+describe('ComePagare — la copia che non riesce non resta muta (rilievo 5)', () => {
+    it('l’esito negativo esce dalla regione viva e dice cosa fare', async () => {
+        scrivi.mockRejectedValueOnce(
+            Object.assign(new Error('Write permission denied.'), { name: 'NotAllowedError' }),
+        );
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
+
+        const avviso = await screen.findByText('Copia non riuscita: seleziona l’IBAN qui sopra e copialo a mano.');
+        const regione = avviso.closest('[role="status"]');
+        expect(regione).not.toBeNull();
+        // La stessa riga la LEGGE anche chi guarda: un bottone che non fa niente non
+        // è un riscontro per nessuno. Una sola riga, due destinatari.
+        expect(regione?.className).not.toContain('sr-only');
+    });
+
+    it('la causa del fallimento sta nel log, l’IBAN non ci entra in nessuna forma', async () => {
+        scrivi.mockRejectedValueOnce(Object.assign(new Error('nope'), { name: 'SecurityError' }));
+        render(<ComePagare sedi={[SEDE_UNO]} voci={[VOCE_UNO]} />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Copia l’IBAN' }));
+        await screen.findByText('Copia non riuscita: seleziona l’IBAN qui sopra e copialo a mano.');
+
+        const riga = JSON.stringify(vi.mocked(logClient).mock.calls[0][0]);
+        expect(riga).toContain('SecurityError');
+        expect(riga).not.toContain(IBAN_COMPATTO);
+        expect(riga).not.toContain(IBAN_LEGGIBILE);
     });
 });

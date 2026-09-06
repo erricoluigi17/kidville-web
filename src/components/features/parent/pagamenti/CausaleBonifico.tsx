@@ -2,7 +2,7 @@
 
 import { Fragment, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
-import { Copy, Check, Info } from 'lucide-react';
+import { Copy, Check, Info, AlertTriangle } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { formatEuro } from '@/lib/format/valuta';
 
@@ -203,7 +203,18 @@ export interface VoceCausale {
     id: string;
     /** Sede a cui la voce appartiene: decide SU QUALE CONTO va pagata (`ComePagare`). */
     scuola_id: string;
-    /** Causale già COMPOSTA dal server col modello per-categoria (admin_settings.causali_config). */
+    /**
+     * Causale già COMPOSTA dal server col modello per-categoria
+     * (admin_settings.causali_config).
+     *
+     * ⚠️ PUÒ ESSERE VUOTA, e la stringa vuota è un caso previsto, non un errore: il
+     * server non la produce quando manca il modello della categoria, e le righe più
+     * vecchie del motore che la compone non ce l'hanno affatto. Fino al 2026-09-06
+     * quelle voci venivano SCARTATE a monte, e quando erano le uniche portavano via
+     * l'intera card «Come pagare» — IBAN e intestatario compresi — mentre lo spec
+     * del 2026-09-05 promette che la card «non sparisce mai». Oggi la voce resta e
+     * al posto del campo copiabile compare la riga che dice cosa scrivere a mano.
+     */
     causale: string;
     /**
      * Come il genitore chiama questa voce («Retta Settembre 2026»). È il TITOLO della
@@ -242,7 +253,15 @@ export interface VoceCausale {
 // due card annidate darebbero due bordi e due titoli per una cosa sola.
 export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausale[]; incorporata?: boolean }) {
     const t = useTranslations('pagamenti');
-    const [copiato, setCopiato] = useState<string | null>(null);
+    /**
+     * L'esito dell'ultima copia: quale voce, e se è ANDATA A BUON FINE.
+     *
+     * Prima era il solo id della voce copiata, e il fallimento non aveva dove
+     * stare: `navigator.clipboard` rifiutava (o non esisteva — WebView), il `catch`
+     * scriveva la riga di log e a schermo non cambiava niente. Chi non vede non
+     * aveva NESSUN riscontro; chi vede nemmeno.
+     */
+    const [esito, setEsito] = useState<{ id: string; ok: boolean } | null>(null);
     // Il fuoco DA TASTIERA, tenuto a mano invece che con `focus-visible:` di
     // Tailwind: al fuoco il bottone deve prendere le classi STATICHE su cui l'Alto
     // Contrasto lo ribalta (vedi `BTN_COPIA_SECONDARIO_FUOCO`), e una variante
@@ -258,13 +277,20 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
     if (voci.length === 0) return null;
 
     const nomeDi = (v: VoceCausale) => [v.nome, v.cognome].filter(Boolean).join(' ') || t('questoPagamento');
-    const vocecopiata = voci.find((v) => v.id === copiato);
+    const vocecopiata = esito?.ok ? voci.find((v) => v.id === esito.id) : undefined;
+    const fallita = esito !== null && !esito.ok;
+    // L'introduzione promette una copia («Copiala così com'è»): davanti a zero campi
+    // copiabili sarebbe l'istruzione per una cosa che non c'è.
+    const qualcunaCopiabile = voci.some((v) => v.causale.trim() !== '');
 
     const copia = async (id: string, testo: string) => {
         try {
             await navigator.clipboard.writeText(testo);
-            setCopiato(id);
-            setTimeout(() => setCopiato(null), 2000);
+            setEsito({ id, ok: true });
+            // Solo la CONFERMA svanisce da sola. L'aggiornamento è funzionale perché
+            // il timer di una copia riuscita non deve cancellare l'avviso di un
+            // fallimento arrivato nel frattempo.
+            setTimeout(() => setEsito((e) => (e?.ok && e.id === id ? null : e)), 2000);
         } catch (err) {
             // `navigator.clipboard` dice di no per motivi DIVERSI e distinguibili, e
             // ognuno vuole una correzione diversa: permesso negato, contesto non
@@ -279,6 +305,12 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
                 messaggio: `copia-causale-non-riuscita: ${nomeErrore(err)}`,
                 route: '/parent/pagamenti',
             });
+            // …e l'avviso a chi sta guardando lo schermo: il log lo legge solo chi
+            // ha accesso a `app_log`, non il genitore che ha appena premuto.
+            // NESSUN timer: dentro una WebView senza `navigator.clipboard` la copia
+            // fallirà ogni volta, e un avviso che sparisce dopo due secondi lascia
+            // la persona esattamente dov'era. Se ne va al primo esito nuovo.
+            setEsito({ id, ok: false });
         }
     };
 
@@ -294,16 +326,18 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
                 l'a-capo, che dipende dalla larghezza dello schermo e dalla lingua.
                 14px e non 12: è testo che si legge, su un telefono, prima di spostare
                 dei soldi. */}
-            <p className="font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
-                {t('causaleIntro')}
-            </p>
+            {qualcunaCopiabile && (
+                <p className="font-maven text-sm leading-relaxed text-pretty text-kidville-sub">
+                    {t('causaleIntro')}
+                </p>
+            )}
             {/* 12px fra una voce e l'altra e non 8: con card alte 118 le tre superfici
                 crema si saldavano in un blocco unico a righe, e si perdeva il conteggio
                 delle voci a colpo d'occhio. */}
             <ul className="mt-3 space-y-3">
                 {voci.map((v) => {
                     const causale = v.causale;
-                    const done = copiato === v.id;
+                    const done = esito?.ok === true && esito.id === v.id;
                     const nome = nomeDi(v);
                     return (
                         // `border border-transparent`: il riquadro del conto, che sta
@@ -357,10 +391,25 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
                                 Si aggiunge al primo riavvio del server. */}
                             {/* L'occhiello che «Intestato a» e «IBAN» hanno già: tre campi, una sola etichetta. */}
                             <p className={`mt-3 ${ETICHETTA}`}>{t('causaleEtichetta')}</p>
-                            <p className={`mt-1 bg-kidville-white font-maven text-sm ${CAMPO_COPIABILE}`}>
-                                <CausaleLeggibile causale={causale} />
-                            </p>
-                            {!v.hasCf && (
+                            {causale ? (
+                                <p className={`mt-1 bg-kidville-white font-maven text-sm ${CAMPO_COPIABILE}`}>
+                                    <CausaleLeggibile causale={causale} />
+                                </p>
+                            ) : (
+                                // L'OCCHIELLO RESTA, IL CAMPO NO — la stessa forma con cui il
+                                // riquadro del conto dice «Intestatario non disponibile»:
+                                // un'assenza non si scrive col peso di un valore, e nemmeno
+                                // dentro una scatola che invita a copiare il vuoto.
+                                // Non manda in segreteria: qui il genitore può agire da solo,
+                                // e la riga gli dice esattamente cosa scrivere.
+                                <p className="mt-1 break-words font-maven text-sm leading-snug text-pretty text-kidville-sub">
+                                    {t('causaleNonDisponibile')}
+                                </p>
+                            )}
+                            {/* La nota del CF chiede la stessa cosa che la riga qui sopra ha
+                                appena chiesto («indica il nome e cognome del bambino»): senza
+                                causale si leggerebbero come due adempimenti invece di uno. */}
+                            {causale && !v.hasCf && (
                                 <p className="mt-2 flex items-start gap-2 font-maven text-xs leading-relaxed text-pretty text-kidville-sub">
                                     <span className="mt-[2px] flex w-4 shrink-0 justify-center" aria-hidden="true">
                                         <Info size={14} />
@@ -368,6 +417,7 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
                                     <span>{t('cfNonDisponibile')}</span>
                                 </p>
                             )}
+                            {causale && (
                             <div className="mt-3 flex sm:justify-end">
                                 <button
                                     type="button"
@@ -398,6 +448,7 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
                                         : <><Copy size={15} aria-hidden="true" /> {t('copia')}</>}
                                 </button>
                             </div>
+                            )}
                         </li>
                     );
                 })}
@@ -405,9 +456,38 @@ export function CausaleBonifico({ voci, incorporata = false }: { voci: VoceCausa
             {/* L'esito della copia detto A VOCE, non solo con l'etichetta che cambia.
                 La regione è montata SEMPRE, anche vuota: un `aria-live` che compare
                 insieme al proprio testo, nei lettori di schermo, spesso non annuncia
-                niente — è l'errore che rende inutili metà delle conferme «copiato». */}
-            <p role="status" aria-live="polite" className="sr-only">
-                {vocecopiata ? t('ariaCopiatoCausale', { nome: nomeDi(vocecopiata) }) : ''}
+                niente — è l'errore che rende inutili metà delle conferme «copiato».
+
+                E DICE ANCHE IL FALLIMENTO (2026-09-06). Quando la copia non riesce la
+                stessa regione diventa VISIBILE: un bottone che non fa niente non è un
+                riscontro per nessuno, né per chi ascolta né per chi guarda. Una riga
+                sola per due destinatari — due meccanismi separati divergerebbero al
+                primo ritocco, come è già successo in questa card.
+
+                L'inchiostro è `ink` e non `error`: in Alto Contrasto
+                `.kv-come-pagare .text-kidville-ink` va a #FFFFFF (globals.css), mentre
+                il rosso resterebbe l'hex inlinato da `@theme inline` — cioè un rosso su
+                nero, sotto AA, proprio nella modalità pensata per chi fatica a leggere.
+                Il segnale lo fa la forma del triangolo, che non ha bisogno di colore. */}
+            <p
+                role="status"
+                aria-live="polite"
+                className={
+                    fallita
+                        ? 'mt-3 flex items-start gap-2 font-maven text-sm leading-relaxed text-pretty text-kidville-ink'
+                        : 'sr-only'
+                }
+            >
+                {fallita ? (
+                    <>
+                        <span className="mt-[2px] flex w-4 shrink-0 justify-center" aria-hidden="true">
+                            <AlertTriangle size={16} />
+                        </span>
+                        <span>{t('copiaFallitaCausale')}</span>
+                    </>
+                ) : (
+                    vocecopiata ? t('ariaCopiatoCausale', { nome: nomeDi(vocecopiata) }) : ''
+                )}
             </p>
         </div>
     );

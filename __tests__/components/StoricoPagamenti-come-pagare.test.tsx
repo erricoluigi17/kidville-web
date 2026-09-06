@@ -130,3 +130,48 @@ describe('StoricoPagamenti — «Come pagare» con le coordinate della sede', ()
         expect(screen.getAllByText('€ 40,00').length).toBeGreaterThanOrEqual(1);
     });
 });
+
+/**
+ * RILIEVO 1 (collaudo 2026-09-06) — «Come pagare» spariva DEL TUTTO quando il
+ * server non produceva la causale: la lista scartava le voci senza `causale_suggerita`,
+ * e con zero voci la card non si rende. Sparivano con lei l'IBAN e l'intestatario,
+ * cioè le due cose per cui la card è nata — mentre lo spec del 2026-09-05 promette
+ * che la card «non sparisce mai» finché c'è un residuo.
+ */
+describe('StoricoPagamenti — la card segue il RESIDUO, non la causale', () => {
+    it('una voce aperta senza causale tiene la card, l’IBAN e l’intestatario', async () => {
+        corpo = { success: true, data: [{ ...VOCE, causale_suggerita: null }], sedi: SEDI };
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Come pagare')).toBeInTheDocument();
+        expect(screen.getByText(IBAN_LEGGIBILE)).toBeInTheDocument();
+        expect(screen.getByText('Cooperativa Esempio soc. coop.')).toBeInTheDocument();
+        expect(
+            screen.getByText(
+                'Causale non disponibile: nel bonifico indica il nome e il cognome del bambino e la voce da pagare.',
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it('la voce senza causale porta il proprio residuo, come le altre', async () => {
+        corpo = { success: true, data: [{ ...VOCE_PARZIALE, causale_suggerita: null }], sedi: SEDI };
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Come pagare')).toBeInTheDocument();
+        // 60 − 20 = 40: la cifra da bonificare resta quella giusta anche quando la
+        // causale manca — sono due dati diversi, e uno non trascina l'altro.
+        expect(screen.getAllByText('€ 40,00').length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('senza voci aperte la card non compare, causale o no', async () => {
+        corpo = {
+            success: true,
+            data: [{ ...VOCE, stato: 'pagato', importo_pagato: 250, causale_suggerita: null }],
+            sedi: SEDI,
+        };
+        render(<StoricoPagamenti userId="u-1" />);
+
+        expect(await screen.findByText('Retta Settembre')).toBeInTheDocument();
+        expect(screen.queryByText('Come pagare')).toBeNull();
+    });
+});

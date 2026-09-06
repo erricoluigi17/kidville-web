@@ -179,12 +179,27 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         setRifiuto(null);
         setErroreRete(false);
       } else if (movRes === null) {
+        // ⚠️ I DUE STATI D'ERRORE SI AZZERANO A VICENDA, SEMPRE E IN TUTTI I RAMI.
+        //
+        // `rifiuto` («il server ha detto di no») ed `erroreRete` («la risposta non
+        // è arrivata») descrivono due guasti che non possono valere insieme, e la
+        // fascia sceglie `error ?? messaggioRifiuto ?? «errore di rete»`: se il
+        // rifiuto di prima resta appeso, il terzo ramo non si raggiunge mai e
+        // l'operatore legge «Filtro non riconosciuto» mentre è caduta la rete —
+        // cioè la diagnosi opposta a quella giusta (cambia il filtro, contro
+        // riprova fra un attimo). Ogni giro di `load` ne lascia acceso UNO SOLO.
         setErroreRete(true);
+        setRifiuto(null);
       } else {
         // Il server ha RIFIUTATO. Prima non succedeva niente: nessun messaggio,
         // nessun log, e l'operatore restava davanti a una lista che sembrava
         // filtrata. Il corpo si conserva per il testo, lo `stato` va nel log.
         setRifiuto((movRes.corpo ?? {}) as { error?: unknown; codice?: unknown });
+        // Il gemello della riga qui sopra. Oggi non cambia nulla di visibile — la
+        // fascia preferisce comunque `messaggioRifiuto` al ripiego di rete — ma
+        // `erroreRete` è letto anche da `vuoto`, e uno stato che sopravvive al
+        // proprio guasto è una trappola per il prossimo che lo legge.
+        setErroreRete(false);
         logClient({ livello: 'warn', evento: 'fetch', messaggio: 'riconciliazione-movimenti-rifiutati', route: '/admin/pagamenti', stato: movRes.stato });
       }
       if (apRes?.success) {
@@ -308,8 +323,14 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * ⚠️ «Nessun movimento in questo stato» è una AFFERMAZIONE, e si può fare solo
    * quando si sa che è vera. Con un rifiuto in corso o col filtro non applicato
    * non lo sappiamo: lì parla la fascia, non il vuoto.
+   *
+   * `erroreRete` mancava a questo elenco, ed è il caso in cui si sa MENO di tutti:
+   * la risposta non è arrivata affatto, quindi la lista è vuota per assenza di
+   * dati, non per assenza di movimenti. La schermata scriveva «Nessun movimento:
+   * importa un estratto conto per iniziare.» — un invito a lavorare — proprio
+   * sotto la fascia rossa che dice che il caricamento è fallito.
    */
-  const vuoto = !loading && disponibile && !messaggioRifiuto && !avvisoFatturazione && movimenti.length === 0;
+  const vuoto = !loading && disponibile && !erroreRete && !messaggioRifiuto && !avvisoFatturazione && movimenti.length === 0;
 
   return (
     <div>

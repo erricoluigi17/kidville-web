@@ -318,22 +318,60 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // su due sedi su tre» è una cosa che si scopre solo aprendo l'app con
     // l'account di una famiglia: le righe per-sede del motore dicono CHE manca,
     // questa dice QUANTO pesa sul servito. Solo conteggi — nessun IBAN, nessun
-    // nome di sede, nessun uuid di bambino — e `app_log` deduplica per giorno,
-    // che è la granularità giusta per una domanda di questo tipo.
+    // nome di sede, nessun uuid di bambino.
     //
-    // ⚠️ I CAMPI NON POSSONO CHIAMARSI `sedi_con_iban`: `iban` è una radice
-    // segreta di `redact()` e la corrispondenza è per CONTENIMENTO, quindi anche
-    // un numero sotto quel nome esce `[redatto]` — la riga sarebbe uscita ogni
-    // giorno senza dire l'unica cosa che ha da dire. `coordinate` descrive lo
-    // stesso fatto e lascia la difesa sull'IBAN dov'è. Misurato dal test, non
-    // dedotto.
+    // ⚠️ `persisti: false`: LA RIGA VA SU VERCEL, NON IN `app_log`. Qui prima
+    // c'era scritto «`app_log` deduplica per giorno, che è la granularità giusta»,
+    // ed era falso: deduplica per **(impronta, giorno)**, e `utente_id` è una
+    // delle parti dell'impronta (`impronta()` in `app-log.ts`). Su una pagina che
+    // ogni famiglia apre, «una riga al giorno» diventa «una riga al giorno PER
+    // GENITORE»: nel giorno di punta 286 utenti distinti contro 1.733 righe totali
+    // in tabella — un ordine di grandezza di +16% di volume da questa sola.
+    // ⚠️ I due numeri sono MISURATI (produzione, 2026-09-04); il +16% è un'INFERENZA,
+    // e vale solo se ognuno di quei 286 apre la pagina dei pagamenti — mentre i 286
+    // sono gli utenti che compaiono in `app_log` per qualunque motivo. Dà la taglia
+    // del problema, non la sua misura, e va letto per quello. E `pagamento` è in
+    // `EVENTI_PERSISTITI`, quindi ci finirebbe per ELENCO: un `info` qualunque, su
+    // un canale qualunque, in tabella non ci arriva.
+    //
+    // Quanto poco si voglia far rumore su QUESTO percorso lo dice il motore che
+    // sta due chiamate più in là: `coordinateBonificoSede` invoca `datiStruttura`
+    // con `livello: 'info'` esplicito, mentre il suo default è `'error'`
+    // (`fiscale.ts`), e la ragione scritta lì accanto è la stessa — è una riga che
+    // il genitore rilegge a ogni apertura della pagina.
+    //
+    // E quel volume non comprerebbe nemmeno la risposta: l'`ON CONFLICT` somma le
+    // occorrenze ma NON aggiorna il `contesto`, quindi i due conteggi in tabella
+    // resterebbero quelli della PRIMA apertura di quel genitore in quel giorno.
+    //
+    // La memoria durevole di «su quali sedi manca l'IBAN» esiste già ed è
+    // migliore: le righe per-sede di `coordinateBonificoSede`
+    // (`warn iban-non-configurato`, `error iban-non-valido`) portano lo
+    // `scuola_id` e si persistono per livello. Questa è il riassunto della singola
+    // richiesta, e il posto di un riassunto per-richiesta è la console.
+    //
+    // ⚠️ I CAMPI NON SI CHIAMANO `sedi_con_iban`, E RESTANO COSÌ ANCHE ADESSO CHE
+    // NON SI PERSISTONO. `iban` è una radice segreta di `redact()` e la
+    // corrispondenza è per CONTENIMENTO: anche un numero sotto quel nome esce
+    // `[redatto]`. Con `persisti: false` la redazione su questa riga non gira più
+    // — `redact()` sta sul ramo della persistenza — quindi il vincolo oggi non
+    // morde; i nomi però restano quelli giusti per il giorno in cui la valvola si
+    // richiude, e il test li tiene fermi. Misurato, non dedotto.
     if (sedi.length > 0) {
-      logEvento('pagamento', 'info', {
-        operazione: 'pagamenti:GET',
-        esito: 'coordinate-bonifico',
-        sedi_con_coordinate: sedi.filter((s) => s.iban !== null).length,
-        sedi_senza_coordinate: sedi.filter((s) => s.iban === null).length,
-      })
+      logEvento(
+        'pagamento',
+        'info',
+        {
+          operazione: 'pagamenti:GET',
+          esito: 'coordinate-bonifico',
+          sedi_con_coordinate: sedi.filter((s) => s.iban !== null).length,
+          sedi_senza_coordinate: sedi.filter((s) => s.iban === null).length,
+        },
+        // Nessun errore da descrivere: il posto di `err` va tenuto per arrivare
+        // alle opzioni.
+        undefined,
+        { persisti: false },
+      )
     }
 
     return NextResponse.json({

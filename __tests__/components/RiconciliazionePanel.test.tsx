@@ -828,3 +828,94 @@ describe('RiconciliazionePanel — la geometria della riga', () => {
     expect(aggiorna.className, 'un bottone-icona schiacciato è una capsula, non un cerchio').toContain('shrink-0');
   });
 });
+
+/**
+ * ─── DUE ERRORI IN FILA, E IL PRIMO RESTAVA APPESO ───────────────────────────
+ *
+ * `load` ha tre uscite e due stati d'errore: `rifiuto` (il server ha risposto e
+ * ha detto di no) ed `erroreRete` (la risposta non è arrivata affatto). Il ramo
+ * felice li azzera entrambi; gli altri due ne azzeravano UNO ciascuno — cioè
+ * nessuno azzerava quello dell'altro.
+ *
+ * Conseguenza a schermo: dopo un 400, un errore di rete lasciava la fascia a
+ * ripetere il messaggio VECCHIO. La fascia sceglie `error ?? messaggioRifiuto ??
+ * «errore di rete»`: con `rifiuto` ancora valorizzato il terzo ramo non si
+ * raggiunge mai, e l'operatore legge «Filtro non riconosciuto» mentre il
+ * problema è che la rete è caduta. Due diagnosi opposte — cambia il filtro,
+ * contro riprova fra un attimo — e quella mostrata è quella sbagliata.
+ *
+ * ⚠️ E IL VUOTO NON PUÒ PARLARE MENTRE PARLA LA FASCIA. `vuoto` esclude già
+ * `messaggioRifiuto` e `avvisoFatturazione` con la regola scritta accanto:
+ * «"Nessun movimento" è una AFFERMAZIONE, e si può fare solo quando si sa che è
+ * vera». `erroreRete` mancava all'appello, ed è lo stato in cui non si sa MENO
+ * di tutti: la risposta non è arrivata. Senza, azzerare `rifiuto` avrebbe
+ * scoperto la frase «Nessun movimento: importa un estratto conto per iniziare.»
+ * proprio sotto la fascia rossa dell'errore di rete.
+ */
+describe('RiconciliazionePanel — un errore non lascia in piedi il precedente', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  /**
+   * Un finto server pilotabile a metà corsa: `modo` decide come risponde la GET
+   * dei movimenti al prossimo giro. I pagamenti aperti rispondono sempre bene,
+   * così l'unica variabile è quella che si sta misurando.
+   */
+  const fetchPilotato = (stato: { modo: 'rifiuto' | 'rete' }) =>
+    vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === undefined) {
+        if (stato.modo === 'rete') throw new TypeError('Failed to fetch');
+        return { ok: false, status: 400, json: async () => ({ error: 'Filtro non riconosciuto' }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+
+  it('400 e POI caduta di rete: la fascia dice l’errore nuovo, non riscrive il vecchio', async () => {
+    const stato: { modo: 'rifiuto' | 'rete' } = { modo: 'rifiuto' };
+    vi.stubGlobal('fetch', fetchPilotato(stato));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Filtro non riconosciuto'));
+
+    // Cade la rete. «Aggiorna» rifà lo stesso identico GET.
+    stato.modo = 'rete';
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Errore di rete'));
+    // La riga che dimostra il difetto: senza `setRifiuto(null)` qui c'era ancora
+    // «Filtro non riconosciuto», cioè si continuava a mandare l'operatore a
+    // cambiare un filtro mentre il problema era la rete.
+    expect(
+      screen.getByRole('alert').textContent,
+      'il messaggio del 400 precedente non può sopravvivere a un errore di rete',
+    ).not.toContain('Filtro non riconosciuto');
+  });
+
+  it('durante un errore di rete il vuoto TACE: nessun «Nessun movimento»', async () => {
+    // Non serve il 400 prima: è il caso semplice, e vale da solo. La lista è
+    // vuota perché la risposta non è arrivata — dire «non c'è niente da
+    // riconciliare» sarebbe un'affermazione su dati che non si sono visti.
+    vi.stubGlobal('fetch', fetchPilotato({ modo: 'rete' }));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Errore di rete'));
+
+    expect(screen.queryByText(/Nessun movimento/)).toBeNull();
+  });
+
+  it('controprova dell’ordine inverso: rete e POI 400, la fascia passa al rifiuto', async () => {
+    // ⚠️ Questa prova era VERDE anche prima della correzione, e va detto: la
+    // fascia preferisce già `messaggioRifiuto` al ripiego di rete, quindi il
+    // testo era giusto pur restando `erroreRete` acceso. Sta qui perché la
+    // correzione azzera i due stati in ENTRAMBI i rami, e senza controprova
+    // «azzerare anche l'altro» potrebbe rompere l'ordine inverso senza che
+    // nessuno se ne accorga.
+    const stato: { modo: 'rifiuto' | 'rete' } = { modo: 'rete' };
+    vi.stubGlobal('fetch', fetchPilotato(stato));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Errore di rete'));
+
+    stato.modo = 'rifiuto';
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Filtro non riconosciuto'));
+    expect(screen.getByRole('alert').textContent).not.toContain('Errore di rete');
+  });
+});

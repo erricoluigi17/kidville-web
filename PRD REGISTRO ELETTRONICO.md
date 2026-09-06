@@ -285,6 +285,127 @@ non toccano questo perimetro. Il suo changelog resta qui sotto, intero.
 tolto il ramo dei documenti da `chipFatturazione` → **8 test rossi** (fra cui i quattro della #118);
 rimessa la `.in()` unica al posto dei blocchi → **1 rosso**, quello dei 250 pagamenti.
 
+### La ripresa del 6 settembre — due job rossi, due cause diverse, e una sola era nostra
+
+La sessione del 5 settembre si è interrotta con la CI rossa su **entrambi** i check obbligatori.
+I due rossi sembravano un problema solo; erano due, e uno non nasceva qui.
+
+**Il job `Lint · Typecheck · Unit`: un test su 14.338.** Il commit `40904237` aveva portato
+l'etichetta del chip al **plurale ICU** — «Fattura FPR …» con un documento, «Fatture FPR … · Asilo …»
+con due — e aveva lasciato indietro l'unico test che asseriva quella stringa. La riparazione esisteva
+già sul disco, mai committata: lo spegnimento del PC l'ha colta lì.
+
+Correggere quella riga, però, avrebbe chiuso il rosso lasciando aperto ciò che l'aveva prodotto.
+Nello stesso file la stessa etichetta era cercata in **tre modi**, e due erano diventati **ciechi**:
+`queryByText(/^Fattura /)` e `not.toContain('Fattura')` non vedono la parola «Fatture». Sono
+entrambe asserzioni **negative**, cioè della specie che tace invece di rompersi. Misurato, non
+dedotto: scavalcando la guardia su `pagamento_id` e con un pagamento a due documenti, la riga che
+vieta il chip su un movimento non abbinato **passava verde con il difetto in atto**; col matcher
+riparato `/^Fattur[ae] /` diventa rossa. Il conteggio dei chip, a sua volta, reggeva solo perché
+nessun fixture aveva due documenti — reso plurale, accusava un chip *mancante* mentre il chip c'era.
+
+⚠️ La forma del matcher conta: `/^Fatture? /` è «Fattur» più una «e» facoltativa, quindi è cieca al
+**singolare**. Solo `/^Fattur[ae] /` vede entrambe le forme, e le due sono state provate una contro
+l'altra prima di sceglierne una.
+
+A monte c'era un buco più grande: il plurale di questa chiave non aveva **nessun lock**. L'elenco
+`CONTATORI` è a mano e non la conteneva; il «riconoscitore di forma» salta per costruzione ogni
+stringa che apre un blocco `plural`, cioè perde il contatore **proprio nel momento in cui viene
+portato a ICU**. L'unica prova che l'etichetta rendesse «Fatture» era quella riga di test — quella
+che la CI ha trovato rossa. Ora le due chiavi sono in `CONTATORI`, rese in italiano **e in inglese**:
+il mock di next-intl formatta ICU per davvero, ma a locale fisso `it`, e solo quando il punto di
+chiamata passa dei valori — condizione che il commento del lock adesso dichiara, perché prima
+prometteva più di quanto verificasse.
+
+**Il job `E2E (Playwright)`: non era di questo branch, e non si poteva ignorare.** La sonda di
+contrasto falliva su `/teacher` con «15 nodi di testo contro i ≥ 18 attesi». Il diff non tocca
+nessun file di `/teacher`, e in `globals.css` aggiunge solo selettori `kv-recon-*` e
+`kv-come-pagare`, che sotto quella rotta hanno zero occorrenze. Ma «non è mio» non è una diagnosi:
+
+- **`main` era già rosso**, con lo stesso test e gli stessi numeri (run `33976911606`, il merge della
+  PR #118), e non aveva avuto run successive. Il check E2E è obbligatorio nella branch protection:
+  quel rosso si ereditava su qualunque PR;
+- il test è **instabile, non stabilmente rotto**: verde in cinque run, rosso in tre, a codice fermo.
+  La distinzione non è accademica — «rotto sempre» invita a spegnere la sonda, «vince una corsa otto
+  volte su dieci» invita a togliere la corsa.
+
+La causa: `misura()` attendeva `load` e la sparizione dell'overlay, e nient'altro.
+`attendiFineCaricamento` aspetta solo che il `GlobalLoader` se ne vada, e quello si spegne al primo
+`requestAnimationFrame` dopo il mount — **prima** che sia tornata una sola delle chiamate della
+pagina. `/teacher` rende ~18 nodi come guscio idratato e ~36 a dati arrivati: la sonda fotografava
+l'anticamera. E la baseline aveva inciso come pavimento il valore **esatto** di quella corsa
+(`nodiMinimi = Math.min(normale, alto)`), cioè con margine zero: bastava che la corsa scivolasse di
+uno stadio.
+
+Non è stato abbassato `nodiMinimi` e non è stata tolta `/teacher` dall'elenco. La prima cosa
+certificherebbe come «pagina pulita» un guscio senza un dato — e 15 non è nemmeno uno stadio
+spiegato, il primo ne vale ~16. La seconda spegnerebbe l'unica rotta docente misurata lasciando in
+piedi la stessa causa su `/parent/pagamenti`. Nessun `retries`: la config lo vieta con la ragione
+scritta, ed è la ragione giusta.
+
+Quello che è stato fatto: l'attesa è **deterministica**. Prima `networkidle`, poi un ciclo che
+rimisura finché il conteggio non si ripete. Sono complementari e coprono due momenti diversi — il
+ciclo vede il rendering *dopo* la risposta, `networkidle` la quiete *prima* — e serviva dirlo,
+perché un ciclo da solo non distingue «fermo perché ha finito» da «fermo perché non è ancora
+partito»: con un orologio finto, una fetch che risponde a 501 ms fa leggere due volte il guscio e
+lo dichiara stabile.
+
+Tre difetti minori della stessa sonda sono stati chiusi con essa: `alto.saltati` non era **mai**
+confrontato con la baseline (e una superficie che diventa non calcolabile solo in Alto Contrasto
+abbassa il conteggio senza lasciare traccia); l'`expect` che è caduta non stampava nulla, e
+l'`error-context.md` di quei rossi non contiene alcuno snapshot, quindi il messaggio è l'unica cosa
+che resta a chi legge; e il blocco «voce da incollare» era appeso a **ogni** fallimento, compresi
+quelli che sorvegliano i contrasti veri — cioè a chi peggiorava un colore veniva servito il numero
+peggiorato, pronto da copiare. Ora esce solo nel caso per cui era nato.
+
+**La rete che tiene onesta la correzione**, ed è la parte che conta: il criterio di accettazione non
+è più una frase nel `_leggimi`, è un campo `provaPositiva` **per rotta**, preteso da un'`expect` su
+entrambe le passate. Su `/teacher` è il blocco «Comunicazioni», che ha uno sfondo a gradiente e che
+il seme alimenta; su `/parent/pagamenti` è la card del totale dovuto, gradiente inline. Se dopo la
+correzione quei `saltati.gradiente` restano a 0, la sonda sta ancora misurando il guscio e il verde
+è cieco. Senza quel criterio `/parent/pagamenti` sarebbe rimasta cieca **senza nemmeno un rosso**,
+che è il caso peggiore.
+
+⚠️ **Rilievo aperto, e va messo in conto**: la baseline andrà **rimisurata** al primo giro di CI dopo
+questa correzione, e i numeri `normale`/`altoContrasto` su `/teacher` con ogni probabilità
+**saliranno**. Non è una regressione: sono difetti preesistenti dell'Alto Contrasto su superfici che
+la sonda non aveva mai visto, perché guardava la pagina prima che esistesse. Vanno dichiarati in
+baseline, non nascosti — e si aggiungono al rilievo già aperto qui sopra sulle 7 rotte su 9.
+
+### Quattro difetti nostri, trovati mentre si cercava altro
+
+Nessuno dei quattro produceva un rosso, e tre erano **nuovi di questo branch**.
+
+- **Un log che scriveva una riga per genitore al giorno.** `logEvento('pagamento','info', …)` sta su
+  un canale persistito, e l'impronta della deduplica include l'`utente_id`: «una riga al giorno»
+  diventa una riga *per utente*. Con 286 utenti distinti nel giorno di punta contro 1.733 righe
+  totali in `app_log`, un ordine di grandezza del +16% — su un canale dove questo stesso lavoro
+  aveva appena abbassato un `error` a `info` per non fare rumore. E il `contesto` non si aggiorna
+  sull'`ON CONFLICT`, quindi i contatori restavano quelli della prima apertura: la domanda a cui la
+  riga voleva rispondere non l'avrebbe risolta comunque. Ora non persiste.
+- **Due stati d'errore che non si azzeravano a vicenda.** Un 400 lasciava il messaggio di rifiuto in
+  piedi anche dopo un successivo errore di rete: la fascia mostrava il testo vecchio e l'empty-state
+  non tornava più.
+- **Il filtro del server e il chip del client applicavano la stessa politica in due modi diversi.**
+  La rotta sintetizza un documento `da_fatturare` per ogni pagamento senza fatture, quindi non
+  ricadeva mai su `fattura_stato`; il chip invece ci ricade sempre. Nello stato in cui la fattura è
+  partita ma il registro non è stato scritto, la riga finiva nella lista di lavoro «Da fatturare e
+  scartate» — dove il pulsante non c'è nemmeno — e **spariva** da «Fatturate e in attesa», cioè
+  dall'elenco con cui si controlla che le fatture siano uscite. In produzione: 0 occorrenze oggi.
+  I test non lo vedevano perché seminavano documenti sempre coerenti col riassunto.
+- **Un commento che descriveva una minimizzazione inesistente**: diceva che lo stato di fatturazione
+  si mostra solo sulle proprie sedi, mentre il *numero* della fattura usciva comunque. Non è
+  un'urgenza di privacy — il registro è dichiaratamente cross-sede e un numero di fattura non è dato
+  di un minore — ma un commento che descrive una protezione che non c'è è la cosa che questo
+  repository ha già pagato due volte.
+
+Per non far ridivergere filtro e chip, la politica è ora **un motore solo** in
+`src/lib/pagamenti/fatturazione-riga.ts`, con il suo lock architetturale. Il trasloco ha chiuso per
+strada un precedente che nessuno aveva notato: la rotta importava da `@/components`, ed era il
+**primo import di `src/app/api` verso i componenti in tutto il repository**. Nessuna regola lo
+intercettava e `tsc` lo accetta — la frontiera RSC la prova solo `next build`. Ora una riga del lock
+la fa vedere a `vitest`, senza aspettare la build.
+
 ### Cosa NON è stato fatto, e perché
 
 - **Nessun campo «intestatario»**: decisione del titolare. È la denominazione del cedente, la stessa

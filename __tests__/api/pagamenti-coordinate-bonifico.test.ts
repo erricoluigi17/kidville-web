@@ -71,6 +71,10 @@ vi.mock('@/lib/supabase/server-client', async () => {
 import { GET } from '@/app/api/pagamenti/route'
 // La redazione VERA: è lei a decidere cosa di una riga si legge davvero in `app_log`.
 import { redact } from '@/lib/logging/redact'
+// La regola VERA di persistenza (il mock qui sopra sostituisce la sola `logEvento`):
+// serve a provare che l'opzione `persisti: false` porta il suo peso, e non è
+// decorazione su un canale che in tabella non ci sarebbe finito comunque.
+import { vaPersistito } from '@/lib/logging/logger'
 
 const url = (qs = '') =>
   new Request(`http://localhost/api/pagamenti?${qs}`) as unknown as import('next/server').NextRequest
@@ -199,7 +203,7 @@ describe('GET /api/pagamenti — le coordinate del bonifico, una per sede', () =
 const lettureImpostazioni = () => h.tabelle.filter((t) => t === 'admin_settings').length
 
 /** Le chiamate a `logEvento` del gruppo `pagamento` con quell'esito. */
-type ChiamataLog = [string, string, Record<string, unknown>]
+type ChiamataLog = [string, string, Record<string, unknown>, unknown?, { persisti?: boolean }?]
 const riepiloghi = () =>
   (h.logEvento.mock.calls as ChiamataLog[]).filter(
     (c) => c[0] === 'pagamento' && c[2]?.esito === 'coordinate-bonifico',
@@ -273,8 +277,13 @@ describe('GET /api/pagamenti — `Cache-Control` sulla risposta che porta le coo
 
 // ─── QUANTE VOLTE LA CARD È USCITA COL RIPIEGO (rilievo f) ──────────────────
 // Senza questa riga, «l'IBAN manca su due sedi su tre» è una cosa che si scopre
-// solo aprendo l'app con l'account di una famiglia. `app_log` deduplica per
-// giorno: è una riga al giorno, ed è esattamente la granularità che serve.
+// solo aprendo l'app con l'account di una famiglia.
+//
+// ⚠️ MA LA RIGA VIVE SU VERCEL, NON IN `app_log`. Qui prima c'era scritto che
+// «`app_log` deduplica per giorno: è una riga al giorno», e non è vero: deduplica
+// per **(impronta, giorno)**, e `utente_id` è dentro l'impronta. Su una pagina che
+// ogni genitore apre, «una al giorno» diventa «una al giorno PER GENITORE». Il test
+// in fondo a questo blocco è il lock di quella scelta.
 describe('GET /api/pagamenti — il riepilogo delle coordinate servite', () => {
   it('una sede con IBAN e una senza → i due conteggi, e nessun dato di nessuno', async () => {
     await GET(url())
@@ -294,15 +303,34 @@ describe('GET /api/pagamenti — il riepilogo delle coordinate servite', () => {
     expect(testo).not.toContain(IBAN_A_LEGGIBILE)
     expect(testo).not.toContain(NOME_SEDE_A)
     expect(testo).not.toContain(ALU_A)
+  })
 
-    // E i due conteggi si RILEGGONO in tabella. Non è una formalità: i primi
-    // nomi erano `sedi_con_iban` / `sedi_senza_iban` e uscivano **`[redatto]`**,
-    // perché `iban` è una RADICE SEGRETA di `redact()` e la corrispondenza è per
-    // contenimento — vale anche sui numeri, e il redatto secco cancella pure la
-    // forma. La riga sarebbe finita in `app_log` tutti i giorni senza dire
-    // l'unica cosa che aveva da dire, e nessun test se ne sarebbe accorto.
-    // Perciò `coordinate`, che descrive la stessa cosa e non tocca la radice: la
-    // difesa sull'IBAN resta intatta, ed è il verso giusto in cui cedere.
+  /**
+   * ⚠️ QUESTO NON È (PIÙ) IL LOCK DELLA REDAZIONE, e il nome lo dice.
+   *
+   * L'asserzione era nata come «i campi sopravvivono a `redact()`», cioè come
+   * guardia contro una fuga. Non può esserlo: la riga esce con `persisti: false`
+   * (lock in fondo al file) e `redact()` sta sul ramo della PERSISTENZA — su
+   * questa riga non gira, quindi nessuna fuga vera la farebbe diventare rossa.
+   * Chiamarla lock della redazione sarebbe un motivo scritto falso, ed è il modo
+   * in cui un lock si sfila da solo: chi legge il nome, misura, e conclude che è
+   * un doppione da togliere.
+   *
+   * Ciò che verifica davvero è i NOMI dei campi, ed è un controllo che serve: i
+   * primi nomi erano `sedi_con_iban` / `sedi_senza_iban` e uscivano
+   * **`[redatto]`**, perché `iban` è una RADICE SEGRETA di `redact()` e la
+   * corrispondenza è per contenimento — vale anche sui numeri, e il redatto secco
+   * cancella pure la forma. `coordinate` descrive la stessa cosa senza toccare la
+   * radice.
+   *
+   * Il giorno in cui la valvola si richiudesse (`persisti: false` tolto, o
+   * `redact()` spostato prima del ramo), questa stessa riga tornerebbe a
+   * sorvegliare la redazione per davvero — e i nomi sono già quelli giusti,
+   * invece di scoprirlo da una colonna piena di `[redatto]`.
+   */
+  it('i nomi dei campi non toccano la radice segreta `iban`: `redact()` li lascia passare', async () => {
+    await GET(url())
+    const [, , campi] = riepiloghi()[0]
     expect(redact(campi)).toMatchObject({
       esito: 'coordinate-bonifico',
       operazione: 'pagamenti:GET',
@@ -315,5 +343,36 @@ describe('GET /api/pagamenti — il riepilogo delle coordinate servite', () => {
     h.db.pagamenti = []
     await GET(url())
     expect(riepiloghi()).toEqual([])
+  })
+
+  it('la riga NON si persiste: `persisti: false`, perché l’impronta di `app_log` include l’utente', async () => {
+    // PERCHÉ QUESTA ASSERZIONE COMINCIA DA `vaPersistito`.
+    //
+    // `pagamento` sta in `EVENTI_PERSISTITI`: senza l'opzione questa riga finisce
+    // in tabella PER ELENCO, non per livello — un `info` qualunque non ci
+    // arriverebbe. Se un giorno qualcuno togliesse `pagamento` dall'elenco,
+    // «non persiste» resterebbe vero per la ragione sbagliata e l'opzione
+    // diventerebbe decorazione: questa prima riga la tiene onesta.
+    expect(vaPersistito('info', 'pagamento')).toBe(true)
+
+    // E IL VOLUME CHE SI EVITA, in numeri. `app_log` deduplica per (impronta,
+    // giorno) e `utente_id` è una delle parti dell'impronta (`impronta()` in
+    // `app-log.ts`): su un percorso che ogni famiglia apre, la riga sarebbe una
+    // PER GENITORE al giorno — nel giorno di punta 286 utenti distinti contro
+    // 1.733 righe totali in tabella: un ordine di grandezza di +16% di volume da
+    // questa sola. I due conteggi sono misurati, il +16% è l'inferenza che ci si
+    // costruisce sopra (vale se ognuno di quei 286 apre la pagina dei pagamenti,
+    // e i 286 stanno in `app_log` per qualunque motivo): è la taglia, non la misura.
+    // In cambio la tabella non risponderebbe nemmeno alla domanda: l'`ON CONFLICT`
+    // somma le occorrenze ma NON aggiorna il `contesto`, quindi i due conteggi
+    // resterebbero quelli della PRIMA apertura di quel genitore.
+    //
+    // Il segnale durevole su «dove manca l'IBAN» resta, ed è migliore: le righe
+    // per-sede di `coordinateBonificoSede` (`warn iban-non-configurato`,
+    // `error iban-non-valido`) portano lo `scuola_id` e si persistono per livello.
+    await GET(url())
+    const [, , , errore, opzioni] = riepiloghi()[0]
+    expect(errore).toBeUndefined()
+    expect(opzioni).toEqual({ persisti: false })
   })
 })

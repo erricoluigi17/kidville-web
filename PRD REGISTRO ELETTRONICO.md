@@ -406,6 +406,117 @@ strada un precedente che nessuno aveva notato: la rotta importava da `@/componen
 intercettava e `tsc` lo accetta — la frontiera RSC la prova solo `next build`. Ora una riga del lock
 la fa vedere a `vitest`, senza aspettare la build.
 
+### Il collaudo di frontend e accessibilità, e ciò che ha trovato
+
+I due report mancavano, e sono stati fatti. Il tester frontend non aveva `.env.local` nel worktree
+— quindi niente pagine autenticate — e invece di fermarsi alla lettura del JSX ha costruito due
+banchi: uno in jsdom con i cataloghi veri, e uno in **Chromium vero** su Vite, che monta i
+componenti autentici con `globals.css` compilato da Tailwind. Le misure di colore e di scatola sono
+quindi osservate, non dedotte; quelle di impaginazione del testo no, perché lì i font di
+`next/font` non si caricano. Sta scritto nel report, ed è il modo giusto di consegnare una misura
+parziale.
+
+Verdetto: **FAIL entrambi**, nove rilievi. Quattro importanti, e tutti chiusi.
+
+**Il popup diceva due volte lo stato, in due modi opposti.** Appena emessa la fattura mostrava
+ancora il chip giallo «Da fatturare», la frase «la fattura non è ancora stata emessa» e il pulsante
+dipinto da CTA — a due centimetri dal badge «In attesa SDI» che il pulsante stesso aveva appena
+prodotto. `pagamentoFattura` è stato locale del dialog, letto una volta al montaggio; `onEmessa`
+era cablato al refetch della **lista**, e la lista non riscrive `selezionato`. Il popup non aveva
+nessuna via per rileggere ciò che aveva appena cambiato. Il commento che dichiarava «lo stato si
+dice una volta» descriveva un invariante che dopo l'emissione era rotto.
+
+**La fascia d'errore dell'import non si azzerava mai** — lo stesso difetto già corretto in questo
+lavoro per altri due stati, in un terzo posto che la correzione non copriva. La riparazione non è
+stata «azzerare anche quello»: i tre stati sono diventati **uno solo**, un tipo discriminato, così
+assegnarne uno cancella il precedente **per costruzione** e non per disciplina di chi scriverà il
+prossimo ramo.
+
+**«Come pagare» spariva quando mancava la causale** — IBAN e intestatario compresi — contraddicendo
+la promessa scritta nella spec di questo stesso lavoro. La causa era un filtro che guardava il dato
+sbagliato: a decidere se c'è qualcosa da pagare è il **residuo**, non la causale suggerita.
+
+**Tre rilievi riguardavano chi non vede**, e nessuno di essi era visibile guardando lo schermo:
+l'IBAN a gruppi di quattro veniva letto come una fila di numeri cardinali («duemilaottocentoundici»)
+e chi trascrive doveva ricostruire le cifre — ora la forma elettronica intera sta in un nodo per
+soli screen reader, prodotta dalla **stessa funzione** che riempie gli appunti, così chi ascolta e
+chi copia non possono ricevere stringhe diverse; due bottoni «Copia l'IBAN» avevano lo stesso
+identico nome accessibile; e se la copia falliva non succedeva **niente di percepibile** — ora la
+regione viva dice cosa è andato storto e cosa fare, e la causa finisce nel log applicativo mentre
+l'IBAN non ci finisce mai.
+
+### L'Alto Contrasto non ribaltava gli inchiostri di stato — e adesso lo fa
+
+Ancorata la sonda, il rosso E2E ha cambiato natura: da «15 nodi contro 18» a **«le due modalità
+danno lo stesso identico esito: il cookie non sta facendo niente»**, su entrambe le rotte. Otto
+firme, riconducibili a quattro inchiostri (`muted`, `error`, `success`, `info`) più due tinte
+scritte a mano.
+
+La causa è quella che questo file ha già pagato due volte: **`@theme inline` inlina l'hex**, quindi
+`.text-kidville-muted` emette `color:#7B8582` letterale e ridefinire il token sotto
+`[data-contrast="high"]` non tocca una sola classe Tailwind. Ma c'era un secondo pezzo, e senza
+quello la correzione sarebbe stata sbagliata di verso: **la carta non si ribalta con l'inchiostro**.
+Il guscio del genitore e del docente è `bg-kidville-cream` — hex inlinato, resta crema — e le card
+sono bianche: `[data-contrast="high"] body { background:#000 }` sta dietro e non si vede. Perciò in
+Alto Contrasto gli inchiostri si **scuriscono**, non si schiariscono, come già facevano
+`.kv-admin-sheet`, `.kv-admin-nav` e `.kv-public` per conto loro. Qui la scelta si generalizza ai
+quattro inchiostri che nessuna di quelle liste nominava:
+
+| | prima | dopo | minimo sulle 14 fasce chiare |
+|---|---|---|---|
+| `muted` | 3,80:1 | `#000000` | 16,46 |
+| `error` | 4,23:1 | `#8B0000` | 7,85 |
+| `success` | 2,89:1 | `#0F4A22` | 8,14 |
+| `info` | 4,20:1 | `#123C86` | 8,16 |
+
+Gli ultimi tre **tengono la tinta**: in Alto Contrasto un errore deve continuare a leggersi come un
+errore anche per chi arriva di fretta. E le pastiglie a fondo soft hanno ora un contorno, perché
+`#E7F3E8` contro il bianco della card vale 1,12:1 — la pastiglia come *forma* non esisteva.
+
+**Il fuoco da tastiera era a 1,28:1 su nove dei sedici stop** della Riconciliazione, comprese le tre
+pill nuove. E la causa non era «il giallo confina con la carta»: se fosse stata quella sarebbero
+stati sedici su sedici. I nove erano esattamente quelli che portano una regola di Alto Contrasto con
+`box-shadow` sulla propria superficie — e `box-shadow` è **una** proprietà, non una pila: chi vince
+la cascata sostituisce l'intera lista, separatore di fuoco compreso. Ora l'anello ha il nero anche
+**da fuori**, e undici regole per-superficie rimettono nella stessa dichiarazione il proprio
+contorno e i due anelli. Il lock che lo sorveglia non elenca le superfici a mano: **setaccia**
+`globals.css` e trova da sé ogni regola che potrebbe mangiarsi l'anello.
+
+**La ✕ del popup spariva in hover**, bianco su `#F0F2F1`, 1,12:1 — mentre in luce normale lo stesso
+hover vale 10,48:1. Non era un colore sbagliato: erano due regole che non si parlavano.
+
+Le due tinte scritte a mano nell'array `SHORTCUTS` della home docente sono state chiuse con una
+**classe-àncora**, non con un `!important` su `[style*="color"]`: quello avrebbe coperto il sintomo
+spegnendo anche le quattro tinte che in Alto Contrasto reggono già.
+
+### Rilievi aperti che questo lavoro ha trovato e NON chiude
+
+Sono dichiarati qui perché un difetto scritto non è un difetto nascosto.
+
+- 🔴 **`.kv-news-onbody` è scritto contro un fondo nero che non c'è.** `globals.css` porta
+  `[data-contrast="high"] .kv-news-onbody { color:#FFFFFF }` e il link a `#FFE500`, ma il guscio di
+  genitore e docente resta crema: **misurato 1,11:1** il testo bianco e **1,15:1** il link giallo,
+  su `/parent/news`, `/parent/news/[id]`, `/parent/news/digest` e `/teacher/news`. È la stessa
+  famiglia di difetto appena corretta — una regola di Alto Contrasto scritta contro una carta che
+  non c'è — ma su rotte che nessuno ha mai misurato, e il trattamento è una decisione di design.
+- **La causa radice delle tinte della home docente resta**: le sei tinte dell'array `SHORTCUTS` sono
+  scritte a mano nel componente invece di passare da `TINTA_FUNZIONE`, che esiste apposta e il cui
+  commento cita proprio `#1F8A5B` fra le tinte «che non corrispondevano a nessun token dichiarato».
+  Finché stanno lì, **ogni tinta nuova nasce scoperta in Alto Contrasto**.
+- **Le varianti con alfa e di stato non sono coperte** dalle quattro regole nuove: 17 varianti
+  `text-kidville-muted/60` e simili, e 53 varianti `hover:`. Un selettore `[class*="…"]` le
+  prenderebbe tutte — comprese le `hover:` — trasformando uno **stato** in un colore fisso, cioè
+  spegnendo un'affordance invece di aggiungerne una. Nessuna delle otto firme misurate è una di
+  queste.
+- **Due chiavi ICU nuove restano fuori dal lock dei plurali**: `ariaCopiaIbanSede` e
+  `ariaCopiatoIbanSede` non sono nell'elenco `CONTATORI`, che per costruzione salta le stringhe che
+  aprono un blocco `plural`. È lo stesso buco chiuso oggi per il chip di fatturazione, riaperto da
+  chiavi nuove: l'elenco è a mano, e a mano va tenuto.
+- **La baseline del crawler va rimisurata** dopo questo giro: `altoContrasto` deve **scendere** su
+  entrambe le rotte mentre `normale` resta dov'è. Se il messaggio «le due modalità danno lo stesso
+  identico esito» comparisse ancora, le regole nuove non stanno arrivando a quelle superfici, e va
+  guardato **prima** di toccare qualunque numero.
+
 ### Cosa NON è stato fatto, e perché
 
 - **Nessun campo «intestatario»**: decisione del titolare. È la denominazione del cedente, la stessa

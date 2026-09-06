@@ -40,9 +40,14 @@ import { join } from 'node:path'
 //   l'arbitro non ha.
 // · `indisvalid`: un indice rimasto invalido (una `CREATE INDEX CONCURRENTLY` fallita) esiste in
 //   catalogo e non arbitra niente.
-// · `nulls_not_distinct` non serve al confronto (l'arbitro si infersce dalle sole colonne): sta
-//   nella fotografia perche' e' la differenza fra «unico davvero» e «unico tranne che sui NULL»,
-//   ed e' l'informazione che serve a chi legge il diff della fotografia dopo una migrazione.
+// · `nulls_not_distinct` + `ha_colonna_nullable` sono la COPPIA che dice se l'arbitro arbitra
+//   davvero, e da soli non dicono niente ne' l'uno ne' l'altro. `ON CONFLICT (colonne)` infersce
+//   l'indice A PRESCINDERE da `NULLS NOT DISTINCT`: quindi un `UNIQUE (a, b)` con `b` nullable e
+//   senza quella clausola fa sparire il `42P10` — sembra guarito — e poi INSERISCE una riga nuova
+//   a ogni salvataggio in cui `b IS NULL`, perche' per Postgres due NULL sono diversi. Duplicati
+//   silenziosi al posto di un errore rumoroso: peggio del difetto di partenza, e senza questi due
+//   campi il lock direbbe verde. Servono INSIEME: `nulls_not_distinct` conta solo se qualche
+//   colonna chiave e' davvero nullable, e la nullabilita' conta solo se manca la clausola.
 const SQL = `select json_build_object(
   'indici', (
     select coalesce(json_agg(json_build_object(
@@ -51,6 +56,12 @@ const SQL = `select json_build_object(
              'parziale', (x.indpred is not null),
              'con_espressioni', (x.indexprs is not null),
              'nulls_not_distinct', x.indnullsnotdistinct,
+             'ha_colonna_nullable', (
+               select bool_or(not a.attnotnull)
+               from unnest(x.indkey) with ordinality k(attnum, ord)
+               join pg_attribute a on a.attrelid = c.oid and a.attnum = k.attnum
+               where k.ord <= x.indnkeyatts
+             ),
              'colonne', (
                select coalesce(array_agg(a.attname::text order by a.attname::text), '{}')
                from unnest(x.indkey) with ordinality k(attnum, ord)
@@ -92,6 +103,7 @@ export function normalizza(f) {
             parziale: !!i.parziale,
             con_espressioni: !!i.con_espressioni,
             nulls_not_distinct: !!i.nulls_not_distinct,
+            ha_colonna_nullable: !!i.ha_colonna_nullable,
             colonne: [...(i.colonne ?? [])].map(String).sort(),
         }))
         .sort((a, b) => a.tabella.localeCompare(b.tabella) || a.indice.localeCompare(b.indice))

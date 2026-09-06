@@ -100,21 +100,28 @@ const SENZA_ARBITRO_ATTESO: { tabella: string; chiave: string; perche: string }[
     tabella: 'daily_routines',
     chiave: 'id',
     perche:
-      'NON è «manca un indice»: è «manca la TABELLA». `daily_routines` non esiste nel database di ' +
-      'produzione — misurato il 2026-09-06 sul catalogo (`pg_class`), zero righe — e nessuna ' +
-      'migrazione la crea. Il diario vero del prodotto è `eventi_diario`. ' +
-      '`src/app/api/diary/route.ts` (righe 15-25) lo documenta dal 2026-08-04 e la ROUTE degrada ' +
-      'come si deve: 503 dichiarato. Il MOTORE OFFLINE no: `src/lib/offline/syncEngine.ts` fa ' +
-      'l’upsert sulla stessa tabella fantasma, prende `PGRST205` («Could not find the table ' +
-      '\'public.daily_routines\' in the schema cache») e lo inghiotte in un ' +
-      '`catch { logSync(\'sync-diario-fallito\') }` — quindi il diario offline degli insegnanti ' +
-      'non si sincronizza e nessuno lo vede. ' +
+      'NON è «manca un indice»: è «manca la TABELLA», e nemmeno il codice che ci scrive è vivo. ' +
+      '`daily_routines` non esiste nel database di produzione — misurato il 2026-09-06 su ' +
+      '`pg_class`, zero righe — e nessuna migrazione la crea; il diario vero del prodotto è ' +
+      '`eventi_diario`. `src/app/api/diary/route.ts` (righe 15-25) lo documenta dal 2026-08-04, ma ' +
+      'solo per la ROUTE, che infatti degrada come si deve (503 dichiarato). ' +
+      'A scrivere qui è `src/lib/offline/syncEngine.ts:142`, ed è CODICE MORTO DUE VOLTE, ' +
+      'misurato il 2026-09-06: `saveLocalDiaryEntry` (:97) non ha nessun chiamante in `src/` né ' +
+      'in `__tests__/`; `syncPendingDiaryEntries` (:112) ha come unico chiamante proprio quella ' +
+      'funzione morta; e `db.diario` viene scritto SOLO dentro di essa, quindi anche se qualcuno ' +
+      'la chiamasse la coda sarebbe vuota e si uscirebbe al `if (pending.length === 0) return` ' +
+      'di :124, PRIMA dell’upsert. ' +
+      '⚠️ QUINDI NON C’È NESSUNA PERDITA DI DATI IN CORSO, e va detto perché la lettura opposta ' +
+      'sarebbe allarmante e falsa. Non è nemmeno il caso di «fallisce ma non si vede»: `logSync` ' +
+      'funziona, ed è dimostrato dal suo gemello — in `app_log` c’è `sync-galleria-fallito` ' +
+      '(1 occorrenza, 2026-09-01) prodotto dalla STESSA `logSync` nello STESSO file. Lo zero di ' +
+      '`sync-diario-fallito` significa «non parte», non «non si vede». ' +
       '⚠️ IL RIMEDIO NON È CREARE LA TABELLA, ed è per questo che la voce sta qui invece che nei ' +
-      'Task delle migrazioni: è che quel ramo smetta di scrivere in un posto che non c’è — ' +
-      'puntando a `eventi_diario` con il payload rimappato, oppure sparendo. È una funzionalità a ' +
-      'sé (il diario offline, che gira sul dispositivo e nessun test di questo lavoro copre) e va ' +
-      'collaudata per conto suo, non infilata in una correzione della mensa. ' +
-      'QUESTA VOCE SI TOGLIE QUANDO QUEL RAMO VIENE CORRETTO, non quando la tabella viene creata.',
+      'Task delle migrazioni: è CANCELLARE `saveLocalDiaryEntry` e `syncPendingDiaryEntries` ' +
+      '(valutando anche `db.diario`), che è un commit di poche righe e chiude anche questa voce. ' +
+      'Non c’è niente da collaudare: non c’è niente che gira. Resta fuori dallo scopo della ' +
+      'correzione della mensa, quindi è scritto qui invece che fatto. ' +
+      'QUESTA VOCE SI TOGLIE QUANDO QUEL CODICE MORTO SPARISCE, non quando la tabella viene creata.',
   },
 ]
 
@@ -147,13 +154,19 @@ function costantiDelFile(testo: string): Record<string, string> {
 }
 
 /**
- * Il testo fra la `(` di `.upsert(` e la parentesi che la CHIUDE, saltando le stringhe.
+ * Il testo fra la `(` di `.upsert(` e la parentesi che la CHIUDE, saltando stringhe e commenti.
  *
  * Il primo tentativo cercava `onConflict` in una finestra di dieci righe, e su
  * `src/lib/fea/slots.ts` l'ha mancato per una riga: il payload era lungo undici. Una chiamata
  * saltata non fa rumore — il setaccio la classifica come «senza `onConflict`, arbitra la chiave
  * primaria» e passa oltre. Un lock cieco è verde, ed è il modo più silenzioso di non controllare
  * niente: la finestra arbitraria è stata sostituita dal confine vero della chiamata.
+ *
+ * I COMMENTI si saltano, e in questo repo non è un dettaglio: sono in italiano, quindi pieni di
+ * apostrofi. Un `// l'elenco` dentro le parentesi aprirebbe una stringa che non si chiude più, e
+ * il parser correrebbe fino a fine file portandosi dietro l'`onConflict` della chiamata dopo.
+ * Oggi nessun corpo è in fuga — ma il modo di fallire sarebbe silenzioso, e un errore silenzioso
+ * in un lock è il lock che smette di esistere.
  */
 function corpoChiamata(testo: string, aperta: number): string {
   let livello = 0
@@ -167,6 +180,9 @@ function corpoChiamata(testo: string, aperta: number): string {
       i++
       continue
     }
+    const due = testo.slice(i, i + 2)
+    if (due === '//') { const fine = testo.indexOf('\n', i); i = fine < 0 ? testo.length : fine; continue }
+    if (due === '/*') { const fine = testo.indexOf('*/', i + 2); i = fine < 0 ? testo.length : fine + 2; continue }
     if (c === "'" || c === '"' || c === '`') { dentro = c; i++; continue }
     if (c === '(') livello++
     else if (c === ')') { livello--; if (livello === 0) return testo.slice(aperta + 1, i) }
@@ -175,18 +191,41 @@ function corpoChiamata(testo: string, aperta: number): string {
   return testo.slice(aperta + 1)
 }
 
-/** Chiamate `.upsert(` la cui tabella o la cui chiave non si è riusciti a risolvere. */
-const nonRisolte: Chiave[] = []
-/** Chiamate `.upsert(` senza `onConflict`: l'arbitro è la chiave primaria, e c'è sempre. */
-const senzaChiave: Chiave[] = []
+type Setaccio = {
+  /** Chiamate con tabella e chiave risolte: sono quelle che il lock confronta. */
+  risolte: Chiave[]
+  /** Chiamate la cui tabella o la cui chiave non si è riusciti a risolvere. */
+  nonRisolte: Chiave[]
+  /** Chiamate senza `onConflict`: l'arbitro è la chiave primaria, e c'è sempre. */
+  senzaChiave: Chiave[]
+}
 
-function chiaviDaSrc(): Chiave[] {
-  nonRisolte.length = 0
-  senzaChiave.length = 0
-  const out: Chiave[] = []
+let memoria: Setaccio | null = null
+
+/**
+ * Il setaccio, calcolato UNA volta.
+ *
+ * La prima versione teneva `nonRisolte` e `senzaChiave` come array di modulo che `chiaviDaSrc()`
+ * svuotava e riempiva, e quattro prove la chiamavano solo per l'effetto collaterale: bastava
+ * riordinare le prove — o aggiungerne una che non la chiama — perché una di loro leggesse le
+ * liste di un'altra. Uno stato mutabile condiviso fra prove è un test che dipende dal proprio
+ * ordine, cioè un test che un giorno dirà una cosa non vera. Qui la risposta è una sola, immutata,
+ * e in più `src/` si legge una volta invece di quattro.
+ */
+function chiaviDaSrc(): Setaccio {
+  if (memoria) return memoria
+  const risolte: Chiave[] = []
+  const nonRisolte: Chiave[] = []
+  const senzaChiave: Chiave[] = []
   for (const f of filesTs(SRC)) {
     const testo = fs.readFileSync(f, 'utf8')
     const righe = testo.split('\n')
+    // L'offset assoluto di ogni riga: serve a passare dalle righe (comode per risalire alla
+    // `.from()`) alle posizioni nel testo (le uniche con cui si misura davvero che cosa sta in
+    // mezzo fra due punti).
+    const inizioDelleRighe: number[] = []
+    let scorrere = 0
+    for (const r of righe) { inizioDelleRighe.push(scorrere); scorrere += r.length + 1 }
     const locali = costantiDelFile(testo)
     for (const m of testo.matchAll(/\.upsert\(/g)) {
       const pos = m.index ?? 0
@@ -195,12 +234,35 @@ function chiaviDaSrc(): Chiave[] {
       // Le righe di COMMENTO che nominano un upsert non sono chiamate.
       if (/^\s*(\*|\/\/)/.test(righe[i])) continue
 
+      // La tabella si cerca RISALENDO, e qui la finestra di righe è rimasta — ma con un confine.
+      // Un `;` o una `}` fra la `.from()` trovata e l'`.upsert()` vogliono dire che quella
+      // `.from()` appartiene a un'ALTRA istruzione, e prenderla comunque significherebbe
+      // confrontare la chiave di un upsert con gli indici della tabella sbagliata: verde per
+      // caso, e nessuno se ne accorgerebbe mai. Misurato il 2026-09-06 su tutte e 63 le chiamate:
+      // la `.from()` sta a distanza 0 o 1 riga e in nessun caso c'è un `;` o una `}` in mezzo,
+      // quindi oggi il guard non rifiuta niente — esiste perché il giorno in cui rifiuterà, lo
+      // dirà invece di tacere.
+      // ⚠️ LIMITE RESIDUO, e non è coperto: `const s = supabase.from('X')` seguito da `s.upsert()`
+      // su righe contigue non nomina nessuna `.from()` sulla riga dell'upsert e non ha né `;` né
+      // `}` fra le due, quindi passerebbe prendendo la tabella giusta per fortuna. Oggi in `src/`
+      // quella forma non esiste; il giorno in cui esistesse, servirebbe un vero AST.
       let tabella: string | null = null
       for (let j = i; j >= Math.max(0, i - 8); j--) {
         const lett = righe[j].match(/\.from\(\s*['"`]([A-Za-z0-9_]+)['"`]\s*\)/)
-        if (lett) { tabella = lett[1]; break }
-        const cost = righe[j].match(/\.from\(\s*([A-Za-z0-9_]+)\s*\)/)
-        if (cost) { tabella = locali[cost[1]] ?? `NON_RISOLTA:${cost[1]}`; break }
+        const cost = lett ? null : righe[j].match(/\.from\(\s*([A-Za-z0-9_]+)\s*\)/)
+        const trovato = lett ?? cost
+        if (!trovato) continue
+        // Ciò che sta FRA la fine della `.from(…)` e l'inizio di `.upsert(`, non le righe intere:
+        // la riga dell'upsert contiene quasi sempre una `}` sua (`.upsert({ … }, { … })`), e
+        // contarla farebbe rifiutare ogni chiamata del repo.
+        const inizioRiga = inizioDelleRighe[j]
+        const fineFrom = inizioRiga + (trovato.index ?? 0) + trovato[0].length
+        if (/[;}]/.test(testo.slice(fineFrom, pos))) {
+          tabella = 'NON_RISOLTA:from-oltre-un-confine'
+          break
+        }
+        tabella = lett ? lett[1] : (locali[cost![1]] ?? `NON_RISOLTA:${cost![1]}`)
+        break
       }
 
       const corpo = corpoChiamata(testo, pos + m[0].length - 1)
@@ -219,10 +281,11 @@ function chiaviDaSrc(): Chiave[] {
         nonRisolte.push(voce)
         continue
       }
-      out.push(voce)
+      risolte.push(voce)
     }
   }
-  return out
+  memoria = { risolte, nonRisolte, senzaChiave }
+  return memoria
 }
 
 type Indice = {
@@ -231,6 +294,7 @@ type Indice = {
   parziale: boolean
   con_espressioni: boolean
   nulls_not_distinct: boolean
+  ha_colonna_nullable: boolean
   colonne: string[]
 }
 // `generato_il` NON è opzionale: `sogliaFotografia` lo pretende (vedi ./soglia-fotografia).
@@ -241,17 +305,44 @@ const foto: Foto = JSON.parse(fs.readFileSync(FOTO_PATH, 'utf8'))
 /** Le colonne di una chiave, come insieme ordinato: `ON CONFLICT` non guarda l'ordine. */
 const insieme = (cols: string) => [...cols.split(',').map((c) => c.trim())].sort().join(',')
 
-/** Questo indice può fare da arbitro per questa chiave? */
+/**
+ * Questo indice può fare da arbitro per questa chiave?
+ *
+ * Quattro condizioni, e la quarta è quella che il lock aveva sbagliato.
+ *
+ * ⚠️ `ON CONFLICT (colonne)` INFERISCE L'INDICE A PRESCINDERE DA `NULLS NOT DISTINCT`. Quindi un
+ * `UNIQUE (scuola_id, menu_config_id, settimana, giorno_settimana)` creato SENZA quella clausola
+ * farebbe sparire il `42P10` — e il lock, guardando solo le colonne, direbbe VERDE. Ma
+ * `menu_config_id` è nullable, e per Postgres due `NULL` sono DIVERSI: il salvataggio del menu
+ * unico non troverebbe mai la riga da aggiornare e ne INSERIREBBE una nuova ogni volta.
+ * Duplicati silenziosi al posto di un errore rumoroso: peggio del difetto che si stava
+ * correggendo, e invisibile — il primo salvataggio funziona, il secondo raddoppia, e ci si
+ * accorge del guasto mesi dopo, in tavola. Un lock che approva il rimedio sbagliato è peggio di
+ * un lock che non c'è, perché fa smettere di guardare.
+ *
+ * `nulls_not_distinct` e `ha_colonna_nullable` non dicono niente presi da soli: la clausola serve
+ * solo se una colonna chiave è davvero nullable, e la nullabilità è innocua se la clausola c'è.
+ */
 const arbitra = (i: Indice, tabella: string, chiave: string) =>
   i.tabella === tabella &&
   !i.parziale &&
   !i.con_espressioni &&
+  (!i.ha_colonna_nullable || i.nulls_not_distinct) &&
   [...i.colonne].sort().join(',') === insieme(chiave)
 
 /**
- * La fotografia sa qualcosa di questa tabella? Basta UN indice qualsiasi, e in pratica è la
- * chiave primaria: ogni tabella di questo database ne ha una, quindi «zero indici» non vuol dire
- * «tabella senza vincoli» — vuol dire tabella che non c'è.
+ * La fotografia sa qualcosa di questa tabella? Basta UN indice qualsiasi.
+ *
+ * ⚠️ È UN'EURISTICA, non un fatto, e va detto perché il messaggio che ne dipende è netto.
+ * Misurato il 2026-09-06 sulla produzione: 135 tabelle in `public`, **134** con almeno un indice
+ * UNIQUE valido. L'unica senza è `backup_pulizia_note_20260905` — una tabella di salvataggio, che
+ * non ha né chiave primaria né altro. Quindi «zero indici nella fotografia» quasi sempre vuol
+ * dire «tabella che non esiste», ma non sempre: su una tabella fatta come quel backup il lock
+ * direbbe «probabilmente non esiste» a proposito di una tabella che c'è.
+ *
+ * Va bene così, perché sbaglia dalla parte del rumore: un upsert su una tabella senza NESSUN
+ * vincolo unico è comunque un difetto da guardare — `ON CONFLICT` lì non ha proprio niente da
+ * inferire. Il messaggio dice «con ogni probabilità», non «di sicuro», e offre l'altra lettura.
  */
 const tabellaNota = (tabella: string) => foto.indici.some((i) => i.tabella === tabella)
 
@@ -259,7 +350,7 @@ const tabellaNota = (tabella: string) => foto.indici.some((i) => i.tabella === t
 function senzaArbitro(): Chiave[] {
   const attese = new Set(SENZA_ARBITRO_ATTESO.map((v) => `${v.tabella}|${insieme(v.chiave)}`))
   return chiaviDaSrc()
-    .filter((k) => !attese.has(`${k.tabella}|${insieme(k.chiave)}`))
+    .risolte.filter((k) => !attese.has(`${k.tabella}|${insieme(k.chiave)}`))
     .filter((k) => !foto.indici.some((i) => arbitra(i, k.tabella, k.chiave)))
 }
 
@@ -301,13 +392,14 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
   })
 
   it('ogni upsert di src/ è stato risolto (tabella e chiave)', () => {
-    chiaviDaSrc()
     expect(
-      nonRisolte,
+      chiaviDaSrc().nonRisolte,
       `Di questi upsert non si è capito su quale tabella scrivono o con quale chiave. Saltarli ` +
       `renderebbe il lock cieco proprio dove il codice è meno leggibile: dai un nome risolvibile ` +
       `alla costante (una \`const NOME = 'tabella'\` nello stesso file), oppure aggiungila a ` +
-      `COSTANTI in questo file.`,
+      `COSTANTI in questo file. Se il motivo è \`from-oltre-un-confine\`, la \`.from()\` più ` +
+      `vicina è separata dall'upsert da un \`;\` o da una \`}\`, cioè appartiene a un'altra ` +
+      `istruzione: scrivi la chiamata in modo che tabella e upsert stiano nella stessa catena.`,
     ).toEqual([])
   })
 
@@ -345,7 +437,7 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
   })
 
   it('le eccezioni dichiarate sono ancora eccezioni (se cade, la ragione della voce è scaduta)', () => {
-    const usate = chiaviDaSrc()
+    const usate = chiaviDaSrc().risolte
     for (const v of SENZA_ARBITRO_ATTESO) {
       // Ogni voce porta il suo `perche` nel messaggio: le due dichiarate qui non hanno la stessa
       // ragione, e un messaggio unico ne racconterebbe una sbagliata a chi trova il rosso.
@@ -374,6 +466,13 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
   it('la fotografia viene dal DATABASE, non dal codice che il lock controlla', () => {
     // Se la fotografia si ricavasse leggendo `src/`, questo file confronterebbe il codice con se
     // stesso: verde per costruzione, cioè nessun controllo.
+    //
+    // ⚠️ Il confronto è su SOTTOSTRINGHE, commenti compresi: è grossolano di proposito (leggere
+    // un `.mjs` con un parser per una prova di igiene sarebbe sproporzionato), ma vuol dire che
+    // anche NOMINARE una di queste parole in un commento del generatore fa cadere il lock — per
+    // esempio scrivendoci «questo script non legge 'src'», cioè affermando la cosa giusta. Se
+    // capita, non è il generatore a essere sbagliato: si riformula il commento, oppure si toglie
+    // la parola da questa lista spiegando perché.
     const codice = fs.readFileSync(GENERATORE, 'utf8')
     for (const vietato of ['readdirSync', "'src'", 'onConflict']) {
       expect(
@@ -393,9 +492,60 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
     // risolto, e 215 indici UNIQUE in produzione. Le soglie stanno APPENA sotto la misura: un
     // setaccio che smette di trovare gli upsert, o una fotografia che si svuota, passerebbero
     // entrambi in silenzio — sono i due modi in cui questo lock potrebbe non controllare niente.
-    const chiavi = chiaviDaSrc()
-    expect(chiavi.length, `upsert con onConflict risolti: ${chiavi.length}`).toBeGreaterThan(60)
-    expect(senzaChiave.length, `upsert senza onConflict: ${senzaChiave.length}`).toBeLessThan(3)
-    expect(foto.indici.length, `indici nella fotografia: ${foto.indici.length}`).toBeGreaterThan(200)
+    //
+    // ⚠️ SE UNA DI QUESTE CADE, LA CORREZIONE NON È ABBASSARE IL NUMERO. Un lock la cui soglia si
+    // abbassa ogni volta che diventa rossa è una decorazione. Si abbassa solo dopo aver capito
+    // perché è sceso, e scrivendolo qui accanto insieme alla nuova misura e alla data.
+    const { risolte, senzaChiave } = chiaviDaSrc()
+    expect(
+      risolte.length,
+      `Il setaccio trova ${risolte.length} upsert con onConflict risolto, contro i 63 misurati il ` +
+      `2026-09-06. Delle due l'una, e vanno distinte prima di toccare il numero: o qualcuno ha ` +
+      `TOLTO davvero degli upsert da src/ (verifica con \`grep -rc '\\.upsert(' src/\` e, se ` +
+      `torna, aggiorna la soglia scrivendo qui accanto perché è scesa), oppure il SETACCIO ha ` +
+      `smesso di leggerli — ed è il caso grave, perché un setaccio che non trova niente rende ` +
+      `verde tutto il resto del file senza dire una parola.`,
+    ).toBeGreaterThan(60)
+    expect(
+      senzaChiave.length,
+      `Ci sono ${senzaChiave.length} \`.upsert()\` senza \`onConflict\`, contro gli 0 misurati il ` +
+      `2026-09-06. Un upsert che si affida alla CHIAVE PRIMARIA è legittimo e questo lock non ha ` +
+      `niente da dirgli: il rosso qui non accusa quel codice, chiede di guardare QUALI sono. Se ` +
+      `sono davvero senza \`onConflict\`, alza la soglia dicendo quali e perché; se invece ` +
+      `l'\`onConflict\` ce l'hanno, allora è \`corpoChiamata()\` a non leggerlo più — e ogni ` +
+      `chiamata che finisce qui è una chiamata che il lock NON sta controllando.`,
+    ).toBeLessThan(3)
+    expect(
+      foto.indici.length,
+      `La fotografia contiene ${foto.indici.length} indici UNIQUE, contro i 215 del 2026-09-06: ` +
+      `troppo pochi per essere la produzione. Un lock che gira su una fotografia quasi vuota ` +
+      `approva qualunque chiave. Non abbassare la soglia: rigenera. ${COME_RIGENERARE}`,
+    ).toBeGreaterThan(200)
+  })
+
+  it('la fotografia è della PRODUZIONE, non del database E2E della CI', () => {
+    // ⟵ L'incidente che nessuna soglia numerica può prendere: rigenerare la fotografia contro il
+    // progetto E2E della CI, che è separato e molto meno migrato. Il conteggio potrebbe anche
+    // reggere, e il lock diventerebbe verde su chiavi che in PRODUZIONE non hanno arbitro — cioè
+    // proprio il difetto che esiste per trovare, approvato dal database sbagliato.
+    //
+    // Si riconosce per NOME, con due sentinelle scelte perché in CI non ci sono o non sono così:
+    // `enrollment_submissions` (le domande di iscrizione vere) e `unique_registro_orario`, il
+    // vincolo del registro CON la sede — quello che sul DB E2E non è mai stato migrato, ed è la
+    // ragione stessa per cui `CHIAVE_REGISTRO_LEGACY` esiste.
+    const tabelle = new Set(foto.indici.map((i) => i.tabella))
+    const indici = new Set(foto.indici.map((i) => i.indice))
+    const mancanti = [
+      ...(tabelle.has('enrollment_submissions') ? [] : ['tabella enrollment_submissions']),
+      ...(indici.has('unique_registro_orario') ? [] : ['indice unique_registro_orario']),
+    ]
+    expect(
+      mancanti,
+      `Nella fotografia mancano segni che si trovano SOLO in produzione (${mancanti.join(', ')}): ` +
+      `con ogni probabilità la query è stata eseguita sul database E2E della CI, che è un ` +
+      `progetto separato e non migrato. Una fotografia presa dal database sbagliato fa dire al ` +
+      `lock che va tutto bene su vincoli che in produzione non esistono. Rifai la query sul ` +
+      `progetto di produzione. ${COME_RIGENERARE}`,
+    ).toEqual([])
   })
 })

@@ -40,6 +40,17 @@ const h = vi.hoisted(() => ({
   legame: null as { alunno_id: string } | null,
   /** I filtri `.eq()` visti su `legame_genitori_alunni`: servono a provare T16. */
   filtri: [] as { colonna: string; valore: unknown }[],
+  /**
+   * La riga di `alunni` che il gate legge per decidere se il bambino si mostra
+   * ancora alla famiglia. Con la classe valorizzata è VISIBILE, che è la premessa
+   * di ogni caso di questo file: qui si prova il legame, non la visibilità.
+   */
+  alunno: {
+    id: 'aaacb836-8d02-422d-88cb-ea99cf8e3c56', // = FIGLIO (vi.hoisted gira prima delle const)
+    section_id: 'sec-1',
+    stato: 'iscritto',
+    archiviato_il: null,
+  } as Record<string, unknown> | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({
@@ -64,8 +75,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (tabella === 'legame_genitori_alunni') h.filtri.push({ colonna, valore })
         return qb
       }
-      qb.maybeSingle = async () =>
-        h.errore ? { data: null, error: h.errore } : { data: h.legame, error: null }
+      // ⚠️ IL MOCK NON PUÒ ESSERE PIATTO, e fino al 2026-09-05 lo era: rispondeva
+      // `h.legame` a QUALUNQUE tabella. Dal gate passa ora anche una lettura di
+      // `alunni` (`verificaAlunnoAttivo`: «questo bambino si mostra ancora alla sua
+      // famiglia?»), e una riga di legame data per alunno significa `section_id`
+      // assente — cioè un bambino nascosto — che qui non c'entra niente. Il tema di
+      // questo file è il LEGAME: l'alunno risponde da alunno, con la sua classe.
+      qb.maybeSingle = async () => {
+        if (h.errore) return { data: null, error: h.errore }
+        if (tabella === 'alunni') {
+          return { data: h.alunno, error: null }
+        }
+        return { data: h.legame, error: null }
+      }
       qb.then = (res: (v: unknown) => unknown) =>
         Promise.resolve(h.errore ? { data: null, error: h.errore } : { data: [], error: null }).then(res)
       return qb

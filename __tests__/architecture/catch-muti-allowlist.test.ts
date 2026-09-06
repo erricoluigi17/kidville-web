@@ -51,8 +51,14 @@ const ESENTE = 'src/lib/logging/';
  * il numero. Chi si trovasse a doverli ALZARE sta aggiungendo un catch muto, ed è quello il
  * momento di fermarsi, non dopo.
  */
-const MAX_FILE = 52;
-const MAX_OCCORRENZE = 82;
+// 52 → 51 e 82 → 81 il 2026-09-06: bonificato `src/app/(dashboard)/parent/page.tsx`, il cui
+// `.catch(() => {})` inghiottiva la lettura del nome del bambino sulla home. L'effetto era
+// invisibile per costruzione — la pagina salutava «Ciao!» invece che per nome, e di un
+// guasto di rete non restava niente da nessuna parte. Ora è un `logClient` di livello `warn`
+// (`info` sul client non esiste: `/api/logs` lo rifiuta), col solo `nomeErrore` perché il
+// `message` di una fetch fallita si porta dietro l'URL, e in quell'URL c'è l'id di un minore.
+const MAX_FILE = 51;
+const MAX_OCCORRENZE = 81;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

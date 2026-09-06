@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-02",
-  "generato_alle": "2026-09-02T14:57:43Z",
-  "sha256": "6b74df91aee70ac524adff67f84165c2d3c8159747916a740128072be8d6937e",
+  "generato_il": "2026-09-06",
+  "generato_alle": "2026-09-06T01:32:50Z",
+  "sha256": "9bc51cf713fd04dc42344bd7f66d0251ea4c292333863073643c5b77b8f182d4",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -579,6 +579,18 @@
     {
       "version": "20260902145538",
       "name": "identita_classe_presidi"
+    },
+    {
+      "version": "20260904094442",
+      "name": "propaga_rinomina_sezione_a_tutte_le_tabelle"
+    },
+    {
+      "version": "20260906013059",
+      "name": "galleria_indici_vista_di_sede"
+    },
+    {
+      "version": "20260906013119",
+      "name": "candidature_etichetta_selezione"
     }
   ]
 }

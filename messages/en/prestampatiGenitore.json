@@ -136,5 +136,9 @@
   "uscitaRiga": "Trip on {data} — {destinazione} · leaving {partenza}, back {rientro}.",
   "uscitaRigaSenzaOrari": "Trip on {data} — {destinazione}.",
 
-  "avvisoSanitario": "What you write here concerns your child’s health: it is read by the school office and by the teachers of their class, and by nobody else."
+  "avvisoSanitario": "What you write here concerns your child’s health: it is read by the school office and by the teachers of their class, and by nobody else.",
+
+  "vuotoFigliInAttesa": "We are still completing the enrolment: forms and certificates will appear here as soon as the class is assigned. If you need the attendance certificate right away, ask the school office.",
+
+  "vuotoFigliNonPiuIscritto": "There is no enrolled child linked to this account: forms can only be filled in for children who attend. For certificates covering years already attended — including the attendance certificate for tax deduction — please ask the school office."
 }

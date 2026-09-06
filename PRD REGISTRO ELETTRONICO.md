@@ -17,9 +17,12 @@
 > | `utenti` | Staff (PK `id` FK → `auth.users`); **genitori reali su `parents`** | ⚠️ RLS abilitata ma **bypassata via `service_role`** — lockdown letture genitore in P0 (DL-003) |
 > | `alunni` | Anagrafica alunni con allergie. Dal 2026-08-10 porta anche `codice_belfiore_nascita` (`varchar(4)`, migr. `20260810094625`, colonna gemella su `parents`): il codice catastale del comune di nascita **scelto da un elenco**, dal quale il codice fiscale si calcola in locale. Nullable, senza default, senza trigger e senza backfill — segnala sempre, non blocca mai. Misurato l'11/08/2026: **0 righe valorizzate su 83** (33 alunni + 50 genitori) | ✅ Policy anon SELECT |
 > | `eventi_diario` | Eventi giornalieri del Diario 0-6 | ✅ SELECT + INSERT + UPDATE |
-> | `legame_genitori_alunni` | Relazione genitore↔figlio | ✅ RLS attivo |
+> | `legame_genitori_alunni` | Relazione **account**↔figlio (`genitore_id → utenti.id`): 819 righe al 2026-09-06. È ciò che regge il **gate applicativo**. ⚠️ Le tabelle ponte VIVE sono **DUE**: questa e `student_parents`. Scriverne una sola apre il gate e lascia chiusa la RLS, o il contrario — dal 2026-09-06 `src/lib/anagrafiche/legami-scrittura.ts` le scrive **sempre insieme** | ✅ RLS attivo |
+> | `student_parents` | Relazione **anagrafica**↔figlio (`parent_id → parents.id`): 886 righe al 2026-09-06. È ciò su cui poggia la **RLS**. Gemella della riga qui sopra, e le due si scrivono insieme | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `student_guardians` | Terza tabella ponte, scritta nel 2026-07 e **MAI LETTA** da `src/` (34 righe, ferme). Non è la canonica: non usarla, non scriverla | ✅ RLS abilitata **senza policy** |
 > | `valutazioni` | Voti e giudizi (Primaria) | Schema creato, non ancora popolato |
-> | `galleria_media` | Foto/Video con privacy tagging | Schema creato, non ancora popolato |
+> | `galleria_media` | Foto/Video con privacy tagging — **v1, TABELLA MORTA**: 0 righe, misurate il 2026-09-06. Non scriverci e non leggerla: il prodotto vivo è `galleria_media_v2` | Schema creato, mai popolato |
+> | `galleria_media_v2` | La galleria vera: **301 foto** al 2026-09-06, 301 su 301 con `tag_students` e **zero** con `target_classes` — il legame foto→classe si ottiene SOLO risalendo i tag. Dal 2026-09-06 due indici nuovi (`GIN` su `tag_students`, composito `(scuola_id, created_at DESC)`, migr. `20260906013059`) per la vista di sede della segreteria | ✅ RLS + policy service_role |
 > | `armadietto` | Inventario materiali a scalare (libro giornale: `portato` true/false, stock = somma) | ✅ Operativo, in attesa del primo uso reale |
 > | `armadietto_richieste` | Richieste di rifornimento al genitore: `aperta` → `presa_in_carico` → `evasa` | ✅ Operativa dal 2026-09-01 (migr. `20260901163536`) |
 > | `locker_config` | Catalogo materiali e soglie, per sezione | ⚠️ **Vuota per scelta** — vedi nota sotto |
@@ -34,7 +37,7 @@
 > | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `segnalazioni` | Coda di triage UGC (C5, Google Play): segnalazione **contenuto** (chat/galleria/diario, discriminante `tipo_oggetto`+`oggetto_id` polimorfico) o **utente** (`segnalato_id`), categoria, motivo libero, stato/gestione. Nessuna FK utente: la riga sopravvive a un'eventuale anonimizzazione | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
-> | `candidature_insegnanti` | Candidature spontanee di personale dal modulo **pubblico** `/lavora-con-noi` — dal 15/08/2026 **non più solo docente**: `posizioni text[]` (sette valori, almeno uno, `CHECK cardinality(...) >= 1`) porta anche collaboratrice, cucina, segreteria e un «altro» scritto a mano in `posizione_altro`; `gradi` non si chiede più e si **deriva** dalle posizioni docenti (vuoto è legittimo). Dal 25/08/2026 anche **`disponibilita` non si chiede più** — la colonna **resta** con i suoi valori storici (**227 righe al 25/08, h 12:08** — `SELECT count(disponibilita) …`, non ricopiare: cresce fino al deploy) e la scheda di segreteria mostra la riga solo quando il valore c'è; e il **`cv_path` è obbligatorio in via APPLICATIVA** (template `required: true` + `validateField` client e server), **non** con un `NOT NULL`: **98 righe storiche su 237** (25/08 h 12:08) lo hanno vuoto e il vincolo non si potrebbe applicare. Base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo; `cv_path` **unico** (`candidature_insegnanti_cv_unico`). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `candidature_insegnanti` | Candidature spontanee di personale dal modulo **pubblico** `/lavora-con-noi` — dal 15/08/2026 **non più solo docente**: `posizioni text[]` (sette valori, almeno uno, `CHECK cardinality(...) >= 1`) porta anche collaboratrice, cucina, segreteria e un «altro» scritto a mano in `posizione_altro`; `gradi` non si chiede più e si **deriva** dalle posizioni docenti (vuoto è legittimo). Dal 25/08/2026 anche **`disponibilita` non si chiede più** — la colonna **resta** con i suoi valori storici (**227 righe al 25/08, h 12:08** — `SELECT count(disponibilita) …`, non ricopiare: cresce fino al deploy) e la scheda di segreteria mostra la riga solo quando il valore c'è; e il **`cv_path` è obbligatorio in via APPLICATIVA** (template `required: true` + `validateField` client e server), **non** con un `NOT NULL`: **98 righe storiche su 237** (25/08 h 12:08) lo hanno vuoto e il vincolo non si potrebbe applicare. Base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo. **Dal 2026-09-06** porta `etichetta` (+ `etichetta_aggiornata_il`/`_da`, migr. `20260906013119`): una nota di selezione **interna**, vocabolario chiuso in `CHECK` (già chiamata · non idonea · da richiamare · in valutazione · assunta), che **non raggiunge mai** la persona candidata — un lock rende rossa la suite se la rotta che la scrive arriva, anche transitivamente, a un percorso di invio email. Non riusa `stato`, che è l'aggregato ricalcolato dal trigger `candidature_ricalcola_stato()` e la sovrascriverebbe in silenzio: al 2026-09-06 sono **461 `pending` su 462**, cioè lo stato non distingue nulla. `cv_path` **unico** (`candidature_insegnanti_cv_unico`). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 >
 > ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
@@ -73,7 +76,7 @@
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
 > | **Anagrafiche — il codice fiscale certo** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione**: le due migrazioni sono applicate, il codice attende il merge | `/admin/students` → **quinta linguetta «Codici fiscali»** (`CodiciFiscaliDaVerificare`); la cascata **provincia → comune** (`LuogoNascitaFields`) e il badge di coerenza (`BadgeCoerenzaCf`) sulle sei schede di alunno e genitore | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde. Scrittura con `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**. `GET /api/anagrafiche/comuni` serve la sola provincia scelta: le 13.656 righe della tabella Belfiore **non escono mai** verso il browser (lock `dataset-comuni-fuori-dal-bundle`). Il calcolo è locale e sincrono (`src/lib/fiscale/`): **nessuna chiamata a terzi**, `api.codicefiscale.it` è al bando |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
-> | **Foto/Video** | ✅ Operativo | `/teacher/gallery`, `/parent/gallery` | `/api/gallery/*` |
+> | **Foto/Video** | ✅ Operativo · **vista di sede per la segreteria dal 2026-09-06** | `/teacher/gallery` (una sezione), `/parent/gallery`, **`/admin/gallery`** (l'intero plesso: dal più recente, raggruppato per giornata, filtro per classe e per bambino, paginazione) | `/api/gallery/*` — con `scope=sede&scuolaId=…`, riservato a `requireStaff`, **sede sempre dichiarata e mai indovinata**. Lo «scarica» dei media passa da `@capacitor/filesystem` + `Share.share({files})` sul telefono e dal signed URL diretto sul web: in WebView un `<a download>` su un `blob:` non fa niente **e non solleva eccezione**, quindi il vecchio `catch` non poteva scattare |
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
@@ -129,6 +132,185 @@ Rientrano quando l'Alto Contrasto coprirà davvero quelle schermate — un lavor
 nove. La baseline copre le due che funzionano (`/parent/pagamenti`, `/teacher`), e il
 crawler continua a sorvegliare quelle: è poco, ma è vero — e il giorno in cui l'Alto
 Contrasto verrà esteso, le altre sette si riaccendono togliendo un `//`.
+
+## 👪 Changelog — Un bambino senza classe restava visibile e non funzionante, e i legami di famiglia si potevano solo guardare — 2026-09-05/06 (branch `feat/famiglie-foto-e-candidature`)
+
+Sei richieste arrivate insieme, e quattro nascono dallo stesso difetto strutturale: **la scheda
+di un bambino e il legame con la sua famiglia si potevano solo guardare, non governare**. La
+segreteria non poteva collegare un genitore già in archivio, non poteva scollegarlo, non vedeva
+le foto della propria sede; e un bambino che non stava in nessuna sezione restava visibile al
+genitore come se tutto fosse a posto.
+
+**Le misure di produzione, rifatte il 2026-09-06** (non copiate: `select count(*) …`):
+
+| | 2026-09-05 | 2026-09-06 |
+|---|---|---|
+| domande di iscrizione | 594 | **595** |
+| alunni non archiviati | 629 | 631 |
+| **alunni senza `section_id`** | 5 | **5** — 3 sede Demo, 2 Giugliano reali |
+| domande **senza alcuna prova di consenso** | 93 | **93** (di cui **86 approvate**) |
+| foto in `galleria_media_v2` | 301 | 301 — e `galleria_media` (v1) resta a **0**: tabella morta |
+| candidature insegnanti | 461 | **462**, di cui **461 `pending`** |
+| `legame_genitori_alunni` (l'account) | 816 | **819** |
+| `student_parents` (l'anagrafica) | 883 | **886** |
+
+⚠️ La riga di `AGENTS.md` che stima «circa venti al giorno» sulle iscrizioni è la misura del
+2026-09-04: fra il 5 e il 6 settembre le domande sono cresciute di **una**. Non significa che la
+crescita si sia fermata — significa che *una stima di velocità invecchia più in fretta del numero
+che stima*, ed è il quarto giro consecutivo in cui questo file lo dimostra su sé stesso.
+
+---
+
+### 1. Un bambino senza classe non spariva: restava, e non funzionava
+
+`GET /api/parent/students` faceva `.from('alunni').select(…).in('id', ids)` e basta: **nessun
+filtro** su `section_id`, `stato`, `archiviato_il`. Da lì il bambino entrava ovunque —
+`useParentIdentity` → `ChildSwitcher` → lo `studentId` di tutta l'app — ma perdeva in silenzio i
+moduli di classe, gli avvisi, le news di grado, l'agenda di sezione, l'armadietto, **tutta l'area
+primaria** (blocco duro su `section_id` in quattro route) e **le rette**, che `genera-rette` non
+produce mai per chi non ha classe. La peggiore delle combinazioni: **presente e non funzionante**.
+
+Ora c'è `getFigliAttiviDiGenitore()`, **accanto** a `getFigliDiGenitore()` e non al posto suo: la
+seconda ha **14 chiamanti**, fra cui `api/pagamenti`, `api/pagamenti/famiglia` e
+`src/lib/pagamenti/sospensione.ts`, e stringerla avrebbe tolto dalla vista i figli **ritirati che
+hanno ancora pagamenti aperti**. Il nascondere non è cosmetico: `requireParentOfStudent()` ha
+acquisito `richiediAttivo` con **default `true`**, così un client con l'id in cache riceve 403
+invece del contenuto; le route economiche passano esplicitamente `false`.
+
+Quando la lista filtrata è vuota **ma quella non filtrata non lo era**, il genitore non è «senza
+figli»: è **in attesa**, e vede una schermata che lo dice invece dell'app vuota. E non dice la
+stessa cosa a tutti: il motivo del nascondimento viaggia fino a schermo, così chi ha un figlio
+non più iscritto legge una frase diversa da chi ne ha uno che aspetta la classe.
+
+⚠️ **Una funzione è stata persa, ed è di tre famiglie — non di quattro.** Il selettore dei
+prestampati del genitore si riempie da `GET /api/parent/students`, quindi i figli nascosti ne
+escono. Per i **ritirati e gli anonimizzati non cambia niente**: `alunnoNonStampabile` li
+rifiutava già con un **409**, e rimetterli nel selettore aggiungerebbe un pulsante che porta a un
+rifiuto. Ma i bambini **senza sezione sono `iscritto`**, quel 409 per loro non scatta e il
+certificato uscirebbe: misurato il 2026-09-06, dei 4 account senza figli visibili **3 hanno
+l'unico figlio senza sezione**, e fino al 5 settembre potevano chiedersi da soli il certificato
+di frequenza — quello della detrazione. Adesso passano dalla segreteria, e la frase del pannello
+vuoto ce li manda. È il prezzo della decisione, scritto invece che scoperto fra un mese.
+
+Un'esenzione dell'allowlist di `isolamento-sede-coverage` è stata **tolta**, non spostata:
+`parent/students:GET` non fa più la propria `.from('alunni')` — la lettura vive nell'helper, che
+parte dai legami dell'account autenticato e quindi non ha una sede da filtrare.
+
+### 2. L'import in blocco non ha mai copiato i consensi foto, e il bianco valeva «no»
+
+Gli import sono **due**. Quello manuale copiava tutti e tre i consensi; **il giro automatico del
+cron non li nominava affatto** (`iscrizioni-import-invio`, cinque giri alle 8:10–8:50), quindi le
+tre colonne cadevano sul `DEFAULT false` — un «no» che nessuno aveva detto. **474 bambini** sono
+entrati da quella strada; risultavano giusti solo perché il backfill di una vecchia migrazione
+veniva ripassato sopra a mano. *Una riparazione periodica non è una correzione: nasconde il
+guasto, ed è il motivo per cui nessun test era rosso.*
+
+La regola vive ora in un file solo (`src/lib/iscrizioni/consensi-foto.ts`), letto da entrambi gli
+import, e la mappa canale→colonna resta quella già lockata in `enrollment-template.ts`.
+
+⚠️ **`BIANCO_VALE_CONSENSO = true` ribalta il default della colonna, ed è voluto**: per istruzione
+del titolare, all'import una casella lasciata in bianco si intende come consenso **dato**. La
+distinzione che regge tutto: *prova assente* ≠ *lettura caduta* — se la lettura di `consents_log`
+fallisce non si scrive nessuna colonna, perché **da un non-so non si inventa il consenso a
+pubblicare la foto di un minore**.
+
+**La sanatoria è scritta, misurata e NON eseguita**: `docs/sanatoria-consensi-foto-2026-09-06.md`.
+Tocca **2 righe e 5 celle** — non le 86 attese, perché le domande mute hanno già le colonne a
+`true` da un vecchio backfill. La stessa istruzione **senza** la guardia della volontà ne
+toccherebbe 36 e 75, pubblicando le foto di **32 bambini sul sito e 32 sui social contro il no
+scritto delle loro famiglie**: la guardia non è una cintura di sicurezza, è il **93%
+dell'istruzione**. Va eseguita **dopo** il rilascio, o il cron delle 8 rimette `false` sui nuovi.
+
+### 3. La segreteria non poteva vedere le foto della propria sede
+
+`GET /api/gallery` rispondeva **400** senza `classe` o `studentId` — non una svista: senza uno dei
+due non esiste uno scope di sede. Lo staff poteva solo aprire `/teacher/gallery`, che è per singola
+sezione, senza filtro data né filtro bambino.
+
+Nasce `scope=sede` con `scuolaId` **esplicito** (mai indovinato: tre sedi reali più quella della
+CI), riservato a `requireStaff`, e la pagina `/admin/gallery` — dal più recente, raggruppata per
+giornata, con filtro per classe e per bambino e paginazione. **La classe non è sulla foto**: 301
+su 301 hanno `tag_students` e **zero** hanno `target_classes`, quindi si risale dai tag; nessuna
+colonna inventata.
+
+**Migrazione `20260906013059`** — i due indici che mancavano: `GIN` su `tag_students` (il filtro
+per bambino e per classe era un **Seq Scan**) e composito `(scuola_id, created_at DESC)` (la vista
+di sede scorreva l'indice per data scartando gli altri plessi). Nessun dato toccato.
+
+### 4. Il pulsante «scarica» non scaricava, e il suo `catch` non poteva scattare
+
+`MediaGrid` costruiva un `blob:` e cliccava un `<a download>`. In una WebView Capacitor quel gesto
+**non fa niente e non solleva eccezione**: il `catch` non scattava, il log non partiva mai, e il
+ripiego `window.open` era anch'esso muto. In più `url` è un signed URL **cross-origin**, e per
+quelli l'attributo `download` è ignorato per definizione. Il «condividi» funzionava perché passa un
+**URL** a `navigator.share`.
+
+*Non un catch muto — un catch irraggiungibile*: la regola 6 di `AGENTS.md` al rovescio.
+
+Su nativo si passa ora da `@capacitor/filesystem` + `Share.share({files})`, che sul telefono è il
+gesto che l'utente riconosce come «salva»; su web si usa il signed URL diretto, con l'estensione
+che prima mancava. ⚠️ Il plugin richiede `npx cap sync`: senza, `isPluginAvailable('Filesystem')`
+è falso e ogni «Scarica» finisce nel ripiego — cioè il difetto resta, solo più educato.
+
+### 5. Aggiungere e togliere un familiare — e le tabelle ponte vive sono DUE
+
+Non esisteva **nessun** modo di collegare un genitore già in archivio (il riuso avveniva solo per
+collisione di codice fiscale dentro `linkOrCreateParent`), **nessun** modo di scollegare (gli unici
+`DELETE` stavano in funzioni SQL di annullamento import, irraggiungibili da una schermata), e
+**nessun** modo di correggere madre/padre dopo la creazione. Due schede che guardavano e non
+toccavano.
+
+Nasce `POST|DELETE /api/admin/legami-familiari` (`withRoute`, `requireStaff`, zod **strict**), con
+i pulsanti nelle due schede. Il punto che conta più di tutti:
+
+| Tabella | Righe (06/09) | Punta a |
+|---|--:|---|
+| `legame_genitori_alunni` | 819 | `utenti.id` — **l'account** (il gate applicativo) |
+| `student_parents` | 886 | `parents.id` — **l'anagrafica** (la RLS) |
+| `student_guardians` | 34 | scritta nel 2026-07 e **mai letta** da `src/`: non è la canonica |
+
+**Scriverne una sola apre il gate e lascia chiusa la RLS, o il contrario.** Ogni azione scrive su
+entrambe le vive e chiama `sincronizzaLegamiRuntime()`.
+
+Scollegare l'**ultimo** adulto di un bambino è **rifiutato**, non confermato: senza legami quel
+bambino non lo vede più nessun genitore — diario, galleria, pagamenti, chat — e il solo modo di
+ricollegarlo è la stessa schermata da cui lo si è tolto. Il messaggio dice il rimedio, perché *un
+rifiuto che non dice come si sblocca è un rifiuto che torna*.
+
+I legami non passano da `PATCH /api/admin/parents`, il cui `patchBodySchema` è `.loose()` con la
+sola `id`: qualunque chiave passa dritta all'`update()`. È la strada che ha già prodotto tre
+incidenti di campi scartati in silenzio (`codice_belfiore_nascita`, `scuola_id`,
+`retta_a_carico_di`).
+
+### 6. Un'etichetta sui curriculum, e la promessa che nessuna email parta
+
+461 candidature su 462 sono `pending`: lo stato non distingue niente, perché la selezione vive
+fuori dalla piattaforma. L'etichetta **non riusa `stato`** — governato dal trigger
+`candidature_ricalcola_stato()`, che lo ricalcola aggregando `candidature_sedi` e lo
+sovrascriverebbe senza preavviso — ma una colonna nuova con vocabolario chiuso in `CHECK`
+(**migrazione `20260906013119`**, con indice parziale: le righe etichettate sono e resteranno la
+minoranza).
+
+Nel flusso candidature esistono **esattamente tre** invii di email e nessuno è agganciato al cambio
+di stato in sé. La promessa «non manda mai una mail» non è affidata a un commento: un lock rende
+rossa la suite se il modulo della rotta raggiunge — **anche transitivamente** — un percorso di
+invio. *Provato rompendolo: aggiunto un import di un modulo che manda email, il lock diventa rosso.*
+
+---
+
+### Quello che è stato trovato verificando, e che nessuno cercava
+
+- Il lock `migrazioni-senza-sede-cablata` scandagliava anche `.claude/worktrees/`, cioè il
+  **checkout di un altro branch** montato da un'altra sessione: 11 file segnalati che
+  nell'albero principale sono in allowlist da mesi. Rosso solo sulla macchina di chi lavora, e per
+  file che non gli appartengono — *un lock così si impara a ignorare*. Ora salta quella cartella,
+  e la prova negativa dimostra che continua a mordere su `src/`.
+- La fotografia dello schema `candidature_insegnanti` e quella del registro migrazioni sono state
+  **rigenerate dal database** (147 migrazioni = 147 file), come i loro lock pretendono dopo ogni
+  `apply_migration`.
+- Il lockfile npm era fuori sincrono: `@capacitor/filesystem` era in `package.json` e **non** nel
+  lock. Rigenerato con **npm 10** — la versione della CI — perché npm 11 pota dal lock voci che
+  npm 10 pretende, e `npm ci` sarebbe fallito in otto secondi senza eseguire un solo test.
 
 ## 🧾 Changelog — La riga verde non dice mai «fatturato», e il genitore non sa dove mandare i soldi — 2026-09-05 (branch `feat/riconciliazione-fatturato-e-come-pagare`)
 

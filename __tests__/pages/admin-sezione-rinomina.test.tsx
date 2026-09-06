@@ -185,8 +185,18 @@ describe('Rinomina sezione — la tastiera arriva dove arriva il mouse', () => {
     it('dopo il salvataggio riuscito il fuoco torna sul pulsante, non su `body`', async () => {
         await apriRinomina(NOME_NUOVO)
         fireEvent.click(bottone(itAdmin.sezRinominaConferma))
-        await waitFor(() => expect(bottone(itAdmin.sezRinomina)).toBeTruthy())
-        expect(document.activeElement).toBe(bottone(itAdmin.sezRinomina))
+        // ⚠️ L'ASSERZIONE SUL FUOCO STA DENTRO L'ATTESA, e la differenza non è di
+        // stile. Fino al 2026-09-06 si aspettava che il pulsante ESISTESSE e poi,
+        // fuori dal `waitFor`, si guardava dove fosse il fuoco — ma il ripristino
+        // del fuoco avviene un tick DOPO che il pulsante è tornato a schermo.
+        // Fra le due righe non c'era nessuna attesa: il test passava perché la
+        // macchina era abbastanza veloce, non perché il fuoco fosse tornato.
+        //
+        // In CI, sotto carico, non lo era: `expected <body> to be <button>` — il
+        // fuoco era ancora su `body`. Un test che passa solo su una macchina
+        // scarica non è un test. Così invece l'attesa misura la cosa che al test
+        // interessa davvero, e resta capace di fallire se il fuoco non torna MAI.
+        await waitFor(() => expect(document.activeElement).toBe(bottone(itAdmin.sezRinomina)))
     })
 
     it('INVIO nel campo conferma la rinomina: il silenzio somiglia a un guasto', async () => {

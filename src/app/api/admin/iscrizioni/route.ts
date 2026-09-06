@@ -21,7 +21,7 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { normalizzaProvincia } from '@/lib/anagrafiche/province'
 import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
-import { CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
+import { consensiFotoDaProva, type ProvaConsensi } from '@/lib/iscrizioni/consensi-foto'
 import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 import { normalizzaNomeSezione, SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
 import { z } from 'zod'
@@ -748,35 +748,47 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       .select('*')
       .eq('id', id)
       .maybeSingle()
-    // Consenso foto dalla PROVA registrata all'invio (`consents_log`), non dal
-    // payload grezzo: `data` è ciò che il client ha mandato, `consents_log` è ciò
-    // che il server ha verificato e congelato. Le domande anteriori al passo
-    // consensi non hanno la prova: restano a `false`, che è il default corretto —
-    // un consenso che non risulta non è un consenso.
     if (subErr || !sub) {
       return NextResponse.json({ error: 'Invio non trovato' }, { status: 404 })
     }
     const invioScuolaId = (sub as { scuola_id?: string | null }).scuola_id ?? null
 
-    // Consensi fotografici, letti dalla PROVA e non dal payload grezzo: `data` è
-    // ciò che il client ha mandato, `consents_log` è ciò che il server ha
-    // verificato e congelato all'invio. Le domande anteriori al passo consensi
-    // non hanno la prova: restano a `false`, che è il default corretto — un
-    // consenso che non risulta non è un consenso.
+    // Consensi fotografici, letti dalla PROVA (`consents_log`) e non dal payload
+    // grezzo. La regola sta in `@/lib/iscrizioni/consensi-foto` e NON qui: è la
+    // stessa che applica il giro automatico, che fino al 2026-09-05 non la
+    // applicava affatto perché ne esisteva una copia sola, in questo file.
+    // Comprende TUTTI E TRE i canali (privacy F4) e la regola del bianco — una
+    // domanda senza prova vale come consenso dato, per istruzione del titolare.
     //
-    // ⚠️ TUTTI E TRE, non solo la galleria (privacy F4, 2026-07-31). Fino a oggi
-    // qui si leggeva soltanto `consenso_foto_galleria`: sito e social — risposti
-    // da 141 famiglie — non arrivavano da nessuna parte. L'elenco NON si scrive
-    // a mano: viene da `CONSENSI_FOTO_CANALI`, così un quarto canale aggiunto al
-    // modulo non può più nascere senza destinazione (lock nei test).
-    const provaConsensi = (sub as { consents_log?: { blocchi?: { field_id?: string; accepted?: boolean }[] } | null }).consents_log
-    const blocchiConsenso = provaConsensi?.blocchi ?? []
-    const consensiFoto = Object.fromEntries(
-      Object.entries(CONSENSI_FOTO_CANALI).map(([fieldId, colonna]) => [
-        colonna,
-        blocchiConsenso.some((b) => b.field_id === fieldId && b.accepted === true),
-      ]),
-    ) as Record<string, boolean>
+    // ⚠️ «PROVA ASSENTE» E «COLONNA ASSENTE» NON SONO LA STESSA COSA, e la
+    // differenza qui vale la foto di un minore sul sito pubblico.
+    // L'invio si carica con `select('*')`: su un database indietro di una
+    // migrazione la chiave `consents_log` non è proprio nella riga, e passare
+    // quell'`undefined` alla regola lo renderebbe indistinguibile da un bianco —
+    // che dal 2026-09-05 vale SÌ. Si concederebbero sito e canali social per una
+    // colonna che manca, non per una scelta della famiglia. Il giro automatico
+    // non ha questo buco perché fa una select MIRATA e ritorna `null` quando la
+    // lettura cade; qui la stessa distinzione la fa `in`, che separa «la chiave
+    // c'è e vale null» (prova assente → bianco) da «la chiave non c'è» (non-so →
+    // nessuna colonna nel record, e decide il default della colonna).
+    // In produzione la colonna esiste: l'esposizione erano il DB E2E della CI e
+    // ogni ambiente rimasto indietro di una migrazione.
+    const provaLeggibile = 'consents_log' in (sub as Record<string, unknown>)
+    const consensiFoto = provaLeggibile
+      ? consensiFotoDaProva((sub as { consents_log?: ProvaConsensi | null }).consents_log)
+      : {}
+    if (!provaLeggibile) {
+      // Stesso `esito` del giro automatico, di proposito: un grep solo trova
+      // entrambi i modi in cui i consensi possono restare non verificati. Un
+      // non-so che passa in silenzio è il difetto, non il caso limite.
+      logEvento('iscrizione', 'error', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'consensi-foto-non-letti',
+        entita_tipo: 'enrollment_submissions',
+        entita_id: id,
+        error_code: null,
+      }, new Error('colonna consents_log assente: consensi foto non verificabili'))
+    }
     const fuoriScope = await assertInvioInScope(supabase, auth.user, invioScuolaId, action)
     if (fuoriScope) return fuoriScope
 

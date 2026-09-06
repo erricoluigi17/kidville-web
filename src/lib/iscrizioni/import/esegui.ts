@@ -70,6 +70,7 @@ import { logEvento } from '@/lib/logging/logger'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { normalizzaNome } from './normalizza'
+import { consensiFotoDellaDomanda } from '@/lib/iscrizioni/consensi-foto'
 import { invitaGenitore, normalizzaEmail } from './inviti'
 import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
@@ -192,10 +193,48 @@ async function nomeCanonicoClasse(
 }
 
 /**
+ * Scrive riprovando SENZA la colonna che questo database non ha.
+ *
+ * Il DB E2E della CI è un progetto separato e non è migrato: una colonna nata
+ * dopo il suo ultimo allineamento fa rispondere a PostgREST `PGRST204` (INSERT)
+ * o `42703`, e l'INTERA scrittura viene respinta — non solo il campo di troppo.
+ * Senza questo degrado un ambiente indietro di una migrazione non
+ * «perderebbe un consenso»: annullerebbe l'iscrizione.
+ *
+ * È lo stesso schema già in uso nell'import a mano
+ * (`src/app/api/admin/iscrizioni/route.ts`), scritto qui perché le due strade
+ * devono lasciare la stessa famiglia nello stesso stato.
+ */
+async function conDegradoDiColonna<T extends { error: { code?: string; message?: string } | null }>(
+  record: Record<string, unknown>,
+  // `PromiseLike` e non `Promise`: i costruttori di query di PostgREST sono
+  // thenable ma non sono Promise, e con `Promise<T>` l'inferenza qui sotto
+  // perderebbe il tipo della riga letta.
+  scrivi: (rec: Record<string, unknown>) => PromiseLike<T>,
+): Promise<T> {
+  let res = await scrivi(record)
+  let tentativi = 0
+  while (res.error && ['PGRST204', '42703'].includes(res.error.code ?? '') && tentativi < 4) {
+    const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(
+      res.error.message ?? '',
+    )
+    const col = m?.[1] ?? m?.[2]
+    // Se il nome non si legge, o non è nostro, si smette: riprovare identico
+    // sarebbe un giro a vuoto, e l'errore vero va restituito com'è.
+    if (!col || !(col in record)) break
+    delete record[col]
+    res = await scrivi(record)
+    tentativi++
+  }
+  return res
+}
+
+/**
  * Trova un `alunno` per codice fiscale nella sede, oppure lo crea.
  *
- * Esportata per il collaudo (`__tests__/api/iscrizioni-import-nome-canonico.test.ts`):
- * è il punto in cui il nome della classe passa dal foglio al database, e provarlo
+ * Esportata per il collaudo (`__tests__/api/iscrizioni-import-nome-canonico.test.ts`,
+ * `__tests__/api/consensi-foto-import.test.ts`): è il punto in cui il nome della
+ * classe e la liberatoria foto passano dal foglio al database, e provarlo
  * dall'esterno di `eseguiDomanda` significa provare CHE COSA viene scritto invece
  * di quante righe tornano.
  */
@@ -209,6 +248,18 @@ export async function alunnoDiRiferimento(
   const cf = campo(grezzo, 'codice_fiscale')?.toUpperCase() ?? null
   // Il nome della sezione com'è in anagrafica, non com'è nel foglio.
   const classe = await nomeCanonicoClasse(supabase, scuolaId, assegnazione.classe)
+  /**
+   * La liberatoria foto, dalla PROVA congelata all'invio. Fino al 2026-09-05
+   * questo giro non la nominava affatto: le tre colonne cadevano sul default
+   * `false`, e la famiglia che aveva acconsentito risultava aver negato.
+   * La regola (compreso il bianco che vale sì) sta in un posto solo,
+   * `@/lib/iscrizioni/consensi-foto`, condiviso con l'import a mano.
+   */
+  const consensi = await consensiFotoDellaDomanda(
+    supabase,
+    submissionId,
+    'iscrizioni/import:consensiFoto',
+  )
 
   if (cf) {
     const { data, error } = await supabase
@@ -224,14 +275,19 @@ export async function alunnoDiRiferimento(
       if (trovato.scuola_id !== scuolaId) {
         return { errore: `il codice fiscale risulta già iscritto in un'altra sede: va risolto a mano` }
       }
-      // Esiste già qui: si aggiorna solo classe e retta, senza ricrearlo.
-      const { error: errUp } = await supabase
-        .from('alunni')
-        .update({
-          classe_sezione: classe,
-          importo_retta_mensile: assegnazione.retta,
-        })
-        .eq('id', trovato.id)
+      // Esiste già qui: si aggiorna solo classe, retta e — se la domanda porta
+      // la prova — i consensi foto. Il BIANCO qui NON si applica: su una riga
+      // che esiste già c'è una preferenza registrata, e una domanda vecchia e
+      // muta non può cancellare un «no» raccolto altrove. Il bianco riempie un
+      // vuoto, non sovrascrive una scelta.
+      const patch: Record<string, unknown> = {
+        classe_sezione: classe,
+        importo_retta_mensile: assegnazione.retta,
+        ...(consensi?.daProva ? consensi.colonne : {}),
+      }
+      const { error: errUp } = await conDegradoDiColonna(patch, (rec) =>
+        supabase.from('alunni').update(rec).eq('id', trovato.id),
+      )
       if (errUp) return { errore: `alunno non aggiornato: ${errUp.message}` }
       return { id: trovato.id }
     }
@@ -263,9 +319,16 @@ export async function alunnoDiRiferimento(
     // spazi apriva la classe senza nessun bambino.
     classe_sezione: classe,
     importo_retta_mensile: assegnazione.retta,
+    // Liberatorie foto raccolte all'iscrizione, UNA PER CANALE: la galleria
+    // riservata alle famiglie della sezione è un'altra cosa dal sito pubblico e
+    // dai social (provv. Garante 725 del 27/11/2025). Senza queste righe il
+    // bambino nasceva a `false` su tutti e tre.
+    ...(consensi?.colonne ?? {}),
   }
 
-  const { data, error } = await supabase.from('alunni').insert(record).select('id').single()
+  const { data, error } = await conDegradoDiColonna(record, (rec) =>
+    supabase.from('alunni').insert(rec).select('id').single(),
+  )
   if (error || !data) return { errore: `alunno non inserito: ${error?.message ?? 'nessuna riga'}` }
 
   const id = (data as { id: string }).id

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { createAdminClient } from '@/lib/supabase/server-client';
-import { requireDocente } from '@/lib/auth/require-staff';
+import { requireDocente, requireStaff } from '@/lib/auth/require-staff';
 // Dal MODULO PURO, non da `require-staff`: 298 file sostituiscono quest'ultimo per
 // intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
 // esplodere con `No "eFamiglia" export is defined on the mock`.
@@ -15,6 +15,7 @@ import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
+import { alunniTaggatiDellaSede, assertAlunnoNellaSede, risolviSedeDellaVista } from '@/lib/gallery/vista-sede';
 import { proiettaPerGenitore } from './proiezione';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
 import { notificaEvento } from '@/lib/notifiche/triggers';
@@ -35,6 +36,55 @@ const getQuerySchema = z.object({
     // NON zPaginazione, che cambierebbe default e limiti.
     limit: z.string().optional(),
     offset: z.string().optional(),
+    // ─── LA VISTA DI SEDE (segreteria) ───────────────────────────────────────
+    // `scope=sede` è l'unica modalità che legge la galleria di un PLESSO INTERO,
+    // ed è riservata a `requireStaff`. `z.literal` e non `z.string()`: un valore
+    // sconosciuto («scope=tutto») deve essere un 400 esplicito, non un ripiego
+    // silenzioso sul comportamento storico.
+    scope: z.literal('sede').optional(),
+    scuolaId: zUuid.optional(),
+});
+
+/**
+ * `scope` e `scuolaId` viaggiano INSIEME, o il 400 lo dice.
+ *
+ * ⚠️ `z.object` NON è strict: i campi fuori schema li scarta **in silenzio**, ed
+ * è già costato tre incidenti in questo repo. Senza questa regola uno
+ * `?scuolaId=<uuid>` scritto senza `scope=sede` verrebbe letto, ignorato e
+ * dimenticato: il chiamante crederebbe di aver dichiarato una sede, il server
+ * risponderebbe 400 «specificare la classe o l'alunno» — o peggio, con `classe`
+ * accanto, un 200 su un perimetro diverso da quello chiesto.
+ *
+ * L'altro verso è la porta stessa: `scope=sede` senza `scuolaId` è la richiesta
+ * «dammi tutte le foto» senza dire di dove, cioè esattamente ciò che il 400
+ * storico di questa rotta esiste per impedire.
+ */
+const getQuerySchemaCoerente = getQuerySchema.superRefine((q, ctx) => {
+    if (q.scope === 'sede' && !q.scuolaId) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['scuolaId'],
+            message: 'Con scope=sede la sede va dichiarata: manca scuolaId',
+        });
+    }
+    if (q.scuolaId && q.scope !== 'sede') {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['scope'],
+            message: 'scuolaId si usa solo con scope=sede',
+        });
+    }
+    // `parentId` è il fallback storico della vista FAMIGLIA (e serve solo a
+    // farsi negare 403 se il legame non esiste). Nella vista di sede non filtra
+    // niente: accettarlo e ignorarlo sarebbe la stessa bugia di `scuolaId`
+    // scartato in silenzio, un parametro in meno.
+    if (q.parentId && q.scope === 'sede') {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['parentId'],
+            message: 'parentId non si usa con scope=sede',
+        });
+    }
 });
 
 const postBodySchema = z.object({
@@ -85,12 +135,26 @@ const patchBodySchema = z.object({
 // GET /api/gallery?studentId=xxx&classe=xxx&date=YYYY-MM-DD&limit=30&offset=0
 // Lista media con filtri (studentId per genitore, classe per insegnante).
 // Filtri e paginazione applicati in SQL (.or + .range): niente scarico dell'intera
-// tabella con filtro/slice in memoria. Contratto risposta invariato: { media, total }.
+// tabella con filtro/slice in memoria. Contratto risposta: { media, total, limit, offset }
+// (`limit`/`offset` aggiunti il 2026-09-05: il clamp qui sotto è SILENZIOSO, e un
+// client che chiede 5000 righe e ne riceve 100 deve poterlo sapere).
+//
+// ─── E DAL 2026-09-05 ANCHE LA GALLERIA DI UNA SEDE INTERA ───────────────────
+// `?scope=sede&scuolaId=<uuid>` — la vista della segreteria: tutte le foto del
+// proprio plesso, filtrabili per classe, per bambino e per data, dalla più
+// recente. Gate `requireStaff` (admin/coordinatore/segreteria: chi insegna resta
+// alla propria classe) e sede **dichiarata**, mai dedotta. Il resto della lettura
+// — filtri, paginazione, degrado, firma dei link — è lo STESSO codice delle due
+// modalità storiche: una terza copia sarebbe la terza occasione di correggerne
+// una e dimenticarne due.
 export const GET = withRoute('gallery:GET', async (request: Request) => {
     try {
-        const q = parseQuery(request, getQuerySchema);
+        const q = parseQuery(request, getQuerySchemaCoerente);
         if ('response' in q) return q.response;
-        const { studentId, classe, date } = q.data;
+        const { studentId, classe, date, scuolaId } = q.data;
+        // Lo schema garantisce che `scope === 'sede'` implichi `scuolaId`, e
+        // viceversa: da qui in giù `vistaSede` è l'unica domanda da porsi.
+        const vistaSede = q.data.scope === 'sede';
         const limit = Math.min(Math.max(parseInt(q.data.limit ?? '30') || 30, 1), 100);
         const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
 
@@ -99,9 +163,17 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         // famiglia per il genitore, plesso e sezione per tutti gli altri (401
         // anonimo / 403 figlio altrui o bambino di un'altra sede); senza
         // studentId (lista/classe) la lettura è riservata a staff/docente.
-        const auth = studentId
-            ? await requireParentOfStudent(request, studentId)
-            : await requireDocente(request);
+        //
+        // La vista di sede ha il SUO gate, e viene per primo: `requireStaff`.
+        // Non `requireDocente`, che ammette anche `educator`: una maestra vede le
+        // sue classi, non l'intero plesso — e non `requireParentOfStudent`
+        // nemmeno quando arriva `studentId`, perché lì quel parametro non è
+        // «mio figlio», è un FILTRO su un elenco di lavoro.
+        const auth = vistaSede
+            ? await requireStaff(request)
+            : studentId
+                ? await requireParentOfStudent(request, studentId)
+                : await requireDocente(request);
         if (auth.response) return auth.response;
 
         // Genitore: il parentId storico in query deve coincidere con l'identità
@@ -154,14 +226,37 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         // a `[]` e — per via della guardia `if (plessi.length > 0)` più sotto —
         // usciva SENZA NESSUN filtro: i 30 media più recenti di TUTTE le sedi,
         // con `tag_students` e `caption`. Scope non calcolato ⇒ si nega.
-        if (!classe && !studentId) {
+        //
+        // ⚠️ E RESTA IN PIEDI: `!vistaSede` non è un'esenzione, è il modo in cui
+        // la terza modalità paga il pedaggio invece di aggirarlo. Il muro
+        // esisteva perché senza classe né alunno lo scope di sede non si poteva
+        // CALCOLARE; `scope=sede` non lo calcola nemmeno lui — se lo fa
+        // DICHIARARE, e `risolviSedeDellaVista` lo verifica contro i plessi di
+        // chi chiede. Chi non dichiara niente continua a prendersi il 400.
+        if (!vistaSede && !classe && !studentId) {
             return NextResponse.json(
                 { error: 'Specificare la classe (classe) o l\'alunno (studentId)' },
                 { status: 400 }
             );
         }
         let plessi: string[] = [];
-        if (classe) {
+        if (vistaSede) {
+            // La sede dichiarata, intersecata con i plessi di chi chiede. Il
+            // ramo NON è condizionato a `classe`/`studentId`: nella vista di
+            // sede quei due sono FILTRI dentro un perimetro già stabilito, non
+            // il perimetro stesso.
+            const sede = await risolviSedeDellaVista(supabase, auth.user, scuolaId);
+            if (sede.response) return sede.response;
+            plessi = sede.plessi;
+            // Un bambino di un altro plesso non porterebbe indietro niente
+            // comunque (i media sono già ristretti a `plessi`), ma tacere
+            // vorrebbe dire rispondere «questo bambino non ha foto» a chi sta
+            // guardando nel plesso sbagliato. Qui il 200 vuoto costa troppo.
+            if (studentId) {
+                const fuori = await assertAlunnoNellaSede(supabase, studentId, plessi);
+                if (fuori) return fuori;
+            }
+        } else if (classe) {
             plessi = await resolveScuoleAttive(request as NextRequest, supabase, auth.user);
         } else if (studentId) {
             const { data: alunno, error: alErr } = await supabase
@@ -250,6 +345,23 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
         let studentIds: string[] = [];
         if (classe) {
             const sezioni = await sezioniDiNome(supabase, classe, plessi);
+            if (sezioni.length === 0) {
+                // Il nome non corrisponde a nessuna sezione dei plessi in scope.
+                // Non è un errore del server e non cambia la risposta (resta la
+                // condizione broadcast, che per progetto viaggia per NOME), ma
+                // non può restare muto: il 2026-09-02 cinque classi di Giugliano
+                // sono uscite vuote o parziali proprio così — 200, nessun log, e
+                // una schermata bianca che sembrava «non ci sono foto».
+                logEvento('galleria', 'warn', {
+                    operazione: 'gallery:GET',
+                    esito: 'classe-non-risolta',
+                    // Il nome della classe NON si logga: la redazione è a lista
+                    // bianca e non la si allarga «perché sarebbe comodo
+                    // vederlo». Per ritrovare la riga bastano il conteggio dei
+                    // plessi in scope e l'ora.
+                    sedi: plessi.length,
+                });
+            }
             const alunniQ = supabase
                 .from('alunni')
                 .select('id')
@@ -285,8 +397,18 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             }
 
             // Genitore: media broadcast (semantica storica) o con il figlio taggato.
+            //
+            // ⚠️ NELLA VISTA DI SEDE NO, e la differenza non è estetica: lì
+            // `studentId` è un FILTRO scelto in una tendina («fammi vedere le
+            // foto di questo bambino»), e i broadcast — che sono comunicazioni
+            // a un'intera classe o all'intera sede, per progetto senza tag —
+            // non sono foto di quel bambino. Tenere la semantica di famiglia
+            // riempirebbe il filtro di righe che il bambino non ritraggono, cioè
+            // farebbe mentire il filtro.
             if (studentId) {
-                query = query.or(`is_broadcast.eq.true,tag_students.cs.{${studentId}}`);
+                query = vistaSede
+                    ? query.contains('tag_students', [studentId])
+                    : query.or(`is_broadcast.eq.true,tag_students.cs.{${studentId}}`);
             }
 
             // Insegnante: broadcast destinati alla classe o media con alunni della classe taggati.
@@ -347,10 +469,24 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             : { data: [] };
         const uploaderById = new Map((uploaders ?? []).map(u => [u.id, u]));
 
-        // `studentId` presente ⇒ chi legge è un GENITORE (il gate sopra è
-        // `requireParentOfStudent`). A lui `tag_students` — gli uuid degli altri
+        // ⚠️ «C'È `studentId`» NON VUOL PIÙ DIRE «CHI LEGGE È UN GENITORE», e da
+        // quando esiste la terza modalità la differenza si misura in un campo che
+        // sparisce. Nella vista di FAMIGLIA `studentId` è il figlio (il gate sopra
+        // è `requireParentOfStudent`), e `tag_students` — gli uuid degli ALTRI
         // minori ritratti nella stessa foto di gruppo — non serve e non deve
-        // uscire: GDPR art. 5.1.c. Vedi `./proiezione`.
+        // uscire: GDPR art. 5.1.c, vedi `./proiezione`. Nella vista di SEDE lo
+        // stesso parametro è un FILTRO scelto in una tendina da una segreteria che
+        // quel plesso lo amministra: togliere lì `tag_students` non protegge
+        // nessuno — i bambini sono i suoi, e li vede già senza filtro — mentre
+        // spegne `alunniTaggatiDellaSede`, che legge proprio quel campo poche
+        // righe più sotto.
+        //
+        // Misurato con `Boolean(studentId)` da solo: `?scope=sede&studentId=…`
+        // rispondeva righe SENZA `tag_students` e con `alunni_taggati: []` su ogni
+        // foto, mentre il commento qui sotto ne prometteva nomi e classe. Non è
+        // una fuga (usciva meno, non di più): è una promessa che si spegneva in
+        // silenzio, cioè il difetto che su questa rotta è già costato di più.
+        const perGenitore = !vistaSede && Boolean(studentId);
         const enriched = page.map((media) => {
             const uploader = uploaderById.get(media.uploaded_by);
             return proiettaPerGenitore(
@@ -360,17 +496,59 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
                         ? `${uploader.first_name || uploader.nome} ${uploader.last_name || uploader.cognome}`
                         : 'Sconosciuto',
                 },
-                Boolean(studentId),
+                perGenitore,
             );
         });
+
+        // Vista di sede: ai media si attaccano i bambini taggati DELLA SEDE, coi
+        // loro nomi e la loro classe. Senza, la schermata della segreteria
+        // mostrerebbe uuid, o dovrebbe interrogare l'anagrafica una volta per
+        // foto. Non si fa per le altre due modalità: al genitore `tag_students`
+        // viene tolto del tutto (`proiettaPerGenitore`, GDPR art. 5.1.c), e la
+        // vista di classe della maestra i nomi ce li ha già dal suo elenco.
+        const conAlunni = vistaSede
+            ? await alunniTaggatiDellaSede(supabase, enriched, plessi, 'gallery:GET')
+            : enriched;
 
         // Il bucket `gallery` è PRIVATO: in tabella c'è il percorso del file, e
         // l'indirizzo con cui la foto si guarda nasce QUI, firmato e a scadenza
         // breve, solo per chi ha superato il gate e lo scope di sede appena
         // applicati. Una chiamata sola per l'intera pagina.
-        const conLink = await firmaMediaGalleria(supabase, enriched, 'gallery:GET');
+        //
+        // ⚠️ La vista di sede NON allarga il TTL (600 s, `@/lib/gallery/storage`):
+        // è una schermata di lavoro, non un varco. Un link firmato che dura di
+        // più è un link che, inoltrato o copiato per sbaglio, continua a mostrare
+        // la foto di un minore più a lungo.
+        const conLink = await firmaMediaGalleria(supabase, conAlunni, 'gallery:GET');
 
-        return NextResponse.json({ media: conLink, total: count ?? 0 });
+        if (vistaSede) {
+            // Evento critico ⇒ si logga anche il SUCCESSO: questa è la lettura di
+            // un plesso INTERO di foto di minori, e senza una riga per il caso
+            // buono «nessun log» non distinguerebbe «tutto ok» da «non è mai
+            // partito niente». Solo uuid, conteggi e booleani: mai un id di
+            // bambino, mai un nome.
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:GET',
+                esito: 'vista-sede',
+                sede_id: plessi[0],
+                utente: auth.user.id,
+                ruolo: auth.user.role,
+                n: conLink.length,
+                total: count ?? 0,
+                offset,
+                limit,
+                con_classe: Boolean(classe),
+                con_alunno: Boolean(studentId),
+                con_data: Boolean(date),
+            });
+        }
+
+        // `limit`/`offset` nella risposta: il clamp qui sopra è silenzioso (per
+        // scelta storica di questa rotta, che non risponde 400 su un limite
+        // fuori scala), e un chiamante che ne chiede 5000 e ne riceve 100 deve
+        // poter capire che è stato tagliato invece di credere che le righe
+        // fossero finite.
+        return NextResponse.json({ media: conLink, total: count ?? 0, limit, offset });
     } catch (error) {
         logErrore({ operazione: 'gallery:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

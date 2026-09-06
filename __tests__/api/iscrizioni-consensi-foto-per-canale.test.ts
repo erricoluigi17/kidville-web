@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   logScrittura: vi.fn(),
+  logEvento: vi.fn(),
   sub: null as Record<string, unknown> | null,
   inserts: [] as { table: string; row: Record<string, unknown> }[],
   updates: [] as { table: string; row: Record<string, unknown> }[],
@@ -28,6 +29,15 @@ const h = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
+// Il logger resta VERO tranne `logEvento`, che qui si osserva: quando i consensi
+// non si possono verificare la riga d'errore è parte della correzione, non un di
+// più — senza, un «non-so» passerebbe in silenzio ed è il guasto di partenza.
+// Si intercetta la sola funzione perché `withRoute` continua a usare `logOk` e
+// `logErrore` di serie.
+vi.mock('@/lib/logging/logger', async (importOriginal) => {
+  const vero = await importOriginal<typeof import('@/lib/logging/logger')>()
+  return { ...vero, logEvento: h.logEvento }
+})
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: h.logScrittura }))
 vi.mock('@/lib/email/send', () => ({
   sendEmail: async () => true,
@@ -87,6 +97,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { PATCH } from '@/app/api/admin/iscrizioni/route'
 import { CONSENSI_FIELDS, CONSENSI_FOTO_CANALI } from '@/lib/forms/enrollment-template'
+import { BIANCO_VALE_CONSENSO } from '@/lib/iscrizioni/consensi-foto'
 
 const ID = '5b5b5b5b-5b5b-45b5-85b5-5b5b5b5b5b5b'
 const req = (body: unknown) =>
@@ -111,6 +122,13 @@ const domanda = (blocchi: { field_id: string; accepted: boolean }[]) => ({
 })
 
 const rigaAlunno = () => h.inserts.find((i) => i.table === 'alunni')?.row
+
+/** Le righe di log del «non-so»: consensi che non si sono potuti verificare. */
+const righeNonLette = () =>
+  h.logEvento.mock.calls.filter(
+    ([, livello, campi]) =>
+      livello === 'error' && (campi as { esito?: string })?.esito === 'consensi-foto-non-letti',
+  )
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -159,13 +177,59 @@ describe('import iscrizione — i tre consensi foto atterrano ciascuno sul propr
     expect(row?.consenso_foto_social).toBe(false)
   })
 
-  it('nessuna prova di consenso (domande anteriori al passo consensi) → tutte false', async () => {
+  it('nessuna prova di consenso (domande anteriori al passo consensi) → vale la REGOLA DEL BIANCO', async () => {
+    // ⚠️ FINO A OGGI QUESTO TEST PRETENDEVA TRE `false`, e dal 2026-09-05
+    // congelava il comportamento superato: il bianco cadeva sul DEFAULT della
+    // colonna (`NOT NULL DEFAULT false`), cioè su un «no» che nessuna famiglia
+    // aveva detto. Per decisione del titolare del 2026-09-05, all'import una
+    // casella lasciata in bianco vale SÌ: riguarda le 86 domande approvate
+    // anteriori al passo consensi (misurate il 2026-09-06 su 595), a quelle
+    // famiglie non è mai stato chiesto niente.
+    //
+    // Si asserisce sulla COSTANTE e non su un `true` scritto a mano: la regola
+    // vive in un posto solo, e così il test non può divergere da lei — se un
+    // giorno la decisione si ribalta, `BIANCO_VALE_CONSENSO` cambia e questo
+    // test la segue invece di inchiodare l'import al comportamento di oggi.
+    // Resta capace di diventare rosso: la route deve comunque SCRIVERE le tre
+    // colonne, e se smettesse di applicare la regola arriverebbe `undefined`,
+    // che non è né `true` né `false`.
+    //
+    // Il caso opposto — prova PRESENTE e negativa — sta due test più su e non si
+    // tocca: è quello che tiene onesto questo. Chi ha detto no davvero resta a no.
     h.sub = { ...domanda([]), consents_log: null }
     await importa()
     const row = rigaAlunno()
-    expect(row?.consenso_privacy).toBe(false)
-    expect(row?.consenso_foto_sito).toBe(false)
-    expect(row?.consenso_foto_social).toBe(false)
+    expect(row?.consenso_privacy).toBe(BIANCO_VALE_CONSENSO)
+    expect(row?.consenso_foto_sito).toBe(BIANCO_VALE_CONSENSO)
+    expect(row?.consenso_foto_social).toBe(BIANCO_VALE_CONSENSO)
+  })
+
+  it('la COLONNA `consents_log` non c’è (DB indietro di una migrazione) → nessun consenso nel record', async () => {
+    // «PROVA ASSENTE» E «COLONNA ASSENTE» PORTANO A ESITI OPPOSTI, e confonderle
+    // regala il sito pubblico e i social. Qui l'invio si carica con `select('*')`:
+    // senza la colonna la chiave non esiste nella riga, alla regola arriva
+    // `undefined` e il bianco scatterebbe — concedendo la foto di un minore per
+    // una migrazione mancante, non per una scelta della famiglia.
+    // Una lettura che non si è potuta fare non è un bianco: è un non-so, e da un
+    // non-so non si inventa un consenso. Le tre colonne restano FUORI dal record
+    // e decide il default, come già fa il giro automatico.
+    const senzaColonna = { ...domanda([]) } as Record<string, unknown>
+    delete senzaColonna.consents_log
+    h.sub = senzaColonna
+
+    const res = await importa()
+    expect(res.status).toBe(200)
+    const row = rigaAlunno()
+    expect(row).not.toHaveProperty('consenso_privacy')
+    expect(row).not.toHaveProperty('consenso_foto_sito')
+    expect(row).not.toHaveProperty('consenso_foto_social')
+    // Controllo positivo: la riga è stata scritta davvero, con l'anagrafica.
+    // Senza, le tre asserzioni qui sopra sarebbero vere anche per un import che
+    // non ha scritto niente e non direbbero più nulla.
+    expect(row?.nome).toBe('Luca')
+    // E il non-so LASCIA UNA RIGA: senza, «nessun consenso» e «consenso non
+    // verificabile» si somigliano — è l'ambiguità da cui nasce tutto questo file.
+    expect(righeNonLette(), 'un non-so deve lasciare una riga, non passare in silenzio').toHaveLength(1)
   })
 
   it('DB E2E non migrato: PGRST204 sulle colonne nuove → si ritenta senza, l’import riesce', async () => {

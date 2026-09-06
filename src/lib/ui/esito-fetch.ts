@@ -1678,6 +1678,81 @@ export const CODICI_ERRORE = {
      * riceve a guardare la cosa sbagliata.
      */
     FATTURA_RIGA_VIVA_ESTRANEA_ALLE_QUOTE: 'erroreFatturaRigaVivaEstraneaAlleQuote',
+    /**
+     * ─── I LEGAMI FAMILIARI (`admin/legami-familiari`) ──────────────────────
+     * 404 — l'adulto e il bambino non risultano collegati: si sta scollegando o
+     * correggendo un legame che non c'è (di solito un elenco vecchio a schermo).
+     * Non è `ALUNNO_NON_TROVATO`: il bambino c'è, è il LEGAME a non esserci.
+     */
+    LEGAME_NON_TROVATO: 'erroreLegameNonTrovato',
+    /**
+     * 409 — si sta togliendo l'ULTIMO adulto collegato a un bambino.
+     *
+     * Non è un guasto, è una protezione, e la frase deve dire il rimedio: senza
+     * nessun legame quel bambino non lo vede più nessun genitore — diario,
+     * galleria, pagamenti, chat — e il solo modo di ricollegarlo è la stessa
+     * schermata da cui lo si è tolto. In produzione cinque alunni sono già in
+     * quello stato; l'ordine giusto è collegare prima l'altro genitore.
+     * È la stessa lezione del 409 dell'oblio: un rifiuto che non dice come si
+     * sblocca è un rifiuto che torna.
+     */
+    LEGAME_ULTIMO_GENITORE: 'erroreLegameUltimoGenitore',
+    /**
+     * 500 — la scrittura del legame è stata respinta dal database.
+     *
+     * NON riusa `LETTURA_FALLITA`, che sta accanto in questa stessa rotta: là
+     * non si era ancora toccato niente e il rimedio è riprovare; qui una
+     * scrittura è stata tentata, e chi legge deve sapere che è quella ad essere
+     * fallita. Il `message` grezzo di PostgREST non esce di qui — resta nel log.
+     */
+    LEGAME_NON_SALVATO: 'erroreLegameNonSalvato',
+    /**
+     * 500 — lo SCOLLEGAMENTO è riuscito a metà: la riga che apre l'accesso è già
+     * stata tolta, quella in anagrafica no.
+     *
+     * NON è `LEGAME_NON_SALVATO`, e la differenza non è di sfumatura: quel codice
+     * porta in catalogo la frase «niente è stato modificato», che qui è l'esatto
+     * CONTRARIO del vero — metà del gesto è avvenuta, e la metà avvenuta è
+     * proprio quella che toglie a un adulto la vista sui dati di un minore. Fino
+     * al 2026-09-06 le due situazioni condividevano il codice: il server scriveva
+     * la frase giusta, il catalogo la scartava (i codici `LEGAME_*` non sono in
+     * `CODICI_CON_DETTAGLIO`) e l'operatore leggeva il contrario di ciò che era
+     * successo. Due rimedi opposti — là si riprova e basta, qui si riprova
+     * sapendo che una metà è già andata — non stanno sotto lo stesso codice.
+     */
+    LEGAME_MEZZO_TOLTO: 'erroreLegameMezzoTolto',
+    /**
+     * 500 — il ramo «crea un adulto NUOVO» del collegamento è caduto DOPO aver
+     * chiamato `linkOrCreateParent`: l'anagrafica dell'adulto può essere già
+     * nata, e con un'email le credenziali sono già partite verso una famiglia
+     * vera.
+     *
+     * Anche qui il rimedio è l'opposto di `LEGAME_NON_SALVATO`: quella frase
+     * («niente è stato modificato… riprova») invita a ricompilare il modulo, cioè
+     * a creare un SECONDO adulto e a mandare una SECONDA email di credenziali. Il
+     * dialogo di aggiunta se n'era accorto dal proprio lato e si difendeva
+     * nascondendo la prosa del server sui 5xx; la difesa giusta è che la rotta
+     * dica quale ramo ha preso, ed è questo codice.
+     *
+     * «FORSE» è la parola esatta e non un'attenuazione: `linkOrCreateParent` può
+     * cadere prima di creare l'anagrafica (insert respinto) o dopo (il legame,
+     * l'identità di accesso). Il rimedio però è lo stesso in entrambi i casi —
+     * cercare l'adulto in archivio invece di ricrearlo — e due situazioni con lo
+     * STESSO rimedio condividono il codice, esattamente come `TROPPE_RICHIESTE`.
+     */
+    LEGAME_ADULTO_FORSE_CREATO: 'erroreLegameAdultoForseCreato',
+    /**
+     * 400 — la richiesta di collegamento non porta né `parent_id` né l'anagrafica
+     * di un adulto nuovo: non c'è nessuno da collegare.
+     *
+     * Era il quinto uso di `LEGAME_NON_SALVATO`, e stonava per il rimedio: la
+     * frase di catalogo dice «riprova fra poco», mentre riprovare non serve a
+     * niente finché non si sceglie un adulto. Non lo produce nessuna schermata
+     * (il client costruisce sempre uno dei due corpi), quindi lo legge chi sta
+     * scrivendo un chiamante nuovo: è a lui che il messaggio deve dire cosa
+     * manca, non di aspettare.
+     */
+    LEGAME_ADULTO_NON_INDICATO: 'erroreLegameAdultoNonIndicato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

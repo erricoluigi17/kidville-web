@@ -17,6 +17,10 @@ import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri';
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+// La lettura del campo sta in un posto solo (la fa anche `useParentIdentity`), e il
+// vocabolario dei motivi pure: `import type`, così il modulo server resta fuori dal bundle.
+import { leggiMotivoAssenza } from '@/lib/auth/use-parent-identity';
+import type { MotivoFiglioNascosto } from '@/lib/alunni/attivo';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
 import { useClientValue } from '@/lib/hooks/use-client-value';
@@ -176,6 +180,33 @@ function ContenutoModulistica() {
     scuola_cap?: string | null; scuola_provincia?: string | null; scuola_codice_meccanografico?: string | null;
   }[]>([]);
   const [parentInfo, setParentInfo] = useState<{ nome?: string | null; cognome?: string | null } | null>(null);
+  /**
+   * «Ho dei figli, ma nessuno è ancora visibile» — il campo che la risposta portava già.
+   *
+   * 🔴 `GET /api/parent/students` risponde `{ success, data, in_attesa }` dal 2026-09-05, e
+   * qui sotto si leggeva solo `data`: il resto del corpo veniva buttato. Conseguenza, per i
+   * quattro account genitore i cui figli il filtro toglie tutti: `children` resta `[]` e
+   * `PrestampatiGenitore` diceva loro «non risulta nessun bambino collegato a questo
+   * accesso», mentre la home — a un tocco di distanza, stessa BottomNav — dice «Stiamo
+   * completando l'iscrizione». Le due schermate si contraddicevano, e quella che diceva il
+   * falso era anche quella da cui si chiede il certificato di frequenza.
+   *
+   * Nessuna richiesta in più: è lo stesso corpo, tenuto invece che scartato.
+   */
+  const [figliInAttesa, setFigliInAttesa] = useState(false);
+  /**
+   * E QUALE dei tre motivi, perché `in_attesa` da solo diceva ancora il falso a una
+   * famiglia su quattro.
+   *
+   * Misurato in produzione il 2026-09-06: dei 4 account senza figli visibili, 3 hanno
+   * l'unico figlio senza sezione e 1 ce l'ha ARCHIVIATO. A quest'ultima il pannello
+   * prometteva moduli «appena la classe è assegnata», cioè un'attesa che non finirà — e
+   * per giunta `alunnoNonStampabile` (`@/lib/prestampati/prefill.ts`) rifiuta comunque con
+   * 409 ogni generazione su chi non è più iscritto: la strada vera è la segreteria.
+   *
+   * Stesso corpo, stessa richiesta: `motivo_assenza` viaggia accanto a `in_attesa`.
+   */
+  const [motivoAssenzaFigli, setMotivoAssenzaFigli] = useState<MotivoFiglioNascosto | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   /**
    * Una lettura FALLITA non è mai «nessun risultato», e nemmeno «vuoto»: le tre
@@ -251,6 +282,14 @@ function ContenutoModulistica() {
         setChildren(studs);
         setSelectedChildId(studs[0].id);
       }
+      // `=== true` e non «tutto ciò che non è falso»: quando la lettura fallisce `sJson` è
+      // `{}` (o `undefined`), e mandare in segreteria chi è semplicemente offline sarebbe
+      // peggio del silenzio. Stessa disciplina di `caricaFigli` in `use-parent-identity`.
+      const attesa = studs.length === 0 && sJson?.in_attesa === true;
+      setFigliInAttesa(attesa);
+      // Il motivo vale solo dentro l'attesa, e solo se è uno dei tre: una stringa qualunque
+      // arrivata dalla rete non deve poter scegliere una frase che nessuno ha scritto.
+      setMotivoAssenzaFigli(attesa ? leggiMotivoAssenza(sJson?.motivo_assenza) : null);
 
       // 5. Fetch Parent info via /api/me (gated, niente lettura anon di `utenti`)
       const pRes = await fetch('/api/me', { headers: { 'x-user-id': parentId } }).catch(() => null);
@@ -877,7 +916,7 @@ function ContenutoModulistica() {
                   generano e si riscaricano — tutto da qui dentro, dove il figlio si sceglie
                   una volta sola. I due riquadri «Scarica PDF» che stavano sotto sono spariti
                   insieme al loro generatore: vedi il blocco più su in questo file. */}
-              <PrestampatiGenitore figli={children} />
+              <PrestampatiGenitore figli={children} inAttesa={figliInAttesa} motivoAssenza={motivoAssenzaFigli} />
             </div>
           )}
 

@@ -5,13 +5,13 @@ import { useTranslations } from 'next-intl'
 import { useDateFormat } from '@/lib/i18n/date'
 import {
   AlertTriangle, CheckCircle2, ChevronLeft, Clock, ExternalLink, FileText,
-  KeyRound, Loader2, Mail, MapPin, UserCheck, Users, XCircle,
+  KeyRound, Loader2, Mail, MapPin, Tag, UserCheck, Users, XCircle,
 } from 'lucide-react'
 import { StatCard } from '@/components/ui/cockpit'
 import {
   GRADI_OPTIONS, POSIZIONI_OPTIONS, comprendeInsegnamento,
 } from '@/lib/forms/insegnanti-template'
-import { LIMITE_ISCRIZIONI_DEFAULT } from '@/lib/api/paginazione'
+import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 import { useSediAttive } from '@/lib/context/sede-context'
 import { useAdminIdentity } from '@/lib/context/admin-identity'
 import { logClient, nomeErrore } from '@/lib/logging/client'
@@ -21,7 +21,7 @@ import { BarraFiltri, testiBarraFiltri } from '@/components/ui/BarraFiltri'
 import { StatoElenco, testiStatoElenco } from '@/components/ui/StatoElenco'
 import { useFiltri } from '@/lib/ui/filtri/use-filtri'
 import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
-import { campiCandidature } from './filtri-candidature'
+import { ETICHETTE_CANDIDATURA, SENZA_ETICHETTA, campiCandidature } from './filtri-candidature'
 import { opzioniSedeAttive } from '@/components/features/admin/opzioni-sede'
 
 /**
@@ -331,6 +331,78 @@ const CHIAVE_POSIZIONE: Record<string, string> = {
   altro: 'candPosAltro',
 }
 
+/**
+ * ─── L'ETICHETTA DI SELEZIONE, a schermo ────────────────────────────────────
+ *
+ * Le chiavi i18n delle cinque voci del vocabolario.
+ *
+ * ⚠️ QUESTA MAPPA NON DECIDE L'ORDINE del menu, e fino al 2026-09-06 un commento
+ * qui sosteneva il contrario («ordine deliberato: si legge come si lavora»). Le
+ * `<option>` si disegnano scorrendo `ETICHETTE_CANDIDATURA`, quindi l'ordine a
+ * schermo è quello del VOCABOLARIO; l'ordine delle righe qui dentro non lo legge
+ * nessuno. È una mappa di traduzione, e va tenuta completa — non ordinata:
+ * `__tests__/architecture/etichetta-candidatura-vocabolario.test.ts` diventa
+ * rosso se una voce del vocabolario resta senza chiave (o senza traduzione),
+ * cioè se il menu mostrerebbe un token grezzo.
+ *
+ * ⚠️ È una nota INTERNA e non parte mai da qui nessuna email. Non è una
+ * promessa scritta in un commento: la rotta che la scrive
+ * (`…/candidature-insegnanti/etichetta`) non può nemmeno RAGGIUNGERE un percorso
+ * d'invio, e il lock `etichetta-candidatura-senza-email.test.ts` lo verifica sul
+ * grafo degli import.
+ */
+const CHIAVE_ETICHETTA: Record<string, string> = {
+  da_richiamare: 'candEtichettaDaRichiamare',
+  in_valutazione: 'candEtichettaInValutazione',
+  gia_chiamata: 'candEtichettaGiaChiamata',
+  non_idonea: 'candEtichettaNonIdonea',
+  assunta: 'candEtichettaAssunta',
+}
+
+/** Il tono del badge di ogni etichetta: solo token, mai un hex (Alto Contrasto). */
+const TINTA_ETICHETTA: Record<string, string> = {
+  da_richiamare: 'bg-kidville-warn-soft text-kidville-warn-strong',
+  in_valutazione: 'bg-kidville-info-soft text-kidville-info-strong',
+  gia_chiamata: 'bg-kidville-info-soft text-kidville-info-strong',
+  non_idonea: 'bg-kidville-error-soft text-kidville-error-strong',
+  assunta: 'bg-kidville-success-soft text-kidville-success-strong',
+}
+
+/**
+ * La mappa delle etichette, come arriva dal server.
+ *
+ * `troncata` e `colonnaAssente` non sono dettagli tecnici: sono le due
+ * condizioni in cui il filtro per etichetta DEVE spegnersi invece di mostrare un
+ * risultato parziale. Una mappa incompleta produce un elenco più corto del vero,
+ * e nessuno può accorgersene guardando lo schermo.
+ */
+interface MappaEtichette {
+  perId: Record<string, string>
+  troncata: boolean
+  colonnaAssente: boolean
+}
+
+/**
+ * QUANTE PAGINE si accettano di scorrere quando il filtro per etichetta è acceso.
+ *
+ * ⚠️ PERCHÉ SI SCORRE TUTTO, invece di filtrare la pagina che si ha in mano.
+ * L'etichetta non è una colonna dell'elenco: la rotta che serve le righe non la
+ * conosce e non la sa filtrare. Restringere le sole 50 righe già caricate
+ * scriverebbe «3 candidature» mentre altre 30 con quell'etichetta stanno nelle
+ * pagine mai chieste — cioè un filtro che mente, che è esattamente il difetto
+ * che l'intestazione di `filtri-candidature.ts` racconta.
+ *
+ * Quindi: si scorre l'elenco INTERO (con tutti gli altri filtri applicati dal
+ * server, che restano veri) e si incrocia con la mappa delle etichette, che
+ * arriva anch'essa dal server ed è completa. Il totale che ne esce è ESATTO.
+ *
+ * A pagine da 200 e 461 candidature in produzione (misurate il 2026-09-05) sono
+ * tre richieste. Il tetto è a 25 pagine — 5.000 righe: oltre, invece di
+ * proseguire in silenzio, il pannello DICE che l'elenco è troppo lungo e chiede
+ * di restringere. Un tetto che tace è un totale sbagliato.
+ */
+const PAGINE_MAX_ETICHETTA = 25
+
 const ORDINE_GRADI = GRADI_OPTIONS.map((o) => String(o.value))
 const ORDINE_POSIZIONI = POSIZIONI_OPTIONS.map((o) => String(o.value))
 
@@ -542,6 +614,37 @@ export function CandidatureInsegnanti() {
    */
   const [esitiScartati, setEsitiScartati] = useState<EsitoScartato[]>([])
 
+  /**
+   * ─── L'ETICHETTA DI SELEZIONE ──────────────────────────────────────────────
+   *
+   * `etichette` è la mappa `id → etichetta` delle candidature IN SCOPE, letta da
+   * `…/candidature-insegnanti/etichetta:GET`. Serve a due cose e a nessun'altra:
+   * disegnare il menu di ogni riga sul valore giusto, e sapere QUALI righe hanno
+   * un'etichetta quando il filtro è acceso.
+   *
+   * ⚠️ Vive qui e non dentro `RigaElenco`: la rotta che serve l'elenco NON
+   * proietta questa colonna, e appiccicarla alla riga farebbe credere il
+   * contrario a chi legge il tipo — cioè inviterebbe il prossimo a filtrarla lato
+   * client sulla sola pagina caricata.
+   */
+  const [etichette, setEtichette] = useState<MappaEtichette>({
+    perId: {},
+    troncata: false,
+    colonnaAssente: false,
+  })
+  /** L'ultima lettura della mappa è FALLITA: le righe possono averne una che non si vede. */
+  const [etichetteFallite, setEtichetteFallite] = useState(false)
+  /** Il filtro: `''` = tutte, `SENZA_ETICHETTA` = solo quelle mai etichettate. */
+  const [filtroEtichetta, setFiltroEtichetta] = useState('')
+  /** L'`id` della candidatura su cui una PATCH d'etichetta è in volo. */
+  const [salvandoEtichetta, setSalvandoEtichetta] = useState<string | null>(null)
+  /**
+   * Lo scorrimento per il filtro d'etichetta si è fermato al tetto: ci sono
+   * candidature che non sono state nemmeno guardate. Si DICE, non si tace: un
+   * elenco troncato in silenzio è un totale sbagliato con l'aria di essere giusto.
+   */
+  const [elencoTroncato, setElencoTroncato] = useState(false)
+
   // I gettoni: uno per l'elenco, uno per il dettaglio. Vedi il commento in cima.
   const gettoneElenco = useRef(0)
   const gettoneDettaglio = useRef(0)
@@ -637,7 +740,7 @@ export function CandidatureInsegnanti() {
           ? t('candArretratoFermatoQuota', { n: inviate })
           : t('candArretratoFatto', { n: inviate, k: fallite }),
       })
-      await carica(reFetchKey, filtri.chiaveServer)
+      await carica(reFetchKey, filtri.chiaveServer, false, filtroEtichetta)
     } catch (e) {
       logClient({
         livello: 'error', evento: 'react',
@@ -692,6 +795,175 @@ export function CandidatureInsegnanti() {
   const filtri = useFiltri<RigaElenco>(campi)
 
   /**
+   * LA MAPPA DELLE ETICHETTE, dal server.
+   *
+   * ⚠️ NON è un `useEffect` a parte: si legge dentro `carica`, insieme alla
+   * pagina 0, perché le due letture devono descrivere lo STESSO momento. Con due
+   * effetti indipendenti, una PATCH d'etichetta fatta in parallelo da un'altra
+   * postazione lascerebbe a schermo righe di adesso con etichette di prima —
+   * e con il filtro acceso non sarebbe un ritardo estetico, sarebbe un elenco
+   * sbagliato.
+   *
+   * Ritorna `null` quando la lettura FALLISCE: e «fallita» non è «vuota». Con il
+   * filtro acceso, un `{}` al posto di un errore mostrerebbe zero candidature
+   * dicendo che non ce ne sono.
+   */
+  /**
+   * Due mappe dicono la stessa cosa? Serve a non ridisegnare l'elenco quando la
+   * rilettura non ha portato niente di nuovo — il caso normale.
+   *
+   * Confronto per VALORE e non per riferimento: `leggiEtichette` costruisce un
+   * oggetto nuovo a ogni lettura, quindi il riferimento è sempre diverso e non
+   * direbbe niente. Le chiavi sono gli `id` delle candidature in scope (462 al
+   * 2026-09-06): un giro su quelle costa incomparabilmente meno di un ridisegno.
+   */
+  function stessaMappa(a: MappaEtichette, b: MappaEtichette): boolean {
+    if (a.troncata !== b.troncata || a.colonnaAssente !== b.colonnaAssente) return false
+    const chiaviA = Object.keys(a.perId)
+    const chiaviB = Object.keys(b.perId)
+    if (chiaviA.length !== chiaviB.length) return false
+    return chiaviA.every((k) => a.perId[k] === b.perId[k])
+  }
+
+  async function leggiEtichette(sediKey: string): Promise<MappaEtichette | null> {
+    try {
+      const res = await fetch(`${API}/etichetta`, { headers: { 'x-sedi': sediKey } })
+      if (!res.ok) {
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `candidature-etichette-non-lette: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return null
+      }
+      const json = await res.json()
+      if (!Array.isArray(json?.data)) {
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: 'candidature-etichette-corpo-inatteso: data non è un elenco',
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return null
+      }
+      const voci = json.data as { id?: unknown; etichetta?: unknown }[]
+      const perId: Record<string, string> = {}
+      for (const v of voci) {
+        if (typeof v?.id === 'string' && typeof v?.etichetta === 'string' && v.etichetta !== '') {
+          perId[v.id] = v.etichetta
+        }
+      }
+      // `total` è il conteggio ESATTO del server: se supera le righe tornate, la
+      // mappa è tagliata e il filtro non può dire il vero.
+      const total = typeof json.total === 'number' ? json.total : voci.length
+      return { perId, troncata: total > voci.length, colonnaAssente: json.colonnaAssente === true }
+    } catch (e) {
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidature-etichette-fallite: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+      return null
+    }
+  }
+
+  /**
+   * TUTTE le pagine dell'elenco, con gli altri filtri applicati dal server.
+   *
+   * Serve al solo filtro per etichetta, e la ragione sta in `PAGINE_MAX_ETICHETTA`:
+   * l'incrocio con la mappa delle etichette va fatto sull'insieme INTERO, non
+   * sulla pagina che si ha in mano, altrimenti il conteggio a schermo è più
+   * piccolo del vero e nessuno se ne accorge.
+   *
+   * Pagine da `LIMITE_ISCRIZIONI_MAX` (200) e non da 50: sono le stesse righe,
+   * in un quarto delle richieste.
+   *
+   * Ritorna `null` quando una pagina fallisce — e allora l'errore è già stato
+   * scritto a schermo. Mezzo elenco non è un elenco: filtrarci sopra darebbe un
+   * totale plausibile e sbagliato.
+   */
+  async function tutteLePagine(
+    sediKey: string,
+    chiave: string,
+    mio: number,
+  ): Promise<{ righe: RigaElenco[]; totaleLinguetta: number; troncato: boolean } | null> {
+    const coda = chiave ? `&${chiave}` : ''
+    const raccolte: RigaElenco[] = []
+    let totaleLinguetta = 0
+    let totaleFiltrato = 0
+    for (let pagina = 0; pagina < PAGINE_MAX_ETICHETTA; pagina++) {
+      const offset = pagina * LIMITE_ISCRIZIONI_MAX
+      let res: Response
+      try {
+        res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_MAX}&offset=${offset}${coda}`, {
+          headers: { 'x-sedi': sediKey },
+        })
+      } catch (e) {
+        if (mio === gettoneElenco.current) {
+          setErrore(t('candErroreElenco'))
+          setLetturaFallita(true)
+        }
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `candidature-elenco-fallito: ${nomeErrore(e)}`,
+          route: ROUTE_LOG,
+        })
+        return null
+      }
+      if (!res.ok) {
+        const messaggio = await messaggioErrore(res, t('candErroreElenco'))
+        if (mio === gettoneElenco.current) {
+          setErrore(messaggio)
+          setLetturaFallita(true)
+        }
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `candidature-elenco-non-caricato: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return null
+      }
+      const json = await res.json().catch(() => null)
+      if (mio !== gettoneElenco.current) return null
+      if (!Array.isArray(json?.data)) {
+        // 200 con un corpo che non è un elenco: è una lettura FALLITA quanto un 503.
+        setErrore(t('candErroreElenco'))
+        setLetturaFallita(true)
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: 'candidature-elenco-corpo-inatteso: data non è un elenco',
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return null
+      }
+      const righeP = json.data as RigaElenco[]
+      if (pagina === 0) {
+        totaleFiltrato = typeof json.total === 'number' ? json.total : righeP.length
+        totaleLinguetta =
+          typeof json.totaleLinguetta === 'number' ? json.totaleLinguetta : totaleFiltrato
+      }
+      raccolte.push(...righeP)
+      // Pagina più corta del limite ⇒ non ce n'è un'altra. È il segnale che
+      // chiude il ciclo senza fidarsi di un `total` che può essere invecchiato
+      // fra una pagina e l'altra: il modulo pubblico riceve invii di continuo.
+      if (righeP.length < LIMITE_ISCRIZIONI_MAX) {
+        return { righe: raccolte, totaleLinguetta, troncato: false }
+      }
+    }
+    // Tetto raggiunto: `troncato` è VERO solo se là fuori è rimasto qualcosa.
+    return { righe: raccolte, totaleLinguetta, troncato: raccolte.length < totaleFiltrato }
+  }
+
+  /**
    * @param azzera  la richiesta nasce da un CAMBIO DI FILTRO.
    *
    * ⚠️ L'ACCUMULO SI SVUOTA PRIMA CHE PARTA LA PAGINA 0, e non è una pulizia
@@ -701,7 +973,7 @@ export function CandidatureInsegnanti() {
    * corrispondono al filtro, con lo stesso aspetto di quelle che corrispondono,
    * e un totale che non torna con nessuna delle due.
    */
-  async function carica(sediKey: string, chiave: string, azzera = false) {
+  async function carica(sediKey: string, chiave: string, azzera = false, etichettaSel = '') {
     const mio = ++gettoneElenco.current
     if (azzera) {
       setRighe([])
@@ -709,11 +981,84 @@ export function CandidatureInsegnanti() {
       setFinePagine(false)
     }
     setRicaricaInVolo(true)
+    setElencoTroncato(false)
     try {
+      /*
+       * ─── LE DUE LETTURE PARTONO INSIEME, e non è micro-ottimizzazione ──────
+       *
+       * `carica()` fa due richieste: la mappa delle etichette e la prima pagina
+       * dell'elenco. Fino al 2026-09-06 la seconda partiva solo DOPO che la prima
+       * era tornata, e chi guarda lo schermo aspettava la SOMMA dei due tempi
+       * invece del maggiore — su una rotta che scandaglia tutte le candidature in
+       * scope (462 al 2026-09-06) non è un dettaglio.
+       *
+       * Misurato dove il costo si vede: `CandidatureInsegnanti-filtri-paginazione`
+       * passava da 23,5 s (prima che le etichette esistessero) a 29,3 s, ed è il
+       * file che ha fatto FALLIRE la CI — dove la macchina è più lenta — su due
+       * `waitFor`, con un messaggio che sembrava un difetto funzionale e non lo
+       * era.
+       *
+       * ⚠️ SOLO QUANDO L'ETICHETTA NON FILTRA. Col filtro acceso la mappa non è un
+       * ornamento della riga: è ciò che DECIDE quali righe chiedere, e se manca o
+       * è troncata non si chiede niente affatto (vedi il ramo qui sotto). Lì la
+       * sequenza è la cosa giusta: chiedere un elenco che si sta per buttare via
+       * sarebbe lavoro sprecato per il server, non tempo risparmiato.
+       */
       const coda = chiave ? `&${chiave}` : ''
-      const res = await fetch(`${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`, {
-        headers: { 'x-sedi': sediKey },
-      })
+      const urlElenco = `${API}?limit=${LIMITE_ISCRIZIONI_DEFAULT}&offset=0${coda}`
+      const pElenco =
+        etichettaSel === ''
+          ? fetch(urlElenco, { headers: { 'x-sedi': sediKey } })
+          : null
+
+      const mappa = await leggiEtichette(sediKey)
+      if (mio !== gettoneElenco.current) return
+      setEtichetteFallite(mappa === null)
+      // ⚠️ SOLO SE È CAMBIATA DAVVERO. `leggiEtichette` costruisce ogni volta un
+      // oggetto NUOVO, e `setEtichette(mappa)` con un riferimento nuovo fa
+      // ridisegnare l'elenco intero anche quando la mappa dice le stesse identiche
+      // cose — cioè quasi sempre, perché fra due ricariche le etichette non
+      // cambiano da sole. Con 50 righe a schermo il ridisegno si sente, ed è la
+      // parte del costo che la parallelizzazione qui sopra NON toglie (le due
+      // letture erano già simultanee: a pesare era il render).
+      if (mappa) setEtichette((prec) => (stessaMappa(prec, mappa) ? prec : mappa))
+
+      // ─── IL RAMO DEL FILTRO PER ETICHETTA ───────────────────────────────────
+      // L'etichetta la filtra il SUO server (`…/etichetta:GET`), che risponde con
+      // la mappa completa delle candidature in scope; gli altri filtri li applica
+      // la rotta dell'elenco. L'incrocio si fa su TUTTE le righe che gli altri
+      // filtri lasciano passare, non sulla prima pagina: vedi `PAGINE_MAX_ETICHETTA`.
+      if (etichettaSel !== '') {
+        if (!mappa || mappa.troncata || mappa.colonnaAssente) {
+          // Nessun elenco al posto di un elenco sbagliato.
+          setRighe([])
+          setTotale(0)
+          setFinePagine(true)
+          setErrore(mappa === null ? t('candEtichetteNonLette') : t('candEtichetteTroncate'))
+          setLetturaFallita(true)
+          return
+        }
+        const esito = await tutteLePagine(sediKey, chiave, mio)
+        if (esito === null || mio !== gettoneElenco.current) return
+        const cercata = etichettaSel === SENZA_ETICHETTA ? '' : etichettaSel
+        const visibili = esito.righe.filter((r) => (mappa.perId[r.id] ?? '') === cercata)
+        setRighe(visibili)
+        // ESATTO, e non una stima: `visibili` è l'incrocio fra l'insieme intero
+        // che gli altri filtri lasciano passare e la mappa intera delle etichette.
+        setTotale(visibili.length)
+        setTotaleLinguetta(esito.totaleLinguetta)
+        // Non c'è nessuna «pagina successiva» da chiedere: sono già state chieste
+        // tutte. Lasciare «Mostra altre» acceso qui accoderebbe righe NON filtrate.
+        setFinePagine(true)
+        setElencoTroncato(esito.troncato)
+        setErrore(null)
+        setLetturaFallita(false)
+        return
+      }
+
+      // Partita insieme alla mappa, qui sopra: `pElenco` non è mai `null` in questo
+      // punto, perché il ramo del filtro per etichetta esce con un `return`.
+      const res = await pElenco!
       if (!res.ok) {
         const messaggio = await messaggioErrore(res, t('candErroreElenco'))
         if (mio === gettoneElenco.current) {
@@ -793,7 +1138,7 @@ export function CandidatureInsegnanti() {
   /** Il ritenta del riquadro «elenco non letto»: rimette il velo e rilegge. */
   function riprovaElenco() {
     setCaricamento(true)
-    void carica(reFetchKey, filtri.chiaveServer)
+    void carica(reFetchKey, filtri.chiaveServer, false, filtroEtichetta)
   }
 
   /**
@@ -819,12 +1164,12 @@ export function CandidatureInsegnanti() {
    * Un `ref` è stabile per costruzione: leggerle da qui evita di metterle fra le
    * dipendenze di un effetto che NON deve ripartire quando cambiano.
    */
-  const contestoRef = useRef({ sedi: reFetchKey, chiave: filtri.chiaveServer })
+  const contestoRef = useRef({ sedi: reFetchKey, chiave: filtri.chiaveServer, etichetta: filtroEtichetta })
   /** L'ultima `chiaveServer` per cui una pagina 0 è già partita. */
   const chiaveCaricataRef = useRef<string>(filtri.chiaveServer)
   useEffect(() => { caricaRef.current = carica })
   useEffect(() => { chiudiRef.current = chiudiDettaglio })
-  useEffect(() => { contestoRef.current = { sedi: reFetchKey, chiave: filtri.chiaveServer } })
+  useEffect(() => { contestoRef.current = { sedi: reFetchKey, chiave: filtri.chiaveServer, etichetta: filtroEtichetta } })
   /**
    * ⚠️ E IL PANNELLO SI CHIUDE, non solo l'elenco si ricarica.
    *
@@ -852,7 +1197,7 @@ export function CandidatureInsegnanti() {
     // lampeggiare «Nessuna candidatura ricevuta» su un elenco che sta
     // arrivando. L'accodatura è comunque impossibile, perché `ricaricaInVolo`
     // spegne «Mostra altre» per tutta la durata della lettura.
-    caricaRef.current(contestoRef.current.sedi, contestoRef.current.chiave, false)
+    caricaRef.current(contestoRef.current.sedi, contestoRef.current.chiave, false, contestoRef.current.etichetta)
   }, [reFetchKey])
 
   /**
@@ -871,8 +1216,89 @@ export function CandidatureInsegnanti() {
   useEffect(() => {
     if (chiaveCaricataRef.current === filtri.chiaveServer) return
     chiaveCaricataRef.current = filtri.chiaveServer
-    caricaRef.current(contestoRef.current.sedi, filtri.chiaveServer, true)
+    caricaRef.current(contestoRef.current.sedi, filtri.chiaveServer, true, contestoRef.current.etichetta)
   }, [filtri.chiaveServer])
+
+  /**
+   * Il filtro per ETICHETTA ricarica, come gli altri, e per la stessa ragione:
+   * l'incrocio si fa sull'elenco intero, quindi cambiare etichetta cambia quante
+   * pagine bisogna chiedere. Non chiuderebbe il pannello — è un filtro, non un
+   * cambio di scope — quindi vive accanto all'effetto qui sopra e non dentro
+   * quello delle sedi.
+   *
+   * ⚠️ La guardia sul `ref` non è una precauzione stilistica: senza, il primo
+   * montaggio farebbe partire una seconda lettura identica alla prima, e con
+   * `azzera: true` l'elenco appena arrivato lampeggerebbe a vuoto.
+   */
+  const etichettaCaricataRef = useRef<string>(filtroEtichetta)
+  useEffect(() => {
+    if (etichettaCaricataRef.current === filtroEtichetta) return
+    etichettaCaricataRef.current = filtroEtichetta
+    caricaRef.current(contestoRef.current.sedi, contestoRef.current.chiave, true, filtroEtichetta)
+  }, [filtroEtichetta])
+
+  /**
+   * ─── ASSEGNA (o toglie) L'ETICHETTA A UNA CANDIDATURA ──────────────────────
+   *
+   * ⚠️ NON manda nessuna email, e non è una promessa di questo commento: passa da
+   * `PATCH …/candidature-insegnanti/etichetta`, che è una rotta a sé PROPRIO
+   * perché l'assenza di invii si possa dimostrare invece di dichiararla. Il lock
+   * `__tests__/architecture/etichetta-candidatura-senza-email.test.ts` ricostruisce
+   * il grafo degli import di quella rotta e diventa rosso se da lì si arriva a un
+   * percorso di posta, anche attraverso tre livelli di indirezione.
+   *
+   * La mappa a schermo si aggiorna PRIMA della risposta? No: si aggiorna DOPO. Un
+   * aggiornamento ottimistico qui direbbe «non idonea» su una riga a cui il
+   * server ha appena risposto 404 per sede fuori scope, e l'unica traccia
+   * sarebbe un avviso che scorre via.
+   */
+  async function assegnaEtichetta(id: string, valore: string) {
+    setSalvandoEtichetta(id)
+    setErrore(null)
+    try {
+      const res = await fetch(`${API}/etichetta`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-sedi': reFetchKey },
+        // `null` TOGLIE l'etichetta: la casella «Senza etichetta» del menu è un
+        // gesto vero, non l'assenza di un gesto.
+        body: JSON.stringify({ id, etichetta: valore === '' ? null : valore }),
+      })
+      if (!res.ok) {
+        const messaggio = await messaggioErrore(res, t('candEtichettaNonSalvata'))
+        setErrore(messaggio)
+        logClient({
+          livello: 'error',
+          evento: 'react',
+          messaggio: `candidature-etichetta-non-salvata: http ${res.status}`,
+          route: ROUTE_LOG,
+          stato: res.status,
+        })
+        return
+      }
+      setEtichette((prec) => {
+        const perId = { ...prec.perId }
+        if (valore === '') delete perId[id]
+        else perId[id] = valore
+        return { ...prec, perId }
+      })
+      // Con il filtro acceso la riga appena cambiata può non appartenere più
+      // all'insieme mostrato: si rilegge, invece di lasciarla lì a contraddire
+      // il filtro che si sta guardando.
+      if (filtroEtichetta !== '') {
+        await carica(reFetchKey, filtri.chiaveServer, true, filtroEtichetta)
+      }
+    } catch (e) {
+      setErrore(t('candEtichettaNonSalvata'))
+      logClient({
+        livello: 'error',
+        evento: 'react',
+        messaggio: `candidature-etichetta-fallita: ${nomeErrore(e)}`,
+        route: ROUTE_LOG,
+      })
+    } finally {
+      setSalvandoEtichetta(null)
+    }
+  }
 
   /** Pagina successiva, in coda a quelle già mostrate. */
   async function caricaAltre() {
@@ -1143,7 +1569,7 @@ export function CandidatureInsegnanti() {
           route: ROUTE_LOG,
           stato: res.status,
         })
-        await carica(reFetchKey, filtri.chiaveServer)
+        await carica(reFetchKey, filtri.chiaveServer, false, filtroEtichetta)
         return
       }
       setConferma(null)
@@ -1184,7 +1610,7 @@ export function CandidatureInsegnanti() {
           }
         })
       }
-      await carica(reFetchKey, filtri.chiaveServer)
+      await carica(reFetchKey, filtri.chiaveServer, false, filtroEtichetta)
     } catch (e) {
       // Qui non si sa nemmeno se l'operazione sia avvenuta: la risposta non è
       // mai arrivata. È diverso da «respinta», e va detto con parole diverse.
@@ -1273,6 +1699,67 @@ export function CandidatureInsegnanti() {
           mostrati={totale}
           className="mb-5"
         />
+      )}
+
+      {/* ── IL FILTRO PER ETICHETTA — accanto alla barra, e non dentro ────────
+          Sta fuori dai campi di `campiCandidature` perché il server che lo
+          esegue è un ALTRO: `…/candidature-insegnanti/etichetta:GET`, non la
+          rotta che serve l'elenco, che questa colonna non la conosce. Metterlo
+          fra i campi `dove: 'server'` della barra vorrebbe dire spedire
+          `?etichetta=` a una rotta che lo scarta in silenzio e risponde 200 con
+          l'elenco intero — cioè un filtro che a schermo sembra acceso e non
+          filtra niente. È la ragione per cui esiste
+          `__tests__/architecture/filtri-server-non-mentono.test.ts`.
+
+          Sparisce del tutto dove le etichette non esistono (ambiente non
+          migrato): un menu che non salva niente è peggio di nessun menu. */}
+      {totaleLinguetta > 0 && !etichette.colonnaAssente && (
+        <div className="mb-5 flex flex-wrap items-end gap-3">
+          <div>
+            <label
+              htmlFor="filtro-etichetta"
+              className="mb-1 block font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-sub"
+            >
+              {t('candEtichettaFiltro')}
+            </label>
+            <select
+              id="filtro-etichetta"
+              value={filtroEtichetta}
+              disabled={etichette.troncata}
+              onChange={(e) => setFiltroEtichetta(e.target.value)}
+              className="h-[42px] cursor-pointer rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 font-maven text-sm text-kidville-ink transition-colors hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 disabled:opacity-50"
+            >
+              <option value="">{t('candEtichettaFiltroTutte')}</option>
+              <option value={SENZA_ETICHETTA}>{t('candEtichettaFiltroSenza')}</option>
+              {ETICHETTE_CANDIDATURA.map((v) => (
+                <option key={v} value={v}>
+                  {t(CHIAVE_ETICHETTA[v])}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="flex items-start gap-1.5 pb-2 font-maven text-xs text-kidville-sub">
+            <Tag size={13} className="mt-0.5 shrink-0" /> {t('candEtichettaNota')}
+          </p>
+        </div>
+      )}
+
+      {/* I due modi in cui l'etichetta può DIRE MENO DEL VERO, detti a voce alta
+          invece di lasciati indovinare. */}
+      {etichetteFallite && (
+        <p role="status" className="mb-4 font-maven text-xs text-kidville-warn-strong">
+          {t('candEtichetteNonLette')}
+        </p>
+      )}
+      {etichette.troncata && (
+        <p role="status" className="mb-4 font-maven text-xs text-kidville-warn-strong">
+          {t('candEtichetteTroncate')}
+        </p>
+      )}
+      {elencoTroncato && (
+        <p role="status" className="mb-4 font-maven text-xs text-kidville-warn-strong">
+          {t('candEtichettaElencoTroncato')}
+        </p>
       )}
 
       {caricamento ? (
@@ -1397,15 +1884,22 @@ export function CandidatureInsegnanti() {
               </p>
             )}
             {righe.map((riga) => (
-              <button
+              /* ⚠️ IL MENU È FUORI DAL PULSANTE, e non per gusto: un `select`
+                 dentro un `<button>` è HTML non valido, e nei browser che lo
+                 accettano ogni scelta fa scattare anche l'apertura della scheda.
+                 Il bordo e lo stato «selezionata» passano quindi al contenitore. */
+              <div
                 key={riga.id}
-                type="button"
-                onClick={() => apriDettaglio(riga)}
-                className={`w-full rounded-card border bg-kidville-white p-4 text-left transition-all ${
+                className={`rounded-card border bg-kidville-white transition-all ${
                   selezionata?.id === riga.id
                     ? 'border-kidville-green ring-1 ring-kidville-green/30'
                     : 'border-kidville-line hover:border-kidville-green/40'
                 }`}
+              >
+              <button
+                type="button"
+                onClick={() => apriDettaglio(riga)}
+                className="w-full p-4 text-left"
               >
                 <span className="mb-1.5 flex items-center justify-between gap-2">
                   <span className="font-barlow font-bold text-kidville-ink">{nomeCompleto(riga)}</span>
@@ -1431,6 +1925,39 @@ export function CandidatureInsegnanti() {
                   <span>{riga.creata_il ? f.dataBreve(riga.creata_il) : t('candNonIndicato')}</span>
                 </span>
               </button>
+              {/* L'ETICHETTA DI SELEZIONE. Nota interna: non parte nessuna email,
+                  e non lo dice solo questo commento — vedi `assegnaEtichetta`. */}
+              {!etichette.colonnaAssente && (
+                <div className="flex flex-wrap items-center gap-2 border-t border-kidville-line px-4 py-2">
+                  <label
+                    htmlFor={`etichetta-${riga.id}`}
+                    className="font-barlow text-[11px] font-bold uppercase tracking-[0.05em] text-kidville-sub"
+                  >
+                    {t('candEtichetta')}
+                  </label>
+                  <select
+                    id={`etichetta-${riga.id}`}
+                    value={etichette.perId[riga.id] ?? ''}
+                    disabled={salvandoEtichetta === riga.id}
+                    onChange={(e) => void assegnaEtichetta(riga.id, e.target.value)}
+                    className={`h-[34px] cursor-pointer rounded-input border-[1.5px] border-kidville-line px-2 font-maven text-xs transition-colors hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15 disabled:opacity-50 ${
+                      TINTA_ETICHETTA[etichette.perId[riga.id] ?? ''] ??
+                      'bg-kidville-white text-kidville-ink'
+                    }`}
+                  >
+                    <option value="">{t('candEtichettaNessuna')}</option>
+                    {ETICHETTE_CANDIDATURA.map((v) => (
+                      <option key={v} value={v}>
+                        {t(CHIAVE_ETICHETTA[v])}
+                      </option>
+                    ))}
+                  </select>
+                  {salvandoEtichetta === riga.id && (
+                    <Loader2 size={13} className="animate-spin text-kidville-green" aria-hidden />
+                  )}
+                </div>
+              )}
+              </div>
             ))}
             {altrePagine && (
               <button

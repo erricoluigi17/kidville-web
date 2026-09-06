@@ -3,10 +3,17 @@ import { NextResponse } from 'next/server'
 
 // P4/DL-043 — icona pericolo allergeni lato genitore: il menu del giorno è
 // incrociato con gli allergeni del figlio (riusa gli helper puri già testati).
+//
+// ⚠️ IL MOCK È PIATTO — `from()` risponde la STESSA riga a ogni tabella — quindi la
+// fixture dell'alunno serve anche al gate: dal 2026-09-05 `requireParentOfStudent`
+// chiede pure «questo bambino si mostra ancora alla sua famiglia?»
+// (`@/lib/alunni/attivo`). Senza `section_id` la riga vale «senza classe», il gate
+// risponde 403 e i tre casi sul pericolo allergeni non arrivano nemmeno a girare —
+// per una ragione che con gli allergeni non c'entra niente.
 
 const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
-  alunno: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', nome: 'Mia', scuola_id: 'sc-1', allergies: null, allergeni: ['glutine'] } as Record<string, unknown> | null,
+  alunno: { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', nome: 'Mia', scuola_id: 'sc-1', section_id: 'sec-1', stato: 'iscritto', archiviato_il: null, allergies: null, allergeni: ['glutine'] } as Record<string, unknown> | null,
   menu: { attivo: true, chiuso: false, allergeni: { primo: ['glutine', 'latte'], secondo: ['uova'] } } as Record<string, unknown>,
 }))
 
@@ -31,7 +38,7 @@ const req = (qs: string) => new Request(`http://localhost/api/parent/mensa/aller
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireUser.mockResolvedValue({ user: { id: 'p1', role: 'genitore' } })
-  h.alunno = { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', nome: 'Mia', scuola_id: 'sc-1', allergies: null, allergeni: ['glutine'] }
+  h.alunno = { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', nome: 'Mia', scuola_id: 'sc-1', section_id: 'sec-1', stato: 'iscritto', archiviato_il: null, allergies: null, allergeni: ['glutine'] }
   h.menu = { attivo: true, chiuso: false, allergeni: { primo: ['glutine', 'latte'], secondo: ['uova'] } }
 })
 
@@ -54,7 +61,7 @@ describe('GET /api/parent/mensa/allergie', () => {
   })
 
   it('pericolo=false se il figlio non ha allergeni', async () => {
-    h.alunno = { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', nome: 'Mia', scuola_id: 'sc-1', allergies: null, allergeni: [] }
+    h.alunno = { id: 'a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1', nome: 'Mia', scuola_id: 'sc-1', section_id: 'sec-1', stato: 'iscritto', archiviato_il: null, allergies: null, allergeni: [] }
     const res = await GET(req('alunno_id=a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1&date=2026-06-29'))
     const j = await res.json()
     expect(j.pericolo).toBe(false)

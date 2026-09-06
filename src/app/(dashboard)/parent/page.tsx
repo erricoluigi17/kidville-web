@@ -3,9 +3,10 @@
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap } from 'lucide-react';
+import { MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap, Hourglass, Info } from 'lucide-react';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { withIdentity } from '@/lib/auth/current-user';
-import { useParentIdentity } from '@/lib/auth/use-parent-identity';
+import { useParentIdentity, eMotivoNonPiuIscritto } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { HeroCard } from '@/components/features/shell/HeroCard';
 import { SospensioneBanner } from '@/components/features/parent/SospensioneBanner';
@@ -30,7 +31,10 @@ interface QuickAction {
 
 function ParentHomeContent() {
   const t = useTranslations('home');
-  const { parentId, studentId } = useParentIdentity();
+  // Le due frasi della schermata di cortesia stanno in `parentServizi` e non in
+  // `home`: sono un testo dell'AREA famiglia, non del riquadro di benvenuto.
+  const tServizi = useTranslations('parentServizi');
+  const { parentId, studentId, inAttesa, motivoAssenza, ready } = useParentIdentity();
   const { schoolType } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
 
@@ -49,9 +53,83 @@ function ParentHomeContent() {
         setFirstName(d.nome ?? '');
         if (typeof d.classe_sezione === 'string') setClasseSezione(d.classe_sezione);
       })
-      .catch(() => {})
+      // AGENTS.md regola 6: un `catch` che non logga è un bug. Qui l'errore È
+      // tollerabile — il nome serve al solo saluto dell'hero, e il `finally`
+      // sblocca comunque lo skeleton — ma «tollerabile» va SCRITTO: senza questa
+      // riga una home che saluta «Ciao!» invece che per nome non lascia nessuna
+      // traccia, e un guasto di rete prende l'aspetto di una scelta di prodotto.
+      //
+      // ⚠️ `warn` E NON `info`, benché la regola dica `info`: il canale del client
+      // non ha `info` — `EventoClient.livello` è `'warn' | 'error'` e la route
+      // `/api/logs` rifiuta il resto (vedi `livelloEvento` in
+      // `@/lib/logging/client`). `warn` è il livello più basso che esista qui, ed
+      // è anche quello in cui la politica declassa da sola una fetch troncata
+      // dalla WebView, che è il caso frequente.
+      //
+      // Solo `nomeErrore`: il `message` di una fetch fallita può portarsi dietro
+      // l'URL, e in quell'URL c'è l'id di un minore.
+      .catch((err: unknown) => {
+        logClient({
+          livello: 'warn',
+          evento: 'fetch',
+          messaggio: `home-nome-figlio-non-letto: ${nomeErrore(err)}`,
+          route: '/parent',
+        });
+      })
       .finally(() => setNameResolved(true));
   }, [studentId]);
+
+  // ── «HO DEI FIGLI, MA NESSUNO È ANCORA VISIBILE» ────────────────────────────
+  //
+  // Dal 2026-09-05 l'app non mostra più i figli senza classe, ritirati o
+  // archiviati. Per quattro account genitore in produzione quelli erano TUTTI i
+  // figli: senza questo ramo la loro home sarebbe la home di chi non ha figli —
+  // saluto neutro, riquadri vuoti, nessuna spiegazione e nessuna cosa da fare.
+  //
+  // La differenza fra le due situazioni la sa solo il server (`in_attesa`), ed è
+  // il motivo per cui non basta guardare `studentId === null`: quello è vero anche
+  // mentre la rete è giù, e mandare in segreteria chi è semplicemente offline
+  // sarebbe peggio di non dire niente.
+  //
+  // ⚠️ IL RAMO STA DOPO TUTTI GLI HOOK, e non prima: `useEffect` e `useState` di
+  // questo componente devono girare sempre nello stesso ordine.
+  //
+  // ── E NON È UNA SCHERMATA SOLA, PERCHÉ NON È UN CASO SOLO ──────────────────
+  //
+  // Misurato in produzione il 2026-09-06: dei 4 account senza figli visibili, 3
+  // hanno l'unico figlio SENZA SEZIONE — «appena la classe è assegnata qui
+  // compare tutto» è vera — e 1 ce l'ha ARCHIVIATO, e a quella famiglia la
+  // stessa frase prometteva il completamento di un'iscrizione che non esiste e
+  // una classe che non arriverà. Un quarto delle persone leggeva una cosa falsa
+  // sull'unica schermata che la loro app mostra.
+  //
+  // La clessidra segue la frase e non il ramo: promette un'attesa, e dove non
+  // c'è nessuna attesa da fare sarebbe la parte che continua a mentire dopo che
+  // il testo ha smesso.
+  if (ready && inAttesa) {
+    const nonPiuIscritto = eMotivoNonPiuIscritto(motivoAssenza);
+    const Icona = nonPiuIscritto ? Info : Hourglass;
+    return (
+      <div className="min-h-screen bg-kidville-cream px-4 pb-[100px] pt-5">
+        <div className="rounded-[22px] bg-white px-5 py-8 text-center" style={{ boxShadow: '0 4px 12px -8px rgba(0,0,0,0.18)' }}>
+          <span className="mx-auto flex h-[52px] w-[52px] items-center justify-center rounded-[18px] bg-kidville-yellow-soft text-kidville-yellow-dark">
+            <Icona size={24} strokeWidth={1.9} aria-hidden="true" />
+          </span>
+          <h1 className="pt-4 font-barlow text-[19px] font-bold uppercase leading-[1.1] tracking-[0.02em] text-kidville-green">
+            {nonPiuIscritto ? tServizi('nonPiuIscrittoTitolo') : tServizi('inAttesaTitolo')}
+          </h1>
+          {/* `sub` (#55615C, 6,46:1) e NON `muted` (#7B8582, 3,80:1 su bianco, sotto i
+              4,5:1 di WCAG AA): a 13,5px questa frase è l'UNICA cosa che i quattro
+              account senza figli visibili leggono nella loro app, e dice a chi
+              rivolgersi. Il lock `__tests__/a11y/testo-muted-allowlist.test.ts` lo
+              pretende — l'allowlist può solo accorciarsi, non crescere a due. */}
+          <p className="pt-2 font-maven text-[13.5px] leading-[1.5] text-kidville-sub">
+            {nonPiuIscritto ? tServizi('nonPiuIscrittoTesto') : tServizi('inAttesaTesto')}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Skeleton finché il nome non è risolto (evita il flash del fallback).
   // Con studentId assente non si resta in caricamento: si mostra il saluto neutro.

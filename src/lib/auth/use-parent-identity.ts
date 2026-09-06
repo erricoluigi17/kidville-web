@@ -6,6 +6,11 @@ import { logClient } from '@/lib/logging/client';
 import { creaCachePromesse } from '@/lib/rete/cache-promesse';
 import { useSessionIdentity } from './use-session-identity';
 import { getCurrentStudentId } from './current-user';
+// Solo il TIPO: `import type` sparisce in compilazione, quindi il modulo server
+// (che importa il logger del server e i tipi di `@supabase/supabase-js`) non
+// entra nel bundle del browser. Il vocabolario dei motivi però resta uno solo —
+// due unioni parallele si sarebbero disallineate al primo motivo nuovo.
+import type { MotivoFiglioNascosto } from '@/lib/alunni/attivo';
 
 /**
  * Anagrafica minima di un figlio, come la restituisce /api/parent/students.
@@ -38,6 +43,29 @@ export interface ParentIdentity {
    * `[]` quando la lista non è (ancora) determinabile — nessun figlio o fetch fallita.
    */
   figliIds: string[];
+  /**
+   * «HO DEI FIGLI, MA NESSUNO È ANCORA VISIBILE» — che non è «non ho figli».
+   *
+   * Vero quando il backend ha trovato dei legami di famiglia ma il filtro li ha
+   * tolti tutti: bambino senza classe, ritirato, archiviato. Misurato in
+   * produzione il 2026-09-05: sono 4 account genitore. Senza questo campo la
+   * loro app è identica a quella di chi non ha proprio figli — cioè vuota, e
+   * senza una frase che dica cosa fare. Resta `false` finché `ready` non è vero.
+   */
+  inAttesa: boolean;
+  /**
+   * PERCHÉ non è visibile nessuno — perché «in attesa» era vero per 3 famiglie
+   * su 4 e falso per la quarta.
+   *
+   * Misurato in produzione il 2026-09-06: dei 4 account senza figli visibili, 3
+   * hanno l'unico figlio senza sezione e 1 ce l'ha ARCHIVIATO. A quella famiglia
+   * la frase «appena la classe è assegnata qui compare tutto» prometteva una
+   * classe che non arriverà mai. `null` quando non c'è niente da spiegare, o
+   * quando il server non manda il campo (client più nuovo del server, o
+   * viceversa): là si ricade sulla frase generica, cioè sul comportamento di
+   * ieri.
+   */
+  motivoAssenza: MotivoFiglioNascosto | null;
   ready: boolean; // false finché l'auto-resolve non è completato
 }
 
@@ -85,11 +113,55 @@ export function decidiFiglioRivalidato(
   return { studentId: primo, aggiornaCache: primo !== null, rimuoviCache: false };
 }
 
+export interface EsitoFigli {
+  /** I figli da mostrare: già filtrati dal server. */
+  figli: FiglioAnagrafica[];
+  /** L'elenco è vuoto perché il filtro ha tolto tutto, non perché non c'è nessuno. */
+  inAttesa: boolean;
+  /** Quale dei tre motivi, per scegliere la frase. `null` = frase generica. */
+  motivoAssenza: MotivoFiglioNascosto | null;
+}
+
+/** I tre soli valori che il campo può portare: il resto della rete non è un motivo. */
+const MOTIVI_ASSENZA: readonly MotivoFiglioNascosto[] = ['archiviato', 'ritirato', 'senza-sezione'];
+
+/**
+ * Il motivo, se il corpo ne porta uno DEI TRE. Una stringa qualunque diventa
+ * `null` e riporta alla frase generica: un campo nuovo non deve poter mandare a
+ * schermo un ramo che nessuno ha scritto.
+ *
+ * Esportata perché la stessa risposta la legge anche `parent/modulistica`, che
+ * chiama `/api/parent/students` per conto proprio (le serve l'anagrafica intera
+ * dei figli, non i soli id): due letture scritte a mano si sarebbero fidate di
+ * due insiemi di stringhe diversi.
+ */
+export function leggiMotivoAssenza(v: unknown): MotivoFiglioNascosto | null {
+  return typeof v === 'string' && (MOTIVI_ASSENZA as readonly string[]).includes(v)
+    ? (v as MotivoFiglioNascosto)
+    : null;
+}
+
+/**
+ * «NON È ANCORA VISIBILE» oppure «NON C'È PIÙ»: la sola distinzione che cambia
+ * la frase, e sta qui perché la fanno in DUE — la home e la modulistica. Scritta
+ * due volte, il giorno che si sposta un motivo se ne aggiorna una sola, e
+ * l'altra continua a promettere una classe a una famiglia che non l'aspetta.
+ *
+ * `senza-sezione` è un bambino ISCRITTO che aspetta la classe: per lui la
+ * promessa è vera. `ritirato` e `archiviato` no, e per loro non c'è nemmeno un
+ * self-service da offrire — `alunnoNonStampabile`
+ * (`@/lib/prestampati/prefill.ts`) rifiuta con 409 «non è più fra gli iscritti»
+ * già da prima di questo lavoro.
+ */
+export function eMotivoNonPiuIscritto(motivo: MotivoFiglioNascosto | null | undefined): boolean {
+  return motivo === 'ritirato' || motivo === 'archiviato';
+}
+
 /**
  * La richiesta vera. Non lancia mai: `null` significa "non determinabile"
  * (rete giù, endpoint non-ok, corpo inatteso) e il chiamante degrada al noto.
  */
-async function caricaFigli(parentId: string): Promise<FiglioAnagrafica[] | null> {
+async function caricaFigli(parentId: string): Promise<EsitoFigli | null> {
   let res: Response;
   try {
     res = await fetch(`/api/parent/students?userId=${parentId}`, {
@@ -104,7 +176,7 @@ async function caricaFigli(parentId: string): Promise<FiglioAnagrafica[] | null>
   if (!res.ok) return null;
   const body = await res.json().catch(() => null);
   if (!body || !Array.isArray(body.data)) return null;
-  return (body.data as Array<Record<string, unknown>>)
+  const figli = (body.data as Array<Record<string, unknown>>)
     .filter((x) => typeof x?.id === 'string')
     .map((x) => ({
       id: x.id as string,
@@ -114,6 +186,13 @@ async function caricaFigli(parentId: string): Promise<FiglioAnagrafica[] | null>
       scuola_id: typeof x.scuola_id === 'string' ? x.scuola_id : null,
       scuola_nome: typeof x.scuola_nome === 'string' ? x.scuola_nome : null,
     }));
+  // `in_attesa` è additivo: un backend che non lo manda (o una risposta in cache
+  // vecchia) vale `false`, cioè il comportamento di prima.
+  const inAttesa = figli.length === 0 && body.in_attesa === true;
+  // Il motivo vale SOLO dentro `inAttesa`: fuori di lì non c'è nessuna schermata
+  // da scegliere, e un motivo che sopravvive a un elenco pieno è solo un campo
+  // che aspetta di essere letto per sbaglio.
+  return { figli, inAttesa, motivoAssenza: inAttesa ? leggiMotivoAssenza(body.motivo_assenza) : null };
 }
 
 /**
@@ -126,11 +205,20 @@ async function caricaFigli(parentId: string): Promise<FiglioAnagrafica[] | null>
 const cacheFigli = creaCachePromesse(caricaFigli);
 
 /**
- * Elenco COMPLETO dei figli del genitore (anagrafica), dalla cache condivisa.
- * `null` = non determinabile.
+ * L'esito COMPLETO della lettura: i figli e il perché di un elenco vuoto.
+ * `null` = non determinabile (rete giù, endpoint non-ok, corpo inatteso).
  */
-export function fetchFigli(parentId: string): Promise<FiglioAnagrafica[] | null> {
+export function fetchEsitoFigli(parentId: string): Promise<EsitoFigli | null> {
   return cacheFigli.leggi(parentId);
+}
+
+/**
+ * Elenco COMPLETO dei figli del genitore (anagrafica), dalla cache condivisa.
+ * `null` = non determinabile. Firma invariata: `ChildSwitcher` legge da qui.
+ */
+export async function fetchFigli(parentId: string): Promise<FiglioAnagrafica[] | null> {
+  const esito = await fetchEsitoFigli(parentId);
+  return esito ? esito.figli : null;
 }
 
 /**
@@ -188,6 +276,8 @@ export function useParentIdentity(): ParentIdentity {
   const fromUrl = searchParams.get('id');
   const [studentId, setStudentId] = useState<string | null>(fromUrl);
   const [figliIds, setFigliIds] = useState<string[]>([]);
+  const [inAttesa, setInAttesa] = useState<boolean>(false);
+  const [motivoAssenza, setMotivoAssenza] = useState<MotivoFiglioNascosto | null>(null);
   const [studentReady, setStudentReady] = useState<boolean>(false);
 
   useEffect(() => {
@@ -204,7 +294,8 @@ export function useParentIdentity(): ParentIdentity {
       // unificato avvisi) e da quella deriva anche il singolo `studentId` con la
       // decisione pura. Non si passa più da `rivalidaFiglio` per non fare due giri
       // (la lista servirebbe comunque, e sarebbe una seconda chiamata a /students).
-      const figli = parentId ? await fetchFigliIds(parentId) : null;
+      const lettura = parentId ? await fetchEsitoFigli(parentId) : null;
+      const figli = lettura ? lettura.figli.map((f) => f.id) : null;
       const esito = decidiFiglioRivalidato(known, figli);
       if (cancelled) return;
 
@@ -227,11 +318,17 @@ export function useParentIdentity(): ParentIdentity {
 
       setStudentId(esito.studentId);
       setFigliIds(figli ?? []);
+      // ⚠️ Solo su una lettura RIUSCITA. Con `lettura === null` (rete giù) la lista
+      // è «non determinabile» e si degrada al noto: mostrare «l'iscrizione è in
+      // lavorazione» a chi è semplicemente offline sarebbe una bugia, e per giunta
+      // manderebbe una famiglia in segreteria per un problema di rete.
+      setInAttesa(lettura !== null && lettura.inAttesa);
+      setMotivoAssenza(lettura !== null ? lettura.motivoAssenza : null);
       setStudentReady(true);
     };
     void resolve();
     return () => { cancelled = true; };
   }, [session.ready, session.userId, searchParams]);
 
-  return { parentId: session.userId, studentId, figliIds, ready: session.ready && studentReady };
+  return { parentId: session.userId, studentId, figliIds, inAttesa, motivoAssenza, ready: session.ready && studentReady };
 }

@@ -178,8 +178,22 @@ describe('POST /api/iscrizione — la presa visione è verificata sul SERVER', (
   })
 })
 
+/**
+ * Il sorgente SENZA commenti. Qui i lock cercano parole — `consents_log`,
+ * `CONSENSI_FOTO_CANALI` — che nei file sorvegliati compaiono anche nella prosa
+ * che spiega la regola, e devono compararci: un lock che le trovasse nei propri
+ * commenti resterebbe verde su codice riscritto da capo. Si guarda il CODICE.
+ *
+ * Il `//` di uno SCHEMA non è un commento: senza l'esclusione del `:` che lo
+ * precede, una riga con `'https://…'` verrebbe troncata e il lock leggerebbe
+ * mezzo file convinto di averlo letto tutto. Stessa forma (e stessa ragione) di
+ * `__tests__/lib/logging-tetto.test.ts`.
+ */
+const senzaCommenti = (sorgente: string): string =>
+  sorgente.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+
 describe('la liberatoria foto arriva fino al bambino', () => {
-  it('i consensi foto si leggono dalla PROVA, non dal payload grezzo', async () => {
+  it('i consensi foto si leggono dalla PROVA, e la route DELEGA alla regola condivisa', async () => {
     // Difetto d'integrazione che questo test blocca: la famiglia acconsentiva e
     // il bambino restava con `consenso_privacy = false`, quindi la galleria gli
     // bloccava le foto. Il consenso c'era, ma non arrivava dove viene letto — e
@@ -197,14 +211,48 @@ describe('la liberatoria foto arriva fino al bambino', () => {
     // lo percorre tutto: la prova per canale è in
     // `__tests__/api/iscrizioni-consensi-foto-per-canale.test.ts`, che è
     // comportamentale e cresce da sola con la mappa.
+    //
+    // ⚠️ 2026-09-06 — IL LOCK HA CAMBIATO CASA, NON MESTIERE. Fino a oggi
+    // pretendeva le due cose dentro la ROUTE: `consents_log` accanto a
+    // `CONSENSI_FOTO_CANALI`, e l'import di `@/lib/forms/enrollment-template`.
+    // Dal 2026-09-05 la regola non abita più lì: sta in
+    // `src/lib/iscrizioni/consensi-foto.ts` e la chiamano tutti e due gli import
+    // — a mano e in blocco — perché per un mese e mezzo ne è esistita UNA COPIA
+    // SOLA, in questa route, e il giro automatico non ne aveva nessuna. Dopo il
+    // refactoring le due asserzioni erano diventate rosse per il posto, non per
+    // il merito: il lock si sposta dove la regola vive adesso e in più pretende
+    // che la route DELEGHI, invece di essere semplicemente cancellato.
+    //
+    // ⚠️ E SI GUARDA IL CODICE, NON I COMMENTI. La forma originale del lock era
+    // una vicinanza fra le due parole — `/consents_log[\s\S]{0,600}CONSENSI_FOTO_CANALI/`
+    // — e portata di peso sul modulo sarebbe stata DECORATIVA: misurato il
+    // 2026-09-06, restava verde anche dopo aver tolto `CONSENSI_FOTO_CANALI` da
+    // tutto il codice, perché le due parole si toccano già dentro la testata che
+    // SPIEGA la regola. Un lock soddisfatto dai propri commenti non è un lock:
+    // qui si cerca nel sorgente ripulito, e ogni asserzione è stata vista
+    // diventare rossa rompendo apposta ciò che sorveglia.
     const { readFileSync } = await import('node:fs')
-    const route = readFileSync('src/app/api/admin/iscrizioni/route.ts', 'utf8')
+    const modulo = senzaCommenti(readFileSync('src/lib/iscrizioni/consensi-foto.ts', 'utf8'))
+    const route = senzaCommenti(readFileSync('src/app/api/admin/iscrizioni/route.ts', 'utf8'))
+
+    // 1. LA REGOLA legge la prova e percorre la mappa, e le due cose stanno lì.
     // Dalla prova (`consents_log`), non da `data`: `data` è ciò che il client ha
-    // mandato, `consents_log` è ciò che il server ha verificato e congelato.
-    expect(route).toMatch(/consents_log[\s\S]{0,600}CONSENSI_FOTO_CANALI/)
-    // L'elenco dei canali NON si scrive a mano nella route: viene dalla mappa.
-    // È l'unica difesa contro il ripetersi dell'elenco troncato al primo.
-    expect(route).toContain("from '@/lib/forms/enrollment-template'")
+    // mandato, `consents_log` è ciò che il server ha verificato e congelato
+    // all'invio. La colonna si nomina nella select, quindi la prova si legge
+    // davvero da lì e non si deduce da altro.
+    expect(modulo).toContain("select('consents_log')")
+    // L'elenco dei canali NON si scrive a mano: viene dalla mappa, percorsa
+    // tutta. È l'unica difesa contro il ripetersi dell'elenco troncato al primo.
+    expect(modulo).toContain('Object.entries(CONSENSI_FOTO_CANALI)')
+    expect(modulo).toContain("from '@/lib/forms/enrollment-template'")
+
+    // 2. LA ROUTE delega: importa la regola condivisa e le passa LA PROVA.
+    // Le due asserzioni vanno insieme e nessuna basta da sola: con il solo
+    // import, un domani basterebbe rifarsi la regola in casa accanto a una
+    // dipendenza inerte; con la sola vicinanza, basterebbe alimentarla con
+    // `data` invece che con `consents_log` per tornare al difetto col lock verde.
+    expect(route).toContain("from '@/lib/iscrizioni/consensi-foto'")
+    expect(route).toMatch(/consensiFotoDaProva[\s\S]{0,200}consents_log/)
     // Controllo positivo: la mappa contiene davvero i tre canali (se si
     // svuotasse, le asserzioni qui sopra resterebbero verdi e non direbbero più
     // niente).

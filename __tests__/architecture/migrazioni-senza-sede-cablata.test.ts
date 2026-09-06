@@ -81,6 +81,22 @@ const CARTELLE_SALTATE = new Set([
   // e la ricognizione che ci vive dentro CITA gli uuid perché il suo mestiere è
   // segnalarli. Vietarli lì significherebbe vietare di descrivere il difetto.
   '.ship-cycle',
+  // `.claude/worktrees/<nome>` è il CHECKOUT DI UN ALTRO BRANCH, montato lì da
+  // `git worktree` quando due sessioni lavorano in parallelo. I file che contiene
+  // non sono file di questo albero: sono le copie di un'altra revisione, e questo
+  // lock le vedeva come violazioni nuove.
+  //
+  // Misurato il 2026-09-06: 11 file segnalati, TUTTI dentro
+  // `.claude/worktrees/riconciliazione-fatturato-e-come-pagare/` — `AGENTS.md` e
+  // documenti di `docs/` che nell'albero principale sono già in allowlist, con la
+  // loro ragione, da mesi. Il lock stava chiedendo di correggere due volte lo
+  // stesso file: una qui e una nell'altro branch, dove il primo non può arrivare.
+  //
+  // In CI il difetto non si vede — un worktree non è tracciato da git, quindi là
+  // la cartella non esiste affatto — ed è precisamente il motivo per cui va
+  // saltato QUI: un lock che è rosso solo sulla macchina di chi lavora, e per un
+  // file che non gli appartiene, è un lock che si impara a ignorare.
+  'worktrees',
 ])
 
 /** Questo file NOMINA gli uuid vietati: è il suo mestiere, non si controlla da solo. */

@@ -24,6 +24,29 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 import { mapStatoAruba } from '@/lib/aruba/stato'
 import { formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
+/**
+ * IL MOTORE DELLO STATO DI FATTURAZIONE — la stessa politica che disegna il chip.
+ *
+ * `fatturazione-riga.ts` è il posto in cui «questa riga è fatturata / è da fatturare»
+ * è scritta e collaudata, una volta sola. Riscriverla qui è ciò che ha prodotto il
+ * difetto che questa importazione chiude: due copie, divergenti sul documento
+ * sintetico (v. la testata del motore).
+ *
+ * ⚠️ Sta in `src/lib` e non fra i componenti, e il perché è misurato: la prima
+ * stesura importava da `@/components/features/admin/pagamenti/riconciliazione-ui`
+ * ed era il PRIMO import di `src/app/api` da `src/components` di tutto il
+ * repository. `eslint` non lo vede, `tsc --noEmit` nemmeno, e a provare la
+ * frontiera RSC è solo `next build`: un `'use client'` aggiunto un giorno in
+ * quella cartella avrebbe fatto cadere QUESTA rotta, in CI, con un messaggio che
+ * non nomina la fatturazione. Lock:
+ * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
+ */
+import {
+  fatturaDaFare,
+  fatturaGiaFatta,
+  type FatturaMovimentoUi,
+  type RigaFatturabile,
+} from '@/lib/pagamenti/fatturazione-riga'
 
 /**
  * L'ESTRATTO ANNUALE È 9.004 RIGHE, e le legge tutte in una richiesta sola.
@@ -372,11 +395,6 @@ function normalizzaFattura(v: unknown): FatturaStato | null {
   return typeof v === 'string' && FATTURA_STATI.has(v) ? (v as FatturaStato) : null
 }
 
-/** Fattura ancora da fare: mai emessa, oppure emessa e SCARTATA dallo SDI (va rifatta). */
-const FATTURA_DA_FARE = new Set<string>(['non_richiesta', 'scartata'])
-/** Fattura già partita: in viaggio verso lo SDI o consegnata. Non si rifà. */
-const FATTURA_FATTA = new Set<string>(['in_attesa', 'emessa'])
-
 /**
  * ─── LA BATCH VA A BLOCCHI, E NON È UNA MICRO-OTTIMIZZAZIONE ────────────────
  *
@@ -483,45 +501,62 @@ function dettaglioErrore(e: unknown): { error_code: string; stato_errore?: numbe
 }
 
 /**
- * Il filtro si applica IN MEMORIA, dopo l'arricchimento, e non può essere altrimenti: il dato
- * su cui filtra non sta su `riconciliazione_movimenti` ma su `pagamenti`, e PostgREST non
- * filtra una tabella per una colonna dell'altra senza una join che qui non esiste (il legame
- * è `pagamento_id`, nullable). Il costo è nullo: le righe sono al massimo 500 (`.limit(500)`).
+ * LA RIGA NELLA FORMA CHE IL MOTORE SI ASPETTA — e il cast sta QUI, in un punto solo.
  *
- * `da_fatturare` pretende anche il pagamento SALDATO: su un pagamento parziale la fattura non
- * si emette, e mostrarlo fra i «da fatturare» manderebbe l'operatore contro un rifiuto.
+ * `MovimentoRiga` è volutamente largo (`[k: string]: unknown`): è la riga come torna da
+ * PostgREST, più i campi che ci appendiamo. Il motore invece vuole i quattro campi
+ * tipizzati. La conversione è un adattatore, non una politica: dentro non c'è nessuna
+ * decisione su che cosa sia «fatturato».
  */
+function perFatturazione(r: MovimentoArricchito): RigaFatturabile {
+  return {
+    pagamento_id: typeof r.pagamento_id === 'string' && r.pagamento_id !== '' ? r.pagamento_id : null,
+    pagamento_stato: r.pagamento_stato,
+    fattura_stato: r.fattura_stato,
+    fattura: (r.fattura ?? null) as FatturaMovimentoUi | null,
+  }
+}
+
 /**
- * I DOCUMENTI vincono sul riassunto, come nel chip.
+ * IL FILTRO CHIEDE AL MOTORE, esattamente come il chip — e non è una comodità.
  *
- * Le due fonti possono divergere davvero: `emissione.ts` documenta che l'`update` del
- * riassunto su `pagamenti` può fallire lasciando `fatture_emesse` avanti e `fattura_stato`
- * indietro. Se il filtro leggesse solo il riassunto, una riga che il chip dichiara
- * «Scartata, da riemettere» non comparirebbe fra i «da fatturare» — l'operatore vedrebbe
- * l'invito a rifare un lavoro che il filtro nasconde. Quando `fattura` è `null` (lettura dei
- * documenti fallita) o assente (riga non abbinata) si ripiega sul riassunto.
+ * Si applica IN MEMORIA, dopo l'arricchimento, e non può essere altrimenti: il dato su cui
+ * filtra non sta su `riconciliazione_movimenti` ma su `pagamenti`, e PostgREST non filtra
+ * una tabella per una colonna dell'altra senza una join che qui non esiste (il legame è
+ * `pagamento_id`, nullable). Il costo è nullo: le righe sono al massimo 500 (`.limit(500)`),
+ * 5.000 quando `?fattura=` è attivo.
+ *
+ * Fino al 2026-09-06 questa politica era scritta qui una seconda volta, e le due copie
+ * divergevano sul DOCUMENTO SINTETICO: qui sotto ogni riga abbinata riceve
+ * `{ stato: 'da_fatturare', numeri: [] }` quando in `fatture_emesse` non c'è nessuna
+ * riga, quindi «un documento» c'era sempre e il ripiego sul riassunto non scattava mai.
+ * Il chip invece ci ripiega ogni volta che il documento non dice `emessa`/`scartata`.
+ *
+ * Il caso in cui si contraddicevano è quello che `src/lib/aruba/emissione.ts` chiama «il
+ * caso più velenoso» (fattura partita, `fatture_emesse` non scritta, `fattura_stato` a
+ * `in_attesa` senza documento): il chip diceva «In attesa SDI», il filtro la spediva fra
+ * le «Da fatturare e scartate» — dove non si può agire, perché su `in_attesa` il pulsante
+ * di emissione non c'è — e la toglieva da «Fatturate e in attesa», che è l'elenco con cui
+ * si controlla che le fatture siano uscite. Lock:
+ * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts` (di copie
+ * ce n'è una) e `__tests__/pagamenti/riconciliazione-ui.test.ts` (le 75 combinazioni su
+ * cui chip e filtro non si contraddicono mai).
  */
-function fatturaGiaFatta(r: MovimentoArricchito): boolean {
-  const doc = r.fattura as FatturaMovimento | null | undefined
-  if (doc) return doc.stato === 'emessa'
-  return FATTURA_FATTA.has(r.fattura_stato ?? '')
-}
-
-function fatturaDaFare(r: MovimentoArricchito): boolean {
-  const doc = r.fattura as FatturaMovimento | null | undefined
-  if (doc) return doc.stato !== 'emessa'
-  return FATTURA_DA_FARE.has(r.fattura_stato ?? '')
-}
-
 function filtraFattura(
   righe: MovimentoArricchito[],
   fattura: 'da_fatturare' | 'fatturate' | undefined,
 ): MovimentoArricchito[] {
   if (!fattura) return righe
+  // `da_fatturare` pretende anche il movimento CONFERMATO e il pagamento SALDATO: su un
+  // pagamento parziale la fattura non si emette, e mostrarlo fra i «da fatturare»
+  // manderebbe l'operatore contro un rifiuto. Il motore non lo sa e non deve saperlo:
+  // è una regola della LISTA DI LAVORO, non della fattura.
   if (fattura === 'da_fatturare') {
-    return righe.filter((r) => r.stato === 'confermato' && r.pagamento_stato === 'pagato' && fatturaDaFare(r))
+    return righe.filter(
+      (r) => r.stato === 'confermato' && r.pagamento_stato === 'pagato' && fatturaDaFare(perFatturazione(r)),
+    )
   }
-  return righe.filter((r) => fatturaGiaFatta(r))
+  return righe.filter((r) => fatturaGiaFatta(perFatturazione(r)))
 }
 
 const OPERAZIONE_GET = 'pagamenti/riconciliazione:GET'
@@ -538,11 +573,15 @@ interface RigaFatturaMovimento {
   quota_adult_id: string | null
 }
 
-/** Lo stato della fatturazione di UN movimento già abbinato, come lo legge la lista. */
-interface FatturaMovimento {
-  stato: 'emessa' | 'scartata' | 'da_fatturare'
-  numeri: string[]
-}
+/**
+ * Lo stato della fatturazione di UN movimento già abbinato, come lo legge la lista.
+ *
+ * È il TIPO DEL CLIENT, importato e non ricopiato: questa forma viaggia nel JSON del GET
+ * e il chip la legge dall'altra parte. Due dichiarazioni gemelle in due file resterebbero
+ * uguali finché qualcuno non ne cambia una — e il compilatore non direbbe niente, perché
+ * fra i due estremi c'è un `JSON.parse`.
+ */
+type FatturaMovimento = FatturaMovimentoUi
 
 /**
  * IL NUMERO SCRITTO COM'È SUL DOCUMENTO — e le righe storiche che non hanno un sezionale.
@@ -876,9 +915,35 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
             }),
           }
         : r
-      // Stessa minimizzazione dei label, stessa ragione: lo stato di fatturazione si mostra
-      // SOLO sulle proprie sedi. Un operatore non deve leggere «da fatturare» su un plesso su
-      // cui non può agire — e la riga bancaria resta comunque globale, come oggi.
+      /**
+       * CHE COSA SI MINIMIZZA PER SEDE, ESATTAMENTE — e che cosa NO.
+       *
+       * ⚠️ Fino al 2026-09-06 qui c'era scritto che «lo stato di fatturazione si mostra
+       * SOLO sulle proprie sedi», e non era vero: `r.fattura` — i DOCUMENTI, col loro
+       * numero — è attaccato sopra a ogni riga abbinata senza nessun filtro di sede, e il
+       * chip preferisce quello al riassunto. Su una riga di un altro plesso il chip
+       * mostrava (e mostra) «Fattura FPR 1947/26». Un commento che descrive una
+       * protezione inesistente è la cosa che questo repository ha già pagato due volte:
+       * meglio scrivere la regola vera.
+       *
+       * LA REGOLA VERA, ed è una decisione, non un residuo:
+       *  · i due campi DERIVATI dal pagamento (`pagamento_stato`, `fattura_stato`) si
+       *    mostrano solo sulle proprie sedi, come i label dei suggerimenti. Sono quelli
+       *    che invitano ad AGIRE — «da fatturare» — e su un plesso non proprio l'azione
+       *    non c'è: l'emissione la rifiuterebbe;
+       *  · i DOCUMENTI restano cross-sede. Il registro È l'estratto conto unico del
+       *    titolare: la riga bancaria porta già data, importo, causale e il nome
+       *    dell'ORDINANTE a tutte le segreterie. Un numero di fattura è meno di così, e
+       *    serve — dice «questa riga di un altro plesso è a posto, non toccarla».
+       *
+       * ⚠️ LA CONSEGUENZA, dichiarata invece che scoperta: i due bidoni di `?fattura=` non
+       * hanno la stessa portata. «Da fatturare» pretende anche `pagamento_stato ===
+       * 'pagato'`, che sulle altre sedi è `null`, quindi è di fatto la lista di lavoro
+       * della PROPRIA sede; «Fatturate» guarda i documenti e resta cross-sede. È voluto:
+       * la prima è una lista di cose da fare, la seconda un controllo.
+       *
+       * Lock: `__tests__/api/pagamenti-riconciliazione-fatturazione.test.ts`.
+       */
       const pag = r.stato === 'confermato' && typeof r.pagamento_id === 'string'
         ? pagDi.get(r.pagamento_id)
         : undefined

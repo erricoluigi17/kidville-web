@@ -11,8 +11,30 @@
  * inline` li rimappa in Alto Contrasto. L'unico caso che il rimappaggio non
  * copre è il giallo (in HC diventa near-white e il testo chiaro sparirebbe):
  * l'override sta in `globals.css` agganciato a `hcClass`.
+ *
+ * ⚠️ LA POLITICA DI FATTURAZIONE NON È PIÙ QUI: sta in
+ * `@/lib/pagamenti/fatturazione-riga`, perché la legge anche la ROTTA del
+ * registro e una rotta non deve importare da `src/components` (la frontiera RSC
+ * la prova solo `next build`). Qui resta il CHIP — pelle, etichette, forma — che
+ * è roba da schermo. Lock:
+ * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
  */
 import { formatEuro } from '@/lib/format/valuta'
+import { esitoFatturazione, type RigaFatturabile, type TonoFatturazione } from '@/lib/pagamenti/fatturazione-riga'
+
+/**
+ * I tipi della politica si rileggono da qui perché questo modulo è il barile
+ * della schermata (`MovimentoDialog`, `RiconciliazionePanel`): la DEFINIZIONE
+ * però è una sola, e sta nella lib. Un ri-export non è una seconda copia.
+ */
+export type {
+  EsitoFatturazione,
+  FatturaMovimentoUi,
+  FonteFatturazione,
+  RigaFatturabile,
+  StatoFattura,
+  TonoFatturazione,
+} from '@/lib/pagamenti/fatturazione-riga'
 
 export type StatoMovimento = 'da_abbinare' | 'suggerito' | 'confermato' | 'ignorato'
 
@@ -29,20 +51,15 @@ export interface SuggerimentoUi {
 }
 
 /**
- * Lo stato della FATTURA di un movimento già abbinato, come lo calcola il GET.
+ * Una riga del registro movimenti (GET /api/pagamenti/riconciliazione).
  *
- * Tre stati, non due: `emessa` porta i numeri dei documenti (uno per quota, quindi più
- * d'uno sui pagamenti ripartiti fra due genitori), `scartata` è un tentativo fallito da
- * riemettere, `da_fatturare` è un bonifico incassato per cui non è mai partito niente.
- * Confondere le ultime due farebbe sembrare «da fare» un lavoro già fatto e finito male.
+ * ESTENDE `RigaFatturabile`, e non è un dettaglio di stile: i quattro campi che
+ * decidono lo stato della fattura sono dichiarati nel motore
+ * (`@/lib/pagamenti/fatturazione-riga`), così la riga della lista e la riga che
+ * il motore legge non possono divergere senza che `tsc` lo dica. Il perché di
+ * ciascuno dei quattro è scritto lì accanto alla sua dichiarazione.
  */
-export interface FatturaMovimentoUi {
-  stato: 'emessa' | 'scartata' | 'da_fatturare'
-  numeri: string[]
-}
-
-/** Una riga del registro movimenti (GET /api/pagamenti/riconciliazione). */
-export interface MovimentoUi {
+export interface MovimentoUi extends RigaFatturabile {
   id: string
   import_id?: string | null
   scuola_id?: string | null
@@ -52,36 +69,8 @@ export interface MovimentoUi {
   controparte?: string | null
   stato: StatoMovimento
   suggerimenti?: SuggerimentoUi[] | null
-  pagamento_id?: string | null
   confermato_il?: string | null
-  /**
-   * Stato del pagamento collegato (`pagamenti.stato`), DERIVATO dal server e
-   * valorizzato solo sui movimenti confermati di una sede dell'operatore.
-   * Serve a un caso solo: distinguere «da fatturare» (saldato) dal rumore.
-   */
-  pagamento_stato?: string | null
-  /**
-   * Stato di fatturazione del PAGAMENTO (`pagamenti.fattura_stato`), stessa
-   * minimizzazione.
-   *
-   * ⚠️ Convive con `fattura` qui sotto, e i due NON sono un doppione: questo è il
-   * riassunto scritto sul pagamento (una riga sola, aggiornata dall'emissione),
-   * quello è ciò che risulta dai DOCUMENTI davvero presenti in `fatture_emesse`,
-   * quota per quota. Quando divergono vince `fattura`, perché è la fonte: un
-   * `fattura_stato` fermo a `emessa` su un documento poi scartato dallo SdI
-   * direbbe «fatto» di un lavoro da rifare.
-   */
-  fattura_stato?: StatoFattura | null
-  /**
-   * Presente solo sulle righe già abbinate. `null` significa «non lo so» — la lettura di
-   * `fatture_emesse` è fallita — ed è diverso da `da_fatturare`: in quel caso non si mostra
-   * nessun chip che parli dei DOCUMENTI, e si ripiega su `fattura_stato`.
-   */
-  fattura?: FatturaMovimentoUi | null
 }
-
-/** Gli stati di `pagamenti.fattura_stato` (colonna esistente, nessuna migrazione). */
-export type StatoFattura = 'non_richiesta' | 'in_attesa' | 'emessa' | 'scartata'
 
 /**
  * La risposta del GET del registro — e i tre campi che raccontano ciò che il
@@ -249,9 +238,6 @@ export const FILTRI: { id: '' | StatoMovimento; label: string }[] = [
 // una fattura non lo ferma nessuno (fatturare due volte sì: c'è la guardia di
 // idempotenza dell'emissione). Il dato è DERIVATO e derivato resta.
 
-/** I quattro «tono» del chip: la chiave della pelle, non un testo. */
-export type TonoFatturazione = 'fatturata' | 'attesa' | 'scartata' | 'da_fatturare'
-
 /**
  * Pelle del chip. Fondi PIENI, mai opacità: il chip vive sopra il fondo VERDE
  * della riga confermata, e `bg-kidville-white/70` su verde scende sotto AA (la
@@ -333,13 +319,6 @@ export const FRASE_FATTURAZIONE: Record<TonoFatturazione, string> = {
   da_fatturare: 'movdlgFatturaDaEmettere',
 }
 
-/** Da quale stato di fatturazione nasce quale tono (gli sconosciuti: nessuno). */
-const TONO_DA_FATTURA: Partial<Record<StatoFattura, TonoFatturazione>> = {
-  in_attesa: 'attesa',
-  emessa: 'fatturata',
-  scartata: 'scartata',
-}
-
 /** Il risultato di `chipFatturazione`: la pelle del tono, più cosa scriverci dentro. */
 export interface ChipFatturazioneUi {
   labelKey: string
@@ -371,8 +350,14 @@ export interface ChipFatturazioneUi {
  * Ciò che la prima NON dimostra è l'assenza: `da_fatturare` lì significa solo
  * «nessuna riga in `fatture_emesse`», e da sola non basta a chiedere di agire —
  * per quello serve sapere che il pagamento è SALDATO, e quel dato sta sull'altra
- * fonte. Quindi il ramo `da_fatturare` ricade sulla tabella di verità di sotto,
- * che pretende due campi.
+ * fonte. Quindi il ramo `da_fatturare` ricade sulla tabella di verità del motore
+ * (`esitoFatturazione` in `@/lib/pagamenti/fatturazione-riga`), che pretende due
+ * campi.
+ *
+ * ⚠️ QUI NON SI DECIDE NIENTE: il verdetto arriva dal motore, e questa funzione
+ * sceglie soltanto che cosa scriverci dentro. Una scala di ripiego ricopiata qui
+ * è la divergenza che è già costata una riga in due bidoni opposti. Lock:
+ * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
  *
  * ⚠️ «Da fatturare» è l'unico caso che pretende DUE campi: `non_richiesta` su un
  * pagamento non ancora saldato non è un invito ad agire, è rumore su una riga che
@@ -386,30 +371,26 @@ export interface ChipFatturazioneUi {
  * non esiste nessun pagamento da fatturare, e un documento su una riga non
  * abbinata sarebbe comunque roba d'altri.
  */
-export function chipFatturazione(
-  m: Pick<MovimentoUi, 'fattura_stato' | 'pagamento_stato' | 'fattura' | 'pagamento_id'>,
-): ChipFatturazioneUi | null {
-  const documenti = m.pagamento_id ? m.fattura ?? null : null
-  if (documenti?.stato === 'emessa') {
-    const numeri = documenti.numeri.filter((n) => typeof n === 'string' && n !== '')
+export function chipFatturazione(m: RigaFatturabile): ChipFatturazioneUi | null {
+  const esito = esitoFatturazione(m)
+  if (!esito) return null
+  // La FONTE non è un dettaglio da buttare: le due etichette che nominano il
+  // DOCUMENTO — il suo numero, e «da riemettere» — si possono dire solo quando a
+  // parlare sono i documenti. Dal riassunto escono le etichette secche.
+  if (esito.fonte === 'documenti' && esito.tono === 'fatturata') {
     // Senza numeri leggibili si ripiega sull'etichetta secca: «Fattura » con il
     // segnaposto vuoto sarebbe una frase troncata a metà.
-    return numeri.length === 0
+    return esito.numeri.length === 0
       ? { tono: 'fatturata', ...CHIP_FATTURAZIONE.fatturata }
-      : { tono: 'fatturata', ...CHIP_FATTURAZIONE.fatturata, labelKey: 'reconFatturaEmessa', params: { n: numeri.length, numeri: numeri.join(' · ') } }
+      : { tono: 'fatturata', ...CHIP_FATTURAZIONE.fatturata, labelKey: 'reconFatturaEmessa', params: { n: esito.numeri.length, numeri: esito.numeri.join(' · ') } }
   }
   // «Scartata, da riemettere», non la sola parola «Scartata»: è l'unico stato in
   // cui qualcuno DEVE rifare il lavoro, e l'etichetta lo dice invece di lasciarlo
   // dedurre dal colore.
-  if (documenti?.stato === 'scartata') {
+  if (esito.fonte === 'documenti' && esito.tono === 'scartata') {
     return { tono: 'scartata', ...CHIP_FATTURAZIONE.scartata, labelKey: 'reconFatturaScartata' }
   }
-  const fs = m.fattura_stato
-  if (!fs) return null
-  const tono: TonoFatturazione | undefined =
-    fs === 'non_richiesta' ? (m.pagamento_stato === 'pagato' ? 'da_fatturare' : undefined) : TONO_DA_FATTURA[fs]
-  if (!tono) return null
-  return { tono, ...CHIP_FATTURAZIONE[tono] }
+  return { tono: esito.tono, ...CHIP_FATTURAZIONE[esito.tono] }
 }
 
 /**

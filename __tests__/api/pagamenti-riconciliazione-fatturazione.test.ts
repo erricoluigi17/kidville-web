@@ -103,6 +103,10 @@ vi.mock('@/lib/supabase/server-client', () => {
 })
 
 import { GET } from '@/app/api/pagamenti/riconciliazione/route'
+// La schermata: si interroga la STESSA funzione che disegna il chip, sulla risposta
+// vera del server. È l'unico modo di provare che filtro e chip non divergano — un
+// secondo elenco di stati scritto qui sarebbe la terza copia della politica.
+import { chipFatturazione, type MovimentoUi } from '@/components/features/admin/pagamenti/riconciliazione-ui'
 
 const MID = (n: number) => `dddddddd-dddd-4ddd-8ddd-00000000000${n}`
 const PID = (n: number) => `aaaaaaaa-aaaa-4aaa-8aaa-00000000000${n}`
@@ -566,5 +570,206 @@ describe('GET /api/pagamenti/riconciliazione — il filtro legge i DOCUMENTI qua
     const daFare = await (await get('?fattura=da_fatturare')).json()
     expect(daFare.data).toHaveLength(2)
     expect(daFare.data[0].fattura).toBeNull()
+  })
+})
+
+/**
+ * ─── IL FILTRO DEL SERVER E IL CHIP DELLA RIGA SONO LA STESSA POLITICA ───────
+ *
+ * Il difetto, misurato il 2026-09-06 e non coperto da nessuno dei casi qui sopra:
+ * i test seminavano documenti COERENTI col riassunto, e la divergenza si vede solo
+ * quando i due si contraddicono.
+ *
+ * La rotta appende `{ stato: 'da_fatturare', numeri: [] }` a OGNI riga abbinata che
+ * in `fatture_emesse` non ha nessuna riga. Per il filtro, quindi, un documento
+ * c'era sempre, e il ripiego su `fattura_stato` non scattava mai. Il chip invece ci
+ * ripiega ogni volta che il documento non è `emessa`/`scartata`.
+ *
+ * Nello stato che `src/lib/aruba/emissione.ts` chiama «il caso più velenoso» — la
+ * fattura è partita e il registro dei documenti NON è stato scritto, quindi
+ * `fattura_stato` diventa `in_attesa` senza nessun documento accanto — la riga
+ * finiva fra i «Da fatturare e scartate», dove non si può agire (il pulsante di
+ * emissione non c'è: `MovimentoDialog.tsx` lo nasconde su `in_attesa`), e spariva
+ * da «Fatturate e in attesa», che è l'elenco con cui si controlla che le fatture
+ * siano uscite.
+ *
+ * QUANTE VOLTE CAPITA OGGI, contato invece che stimato (2026-09-06, produzione):
+ * `pagamenti` ha 634 righe `non_richiesta` (nessuna con documenti) e 4 `in_attesa`, e
+ * tutte e quattro hanno almeno una riga in `fatture_emesse`. Di `emessa` non ce n'è
+ * nessuna. Zero occorrenze dello stato divergente, quindi: si chiude adesso, che non
+ * costa niente, e non il giorno in cui una scrittura in `fatture_emesse` fallirà.
+ */
+describe('GET /api/pagamenti/riconciliazione — il filtro e il chip non divergono', () => {
+  /** Il chip come lo calcolerebbe la schermata, sulla riga così com'è uscita dal server. */
+  const chipDi = (r: unknown) => chipFatturazione(r as MovimentoUi)
+
+  /** Una riga confermata per ogni combinazione, con controllo per riga sul pagamento. */
+  const scenario = (righe: { fatturaStato: string; documento?: number | null }[]) => {
+    h.db.riconciliazione_movimenti = righe.map((_, i) => ({
+      id: MID_N(i), import_id: null, scuola_id: 'sc-1', data_operazione: '2026-09-05',
+      importo: 150, causale: 'BONIFICO RETTA', controparte: 'ORDINANTE', stato: 'confermato',
+      suggerimenti: null, pagamento_id: PID_N(i), confermato_il: '2026-09-05T10:00:00Z',
+    }))
+    h.db.pagamenti = righe.map((r, i) => ({
+      id: PID_N(i), scuola_id: 'sc-1', stato: 'pagato', fattura_stato: r.fatturaStato,
+    }))
+    h.db.fatture_emesse = righe.flatMap((r, i) =>
+      r.documento == null ? [] : [{ pagamento_id: PID_N(i), numero: 1947 + i, anno: 2026, sezionale: 'FPR', sdi_stato: r.documento, quota_adult_id: null }])
+  }
+
+  it('fattura partita e `fatture_emesse` non scritta: NON è «da fatturare»', async () => {
+    scenario([{ fatturaStato: 'in_attesa' }])
+
+    const j = await (await get('?fattura=da_fatturare')).json()
+    expect(j.fatturazione_disponibile).toBe(true)
+    expect(j.data).toHaveLength(0)
+  })
+
+  it('…e sta fra le «fatturate», che è l’elenco con cui si controlla che siano uscite', async () => {
+    scenario([{ fatturaStato: 'in_attesa' }])
+
+    const j = await (await get('?fattura=fatturate')).json()
+    expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID_N(0)])
+    // la prova che i due parlano della stessa riga: il chip di quella riga dice «attesa»
+    expect(chipDi(j.data[0])?.tono).toBe('attesa')
+  })
+
+  it('riassunto «emessa» senza nessun documento registrato: sta fra le «fatturate», come dice il chip', async () => {
+    scenario([{ fatturaStato: 'emessa' }])
+
+    const daFare = await (await get('?fattura=da_fatturare')).json()
+    expect(daFare.data).toHaveLength(0)
+    const fatte = await (await get('?fattura=fatturate')).json()
+    expect(fatte.data.map((r: { id: string }) => r.id)).toEqual([MID_N(0)])
+    expect(chipDi(fatte.data[0])?.tono).toBe('fatturata')
+  })
+
+  it('i due bidoni sono una PARTIZIONE di ciò che il chip dice, riga per riga', async () => {
+    scenario([
+      { fatturaStato: 'non_richiesta' },          // 0 · saldato, mai fatturato   → da_fatturare
+      { fatturaStato: 'in_attesa' },              // 1 · IL CASO VELENOSO         → attesa
+      { fatturaStato: 'emessa', documento: 1 },   // 2 · documento vivo           → fatturata
+      { fatturaStato: 'emessa', documento: 2 },   // 3 · documento scartato       → scartata
+      { fatturaStato: 'scartata' },               // 4 · scarto senza documento   → scartata
+    ])
+
+    const tutte = (await (await get()).json()).data as { id: string }[]
+    expect(tutte).toHaveLength(5)
+    const atteseDaFare = tutte.filter((r) => ['da_fatturare', 'scartata'].includes(chipDi(r)?.tono ?? '')).map((r) => r.id)
+    const atteseFatte = tutte.filter((r) => ['fatturata', 'attesa'].includes(chipDi(r)?.tono ?? '')).map((r) => r.id)
+    // controllo positivo: se il chip tacesse su tutte, i due elenchi sarebbero vuoti
+    // e le due asserzioni sotto passerebbero senza guardare niente.
+    expect(atteseDaFare.length + atteseFatte.length).toBe(5)
+
+    const daFare = await (await get('?fattura=da_fatturare')).json()
+    expect(daFare.data.map((r: { id: string }) => r.id)).toEqual(atteseDaFare)
+    const fatte = await (await get('?fattura=fatturate')).json()
+    expect(fatte.data.map((r: { id: string }) => r.id)).toEqual(atteseFatte)
+  })
+})
+
+/**
+ * ─── COSA SI VEDE DI UN PLESSO CHE NON È IL PROPRIO ──────────────────────────
+ *
+ * Decisione presa il 2026-09-06 e scritta qui perché sia una scelta e non un
+ * residuo: della riga di un altro plesso si tacciono i due campi DERIVATI dal
+ * pagamento (`pagamento_stato`, `fattura_stato`) — quelli che invitano ad AGIRE,
+ * e agire su un plesso non proprio non si può — mentre il DOCUMENTO resta, col
+ * suo numero.
+ *
+ * Il registro è l'estratto conto unico del titolare ed è cross-sede per progetto:
+ * la riga bancaria porta già data, importo, causale e il nome dell'ORDINANTE a
+ * tutte le segreterie. Un numero di fattura è meno di così, e serve: dice
+ * «questa riga di un altro plesso è già a posto, non toccarla».
+ *
+ * ⚠️ LA CONSEGUENZA, DICHIARATA: i due bidoni del sottofiltro non hanno la stessa
+ * portata. «Da fatturare» pretende anche `pagamento_stato === 'pagato'`, che sulle
+ * altre sedi è `null`, quindi è di fatto la lista di lavoro della PROPRIA sede;
+ * «Fatturate» guarda i documenti e resta cross-sede.
+ */
+describe('GET /api/pagamenti/riconciliazione — la riga di un altro plesso', () => {
+  it('i due campi derivati tacciono, il NUMERO del documento resta', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
+    h.db.pagamenti = [pag(1, 'pagato', 'emessa', 'sc-99')]
+    h.db.fatture_emesse = [doc(PID(1), 1)]
+
+    const j = await (await get()).json()
+    expect(j.data[0].pagamento_stato).toBeNull()
+    expect(j.data[0].fattura_stato).toBeNull()
+    expect(j.data[0].fattura).toEqual({ stato: 'emessa', numeri: ['FPR 1947/26'] })
+    expect(chipFatturazione(j.data[0] as MovimentoUi)?.labelKey).toBe('reconFatturaEmessa')
+  })
+
+  it('«Da fatturare» resta la lista di lavoro della propria sede', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1)), mov(2, 'confermato', PID(2))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta', 'sc-1'), pag(2, 'pagato', 'non_richiesta', 'sc-99')]
+    h.db.fatture_emesse = []
+
+    const j = await (await get('?fattura=da_fatturare')).json()
+    expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID(1)])
+  })
+})
+
+/**
+ * ─── LA BATCH CHIEDE DUE COLONNE CHE SUL DB E2E DELLA CI POSSONO NON ESSERCI ─
+ *
+ * La `select` su `pagamenti` è passata da `id, scuola_id` a
+ * `id, scuola_id, stato, fattura_stato`. Il database E2E della CI è un progetto
+ * separato e NON è migrato: se una delle due colonne manca, PostgREST risponde
+ * `42703` e — a differenza della lettura su `fatture_emesse`, che quel codice lo
+ * riconosce come configurazione attesa — qui cade l'INTERA batch, che è anche la
+ * query da cui si ricava la SEDE dei pagamenti.
+ *
+ * Il prezzo è dichiarato nel codice ma non era sorvegliato da nessuna asserzione:
+ * TUTTI i suggerimenti perdono il `label`, cioè il nome accanto al suggerimento
+ * sparisce da tutta la schermata. Qui si blocca il degrado per quello che è.
+ */
+describe('GET /api/pagamenti/riconciliazione — 42703 sulla batch (DB E2E non migrato)', () => {
+  it('la batch chiede davvero le due colonne nuove: sono quelle che possono mancare', async () => {
+    registro(1)
+
+    await get()
+    expect(batchPagamenti()[0].cols).toBe('id, scuola_id, stato, fattura_stato')
+  })
+
+  it('colonna assente → 200 degradato, campi a null, TUTTI i label persi, due warn col codice', async () => {
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'confermato', PID(1), { suggerimenti: [{ pagamento_id: PID(1), score: 90, label: 'Etichetta con un nome' }] }),
+      mov(2, 'suggerito', null, { suggerimenti: [{ pagamento_id: PID(2), score: 70, label: 'Un’altra etichetta' }] }),
+    ]
+    h.db.pagamenti = [pag(1, 'pagato', 'emessa'), pag(2, 'pagato', 'non_richiesta')]
+    h.errori.pagamenti = { code: '42703', message: 'column pagamenti.fattura_stato does not exist' }
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.success).toBe(true)
+    expect(j.fatturazione_disponibile).toBe(false)
+    // la lista NON si svuota: sarebbe «non c'è niente da fatturare» detto per ignoranza
+    expect(j.data).toHaveLength(2)
+    for (const r of j.data) {
+      expect(r.pagamento_stato).toBeNull()
+      expect(r.fattura_stato).toBeNull()
+    }
+    // ⚠️ IL PREZZO DEL DEGRADO, che è quello che nessuno sorvegliava: la stessa query
+    // porta la sede, quindi cade anche il NOME accanto a ogni suggerimento.
+    const label = j.data.flatMap((r: { suggerimenti?: { label: string | null }[] | null }) => r.suggerimenti ?? [])
+    expect(label).toHaveLength(2)
+    expect(label.every((s: { label: string | null }) => s.label === null)).toBe(true)
+
+    const degrado = h.eventi.filter((e) =>
+      e.campi.esito === 'sedi_suggerimenti_non_risolte' || e.campi.esito === 'fatturazione_movimenti_non_risolta')
+    expect(degrado).toHaveLength(2)
+    expect(degrado.every((e) => e.livello === 'warn')).toBe(true)
+    expect(degrado.every((e) => e.campi.error_code === '42703')).toBe(true)
+  })
+
+  it('e con ?fattura= non risponde «niente da fatturare»: le righe escono NON filtrate', async () => {
+    registro(3)
+    h.errori.pagamenti = { code: '42703', message: 'column pagamenti.fattura_stato does not exist' }
+
+    const j = await (await get('?fattura=da_fatturare')).json()
+    expect(j.data).toHaveLength(3)
+    expect(j.fatturazione_disponibile).toBe(false)
   })
 })

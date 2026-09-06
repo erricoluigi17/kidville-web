@@ -18,6 +18,12 @@ import {
   type EsitoImport,
   type MovimentoUi,
 } from '@/components/features/admin/pagamenti/riconciliazione-ui'
+// La POLITICA sta nella lib e non fra i componenti: la legge anche la rotta del
+// registro, e una rotta non importa da `src/components` (v. il lock
+// `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`).
+// Qui si importa da lì apposta: se un giorno tornasse a passare dal barile della
+// schermata, questa riga sarebbe la prima a doverlo dire.
+import { esitoFatturazione, fatturaGiaFatta, fatturaDaFare } from '@/lib/pagamenti/fatturazione-riga'
 
 // Logica PURA della lista a semaforo (Riconciliazione v2, lato UI). Contano tre
 // cose: quando accendere il badge «CF», quando un movimento è «multi-CF» (aggancio
@@ -578,3 +584,126 @@ describe('classiChipFatturazione — sulla carta è un’etichetta, non un coman
     }
   })
 })
+
+/**
+ * ─── IL MOTORE UNICO: `esitoFatturazione` ────────────────────────────────────
+ *
+ * IL DIFETTO CHE QUESTO BLOCCO CHIUDE (misurato il 2026-09-06, prima del rilascio).
+ *
+ * La stessa politica era scritta DUE volte: dentro `chipFatturazione`, e dentro
+ * la rotta (`fatturaGiaFatta`/`fatturaDaFare`, che leggevano `r.fattura` con una
+ * scala di ripiego propria). Non erano identiche, e la differenza stava nel
+ * documento SINTETICO: la rotta appende `{ stato: 'da_fatturare', numeri: [] }` a
+ * ogni riga abbinata che in `fatture_emesse` non ha nessuna riga, quindi per lei
+ * un documento c'era SEMPRE — e il ripiego su `fattura_stato` non scattava mai.
+ * Il chip invece ci ripiega ogni volta che il documento non è `emessa`/`scartata`.
+ *
+ * Nello stato che `src/lib/aruba/emissione.ts` chiama «il caso più velenoso» — la
+ * fattura è partita verso lo SdI e il registro `fatture_emesse` NON è stato scritto,
+ * quindi `fattura_stato` diventa `in_attesa` senza nessun documento accanto — le due
+ * scritture dicevano cose opposte: il chip «In attesa SDI», il filtro «da fatturare».
+ * La riga finiva nel bidone in cui non si può agire (il pulsante di emissione non
+ * c'è, `MovimentoDialog.tsx`: `fattura_stato === 'in_attesa'` lo nasconde) e spariva
+ * da «Fatturate e in attesa», che è l'elenco con cui si controlla che le fatture
+ * siano uscite.
+ *
+ * Da qui in avanti la politica è UNA funzione — e vive in
+ * `src/lib/pagamenti/fatturazione-riga.ts`, non fra i componenti, perché la legge
+ * anche la rotta. I due bidoni del sottofiltro sono una PARTIZIONE dei quattro
+ * toni del chip: un tono nuovo che non finisse in nessuno dei due, o in tutti e
+ * due, rende rosso questo blocco.
+ *
+ * Qui si misura il COMPORTAMENTO (che cosa risulta di una riga). Che di copie ce
+ * ne sia una sola lo sorveglia un lock a parte, insieme ai suoi quattro gemelli:
+ * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
+ */
+describe('esitoFatturazione — chip e filtro leggono la stessa tabella di verità', () => {
+  /** Tutte le forme in cui `fattura` può arrivare al client. */
+  const DOCUMENTI: { nome: string; valore: MovimentoUi['fattura'] }[] = [
+    { nome: 'assente (riga mai abbinata)', valore: undefined },
+    { nome: 'null (lettura dei documenti fallita)', valore: null },
+    { nome: 'sintetico: nessuna riga in fatture_emesse', valore: { stato: 'da_fatturare', numeri: [] } },
+    { nome: 'documento vivo', valore: { stato: 'emessa', numeri: ['FPR 1947/26'] } },
+    { nome: 'documento scartato dallo SdI', valore: { stato: 'scartata', numeri: [] } },
+  ]
+  const RIASSUNTI: MovimentoUi['fattura_stato'][] = [null, 'non_richiesta', 'in_attesa', 'emessa', 'scartata']
+  const PAGAMENTI = ['pagato', 'parziale', null]
+
+  /** Il prodotto cartesiano: 5 × 5 × 3 = 75 righe, nessuna scelta a mano. */
+  const tutteLeRighe = (): MovimentoUi[] =>
+    DOCUMENTI.flatMap((d) =>
+      RIASSUNTI.flatMap((fs) =>
+        PAGAMENTI.map((ps): MovimentoUi => ({
+          id: `${d.nome}|${String(fs)}|${String(ps)}`,
+          data_operazione: '2026-09-06',
+          importo: 150,
+          stato: 'confermato',
+          pagamento_id: 'pg1',
+          fattura: d.valore,
+          fattura_stato: fs,
+          pagamento_stato: ps,
+        })),
+      ),
+    )
+
+  it('i due predicati del filtro non contraddicono MAI il chip (75 combinazioni)', () => {
+    const FATTA = new Set(['fatturata', 'attesa'])
+    const DA_FARE = new Set(['da_fatturare', 'scartata'])
+    // Controllo positivo: un prodotto cartesiano vuoto direbbe «tutto a posto».
+    expect(tutteLeRighe()).toHaveLength(75)
+    for (const r of tutteLeRighe()) {
+      const chip = chipFatturazione(r)
+      const tono = chip?.tono ?? null
+      expect(fatturaGiaFatta(r), `già fatta ≠ chip su ${r.id}`).toBe(tono != null && FATTA.has(tono))
+      expect(fatturaDaFare(r), `da fare ≠ chip su ${r.id}`).toBe(tono != null && DA_FARE.has(tono))
+    }
+  })
+
+  it('nessuna riga sta in tutt’e due i bidoni, e una riga senza chip non sta in nessuno', () => {
+    for (const r of tutteLeRighe()) {
+      expect(fatturaGiaFatta(r) && fatturaDaFare(r), `${r.id} sta in due bidoni`).toBe(false)
+      if (chipFatturazione(r) === null) {
+        expect(fatturaGiaFatta(r) || fatturaDaFare(r), `${r.id} è muta ma filtrata`).toBe(false)
+      }
+    }
+  })
+
+  it('i quattro toni sono coperti: i due bidoni sono una partizione, non due esempi', () => {
+    const toni = new Set(tutteLeRighe().map((r) => chipFatturazione(r)?.tono).filter(Boolean))
+    expect([...toni].sort()).toEqual(['attesa', 'da_fatturare', 'fatturata', 'scartata'])
+  })
+
+  it('IL CASO VELENOSO: fattura partita, registro dei documenti non scritto', () => {
+    // `fattura_stato: 'in_attesa'` e NESSUNA riga in `fatture_emesse` (documento
+    // sintetico). Il documento sintetico non dimostra un'assenza: dimostra solo
+    // che in `fatture_emesse` non c'è niente, e chi lo sa è il riassunto.
+    const riga: MovimentoUi = {
+      id: 'm1', data_operazione: '2026-09-06', importo: 150, stato: 'confermato',
+      pagamento_id: 'pg1', fattura: { stato: 'da_fatturare', numeri: [] },
+      fattura_stato: 'in_attesa', pagamento_stato: 'pagato',
+    }
+    expect(chipFatturazione(riga)?.tono).toBe('attesa')
+    expect(fatturaGiaFatta(riga)).toBe(true)
+    expect(fatturaDaFare(riga)).toBe(false)
+  })
+
+  it('la FONTE resta distinguibile: «Scartata, da riemettere» solo dai DOCUMENTI', () => {
+    const daDocumento = esitoFatturazione({ pagamento_id: 'pg1', fattura: { stato: 'scartata', numeri: [] }, fattura_stato: 'emessa', pagamento_stato: 'pagato' })
+    expect(daDocumento).toEqual({ tono: 'scartata', fonte: 'documenti', numeri: [] })
+    const daRiassunto = esitoFatturazione({ pagamento_id: 'pg1', fattura: { stato: 'da_fatturare', numeri: [] }, fattura_stato: 'scartata', pagamento_stato: 'pagato' })
+    expect(daRiassunto).toEqual({ tono: 'scartata', fonte: 'riassunto', numeri: [] })
+  })
+})
+
+// ─── DOV'È FINITO IL LOCK «UN MOTORE SOLO» ───────────────────────────────────
+//
+// Stava qui sotto, e da qui non lo trovava chi domani farà l'inventario dei lock
+// architetturali: i quattro gemelli (`causale-fattura-un-motore-solo`,
+// `intestatario-fattura-un-motore-solo`, `coordinate-bonifico-un-motore-solo`,
+// `ricevuta-firma-un-motore-solo`) stanno tutti in `__tests__/architecture/`.
+// È traslocato insieme al motore, e adesso sta col suo cognome:
+// `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
+//
+// Qui restano le prove di COMPORTAMENTO (le 75 combinazioni, il caso velenoso, la
+// partizione dei quattro toni): la regola «di copie ce n'è una» è un'altra cosa,
+// e si legge in un altro posto.

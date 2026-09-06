@@ -28,6 +28,27 @@ import { CHIAVE_REGISTRO, CHIAVE_REGISTRO_LEGACY } from '@/lib/registro/chiave-o
  * fotografia vecchia non sa più niente, e un lock che non sa niente è verde per costruzione).
  * VA RIGENERATA DOPO OGNI `apply_migration` che tocchi un indice UNIQUE:
  * `node __tests__/fixtures/indici-unici-fotografia.mjs --sql` → esegui → `… < risposta.json`.
+ *
+ * ─── TRE COSE CHE IL SETACCIO FA DIVERSAMENTE DA COME SEMBREREBBE OVVIO ───────
+ *
+ * Tutte e tre nascono da un primo giro che era CIECO, e ognuna chiude un modo in cui questo lock
+ * sarebbe stato verde senza controllare niente. Il dettaglio sta accanto al codice che le
+ * applica; qui c'è l'elenco, perché fra sei mesi il perché vale quanto il come.
+ *
+ *  1. **Il confine di una chiamata sono le sue PARENTESI, non dieci righe.** Cercare `onConflict`
+ *     in una finestra di dieci righe sotto `.upsert(` mancava `src/lib/fea/slots.ts` per una riga
+ *     sola (il payload era di undici). Una chiamata mancata non fa rumore: il setaccio la
+ *     classificava «senza `onConflict`, arbitra la chiave primaria» e passava oltre. Vedi
+ *     `corpoChiamata()`.
+ *  2. **Le costanti di tabella si risolvono NEL FILE, non con una mappa globale.** `TABELLA` vale
+ *     tre tabelle diverse in tre route diverse: risolverla fuori dal suo file significa
+ *     confrontare la chiave di una route con gli indici di un'altra tabella, cioè un verde per
+ *     caso. Vedi `costantiDelFile()`.
+ *  3. **Un indice non è un arbitro solo perché è UNIQUE.** Non lo è se è parziale, se è su
+ *     ESPRESSIONE (`UNIQUE (lower(slug))` si presenterebbe come `['slug']`), se è rimasto
+ *     `indisvalid = false`, e le sue colonne sono le sole CHIAVE — quelle in `INCLUDE` stanno in
+ *     `indkey` ma non fanno parte dell'unicità. La query della fotografia li distingue tutti e
+ *     quattro: vedi il commento sopra `SQL` in `indici-unici-fotografia.mjs`.
  */
 
 const RADICE = process.cwd()
@@ -49,14 +70,53 @@ const COSTANTI: Record<string, string> = {
 }
 
 /**
- * Chiavi che NON devono avere un arbitro in produzione, con la ragione scritta.
- * Una sola voce, e non è un'eccezione di comodo: `CHIAVE_REGISTRO_LEGACY` esiste apposta per il
- * database E2E della CI, che è un progetto separato e non migrato — là il vincolo del registro
- * non ha ancora `scuola_id`. In produzione quella chiave NON deve trovare niente: se un giorno lo
- * trovasse, vorrebbe dire che il vincolo senza sede è tornato, cioè la falla multi-sede del
- * 2026-07-30 (il «2 ANNI» di Aversa e quello di Cesa sulla stessa riga di registro).
+ * Chiavi che in produzione NON trovano un arbitro, e per cui va bene così — ognuna col suo
+ * `perche`, che finisce nel messaggio d'errore il giorno in cui la voce smette di essere vera.
+ *
+ * ⚠️ LE DUE VOCI NON SONO LA STESSA COSA, e la lista sarebbe fuorviante se lo lasciasse credere:
+ *
+ *  · `registro_orario` è un ripiego **voluto e funzionante**. La sua voce è una sentinella: serve
+ *    a far cadere il lock se un giorno quella chiave un arbitro lo trovasse.
+ *  · `daily_routines` è un **difetto vivo**, dichiarato qui solo perché il rimedio non sta né in
+ *    un'eccezione né in una migrazione, ma nel codice che chiama.
+ *
+ * Una voce si toglie quando sparisce la sua ragione — che è scritta dentro `perche`, e non è
+ * sempre «l'indice adesso c'è».
  */
-const SENZA_ARBITRO_ATTESO = [{ tabella: 'registro_orario', chiave: CHIAVE_REGISTRO_LEGACY }]
+const SENZA_ARBITRO_ATTESO: { tabella: string; chiave: string; perche: string }[] = [
+  {
+    tabella: 'registro_orario',
+    chiave: CHIAVE_REGISTRO_LEGACY,
+    perche:
+      'Ripiego VOLUTO per il database E2E della CI, che è un progetto separato e non migrato: là ' +
+      'il vincolo del registro non ha ancora `scuola_id`, e senza questo secondo tentativo ' +
+      'l’upsert non troverebbe nessun vincolo. In produzione il vincolo con la sede esiste e il ' +
+      'ripiego non scatta mai, quindi qui NON deve trovare niente: se lo trovasse, vorrebbe dire ' +
+      'che il vincolo senza sede è tornato — è la falla multi-sede del 2026-07-30, il «2 ANNI» di ' +
+      'Aversa e quello di Cesa sulla stessa riga di registro. La voce si toglie il giorno in cui ' +
+      'il DB E2E viene migrato e il ripiego sparisce da `src/`.',
+  },
+  {
+    tabella: 'daily_routines',
+    chiave: 'id',
+    perche:
+      'NON è «manca un indice»: è «manca la TABELLA». `daily_routines` non esiste nel database di ' +
+      'produzione — misurato il 2026-09-06 sul catalogo (`pg_class`), zero righe — e nessuna ' +
+      'migrazione la crea. Il diario vero del prodotto è `eventi_diario`. ' +
+      '`src/app/api/diary/route.ts` (righe 15-25) lo documenta dal 2026-08-04 e la ROUTE degrada ' +
+      'come si deve: 503 dichiarato. Il MOTORE OFFLINE no: `src/lib/offline/syncEngine.ts` fa ' +
+      'l’upsert sulla stessa tabella fantasma, prende `PGRST205` («Could not find the table ' +
+      '\'public.daily_routines\' in the schema cache») e lo inghiotte in un ' +
+      '`catch { logSync(\'sync-diario-fallito\') }` — quindi il diario offline degli insegnanti ' +
+      'non si sincronizza e nessuno lo vede. ' +
+      '⚠️ IL RIMEDIO NON È CREARE LA TABELLA, ed è per questo che la voce sta qui invece che nei ' +
+      'Task delle migrazioni: è che quel ramo smetta di scrivere in un posto che non c’è — ' +
+      'puntando a `eventi_diario` con il payload rimappato, oppure sparendo. È una funzionalità a ' +
+      'sé (il diario offline, che gira sul dispositivo e nessun test di questo lavoro copre) e va ' +
+      'collaudata per conto suo, non infilata in una correzione della mensa. ' +
+      'QUESTA VOCE SI TOGLIE QUANDO QUEL RAMO VIENE CORRETTO, non quando la tabella viene creata.',
+  },
+]
 
 type Chiave = { file: string; riga: number; tabella: string; chiave: string }
 
@@ -188,6 +248,21 @@ const arbitra = (i: Indice, tabella: string, chiave: string) =>
   !i.con_espressioni &&
   [...i.colonne].sort().join(',') === insieme(chiave)
 
+/**
+ * La fotografia sa qualcosa di questa tabella? Basta UN indice qualsiasi, e in pratica è la
+ * chiave primaria: ogni tabella di questo database ne ha una, quindi «zero indici» non vuol dire
+ * «tabella senza vincoli» — vuol dire tabella che non c'è.
+ */
+const tabellaNota = (tabella: string) => foto.indici.some((i) => i.tabella === tabella)
+
+/** Le chiavi di `src/` che non trovano un arbitro e non sono dichiarate in SENZA_ARBITRO_ATTESO. */
+function senzaArbitro(): Chiave[] {
+  const attese = new Set(SENZA_ARBITRO_ATTESO.map((v) => `${v.tabella}|${insieme(v.chiave)}`))
+  return chiaviDaSrc()
+    .filter((k) => !attese.has(`${k.tabella}|${insieme(k.chiave)}`))
+    .filter((k) => !foto.indici.some((i) => arbitra(i, k.tabella, k.chiave)))
+}
+
 const COME_RIGENERARE =
   'Rigenera la fotografia: `node __tests__/fixtures/indici-unici-fotografia.mjs --sql` → esegui ' +
   'la query sul DB → `node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json`.'
@@ -237,10 +312,9 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
   })
 
   it('nessuna chiave di conflitto punta a un indice parziale o inesistente', () => {
-    const attese = new Set(SENZA_ARBITRO_ATTESO.map((v) => `${v.tabella}|${insieme(v.chiave)}`))
-    const orfane = chiaviDaSrc()
-      .filter((k) => !attese.has(`${k.tabella}|${insieme(k.chiave)}`))
-      .filter((k) => !foto.indici.some((i) => arbitra(i, k.tabella, k.chiave)))
+    // Solo le chiavi su tabelle che la fotografia CONOSCE: per quelle che non ci sono affatto il
+    // rimedio è un altro, e lo dice il test qui sotto. Un solo rosso, una sola cosa da fare.
+    const orfane = senzaArbitro().filter((k) => tabellaNota(k.tabella))
     expect(
       orfane,
       `Queste chiavi di conflitto non hanno, nel database, un indice UNIQUE NON PARZIALE e senza ` +
@@ -250,22 +324,50 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
     ).toEqual([])
   })
 
-  it('le eccezioni dichiarate sono ancora eccezioni (se cade, un vincolo è cambiato)', () => {
+  it('nessun upsert scrive su una tabella che la produzione non ha', () => {
+    // ⟵ È L'ALTRO RAMO, e senza di lui il messaggio qui sopra manderebbe chi legge a scrivere una
+    // migrazione che non serve. Se di una tabella la fotografia non ha NEMMENO la chiave
+    // primaria, l'unica lettura sensata è che quella tabella non esista: le PK ci sono sempre, e
+    // infatti sono 215 su 215 le tabelle che ne hanno una qui dentro. L'errore non è `42P10` («la
+    // chiave non corrisponde a nessun vincolo») ma `PGRST205` («could not find the table … in the
+    // schema cache»), e il rimedio non sta nel database — sta nel codice che lo chiama.
+    const fantasma = senzaArbitro().filter((k) => !tabellaNota(k.tabella))
+    expect(
+      fantasma,
+      `Questi upsert scrivono su tabelle di cui la fotografia non ha NESSUN indice, nemmeno la ` +
+      `chiave primaria: quelle tabelle in produzione con ogni probabilità NON ESISTONO. Ogni ` +
+      `chiamata torna \`PGRST205\`, non \`42P10\`, e se il chiamante la inghiotte in un catch la ` +
+      `funzionalità è semplicemente spenta senza che nessuno lo veda. Il rimedio NON è una ` +
+      `migrazione che crei la tabella: è che quel codice smetta di scrivere in un posto che non ` +
+      `c'è — o punti alla tabella vera, o sparisca. (Se invece la tabella esiste ed è la ` +
+      `fotografia a essere vecchia: ${COME_RIGENERARE}) ${JSON.stringify(fantasma, null, 2)}`,
+    ).toEqual([])
+  })
+
+  it('le eccezioni dichiarate sono ancora eccezioni (se cade, la ragione della voce è scaduta)', () => {
     const usate = chiaviDaSrc()
     for (const v of SENZA_ARBITRO_ATTESO) {
+      // Ogni voce porta il suo `perche` nel messaggio: le due dichiarate qui non hanno la stessa
+      // ragione, e un messaggio unico ne racconterebbe una sbagliata a chi trova il rosso.
       const trovato = foto.indici.some((i) => arbitra(i, v.tabella, v.chiave))
       expect(
         trovato,
-        `\`${v.chiave}\` su ${v.tabella} ADESSO ha un arbitro in produzione. Era il ripiego per il ` +
-        `DB E2E non migrato, e in produzione non doveva trovare niente: se lo trova, il vincolo ` +
-        `senza sede è tornato — è la falla multi-sede del 2026-07-30.`,
+        `\`${v.chiave}\` su ${v.tabella} ADESSO ha un arbitro in produzione, e la voce di ` +
+        `SENZA_ARBITRO_ATTESO diceva che non doveva averlo. Rileggi la ragione con cui è stata ` +
+        `scritta prima di toglierla:\n${v.perche}`,
       ).toBe(false)
       // Un'esenzione che sopravvive al suo motivo è un buco che nessuno ricorda di aver aperto.
       expect(
         usate.some((k) => k.tabella === v.tabella && insieme(k.chiave) === insieme(v.chiave)),
         `Nessun upsert di src/ usa più \`${v.chiave}\` su ${v.tabella}: togli la voce da ` +
-        `SENZA_ARBITRO_ATTESO invece di lasciarla a coprire codice che non esiste.`,
+        `SENZA_ARBITRO_ATTESO invece di lasciarla a coprire codice che non esiste. La ragione ` +
+        `con cui era stata scritta:\n${v.perche}`,
       ).toBe(true)
+      expect(
+        v.perche.length,
+        `La voce ${v.tabella}/${v.chiave} non ha una ragione scritta: un'eccezione senza motivo ` +
+        `è un buco, non una decisione.`,
+      ).toBeGreaterThan(80)
     }
   })
 

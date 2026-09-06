@@ -573,6 +573,15 @@ stampa la query, il JSON entra da **stdin**, e **lo script non si collega da sé
 `.env.local` punta alla produzione, e uno script che si collega da solo è uno script che prima o
 poi ci scrive.
 
+🔴 **IL CODICE QUI SOTTO È LA STESURA INIZIALE, E NON È PIÙ LA FONTE.** La versione viva è il file
+committato `__tests__/fixtures/indici-unici-fotografia.mjs`, che rispetto a questa aggiunge almeno
+`con_espressioni`, `indisvalid`, le sole colonne chiave (`indnkeyatts`) e — la più importante —
+**`ha_colonna_nullable`**. Chi deve rigenerare la fotografia esegue `node
+__tests__/fixtures/indici-unici-fotografia.mjs --sql` e usa **quella** query: copiare da qui
+produrrebbe una fotografia senza `ha_colonna_nullable`, e il controllo sugli arbitri senza
+`NULLS NOT DISTINCT` **si spegnerebbe in silenzio** (rilievo I1-bis della revisione di qualità:
+misurato, le orfane passano da 5 a 2 e il file sembra sano).
+
 ```js
 #!/usr/bin/env node
 /**
@@ -907,7 +916,7 @@ node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json
 npx vitest run __tests__/architecture/onconflict-arbitro.test.ts
 ```
 
-Atteso: **ROSSO**, con **4** chiavi orfane — una per `mensa_menu_rotazione`, una per
+Atteso: **ROSSO**, con **4 chiavi orfane in 5 voci** (`registro_orario` compare in due file) — una per `mensa_menu_rotazione`, una per
 `mensa_menu_override`, `giudizio_template (scuola_id, dimensione, valore)` e
 `registro_orario (scuola_id, classe_sezione, data, ora_lezione)`.
 
@@ -1027,7 +1036,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_registro_orario_chiave
     ON public.registro_orario (scuola_id, classe_sezione, data, ora_lezione)
     NULLS NOT DISTINCT;
 
-DROP INDEX IF EXISTS public.unique_registro_orario;
+-- 🔴 `ALTER TABLE … DROP CONSTRAINT`, NON `DROP INDEX`. Verificato sul catalogo di
+-- produzione il 2026-09-06: `unique_registro_orario` ha `contype = 'u'` — nasce da un
+-- `ADD CONSTRAINT`, e l'indice omonimo è quello che il vincolo si porta dietro.
+-- Postgres RIFIUTA `DROP INDEX` su un indice che regge un vincolo, e `IF EXISTS` non
+-- salva perché l'indice c'è: la migrazione si sarebbe fermata QUI, dopo aver già
+-- creato l'indice nuovo e droppato i quattro della mensa. A metà, in produzione.
+-- Gli altri sei indici che questa migrazione lascia cadere non sono retti da nessun
+-- vincolo (verificato nella stessa query): per loro `DROP INDEX` è giusto.
+ALTER TABLE public.registro_orario DROP CONSTRAINT IF EXISTS unique_registro_orario;
 
 COMMENT ON INDEX public.uidx_registro_orario_chiave IS
     '2026-09-06: sostituisce unique_registro_orario. Stesse colonne, più NULLS NOT DISTINCT: scuola_id è nullable, e senza questo una riga senza sede si duplicherebbe a ogni salvataggio invece di aggiornarsi.';

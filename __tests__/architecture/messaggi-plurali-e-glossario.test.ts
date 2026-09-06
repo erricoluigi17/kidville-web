@@ -189,6 +189,31 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // sostituisce con un «1» (`due.replace(/\b2\b/, '1')`).
     { ns: 'adminContabilita', chiave: 'reconFatturaEmessa', variabile: 'n', extra: { numeri: 'FPR 1/26' } },
     { ns: 'adminContabilita', chiave: 'reconFatturazioneTroncata', variabile: 'n' },
+    // ── 2026-09-06 · IL NOME ACCESSIBILE DEL COPIA-IBAN ─────────────────────
+    // Stessa ragione delle due qui sopra, e stessa cecità: aprono un blocco
+    // `plural`, quindi il RICONOSCITORE DI FORMA le salta per costruzione.
+    // Perché proprio queste: sono l'`aria-label` del bottone che copia l'IBAN in
+    // `ComePagare` (`ComePagare.tsx:276-277`), cioè stringhe che NESSUNO legge a
+    // schermo — le pronuncia solo uno screen reader, e nessun collaudo a vista
+    // può trovarle rotte. Un plurale sbagliato lì non lo scopre nessuno.
+    // `extra.sedi` serve perché senza quel segnaposto il formattatore lancia; il
+    // valore è il nome di una sede vera e NON contiene un «2» isolato, che il
+    // confronto d'invarianza sostituirebbe con un «1» (`due.replace(/\b2\b/, '1')`).
+    //
+    // ⚠️ E QUESTO ELENCO NON È UN CENSIMENTO, MISURATO OGGI. La prima stesura di
+    // queste due righe diceva «sono le uniche due chiavi ICU rimaste fuori»:
+    // contate, le chiavi che aprono un blocco `plural` in `messages/it` sono
+    // **115**, e questo array ne sorveglia **17** — 99 restano fuori (una delle
+    // 17, `adminPrimaria.orarioAttivo`, non è nemmeno ICU: è un contatore a
+    // stringa piatta, cioè il difetto F3 originale). Il perimetro automatico è
+    // il RICONOSCITORE DI FORMA in fondo al file, che però le stringhe già in
+    // ICU le salta apposta: di quelle 99 nessuno verifica che le due clausole
+    // dicano cose diverse. Non è un buco aperto oggi — è la conseguenza scritta
+    // nel commento qui sopra, «un contatore esce dal perimetro automatico nel
+    // momento in cui viene portato a ICU» — ma va detta col numero accanto,
+    // perché «le due rimaste fuori» faceva sembrare chiuso ciò che è aperto.
+    { ns: 'pagamenti', chiave: 'ariaCopiaIbanSede', variabile: 'count', extra: { sedi: 'Kidville Cesa' } },
+    { ns: 'pagamenti', chiave: 'ariaCopiatoIbanSede', variabile: 'count', extra: { sedi: 'Kidville Cesa' } },
 ]
 
 /**

@@ -475,8 +475,104 @@ body {
 }
 [data-contrast="high"] body {
   background-color: #000000;
+  /* ⚠️ QUESTA RIGA È RIDONDANTE, E SAPERLO È IL PUNTO. Toglierla NON riporta
+     l'inchiostro al nero: `body { color: var(--color-kidville-green) }` (~riga
+     188) legge il token, e il token qui sopra è rimappato a #FFFFFF. Chi la
+     tratta come «la radice» la cancella, rilancia e conclude che il difetto non
+     esiste. La radice è la coppia token-bianco × carta-chiara, e si chiude nel
+     blocco qui sotto.
+     Lock: `__tests__/a11y/alto-contrasto-inchiostro-ereditato.test.tsx` §1.7. */
   color: #FFFFFF;
 }
+
+/* =============================================================================
+   L'INCHIOSTRO EREDITATO DENTRO I GUSCI CHIARI (2026-09-06).
+
+   ─── IL DIFETTO, MISURATO ──────────────────────────────────────────────────
+   In Alto Contrasto l'inchiostro del `body` è #FFFFFF, e `color` si EREDITA:
+   ogni elemento che non dichiari una classe `text-*` lo prende. Ma LA CARTA NON
+   SI RIBALTA CON L'INCHIOSTRO: i tre gusci dell'app
+   (`src/app/(dashboard)/{parent,teacher,admin}/layout.tsx`) sono
+   `min-h-screen bg-kidville-cream` — #FEF1E4 INLINATO da `@theme inline`, che
+   nessun rimappaggio di token tocca — e le card dentro sono `bg-white`. Il nero
+   del `body` sta DIETRO il guscio e non si vede quasi mai.
+   Risultato prima di questa regola: bianco su crema 1,11:1, bianco su bianco
+   1,00:1. Tre conseguenze tracciate, tutte su testo che nessuno aveva
+   tokenizzato perché non sembrava servire:
+     · /admin/merchandise — il numero della quantità e le icone
+       «Diminuisci»/«Aumenta» (disegnate con `currentColor`): due cerchi vuoti;
+     · /teacher/primaria/[sectionId]/registro — le `<option>` del `<select>`
+       «Classe» nella modale «Firma lezione»: la lezione si firma alla cieca;
+     · /teacher/primaria/[sectionId]/scrutinio — le due `<textarea>` del giudizio
+       di comportamento e del giudizio globale: il docente scrive senza vedere.
+   Il preflight di Tailwind mette `color: inherit` su input/select/textarea:
+   ogni controllo di modulo che non dichiara un inchiostro era esposto.
+
+   ─── PERCHÉ SI DICHIARA QUI, ACCANTO ALLA CARTA ────────────────────────────
+   È la stessa mossa già fatta da `.kv-admin-sheet`, `.kv-admin-rowcard` e
+   `.kv-recon-row`, che scrivono `color` accanto al proprio `background`:
+   generalizzata alle DUE carte che l'app usa davvero — i tre `[data-kv-shell]`
+   e `.kv-public`. Quest'ultima non è un dettaglio: sta FUORI dai gusci e serve
+   privacy, termini, assistenza, cancellazione-account e `m/[token]`, cioè le
+   pagine da cui arrivano le domande d'iscrizione. Dimenticarla era l'errore che
+   il primo censimento stava per fare.
+   Nero su crema 18,92:1 · nero su bianco 21,00:1.
+
+   ─── DOVE QUESTA REGOLA DEVE PERDERE ───────────────────────────────────────
+   Sulle superfici che in Alto Contrasto dipingono DAVVERO nero. Lì non serve la
+   specificità — quelle superfici sono ELEMENTI DISCENDENTI, e una dichiarazione
+   propria batte sempre un colore ereditato — ma serve che l'inchiostro ci sia:
+   una superficie nera che non dichiara `color` prendeva il bianco del `body` per
+   caso, e con questa regola prenderebbe il nero, cioè nero su nero. MISURATO:
+   dentro `.kv-appbar` un testo nudo passerebbe da 21:1 a 1:1. Le cinque regole
+   che dipingevano nero senza dichiarare l'inchiostro sono state completate nello
+   stesso lavoro (`.kv-appbar`+`.kv-header-card`, `.kv-mensa-alt
+   .bg-kidville-error-soft`, `.kv-appello-avviso`, `.kv-admin-topbar`, i tre rami
+   di `.kv-admin-bottomnav`). I numeri, contati e non stimati: le superfici che in
+   Alto Contrasto dipingono nero sono 26; 8 selettori (le 5 regole qui sopra, due
+   delle quali ne elencano più d'uno) non dichiaravano l'inchiostro e cadevano a
+   1:1; le altre 18 reggevano — 15 perché l'inchiostro chiaro lo scrivevano già
+   accanto al proprio nero, 3 perché lo eredita un antenato che ce l'ha
+   (`.kv-admin-nav a[aria-current="page"]`, i due rami di
+   `.kv-recon-azione-fattura[data-tono="fatturata"]`).
+   La regola sta in TESTA per la stessa disciplina del blocco degli inchiostri di
+   stato qui sotto: rete di sicurezza generica prima, superfici dipinte a mano
+   dopo, così le parità di specificità le vince la superficie.
+   Lock: `__tests__/a11y/alto-contrasto-inchiostro-ereditato.test.tsx` §1 e §2.
+
+   ─── IL BORDO DI QUESTA REGOLA, DICHIARATO INVECE CHE TACIUTO ──────────────
+   Restano fuori dal ribaltamento le utility di RIEMPIMENTO SCURO che l'Alto
+   Contrasto non ha (ancora) una regola per ridipingere: `bg-kidville-green`
+   soprattutto, che in Alto Contrasto resta #006A5F perché `@theme inline` ne ha
+   inlinato l'hex. Su quel fondo il bianco vale 6,51:1 e il nero 3,23:1 — quindi
+   un testo NUDO dentro un riempimento verde, dentro un guscio, prima ereditava
+   il bianco (giusto per caso) e adesso eredita il nero (sbagliato).
+   MISURATO oggi, prima di decidere: 270 elementi nei gusci portano un
+   riempimento scuro; 44 non dichiarano un inchiostro sull'elemento stesso, e di
+   quei 44 sono stati aperti a mano tutti quelli che contengono testo vero —
+   AppBar, topbar del cockpit (desktop e mobile), intestazione della chat,
+   `ClasseShell`, `BulkAssignBar`, `ChunkErrorBoundary`, `BiometricGate`,
+   `MediaGrid`. In OGNUNO ogni nodo di testo dichiara il proprio inchiostro
+   (`text-white`, `text-kidville-white`, `text-kidville-yellow`), e
+   `BiometricGate` è per giunta un `createPortal` su `document.body`, cioè fuori
+   dai gusci. Nessun caso reale, quindi — ma nessuna garanzia: il giorno in cui
+   qualcuno scriverà testo nudo dentro una pill verde saranno 3,23:1.
+   Perché NON si è messa una regola: coprire `[data-kv-shell] .bg-kidville-green`
+   con l'inchiostro chiaro significherebbe scavalcare i 131 `text-kidville-yellow`
+   e i 16 `text-kidville-yellow-ink` che quel fondo porta oggi — una regola
+   non-layered batte SEMPRE una utility, e non esiste modo di perdere contro di
+   lei restando fuori dai layer. Sarebbe stato lo scambio di difetto, nell'altro
+   verso. La strada giusta, quando servirà, è la stessa di `.kv-appbar`: dare a
+   quella superficie una classe `.kv-*` e ridipingerla NERA in Alto Contrasto.
+   ⚠️ Non è un rischio nato oggi: `.kv-admin-sheet` scrive `color:#000000` dal
+   2026-07-16 e ospita un riquadro `bg-kidville-green` nudo (`AdminMenuSheet.tsx:227`).
+   Questa regola generalizza una scelta già presa, e ne eredita il bordo.
+   ============================================================================= */
+[data-contrast="high"] [data-kv-shell],
+[data-contrast="high"] .kv-public {
+  color: #000000;
+}
+
 [data-contrast="high"] a,
 [data-contrast="high"] button {
   text-decoration-thickness: from-font;
@@ -514,6 +610,12 @@ body {
 [data-contrast="high"] .kv-header-card {
   background: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
+  /* L'inchiostro accanto alla carta (2026-09-06). Fino a oggi il bianco qui
+     dentro arrivava per EREDITÀ dal `body`: funzionava per caso. Da quando il
+     guscio porta l'inchiostro a nero (blocco in testa) questa barra lo
+     erediterebbe, e sarebbe nero su nero — 1:1, MISURATO. #FFFFFF su #000000
+     = 21:1, cioè esattamente ciò che si vedeva prima, ma dichiarato. */
+  color: #FFFFFF;
 }
 
 /* =============================================================================
@@ -724,24 +826,81 @@ body {
   box-shadow: 0 0 0 2px #000000, 0 0 0 7px #000000;
 }
 
-/* News — testo posato direttamente sul body (back-link, stati vuoti), fuori
-   dalle card bianche. Le utility kidville-* sono inlineate da @theme inline e in
-   Alto Contrasto NON si ribaltano da sole: sul body nero il verde (3,23:1) e il
-   sub (3,25:1) cadono sotto AA. Qui si forzano le coppie; le card bianche interne
-   restano in palette chiara (ink/sub/green su bianco ≥4,5:1). Non-layered →
-   vince sulle utility senza !important. */
+/* =============================================================================
+   News — il testo posato FUORI dalle card, cioè i back-link e gli STATI VUOTI
+   (`.kv-news-onbody`). Corretto il 2026-09-06.
+
+   ─── COSA DICEVA QUESTO COMMENTO, E PERCHÉ ERA FALSO ───────────────────────
+   Fino a oggi qui c'era scritto «sul body nero il verde (3,23:1) e il sub
+   (3,25:1) cadono sotto AA», e le regole scrivevano di conseguenza BIANCO e
+   GIALLO. La premessa era sbagliata: sotto questa classe il body nero NON si
+   vede mai. La classe vive dentro i gusci del genitore e del docente, che sono
+   `bg-kidville-cream` — #FEF1E4 inlinato da `@theme inline`, che il rimappaggio
+   dei token non tocca. La carta REALE è la crema, e su di essa:
+     bianco  1,11:1   ← il testo degli stati vuoti
+     giallo  1,15:1   ← «TUTTE LE NEWS», «TUTTI I DIGEST», «I MIEI CONTENUTI»
+   In luce normale le stesse scritte valgono 5,82:1 e 5,86:1: l'Alto Contrasto le
+   PEGGIORAVA di cinque volte, e lo faceva su CINQUE rotte —
+   /parent/news · /parent/news/[id] · /parent/news/digest ·
+   /parent/news/digest/[id] · /teacher/news. Sono gli stati vuoti, cioè il caso
+   NORMALE di una scuola che non ha ancora pubblicato: il genitore in Alto
+   Contrasto vedeva una pagina bianca senza sapere se stesse caricando o fosse
+   rotta.
+
+   ─── COSA SI SCRIVE ADESSO, E CON QUALE MISURA ─────────────────────────────
+   Testo a NERO PIENO (18,92:1 sulla crema, 21:1 sul bianco), la stessa lingua di
+   `.kv-public` e `.kv-admin-sheet`. Comandi e titoli al verde INCHIOSTRO del
+   tema — #004A42, che è il valore di `--color-kidville-green-ink` e quindi non
+   un hex inventato: 9,19:1 sulla crema, 10,20:1 sul bianco, cioè AAA. Il verde
+   di brand #006A5F reggerebbe AA (5,86:1) ma è il colore della luce normale:
+   in Alto Contrasto l'inchiostro deve stringere, non restare dov'era.
+   Lock: `__tests__/a11y/alto-contrasto-inchiostro-ereditato.test.tsx` §3.
+   ============================================================================= */
 [data-contrast="high"] .kv-news-onbody,
 [data-contrast="high"] .kv-news-onbody .text-kidville-sub,
 [data-contrast="high"] .kv-news-onbody .text-kidville-ink {
-  color: #FFFFFF;
+  color: #000000;
 }
+/* Comandi (back-link, «chiudi editor») e titolo h2 dello stato vuoto. */
 [data-contrast="high"] a.kv-news-onbody,
 [data-contrast="high"] button.kv-news-onbody,
 [data-contrast="high"] .kv-news-onbody .text-kidville-green {
-  color: #FFE500;
+  color: #004A42;
 }
+/* L'icona dell'unico stato vuoto senza emoji (`/teacher/news`, `Newspaper`):
+   `text-kidville-green/70` è una classe con ALFA, e `.text-kidville-green` non
+   la aggancia — è la stessa trappola che aveva lasciato scoperte le
+   intestazioni della sidebar desktop. Composta sulla crema valeva 3,24:1, e
+   dopo questa correzione sarebbe rimasta l'unica macchia di tinta chiara in
+   mezzo a testo nero. Nominata a parte, esattamente come
+   `.kv-admin-nav .text-kidville-ink\/70`. */
+[data-contrast="high"] .kv-news-onbody .text-kidville-green\/70 {
+  color: #004A42;
+}
+/* WCAG 1.4.1 — il colore non può essere l'unico segno che quello è un comando.
+   Il preflight di Tailwind azzera la sottolineatura nativa di `<a>`, e
+   `[data-contrast="high"] a, button` dichiara `text-decoration-thickness`, che
+   da solo non disegna NIENTE. Fra il link (#004A42) e il testo attorno
+   (#000000) corrono 2,06:1: due tinte che a colpo d'occhio non si distinguono,
+   e per chi non distingue i colori nemmeno in teoria. La riga sotto sì.
+   Solo su `a`/`button`: il titolo h2 non è un comando e non va sottolineato. */
+[data-contrast="high"] a.kv-news-onbody,
+[data-contrast="high"] button.kv-news-onbody {
+  text-decoration-line: underline;
+}
+/* Il disco dell'emoji degli stati vuoti (`bg-kidville-cream` su carta crema:
+   1:1, cioè invisibile come FORMA se lasciato al token). Resta #1A1A1A —
+   15,68:1 contro la crema — e MISURATO oggi contiene solo un'emoji (📰 / ✉️),
+   che si disegna con i propri colori e non con `currentColor`: non è un
+   problema di contrasto del testo in nessuno dei due sensi, quindi non è il
+   disco a dover cambiare. Ma l'inchiostro va dichiarato lo stesso: prima ci
+   arrivava il bianco del `body` per eredità, e da questa correzione ci
+   arriverebbe il NERO — 1,21:1 sul disco. Bianco = 17,4:1. È la stessa regola
+   del mestiere delle cinque superfici scure in testa al blocco: chi dipinge la
+   carta dichiara l'inchiostro. */
 [data-contrast="high"] .kv-news-onbody .bg-kidville-cream {
   background: #1A1A1A;
+  color: #FFFFFF;
 }
 
 /* =============================================================================
@@ -1450,6 +1609,11 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft {
   background-color: #000000;
   border: 2px solid #FF5252;
+  /* Inchiostro dichiarato accanto alla carta: le tre regole qui sotto coprono i
+     testi TOKENIZZATI, ma un testo nudo dentro il box ereditava il bianco del
+     `body` — e da quando il guscio scrive nero erediterebbe il nero, su nero.
+     #FFFFFF su #000000 = 21:1. È informazione di sicurezza per un minore. */
+  color: #FFFFFF;
 }
 [data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft .text-kidville-error-strong,
 [data-contrast="high"] .kv-mensa-alt .bg-kidville-error-soft .text-kidville-error,
@@ -1479,6 +1643,10 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] .kv-appello-avviso {
   background: #000000;
   border-color: #FF5252;
+  /* Come sopra: `[class*="text-kidville-"]` copre i testi tokenizzati, il testo
+     NUDO no. #FFFFFF su #000000 = 21:1. È la fascia che dice al docente che la
+     presenza di un bambino non è stata registrata: se sparisce, sparisce quello. */
+  color: #FFFFFF;
 }
 [data-contrast="high"] .kv-appello-avviso [class*="text-kidville-"] {
   color: #FFFFFF;
@@ -1544,6 +1712,10 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] .kv-admin-topbar {
   background: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
+  /* Inchiostro dichiarato accanto alla carta, come `.kv-appbar`: la regola qui
+     sotto tiene la campanella `text-kidville-white`, ma il resto della barra
+     ereditava. #FFFFFF su #000000 = 21:1. */
+  color: #FFFFFF;
 }
 [data-contrast="high"] .kv-admin-topbar .text-kidville-white {
   color: #FFFFFF;
@@ -1625,6 +1797,11 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] .kv-admin-bottomnav [aria-current="true"] .bg-kidville-green,
 [data-contrast="high"] .kv-admin-bottomnav [aria-expanded="true"] .bg-kidville-green {
   background-color: #000000;
+  /* Il pill nero della voce attiva: l'icona la tinge di giallo la regola qui
+     sotto (0,4,0, sull'elemento `svg`), ma qualunque altro contenuto ereditava
+     — bianco per caso prima, nero su nero da quando il guscio scrive nero.
+     #FFFFFF su #000000 = 21:1. */
+  color: #FFFFFF;
 }
 [data-contrast="high"] .kv-admin-bottomnav [aria-current="page"] svg,
 [data-contrast="high"] .kv-admin-bottomnav [aria-current="true"] svg,
@@ -2020,10 +2197,15 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    Perché serve una regola dedicata, e non basta il rimappaggio dei token: i token
    stanno in `@theme inline`, che INLINA l'hex dentro l'utility. `bg-kidville-white`
    resta #FFFFFF anche in Alto Contrasto, `text-kidville-green` resta #006A5F: la
-   card nuova sarebbe una macchia chiara sul body nero, con dentro un verde a
-   3,2:1. Si dipinge quindi a mano, con lo stesso linguaggio di `.kv-appbar` e
-   `.kv-news-onbody` — fondo nero, bordo bianco 2px, accento GIALLO su ciò che si
-   può toccare. Regole non-layered → vincono sulle utility senza `!important`.
+   card nuova sarebbe una macchia chiara — non «sul body nero», che sotto il
+   guscio crema non si vede mai, ma sulla carta chiara del cruscotto — con dentro
+   un verde a 3,2:1. Si dipinge quindi a mano, con lo stesso linguaggio di
+   `.kv-appbar` — fondo nero, bordo bianco 2px, accento GIALLO su ciò che si può
+   toccare. Regole non-layered → vincono sulle utility senza `!important`.
+   ⚠️ Il giallo qui è giusto e va tenuto, ma NON è più «come `.kv-news-onbody`»:
+   quella classe (2026-09-06) è passata a nero e verde inchiostro, perché la sua
+   carta è CHIARA. Qui la carta è nera davvero, ed è per questo che le due
+   superfici, pur nella stessa modalità, scrivono in due colori diversi.
 
    Dentro ci vive anche `CausaleBonifico incorporata`: le sue chip crema e il testo
    verde della causale sono coperti dalle stesse regole (i selettori sono sui
@@ -2039,7 +2221,7 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
   color: #FFFFFF;
 }
 /* Occhiello «COME PAGARE» e testo della causale: verde inlinato su fondo nero
-   (3,23:1, sotto AA) → giallo, come i link di `.kv-news-onbody`. */
+   (3,23:1, sotto AA) → giallo, 16,46:1 sul nero di questa card. */
 [data-contrast="high"] .kv-come-pagare .text-kidville-green {
   color: #FFE500;
 }

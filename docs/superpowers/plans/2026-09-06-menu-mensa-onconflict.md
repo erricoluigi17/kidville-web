@@ -1049,10 +1049,31 @@ di duplicarlo. Se tornasse `righe = 2`, `NULLS NOT DISTINCT` non sta facendo il 
 Il `ROLLBACK` è parte della prova, non un ripensamento: verificare col `SELECT` finale che la sede
 Demo sia tornata a 0 righe.
 
-- [ ] **Passo 7: commit**
+- [ ] **Passo 7: la route che fabbricò gli indici parziali smette di descrivere uno schema morto**
+
+Rilievo della revisione di qualità del 2026-09-06.
+`src/app/api/admin/apply-mensa-multi-menu-migration/route.ts:53-82` è la route che **creò** i
+quattro indici parziali. Non è un rischio operativo — `sealDangerous` risponde **404** quando
+`NODE_ENV !== 'test'`, quindi in produzione è morta — ma appena questo Task 4 li droppa, quel file
+resta **l'unica descrizione dello schema mensa presente nel repository, e descrive uno schema che
+non esiste più**. Un file così non è documentazione: è una trappola per chi lo leggerà fra sei mesi.
+
+Aggiungere in testa a `steps_sql`, sopra la voce `DROP old unique constraint on rotazione`:
+
+```ts
+// ⚠️ QUESTO ELENCO È STORIA, NON LO SCHEMA DI OGGI (2026-09-06).
+// I quattro indici PARZIALI creati qui sotto (`uidx_mensa_rot_legacy`, `uidx_mensa_rot_menu`,
+// `uidx_mensa_ovr_legacy`, `uidx_mensa_ovr_menu`) NON ESISTONO PIÙ: li ha sostituiti un solo
+// indice non parziale per tabella, con `NULLS NOT DISTINCT`, perché `ON CONFLICT (colonne)` non
+// sa inferire un indice parziale e il salvataggio del menu falliva con `42P10` in ogni sede.
+// Vedi le migrazioni `*_mensa_menu_chiave_conflitto_unica.sql`. Questa route risponde 404 fuori
+// dai test (`sealDangerous`): rieseguirla ricreerebbe indici che non vogliamo più.
+```
+
+- [ ] **Passo 8: commit**
 
 ```bash
-git add supabase/migrations/
+git add supabase/migrations/ src/app/api/admin/apply-mensa-multi-menu-migration/route.ts
 git commit -m "feat(db): un solo indice UNIQUE per la chiave del menu mensa (NULLS NOT DISTINCT)
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -1221,12 +1242,25 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 Aggiungere in cima al changelog, nella forma delle voci esistenti, una voce `2026-09-06` che dica:
 che cosa era rotto (il salvataggio del menu, in tutte le sedi, dal giorno degli indici parziali),
 come lo si è visto (9 `42P10` di Cesa in `app_log`), che cosa è cambiato (una chiave, un indice
-`NULLS NOT DISTINCT`, il lock nuovo), e i **due debiti dichiarati**:
+`NULLS NOT DISTINCT`, il lock nuovo), e i **tre debiti dichiarati**:
 
 1. `PUT /api/mensa/menu` scrive rotazione e variazioni in **due istruzioni senza transazione**: se
    la prima riesce e la seconda no, resta un salvataggio a metà con una risposta 500.
 2. Il «menu unico» resta un `menu_config_id NULL`. Il modello pulito — un vero menu «Standard» per
    sede e `NOT NULL` sulla colonna — è rimandato: tocca dati di produzione e l'interfaccia.
+3. **Il `PUT` non verifica la sede del `menu_config_id` che riceve** (rilievo della revisione di
+   qualità del 2026-09-06, difetto **preesistente**, non introdotto da questo lavoro). Il `DELETE`
+   passa da `assertConfigMensaInScope`; il `PUT` no: la sede delle righe è quella dell'utente
+   (`resolveScuolaScrittura`, e va bene), ma il `menu_config_id` arriva dal client senza che
+   nessuno controlli che appartenga a quella sede. Con l'uuid del menu di un altro plesso in mano,
+   chi lavora nella sede A scrive righe `scuola_id = A` appese a un menu di B. Non è una fuga di
+   dati — in lettura quelle righe non le trova nessuno, perché `resolveMenuConfigId` per la sede A
+   non restituirà mai un menu di B. È peggio in un modo più silenzioso: la `DELETE` di
+   `mensa/menu-config` conta le rotazioni collegate **filtrando per la propria sede**, quindi non
+   le vede e lascia cancellare il menu di B; la FK è `ON DELETE SET NULL`, e quelle righe
+   diventano di colpo righe del **menu unico della sede A** — cioè compaiono in tavola.
+   Chiuderlo è un lavoro a sé: il `PUT` deve passare da `assertConfigMensaInScope` sul
+   `menu_config_id`, con un test che lo provi.
 
 - [ ] **Passo 2: commit**
 
@@ -1305,6 +1339,10 @@ A deploy riuscito, eliminare `fix/menu-mensa-onconflict` in locale e su origin. 
 - **Non riscrive il menu di Giugliano.** Le 20 righe del menu «TEST (demo App Review)» restano, e
   «menu nido» resta vuoto: sarà la segreteria a decidere.
 - **Non rende atomico il `PUT`.** Debito dichiarato nel PRD.
+- **Non mette il gate di sede sul `menu_config_id` del `PUT`.** Difetto preesistente trovato dalla
+  revisione di qualità del 2026-09-06: il `DELETE` passa da `assertConfigMensaInScope`, il `PUT`
+  no. Debito n. 3 nel PRD, con la conseguenza per esteso — non è una fuga di dati, è una via per
+  cui le righe di un plesso finiscono in tavola in un altro. Chiuderlo è un lavoro a sé.
 - **Non toglie il `NULL` da `menu_config_id`.** Debito dichiarato nel PRD.
 - **Non copre il salvataggio del menu con un test E2E.** Il DB E2E è un progetto separato e non
   migrato: uno spec Playwright che salvasse il menu prenderebbe `42P10` là dentro. Prima va migrato

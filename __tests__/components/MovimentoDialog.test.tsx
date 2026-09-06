@@ -326,6 +326,66 @@ describe('MovimentoDialog — stato della fattura al pulsante', () => {
 });
 
 /**
+ * ─── IL CHIP DEL POPUP PORTA IL NUMERO, COME QUELLO DELLA RIGA (2026-09-06) ──
+ *
+ * `MovimentoDialog` rende la STESSA etichetta della lista — `<ChipFatturazione
+ * fat={fat} suCarta />`, `MovimentoDialog.tsx:389` — e da `b98ce58e` quell'etichetta
+ * scrive il NUMERO del documento al posto del generico «Fatturata». Fino a oggi,
+ * però, nessun test di questo file passava al popup dei `numeri`: `movBase` non ha
+ * il campo `fattura`, quindi `chipFatturazione` ricadeva sempre sul ripiego, e
+ * l'unica asserzione era su quello («Fatturata», più sopra). Il comportamento
+ * annunciato da quel commit aveva copertura ZERO proprio qui.
+ *
+ * Non è il doppione di `RiconciliazionePanel-fattura.test.tsx`: là il chip nasce dal
+ * GET dell'elenco, qui da `movimento.fattura` incrociato col dettaglio del pagamento
+ * (`/api/pagamenti/[id]`). Stessa funzione, due strade — e questa non la guardava
+ * nessuno.
+ *
+ * Il plurale è ICU (`reconFatturaEmessa`): su un pagamento ripartito su due quote la
+ * parola «Fattura» non è brutta, è FALSA — i documenti sono due, e si vanno a cercare
+ * in archivio uno per uno.
+ */
+describe('MovimentoDialog — il chip del popup dice QUALE documento', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; });
+
+  /** Il pagamento è saldato e fatturato: è la sola condizione in cui il chip nasce. */
+  const pagamentoSaldatoEFatturato = () =>
+    vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/pg1')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: 'emessa' } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+
+  const conDocumenti = (numeri: string[]): MovimentoUi => ({
+    ...movBase, stato: 'confermato', pagamento_id: 'pg1', fattura: { stato: 'emessa', numeri },
+  });
+
+  it('un documento → il popup ne scrive il NUMERO, non il generico «Fatturata»', async () => {
+    vi.stubGlobal('fetch', pagamentoSaldatoEFatturato());
+    render(<MovimentoDialog movimento={conDocumenti(['FPR 1947/26'])} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const chip = await screen.findByText('Fattura FPR 1947/26');
+    // L'etichetta secca che il numero SOSTITUISCE non resta a schermo: sarebbe lo
+    // stesso stato scritto due volte, e una delle due volte senza il dato utile.
+    expect(screen.queryByText('Fatturata')).toBeNull();
+    // ed è il chip del POPUP: forma quadra (`suCarta`), non la pillola della riga
+    expect(chip.className).toContain('rounded-md');
+    expect(chip.className).not.toContain('rounded-pill');
+  });
+
+  it('due documenti → «Fatture» al PLURALE, coi due numeri uniti da « · »', async () => {
+    vi.stubGlobal('fetch', pagamentoSaldatoEFatturato());
+    render(<MovimentoDialog movimento={conDocumenti(['FPR 1947/26', 'Asilo 2328/2026'])} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    // «Fattura» qui sarebbe falso: le quote fatturate sono due.
+    const chip = await screen.findByText('Fatture FPR 1947/26 · Asilo 2328/2026');
+    expect(chip.className).toContain('rounded-md');
+    expect(screen.queryByText('Fatturata')).toBeNull();
+  });
+});
+
+/**
  * ─── LA FORMA DEL POPUP (2026-09-05) ─────────────────────────────────────────
  *
  * Difetti misurati sulle schermate del giro precedente, tutti dentro `[role=dialog]`:

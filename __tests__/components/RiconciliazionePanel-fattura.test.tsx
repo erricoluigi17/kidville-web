@@ -124,7 +124,12 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     const riga = rigaDi('BONIFICO QUATTRO').textContent ?? '';
     expect(riga).not.toContain('Da fatturare');
     expect(riga).not.toContain('Scartata');
-    expect(riga).not.toContain('Fattura');
+    // «Fattur» TRONCO, non «Fattura»: da quando l'etichetta è un plurale ICU, un
+    // chip con DUE documenti scrive «Fatture …», e `not.toContain('Fattura')` lo
+    // lascerebbe passare — cioè la guardia più importante di questo test (non si
+    // scrive niente quando non si sa) resterebbe verde proprio sul caso nuovo.
+    // Il tronco copre singolare e plurale con una sola asserzione.
+    expect(riga).not.toContain('Fattur');
   });
 
   it('riga non ancora abbinata → nessun chip (il campo non arriva nemmeno)', async () => {
@@ -135,17 +140,30 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     const riga = rigaDi('BONIFICO CINQUE').textContent ?? '';
     expect(riga).toContain('Da abbinare'); // l'etichetta a semaforo resta
     expect(riga).not.toContain('Da fatturare');
-    expect(riga).not.toContain('Fattura');
+    // Tronco «Fattur» per la stessa ragione della riga sopra: «Fatture …» al
+    // plurale sfuggirebbe a un `not.toContain('Fattura')`.
+    expect(riga).not.toContain('Fattur');
   });
 
   it('senza pagamento_id il chip non compare NEMMENO se il server mandasse una fattura', async () => {
+    // DUE documenti, e non è un dettaglio del fixture: con UNO solo l'etichetta
+    // sarebbe «Fattura FPR 1/26», che `/^Fattura /` e `/^Fattur[ae] /` pescano
+    // identiche — cioè la classe di caratteri qui sotto sarebbe copertura in
+    // avanti e non una guardia. Con due, l'etichetta diventa «Fatture …» e il
+    // singolare NON la vedrebbe: se il filtro su `pagamento_id` si rompesse, solo
+    // il matcher scritto così diventerebbe rosso. Numeri SINTETICI, mai
+    // progressivi veri di produzione.
     vi.stubGlobal('fetch', stubFetch([
-      { id: 'mx', data_operazione: '2026-10-10', importo: 200, causale: 'BONIFICO SEI', controparte: '', stato: 'suggerito', pagamento_id: null, suggerimenti: [], fattura: { stato: 'emessa', numeri: ['FPR 1/26'] } },
+      { id: 'mx', data_operazione: '2026-10-10', importo: 200, causale: 'BONIFICO SEI', controparte: '', stato: 'suggerito', pagamento_id: null, suggerimenti: [], fattura: { stato: 'emessa', numeri: ['FPR 1/26', 'Asilo 2/2026'] } },
     ]));
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
     await waitFor(() => expect(screen.getByText(/BONIFICO SEI/)).toBeInTheDocument());
 
-    expect(screen.queryByText(/^Fattura /)).toBeNull();
+    // `[ae]`, e NON `/^Fatture? /`: quest'ultima è «Fattur» + una «e» facoltativa,
+    // quindi è cieca a «Fattura ». La classe di caratteri le prende entrambe, ed è
+    // ciò che rende questa guardia capace di vedere anche un chip a DUE documenti
+    // («Fatture …»), che è la forma in cui il difetto tornerebbe oggi.
+    expect(screen.queryByText(/^Fattur[ae] /)).toBeNull();
   });
 
   it('le due fonti insieme: vince il NUMERO del documento, non il generico «Fatturata»', async () => {
@@ -173,7 +191,9 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
     await waitFor(() => expect(screen.getByText(/BONIFICO SETTE/)).toBeInTheDocument());
 
-    expect(screen.getByText('Fattura FPR 1947/26 · Asilo 2328/2026')).toBeInTheDocument();
+    // Due documenti ⇒ «Fatture», al plurale (ICU, tester localizzazione 2026-09-05):
+    // il chip non dice «Fattura» di un pagamento che ne ha due.
+    expect(screen.getByText('Fatture FPR 1947/26 · Asilo 2328/2026')).toBeInTheDocument();
   });
 
   it('un solo chip per riga, e solo sulle righe abbinate con esito noto', async () => {
@@ -184,7 +204,10 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     // 5 righe caricate, 3 con esito noto (emessa/scartata/da_fatturare)
     expect(container.querySelectorAll('li')).toHaveLength(5);
     const chip = [
-      ...screen.queryAllByText(/^Fattura /),
+      // `[ae]` per contare anche i chip al plurale: qui il documento è uno solo
+      // («Fattura FPR 1947/26»), ma con /^Fatture? / — che è cieca al singolare —
+      // il conteggio scenderebbe da 3 a 2, e un chip in più o in meno passerebbe.
+      ...screen.queryAllByText(/^Fattur[ae] /),
       ...screen.queryAllByText('Scartata, da riemettere'),
       ...screen.queryAllByText('Da fatturare'),
     ];

@@ -175,6 +175,9 @@ aggiunge invece un **ramo esplicito su `42P10`**: messaggio leggibile, log con i
 
 **Da modificare**
 - `src/app/api/mensa/menu/route.ts:216-238` — chiave unica, log, messaggi con codice
+- `src/components/features/admin/mensa/MenuBuilder.tsx` — i quattro `alert(j.error)` passano da
+  `messaggioDaCorpo`, altrimenti il `codice` appena dichiarato non lo legge nessuno e le due voci
+  di catalogo restano un debito che *sembra* pagato (rilievo della revisione di qualità)
 - `src/lib/registro/chiave-orario.ts` — riesporta il predicato invece di definirlo
 - `src/app/api/admin/primaria/giudizi/route.ts:168` — solo il ramo d'errore (la chiave inviata è
   già quella giusta: cambia l'indice sotto)
@@ -398,7 +401,12 @@ lì) restano com'erano:
 export { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
 ```
 
-In `src/lib/mensa/chiave-menu.ts`, la stessa riga.
+In `src/lib/mensa/chiave-menu.ts` **non** si aggiunge nulla, e la differenza fra i due casi va
+scritta nel file: `chiave-orario.ts` riesporta perché ha tre chiamanti storici da non rompere;
+`chiave-menu.ts` nasce oggi e non ne ha nessuno, quindi un alias lì creerebbe un terzo percorso
+d'importazione per lo stesso predicato il giorno stesso in cui se ne crea il primo — e metterebbe
+due responsabilità in un file che ne deve avere una. Chi ha bisogno del predicato lo importa da
+`@/lib/db/vincolo-conflitto`.
 
 - [ ] **Passo 4: modificare la route**
 
@@ -473,8 +481,11 @@ function rifiutoSalvataggio(cosa: 'rotazione' | 'override', error: { code?: stri
 e l'import:
 
 ```ts
-import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE, vincoloConflittoAssente } from '@/lib/mensa/chiave-menu'
+import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE } from '@/lib/mensa/chiave-menu'
+import { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
 ```
+
+Due import e non uno: il predicato non passa dal modulo delle chiavi della mensa. Vedi il Passo 3-bis.
 
 - [ ] **Passo 5: dichiarare il codice d'errore**
 

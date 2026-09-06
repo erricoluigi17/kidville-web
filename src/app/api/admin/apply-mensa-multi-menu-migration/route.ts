@@ -51,8 +51,14 @@ const steps_sql = [
   // `uidx_mensa_ovr_legacy`, `uidx_mensa_ovr_menu`) NON ESISTONO PIÙ: li ha sostituiti un solo
   // indice non parziale per tabella, con `NULLS NOT DISTINCT`, perché `ON CONFLICT (colonne)` non
   // sa inferire un indice parziale e il salvataggio del menu falliva con `42P10` in ogni sede.
-  // Vedi le migrazioni `*_mensa_menu_chiave_conflitto_unica.sql`. Questa route risponde 404 fuori
-  // dai test (`sealDangerous`): rieseguirla ricreerebbe indici che non vogliamo più.
+  // A sostituirli è `20260906122753_chiave_conflitto_unica_mensa_e_registro.sql` (version
+  // `20260906122753`), applicata in produzione il 2026-09-06 insieme alla gemella
+  // `20260906122807_giudizio_template_chiave_conflitto_unica.sql`, che porta la stessa cura ai
+  // template dei giudizi. ⚠️ Il nome per esteso, e non un `*_…`: fino al 2026-09-06 qui c'era
+  // `*_mensa_menu_chiave_conflitto_unica.sql`, che non corrisponde a NESSUN file — era il nome
+  // del piano, scritto quando la migrazione riguardava la sola mensa e rimasto indietro quando è
+  // stata allargata al registro e rinominata. Questa route risponde 404 fuori dai test
+  // (`sealDangerous`): rieseguirla ricreerebbe indici che non vogliamo più.
   {
     label: 'DROP old unique constraint on rotazione',
     sql: `ALTER TABLE public.mensa_menu_rotazione

@@ -268,12 +268,26 @@ righe del menu erano **tutti parziali**: `uidx_mensa_rot_legacy` e `uidx_mensa_o
 variazioni × menu unico e multi-menu — in ogni sede. Cesa se n'è accorta per un motivo solo:
 è la sede che in quei giorni stava configurando il menu.
 
-**Da quando.** Non da sempre, e la data si può dire: è la migrazione del multi-menu
-(`supabase/migrations_archive/20260612_mensa_multi_menu.sql`) che ha fatto
+**Da quando.** Non da sempre. La *data* si può dire; **l'esecutore no**, e la prima stesura di
+questa voce lo dava per certo. A far cadere
 `DROP CONSTRAINT mensa_menu_rotazione_scuola_id_settimana_giorno_settimana_key` e
 `… mensa_menu_override_scuola_id_data_key` — due vincoli **semplici, e quindi inferibili** — per
-sostituirli con i quattro indici parziali. Da quel giorno l'upsert non aveva più un arbitro, e i
-quattro indici sono già nel dump di baseline del 2026-07-04: ci sono rimasti fino a oggi.
+sostituirli con i quattro indici parziali ci sono **due candidati che fanno la stessa identica
+cosa**, riga per riga:
+
+- la migrazione del multi-menu, `supabase/migrations_archive/20260612_mensa_multi_menu.sql`;
+- la route `src/app/api/admin/apply-mensa-multi-menu-migration/route.ts`, che ripete gli stessi
+  due `DROP CONSTRAINT` e le stesse quattro `CREATE UNIQUE INDEX … WHERE menu_config_id IS
+  (NOT) NULL`.
+
+**Quale dei due sia davvero girato in produzione non è recuperabile**: `CREATE INDEX` non lascia
+nel catalogo la firma di chi l'ha eseguito, e la route non scriveva un log che sia sopravvissuto.
+È lo stesso standard applicato più sotto alle 25 righe di Giugliano — *l'autore esatto è
+irrecuperabile, e va detto invece di indovinarlo* — e vale anche qui.
+
+Ciò che resta **misurato** è la data limite: i quattro indici parziali sono già nel dump di
+baseline del **2026-07-04**. Da quel giorno — o da prima — l'upsert non ha più avuto un arbitro,
+e ci sono rimasti fino al 2026-09-06.
 
 ### Come lo si è visto
 
@@ -402,7 +416,7 @@ il secondo raddoppia, e ci si accorge del guasto mesi dopo. Oggi non mordeva (mi
 **zero senza sede**), ed è esattamente per questo che si è chiuso adesso: un difetto che non
 morde ancora è l'unico che si può correggere senza fretta.
 
-### I cinque debiti dichiarati
+### I sette debiti dichiarati
 
 1. **Il `PUT` non è transazionale.** Scrive rotazione e variazioni in **due istruzioni senza
    transazione**: se la prima riesce e la seconda no, resta un salvataggio a metà con una
@@ -459,10 +473,41 @@ morde ancora è l'unico che si può correggere senza fretta.
    ⚠️ Il lock **non** è una decorazione e non va indebolito: verificato il 2026-09-06 che morda
    ancora, mettendo una migrazione finta nella fotografia e vedendolo cadere su *«ogni migrazione
    applicata in produzione ha il suo file nel repo»*.
+6. **Nel builder del menu il pulsante può non fare niente, in silenzio** (difetto
+   **preesistente**, non introdotto da questo lavoro; rilievo della revisione finale del
+   2026-09-06). In `src/components/features/admin/mensa/MenuBuilder.tsx` ci sono **cinque**
+   `const j = await res.json()` senza `try` — righe 103, 146, 181, 203, 210, cioè il caricamento,
+   il salvataggio delle sezioni, quello della rotazione, l'aggiunta di una variazione e la sua
+   rimozione. Finché la risposta è JSON va tutto bene; quando non lo è — un 502 di Vercel, un
+   redirect del middleware, un gateway timeout, una pagina d'errore HTML — `json()` **lancia**
+   dentro un handler `async` che nessuno avvolge (quello di riga 103 sta in un `try`/`finally`
+   **senza `catch`**, che non trattiene niente). Non compare nessun avviso, non cambia nessuno
+   stato: **il pulsante semplicemente non fa niente**, e la segretaria non ha modo di sapere se
+   ha salvato. È lo stesso silenzio che questo lavoro ha appena tolto dal database, un piano più
+   in su. ⚠️ `messaggioErrore` di `@/lib/ui/esito-fetch` quel `try/catch` ce l'ha già, ma **qui
+   non è utilizzabile**: il corpo serve prima per `j.success`, e uno stream si consuma una volta
+   sola (è il motivo per cui questo file importa `messaggioDaCorpo`). Il rimedio è un
+   `try/catch` attorno alle cinque chiamate, con un messaggio all'utente nel ramo d'errore.
+7. **Il `PUT` risponde «salvato» anche quando non ha scritto niente** (difetto **preesistente**;
+   stessa revisione). In `src/app/api/mensa/menu/route.ts` le due scritture sono protette da
+   `if (body.rotazione && body.rotazione.length > 0)` e `if (body.override && body.override.length
+   > 0)`; se **entrambi** gli elenchi arrivano vuoti nessuno dei due rami parte e la route esce
+   comunque con `return NextResponse.json({ success: true })`. L'interfaccia legge `j.success` e
+   mostra la spunta verde: **un «salvato» che non ha salvato**.
+   ⚠️ **E si può raggiungere oggi**, verificato leggendo il codice il 2026-09-06: `salvaRotazione`
+   costruisce `rows` solo dai giorni in cui c'è qualcosa (`if (rot[key] || ing[key] || alg[key])`),
+   il pulsante «Salva» non è mai `disabled`, e su una settimana ancora vuota l'elenco esce `[]`.
+   Chi apre una settimana nuova, non compila nulla e preme Salva vede la spunta verde. Non è un
+   percorso in cui si perdano dati — non c'era niente da scrivere — ma è la spunta verde che
+   insegna a fidarsi, ed è quella che poi non si distingue da un salvataggio vero fallito.
+   Il rimedio è distinguere i due casi: `400` (o un esito dichiarato «niente da salvare») quando
+   il corpo non porta né rotazione né variazioni, invece di un `success` indistinguibile.
 
 ### Gate
 
-`eslint` 0 · `tsc` 0 · `npm run build` ok · `vitest` **14.749 verdi su 1139 file**. Le due
+`eslint` 0 · `tsc` 0 · `npm run build` ok · `vitest` **14.834 verdi su 1141 file** — rieseguito
+per intero il 2026-09-06 **dopo aver fuso `origin/main`** nel ramo, che porta prove nuove mai
+girate insieme alle nostre; prima della fusione erano 14.749 su 1139 file. Le due
 fotografie versionate (indici e migrazioni) sono state rigenerate dal catalogo di produzione in
 sola lettura, e la trascrizione è stata verificata **contro il database e non contro sé stessa**:
 `md5` di una forma canonica calcolato dal DB e in locale, identico su entrambi i lati. Il lock si

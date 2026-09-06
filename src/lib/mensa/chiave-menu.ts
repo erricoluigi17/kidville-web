@@ -17,13 +17,20 @@
  * come uguali. Le righe del menu unico restano uniche per (sede, settimana, giorno)
  * come prima — la garanzia non cambia, cambia il modo di esprimerla.
  *
- * ⚠️ L'INDICE LO CREANO LE MIGRAZIONI DEI TASK 4 E 5 DEL PIANO
- * (`docs/superpowers/plans/2026-09-06-menu-mensa-onconflict.md`), e finché non sono
- * applicate il salvataggio prende ancora `42P10`. Questo file da solo non ripara il
- * menu: toglie il ramo a runtime — che sbagliava comunque, in tutti e quattro i casi —
- * e fa sì che il fallimento sia LOGGATO come `evento: 'schema'` invece di uscire a
- * schermo. La frase al presente qui sopra descrive il bersaglio, non lo stato del
- * database: chi legge questo commento prima di fidarsene esegua
+ * ⚠️ L'INDICE C'È, dal 2026-09-06. Lo ha creato la migrazione `20260906122753`
+ * (`chiave_conflitto_unica_mensa_e_registro`), applicata in produzione quel giorno
+ * insieme alla `20260906122807` (`giudizio_template_chiave_conflitto_unica`), che porta
+ * la stessa cura ai template dei giudizi. Verificato sul catalogo lo stesso giorno:
+ * `uidx_mensa_rot_chiave` e `uidx_mensa_ovr_chiave` esistono, non sono parziali e hanno
+ * `NULLS NOT DISTINCT`; i quattro parziali di prima non ci sono più.
+ *
+ * Questo file da solo non riparava il menu, e va ricordato perché spiega cosa fa e cosa
+ * non fa: toglie il ramo a runtime — che sbagliava comunque, in tutti e quattro i casi —
+ * e fa sì che un fallimento di schema sia LOGGATO come `evento: 'schema'` invece di
+ * uscire a schermo. L'indice lo mette il database, non questo modulo.
+ *
+ * ⚠️ Anche la riga qui sopra è una misura con una data, non una garanzia: chi ci si
+ * appoggia la rifaccia invece di crederle —
  * `select indexdef from pg_indexes where tablename = 'mensa_menu_rotazione'`.
  *
  * ⚠️ Se qualcuno rimette una chiave senza `menu_config_id`, la trova

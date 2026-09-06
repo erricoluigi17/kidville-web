@@ -480,10 +480,15 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
   it('nessun upsert scrive su una tabella che la produzione non ha', () => {
     // ⟵ È L'ALTRO RAMO, e senza di lui il messaggio qui sopra manderebbe chi legge a scrivere una
     // migrazione che non serve. Se di una tabella la fotografia non ha NEMMENO la chiave
-    // primaria, l'unica lettura sensata è che quella tabella non esista: le PK ci sono sempre, e
-    // infatti sono 215 su 215 le tabelle che ne hanno una qui dentro. L'errore non è `42P10` («la
-    // chiave non corrisponde a nessun vincolo») ma `PGRST205` («could not find the table … in the
-    // schema cache»), e il rimedio non sta nel database — sta nel codice che lo chiama.
+    // primaria, l'unica lettura sensata è che quella tabella non esista: le PK ci sono quasi
+    // sempre, e infatti — rimisurato sul catalogo di produzione il 2026-09-06, DOPO le due
+    // migrazioni di questo lavoro — su 135 tabelle di `public` sono 134 quelle che qui dentro
+    // hanno almeno un indice UNIQUE valido; l'unica senza è la tabella di salvataggio già
+    // nominata sopra, accanto a `tabellaNota`. Sono TABELLE, non indici — gli indici sono 212 —
+    // e fino al 2026-09-06 questa riga diceva «215 su 215», confondendo i due conti in una frase
+    // sola. L'errore non è `42P10` («la chiave non corrisponde a nessun vincolo») ma `PGRST205`
+    // («could not find the table … in the schema cache»), e il rimedio non sta nel database —
+    // sta nel codice che lo chiama.
     const fantasma = senzaArbitro().filter((k) => !tabellaNota(k.tabella))
     expect(
       fantasma,
@@ -550,7 +555,10 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
 
   it('ci sono chiavi da controllare (se cade, il lock si sta autoingannando)', () => {
     // Misurati il 2026-09-06: 63 chiamate `.upsert()` in `src/`, tutte con un `onConflict`
-    // risolto, e 215 indici UNIQUE in produzione. Le soglie stanno APPENA sotto la misura: un
+    // risolto, e 212 indici UNIQUE in produzione — rimisurati sul catalogo lo stesso giorno DOPO
+    // le due migrazioni di questo lavoro, che fra indici e vincolo ne tolgono sette e ne mettono
+    // quattro: erano 215 prima, sono 212 dopo, ed è quel 215 che qui era rimasto scritto.
+    // Le soglie stanno APPENA sotto la misura: un
     // setaccio che smette di trovare gli upsert, o una fotografia che si svuota, passerebbero
     // entrambi in silenzio — sono i due modi in cui questo lock potrebbe non controllare niente.
     //
@@ -578,7 +586,7 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
     ).toBeLessThan(3)
     expect(
       foto.indici.length,
-      `La fotografia contiene ${foto.indici.length} indici UNIQUE, contro i 215 del 2026-09-06: ` +
+      `La fotografia contiene ${foto.indici.length} indici UNIQUE, contro i 212 del 2026-09-06: ` +
       `troppo pochi per essere la produzione. Un lock che gira su una fotografia quasi vuota ` +
       `approva qualunque chiave. Non abbassare la soglia: rigenera. ${COME_RIGENERARE}`,
     ).toBeGreaterThan(200)
@@ -629,9 +637,9 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
     ).toBe(true)
     expect(
       foto.indici.some((i) => i.ha_colonna_nullable),
-      // 26 su 215 il 2026-09-06. Zero è impossibile su questo schema: basta una FK opzionale.
+      // 24 su 212 il 2026-09-06. Zero è impossibile su questo schema: basta una FK opzionale.
       `Nessuno dei ${foto.indici.length} indici risulta avere una colonna nullable: impossibile ` +
-      `su questo schema (erano 26 il 2026-09-06). La fotografia è stata rigenerata con la query ` +
+      `su questo schema (erano 24 il 2026-09-06). La fotografia è stata rigenerata con la query ` +
       `VECCHIA, e il controllo sugli arbitri senza NULLS NOT DISTINCT è spento senza dirlo — ` +
       `cioè il lock approverebbe un indice che fa duplicati invece di aggiornare. ` +
       `${COME_RIGENERARE}`,

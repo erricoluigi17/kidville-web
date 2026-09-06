@@ -67,10 +67,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_registro_orario_chiave
 -- Postgres RIFIUTA `DROP INDEX` su un indice che regge un vincolo, e `IF EXISTS` non
 -- salva perché l'indice c'è: la migrazione si sarebbe fermata QUI, dopo aver già
 -- creato l'indice nuovo e droppato i quattro della mensa. A metà, in produzione.
--- Gli altri sei indici che questa migrazione lascia cadere non sono retti da nessun
--- vincolo (verificato nella stessa query): per loro `DROP INDEX` è giusto. E nessuna
--- chiave esterna si appoggia a questi indici — le tre FK che puntano a
--- `registro_orario` usano la sua chiave primaria — quindi nessun `CASCADE` serve.
+-- Gli altri QUATTRO indici che questa migrazione lascia cadere — i quattro parziali
+-- della mensa qui sopra — non sono retti da nessun vincolo (verificato nella stessa
+-- query): per loro `DROP INDEX` è giusto. Quattro, non sei: i due
+-- `uq_giudizio_template_*` cadono nell'ALTRA migrazione
+-- (`20260906122807_giudizio_template_chiave_conflitto_unica.sql`), e sei era il totale
+-- dei due file. E nessuna chiave esterna si appoggia a questi indici — le tre FK che
+-- puntano a `registro_orario` usano la sua chiave primaria — quindi nessun `CASCADE`
+-- serve.
 ALTER TABLE public.registro_orario DROP CONSTRAINT IF EXISTS unique_registro_orario;
 
 COMMENT ON INDEX public.uidx_registro_orario_chiave IS

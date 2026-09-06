@@ -907,8 +907,16 @@ node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json
 npx vitest run __tests__/architecture/onconflict-arbitro.test.ts
 ```
 
-Atteso: **ROSSO**, con **3** chiavi orfane — una per `mensa_menu_rotazione`, una per
-`mensa_menu_override`, e `giudizio_template (scuola_id, dimensione, valore)`.
+Atteso: **ROSSO**, con **4** chiavi orfane — una per `mensa_menu_rotazione`, una per
+`mensa_menu_override`, `giudizio_template (scuola_id, dimensione, valore)` e
+`registro_orario (scuola_id, classe_sezione, data, ora_lezione)`.
+
+La quarta la fa emergere il criterio stretto di `arbitra()` (rilievo **I1** della revisione di
+qualità): un indice UNIQUE con una colonna **nullable** e **senza** `NULLS NOT DISTINCT` non è un
+arbitro sano. Non dà `42P10` — dà qualcosa di peggio: due `NULL` sono diversi, quindi la riga non
+trova mai sé stessa e ogni salvataggio ne **inserisce una nuova invece di aggiornarla**. Duplicati
+silenziosi al posto di un errore rumoroso. `unique_registro_orario` è esattamente così, e il Task 4
+lo sostituisce.
 
 ⚠️ **Erano «5» in una stesura precedente di questo piano, ed era un numero invecchiato dal Task 2
 stesso**: quando l'ho scritto la route mandava due chiavi per tabella (il ramo col
@@ -1004,6 +1012,25 @@ DROP INDEX IF EXISTS public.uidx_mensa_rot_legacy;
 DROP INDEX IF EXISTS public.uidx_mensa_rot_menu;
 DROP INDEX IF EXISTS public.uidx_mensa_ovr_legacy;
 DROP INDEX IF EXISTS public.uidx_mensa_ovr_menu;
+
+-- ─── E la stessa cura al registro, perché è lo stesso difetto ────────────────
+-- Trovato dalla revisione di qualità del Task 3 (2026-09-06). `unique_registro_orario`
+-- copre `(scuola_id, classe_sezione, data, ora_lezione)` e NON è parziale, quindi
+-- `ON CONFLICT` lo infersce e `42P10` non scatta — ma `registro_orario.scuola_id`
+-- ammette NULL, e senza `NULLS NOT DISTINCT` due `NULL` sono DIVERSI: una riga di
+-- registro senza sede non troverebbe mai sé stessa, e ogni salvataggio ne
+-- INSERIREBBE una nuova invece di aggiornarla. Duplicati silenziosi al posto di un
+-- errore rumoroso: peggio del difetto che questo lavoro chiude.
+-- Oggi non morde — misurato: 14 righe, ZERO con `scuola_id IS NULL` — ed è per
+-- questo che si fa adesso, mentre non costa niente, e non il giorno in cui morderà.
+CREATE UNIQUE INDEX IF NOT EXISTS uidx_registro_orario_chiave
+    ON public.registro_orario (scuola_id, classe_sezione, data, ora_lezione)
+    NULLS NOT DISTINCT;
+
+DROP INDEX IF EXISTS public.unique_registro_orario;
+
+COMMENT ON INDEX public.uidx_registro_orario_chiave IS
+    '2026-09-06: sostituisce unique_registro_orario. Stesse colonne, più NULLS NOT DISTINCT: scuola_id è nullable, e senza questo una riga senza sede si duplicherebbe a ogni salvataggio invece di aggiornarsi.';
 
 COMMENT ON INDEX public.uidx_mensa_rot_chiave IS
     '2026-09-06: chiave unica di rotazione. NULLS NOT DISTINCT perché il menu unico ha menu_config_id NULL e ON CONFLICT deve poterla inferire (i due indici parziali di prima davano 42P10).';

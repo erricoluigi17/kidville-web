@@ -1753,6 +1753,12 @@ export const CODICI_ERRORE = {
      * manca, non di aspettare.
      */
     LEGAME_ADULTO_NON_INDICATO: 'erroreLegameAdultoNonIndicato',
+    /**
+     * 500 — il menu della mensa non è stato scritto. Copre sia il guasto di scrittura sia
+     * `42P10` (l'indice che la route usa come arbitro non c'è: migrazione mancante). Il
+     * motivo vero resta nel log: fino al 2026-09-06 usciva a schermo, in inglese.
+     */
+    MENU_NON_SALVATO: 'erroreMenuNonSalvato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

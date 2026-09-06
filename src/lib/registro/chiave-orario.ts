@@ -23,7 +23,13 @@
 export const CHIAVE_REGISTRO = 'scuola_id,classe_sezione,data,ora_lezione'
 export const CHIAVE_REGISTRO_LEGACY = 'classe_sezione,data,ora_lezione'
 
-/** `42P10` = la chiave di conflitto non corrisponde a nessun vincolo esistente. */
-export function vincoloConflittoAssente(error: { code?: string } | null | undefined): boolean {
-  return error?.code === '42P10'
-}
+/**
+ * `42P10` = la chiave di conflitto non corrisponde a nessun vincolo esistente.
+ *
+ * Il predicato vive in `@/lib/db/vincolo-conflitto` da quando le strade che lo usano
+ * sono più d'una (registro, mensa, giudizi della Primaria): una regola valida per più
+ * strade sta in un posto solo. Qui resta la riesportazione perché i chiamanti storici
+ * — `register/lessons`, `primaria/registro` e il lock
+ * `__tests__/architecture/chiave-registro-per-sede.test.ts` — la importano di qui.
+ */
+export { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'

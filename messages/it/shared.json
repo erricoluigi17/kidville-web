@@ -361,5 +361,6 @@
   "erroreLegameNonSalvato": "Il legame non è stato salvato: niente è stato modificato. Riprova fra poco.",
   "erroreLegameMezzoTolto": "Il gesto è riuscito a metà: l’accesso ai dati del bambino è già stato tolto, il legame in anagrafica è rimasto. Riprova a scollegare fra qualche istante: fino ad allora l’elenco della famiglia mostra un adulto che non vede più pagamenti e note del bambino.",
   "erroreLegameAdultoForseCreato": "L’anagrafica dell’adulto potrebbe essere già stata salvata, ma il collegamento al bambino non è confermato: ricarica la scheda e controlla la famiglia prima di riprovare, per non creare un doppione e una seconda email di credenziali.",
-  "erroreLegameAdultoNonIndicato": "Indica l’adulto da collegare: scegline uno dall’archivio oppure compila la sua anagrafica."
+  "erroreLegameAdultoNonIndicato": "Indica l’adulto da collegare: scegline uno dall’archivio oppure compila la sua anagrafica.",
+  "erroreMenuNonSalvato": "Non è stato possibile salvare il menu. Riprova; se l’errore resta, segnalalo."
 }

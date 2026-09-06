@@ -16,6 +16,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { assertConfigMensaInScope } from '@/lib/mensa/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE, vincoloConflittoAssente } from '@/lib/mensa/chiave-menu'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // '' è ammesso per retro-compatibilità sui param opzionali: ?scuola_id= (vuoto)
@@ -185,6 +186,32 @@ export const GET = withRoute('mensa/menu:GET', async (request: NextRequest) => {
   }
 })
 
+/**
+ * Il salvataggio del menu è fallito: si LOGGA il motivo vero (codice compreso) e si
+ * risponde con un codice stabile, mai con la prosa di PostgREST.
+ *
+ * Fino al 2026-09-06 qui c'era `NextResponse.json({ error: error.message }, …)`: la
+ * segretaria di Cesa si è vista un `alert()` che diceva «there is no unique or
+ * exclusion constraint matching the ON CONFLICT specification». Inglese, e il nome
+ * di un meccanismo interno del database, dentro l'interfaccia di chi carica il menu.
+ *
+ * `42P10` ha un ramo suo perché è l'unico che NON dipende dai dati: dice che il
+ * database non ha l'indice che questa route si aspetta — cioè che una migrazione
+ * non è arrivata. È l'informazione che serve a chi legge il log, e non serve a chi
+ * legge lo schermo.
+ */
+function rifiutoSalvataggio(cosa: 'rotazione' | 'override', error: { code?: string; message?: string }) {
+  const evento = vincoloConflittoAssente(error) ? 'schema' : 'db'
+  logErrore({ operazione: `mensa/menu:PUT:${cosa}`, stato: 500, evento }, error)
+  return NextResponse.json(
+    {
+      error: 'Non è stato possibile salvare il menu. Riprova; se l’errore resta, segnalalo.',
+      codice: 'MENU_NON_SALVATO',
+    },
+    { status: 500 },
+  )
+}
+
 // PUT /api/mensa/menu  (staff) — upsert rotazione e/o override.
 // Body: { userId, scuola_id?, menu_config_id?,
 //         rotazione?: [{settimana, giorno_settimana, portate, note}],
@@ -213,12 +240,10 @@ export const PUT = withRoute('mensa/menu:PUT', async (request: NextRequest) => {
         allergeni: r.allergeni ?? {},
         note: r.note ?? null,
       }))
-      // Usa il conflict target corretto a seconda del tipo di menu
-      const rotConflict = menuConfigId
-        ? 'scuola_id,menu_config_id,settimana,giorno_settimana'
-        : 'scuola_id,settimana,giorno_settimana'
-      const { error } = await supabase.from('mensa_menu_rotazione').upsert(rows, { onConflict: rotConflict })
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const { error } = await supabase
+        .from('mensa_menu_rotazione')
+        .upsert(rows, { onConflict: CHIAVE_ROTAZIONE })
+      if (error) return rifiutoSalvataggio('rotazione', error)
     }
 
     if (body.override && body.override.length > 0) {
@@ -232,9 +257,10 @@ export const PUT = withRoute('mensa/menu:PUT', async (request: NextRequest) => {
         allergeni: o.allergeni ?? {},
         note: o.note ?? null,
       }))
-      const ovrConflict = menuConfigId ? 'scuola_id,menu_config_id,data' : 'scuola_id,data'
-      const { error } = await supabase.from('mensa_menu_override').upsert(rows, { onConflict: ovrConflict })
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      const { error } = await supabase
+        .from('mensa_menu_override')
+        .upsert(rows, { onConflict: CHIAVE_OVERRIDE })
+      if (error) return rifiutoSalvataggio('override', error)
     }
 
     return NextResponse.json({ success: true })

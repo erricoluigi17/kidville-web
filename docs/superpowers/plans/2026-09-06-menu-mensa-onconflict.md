@@ -32,7 +32,7 @@ frase inglese che nomina `ON CONFLICT`.
 | `messaggio` | `there is no unique or exclusion constraint matching the ON CONFLICT specification` |
 | `stato_http` | 400 (PostgREST) → la route lo ritrasmette come **500** |
 | `occorrenze` | **9** · prima 2026-09-05 06:58:12Z · ultima 2026-09-05 09:47:01Z |
-| `scuola_id` | `04accbfd-5890-4416-99f7-acd8b864dc2f` (**Cesa**) |
+| `scuola_id` | `<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>` (**Cesa**) |
 | `utente_ruolo` | `segreteria` |
 | `contesto.payload.body` | `rotazione` di 5 righe (settimana 1, giorni 1-5), **`menu_config_id: null`** |
 
@@ -67,16 +67,16 @@ pagata sull'Armadietto il 2026-09-01 (`armadietto_richieste`).
 ```sql
 -- ramo legacy  → ERROR 42P10
 EXPLAIN INSERT INTO mensa_menu_rotazione (scuola_id, menu_config_id, settimana, giorno_settimana, portate)
-VALUES ('04accbfd-…'::uuid, NULL, 1, 1, '{}'::jsonb)
+VALUES ('<sede Cesa>'::uuid, NULL, 1, 1, '{}'::jsonb)
 ON CONFLICT (scuola_id, settimana, giorno_settimana) DO UPDATE SET portate = EXCLUDED.portate;
 
 -- ramo multi-menu → ERROR 42P10
 EXPLAIN INSERT INTO mensa_menu_rotazione (…)
-VALUES ('d53b0fbc-…'::uuid, '5e46b66e-…'::uuid, 1, 1, '{}'::jsonb)
+VALUES ('<sede Giugliano>'::uuid, '<menu della sede>'::uuid, 1, 1, '{}'::jsonb)
 ON CONFLICT (scuola_id, menu_config_id, settimana, giorno_settimana) DO UPDATE SET …;
 
 -- controprova: con il WHERE, l'indice si trova
-EXPLAIN INSERT INTO mensa_menu_rotazione (…) VALUES ('04accbfd-…'::uuid, NULL, 1, 1, '{}'::jsonb)
+EXPLAIN INSERT INTO mensa_menu_rotazione (…) VALUES ('<sede Cesa>'::uuid, NULL, 1, 1, '{}'::jsonb)
 ON CONFLICT (scuola_id, settimana, giorno_settimana) WHERE menu_config_id IS NULL DO UPDATE SET …;
 -- →  Conflict Arbiter Indexes: uidx_mensa_rot_legacy
 ```
@@ -261,8 +261,8 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireUser: async () => ({ user: { id: 'u1', ruolo: 'segreteria' } }),
 }))
 vi.mock('@/lib/auth/scope', () => ({
-  resolveScuolaScrittura: async () => ({ scuolaId: '04accbfd-5890-4416-99f7-acd8b864dc2f' }),
-  scuoleDiUtente: async () => ['04accbfd-5890-4416-99f7-acd8b864dc2f'],
+  resolveScuolaScrittura: async () => ({ scuolaId: '<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>' }),
+  scuoleDiUtente: async () => ['<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>'],
 }))
 
 import { PUT } from '@/app/api/mensa/menu/route'
@@ -280,7 +280,7 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
 
   it('col menu unico (menu_config_id null) manda comunque la chiave con menu_config_id', async () => {
     const res = await PUT(put({
-      scuola_id: '04accbfd-5890-4416-99f7-acd8b864dc2f',
+      scuola_id: '<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>',
       menu_config_id: null,
       rotazione: [{ settimana: 1, giorno_settimana: 1, portate: {} }],
     }))
@@ -290,8 +290,8 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
 
   it('con un menu selezionato manda la STESSA chiave', async () => {
     await PUT(put({
-      scuola_id: '04accbfd-5890-4416-99f7-acd8b864dc2f',
-      menu_config_id: '5e46b66e-f29e-4f1b-9f85-98c117e83377',
+      scuola_id: '<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>',
+      menu_config_id: '<uuid di un menu della sede>',
       rotazione: [{ settimana: 1, giorno_settimana: 1, portate: {} }],
     }))
     expect(upsert.mock.calls[0][1]).toEqual({ onConflict: CHIAVE_ROTAZIONE })
@@ -299,7 +299,7 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
 
   it('anche le variazioni hanno una chiave sola, con menu_config_id', async () => {
     await PUT(put({
-      scuola_id: '04accbfd-5890-4416-99f7-acd8b864dc2f',
+      scuola_id: '<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>',
       menu_config_id: null,
       override: [{ data: '2026-09-10', chiuso: false, portate: {} }],
     }))
@@ -316,7 +316,7 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
       error: { code: '42P10', message: 'there is no unique or exclusion constraint matching…' },
     })
     const res = await PUT(put({
-      scuola_id: '04accbfd-5890-4416-99f7-acd8b864dc2f',
+      scuola_id: '<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>',
       menu_config_id: null,
       rotazione: [{ settimana: 1, giorno_settimana: 1, portate: {} }],
     }))
@@ -1084,7 +1084,7 @@ git mv supabase/migrations/<nome-locale>.sql supabase/migrations/<version-dal-DB
 
 ```sql
 EXPLAIN INSERT INTO public.mensa_menu_rotazione (scuola_id, menu_config_id, settimana, giorno_settimana, portate)
-VALUES ('04accbfd-5890-4416-99f7-acd8b864dc2f'::uuid, NULL, 1, 1, '{}'::jsonb)
+VALUES ('<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>'::uuid, NULL, 1, 1, '{}'::jsonb)
 ON CONFLICT (scuola_id, menu_config_id, settimana, giorno_settimana) DO UPDATE SET portate = EXCLUDED.portate;
 ```
 
@@ -1208,7 +1208,7 @@ Stessa procedura del Task 4, passi 3 e 4.
 
 ```sql
 EXPLAIN INSERT INTO public.giudizio_template (scuola_id, dimensione, valore, frammento)
-VALUES ('04accbfd-5890-4416-99f7-acd8b864dc2f'::uuid, 'x', 'y', 'z')
+VALUES ('<uuid della sede, da `SELECT id FROM schools WHERE nome = 'Kidville Cesa'`>'::uuid, 'x', 'y', 'z')
 ON CONFLICT (scuola_id, dimensione, valore) DO UPDATE SET frammento = EXCLUDED.frammento;
 ```
 
@@ -1401,7 +1401,7 @@ FROM app_log WHERE codice = '42P10' ORDER BY visto_l_ultima DESC LIMIT 5;
 Atteso: Cesa **> 0** dopo che la segreteria ha rifatto il salvataggio, e **nessun `42P10` nuovo**
 dopo l'ora del deploy (i 9 del 2026-09-05 restano: sono storia, non un guasto in corso).
 
-- [ ] **Passo 5: dire a Sara Bortone di rifare il caricamento**
+- [ ] **Passo 5: dire alla segreteria di Cesa di rifare il caricamento**
 
 Il salvataggio non ha mai scritto niente: **il menu di Cesa è ancora tutto da inserire**, non c'è
 niente da correggere o ripulire. Va rifatto da capo, settimana per settimana. Fino a quel momento

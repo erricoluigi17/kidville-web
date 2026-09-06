@@ -110,7 +110,7 @@ const SENZA_ARBITRO_ATTESO: { tabella: string; chiave: string; perche: string }[
       'in `__tests__/`; `syncPendingDiaryEntries` (:112) ha come unico chiamante proprio quella ' +
       'funzione morta; e `db.diario` viene scritto SOLO dentro di essa, quindi anche se qualcuno ' +
       'la chiamasse la coda sarebbe vuota e si uscirebbe al `if (pending.length === 0) return` ' +
-      'di :124, PRIMA dell’upsert. ' +
+      'di :125, PRIMA dell’upsert. ' +
       '⚠️ QUINDI NON C’È NESSUNA PERDITA DI DATI IN CORSO, e va detto perché la lettura opposta ' +
       'sarebbe allarmante e falsa. Non è nemmeno il caso di «fallisce ma non si vede»: `logSync` ' +
       'funziona, ed è dimostrato dal suo gemello — in `app_log` c’è `sync-galleria-fallito` ' +
@@ -167,6 +167,14 @@ function costantiDelFile(testo: string): Record<string, string> {
  * il parser correrebbe fino a fine file portandosi dietro l'`onConflict` della chiamata dopo.
  * Oggi nessun corpo è in fuga — ma il modo di fallire sarebbe silenzioso, e un errore silenzioso
  * in un lock è il lock che smette di esistere.
+ *
+ * ⚠️ SALTARE I COMMENTI HA APERTO UN LIMITE SUO, e va scritto perché è dello stesso tipo: questo
+ * non è un parser JavaScript e non conosce le ESPRESSIONI REGOLARI. Una regex che termina con
+ * due barre — `.replace(/\/\//g, '')` — viene letta come l'inizio di un commento, e il corpo
+ * scappa fino a fine riga e oltre la chiusura della chiamata. Misurato su testo sintetico:
+ * l'`onConflict` finisce attribuito alla chiamata SUCCESSIVA, in silenzio. In `src/` oggi nessun
+ * corpo di `.upsert()` contiene una regex, quindi l'impatto è zero; il giorno in cui ne
+ * contenesse una servirebbe un vero AST, non un'altra pezza a questo carattere-per-carattere.
  */
 function corpoChiamata(testo: string, aperta: number): string {
   let livello = 0
@@ -346,6 +354,24 @@ const arbitra = (i: Indice, tabella: string, chiave: string) =>
  */
 const tabellaNota = (tabella: string) => foto.indici.some((i) => i.tabella === tabella)
 
+/**
+ * Esiste un indice che arbitrerebbe questa chiave se non fosse per i NULL?
+ *
+ * È la differenza fra i due sintomi, e quindi fra due messaggi d'errore che non possono essere
+ * lo stesso: senza indice arriva `42P10` a ogni chiamata; con questo indice non arriva niente e
+ * si accumulano duplicati. Chi legge un rosso deve sapere quale dei due sta guardando.
+ */
+const quasiArbitroPerINull = (k: Chiave) =>
+  foto.indici.some(
+    (i) =>
+      i.tabella === k.tabella &&
+      !i.parziale &&
+      !i.con_espressioni &&
+      i.ha_colonna_nullable &&
+      !i.nulls_not_distinct &&
+      [...i.colonne].sort().join(',') === insieme(k.chiave),
+  )
+
 /** Le chiavi di `src/` che non trovano un arbitro e non sono dichiarate in SENZA_ARBITRO_ATTESO. */
 function senzaArbitro(): Chiave[] {
   const attese = new Set(SENZA_ARBITRO_ATTESO.map((v) => `${v.tabella}|${insieme(v.chiave)}`))
@@ -403,16 +429,43 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
     ).toEqual([])
   })
 
-  it('nessuna chiave di conflitto punta a un indice parziale o inesistente', () => {
-    // Solo le chiavi su tabelle che la fotografia CONOSCE: per quelle che non ci sono affatto il
-    // rimedio è un altro, e lo dice il test qui sotto. Un solo rosso, una sola cosa da fare.
-    const orfane = senzaArbitro().filter((k) => tabellaNota(k.tabella))
+  it('nessuna chiave di conflitto è senza arbitro (42P10 a ogni chiamata)', () => {
+    // Solo le chiavi su tabelle che la fotografia CONOSCE, e solo quelle per cui non esiste
+    // NESSUN indice sulle stesse colonne: gli altri due casi hanno un rimedio diverso e un
+    // sintomo diverso, e stanno nelle due prove qui sotto. Un solo rosso, una sola cosa da fare.
+    const orfane = senzaArbitro()
+      .filter((k) => tabellaNota(k.tabella))
+      .filter((k) => !quasiArbitroPerINull(k))
     expect(
       orfane,
       `Queste chiavi di conflitto non hanno, nel database, un indice UNIQUE NON PARZIALE e senza ` +
       `espressioni sulle stesse colonne: ogni chiamata torna 42P10 e nessun test coi mock se ne ` +
       `accorge. Il rimedio NON è aggiungere un'eccezione qui: è una migrazione che crei l'indice ` +
-      `(se la colonna può essere NULL, con NULLS NOT DISTINCT). ${JSON.stringify(orfane, null, 2)}`,
+      `(se una colonna chiave può essere NULL, con NULLS NOT DISTINCT — vedi la prova qui sotto, ` +
+      `perché crearlo senza è un rimedio peggiore del difetto). ${JSON.stringify(orfane, null, 2)}`,
+    ).toEqual([])
+  })
+
+  it('nessuna chiave si appoggia a un indice che tratta i NULL come distinti', () => {
+    // ⟵ IL RAMO CHE NON DÀ NESSUN ERRORE, ed è per questo che ha una prova sua. Qui l'indice
+    // c'è, `ON CONFLICT` lo infersce, la chiamata risponde 200 e in `app_log` non compare niente:
+    // ma se la riga porta un NULL in una colonna chiave, per Postgres non è uguale a nessuna
+    // riga esistente, quindi l'upsert INSERISCE invece di aggiornare. Il primo salvataggio
+    // sembra funzionare, il secondo raddoppia la riga, e ci si accorge del guasto mesi dopo.
+    //
+    // Dire «42P10» anche qui, come faceva il messaggio unico fino al 2026-09-06, manda chi legge
+    // a cercare in `app_log` un codice che non c'è, e proprio sul caso più difficile da vedere.
+    const ingannevoli = senzaArbitro().filter(quasiArbitroPerINull)
+    expect(
+      ingannevoli,
+      `Su queste chiavi un indice inferibile C'È — non arriva nessun 42P10, la chiamata risponde ` +
+      `200 — ma ha una colonna che può essere NULL e NON è \`NULLS NOT DISTINCT\`: quando quella ` +
+      `colonna è NULL l'upsert non trova mai la riga e ne inserisce una nuova. Il sintomo non è ` +
+      `un errore: sono DUPLICATI SILENZIOSI, visibili solo dal secondo salvataggio in poi. Lo si ` +
+      `riconosce nella fotografia dalla voce con \`ha_colonna_nullable: true\` e ` +
+      `\`nulls_not_distinct: false\` sulle stesse colonne. Il rimedio è ricreare l'indice con ` +
+      `NULLS NOT DISTINCT (o rendere la colonna NOT NULL, se il dominio lo consente). ` +
+      `${JSON.stringify(ingannevoli, null, 2)}`,
     ).toEqual([])
   })
 
@@ -529,15 +582,21 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
     // reggere, e il lock diventerebbe verde su chiavi che in PRODUZIONE non hanno arbitro — cioè
     // proprio il difetto che esiste per trovare, approvato dal database sbagliato.
     //
-    // Si riconosce per NOME, con due sentinelle scelte perché in CI non ci sono o non sono così:
-    // `enrollment_submissions` (le domande di iscrizione vere) e `unique_registro_orario`, il
-    // vincolo del registro CON la sede — quello che sul DB E2E non è mai stato migrato, ed è la
-    // ragione stessa per cui `CHIAVE_REGISTRO_LEGACY` esiste.
+    // ⚠️ SI CERCA UN FATTO, NON UN NOME, e la prima versione sbagliava proprio qui: pretendeva
+    // l'indice `unique_registro_orario`, credendolo esclusivo della produzione. Non lo è. Quel
+    // NOME nasce nella baseline, su `(classe_sezione, data, ora_lezione)`, e il DB E2E ce l'ha; la
+    // migrazione del 2026-07-30 che aggiunge `scuola_id` riusa lo stesso nome. Ciò che l'E2E non
+    // ha sono le COLONNE, non il nome — quindi metà del controllo non distingueva i due database.
+    // E il nome è anche fragile: il Task 4 di questo piano lo sostituisce, e la prova sarebbe
+    // diventata rossa accusando il database sbagliato proprio nel giro in cui tutto torna verde —
+    // cioè insegnando a cancellare la sentinella.
     const tabelle = new Set(foto.indici.map((i) => i.tabella))
-    const indici = new Set(foto.indici.map((i) => i.indice))
+    const registroPerSede = foto.indici.some(
+      (i) => i.tabella === 'registro_orario' && i.colonne.includes('scuola_id'),
+    )
     const mancanti = [
-      ...(tabelle.has('enrollment_submissions') ? [] : ['tabella enrollment_submissions']),
-      ...(indici.has('unique_registro_orario') ? [] : ['indice unique_registro_orario']),
+      ...(tabelle.has('enrollment_submissions') ? [] : ['la tabella enrollment_submissions']),
+      ...(registroPerSede ? [] : ['un indice unico di registro_orario che comprenda scuola_id']),
     ]
     expect(
       mancanti,
@@ -547,5 +606,27 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
       `lock che va tutto bene su vincoli che in produzione non esistono. Rifai la query sul ` +
       `progetto di produzione. ${COME_RIGENERARE}`,
     ).toEqual([])
+
+    // ⚠️ E LA FOTOGRAFIA DEVE ESSERE STATA PRESA CON LA QUERY DI OGGI. `ha_colonna_nullable` è
+    // arrivato dopo, e una fotografia rigenerata con la query VECCHIA non fa rumore: il campo
+    // manca (o, peggio, il generatore lo scrive `false` per tutti con il suo `!!undefined`), il
+    // JSON resta valido, lo sha256 combacia perché è stato calcolato su quel contenuto, e
+    // `arbitra()` smette semplicemente di guardare i NULL. Misurato: in entrambi i casi le voci
+    // orfane passano da 5 a 2 — spariscono le due `registro_orario`, che sono esattamente quelle
+    // che il controllo sui NULL esiste per trovare. Nessuna delle altre prove se ne accorge.
+    expect(
+      foto.indici.every((i) => typeof i.ha_colonna_nullable === 'boolean'),
+      `Qualche voce della fotografia non porta \`ha_colonna_nullable\`: è stata generata con una ` +
+      `query più vecchia del controllo sui NULL. ${COME_RIGENERARE}`,
+    ).toBe(true)
+    expect(
+      foto.indici.some((i) => i.ha_colonna_nullable),
+      // 26 su 215 il 2026-09-06. Zero è impossibile su questo schema: basta una FK opzionale.
+      `Nessuno dei ${foto.indici.length} indici risulta avere una colonna nullable: impossibile ` +
+      `su questo schema (erano 26 il 2026-09-06). La fotografia è stata rigenerata con la query ` +
+      `VECCHIA, e il controllo sugli arbitri senza NULLS NOT DISTINCT è spento senza dirlo — ` +
+      `cioè il lock approverebbe un indice che fa duplicati invece di aggiornare. ` +
+      `${COME_RIGENERARE}`,
+    ).toBe(true)
   })
 })

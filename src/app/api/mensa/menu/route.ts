@@ -16,7 +16,8 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { assertConfigMensaInScope } from '@/lib/mensa/scope'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
-import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE, vincoloConflittoAssente } from '@/lib/mensa/chiave-menu'
+import { CHIAVE_OVERRIDE, CHIAVE_ROTAZIONE } from '@/lib/mensa/chiave-menu'
+import { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // '' è ammesso per retro-compatibilità sui param opzionali: ?scuola_id= (vuoto)
@@ -205,6 +206,13 @@ function rifiutoSalvataggio(cosa: 'rotazione' | 'override', error: { code?: stri
   logErrore({ operazione: `mensa/menu:PUT:${cosa}`, stato: 500, evento }, error)
   return NextResponse.json(
     {
+      // ⚠️ QUESTA PROSA È IL RIPIEGO, NON IL TESTO BUONO. La frase che l'utente deve
+      // leggere è `erroreMenuNonSalvato` nei cataloghi, scelta da `messaggioDaCorpo`
+      // in base alla lingua dell'interfaccia; questa riga serve solo a chi riceve la
+      // risposta senza passare dal catalogo (un client nuovo, uno script, `curl`).
+      // Oggi le due frasi coincidono carattere per carattere ed è un caso, non un
+      // vincolo: se domani divergono, quella che conta è quella del catalogo, e
+      // nessun test le tiene allineate.
       error: 'Non è stato possibile salvare il menu. Riprova; se l’errore resta, segnalalo.',
       codice: 'MENU_NON_SALVATO',
     },

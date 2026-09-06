@@ -1149,12 +1149,15 @@ con
       }
 ```
 
-con l'import `import { vincoloConflittoAssente } from '@/lib/mensa/chiave-menu'`.
+con l'import `import { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'`.
 
-⚠️ `vincoloConflittoAssente` sta oggi in due posti (`@/lib/registro/chiave-orario` e il modulo
-nuovo della mensa): **prima di importarla qui, spostarla in un posto solo** —
-`src/lib/db/vincolo-conflitto.ts` — e farla riesportare dai due moduli di chiave. Una regola valida
-per tre strade deve vivere in un posto solo.
+⚠️ Lo spostamento in un posto solo **è già stato fatto al Task 2**: il predicato vive in
+`src/lib/db/vincolo-conflitto.ts` e si importa **da lì**, non da un modulo di chiave. Questo passo
+diceva `@/lib/mensa/chiave-menu`, ed era un errore di questo piano: avrebbe fatto importare la
+route dei giudizi della **Primaria** da `lib/mensa`, cioè avrebbe legato due aree che non
+c'entrano niente l'una con l'altra. `chiave-orario.ts` conserva una riesportazione perché ha tre
+chiamanti storici da non rompere; `chiave-menu.ts` **non** ce l'ha, di proposito — un alias nato
+lo stesso giorno del modulo è solo un secondo modo di sbagliare strada.
 
 Dichiarare `GIUDIZIO_NON_SALVATO: 'erroreGiudizioNonSalvato'` in `CODICI_ERRORE` e le due frasi in
 coda ai cataloghi, come al Task 2 Passo 5. Poi abbassare la voce

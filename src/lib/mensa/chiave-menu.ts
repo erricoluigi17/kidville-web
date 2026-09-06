@@ -33,4 +33,14 @@
 export const CHIAVE_ROTAZIONE = 'scuola_id,menu_config_id,settimana,giorno_settimana'
 export const CHIAVE_OVERRIDE = 'scuola_id,menu_config_id,data'
 
-export { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
+/**
+ * ⚠️ QUI NON C'È `vincoloConflittoAssente`, e l'assenza è voluta: sta in
+ * `@/lib/db/vincolo-conflitto`, e da lì lo importa chi ne ha bisogno.
+ *
+ * Una riesportazione di comodo ci stava, ed è stata tolta. `chiave-orario.ts` ne ha
+ * una perché ha tre chiamanti STORICI da non rompere; questo file è nato il
+ * 2026-09-06 e di chiamanti storici non ne ha nessuno: l'alias avrebbe creato un
+ * terzo percorso d'importazione per lo stesso predicato il giorno in cui se ne
+ * creava il primo. Il costo non è teorico — la route dei giudizi della PRIMARIA
+ * sarebbe finita a importare da `lib/mensa`.
+ */

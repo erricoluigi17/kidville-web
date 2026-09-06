@@ -36,9 +36,34 @@ const CFG_MENU = 'c0c0c0c0-0000-4000-8000-cccccccccccc'
  */
 type EsitoUpsert = { error: { code?: string; message?: string } | null }
 type Upsert = (righe: unknown[], opzioni: { onConflict: string }) => Promise<EsitoUpsert>
+/** Anche `from` è tipizzata, per poter leggere la TABELLA da `from.mock.calls[i][0]`. */
+type From = (tabella: string) => { upsert: typeof upsert }
 
 const upsert = vi.fn<Upsert>(() => Promise.resolve({ error: null }))
-const from = vi.fn(() => ({ upsert }))
+const from = vi.fn<From>(() => ({ upsert }))
+
+/**
+ * Il logger va MOCKATO, non silenziato: «il fallimento diventa una riga di log» è
+ * una delle tre promesse di questo lavoro, ed è l'unica che la risposta HTTP non
+ * mostra. Senza queste chiamate accumulate si potrebbe cancellare `logErrore` dalla
+ * route e vedere la suite restare verde — cioè `42P10` tornerebbe a essere il guasto
+ * muto che il modulo di logging esiste per impedire.
+ *
+ * Le tre funzioni ci sono tutte perché `withRoute` le usa tutte e tre: mockarne una
+ * sola farebbe esplodere il wrapper su ogni chiamata.
+ */
+const h = vi.hoisted(() => ({ log: [] as { fn: string; args: unknown[] }[] }))
+vi.mock('@/lib/logging/logger', () => ({
+  logOk: (...args: unknown[]) => { h.log.push({ fn: 'logOk', args }) },
+  logErrore: (...args: unknown[]) => { h.log.push({ fn: 'logErrore', args }) },
+  logEvento: (...args: unknown[]) => { h.log.push({ fn: 'logEvento', args }) },
+}))
+
+/** Le sole chiamate a `logErrore`, con i campi già estratti. */
+const erroriLoggati = () =>
+  h.log
+    .filter((r) => r.fn === 'logErrore')
+    .map((r) => ({ campi: r.args[0] as Record<string, unknown>, errore: r.args[1] as { code?: string } }))
 
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({ from }),
@@ -63,7 +88,7 @@ const put = (body: unknown) =>
   })
 
 describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
-  beforeEach(() => { upsert.mockClear(); from.mockClear() })
+  beforeEach(() => { upsert.mockClear(); from.mockClear(); h.log.length = 0 })
 
   it('col menu unico (menu_config_id null) manda comunque la chiave con menu_config_id', async () => {
     const res = await PUT(put({
@@ -111,5 +136,67 @@ describe('PUT /api/mensa/menu — una sola chiave di conflitto', () => {
     expect(res.status).toBe(500)
     expect(j.codice).toBe('MENU_NON_SALVATO')
     expect(j.error).not.toMatch(/ON CONFLICT/i)
+
+    // …e la prosa che NON esce a schermo dev'essere finita nel log, con il codice:
+    // altrimenti il salvataggio fallirebbe in silenzio, che è peggio dell'inglese.
+    const [errore, ...altri] = erroriLoggati()
+    expect(altri).toEqual([])
+    expect(errore.campi).toMatchObject({
+      operazione: 'mensa/menu:PUT:rotazione',
+      stato: 500,
+      evento: 'schema',
+    })
+    expect(errore.errore).toMatchObject({ code: '42P10' })
+  })
+
+  it('un errore che NON è 42P10 si logga come `db`, e sul ramo delle variazioni', async () => {
+    // `evento` distingue due guasti diversi: `schema` dice «manca l'indice, cioè una
+    // migrazione non è arrivata», `db` dice «la scrittura è stata respinta». Chi legge
+    // `app_log` cerca per quella colonna, e un ternario invertito manderebbe fuori
+    // strada la diagnosi senza cambiare una virgola di ciò che vede l'utente.
+    upsert.mockResolvedValueOnce({
+      error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+    })
+    const res = await PUT(put({
+      scuola_id: SEDE_A,
+      menu_config_id: null,
+      override: [{ data: '2026-09-10', chiuso: false, portate: {} }],
+    }))
+    expect(res.status).toBe(500)
+
+    const [errore, ...altri] = erroriLoggati()
+    expect(altri).toEqual([])
+    expect(errore.campi).toMatchObject({
+      operazione: 'mensa/menu:PUT:override',
+      stato: 500,
+      evento: 'db',
+    })
+    expect(errore.errore).toMatchObject({ code: '23505' })
+  })
+
+  it('rotazione e variazioni insieme: due tabelle, due chiavi, e menu_config_id nelle righe', async () => {
+    const res = await PUT(put({
+      scuola_id: SEDE_A,
+      menu_config_id: null,
+      rotazione: [{ settimana: 1, giorno_settimana: 1, portate: {} }],
+      override: [{ data: '2026-09-10', chiuso: false, portate: {} }],
+    }))
+    expect(res.status).toBe(200)
+
+    // Le due scritture vanno su tabelle DIVERSE, e ciascuna con la propria chiave:
+    // scambiarle passerebbe inosservato a un test che guarda una chiamata sola.
+    expect(from.mock.calls.map((c) => c[0])).toEqual(['mensa_menu_rotazione', 'mensa_menu_override'])
+    expect(upsert.mock.calls[0][1]).toEqual({ onConflict: CHIAVE_ROTAZIONE })
+    expect(upsert.mock.calls[1][1]).toEqual({ onConflict: CHIAVE_OVERRIDE })
+
+    // E le righe devono PORTARE la colonna che la chiave nomina: con `menu_config_id`
+    // nell'elenco ma assente dalle righe, l'indice non sarebbe soddisfacibile. Qui
+    // vale `null` — il menu unico — che è esattamente il caso che l'indice nuovo
+    // tratta con `NULLS NOT DISTINCT`.
+    for (const [righe] of upsert.mock.calls) {
+      expect(righe).toHaveLength(1)
+      expect(righe[0]).toMatchObject({ scuola_id: SEDE_A, menu_config_id: null })
+    }
+    expect(erroriLoggati()).toEqual([])
   })
 })

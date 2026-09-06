@@ -8,6 +8,9 @@ import { CalendarRange, Save, Plus, Trash2, CalendarOff, UtensilsCrossed } from 
 import { DateField } from '@/components/ui/DateField';
 import { SaveCheck } from '@/components/ui/SaveConfirmation';
 import { ALLERGENI } from '@/lib/mensa/allergeni';
+// `messaggioDaCorpo` e non `messaggioErrore`: il corpo qui è già stato letto con
+// `await res.json()` (serve `j.success`), e uno stream si consuma una volta sola.
+import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { SezioniMultiSelect } from '@/components/features/admin/SezioniMultiSelect';
 
 interface Props { userId: string; scuolaId: string }
@@ -141,7 +144,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
       body: JSON.stringify({ scuola_id: scuolaId, menu_config_id: selectedMenuId, classi: assegnaSezioni }),
     });
     const j = await res.json();
-    if (j.success) { setAssegnaSaved(true); setTimeout(() => setAssegnaSaved(false), 2500); } else alert(j.error);
+    if (j.success) { setAssegnaSaved(true); setTimeout(() => setAssegnaSaved(false), 2500); } else alert(messaggioDaCorpo(j, t('erroreSalvataggio')));
   };
 
   const setNome = (giorno: number, p: PortataKey, val: string) => {
@@ -176,7 +179,7 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
       body: JSON.stringify({ scuola_id: scuolaId, menu_config_id: selectedMenuId, rotazione: rows }),
     });
     const j = await res.json();
-    if (j.success) setDone(true); else alert(j.error);
+    if (j.success) setDone(true); else alert(messaggioDaCorpo(j, t('erroreSalvataggio')));
   };
 
   const toggleOvAllergene = (p: PortataKey, allergene: string) => {
@@ -198,14 +201,14 @@ export function MenuBuilder({ userId, scuolaId }: Props) {
       }),
     });
     const j = await res.json();
-    if (j.success) { setOvData(''); setOvChiuso(false); setOvPortate({}); setOvIng({}); setOvAlg({}); await load(); } else alert(j.error);
+    if (j.success) { setOvData(''); setOvChiuso(false); setOvPortate({}); setOvIng({}); setOvAlg({}); await load(); } else alert(messaggioDaCorpo(j, t('erroreSalvataggio')));
   };
 
   const rimuoviOverride = async (id?: string) => {
     if (!id) return;
     const res = await fetch(`/api/mensa/menu?userId=${userId}&override_id=${id}`, { method: 'DELETE', headers: hdr(userId) });
     const j = await res.json();
-    if (j.success) await load(); else alert(j.error);
+    if (j.success) await load(); else alert(messaggioDaCorpo(j, t('erroreEliminazione')));
   };
 
   return (

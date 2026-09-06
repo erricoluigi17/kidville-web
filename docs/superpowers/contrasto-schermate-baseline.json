@@ -192,18 +192,18 @@
   "rotte": [
     {
       "rotta": "/parent/pagamenti",
-      "nodiMinimi": 12,
-      "normale": 0,
+      "nodiMinimi": 33,
+      "normale": 3,
       "altoContrasto": 0,
       "saltati": {
-        "gradiente": 0,
+        "gradiente": 3,
         "composizione": 0,
         "fondoIgnoto": 0
       },
       "saltatiAlto": {
-        "gradiente": -1,
-        "composizione": -1,
-        "fondoIgnoto": -1
+        "gradiente": 3,
+        "composizione": 0,
+        "fondoIgnoto": 0
       },
       "provaPositiva": {
         "saltato": "gradiente",
@@ -213,18 +213,18 @@
     },
     {
       "rotta": "/teacher",
-      "nodiMinimi": 18,
-      "normale": 0,
-      "altoContrasto": 1,
+      "nodiMinimi": 43,
+      "normale": 5,
+      "altoContrasto": 0,
       "saltati": {
-        "gradiente": 0,
+        "gradiente": 3,
         "composizione": 0,
         "fondoIgnoto": 0
       },
       "saltatiAlto": {
-        "gradiente": -1,
-        "composizione": -1,
-        "fondoIgnoto": -1
+        "gradiente": 3,
+        "composizione": 0,
+        "fondoIgnoto": 0
       },
       "provaPositiva": {
         "saltato": "gradiente",

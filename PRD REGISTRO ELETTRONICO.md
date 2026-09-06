@@ -512,10 +512,27 @@ Sono dichiarati qui perché un difetto scritto non è un difetto nascosto.
   `ariaCopiatoIbanSede` non sono nell'elenco `CONTATORI`, che per costruzione salta le stringhe che
   aprono un blocco `plural`. È lo stesso buco chiuso oggi per il chip di fatturazione, riaperto da
   chiavi nuove: l'elenco è a mano, e a mano va tenuto.
-- **La baseline del crawler va rimisurata** dopo questo giro: `altoContrasto` deve **scendere** su
-  entrambe le rotte mentre `normale` resta dov'è. Se il messaggio «le due modalità danno lo stesso
-  identico esito» comparisse ancora, le regole nuove non stanno arrivando a quelle superfici, e va
-  guardato **prima** di toccare qualunque numero.
+- ~~La baseline del crawler va rimisurata~~ — **fatto, run 34012296047**, e i numeri dicono tre cose:
+
+  | | prima (guscio) | ora (pagina vera) |
+  |---|---|---|
+  | `/parent/pagamenti` — nodi | 12 | **33** |
+  | `/parent/pagamenti` — normale · Alto Contrasto | 0 · 0 | **3 · 0** |
+  | `/teacher` — nodi | 18 | **43** |
+  | `/teacher` — normale · Alto Contrasto | 0 · 1 | **5 · 0** |
+
+  1. Il messaggio «le due modalità danno lo stesso identico esito» **è sparito** da entrambe: il
+     cookie adesso fa qualcosa.
+  2. **`altoContrasto` è 0 su entrambe le rotte.** Nella modalità che esiste apposta per chi non
+     legge un grigio su bianco, quelle due schermate non hanno più una sola coppia sotto soglia.
+  3. In modalità **normale** restano 3 e 5 fallimenti, ed è **debito dichiarato, non nuovo**: due
+     sono `text-kidville-muted` a 3,80:1 — sotto AA *per scelta documentata*, perché fra `hint` e
+     `sub` l'intervallo utile è vuoto — e gli altri sono `error` a 4,23:1, `success` a 2,89:1 su
+     fondo soft, `info` a 4,20:1, più le due tinte della home docente. Erano lì da sempre: la
+     differenza è che ora **si vedono**, e il numero può solo scendere.
+
+  La prova positiva ha fatto il suo mestiere: `saltati.gradiente` è **3** su entrambe, contro il
+  minimo di 2 preteso. Se fosse rimasto 0, il verde sarebbe stato cieco e il file lo avrebbe detto.
 
 ### Cosa NON è stato fatto, e perché
 

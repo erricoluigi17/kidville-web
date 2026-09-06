@@ -99,6 +99,125 @@
 
 ---
 
+## ♿ Changelog — In Alto Contrasto il testo diventava bianco su bianco, e nessuno lo guardava — 2026-09-06 (branch `fix/alto-contrasto-news-e-tinte`)
+
+**Segnalazione**: il rilievo lasciato aperto dal rilascio della PR #117 — «`.kv-news-onbody` è
+scritto contro un fondo nero che non c'è: 1,11:1 su quattro rotte delle news». Cercandone
+l'ampiezza invece di correggerlo com'era scritto, sotto è emersa la radice.
+
+### Il censimento, prima della correzione
+
+Su **57 dichiarazioni `color:`** sotto `[data-contrast="high"]` in `globals.css`, **27 posano un
+inchiostro chiaro**. Ventiquattro stanno su una superficie che in Alto Contrasto diventa davvero
+nera — verificate una per una in Chromium: sono corrette e vanno lasciate stare. Tre no.
+
+| | rapporto | in luce normale |
+|---|---|---|
+| `.kv-news-onbody`, testo | **1,11:1** | 5,82:1 |
+| `.kv-news-onbody`, link e titoli | **1,15:1** | 5,86:1 |
+| **inchiostro ereditato dal `body`** | **1,00:1** | 6,51:1 |
+
+In tutti e tre i casi **l'Alto Contrasto peggiora la pagina** rispetto alla luce normale. Non è una
+modalità che non aiuta: è una modalità che cancella.
+
+### La radice: l'inchiostro si ribalta, la carta no
+
+In Alto Contrasto l'inchiostro del `body` diventa `#FFFFFF` e viene **ereditato** da ogni elemento
+di testo che non dichiari una classe `text-*`. Ma la carta sotto resta chiara: i tre gusci del
+cruscotto sono `min-h-screen bg-kidville-cream` — `#FEF1E4`, hex inlinato da `@theme inline`, che
+nessuna ridefinizione di token può toccare — e le card sono bianche. Il nero del `body` sta dietro
+e non si vede quasi mai.
+
+Tre conseguenze, tracciate dal CSS fino al JSX e misurate:
+
+- **`/teacher/primaria/[sectionId]/registro`** — nella modale «Firma lezione» il `<select>` della
+  classe **non mostra nessuna opzione**: la lezione si firma alla cieca, e una supplenza finisce
+  sulla classe sbagliata.
+- **`/teacher/primaria/[sectionId]/scrutinio`** (`:364` e `:372`) — le due `<textarea>` del
+  **giudizio di comportamento** e del **giudizio globale** di un bambino: il docente scrive senza
+  vedere quello che scrive.
+- **`/admin/merchandise`** — nella riga «Nuovo ordine» spariscono il numero della quantità e le
+  icone dei bottoni «Diminuisci»/«Aumenta», disegnate con `currentColor`: restano due cerchi vuoti.
+
+Il preflight di Tailwind mette `color: inherit` su `input`, `select` e `textarea`: **ogni controllo
+di modulo che non dichiara un inchiostro è esposto**.
+
+### Due trappole, e nessuna delle due era prevista
+
+**La riga che sembra colpevole è ridondante.** `[data-contrast="high"] body { color:#FFFFFF }`
+sembra la radice — è persino la regola più antica del blocco. Toglierla non cambia niente: il
+bianco arriva da `body { color: var(--color-kidville-green) }`, che legge il token rimappato.
+Chi provasse solo quella concluderebbe che il difetto non esiste. C'è ora un test **verde** che lo
+documenta, perché non ci ricaschi nessuno.
+
+**La correzione ovvia sposta il guasto.** Portare a nero l'inchiostro ereditato rende nero-su-nero
+il testo nelle superfici che in Alto Contrasto sono davvero scure: dentro `.kv-appbar` un testo
+nudo passerebbe da 21:1 a **1:1**. Cinque superfici dipingevano il proprio nero **senza dichiarare
+l'inchiostro** — ce l'avevano bianco *per eredità*, cioè per caso. Ora lo dichiarano.
+
+### Cosa cambia
+
+- `[data-contrast="high"] [data-kv-shell], [data-contrast="high"] .kv-public { color:#000000 }`, in
+  **testa** al blocco: così le rimappature per-superficie continuano a vincere. 1,00:1 → **21:1**
+  sul bianco, 1,11:1 → **18,92:1** sulla crema.
+- `color:#FFFFFF` accanto al proprio nero sulle cinque superfici scoperte.
+- `.kv-news-onbody`: testo a nero, comandi e titoli a `#004A42` (**9,19:1**), e **sottolineatura**
+  sui comandi — in Alto Contrasto il colore da solo non può più dire «questo si preme» (WCAG 1.4.1;
+  fra link e testo corrono 2,06:1).
+- `kv-public` su `/cancellazione-account/conferma`, che era rimasta **fuori da tutto**: né
+  `data-kv-shell` né `kv-public`, quindi su quella pagina — un adempimento GDPR, pubblico —
+  l'Alto Contrasto non ribaltava proprio nulla. La sua pagina sorella la classe ce l'aveva.
+
+### La rete, che è la parte che dura
+
+Il lock è stato scritto **prima** della correzione, e la ragione è misurata: `kv-news-onbody`
+compariva **zero volte** in `__tests__/` e in `e2e/`, con 509 test di accessibilità verdi. Il
+difetto non era verde perché non c'era: era verde perché nessuno lo guardava.
+
+- `__tests__/a11y/alto-contrasto-inchiostro-ereditato.test.tsx` — 66 prove. Il censimento delle
+  superfici **si legge dal CSS** (26 trovate), non si elenca a mano: un elenco a mano invecchia
+  alla prima superficie nuova. Rimettendo il `globals.css` vecchio fallisce in **20 punti**, non
+  nei 13 di partenza — gli adeguamenti non hanno allentato nulla, lo hanno reso più sensibile.
+- `__tests__/architecture/guscio-chiaro-dichiara-la-superficie.test.ts` — 19 prove. Ogni guscio a
+  fondo chiaro deve dichiarare la propria superficie, o stare in allowlist **con la ragione
+  scritta**. «Chiaro» non è un elenco: è *l'inchiostro ereditato non regge 4,5:1 su questo fondo*,
+  calcolato dai token. Così `bg-kidville-green` resta fuori **gratis** — il bianco lì vale 6,51:1, e
+  dargli `kv-public` lo porterebbe a 3,23:1, cioè sarebbe lo scambio di difetto al contrario.
+  Una sola deroga: `/auth/nuova-password`, che resta chiaro per scelta già dichiarata e i cui
+  inchiostri sono lockati a ≥5:1 in entrambe le modalità.
+- La sorveglianza dei **riempimenti scuri** che vengono da utility Tailwind, che il censimento
+  delle regole non poteva vedere: 13 utility sotto AA col nero, 289 elementi che le usano, 48
+  esposti, uno scanner che legge il **codice** con il compilatore TypeScript.
+
+**Undici mutazioni** per provare che il lock morde, e alla sesta è arrivata la lezione: togliendo
+una regola appena aggiunta il lock **restava verde** — era nata una regola che nessuno sorvegliava,
+lo stesso meccanismo che in questo repository ha già prodotto due difetti gravi. Chiusa e
+rimisurata. *Scrivere la regola non basta: va rotta.*
+
+### Numeri corretti perché erano falsi appena scritti
+
+Vale la pena registrarlo, perché è la stessa disciplina che questo file chiede altrove.
+«Le altre 21 superfici lo dichiaravano già»: contate, sono **18**. «Le uniche due chiavi ICU fuori
+dal lock dei plurali»: le chiavi che aprono un blocco `plural` sono **115** e l'elenco ne sorveglia
+**17** — 99 restano fuori. E le utility scure non erano otto: sono **tredici**.
+
+### Rilievi aperti
+
+- **`<option className="bg-kidville-ink">`** dentro un `<select className="text-kidville-green">`
+  (`PropertiesPanel.tsx:342` e `:351`): **1,81:1**, identico nelle due modalità. Preesistente, non
+  causato né peggiorato qui. Il rimedio da una riga sarebbe `text-white` sulle due `<option>`, ma su
+  iOS e Android la tendina la disegna il sistema operativo e la classe non arriva: è una decisione
+  sul `<select>` nativo, non una correzione meccanica.
+- **L'interruttore della biografia** su `/parent/profilo` vale **1,23:1 in entrambe le modalità**
+  (WCAG 1.4.11 chiede 3:1): da spento, quell'interruttore non esiste. Non è un problema di Alto
+  Contrasto — è un problema e basta.
+- I **99 contatori ICU** fuori dall'elenco a mano del lock dei plurali: chiuderli richiede di
+  derivare la variabile dall'ICU, ed è uno step a sé.
+- `contrasto-cascata.test.tsx` non importa ancora il motore condiviso `cascata.ts`: due copie,
+  tenute oneste da una taratura incrociata sul difetto storico a 1,28:1.
+
+---
+
 ## ♿ Rilievo aperto — l'Alto Contrasto non funziona su 7 rotte su 9 (misurato il 2026-09-04/05)
 
 Il crawler di contrasto, ai suoi primi tre giri di CI (PR #116), ha misurato le nove rotte

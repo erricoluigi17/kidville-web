@@ -27,7 +27,29 @@ export default async function ConfermaCancellazionePage({
   const parametriPresenti = !!(sp.email && sp.code && sp.expiry && sp.ticket)
 
   return (
-    <main className="min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
+    /*
+     * `kv-public` NON è decorazione, ed è la classe che questa pagina si era persa
+     * per strada mentre la sorella (`/cancellazione-account`) ce l'aveva.
+     *
+     * In Alto Contrasto l'inchiostro del `body` è #FFFFFF e si EREDITA, ma la carta
+     * non si ribalta con lui: `bg-kidville-cream` e `bg-white` sono utility con
+     * l'hex INLINATO da `@theme inline`, che il rimappaggio dei token dentro
+     * `[data-contrast="high"]` non tocca. Senza marcatore succedevano due cose
+     * insieme, e la seconda è quella che si paga dopo:
+     *   · il ribaltamento non arrivava affatto — il link «torna indietro» restava
+     *     #006A5F sul crema (5,86:1) e l'h1 #006A5F sul bianco (6,51:1), cioè i
+     *     colori della luce normale: chi accende l'Alto Contrasto non otteneva
+     *     niente, su un adempimento GDPR che si apre da un'email;
+     *   · `<main>` e l'`<article>` dipingono carta chiara senza dichiarare
+     *     inchiostro, quindi il PROSSIMO nodo di testo nudo — o il primo `<input>`,
+     *     che il preflight di Tailwind lascia a `color: inherit` — sarebbe caduto a
+     *     1,11:1 sul crema e 1,00:1 sul bianco. Latente, invisibile a una misura
+     *     fatta oggi.
+     * Con `kv-public`: carta bianca, inchiostro nero pieno (21:1), e il bottone di
+     * conferma diventa la coppia nero/#FFE500 (16,46:1) come sulle altre pubbliche.
+     * Lock: `__tests__/architecture/guscio-chiaro-dichiara-la-superficie.test.ts`.
+     */
+    <main className="kv-public min-h-screen bg-kidville-cream px-4 py-10 sm:py-12">
       <div className="mx-auto w-full max-w-3xl">
         <div className="flex items-center justify-between gap-3">
           <Link

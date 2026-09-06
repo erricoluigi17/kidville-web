@@ -448,19 +448,27 @@ describe('ogni onConflict ha un arbitro non parziale', () => {
 
   it('nessuna chiave si appoggia a un indice che tratta i NULL come distinti', () => {
     // ⟵ IL RAMO CHE NON DÀ NESSUN ERRORE, ed è per questo che ha una prova sua. Qui l'indice
-    // c'è, `ON CONFLICT` lo infersce, la chiamata risponde 200 e in `app_log` non compare niente:
+    // c'è, `ON CONFLICT` lo infersce, la chiamata RIESCE e in `app_log` non compare niente:
     // ma se la riga porta un NULL in una colonna chiave, per Postgres non è uguale a nessuna
     // riga esistente, quindi l'upsert INSERISCE invece di aggiornare. Il primo salvataggio
     // sembra funzionare, il secondo raddoppia la riga, e ci si accorge del guasto mesi dopo.
     //
     // Dire «42P10» anche qui, come faceva il messaggio unico fino al 2026-09-06, manda chi legge
     // a cercare in `app_log` un codice che non c'è, e proprio sul caso più difficile da vedere.
+    //
+    // E NON SI SCRIVE UN NUMERO DI STATO. Fino al 2026-09-06 qui c'era «risponde 200», e non era
+    // vero per nessuna delle chiamate di cui questa prova parla: `mensa/menu/route.ts` non
+    // concatena `.select()`, quindi PostgREST risponde `return=minimal` → 204; `primaria/registro`
+    // e `register/lessons` concatenano `.select().single()` → 201. Un messaggio di lock che nomina
+    // uno stato sbagliato manda a cercare nel posto sbagliato: «la chiamata riesce e in `app_log`
+    // non compare niente» dice la stessa cosa ed è vero per entrambe le forme.
     const ingannevoli = senzaArbitro().filter(quasiArbitroPerINull)
     expect(
       ingannevoli,
-      `Su queste chiavi un indice inferibile C'È — non arriva nessun 42P10, la chiamata risponde ` +
-      `200 — ma ha una colonna che può essere NULL e NON è \`NULLS NOT DISTINCT\`: quando quella ` +
-      `colonna è NULL l'upsert non trova mai la riga e ne inserisce una nuova. Il sintomo non è ` +
+      `Su queste chiavi un indice inferibile C'È — non arriva nessun 42P10, la chiamata riesce e ` +
+      `in \`app_log\` non compare niente — ma ha una colonna che può essere NULL e NON è ` +
+      `\`NULLS NOT DISTINCT\`: quando quella colonna è NULL l'upsert non trova mai la riga e ne ` +
+      `inserisce una nuova. Il sintomo non è ` +
       `un errore: sono DUPLICATI SILENZIOSI, visibili solo dal secondo salvataggio in poi. Lo si ` +
       `riconosce nella fotografia dalla voce con \`ha_colonna_nullable: true\` e ` +
       `\`nulls_not_distinct: false\` sulle stesse colonne. Il rimedio è ricreare l'indice con ` +

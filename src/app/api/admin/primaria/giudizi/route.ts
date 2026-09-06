@@ -7,6 +7,7 @@ import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { vincoloConflittoAssente } from '@/lib/db/vincolo-conflitto'
 
 // ============================================================
 // Configurazione giudizi: scala sintetica + template descrittivi.
@@ -165,7 +166,20 @@ export const POST = withRoute('admin/primaria/giudizi:POST', async (request: Nex
         .upsert({ scuola_id: sede, dimensione, valore, frammento }, { onConflict: 'scuola_id,dimensione,valore' })
         .select()
         .single()
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+      if (error) {
+        // PostgREST non lancia: senza questo ramo il motivo vero non arriverebbe mai nel log.
+        // `42P10` qui significa che l'indice arbitro non c'è, cioè che una migrazione non è
+        // arrivata: è un'informazione per chi legge i log, non per chi legge lo schermo — fino
+        // al 2026-09-06 usciva invece a schermo, in inglese e col nome di un meccanismo interno.
+        logErrore(
+          { operazione: 'admin/primaria/giudizi:POST:template', stato: 500, evento: vincoloConflittoAssente(error) ? 'schema' : 'db' },
+          error,
+        )
+        return NextResponse.json(
+          { error: 'Non è stato possibile salvare il frammento di giudizio. Riprova; se l’errore resta, segnalalo.', codice: 'GIUDIZIO_NON_SALVATO' },
+          { status: 500 },
+        )
+      }
       return NextResponse.json({ success: true, data }, { status: 201 })
     }
 

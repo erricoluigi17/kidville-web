@@ -137,9 +137,18 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * (`db`) dall'indice che non c'è (`schema`, cioè `42P10`: una migrazione non arrivata). Il file
  * scende da 9 a 7: restano i quattro rifiuti del GET/DELETE e i tre `Internal Server Error` dei
  * `catch`. `MAX_FILE` non si muove: la voce resta in elenco.
+ *
+ * 2026-09-06 · −1 (1431 → 1430). `admin/primaria/giudizi:POST` (ramo `template`) è la STESSA
+ * trappola della mensa su una strada dove nessuno l'ha ancora pestata: `giudizio_template` ha
+ * nove righe, tutte globali, e il primo che salverà un frammento per una sede riceverà lo
+ * stesso `42P10`, con lo stesso inglese a schermo. Convertita quella sola risposta —
+ * `GIUDIZIO_NON_SALVATO`, un `logErrore` con l'`evento` che separa `db` da `schema` — e il file
+ * scende da 10 a 9. Le altre due `error.message` dello stesso file (rami `scala` e
+ * `scala-rename`) restano: sono debito già in elenco, e convertirle qui allargherebbe lo scopo
+ * di un lavoro che parla di `ON CONFLICT`. `MAX_FILE` non si muove: la voce resta in elenco.
  */
 const MAX_FILE = 278;
-const MAX_OCCORRENZE = 1431;
+const MAX_OCCORRENZE = 1430;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

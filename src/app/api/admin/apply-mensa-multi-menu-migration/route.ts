@@ -46,6 +46,13 @@ const steps_sql = [
     sql: `ALTER TABLE public.mensa_menu_override
       ADD COLUMN IF NOT EXISTS menu_config_id UUID REFERENCES public.mensa_menu_config(id) ON DELETE SET NULL`,
   },
+  // ⚠️ QUESTO ELENCO È STORIA, NON LO SCHEMA DI OGGI (2026-09-06).
+  // I quattro indici PARZIALI creati qui sotto (`uidx_mensa_rot_legacy`, `uidx_mensa_rot_menu`,
+  // `uidx_mensa_ovr_legacy`, `uidx_mensa_ovr_menu`) NON ESISTONO PIÙ: li ha sostituiti un solo
+  // indice non parziale per tabella, con `NULLS NOT DISTINCT`, perché `ON CONFLICT (colonne)` non
+  // sa inferire un indice parziale e il salvataggio del menu falliva con `42P10` in ogni sede.
+  // Vedi le migrazioni `*_mensa_menu_chiave_conflitto_unica.sql`. Questa route risponde 404 fuori
+  // dai test (`sealDangerous`): rieseguirla ricreerebbe indici che non vogliamo più.
   {
     label: 'DROP old unique constraint on rotazione',
     sql: `ALTER TABLE public.mensa_menu_rotazione

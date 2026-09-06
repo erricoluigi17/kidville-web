@@ -707,3 +707,106 @@ describe('MovimentoDialog — il chip di stato sta sull’occhiello', () => {
     expect(ricevuta.className, 'i comandi restano pillole: la differenza di forma è il segnale').toContain('rounded-pill');
   });
 });
+
+/**
+ * ─── DOPO L'EMISSIONE IL POPUP CONTINUAVA A DIRE «DA FATTURARE» (2026-09-06) ──
+ *
+ * Misurato dal collaudo frontend, in jsdom, col `FatturaButton` vero: appena
+ * emessa la fattura il popup mostrava ancora il chip giallo «Da fatturare», la
+ * frase «la fattura non è ancora stata emessa» e il pulsante dipinto da CTA —
+ * a due centimetri dal badge «In attesa SDI» che il pulsante stesso aveva appena
+ * mostrato. «GET dettaglio pagamento dopo emissione: 1»: mai riletto.
+ *
+ * CAUSA RADICE. `pagamentoStato`/`pagamentoFattura` sono stato LOCALE del dialog,
+ * caricati una volta sola al montaggio; `onEmessa` era cablato dritto a `onDone`,
+ * che ricarica la LISTA — e la lista non riscrive `selezionato`, cioè la prop da
+ * cui il popup è nato. Il popup non aveva nessuna via per rileggere ciò che aveva
+ * appena cambiato.
+ *
+ * ⚠️ QUESTE DUE PROVE VANNO IN COPPIA. La prima pretende la SECONDA lettura dopo
+ * l'emissione; la seconda pretende che all'apertura ne resti UNA sola. Da sola, la
+ * prima si accontenterebbe anche di un effetto che rilegge a ogni render — cioè di
+ * un difetto peggiore di quello che chiude.
+ */
+describe('MovimentoDialog — dopo l’emissione il popup rilegge sé stesso', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; });
+
+  const confermato5: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
+
+  /**
+   * Il server visto dal popup: conta le letture del dettaglio e cambia risposta
+   * quando l'emissione è avvenuta — che è ciò che succede davvero, perché la POST
+   * della fattura scrive `pagamenti.fattura_stato` prima di chiamare `onEmessa`.
+   */
+  const serverDelPagamento = () => {
+    const banco = { letture: 0, fattura: 'non_richiesta' };
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/pg1')) {
+        banco.letture += 1;
+        return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato', fattura_stato: banco.fattura } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+    return { banco, fetchMock };
+  };
+
+  it('emessa la fattura, il chip passa a «In attesa SDI» e la frase «da emettere» sparisce', async () => {
+    const { banco, fetchMock } = serverDelPagamento();
+    vi.stubGlobal('fetch', fetchMock);
+    const onDone = vi.fn();
+    render(<MovimentoDialog movimento={confermato5} aperti={aperti} userId="u1" onClose={() => {}} onDone={onDone} returnFocusRef={ref()} />);
+
+    // Punto di partenza: saldato, nessuna fattura → chip giallo e invito ad agire.
+    expect(await screen.findByText('Da fatturare')).toBeInTheDocument();
+    expect(screen.getByText(/non è ancora stata emessa/i)).toBeInTheDocument();
+
+    // L'emissione riesce: il server ora risponde «in attesa SDI».
+    banco.fattura = 'in_attesa';
+    fireEvent.click(screen.getByTestId('fattura-button'));
+
+    await waitFor(() => expect(
+      banco.letture,
+      'dopo l’emissione il popup deve rileggere il dettaglio del pagamento: senza, dice ancora «Da fatturare»',
+    ).toBe(2));
+
+    await waitFor(() => expect(screen.getByText('In attesa SDI')).toBeInTheDocument());
+    expect(screen.queryByText('Da fatturare'), 'lo stato non può dirsi in due modi opposti').toBeNull();
+    expect(screen.queryByText(/non è ancora stata emessa/i)).toBeNull();
+    expect(screen.getByText(/si attende la conferma/i)).toBeInTheDocument();
+    // …e la lista continua a ricaricarsi come prima: la rilettura si AGGIUNGE.
+    expect(onDone).toHaveBeenCalled();
+  });
+
+  it('«in attesa SDI» toglie il pulsante-CTA: lo stato resta detto UNA volta', async () => {
+    const { banco, fetchMock } = serverDelPagamento();
+    vi.stubGlobal('fetch', fetchMock);
+    const { container } = render(<MovimentoDialog movimento={confermato5} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    // `waitFor` ritenta solo se il corpo LANCIA: un `querySelector` che torna
+    // `null` passerebbe al primo giro. L'attesa sta nell'asserzione.
+    await waitFor(() => expect(container.querySelector('.kv-recon-azione-fattura')).not.toBeNull());
+    expect((container.querySelector('.kv-recon-azione-fattura') as HTMLElement).getAttribute('data-tono')).toBe('da_fatturare');
+
+    banco.fattura = 'in_attesa';
+    fireEvent.click(screen.getByTestId('fattura-button'));
+
+    await waitFor(() => expect(
+      container.querySelector('.kv-recon-azione-fattura'),
+      'su «in attesa» il pulsante non esiste: restava un CTA giallo accanto al badge che dice il contrario',
+    ).toBeNull());
+    expect(screen.getAllByText('In attesa SDI')).toHaveLength(1);
+  });
+
+  it('aprire il popup costa UNA lettura sola: la rilettura è dell’emissione, non dell’apertura', async () => {
+    const { banco, fetchMock } = serverDelPagamento();
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MovimentoDialog movimento={confermato5} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByTestId('fattura-button');
+    // Si aspetta un giro di eventi in più: un effetto che rilegge a ogni render
+    // qui salirebbe a 2 anche senza che nessuno prema niente.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(banco.letture, 'il dettaglio si legge una volta al montaggio').toBe(1);
+  });
+});

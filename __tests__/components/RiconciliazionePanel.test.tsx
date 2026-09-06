@@ -919,3 +919,127 @@ describe('RiconciliazionePanel — un errore non lascia in piedi il precedente',
     expect(screen.getByRole('alert').textContent).not.toContain('Errore di rete');
   });
 });
+
+/**
+ * ─── E IL TERZO STATO NON SI AZZERAVA MAI (2026-09-06) ───────────────────────
+ *
+ * Il describe qui sopra ha rimesso in riga DUE dei tre stati d'errore — `rifiuto`
+ * ed `erroreRete` — e ne ha dimostrato l'esclusione reciproca. Il terzo, `error`,
+ * è rimasto fuori: lo scrive l'IMPORT dell'estratto conto e non lo azzera nessuno
+ * dei rami di `load`. Siccome la fascia sceglie `error ?? messaggioRifiuto ??
+ * «errore di rete»`, `error` sta in TESTA alla catena: finché è appeso, gli altri
+ * due non si vedono nemmeno se il guasto è cambiato.
+ *
+ * Misurato dal collaudo frontend: 422 sull'import → fascia «Colonne non
+ * riconosciute nel file» → cambio filtro RIUSCITO → la fascia resta → rete giù →
+ * la fascia parla ancora del file. Cioè la diagnosi sbagliata due volte di fila,
+ * su una schermata la cui unica ragione d'essere è non far saltare una fattura.
+ *
+ * Le prove sono scritte sui MESSAGGI VISIBILI, non sulla forma dello stato: la
+ * correzione unifica i tre stati in uno solo, e un test che guardasse i tre
+ * `useState` sarebbe rosso per la rifattorizzazione invece che per il difetto.
+ */
+describe('RiconciliazionePanel — l’errore dell’import non sopravvive a ciò che viene dopo', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  /** Finto server pilotabile: la GET dei movimenti obbedisce a `modo`, la POST rifiuta sempre. */
+  const fetchPilotato = (stato: { modo: 'ok' | 'rete' }) =>
+    vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === 'POST') {
+        return { ok: false, status: 422, json: async () => ({ error: 'Colonne non riconosciute nel file' }) };
+      }
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        if (stato.modo === 'rete') throw new TypeError('Failed to fetch');
+        return { ok: true, status: 200, json: async () => ({ success: true, data: movimenti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+
+  /** Carica un `.csv` qualunque: la POST risponde 422 e la fascia si accende. */
+  const importaEFallisci = async (container: HTMLElement) => {
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['data;importo\n'], 'Conti.csv', { type: 'text/csv' })] } });
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Colonne non riconosciute'));
+  };
+
+  it('import fallito e POI un filtro RIUSCITO: la fascia si spegne, non resta appesa', async () => {
+    vi.stubGlobal('fetch', fetchPilotato({ modo: 'ok' }));
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+    await importaEFallisci(container);
+
+    // Il filtro fa il suo GET e VA A BUON FINE: non è rimasto niente da segnalare.
+    fireEvent.click(screen.getByRole('button', { name: 'Confermati' }));
+
+    await waitFor(() => expect(
+      screen.queryByRole('alert'),
+      'un caricamento riuscito azzera la fascia: l’errore dell’import è di due schermate fa',
+    ).toBeNull());
+  });
+
+  it('import fallito e POI la rete giù: la fascia dice la RETE, non ancora il file', async () => {
+    const stato: { modo: 'ok' | 'rete' } = { modo: 'ok' };
+    vi.stubGlobal('fetch', fetchPilotato(stato));
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+    await importaEFallisci(container);
+
+    stato.modo = 'rete';
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Errore di rete'));
+    expect(
+      screen.getByRole('alert').textContent,
+      'il 422 dell’import copriva la caduta della rete: due diagnosi opposte, mostrata quella sbagliata',
+    ).not.toContain('Colonne non riconosciute');
+  });
+
+  it('import fallito e POI un rifiuto del server: si legge il rifiuto, non il file', async () => {
+    // La controprova del terzo incrocio: `error` batteva anche `messaggioRifiuto`,
+    // che è l'unico dei tre a dire quale filtro correggere.
+    const stato = { rifiuta: false };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === 'POST') {
+        return { ok: false, status: 422, json: async () => ({ error: 'Colonne non riconosciute nel file' }) };
+      }
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return stato.rifiuta
+          ? { ok: false, status: 400, json: async () => ({ error: 'Filtro non riconosciuto' }) }
+          : { ok: true, status: 200, json: async () => ({ success: true, data: movimenti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    }));
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+    await importaEFallisci(container);
+
+    stato.rifiuta = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Filtro non riconosciuto'));
+    expect(screen.getByRole('alert').textContent).not.toContain('Colonne non riconosciute');
+  });
+
+  it('e all’inverso: un errore dell’import copre il rifiuto precedente (una fascia, l’ultimo guasto)', async () => {
+    // Il verso opposto vale come regola, non come effetto collaterale: la fascia è
+    // UNA, e dice l'ULTIMO guasto. Senza questa prova, «azzerare anche il terzo»
+    // potrebbe diventare «il terzo non si mostra più».
+    const stato = { rifiuta: true };
+    vi.stubGlobal('fetch', vi.fn(async (url: string, opts?: { method?: string }) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione') && opts?.method === 'POST') {
+        return { ok: false, status: 422, json: async () => ({ error: 'Colonne non riconosciute nel file' }) };
+      }
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return stato.rifiuta
+          ? { ok: false, status: 400, json: async () => ({ error: 'Filtro non riconosciuto' }) }
+          : { ok: true, status: 200, json: async () => ({ success: true, data: movimenti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    }));
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Filtro non riconosciuto'));
+
+    await importaEFallisci(container);
+    expect(screen.getByRole('alert').textContent).not.toContain('Filtro non riconosciuto');
+  });
+});

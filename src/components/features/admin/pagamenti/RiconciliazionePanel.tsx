@@ -56,6 +56,51 @@ const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u
  */
 const hdrFile = (u: string) => ({ 'x-user-id': u });
 
+/**
+ * ⚠️ UNA FASCIA SOLA ⇒ UNO STATO SOLO. I TRE ERRORI NON POSSONO PIÙ DIVERGERE.
+ *
+ * A schermo il guasto si dice in un posto: il `<p role="alert">` qui sotto. Dietro
+ * però ce n'erano TRE, e indipendenti — `error` (l'import dell'estratto conto),
+ * `rifiuto` (il server ha risposto e ha detto di no), `erroreRete` (la risposta
+ * non è arrivata) — con la fascia che sceglieva `error ?? messaggioRifiuto ??
+ * «errore di rete»`. Tre sorgenti, una gerarchia implicita e nessuna regola che le
+ * rendesse mutuamente esclusive: ogni ramo doveva ricordarsi di spegnere gli altri
+ * DUE, e bastava dimenticarne uno perché la fascia mostrasse la diagnosi sbagliata.
+ *
+ * È già successo due volte. Il 2026-09-05 fu `rifiuto` a sopravvivere a un errore
+ * di rete («cambia il filtro» invece di «riprova fra un attimo») e la correzione
+ * aggiunse gli azzeramenti incrociati — ma solo fra quei due. Il 2026-09-06 il
+ * collaudo ha misurato il terzo: un 422 sull'import restava appeso a un filtro
+ * andato a buon fine e poi COPRIVA la caduta della rete, perché `error` sta in
+ * testa alla catena.
+ *
+ * Qui i tre diventano un valore solo: assegnarne uno cancella l'altro per
+ * costruzione, non per disciplina di chi scrive il prossimo ramo. I MESSAGGI
+ * VISIBILI non cambiano — `testoGuasto` rende esattamente le stesse tre frasi.
+ *
+ * La traduzione resta FUORI da `load`, ed è la ragione per cui l'import porta un
+ * testo già tradotto e gli altri due no: `t` di next-intl non è garantito stabile
+ * fra un render e l'altro, e chiamarlo dentro `load` lo rimetterebbe fra le
+ * dipendenze del `useCallback` — 1.470 GET in 300 ms, misurati. L'import invece
+ * nasce in un gestore di eventi, dove `t` si può usare senza legare niente.
+ */
+type Guasto =
+  /** L'import dell'estratto conto è fallito: testo già tradotto (nasce in un handler). */
+  | { tipo: 'import'; testo: string }
+  /** Il server ha RIFIUTATO il GET: si conserva il corpo, la lingua la sceglie il JSX. */
+  | { tipo: 'rifiuto'; corpo: { error?: unknown; codice?: unknown } }
+  /** La risposta non è arrivata affatto. */
+  | { tipo: 'rete' };
+
+/**
+ * Il guasto di rete è senza dati, quindi è una COSTANTE e non un oggetto nuovo a
+ * ogni giro: due `setGuasto` con lo stesso riferimento non fanno ri-renderizzare
+ * (React fa bail-out), esattamente come faceva `setErroreRete(true)` sul flag di
+ * prima. Un oggetto letterale qui dentro rimetterebbe in circolo un render per
+ * ogni tentativo fallito, cioè il primo anello del ciclo che quel flag chiudeva.
+ */
+const GUASTO_RETE: Guasto = { tipo: 'rete' };
+
 /** Pill dei filtri (stato e fatturazione): stessa pelle, un solo posto. */
 const PILL_FILTRO = 'rounded-pill px-3 py-1.5 font-barlow text-[12px] font-extrabold uppercase tracking-[0.03em] transition-colors';
 const PILL_FILTRO_ON = 'bg-kidville-green text-kidville-white';
@@ -94,36 +139,21 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [esito, setEsito] = useState<EsitoImport | null>(null);
-  const [error, setError] = useState<string | null>(null);
   /**
-   * ⚠️ L'ERRORE DI RETE DEI MOVIMENTI È UN FLAG, NON UNA STRINGA — e non è
-   * pignoleria: è ciò che ferma un ciclo di richieste senza fine.
+   * IL GUASTO IN CORSO — uno solo, di uno dei tre tipi (v. `Guasto` qui sopra).
    *
-   * `load` finiva con `setError(t('reconErroreReteMovimenti'))`, quindi `t`
-   * doveva stare fra le sue dipendenze. Ma `t` di next-intl **non è garantito
-   * stabile fra un render e l'altro**: quando cambia identità, `load` cambia,
-   * l'effetto rigira, il `finally` fa `setLoading(false)`, si ri-renderizza, e
-   * si ricomincia. Misurato sul banco di prova (dove `useTranslations` è un mock
-   * che ricrea `t` ogni volta): **1.470 GET in 300 ms, senza che nessuno
-   * cliccasse niente**. Nessun test se n'era mai accorto, perché nessuno contava
-   * le richieste — si guardava solo che ce ne fosse almeno una.
+   * Il tipo `rete` è un caso senza testo e il tipo `rifiuto` conserva il CORPO
+   * grezzo invece della frase già tradotta: `messaggioDaCorpo` vuole un `fallback`
+   * tradotto, e chiamare `t` dentro `load` lo rimetterebbe fra le dipendenze del
+   * `useCallback` — **1.470 GET in 300 ms**, misurati sul banco di prova, dove
+   * `useTranslations` ricrea `t` a ogni render. La lingua la sceglie il JSX, che
+   * si ri-renderizza da sé.
    *
-   * Il rimedio è togliere la traduzione dal caricamento: `load` alza un flag, il
-   * testo lo sceglie il JSX. Così `load` dipende solo dai suoi veri ingressi.
+   * Fino al 2026-09-05 un `success: false` non alzava NIENTE: né messaggio né log.
+   * Un 400 sul sottofiltro — cioè un filtro che non ha filtrato — si vedeva come
+   * una lista qualunque.
    */
-  const [erroreRete, setErroreRete] = useState(false);
-  /**
-   * IL CORPO del rifiuto, non il suo testo già tradotto — per la stessa ragione
-   * per cui `erroreRete` è un flag: `messaggioDaCorpo` vuole un `fallback`
-   * tradotto, e chiamare `t` dentro `load` rimetterebbe `t` fra le dipendenze
-   * del `useCallback` (1.470 GET in 300 ms, misurati). Qui si conserva ciò che
-   * il server ha detto; la lingua la sceglie il JSX, che si ri-renderizza da sé.
-   *
-   * Fino a oggi un `success: false` non alzava NIENTE: né errore né log. Un 400
-   * sul sottofiltro — cioè un filtro che non ha filtrato — si vedeva come una
-   * lista qualunque.
-   */
-  const [rifiuto, setRifiuto] = useState<{ error?: unknown; codice?: unknown } | null>(null);
+  const [guasto, setGuasto] = useState<Guasto | null>(null);
   /**
    * Il server sa dire se la fatturazione è filtrabile, e quando non lo è manda
    * le righe NON filtrate (`fatturazione_disponibile: false`). Senza questo
@@ -176,30 +206,26 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         // una risposta che l'ha persa (rotte vecchie, cache, ramo «schema assente»).
         setFatturazioneDisponibile(movRes.corpo.fatturazione_disponibile !== false);
         setTroncato(movRes.corpo.troncato === true);
-        setRifiuto(null);
-        setErroreRete(false);
-      } else if (movRes === null) {
-        // ⚠️ I DUE STATI D'ERRORE SI AZZERANO A VICENDA, SEMPRE E IN TUTTI I RAMI.
+        // ⚠️ IL CARICAMENTO RIUSCITO SPEGNE LA FASCIA, QUALUNQUE COSA DICESSE —
+        // COMPRESO L'ERRORE DELL'IMPORT.
         //
-        // `rifiuto` («il server ha detto di no») ed `erroreRete` («la risposta non
-        // è arrivata») descrivono due guasti che non possono valere insieme, e la
-        // fascia sceglie `error ?? messaggioRifiuto ?? «errore di rete»`: se il
-        // rifiuto di prima resta appeso, il terzo ramo non si raggiunge mai e
-        // l'operatore legge «Filtro non riconosciuto» mentre è caduta la rete —
-        // cioè la diagnosi opposta a quella giusta (cambia il filtro, contro
-        // riprova fra un attimo). Ogni giro di `load` ne lascia acceso UNO SOLO.
-        setErroreRete(true);
-        setRifiuto(null);
+        // Era l'unico dei tre a sopravvivere qui, e siccome stava in testa alla
+        // catena della fascia (`error ?? …`) copriva tutto ciò che veniva dopo:
+        // misurato in collaudo, un 422 sull'import restava appeso a un cambio di
+        // filtro andato a buon fine e poi mostrava «Colonne non riconosciute nel
+        // file» mentre era caduta la rete. Adesso non è un azzeramento in più da
+        // ricordarsi: lo stato è UNO, e assegnarlo cancella il precedente.
+        setGuasto(null);
+      } else if (movRes === null) {
+        // La risposta non è arrivata affatto: `GUASTO_RETE` è una costante, quindi
+        // due tentativi falliti di fila non producono un render (v. la sua nota).
+        setGuasto(GUASTO_RETE);
       } else {
-        // Il server ha RIFIUTATO. Prima non succedeva niente: nessun messaggio,
-        // nessun log, e l'operatore restava davanti a una lista che sembrava
-        // filtrata. Il corpo si conserva per il testo, lo `stato` va nel log.
-        setRifiuto((movRes.corpo ?? {}) as { error?: unknown; codice?: unknown });
-        // Il gemello della riga qui sopra. Oggi non cambia nulla di visibile — la
-        // fascia preferisce comunque `messaggioRifiuto` al ripiego di rete — ma
-        // `erroreRete` è letto anche da `vuoto`, e uno stato che sopravvive al
-        // proprio guasto è una trappola per il prossimo che lo legge.
-        setErroreRete(false);
+        // Il server ha RIFIUTATO. Prima del 2026-09-05 non succedeva niente:
+        // nessun messaggio, nessun log, e l'operatore restava davanti a una lista
+        // che sembrava filtrata. Il corpo si conserva per il testo, lo `stato` va
+        // nel log — è un numero, passa la lista bianca di `redact`.
+        setGuasto({ tipo: 'rifiuto', corpo: (movRes.corpo ?? {}) as { error?: unknown; codice?: unknown } });
         logClient({ livello: 'warn', evento: 'fetch', messaggio: 'riconciliazione-movimenti-rifiutati', route: '/admin/pagamenti', stato: movRes.stato });
       }
       if (apRes?.success) {
@@ -253,11 +279,11 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     // comunque. Meglio non partire affatto.
     if (file.size > LIMITE_UPLOAD_BYTE) {
       setEsito(null);
-      setError(t('reconFileTroppoGrande'));
+      setGuasto({ tipo: 'import', testo: t('reconFileTroppoGrande') });
       return;
     }
     setBusy(true);
-    setError(null);
+    setGuasto(null);
     setEsito(null);
     try {
       const corpo = new FormData();
@@ -271,12 +297,12 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         body: corpo,
       });
       const j = await r.json();
-      if (!r.ok || !j.success) { setError(messaggioDaCorpo(j, t('reconErroreImport'))); return; }
+      if (!r.ok || !j.success) { setGuasto({ tipo: 'import', testo: messaggioDaCorpo(j, t('reconErroreImport')) }); return; }
       setEsito(j.data as EsitoImport);
       await load();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `riconciliazione-import-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
-      setError(t('reconErroreLetturaFile'));
+      setGuasto({ tipo: 'import', testo: t('reconErroreLetturaFile') });
     } finally {
       setBusy(false);
     }
@@ -309,11 +335,21 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   }, [userId, onIncassoUnico]);
 
   /**
-   * Il rifiuto del server, tradotto qui e non dentro `load` (vedi `rifiuto`).
-   * `messaggioDaCorpo` è pura: preferisce il codice di catalogo, poi la prosa del
-   * server, e in ultimo il ripiego — che dice cosa fare, non «errore».
+   * IL TESTO DELLA FASCIA, tradotto qui e non dentro `load` (vedi `guasto`).
+   *
+   * Le tre frasi sono le stesse di prima, una per tipo: l'unificazione dello stato
+   * non doveva cambiare una parola di ciò che l'operatore legge — solo impedire che
+   * due di quelle frasi esistano insieme. Su un rifiuto, `messaggioDaCorpo` è pura:
+   * preferisce il codice di catalogo, poi la prosa del server, e in ultimo il
+   * ripiego — che dice cosa fare, non «errore».
    */
-  const messaggioRifiuto = rifiuto ? messaggioDaCorpo(rifiuto, t('reconErroreFiltro')) : null;
+  const testoGuasto = guasto === null
+    ? null
+    : guasto.tipo === 'import'
+      ? guasto.testo
+      : guasto.tipo === 'rifiuto'
+        ? messaggioDaCorpo(guasto.corpo, t('reconErroreFiltro'))
+        : t('reconErroreReteMovimenti');
   /**
    * L'avviso si mostra SOLO col sottofiltro acceso: senza, non c'è nessun filtro
    * sospeso da dichiarare e la fascia sarebbe rumore su una lista già corretta.
@@ -322,15 +358,19 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   /**
    * ⚠️ «Nessun movimento in questo stato» è una AFFERMAZIONE, e si può fare solo
    * quando si sa che è vera. Con un rifiuto in corso o col filtro non applicato
-   * non lo sappiamo: lì parla la fascia, non il vuoto.
+   * non lo sappiamo: lì parla la fascia, non il vuoto. L'errore di RETE è il caso
+   * in cui si sa meno di tutti — la risposta non è arrivata affatto — e la lista è
+   * vuota per assenza di dati, non per assenza di movimenti: la schermata scriveva
+   * «Nessun movimento: importa un estratto conto per iniziare», un invito a
+   * lavorare, proprio sotto la fascia rossa del caricamento fallito.
    *
-   * `erroreRete` mancava a questo elenco, ed è il caso in cui si sa MENO di tutti:
-   * la risposta non è arrivata affatto, quindi la lista è vuota per assenza di
-   * dati, non per assenza di movimenti. La schermata scriveva «Nessun movimento:
-   * importa un estratto conto per iniziare.» — un invito a lavorare — proprio
-   * sotto la fascia rossa che dice che il caricamento è fallito.
+   * ⚠️ L'IMPORT FALLITO NON ENTRA IN QUESTO ELENCO, ed è l'unico dei tre a restarne
+   * fuori: lì il caricamento della lista è andato benissimo: se la lista è vuota, è
+   * vuota davvero, e «importa un estratto conto per iniziare» è esattamente il
+   * consiglio giusto per chi ha appena visto rifiutare il proprio file.
    */
-  const vuoto = !loading && disponibile && !erroreRete && !messaggioRifiuto && !avvisoFatturazione && movimenti.length === 0;
+  const guastoDelCaricamento = guasto !== null && guasto.tipo !== 'import';
+  const vuoto = !loading && disponibile && !guastoDelCaricamento && !avvisoFatturazione && movimenti.length === 0;
 
   return (
     <div>
@@ -378,9 +418,9 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           {riepilogoImport(esito)}
         </p>
       )}
-      {(error || erroreRete || messaggioRifiuto) && (
+      {testoGuasto !== null && (
         <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">
-          {error ?? messaggioRifiuto ?? t('reconErroreReteMovimenti')}
+          {testoGuasto}
         </p>
       )}
 

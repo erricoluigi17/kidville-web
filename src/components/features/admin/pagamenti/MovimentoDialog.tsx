@@ -136,6 +136,27 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
    */
   const [pagamentoFattura, setPagamentoFattura] = useState<string | null>(null);
   const [loadingPag, setLoadingPag] = useState(movimento.stato === 'confermato' && !!movimento.pagamento_id);
+  /**
+   * ⚠️ IL SEGNALE DI RILETTURA — perché il popup possa rileggere CIÒ CHE HA APPENA
+   * CAMBIATO.
+   *
+   * `pagamentoStato` e `pagamentoFattura` sono stato locale caricato una volta al
+   * montaggio, e `onEmessa` era cablato dritto a `onDone`: quello ricarica la
+   * LISTA, e la lista non riscrive `selezionato` — cioè la prop da cui questo
+   * popup è nato. Risultato misurato in collaudo: emessa la fattura, il popup
+   * restava a «Da fatturare», con la frase «non è ancora stata emessa» e il
+   * pulsante dipinto da CTA, a due centimetri dal badge «In attesa SDI» che il
+   * pulsante stesso aveva appena mostrato. Lo stesso stato, detto due volte e in
+   * due modi opposti.
+   *
+   * Un contatore, e non un secondo `fetch` scritto dentro `onEmessa`: la lettura
+   * esiste già qui sotto, con la sua guardia `active`, il suo `catch` che LOGGA e
+   * il suo `finally`. Duplicarla vorrebbe dire due copie della stessa richiesta da
+   * tenere allineate. E non costa una richiesta in più all'apertura: l'effetto
+   * riparte solo quando questo numero cambia, cioè dopo un'emissione riuscita
+   * (lock: «aprire il popup costa UNA lettura sola»).
+   */
+  const [ricarica, setRicarica] = useState(0);
 
   const stato = movimento.stato;
   const puoAbbinare = stato !== 'confermato';
@@ -169,7 +190,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       }
     })();
     return () => { active = false; };
-  }, [stato, movimento.pagamento_id, userId]);
+  }, [stato, movimento.pagamento_id, userId, ricarica]);
 
   const azione = useCallback(async (az: 'conferma' | 'ignora' | 'riapri', pagamentoId?: string) => {
     setBusy(true);
@@ -413,14 +434,23 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                     niente. Lo stato si dice una volta.
                     Il guscio è ciò che dà la pelle al pulsante senza toccare
                     `FatturaButton`, che è condiviso con altre viste: `data-tono`
-                    decide CTA pieno (c'è da emettere) o secondario (c'è già). */}
+                    decide CTA pieno (c'è da emettere) o secondario (c'è già).
+
+                    ⚠️ «UNA VOLTA» VALE ANCHE UN ISTANTE DOPO L'EMISSIONE, ed è ciò
+                    che questa riga ha smesso di dare per scontato. Il ramo qui sopra
+                    guarda `pagamentoFattura`, che era una fotografia del montaggio:
+                    emessa la fattura restava `non_richiesta`, quindi il CTA giallo
+                    sopravviveva accanto al badge «In attesa SDI» reso dal pulsante
+                    stesso. `onEmessa` adesso alza PRIMA il segnale di rilettura e
+                    POI avvisa la lista: quando la risposta arriva, questo ramo
+                    sparisce da sé e il chip è l'unico a parlare. */}
                 {pagamentoFattura !== 'in_attesa' && (
                   <span className="kv-recon-azione-fattura" data-tono={fat?.tono ?? 'da_fatturare'}>
                     <FatturaButton
                       pagamentoId={movimento.pagamento_id}
                       userId={userId}
                       fatturaStato={pagamentoFattura ?? undefined}
-                      onEmessa={onDone}
+                      onEmessa={() => { setRicarica((n) => n + 1); onDone(); }}
                     />
                   </span>
                 )}

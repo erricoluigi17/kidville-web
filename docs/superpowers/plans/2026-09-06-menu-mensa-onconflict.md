@@ -907,9 +907,25 @@ node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json
 npx vitest run __tests__/architecture/onconflict-arbitro.test.ts
 ```
 
-Atteso: **ROSSO**, con esattamente 5 chiavi orfane — le 4 di `mensa_menu_*` e
-`giudizio_template (scuola_id, dimensione, valore)`. Se ne elenca meno di 5, `chiaviDaSrc()` non
-sta risolvendo le costanti: sistemarla prima di andare avanti.
+Atteso: **ROSSO**, con **3** chiavi orfane — una per `mensa_menu_rotazione`, una per
+`mensa_menu_override`, e `giudizio_template (scuola_id, dimensione, valore)`.
+
+⚠️ **Erano «5» in una stesura precedente di questo piano, ed era un numero invecchiato dal Task 2
+stesso**: quando l'ho scritto la route mandava due chiavi per tabella (il ramo col
+`menu_config_id` e quello senza), quindi le tuple mensa erano quattro. Il Task 2 le ha collassate
+in una per tabella, e le attese sono diventate tre. Se ne trovi **meno di tre**, `chiaviDaSrc()`
+non sta risolvendo le costanti: sistemarla prima di andare avanti. Se ne trovi **di più**, è una
+scoperta: fermarsi e discuterla, non aggiungerla alle eccezioni.
+
+**Una quarta è emersa davvero, il 2026-09-06, ed è di natura diversa**: `daily_routines`
+(`src/lib/offline/syncEngine.ts:142`, `onConflict: 'id'`). Quella tabella **non esiste in
+produzione** — il diario vero è `eventi_diario`, e `src/app/api/diary/route.ts:15-25` lo documenta
+dal 2026-08-04 per la *route*, ma non per il motore di sincronizzazione offline, che ci scrive
+lo stesso, prende `PGRST205` e lo inghiotte in `catch { logSync('sync-diario-fallito') }`. Non è
+«nessun arbitro»: è «nessuna tabella», e il rimedio non è una migrazione — è che quel codice
+smetta di scrivere in un posto che non c'è. Resta **dichiarata come eccezione con la ragione per
+esteso** e come debito nel PRD: correggere la sincronizzazione offline del diario è una
+funzionalità a sé, e infilarla qui la farebbe uscire senza collaudo.
 
 - [ ] **Passo 4: commit del lock rosso**
 
@@ -1253,7 +1269,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 Aggiungere in cima al changelog, nella forma delle voci esistenti, una voce `2026-09-06` che dica:
 che cosa era rotto (il salvataggio del menu, in tutte le sedi, dal giorno degli indici parziali),
 come lo si è visto (9 `42P10` di Cesa in `app_log`), che cosa è cambiato (una chiave, un indice
-`NULLS NOT DISTINCT`, il lock nuovo), e i **tre debiti dichiarati**:
+`NULLS NOT DISTINCT`, il lock nuovo), e i **quattro debiti dichiarati**:
 
 1. `PUT /api/mensa/menu` scrive rotazione e variazioni in **due istruzioni senza transazione**: se
    la prima riesce e la seconda no, resta un salvataggio a metà con una risposta 500.
@@ -1272,6 +1288,16 @@ come lo si è visto (9 `42P10` di Cesa in `app_log`), che cosa è cambiato (una 
    diventano di colpo righe del **menu unico della sede A** — cioè compaiono in tavola.
    Chiuderlo è un lavoro a sé: il `PUT` deve passare da `assertConfigMensaInScope` sul
    `menu_config_id`, con un test che lo provi.
+4. **La sincronizzazione offline del diario scrive su una tabella che non esiste** (trovata dal
+   lock del Task 3 il 2026-09-06). `src/lib/offline/syncEngine.ts:142` fa
+   `upsert(payload, { onConflict: 'id' })` su **`daily_routines`**, che in produzione non c'è: il
+   diario vero è `eventi_diario`. La route `/api/diary` lo sa e lo dichiara dal 2026-08-04
+   (`src/app/api/diary/route.ts:15-25`, degrada in 503 dichiarato); il **motore offline** no —
+   prende `PGRST205` e lo inghiotte in `catch { logSync('sync-diario-fallito') }`. Significa che
+   ciò che una maestra scrive nel diario **mentre è senza rete non arriva mai**, e a schermo non
+   se ne accorge nessuno. È dichiarato come eccezione nel lock `onconflict-arbitro`, con la
+   ragione scritta e l'istruzione di toglierla quando il ramo sarà corretto — **non** quando la
+   tabella sarà creata.
 
 - [ ] **Passo 2: commit**
 

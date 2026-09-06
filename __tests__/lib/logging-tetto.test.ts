@@ -280,6 +280,16 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         'NON È RETE: `fetch(dataUrl)` su una `data:` URL è il modo standard di trasformare in `Blob` '
         + 'la foto che il plugin ha già in memoria. Non esce niente dal dispositivo, non c\'è nessun '
         + 'bersaglio che possa tacere.'],
+    ['src/lib/native/scarica.ts',
+        'BROWSER: due `fetch(input.url)` su un indirizzo FIRMATO dello Storage Supabase, per '
+        + 'portare il file dentro il dispositivo (`Filesystem.writeFile`) o dentro un `blob:` sul '
+        + 'web. Un tetto qui non si puo\' mettere, e non e\' una scorciatoia: `MAI_OLTRE_MS` tosa '
+        + 'a 30 secondi ogni scadenza dichiarata in `src/`, e trenta secondi su un video di qualche '
+        + 'decina di megabyte trasformerebbero in RIPIEGO uno scarico che sta funzionando — cioe\' '
+        + 'il difetto che questo file e\' nato per chiudere, riaperto da una protezione. '
+        + '`externalFetch` non e\' la strada: e\' lo strumento del SERVER, e questo codice gira nel '
+        + 'browser e nella WebView. Il silenzio qui non e\' possibile: ogni esito passa da '
+        + '`RisultatoScarico` e finisce in `app_log` attraverso `MediaGrid` — successo compreso.'],
     ['src/lib/offline/read-cache.ts',
         'BROWSER: è il wrapper di lettura con fallback su IndexedDB delle pagine genitore, e l\'`url` '
         + 'che riceve è sempre una nostra route relativa. Un tetto qui sarebbe per di più il '

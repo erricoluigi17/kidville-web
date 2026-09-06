@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser, type AuthResult } from '@/lib/auth/require-staff'
 import { agisceComeGenitore, eFamiglia } from '@/lib/auth/predicati-ruolo'
 import { verificaLegameGenitore } from '@/lib/anagrafiche/legami'
+import { verificaAlunnoAttivo } from '@/lib/alunni/attivo'
 import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -98,7 +99,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  */
 export async function requireParentOfStudent(
   request: Request,
-  studentId: string
+  studentId: string,
+  richiediAttivo: boolean = true
 ): Promise<AuthResult> {
   const auth = await requireUser(request)
   if (auth.response) return auth
@@ -185,6 +187,60 @@ export async function requireParentOfStudent(
     }
 
     if (esito === 'si') {
+      // ─── IL LEGAME C'È, MA IL BAMBINO PUÒ NON ESSERE PIÙ FRA I VISIBILI ──
+      //
+      // Dal 2026-09-05 l'app di famiglia non mostra più i figli senza sezione, i
+      // ritirati e gli archiviati (`getFigliAttiviDiGenitore`). Se il filtro
+      // vivesse SOLO nella lista sarebbe cosmetico: `kv_student_id` resta nel
+      // localStorage, l'URL `?id=` si condivide, e la schermata continuerebbe a
+      // rispondere 200 col contenuto. Venti rotte passano di qui — diario,
+      // galleria, mensa, presenze, primaria, armadietto — e questa è l'unica riga
+      // che le chiude tutte insieme.
+      //
+      // ⚠️ 403 E NON 404, ed è una distinzione che questo file fa già trenta righe
+      // più su per un motivo diverso. Il 404 dice «non esiste»: qui il bambino
+      // esiste, la segreteria ne ha l'anagrafica, e tornerà visibile il giorno in
+      // cui gli assegnano una classe. Quello che si nega è la VISTA, non la
+      // persona. Il `codice` è `ALUNNO_NON_TROVATO`, la cui frase di catalogo dice
+      // esattamente la cosa vera («Non troviamo questo bambino fra i tuoi figli.
+      // Contatta la segreteria») ed è già tradotta in entrambe le lingue: un codice
+      // nuovo sarebbe stata una frase in più che dice la stessa cosa.
+      //
+      // ⚠️ `non-letto` PROSEGUE, e non è una svista. È la lezione T13 già scritta
+      // in questo file: «non l'ho potuto leggere» non è «non è tuo figlio». Il
+      // perimetro di SICUREZZA è il legame di famiglia, che è già stato verificato
+      // qui sopra; questo è un filtro di PRESENTAZIONE, e chiudere un'app intera
+      // perché una `SELECT` è andata storta — o perché il DB E2E della CI non ha
+      // la colonna — costerebbe più di quanto valga. Il guasto lascia comunque la
+      // sua riga (`segnalaLetturaLegami`, livello `error`).
+      //
+      // ⚠️ COSTA UNA LETTURA IN PIÙ per richiesta di famiglia, che è il percorso
+      // più frequente del sistema. È una `maybeSingle()` sulla chiave primaria di
+      // `alunni`, e la si paga solo dopo che il legame ha già detto `si`: chi non è
+      // famiglia (61 educator su 61) non la vede nemmeno.
+      if (richiediAttivo && (await verificaAlunnoAttivo(supabase, studentId)) === 'nascosto') {
+        // `info` e non `warn`: non è un tentativo, è un client con un id vecchio in
+        // cache — e capita a ogni ricarica finché la cache non si ripulisce da sola
+        // (`decidiFiglioRivalidato`). Il conteggio che serve a sapere QUANTI bambini
+        // sono invisibili alle loro famiglie è persistito altrove, una volta per
+        // genitore e per giorno: `getFigliAttiviDiGenitore`, livello `warn`.
+        // Solo uuid ed enumerati, come i due rami gemelli qui sotto.
+        logEvento('auth', 'info', {
+          tipo: 'alunno-non-attivo',
+          azione: 'requireParentOfStudent',
+          utente: auth.user.id,
+          ruolo: auth.user.role,
+          alunno_id: studentId,
+          stato: 403,
+        }, undefined, { distingui: ['alunno_id'] })
+        return {
+          response: NextResponse.json(
+            { error: 'Alunno non trovato', codice: 'ALUNNO_NON_TROVATO' },
+            { status: 403 },
+          ),
+        }
+      }
+
       // ─── IL SEGNALE CHE DICE SE LA CORREZIONE È VIVA ─────────────────────
       //
       // Una riga `info` (Vercel, non persistita: `vaPersistito` tiene in tabella

@@ -136,5 +136,9 @@
   "uscitaRiga": "Uscita del {data} — {destinazione} · partenza {partenza}, rientro {rientro}.",
   "uscitaRigaSenzaOrari": "Uscita del {data} — {destinazione}.",
 
-  "avvisoSanitario": "Quello che scrivi qui riguarda la salute di tuo figlio: lo leggono la segreteria e le insegnanti della sua sezione, nessun altro."
+  "avvisoSanitario": "Quello che scrivi qui riguarda la salute di tuo figlio: lo leggono la segreteria e le insegnanti della sua sezione, nessun altro.",
+
+  "vuotoFigliInAttesa": "Stiamo completando l’iscrizione: i moduli e i certificati compaiono qui appena la classe è assegnata. Se ti serve subito il certificato di frequenza, chiedilo alla segreteria.",
+
+  "vuotoFigliNonPiuIscritto": "Non risulta nessun bambino iscritto collegato a questo accesso: i moduli si compilano solo per chi frequenta. Per i certificati degli anni già frequentati — compreso quello di frequenza per la detrazione — chiedi alla segreteria."
 }

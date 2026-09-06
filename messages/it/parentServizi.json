@@ -193,5 +193,9 @@
   "sospensioneScaduto": " ({importo} scaduti)",
   "sospensioneTesto": "La tua posizione risulta sospesa per morosità{scaduto}. Alcuni servizi (moduli, adesioni, ordini) sono temporaneamente bloccati. Salda gli importi scaduti o contatta la <strong>Segreteria</strong> per regolarizzare: la riattivazione è automatica una volta saldato tutto lo scaduto.",
   "lockerMesePrecedente": "Mese precedente",
-  "lockerMeseSuccessivo": "Mese successivo"
+  "lockerMeseSuccessivo": "Mese successivo",
+  "inAttesaTitolo": "Iscrizione in lavorazione",
+  "inAttesaTesto": "Stiamo completando l’iscrizione: appena la classe è assegnata qui compare tutto. Per sapere a che punto siamo, contatta la segreteria.",
+  "nonPiuIscrittoTitolo": "Nessuna iscrizione attiva",
+  "nonPiuIscrittoTesto": "In questo momento non risulta nessun bambino iscritto collegato a questo accesso. Per i documenti degli anni già frequentati — compreso il certificato di frequenza — contatta la segreteria."
 }

@@ -193,5 +193,9 @@
   "sospensioneScaduto": " ({importo} overdue)",
   "sospensioneTesto": "Your account is suspended for an unpaid balance{scaduto}. Some services (forms, sign-ups, orders) are temporarily blocked. Pay the overdue amounts or contact the <strong>school office</strong> to regularize: reactivation is automatic once all overdue amounts are settled.",
   "lockerMesePrecedente": "Previous month",
-  "lockerMeseSuccessivo": "Next month"
+  "lockerMeseSuccessivo": "Next month",
+  "inAttesaTitolo": "Enrolment in progress",
+  "inAttesaTesto": "We are still completing the enrolment: everything will appear here as soon as the class is assigned. To check the status, please contact the school office.",
+  "nonPiuIscrittoTitolo": "No active enrolment",
+  "nonPiuIscrittoTesto": "There is currently no enrolled child linked to this account. For documents covering years already attended — including the attendance certificate — please contact the school office."
 }

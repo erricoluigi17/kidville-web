@@ -802,7 +802,13 @@ const AMMESSE: Record<string, string> = {
     // parent/primaria/{assenze,note,orario,pagella,scrutinio}:GET,
     // parent/primaria/pagella/firma:POST, diary/checkin:GET,
     // locker/inventory:{GET,POST}.
-    'parent/students:GET': 'scope famiglia: i figli del richiedente, in qualunque plesso',
+    // ⚠️ `parent/students:GET` ERA QUI, e dal 2026-09-05 non serve più: il debito è
+    // stato PAGATO, non spostato. L'handler non fa più il proprio `.from('alunni')`
+    // — la lettura vive in `getFigliAttiviDiGenitore` (`@/lib/anagrafiche/legami`),
+    // che parte dai LEGAMI dell'account autenticato e quindi non ha una sede da
+    // filtrare. Lasciare la voce avrebbe significato tenere un'esenzione viva per la
+    // prossima route che nascerà con quel nome: è il difetto che il test qui sotto
+    // («l'allowlist non contiene voci morte») esiste per impedire.
     // `parent/presenze/comunica-assenza:POST` NON è più qui (2026-08-07), e il
     // debito è stato pagato davvero: l'upsert dichiara `scuola_id`, letto da
     // `alunni` — la stessa fonte che usa il trigger `trg_presenze_scuola_id`.
@@ -1655,7 +1661,17 @@ describe('coverage-lock isolamento fra sedi', () => {
             //
             // `handlerEsentati` resta fermo a 99: nessuna esenzione, e non ne serve
             // nessuna.
-            routeConServiceRole: 304,
+            //
+            // 🔺 304 → 306 il 2026-09-06: due route nuove, dallo stesso rilascio.
+            // `admin/legami-familiari` (GET di ricerca, POST che collega/scollega/corregge
+            // il ruolo) e `admin/candidature-insegnanti/etichetta` (GET, PATCH). La prima
+            // scrive su ENTRAMBE le tabelle ponte vive — `student_parents`, che regge la
+            // RLS, e `legame_genitori_alunni`, che regge il gate applicativo: scriverne
+            // una sola aprirebbe l'una e lascerebbe chiusa l'altra. Nessuna delle due
+            // porta esenzioni: la prima dichiara il suo scope con `assertAlunnoInScope` e
+            // `assertParentInScope`, la seconda con il filtro di plesso sulla
+            // candidatura.
+            routeConServiceRole: 306,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1770,7 +1786,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 🔺 466 → 467 il 2026-09-04: il solo `GET` di `admin/sedi/destinazioni`. Qui
             // il passo coincide col file perché il file espone un metodo solo — e la
             // coincidenza va detta, non dedotta, per la ragione scritta qui sopra.
-            handlerControllati: 468,
+            //
+            // 🔺 468 → 472 il 2026-09-06: i QUATTRO handler delle due route nuove qui
+            // sopra — `admin/legami-familiari` (GET, POST) e
+            // `admin/candidature-insegnanti/etichetta` (GET, PATCH). Anche qui il passo
+            // non coincide col numero di file (+2 route, +4 handler), che è il caso
+            // normale e va detto ogni volta.
+            handlerControllati: 472,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -1944,7 +1966,16 @@ describe('coverage-lock isolamento fra sedi', () => {
             // se dichiarassero una difesa. Chi rilegge una riga di questo blocco che dice
             // «scope famiglia» vada a guardare il codice: la frase descrive ciò che
             // succede a un genitore, e non dice niente di tutti gli altri.
-            handlerEsentati: 99,
+            //
+            // 🔻 99 → 98 il 2026-09-06, e questo numero SCENDE: `parent/students:GET` ha
+            // pagato il proprio debito e la sua voce è stata TOLTA dall'elenco `AMMESSE`
+            // (la ragione sta lì, accanto al posto che occupava). L'handler non fa più la
+            // propria `.from('alunni')`: la lettura vive in `getFigliAttiviDiGenitore`, che
+            // parte dai LEGAMI dell'account autenticato e quindi non ha una sede da
+            // filtrare. Lasciare la voce avrebbe tenuto viva un'esenzione per la prossima
+            // route che nascerà con quel nome — cioè esattamente ciò che la prova
+            // «l'allowlist non contiene voci morte» esiste per impedire.
+            handlerEsentati: 98,
         })
     })
 })

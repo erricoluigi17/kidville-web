@@ -30,6 +30,53 @@ import type { CampoFiltro, OpzioneFiltro, Periodo, Traduttore } from '@/lib/ui/f
  * è filtrabile — cioè un elenco che non trova righe che ci sono.
  */
 
+/**
+ * ─── IL VOCABOLARIO DELL'ETICHETTA DI SELEZIONE ─────────────────────────────
+ *
+ * Sta QUI, in un modulo senza React e senza `next/server`, perché è l'unico
+ * posto che il pannello (client) può importare senza tirarsi dietro il client
+ * service-role della rotta.
+ *
+ * ⚠️ IL VOCABOLARIO ESISTE IN TRE POSTI, e non poteva esserne uno solo:
+ *   · il CHECK di `supabase/migrations/20260906013119_candidature_etichetta_selezione.sql`
+ *     (l'unico che vale anche per chi scrive da `psql`);
+ *   · lo `z.enum` di `src/app/api/admin/candidature-insegnanti/etichetta/route.ts`
+ *     (l'unico che vale per la porta HTTP);
+ *   · questa costante (l'unica che il browser può leggere).
+ * SQL, server e client non possono condividere una costante — quindi i tre
+ * elenchi si tengono allineati da un lock, non dalla buona volontà:
+ * `__tests__/architecture/etichetta-candidatura-vocabolario.test.ts` li legge
+ * tutti e tre (l'array qui sotto, lo `z.enum` risolto nella rotta, i valori dentro
+ * `etichetta in (…)` del CHECK) e diventa rosso appena divergono di una voce.
+ *
+ * ⚠️ Fino al 2026-09-06 questa frase citava il lock ANTI-EMAIL, che cammina sul
+ * grafo degli import e un vocabolario non l'ha mai letto: il lock promesso non
+ * esisteva, e togliere `in_valutazione` dal CHECK lasciava la suite tutta verde.
+ * Adesso esiste. Se un giorno si sposta, si cambia QUI il nome del file: un
+ * commento che cita una protezione che non c'è è peggio di nessun commento.
+ *
+ * ⚠️ E NON È UN FILTRO `dove: 'server'` DI QUESTA BARRA. Il filtro per etichetta
+ * è disegnato dal pannello ACCANTO alla barra, con un controllo suo, perché il
+ * server che lo esegue è un altro: `…/candidature-insegnanti/etichetta:GET`,
+ * non la rotta che serve l'elenco. Dichiararlo qui come campo server vorrebbe
+ * dire mandare `?etichetta=` alla rotta dell'elenco, che NON lo conosce e lo
+ * scarterebbe in silenzio rispondendo 200 con l'elenco intero — la bugia esatta
+ * che `__tests__/architecture/filtri-server-non-mentono.test.ts` esiste per
+ * impedire, e che quel lock renderebbe rossa.
+ */
+export const ETICHETTE_CANDIDATURA = [
+  'gia_chiamata',
+  'non_idonea',
+  'da_richiamare',
+  'in_valutazione',
+  'assunta',
+] as const
+
+export type EtichettaCandidatura = (typeof ETICHETTE_CANDIDATURA)[number]
+
+/** Il valore del filtro che chiede le candidature SENZA etichetta. */
+export const SENZA_ETICHETTA = 'senza'
+
 /** Come il pannello chiama i quattro stati: le stringhe del badge, già tradotte. */
 export interface EtichetteStatoCandidatura {
   pending: string

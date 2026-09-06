@@ -205,7 +205,21 @@ async function portataChiusa(
   request: Request,
   alunnoId: string,
 ): Promise<{ user: AppUser; response?: undefined } | { user?: undefined; response: NextResponse }> {
-  const auth = await requireParentOfStudent(request, alunnoId)
+  // ⚠️ `richiediAttivo: false`, e qui vale doppio. Il precompilato È il posto che
+  // rifiuta il bambino archiviato, anonimizzato o senza sede, con un motivo scritto
+  // per ciascuno: se il gate lo nascondesse prima, questa funzione non arriverebbe
+  // mai a spiegare perché il certificato non si può fare — e la segreteria, che passa
+  // di qui dal proprio banco, si vedrebbe negare un bambino che sta guardando apposta
+  // perché non frequenta più.
+  //
+  // ⚠️ ED È L'UNICO DEI CINQUE PUNTI CHE OGGI PORTA PESO DAVVERO, il che è il motivo
+  // per cui vale la pena leggerlo qui. I quattro gemelli in `api/parent/prestampati/**`
+  // stanno su handler che rispondono `soloFamiglia()`, e il selettore della famiglia si
+  // riempie da `GET /api/parent/students`, che dal 2026-09-05 nasconde i figli non
+  // attivi: da lì un id ritirato non arriva più. Da qui sì — `/api/prestampati` e
+  // `/api/prestampati/genera` sono il banco della segreteria, e il bambino ritirato lo
+  // sta cercando apposta.
+  const auth = await requireParentOfStudent(request, alunnoId, false)
   if (auth.response) return { response: auth.response }
   if (!auth.user) {
     // Non può accadere — `AuthResult` è un'unione — ma `auth.user` è opzionale nel tipo e
@@ -431,6 +445,36 @@ async function leggiAlunno(
  *   bottone che non esiste.
  *
  * Un codice solo per i due casi direbbe la cosa sbagliata a metà delle segretarie.
+ *
+ * ─── E QUESTA FUNZIONE DECIDE UNA DOMANDA DI PRODOTTO, non solo un rifiuto ────
+ *
+ * Il 2026-09-05 l'app di famiglia ha smesso di mostrare i figli senza classe,
+ * ritirati o archiviati, e il selettore dei prestampati del genitore — che si
+ * riempie da `GET /api/parent/students` — con loro. È stato chiesto se ripristinare
+ * il self-service per i figli non attivi (una rotta con `?includiNonAttivi=1`)
+ * oppure accettare la perdita. **Si accetta la perdita, ed è QUESTA funzione la
+ * ragione**: per un bambino `ritirato` o anonimizzato la generazione si ferma qui
+ * con un **409**, e si fermava così anche PRIMA del filtro. Rimettere quei figli
+ * nel selettore non restituirebbe nessun certificato: aggiungerebbe un pulsante
+ * che porta a un rifiuto. La strada per loro è la segreteria, e la frase del
+ * pannello vuoto (`vuotoFigliNonPiuIscritto`) manda lì.
+ *
+ * ⚠️ RESTA UNA PERDITA VERA, e non va confusa con quella che non c'è. Misurato in
+ * produzione il 2026-09-06 (conteggi soli): dei 4 account genitore senza figli
+ * visibili, 1 ha l'unico figlio archiviato — per lui, come detto, non cambia
+ * niente — e **3 hanno l'unico figlio SENZA SEZIONE**. Quei bambini sono
+ * `iscritto`: `alunnoNonStampabile` per loro NON scatta, il certificato uscirebbe,
+ * e fino al 2026-09-05 quelle famiglie potevano chiederselo da sole. Adesso no.
+ * È il prezzo della decisione, ed è di tre famiglie, non di quattro.
+ *
+ * Perché non lo si è ripristinato subito: le righe dei figli nascosti le ha solo
+ * `getFigliAttiviDiGenitore`, che le conta e le scarta, e vive in
+ * `@/lib/anagrafiche/legami` — l'unico posto da cui l'elenco potrebbe uscire
+ * completo. L'alternativa (un `.from('alunni')` dentro l'handler) riaprirebbe
+ * l'esenzione `parent/students:GET` nell'allowlist di
+ * `__tests__/architecture/isolamento-sede-coverage.test.ts`, che il 2026-09-05 è
+ * stata TOLTA perché il debito era stato pagato. Il ripristino, se si farà, si fa
+ * dentro `legami.ts` e senza rimettere quella voce.
  */
 export function alunnoNonStampabile(riga: RigaAlunno, alunnoId: string): NextResponse | null {
   if (riga.anonimizzato_il) {

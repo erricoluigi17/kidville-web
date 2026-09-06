@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/candidature-schema-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/candidature-schema-fotografia.mjs < risposta.json",
-  "generato_il": "2026-08-25",
-  "generato_alle": "2026-08-25T00:07:50Z",
-  "sha256": "db7af0557104c8ae2eeec56e8d15c0f922b57a484471eb9b5408da1c3b9d3bd5",
+  "generato_il": "2026-09-06",
+  "generato_alle": "2026-09-06T03:15:26Z",
+  "sha256": "50844a9335569ba1e3395ddd822afff913bc61ea9f89b33ebdfd59e64a022873",
   "tabella": "candidature_insegnanti",
   "colonne": [
     {
@@ -186,6 +186,27 @@
       "udt": "timestamptz",
       "nullable": true,
       "default": null
+    },
+    {
+      "posizione": 27,
+      "nome": "etichetta",
+      "udt": "text",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 28,
+      "nome": "etichetta_aggiornata_il",
+      "udt": "timestamptz",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "posizione": 29,
+      "nome": "etichetta_aggiornata_da",
+      "udt": "uuid",
+      "nullable": true,
+      "default": null
     }
   ],
   "enum_school_type": [
@@ -197,6 +218,10 @@
     {
       "nome": "candidature_insegnanti_anni_esperienza_check",
       "definizione": "CHECK (((anni_esperienza IS NULL) OR ((anni_esperienza >= 0) AND (anni_esperienza <= 60))))"
+    },
+    {
+      "nome": "candidature_insegnanti_etichetta_check",
+      "definizione": "CHECK (((etichetta IS NULL) OR (etichetta = ANY (ARRAY['gia_chiamata'::text, 'non_idonea'::text, 'da_richiamare'::text, 'in_valutazione'::text, 'assunta'::text]))))"
     },
     {
       "nome": "candidature_insegnanti_gradi_check",

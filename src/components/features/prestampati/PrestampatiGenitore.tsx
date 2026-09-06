@@ -18,6 +18,12 @@ import {
 import { Btn } from '@/components/ui/Btn';
 import { DateField } from '@/components/ui/DateField';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+// La distinzione «non è ancora visibile» / «non c'è più» sta in un posto solo:
+// la fanno anche la home del genitore e la pagina della modulistica, e tre copie
+// si disallineano al primo motivo nuovo. `import type` per il vocabolario, così
+// il modulo server non entra nel bundle del browser.
+import { eMotivoNonPiuIscritto } from '@/lib/auth/use-parent-identity';
+import type { MotivoFiglioNascosto } from '@/lib/alunni/attivo';
 import { useDateFormat } from '@/lib/i18n/date';
 import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -466,9 +472,49 @@ type Passo = 'modulo' | 'compila' | 'rivedi' | 'firma' | 'fatto';
 
 export function PrestampatiGenitore({
   figli,
+  inAttesa = false,
+  motivoAssenza = null,
   onAlunnoScelto,
 }: {
   figli: readonly FiglioPrestampati[];
+  /**
+   * «HO DEI FIGLI, MA NESSUNO È ANCORA VISIBILE» — che non è «non ho figli», e da qui in
+   * avanti le due cose non si dicono più con la stessa frase.
+   *
+   * 🔴 Dal 2026-09-05 `GET /api/parent/students` non restituisce più i bambini senza
+   * classe, ritirati o archiviati. Per quattro account genitore in produzione quelli erano
+   * TUTTI i figli, quindi `figli` arriva qui vuoto e il ramo qui sotto diceva loro «non
+   * risulta nessun bambino collegato a questo accesso»: una frase FALSA, perché i legami
+   * ci sono — è proprio la loro esistenza a rendere vero `in_attesa`, che senza legami
+   * sarebbe falso. E la modulistica sta nella BottomNav, cioè a un tocco dalla home, dove
+   * le stesse famiglie leggono «Stiamo completando l'iscrizione»: due schermate che si
+   * contraddicono, e quella che diceva il falso era anche quella che chiudeva la strada.
+   *
+   * Il dato NON costa una lettura in più: `in_attesa` viaggia nello stesso corpo che la
+   * pagina che ospita questo pannello scarica già per riempire `figli`.
+   *
+   * Opzionale con valore di riposo `false`: chi monta il pannello senza passarlo (i banchi
+   * di prova storici) vede esattamente la frase di prima.
+   */
+  inAttesa?: boolean;
+  /**
+   * QUALE dei tre motivi ha svuotato l'elenco — perché anche `inAttesa` da solo mentiva.
+   *
+   * Misurato in produzione il 2026-09-06: dei 4 account senza figli visibili, 3 hanno
+   * l'unico figlio senza sezione (per loro «appena la classe è assegnata» è vero) e 1 ce
+   * l'ha ARCHIVIATO. A quella famiglia questo pannello prometteva moduli che arriveranno
+   * con una classe che non arriverà.
+   *
+   * E per lei la promessa era doppiamente vuota: `alunnoNonStampabile`
+   * (`@/lib/prestampati/prefill.ts`) rifiuta con **409** «non è più fra gli iscritti» ogni
+   * generazione su un bambino non più iscritto o anonimizzato — quindi anche mostrandogli
+   * il figlio nel selettore, il documento non uscirebbe. La strada vera è la segreteria, e
+   * la frase deve dire quella.
+   *
+   * `null` = motivo non pervenuto (server più vecchio del client): si ricade sulla frase
+   * generica, cioè sul comportamento di ieri.
+   */
+  motivoAssenza?: MotivoFiglioNascosto | null;
   /**
    * Il figlio scelto qui, comunicato a chi ospita il pannello. Serve alla scheda che lo
    * contiene per smettere di prendere `children[0]`: la scelta la fa il genitore una volta
@@ -931,9 +977,19 @@ export function PrestampatiGenitore({
     t(m.chiaveEtichetta.replace(/^modelli\./, 'descrizioni.'));
 
   if (figli.length === 0) {
+    // Un elenco vuoto non ha una causa sola, e ora nemmeno due: «non ho figli» manda in
+    // segreteria per un legame che manca; «il mio bambino aspetta la classe» dice che
+    // l'iscrizione è in lavorazione e come avere subito il certificato; «non è più fra gli
+    // iscritti» toglie la promessa della classe e lascia in piedi la sola strada che
+    // esiste davvero, perché a valle c'è un 409 (vedi `motivoAssenza` nella firma).
+    const vuoto = !inAttesa
+      ? 'vuotoFigli'
+      : eMotivoNonPiuIscritto(motivoAssenza)
+        ? 'vuotoFigliNonPiuIscritto'
+        : 'vuotoFigliInAttesa';
     return (
       <p className="rounded-card border border-kidville-line bg-white px-4 py-6 text-center font-maven text-sm text-kidville-sub">
-        {t('vuotoFigli')}
+        {t(vuoto)}
       </p>
     );
   }

@@ -5,6 +5,7 @@ import { useTranslations, useLocale } from 'next-intl';
 import { X, Archive, Save, AlertTriangle, Undo2, Users, Baby, Building2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { LinkedAdultProfile, AdultProfileData, AdultType } from './LinkedAdultProfile';
+import { GestoreLegami, type VoceLegame } from './legami/GestoreLegami';
 import { Task } from '../teacher/tasks/TaskCard';
 import { StudentEconomicSection } from './StudentEconomicSection';
 import { AllergeniSelect } from './AllergeniSelect';
@@ -176,6 +177,28 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
     const [riattivazioneInCorso, setRiattivazioneInCorso] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [activeAdultTab, setActiveAdultTab] = useState<string | null>(null);
+    /**
+     * ═══ I LEGAMI FAMILIARI, RILETTI DOPO OGNI SCRITTURA ══════════════════════
+     *
+     * `student` arriva dal contenitore, che lo legge UNA volta all'apertura della
+     * pagina. Da quando questa scheda può collegare e scollegare un adulto, quella
+     * copia invecchia al primo gesto: l'elenco a schermo resterebbe quello di
+     * prima, e il gesto successivo manderebbe al server l'uuid di un legame che
+     * non c'è più — cioè un 404 `LEGAME_NON_TROVATO` che parla di un guasto
+     * mentre il guasto era solo la schermata ferma.
+     *
+     * `null` = «non è ancora stato riletto niente», e allora vale ciò che il
+     * contenitore ha passato. Non è un doppione dello stato: è la differenza fra
+     * «l'elenco del server» e «l'elenco che il contenitore aveva letto».
+     *
+     * ⚠️ Non si azzera al cambio di `student`, e non serve: questa scheda è
+     * montata PER ALUNNO (`{selectedStudent && <StudentDetailPanel/>}`, e in
+     * pagina la rotta `/admin/students/[id]`), come già presuppone `form`, che
+     * nasce da un inizializzatore di `useState` e non da un effetto.
+     */
+    const [legamiRiletti, setLegamiRiletti] = useState<Student['student_parents'] | null>(null);
+    /** La rilettura è fallita: l'elenco a schermo è VECCHIO, e va detto. */
+    const [rilettura, setRilettura] = useState<'ok' | 'fallita'>('ok');
     const [sections, setSections] = useState<{id: string, name: string, school_type: string}[]>([]);
     const [siblings, setSiblings] = useState<Sibling[]>([]);
     // NB: niente setLoading(true) sincrono negli effect (react-hooks/set-state-in-effect):
@@ -643,23 +666,57 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
         updateForm('codice_fiscale', codice);
     };
 
+    /** L'elenco su cui lavorano i tab e i comandi: il riletto se c'è, altrimenti il prop. */
+    const legamiCorrenti = legamiRiletti ?? student?.student_parents ?? [];
+
+    /**
+     * Rilegge i legami dal server dopo una scrittura riuscita.
+     *
+     * Passa dalla scheda completa dell'alunno (`GET /api/admin/students/[id]`) e
+     * non da una rotta nuova: è la STESSA fonte da cui il contenitore ha letto
+     * `student_parents`, quindi non può dire una cosa diversa. Se la rilettura non
+     * riesce non si finge che sia andata: si accende `rilettura: 'fallita'`, che a
+     * schermo diventa una riga — un elenco vecchio che tace è il modo di far
+     * arrivare l'operatore al 404 del gesto dopo.
+     */
+    const ricaricaLegami = async () => {
+        const sid = student?.id;
+        if (!sid) return;
+        const res = await fetch(`/api/admin/students/${sid}`).catch(() => null);
+        const corpo = res?.ok ? await res.json().catch(() => null) : null;
+        if (!corpo || !Array.isArray(corpo.student_parents)) {
+            setRilettura('fallita');
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: 'legami-elenco-non-riletto',
+                route: '/admin/students',
+                stato: res?.status,
+            });
+            return;
+        }
+        setLegamiRiletti(corpo.student_parents as Student['student_parents']);
+        setRilettura('ok');
+    };
+
     // Estrai madre, padre e delegati per i tab
     const getAdultTabs = () => {
         const tabs: { id: string; type: AdultType; label: string; data: AdultProfileData }[] = [];
-        
-        if (student?.student_parents) {
-            student.student_parents.forEach(sp => {
-                if (sp.parents) {
-                    if (sp.relation_type === 'mother' || sp.parents.gender === 'F') {
-                        tabs.push({ id: 'mother', type: 'mother', label: t('ruoloMadre'), data: sp.parents });
-                    } else if (sp.relation_type === 'father' || sp.parents.gender === 'M') {
-                        tabs.push({ id: 'father', type: 'father', label: t('ruoloPadre'), data: sp.parents });
-                    } else {
-                        tabs.push({ id: `parent_${sp.parents.id}`, type: 'delegate', label: t('ruoloGenitore'), data: sp.parents });
-                    }
+
+        // Nessuna guardia sull'elenco: `legamiCorrenti` è già `[]` quando non c'è
+        // niente — un `if` su un array che non è mai `undefined` è una guardia che
+        // sembra proteggere e non protegge.
+        legamiCorrenti.forEach(sp => {
+            if (sp.parents) {
+                if (sp.relation_type === 'mother' || sp.parents.gender === 'F') {
+                    tabs.push({ id: 'mother', type: 'mother', label: t('ruoloMadre'), data: sp.parents });
+                } else if (sp.relation_type === 'father' || sp.parents.gender === 'M') {
+                    tabs.push({ id: 'father', type: 'father', label: t('ruoloPadre'), data: sp.parents });
+                } else {
+                    tabs.push({ id: `parent_${sp.parents.id}`, type: 'delegate', label: t('ruoloGenitore'), data: sp.parents });
                 }
-            });
-        }
+            }
+        });
 
         if (student?.delegates) {
             student.delegates.forEach((del, idx) => {
@@ -672,6 +729,20 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
 
     const adultTabs = getAdultTabs();
     const activeTabData = adultTabs.find(t => t.id === activeAdultTab);
+
+    /**
+     * Le righe comandabili: SOLO `student_parents`, cioè i legami che questa rotta
+     * scrive. I `delegates` sono un'altra tabella e da qui non si scollegano — un
+     * comando che prova a togliere una riga che non c'è risponderebbe 404.
+     */
+    const legamiGestibili: VoceLegame[] = legamiCorrenti
+        .filter(sp => Boolean(sp.parents?.id))
+        .map(sp => ({
+            id: sp.parents.id,
+            nome: [sp.parents.last_name, sp.parents.first_name].filter(Boolean).join(' ').trim() || t('legamiSenzaNome'),
+            dettaglio: sp.parents.fiscal_code ?? null,
+            ruolo: sp.relation_type ?? null,
+        }));
 
     // Classe corrente non presente fra le sezioni caricate: va mostrata comunque.
     const classeCorrente = (form.classe_sezione as string) ?? '';
@@ -1191,6 +1262,33 @@ export function StudentDetailPanel({ student, onClose, onSave, onArchive, onRiat
                                 <p className="font-maven text-sm text-kidville-muted">{t('detailNessunGenitore')}</p>
                                 <p className="font-maven text-xs text-kidville-muted mt-1">{t('detailAggiungiGenitori')}</p>
                             </div>
+                        )}
+
+                        {/* ═══ I COMANDI DEL LEGAME ═══════════════════════════════
+                            Le linguette qui sopra dicono il RUOLO e aprono il
+                            fascicolo dell'adulto: servono a leggere. Questi comandi
+                            servono a cambiare chi è collegato, ed è un altro
+                            mestiere — fino al 2026-09-06 non esisteva affatto, e
+                            l'unico modo di scollegare un genitore era una `DELETE` a
+                            mano sul database.
+                            I DELEGATI (`delegates`) restano fuori: sono un'altra
+                            tabella, non passano da `student_parents` e questa rotta
+                            non li tocca. */}
+                        <GestoreLegami
+                            verso="genitori"
+                            alunnoId={student.id}
+                            // Se in archivio il nome non c'è, si dice: una conferma di
+                            // scollegamento che comincia con uno spazio vuoto non nomina
+                            // nessuno, ed è proprio il nome ciò che deve nominare.
+                            nomeFisso={[student.cognome, student.nome].filter(Boolean).join(' ').trim() || t('legamiSenzaNome')}
+                            collegati={legamiGestibili}
+                            onRicarica={ricaricaLegami}
+                        />
+
+                        {rilettura === 'fallita' && (
+                            <p role="alert" className="mt-2 rounded-input bg-kidville-warn-soft px-3 py-2 font-maven text-[12px] text-kidville-warn-strong">
+                                {t('legamiElencoNonRiletto')}
+                            </p>
                         )}
                     </section>
 

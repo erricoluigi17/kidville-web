@@ -3,8 +3,10 @@
 import { motion } from 'framer-motion';
 import { useTranslations } from 'next-intl';
 import { logClient } from '@/lib/logging/client';
+import { nomeFileScarico, scarica, type RisultatoScarico } from '@/lib/native/scarica';
+import { condividiLink } from '@/lib/native/share';
 import { Download, Share2, Play, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 
 // Il traduttore va passato a timeAgo(), che è module-level (fuori dal componente).
@@ -42,6 +44,86 @@ interface Props {
     onUpdateTags?: (id: string, newTags: string[]) => Promise<void>; // Salvataggio dei tag
 }
 
+/*
+ * ⚠️ QUI NON SI PASSA `route`, ED È UNA DECISIONE — non una dimenticanza.
+ *
+ * Fino al 2026-09-06 queste righe dichiaravano `route: '/gallery'`, una pagina che NON
+ * ESISTE: sotto `src/app/` ci sono `parent/gallery`, `teacher/gallery`, `admin/gallery` e la
+ * route API, mai una `/gallery` alla radice. E `MediaGrid` è montata in QUATTRO punti —
+ * `/parent/gallery`, `/parent/diary`, `/teacher/gallery` e, dal 2026-09-05, `/admin/gallery`
+ * attraverso `GalleriaSedeGiornate`.
+ *
+ * `logClient` la rotta se la riempie da sé quando il campo manca: `client.ts` fa
+ * `redigiPathSicuro(e.route || pagina())`, e `pagina()` è `redigiPath(location.pathname)` —
+ * il percorso vero, già ridotto. Passare una costante era quindi STRETTAMENTE PEGGIO che
+ * ometterla: sovrascriveva il luogo dell'incidente con un luogo inventato, e in `app_log` lo
+ * scarico fallito di un'insegnante, quello di un genitore in galleria e quello dal diario
+ * diventavano indistinguibili — in un lavoro il cui scopo è proprio sapere dove è successo.
+ *
+ * Chi in futuro volesse rimettere un `route` fisso qui dentro: serve a distinguere QUATTRO
+ * superfici, e il modo giusto è lasciar parlare la pagina.
+ */
+
+/**
+ * L'ESITO DELLO SCARICO FINISCE SEMPRE IN `app_log` — successo compreso.
+ *
+ * ─── PERCHÉ ANCHE IL SUCCESSO ────────────────────────────────────────────────
+ * Senza la riga del successo, «nessun log» non distingue «va tutto bene» da «il
+ * pulsante non ha mai fatto partire niente» — ed è ESATTAMENTE così che questo
+ * guasto è rimasto in piedi: in trenta giorni di `app_log` c'è UNA sola riga
+ * sullo scarico della galleria (2026-09-05, iOS), e nessuna che dica che una
+ * volta abbia funzionato. Il silenzio sembrava salute (§5 di AGENTS.md).
+ *
+ * ─── PERCHÉ `warn` PER UN SUCCESSO, che sembra sbagliato ─────────────────────
+ * Perché il canale non ha di meglio: `/api/logs` accetta **solo** `warn|error`
+ * (difesa n. 4 della route: «un client non può riempire la tabella di `info`»),
+ * quindi un `info` non è spedibile e l'unico modo di NON conservare un evento è
+ * non mandarlo. Il costo è misurato, non stimato: `app_log` deduplica per
+ * `(fingerprint, giorno)` — una riga al giorno per utente, con `occorrenze` che
+ * conta il resto — e `controlloTassoErrore` guarda **solo** `livello = 'error'`,
+ * quindi un battito a `warn` non può far dire «degradato» a un'app sana.
+ *
+ * ─── PERCHÉ LO STATO HTTP STA NEL MESSAGGIO E NON IN `stato` ─────────────────
+ * Perché `livelloEvento()` applica a ogni `stato` fra 400 e 599 la politica di
+ * `livelloFetch`, che per un 403 o un 404 risponde `null` = «non spedire». Un
+ * indirizzo firmato scaduto (403) è il caso più probabile di scarico fallito:
+ * dichiararlo in `stato` significherebbe scartare in silenzio proprio la riga
+ * che si sta aggiungendo. Come token dentro `messaggio` invece resta, e il
+ * livello resta quello dichiarato qui.
+ */
+function registraEsitoScarico(risultato: RisultatoScarico): void {
+    const coda = risultato.motivo ? `: ${risultato.motivo}` : '';
+    if (risultato.esito === 'nativo-file' || risultato.esito === 'web-blob') {
+        logClient({
+            livello: 'warn',
+            evento: 'fetch',
+            messaggio: `gallery-scarico-riuscito:${risultato.esito}`,
+        });
+        return;
+    }
+    if (risultato.esito === 'ripiego-condivisione' || risultato.esito === 'ripiego-appunti') {
+        // Degradato, non guasto: l'utente ha ottenuto il link. Vale `warn`.
+        //
+        // I DUE RIPIEGHI RESTANO DUE TOKEN DIVERSI in tabella
+        // (`gallery-scarico-ripiego-condivisione` e `gallery-scarico-ripiego-appunti`),
+        // perché non sono la stessa degradazione: col foglio l'utente vede
+        // qualcosa succedere, con gli appunti no. Contarli insieme nasconderebbe
+        // proprio il ramo che si è dovuto rendere parlante.
+        logClient({
+            livello: 'warn',
+            evento: 'fetch',
+            messaggio: `gallery-scarico-${risultato.esito}${coda}`,
+        });
+        return;
+    }
+    // L'utente non ha ottenuto NIENTE: è il solo caso che merita un `error`.
+    logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `gallery-scarico-non-riuscito${coda}`,
+    });
+}
+
 function timeAgo(iso: string, t: Traduttore): string {
     const diff = Date.now() - new Date(iso).getTime();
     const hrs = Math.floor(diff / 3600000);
@@ -57,6 +139,105 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
     const [editMode, setEditMode] = useState(false);
     const [tempTagged, setTempTagged] = useState<string[]>([]);
     const [savingTags, setSavingTags] = useState(false);
+
+    /**
+     * UNO SCARICO ALLA VOLTA. Non è cosmesi: su iOS presentare un secondo foglio
+     * di condivisione mentre il primo è aperto solleva, e su nativo la seconda
+     * pressione riscriverebbe lo stesso file mentre lo si sta consegnando. Un
+     * `ref` e non uno `state` perché non deve ridisegnare niente.
+     */
+    const scaricoInCorso = useRef(false);
+
+    /**
+     * LO SCARICO, IN UN POSTO SOLO — ed è metà della correzione.
+     *
+     * Prima questa logica era scritta DUE VOLTE, sulla card e nel visore, e le
+     * due copie erano già divergenti: quella della card non aveva nemmeno un
+     * `logClient`. Due copie che divergono non sono un difetto di domani: erano
+     * il difetto di ieri.
+     */
+    const scaricaMedia = useCallback(async (item: MediaItem, url: string) => {
+        if (scaricoInCorso.current) {
+            /**
+             * NON UN `return` NUDO — e non è pignoleria.
+             *
+             * `scarica()` non lancia mai, ma può NON RISOLVERE: la `fetch` verso
+             * l'indirizzo firmato è CROSS-ORIGIN e nella WebView può accettare e
+             * tacere (è la riga di produzione con `stato_http = 0` citata in
+             * `scarica.ts`). In quel caso il `finally` qui sotto non gira mai, il
+             * ref resta `true` per tutta la vita della pagina, e da lì in avanti
+             * OGNI pressione di «Scarica» esce da questa riga.
+             *
+             * Senza questa riga «il pulsante è incagliato» e «nessuno l'ha mai
+             * premuto» sarebbero lo stesso identico silenzio in `app_log`: è
+             * l'ambiguità che il §5 di AGENTS.md vieta, ed è precisamente il modo
+             * in cui lo «Scarica» rotto è sopravvissuto per mesi.
+             *
+             * Il TETTO DI TEMPO su `scarica()` è una decisione separata e non si
+             * prende qui: `MAI_OLTRE_MS` è 30 s, e trenta secondi sono pochi per
+             * il video di un genitore su rete lenta. Loggare la pressione
+             * scartata invece non richiede nessuna scelta sui tempi.
+             */
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: 'gallery-scarico-gia-in-corso',
+            });
+            return;
+        }
+        scaricoInCorso.current = true;
+        try {
+            const risultato = await scarica({
+                url,
+                nomeFile: nomeFileScarico(item.caption, url, item.file_type),
+                titolo: item.caption ?? t('galleryFotoDaKidville'),
+            });
+            // Prima la riga, poi l'avviso: `alert()` blocca il thread finché
+            // l'utente non chiude, e un log che parte dopo è un log che si perde
+            // se lui intanto se ne va dalla pagina.
+            registraEsitoScarico(risultato);
+            // L'UNICO RAMO MUTO, e va detto — esattamente come fa `condividiMedia`
+            // qui sotto. Ci si arriva sul web senza Web Share (Firefox su desktop)
+            // quando l'indirizzo firmato è scaduto: il file non c'è, negli appunti
+            // c'è il link, e sullo schermo non è cambiato niente. Senza queste due
+            // righe «Scarica» tornerebbe a essere un pulsante che sembra rotto,
+            // che è il difetto da cui è nato tutto questo lavoro.
+            if (risultato.esito === 'ripiego-appunti') alert(t('mediaLinkCopiato'));
+        } finally {
+            scaricoInCorso.current = false;
+        }
+    }, [t]);
+
+    /**
+     * LA CONDIVISIONE, dallo stesso modulo nativo di tutto il resto dell'app
+     * (`@/lib/native/share`) invece che riscritta a mano due volte. Qui il ramo
+     * nativo mancava del tutto: c'era solo `navigator.share`, che nella WebView
+     * esiste ma non è il foglio di sistema di Capacitor.
+     *
+     * `avvisoAppunti` è il messaggio da mostrare QUANDO si finisce sugli appunti,
+     * che è l'unico ramo muto: senza, la copia riuscita e il pulsante rotto si
+     * assomigliano troppo. Lo decide `condividiLink`, non una condizione
+     * ricopiata qui.
+     */
+    const condividiMedia = useCallback(async (item: MediaItem, url: string, avvisoAppunti: string) => {
+        const esito = await condividiLink({
+            url,
+            title: item.caption ?? t('galleryFotoDaKidville'),
+        });
+        if (esito === 'appunti') {
+            alert(avvisoAppunti);
+            return;
+        }
+        if (esito === 'non-riuscita') {
+            // Nessun canale: prima di oggi questo ramo taceva del tutto, e un
+            // «Condividi» che non condivide non lasciava traccia da nessuna parte.
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: 'gallery-condivisione-senza-canale',
+            });
+        }
+    }, [t]);
 
     const handleCloseLightbox = () => {
         setLightbox(null);
@@ -176,22 +357,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         {showActions && url && (
                             <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 md:group-hover:opacity-100 transition-opacity duration-200 z-10 pointer-events-auto" style={{ opacity: 1 /* rendili sempre visibili per facilità su mobile */ }}>
                                 <button
-                                    onClick={async (e) => {
+                                    onClick={(e) => {
                                         e.stopPropagation();
-                                        try {
-                                            const response = await fetch(url);
-                                            const blob = await response.blob();
-                                            const blobUrl = window.URL.createObjectURL(blob);
-                                            const a = document.createElement('a');
-                                            a.href = blobUrl;
-                                            a.download = item.caption || 'scaricato-da-kidville';
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
-                                            window.URL.revokeObjectURL(blobUrl);
-                                        } catch {
-                                            window.open(url, '_blank');
-                                        }
+                                        void scaricaMedia(item, url);
                                     }}
                                     className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaScarica')}
@@ -199,27 +367,9 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                     <Download size={12} strokeWidth={2.5} />
                                 </button>
                                 <button
-                                    onClick={async (e) => {
+                                    onClick={(e) => {
                                         e.stopPropagation();
-                                        if (navigator.share) {
-                                            try {
-                                                await navigator.share({
-                                                    url,
-                                                    title: item.caption ?? t('galleryFotoDaKidville')
-                                                });
-                                            } catch {
-                                                // Annullamento del foglio di condivisione: UX attesa,
-                                                // non un guasto (stesso principio di @/lib/native/share).
-                                                // L'oggetto errore conteneva l'URL FIRMATO della foto.
-                                            }
-                                        } else {
-                                            try {
-                                                await navigator.clipboard.writeText(url);
-                                                alert(t('mediaLinkCopiato'));
-                                            } catch {
-                                                // Copia negata dal browser: l'utente lo vede subito.
-                                            }
-                                        }
+                                        void condividiMedia(item, url, t('mediaLinkCopiato'));
                                     }}
                                     className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaCondividi')}
@@ -391,47 +541,16 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         {/* Actions */}
                         {showActions && (
                             <div className="flex items-center justify-center gap-3 mt-4">
+                                {/* Gli STESSI due gesti della card, e nient'altro: la
+                                    duplicazione fra questi due punti è ciò che aveva
+                                    lasciato la card senza nemmeno un log. */}
                                 {urlVisore && <button
-                                    onClick={async () => {
-                                        try {
-                                            const response = await fetch(urlVisore);
-                                            const blob = await response.blob();
-                                            const blobUrl = window.URL.createObjectURL(blob);
-                                            const a = document.createElement('a');
-                                            a.href = blobUrl;
-                                            a.download = lightbox.caption || 'scaricato-da-kidville';
-                                            document.body.appendChild(a);
-                                            a.click();
-                                            document.body.removeChild(a);
-                                            window.URL.revokeObjectURL(blobUrl);
-                                        } catch {
-                                            logClient({ livello: 'warn', evento: 'fetch', messaggio: 'gallery-download-diretto-fallito', route: '/gallery' });
-                                            window.open(urlVisore, '_blank');
-                                        }
-                                    }}
+                                    onClick={() => { void scaricaMedia(lightbox, urlVisore); }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-green hover:bg-kidville-green/90 text-white rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Download size={14} strokeWidth={2.5} /> {t('mediaScarica')}
                                 </button>}
                                 {urlVisore && <button
-                                    onClick={async () => {
-                                        if (navigator.share) {
-                                            try {
-                                                await navigator.share({
-                                                    url: urlVisore,
-                                                    title: lightbox.caption ?? t('galleryFotoDaKidville')
-                                                });
-                                            } catch {
-                                                // Annullamento della condivisione: UX attesa.
-                                            }
-                                        } else {
-                                            try {
-                                                await navigator.clipboard.writeText(urlVisore);
-                                                alert(t('mediaLinkCopiatoLungo'));
-                                            } catch {
-                                                // Copia negata dal browser: l'utente lo vede subito.
-                                            }
-                                        }
-                                    }}
+                                    onClick={() => { void condividiMedia(lightbox, urlVisore, t('mediaLinkCopiatoLungo')); }}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-kidville-yellow hover:bg-kidville-yellow/90 text-kidville-green rounded-full font-barlow font-bold text-xs uppercase tracking-wide transition-colors cursor-pointer shadow-sm">
                                     <Share2 size={14} strokeWidth={2.5} /> {t('mediaCondividi')}
                                 </button>}

@@ -10,6 +10,7 @@ import { LuogoNascitaFields, type ValoreLuogoNascita } from '@/components/featur
 import { verificaCoerenza } from '@/lib/fiscale/coerenza';
 import { eCfGenitoreDuplicato } from '@/lib/anagrafiche/errori-cf';
 import { useDestinazioniSede, nomeSede } from './destinazioni-sede';
+import { GestoreLegami, type VoceLegame } from './legami/GestoreLegami';
 
 /**
  * ⚠️ `parents.fiscal_code` È UNIQUE, e questa è la scheda da cui si correggono i
@@ -199,6 +200,12 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
     const [regenMsg, setRegenMsg] = useState('');
     /** Il messaggio LEGGIBILE dell'ultimo salvataggio fallito. Mai il testo grezzo del server. */
     const [erroreSalvataggio, setErroreSalvataggio] = useState<string | null>(null);
+    /**
+     * La rilettura dei figli è fallita: l'elenco a schermo è VECCHIO, e va detto.
+     * Un elenco fermo manda il gesto successivo su un legame che non c'è più —
+     * cioè su un 404 `LEGAME_NON_TROVATO` che parla di un guasto inesistente.
+     */
+    const [elencoVecchio, setElencoVecchio] = useState(false);
 
     /**
      * Radice unica degli `id`: questa scheda vive sia come pannello laterale sia a
@@ -353,6 +360,41 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
         setForm(prev => ({ ...prev, [field]: value }));
     };
 
+    /**
+     * Rilegge i FIGLI dopo un collegamento riuscito.
+     *
+     * ⚠️ AGGIORNA SOLO `student_parents`, e non `form`. La lettura all'apertura fa
+     * `setForm(data)`: rifarla qui butterebbe via ciò che l'operatore ha scritto
+     * nei campi e non ha ancora salvato — chi corregge un numero di telefono e poi
+     * aggiunge un figlio si vedrebbe tornare il numero vecchio, senza un messaggio
+     * che lo dica. È la stessa regola già scritta in `handleSave`: i dati compilati
+     * non si perdono mai.
+     *
+     * ⚠️ E NON passa dall'effetto di apertura: quello accende `isLoading`, che
+     * sostituisce l'intera scheda con lo spinner — portandosi via anche l'esito
+     * dell'operazione appena riuscita, che è la sola riga che dice com'è andata.
+     */
+    const ricaricaFigli = async () => {
+        if (!parentBasicInfo) return;
+        const res = await fetch(`/api/admin/parents/${parentBasicInfo.id}`).catch(() => null);
+        const corpo = res?.ok ? await res.json().catch(() => null) : null;
+        if (!corpo || !Array.isArray(corpo.student_parents)) {
+            setElencoVecchio(true);
+            logClient({
+                livello: 'error',
+                evento: 'fetch',
+                messaggio: 'legami-figli-non-riletti',
+                route: '/admin/students',
+                stato: res?.status,
+            });
+            return;
+        }
+        setParent(precedente =>
+            precedente ? { ...precedente, student_parents: corpo.student_parents as ParentProfile['student_parents'] } : precedente,
+        );
+        setElencoVecchio(false);
+    };
+
     const handleRegen = async () => {
         if (!parent) return;
         if (!confirm(t('parentConfermaRigenera'))) return;
@@ -388,6 +430,24 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
     };
 
     const children = figli;
+
+    /**
+     * Le righe comandabili, col loro RUOLO: `relation_type` sta sulla riga di
+     * legame (`student_parents`), non sul bambino, quindi non si ricava da
+     * `figli` — che i bambini li ha già spogliati del legame che li porta qui.
+     */
+    const legamiGestibili: VoceLegame[] = (parent?.student_parents ?? [])
+        .filter(sp => Boolean(sp.alunni?.id))
+        .map(sp => ({
+            id: (sp.alunni as LinkedChild).id,
+            nome:
+                [(sp.alunni as LinkedChild).cognome, (sp.alunni as LinkedChild).nome]
+                    .filter(Boolean)
+                    .join(' ')
+                    .trim() || t('legamiSenzaNome'),
+            dettaglio: (sp.alunni as LinkedChild).classe_sezione ?? null,
+            ruolo: sp.relation_type ?? null,
+        }));
 
     const isPage = variant === 'page';
     const shellCls = isPage
@@ -757,6 +817,37 @@ export function ParentDetailPanel({ parentBasicInfo, onClose, onSave, variant = 
                                 <p data-testid="parent-sedi-figli-nota" className="mt-3 font-maven text-xs text-kidville-sub">
                                     {t('parentSediFigliNota')}
                                 </p>
+                            </section>
+                        )}
+
+                        {/* ═══ I COMANDI DEL LEGAME ═══════════════════════════════
+                            FUORI dal `children.length > 0` qui sopra, ed è il caso
+                            che conta: un adulto senza nessun figlio collegato è
+                            esattamente quello a cui serve «Aggiungi figlio», e
+                            dentro quel ramo il comando non sarebbe mai comparso.
+                            Il verso è l'opposto della scheda del bambino, la rotta
+                            e la riga scritta sono le stesse. */}
+                        {parent && (
+                            <section data-testid="parent-legami">
+                                {children.length === 0 && (
+                                    <p className="font-maven text-sm text-kidville-sub">{t('legamiNessunBambino')}</p>
+                                )}
+                                <GestoreLegami
+                                    verso="alunni"
+                                    parentId={parent.id}
+                                    // Dal record in ARCHIVIO, non da `form`: `form` porta
+                                    // anche ciò che l'operatore ha scritto e non ha salvato,
+                                    // e una conferma non deve nominare una persona con un
+                                    // nome che in archivio non c'è ancora.
+                                    nomeFisso={[parent.last_name, parent.first_name].filter(Boolean).join(' ').trim() || t('legamiSenzaNome')}
+                                    collegati={legamiGestibili}
+                                    onRicarica={ricaricaFigli}
+                                />
+                                {elencoVecchio && (
+                                    <p role="alert" className="mt-2 rounded-input bg-kidville-warn-soft px-3 py-2 font-maven text-[12px] text-kidville-warn-strong">
+                                        {t('legamiElencoNonRiletto')}
+                                    </p>
+                                )}
                             </section>
                         )}
                     </div>

@@ -1,5 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logEvento } from '@/lib/logging/logger';
+import {
+  COLONNE_VISIBILITA,
+  motivoNascosto,
+  type MotivoFiglioNascosto,
+} from '@/lib/alunni/attivo';
 
 // =============================================================================
 // Risoluzione condivisa dei legami genitore(account)↔alunno.
@@ -461,4 +466,193 @@ export async function sincronizzaLegamiRuntime(
     creati: mancanti.length,
   });
   return { creati: mancanti.length };
+}
+
+// =============================================================================
+// I FIGLI CHE LA FAMIGLIA DEVE VEDERE — e perché è un helper ACCANTO all'altro.
+//
+// ─── IL DIFETTO, misurato il 2026-09-05 ─────────────────────────────────────
+//
+// `GET /api/parent/students` risolveva i legami e poi leggeva `alunni` con il
+// solo `.in('id', ids)`: nessun filtro su `section_id`, `stato`, `archiviato_il`.
+// Quella rotta alimenta `useParentIdentity` → `ChildSwitcher` → lo `studentId`
+// di TUTTA l'app di famiglia, quindi un bambino senza sezione entrava dappertutto
+// e poi perdeva in silenzio — moduli e avvisi di classe, news di grado, agenda di
+// sezione, materiali dell'armadietto, l'intera area primaria (che ha un blocco
+// duro su `section_id` in quattro rotte) e le RETTE, che `genera-rette` non
+// produce mai per chi non ha classe. Presente e non funzionante: la combinazione
+// peggiore, perché non lascia nemmeno un errore da cercare.
+//
+// Misurato sul database di produzione, non dedotto:
+//   · 5 alunni non archiviati SENZA `section_id` (3 nella sede Demo, 2 veri);
+//   · 5 alunni ARCHIVIATI ancora legati a un account, quindi ancora mostrati;
+//   · 12 legami in tutto cadono sotto il filtro, su 684 account con figli;
+//   · 4 account resterebbero senza NESSUN figlio visibile — ed è il motivo per
+//     cui esiste la schermata di cortesia: nascondere a secco, per loro, è
+//     un'app vuota senza spiegazione.
+//
+// ─── PERCHÉ NON SI STRINGE `getFigliDiGenitore` ─────────────────────────────
+//
+// Ha 14 chiamanti, e tre sono `api/pagamenti`, `api/pagamenti/famiglia` e
+// `lib/pagamenti/sospensione`. Filtrare là dentro toglierebbe dalla vista i figli
+// RITIRATI CHE HANNO ANCORA PAGAMENTI APERTI: una famiglia smetterebbe di vedere
+// (e di poter saldare) il dovuto di un bambino che ha lasciato la scuola, e la
+// sospensione per morosità smetterebbe di contarlo. Un filtro giusto per una
+// superficie è un difetto su un'altra: si AFFIANCA, non si stringe.
+// =============================================================================
+
+/** Le colonne di un figlio che l'app di famiglia mostra davvero. */
+export interface RigaFiglio {
+  id: string;
+  nome: string | null;
+  cognome: string | null;
+  classe_sezione: string | null;
+  scuola_id: string | null;
+}
+
+export interface EsitoFigliAttivi {
+  /** I figli da mostrare: le RIGHE, non i soli id. */
+  righe: RigaFiglio[];
+  /** Quanti legami figlio↔genitore esistono, PRIMA del filtro. */
+  totaleLegami: number;
+  /** Quanti ne ha tolti il filtro, per motivo. */
+  nascosti: Record<MotivoFiglioNascosto, number>;
+  /** `false` = l'elenco dei legami può essere corto (vedi `getFigliDiGenitoreEsito`). */
+  completo: boolean;
+  /** La lettura di `alunni` è fallita: chi risponde a un client decida (500). */
+  errore: { code?: string; message?: string } | null;
+}
+
+/**
+ * Le colonne lette. Le prime cinque sono il contratto dell'app di famiglia; le
+ * ultime tre servono SOLO a decidere chi si mostra e non escono di qui.
+ */
+const COLONNE_FIGLIO = [
+  'id', 'nome', 'cognome', 'classe_sezione', 'scuola_id',
+  ...COLONNE_VISIBILITA,
+];
+
+function nascostiVuoti(): Record<MotivoFiglioNascosto, number> {
+  return { archiviato: 0, ritirato: 0, 'senza-sezione': 0 };
+}
+
+function testo(v: unknown): string | null {
+  return typeof v === 'string' ? v : null;
+}
+
+/**
+ * I figli di un genitore che la sua app deve MOSTRARE: unione dei legami
+ * (`getFigliDiGenitoreEsito`) ristretta a chi ha una classe, non è archiviato ed
+ * è ancora iscritto.
+ *
+ * ⚠️ LO STATO NON HA UN VOCABOLARIO SUO, QUI. Il confine lo decide
+ * `eAncoraIscritto` (`@/lib/alunni/stato`), che è lo stesso predicato che protegge
+ * dall'anonimizzazione: `'sospeso'` è un bambino che FREQUENTA e resta visibile,
+ * uno stato sconosciuto o vuoto non autorizza a nascondere niente. Riscrivere qui
+ * `.neq('stato','iscritto')` sarebbe la settima copia di una regola che questo
+ * repo ha già pagato per aver tenuto in sei posti.
+ *
+ * ⚠️ IL FILTRO SI APPLICA IN JS, NON IN SQL, ed è una scelta con due ragioni.
+ * La prima: `eAncoraIscritto` è complementare a un'ALLOWLIST, e la sua traduzione
+ * PostgREST (`not.in`) su una colonna che può essere NULL escluderebbe la riga
+ * invece di ammetterla — l'opposto esatto del predicato. La seconda: per loggare
+ * il MOTIVO bisogna aver letto la riga, e un filtro che scarta nel database non
+ * sa dire di che cosa si è liberato.
+ *
+ * ⚠️ COLONNA ASSENTE ⇒ QUEL CRITERIO NON SI APPLICA (e si logga). Il DB E2E della
+ * CI non è migrato e su `SELECT` risponde `42703`: il ciclo qui sotto toglie la
+ * colonna e rilegge. Degradare APERTI è il verso giusto in cui sbagliare — chiudere
+ * significherebbe svuotare l'app a 662 famiglie perché uno schema è indietro — ma
+ * un degrado muto sarebbe un filtro che smette di filtrare senza dirlo, quindi la
+ * riga di `warn` non è un ornamento.
+ */
+export async function getFigliAttiviDiGenitore(
+  supabase: SupabaseClient,
+  accountId: string,
+): Promise<EsitoFigliAttivi> {
+  const { figli: ids, completo } = await getFigliDiGenitoreEsito(supabase, accountId);
+  if (ids.length === 0) {
+    return { righe: [], totaleLegami: 0, nascosti: nascostiVuoti(), completo, errore: null };
+  }
+
+  let colonne = [...COLONNE_FIGLIO];
+  const leggi = () => supabase.from('alunni').select(colonne.join(', ')).in('id', ids);
+  let { data, error } = await leggi();
+  let tentativi = 0;
+  while (error && (error as { code?: string }).code === '42703' && tentativi < 5) {
+    const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(
+      (error as { message?: string }).message ?? '',
+    )?.[1];
+    if (!col || col === 'id' || !colonne.includes(col)) break;
+    logEvento('db', 'info', {
+      operazione: 'anagrafiche/legami:figli-attivi',
+      esito: 'colonna-assente-rimossa',
+      entita_tipo: 'alunni',
+      error_code: '42703',
+    });
+    colonne = colonne.filter((c) => c !== col);
+    ({ data, error } = await leggi());
+    tentativi++;
+  }
+
+  if (error) {
+    // PostgREST non lancia: senza questo ramo la lettura fallita uscirebbe come
+    // «questo genitore non ha figli», cioè un guasto travestito da risposta.
+    segnalaLetturaLegami('figli-attivi-non-letti', 'alunni', ids.length, error);
+    return {
+      righe: [],
+      totaleLegami: ids.length,
+      nascosti: nascostiVuoti(),
+      completo: false,
+      errore: error as { code?: string; message?: string },
+    };
+  }
+
+  const presenti = new Set(colonne);
+  const nascosti = nascostiVuoti();
+  const righe: RigaFiglio[] = [];
+
+  for (const r of (data ?? []) as unknown as Record<string, unknown>[]) {
+    const id = testo(r.id);
+    if (!id) continue;
+    // Il motivo lo decide `@/lib/alunni/attivo`, lo stesso predicato che usa il
+    // gate delle venti rotte: due copie di questa regola vorrebbero dire un
+    // bambino nascosto nell'elenco e visibile aprendo il link, o viceversa.
+    const motivo = motivoNascosto(r, presenti);
+    if (motivo) { nascosti[motivo] += 1; continue; }
+    righe.push({
+      id,
+      nome: testo(r.nome),
+      cognome: testo(r.cognome),
+      classe_sezione: testo(r.classe_sezione),
+      scuola_id: testo(r.scuola_id),
+    });
+  }
+
+  const totale = nascosti.archiviato + nascosti.ritirato + nascosti['senza-sezione'];
+  if (totale > 0) {
+    // ⚠️ `warn` E NON `info`, e la ragione è misurabile: `anagrafica` sta fra le
+    // `DEROGHE_INFO_NON_PERSISTITI` di `__tests__/architecture/eventi-log.test.ts`,
+    // quindi un `info` su questo canale vive qualche giorno sui log di Vercel e
+    // poi sparisce. Questa riga esiste per una domanda che si fa in SQL fra sei
+    // mesi — «i cinque bambini invisibili sono diventati cinquanta?» — e un log
+    // che non arriva in tabella non la risponde. `vaPersistito` manda in `app_log`
+    // tutto ciò che è `warn` o `error`: è l'unico livello che la fa arrivare.
+    //
+    // SOLO UUID E NUMERI: `operazione` ed `esito` sono in lista bianca,
+    // `genitore_id` passa per FORMA (uuid), il resto sono conteggi. Nessun
+    // `alunno_id`, nessun nome: per contare non serve sapere di chi.
+    logEvento('anagrafica', 'warn', {
+      operazione: 'anagrafiche/legami:figli-attivi',
+      esito: 'figli-nascosti-alla-famiglia',
+      genitore_id: accountId,
+      n: totale,
+      n_visibili: righe.length,
+      n_archiviati: nascosti.archiviato,
+      n_ritirati: nascosti.ritirato,
+      n_senza_sezione: nascosti['senza-sezione'],
+    });
+  }
+
+  return { righe, totaleLegami: ids.length, nascosti, completo, errore: null };
 }

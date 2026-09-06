@@ -152,7 +152,36 @@ export const GET = withRoute('parent/prestampati:GET', async (request: NextReque
     // «handler-senza-scope su `delegates`». Con questa riga il permesso di leggere i
     // delegati si vede accanto alla query che ne approfitta, che è esattamente ciò che il
     // lock pretende e ciò che serve a chi rilegge il file.
-    const portata = await requireParentOfStudent(request, alunnoId)
+    // ⚠️ `richiediAttivo: false` — E DALL'INTERFACCIA DELLA FAMIGLIA, OGGI, NON CI SI ARRIVA.
+    //
+    // Fino al 2026-09-06 qui c'era scritto «LA MODULISTICA DEVE VEDERE ANCHE CHI NON
+    // C'È PIÙ», e descriveva un comportamento che il codice si impedisce da solo: il
+    // selettore dei prestampati della famiglia si riempie da `GET /api/parent/students`
+    // (unico punto di montaggio: `parent/modulistica/page.tsx`), che dal 2026-09-05
+    // nasconde i figli senza classe, ritirati o archiviati — quindi un id non attivo,
+    // da qui, non arriva più. Per i 4 account genitore senza nessun figlio visibile
+    // `figli` è `[]` e il pannello mostra «vuotoFigliInAttesa» — «Stiamo completando
+    // l'iscrizione… chiedilo alla segreteria», la stessa cosa che quelle famiglie leggono
+    // sulla home. (Fino al 2026-09-06 diceva «non risulta nessun bambino collegato», che
+    // era FALSO: i legami esistono, ed è la loro esistenza a rendere vero `in_attesa`.
+    // Due schermate a un tocco l'una dall'altra si contraddicevano, e quella che diceva
+    // il falso era anche quella da cui si chiede il certificato.) Il certificato di
+    // frequenza per la detrazione, dalla famiglia, si chiede alla segreteria.
+    //
+    // ⚠️ E NON È IL BANCO DELLA SEGRETERIA A PASSARE DI QUI: questi handler rispondono
+    // `soloFamiglia()` a chi non `agisceComeGenitore`. Il banco passa da
+    // `/api/prestampati` e `/api/prestampati/genera`, il cui gate sta in
+    // `caricaPrefillAlunno` → `portataChiusa` (`@/lib/prestampati/prefill.ts`): è LÌ che
+    // questa esenzione porta peso, e lì è documentata.
+    //
+    // Resta anche qui per la finestra che nessuno chiude: l'id già in mano quando il
+    // bambino sparisce — la pagina aperta mentre la segreteria archivia, un elenco già
+    // letto. In quel caso i prestampati hanno rifiuti propri e molto più utili —
+    // `PRESTAMPATO_ALUNNO_NON_ISCRITTO`, `PRESTAMPATO_ALUNNO_ANONIMIZZATO`,
+    // `PRESTAMPATO_ALUNNO_NON_TROVATO`, che passano da `caricaPrefillAlunno` e sanno
+    // distinguere «non frequenta» da «anagrafica cancellata» — e un 403 generico prima
+    // di loro sostituirebbe una frase che spiega con una che non spiega.
+    const portata = await requireParentOfStudent(request, alunnoId, false)
     if (portata.response) return portata.response
     const utente = portata.user
     // PRESENTAZIONE, non autorizzazione — e qui la differenza è voluta. Il diniego
@@ -695,7 +724,36 @@ export const POST = withRoute('parent/prestampati:POST', async (request: NextReq
     // genitore lo scope è la FAMIGLIA e non la sede. Senza, un id altrui farebbe uscire il
     // certificato di iscrizione di un bambino qualsiasi — con nome, data di nascita e
     // codice fiscale dentro.
-    const portata = await requireParentOfStudent(request, alunnoId)
+    // ⚠️ `richiediAttivo: false` — E DALL'INTERFACCIA DELLA FAMIGLIA, OGGI, NON CI SI ARRIVA.
+    //
+    // Fino al 2026-09-06 qui c'era scritto «LA MODULISTICA DEVE VEDERE ANCHE CHI NON
+    // C'È PIÙ», e descriveva un comportamento che il codice si impedisce da solo: il
+    // selettore dei prestampati della famiglia si riempie da `GET /api/parent/students`
+    // (unico punto di montaggio: `parent/modulistica/page.tsx`), che dal 2026-09-05
+    // nasconde i figli senza classe, ritirati o archiviati — quindi un id non attivo,
+    // da qui, non arriva più. Per i 4 account genitore senza nessun figlio visibile
+    // `figli` è `[]` e il pannello mostra «vuotoFigliInAttesa» — «Stiamo completando
+    // l'iscrizione… chiedilo alla segreteria», la stessa cosa che quelle famiglie leggono
+    // sulla home. (Fino al 2026-09-06 diceva «non risulta nessun bambino collegato», che
+    // era FALSO: i legami esistono, ed è la loro esistenza a rendere vero `in_attesa`.
+    // Due schermate a un tocco l'una dall'altra si contraddicevano, e quella che diceva
+    // il falso era anche quella da cui si chiede il certificato.) Il certificato di
+    // frequenza per la detrazione, dalla famiglia, si chiede alla segreteria.
+    //
+    // ⚠️ E NON È IL BANCO DELLA SEGRETERIA A PASSARE DI QUI: questi handler rispondono
+    // `soloFamiglia()` a chi non `agisceComeGenitore`. Il banco passa da
+    // `/api/prestampati` e `/api/prestampati/genera`, il cui gate sta in
+    // `caricaPrefillAlunno` → `portataChiusa` (`@/lib/prestampati/prefill.ts`): è LÌ che
+    // questa esenzione porta peso, e lì è documentata.
+    //
+    // Resta anche qui per la finestra che nessuno chiude: l'id già in mano quando il
+    // bambino sparisce — la pagina aperta mentre la segreteria archivia, un elenco già
+    // letto. In quel caso i prestampati hanno rifiuti propri e molto più utili —
+    // `PRESTAMPATO_ALUNNO_NON_ISCRITTO`, `PRESTAMPATO_ALUNNO_ANONIMIZZATO`,
+    // `PRESTAMPATO_ALUNNO_NON_TROVATO`, che passano da `caricaPrefillAlunno` e sanno
+    // distinguere «non frequenta» da «anagrafica cancellata» — e un 403 generico prima
+    // di loro sostituirebbe una frase che spiega con una che non spiega.
+    const portata = await requireParentOfStudent(request, alunnoId, false)
     if (portata.response) return portata.response
 
     const supabase = await createAdminClient()

@@ -12,6 +12,7 @@ import {
   ListTodo,
   Package,
   BookOpen,
+  Images,
   Award,
   ShieldCheck,
   ChefHat,
@@ -71,6 +72,17 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/primaria', label: 'Primaria', labelKey: 'nav_primaria', icon: GraduationCap },
       { href: '/admin/diary', label: 'Diario 0–6', labelKey: 'nav_diary', icon: BookOpen },
+      // Galleria del PLESSO (segreteria): le foto di tutta la sede, filtrabili per
+      // classe, per bambino e per giornata. Sta accanto al Diario perché sono i due
+      // registri della stessa giornata; `/teacher/gallery` resta la vista di UNA
+      // sezione, senza filtro data né filtro bambino. Il gate vero è nelle API
+      // (`GET /api/gallery?scope=sede` → `requireStaff`), qui è solo UI.
+      // `roles` = gli stessi tre che `requireStaff` ammette di default su quella
+      // rotta. Senza, la voce sarebbe visibile anche alla `cuoca`, che entra
+      // nell'area admin per il solo report cucina (`AREE_PER_RUOLO`): vedrebbe
+      // «Galleria» in sidebar e nel menu, e aprendola atterrerebbe su un 403 —
+      // un menu che promette una schermata di foto di minori e poi la nega.
+      { href: '/admin/gallery', label: 'Galleria', labelKey: 'nav_gallery', icon: Images, roles: ['admin', 'coordinator', 'segreteria'] },
       { href: '/admin/competenze', label: 'Competenze', labelKey: 'nav_competenze', icon: Award },
     ],
   },

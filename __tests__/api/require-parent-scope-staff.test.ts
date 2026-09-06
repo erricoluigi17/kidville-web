@@ -172,8 +172,19 @@ describe('requireParentOfStudent — genitore (comportamento invariato)', () => 
     const r = await requireParentOfStudent(req(), ALU_B)
     expect(r.response).toBeUndefined()
     expect(r.user?.id).toBe('gen-1')
-    // Al genitore non si applica lo scope di sede: nessuna lettura di `alunni`.
-    expect(h.tabelle).not.toContain('alunni')
+    // Al genitore non si applica lo SCOPE DI SEDE: `sections`, `utenti_sezioni` e
+    // `utenti_scuole` non vengono nemmeno sfiorate — due fratelli possono stare in
+    // due plessi diversi.
+    //
+    // ⚠️ QUI C'ERA `expect(h.tabelle).not.toContain('alunni')`, e dal 2026-09-05 non è
+    // più vero: il gate legge `alunni` anche per il genitore, ma per un'altra domanda
+    // — «questo bambino si mostra ancora alla sua famiglia?» (`verificaAlunnoAttivo`).
+    // Confondere «non applica lo scope di sede» con «non legge alunni» avrebbe reso
+    // rosso un comportamento corretto: la tabella non è il perimetro, le tabelle DELLO
+    // SCOPE lo sono.
+    expect(h.tabelle).not.toContain('utenti_sezioni')
+    expect(h.tabelle).not.toContain('utenti_scuole')
+    expect(h.tabelle).not.toContain('sections')
   })
 })
 

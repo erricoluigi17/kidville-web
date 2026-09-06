@@ -19,7 +19,17 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuoleAttive: vi.fn(async () => ['sc-1']),
   assertAlunnoInScope: vi.fn(async () => null),
 }))
-vi.mock('@/lib/settings/module-config', () => ({ getModuleConfig: async () => ({}) }))
+// ⚠️ ENTRAMBE le esportazioni, e la seconda non è di scorta: dal 2026-09-05
+// `coordinateBonificoSede` (che questa route chiama per l'IBAN della card «Come
+// pagare») legge con `leggiModuleConfig`, perché deve distinguere «la scuola non
+// ha impostazioni» da «la riga non si è potuta leggere». Una factory `vi.mock`
+// sostituisce il modulo PER INTERO: con la sola `getModuleConfig` la route
+// esplodeva con `No "leggiModuleConfig" export is defined on the mock` e
+// rispondeva 500 — un test sui LEGAMI che diventa rosso per un import.
+vi.mock('@/lib/settings/module-config', () => ({
+  getModuleConfig: async () => ({}),
+  leggiModuleConfig: async () => ({ ok: true, config: {} }),
+}))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {

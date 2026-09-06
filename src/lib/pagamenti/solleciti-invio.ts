@@ -11,7 +11,7 @@ import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
 import { DEFAULT_CAUSALE_TEMPLATE, causaleBonifico, modelloCausale, rigaCausaleSollecito } from './causale'
 import { meseAnnoDaPeriodo } from './periodo'
-import { datiStruttura, type ArubaFiscalConfig, type FiscaleConfig } from './fiscale'
+import { coordinateBonificoSede } from './coordinate-bonifico'
 import {
     DEFAULT_SOLLECITI_CONFIG,
     livelliEffettivi,
@@ -100,6 +100,7 @@ export async function sollecitaPagamenti(
         sedeNome: string
         causaliCfg: Partial<Record<string, string>>
         iban: string | null
+        intestatario: string | null
         contestoSede: ContestoSede
     }>()
     const esiti: EsitoSollecito[] = []
@@ -118,8 +119,16 @@ export async function sollecitaPagamenti(
         let scuolaCtx = cfgCache.get(pag.scuola_id)
         if (!scuolaCtx) {
             const cfg = (await getModuleConfig(supabase, 'solleciti_config', pag.scuola_id)) as SollecitiConfig
-            const fiscale = (await getModuleConfig(supabase, 'fiscale_config', pag.scuola_id)) as FiscaleConfig
-            const aruba = (await getModuleConfig(supabase, 'aruba_config', pag.scuola_id)) as ArubaFiscalConfig
+            // IBAN e intestatario del riquadro «Dati per il bonifico» vengono da
+            // `coordinateBonificoSede`, lo STESSO motore che riempie la card
+            // «Come pagare» del genitore: sono le due righe che la famiglia
+            // copia nell'home banking, e leggerle due volte significa poterle
+            // dire diverse nei due posti senza che nessuno se ne accorga.
+            // L'IBAN esce già a gruppi di quattro — e `null` se le cifre di
+            // controllo non tornano: un IBAN sbagliato non si manda mai.
+            const coordinate = await coordinateBonificoSede(supabase, pag.scuola_id, {
+                operazione: 'solleciti-invio',
+            })
             // Modelli di causale per-categoria (per slug, con eventuale `default`).
             // `getModuleConfig` degrada da solo (config/colonna assente → `{}` → predefinito).
             const causaliCfg = await getModuleConfig<Record<string, string>>(supabase, 'causali_config', pag.scuola_id)
@@ -128,24 +137,26 @@ export async function sollecitaPagamenti(
             const { data: sede } = await supabase.from('scuole').select('nome').eq('id', pag.scuola_id).maybeSingle()
             scuolaCtx = {
                 cfg,
-                scuolaNome:
-                    datiStruttura(fiscale, aruba, {
-                        operazione: 'solleciti-invio',
-                        scuolaId: pag.scuola_id,
-                    }).denominazione || 'La Segreteria',
+                // La firma della prosa (`{scuola}` nei modelli): resta com'era,
+                // col ripiego «La Segreteria» quando la denominazione non è
+                // configurata. ⚠️ Il ripiego NON può decidere l'intestatario del
+                // conto: è una stringa sentinella, e finché l'intestatario si
+                // deduceva da lui una sede davvero chiamata «La Segreteria»
+                // perdeva la riga «Intestato a».
+                scuolaNome: coordinate.intestatario ?? 'La Segreteria',
                 sedeNome: ((sede?.nome as string | null | undefined) ?? '') || '',
                 causaliCfg,
-                // L'IBAN del riquadro «Dati per il bonifico». Vuoto finché
-                // qualcuno non lo compila in Impostazioni: allora il riquadro
-                // mostra importo, causale e intestatario — cioè esattamente ciò
-                // che questo sollecito manda da sempre. Nessuna regressione.
-                iban: (fiscale?.iban ?? null),
+                // Vuoto finché qualcuno non compila l'IBAN in Impostazioni:
+                // allora il riquadro mostra importo, causale e intestatario —
+                // cioè esattamente ciò che questo sollecito manda da sempre.
+                iban: coordinate.iban,
+                intestatario: coordinate.intestatario,
                 // L'identità della sede per il piè di pagina dell'email.
                 contestoSede: await risolviContestoSede(supabase, pag.scuola_id, 'solleciti-invio'),
             }
             cfgCache.set(pag.scuola_id, scuolaCtx)
         }
-        const { cfg, scuolaNome, sedeNome, causaliCfg, iban, contestoSede } = scuolaCtx
+        const { cfg, scuolaNome, sedeNome, causaliCfg, iban, intestatario, contestoSede } = scuolaCtx
 
         const cadenza = cfg.cadenza_min_giorni ?? DEFAULT_SOLLECITI_CONFIG.cadenza_min_giorni
         if (pag.ultimo_sollecito_il && adesso - Date.parse(pag.ultimo_sollecito_il) < cadenza * MS_GIORNO) {
@@ -255,7 +266,7 @@ export async function sollecitaPagamenti(
                 importo: formatEuro(pag.importo),
                 scadenza: isoToIt(pag.scadenza ?? ''),
             }, templateCausale),
-            intestatario: scuolaNome !== 'La Segreteria' ? scuolaNome : null,
+            intestatario,
             iban,
         }, contestoSede)
 

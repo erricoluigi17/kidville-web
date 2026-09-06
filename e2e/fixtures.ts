@@ -217,6 +217,27 @@ export async function login(page: Page, email: string, password: string = PASSWO
 /**
  * Attende che l'overlay di caricamento globale abbia finito di coprire la pagina.
  *
+ * ─── ⚠️ NON È UN'ATTESA DI CONTENUTO, E NON LO È MAI STATA ──────────────────
+ * Questa funzione attende UNA cosa sola: che sparisca l'overlay
+ * `[data-visible="true"][role="status"]`. Non guarda il DOM della pagina, non
+ * sa se una fetch è partita, non sa se è tornata. E l'overlay si spegne presto:
+ * `GlobalLoader.tsx` lo nasconde «appena il client ha idratato e dipinto (primo
+ * rAF post-mount)», cioè PRIMA che qualunque `useEffect` abbia ricevuto una
+ * risposta dal server.
+ * In più è FAIL-OPEN per costruzione: se l'elemento non è mai comparso la
+ * condizione è già vera e si prosegue subito, e se resta a schermo oltre i 10 s
+ * il `catch` logga e prosegue lo stesso. Quindi «attendiFineCaricamento è
+ * passata» non è mai la prova che ci sia qualcosa da guardare.
+ *
+ * Chi misura il CONTENUTO deve aggiungere una condizione propria. È il difetto
+ * da cui è nato il rosso intermittente di `/teacher` nel crawler di contrasto
+ * (2026-09-06): `contrasto-schermate.spec.ts` scattava la fotografia subito
+ * dopo questa attesa e misurava il guscio — ~16 nodi in SSR, ~18 idratato, ~36
+ * a dati arrivati — con lo stesso codice verde in cinque run e rosso in due.
+ * La riparazione è nello spec (un ciclo che rilegge finché il conteggio non si
+ * ferma), NON qui: il comportamento di questa funzione non è stato cambiato,
+ * perché altri spec ci contano ed è giusta per ciò che fa davvero.
+ *
  * ─── DA DOVE VIENE, 2026-08-04 ─────────────────────────────────────────────
  * Nata per convivere con l'inertizzazione del `GlobalLoader` (rilievo T09-F1),
  * che poi è stata RITIRATA — la ragione per esteso è nel commento di

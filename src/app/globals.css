@@ -485,8 +485,27 @@ body {
   outline: 3px solid #FFE500;
   outline-offset: 2px;
   /* A3: separatore nero, così l'anello giallo si stacca anche dai controlli a
-     bordo/fondo giallo (es. riga «suggerito» in Alto Contrasto). */
-  box-shadow: 0 0 0 2px #000000;
+     bordo/fondo giallo (es. riga «suggerito» in Alto Contrasto).
+
+     ⚠️ 2026-09-06 — IL SEPARATORE STAVA SOLO DA UN LATO, E UN ANELLO NE HA DUE.
+     MISURATO da tastiera sulla Riconciliazione in Alto Contrasto: 9 dei 16 stop
+     — le cinque pill di stato, le tre del gruppo «Fatturazione» e ogni riga del
+     registro — davano un indicatore di fuoco a **1,28:1**. Non era il colore:
+     #FFE500 contro il nero vale 16,46:1 ed è il giallo giusto. Era la geometria.
+     La regola dipingeva NERO da 0 a 2px, GIALLO da 2 a 5px, e poi la PAGINA — e
+     la pagina, in Alto Contrasto, resta CHIARA: il guscio del cruscotto è
+     `bg-kidville-cream` e le card `bg-white`, hex inlinati da `@theme inline`
+     che il rimappaggio dei token non tocca (#FFE500 su #FFFFFF 1,28:1, su
+     #FEF1E4 1,15:1). Il nero di dentro c'era, quello di fuori no.
+     Il rimedio chiude il panino: un secondo anello nero OLTRE l'outline, da 5 a
+     7px. L'`outline` si dipinge SOPRA la `box-shadow` dello stesso elemento
+     (CSS 2.1, appendice E: gli outline sono l'ultimo passo), quindi il giallo
+     resta intero e ai suoi due lati c'è nero — 16,46:1 di qua e di là, e il
+     nero esterno stacca a sua volta dalla carta a 21:1.
+     Il giallo resta UNA banda sola: il lock che conta le bande
+     (`__tests__/a11y/scadenze-documenti-a11y.test.tsx`) guarda #FFE500, e qui
+     se ne aggiunge solo del nero. */
+  box-shadow: 0 0 0 2px #000000, 0 0 0 7px #000000;
 }
 /* AppBar e card-header verdi: in alto contrasto --color-kidville-green diventa
    #FFF e il testo bianco sparirebbe (bug latente degli header verdi inline).
@@ -495,6 +514,150 @@ body {
 [data-contrast="high"] .kv-header-card {
   background: #000000;
   box-shadow: inset 0 0 0 1px #8A8A8A;
+}
+
+/* =============================================================================
+   GLI INCHIOSTRI DI STATO, SU UNA CARTA CHE IN ALTO CONTRASTO RESTA CHIARA
+   (2026-09-06). Misurato IN CI, run 34008632435, dal crawler di contrasto
+   `e2e/contrasto-schermate.spec.ts` — la prima sonda che abbia mai guardato
+   dietro il login nelle DUE modalità.
+
+   ─── IL RILIEVO, NELLE SUE PAROLE ──────────────────────────────────────────
+   Le due rotte misurate fallivano entrambe con «le due modalità danno lo stesso
+   identico esito: il cookie non sta facendo niente»: gli elementi ILLEGGIBILI
+   restavano illeggibili IDENTICI con l'Alto Contrasto acceso. Otto firme:
+
+     /parent/pagamenti (390×844)
+       a    .text-kidville-muted (+ border-kidville-line, hover:*)  3,80:1
+       p    .font-maven.text-kidville-muted.text-xs                 3,80:1
+       span .text-[10px].text-kidville-error                        4,23:1
+     /teacher (1440×900)
+       span .bg-kidville-info-soft.text-kidville-info               4,20:1
+       span .bg-kidville-success-soft.text-kidville-success         2,89:1
+       span idem, altro padding                                     2,89:1
+       span style={{ color:'#E53935' }}  ← INLINE, v. in fondo      4,23:1
+       span style={{ color:'#1F8A5B' }}  ← INLINE, v. in fondo      4,33:1
+
+   ─── PERCHÉ NON CAMBIAVA NIENTE ────────────────────────────────────────────
+   La solita, e vale la pena riscriverla: `@theme inline` INLINA l'hex dentro la
+   utility, quindi `.text-kidville-muted` emette `color:#7B8582` letterale e
+   ridefinire `--color-kidville-muted` sotto `[data-contrast="high"]` non tocca
+   una sola classe Tailwind. È già costato due volte in questo file
+   (`warn-strong` inerte fino al 2026-08-02, `muted` rimosso il 2026-09-04).
+
+   ─── PERCHÉ SI SCURISCE, INVECE DI SCHIARIRE ───────────────────────────────
+   Perché la carta, in Alto Contrasto, NON si ribalta con l'inchiostro. Il
+   guscio del genitore e quello del docente sono
+   `<div class="min-h-screen bg-kidville-cream">` — hex inlinato, resta CREMA —
+   e le card sono `bg-white`/`bg-kidville-white`, che restano BIANCHE.
+   `[data-contrast="high"] body { background:#000 }` sta dietro e non si vede.
+   Sul cruscotto, in Alto Contrasto, la carta è chiara quasi ovunque: è la stessa
+   constatazione che ha già portato `.kv-admin-sheet`, `.kv-admin-nav`,
+   `.kv-admin-rowcard`, `.kv-admin-bottomnav` e `.kv-public` a scrivere i propri
+   testi tokenizzati in NERO. Qui si generalizza quella scelta ai quattro
+   inchiostri che nessuna di quelle liste nominava.
+
+   ─── I VALORI, MISURATI SULLE TREDICI FASCE CHIARE DEL TEMA ────────────────
+   `muted` va a NERO PIENO: non è un inchiostro semantico (lo dice il suo stesso
+   commento in `@theme inline`), e tre regole di questo file lo portano già lì.
+   Gli altri tre TENGONO LA TINTA — in Alto Contrasto un errore deve continuare
+   a leggersi come un errore anche per chi arriva alla pagina di fretta — ma
+   scendono al punto in cui reggono AAA su ogni carta chiara del tema, giallo
+   dell'Alto Contrasto compreso (che è la fascia peggiore di tutte):
+
+     muted   #000000  min 16,46  · bianco 21,00 · crema 18,92 · cream-dark 16,95
+     error   #8B0000  min  7,85  · bianco 10,01 · crema  9,02 · cream-dark  8,08
+     success #0F4A22  min  8,14  · bianco 10,38 · crema  9,35 · cream-dark  8,38
+     info    #123C86  min  8,16  · bianco 10,42 · crema  9,38 · cream-dark  8,40
+
+   Le quattro firme che dipendono da questo blocco passano da 3,80 · 4,23 · 4,20
+   · 2,89 a 21,00 · 10,01 · 9,15 · 9,09.
+
+   ─── DOVE QUESTE REGOLE DEVONO PERDERE, E COME SI OTTIENE ──────────────────
+   Una manciata di superfici in Alto Contrasto è NERA (`.kv-recon-row`,
+   `.kv-recon-dialog`, `.kv-come-pagare`, `.kv-appbar`, `.kv-admin-topbar`,
+   `.kv-appello-avviso`, `.kv-mensa-alt .bg-kidville-error-soft`): là dentro un
+   inchiostro scuro sarebbe nero su nero, cioè il difetto opposto e peggiore.
+   Due presidi, non uno:
+     · SPECIFICITÀ — questi selettori sono NUDI, (0,2,0). Ogni regola
+       per-superficie porta la sua classe `.kv-*` in più, (0,3,0), e vince
+       comunque, ovunque stia scritta;
+     · ORDINE — per le parità: questo blocco sta in TESTA, prima di tutte le
+       rimappature per-superficie del file. Rete di sicurezza generica prima,
+       superfici dipinte a mano dopo.
+   Lock: `__tests__/a11y/alto-contrasto-inchiostri-di-stato.test.ts`, che
+   ricalcola i rapporti e verifica sia la forma dei selettori sia l'ordine.
+
+   ─── IL DEBITO CHE QUESTO BLOCCO NON CHIUDE, DETTO INVECE CHE TACIUTO ──────
+   Le regole agganciano le quattro utility ESATTE. Restano fuori:
+     · le varianti con alfa (`text-kidville-muted/60`, 17 in `src/`). Un
+       `[class*="text-kidville-muted"]` le prenderebbe — ma prenderebbe anche le
+       4 `hover:text-kidville-muted`, trasformando uno STATO in un colore fisso:
+       spegnerebbe un'affordance invece di aggiungerne una;
+     · le varianti di stato (`hover:text-kidville-error`, 47): sono uno stato,
+       non il riposo, e nessuna delle otto firme misurate ne è una;
+     · le due firme `style={{ color: … }}` INLINE della home docente
+       (`teacher/page.tsx`, l'array `SHORTCUTS`) — CHIUSE il 2026-09-06, ma non
+       qui sopra: un foglio di stile non batte un attributo `style` senza
+       `!important`, e una regola `!important` su `[style*="color"]` avrebbe
+       coperto il sintomo spegnendo anche le tinte che in Alto Contrasto vanno
+       benissimo. Si è aggiunta invece una CLASSE-ÀNCORA sui due soli elementi
+       che portano quelle tinte (`.kv-tinta-inline` sull'occhiello,
+       `.kv-tinta-inline-pastiglia` sulla pastiglia dell'icona), e le regole
+       stanno in fondo a questo blocco. L'`!important` c'è, ma è puntato su una
+       classe che nomina i suoi due elementi, non su «qualunque cosa abbia uno
+       style».
+       ⚠️ Resta vera la causa radice, e non la chiude questo lavoro: quelle sei
+       tinte sono scritte a mano nel componente invece di passare da
+       `TINTA_FUNZIONE` (`src/lib/ui/tinte-funzioni.ts`), che esiste apposta e il
+       cui commento cita proprio `#1F8A5B` fra le tinte «che non corrispondevano
+       a nessun token dichiarato». Finché stanno lì, ogni tinta nuova nasce
+       scoperta in Alto Contrasto.
+   ============================================================================= */
+[data-contrast="high"] .text-kidville-muted {
+  color: #000000;
+}
+[data-contrast="high"] .text-kidville-error {
+  color: #8B0000;
+}
+[data-contrast="high"] .text-kidville-success {
+  color: #0F4A22;
+}
+[data-contrast="high"] .text-kidville-info {
+  color: #123C86;
+}
+
+/* LE TINTE SCRITTE A MANO NEL COMPONENTE (home docente, array `SHORTCUTS`).
+   `style={{ color: s.tint }}` vince su qualunque foglio di stile: l'unica leva è
+   `!important`, e qui è puntato su una classe che nomina i suoi due elementi —
+   non su `[style*="color"]`, che avrebbe spento anche le quattro tinte che in
+   Alto Contrasto reggono già (#006A5F ×2, #2A6FDB, #7A3FD0).
+   Misurate dal crawler in CI (run 34008632435): #E53935 4,23:1 e #1F8A5B 4,33:1
+   su bianco, IDENTICHE nelle due modalità. A nero pieno: 21:1.
+   La pastiglia dell'icona non è testo — il crawler non la conta — ma in Alto
+   Contrasto un fondo `tint + '18'` (alfa 9%) su carta bianca è una forma che non
+   esiste: stesso trattamento delle pastiglie soft qui sopra, contorno nero. */
+[data-contrast="high"] .kv-tinta-inline {
+  color: #000000 !important;
+}
+[data-contrast="high"] .kv-tinta-inline-pastiglia {
+  background: #FFFFFF !important;
+  color: #000000 !important;
+  border: 1.5px solid #000000;
+}
+/* Le PASTIGLIE a fondo soft: l'inchiostro adesso si legge, ma la pastiglia come
+   FORMA continuava a non esistere — #E7F3E8 contro il bianco della card vale
+   1,12:1. In Alto Contrasto lo stacco lo dà il contorno, non il colore: è la
+   stessa grammatica di `.kv-recon-chip`, e il nero tiene 18,4:1 sul fondo della
+   pastiglia e 21:1 sulla carta attorno (WCAG 1.4.11 chiede 3:1).
+   Selettore COMPOSTO — le due classi sullo STESSO elemento — così tocca la
+   pastiglia e nient'altro: un `.bg-kidville-success-soft` che fa da fascia larga
+   non lo prende, e le superfici che in HC diventano nere
+   (`.kv-admin-rowcard`, `.kv-mensa-alt`) restano dipinte dalle loro regole. */
+[data-contrast="high"] .bg-kidville-success-soft.text-kidville-success,
+[data-contrast="high"] .bg-kidville-info-soft.text-kidville-info,
+[data-contrast="high"] .bg-kidville-error-soft.text-kidville-error {
+  box-shadow: inset 0 0 0 1.5px #000000;
 }
 
 /* I RICOVERI DEL FUOCO delle schermate «comunica un'assenza» (`.kv-fuoco-esito`).
@@ -556,7 +719,9 @@ body {
 [data-contrast="high"] .kv-fuoco-esito:focus {
   outline: 3px solid #FFE500;
   outline-offset: 2px;
-  box-shadow: 0 0 0 2px #000000;
+  /* Identica alla regola universale, secondo anello nero compreso: è il punto
+     di questo blocco, e il lock lo confronta proprietà per proprietà. */
+  box-shadow: 0 0 0 2px #000000, 0 0 0 7px #000000;
 }
 
 /* News — testo posato direttamente sul body (back-link, stati vuoti), fuori
@@ -579,23 +744,76 @@ body {
   background: #1A1A1A;
 }
 
-/* Riconciliazione bancaria — righe a semaforo (RiconciliazionePanel). Gli sfondi
-   pieni per stato (verde/giallo/rosso/grigio) restano leggibili in luce normale
-   e, in Alto Contrasto, il rimappaggio naturale dei token li tiene AA — TRANNE il
-   giallo: `--color-kidville-yellow` diventa near-white e il testo `ink` (→ bianco
-   in HC) vi sparirebbe sopra. Solo per «suggerito» si passa al linguaggio HC
-   (fondo nero + bordo giallo brillante), come `.kv-appbar`. Non-layered → vince
-   sulle utility Tailwind senza !important. */
-[data-contrast="high"] .kv-recon-row--suggerito {
+/* =============================================================================
+   Riconciliazione bancaria — le RIGHE a semaforo in Alto Contrasto (05/09/2026).
+
+   Fino a ieri qui c'era una sola regola, per «suggerito», con questa spiegazione:
+   «in Alto Contrasto il rimappaggio naturale dei token li tiene AA, tranne il
+   giallo». MISURATO campionando lo stesso pixel nelle due modalità: FALSO. La
+   card confermata restava rgb(0,106,95), «da abbinare» rgb(198,40,40),
+   «ignorato» rgb(240,242,241) — sei righe su otto identiche al contrasto
+   normale. Il motivo è lo stesso di sempre, e vale la pena riscriverlo: `@theme
+   inline` INLINA l'hex dentro l'utility, quindi ridefinire `--color-kidville-*`
+   sotto `[data-contrast="high"]` non tocca `.bg-kidville-green` né nient'altro.
+   Si ribaltavano i chip, non il fondo che li ospita — e un chip bianco con
+   filetto nero sopra un verde #006A5F non è Alto Contrasto: è il tema di sempre
+   con un contorno in più.
+
+   Il linguaggio è quello già in uso da `.kv-come-pagare` e `.kv-appbar`: fondo
+   NERO per tutte, e lo stato lo porta il CONTORNO — bianco (confermato), giallo
+   (suggerito), rosso (da abbinare), grigio (ignorato). Il colore smette di
+   essere l'unico portatore dell'informazione, che è il punto dell'Alto Contrasto.
+   Non-layered → vince sulle utility Tailwind senza !important.
+   Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`.
+   ============================================================================= */
+[data-contrast="high"] .kv-recon-row {
   background: #000000;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+  color: #FFFFFF;
+}
+/* Le varianti stanno DOPO la comune (stessa specificità: vince l'ultima) e
+   cambiano SOLO il contorno: il fondo resta nero per tutte. */
+[data-contrast="high"] .kv-recon-row--confermato {
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+}
+[data-contrast="high"] .kv-recon-row--suggerito {
   box-shadow: inset 0 0 0 2px #FFE500;
 }
-/* A2: sul box nero, il testo `text-kidville-ink` è inlinato SCURO da `@theme inline`
-   e NON si ribalta col rimappaggio del token → sparirebbe. Lo si forza chiaro sui
-   discendenti di testo (importo/data/causale/etichetta/chevron). Il badge «CF»
-   (text-kidville-green su pill bianca) resta leggibile: si lascia stare. */
-[data-contrast="high"] .kv-recon-row--suggerito .text-kidville-ink {
+[data-contrast="high"] .kv-recon-row--da_abbinare {
+  box-shadow: inset 0 0 0 2px #FF5252;
+}
+[data-contrast="high"] .kv-recon-row--ignorato {
+  box-shadow: inset 0 0 0 2px #9E9E9E;
+}
+/* A2: sul box nero i testi `text-kidville-ink` e `text-kidville-sub` sono inlinati
+   SCURI da `@theme inline` e NON si ribaltano col rimappaggio del token → sparirebbero
+   (riga «suggerito» e riga «ignorato», importo compreso). Si forzano chiari.
+
+   ⚠️ IL `:not(.kv-recon-chip)` NON È PIGNOLERIA: il chip «Da fatturare» è
+   `text-kidville-ink` su giallo pieno. Senza l'esclusione questa regola (0,3,0)
+   batterebbe quella del chip (0,2,0) e scriverebbe bianco su giallo — 1,4:1,
+   cioè il chip illeggibile proprio nella modalità di chi legge peggio. */
+[data-contrast="high"] .kv-recon-row .text-kidville-ink:not(.kv-recon-chip),
+[data-contrast="high"] .kv-recon-row .text-kidville-sub:not(.kv-recon-chip) {
   color: #FFFFFF;
+}
+/* Il badge «CF» prende la stessa grammatica del chip — carta bianca, inchiostro
+   nero, contorno nero — invece del verde inlinato, che sulla riga nera resta
+   verde su bianco (6,5:1: a norma, ma è l'unico oggetto rimasto col colore del
+   tema chiaro in mezzo a superfici ribaltate). */
+/* ⚠️ Il selettore porta ANCHE `.kv-recon-row`, e non per eleganza: il badge vive
+   dentro la riga «suggerito», che ha `bg-kidville-yellow`, e più in basso in
+   questo file c'è `.bg-kidville-yellow .text-kidville-green { color: green-ink }`
+   (0,2,0). A parità di specificità vince l'ultima scritta, che è quella — e
+   infatti, MISURATO, il badge restava rgb(0,74,66). Con l'àncora della riga
+   questa sale a 0,3,0 e vince davvero. */
+[data-contrast="high"] .kv-recon-row .kv-recon-badge-cf {
+  background: #FFFFFF;
+  color: #000000;
+  /* il contorno si riscrive come box-shadow e non come `--tw-ring-color`: questa
+     regola sta fuori dai layer e batte l'utility `ring-*` per intero, mentre una
+     variabile ridefinita dipenderebbe da come Tailwind compone l'anello. */
+  box-shadow: inset 0 0 0 2px #000000;
 }
 
 /* Focus-ring visibile anche in modalità normale (baseline WCAG 2.4.7). A3: colore
@@ -1036,10 +1254,23 @@ textarea[class*="border-kidville-green/"]:not([class*="border-transparent"]):not
    dentro il giallo È la costante dell'Alto Contrasto.
    Presidio: `__tests__/components/FieldRenderer-stati-visivi.test.tsx` §13 (c) e (d).
    ============================================================================= */
+/* ── E DAL 2026-09-06 ANCHE IL SECONDO ANELLO ────────────────────────────────
+   La regola universale ha smesso di lasciare la banda gialla a confinare con la
+   pagina chiara (v. il commento a `*:focus-visible`, ~riga 484): adesso dipinge
+   NERO da 0 a 2px, GIALLO da 2 a 5, NERO da 5 a 7. Se questo riquadro restasse
+   a due strati tornerebbe a essere «l'unico controllo che risponde diverso» —
+   il difetto già chiuso due volte su questo stesso elemento, prima sulla tinta
+   (2026-08-07) e poi sullo spessore (2026-08-25).
+   Il secondo strato si aggiunge dentro `--tw-ring-shadow`, non con una
+   `box-shadow` a parte: Tailwind compone `box-shadow` da tre variabili e una
+   dichiarazione esterna le cancellerebbe tutte. L'ordine di pittura fa il resto
+   — l'anello più largo sta sotto, quindi si vede solo la corona da 5 a 7px. */
 [data-contrast="high"] label[class*="focus-within:ring-"]:focus-within {
   --tw-ring-color: #FFE500;
   --tw-ring-offset-color: #000000;
-  --tw-ring-shadow: 0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+  --tw-ring-shadow:
+    0 0 0 calc(3px + var(--tw-ring-offset-width)) var(--tw-ring-color),
+    0 0 0 calc(5px + var(--tw-ring-offset-width)) #000000;
 }
 
 /* 🟠 design #2 del collaudo 2026-08-02, chiuso qui.
@@ -1726,4 +1957,466 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 [data-contrast="high"] [data-scelta-invalida="true"] {
   border-style: double;
   border-width: 4px;
+}
+
+/* =============================================================================
+   IL CHIP DI FATTURAZIONE DELLA RICONCILIAZIONE (05/09/2026).
+
+   `RiconciliazionePanel` posa sulla riga confermata — fondo VERDE PIENO — un chip
+   che dice a che punto è la fattura: «Fatturata», «In attesa SDI», «Scartata»,
+   «Da fatturare». In luce normale sono carta bianca con inchiostro di funzione
+   (green 6,51:1 · warn-strong 5,61:1 · error-strong 5,62:1) e, per l'unico che
+   chiede di agire, giallo pieno su inchiostro (7,33:1).
+
+   In Alto Contrasto niente di tutto questo si ribalta da solo: `@theme inline`
+   INLINA l'hex dentro le utility, quindi ridefinire `--color-kidville-*` sotto
+   `[data-contrast="high"]` non tocca `.bg-kidville-white` né `.text-kidville-green`
+   — è la stessa lezione già scritta sopra per `.kv-recon-row--suggerito` e per
+   `.kv-news-onbody`. Una superficie nuova, qui, o si dipinge a mano o non esiste.
+
+   Il linguaggio è quello del tema: carta bianca, inchiostro nero (21:1), e un
+   CONTORNO nero da 2px — che è ciò che stacca il chip dal fondo della riga, dato
+   che in Alto Contrasto il colore non può più farlo.
+
+   L'eccezione è «Da fatturare», e non è un vezzo: è l'unico chip che chiede
+   un'azione, e perderlo dentro una fila di bianchi identici toglierebbe la
+   ragione per cui è stato aggiunto. Prende lo stesso giallo brillante che il tema
+   usa già come segnale (#FFE500, 16,46:1 sul nero), con lo stesso contorno.
+   La variante sta DOPO la regola comune: stessa specificità, vince l'ultima.
+
+   Non-layered → vince sulle utility Tailwind senza `!important`.
+   Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`.
+   ============================================================================= */
+[data-contrast="high"] .kv-recon-chip {
+  background: #FFFFFF;
+  color: #000000;
+  box-shadow: inset 0 0 0 2px #000000;
+}
+[data-contrast="high"] .kv-recon-chip--da-fatturare {
+  background: #FFE500;
+}
+/* «Scartata» è la seconda eccezione, per la stessa ragione della prima e non per
+   simmetria: è l'unico altro stato che obbliga qualcuno a rifare il lavoro.
+
+   MISURATO sulle schermate del giro precedente: in Alto Contrasto l'inchiostro
+   passava da rgb(198,40,40) a rgb(0,0,0), e i tre chip «Fatturata», «In attesa
+   SDI» e «Scartata» diventavano tipograficamente identici — carta bianca,
+   inchiostro nero, filetto nero. L'unico che chiede un intervento spariva dentro
+   i due che non chiedono niente.
+
+   ⚠️ SI RIBALTA IL CHIP, NON SI COLORA IL TESTO. Scrivere #FF5252 sull'inchiostro
+   di una carta bianca darebbe 3,19:1 — sotto AA per un testo da 11px, e la sonda
+   del collaudo lo segnerebbe (giustamente) come difetto. Fondo rosso e inchiostro
+   nero (ereditato dalla regola comune) valgono 6,58:1, ed è la stessa grammatica
+   di «Da fatturare». Restano due chip di carta — le fatture che non chiedono
+   niente — e due colorati, che sono le due che chiedono di agire. */
+[data-contrast="high"] .kv-recon-chip--scartata {
+  background: #FF5252;
+}
+
+/* =============================================================================
+   «Come pagare» — la card del genitore in /parent/pagamenti (`ComePagare`).
+
+   Perché serve una regola dedicata, e non basta il rimappaggio dei token: i token
+   stanno in `@theme inline`, che INLINA l'hex dentro l'utility. `bg-kidville-white`
+   resta #FFFFFF anche in Alto Contrasto, `text-kidville-green` resta #006A5F: la
+   card nuova sarebbe una macchia chiara sul body nero, con dentro un verde a
+   3,2:1. Si dipinge quindi a mano, con lo stesso linguaggio di `.kv-appbar` e
+   `.kv-news-onbody` — fondo nero, bordo bianco 2px, accento GIALLO su ciò che si
+   può toccare. Regole non-layered → vincono sulle utility senza `!important`.
+
+   Dentro ci vive anche `CausaleBonifico incorporata`: le sue chip crema e il testo
+   verde della causale sono coperti dalle stesse regole (i selettori sono sui
+   discendenti), quindi non serve una seconda ancora. */
+[data-contrast="high"] .kv-come-pagare {
+  background: #000000;
+  border-color: transparent;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-come-pagare .text-kidville-ink,
+[data-contrast="high"] .kv-come-pagare .text-kidville-sub {
+  color: #FFFFFF;
+}
+/* Occhiello «COME PAGARE» e testo della causale: verde inlinato su fondo nero
+   (3,23:1, sotto AA) → giallo, come i link di `.kv-news-onbody`. */
+[data-contrast="high"] .kv-come-pagare .text-kidville-green {
+  color: #FFE500;
+}
+[data-contrast="high"] .kv-come-pagare .border-kidville-line {
+  border-color: #FFFFFF;
+}
+/* Le superfici crema (barra dei tab, chip delle causali, nota dei contanti)
+   sono hex inlinati chiari: diventano il grigio scurissimo già usato altrove,
+   così restano DISTINTE dal fondo della card senza tornare chiare. */
+[data-contrast="high"] .kv-come-pagare .bg-kidville-cream {
+  background-color: #1A1A1A;
+}
+/* I due tab. Base: nero con contorno bianco. */
+[data-contrast="high"] .kv-come-pagare [role="tab"] {
+  background-color: #000000;
+  color: #FFFFFF;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+}
+/* Il CTA «Copia» (`.bg-kidville-green`, bianco su verde in luce normale) e il tab
+   attivo, che porta le stesse classi: pieno GIALLO con inchiostro nero. Il
+   `color` qui batte l'utility `.text-kidville-white` sullo stesso elemento
+   (0,3,0 contro 0,1,0, e non-layered contro layered). */
+[data-contrast="high"] .kv-come-pagare .bg-kidville-green {
+  background-color: #FFE500;
+  color: #000000;
+}
+/* …e il tab attivo si distingue ANCHE senza colore: pieno + sottolineatura
+   contro contorno vuoto. Chi non separa il giallo dal bianco legge lo stato
+   dalla forma. Specificità (0,4,0): vince sulle due regole qui sopra. */
+[data-contrast="high"] .kv-come-pagare [role="tab"][aria-selected="true"] {
+  background-color: #FFE500;
+  color: #000000;
+  box-shadow: inset 0 0 0 2px #FFE500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* IL CAMPO DELLA CAUSALE (2026-09-05). La riga della causale ha ora un campo
+   `bg-kidville-white` dentro la chip crema: dice «questo testo si incolla lì»,
+   e in luce normale è bianco su crema, inchiostro `ink` a 11,8:1.
+
+   In Alto Contrasto sarebbe stato il difetto peggiore possibile, ed è il motivo
+   per cui questa regola nasce insieme al campo e non dopo: `bg-kidville-white`
+   porta l'hex #FFFFFF INLINATO da `@theme inline` e in HC resta BIANCO, mentre
+   la regola qui sopra porta `.text-kidville-ink` a #FFFFFF. Bianco su bianco:
+   1,00:1, cioè il testo da copiare — l'unica cosa che il genitore non può
+   perdere — sarebbe stato invisibile proprio nella modalità pensata per chi
+   fatica a leggere. Si dipinge quindi a mano: fondo nero (21:1 col testo) e un
+   filetto grigio #8A8A8A (6,4:1 sul nero, sopra i 3:1 di WCAG 1.4.11) che lo
+   stacca dal #1A1A1A della chip che lo contiene — perché in Alto Contrasto due
+   neri vicini non si separano più col colore, si separano col contorno.
+   Il selettore è DISCENDENTE: la card stessa porta `bg-kidville-white` sulla
+   propria radice, e lì il fondo nero glielo dà già `.kv-come-pagare`. */
+[data-contrast="high"] .kv-come-pagare .bg-kidville-white {
+  background-color: #000000;
+  box-shadow: inset 0 0 0 1px #8A8A8A;
+}
+
+/* I DUE CAMPI DA CUI SI COPIA (2026-09-05) — l'IBAN e la causale.
+
+   In luce normale hanno la stessa forma e due fondi diversi, perché stanno in due
+   contenitori diversi: la causale è bianca dentro una chip crema, l'IBAN è crema
+   dentro il riquadro bianco del conto. In Alto Contrasto quella differenza non
+   serve più a niente e anzi si rovescia: `bg-kidville-white` resterebbe BIANCO su
+   testo portato a bianco (1,00:1, invisibile — è la regola qui sopra), e
+   `bg-kidville-cream` diventa #1A1A1A, che sul nero della card vale 1,15:1: il
+   testo si leggerebbe, ma il RETTANGOLO sparirebbe, e con lui l'unica cosa che
+   dice «da qui si copia». In Alto Contrasto due neri vicini non si separano più
+   col colore: si separano col contorno.
+
+   Perciò l'aggancio non è il fondo ma la classe che i due campi condividono
+   (`CAMPO_COPIABILE` in `CausaleBonifico.tsx`): stesso nero e stesso filetto
+   #8A8A8A (6,4:1 sul nero, sopra i 3:1 di WCAG 1.4.11) per tutti e due, qualunque
+   fondo abbiano di giorno. Sta DOPO la regola su `.bg-kidville-white`, che ha la
+   stessa specificità (0,2,0) e dice la stessa cosa: sul campo della causale le due
+   coincidono, e non c'è nessun conflitto da dirimere.
+   Non-layered → vince sulle utility Tailwind senza `!important`. */
+[data-contrast="high"] .kv-come-pagare .kv-campo-copiabile {
+  background-color: #000000;
+  box-shadow: inset 0 0 0 1px #8A8A8A;
+}
+
+/* =============================================================================
+   IL PULSANTE DELLA FATTURA NEL POPUP DEL MOVIMENTO (`.kv-recon-azione-fattura`).
+
+   MISURATO sul giro precedente: «Invia fattura» era `text-kidville-muted`
+   (#7B8582) su bianco — **3,80:1**, sotto AA — alto 26px invece dei 44 di WCAG
+   2.5.8, e con l'aria di un pulsante disattivato. È l'azione per cui questa
+   schermata esiste: la lista serve a scoprire quali incassi restano da fatturare,
+   e il comando per farlo sembrava spento.
+
+   `FatturaButton` non si tocca: è condiviso col drawer dei pagamenti, e cambiarlo
+   lì cambierebbe schermate che qui nessuno sta guardando. La pelle la dà il
+   CONTENITORE, che dichiara il tono con `data-tono` — l'unico dato che serve per
+   sapere se questo è il comando principale o un allegato da scaricare:
+     · «da fatturare» e «scartata» → c'è un documento da emettere: CTA PIENO;
+     · «fatturata» → il documento c'è già: secondario contornato.
+
+   I colori passano da `var()` e non da hex, e non è pigrizia: `--color-kidville-*`
+   è rimappato sotto `[data-contrast="high"]`, quindi in Alto Contrasto il CTA si
+   ribalta da solo in nero-su-bianco (21:1) anche prima che intervenga la regola
+   dedicata più sotto. Se un giorno qualcuno cancellasse quella regola, resterebbe
+   comunque leggibile: è la differenza fra degradare e rompersi.
+
+   Il selettore arriva a `> div > button` perché quando le fatture sono più d'una
+   `FatturaButton` avvolge il trigger in un `div.relative` (menu a tendina).
+   Regole NON-layered → vincono sulle utility senza `!important`.
+   Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`.
+   ============================================================================= */
+.kv-recon-azione-fattura > a,
+.kv-recon-azione-fattura > button,
+.kv-recon-azione-fattura > div > button {
+  min-height: 44px;
+  padding-inline: 16px;
+  border-radius: 9999px;
+  font-family: var(--font-maven);
+  font-size: 14px;
+  gap: 6px;
+}
+/* ⚠️ QUI LA COPPIA SI SCRIVE PER ESTESO, E NON È UN'INCOERENZA — è il lock S16
+   (`__tests__/a11y/contrasto-token.test.ts`) che me l'ha insegnato facendosi rosso.
+   Quella sonda cerca le regole che usano il token BIANCO insieme a un `background`:
+   in Alto Contrasto `--color-kidville-white` vale #000000, e su una superficie
+   chiara diventa una banda nera sopra il testo (è la causa radice del finding F6,
+   il coperchio nero sulle tabelle admin). Qui il bianco sarebbe l'INCHIOSTRO su un
+   pieno verde e non la copertura, ma la sonda non può distinguerlo dal corpo della
+   regola — e fa bene a non provarci: il modo di dirlo, in questo file, è la coppia
+   esplicita, come per ogni altra superficie dipinta a mano.
+   E il RIPIEGO migliora: se un domani sparisse la regola di Alto Contrasto qui
+   sotto, resterebbe bianco su verde (6,51:1) sulla card nera — leggibile. Col token
+   sarebbe stato bianco su bianco, cioè un CTA invisibile. */
+.kv-recon-azione-fattura[data-tono="da_fatturare"] > button,
+.kv-recon-azione-fattura[data-tono="scartata"] > button {
+  background: #006A5F;
+  border-color: #006A5F;
+  color: #FFFFFF;
+}
+/* L'hover della regola globale sui contorni deboli (0,3,1) batterebbe quella qui
+   sopra e ridipingerebbe il bordo: si dichiara anche lo stato al passaggio. */
+.kv-recon-azione-fattura[data-tono="da_fatturare"] > button:hover,
+.kv-recon-azione-fattura[data-tono="scartata"] > button:hover {
+  background: #00544B;
+  border-color: #00544B;
+  color: #FFFFFF;
+}
+/* Il secondario, invece, resta sul TOKEN, e anche questo è misurato: in Alto
+   Contrasto `--color-kidville-green` diventa #FFFFFF, quindi senza la regola HC
+   resterebbe contorno e testo bianchi su fondo trasparente (cioè il nero della
+   card): 21:1. Con l'hex #006A5F sarebbe stato verde su nero, 3,23:1 — sotto AA.
+   Le due regole divergono perché divergono i loro RIPIEGHI, non per distrazione. */
+.kv-recon-azione-fattura[data-tono="fatturata"] > a,
+.kv-recon-azione-fattura[data-tono="fatturata"] > div > button {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--color-kidville-green);
+  color: var(--color-kidville-green);
+}
+
+/* =============================================================================
+   IL POPUP DEL MOVIMENTO IN ALTO CONTRASTO (`.kv-recon-dialog`).
+
+   MISURATO sulle schermate del giro precedente: in Alto Contrasto il popup era
+   IDENTICO alla luce normale — card bianca, riquadro crema, pillola verde tenue,
+   chip grigio. Trentuno testi su trentuno con la stessa identica coppia
+   colore/fondo. Non era una regola sbagliata: non ce n'era nessuna. `@theme
+   inline` INLINA l'hex dentro le utility, quindi rimappare `--color-kidville-*`
+   sotto `[data-contrast="high"]` non tocca `.bg-kidville-white` né
+   `.text-kidville-ink`: una superficie nuova o è dipinta a mano o, in Alto
+   Contrasto, non esiste. È la stessa lezione di `.kv-recon-row--suggerito`,
+   `.kv-news-onbody` e `.kv-come-pagare`.
+
+   Linguaggio: fondo nero, contorno bianco 2px, accento GIALLO su ciò che si può
+   toccare o su ciò che è titolo. Le superfici crema diventano il grigio
+   scurissimo già in uso altrove, così restano distinte dal fondo della card.
+
+   ⚠️ IL `:not(.kv-recon-chip)` NON È PIGNOLERIA. Il chip di fatturazione vive
+   dentro questo popup e porta `.text-kidville-green` / `.text-kidville-ink`.
+   Senza l'esclusione, queste regole (0,3,0) batterebbero quella del chip (0,2,0)
+   e scriverebbero giallo #FFE500 sulla sua carta bianca: 1,44:1, cioè il chip
+   illeggibile proprio nella modalità pensata per chi fatica a leggere. Il chip ha
+   già la sua regola — carta bianca, inchiostro nero, contorno — ed è giusta anche
+   sul nero: in Alto Contrasto un chip è un francobollo di carta, non una macchia.
+   Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`.
+   ============================================================================= */
+[data-contrast="high"] .kv-recon-dialog {
+  background: #000000;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+  color: #FFFFFF;
+}
+[data-contrast="high"] .kv-recon-dialog .text-kidville-ink:not(.kv-recon-chip),
+[data-contrast="high"] .kv-recon-dialog .text-kidville-sub:not(.kv-recon-chip) {
+  color: #FFFFFF;
+}
+/* Occhielli, cifra e pulsanti contornati: il verde inlinato su nero vale 3,23:1.
+   BIANCO (21:1) e non giallo — ed è una correzione MISURATA, non un gusto.
+
+   Con questa riga a #FFE500 il popup in Alto Contrasto aveva SEI elementi gialli
+   sulla stessa schermata: la cifra «€ 300,00», gli occhielli «CAUSALE»,
+   «ORDINANTE» e «DOCUMENTI», il chip e «Invia fattura». Uno solo si poteva
+   premere. In luce normale la gerarchia regge proprio perché il giallo è
+   riservato al chip; accendendo l'Alto Contrasto — cioè la modalità di chi fa
+   più fatica a leggere — si perdeva, e restava un accento che accentava tutto.
+
+   Il bianco non è un compromesso sul contrasto: 21:1 batte i 16,46:1 del giallo.
+   Qui si guadagna gerarchia senza pagare niente, e il giallo torna a voler dire
+   una cosa sola — «questo si preme». Lock: il test dell'invariante in
+   `__tests__/pagamenti/riconciliazione-a11y-css.test.ts` rifiuta ogni futura
+   regola `.kv-recon-dialog` che tiri fuori #FFE500 su qualcosa che non è un
+   comando. */
+[data-contrast="high"] .kv-recon-dialog .text-kidville-green:not(.kv-recon-chip) {
+  color: #FFFFFF;
+}
+/* L'inchiostro d'errore #C62828 sul nero vale 3,4:1: si passa al rosso HC. */
+[data-contrast="high"] .kv-recon-dialog .text-kidville-error-strong:not(.kv-recon-chip) {
+  color: #FF5252;
+}
+/* La card bianca del popup, i suoi riquadri crema e le righe della ricerca. */
+[data-contrast="high"] .kv-recon-dialog .bg-kidville-white:not(.kv-recon-chip),
+[data-contrast="high"] .kv-recon-dialog .bg-kidville-cream {
+  background-color: #1A1A1A;
+}
+/* Fasce piene di stato (verde tenue della ricevuta, rosso tenue dell'errore):
+   nere con un contorno, perché in Alto Contrasto due neri vicini si separano col
+   filetto e non più col colore. */
+[data-contrast="high"] .kv-recon-dialog .bg-kidville-green-soft,
+[data-contrast="high"] .kv-recon-dialog .bg-kidville-error-soft {
+  background-color: #000000;
+  box-shadow: inset 0 0 0 2px #FFFFFF;
+}
+/* I CTA pieni verdi (Conferma questo, Apri Incasso unico, pill «CF»): giallo di
+   segnale su inchiostro nero, come `.kv-come-pagare .bg-kidville-green`. */
+[data-contrast="high"] .kv-recon-dialog .bg-kidville-green {
+  background-color: #FFE500;
+  color: #000000;
+}
+/* I filetti: `line` è chiaro e `green` scuro — sul nero entrambi spariscono. */
+[data-contrast="high"] .kv-recon-dialog .border-kidville-line,
+[data-contrast="high"] .kv-recon-dialog .border-kidville-green {
+  border-color: #FFFFFF;
+}
+/* …e i contorni dei bottoni secondari, che la regola globale dell'Alto Contrasto
+   porta a NERO — giusto sulla carta bianca di tutte le altre schermate, invisibile
+   sulla card nera di questa. Sta DOPO quella regola, con un pesetto in più. */
+[data-contrast="high"] .kv-recon-dialog button[class*="border-kidville-line"],
+[data-contrast="high"] .kv-recon-dialog button[class*="border-kidville-line"]:hover {
+  border-color: #FFFFFF;
+}
+/* Il pulsante della fattura: il CTA prende il giallo di segnale, l'allegato già
+   emesso resta un contorno bianco su nero. */
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="da_fatturare"] > button,
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="scartata"] > button,
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="da_fatturare"] > button:hover,
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="scartata"] > button:hover {
+  background: #FFE500;
+  border-color: #FFE500;
+  color: #000000;
+}
+/* Il documento già emesso: nero con contorno bianco. L'INCHIOSTRO non si dichiara
+   qui, e non è una dimenticanza — lo scrive la regola
+   `.kv-recon-dialog .text-kidville-green:not(.kv-recon-chip)` (0,4,0, più pesante
+   di questa 0,3,0), che dal 2026-09-05 lo porta a #FFFFFF. Scrivere qui un
+   `color` sarebbe una riga inerte: mai applicata, e col compito di far credere il
+   contrario a chi legge.
+
+   Ed è giusto che sia bianco. Finché anche questo era giallo, il giallo lo
+   portavano tutti e due i pulsanti e la sola differenza era il riempimento: a
+   distinguerli resta la FORMA — contorno vuoto contro pieno — che è il segnale
+   che regge anche per chi il giallo dal bianco non lo separa. Il giallo, adesso,
+   ce l'ha soltanto ciò che va premuto. */
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > a,
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > div > button {
+  background: #000000;
+  /* 1,5px come «Ricevuta», che gli sta accanto con lo stesso rango: due fratelli, un solo peso. */
+  box-shadow: inset 0 0 0 1.5px #FFFFFF;
+}
+
+/* La ✕ «Chiudi il movimento» — RILIEVO (b) del collaudo, chiuso qui (2026-09-06).
+
+   MISURATO: in Alto Contrasto, col mouse sopra, il glifo valeva **1,12:1**. In
+   luce normale lo stesso hover vale 10,48:1. Non è un colore sbagliato: sono due
+   regole che non si parlano. Il bottone è
+   `text-kidville-sub … hover:bg-kidville-neutral-soft hover:text-kidville-ink`:
+     · a riposo il glifo lo porta a BIANCO
+       `.kv-recon-dialog .text-kidville-sub:not(.kv-recon-chip)`, (0,4,0);
+     · in hover `hover:text-kidville-ink` vorrebbe scurirlo, ma è una utility
+       (0,2,0) e perde, mentre `hover:bg-kidville-neutral-soft` — che nessuno
+       contende — accende il fondo #F0F2F1, hex inlinato da `@theme inline` che
+       in Alto Contrasto non si ribalta.
+   Glifo bianco su carta quasi bianca: il comando c'è, risponde, e sparisce
+   proprio nell'istante in cui l'utente ci sta sopra.
+
+   Si dichiara la COPPIA, non il solo inchiostro: carta bianca e glifo nero,
+   21:1 — la stessa grammatica di `.kv-recon-chip`. NON gialla: dentro questo
+   popup il giallo è riservato a ciò che si può premere davvero (il CTA della
+   fattura), e il lock `riconciliazione-a11y-css.test.ts` lo pretende.
+   Sta in fondo APPOSTA: (0,4,0) come la regola che gli aveva imposto il bianco,
+   e a parità di specificità vince l'ultima scritta. */
+[data-contrast="high"] .kv-recon-dialog .hover\:bg-kidville-neutral-soft:hover {
+  background: #FFFFFF;
+  color: #000000;
+}
+
+/* =============================================================================
+   IL FUOCO NON SI FA MANGIARE DALLA SUPERFICIE — RILIEVO (a), CHIUSO QUI
+   (2026-09-06).
+
+   ─── LA CAUSA RADICE, TROVATA CONTANDO ─────────────────────────────────────
+   Il collaudo ha misurato **9 stop su 16** a 1,28:1 sulla Riconciliazione: le
+   cinque pill di stato, le tre del gruppo «Fatturazione», e ogni riga del
+   registro. Gli altri sette stop della STESSA schermata stavano bene — e quella
+   differenza è la diagnosi. Se il difetto fosse stato soltanto «il giallo
+   confina con la carta chiara», sarebbero stati sedici su sedici: l'anello ha la
+   stessa geometria per tutti.
+
+   I nove sono esattamente quelli che portano una regola di Alto Contrasto con un
+   `box-shadow` sulla PROPRIA superficie. E `box-shadow` è UNA proprietà, non una
+   pila: la dichiarazione che vince la cascata sostituisce l'INTERA lista.
+     · `[data-contrast="high"] *:focus-visible` è (0,2,0) e sta a ~riga 484;
+       `[data-contrast="high"] .kv-recon-row--suggerito` è (0,2,0) e sta più in
+       basso → a parità vince l'ultima, e il separatore nero del fuoco sparisce;
+     · `[data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="true"]` è
+       (0,3,1) → vince a prescindere dall'ordine.
+   Restava il solo `outline` giallo posato sulla carta: 1,28:1. Il comando è a
+   fuoco, risponde, e non si vede — in una schermata dove il fuoco è l'unico modo
+   di sapere dove si è.
+
+   ─── IL RIMEDIO ────────────────────────────────────────────────────────────
+   Per-superficie, come tutto l'Alto Contrasto di questo file: ogni superficie
+   che dichiara un `box-shadow` su qualcosa che prende il fuoco ha la sua
+   variante `:focus-visible`, che nella STESSA dichiarazione rimette
+     1. il proprio contorno — così a fuoco la riga continua a dire in che stato è;
+     2. i due anelli del fuoco, nero dentro e nero fuori.
+   La specificità della variante è sempre quella della regola che la genera più
+   uno (`:focus-visible`), quindi vince senza toccare nient'altro.
+
+   L'invariante — «nessuna superficie si mangia l'anello» — è sotto lock in
+   `__tests__/a11y/alto-contrasto-inchiostri-di-stato.test.ts` §5, che rilegge
+   questo foglio e trova da sé la decima superficie che nascerà domani.
+   ============================================================================= */
+[data-contrast="high"] .kv-recon-row:focus-visible {
+  box-shadow: inset 0 0 0 2px #FFFFFF, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-recon-row--confermato:focus-visible {
+  box-shadow: inset 0 0 0 2px #FFFFFF, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-recon-row--suggerito:focus-visible {
+  box-shadow: inset 0 0 0 2px #FFE500, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-recon-row--da_abbinare:focus-visible {
+  box-shadow: inset 0 0 0 2px #FF5252, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-recon-row--ignorato:focus-visible {
+  box-shadow: inset 0 0 0 2px #9E9E9E, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+/* Le otto pill di filtro (`.kv-cockpit-tabs`): (0,3,1) senza il fuoco, (0,4,1)
+   con — la variante vince sempre sulla propria regola. */
+[data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="true"]:focus-visible {
+  box-shadow: inset 0 0 0 2px #FFE500, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-cockpit-tabs button[aria-pressed="false"]:focus-visible {
+  box-shadow: inset 0 0 0 1px #000000, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+/* I due tab di «Come pagare» sul cruscotto del genitore: stessa dinamica, stessa
+   cura. Il tab selezionato è un pieno #FFE500 e il suo contorno è dello stesso
+   giallo: senza i due anelli neri, a fuoco non cambiava assolutamente nulla. */
+[data-contrast="high"] .kv-come-pagare [role="tab"]:focus-visible {
+  box-shadow: inset 0 0 0 2px #FFFFFF, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+[data-contrast="high"] .kv-come-pagare [role="tab"][aria-selected="true"]:focus-visible {
+  box-shadow: inset 0 0 0 2px #FFE500, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+/* Il documento già emesso dentro il popup del movimento: contorno bianco 1,5px. */
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > a:focus-visible,
+[data-contrast="high"] .kv-recon-azione-fattura[data-tono="fatturata"] > div > button:focus-visible {
+  box-shadow: inset 0 0 0 1.5px #FFFFFF, 0 0 0 2px #000000, 0 0 0 7px #000000;
+}
+/* La voce inattiva della sidebar admin quando il mouse ci passa sopra: se in quel
+   momento porta anche il fuoco da tastiera, il suo contorno nero cancellerebbe
+   gli anelli. Raro, ma è la stessa identica causa e costa una riga. */
+[data-contrast="high"] .kv-admin-nav a:not([aria-current="page"]):hover:focus-visible {
+  box-shadow: inset 0 0 0 2px #000000, 0 0 0 2px #000000, 0 0 0 7px #000000;
 }

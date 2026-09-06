@@ -70,7 +70,7 @@
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **stato della fattura su ogni riga di movimento** — «Fattura FPR 1947/26» · «Scartata, da riemettere» · «Da fatturare», con una sola lettura per pagina — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -311,6 +311,427 @@ invio. *Provato rompendolo: aggiunto un import di un modulo che manda email, il 
 - Il lockfile npm era fuori sincrono: `@capacitor/filesystem` era in `package.json` e **non** nel
   lock. Rigenerato con **npm 10** — la versione della CI — perché npm 11 pota dal lock voci che
   npm 10 pretende, e `npm ci` sarebbe fallito in otto secondi senza eseguire un solo test.
+
+## 🧾 Changelog — La riga verde non dice mai «fatturato», e il genitore non sa dove mandare i soldi — 2026-09-05 (branch `feat/riconciliazione-fatturato-e-come-pagare`)
+
+Due difetti che vivevano alle due estremità dello stesso movimento di denaro: chi incassa non
+sapeva quali incassi restassero da fatturare, chi paga non sapeva su quale conto pagare.
+
+### 1. In riconciliazione, dopo la fattura, non succedeva niente
+
+Il registro dei movimenti bancari ha **quattro stati e soli quattro**
+(`CHECK (stato IN ('da_abbinare','suggerito','confermato','ignorato'))`,
+`20260710150000_contabilita_riconciliazione.sql:32`). La riga diventava verde alla conferma
+dell'abbinamento e **restava identica per sempre**: l'emissione della fattura scrive su
+`pagamenti.fattura_stato` e mai sul movimento. Misurata, la catena si spezzava in **tre** punti,
+tutti a valle della fattura:
+
+- `GET /api/pagamenti/riconciliazione` selezionava undici colonne del movimento e **nessun campo di
+  fatturazione**. La query batch su `pagamenti` che già faceva (`id, scuola_id`) serviva solo a
+  minimizzare i nomi dei minori nei suggerimenti;
+- `MovimentoDialog` montava `<FatturaButton pagamentoId userId />` **senza `fatturaStato`**, e
+  `FatturaButton:186` parte da `'non_richiesta'`: il pulsante diceva «Invia fattura» anche quando la
+  fattura era già uscita. Il dialog **aveva già il dato in mano** — la risposta di
+  `/api/pagamenti/[id]` porta `fattura_stato` — e ne teneva solo `stato`;
+- non esisteva **nessun filtro** «confermati da fatturare».
+
+Le due conseguenze non sono simmetriche, e vale la pena dirlo. **Fatturare due volte** era
+*contenuto*: la guardia di idempotenza e l'indice `fatture_emesse_pagamento_quota_uidx` fermano il
+secondo documento — l'operatore riceveva un 409 incomprensibile, non un doppione. **Saltare una
+fattura** era *reale e non mitigato*: su un registro globale di centinaia di righe verdi
+indistinguibili nessuno poteva dire quali restassero da fatturare, e un incasso non fatturato non
+produce nessun errore, nessun log e nessun sintomo. Il silenzio era il difetto.
+
+### 2. Il genitore vedeva la causale, ma non l'IBAN né a chi è intestato il conto
+
+`/parent/pagamenti` mostrava il totale dovuto, le voci e la card «Causale consigliata per il
+bonifico»: diceva **che cosa** scrivere e mai **dove** mandare i soldi. Eppure l'IBAN esisteva già
+in Impostazioni → Fiscale (`admin_settings.fiscale_config.iban`, validato mod-97), e le email di
+sollecito lo mostravano già nel riquadro «Dati per il bonifico», intestatario compreso. Il dato
+c'era: usciva solo per email, e solo a chi era in ritardo.
+
+### Cosa cambia
+
+**«Fatturato» è un chip derivato sulla riga verde, non un quinto stato.** Un quinto stato avrebbe
+rotto il `CHECK` del DB, i filtri `?stato=` validati da zod e l'invariante «stato del movimento =
+enum del DB». Il dato è derivato — `movimento.pagamento_id → pagamenti.fattura_stato` — e derivato
+resta: il GET lo calcola con la query batch **che già faceva**, estesa ai `pagamento_id` dei
+confermati e alla colonna `fattura_stato`. La riga esce con `pagamento_stato` e `fattura_stato`
+**solo se confermata e di una sede attiva** dell'operatore, altrimenti `null`: è la stessa
+minimizzazione già applicata ai nomi nei suggerimenti, perché un operatore non deve leggere «da
+fatturare» dove non può agire. Il chip lo decide una funzione pura, `chipFatturazione`:
+`in_attesa` → «In attesa SDI» · `emessa` → «Fatturata» · `scartata` → «Scartata» · `non_richiesta`
+con pagamento saldato → «Da fatturare» · altrimenti niente.
+
+**Un sottofiltro «Fatturazione»** (`?fattura=da_fatturare|fatturate`) si applica in memoria dopo
+l'arricchimento e si compone con `?stato=`: sceglierlo forza `stato=confermato`, perché la
+fatturazione vive solo sui confermati e un filtro che non trova mai niente si legge come un guasto.
+
+**Il dialog passa al pulsante ciò che aveva già in mano**: `fattura_stato` arriva a `FatturaButton`
+e a `FatturaChip`, `onEmessa={onDone}` aggiorna la lista dopo l'emissione, e quando la fattura è già
+uscita lo si dice in una riga invece di offrire un pulsante che darà 409.
+
+**«Come pagare» al genitore, e un motore solo per IBAN e intestatario.** Il nuovo
+`coordinateBonificoSede()` (`src/lib/pagamenti/coordinate-bonifico.ts`) legge `fiscale_config` e
+`aruba_config`, prende la denominazione da `datiStruttura` e l'IBAN da `ibanLeggibile`: assente o
+non valido ⇒ `null`, **mai un IBAN sbagliato a schermo**. Lo usano **sia** `GET /api/pagamenti`
+(che ora risponde anche `sedi: [{ id, nome, iban, intestatario }]`) **sia** il motore dei solleciti,
+e un lock architetturale (`coordinate-bonifico-un-motore-solo`) impedisce che ne nascano due copie:
+due letture separate direbbero due IBAN diversi alla stessa famiglia, e la divergenza si scoprirebbe
+solo a bonifico partito. La card ha due segmenti — **Bonifico** (Intestato a · IBAN a gruppi di
+quattro con «Copia» · le causali per voce, cioè la card di prima incorporata) e **Contanti** (in
+segreteria, ricevuta subito, **non detraibili**, L. 160/2019). Le sedi con le stesse coordinate si
+mostrano una volta sola: il conto è uno per la cooperativa, ma la configurazione è per sede e il
+codice non può darlo per scontato. **Senza IBAN la card non sparisce**: dice di chiederlo in
+segreteria.
+
+Trovato per strada e corretto: il pannello di riconciliazione **ricaricava in loop** (1.470 GET in
+300 ms, misurati) perché `t` di next-intl stava fra le dipendenze di `load` e non è stabile fra
+render. Invisibile perché ogni asserzione guardava «almeno una fetch», mai «quante». E il ripiego
+`'La Segreteria'` dei solleciti era **anche** il modo di dire «non configurato»: una sede la cui
+denominazione fiscale fosse davvero «La Segreteria» perdeva in silenzio la riga «Intestato a».
+
+**Nessuna migrazione, nessuna colonna nuova, nessuna variabile d'ambiente**: tutto è derivato da
+colonne che esistono già.
+
+### La rete
+
+**12 file di test, 145 verdi**, di cui **6 file nuovi con 47 test**; suite intera **14.117**. Ogni
+comportamento è nato da un test visto **rosso** e citato per esteso: il dialog senza `fatturaStato`
+(`expected undefined to be 'emessa'`), il GET senza `fattura_stato` (`expected undefined to be
+'pagato'`), la risposta senza `sedi` (`TypeError: sedi is not iterable`), il componente inesistente
+(`Failed to resolve import "…/ComePagare"`).
+
+Contro la trappola del **mock piatto** — un finto client che risponde uguale a ogni tabella è verde
+con **e senza** la correzione — sono state fatte le controprove: rotte apposta, una alla volta, la
+guardia «sede attiva» e la guardia «stato confermato» (entrambe tornate rosse con `expected 'pagato'
+to be null`); sostituito `sid` con `scuolaIds[0]` nel loop per sede (rosso: il finto client filtra
+davvero); nove mutazioni deliberate sulla card del genitore (l'àncora Alto Contrasto, la fusione dei
+conti, la tastiera dei tab, i 44 px, l'IBAN compatto negli appunti). Due test sono stati **riscritti
+perché non mordevano**: uno passava anche senza la correzione perché la denominazione firma anche la
+prosa dell'email, l'altro perché una sola riga confermata bastava a produrre il risultato atteso col
+solo `?stato=`.
+
+Un test **esistente** è stato riparato dopo essere stato smascherato: l'iniezione d'errore del
+degrado prudente scattava su `cols === 'id, scuola_id'` a uguaglianza esatta, e allargando la select
+ha smesso di scattare **in silenzio**, misurando il ramo felice mentre credeva di misurare il
+degrado.
+
+E2E (girano in CI): «Come pagare» visibile sulla pagina del genitore, il tab «Contanti» che mostra
+il proprio testo, e — poiché il DB della CI **non ha** `fiscale_config` — il ripiego «Le coordinate
+bancarie non sono ancora disponibili», che è il ramo che vedrà anche produzione finché l'IBAN non
+sarà compilato. In `admin-contabilita`, la pill «Da fatturare» nella vista riconciliazione.
+
+### La fusione con la PR #118 — due lavori sullo stesso file, e nessuno dei due buttato
+
+Mentre questo branch era aperto, un'altra sessione ha portato in produzione la **PR #118**
+(`f4f6e6ad`), che sulla stessa riga della riconciliazione faceva una cosa **sovrapposta**: leggere
+`fatture_emesse` e mostrare il **numero** del documento. Il merge di `origin/main` ha aperto sei
+conflitti (PRD, i due cataloghi `adminContabilita`, la rotta, il pannello, `riconciliazione-ui`), e
+sono stati risolti **fondendo**, mai scegliendo una parte:
+
+- **Le due letture restano due**, e non è una ridondanza: `pagamenti.fattura_stato` è il *riassunto*
+  che l'emissione scrive (dice «in attesa», e con lo stato del pagamento se c'è davvero qualcosa da
+  fare), `fatture_emesse` sono i **documenti**, quota per quota, **col numero**. Sono anche due
+  degradi indipendenti: se cade solo `fatture_emesse` il chip ripiega sul riassunto e il filtro
+  continua a lavorare (`fatturazione_disponibile` resta `true`); se cade la batch su `pagamenti`
+  vale il degrado di questo branch — righe **non filtrate** e `fatturazione_disponibile: false`.
+  Unirle in una lettura sola vorrebbe dire perderle **insieme**.
+- **Anche `fatture_emesse` va a blocchi di 100**, con lo stesso helper della batch: la #118 usava
+  una `.in()` sola, corretta finché la finestra era 500 righe — ma con `?fattura=` la finestra di
+  questo branch sale a **5.000**, cioè lo stesso muro degli 8 KB della request line che aveva già
+  prodotto un **431**. Sotto i 100 id resta **una query sola**: la correttezza non si paga con un
+  round-trip per riga (verificato: 250 pagamenti → 3 letture; 3 pagamenti → 1).
+- **Vince il numero, quando c'è**: `chipFatturazione` — la funzione pura che governa il chip della
+  riga *e* quello del popup — guarda prima i documenti. «Fatturata» è vero e inutile, «Fattura FPR
+  1947/26» si va a prendere in archivio. E uno **scarto SdI** letto dai documenti batte un
+  `fattura_stato` fermo a `emessa`, che direbbe «fatto» di un lavoro da rifare.
+- **La pelle resta quella misurata** di questo branch (`CHIP_FATTURAZIONE`: fondi **pieni**, àncora
+  Alto Contrasto `kv-recon-chip--*`), non il `Badge` generico della #118: il chip vive **sopra il
+  fondo verde** della riga confermata, dove un fondo `-soft` semitrasparente scende sotto AA — ed
+  è la misura che questo lavoro aveva già pagato.
+- **«Da fatturare» pretende il pagamento SALDATO**, e qui la regola di questo branch è più severa
+  di quella della #118: «nessuna riga in `fatture_emesse`» non basta a chiedere di agire, perché su
+  un pagamento parziale l'emissione **rifiuta** e l'invito manderebbe l'operatore contro un muro.
+- Il test del pannello della #118 è stato **adattato, non indebolito**: le asserzioni sul `Badge`
+  (`bg-kidville-*-soft`) sono diventate quelle sulle classi vere **più** l'àncora Alto Contrasto e
+  il divieto di opacità sul fondo — che il `Badge` non aveva affatto — e il caso «Da fatturare» ha
+  guadagnato la sua controprova (pagamento parziale → nessun chip).
+
+Le altre modifiche della #118 (guardia multi-quota in `emissione.ts` e nella rotta `[id]`,
+`fattura/route.ts`, `intestatari.ts`, i legami, `esito-fetch.ts`) sono entrate **così come sono**:
+non toccano questo perimetro. Il suo changelog resta qui sotto, intero.
+
+**Gate dopo la fusione**: `tsc --noEmit` pulito, **14.335 test verdi su 1.117 file**, `eslint
+--max-warnings 0` pulito. Le due controprove che contano sono state fatte **rompendo il codice**:
+tolto il ramo dei documenti da `chipFatturazione` → **8 test rossi** (fra cui i quattro della #118);
+rimessa la `.in()` unica al posto dei blocchi → **1 rosso**, quello dei 250 pagamenti.
+
+### La ripresa del 6 settembre — due job rossi, due cause diverse, e una sola era nostra
+
+La sessione del 5 settembre si è interrotta con la CI rossa su **entrambi** i check obbligatori.
+I due rossi sembravano un problema solo; erano due, e uno non nasceva qui.
+
+**Il job `Lint · Typecheck · Unit`: un test su 14.338.** Il commit `40904237` aveva portato
+l'etichetta del chip al **plurale ICU** — «Fattura FPR …» con un documento, «Fatture FPR … · Asilo …»
+con due — e aveva lasciato indietro l'unico test che asseriva quella stringa. La riparazione esisteva
+già sul disco, mai committata: lo spegnimento del PC l'ha colta lì.
+
+Correggere quella riga, però, avrebbe chiuso il rosso lasciando aperto ciò che l'aveva prodotto.
+Nello stesso file la stessa etichetta era cercata in **tre modi**, e due erano diventati **ciechi**:
+`queryByText(/^Fattura /)` e `not.toContain('Fattura')` non vedono la parola «Fatture». Sono
+entrambe asserzioni **negative**, cioè della specie che tace invece di rompersi. Misurato, non
+dedotto: scavalcando la guardia su `pagamento_id` e con un pagamento a due documenti, la riga che
+vieta il chip su un movimento non abbinato **passava verde con il difetto in atto**; col matcher
+riparato `/^Fattur[ae] /` diventa rossa. Il conteggio dei chip, a sua volta, reggeva solo perché
+nessun fixture aveva due documenti — reso plurale, accusava un chip *mancante* mentre il chip c'era.
+
+⚠️ La forma del matcher conta: `/^Fatture? /` è «Fattur» più una «e» facoltativa, quindi è cieca al
+**singolare**. Solo `/^Fattur[ae] /` vede entrambe le forme, e le due sono state provate una contro
+l'altra prima di sceglierne una.
+
+A monte c'era un buco più grande: il plurale di questa chiave non aveva **nessun lock**. L'elenco
+`CONTATORI` è a mano e non la conteneva; il «riconoscitore di forma» salta per costruzione ogni
+stringa che apre un blocco `plural`, cioè perde il contatore **proprio nel momento in cui viene
+portato a ICU**. L'unica prova che l'etichetta rendesse «Fatture» era quella riga di test — quella
+che la CI ha trovato rossa. Ora le due chiavi sono in `CONTATORI`, rese in italiano **e in inglese**:
+il mock di next-intl formatta ICU per davvero, ma a locale fisso `it`, e solo quando il punto di
+chiamata passa dei valori — condizione che il commento del lock adesso dichiara, perché prima
+prometteva più di quanto verificasse.
+
+**Il job `E2E (Playwright)`: non era di questo branch, e non si poteva ignorare.** La sonda di
+contrasto falliva su `/teacher` con «15 nodi di testo contro i ≥ 18 attesi». Il diff non tocca
+nessun file di `/teacher`, e in `globals.css` aggiunge solo selettori `kv-recon-*` e
+`kv-come-pagare`, che sotto quella rotta hanno zero occorrenze. Ma «non è mio» non è una diagnosi:
+
+- **`main` era già rosso**, con lo stesso test e gli stessi numeri (run `33976911606`, il merge della
+  PR #118), e non aveva avuto run successive. Il check E2E è obbligatorio nella branch protection:
+  quel rosso si ereditava su qualunque PR;
+- il test è **instabile, non stabilmente rotto**: verde in cinque run, rosso in tre, a codice fermo.
+  La distinzione non è accademica — «rotto sempre» invita a spegnere la sonda, «vince una corsa otto
+  volte su dieci» invita a togliere la corsa.
+
+La causa: `misura()` attendeva `load` e la sparizione dell'overlay, e nient'altro.
+`attendiFineCaricamento` aspetta solo che il `GlobalLoader` se ne vada, e quello si spegne al primo
+`requestAnimationFrame` dopo il mount — **prima** che sia tornata una sola delle chiamate della
+pagina. `/teacher` rende ~18 nodi come guscio idratato e ~36 a dati arrivati: la sonda fotografava
+l'anticamera. E la baseline aveva inciso come pavimento il valore **esatto** di quella corsa
+(`nodiMinimi = Math.min(normale, alto)`), cioè con margine zero: bastava che la corsa scivolasse di
+uno stadio.
+
+Non è stato abbassato `nodiMinimi` e non è stata tolta `/teacher` dall'elenco. La prima cosa
+certificherebbe come «pagina pulita» un guscio senza un dato — e 15 non è nemmeno uno stadio
+spiegato, il primo ne vale ~16. La seconda spegnerebbe l'unica rotta docente misurata lasciando in
+piedi la stessa causa su `/parent/pagamenti`. Nessun `retries`: la config lo vieta con la ragione
+scritta, ed è la ragione giusta.
+
+Quello che è stato fatto: l'attesa è **deterministica**. Prima `networkidle`, poi un ciclo che
+rimisura finché il conteggio non si ripete. Sono complementari e coprono due momenti diversi — il
+ciclo vede il rendering *dopo* la risposta, `networkidle` la quiete *prima* — e serviva dirlo,
+perché un ciclo da solo non distingue «fermo perché ha finito» da «fermo perché non è ancora
+partito»: con un orologio finto, una fetch che risponde a 501 ms fa leggere due volte il guscio e
+lo dichiara stabile.
+
+Tre difetti minori della stessa sonda sono stati chiusi con essa: `alto.saltati` non era **mai**
+confrontato con la baseline (e una superficie che diventa non calcolabile solo in Alto Contrasto
+abbassa il conteggio senza lasciare traccia); l'`expect` che è caduta non stampava nulla, e
+l'`error-context.md` di quei rossi non contiene alcuno snapshot, quindi il messaggio è l'unica cosa
+che resta a chi legge; e il blocco «voce da incollare» era appeso a **ogni** fallimento, compresi
+quelli che sorvegliano i contrasti veri — cioè a chi peggiorava un colore veniva servito il numero
+peggiorato, pronto da copiare. Ora esce solo nel caso per cui era nato.
+
+**La rete che tiene onesta la correzione**, ed è la parte che conta: il criterio di accettazione non
+è più una frase nel `_leggimi`, è un campo `provaPositiva` **per rotta**, preteso da un'`expect` su
+entrambe le passate. Su `/teacher` è il blocco «Comunicazioni», che ha uno sfondo a gradiente e che
+il seme alimenta; su `/parent/pagamenti` è la card del totale dovuto, gradiente inline. Se dopo la
+correzione quei `saltati.gradiente` restano a 0, la sonda sta ancora misurando il guscio e il verde
+è cieco. Senza quel criterio `/parent/pagamenti` sarebbe rimasta cieca **senza nemmeno un rosso**,
+che è il caso peggiore.
+
+⚠️ **Rilievo aperto, e va messo in conto**: la baseline andrà **rimisurata** al primo giro di CI dopo
+questa correzione, e i numeri `normale`/`altoContrasto` su `/teacher` con ogni probabilità
+**saliranno**. Non è una regressione: sono difetti preesistenti dell'Alto Contrasto su superfici che
+la sonda non aveva mai visto, perché guardava la pagina prima che esistesse. Vanno dichiarati in
+baseline, non nascosti — e si aggiungono al rilievo già aperto qui sopra sulle 7 rotte su 9.
+
+### Quattro difetti nostri, trovati mentre si cercava altro
+
+Nessuno dei quattro produceva un rosso, e tre erano **nuovi di questo branch**.
+
+- **Un log che scriveva una riga per genitore al giorno.** `logEvento('pagamento','info', …)` sta su
+  un canale persistito, e l'impronta della deduplica include l'`utente_id`: «una riga al giorno»
+  diventa una riga *per utente*. Con 286 utenti distinti nel giorno di punta contro 1.733 righe
+  totali in `app_log`, un ordine di grandezza del +16% — su un canale dove questo stesso lavoro
+  aveva appena abbassato un `error` a `info` per non fare rumore. E il `contesto` non si aggiorna
+  sull'`ON CONFLICT`, quindi i contatori restavano quelli della prima apertura: la domanda a cui la
+  riga voleva rispondere non l'avrebbe risolta comunque. Ora non persiste.
+- **Due stati d'errore che non si azzeravano a vicenda.** Un 400 lasciava il messaggio di rifiuto in
+  piedi anche dopo un successivo errore di rete: la fascia mostrava il testo vecchio e l'empty-state
+  non tornava più.
+- **Il filtro del server e il chip del client applicavano la stessa politica in due modi diversi.**
+  La rotta sintetizza un documento `da_fatturare` per ogni pagamento senza fatture, quindi non
+  ricadeva mai su `fattura_stato`; il chip invece ci ricade sempre. Nello stato in cui la fattura è
+  partita ma il registro non è stato scritto, la riga finiva nella lista di lavoro «Da fatturare e
+  scartate» — dove il pulsante non c'è nemmeno — e **spariva** da «Fatturate e in attesa», cioè
+  dall'elenco con cui si controlla che le fatture siano uscite. In produzione: 0 occorrenze oggi.
+  I test non lo vedevano perché seminavano documenti sempre coerenti col riassunto.
+- **Un commento che descriveva una minimizzazione inesistente**: diceva che lo stato di fatturazione
+  si mostra solo sulle proprie sedi, mentre il *numero* della fattura usciva comunque. Non è
+  un'urgenza di privacy — il registro è dichiaratamente cross-sede e un numero di fattura non è dato
+  di un minore — ma un commento che descrive una protezione che non c'è è la cosa che questo
+  repository ha già pagato due volte.
+
+Per non far ridivergere filtro e chip, la politica è ora **un motore solo** in
+`src/lib/pagamenti/fatturazione-riga.ts`, con il suo lock architetturale. Il trasloco ha chiuso per
+strada un precedente che nessuno aveva notato: la rotta importava da `@/components`, ed era il
+**primo import di `src/app/api` verso i componenti in tutto il repository**. Nessuna regola lo
+intercettava e `tsc` lo accetta — la frontiera RSC la prova solo `next build`. Ora una riga del lock
+la fa vedere a `vitest`, senza aspettare la build.
+
+### Il collaudo di frontend e accessibilità, e ciò che ha trovato
+
+I due report mancavano, e sono stati fatti. Il tester frontend non aveva `.env.local` nel worktree
+— quindi niente pagine autenticate — e invece di fermarsi alla lettura del JSX ha costruito due
+banchi: uno in jsdom con i cataloghi veri, e uno in **Chromium vero** su Vite, che monta i
+componenti autentici con `globals.css` compilato da Tailwind. Le misure di colore e di scatola sono
+quindi osservate, non dedotte; quelle di impaginazione del testo no, perché lì i font di
+`next/font` non si caricano. Sta scritto nel report, ed è il modo giusto di consegnare una misura
+parziale.
+
+Verdetto: **FAIL entrambi**, nove rilievi. Quattro importanti, e tutti chiusi.
+
+**Il popup diceva due volte lo stato, in due modi opposti.** Appena emessa la fattura mostrava
+ancora il chip giallo «Da fatturare», la frase «la fattura non è ancora stata emessa» e il pulsante
+dipinto da CTA — a due centimetri dal badge «In attesa SDI» che il pulsante stesso aveva appena
+prodotto. `pagamentoFattura` è stato locale del dialog, letto una volta al montaggio; `onEmessa`
+era cablato al refetch della **lista**, e la lista non riscrive `selezionato`. Il popup non aveva
+nessuna via per rileggere ciò che aveva appena cambiato. Il commento che dichiarava «lo stato si
+dice una volta» descriveva un invariante che dopo l'emissione era rotto.
+
+**La fascia d'errore dell'import non si azzerava mai** — lo stesso difetto già corretto in questo
+lavoro per altri due stati, in un terzo posto che la correzione non copriva. La riparazione non è
+stata «azzerare anche quello»: i tre stati sono diventati **uno solo**, un tipo discriminato, così
+assegnarne uno cancella il precedente **per costruzione** e non per disciplina di chi scriverà il
+prossimo ramo.
+
+**«Come pagare» spariva quando mancava la causale** — IBAN e intestatario compresi — contraddicendo
+la promessa scritta nella spec di questo stesso lavoro. La causa era un filtro che guardava il dato
+sbagliato: a decidere se c'è qualcosa da pagare è il **residuo**, non la causale suggerita.
+
+**Tre rilievi riguardavano chi non vede**, e nessuno di essi era visibile guardando lo schermo:
+l'IBAN a gruppi di quattro veniva letto come una fila di numeri cardinali («duemilaottocentoundici»)
+e chi trascrive doveva ricostruire le cifre — ora la forma elettronica intera sta in un nodo per
+soli screen reader, prodotta dalla **stessa funzione** che riempie gli appunti, così chi ascolta e
+chi copia non possono ricevere stringhe diverse; due bottoni «Copia l'IBAN» avevano lo stesso
+identico nome accessibile; e se la copia falliva non succedeva **niente di percepibile** — ora la
+regione viva dice cosa è andato storto e cosa fare, e la causa finisce nel log applicativo mentre
+l'IBAN non ci finisce mai.
+
+### L'Alto Contrasto non ribaltava gli inchiostri di stato — e adesso lo fa
+
+Ancorata la sonda, il rosso E2E ha cambiato natura: da «15 nodi contro 18» a **«le due modalità
+danno lo stesso identico esito: il cookie non sta facendo niente»**, su entrambe le rotte. Otto
+firme, riconducibili a quattro inchiostri (`muted`, `error`, `success`, `info`) più due tinte
+scritte a mano.
+
+La causa è quella che questo file ha già pagato due volte: **`@theme inline` inlina l'hex**, quindi
+`.text-kidville-muted` emette `color:#7B8582` letterale e ridefinire il token sotto
+`[data-contrast="high"]` non tocca una sola classe Tailwind. Ma c'era un secondo pezzo, e senza
+quello la correzione sarebbe stata sbagliata di verso: **la carta non si ribalta con l'inchiostro**.
+Il guscio del genitore e del docente è `bg-kidville-cream` — hex inlinato, resta crema — e le card
+sono bianche: `[data-contrast="high"] body { background:#000 }` sta dietro e non si vede. Perciò in
+Alto Contrasto gli inchiostri si **scuriscono**, non si schiariscono, come già facevano
+`.kv-admin-sheet`, `.kv-admin-nav` e `.kv-public` per conto loro. Qui la scelta si generalizza ai
+quattro inchiostri che nessuna di quelle liste nominava:
+
+| | prima | dopo | minimo sulle 14 fasce chiare |
+|---|---|---|---|
+| `muted` | 3,80:1 | `#000000` | 16,46 |
+| `error` | 4,23:1 | `#8B0000` | 7,85 |
+| `success` | 2,89:1 | `#0F4A22` | 8,14 |
+| `info` | 4,20:1 | `#123C86` | 8,16 |
+
+Gli ultimi tre **tengono la tinta**: in Alto Contrasto un errore deve continuare a leggersi come un
+errore anche per chi arriva di fretta. E le pastiglie a fondo soft hanno ora un contorno, perché
+`#E7F3E8` contro il bianco della card vale 1,12:1 — la pastiglia come *forma* non esisteva.
+
+**Il fuoco da tastiera era a 1,28:1 su nove dei sedici stop** della Riconciliazione, comprese le tre
+pill nuove. E la causa non era «il giallo confina con la carta»: se fosse stata quella sarebbero
+stati sedici su sedici. I nove erano esattamente quelli che portano una regola di Alto Contrasto con
+`box-shadow` sulla propria superficie — e `box-shadow` è **una** proprietà, non una pila: chi vince
+la cascata sostituisce l'intera lista, separatore di fuoco compreso. Ora l'anello ha il nero anche
+**da fuori**, e undici regole per-superficie rimettono nella stessa dichiarazione il proprio
+contorno e i due anelli. Il lock che lo sorveglia non elenca le superfici a mano: **setaccia**
+`globals.css` e trova da sé ogni regola che potrebbe mangiarsi l'anello.
+
+**La ✕ del popup spariva in hover**, bianco su `#F0F2F1`, 1,12:1 — mentre in luce normale lo stesso
+hover vale 10,48:1. Non era un colore sbagliato: erano due regole che non si parlavano.
+
+Le due tinte scritte a mano nell'array `SHORTCUTS` della home docente sono state chiuse con una
+**classe-àncora**, non con un `!important` su `[style*="color"]`: quello avrebbe coperto il sintomo
+spegnendo anche le quattro tinte che in Alto Contrasto reggono già.
+
+### Rilievi aperti che questo lavoro ha trovato e NON chiude
+
+Sono dichiarati qui perché un difetto scritto non è un difetto nascosto.
+
+- 🔴 **`.kv-news-onbody` è scritto contro un fondo nero che non c'è.** `globals.css` porta
+  `[data-contrast="high"] .kv-news-onbody { color:#FFFFFF }` e il link a `#FFE500`, ma il guscio di
+  genitore e docente resta crema: **misurato 1,11:1** il testo bianco e **1,15:1** il link giallo,
+  su `/parent/news`, `/parent/news/[id]`, `/parent/news/digest` e `/teacher/news`. È la stessa
+  famiglia di difetto appena corretta — una regola di Alto Contrasto scritta contro una carta che
+  non c'è — ma su rotte che nessuno ha mai misurato, e il trattamento è una decisione di design.
+- **La causa radice delle tinte della home docente resta**: le sei tinte dell'array `SHORTCUTS` sono
+  scritte a mano nel componente invece di passare da `TINTA_FUNZIONE`, che esiste apposta e il cui
+  commento cita proprio `#1F8A5B` fra le tinte «che non corrispondevano a nessun token dichiarato».
+  Finché stanno lì, **ogni tinta nuova nasce scoperta in Alto Contrasto**.
+- **Le varianti con alfa e di stato non sono coperte** dalle quattro regole nuove: 17 varianti
+  `text-kidville-muted/60` e simili, e 53 varianti `hover:`. Un selettore `[class*="…"]` le
+  prenderebbe tutte — comprese le `hover:` — trasformando uno **stato** in un colore fisso, cioè
+  spegnendo un'affordance invece di aggiungerne una. Nessuna delle otto firme misurate è una di
+  queste.
+- **Due chiavi ICU nuove restano fuori dal lock dei plurali**: `ariaCopiaIbanSede` e
+  `ariaCopiatoIbanSede` non sono nell'elenco `CONTATORI`, che per costruzione salta le stringhe che
+  aprono un blocco `plural`. È lo stesso buco chiuso oggi per il chip di fatturazione, riaperto da
+  chiavi nuove: l'elenco è a mano, e a mano va tenuto.
+- ~~La baseline del crawler va rimisurata~~ — **fatto, run 34012296047**, e i numeri dicono tre cose:
+
+  | | prima (guscio) | ora (pagina vera) |
+  |---|---|---|
+  | `/parent/pagamenti` — nodi | 12 | **33** |
+  | `/parent/pagamenti` — normale · Alto Contrasto | 0 · 0 | **3 · 0** |
+  | `/teacher` — nodi | 18 | **43** |
+  | `/teacher` — normale · Alto Contrasto | 0 · 1 | **5 · 0** |
+
+  1. Il messaggio «le due modalità danno lo stesso identico esito» **è sparito** da entrambe: il
+     cookie adesso fa qualcosa.
+  2. **`altoContrasto` è 0 su entrambe le rotte.** Nella modalità che esiste apposta per chi non
+     legge un grigio su bianco, quelle due schermate non hanno più una sola coppia sotto soglia.
+  3. In modalità **normale** restano 3 e 5 fallimenti, ed è **debito dichiarato, non nuovo**: due
+     sono `text-kidville-muted` a 3,80:1 — sotto AA *per scelta documentata*, perché fra `hint` e
+     `sub` l'intervallo utile è vuoto — e gli altri sono `error` a 4,23:1, `success` a 2,89:1 su
+     fondo soft, `info` a 4,20:1, più le due tinte della home docente. Erano lì da sempre: la
+     differenza è che ora **si vedono**, e il numero può solo scendere.
+
+  La prova positiva ha fatto il suo mestiere: `saltati.gradiente` è **3** su entrambe, contro il
+  minimo di 2 preteso. Se fosse rimasto 0, il verde sarebbe stato cieco e il file lo avrebbe detto.
+
+### Cosa NON è stato fatto, e perché
+
+- **Nessun campo «intestatario»**: decisione del titolare. È la denominazione del cedente, la stessa
+  che firma le fatture e le email — un campo in più sarebbe una seconda verità da tenere allineata.
+- ✅ **L'IBAN è compilato sulle tre sedi** (2026-09-05, sera). Prima del rilascio era presente solo
+  su Aversa: su Giugliano e Cesa è stato copiato da lì con un `UPDATE` mostrato prima di eseguirlo
+  (il conto è uno per la cooperativa), e verificato con il mod-97 in SQL: 27 caratteri, valido su
+  tutte e tre. La sede E2E resta vuota di proposito (è il caso «chiedile in segreteria» che la CI
+  esercita). Il valore non sta in nessun file del repository, che è pubblico.
+- Le **etichette del semaforo** e dei filtri per stato della riconciliazione restano in italiano
+  cablato: è un gap pre-esistente, il gruppo nuovo è invece tutto a catalogo. Si chiude a parte.
+- Le pill dei filtri restano a ~30 px di altezza, sotto i 44 px di target touch: alzarle
+  toccherebbe anche il gruppo «stato» già in produzione, e non si fa di nascosto dentro questo
+  lavoro.
+- `emissione.ts` e la route `[id]` non si toccano; nessun interruttore «contanti sì/no» per sede,
+  perché oggi tutte e tre le sedi accettano entrambi i metodi.
 
 ## 🧾 Changelog — La lista dei bonifici non diceva quali fossero già fatturati, e una guardia si scavalcava ripartendo la retta — 2026-09-05 (branch `feat/fatture-movimenti-e-guardie`)
 
@@ -6754,6 +7175,13 @@ Sedici punti d'invio hanno smesso di comporre testo a mano e chiedono l'email al
 
 - Mettere l'**IBAN** in Impostazioni → Dati fiscali: finché è vuoto il riquadro bonifico mostra
   importo, causale e intestatario, cioè quello che il sollecito manda oggi.
+  ⚠️ **Dal 2026-09-05 questa voce non riguarda più le sole email.** Lo stesso IBAN compare adesso
+  anche **al genitore**, nella card «Come pagare» di `/parent/pagamenti` (branch
+  `feat/riconciliazione-fatturato-e-come-pagare`): è la stessa `admin_settings.fiscale_config.iban`,
+  letta dallo stesso motore. Finché resta vuoto, la card **non sparisce** — dice «Le coordinate
+  bancarie non sono ancora disponibili: chiedile in segreteria», che è vero ma è un giro in più per
+  la famiglia. **Va compilato su tutte e tre le sedi** (Giugliano, Aversa, Cesa): la configurazione è
+  per sede, e una sede senza IBAN resta muta anche se le altre due ce l'hanno.
 - Il bottone **Google Play** punta all'indirizzo definitivo, che al 2026-08-15 risponde **404**
   perché l'app è ancora nel canale di test chiuso. Scelta esplicita del titolare, che conosceva il
   404 quando ha scelto.

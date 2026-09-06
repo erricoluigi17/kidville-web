@@ -18,7 +18,11 @@ const h = vi.hoisted(() => ({
   fail23502: new Set<string>(),
   // Errore iniettabile sulla SELECT dei pagamenti aperti (POST, ha `codice_fiscale` nei cols).
   apertiCfError: null as { code: string; message: string } | null,
-  // Errore iniettabile sulla query batch sede in GET (cols = 'id, scuola_id').
+  // Errore iniettabile sulla query batch sede in GET (cols che inizia per 'id, scuola_id').
+  // ⚠️ Non un confronto ESATTO con 'id, scuola_id': quella select è cresciuta il 2026-09-05
+  // (`stato, fattura_stato`, per dire se la riga confermata è già fatturata) e l'uguaglianza
+  // ha smesso di riconoscerla in silenzio — l'iniezione non scattava più e il test misurava
+  // il ramo felice credendo di misurare il degrado.
   batchSedeError: null as { code: string; message: string } | null,
   // Errore iniettabile sull'UPDATE dei movimenti (ignora/riapri/conferma).
   updateError: null as { code: string; message: string } | null,
@@ -77,7 +81,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'pagamenti') {
           const cols = typeof b._cols === 'string' ? (b._cols as string) : ''
           if (h.apertiCfError && cols.includes('codice_fiscale')) error = h.apertiCfError
-          else if (h.batchSedeError && cols === 'id, scuola_id') error = h.batchSedeError
+          else if (h.batchSedeError && cols.startsWith('id, scuola_id')) error = h.batchSedeError
         }
         return resolve({
           data:

@@ -1,0 +1,2249 @@
+{
+  "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
+  "generato_il": "2026-09-06",
+  "generato_alle": "2026-09-06T11:11:36Z",
+  "sha256": "9c9287501e3cc5e103de5985b6b20cc9ac18b3dbad5a17a9f1de912b198ca94a",
+  "indici": [
+    {
+      "tabella": "admin_settings",
+      "indice": "admin_settings_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "allegati_registro",
+      "indice": "allegati_registro_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "alunni",
+      "indice": "alunni_codice_fiscale_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "codice_fiscale"
+      ]
+    },
+    {
+      "tabella": "alunni",
+      "indice": "alunni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "alunni",
+      "indice": "ux_alunni_numero_domanda_sidi",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "numero_domanda_sidi",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "anagrafica_personale",
+      "indice": "anagrafica_personale_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "utente_id"
+      ]
+    },
+    {
+      "tabella": "app_log",
+      "indice": "app_log_impronta_giorno_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "fingerprint",
+        "giorno"
+      ]
+    },
+    {
+      "tabella": "app_log",
+      "indice": "app_log_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "armadietto",
+      "indice": "armadietto_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "armadietto_richieste",
+      "indice": "armadietto_richieste_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "armadietto_richieste",
+      "indice": "armadietto_richieste_viva_uniq",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "materiale"
+      ]
+    },
+    {
+      "tabella": "audit_scritture_docente",
+      "indice": "audit_scritture_docente_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "avvisi",
+      "indice": "avvisi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "avvisi_risposte",
+      "indice": "avvisi_risposte_avviso_id_parent_id_student_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "avviso_id",
+        "parent_id",
+        "student_id"
+      ]
+    },
+    {
+      "tabella": "avvisi_risposte",
+      "indice": "avvisi_risposte_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "campanelle",
+      "indice": "campanelle_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "campanelle",
+      "indice": "campanelle_section_id_giorno_settimana_ordine_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "giorno_settimana",
+        "ordine",
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "indice": "candidature_insegnanti_cv_unico",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "cv_path"
+      ]
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "indice": "candidature_insegnanti_email_viva",
+      "parziale": true,
+      "con_espressioni": true,
+      "nulls_not_distinct": false,
+      "colonne": []
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "indice": "candidature_insegnanti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "candidature_sedi",
+      "indice": "candidature_sedi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "candidatura_id",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "caricamenti_personale",
+      "indice": "caricamenti_personale_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "percorso"
+      ]
+    },
+    {
+      "tabella": "cassa_categorie",
+      "indice": "cassa_categorie_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "cassa_categorie",
+      "indice": "cassa_categorie_slug_uniq",
+      "parziale": false,
+      "con_espressioni": true,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "slug"
+      ]
+    },
+    {
+      "tabella": "cassa_chiusure",
+      "indice": "cassa_chiusure_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "cassa_movimenti",
+      "indice": "cassa_movimenti_incasso_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "incasso_id"
+      ]
+    },
+    {
+      "tabella": "cassa_movimenti",
+      "indice": "cassa_movimenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "certificati_competenze",
+      "indice": "certificati_competenze_alunno_id_anno_scolastico_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "anno_scolastico"
+      ]
+    },
+    {
+      "tabella": "certificati_competenze",
+      "indice": "certificati_competenze_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "certificati_medici",
+      "indice": "certificati_medici_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "certificato_competenza_livelli",
+      "indice": "certificato_competenza_livell_certificato_id_competenza_cod_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "certificato_id",
+        "competenza_codice"
+      ]
+    },
+    {
+      "tabella": "certificato_competenza_livelli",
+      "indice": "certificato_competenza_livelli_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "chat_messages",
+      "indice": "chat_messages_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "chat_threads",
+      "indice": "chat_threads_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "chat_threads",
+      "indice": "chat_threads_teacher_id_parent_id_student_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "parent_id",
+        "student_id",
+        "teacher_id"
+      ]
+    },
+    {
+      "tabella": "consensi_accettazioni",
+      "indice": "consensi_accettazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "conversazioni_sospensioni",
+      "indice": "conversazioni_sospensioni_attiva_unica",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "thread_id"
+      ]
+    },
+    {
+      "tabella": "conversazioni_sospensioni",
+      "indice": "conversazioni_sospensioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "crediti_famiglia",
+      "indice": "crediti_famiglia_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "delegates",
+      "indice": "delegates_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "divise_articoli",
+      "indice": "divise_articoli_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "divise_ordini",
+      "indice": "divise_ordini_idempotency_key_uq",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "idempotency_key"
+      ]
+    },
+    {
+      "tabella": "divise_ordini",
+      "indice": "divise_ordini_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "divise_ordini_righe",
+      "indice": "divise_ordini_righe_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "enrollment_submissions",
+      "indice": "enrollment_submissions_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "eventi_agenda",
+      "indice": "eventi_agenda_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "eventi_diario",
+      "indice": "eventi_diario_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "fascicolo_accessi_audit",
+      "indice": "fascicolo_accessi_audit_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "fatture_emesse",
+      "indice": "fatture_emesse_pagamento_quota_uidx",
+      "parziale": true,
+      "con_espressioni": true,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "pagamento_id"
+      ]
+    },
+    {
+      "tabella": "fatture_emesse",
+      "indice": "fatture_emesse_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "fatture_emesse",
+      "indice": "fatture_emesse_scuola_id_anno_numero_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "numero",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "fatture_emesse",
+      "indice": "fatture_emesse_sezionale_anno_numero_uidx",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "numero",
+        "sezionale"
+      ]
+    },
+    {
+      "tabella": "fatture_numerazione",
+      "indice": "fatture_numerazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "fatture_numerazione_sezionale",
+      "indice": "fatture_numerazione_sezionale_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "sezionale"
+      ]
+    },
+    {
+      "tabella": "fea_audit_log",
+      "indice": "fea_audit_log_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "fea_signatures",
+      "indice": "fea_signatures_entita_tipo_entita_id_slot_index_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "entita_id",
+        "entita_tipo",
+        "slot_index"
+      ]
+    },
+    {
+      "tabella": "fea_signatures",
+      "indice": "fea_signatures_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "firme_docenti",
+      "indice": "firme_docenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "firme_docenti",
+      "indice": "uniq_firma_principale_per_registro",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "registro_id"
+      ]
+    },
+    {
+      "tabella": "firme_docenti",
+      "indice": "unique_firma_docente",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "maestra_id",
+        "registro_id"
+      ]
+    },
+    {
+      "tabella": "firme_documenti",
+      "indice": "firme_documenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "form_models",
+      "indice": "form_models_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "form_models",
+      "indice": "form_models_public_token_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "public_token"
+      ]
+    },
+    {
+      "tabella": "form_submissions",
+      "indice": "form_submissions_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "forms_submissions",
+      "indice": "forms_submissions_firma_unica_idx",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "form_id",
+        "student_id"
+      ]
+    },
+    {
+      "tabella": "forms_submissions",
+      "indice": "forms_submissions_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "forms_templates",
+      "indice": "forms_templates_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "galleria_media",
+      "indice": "galleria_media_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "galleria_media_v2",
+      "indice": "galleria_media_v2_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "giudizi_sintetici_scala",
+      "indice": "giudizi_sintetici_scala_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "giudizi_sintetici_scala",
+      "indice": "giudizi_sintetici_scala_scuola_id_etichetta_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "etichetta",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "giudizio_template",
+      "indice": "giudizio_template_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "giudizio_template",
+      "indice": "uq_giudizio_template_global",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "dimensione",
+        "valore"
+      ]
+    },
+    {
+      "tabella": "giudizio_template",
+      "indice": "uq_giudizio_template_scuola",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "dimensione",
+        "scuola_id",
+        "valore"
+      ]
+    },
+    {
+      "tabella": "giustifiche_didattiche",
+      "indice": "giustifiche_didattiche_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "gruppi_mensa",
+      "indice": "gruppi_mensa_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "gruppi_mensa",
+      "indice": "gruppi_mensa_scuola_id_nome_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "nome",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "incassi",
+      "indice": "incassi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_decisioni",
+      "indice": "iscrizioni_decisioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_decisioni",
+      "indice": "iscrizioni_decisioni_una_per_bambino",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "bambino_norm",
+        "submission_id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_elenco_caricamenti",
+      "indice": "iscrizioni_elenco_caricamenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_elenco_caricamenti",
+      "indice": "iscrizioni_elenco_uno_attivo_per_sede",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_elenco_righe",
+      "indice": "iscrizioni_elenco_righe_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_import_esiti",
+      "indice": "iscrizioni_import_esiti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "submission_id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_import_tentativi",
+      "indice": "iscrizioni_import_tentativi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_inviti_credenziali",
+      "indice": "iscrizioni_inviti_credenziali_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "auth_user_id"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_inviti_credenziali",
+      "indice": "iscrizioni_inviti_email_unica",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "email_norm"
+      ]
+    },
+    {
+      "tabella": "iscrizioni_retention_esecuzioni",
+      "indice": "iscrizioni_retention_esecuzioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "legame_genitori_alunni",
+      "indice": "legame_genitori_alunni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "genitore_id"
+      ]
+    },
+    {
+      "tabella": "locker_config",
+      "indice": "locker_config_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "locker_config",
+      "indice": "locker_config_sezione_nome_uniq",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "nome",
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "materie",
+      "indice": "materie_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "materie",
+      "indice": "materie_section_id_codice_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "codice",
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "materie_preset",
+      "indice": "materie_preset_livello_codice_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "codice",
+        "livello"
+      ]
+    },
+    {
+      "tabella": "materie_preset",
+      "indice": "materie_preset_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_alternative",
+      "indice": "mensa_alternative_alunno_id_data_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "data"
+      ]
+    },
+    {
+      "tabella": "mensa_alternative",
+      "indice": "mensa_alternative_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_class_menu_assignment",
+      "indice": "mensa_class_menu_assignment_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_class_menu_assignment",
+      "indice": "uidx_mensa_class_assign_sede_classe_dal",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "attivo_dal",
+        "classe",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_config",
+      "indice": "mensa_menu_config_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_config",
+      "indice": "uidx_mensa_menu_config_sede_nome",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "nome",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_override",
+      "indice": "mensa_menu_override_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_override",
+      "indice": "uidx_mensa_ovr_legacy",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "data",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_override",
+      "indice": "uidx_mensa_ovr_menu",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "data",
+        "menu_config_id",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_rotazione",
+      "indice": "mensa_menu_rotazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_rotazione",
+      "indice": "uidx_mensa_rot_legacy",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "giorno_settimana",
+        "scuola_id",
+        "settimana"
+      ]
+    },
+    {
+      "tabella": "mensa_menu_rotazione",
+      "indice": "uidx_mensa_rot_menu",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "giorno_settimana",
+        "menu_config_id",
+        "scuola_id",
+        "settimana"
+      ]
+    },
+    {
+      "tabella": "mensa_prenotazioni",
+      "indice": "mensa_prenotazioni_alunno_id_data_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "data"
+      ]
+    },
+    {
+      "tabella": "mensa_prenotazioni",
+      "indice": "mensa_prenotazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "mensa_ticket_movimenti",
+      "indice": "mensa_ticket_movimenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "merch_fornitori",
+      "indice": "merch_fornitori_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "merch_ordini_fornitore",
+      "indice": "merch_ordini_fornitore_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "merch_ordini_fornitore",
+      "indice": "merch_ordini_fornitore_scuola_id_numero_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "numero",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "merch_po_numerazione",
+      "indice": "merch_po_numerazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "merch_rettifiche",
+      "indice": "merch_rettifiche_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "news_categorie",
+      "indice": "news_categorie_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "news_categorie",
+      "indice": "news_categorie_slug_uniq",
+      "parziale": false,
+      "con_espressioni": true,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "slug"
+      ]
+    },
+    {
+      "tabella": "news_digest_edizioni",
+      "indice": "news_digest_edizioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "news_digest_edizioni",
+      "indice": "news_digest_edizioni_scuola_id_anno_mese_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "mese",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "news_media",
+      "indice": "news_media_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "news_posts",
+      "indice": "news_posts_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "news_visualizzazioni",
+      "indice": "news_visualizzazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "post_id",
+        "utente_id"
+      ]
+    },
+    {
+      "tabella": "nota_ricezioni",
+      "indice": "nota_ricezioni_nota_id_genitore_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "genitore_id",
+        "nota_id"
+      ]
+    },
+    {
+      "tabella": "nota_ricezioni",
+      "indice": "nota_ricezioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "note_disciplinari",
+      "indice": "note_disciplinari_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "notifiche",
+      "indice": "notifiche_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "obiettivi_apprendimento",
+      "indice": "obiettivi_apprendimento_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "obiettivi_apprendimento",
+      "indice": "obiettivi_apprendimento_scuola_id_materia_codice_livello_co_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "codice",
+        "livello",
+        "materia_codice",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "orario_settimanale",
+      "indice": "orario_settimanale_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "orario_settimanale",
+      "indice": "orario_settimanale_section_id_giorno_settimana_campanella_i_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "campanella_id",
+        "giorno_settimana",
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "otp_ticket_consumati",
+      "indice": "otp_ticket_consumati_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "jti"
+      ]
+    },
+    {
+      "tabella": "pagamenti",
+      "indice": "pagamenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "pagamenti",
+      "indice": "uq_pagamenti_retta_mese",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "periodo_competenza"
+      ]
+    },
+    {
+      "tabella": "pagamenti_quote",
+      "indice": "pagamenti_quote_pagamento_id_adult_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "adult_id",
+        "pagamento_id"
+      ]
+    },
+    {
+      "tabella": "pagamenti_quote",
+      "indice": "pagamenti_quote_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "pagamenti_transazioni",
+      "indice": "pagamenti_transazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "pagella_ricezioni",
+      "indice": "pagella_ricezioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "pagella_ricezioni",
+      "indice": "pagella_ricezioni_scrutinio_id_alunno_id_genitore_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "genitore_id",
+        "scrutinio_id"
+      ]
+    },
+    {
+      "tabella": "pagelle",
+      "indice": "pagelle_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "pagelle",
+      "indice": "pagelle_scrutinio_id_alunno_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "scrutinio_id"
+      ]
+    },
+    {
+      "tabella": "parents",
+      "indice": "parents_auth_user_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "auth_user_id"
+      ]
+    },
+    {
+      "tabella": "parents",
+      "indice": "parents_fiscal_code_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "fiscal_code"
+      ]
+    },
+    {
+      "tabella": "parents",
+      "indice": "parents_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "password_cambi",
+      "indice": "password_cambi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "auth_user_id"
+      ]
+    },
+    {
+      "tabella": "payment_categories",
+      "indice": "payment_categories_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "payment_categories",
+      "indice": "payment_categories_scuola_id_nome_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "nome",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "payment_categories",
+      "indice": "uq_payment_categories_global_nome",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "nome"
+      ]
+    },
+    {
+      "tabella": "pratiche_personale",
+      "indice": "pratiche_personale_email_viva",
+      "parziale": true,
+      "con_espressioni": true,
+      "nulls_not_distinct": false,
+      "colonne": []
+    },
+    {
+      "tabella": "pratiche_personale",
+      "indice": "pratiche_personale_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "presenze",
+      "indice": "presenze_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "presenze",
+      "indice": "unique_presenza_giornaliera",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "data"
+      ]
+    },
+    {
+      "tabella": "protocolli",
+      "indice": "protocolli_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "protocolli",
+      "indice": "protocolli_scuola_id_anno_numero_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "numero",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "protocolli_allegati",
+      "indice": "protocolli_allegati_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "protocolli_categorie",
+      "indice": "protocolli_categorie_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "protocolli_categorie",
+      "indice": "protocolli_categorie_scuola_id_nome_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "nome",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "protocolli_numerazione",
+      "indice": "protocolli_numerazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "push_subscriptions",
+      "indice": "push_subscriptions_endpoint_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "endpoint"
+      ]
+    },
+    {
+      "tabella": "push_subscriptions",
+      "indice": "push_subscriptions_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "registro_destinatari",
+      "indice": "registro_destinatari_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "registro_destinatari",
+      "indice": "registro_destinatari_registro_id_firma_id_alunno_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "firma_id",
+        "registro_id"
+      ]
+    },
+    {
+      "tabella": "registro_modifiche",
+      "indice": "registro_modifiche_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "registro_orario",
+      "indice": "registro_orario_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "registro_orario",
+      "indice": "unique_registro_orario",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "classe_sezione",
+        "data",
+        "ora_lezione",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "ricevute_emesse",
+      "indice": "ricevute_emesse_pagamento_attiva",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "pagamento_id"
+      ]
+    },
+    {
+      "tabella": "ricevute_emesse",
+      "indice": "ricevute_emesse_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "ricevute_emesse",
+      "indice": "ricevute_emesse_scuola_id_anno_numero_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "numero",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "ricevute_emesse",
+      "indice": "ricevute_una_attiva_per_transazione",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "transazione_id"
+      ]
+    },
+    {
+      "tabella": "ricevute_numerazione",
+      "indice": "ricevute_numerazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "richieste_cancellazione",
+      "indice": "richieste_cancellazione_pending_unica",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "parent_id"
+      ]
+    },
+    {
+      "tabella": "richieste_cancellazione",
+      "indice": "richieste_cancellazione_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "riconciliazione_import",
+      "indice": "riconciliazione_import_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "riconciliazione_movimenti",
+      "indice": "riconciliazione_movimenti_hash_uidx",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "hash_movimento"
+      ]
+    },
+    {
+      "tabella": "riconciliazione_movimenti",
+      "indice": "riconciliazione_movimenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "sblocchi_audit",
+      "indice": "sblocchi_audit_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "schools",
+      "indice": "schools_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "scrutini",
+      "indice": "scrutini_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "scrutini",
+      "indice": "scrutini_section_id_periodo_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "periodo_id",
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_comportamento",
+      "indice": "scrutinio_comportamento_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_comportamento",
+      "indice": "scrutinio_comportamento_scrutinio_id_alunno_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "scrutinio_id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_giudizi",
+      "indice": "scrutinio_giudizi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_giudizi",
+      "indice": "scrutinio_giudizi_scrutinio_id_alunno_id_materia_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "materia_id",
+        "scrutinio_id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_giudizio_descrittivo",
+      "indice": "scrutinio_giudizio_descrittiv_scuola_id_livello_materia_cod_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "etichetta_voto",
+        "livello",
+        "materia_codice",
+        "periodo_id",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_giudizio_descrittivo",
+      "indice": "scrutinio_giudizio_descrittivo_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_periodi",
+      "indice": "scrutinio_periodi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "scrutinio_periodi",
+      "indice": "scrutinio_periodi_scuola_id_anno_scolastico_nome_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "anno_scolastico",
+        "nome",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "scuole",
+      "indice": "scuole_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "sections",
+      "indice": "sections_forma_normalizzata_per_sede",
+      "parziale": false,
+      "con_espressioni": true,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "sections",
+      "indice": "sections_nome_per_sede",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "name",
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "sections",
+      "indice": "sections_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "segnalazioni",
+      "indice": "segnalazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "sezione_materia_obiettivo",
+      "indice": "sezione_materia_obiettivo_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "sezione_materia_obiettivo",
+      "indice": "sezione_materia_obiettivo_section_id_materia_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "materia_id",
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "sidi_import_batches",
+      "indice": "sidi_import_batches_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "sidi_sync_state",
+      "indice": "sidi_sync_state_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "scuola_id"
+      ]
+    },
+    {
+      "tabella": "solleciti",
+      "indice": "solleciti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "student_documents",
+      "indice": "student_documents_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "student_guardians",
+      "indice": "sg_uniq_account",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "utenti_id"
+      ]
+    },
+    {
+      "tabella": "student_guardians",
+      "indice": "sg_uniq_anagrafica",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id",
+        "parent_id"
+      ]
+    },
+    {
+      "tabella": "student_guardians",
+      "indice": "student_guardians_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "student_parents",
+      "indice": "student_parents_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "parent_id",
+        "student_id"
+      ]
+    },
+    {
+      "tabella": "task_interni",
+      "indice": "task_interni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "tempo_scuola",
+      "indice": "tempo_scuola_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "tempo_scuola",
+      "indice": "uq_tempo_scuola_section_attivo",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "section_id"
+      ]
+    },
+    {
+      "tabella": "tetto_frequenza",
+      "indice": "tetto_frequenza_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "chiave"
+      ]
+    },
+    {
+      "tabella": "ticket_mensa",
+      "indice": "ticket_mensa_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "alunno_id"
+      ]
+    },
+    {
+      "tabella": "utenti",
+      "indice": "utenti_email_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "email"
+      ]
+    },
+    {
+      "tabella": "utenti",
+      "indice": "utenti_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "utenti_scuole",
+      "indice": "utenti_scuole_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "scuola_id",
+        "utente_id"
+      ]
+    },
+    {
+      "tabella": "utenti_sezioni",
+      "indice": "utenti_sezioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "section_id",
+        "utente_id"
+      ]
+    },
+    {
+      "tabella": "utenti_sezioni_materie",
+      "indice": "utenti_sezioni_materie_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "utenti_sezioni_materie",
+      "indice": "utenti_sezioni_materie_utente_id_section_id_materia_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "materia_id",
+        "section_id",
+        "utente_id"
+      ]
+    },
+    {
+      "tabella": "valutazione_obiettivi",
+      "indice": "valutazione_obiettivi_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "valutazione_obiettivi",
+      "indice": "valutazione_obiettivi_valutazione_id_obiettivo_id_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "obiettivo_id",
+        "valutazione_id"
+      ]
+    },
+    {
+      "tabella": "valutazioni",
+      "indice": "valutazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "colonne": [
+        "id"
+      ]
+    }
+  ]
+}

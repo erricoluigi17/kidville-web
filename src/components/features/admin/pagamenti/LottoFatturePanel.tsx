@@ -16,6 +16,7 @@ import {
   fermaIlLotto,
   numeroInDubbio,
   pausaDopo,
+  stimaRimanenteMs,
   prontaPerIlLotto,
   type AnteprimaPerIlLotto,
 } from '@/lib/pagamenti/lotto-fatture';
@@ -197,8 +198,15 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
    * respinte da un gate nostro — lo scenario per cui quella pausa corta esiste —
    * la barra annunciava diciotto minuti a chi ne stava aspettando sessanta
    * secondi, e lo annunciava a uno screen reader.
+   *
+   * ⚠️ `concluse` È UN CAMPO SUO, e non si ricava da `corrente`: quel numero
+   * cambia significato con la fase — durante l'invio è l'indice 1-based della
+   * riga IN VOLO (che conclusa non è), durante l'attesa è il conteggio di quelle
+   * finite. Una barra che si riempisse su `corrente` direbbe «1 su 3 fatta»
+   * mentre la prima è ancora per aria, cioè annuncerebbe un documento fiscale
+   * che potrebbe non esistere. È anche il numero che regge la stima.
    */
-  const [avanzamento, setAvanzamento] = useState<{ corrente: number; totale: number; attesaMs: number | null } | null>(null);
+  const [avanzamento, setAvanzamento] = useState<{ corrente: number; totale: number; attesaMs: number | null; concluse: number } | null>(null);
 
   /**
    * L'interruzione è un REF e non uno stato, e non è un dettaglio: il ciclo di
@@ -425,7 +433,7 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
         break;
       }
       const riga = lista[i];
-      setAvanzamento({ corrente: i + 1, totale: lista.length, attesaMs: null });
+      setAvanzamento({ corrente: i + 1, totale: lista.length, attesaMs: null, concluse: i });
       const inizio = adesso();
       let stato = 0;
       let corpo: unknown = null;
@@ -512,7 +520,7 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
         // La durata si calcola PRIMA di annunciarla: la live region deve dire
         // l'attesa vera, non quella tipica.
         const pausa = pausaDopo(stato, adesso() - inizio);
-        setAvanzamento({ corrente: i, totale: lista.length, attesaMs: pausa });
+        setAvanzamento({ corrente: i, totale: lista.length, attesaMs: pausa, concluse: i });
         await attendi(pausa);
       }
     }
@@ -550,19 +558,71 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
           ? { etichetta: `${t('reconLottoEmettiOra')} (${pronte.length})`, azione: () => { void esegui(); } }
           : { etichetta: t('reconLottoChiudi'), azione: onChiudi };
 
+  /**
+   * ─── QUANTO MANCA, IN MINUTI, DENTRO LA STESSA LIVE REGION ──────────────────
+   *
+   * Il conto vero è di `stimaRimanenteMs` (modulo puro): qui si traduce, ed è
+   * l'unica cosa che questo file deve fare — «da lì escono VERDETTI, non testi».
+   *
+   * ⚠️ SI AGGIORNA A PASSI, NON CON UN OROLOGIO. La stima si ricalcola quando
+   * cambia `avanzamento`, cioè due volte per fattura: un contatore al secondo
+   * dentro un `role="status"` sarebbe un annuncio al secondo per uno screen
+   * reader, cioè la schermata resa inascoltabile dalla cosa che doveva renderla
+   * chiara. Sotto il minuto si dice «meno di un minuto» invece di «circa 0».
+   */
+  const stimaTesto = (): string => {
+    if (!avanzamento) return '';
+    const ms = stimaRimanenteMs(avanzamento.concluse, avanzamento.totale, avanzamento.attesaMs);
+    if (ms <= 0) return '';
+    const minuti = Math.round(ms / 60_000);
+    return minuti < 1 ? t('reconLottoStimaBreve') : t('reconLottoStimaMinuti', { minuti });
+  };
+
   const testoAvanzamento = avanzamento
-    ? avanzamento.attesaMs !== null
-      ? t('reconLottoAvanzamentoAttesa', {
-          corrente: avanzamento.corrente,
-          totale: avanzamento.totale,
-          secondi: Math.round(avanzamento.attesaMs / 1000),
-        })
-      : t('reconLottoAvanzamentoInvio', { corrente: avanzamento.corrente, totale: avanzamento.totale })
+    ? [
+        avanzamento.attesaMs !== null
+          ? t('reconLottoAvanzamentoAttesa', {
+              corrente: avanzamento.corrente,
+              totale: avanzamento.totale,
+              secondi: Math.round(avanzamento.attesaMs / 1000),
+            })
+          : t('reconLottoAvanzamentoInvio', { corrente: avanzamento.corrente, totale: avanzamento.totale }),
+        stimaTesto(),
+      ].filter(Boolean).join(' · ')
     : fase === 'controllo'
       ? t('reconLottoControlloInCorso')
       : '';
 
   const rigaBreve = (importo: number, data: string | null) => `${formatEuro(importo)} · ${dataIt(data)}`;
+
+  /**
+   * UN GRUPPO DI ESITI — la stessa forma per l'elenco che scorre DURANTE il lotto
+   * e per il riepilogo finale.
+   *
+   * Non è una gentilezza estetica: erano due elenchi della stessa cosa, e due
+   * elenchi dello stesso fatto sono due posti da cui un giorno diverge. Il motivo
+   * non si stampa quando è già quello del `role="alert"` in fondo al riepilogo —
+   * stamparlo due volte fa sembrare che i guasti siano due.
+   */
+  const gruppoEsiti = (titolo: string, classeTitolo: string, righe: Esito[]) =>
+    righe.length === 0 ? null : (
+      <>
+        <p className={classeTitolo}>{titolo}</p>
+        <ul className="mt-1 space-y-0.5">
+          {righe.map((e) => (
+            <li key={e.id} className="font-maven text-xs text-kidville-sub">
+              {rigaBreve(e.importo, e.data)}
+              {e.esito === 'ok' && e.numero != null ? ` · ${t('reconLottoNumero', { numero: e.numero })}` : ''}
+              {e.esito !== 'ok' && e.motivo && e.motivo !== fermata?.messaggio ? ` · ${e.motivo}` : ''}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+
+  const TITOLO_OK = 'mt-1 font-maven text-xs font-bold text-kidville-success';
+  const TITOLO_ERRORE = 'mt-2 font-maven text-xs font-bold text-kidville-error-strong';
+  const TITOLO_NON_TENTATE = 'mt-2 font-maven text-xs font-bold text-kidville-warn-strong';
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-40 mx-auto w-full max-w-3xl px-3 pb-3">
@@ -645,74 +705,18 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
             >
               {t('reconLottoRiepilogo')}
             </p>
-            <p className="mt-1 font-maven text-xs font-bold text-kidville-success">
-              {t('reconLottoRiuscite', { n: riuscite.length })}
-            </p>
-            <ul className="mt-1 space-y-0.5">
-              {riuscite.map((e) => (
-                <li key={e.id} className="font-maven text-xs text-kidville-sub">
-                  {rigaBreve(e.importo, e.data)}
-                  {e.numero != null ? ` · ${t('reconLottoNumero', { numero: e.numero })}` : ''}
-                </li>
-              ))}
-            </ul>
+            {gruppoEsiti(t('reconLottoRiuscite', { n: riuscite.length }), TITOLO_OK, riuscite)}
 
             {/* ── L'ESITO IGNOTO STA DA SOLO, E SOPRA LE SALTATE ────────────────
                 Non è una sfumatura delle «saltate»: è la sola riga del riepilogo
                 che parla di un numero di fattura già consumato, cioè l'unica per
                 cui esiste qualcosa da andare a cercare sul pannello Aruba. Il
-                motivo non si ripete — è lo stesso del `role="alert"` in fondo. */}
-            {ignote.length > 0 && (
-              <>
-                <p className="mt-2 font-maven text-xs font-bold text-kidville-error-strong">
-                  {t('reconLottoIgnote', { n: ignote.length })}
-                </p>
-                <ul className="mt-1 space-y-0.5">
-                  {ignote.map((e) => (
-                    <li key={e.id} className="font-maven text-xs text-kidville-sub">
-                      {rigaBreve(e.importo, e.data)}
-                      {e.motivo && e.motivo !== fermata?.messaggio ? ` · ${e.motivo}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {saltate.length > 0 && (
-              <>
-                <p className="mt-2 font-maven text-xs font-bold text-kidville-error-strong">
-                  {t('reconLottoSaltate', { n: saltate.length })}
-                </p>
-                <ul className="mt-1 space-y-0.5">
-                  {saltate.map((e) => (
-                    <li key={e.id} className="font-maven text-xs text-kidville-sub">
-                      {rigaBreve(e.importo, e.data)}
-                      {/* ⚠️ IL MOTIVO NON SI RIPETE. La riga che ha FERMATO il lotto
-                          porta lo stesso testo che sta nel `role="alert"` qui sotto —
-                          quello lungo, col numero del documento — e stamparlo due
-                          volte nello stesso pannello non aggiunge niente: fa solo
-                          sembrare che siano due guasti diversi. */}
-                      {e.motivo && e.motivo !== fermata?.messaggio ? ` · ${e.motivo}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-
-            {nonTentate.length > 0 && (
-              <>
-                <p className="mt-2 font-maven text-xs font-bold text-kidville-warn-strong">
-                  {t('reconLottoNonTentate', { n: nonTentate.length })}
-                </p>
-                <ul className="mt-1 space-y-0.5">
-                  {nonTentate.map((e) => (
-                    <li key={e.id} className="font-maven text-xs text-kidville-sub">
-                      {rigaBreve(e.importo, e.data)}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+                motivo non si ripete — lo stampa già il `role="alert"` in fondo, e
+                due volte farebbe sembrare che i guasti siano due (la regola sta
+                dentro `gruppoEsiti`, che qui è condiviso con l'elenco in corso). */}
+            {gruppoEsiti(t('reconLottoIgnote', { n: ignote.length }), TITOLO_ERRORE, ignote)}
+            {gruppoEsiti(t('reconLottoSaltate', { n: saltate.length }), TITOLO_ERRORE, saltate)}
+            {gruppoEsiti(t('reconLottoNonTentate', { n: nonTentate.length }), TITOLO_NON_TENTATE, nonTentate)}
 
             {/* ⚠️ IL TESTO CHE DICE «NON RIPREMERE», e il perché dei 45 minuti.
                 Senza, il primo gesto di chiunque davanti a una fattura in dubbio
@@ -737,6 +741,31 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
           </div>
         )}
 
+        {/* ── CHE COSA È GIÀ USCITO, MENTRE IL LOTTO GIRA ───────────────────
+            MISURATO sullo screenshot del 2026-09-07: le fatture concluse
+            comparivano solo nel riepilogo FINALE. Per diciotto minuti l'operatore
+            non sapeva se qualcosa fosse andato — e un lotto di documenti fiscali
+            è esattamente il posto in cui quel dubbio fa ricaricare la pagina.
+
+            Stessa forma del riepilogo, perché è `gruppoEsiti` a disegnarli tutti e
+            due: due elenchi dello stesso fatto con due vestiti sarebbero due
+            verità da tenere allineate. «Non tentate» qui non c'è: si sa solo alla
+            fine, e prima sarebbe una previsione, non un esito.
+
+            ⚠️ SPARISCE IN `fine`, dove a raccontare resta il riepilogo: lasciarli
+            tutti e due vorrebbe dire lo stesso elenco due volte nella stessa
+            schermata. */}
+        {fase === 'corso' && esiti.length > 0 && (
+          <div className="mb-3" data-testid="lotto-in-corso-esiti">
+            <p className="font-barlow text-sm font-black uppercase tracking-wide text-kidville-green">
+              {t('reconLottoInCorsoTitolo')}
+            </p>
+            {gruppoEsiti(t('reconLottoRiuscite', { n: riuscite.length }), TITOLO_OK, riuscite)}
+            {gruppoEsiti(t('reconLottoIgnote', { n: ignote.length }), TITOLO_ERRORE, ignote)}
+            {gruppoEsiti(t('reconLottoSaltate', { n: saltate.length }), TITOLO_ERRORE, saltate)}
+          </div>
+        )}
+
         {/* ⚠️ LIVE REGION MONTATA VUOTA E RIEMPITA DOPO — sempre lo stesso nodo.
             Un `role="status"` inserito nel DOM col contenuto già dentro resta muto
             su NVDA e JAWS, che osservano le mutazioni di quelli già presenti. È la
@@ -753,11 +782,69 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
           {testoAvanzamento}
         </p>
 
+        {/* ── LA BARRA ──────────────────────────────────────────────────────
+            Si riempie sulle fatture CONCLUSE, mai su quella in volo: dire «1 su 3
+            fatta» mentre la prima è ancora per aria annuncerebbe un documento
+            fiscale che potrebbe non esistere.
+
+            ⚠️ `aria-hidden`, e NON `role="progressbar"`: il `role="status"` qui
+            sopra dice già «Fattura 2/3», la ragione dell'attesa e quanto manca —
+            cioè più di quanto un `aria-valuenow` sappia dire, e lo annuncia da
+            solo. Due nodi che raccontano lo stesso avanzamento sono due annunci
+            per la stessa cosa. Una delle due, non entrambe.
+
+            I `data-*` non sono decorazione: sono ciò su cui il test misura il
+            riempimento, che a occhio nudo in jsdom non esiste. */}
+        {avanzamento && (
+          <div
+            aria-hidden="true"
+            data-testid="lotto-barra"
+            data-concluse={avanzamento.concluse}
+            data-totale={avanzamento.totale}
+            className="mt-2 h-1.5 w-full overflow-hidden rounded-pill bg-kidville-neutral-soft"
+          >
+            <div
+              className="h-full rounded-pill bg-kidville-green transition-[width] duration-500"
+              style={{ width: `${(avanzamento.concluse / Math.max(1, avanzamento.totale)) * 100}%` }}
+            />
+          </div>
+        )}
+
+        {/* ── IL PIÈ DI PAGINA DICE CIÒ CHE SERVE ALLA FASE IN CUI SI TROVA ──
+            MISURATO sullo screenshot del 2026-09-07: «3 bonifici selezionati · Si
+            emettono al massimo 12 fatture per volta: il ritmo lo detta Aruba»
+            compariva in TUTTE E QUATTRO le fasi, esito finale compreso — dove il
+            lotto è finito, non c'è più niente da emettere e quella frase è rumore
+            su un riepilogo che si deve leggere.
+
+            · il CONTEGGIO dei selezionati vale finché la selezione è ancora il
+              soggetto: si sceglie, si controlla, si conferma. Durante il lotto lo
+              dicono la barra e la live region, e alla fine il riepilogo;
+            · il TETTO spiega perché non si può spuntare la tredicesima: è una
+              regola su un gesto, e vale solo dove quel gesto è ancora possibile.
+              Dalla fase `controllo` in poi la selezione è congelata. */}
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="font-maven text-xs font-bold text-kidville-ink">
-            {t('reconLottoSelezionati', { n: selezionate.length })}
-          </span>
-          <span className="font-maven text-[11px] text-kidville-sub">{t('reconLottoTetto', { n: TETTO_LOTTO })}</span>
+          {(fase === 'selezione' || fase === 'controllo' || fase === 'conferma') && (
+            <span className="font-maven text-xs font-bold text-kidville-ink">
+              {t('reconLottoSelezionati', { n: selezionate.length })}
+            </span>
+          )}
+          {fase === 'selezione' && (
+            <span className="font-maven text-[11px] text-kidville-sub">{t('reconLottoTetto', { n: TETTO_LOTTO })}</span>
+          )}
+          {/* ── «3 selezionati» accanto a «Emetti ora (2)»: SI SPIEGA ──────────
+              I fatti sono giusti — 3 selezionati, 2 pronte, 1 da completare — e
+              proprio per questo la divergenza va detta invece che dedotta: due
+              numeri diversi a pochi centimetri, senza una parola che li leghi, si
+              leggono come un errore del programma, e chi li legge così non preme.
+              Solo quando entrambi i gruppi esistono: se non c'è nessuna pronta il
+              pannello lo dice già a lettere sue, e ripeterlo qui sarebbe la stessa
+              frase due volte. */}
+          {fase === 'conferma' && pronte.length > 0 && daCompletare.length > 0 && (
+            <span className="font-maven text-[11px] text-kidville-warn-strong">
+              {t('reconLottoSoloLePronte', { n: daCompletare.length })}
+            </span>
+          )}
           <span className="flex-1" />
           <button type="button" onClick={primario.azione} className={cx(BTN_PRIMARY_AA, 'shrink-0')}>
             {primario.etichetta}

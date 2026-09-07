@@ -253,3 +253,39 @@ export function numeroInDubbio(statoHttp: number, codice?: string | null): boole
   if (codice === CODICE_TRASPORTO_IGNOTO) return true
   return statoHttp === 502
 }
+
+/**
+ * ─── QUANTO MANCA ALLA FINE DEL LOTTO ───────────────────────────────────────
+ *
+ * MISURATO sullo screenshot del 2026-09-07: durante il lotto il pannello diceva
+ * soltanto «Fattura 1/3 · invio in corso». Con dodici fatture quel lotto dura
+ * **circa diciotto minuti** — è il conto scritto in testa a `TETTO_LOTTO` — e
+ * novanta secondi di riga ferma si leggono come un blocco. Chi li legge così
+ * ricarica la pagina, cioè fa la sola cosa che qui non si deve fare: perde di
+ * vista quali documenti fiscali siano già partiti.
+ *
+ * Il conto è START-TO-START, come `pausaDopo` e per la stessa ragione: fra due
+ * partenze passa `INTERVALLO_FRA_EMISSIONI_MS`, e la durata della singola POST è
+ * già dentro quell'intervallo.
+ *  · la riga IN VOLO non si conta: sta finendo, e quel che le resta è rumore
+ *    rispetto ai novanta secondi che vengono dopo;
+ *  · ogni riga successiva alla prossima costa un intervallo intero;
+ *  · l'attesa in corso si SOMMA, perché è tempo che deve ancora passare — ed è
+ *    anche l'unico pezzo che sa distinguere una pausa da 90 s da una da 5 s
+ *    (`pausaDopo` dopo un rifiuto locale), cioè un lotto che parla con Aruba da
+ *    uno respinto dai nostri gate.
+ *
+ * ⚠️ È UNA STIMA, e si aggiorna A PASSI: la si ricalcola quando cambia lo stato
+ * dell'avanzamento, non con un orologio che scorre. Un contatore al secondo
+ * dentro un `role="status"` sarebbe un annuncio al secondo per uno screen reader,
+ * cioè la schermata resa inascoltabile proprio da ciò che doveva renderla chiara.
+ *
+ * @param concluse quante righe hanno già un esito
+ * @param totale quante righe ha il lotto
+ * @param attesaMs la pausa in corso adesso (`null` = si sta inviando)
+ */
+export function stimaRimanenteMs(concluse: number, totale: number, attesaMs: number | null): number {
+  const restanti = totale - concluse
+  if (restanti <= 0) return 0
+  return Math.max(0, attesaMs ?? 0) + (restanti - 1) * INTERVALLO_FRA_EMISSIONI_MS
+}

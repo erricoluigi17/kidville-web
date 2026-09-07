@@ -303,6 +303,102 @@ export function etichetteAllergie(
   ]
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// IL RESIDUO — cosa resta da scrivere quando i chip hanno già parlato
+//
+// MISURATO sullo screenshot della home docente (2026-09-07): una riga mostrava il
+// chip «🥜 ARACHIDI» e, a due centimetri, il testo «ARACHIDI»; un'altra il chip
+// «🥛 LATTE / LATTOSIO» seguito da «LATTOSIO, FRAGOLE». Lo stesso dato scritto due
+// volte sulla stessa riga, in una colonna larga il 58% dello schermo di un telefono.
+//
+// Il testo libero non si può togliere — è l'unico posto in cui compare «fragole»,
+// che fra i 14 allergeni UE non c'è e che nessun chip dirà mai — ma deve dire solo
+// la parte che i chip non hanno già detto.
+//
+// ⚠️ LA DIREZIONE D'ERRORE È DICHIARATA, ed è la stessa del blocco in testa a
+// questo file: su sicurezza alimentare **si può mostrare qualcosa in più, mai in
+// meno**. Perciò un frammento si toglie SOLO quando, normalizzato, è ESATTAMENTE
+// un sinonimo (o l'etichetta, o la chiave) di un allergene che sta già lì accanto
+// in forma di chip: in quel caso l'informazione non si perde, si è solo spostata
+// di due centimetri. In ogni altro caso — una frase, una parola sconosciuta, un
+// sinonimo di un allergene che chip non ne ha — il frammento RESTA.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * I separatori di un elenco scritto a mano: virgola, punto e virgola, barra,
+ * punto mediano, a capo.
+ *
+ * ⚠️ NON la congiunzione « e », di proposito. Spezzare «arachidi e noci» toglierebbe
+ * entrambi i pezzi e mostrerebbe MENO — la direzione vietata — mentre lasciandola
+ * intera la frase resta a schermo accanto ai chip: una ripetizione, che è il
+ * fastidio che si sta correggendo, ma dalla parte giusta dell'errore.
+ */
+const SEPARATORI_ELENCO = /[,;/\n·]+/
+
+/** Un frammento ridotto a parole: minuscolo, senza accenti, senza punteggiatura. */
+function formaConfronto(testo: string): string {
+  return paroleDi(testo).join(' ')
+}
+
+/**
+ * Le forme di testo che un chip DICE GIÀ: per ogni chiave mostrata, i suoi
+ * sinonimi, la sua etichetta e la chiave stessa (che è ciò che si legge sul chip
+ * quando la chiave è fuori dalle 14 UE, es. `nichel`).
+ */
+function formeCoperte(chiavi: string[]): Set<string> {
+  const coperte = new Set<string>()
+  for (const k of chiavi) {
+    const chiave = String(k ?? '').trim()
+    if (chiave === '') continue
+    coperte.add(formaConfronto(chiave))
+    const def = BY_KEY.get(chiave as AllergeneKey)
+    if (!def) continue
+    coperte.add(formaConfronto(def.label))
+    for (const s of def.sinonimi) coperte.add(formaConfronto(s))
+  }
+  coperte.delete('')
+  return coperte
+}
+
+/**
+ * Il testo libero da mostrare ACCANTO ai chip: quello di archivio meno i pezzi
+ * che i chip già dicono. Stringa vuota ⇒ non c'è niente da scrivere.
+ *
+ * @param testo `alunni.allergies` così com'è in archivio
+ * @param chiavi le chiavi che a schermo diventano chip (`chiaviAllergeni` +
+ *   `allergeniAlunno`, cioè quelle dell'archivio più quelle inferite)
+ *
+ * ⚠️ SE NON SI TOGLIE NIENTE, IL TESTO TORNA IDENTICO. La ricomposizione con la
+ * virgola avviene solo quando almeno un frammento è caduto: altrimenti un testo
+ * come «1/2 porzione di latte», che la barra spezza in due, tornerebbe riscritto
+ * come «1, 2 porzione di latte» — un dato di cucina cambiato da una funzione di
+ * presentazione.
+ *
+ * La negazione («Nessuna», «N/A») non si mostra mai, qui come in
+ * `etichetteAllergie`: non è un'allergia, è il modo in cui qualcuno ha scritto
+ * «niente». Sta dentro questa funzione e non nel chiamante perché ogni superficie
+ * che mostra il residuo deve prendersi la stessa regola senza doverla ricordare.
+ */
+export function testoResiduoAllergie(testo: string | null | undefined, chiavi: string[]): string {
+  const intero = String(testo ?? '').trim()
+  if (intero === '' || isNegazione(intero)) return ''
+
+  const coperte = formeCoperte(chiavi)
+  if (coperte.size === 0) return intero
+
+  const superstiti: string[] = []
+  let tolto = false
+  for (const pezzo of intero.split(SEPARATORI_ELENCO)) {
+    const forma = formaConfronto(pezzo)
+    // Solo punteggiatura fra due separatori: non è un frammento, non è una perdita.
+    if (forma === '') continue
+    if (coperte.has(forma)) { tolto = true; continue }
+    superstiti.push(pezzo.trim())
+  }
+  if (!tolto) return intero
+  return superstiti.join(', ')
+}
+
 export interface PortateAllergeni {
   primo?: string[]
   secondo?: string[]

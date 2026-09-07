@@ -881,6 +881,60 @@ describe('MovimentoDialog — «questo bonifico sembra di un’altra sede»', ()
     expect(container.textContent).not.toMatch(/null|\{sede\}|undefined/);
   });
 
+  /**
+   * ─── UN AVVISO NON PUÒ AVERE IL VESTITO DI CIÒ CHE INFORMA ─────────────────
+   *
+   * MISURATO sullo screenshot del 2026-09-07: il riquadro «Questo bonifico ha un
+   * aggancio forte su Kidville Cesa» era la STESSA carta crema della card
+   * «CAUSALE / ORDINANTE» che gli sta due centimetri sopra. Due rettangoli
+   * identici: uno riporta dei dati, l'altro dice «se premi qui sotto registri
+   * l'incasso sulla voce di un bambino di un altro plesso».
+   *
+   * Il peso arriva da tre cose, non dal fondo: un FILETTO laterale, un GLIFO e
+   * l'INCHIOSTRO d'avviso. Il fondo resta crema apposta — `warn-soft` (#FBEFE2)
+   * e crema (#FEF1E4) distano tre punti per canale, quindi cambiarlo non avrebbe
+   * separato niente, e avrebbe portato fuori dalla regola di Alto Contrasto che
+   * il popup ha già su `.bg-kidville-cream`.
+   *
+   * ⚠️ FONDI PIENI, MAI OPACITÀ TAILWIND (`/70`, `/80`): con l'alfa dentro il
+   * nome della classe la regola HC `.kv-recon-dialog .bg-kidville-cream` non lo
+   * raggiungerebbe nemmeno — è la lezione già scritta due volte in questo file.
+   */
+  it('l’avviso non ha il vestito della card che informa: filetto, glifo e inchiostro d’avviso', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={conAltraSede({ nome: 'Kidville Cesa' })} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const titolo = screen.getByText(/aggancio forte su Kidville Cesa/);
+    const avviso = titolo.closest('section') as HTMLElement;
+    expect(avviso, 'il riquadro dell’altra sede è una <section> sua').not.toBeNull();
+    const classi = token(avviso);
+
+    // L'àncora dell'Alto Contrasto: senza, in HC il filetto e l'inchiostro non si
+    // possono ridipingere e il riquadro torna indistinguibile dal suo vicino.
+    expect(classi, 'manca la classe àncora per la regola di globals.css').toContain('kv-recon-avviso-sede');
+    // Il filetto laterale, che è ciò che lo stacca a colpo d'occhio.
+    expect(classi).toContain('border-kidville-warn-strong');
+    expect(classi.some((c) => /^border-l(-|$)/.test(c)), 'il filetto è LATERALE').toBe(true);
+    // Fondo PIENO: nessuna classe con l'alfa dentro il nome.
+    expect(classi.filter((c) => c.includes('/')), 'niente opacità Tailwind su questo riquadro').toEqual([]);
+    // Un glifo, che si legge prima del testo.
+    expect(avviso.querySelector('svg'), 'manca il glifo d’avviso').not.toBeNull();
+    // E l'inchiostro d'avviso sul titolo: #A64F09 su crema #FEF1E4 = 5,05:1 (AA).
+    expect(token(titolo)).toContain('text-kidville-warn-strong');
+  });
+
+  it('la card che INFORMA resta quella di sempre: l’avviso non ha contagiato il vicino', () => {
+    // Senza questa riga la prova qui sopra sarebbe verde anche se si fosse messo
+    // il filetto d'avviso a TUTTI i riquadri crema del popup — cioè se si fosse
+    // tolta di nuovo la differenza, dall'altro capo.
+    vi.stubGlobal('fetch', vi.fn());
+    const { container } = render(<MovimentoDialog movimento={conAltraSede({ nome: 'Kidville Cesa' })} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    const cartaCausale = container.querySelector('.mb-4.rounded-card.bg-kidville-cream') as HTMLElement;
+    expect(cartaCausale, 'la card della causale non è più riconoscibile').not.toBeNull();
+    expect(token(cartaCausale)).not.toContain('border-kidville-warn-strong');
+    expect(token(cartaCausale)).not.toContain('kv-recon-avviso-sede');
+  });
+
   it('senza verdetto (o a `null`) nessun riquadro: la schermata di sempre', () => {
     vi.stubGlobal('fetch', vi.fn());
     const { unmount } = render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);

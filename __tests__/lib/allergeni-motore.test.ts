@@ -9,6 +9,7 @@ import {
   allergeniAlunno,
   chiaviAllergeni,
   etichetteAllergie,
+  testoResiduoAllergie,
 } from '@/lib/mensa/allergeni'
 
 /**
@@ -295,5 +296,70 @@ describe('chiaviAllergeni / etichetteAllergie — l\'elenco della cucina non but
   it('l\'etichettatore si può sostituire (i componenti client traducono)', () => {
     expect(etichetteAllergie({ allergeni: ['latte'], allergies: 'fragole' }, (k) => `«${k}»`))
       .toEqual(['«latte»', 'fragole'])
+  })
+})
+
+/**
+ * ─── IL RESIDUO: il testo mostra SOLO ciò che i chip non dicono già ──────────
+ *
+ * MISURATO sullo screenshot della home docente (2026-09-07): una riga mostrava il
+ * chip «🥜 ARACHIDI» e, a due centimetri, il testo «ARACHIDI»; un'altra «🥛 LATTE /
+ * LATTOSIO» seguito da «LATTOSIO, FRAGOLE». Lo stesso dato scritto due volte sulla
+ * stessa riga, in uno spazio che sul telefono è largo il 58%.
+ *
+ * Il testo libero SERVE — è l'unico posto in cui compare «fragole», che fra i 14
+ * allergeni UE non c'è e che nessun chip dirà mai — ma deve dire solo la parte che
+ * i chip non hanno già detto.
+ *
+ * ⚠️ LA DIREZIONE D'ERRORE È UNA SOLA, ed è la stessa dichiarata in testa al
+ * motore: su sicurezza alimentare si può mostrare qualcosa in più, mai in meno. Un
+ * pezzo di testo si toglie solo quando è ESATTAMENTE un sinonimo di un allergene
+ * che sta già lì accanto in forma di chip; in ogni altro caso resta.
+ */
+describe('testoResiduoAllergie — via i pezzi che un chip dice già, il resto resta', () => {
+  it('il testo che COINCIDE con un chip sparisce del tutto', () => {
+    expect(testoResiduoAllergie('arachidi', ['arachidi'])).toBe('')
+    // maiuscole, spazi e punteggiatura non cambiano il verdetto
+    expect(testoResiduoAllergie('  ARACHIDI. ', ['arachidi'])).toBe('')
+  })
+
+  it('IL CASO DELLO SCREENSHOT: «lattosio, fragole» accanto al chip del latte → «fragole»', () => {
+    expect(testoResiduoAllergie('lattosio, fragole', ['latte'])).toBe('fragole')
+  })
+
+  it('senza nessun chip il testo resta intero: non c\'è niente che lo dica al posto suo', () => {
+    expect(testoResiduoAllergie('lattosio, fragole', [])).toBe('lattosio, fragole')
+  })
+
+  it('un pezzo NON chiaramente coperto si tiene: mostrare in più, mai in meno', () => {
+    // «allergia alle arachidi» non è un sinonimo: è una frase. Resta per intero,
+    // anche se il chip «Arachidi» le sta accanto.
+    expect(testoResiduoAllergie('allergia alle arachidi', ['arachidi'])).toBe('allergia alle arachidi')
+  })
+
+  it('quando non si toglie NIENTE il testo torna identico, separatori compresi', () => {
+    // La ricomposizione con la virgola avviene SOLO se qualcosa è stato tolto:
+    // altrimenti «1/2 porzione di latte» diventerebbe «1, 2 porzione di latte».
+    expect(testoResiduoAllergie('1/2 porzione di latte', ['latte'])).toBe('1/2 porzione di latte')
+  })
+
+  it('un sinonimo di un allergene che NON è fra i chip resta: nessuno lo sta dicendo', () => {
+    // `burro` è del latte (chip presente ⇒ via); `glutine` no (nessun chip ⇒ resta).
+    expect(testoResiduoAllergie('burro, glutine', ['latte'])).toBe('glutine')
+  })
+
+  it('una chiave fuori dai 14 UE copre il proprio nome', () => {
+    expect(testoResiduoAllergie('nichel', ['nichel'])).toBe('')
+  })
+
+  it('più chip, più pezzi tolti — e l\'ordine di ciò che resta non cambia', () => {
+    expect(testoResiduoAllergie('latte, uova, fragole, kiwi', ['latte', 'uova'])).toBe('fragole, kiwi')
+  })
+
+  it('una negazione non si mostra mai, chip o non chip', () => {
+    expect(testoResiduoAllergie('nessuna', [])).toBe('')
+    expect(testoResiduoAllergie('N/A', ['latte'])).toBe('')
+    expect(testoResiduoAllergie(null, ['latte'])).toBe('')
+    expect(testoResiduoAllergie('   ', [])).toBe('')
   })
 })

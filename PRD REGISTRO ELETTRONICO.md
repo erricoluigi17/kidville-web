@@ -99,6 +99,89 @@
 
 ---
 
+## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
+
+Quattro elementi appena rilasciati sono stati fotografati con fixture sintetiche. I difetti qui
+sotto vengono dalle immagini: nessuno era rosso, e nessuno poteva esserlo — sono tutti difetti di
+ciò che una persona **legge**, non di ciò che il codice calcola.
+
+### E2 · Il pannello del lotto fatture (`LottoFatturePanel.tsx`)
+
+**(a) L'avanzamento era una riga di testo, e diciotto minuti di attesa non erano né spiegati né
+stimati.** Il lotto dura **90 s per fattura** (il ritmo del `signin` di Aruba, uno al minuto per IP):
+dodici fatture sono circa diciotto minuti davanti a «Fattura 1/3 · invio in corso». Novanta secondi
+di riga ferma si leggono come un blocco, e chi li legge così ricarica la pagina — perdendo di vista
+quali documenti fiscali siano partiti. Ora ci sono una **barra** che si riempie sulle fatture
+**concluse** (mai su quella in volo: annuncerebbe un documento che potrebbe non esistere) e il
+**tempo stimato** («circa 4 minuti alla fine»), calcolato da `stimaRimanenteMs` — funzione pura,
+start-to-start come tutto il resto di quel motore.
+⚠️ *La terza richiesta — «la ragione dell'attesa» — era già soddisfatta*: `reconLottoAvanzamentoAttesa`
+dice «attendo il ritmo di Aruba (~90 s)» dal primo giorno, ed è sotto test. Lo screenshot aveva colto
+l'istante dell'**invio**, che dura pochi secondi, invece dei novanta della pausa. Nessuna correzione
+applicata, un test aggiunto a dimostrarlo.
+⚠️ La barra è `aria-hidden`: a dire il numero, la ragione e la stima è già il `role="status"`, che
+resta **lo stesso nodo montato vuoto** (su NVDA e JAWS una live region inserita già piena resta muta).
+Una delle due, non entrambe a raccontare la stessa cosa.
+
+**(b) Mentre il lotto girava non si vedeva che cosa fosse già uscito.** Le righe concluse comparivano
+solo nel riepilogo finale. Ora l'elenco si riempie **durante** il lotto, con la stessa forma del
+riepilogo — `gruppoEsiti`, uno solo per tutti e due: due elenchi dello stesso fatto sono due posti da
+cui un giorno diverge.
+
+**(c) Il piè di pagina ripeteva la stessa frase in tutte e quattro le fasi**, esito finale compreso —
+dove il lotto è finito e «3 bonifici selezionati · si emettono al massimo 12 fatture per volta» è
+rumore su un riepilogo da leggere. Ora il conteggio vale finché la selezione è il soggetto
+(selezione → controllo → conferma) e il tetto solo dove si può ancora spuntare una casella.
+
+**(d) «3 bonifici selezionati» accanto a «Emetti ora (2)»** era corretto nei fatti e si leggeva come
+un errore del programma. Una frase lega i due numeri: *«Si emettono solo le righe pronte: 1 resta da
+completare e non parte.»*
+
+### E3 · Il riquadro «altra sede» nel popup del movimento (`MovimentoDialog.tsx`)
+
+**(e) L'avviso aveva il vestito di ciò che informa.** Stesso fondo crema della card «CAUSALE /
+ORDINANTE» che gli sta due centimetri sopra: due rettangoli identici, uno che riporta dei dati e uno
+che dice «se premi qui sotto registri l'incasso sulla voce di un bambino di un altro plesso». Ora
+porta un **filetto laterale**, un **glifo** e l'**inchiostro d'avviso** (`warn-strong` sul crema =
+**5,05:1**, sopra AA). Il fondo resta crema apposta: `warn-soft` e crema distano tre punti per canale
+— cambiarlo non avrebbe separato niente e avrebbe portato il riquadro fuori dalla regola di Alto
+Contrasto che il popup ha già su `.bg-kidville-cream`. Il filetto **non** è `warn`, misurato: 2,79:1
+sul crema, sotto i 3:1 di WCAG 1.4.11. In Alto Contrasto filetto e inchiostro passano all'ambra
+(10,12:1 sul grigio scurissimo) con `.kv-recon-avviso-sede` in `globals.css`, fuori da ogni `@layer`.
+
+### E4 · Il riquadro «Allergie e note mediche» del docente (`teacher/page.tsx`)
+
+**(f) Lo stesso dato era scritto due volte sulla stessa riga.** Il chip «🥜 ARACHIDI» e, accanto, il
+testo «arachidi»; «🥛 LATTE / LATTOSIO» seguito da «LATTOSIO, FRAGOLE», in una colonna larga il 58%
+dello schermo di un telefono. Il testo residuo serve — è l'unico posto in cui compare «fragole», che
+fra i 14 allergeni UE non c'è — ma ora mostra **solo ciò che i chip non dicono già**:
+`testoResiduoAllergie`, funzione pura nel motore unico del dominio (`src/lib/mensa/allergeni.ts`,
+preteso dal lock `allergie-un-motore-solo`). ⚠️ **La direzione d'errore è dichiarata**: un frammento
+si toglie solo se, normalizzato, è **esattamente** un sinonimo di un allergene che sta lì accanto in
+forma di chip; in ogni altro caso resta. Su sicurezza alimentare si può mostrare qualcosa in più, mai
+in meno — ed è per questo che non si spezza sulla congiunzione « e » e che, se non si toglie niente,
+il testo torna **identico**, separatori compresi.
+
+**(g) Il titolo contava 3 e sotto c'erano 5 righe.** «3 bambini da seguire · sezione 2 ANNI» sopra
+tre allergie e due note mediche: il conteggio era giusto e proprio per questo si leggeva come un
+difetto. Ora la frase dice entrambi i numeri — «4 con allergie · 2 con note mediche · sezione 2
+ANNI» — con i plurali ICU in `it` e in `en` e il ramo per lo zero: se un gruppo è vuoto la sua metà
+non compare (mai «0 con allergie · …»). Il lessico resta quello della schermata, «classe» per la
+primaria e «sezione» per lo 0-6.
+
+### Lock estesi
+
+`allergie-un-motore-solo` (la sottrazione del residuo è politica di dominio, sta nel motore e la home
+docente la importa) · `messaggi-plurali-e-glossario` (quattro chiavi ICU nuove sotto sorveglianza:
+17 → 23 su 115) · `riconciliazione-a11y-css` (le due regole HC dell'avviso, il rapporto ricalcolato e
+la profondità fuori dai `@layer`).
+
+### Gate
+
+`eslint` 0 · `tsc --noEmit` 0 · `vitest` **15.258 su 15.258** (erano 15.227: +31) · `npm run build` ok.
+
+---
+
 ## 🧾 Changelog — Le fatture si emettevano un popup per volta, e 129 su 130 non si potevano emettere affatto — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
 
 Richiesta del titolare: *«in conciliazione mettere il selettore di selezione multipla, solo sui

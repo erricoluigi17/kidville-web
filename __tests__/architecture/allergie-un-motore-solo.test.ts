@@ -48,7 +48,7 @@ const RADICE = path.join(process.cwd(), 'src')
 const MOTORE = path.join('src', 'lib', 'mensa', 'allergeni.ts')
 
 /** I predicati che compongono la politica: una definizione a testa, nel motore. */
-const PREDICATI = ['haAllergiaConteggiabile', 'haAllergiaOperativa', 'isNegazione', 'allergeniAlunno', 'chiaviAllergeni', 'etichetteAllergie']
+const PREDICATI = ['haAllergiaConteggiabile', 'haAllergiaOperativa', 'isNegazione', 'allergeniAlunno', 'chiaviAllergeni', 'etichetteAllergie', 'testoResiduoAllergie']
 
 /** Via i commenti: un lock non si aggira — né si innesca — con una frase. */
 const soloCodice = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -205,6 +205,14 @@ describe('LOCK · un motore solo per «ha un\'allergia», e non è la nota medic
       // Chi mostra la NOTA MEDICA deve decidere con la stessa regola della
       // negazione, non con una `/nessuna/` propria: vedi la prova più in basso.
       { file: path.join('src', 'app', '(dashboard)', 'teacher', 'page.tsx'), predicato: 'isNegazione' },
+      // ⚠️ E CHI DECIDE QUANTO TESTO MOSTRARE ACCANTO AI CHIP. La home docente
+      // stampava il testo libero PER INTERO di fianco alle etichette che ne
+      // avevano già riconosciuto una parte: «🥜 ARACHIDI» + «arachidi», «🥛 LATTE /
+      // LATTOSIO» + «LATTOSIO, FRAGOLE» (misurato sullo screenshot del
+      // 2026-09-07). La sottrazione è una regola di dominio — decide che cosa un
+      // docente NON legge accanto al nome di un bambino — e sta nel motore, con la
+      // sua direzione d'errore scritta: si mostra in più, mai in meno.
+      { file: path.join('src', 'app', '(dashboard)', 'teacher', 'page.tsx'), predicato: 'testoResiduoAllergie' },
       { file: path.join('src', 'components', 'features', 'teacher', 'diary', 'DiaryEventEditor.tsx'), predicato: 'isNegazione' },
     ]
     for (const { file, predicato } of CONSUMATORI) {

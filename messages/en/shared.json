@@ -369,5 +369,6 @@
   "erroreMensaElencoNonLetto": "The list of children could not be loaded. Please try again.",
   "erroreMensaTicketNonLetti": "Remaining meals could not be loaded. Please try again.",
   "erroreMensaAlunnoFuoriClasse": "This child is not in one of your classes.",
-  "erroreMensaScopeNonVerificato": "Permissions for this child could not be verified."
+  "erroreMensaScopeNonVerificato": "Permissions for this child could not be verified.",
+  "erroreFatturaTrasportoIgnoto": "The invoice was numbered, but Aruba did not confirm the upload: nobody knows whether it was sent. Do NOT press “Issue” again: first check on the Aruba panel whether the document was transmitted."
 }

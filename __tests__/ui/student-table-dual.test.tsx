@@ -38,7 +38,13 @@ const FIXTURE_CHILD = [
         data_nascita: '2019-03-15',
         classe_sezione: 'Girasoli',
         stato: 'iscritto',
+        // Dal 2026-09-07 i segnali sono DUE e distinti: `ha_allergie` (allergeni
+        // spuntati o testo che nomina uno dei 14 UE) e `ha_note_mediche`. Qui
+        // restano anche `note_mediche` grezza — che la lista NON riceve più, ma
+        // che nessuno deve poter far comparire nel DOM: è la sentinella del test
+        // sulla privacy in fondo al file.
         note_mediche: 'Arachidi',
+        ha_allergie: true,
         bes: true,
     },
     {
@@ -97,7 +103,8 @@ describe('StudentTable — dual render (tabella ≥sm, card <sm)', () => {
         expect(testo).toContain('Anna'); // nome
         expect(testo).toContain('Girasoli'); // classe/sezione
         expect(testo).toContain('iscritto'); // stato
-        expect(testo).toContain('Allergie'); // indicatore note mediche
+        expect(testo).toContain('Allergie'); // indicatore allergie (`ha_allergie`)
+        expect(testo).toContain('Nota medica'); // indicatore nota medica, separato
         expect(testo).toContain('BES'); // indicatore BES
         // Data di nascita formattata come nella riga.
         const dataAttesa = new Date('2019-03-15').toLocaleDateString('it-IT', {
@@ -138,14 +145,16 @@ describe('StudentTable — dual render (tabella ≥sm, card <sm)', () => {
         expect(tableBadge?.className).toContain('text-kidville-success-strong');
     });
 
-    it('l\'indicatore allergie della card NON espone la nota medica grezza nel title (privacy)', () => {
+    it('gli indicatori della card NON espongono il testo grezzo nel title (privacy)', () => {
         const { container } = renderTable();
         const cardS1 = container.querySelector<HTMLElement>('.kv-admin-rowcard[data-student-id="s1"]');
-        const allergie = Array.from(cardS1!.querySelectorAll('span')).find((s) => s.textContent?.includes('Allergie'));
-        const title = allergie?.getAttribute('title') ?? '';
-        // Fixture s1.note_mediche = 'Arachidi': non deve finire in un attributo DOM.
-        expect(title).not.toContain('Arachidi');
-        expect(title).toBe('Allergie/note mediche presenti');
+        const span = (etichetta: string) =>
+            Array.from(cardS1!.querySelectorAll('span')).find((s) => s.textContent?.includes(etichetta));
+        // Fixture s1.note_mediche = 'Arachidi': non deve finire in un attributo DOM,
+        // su NESSUNO dei due badge.
+        expect(span('Allergie')?.getAttribute('title')).toBe('Allergie presenti');
+        expect(span('Nota medica')?.getAttribute('title')).toBe('Nota medica presente');
+        expect(cardS1!.outerHTML).not.toContain('Arachidi');
     });
 
     it('per lo staff la card mostra email/ruolo/sede e non ha checkbox', () => {

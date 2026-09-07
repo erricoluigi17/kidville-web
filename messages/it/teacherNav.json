@@ -12,8 +12,6 @@
   "adesioniSiNo": "{si} sì · {no} no",
   "apriBacheca": "Apri la bacheca",
   "allergieTitolo": "Allergie e note mediche",
-  "allergieDaSeguireClasse": "{count, plural, one {# alunno} other {# alunni}} da seguire · classe {sezione}",
-  "allergieDaSeguireSezione": "{count, plural, one {# bambino} other {# bambini}} da seguire · sezione {sezione}",
   "allergieCtaRegistro": "Vai al registro",
   "allergieCtaDiario": "Vedi nel diario",
   "appelloTitolo": "Appello del giorno",
@@ -113,5 +111,11 @@
   "agendaOraRientro": "Rientro previsto",
   "agendaSalvataggio": "Salvataggio…",
   "agendaAggiungi": "Aggiungi",
-  "agendaErroreSalvataggio": "Salvataggio non riuscito. Riprova."
+  "agendaErroreSalvataggio": "Salvataggio non riuscito. Riprova.",
+  "gruppoAllergie": "Allergie",
+  "gruppoNoteMediche": "Note mediche",
+  "allergieConta": "{count, plural, one {# con allergia} other {# con allergie}}",
+  "noteMedicheConta": "{count, plural, one {# con nota medica} other {# con note mediche}}",
+  "allergieGruppoClasse": "classe {sezione}",
+  "allergieGruppoSezione": "sezione {sezione}"
 }

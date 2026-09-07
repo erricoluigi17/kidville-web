@@ -86,6 +86,56 @@ describe('POST /api/pagamenti/fattura', () => {
     const json = await res.json()
     expect(json.data.numero).toBe(7)
   })
+
+  /**
+   * ─── IL RIFIUTO DI TRASPORTO PORTA UN CODICE SUO ───────────────────────────
+   *
+   * `motivo: 'errore'` con `httpStatus: 502` è l'unico esito in cui il numero di
+   * fattura È STATO CONSUMATO e nessuno sa se il documento sia partito. Fino a
+   * oggi usciva dal ramo generico, cioè senza `codice`: chi ha l'interfaccia in
+   * inglese leggeva la prosa italiana del server, e — cosa peggiore — nessun
+   * chiamante poteva distinguerlo da un rifiuto qualunque per decidere di
+   * FERMARSI invece di riprovare. Con un lotto in corso quella distinzione vale
+   * undici numeri di fattura.
+   *
+   * Il codice sta anche in `CODICI_CON_DETTAGLIO` perché la prosa del server
+   * porta il NUMERO della fattura, che il catalogo non può conoscere ed è l'unica
+   * cosa che dice quale documento andare a cercare sul pannello Aruba.
+   */
+  it('rifiuto di TRASPORTO (motivo errore + 502) → codice FATTURA_TRASPORTO_IGNOTO', async () => {
+    h.emetti.mockResolvedValue({
+      ok: false,
+      motivo: 'errore',
+      httpStatus: 502,
+      messaggio: 'Aruba non ha concluso l’invio della fattura FPR 1949/2026 (429) …',
+    })
+    const res = await POST(post({ pagamento_id: PID }))
+    expect(res.status).toBe(502)
+    const json = await res.json()
+    expect(json.codice).toBe('FATTURA_TRASPORTO_IGNOTO')
+    // La prosa resta: è lei a portare il numero del documento.
+    expect(json.error).toContain('FPR 1949/2026')
+  })
+
+  it('un `errore` che NON è di trasporto (500) resta senza quel codice', async () => {
+    // L'XML che non si è saputo comporre è un guasto nostro, e ripremere è la
+    // risposta giusta: dargli lo stesso codice direbbe «non ripremere» a chi
+    // invece deve farlo.
+    h.emetti.mockResolvedValue({ ok: false, motivo: 'errore', httpStatus: 500, messaggio: 'XML non composto' })
+    const res = await POST(post({ pagamento_id: PID }))
+    expect(res.status).toBe(500)
+    expect((await res.json()).codice).toBeUndefined()
+  })
+
+  it('uno SCARTO di Aruba (502 ma motivo `scartata`) non è un trasporto ignoto', async () => {
+    // Stesso status, significato opposto: qui Aruba ha guardato il documento e
+    // l'ha respinto nel merito. Il rimedio è correggere e riemettere, non
+    // «verifica sul pannello prima di ripremere».
+    h.emetti.mockResolvedValue({ ok: false, motivo: 'scartata', httpStatus: 502, messaggio: 'scartata da Aruba' })
+    const res = await POST(post({ pagamento_id: PID }))
+    expect(res.status).toBe(502)
+    expect((await res.json()).codice).toBeUndefined()
+  })
 })
 
 describe('GET /api/pagamenti/fattura?fattura_id=', () => {

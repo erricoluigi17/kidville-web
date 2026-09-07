@@ -7,7 +7,7 @@ import { resolveScuolaScrittura } from '@/lib/auth/scope'
 import { resolveMenuGiorno, type MenuGiorno } from '@/lib/mensa/resolveMenu'
 import { nomiSezioniDiUtente } from '@/lib/sezioni/docenti'
 import { sezioniDiNome } from '@/lib/sezioni/risoluzione'
-import { allergeniAlunno, conflittiAllergie, allergeneLabel, type ConflittoAllergia } from '@/lib/mensa/allergeni'
+import { allergeniAlunno, conflittiAllergie, allergeneLabel, haAllergiaOperativa, etichetteAllergie, type ConflittoAllergia } from '@/lib/mensa/allergeni'
 import { parseQuery } from '@/lib/validation/http'
 import { zDataYMD } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -169,10 +169,25 @@ export const GET = withRoute('mensa/report:GET', async (request: NextRequest) =>
       arr.push(rep)
       perClasseMap.set(classe, arr)
 
-      if ((a.allergies ?? '').trim().length > 0 || eff.length > 0) {
+      // L'ELENCO DELLA CUCINA È UNA SUPERFICIE OPERATIVA, non un contatore: qui
+      // non si conta chi ha un'allergia, si decide cosa NON mettere nel piatto.
+      // Un testo «fragole» o «nichel» — fuori dai 14 UE, quindi invisibile ai
+      // contatori — deve restare. Escono solo le negazioni («Nessuna», «N/A»),
+      // che prima entravano in elenco come se fossero un'allergia: 60 righe
+      // diventano 57, e le 33 non riconosciute restano tutte.
+      //
+      // ⚠️ E IL TESTO NON VINCE SULLE CHIAVI. La riga era
+      // `(a.allergies ?? '').trim() || eff.join(', ')`: il testo libero copriva
+      // sempre gli allergeni spuntati, e per un bambino con `latte` spuntato e la
+      // parola «nessuna» scritta a mano — caso che il motore prevede apposta, la
+      // spunta è una dichiarazione e il testo non la smentisce — la cucina leggeva
+      // «nessuna» accanto al suo nome. Le due fonti si SOMMANO, come fa
+      // `colonnaAllergie` del prestampato di banco: la composizione sta in
+      // `etichetteAllergie`, una sola per tutte le superfici operative.
+      if (haAllergiaOperativa({ allergeni: a.allergeni, allergies: a.allergies })) {
         allergie.push({
           nome, classe,
-          allergie: (a.allergies ?? '').trim() || eff.join(', '),
+          allergie: etichetteAllergie({ allergeni: a.allergeni, allergies: a.allergies }).join(' · '),
           conflitto: conflitti.length > 0,
         })
       }

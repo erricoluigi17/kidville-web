@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { ArrowUpDown, AlertTriangle } from 'lucide-react';
+import { ArrowUpDown, AlertTriangle, Stethoscope } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { StudentRowCard, nomeCompleto } from './StudentRowCard';
@@ -20,6 +20,11 @@ export interface Student {
     /** SEGNALE, non contenuto: `GET /api/admin/students` manda solo questo booleano
      *  («c'è una nota medica»), mai il testo. Il testo vive nella scheda alunno. */
     ha_note_mediche?: boolean;
+    /** SEGNALE «ha un'allergia»: allergeni spuntati, o testo `allergies` che nomina
+     *  uno dei 14 allergeni UE. È un'ALTRA cosa da `ha_note_mediche`, e per mesi il
+     *  badge «Allergie» si è acceso sulla seconda — cioè sulla casella «Note Mediche
+     *  (BES, DSA, patologie)» del modulo d'iscrizione. */
+    ha_allergie?: boolean;
     /** Solo per i chiamanti che hanno già la riga completa (scheda alunno): la
      *  LISTA non lo riceve più. Tenuto per non rompere chi passa il record intero. */
     note_mediche?: string | null;
@@ -235,10 +240,16 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                 </tr>
                                 {sectionStudents.map(student => {
                                     const isSelected = selectedIds.has(student.id);
-                                    // Solo un flag di presenza, come nella card mobile: la nota medica
-                                    // GREZZA (dato art. 9 GDPR di un minore) non finisce mai in un
-                                    // attributo DOM, e dalla lista non arriva nemmeno più.
-                                    const hasAllergie = student.ha_note_mediche ?? !!student.note_mediche;
+                                    // Due flag di presenza, come nella card mobile. Il testo GREZZO
+                                    // (nota medica o allergia: entrambi dati art. 9 GDPR di un
+                                    // minore) non finisce mai in un attributo DOM, e dalla lista non
+                                    // arriva nemmeno più.
+                                    //
+                                    // ⚠️ IL RIPIEGO `?? !!student.note_mediche` NON C'È PIÙ SUL BADGE
+                                    // ALLERGIE, ed è il punto di tutto: era lui la sorgente della
+                                    // confusione. La nota medica accende il badge SUO.
+                                    const hasAllergie = !!student.ha_allergie;
+                                    const hasNotaMedica = student.ha_note_mediche ?? !!student.note_mediche;
                                     const hasBes = !!student.bes;
 
                                     return (
@@ -314,10 +325,17 @@ export function StudentTable({ students, selectedIds, onToggleSelect, onToggleSe
                                                         </span>
                                                     </td>
                                                     <td className="px-3 py-3">
-                                                        <div className="flex items-center gap-1.5">
+                                                        <div className="flex flex-wrap items-center gap-1.5">
                                                             {hasAllergie && (
-                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergieNotePresenti')}>
+                                                                <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergiePresenti')}>
                                                                     <AlertTriangle size={12} /> {t('allergie')}
+                                                                </span>
+                                                            )}
+                                                            {hasNotaMedica && (
+                                                                // Icona e tono diversi da quelli dell'allergia: due segnali
+                                                                // che si somigliavano erano il modo in cui si sono confusi.
+                                                                <span className="text-kidville-info text-xs font-maven font-bold flex items-center gap-0.5" title={t('notaMedicaPresente')}>
+                                                                    <Stethoscope size={12} /> {t('notaMedica')}
                                                                 </span>
                                                             )}
                                                             {hasBes && (

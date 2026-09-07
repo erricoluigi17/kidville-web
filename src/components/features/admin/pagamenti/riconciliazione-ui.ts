@@ -70,6 +70,28 @@ export interface MovimentoUi extends RigaFatturabile {
   stato: StatoMovimento
   suggerimenti?: SuggerimentoUi[] | null
   confermato_il?: string | null
+  /**
+   * «Questo bonifico sembra di un'altra sede»: l'aggancio forte sta fuori dai
+   * plessi di chi guarda, e i candidati qui sotto sono deboli. `null` = no (o non
+   * si è potuto guardare). Lo calcola il server, dove la sede è FRESCA: portarla
+   * dentro `SuggerimentoUi` la congelerebbe nel JSONB all'import — una fotografia
+   * che invecchia — e non funzionerebbe sulle righe già in registro.
+   */
+  altra_sede?: AltraSedeUi | null
+}
+
+/**
+ * Il verdetto «altra sede» come arriva dal GET: il NOME del plesso, mai il suo uuid.
+ *
+ * ⚠️ Un campo solo, e `per_cf` NON c'è più (tolto il 2026-09-07, il giorno dopo
+ * esserci entrato): la schermata dice la stessa cosa sia che a parlare sia un
+ * codice fiscale sia che sia un punteggio, perché all'operatore serve sapere *che*
+ * l'aggancio è altrove. Un campo che viaggia nel JSON e non legge nessuno non è
+ * un'informazione in più: è decorazione da mantenere.
+ */
+export interface AltraSedeUi {
+  /** `null` = la sede c'è ma il suo nome non è stato letto: si dice senza nominarla. */
+  nome: string | null
 }
 
 /**
@@ -95,6 +117,14 @@ export interface RispostaMovimenti {
   fatturazione_disponibile?: boolean
   /** `true` = la finestra del server era piena: ci sono altre righe oltre a queste. */
   troncato?: boolean
+  /**
+   * I due numeri delle pillole, quando li si è chiesti (`?conteggi=1`).
+   *
+   * `null` NON è «zero»: è «non ho potuto contare» — la lettura dello stato di
+   * fatturazione è caduta, e in quel caso il server risponde anche
+   * `fatturazione_disponibile: false`. Assente ⇒ non sono stati chiesti.
+   */
+  conteggi?: ConteggiFattura | null
   /** Il corpo del rifiuto, quando `success` non è `true` (`{ error, codice }`). */
   error?: unknown
   codice?: unknown
@@ -302,6 +332,54 @@ export function classiChipFatturazione(
   ].filter(Boolean).join(' ')
 }
 
+// ─── «ALTRA SEDE»: UN CHIP DI TESTO, E NON UN QUINTO TONO ────────────────────
+//
+// ⚠️ NON ENTRA IN `CHIP_FATTURAZIONE`, e non è una questione di ordine. Un quinto
+// tono farebbe cadere in cascata `TonoFatturazione`, il `Record` TOTALE
+// `FRASE_FATTURAZIONE` e i 75 casi del prodotto cartesiano dei test — ma il
+// motivo vero è che direbbe una cosa falsa: «sembra di un'altra sede» non è uno
+// stato della fattura, è un'altra domanda, posta su un altro asse.
+//
+// ⚠️ MAI GIALLO NÉ ROSSO. In questa schermata quei due colori sono riservati a ciò
+// che chiede un'azione a CHI GUARDA — le regole di Alto Contrasto in `globals.css`
+// lo dicono per esteso sui chip «Da fatturare» e «Scartata». Qui l'azione non c'è:
+// il bonifico si abbina dalla sede dell'aggancio, non da questa schermata. Carta
+// bianca e inchiostro, come i due chip che informano e basta.
+//
+// ⚠️ NESSUNA RIGA NUOVA IN `globals.css`: l'àncora `kv-recon-chip` esiste già e
+// porta con sé tutto l'Alto Contrasto (carta bianca, inchiostro nero, contorno) —
+// ed è anche ciò che salva l'inchiostro dal `:not(.kv-recon-chip)` con cui la riga
+// schiarisce i propri discendenti. Il foglio è condiviso con altri lavori.
+
+/** Pelle del chip «altra sede»: le stesse due leve degli altri chip, senza glifo. */
+export const CHIP_ALTRA_SEDE = {
+  labelKey: 'reconChipAltraSede',
+  bg: 'bg-kidville-white',
+  testo: 'text-kidville-ink',
+} as const
+
+/**
+ * Le classi del chip «altra sede». UNA SOLA VARIANTE: la pillola della riga.
+ *
+ * Passa dallo STESSO vestito dei chip di fatturazione: geometria, carattere e
+ * pillola non sono ricopiati qui, così non possono divergere. Cambia solo la
+ * pelle, che è il dato. `hcClass` è vuota di proposito — non serve nessuna
+ * eccezione all'Alto Contrasto: la regola comune di `.kv-recon-chip` è già quella
+ * giusta per un chip di carta bianca che non chiede niente.
+ *
+ * ⚠️ NIENTE PARAMETRO `suCarta`, e non è una svista. C'era, valeva `true` per la
+ * «carta del popup», e nel popup un chip non c'è: là il verdetto è una `<section>`
+ * di testo, perché la cosa da dire è una frase, non un'etichetta. Quel ramo non
+ * era chiamato da nessun punto di `src/` — lo teneva vivo il solo test, che lo
+ * asseriva in tre punti: una variante che nessuno rende e che, al primo cambio di
+ * geometria dei chip di fatturazione, andava riallineata senza che niente a
+ * schermo la mostrasse. Se un giorno il popup vorrà il chip, si rimette il
+ * parametro INSIEME al punto che lo monta.
+ */
+export function classiChipAltraSede(): string {
+  return classiChipFatturazione({ bg: CHIP_ALTRA_SEDE.bg, testo: CHIP_ALTRA_SEDE.testo, hcClass: '' })
+}
+
 /**
  * La FRASE che accompagna il chip nel popup: una per tono, nessuna condivisa.
  *
@@ -420,3 +498,62 @@ export const FILTRI_FATTURA: { id: '' | 'da_fatturare' | 'fatturate'; labelKey: 
   { id: 'da_fatturare', labelKey: 'reconFiltroDaFatturare' },
   { id: 'fatturate', labelKey: 'reconFiltroFatturate' },
 ]
+
+/**
+ * I DUE NUMERI DELLE PILLOLE, come li manda il server (`?conteggi=1`).
+ *
+ * ⚠️ `parziale` non è un dettaglio di presentazione: dice che la finestra del
+ * server era PIENA, cioè che i due numeri sono un MINIMO. Senza, la schermata
+ * scriverebbe «12» dove il vero è «almeno 12» — e su questa schermata un totale
+ * finto è peggio di nessun totale, perché una fattura saltata non la ferma
+ * nessuna guardia.
+ *
+ * ⚠️ E i due numeri NON sono parti di uno stesso totale, per quanto accostati lo
+ * sembrino: «Da fatturare» pretende `pagamento_stato === 'pagato'`, che fuori
+ * dalle proprie sedi è `null`, quindi è la lista di lavoro della PROPRIA sede;
+ * «Fatturate» guarda i DOCUMENTI ed è cross-sede. È voluto (la prima è una lista
+ * di cose da fare, la seconda un controllo) ed è dichiarato nell'etichetta
+ * accessibile del gruppo di pillole.
+ */
+export interface ConteggiFattura {
+  da_fatturare: number
+  fatturate: number
+  /** `true` = la finestra del server era piena: i due numeri sono un minimo. */
+  parziale: boolean
+}
+
+/**
+ * Il numero da scrivere su UNA pillola, o `null` se non se ne scrive nessuno.
+ *
+ * ⚠️ «TUTTE» NON PORTA NUMERO, e non è una dimenticanza. Quella pillola non è un
+ * terzo bidone: è l'ASSENZA del filtro. Un numero lì conterebbe la finestra
+ * corrente — che cambia col filtro di STATO, e che non è la somma dei due bidoni
+ * (le righe senza chip non stanno in nessuno dei due) — cioè risponderebbe a una
+ * domanda diversa da quella che sembra.
+ *
+ * ⚠️ `conteggi === null` → `null`, MAI `0`. Uno zero è un'affermazione («non ne
+ * resta nessuna da fare») e lì non la sappiamo: un numero non letto è un numero
+ * inventato. Uno zero LETTO invece si scrive — è l'informazione più bella che
+ * questa schermata possa dare — ed è per questo che i due casi non si possono
+ * confondere in un falsy.
+ */
+export function numeroPillolaFattura(
+  id: (typeof FILTRI_FATTURA)[number]['id'],
+  conteggi: ConteggiFattura | null | undefined,
+): number | null {
+  if (!conteggi) return null
+  if (id === 'da_fatturare') return conteggi.da_fatturare
+  if (id === 'fatturate') return conteggi.fatturate
+  return null
+}
+
+/**
+ * Il numero come si legge sulla pillola: «12», oppure «≥ 12» quando è un minimo.
+ *
+ * Il segno c'è o non c'è, e non esiste una terza forma: è l'unica cosa che
+ * distingue un totale da una finestra piena, e deve restare leggibile in una
+ * pillola larga tre caratteri.
+ */
+export function etichettaConteggio(n: number, parziale: boolean): string {
+  return parziale ? `≥ ${n}` : String(n)
+}

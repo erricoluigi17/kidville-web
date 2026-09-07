@@ -70,7 +70,7 @@
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -96,6 +96,549 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+
+Quattro elementi appena rilasciati sono stati fotografati con fixture sintetiche. I difetti qui
+sotto vengono dalle immagini: nessuno era rosso, e nessuno poteva esserlo — sono tutti difetti di
+ciò che una persona **legge**, non di ciò che il codice calcola.
+
+### E2 · Il pannello del lotto fatture (`LottoFatturePanel.tsx`)
+
+**(a) L'avanzamento era una riga di testo, e diciotto minuti di attesa non erano né spiegati né
+stimati.** Il lotto dura **90 s per fattura** (il ritmo del `signin` di Aruba, uno al minuto per IP):
+dodici fatture sono circa diciotto minuti davanti a «Fattura 1/3 · invio in corso». Novanta secondi
+di riga ferma si leggono come un blocco, e chi li legge così ricarica la pagina — perdendo di vista
+quali documenti fiscali siano partiti. Ora ci sono una **barra** che si riempie sulle fatture
+**concluse** (mai su quella in volo: annuncerebbe un documento che potrebbe non esistere) e il
+**tempo stimato** («circa 4 minuti alla fine»), calcolato da `stimaRimanenteMs` — funzione pura,
+start-to-start come tutto il resto di quel motore.
+⚠️ *La terza richiesta — «la ragione dell'attesa» — era già soddisfatta*: `reconLottoAvanzamentoAttesa`
+dice «attendo il ritmo di Aruba (~90 s)» dal primo giorno, ed è sotto test. Lo screenshot aveva colto
+l'istante dell'**invio**, che dura pochi secondi, invece dei novanta della pausa. Nessuna correzione
+applicata, un test aggiunto a dimostrarlo.
+⚠️ La barra è `aria-hidden`: a dire il numero, la ragione e la stima è già il `role="status"`, che
+resta **lo stesso nodo montato vuoto** (su NVDA e JAWS una live region inserita già piena resta muta).
+Una delle due, non entrambe a raccontare la stessa cosa.
+
+**(b) Mentre il lotto girava non si vedeva che cosa fosse già uscito.** Le righe concluse comparivano
+solo nel riepilogo finale. Ora l'elenco si riempie **durante** il lotto, con la stessa forma del
+riepilogo — `gruppoEsiti`, uno solo per tutti e due: due elenchi dello stesso fatto sono due posti da
+cui un giorno diverge.
+
+**(c) Il piè di pagina ripeteva la stessa frase in tutte e quattro le fasi**, esito finale compreso —
+dove il lotto è finito e «3 bonifici selezionati · si emettono al massimo 12 fatture per volta» è
+rumore su un riepilogo da leggere. Ora il conteggio vale finché la selezione è il soggetto
+(selezione → controllo → conferma) e il tetto solo dove si può ancora spuntare una casella.
+
+**(d) «3 bonifici selezionati» accanto a «Emetti ora (2)»** era corretto nei fatti e si leggeva come
+un errore del programma. Una frase lega i due numeri: *«Si emettono solo le righe pronte: 1 resta da
+completare e non parte.»*
+
+### E3 · Il riquadro «altra sede» nel popup del movimento (`MovimentoDialog.tsx`)
+
+**(e) L'avviso aveva il vestito di ciò che informa.** Stesso fondo crema della card «CAUSALE /
+ORDINANTE» che gli sta due centimetri sopra: due rettangoli identici, uno che riporta dei dati e uno
+che dice «se premi qui sotto registri l'incasso sulla voce di un bambino di un altro plesso». Ora
+porta un **filetto laterale**, un **glifo** e l'**inchiostro d'avviso** (`warn-strong` sul crema =
+**5,05:1**, sopra AA). Il fondo resta crema apposta: `warn-soft` e crema distano tre punti per canale
+— cambiarlo non avrebbe separato niente e avrebbe portato il riquadro fuori dalla regola di Alto
+Contrasto che il popup ha già su `.bg-kidville-cream`. Il filetto **non** è `warn`, misurato: 2,79:1
+sul crema, sotto i 3:1 di WCAG 1.4.11. In Alto Contrasto filetto e inchiostro passano all'ambra
+(10,12:1 sul grigio scurissimo) con `.kv-recon-avviso-sede` in `globals.css`, fuori da ogni `@layer`.
+
+### E4 · Il riquadro «Allergie e note mediche» del docente (`teacher/page.tsx`)
+
+**(f) Lo stesso dato era scritto due volte sulla stessa riga.** Il chip «🥜 ARACHIDI» e, accanto, il
+testo «arachidi»; «🥛 LATTE / LATTOSIO» seguito da «LATTOSIO, FRAGOLE», in una colonna larga il 58%
+dello schermo di un telefono. Il testo residuo serve — è l'unico posto in cui compare «fragole», che
+fra i 14 allergeni UE non c'è — ma ora mostra **solo ciò che i chip non dicono già**:
+`testoResiduoAllergie`, funzione pura nel motore unico del dominio (`src/lib/mensa/allergeni.ts`,
+preteso dal lock `allergie-un-motore-solo`). ⚠️ **La direzione d'errore è dichiarata**: un frammento
+si toglie solo se, normalizzato, è **esattamente** un sinonimo di un allergene che sta lì accanto in
+forma di chip; in ogni altro caso resta. Su sicurezza alimentare si può mostrare qualcosa in più, mai
+in meno — ed è per questo che non si spezza sulla congiunzione « e » e che, se non si toglie niente,
+il testo torna **identico**, separatori compresi.
+
+**(g) Il titolo contava 3 e sotto c'erano 5 righe.** «3 bambini da seguire · sezione 2 ANNI» sopra
+tre allergie e due note mediche: il conteggio era giusto e proprio per questo si leggeva come un
+difetto. Ora la frase dice entrambi i numeri — «4 con allergie · 2 con note mediche · sezione 2
+ANNI» — con i plurali ICU in `it` e in `en` e il ramo per lo zero: se un gruppo è vuoto la sua metà
+non compare (mai «0 con allergie · …»). Il lessico resta quello della schermata, «classe» per la
+primaria e «sezione» per lo 0-6.
+
+### Lock estesi
+
+`allergie-un-motore-solo` (la sottrazione del residuo è politica di dominio, sta nel motore e la home
+docente la importa) · `messaggi-plurali-e-glossario` (quattro chiavi ICU nuove sotto sorveglianza:
+17 → 23 su 115) · `riconciliazione-a11y-css` (le due regole HC dell'avviso, il rapporto ricalcolato e
+la profondità fuori dai `@layer`).
+
+### Gate
+
+`eslint` 0 · `tsc --noEmit` 0 · `vitest` **15.258 su 15.258** (erano 15.227: +31) · `npm run build` ok.
+
+---
+
+## 🧾 Changelog — Le fatture si emettevano un popup per volta, e 129 su 130 non si potevano emettere affatto — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+
+Richiesta del titolare: *«in conciliazione mettere il selettore di selezione multipla, solo sui
+pagamenti già abbinati, così da poter emettere tutte le fatture in un unico click»*.
+
+### Il fatto che ha deciso la forma della funzione
+
+**130 pagamenti saldati aspettano una fattura** (0 emesse, 4 in attesa) e, misurato il 2026-09-07,
+**uno solo ha un intestatario risolvibile**. È la stessa proporzione già misurata il 04/09 (88 su 93
+rifiutati per «Intestatario fattura non impostato»). Un «emetti tutte» che parte alla cieca
+brucerebbe la quota di Aruba per fallire 129 volte — e ogni tentativo, anche rifiutato, riazzera per
+un'ora il secchio dei limiti.
+
+Quindi la funzione **non è** un ciclo di POST: è un **pre-volo**. `GET /api/pagamenti/fattura/anteprima`
+non parla con Aruba (usa gli stessi `componiCausalePagamento` e `determinaQuoteFatturazione`
+dell'emissione, tutto in casa), quindi costa **zero quota** e in dieci secondi dice ciò che oggi si
+scopre aprendo 130 popup uno per uno. Le righe non pronte non spariscono: vanno in un elenco «Da
+completare» col motivo.
+
+### Che cosa c'è adesso
+
+- **Caselle di selezione** nella Riconciliazione, **solo** sulle righe `confermato` + pagamento
+  abbinato + `fatturaDaFare()` — il predicato **importato** dal motore
+  (`@/lib/pagamenti/fatturazione-riga`), mai riscritto. Le altre righe non hanno una casella
+  disabilitata: non hanno casella.
+- **Pannello a due tempi** (`LottoFatturePanel.tsx`), come i solleciti: si vede prima l'importo, la
+  causale che uscirà **davvero** (quella dell'anteprima, mai ricomposta nel browser) e a chi si
+  intesta; poi si conferma.
+- **Motore puro** `src/lib/pagamenti/lotto-fatture.ts`: `TETTO_LOTTO = 12`,
+  `INTERVALLO_FRA_EMISSIONI_MS = 90_000`, `pausaDopo` (da inizio a inizio, 5 s dopo un rifiuto
+  locale), `fermaIlLotto`, `corpoEmissione` (**`causale: null`, mai il campo assente**).
+- **Codice d'errore nuovo `FATTURA_TRASPORTO_IGNOTO`** (502) su `POST /api/pagamenti/fattura`,
+  dichiarato anche in `CODICI_CON_DETTAGLIO` perché la prosa del server porta il numero del
+  documento. Al 502 il lotto **si ferma e non riprova**, e lo dice: «non ripremere, verifica sul
+  pannello Aruba, riprova fra almeno 45 minuti».
+
+### I tre numeri che spiegano il ritmo
+
+| | Perché |
+|---|---|
+| 90 s fra due emissioni | il `signin` di Aruba è **1 al minuto per IP** e `tokenCache` è locale alla singola invocazione: N chiamate = N `signin`. 60 s è il limite esatto, non un margine; e con la cache del progressivo fredda un'emissione fa fino a 7 ricerche, contro un tetto di 12 al minuto in **ogni** finestra scorrevole |
+| 12 righe per lotto | 12 × 90 s ≈ 18 minuti di scheda aperta, e due lotti pieni in un'ora fanno 24 upload contro un tetto di 60/ora. **Va rivisto dopo il primo lotto vero**, guardando quanti `429` compaiono in `app_log` |
+| 5 s dopo un rifiuto locale | 400/404/409/422 nascono dai nostri gate, prima del `signin`: ad Aruba non è partito niente. Senza questa distinzione dodici righe respinte costerebbero diciotto minuti di attesa per zero chiamate |
+
+### Nessuna tabella nuova, e perché la ripresa funziona lo stesso
+
+Lo stato del lotto **è già persistito**: `pagamenti.fattura_stato` + `fatture_emesse`, con doppia
+idempotenza. Una fattura dal trasporto ignoto è scritta con `sdi_stato: null` e il registro la conta
+fra le **vive**: esce da `fattureDeiPagamenti` come `{ stato: 'emessa' }`, quindi `fatturaGiaFatta`
+è vera e un lotto successivo **non la ripesca**. Una tabella di lotto sarebbe una seconda scrittura
+dello stesso fatto. Lock: `__tests__/api/riconciliazione-ripresa-trasporto.test.ts`.
+
+### Il buco residuo, dichiarato
+
+Se fallisce anche l'INSERT in `fatture_emesse` non resta nessuna riga a registro e quel pagamento
+può tornare fra i «da fatturare» **con un numero già consumato**. È un difetto pre-esistente
+dell'emissione singola: il lotto lo **eredita**, non lo allarga. L'unica mitigazione è lo stop
+immediato più il testo «non ripremere».
+
+### Privacy
+
+La causale contiene il **codice fiscale di un minore**: sta a schermo — dove sta già oggi, stesso
+operatore, stessa sede, dietro `assertPagamentoInScope` — e **non entra in nessun log**, né client né
+server. Gli `aria-label` delle caselle portano importo e data, **mai** la causale. Nei log del lotto
+solo conteggi e status.
+
+### Collaudo e correzione, stesso giorno — sei difetti, e il primo emetteva fatture da solo
+
+Un collaudo indipendente ha misurato l'implementazione qui sopra e ha trovato sei difetti. Tutti
+corretti, tutti con il test che li vede.
+
+| | Cos'era | Come si chiude |
+|---|---|---|
+| 🔴 **bloccante** | Il ciclo di emissione **sopravviveva allo smontaggio** del pannello. La barra è montata su `selezionati.size > 0` e le caselle restavano cliccabili a lotto in corso: togliendo le spunte il pannello spariva, ma `esegui()` è una `async` già in volo e il cleanup cancellava solo il timer **esistente** — il ciclo, che intanto risolveva `res.json()`, ne creava uno nuovo e ripartiva. Misurato: 3 POST su 3, pannello smontato, **nessun riepilogo**: nessuna traccia a schermo di quali documenti fossero usciti | Due difese indipendenti. (1) Il cleanup ferma il **ciclo** (`stopRef.current = true` + sblocco dell'attesa), non solo il timer: il `while` legge quel ref in testa a ogni giro. (2) Il pannello dichiara al padre che c'è del lavoro in volo (`onLavoro`) e il padre **blocca le caselle**, così il pannello non si può smontare da sotto |
+| 🟠 **grave** | `selezionabile` ometteva `pagamento_stato === 'pagato'`, e il commento sopra dichiarava che l'omissione fosse innocua «perché su una riga di un'altra sede quel campo è `null`». **Falso**: la rotta minimizza per sede i due campi *derivati*, non i **documenti**, che restano cross-sede per progetto. Su una riga confermata di un altro plesso con `fattura: { stato: 'scartata' }` la casella compariva — e su un pagamento della propria sede **non saldato** anche. Era una **seconda definizione** di «da fatturare», diversa da quella del server: contava righe che il filtro non mostra, occupava con esse gli slot del tetto, e le mandava al pre-volo (che sul saldo non ha guardie) per farle poi respingere dall'emissione | La quarta condizione, la stessa di `filtraFattura` nella rotta. E il commento riscritto: descriveva una protezione che non c'era |
+| 🟠 **grave** | Il **tetto di 12** sulla selezione — la sola difesa contro un lotto che sfonda la quota oraria di Aruba — non era collaudato da nessun test: i test giravano su 3 righe contro un tetto di 12, e togliendo **entrambe** le guardie la suite restava verde (168/168) | Due casi con 14 righe selezionabili: la tredicesima spunta è rifiutata e il conteggio resta 12; «Seleziona tutte» dichiara `(12)` nell'etichetta e ne spunta 12 |
+| 🟡 minore | Interrompere il **pre-volo** faceva **sparire in silenzio** le righe non ancora controllate: né fra le «pronte» né fra le «da completare», con il piè di pagina che continuava a dire «X bonifici selezionati». L'opposto della promessa su cui regge il pre-volo | Le righe non controllate finiscono in «Da completare» col motivo dedicato (`reconLottoMotivoInterrotto`): N + M torna a essere il numero delle righe selezionate |
+| 🟡 minore | Al 502 di trasporto — **l'unico caso in cui il numero è stato consumato** — la riga era contata fra le «saltate», cioè «per questa riga non è successo niente»: il contrario dell'alert sottostante, e un progressivo in meno per chi riconcilia con Aruba | Quarto esito, `ignota`, con la sua riga di riepilogo: «# riga dall'esito ignoto: il numero potrebbe essere stato consumato». ⚠️ *La prima stesura lo faceva decidere dallo stesso `fermaIlLotto` che ferma il ciclo: sbagliato, v. il secondo giro qui sotto* |
+| 🟡 minore | Italiano non grammaticale sul ramo che si vede sempre: «Si emette al massimo 12 fatture per volta» (il verbo impersonale col plurale vuole «Si emettono») e «Controlla e emetti» (davanti a vocale, «ed emetti») | Corrette entrambe, con l'asserzione che le tiene |
+
+Le nove mutazioni di verifica (una per correzione, più le due guardie del tetto separate) fanno
+**rosso il test giusto e solo quello**, ripristinate con la modifica inversa.
+
+### Secondo giro di collaudo — quattro difetti in più, uno dei quali emetteva fatture non scelte
+
+Un secondo collaudo indipendente ha rimisurato le correzioni qui sopra e ne ha trovati altri
+quattro. Tutti corretti, tutti con la mutazione che rende rosso il test giusto e solo quello.
+
+| | Cos'era | Come si chiude |
+|---|---|---|
+| 🟠 **grave** | **Togliere una spunta DOPO il pre-volo non toglieva la riga dal lotto.** Il blocco delle caselle valeva per le fasi `controllo` e `corso` e si apriva **in mezzo**, nella fase `conferma` — l'unica in cui la lista è già decisa e il ciclo non è ancora partito: `esegui()` emette da `pronte`, congelato al pre-volo e mai riallineato. Il piè di pagina scriveva «2 bonifici selezionati», il pulsante «Emetti ora (3)», **e ne uscivano 3**. È lo stesso difetto di famiglia del bloccante appena chiuso, spostato una fase indietro; e un documento fiscale emesso si corregge solo con una nota di variazione | La selezione è congelata **dal pre-volo alla fine del lotto**: `inVolo = fase !== 'selezione' && fase !== 'fine'`. Si congela invece di riallineare `pronte` perché il pannello di conferma è un secondo tempo — la lista che si approva dev'essere quella che il pre-volo ha misurato — e l'uscita è già a schermo: «Annulla selezione», poi «Seleziona tutte». Due test: le caselle sono `disabled` in `conferma`, e ciò che esce dal lotto è ciò che il piè di pagina dichiara |
+| 🟡 minore | «Mi fermo?» e «il numero è in dubbio?» erano **la stessa domanda** (`fermaIlLotto`), e la seconda è un'affermazione: manda l'operatore a cercare un documento sul pannello Aruba. I **503** di `emissione.ts` nascono tutti **prima del `signin`** — Aruba non configurata, cedente incompleto, una lettura caduta — e ognuno lo scrive nel proprio messaggio: «nessun numero è stato consumato». È anche l'esito **più probabile del primo lotto vero**: se la sede non è configurata, il 503 esce sulla prima riga, e il pannello mandava a cercare un fantasma | Un secondo predicato nel motore, `numeroInDubbio(stato, codice)`: `0` (risposta mai arrivata) e `502` (l'unico status che in `emissione.ts` esce **dopo** l'upload), più il `codice` `FATTURA_TRASPORTO_IGNOTO` che il server già dichiara. Fuori 503, 500 e 429. «Mi fermo?» resta larga. Nuova chiave `reconLottoFermatoSenzaNumero` per l'alert, che non manda più al pannello Aruba quando lì non c'è niente |
+| 🟡 minore | La live region prometteva un'attesa che non c'era: `attesa: true` rendeva sempre «attendo il ritmo di Aruba (~90 s)», ma dopo un rifiuto **locale** (400/404/409/422) `pausaDopo` vale **5 s**. Su dodici righe tutte respinte da un gate nostro — lo scenario per cui quella pausa corta esiste — la barra annunciava diciotto minuti a chi ne aspettava sessanta secondi, **a uno screen reader** | Lo stato di avanzamento porta i millisecondi (`attesaMs`), non un booleano, e la chiave dice i secondi veri: `reconLottoAvanzamentoAttesa` → «(~{secondi} s)» |
+| 🟡 minore | La correzione del rilievo «grave» del primo giro aveva creato una **seconda copia** della regola della lista di lavoro: `stato === 'confermato' && pagamento_id && pagamento_stato === 'pagato' && fatturaDaFare(…)`, parola per parola in `selezionabile` e in `filtraFattura`. Il lock non la vedeva — sorveglia il corpo di `chipFatturazione` e gli import della rotta — ed è letteralmente la storia che quel lock racconta di sé stesso | La regola entra nel motore: `daFatturareInListaDiLavoro` in `fatturazione-riga.ts`, chiamata da entrambi. Il lock ha una **sesta regola**: una definizione sola, i due chiamanti la importano, e nessuno dei due riscrive `pagamento_stato ===` per conto proprio. Più il caso di prova che mancava sul lato **rotta** (un pagamento non saldato col documento *scartato* resta fuori da `?fattura=da_fatturare`), senza il quale mutare la regola condivisa lasciava verde metà della fusione |
+
+---
+
+## 🔢 Changelog — Per sapere quante fatture restassero bisognava premere le pillole una per una — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+
+**Il difetto.** Sotto l'occhiello «Fatturazione» della Riconciliazione ci sono tre pillole — «Tutte»
+· «Da fatturare e scartate» · «Fatturate e in attesa» — e dicevano soltanto il proprio nome. La
+domanda con cui si apre quella schermata («quante ne restano da fare?») aveva una sola risposta
+possibile: premere, aspettare l'elenco, contare a occhio, premere l'altra. Chi non premeva non lo
+sapeva, e su un registro di centinaia di righe verdi indistinguibili una fattura saltata non la
+ferma nessuna guardia (fatturarne due sì: c'è l'idempotenza dell'emissione).
+
+**La correzione.** Il numero sta sulla pillola. Lo porta un parametro nuovo del GET del registro,
+`?conteggi=1`, che **non elenca**: forza `stato=confermato`, usa la finestra alta del filtro
+(`LIMITE_FATTURAZIONE`), chiede una SELECT **leggera** (`id, stato, pagamento_id` — niente
+`suggerimenti`, che è il JSONB pesante e a un conteggio non serve), risponde `data: []` e due
+interi. I due numeri li produce **lo stesso motore che filtra** (`filtraFattura` →
+`@/lib/pagamenti/fatturazione-riga`): il numero scritto sulla pillola e l'elenco che la pillola apre
+non possono dire cose diverse, ed è ciò che il lock
+`__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts` continua a sorvegliare.
+
+**Le tre regole d'onestà — sono il lavoro, non il contorno.**
+
+| Situazione | Cosa si scrive | Perché |
+|---|---|---|
+| `fatturazione_disponibile: false` (la lettura è caduta) | `conteggi: null` → a schermo **niente** | Un numero non letto è un numero inventato. Uno «0» lì è la stessa bugia di «Nessun movimento in questo stato», detta dalla schermata che esiste per non far saltare una fattura. Nessuno «0», nessun «—», nessuno spazio riservato |
+| `troncato: true` (la finestra del server era piena) | `parziale: true` → **«≥ 12»**, mai «12» | Un minimo è vero e utile; un parziale che sembra un totale è la bugia peggiore di questa schermata |
+| la pillola «Tutte» | **nessun numero** | Non è un terzo bidone: è l'**assenza** del filtro. Un numero lì conterebbe la finestra corrente — che cambia col filtro di stato e non è la somma dei due bidoni — cioè risponderebbe a una domanda diversa da quella che sembra |
+
+**Due scelte di forma che valgono quanto le tre regole.**
+- Il numero è uno `<span>` **`aria-hidden`** dopo l'etichetta, più un `aria-describedby` che lo dice
+  in parole («12 movimenti da fatturare»). Il **nome accessibile della pillola non cambia** — è ciò
+  con cui la si trova, a mano e nei test — e chi usa uno screen reader il numero lo **sente**: «12»
+  letto in coda a un'etichetta non significherebbe niente, e un numero solo visivo, per lui,
+  semplicemente non esiste.
+- Il fetch dei conteggi è un **effetto separato**, con chiave `[userId, generazione]` e **non**
+  `[filtro, fattura]`. Se dipendesse dalla pillola premuta, premere «Da fatturare» cambierebbe il
+  numero scritto *sopra* «Da fatturare»: un contatore che si sposta mentre lo si guarda. `generazione`
+  cresce quando cambia il mondo — montaggio, «Aggiorna», import riuscito, `onDone` del popup (cioè
+  subito dopo un'emissione, quando il numero **deve** scendere) — mai quando cambia un filtro.
+
+**L'asimmetria, dichiarata dove i numeri la renderebbero fuorviante.** «Da fatturare» pretende
+`pagamento_stato === 'pagato'`, che fuori dalle proprie sedi è `null`: è di fatto la lista di lavoro
+della **propria** sede. «Fatturate» guarda i **documenti** ed è **cross-sede**. Era già così ed era
+voluto (la prima è una lista di cose da fare, la seconda un controllo), ma due numeri accostati si
+leggono come parti di uno stesso totale — e non lo sono, la loro somma non è «quanti movimenti ci
+sono». Lo dice una **descrizione** del gruppo (`aria-describedby` su uno `<span>` `sr-only`),
+montata **solo quando i numeri ci sono**: senza numeri non c'è niente da disambiguare e la frase
+lunga sarebbe rumore per chi ascolta.
+
+⚠️ **Il nome del gruppo, invece, non cambia mai** — ed è una correzione, non una scelta iniziale: il
+primo tentativo metteva l'asimmetria nell'`aria-label`, che diventava la frase lunga appena i numeri
+arrivavano. Due guasti in uno. Il nome è l'**identificatore** del gruppo: un lettore di schermo lo
+rilegge a ogni ingresso, e un identificatore che muta sotto l'utente — per giunta in trenta parole —
+non identifica più niente. E in produzione i numeri **ci sono sempre** (il server risponde `conteggi`
+ogni volta che la fatturazione è leggibile), quindi il ramo con l'etichetta breve era irraggiungibile
+fuori dai test: i sette casi che cercavano il gruppo per nome restavano verdi solo perché il loro
+finto server non contava. Era **codice modellato attorno ai test**. Ora il nome è stabile, la
+spiegazione è una descrizione — la stessa regola già applicata al numero delle singole pillole — e il
+finto server dei test conta come conta quello vero.
+
+**Perimetro.** `src/app/api/pagamenti/riconciliazione/route.ts` (parametro `conteggi`, SELECT
+leggera, `conteggiDi`, e `rispondi` che ora riceve le righe **non filtrate** — così «quando la
+fatturazione non è disponibile non si filtra» smette di essere una disciplina di chi scrive il ramo
+e diventa una proprietà della funzione), `riconciliazione-ui.ts` (`ConteggiFattura`,
+`numeroPillolaFattura`, `etichettaConteggio`), `RiconciliazionePanel.tsx`, e cinque chiavi nuove in
+coda a `messages/{it,en}/adminContabilita.json` — quattro delle quali entrano anche nel perimetro a
+mano del lock dei plurali, che le stringhe già in ICU le salta per costruzione.
+
+**Nessuna migrazione, nessuna colonna nuova**: `conteggi` è un dato derivato e derivato resta.
+
+**Giro di correzione (stesso giorno): quattro comportamenti erano corretti nel codice e non
+provati da nessun test.** Li ha trovati una campagna di mutazioni sul codice di produzione — si
+rompe apposta e si guarda se qualcosa diventa rosso — e in quattro casi la suite è rimasta verde col
+codice rotto:
+
+| Cosa non era provato | Perché conta | Mutazione che ora è rossa |
+|---|---|---|
+| `onDone` del popup rifà il conteggio | è il trigger che **scatta da solo**: «Aggiorna» lo preme chi ha già il sospetto, `onDone` è quello che agisce subito dopo un'emissione, quando il numero deve scendere | tolto `riconta()` da `onDone` → 1 rosso (era 60 verdi) |
+| l'import riuscito rifà il conteggio | entrano righe nuove: quante ne restino non è più il numero di prima | tolto `riconta()` dopo l'import → 1 rosso |
+| la guardia sulle risposte **sorpassate** | due «Aggiorna» ravvicinati tornano come capita: senza guardia il numero di *prima* dell'emissione atterra per ultimo e resta a schermo | `if (false && …)` sulla guardia → 1 rosso |
+| il campo `tipo: 'conteggi'` del log `fatturazione_finestra_piena` | è lo strumento con cui in produzione si misura quanti «≥» stanno uscendo: un campo che nessuno guarda cadere può sparire in silenzio | `tipo: filtroFattura ?? ''` → 1 rosso |
+
+E una **fixture che non guardava**: `registroMisto()` dava `{ da_fatturare: 2, fatturate: 2 }`, quindi
+scambiare i due bidoni dentro `conteggiDi` lasciava verde proprio il caso che dà il nome al
+comportamento («risponde i due numeri»). Ora la sesta riga rompe la simmetria — `{ 2, 3 }` — e lo
+scambio è rosso lì.
+
+---
+
+## 🏦 Changelog — Il bonifico era di un altro plesso, e la schermata proponeva di incassarlo qui — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+
+**Il difetto, misurato prima di scrivere il codice.** L'estratto conto della banca è **uno solo per
+le tre sedi** — è la decisione del 19 luglio — quindi i suggerimenti di abbinamento si calcolano
+contro i pagamenti aperti di *tutte* le sedi. La lista però ne mostra a ogni segreteria solo i
+candidati della **propria**, perché il nome di un minore di un altro plesso non deve uscire
+(minimizzazione, invariata). Le due cose insieme producono la trappola: quando l'aggancio forte sta
+altrove, quello che resta a schermo è il candidato **debole di casa**, presentato col verde pieno di
+ciò che è giusto premere.
+
+Misurato su `riconciliazione_movimenti` (2026-09-07, sola lettura): **239 movimenti, 236 con
+suggerimenti**. Applicando la regola **come è implementata** — quindi sulle sole righe **non
+confermate**, le uniche su cui il verdetto si calcola — e contando i candidati che **restano dopo la
+minimizzazione**:
+
+| Sede | il verdetto scatta | …e non c'è nessun candidato di casa | …con dei candidati di casa |
+|---|---|---|---|
+| Kidville Aversa | 165 | **162** | 3 |
+| Kidville Cesa | 166 | **162** | 4 |
+| Kidville Giugliano | 72 | **8** | 64 |
+
+**403 righe su 236 movimenti × 3 sedi**, e in **332** casi la segreteria non ha nemmeno un candidato
+da proporre: la riga non è sua, punto. Per Giugliano è il contrario — 64 su 72 hanno un candidato
+locale — ed è esattamente il caso in cui si sbaglia premendo.
+
+> ⚠️ La prima stesura di questa tabella diceva 169/168/76 e «338 su 413»: erano i conteggi **prima**
+> della guardia sulle righe confermate, cioè con dentro le 5 righe `confermato` che portano ancora
+> suggerimenti e su cui il chip non compare. Nessuna decisione cambia, ma un numero presentato come
+> «della funzionalità rilasciata» quando è di un'altra regola è la stessa specie di riga che questo
+> documento ha già pagato due volte.
+
+### Cosa cambia
+
+- **Un verdetto nuovo nella risposta di `GET /api/pagamenti/riconciliazione`: `altra_sede`.** Esce
+  **sempre**, `null` compreso: `undefined` vorrebbe dire insieme «l'aggancio è qui» e «non ho potuto
+  guardare», che sono opposti. Contiene **solo il nome del plesso** (`{ nome: string | null }`); il
+  suo uuid non esce. `nome: null` = la sede c'è ma il nome non si è potuto leggere, e la schermata lo
+  dice senza nominarla — **mai un nome inventato**.
+- **La regola vive in un posto solo**, `agganciaFuoriSede` (`src/lib/pagamenti/riconciliazione.ts`),
+  funzione pura, con le **stesse due soglie del matcher** (`SOGLIA_AGGANCIO` 60, `DISTACCO_AGGANCIO`
+  20) invece di due numeri ricopiati: un `cf_match` **nella propria sede chiude la domanda** e il
+  verdetto è `null`; poi un `cf_match` fuori decide da solo; altrimenti serve punteggio ≥ 60 **e**
+  distacco ≥ 20 dal migliore di casa. I candidati di cui non si conosce la sede (`pagamenti.scuola_id`
+  è nullable) non pesano da nessuna delle due parti: contarli accuserebbe un plesso a caso o
+  spegnerebbe un verdetto vero.
+- **Un codice fiscale di casa non si declassa mai, e per una riga sola non era così.** La guardia
+  `cfDentro` era appesa al **solo** ramo per-CF; il commento sosteneva che il caso «si risolve da sé
+  al punto del distacco, due punteggi CF quasi pari». È aritmeticamente falso: un `cf_match` vale
+  1000 **più** i segnali deboli (fino a 100), quindi bastano i +50 dell'«importo esatto» da un lato
+  per fare distacco 50. Sul **bonifico di famiglia coi fratelli in due plessi** — cioè il caso per cui
+  esiste l'«Incasso unico», e quello che quel commento diceva di proteggere — il popup mostrava il
+  riquadro «altra sede» sopra un aggancio per codice fiscale e ne declassava il «Conferma questo».
+  Ora la guardia è un'**uscita** che vale per tutta la regola. In produzione (2026-09-07) i movimenti
+  con un CF dentro **e** uno fuori sono **0 su 236**: era latente, non attivo, e i conteggi della
+  tabella qui sopra non cambiano di una riga. Il confine di `DISTACCO_AGGANCIO` — che nessun test
+  toccava, e la mutazione `>=` → `>` restava verde — ora ha i suoi due casi, 80 contro 60 e 79 contro
+  60.
+- **Costa zero query**: la mappa `pagamento → sede` è quella già letta per minimizzare i label.
+  L'unica lettura in più è quella dei **nomi** delle sedi nominate, una sola per pagina e solo se ce
+  n'è almeno una. Il verdetto si calcola **prima** del filtro di minimizzazione, perché dopo
+  l'informazione non esiste più.
+- **Si vede dalla lista, non solo dal popup**: la riga porta un chip «Altra sede» (carta bianca,
+  àncora `kv-recon-chip` per l'Alto Contrasto). Mai giallo né rosso — qui non si chiede un'azione a
+  chi guarda — e il fondo della riga resta il **semaforo dello stato**: «di un'altra sede» è un'altra
+  domanda, su un altro asse.
+- **Nel popup due frasi, perché i casi sono due.** Con dei candidati di casa: «sono deboli, abbinarne
+  uno registrerebbe l'incasso sulla voce sbagliata». **Senza**: «in questa schermata non c'è nessun
+  candidato per questo bonifico: si abbina dalla sede dell'aggancio». È il caso **dominante**
+  (332 su 403) e fino a questo giro leggeva la frase dell'altro, cioè parlava di una lista che non
+  era a schermo.
+  La seconda frase **non attribuisce il lavoro a nessuno**, e in una prima stesura lo faceva («lo
+  lavorerà l'altra segreteria»): il verdetto si calcola contro `resolveScuoleAttive`, cioè le sedi
+  accessibili **intersecate** con quelle selezionate nel selettore, quindi a un utente multi-sede che
+  ha filtrato su un plesso basta un aggancio su un altro dei **suoi** per sentirsi annunciare una
+  segreteria che non esiste. La schermata resta coerente (il PATCH risponde 404 sullo stesso
+  insieme): era la frase a dire una cosa non verificata.
+- **I candidati deboli restano, e restano premibili**: nasconderli toglierebbe l'unica via d'uscita
+  quando il segnale sbaglia (un omonimo, un CF finito per errore in un'altra causale). Cambia il
+  **peso visivo** — il «Conferma questo» passa da verde pieno a contornato — e la protezione vera
+  resta il **404 fuori sede** del PATCH.
+- **Su una riga già confermata il verdetto non si calcola.** Serve a impedire un abbinamento
+  sbagliato *prima* che venga fatto; dopo, i `suggerimenti` sono la fotografia dell'import. Calcolarlo
+  lì marcava «sembra di un'altra sede» la riga più correttamente lavorata che esista — confermata su
+  un pagamento della propria sede — e col chip montato sarebbe stato un falso allarme (misurati il
+  2026-09-07: **5** movimenti `confermato` portano ancora suggerimenti, e senza la guardia il verdetto
+  scattava su 4 per Aversa, 2 per Cesa, 4 per Giugliano).
+  `ignorato` invece lo tiene: quella riga si può ancora abbinare.
+
+### La decisione di privacy, dichiarata
+
+La frase rivela l'**esistenza** di una voce aperta in un altro plesso, **mai chi**. È meno del nome
+dell'**ordinante**, che la riga bancaria mostra già a tutte e tre le segreterie da quando l'estratto
+conto è unico. La minimizzazione dei `suggerimenti` non è toccata di una riga: il nome del minore
+dell'altro plesso resta oscurato come prima, e il lock che lo pretende è ancora quello.
+
+### Trovati per strada, e corretti
+
+- **In Alto Contrasto il pulsante declassato spariva sotto il puntatore.**
+  `hover:bg-kidville-green-soft` non è coperto da nessuna regola: `bg-kidville-green-soft` e
+  `hover:bg-kidville-green-soft` sono **due token di classe diversi**, e la regola HC del popup guarda
+  il primo. Con l'inchiostro già forzato al bianco, il fondo in hover restava il verde tenue inlinato
+  da `@theme inline`: **1,19:1**. Ora l'hover è **verde pieno**, come «Abbina», e vale 6,5:1 —
+  **senza toccare `globals.css`**, che è di un lavoro in parallelo. Stesso difetto e stessa
+  correzione sul link «Ricevuta», che ce l'aveva da prima. Nuovo lock in
+  `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`: nel popup ogni `hover:bg-*` o dipinge scuro
+  o ha la sua regola in Alto Contrasto.
+- **Il catalogo inglese era tornato a due nomi per «sede».** Le quattro stringhe nuove dicevano
+  «site», che in un'app web si legge «sito»: `glossario-sede` era **rosso** e nessuno l'aveva
+  eseguito. Riportate su **«location»**.
+- **`per_cf` è uscito dal contratto il giorno dopo esserci entrato.** Viaggiava nel JSON e non lo
+  leggeva nessuno: la schermata dice la stessa cosa che a parlare sia un codice fiscale o un
+  punteggio. Il verdetto interno lo porta ancora (`VerdettoAltraSede`), quindi rimetterlo costa una
+  riga il giorno in cui serva davvero.
+
+**Nessuna migrazione, nessuna colonna nuova, nessuna scrittura**: `altra_sede` è derivato in lettura.
+Degradazione pulita sul DB E2E non migrato: la sola lettura in più è `scuole(id, nome)`, PostgREST
+non lancia e l'errore è letto nel valore di ritorno — `warn` col codice, e la riga esce con
+`nome: null` invece di un 500.
+
+---
+
+## 🥜 Changelog — Sotto la parola «Allergie» l'app contava le note mediche — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+
+**Il difetto, misurato prima di scrivere il codice.** Nell'anagrafica convivono due colonne che
+non sono la stessa cosa: `alunni.note_mediche` — la casella che il modulo d'iscrizione etichetta
+letteralmente «Note Mediche (BES, DSA, patologie)» — e le ALLERGIE vere, `alunni.allergeni` (le 14
+chiavi dell'allegato II Reg. UE 1169/2011) e `alunni.allergies` (il testo libero della segreteria).
+Tutto ciò che l'utente vedeva sotto la parola «Allergie» leggeva la PRIMA: la StatCard
+dell'anagrafica, i badge della tabella e della card, il riquadro della home del docente, l'alert del
+PRANZO nel diario, il campo `allergie` della scheda attività.
+
+Nessun test era rosso, e non poteva esserlo: `note_mediche` è una colonna vera, valorizzata, e il
+codice la leggeva bene. **Sbagliava la domanda, non la lettura.**
+
+Misurato in produzione il **2026-09-07** (sola lettura, solo conteggi, nessun testo estratto):
+**654 iscritti**, **42** con una nota medica, **61** con un testo in `allergies`, **0** allergeni
+strutturati. Di quei 61, **4** sono negazioni («nessuna», «nessuno», «no»), **26** nominano uno dei
+14 allergeni UE e **31** dichiarano una restrizione vera che fra i 14 non c'è («fragole», «kiwi»,
+«nichel»). ⚠️ Sono numeri di un giorno e le iscrizioni crescono: chi li rilegge li rimisuri.
+
+### Due domande diverse, due predicati diversi
+
+Il motore è `src/lib/mensa/allergeni.ts`, e da qui in avanti è l'unico posto in cui si decide se un
+bambino «ha un'allergia». La regola dipende da COSA si sta facendo:
+
+- **`haAllergiaConteggiabile` — si CONTA.** I 14 allergeni UE, spuntati o inferiti dal testo. È la
+  StatCard «Con Allergie» dell'anagrafica (che passa da **42** a **26**) e il segnale `ha_allergie`
+  di `GET /api/admin/students`.
+- **`haAllergiaOperativa` — si ELENCA.** Qui non si conta, si decide cosa NON mettere nel piatto:
+  un testo fuori dai 14 RESTA. È l'elenco della cucina (`GET /api/mensa/report`), l'alert del pranzo
+  nel diario, e **la card «Allergie e note mediche» della home del docente** — che sull'appartenenza
+  usava il predicato dei contatori e faceva sparire dall'elenco **31 bambini su 57**.
+- **`etichetteAllergie` — cosa si LEGGE accanto al nome.** Chiavi etichettate **più** testo libero,
+  come `colonnaAllergie` del prestampato di banco: le due fonti si sommano e nessuna copre l'altra.
+  Prima il report mensa faceva vincere il testo, e per un bambino con `latte` spuntato e la parola
+  «nessuna» scritta a mano la cucina leggeva **«nessuna»** accanto al suo nome. Ed è una sola
+  composizione per quattro superfici, non quattro copie che divergono.
+- **`chiaviAllergeni` — l'archivio così com'è.** `normalizzaAllergeni` tiene le 14 UE e scarta il
+  resto **in silenzio**: giusto per confrontare col menu del giorno (le chiavi devono combaciare),
+  sbagliato su un elenco di cucina, dove una chiave come `nichel` non deve sparire.
+
+### La negazione si riconosce a vocabolario intero, e pretende un negatore
+
+`isNegazione` non cerca più `nessun` a sottostringa: quel criterio dichiarava negazione una frase
+reale che parla di un fastidio al lattosio e di cibi che il bambino non mangia «di nessun tipo», e
+la toglieva dal foglio di chi gli prepara il piatto. Ora una stringa è negazione solo se **ogni**
+parola sta in un vocabolario chiuso **e almeno una nega davvero** (`nessun*`, `no`, `none`, `n/a`,
+`niente`, `nulla`, `assente/i`). Senza la seconda condizione «allergia presente», «intolleranze
+presenti», «patologie presenti» — frasi che dicono l'esatto contrario — sarebbero state negazioni.
+Una parola sconosciuta ⇒ non è una negazione ⇒ **il bambino resta**: contare di più costa una
+verifica, contare di meno costa un piatto sbagliato. Lo script `scripts/backfill_allergeni.mjs` ne
+è il mirror, e un test di parità pretende che le due copie dicano la stessa cosa.
+
+### Cosa si vede
+
+- **`/admin/students`** — due StatCard invece di una («Con Allergie» dagli allergeni, «Con Note
+  Mediche» dalla nota) e **due indicatori distinti** su `StudentRowCard` e `StudentTable`, con
+  `title` «**Allergie presenti**» (`allergiePresenti`) e «**Nota medica presente**»
+  (`notaMedicaPresente`). La vecchia chiave unica `allergieNotePresenti` non esiste più in nessuno
+  dei due cataloghi. Il TESTO non esce da nessuna delle due colonne: dalla rotta escono solo i
+  booleani `ha_allergie` e `ha_note_mediche`, mai un attributo del DOM con dentro un dato sanitario.
+- **Home docente** — la card ha due gruppi, «Allergie» e «Note mediche», e la frase conta il primo.
+- **`GET /api/mensa/report`** — entrano in elenco tutte le restrizioni non negate, e accanto al nome
+  si legge la somma delle due fonti.
+- **`GET /api/tasks`** — **non legge più `note_mediche` affatto**: è un guadagno di privacy, non un
+  effetto collaterale. Il dato sanitario più delicato dell'anagrafica viaggiava fin lì per
+  un'etichetta sbagliata; il contratto `allergie: string[]` non cambia e `TaskCard` non cambia.
+
+**Log**: nessuna route nuova (nessun `withRoute` in più), nessun `catch` nuovo, nessun `console.*`.
+Il cambiamento è di predicati e di composizione, e i percorsi d'errore delle rotte toccate restano
+quelli che erano.
+**Nessuna migrazione, nessuna colonna nuova, nessuna variabile d'ambiente, nessuna scrittura.** Le
+tre colonne lette (`note_mediche`, `allergies`, `allergeni`) sono tutte nella baseline
+`20260704120000_baseline.sql`; sul DB E2E non migrato il ciclo `42703` di `admin/students` le toglie
+una per giro (tetto 8, sei colonne possibili) e i segnali valgono `false` — 200 con l'indicatore
+spento, mai un 500.
+**Test**: `allergeni-motore` (i due predicati, la negazione a vocabolario intero col negatore
+obbligatorio, `etichetteAllergie`), `allergeni-backfill` (parità fra le due copie della regola),
+`students-segnale-allergie` (i due segnali sulla risposta vera, su alunni disgiunti, più il degrado
+`42703`), `mensa-report-elenco-operativo`, `teacher-home-allergie-e-note`,
+`diary-allergie-dalle-allergie`, `tasks-identita-da-sessione`, e il lock architetturale
+`allergie-un-motore-solo` — una definizione sola per predicato, nessun conteggio «allergie» che
+parta da `note_mediche`, nessuna regex locale su «nessun», elenco DICHIARATO dei consumatori.
+Fixture sintetiche, mai PII.
+
+### 🔧 Correzione dopo il collaudo — stesso giorno, otto rilievi
+
+Il collaudo ha trovato che la correzione qui sopra, mentre chiudeva il difetto, **ne apriva uno
+nuovo e ne lasciava aperti quattro**. Rimisurato in produzione il 2026-09-07 (sola lettura, soli
+conteggi): **657 iscritti non archiviati**, **44** con nota medica, **63** con un testo in
+`allergies` — **6** negazioni ⇒ **57 operativi** e **27 conteggiabili** fra i 14 UE — e **29** con
+la nota e nessuna allergia operativa. *(Le cifre del blocco qui sopra sono di poche ore prima, sugli
+stessi dati: crescono, sono una fotografia, si rimisurano invece di copiarle.)*
+
+**1. L'alert del pranzo perdeva 29 bambini, e la perdita non era stata misurata.** Prima mostrava
+`note_mediche` spezzata sulle virgole; la correzione l'ha tolta e ha messo solo
+`etichetteAllergie`. Chi ha una nota medica e `allergies` vuota o negata — **29 bambini oggi** —
+smetteva di comparire nel riquadro rosso della schermata pranzo, e in quella casella la segreteria
+scrive anche «terapia salvavita». Togliere un'etichetta sbagliata non è togliere il dato: la nota
+**è tornata, in un gruppo suo**. `DiaryStudent` porta ora due campi (`allergie` e `notaMedica`) e
+`MealDetailInline` disegna **due riquadri**: rosso «Allergie» (il piatto) e ambra «Note mediche»
+(la persona), con icona, etichetta e colore diversi. Chiave i18n nuova `noteMediche` in coda a
+`messages/{it,en}/teacherDiario.json`.
+
+**2. `GET /api/tasks` — la perdita si accetta lì, ma detta col suo numero.** La scheda di un
+incarico interno non è una superficie alimentare, quindi la nota resta fuori; il commento che
+chiamava la cosa «un guadagno di privacy» e basta ora dichiara i **29 bambini** che quella scheda
+non mostra più, e un test lo fissa: se domani `note_mediche` torna nella `select`, diventa rosso.
+Verificato che la premessa regga: **0 su 44** note nomina uno dei 14 allergeni UE, e le 5 che
+parlano di allergia/intolleranza/dieta hanno **tutte** un `allergies` non vuoto e non negato.
+
+**3. La guardia di negazione dentro `allergeniAlunno` era un no-op con un commento falso.** La riga
+`if (isNegazione(opts.allergies)) return []` prometteva di impedire che «nessuna allergia al latte»
+inferisse `latte`: non lo faceva (quella frase **non** è una negazione — «al» e «latte» non stanno
+nel vocabolario), e quando la guardia scattava non cambiava nulla, perché nessuna parola del
+vocabolario contiene il nome di un allergene. Misurato sui dati veri: il contatore vale **27 con la
+guardia e 27 senza**. La riga è stata **tolta**; al suo posto c'è un test dell'**invariante** su
+tutti i sinonimi dei 14 UE, che diventa rosso il giorno in cui il vocabolario inghiotte il nome di
+un cibo — e un test che fissa la scelta deliberata: «nessuna allergia al latte» **infersce `latte`**,
+perché contare di più costa una verifica e contare di meno costa un piatto sbagliato.
+
+**4. La quinta superficie operativa era rimasta sulla regola vecchia.**
+`/teacher/primaria/[sectionId]` componeva il badge con `allergeni.join(', ')` **oppure**
+`allergies` — una fonte che vince sull'altra, chiavi grezze senza etichetta, negazione non tolta.
+Misurato: su **132 bambini di primaria**, **15** hanno un testo e **1 è una negazione** ⇒ un
+bambino aveva un badge **rosso** che diceva «NESSUNA», col nome in rosso. Ora passa da
+`etichetteAllergie` + `useAllergeneLabel`, ed è **nell'elenco dei consumatori del lock**: la
+prossima copia diverge in rosso e non in silenzio.
+
+**5. Il prestampato di banco stampava «Nessuna» accanto al nome.** `colonnaAllergie` sommava le due
+colonne ma **non** toglieva la negazione, cioè il difetto corretto in `mensa/report` sopravviveva
+sul foglio con cui si prepara il piatto — e quei bambini venivano contati fra i «bambini con dieta
+speciale». Sono **6 su 657**. Ora `colonnaAllergie` **chiama** `etichetteAllergie`: il verso è
+invertito e il docblock del motore, che dichiarava un'equivalenza che non c'era, dice il vero.
+
+**6. La home del docente teneva una `/nessuna/` a sottostringa sulle NOTE MEDICHE** — la stessa
+regex che tutto questo lavoro dichiara pericolosa, sulla colonna sanitaria più delicata: «Epilessia,
+nessuna terapia in corso» spariva dalla card. Ora decide `isNegazione`. E il **lock**, che a quella
+riga aveva scritto un'esenzione a mano, non ne ha più bisogno: l'esenzione è stata rimossa.
+
+**7-8. Commenti che dicevano il contrario del codice.** In `tasks/route.ts` il gate del ramo
+`?studentId=` annunciava ancora «ALLERGIE (`note_mediche`)»; il docblock di
+`teacher-home-allergie-e-note` dichiarava `haAllergiaConteggiabile` dove il codice, il lock e il
+resto del file dicono `haAllergiaOperativa`; e il «27» del test `students-segnale-allergie` era
+rimasto accanto a una misura di un altro giorno. I numeri datati del perimetro allergie sono ora
+**una misura sola**, con scritto accanto che è una fotografia.
+
+**Nessuna migrazione, nessuna colonna nuova, nessuna variabile d'ambiente, nessuna scrittura.**
+**Test aggiunti**: `diary-pranzo-nota-medica` (i due riquadri della schermata pranzo),
+`teacher-primaria-allergie-dal-motore` (la quinta superficie), più i casi nuovi in
+`allergeni-motore`, `diary-allergie-dalle-allergie`, `teacher-home-allergie-e-note`,
+`tasks-identita-da-sessione`, `prestampati-segreteria` e due righe nuove nell'elenco dei consumatori
+del lock. Ognuno visto **rosso** rompendo il codice prima di correggerlo.
 
 ---
 
@@ -16489,7 +17032,7 @@ Il re-skin del 2026-07-16 aveva portato l'area `/admin/**` (il cockpit Direzione
 - **Stato attivo del Menu sulle sezioni dello sheet** (`AdminBottomNav`): quando la rotta corrente è una sezione dello sheet (es. `/admin/students`) e nessuno dei 4 tab è attivo, il bottone «Menu» ora si accende — `menuActive` = sheet aperto **oppure** (rotta ∈ voci sheet **e** nessun tab attivo) → pill `bg-kidville-green`, icona `text-kidville-yellow`, `aria-current="true"` a sheet chiuso (per la copertura HC); resta la mutua esclusività (una sola voce accesa) e `aria-expanded` legato al solo `menuOpen`.
 - **Contrasti AA** (`AdminBottomNav`/`AdminMenuSheet`/`StudentRowCard`/`StudentTable`): i token decorativi usati come **testo** passano da `text-kidville-muted` a `text-kidville-sub` (label nav inattive, sottotitolo dello sheet, data/email/telefono/CF delle card anagrafica); nuovo token **`--color-kidville-success-strong`** (`#1B5E20`, ≈8:1 su `success-soft`; `#00E676` in Alto Contrasto) per il badge stato «iscritto», con `text-kidville-warn-strong` per «sospeso»/BES — **parità tra card mobile e tabella desktop** (stesso swap nella `getStatoBadge` di entrambe). L'occhiello (grabber) del bottom-sheet e le nuove superfici ricevono regole `[data-contrast="high"]` esplicite **estese** (`.kv-admin-bottomnav`: `sub`/`green` a nero; `.kv-admin-rowcard`: badge success/warn a coppie fondo-nero + colore-brand).
 - **Scroll-lock del bottom-sheet** (`AdminMenuSheet`): a sheet aperto `body { overflow: hidden }` con ripristino nel cleanup (prima del ritorno del focus al bottone Menu) → lo sfondo non scorre più sotto il modale.
-- **Title generico sull'indicatore allergie** (`StudentRowCard`): il triangolo note mediche mostra `title="Allergie/note mediche presenti"` — **mai** la nota grezza (dato sanitario di minore); la tabella desktop non espone la nota.
+- **Title generico sull'indicatore allergie** (`StudentRowCard`): il triangolo note mediche mostra `title="Allergie/note mediche presenti"` — **mai** la nota grezza (dato sanitario di minore); la tabella desktop non espone la nota. — ⚠️ **SUPERATO IL 2026-09-07** (voce «Sotto la parola “Allergie” l'app contava le note mediche»): quel `title` metteva insieme due cose diverse perché l'indicatore era uno solo e partiva da `note_mediche`. Adesso gli indicatori sono **due**, su `StudentRowCard` **e** su `StudentTable`, con `title` «Allergie presenti» (`allergiePresenti`) e «Nota medica presente» (`notaMedicaPresente`); la chiave `allergieNotePresenti` è stata rimossa da entrambi i cataloghi. Resta vero, e vale per tutti e due: **mai il testo grezzo**.
 - **Selettori Maestro cross-platform** (`android-`/`ios-percorso-segreteria.yaml`): il passo Menu→Anagrafica usa ora regex **non ancorate** (`.*Alunni, famiglie e personale.*`, `.*Anagrafica.*`), che reggono sia il nodo Android separato sia il nodo iOS combinato senza rompersi.
 
 **Log**: nessuno. Intervento presentazionale — nessuna route nuova (quindi nessun `withRoute`), nessun `catch`, nessun `console.*` in `src/`; il diff non rimuove log esistenti e il micro-fix del dropdown non introduce rami d'errore.

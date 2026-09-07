@@ -107,6 +107,36 @@ export function ChipFatturazione({ fat, suCarta = false }: {
   );
 }
 
+/**
+ * I due vestiti del «Conferma questo» — e perché ce ne sono due.
+ *
+ * Normalmente il suggerimento è LA cosa da fare: verde pieno, il CTA della
+ * schermata. Quando però l'aggancio forte è su un altro plesso (`altra_sede`),
+ * questi candidati sono i deboli di casa: restano — sono l'unica via d'uscita se
+ * il segnale sbaglia, un omonimo o un CF finito per errore in un'altra causale — e
+ * restano PREMIBILI, ma smettono di essere il CTA. È il peso visivo a rendere
+ * facile l'errore, non la loro presenza.
+ *
+ * Il vestito secondario è quello che «Abbina» usa già qui sotto — LO STESSO, e
+ * adesso davvero: contorno verde a riposo, VERDE PIENO in hover.
+ *
+ * ⚠️ E NON `hover:bg-kidville-green-soft`, che è ciò che c'era scritto qui il
+ * 2026-09-07 mentre il commento diceva «Abbina». MISURATO: in Alto Contrasto
+ * `hover:bg-kidville-green-soft` non è coperto da NIENTE — la regola
+ * `[data-contrast="high"] .kv-recon-dialog .bg-kidville-green-soft` guarda un
+ * token di classe DIVERSO e non lo raggiunge — mentre l'inchiostro è già forzato
+ * al bianco dalla regola del popup: bianco su verde tenue, **1,19:1**, e il
+ * pulsante spariva proprio sotto il puntatore. Col verde PIENO l'inchiostro resta
+ * bianco (la regola del popup batte la utility) e sale a 6,5:1, senza toccare
+ * `globals.css`, che è condiviso con altri lavori.
+ * Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`, che rifiuta ogni
+ * `hover:bg-*` di questo file che non sia scuro o non abbia la sua regola HC — ed
+ * è lì che stanno i due numeri, perché in questo file gli hex sono vietati
+ * (`__tests__/architecture/design-tokens-admin.test.ts`, commenti compresi).
+ */
+const CTA_SUGGERIMENTO = 'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill bg-kidville-green px-4 font-maven text-sm font-bold text-kidville-white transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
+const CTA_SUGGERIMENTO_DEBOLE = 'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white disabled:opacity-50';
+
 /** Pill «CF» dell'aggancio per codice fiscale (su card bianca del dialog). */
 function CfPill() {
   const t = useTranslations('adminContabilita');
@@ -164,6 +194,14 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
   const isIgnorato = stato === 'ignorato';
   const suggerimenti = movimento.suggerimenti ?? [];
   const multiCf = movimentoMultiCf(suggerimenti);
+  /**
+   * «Questo bonifico sembra di un'altra sede»: il verdetto lo calcola il server
+   * (`agganciaFuoriSede`, stesse soglie del matcher) sui candidati di TUTTE le
+   * sedi — cioè su un'informazione che qui non c'è più, perché la lista che
+   * arriva è già minimizzata per sede. `null`/assente = no, o non si è potuto
+   * guardare: in entrambi i casi la schermata è quella di sempre.
+   */
+  const altraSede = movimento.altra_sede ?? null;
 
   // Dettaglio del pagamento (solo movimenti confermati): stesso pattern di
   // PagamentoDrawer — setState solo in try (guardato da `active`) e in finally,
@@ -339,6 +377,106 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
             </div>
           )}
 
+          {/* ── «Questo bonifico sembra di un'altra sede» ────────────────────
+              Sopra i suggerimenti, perché è la cosa da sapere PRIMA di premerne
+              uno.
+
+              ⚠️ E NON È PIÙ LA STESSA CARTA CREMA DEGLI ALTRI RIQUADRI, come
+              questo commento diceva fino al 2026-09-07. MISURATO sullo
+              screenshot: aveva lo stesso identico vestito della card «CAUSALE /
+              ORDINANTE» che gli sta due centimetri sopra — due rettangoli uguali,
+              uno che riporta dei dati e uno che dice «se premi qui sotto registri
+              l'incasso sulla voce di un bambino di un altro plesso». Un avviso col
+              vestito di ciò che informa non è un avviso: è una nota.
+
+              Il peso lo danno TRE cose, e nessuna è il fondo: un FILETTO laterale
+              da 4px, un GLIFO e l'INCHIOSTRO d'avviso sul titolo. I numeri —
+              cioè gli hex, che in questo file sono vietati anche nei commenti
+              (`__tests__/architecture/design-tokens-admin.test.ts`) — stanno nel
+              lock che li ricalcola, `riconciliazione-a11y-css.test.ts`:
+                · `warn-strong` sul crema vale **5,05:1**, sopra i 4,5:1 di WCAG
+                  1.4.3 — ed è anche il colore del FILETTO, dove basterebbero i
+                  3:1 di 1.4.11. `warn` sul crema si ferma a 2,79:1 e sarebbe
+                  stato sotto soglia: misurato prima di scartarlo, non dopo;
+                · il fondo resta crema APPOSTA. `warn-soft` e crema distano tre
+                  punti per canale: cambiarlo non avrebbe separato niente, e
+                  avrebbe portato il riquadro fuori dalla regola di Alto Contrasto
+                  che il popup ha già su `.bg-kidville-cream`;
+                · fondi PIENI, mai `bg-…/70`: con l'alfa dentro il nome della
+                  classe quella regola HC non lo raggiungerebbe nemmeno. È la
+                  stessa lezione scritta due volte qui sopra.
+
+              In Alto Contrasto le superfici crema di questo popup diventano il
+              grigio scurissimo, dove `warn-strong` varrebbe 5,62:1 — legge, ma
+              smette di gridare. Filetto e inchiostro passano all'AMBRA (10,12:1)
+              con la regola `.kv-recon-avviso-sede` in `globals.css`, fuori da
+              ogni `@layer`: `@theme inline` INLINA l'hex nelle utility, quindi
+              ridefinire un token sotto `[data-contrast="high"]` non tocca una
+              sola classe già generata.
+
+              Mai il giallo dei comandi né il rosso, in nessuno dei due: qui
+              dentro quei colori sono di ciò che si preme (e c'è un lock che lo
+              verifica sulle regole nuove), e
+              questo riquadro non chiede un'azione a QUESTO operatore — chiede di
+              non farne una. L'ambra dell'avviso non è quel giallo.
+
+              ⚠️ Variante SENZA nome quando il server non ha potuto leggerlo: si
+              dice comunque, senza nominare il plesso. Mai un nome inventato, e
+              mai un `null` a schermo.
+
+              ⚠️ Privacy, dichiarata: questa frase rivela l'ESISTENZA di una voce
+              aperta in un altro plesso, mai CHI. È meno del nome dell'ordinante
+              che la riga bancaria mostra già a tutte e tre le segreterie. Il nome
+              del minore resta oscurato: i suggerimenti qui sotto sono quelli
+              minimizzati dal server, e non è cambiato niente.
+
+              ⚠️ DUE FRASI, PERCHÉ I CASI SONO DUE E IL DOMINANTE ERA L'ALTRO. Il
+              riquadro dipende da `altraSede`, la lista dei candidati da
+              `suggerimenti.length > 0`: le due condizioni NON coincidono, e la
+              frase dei «deboli qui sotto» finiva sopra il vuoto. MISURATO in
+              produzione il 2026-09-07 applicando la regola COME È IMPLEMENTATA —
+              cioè sulle sole righe NON confermate, le uniche su cui il verdetto si
+              calcola — e contando i candidati che RESTANO dopo la minimizzazione:
+              dei 403 casi in cui il verdetto scatta, **332 non hanno nessun
+              candidato di casa** — Aversa 162 su 165, Cesa 162 su 166, Giugliano 8
+              su 72. Per due segreterie su tre la frase era falsa quasi sempre.
+
+              ⚠️ QUESTI NUMERI SONO DOPO LA GUARDIA SULLE CONFERMATE; i primi qui
+              scritti (338 su 413 — Aversa 166/169, Cesa 164/168, Giugliano 8/76)
+              erano PRIMA, cioè la somma con le 5 righe `confermato` che portano
+              ancora suggerimenti e su cui questo riquadro non compare mai. Non
+              cambiava nessuna decisione, ma è la specie esatta di riga — un
+              commento che descrive ciò che il codice non fa — che questo
+              repository ha già pagato due volte.
+
+              ⚠️ LA FRASE NON ATTRIBUISCE IL LAVORO A NESSUNO, e prima lo faceva:
+              diceva «lo lavorerà l'altra segreteria». Non è verificato. Il verdetto
+              si calcola contro `sediAttive`, che è `resolveScuoleAttive` — le sedi
+              ACCESSIBILI intersecate con quelle selezionate nel cookie del selettore
+              — quindi a un utente multi-sede che ha filtrato su Giugliano basta un
+              aggancio su Cesa, sede SUA, per sentirsi annunciare una segreteria che
+              non esiste. La schermata resta coerente (il PATCH risponde 404 sullo
+              stesso insieme), ed è la frase a doversi limitare a ciò che è vero:
+              parla di QUESTA schermata e di dove si abbina, non di chi lo farà. */}
+          {altraSede && (
+            <section className="kv-recon-avviso-sede flex gap-3 rounded-card border-l-4 border-kidville-warn-strong bg-kidville-cream p-4">
+              {/* `aria-hidden`: il glifo ripete ciò che la frase accanto dice per
+                  esteso, e uno screen reader non deve sentire due volte la stessa
+                  cosa. Il peso visivo è tutto suo, il significato è del testo. */}
+              <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-kidville-warn-strong" />
+              <div className="min-w-0">
+                <p className="font-maven text-sm font-bold leading-snug text-kidville-warn-strong">
+                  {altraSede.nome
+                    ? t('movdlgAltraSedeTitolo', { sede: altraSede.nome })
+                    : t('movdlgAltraSedeTitoloSenzaNome')}
+                </p>
+                <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
+                  {suggerimenti.length > 0 ? t('movdlgAltraSedeSpiega') : t('movdlgAltraSedeSpiegaSenzaCandidati')}
+                </p>
+              </div>
+            </section>
+          )}
+
           {/* Suggerimenti ordinati (CF-match primi) */}
           {suggerimenti.length > 0 && (
             <div>
@@ -350,8 +488,11 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                       {s.cf_match && <CfPill />}
                       <span className="min-w-0 truncate font-maven text-sm text-kidville-ink">{s.label || s.pagamento_id}</span>
                     </span>
+                    {/* Declassato — non disabilitato — quando l'aggancio forte è
+                        altrove: si preme ancora, e la protezione vera resta il
+                        404 fuori sede del PATCH. */}
                     <button type="button" onClick={() => azione('conferma', s.pagamento_id)} disabled={busy}
-                      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill bg-kidville-green px-4 font-maven text-sm font-bold text-kidville-white transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
+                      className={altraSede ? CTA_SUGGERIMENTO_DEBOLE : CTA_SUGGERIMENTO}>
                       <Check size={15} /> {t('movdlgConfermaQuesto')}
                     </button>
                   </div>
@@ -423,9 +564,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 {/* Secondario: la ricevuta c'è sempre, non è mai l'azione da fare.
                     Fondo trasparente (in Alto Contrasto diventa il nero della card
-                    da solo) e 44px di altezza — erano 28. */}
+                    da solo) e 44px di altezza — erano 28.
+                    L'hover è VERDE PIENO come «Abbina» e come il «Conferma questo»
+                    declassato: `hover:bg-kidville-green-soft` — che è ciò che c'era
+                    qui — in Alto Contrasto dava bianco su verde tenue, 1,19:1.
+                    Stesso difetto, stessa correzione, un posto solo dove cercarla. */}
                 <a href={`/api/pagamenti/ricevuta?pagamento_id=${movimento.pagamento_id}&userId=${userId}`}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green-soft">
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white">
                   <Download size={15} /> {t('movdlgRicevuta')}
                 </a>
                 {/* «In attesa SDI» NON ha un pulsante: in quello stato FatturaButton

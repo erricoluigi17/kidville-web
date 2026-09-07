@@ -228,6 +228,25 @@ describe('GET /api/pagamenti/riconciliazione — stato di fatturazione della rig
     expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID(1), MID(2)])
   })
 
+  it('?fattura=da_fatturare: un pagamento NON saldato col documento SCARTATO resta fuori', async () => {
+    // ⚠️ IL CASO CHE PROVA LA REGOLA ESTERNA, e non era coperto da nessuna parte.
+    // Sulla riga `non_richiesta` il saldo lo pretende già il motore dentro
+    // `esitoFatturazione`; sulla riga SCARTATA no — il tono arriva dai DOCUMENTI,
+    // che la rotta non minimizza per sede — e a tenerla fuori è la sola
+    // `daFatturareInListaDiLavoro`. È la stessa riga che nel browser non deve avere
+    // la casella del lotto: una definizione, due chiamanti, un caso di prova per
+    // ciascuno.
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'confermato', PID(1)), // pagato · scartata   → SÌ
+      mov(2, 'confermato', PID(2)), // parziale · scartata → no: la fattura non si emette su un parziale
+    ]
+    h.db.pagamenti = [pag(1, 'pagato', 'scartata'), pag(2, 'parziale', 'scartata')]
+    h.db.fatture_emesse = [doc(PID(1), 2), doc(PID(2), 2)]
+
+    const j = await (await get('?fattura=da_fatturare')).json()
+    expect(j.data.map((r: { id: string }) => r.id)).toEqual([MID(1)])
+  })
+
   it('?fattura=fatturate: solo in_attesa ed emessa', async () => {
     h.db.riconciliazione_movimenti = [
       mov(1, 'confermato', PID(1)),
@@ -519,6 +538,9 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
     const piena = h.eventi.find((e) => e.campi.esito === 'fatturazione_finestra_piena')
     expect(piena?.livello).toBe('warn')
     expect(piena?.campi.righe).toBe(1000)
+    // …e QUALE taglio era pieno: senza, i due modi di riempire la finestra
+    // (l'elenco filtrato e il conteggio) sono indistinguibili nei log.
+    expect(piena?.campi.tipo).toBe('da_fatturare')
   })
 
   it('sotto la soglia nessun troncamento, e nessun allarme', async () => {
@@ -771,5 +793,407 @@ describe('GET /api/pagamenti/riconciliazione — 42703 sulla batch (DB E2E non m
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.data).toHaveLength(3)
     expect(j.fatturazione_disponibile).toBe(false)
+  })
+})
+
+/**
+ * ─── «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» (2026-09-07) ──────────────────
+ *
+ * I suggerimenti si calcolano contro i pagamenti aperti di TUTTE le sedi —
+ * deliberato, l'estratto conto della banca è unico — ma la lista poi mostra a
+ * ogni segreteria solo i candidati della PROPRIA. Misurato in produzione: su 234
+ * movimenti con suggerimenti, 67 avevano l'aggancio forte altrove E candidati
+ * locali deboli, cioè 67 righe che invitavano a registrare l'incasso sulla voce
+ * di un bambino di un altro plesso.
+ *
+ * ⚠️ IL PUNTO PIÙ FRAGILE È L'ORDINE: il verdetto si calcola PRIMA del filtro di
+ * minimizzazione, perché è il filtro stesso a togliere i candidati fuori sede su
+ * cui la domanda si pone. Un test che guardasse solo «il campo c'è» sarebbe verde
+ * anche col calcolo messo dopo — lì il verdetto sarebbe sempre `null` — quindi
+ * ogni caso qui sotto asserisce il CONTENUTO del verdetto.
+ */
+describe('GET /api/pagamenti/riconciliazione — «sembra di un’altra sede»', () => {
+  /** Il registro di `scuole`: tre plessi veri, come in produzione. */
+  const conSedi = () => {
+    h.db.scuole = [
+      { id: 'sc-1', nome: 'Kidville Giugliano' },
+      { id: 'sc-99', nome: 'Kidville Cesa' },
+      { id: 'sc-98', nome: 'Kidville Aversa' },
+    ]
+  }
+  const sugg = (pagamentoId: string, score: number, cf = false) => ({
+    pagamento_id: pagamentoId, score, motivi: [], label: 'Nome Minore · Retta', ...(cf ? { cf_match: true } : {}),
+  })
+  /** Le interrogazioni su `scuole` fatte dalla risoluzione dei nomi. */
+  const letturaSedi = () => h.chiamate.filter((c) => c.tabella === 'scuole')
+
+  it('CF su un’altra sede → `altra_sede` col NOME, e i suggerimenti restano OSCURATI', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, {
+      suggerimenti: [sugg(PID(2), 1050, true), sugg(PID(1), 50)],
+    })]
+    h.db.pagamenti = [pag(1, 'scaduto', null, 'sc-1'), pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toEqual({ nome: 'Kidville Cesa' })
+    // ⚠️ LA MINIMIZZAZIONE NON SI INDEBOLISCE: il candidato di Cesa — che porta il
+    // NOME di un minore di un altro plesso — sparisce come prima. Resta solo il
+    // debole di casa, ed è esattamente il candidato che la frase declassa.
+    expect(j.data[0].suggerimenti).toHaveLength(1)
+    expect(j.data[0].suggerimenti[0].pagamento_id).toBe(PID(1))
+  })
+
+  it('aggancio forte per PUNTEGGIO (100 fuori contro 50 dentro) → lo stesso verdetto', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, {
+      suggerimenti: [sugg(PID(2), 100), sugg(PID(1), 50)],
+    })]
+    h.db.pagamenti = [pag(1, 'scaduto', null, 'sc-1'), pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toEqual({ nome: 'Kidville Cesa' })
+  })
+
+  it('aggancio forte NELLA propria sede → `altra_sede: null` (e nessuna query in più)', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, {
+      suggerimenti: [sugg(PID(1), 100), sugg(PID(2), 50)],
+    })]
+    h.db.pagamenti = [pag(1, 'scaduto', null, 'sc-1'), pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toBeNull()
+    expect(letturaSedi(), 'nessuna riga fuori sede ⇒ nessuna lettura di `scuole`').toHaveLength(0)
+  })
+
+  it('nessuna riga fuori sede in TUTTA la pagina → ZERO letture di `scuole`', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'confermato', PID(1)),
+      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(1), 90)] }),
+      mov(3, 'da_abbinare', null, { suggerimenti: [] }),
+    ]
+    h.db.pagamenti = [pag(1, 'pagato', 'emessa', 'sc-1')]
+
+    const j = await (await get()).json()
+    expect(letturaSedi()).toHaveLength(0)
+    for (const r of j.data) expect(r.altra_sede).toBeNull()
+  })
+
+  it('una sola lettura di `scuole` per l’intera pagina, con gli id DISTINTI', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'suggerito', null, { suggerimenti: [sugg(PID(2), 100)] }),
+      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(3), 100)] }),
+      mov(3, 'suggerito', null, { suggerimenti: [sugg(PID(4), 100)] }),
+    ]
+    h.db.pagamenti = [
+      pag(2, 'scaduto', null, 'sc-99'),
+      pag(3, 'scaduto', null, 'sc-99'), // stessa sede: non si chiede due volte
+      pag(4, 'scaduto', null, 'sc-98'),
+    ]
+
+    const j = await (await get()).json()
+    expect(letturaSedi()).toHaveLength(1)
+    expect((idDi(letturaSedi()[0]) as string[]).slice().sort()).toEqual(['sc-98', 'sc-99'])
+    expect(j.data.map((r: { altra_sede: { nome: string } | null }) => r.altra_sede?.nome))
+      .toEqual(['Kidville Cesa', 'Kidville Cesa', 'Kidville Aversa'])
+  })
+
+  it('query `scuole` caduta → `nome: null` (mai un nome inventato) e un warn col codice', async () => {
+    conSedi()
+    h.errori.scuole = { code: 'PGRST301', message: 'boom' }
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, { suggerimenti: [sugg(PID(2), 100)] })]
+    h.db.pagamenti = [pag(2, 'scaduto', null, 'sc-99')]
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    // il verdetto RESTA: la schermata dirà «sembra di un'altra sede» senza nominarla
+    expect(j.data[0].altra_sede).toEqual({ nome: null })
+    const warn = h.eventi.filter((e) => e.campi.esito === 'sedi_nome_non_risolto')
+    expect(warn).toHaveLength(1)
+    expect(warn[0].livello).toBe('warn')
+    expect(warn[0].campi.error_code).toBe('PGRST301')
+  })
+
+  it('sede senza nome in anagrafica → `nome: null`, non la stringa vuota', async () => {
+    h.db.scuole = [{ id: 'sc-99', nome: null }]
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, { suggerimenti: [sugg(PID(2), 100)] })]
+    h.db.pagamenti = [pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toEqual({ nome: null })
+  })
+
+  /**
+   * ⚠️ IL RAMO CHE VALE PIÙ DI TUTTI. Quando la batch su `pagamenti` cade non
+   * esiste la mappa `pagamento → sede`: non si sa né chi è dentro né chi è fuori.
+   * Un verdetto lì sarebbe INVENTATO, e nominerebbe un plesso a caso a una
+   * segreteria che non ha modo di verificarlo.
+   */
+  it('batch delle sedi CADUTA → `altra_sede: null` su TUTTE le righe, e nessuna lettura di `scuole`', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'suggerito', null, { suggerimenti: [sugg(PID(2), 1050, true)] }),
+      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(3), 100)] }),
+    ]
+    h.db.pagamenti = [pag(2, 'scaduto', null, 'sc-99'), pag(3, 'scaduto', null, 'sc-99')]
+    h.errori.pagamenti = { code: '42703', message: 'column pagamenti.fattura_stato does not exist' }
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.data).toHaveLength(2)
+    for (const r of j.data) expect(r.altra_sede).toBeNull()
+    expect(letturaSedi(), 'senza la mappa non c’è nessuna sede da nominare').toHaveLength(0)
+  })
+
+  it('il campo esce SEMPRE, anche quando non c’è nessun pagamento da risolvere', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'da_abbinare', null)]
+    h.db.pagamenti = []
+
+    const j = await (await get()).json()
+    expect(j.data[0]).toHaveProperty('altra_sede', null)
+  })
+
+  it('pagamento con `scuola_id` NULL (nullable in produzione) → nessuna accusa: `altra_sede: null`', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, { suggerimenti: [sugg(PID(2), 100)] })]
+    h.db.pagamenti = [pag(2, 'scaduto', null, null)]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toBeNull()
+    expect(letturaSedi()).toHaveLength(0)
+  })
+
+  /**
+   * ─── SU UNA RIGA CONFERMATA IL VERDETTO NON C'È, E IL MOTIVO È IL SUO SCOPO ──
+   *
+   * `altra_sede` esiste per impedire un abbinamento sbagliato PRIMA che venga
+   * fatto: il riquadro del popup vive dentro `{puoAbbinare && …}`, e il chip di
+   * riga dice «questa non la lavori tu». Su una riga già confermata la scelta è
+   * fatta, e i `suggerimenti` sono la fotografia dell'import — un elenco vecchio.
+   *
+   * Fino al 2026-09-07 il verdetto si calcolava anche lì, e la riga PIÙ
+   * correttamente lavorata che esista — confermata su un pagamento della PROPRIA
+   * sede — usciva marcata «sembra di un'altra sede». Era invisibile solo perché
+   * nessuno montava il chip: montarlo l'avrebbe trasformata in un falso allarme.
+   * MISURATO in produzione: 3 movimenti `confermato` portano ancora suggerimenti.
+   */
+  it('riga CONFERMATA sulla PROPRIA sede: nessun verdetto, nemmeno con un candidato forte altrove', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1), {
+      suggerimenti: [sugg(PID(2), 100)],
+    })]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta', 'sc-1'), pag(2, 'scaduto', null, 'sc-99')]
+    h.db.fatture_emesse = []
+
+    const j = await (await get()).json()
+    expect(j.data).toHaveLength(1)
+    expect(j.data[0].altra_sede, 'l’abbinamento è fatto: non c’è nessun errore da prevenire').toBeNull()
+    // e il nome della sede non si va nemmeno a leggere: non serve a nessuna riga
+    expect(letturaSedi()).toHaveLength(0)
+  })
+
+  it('…e nemmeno con un CF fuori sede, che è il segnale più forte che esista', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1), {
+      suggerimenti: [sugg(PID(2), 1050, true)],
+    })]
+    h.db.pagamenti = [pag(1, 'pagato', 'emessa', 'sc-1'), pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toBeNull()
+  })
+
+  /**
+   * ⚠️ IL CONTROLLO CHE TIENE IN PIEDI I DUE QUI SOPRA: sono `null` perché la riga
+   * è confermata, non perché il verdetto abbia smesso di funzionare. Stessi
+   * candidati, stesse sedi, stato `suggerito` → il verdetto c'è.
+   */
+  it('CONTROLLO POSITIVO: la stessa riga ancora da lavorare il verdetto ce l’ha', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'suggerito', null, {
+      suggerimenti: [sugg(PID(2), 100)],
+    })]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta', 'sc-1'), pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toEqual({ nome: 'Kidville Cesa' })
+  })
+
+  /**
+   * `ignorato` NON è confermato: la riga si può ancora abbinare (il popup mostra i
+   * suggerimenti anche lì, `puoAbbinare = stato !== 'confermato'`), quindi
+   * l'errore da prevenire c'è ancora e il verdetto resta.
+   */
+  it('riga IGNORATA: il verdetto resta, perché si può ancora abbinare', async () => {
+    conSedi()
+    h.db.riconciliazione_movimenti = [mov(1, 'ignorato', null, {
+      suggerimenti: [sugg(PID(2), 100)],
+    })]
+    h.db.pagamenti = [pag(2, 'scaduto', null, 'sc-99')]
+
+    const j = await (await get()).json()
+    expect(j.data[0].altra_sede).toEqual({ nome: 'Kidville Cesa' })
+  })
+})
+
+/**
+ * ─── I NUMERI SULLE PILLOLE: `?conteggi=1` ───────────────────────────────────
+ *
+ * Le tre pillole del sottofiltro dicevano soltanto il proprio nome: per sapere
+ * quante fatture restassero bisognava premerle una per una. Il numero si chiede
+ * con una richiesta SUA, che non porta a casa nessuna riga — `data: []` — e che
+ * riusa il MOTORE, mai un secondo confronto su `fattura_stato` (lo vieta il lock
+ * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`).
+ *
+ * Le tre regole d'onestà, ed è per queste che questo blocco esiste:
+ *  1. lettura di fatturazione caduta → `conteggi: null`. Un numero non letto è un
+ *     numero inventato, e uno zero al suo posto è la stessa bugia di «Nessun
+ *     movimento in questo stato»;
+ *  2. finestra piena → i numeri escono, ma con `parziale: true`: la schermata
+ *     scrive «≥ 12» e mai «12». Un minimo è vero e utile; un parziale che sembra
+ *     un totale no — e qui una fattura saltata non la ferma nessuna guardia;
+ *  3. la SELECT è leggera (`id, stato, pagamento_id`): `suggerimenti` è la
+ *     colonna JSONB pesante della tabella, e a un conteggio non serve.
+ */
+describe('GET /api/pagamenti/riconciliazione — i numeri delle pillole (`?conteggi=1`)', () => {
+  /**
+   * ⚠️ I DUE NUMERI SONO DIVERSI, E NON È UN DETTAGLIO DELLA FIXTURE.
+   *
+   * Finché questo registro dava `{ da_fatturare: 2, fatturate: 2 }`, SCAMBIARE i
+   * due bidoni dentro `conteggiDi` non faceva cadere niente: il caso che dà il
+   * nome al comportamento — «risponde i due numeri» — non distingueva i due
+   * numeri. Un atteso simmetrico è un atteso che non guarda.
+   *
+   * La sesta riga (fatturata, senza documento in `fatture_emesse`: il riassunto
+   * basta) rompe la simmetria e insieme copre il caso in cui i DUE campi
+   * divergono — `pagamenti.fattura_stato` avanti, `fatture_emesse` ancora vuota.
+   */
+  const registroMisto = () => {
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'confermato', PID(1)), // saldato, mai fatturato        → da fatturare
+      mov(2, 'confermato', PID(2)), // documento vivo                 → fatturate
+      mov(3, 'confermato', PID(3)), // riassunto «in attesa»          → fatturate
+      mov(4, 'confermato', PID(4)), // documento scartato dallo SdI   → da fatturare
+      mov(5, 'confermato', PID(5)), // pagamento NON saldato          → nessun bidone
+      mov(6, 'confermato', PID(6)), // riassunto «emessa», nessun documento → fatturate
+    ]
+    h.db.pagamenti = [
+      pag(1, 'pagato', 'non_richiesta'),
+      pag(2, 'pagato', 'emessa'),
+      pag(3, 'pagato', 'in_attesa'),
+      pag(4, 'pagato', 'non_richiesta'),
+      pag(5, 'parziale', 'non_richiesta'),
+      pag(6, 'pagato', 'emessa'),
+    ]
+    h.db.fatture_emesse = [doc(PID(2), 1, 1947), doc(PID(4), 2, 1948)]
+  }
+  const registroMovimenti = () => h.chiamate.filter((c) => c.tabella === 'riconciliazione_movimenti')
+
+  it('risponde i due numeri e NESSUNA riga: al conteggio le righe non servono', async () => {
+    registroMisto()
+
+    const res = await get('?conteggi=1')
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.success).toBe(true)
+    expect(j.data).toEqual([])
+    // ⚠️ DUE NUMERI DIVERSI: con `2` e `2` uno scambio fra i bidoni resterebbe verde.
+    expect(j.conteggi).toEqual({ da_fatturare: 2, fatturate: 3, parziale: false })
+  })
+
+  it('i due bidoni sono DISGIUNTI e la loro somma non supera le righe confermate', async () => {
+    registroMisto()
+
+    const { conteggi } = await (await get('?conteggi=1')).json()
+    // 6 righe confermate, 2+3 nei bidoni: la riga col pagamento non saldato non
+    // sta in nessuno dei due, e nessuna riga può stare in tutti e due.
+    expect(conteggi.da_fatturare + conteggi.fatturate).toBe(5)
+    expect(conteggi.da_fatturare + conteggi.fatturate).toBeLessThan(6)
+    // …e il controllo positivo: i numeri non sono zero per un filtro andato a vuoto.
+    expect(conteggi.da_fatturare).toBeGreaterThan(0)
+    expect(conteggi.fatturate).toBeGreaterThan(0)
+  })
+
+  it('NON chiede la colonna `suggerimenti`: è il JSONB pesante, e a un conteggio non serve', async () => {
+    registroMisto()
+
+    await get('?conteggi=1')
+    const q = registroMovimenti()[0]
+    expect(q.cols, 'il conteggio si porta a casa il JSONB dei suggerimenti').not.toContain('suggerimenti')
+    // …e le tre colonne che servono davvero ci sono (senza, il motore non decide niente)
+    for (const c of ['id', 'stato', 'pagamento_id']) expect(q.cols).toContain(c)
+    // CONTROLLO POSITIVO: la lista normale quella colonna la chiede eccome.
+    h.chiamate = []
+    await get()
+    expect(registroMovimenti()[0].cols).toContain('suggerimenti')
+  })
+
+  it('usa la finestra del filtro: `stato=confermato` imposto e tetto a LIMITE_FATTURAZIONE', async () => {
+    registroMisto()
+
+    await get('?conteggi=1')
+    const q = registroMovimenti()[0]
+    expect(q.filtri.find((f) => f.op === 'eq' && f.col === 'stato')?.val).toBe('confermato')
+    expect(q.limite).toBe(5001)
+  })
+
+  it('finestra piena → i numeri escono comunque, ma dichiarati PARZIALI', async () => {
+    // 1.000 righe: è `max_rows` di PostgREST, il taglio che il server fa da solo
+    // senza dirlo. I numeri sono un MINIMO, e devono dire di esserlo.
+    registro(1000)
+
+    const j = await (await get('?conteggi=1')).json()
+    expect(j.troncato).toBe(true)
+    expect(j.conteggi.parziale).toBe(true)
+    expect(j.conteggi.da_fatturare).toBe(1000)
+    // ⚠️ E IL LOG DICE CHE ERA IL CONTEGGIO. È lo strumento con cui in produzione
+    // si misura il rischio n. 1 di questa funzione — quante richieste di numeri
+    // battono contro il tetto della finestra, cioè quanti «≥» stanno uscendo. Un
+    // campo di log che nessuno guarda cadere è un campo che può sparire in
+    // silenzio, e allora la misura promessa non si può più fare.
+    const piena = h.eventi.find((e) => e.campi.esito === 'fatturazione_finestra_piena')
+    expect(piena?.campi.tipo).toBe('conteggi')
+  })
+
+  it('sotto la soglia `parziale` è falso: un totale vero non si annacqua', async () => {
+    registro(999)
+
+    const j = await (await get('?conteggi=1')).json()
+    expect(j.conteggi.parziale).toBe(false)
+    expect(j.conteggi.da_fatturare).toBe(999)
+  })
+
+  it('lettura di fatturazione CADUTA → `conteggi: null` e `fatturazione_disponibile: false`', async () => {
+    registroMisto()
+    h.errori.pagamenti = { code: '08006', message: 'connection failure' }
+
+    const res = await get('?conteggi=1')
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(j.fatturazione_disponibile).toBe(false)
+    // ⚠️ `null`, MAI `{ da_fatturare: 0, fatturate: 0 }`: uno zero dove il dato
+    // manca si legge come «non c'è niente da fatturare», che è la frase che
+    // questa schermata esiste per non far dire mai per sbaglio.
+    expect(j.conteggi).toBeNull()
+    expect(j.data).toEqual([])
+  })
+
+  it('senza `?conteggi=1` la risposta non cambia di una virgola: nessun campo `conteggi`', async () => {
+    registroMisto()
+
+    const j = await (await get()).json()
+    expect(j).not.toHaveProperty('conteggi')
+    expect(j.data).toHaveLength(6)
+  })
+
+  it('`?conteggi=` con un valore diverso da `1` è un 400: un letterale, non un booleano permissivo', async () => {
+    registroMisto()
+
+    expect((await get('?conteggi=true')).status).toBe(400)
+    expect((await get('?conteggi=0')).status).toBe(400)
   })
 })

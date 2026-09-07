@@ -12,6 +12,7 @@ import { zTargetClassTask, zTitoloTask } from '@/lib/validation/task-interni';
 import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storage';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { etichetteAllergie } from '@/lib/mensa/allergeni';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id (userId, studentId, author_id, assignees) restano stringhe libere:
@@ -234,9 +235,45 @@ async function enrichTask(
     // Student
     let student = null;
     if (decoded.student_id) {
+        // ── LE ALLERGIE VENGONO DALLE ALLERGIE, E `note_mediche` ESCE DI QUI ──
+        //
+        // La scheda dell'attività mostra un campo `allergie`, e lo si ricavava
+        // spezzando `note_mediche` sulle virgole: è la casella «Note Mediche (BES,
+        // DSA, patologie)» del modulo d'iscrizione, cioè un'altra cosa — misurato in
+        // produzione, ZERO delle 41 note mediche nomina un allergene.
+        //
+        // `note_mediche` non si legge più affatto, e QUESTA È ANCHE UNA PERDITA:
+        // va detta col suo numero, non chiamata «guadagno di privacy» e basta.
+        // Misurato in produzione il 2026-09-07 (sola lettura, soli conteggi): 657
+        // iscritti non archiviati, 44 con nota medica, 29 dei quali hanno
+        // `allergies` vuota o negata. Sono 29 bambini per i quali questa scheda
+        // mostrava una riga — sotto un'etichetta sbagliata, ma la mostrava — e da
+        // oggi non ne mostra nessuna.
+        //
+        // Perché la perdita si accetta QUI e non nel diario. La schermata del
+        // pranzo decide cosa finisce nel piatto, e lì la nota è tornata, in un
+        // gruppo suo con etichetta e colore diversi (`MealDetailInline`). Una
+        // scheda di incarico interno non è una superficie alimentare: è un
+        // promemoria fra colleghi, e per farlo non serve trasportare l'art. 9 di
+        // un minore attraverso una rotta in più. Chi ha bisogno della nota la
+        // legge dove la nota vive — anagrafica, diario, foglio delle emergenze —
+        // dietro i gate che quella schermata ha già.
+        //
+        // Verificato che la premessa regga: ZERO delle 44 note nomina uno dei 14
+        // allergeni UE, e le 5 che parlano di allergia/intolleranza/dieta hanno
+        // TUTTE un `allergies` non vuoto e non negato, quindi nessun bambino con
+        // una restrizione alimentare esce dall'elenco di questa scheda.
+        //
+        // La composizione è quella di `colonnaAllergie` (prestampati/banco.ts) e
+        // vive in `etichetteAllergie`, una sola per tutte le superfici operative:
+        // etichette degli allergeni SPUNTATI più il testo libero così com'è. Non si
+        // infersce e non si filtra — «fragole» non è fra i 14 UE e sparirebbe dal
+        // testo, «nichel» sparirebbe dalle chiavi (`normalizzaAllergeni` scarta in
+        // silenzio ciò che non riconosce). Esce solo la negazione. Il contratto
+        // `allergie: string[]` non cambia, quindi `TaskCard` non cambia.
         const { data: stud } = await supabase
             .from('alunni')
-            .select('nome, cognome, classe_sezione, note_mediche')
+            .select('nome, cognome, classe_sezione, allergeni, allergies')
             .eq('id', decoded.student_id)
             .maybeSingle();
         if (stud) {
@@ -244,7 +281,7 @@ async function enrichTask(
                 nome: stud.nome,
                 cognome: stud.cognome,
                 classe_sezione: stud.classe_sezione,
-                allergie: stud.note_mediche ? String(stud.note_mediche).split(',').map((s: string) => s.trim()) : []
+                allergie: etichetteAllergie({ allergeni: stud.allergeni, allergies: stud.allergies }),
             };
         }
     }
@@ -330,8 +367,9 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
         if (plessi.length === 0) return NextResponse.json([]);
 
         // ─── IL RAMO `?studentId=` PARLA DI UN BAMBINO ───────────────────────
-        // La risposta porta nome, cognome, classe e ALLERGIE (`note_mediche`)
-        // dell'alunno collegato all'incarico — dato sanitario di un minore — e
+        // La risposta porta nome, cognome, classe e ALLERGIE (`allergeni` +
+        // `allergies`) dell'alunno collegato all'incarico — dato sanitario di un
+        // minore lo stesso, il gate serve identico — e
         // fino a oggi non c'era NESSUNA verifica: bastava un uuid qualsiasi
         // della sede. `assertAlunnoInScope` controlla il plesso e, per chi non
         // vede tutte le classi (l'educator), esige la sezione assegnata.

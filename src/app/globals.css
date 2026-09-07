@@ -2523,6 +2523,41 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
 }
 
 /* =============================================================================
+   L'AVVISO «QUESTO BONIFICO È DI UN'ALTRA SEDE» (`.kv-recon-avviso-sede`).
+
+   MISURATO sullo screenshot del 2026-09-07: in luce normale il riquadro aveva lo
+   STESSO fondo crema della card «CAUSALE / ORDINANTE» che gli sta due centimetri
+   sopra — due rettangoli identici, uno che riporta dei dati e uno che dice «se
+   premi qui sotto registri l'incasso sulla voce di un bambino di un altro
+   plesso». In luce normale la differenza gliela danno tre utility Tailwind
+   (filetto laterale, glifo, inchiostro `warn-strong`, 5,05:1 sul crema).
+
+   Qui l'Alto Contrasto, dove quelle tre non bastano e non per una svista: le
+   superfici crema del popup diventano tutte #1A1A1A per la regola
+   `.kv-recon-dialog .bg-kidville-cream`, e su quel nero il filetto `warn-strong`
+   #A64F09 vale 5,62:1 — legge, ma smette di gridare, proprio nella modalità di
+   chi fa più fatica a leggere. `@theme inline` INLINA l'hex nelle utility:
+   ridefinire `--color-kidville-warn-strong` sotto `[data-contrast="high"]` non
+   toccherebbe una sola classe già generata, quindi una superficie nuova o è
+   dipinta a mano o in Alto Contrasto non esiste.
+
+   AMBRA #FFB84D: **10,12:1** su #1A1A1A, misurato e bloccato dal lock
+   `riconciliazione-a11y-css.test.ts`. NON è il giallo #FFE500, che dentro questo
+   popup è riservato a ciò che si preme (e c'è un invariante che lo verifica su
+   ogni regola nuova): questo riquadro non chiede un'azione, chiede di NON farne
+   una. Fuori da ogni `@layer`, come tutte le altre regole del popup.
+   ============================================================================= */
+[data-contrast="high"] .kv-recon-dialog .kv-recon-avviso-sede {
+  border-color: #FFB84D;
+}
+/* Il titolo e il glifo. `warn-strong` non è coperto da nessuna delle regole
+   generiche del popup — quelle riguardano `ink`, `sub`, `green` e
+   `error-strong` — quindi senza questa riga resterebbe il #A64F09 inlinato. */
+[data-contrast="high"] .kv-recon-dialog .kv-recon-avviso-sede .text-kidville-warn-strong {
+  color: #FFB84D;
+}
+
+/* =============================================================================
    IL FUOCO NON SI FA MANGIARE DALLA SUPERFICIE — RILIEVO (a), CHIUSO QUI
    (2026-09-06).
 

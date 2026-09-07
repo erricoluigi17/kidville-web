@@ -7,6 +7,7 @@ import { zUuid } from '@/lib/validation/common'
 import { resolveScuolaScrittura, resolveScuoleAttive } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import {
+  agganciaFuoriSede,
   hashMovimento,
   parseCsv,
   preparaAperti,
@@ -14,6 +15,7 @@ import {
   type MappingCsv,
   type MovimentoCsv,
   type PagamentoAperto,
+  type VerdettoAltraSede,
 } from '@/lib/pagamenti/riconciliazione'
 import { leggiEstrattoConto } from '@/lib/pagamenti/estratto-conto/lettura'
 import { interpretaFogli } from '@/lib/pagamenti/estratto-conto/tabella'
@@ -42,10 +44,10 @@ import { formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
  * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts`.
  */
 import {
-  fatturaDaFare,
+  daFatturareInListaDiLavoro,
   fatturaGiaFatta,
   type FatturaMovimentoUi,
-  type RigaFatturabile,
+  type RigaListaDiLavoro,
 } from '@/lib/pagamenti/fatturazione-riga'
 
 /**
@@ -83,6 +85,18 @@ const getQuerySchema = z.object({
    * `?fattura=` costruito male. Un 400 lo dice.
    */
   fattura: z.enum(['da_fatturare', 'fatturate']).optional(),
+  /**
+   * «QUANTE NE RESTANO?» — la domanda che le tre pillole non sapevano rispondere.
+   *
+   * Con `conteggi=1` questa rotta non porta a casa nessuna riga (`data: []`): conta e
+   * basta, sui DUE bidoni di `?fattura=` e con lo STESSO motore, così il numero scritto
+   * sulla pillola e l'elenco che la pillola apre non possono divergere.
+   *
+   * ⚠️ UN LETTERALE, non un booleano permissivo (`z.coerce.boolean()` accetta perfino
+   * `'false'`): `?conteggi=0` deve essere un 400, non un conteggio silenzioso. Lo schema
+   * non è `.strict()`, quindi un client vecchio che non manda niente resta valido.
+   */
+  conteggi: z.enum(['1']).optional(),
   import_id: zUuidQueryOpzionale,
   // Intervallo su data_operazione (estremi inclusi).
   da: zDataQueryOpzionale,
@@ -367,23 +381,63 @@ const FATTURA_STATI = new Set<string>(['non_richiesta', 'in_attesa', 'emessa', '
 interface MovimentoArricchito extends MovimentoRiga {
   pagamento_stato: string | null
   fattura_stato: FatturaStato | null
+  /**
+   * «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» — l'aggancio forte è fuori dalle
+   * sedi dell'operatore, e i candidati che vedrà lui sono deboli.
+   *
+   * ⚠️ ESCE IL NOME, NON L'UUID, e non è una svista: al client serve una frase
+   * («ha un aggancio forte su Kidville Cesa»), e un uuid in più sarebbe
+   * superficie senza uso — un identificatore di plesso che viaggia in un JSON
+   * che nessuno legge per quello.
+   *
+   * ⚠️ LA DECISIONE DI PRIVACY, dichiarata invece che scoperta: dire «questo
+   * bonifico ha un aggancio forte su Kidville Cesa» rivela l'ESISTENZA di una
+   * voce aperta in un altro plesso, mai CHI. È meno del nome dell'ORDINANTE che
+   * quella stessa riga bancaria già mostra a tutte e tre le segreterie (il
+   * registro è l'estratto conto unico del titolare). Il nome del MINORE resta
+   * oscurato esattamente come prima: la minimizzazione dei `suggerimenti` non è
+   * toccata di una riga, e questo campo si calcola PRIMA di quel filtro proprio
+   * perché dopo l'informazione non c'è più.
+   */
+  altra_sede: AltraSedeUi | null
 }
 
 /**
- * I DUE CAMPI ESCONO SEMPRE, ANCHE A `null` — e «sempre» è la parte che conta.
+ * Il verdetto come esce nel JSON: il NOME della sede, o `null`. E basta.
+ *
+ * ⚠️ `per_cf` — «a dirlo è stato un codice fiscale» — È STATO TOLTO DAL CONTRATTO
+ * il 2026-09-07, il giorno dopo esserci entrato. Viaggiava nel JSON e non lo
+ * leggeva nessuno: la schermata dice la stessa frase nei due casi, perché
+ * all'operatore serve sapere *che* l'aggancio è altrove, non *da quale segnale*.
+ * Un campo che nessuno legge non è un'informazione in più, è una promessa da
+ * mantenere in eterno — e il giorno in cui servisse davvero, il verdetto lo porta
+ * già (`VerdettoAltraSede.per_cf`, in `@/lib/pagamenti/riconciliazione`) e
+ * rimetterlo qui costa una riga.
+ */
+interface AltraSedeUi {
+  /** `null` = la sede c'è ma non si è potuto leggerne il nome. MAI una stringa inventata. */
+  nome: string | null
+}
+
+/**
+ * I TRE CAMPI ESCONO SEMPRE, ANCHE A `null` — e «sempre» è la parte che conta.
  *
  * Se comparissero solo sulle righe che hanno qualcosa da dire, il client non potrebbe
  * distinguere «questa riga non è fatturabile» da «questa risposta non porta l'informazione»
  * (batch fallito, nessun pagamento da risolvere, campo non ancora implementato). Sono due
  * significati opposti che si leggerebbero uguali: `undefined` per entrambi. Con il campo
  * sempre presente, `null` vuol dire una cosa sola — «non lo so, o non ti riguarda».
+ *
+ * Dal 2026-09-07 vale anche per il terzo, `altra_sede`: `undefined` significherebbe insieme
+ * «l'aggancio forte è qui» e «non ho potuto guardare», che sono opposti.
  */
 function conFatturazione(
   r: MovimentoRiga,
   pagamentoStato: string | null = null,
   fatturaStato: FatturaStato | null = null,
+  altraSede: AltraSedeUi | null = null,
 ): MovimentoArricchito {
-  return { ...r, pagamento_stato: pagamentoStato, fattura_stato: fatturaStato }
+  return { ...r, pagamento_stato: pagamentoStato, fattura_stato: fatturaStato, altra_sede: altraSede }
 }
 
 /**
@@ -508,8 +562,12 @@ function dettaglioErrore(e: unknown): { error_code: string; stato_errore?: numbe
  * tipizzati. La conversione è un adattatore, non una politica: dentro non c'è nessuna
  * decisione su che cosa sia «fatturato».
  */
-function perFatturazione(r: MovimentoArricchito): RigaFatturabile {
+function perFatturazione(r: MovimentoArricchito): RigaListaDiLavoro {
   return {
+    // Lo stato del MOVIMENTO, non della fattura: senza, chi compone la lista di
+    // lavoro dovrebbe rimetterci sopra la propria congiunzione — ed è la seconda
+    // copia che il lock esiste per impedire.
+    stato: r.stato,
     pagamento_id: typeof r.pagamento_id === 'string' && r.pagamento_id !== '' ? r.pagamento_id : null,
     pagamento_stato: r.pagamento_stato,
     fattura_stato: r.fattura_stato,
@@ -549,12 +607,13 @@ function filtraFattura(
   if (!fattura) return righe
   // `da_fatturare` pretende anche il movimento CONFERMATO e il pagamento SALDATO: su un
   // pagamento parziale la fattura non si emette, e mostrarlo fra i «da fatturare»
-  // manderebbe l'operatore contro un rifiuto. Il motore non lo sa e non deve saperlo:
-  // è una regola della LISTA DI LAVORO, non della fattura.
+  // manderebbe l'operatore contro un rifiuto. È una regola della LISTA DI LAVORO, non
+  // della fattura — e dal 2026-09-07 sta nel motore insieme all'altra, perché le caselle
+  // del lotto di fatture (`RiconciliazionePanel`) devono spuntare esattamente le righe
+  // che questo filtro mostra: la stessa congiunzione scritta in due file è la divergenza
+  // che il lock `fatturazione-riconciliazione-un-motore-solo` racconta di sé stesso.
   if (fattura === 'da_fatturare') {
-    return righe.filter(
-      (r) => r.stato === 'confermato' && r.pagamento_stato === 'pagato' && fatturaDaFare(perFatturazione(r)),
-    )
+    return righe.filter((r) => daFatturareInListaDiLavoro(perFatturazione(r)))
   }
   return righe.filter((r) => fatturaGiaFatta(perFatturazione(r)))
 }
@@ -692,10 +751,48 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
      * (`stato=confermato`, gli unici su cui la fatturazione esista) e si alza il tetto.
      */
     const filtroFattura = q.data.fattura
-    const limiteChiesto = filtroFattura ? LIMITE_FATTURAZIONE + 1 : LIMITE_REGISTRO
+    /**
+     * `?conteggi=1`: si conta, non si elenca. Stessa finestra e stesso motore del
+     * filtro — è l'unico modo perché il numero sulla pillola e l'elenco che la pillola
+     * apre non possano dire due cose diverse — ma con una SELECT leggera e `data: []`.
+     */
+    const soloConteggi = q.data.conteggi === '1'
+    // I due casi che guardano l'INTERO registro dei confermati, e non la sua ultima
+    // pagina: il filtro di fatturazione e il conteggio che lo precede.
+    const finestraFatturazione = Boolean(filtroFattura) || soloConteggi
+    const limiteChiesto = finestraFatturazione ? LIMITE_FATTURAZIONE + 1 : LIMITE_REGISTRO
+    /**
+     * LE COLONNE DEL CONTEGGIO SONO TRE, E `suggerimenti` NON È FRA LORO.
+     *
+     * `suggerimenti` è il JSONB della tabella — l'elenco dei candidati con nome del
+     * minore, punteggio e motivi — cioè di gran lunga la colonna più pesante di una
+     * riga di registro. Il motore della fatturazione non la guarda mai: gli servono
+     * `pagamento_id` (per legare il pagamento), `stato` (i confermati) e `id`. Chiederla
+     * per un conteggio vorrebbe dire trasportare fino a 5.000 blob per restituire due
+     * interi — e portarsi dietro nomi di minori che nessuno leggerà.
+     */
+    const COLONNE_CONTEGGIO = 'id, stato, pagamento_id'
+    const COLONNE_REGISTRO = 'id, import_id, scuola_id, data_operazione, importo, causale, controparte, stato, suggerimenti, pagamento_id, confermato_il'
+    /**
+     * ⚠️ IL CAST SU UNA STRINGA, ED È L'UNICO MODO DI TENERE INSIEME DUE COSE VERE.
+     *
+     * Il tipo di `.select()` di supabase-js PARSA le colonne a compile time, e
+     * pretende un LETTERALE: con un ternario fra due letterali gli arriva
+     * un'unione e `tsc` cade con un `ParserError`; allargando a `string` deduce
+     * `GenericStringError[]` e cade lo stesso, tre righe più sotto, con un
+     * messaggio che non nomina né la fatturazione né il conteggio.
+     *
+     * Si dichiara quindi la forma PIÙ RICCA (il registro intero) e la si
+     * restringe subito dopo a `MovimentoRiga`, dove ogni campo è opzionale: sul
+     * ramo del conteggio le colonne non chieste sono `undefined`, che è
+     * esattamente ciò che sono. Nessun codice raggiunto dal conteggio le legge —
+     * il motore della fatturazione guarda `stato`, `pagamento_id` e i due campi
+     * che gli appendiamo noi.
+     */
+    const colonne = (soloConteggi ? COLONNE_CONTEGGIO : COLONNE_REGISTRO) as typeof COLONNE_REGISTRO
     let query = supabase
       .from('riconciliazione_movimenti')
-      .select('id, import_id, scuola_id, data_operazione, importo, causale, controparte, stato, suggerimenti, pagamento_id, confermato_il')
+      .select(colonne)
       .order('data_operazione', { ascending: false })
       .limit(limiteChiesto)
     // `?fattura=` implica `stato=confermato` e lo IMPONE. Non contraddice `?stato=`: la
@@ -703,7 +800,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // righe anche filtrando in memoria (l'interfaccia infatti azzera il sottofiltro quando
     // si sceglie un altro stato). Imporlo qui serve alla FINESTRA: restringere la query è
     // ciò che permette di alzarne il tetto senza leggere tutto il registro.
-    const statoRichiesto = filtroFattura ? 'confermato' : q.data.stato
+    const statoRichiesto = finestraFatturazione ? 'confermato' : q.data.stato
     if (statoRichiesto) query = query.eq('stato', statoRichiesto)
     if (q.data.import_id) query = query.eq('import_id', q.data.import_id)
     if (q.data.da) query = query.gte('data_operazione', q.data.da)
@@ -711,12 +808,17 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
 
     const { data, error } = await query
     if (error) {
-      if (SCHEMA_MANCANTE.has(error.code ?? '')) return NextResponse.json({ success: true, data: [], disponibile: false })
+      if (SCHEMA_MANCANTE.has(error.code ?? '')) {
+        // Il registro non esiste su questo database: non c'è niente da contare, e
+        // `null` lo dice — uno zero direbbe «nessuna fattura da fare», che è un'altra
+        // affermazione e sarebbe falsa.
+        return NextResponse.json({ success: true, data: [], disponibile: false, ...(soloConteggi ? { conteggi: null } : {}) })
+      }
       return NextResponse.json({ error: 'Errore nel recupero dei movimenti' }, { status: 500 })
     }
     const lette = (data || []) as MovimentoRiga[]
     // La riga in più chiesta sopra non si mostra: serve solo a sapere che c'era.
-    const troncato = Boolean(filtroFattura) && finestraPiena(lette.length)
+    const troncato = finestraFatturazione && finestraPiena(lette.length)
     const finestra = lette.length > LIMITE_FATTURAZIONE ? lette.slice(0, LIMITE_FATTURAZIONE) : lette
     if (troncato) {
       // `warn`, non `info`: la lista di lavoro sta nascondendo delle righe, e chi la usa
@@ -728,7 +830,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
         // `tipo` è in lista bianca (`redact`) e dice QUALE taglio è pieno: una chiave
         // fuori lista uscirebbe `[redatto:str/12]`, cioè un campo che occupa posto e
         // non risponde a niente.
-        tipo: filtroFattura ?? '',
+        tipo: filtroFattura ?? (soloConteggi ? 'conteggi' : ''),
       })
     }
 
@@ -818,20 +920,71 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
 
 
     /**
-     * La risposta del GET, in un posto solo.
+     * I DUE NUMERI DELLE PILLOLE — o `null`, che è una risposta e non un guasto.
+     *
+     * ⚠️ REGOLA 1: se la fatturazione non si è potuta leggere si risponde `null`, mai
+     * `{ da_fatturare: 0, fatturate: 0 }`. Uno zero su una pillola è un'AFFERMAZIONE
+     * («non ne resta nessuna da fare») e qui non la sappiamo: un numero non letto è un
+     * numero inventato.
+     *
+     * ⚠️ REGOLA 2: se la finestra era piena i numeri escono lo stesso, ma con
+     * `parziale: true` — la schermata scriverà «≥ 12» e mai «12». Un minimo è vero e
+     * utile; un parziale che sembra un totale è la bugia peggiore di questa schermata,
+     * perché una fattura saltata non la ferma nessuna guardia.
+     *
+     * ⚠️ La TERZA regola non è qui, e non ci può stare: la pillola «Tutte» non porta
+     * nessun numero. Non è un bidone — è l'assenza del filtro — e contarci dentro la
+     * finestra corrente risponderebbe a una domanda diversa da quella che sembra.
+     * Quella regola vive dove si disegna la pillola (`numeroPillolaFattura`).
+     *
+     * Si conta chiedendo al MOTORE, con la stessa funzione che filtra: un `.filter()`
+     * scritto qui sarebbe la seconda tabella di verità che il lock
+     * `__tests__/architecture/fatturazione-riconciliazione-un-motore-solo.test.ts` vieta,
+     * e il numero sulla pillola potrebbe smentire l'elenco che la pillola apre.
+     */
+    function conteggiDi(arricchite: MovimentoArricchito[], fatturazioneDisponibile: boolean) {
+      if (!fatturazioneDisponibile) return null
+      return {
+        da_fatturare: filtraFattura(arricchite, 'da_fatturare').length,
+        fatturate: filtraFattura(arricchite, 'fatturate').length,
+        parziale: troncato,
+      }
+    }
+
+    /**
+     * La risposta del GET, in un posto solo — e riceve le righe ARRICCHITE, mai già
+     * filtrate.
+     *
+     * ⚠️ IL FILTRO È QUI DENTRO, E NON PER COMODITÀ. La regola «quando la fatturazione
+     * non si è potuta leggere NON si filtra» era una disciplina di chi scriveva il ramo:
+     * ogni `return` doveva ricordarsene, e il giorno in cui uno se ne dimenticò
+     * `?fattura=da_fatturare` rispose l'elenco VUOTO su righe il cui `fattura_stato` era
+     * `null` per costruzione — cioè «non c'è niente da fatturare» detto dalla funzione
+     * nata per impedire che una fattura venga saltata. Legandola al flag che DICHIARA il
+     * degrado, la regola non si può più dimenticare: `fatturazione_disponibile === false`
+     * significa insieme «non ho filtrato» e «te lo sto dicendo».
      *
      * `fatturazione_disponibile` esce SEMPRE, per la stessa ragione per cui escono sempre
      * `pagamento_stato` e `fattura_stato`: senza, il client non può distinguere «filtrato,
      * e non c'è niente» da «non ho potuto filtrare» — e le due cose a schermo diventavano
      * la stessa frase, «Nessun movimento in questo stato».
+     *
+     * ⚠️ E I DUE NUMERI SI CONTANO SULLE RIGHE NON FILTRATE, non su `dati`: sono le due
+     * risposte alla domanda «se premo questa pillola, quante ne trovo?», e una delle due
+     * riguarda sempre il bidone che in questo momento NON è aperto.
      */
-    const rispondi = (dati: MovimentoArricchito[], fatturazioneDisponibile: boolean) =>
-      NextResponse.json({
+    const rispondi = (arricchite: MovimentoArricchito[], fatturazioneDisponibile: boolean) => {
+      const dati = fatturazioneDisponibile ? filtraFattura(arricchite, filtroFattura) : arricchite
+      return NextResponse.json({
         success: true,
-        data: dati,
+        // Al conteggio le righe non servono: chiederle e poi buttarle sarebbe traffico
+        // pagato per niente su una finestra che arriva a 5.000.
+        data: soloConteggi ? [] : dati,
         fatturazione_disponibile: fatturazioneDisponibile,
         ...(troncato ? { troncato: true } : {}),
+        ...(soloConteggi ? { conteggi: conteggiDi(arricchite, fatturazioneDisponibile) } : {}),
       })
+    }
 
     // I PAGAMENTI DA RISOLVERE SONO DUE INSIEMI, e servono due cose diverse.
     //   · quelli citati dai SUGGERIMENTI → per minimizzare i label (nomi di minori);
@@ -851,7 +1004,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // lo stesso — e la fatturazione è «disponibile»: non c'è nessun guasto da dichiarare,
     // il filtro ha guardato tutto ciò che c'era.
     if (pagIds.length === 0) {
-      return rispondi(filtraFattura(righe.map((r) => conFatturazione(r)), filtroFattura), true)
+      return rispondi(righe.map((r) => conFatturazione(r)), true)
     }
 
     const sediAttive = new Set(await resolveScuoleAttive(request, supabase, auth.user))
@@ -884,6 +1037,12 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
         // e distingue «due righe» da «tutto il registro».
         confermate_senza_stato: confermateConPagamento.length,
       }, errSedi)
+      // ⚠️ E `altra_sede` RESTA `null` SU TUTTE LE RIGHE (è il default di
+      // `conFatturazione`), che è la terza conseguenza della stessa query caduta e
+      // merita di essere detta: senza la mappa non si sa né chi è dentro né chi è
+      // fuori, quindi «questo bonifico sembra di un'altra sede» qui sarebbe un
+      // verdetto INVENTATO — e nominerebbe un plesso a caso a una segreteria che
+      // non ha modo di verificarlo. Il campo esce lo stesso, a `null`: «non lo so».
       const oscurati = righe.map((r) =>
         conFatturazione(
           r.suggerimenti ? { ...r, suggerimenti: r.suggerimenti.map((s) => ({ ...s, label: null })) } : r,
@@ -899,13 +1058,109 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
        * funzione nata per impedire che una fattura venga saltata. `null` vuol dire «non lo
        * so» e non si può leggere come «no».
        *
-       * Si risponde con le righe NON filtrate e `fatturazione_disponibile: false`: il client
-       * mostra la lista intera e dice, sopra, che il filtro non è stato applicato.
+       * Il `false` qui sotto è ciò che lo IMPEDISCE, e non solo ciò che lo dichiara: da
+       * quando i due numeri delle pillole si contano nella stessa funzione, `rispondi`
+       * salta il filtro esattamente quando la fatturazione non è disponibile — e per la
+       * stessa ragione i conteggi escono `null` invece che a zero. Il client mostra la
+       * lista intera, non scrive nessun numero, e dice sopra che il filtro non è stato
+       * applicato.
        */
       return rispondi(oscurati, false)
     }
     const pagDi = new Map(pagSedi.map((p) => [p.id, p]))
-    const minimizzate = righe.map((r) => {
+
+    /**
+     * ─── «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» (2026-09-07) ──────────────
+     *
+     * IL DIFETTO, misurato in produzione: i suggerimenti si calcolano contro i
+     * pagamenti aperti di TUTTE le sedi — deliberato, l'estratto conto della
+     * banca è unico — ma qui sotto si tengono solo quelli della PROPRIA sede.
+     * Rimisurato il 2026-09-07: su 236 movimenti con suggerimenti, 86 hanno
+     * candidati in più plessi e, per l'operatore di Giugliano, **64 righe non
+     * confermate hanno l'aggancio forte altrove e candidati locali deboli** — 64
+     * righe che lo invitavano a registrare l'incasso sulla voce di un bambino di
+     * un altro plesso. (I «234 / 85 / 67» scritti qui prima erano di qualche ora
+     * prima e comprendevano le confermate: il registro cresce, e un numero senza
+     * data né perimetro invecchia in silenzio.)
+     *
+     * ⚠️ IL VERDETTO SI CALCOLA QUI, PRIMA DEL `.filter()` QUI SOTTO. Dopo,
+     * l'informazione non c'è più: il filtro toglie proprio i candidati fuori sede
+     * su cui la domanda si pone. Non è una preferenza d'ordine, è l'unico punto
+     * in cui il dato esiste.
+     *
+     * ⚠️ COSTA ZERO QUERY: la mappa `pagamento → scuola_id` è quella che la batch
+     * qui sopra ha già letto per minimizzare i label. La sola lettura in più è
+     * quella dei NOMI delle sedi nominate, e solo quando ce n'è almeno una.
+     *
+     * La regola (soglia, distacco, ignoti, cf_match) vive tutta in
+     * `agganciaFuoriSede`, con le STESSE due soglie del matcher: qui c'è solo
+     * l'adattatore fra la riga come torna da PostgREST — dove `score` e
+     * `cf_match` sono `unknown`, perché `suggerimenti` è un JSONB — e i candidati
+     * che la funzione pura si aspetta.
+     *
+     * ⚠️ SU UNA RIGA GIÀ CONFERMATA NON SI CHIEDE NIENTE, e non è un'ottimizzazione.
+     * Questo campo esiste per impedire un abbinamento sbagliato PRIMA che venga
+     * fatto — il riquadro del popup vive dentro `{puoAbbinare && …}`, il chip di
+     * riga dice «questa non la lavori tu». Su una riga confermata la scelta è
+     * fatta e i `suggerimenti` sono la fotografia dell'import: calcolare il
+     * verdetto lì marcava «sembra di un'altra sede» anche la riga PIÙ
+     * correttamente lavorata che esista — confermata su un pagamento della propria
+     * sede. Restava invisibile solo perché nessuno montava il chip; montandolo
+     * (2026-09-07) sarebbe diventato un falso allarme su una riga giusta.
+     * `ignorato` invece resta: quella riga si può ancora abbinare.
+     */
+    const verdetti = righe.map((r) =>
+      r.stato === 'confermato' ? null : agganciaFuoriSede(
+        (r.suggerimenti ?? []).map((s) => ({
+          pagamento_id: s.pagamento_id,
+          score: Number(s.score) || 0,
+          cf_match: s.cf_match === true,
+        })),
+        (pagamentoId: string) => pagDi.get(pagamentoId)?.scuola_id,
+        sediAttive,
+      ),
+    )
+
+    /**
+     * IL NOME DELLA SEDE — una `.in()` sugli id distinti, come fa `GET /api/pagamenti`.
+     *
+     * Nessun blocco da 100 qui, e non per dimenticanza: le sedi dell'intero
+     * registro sono TRE (più le due di prova), quindi `idSediFuori` non può
+     * superare quel numero — la request line resta di poche decine di byte, e il
+     * 431 che ha imposto `aBlocchi` sui pagamenti non è raggiungibile.
+     *
+     * ⚠️ IL DEGRADO È `nome: null`, MAI UNA STRINGA INVENTATA: la schermata dirà
+     * «sembra di un'altra sede» senza nominarla, che è vero. Un placeholder tipo
+     * «un'altra sede» scritto qui sarebbe indistinguibile da un nome davvero
+     * letto, e il giorno in cui una sede si chiamasse così nessuno lo saprebbe.
+     * `warn` e non `info`: la schermata sta perdendo un dato che aveva.
+     */
+    const idSediFuori = [...new Set(
+      verdetti.filter((v): v is VerdettoAltraSede => v !== null).map((v) => v.scuola_id),
+    )]
+    const nomiSedi = new Map<string, string>()
+    if (idSediFuori.length > 0) {
+      // PostgREST non lancia: l'errore sta nel valore di ritorno, e si guarda.
+      const { data: sedi, error: errNomi } = await supabase.from('scuole').select('id, nome').in('id', idSediFuori)
+      if (errNomi || !sedi) {
+        logEvento('pagamento', 'warn', {
+          operazione: OPERAZIONE_GET,
+          esito: 'sedi_nome_non_risolto',
+          n: idSediFuori.length,
+          ...dettaglioErrore(errNomi),
+        }, errNomi)
+      } else {
+        for (const s of sedi as { id: string; nome: string | null }[]) {
+          if (typeof s.nome === 'string' && s.nome.trim() !== '') nomiSedi.set(s.id, s.nome)
+        }
+      }
+    }
+
+    const minimizzate = righe.map((r, i) => {
+      const verdetto = verdetti[i]
+      const altraSede: AltraSedeUi | null = verdetto
+        ? { nome: nomiSedi.get(verdetto.scuola_id) ?? null }
+        : null
       const conSuggerimenti = r.suggerimenti
         ? {
             ...r,
@@ -949,10 +1204,10 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
         : undefined
       const visibile = pag != null && pag.scuola_id != null && sediAttive.has(pag.scuola_id)
       return visibile
-        ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato))
-        : conFatturazione(conSuggerimenti)
+        ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato), altraSede)
+        : conFatturazione(conSuggerimenti, null, null, altraSede)
     })
-    return rispondi(filtraFattura(minimizzate, filtroFattura), true)
+    return rispondi(minimizzate, true)
   } catch (err) {
     logErrore({ operazione: OPERAZIONE_GET, stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

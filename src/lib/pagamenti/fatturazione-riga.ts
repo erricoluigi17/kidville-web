@@ -191,3 +191,48 @@ export function fatturaDaFare(m: RigaFatturabile): boolean {
   const esito = esitoFatturazione(m)
   return esito != null && TONI_DA_FARE.has(esito.tono)
 }
+
+/**
+ * La riga come la vede chi compone la LISTA DI LAVORO: quella della fattura, più
+ * lo stato del MOVIMENTO in registro.
+ *
+ * `stato` non c'entra con la fattura — è l'abbinamento del bonifico — e per questo
+ * non sta in `RigaFatturabile`: chi chiede «che fattura risulta di questa riga»
+ * non deve sapere che esistono i movimenti da abbinare.
+ */
+export interface RigaListaDiLavoro extends RigaFatturabile {
+  /** `riconciliazione_movimenti.stato`: solo un movimento CONFERMATO ha un pagamento. */
+  stato?: string | null
+}
+
+/**
+ * ─── «QUESTA RIGA STA NELL'ELENCO DELLE FATTURE DA FARE» ─────────────────────
+ *
+ * Non è `fatturaDaFare` con qualcosa attorno: è la regola INTERA, e sta qui
+ * perché la leggono in due — il sottofiltro `?fattura=da_fatturare` della rotta
+ * (`filtraFattura`) e le caselle di selezione del lotto (`selezionabile` in
+ * `RiconciliazionePanel`). Fino al 2026-09-07 esisteva scritta due volte, parola
+ * per parola, e le due copie coincidevano: è esattamente lo stato in cui si
+ * trovavano `chipFatturazione` e la rotta il giorno prima di divergere.
+ *
+ * LE TRE CONDIZIONI IN PIÙ RISPETTO ALLA FATTURA, e perché ciascuna:
+ *  · `stato === 'confermato'` — un movimento non abbinato non ha nessun pagamento
+ *    da fatturare;
+ *  · `pagamento_id` — senza, il documento che si vedesse sulla riga sarebbe
+ *    comunque roba d'altri;
+ *  · `pagamento_stato === 'pagato'` — su un pagamento parziale la fattura non si
+ *    emette (400 `non_saldato`), e mostrarlo fra i «da fatturare» manderebbe
+ *    l'operatore contro un rifiuto. Fuori dalle proprie sedi quel campo arriva
+ *    `null` per minimizzazione, quindi la stessa condizione tiene fuori anche i
+ *    bonifici di un altro plesso — che l'emissione respingerebbe con
+ *    `assertPagamentoInScope` dopo che il pre-volo li ha dichiarati «pronti».
+ *
+ * ⚠️ NON è un doppione di `fatturaDaFare`, ed è il motivo per cui quest'ultima
+ * resta esportata da sola: il CHIP la usa senza queste tre condizioni, perché una
+ * riga di un altro plesso col documento scartato il chip deve mostrarla — il
+ * registro è l'estratto conto unico del titolare, cross-sede per progetto — e
+ * semplicemente non la si può spuntare.
+ */
+export function daFatturareInListaDiLavoro(r: RigaListaDiLavoro): boolean {
+  return r.stato === 'confermato' && !!r.pagamento_id && r.pagamento_stato === 'pagato' && fatturaDaFare(r)
+}

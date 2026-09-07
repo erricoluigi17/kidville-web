@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Stethoscope } from 'lucide-react';
 import { useLabelRuolo } from '@/lib/auth/ruoli';
 import type { Student } from './StudentTable';
 import { formattaIstante } from '@/i18n/config';
@@ -65,9 +65,14 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
     const labelRuolo = useLabelRuolo();
     const cognome = student.cognome || student.last_name || '—';
     const nome = student.nome || student.first_name || '';
-    // Dal 2026-07-31 la lista riceve solo il SEGNALE (`ha_note_mediche`), non il
-    // testo: `note_mediche` resta come ripiego per chi passa il record completo.
-    const hasAllergie = student.ha_note_mediche ?? !!student.note_mediche;
+    // Dal 2026-07-31 la lista riceve solo i SEGNALI, non il testo: `note_mediche`
+    // resta come ripiego per chi passa il record completo.
+    //
+    // ⚠️ Dal 2026-09-07 i segnali sono DUE, e il badge «Allergie» non ripiega più
+    // sulla nota medica: era quello il difetto — «Note Mediche (BES, DSA,
+    // patologie)» accendeva un badge che diceva «Allergie».
+    const hasAllergie = !!student.ha_allergie;
+    const hasNotaMedica = student.ha_note_mediche ?? !!student.note_mediche;
     const hasBes = !!student.bes;
     const showCheckbox = currentTypeFilter !== 'staff';
 
@@ -169,14 +174,21 @@ export function StudentRowCard({ student, isSelected, onToggleSelect, onClick, c
                 </div>
             </div>
 
-            {currentTypeFilter === 'child' && (hasAllergie || hasBes) && (
-                <div className="mt-2 flex items-center gap-1.5">
+            {currentTypeFilter === 'child' && (hasAllergie || hasNotaMedica || hasBes) && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
                     {hasAllergie && (
-                        // Solo un flag di presenza: la nota medica GREZZA (dato art. 9
-                        // GDPR di un minore) non finisce mai in un attributo DOM — il
-                        // dettaglio vive solo dietro la scheda alunno.
-                        <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergieNotePresenti')}>
+                        // Solo un flag di presenza: il testo GREZZO (dato art. 9 GDPR di
+                        // un minore) non finisce mai in un attributo DOM — il dettaglio
+                        // vive solo dietro la scheda alunno.
+                        <span className="text-kidville-error text-xs font-maven font-bold flex items-center gap-0.5" title={t('allergiePresenti')}>
                             <AlertTriangle size={12} /> {t('allergie')}
+                        </span>
+                    )}
+                    {hasNotaMedica && (
+                        // Icona e tono diversi dall'allergia: sono due cose, e finché si
+                        // somigliavano venivano lette come una sola.
+                        <span className="text-kidville-info text-xs font-maven font-bold flex items-center gap-0.5" title={t('notaMedicaPresente')}>
+                            <Stethoscope size={12} /> {t('notaMedica')}
                         </span>
                     )}
                     {hasBes && (

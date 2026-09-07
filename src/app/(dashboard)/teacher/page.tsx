@@ -12,6 +12,10 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
+import {
+  haAllergiaOperativa, allergeniAlunno, chiaviAllergeni, isNegazione, testoResiduoAllergie,
+  allergeneEmoji, useAllergeneLabel,
+} from '@/lib/mensa/allergeni';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { HeroCard } from '@/components/features/shell/HeroCard';
 import { GradeWorldSwitch } from '@/components/features/teacher/GradeWorldSwitch';
@@ -48,7 +52,17 @@ type SezioneChip = {
   scuolaNome: string;
   school_type: string | null;
 };
-type Student = { id: string; nome: string; cognome: string; note_mediche: string | null; consenso_privacy: boolean };
+type Student = {
+  id: string;
+  nome: string;
+  cognome: string;
+  note_mediche: string | null;
+  /** Le due colonne delle ALLERGIE, che sono un'altra cosa dalla nota medica:
+   *  chiavi spuntate + testo libero. Arrivano da `/api/diary/students`. */
+  allergeni?: string[] | null;
+  allergies?: string | null;
+  consenso_privacy: boolean;
+};
 type Avviso = {
   id: string; titolo: string; contenuto: string; tipo: string;
   author?: { first_name?: string; last_name?: string };
@@ -201,9 +215,37 @@ function TeacherDashboardInner() {
 
   // derivati
   const studentCount = students.length;
-  const allergie = students.filter(
-    (s) => s.note_mediche && s.note_mediche.trim() !== '' && !/nessuna/i.test(s.note_mediche),
-  );
+  // ── DUE GRUPPI, PERCHÉ SONO DUE COSE ─────────────────────────────────────
+  // Il riquadro si chiama «Allergie e note mediche» da sempre, ma di allergie
+  // non sapeva niente: filtrava `note_mediche`, cioè la casella che il modulo
+  // d'iscrizione etichetta «Note Mediche (BES, DSA, patologie)». Misurato in
+  // produzione il 2026-09-07 su 657 iscritti: ZERO delle 44 note mediche nomina
+  // un allergene, e 29 bambini comparivano qui senza avere un'allergia.
+  //
+  // Ora il primo gruppo viene dagli ALLERGENI col predicato del motore, e il
+  // secondo resta la nota medica, col criterio di prima. Il conteggio nella frase
+  // è quello delle ALLERGIE: è il gruppo che il titolo nomina per primo.
+  //
+  // ⚠️ QUESTO È UN ELENCO, NON UN CONTATORE, e il predicato è quello largo. Con
+  // `haAllergiaConteggiabile` (i soli 14 UE) l'appartenenza si decideva con la
+  // regola dei numeri: misurato in produzione il 2026-09-07, 57 bambini hanno una
+  // restrizione scritta e non negata e solo 27 la nominano fra i 14 — gli altri
+  // **30 sparivano da questa card**, benché la riga qui sotto sappia già mostrare
+  // il testo libero accanto alle etichette. Chi conta davvero (la StatCard
+  // dell'anagrafica, il segnale `ha_allergie` della rotta) resta sui 14 UE: lì la
+  // domanda è «quanti», qui è «chi, e cosa non gli si dà».
+  const allergie = students.filter((s) => haAllergiaOperativa(s));
+  // ⚠️ ANCHE QUI LA NEGAZIONE LA DECIDE IL MOTORE. Il filtro era
+  // `!/nessuna/i.test(s.note_mediche)`: la stessa regex a SOTTOSTRINGA che il
+  // motore vieta per iscritto perché «cancella un bambino vero», applicata alla
+  // colonna sanitaria più delicata dell'anagrafica. «Epilessia, nessuna terapia
+  // in corso» spariva per intero da questa card. Misurato in produzione il
+  // 2026-09-07: 44 note mediche, 3 contengono «nessun», nessuna più lunga della
+  // sola parola — era latente, e una trappola latente su BES, epilessie e
+  // terapie salvavita resta una trappola. `isNegazione` copre anche il vuoto e
+  // gli spazi: `isNegazione(null)` è `true`, «non c'è niente da elencare».
+  const noteMediche = students.filter((s) => !isNegazione(s.note_mediche));
+  const etichettaAllergene = useAllergeneLabel();
   const appelloFatto = presenze.length > 0;
   const presenti = presenze.filter((p) => p.stato && p.stato !== 'assente').length;
   const assenti = presenze.filter((p) => p.stato === 'assente').length;
@@ -332,8 +374,11 @@ function TeacherDashboardInner() {
         </section>
       )}
 
-      {/* ── BANNER ALLERGIE DEL GIORNO (DR AllergieBanner) ── */}
-      {allergie.length > 0 && (
+      {/* ── BANNER ALLERGIE E NOTE MEDICHE (DR AllergieBanner) ──
+           Una card sola, DUE gruppi. Il titolo prometteva due cose e il contenuto
+           ne mostrava una: l'elenco filtrava `note_mediche` — la casella «Note
+           Mediche (BES, DSA, patologie)» — e la chiamava «allergie». */}
+      {(allergie.length > 0 || noteMediche.length > 0) && (
         <section className="mt-5">
           <div className="overflow-hidden rounded-[20px] bg-white"
             style={{ boxShadow: 'inset 0 0 0 1.6px var(--color-kidville-cream-dark), 0 10px 26px -18px rgba(120,80,10,.4)' }}>
@@ -345,28 +390,105 @@ function TeacherDashboardInner() {
               <div className="min-w-0 flex-1">
                 <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
                 <div className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">
-                  {t(isPrimariaOnly ? 'allergieDaSeguireClasse' : 'allergieDaSeguireSezione', { count: allergie.length, sezione: nomeSezione })}
+                  {/* ── IL SOTTOTITOLO DICE ENTRAMBI I NUMERI ───────────────────
+                      MISURATO sullo screenshot del 2026-09-07: il titolino diceva
+                      «3 bambini da seguire · sezione 2 ANNI» sopra un elenco di
+                      CINQUE nomi — tre con allergie, due con note mediche. Il
+                      conteggio era giusto (le allergie sono il gruppo che il
+                      titolo nomina per primo) e proprio per questo si leggeva
+                      come un difetto del programma: due numeri diversi a due
+                      centimetri, e nessuna parola a legarli.
+
+                      Ora la frase nomina i due gruppi. Ogni metà compare solo se
+                      il suo gruppo esiste: «0 con allergie · 2 con note mediche»
+                      sarebbe un conteggio a zero stampato sopra un elenco pieno,
+                      cioè il difetto di prima al contrario. La composizione è in
+                      JS perché è un ELENCO di frammenti, non una frase con due
+                      variabili: un ICU che debba anche far sparire una metà
+                      diventa un `plural` annidato che nessun traduttore rilegge.
+                      Il lessico resta quello della schermata — «classe» per la
+                      primaria, «sezione» per lo 0-6 — e vive nell'ultimo
+                      frammento, come nelle chiavi che c'erano prima. */}
+                  {[
+                    allergie.length > 0 ? t('allergieConta', { count: allergie.length }) : null,
+                    noteMediche.length > 0 ? t('noteMedicheConta', { count: noteMediche.length }) : null,
+                    t(isPrimariaOnly ? 'allergieGruppoClasse' : 'allergieGruppoSezione', { sezione: nomeSezione }),
+                  ].filter((p): p is string => p !== null).join(' · ')}
                 </div>
               </div>
             </div>
-            <div className="px-2.5 pb-1 pt-1">
-              {allergie.map((s, i) => (
-                <div key={s.id} className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-yellow-dark" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
-                  </div>
-                  {/* La NOTA MEDICA di un bambino non è un accento cromatico:
-                      su `cream-dark` il giallo scuro stava a 1,59:1 — il
-                      contrasto più basso di tutta l'app, proprio sull'unica riga
-                      che un docente deve poter leggere di sfuggita. `ink` la
-                      porta a 9,51:1 (AAA). */}
-                  <span className="inline-flex max-w-[55%] items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
-                    {s.note_mediche}
-                  </span>
+            {allergie.length > 0 && (
+              <div className="px-2.5 pb-1 pt-1">
+                <div className="px-1.5 pt-2 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-sub">
+                  {t('gruppoAllergie')}
                 </div>
-              ))}
-            </div>
+                {allergie.map((s, i) => {
+                  // Le chiavi riconosciute con emoji ed etichetta tradotta, PIÙ il
+                  // testo libero così com'è: «fragole» o «nichel» non sono fra i 14
+                  // UE e sparirebbero, e a chi sta in classe non si nasconde niente.
+                  //
+                  // L'unione è di due insiemi: le chiavi COME STANNO IN ARCHIVIO
+                  // (anche fuori dalle 14, che `normalizzaAllergeni` scarterebbe in
+                  // silenzio lasciando una riga col solo nome) e quelle inferite dal
+                  // testo quando l'archivio è vuoto — che è ciò che fa
+                  // `allergeniAlunno`, e per cui «lattosio» diventa «Latte / lattosio».
+                  const chiavi = Array.from(new Set([...chiaviAllergeni(s), ...allergeniAlunno(s)]));
+                  // ⚠️ IL TESTO MOSTRA SOLO CIÒ CHE I CHIP NON DICONO GIÀ. Misurato
+                  // sullo screenshot del 2026-09-07: accanto al chip «🥜 ARACHIDI»
+                  // c'era la parola «arachidi», e accanto a «🥛 LATTE / LATTOSIO» il
+                  // testo «LATTOSIO, FRAGOLE» — lo stesso dato due volte sulla stessa
+                  // riga, in una colonna larga il 58% dello schermo di un telefono.
+                  // La regola sta nel motore (`testoResiduoAllergie`) e non qui:
+                  // è la stessa disciplina di `etichetteAllergie`, e il lock
+                  // `allergie-un-motore-solo` pretende che ci resti. Residuo vuoto ⇒
+                  // nessun testo: il chip ha già detto tutto.
+                  const residuo = testoResiduoAllergie(s.allergies, chiavi);
+                  return (
+                    <div key={s.id} data-testid="teacher-allergia-riga" className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-error" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
+                      </div>
+                      <div className="flex max-w-[58%] flex-wrap items-center justify-end gap-1">
+                        {chiavi.map((k) => (
+                          <span key={k} className="inline-flex items-center gap-0.5 truncate rounded-pill bg-kidville-error-soft px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
+                            <span aria-hidden="true">{allergeneEmoji(k)}</span> {etichettaAllergene(k)}
+                          </span>
+                        ))}
+                        {residuo !== '' && (
+                          <span className="inline-flex items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
+                            {residuo}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {noteMediche.length > 0 && (
+              <div className="border-t border-kidville-line px-2.5 pb-1 pt-1">
+                <div className="px-1.5 pt-2 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-sub">
+                  {t('gruppoNoteMediche')}
+                </div>
+                {noteMediche.map((s, i) => (
+                  <div key={s.id} className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-yellow-dark" />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
+                    </div>
+                    {/* La NOTA MEDICA di un bambino non è un accento cromatico:
+                        su `cream-dark` il giallo scuro stava a 1,59:1 — il
+                        contrasto più basso di tutta l'app, proprio sull'unica riga
+                        che un docente deve poter leggere di sfuggita. `ink` la
+                        porta a 9,51:1 (AAA). */}
+                    <span className="inline-flex max-w-[55%] items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
+                      {s.note_mediche}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
             <Link href={withUser(isPrimariaOnly ? '/teacher/primaria' : '/teacher/diary')}
               className="flex w-full items-center justify-center gap-1.5 border-t border-kidville-line bg-kidville-cream py-2.5 font-barlow text-xs font-extrabold uppercase tracking-wide text-kidville-green">
               {isPrimariaOnly ? <BookOpen size={15} /> : <NotebookPen size={15} />}

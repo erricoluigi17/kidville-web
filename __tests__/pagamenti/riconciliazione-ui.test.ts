@@ -11,9 +11,14 @@ import {
   FILTRI,
   chipFatturazione,
   CHIP_FATTURAZIONE,
+  CHIP_ALTRA_SEDE,
   classiChipFatturazione,
+  classiChipAltraSede,
   FRASE_FATTURAZIONE,
   FILTRI_FATTURA,
+  numeroPillolaFattura,
+  etichettaConteggio,
+  type ConteggiFattura,
   type SuggerimentoUi,
   type EsitoImport,
   type MovimentoUi,
@@ -536,6 +541,7 @@ describe('i testi della Riconciliazione esistono in italiano e in inglese', () =
     for (const p of Object.values(CHIP_FATTURAZIONE)) out.add(p.labelKey)
     for (const k of Object.values(FRASE_FATTURAZIONE)) out.add(k)
     for (const f of FILTRI_FATTURA) out.add(f.labelKey)
+    out.add(CHIP_ALTRA_SEDE.labelKey)
     return [...out]
   }
 
@@ -707,3 +713,148 @@ describe('esitoFatturazione — chip e filtro leggono la stessa tabella di verit
 // Qui restano le prove di COMPORTAMENTO (le 75 combinazioni, il caso velenoso, la
 // partizione dei quattro toni): la regola «di copie ce n'è una» è un'altra cosa,
 // e si legge in un altro posto.
+
+/**
+ * ─── IL CHIP «ALTRA SEDE»: DECLASSARE, MAI NASCONDERE ────────────────────────
+ *
+ * Quando l'aggancio forte è su un altro plesso, la riga lo dice con un chip di
+ * TESTO. Tre vincoli, e ognuno ha già costato qualcosa a questo repository:
+ *
+ *  · NON è un quinto tono di `CHIP_FATTURAZIONE`. Aggiungerlo lì farebbe cadere
+ *    in cascata `TonoFatturazione`, il `Record` totale `FRASE_FATTURAZIONE` e i
+ *    75 casi del prodotto cartesiano — e soprattutto direbbe una cosa falsa:
+ *    «sembra di un'altra sede» non è uno stato della FATTURA, è un'altra domanda;
+ *  · MAI giallo né rosso. In questa schermata quei due colori sono riservati a
+ *    ciò che chiede un'azione a CHI GUARDA (v. le regole HC di `globals.css`), e
+ *    qui l'azione non c'è: il bonifico si abbina dalla sede dell'aggancio;
+ *  · l'àncora `kv-recon-chip` è OBBLIGATORIA. È lei che in Alto Contrasto dipinge
+ *    carta bianca + inchiostro nero + contorno, ed è lei che salva l'inchiostro
+ *    dal `:not(.kv-recon-chip)` delle righe. Senza, il chip eredita il ribaltamento
+ *    della riga e sparisce. Nessuna riga nuova in `globals.css`: l'àncora esiste.
+ */
+describe('chip «altra sede» — un chip di testo, e nessun quinto tono', () => {
+  it('è carta bianca con inchiostro `ink`, e la sua etichetta è una CHIAVE di catalogo', () => {
+    expect(CHIP_ALTRA_SEDE.bg).toBe('bg-kidville-white')
+    expect(CHIP_ALTRA_SEDE.testo).toBe('text-kidville-ink')
+    expect(CHIP_ALTRA_SEDE.labelKey).toBe('reconChipAltraSede')
+  })
+
+  it('porta l’àncora `kv-recon-chip`, la sua pelle e la geometria a pillola della riga', () => {
+    const classi = classiChipAltraSede()
+    expect(classi).toContain('kv-recon-chip')
+    expect(classi).toContain('bg-kidville-white')
+    expect(classi).toContain('text-kidville-ink')
+    expect(classi).toContain('rounded-pill')
+    expect(classi).toContain('font-barlow')
+  })
+
+  it('MAI giallo né rosso: questo chip non chiede un’azione a chi lo legge', () => {
+    const classi = classiChipAltraSede()
+    expect(classi).not.toContain('kidville-yellow')
+    expect(classi).not.toContain('kidville-error')
+    expect(classi).not.toContain('kidville-warn')
+  })
+
+  it('nessuna opacità e nessun grigio `muted` (la lezione già pagata dal semaforo)', () => {
+    const classi = classiChipAltraSede()
+    expect(classi).not.toContain('text-kidville-muted')
+    expect(classi).not.toMatch(/(?:bg|text|border)-kidville-[a-z-]+\//)
+  })
+
+  /**
+   * Un VESTITO SOLO: la geometria è quella del chip di fatturazione, non una
+   * seconda copia da tenere allineata.
+   *
+   * ⚠️ E UNA VARIANTE SOLA. Fino al 2026-09-07 questo caso collaudava anche
+   * `classiChipAltraSede(true)`, la «carta del popup» — che nessun punto di `src/`
+   * ha mai reso: nel popup il verdetto è una `<section>` di testo, non un chip.
+   * Era superficie morta tenuta viva dal test, cioè esattamente ciò che poi va
+   * riallineato a ogni cambio di geometria senza che niente a schermo lo mostri.
+   * Il parametro è stato tolto: se un giorno il popup vorrà il chip, torna qui
+   * insieme al punto che lo monta.
+   */
+  it('condivide la geometria a pillola del chip di fatturazione', () => {
+    const riga = classiChipAltraSede().split(' ')
+    const rigaFat = classiChipFatturazione(CHIP_FATTURAZIONE.fatturata).split(' ')
+    // stessa geometria: le uniche differenze ammesse sono quelle di PELLE
+    const soloGeometria = (a: string[], b: string[]) =>
+      a.filter((x) => !b.includes(x)).filter((x) => !x.includes('kidville') && !x.includes('kv-recon-chip--'))
+    expect(soloGeometria(riga, rigaFat)).toEqual([])
+    expect(soloGeometria(rigaFat, riga)).toEqual([])
+    // …e NON quella della carta: il filetto e gli angoli quadri restano dei chip di fatturazione
+    expect(riga).not.toContain('border-current')
+    expect(riga).toContain('rounded-pill')
+  })
+
+  it('NON aggiunge un quinto tono a `CHIP_FATTURAZIONE` (i toni restano quattro)', () => {
+    expect(Object.keys(CHIP_FATTURAZIONE).sort()).toEqual(['attesa', 'da_fatturare', 'fatturata', 'scartata'])
+    expect(Object.keys(FRASE_FATTURAZIONE).sort()).toEqual(['attesa', 'da_fatturare', 'fatturata', 'scartata'])
+  })
+})
+
+/**
+ * ─── I NUMERI SULLE PILLOLE, E LE TRE COSE CHE UN NUMERO PUÒ MENTIRE ─────────
+ *
+ * Le pillole dicevano solo il proprio nome: per sapere quante fatture restassero
+ * bisognava premerle una per una. Il numero c'è, e queste due funzioni pure sono
+ * il posto in cui si decide QUANDO scriverlo e COME.
+ *
+ *  1. `conteggi === null` (il server non ha potuto leggere lo stato di
+ *     fatturazione) → nessun numero. Non uno «0», non un «—», non uno spazio
+ *     riservato: uno zero dove il dato manca è la stessa bugia di «Nessun
+ *     movimento in questo stato»;
+ *  2. `parziale` (la finestra del server era piena) → «≥ 12», mai «12». Un minimo
+ *     è vero e utile; un parziale che sembra un totale è la bugia peggiore di
+ *     questa schermata, perché una fattura saltata non la ferma nessuna guardia;
+ *  3. «Tutte» non porta nessun numero. Non è un bidone — è l'ASSENZA del filtro —
+ *     e un numero lì conterebbe la finestra corrente, che cambia col filtro di
+ *     stato: risponderebbe a una domanda diversa da quella che sembra.
+ */
+describe('numeroPillolaFattura / etichettaConteggio — il numero sulle pillole', () => {
+  const conteggi: ConteggiFattura = { da_fatturare: 12, fatturate: 7, parziale: false }
+
+  it('ogni bidone porta il PROPRIO numero', () => {
+    expect(numeroPillolaFattura('da_fatturare', conteggi)).toBe(12)
+    expect(numeroPillolaFattura('fatturate', conteggi)).toBe(7)
+  })
+
+  it('«Tutte» non porta nessun numero, nemmeno quando i conteggi ci sono', () => {
+    // La pillola vuota è l'assenza del filtro: la somma dei due bidoni non è il
+    // suo contenuto (le righe senza chip non stanno in nessuno dei due), e la
+    // finestra che conterebbe cambia col filtro di STATO.
+    expect(numeroPillolaFattura('', conteggi)).toBeNull()
+  })
+
+  it('conteggi assenti → nessun numero da nessuna parte (mai uno zero)', () => {
+    for (const id of ['', 'da_fatturare', 'fatturate'] as const) {
+      expect(numeroPillolaFattura(id, null)).toBeNull()
+    }
+  })
+
+  it('uno ZERO vero si scrive: «non ne resta nessuna» è un\u2019informazione', () => {
+    // ⚠️ Lo zero LETTO è l'opposto dello zero INVENTATO: qui il server ha guardato
+    // e ha contato zero. Nasconderlo lascerebbe la pillola identica al caso in cui
+    // non si sa niente, che è il difetto da cui nasce tutto questo.
+    expect(numeroPillolaFattura('da_fatturare', { da_fatturare: 0, fatturate: 3, parziale: false })).toBe(0)
+  })
+
+  it('finestra piena → «≥ n», e il numero secco resta al caso in cui è un totale', () => {
+    expect(etichettaConteggio(12, true)).toBe('≥ 12')
+    expect(etichettaConteggio(12, false)).toBe('12')
+  })
+
+  it('lo stesso numero non si può leggere in due modi: il segno c\u2019è o non c\u2019è', () => {
+    expect(etichettaConteggio(0, false)).toBe('0')
+    expect(etichettaConteggio(0, true)).toBe('≥ 0')
+  })
+
+  it('gli id dei bidoni sono quelli di FILTRI_FATTURA: nessuna terza lista', () => {
+    // Se un giorno nascesse una quarta pillola, questo test cade qui invece che a
+    // schermo con un numero muto accanto a un\u2019etichetta nuova.
+    expect(FILTRI_FATTURA.map((f) => f.id)).toEqual(['', 'da_fatturare', 'fatturate'])
+    for (const f of FILTRI_FATTURA) {
+      const n = numeroPillolaFattura(f.id, conteggi)
+      expect(f.id === '' ? n === null : typeof n === 'number').toBe(true)
+    }
+  })
+})

@@ -1789,6 +1789,23 @@ export const CODICI_ERRORE = {
     MENSA_ALUNNO_FUORI_CLASSE: 'erroreMensaAlunnoFuoriClasse',
     /** 500 — non si è potuto verificare a chi appartiene quel bambino. */
     MENSA_SCOPE_NON_VERIFICATO: 'erroreMensaScopeNonVerificato',
+    /**
+     * ─── LA FATTURA È PARTITA, MA ARUBA NON L'HA CONFERMATO ─────────────────
+     * 502 — rifiuto di TRASPORTO (`POST /api/pagamenti/fattura`): il numero è
+     * stato consumato e nessuno sa se il documento sia arrivato allo SdI (un 429
+     * sopravvissuto al ritentativo, un 401, un 5xx, un timeout).
+     *
+     * È l'unico rifiuto dell'emissione dopo il quale **ripremere è la cosa
+     * sbagliata**: tutti gli altri si chiudono con «nessun numero è stato
+     * consumato», qui un secondo tentativo produrrebbe una SECONDA fattura vera
+     * per la stessa retta — che si corregge solo con una nota di variazione — e
+     * ogni tentativo riazzera per un'ora il secchio dei limiti di Aruba.
+     *
+     * Sta anche in `CODICI_CON_DETTAGLIO`: la prosa del server porta il NUMERO
+     * del documento, che il catalogo non può conoscere ed è l'unica cosa che dice
+     * quale fattura andare a cercare sul pannello Aruba.
+     */
+    FATTURA_TRASPORTO_IGNOTO: 'erroreFatturaTrasportoIgnoto',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;
@@ -1839,6 +1856,10 @@ export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErr
     // rifiuto sa che c'è un documento di mezzo e non sa quale andare a guardare
     // — cioè non può fare la sola cosa che il messaggio gli chiede.
     'BONIFICO_GIA_FATTURATO',
+    // Il NUMERO della fattura consumata («FPR 1949/2026»): la frase di catalogo
+    // dice «non ripremere, verifica sul pannello Aruba», e senza il numero quel
+    // controllo non si può fare — è l'unica cosa che dice QUALE documento cercare.
+    'FATTURA_TRASPORTO_IGNOTO',
 ]);
 
 const CATALOGHI: Record<Locale, Record<string, string>> = {

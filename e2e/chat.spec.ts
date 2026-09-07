@@ -5,6 +5,29 @@ import { STORAGE } from './fixtures';
 // Chat genitore↔maestra: nuova conversazione, messaggio, allegato immagine,
 // e verifica lato docente. Il seed azzera i thread E2E a ogni run.
 
+/**
+ * ⚠️ IL TRACE ANCHE DEL PRIMO TENTATIVO, e serve per una ragione precisa.
+ *
+ * `playwright.config.ts` usa `trace: 'on-first-retry'`, che è la scelta giusta per
+ * la suite: i trace pesano e i retry bastano quasi sempre. Qui no. Il fallimento di
+ * questa spec si manifesta **al primo tentativo** — arriva all'allegato e il
+ * messaggio non compare — mentre nei retry il test muore molto prima, sul click del
+ * contatto: a quel punto una conversazione con la maestra ESISTE già (il seed non
+ * si rifà fra un tentativo e l'altro), quindi la modale «Nuova Chat» è vuota e
+ * `getByText('Dora Docente-E2E').first()` risolve sulla riga della LISTA, che sta
+ * sotto la tendina della modale e non si può cliccare.
+ *
+ * Conseguenza: il trace conservato descrive un tentativo in cui l'upload non è mai
+ * partito — verificato, zero `setInputFiles` in tutto il file — e del fallimento
+ * vero non resta nessuna traccia di rete. `retain-on-failure` conserva anche il
+ * primo, ed è l'unico modo per vedere la risposta della POST dell'allegato senza
+ * eseguire l'E2E in locale (che è in `deny`: il seed scriverebbe sul database di
+ * produzione).
+ *
+ * Si toglie quando il difetto è chiuso: è uno strumento di diagnosi, non un presidio.
+ */
+test.use({ trace: 'retain-on-failure' });
+
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64'

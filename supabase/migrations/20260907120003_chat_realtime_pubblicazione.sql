@@ -1,0 +1,16 @@
+-- Il realtime della chat non ha MAI funzionato: `chat_messages` non è mai stata
+-- aggiunta alla pubblicazione. Il client si sottoscrive lo stesso
+-- (`useChatRealtime.ts`), riceve `CHANNEL_ERROR` e ripiega sul polling a 15 s —
+-- 579 volte in 30 giorni, misurato in `app_log` il 2026-09-07. Il messaggio
+-- d'errore che il codice stesso emette lo dice: «realtime non abilitato o caduto,
+-- fallback sul polling».
+--
+-- Stesso schema delle cinque tabelle già pubblicate (`notifiche`, `pagamenti`,
+-- `incassi`, `mensa_prenotazioni`, `armadietto`): tutte con replica identity di
+-- default, e funzionanti.
+--
+-- ⚠️ SICURO RISPETTO ALLA PRIVACY: la policy `chat_messages_select_participant` è
+-- attiva su questa tabella e Realtime applica la RLS. Un sottoscrittore riceve
+-- solo i messaggi dei thread di cui è partecipante — mai quelli delle altre
+-- famiglie.
+ALTER PUBLICATION supabase_realtime ADD TABLE public.chat_messages;

@@ -6,6 +6,8 @@
 // Funzione pura e testabile: durata giornata e orari in ingresso, ore in uscita.
 // =============================================================================
 
+import { minutiDiRoma } from '@/lib/presenze/orario';
+
 export type StatoPresenza = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 
 export interface PresenzaInput {
@@ -35,12 +37,22 @@ function minutiDaOrario(hhmm: string): number {
   return Number(h) * 60 + Number(m);
 }
 
-// Minuti da mezzanotte (ora locale) per un timestamp ISO.
-function minutiDaTimestamp(ts: string): number | null {
-  const d = new Date(ts);
-  if (isNaN(d.getTime())) return null;
-  return d.getHours() * 60 + d.getMinutes();
-}
+/**
+ * Minuti da mezzanotte, letti **a Roma**, per un orario di presenza.
+ *
+ * ⚠️ QUI C'ERA `d.getHours()`, cioè l'ora locale DEL PROCESSO — su Vercel UTC.
+ * Non produceva un errore visibile solo perché si annullava da solo: le righe
+ * della primaria sono ISO **naïve** (`2026-09-04T09:40:00`), JS le parsa come ora
+ * locale e `getHours()` le rilegge come ora locale, quindi con `TZ=UTC` il conto
+ * tornava PER CASO. Su un istante `…Z` — la forma che scrive lo 0-6 — valeva due
+ * ore in meno; su un `HH:MM` nudo valeva `null`, e 19 righe di ritardo erano
+ * contate ZERO. La rettifica manuale dell'orario dell'appello scrive istanti in
+ * righe che questo file legge: era il writer che avrebbe armato il difetto.
+ *
+ * La lettura vive ora in `@/lib/presenze/orario`, insieme alle altre quattro che
+ * sbagliavano ciascuna a modo suo.
+ */
+const minutiDaTimestamp = (ts: string): number | null => minutiDiRoma(ts);
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));

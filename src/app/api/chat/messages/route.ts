@@ -111,7 +111,41 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
             }
         }
 
-        // Recupera messaggi
+        /**
+         * ⚠️ SI LEGGONO I PRIMI 50, E OGGI È GIUSTO COSÌ — ma non lo sarà per sempre.
+         *
+         * Questa `select` ordina dal più VECCHIO e si ferma a 50, e nessuno dei tre
+         * client passa mai `limit`/`offset`: di ogni conversazione si caricano quindi
+         * i 50 messaggi più vecchi. Al cinquantunesimo la conversazione si
+         * «congelerà» — chi ricarica vedrà sparire ciò che si sono detti di recente,
+         * e il polling continuerà a ri-scrivere lo stesso blocco.
+         *
+         * ⚠️ IL RIMEDIO C'ERA ED È STATO TOLTO, il 2026-09-07, e la ragione va scritta
+         * per intero perché è una decisione, non una dimenticanza.
+         *
+         * Il rimedio leggeva la CODA (`ascending: false` + `range`, poi `reverse`).
+         * Nella stessa consegna `e2e/chat.spec.ts` è diventata rossa in CI: il
+         * messaggio con allegato non compariva nel thread, tre tentativi su tre.
+         * La causa NON è stata trovata — e ciò che è stato escluso, con test scritti
+         * apposta e rimasti nel repo, è: `ChatInput`
+         * (`chat-input-invio-allegato.test.tsx`, l'invio con allegato manda i tre
+         * argomenti giusti), il percorso della pagina genitore
+         * (`parent-chat-invio-sequenza.test.tsx`, testo + allegato arrivano entrambi
+         * a schermo), `firmaAllegatiChat` (non scarta mai righe, mappa 1:1) e
+         * `loadMessages` (fonde, non sostituisce: un poll non può cancellare il
+         * messaggio ottimistico).
+         *
+         * Restava questa lettura come unica modifica non verificabile da qui —
+         * l'E2E in locale è in `deny`, il seed scriverebbe sul database di
+         * produzione. Si toglie perché è il rimedio a un difetto **latente**:
+         * misurato il 2026-09-07, il thread più lungo in produzione ha **18**
+         * messaggi, quindi oggi non morde nessuno. Un rimedio che non serve ancora
+         * non vale il blocco di un rilascio che ne contiene due che servono adesso.
+         *
+         * COME RIMETTERLO, quando si rimetterà: prima un test che crei davvero un
+         * thread con più di 50 messaggi (nessuno lo fa, ed è per questo che il
+         * difetto è passato inosservato), poi la lettura dalla coda, poi la CI.
+         */
         const { data, error, count } = await supabase
             .from('chat_messages')
             .select('*', { count: 'exact' })

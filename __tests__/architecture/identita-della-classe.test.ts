@@ -64,10 +64,16 @@ const AMMESSE: Record<string, string> = {
     'Generazione rette per classe, scelta dalla segreteria su un elenco ' +
     'auto-consistente. Toccarla significa toccare la generazione dei pagamenti, ' +
     'che è un intervento a sé.',
-  'src/app/api/chat/contacts/route.ts:alunni':
-    'DEDUCE la classe dal `classe_sezione` di un bambino taggato e filtra sullo ' +
-    'stesso valore: auto-consistente, le due letture cambiano insieme. Dedurre ' +
-    'la classe dal tag di una foto è un difetto suo, diverso da questo.',
+  // ✅ `src/app/api/chat/contacts/route.ts:alunni` TOLTA il 2026-09-07, e il lock
+  // l'ha chiesto da sé («voce in AMMESSE senza più un filtro che la giustifichi»).
+  // La deroga diceva: «DEDUCE la classe dal `classe_sezione` di un bambino taggato
+  // e filtra sullo stesso valore: auto-consistente». Le due cose che la
+  // giustificavano sono sparite insieme — la deduzione dai tag delle foto
+  // (un'inferenza che produceva abbinamenti plausibili e sbagliati) e il filtro per
+  // NOME. La rubrica ora filtra `.in('section_id', …)` in `@/lib/chat/rubrica`,
+  // dove l'identità della classe è il suo uuid. Misurato prima di toccarla: 12
+  // docenti su 60 vedevano i genitori di una sola sezione, e chi aveva una classe
+  // col testo divergente dal `sections.name` non ne vedeva nessuno.
   'src/app/api/register/lessons/route.ts:registro_orario':
     'NON è una selezione di bambini: filtra `registro_orario.classe_sezione`, ' +
     'colonna DI QUELLA TABELLA, scritta canonicamente da `sections.name` nella ' +

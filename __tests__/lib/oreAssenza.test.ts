@@ -1,11 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import { calcolaOreAssenza, giornataDaCampanelle, GIORNATA_DEFAULT } from '@/lib/primaria/oreAssenza';
 
-// Costruisce un timestamp ISO locale per un dato orario del 2026-06-08.
+/**
+ * Un orario del 2026-06-08 **ancorato a Roma**, non al fuso del runner.
+ *
+ * ⚠️ QUESTO HELPER FACEVA `new Date(2026, 5, 8, h, m).toISOString()`, cioè
+ * costruiva l'ora LOCALE DEL PROCESSO. E `minutiDaTimestamp`, dentro
+ * `oreAssenza.ts`, la rileggeva con `getHours()` — di nuovo l'ora locale del
+ * processo. **Il test usava l'assunzione sbagliata su tutti e due i lati**, quindi
+ * passava in qualunque fuso: non poteva distinguere il codice corretto da quello
+ * sbagliato, che è l'unica cosa che un test deve saper fare.
+ *
+ * La prova che era così: appena la lettura è passata a `@/lib/presenze/orario`
+ * (che legge a `Europe/Rome`, come fa lo schermo), questo file è diventato ROSSO
+ * con `TZ=UTC` e verde con `TZ=Europe/Rome` — 4 casi su 8. L'`+02:00` esplicito lo
+ * riporta a dire la stessa cosa nei due fusi.
+ *
+ * Giugno è CEST, quindi `+02:00`. Gli attesi qui sotto non cambiano di un decimale:
+ * non si è indebolito il test, gli si è tolta l'ambiguità.
+ */
 function ts(hhmm: string): string {
-  const [h, m] = hhmm.split(':');
-  const d = new Date(2026, 5, 8, Number(h), Number(m), 0);
-  return d.toISOString();
+  return `2026-06-08T${hhmm}:00+02:00`;
 }
 
 describe('calcolaOreAssenza', () => {

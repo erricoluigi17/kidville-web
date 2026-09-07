@@ -65,11 +65,11 @@
 > | Modulo | Stato | Pagine | API Routes |
 > |--------|-------|--------|------------|
 > | **Diario 0-6** | ✅ Operativo | `/teacher/diary` | `/api/diary/students`, `/api/diary/entries` |
-> | **Presenze** | ✅ Operativo | `/teacher/attendance`, `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*`, `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP) |
+> | **Presenze** | ✅ Operativo | `/teacher/attendance`, `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*` (+ **`PATCH /api/attendance/daily`**: rettifica dell'orario 0-6, anche sui giorni passati, con traccia in `audit_scritture_docente`), `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP) |
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
-> | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat` | `/api/chat/*` |
+> | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`) |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
@@ -99,7 +99,7 @@
 
 ---
 
-## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
 
 Quattro elementi appena rilasciati sono stati fotografati con fixture sintetiche. I difetti qui
 sotto vengono dalle immagini: nessuno era rosso, e nessuno poteva esserlo — sono tutti difetti di
@@ -182,7 +182,7 @@ la profondità fuori dai `@layer`).
 
 ---
 
-## 🧾 Changelog — Le fatture si emettevano un popup per volta, e 129 su 130 non si potevano emettere affatto — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+## 🧾 Changelog — Le fatture si emettevano un popup per volta, e 129 su 130 non si potevano emettere affatto — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
 
 Richiesta del titolare: *«in conciliazione mettere il selettore di selezione multipla, solo sui
 pagamenti già abbinati, così da poter emettere tutte le fatture in un unico click»*.
@@ -279,7 +279,183 @@ quattro. Tutti corretti, tutti con la mutazione che rende rosso il test giusto e
 
 ---
 
-## 🔢 Changelog — Per sapere quante fatture restassero bisognava premere le pillole una per una — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+## 💬 Changelog — La «Nuova chat» offriva 63 insegnanti di 5 sedi, e l'ora dell'appello si poteva solo guardare — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
+
+Due richieste del titolare, una verifica, e un difetto che nessuno cercava.
+
+### 1 · «Un genitore deve poter contattare solo le proprie insegnanti»
+
+La rubrica non lo faceva, **in due direzioni opposte**. Misurato in produzione prima di
+toccare una riga, su 706 genitori e 60 docenti:
+
+| | misura |
+|---|---|
+| genitori che, fra le «proprie insegnanti», vedevano **chi insegnante non è** | **150** — in `utenti_sezioni` ci sono 6 righe di `segreteria` e 1 di `admin`, e la rubrica non guardava il ruolo |
+| genitori che vedevano un docente **cessato** | **32** — 8 righe appartengono a educator disattivati |
+| genitori che vedevano **tutti** i docenti | **9**, e ne vedevano **63 di 5 sedi** (Demo ed E2E comprese, 9 disattivati): un fallback scattava appena un figlio non aveva `section_id` |
+| genitori di bambini **ritirati** che potevano ancora aprire una chat | **6** — il ramo famiglia non aveva il filtro di stato che il ramo docente aveva già |
+| docenti che vedevano i genitori di **una sola** delle proprie sezioni | **12 su 60** — `.limit(1)` **senza `order`** su `utenti_sezioni`, quindi nemmeno sempre la stessa |
+| thread aperti con un docente **fuori sezione** | **32**, in crescita di circa **uno al giorno** |
+
+**La causa non era una sola query storta: era che la domanda viveva in tre posti che non
+davano la stessa risposta** — la rubrica del genitore, quella della maestra, e il gate che apre
+il thread. Ora vive in `src/lib/chat/rubrica.ts`, in una funzione **pura**
+(`decidiAbbinamento`) che le tre strade chiamano tutte: *il docente deve avere una riga in
+`utenti_sezioni` sulla sezione del bambino, e il genitore il legame con quel bambino*; per
+segreteria e direzione il confine è la **sede**.
+
+Cosa è sparito, e perché:
+- il **fallback «tutti i docenti»**: non era generosità, erano 63 nomi di persone che non sono
+  le sue insegnanti;
+- il **fallback storico che deduceva la classe dai tag delle foto**: un'inferenza che produce
+  abbinamenti plausibili e sbagliati — peggio del vuoto, come questo PRD dice già a proposito
+  delle insegnanti senza sezione;
+- il filtro **per NOME di classe**: il nome non è una chiave («2 ANNI» esiste ad Aversa E a
+  Cesa) e dove il testo diverge dal `sections.name` la rubrica usciva **vuota con un 200**.
+  Il lock `identita-della-classe` ha chiesto da sé di togliere la propria deroga.
+
+**Il gate vale anche sulla SCRITTURA**, ed è la parte che mancava: `chat/threads:POST`
+controllava solo la propria metà del thread — chi chiama e il suo bambino — e dell'altra niente.
+Bastava conoscere l'uuid di una qualunque insegnante, anche di un'altra sede. *Una vetrina non
+è una porta*: da lì venivano i 32 thread fuori sezione.
+
+**I profili doppi decidono per VESTE, non per ruolo nel database.** 9 persone del personale sono
+anche genitori (12 legami, **11 su bambini in sezioni che non insegnano**): in veste famiglia
+ricevevano comunque la rubrica da maestra, quindi *non potevano aprire una chat con le insegnanti
+del proprio figlio*. Il commento nel file lo ammetteva e rinviava la cosa come «decisione di
+prodotto»: la decisione è stata presa.
+
+**⚠️ I 279 thread già aperti non si toccano**, i 32 fuori sezione compresi. Tutti hanno il legame
+genitore↔alunno valido: sono adulti legittimi che parlano con un docente della scuola giusta,
+sulla sezione sbagliata. Chiudere una conversazione in corso è un danno certo per riparare un
+rischio non materializzato — se un giorno la si vorrà, è una decisione della Direzione su casi
+nominati, non l'effetto collaterale di un rilascio. La regola vale sulle **nuove aperture**.
+
+**⚠️ RESTA APERTO, e non è un difetto di codice — 23 famiglie senza rubrica.** Di queste, **20
+sono un'unica sezione**: `Sezione delle Meraviglie (NIDO)` a **Kidville Cesa**, 20 iscritti,
+**zero educator attivi assegnati** e al loro posto una segreteria. Le altre 2 sono sezioni `TEST`
+della sede Demo. Si risolve in minuti da Admin → anagrafica del dipendente. Fino ad allora quelle
+famiglie leggono una frase che dice il vero e le manda in segreteria — non più «Hai già una
+conversazione con tutte le maestre disponibili! 🎉», che per loro sarebbe stata una bugia detta
+con un'emoji.
+
+⚠️ `PATCH /api/admin/staff` è un **replace completo**: un `section_ids` parziale cancella le
+assegnazioni non incluse.
+
+### 2 · L'ora dell'appello 0-6 si può correggere
+
+La primaria lo fa da sempre; nel nido e nell'infanzia il registro scriveva l'ora del **tocco**
+(`new Date().toISOString()` sul tablet) e non c'era modo di dire che il bambino era arrivato alle
+09:40 e non alle 10:15. Ora l'orario mostrato **è** il comando: si tocca, diventa un campo ora,
+si conferma. Vale per l'ingresso sul **presente** e sul **ritardo**, per l'**uscita anticipata**,
+e **anche nei giorni passati** — che è una rettifica di registro, quindi finisce in
+`audit_scritture_docente` come già fa la primaria.
+
+**Una `PATCH` nuova, non la `POST` che c'era**, e non per gusto: quella è un upsert della riga
+intera e la pagina calcola `orario_uscita = stato === 'uscita_anticipata' ? now : null`.
+Ripassare di lì per cambiare l'ingresso **azzererebbe l'uscita**, e viceversa. Una `.update()`
+non può azzerare la colonna che non nomina.
+
+Sul filo passa `HH:MM`, non un istante: è ciò che `<input type="time">` produce ed è l'unica
+forma che `@/lib/logging/redact` **non** lascia passare in chiaro — un ISO matcha `DATA_ISO` e
+finirebbe intero in `app_log`, cioè l'ora d'arrivo di un minore. La conversione la fa il server
+col fuso di Roma, riusando `istanteCivile` (`@/lib/format/confini-giorno`), che l'algoritmo a due
+passaggi per i giorni di cambio ora ce l'ha già.
+
+### 3 · «Ingresso alle 2026-» — il difetto che nessuno cercava
+
+Andando a fondo sui formati è saltato fuori che **la home del genitore diceva letteralmente
+«Ingresso alle 2026-»**. `PresenzeTodayCard` faceva `v.slice(0, 5)` su una colonna che per lo 0-6
+contiene `2026-09-07T10:35:04.428Z`. **Misurato: 450 righe d'appello su 450, 490 famiglie, ogni
+giorno.** Era lì da mesi e nessun test lo vedeva, perché nessun test guardava quella stringa.
+
+La causa: `presenze.orario_entrata`/`orario_uscita` sono `text` e ci convivono **tre formati**
+(1.219 ISO con fuso, 19 `HH:MM`, 6 ISO naïve), letti da **sei** copie di logica che sbagliavano
+ognuna a modo suo:
+
+| lettore | su `…T10:35:04.428Z` | su `2026-09-04T09:40:00` | su `08:45` |
+|---|---|---|---|
+| `.slice(0,5)` | **`2026-`** | `2026-` | `08:45` ✅ |
+| `getHours()` con `TZ=UTC` | `10` ❌ (sono le 12:35) | `9` ✅ *per caso* | **`null`** — 19 ritardi contati ZERO |
+
+⚠️ **Il difetto del fuso in `oreAssenza` NON era vivo, ed è la parte che vale la pena aver
+capito**: sulle righe naïve si annullava da solo — JS le parsa come ora locale e `getHours()` le
+rilegge come ora locale — quindi su Vercel il conto tornava **per caso**. Si sarebbe armato al
+primo istante `…Z` scritto in una riga che `calcolaOreAssenza` legge, e **la rettifica manuale
+dell'orario è esattamente quel writer**: spedirla senza correggere il lettore non sarebbe stato
+ereditare un bug, sarebbe stato causarlo.
+
+Le sei letture ora sono una sola (`src/lib/presenze/orario.ts`), sorvegliata dal lock nuovo
+`orario-presenze-un-motore-solo` — che al primo giro **nominava cinque colpevoli e ne ha trovati
+due che non erano nella lista**: l'inventario contato dal test invece che dichiarato a mano.
+
+⚠️ **`__tests__/lib/oreAssenza.test.ts` era verde perché sbagliava dai due lati.** Il suo fixture
+costruiva l'ora col fuso del processo e `minutiDaTimestamp` la rileggeva con lo stesso fuso: il
+test **non poteva distinguere il codice giusto da quello sbagliato**. Ancorato a `+02:00`, con
+`TZ=UTC` vede il difetto (3 casi rossi su 8). Da oggi
+`TZ=UTC npx vitest run` e `TZ=Europe/Rome npx vitest run` devono dare lo stesso esito.
+
+**⚠️ La normalizzazione dei dati NON entra in questo giro, di proposito.** Le righe devianti sono
+**25 su 1.244** — il 98% è già canonico — ma normalizzare lo storage *prima* di unificare i
+lettori li romperebbe uno alla volta e in direzioni diverse, e senza un `CHECK` sulla colonna il
+writer della primaria reintrodurrebbe la quarta forma il giorno dopo. Backfill + vincolo al giro
+successivo, quando il motore è in produzione da un rilascio.
+
+### 4 · «Verifica se i messaggi funzionano correttamente»
+
+Funzionano: 529 messaggi, 498 negli ultimi 30 giorni, 384 notifiche accodate e **381 push
+partite**. Ma la verifica ha trovato tre difetti veri, tutti e tre riparati.
+
+**a) L'arrivo istantaneo non ha MAI funzionato.** `chat_messages` non era nella pubblicazione
+`supabase_realtime`: il client si sottoscrive, riceve `CHANNEL_ERROR` — **579 volte in 30
+giorni** — e ripiega sul polling a 15 s. Il codice lo diceva già nel proprio messaggio d'errore
+(«realtime non abilitato o caduto, fallback sul polling») e nessuno l'ha letto. Migrazione
+`20260907120003_chat_realtime_pubblicazione`. Sicuro rispetto alla privacy: la policy
+`chat_messages_select_participant` è attiva e Realtime applica la RLS.
+⚠️ **Si verifica guardando i log**: `CHANNEL_ERROR` deve smettere di crescere. *Una
+configurazione mai vista funzionare non è configurata.*
+
+**b) Un invio che fallisce non diceva niente.** `ChatInput` svuotava il campo **prima** di sapere
+l'esito, e nessuno dei tre handler aveva un ramo per `!res.ok` fuori da due casi di 403 — quello
+di `/admin/messaggi` non leggeva `res.ok` affatto. Genitore moroso, allegato rifiutato, 500: il
+testo spariva e a schermo non compariva nulla. **Il messaggio era perso e chi l'aveva scritto
+credeva di averlo mandato.** Ora `onSend` restituisce l'esito, il testo **resta nel campo** e
+l'avviso dice il motivo.
+
+**c) Si caricano i 50 messaggi più VECCHI — e ⚠️ QUESTO NON È STATO CORRETTO.**
+`order(created_at, ascending: true).range(0, 49)`, e nessun client passa mai `limit`/`offset`. Al
+cinquantunesimo messaggio la conversazione si «congelerà»: chi ricarica vedrà sparire ciò che si
+sono detti di recente, e il polling ri-scriverà lo stesso blocco vecchio.
+
+Il rimedio era stato scritto (lettura dalla coda) ed è stato **tolto nella stessa consegna**.
+Nello stesso lotto `e2e/chat.spec.ts` è diventata rossa in CI — il messaggio con allegato non
+compare nel thread, tre tentativi su tre — e **la causa non è stata trovata**. Ciò che è stato
+escluso, con test scritti apposta e rimasti nel repo: `ChatInput`, il percorso della pagina
+genitore, `firmaAllegatiChat` (non scarta righe), `loadMessages` (fonde, non sostituisce).
+Restava questa lettura come unica modifica non verificabile in locale (l'E2E è in `deny`: il seed
+scriverebbe sul database di produzione), ed è il rimedio a un difetto **latente** — misurato, il
+thread più lungo in produzione ha **18** messaggi. Un rimedio che non serve ancora non vale il
+blocco di un rilascio che ne contiene due che servono adesso.
+
+Per rimetterlo servirà prima un test che crei davvero un thread con più di 50 messaggi: nessuno
+lo fa, ed è per questo che il difetto è passato inosservato.
+
+### Gate
+
+`eslint` 0 · `tsc` 0 · `vitest` **15.169/15.169** · `build` ok · advisors Supabase **0 ERROR**.
+
+**I test nuovi sono stati visti fallire sul codice di prima**, uno per uno: rimesso `.limit(1)`
+→ 2 rossi; tolto il filtro di ruolo → 4; rimesso il filtro per nome-classe → 2; tolto il gate di
+scrittura → 3; rimesso `getHours()` con `TZ=UTC` → 6; rimesso `.slice(0,5)` → 7; il chip
+dell'orario ricablato su `handleSetStato` → 7 su 7.
+
+⚠️ **Il test che c'era non poteva accorgersi di niente**: `chat-contacts-legame-anagrafica` monta
+un finto Supabase in cui `eq`, `in` e `limit` sono la stessa funzione identità — verde con e senza
+la correzione. I test nuovi usano `creaFintoSupabase`, che i filtri li applica davvero.
+
+---
+
+## 🔢 Changelog — Per sapere quante fatture restassero bisognava premere le pillole una per una — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
 
 **Il difetto.** Sotto l'occhiello «Fatturazione» della Riconciliazione ci sono tre pillole — «Tutte»
 · «Da fatturare e scartate» · «Fatturate e in attesa» — e dicevano soltanto il proprio nome. La
@@ -366,7 +542,7 @@ scambio è rosso lì.
 
 ---
 
-## 🏦 Changelog — Il bonifico era di un altro plesso, e la schermata proponeva di incassarlo qui — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+## 🏦 Changelog — Il bonifico era di un altro plesso, e la schermata proponeva di incassarlo qui — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
 
 **Il difetto, misurato prima di scrivere il codice.** L'estratto conto della banca è **uno solo per
 le tre sedi** — è la decisione del 19 luglio — quindi i suggerimenti di abbinamento si calcolano
@@ -487,7 +663,7 @@ non lancia e l'errore è letto nel valore di ritorno — `warn` col codice, e la
 
 ---
 
-## 🥜 Changelog — Sotto la parola «Allergie» l'app contava le note mediche — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
+## 🥜 Changelog — Sotto la parola «Allergie» l'app contava le note mediche — 2026-09-07 (branch `feat/riconciliazione-lotto-e-allergie`)
 
 **Il difetto, misurato prima di scrivere il codice.** Nell'anagrafica convivono due colonne che
 non sono la stessa cosa: `alunni.note_mediche` — la casella che il modulo d'iscrizione etichetta

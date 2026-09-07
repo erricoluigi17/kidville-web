@@ -8,6 +8,7 @@ import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
 import { formattaIstante } from '@/i18n/config';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 interface OversightThread {
   id: string;
@@ -116,6 +117,8 @@ function MessaggiInner() {
   const [chatMsgs, setChatMsgs] = useState<Msg[]>([]);
   const [composer, setComposer] = useState('');
   const [sending, setSending] = useState(false);
+  /** L'invio è stato rifiutato: il testo resta nel riquadro e lo si dice. */
+  const [erroreInvio, setErroreInvio] = useState(false);
   const [loadingContatti, setLoadingContatti] = useState(true);
 
   useEffect(() => {
@@ -150,17 +153,36 @@ function MessaggiInner() {
     } catch { /* no-op */ }
   };
 
+  /**
+   * ⚠️ QUI `res.ok` NON VENIVA LETTO AFFATTO.
+   *
+   * `await fetch(...)` e via: qualunque esito — 403, 500, allegato rifiutato —
+   * svuotava comunque il riquadro e ricaricava la lista. Chi in segreteria
+   * scriveva a una famiglia vedeva il proprio testo sparire e la conversazione
+   * ricomparire senza il suo messaggio, senza una parola. È la regola 6 di
+   * AGENTS.md («un catch che non logga è un bug») applicata al suo caso peggiore:
+   * un fetch di cui non si guarda nemmeno l'esito.
+   */
   const invia = async () => {
     if (!composer.trim() || !chatThreadId || !userId) return;
     setSending(true);
+    setErroreInvio(false);
     try {
-      await fetch('/api/chat/messages', {
+      const res = await fetch('/api/chat/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ thread_id: chatThreadId, sender_id: userId, content: composer.trim() }),
       });
+      if (!res.ok) {
+        // Il testo RESTA nel riquadro: è la differenza fra «riprova» e «riscrivilo».
+        setErroreInvio(true);
+        return;
+      }
       setComposer('');
       loadChatMessages(chatThreadId, userId);
+    } catch (err) {
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/admin/messaggi' });
+      setErroreInvio(true);
     } finally { setSending(false); }
   };
 
@@ -192,9 +214,14 @@ function MessaggiInner() {
               <p className="font-maven text-sm text-kidville-muted p-2">{t('messaggiNessunGenitore')}</p>
             ) : contatti.map(c => (
               <button
-                key={c.parentUserId}
+                // Chiave e selezione sulla COPPIA (genitore, bambino): dal
+                // 2026-09-07 la rubrica non deduplica più per solo genitore, quindi
+                // un genitore con due figli produce due righe. Con la chiave vecchia
+                // React ne avrebbe viste due uguali e la selezione le avrebbe
+                // evidenziate entrambe.
+                key={`${c.parentUserId}:${c.studentId}`}
                 onClick={() => openContatto(c)}
-                className={`w-full text-left rounded-input px-3 py-2.5 mb-1 transition-colors ${selContatto?.parentUserId === c.parentUserId ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream'}`}
+                className={`w-full text-left rounded-input px-3 py-2.5 mb-1 transition-colors ${selContatto?.parentUserId === c.parentUserId && selContatto?.studentId === c.studentId ? 'bg-kidville-green-soft' : 'hover:bg-kidville-cream'}`}
               >
                 <p className="font-maven text-sm font-semibold text-kidville-ink">{c.parentName}</p>
                 <p className="font-maven text-xs text-kidville-muted">{c.studentName}{c.classe ? ` · ${c.classe}` : ''}</p>
@@ -228,6 +255,11 @@ function MessaggiInner() {
                     );
                   })}
                 </div>
+                {erroreInvio && (
+                  <p role="alert" className="mt-3 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+                    {t('messaggiInvioNonRiuscito')}
+                  </p>
+                )}
                 <div className="mt-3 flex items-center gap-2">
                   <input
                     value={composer}

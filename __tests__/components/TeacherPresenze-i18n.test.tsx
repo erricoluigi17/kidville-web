@@ -43,6 +43,9 @@ const CHIAVI_RICHIESTE = [
   'invioAllarme', 'panicAlert', 'panicDescrizione',
   // riga studente
   'ingresso',
+  // rettifica dell'orario (0-6): l'ora d'ingresso e quella d'uscita si correggono
+  'orarioIngressoAria', 'orarioUscitaAria', 'orarioNonRegistrato',
+  'orarioCampoAria', 'salvaOrario', 'annullaModifica',
   // semaforo autorizzazione
   'prontoUscita', 'nonPronto', 'autorizzazioneFirmata', 'firmata', 'nonFirmata',
   'quotaSaldata', 'saldata', 'daSaldare',

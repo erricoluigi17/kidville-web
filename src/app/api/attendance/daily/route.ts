@@ -7,11 +7,13 @@ import { risolviSezione } from '@/lib/sezioni/risoluzione';
 import { restringiASedeRichiesta } from '@/lib/auth/sede-richiesta';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { parseBody, parseQuery } from '@/lib/validation/http';
-import { zDataYMD, zUuid } from '@/lib/validation/common';
+import { zDataYMD, zOraHHMM, zUuid } from '@/lib/validation/common';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { colonneConMotivo } from '@/lib/presenze/motivo-visibile';
+import { aOrarioIso } from '@/lib/presenze/orario';
+import { logScrittura } from '@/lib/audit/scrittura';
 
 /**
  * GET /api/attendance/daily?data=YYYY-MM-DD&sezione=<classe>
@@ -471,6 +473,207 @@ export const POST = withRoute('attendance/daily:POST', async (request: NextReque
         }, { status: 200 });
     } catch (err) {
         logErrore({ operazione: 'attendance/daily:POST', stato: 500 }, err);
+        return erroreInterno();
+    }
+});
+
+
+/**
+ * ─── PATCH /api/attendance/daily — LA RETTIFICA DI UN ORARIO ─────────────────
+ *
+ * Body: `{ alunno_id, data, orario_entrata?: 'HH:MM', orario_uscita?: 'HH:MM' }`.
+ *
+ * ── PERCHÉ NON LA `POST` QUI SOPRA ──────────────────────────────────────────
+ *
+ * Fino a oggi, nel nido e nell'infanzia, l'orario si poteva solo GUARDARE: il
+ * registro scriveva l'ora del TOCCO (`new Date().toISOString()` sul tablet) e non
+ * c'era modo di dire che il bambino era arrivato alle 09:40 e non alle 10:15. La
+ * primaria lo fa da sempre.
+ *
+ * La strada corta sarebbe stata riusare la `POST`. Non si può, e non per gusto:
+ * quella è un **upsert della riga intera**, e la pagina che la chiama calcola
+ * `orario_uscita = stato === 'uscita_anticipata' ? now : null`. Ripassare di lì per
+ * cambiare l'ingresso significherebbe AZZERARE l'uscita — e viceversa — oltre a
+ * rientrare nel ramo che revoca le notifiche d'assenza già mandate ai genitori.
+ * Tre effetti collaterali per un'operazione che ne vuole zero.
+ *
+ * Una `.update()` non può azzerare la colonna che non nomina. È tutta qui la
+ * ragione della porta nuova.
+ *
+ * ── COSA NON FA ─────────────────────────────────────────────────────────────
+ *
+ * Non CREA la presenza: un orario senza appello non significa niente, e inventare
+ * la riga vorrebbe dire registrare un bambino come presente perché qualcuno ha
+ * toccato un campo ora. Riga assente ⇒ 409, con il rimedio scritto nel messaggio.
+ */
+const patchBodySchema = z
+    .object({
+        alunno_id: zUuid,
+        data: zDataYMD,
+        orario_entrata: zOraHHMM.optional(),
+        orario_uscita: zOraHHMM.optional(),
+    })
+    // Un corpo che non nomina nessuno dei due orari non è una rettifica: è una
+    // richiesta senza oggetto, e va respinta prima di leggere qualunque cosa.
+    .refine(
+        (b) => b.orario_entrata !== undefined || b.orario_uscita !== undefined,
+        { message: 'Indicare almeno un orario da correggere' },
+    );
+
+/** Le sei colonne dell'appello + i due campi che servono a scrivere in sicurezza. */
+const COLONNE_RETTIFICA = 'id, alunno_id, data, stato, orario_entrata, orario_uscita, scuola_id, section_id';
+
+export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextRequest) => {
+    try {
+        const auth = await requireDocente(request);
+        if (auth.response) return auth.response;
+
+        const b = await parseBody(request, patchBodySchema);
+        if ('response' in b) return b.response;
+        const { alunno_id, data } = b.data;
+
+        const supabase = await createAdminClient();
+
+        // LO SCOPE PRIMA DI TUTTO, e prima di qualunque lettura: dopo un diniego
+        // `presenze` non deve nemmeno comparire fra le tabelle toccate.
+        const fuoriScope = await assertAlunnoInScope(supabase, auth.user, alunno_id);
+        if (fuoriScope) return fuoriScope;
+
+        const { data: prima, error: erroreLettura } = await supabase
+            .from('presenze')
+            .select(COLONNE_RETTIFICA)
+            .eq('alunno_id', alunno_id)
+            .eq('data', data)
+            .maybeSingle();
+
+        // «NON C'È» E «NON L'HO POTUTO LEGGERE» NON SONO LA STESSA COSA.
+        // PostgREST non lancia (AGENTS.md, regola 7): senza questo ramo un guasto
+        // di lettura uscirebbe dalla porta del 409 qui sotto, e al docente si
+        // direbbe che l'appello non è stato fatto quando invece non si è potuto
+        // leggere. È lo stesso rilievo già scritto nella POST di questo file.
+        if (erroreLettura) {
+            logErrore({ operazione: 'attendance/daily:PATCH', stato: 500, evento: 'db' }, erroreLettura);
+            return erroreInterno();
+        }
+        if (!prima) {
+            return NextResponse.json(
+                {
+                    error: 'Appello non ancora registrato per questo giorno.',
+                    codice: 'APPELLO_NON_REGISTRATO',
+                },
+                { status: 409 },
+            );
+        }
+
+        const riga = prima as unknown as Record<string, unknown>;
+        const stato = riga.stato as string;
+
+        // Coerenza fra orario e stato. Non è una validazione di FORMA (quella l'ha
+        // già fatta zod): è un'incoerenza che si vede solo avendo letto la riga.
+        const vuoleEntrata = b.data.orario_entrata !== undefined;
+        const vuoleUscita = b.data.orario_uscita !== undefined;
+        const entrataAmmessa = stato === 'presente' || stato === 'ritardo' || stato === 'uscita_anticipata';
+        const uscitaAmmessa = stato === 'uscita_anticipata';
+        if ((vuoleEntrata && !entrataAmmessa) || (vuoleUscita && !uscitaAmmessa)) {
+            return NextResponse.json(
+                {
+                    error: 'Orario non compatibile con lo stato registrato.',
+                    codice: 'ORARIO_INCOERENTE',
+                },
+                { status: 422 },
+            );
+        }
+
+        // `in` e non `?? null`: è LA differenza fra una patch e un upsert. La
+        // colonna che il corpo non nomina non compare nell'aggiornamento, quindi
+        // non può essere azzerata.
+        const aggiornamento: Record<string, unknown> = { aggiornato_il: new Date().toISOString() };
+        if (vuoleEntrata) aggiornamento.orario_entrata = aOrarioIso(data, b.data.orario_entrata as string);
+        if (vuoleUscita) aggiornamento.orario_uscita = aOrarioIso(data, b.data.orario_uscita as string);
+
+        const { data: result, error } = await supabase
+            .from('presenze')
+            .update(aggiornamento)
+            .eq('id', riga.id as string)
+            // La sede viene dalla riga appena LETTA e verificata, non dalla
+            // richiesta: è la forma che `isolamento-sede-coverage` riconosce.
+            .eq('scuola_id', riga.scuola_id as string)
+            .select(COLONNE_ESITO)
+            .single();
+
+        if (error) {
+            // Il `message` di PostgREST resta nel log, dove dice PERCHÉ: porta nomi
+            // di colonna e di vincolo, cioè una mappa dello schema.
+            logErrore({ operazione: 'attendance/daily:PATCH', stato: 500, evento: 'db' }, error);
+            return erroreInterno();
+        }
+
+        const dopo = (result ?? {}) as Record<string, unknown>;
+
+        /**
+         * LA TRACCIA DI CHI HA CORRETTO.
+         *
+         * La primaria scrive in `audit_scritture_docente` da sempre; lo 0-6 no.
+         * Correggere a mano l'orario di un registro — e per i giorni passati — è
+         * una **rettifica**: senza questa riga, «l'orario dice 09:10 ma mio figlio
+         * era arrivato alle 08:30» non ha risposta.
+         *
+         * Il diff è pulito PER COSTRUZIONE, non per disciplina: `COLONNE_RETTIFICA`
+         * non chiede `giustificazione_testo` né `giustificazione_firma`, quindi non
+         * possono finirci — che è l'errore già pagato dalla rotta gemella.
+         *
+         * Non si audita la POST in questo giro: sono centinaia di righe al giorno di
+         * appello ordinario, e mescolarle alle rettifiche renderebbe la tabella meno
+         * leggibile proprio per la domanda a cui deve rispondere.
+         */
+        await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'presenze',
+            entitaId: riga.id as string,
+            azione: 'update',
+            scuolaId: riga.scuola_id as string | null,
+            sectionId: riga.section_id as string | null,
+            valorePrima: {
+                stato: riga.stato,
+                orario_entrata: riga.orario_entrata,
+                orario_uscita: riga.orario_uscita,
+            },
+            valoreDopo: {
+                stato: dopo.stato ?? riga.stato,
+                orario_entrata: dopo.orario_entrata ?? null,
+                orario_uscita: dopo.orario_uscita ?? null,
+            },
+        });
+
+        /**
+         * ⚠️ `tipo:` e non `campo:`. `campo` NON è in `CHIAVI_IN_CHIARO`
+         * (`@/lib/logging/redact`) e uscirebbe come `[redatto:str/…]`; `tipo` sì. E
+         * non si allarga quella lista bianca per comodità: è anche il canale con cui
+         * `parseBody` registra il corpo grezzo, quindi allargarla aprirebbe testo
+         * libero proveniente da qualunque richiesta.
+         *
+         * L'ORARIO NON COMPARE, in nessun campo: è il dato, non il metadato.
+         */
+        logEvento('registro', 'info', {
+            operazione: 'attendance/daily:PATCH',
+            esito: 'orario-rettificato',
+            alunno_id,
+            entita_id: riga.id as string,
+            tipo: vuoleEntrata && vuoleUscita ? 'entrambi' : vuoleEntrata ? 'orario_entrata' : 'orario_uscita',
+        });
+
+        // La risposta si COMPONE, non si inoltra: stessa forma della POST, così il
+        // client fonde l'una o l'altra senza sapere quale porta ha usato.
+        return NextResponse.json({
+            id: dopo.id ?? riga.id,
+            alunno_id: dopo.alunno_id ?? alunno_id,
+            data: dopo.data ?? data,
+            stato: dopo.stato ?? stato,
+            orario_entrata: dopo.orario_entrata ?? null,
+            orario_uscita: dopo.orario_uscita ?? null,
+        }, { status: 200 });
+    } catch (err) {
+        logErrore({ operazione: 'attendance/daily:PATCH', stato: 500 }, err);
         return erroreInterno();
     }
 });

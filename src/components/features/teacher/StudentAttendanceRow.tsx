@@ -1,10 +1,10 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import { useTranslations, useLocale } from 'next-intl';
-import { intlDateTime } from '@/i18n/config';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
-import { User, Clock, CheckCircle, Timer, LogOut, X } from 'lucide-react';
+import { User, Clock, CheckCircle, Timer, LogOut, X, Check } from 'lucide-react';
+import { oraDiRoma, oraDiRomaAdesso } from '@/lib/presenze/orario';
 
 export type AttendanceStato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 
@@ -35,12 +35,28 @@ interface Student {
     lastName: string;
 }
 
+export type CampoOrario = 'entrata' | 'uscita';
+
 interface Props {
     student: Student;
     record?: AttendanceRecord;
     onSetStato: (studentId: string, stato: AttendanceStato) => void;
     onCheckoutClick: (studentId: string) => void;
     isLoading?: boolean;
+    /**
+     * Rettifica di un ORARIO già registrato. **Opzionale, e non per pigrizia**: due
+     * schermate montano questa riga senza (e i loro test lo verificano), quindi
+     * senza questa prop la riga resta esattamente quella di prima — l'orario è
+     * testo, e non compare nessun comando.
+     */
+    onSetOrario?: (studentId: string, campo: CampoOrario, ora: string) => void;
+    /**
+     * Quale dei due orari si sta salvando. Separato da `isLoading` di proposito:
+     * `isLoading` sostituisce l'INTERO gruppo di bottoni con uno spinner, e usarlo
+     * qui farebbe sparire dagli occhi della maestra proprio l'ora che sta
+     * correggendo.
+     */
+    orarioInCorso?: CampoOrario | null;
 }
 
 // Solo i token cromatici del badge "uscita anticipata"; le etichette testuali
@@ -105,23 +121,159 @@ const STATI_BOTTONI: {
     },
 ];
 
-function formatTime(isoString: string | null, locale: string): string | null {
-    if (!isoString) return null;
-    try {
-        return intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(isoString));
-    } catch {
-        return isoString;
+/**
+ * L'ora italiana di un orario di presenza.
+ *
+ * Era la settima copia di questa lettura, e l'unica che dichiarasse il fuso — ma
+ * cadeva comunque sul `catch { return isoString }` per le altre due forme che la
+ * colonna contiene (`08:45` e l'ISO naïve della primaria), restituendo la stringa
+ * grezza. Ora passa dal motore, che le conosce tutte e tre.
+ */
+const formatTime = (valore: string | null): string | null => oraDiRoma(valore);
+
+/**
+ * ─── L'ORARIO È IL COMANDO ───────────────────────────────────────────────────
+ *
+ * A riposo questo componente rende **esattamente ciò che rendeva prima**: l'icona,
+ * l'etichetta e l'ora. La differenza è che è un `<button>`, quindi l'affordance sta
+ * dove sta il dato invece di occupare un posto suo nella riga — che a 320px va già
+ * a capo. Al tocco il chip si trasforma NELLO STESSO SLOT in un campo ora con
+ * conferma e annulla.
+ *
+ * ⚠️ Il colore è `text-kidville-sub` (#55615C: 6,46:1 su bianco, 5,82:1 sul crema
+ * dell'hover) e non più `text-kidville-muted` (2,51:1). Quel muted era in
+ * `testo-muted-allowlist.json` — discutibile per un testo passivo, indifendibile
+ * per un comando tattile. La voce è stata tolta dall'allowlist, non aggirata.
+ */
+function OrarioCorreggibile({
+    campo,
+    valore,
+    etichetta,
+    icona,
+    alunno,
+    nomeAlunno,
+    ariaKey,
+    inCorso,
+    onSalva,
+    t,
+}: {
+    campo: CampoOrario;
+    valore: string | null;
+    etichetta: string;
+    icona: ReactNode;
+    alunno: string;
+    nomeAlunno: string;
+    ariaKey: 'orarioIngressoAria' | 'orarioUscitaAria';
+    inCorso: boolean;
+    onSalva: ((ora: string) => void) | null;
+    t: (key: string, valori?: Record<string, string>) => string;
+}) {
+    const [inModifica, setInModifica] = useState(false);
+    const [bozza, setBozza] = useState('');
+    const rifInput = useRef<HTMLInputElement>(null);
+    const rifChip = useRef<HTMLButtonElement>(null);
+
+    const ora = formatTime(valore);
+    const mostrato = ora ?? t('orarioNonRegistrato');
+
+    useEffect(() => {
+        if (inModifica) rifInput.current?.focus();
+    }, [inModifica]);
+
+    const chiudi = () => {
+        setInModifica(false);
+        rifChip.current?.focus();
+    };
+
+    const conferma = () => {
+        // Un campo svuotato non è una correzione: cancellare l'ora d'ingresso di un
+        // bambino presente non vuol dire niente, e si farebbe con un tocco distratto.
+        if (!bozza || !onSalva) return;
+        onSalva(bozza);
+        // Si chiude SUBITO, come fa il resto di questa schermata: l'aggiornamento è
+        // ottimistico e, se il server rifiuta, la pagina fa rollback e alza la
+        // fascia `role="alert"` che nomina il bambino. Chiudere invece in un
+        // `useEffect` appeso a `inCorso` sarebbe un `setState` dentro un effetto —
+        // vietato dal lock `eslint-set-state-in-effect`, e per una buona ragione:
+        // due render a catena per un'informazione che qui è già nota.
+        setInModifica(false);
+        rifChip.current?.focus();
+    };
+
+    // Senza `onSalva` la riga è quella di sempre: testo, non comando — e se l'ora
+    // non c'è, NIENTE. Prima la condizione era `{checkInTime && …}`: mostrare
+    // «Ingresso: non registrato» dove prima non compariva nulla sarebbe rumore in
+    // una schermata che si legge di corsa. Il «non registrato» ha senso solo dove
+    // è un invito a scriverlo, cioè quando l'ora si può correggere.
+    if (!onSalva) {
+        if (!ora) return null;
+        return (
+            <span className="flex items-center gap-1">
+                {icona} {etichetta}: {ora}
+            </span>
+        );
     }
+
+    if (inModifica) {
+        return (
+            <span className="flex items-center gap-1">
+                <label className="sr-only" htmlFor={`input-orario-${campo}-${alunno}`}>
+                    {t('orarioCampoAria')}
+                </label>
+                <input
+                    ref={rifInput}
+                    id={`input-orario-${campo}-${alunno}`}
+                    type="time"
+                    step={60}
+                    value={bozza}
+                    onChange={(e) => setBozza(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); conferma(); }
+                        if (e.key === 'Escape') { e.preventDefault(); chiudi(); }
+                    }}
+                    className="min-h-11 rounded-xl border border-kidville-line bg-white px-2 font-maven text-sm text-kidville-sub"
+                />
+                <button
+                    id={`btn-salva-orario-${campo}-${alunno}`}
+                    onClick={conferma}
+                    disabled={inCorso}
+                    aria-label={t('salvaOrario')}
+                    className="min-h-11 min-w-11 rounded-xl bg-kidville-green text-white flex items-center justify-center disabled:opacity-60"
+                >
+                    <Check size={16} />
+                </button>
+                <button
+                    id={`btn-annulla-orario-${campo}-${alunno}`}
+                    onClick={chiudi}
+                    aria-label={t('annullaModifica')}
+                    className="min-h-11 min-w-11 rounded-xl bg-kidville-cream text-kidville-sub border border-kidville-line flex items-center justify-center"
+                >
+                    <X size={16} />
+                </button>
+            </span>
+        );
+    }
+
+    return (
+        <button
+            ref={rifChip}
+            id={`btn-orario-${campo}-${alunno}`}
+            onClick={() => { setBozza(ora ?? oraDiRomaAdesso()); setInModifica(true); }}
+            aria-label={t(ariaKey, { alunno: nomeAlunno, ora: mostrato })}
+            className="min-h-11 flex items-center gap-1 rounded-xl px-1 text-kidville-sub hover:bg-kidville-cream-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-kidville-green"
+        >
+            {icona} {etichetta}: {mostrato}
+        </button>
+    );
 }
 
-export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading }: Props) {
+export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading, onSetOrario, orarioInCorso }: Props) {
     const t = useTranslations('teacherPresenze');
     // L'etichetta della giustifica del genitore è GIÀ tradotta (it/en) per
     // l'appello della primaria: si riusa quella invece di scriverne una gemella.
     // Due copie della stessa frase divergono al primo ritocco — è la lezione che
     // questo ciclo ha già pagato quattro volte.
     const tp = useTranslations('teacherPrimaria');
-    const locale = useLocale();
     const motivoGenitore = (record?.giustificazione_testo ?? '').trim();
     const stato = record?.stato ?? null;
     const isPresente = stato === 'presente';
@@ -129,8 +281,14 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     const isUscitaAnticipata = stato === 'uscita_anticipata';
     const isAssente = stato === 'assente';
 
-    const checkInTime = formatTime(record?.orario_entrata ?? null, locale);
-    const checkOutTime = formatTime(record?.orario_uscita ?? null, locale);
+    const nomeAlunno = `${student.firstName} ${student.lastName}`;
+    // Quali orari hanno senso, per stato. L'INGRESSO vale anche per l'uscita
+    // anticipata: chi esce prima era comunque entrato, e finora quell'ora non si
+    // poteva più toccare. Sull'ASSENTE non ne ha senso nessuno dei due.
+    const mostraEntrata = isPresente || isRitardo || isUscitaAnticipata;
+    const mostraUscita = isUscitaAnticipata || Boolean(record?.orario_uscita);
+    const salva = (campo: CampoOrario) =>
+        onSetOrario ? (ora: string) => onSetOrario(student.id, campo, ora) : null;
 
     // ── Bordo sinistro = UNICO segnale cromatico dello stato della riga ──────────
     // WCAG 2.1 §1.4.11 chiede 3:1 per un segnale di stato non testuale, e i fondi
@@ -178,16 +336,34 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                     <h3 className="font-barlow font-semibold text-lg text-kidville-green uppercase tracking-wide truncate">
                         {student.firstName} {student.lastName}
                     </h3>
-                    <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven">
-                        {checkInTime && (
-                            <span className="flex items-center gap-1">
-                                <Clock size={11} /> {t('ingresso')}: {checkInTime}
-                            </span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-kidville-sub font-maven">
+                        {mostraEntrata && (
+                            <OrarioCorreggibile
+                                campo="entrata"
+                                valore={record?.orario_entrata ?? null}
+                                etichetta={t('ingresso')}
+                                icona={<Clock size={11} />}
+                                alunno={student.id}
+                                nomeAlunno={nomeAlunno}
+                                ariaKey="orarioIngressoAria"
+                                inCorso={orarioInCorso === 'entrata'}
+                                onSalva={salva('entrata')}
+                                t={t}
+                            />
                         )}
-                        {checkOutTime && (
-                            <span className="flex items-center gap-1">
-                                <LogOut size={11} /> {t('uscita')}: {checkOutTime}
-                            </span>
+                        {mostraUscita && (
+                            <OrarioCorreggibile
+                                campo="uscita"
+                                valore={record?.orario_uscita ?? null}
+                                etichetta={t('uscita')}
+                                icona={<LogOut size={11} />}
+                                alunno={student.id}
+                                nomeAlunno={nomeAlunno}
+                                ariaKey="orarioUscitaAria"
+                                inCorso={orarioInCorso === 'uscita'}
+                                onSalva={salva('uscita')}
+                                t={t}
+                            />
                         )}
                     </div>
                     {/* IL MOTIVO COMUNICATO DAL GENITORE — la finalità dichiarata

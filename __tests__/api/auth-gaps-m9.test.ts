@@ -49,6 +49,17 @@ vi.mock('@/lib/anagrafiche/legami', () => ({
   getGenitoriDiAlunni: vi.fn(async () => new Map()),
   getGenitoriDiAlunno: vi.fn(async () => []),
   getFigliDiGenitore: vi.fn(async () => []),
+  // ⚠️ Due export in più dal 2026-09-07, e non per completezza formale: una
+  // factory `vi.mock` sostituisce il modulo per INTERO, quindi ciò che non
+  // elenca vale `undefined`. `chat/contacts` e `chat/threads:POST` passano ora
+  // da `@/lib/chat/rubrica`, che usa questi due — e senza di loro la chiamata
+  // esplodeva dentro il `try` della route uscendo come 500, cioè come un difetto
+  // del gate che questo file NON sta misurando.
+  // `'si'` di default per la stessa ragione dichiarata sopra per
+  // `genitoreHasFiglio`: l'oggetto di questo file è il gate «partecipante», non
+  // il legame di famiglia.
+  verificaLegameGenitore: vi.fn(async () => 'si'),
+  getFigliDiGenitoreEsito: vi.fn(async () => ({ figli: [], completo: true })),
 }))
 
 vi.mock('@/lib/supabase/server-client', () => {
@@ -202,6 +213,14 @@ describe('M9 — chat/threads POST solo per i partecipanti', () => {
   it('200 se il chiamante è un partecipante (thread esistente restituito)', async () => {
     h.requireUser.mockImplementation(async () => ({ user: { id: UUID_C, role: 'genitore' } }))
     h.rows['chat_threads'] = { id: UUID_A }
+    // Dal 2026-09-07 essere partecipante non basta più: la porta verifica anche
+    // l'ALTRA metà del thread (`@/lib/chat/rubrica`). Queste tre righe descrivono
+    // una coppia legittima — bambino iscritto con una sezione, docente in servizio
+    // assegnato a QUELLA sezione — così il caso continua a misurare ciò per cui
+    // esiste: il gate «partecipante», non l'abbinamento.
+    h.rows['alunni'] = { id: UUID_A, section_id: 'sec-1', scuola_id: 'sede-1', stato: 'iscritto' }
+    h.rows['utenti'] = { id: UUID_B, ruolo: 'educator', attivo: true, scuola_id: 'sede-1' }
+    h.lists['utenti_sezioni'] = [{ section_id: 'sec-1', utente_id: UUID_B }]
     const res = await chatThreadsPOST(
       jsonReq('http://x/api/chat/threads', 'POST', { teacher_id: UUID_B, parent_id: UUID_C, student_id: UUID_A })
     )

@@ -5,15 +5,64 @@ import { STORAGE } from './fixtures';
 // Chat genitore↔maestra: nuova conversazione, messaggio, allegato immagine,
 // e verifica lato docente. Il seed azzera i thread E2E a ogni run.
 
+/**
+ * ⚠️ IL TRACE ANCHE DEL PRIMO TENTATIVO, e serve per una ragione precisa.
+ *
+ * `playwright.config.ts` usa `trace: 'on-first-retry'`, che è la scelta giusta per
+ * la suite: i trace pesano e i retry bastano quasi sempre. Qui no. Il fallimento di
+ * questa spec si manifesta **al primo tentativo** — arriva all'allegato e il
+ * messaggio non compare — mentre nei retry il test muore molto prima, sul click del
+ * contatto: a quel punto una conversazione con la maestra ESISTE già (il seed non
+ * si rifà fra un tentativo e l'altro), quindi la modale «Nuova Chat» è vuota e
+ * `getByText('Dora Docente-E2E').first()` risolve sulla riga della LISTA, che sta
+ * sotto la tendina della modale e non si può cliccare.
+ *
+ * Conseguenza: il trace conservato descrive un tentativo in cui l'upload non è mai
+ * partito — verificato, zero `setInputFiles` in tutto il file — e del fallimento
+ * vero non resta nessuna traccia di rete. `retain-on-failure` conserva anche il
+ * primo, ed è l'unico modo per vedere la risposta della POST dell'allegato senza
+ * eseguire l'E2E in locale (che è in `deny`: il seed scriverebbe sul database di
+ * produzione).
+ *
+ * Si toglie quando il difetto è chiuso: è uno strumento di diagnosi, non un presidio.
+ */
+test.use({ trace: 'retain-on-failure' });
+
 const PNG_1PX = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64'
 );
 
+/**
+ * ⚠️ IL TETTO DI 30 s NON BASTAVA, ED È MISURATO — non una precauzione.
+ *
+ * La CI E2E gira su `next dev` (vedi `playwright.config.ts`): questa è la PRIMA
+ * spec a colpire `/parent/chat`, `/api/chat/contacts`, `/api/chat/threads` e
+ * `/api/chat/messages`, che compilano A FREDDO. Il tetto per test di Playwright,
+ * qui non dichiarato, era quello di default: **30 secondi**.
+ *
+ * Le misure, dallo storico della CI:
+ *   · su `main`, tre run verdi di fila: **15,6 s · 14,2 s · 18,4 s**;
+ *   · sul ramo che ha introdotto il gate di abbinamento
+ *     (`@/lib/chat/rubrica`, un modulo NUOVO nel grafo di due route):
+ *     **29,2 s · 30,4 s · 30,0 s**, cioè il tetto, tre volte su tre.
+ *
+ * E i tre fallimenti non erano lo stesso: uno alla riga dell'allegato, due sul
+ * `click` del contatto. **Non era un'asserzione a cadere: era il budget a
+ * finire**, e cadeva dove capitava. Un test che fallisce in punti diversi a
+ * ogni giro sta dicendo «sono lento», non «il prodotto è rotto».
+ *
+ * Il rimedio è lo stesso già scritto — con la stessa motivazione — in testa a
+ * `e2e/teacher-attendance.spec.ts`, che a questo problema era già arrivato: un
+ * tetto esplicito e generoso, che NON cambia una sola asserzione. Il lavoro vero
+ * (leggere solo ciò che serve nel gate) è stato fatto in `rubrica.ts`; questo è
+ * il margine per il cold-compile, che non dipende da noi.
+ */
 test.describe('lato genitore', () => {
   test.use({ storageState: STORAGE.genitore });
 
   test('nuova chat con la maestra: messaggio + allegato', async ({ page }, testInfo) => {
+    test.setTimeout(150_000);
     const pngPath = testInfo.outputPath('allegato.png');
     writeFileSync(pngPath, PNG_1PX);
 
@@ -26,6 +75,21 @@ test.describe('lato genitore', () => {
     await page.getByRole('button', { name: 'Nuova Chat' }).click();
     const contatto = page.getByText('Dora Docente-E2E').first();
     await expect(contatto).toBeVisible({ timeout: 15_000 });
+
+    // ── E CHI NON DEVE COMPARIRE, NON COMPARE ────────────────────────────────
+    //
+    // «Quando clicchi su nuova chat, non devono proprio comparire le altre
+    // persone.» Fino al 2026-09-07 non era vero: un fallback consegnava al
+    // genitore TUTTI i docenti di TUTTE le sedi appena un figlio non aveva
+    // sezione — misurato in produzione, 63 nomi di 5 plessi, 9 dei quali
+    // disattivati. `Diana Docente2-E2E` insegna in SEDE 2: è la controprova che
+    // il filtro c'è, e va PRIMA del click perché dopo la modale si chiude.
+    //
+    // ⚠️ È un'asserzione NEGATIVA e va guardata con sospetto: passerebbe anche
+    // con la modale vuota. Per questo la riga sopra pretende che la maestra
+    // GIUSTA sia visibile — le due insieme dicono «queste sì, quelle no».
+    await expect(page.getByText('Diana Docente2-E2E')).toHaveCount(0);
+
     await contatto.click();
 
     // Messaggio di testo.
@@ -53,6 +117,7 @@ test.describe('lato docente', () => {
   test.use({ storageState: STORAGE.docente });
 
   test('la maestra vede la conversazione e il messaggio', async ({ page }) => {
+    test.setTimeout(150_000);
     await page.goto('/teacher/chat');
     await expect(page.getByText('Messaggi con le famiglie')).toBeVisible({ timeout: 15_000 });
 

@@ -849,6 +849,31 @@ blocco di un rilascio che ne contiene due che servono adesso.
 Per rimetterlo servirà prima un test che crei davvero un thread con più di 50 messaggi: nessuno
 lo fa, ed è per questo che il difetto è passato inosservato.
 
+**d) La causa dell'E2E rossa È STATA TROVATA — 2026-09-07, dal trace di rete conservato.**
+Il paragrafo qui sopra dice «la causa non è stata trovata»: valeva quel giorno, non vale più, e
+la si è vista solo perché nello stesso lotto era stato messo `trace: 'retain-on-failure'` sulla
+spec. Senza quello si sarebbe conservato il trace di un *ripescaggio*, in cui l'upload non parte
+nemmeno — e si sarebbe cercata un'altra volta nel posto sbagliato.
+
+Nel trace del **primo** tentativo: `POST /api/chat/messages` (il testo) parte alle 18:26:01.354 e
+ci mette ~2,6 s; `POST /api/chat/upload` parte 51 ms dopo e finisce subito. Il test vede il chip
+dell'allegato, preme «Invia» — e siamo ancora dentro quei 2,6 s. Lì `handleSend` incontra
+`if (uploading || inviando) return` e **se ne va in silenzio**. Nel trace c'è **una sola** POST
+per due messaggi mandati; nello snapshot del DOM al fallimento il chip `📎 allegato.png` è ancora
+agganciato, col suo «Rimuovi allegato».
+
+La guardia è giusta — due invii sovrapposti manderebbero due volte lo stesso messaggio. Sbagliato
+era il **pulsante**, che restava premibile promettendo un'azione che non avveniva. Ora
+`disabled` include `inviando`: Playwright aspetta che torni premibile invece di sprecare il
+click, e **una persona vede perché non succede niente**. Non era un problema del solo test: chi
+manda un messaggio e nel frattempo allega un file premeva un pulsante inerte, senza sapere se il
+file fosse partito.
+
+⚠️ Il caso che mancava ai test non era un caso nuovo: `chat-input-invio-allegato.test.tsx` aveva
+già la corsa fra invio e allegato, ma **cliccava «Invia» solo DOPO** che il primo invio si era
+risolto. L'E2E clicca prima. *Un test che non attraversa la finestra in cui il difetto vive resta
+verde per sempre.*
+
 ### Gate
 
 `eslint` 0 · `tsc` 0 · `vitest` **15.169/15.169** · `build` ok · advisors Supabase **0 ERROR**.

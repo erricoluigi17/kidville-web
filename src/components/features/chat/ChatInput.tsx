@@ -225,7 +225,18 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                 {/* Design Composer: invio = cerchio 44 verde/giallo con glow */}
                 <button
                     onClick={handleSend}
-                    disabled={disabled || uploading || (!text.trim() && !attachment)}
+                    /**
+                     * `inviando` STA QUI, e non e' una rifinitura: senza, il
+                     * pulsante resta premibile mentre l'invio e' in volo, e
+                     * `handleSend` scarta quel click in silenzio (`if (uploading
+                     * || inviando) return`). E' il difetto che ha tenuto rossa
+                     * `e2e/chat.spec.ts`: l'allegato era pronto dopo 51 ms, il
+                     * messaggio di testo ci metteva 2,6 s, e il click che stava
+                     * nel mezzo non e' mai diventato una POST.
+                     * Vale per chiunque, non solo per il test: si preme, non
+                     * succede niente, e non si sa se il file sia partito.
+                     */
+                    disabled={disabled || uploading || inviando || (!text.trim() && !attachment)}
                     className="w-11 h-11 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green text-kidville-yellow hover:bg-kidville-green-dark active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                     style={{ boxShadow: '0 8px 18px -10px rgba(0,84,75,.8)' }}
                     aria-label={t('chatInputAriaInvia')}

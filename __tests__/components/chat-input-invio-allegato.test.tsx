@@ -182,6 +182,56 @@ describe('la corsa fra un invio in volo e un allegato appena caricato', () => {
     expect(onSend).toHaveBeenLastCalledWith('📎 Allegato', PERCORSO, 'image')
   })
 
+  /**
+   * IL SECONDO GIRO DELLO STESSO DIFETTO — e il caso qui sopra NON lo vedeva,
+   * perche' clicca «Invia» solo DOPO che il primo invio si e' risolto.
+   *
+   * L'E2E clicca prima. Dal trace di rete della CI del 2026-09-07:
+   * `POST /api/chat/messages` parte alle 18:26:01.354 e ci mette ~2,6 s;
+   * `POST /api/chat/upload` parte alle 18:26:01.405 e finisce subito. Il test vede
+   * il chip, preme «Invia» — ed e' ancora dentro quei 2,6 s. Li' `handleSend`
+   * incontra `if (uploading || inviando) return` e se ne va IN SILENZIO: nel trace
+   * non c'e' nessuna seconda POST, il chip resta agganciato e l'asserzione su
+   * «📎 Allegato» scade a 15 s.
+   *
+   * La guardia e' giusta: due invii sovrapposti manderebbero due volte lo stesso
+   * messaggio. Sbagliato era il PULSANTE, che restava premibile promettendo
+   * un'azione che non avveniva — per Playwright come per una persona, che preme,
+   * non vede succedere niente e non sa se il file sia partito.
+   *
+   * Il rimedio e' far dire al pulsante la verita': durante l'invio e' disabilitato.
+   * Playwright allora ASPETTA che torni premibile invece di sprecare il click, e
+   * chi guarda lo schermo vede perche' non succede niente.
+   */
+  it('durante l\'invio il pulsante e\' disabilitato: il click non si perde in silenzio', async () => {
+    let sblocca: (v: boolean) => void = () => {}
+    const onSend = vi.fn(() => new Promise<boolean>((r) => { sblocca = r }))
+    render(<ChatInput onSend={onSend} />)
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'primo' } })
+    invia()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+
+    // L'allegato finisce mentre il testo e' ancora in volo, come in CI.
+    await allega()
+
+    // ── L'ASSERZIONE CHE ERA ROSSA ────────────────────────────────────────────
+    // Il pulsante era PREMIBILE e non faceva niente.
+    expect(screen.getByLabelText('chatInputAriaInvia')).toBeDisabled()
+
+    // Il click sprecato non e' piu' possibile: l'allegato e' ancora li' da mandare.
+    invia()
+    expect(onSend).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('allegato.png')).not.toBeNull()
+
+    // Finito il primo invio, il secondo parte davvero.
+    sblocca(true)
+    await waitFor(() => expect(screen.getByLabelText('chatInputAriaInvia')).not.toBeDisabled())
+    invia()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2))
+    expect(onSend).toHaveBeenLastCalledWith('📎 Allegato', PERCORSO, 'image')
+  })
+
   it('lo stesso vale per il TESTO scritto mentre l\'invio è in volo', async () => {
     let sblocca: (v: boolean) => void = () => {}
     const onSend = vi.fn(() => new Promise<boolean>((r) => { sblocca = r }))

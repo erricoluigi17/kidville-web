@@ -422,11 +422,23 @@ testo spariva e a schermo non compariva nulla. **Il messaggio era perso e chi l'
 credeva di averlo mandato.** Ora `onSend` restituisce l'esito, il testo **resta nel campo** e
 l'avviso dice il motivo.
 
-**c) Si caricavano i 50 messaggi più VECCHI.** `order(created_at, ascending: true).range(0, 49)`,
-e nessun client passava mai `limit`/`offset`. Oggi non morde — il thread più lungo ne ha 18 — ma
-al cinquantunesimo messaggio la conversazione si sarebbe «congelata»: chi ricarica vede sparire
-tutto ciò che si sono detti di recente, e il polling ri-scrive lo stesso blocco vecchio. Ora si
-legge la **coda**, e la risposta porta `precedenti` per chi vorrà i più vecchi.
+**c) Si caricano i 50 messaggi più VECCHI — e ⚠️ QUESTO NON È STATO CORRETTO.**
+`order(created_at, ascending: true).range(0, 49)`, e nessun client passa mai `limit`/`offset`. Al
+cinquantunesimo messaggio la conversazione si «congelerà»: chi ricarica vedrà sparire ciò che si
+sono detti di recente, e il polling ri-scriverà lo stesso blocco vecchio.
+
+Il rimedio era stato scritto (lettura dalla coda) ed è stato **tolto nella stessa consegna**.
+Nello stesso lotto `e2e/chat.spec.ts` è diventata rossa in CI — il messaggio con allegato non
+compare nel thread, tre tentativi su tre — e **la causa non è stata trovata**. Ciò che è stato
+escluso, con test scritti apposta e rimasti nel repo: `ChatInput`, il percorso della pagina
+genitore, `firmaAllegatiChat` (non scarta righe), `loadMessages` (fonde, non sostituisce).
+Restava questa lettura come unica modifica non verificabile in locale (l'E2E è in `deny`: il seed
+scriverebbe sul database di produzione), ed è il rimedio a un difetto **latente** — misurato, il
+thread più lungo in produzione ha **18** messaggi. Un rimedio che non serve ancora non vale il
+blocco di un rilascio che ne contiene due che servono adesso.
+
+Per rimetterlo servirà prima un test che crei davvero un thread con più di 50 messaggi: nessuno
+lo fa, ed è per questo che il difetto è passato inosservato.
 
 ### Gate
 

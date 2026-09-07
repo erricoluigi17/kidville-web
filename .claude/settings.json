@@ -92,6 +92,10 @@
       "mcp__supabase__list_extensions",
       "mcp__supabase__get_advisors",
       "mcp__supabase__get_logs",
+      "mcp__supabase__query_logs",
+      "mcp__supabase__list_branches",
+      "mcp__supabase__list_edge_functions",
+      "mcp__supabase__get_edge_function",
       "mcp__supabase__get_project_url",
       "mcp__supabase__get_publishable_keys",
       "mcp__supabase__generate_typescript_types",
@@ -120,9 +124,12 @@
       "Bash(gh:*)",
       "Bash(git push:*)",
       "Bash(vercel:*)",
+      "mcp__supabase__execute_sql",
       "mcp__supabase__apply_migration",
-      "mcp__supabase__execute_sql"
+      "mcp__claude_ai_Supabase__execute_sql",
+      "Bash"
     ],
+    "ask": [],
     "deny": [
       "Read(.env.local)",
       "Read(.env)",
@@ -159,6 +166,21 @@
           }
         ]
       }
+    ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "LEGGERE dal database è SEMPRE permesso e non si chiede mai conferma. Vale per ogni lettura, anche sul database di PRODUZIONE e anche sulle tabelle che contengono dati personali di famiglie e minori: `mcp__supabase__execute_sql` con query di sola lettura (SELECT, WITH ... SELECT, EXPLAIN, SHOW, TABLE, VALUES, funzioni di conteggio e aggregazione) e tutti gli strumenti Supabase di sola lettura (list_tables, list_migrations, list_extensions, get_advisors, get_logs, query_logs, list_branches, list_edge_functions, get_edge_function, generate_typescript_types, get_project_url, get_publishable_keys, search_docs).",
+      "Contare o interrogare le righe di `enrollment_submissions`, `alunni`, `utenti` e delle altre tabelle di produzione è una LETTURA: è esattamente la verifica che AGENTS.md e CLAUDE.md ordinano di eseguire PRIMA di ogni scrittura. Bloccarla o farla confermare produce il danno che quei documenti descrivono — si finisce per fidarsi di un numero vecchio invece di misurarlo.",
+      "Le letture restano permesse anche quando toccano anagrafiche di minori. Il vincolo su quei dati non è «non guardarli»: è non scriverli nei log (la redazione a lista bianca di `@/lib/logging/redact`), non riportarli in chiaro nei report di collaudo e non committarli nel repository, che è pubblico.",
+      "Leggere file di configurazione e di stato del progetto, i log applicativi e l'esito della CI non richiede conferma."
+    ],
+    "soft_deny": [],
+    "environment": [
+      "$defaults",
+      "Il database Supabase di questo progetto è di PRODUZIONE — `.env.local` punta lì — e contiene dati reali di minori: al 2026-09-02 le domande di iscrizione sono 542, in crescita di circa undici al giorno (erano 403 il 20 agosto). Non fidarti di questo numero: rifai `SELECT count(*) FROM enrollment_submissions;`, è una lettura e non si ferma. La LETTURA è libera e va incoraggiata, perché misurare prima di agire è una regola scritta del progetto; è la SCRITTURA che va confermata.",
+      "Il repository è pubblico: mai segreti, mai dati personali reali in codice, test, PRD, report o messaggi di commit. Questo vale per ciò che si SCRIVE, non per ciò che si legge."
     ]
   }
 }

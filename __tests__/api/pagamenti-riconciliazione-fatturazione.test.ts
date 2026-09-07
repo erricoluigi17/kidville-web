@@ -513,8 +513,33 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
 
     await get()
     expect(registroMovimenti()).toHaveLength(1)
-    expect(registroMovimenti()[0].limite).toBe(500)
+    // 501, non 500: la riga in più si chiede SEMPRE, esattamente come sulla
+    // finestra larga. Questa asserzione diceva 500, e quel numero era il difetto
+    // scritto in un test: senza la riga in più, `troncato` sulla finestra normale
+    // non poteva accendersi MAI, e il registro veniva tagliato in silenzio.
+    expect(registroMovimenti()[0].limite).toBe(501)
     expect(statoChiesto(registroMovimenti()[0])).toBeUndefined()
+  })
+
+  it('501 righe SENZA ?fattura= → `troncato: true`: prima taceva', async () => {
+    registro(501)
+
+    const j = await (await get()).json()
+    expect(j.troncato).toBe(true)
+    expect(j.data).toHaveLength(500)      // la riga in più non si mostra
+    const piena = h.eventi.find((e) => e.campi.esito === 'finestra_piena')
+    expect(piena?.livello).toBe('warn')
+    // `registro` distingue questo troncamento da quello della finestra larga: nei
+    // log i due erano indistinguibili perché il secondo non esisteva
+    expect(piena?.campi.tipo).toBe('registro')
+  })
+
+  it('500 righe esatte non sono un troncamento', async () => {
+    registro(500)
+
+    const j = await (await get()).json()
+    expect(j.troncato).toBeUndefined()
+    expect(j.data).toHaveLength(500)
   })
 
   it('con ?fattura= la query forza `stato=confermato` e alza il tetto a LIMITE_FATTURAZIONE', async () => {
@@ -535,7 +560,7 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
 
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.troncato).toBe(true)
-    const piena = h.eventi.find((e) => e.campi.esito === 'fatturazione_finestra_piena')
+    const piena = h.eventi.find((e) => e.campi.esito === 'finestra_piena')
     expect(piena?.livello).toBe('warn')
     expect(piena?.campi.righe).toBe(1000)
     // …e QUALE taglio era pieno: senza, i due modi di riempire la finestra
@@ -548,7 +573,7 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
 
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.troncato).toBeUndefined()
-    expect(h.eventi.some((e) => e.campi.esito === 'fatturazione_finestra_piena')).toBe(false)
+    expect(h.eventi.some((e) => e.campi.esito === 'finestra_piena')).toBe(false)
   })
 })
 
@@ -1155,7 +1180,7 @@ describe('GET /api/pagamenti/riconciliazione — i numeri delle pillole (`?conte
     // battono contro il tetto della finestra, cioè quanti «≥» stanno uscendo. Un
     // campo di log che nessuno guarda cadere è un campo che può sparire in
     // silenzio, e allora la misura promessa non si può più fare.
-    const piena = h.eventi.find((e) => e.campi.esito === 'fatturazione_finestra_piena')
+    const piena = h.eventi.find((e) => e.campi.esito === 'finestra_piena')
     expect(piena?.campi.tipo).toBe('conteggi')
   })
 

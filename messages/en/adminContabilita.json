@@ -968,5 +968,9 @@
   "reconLottoNessunaPronta": "None of the selected rows can be invoiced as they are.",
   "reconLottoMotivoInterrotto": "Check stopped: this row was not verified.",
   "reconLottoIgnote": "{n, plural, one {# row with an unknown outcome} other {# rows with an unknown outcome}}: the invoice number may already have been used.",
-  "reconLottoFermatoSenzaNumero": "The batch stopped: issuing did not answer as it should. {n, plural, =0 {Nothing else was left to do.} one {The other row was not attempted.} other {The other # rows were not attempted.}} No invoice number was used: fix the reason above and try again."
+  "reconLottoFermatoSenzaNumero": "The batch stopped: issuing did not answer as it should. {n, plural, =0 {Nothing else was left to do.} one {The other row was not attempted.} other {The other # rows were not attempted.}} No invoice number was used: fix the reason above and try again.",
+  "reconLottoStimaMinuti": "about {minuti, plural, one {# minute} other {# minutes}} left",
+  "reconLottoStimaBreve": "less than a minute left",
+  "reconLottoInCorsoTitolo": "What has gone out so far",
+  "reconLottoSoloLePronte": "Only the ready rows are issued: {n, plural, one {# still needs completing and will not be sent} other {# still need completing and will not be sent}}."
 }

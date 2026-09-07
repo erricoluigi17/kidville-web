@@ -507,3 +507,70 @@ describe('MovimentoDialog — nessun fondo in hover senza il suo Alto Contrasto'
     expect(cr('#FFFFFF', '#006A5F')).toBeGreaterThan(6.4);
   });
 });
+
+/**
+ * ─── L'AVVISO «ALTRA SEDE» DEVE PESARE PIÙ DI CIÒ CHE INFORMA ────────────────
+ *
+ * MISURATO sullo screenshot del 2026-09-07: il riquadro «Questo bonifico ha un
+ * aggancio forte su Kidville Cesa» aveva lo STESSO fondo crema della card
+ * «CAUSALE / ORDINANTE» che gli sta due centimetri sopra. In luce normale la
+ * differenza gliela danno tre utility Tailwind (filetto, glifo, inchiostro) e le
+ * verifica `MovimentoDialog.test.tsx`; in Alto Contrasto no, e non per una svista:
+ * `@theme inline` INLINA l'hex dentro le utility, quindi le superfici crema del
+ * popup diventano tutte #1A1A1A e il filetto `warn-strong` resta l'unico segnale —
+ * a 5,62:1, cioè leggibile ma spento proprio nella modalità di chi fa più fatica.
+ *
+ * La regola dedicata porta filetto e inchiostro a #FFB84D: **10,12:1** su #1A1A1A.
+ * Non è il giallo #FFE500 dei comandi — l'invariante qui sopra continua a valere.
+ */
+describe('globals.css — il riquadro d’avviso «altra sede» in Alto Contrasto', () => {
+  const AMBRA = '#FFB84D';
+
+  const rapporto = (a: string, b: string) => {
+    const l = (h: string) => {
+      const c = [0, 2, 4].map((i) => parseInt(h.slice(1 + i, 3 + i), 16) / 255)
+        .map((s) => (s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const [x, y] = [l(a), l(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+
+  it('filetto e inchiostro dell’avviso si ridipingono, e NON come il resto del popup', () => {
+    const filetto = blocco('[data-contrast="high"] .kv-recon-dialog .kv-recon-avviso-sede {');
+    expect(filetto).toMatch(new RegExp(`border-color:\\s*${AMBRA}`, 'i'));
+    const inchiostro = blocco(
+      '[data-contrast="high"] .kv-recon-dialog .kv-recon-avviso-sede .text-kidville-warn-strong',
+    );
+    expect(inchiostro).toMatch(new RegExp(`color:\\s*${AMBRA}`, 'i'));
+  });
+
+  it('CONTROLLO NUMERICO: l’ambra su #1A1A1A vale 10,1:1, e il crema regge AA in luce normale', () => {
+    // Se un giorno qualcuno cambiasse l'ambra con un colore più tenue, questa riga
+    // diventerebbe rossa PRIMA che lo scopra un utente.
+    expect(Math.round(rapporto(AMBRA, '#1A1A1A') * 100) / 100).toBe(10.12);
+    // …e in luce normale l'inchiostro è `warn-strong` sul crema, sopra i 4,5:1.
+    expect(css).toContain('--color-kidville-warn-strong: #A64F09');
+    expect(css).toContain('--color-kidville-cream: #FEF1E4');
+    expect(rapporto('#A64F09', '#FEF1E4')).toBeGreaterThan(4.5);
+    // La ragione per cui il FILETTO non è `warn` (#E6720A): sul crema vale 2,79:1,
+    // sotto i 3:1 che WCAG 1.4.11 chiede a un elemento non testuale.
+    expect(rapporto('#E6720A', '#FEF1E4')).toBeLessThan(3);
+  });
+
+  it('le regole dell’avviso stanno FUORI da ogni @layer, come tutte le altre del popup', () => {
+    // Dentro un layer perderebbero contro le utility generate da `@theme inline`,
+    // a prescindere dalla specificità: è l'unico motivo per cui vincono senza
+    // `!important`.
+    const nudo = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const profondita = (ago: string) => {
+      const j = nudo.indexOf(ago);
+      expect(j, `selettore non trovato: ${ago}`).toBeGreaterThan(-1);
+      let p = 0;
+      for (const c of nudo.slice(0, j)) { if (c === '{') p++; else if (c === '}') p--; }
+      return p;
+    };
+    expect(profondita('[data-contrast="high"] .kv-recon-dialog .kv-recon-avviso-sede {')).toBe(0);
+    expect(profondita('[data-contrast="high"] .kv-recon-dialog .kv-recon-avviso-sede .text-kidville-warn-strong')).toBe(0);
+  });
+});

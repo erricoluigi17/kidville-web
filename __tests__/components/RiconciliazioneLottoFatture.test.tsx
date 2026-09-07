@@ -664,3 +664,215 @@ describe('la barra annuncia l’attesa VERA, non sempre novanta secondi', () => 
     await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('~90 s'));
   });
 });
+
+/**
+ * ─── DICIOTTO MINUTI DAVANTI A UNA RIGA DI TESTO ────────────────────────────
+ *
+ * MISURATO sullo screenshot del 2026-09-07: durante il lotto il pannello diceva
+ * soltanto «Fattura 1/3 · invio in corso». Con dodici fatture sono **circa
+ * diciotto minuti** (12 × 90 s, il ritmo del `signin` di Aruba) davanti a una riga
+ * che si muove una volta ogni novanta secondi: si legge come un blocco, e chi la
+ * legge così ricarica la pagina — perdendo di vista quali documenti fiscali siano
+ * già partiti. E le fatture concluse comparivano solo nel riepilogo finale.
+ */
+describe('l’attesa si vede, si spiega e si misura', () => {
+  it('la barra si riempie in proporzione alle fatture CONCLUSE', async () => {
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+
+    // Prima di premere non c'è nessuna barra: non c'è niente che avanzi.
+    expect(screen.queryByTestId('lotto-barra')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => screen.queryByTestId('lotto-barra') !== null);
+    // La prima è IN VOLO: conclusa non lo è ancora, e la barra non deve mentire.
+    expect(screen.getByTestId('lotto-barra').getAttribute('data-concluse')).toBe('0');
+
+    await finoA(() => screen.getByTestId('lotto-barra').getAttribute('data-concluse') === '1');
+    const barra = screen.getByTestId('lotto-barra');
+    expect(barra.getAttribute('data-totale')).toBe('3');
+    // Riempita per davvero, non solo contata: 1 su 3.
+    expect((barra.firstElementChild as HTMLElement).style.width).toBe('33.33333333333333%');
+  });
+
+  it('la barra è MUTA per lo screen reader: a dire il numero è già il `role="status"`', async () => {
+    // Una delle due, non tutte e due a raccontare la stessa cosa. Il `role="status"`
+    // dice «Fattura 2/3», più la ragione dell'attesa e quanto manca: è più di
+    // quanto un `aria-valuenow` possa dire, e arriva da solo.
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => screen.queryByTestId('lotto-barra') !== null);
+
+    const barra = screen.getByTestId('lotto-barra');
+    expect(barra.getAttribute('aria-hidden')).toBe('true');
+    expect(barra.getAttribute('role'), 'o decorativa o progressbar: mai le due cose').toBeNull();
+  });
+
+  it('la live region dice QUANTO MANCA, non solo a che punto è', async () => {
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+
+    // Appena partita: la prima è in volo, restano due intervalli da 90 s = 3 minuti.
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('minuti'));
+    expect(screen.getByTestId('lotto-avanzamento').textContent).toContain('circa 3 minuti alla fine');
+  });
+
+  it('LA RAGIONE DELL’ATTESA c’era già, e resta: «attendo il ritmo di Aruba»', async () => {
+    // Non è un difetto nuovo: la frase esisteva, e lo screenshot aveva colto
+    // l'istante dell'INVIO — che dura pochi secondi — invece dei novanta della pausa.
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('attendo'));
+    expect(screen.getByTestId('lotto-avanzamento').textContent).toContain('attendo il ritmo di Aruba');
+  });
+
+  it('la live region resta LO STESSO NODO: montata vuota, riempita dopo', async () => {
+    // Un `role="status"` inserito nel DOM col contenuto già dentro resta muto su
+    // NVDA e JAWS. I blocchi nuovi (elenco in corso, barra) le stanno attorno: se
+    // uno di loro la facesse rimontare, la barra parlerebbe a nessuno.
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+    const prima = screen.getByTestId('lotto-avanzamento');
+    expect(prima.textContent).toBe('');
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '') !== '');
+    expect(screen.getByTestId('lotto-avanzamento'), 'la live region è stata rimontata').toBe(prima);
+
+    // …e resta lo stesso anche dopo che l'elenco «già uscito» è comparso e il
+    // riepilogo finale gli è nato accanto. I timer vanno avanzati a mano: il
+    // ritmo è 90 s da inizio a inizio, e `finoA` svuota i microtask, non l'orologio.
+    await avanza(90_000);
+    await finoA(() => post(f).length === 2);
+    await avanza(90_000);
+    await finoA(() => post(f).length === 3);
+    await finoA(() => screen.queryByTestId('lotto-riepilogo') !== null);
+    expect(screen.getByTestId('lotto-avanzamento')).toBe(prima);
+  });
+});
+
+describe('durante il lotto si vede CHE COSA è già uscito', () => {
+  it('il numero della prima fattura si legge PRIMA della fine, non solo nel riepilogo', async () => {
+    // Per diciotto minuti l'operatore non sapeva se qualcosa fosse andato: le
+    // righe concluse comparivano solo alla fine, cioè quando non servono più.
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => screen.queryByTestId('lotto-in-corso-esiti') !== null);
+
+    const inCorso = screen.getByTestId('lotto-in-corso-esiti');
+    expect(within(inCorso).getByText('1 fattura emessa')).toBeInTheDocument();
+    expect(within(inCorso).getByText(/Fattura n\. 1900/)).toBeInTheDocument();
+    // …e il riepilogo finale non c'è ancora: il lotto sta ancora girando
+    expect(screen.queryByTestId('lotto-riepilogo')).toBeNull();
+  });
+
+  it('anche le righe SALTATE si vedono mentre il lotto gira, col loro motivo', async () => {
+    const f = stubFetch({
+      postPerId: { pg1: { stato: 409, corpo: { error: 'Per questo pagamento esiste già una fattura viva.' } } },
+    });
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => screen.queryByTestId('lotto-in-corso-esiti') !== null);
+
+    const inCorso = screen.getByTestId('lotto-in-corso-esiti');
+    expect(within(inCorso).getByText('1 riga saltata')).toBeInTheDocument();
+    expect(within(inCorso).getByText(/esiste già una fattura viva/)).toBeInTheDocument();
+  });
+
+  it('a lotto finito l’elenco in corso sparisce: a raccontare resta il riepilogo', async () => {
+    // Due elenchi della stessa cosa nello stesso pannello sarebbero due verità da
+    // tenere allineate, ed è il difetto che il riepilogo esiste per non avere.
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f, ['m1']);
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => screen.queryByTestId('lotto-riepilogo') !== null);
+    expect(screen.queryByTestId('lotto-in-corso-esiti')).toBeNull();
+  });
+});
+
+describe('il piè di pagina dice ciò che serve ALLA FASE in cui si trova', () => {
+  it('a lotto FINITO non conta più i selezionati e non ripete il tetto delle 12', async () => {
+    // MISURATO sullo screenshot: «3 bonifici selezionati · Si emettono al massimo
+    // 12 fatture per volta» compariva anche sotto il riepilogo finale, dove il
+    // lotto è finito e non c'è più niente da emettere. È rumore su una schermata
+    // che va letta.
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f, ['m1']);
+
+    // …e prima di premere quelle due frasi ci sono davvero: senza questa riga il
+    // test sarebbe verde anche su un piè di pagina sparito del tutto.
+    expect(screen.getByText('1 bonifico selezionato')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => screen.queryByTestId('lotto-riepilogo') !== null);
+
+    expect(screen.queryByText(/bonifico selezionato|bonifici selezionati/)).toBeNull();
+    expect(screen.queryByText(/Si emettono al massimo/)).toBeNull();
+    // Il comando per uscire, invece, resta.
+    expect(screen.getByRole('button', { name: 'Chiudi' })).toBeInTheDocument();
+  });
+
+  it('il tetto si dichiara solo dove si può ancora scegliere', async () => {
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await finoA(() => screen.queryByText(/Bonifico retta 1/) !== null);
+    fireEvent.click(screen.getByRole('checkbox', { name: /\(01\/10\/2026\)/ }));
+    await avanza(0);
+    expect(screen.getByText(/Si emettono al massimo 12 fatture per volta/)).toBeInTheDocument();
+
+    // In `conferma` la selezione è congelata: il tetto non è più una regola che
+    // riguarda un gesto possibile.
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+    expect(screen.queryByText(/Si emettono al massimo/)).toBeNull();
+  });
+});
+
+describe('«3 selezionati» accanto a «Emetti ora (2)» va SPIEGATO, non dedotto', () => {
+  it('quando le pronte sono meno dei selezionati, una frase lega i due numeri', async () => {
+    // I fatti sono giusti — 3 selezionati, 2 pronte, 1 da completare — ma due
+    // numeri diversi a pochi centimetri, senza una parola che li leghi, si leggono
+    // come un errore del programma. E chi li legge così non preme.
+    const f = stubFetch({
+      anteprimaPerId: {
+        pg3: {
+          causale: 'Retta ottobre pg3', origine: 'modello', lunghezza: 20, limite: 100, eccede: false,
+          intestatario: { alunno: null, quote: [{ adult_id: null, label: 'unica', importo: 100, nome: '', fatturabile: false, errori: { codice_fiscale: 'mancante' } }], ripartito: false, candidati: [], proposta: null, ordinante: null },
+        },
+      },
+    });
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+
+    expect(screen.getByText('3 bonifici selezionati')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Emetti ora (2)' })).toBeInTheDocument();
+    expect(screen.getByText(/Si emettono solo le righe pronte: 1 resta da completare e non parte/))
+      .toBeInTheDocument();
+  });
+
+  it('quando i due numeri COINCIDONO la frase non c’è: non c’è niente da spiegare', async () => {
+    const f = stubFetch();
+    vi.stubGlobal('fetch', f);
+    await finoAllaConferma(f);
+    expect(screen.getByRole('button', { name: 'Emetti ora (3)' })).toBeInTheDocument();
+    expect(screen.queryByText(/Si emettono solo le righe pronte/)).toBeNull();
+  });
+});

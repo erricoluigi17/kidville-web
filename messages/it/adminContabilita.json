@@ -968,5 +968,9 @@
   "reconLottoNessunaPronta": "Nessuna delle righe selezionate si può fatturare così com’è.",
   "reconLottoMotivoInterrotto": "Controllo interrotto: questa riga non è stata verificata.",
   "reconLottoIgnote": "{n, plural, one {# riga dall’esito ignoto} other {# righe dall’esito ignoto}}: il numero potrebbe essere stato consumato.",
-  "reconLottoFermatoSenzaNumero": "Il lotto si è fermato: l’emissione non ha risposto come doveva. {n, plural, =0 {Non restava nient’altro da fare.} one {L’altra riga non è stata tentata.} other {Le altre # righe non sono state tentate.}} Nessun numero di fattura è stato consumato: risolvi il motivo qui sopra e riprova."
+  "reconLottoFermatoSenzaNumero": "Il lotto si è fermato: l’emissione non ha risposto come doveva. {n, plural, =0 {Non restava nient’altro da fare.} one {L’altra riga non è stata tentata.} other {Le altre # righe non sono state tentate.}} Nessun numero di fattura è stato consumato: risolvi il motivo qui sopra e riprova.",
+  "reconLottoStimaMinuti": "circa {minuti, plural, one {# minuto} other {# minuti}} alla fine",
+  "reconLottoStimaBreve": "meno di un minuto alla fine",
+  "reconLottoInCorsoTitolo": "Che cosa è già uscito",
+  "reconLottoSoloLePronte": "Si emettono solo le righe pronte: {n, plural, one {# resta da completare e non parte} other {# restano da completare e non partono}}."
 }

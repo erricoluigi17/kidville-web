@@ -12,8 +12,6 @@
   "adesioniSiNo": "{si} yes · {no} no",
   "apriBacheca": "Open the board",
   "allergieTitolo": "Allergies and medical notes",
-  "allergieDaSeguireClasse": "{count, plural, one {# pupil} other {# pupils}} to keep an eye on · class {sezione}",
-  "allergieDaSeguireSezione": "{count, plural, one {# child} other {# children}} to keep an eye on · section {sezione}",
   "allergieCtaRegistro": "Go to the register",
   "allergieCtaDiario": "See in the diary",
   "appelloTitolo": "Today’s attendance",
@@ -116,5 +114,8 @@
   "agendaErroreSalvataggio": "Save failed. Please try again.",
   "gruppoAllergie": "Allergies",
   "gruppoNoteMediche": "Medical notes",
-  "noteMedicheDaLeggere": "{count, plural, one {# medical note} other {# medical notes}} to read"
+  "allergieConta": "{count, plural, one {# with an allergy} other {# with allergies}}",
+  "noteMedicheConta": "{count, plural, one {# with a medical note} other {# with medical notes}}",
+  "allergieGruppoClasse": "class {sezione}",
+  "allergieGruppoSezione": "section {sezione}"
 }

@@ -13,7 +13,7 @@ import { useTeacherGradi } from '@/lib/auth/use-teacher-gradi';
 import { useClientValue } from '@/lib/hooks/use-client-value';
 import { greetingByHour } from '@/lib/ui/greeting';
 import {
-  haAllergiaOperativa, allergeniAlunno, chiaviAllergeni, isNegazione,
+  haAllergiaOperativa, allergeniAlunno, chiaviAllergeni, isNegazione, testoResiduoAllergie,
   allergeneEmoji, useAllergeneLabel,
 } from '@/lib/mensa/allergeni';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
@@ -390,13 +390,30 @@ function TeacherDashboardInner() {
               <div className="min-w-0 flex-1">
                 <div className="font-barlow text-lg font-black uppercase leading-none text-kidville-green">{t('allergieTitolo')}</div>
                 <div className="mt-0.5 font-maven text-[11.5px] text-kidville-warn-strong">
-                  {/* Il conteggio è quello delle ALLERGIE. Quando non ce ne sono
-                      ma qualche nota medica sì, la frase parla di quelle: dire
-                      «0 bambini da seguire» sopra un elenco pieno è peggio che
-                      non dire niente. */}
-                  {allergie.length > 0
-                    ? t(isPrimariaOnly ? 'allergieDaSeguireClasse' : 'allergieDaSeguireSezione', { count: allergie.length, sezione: nomeSezione })
-                    : t('noteMedicheDaLeggere', { count: noteMediche.length })}
+                  {/* ── IL SOTTOTITOLO DICE ENTRAMBI I NUMERI ───────────────────
+                      MISURATO sullo screenshot del 2026-09-07: il titolino diceva
+                      «3 bambini da seguire · sezione 2 ANNI» sopra un elenco di
+                      CINQUE nomi — tre con allergie, due con note mediche. Il
+                      conteggio era giusto (le allergie sono il gruppo che il
+                      titolo nomina per primo) e proprio per questo si leggeva
+                      come un difetto del programma: due numeri diversi a due
+                      centimetri, e nessuna parola a legarli.
+
+                      Ora la frase nomina i due gruppi. Ogni metà compare solo se
+                      il suo gruppo esiste: «0 con allergie · 2 con note mediche»
+                      sarebbe un conteggio a zero stampato sopra un elenco pieno,
+                      cioè il difetto di prima al contrario. La composizione è in
+                      JS perché è un ELENCO di frammenti, non una frase con due
+                      variabili: un ICU che debba anche far sparire una metà
+                      diventa un `plural` annidato che nessun traduttore rilegge.
+                      Il lessico resta quello della schermata — «classe» per la
+                      primaria, «sezione» per lo 0-6 — e vive nell'ultimo
+                      frammento, come nelle chiavi che c'erano prima. */}
+                  {[
+                    allergie.length > 0 ? t('allergieConta', { count: allergie.length }) : null,
+                    noteMediche.length > 0 ? t('noteMedicheConta', { count: noteMediche.length }) : null,
+                    t(isPrimariaOnly ? 'allergieGruppoClasse' : 'allergieGruppoSezione', { sezione: nomeSezione }),
+                  ].filter((p): p is string => p !== null).join(' · ')}
                 </div>
               </div>
             </div>
@@ -416,10 +433,18 @@ function TeacherDashboardInner() {
                   // testo quando l'archivio è vuoto — che è ciò che fa
                   // `allergeniAlunno`, e per cui «lattosio» diventa «Latte / lattosio».
                   const chiavi = Array.from(new Set([...chiaviAllergeni(s), ...allergeniAlunno(s)]));
-                  const testo = (s.allergies ?? '').trim();
-                  const mostraTesto = testo !== '' && !isNegazione(testo);
+                  // ⚠️ IL TESTO MOSTRA SOLO CIÒ CHE I CHIP NON DICONO GIÀ. Misurato
+                  // sullo screenshot del 2026-09-07: accanto al chip «🥜 ARACHIDI»
+                  // c'era la parola «arachidi», e accanto a «🥛 LATTE / LATTOSIO» il
+                  // testo «LATTOSIO, FRAGOLE» — lo stesso dato due volte sulla stessa
+                  // riga, in una colonna larga il 58% dello schermo di un telefono.
+                  // La regola sta nel motore (`testoResiduoAllergie`) e non qui:
+                  // è la stessa disciplina di `etichetteAllergie`, e il lock
+                  // `allergie-un-motore-solo` pretende che ci resti. Residuo vuoto ⇒
+                  // nessun testo: il chip ha già detto tutto.
+                  const residuo = testoResiduoAllergie(s.allergies, chiavi);
                   return (
-                    <div key={s.id} className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
+                    <div key={s.id} data-testid="teacher-allergia-riga" className={`flex items-center gap-2.5 px-1.5 py-2.5 ${i ? 'border-t border-kidville-line' : ''}`}>
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-kidville-error" />
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-barlow text-sm font-extrabold uppercase leading-tight text-kidville-green">{s.nome} {s.cognome}</div>
@@ -430,9 +455,9 @@ function TeacherDashboardInner() {
                             <span aria-hidden="true">{allergeneEmoji(k)}</span> {etichettaAllergene(k)}
                           </span>
                         ))}
-                        {mostraTesto && (
+                        {residuo !== '' && (
                           <span className="inline-flex items-center truncate rounded-pill bg-kidville-cream-dark px-2 py-0.5 font-barlow text-[10.5px] font-extrabold uppercase tracking-wide text-kidville-ink">
-                            {testo}
+                            {residuo}
                           </span>
                         )}
                       </div>

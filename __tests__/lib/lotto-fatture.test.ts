@@ -9,6 +9,7 @@ import {
   pausaDopo,
   fermaIlLotto,
   numeroInDubbio,
+  stimaRimanenteMs,
   CODICE_TRASPORTO_IGNOTO,
 } from '@/lib/pagamenti/lotto-fatture'
 
@@ -172,5 +173,49 @@ describe('numeroInDubbio — «mi fermo?» e «il numero è in dubbio?» sono DU
     expect(stati.filter((s) => fermaIlLotto(s)).length).toBeGreaterThan(
       stati.filter((s) => numeroInDubbio(s, null)).length,
     )
+  })
+})
+
+/**
+ * ─── QUANTO MANCA — la sola domanda che un'attesa di diciotto minuti pone ────
+ *
+ * MISURATO sullo screenshot del 2026-09-07: durante il lotto si leggeva soltanto
+ * «Fattura 1/3 · invio in corso». Con dodici fatture il lotto dura **circa
+ * diciotto minuti** (12 × 90 s, il ritmo del `signin` di Aruba): novanta secondi
+ * di riga ferma si leggono come un blocco, e chi li legge così ricarica la pagina
+ * — cioè fa la sola cosa che qui non si deve fare, perché perde di vista quali
+ * documenti fiscali siano già partiti.
+ *
+ * La stima è START-TO-START, come tutto il resto di questo file: la riga in volo
+ * non si conta (sta finendo), quelle dopo costano un intervallo ciascuna, e
+ * l'attesa in corso si somma perché è tempo che deve ancora passare.
+ */
+describe('stimaRimanenteMs — quanto manca alla fine del lotto', () => {
+  it('a lotto appena partito, con tre righe, mancano due intervalli', () => {
+    // La prima è in volo: finirà in pochi secondi. Restano la seconda e la terza,
+    // e fra una partenza e l'altra passano 90 s.
+    expect(stimaRimanenteMs(0, 3, null)).toBe(2 * INTERVALLO_FRA_EMISSIONI_MS)
+  })
+
+  it('durante l’attesa, la pausa in corso si SOMMA agli intervalli che restano', () => {
+    expect(stimaRimanenteMs(1, 3, 90_000)).toBe(90_000 + INTERVALLO_FRA_EMISSIONI_MS)
+  })
+
+  it('sull’ultima riga non resta nessun intervallo: solo la pausa che manca', () => {
+    expect(stimaRimanenteMs(2, 3, PAUSA_DOPO_RIFIUTO_LOCALE_MS)).toBe(PAUSA_DOPO_RIFIUTO_LOCALE_MS)
+    expect(stimaRimanenteMs(2, 3, null)).toBe(0)
+  })
+
+  it('a lotto finito — o oltre — la stima è zero, mai negativa', () => {
+    expect(stimaRimanenteMs(3, 3, null)).toBe(0)
+    expect(stimaRimanenteMs(5, 3, null)).toBe(0)
+    expect(stimaRimanenteMs(0, 0, null)).toBe(0)
+  })
+
+  it('IL CONTO CHE HA FATTO NASCERE IL TETTO: dodici fatture ≈ diciotto minuti', () => {
+    // Se un giorno l'intervallo o il tetto cambiassero, questa riga dice subito
+    // quanto tempo si sta chiedendo a una segretaria davanti a una barra.
+    const minuti = stimaRimanenteMs(0, TETTO_LOTTO, null) / 60_000
+    expect(Math.round(minuti)).toBe(17)
   })
 })

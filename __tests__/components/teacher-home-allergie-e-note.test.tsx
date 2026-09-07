@@ -151,14 +151,25 @@ async function card(): Promise<HTMLElement> {
   return titolo.closest('section') as HTMLElement
 }
 
+/** La riga di UN bambino dentro il gruppo «Allergie»: chip + testo residuo. */
+function riga(c: HTMLElement, nome: string): HTMLElement {
+  const el = within(c).getByText(nome).closest('[data-testid="teacher-allergia-riga"]')
+  if (!el) throw new Error(`nessuna riga «Allergie» per ${nome}`)
+  return el as HTMLElement
+}
+
 describe('Home docente — due gruppi nella card «Allergie e note mediche»', () => {
   it('l\'allergia sta nel gruppo ALLERGIE, con l\'etichetta dell\'allergene', async () => {
     render(<TeacherDashboardPage />)
     const c = await card()
     await waitFor(() => expect(within(c).getByText('Alfa Uno')).toBeInTheDocument())
     expect(within(c).getByText('Arachidi')).toBeInTheDocument()
-    // Il testo libero resta accanto all'etichetta: è ciò che la persona ha scritto.
-    expect(within(c).getByText('arachidi')).toBeInTheDocument()
+    // ⚠️ E IL TESTO LIBERO NON SI RIPETE. Fino al 2026-09-07 accanto al chip
+    // «🥜 ARACHIDI» compariva, a due centimetri, la parola «arachidi»: lo stesso
+    // dato scritto due volte sulla stessa riga, in una colonna larga il 58% dello
+    // schermo. Il chip lo dice già.
+    const r = riga(c, 'Alfa Uno')
+    expect(within(r).queryByText('arachidi')).toBeNull()
   })
 
   it('la NOTA MEDICA non finisce fra le allergie, e ha il suo gruppo', async () => {
@@ -181,7 +192,7 @@ describe('Home docente — due gruppi nella card «Allergie e note mediche»', (
     render(<TeacherDashboardPage />)
     const c = await card()
     await waitFor(() => expect(within(c).getByText('Alfa Uno')).toBeInTheDocument())
-    expect(within(c).getByText(`4 bambini da seguire · sezione ${CLASSE}`)).toBeInTheDocument()
+    expect(within(c).getByText(`4 con allergie · 2 con note mediche · sezione ${CLASSE}`)).toBeInTheDocument()
   })
 
   it('il testo NON riconosciuto resta accanto all\'etichetta: «fragole» non sparisce', async () => {
@@ -190,8 +201,11 @@ describe('Home docente — due gruppi nella card «Allergie e note mediche»', (
     await waitFor(() => expect(within(c).getByText('Gamma Tre')).toBeInTheDocument())
     // «lattosio» diventa un'etichetta canonica…
     expect(within(c).getByText('Latte / lattosio')).toBeInTheDocument()
-    // …e il testo per intero resta, con dentro la parola che i 14 UE non hanno.
-    expect(within(c).getByText('lattosio, fragole')).toBeInTheDocument()
+    // …e del testo resta SOLO ciò che il chip non dice già: «fragole» non è fra i
+    // 14 UE e nessun chip la dirà mai, «lattosio» l'ha appena detta il chip.
+    const r = riga(c, 'Gamma Tre')
+    expect(within(r).getByText('fragole')).toBeInTheDocument()
+    expect(within(r).queryByText('lattosio, fragole'), 'il residuo non ripete il chip').toBeNull()
   })
 
   it('«nessuna» non è un\'allergia: quel bambino non compare affatto', async () => {
@@ -211,7 +225,10 @@ describe('Home docente — due gruppi nella card «Allergie e note mediche»', (
     const c = await card()
     await waitFor(() => expect(within(c).getByText('Alfa Uno')).toBeInTheDocument())
     expect(within(c).getByText('Epsilon Cinque')).toBeInTheDocument()
-    expect(within(c).getByText('fragole')).toBeInTheDocument()
+    // Nella SUA riga: dal 2026-09-07 «fragole» compare due volte nella card —
+    // qui e come residuo di Gamma — e un `getByText` sulla card intera romperebbe
+    // per ambiguità invece che per un difetto.
+    expect(within(riga(c, 'Epsilon Cinque')).getByText('fragole')).toBeInTheDocument()
   })
 
   it('una chiave STRUTTURATA fuori dalle 14 non lascia una riga muta', async () => {
@@ -261,7 +278,9 @@ describe('Home docente — due gruppi nella card «Allergie e note mediche»', (
     render(<TeacherDashboardPage />)
     const c = await card()
     await waitFor(() => expect(within(c).getByText('Beta Due')).toBeInTheDocument())
-    expect(within(c).getByText('1 nota medica da leggere')).toBeInTheDocument()
+    expect(within(c).getByText(`1 con nota medica · sezione ${CLASSE}`)).toBeInTheDocument()
+    // …e MAI «0 con allergie ·»: il ramo per lo zero non stampa la sua metà.
+    expect(within(c).queryByText(/0 con allergie/)).toBeNull()
     // E il gruppo «Allergie» non c'è affatto: nessuna intestazione vuota.
     expect(within(c).queryByText('Allergie')).toBeNull()
   })

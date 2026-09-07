@@ -379,13 +379,46 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
 
           {/* ── «Questo bonifico sembra di un'altra sede» ────────────────────
               Sopra i suggerimenti, perché è la cosa da sapere PRIMA di premerne
-              uno. È la stessa carta crema del riquadro «Documenti» e di quello
-              della causale: nessuna forma nuova, e in Alto Contrasto è già
-              coperta dalle regole di `.kv-recon-dialog` sulle superfici.
+              uno.
 
-              Mai giallo né rosso, in nessuno dei due: qui dentro quei colori
-              sono di ciò che si preme, e questo riquadro non chiede un'azione a
-              QUESTO operatore — chiede di non farne una.
+              ⚠️ E NON È PIÙ LA STESSA CARTA CREMA DEGLI ALTRI RIQUADRI, come
+              questo commento diceva fino al 2026-09-07. MISURATO sullo
+              screenshot: aveva lo stesso identico vestito della card «CAUSALE /
+              ORDINANTE» che gli sta due centimetri sopra — due rettangoli uguali,
+              uno che riporta dei dati e uno che dice «se premi qui sotto registri
+              l'incasso sulla voce di un bambino di un altro plesso». Un avviso col
+              vestito di ciò che informa non è un avviso: è una nota.
+
+              Il peso lo danno TRE cose, e nessuna è il fondo: un FILETTO laterale
+              da 4px, un GLIFO e l'INCHIOSTRO d'avviso sul titolo. I numeri —
+              cioè gli hex, che in questo file sono vietati anche nei commenti
+              (`__tests__/architecture/design-tokens-admin.test.ts`) — stanno nel
+              lock che li ricalcola, `riconciliazione-a11y-css.test.ts`:
+                · `warn-strong` sul crema vale **5,05:1**, sopra i 4,5:1 di WCAG
+                  1.4.3 — ed è anche il colore del FILETTO, dove basterebbero i
+                  3:1 di 1.4.11. `warn` sul crema si ferma a 2,79:1 e sarebbe
+                  stato sotto soglia: misurato prima di scartarlo, non dopo;
+                · il fondo resta crema APPOSTA. `warn-soft` e crema distano tre
+                  punti per canale: cambiarlo non avrebbe separato niente, e
+                  avrebbe portato il riquadro fuori dalla regola di Alto Contrasto
+                  che il popup ha già su `.bg-kidville-cream`;
+                · fondi PIENI, mai `bg-…/70`: con l'alfa dentro il nome della
+                  classe quella regola HC non lo raggiungerebbe nemmeno. È la
+                  stessa lezione scritta due volte qui sopra.
+
+              In Alto Contrasto le superfici crema di questo popup diventano il
+              grigio scurissimo, dove `warn-strong` varrebbe 5,62:1 — legge, ma
+              smette di gridare. Filetto e inchiostro passano all'AMBRA (10,12:1)
+              con la regola `.kv-recon-avviso-sede` in `globals.css`, fuori da
+              ogni `@layer`: `@theme inline` INLINA l'hex nelle utility, quindi
+              ridefinire un token sotto `[data-contrast="high"]` non tocca una
+              sola classe già generata.
+
+              Mai il giallo dei comandi né il rosso, in nessuno dei due: qui
+              dentro quei colori sono di ciò che si preme (e c'è un lock che lo
+              verifica sulle regole nuove), e
+              questo riquadro non chiede un'azione a QUESTO operatore — chiede di
+              non farne una. L'ambra dell'avviso non è quel giallo.
 
               ⚠️ Variante SENZA nome quando il server non ha potuto leggerlo: si
               dice comunque, senza nominare il plesso. Mai un nome inventato, e
@@ -426,15 +459,21 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
               stesso insieme), ed è la frase a doversi limitare a ciò che è vero:
               parla di QUESTA schermata e di dove si abbina, non di chi lo farà. */}
           {altraSede && (
-            <section className="rounded-card bg-kidville-cream p-4">
-              <p className="font-maven text-sm font-bold leading-snug text-kidville-ink">
-                {altraSede.nome
-                  ? t('movdlgAltraSedeTitolo', { sede: altraSede.nome })
-                  : t('movdlgAltraSedeTitoloSenzaNome')}
-              </p>
-              <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
-                {suggerimenti.length > 0 ? t('movdlgAltraSedeSpiega') : t('movdlgAltraSedeSpiegaSenzaCandidati')}
-              </p>
+            <section className="kv-recon-avviso-sede flex gap-3 rounded-card border-l-4 border-kidville-warn-strong bg-kidville-cream p-4">
+              {/* `aria-hidden`: il glifo ripete ciò che la frase accanto dice per
+                  esteso, e uno screen reader non deve sentire due volte la stessa
+                  cosa. Il peso visivo è tutto suo, il significato è del testo. */}
+              <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-kidville-warn-strong" />
+              <div className="min-w-0">
+                <p className="font-maven text-sm font-bold leading-snug text-kidville-warn-strong">
+                  {altraSede.nome
+                    ? t('movdlgAltraSedeTitolo', { sede: altraSede.nome })
+                    : t('movdlgAltraSedeTitoloSenzaNome')}
+                </p>
+                <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
+                  {suggerimenti.length > 0 ? t('movdlgAltraSedeSpiega') : t('movdlgAltraSedeSpiegaSenzaCandidati')}
+                </p>
+              </div>
             </section>
           )}
 

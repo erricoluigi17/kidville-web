@@ -64,12 +64,16 @@ function uuid(n: number): string {
   return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 }
 
-function richiesta(quante: number, da = 1): Request {
+function richiesta(quante: number, da = 1, conIntestatario = false): Request {
   return new Request('http://localhost/api/pagamenti/fattura/lotto', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      pagamenti: Array.from({ length: quante }, (_, i) => ({ pagamento_id: uuid(da + i), causale: null })),
+      pagamenti: Array.from({ length: quante }, (_, i) => ({
+        pagamento_id: uuid(da + i),
+        causale: null,
+        ...(conIntestatario ? { intestatario: { tipo: 'adult', adult_id: uuid(900 + i) } } : {}),
+      })),
     }),
   })
 }
@@ -269,5 +273,34 @@ describe('il budget si deriva da `maxDuration`, e i due non possono divergere', 
     expect(dichiarato, 'la route deve dichiarare `maxDuration`').toBeTruthy()
     expect(Number(dichiarato)).toBe(MAX_DURATION_BLOCCO_S)
     expect(BUDGET_BLOCCO_MS).toBe(MAX_DURATION_BLOCCO_S * 1_000 - MARGINE_PIATTAFORMA_MS)
+  })
+})
+
+describe('l’intestatario proposto dal bonifico arriva fino all’emissione', () => {
+  it('non viene scartato per strada: ogni riga lo porta con sé', async () => {
+    // ⚠️ IL DIFETTO CHE QUESTO CASO CHIUDE È SILENZIOSO. `zod` è una lista bianca **in
+    // scrittura**: un campo non dichiarato nello schema viene scartato senza un errore,
+    // e la richiesta risponde 200. Il pannello manderebbe l'intestatario scelto, il
+    // blocco lo butterebbe via, e il server deciderebbe con la cascata predefinita —
+    // fatture intestate a qualcun altro, senza nessuna schermata che lo dica.
+    //
+    // È già successo su questo repo con `scuola_id` (trasferimento di sede, 04/09) e
+    // con i campi dell'anagrafica di sede (15/08): due volte, sempre con un 200.
+    const res = await POST(richiesta(3, 1, true))
+    expect(res.status).toBe(200)
+
+    const passati = h.emetti.mock.calls.map((c) => (c[3] as { intestatarioScelto?: unknown }).intestatarioScelto)
+    expect(passati).toEqual([
+      { tipo: 'adult', adult_id: uuid(900) },
+      { tipo: 'adult', adult_id: uuid(901) },
+      { tipo: 'adult', adult_id: uuid(902) },
+    ])
+  })
+
+  it('senza intestatario resta `undefined`: decide la cascata del server, come prima', async () => {
+    await POST(richiesta(2))
+    for (const chiamata of h.emetti.mock.calls) {
+      expect((chiamata[3] as { intestatarioScelto?: unknown }).intestatarioScelto).toBeUndefined()
+    }
   })
 })

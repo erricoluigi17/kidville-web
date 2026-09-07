@@ -6,6 +6,7 @@ import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { creaSessioneAruba, emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
+import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import {
@@ -95,6 +96,20 @@ const bodySchema = z.object({
         // Stessa semantica a tre valori della route singola: stringa ⇒ scrive la
         // correzione manuale, `null` ⇒ la toglie, assente ⇒ non tocca niente.
         causale: z.unknown().optional(),
+        /**
+         * L'intestatario proposto dal bonifico, riga per riga.
+         *
+         * ⚠️ NON È FACOLTATIVO PER COMODITÀ. `zod` è una lista bianca **in scrittura**:
+         * un campo non dichiarato viene scartato **in silenzio**, con un 200. Se questa
+         * riga mancasse, il pannello continuerebbe a mandare l'intestatario scelto e il
+         * blocco lo butterebbe via, lasciando decidere al server la cascata predefinita
+         * — fatture intestate a qualcun altro, e nessuna schermata che lo dica.
+         *
+         * L'unione discriminata rende irrappresentabile l'ibrido «adult_id + anagrafica»:
+         * dal browser viaggia solo l'id, e nome, codice fiscale e residenza si rileggono
+         * da `parents` lato server.
+         */
+        intestatario: zIntestatarioScelto.optional(),
       }),
     )
     .min(1)
@@ -227,7 +242,7 @@ export const POST = withRoute('pagamenti/fattura/lotto:POST', async (request: Re
       supabase,
       riga.pagamento_id,
       { id: auth.user.id },
-      { sessione, ritentaUpload: false },
+      { sessione, ritentaUpload: false, intestatarioScelto: riga.intestatario },
     )
 
     if (esito.ok) {

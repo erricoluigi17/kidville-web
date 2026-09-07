@@ -1,3 +1,6 @@
+import { intestatarioAutomaticoDelLotto, type AnteprimaConProposta } from './proposta-intestatario'
+import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
+
 /**
  * ─── IL MOTORE DEL LOTTO DI FATTURE — puro, e collaudabile senza un browser ──
  *
@@ -182,7 +185,7 @@ export interface QuotaPerIlLotto {
  * può arrivare degradata — quel blocco è fail-open per progetto — e un lotto che
  * assume la forma piena emetterebbe sulla fede di un campo mai calcolato.
  */
-export interface AnteprimaPerIlLotto {
+export interface AnteprimaPerIlLotto extends AnteprimaConProposta {
   quote?: QuotaPerIlLotto[] | null
 }
 
@@ -194,16 +197,32 @@ export interface AnteprimaPerIlLotto {
  * l'anteprima non ha saputo determinare nessuna quota — cioè il caso in cui non si
  * sa a chi intestare la fattura — passerebbe come «pronto».
  *
- * Verificato in produzione il 2026-09-07: dei 130 pagamenti saldati in attesa di
- * fattura **uno solo** ha un intestatario risolvibile. È questo predicato a
- * trasformare «emetti tutte» da bruciatore di quota in un elenco che, senza
- * spendere un colpo, dice in dieci secondi ciò che oggi si scopre aprendo 130
- * popup uno per uno.
+ * ⚠️ La misura che stava qui — «dei 130 pagamenti saldati uno solo ha un
+ * intestatario risolvibile» — era SBAGLIATA, e rimisurarla è servito. Contati in
+ * produzione lo stesso 2026-09-07:
+ *
+ *   156  pagamenti saldati in attesa di fattura
+ *    11  con un movimento di riconciliazione confermato e un ordinante leggibile
+ *     8  già emettibili senza alcuna proposta (`alunni.intestatario_fatture`)
+ *     6  sbloccati SOLO dalla proposta del bonifico
+ *   145  senza alcun movimento confermato: non compaiono nemmeno in lista
+ *
+ * Le due letture sono entrambe vere e vanno tenute insieme: rispetto a ciò che il
+ * lotto può vedere, la proposta è quasi tutto; rispetto all'arretrato, il collo di
+ * bottiglia sono i 145 — e non lo tocca niente di quanto sta in questo file.
+ *
+ * Resta il punto del predicato: senza spendere un colpo di quota dice in dieci
+ * secondi ciò che altrimenti si scopre aprendo i popup uno per uno.
  */
 export function prontaPerIlLotto(anteprima: AnteprimaPerIlLotto | null | undefined): boolean {
   const quote = anteprima?.quote
   if (!Array.isArray(quote) || quote.length === 0) return false
-  return quote.every((q) => q?.fatturabile === true)
+  if (quote.every((q) => q?.fatturabile === true)) return true
+  // ...oppure l'app sa CHI ha fatto il bonifico, e quel genitore è fatturabile:
+  // è la stessa proposta che l'emissione singola preseleziona, e il lotto la
+  // buttava via due volte — il suo tipo non la conteneva, e il corpo
+  // dell'emissione non aveva il campo dove spedirla.
+  return intestatarioAutomaticoDelLotto(anteprima) !== null
 }
 
 /** Il corpo della POST di emissione di UNA riga del lotto. */
@@ -211,6 +230,16 @@ export interface CorpoEmissione {
   pagamento_id: string
   /** SEMPRE `null`: vedi `corpoEmissione`. Il tipo non ammette `undefined`. */
   causale: null
+  /**
+   * L'intestatario proposto dal bonifico, quando c'è. ASSENTE (mai `null`) quando
+   * non c'è: il campo mancante significa «decide la cascata del server», che è il
+   * comportamento su cui contano tutti gli altri punti da cui si emette.
+   *
+   * Solo il ramo `adult`: il lotto non ha nessun modulo da compilare, e accettare
+   * l'anagrafica di una persona dal browser è ciò che lo schema della POST vieta
+   * per iscritto.
+   */
+  intestatario?: Extract<IntestatarioScelto, { tipo: 'adult' }>
 }
 
 /**
@@ -233,8 +262,13 @@ export interface CorpoEmissione {
  * Il lotto non personalizza mai la causale — non c'è nessun campo da compilare —
  * quindi «togli la correzione salvata» è esattamente ciò che deve dire.
  */
-export function corpoEmissione(pagamentoId: string): CorpoEmissione {
-  return { pagamento_id: pagamentoId, causale: null }
+export function corpoEmissione(pagamentoId: string, adultId?: string | null): CorpoEmissione {
+  // `adultId` non riguarda la causale: la nota qui sopra resta intera.
+  return {
+    pagamento_id: pagamentoId,
+    causale: null,
+    ...(adultId ? { intestatario: { tipo: 'adult' as const, adult_id: adultId } } : {}),
+  }
 }
 
 /**

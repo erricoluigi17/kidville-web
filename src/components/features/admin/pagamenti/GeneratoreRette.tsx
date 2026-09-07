@@ -9,6 +9,11 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { eDirezioneCockpit } from '@/lib/auth/ruoli';
+import { SelettoreAlunni } from '@/components/ui/SelettoreAlunni';
+import {
+    SELEZIONE_TUTTI, parametriSelezione, selezioneVuota, alunniBersaglio,
+    type SelezioneAlunni,
+} from '@/lib/pagamenti/selezione-alunni';
 
 const GEN_SELECT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors cursor-pointer hover:border-kidville-green/50 focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GEN_INPUT = 'rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
@@ -24,7 +29,15 @@ interface Candidato {
     /** Quanti fratelli hanno la retta a carico di questo bambino. */
     paga_per?: number;
 }
-interface MesePreview { periodo: string; candidati: number; gia_generati: number; importo: number }
+interface MesePreview {
+    periodo: string; candidati: number; gia_generati: number; importo: number;
+    /**
+     * Gli id dei candidati di QUEL mese. La vista annuale è quella aperta di
+     * default e prima restituiva soli aggregati: senza questi, per l'anno non ci
+     * sarebbe niente da spuntare.
+     */
+    candidati_ids?: string[];
+}
 interface Props { userId: string; scuolaId: string }
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
 
@@ -50,12 +63,19 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
     const [mode, setMode] = useState<Mode>('anno');
     const [periodo, setPeriodo] = useState(currentPeriod());
     const [anno, setAnno] = useState(annoScolasticoCorrente());
-    const [previewMese, setPreviewMese] = useState<{ candidati: Candidato[]; gia_generati: number; totale_previsto: number; retta_default?: number } | null>(null);
-    const [previewAnno, setPreviewAnno] = useState<{ mesi: MesePreview[]; alunni_attivi: number; totale_candidati: number; totale_previsto: number; retta_default?: number } | null>(null);
+    const [previewMese, setPreviewMese] = useState<{ candidati: Candidato[]; gia_generati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
+    const [previewAnno, setPreviewAnno] = useState<{ mesi: MesePreview[]; alunni_attivi: number; totale_candidati: number; totale_previsto: number; retta_default?: number; generazione_attiva?: boolean } | null>(null);
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState<string | null>(null);
+    /**
+     * Chi generare. Vive nel BROWSER: il client ha già l'elenco dei candidati —
+     * quello dell'anteprima, non un elenco alunni grezzo — e filtrarlo qui dà lo
+     * stesso insieme che filtrerebbe il server, senza spedire trecento uuid in una
+     * query string che si romperebbe.
+     */
+    const [selezione, setSelezione] = useState<SelezioneAlunni>(SELEZIONE_TUTTI);
 
-    const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); };
+    const reset = () => { setPreviewMese(null); setPreviewAnno(null); setDone(null); setSelezione(SELEZIONE_TUTTI); };
 
     const loadPreview = useCallback(async () => {
         setLoading(true); setDone(null);
@@ -77,7 +97,12 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
             // «genera le rette» emetteva su tutti i plessi (in produzione è già
             // successo: un clic, due sedi). Il pannello sta dentro <SedeRequired>,
             // quindi `scuolaId` c'è sempre.
-            const body = mode === 'anno' ? { anno, scuola_id: scuolaId } : { periodo, scuola_id: scuolaId };
+            // Gli STESSI parametri che l'anteprima ha usato: è la funzione unica a
+            // tradurre la selezione, e non due traduzioni che possono divergere.
+            const scelta = parametriSelezione(candidatiScelta, selezione);
+            const body = mode === 'anno'
+                ? { anno, scuola_id: scuolaId, ...scelta }
+                : { periodo, scuola_id: scuolaId, ...scelta };
             const res = await fetch('/api/pagamenti/genera-rette', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
             const j = await res.json();
             if (j.success) {
@@ -90,7 +115,32 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
         } finally { setLoading(false); }
     };
 
+    /**
+     * I candidati su cui si sceglie. Sul MESE è l'elenco dell'anteprima; sull'ANNO
+     * è l'unione dei candidati dei dieci mesi — un bambino che compare anche in un
+     * solo mese va potuto scegliere, e la funzione salterà da sé i mesi in cui la
+     * retta c'è già.
+     */
+    const candidatiScelta = mode === 'anno'
+        ? Object.values(
+            (previewAnno?.mesi ?? []).reduce((acc: Record<string, { id: string }>, m) => {
+                for (const id of m.candidati_ids ?? []) acc[id] = { id };
+                return acc;
+            }, {}),
+        )
+        : (previewMese?.candidati ?? []);
+    const selezioneNonValida = selezioneVuota(candidatiScelta, selezione);
+
     const totCandidati = mode === 'anno' ? (previewAnno?.totale_candidati ?? 0) : (previewMese?.candidati.length ?? 0);
+    /**
+     * Il numero SUL BOTTONE segue la selezione, non il totale dei candidati:
+     * scrivere «genera 314 rette» mentre se ne generano due è la stessa classe di
+     * bugia dei conteggi che non guardano ciò che è a schermo.
+     */
+    const quanteSiGenerano = selezione.modo === 'tutti'
+        ? totCandidati
+        : alunniBersaglio(candidatiScelta, selezione).length;
+    const generazioneSpenta = (mode === 'anno' ? previewAnno?.generazione_attiva : previewMese?.generazione_attiva) === false;
     const hasPreview = mode === 'anno' ? !!previewAnno : !!previewMese;
 
     return (
@@ -213,10 +263,46 @@ export function GeneratoreRette({ userId, scuolaId }: Props) {
                 </div>
             )}
 
+            {/* ⚠️ LA GENERAZIONE AUTOMATICA PUÒ ESSERE SPENTA, e la funzione la
+                onora (`AND COALESCE(s.retta_auto_enabled, true) = true`). Finché
+                l'anteprima non lo diceva, togliere quella spunta in Impostazioni
+                produceva «candidati: 314, generati: 0» che si legge come un guasto
+                del programma. */}
+            {hasPreview && generazioneSpenta && (
+                <p role="alert" className="mb-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-xs text-kidville-warn-strong">
+                    {t('genrGenerazioneSpenta')}
+                </p>
+            )}
+
             {hasPreview && totCandidati > 0 && (
-                <button onClick={conferma} disabled={loading}
-                    className="inline-flex items-center gap-1 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
-                    <CalendarClock size={15} /> {t('genrGenera')} {totCandidati} {t('genrRette')}
+                <SelettoreAlunni
+                    id="genr-scelta"
+                    alunni={candidatiScelta}
+                    valore={selezione}
+                    onChange={setSelezione}
+                    disabled={loading}
+                    testi={{
+                        legenda: t('genrSceltaLegenda'),
+                        modoTutti: t('genrSceltaTutti'),
+                        modoClasse: t('genrSceltaClasse'),
+                        modoScelti: t('genrSceltaScelti'),
+                        classeEtichetta: t('genrSceltaClasseEtichetta'),
+                        classeTutte: t('genrSceltaClasseTutte'),
+                        cercaEtichetta: t('genrSceltaCerca'),
+                        cercaSegnaposto: t('genrSceltaCercaSegnaposto'),
+                        selezionaMostrati: t('genrSceltaSelezionaMostrati'),
+                        svuota: t('genrSceltaSvuota'),
+                        vuoto: t('genrSceltaVuoto'),
+                        conteggio: (n: number) => t('genrSceltaConteggio', { n }),
+                        bersaglio: (n: number) => t('genrSceltaBersaglio', { n }),
+                    }}
+                />
+            )}
+
+            {hasPreview && totCandidati > 0 && (
+                <button onClick={conferma} disabled={loading || selezioneNonValida}
+                    className="mt-3 inline-flex items-center gap-1 rounded-pill bg-kidville-green px-5 py-2.5 font-maven text-sm font-bold text-kidville-yellow transition-colors hover:bg-kidville-green-dark disabled:opacity-50">
+                    <CalendarClock size={15} /> {t('genrGenera')} {quanteSiGenerano} {t('genrRette')}
                 </button>
             )}
         </div>

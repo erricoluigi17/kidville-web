@@ -1433,3 +1433,130 @@ describe('RiconciliazionePanel — i numeri sulle pillole di «Fatturazione»', 
     expect(richiesteDiConteggi(fetchMock)).toHaveLength(1);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IL FILTRO PER SEDE, E IL SUO N.B.
+//
+// Il registro è cross-sede per progetto: `scuola_id` resta NULL finché il
+// movimento non viene confermato. Quindi la sede delle righe che restano da
+// lavorare non esiste come colonna e si può solo DEDURRE — e su alcune righe non
+// si deduce affatto. Quelle sono i «rossi da controllare», e la schermata deve
+// dire che le sta escludendo invece di farle sparire.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('RiconciliazionePanel — filtro per sede', () => {
+  const GIU = 'sc-giu';
+  const CESA = 'sc-cesa';
+  const conSedi = [
+    { ...movimenti[0], id: 's1', sede_dedotta: { scuola_id: GIU, certa: true } },
+    { ...movimenti[1], id: 's2', sede_dedotta: { scuola_id: CESA, certa: false } },
+    // nessuna sede dedotta: è la riga rossa che il n.b. nomina
+    { ...movimenti[1], id: 's3', causale: 'Ignoto', sede_dedotta: null },
+    // confermata: la sede è NOTA, sta sulla riga, e non si deduce niente
+    { ...movimenti[2], id: 's4', scuola_id: GIU, sede_dedotta: null },
+  ];
+
+  function stubConSedi(righe = conSedi, extra: Record<string, unknown> = {}) {
+    return vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            success: true, data: righe, fatturazione_disponibile: true, conteggi: CONTEGGI_STUB,
+            sedi: { [GIU]: 'Kidville Giugliano', [CESA]: 'Kidville Cesa' },
+            ...extra,
+          }),
+        };
+      }
+      if (String(url).includes('/api/pagamenti?')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+  }
+
+  beforeEach(() => { vi.stubGlobal('fetch', stubConSedi()); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  it('offre le sedi DERIVATE DALLE RIGHE, non quelle accessibili all’operatore', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+    expect(screen.getByRole('button', { name: 'Kidville Giugliano' })).toBeTruthy();
+    // Cesa non è la sede dell'operatore, ma nel registro cross-sede la vede: se le
+    // opzioni venissero dal contesto sedi, questa pillola non ci sarebbe
+    expect(screen.getByRole('button', { name: 'Kidville Cesa' })).toBeTruthy();
+  });
+
+  it('l’avvertenza sulla sede dedotta è sempre a schermo, e non è un allarme', async () => {
+    const { container } = render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    const nota = await screen.findByText(/quella che l’app ha dedotto/i);
+    expect(nota).toBeTruthy();
+    // mai giallo, mai rosso, mai role="alert": in questa schermata quei toni sono
+    // riservati a ciò che chiede un'azione
+    expect(nota.getAttribute('role')).toBe(null);
+    expect(nota.className).not.toMatch(/warn|error/);
+    expect(container).toBeTruthy();
+  });
+
+  it('scegliere una sede filtra la lista E DICHIARA quante righe ha escluso', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kidville Giugliano' }));
+
+    // restano le due righe di Giugliano (la dedotta e la confermata)
+    expect(screen.queryByText('Ignoto')).toBeNull();
+    // ...e la riga che nessuno ha capito non sparisce in silenzio
+    const avviso = await screen.findByRole('status');
+    expect(avviso.textContent).toMatch(/sede riconosciuta/i);
+  });
+
+  it('«Vedile» porta al bidone dei rossi', async () => {
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+    fireEvent.click(screen.getByRole('button', { name: 'Kidville Giugliano' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Vedile/i }));
+
+    expect(await screen.findByText('Ignoto')).toBeTruthy();
+    expect(screen.queryByText(/Bonifico retta/)).toBeNull();
+  });
+
+  it('con la finestra troncata il numero delle escluse è un MINIMO', async () => {
+    vi.stubGlobal('fetch', stubConSedi(conSedi, { troncato: true }));
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+    fireEvent.click(screen.getByRole('button', { name: 'Kidville Giugliano' }));
+    const avvisi = await screen.findAllByRole('status');
+    expect(avvisi.some((a) => a.textContent?.includes('≥'))).toBe(true);
+  });
+
+  it('il filtro sede NON fa ripartire nessuna richiesta: vive nel browser', async () => {
+    const f = stubConSedi();
+    vi.stubGlobal('fetch', f);
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+    const prima = f.mock.calls.filter((c) => String(c[0]).includes('/riconciliazione')).length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kidville Cesa' }));
+    await screen.findByText(/Mensa/);
+
+    expect(f.mock.calls.filter((c) => String(c[0]).includes('/riconciliazione')).length).toBe(prima);
+  });
+
+  it('«mostrate le prime N» conta le righe A SCHERMO, non quelle scaricate', async () => {
+    // Prima contava `movimenti`: con un filtro che vive nel browser i due numeri
+    // divergono, e a pochi centimetri di distanza si leggono come un errore del
+    // programma.
+    vi.stubGlobal('fetch', stubConSedi(conSedi, { troncato: true }));
+    render(<RiconciliazionePanel userId="u1" scuolaId={GIU} />);
+    await screen.findByText(/Bonifico retta/);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Kidville Cesa' }));
+    await screen.findByText(/Mensa/);
+    const avvisi = await screen.findAllByRole('status');
+    const troncamento = avvisi.map((a) => a.textContent ?? '').join(' | ');
+    // quattro righe scaricate, una sola di Cesa a schermo: il «4» non deve
+    // comparire da nessuna parte, o sarebbe il numero sbagliato accanto a una
+    // lista di uno
+    expect(troncamento).not.toMatch(/\b4\b/);
+  });
+});

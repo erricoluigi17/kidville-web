@@ -1817,6 +1817,8 @@ export const CODICI_ERRORE = {
      * mano dal pannello.
      */
     LOTTO_TETTO_ORARIO_RAGGIUNTO: 'erroreLottoTettoOrario',
+    /** 409 — a questo bambino è già stata registrata una ricarica OGGI: serve la conferma esplicita. */
+    TICKET_RICARICA_DUPLICATA: 'erroreTicketRicaricaDuplicata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

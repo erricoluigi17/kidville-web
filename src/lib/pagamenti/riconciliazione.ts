@@ -397,6 +397,84 @@ export function agganciaFuoriSede(
     if (sediAttive.has(sede)) dentro.push(s)
     else fuori.push({ candidato: s, sede })
   }
+  return agganciaForte(dentro, fuori)
+}
+
+/** La sede che l'app ha DEDOTTO per un movimento, e quanto è sicura di dirlo. */
+export interface SedeDedotta {
+  scuola_id: string
+  /** `true` solo quando a deciderlo è un codice fiscale: l'aggancio più forte che esista. */
+  certa: boolean
+}
+
+/**
+ * Di quale sede sembra questo bonifico?
+ *
+ * Sorella di `agganciaFuoriSede`, stessa regola e STESSE SOGLIE — non una loro
+ * parafrasi: entrambe passano da `agganciaForte`, cambia solo come si partizionano
+ * i candidati. Là il taglio è il perimetro dell'operatore, qui è la sede candidata:
+ * per ogni sede X si chiede «X batte tutte le altre?», con le stesse due soglie.
+ *
+ * ⚠️ RISPONDE `null` MOLTO SPESSO, ed è il punto. Sotto soglia, o con due sedi che
+ * pareggiano, non si nomina un plesso: misurato sui 219 movimenti non confermati di
+ * produzione, 9 hanno un pareggio di punteggio massimo fra sedi diverse, e su quelli
+ * scegliere «la prima dell'elenco» sarebbe una bugia detta con sicurezza — la stessa
+ * che `agganciaFuoriSede` si vieta. Il `null` è il bidone «sede non riconosciuta»,
+ * cioè le righe che il titolare chiama «i rossi da controllare».
+ *
+ * ⚠️ NON si allarga la soglia per dedurre di più. Nominare un plesso sulla base di
+ * 25 punti di somiglianza di nome renderebbe FALSA l'avvertenza che la schermata
+ * scrive accanto al filtro: «questa è la sede che l'app ha dedotto».
+ *
+ * Due sedi non possono vincere insieme: se entrambe avessero un `cf_match`, ognuna
+ * sarebbe il `cfDentro` dell'altra e `agganciaForte` risponderebbe `null` a tutt'e
+ * due — la regola si difende da sola, senza un caso speciale scritto qui.
+ *
+ * Funzione PURA. `sedeDi` è la stessa mappa `pagamento → scuola_id` che la rotta ha
+ * già in mano: nessuna query in più.
+ */
+export function sedeDedotta(
+  suggerimenti: readonly CandidatoSede[],
+  sedeDi: (pagamentoId: string) => string | null | undefined,
+): SedeDedotta | null {
+  const conSede: { candidato: CandidatoSede; sede: string }[] = []
+  for (const s of suggerimenti) {
+    const sede = sedeDi(s.pagamento_id)
+    if (sede == null || sede === '') continue
+    conSede.push({ candidato: s, sede })
+  }
+  if (conSede.length === 0) return null
+
+  const vincitori: SedeDedotta[] = []
+  for (const sede of new Set(conSede.map((c) => c.sede))) {
+    const fuori = conSede.filter((c) => c.sede === sede)
+    const dentro = conSede.filter((c) => c.sede !== sede).map((c) => c.candidato)
+    const v = agganciaForte(dentro, fuori)
+    if (v) vincitori.push({ scuola_id: v.scuola_id, certa: v.per_cf })
+  }
+  return vincitori.length === 1 ? vincitori[0]! : null
+}
+
+/**
+ * I punti 2-5 della regola qui sopra, con la PARTIZIONE COME PARAMETRO.
+ *
+ * ⚠️ È questo che rende l'estrazione lecita: la regola non è «il migliore contro
+ * il secondo», è «il migliore di UN insieme contro il migliore dell'ALTRO», e le
+ * due asimmetrie che la fanno funzionare — l'uscita quando `fuori` è vuoto, e
+ * `bestDentro = 0` quando `dentro` è vuoto — vivono DENTRO questa funzione, non
+ * fuori. Una versione «cieca al perimetro», che confrontasse il migliore col
+ * secondo dell'elenco, sarebbe un'altra regola: misurata sui 219 movimenti non
+ * confermati di produzione divergerebbe su 39 righe per un operatore di Aversa e
+ * su altre 39 per uno di Cesa.
+ *
+ * Chi chiama decide che cosa siano «dentro» e «fuori»: `agganciaFuoriSede`
+ * partiziona per PERIMETRO dell'operatore, `sedeDedotta` per SEDE candidata. La
+ * regola è la stessa, e non esiste in due copie.
+ */
+function agganciaForte(
+  dentro: readonly CandidatoSede[],
+  fuori: readonly { candidato: CandidatoSede; sede: string }[],
+): VerdettoAltraSede | null {
   if (fuori.length === 0) return null
 
   // ⚠️ UN `cf_match` DENTRO CHIUDE LA DOMANDA, E LA CHIUDE PER TUTTI I PUNTI.

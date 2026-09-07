@@ -337,3 +337,60 @@ describe('un blocco tutto respinto dai NOSTRI gate non ha toccato Aruba', () => 
     expect(pausaDopoBlocco(999_000, true)).toBe(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La proposta del bonifico entra nel lotto: le stesse condizioni della singola,
+// più le due guardie che la singola ottiene da un umano che guarda lo schermo.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('prontaPerIlLotto — quando è la proposta a sbloccare la riga', () => {
+  const conProposta = (over: Record<string, unknown> = {}) => ({
+    quote: [{ fatturabile: false }],
+    ripartito: false,
+    candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria', fatturabile: true }],
+    proposta: { adult_id: 'a-1', motivo: 'bonifico_esatto' },
+    ordinante: 'ROSSI MARIA',
+    ...over,
+  })
+
+  it('quote non fatturabili ma proposta usabile → pronta', () => {
+    expect(prontaPerIlLotto(conProposta())).toBe(true)
+  })
+
+  it('quote vuote restano NON pronte, anche con una proposta', () => {
+    // `every` su un elenco vuoto risponde `true`: il controllo di lunghezza non è
+    // una ridondanza, e la proposta non deve diventare la scorciatoia che lo aggira
+    expect(prontaPerIlLotto(conProposta({ quote: [] }))).toBe(false)
+  })
+
+  it('pagamento ripartito → non pronta, anche con la proposta', () => {
+    expect(prontaPerIlLotto(conProposta({ ripartito: true }))).toBe(false)
+  })
+
+  it('proposto non fatturabile → non pronta: si eviterebbe di bruciare un colpo di quota', () => {
+    expect(prontaPerIlLotto(conProposta({ candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria', fatturabile: false }] }))).toBe(false)
+  })
+
+  it('senza proposta il predicato è quello di prima', () => {
+    expect(prontaPerIlLotto({ quote: [{ fatturabile: true }] })).toBe(true)
+    expect(prontaPerIlLotto({ quote: [{ fatturabile: false }] })).toBe(false)
+  })
+})
+
+describe('corpoEmissione — l’intestatario viaggia, la causale no', () => {
+  it('senza intestatario il campo è ASSENTE, non `null`', () => {
+    const c = corpoEmissione('p-1')
+    expect(c).toEqual({ pagamento_id: 'p-1', causale: null })
+    expect('intestatario' in c).toBe(false)
+  })
+
+  it('con intestatario porta solo il ramo `adult`', () => {
+    expect(corpoEmissione('p-1', 'a-1')).toEqual({
+      pagamento_id: 'p-1', causale: null, intestatario: { tipo: 'adult', adult_id: 'a-1' },
+    })
+  })
+
+  it('`causale: null` resta in ENTRAMBI i casi: è ciò che toglie la correzione appiccicosa', () => {
+    expect(corpoEmissione('p-1').causale).toBe(null)
+    expect(corpoEmissione('p-1', 'a-1').causale).toBe(null)
+  })
+})

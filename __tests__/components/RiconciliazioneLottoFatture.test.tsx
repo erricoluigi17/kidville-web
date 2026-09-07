@@ -973,3 +973,114 @@ describe('«3 selezionati» accanto a «Emetti ora (2)» va SPIEGATO, non dedott
     expect(screen.queryByText(/Si emettono solo le righe pronte/)).toBeNull();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LA PROPOSTA DEL BONIFICO ENTRA NEL LOTTO
+//
+// L'emissione singola sa dire «questo bonifico l'ha fatto Rossi Maria, e Rossi
+// Maria è la mamma»; il lotto buttava via quella proposta e scartava la riga con
+// «manca l'intestatario». Ora la usa — ma non in silenzio: quel nome non l'ha
+// scelto nessuno, e una fattura elettronica sbagliata si corregge solo con una
+// nota di variazione.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('il lotto usa la proposta, e la fa confermare', () => {
+  const CON_PROPOSTA = {
+    causale: 'Retta ottobre',
+    origine: 'modello',
+    lunghezza: 20, limite: 100, eccede: false,
+    intestatario: {
+      alunno: null,
+      // nessuna quota fatturabile: senza la proposta questa riga sarebbe scartata
+      quote: [{ adult_id: null, label: 'unica', importo: 100, nome: '', fatturabile: false, errori: {} }],
+      ripartito: false,
+      candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria', relazione: 'madre', fatturabile: true, errori: {} }],
+      proposta: { adult_id: 'a-1', motivo: 'bonifico_esatto' },
+      ordinante: 'ROSSI MARIA',
+    },
+  };
+
+  it('una riga che prima era «da completare» diventa pronta, e dice CHI e PERCHÉ', async () => {
+    const f = stubFetch({ movimenti: [daFatturare(1)], anteprimaPerId: { pg1: CON_PROPOSTA } });
+    vi.stubGlobal('fetch', f);
+    render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+
+    expect(screen.getByText(/Intestate su proposta del bonifico/i)).toBeTruthy();
+    // due volte, ed è giusto: «Intestata a: Rossi Maria» e la frase che spiega
+    // il perché, «Bonifico di ROSSI MARIA: il nome corrisponde…»
+    expect(screen.getAllByText(/Rossi Maria/).length).toBeGreaterThanOrEqual(2);
+    // il «perché» è la frase della SINGOLA, non un doppione scritto per il lotto
+    expect(screen.queryByText(/manca l’intestatario/i)).toBeNull();
+  });
+
+  it('senza la spunta il lotto NON parte, e lo dice invece di restare zitto', async () => {
+    const f = stubFetch({ movimenti: [daFatturare(1)], anteprimaPerId: { pg1: CON_PROPOSTA } });
+    vi.stubGlobal('fetch', f);
+    render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    // sincrono di proposito: con i timer finti un `findBy` aspetterebbe un orologio
+    // che qui nessuno fa girare — e la mancata partenza è immediata, non attesa
+    expect(screen.getByRole('alert').textContent).toMatch(/spunta/i);
+    expect(post(f)).toHaveLength(0);
+    // il pulsante primario NON si è disabilitato: il fuoco resta dov'è
+    expect((screen.getByRole('button', { name: /Emetti ora/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('con la spunta parte, e la POST porta l’intestatario proposto', async () => {
+    const f = stubFetch({ movimenti: [daFatturare(1)], anteprimaPerId: { pg1: CON_PROPOSTA } });
+    vi.stubGlobal('fetch', f);
+    render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => post(f).length === 1);
+
+    // ⚠️ IL CORPO ADESSO PORTA UN BLOCCO, non una riga: lo stesso giorno il lotto è
+    // passato dal browser al server (`/api/pagamenti/fattura/lotto`). Ciò che questo
+    // caso misura NON cambia — l'intestatario proposto deve arrivare nella POST — ma
+    // vive dentro `pagamenti[0]`. Se si fosse riallineato guardando solo il primo
+    // livello, il campo sarebbe risultato `undefined` e qualcuno avrebbe potuto
+    // concludere che la proposta non serviva più.
+    const corpo = JSON.parse(String(post(f)[0]![1]!.body));
+    expect(corpo.pagamenti).toHaveLength(1);
+    expect(corpo.pagamenti[0].intestatario).toEqual({ tipo: 'adult', adult_id: 'a-1' });
+    // `causale: null` resta: è ciò che toglie la correzione manuale appiccicosa
+    expect(corpo.pagamenti[0].causale).toBe(null);
+  });
+
+  it('una riga già emettibile per anagrafica non chiede nessuna spunta', async () => {
+    const f = stubFetch({ movimenti: [daFatturare(1)] });     // anteprima di default: quota fatturabile
+    vi.stubGlobal('fetch', f);
+    render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => post(f).length === 1);
+    expect(JSON.parse(String(post(f)[0]![1]!.body)).intestatario).toBeUndefined();
+  });
+
+  it('un pagamento ripartito resta fuori, e ora dice il motivo VERO', async () => {
+    const ripartito = {
+      ...CON_PROPOSTA,
+      intestatario: { ...CON_PROPOSTA.intestatario, ripartito: true },
+    };
+    const f = stubFetch({ movimenti: [daFatturare(1)], anteprimaPerId: { pg1: ripartito } });
+    vi.stubGlobal('fetch', f);
+    render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    await finoA(() => screen.queryByText(/ripartito/i) !== null);
+    // «manca l'intestatario» qui sarebbe falso: gli intestatari sono due, ed è voluto
+    expect(screen.getByText(/ripartito fra due genitori/i)).toBeTruthy();
+  });
+});

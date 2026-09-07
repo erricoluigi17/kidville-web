@@ -371,5 +371,6 @@
   "erroreMensaAlunnoFuoriClasse": "This child is not in one of your classes.",
   "erroreMensaScopeNonVerificato": "Permissions for this child could not be verified.",
   "erroreFatturaTrasportoIgnoto": "The invoice was numbered, but Aruba did not confirm the upload: nobody knows whether it was sent. Do NOT press “Issue” again: first check on the Aruba panel whether the document was transmitted.",
-  "erroreLottoTettoOrario": "Aruba allows a maximum number of invoices per hour and this hour’s allowance is used up. No invoice was issued and no number was consumed: try again in an hour."
+  "erroreLottoTettoOrario": "Aruba allows a maximum number of invoices per hour and this hour’s allowance is used up. No invoice was issued and no number was consumed: try again in an hour.",
+  "erroreTicketRicaricaDuplicata": "A meal-ticket top-up has already been recorded for this child today. Check that this is not the same payment being recorded twice."
 }

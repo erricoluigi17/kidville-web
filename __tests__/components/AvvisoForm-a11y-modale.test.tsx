@@ -290,6 +290,11 @@ const AL_PIANO_DELLA_MODALE: Readonly<Record<string, string>> = {
         'pillola «protocollo salvato» (toast effimero, in basso a destra)',
     'src/components/features/admin/FamilyRegistryManager.tsx':
         'pillola di esito del salvataggio anagrafica (toast effimero, in alto al centro)',
+    'src/components/ui/SaveConfirmation.tsx':
+        '`SaveCelebration`: conferma di salvataggio in overlay, `pointer-events-none`, che si ' +
+        'chiude da sé in 1,6 s. Stava a z-[80] e se la mangiavano la barra verde dell\'admin ' +
+        '(z-[105]) e il foglio «Menu» (z-[110]) — lo stesso difetto che `Modal.tsx` documenta per ' +
+        'sé. Al piano della modale e non oltre: non è un velo che deve coprire i dati sotto',
 }
 
 /**

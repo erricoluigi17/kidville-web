@@ -1,12 +1,14 @@
 'use client';
 
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Ticket, Search, Plus, History, AlertTriangle } from 'lucide-react';
-import { SaveCheck } from '@/components/ui/SaveConfirmation';
+import { SaveCelebration } from '@/components/ui/SaveConfirmation';
+import { Modal } from '@/components/ui/Modal';
+import { MODAL_CARD, MODAL_SHADOW, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -28,6 +30,9 @@ interface Movimento {
     pagamento_id: string | null;
     pagamenti?: { descrizione?: string; importo?: number; stato?: string; incassi?: { metodo?: string }[] } | null;
 }
+/** La ricarica di oggi che il server rimanda col 409. Solo ciò che serve a
+ *  riconoscerla: nessun nome, nessuna nota, nessun operatore. */
+interface Precedente { creato_il: string; pezzi: number; importo: number | null }
 interface Storico { saldo_ticket: number; ultimo_carico: string | null; movimenti: Movimento[] }
 interface Moroso { alunno_id: string; nome: string; cognome: string; classe_sezione?: string | null; saldo_ticket: number; ultimo_carico: string | null }
 
@@ -46,8 +51,11 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     const [pezzi, setPezzi] = useState(10);
     const [costo, setCosto] = useState(50);
     const [metodo, setMetodo] = useState('contanti');
-    const [done, setDone] = useState<string | null>(null);
-    const [confermaId, setConfermaId] = useState(0);
+    const [celebra, setCelebra] = useState<string | null>(null);
+    const [errore, setErrore] = useState<string | null>(null);
+    const [dup, setDup] = useState<Precedente | null>(null);
+    const [inviando, setInviando] = useState(false);
+    const btnRicaricaRef = useRef<HTMLButtonElement | null>(null);
     const [storico, setStorico] = useState<Storico | null>(null);
     const [morosi, setMorosi] = useState<Moroso[]>([]);
 
@@ -83,8 +91,19 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
     }, [scuolaId, userId, loadMorosi]);
 
     const loadSaldo = useCallback((alunnoId: string) => {
+        // Era l'unica delle tre `fetch` rimasta senza `!r.ok` e senza `.catch`: un 403
+        // o una rete caduta lasciavano il saldo del bambino PRECEDENTE a schermo,
+        // sotto il nome di quello appena scelto.
         fetch(`/api/pagamenti/ticket?userId=${userId}&alunno_id=${alunnoId}`, { headers: hdr(userId) })
-            .then(r => r.json()).then(d => { if (d.success) setSaldo(d.data.saldo_ticket); });
+            .then(r => {
+                if (!r.ok) {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'ticket-mensa-saldo-non-caricato', stato: r.status });
+                    return null;
+                }
+                return r.json();
+            })
+            .then(d => { if (d?.success) setSaldo(d.data.saldo_ticket); })
+            .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-saldo-non-caricato: ${nomeErrore(err)}` }));
     }, [userId]);
 
     const loadStorico = useCallback((alunnoId: string) => {
@@ -100,20 +119,50 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
             .catch(err => logClient({ livello: 'warn', evento: 'fetch', messaggio: `ticket-mensa-storico-non-caricato: ${nomeErrore(err)}` }));
     }, [userId]);
 
-    const select = (a: Alunno) => { setSel(a); setDone(null); setStorico(null); loadSaldo(a.id); loadStorico(a.id); };
+    const select = (a: Alunno) => { setSel(a); setCelebra(null); setErrore(null); setDup(null); setStorico(null); loadSaldo(a.id); loadStorico(a.id); };
 
-    const ricarica = async () => {
-        if (!sel) return;
-        const res = await fetch('/api/pagamenti/ticket', { method: 'POST', headers: hdr(userId), body: JSON.stringify({ alunno_id: sel.id, pezzi, costo, metodo }) });
-        const j = await res.json();
-        if (j.success) {
+    // `conferma` arriva solo dal secondo invio, quello che parte dal dialogo del
+    // duplicato. Il campo è NOMINATO: un booleano lo avrebbe reso disattivabile per
+    // sbaglio da un client che lo manda sempre.
+    const ricarica = async (conferma?: 'gia_ricaricato_oggi') => {
+        if (!sel || inviando) return;
+        setInviando(true);
+        setErrore(null);
+        try {
+            const res = await fetch('/api/pagamenti/ticket', {
+                method: 'POST',
+                headers: hdr(userId),
+                body: JSON.stringify({ alunno_id: sel.id, pezzi, costo, metodo, ...(conferma ? { conferma_duplicato: conferma } : {}) }),
+            });
+            const j = await res.json().catch(() => ({}));
+
+            if (res.status === 409 && j?.precedente) {
+                setDup(j.precedente as Precedente);
+                // Lo storico si ricarica ANCHE qui: la ricarica di stamattina può
+                // essere di un collega o del wizard, e senza questa riga il pannello
+                // accuserebbe di un duplicato senza mostrarne la prova.
+                loadStorico(sel.id);
+                return;
+            }
+            if (!res.ok || !j?.success) {
+                setErrore(messaggioDaCorpo(j, t('ticket_err_ricarica')));
+                return;
+            }
+
+            setDup(null);
             setSaldo(j.data.saldo_ticket);
-            setDone(`${t('ticket_ricarica_pre')} ${pezzi} ${t('ticket_ricarica_mid')} ${costo}${t('ticket_ricarica_post')}`);
-            setConfermaId(n => n + 1);
+            setCelebra(t('ticketRicaricaFatta'));
             loadStorico(sel.id);
             loadMorosi();
-            // `alert(j.error)` nudo mostrava «undefined» quando il corpo non portava `error`.
-        } else alert(messaggioDaCorpo(j, t('ticket_err_ricarica')));
+        } catch (err) {
+            // Senza questo ramo un `fetch` che rigetta — rete caduta, corpo non-JSON —
+            // non lasciava NESSUN segno: né a schermo né nei log. L'operatore non
+            // sapeva se la ricarica fosse partita.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `ticket-mensa-ricarica-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+            setErrore(t('ticketErrRete'));
+        } finally {
+            setInviando(false);
+        }
     };
 
     const filtered = alunni.filter(a => `${a.nome} ${a.cognome}`.toLowerCase().includes(search.toLowerCase())).slice(0, 8);
@@ -186,10 +235,11 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                                         <option value="contanti">{t('ticket_contanti')}</option><option value="bonifico">{t('ticket_bonifico')}</option><option value="pos">{t('ticket_pos')}</option>
                                     </select></div>
                             </div>
-                            <button onClick={ricarica} className="w-full py-2.5 rounded-pill bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center justify-center gap-1 transition-colors hover:bg-kidville-green-dark">
+                            <button ref={btnRicaricaRef} onClick={() => ricarica()} disabled={inviando}
+                                className="w-full py-2.5 rounded-pill bg-kidville-green text-kidville-yellow font-maven font-bold text-sm flex items-center justify-center gap-1 transition-colors hover:bg-kidville-green-dark disabled:opacity-60 disabled:cursor-not-allowed">
                                 <Plus size={15} /> {t('ticket_ricarica_btn')}
                             </button>
-                            {done && <p key={confermaId} className="mt-2 font-maven text-xs text-kidville-success flex items-center gap-1"><SaveCheck size={14} /> {done}</p>}
+                            {errore && <p role="alert" className="mt-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{errore}</p>}
                         </div>
                     )}
                 </div>
@@ -258,6 +308,56 @@ export function TicketMensaPanel({ userId, scuolaId }: Props) {
                     </div>
                 </div>
             )}
+
+            {/* Conferma del salvataggio: overlay con spunta e coriandoli, si chiude da
+                sé. Prima era un paragrafino inline che restava a schermo finché non si
+                cambiava bambino — e a ricariche ripetute non si capiva se fosse quella
+                nuova o quella di prima. */}
+            <SaveCelebration show={!!celebra} message={celebra ?? ''} onDone={() => setCelebra(null)} />
+
+            {/* Il duplicato: si CHIEDE, non si vieta. Una seconda ricarica nello stesso
+                giorno può essere legittima; quello che non deve succedere è che avvenga
+                senza che nessuno l'abbia guardata. */}
+            <Modal
+                open={!!dup}
+                onClose={() => setDup(null)}
+                title={t('ticketDupTitolo')}
+                returnFocusRef={btnRicaricaRef}
+                className={MODAL_CARD}
+                style={{ boxShadow: MODAL_SHADOW }}
+            >
+                <h3 className="flex items-center gap-2 font-barlow text-base font-extrabold uppercase leading-tight text-kidville-error-strong">
+                    <AlertTriangle size={18} /> {t('ticketDupTitolo')}
+                </h3>
+                <p className="mt-2 font-maven text-sm text-kidville-ink">{t('ticketDupSpiega')}</p>
+                {dup && (
+                    <div className="mt-3 rounded-card bg-kidville-cream/60 px-3 py-2">
+                        <p className="font-barlow text-xs font-bold uppercase tracking-wide text-kidville-green">{t('ticketDupPrecedenteTitolo')}</p>
+                        <dl className="mt-1 space-y-0.5 font-maven text-sm text-kidville-ink">
+                            <div className="flex justify-between gap-3"><dt className="text-kidville-sub">{t('ticketDupOra')}</dt><dd><b>{f.ora(dup.creato_il)}</b></dd></div>
+                            <div className="flex justify-between gap-3"><dt className="text-kidville-sub">{t('ticketDupTicket')}</dt><dd><b>{dup.pezzi}</b></dd></div>
+                            <div className="flex justify-between gap-3">
+                                <dt className="text-kidville-sub">{t('ticketDupImporto')}</dt>
+                                {/* `null` = ricarica senza pagamento collegato (le 10 righe di
+                                    backfill, o una ricarica arrivata dal wizard). Dire «€ 0,00»
+                                    sarebbe un numero inventato. */}
+                                <dd><b>{dup.importo == null ? t('ticketDupImportoIgnoto') : formatEuro(dup.importo)}</b></dd>
+                            </div>
+                        </dl>
+                    </div>
+                )}
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    <button type="button" onClick={() => setDup(null)} className={cx(BTN_PRIMARY_AA, 'min-h-[44px] px-4 py-2 text-xs')}>
+                        {t('ticketDupAnnulla')}
+                    </button>
+                    {/* Secondario, non primario: confermare un duplicato non deve essere il
+                        gesto piu` facile della schermata. */}
+                    <button type="button" disabled={inviando} onClick={() => ricarica('gia_ricaricato_oggi')}
+                        className={cx(BTN_SECONDARY, 'min-h-[44px] px-4 py-2 text-xs disabled:opacity-60')}>
+                        {t('ticketDupConferma')}
+                    </button>
+                </div>
+            </Modal>
         </div>
     );
 }

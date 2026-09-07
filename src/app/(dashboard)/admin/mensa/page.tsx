@@ -3,16 +3,17 @@
 import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
-import { UtensilsCrossed, CalendarRange, ClipboardList, Settings, CalendarPlus, Ticket } from 'lucide-react';
+import { UtensilsCrossed, CalendarRange, ClipboardList, Settings, CalendarPlus, Ticket, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { MenuBuilder } from '@/components/features/admin/mensa/MenuBuilder';
 import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
 import { PrenotazioneSegreteria } from '@/components/features/admin/mensa/PrenotazioneSegreteria';
+import { TicketResiduiPanel } from '@/components/features/admin/mensa/TicketResiduiPanel';
 import { CockpitPage, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { SedeRequired, useSediAttive } from '@/lib/context/sede-context';
 
-type Tab = 'menu' | 'report' | 'prenota';
+type Tab = 'menu' | 'report' | 'prenota' | 'residui';
 
 function MensaInner() {
   const t = useTranslations('adminMensa');
@@ -59,6 +60,7 @@ function MensaInner() {
           { id: 'menu', label: t('tabMenu'), icon: CalendarRange },
           { id: 'report', label: t('tabReportCucina'), icon: ClipboardList },
           { id: 'prenota', label: t('tabInserisciTicket'), icon: CalendarPlus },
+          { id: 'residui', label: t('tabTicketResidui'), icon: Wallet },
         ]}
       />
 
@@ -68,6 +70,7 @@ function MensaInner() {
             {tab === 'menu' && userId && <MenuBuilder userId={userId} scuolaId={scuolaId} />}
             {tab === 'report' && userId && <MensaReport userId={userId} scuolaId={scuolaId} sezioni={sezioni} />}
             {tab === 'prenota' && userId && <PrenotazioneSegreteria userId={userId} scuolaId={scuolaId} />}
+            {tab === 'residui' && userId && <TicketResiduiPanel userId={userId} scuolaId={scuolaId} />}
           </div>
         )}
       </SedeRequired>

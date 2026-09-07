@@ -26,7 +26,7 @@
 > | `armadietto` | Inventario materiali a scalare (libro giornale: `portato` true/false, stock = somma) | ✅ Operativo, in attesa del primo uso reale |
 > | `armadietto_richieste` | Richieste di rifornimento al genitore: `aperta` → `presa_in_carico` → `evasa` | ✅ Operativa dal 2026-09-01 (migr. `20260901163536`) |
 > | `locker_config` | Catalogo materiali e soglie, per sezione | ⚠️ **Vuota per scelta** — vedi nota sotto |
-> | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno) | Schema creato, non ancora popolato |
+> | `ticket_mensa` | Saldo ticket pasto prepagato (running int per alunno, PK = `alunno_id`, **nessuna colonna di sede**: lo scoping passa sempre da `alunni`). ⚠️ **Misurato il 2026-09-07: 18 righe a fronte di 643 alunni iscritti** — Giugliano 1, Cesa 0, Aversa 0, il resto sulla sede Demo. Chi non ha mai ricaricato **non ha la riga**: qualunque elenco costruito partendo da questa tabella mostra 18 bambini su 643 e in due sedi su tre è vuoto. Si parte dagli alunni e si innesta il saldo (`mensa/ticket-residui:GET`), dove «niente riga» vale **0**, che è la verità | Schema creato, **in uso dal 2026-07** |
 > | `mensa_ticket_movimenti` | Ledger movimenti ticket (ricarica/consumo/disdetta/rettifica + `saldo_dopo`) — storico e morosità | ✅ RLS + policy service_role |
 > | `mensa_alternative` | Alternativa pasto per allergia/richiesta genitore (UNIQUE alunno+data, origine segreteria/genitore) | ✅ RLS + policy service_role |
 > | `protocolli` (+ `protocolli_allegati`, `protocolli_categorie`, `protocolli_numerazione`) | Registro di protocollo DPR 445/2000: trigger WORM (annullo una-tantum art. 54; DELETE solo via `protocollo_elimina()` senza tracce), numerazione atomica per scuola/anno, titolario con seed | ✅ RLS + policy service_role |
@@ -96,6 +96,77 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 🎫 Changelog — In cucina non si sapeva chi avesse ancora pasti, e lo storico stava in contabilità — 2026-09-07 (branch `feat/ticket-residui-mensa`)
+
+**Richiesta**: «in mensa e cucina, un widget in cui vedere quanti ticket ha ogni alunno ancora
+usufruibili, filtrabile per classe e in ordine alfabetico» — e, a seguire, «cliccando sull'alunno
+deve mostrare anche lo storico: quando ha usufruito di ogni ticket e quando li ha acquistati».
+
+### Il fatto che ha deciso la forma, misurato prima di scrivere il codice
+
+`ticket_mensa` ha **18 righe** contro **643 alunni iscritti** (2026-09-07): Giugliano **1**, Cesa
+**0**, Aversa **0** — le altre 17 stanno sulla sede Demo. **Chi non ha mai ricaricato non ha la
+riga.** Un elenco che avesse interrogato `ticket_mensa` — la strada ovvia — avrebbe mostrato 18
+bambini su 643, e in **due sedi su tre una schermata vuota**, indistinguibile da un guasto.
+
+L'elenco parte quindi dagli **alunni** e innesta il saldo: niente riga ⇒ **0 pasti**, che non è un
+ripiego ma il dato vero. A Giugliano il widget mostra **305 righe, 16 classi nel filtro, 1 bambino
+con pasti e 304 a zero** (query di controllo eseguita sul database di produzione).
+
+### Che cosa è stato aggiunto
+
+| | |
+|---|---|
+| `GET /api/mensa/ticket-residui` | Elenco alfabetico dei pasti residui della sede: `classi` per il filtro, `alunni`, `totale_residui`, `senza_ticket` |
+| `GET /api/mensa/ticket-residui/storico` | Per un bambino: acquisti e consumi **con le date**, dal ledger `mensa_ticket_movimenti` |
+| `TicketResiduiPanel` | Il widget: filtro per classe, ricerca, e la riga che si apre sullo storico |
+| `assertAlunnoInScopeCucina` | Lo scope di sede per le schermate di cucina (`src/lib/mensa/scope.ts`) |
+
+Innestato in **due punti**: nuovo tab «Ticket residui» in `/admin/mensa` e blocco in fondo a
+`/admin/mensa/cucina`, la pagina che usa la cuoca.
+
+### Le tre decisioni che non si vedono dall'interfaccia
+
+- **Lo storico non è un doppione di `pagamenti/ticket/storico`.** Quello resta la vista
+  *contabile*: gate `requireStaff` (cuoca e insegnanti fuori), con importi, metodo di pagamento e
+  stato della ricevuta. Il nuovo passa da `requireKitchenRead` — entrano **anche la cuoca e
+  l'insegnante** — e proprio per questo restituisce **solo date e quantità**: niente euro, niente
+  metodo, niente `note` (testo libero). Ciò che non serve alla cucina non esce dal server.
+- **`assertAlunnoInScope` non era utilizzabile**, e non per stile: per chi non è
+  admin/coordinator/segreteria pretende una sezione assegnata in `utenti_sezioni`. La **cuoca non
+  ne ha** — non insegna — e avrebbe preso 403 su ogni bambino della sua stessa cucina. La regola
+  giusta qui è per **sede**, con l'`educator` ristretto alle proprie sezioni.
+- **`ticket_mensa` non ha `scuola_id`.** I saldi si leggono con un join `alunni!inner` sulla sede,
+  come già in `pagamenti/ticket/morosi`: senza, un uuid basterebbe a leggere il saldo di un bambino
+  di un altro plesso.
+
+### Due silenzi che sono stati resi rumorosi
+
+Un elenco vuoto, qui, è una frase di senso compiuto — «nessuno ha pasti» — e sarebbe la bugia
+peggiore. Perciò le due letture **dichiarano il proprio fallimento** invece di degradare in
+silenzio: `saldi_non_disponibili` e `storico_non_disponibile` arrivano al client, che scrive a
+schermo «i saldi non sono stati letti» al posto di zeri credibili. PostgREST non lancia: senza quel
+ramo, un guasto sarebbe diventato «tutti a zero».
+
+### Verifiche
+
+`eslint` 0 · `tsc` 0 · **14.868 test verdi** (34 nuovi) · `npm run build` ok. I test nuovi sono
+stati **visti fallire**: rompendo l'ordinamento, la partenza dagli alunni (6 rossi su 14), il gate
+di scope (3 rossi) e il filtro per classe, uno per uno.
+
+Tre lock d'architettura sono stati aggiornati **accanto al numero, con la motivazione**
+(`isolamento-sede-coverage`: 306→308 route, 472→474 handler). Due erano invece **difetti veri del
+codice nuovo**, corretti nel codice e non nell'allowlist: `text-kidville-muted` usato come
+inchiostro (2,51:1, sotto WCAG AA) e cinque risposte d'errore **senza codice** — ora sei codici
+nuovi in `CODICI_ERRORE`, tradotti in italiano e inglese.
+
+⚠️ **Quello che NON è stato provato**: la schermata non è stata vista renderizzata in un browser
+con dati veri. Il server locale accetta l'identità **solo da sessione** (`ALLOW_HEADER_IDENTITY`
+disabilitato): la route risponde e si logga correttamente (`rt=mensa/ticket-residui:GET`), ma senza
+credenziali si ferma a 401. Il collaudo visivo resta da fare.
 
 ---
 

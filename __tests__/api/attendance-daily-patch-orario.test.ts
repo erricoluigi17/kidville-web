@@ -202,10 +202,21 @@ describe('cosa la porta rifiuta', () => {
     expect(h.aggiornamenti).toHaveLength(0)
   })
 
-  it('un PRESENTE non ha un\'uscita anticipata ⇒ 422', async () => {
+  // ⚠️ QUESTO CASO È STATO ROVESCIATO IL 2026-09-07, per decisione del titolare, e la
+  // riga esiste perché il prossimo lettore non lo «ripristini» leggendolo come una
+  // svista. Fino a quel giorno l'uscita si poteva registrare SOLO a chi era in
+  // `uscita_anticipata`: un bambino uscito all'orario normale non aveva nessuna uscita
+  // da correggere, e la giornata restava senza l'ora in cui è andato a casa.
+  // La regola vive ora in `@/lib/presenze/orario-ammesso`, che la dichiara per tutti e
+  // quattro i punti che se la chiedono.
+  it('un PRESENTE può avere l\'ora di USCITA, e lo stato NON cambia', async () => {
     const res = await PATCH(richiesta({ alunno_id: ALUNNO, data: GIORNO, orario_uscita: '15:30' }))
-    expect(res.status).toBe(422)
-    expect(h.aggiornamenti).toHaveLength(0)
+    expect(res.status).toBe(200)
+    expect(h.aggiornamenti).toHaveLength(1)
+    expect(h.aggiornamenti[0]).toHaveProperty('orario_uscita')
+    // Uscire all'orario normale non è un'uscita ANTICIPATA: quello è un giudizio di
+    // chi fa l'appello, non una conseguenza dell'orologio.
+    expect(h.aggiornamenti[0]).not.toHaveProperty('stato')
   })
 
   it.each(['99:99', '25:00', '8:5', 'boh', ''])('un\'ora malformata ⇒ 400: %p', async (ora) => {

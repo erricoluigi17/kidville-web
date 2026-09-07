@@ -180,8 +180,22 @@ describe('quali orari sono correggibili, per stato', () => {
         expect(document.querySelector('#btn-orario-uscita-a-1')).toBeNull()
     })
 
-    it('PRESENTE senza uscita: l\'uscita non si corregge, perché non c\'è', () => {
+    // ⚠️ ROVESCIATO IL 2026-09-07, per decisione del titolare, e la riga esiste perché
+    // il prossimo lettore non lo «ripristini» leggendolo come una svista. Fino a quel
+    // giorno l'uscita si mostrava solo a chi era in `uscita_anticipata` (o l'aveva già
+    // registrata): un bambino uscito all'orario NORMALE non aveva nessuna ora d'uscita
+    // da segnare, e della sua giornata mancava l'ora in cui è andato a casa.
+    // La regola vive ora in `@/lib/presenze/orario-ammesso`, insieme al 422 del server.
+    it('PRESENTE: anche l\'uscita si può registrare, e lo dice quando non c\'è', () => {
         monta(riga(), vi.fn())
+        const b = document.querySelector('#btn-orario-uscita-a-1') as HTMLButtonElement
+        expect(b).toBeTruthy()
+        expect(b.textContent).toContain('non registrato')
+    })
+
+    it('ASSENTE: nessuno dei due, perché non è mai arrivato', () => {
+        monta(riga({ stato: 'assente', orario_entrata: null }), vi.fn())
+        expect(document.querySelector('#btn-orario-entrata-a-1')).toBeNull()
         expect(document.querySelector('#btn-orario-uscita-a-1')).toBeNull()
     })
 

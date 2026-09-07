@@ -3,12 +3,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Check, X, Clock, LogOut, Users, BarChart2 } from 'lucide-react';
+import { Check, X, Clock, LogIn, LogOut, Users, BarChart2 } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 import { DateField } from '@/components/ui/DateField';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
-import { oraDiRoma, oraDiRomaAdesso } from '@/lib/presenze/orario';
+import { oraDiRomaAdesso } from '@/lib/presenze/orario';
+import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
+import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 
 type Stato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 interface Riga {
@@ -37,7 +40,6 @@ function annoScolasticoDefault(): { from: string; to: string } {
 // HH:MM a Roma da un orario di presenza; '' se assente. Prima erano due copie di
 // `getHours()` — l'ora del dispositivo — e su un tablet fuori fuso l'appello
 // proponeva e mostrava un'ora che non era quella della scuola.
-const oraDaTs = (ts: string | null): string => oraDiRoma(ts) ?? '';
 const oraCorrente = (): string => oraDiRomaAdesso();
 
 // L'etichetta di stato è tradotta al render via t(`appelloStato_${key}`): l'array
@@ -77,6 +79,9 @@ export default function AppelloPage() {
   const [righe, setRighe] = useState<Riga[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Il nome di chi ha subìto una rettifica non riuscita: un avviso che non nomina
+  // nessuno, in una classe di venticinque righe, non dice a chi rifare il gesto.
+  const [erroreOrario, setErroreOrario] = useState<string | null>(null);
 
   // Riepilogo ore assenze
   const defaultPeriodo = annoScolasticoDefault();
@@ -154,21 +159,55 @@ export default function AppelloPage() {
     // Per ritardo/uscita anticipata propone l'ora corrente come default modificabile.
     const oraEntrata = stato === 'ritardo' ? oraCorrente() : '';
     const oraUscita = stato === 'uscita_anticipata' ? oraCorrente() : '';
+    // In stato locale si tiene `HH:MM` NUDO, che `oraDiRoma` legge benissimo. Prima
+    // qui si componeva `${data}T${ora}:00`: la forma ISO naïve, senza fuso — la stessa
+    // stringa per le 08:45 di settembre e quelle di gennaio. Il formato canonico in
+    // colonna lo scrive il SERVER, con `aOrarioIso`, che il fuso lo conosce.
     setRighe((prev) => prev.map((r) => (r.id === alunnoId
-      ? { ...r, stato, orario_entrata: oraEntrata ? `${data}T${oraEntrata}:00` : null, orario_uscita: oraUscita ? `${data}T${oraUscita}:00` : null }
+      ? { ...r, stato, orario_entrata: oraEntrata || null, orario_uscita: oraUscita || null }
       : r)));
     await invia(alunnoId, stato, oraEntrata || undefined, oraUscita || undefined);
   };
 
-  // Aggiorna l'orario (entrata/uscita) di una riga già in stato ritardo/uscita.
-  const setOrario = async (alunnoId: string, ora: string) => {
+  /**
+   * RETTIFICA di un orario già registrato — passa da `PATCH /api/attendance/daily`.
+   *
+   * Prima passava da `invia`, cioè dalla POST, cioè da un UPSERT DELLA RIGA INTERA che
+   * non nominava `noteAppello`: correggere un'ora cancellava la nota che il docente
+   * aveva scritto su quel giorno. In silenzio, e su un registro.
+   *
+   * La porta è quella dello 0-6 e non ne serviva una seconda: la tabella è la stessa
+   * (`presenze`) e la sua chiave `(alunno_id, data)` non sa cosa sia un grado. La PATCH
+   * tocca la SOLA colonna che il corpo nomina — è la differenza fra una patch e un
+   * upsert — e l'istante lo compone il server con `aOrarioIso`, che sa il fuso.
+   *
+   * Ottimistico sul solo campo toccato, con rollback: se il server rifiuta, l'ora a
+   * schermo torna quella di prima invece di raccontare una correzione mai avvenuta.
+   */
+  const setOrario = async (alunnoId: string, campo: CampoOrario, ora: string) => {
+    if (!userId) return;
     const riga = righe.find((r) => r.id === alunnoId);
-    if (!riga || !riga.stato) return;
-    const isEntrata = riga.stato === 'ritardo';
-    setRighe((prev) => prev.map((r) => (r.id === alunnoId
-      ? { ...r, [isEntrata ? 'orario_entrata' : 'orario_uscita']: ora ? `${data}T${ora}:00` : null }
-      : r)));
-    await invia(alunnoId, riga.stato, isEntrata ? ora : undefined, isEntrata ? undefined : ora);
+    if (!riga) return;
+    const colonna = campo === 'entrata' ? 'orario_entrata' : 'orario_uscita';
+    const precedente = riga[colonna] ?? null;
+
+    // `HH:MM` nudo: `oraDiRoma` lo legge benissimo, e il formato canonico in colonna
+    // lo scrive il server. Comporlo qui produrrebbe la forma naïve, senza fuso.
+    setRighe((prev) => prev.map((r) => (r.id === alunnoId ? { ...r, [colonna]: ora } : r)));
+    setErroreOrario(null);
+    try {
+      const res = await fetch(`/api/attendance/daily?userId=${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ alunno_id: alunnoId, data, [colonna]: ora }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch (err) {
+      setRighe((prev) => prev.map((r) => (r.id === alunnoId ? { ...r, [colonna]: precedente } : r)));
+      // Del guasto esce il codice: l'ora d'arrivo di un minore non entra nei log.
+      logClient({ livello: 'error', evento: 'fetch', messaggio: `appello-primaria-orario-non-salvato: ${nomeErrore(err)}`, route: '/teacher/primaria/appello' });
+      setErroreOrario(`${riga.cognome} ${riga.nome}`);
+    }
   };
 
   // Presa visione della giustifica inserita dal genitore.
@@ -220,6 +259,16 @@ export default function AppelloPage() {
         </div>
       </div>
 
+      {/* La rettifica è ottimistica: se il server rifiuta, l'ora torna quella di
+            prima — e va DETTO, altrimenti la correzione sembra riuscita e non lo è.
+            L'avviso nomina il bambino: in una classe di venticinque righe, «errore di
+            salvataggio» non dice a chi rifare il gesto. */}
+      {erroreOrario && (
+        <p role="alert" className="font-maven mb-2 rounded-xl bg-kidville-error-soft px-3 py-2 text-xs text-kidville-error-strong">
+          {t('appelloOrarioNonSalvato', { nome: erroreOrario })}
+        </p>
+      )}
+
       {loading ? (
         <p className="font-maven text-kidville-muted text-sm">{t('comuneCaricamento')}</p>
       ) : (
@@ -241,17 +290,37 @@ export default function AppelloPage() {
                     <span className="hidden sm:inline">{t(`appelloStato_${s.key}`)}</span>
                   </button>
                 ))}
-                {/* Orario di entrata (ritardo) / uscita (uscita anticipata). */}
-                {(r.stato === 'ritardo' || r.stato === 'uscita_anticipata') && (
-                  <label className="font-maven inline-flex items-center gap-1 text-xs text-kidville-muted">
-                    {r.stato === 'ritardo' ? t('appelloOrarioEntrata') : t('appelloOrarioUscita')}
-                    <input
-                      type="time"
-                      value={oraDaTs(r.stato === 'ritardo' ? r.orario_entrata : r.orario_uscita)}
-                      onChange={(e) => setOrario(r.id, e.target.value)}
-                      className="rounded-pill border border-kidville-line px-2 py-0.5 text-xs"
-                    />
-                  </label>
+                {/* GLI ORARI — lo stesso chip correggibile dell'appello 0-6.
+                    Prima qui c'era un `<input type="time">` nudo, mostrato per il solo
+                    stato «ritardo» o «uscita anticipata», e UNO ALLA VOLTA: chi usciva
+                    prima non poteva più vedere né toccare la propria ora d'ingresso,
+                    benché fosse comunque entrato. Quali campi hanno senso lo dice
+                    `orariAmmessi`, la stessa tabella di verità del 422 del server. */}
+                {orariAmmessi(r.stato).entrata && (
+                  <OrarioCorreggibile
+                    campo="entrata"
+                    valore={r.orario_entrata}
+                    etichetta={t('appelloOrarioEntrata')}
+                    icona={<LogIn size={12} />}
+                    alunno={r.id}
+                    nomeAlunno={`${r.nome} ${r.cognome}`}
+                    ariaKey="orarioIngressoAria"
+                    inCorso={false}
+                    onSalva={(ora) => setOrario(r.id, 'entrata', ora)}
+                  />
+                )}
+                {orariAmmessi(r.stato).uscita && (
+                  <OrarioCorreggibile
+                    campo="uscita"
+                    valore={r.orario_uscita}
+                    etichetta={t('appelloOrarioUscita')}
+                    icona={<LogOut size={12} />}
+                    alunno={r.id}
+                    nomeAlunno={`${r.nome} ${r.cognome}`}
+                    ariaKey="orarioUscitaAria"
+                    inCorso={false}
+                    onSalva={(ora) => setOrario(r.id, 'uscita', ora)}
+                  />
                 )}
                 {/* Stato giustificazione genitore + presa visione del docente. */}
                 {r.giustificata && (

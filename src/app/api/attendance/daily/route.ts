@@ -12,6 +12,7 @@ import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { colonneConMotivo } from '@/lib/presenze/motivo-visibile';
+import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 import { aOrarioIso } from '@/lib/presenze/orario';
 import { logScrittura } from '@/lib/audit/scrittura';
 
@@ -570,11 +571,15 @@ export const PATCH = withRoute('attendance/daily:PATCH', async (request: NextReq
 
         // Coerenza fra orario e stato. Non è una validazione di FORMA (quella l'ha
         // già fatta zod): è un'incoerenza che si vede solo avendo letto la riga.
+        //
+        // La tabella di verità sta in `@/lib/presenze/orario-ammesso` e non qui: la
+        // consultano anche le due interfacce, per sapere quali chip mostrare. Scritta
+        // in due posti divergerebbe, e la divergenza si vedrebbe come un campo offerto
+        // a schermo e poi respinto con un 422 che l'insegnante non può capire.
         const vuoleEntrata = b.data.orario_entrata !== undefined;
         const vuoleUscita = b.data.orario_uscita !== undefined;
-        const entrataAmmessa = stato === 'presente' || stato === 'ritardo' || stato === 'uscita_anticipata';
-        const uscitaAmmessa = stato === 'uscita_anticipata';
-        if ((vuoleEntrata && !entrataAmmessa) || (vuoleUscita && !uscitaAmmessa)) {
+        const ammessi = orariAmmessi(stato as string | null);
+        if ((vuoleEntrata && !ammessi.entrata) || (vuoleUscita && !ammessi.uscita)) {
             return NextResponse.json(
                 {
                     error: 'Orario non compatibile con lo stato registrato.',

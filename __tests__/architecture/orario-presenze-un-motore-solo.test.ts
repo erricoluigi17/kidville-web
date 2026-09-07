@@ -79,11 +79,39 @@ function righeColpevoli(rel: string, testo: string): string[] {
   testo.split('\n').forEach((riga, i) => {
     const parla = COLONNE.some((c) => riga.includes(c))
     if (!parla) return
-    // `new Date(<qualcosa che è un orario>)`, `.getHours()`, `.slice(0, 5)`
+    // Chi LEGGE a mano: `new Date(<orario>)`, `.getHours()`, `.slice(0, 5)`
     if (/new Date\s*\(/.test(riga) || /\.getHours\s*\(/.test(riga) || /\.slice\s*\(\s*0\s*,\s*5\s*\)/.test(riga)) {
       colpe.push(`${rel}:${i + 1}  ${riga.trim()}`)
+      return
     }
+    // (per chi SCRIVE il criterio è diverso e sta fuori da questo giro: vedi sotto)
   })
+
+  // ── CHI SCRIVE, e perché il criterio qui è più largo ────────────────────────
+  //
+  // Aggiunto il 2026-09-07. `${data}T${ora}:00` non è nessuno dei pattern di lettura,
+  // quindi il writer dell'appello della primaria è passato indenne per mesi pur
+  // producendo la forma ISO NAÏVE: senza fuso, la STESSA stringa per le 08:45 di
+  // settembre e quelle di gennaio. Un lock che sorveglia solo i lettori certifica che
+  // si legge bene una colonna che si continua a scrivere male.
+  //
+  // ⚠️ IL CRITERIO DI PROSSIMITÀ DI RIGA NON BASTA, e la prima stesura di questa
+  // regola l'ha dimostrato su sé stessa: rimettendo `toTs` a mano il lock restava
+  // VERDE, perché quella riga è un helper che le colonne non le nomina —
+  //     const toTs = (o) => o ? `${data}T${o}:00` : null
+  // e le colonne compaiono venti righe più in basso, dove `toTs` viene usata. Un test
+  // mai visto fallire non è un test. Qui il perimetro è il FILE: se un file nomina le
+  // colonne d'orario, nessuna delle sue righe compone un istante a mano.
+  //
+  // I COMMENTI SI SALTANO, e non è pedanteria: le righe che spiegano PERCHÉ la forma
+  // naïve è vietata la citano per forza, e un lock che punisce chi lo documenta si fa
+  // zittire alla prima occasione.
+  const commento = (riga: string) => /^\s*(\/\/|\*|\/\*)/.test(riga)
+  const componeAMano = (riga: string) => /\}T\$\{/.test(riga) || /['"]T['"]\s*\+/.test(riga)
+  testo.split('\n').forEach((riga, i) => {
+    if (!commento(riga) && componeAMano(riga)) colpe.push(`${rel}:${i + 1}  ${riga.trim()}`)
+  })
+
   return colpe
 }
 
@@ -94,7 +122,9 @@ describe('LOCK · un motore solo per l\'orario delle presenze', () => {
       colpe,
       'Queste righe leggono un orario di presenza a mano. Le forme in colonna sono TRE ' +
         '(ISO con fuso, ISO naïve, HH:MM) e ognuna di queste tre strade ne sbaglia almeno ' +
-        'una: `.slice(0,5)` rende «2026-», `getHours()` legge il fuso del processo. ' +
+        'una: `.slice(0,5)` rende «2026-», `getHours()` legge il fuso del processo, e ' +
+        'un `${data}T${ora}:00` composto a mano produce la forma naïve — la stessa ' +
+        'stringa per le 08:45 di settembre e quelle di gennaio. ' +
         'Usa `oraDiRoma` / `minutiDiRoma` / `aOrarioIso` da `@/lib/presenze/orario`.',
     ).toEqual([])
   })

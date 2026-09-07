@@ -6,6 +6,7 @@ import { useTranslations } from 'next-intl';
 import { AlertTriangle, BookOpen } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { dataCivile } from '@/i18n/config';
+import { etichetteAllergie, useAllergeneLabel } from '@/lib/mensa/allergeni';
 
 interface Alunno { id: string; nome: string; cognome: string; allergies?: string | null; allergeni?: string[] }
 interface Materia { id: string; nome: string }
@@ -50,8 +51,23 @@ export default function ClasseOverviewPage() {
   const assenti = presenze.filter((p) => p.stato === 'assente').length;
   const ritardi = presenze.filter((p) => p.stato === 'ritardo').length;
 
+  // ── QUELLO CHE SI LEGGE ACCANTO AL NOME LO COMPONE IL MOTORE ─────────────
+  // Qui c'era una regola tutta sua:
+  //     a.allergeni?.length ? a.allergeni.join(', ') : (a.allergies || null)
+  // cioè il difetto già corretto in `mensa/report` — una fonte VINCE sull'altra
+  // invece di sommarsi: `allergeni: ['latte']` + `allergies: 'fragole'` mostrava
+  // solo «latte», e «fragole» fra i 14 UE non c'è, quindi nessuno l'avrebbe più
+  // vista. In più stampava le chiavi grezze senza etichetta e non toglieva la
+  // negazione: misurato in produzione il 2026-09-07, su 132 bambini di primaria
+  // 15 hanno un testo in `allergies` e 1 di quei testi è una negazione ⇒ un
+  // bambino aveva un badge ROSSO che diceva «NESSUNA», e il nome in rosso.
+  //
+  // Ora è `etichetteAllergie`, la stessa che compongono il report mensa, l'alert
+  // del pranzo, la scheda dell'incarico e il prestampato di banco. Il componente
+  // è client, quindi l'etichetta passa da `useAllergeneLabel` (tradotta).
+  const etichettaAllergene = useAllergeneLabel();
   const allergiaOf = (a: Alunno) =>
-    (a.allergeni && a.allergeni.length > 0) ? a.allergeni.join(', ') : (a.allergies || null);
+    etichetteAllergie({ allergeni: a.allergeni, allergies: a.allergies }, etichettaAllergene).join(' · ') || null;
 
   return (
     <div className="mx-auto flex max-w-[460px] flex-col gap-4">

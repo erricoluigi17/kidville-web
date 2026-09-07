@@ -431,3 +431,79 @@ describe('globals.css — la ✕ del popup risponde al mouse anche in Alto Contr
     expect(css.slice(i, css.indexOf('}', i))).not.toMatch(/#FFE500/i);
   });
 });
+
+/**
+ * ─── IL FONDO IN HOVER NON SI RIBALTA DA SOLO, E IL POPUP LO HA GIÀ PAGATO ───
+ *
+ * La ✕ qui sopra è UN caso; questo blocco è la REGOLA, e nasce da una regressione
+ * misurata il 2026-09-07 sul «Conferma questo» declassato: era passato da
+ * `bg-kidville-green` (coperto da `[data-contrast="high"] .kv-recon-dialog
+ * .bg-kidville-green` → #FFE500 su #000000) a `hover:bg-kidville-green-soft`, che
+ * NESSUNA regola raggiunge — `bg-kidville-green-soft` e `hover:bg-kidville-green-soft`
+ * sono due token di classe DIVERSI, e la prima non copre la seconda.
+ * Risultato: inchiostro forzato a #FFFFFF dalla regola del popup, fondo #E2EEEC
+ * inlinato da `@theme inline` → **1,19:1**, il pulsante spariva sotto il puntatore.
+ *
+ * L'invariante, e vale per ogni vestito futuro: dentro il popup, un
+ * `hover:bg-kidville-*` o dipinge SCURO (e allora l'inchiostro bianco che l'Alto
+ * Contrasto impone si legge), o ha una regola HC che dichiara la COPPIA. Non c'è
+ * una terza possibilità che non sia un difetto: in Alto Contrasto l'inchiostro non
+ * è più quello della utility, è quello che il popup ha deciso.
+ */
+describe('MovimentoDialog — nessun fondo in hover senza il suo Alto Contrasto', () => {
+  const jsx = fs.readFileSync(
+    path.join(process.cwd(), 'src', 'components', 'features', 'admin', 'pagamenti', 'MovimentoDialog.tsx'),
+    'utf8',
+  );
+
+  /**
+   * I fondi SCURI: su di loro il bianco che l'HC impone al testo si legge, e non
+   * serve nessuna riga in `globals.css` — che è condiviso con altri lavori.
+   * `green-soft`, `neutral-soft`, `cream`, `white` NON stanno qui: sono carte
+   * chiare, e su una carta chiara l'inchiostro bianco è il difetto.
+   */
+  const FONDI_SCURI = new Set(['kidville-green', 'kidville-green-dark', 'kidville-ink']);
+
+  /**
+   * Il difetto, cercato come lo cercherebbe il browser: per TOKEN di classe — e
+   * SOLO nel codice. I commenti si tolgono prima, altrimenti raccontare il difetto
+   * («e non `hover:bg-kidville-green-soft`, che dava 1,19:1») lo farebbe scattare:
+   * una sonda che vieta di scrivere il nome di ciò che difende costringe a
+   * cancellare la spiegazione per far passare la suite.
+   */
+  const senzaCommenti = (s: string) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const senzaAltoContrasto = (sorgente: string, foglio: string): string[] =>
+    [...new Set([...senzaCommenti(sorgente).matchAll(/hover:bg-(kidville-[a-z-]+)/g)].map((m) => m[1]))]
+      .filter((tok) => !FONDI_SCURI.has(tok) && !foglio.includes(`.hover\\:bg-${tok}:hover`));
+
+  it('ogni `hover:bg-*` del popup o è un fondo scuro o ha la sua regola HC', () => {
+    expect(senzaAltoContrasto(jsx, css)).toEqual([]);
+  });
+
+  it('CONTROLLO POSITIVO: la sonda pesca davvero il caso che ha rotto il pulsante', () => {
+    // Senza questo, un `matchAll` che non pesca più niente direbbe «tutto a posto».
+    expect(senzaAltoContrasto('className="hover:bg-kidville-green-soft"', css))
+      .toEqual(['kidville-green-soft']);
+    // e riconosce come coperti sia il fondo scuro sia la coppia dichiarata a mano
+    expect(senzaAltoContrasto('hover:bg-kidville-green hover:bg-kidville-neutral-soft', css)).toEqual([]);
+    // il popup ne ha davvero, di hover: se sparissero tutti il test sopra sarebbe vuoto
+    expect([...jsx.matchAll(/hover:bg-kidville-/g)].length).toBeGreaterThan(2);
+  });
+
+  it('CONTROLLO NUMERICO: bianco su `green-soft` vale 1,19:1 (ecco perché è un difetto)', () => {
+    expect(css).toContain('--color-kidville-green-soft: #E2EEEC');
+    const l = (h: string) => {
+      const c = [0, 2, 4].map((i) => parseInt(h.slice(1 + i, 3 + i), 16) / 255)
+        .map((s) => (s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const cr = (a: string, b: string) => {
+      const [x, y] = [l(a), l(b)].sort((p, q) => q - p);
+      return Math.round(((x + 0.05) / (y + 0.05)) * 100) / 100;
+    };
+    expect(cr('#FFFFFF', '#E2EEEC')).toBe(1.19);
+    // …e sul verde pieno, che è il vestito scelto, lo stesso bianco vale 6,5:1
+    expect(cr('#FFFFFF', '#006A5F')).toBeGreaterThan(6.4);
+  });
+});

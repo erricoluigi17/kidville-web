@@ -144,6 +144,23 @@ export function estraiCodiciFiscali(testo: string): string[] {
 /** Bonus dell'aggancio per CF: domina qualunque combinazione di segnali deboli (max 100). */
 const CF_BONUS = 1000
 
+/**
+ * ─── LE DUE SOGLIE DELL'AGGANCIO HANNO UN NOME, E NON È COSMESI ──────────────
+ *
+ * `60` e `20` erano due numeri anonimi dentro `suggerisciMatchPreparato`: «il
+ * migliore vale almeno 60 E stacca il secondo di almeno 20». È la definizione di
+ * *aggancio forte* di questo progetto, e da oggi la stessa definizione risponde a
+ * una SECONDA domanda — «questo bonifico sembra di un'altra sede?»
+ * (`agganciaFuoriSede`), che confronta il migliore di FUORI col migliore di
+ * DENTRO invece del primo col secondo.
+ *
+ * Due assi diversi, la stessa soglia. Ricopiare 60 e 20 nella rotta creerebbe due
+ * copie che un giorno divergono — e divergerebbero in silenzio, perché nessuna
+ * delle due è sbagliata da sola.
+ */
+export const SOGLIA_AGGANCIO = 60
+export const DISTACCO_AGGANCIO = 20
+
 export interface RisultatoMatch {
     stato: 'suggerito' | 'da_abbinare'
     suggerimenti: Suggerimento[]
@@ -264,7 +281,7 @@ export function suggerisciMatchPreparato(mov: MovimentoCsv, aperti: PagamentoPre
     const haCf = cfMatches.length > 0
     // Un CF agganciato vale sempre "suggerito" (giallo): anche con due fratelli a pari punteggio,
     // dove il distacco è 0 e la regola standard direbbe "da_abbinare".
-    const suggerito = haCf || (!!best && best.score >= 60 && (!second || best.score - second.score >= 20))
+    const suggerito = haCf || (!!best && best.score >= SOGLIA_AGGANCIO && (!second || best.score - second.score >= DISTACCO_AGGANCIO))
 
     const out: RisultatoMatch = { stato: suggerito ? 'suggerito' : 'da_abbinare', suggerimenti: top }
     if (haCf) {
@@ -283,4 +300,126 @@ export function suggerisciMatchPreparato(mov: MovimentoCsv, aperti: PagamentoPre
  */
 export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): RisultatoMatch {
     return suggerisciMatchPreparato(mov, preparaAperti(aperti))
+}
+
+// ─── «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» ───────────────────────────────
+//
+// IL DIFETTO, misurato in produzione il 2026-09-07: i suggerimenti si calcolano
+// contro i pagamenti aperti di TUTTE le sedi — è deliberato, l'estratto conto
+// della banca è unico e cross-sede — ma la schermata poi mostra a ogni segreteria
+// solo i candidati della PROPRIA sede. Su 236 movimenti con suggerimenti, 86 hanno
+// candidati in più plessi e, per l'operatore di Giugliano, **64 righe non
+// confermate hanno l'aggancio forte altrove con candidati locali deboli**: 64
+// righe che invitavano a un abbinamento sbagliato, cioè a registrare l'incasso
+// sulla voce di un altro bambino. (Il «234 / 85 / 67» di poche ore prima non
+// escludeva le confermate, ed è già invecchiato: il registro cresce.)
+//
+// La domanda è la stessa di `suggerisciMatchPreparato` — «c'è un aggancio forte?»
+// — posta su un ALTRO ASSE: non il primo contro il secondo, ma il migliore di
+// FUORI contro il migliore di DENTRO. Stesse due soglie, un posto solo.
+
+/** Un candidato come lo vede questa domanda: chi, quanto forte, e se è un CF. */
+export interface CandidatoSede {
+  pagamento_id: string
+  score: number
+  cf_match?: boolean
+}
+
+/** Il verdetto: la sede che ha l'aggancio forte, e se a dirlo è un codice fiscale. */
+export interface VerdettoAltraSede {
+  scuola_id: string
+  per_cf: boolean
+}
+
+/**
+ * Il bonifico ha un aggancio forte FUORI dalle sedi dell'operatore?
+ *
+ * Funzione PURA: nessuna lettura, nessun I/O. `sedeDi` è la mappa
+ * `pagamento → scuola_id` che la rotta ha già in mano (`pagamenti(id, scuola_id)`,
+ * la stessa query che minimizza i label): il verdetto non costa nessuna query.
+ *
+ * ─── LA REGOLA, PER ESTESO ───────────────────────────────────────────────────
+ *  1. i candidati si partizionano in DENTRO (sede risolta e in `sediAttive`),
+ *     FUORI (sede risolta e non in `sediAttive`) e IGNOTI (sede assente);
+ *  2. un `cf_match` DENTRO chiude la domanda: `null`, e nessuno degli altri due
+ *     punti viene interrogato — è l'aggancio più forte che esista;
+ *  3. un `cf_match` FUORI decide da solo: `per_cf: true`, e la sede è quella del
+ *     cf_match col punteggio più alto;
+ *  4. altrimenti vale il distacco: `bestFuori >= SOGLIA_AGGANCIO` **e**
+ *     `bestFuori - bestDentro >= DISTACCO_AGGANCIO`, con `bestDentro = 0` quando
+ *     dentro non c'è nessuno;
+ *  5. in ogni altro caso `null`.
+ *
+ * ⚠️ GLI IGNOTI NON CONTANO DA NESSUNA PARTE, ed è una decisione: `pagamenti.scuola_id`
+ * è NULLABLE (misurato), e un pagamento che non è stato letto — o che è sparito —
+ * non è «di un'altra sede». Contarlo fra i FUORI accuserebbe un plesso a caso;
+ * contarlo fra i DENTRO alzerebbe `bestDentro` e spegnerebbe un verdetto vero.
+ *
+ * ⚠️ `bestDentro = 0` E NON «VERDETTO AUTOMATICO» QUANDO DENTRO È VUOTO. Un
+ * bonifico con un solo candidato debole altrove non è «di un'altra sede»: è un
+ * bonifico che nessuno ha capito, e dirlo sarebbe una bugia detta con sicurezza.
+ * La soglia resta la stessa in tutti e due i casi.
+ *
+ * ⚠️ IL CASO DI BORDO CHE SEMBRA UN BUG E NON LO È — sta scritto qui perché è
+ * quello che qualcuno segnalerà: i suggerimenti si calcolano ALL'IMPORT e si
+ * cappano a 3 non-CF (`suggerisciMatchPreparato`). Se i primi tre sono tutti di
+ * Cesa, il candidato di Giugliano **non è mai stato salvato**: `bestDentro` vale
+ * 0, il distacco è tutto il punteggio di Cesa, e la regola scatta. È voluto — la
+ * schermata non ha nessun candidato locale da proporre, e proprio per questo
+ * l'unica cosa vera da dire è che il bonifico sembra di un altro plesso.
+ *
+ * ⚠️ IL CF DENTRO BATTE TUTTO (il punto 2), e serve al bonifico di famiglia coi
+ * fratelli in due plessi: lì il candidato locale È un aggancio per codice fiscale
+ * — il più forte che esista, quello da cui si apre l'«Incasso unico» — e annunciare
+ * «i suggerimenti qui sotto sono deboli» sarebbe semplicemente falso.
+ *
+ * ⚠️ E LA GUARDIA È UN'USCITA, NON UNA CONDIZIONE DEL SOLO RAMO per_cf. Fino al
+ * 2026-09-07 era `&& !cfDentro` sul punto 3, e qui c'era scritto che il punto 4
+ * «lo risolve da sé: due punteggi CF quasi pari, distacco ~0». Non è vero, ed è
+ * aritmetica: un `cf_match` vale `CF_BONUS` (1000) PIÙ i segnali deboli, che
+ * arrivano a 100. Bastano i +50 dell'«importo esatto» da un lato solo per fare
+ * distacco 50 — più che sufficiente — e il verdetto scattava proprio sul caso che
+ * questo paragrafo diceva di proteggere. In produzione oggi (2026-09-07) i
+ * movimenti con un CF dentro E uno fuori sono 0 su 236: era latente, non attivo.
+ */
+export function agganciaFuoriSede(
+  suggerimenti: readonly CandidatoSede[],
+  sedeDi: (pagamentoId: string) => string | null | undefined,
+  sediAttive: ReadonlySet<string>,
+): VerdettoAltraSede | null {
+  const dentro: CandidatoSede[] = []
+  const fuori: { candidato: CandidatoSede; sede: string }[] = []
+  for (const s of suggerimenti) {
+    const sede = sedeDi(s.pagamento_id)
+    // `null`, `undefined` e la stringa vuota sono tutti «non lo so»: si esce, e
+    // il candidato non pesa da nessuna delle due parti.
+    if (sede == null || sede === '') continue
+    if (sediAttive.has(sede)) dentro.push(s)
+    else fuori.push({ candidato: s, sede })
+  }
+  if (fuori.length === 0) return null
+
+  // ⚠️ UN `cf_match` DENTRO CHIUDE LA DOMANDA, E LA CHIUDE PER TUTTI I PUNTI.
+  // Fino al 2026-09-07 questa guardia era appesa al solo ramo per_cf (`&& !cfDentro`)
+  // e il commento sopra sosteneva che al punto 3 il caso «si risolve da sé, due
+  // punteggi CF quasi pari». È falso, e la prova è aritmetica: un `cf_match` vale
+  // `CF_BONUS` (1000) PIÙ i segnali deboli, che arrivano a 100 — il solo «importo
+  // esatto» ne fa 50, cioè più del distacco richiesto. Sul bonifico di famiglia coi
+  // fratelli in due plessi, con la quota di Cesa pari al bonifico e quella di casa no,
+  // il verdetto scattava: il popup annunciava «i suggerimenti qui sotto sono deboli»
+  // sopra un aggancio per CODICE FISCALE e ne declassava il «Conferma questo».
+  const cfDentro = dentro.some((s) => s.cf_match === true)
+  if (cfDentro) return null
+
+  const cfFuori = fuori.filter((f) => f.candidato.cf_match === true)
+  if (cfFuori.length > 0) {
+    const migliore = cfFuori.reduce((a, b) => (b.candidato.score > a.candidato.score ? b : a))
+    return { scuola_id: migliore.sede, per_cf: true }
+  }
+
+  const bestFuori = fuori.reduce((a, b) => (b.candidato.score > a.candidato.score ? b : a))
+  const bestDentro = dentro.reduce((max, s) => Math.max(max, s.score), 0)
+  const forte = bestFuori.candidato.score >= SOGLIA_AGGANCIO
+    && bestFuori.candidato.score - bestDentro >= DISTACCO_AGGANCIO
+  return forte ? { scuola_id: bestFuori.sede, per_cf: false } : null
 }

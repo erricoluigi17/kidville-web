@@ -15,7 +15,8 @@ import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
 // destinatario di classe.
 //
 // Il ramo `?studentId=` era anche peggio: nessuna verifica di sezione, e la
-// risposta portava nome, cognome, classe e ALLERGIE (`alunni.note_mediche`) del
+// risposta portava nome, cognome, classe e ALLERGIE (allora `alunni.note_mediche`,
+// dal 2026-09-07 `alunni.allergeni` + `alunni.allergies`) del
 // bambino collegato all'incarico. Sono dati sanitari di un minore.
 //
 // COME SI PROVA. Ogni asserzione negativa ha accanto il suo controllo positivo:
@@ -117,11 +118,18 @@ const dbBase = (): DBFinto => ({
   alunni: [
     {
       id: ALU_MIO, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE_MIA,
-      section_id: SEC_MIA, scuola_id: SEDE_A, note_mediche: 'arachidi',
+      // `allergies` accanto a `note_mediche`: dal 2026-09-07 la route legge la
+      // PRIMA (le allergie vengono dalle allergie) e non legge più la seconda.
+      // Le sentinelle qui sotto valgono su entrambe.
+      // `allergeni` porta una chiave FUORI dalle 14 UE: è una superficie
+      // operativa, e una chiave che l'archivio ha non si scarta perché non la si
+      // riconosce (`normalizzaAllergeni` lo faceva in silenzio).
+      section_id: SEC_MIA, scuola_id: SEDE_A, note_mediche: 'nota medica riservata',
+      allergies: 'arachidi', allergeni: ['nichel'],
     },
     {
       id: ALU_ALTRA_SEZIONE, nome: 'Bea', cognome: 'Beta', classe_sezione: CLASSE_ALTRUI,
-      section_id: SEC_ALTRUI, scuola_id: SEDE_A, note_mediche: 'lattosio',
+      section_id: SEC_ALTRUI, scuola_id: SEDE_A, note_mediche: 'nota medica riservata', allergies: 'lattosio',
     },
   ],
   parents: [],
@@ -241,7 +249,7 @@ describe('GET /api/tasks?studentId= — la sezione si verifica prima di parlare 
     const corpo = await res.text()
     // Non basta lo status: con il difetto la risposta era 200 CON i dati. Qui si
     // prova che nel corpo non c'è NIENTE del bambino — nome, cognome, classe,
-    // allergie (`note_mediche`).
+    // allergie (`alunni.allergies`).
     expect(corpo).not.toContain('Bea')
     expect(corpo).not.toContain('Beta')
     expect(corpo).not.toContain(CLASSE_ALTRUI)
@@ -256,9 +264,54 @@ describe('GET /api/tasks?studentId= — la sezione si verifica prima di parlare 
   it('controllo positivo: sull\'alunno della PROPRIA sezione l\'educator vede il task e l\'anagrafica', async () => {
     const res = await TASKS_GET(req(`/api/tasks?studentId=${ALU_MIO}&userId=${ED_A}`))
     expect(res.status).toBe(200)
-    const j = (await res.json()) as { id: string; student: { nome: string; cognome: string } | null }[]
+    const corpo = await res.clone().text()
+    const j = (await res.json()) as { id: string; student: { nome: string; cognome: string; allergie: string[] } | null }[]
     expect(j.map((t) => t.id)).toEqual(['task-alunno-mio'])
     expect(j[0].student).toEqual(expect.objectContaining({ nome: 'Ali', cognome: 'Alfa' }))
+    // Il campo `allergie` viene dalle ALLERGIE (`alunni.allergies`), non dalla
+    // nota medica spezzata sulle virgole: era la casella «Note Mediche (BES, DSA,
+    // patologie)» del modulo d'iscrizione, e ZERO delle 41 note in produzione
+    // nomina un allergene.
+    // Le due fonti si sommano — chiavi etichettate PIÙ testo libero — e la chiave
+    // non canonica arriva com'è, come sul prestampato di banco.
+    expect(j[0].student!.allergie).toEqual(['nichel', 'arachidi'])
+    // E la nota medica non viaggia più fin qui: questa rotta non la legge nemmeno
+    // (guadagno di privacy, non effetto collaterale).
+    expect(corpo).not.toContain('nota medica riservata')
+    expect(corpo).not.toContain('note_mediche')
+  })
+
+  it('LA PERDITA, DETTA COL SUO NUMERO: chi ha SOLO la nota medica non porta più niente qui', async () => {
+    // Non è un effetto collaterale ed è giusto che sia scritto in un test invece
+    // che in un commento rassicurante. Misurato in produzione il 2026-09-07 (sola
+    // lettura, soli conteggi): 657 iscritti non archiviati, 44 con nota medica,
+    // **29 dei quali con `allergies` vuota o negata**. Per quei 29 questa scheda
+    // mostrava una riga — sotto l'etichetta sbagliata «Allergie» — e da oggi non
+    // ne mostra nessuna.
+    //
+    // La perdita si accetta QUI, non ovunque: la schermata del PRANZO decide cosa
+    // finisce nel piatto e lì la nota è tornata, in un gruppo suo
+    // (`MealDetailInline`, `__tests__/components/diary-pranzo-nota-medica`). Una
+    // scheda di incarico interno è un promemoria fra colleghi, e per scriverlo non
+    // serve trasportare l'art. 9 di un minore attraverso una rotta in più.
+    //
+    // Ciò che questo test impedisce è il ritorno silenzioso: se domani qualcuno
+    // rimette `note_mediche` nella `select`, la riga qui sotto diventa rossa e la
+    // decisione va ripresa, non subita.
+    h.db.alunni = [
+      {
+        id: ALU_MIO, nome: 'Ali', cognome: 'Alfa', classe_sezione: CLASSE_MIA,
+        section_id: SEC_MIA, scuola_id: SEDE_A,
+        note_mediche: 'nota medica riservata', allergies: null, allergeni: [],
+      },
+    ]
+
+    const res = await TASKS_GET(req(`/api/tasks?studentId=${ALU_MIO}&userId=${ED_A}`))
+    expect(res.status).toBe(200)
+    const corpo = await res.clone().text()
+    const j = (await res.json()) as { student: { allergie: string[] } | null }[]
+    expect(j[0].student!.allergie).toEqual([])
+    expect(corpo).not.toContain('nota medica riservata')
   })
 
   it('l\'admin vede anche l\'alunno di una sezione non sua (controllo positivo del ruolo)', async () => {

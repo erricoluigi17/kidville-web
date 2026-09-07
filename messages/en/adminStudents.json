@@ -67,7 +67,6 @@
   "ordineCrescente": "Ascending order, tap to reverse",
   "ordineDecrescente": "Descending order, tap to reverse",
   "allergie": "Allergies",
-  "allergieNotePresenti": "Allergies/medical notes present",
   "cardApriScheda": "Open record of {nome}",
   "cardClassi": "{n, plural, one {# class} other {# classes}}",
   "selezionaRiga": "Select {nome}",
@@ -760,5 +759,9 @@
   "legamiEsitoNonLetto": "The server replied, but the outcome of the operation could not be read: reload the record and check the link before repeating the command.",
   "legamiNuovoAccessoCreato": "This adult was already linked to this child: the link has not changed. Their access to the app has just been created and, if you entered an email address, the credentials have already been sent.",
   "legamiNuovoEsitoIncerto": "The adult’s record may already have been created and, if you entered an email address, the credentials may already have been sent: the server could not confirm the link. Do not create it again — close this window, reopen the child’s record and check whether the adult is in the list.",
-  "legamiMezzoToltoTitolo": "Only halfway done: access has already been removed"
+  "legamiMezzoToltoTitolo": "Only halfway done: access has already been removed",
+  "statConNoteMediche": "With medical notes",
+  "allergiePresenti": "Allergies present",
+  "notaMedica": "Medical note",
+  "notaMedicaPresente": "Medical note present"
 }

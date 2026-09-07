@@ -31,8 +31,17 @@ import { SEDE_A, SEDE_B } from '../fixtures/sedi'
 //     telefono, codice fiscale, sede) e `TransazioniPanel` (nome, cognome).
 //
 // LA NOTA MEDICA È UN CASO A SÉ. La lista non ne mostra il TESTO: accende un
-// indicatore «Allergie». La route continua quindi a leggerla, ma restituisce
-// solo il booleano `ha_note_mediche`; il testo resta dietro la scheda alunno.
+// indicatore. La route continua quindi a leggerla, ma restituisce solo il
+// booleano `ha_note_mediche`; il testo resta dietro la scheda alunno.
+//
+// ⚠️ DAL 2026-09-07 I CASI A SÉ SONO TRE, E IL SEGNALE È DOPPIO. `allergies` e
+// `allergeni` erano fra le colonne TOLTE da qui, perché la lista accendeva
+// l'indicatore «Allergie» dalla nota medica — che è la casella «Note Mediche
+// (BES, DSA, patologie)» del modulo d'iscrizione, cioè un'altra cosa. Ora la
+// lista ha due indicatori distinti e le due colonne si leggono per accendere
+// `ha_allergie`. Il regime è quello della nota medica, non un'apertura: dal
+// corpo HTTP non esce niente che non sia un booleano, e le sentinelle qui sotto
+// lo verificano sulla RISPOSTA.
 //
 // ⚠️ METODO. `finto-supabase` non emula la proiezione (righe intere): qui si usa
 // `creaFintoSupabaseConProiezione`, che proietta come PostgREST. Senza,
@@ -193,6 +202,7 @@ describe('GET /api/admin/students — l\'elenco porta quel che l\'elenco mostra'
         'codice_fiscale',
         'cognome',
         'data_nascita',
+        'ha_allergie',
         'ha_note_mediche',
         'id',
         'nome',
@@ -241,14 +251,25 @@ describe('GET /api/admin/students — l\'elenco porta quel che l\'elenco mostra'
   it('la query non chiede più le colonne del fascicolo', async () => {
     await STUDENTS(req('/api/admin/students?limit=1000'))
     const chieste = colonneDi('alunni').join(' | ')
+    // ⚠️ `allergies` e `allergeni` NON sono più in questo elenco, ed è una
+    // decisione, non una svista. Dal 2026-09-07 passano dal regime «vietate» al
+    // regime della nota medica: si LEGGONO per accendere `ha_allergie`, e non
+    // escono. Il presidio non è più «non chiederle», è il test qui sotto — «il
+    // testo non compare nel corpo» — che vale di più, perché guarda la RISPOSTA
+    // e non la query: una route che rimettesse il testo partendo da un'altra
+    // strada lo farebbe comunque cadere.
     for (const colonna of [
-      'allergies', 'allergeni', 'is_bes_dsa', 'documento_path', 'importo_retta_mensile',
+      'is_bes_dsa', 'documento_path', 'importo_retta_mensile',
       'genitori_separati', 'retta_split_config', 'intestatario_fatture', 'invoice_holder_details',
       'residence_address', 'zip_code', 'consenso_privacy', 'numero_domanda_sidi',
       'student_parents', 'delegates',
     ]) {
       expect(chieste).not.toContain(colonna)
     }
+    // E le due che ora si leggono davvero: se sparissero, `ha_allergie` sarebbe
+    // sempre `false` e il contatore mostrerebbe zero senza dirlo a nessuno.
+    expect(chieste).toContain('allergies')
+    expect(chieste).toContain('allergeni')
   })
 
   it('il filtro di sede resta: l\'alunno dell\'altro plesso non compare', async () => {

@@ -17,6 +17,7 @@ import { staffScuola } from '@/lib/notifiche/destinatari';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { HEADER_TOTALE } from '@/lib/api/paginazione';
+import { haAllergiaConteggiabile } from '@/lib/mensa/allergeni';
 
 // ============================================================
 // Anagrafica alunni — gated Segreteria+Direzione (DL-036) + audit
@@ -516,10 +517,14 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         // (`fiscal_code` su `alunni` non è mai stato popolato: il CF del minore
         // sta in `codice_fiscale`.)
         //
-        // `note_mediche` si LEGGE ma non si RESTITUISCE: la lista accende solo un
-        // indicatore «Allergie», e il testo libero di un minore non deve viaggiare
-        // in un elenco (né finire in un attributo del DOM). Fuori esce il booleano
-        // `ha_note_mediche`; il testo resta dietro la scheda alunno.
+        // `note_mediche`, `allergies` e `allergeni` si LEGGONO ma non si
+        // RESTITUISCONO: la lista accende due indicatori — «Allergie» e «Nota
+        // medica» — e il testo libero di un minore non deve viaggiare in un elenco
+        // (né finire in un attributo del DOM). Fuori escono i due booleani
+        // `ha_allergie` e `ha_note_mediche`; il testo resta dietro la scheda alunno.
+        // Le prime righe di questo blocco elencano `allergies`/`allergeni` fra le
+        // colonne TOLTE nel 2026-07-31: da allora tornano, ma nel regime della nota
+        // medica — lette, mai restituite.
         //
         // Il ciclo 42703 qui sotto resta indispensabile: il DB E2E della CI non è
         // migrato e una colonna assente va tolta, non trasformata in un 500.
@@ -544,6 +549,7 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         let cols = [
             'id', 'scuola_id', 'nome', 'cognome', 'data_nascita', 'codice_fiscale',
             'classe_sezione', 'stato', 'section_id', 'note_mediche',
+            'allergies', 'allergeni',
             'archiviato_il', 'archiviato_classe_sezione', 'spazio_liberato_il',
         ];
         // Scope multi-sede: solo i plessi attivi (selezione SedeSelector ∩ accessibili).
@@ -575,7 +581,20 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
 
         let { data, error, count } = await runQuery();
         let attempts = 0;
-        while (error && (error as { code?: string }).code === '42703' && attempts < 5) {
+        // Il tetto era 5 e le colonne che possono mancare sul DB E2E (non migrato)
+        // sono SEI: `note_mediche`, `allergies`, `allergeni` e le tre
+        // dell'archiviazione. Un tetto più basso del numero di colonne assenti non
+        // degrada: risponde 500 dopo aver tolto le prime cinque, che è il modo in
+        // cui un degrado «pulito» smette di esserlo senza che nessuno lo tocchi.
+        //
+        // Delle sei, TRE (`note_mediche`, `allergies`, `allergeni`) stanno già nella
+        // baseline `20260704120000_baseline.sql`, tabella `alunni`: quelle davvero
+        // non garantite sono le tre dell'archiviazione, che arrivano dalla
+        // migrazione `20260812194517_alunni_archiviazione.sql`. Il tetto resta
+        // dimensionato su sei perché il ciclo le toglie una per giro e il numero
+        // che conta è quante ne può togliere, non quante ne mancano davvero oggi
+        // (`__tests__/api/students-segnale-allergie.test.ts` lo misura su tutte e sei).
+        while (error && (error as { code?: string }).code === '42703' && attempts < 8) {
             const col = /column\s+(?:\w+\.)?"?(\w+)"?\s+does not exist/i.exec(error.message)?.[1];
             if (!col || !cols.includes(col)) break;
             cols = cols.filter((c) => c !== col);
@@ -584,13 +603,48 @@ export const GET = withRoute('admin/students:GET', async (request: NextRequest) 
         }
         if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-        // La nota medica esce come SEGNALE, non come testo: `ha_note_mediche`
-        // accende l'indicatore «Allergie» nella lista, e il contenuto resta dove
-        // ha un motivo per stare (la scheda alunno). `note_mediche` non compare
-        // nella risposta nemmeno a null, così nessun componente può ricascarci.
+        // ─── DUE SEGNALI, NON UNO, E NESSUNO DEI DUE PORTA IL TESTO ─────────
+        //
+        // Fino al 2026-09-07 da qui usciva un booleano solo, `ha_note_mediche`, e
+        // la lista ci accendeva un indicatore chiamato «Allergie». Ma
+        // `note_mediche` è la casella che il modulo d'iscrizione etichetta «Note
+        // Mediche (BES, DSA, patologie)»: contarla come allergia è contare un'altra
+        // cosa. Misurato in produzione il 2026-09-07 (soli conteggi, sola lettura):
+        // 657 iscritti non archiviati, 44 con nota medica, 63 con un testo in
+        // `allergies` — 6 negazioni ⇒ 57 operativi e 27 conteggiabili fra i 14 UE —
+        // e **29** con la nota e NESSUNA allergia operativa, cioè i falsi positivi
+        // che il numero a schermo mostrava ogni giorno. ZERO delle 44 note nomina
+        // un allergene.
+        // ⚠️ Sono una FOTOGRAFIA e crescono ogni giorno: si rimisurano con una
+        // query — è una lettura, non ferma nessuno — invece di copiarli da qui.
+        //
+        // Quindi le colonne lette sono tre e i segnali sono due:
+        //  · `ha_allergie`    ← `allergeni` (spuntati) oppure `allergies` (testo che
+        //    nomina uno dei 14 UE). La regola sta in UN posto solo,
+        //    `haAllergiaConteggiabile`, che è anche il predicato che il docente e la
+        //    mensa usano — un motore, non tre copie;
+        //  · `ha_note_mediche` ← la nota medica, che resta un segnale suo, con la sua
+        //    etichetta e il suo badge.
+        //
+        // Il TESTO non esce da nessuna delle tre: `allergies` è un dato sanitario di
+        // un minore esattamente come `note_mediche`, e un elenco non ha motivo di
+        // portarlo (né di metterlo in un attributo del DOM). Le colonne passano dal
+        // regime «vietate» al regime «si leggono, esce solo il booleano».
+        //
+        // Sul DB E2E della CI, non migrato, il ciclo `42703` qui sopra toglie le
+        // colonne che non esistono: i campi arrivano `undefined` e i due segnali
+        // valgono `false`, che su un database senza quelle colonne è la lettura
+        // giusta — 200 con l'indicatore spento, mai un 500.
         const righe = ((data ?? []) as unknown as Record<string, unknown>[]).map((riga) => {
-            const { note_mediche: nota, ...resto } = riga;
-            return { ...resto, ha_note_mediche: Boolean(nota) };
+            const { note_mediche: nota, allergies: testoAllergie, allergeni: chiaviAllergeni, ...resto } = riga;
+            return {
+                ...resto,
+                ha_note_mediche: Boolean(nota),
+                ha_allergie: haAllergiaConteggiabile({
+                    allergeni: (chiaviAllergeni as string[] | null) ?? null,
+                    allergies: (testoAllergie as string | null) ?? null,
+                }),
+            };
         });
 
         // ─── IL TRONCAMENTO NON DEVE POTER PASSARE INOSSERVATO (T11-F5) ─────

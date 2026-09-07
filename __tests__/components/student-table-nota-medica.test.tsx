@@ -15,6 +15,19 @@ import { render } from '@testing-library/react';
 // — manda il booleano `ha_note_mediche`. I due componenti devono accendere
 // l'indicatore su QUEL segnale, altrimenti l'unica traccia visibile della lista
 // («questo bambino ha una nota medica») sparirebbe in silenzio.
+//
+// ⚠️ AGGIORNATO IL 2026-09-07 — L'INDICATORE ERA UNO E DICEVA LA COSA SBAGLIATA.
+// Fino a oggi la nota medica accendeva un badge chiamato «Allergie», e questo
+// file lo pretendeva: `note_mediche` valorizzata ⇒ span «Allergie». Ma
+// `note_mediche` è la casella che il modulo d'iscrizione etichetta «Note Mediche
+// (BES, DSA, patologie)» — misurato in produzione, ZERO delle 41 note nomina un
+// allergene, e 23 bambini finivano fra gli «allergici» senza avere un'allergia.
+// I badge ora sono due, e ognuno ha il suo segnale: `ha_allergie` accende
+// «Allergie», `ha_note_mediche` accende «Nota medica».
+//
+// Ciò che questo file sorveglia NON è cambiato, ed è la ragione per cui esiste:
+// **il testo grezzo non finisce in nessun attributo del DOM, in nessuno dei due
+// badge.** Le asserzioni sul `title` e sull'`outerHTML` sono quelle di prima.
 // =============================================================================
 
 vi.mock('@/lib/context/sede-context', () => ({
@@ -48,39 +61,60 @@ function renderTable(students: Parameters<typeof StudentTable>[0]['students']) {
   );
 }
 
-/** L'indicatore «Allergie» dentro la TABELLA (non la card mobile). */
-function indicatoreTabella(container: HTMLElement) {
+/** Un indicatore dentro la TABELLA (non la card mobile), cercato per etichetta. */
+function indicatoreTabella(container: HTMLElement, etichetta: string) {
   const table = container.querySelector('table')!;
-  return Array.from(table.querySelectorAll('span')).find((s) => s.textContent?.includes('Allergie'));
+  return Array.from(table.querySelectorAll('span')).find((s) => s.textContent?.includes(etichetta));
 }
 
-describe('StudentTable — l\'indicatore allergie non porta il testo della nota', () => {
+describe('StudentTable — nessun indicatore porta il testo della nota', () => {
   it('la nota medica grezza non finisce nel `title` della riga di tabella', () => {
     const { container } = renderTable([
       { id: 's1', cognome: 'Verdi', nome: 'Anna', classe_sezione: 'Girasoli', stato: 'iscritto', note_mediche: NOTA_GREZZA },
     ]);
-    const indicatore = indicatoreTabella(container);
+    const indicatore = indicatoreTabella(container, 'Nota medica');
     expect(indicatore).toBeTruthy();
     expect(indicatore!.getAttribute('title') ?? '').not.toContain(NOTA_GREZZA);
-    expect(indicatore!.getAttribute('title')).toBe('Allergie/note mediche presenti');
+    expect(indicatore!.getAttribute('title')).toBe('Nota medica presente');
     // E nemmeno altrove nel markup della tabella.
     expect(container.querySelector('table')!.outerHTML).not.toContain(NOTA_GREZZA);
   });
 
-  it('con il solo booleano `ha_note_mediche` (la forma che la API manda ora) l\'indicatore si accende', () => {
+  it('una nota medica NON accende più il badge «Allergie»: sono due cose', () => {
+    // È il difetto: «Note Mediche (BES, DSA, patologie)» accendeva un badge che
+    // diceva «Allergie», e il contatore della pagina lo contava lì.
     const { container } = renderTable([
       { id: 's1', cognome: 'Verdi', nome: 'Anna', classe_sezione: 'Girasoli', stato: 'iscritto', ha_note_mediche: true },
     ]);
-    expect(indicatoreTabella(container)).toBeTruthy();
+    expect(indicatoreTabella(container, 'Nota medica')).toBeTruthy();
+    expect(indicatoreTabella(container, 'Allergie')).toBeUndefined();
+  });
+
+  it('con il solo booleano `ha_allergie` (la forma che la API manda ora) il badge allergie si accende', () => {
+    const { container } = renderTable([
+      { id: 's1', cognome: 'Verdi', nome: 'Anna', classe_sezione: 'Girasoli', stato: 'iscritto', ha_allergie: true },
+    ]);
+    const indicatore = indicatoreTabella(container, 'Allergie');
+    expect(indicatore).toBeTruthy();
+    expect(indicatore!.getAttribute('title')).toBe('Allergie presenti');
     // Anche nella card mobile, che mostra gli stessi dati della riga.
     const card = container.querySelector<HTMLElement>('.kv-admin-rowcard[data-student-id="s1"]')!;
     expect(Array.from(card.querySelectorAll('span')).some((s) => s.textContent?.includes('Allergie'))).toBe(true);
   });
 
-  it('senza nota medica l\'indicatore resta spento', () => {
+  it('i due segnali insieme accendono DUE badge distinti', () => {
     const { container } = renderTable([
-      { id: 's2', cognome: 'Bianchi', nome: 'Marco', classe_sezione: 'Margherite', stato: 'iscritto', ha_note_mediche: false },
+      { id: 's1', cognome: 'Verdi', nome: 'Anna', classe_sezione: 'Girasoli', stato: 'iscritto', ha_allergie: true, ha_note_mediche: true },
     ]);
-    expect(indicatoreTabella(container)).toBeUndefined();
+    expect(indicatoreTabella(container, 'Allergie')).toBeTruthy();
+    expect(indicatoreTabella(container, 'Nota medica')).toBeTruthy();
+  });
+
+  it('senza segnali gli indicatori restano spenti', () => {
+    const { container } = renderTable([
+      { id: 's2', cognome: 'Bianchi', nome: 'Marco', classe_sezione: 'Margherite', stato: 'iscritto', ha_note_mediche: false, ha_allergie: false },
+    ]);
+    expect(indicatoreTabella(container, 'Allergie')).toBeUndefined();
+    expect(indicatoreTabella(container, 'Nota medica')).toBeUndefined();
   });
 });

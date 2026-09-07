@@ -629,10 +629,38 @@ export async function arubaGetByFilename(
  */
 const FORMA_NUMERO_SEZIONALE = /^([A-Za-z]+) (\d{1,9}) ?\/ ?(\d{2}|\d{4})$/
 
-/** Quante pagine al massimo si scorrono. 20 × 500 = 10.000 documenti per anno. */
+/** Quante pagine al massimo si scorrono. 20 × 2.000 = 40.000 documenti per anno. */
 const PAGINE_MAX = 20
-/** Quanti documenti per pagina si chiedono ad Aruba. */
-const PAGINA_SIZE = 500
+/**
+ * Quanti documenti per pagina si chiedono ad Aruba.
+ *
+ * ─── DUEMILA È UNA MISURA, NON UNA SPERANZA ──────────────────────────────────
+ * La documentazione ufficiale dichiara `size` «Range: 1-100». È falso da anni: con
+ * 500 ne abbiamo sempre ottenuti 500. Il 2026-09-07, con
+ * `scripts/collaudo/aruba-pagina-grande.collaudo.ts`, il tetto vero è stato cercato
+ * dall'alto contro l'API di produzione:
+ *
+ *     size 5000 → RIFIUTATA   (HTTP 200, errorCode "0001", content vuoto)
+ *     size 3500 → RIFIUTATA   (idem)
+ *     size 2000 → ACCETTATA   (2.000 documenti, size echeggiata 2000,
+ *                              totalElements 3327, totalPages 2, number 1, first true)
+ *
+ * Il tetto sta fra 2000 e 3500. **Non si insegue la pagina singola**: servirebbe una
+ * `size` ≥ 3.327 sotto un tetto minore di 3.500, cioè una finestra che i documenti —
+ * che crescono di una decina al giorno — chiudono da soli in poche settimane. Due
+ * pagine è la risposta che invecchia bene.
+ *
+ * ⏱️ IL GUADAGNO: 3.327 documenti stavano in **7 pagine e sei pause** da cinque
+ * secondi (~35 s a ogni emissione, misurato in `app_log` il 2026-09-07: una riga
+ * `aruba:findByUsername` con `occorrenze: 7` dentro una sola invocazione). Adesso
+ * sono **2 pagine e una pausa**, cioè ~6 secondi.
+ *
+ * ⚠️ Chi cambia questo numero cambia anche la guardia: `paginaUltimoNumero` confronta
+ * la `size` ECHEGGIATA dall'involucro con questa costante e **lancia** se non
+ * combaciano. Alzarla oltre il tetto concesso non produce una lettura parziale in
+ * silenzio — produce un rifiuto rumoroso, ed è il punto.
+ */
+export const PAGINA_SIZE = 2000
 
 /**
  * ─── IL LIMITE DI ARUBA È A RAFFICA, NON A SECCHIO ORARIO ────────────────────
@@ -716,6 +744,22 @@ function etichettaNellaFormaAttesa(etichetta: unknown): boolean {
 /** Quanto di un'etichetta incomprensibile si porta nel log: serve la forma, non l'elenco. */
 const CAMPIONE_ETICHETTA_MAX = 40
 
+/** Il valore che Aruba manda quando la risposta è buona. Misurato il 2026-09-07. */
+const CODICE_INVOLUCRO_OK = '0000'
+
+/**
+ * Un errore dell'involucro di pagina: stesso `name` di `erroreEtichette`, per la stessa
+ * ragione (`get_runtime_errors` di Vercel raggruppa per *error name*), e stessa severità
+ * — chi legge il progressivo si FERMA. Si sbaglia sempre dalla parte del non emettere:
+ * un numero non consumato si riprende, un numero doppio è una nota di variazione.
+ */
+function erroreInvolucro(code: string, messaggio: string): Error {
+  const err = new Error(`${messaggio} Il progressivo NON è stato letto: nessun numero è stato consumato.`)
+  err.name = 'ArubaNumerazioneError'
+  Object.assign(err, { code })
+  return err
+}
+
 /**
  * Le etichette dei numeri di fattura contenute in UN elemento dell'elenco.
  *
@@ -779,6 +823,36 @@ interface EsitoPagina {
    * contengono `receiver.fiscalCode` di genitori reali, che infatti non si tocca.)
    */
   chiaviPrimoElemento: string[]
+  /**
+   * L'involucro di pagina, per quel che serve a sapere SE ABBIAMO VISTO TUTTO.
+   *
+   * Misurato contro l'API vera il 2026-09-07: i campi stanno **in cima** alla risposta,
+   * non sotto `value`, e sono `content, errorCode, errorDescription, first, last, number,
+   * numberOfElements, size, totalElements, totalPages`. Fino a quel giorno il codice li
+   * buttava via tutti e dieci e si regolava sulla sola lunghezza di `content` — che è
+   * un'euristica, non una misura, e che il cap silenzioso della `size` rende falsa.
+   */
+  involucro: InvolucroPagina
+}
+
+/** I quattro campi dell'involucro che decidono se lo scorrimento è finito e se è valido. */
+interface InvolucroPagina {
+  /** `'0000'` = va bene. Qualunque altro valore è un RIFIUTO travestito da HTTP 200. */
+  errorCode: string | null
+  /** La descrizione del rifiuto, per il log. Mai un dato personale: è testo di Aruba. */
+  errorDescription: string | null
+  /** La `size` che Aruba dichiara di aver applicato: se non è quella chiesta, l'ha tappata. */
+  size: number | null
+  /** Quanti documenti esistono in tutto: l'unica invariante numerica di completezza. */
+  totalElements: number | null
+  /** `true` quando Aruba dice che questa è l'ultima pagina. Ferma, non conclude. */
+  last: boolean | null
+}
+
+/** Legge un campo dell'involucro senza inventarlo: assente resta `null`, non zero. */
+function numeroInvolucro(env: Record<string, unknown>, chiave: string): number | null {
+  const v = env[chiave]
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
 }
 
 /**
@@ -819,6 +893,44 @@ async function paginaUltimoNumero(
   if (!esito.ok) throw erroreAruba('findByUsername', esito)
   const json = await leggiCorpoJson(esito.res, 'aruba:findByUsername')
   const env = (json.value as Record<string, unknown>) ?? json
+
+  // ─── L'INVOLUCRO SI LEGGE PRIMA DEI DOCUMENTI, E DUE CASI FERMANO TUTTO ────
+  // Misurato il 2026-09-07 contro l'API vera: chiedendo `size=5000` Aruba risponde
+  // **HTTP 200** con `content: []`, `errorCode: "0001"`, `size: 0`. Un rifiuto
+  // travestito da successo. Chi legge solo `content` conclude «serie senza
+  // documenti», e per `leggiPavimentoSerie` quello significa pavimento ZERO — cioè
+  // emettere «Asilo 1/2026» su una serie che ne ha duemilatrecento.
+  //
+  // I campi stanno IN CIMA alla risposta, non sotto `value`: `env` cade sul secondo
+  // ramo del `??`. È lo stesso livello che le fixture devono rispettare, ed è la
+  // ragione per cui la fase 0 lo ha misurato invece di assumerlo.
+  const involucro: InvolucroPagina = {
+    errorCode: typeof env.errorCode === 'string' ? env.errorCode : null,
+    errorDescription: typeof env.errorDescription === 'string' ? env.errorDescription : null,
+    size: numeroInvolucro(env, 'size'),
+    totalElements: numeroInvolucro(env, 'totalElements'),
+    last: typeof env.last === 'boolean' ? env.last : null,
+  }
+  if (involucro.errorCode !== null && involucro.errorCode !== CODICE_INVOLUCRO_OK) {
+    throw erroreInvolucro(
+      'involucro-errore',
+      `Aruba findByUsername ha risposto 200 ma con errorCode «${involucro.errorCode}»` +
+        `${involucro.errorDescription ? ` (${involucro.errorDescription})` : ''}: la risposta NON contiene ` +
+        "l'elenco. Misurato il 2026-09-07: è ciò che accade chiedendo una «size» fuori dal massimo concesso.",
+    )
+  }
+  // La `size` ECHEGGIATA è il rilevatore diretto del cap silenzioso, e non dipende né
+  // dall'ordinamento né dai totali: se ne chiediamo 2000 e ce ne concede 500,
+  // `ricevuti < PAGINA_SIZE` direbbe «finito» dopo una pagina su sette.
+  if (involucro.size !== null && involucro.size !== PAGINA_SIZE) {
+    throw erroreInvolucro(
+      'size-tappata',
+      `Aruba findByUsername: abbiamo chiesto ${PAGINA_SIZE} documenti per pagina e l'involucro ne ` +
+        `dichiara ${involucro.size}. Il tetto concesso è cambiato: finché PAGINA_SIZE non torna sotto ` +
+        'quel valore, lo scorrimento non può sapere di aver visto tutto.',
+    )
+  }
+
   // `content` è la forma vera (pagina Spring); `invoices` in cima resta accettata perché
   // un elenco nudo è una forma legittima. In entrambi i casi gli elementi sono DOCUMENTI:
   // il numero lo estrae `etichetteDellElemento`, che scende dove serve.
@@ -845,7 +957,7 @@ async function paginaUltimoNumero(
       }
     }
   }
-  return { massimi, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento }
+  return { massimi, ricevuti: documenti.length, leggibili, campione, chiaviPrimoElemento, involucro }
 }
 
 /**
@@ -990,17 +1102,66 @@ export async function arubaUltimiNumeriFattura(
     return err
   }
 
-  const massimiDellAnno = async (anno: number, serie: readonly Sezionale[]): Promise<Map<Sezionale, number>> => {
+  const massimiDellAnno = async (
+    anno: number,
+    serie: readonly Sezionale[],
+  ): Promise<{ massimi: Map<Sezionale, number>; ricevutiTotali: number }> => {
     const massimi = new Map<Sezionale, number>(serie.map((s) => [s, 0]))
     let ricevutiTotali = 0
     let leggibiliTotali = 0
     let campione = ''
     let chiavi: string[] = []
+    /** Quanti documenti Aruba dichiara di avere in tutto. `null` se non lo dice. */
+    let totaleDichiarato: number | null = null
+    let pagineLette = 0
     /** Vero solo se sono arrivati documenti e non se n'è riconosciuto nemmeno uno. */
     const nessunaEtichettaCapita = () => ricevutiTotali > 0 && leggibiliTotali === 0
+
+    /**
+     * La chiusura dello scorrimento, in un posto solo perché le uscite sono due.
+     *
+     * ⚠️ L'INVARIANTE NUMERICA È QUI, e non è la stessa cosa di `last`. `last` sbagliato
+     * **fallisce aperto**: chiude il giro e restituisce un massimo basso senza dire
+     * niente. Il confronto con `totalElements` **fallisce chiuso**: lancia, e nessuna
+     * fattura esce. Su un documento fiscale irreversibile si sbaglia da quella parte.
+     */
+    const concludi = (): { massimi: Map<Sezionale, number>; ricevutiTotali: number } => {
+      if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
+      if (totaleDichiarato !== null && ricevutiTotali < totaleDichiarato) {
+        throw erroreInvolucro(
+          'scorrimento-incompleto',
+          `Aruba findByUsername: l'involucro dichiara ${totaleDichiarato} documenti nel ${anno} e ne abbiamo ` +
+            `analizzati ${ricevutiTotali} in ${pagineLette} pagine. Il massimo letto sarebbe il massimo di un ` +
+            'pezzo qualunque dell\'elenco, non della serie.',
+        )
+      }
+      // Il conto che rende MISURABILE il costo della lettura, invece che deducibile.
+      // `distingui: ['pagine']` non è un vezzo: `app_log` deduplica per
+      // `(fingerprint, giorno)` e somma le occorrenze SENZA aggiornare il contesto —
+      // senza, tutte le letture del giorno collasserebbero in una riga con i numeri
+      // della prima, e «da sette pagine a due» non si potrebbe dimostrare.
+      logEvento(
+        'fattura',
+        'info',
+        {
+          operazione: 'aruba:findByUsername',
+          provider: 'aruba',
+          esito: 'scorrimento-concluso',
+          anno,
+          pagine: pagineLette,
+          ricevuti: ricevutiTotali,
+          totale_dichiarato: totaleDichiarato,
+        },
+        undefined,
+        { distingui: ['pagine', 'anno'] },
+      )
+      return { massimi, ricevutiTotali }
+    }
+
     for (let n = 1; n <= PAGINE_MAX; n++) {
-      const { massimi: massimiPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento } =
+      const { massimi: massimiPagina, ricevuti, leggibili, campione: campionePagina, chiaviPrimoElemento, involucro } =
         await pagina(anno, serie, n)
+      pagineLette = n
       for (const s of serie) {
         const trovato = massimiPagina.get(s) ?? 0
         if (trovato > (massimi.get(s) ?? 0)) massimi.set(s, trovato)
@@ -1009,10 +1170,12 @@ export async function arubaUltimiNumeriFattura(
       leggibiliTotali += leggibili
       if (campione === '' && campionePagina !== '') campione = campionePagina
       if (chiavi.length === 0 && chiaviPrimoElemento.length > 0) chiavi = chiaviPrimoElemento
-      if (ricevuti < PAGINA_SIZE) {
-        if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
-        return massimi
-      }
+      if (totaleDichiarato === null) totaleDichiarato = involucro.totalElements
+      // Due segnali per fermarsi, in OR: la pagina corta (che c'è sempre stata) e il
+      // `last` dell'involucro (che risparmia una richiesta quando l'ultima pagina è
+      // piena esatta). Nessuno dei due CONCLUDE da solo: a dire se il giro è valido
+      // è l'invariante dentro `concludi`.
+      if (ricevuti < PAGINA_SIZE || involucro.last === true) return concludi()
       if (n === PAGINE_MAX) {
         // Il tetto è stato toccato: l'elenco continua e noi smettiamo di guardarlo.
         // `warn` e non `error` perché il numero che restituiamo resta un limite
@@ -1027,11 +1190,10 @@ export async function arubaUltimiNumeriFattura(
         })
       }
     }
-    if (nessunaEtichettaCapita()) throw erroreEtichette(anno, ricevutiTotali, campione, chiavi)
-    return massimi
+    return concludi()
   }
 
-  const massimi = await massimiDellAnno(params.anno, params.sezionali)
+  const { massimi, ricevutiTotali: ricevutiAnno } = await massimiDellAnno(params.anno, params.sezionali)
 
   // L'anno prima si guarda SOLO per le serie rimaste a zero, e solo se ce n'è
   // qualcuna: se «Asilo» ha documenti quest'anno e «FPR» no, non ha senso
@@ -1040,7 +1202,28 @@ export async function arubaUltimiNumeriFattura(
   const senzaDocumenti = params.sezionali.filter((s) => (massimi.get(s) ?? 0) === 0)
   if (senzaDocumenti.length === 0) return massimi
 
-  const precedenti = await massimiDellAnno(params.anno - 1, senzaDocumenti)
+  const { massimi: precedenti, ricevutiTotali: ricevutiPrima } = await massimiDellAnno(
+    params.anno - 1,
+    senzaDocumenti,
+  )
+
+  // ─── ZERO DOCUMENTI IN ENTRAMBI GLI ANNI NON È «SERIE A ZERO» ──────────────────
+  // È «non misurato», ed è il caso peggiore che esista qui dentro: `nessunaEtichettaCapita`
+  // non lo copre — richiede `ricevutiTotali > 0` — quindi due letture mute uscivano con
+  // uno ZERO indistinguibile da un dato. Il 1° gennaio, quando la riga del contatore per
+  // l'anno nuovo non esiste ancora, quello zero è l'unica cosa fra noi e «Asilo 1/2027»
+  // su una serie che ne ha duemilatrecento.
+  //
+  // Si guardano i DOCUMENTI RICEVUTI, non i massimi per serie: una serie davvero nuova,
+  // in un elenco pieno di documenti altrui, è un'assenza vera e deve poter uscire zero.
+  if (ricevutiAnno === 0 && ricevutiPrima === 0) {
+    throw erroreInvolucro(
+      'serie-vuota',
+      `Aruba findByUsername non ha restituito NESSUN documento né per il ${params.anno} né per il ` +
+        `${params.anno - 1}. Su serie vive da anni questo non è un dato, è una lettura che non ha misurato niente.`,
+    )
+  }
+
   for (const s of senzaDocumenti) massimi.set(s, precedenti.get(s) ?? 0)
   return massimi
 }

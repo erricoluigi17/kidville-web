@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   arubaUltimiNumeriFattura,
   arubaUltimoNumeroFattura,
+  PAGINA_SIZE,
   PAUSA_FRA_PAGINE_MS,
 } from '@/lib/aruba/client'
 
@@ -46,14 +47,19 @@ function pagina(numeri: string[], piena = false): Response {
   return {
     ok: true,
     status: 200,
-    text: async () => JSON.stringify({ content, size: 500, numberOfElements: piena ? 500 : numeri.length }),
+    // `size` si IMPORTA, non si riscrive: dal 2026-09-07 `paginaUltimoNumero` confronta
+    // la size echeggiata con quella chiesta e lancia se non combaciano. Un 500 cablato
+    // qui renderebbe rosso l'intero file il giorno in cui la costante cambia — che è
+    // esattamente quello che è successo, ed è il motivo di questa riga.
+    text: async () =>
+      JSON.stringify({ content, size: PAGINA_SIZE, numberOfElements: piena ? PAGINA_SIZE : numeri.length }),
   } as Response
 }
 
-/** Una pagina PIENA (500 documenti): è ciò che fa continuare lo scorrimento. */
+/** Una pagina PIENA (`PAGINA_SIZE` documenti): è ciò che fa continuare lo scorrimento. */
 function paginaPiena(da: number, serie: string, anno: string): Response {
   return pagina(
-    Array.from({ length: 500 }, (_, i) => `${serie} ${da + i}/${anno}`),
+    Array.from({ length: PAGINA_SIZE }, (_, i) => `${serie} ${da + i}/${anno}`),
     true,
   )
 }
@@ -96,14 +102,16 @@ describe('arubaUltimiNumeriFattura — le pagine si scaricano UNA volta sola', (
     // Dentro ci stanno mescolate entrambe le serie, esattamente come nell'elenco vero.
     fetchMock
       .mockResolvedValueOnce(paginaPiena(1, 'Asilo', '2026'))
-      .mockResolvedValueOnce(paginaPiena(501, 'Asilo', '2026'))
-      .mockResolvedValueOnce(pagina(['Asilo 2327/2026', 'FPR 1946/26', 'FPR 1900/26']))
+      .mockResolvedValueOnce(paginaPiena(PAGINA_SIZE + 1, 'Asilo', '2026'))
+      // «Asilo 9001» sta sopra il riempitivo delle due pagine piene: è il numero che
+      // solo lo scorrimento fino in fondo può trovare.
+      .mockResolvedValueOnce(pagina(['Asilo 9001/2026', 'FPR 1946/26', 'FPR 1900/26']))
 
     const massimi = await finoInFondo(
       arubaUltimiNumeriFattura('demo', 'AT', { ...parametri, sezionali: ['Asilo', 'FPR'] }),
     )
 
-    expect(massimi.get('Asilo')).toBe(2327)
+    expect(massimi.get('Asilo')).toBe(9001)
     expect(massimi.get('FPR')).toBe(1946)
     // IL NUMERO CHE CONTA. Prima erano tre pagine PER SERIE, cioè sei richieste per
     // gli stessi identici dati; ed è la sesta che, in presa diretta, ha preso `429`.

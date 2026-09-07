@@ -980,5 +980,10 @@
   "ticketDupImportoIgnoto": "not recorded",
   "ticketDupAnnulla": "Cancel",
   "ticketDupConferma": "Record anyway",
-  "ticketErrRete": "The top-up could not be recorded: check your connection and try again."
+  "ticketErrRete": "The top-up could not be recorded: check your connection and try again.",
+  "cassaMaiSvuotata": "Never emptied: the cash recorded here has not been collected yet.",
+  "cassaUltimoSvuotamentoEtichetta": "Last emptied",
+  "cassaRitiratoEtichetta": "Collected",
+  "cassaVediStorico": "See history",
+  "cassaStoricoVuoto": "Cash-ups will appear here, with how much was counted and how much collected."
 }

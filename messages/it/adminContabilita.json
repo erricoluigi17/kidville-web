@@ -980,5 +980,10 @@
   "ticketDupImportoIgnoto": "non registrato",
   "ticketDupAnnulla": "Annulla",
   "ticketDupConferma": "Registra comunque",
-  "ticketErrRete": "Non è stato possibile registrare la ricarica: controlla la connessione e riprova."
+  "ticketErrRete": "Non è stato possibile registrare la ricarica: controlla la connessione e riprova.",
+  "cassaMaiSvuotata": "Mai svuotata: i contanti registrati non sono ancora stati ritirati.",
+  "cassaUltimoSvuotamentoEtichetta": "Ultimo svuotamento",
+  "cassaRitiratoEtichetta": "Ritirato",
+  "cassaVediStorico": "Vedi lo storico",
+  "cassaStoricoVuoto": "Qui compariranno gli svuotamenti, con quanto è stato contato e quanto ritirato."
 }

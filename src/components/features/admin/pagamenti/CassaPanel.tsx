@@ -226,6 +226,38 @@ export function CassaPanel({ userId, scuolaId }: Props) {
         </div>
       )}
 
+      {/* Lo svuotamento della cassa esisteva già ed era completo: bottone in alto,
+          modale, RPC atomica, storico. Quello che mancava era il FATTO, scritto
+          accanto al numero che l'operatore guarda — al 2026-09-07 il database
+          aveva ZERO chiusure in tutta la sua storia, con 2.283,75 € di uscite
+          registrate dal 20 luglio.
+
+          NON si mettono qui «da ritirare» e «resta come fondo»: si calcolano su
+          `contato`, che fuori dalla modale non esiste, e con `cassa_config` vuoto
+          su tutte le sedi (`fondo ?? 0`) direbbero € 0,00 costante e un duplicato
+          del KPI qui sopra.
+
+          La condizione è la STESSA del bottone (`mostraKpi && isAdmin`) e NON
+          guarda `saldo`: col saldo degradato questa riga deve restare, o
+          sparirebbe proprio nel caso in cui serve capire cosa sta succedendo. */}
+      {mostraKpi && isAdmin && (
+        <p data-testid="cassa-ultimo-svuotamento" className="flex flex-wrap items-center gap-x-2 gap-y-1 font-maven text-[12.5px] text-kidville-sub">
+          <ArrowDownCircle size={14} className="shrink-0" />
+          {chiusure.length === 0 ? (
+            <span>{t('cassaMaiSvuotata')}</span>
+          ) : (
+            <>
+              <span>{t('cassaUltimoSvuotamentoEtichetta')}</span>
+              <b className="text-kidville-ink">{dataIt(chiusure[0].eseguita_il)}</b>
+              <span>·</span>
+              <span>{t('cassaRitiratoEtichetta')}</span>
+              <b className="text-kidville-ink">{formatEuro(chiusure[0].prelevato)}</b>
+              <a href="#cassa-storico" className="underline decoration-kidville-green/40 underline-offset-2 hover:decoration-kidville-green">{t('cassaVediStorico')}</a>
+            </>
+          )}
+        </p>
+      )}
+
       {/* Lista movimenti — tabella desktop + card mobile */}
       <div>
         <SectionTitle icon={CalendarDays} title={t('cassaSecMovimenti')} sub={t('cassaSecMovimentiSub')} />
@@ -335,9 +367,14 @@ export function CassaPanel({ userId, scuolaId }: Props) {
         <>
           <CassaReport userId={userId} scuolaId={scuolaId} />
 
-          {chiusure.length > 0 && (
+          {/* `scroll-mt-24`: l'ancora deve fermarsi SOTTO la barra fissa dell'admin,
+              o il titolo della sezione finisce coperto. */}
+          <div id="cassa-storico" className="scroll-mt-24">
+            <SectionTitle icon={ArrowDownCircle} title={t('cassaStoricoTitolo')} />
+            {chiusure.length === 0 ? (
+              <p className="rounded-card bg-kidville-cream/40 px-3 py-6 text-center font-maven text-sm text-kidville-sub">{t('cassaStoricoVuoto')}</p>
+            ) : (
             <div>
-              <SectionTitle icon={ArrowDownCircle} title={t('cassaStoricoTitolo')} />
               <div className={TABLE_WRAP}>
                 <table className={TABLE}>
                   <thead>
@@ -367,7 +404,8 @@ export function CassaPanel({ userId, scuolaId }: Props) {
                 </table>
               </div>
             </div>
-          )}
+            )}
+          </div>
 
           <CassaCategorieManager userId={userId} scuolaId={scuolaId} />
           <CassaImpostazioni userId={userId} scuolaId={scuolaId} />

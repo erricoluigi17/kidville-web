@@ -1004,5 +1004,19 @@
   "reconFiltroSedeNonRiconosciuta": "Sede non riconosciuta",
   "reconSedeDedottaNota": "La sede qui è quella che l’app ha dedotto dai suggerimenti. Le righe rosse, quelle da abbinare, non ne hanno una: vanno controllate a mano.",
   "reconSedeEscluse": "{n, plural, =1 {Una riga senza sede riconosciuta non è in questo elenco} other {# righe senza sede riconosciuta non sono in questo elenco}}",
-  "reconVaiSenzaSede": "Vedile"
+  "reconVaiSenzaSede": "Vedile",
+  "genrSceltaLegenda": "Per chi",
+  "genrSceltaTutti": "Tutti gli iscritti",
+  "genrSceltaClasse": "Una classe",
+  "genrSceltaScelti": "Bambini scelti",
+  "genrSceltaClasseEtichetta": "Classe",
+  "genrSceltaClasseTutte": "— scegli —",
+  "genrSceltaCerca": "Cerca un bambino",
+  "genrSceltaCercaSegnaposto": "cognome o nome",
+  "genrSceltaSelezionaMostrati": "Spunta quelli mostrati",
+  "genrSceltaSvuota": "Togli tutte le spunte",
+  "genrSceltaVuoto": "Nessun bambino corrisponde alla ricerca.",
+  "genrSceltaConteggio": "{n, plural, =0 {Nessun bambino} =1 {Un bambino} other {# bambini}}",
+  "genrSceltaBersaglio": "{n, plural, =0 {Nessuno selezionato: scegli almeno un bambino} =1 {Si genera per un bambino} other {Si genera per # bambini}}",
+  "genrGenerazioneSpenta": "La generazione automatica delle rette è disattivata nelle impostazioni di questa sede: l’anteprima qui sotto mostra i candidati, ma la conferma non scriverebbe nulla."
 }

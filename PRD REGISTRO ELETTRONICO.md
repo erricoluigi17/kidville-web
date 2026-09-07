@@ -99,6 +99,102 @@
 
 ---
 
+## 🎟️ Changelog — Cinque richieste, e sotto tre difetti che nessuno aveva chiesto di correggere — 2026-09-07 (branch `feat/contabilita-ticket-cassa-generazione`)
+
+Richieste del titolare, in ordine: un avviso visibile quando si aggiungono ticket mensa e una
+conferma se il pagamento si sta registrando due volte; lo «svuota cassa»; la generazione dei
+pagamenti per singolo bambino, per tutti i tipi; tutti i filtri possibili in conciliazione, sede
+compresa, «con n.b. che quelli sono solo quelli che ha capito l'app»; e le fatture in blocco che
+usino la stessa logica della singola, suggerendo chi ha fatto il bonifico.
+
+Il piano è stato passato a tre verificatori e tre critici prima di scrivere una riga. Hanno demolito
+alcune premesse — comprese alcune loro.
+
+### 1 · Ticket mensa — il difetto vero non era quello chiesto
+
+`ticket_mensa.saldo_ticket` veniva **letto e riscritto per valore assoluto**, mentre le altre due
+strade che toccano lo stesso numero lo incrementano in modo atomico da luglio. Due scritture
+concorrenti non davano «saldo doppio»: davano **saldo singolo e incasso doppio** — due righe in
+`pagamenti` e due in `incassi`, con il saldo salito una volta sola. La cassa non quadra e il numero
+che l'operatore guarda sembra a posto. Nuova RPC `varia_saldo_ticket`, e il rientro dopo un
+pagamento fallito è un decremento, non la riscrittura del valore letto prima.
+
+Accanto: l'insert in `incassi` non guardava `{ error }` (PostgREST non lancia) e la risposta era
+identica a quella di un incasso riuscito; la ricarica non loggava il successo; `ricarica()` non
+aveva `try/catch`, quindi una rete caduta non lasciava nessun segno.
+
+Poi le due cose chieste: la conferma è la celebrazione animata (che stava a `z-[80]` e se la
+mangiavano la barra dell'admin e il foglio «Menu»), e una seconda ricarica **nello stesso giorno**
+apre un dialogo che mostra quella di stamattina — ora, ticket, importo — con conferma nominata
+(`conferma_duplicato`), non booleana.
+
+🔴 **Misurato, e va detto**: dei 14 gruppi di ricariche duplicate in produzione, **tutti e 14 stanno
+su «Kidville Demo»**. Sulle tre sedi vere: zero. Il vettore era aperto, l'incidente non c'è stato.
+
+### 2 · Cassa — «c'è ma non si trova»
+
+Lo svuotamento esisteva già ed era completo. Alla domanda su cosa mancasse, la risposta è stata
+quella; i dati le danno ragione: **zero chiusure in tutta la storia del database**, a fronte di 20
+uscite e 12 entrate dal 20 luglio per € 2.283,75. Quello che mancava era il fatto, scritto accanto
+al numero: sotto il KPI del saldo ora compare «Mai svuotata» oppure data e importo dell'ultimo
+ritiro. Il bottone **non si è spostato** (sotto il KPI, su telefono, finirebbe dopo tre schede
+impilate) e **niente proiezioni**: si calcolano su `contato`, che fuori dalla modale non esiste, e
+con `cassa_config` vuoto su tutte le sedi direbbero € 0,00 costante.
+
+### 3 · Generazione per singolo bambino — e la trappola sotto
+
+L'indice `uq_pagamenti_retta_mese` era **cieco alla categoria**: un solo pagamento con mese di
+competenza per bambino, su tutte le categorie. Col «pomeridiano» mensile — la categoria esiste già a
+Giugliano, con zero pagamenti — un `23505` avrebbe ribaltato l'intera generazione della sede, perché
+l'INSERT sta in un `LOOP` senza `ON CONFLICT` e senza blocchi che catturino. Sostituito con
+`uq_pagamenti_categoria_mese`.
+
+🔑 **Il buco vero, che nessuno aveva visto**: `payment_categories` non aveva **nessuna unicità sullo
+slug**, e la route accetta `slug` dal client senza validarlo. Due categorie «retta» avrebbero fatto
+scegliere categorie diverse ad anteprima e conferma. Due indici, e la chiave per categoria diventa
+sufficiente.
+
+Le due funzioni delle rette accettano ora `p_alunno_ids uuid[] DEFAULT NULL` — il default evita la
+finestra fra migrazione e deploy — e sono state riscritte **leggendo il corpo dal catalogo**, mai
+ricopiandolo da un file: il corpo vero non sta in nessun file, e ricopiarlo avrebbe cancellato il
+filtro sul fratello pagante facendo nascere rette a 43 bambini che non devono pagare. Il `REVOKE`
+nomina `anon` e `authenticated`, non solo PUBLIC.
+
+Nuovo selettore riusabile (tutti · una classe · bambini scelti), condiviso dai due generatori, con
+un unico traduttore selezione→parametri per anteprima e conferma. E l'anteprima ora dichiara se la
+**generazione automatica è disattivata**: la funzione la onora, l'anteprima la ignorava, e togliere
+quella spunta produceva «candidati: 314, generati: 0» che si legge come un guasto del programma.
+
+### 4 · Conciliazione — i filtri, e ciò che l'app non ha capito
+
+Il troncamento era **muto**: la finestra normale chiedeva 500 righe senza la riga in più, e
+`troncato` si calcolava solo per la fatturazione. Corretto per primo, perché aggiungere filtri sopra
+una finestra che tronca in silenzio è peggio che non averli.
+
+Ricerca su causale e ordinante, periodo e intervallo d'importo, tutti sul **server**. Il filtro per
+**sede** vive invece nel browser, e per una ragione sola: `scuola_id` è NULL finché il movimento non
+viene confermato, quindi un filtro SQL butterebbe via tutti i rossi e i gialli — cioè il lavoro. La
+sede si **deduce** dai suggerimenti con le stesse due soglie del verdetto «altra sede», e risponde
+`null` molto spesso: sotto soglia, o con due sedi che pareggiano (9 righe su 219 in produzione), non
+si nomina nessun plesso. Quello è il bidone «sede non riconosciuta», e scegliendo una sede il
+pannello **dichiara sempre** quante righe ha escluso, con un gesto per raggiungerle.
+
+### 5 · Fatture in blocco — la proposta del bonifico
+
+Il lotto buttava via la proposta d'intestatario due volte: il suo tipo non la conteneva e il corpo
+dell'emissione non aveva il campo. Ora le due strade passano dallo stesso motore puro, col lotto che
+aggiunge due guardie (niente proposta su un pagamento ripartito; il proposto dev'essere
+fatturabile). Prima di partire, **una spunta**: quel nome non l'ha scelto nessuno, e una fattura
+elettronica sbagliata si corregge solo con una nota di variazione.
+
+⚠️ **Il numero scritto nel codice era falso.** Diceva «dei 130 pagamenti saldati in attesa di fattura
+uno solo ha un intestatario risolvibile». Rimisurato lo stesso giorno: **156** in attesa, **11** con
+un movimento confermato e un ordinante leggibile, **8** già emettibili senza proposta, **6**
+sbloccati da questa. E **145** che non hanno alcun movimento confermato e non compaiono nemmeno in
+lista: è lì il collo di bottiglia vero, e non lo tocca niente di quanto è stato fatto.
+
+---
+
 ## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
 
 Quattro elementi appena rilasciati sono stati fotografati con fixture sintetiche. I difetti qui

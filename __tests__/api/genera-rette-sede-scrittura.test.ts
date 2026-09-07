@@ -171,7 +171,9 @@ describe('POST /api/pagamenti/genera-rette — la sede si dichiara', () => {
     expect(h.chiamate).toHaveLength(1)
     expect(h.chiamate[0]).toEqual({
       nome: 'genera_rette_mensili',
-      args: { p_periodo: '2026-09-01', p_scuola_id: SEDE_B },
+      // `p_alunno_ids: null` e non un array vuoto: `= ANY('{}')` è falso per
+      // tutti, e «nessuno scelto» sarebbe «zero generate» in silenzio.
+      args: { p_periodo: '2026-09-01', p_scuola_id: SEDE_B, p_alunno_ids: null },
     })
     // Lo stato del database, non la forma della chiamata.
     expect(sediDi(h.db.pagamenti as Riga[])).toEqual([SEDE_B])
@@ -187,7 +189,7 @@ describe('POST /api/pagamenti/genera-rette — la sede si dichiara', () => {
     expect(res.status).toBe(200)
     expect(h.chiamate[0]).toEqual({
       nome: 'genera_rette_anno',
-      args: { p_anno_inizio: 2026, p_scuola_id: SEDE_A },
+      args: { p_anno_inizio: 2026, p_scuola_id: SEDE_A, p_alunno_ids: null },
     })
     expect(sediDi(h.db.pagamenti as Riga[])).toEqual([SEDE_A])
     const audit = (h.db.registro_modifiche as Riga[])[0]
@@ -199,7 +201,7 @@ describe('POST /api/pagamenti/genera-rette — la sede si dichiara', () => {
     h.requireStaff.mockResolvedValue({ user: { id: SEGRETERIA, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await POST(post({ periodo: '2026-09' }))
     expect(res.status).toBe(200)
-    expect(h.chiamate[0].args).toEqual({ p_periodo: '2026-09-01', p_scuola_id: SEDE_A })
+    expect(h.chiamate[0].args).toEqual({ p_periodo: '2026-09-01', p_scuola_id: SEDE_A, p_alunno_ids: null })
     expect(sediDi(h.db.pagamenti as Riga[])).toEqual([SEDE_A])
   })
 
@@ -273,5 +275,47 @@ describe('GET /api/pagamenti/genera-rette — anteprima e conferma condividono l
     const j = await res.json()
     expect(j.data.candidati).toEqual([])
     expect(j.data.gia_generati).toBe(1)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LA GENERAZIONE PER UN BAMBINO SOLO
+//
+// Il perimetro di sede non si sposta di un millimetro: `al.scuola_id =
+// p_scuola_id` resta in AND col filtro nuovo dentro la funzione, quindi un id di
+// un altro plesso non genera niente nemmeno se questa route sbagliasse.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('POST /api/pagamenti/genera-rette — scelta dei bambini', () => {
+  beforeEach(() => {
+    h.chiamate = []
+    h.db.pagamenti = []
+    h.db.registro_modifiche = []
+    h.requireStaff.mockResolvedValue({ user: { id: ADMIN, role: 'admin', scuola_id: null } })
+  })
+
+  it('l’elenco arriva alla RPC così com’è', async () => {
+    const res = await POST(post({ periodo: '2026-09', scuola_id: SEDE_B, alunno_ids: [ALU_B] }))
+    expect(res.status).toBe(200)
+    expect(h.chiamate[0].args).toEqual({ p_periodo: '2026-09-01', p_scuola_id: SEDE_B, p_alunno_ids: [ALU_B] })
+  })
+
+  it('anche sull’anno scolastico', async () => {
+    const res = await POST(post({ anno: 2026, scuola_id: SEDE_B, alunno_ids: [ALU_B] }))
+    expect(res.status).toBe(200)
+    expect(h.chiamate[0].args).toEqual({ p_anno_inizio: 2026, p_scuola_id: SEDE_B, p_alunno_ids: [ALU_B] })
+  })
+
+  it('un elenco VUOTO è un 400, non «genera tutti»', async () => {
+    // `alunno_ids: []` significherebbe «nessuno», e senza questa guardia sarebbe
+    // indistinguibile da «non l'ho detto» — cioè da «tutti».
+    const res = await POST(post({ periodo: '2026-09', scuola_id: SEDE_B, alunno_ids: [] }))
+    expect(res.status).toBe(400)
+    expect(h.chiamate).toEqual([])
+  })
+
+  it('senza elenco la RPC riceve `null`, e la sede resta l’unico perimetro', async () => {
+    const res = await POST(post({ periodo: '2026-09', scuola_id: SEDE_B }))
+    expect(res.status).toBe(200)
+    expect(h.chiamate[0].args.p_alunno_ids).toBe(null)
   })
 })

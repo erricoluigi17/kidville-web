@@ -1004,5 +1004,19 @@
   "reconFiltroSedeNonRiconosciuta": "Location not recognised",
   "reconSedeDedottaNota": "The location shown here is the one the app inferred from the suggestions. Red rows, the ones still to match, have none: check them by hand.",
   "reconSedeEscluse": "{n, plural, =1 {One row with no recognised location is not in this list} other {# rows with no recognised location are not in this list}}",
-  "reconVaiSenzaSede": "See them"
+  "reconVaiSenzaSede": "See them",
+  "genrSceltaLegenda": "For whom",
+  "genrSceltaTutti": "All enrolled",
+  "genrSceltaClasse": "One class",
+  "genrSceltaScelti": "Selected children",
+  "genrSceltaClasseEtichetta": "Class",
+  "genrSceltaClasseTutte": "— choose —",
+  "genrSceltaCerca": "Find a child",
+  "genrSceltaCercaSegnaposto": "surname or name",
+  "genrSceltaSelezionaMostrati": "Tick the ones shown",
+  "genrSceltaSvuota": "Clear all ticks",
+  "genrSceltaVuoto": "No child matches the search.",
+  "genrSceltaConteggio": "{n, plural, =0 {No children} =1 {One child} other {# children}}",
+  "genrSceltaBersaglio": "{n, plural, =0 {None selected: pick at least one child} =1 {Will generate for one child} other {Will generate for # children}}",
+  "genrGenerazioneSpenta": "Automatic fee generation is switched off in this location’s settings: the preview below lists the candidates, but confirming would write nothing."
 }

@@ -756,9 +756,6 @@
   "ticket_pz": "pcs",
   "ticket_rettifica": "Adjustment",
   "ticket_ricarica_btn": "Top-up (creates a settled Canteen payment)",
-  "ticket_ricarica_mid": "tickets recorded (€",
-  "ticket_ricarica_post": ").",
-  "ticket_ricarica_pre": "Top-up of",
   "ticket_ricarica_titolo": "Top-up",
   "ticket_saldo": "Balance:",
   "ticket_seleziona_alunno": "Select student",
@@ -972,5 +969,16 @@
   "reconLottoStimaMinuti": "about {minuti, plural, one {# minute} other {# minutes}} left",
   "reconLottoStimaBreve": "less than a minute left",
   "reconLottoInCorsoTitolo": "What has gone out so far",
-  "reconLottoSoloLePronte": "Only the ready rows are issued: {n, plural, one {# still needs completing and will not be sent} other {# still need completing and will not be sent}}."
+  "reconLottoSoloLePronte": "Only the ready rows are issued: {n, plural, one {# still needs completing and will not be sent} other {# still need completing and will not be sent}}.",
+  "ticketRicaricaFatta": "Top-up recorded",
+  "ticketDupTitolo": "Careful: you already topped this child up today",
+  "ticketDupSpiega": "If this is the same payment, recording it again counts it twice: the family will appear to have paid double.",
+  "ticketDupPrecedenteTitolo": "Today’s top-up",
+  "ticketDupOra": "Time",
+  "ticketDupTicket": "Tickets",
+  "ticketDupImporto": "Amount",
+  "ticketDupImportoIgnoto": "not recorded",
+  "ticketDupAnnulla": "Cancel",
+  "ticketDupConferma": "Record anyway",
+  "ticketErrRete": "The top-up could not be recorded: check your connection and try again."
 }

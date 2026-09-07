@@ -756,9 +756,6 @@
   "ticket_pz": "pz",
   "ticket_rettifica": "Rettifica",
   "ticket_ricarica_btn": "Ricarica (crea pagamento Mensa saldato)",
-  "ticket_ricarica_mid": "ticket registrata (€",
-  "ticket_ricarica_post": ").",
-  "ticket_ricarica_pre": "Ricarica di",
   "ticket_ricarica_titolo": "Ricarica",
   "ticket_saldo": "Saldo:",
   "ticket_seleziona_alunno": "Seleziona alunno",
@@ -972,5 +969,16 @@
   "reconLottoStimaMinuti": "circa {minuti, plural, one {# minuto} other {# minuti}} alla fine",
   "reconLottoStimaBreve": "meno di un minuto alla fine",
   "reconLottoInCorsoTitolo": "Che cosa è già uscito",
-  "reconLottoSoloLePronte": "Si emettono solo le righe pronte: {n, plural, one {# resta da completare e non parte} other {# restano da completare e non partono}}."
+  "reconLottoSoloLePronte": "Si emettono solo le righe pronte: {n, plural, one {# resta da completare e non parte} other {# restano da completare e non partono}}.",
+  "ticketRicaricaFatta": "Ricarica registrata",
+  "ticketDupTitolo": "Attenzione: oggi hai già ricaricato questo bambino",
+  "ticketDupSpiega": "Se è lo stesso pagamento, registrandolo di nuovo lo conteggi due volte: la famiglia risulterà aver pagato il doppio.",
+  "ticketDupPrecedenteTitolo": "La ricarica di oggi",
+  "ticketDupOra": "Ora",
+  "ticketDupTicket": "Ticket",
+  "ticketDupImporto": "Importo",
+  "ticketDupImportoIgnoto": "non registrato",
+  "ticketDupAnnulla": "Annulla",
+  "ticketDupConferma": "Registra comunque",
+  "ticketErrRete": "Non è stato possibile registrare la ricarica: controlla la connessione e riprova."
 }

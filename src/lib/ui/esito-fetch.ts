@@ -1806,6 +1806,8 @@ export const CODICI_ERRORE = {
      * quale fattura andare a cercare sul pannello Aruba.
      */
     FATTURA_TRASPORTO_IGNOTO: 'erroreFatturaTrasportoIgnoto',
+    /** 409 — a questo bambino è già stata registrata una ricarica OGGI: serve la conferma esplicita. */
+    TICKET_RICARICA_DUPLICATA: 'erroreTicketRicaricaDuplicata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

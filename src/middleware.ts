@@ -204,6 +204,84 @@ function nomeErroreSicuro(err: unknown): string {
  * `?userId=`, `?email=`, `?next=`).
  */
 
+/**
+ * LE CHIAVI PUBBLICHE DI FIRMA, TENUTE PER ISOLATE — ed è qui che sta tutto il guadagno.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────────
+ * COS'ERA IL DIFETTO, misurato il 7 settembre 2026. 2.231.291 richieste a Supabase in un giorno,
+ * di cui **643.281 di autenticazione**: un costante ~28% del totale in OGNI ora, di punta come di
+ * notte. La composizione (log 10:00-13:00) dice dove sta il peso:
+ *
+ *     /user    280.389   99,3%   ← «questo token vale ancora?», una telefonata per richiesta
+ *     /token     2.189    0,8%   ← il rinnovo, ~1,4 per persona all'ora
+ *
+ * `getUser()` interroga GoTrue ogni volta. `getClaims()` verifica la FIRMA del token con
+ * WebCrypto, in locale, e non chiama nessuno — a patto di avere la chiave pubblica.
+ *
+ * PERCHÉ LA CACHE DEVE STARE QUI E NON NEL CLIENT. `fetchJwk` di auth-js tiene le chiavi
+ * sull'ISTANZA (`this.jwks`), e questo file costruisce un client NUOVO a ogni richiesta: lasciando
+ * fare a lui si scaricherebbe il JWKS a ogni passaggio, cioè si sostituirebbe una chiamata di rete
+ * con un'altra. Tenendole invece in una variabile di modulo — che sull'Edge vive quanto l'isolate,
+ * e un isolate serve molte richieste — si paga **una volta all'avvio a freddo e mai più**.
+ * Il lock che lo misura è `middleware-tetto.test.ts`, test **7-bis**: senza di lui questa
+ * correzione sembrerebbe funzionare e non toglierebbe niente.
+ *
+ * SE LE CHIAVI NON ARRIVANO non succede niente di male: `getClaims()` ripiega da solo su
+ * `getUser()`, cioè sul comportamento di prima. Lo stesso vale se il progetto firma ancora con il
+ * segreto simmetrico (HS256) — vedi il test 7-ter. **Questa modifica è sicura a prescindere**: o
+ * guadagna, o non cambia niente.
+ * ─────────────────────────────────────────────────────────────────────────────────
+ */
+/**
+ * La forma minima che `getClaims()` pretende da una chiave pubblica. Si dichiara QUI invece di
+ * importare `JWK`: quel tipo vive in `@supabase/auth-js`, che è una dipendenza TRANSITIVA di
+ * `supabase-js` e non compare nel nostro `package.json` — importarlo legherebbe il middleware a un
+ * pacchetto che nessuno ha scelto e che può cambiare senza che ce ne accorgiamo.
+ */
+interface ChiavePubblica {
+  kty: string;
+  key_ops: string[];
+  alg?: string;
+  kid?: string;
+  [chiave: string]: unknown;
+}
+
+let chiaviFirma: { keys: ChiavePubblica[] } | null = null;
+/** Vale ANCHE per l'esito negativo: vedi `chiaviDiFirma`. */
+let chiaviScadenza = 0;
+const CHIAVI_TTL_MS = 10 * 60_000;
+/** Dopo un guasto si riprova prima, ma non a ogni richiesta. */
+const CHIAVI_RIPROVA_MS = 60_000;
+
+async function chiaviDiFirma(fetchBudget: typeof fetch): Promise<{ keys: ChiavePubblica[] } | null> {
+  const ora = Date.now();
+  /**
+   * ⚠️ SI RICORDA ANCHE IL «NO», e non è una rifinitura: è il caso peggiore.
+   *
+   * Se il progetto firmasse ancora con il segreto simmetrico — o se il JWKS tornasse vuoto per
+   * qualunque ragione — una cache che memorizza solo i successi riproverebbe a OGNI richiesta,
+   * per sempre. Sarebbe un giro di rete IN PIÙ invece che in meno: il contrario esatto di ciò per
+   * cui esiste questo codice, e in silenzio. Lock: test **7-ter-bis**.
+   */
+  if (ora < chiaviScadenza) return chiaviFirma;
+  try {
+    const res = await fetchBudget(`${SUPABASE_URL}/auth/v1/.well-known/jwks.json`, {
+      headers: { apikey: SUPABASE_ANON_KEY },
+    });
+    const dati = res.ok ? ((await res.json()) as { keys?: ChiavePubblica[] } | null) : null;
+    chiaviFirma = dati?.keys?.length ? { keys: dati.keys } : null;
+    chiaviScadenza = ora + (res.ok ? CHIAVI_TTL_MS : CHIAVI_RIPROVA_MS);
+    return chiaviFirma;
+  } catch {
+    // Niente log muto: il guasto di trasporto l'ha GIÀ scritto `fetchConBudget` (`registraGuasto`,
+    // `KV_ERR … evt=auth`) prima di rilanciare. Qui si tengono le chiavi vecchie, se ci sono —
+    // meglio una chiave di dieci minuti fa che una porta che si chiude su tutti — e si riprova
+    // fra un minuto, non alla prossima richiesta.
+    chiaviScadenza = ora + CHIAVI_RIPROVA_MS;
+    return chiaviFirma;
+  }
+}
+
 export async function middleware(request: NextRequest) {
   const requestId = nuovoRequestId();
   // Letto QUI e non più giù: serve anche alla riga di `fetchConBudget`, che nasce prima della
@@ -226,13 +304,17 @@ export async function middleware(request: NextRequest) {
 
   let response = conRequestId();
 
+  // Un budget SOLO, condiviso fra il JWKS e la verifica: ciò che conta non è che ogni singola
+  // chiamata finisca, ma quanto tempo il middleware trattiene la richiesta in totale.
+  const fetchBudget = fetchConBudget(requestId, pathname);
+
   const supabase = createServerClient(
     SUPABASE_URL,
     SUPABASE_ANON_KEY,
     {
       // Il budget di tempo su TUTTA la sequenza `getUser()`. Senza, una connessione accettata e
       // muta teneva appesa OGNI richiesta del sito. Vedi `TETTO_MIDDLEWARE_MS`.
-      global: { fetch: fetchConBudget(requestId, pathname) },
+      global: { fetch: fetchBudget },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -250,6 +332,39 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  /**
+   * ⛔ NON SI POSSONO SALTARE I PREFETCH DA QUI. Provato e misurato il 2026-09-07 — è scritto
+   * perché costa mezza giornata riscoprirlo, e la strada sembra ovvia.
+   *
+   * L'IDEA. Il 7 settembre l'app è andata lenta per il volume: 2.231.291 richieste a Supabase in
+   * un giorno, di cui 643.281 di autenticazione (un costante ~28% in ogni ora), e di quelle il
+   * 99,3% sono `/user`, cioè questa riga qui sotto. Il `matcher` copre tutto tranne gli asset,
+   * quindi ogni prefetch RSC di Next paga un giro a GoTrue senza che nessuno stia navigando. La
+   * correzione naturale è: se `next-router-prefetch` è presente, esci prima di `getUser()`.
+   *
+   * PERCHÉ NON FUNZIONA. Next **cancella i propri header** prima di eseguire il middleware —
+   * `node_modules/next/dist/server/web/adapter.js`, dove `FLIGHT_HEADERS` (`rsc`,
+   * `next-router-state-tree`, `next-router-prefetch`, `next-hmr-refresh`,
+   * `next-router-segment-prefetch`) vengono rimossi uno per uno, col commento «Headers should only
+   * be stripped for middleware». Anche `?_rsc` sparisce, via `stripInternalSearchParams`. La guida
+   * di Next 16 (`01-app/03-api-reference/03-file-conventions/proxy.md`, riga 442) lo dichiara come
+   * scelta deliberata: impedire che una richiesta RSC venga trattata diversamente dalla sua
+   * gemella HTML. Misurato sul server di sviluppo: un header inventato sopravvive, questi cinque no.
+   *
+   * L'UNICA VIA D'USCITA È PEGGIO. `skipProxyUrlNormalize: true` in `next.config.ts` espone gli
+   * header, ma fa prendere a OGNI prefetch un 307 — verificato anche su una rotta pubblica, dove
+   * questo file non decide niente. Due viaggi invece di uno: aumenterebbe le richieste.
+   *
+   * ⚠️ E I TEST NON TI SALVANO. I test scritti per quella modifica erano tutti VERDI: vitest
+   * chiama `middleware()` direttamente con una `NextRequest` costruita a mano, e quella non passa
+   * mai da `adapter.js`. Il banco di prova non può riprodurre la richiesta vera, quindi il rosso
+   * non poteva arrivare da nessuna parte.
+   *
+   * DOVE GUARDARE INVECE. Un prefetch paga DUE `getUser()`, non uno: questo, e quello di
+   * `requireArea()` (`@/lib/auth/area-guard`) montato in tutti e tre i layout d'area. Le strade
+   * vere sono la verifica locale del JWT (`auth.getClaims()` con chiavi asimmetriche, che azzera
+   * le chiamate a `/user`) oppure togliere uno dei due giri per richiesta.
+   */
   // IMPORTANTE: non eseguire codice tra createServerClient e getUser (refresh).
   //
   // `getUser()` NON lancia su un guasto di trasporto: `auth-js` avvolge il rifiuto della `fetch`
@@ -257,11 +372,31 @@ export async function middleware(request: NextRequest) {
   // sorgente: `_getUser`, ramo `catch (error) → isAuthError`). Quindi una scadenza del budget
   // qui sopra non diventa un 500 su tutto il sito: diventa «nessun utente», e il ramo di
   // redirect sotto la registra come qualunque altra sessione assente.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const chiavi = await chiaviDiFirma(fetchBudget);
 
-  if (shouldRedirect(pathname, !!user)) {
+  /**
+   * `getClaims()` SENZA argomento, ed è deliberato: così passa da `getSession()`, che rinnova il
+   * token scaduto prima di verificarlo. Passandogli il token a mano si salterebbe il rinnovo — e
+   * il rinnovo trasparente è il PRIMO compito dichiarato di questo file. Buttare fuori ogni utente
+   * allo scadere dell'ora sarebbe un guasto peggiore di quello che si sta correggendo. Lock: test
+   * **7-quater**.
+   *
+   * Il `try` non è pignoleria: `getClaims()` ritorna `{ data: null, error }` per gli errori di
+   * autenticazione (trasporto compreso: `AuthRetryableFetchError`), ma **rilancia** quelli che non
+   * lo sono — per esempio una `DOMException` di WebCrypto su una chiave malformata. Senza questo
+   * ramo, quel caso diventerebbe un 500 su tutto il sito. Qui degrada come tutto il resto del
+   * file: nessuna sessione, e il redirect sotto se ne occupa. **Fail-closed**, come il test
+   * 7-quinquies verifica.
+   */
+  let haSessione = false;
+  try {
+    const { data } = await supabase.auth.getClaims(undefined, chiavi ? { jwks: chiavi } : undefined);
+    haSessione = !!data?.claims;
+  } catch {
+    haSessione = false;
+  }
+
+  if (shouldRedirect(pathname, haSessione)) {
     /**
      * `next` PORTA ANCHE LA QUERY, e la pagina di login non ne eredita nessun'altra.
      *

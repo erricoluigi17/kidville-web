@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { useRouter } from 'next/navigation';
 import { useTranslations, useLocale } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
@@ -95,11 +96,9 @@ export function AdminNotificationsPanel({
   useEffect(() => { if (attivo) void load(); }, [attivo, load]);
 
   // Poll 60s (niente canali realtime, vedi mini-design M7) — solo se attivo.
-  useEffect(() => {
-    if (!attivo) return;
-    const t = setInterval(() => { void load(); }, 60_000);
-    return () => clearInterval(t);
-  }, [attivo, load]);
+  // Il gate `attivo` della media query RESTA (il pannello è montato due volte, desktop e
+  // mobile): qui si aggiunge la visibilità, non la si sostituisce.
+  usePollingVisibile(load, 60_000, { attivo });
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };

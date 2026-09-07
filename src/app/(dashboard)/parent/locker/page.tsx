@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { useTranslations } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import {
@@ -326,14 +327,14 @@ function LockerInner() {
         if (activeTab === 'monthly') fetchMonthly(month);
     }, [activeTab, month, fetchMonthly]);
 
-    // ── Polling: aggiornamento ogni 20 secondi (affidabile, funziona sempre) ─────────
-    useEffect(() => {
-        const interval = setInterval(() => {
-            fetchData(true); // silent=true: non mostra spinner
-            if (activeTab === 'monthly') fetchMonthly(month);
-        }, 20_000); // ogni 20 secondi
-        return () => clearInterval(interval);
-    }, [fetchData, fetchMonthly, activeTab, month]);
+    // ── Polling ogni 20 secondi, ma solo mentre qualcuno guarda ─────────
+    // Prima le dipendenze includevano `activeTab` e `month`: l'orologio si ricreava a ogni
+    // cambio di scheda o di mese, e il conto ripartiva da zero. Ora il ritmo è stabile e a
+    // scattare è sempre l'ultima versione della callback.
+    usePollingVisibile(() => {
+        fetchData(true); // silent=true: non mostra spinner
+        if (activeTab === 'monthly') fetchMonthly(month);
+    }, 20_000);
 
     /**
      * «La porto» — il genitore prende in carico la richiesta.

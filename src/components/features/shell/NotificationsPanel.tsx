@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { useRouter } from 'next/navigation';
 import { useTranslations, useLocale } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
@@ -71,11 +72,10 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll 60s (niente canali realtime, stesso pattern del centro notifiche admin).
-  useEffect(() => {
-    const t = setInterval(() => { void load(); }, 60_000);
-    return () => clearInterval(t);
-  }, [load]);
+  // Poll 60s (niente canali realtime, stesso pattern del centro notifiche admin), fermo a
+  // pagina nascosta. Questo pannello è montato dall'AppBar su OGNI pagina genitore e docente:
+  // è un minuto di richieste per ogni schermata aperta, anche a schermo spento.
+  usePollingVisibile(load, 60_000);
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };

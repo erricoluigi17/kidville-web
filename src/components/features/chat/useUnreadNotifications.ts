@@ -1,6 +1,13 @@
 'use client';
 
 import { useEffect, useRef, useCallback } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+
+/**
+ * Il ritmo a pagina nascosta: 5 minuti. Non zero, perché è da nascosto che questo hook fa il suo
+ * lavoro — la notifica del browser parte solo quando la pagina NON è a fuoco.
+ */
+const RITMO_NASCOSTO_MS = 300_000;
 
 interface UseUnreadNotificationsOptions {
     userId: string;
@@ -72,16 +79,27 @@ export function useUnreadNotifications({
         }
     }, [userId, enabled, onUnreadChange]);
 
+    // Il primo controllo resta qui: `usePollingVisibile` governa il RITMO, non l'avvio.
     useEffect(() => {
         if (!enabled) return;
-
-        // Check immediato
         checkUnread();
+    }, [checkUnread, enabled]);
 
-        // Polling
-        const interval = setInterval(checkUnread, pollInterval);
-        return () => clearInterval(interval);
-    }, [checkUnread, pollInterval, enabled]);
+    /**
+     * ⚠️ QUESTO OROLOGIO RALLENTA, NON SI FERMA — ed è l'unico dei dieci.
+     *
+     * A pagina nascosta gli altri tacciono; questo no, perché è il solo punto dell'app che manda
+     * la notifica del browser quando la pagina NON è a fuoco (`if (document.hasFocus()) return`
+     * qui sotto, in `checkUnread`). Sospenderlo spegnerebbe la funzione che vive qui.
+     *
+     * A 5 minuti le notifiche continuano ad arrivare — con al più 5 minuti di ritardo, e le push
+     * native restano la strada principale — mentre il volume di questo timer cala del ~90%: un
+     * telefono in tasca passa da 2 richieste al minuto a 0,2.
+     */
+    usePollingVisibile(checkUnread, pollInterval, {
+        attivo: enabled,
+        intervalloNascostoMs: RITMO_NASCOSTO_MS,
+    });
 
     return { checkUnread };
 }

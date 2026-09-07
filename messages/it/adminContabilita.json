@@ -985,5 +985,10 @@
   "cassaUltimoSvuotamentoEtichetta": "Ultimo svuotamento",
   "cassaRitiratoEtichetta": "Ritirato",
   "cassaVediStorico": "Vedi lo storico",
-  "cassaStoricoVuoto": "Qui compariranno gli svuotamenti, con quanto è stato contato e quanto ritirato."
+  "cassaStoricoVuoto": "Qui compariranno gli svuotamenti, con quanto è stato contato e quanto ritirato.",
+  "reconLottoMotivoRipartito": "Il pagamento è ripartito fra due genitori: ciascuno riceve il proprio documento, quindi va emesso uno per volta.",
+  "reconLottoMotivoPropostoIncompleto": "L’app sa chi ha fatto il bonifico, ma i suoi dati non bastano per la fattura elettronica: completa l’anagrafica.",
+  "reconLottoGruppoProposta": "Intestate su proposta del bonifico",
+  "reconLottoConfermoProposte": "{n, plural, =1 {Confermo l’intestatario proposto dal bonifico} other {Confermo i # intestatari proposti dal bonifico}}",
+  "reconLottoSpuntaMancante": "Metti la spunta qui sopra: senza, il blocco non parte."
 }

@@ -20,6 +20,7 @@ import {
   prontaPerIlLotto,
   type AnteprimaPerIlLotto,
 } from '@/lib/pagamenti/lotto-fatture';
+import { intestatarioAutomaticoDelLotto, CHIAVE_MOTIVO_PROPOSTA } from '@/lib/pagamenti/proposta-intestatario';
 
 /**
  * ─── «EMETTI TUTTE»: LA BARRA DI MASSA DELLA RICONCILIAZIONE ────────────────
@@ -122,6 +123,16 @@ interface Pronta {
   causale: string;
   /** Chi riceverà la fattura, come lo dicono le quote dell'anteprima. */
   intestatario: string;
+  /**
+   * Valorizzati SOLO quando è la proposta del bonifico a sbloccare la riga.
+   * `adultId` viaggia fino alla POST; `motivoProposta` è la chiave della frase
+   * che spiega perché — la stessa che vede chi emette una fattura per volta.
+   * Entrambi assenti = la riga era già emettibile per anagrafica.
+   */
+  adultId?: string;
+  motivoProposta?: keyof typeof CHIAVE_MOTIVO_PROPOSTA;
+  /** Il nome che la banca ha scritto come ordinante, per far vedere il confronto. */
+  ordinante?: string;
 }
 
 /** Una riga che non si può emettere così com'è, col motivo. */
@@ -329,6 +340,22 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
     if (fase === 'fine') titoloRiepilogoRef.current?.focus();
   }, [fase]);
 
+  /**
+   * La spunta che copre le righe intestate su PROPOSTA del bonifico.
+   *
+   * Serve perché quel nome non l'ha scelto nessuno: l'ha riconosciuto un'euristica
+   * che confronta l'ordinante coi genitori del bambino — solo uguaglianza e
+   * sottoinsieme, mai somiglianza — e una fattura elettronica intestata alla
+   * persona sbagliata si corregge unicamente con una nota di variazione.
+   *
+   * Il pulsante primario NON si disabilita (butterebbe il fuoco sul `body` a metà
+   * di un'operazione da diciotto minuti): senza la spunta semplicemente non parte,
+   * sposta il fuoco sulla casella e dice perché.
+   */
+  const [confermoProposte, setConfermoProposte] = useState(false);
+  const spuntaRef = useRef<HTMLInputElement | null>(null);
+  const [mancaSpunta, setMancaSpunta] = useState(false);
+
   /** L'anteprima di UNA riga: zero quota Aruba. */
   const anteprimaDi = async (m: MovimentoUi): Promise<{ pronta?: Pronta; daCompletare?: DaCompletare }> => {
     const base = { id: m.id, importo: m.importo, data: m.data_operazione };
@@ -342,16 +369,38 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
       if (!res.ok || typeof dati?.causale !== 'string' || dati.causale === '') {
         return { daCompletare: { ...base, motivo: messaggioDaCorpo(corpo, t('reconLottoMotivoAnteprima')) } };
       }
+      const proposta = intestatarioAutomaticoDelLotto(dati.intestatario);
       if (!prontaPerIlLotto(dati.intestatario)) {
-        return { daCompletare: { ...base, motivo: t('reconLottoMotivoIntestatario') } };
+        // Tre casi diversi collassavano in «manca l'intestatario» — che per una
+        // riga RIPARTITA è semplicemente falso: l'intestatario non manca, sono due,
+        // ed è voluto. Chi legge deve sapere quale delle tre cose gli è capitata,
+        // perché la mossa successiva è diversa in tutti e tre i casi.
+        const quoteAnt = (dati.intestatario?.quote ?? []) as { fatturabile?: boolean | null }[];
+        const motivo = dati.intestatario?.ripartito === true
+          ? t('reconLottoMotivoRipartito')
+          : (dati.intestatario?.proposta && quoteAnt.some((q) => q?.fatturabile !== true))
+            ? t('reconLottoMotivoPropostoIncompleto')
+            : t('reconLottoMotivoIntestatario');
+        return { daCompletare: { ...base, motivo } };
       }
       const quote = (dati.intestatario?.quote ?? []) as { nome?: string | null }[];
+      const perQuote = quote.map((q) => (q.nome ?? '').trim()).filter(Boolean).join(' · ');
+      // Se è la proposta ad aver sbloccato la riga, l'intestatario è il proposto —
+      // non la concatenazione dei nomi delle quote, che qui direbbe un'altra cosa.
+      const daProposta = proposta && !quote.every((q) => (q as { fatturabile?: boolean | null }).fatturabile === true);
       return {
         pronta: {
           ...base,
           pagamentoId: String(m.pagamento_id),
           causale: dati.causale,
-          intestatario: quote.map((q) => (q.nome ?? '').trim()).filter(Boolean).join(' · '),
+          intestatario: daProposta ? proposta.nome : perQuote,
+          ...(daProposta
+            ? {
+                adultId: proposta.adult_id,
+                motivoProposta: proposta.motivo,
+                ordinante: (dati.intestatario?.ordinante ?? '').trim(),
+              }
+            : {}),
         },
       };
     } catch (err) {
@@ -444,7 +493,7 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
           // ⚠️ `causale: null` e MAI il campo assente: `null` TOGLIE la correzione
           // manuale salvata, l'assenza la lascia congelata su ogni pagamento del
           // lotto. Il corpo lo compone il motore, non questa riga.
-          body: JSON.stringify(corpoEmissione(riga.pagamentoId)),
+          body: JSON.stringify(corpoEmissione(riga.pagamentoId, riga.adultId)),
         });
         stato = res.status;
         corpo = await res.json();
@@ -541,6 +590,24 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
   const saltate = esiti.filter((e) => e.esito === 'saltata');
   const nonTentate = esiti.filter((e) => e.esito === 'non_tentata');
 
+  // Le righe che l'app ha sbloccato riconoscendo chi ha fatto il bonifico. Vanno
+  // in un elenco SEPARATO e intestato: se restassero mescolate alle altre, il
+  // numero della spunta non corrisponderebbe a niente che si vede.
+  const pronteProposta = pronte.filter((p) => !!p.motivoProposta);
+  const pronteAnagrafica = pronte.filter((p) => !p.motivoProposta);
+  const serveSpunta = pronteProposta.length > 0;
+
+  /** Si emette solo se le proposte sono state confermate. */
+  const avviaEmissione = () => {
+    if (serveSpunta && !confermoProposte) {
+      setMancaSpunta(true);
+      spuntaRef.current?.focus();
+      return;
+    }
+    setMancaSpunta(false);
+    void esegui();
+  };
+
   /**
    * IL PULSANTE PRIMARIO È UNO SOLO, E CAMBIA MESTIERE.
    *
@@ -555,7 +622,7 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
       : fase === 'controllo' || fase === 'corso'
         ? { etichetta: t('reconLottoInterrompi'), azione: interrompi }
         : fase === 'conferma' && pronte.length > 0
-          ? { etichetta: `${t('reconLottoEmettiOra')} (${pronte.length})`, azione: () => { void esegui(); } }
+          ? { etichetta: `${t('reconLottoEmettiOra')} (${pronte.length})`, azione: avviaEmissione }
           : { etichetta: t('reconLottoChiudi'), azione: onChiudi };
 
   /**
@@ -642,8 +709,32 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
                 <p className="mt-2 font-maven text-xs font-bold text-kidville-ink">
                   {t('reconLottoPronte', { n: pronte.length })}
                 </p>
+                {serveSpunta && (
+                  <div className="mt-2 rounded-input border-[1.5px] border-kidville-line bg-kidville-cream/50 px-3 py-2">
+                    <label className="flex items-start gap-2 font-maven text-xs text-kidville-ink">
+                      <input
+                        ref={spuntaRef}
+                        type="checkbox"
+                        checked={confermoProposte}
+                        onChange={(e) => { setConfermoProposte(e.target.checked); if (e.target.checked) setMancaSpunta(false); }}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-kidville-green"
+                      />
+                      <span>{t('reconLottoConfermoProposte', { n: pronteProposta.length })}</span>
+                    </label>
+                    {mancaSpunta && (
+                      <p role="alert" className="mt-1 font-maven text-xs text-kidville-error-strong">
+                        {t('reconLottoSpuntaMancante')}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {pronteProposta.length > 0 && (
+                  <p className="mt-2 font-barlow text-[11px] font-bold uppercase tracking-wide text-kidville-sub">
+                    {t('reconLottoGruppoProposta')}
+                  </p>
+                )}
                 <ul className="mt-1 space-y-1">
-                  {pronte.map((p) => (
+                  {[...pronteProposta, ...pronteAnagrafica].map((p) => (
                     <li key={p.id} className="rounded-input bg-kidville-cream/50 px-3 py-2">
                       <span className="block font-maven text-sm font-bold text-kidville-ink">
                         {rigaBreve(p.importo, p.data)}
@@ -659,6 +750,15 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
                       <span className="block font-maven text-xs text-kidville-sub">
                         {t('reconLottoIntestatario')}: {p.intestatario || '—'}
                       </span>
+                      {/* Il PERCHÉ, con le stesse quattro frasi che legge chi emette
+                          una fattura per volta: clonarle in chiavi `reconLotto*`
+                          vorrebbe dire due spiegazioni della stessa cosa, libere di
+                          divergere. */}
+                      {p.motivoProposta && (
+                        <span className="mt-0.5 block font-maven text-xs text-kidville-green">
+                          {t(CHIAVE_MOTIVO_PROPOSTA[p.motivoProposta], { ordinante: p.ordinante ?? '', nome: p.intestatario })}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

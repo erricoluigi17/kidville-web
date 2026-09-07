@@ -45,7 +45,7 @@ function installFetch(opts: MockOpts = {}) {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 /** Monta, sceglie il bambino, e restituisce il bottone di ricarica. */
-async function apriSuUnBambino(container: HTMLElement) {
+async function apriSuUnBambino() {
   const riga = await screen.findByRole('button', { name: /Bambino Uno/ });
   fireEvent.click(riga);
   return await screen.findByRole('button', { name: /Ricarica|Aggiungi/i });
@@ -55,7 +55,7 @@ describe('la conferma del salvataggio si vede', () => {
   it('dopo una ricarica riuscita compare la celebrazione animata, non un paragrafo inline', async () => {
     installFetch();
     const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    const btn = await apriSuUnBambino(container);
+    const btn = await apriSuUnBambino();
     fireEvent.click(btn);
 
     // I coriandoli esistono SOLO dentro SaveCelebration: è questa asserzione che
@@ -79,8 +79,8 @@ describe('la conferma del salvataggio si vede', () => {
     });
     vi.stubGlobal('fetch', fn);
 
-    const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    const btn = await apriSuUnBambino(container);
+    render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
+    const btn = await apriSuUnBambino();
     fireEvent.click(btn);
     await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(true));
     fireEvent.click(btn);
@@ -102,7 +102,7 @@ describe('il duplicato si vede prima di registrarlo', () => {
   it('il 409 apre un dialogo con ora, ticket e importo della ricarica di stamattina', async () => {
     installFetch({ risposte: [{ status: 409, body: CORPO_409 }] });
     const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    fireEvent.click(await apriSuUnBambino(container));
+    fireEvent.click(await apriSuUnBambino());
 
     const dialogo = await screen.findByRole('dialog');
     expect(dialogo).toBeTruthy();
@@ -120,8 +120,8 @@ describe('il duplicato si vede prima di registrarlo', () => {
         { status: 201, body: { success: true, data: { saldo_ticket: 22 } } },
       ],
     });
-    const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    fireEvent.click(await apriSuUnBambino(container));
+    render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
+    fireEvent.click(await apriSuUnBambino());
     await screen.findByRole('dialog');
 
     fireEvent.click(screen.getByRole('button', { name: /Registra comunque/i }));
@@ -137,8 +137,8 @@ describe('il duplicato si vede prima di registrarlo', () => {
 
   it('«Annulla» chiude e non manda nessuna seconda richiesta', async () => {
     const fn = installFetch({ risposte: [{ status: 409, body: CORPO_409 }] });
-    const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    fireEvent.click(await apriSuUnBambino(container));
+    render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
+    fireEvent.click(await apriSuUnBambino());
     await screen.findByRole('dialog');
 
     fireEvent.click(screen.getByRole('button', { name: /Annulla/i }));
@@ -148,8 +148,8 @@ describe('il duplicato si vede prima di registrarlo', () => {
 
   it('un importo non registrato non si spaccia per «€ 0,00»', async () => {
     installFetch({ risposte: [{ status: 409, body: { ...CORPO_409, precedente: { ...CORPO_409.precedente, importo: null } } }] });
-    const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    fireEvent.click(await apriSuUnBambino(container));
+    render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
+    fireEvent.click(await apriSuUnBambino());
 
     const dialogo = await screen.findByRole('dialog');
     expect(dialogo.textContent).not.toMatch(/0,00/);
@@ -162,8 +162,8 @@ describe('gli errori si vedono a schermo, non in un alert del browser', () => {
     const spia = vi.fn();
     vi.stubGlobal('alert', spia);
     installFetch({ risposte: [{ status: 500, body: { error: 'Errore aggiornamento saldo' } }] });
-    const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    fireEvent.click(await apriSuUnBambino(container));
+    render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
+    fireEvent.click(await apriSuUnBambino());
 
     expect(await screen.findByRole('alert')).toBeTruthy();
     expect(spia).not.toHaveBeenCalled();
@@ -180,8 +180,8 @@ describe('gli errori si vedono a schermo, non in un alert del browser', () => {
       return jsonRes({ success: true, data: { saldo_ticket: 2 } });
     });
     vi.stubGlobal('fetch', fn);
-    const { container } = render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
-    fireEvent.click(await apriSuUnBambino(container));
+    render(<TicketMensaPanel userId="u1" scuolaId="sc-1" />);
+    fireEvent.click(await apriSuUnBambino());
     expect(await screen.findByRole('alert')).toBeTruthy();
   });
 });

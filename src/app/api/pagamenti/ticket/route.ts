@@ -23,6 +23,59 @@ const postBodySchema = z.object({
   metodo: z.string().nullish(),
 })
 
+// Codici che significano «la RPC non c'è» — e SOLO quelli. Il DB E2E della CI non
+// è migrato: lì si degrada al percorso storico. Qualunque altro errore è un
+// guasto vero e NON degrada, perché «la funzione non esiste» e «la funzione è
+// fallita» sono due cose diverse e confonderle nasconde i guasti.
+const RPC_ASSENTE = new Set(['PGRST202', '42883'])
+
+type EsitoSaldo =
+  | { ok: true; saldo: number; atomico: boolean }
+  | { ok: false; messaggio: string }
+
+/**
+ * Unico modo corretto di muovere `ticket_mensa.saldo_ticket` da codice applicativo.
+ *
+ * Prima di questa funzione la route leggeva il saldo e lo riscriveva per valore
+ * assoluto. Due scritture concorrenti — due click, o un click e una transazione
+ * del wizard — leggevano lo stesso numero e scrivevano lo stesso risultato: non
+ * «saldo doppio», ma **saldo singolo e incasso doppio**, cioè una cassa che non
+ * quadra sotto un saldo che sembra a posto.
+ */
+async function variaSaldoTicket(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  alunnoId: string,
+  delta: number,
+): Promise<EsitoSaldo> {
+  const { data, error } = await supabase.rpc('varia_saldo_ticket', {
+    p_alunno_id: alunnoId,
+    p_delta: delta,
+  })
+  if (!error) return { ok: true, saldo: Number(data ?? 0), atomico: true }
+
+  if (!RPC_ASSENTE.has(String((error as { code?: string }).code ?? ''))) {
+    return { ok: false, messaggio: (error as { message?: string }).message ?? 'errore RPC saldo' }
+  }
+
+  // Percorso storico, non atomico: lo si usa solo dove la RPC non esiste, e lo si
+  // dichiara nel log — altrimenti il giorno in cui la migrazione non fosse
+  // applicata in produzione nessuno saprebbe che il saldo è tornato fragile.
+  logEvento('db', 'warn', {
+    operazione: 'pagamenti/ticket:POST',
+    esito: 'saldo_non_atomico_rpc_assente',
+    delta,
+  }, error)
+
+  const { data: cur } = await supabase
+    .from('ticket_mensa').select('saldo_ticket').eq('alunno_id', alunnoId).maybeSingle()
+  const nuovo = Number(cur?.saldo_ticket ?? 0) + delta
+  const patch: Record<string, unknown> = { alunno_id: alunnoId, saldo_ticket: nuovo }
+  if (delta > 0) patch.ultimo_carico = new Date().toISOString()
+  const { error: uErr } = await supabase.from('ticket_mensa').upsert(patch, { onConflict: 'alunno_id' })
+  if (uErr) return { ok: false, messaggio: uErr.message }
+  return { ok: true, saldo: nuovo, atomico: false }
+}
+
 // GET /api/pagamenti/ticket?alunno_id=&userId=
 //   staff -> saldo di qualsiasi alunno; genitore -> solo dei propri figli
 export const GET = withRoute('pagamenti/ticket:GET', async (request: Request) => {
@@ -78,13 +131,12 @@ export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) 
     if (!al) return NextResponse.json({ error: 'Alunno non trovato' }, { status: 404 })
     const scuolaId = al.scuola_id
 
-    // 1) incrementa saldo ticket (upsert)
-    const { data: cur } = await supabase.from('ticket_mensa').select('saldo_ticket').eq('alunno_id', alunno_id).maybeSingle()
-    const nuovoSaldo = Number(cur?.saldo_ticket ?? 0) + Number(pezzi)
-    const { error: tErr } = await supabase
-      .from('ticket_mensa')
-      .upsert({ alunno_id, saldo_ticket: nuovoSaldo, ultimo_carico: new Date().toISOString() }, { onConflict: 'alunno_id' })
-    if (tErr) return NextResponse.json({ error: 'Errore aggiornamento saldo', details: tErr.message }, { status: 500 })
+    // 1) incrementa il saldo ticket, in modo ATOMICO
+    const esito = await variaSaldoTicket(supabase, alunno_id, Number(pezzi))
+    if (!esito.ok) {
+      return NextResponse.json({ error: 'Errore aggiornamento saldo', details: esito.messaggio }, { status: 500 })
+    }
+    const nuovoSaldo = esito.saldo
 
     // 2) categoria mensa
     const { data: cat } = await supabase
@@ -98,17 +150,44 @@ export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) 
       tipo: 'singolo', obbligatorio: false, creato_da: user.id, stato: 'da_pagare',
     }).select().single()
     if (pErr || !pag) {
-      // rollback saldo
-      await supabase.from('ticket_mensa').upsert({ alunno_id, saldo_ticket: Number(cur?.saldo_ticket ?? 0) }, { onConflict: 'alunno_id' })
+      // Rientro del saldo per DECREMENTO, non riscrivendo il valore letto prima:
+      // fra l'incremento e qui può essere passata un'altra ricarica, e rimettere
+      // il vecchio numero la cancellerebbe.
+      const rientro = await variaSaldoTicket(supabase, alunno_id, -Number(pezzi))
+      if (!rientro.ok) {
+        logEvento('pagamento', 'error', {
+          operazione: 'pagamenti/ticket:POST',
+          esito: 'saldo_non_rientrato_dopo_pagamento_fallito',
+          alunno_id, pezzi: Number(pezzi),
+        }, rientro.messaggio)
+      }
       return NextResponse.json({ error: 'Errore creazione pagamento', details: pErr?.message }, { status: 500 })
     }
 
     // 4) incasso contestuale (saldato) — il trigger porta lo stato a 'pagato'
+    //
+    // PostgREST non lancia: ritorna `{ error }`. Prima questo insert non lo
+    // guardava, e un suo fallimento era invisibile due volte — nei log, perché
+    // nessuno lo scriveva; a schermo, perché la risposta era identica a quella di
+    // un incasso riuscito. Il saldo era già salito, il pagamento restava
+    // `da_pagare` e la famiglia compariva fra i morosi.
+    //
+    // `null` = nessun incasso da registrare (costo 0), che è diverso da «non è
+    // stato registrato».
+    let incassoRegistrato: boolean | null = null
     if (Number(costo) > 0) {
-      await supabase.from('incassi').insert({
+      const { error: iErr } = await supabase.from('incassi').insert({
         pagamento_id: pag.id, importo: costo, metodo: body.metodo ?? 'contanti',
         note: 'Ricarica ticket mensa', registrato_da: user.id,
       })
+      incassoRegistrato = !iErr
+      if (iErr) {
+        logEvento('pagamento', 'error', {
+          operazione: 'pagamenti/ticket:POST',
+          esito: 'incasso_non_registrato',
+          alunno_id, pagamento_id: pag.id, importo: Number(costo),
+        }, iErr)
+      }
     }
 
     // 5) movimento sul ledger ticket (best-effort: il saldo resta autoritativo)
@@ -147,7 +226,20 @@ export const POST = withRoute('pagamenti/ticket:POST', async (request: Request) 
       }, e)
     }
 
-    return NextResponse.json({ success: true, data: { saldo_ticket: nuovoSaldo, pagamento_id: pag.id } }, { status: 201 })
+    // Evento critico: si logga anche il SUCCESSO. Con i soli errori, «nessun log»
+    // non distingue «tutto ok» da «non è mai partito niente».
+    logEvento('pagamento', 'info', {
+      operazione: 'pagamenti/ticket:POST',
+      esito: 'ricarica_registrata',
+      alunno_id, pagamento_id: pag.id, scuola_id: scuolaId,
+      pezzi: Number(pezzi), importo: Number(costo), saldo_dopo: nuovoSaldo,
+      saldo_atomico: esito.atomico, incasso_registrato: incassoRegistrato,
+    })
+
+    return NextResponse.json({
+      success: true,
+      data: { saldo_ticket: nuovoSaldo, pagamento_id: pag.id, incasso_registrato: incassoRegistrato },
+    }, { status: 201 })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/ticket:POST', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

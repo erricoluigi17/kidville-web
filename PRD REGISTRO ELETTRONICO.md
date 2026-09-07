@@ -99,6 +99,110 @@
 
 ---
 
+## 🔢 Changelog — Aruba rifiutava una pagina troppo grande con un HTTP 200, e lo leggevamo come «serie vuota» — 2026-09-07 (branch `feat/aruba-lotto-veloce`)
+
+Il lavoro nasce da una domanda di velocità — *emettere una fattura richiede 43,6 secondi, e non è
+Aruba* — e ha trovato per strada un difetto di **correttezza fiscale** che non c'entrava con la
+velocità e che era senza difese.
+
+### La misura, prima del codice
+
+`scripts/collaudo/aruba-pagina-grande.collaudo.ts`, sola lettura, budget dichiarato (1 `signin` +
+5 GET distanziate di `PAUSA_FRA_PAGINE_MS`), eseguito contro l'API di **produzione**:
+
+| `size` chiesta | esito |
+|---|---|
+| 5000 | **RIFIUTATA** — HTTP **200**, `errorCode "0001"`, `content` vuoto, `size` 0 |
+| 3500 | **RIFIUTATA** — idem |
+| 2000 | **ACCETTATA** — 2.000 documenti, `totalElements` 3327, `totalPages` 2, `number` 1, `first` true |
+
+Tre assunzioni mai verificate sono cadute nello stesso giro:
+
+- **Il rifiuto arriva come successo.** Chi leggeva solo `content` lo trovava vuoto e concludeva
+  «questa serie non ha documenti». Per `leggiPavimentoSerie` quello significa pavimento **zero**, e
+  per la RPC significa emettere «Asilo 1/2026» su una serie che ne ha duemilatrecento. Nessuna
+  eccezione, nessun log. Il difetto e il rimedio erano **già scritti** in
+  `docs/fatturazione/configurazione-aruba.md` §5: qui vengono eseguiti, non scoperti.
+- **`page` è 1-BASED** (`page=1` → `number: 1`, `first: true`). Il ciclo partiva da 1 ed era giusto,
+  ma per inferenza aritmetica, non per misura.
+- **L'involucro sta IN CIMA alla risposta**, non sotto `value`. È il livello che le fixture devono
+  rispettare: una fixture al livello sbagliato è verde mentre la produzione è cieca — è
+  letteralmente l'incidente del 2026-09-02.
+
+### Che cosa c'è adesso
+
+**Quattro condizioni fermano l'emissione** invece di lasciarla proseguire su un numero inventato
+(`src/lib/aruba/client.ts`, stessa severità di `etichette-illeggibili`):
+
+| condizione | codice |
+|---|---|
+| `errorCode` diverso da `"0000"` | `involucro-errore` |
+| `size` echeggiata diversa da quella chiesta | `size-tappata` |
+| `totalElements` maggiore dei documenti analizzati | `scorrimento-incompleto` |
+| zero documenti in **due** anni di fila | `serie-vuota` |
+
+`last` si usa **solo per fermarsi prima**, mai per concludere. L'asimmetria è il motivo: `last`
+sbagliato **fallisce aperto** — chiude il giro e restituisce un massimo basso in silenzio — mentre
+il confronto sui conteggi **fallisce chiuso**: lancia, e nessuna fattura esce. Su un documento
+fiscale irreversibile si sbaglia da quella parte.
+
+**Un tetto sul pavimento** (`src/lib/aruba/emissione.ts`, `SCARTO_MASSIMO_PAVIMENTO = 10_000`).
+`prossimo_numero_fattura_sezionale` fa `GREATEST(ultimo_numero, p_min) + 1`: un pavimento troppo
+**basso** è quasi sempre innocuo, uno troppo **alto** alza il contatore e **non lo riabbassa mai**.
+`FORMA_NUMERO_SEZIONALE` accetta nove cifre e il pavimento è il massimo su tutto l'anno: **una sola
+etichetta anomala** su Aruba porterebbe la serie a un miliardo, per sempre. Adesso un pavimento
+fuori scala rispetto al contatore a registro non raggiunge la RPC. Se il contatore non si legge
+(PostgREST ritorna `{error}`, e sul DB E2E la tabella può non esserci) si logga e si prosegue: è una
+cintura in più, non l'unica.
+
+**`PAGINA_SIZE` da 500 a 2000.** I 3.327 documenti dell'anno stanno in **2 pagine e una pausa**
+invece di 7 e sei: la lettura del progressivo passa da **~35 a ~6 secondi** a ogni emissione. Non si
+insegue la pagina singola — servirebbe una `size` sopra 3.327 sotto un tetto minore di 3.500, una
+finestra che i documenti (una decina al giorno) chiudono da soli in poche settimane.
+
+### Il numero che il pannello Aruba ha preso mentre misuravamo
+
+| serie | contatore a registro | max in `fatture_emesse` | max su Aruba |
+|---|---|---|---|
+| Asilo 2026 | 2331 | 2331 | **2331** |
+| FPR 2026 | 1952 | 1952 | **1955** |
+
+Le fatture **FPR 1953, 1954, 1955 non sono nostre**: le ha emesse il pannello Aruba, sulla stessa
+serie. È il rischio messo a verbale il 2026-09-07 (le serie **non** si separano, decisione del
+titolare) ripreso in flagrante. Il meccanismo regge: la prossima FPR sarà `GREATEST(1952, 1955)+1`
+= 1956, non un duplicato — ed è esattamente il motivo per cui il progressivo si rilegge da Aruba
+ogni volta invece di fidarsi del contatore.
+
+`ultimo_numero` meno `max(fatture_emesse.numero)` vale **0 su entrambe le serie**: nessun numero
+consumato senza riga a registro. È la query che vede davvero i buchi, e sostituisce il `max()`
+raggruppato che non ne vede nessuno.
+
+### Un lock cambia verso, deliberatamente
+
+«nessun documento in due anni → 0 (la serie è davvero nuova)» adesso **lancia**. La premessa era
+sbagliata: `findByUsername` non filtra per sezionale, quindi una serie davvero nuova vive dentro un
+elenco pieno di documenti altrui — ed è il caso accanto, «etichette leggibili ma di un'altra serie
+→ 0», che resta verde e copre quello scenario. Zero documenti su un'utenza che ne ha 3.327 non è un
+dato: è una lettura che non ha misurato niente. Prezzo dichiarato: la primissima fattura di
+un'utenza Aruba mai usata si ferma e chiede aiuto, una volta nella vita di una sede.
+
+### Osservabilità
+
+`aruba:findByUsername` chiude ogni scorrimento con `esito: 'scorrimento-concluso'` e
+`{ pagine, ricevuti, totale_dichiarato }`, con **`distingui: ['pagine','anno']`**: `app_log`
+deduplica per `(fingerprint, giorno)` e somma le occorrenze **senza aggiornare il contesto**, quindi
+senza quella riga tutte le letture del giorno collasserebbero in una sola coi numeri della prima —
+e «da sette pagine a due» non si potrebbe dimostrare. Il rifiuto per pavimento fuori scala esce a
+livello `error` con il numero rifiutato e quello a registro.
+
+### Gate
+
+`npx eslint . --max-warnings 0` → 0 · `npx vitest run` → **15.134 verdi** · `npm run build` → ok.
+
+⚠️ **Nessuna migrazione**: nessuna tabella creata, nessuna colonna aggiunta.
+
+---
+
 ## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
 
 Quattro elementi appena rilasciati sono stati fotografati con fixture sintetiche. I difetti qui

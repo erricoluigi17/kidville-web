@@ -256,9 +256,67 @@ export function progressivoInvioFattura(sezionale: Sezionale, numero: number, an
  * Dopo ogni allocazione il pavimento in cache viene alzato al numero appena
  * assegnato: dentro un lotto la cache non può che salire.
  */
+/**
+ * Di quanto il pavimento letto da Aruba può superare il contatore a registro prima di
+ * essere un errore invece di un dato.
+ *
+ * ⚠️ L'ASIMMETRIA CHE RENDE NECESSARIA QUESTA COSTANTE. `prossimo_numero_fattura_sezionale`
+ * fa `GREATEST(ultimo_numero, p_min) + 1`, quindi un pavimento troppo BASSO è quasi sempre
+ * innocuo: il contatore è più avanti e vince lui. Un pavimento troppo ALTO invece **alza il
+ * contatore e non lo riabbassa mai** — la tabella si scrive solo da quella funzione, che è
+ * monotona — e per tornare indietro servirebbe una UPDATE a mano su un registro fiscale.
+ *
+ * La strada per arrivarci è corta: `FORMA_NUMERO_SEZIONALE` accetta nove cifre e il
+ * pavimento è il MASSIMO su tutto l'anno. Una sola etichetta anomala su Aruba — un
+ * documento caricato a mano con un numero sbagliato, l'import di un altro gestionale —
+ * porterebbe la serie a un miliardo, per sempre.
+ *
+ * Diecimila è largo di proposito: deve lasciar passare il funzionamento normale, compreso
+ * lo scarto vero fra Aruba e il nostro registro. Misurato il 2026-09-07: la serie FPR era
+ * a 1955 su Aruba e a 1952 da noi, perché tre fatture erano state scritte a mano dal
+ * pannello. Quello scarto è il motivo per cui Aruba la leggiamo: la guardia ferma
+ * l'assurdo, non il mestiere.
+ */
+const SCARTO_MASSIMO_PAVIMENTO = 10_000
+
 const TTL_ULTIMO_NUMERO_MS = 5 * 60 * 1000
 
 const cacheUltimoNumero = new Map<string, { valore: number; scadenza: number }>()
+
+/**
+ * Il contatore a registro per quella serie e quell'anno, o `null` se non si è potuto sapere.
+ *
+ * `null` NON significa zero: significa «non misurato», e chi chiama deve trattarlo come
+ * «non posso giudicare» invece che come «il contatore è a zero». PostgREST non lancia
+ * (AGENTS.md, regola 7): si guarda il valore di ritorno, e un errore qui — sul database
+ * E2E della CI la tabella può non esserci affatto — non deve impedire di lavorare.
+ */
+async function contatoreARegistro(
+  supabase: SupabaseClient,
+  sezionale: Sezionale,
+  anno: number,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from('fatture_numerazione_sezionale')
+    .select('ultimo_numero')
+    .eq('sezionale', sezionale)
+    .eq('anno', anno)
+    .maybeSingle()
+  if (error) {
+    logEvento('fattura', 'warn', {
+      operazione: 'emettiFatturaPagamento:contatoreARegistro',
+      esito: 'contatore-non-letto',
+      sezionale,
+      anno,
+      msg:
+        'il contatore a registro non si è potuto leggere: la guardia sul pavimento non ' +
+        'può giudicare e si prosegue (la protezione contro i valori bassi resta il GREATEST della RPC)',
+    }, error)
+    return null
+  }
+  const valore = (data as { ultimo_numero?: unknown } | null)?.ultimo_numero
+  return typeof valore === 'number' && Number.isFinite(valore) ? valore : null
+}
 
 /** Ambiente + utenza + serie + anno: due sedi con credenziali diverse non si mescolano. */
 function chiaveSerieAruba(ambiente: string | undefined, username: string, sezionale: Sezionale, anno: number): string {
@@ -1624,6 +1682,39 @@ export async function emettiFatturaPagamento(
               'Aruba non ha risposto entro 30 secondi. ' +
               `${nienteEmesso} Riprova fra qualche minuto.`
             )
+          case 'size-tappata':
+            // NON è un guasto passeggero e riprovare non serve: Aruba ha cambiato il
+            // massimo di documenti per pagina che concede, e finché `PAGINA_SIZE` non
+            // torna sotto quel valore ogni lettura si fermerà qui. Misurato il
+            // 2026-09-07: sopra 2.000 la risposta è un 200 con l'elenco vuoto.
+            return (
+              `Aruba non accetta più la dimensione di pagina che chiediamo, quindi l’elenco della serie ` +
+              `«${sezionale}» non si è potuto leggere per intero. ${nienteEmesso} ` +
+              'Riprovare non serve: va corretta l’app. Segnalalo.'
+            )
+          case 'involucro-errore':
+            // Il rifiuto travestito da successo. Chi legge questo messaggio deve sapere
+            // che Aruba ha risposto «va tutto bene» a una richiesta che ha respinto.
+            return (
+              `Aruba ha risposto senza errori ma senza l’elenco delle fatture, quindi non si è potuto ` +
+              `sapere da quale numero ripartire sulla serie «${sezionale}». ${nienteEmesso} ` +
+              'Se si ripete, va corretta l’app. Segnalalo.'
+            )
+          case 'scorrimento-incompleto':
+            return (
+              `Aruba dichiara più documenti di quanti se ne siano potuti leggere: il numero più alto della ` +
+              `serie «${sezionale}» sarebbe quello di un pezzo dell’elenco, non della serie. ${nienteEmesso} ` +
+              'Riprova fra qualche minuto; se si ripete, segnalalo.'
+            )
+          case 'serie-vuota':
+            // Il caso del 1° gennaio, e quello dell'utenza appena creata. Va detto per
+            // esteso: qui si chiede una verifica umana, non un ritentativo.
+            return (
+              `Aruba non ha restituito nessun documento né per quest’anno né per lo scorso, quindi non si è ` +
+              `potuto sapere da quale numero ripartire sulla serie «${sezionale}». ${nienteEmesso} ` +
+              'Controlla sul pannello Aruba che le fatture ci siano davvero: se la serie è appena nata, ' +
+              'la prima fattura va emessa a mano. Altrimenti segnalalo.'
+            )
           case 'etichette-illeggibili':
             // Il caso del 2026-09-02. Va detto che NON è un problema di Aruba né
             // della sede, altrimenti si va a cercare nel posto sbagliato.
@@ -1645,6 +1736,41 @@ export async function emettiFatturaPagamento(
         ok: false,
         motivo: 'numerazione',
         messaggio: messaggioNumerazione,
+      })
+      continue
+    }
+
+    // ─── IL TETTO SUL PAVIMENTO, PRIMA CHE LA RPC LO RENDA IRREVERSIBILE ────────
+    // La RPC alza il contatore e non lo riabbassa mai. Un pavimento fuori scala —
+    // un'etichetta a nove cifre su Aruba — porterebbe la serie dove nessuno la
+    // riporta indietro senza una UPDATE a mano su un registro fiscale.
+    const contatore = await contatoreARegistro(supabase, sezionale, anno)
+    if (contatore !== null && ultimoAruba - contatore > SCARTO_MASSIMO_PAVIMENTO) {
+      const dettoPavimento =
+        `pavimento letto da Aruba fuori scala sulla serie ${sezionale}: ${ultimoAruba} contro ` +
+        `${contatore} a registro (scarto massimo ammesso ${SCARTO_MASSIMO_PAVIMENTO}). ` +
+        'Nessun numero è stato consumato.'
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento:prossimoNumero',
+        esito: 'pavimento-fuori-scala',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+        sezionale,
+        anno,
+        pavimento: ultimoAruba,
+        contatore,
+        msg: dettoPavimento,
+      })
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        motivo: 'numerazione',
+        messaggio:
+          `Su Aruba risulta un numero fuori scala per la serie «${sezionale}» (${ultimoAruba}), mentre a ` +
+          `registro siamo a ${contatore}. Emettere adesso sposterebbe la numerazione in modo NON reversibile. ` +
+          'La fattura non è stata emessa. Nessun numero è stato consumato. Va prima corretto il documento ' +
+          'anomalo sul pannello Aruba: segnalalo.',
       })
       continue
     }

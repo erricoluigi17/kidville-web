@@ -13,6 +13,7 @@ import { ActivityDetailInline, ActivityItem } from '@/components/features/teache
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
+import { etichetteAllergie, isNegazione, useAllergeneLabel } from '@/lib/mensa/allergeni';
 
 // =============================================================================
 // Compilazione del diario 0-6 per una sezione: stato + handler (useDiaryDay) e
@@ -20,7 +21,34 @@ import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 // docente (/teacher/diary) e il cockpit segreteria (/admin/diary).
 // =============================================================================
 
-export interface DiaryStudent { id: string; firstName: string; lastName: string; allergie: string[]; }
+/**
+ * Un bambino nella schermata del diario, con le DUE cose che l'insegnante deve
+ * poter leggere mentre segna il pranzo, tenute separate perché sono separate in
+ * archivio e vogliono dire cose diverse:
+ *  · `allergie` — `alunni.allergeni` + `alunni.allergies`, composti dal motore;
+ *  · `notaMedica` — `alunni.note_mediche`, la casella che il modulo d'iscrizione
+ *    etichetta «Note Mediche (BES, DSA, patologie)»: epilessia, terapia
+ *    salvavita, intolleranze non alimentari.
+ *
+ * ⚠️ IL SECONDO CAMPO NON È UN DI PIÙ, È IL RIPRISTINO DI UNA PERDITA. Prima del
+ * 2026-09-07 la nota veniva spezzata sulle virgole e mostrata SOTTO la parola
+ * «Allergie»: sbagliato. La prima correzione l'ha tolta e basta, e così l'alert
+ * del pranzo ha perso 29 bambini su 657 (misurato in produzione il 2026-09-07:
+ * 44 note mediche, 29 delle quali su bambini con `allergies` vuota o negata).
+ * Togliere un'etichetta sbagliata non è la stessa cosa che togliere il dato.
+ */
+export interface DiaryStudent { id: string; firstName: string; lastName: string; allergie: string[]; notaMedica: string | null; }
+
+/**
+ * La nota medica che vale la pena leggere a pranzo: vuota e «Nessuna» non lo
+ * sono. La regola della negazione è quella del motore (`isNegazione`, a
+ * vocabolario intero) e non una `/nessuna/` scritta qui: a sottostringa,
+ * «Epilessia, nessuna terapia in corso» sparirebbe.
+ */
+function notaDaMostrare(nota?: string | null): string | null {
+  const t = (nota ?? '').trim();
+  return t !== '' && !isNegazione(t) ? t : null;
+}
 
 // Entrata rimossa — gestita dal modulo Presenze
 // Nanna e Sveglia sono DUE pulsanti distinti (PRD §3.1.1): Nanna = orario inizio, Sveglia = orario fine.
@@ -115,6 +143,7 @@ export function useDiaryDay(
     },
 ) {
     const t = useTranslations('teacherDiario');
+    const etichettaAllergene = useAllergeneLabel();
     const [students, setStudents] = useState<DiaryStudent[]>([]);
     const [selectedEvent, setSelectedEvent] = useState<DiaryEventType | null>(null);
     const [studentStates, setStudentStates] = useState<Record<string, Record<string, unknown>>>({});
@@ -159,11 +188,35 @@ export function useDiaryDay(
             const res = await fetch(`/api/diary/students?${paramClasse}&onlyPresent=${showAll ? 'false' : 'true'}&userId=${userId}`);
             const data = await res.json();
             if (Array.isArray(data)) {
-                const mapped: DiaryStudent[] = data.map((a: { id: string; nome: string; cognome: string; note_mediche: string | null }) => ({
+                // ── LE ALLERGIE VENGONO DALLE ALLERGIE ─────────────────────────
+                // Qui si spezzava `note_mediche` sulle virgole e la si chiamava
+                // «allergie»: è la casella «Note Mediche (BES, DSA, patologie)» del
+                // modulo d'iscrizione, e finiva dritta nell'alert del PRANZO.
+                //
+                // Si compone come `colonnaAllergie` in `prestampati/banco.ts`:
+                // etichette degli allergeni SPUNTATI più il testo libero così com'è.
+                // Il testo non si infersce e non si riassume — «fragole» o «nichel»
+                // non sono fra i 14 UE e sparirebbero dal piatto di un bambino. Esce
+                // solo la negazione, che è il modo in cui qualcuno ha scritto «niente».
+                //
+                // ⚠️ E LA NOTA MEDICA NON SI BUTTA: CAMBIA GRUPPO. Toglierla e basta
+                // ha fatto sparire dall'alert del pranzo 29 bambini su 657 (misurato
+                // il 2026-09-07), fra cui chi ha scritto in quella casella una terapia
+                // salvavita. Viaggia in `notaMedica`, con etichetta e colore suoi in
+                // `MealDetailInline`: due gruppi, come nella card della home docente.
+                //
+                // ⚠️ E NEMMENO LE CHIAVI SI FILTRANO. Qui c'era `normalizzaAllergeni`,
+                // che tiene le 14 UE e scarta il resto in SILENZIO: se in archivio
+                // c'è `['nichel']`, il prestampato di banco la stampa e questo alert
+                // la faceva sparire. La composizione ora è una sola per tutte le
+                // superfici operative — `etichetteAllergie` nel motore — e prende
+                // l'etichettatore tradotto perché questo è un componente client.
+                const mapped: DiaryStudent[] = data.map((a: { id: string; nome: string; cognome: string; allergeni?: string[] | null; allergies?: string | null; note_mediche?: string | null }) => ({
                     id: a.id,
                     firstName: a.nome,
                     lastName: a.cognome,
-                    allergie: a.note_mediche ? a.note_mediche.split(',').map((s: string) => s.trim()) : [],
+                    allergie: etichetteAllergie({ allergeni: a.allergeni, allergies: a.allergies }, etichettaAllergene),
+                    notaMedica: notaDaMostrare(a.note_mediche),
                 }));
                 setStudents(mapped);
             }

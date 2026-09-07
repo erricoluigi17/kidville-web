@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { RiconciliazionePanel } from '@/components/features/admin/pagamenti/RiconciliazionePanel';
 
 vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
@@ -27,10 +27,25 @@ const aperti = [
   { id: 'pa1', descrizione: 'Retta', importo: 150, importo_pagato: 0, tipo: 'singolo', alunni: { nome: 'Mara', cognome: 'Bianchi' } },
 ];
 
+/**
+ * ⚠️ IL FINTO SERVER CONTA, PERCHÉ QUELLO VERO CONTA SEMPRE.
+ *
+ * Il server risponde `conteggi` ogni volta che la fatturazione è leggibile: in
+ * produzione i numeri sulle pillole CI SONO, e lo stato «senza numeri» è il
+ * degrado, non la normalità. Finché questo stub taceva, ogni test di questo file
+ * — compresi i sette che premono le pillole di fatturazione, cioè il collaudo
+ * principale della schermata — girava sul ramo DEGRADATO. Verdi, e ciechi sullo
+ * stato reale.
+ *
+ * I due numeri sono DIVERSI fra loro a bella posta: una fixture simmetrica non
+ * distingue i due bidoni, e uno scambio fra loro resterebbe verde.
+ */
+const CONTEGGI_STUB = { da_fatturare: 2, fatturate: 1, parziale: false };
+
 function stubFetch(movs = movimenti) {
   return vi.fn(async (url: string) => {
     if (String(url).includes('/api/pagamenti/riconciliazione')) {
-      return { ok: true, status: 200, json: async () => ({ success: true, data: movs }) };
+      return { ok: true, status: 200, json: async () => ({ success: true, data: movs, fatturazione_disponibile: true, conteggi: CONTEGGI_STUB }) };
     }
     if (String(url).includes('/api/pagamenti?')) {
       return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
@@ -344,6 +359,29 @@ const movimentiFatt = [
 const rigaDi = (causale: string) =>
   screen.getByText(new RegExp(causale)).closest('button') as HTMLButtonElement;
 
+/**
+ * ⚠️ DUE GET ALLA STESSA ROTTA, E CONTARLI INSIEME NON MISURA PIÙ NIENTE.
+ *
+ * Dal 2026-09-07 il pannello chiede al registro due cose diverse: le RIGHE da
+ * mostrare (`?stato=&fattura=`) e i due NUMERI delle pillole (`?conteggi=1`), che
+ * sono una richiesta a sé perché non dipende dalla pillola premuta. Le asserzioni
+ * «in UNA sola richiesta» parlano delle prime: se contassero anche il conteggio
+ * direbbero «due» su un comportamento corretto, e il giorno in cui il pannello
+ * tornasse a ricaricare in ciclo non si distinguerebbe più il rumore dal difetto.
+ *
+ * La forza dell'asserzione non cambia — resta «una sola» — cambia solo che adesso
+ * l'insieme misurato è quello che il suo nome ha sempre promesso.
+ */
+const richiesteDiRighe = (m: ReturnType<typeof vi.fn>) =>
+  m.mock.calls.filter(([u, o]) =>
+    String(u).includes('/api/pagamenti/riconciliazione')
+    && (o as { method?: string })?.method === undefined
+    && !String(u).includes('conteggi=1'));
+
+/** Le richieste dei soli NUMERI delle pillole (`?conteggi=1`). */
+const richiesteDiConteggi = (m: ReturnType<typeof vi.fn>) =>
+  m.mock.calls.filter(([u]) => String(u).includes('conteggi=1'));
+
 describe('RiconciliazionePanel — chip di fatturazione sulla riga', () => {
   beforeEach(() => { vi.stubGlobal('fetch', stubFetch(movimentiFatt)); });
   afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
@@ -399,9 +437,7 @@ describe('RiconciliazionePanel — chip di fatturazione sulla riga', () => {
 describe('RiconciliazionePanel — sottofiltro «Fatturazione»', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
-  const getMovimenti = (m: ReturnType<typeof vi.fn>) =>
-    m.mock.calls.filter(([u, o]) =>
-      String(u).includes('/api/pagamenti/riconciliazione') && (o as { method?: string })?.method === undefined);
+  const getMovimenti = (m: ReturnType<typeof vi.fn>) => richiesteDiRighe(m);
 
   it('«Da fatturare» chiede al server i CONFERMATI con ?fattura=da_fatturare, in UNA sola richiesta', async () => {
     const fetchMock = stubFetch(movimentiFatt);
@@ -1041,5 +1077,359 @@ describe('RiconciliazionePanel — l’errore dell’import non sopravvive a ci�
 
     await importaEFallisci(container);
     expect(screen.getByRole('alert').textContent).not.toContain('Filtro non riconosciuto');
+  });
+});
+
+/**
+ * ─── IL VERDETTO «ALTRA SEDE» SULLA LISTA, DOVE STA L'ERRORE ─────────────────
+ *
+ * Il popup lo diceva già; la LISTA no, e la lista è dove si sbaglia: si scorre,
+ * si apre la riga e si preme. MISURATO in produzione applicando la regola sede
+ * per sede: 169 righe su 236 per Aversa, 168 per Cesa, 76 per Giugliano portano
+ * il verdetto — e per due segreterie su tre non c'è nemmeno un candidato di casa
+ * da proporre, cioè la riga non è loro e basta.
+ *
+ * ⚠️ CHIP, NON UN COLORE NUOVO SULLA RIGA: il fondo della riga è il semaforo dello
+ * STATO (da abbinare / suggerito / confermato / ignorato) e non si tocca — «sembra
+ * di un'altra sede» è un'altra domanda, su un altro asse. E mai giallo né rosso:
+ * qui non c'è un'azione da chiedere a chi guarda.
+ */
+describe('RiconciliazionePanel — «altra sede» si vede già dalla lista', () => {
+  const conVerdetto = [
+    { ...movimenti[0], id: 'mx', causale: 'Bonifico di un altro plesso', altra_sede: { nome: 'Kidville Cesa' } },
+    movimenti[1],
+  ];
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  it('la riga col verdetto porta il chip, e le altre no', async () => {
+    vi.stubGlobal('fetch', stubFetch(conVerdetto));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico di un altro plesso/)).toBeInTheDocument());
+
+    const chip = screen.getAllByText('Altra sede');
+    expect(chip, 'una riga sola su due porta il verdetto').toHaveLength(1);
+    // sta DENTRO la riga giusta, non da qualche parte nella pagina
+    const riga = screen.getByText(/Bonifico di un altro plesso/).closest('button')!;
+    expect(within(riga).getByText('Altra sede')).toBeInTheDocument();
+    // e porta l'àncora dell'Alto Contrasto: senza, resta carta bianca su riga nera
+    expect(chip[0].className).toContain('kv-recon-chip');
+  });
+
+  it('senza verdetto nessun chip: la lista di sempre', async () => {
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico retta/)).toBeInTheDocument());
+    expect(screen.queryByText('Altra sede')).toBeNull();
+  });
+
+  it('il chip non ruba il colore del semaforo né quello dei comandi', async () => {
+    vi.stubGlobal('fetch', stubFetch(conVerdetto));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText('Altra sede')).toBeInTheDocument());
+
+    const classi = screen.getByText('Altra sede').className;
+    expect(classi).not.toContain('kidville-yellow');
+    expect(classi).not.toContain('kidville-error');
+    // il fondo della riga resta quello dello stato: il verdetto non ridipinge nulla
+    const riga = screen.getByText(/Bonifico di un altro plesso/).closest('button')!;
+    expect(riga.className).toContain('kv-recon-row--suggerito');
+  });
+});
+
+/**
+ * ─── I NUMERI SULLE PILLOLE, E LE QUATTRO COSE CHE POSSONO MENTIRE ───────────
+ *
+ * Le tre pillole dicevano solo il proprio nome: per sapere quante fatture
+ * restassero bisognava premerle una per una, e chi non le premeva non lo sapeva.
+ * Il numero c'è. Quello che questo blocco sorveglia non è che compaia — è che
+ * NON compaia quando sarebbe una bugia:
+ *
+ *  1. `conteggi: null` (il server non ha potuto contare) → NIENTE. Non uno «0»,
+ *     non un «—», non uno spazio riservato: uno zero dove il dato manca è la
+ *     stessa bugia di «Nessun movimento in questo stato»;
+ *  2. `parziale: true` (finestra del server piena) → «≥ 12», mai «12»;
+ *  3. «Tutte» non porta numero: non è un bidone, è l'assenza del filtro;
+ *  4. il numero NON dipende dalla pillola premuta. Se il fetch dei conteggi
+ *     stesse nell'effetto della lista, premere «Da fatturare» cambierebbe il
+ *     numero scritto SOPRA «Da fatturare»: un contatore che si sposta mentre lo
+ *     si guarda.
+ *
+ * E due vincoli sulla forma, che valgono quanto i quattro:
+ *  · il nome accessibile della pillola non cambia (il numero è un `<span>`
+ *    `aria-hidden` a parte) — altrimenti cinque test esistenti cadrebbero per la
+ *    ragione sbagliata, e soprattutto un `getByRole('button', { name })` sarebbe
+ *    una promessa rotta a chi automatizza la schermata;
+ *  · chi usa uno screen reader il numero lo SENTE: un `aria-describedby` lo dice
+ *    in parole. Un numero solo visivo, per lui, semplicemente non esiste.
+ */
+describe('RiconciliazionePanel — i numeri sulle pillole di «Fatturazione»', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  /** L'esito di un import andato a buon fine: una riga nuova nel registro. */
+  const ESITO_IMPORT = { nuovi: 1, duplicati: 0, scartate: 0, suggeriti: 0, con_cf: 0, da_abbinare: 1 };
+
+  /**
+   * Finto server: le RIGHE da una parte, i due NUMERI dall'altra — e le due
+   * SCRITTURE che cambiano il mondo, perché è dopo quelle che i numeri devono
+   * muoversi da soli (`POST` = import dell'estratto conto, `PATCH` = azione sul
+   * movimento dal popup).
+   */
+  const fetchCon = (conteggi: { da_fatturare: number; fatturate: number; parziale: boolean } | null) =>
+    vi.fn(async (url: string, opts?: { method?: string }) => {
+      const u = String(url);
+      if (u.includes('/api/pagamenti/riconciliazione') && opts?.method === 'POST') {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: ESITO_IMPORT }) };
+      }
+      if (u.includes('/api/pagamenti/riconciliazione/') && opts?.method === 'PATCH') {
+        return { ok: true, status: 200, json: async () => ({ success: true }) };
+      }
+      if (u.includes('/api/pagamenti/riconciliazione') && opts?.method === undefined) {
+        if (u.includes('conteggi=1')) {
+          return { ok: true, status: 200, json: async () => ({
+            success: true, data: [], fatturazione_disponibile: conteggi !== null, conteggi,
+          }) };
+        }
+        return { ok: true, status: 200, json: async () => ({
+          success: true, data: movimentiFatt, fatturazione_disponibile: true,
+        }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+
+  const pillola = (nome: string) =>
+    within(screen.getByRole('group', { name: /Filtra per fatturazione/ })).getByRole('button', { name: nome });
+
+  const montaCon = async (conteggi: Parameters<typeof fetchCon>[0]) => {
+    const fetchMock = fetchCon(conteggi);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+    return fetchMock;
+  };
+
+  it('ogni bidone porta il suo numero, e il NOME ACCESSIBILE della pillola non cambia', async () => {
+    const fetchMock = await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+
+    // ⚠️ Questa riga è metà del test: se il numero entrasse nel nome accessibile,
+    // `getByRole('button', { name: 'Da fatturare e scartate' })` non troverebbe
+    // più niente — ed è la query con cui cinque test esistenti premono la pillola.
+    const daFatturare = pillola('Da fatturare e scartate');
+    const fatturate = pillola('Fatturate e in attesa');
+    await waitFor(() => expect(within(daFatturare).getByText('12')).toBeInTheDocument());
+    expect(within(fatturate).getByText('7')).toBeInTheDocument();
+    // il numero è decorazione visiva: chi ascolta lo riceve dalla descrizione
+    expect(within(daFatturare).getByText('12')).toHaveAttribute('aria-hidden', 'true');
+    // e il conteggio è UNA richiesta sua, che non porta a casa nessuna riga
+    expect(richiesteDiConteggi(fetchMock)).toHaveLength(1);
+  });
+
+  it('chi non vede il numero lo SENTE: una descrizione accessibile in parole', async () => {
+    await montaCon({ da_fatturare: 12, fatturate: 1, parziale: false });
+
+    const daFatturare = pillola('Da fatturare e scartate');
+    await waitFor(() => expect(daFatturare.getAttribute('aria-describedby')).toBeTruthy());
+    const descrizione = document.getElementById(daFatturare.getAttribute('aria-describedby') as string);
+    expect(descrizione?.textContent).toBe('12 movimenti da fatturare');
+    // …e il singolare è singolare (il plurale ICU è reso davvero, non stampato)
+    const fatturate = pillola('Fatturate e in attesa');
+    const desc2 = document.getElementById(fatturate.getAttribute('aria-describedby') as string);
+    expect(desc2?.textContent).toBe('1 movimento fatturato');
+  });
+
+  it('«Tutte» non porta nessun numero: non è un bidone, è l’assenza del filtro', async () => {
+    await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(within(pillola('Da fatturare e scartate')).getByText('12')).toBeInTheDocument());
+
+    const tutte = pillola('Tutte');
+    // niente numero, e niente descrizione: non c'è nessun conteggio da spiegare
+    expect(tutte.textContent).toBe('Tutte');
+    expect(tutte.getAttribute('aria-describedby')).toBeNull();
+    // in particolare NON la somma dei due bidoni, che non è il contenuto di «Tutte»
+    expect(within(tutte).queryByText('19')).toBeNull();
+  });
+
+  it('`conteggi: null` → NIENTE: nessuno zero, nessun «—», nessuno spazio riservato', async () => {
+    await montaCon(null);
+    // si aspetta che la richiesta dei conteggi sia stata digerita, poi si guarda
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+
+    for (const nome of ['Tutte', 'Da fatturare e scartate', 'Fatturate e in attesa']) {
+      const p = pillola(nome);
+      // ⚠️ Uno «0» qui sarebbe la stessa bugia di «Nessun movimento in questo
+      // stato»: un'affermazione su un dato che nessuno ha letto.
+      expect(within(p).queryByText('0')).toBeNull();
+      expect(p.textContent).not.toContain('—');
+      expect(p.getAttribute('aria-describedby')).toBeNull();
+    }
+  });
+
+  it('finestra piena → «≥ 12», mai «12»: un minimo si dichiara', async () => {
+    await montaCon({ da_fatturare: 12, fatturate: 7, parziale: true });
+
+    const daFatturare = pillola('Da fatturare e scartate');
+    await waitFor(() => expect(within(daFatturare).getByText('≥ 12')).toBeInTheDocument());
+    // il numero secco non c'è: sarebbe un totale, e questo non lo è
+    expect(within(daFatturare).queryByText('12')).toBeNull();
+    const descrizione = document.getElementById(daFatturare.getAttribute('aria-describedby') as string);
+    expect(descrizione?.textContent).toContain('Almeno 12 movimenti da fatturare');
+  });
+
+  it('il conteggio si chiede UNA volta sola: premere le pillole non lo rifà', async () => {
+    // ⚠️ IL PUNTO DI TUTTO IL LAVORO. Se il fetch dei conteggi dipendesse dal
+    // filtro premuto, il numero scritto SOPRA «Da fatturare» cambierebbe nel
+    // momento in cui si preme «Da fatturare»: un contatore che si sposta mentre
+    // lo si guarda, e che non risponde più alla domanda «quante ne restano».
+    const fetchMock = await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(within(pillola('Da fatturare e scartate')).getByText('12')).toBeInTheDocument());
+
+    const righePrima = richiesteDiRighe(fetchMock).length;
+    fireEvent.click(pillola('Da fatturare e scartate'));
+    await waitFor(() => expect(richiesteDiRighe(fetchMock).length).toBe(righePrima + 1));
+    fireEvent.click(pillola('Fatturate e in attesa'));
+    await waitFor(() => expect(richiesteDiRighe(fetchMock).length).toBe(righePrima + 2));
+
+    // due pillole premute, due ricariche dell'elenco… e UN conteggio solo.
+    expect(richiesteDiConteggi(fetchMock)).toHaveLength(1);
+    // …e il numero è rimasto quello: non si è mosso sotto il dito
+    expect(within(pillola('Da fatturare e scartate')).getByText('12')).toBeInTheDocument();
+  });
+
+  it('«Aggiorna» rifà anche il conteggio: dopo un’emissione il numero deve scendere', async () => {
+    const fetchMock = await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(2));
+  });
+
+  /**
+   * ⚠️ «AGGIORNA» LO PREME CHI HA GIÀ IL SOSPETTO. QUESTO SCATTA DA SOLO.
+   *
+   * Il caso qui sopra prova il trigger che l'operatore aziona a mano — cioè
+   * quello che serve solo a chi ha già smesso di fidarsi del numero. Il trigger
+   * che questa funzione esiste per avere è l'altro: l'operatore emette la
+   * fattura nel popup, il popup si chiude, e il numero DEVE essere già sceso.
+   * Se non scende, a schermo resta un conteggio che l'operatore ha appena
+   * smentito con le proprie mani — la bugia esatta che questo lavoro impedisce.
+   *
+   * Si esegue un'azione VERA sul popup vero (`Ignora` su una riga suggerita):
+   * `onDone` non è un bottone da premere, è ciò che il popup chiama quando
+   * l'operazione è andata a buon fine.
+   */
+  it('dopo un’azione nel popup il conteggio si rifà DA SOLO: è il trigger che nessuno preme', async () => {
+    const fetchMock = await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(1));
+
+    fireEvent.click(rigaDi('Bonifico solo suggerito'));
+    fireEvent.click(await screen.findByRole('button', { name: /Ignora/ }));
+
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(2));
+  });
+
+  /**
+   * L'import è l'ALTRO momento in cui il mondo cambia: entrano righe nuove nel
+   * registro, e quante ne restino da fatturare non è più il numero di prima.
+   */
+  it('dopo un import riuscito il conteggio si rifà: le righe nuove cambiano quante ne restano', async () => {
+    const fetchMock = await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(1));
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['data;importo\n2026-01-01;100'], 'estratto.csv', { type: 'text/csv' })] } });
+
+    // prima l'esito dell'import (senza, si starebbe misurando un import fallito)
+    await waitFor(() => expect(screen.getByText(/1 nuovo movimento/)).toBeInTheDocument());
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(2));
+  });
+
+  /**
+   * ─── LA RISPOSTA SORPASSATA, CHE ATTERRA PER ULTIMA E RIMETTE IL NUMERO VECCHIO ──
+   *
+   * Due «Aggiorna» ravvicinati partono in ordine e tornano come capita: la rete
+   * non promette niente. Se la PRIMA risposta atterra dopo la seconda, senza una
+   * guardia riscrive il numero — e a schermo resta il conteggio di PRIMA
+   * dell'emissione, cioè esattamente ciò che il ricalcolo doveva cancellare.
+   * Peggio del numero fermo: un numero che si è mosso e poi è tornato indietro.
+   *
+   * Qui le due risposte si risolvono A MANO e in ordine INVERSO: è l'unico modo
+   * di eseguire davvero lo scenario che il commento accanto alla guardia descrive.
+   */
+  it('una risposta sorpassata NON riscrive il numero: resta quello dell’ultima richiesta', async () => {
+    const risposteConteggi: ((conteggi: unknown) => void)[] = [];
+    const fetchMock = vi.fn(async (url: string, opts?: { method?: string }) => {
+      const u = String(url);
+      if (u.includes('conteggi=1')) {
+        return new Promise((resolve) => {
+          risposteConteggi.push((conteggi) => resolve({
+            ok: true, status: 200,
+            json: async () => ({ success: true, data: [], fatturazione_disponibile: true, conteggi }),
+          }));
+        });
+      }
+      if (u.includes('/api/pagamenti/riconciliazione') && opts?.method === undefined) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: movimentiFatt, fatturazione_disponibile: true }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/Bonifico da fatturare/)).toBeInTheDocument());
+    await waitFor(() => expect(risposteConteggi).toHaveLength(1));
+
+    // Secondo giro chiesto PRIMA che il primo sia tornato: due richieste in volo.
+    fireEvent.click(screen.getByRole('button', { name: 'Aggiorna' }));
+    await waitFor(() => expect(risposteConteggi).toHaveLength(2));
+
+    // Torna prima la SECONDA (il mondo dopo l'emissione: 3), e si vede.
+    await act(async () => { risposteConteggi[1]({ da_fatturare: 3, fatturate: 7, parziale: false }); });
+    await waitFor(() => expect(within(pillola('Da fatturare e scartate')).getByText('3')).toBeInTheDocument());
+
+    // Poi atterra la PRIMA, la fotografia vecchia (12): non deve toccare niente.
+    await act(async () => { risposteConteggi[0]({ da_fatturare: 12, fatturate: 7, parziale: false }); });
+
+    expect(within(pillola('Da fatturare e scartate')).getByText('3')).toBeInTheDocument();
+    expect(within(pillola('Da fatturare e scartate')).queryByText('12')).toBeNull();
+  });
+
+  it('il gruppo dichiara che i due numeri NON sono parti di uno stesso totale — e lo dice DESCRIVENDOSI, non cambiando nome', async () => {
+    await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(within(pillola('Da fatturare e scartate')).getByText('12')).toBeInTheDocument());
+
+    // ⚠️ METÀ DEL TEST È QUESTA RIGA. Il nome del gruppo è il suo identificatore:
+    // un lettore di schermo lo rilegge a ogni ingresso, e i test lo usano per
+    // trovarlo. Farlo diventare una frase di trenta parole appena arrivano i
+    // numeri — cioè SEMPRE, in produzione — è due guasti in uno: un'etichetta
+    // che muta sotto l'utente, e sette casi di questo file che restavano verdi
+    // solo perché il loro finto server non contava.
+    const gruppo = screen.getByRole('group', { name: 'Filtra per fatturazione' });
+
+    // ⚠️ L'asimmetria esiste già nel server e i due numeri accostati la rendono
+    // fuorviante: «Da fatturare» pretende un pagamento saldato, che fuori dalle
+    // proprie sedi è `null` — è la lista di lavoro della PROPRIA sede — mentre
+    // «Fatturate» guarda i documenti ed è cross-sede. Si dice come DESCRIZIONE,
+    // che è la stessa regola già applicata al numero delle singole pillole.
+    const descrizione = document.getElementById(gruppo.getAttribute('aria-describedby') as string);
+    expect(descrizione?.textContent).toContain('I due numeri non sono parti di uno stesso totale');
+    expect(descrizione?.className).toContain('sr-only');
+  });
+
+  it('senza numeri il nome NON cambia e la descrizione non c’è: niente da disambiguare', async () => {
+    await montaCon(null);
+
+    // Il nome è lo stesso dell'altro caso: è l'identità del gruppo, non un
+    // messaggio. A cambiare è solo se ci sia o meno qualcosa da spiegare.
+    const gruppo = screen.getByRole('group', { name: 'Filtra per fatturazione' });
+    expect(gruppo.getAttribute('aria-describedby')).toBeNull();
+    expect(screen.queryByText(/I due numeri non sono parti di uno stesso totale/)).toBeNull();
+  });
+
+  it('a riposo il conteggio NON si ripete: nessun ciclo di ricarica sul contatore', async () => {
+    const fetchMock = await montaCon({ da_fatturare: 12, fatturate: 7, parziale: false });
+    await waitFor(() => expect(richiesteDiConteggi(fetchMock)).toHaveLength(1));
+
+    const subito = fetchMock.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 250));
+    expect(fetchMock.mock.calls.length).toBe(subito);
+    expect(richiesteDiConteggi(fetchMock)).toHaveLength(1);
   });
 });

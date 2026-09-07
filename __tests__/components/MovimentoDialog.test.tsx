@@ -798,6 +798,7 @@ describe('MovimentoDialog — dopo l’emissione il popup rilegge sé stesso', (
     expect(screen.getAllByText('In attesa SDI')).toHaveLength(1);
   });
 
+
   it('aprire il popup costa UNA lettura sola: la rilettura è dell’emissione, non dell’apertura', async () => {
     const { banco, fetchMock } = serverDelPagamento();
     vi.stubGlobal('fetch', fetchMock);
@@ -808,5 +809,113 @@ describe('MovimentoDialog — dopo l’emissione il popup rilegge sé stesso', (
     // qui salirebbe a 2 anche senza che nessuno prema niente.
     await new Promise((r) => setTimeout(r, 50));
     expect(banco.letture, 'il dettaglio si legge una volta al montaggio').toBe(1);
+  });
+});
+
+describe('MovimentoDialog — «questo bonifico sembra di un’altra sede»', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  /**
+   * ─── «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» ─────────────────────────────
+   *
+   * L'estratto conto è unico e i suggerimenti si calcolano su tutte le sedi, ma
+   * la lista mostra a ogni segreteria solo i candidati della PROPRIA. Misurato in
+   * produzione: 67 movimenti su 234 avevano l'aggancio forte altrove e candidati
+   * locali deboli — cioè 67 righe che invitavano a registrare l'incasso sulla
+   * voce di un bambino di un altro plesso.
+   *
+   * ⚠️ SI DECLASSA, NON SI NASCONDE. I candidati deboli restano e restano
+   * premibili: nasconderli toglierebbe l'unica via d'uscita quando il segnale
+   * sbaglia (un omonimo, un CF finito per errore in un'altra causale), e la
+   * protezione vera esiste già — il PATCH respinge con 404 fuori sede. Cambia il
+   * PESO VISIVO, che è ciò che rende facile l'errore.
+   */
+  const conAltraSede = (altra_sede: MovimentoUi['altra_sede']): MovimentoUi => ({ ...movBase, altra_sede });
+  /** Le classi come TOKEN: `hover:text-kidville-white` contiene `text-kidville-white`. */
+  const token = (el: Element) => el.className.split(/\s+/);
+
+  it('con l’aggancio forte altrove: lo dice, e NOMINA la sede', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={conAltraSede({ nome: 'Kidville Cesa' })} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.getByText(/aggancio forte su Kidville Cesa/)).toBeInTheDocument();
+    expect(screen.getByText(/sono deboli/)).toBeInTheDocument();
+  });
+
+  /**
+   * ─── DUE CASI, DUE FRASI — E IL DOMINANTE ERA QUELLO SBAGLIATO ─────────────
+   *
+   * Il riquadro è appeso al solo verdetto, la lista dei candidati è dietro
+   * `suggerimenti.length > 0`: le due condizioni NON coincidono, e a schermo
+   * finiva una frase che parlava di «i suggerimenti qui sotto» sopra il vuoto.
+   *
+   * MISURATO in produzione il 2026-09-07 applicando la regola COME È IMPLEMENTATA
+   * — sulle sole righe NON confermate — e contando i candidati che RESTANO dopo la
+   * minimizzazione: dei 403 casi in cui il verdetto scatta, **332 hanno zero
+   * candidati di casa** — Aversa 162 su 165, Cesa 162 su 166, Giugliano 8 su 72.
+   * Per due segreterie su tre la frase era falsa quasi sempre: non c'è nessun
+   * suggerimento «qui sotto», e non è «debole». (I «338 su 413» della prima
+   * stesura erano PRIMA della guardia sulle confermate.)
+   */
+  it('con l’aggancio altrove e NESSUN candidato di casa: la frase è l’altra, e non parla di una lista che non c’è', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={{ ...conAltraSede({ nome: 'Kidville Cesa' }), suggerimenti: [] }} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.getByText(/aggancio forte su Kidville Cesa/)).toBeInTheDocument();
+    expect(screen.getByText(/si abbina dalla sede dell’aggancio/)).toBeInTheDocument();
+    // la lista non è renderizzata: la frase che la nomina sarebbe una bugia
+    expect(screen.queryByRole('button', { name: /Conferma questo/ })).toBeNull();
+    expect(screen.queryByText(/sono deboli/), 'nessun suggerimento «qui sotto»').toBeNull();
+  });
+
+  it('con i candidati di casa resta la frase dei «deboli», e NON quella dell’altra sede', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={conAltraSede({ nome: 'Kidville Cesa' })} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.getByText(/sono deboli/)).toBeInTheDocument();
+    expect(screen.queryByText(/si abbina dalla sede dell’aggancio/)).toBeNull();
+  });
+
+  it('senza il nome della sede: lo dice lo stesso, senza nominarla e senza inventare', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const { container } = render(<MovimentoDialog movimento={conAltraSede({ nome: null })} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.getByText(/aggancio forte su un’altra sede/)).toBeInTheDocument();
+    // MAI un `null`, una graffa non sostituita o un segnaposto a schermo
+    expect(container.textContent).not.toMatch(/null|\{sede\}|undefined/);
+  });
+
+  it('senza verdetto (o a `null`) nessun riquadro: la schermata di sempre', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    const { unmount } = render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.queryByText(/aggancio forte/)).toBeNull();
+    unmount();
+    render(<MovimentoDialog movimento={conAltraSede(null)} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    expect(screen.queryByText(/aggancio forte/)).toBeNull();
+  });
+
+  it('i candidati deboli RESTANO e restano premibili, ma il CTA passa a secondario contornato', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true }) }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<MovimentoDialog movimento={conAltraSede({ nome: 'Kidville Cesa' })} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const bottoni = screen.getAllByRole('button', { name: /Conferma questo/ });
+    expect(bottoni, 'i suggerimenti non si nascondono: è l’unica via d’uscita se il segnale sbaglia').toHaveLength(2);
+    for (const b of bottoni) {
+      expect(token(b), 'secondario contornato').toContain('border-kidville-green');
+      // A RIPOSO niente verde pieno — ma il TOKEN, non la sottostringa: il vestito
+      // porta `hover:text-kidville-white`, che è il puntatore sopra, non il riposo.
+      expect(token(b), 'niente più verde pieno a riposo').not.toContain('text-kidville-white');
+      expect(token(b), 'niente più fondo verde pieno a riposo').not.toContain('bg-kidville-green');
+    }
+    // e si premono davvero: il declassamento è visivo, non funzionale
+    fireEvent.click(bottoni[0]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  });
+
+  it('senza verdetto i CTA restano verdi pieni (il declassamento non è il default)', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    for (const b of screen.getAllByRole('button', { name: /Conferma questo/ })) {
+      expect(token(b)).toContain('text-kidville-white');
+      expect(token(b)).toContain('bg-kidville-green');
+      expect(token(b)).not.toContain('border-kidville-green');
+    }
   });
 });

@@ -73,7 +73,7 @@ import { annoScolasticoCorrente } from '@/lib/anno-scolastico'
 import { STATO_ISCRITTO, STATO_SOSPESO } from '@/lib/alunni/stato'
 import { buildIntestazioneSede, rigaLuogoData } from '@/lib/certificati/self-service'
 import { isoToIt } from '@/lib/format/data'
-import { allergeneLabel } from '@/lib/mensa/allergeni'
+import { etichetteAllergie } from '@/lib/mensa/allergeni'
 import { parseAnagraficaSede } from '@/lib/scuole/anagrafica'
 import { docentiDiSezione } from '@/lib/sezioni/docenti'
 import {
@@ -1271,11 +1271,21 @@ async function leggiInsegnanti(
  * insieme, quella strutturata e quella in testo libero.
  *
  * `alunni.allergeni` è l'array delle chiavi canoniche (i 14 dell'allegato II Reg. UE
- * 1169/2011) e `alunni.allergies` è il testo che la segreteria ha scritto a mano: sono le
- * stesse due colonne che leggono `mensa/allergie-check`, `mensa/report` e
- * `mensa/prenotazioni`, e l'etichetta da mostrare la sa già `allergeneLabel` — chiave nota →
- * «Arachidi», chiave ignota → la chiave così com'è, che è ciò che serve qui: da un elenco
- * di cucina non deve sparire niente.
+ * 1169/2011) e `alunni.allergies` è il testo che la segreteria ha scritto a mano. La
+ * composizione NON sta più qui: è `etichetteAllergie` in `@/lib/mensa/allergeni`, la
+ * stessa che compongono il report mensa, l'alert del pranzo e la card del docente.
+ * L'etichetta la sa `allergeneLabel` — chiave nota → «Arachidi», chiave ignota → la
+ * chiave così com'è, che è ciò che serve qui: da un elenco di cucina non deve sparire
+ * niente.
+ *
+ * ⚠️ ERA UNA COPIA, E LA COPIA AVEVA DIVERSO IL PEZZO CHE CONTA. Questa funzione sommava
+ * le due colonne — giusto — ma non toglieva la NEGAZIONE, che il motore toglie ovunque
+ * altrove. Risultato, misurato in produzione il 2026-09-07: 6 bambini su 657 hanno
+ * scritto «Nessuna» in `allergies`, e questo foglio — quello con cui si prepara il
+ * piatto, la superficie più operativa di tutte — stampava «Nessuna» accanto al loro nome
+ * e li contava fra i «bambini con dieta speciale». Il docblock di `etichetteAllergie`
+ * diceva di essere «la composizione di `colonnaAllergie`»: non lo era, e adesso il verso
+ * è invertito — è `colonnaAllergie` a chiamare il motore.
  *
  * ⚠️ NON si usa `allergeniAlunno()`, che è la regola gemella e serve a un'altra domanda.
  * Quella sceglie UNA delle due fonti — strutturata se c'è, altrimenti inferita dal testo —
@@ -1283,13 +1293,16 @@ async function leggiInsegnanti(
  * combaciare. Qui no: `inferisciAllergeniDaTesto('lattosio, fragole')` restituisce solo
  * `latte`, e «fragole» — che fra i 14 non c'è — sparirebbe dal foglio di chi prepara i
  * piatti. Le due fonti si sommano, e nessuna copre l'altra.
+ *
+ * `testo()` resta sui due ingressi: è il sanitizer di questo file (via i caratteri di
+ * contorno, `null` per ciò che stringa non è) e vale ancora, perché `allergeni` in
+ * archivio è `text[]` e una riga malformata non deve arrivare a `.trim()`.
  */
 function colonnaAllergie(a: RigaAlunnoSezione): string | null {
-  const strutturati = (Array.isArray(a.allergeni) ? a.allergeni : [])
+  const chiavi = (Array.isArray(a.allergeni) ? a.allergeni : [])
     .map((k) => testo(k))
     .filter((k): k is string => k !== null)
-    .map(allergeneLabel)
-  return [...strutturati, testo(a.allergies)].filter(Boolean).join(' · ') || null
+  return etichetteAllergie({ allergeni: chiavi, allergies: testo(a.allergies) }).join(' · ') || null
 }
 
 /**

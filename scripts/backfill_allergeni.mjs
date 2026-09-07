@@ -57,12 +57,65 @@ export function inferisciAllergeniDaTesto(testo) {
   return out;
 }
 
+// ── Negazione: VOCABOLARIO INTERO (mirror 1:1 di src/lib/mensa/allergeni.ts) ──
+// La parità è garantita dal test __tests__/lib/allergeni-backfill.test.ts.
+//
+// ⚠️ QUI C'ERA `/\bnessun/` A SOTTOSTRINGA, ED È IL DIFETTO. In produzione esiste
+// un testo che dice, in sostanza, «non ha allergie riconosciute ma ha un fastidio
+// al lattosio… non mangia crudi di nessun tipo… non mangia molluschi»: quella
+// regex lo dichiarava NEGAZIONE, cioè saltava proprio un bambino con restrizioni
+// vere. Lo script non è mai stato applicato (0 allergeni strutturati su 646
+// iscritti), quindi il difetto non ha ancora toccato nessun dato — ma la stessa
+// regola vive a runtime, e lì contava.
+//
+// Regola, e sono DUE condizioni: una stringa è negazione solo se OGNI sua parola
+// sta nel vocabolario E almeno una è un NEGATORE vero. Una parola sconosciuta ⇒
+// NON è una negazione ⇒ il bambino resta. Senza la seconda condizione «allergia
+// presente» era una negazione: il vocabolario contiene anche i sostantivi e i
+// participi («allergia», «intolleranza», «segnalata», «presente»), che da soli non
+// negano niente.
+const PAROLE_NEGAZIONE = new Set([
+  'no', 'none', 'na',
+  'assente', 'assenti',
+  'allergia', 'allergie',
+  'intolleranza', 'intolleranze',
+  'nota', 'note', 'noto', 'noti',
+  'particolare', 'particolari',
+  'allergene', 'allergeni',
+  'conosciuta', 'conosciute',
+  'segnalata', 'segnalate',
+  'rilevata', 'rilevate',
+  'presente', 'presenti',
+  'nulla', 'niente',
+  'patologia', 'patologie',
+]);
+
+/** Le parole che negano DAVVERO: almeno una deve esserci. `nessun*` è a prefisso. */
+const NEGATORI = new Set(['no', 'none', 'na', 'niente', 'nulla', 'assente', 'assenti']);
+
+/** `true` per `nessun`, `nessuna`, `nessuno`, `nessun'altra`… */
+function nega(parola) {
+  return parola.startsWith('nessun') || NEGATORI.has(parola);
+}
+
+/** Le parole di un testo, senza accenti e senza punteggiatura (`n/a` → `na`). */
+function paroleDi(testo) {
+  return String(testo ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\bn\s*[/.]\s*a\b/g, ' na ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 /** Frasi che indicano assenza di allergie: da NON backfillare. */
 export function isNegazione(testo) {
-  const low = String(testo ?? '').trim().toLowerCase();
-  if (!low) return true;
-  if (/\bnessun/.test(low)) return true;
-  return ['no', 'none', 'n/a', 'na', '-', '/', '//', 'assente', 'assenti'].includes(low);
+  const parole = paroleDi(testo);
+  if (parole.length === 0) return true;
+  return parole.every((p) => nega(p) || PAROLE_NEGAZIONE.has(p)) && parole.some(nega);
 }
 
 /** Spezza il testo libero in token grezzi (virgole, punti e virgola, slash, "e"). */

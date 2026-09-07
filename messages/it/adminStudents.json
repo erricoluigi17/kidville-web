@@ -67,7 +67,6 @@
   "ordineCrescente": "Ordine crescente, tocca per invertire",
   "ordineDecrescente": "Ordine decrescente, tocca per invertire",
   "allergie": "Allergie",
-  "allergieNotePresenti": "Allergie/note mediche presenti",
   "cardApriScheda": "Apri scheda di {nome}",
   "cardClassi": "{n, plural, one {# classe} other {# classi}}",
   "selezionaRiga": "Seleziona {nome}",
@@ -760,5 +759,9 @@
   "legamiEsitoNonLetto": "Il server ha risposto, ma l’esito dell’operazione non si è potuto leggere: ricarica la scheda e controlla il collegamento prima di ripetere il comando.",
   "legamiNuovoAccessoCreato": "Questo adulto era già collegato a questo bambino: il legame non è cambiato. È stato creato adesso il suo accesso all’app e, se hai indicato un’email, le credenziali sono già partite.",
   "legamiNuovoEsitoIncerto": "L’anagrafica dell’adulto potrebbe essere già stata creata e, se hai indicato un’email, le credenziali potrebbero essere già partite: il server non è riuscito a confermare il collegamento. Non ripetere la creazione — chiudi, riapri la scheda del bambino e controlla se l’adulto è nell’elenco.",
-  "legamiMezzoToltoTitolo": "Riuscito a metà: l’accesso è già stato tolto"
+  "legamiMezzoToltoTitolo": "Riuscito a metà: l’accesso è già stato tolto",
+  "statConNoteMediche": "Con note mediche",
+  "allergiePresenti": "Allergie presenti",
+  "notaMedica": "Nota medica",
+  "notaMedicaPresente": "Nota medica presente"
 }

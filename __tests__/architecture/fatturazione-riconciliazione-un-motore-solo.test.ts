@@ -43,6 +43,16 @@
  *     che questa storia ha bucato una volta, e che nient'altro guarda.
  *  5. Il motore resta importabile dal SERVER: niente `use client`, niente React,
  *     niente `next-intl`.
+ *  6. La regola della LISTA DI LAVORO — «confermato + abbinato + saldato + da
+ *     fatturare» — sta anch'essa nel motore, e né la rotta né il pannello del lotto
+ *     la riscrivono. ⚠️ È l'aggiunta del 2026-09-07, e nasce dallo stesso difetto
+ *     raccontato qui sopra a un giro di distanza: quel pezzo il motore NON lo
+ *     conteneva («è una regola della lista di lavoro, non della fattura», diceva la
+ *     rotta nel proprio commento), e il giorno in cui la barra «Emetti tutte» ha
+ *     avuto bisogno di spuntare esattamente le righe che il filtro mostra, la
+ *     congiunzione è ricomparsa parola per parola dentro `selezionabile`. Le cinque
+ *     regole qui sopra non la vedevano: guardano `chipFatturazione` e gli import
+ *     della rotta. Mutando SOLO la copia della rotta il lock restava verde.
  *
  * NON verifica che la politica sia GIUSTA: quello è
  * `__tests__/pagamenti/riconciliazione-ui.test.ts` (le 75 combinazioni del
@@ -60,6 +70,7 @@ const API = path.join(RADICE, 'app', 'api')
 const MOTORE = path.join('src', 'lib', 'pagamenti', 'fatturazione-riga.ts')
 const CHIP = path.join('src', 'components', 'features', 'admin', 'pagamenti', 'riconciliazione-ui.ts')
 const ROTTA = path.join('src', 'app', 'api', 'pagamenti', 'riconciliazione', 'route.ts')
+const PANNELLO = path.join('src', 'components', 'features', 'admin', 'pagamenti', 'RiconciliazionePanel.tsx')
 
 /** Le funzioni che compongono la politica: una definizione a testa, e sta nel motore. */
 const FUNZIONI = ['esitoFatturazione', 'fatturaGiaFatta', 'fatturaDaFare']
@@ -126,7 +137,7 @@ describe('LOCK · un motore solo per lo stato di fatturazione della riga', () =>
     // Senza questo, un percorso sbagliato renderebbe VERDI tutte le regole qui
     // sotto: «zero file letti» e «zero violazioni» hanno lo stesso colore.
     expect(FILE.length).toBeGreaterThan(500)
-    for (const atteso of [MOTORE, CHIP, ROTTA]) {
+    for (const atteso of [MOTORE, CHIP, ROTTA, PANNELLO]) {
       expect(FILE.map((f) => f.relativo), atteso).toContain(atteso)
     }
     expect(sottoApi.length, 'nessun file letto sotto src/app/api').toBeGreaterThan(200)
@@ -145,12 +156,56 @@ describe('LOCK · un motore solo per lo stato di fatturazione della riga', () =>
   })
 
   it('la rotta IMPORTA i due predicati dal motore, invece di riscriverli', () => {
+    // UNO PER BIDONE del sottofiltro `?fattura=`. ⚠️ Dal 2026-09-07 il bidone «da
+    // fatturare» non passa più da `fatturaDaFare` nudo ma da
+    // `daFatturareInListaDiLavoro`, che è quello STESSO predicato più le tre
+    // condizioni della lista di lavoro (movimento confermato, pagamento abbinato e
+    // saldato). La rotta le riscriveva a mano, e il pannello del lotto le ha
+    // ricopiate: v. la regola qui sopra.
     const codice = di(ROTTA)!.codice
-    for (const nome of ['fatturaDaFare', 'fatturaGiaFatta']) {
+    for (const nome of ['daFatturareInListaDiLavoro', 'fatturaGiaFatta']) {
       expect(
         codice,
         `la rotta deve importare ${nome} da @/lib/pagamenti/fatturazione-riga`,
       ).toMatch(new RegExp(`import\\s*\\{[^}]*\\b${nome}\\b[^}]*\\}\\s*from\\s*'@/lib/pagamenti/fatturazione-riga'`))
+    }
+  })
+
+  it('la regola della LISTA DI LAVORO ha UNA definizione sola, e sta nel motore', () => {
+    // ⚠️ LA QUARTA REGOLA, ed è nata da una copia vera. «Questa riga sta nella
+    // lista di lavoro» è `stato === 'confermato' && pagamento_id &&
+    // pagamento_stato === 'pagato' && fatturaDaFare(…)`: la parte che il motore
+    // NON conteneva, e che la rotta dichiarava nel proprio commento come «una
+    // regola della LISTA DI LAVORO, non della fattura». Il 2026-09-07 la stessa
+    // congiunzione è comparsa, parola per parola, dentro `selezionabile` del
+    // pannello — perché la barra del lotto deve spuntare esattamente le righe che
+    // il filtro «Da fatturare» mostra. Due copie che oggi coincidono e che il
+    // giorno in cui una cambia divergono in silenzio: è letteralmente la storia
+    // che questo lock racconta di sé stesso, e le tre regole qui sopra non la
+    // vedevano — sorvegliano `chipFatturazione` e gli import della rotta.
+    const definizioni = FILE.filter((f) => /export\s+function\s+daFatturareInListaDiLavoro\b/.test(f.codice))
+      .map((f) => f.relativo)
+    expect(
+      definizioni,
+      `daFatturareInListaDiLavoro deve essere definita una volta sola, in ${MOTORE}.`,
+    ).toEqual([MOTORE])
+
+    for (const chiamante of [ROTTA, PANNELLO]) {
+      expect(
+        di(chiamante)!.codice,
+        `${chiamante} deve importare daFatturareInListaDiLavoro da @/lib/pagamenti/fatturazione-riga`,
+      ).toMatch(/import\s*\{[^}]*\bdaFatturareInListaDiLavoro\b[^}]*\}\s*from\s*'@\/lib\/pagamenti\/fatturazione-riga'/)
+    }
+  })
+
+  it('né la rotta né il pannello riscrivono per conto proprio «il pagamento è saldato»', () => {
+    // È la METÀ della regola che il motore non aveva, e la sola che si può
+    // sorvegliare per forma: chi la riscrive sta ricostruendo la seconda copia.
+    for (const chiamante of [ROTTA, PANNELLO]) {
+      expect(
+        di(chiamante)!.codice,
+        `${chiamante} ricostruisce la regola della lista di lavoro invece di chiamarla`,
+      ).not.toMatch(/pagamento_stato\s*===\s*'pagato'/)
     }
   })
 

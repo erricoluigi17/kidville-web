@@ -214,6 +214,20 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // perché «le due rimaste fuori» faceva sembrare chiuso ciò che è aperto.
     { ns: 'pagamenti', chiave: 'ariaCopiaIbanSede', variabile: 'count', extra: { sedi: 'Kidville Cesa' } },
     { ns: 'pagamenti', chiave: 'ariaCopiatoIbanSede', variabile: 'count', extra: { sedi: 'Kidville Cesa' } },
+    // ── 2026-09-07 · I NUMERI SULLE PILLOLE DEL FILTRO «FATTURAZIONE» ───────
+    // Quattro chiavi nate ICU, cioè nate FUORI dal riconoscitore di forma (che
+    // salta per costruzione tutto ciò che apre un blocco `plural`): senza queste
+    // quattro righe nessuno verificherebbe mai che le due clausole dicano cose
+    // diverse. E sono l'`aria-describedby` delle tre pillole — la descrizione che
+    // dice «12 movimenti da fatturare» a chi il numero non lo vede: stringhe che
+    // NESSUN collaudo a vista può trovare rotte, esattamente come le due
+    // dell'IBAN qui sopra. Le quattro portano il conteggio delle chiavi
+    // sorvegliate da 17 a 21, su 115 chiavi ICU nel catalogo italiano: il buco
+    // descritto nel commento qui sopra resta aperto, e si stringe di quattro.
+    { ns: 'adminContabilita', chiave: 'reconConteggioDaFatturare', variabile: 'n' },
+    { ns: 'adminContabilita', chiave: 'reconConteggioFatturate', variabile: 'n' },
+    { ns: 'adminContabilita', chiave: 'reconConteggioDaFatturareParziale', variabile: 'n' },
+    { ns: 'adminContabilita', chiave: 'reconConteggioFatturateParziale', variabile: 'n' },
 ]
 
 /**

@@ -113,5 +113,8 @@
   "agendaOraRientro": "Expected return",
   "agendaSalvataggio": "Saving…",
   "agendaAggiungi": "Add",
-  "agendaErroreSalvataggio": "Save failed. Please try again."
+  "agendaErroreSalvataggio": "Save failed. Please try again.",
+  "gruppoAllergie": "Allergies",
+  "gruppoNoteMediche": "Medical notes",
+  "noteMedicheDaLeggere": "{count, plural, one {# medical note} other {# medical notes}} to read"
 }

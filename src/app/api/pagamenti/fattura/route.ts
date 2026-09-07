@@ -90,6 +90,24 @@ const CODICE_NON_DEL_BAMBINO = 'INTESTATARIO_NON_DEL_BAMBINO'
  * l'intestatario scelto, qui le QUOTE del pagamento (e la fattura di ieri).
  */
 const CODICE_RIGA_ESTRANEA = 'FATTURA_RIGA_VIVA_ESTRANEA_ALLE_QUOTE'
+/**
+ * 502 — RIFIUTO DI TRASPORTO: il numero è stato consumato e nessuno sa se il
+ * documento sia partito (429 sopravvissuto al ritentativo, 401, 5xx, timeout).
+ *
+ * È l'unico rifiuto di questa rotta dopo il quale ripremere «Emetti» è la cosa
+ * SBAGLIATA — ogni altro si chiude con «nessun numero è stato consumato» — e fino
+ * a oggi usciva dal ramo generico, cioè senza `codice`: in inglese si leggeva la
+ * prosa italiana, e nessun chiamante poteva distinguerlo da un rifiuto qualunque
+ * per decidere di fermarsi. Con un lotto in corso
+ * (`src/lib/pagamenti/lotto-fatture.ts`) quella distinzione vale undici numeri di
+ * fattura consumati per niente.
+ *
+ * ⚠️ La condizione è `motivo === 'errore' && httpStatus === 502`, e le due metà
+ * servono entrambe: `motivo: 'errore'` da solo comprende anche il 500 dell'XML
+ * non composto (dove ripremere è giusto), e `502` da solo comprende lo SCARTO di
+ * merito (`motivo: 'scartata'`), dove il rimedio è correggere e riemettere.
+ */
+const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
 
 const getQuerySchema = z.object({
   pagamento_id: zUuid,
@@ -223,6 +241,15 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
         return NextResponse.json(
           { error: esito.messaggio, codice: CODICE_NON_DEL_BAMBINO, data: { motivo: esito.motivo } },
           { status: esito.httpStatus }
+        )
+      }
+      // ⚠️ PRIMA del ritorno generico: `motivo: 'errore'` finirebbe lì dentro, e
+      // il rifiuto che dice «NON ripremere» uscirebbe indistinguibile da quelli
+      // che dicono il contrario.
+      if (esito.motivo === 'errore' && esito.httpStatus === 502) {
+        return NextResponse.json(
+          { error: esito.messaggio, codice: CODICE_TRASPORTO_IGNOTO, data: { motivo: esito.motivo } },
+          { status: 502 }
         )
       }
       return NextResponse.json(

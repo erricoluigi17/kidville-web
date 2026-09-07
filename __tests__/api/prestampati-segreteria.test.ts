@@ -1796,6 +1796,39 @@ describe('POST /api/prestampati/genera — il percorso felice', () => {
     expect(testo).toContain('fragole')
   })
 
+  it('«Nessuna» accanto a un nome è una NEGAZIONE, non una dieta: non finisce sul foglio', async () => {
+    // 🔴 Il difetto: `colonnaAllergie` sommava le due colonne ma NON toglieva la
+    // negazione, mentre il motore (`etichetteAllergie`) la toglie da tutte le altre
+    // superfici — report mensa, alert del pranzo, card del docente. Il prestampato di
+    // banco, che è il foglio con cui si prepara il piatto, stampava «Nessuna» accanto
+    // al nome del bambino e lo contava fra quelli «con dieta speciale».
+    // Misurato in produzione il 2026-09-07: 6 bambini su 657 hanno un testo di
+    // negazione, e questo foglio era l'unica superficie che li stampava.
+    alunniDiSezione({
+      id: ALUNNO,
+      cognome: 'Inventato',
+      allergeni: [],
+      allergies: 'Nessuna',
+    })
+
+    const res = await POST(
+      reqGenera({
+        modello: 'stampe_sezione',
+        sezioneId: SEZIONE,
+        scuolaId: SEDE,
+        risposte: { stampa: 'allergie' },
+      }),
+    )
+    const testo = await estraiTesto(new Uint8Array(await res.arrayBuffer()))
+
+    expect(res.status).toBe(201)
+    expect(testo).not.toContain('Nessuna')
+    // E il bambino non è «con dieta»: la riga non c'è, e il foglio lo dice a parole
+    // invece di lasciare una tabella con la sola intestazione.
+    expect(testo).not.toContain('Bambini con dieta speciale: 1')
+    expect(testo).toContain('Nessun bambino della sezione ha allergie')
+  })
+
   it("il foglio delle emergenze porta i numeri utili della sede, non solo il 118", async () => {
     alunniDiSezione({ id: ALUNNO, cognome: 'Inventato', note_mediche: 'terapia salvavita' })
 

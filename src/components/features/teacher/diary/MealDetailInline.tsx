@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
-import { AlertTriangle, UtensilsCrossed } from 'lucide-react';
+import { AlertTriangle, Stethoscope, UtensilsCrossed } from 'lucide-react';
 import { MEAL_QUANTITIES } from './eventConfig';
 
 // ─── Hook mockato per il menu del giorno ──────────────────────────────────────
@@ -72,6 +72,12 @@ interface Student {
     firstName: string;
     lastName: string;
     allergie?: string[];
+    /**
+     * `alunni.note_mediche` — BES, DSA, patologie, terapie salvavita — già
+     * ripulita dalle negazioni da chi la consegna (`useDiaryDay`). NON è
+     * un'allergia e non finisce nel riquadro rosso: ha il suo.
+     */
+    notaMedica?: string | null;
 }
 
 interface MealDetailInlineProps {
@@ -117,7 +123,19 @@ export function MealDetailInline({
         // che il menu è pronto (predisposizione per futura logica di pre-fill)
     }, [isLoading, isMerenda]);
 
+    // ── DUE GRUPPI, PERCHÉ SONO DUE COSE ─────────────────────────────────────
+    // Il riquadro rosso è il PIATTO: cosa non mettere nel vassoio di questo
+    // bambino. Il secondo è la PERSONA: epilessia, terapia salvavita, ciò che
+    // sta in `note_mediche`.
+    //
+    // ⚠️ IL SECONDO GRUPPO È STATO RIMESSO, NON AGGIUNTO. Fino al 2026-09-07 la
+    // nota medica compariva qui sotto l'etichetta «Allergie» — sbagliata — e la
+    // correzione l'ha tolta senza rimetterla altrove: misurato in produzione lo
+    // stesso giorno, 29 bambini su 657 (44 con nota medica, 29 dei quali con
+    // `allergies` vuota o negata) sparivano da questa schermata. Togliere
+    // un'etichetta sbagliata non è togliere il dato.
     const studentsWithAllergies = students.filter(s => (s.allergie?.length ?? 0) > 0);
+    const studentsWithNota = students.filter(s => (s.notaMedica ?? '').trim() !== '');
 
     return (
         <div className="space-y-2">
@@ -134,6 +152,25 @@ export function MealDetailInline({
                             <p className="font-barlow font-bold text-kidville-error uppercase text-xs tracking-wide">{t('allergie')}</p>
                             <p className="font-maven text-xs text-kidville-error mt-0.5">
                                 {studentsWithAllergies.map(s => `${s.firstName}: ${s.allergie!.join(', ')}`).join(' • ')}
+                            </p>
+                        </div>
+                    </div>
+                </motion.div>
+            )}
+
+            {/* Alert note mediche — etichetta e colore SUOI: non è un'allergia */}
+            {studentsWithNota.length > 0 && (
+                <motion.div
+                    initial={{ opacity: 0, scale: 0.96 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="p-3 rounded-2xl bg-kidville-warn-soft backdrop-blur-sm border border-kidville-warn-strong/25"
+                >
+                    <div className="flex items-start gap-2">
+                        <Stethoscope size={14} className="text-kidville-warn-strong flex-shrink-0 mt-0.5" strokeWidth={1.5} />
+                        <div>
+                            <p className="font-barlow font-bold text-kidville-warn-strong uppercase text-xs tracking-wide">{t('noteMediche')}</p>
+                            <p className="font-maven text-xs text-kidville-warn-strong mt-0.5">
+                                {studentsWithNota.map(s => `${s.firstName}: ${s.notaMedica}`).join(' • ')}
                             </p>
                         </div>
                     </div>

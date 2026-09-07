@@ -113,5 +113,8 @@
   "agendaOraRientro": "Rientro previsto",
   "agendaSalvataggio": "Salvataggio…",
   "agendaAggiungi": "Aggiungi",
-  "agendaErroreSalvataggio": "Salvataggio non riuscito. Riprova."
+  "agendaErroreSalvataggio": "Salvataggio non riuscito. Riprova.",
+  "gruppoAllergie": "Allergie",
+  "gruppoNoteMediche": "Note mediche",
+  "noteMedicheDaLeggere": "{count, plural, one {# nota medica} other {# note mediche}} da leggere"
 }

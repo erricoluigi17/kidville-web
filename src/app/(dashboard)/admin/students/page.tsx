@@ -4,7 +4,7 @@ import { LIMITE_ELENCO_ALUNNI } from '@/lib/api/paginazione';
 import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck, Archive } from 'lucide-react';
+import { Search, Filter, UserPlus, Users, FileDown, CheckCircle2, GraduationCap, Briefcase, AlertTriangle, RotateCcw, ShieldCheck, Archive, Stethoscope } from 'lucide-react';
 import { StudentTable } from '@/components/features/admin/StudentTable';
 import { BulkAssignBar } from '@/components/features/admin/BulkAssignBar';
 import { SectionsView } from '@/components/features/admin/SectionsView';
@@ -58,6 +58,10 @@ interface Student {
   stato?: string;
   /** Segnale «c'è una nota medica»: la lista non riceve più il testo (W8). */
   ha_note_mediche?: boolean;
+  /** Segnale «ha un'allergia»: allergeni spuntati o testo che nomina uno dei 14
+   *  UE. È un'ALTRA colonna da `ha_note_mediche`, e per mesi sono state contate
+   *  insieme sotto la parola «Allergie». */
+  ha_allergie?: boolean;
   codice_fiscale?: string | null;
   fiscal_code?: string | null;
   bes?: boolean;
@@ -699,13 +703,28 @@ function AdminStudentsInner() {
         <>
           {/* Statistiche rapide — solo per alunni */}
           {viewType === 'child' && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            /* Cinque colonne, non quattro: con la quinta card su una griglia da
+               quattro l'ultima andrebbe a capo da sola, e una card orfana su una
+               riga sua sembra un errore di caricamento. */
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
               <StatCard icon={Users} label={t('statTotale')} value={students.length} tone="green" />
               <StatCard icon={CheckCircle2} label={t('statIscritti')} value={students.filter((s) => s.stato === 'iscritto').length} tone="success" />
               <StatCard icon={GraduationCap} label={t('statConBes')} value={students.filter((s) => s.bes).length} tone="warn" />
-              {/* Conteggio dal SEGNALE, non dal testo: la lista non riceve più la
-                  nota medica (W8), riceve solo `ha_note_mediche`. */}
-              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.ha_note_mediche).length} tone="error" />
+              {/* ── DUE CARD, PERCHÉ SONO DUE COSE ────────────────────────────
+                  «Con Allergie» contava `ha_note_mediche`, cioè la casella che il
+                  modulo d'iscrizione chiama «Note Mediche (BES, DSA, patologie)».
+                  Misurato in produzione il 2026-09-07, su 657 iscritti: 44 note
+                  mediche, 63 testi `allergies` e 27 bambini che nominano uno dei
+                  14 allergeni UE — questa card passa da 44 a 27. Ora ogni card
+                  conta il proprio segnale.
+                  ⚠️ I numeri invecchiano (le iscrizioni crescono ogni giorno): chi
+                  li rilegge li rimisuri invece di fidarsene. Ciò che NON invecchia
+                  è la regola: qui si CONTA, e si contano i 14 UE; gli ELENCHI —
+                  cucina, alert del pranzo, card del docente — tengono anche il
+                  testo non riconosciuto: 57 operativi contro 27 conteggiabili,
+                  cioè altri 30 bambini. */}
+              <StatCard icon={AlertTriangle} label={t('statConAllergie')} value={students.filter((s) => s.ha_allergie).length} tone="error" />
+              <StatCard icon={Stethoscope} label={t('statConNoteMediche')} value={students.filter((s) => s.ha_note_mediche).length} tone="info" />
             </div>
           )}
 

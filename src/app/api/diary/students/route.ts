@@ -149,7 +149,13 @@ export const GET = withRoute('diary/students:GET', async (request: NextRequest) 
 
     const { data: alunni, error } = await admin
         .from('alunni')
-        .select('id, nome, cognome, note_mediche, classe_sezione, consenso_privacy')
+        // `allergeni` e `allergies` accanto a `note_mediche`: la home del docente
+        // mostrava un riquadro intitolato «Allergie e note mediche» che di allergie
+        // non sapeva niente — contava `note_mediche`, cioè la casella «Note Mediche
+        // (BES, DSA, patologie)» del modulo d'iscrizione. Nessun nuovo livello di
+        // esposizione: questa route consegna già la nota medica agli stessi occhi,
+        // dietro lo stesso gate (`requireDocente` + sezioni assegnate).
+        .select('id, nome, cognome, note_mediche, allergeni, allergies, classe_sezione, consenso_privacy')
         // Per UUID, non per nome. `.in` e non `.eq`: un admin multi-plesso che
         // chiede un nome omonimo ha legittimamente più di una sezione.
         .in('section_id', classe.sectionIds)

@@ -32,7 +32,6 @@
   "galleryAlertTagAggiornati": "Tags updated successfully!",
   "galleryErrTag": "Error while updating tags.",
   "galleryErrReteTag": "Network error while updating tags.",
-
   "lockerEyebrow": "Tools",
   "lockerTitolo": "Locker",
   "lockerSottotitolo": "Supplies and deliveries · Section {sezione}",
@@ -66,11 +65,9 @@
   "lockerConferma": "✓ Confirm",
   "lockerAnnulla": "Cancel",
   "lockerConsegneMensili": "Monthly deliveries",
-
   "lockerSemaforoEsaurito": "🔴 Out of stock",
   "lockerSemaforoInEsaurimento": "🟡 Running low",
   "lockerSemaforoOk": "🟢 OK",
-
   "lockerModalTitolo": "Record Delivery",
   "lockerModalConfiguraMateriali": "Configure materials",
   "lockerModalAlunno": "Student",
@@ -87,7 +84,6 @@
   "lockerModalErrMateriale": "Select a material",
   "lockerModalErrQuantita": "Enter a valid quantity",
   "lockerModalErrSalvataggio": "Error while saving",
-
   "lockerTableNessunDato": "No data available for {mese}",
   "lockerTableTuttiMateriali": "All materials",
   "lockerTableTuttiMaterialiDash": "— All materials —",
@@ -96,7 +92,6 @@
   "lockerTablePortato": "Brought",
   "lockerTableNonPortato": "Not brought",
   "lockerTableNessunDatoLegenda": "No data",
-
   "mensaEyebrow": "School life",
   "mensaTitolo": "Canteen",
   "mensaSottotitolo": "Class lunch bookings (read-only).",
@@ -114,7 +109,6 @@
   "mensaRichiestaGenitore": "(requested by the parent)",
   "mensaBambini": "{count, plural, one {# child} other {# children}}",
   "mensaAllergeneMenu": "allergen in the menu",
-
   "modulisticaEyebrow": "Documents",
   "modulisticaTitolo": "Forms",
   "modulisticaSottotitolo": "Consents and certificates · Section {sezione}",
@@ -159,7 +153,6 @@
   "modulisticaCertValidato": "✅ Certificate validated.",
   "modulisticaCertRifiutato": "⛔ Certificate rejected.",
   "modulisticaErrValidazione": "❌ Error during validation",
-
   "modulisticaFiltroSezione": "Class",
   "modulisticaFiltroModulo": "Form",
   "modulisticaFiltroStato": "Status",
@@ -171,7 +164,6 @@
   "modulisticaVuotoSemaforoTesto": "The list fills up with the children enrolled in the class: if it is empty, either the class has none yet, or the selected form is not assigned to this class.",
   "modulisticaNessunModuloSezione": "No authorisation form for this class",
   "modulisticaVuotoCertTesto": "Certificates appear here as soon as a family uploads one from the app.",
-
   "settingsEyebrow": "Locker",
   "settingsTitolo": "Materials",
   "settingsSottotitolo": "Configure the materials that parents deliver daily",
@@ -215,5 +207,9 @@
   "lockerChiudiCarico": "Close",
   "galleryAlertVideoNonConvertibile": "This video cannot be converted on this device. On iPhone: Settings → Camera → Formats → \"Most Compatible\", then record again. Alternatively upload an .mp4 (H.264) or .webm file.",
   "galleryAlertVideoFormatoNonSupportato": "Unsupported video format ({tipo}). Upload an .mp4 (H.264) or .webm file: .mov/HEVC videos (typical of iPhone) must be converted before uploading.",
-  "galleryAlertVideoOltreIlLimite": "The video exceeds the 50 MB limit (current size: {dimensione}). Shorten it or lower its quality, then try again."
+  "galleryAlertVideoOltreIlLimite": "The video exceeds the 50 MB limit (current size: {dimensione}). Shorten it or lower its quality, then try again.",
+  "galleryErrTroppoGrande": "The file is over 50 MB. Record a shorter video and try again.",
+  "galleryErrFirma": "The upload could not be prepared. Please try again in a few minutes.",
+  "galleryErrTrasferimento": "The upload was interrupted. Please try again.",
+  "galleryErrRete": "No connection: the file was not sent. Try again when you are back online."
 }

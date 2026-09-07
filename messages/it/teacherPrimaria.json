@@ -230,5 +230,6 @@
   "prospettoToccaRiga": "Tocca una riga per vedere il dettaglio per obiettivo.",
   "prospettoNessunaValutazioneMateria": "Nessuna valutazione registrata per questa materia.",
   "prospettoMediaMatematica": "Media matematica (giudizi sintetici)",
-  "prospettoDescrittivo": "descrittivo"
+  "prospettoDescrittivo": "descrittivo",
+  "appelloOrarioNonSalvato": "Non sono riuscito a salvare l’orario di {nome}. L’ora mostrata è tornata quella di prima: riprova."
 }

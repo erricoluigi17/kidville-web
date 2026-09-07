@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Minus, Moon, Sun } from 'lucide-react';
+import { X, Plus, Minus, Moon, Sun, Trash2 } from 'lucide-react';
 import { DiaryEventType } from '@/lib/offline/db';
 import { EventTypeButton } from '@/components/features/teacher/diary/EventTypeButton';
 import { EVENT_CONFIG, BATHROOM_TYPES, useEventLabel } from '@/components/features/teacher/diary/eventConfig';
@@ -11,6 +11,7 @@ import { MealDetailInline } from '@/components/features/teacher/diary/MealDetail
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ActivityDetailInline, ActivityItem } from '@/components/features/teacher/diary/ActivityDetailInline';
 import { UMORE_VALUES, UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreAttivo } from '@/lib/diary/umore';
+import { eEventoNanna, nannaCompilata } from '@/lib/diary/nanna';
 import { fetchDiarioConfig } from '@/lib/diary/config-cache';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
 import { etichetteAllergie, isNegazione, useAllergeneLabel } from '@/lib/mensa/allergeni';
@@ -265,6 +266,11 @@ export function useDiaryDay(
                     // Eventi umore senza valore (legacy {umore:null}) non contano
                     // come compilati: niente ✅ né ripristino stato.
                     if (eventType === 'umore' && !umoreFromDettagli(entry.dettagli)) return;
+                    // Stessa regola per la nanna, e qui rende inerti anche le righe
+                    // vuote GIÀ in archivio: senza questa riga, riaprendo la schermata
+                    // l'intera sezione risulterebbe «nanna registrata» con l'ora vuota,
+                    // e la ✅ è ciò che dice alla maestra «questo bambino è a posto».
+                    if (eEventoNanna(eventType) && !nannaCompilata(eventType, entry.dettagli)) return;
                     newState[studentId] = entry.dettagli;
                     savedIds.add(studentId);
                 }
@@ -360,6 +366,43 @@ export function useDiaryDay(
         setSavedStudentIds(new Set());
     };
 
+    /**
+     * ELIMINA una registrazione di nanna segnata per errore.
+     *
+     * Perché serve un gesto suo, e non «svuota il campo e risalva»: dopo il filtro
+     * selettivo, un campo vuoto ESCLUDE quel bambino dal payload, quindi il
+     * salvataggio lascerebbe la riga in archivio esattamente com'era — un no-op che
+     * SEMBRA aver funzionato, perché il campo è vuoto a schermo e la ✅ è sparita.
+     * Sarebbe il difetto che stiamo chiudendo, riaperto dal suo stesso rimedio.
+     *
+     * Niente aggiornamento ottimistico: la ✅ si toglie SOLO a cancellazione avvenuta.
+     * Una spunta che sparisce mentre la riga resta è la bugia opposta a quella di prima.
+     */
+    const eliminaRegistrazione = async (studentId: string) => {
+        if (!selectedEvent || !userId || !eEventoNanna(selectedEvent)) return;
+        const campo = selectedEvent === 'nanna_fine' ? 'orario_fine' : 'orario_inizio';
+        try {
+            const qs = new URLSearchParams({
+                alunno_id: studentId,
+                tipo_evento: selectedEvent,
+                date: todayISO(),
+                userId,
+            });
+            const res = await fetch(`/api/diary/entries?${qs.toString()}`, {
+                method: 'DELETE',
+                headers: { 'x-user-id': userId },
+            });
+            if (!res.ok) throw new Error(String(res.status));
+            setSavedStudentIds(prev => { const n = new Set(prev); n.delete(studentId); return n; });
+            setStudentStates(prev => ({ ...prev, [studentId]: { ...prev[studentId], [campo]: '' } }));
+        } catch (err) {
+            // Del guasto esce il codice e basta: il diario è il posto con i dati più
+            // delicati dell'app, e il nome del bambino non entra in nessun log.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `diario-eliminazione-fallita: ${nomeErrore(err)}` });
+            alert(t('alertErroreEliminazione'));
+        }
+    };
+
     // Cambio sezione dal consumer: la selezione e le spunte riferivano la sezione precedente.
     const resetSelection = () => {
         setSelectedEvent(null);
@@ -371,12 +414,27 @@ export function useDiaryDay(
         try {
             if (!selectedEvent || !userId) return;
             const nowIso = new Date().toISOString();
-            // Umore è opzionale per bambino: si salvano SOLO gli alunni con un
-            // valore scelto, altrimenti si upserterebbero eventi {umore:null}
-            // che marcano ✅ tutti e sopprimono lo stato vuoto lato genitore.
+            // CHI FINISCE IN ARCHIVIO. Tre casi, non due — e il secondo è nato da un
+            // difetto vero, segnalato dal titolare.
+            //
+            // · umore: opzionale per bambino. Salvare {umore:null} marcherebbe ✅ tutti
+            //   e sopprimerebbe lo stato vuoto lato genitore.
+            //
+            // · nanna/sveglia: si salva SOLO chi ha l'orario. Prima cadevano nel ramo
+            //   `else`, quindi una riga per ogni bambino presente anche con l'ora vuota,
+            //   e il genitore di chi NON aveva dormito leggeva «Ho fatto un bel
+            //   sonnellino! 😴». Non era un dato mancante: era una frase falsa nel
+            //   diario di suo figlio. La regola «'' non è un'ora» sta in
+            //   `@/lib/diary/nanna`, un posto solo per tutti e tre i lettori.
+            //
+            // · tutto il resto (pranzo, merenda, bagno, attività): si salva TUTTI, ed è
+            //   corretto. Lì lo stato vuoto È un dato — «segnato: non ha mangiato niente»
+            //   è diverso da «non l'ho segnato».
             const targetStudents = selectedEvent === 'umore'
                 ? students.filter(s => umoreFromDettagli(studentStates[s.id]) !== null)
-                : students;
+                : eEventoNanna(selectedEvent)
+                    ? students.filter(s => nannaCompilata(selectedEvent, studentStates[s.id]))
+                    : students;
             if (targetStudents.length === 0) return;
             const payload = targetStudents.map(student => {
                 // dettagli specifico per tipo evento:
@@ -464,6 +522,7 @@ export function useDiaryDay(
         counter,
         bulkNannaOra,
         handleSave,
+        eliminaRegistrazione,
         resetSelection,
     };
 }
@@ -481,9 +540,20 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
         isSaving, showSavedToast,
         handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, handleSave,
+        eliminaRegistrazione,
     } = day;
 
     const cfg = selectedEvent ? EVENT_CONFIG[selectedEvent] : null;
+
+    // QUANTI FINIRANNO IN ARCHIVIO. Per la nanna il salvataggio è selettivo, quindi
+    // «Salva Nanna per tutti» sarebbe una frase falsa sul pulsante che la esegue —
+    // e a zero bambini compilati sarebbe anche un pulsante che non fa niente senza
+    // dirlo (l'handler esce subito). Il conteggio rende visibile la regola, e il
+    // pulsante disabilitato rende visibile il no-op.
+    const nannaSelettiva = selectedEvent !== null && eEventoNanna(selectedEvent);
+    const daSalvare = nannaSelettiva
+        ? students.filter(s => nannaCompilata(selectedEvent!, studentStates[s.id])).length
+        : students.length;
 
     // Tessera selezionata: la scorro in vista quando cambia (mobile a 6-7
     // tessere può iniziare con quella scelta fuori dallo schermo). Niente
@@ -585,6 +655,14 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                         <Moon size={14} strokeWidth={1.5} /> {t('tuttiANannaOra', { ora: now() })}
                                     </button>
                                 )}
+                                {/* Il pulsante si chiama «Tutti a nanna ora»: da quando si salva
+                                    solo chi ha l'orario, quel nome da solo prometterebbe una cosa
+                                    che non fa più. Questa riga dice cosa fa davvero. */}
+                                {selectedEvent === 'nanna_inizio' && students.length > 0 && (
+                                    <p className="font-maven text-[11px] text-kidville-sub text-center mb-1 px-2">
+                                        {t('nannaAiutoCompilazione')}
+                                    </p>
+                                )}
 
                                 {/* ── NANNA (inizio) / SVEGLIA (fine) — due eventi distinti (PRD §3.1.1) ── */}
                                 {(selectedEvent === 'nanna_inizio' || selectedEvent === 'nanna_fine') && students.map((student, idx) => {
@@ -608,6 +686,31 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                                     {student.firstName} {student.lastName}
                                                     {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                                                 </span>
+                                                {/* ELIMINA — compare solo su una registrazione che ESISTE
+                                                    in archivio (la ✅). Svuotare il campo non basterebbe:
+                                                    da quando si salva solo chi ha l'orario, un campo vuoto
+                                                    ESCLUDE il bambino dal salvataggio, quindi la riga
+                                                    resterebbe dov'è. Sarebbe un no-op che sembra riuscito. */}
+                                                {isSaved && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const nome = `${student.firstName} ${student.lastName}`;
+                                                            // La nota per-bambino sta sulla STESSA riga e sparisce
+                                                            // con lei: chi conferma deve saperlo.
+                                                            const haNota = Boolean(notaBambino[student.id]?.trim());
+                                                            const domanda = haNota
+                                                                ? t('nannaConfermaEliminaConNota', { nome })
+                                                                : t('nannaConfermaElimina', { nome });
+                                                            if (!confirm(domanda)) return;
+                                                            void eliminaRegistrazione(student.id);
+                                                        }}
+                                                        aria-label={t('nannaEliminaAria', { nome: `${student.firstName} ${student.lastName}` })}
+                                                        className="flex-shrink-0 min-h-[44px] px-2 rounded-xl text-kidville-error-strong font-maven text-xs font-semibold flex items-center gap-1 hover:bg-kidville-error-soft transition-colors"
+                                                    >
+                                                        <Trash2 size={14} strokeWidth={1.5} /> {t('nannaEliminaRegistrazione')}
+                                                    </button>
+                                                )}
                                             </div>
                                             <div className="flex items-center gap-1.5 mb-1.5">
                                                 {isInizio
@@ -828,12 +931,14 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                             <div className="px-4 py-3 border-t border-kidville-line">
                                 <button
                                     onClick={handleSave}
-                                    disabled={isSaving}
+                                    disabled={isSaving || daSalvare === 0}
                                     className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                                 >
                                     {isSaving
                                         ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('salvataggio')}</>
-                                        : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '') })}</>
+                                        : nannaSelettiva
+                                            ? <><span>{cfg.emoji}</span> {daSalvare === 0 ? t('nannaNessunOrario') : t('salvaConOrario', { count: daSalvare })}</>
+                                            : <><span>{cfg.emoji}</span> {t('salvaPerTutti', { evento: eventLabel(selectedEvent ?? '') })}</>
                                     }
                                 </button>
                             </div>

@@ -10,13 +10,10 @@
   "titleTutti": "Sto mostrando tutti i bambini",
   "titlePresenti": "Sto mostrando solo i presenti",
   "offline": "Offline",
-
   "registra": "Registra",
-
   "bambiniSelezionati": "{count, plural, one {# bambino selezionato} other {# bambini selezionati}}",
   "deselezionaTutti": "Deseleziona tutti",
   "azioneApplicata": "L’azione verrà applicata a tutti i bambini selezionati",
-
   "activity_pittura": "Pittura",
   "activity_musica": "Musica",
   "activity_lettura": "Lettura",
@@ -36,7 +33,6 @@
   "partecipazione": "Partecipazione",
   "bambiniCompilati": "{total, plural, one {{done}/{total} bambino compilato} other {{done}/{total} bambini compilati}}",
   "aggiungiAttivita": "Aggiungi attività",
-
   "portataPrimo": "Primo piatto",
   "portataSecondo": "Secondo piatto",
   "portataContorno": "Contorno",
@@ -44,7 +40,6 @@
   "merenda": "Merenda",
   "allergie": "Allergie",
   "menuDelGiorno": "Menu del giorno",
-
   "cosaRegistrare": "Cosa vuoi registrare?",
   "numBambini": "{count, plural, one {# bambino} other {# bambini}}",
   "tuttiANannaOra": "Tutti a nanna ora ({ora})",
@@ -69,5 +64,13 @@
   "bagnoCaccaPiu": "Aumenta cacca",
   "bagnoVasinoMeno": "Diminuisci vasino",
   "bagnoVasinoPiu": "Aumenta vasino",
-  "noteMediche": "Note mediche"
+  "noteMediche": "Note mediche",
+  "nannaAiutoCompilazione": "Riempie l’ora a tutti: si salva solo chi ce l’ha.",
+  "nannaEliminaRegistrazione": "Elimina",
+  "nannaEliminaAria": "Elimina la registrazione di {nome}",
+  "nannaConfermaElimina": "Elimini la nanna di {nome}? La registrazione sparisce dal diario del genitore.",
+  "nannaConfermaEliminaConNota": "Elimini la nanna di {nome}? Sparisce anche la nota scritta per lui/lei.",
+  "salvaConOrario": "{count, plural, one {Salva # bambino} other {Salva # bambini}}",
+  "nannaNessunOrario": "Nessun orario compilato",
+  "alertErroreEliminazione": "Non sono riuscito a eliminare la registrazione. Riprova."
 }

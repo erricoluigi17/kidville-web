@@ -1,10 +1,11 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import { useTranslations, useLocale } from 'next-intl';
-import { intlDateTime } from '@/i18n/config';
+import { type ReactNode } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion } from 'framer-motion';
 import { User, Clock, CheckCircle, Timer, LogOut, X } from 'lucide-react';
+import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
+import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 
 export type AttendanceStato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 
@@ -35,12 +36,31 @@ interface Student {
     lastName: string;
 }
 
+// Il tipo vive ora accanto al componente che lo usa. Si ri-esporta perché la pagina
+// dell'appello 0-6 lo importa da qui: cambiare anche quel percorso sarebbe un secondo
+// spostamento dentro un'estrazione che vuole restare uno spostamento solo.
+export type { CampoOrario };
+
 interface Props {
     student: Student;
     record?: AttendanceRecord;
     onSetStato: (studentId: string, stato: AttendanceStato) => void;
     onCheckoutClick: (studentId: string) => void;
     isLoading?: boolean;
+    /**
+     * Rettifica di un ORARIO già registrato. **Opzionale, e non per pigrizia**: due
+     * schermate montano questa riga senza (e i loro test lo verificano), quindi
+     * senza questa prop la riga resta esattamente quella di prima — l'orario è
+     * testo, e non compare nessun comando.
+     */
+    onSetOrario?: (studentId: string, campo: CampoOrario, ora: string) => void;
+    /**
+     * Quale dei due orari si sta salvando. Separato da `isLoading` di proposito:
+     * `isLoading` sostituisce l'INTERO gruppo di bottoni con uno spinner, e usarlo
+     * qui farebbe sparire dagli occhi della maestra proprio l'ora che sta
+     * correggendo.
+     */
+    orarioInCorso?: CampoOrario | null;
 }
 
 // Solo i token cromatici del badge "uscita anticipata"; le etichette testuali
@@ -105,23 +125,23 @@ const STATI_BOTTONI: {
     },
 ];
 
-function formatTime(isoString: string | null, locale: string): string | null {
-    if (!isoString) return null;
-    try {
-        return intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(isoString));
-    } catch {
-        return isoString;
-    }
-}
+/**
+ * L'ora italiana di un orario di presenza.
+ *
+ * Era la settima copia di questa lettura, e l'unica che dichiarasse il fuso — ma
+ * cadeva comunque sul `catch { return isoString }` per le altre due forme che la
+ * colonna contiene (`08:45` e l'ISO naïve della primaria), restituendo la stringa
+ * grezza. Ora passa dal motore, che le conosce tutte e tre.
+ */
 
-export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading }: Props) {
+
+export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutClick, isLoading, onSetOrario, orarioInCorso }: Props) {
     const t = useTranslations('teacherPresenze');
     // L'etichetta della giustifica del genitore è GIÀ tradotta (it/en) per
     // l'appello della primaria: si riusa quella invece di scriverne una gemella.
     // Due copie della stessa frase divergono al primo ritocco — è la lezione che
     // questo ciclo ha già pagato quattro volte.
     const tp = useTranslations('teacherPrimaria');
-    const locale = useLocale();
     const motivoGenitore = (record?.giustificazione_testo ?? '').trim();
     const stato = record?.stato ?? null;
     const isPresente = stato === 'presente';
@@ -129,8 +149,17 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
     const isUscitaAnticipata = stato === 'uscita_anticipata';
     const isAssente = stato === 'assente';
 
-    const checkInTime = formatTime(record?.orario_entrata ?? null, locale);
-    const checkOutTime = formatTime(record?.orario_uscita ?? null, locale);
+    const nomeAlunno = `${student.firstName} ${student.lastName}`;
+    // Quali orari hanno senso, per stato: la tabella di verità sta in
+    // `@/lib/presenze/orario-ammesso`, ed è LA STESSA che il server usa per il suo 422.
+    // Scritta qui a mano, divergeva: fino al 2026-09-07 l'uscita si mostrava solo a chi
+    // era in `uscita_anticipata`, quindi un bambino uscito all'orario normale non aveva
+    // nessuna ora d'uscita da registrare.
+    const ammessi = orariAmmessi(stato);
+    const mostraEntrata = ammessi.entrata;
+    const mostraUscita = ammessi.uscita;
+    const salva = (campo: CampoOrario) =>
+        onSetOrario ? (ora: string) => onSetOrario(student.id, campo, ora) : null;
 
     // ── Bordo sinistro = UNICO segnale cromatico dello stato della riga ──────────
     // WCAG 2.1 §1.4.11 chiede 3:1 per un segnale di stato non testuale, e i fondi
@@ -178,16 +207,32 @@ export function StudentAttendanceRow({ student, record, onSetStato, onCheckoutCl
                     <h3 className="font-barlow font-semibold text-lg text-kidville-green uppercase tracking-wide truncate">
                         {student.firstName} {student.lastName}
                     </h3>
-                    <div className="flex items-center gap-3 text-xs text-kidville-muted font-maven">
-                        {checkInTime && (
-                            <span className="flex items-center gap-1">
-                                <Clock size={11} /> {t('ingresso')}: {checkInTime}
-                            </span>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-kidville-sub font-maven">
+                        {mostraEntrata && (
+                            <OrarioCorreggibile
+                                campo="entrata"
+                                valore={record?.orario_entrata ?? null}
+                                etichetta={t('ingresso')}
+                                icona={<Clock size={11} />}
+                                alunno={student.id}
+                                nomeAlunno={nomeAlunno}
+                                ariaKey="orarioIngressoAria"
+                                inCorso={orarioInCorso === 'entrata'}
+                                onSalva={salva('entrata')}
+                            />
                         )}
-                        {checkOutTime && (
-                            <span className="flex items-center gap-1">
-                                <LogOut size={11} /> {t('uscita')}: {checkOutTime}
-                            </span>
+                        {mostraUscita && (
+                            <OrarioCorreggibile
+                                campo="uscita"
+                                valore={record?.orario_uscita ?? null}
+                                etichetta={t('uscita')}
+                                icona={<LogOut size={11} />}
+                                alunno={student.id}
+                                nomeAlunno={nomeAlunno}
+                                ariaKey="orarioUscitaAria"
+                                inCorso={orarioInCorso === 'uscita'}
+                                onSalva={salva('uscita')}
+                            />
                         )}
                     </div>
                     {/* IL MOTIVO COMUNICATO DAL GENITORE — la finalità dichiarata

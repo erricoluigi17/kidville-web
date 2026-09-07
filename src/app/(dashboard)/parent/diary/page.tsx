@@ -14,8 +14,10 @@ import { fetchConCache } from '@/lib/offline/read-cache';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
+import { eEventoNanna, nannaCompilata } from '@/lib/diary/nanna';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
+import { oraDiRoma } from '@/lib/presenze/orario';
 
 // Tipo del traduttore next-intl: serve per passare `t` alle funzioni helper
 // (narrativa, etichetta del giorno) definite fuori dal componente, dove gli
@@ -57,17 +59,25 @@ const MEAL_ICONS: Record<string, string> = {
 
 // Orario leggibile per l'entrata: un ISO (timestamp dell'appello) diventa 'HH:MM'
 // in ora locale; ciò che ISO non è (es. già 'HH:MM') passa invariato.
-function formatOrarioEntrata(raw: string | null | undefined, locale: string): string | null {
-    if (!raw) return null;
-    const d = new Date(raw);
-    return !isNaN(d.getTime())
-        ? intlDateTime(locale, { hour: '2-digit', minute: '2-digit' }).format(d)
-        : raw;
+/**
+ * L'ora d'ingresso mostrata al genitore nel diario.
+ *
+ * Il fuso lo dichiarava già (`intlDateTime`), quindi sull'ISO diceva il vero — ma
+ * era la SESTA copia della stessa lettura, e sulle altre due forme in colonna
+ * (`08:45` e l'ISO naïve della primaria) cadeva sul ramo `: raw`, cioè restituiva
+ * la stringa grezza sperando che somigliasse a un'ora. Ora passa dal motore, che
+ * le conosce tutte e tre. Il `locale` non serve più: l'ora di una scuola italiana
+ * si scrive `HH:MM` in tutte e due le lingue dell'app.
+ */
+function formatOrarioEntrata(raw: string | null | undefined): string | null {
+    return oraDiRoma(raw);
 }
 
-function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, t: Traduci, locale: string): { lines: string[], emoji: string } {
+// `locale` non serve più: l'unica cosa che lo usava era la formattazione dell'ora
+// d'ingresso, che ora passa dal motore condiviso e rende `HH:MM` in entrambe le lingue.
+function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknown> | null, t: Traduci): { lines: string[], emoji: string } {
     if (tipo === 'entrata') {
-        const orario = formatOrarioEntrata((dettagli?.orario as string) ?? '', locale) ?? '';
+        const orario = formatOrarioEntrata((dettagli?.orario as string) ?? '') ?? '';
         return {
             emoji: '👋',
             lines: orario
@@ -134,6 +144,12 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const ini = dettagli?.orario_inizio as string | undefined;
         const fin = dettagli?.orario_fine   as string | undefined;
         const lines: string[] = [];
+        // ⚠️ `nannaGenerica` («Ho fatto un bel sonnellino!») è la RETE, non la strada.
+        // È la frase che per mesi ha raccontato un sonnellino mai avvenuto, perché il
+        // diario salvava una riga di nanna anche con l'ora vuota. Da quando la
+        // timeline filtra le nanne non compilate (`timelineEntries`), questo ramo è
+        // irraggiungibile: resta perché una voce con l'ora persa per altra via non
+        // deve comparire muta, non perché serva ancora.
         if (ini && fin) lines.push(t('nannaDurata', { inizio: ini, fine: fin }));
         else if (ini)   lines.push(t('nannaInizio', { inizio: ini }));
         else            lines.push(t('nannaGenerica'));
@@ -204,7 +220,6 @@ export function EventCard({ entry, index }: { entry: DiaryEntry; index: number }
         entry.tipo_evento,
         entry.dettagli,
         t,
-        f.locale,
     );
     const borderColor = config.accentColor.split(' ').find(c => c.startsWith('border-')) ?? 'border-kidville-line';
 
@@ -384,7 +399,7 @@ function ParentDiaryContent() {
             // "Entrata" dal modulo Presenze (orario di check-in del giorno)
             const ciRes = await fetch(`/api/diary/checkin?alunno_id=${alunnoId}&date=${dk}`).catch(() => null);
             const ci = ciRes?.ok ? await ciRes.json().catch(() => null) : null;
-            setCheckIn(formatOrarioEntrata(ci?.orario_entrata, f.locale));
+            setCheckIn(formatOrarioEntrata(ci?.orario_entrata));
 
             // Carica foto reali associate a questo alunno per il giorno selezionato
             // (GET gated: identità anche via header, oltre alla sessione)
@@ -400,7 +415,7 @@ function ParentDiaryContent() {
         } finally {
             setLoadedKey(dk);
         }
-    }, [ready, alunnoId, parentId, f.locale]);
+    }, [ready, alunnoId, parentId]);
 
     useEffect(() => { load(dateKey); }, [dateKey, load]);
 
@@ -427,7 +442,26 @@ function ParentDiaryContent() {
     // nel banner giallo, non nella timeline.
     const umore = umoreFromDettagli(entries.find(e => e.tipo_evento === 'umore')?.dettagli);
     const umoreCfg = umore ? UMORE_CONFIG[umore] : null;
-    const timelineEntries = entries.filter(e => e.tipo_evento !== 'umore');
+    // Fuori dalla timeline: l'umore (vive nel banner, non fra le voci) e le nanne
+    // NON COMPILATE.
+    //
+    // Queste ultime sono il difetto che il titolare ha segnalato, visto dal lato di
+    // chi lo subiva: il diario salvava una riga di nanna per OGNI bambino presente,
+    // anche con l'ora vuota, e qui sotto il ramo generico della narrativa la
+    // raccontava come «Ho fatto un bel sonnellino! 😴». Il genitore di un bambino
+    // che non aveva dormito leggeva una frase falsa, ogni pomeriggio.
+    //
+    // Il filtro sta DOPO `deduplicateAndSort` di proposito: quella funzione tiene
+    // l'ULTIMA voce per tipo, quindi filtrare prima farebbe riemergere una voce
+    // vecchia al posto di quella corrente — mostrerebbe un sonnellino di ieri invece
+    // di niente. Filtrare dopo mostra il vero: la voce non c'è.
+    //
+    // Vale anche per le righe già in archivio: nessuna migrazione, nessuna
+    // cancellazione retroattiva sul diario di un bambino.
+    const timelineEntries = entries.filter(e =>
+        e.tipo_evento !== 'umore' &&
+        !(eEventoNanna(e.tipo_evento) && !nannaCompilata(e.tipo_evento, e.dettagli)),
+    );
 
     const slideVariants = {
         enter: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),

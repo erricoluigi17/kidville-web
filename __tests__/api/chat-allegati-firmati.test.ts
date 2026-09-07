@@ -94,16 +94,31 @@ const storage = {
 const adminClient = {
   storage,
   from(table: string) {
-    const st: { filters: Record<string, unknown> } = { filters: {} }
+    const st: { filters: Record<string, unknown>; discendente?: boolean } = { filters: {} }
     const b: Record<string, unknown> = {}
     b.select = () => b
-    b.order = () => b
+    /**
+     * L'ORDINAMENTO SI ONORA, dal 2026-09-07. Prima era `() => b`, cioè un no-op,
+     * e andava bene finché la route leggeva in ordine crescente. Adesso legge la
+     * CODA della conversazione (`ascending: false` + `range`, poi rovescia): con
+     * un mock che ignora l'ordine, il `.reverse()` della route ribaltava le righe
+     * e `messages[1]` diventava un altro messaggio. Un mock che non emula ciò che
+     * il codice chiede non misura il codice: misura sé stesso.
+     */
+    b.order = (_colonna: string, opzioni?: { ascending?: boolean }) => {
+      if (opzioni?.ascending === false) st.discendente = true
+      return b
+    }
     b.eq = (c: string, v: unknown) => { st.filters[c] = v; return b }
     b.neq = () => b
     b.in = () => b
     b.is = () => b
     b.limit = () => b
-    b.range = async () => ({ data: h.messages, count: h.messages.length, error: null })
+    b.range = async () => ({
+      data: st.discendente ? [...h.messages].reverse() : h.messages,
+      count: h.messages.length,
+      error: null,
+    })
     b.maybeSingle = async () => {
       if (table === 'chat_threads') return { data: h.thread, error: null }
       if (table === 'utenti') return { data: { scuola_id: 'sc-1' }, error: null }

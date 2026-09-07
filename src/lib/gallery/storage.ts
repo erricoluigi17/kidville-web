@@ -17,8 +17,12 @@
 
 import { logEvento } from '@/lib/logging/logger'
 
-/** Il bucket dei media di galleria (foto e video dei bambini). Privato. */
-export const BUCKET_GALLERIA = 'gallery'
+// I limiti del bucket vivono in `./limiti.ts`, un modulo SENZA import: li legge anche
+// il caricatore che gira nel browser, e questo file tira `@/lib/logging/logger` →
+// `@/lib/supabase/server-client`. Passando di qui, il bundle del client si portava
+// dentro il client service-role — la build lo diceva in chiaro, elencando la catena.
+export { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime } from './limiti'
+import { BUCKET_GALLERIA } from './limiti'
 
 /**
  * Durata del link firmato: 10 minuti.

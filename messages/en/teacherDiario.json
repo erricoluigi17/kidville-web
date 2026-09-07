@@ -10,13 +10,10 @@
   "titleTutti": "Showing all children",
   "titlePresenti": "Showing only children who are present",
   "offline": "Offline",
-
   "registra": "Log",
-
   "bambiniSelezionati": "{count, plural, one {# child selected} other {# children selected}}",
   "deselezionaTutti": "Deselect all",
   "azioneApplicata": "The action will be applied to all selected children",
-
   "activity_pittura": "Painting",
   "activity_musica": "Music",
   "activity_lettura": "Reading",
@@ -36,7 +33,6 @@
   "partecipazione": "Participation",
   "bambiniCompilati": "{total, plural, one {{done}/{total} child filled in} other {{done}/{total} children filled in}}",
   "aggiungiAttivita": "Add activity",
-
   "portataPrimo": "First course",
   "portataSecondo": "Second course",
   "portataContorno": "Side dish",
@@ -44,7 +40,6 @@
   "merenda": "Snack",
   "allergie": "Allergies",
   "menuDelGiorno": "Today’s menu",
-
   "cosaRegistrare": "What would you like to log?",
   "numBambini": "{count, plural, one {# child} other {# children}}",
   "tuttiANannaOra": "Everyone down for a nap now ({ora})",
@@ -69,5 +64,13 @@
   "bagnoCaccaPiu": "Increase poo",
   "bagnoVasinoMeno": "Decrease potty",
   "bagnoVasinoPiu": "Increase potty",
-  "noteMediche": "Medical notes"
+  "noteMediche": "Medical notes",
+  "nannaAiutoCompilazione": "Fills in the time for everyone: only those with a time are saved.",
+  "nannaEliminaRegistrazione": "Delete",
+  "nannaEliminaAria": "Delete {nome}’s entry",
+  "nannaConfermaElimina": "Delete {nome}’s nap? The entry disappears from the parent’s diary.",
+  "nannaConfermaEliminaConNota": "Delete {nome}’s nap? The note written for them disappears too.",
+  "salvaConOrario": "{count, plural, one {Save # child} other {Save # children}}",
+  "nannaNessunOrario": "No time filled in",
+  "alertErroreEliminazione": "I couldn’t delete the entry. Please try again."
 }

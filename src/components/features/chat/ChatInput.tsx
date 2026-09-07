@@ -6,7 +6,17 @@ import { Send, Paperclip, X } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Props {
-    onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void;
+    /**
+     * ⚠️ RESTITUISCE L'ESITO, e non è un dettaglio di tipo.
+     *
+     * Prima era `=> void`, e questo componente svuotava il campo SUBITO, prima di
+     * sapere com'era andata. Se la POST veniva rifiutata — genitore moroso
+     * (403 `account_sospeso`), allegato fuori bucket (400), 500 — il testo spariva
+     * e a schermo non compariva niente: il messaggio era perso, e chi l'aveva
+     * scritto credeva di averlo mandato. Con `false` il campo NON si svuota, e il
+     * testo resta dov'era.
+     */
+    onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void | boolean | Promise<void | boolean>;
     disabled?: boolean;
     placeholder?: string;
 }
@@ -24,22 +34,62 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
-    const handleSend = useCallback(() => {
+    const [inviando, setInviando] = useState(false);
+
+    const handleSend = useCallback(async () => {
         // Niente invio con upload in corso: il messaggio partirebbe senza
         // allegato e il file, a upload finito, resterebbe agganciato al composer.
-        if (uploading) return;
+        if (uploading || inviando) return;
         const trimmed = text.trim();
         if (!trimmed && !attachment) return;
 
-        onSend(
-            trimmed || (attachment ? '📎 Allegato' : ''),
-            attachment?.riferimento,
-            attachment?.type,
-        );
-        setText('');
-        setAttachment(null);
-        inputRef.current?.focus();
-    }, [text, attachment, onSend, uploading]);
+        // Ciò che si sta MANDANDO, catturato adesso: è l'unica cosa che si avrà il
+        // diritto di cancellare quando la risposta arriverà.
+        const testoInviato = trimmed;
+        const allegatoInviato = attachment;
+
+        setInviando(true);
+        try {
+            const esito = await onSend(
+                trimmed || (attachment ? '📎 Allegato' : ''),
+                attachment?.riferimento,
+                attachment?.type,
+            );
+            // ⚠️ Si svuota SOLO se l'invio è andato. `undefined` vale «andata»:
+            // i chiamanti che non dichiarano l'esito si comportano come prima.
+            if (esito === false) {
+                inputRef.current?.focus();
+                return;
+            }
+
+            /**
+             * ⚠️ SI CANCELLA CIÒ CHE SI È MANDATO, NON CIÒ CHE C'È ADESSO.
+             *
+             * Attendere `onSend` è ciò che impedisce di perdere un messaggio
+             * rifiutato — ma sposta lo svuotamento a DOPO, e nel frattempo lo stato
+             * può essere cambiato. Con un `setAttachment(null)` secco si buttava via
+             * un allegato caricato MENTRE l'invio era in volo.
+             *
+             * Non è teoria: è la sequenza che ha fatto rossa `e2e/chat.spec.ts`,
+             * letta dal trace di rete della CI. `POST /api/chat/messages` parte a
+             * +8,3 s e ci mette **2.658 ms**; `POST /api/chat/upload` parte a +8,4 s
+             * e finisce prima. Alla risoluzione della prima, l'allegato era già
+             * agganciato — e spariva. Poi «Invia» risultava disabilitato
+             * (`!text.trim() && !attachment`) e il secondo invio non partiva mai:
+             * nel trace c'è UNA sola POST per due messaggi mandati.
+             *
+             * Vale per una persona quanto per il test: chi manda un messaggio e nel
+             * frattempo allega un file si vedeva sparire l'allegato, in silenzio.
+             * Il confronto per identità dice esattamente la cosa giusta — «questo è
+             * ancora quello che ho spedito?» — e in caso contrario non tocca niente.
+             */
+            setText((attuale) => (attuale.trim() === testoInviato ? '' : attuale));
+            setAttachment((attuale) => (attuale === allegatoInviato ? null : attuale));
+            inputRef.current?.focus();
+        } finally {
+            setInviando(false);
+        }
+    }, [text, attachment, onSend, uploading, inviando]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -175,7 +225,18 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                 {/* Design Composer: invio = cerchio 44 verde/giallo con glow */}
                 <button
                     onClick={handleSend}
-                    disabled={disabled || uploading || (!text.trim() && !attachment)}
+                    /**
+                     * `inviando` STA QUI, e non e' una rifinitura: senza, il
+                     * pulsante resta premibile mentre l'invio e' in volo, e
+                     * `handleSend` scarta quel click in silenzio (`if (uploading
+                     * || inviando) return`). E' il difetto che ha tenuto rossa
+                     * `e2e/chat.spec.ts`: l'allegato era pronto dopo 51 ms, il
+                     * messaggio di testo ci metteva 2,6 s, e il click che stava
+                     * nel mezzo non e' mai diventato una POST.
+                     * Vale per chiunque, non solo per il test: si preme, non
+                     * succede niente, e non si sa se il file sia partito.
+                     */
+                    disabled={disabled || uploading || inviando || (!text.trim() && !attachment)}
                     className="w-11 h-11 rounded-full flex-shrink-0 flex items-center justify-center bg-kidville-green text-kidville-yellow hover:bg-kidville-green-dark active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                     style={{ boxShadow: '0 8px 18px -10px rgba(0,84,75,.8)' }}
                     aria-label={t('chatInputAriaInvia')}

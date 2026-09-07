@@ -941,17 +941,23 @@ const AVVISO_APPELLO = (marker: string) => `
   </div>`
 
 describe('S18 §8 · appello — l\'avviso di salvataggio fallito parla anche in Alto Contrasto', () => {
-  it('la fascia della pagina VERA porta il marcatore (senza, le regole HC non l\'agganciano)', () => {
-    const src = fs.readFileSync(
-      path.join(RADICE, 'src/app/(dashboard)/teacher/attendance/page.tsx'),
-      'utf8',
-    )
-    const fasce = Array.from(src.matchAll(/<div\s+role="alert"[\s\S]{0,600}?className="([^"]*)"/g))
+  // I PERCORSI SONO DUE, dal 2026-09-07. Il motore della giornata 0-6 è uscito da
+  // `teacher/attendance/page.tsx` (lo monta anche il cockpit della segreteria), e
+  // l'appello della PRIMARIA ha ora una fascia sua — la rettifica dell'ora è
+  // ottimistica, quindi un rifiuto del server va detto. Questo test aveva già fatto
+  // il proprio mestiere: quando la fascia è emigrata è diventato ROSSO invece di
+  // passare a vuoto, che è la ragione per cui il controllo positivo qui sotto esiste.
+  it.each([
+    'src/components/features/teacher/attendance/AppelloGiornaliero.tsx',
+    'src/app/(dashboard)/teacher/primaria/[sectionId]/appello/page.tsx',
+  ])('la fascia di %s porta il marcatore (senza, le regole HC non l\'agganciano)', (file) => {
+    const src = fs.readFileSync(path.join(RADICE, file), 'utf8')
+    const fasce = Array.from(src.matchAll(/<(?:div|p)\s+role="alert"[\s\S]{0,600}?className="([^"]*)"/g))
       .map((m) => m[1])
       .filter((c) => c.includes('bg-kidville-error-soft'))
     // Controllo POSITIVO: la fascia esiste ancora. Se cambia forma o sparisce,
     // il test deve diventare rosso, non passare a vuoto.
-    expect(fasce.length, 'nessun role="alert" su bg-kidville-error-soft in attendance/page.tsx')
+    expect(fasce.length, `nessun role="alert" su bg-kidville-error-soft in ${file}`)
       .toBeGreaterThan(0)
     for (const c of fasce) expect(c.split(/\s+/)).toContain('kv-appello-avviso')
   })

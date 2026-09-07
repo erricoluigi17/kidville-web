@@ -71,5 +71,14 @@
   "quotaSaldata": "Fee paid",
   "saldata": "Paid",
   "daSaldare": "Unpaid",
-  "chiudi": "Close"
+  "chiudi": "Close",
+  "orarioIngressoAria": "Edit check-in time for {alunno} (currently {ora})",
+  "orarioUscitaAria": "Edit check-out time for {alunno} (currently {ora})",
+  "orarioNonRegistrato": "not recorded",
+  "orarioCampoAria": "New time",
+  "salvaOrario": "Save the time",
+  "annullaModifica": "Cancel the change",
+  "mensileCorreggiAria": "Edit {alunno}’s time, {giorno} — {stato}",
+  "nessunDato": "no attendance taken",
+  "mensileOrarioNonSalvato": "Could not save {alunno}’s time. The displayed time has been restored: please try again."
 }

@@ -63,5 +63,11 @@
   "ugcTermsBlockedTitle": "Accetta i Termini per continuare",
   "ugcTermsBlockedBody": "Per scrivere in chat devi prima accettare i Termini di servizio.",
   "ugcTermsBlockedCta": "Accetta i Termini per continuare",
-  "chiudiNuovaChat": "Chiudi nuova chat"
+  "chiudiNuovaChat": "Chiudi nuova chat",
+  "noTeachersYet": "Nella classe di tuo figlio non è ancora stata assegnata nessuna insegnante. Puoi contattare la segreteria.",
+  "childWithoutSection": "La classe di tuo figlio non è ancora stata assegnata. Appena la segreteria la completa, qui compariranno le sue insegnanti.",
+  "noChildren": "Non risultano bambini collegati a questo account. Contatta la segreteria.",
+  "invioNonRiuscito": "Il messaggio non è stato inviato. È rimasto qui: riprova.",
+  "invioNonRiuscitoRete": "Il messaggio non è partito: connessione assente. È rimasto qui, riprova quando torni online.",
+  "invioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account è sospeso. Contatta la segreteria."
 }

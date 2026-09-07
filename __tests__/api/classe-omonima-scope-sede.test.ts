@@ -55,16 +55,27 @@ const dbBase = (): DBFinto => ({
     { id: 'lez-b', scuola_id: SEDE_B, classe_sezione: OMONIMA, data: GIORNO, ora_lezione: 1, materia: 'Italiano', argomento: 'ARG-SEDE-B', firme_docenti: [] },
   ],
   utenti: [
-    { id: 'ed1', ruolo: 'educator', role: 'educator', nome: 'Maestra', cognome: 'Sede-A' },
-    { id: 'gen-A', nome: 'Genitore', cognome: 'Sede-A', first_name: null, last_name: null },
-    { id: 'gen-B', nome: 'Genitore', cognome: 'Sede-B', first_name: null, last_name: null },
+    { id: 'ed1', ruolo: 'educator', role: 'educator', nome: 'Maestra', cognome: 'Sede-A', attivo: true, scuola_id: SEDE_A },
+    // `ruolo` esplicito dal 2026-09-07: la rubrica della maestra ora legge i soli
+    // account con `ruolo = 'genitore'`, come faceva già la gemella di segreteria
+    // (`admin/chat/contacts`). Era l'unica delle tre rubriche che non lo faceva.
+    { id: 'gen-A', nome: 'Genitore', cognome: 'Sede-A', first_name: null, last_name: null, ruolo: 'genitore' },
+    { id: 'gen-B', nome: 'Genitore', cognome: 'Sede-B', first_name: null, last_name: null, ruolo: 'genitore' },
   ],
   alunni: [
     // `stato` esplicito: dal 2026-08-13 la rubrica lato maestra legge i soli
     // bambini ancora a scuola, e una fixture che lo tace non descrive più due
     // bambini in classe — descrive due righe che nessuna rubrica raggiunge.
-    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, scuola_id: SEDE_A, stato: 'iscritto' },
-    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, scuola_id: SEDE_B, stato: 'iscritto' },
+    // ⚠️ `section_id` esplicito dal 2026-09-07. La rubrica lato maestra non filtra
+    // più per NOME di classe ma per **uuid di sezione**: il nome non è una chiave —
+    // «2 ANNI» esiste ad Aversa E a Cesa — e con tre sedi bastava l'omonimia perché
+    // una maestra si ritrovasse fra i contatti i genitori dell'altro plesso. Da qui
+    // in poi l'omonimia non è più *filtrata*: è **impossibile per costruzione**, e
+    // il `.in('scuola_id', plessi)` resta come difesa in profondità (oltre che
+    // perché lo esige `isolamento-sede-coverage`). Una fixture senza `section_id`
+    // descrive due righe che nessuna rubrica raggiunge.
+    { id: ALU_A, nome: 'Alfa', cognome: 'Sede-A', classe_sezione: OMONIMA, section_id: 'sec-a', scuola_id: SEDE_A, stato: 'iscritto' },
+    { id: ALU_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, section_id: 'sec-b', scuola_id: SEDE_B, stato: 'iscritto' },
   ],
   legame_genitori_alunni: [
     { alunno_id: ALU_A, genitore_id: 'gen-A' },

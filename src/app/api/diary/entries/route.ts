@@ -401,3 +401,119 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
     return NextResponse.json(results);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────
+// DELETE /api/diary/entries?alunno_id=…&tipo_evento=nanna_inizio&date=YYYY-MM-DD
+//
+// «Ho segnato la nanna a un bambino per errore.» Fino a oggi non c'era modo di
+// disfarlo: nessun handler DELETE esisteva sotto /api/diary, e l'unica via per
+// togliere una riga da `eventi_diario` era l'oblio GDPR dell'alunno o il wipe
+// dell'ambiente.
+//
+// PERCHÉ IL VERBO STA QUI. `eventi_diario` è la risorsa di questa rotta. Aggiungere
+// il verbo dove la risorsa già vive muove UN solo conteggio dell'inventario di
+// `isolamento-sede-coverage` (handlerControllati) invece dei due che costerebbe una
+// rotta nuova — e soprattutto tiene le regole di questa tabella in un posto solo.
+//
+// PERCHÉ NON UNA POST CON `dettagli` VUOTO, che di lock non ne avrebbe mossi affatto:
+//  · la riga RESTEREBBE in archivio, invisibile solo perché tre lettori si ricordano
+//    di filtrarla. Il quarto lettore che nascerà — un export, un prospetto, un
+//    conteggio «quanti hanno dormito» — non se lo ricorderà: è il difetto che stiamo
+//    chiudendo, rimandato di un anno;
+//  · la POST accoda `enqueueDiarioGenitori`, cioè manderebbe al genitore un push
+//    «il diario è aggiornato» per dirgli che una cosa non è successa;
+//  · scriverebbe `azione: 'update'` su una cancellazione. `AzioneScrittura` ha già
+//    `'delete'`: usare l'altro è una colonna d'audit che mente.
+//
+// PERIMETRO STRETTO, DI PROPOSITO. `tipo_evento` è un `z.enum` dei soli eventi nanna,
+// non una stringa libera. Il gesto che questa porta serve è «ho sbagliato a segnare
+// la nanna», non «cancella una riga qualunque del diario»: una stringa libera
+// regalerebbe alla stessa porta la cancellazione di pranzo, bagno e attività — cose
+// che nessuna schermata chiede e che nessuno ha deciso. Se un domani servirà per il
+// bagno, si aggiunge un valore all'enum: quella è la riga in cui la decisione passa
+// sotto gli occhi di qualcuno.
+//
+// NESSUNA NOTIFICA AL GENITORE, e non è una comodità: il diario ha un buffer di
+// visibilità di 10 minuti (vedi il ramo genitore della GET). Una correzione fatta
+// subito — il caso reale — il genitore non l'ha mai vista, e avvisarlo significherebbe
+// raccontargli un errore che non ha letto.
+// ─────────────────────────────────────────────────────────────────────────────────
+
+const deleteQuerySchema = z.object({
+    alunno_id: zUuid,
+    // Solo la nanna: vedi «perimetro stretto» qui sopra.
+    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine']),
+    // Default dinamico (oggi), calcolato nel codice come fa la GET.
+    date: zDataYMD.optional(),
+});
+
+export const DELETE = withRoute('diary/entries:DELETE', async (request: NextRequest) => {
+    // IL GATE PRIMA DI TUTTO, parametri compresi.
+    const auth = await requireDocente(request);
+    if (auth.response) return auth.response;
+
+    const q = parseQuery(request, deleteQuerySchema);
+    if ('response' in q) return q.response;
+
+    const admin = await createAdminClient();
+
+    // Scope: tenant + classe. Un educator può cancellare solo nelle sue sezioni.
+    const scopeErr = await assertAlunnoInScope(admin, auth.user, q.data.alunno_id);
+    if (scopeErr) return scopeErr;
+
+    const date = q.data.date ?? new Date().toISOString().split('T')[0];
+    const startOfDay = `${date}T00:00:00.000Z`;
+    const endOfDay = `${date}T23:59:59.999Z`;
+
+    // Si legge PRIMA di cancellare: è l'unico momento in cui il valore di prima
+    // esiste ancora, ed è ciò che l'audit deve conservare. Con `nota_bambino`
+    // dentro: sta sulla stessa riga e sparisce con lei.
+    const { data: prima, error: erroreLettura } = await admin
+        .from('eventi_diario')
+        .select('id, alunno_id, tipo_evento, dettagli, nota_bambino')
+        .eq('alunno_id', q.data.alunno_id)
+        .eq('tipo_evento', q.data.tipo_evento)
+        .gte('orario_inizio', startOfDay)
+        .lte('orario_inizio', endOfDay);
+
+    if (erroreLettura) {
+        // PostgREST non lancia: ritorna `{ error }`. Senza questo controllo si
+        // cancellerebbe alla cieca, e l'audit direbbe «niente c'era prima».
+        logErrore({ operazione: 'diary/entries:DELETE', stato: 500, evento: 'diary' }, erroreLettura);
+        return NextResponse.json({ error: 'Lettura non riuscita', codice: 'DIARIO_LETTURA_FALLITA' }, { status: 500 });
+    }
+
+    const righe = prima ?? [];
+    if (righe.length === 0) {
+        // Cancellare ciò che non c'è è il risultato voluto, non un errore: un 404
+        // farebbe comparire un avviso alla maestra che tocca due volte il cestino.
+        return NextResponse.json({ eliminati: 0 });
+    }
+
+    const { error } = await admin
+        .from('eventi_diario')
+        .delete()
+        .eq('alunno_id', q.data.alunno_id)
+        .eq('tipo_evento', q.data.tipo_evento)
+        .gte('orario_inizio', startOfDay)
+        .lte('orario_inizio', endOfDay);
+
+    if (error) {
+        logErrore({ operazione: 'diary/entries:DELETE', stato: 500, evento: 'diary' }, error);
+        return NextResponse.json({ error: 'Cancellazione non riuscita', codice: 'DIARIO_NON_ELIMINATO' }, { status: 500 });
+    }
+
+    const { data: al } = await admin
+        .from('alunni')
+        .select('section_id, scuola_id')
+        .eq('id', q.data.alunno_id)
+        .maybeSingle();
+
+    await logScrittura(admin, {
+        attore: auth.user, entitaTipo: 'diario', azione: 'delete',
+        scuolaId: al?.scuola_id ?? null, sectionId: al?.section_id ?? null,
+        valorePrima: righe, valoreDopo: null,
+    });
+
+    return NextResponse.json({ eliminati: righe.length });
+});

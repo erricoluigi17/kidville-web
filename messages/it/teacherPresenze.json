@@ -71,5 +71,14 @@
   "quotaSaldata": "Quota saldata",
   "saldata": "Saldata",
   "daSaldare": "Da saldare",
-  "chiudi": "Chiudi"
+  "chiudi": "Chiudi",
+  "orarioIngressoAria": "Modifica l’orario d’ingresso di {alunno} (ora: {ora})",
+  "orarioUscitaAria": "Modifica l’orario di uscita di {alunno} (ora: {ora})",
+  "orarioNonRegistrato": "non registrato",
+  "orarioCampoAria": "Nuovo orario",
+  "salvaOrario": "Salva l’orario",
+  "annullaModifica": "Annulla la modifica",
+  "mensileCorreggiAria": "Correggi l’orario di {alunno}, {giorno} — {stato}",
+  "nessunDato": "nessun appello",
+  "mensileOrarioNonSalvato": "Non sono riuscito a salvare l’orario di {alunno}. L’ora mostrata è tornata quella di prima: riprova."
 }

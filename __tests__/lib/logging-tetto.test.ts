@@ -229,6 +229,17 @@ const PRIMITIVE_DI_TETTO = new Map<string, Primitiva>([
  * annullamenti (l'utente chiude la pagina). La prima voce è invece debito vero.
  */
 const FETCH_SENZA_TETTO = new Map<string, string>([
+    ['src/lib/gallery/carica-media.ts',
+        'BROWSER, e la deroga è sulla SOLA `PUT` verso lo Storage: un video di galleria arriva a '
+        + '50 MB, e su rete mobile ci mette più di 30 s — cioè più di `TETTO_UPLOAD_MS`, che è il '
+        + 'massimo che questo lock ammette. Un tetto qui interromperebbe un caricamento CHE STA '
+        + 'FUNZIONANDO, ed è il gemello in salita di `native/scarica.ts`, che porta la stessa '
+        + 'deroga per la stessa ragione. La chiamata a `/api/gallery/upload-url`, che è una nostra '
+        + 'route, il tetto ce l\'ha dall\'altra parte. Il compenso non è facoltativo e si legge in '
+        + 'SQL: ogni fallimento produce una riga con stato e un messaggio DISTINTO per ramo, e il '
+        + 'successo lascia due tracce server (`gallery/upload-url:POST` + `gallery:POST`), sicché '
+        + 'una PUT appesa per sempre è una firma senza il record che la segue. Senza tetto e senza '
+        + 'quelle tracce si tornerebbe alla rotellina che gira all\'infinito.'],
     ['src/app/api/admin/apply-enrollment-migration/route.ts',
         'DEBITO DICHIARATO, non un falso positivo: sei `fetch` a mano verso `/rest/v1/rpc/exec_sql` '
         + 'e `/pg/query` con la service-role key negli header — nessun tetto, nessuna riga. La '

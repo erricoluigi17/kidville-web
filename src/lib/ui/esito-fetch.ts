@@ -1806,6 +1806,15 @@ export const CODICI_ERRORE = {
      * quale fattura andare a cercare sul pannello Aruba.
      */
     FATTURA_TRASPORTO_IGNOTO: 'erroreFatturaTrasportoIgnoto',
+    /**
+     * 500 — non si è potuto LEGGERE la registrazione di diario che si stava per
+     * cancellare (`diary/entries:DELETE`). Si legge prima di cancellare perché è
+     * l’unico momento in cui il valore di prima esiste ancora: senza quella lettura
+     * si cancellerebbe alla cieca e l’audit direbbe «non c’era niente».
+     */
+    DIARIO_LETTURA_FALLITA: 'erroreDiarioLetturaFallita',
+    /** 500 — la registrazione di diario non è stata tolta (`diary/entries:DELETE`). */
+    DIARIO_NON_ELIMINATO: 'erroreDiarioNonEliminato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

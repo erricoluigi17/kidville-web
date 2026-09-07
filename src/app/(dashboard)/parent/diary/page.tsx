@@ -14,6 +14,7 @@ import { fetchConCache } from '@/lib/offline/read-cache';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
+import { eEventoNanna, nannaCompilata } from '@/lib/diary/nanna';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 
@@ -134,6 +135,12 @@ function buildFirstPersonNarrative(tipo: string, dettagli: Record<string, unknow
         const ini = dettagli?.orario_inizio as string | undefined;
         const fin = dettagli?.orario_fine   as string | undefined;
         const lines: string[] = [];
+        // ⚠️ `nannaGenerica` («Ho fatto un bel sonnellino!») è la RETE, non la strada.
+        // È la frase che per mesi ha raccontato un sonnellino mai avvenuto, perché il
+        // diario salvava una riga di nanna anche con l'ora vuota. Da quando la
+        // timeline filtra le nanne non compilate (`timelineEntries`), questo ramo è
+        // irraggiungibile: resta perché una voce con l'ora persa per altra via non
+        // deve comparire muta, non perché serva ancora.
         if (ini && fin) lines.push(t('nannaDurata', { inizio: ini, fine: fin }));
         else if (ini)   lines.push(t('nannaInizio', { inizio: ini }));
         else            lines.push(t('nannaGenerica'));
@@ -427,7 +434,26 @@ function ParentDiaryContent() {
     // nel banner giallo, non nella timeline.
     const umore = umoreFromDettagli(entries.find(e => e.tipo_evento === 'umore')?.dettagli);
     const umoreCfg = umore ? UMORE_CONFIG[umore] : null;
-    const timelineEntries = entries.filter(e => e.tipo_evento !== 'umore');
+    // Fuori dalla timeline: l'umore (vive nel banner, non fra le voci) e le nanne
+    // NON COMPILATE.
+    //
+    // Queste ultime sono il difetto che il titolare ha segnalato, visto dal lato di
+    // chi lo subiva: il diario salvava una riga di nanna per OGNI bambino presente,
+    // anche con l'ora vuota, e qui sotto il ramo generico della narrativa la
+    // raccontava come «Ho fatto un bel sonnellino! 😴». Il genitore di un bambino
+    // che non aveva dormito leggeva una frase falsa, ogni pomeriggio.
+    //
+    // Il filtro sta DOPO `deduplicateAndSort` di proposito: quella funzione tiene
+    // l'ULTIMA voce per tipo, quindi filtrare prima farebbe riemergere una voce
+    // vecchia al posto di quella corrente — mostrerebbe un sonnellino di ieri invece
+    // di niente. Filtrare dopo mostra il vero: la voce non c'è.
+    //
+    // Vale anche per le righe già in archivio: nessuna migrazione, nessuna
+    // cancellazione retroattiva sul diario di un bambino.
+    const timelineEntries = entries.filter(e =>
+        e.tipo_evento !== 'umore' &&
+        !(eEventoNanna(e.tipo_evento) && !nannaCompilata(e.tipo_evento, e.dettagli)),
+    );
 
     const slideVariants = {
         enter: (dir: number) => ({ x: dir > 0 ? -40 : 40, opacity: 0 }),

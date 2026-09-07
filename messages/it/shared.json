@@ -331,8 +331,8 @@
   "errorePasswordUgualeAllaPrecedente": "La nuova password deve essere diversa da quella che stai usando adesso.",
   "errorePasswordAttualeErrata": "La password attuale non è corretta: riscrivila e riprova.",
   "errorePasswordRifiutata": "Questa password non è stata accettata: scegline un’altra.",
-  "erroreCredenzialiIndirizzoInUso": "Credenziali non inviate: l\u2019indirizzo di questa anagrafica appartiene gi\u00e0 a un altro account, quindi la famiglia riceverebbe una password per un indirizzo con cui non pu\u00f2 entrare. Unificare le anagrafiche, oppure indicare un indirizzo diverso.",
-  "erroreCredenzialiIndirizzoNonAllineato": "Credenziali non inviate: non \u00e8 stato possibile allineare l\u2019indirizzo di accesso a quello dell\u2019anagrafica. La password precedente resta valida. Riprovare fra qualche minuto.",
+  "erroreCredenzialiIndirizzoInUso": "Credenziali non inviate: l’indirizzo di questa anagrafica appartiene già a un altro account, quindi la famiglia riceverebbe una password per un indirizzo con cui non può entrare. Unificare le anagrafiche, oppure indicare un indirizzo diverso.",
+  "erroreCredenzialiIndirizzoNonAllineato": "Credenziali non inviate: non è stato possibile allineare l’indirizzo di accesso a quello dell’anagrafica. La password precedente resta valida. Riprovare fra qualche minuto.",
   "errorePasswordTroppoComune": "Questa password compare negli elenchi di password rubate ad altri siti, quindi non si può usare qui. La lunghezza e la forma vanno bene: serve una parola meno comune — per esempio due o tre parole unite da un trattino.",
   "errorePasswordNonScritta": "Non siamo riusciti a salvare la nuova password. Riprova fra qualche minuto: quella di prima resta valida.",
   "cambiaProfilo": "Cambia profilo",
@@ -370,5 +370,7 @@
   "erroreMensaTicketNonLetti": "Non è stato possibile leggere i pasti residui. Riprova.",
   "erroreMensaAlunnoFuoriClasse": "Questo bambino non è in una delle tue classi.",
   "erroreMensaScopeNonVerificato": "Non è stato possibile verificare i permessi su questo bambino.",
-  "erroreFatturaTrasportoIgnoto": "La fattura è stata numerata, ma Aruba non ha confermato l’invio: nessuno sa se sia partita. NON ripremere «Emetti»: controlla prima sul pannello Aruba se il documento risulta trasmesso."
+  "erroreFatturaTrasportoIgnoto": "La fattura è stata numerata, ma Aruba non ha confermato l’invio: nessuno sa se sia partita. NON ripremere «Emetti»: controlla prima sul pannello Aruba se il documento risulta trasmesso.",
+  "erroreDiarioLetturaFallita": "Non è stato possibile leggere la registrazione da eliminare. Riprova.",
+  "erroreDiarioNonEliminato": "Non è stato possibile eliminare la registrazione. Riprova."
 }

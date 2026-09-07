@@ -1808,7 +1808,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 472 → 474 il 2026-09-07: i due GET delle route dei pasti residui qui
             // sopra. Qui il passo coincide col numero di file (+2 route, +2 handler)
             // perché entrambe espongono il solo GET: sono schermate di lettura.
-            handlerControllati: 474,
+            //
+            // 474 → 475 il 2026-09-07: è nato `diary/entries:DELETE` — «ho segnato la
+            // nanna a un bambino per errore». `routeConServiceRole` resta 308 e
+            // `handlerEsentati` resta fermo, ed è la parte da guardare: il verbo è stato
+            // messo sulla rotta che possiede GIÀ `eventi_diario` invece che su una rotta
+            // nuova, quindi si muove UN numero solo; e non porta esenzioni perché
+            // dichiara il suo scope con `assertAlunnoInScope`, prima di leggere e prima
+            // di cancellare, esattamente come fa la POST accanto.
+            handlerControllati: 475,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

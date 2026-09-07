@@ -1806,6 +1806,17 @@ export const CODICI_ERRORE = {
      * quale fattura andare a cercare sul pannello Aruba.
      */
     FATTURA_TRASPORTO_IGNOTO: 'erroreFatturaTrasportoIgnoto',
+    /**
+     * 429 — il blocco di fatture è stato rifiutato PRIMA di partire: Aruba concede
+     * 60 upload l'ora per IP e per quest'ora sono esauriti.
+     *
+     * È l'unico rifiuto del lotto che non riguarda nessuna riga in particolare, ed è
+     * volutamente rumoroso: ogni tentativo verso Aruba — anche rifiutato — riazzera il
+     * TTL del secchio da un'ora. Un `429` incassato sul campo non costa solo la fattura
+     * che non parte: costa l'ora successiva a chiunque, compreso chi sta fatturando a
+     * mano dal pannello.
+     */
+    LOTTO_TETTO_ORARIO_RAGGIUNTO: 'erroreLottoTettoOrario',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

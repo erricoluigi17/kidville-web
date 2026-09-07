@@ -99,6 +99,107 @@
 
 ---
 
+## ⏱️ Changelog — Il lotto fatture passa dal browser al server: da 87 minuti presidiati a 6 — 2026-09-07 (branch `feat/aruba-lotto-veloce`)
+
+Seconda metà del lavoro sulla velocità di emissione. La prima (vedi la voce qui sotto) ha reso la
+lettura del progressivo economica; questa toglie lo spreco più grosso, che non erano gli upload.
+
+### Il fatto che decide la forma
+
+Ogni POST a `/api/pagamenti/fattura` è un'invocazione serverless nuova, quindi `tokenCache`
+riparte vuota e **ogni fattura si autentica da capo**. Aruba concede **un accesso al minuto per
+IP**: è questo — non gli upload — a imporre i novanta secondi fra una fattura e l'altra. Sessanta
+fatture costavano **cinque lotti da dodici e ~87 minuti di scheda presidiata**.
+
+Non si è tentata la scorciatoia (spostare `tokenCache` a livello di modulo), e la ragione è una
+misura: `cacheUltimoNumero` ha già esattamente quella forma, e il 2026-09-07 ha prodotto **sette
+letture per ognuna delle cinque emissioni** — riuso fra invocazioni pari a zero, cioè istanze
+sempre fredde. Il beneficio esiste solo **dentro** un'invocazione.
+
+### Che cosa c'è adesso
+
+`POST /api/pagamenti/fattura/lotto` emette un **blocco** di `TETTO_BLOCCO = 15` fatture con **un
+solo accesso** e **una sola lettura del progressivo**. Il pannello manda un blocco per volta e
+aspetta `ATTESA_FRA_BLOCCHI_MS = 65_000` fra l'uno e l'altro (65 e non 60: il limite esatto non è
+un margine, e il 07/09 un `signin` ha preso `429` **con novanta secondi** di intervallo).
+
+**Perché a blocchi e non in una chiamata sola.** Una POST che emettesse tutte e sessanta durerebbe
+~2,5 minuti contro un muro di 5, senza mostrare niente mentre lavora, e se scadesse a metà
+lascerebbe numeri consumati senza esito noto **e senza che il browser sappia dove si è fermata**.
+Un blocco dura ~40 secondi: sette volte di margine, e riprende dal punto in cui si è interrotto.
+
+| | prima | adesso |
+|---|---|---|
+| tempo **presidiato** per 60 fatture | ~87 min | **~6 min** |
+| throughput sostenibile | ~41/ora | **60/ora** (il tetto di Aruba) |
+| `signin` per 60 fatture | 60 | **4** |
+
+⚠️ **Sul throughput il guadagno è 1,5×, non 5×**, ed è giusto scriverlo: Aruba concede 60 upload
+l'ora e nessuna architettura può alzarlo. Il guadagno vero è sul **tempo di una persona davanti a
+una barra**.
+
+### Le tre frasi consolanti che erano false, e come sono state rese vere
+
+Non sono state tolte: è stato cambiato il disegno finché non hanno smesso di mentire.
+
+1. **«Un `signin` fallito non costa niente»** — falsa a cache calda, e lo era **già prima di questo
+   lavoro**. `leggiPavimentoSerie` esce presto quando il pavimento è in cache e non tocca
+   `ensureToken`: l'ordine reale era `cache → RPC che ALLOCA → signin → upload`, e un `429`
+   sull'accesso lasciava **un numero consumato per un accesso mai riuscito**, registrato come
+   «Trasporto fallito» di un upload mai partito. Adesso il token si chiede **prima della RPC**.
+2. **«Il budget copre»** — copriva la *media* in un ciclo dove un evento singolo costa **novanta
+   secondi**: il ritentativo dopo un `429` è un `await` dentro `arubaUpload`, dove il chiamante non
+   ha punti di controllo. Adesso il lotto passa `ritenta: false` (predefinito invariato) e la
+   riserva è il **costo peggiore di UNA fattura** (~155 s), non la media.
+3. **«La ripresa è gratuita grazie all'idempotenza»** — vera per i blocchi finiti, falsa per quelli
+   troncati, che sono l'unico motivo per cui la frase esisteva: morendo fra l'upload e l'INSERT non
+   resta nessuna riga da leggere. Regola scritta: dopo un blocco senza risposta leggibile **non si
+   rilancia alla cieca**, si rifà il pre-volo (che non spende quota Aruba).
+
+### Le guardie nuove
+
+- **Tetto orario** (`src/lib/pagamenti/tetto-orario-aruba.ts`): conta le fatture dell'ultima ora e
+  tronca il blocco a quel che resta. **Soglia 50 e non 60**, e **nessun filtro di sede**: il limite
+  è per IP e le tre sedi escono dallo stesso IP con **una sola utenza**; il margine è per le
+  fatture scritte a mano dal pannello, che consumano lo stesso secchio e non lasciano righe da
+  contare. Il messaggio di rifiuto non espone i volumi di un altro plesso.
+- **`504` fra i numeri in dubbio**: col ciclo sul server l'invocazione troncata diventa il modo
+  *previsto* di fallire. Oggi il pannello si salvava per caso (Vercel manda HTML, `res.json()`
+  lancia, lo stato diventa 0); un ragionevole `res.json().catch(() => null)` avrebbe riportato il
+  504 in superficie come «riga saltata» — un'affermazione falsa su quindici documenti fiscali.
+- **Il cron `fattura-sync` non ruba più lo slot**: la cache dei token era chiavata su `scuola_id` e
+  faceva **tre accessi di fila** per un'utenza sola. Adesso è chiavata sull'**utenza**.
+
+### Cosa si perde, ed è a verbale
+
+- **Chiudere la scheda non ferma più un blocco già partito**: le sue quindici fatture escono
+  comunque. «Interrompi» ferma **fra** un blocco e l'altro. Il test che asseriva il contrario è
+  stato riscritto sulla promessa nuova, non riallineato.
+- Il cron continua a fare fino a **200 `getByFilename` senza pause** su un tier da 12/min. Non è
+  stato toccato: cambiarne il ritmo cambia quante fatture in volo riesce a chiudere per giro, ed è
+  una decisione sua. **Resta un debito dichiarato.**
+
+### Due costanti dove prima ce n'era una
+
+`TETTO_LOTTO` significava sia «quante se ne selezionano» sia «quante ne partono». Adesso:
+**50** la selezione (= `SOGLIA_ORARIA_APP`, con un test che impedisce ai due numeri di divergere)
+e **15** il blocco (ciò che entra nel budget di un'invocazione). `stimaRimanenteMs` è stata
+**riscritta**, non riallineata: cambiava unità di misura, e lasciata com'era avrebbe risposto
+«quindici minuti» per un blocco che ne dura quaranta secondi.
+
+### Gate
+
+`npx eslint . --max-warnings 0` → 0 · `npx vitest run` → **15.175 verdi** · `npm run build` → ok.
+Impronte di `isolamento-sede-coverage` aggiornate a mano (308→309, 474→475); **`handlerEsentati`
+resta 98**: la route nuova non porta esenzioni.
+
+⚠️ **Nessuna migrazione.** ⚠️ `maxDuration` è un letterale `300` e non la costante da cui il budget
+si deriva: Next analizza la configurazione di segmento staticamente e un valore importato fa
+fallire il build. Il numero è scritto in due posti, e un test legge il sorgente per impedire che
+divergano.
+
+---
+
 ## 🔢 Changelog — Aruba rifiutava una pagina troppo grande con un HTTP 200, e lo leggevamo come «serie vuota» — 2026-09-07 (branch `feat/aruba-lotto-veloce`)
 
 Il lavoro nasce da una domanda di velocità — *emettere una fattura richiede 43,6 secondi, e non è

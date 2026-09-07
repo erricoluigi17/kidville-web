@@ -972,5 +972,6 @@
   "reconLottoStimaMinuti": "about {minuti, plural, one {# minute} other {# minutes}} left",
   "reconLottoStimaBreve": "less than a minute left",
   "reconLottoInCorsoTitolo": "What has gone out so far",
-  "reconLottoSoloLePronte": "Only the ready rows are issued: {n, plural, one {# still needs completing and will not be sent} other {# still need completing and will not be sent}}."
+  "reconLottoSoloLePronte": "Only the ready rows are issued: {n, plural, one {# still needs completing and will not be sent} other {# still need completing and will not be sent}}.",
+  "reconLottoGiaEmesse": "{n, plural, one {# was already on record} other {# were already on record}}"
 }

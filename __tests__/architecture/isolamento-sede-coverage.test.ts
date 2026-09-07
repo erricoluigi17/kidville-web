@@ -1684,7 +1684,22 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    che nega fuori dalle sedi attive e, per l'`educator`, fuori dalle sue
             //    sezioni. Non riusa `assertAlunnoInScope` perché quella respingerebbe la
             //    CUOCA, che di sezioni assegnate non ne ha: il perché sta nella sua testata.
-            routeConServiceRole: 308,
+            // 308 → 309 il 2026-09-07: è nata `pagamenti/fattura/lotto:POST`, la route che
+            // emette un BLOCCO di fatture invece di una sola. Usa il service role come la
+            // route singola, e NON porta esenzioni — `handlerEsentati` è fermo a 98 —
+            // perché fa la cosa più stretta possibile: `assertPagamentoInScope` su OGNI
+            // pagamento del blocco, e basta una riga fuori sede perché l'intera richiesta
+            // sia rifiutata. Un lotto non è un lasciapassare per uscire dalla propria sede.
+            //
+            // ⚠️ La guardia sul tetto orario di Aruba, che quella route usa, conta le
+            // righe di `fatture_emesse` SENZA filtro di sede — e sta apposta in
+            // `src/lib/pagamenti/tetto-orario-aruba.ts`, fuori dalla portata di questo
+            // lock. Non è un modo di zittirlo: il limite di Aruba è per IP, e le tre sedi
+            // escono dallo stesso IP con UNA sola utenza. Mettere il filtro di sede per
+            // far tacere il lock renderebbe la guardia FALSA — verde mentre il secchio è
+            // già vuoto. Il precedente è `src/lib/allegati/rimozione.ts`, e la ragione è
+            // scritta nella testata di quel modulo.
+            routeConServiceRole: 309,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1808,7 +1823,8 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 472 → 474 il 2026-09-07: i due GET delle route dei pasti residui qui
             // sopra. Qui il passo coincide col numero di file (+2 route, +2 handler)
             // perché entrambe espongono il solo GET: sono schermate di lettura.
-            handlerControllati: 474,
+            // 474 → 475 il 2026-09-07: il POST di `pagamenti/fattura/lotto` (vedi sopra).
+            handlerControllati: 475,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

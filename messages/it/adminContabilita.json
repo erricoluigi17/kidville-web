@@ -972,5 +972,6 @@
   "reconLottoStimaMinuti": "circa {minuti, plural, one {# minuto} other {# minuti}} alla fine",
   "reconLottoStimaBreve": "meno di un minuto alla fine",
   "reconLottoInCorsoTitolo": "Che cosa è già uscito",
-  "reconLottoSoloLePronte": "Si emettono solo le righe pronte: {n, plural, one {# resta da completare e non parte} other {# restano da completare e non partono}}."
+  "reconLottoSoloLePronte": "Si emettono solo le righe pronte: {n, plural, one {# resta da completare e non parte} other {# restano da completare e non partono}}.",
+  "reconLottoGiaEmesse": "{n, plural, one {# era già a registro} other {# erano già a registro}}"
 }

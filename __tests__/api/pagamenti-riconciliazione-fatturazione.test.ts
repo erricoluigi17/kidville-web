@@ -513,8 +513,33 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
 
     await get()
     expect(registroMovimenti()).toHaveLength(1)
-    expect(registroMovimenti()[0].limite).toBe(500)
+    // 501, non 500: la riga in più si chiede SEMPRE, esattamente come sulla
+    // finestra larga. Questa asserzione diceva 500, e quel numero era il difetto
+    // scritto in un test: senza la riga in più, `troncato` sulla finestra normale
+    // non poteva accendersi MAI, e il registro veniva tagliato in silenzio.
+    expect(registroMovimenti()[0].limite).toBe(501)
     expect(statoChiesto(registroMovimenti()[0])).toBeUndefined()
+  })
+
+  it('501 righe SENZA ?fattura= → `troncato: true`: prima taceva', async () => {
+    registro(501)
+
+    const j = await (await get()).json()
+    expect(j.troncato).toBe(true)
+    expect(j.data).toHaveLength(500)      // la riga in più non si mostra
+    const piena = h.eventi.find((e) => e.campi.esito === 'finestra_piena')
+    expect(piena?.livello).toBe('warn')
+    // `registro` distingue questo troncamento da quello della finestra larga: nei
+    // log i due erano indistinguibili perché il secondo non esisteva
+    expect(piena?.campi.tipo).toBe('registro')
+  })
+
+  it('500 righe esatte non sono un troncamento', async () => {
+    registro(500)
+
+    const j = await (await get()).json()
+    expect(j.troncato).toBeUndefined()
+    expect(j.data).toHaveLength(500)
   })
 
   it('con ?fattura= la query forza `stato=confermato` e alza il tetto a LIMITE_FATTURAZIONE', async () => {
@@ -535,7 +560,7 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
 
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.troncato).toBe(true)
-    const piena = h.eventi.find((e) => e.campi.esito === 'fatturazione_finestra_piena')
+    const piena = h.eventi.find((e) => e.campi.esito === 'finestra_piena')
     expect(piena?.livello).toBe('warn')
     expect(piena?.campi.righe).toBe(1000)
     // …e QUALE taglio era pieno: senza, i due modi di riempire la finestra
@@ -548,7 +573,7 @@ describe('GET /api/pagamenti/riconciliazione — la finestra del filtro di fattu
 
     const j = await (await get('?fattura=da_fatturare')).json()
     expect(j.troncato).toBeUndefined()
-    expect(h.eventi.some((e) => e.campi.esito === 'fatturazione_finestra_piena')).toBe(false)
+    expect(h.eventi.some((e) => e.campi.esito === 'finestra_piena')).toBe(false)
   })
 })
 
@@ -863,21 +888,35 @@ describe('GET /api/pagamenti/riconciliazione — «sembra di un’altra sede»',
 
     const j = await (await get()).json()
     expect(j.data[0].altra_sede).toBeNull()
-    expect(letturaSedi(), 'nessuna riga fuori sede ⇒ nessuna lettura di `scuole`').toHaveLength(0)
+    // ...ma la sede DEDOTTA c'è, ed è quella di casa: l'aggancio forte è su sc-1.
+    // Dal 2026-09-07 il nome delle sedi citate si legge anche per queste righe,
+    // perché è la chiave del filtro per sede — resta UNA query su una tabella di
+    // cinque righe, non «una query in più per ogni riga».
+    expect(j.data[0].sede_dedotta).toEqual({ scuola_id: 'sc-1', certa: false })
+    // il nome viaggia nella busta, una volta sola: sulle righe confermate
+    // `sede_dedotta` è null per decisione, e appendere il nome a ogni riga
+    // lascerebbe senza nome proprio quelle
+    expect(j.sedi['sc-1']).toBe('Kidville Giugliano')
+    expect(letturaSedi()).toHaveLength(1)
   })
 
-  it('nessuna riga fuori sede in TUTTA la pagina → ZERO letture di `scuole`', async () => {
+  it('nessuna sede CITABILE in tutta la pagina → ZERO letture di `scuole`', async () => {
     conSedi()
+    // Nessun candidato con una sede risolvibile, e nessuna riga confermata con la
+    // propria: non c'è NIENTE da nominare, e infatti non si legge niente.
     h.db.riconciliazione_movimenti = [
-      mov(1, 'confermato', PID(1)),
-      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(1), 90)] }),
+      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(9), 90)] }),
       mov(3, 'da_abbinare', null, { suggerimenti: [] }),
     ]
-    h.db.pagamenti = [pag(1, 'pagato', 'emessa', 'sc-1')]
+    h.db.pagamenti = []
 
     const j = await (await get()).json()
     expect(letturaSedi()).toHaveLength(0)
-    for (const r of j.data) expect(r.altra_sede).toBeNull()
+    for (const r of j.data) {
+      expect(r.altra_sede).toBeNull()
+      // il campo esce SEMPRE, anche quando non c'è niente da dire
+      expect(r.sede_dedotta).toBeNull()
+    }
   })
 
   it('una sola lettura di `scuole` per l’intera pagina, con gli id DISTINTI', async () => {
@@ -992,8 +1031,14 @@ describe('GET /api/pagamenti/riconciliazione — «sembra di un’altra sede»',
     const j = await (await get()).json()
     expect(j.data).toHaveLength(1)
     expect(j.data[0].altra_sede, 'l’abbinamento è fatto: non c’è nessun errore da prevenire').toBeNull()
-    // e il nome della sede non si va nemmeno a leggere: non serve a nessuna riga
-    expect(letturaSedi()).toHaveLength(0)
+    // Nemmeno la sede DEDOTTA si calcola su una riga confermata, e per la stessa
+    // ragione: i suggerimenti lì sono la fotografia dell'import, e dedurne la sede
+    // rimetterebbe in piedi il falso positivo. Non serve: `scuola_id` sta già sulla
+    // riga, quindi è nota e non dedotta.
+    expect(j.data[0].sede_dedotta).toBeNull()
+    // Il nome si legge lo stesso, perché la riga confermata NOMINA la propria sede
+    // ed è quella che il filtro deve poter mostrare.
+    expect(letturaSedi()).toHaveLength(1)
   })
 
   it('…e nemmeno con un CF fuori sede, che è il segnale più forte che esista', async () => {
@@ -1155,7 +1200,7 @@ describe('GET /api/pagamenti/riconciliazione — i numeri delle pillole (`?conte
     // battono contro il tetto della finestra, cioè quanti «≥» stanno uscendo. Un
     // campo di log che nessuno guarda cadere è un campo che può sparire in
     // silenzio, e allora la misura promessa non si può più fare.
-    const piena = h.eventi.find((e) => e.campi.esito === 'fatturazione_finestra_piena')
+    const piena = h.eventi.find((e) => e.campi.esito === 'finestra_piena')
     expect(piena?.campi.tipo).toBe('conteggi')
   })
 

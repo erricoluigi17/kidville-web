@@ -11,6 +11,8 @@ import { formatEuro } from '@/lib/format/valuta';
 import { useRuoloCockpit } from '@/lib/context/admin-identity';
 import { eDirezioneCockpit } from '@/lib/auth/ruoli';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+import { SelettoreAlunni } from '@/components/ui/SelettoreAlunni';
+import { SELEZIONE_TUTTI, parametriSelezione, alunniBersaglio, type SelezioneAlunni } from '@/lib/pagamenti/selezione-alunni';
 
 const GC_INPUT = 'w-full rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-2 font-maven text-sm text-kidville-ink outline-none transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15';
 const GC_SELECT = `${GC_INPUT} cursor-pointer hover:border-kidville-green/50`;
@@ -39,7 +41,6 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
     const [categorie, setCategorie] = useState<Categoria[]>([]);
     const [alunni, setAlunni] = useState<Alunno[]>([]);
     const [categoriaId, setCategoriaId] = useState('');
-    const [classe, setClasse] = useState('');
     const [descrizione, setDescrizione] = useState('');
     const [importo, setImporto] = useState<number>(0);
     const [scadenza, setScadenza] = useState(() => new Date().toISOString().slice(0, 10));
@@ -82,15 +83,18 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             }).catch(() => {});
     }, [userId, scuolaId, applyCategoria]);
 
-    const classi = useMemo(() => {
-        const set = new Set<string>();
-        alunni.forEach((a) => a.classe_sezione && set.add(a.classe_sezione));
-        return Array.from(set).sort();
-    }, [alunni]);
+
+    /**
+     * Chi generare. Sostituisce il vecchio `<select>` di classe — che resta come
+     * MODALITÀ del selettore — e aggiunge la scelta per singolo bambino, che prima
+     * non c'era: la rotta accettava già `alunno_ids`, ma a schermo non c'era modo
+     * di comporli.
+     */
+    const [selezione, setSelezione] = useState<SelezioneAlunni>(SELEZIONE_TUTTI);
 
     const target = useMemo(
-        () => alunni.filter((a) => !classe || a.classe_sezione === classe),
-        [alunni, classe]
+        () => alunniBersaglio(alunni, selezione),
+        [alunni, selezione]
     );
 
     const buildRate = useCallback(() => {
@@ -111,12 +115,18 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
         try {
             const qs = new URLSearchParams();
             if (scuolaId) qs.set('scuola_id', scuolaId);
-            if (classe) qs.set('classe_sezione', classe);
+            // La classe NON si manda più al server: la scelta dei bambini vive nel
+            // browser (il client ha già l'elenco) e il server risponde su tutta la
+            // sede. Filtrare qui e là darebbe due insiemi da tenere d'accordo.
             if (gruppo.trim()) qs.set('gruppo', gruppo.trim());
             const res = await fetch(`/api/pagamenti/genera?${qs.toString()}`, { headers: hdr(userId) });
             const j = await res.json();
             if (!res.ok || !j.success) { setError(messaggioDaCorpo(j, t('gencErrAnteprima'))); return; }
-            setAnteprima({ candidati: j.data.candidati || [], giaGenerati: j.data.gia_generati || 0 });
+            // I candidati sono quelli del server (che ha tolto i già generati),
+            // ristretti a chi è stato scelto: l'intersezione, non uno dei due.
+            const scelti = new Set(alunniBersaglio(alunni, selezione).map((a) => a.id));
+            const candidati = ((j.data.candidati || []) as { id: string }[]).filter((c) => scelti.has(c.id));
+            setAnteprima({ candidati, giaGenerati: j.data.gia_generati || 0 });
         } catch {
             setError(t('gencErrRete'));
         } finally { setLoading(false); }
@@ -134,7 +144,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                 scadenza,
                 obbligatorio,
                 gruppo: gruppo.trim() || null,
-                alunno_ids: anteprima.candidati.map((a) => a.id),
+                ...parametriSelezione(anteprima.candidati, { modo: 'scelti', classe: '', ids: anteprima.candidati.map((a) => a.id) }),
             };
             if (acconti && nRate >= 2) body.rate = buildRate();
             const res = await fetch('/api/pagamenti/genera', { method: 'POST', headers: hdr(userId), body: JSON.stringify(body) });
@@ -155,14 +165,6 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     <select value={categoriaId} onChange={(e) => applyCategoria(categorie.find((c) => c.id === e.target.value))}
                         className={GC_SELECT}>
                         {categorie.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label className="font-maven text-xs text-kidville-muted mb-1 block">{t('gencClasseLabel')}</label>
-                    <select value={classe} onChange={(e) => { setClasse(e.target.value); setAnteprima(null); }}
-                        className={GC_SELECT}>
-                        <option value="">{t('gencOpzioneTutti')} ({alunni.length})</option>
-                        {classi.map((c) => <option key={c} value={c}>{c}</option>)}
                     </select>
                 </div>
                 <div>
@@ -222,7 +224,7 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
                     </p>
                     <p className="font-maven text-xs text-kidville-muted">{t('gencGiaPresenti')} {anteprima.giaGenerati}</p>
                     <p className="font-maven text-xs text-kidville-muted">
-                        {t('gencScadenzaPre')} {acconti ? t('gencPrimaRata') : ''}{f.dataBreve(scadenza)} · {classe || t('gencTuttiIscritti')}
+                        {t('gencScadenzaPre')} {acconti ? t('gencPrimaRata') : ''}{f.dataBreve(scadenza)} · {selezione.modo === 'classe' ? (selezione.classe || t('gencTuttiIscritti')) : selezione.modo === 'scelti' ? t('genrSceltaScelti') : t('gencTuttiIscritti')}
                     </p>
                 </div>
             )}
@@ -234,7 +236,34 @@ export function GeneratoreCategoria({ userId, scuolaId }: Props) {
             )}
             {error && <p className="font-maven text-xs text-kidville-error">{error}</p>}
 
+                {/* Il vecchio «Classe» era un <select> che filtrava e basta: la scelta per
+                    singolo bambino non c'era, benché la rotta accettasse già `alunno_ids`.
+                    Ora la classe è una MODALITÀ del selettore, accanto a «tutti» e «scelti». */}
+                <SelettoreAlunni
+                    id="genc-scelta"
+                    alunni={alunni}
+                    valore={selezione}
+                    onChange={(v) => { setSelezione(v); setAnteprima(null); }}
+                    disabled={loading}
+                    testi={{
+                        legenda: t('genrSceltaLegenda'),
+                        modoTutti: t('genrSceltaTutti'),
+                        modoClasse: t('genrSceltaClasse'),
+                        modoScelti: t('genrSceltaScelti'),
+                        classeEtichetta: t('genrSceltaClasseEtichetta'),
+                        classeTutte: t('genrSceltaClasseTutte'),
+                        cercaEtichetta: t('genrSceltaCerca'),
+                        cercaSegnaposto: t('genrSceltaCercaSegnaposto'),
+                        selezionaMostrati: t('genrSceltaSelezionaMostrati'),
+                        svuota: t('genrSceltaSvuota'),
+                        vuoto: t('genrSceltaVuoto'),
+                        conteggio: (n: number) => t('genrSceltaConteggio', { n }),
+                        bersaglio: (n: number) => t('genrSceltaBersaglio', { n }),
+                    }}
+                />
+
             {!anteprima ? (
+
                 <button onClick={caricaAnteprima} disabled={loading} className={GC_BTN_PRIMARY}>
                     {loading ? <RefreshCw size={15} className="animate-spin" /> : <Layers size={15} />}
                     {t('gencAnteprima')} ({target.length} {t('gencAlunni')})

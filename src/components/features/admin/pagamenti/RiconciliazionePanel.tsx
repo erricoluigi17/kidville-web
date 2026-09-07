@@ -36,6 +36,9 @@ import {
   type EsitoImport,
   type RispostaMovimenti,
   type StatoMovimento,
+  sedeDiRiga,
+  sediDelleRighe,
+  SEDE_NON_RICONOSCIUTA,
 } from './riconciliazione-ui';
 
 interface Props {
@@ -226,6 +229,40 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   // Sottofiltro «Fatturazione»: si compone col filtro per stato e vale solo sui
   // confermati (gli unici su cui la fatturazione esista).
   const [fattura, setFattura] = useState<'' | 'da_fatturare' | 'fatturate'>('');
+  /**
+   * ─── I FILTRI CHE VIAGGIANO AL SERVER, IN UNA STRINGA SOLA ────────────────
+   *
+   * `queryServer` è la coda dell'indirizzo già composta. Una STRINGA e non un
+   * oggetto, e non è pignoleria: `load` è una `useCallback` e un oggetto nuovo a
+   * ogni render la ricreerebbe, facendo ripartire il GET a ogni battuta di tasto —
+   * su questa schermata il difetto è già stato misurato una volta, 1.470 richieste
+   * in 300 ms. Si compone nei GESTORI D'EVENTO, mai dentro un effetto.
+   */
+  const [queryServer, setQueryServer] = useState('');
+  /** Il testo così com'è nella casella: `queryServer` lo insegue con 300 ms di ritardo. */
+  const [ricerca, setRicerca] = useState('');
+  const [dal, setDal] = useState('');
+  const [al, setAl] = useState('');
+  const [importoDa, setImportoDa] = useState('');
+  const [importoA, setImportoA] = useState('');
+  /**
+   * Il filtro per SEDE è l'unico che NON va al server, e la ragione è una sola:
+   * `riconciliazione_movimenti.scuola_id` è NULL finché il movimento non viene
+   * confermato, quindi un `.eq('scuola_id', X)` butterebbe via tutti i rossi e i
+   * gialli — cioè il lavoro. La sede delle righe non confermate si deduce dai
+   * suggerimenti, e quella deduzione esiste solo dopo che il server ha risposto.
+   */
+  const [sedeFiltro, setSedeFiltro] = useState('');
+  const [nomiSedi, setNomiSedi] = useState<Record<string, string>>({});
+  const attesaRicerca = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * ⚠️ LA GENERAZIONE DEL CARICAMENTO. `caricaConteggi` ce l'ha da sempre, `load`
+   * no: con il ritardo sulla ricerca due GET in volo diventano lo scenario normale,
+   * e la risposta VECCHIA che atterra per ultima lascerebbe a schermo l'elenco di
+   * un termine che non è più nella casella — elenco da cui si deriva la selezione
+   * del lotto.
+   */
+  const generazioneLista = useRef(0);
   const [selezionato, setSelezionato] = useState<MovimentoUi | null>(null);
   /**
    * LE RIGHE SPUNTATE PER IL LOTTO DI FATTURE — per `movimento.id`, come i
@@ -236,7 +273,17 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * della selezione svanirebbe nel momento in cui serve leggerlo. Lo svuota
    * l'operatore, premendo «Chiudi» o «Annulla selezione».
    */
-  const [selezionati, setSelezionati] = useState<Set<string>>(new Set());
+  /**
+   * ⚠️ UNA MAPPA, NON UN INSIEME DI ID. `selezionate` si ricavava filtrando
+   * `movimenti`: bastava che un filtro cambiasse la lista perché le righe spuntate
+   * ne uscissero — non dalla selezione, che le teneva, ma da ciò che il lotto
+   * riceve. In fase di controllo quelle righe non venivano mai esaminate e non
+   * finivano né fra le pronte né fra le «da completare», pur restando spuntate; in
+   * fase di conferma il piè di pagina e il pulsante dicevano due numeri diversi.
+   * Tenendo qui la riga intera, la promessa «le righe spuntate non spariscono» è
+   * vera invece che a metà.
+   */
+  const [selezionati, setSelezionati] = useState<Map<string, MovimentoUi>>(new Map());
 
   /**
    * ─── C'È UN CICLO IN VOLO: LE CASELLE SI BLOCCANO ──────────────────────────
@@ -284,19 +331,23 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       return null;
     };
     try {
-      const statoQ = filtro ? `&stato=${filtro}` : '';
-      const fatturaQ = fattura ? `&fattura=${fattura}` : '';
+      const mia = ++generazioneLista.current;
       const [movRes, apRes] = await Promise.all([
         // ⚠️ LO STATO HTTP NON SI BUTTA VIA. Con `.then((r) => r.json())` il numero
         // che distingue un 400 (filtro sbagliato) da un 500 (server rotto) spariva
         // prima di poter essere né mostrato né loggato.
-        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${statoQ}${fatturaQ}`, { headers: hdr(userId) })
+        fetch(`/api/pagamenti/riconciliazione?userId=${userId}${queryServer}`, { headers: hdr(userId) })
           .then(async (r) => ({ stato: r.status, corpo: (await r.json()) as RispostaMovimenti }))
           .catch(onErr),
         fetch(`/api/pagamenti?userId=${userId}&scuola_id=${scuolaId}&solo_aperti=true`, { headers: hdr(userId) }).then((r) => r.json()).catch(onErr),
       ]);
+      // Sorpassata da una richiesta più recente: si esce senza scrivere niente.
+      // Non è un'ottimizzazione, è correttezza — l'ultima risposta ad ARRIVARE non
+      // è l'ultima a essere stata CHIESTA.
+      if (mia !== generazioneLista.current) return;
       if (movRes?.corpo?.success) {
         setMovimenti((movRes.corpo.data ?? []) as MovimentoUi[]);
+        setNomiSedi(movRes.corpo.sedi ?? {});
         setDisponibile(movRes.corpo.disponibile !== false);
         // Assente = disponibile: una risposta che non parla di fatturazione non è
         // una risposta che l'ha persa (rotte vecchie, cache, ramo «schema assente»).
@@ -330,7 +381,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     } finally {
       setLoading(false);
     }
-  }, [userId, scuolaId, filtro, fattura]);
+  }, [userId, scuolaId, queryServer]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -391,11 +442,59 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * I due `setState` stanno nello stesso gestore: React li accorpa in un render
    * solo, quindi il GET riparte UNA volta (nessun refetch doppio).
    */
+  /**
+   * La coda dell'indirizzo, composta in un posto solo. Si chiama dai gestori
+   * d'evento con i valori NUOVI: leggerli dallo stato qui dentro darebbe quelli
+   * del render precedente.
+   */
+  const componiQuery = (v: {
+    stato?: '' | StatoMovimento; fattura?: '' | 'da_fatturare' | 'fatturate';
+    q?: string; dal?: string; al?: string; importoDa?: string; importoA?: string;
+  }) => {
+    const st = v.stato ?? filtro;
+    const fa = v.fattura ?? fattura;
+    const testo = (v.q ?? ricerca).trim();
+    const d = v.dal ?? dal; const a = v.al ?? al;
+    const iDa = v.importoDa ?? importoDa; const iA = v.importoA ?? importoA;
+    return [
+      st ? `&stato=${st}` : '',
+      fa ? `&fattura=${fa}` : '',
+      testo ? `&q=${encodeURIComponent(testo)}` : '',
+      d ? `&da=${d}` : '',
+      a ? `&a=${a}` : '',
+      iDa ? `&importoDa=${encodeURIComponent(iDa)}` : '',
+      iA ? `&importoA=${encodeURIComponent(iA)}` : '',
+    ].join('');
+  };
+
   const cambiaFiltro = (id: '' | StatoMovimento) => {
     if (id === filtro) return;
     setLoading(true);
     setFiltro(id);
+    const f = id !== 'confermato' ? '' : fattura;
     if (id !== 'confermato') setFattura('');
+    setQueryServer(componiQuery({ stato: id, fattura: f }));
+  };
+
+  /** Un campo che non è testo: riparte subito, senza attesa. */
+  const cambiaCampo = (chiave: 'dal' | 'al' | 'importoDa' | 'importoA', valore: string) => {
+    const set = { dal: setDal, al: setAl, importoDa: setImportoDa, importoA: setImportoA }[chiave];
+    set(valore);
+    setLoading(true);
+    setQueryServer(componiQuery({ [chiave]: valore }));
+  };
+
+  /**
+   * La casella di ricerca aspetta 300 ms. ⚠️ Il ritardo sta SOLO qui: gli altri
+   * filtri cambiano con un clic, e farli aspettare sarebbe una lentezza inventata.
+   */
+  const cambiaRicerca = (valore: string) => {
+    setRicerca(valore);
+    if (attesaRicerca.current) clearTimeout(attesaRicerca.current);
+    attesaRicerca.current = setTimeout(() => {
+      setLoading(true);
+      setQueryServer(componiQuery({ q: valore }));
+    }, 300);
   };
 
   /**
@@ -407,7 +506,9 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     if (id === fattura) return;
     setLoading(true);
     setFattura(id);
+    const st = id ? 'confermato' : filtro;
     if (id) setFiltro('confermato');
+    setQueryServer(componiQuery({ fattura: id, stato: st }));
   };
 
   /**
@@ -540,7 +641,24 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * consiglio giusto per chi ha appena visto rifiutare il proprio file.
    */
   const guastoDelCaricamento = guasto !== null && guasto.tipo !== 'import';
-  const vuoto = !loading && disponibile && !guastoDelCaricamento && !avvisoFatturazione && movimenti.length === 0;
+
+  /**
+   * ⚠️ DA QUI IN GIÙ SI RAGIONA SU `visibili`, NON SU `movimenti`.
+   *
+   * Con un filtro che vive nel browser, le due liste divergono, e tre cose che
+   * finora erano corrette diventerebbero false: lo stato vuoto guarderebbe le
+   * righe scaricate e renderebbe una lista vuota senza spiegazione; «mostrate le
+   * prime N» conterebbe le scaricate e non quelle a schermo; «seleziona tutte»
+   * spunterebbe righe invisibili occupando con esse gli slot del lotto.
+   */
+  const visibili = sedeFiltro
+    ? movimenti.filter((m) => sedeDiRiga(m) === sedeFiltro)
+    : movimenti;
+  const escluseDalFiltroSede = movimenti.length - visibili.length;
+  const opzioniSede = sediDelleRighe(movimenti, nomiSedi);
+  const senzaSede = movimenti.filter((m) => sedeDiRiga(m) === SEDE_NON_RICONOSCIUTA).length;
+
+  const vuoto = !loading && disponibile && !guastoDelCaricamento && !avvisoFatturazione && visibili.length === 0;
 
   /**
    * ─── QUALI RIGHE SI POSSONO SPUNTARE, E PERCHÉ SOLO QUESTE ─────────────────
@@ -586,8 +704,8 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    */
   const selezionabile = (m: MovimentoUi): boolean => daFatturareInListaDiLavoro(m);
 
-  const selezionabili = movimenti.filter(selezionabile);
-  const selezionate = movimenti.filter((m) => selezionati.has(m.id));
+  const selezionabili = visibili.filter(selezionabile);
+  const selezionate = [...selezionati.values()];
   const tutteSpuntate =
     selezionabili.length > 0 &&
     selezionabili.slice(0, TETTO_LOTTO).every((m) => selezionati.has(m.id));
@@ -599,18 +717,18 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * spiegato a schermo dalla riga «si emette al massimo N per volta», che la
    * barra mostra sempre.
    */
-  const spunta = (id: string) => {
+  const spunta = (m: MovimentoUi) => {
     setSelezionati((prima) => {
-      const dopo = new Set(prima);
-      if (dopo.has(id)) dopo.delete(id);
-      else if (dopo.size < TETTO_LOTTO) dopo.add(id);
+      const dopo = new Map(prima);
+      if (dopo.has(m.id)) dopo.delete(m.id);
+      else if (dopo.size < TETTO_LOTTO) dopo.set(m.id, m);
       return dopo;
     });
   };
 
   const spuntaTutte = () => {
     setSelezionati(
-      tutteSpuntate ? new Set() : new Set(selezionabili.slice(0, TETTO_LOTTO).map((m) => m.id)),
+      tutteSpuntate ? new Map() : new Map(selezionabili.slice(0, TETTO_LOTTO).map((m) => [m.id, m])),
     );
   };
 
@@ -776,8 +894,107 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           vecchia — quelle in fondo, cioè quelle che nessuno ha ancora fatto. */}
       {troncato && !loading && (
         <p role="status" className="mt-2 font-maven text-[11px] text-kidville-sub">
-          {t('reconFatturazioneTroncata', { n: movimenti.length })}
+          {/* `visibili`, non `movimenti`: con un filtro che vive nel browser il
+              numero delle righe scaricate e quello delle righe a schermo
+              divergono, e qui va scritto il secondo. */}
+          {t('reconFatturazioneTroncata', { n: visibili.length })}
         </p>
+      )}
+
+      {/* ─── ALTRI FILTRI ───────────────────────────────────────────────────
+          Controlli su misura e non `BarraFiltri`: quel framework non ha un campo
+          di intervallo numerico e disegna una sola casella di ricerca, mentre qui
+          i due gruppi di pillole hanno un incastro (lo stato azzera il sottofiltro,
+          la fatturazione forza «confermato») che i suoi tipi non modellano.
+          La contropartita è dichiarata: fuori dal framework le chiavi nuove non
+          sono coperte dal suo lock, e al loro posto c'è un test che misura la
+          QUERY PRODOTTA — una garanzia più forte, non più debole. */}
+      <div className="mt-3">
+        <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoAltriFiltri')}</span>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="flex flex-col">
+            <span className="font-maven text-[11px] text-kidville-sub">{t('reconFiltroRicerca')}</span>
+            <input type="search" value={ricerca} onChange={(e) => cambiaRicerca(e.target.value)}
+              placeholder={t('reconFiltroRicercaSegnaposto')}
+              className="min-h-[38px] w-52 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-1.5 font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" />
+          </label>
+          <label className="flex flex-col">
+            <span className="font-maven text-[11px] text-kidville-sub">{t('reconFiltroPeriodoDal')}</span>
+            <input type="date" value={dal} onChange={(e) => cambiaCampo('dal', e.target.value)}
+              className="min-h-[38px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-1.5 font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" />
+          </label>
+          <label className="flex flex-col">
+            <span className="font-maven text-[11px] text-kidville-sub">{t('reconFiltroPeriodoAl')}</span>
+            <input type="date" value={al} onChange={(e) => cambiaCampo('al', e.target.value)}
+              className="min-h-[38px] rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-1.5 font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" />
+          </label>
+          <label className="flex flex-col">
+            <span className="font-maven text-[11px] text-kidville-sub">{t('reconFiltroImportoDa')}</span>
+            <input type="number" min="0" step="0.01" inputMode="decimal" value={importoDa} onChange={(e) => cambiaCampo('importoDa', e.target.value)}
+              className="min-h-[38px] w-24 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-1.5 font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" />
+          </label>
+          <label className="flex flex-col">
+            <span className="font-maven text-[11px] text-kidville-sub">{t('reconFiltroImportoA')}</span>
+            <input type="number" min="0" step="0.01" inputMode="decimal" value={importoA} onChange={(e) => cambiaCampo('importoA', e.target.value)}
+              className="min-h-[38px] w-24 rounded-input border-[1.5px] border-kidville-line bg-kidville-white px-3 py-1.5 font-maven text-sm text-kidville-ink transition-colors focus:border-kidville-green focus:ring-2 focus:ring-kidville-green/15" />
+          </label>
+        </div>
+      </div>
+
+      {/* ─── SEDE ────────────────────────────────────────────────────────────
+          Le opzioni si derivano DALLE RIGHE, mai da `useSediAttive()`: una
+          segreteria ha un solo plesso accessibile ma in un registro cross-sede ne
+          vede tre, e prendere l'elenco dal contesto ne nasconderebbe due terzi. */}
+      {opzioniSede.length > 0 && (
+        <div className="mt-3" role="group" aria-label={t('reconGruppoSede')}>
+          <span aria-hidden="true" className={OCCHIELLO_FILTRO}>{t('reconGruppoSede')}</span>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" onClick={() => setSedeFiltro('')}
+              aria-pressed={sedeFiltro === ''}
+              className={cx(PILL_FILTRO, sedeFiltro === '' ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+              {t('reconFiltroSedeTutte')}
+            </button>
+            {opzioniSede.map((o) => (
+              <button key={o.id} type="button" onClick={() => setSedeFiltro(o.id)}
+                aria-pressed={sedeFiltro === o.id}
+                className={cx(PILL_FILTRO, sedeFiltro === o.id ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+                {/* Il nome è un DATO (come si chiama il plesso), non una chiave di
+                    traduzione. `null` = non si è potuto leggere: si mostra l'avviso
+                    generico invece di inventarne uno. */}
+                {o.nome ?? t('reconFiltroSedeSenzaNome')}
+              </button>
+            ))}
+            {senzaSede > 0 && (
+              <button type="button" onClick={() => setSedeFiltro(SEDE_NON_RICONOSCIUTA)}
+                aria-pressed={sedeFiltro === SEDE_NON_RICONOSCIUTA}
+                className={cx(PILL_FILTRO, sedeFiltro === SEDE_NON_RICONOSCIUTA ? PILL_FILTRO_ON : PILL_FILTRO_OFF)}>
+                {t('reconFiltroSedeNonRiconosciuta')} <span className={PILL_CONTEGGIO}>{senzaSede}</span>
+              </button>
+            )}
+          </div>
+          {/* L'avvertenza chiesta dal titolare. Testo semplice: MAI giallo, mai
+              rosso, mai `role="alert"` — in questa schermata quei due toni sono
+              riservati a ciò che chiede un'azione a chi guarda. */}
+          <p className="mt-1.5 font-maven text-[11px] text-kidville-sub">{t('reconSedeDedottaNota')}</p>
+          {/* Escludere in silenzio le righe che nessuno ha capito sarebbe il falso
+              negativo peggiore: sono precisamente quelle che richiedono un umano.
+              Si dichiara quante sono, e si dà un gesto solo per raggiungerle. */}
+          {sedeFiltro !== '' && sedeFiltro !== SEDE_NON_RICONOSCIUTA && escluseDalFiltroSede > 0 && (
+            <p role="status" className="mt-1.5 flex flex-wrap items-center gap-2 font-maven text-[11px] text-kidville-sub">
+              <span>
+                {/* Con la finestra troncata quel numero è un MINIMO: si riusa la
+                    convenzione `≥` che questa schermata ha già. */}
+                {troncato ? '≥ ' : ''}{t('reconSedeEscluse', { n: escluseDalFiltroSede })}
+              </span>
+              {senzaSede > 0 && (
+                <button type="button" onClick={() => setSedeFiltro(SEDE_NON_RICONOSCIUTA)}
+                  className="underline decoration-kidville-green/40 underline-offset-2 hover:decoration-kidville-green">
+                  {t('reconVaiSenzaSede')}
+                </button>
+              )}
+            </p>
+          )}
+        </div>
       )}
 
       {loading ? (
@@ -803,7 +1020,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           </label>
         )}
         <ul className="mt-3 space-y-2">
-          {movimenti.map((m) => {
+          {visibili.map((m) => {
             const s = SEMAFORO[m.stato] ?? SEMAFORO.da_abbinare;
             const cf = suggerimentoPrincipaleCf(m.suggerimenti);
             // Una funzione sola per i due dati che raccontano la fattura: i DOCUMENTI
@@ -835,7 +1052,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                     <input
                       type="checkbox"
                       checked={selezionati.has(m.id)}
-                      onChange={() => spunta(m.id)}
+                      onChange={() => spunta(m)}
                       /* ⚠️ A lotto in volo la selezione NON si tocca: cambiarla
                          smonterebbe la barra da sotto un ciclo che sta emettendo
                          documenti fiscali. Qui il `disabled` è legittimo perché
@@ -971,7 +1188,7 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
         <LottoFatturePanel
           userId={userId}
           selezionate={selezionate}
-          onChiudi={() => setSelezionati(new Set())}
+          onChiudi={() => setSelezionati(new Map())}
           onDone={() => { void load(); riconta(); }}
           onLavoro={setLottoInVolo}
         />

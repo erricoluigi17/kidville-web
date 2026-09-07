@@ -29,6 +29,17 @@ const postBodySchema = z.object({
   // dentro <SedeRequired>, quindi ce l'ha sempre); se manca e l'operatore ha più
   // plessi, `resolveScuolaScrittura` risponde 400 invece di sceglierne una.
   scuola_id: zUuid.nullish(),
+  /**
+   * I bambini scelti. Assente = tutti gli iscritti della sede, che è il
+   * comportamento di sempre — e in SQL diventa `p_alunno_ids = NULL`, non un
+   * array vuoto: `= ANY('{}')` è falso per tutti, e «nessuno scelto» sarebbe
+   * «zero generate» in silenzio. La RPC ha una guardia apposta.
+   *
+   * Il perimetro di sede lo impone comunque la funzione (`al.scuola_id =
+   * p_scuola_id` resta in AND col filtro nuovo): un id di un altro plesso non
+   * genera niente nemmeno se questa route sbagliasse.
+   */
+  alunno_ids: z.array(zUuid).min(1).nullish(),
 })
 
 function firstOfMonth(periodo?: string | null): string {
@@ -176,11 +187,21 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
     // retta default della sede
     const { data: sett } = await supabase
       .from('admin_settings')
-      .select('retta_default_importo, scuola_id')
+      .select('retta_default_importo, retta_auto_enabled, scuola_id')
       .eq('scuola_id', scuolaId)
       .limit(1)
       .maybeSingle()
     const rettaDefault = Number(sett?.retta_default_importo ?? 150)
+    /**
+     * ⚠️ LA RPC ONORA `retta_auto_enabled`, L'ANTEPRIMA LO IGNORAVA.
+     *
+     * Il corpo della funzione ha `AND COALESCE(s.retta_auto_enabled, true) = true`.
+     * Togliendo la spunta in Impostazioni, l'anteprima mostrava trecento candidati
+     * e qualche decina di migliaia di euro, e la conferma scriveva ZERO — senza
+     * dire perché. È la causa vera del sintomo «generati: 0» che sembra un guasto
+     * del programma, ed è una casella che si può togliere per sbaglio.
+     */
+    const generazioneAttiva = sett?.retta_auto_enabled !== false
 
     // alunni attivi = iscritti CON sezione valorizzata (classe_sezione o section_id)
     const COLONNE_ALUNNI = 'id, nome, cognome, classe_sezione, section_id, importo_retta_mensile, genitori_separati, scuola_id'
@@ -253,13 +274,23 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
         const importo = candidati.reduce((s, a) => s + importoRetta(a, rettaDefault), 0)
         totaleCandidati += candidati.length
         totalePrevisto += importo
-        return { periodo: p, candidati: candidati.length, gia_generati: giaFatti.size, importo }
+        /**
+         * ⚠️ ANCHE GLI ID, non solo il conteggio. La scelta dei bambini vive nel
+         * browser — il client ha già l'elenco e filtrarlo lì dà lo stesso numero
+         * al centesimo — ma la vista ANNUALE è quella aperta di default e finora
+         * restituiva soli aggregati: senza gli id, per l'anno non ci sarebbe
+         * niente da spuntare. In risposta non ci sono limiti di lunghezza: 314
+         * uuid per dieci mesi sono ~116 kB, contro una query string che si
+         * romperebbe.
+         */
+        return { periodo: p, candidati: candidati.length, candidati_ids: candidati.map((a) => a.id), gia_generati: giaFatti.size, importo }
       })
 
       return NextResponse.json({
         success: true,
         data: {
           anno_inizio: annoInizio,
+          generazione_attiva: generazioneAttiva,
           mesi,
           alunni_attivi: alunni.length,
           retta_default: rettaDefault,
@@ -328,7 +359,7 @@ export const GET = withRoute('pagamenti/genera-rette:GET', async (request: Reque
 
     return NextResponse.json({
       success: true,
-      data: { periodo, candidati, gia_generati: giaFatti.size, retta_default: rettaDefault, totale_previsto: totale },
+      data: { periodo, generazione_attiva: generazioneAttiva, candidati, gia_generati: giaFatti.size, retta_default: rettaDefault, totale_previsto: totale },
     })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/genera-rette:GET', stato: 500 }, err)
@@ -386,6 +417,7 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
       const { data, error } = await supabase.rpc('genera_rette_anno', {
         p_anno_inizio: annoInizio,
         p_scuola_id: scuolaId,
+        p_alunno_ids: body.alunno_ids ?? null,
       })
       if (error) {
         logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
@@ -407,9 +439,19 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
 
     // --- Generazione MENSILE ---
     const periodo = firstOfMonth(body.periodo)
+    // Chi aveva GIÀ la retta di questo mese, letto PRIMA di generare: è l'unico
+    // modo per avvisare solo i nuovi senza affidarsi a un orologio.
+    const { data: gia } = await supabase
+      .from('pagamenti')
+      .select('alunno_id')
+      .eq('periodo_competenza', periodo)
+      .eq('scuola_id', scuolaId)
+      .eq('gruppo', `retta-${periodo.slice(0, 7)}`)
+    const prima = new Set(((gia ?? []) as Array<{ alunno_id: string }>).map((p) => p.alunno_id))
     const { data, error } = await supabase.rpc('genera_rette_mensili', {
       p_periodo: periodo,
       p_scuola_id: scuolaId,
+      p_alunno_ids: body.alunno_ids ?? null,
     })
     if (error) {
       logErrore({ operazione: 'pagamenti/genera-rette:POST', stato: 500, evento: 'db' }, error)
@@ -439,6 +481,11 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
           .eq('periodo_competenza', periodo)
           .eq('scuola_id', scuolaId)
           .eq('gruppo', `retta-${periodo.slice(0, 7)}`)
+        // ⚠️ Questo elenco è TUTTE le rette del mese su questa sede, non solo
+        // quelle appena create: generando per un bambino solo, senza il confronto
+        // qui sotto si riavviserebbero i genitori di tutti e trecento. Il difetto
+        // c'era già sulla rigenerazione parziale; con la scelta per singolo
+        // bambino diventa il caso normale.
         if (errNuove) {
           logEvento('pagamento', 'error', {
             operazione: 'pagamenti/genera-rette:POST', esito: 'destinatari-non-letti',
@@ -448,6 +495,10 @@ export const POST = withRoute('pagamenti/genera-rette:POST', async (request: Req
         const alunniIds = ((nuove ?? []) as Array<{ alunno_id: string; visibile_dal: string | null }>)
           .filter((p) => !(p.visibile_dal && p.visibile_dal > oggi))
           .map((p) => p.alunno_id)
+          // Solo chi NON aveva già la retta prima di questa chiamata. Niente
+          // orologi (`creato_il >= now()`): lo scarto fra il clock di Next e
+          // quello di Postgres farebbe sparire i destinatari in silenzio.
+          .filter((id) => !prima.has(id))
         const mese = `${periodo.slice(5, 7)}/${periodo.slice(0, 4)}`
         if (alunniIds.length === 0) {
           // Rette emesse e nessuno da avvisare: può essere legittimo (tutte non

@@ -370,5 +370,6 @@
   "erroreMensaTicketNonLetti": "Non è stato possibile leggere i pasti residui. Riprova.",
   "erroreMensaAlunnoFuoriClasse": "Questo bambino non è in una delle tue classi.",
   "erroreMensaScopeNonVerificato": "Non è stato possibile verificare i permessi su questo bambino.",
-  "erroreFatturaTrasportoIgnoto": "La fattura è stata numerata, ma Aruba non ha confermato l’invio: nessuno sa se sia partita. NON ripremere «Emetti»: controlla prima sul pannello Aruba se il documento risulta trasmesso."
+  "erroreFatturaTrasportoIgnoto": "La fattura è stata numerata, ma Aruba non ha confermato l’invio: nessuno sa se sia partita. NON ripremere «Emetti»: controlla prima sul pannello Aruba se il documento risulta trasmesso.",
+  "erroreTicketRicaricaDuplicata": "Oggi a questo bambino è già stata registrata una ricarica di ticket mensa. Controlla che non sia lo stesso pagamento registrato due volte."
 }

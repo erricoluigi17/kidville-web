@@ -77,11 +77,15 @@ export function SaveCelebration({
     });
   }, []);
 
+  // z-[120]: sopra TUTTO, Modal compresa (z-[120]). A z-[80] — il valore che
+  // aveva — la barra verde dell'admin (z-[105]) e il foglio «Menu» (z-[110]) se
+  // la mangiavano: è lo stesso difetto che `Modal.tsx` documenta per sé.
+  // `pointer-events-none`: non ruba mai un click a ciò che sta sotto.
   return (
     <AnimatePresence>
       {show && (
         <motion.div
-          className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center"
+          className="pointer-events-none fixed inset-0 z-[120] flex items-center justify-center"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         >
           <div className="relative flex flex-col items-center">
@@ -97,6 +101,8 @@ export function SaveCelebration({
               />
             ))}
             <motion.div
+              role="status"
+              aria-live="polite"
               className="flex flex-col items-center gap-2 rounded-3xl bg-white/95 px-7 py-6 shadow-xl"
               initial={{ scale: reduce ? 1 : 0.7, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}

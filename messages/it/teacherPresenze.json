@@ -77,5 +77,8 @@
   "orarioNonRegistrato": "non registrato",
   "orarioCampoAria": "Nuovo orario",
   "salvaOrario": "Salva l’orario",
-  "annullaModifica": "Annulla la modifica"
+  "annullaModifica": "Annulla la modifica",
+  "mensileCorreggiAria": "Correggi l’orario di {alunno}, {giorno} — {stato}",
+  "nessunDato": "nessun appello",
+  "mensileOrarioNonSalvato": "Non sono riuscito a salvare l’orario di {alunno}. L’ora mostrata è tornata quella di prima: riprova."
 }

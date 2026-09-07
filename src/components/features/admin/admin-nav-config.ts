@@ -15,6 +15,7 @@ import {
   Images,
   Award,
   ShieldCheck,
+  CheckSquare,
   ChefHat,
   ShoppingBag,
   MessageCircle,
@@ -72,6 +73,16 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: '/admin/primaria', label: 'Primaria', labelKey: 'nav_primaria', icon: GraduationCap },
       { href: '/admin/diary', label: 'Diario 0–6', labelKey: 'nav_diary', icon: BookOpen },
+      // Appello di TUTTI i gradi: nido e infanzia si compilano qui dentro, la primaria
+      // porta al registro della sua classe (che ha una schermata sua, dentro
+      // `ClasseShell`). Una voce sola e non due: il menu è un elenco di lavori, non di
+      // motori, e «correggere l'appello di una classe» è un lavoro solo.
+      //
+      // `roles` non è facoltativo. La `cuoca` entra nell'area admin per il solo report
+      // cucina, ma `requireDocente` la esclude dalle route delle presenze: vedrebbe una
+      // voce che promette l'appello di minori e poi risponde 403. È la stessa ragione,
+      // già scritta, della voce «Galleria» qui sopra.
+      { href: '/admin/appello', label: 'Appello', labelKey: 'nav_appello', icon: CheckSquare, roles: ['admin', 'coordinator', 'segreteria'] },
       // Galleria del PLESSO (segreteria): le foto di tutta la sede, filtrabili per
       // classe, per bambino e per giornata. Sta accanto al Diario perché sono i due
       // registri della stessa giornata; `/teacher/gallery` resta la vista di UNA

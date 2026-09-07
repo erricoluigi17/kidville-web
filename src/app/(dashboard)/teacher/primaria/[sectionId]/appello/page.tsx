@@ -264,7 +264,7 @@ export default function AppelloPage() {
             L'avviso nomina il bambino: in una classe di venticinque righe, «errore di
             salvataggio» non dice a chi rifare il gesto. */}
       {erroreOrario && (
-        <p role="alert" className="font-maven mb-2 rounded-xl bg-kidville-error-soft px-3 py-2 text-xs text-kidville-error-strong">
+        <p role="alert" className="kv-appello-avviso font-maven mb-2 rounded-xl bg-kidville-error-soft px-3 py-2 text-xs text-kidville-error-strong">
           {t('appelloOrarioNonSalvato', { nome: erroreOrario })}
         </p>
       )}

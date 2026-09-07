@@ -77,5 +77,8 @@
   "orarioNonRegistrato": "not recorded",
   "orarioCampoAria": "New time",
   "salvaOrario": "Save the time",
-  "annullaModifica": "Cancel the change"
+  "annullaModifica": "Cancel the change",
+  "mensileCorreggiAria": "Edit {alunno}’s time, {giorno} — {stato}",
+  "nessunDato": "no attendance taken",
+  "mensileOrarioNonSalvato": "Could not save {alunno}’s time. The displayed time has been restored: please try again."
 }

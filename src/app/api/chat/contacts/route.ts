@@ -6,13 +6,11 @@ import { requireUser } from '@/lib/auth/require-staff';
 // intero con una factory `vi.mock`, e importare di lì un predicato li farebbe
 // esplodere con `No "agisceComeGenitore" export is defined on the mock`.
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
-import { scuoleDiUtente } from '@/lib/auth/scope';
-import { getFigliDiGenitore, getGenitoriDiAlunni } from '@/lib/anagrafiche/legami';
-import { STATI_CON_CANALE_FAMIGLIA } from '@/lib/alunni/stato';
+import { rubricaDiFamiglia, rubricaDiOperatore, type EsitoRubrica } from '@/lib/chat/rubrica';
 import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore } from '@/lib/logging/logger';
+import { logErrore, logEvento } from '@/lib/logging/logger';
 
 // Gap auth chiuso in M9: il legacy `?userId=` in query resta ACCETTATO dallo
 // schema per compatibilità coi client ma viene IGNORATO — l'identità è quella
@@ -21,10 +19,53 @@ const getQuerySchema = z.object({
     userId: zUuid.optional(),
 });
 
-// GET /api/chat/contacts
-// Restituisce i contatti disponibili per iniziare una nuova chat
-// - Se l'utente è maestra: restituisce i genitori dei suoi studenti
-// - Se l'utente è genitore: restituisce le maestre della sezione dei suoi figli
+/**
+ * GET /api/chat/contacts — con chi si può APRIRE una conversazione.
+ *
+ * ─── COSA È CAMBIATO, E PERCHÉ ───────────────────────────────────────────────
+ *
+ * «Un genitore deve poter contattare solo le proprie insegnanti, così come le
+ * insegnanti possono contattare solo i propri genitori: quando clicchi su nuova
+ * chat, non devono proprio comparire le altre persone.»
+ *
+ * Questa rotta non lo faceva, in due direzioni opposte. Misurato in produzione il
+ * 2026-09-07, su 706 genitori e 60 docenti:
+ *
+ *  · **9 genitori** ricevevano **tutti i 63 docenti di 5 sedi** (Demo ed E2E
+ *    comprese, 9 disattivati): bastava che un figlio non avesse `section_id`, o
+ *    che la sua sezione non avesse legami, e un fallback restituiva l'anagrafica
+ *    intera del personale docente. Non era generosità: erano 63 nomi di persone
+ *    che non sono le sue insegnanti.
+ *  · **150 genitori** vedevano, fra le «proprie insegnanti», qualcuno che
+ *    insegnante non è — in `utenti_sezioni` ci sono 6 righe di `segreteria` e 1 di
+ *    `admin` — e **32** vedevano un docente CESSATO.
+ *  · **12 docenti su 60** vedevano i genitori di UNA sola delle proprie sezioni:
+ *    `.limit(1)` **senza `order`** su `utenti_sezioni`, quindi nemmeno sempre la
+ *    stessa. E il filtro sugli alunni era per NOME di classe, che non è una
+ *    chiave: dove il testo diverge dal `sections.name`, la rubrica usciva vuota
+ *    con un 200 e nessuna riga di log.
+ *  · un fallback storico deduceva la sezione della maestra dai **tag delle foto**
+ *    che aveva caricato. È sparito: dedurre la classe dai media produce
+ *    abbinamenti plausibili e sbagliati, che è peggio del vuoto — il PRD lo dice
+ *    già a proposito delle insegnanti senza sezione.
+ *
+ * La regola vive ora in `@/lib/chat/rubrica`, in un posto solo, e la applica
+ * anche `chat/threads:POST` — che è il gate della SCRITTURA. Filtrare la sola
+ * vetrina lasciava la porta aperta a chi conosce gli uuid, e gli uuid viaggiano
+ * nelle risposte API: di lì sono nati 32 thread fuori sezione, uno al giorno.
+ *
+ * ─── LA VESTE, NON IL RUOLO NEL DATABASE ────────────────────────────────────
+ *
+ * La biforcazione guarda `agisceComeGenitore` — la veste ATTIVA — e non più
+ * `utenti.role`. Prima una maestra che è anche mamma, passando in veste famiglia,
+ * riceveva comunque la rubrica da maestra: **non poteva aprire una chat con le
+ * insegnanti di suo figlio**. Sono 9 persone, con 12 legami, 11 dei quali su
+ * bambini in sezioni che non insegnano. Il commento che stava qui lo ammetteva e
+ * rinviava la cosa come «decisione di prodotto»: la decisione è stata presa, ed è
+ * quella coerente con la frase da cui parte questa rotta. `chat/threads:POST` fa
+ * già esattamente questa distinzione, quindi la rubrica smette di contraddire il
+ * gate che le sta accanto.
+ */
 export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
     const auth = await requireUser(request);
     if (auth.response) return auth.response;
@@ -35,257 +76,109 @@ export const GET = withRoute('chat/contacts:GET', async (request: Request) => {
 
     try {
         const supabase = await createAdminClient();
+        const comeGenitore = agisceComeGenitore(auth.user);
 
-        // Determina il ruolo dell'utente
-        const { data: user } = await supabase
-            .from('utenti')
-            .select('id, nome, cognome, ruolo, first_name, last_name, role')
-            .eq('id', userId)
-            .maybeSingle();
+        const esito: EsitoRubrica = comeGenitore
+            ? await rubricaDiFamiglia(supabase, userId)
+            : await rubricaDiOperatore(supabase, auth.user);
 
-        if (!user) {
-            return NextResponse.json({ error: 'Utente non trovato' }, { status: 404 });
-        }
-
-        const role = user.role || user.ruolo;
-        const contacts: Array<{
-            user_id: string;
-            user_name: string;
-            user_role: string;
-            student_id: string;
-            student_name: string;
-            sezione: string;
-            // Sede del LEGAME (quella dell'alunno), non dell'operatore: con più
-            // plessi «2 ANNI» non identifica una classe, e una lista di persone
-            // senza sede è indistinguibile da quella di un altro plesso. La UI
-            // la usa per l'etichetta «nome — sede» quando le sedi sono più d'una.
-            scuola_id: string | null;
-        }> = [];
-
-        if (role === 'maestra' || role === 'educator') {
-            // Isolamento per sede: la sezione è risolta dai legami del docente,
-            // ma il nome-classe non è una chiave (con tre sedi «2 ANNI» esiste
-            // sia ad Aversa sia a Cesa). Senza questo filtro la maestra si
-            // ritrovava fra i contatti i GENITORI dei bambini dell'altra sede,
-            // con la chat già apribile. Fail-closed: nessun plesso → nessun
-            // contatto (in produzione ogni utente di staff ha una sede).
-            //
-            // Il calcolo sta QUI, e non venti righe più sotto, perché serve già
-            // al fallback storico: la derivazione della sezione dai tag deve
-            // restare dentro la sede, altrimenti si IDENTIFICA la maestra con la
-            // classe di un altro plesso e la si porta poi sull'omonima.
-            const plessi = await scuoleDiUtente(supabase, auth.user);
-
-            // Maestra: sezione dalla fonte canonica (utenti_sezioni → sections).
-            const { data: legamiSez } = await supabase
-                .from('utenti_sezioni')
-                .select('sections(name)')
-                .eq('utente_id', userId)
-                .limit(1);
-            let teacherSection = ((legamiSez?.[0]?.sections as { name?: string } | null)?.name) ?? null;
-
-            // Fallback storico: deriva la sezione dai media caricati con studenti taggati
-            if (!teacherSection) {
-                const { data: myMedia } = await supabase
-                    .from('galleria_media_v2')
-                    .select('tag_students')
-                    .eq('uploaded_by', userId)
-                    .not('tag_students', 'is', null)
-                    .limit(10);
-
-                const myTaggedIds = (myMedia ?? [])
-                    .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
-                    .filter(Boolean);
-
-                if (myTaggedIds.length > 0) {
-                    // `.in('scuola_id', plessi)`: ultima copia non corretta del
-                    // frammento che vive anche in `educator-sections` e `tasks`.
-                    // Il `.limit(1)` non ordina: bastava un vecchio tag su un
-                    // bambino di un altro plesso perché la SUA classe vincesse.
-                    const { data: taggedStudents } = await supabase
-                        .from('alunni')
-                        .select('classe_sezione')
-                        .in('id', myTaggedIds)
-                        .in('scuola_id', plessi)
-                        .limit(1);
-                    teacherSection = taggedStudents?.[0]?.classe_sezione ?? null;
-                }
-            }
-
-            // Senza sezione risolta la lista resta vuota: niente default arbitrari.
-            if (teacherSection) {
-                // 3 query batched: alunni della sezione → legami → genitori (niente N+1).
-                //
-                // ⚠️ IL FILTRO DI STATO C'È ANCHE QUI, benché la query nomini la
-                // CLASSE (2026-08-13). È il gemello lato maestra della rubrica di
-                // segreteria, ed è una RUBRICA: decide con quali famiglie si può
-                // aprire una conversazione. L'esenzione «per sezione» del lock
-                // vale per la strada dell'ARCHIVIAZIONE — che sgancia dalla
-                // classe — non per la TENDINA della scheda alunno, che porta lo
-                // `stato` a `'ritirato'` lasciando il bambino agganciato: per
-                // quella strada la maestra poteva scrivere alla famiglia di un
-                // bambino che non frequenta più.
-                const { data: allStudents, error: errStudents } = await supabase
-                    .from('alunni')
-                    .select('id, nome, cognome, classe_sezione, scuola_id')
-                    .eq('classe_sezione', teacherSection)
-                    .in('scuola_id', plessi)
-                    .in('stato', [...STATI_CON_CANALE_FAMIGLIA]);
-                // PostgREST non lancia: senza questa riga una lettura rotta
-                // usciva come «questa classe non ha bambini» e la rubrica della
-                // maestra restava vuota senza che nessuna riga lo dicesse.
-                if (errStudents) {
-                    logErrore({ operazione: 'chat/contacts:GET', stato: 500, evento: 'db' }, errStudents);
-                    return NextResponse.json(
-                        { error: 'La rubrica non si è potuta caricare.', codice: 'RUBRICA_NON_DISPONIBILE' },
-                        { status: 500 },
-                    );
-                }
-                const students = allStudents ?? [];
-                const studentIds = students.map(s => s.id);
-
-                // Verso inverso dell'unione (alunno → account genitore): con la
-                // sola `legame_genitori_alunni` la maestra non vedeva i genitori
-                // dei bambini importati dal form pubblico. Query in blocco, come
-                // prima: `getGenitoriDiAlunni` non introduce N+1.
-                const genitoriPerAlunno = studentIds.length > 0
-                    ? await getGenitoriDiAlunni(supabase, studentIds)
-                    : new Map<string, string[]>();
-
-                const parentIds = [...new Set([...genitoriPerAlunno.values()].flat())];
-                const { data: parents } = parentIds.length > 0
-                    ? await supabase
-                        .from('utenti')
-                        .select('id, nome, cognome, first_name, last_name')
-                        .in('id', parentIds)
-                    : { data: [] };
-
-                const parentById = new Map((parents ?? []).map(p => [p.id, p]));
-                const seen = new Set<string>();
-                for (const student of students) {
-                    for (const genitoreId of genitoriPerAlunno.get(student.id) ?? []) {
-                        const parent = parentById.get(genitoreId);
-                        if (!parent) continue;
-                        const key = `${parent.id}:${student.id}`;
-                        if (seen.has(key)) continue;
-                        seen.add(key);
-                        contacts.push({
-                            user_id: parent.id,
-                            user_name: `${parent.first_name || parent.nome} ${parent.last_name || parent.cognome}`,
-                            user_role: 'genitore',
-                            student_id: student.id,
-                            student_name: `${student.nome} ${student.cognome}`,
-                            sezione: student.classe_sezione ?? '',
-                            scuola_id: (student.scuola_id as string | null) ?? null,
-                        });
-                    }
-                }
-            }
-        // PRESENTAZIONE: quale rubrica si sta guardando.
-        //
-        // ⚠️ NOTA ONESTA, perché la conversione qui è meno efficace di quanto sembri:
-        // il ramo docente qui sopra biforca ancora su `role`, che in questo file è
-        // letto dal DATABASE (`utenti.role || utenti.ruolo`), non dal cookie. Una
-        // docente-genitore che commuti la veste viene quindi intercettata PRIMA, dal
-        // ramo `maestra/educator`, e questa riga non la vede nemmeno. Metterle la
-        // vista di famiglia davanti sarebbe la cosa giusta, ma cambia quale rubrica
-        // riceve — non è una conversione, è una decisione di prodotto, e sta fuori
-        // dal perimetro di questo intervento.
-        } else if (agisceComeGenitore(auth.user)) {
-            // Genitore: figli → docenti delle loro sezioni, tutto batched (niente N+1).
-            // I figli vengono dall'unione runtime+anagrafica: con la sola tabella
-            // runtime il genitore importato dal form pubblico non aveva contatti.
-            const alunnoIds = await getFigliDiGenitore(supabase, userId);
-
-            const { data: studentsData } = alunnoIds.length > 0
-                ? await supabase
-                    .from('alunni')
-                    .select('id, nome, cognome, classe_sezione, section_id, scuola_id')
-                    .in('id', alunnoIds)
-                : { data: [] };
-            const students = studentsData ?? [];
-
-            // Insegnanti per sezione (fonte canonica utenti_sezioni), in blocco.
-            const sectionIds = [...new Set(students.map(s => s.section_id).filter(Boolean))] as string[];
-            const { data: legamiSez } = sectionIds.length > 0
-                ? await supabase
-                    .from('utenti_sezioni')
-                    .select('section_id, utente_id')
-                    .in('section_id', sectionIds)
-                : { data: [] };
-
-            type Teacher = { id: string; nome: string | null; cognome: string | null; first_name: string | null; last_name: string | null };
-            const teacherIds = [...new Set((legamiSez ?? []).map(r => r.utente_id))];
-            const { data: teachersData } = teacherIds.length > 0
-                ? await supabase
-                    .from('utenti')
-                    .select('id, nome, cognome, first_name, last_name')
-                    .in('id', teacherIds)
-                : { data: [] };
-            const teacherById = new Map<string, Teacher>(((teachersData ?? []) as Teacher[]).map(t => [t.id, t]));
-
-            const teachersBySection = new Map<string, Teacher[]>();
-            for (const r of legamiSez ?? []) {
-                const t = teacherById.get(r.utente_id);
-                if (!t) continue;
-                const arr = teachersBySection.get(r.section_id) ?? [];
-                arr.push(t);
-                teachersBySection.set(r.section_id, arr);
-            }
-
-            // Fallback storico (una sola query, solo se serve): tutte le maestre
-            // per i figli con sezione non mappata.
-            let allTeachers: Teacher[] | null = null;
-            const needsFallback = students.some(
-                s => !s.section_id || (teachersBySection.get(s.section_id) ?? []).length === 0
+        // PostgREST non lancia: senza questo ramo una lettura rotta uscirebbe come
+        // «non hai nessun contatto», e la rubrica resterebbe vuota senza che
+        // nessuna riga lo dica. Vale su ENTRAMBI i rami: fino a oggi il 500 ce
+        // l'aveva solo quello della maestra.
+        if (esito.errore) {
+            return NextResponse.json(
+                { error: 'La rubrica non si è potuta caricare.', codice: 'RUBRICA_NON_DISPONIBILE' },
+                { status: 500 },
             );
-            if (needsFallback) {
-                const { data } = await supabase
-                    .from('utenti')
-                    .select('id, nome, cognome, first_name, last_name')
-                    .or('ruolo.eq.maestra,role.eq.educator');
-                allTeachers = (data ?? []) as Teacher[];
-            }
-
-            const seen = new Set<string>();
-            for (const student of students) {
-                const own = student.section_id ? (teachersBySection.get(student.section_id) ?? []) : [];
-                const teachers = own.length > 0 ? own : (allTeachers ?? []);
-                for (const teacher of teachers) {
-                    const key = `${teacher.id}:${student.id}`;
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-                    contacts.push({
-                        user_id: teacher.id,
-                        user_name: `${teacher.first_name || teacher.nome} ${teacher.last_name || teacher.cognome}`,
-                        user_role: 'maestra',
-                        student_id: student.id,
-                        student_name: `${student.nome} ${student.cognome}`,
-                        sezione: student.classe_sezione ?? '',
-                        scuola_id: (student.scuola_id as string | null) ?? null,
-                    });
-                }
-            }
         }
 
-        // Filtra contatti che hanno già un thread attivo
-        const { data: existingThreads } = await supabase
+        // I contatti con cui una conversazione è già aperta non si ripropongono:
+        // la si riprende dalla lista, non se ne apre una seconda (la tripla
+        // `(teacher_id, parent_id, student_id)` è UNIQUE).
+        const { data: threadEsistenti, error: erroreThread } = await supabase
             .from('chat_threads')
             .select('teacher_id, parent_id, student_id')
             .or(`teacher_id.eq.${userId},parent_id.eq.${userId}`);
+        if (erroreThread) {
+            logErrore({ operazione: 'chat/contacts:GET', stato: 500, evento: 'db' }, erroreThread);
+            return NextResponse.json(
+                { error: 'La rubrica non si è potuta caricare.', codice: 'RUBRICA_NON_DISPONIBILE' },
+                { status: 500 },
+            );
+        }
+        const esistenti = threadEsistenti ?? [];
 
-        const available = contacts.filter(c => {
-            const hasThread = (existingThreads ?? []).some(t => {
-                if (role === 'maestra' || role === 'educator') {
-                    return t.teacher_id === userId && t.parent_id === c.user_id && t.student_id === c.student_id;
-                } else {
-                    return t.parent_id === userId && t.teacher_id === c.user_id && t.student_id === c.student_id;
-                }
+        const contacts = esito.voci
+            .filter((v) => !esistenti.some((t) =>
+                comeGenitore
+                    ? t.parent_id === userId && t.teacher_id === v.utenteId && t.student_id === v.alunno.id
+                    : t.teacher_id === userId && t.parent_id === v.utenteId && t.student_id === v.alunno.id,
+            ))
+            .map((v) => ({
+                user_id: v.utenteId,
+                user_name: '',
+                user_role: comeGenitore ? 'maestra' : 'genitore',
+                student_id: v.alunno.id,
+                student_name: `${v.alunno.nome ?? ''} ${v.alunno.cognome ?? ''}`.trim(),
+                sezione: v.alunno.classeSezione ?? '',
+                // Sede del LEGAME (quella dell'alunno), non dell'operatore: con più
+                // plessi «2 ANNI» non identifica una classe, e una lista di persone
+                // senza sede è indistinguibile da quella di un altro plesso.
+                scuola_id: v.alunno.scuolaId,
+            }));
+
+        // I nomi in blocco, alla fine e su un insieme già filtrato: nessuna N+1, e
+        // nessun nome letto per una persona che poi non compare in elenco.
+        const daNominare = [...new Set(contacts.map((c) => c.user_id))];
+        if (daNominare.length > 0) {
+            const { data: persone } = await supabase
+                .from('utenti')
+                .select('id, nome, cognome, first_name, last_name')
+                .in('id', daNominare);
+            const perId = new Map(((persone ?? []) as Array<{ id: string; nome: string | null; cognome: string | null; first_name: string | null; last_name: string | null }>).map((p) => [p.id, p]));
+            for (const c of contacts) {
+                const p = perId.get(c.user_id);
+                c.user_name = p ? `${p.first_name || p.nome || ''} ${p.last_name || p.cognome || ''}`.trim() : '';
+            }
+        }
+
+        /**
+         * PERCHÉ LA ROTTA DICE ANCHE *PERCHÉ* È VUOTA.
+         *
+         * Finora, a elenco vuoto, il genitore leggeva «Hai già una conversazione con
+         * tutte le maestre disponibili! 🎉» e la docente il suo gemello. Dopo questa
+         * stretta quelle frasi toccherebbero anche chi non ha **nessun** contatto
+         * possibile — 23 genitori, di cui **20 di una sola sezione**, la
+         * `Sezione delle Meraviglie (NIDO)` di Cesa, che ha 20 iscritti e zero
+         * educator attivi. Dire loro «li hai già contattati tutti», con un'emoji,
+         * sarebbe una bugia.
+         *
+         * Il campo è ADDITIVO: chi legge solo `contacts` non se ne accorge. È lo
+         * stesso schema già in produzione su `/api/parent/students` (`in_attesa` +
+         * `motivo_assenza`).
+         */
+        const motivo = contacts.length === 0
+            ? (esito.motivoVuota ?? (esistenti.length > 0 ? 'tutti-gia-contattati' : null))
+            : null;
+
+        if (motivo && motivo !== 'tutti-gia-contattati') {
+            // `warn` e non `info`: è la riga con cui, fra due mesi, «i 23 genitori
+            // sono diventati cinquanta?» si risponde con una query invece che con
+            // un'opinione. `tipo` e non `motivo`: `motivo` è una chiave REDATTA.
+            logEvento('chat', 'warn', {
+                operazione: 'chat/contacts:GET',
+                esito: 'rubrica-vuota',
+                tipo: motivo,
+                utente: userId,
             });
-            return !hasThread;
-        });
+        }
 
-        return NextResponse.json({ contacts: available, existing_count: (existingThreads ?? []).length });
+        return NextResponse.json({
+            contacts,
+            existing_count: esistenti.length,
+            motivo,
+        });
     } catch (error) {
         logErrore({ operazione: 'chat/contacts:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

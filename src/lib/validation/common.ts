@@ -35,6 +35,24 @@ export const zDataYMD = z
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'Data non valida (atteso YYYY-MM-DD)')
     .refine(dataCalendarioValida, 'Data inesistente nel calendario');
 
+/**
+ * Un'ora del giorno, `HH:MM` a 24 ore.
+ *
+ * ⚠️ NON è `/^\d{2}:\d{2}$/`, che è la regex che l'appello della primaria usava
+ * (`primaria/appello/route.ts`) e che **accetta `99:99`**. Un'ora è un'ora: le ore
+ * arrivano a 23 e i minuti a 59, e chi valida un orario del registro di un minore
+ * non ha motivo di essere più permissivo del calendario.
+ *
+ * Sul filo passa questa forma, e non un ISO: è ciò che `<input type="time">`
+ * produce, ed è l'unica che `@/lib/logging/redact` non lascia passare in chiaro —
+ * un ISO matcha `DATA_ISO` e uscirebbe intero in `app_log`, cioè l'istante
+ * d'arrivo di un bambino. La conversione in istante la fa il server
+ * (`aOrarioIso`), dove il fuso è dichiarato e non dipende dall'orologio del tablet.
+ */
+export const zOraHHMM = z
+    .string({ error: 'Orario mancante' })
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Orario non valido (atteso HH:MM)');
+
 /** Mese in formato YYYY-MM. */
 export const zAnnoMese = z
     .string({ error: 'Mese mancante' })

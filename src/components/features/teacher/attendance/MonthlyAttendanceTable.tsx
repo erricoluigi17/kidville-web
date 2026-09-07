@@ -9,6 +9,7 @@ import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route
 import { calcolaOreAssenza } from '@/lib/primaria/oreAssenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
+import { oraDiRoma } from '@/lib/presenze/orario';
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
@@ -147,12 +148,10 @@ export function calcSummary(s: StudentMonthData): StudentSummary {
 
 // ─── Cella ───────────────────────────────────────────────────────────────────
 
-// HH:MM da un timestamp ISO (vuoto se assente/non valido).
-function hhmm(ts: string | null | undefined): string {
-    if (!ts) return '';
-    const d = new Date(ts);
-    return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+// HH:MM a Roma da un orario di presenza, in qualunque delle forme che la colonna
+// contiene (vuoto se assente/non valido). Il `getHours()` di prima era l'ora del
+// DISPOSITIVO: giusta per un tablet italiano, sbagliata per chiunque altro, e muta.
+const hhmm = (ts: string | null | undefined): string => oraDiRoma(ts) ?? '';
 
 function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeekend: boolean }) {
     const t = useTranslations('teacherPresenze');

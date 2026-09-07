@@ -78,7 +78,12 @@ describe('GET /api/chat/contacts — unione runtime+anagrafica', () => {
     h.righe = {
       utenti: [
         { id: 'gen1', ruolo: 'genitore', role: 'genitore' },
-        { id: 'doc1', nome: 'Maria', cognome: 'Verdi', first_name: null, last_name: null },
+        // `ruolo` e `attivo` espliciti dal 2026-09-07: la rubrica di famiglia ora
+        // offre SOLO gli educator in servizio — in `utenti_sezioni` ci sono anche
+        // 6 righe di segreteria e 1 di admin, e 150 genitori se le vedevano fra le
+        // «proprie insegnanti». Un fixture che tace il ruolo descrive una persona
+        // che in produzione non esiste.
+        { id: 'doc1', nome: 'Maria', cognome: 'Verdi', first_name: null, last_name: null, ruolo: 'educator', attivo: true },
       ],
       legame_genitori_alunni: [],
       parents: [{ id: 'p1', auth_user_id: 'gen1' }],

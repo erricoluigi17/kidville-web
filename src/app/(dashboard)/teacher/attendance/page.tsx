@@ -219,6 +219,13 @@ function TodayView({ sezione, sectionId }: { sezione: string; sectionId?: string
     const [delegates, setDelegates] = useState<LocalDelegate[]>([]);
     const [selectedCheckout, setSelectedCheckout] = useState<string | null>(null);
     const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
+    /**
+     * Quale orario, di quale bambino, si sta salvando. Separato da
+     * `loadingStudentId` di proposito: quello sostituisce l'INTERO gruppo di
+     * bottoni con uno spinner, e usarlo qui farebbe sparire dagli occhi della
+     * maestra proprio l'ora che sta correggendo.
+     */
+    const [orarioInCorso, setOrarioInCorso] = useState<{ studentId: string; campo: 'entrata' | 'uscita' } | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     /**
@@ -321,7 +328,10 @@ function TodayView({ sezione, sectionId }: { sezione: string; sectionId?: string
         const now = new Date().toISOString();
 
         const orario_entrata = stato === 'assente' ? null : (records[studentId]?.orario_entrata ?? now);
-        const orario_uscita = stato === 'uscita_anticipata' ? now : null;
+        // `?? now` e non `now`, simmetrico alla riga sopra. Con `now` secco, ogni
+        // ri-salvataggio di un'uscita anticipata — e `CheckoutModal` ne fa uno —
+        // riscriveva l'ora del TOCCO sopra quella appena rettificata a mano.
+        const orario_uscita = stato === 'uscita_anticipata' ? (records[studentId]?.orario_uscita ?? now) : null;
 
         // Ottimistic update. Si PARTE dal record precedente invece di ricostruirlo
         // da zero: il motivo comunicato dal genitore non arriva dalla POST (la
@@ -392,6 +402,62 @@ function TodayView({ sezione, sectionId }: { sezione: string; sectionId?: string
             setErroriSalvataggio(prev => ({ ...prev, [studentId]: stato }));
         } finally {
             setLoadingStudentId(null);
+        }
+    };
+
+    /**
+     * ── RETTIFICA DI UN ORARIO ──────────────────────────────────────────────
+     *
+     * Handler SUO, e non `handleSetStato` con un parametro in più. La POST è un
+     * upsert della riga intera: passando di lì per cambiare l'ingresso si
+     * azzererebbe l'uscita (vedi le due righe di `handleSetStato`), si riasserirebbe
+     * lo stato e si rientrerebbe nel ramo che revoca le notifiche d'assenza. La
+     * PATCH nomina una colonna sola, e una `.update()` non può azzerare quella che
+     * non nomina.
+     *
+     * Sul filo va `HH:MM`, non un istante: l'ISO matcha `DATA_ISO` in
+     * `@/lib/logging/redact` e uscirebbe in chiaro in `app_log` su ogni 400 — cioè
+     * l'ora d'arrivo di un bambino. La conversione la fa il server, col fuso di
+     * Roma, invece che l'orologio di questo tablet.
+     */
+    const handleSetOrario = async (studentId: string, campo: 'entrata' | 'uscita', ora: string) => {
+        const chiave = campo === 'entrata' ? 'orario_entrata' : 'orario_uscita';
+        setOrarioInCorso({ studentId, campo });
+        const precedente = records[studentId];
+
+        // Ottimistico sul SOLO campo toccato: si parte dal record precedente, come
+        // fa `handleSetStato`, perché il motivo comunicato dal genitore non torna
+        // dalla risposta e ricreando l'oggetto sparirebbe dalla riga.
+        setRecords(prev => ({
+            ...prev,
+            [studentId]: { ...prev[studentId], [chiave]: ora },
+        }));
+
+        let statoHttp: number | undefined;
+        try {
+            const res = await fetch('/api/attendance/daily', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ alunno_id: studentId, data: selectedDate, [chiave]: ora }),
+            });
+            statoHttp = res.status;
+            if (!res.ok) throw new Error('Rettifica rifiutata');
+            const saved = await res.json();
+            setRecords(prev => ({ ...prev, [studentId]: { ...prev[studentId], ...saved } }));
+            setErroriSalvataggio(prev => {
+                if (!(studentId in prev)) return prev;
+                const next = { ...prev };
+                delete next[studentId];
+                return next;
+            });
+        } catch (err) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `orario-rettifica-fallita: ${nomeErrore(err)}`, route: '/teacher/attendance', stato: statoHttp });
+            // Rollback del solo campo, e SUBITO l'avviso: il rollback da solo è
+            // ingannevole, perché per un istante la riga ha mostrato l'ora nuova.
+            setRecords(prev => ({ ...prev, [studentId]: precedente ?? prev[studentId] }));
+            setErroriSalvataggio(prev => ({ ...prev, [studentId]: prev[studentId] ?? (precedente?.stato ?? 'presente') }));
+        } finally {
+            setOrarioInCorso(null);
         }
     };
 
@@ -559,6 +625,8 @@ function TodayView({ sezione, sectionId }: { sezione: string; sectionId?: string
                         onSetStato={handleSetStato}
                         onCheckoutClick={setSelectedCheckout}
                         isLoading={loadingStudentId === student.id}
+                        onSetOrario={handleSetOrario}
+                        orarioInCorso={orarioInCorso?.studentId === student.id ? orarioInCorso.campo : null}
                     />
                 ))}
                 {visibleStudents.length === 0 && (

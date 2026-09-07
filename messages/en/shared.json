@@ -370,5 +370,10 @@
   "erroreMensaTicketNonLetti": "Remaining meals could not be loaded. Please try again.",
   "erroreMensaAlunnoFuoriClasse": "This child is not in one of your classes.",
   "erroreMensaScopeNonVerificato": "Permissions for this child could not be verified.",
+  "erroreAppelloNonRegistrato": "Mark the child’s attendance first: with no roll call there is no time to correct.",
+  "erroreOrarioIncoerente": "The time does not match the recorded status.",
+  "erroreChatAbbinamentoNonConsentito": "You cannot start a conversation with this person about this child.",
+  "erroreChatAbbinamentoNonVerificato": "The connection could not be verified. Please try again in a few minutes.",
+  "erroreChatThreadNonCreato": "The conversation could not be opened. Please try again in a few minutes.",
   "erroreFatturaTrasportoIgnoto": "The invoice was numbered, but Aruba did not confirm the upload: nobody knows whether it was sent. Do NOT press “Issue” again: first check on the Aruba panel whether the document was transmitted."
 }

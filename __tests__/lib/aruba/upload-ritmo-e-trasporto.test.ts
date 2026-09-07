@@ -266,3 +266,61 @@ describe('arubaUpload — un 2xx che non si sa leggere non è un successo', () =
     expect((errore as Error).message).toContain('ECONNREFUSED')
   })
 })
+
+describe('arubaUpload — il ritentativo si può SPEGNERE, e dentro un ciclo cronometrato si spegne', () => {
+  /**
+   * ─── PERCHÉ ESISTE QUESTO INTERRUTTORE ──────────────────────────────────────────────
+   * I novanta secondi del ritentativo sono giusti per un'emissione singola: la route ha
+   * `maxDuration = 300` e la fattura parte al secondo 40, quindi restano 260 secondi di
+   * margine e il ritentativo ci sta comodo.
+   *
+   * Dentro un LOTTO che gira sul server la stessa attesa cambia natura. Il ciclo ha un
+   * budget: prima di ogni fattura guarda quanto tempo resta. Se una fattura parte con
+   * sessanta secondi di margine e prende un `429`, l'`await` di novanta secondi vive
+   * DENTRO `arubaUpload` — il chiamante non ha nessun punto di controllo fra l'inizio e
+   * la fine — e l'invocazione muore oltre il muro **con il numero già allocato e nessuna
+   * riga a registro**. Il ritentativo, pensato per proteggere, diventa il modo di
+   * produrre il buco che tutto il resto cerca di evitare.
+   *
+   * Perciò il lotto passa `ritenta: false`: sul `429` si ferma e restituisce le righe
+   * rimanenti. Non è «rinunciare a riprovare» — è riprovare DOPO, con il tempo davanti,
+   * invece che dentro un'invocazione che sta per essere uccisa.
+   *
+   * Il valore predefinito NON cambia: l'emissione singola continua a ritentare.
+   */
+  it('con `ritenta: false` il 429 non aspetta e non ritenta: un solo tentativo', async () => {
+    vi.useFakeTimers()
+    const { arubaUpload } = await carica()
+    fetchMock.mockResolvedValue(troppeRichieste())
+
+    const attesa = arubaUpload('demo', 'AT', { ...PARAMS, ritenta: false })
+    // L'orologio si muove di molto più dei novanta secondi: se ci fosse un'attesa,
+    // qui si vedrebbe partire il secondo tentativo.
+    await vi.advanceTimersByTimeAsync(300_000)
+    const esito = await attesa
+
+    expect(fetchMock, 'un ciclo a budget non può permettersi novanta secondi ciechi').toHaveBeenCalledTimes(1)
+    expect(esito.ok).toBe(false)
+    expect(esito.trasporto, 'il 429 resta un rifiuto di TRASPORTO: il merito non è stato giudicato').toBe(true)
+    expect(esito.statoHttp).toBe(429)
+    // `dopoRitentativo` si valorizza SOLO quando un secondo tentativo c'è stato (è il
+    // campo che distingue un `0034` «già inviato prima» da un `0034` «l'ho inviato io un
+    // minuto fa»). Qui non c'è stato: deve restare non dichiarato, non «false».
+    expect(esito.dopoRitentativo, 'nessun secondo tentativo da dichiarare').toBeUndefined()
+  })
+
+  it('senza l\'opzione il comportamento è quello di sempre: due tentativi', async () => {
+    // La prova che l'interruttore non ha cambiato il valore predefinito. Senza questo
+    // caso, `ritenta: false` potrebbe essere diventato il comportamento di tutti senza
+    // che nessun test se ne accorgesse.
+    vi.useFakeTimers()
+    const { arubaUpload } = await carica()
+    fetchMock.mockResolvedValueOnce(troppeRichieste()).mockResolvedValueOnce(risposta(ACCETTATA))
+
+    const attesa = arubaUpload('demo', 'AT', PARAMS)
+    await vi.advanceTimersByTimeAsync(300_000)
+    await attesa
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})

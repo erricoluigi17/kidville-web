@@ -48,6 +48,7 @@ import {
   richiesteArubaSpese,
   PAUSA_FRA_PAGINE_MS,
   type ArubaConfig,
+  type ArubaCredentials,
   type ArubaUploadResult,
 } from './client'
 import { buildFatturaElettronicaXml, causalePerTracciato, verificaCoerenzaIva, LIMITI, type IvaFattura } from './fatturapa-xml'
@@ -163,6 +164,38 @@ interface AlunnoNested {
 }
 
 /** Le opzioni dell'emissione: tutte facoltative, e assenti = comportamento di sempre. */
+/**
+ * Un accesso ad Aruba condiviso fra più emissioni della STESSA invocazione.
+ *
+ * ─── PERCHÉ ESISTE ──────────────────────────────────────────────────────────────
+ * `tokenCache` è sempre stato locale a `emettiFatturaPagamento`, e su Vercel ogni POST
+ * è un'invocazione a sé: dodici fatture erano **dodici `signin`**, e Aruba ne concede
+ * **uno al minuto per IP**. Non sono gli upload a imporre i novanta secondi fra una
+ * fattura e l'altra — è l'autenticazione.
+ *
+ * ⚠️ Non si è provato a farne una cache di modulo, che sarebbe stata l'intervento più
+ * piccolo. La misura dice che non funzionerebbe: `cacheUltimoNumero` ha già esattamente
+ * quella forma, e il 2026-09-07 ha prodotto **sette letture per ognuna delle cinque
+ * emissioni** — riuso fra invocazioni pari a zero, cioè istanze sempre fredde. Copiare
+ * quella forma per il token significherebbe copiare l'unico meccanismo del file già
+ * misurato inefficace. Il beneficio esiste solo DENTRO un'invocazione: da lì la sessione.
+ */
+export interface SessioneAruba {
+  /** Il token, preso una volta sola e riusato. Lancia se Aruba rifiuta l'accesso. */
+  token(ambiente: string | undefined, creds: ArubaCredentials): Promise<string>
+}
+
+/** Una sessione nuova, vuota. Il `signin` avviene alla prima richiesta di token. */
+export function creaSessioneAruba(): SessioneAruba {
+  let cache: string | null = null
+  return {
+    async token(ambiente, creds) {
+      if (!cache) cache = (await arubaSignin(ambiente, creds)).accessToken
+      return cache
+    },
+  }
+}
+
 export interface OpzioniEmissione {
   /**
    * L'intestatario indicato a mano dalla segreteria, che sostituisce (o FORNISCE)
@@ -170,6 +203,20 @@ export interface OpzioniEmissione {
    * chiamanti più otto file di test a dipendere da questo.
    */
   intestatarioScelto?: IntestatarioScelto | null
+  /**
+   * L'accesso ad Aruba del chiamante, quando più emissioni girano nella stessa
+   * invocazione (il lotto sul server). **Assente ⇒ percorso identico a prima**: un
+   * `signin` per emissione, com'è sempre stato per i sei chiamanti esistenti.
+   */
+  sessione?: SessioneAruba
+  /**
+   * Se lasciare che `arubaUpload` ritenti una volta dopo un `429`. Predefinito: **sì**.
+   *
+   * Il lotto passa `false`: quei novanta secondi vivono dentro `arubaUpload`, dove chi
+   * chiama non ha punti di controllo, e in un ciclo con un budget di tempo farebbero
+   * morire l'invocazione **con il numero già allocato e nessuna riga a registro**.
+   */
+  ritentaUpload?: boolean
 }
 
 function s(v: unknown): string {
@@ -1018,11 +1065,11 @@ export async function emettiFatturaPagamento(
   }[]
 
   // 7. emissione indipendente per quota
-  let tokenCache: string | null = null
-  const ensureToken = async () => {
-    if (!tokenCache) tokenCache = (await arubaSignin(cfg.ambiente, creds)).accessToken
-    return tokenCache
-  }
+  // La sessione del chiamante quando c'è, altrimenti una tutta nostra: `creaSessioneAruba`
+  // ha esattamente la forma del `tokenCache` locale di prima, quindi senza `opzioni.sessione`
+  // il comportamento è quello di sempre — un `signin` per emissione.
+  const sessione = opzioni.sessione ?? creaSessioneAruba()
+  const ensureToken = () => sessione.token(cfg.ambiente, creds)
 
   // La serie e l'anno sono gli stessi per tutte le quote di questo pagamento (li
   // decide il MINORE, non chi paga): una chiave sola, e una lettura sola.
@@ -1623,6 +1670,15 @@ export async function emettiFatturaPagamento(
     // potuto allineare è un progressivo che non si conosce.
     let ultimoAruba: number
     try {
+      // ⚠️ IL `signin` VIENE PRIMA DELL'ALLOCAZIONE, ANCHE A CACHE CALDA.
+      // `leggiPavimentoSerie` esce presto quando il pavimento è in cache, e allora non
+      // tocca `ensureToken`: l'ordine diventava `cache → RPC che ALLOCA → signin`, e un
+      // `429` sull'accesso — Aruba ne concede uno al minuto per IP, col cron
+      // `fattura-sync` che ruba lo slot — lasciava un numero consumato per un accesso
+      // mai riuscito, registrato come «Trasporto fallito» di un upload mai partito.
+      // Chiedere il token qui costa nulla (la sessione lo riusa) e rende vera la frase
+      // che il codice ripete in dieci punti: «nessun numero è stato consumato».
+      await ensureToken()
       ultimoAruba = await leggiPavimentoSerie()
     } catch (e) {
       // `error` e non più `warn`: fino al 2026-08-09 qui si proseguiva «col
@@ -1924,6 +1980,7 @@ export async function emettiFatturaPagamento(
       // respingere la prima fattura vera con `0093` «deleghe non valide» (vedi `arubaUpload`).
       up = await arubaUpload(cfg.ambiente, token, {
         dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
+        ritenta: opzioni.ritentaUpload,
       })
     } catch (e) {
       // `code` viene da `erroreAruba` (`'rete'`, o lo status quando una risposta

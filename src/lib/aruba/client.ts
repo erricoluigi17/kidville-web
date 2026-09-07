@@ -443,7 +443,25 @@ export async function arubaRefresh(ambiente: string | undefined, refreshToken: s
 export async function arubaUpload(
   ambiente: string | undefined,
   accessToken: string,
-  params: { dataFileBase64: string; senderPIVA?: string }
+  params: {
+    dataFileBase64: string
+    senderPIVA?: string
+    /**
+     * Se ritentare una volta dopo un `429`. Predefinito: **sì**, come è sempre stato.
+     *
+     * ⚠️ Il lotto sul server passa `false`, e non per fretta. I novanta secondi di
+     * `PAUSA_DOPO_429_MS` vivono DENTRO questa funzione: chi chiama non ha nessun punto
+     * di controllo fra l'inizio e la fine. In un ciclo con un budget di tempo — dove
+     * prima di ogni fattura si guarda quanto margine resta — una fattura che parte con
+     * sessanta secondi davanti e prende un `429` finisce oltre il muro **con il numero
+     * già allocato e nessuna riga a registro**. Il ritentativo, pensato per proteggere,
+     * diventerebbe il modo di produrre esattamente il buco che si vuole evitare.
+     *
+     * Spegnerlo non è rinunciare a riprovare: è riprovare DOPO, col tempo davanti,
+     * invece che dentro un'invocazione che sta per essere uccisa.
+     */
+    ritenta?: boolean
+  }
 ): Promise<ArubaUploadResult> {
   const { ws } = arubaBaseUrls(ambiente)
   const tentativo = (): Promise<EsitoEsterno> =>
@@ -491,19 +509,26 @@ export async function arubaUpload(
   // (Il `0034` cambia significato quando è la RISPOSTA a questo ritentativo, ed è il motivo
   // del booleano qui sopra: vedi il ramo `ritentato && errorCode === '0034'` in fondo.)
   if (esito.stato === 429) {
+    const ritentaDopo = params.ritenta !== false
     // Novanta secondi di silenzio dentro una richiesta HTTP sono indistinguibili da un
-    // blocco, per chi legge i log. Questa riga è ciò che li distingue.
+    // blocco, per chi legge i log. Questa riga è ciò che li distingue — e dice anche
+    // quando l'attesa NON c'è stata, che è un'informazione altrettanto utile.
     logEvento('fattura', 'warn', {
       operazione: 'aruba:upload',
       provider: 'aruba',
       esito: 'limite-richieste',
-      msg:
-        `Aruba ha risposto 429 all'upload della fattura: si attende ` +
-        `${Math.round(PAUSA_DOPO_429_MS / 1000)}s e si ritenta UNA volta sola`,
+      ritenta: ritentaDopo,
+      msg: ritentaDopo
+        ? `Aruba ha risposto 429 all'upload della fattura: si attende ` +
+          `${Math.round(PAUSA_DOPO_429_MS / 1000)}s e si ritenta UNA volta sola`
+        : "Aruba ha risposto 429 all'upload della fattura: il chiamante ha un budget di tempo, " +
+          'quindi non si aspetta e non si ritenta — si riprova più tardi, col tempo davanti',
     })
-    await attendi(PAUSA_DOPO_429_MS)
-    ritentato = true
-    esito = await tentativo()
+    if (ritentaDopo) {
+      await attendi(PAUSA_DOPO_429_MS)
+      ritentato = true
+      esito = await tentativo()
+    }
   }
 
   // Nessuna risposta (rete, DNS, TLS, scadenza del tetto): si LANCIA, come ha sempre fatto.

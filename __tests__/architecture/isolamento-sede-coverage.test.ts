@@ -1691,7 +1691,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    che nega fuori dalle sedi attive e, per l'`educator`, fuori dalle sue
             //    sezioni. Non riusa `assertAlunnoInScope` perché quella respingerebbe la
             //    CUOCA, che di sezioni assegnate non ne ha: il perché sta nella sua testata.
-            routeConServiceRole: 308,
+            // 308 → 309 il 2026-09-07: è nata `gallery/upload-url:POST`, la porta che
+            // FIRMA i caricamenti diretti allo Storage. È il rimedio al 413 di Vercel
+            // misurato in `app_log` (sei video respinti in un giorno, e l'unico passato
+            // pesava dodici kilobyte meno del tetto). Non porta esenzioni, ed è il punto
+            // da guardare: la route non tocca NESSUNA tabella — solo lo Storage — quindi
+            // non ha una sede da dichiarare, esattamente come `avvisi/upload/rimuovi:POST`
+            // qui sopra. Ciò che difende lo fa altrove: il percorso dell'oggetto è
+            // intestato all'utente del gate, mai a un campo del client.
+            routeConServiceRole: 309,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1828,7 +1836,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // nuova, quindi si muove UN numero solo; e non porta esenzioni perché
             // dichiara il suo scope con `assertAlunnoInScope`, prima di leggere e prima
             // di cancellare, esattamente come fa la POST accanto.
-            handlerControllati: 476,
+            //
+            // 476 → 477 il 2026-09-07: il POST della route qui sopra.
+            handlerControllati: 477,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

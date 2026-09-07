@@ -2,6 +2,7 @@ import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimar
 import { createBrowserClient } from '@supabase/ssr';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient } from '@/lib/logging/client';
+import { caricaMediaGalleria } from '@/lib/gallery/carica-media';
 
 // Motore di sincronizzazione offline: gira NEL CLIENT, quindi dentro la WebView
 // nativa. Per questo qui non c'è (e non deve tornare) nessun `console.*`: nella
@@ -285,34 +286,27 @@ export async function syncPendingGalleryMedia() {
 
         for (const item of pending) {
             try {
-                // 1. Carica il blob tramite API server-side
-                const formData = new FormData();
-                const fileObj = new File([item.file_blob], item.file_name, {
-                    type: item.file_type === 'video' ? 'video/mp4' : 'image/jpeg'
-                });
-                formData.append('file', fileObj);
-                formData.append('userId', item.uploaded_by);
+                // 1. Carica il blob — firma + `PUT` diretto allo Storage.
+                //
+                // ⚠️ QUI IL MULTIPART ERA UN GUASTO, non una scelta. Un video accodato
+                // può arrivare a 50 MB (il client lo comprime fino a quel tetto prima di
+                // metterlo in coda), e `POST /api/gallery/upload` prendeva 413 da Vercel
+                // al ritorno della rete: la riga finiva `sync_status: 'error'` e quel
+                // video NON RIPARTIVA PIÙ. Riparare la galleria online lasciando rotto il
+                // percorso pensato per la scuola senza campo sarebbe stato metà lavoro.
+                const mime = item.file_type === 'video' ? 'video/mp4' : 'image/jpeg';
+                const fileObj = new File([item.file_blob], item.file_name, { type: mime });
 
-                const uploadRes = await fetch('/api/gallery/upload', {
-                    method: 'POST',
-                    // Identità via header (il campo form userId non è letto dal gate).
-                    // FormData: NIENTE Content-Type (lo imposta il browser col boundary).
-                    headers: { 'x-user-id': item.uploaded_by },
-                    body: formData
-                });
-
-                if (!uploadRes.ok) {
-                    // Il corpo della risposta NON si legge: conteneva il nome del
-                    // file (una foto di minori). Basta lo stato per la diagnosi.
-                    logSync('sync-galleria-upload-fallito');
+                const esito = await caricaMediaGalleria(fileObj, mime);
+                if (!esito.ok) {
+                    // Il motivo distingue i rami in SQL: «troppo grande» e «lo Storage ha
+                    // rifiutato» hanno rimedi opposti. Il nome del file resta fuori: è la
+                    // foto di un minore.
+                    logSync(`sync-galleria-upload-fallito: ${esito.motivo}`);
                     await db.galleria.update(item.id, { sync_status: 'error' });
                     continue;
                 }
-
-                // Bucket privato: in tabella va il PERCORSO nel bucket. `fileUrl`
-                // è il nome storico dello stesso valore (ripiego per una risposta
-                // servita da una versione precedente dell'API).
-                const { path, fileUrl } = await uploadRes.json();
+                const path = esito.path;
 
                 // 2. Salva il record nel database tramite l'API POST
                 const response = await fetch('/api/gallery', {
@@ -320,7 +314,7 @@ export async function syncPendingGalleryMedia() {
                     headers: { 'Content-Type': 'application/json', 'x-user-id': item.uploaded_by },
                     body: JSON.stringify({
                         uploaded_by: item.uploaded_by,
-                        file_url: path ?? fileUrl,
+                        file_url: path,
                         file_type: item.file_type,
                         caption: item.caption,
                         tag_students: item.tag_students,

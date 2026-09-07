@@ -31,6 +31,44 @@ export const BUCKET_GALLERIA = 'gallery'
  */
 export const TTL_FIRMA_GALLERIA_S = 600
 
+/**
+ * I FORMATI AMMESSI nel bucket, e il suo tetto vero.
+ *
+ * Dichiarati QUI perché da oggi li leggono in due: la route multipart storica e quella
+ * che firma i caricamenti diretti. La lista è la stessa della migrazione — solo formati
+ * che si aprono sia su Android sia su iOS, perché in galleria finiscono foto e video dei
+ * bambini e un formato che si vede da una parte sola è metà dei genitori davanti a un
+ * riquadro nero.
+ *
+ * ⚠️ Il tetto è quello GLOBALE del progetto (50 MB), non un numero scelto qui: Supabase
+ * applica `min(limite del bucket, tetto globale)`, e dichiararne uno più alto fa
+ * rifiutare l'intera chiamata di configurazione con `EntityTooLarge`.
+ */
+export const MIME_GALLERIA = [
+    'image/jpeg', 'image/png', 'image/webp',
+    'video/mp4', 'video/webm',
+] as const
+
+export const TETTO_GALLERIA_BYTE = 52_428_800
+
+/**
+ * L'estensione dal MIME VALIDATO, mai dal nome del file.
+ *
+ * Il nome di un file di galleria è `IMG_bambina-rossi.mov`: anagrafica di un minore, che
+ * finirebbe nella chiave dell'oggetto e quindi in `app_log` ogni volta che qualcosa
+ * logga un percorso. Del nome serviva solo l'estensione, e quella si ricava dal tipo.
+ */
+export function estensioneDaMime(mime: string): string {
+    switch (mime) {
+        case 'image/jpeg': return 'jpg'
+        case 'image/png': return 'png'
+        case 'image/webp': return 'webp'
+        case 'video/mp4': return 'mp4'
+        case 'video/webm': return 'webm'
+        default: return 'bin'
+    }
+}
+
 // Un URL dello Storage Supabase, in una qualunque delle tre forme che
 // l'API produce (`public`, `sign`, `authenticated`), per QUESTO bucket.
 const RE_URL_STORAGE = new RegExp(

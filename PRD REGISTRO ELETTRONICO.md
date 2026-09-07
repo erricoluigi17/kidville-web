@@ -64,8 +64,8 @@
 > ### Moduli Implementati
 > | Modulo | Stato | Pagine | API Routes |
 > |--------|-------|--------|------------|
-> | **Diario 0-6** | ✅ Operativo | `/teacher/diary` | `/api/diary/students`, `/api/diary/entries` |
-> | **Presenze** | ✅ Operativo | `/teacher/attendance`, `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*` (+ **`PATCH /api/attendance/daily`**: rettifica dell'orario 0-6, anche sui giorni passati, con traccia in `audit_scritture_docente`), `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP) |
+> | **Diario 0-6** | ✅ Operativo | `/teacher/diary`, `/admin/diary` | `/api/diary/students`, `/api/diary/entries` (+ **`DELETE`**: toglie una nanna segnata per errore, solo eventi nanna, con audit `delete` e nessuna notifica al genitore) — dal 2026-09-07 **la nanna si salva SOLO per i bambini con l'orario compilato** (prima una riga per ogni presente, e il genitore di chi non aveva dormito leggeva «Ho fatto un bel sonnellino»); regola in `@/lib/diary/nanna`, condivisa fra chi salva, chi rimette la ✅ e chi racconta al genitore |
+> | **Presenze** | ✅ Operativo | `/teacher/attendance`, **`/admin/appello`** (segreteria: tutte le classi della sede, nido·infanzia in pagina e primaria col link al registro), `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*` (+ **`PATCH /api/attendance/daily`**: rettifica dell'orario di **QUALUNQUE grado** — la tabella è una sola e la chiave `(alunno_id, data)` non sa cosa sia un grado — anche sui giorni passati, con traccia in `audit_scritture_docente`), `/api/primaria/appello`, `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP). Dal 2026-09-07: l'**uscita si registra anche a chi è «presente»** (chi esce all'orario normale prima non aveva nessuna ora d'uscita) e la regola sta in `@/lib/presenze/orario-ammesso`, un posto solo per il 422 del server e le tre interfacce |
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
@@ -96,6 +96,102 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 😴 Changelog — La nanna andava a tutti, l'appello cancellava la nota, i video non si caricavano — 2026-09-07 (branch `feat/appello-ninna-video`)
+
+Quattro richieste del titolare. Tre già in produzione, e due erano perdite di dato
+silenziose: nessun errore, nessun log, il dato spariva e basta.
+
+**1. La nanna si segnava a tutti.** Il salvataggio del diario aveva UN SOLO ramo
+selettivo (`umore`): «Nanna» e «Sveglia» cadevano nel ramo `else`, che salva l'intero
+elenco dei presenti. Una riga in `eventi_diario` per ogni bambino, anche con l'ora mai
+toccata — e a valle il genitore di chi **non** aveva dormito leggeva «Ho fatto un bel
+sonnellino! 😴», il ramo generico della narrativa, che nasce proprio quando l'ora manca.
+Una frase falsa nel diario di suo figlio, ogni pomeriggio.
+La regola «`''` non è un'ora» vive ora in `@/lib/diary/nanna` (gemello di `umore.ts`) e
+la leggono tutti e tre i punti che ne avevano bisogno: chi salva, chi rimette la ✅
+riaprendo la schermata, chi racconta la giornata al genitore. **Rende inerti anche le
+righe già in archivio**, senza nessuna migrazione. Chi ha compilato per errore ha ora un
+cestino: `DELETE /api/diary/entries`, sulla rotta che possiede già la risorsa, con
+perimetro ristretto ai soli eventi nanna. «Tutti a nanna ora» resta, ma dichiara di
+essere un aiuto di compilazione; e il pulsante di salvataggio conta chi finirà in
+archivio invece di promettere «per tutti».
+
+**2. L'appello della primaria cancellava la nota.** Non ha un PATCH: ogni gesto
+rispediva una POST, e la POST è un upsert della **riga intera**. `setOrario` mandava
+stato e orari ma non `noteAppello`, quindi correggere un'ora cancellava la nota del
+docente; e «Tutti presenti» faceva lo stesso **sull'intera classe**, orari compresi.
+Il punto esatto era il dispatch del ramo singolo, che elencava i cinque campi sempre:
+`noteAppello` esisteva comunque, con valore `undefined`, e a valle non c'era più modo di
+distinguere «non l'ho mandato» da «mandalo vuoto». Ora la riga si costruisce a partire da
+ciò che c'era, un `null` esplicito resta un comando, e la lettura dello stato precedente
+è diventata **portante**: era un `warn` e si proseguiva, ora è un 500.
+Con lei sono cadute le altre tre falle dello stesso file: `zOraHHMM` al posto di
+`z.string()` nudo («pippo» passava e diventava `null` con un 200), `aOrarioIso` al posto
+di `${data}T${ora}:00` (la stessa stringa per le 08:45 di settembre e quelle di gennaio),
+e l'orario non è più **legato allo stato** — un presente può avere l'ora d'ingresso, e chi
+esce prima non perde più quella d'entrata, perché era comunque entrato.
+
+**3. La rettifica dell'ora, per la primaria, passa dalla porta dello 0-6.** Nessuna PATCH
+nuova: la tabella è una sola (`presenze`) e la sua chiave non sa cosa sia un grado. Il chip
+correggibile è uscito da `StudentAttendanceRow` ed è diventato condiviso
+(`OrarioCorreggibile`): la primaria aveva un `<input type="time">` nudo, per un solo stato
+e uno alla volta. **I test dello 0-6 passano senza essere toccati**, che è la prova che è
+stato uno spostamento.
+
+**4. La segreteria ha la voce «Appello».** Per la primaria la schermata esisteva già ma si
+raggiungeva in tre clic; per nido e infanzia non esisteva affatto. Ora `/admin/appello`
+elenca tutte le classi della sede: 0-6 si compila lì (oggi e mese), la primaria porta al
+registro della sua classe. Le classi vengono da `sections/scoped` e **non** da
+`educator-sections`, che non conosce `segreteria` e le risponderebbe `200 []` — un elenco
+vuoto e nessun errore. Nessuna route API nuova: i gate ammettevano già la segreteria.
+Il **motivo sanitario** della giustifica non arriva a quella schermata: `colonneConMotivo`
+non lo chiede nemmeno al database. È muta per costruzione, e ora c'è un test che lo prova.
+
+**5. I video non si caricavano, e non era colpa del bucket.** `app_log` del 2026-09-07:
+`POST /api/gallery/upload → 413`, **sei volte in un giorno**, tutte da `/teacher/gallery`.
+L'unico video passato quel giorno pesava **4.484.198 byte** — dodici kilobyte sotto il
+tetto di ~4,5 MB che Vercel impone al corpo di una funzione — e il tentativo di quaranta
+secondi dopo ha preso 413. Il bucket accetta `video/mp4` e `video/webm` fino a 50 MB: la
+strozzatura stava fra un client che li prometteva e una piattaforma che ne ammette 4,5,
+e nessuno dei due lo sapeva. Il 413 lo scrive l'infrastruttura **prima** che la funzione
+parta, con un corpo `text/plain`: nei log del server non restava niente, il client faceva
+`res.json()` su quel testo e ricadeva sul messaggio generico. In tutto lo Storage c'erano
+**due soli mp4**, e uno era del seed E2E.
+
+Il repo aveva imparato questo guasto il 31/07 (`@/lib/upload/limite-piattaforma`) e
+l'aveva applicato a **otto** percorsi di upload, lasciando fuori proprio l'unico che
+carica video. Ora la galleria usa lo schema già in esercizio per Protocolli e Cassa:
+`POST /api/gallery/upload-url` firma, e il file va dal telefono direttamente allo Storage.
+Il tetto torna a essere quello vero, 50 MB. **Anche la coda offline**, dove il difetto era
+peggiore: un video accodato prendeva 413 al ritorno della rete, finiva `sync_status:
+'error'` e non ripartiva più.
+
+Due cose dette senza abbellirle. **Lo sniff del codec** — la terza rete contro un HEVC che
+su Android mostrerebbe un riquadro nero — non può più girare sul file intero: i primi
+64 KB viaggiano nel corpo della richiesta di firma e lo sniff gira lo stesso sul server,
+con la stessa funzione, quindi un client vecchio riceve 415 *prima* di spedire quaranta
+megabyte; ma resta scoperto chi manda una testa pulita e poi carica altro. È un
+indebolimento vero, e il costo di un errore è un riquadro nero, non un dato esposto.
+**La `PUT` non ha tetto di tempo**: 30 s interromperebbero un caricamento che sta
+funzionando. La deroga è dichiarata in `FETCH_SENZA_TETTO` accanto al suo gemello in
+discesa, e il compenso è che ogni fallimento ha un messaggio distinto per ramo — prima
+erano tutti `gallery-upload-fallito`, con `contesto` vuoto e nessuno stato, cioè tre
+guasti diversi collassati in una riga sola dalla deduplicazione.
+
+Il lock dei bucket confrontava due fonti; la lista mime ora vive in tre posti, e il terzo
+sarebbe nato fuori dalla sua vista: esteso, e provato allargando la lista per vederlo
+diventare rosso.
+
+**Il lock degli orari ora guarda anche chi SCRIVE.** Sorvegliava solo i lettori, quindi
+`${data}T${ora}:00` gli sfuggiva: certificava che si legge bene una colonna che si
+continuava a scrivere male. La prima stesura della regola era **finta** e l'ha dimostrato
+su sé stessa — rimettendo `toTs` a mano restava verde, perché quella riga è un helper che
+le colonne non le nomina. Col perimetro allargato al file è stata provata verde → rosso →
+verde, e nel frattempo ha trovato un difetto sfuggito alla revisione: `setStato` della
+primaria componeva ancora l'istante a mano.
 
 ---
 

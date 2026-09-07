@@ -32,7 +32,6 @@
   "galleryAlertTagAggiornati": "Tag aggiornati con successo!",
   "galleryErrTag": "Errore durante l’aggiornamento dei tag.",
   "galleryErrReteTag": "Errore di rete durante l’aggiornamento dei tag.",
-
   "lockerEyebrow": "Strumenti",
   "lockerTitolo": "Armadietto",
   "lockerSottotitolo": "Scorte e consegne · Sezione {sezione}",
@@ -66,11 +65,9 @@
   "lockerConferma": "✓ Conferma",
   "lockerAnnulla": "Annulla",
   "lockerConsegneMensili": "Consegne mensili",
-
   "lockerSemaforoEsaurito": "🔴 Esaurito",
   "lockerSemaforoInEsaurimento": "🟡 In esaurimento",
   "lockerSemaforoOk": "🟢 Ok",
-
   "lockerModalTitolo": "Registra Carico",
   "lockerModalConfiguraMateriali": "Configura materiali",
   "lockerModalAlunno": "Alunno",
@@ -87,7 +84,6 @@
   "lockerModalErrMateriale": "Seleziona un materiale",
   "lockerModalErrQuantita": "Inserisci una quantità valida",
   "lockerModalErrSalvataggio": "Errore durante il salvataggio",
-
   "lockerTableNessunDato": "Nessun dato disponibile per {mese}",
   "lockerTableTuttiMateriali": "Tutti i materiali",
   "lockerTableTuttiMaterialiDash": "— Tutti i materiali —",
@@ -96,7 +92,6 @@
   "lockerTablePortato": "Portato",
   "lockerTableNonPortato": "Non portato",
   "lockerTableNessunDatoLegenda": "Nessun dato",
-
   "mensaEyebrow": "Vita scolastica",
   "mensaTitolo": "Mensa",
   "mensaSottotitolo": "Prenotazioni pranzo della classe (sola lettura).",
@@ -114,7 +109,6 @@
   "mensaRichiestaGenitore": "(richiesta dal genitore)",
   "mensaBambini": "{count, plural, one {# bambino} other {# bambini}}",
   "mensaAllergeneMenu": "allergene nel menu",
-
   "modulisticaEyebrow": "Documenti",
   "modulisticaTitolo": "Modulistica",
   "modulisticaSottotitolo": "Consensi e certificati · Sezione {sezione}",
@@ -159,7 +153,6 @@
   "modulisticaCertValidato": "✅ Certificato validato.",
   "modulisticaCertRifiutato": "⛔ Certificato rifiutato.",
   "modulisticaErrValidazione": "❌ Errore durante la validazione",
-
   "modulisticaFiltroSezione": "Sezione",
   "modulisticaFiltroModulo": "Modulo",
   "modulisticaFiltroStato": "Stato",
@@ -171,7 +164,6 @@
   "modulisticaVuotoSemaforoTesto": "L’elenco si riempie con i bambini iscritti alla sezione: se è vuoto, o la sezione non ne ha ancora, oppure il modulo scelto non è assegnato a questa sezione.",
   "modulisticaNessunModuloSezione": "Nessun modulo di autorizzazione per questa sezione",
   "modulisticaVuotoCertTesto": "I certificati compaiono qui appena una famiglia ne carica uno dall’app.",
-
   "settingsEyebrow": "Armadietto",
   "settingsTitolo": "Materiali",
   "settingsSottotitolo": "Configura i materiali che i genitori consegnano quotidianamente",
@@ -215,5 +207,9 @@
   "lockerChiudiCarico": "Chiudi",
   "galleryAlertVideoNonConvertibile": "Questo video non può essere convertito su questo dispositivo. Su iPhone: Impostazioni → Fotocamera → Formati → «Più compatibile», poi registra di nuovo. In alternativa carica un file .mp4 (H.264) o .webm.",
   "galleryAlertVideoFormatoNonSupportato": "Formato video non supportato ({tipo}). Carica un file .mp4 (H.264) o .webm: i video .mov/HEVC (tipici di iPhone) vanno convertiti prima del caricamento.",
-  "galleryAlertVideoOltreIlLimite": "Il video supera il limite di 50 MB (dimensione attuale: {dimensione}). Accorcialo o riducine la qualità, poi riprova."
+  "galleryAlertVideoOltreIlLimite": "Il video supera il limite di 50 MB (dimensione attuale: {dimensione}). Accorcialo o riducine la qualità, poi riprova.",
+  "galleryErrTroppoGrande": "Il file supera i 50 MB. Registra un video più breve e riprova.",
+  "galleryErrFirma": "Non è stato possibile preparare il caricamento. Riprova fra qualche minuto.",
+  "galleryErrTrasferimento": "Il caricamento si è interrotto. Riprova.",
+  "galleryErrRete": "Connessione assente o instabile: il file non è partito. Riprova quando torna la rete."
 }

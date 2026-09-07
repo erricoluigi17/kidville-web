@@ -26,6 +26,21 @@ test.describe('lato genitore', () => {
     await page.getByRole('button', { name: 'Nuova Chat' }).click();
     const contatto = page.getByText('Dora Docente-E2E').first();
     await expect(contatto).toBeVisible({ timeout: 15_000 });
+
+    // ── E CHI NON DEVE COMPARIRE, NON COMPARE ────────────────────────────────
+    //
+    // «Quando clicchi su nuova chat, non devono proprio comparire le altre
+    // persone.» Fino al 2026-09-07 non era vero: un fallback consegnava al
+    // genitore TUTTI i docenti di TUTTE le sedi appena un figlio non aveva
+    // sezione — misurato in produzione, 63 nomi di 5 plessi, 9 dei quali
+    // disattivati. `Diana Docente2-E2E` insegna in SEDE 2: è la controprova che
+    // il filtro c'è, e va PRIMA del click perché dopo la modale si chiude.
+    //
+    // ⚠️ È un'asserzione NEGATIVA e va guardata con sospetto: passerebbe anche
+    // con la modale vuota. Per questo la riga sopra pretende che la maestra
+    // GIUSTA sia visibile — le due insieme dicono «queste sì, quelle no».
+    await expect(page.getByText('Diana Docente2-E2E')).toHaveCount(0);
+
     await contatto.click();
 
     // Messaggio di testo.

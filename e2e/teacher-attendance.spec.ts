@@ -48,3 +48,59 @@ test('appello: registra, rettifica assente→presente e persiste al reload', asy
   await expect(page.locator(`#btn-presente-${IDS.A2}`)).toHaveAttribute('aria-pressed', 'true', { timeout: AZIONE });
   await expect(page.getByText('Completo')).toBeVisible({ timeout: AZIONE });
 });
+
+/**
+ * La RETTIFICA DELL'ORARIO — l'ora d'ingresso si corregge, e persiste.
+ *
+ * Fino al 2026-09-07 nel nido e nell'infanzia l'orario era testo in sola lettura: il
+ * registro scriveva l'ora del TOCCO e non c'era modo di dire che il bambino era
+ * arrivato alle 09:40 e non alle 10:15.
+ *
+ * ⚠️ Il caso che conta davvero è l'ULTIMO: si corregge l'ingresso di un bambino che ha
+ * ANCHE l'orario d'uscita, e si verifica che l'uscita non sia sparita. La strada corta
+ * (riusare `handleSetStato`, cioè la POST) l'avrebbe azzerata — la POST è un upsert
+ * della riga intera. È il difetto che questo test esiste per impedire.
+ */
+test('appello: l\'ora d\'ingresso si corregge, e non cancella quella d\'uscita', async ({ page }) => {
+  test.setTimeout(150_000);
+  await page.goto('/teacher/attendance');
+
+  await expect(page.getByRole('heading', { name: 'Appello' })).toBeVisible({ timeout: RENDER });
+  await expect(page.getByText('Aurora')).toBeVisible({ timeout: RENDER });
+
+  // Presente → l'orario d'ingresso nasce (l'ora del tocco) e diventa un comando.
+  await page.locator(`#btn-presente-${IDS.A1}`).click();
+  const chipEntrata = page.locator(`#btn-orario-entrata-${IDS.A1}`);
+  await expect(chipEntrata).toBeVisible({ timeout: AZIONE });
+
+  // Si tocca: al suo posto compare il campo ora, pre-riempito con l'ora ITALIANA.
+  await chipEntrata.click();
+  const campo = page.locator(`#input-orario-entrata-${IDS.A1}`);
+  await expect(campo).toBeVisible({ timeout: AZIONE });
+  await campo.fill('09:10');
+  await page.locator(`#btn-salva-orario-entrata-${IDS.A1}`).click();
+  await expect(chipEntrata).toContainText('09:10', { timeout: AZIONE });
+
+  // Persistenza vera (PATCH su presenze): al reload l'ora corretta è ancora lì.
+  await page.reload();
+  await expect(page.locator(`#btn-orario-entrata-${IDS.A1}`)).toContainText('09:10', { timeout: RENDER });
+
+  // ── E ORA IL CASO CHE VALE IL TEST ──────────────────────────────────────────
+  // Uscita anticipata: il bambino ha ENTRAMBI gli orari.
+  await page.locator(`#btn-uscita-${IDS.A1}`).click();
+  const chipUscita = page.locator(`#btn-orario-uscita-${IDS.A1}`);
+  await expect(chipUscita).toBeVisible({ timeout: AZIONE });
+  const uscitaPrima = (await chipUscita.textContent()) ?? '';
+
+  // Si corregge l'INGRESSO. L'uscita non deve muoversi di un minuto.
+  await page.locator(`#btn-orario-entrata-${IDS.A1}`).click();
+  await page.locator(`#input-orario-entrata-${IDS.A1}`).fill('08:35');
+  await page.locator(`#btn-salva-orario-entrata-${IDS.A1}`).click();
+  await expect(page.locator(`#btn-orario-entrata-${IDS.A1}`)).toContainText('08:35', { timeout: AZIONE });
+  await expect(chipUscita).toHaveText(uscitaPrima, { timeout: AZIONE });
+
+  // E resta vero dopo un giro dal database.
+  await page.reload();
+  await expect(page.locator(`#btn-orario-entrata-${IDS.A1}`)).toContainText('08:35', { timeout: RENDER });
+  await expect(page.locator(`#btn-orario-uscita-${IDS.A1}`)).toHaveText(uscitaPrima, { timeout: AZIONE });
+});

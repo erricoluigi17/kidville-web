@@ -99,6 +99,92 @@
 
 ---
 
+## 🔑 Changelog — La firma del token si verifica in locale: via metà delle chiamate di autenticazione — 2026-09-07 (branch `perf/verifica-jwt-locale`)
+
+Seguito diretto del changelog qui sotto, che lasciava aperto il pezzo grosso. Il 7 settembre le
+chiamate di autenticazione erano **643.281 in un giorno**, un costante ~28% del totale in ogni ora.
+La loro composizione (log Supabase, 10:00-13:00) dice dove sta il peso:
+
+| endpoint | chiamate | quota |
+|---|---|---|
+| **`/user`** — cioè `getUser()` | **280.389** | **99,3%** |
+| `/token` — il rinnovo | 2.189 | 0,8% |
+
+`getUser()` telefona a GoTrue per ogni richiesta. **`getClaims()` verifica la firma del token con
+WebCrypto, in locale, e non chiama nessuno** — a patto che il progetto firmi con una chiave
+asimmetrica. Il nostro pubblica una **ES256** nel JWKS: `getClaims()` è utilizzabile subito, senza
+migrazioni.
+
+### Dove è stato applicato, e soprattutto dove NO
+
+**Solo nel middleware.** La ragione è scritta nel middleware stesso, da prima di questo lavoro:
+
+> *«il redirect di questo file non è il controllo d'accesso (quello sta nei gate delle route, e non
+> si tocca)»*
+
+`getUser()` chiede al server «vale **adesso**?»; `getClaims()` verifica la firma e si fida **fino
+alla scadenza** del token. Una sessione revocata resterebbe quindi buona per il tempo residuo. Nel
+middleware va bene, perché lì si decide solo «login o passa». **`requireArea` e i gate `require*`
+continuano a interrogare il server**: sono loro a proteggere anagrafiche, allergie e pagamenti, e lì
+la revoca resta immediata — cosa che su questo progetto conta, perché il cambio password revoca
+tutte le sessioni e la Segreteria rigenera le credenziali delle famiglie.
+
+### ⚠️ La cache per ISOLATE è tutto il guadagno, e senza un lock non si vedrebbe
+
+`fetchJwk` di auth-js tiene le chiavi **sull'istanza del client**, e il middleware ne costruisce una
+nuova a ogni richiesta: lasciando fare a lui si scaricherebbe il JWKS a ogni passaggio, cioè si
+**sposterebbe** una chiamata di rete invece di toglierla. Le chiavi stanno quindi in una variabile di
+modulo, che sull'Edge vive quanto l'isolate: si paga una volta all'avvio a freddo e mai più.
+
+**Misurato contro il server vero** (non solo nei test): otto richieste di pagina → **una sola**
+`GET /.well-known/jwks.json`, stato 200.
+
+### Perché è sicuro a prescindere dall'algoritmo
+
+Se il progetto firmasse ancora in HS256, `getClaims()` **ripiega da solo su `getUser()`**: nessun
+guadagno, ma nemmeno nessun danno e nessun cambio di sicurezza. Idem se il JWKS non si raggiunge.
+E si ricorda anche il **«no»**: una cache che memorizzasse solo i successi richiederebbe le chiavi a
+ogni richiesta per sempre — un giro di rete *in più* invece che in meno, in silenzio. È il caso
+peggiore, ed è coperto dal test `7-ter-bis`.
+
+### Le proprietà bloccate da un test (`__tests__/lib/middleware-tetto.test.ts`)
+
+| test | cosa impedisce |
+|---|---|
+| **7** | tornare a `getUser()` quando la firma è verificabile in locale |
+| **7-bis** | perdere la cache per isolate, o non passare le chiavi a `getClaims()` |
+| **7-ter** | perdere il ripiego su `getUser()` con i token HS256 |
+| **7-ter-bis** | ricordare solo i «sì»: il JWKS vuoto richiesto a ogni richiesta |
+| **7-quater** | **perdere il rinnovo del token** — `getClaims()` va chiamata SENZA argomento, così passa da `getSession()`. Passandole il token a mano si butterebbe fuori ogni utente allo scadere dell'ora |
+| **7-quinquies** | degradare fail-**open** quando la verifica non si può fare |
+| **7-sexies** | un 500 su tutto il sito per una chiave corrotta (`getClaims()` **rilancia** gli errori non-auth, es. una `DOMException` di WebCrypto) |
+
+I test firmano token **veri** con una coppia ES256 generata sul momento: l'unica cosa simulata è la
+rete, non la crittografia. Ogni manomissione del codice ne fa diventare rosso almeno uno.
+
+⚠️ **Due difetti trovati nei test stessi, e vale la pena saperli.** Il `kid` era una costante
+condivisa, e con essa `7-bis` coglieva una manomissione **in isolamento** ma la mancava nella suite
+completa: un lock che cambia risposta secondo l'ordine non è un lock. E il ramo `catch` fail-closed
+non era coperto da niente finché non è arrivato `7-sexies`. Entrambi trovati **rompendo il codice e
+guardando il colore**, non leggendolo.
+
+### Cosa aspettarsi, e come si verifica
+
+Se i token emessi sono ES256 — indizi forti, ma la conferma è la misura stessa — le chiamate a
+`/user` dal middleware spariscono. Restano quelle di `requireArea` e dei gate, che sono volute.
+**Attesa: il rapporto auth/totale scende dal ~28% verso il ~14%.** Se non scende, i token sono
+ancora HS256 e la strada è promuovere la chiave asimmetrica nel pannello Supabase.
+
+```sql
+select toStartOfHour(timestamp) as ora, source, count(*) from logs
+where source in ('edge_logs','auth_logs') group by ora, source order by ora desc;
+
+select log_attributes['path'] as percorso, count(*) from logs
+where source = 'auth_logs' group by percorso order by 2 desc limit 10;
+```
+
+---
+
 ## 🐌 Changelog — L'app lenta del 7 settembre: 2,1 milioni di richieste, e dieci orologi che parlavano a schermo spento — 2026-09-07 (branch `perf/volume-richieste`)
 
 La mattina del 7 settembre l'app è andata lenta per ore. **Non era il database** (cache 100%, zero

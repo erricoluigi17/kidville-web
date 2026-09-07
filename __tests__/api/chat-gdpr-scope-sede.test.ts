@@ -56,7 +56,22 @@ vi.mock('@/lib/auth/require-staff', () => ({
   requireStaff: h.requireStaff,
   requireUser: h.requireUser,
 }))
-vi.mock('@/lib/anagrafiche/legami', () => ({
+/**
+ * ⚠️ `importActual` E NON UNA FACTORY NUDA, dal 2026-09-07.
+ *
+ * Una factory `vi.mock` sostituisce il modulo per INTERO: ciò che non elenca
+ * diventa `undefined`. `chat/threads:POST` ora passa da `@/lib/chat/rubrica`, che
+ * usa `verificaLegameGenitore` e `getFigliDiGenitoreEsito` — due export che questo
+ * elenco non aveva — e la chiamata esplodeva dentro il `try` della route,
+ * uscendo come **500**. Un 500 che sembra un difetto della regola e invece è il
+ * mock che ha spento mezza libreria.
+ *
+ * Le due funzioni vere leggono `legame_genitori_alunni` / `parents` /
+ * `student_parents`, che il finto database di questo file contiene: si tengono
+ * quelle. I due `h.*` restano perché altri casi di questo file li pilotano.
+ */
+vi.mock('@/lib/anagrafiche/legami', async (originale) => ({
+  ...(await originale<Record<string, unknown>>()),
   genitoreHasFiglio: h.genitoreHasFiglio,
   getGenitoriDiAlunni: h.getGenitoriDiAlunni,
   getGenitoriDiAlunno: vi.fn(async () => []),
@@ -111,8 +126,24 @@ const dbBase = (): DBFinto => ({
     { id: ISC_B, nome: 'Beta', cognome: 'Sede-B', classe_sezione: OMONIMA, section_id: 'sec-b', scuola_id: SEDE_B, stato: 'iscritto', anonimizzato_il: null },
   ],
   utenti: [
-    { id: GEN_A, nome: 'Genitore', cognome: 'DiAlfa', ruolo: 'genitore' },
-    { id: GEN_B, nome: 'Genitore', cognome: 'DiBeta', ruolo: 'genitore' },
+    { id: GEN_A, nome: 'Genitore', cognome: 'DiAlfa', ruolo: 'genitore', attivo: true, scuola_id: SEDE_A },
+    { id: GEN_B, nome: 'Genitore', cognome: 'DiBeta', ruolo: 'genitore', attivo: true, scuola_id: SEDE_B },
+    // Gli OPERATORI, aggiunti il 2026-09-07. `chat/threads:POST` non guardava che
+    // la propria metà del thread: chi chiama e il suo bambino. Adesso verifica
+    // anche la CONTROPARTE (`@/lib/chat/rubrica`), quindi il finto database deve
+    // dire chi è — ruolo e sede — invece di lasciarlo implicito. Senza queste due
+    // righe la regola risponde `non-deciso`, che è 500 e non 403: giusto così, e
+    // il fixture muto lo faceva sembrare un difetto.
+    { id: SEG_A, nome: 'Segreteria', cognome: 'SedeA', ruolo: 'segreteria', attivo: true, scuola_id: SEDE_A },
+    { id: 'ed1', nome: 'Educatrice', cognome: 'SedeA', ruolo: 'educator', attivo: true, scuola_id: SEDE_A },
+  ],
+  // Il legame di famiglia: è la prima cosa che la regola guarda, e senza di esso
+  // nessun thread si apre — nemmeno per la segreteria della sede giusta.
+  legame_genitori_alunni: [
+    { genitore_id: GEN_A, alunno_id: ALU_A },
+    { genitore_id: GEN_A, alunno_id: ISC_A },
+    { genitore_id: GEN_B, alunno_id: ALU_B },
+    { genitore_id: GEN_B, alunno_id: ISC_B },
   ],
   chat_threads: [
     { id: THREAD_A, teacher_id: 'ed1', parent_id: GEN_A, student_id: ALU_A, last_message_at: null, alunni: { scuola_id: SEDE_A } },
@@ -203,16 +234,32 @@ describe('POST /api/chat/threads — non si apre una chat su un minore altrui', 
   // finiva nel catch (audit R130). Qui si asserisce lo stato ESATTO e la
   // SCRITTURA: il thread nasce, e nasce sul bambino giusto.
   it('staff: crea davvero il thread sul bambino della propria sede', async () => {
+    // ⚠️ Su `ISC_A` e non più su `ALU_A`, e non è un dettaglio del fixture: `ALU_A`
+    // è **ritirato**, e dal 2026-09-07 la regola della rubrica vale anche sulla
+    // scrittura — il canale con la famiglia di un bambino che non frequenta più è
+    // chiuso, come lo era già in ENTRAMBE le rubriche (`STATI_CON_CANALE_FAMIGLIA`).
+    // Questo caso misura l'ISOLAMENTO FRA SEDI, e continua a misurarlo: cambia il
+    // bambino, non la domanda.
     h.requireUser.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
-    const res = await CREA_THREAD(post('/api/chat/threads', { teacher_id: SEG_A, parent_id: GEN_A, student_id: ALU_A }))
+    const res = await CREA_THREAD(post('/api/chat/threads', { teacher_id: SEG_A, parent_id: GEN_A, student_id: ISC_A }))
     expect(res.status).toBe(201)
     expect(h.scritture).toEqual([
       expect.objectContaining({ tabella: 'chat_threads', operazione: 'insert' }),
     ])
     expect(h.scritture[0].valori).toEqual([
-      { teacher_id: SEG_A, parent_id: GEN_A, student_id: ALU_A },
+      { teacher_id: SEG_A, parent_id: GEN_A, student_id: ISC_A },
     ])
-    expect(h.db.chat_threads.map((t) => t.student_id)).toEqual([ALU_A, ALU_B, ALU_A])
+    expect(h.db.chat_threads.map((t) => t.student_id)).toEqual([ALU_A, ALU_B, ISC_A])
+  })
+
+  it('staff: sul bambino RITIRATO non si apre più niente, e non si scrive nulla', async () => {
+    // Il gemello del caso qui sopra, ed è nuovo: prima questa chiamata rispondeva
+    // 201. Le due rubriche non offrivano quel bambino, ma la PORTA lo accettava —
+    // e una vetrina non è una porta.
+    h.requireUser.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
+    const res = await CREA_THREAD(post('/api/chat/threads', { teacher_id: SEG_A, parent_id: GEN_A, student_id: ALU_A }))
+    expect(res.status).toBe(403)
+    expect(h.scritture).toEqual([])
   })
 })
 

@@ -50,7 +50,11 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
 
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
-        const { threadId, limit, offset } = q.data;
+        const { threadId, limit } = q.data;
+        // `offset` diventa OPZIONALE nella semantica, non nello schema: `-1` non
+        // esiste, quindi si guarda l'URL. Chi non lo passa — e nessuno dei tre
+        // client lo passava — vuole la CODA della conversazione, non la testa.
+        const offsetRichiesto = new URL(request.url).searchParams.has('offset') ? q.data.offset : null;
         // `markRead` resta solo un TRIGGER opt-in del mark-read (usato dalla pagina
         // admin/messaggi): il suo VALORE è ignorato, l'identità è `uid` dal gate.
         const vuoleMarkRead = Boolean(q.data.markRead);
@@ -111,13 +115,33 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
             }
         }
 
-        // Recupera messaggi
+        /**
+         * ─── SI LEGGONO GLI ULTIMI MESSAGGI, NON I PRIMI ─────────────────────
+         *
+         * Qui c'era `order('created_at', ascending: true).range(0, 49)`, e nessuno
+         * dei tre client passava mai `limit`/`offset`. Cioè: di ogni conversazione
+         * si caricavano i **50 messaggi più VECCHI**, per sempre.
+         *
+         * Oggi non morde — misurato il 2026-09-07, il thread più lungo in
+         * produzione ne ha 18 — ma è una mina a scadenza: al cinquantunesimo
+         * messaggio la conversazione si «congela». Chi ricarica la pagina vede
+         * sparire tutto ciò che si sono detti di recente, e il polling a 15 s
+         * continua a ri-scrivere lo stesso blocco vecchio — quindi nemmeno
+         * aspettare serve. Un difetto che si presenta come «la chat ha perso i
+         * messaggi», sulla conversazione più fitta, cioè quella che conta di più.
+         *
+         * Si legge quindi la CODA per difetto: `descending` + `limit`, poi si
+         * rovescia. `total` dice al client quanti ce ne sono in tutto, e chi vuole
+         * i precedenti passa `offset` — che da qui in poi conta **dal fondo**.
+         */
+        const daCoda = offsetRichiesto === null || offsetRichiesto === 0;
+        const inizio = offsetRichiesto ?? 0;
         const { data, error, count } = await supabase
             .from('chat_messages')
             .select('*', { count: 'exact' })
             .eq('thread_id', threadId)
-            .order('created_at', { ascending: true })
-            .range(offset, offset + limit - 1);
+            .order('created_at', { ascending: false })
+            .range(inizio, inizio + limit - 1);
 
         if (error) {
             logErrore({ operazione: 'chat/messages:GET', stato: 500, evento: 'db' }, error);
@@ -127,9 +151,20 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
         // In tabella c'è il PERCORSO nel bucket privato: il link firmato lo
         // genera la lettura, a tempo, dietro al gate appena superato (S32). Una
         // sola chiamata allo Storage per pagina, mai una per messaggio.
-        const messages = await firmaAllegatiChat(supabase, data ?? [], 'chat/messages:GET');
+        // Si rovescia SEMPRE: la lettura è discendente per prendere la coda, ma la
+        // conversazione si legge dal più vecchio al più recente, ed è la forma che
+        // i tre client si aspettano da sempre.
+        const inOrdine = [...(data ?? [])].reverse();
+        const messages = await firmaAllegatiChat(supabase, inOrdine, 'chat/messages:GET');
 
-        return NextResponse.json({ messages, total: count ?? 0 });
+        return NextResponse.json({
+            messages,
+            total: count ?? 0,
+            // Quanti ne restano PRIMA di questi: è ciò che serve alla UI per
+            // decidere se mostrare «carica i precedenti», senza doverli contare lei.
+            precedenti: Math.max(0, (count ?? 0) - inizio - inOrdine.length),
+            daCoda,
+        });
     } catch (error) {
         logErrore({ operazione: 'chat/messages:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

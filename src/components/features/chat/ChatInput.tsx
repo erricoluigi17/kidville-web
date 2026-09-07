@@ -6,7 +6,17 @@ import { Send, Paperclip, X } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 interface Props {
-    onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void;
+    /**
+     * ⚠️ RESTITUISCE L'ESITO, e non è un dettaglio di tipo.
+     *
+     * Prima era `=> void`, e questo componente svuotava il campo SUBITO, prima di
+     * sapere com'era andata. Se la POST veniva rifiutata — genitore moroso
+     * (403 `account_sospeso`), allegato fuori bucket (400), 500 — il testo spariva
+     * e a schermo non compariva niente: il messaggio era perso, e chi l'aveva
+     * scritto credeva di averlo mandato. Con `false` il campo NON si svuota, e il
+     * testo resta dov'era.
+     */
+    onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void | boolean | Promise<void | boolean>;
     disabled?: boolean;
     placeholder?: string;
 }
@@ -24,22 +34,35 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
-    const handleSend = useCallback(() => {
+    const [inviando, setInviando] = useState(false);
+
+    const handleSend = useCallback(async () => {
         // Niente invio con upload in corso: il messaggio partirebbe senza
         // allegato e il file, a upload finito, resterebbe agganciato al composer.
-        if (uploading) return;
+        if (uploading || inviando) return;
         const trimmed = text.trim();
         if (!trimmed && !attachment) return;
 
-        onSend(
-            trimmed || (attachment ? '📎 Allegato' : ''),
-            attachment?.riferimento,
-            attachment?.type,
-        );
-        setText('');
-        setAttachment(null);
-        inputRef.current?.focus();
-    }, [text, attachment, onSend, uploading]);
+        setInviando(true);
+        try {
+            const esito = await onSend(
+                trimmed || (attachment ? '📎 Allegato' : ''),
+                attachment?.riferimento,
+                attachment?.type,
+            );
+            // ⚠️ Si svuota SOLO se l'invio è andato. `undefined` vale «andata»:
+            // i chiamanti che non dichiarano l'esito si comportano come prima.
+            if (esito === false) {
+                inputRef.current?.focus();
+                return;
+            }
+            setText('');
+            setAttachment(null);
+            inputRef.current?.focus();
+        } finally {
+            setInviando(false);
+        }
+    }, [text, attachment, onSend, uploading, inviando]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {

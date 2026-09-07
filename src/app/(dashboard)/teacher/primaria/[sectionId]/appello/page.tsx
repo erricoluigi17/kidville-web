@@ -8,6 +8,7 @@ import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalAppello, syncPendingAppello } from '@/lib/offline/syncEngine';
 import { DateField } from '@/components/ui/DateField';
 import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
+import { oraDiRoma, oraDiRomaAdesso } from '@/lib/presenze/orario';
 
 type Stato = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata';
 interface Riga {
@@ -33,17 +34,11 @@ function annoScolasticoDefault(): { from: string; to: string } {
   return { from: `${anno}-09-01`, to: `${anno + 1}-06-30` };
 }
 
-// Estrae HH:MM da un timestamp ISO; '' se assente.
-function oraDaTs(ts: string | null): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
-
-function oraCorrente(): string {
-  const d = new Date();
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+// HH:MM a Roma da un orario di presenza; '' se assente. Prima erano due copie di
+// `getHours()` — l'ora del dispositivo — e su un tablet fuori fuso l'appello
+// proponeva e mostrava un'ora che non era quella della scuola.
+const oraDaTs = (ts: string | null): string => oraDiRoma(ts) ?? '';
+const oraCorrente = (): string => oraDiRomaAdesso();
 
 // L'etichetta di stato è tradotta al render via t(`appelloStato_${key}`): l'array
 // tiene solo la chiave (valore di stato lato API), l'icona e lo stile.

@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl'
 import { CircleCheck, CircleX, Clock, LogOut, CircleHelp } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import type { StatoPresenza } from '@/lib/primaria/oreAssenza'
+import { oraDiRoma } from '@/lib/presenze/orario'
 
 interface OggiPresenza {
   stato: StatoPresenza | null
@@ -57,10 +58,20 @@ const STATI = {
   },
 } as const
 
-// Ora 'HH:MM:SS' → 'HH:MM' (tollerante a null / formati corti).
-function hhmm(v: string | null): string {
-  return v ? v.slice(0, 5) : ''
-}
+/**
+ * ⚠️ QUI USCIVA «Ingresso alle 2026-», e lo leggevano 490 famiglie.
+ *
+ * Questa funzione faceva `v.slice(0, 5)`, corretto su `'08:45:00'` — la forma che il
+ * commento di prima dava per scontata. Ma `presenze.orario_entrata` per il nido e
+ * l'infanzia contiene un ISO completo (`2026-09-07T10:35:04.428Z`), e i suoi primi
+ * cinque caratteri sono **`2026-`**. Misurato il 2026-09-07: 450 righe d'appello su
+ * 450, tutti i giorni, e nessun test lo vedeva perché nessun test guardava questa
+ * stringa.
+ *
+ * La lettura ora è quella condivisa: capisce tutte e tre le forme della colonna e
+ * rende l'ora ITALIANA, non quella del fuso del dispositivo.
+ */
+const hhmm = (v: string | null): string => oraDiRoma(v) ?? ''
 
 /**
  * Riquadro "Oggi a scuola" della home genitore (DR home cards): presenza reale

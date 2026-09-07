@@ -369,5 +369,10 @@
   "erroreMensaElencoNonLetto": "The list of children could not be loaded. Please try again.",
   "erroreMensaTicketNonLetti": "Remaining meals could not be loaded. Please try again.",
   "erroreMensaAlunnoFuoriClasse": "This child is not in one of your classes.",
-  "erroreMensaScopeNonVerificato": "Permissions for this child could not be verified."
+  "erroreMensaScopeNonVerificato": "Permissions for this child could not be verified.",
+  "erroreAppelloNonRegistrato": "Mark the child’s attendance first: with no roll call there is no time to correct.",
+  "erroreOrarioIncoerente": "The time does not match the recorded status.",
+  "erroreChatAbbinamentoNonConsentito": "You cannot start a conversation with this person about this child.",
+  "erroreChatAbbinamentoNonVerificato": "The connection could not be verified. Please try again in a few minutes.",
+  "erroreChatThreadNonCreato": "The conversation could not be opened. Please try again in a few minutes."
 }

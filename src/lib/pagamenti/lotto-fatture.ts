@@ -239,7 +239,16 @@ export const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
  *    peggio;
  *  · **502** — l'unico status che in `emissione.ts` esce DOPO l'upload. Col
  *    codice di trasporto il numero è consumato e l'esito ignoto; senza codice è
- *    uno scarto di merito, dove il numero è consumato lo stesso.
+ *    uno scarto di merito, dove il numero è consumato lo stesso;
+ *  · **504** — l'invocazione uccisa dalla piattaforma. Finché il ciclo girava nel
+ *    browser non si presentava (un'emissione dura ~44 s su 300 di `maxDuration`);
+ *    col ciclo sul server e un budget di tempo diventa il modo PREVISTO di
+ *    fallire, e la risposta non dice quali delle fatture del blocco siano partite.
+ *    ⚠️ Oggi il pannello si salva PER CASO: Vercel manda il 504 con un corpo HTML,
+ *    `res.json()` lancia, il `catch` mette `stato = 0` e il dubbio scatta da lì.
+ *    Un ragionevole `res.json().catch(() => null)` in una riscrittura riporterebbe
+ *    il 504 in superficie con `dubbio = false`, cioè con un'AFFERMAZIONE falsa
+ *    stampata su un documento fiscale. Meglio dentro, esplicitamente.
  *
  * CHI RESTA FUORI: **503** (sopra), **500** — l'XML non composto, che sta prima
  * dell'upload, o il `catch` della rotta — e **429**, che qui può essere solo un
@@ -251,7 +260,7 @@ export const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
 export function numeroInDubbio(statoHttp: number, codice?: string | null): boolean {
   if (statoHttp === 0) return true
   if (codice === CODICE_TRASPORTO_IGNOTO) return true
-  return statoHttp === 502
+  return statoHttp === 502 || statoHttp === 504
 }
 
 /**

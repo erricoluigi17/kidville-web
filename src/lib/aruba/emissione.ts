@@ -126,7 +126,27 @@ export interface EsitoQuota {
 }
 
 export type EsitoEmissione =
-  | { ok: true; fatturaStato: 'in_attesa'; uploadFileName: string; numero: number; numeroFattura?: string; quote?: EsitoQuota[] }
+  | {
+      ok: true
+      fatturaStato: 'in_attesa'
+      uploadFileName: string
+      numero: number
+      numeroFattura?: string
+      quote?: EsitoQuota[]
+      /**
+       * `true` quando NON è stata emessa niente adesso: la fattura c'era già e la
+       * chiamata è stata idempotente.
+       *
+       * ⚠️ Serviva e non c'era, e l'assenza si vedeva solo su un lotto. `EsitoQuota` ha
+       * `motivo: 'idempotente'` da sempre, ma `quote` viene popolato **solo se
+       * multi-quota**: sul caso normale — una quota sola — il chiamante non aveva modo
+       * di distinguere «emessa adesso» da «c'era già». Rilanciando un blocco
+       * parzialmente eseguito, la risposta avrebbe detto «emesse: 15» quando le nuove
+       * erano tre, e chi usa quel conteggio per la quadratura avrebbe contato dodici
+       * documenti mai emessi oggi.
+       */
+      gia?: true
+    }
   | {
       ok: false
       motivo:
@@ -2261,6 +2281,10 @@ export async function emettiFatturaPagamento(
     .eq('id', pagamentoId)
   if (errAggAttesa) segnalaStatoNonAggiornato(pagamentoId, pag.scuola_id, 'in_attesa', errAggAttesa)
 
+  // «Già fatta» solo se TUTTE le quote riuscite erano già a registro: una sola davvero
+  // emessa fa di questa chiamata un'emissione, e va contata come tale.
+  const tutteGia = okEsiti.every((e) => e.motivo === 'idempotente')
+
   return {
     ok: true,
     fatturaStato: 'in_attesa',
@@ -2268,6 +2292,7 @@ export async function emettiFatturaPagamento(
     numero: okEsiti[0].numero ?? 0,
     numeroFattura: okEsiti[0].numeroFattura,
     quote: multi ? esiti : undefined,
+    ...(tutteGia ? { gia: true as const } : {}),
   }
 }
 

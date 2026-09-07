@@ -219,3 +219,37 @@ describe('stimaRimanenteMs — quanto manca alla fine del lotto', () => {
     expect(Math.round(minuti)).toBe(17)
   })
 })
+
+describe('il 504 di piattaforma è un numero in DUBBIO, non una riga saltata', () => {
+  /**
+   * ─── PERCHÉ ARRIVA ADESSO ────────────────────────────────────────────────────────
+   * Finché il ciclo girava nel browser, una POST per fattura, il 504 non si presentava:
+   * l'emissione singola dura ~44 secondi su un `maxDuration` di 300. Col ciclo sul
+   * server e un budget di tempo, l'invocazione troncata dalla piattaforma diventa il
+   * modo PREVISTO di fallire — e fino a quindici documenti possono essere partiti senza
+   * che nessuna risposta lo dica.
+   *
+   * ⚠️ Oggi il pannello si salva PER CASO: Vercel manda il 504 con un corpo HTML,
+   * `res.json()` lancia, il `catch` mette `stato = 0` e `numeroInDubbio(0)` è vero. È un
+   * salvataggio accidentale, non una regola: chiunque riscrivesse quel ciclo con un
+   * ragionevole `res.json().catch(() => null)` riporterebbe il 504 in superficie con
+   * `dubbio = false`, e la riga verrebbe etichettata «saltata» — che questo file
+   * definisce come *un'AFFERMAZIONE: per questa riga non è successo niente*.
+   *
+   * Una affermazione falsa su un documento fiscale vale più di una riga ritentata: il
+   * 504 entra fra i dubbi.
+   */
+  it('504 → il numero è in dubbio', () => {
+    expect(numeroInDubbio(504)).toBe(true)
+  })
+
+  it('e ferma il lotto, come ogni 5xx', () => {
+    expect(fermaIlLotto(504)).toBe(true)
+  })
+
+  it('il 503 resta FUORI dai dubbi: nasce prima del signin e lo dice nel messaggio', () => {
+    // La distinzione che il 2026-09-07 ha stretto: sbagliare per eccesso qui manda un
+    // operatore a cercare sul pannello Aruba un documento che non esiste.
+    expect(numeroInDubbio(503)).toBe(false)
+  })
+})

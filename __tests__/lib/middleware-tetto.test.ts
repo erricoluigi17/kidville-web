@@ -52,7 +52,10 @@ function cookieDiSessione(urlSupabase: string, scadutoDa = -3_600): string {
     // di scriverla a mano è ciò che tiene il test vero anche se cambia l'host.
     const chiave = `sb-${new URL(urlSupabase).hostname.split('.')[0]}-auth-token`;
     const sessione = JSON.stringify({
-        access_token: 'access-di-prova',
+        // Un JWT VERO, non un segnaposto: `getClaims()` lo DECODIFICA, mentre a `getUser()`
+        // bastava una stringa da spedire. HS256 ⇒ verifica non locale ⇒ ripiego su `getUser()`,
+        // cioè la sequenza di rete che questi test misurano da sempre.
+        access_token: jwtSimmetrico(),
         refresh_token: 'refresh-di-prova',
         // `_isValidSession` pretende questi tre campi; `expires_at` nel PASSATO forza il rinnovo,
         // cioè il primo dei due giri di rete.
@@ -62,6 +65,65 @@ function cookieDiSessione(urlSupabase: string, scadutoDa = -3_600): string {
     });
     const valore = `base64-${Buffer.from(sessione, 'utf8').toString('base64url')}`;
     return `${chiave}=${valore}`;
+}
+
+/* ── JWT VERI, perché la verifica locale è vera ───────────────────────────────────
+ * `getClaims()` decodifica il token e — se l'algoritmo è asimmetrico — ne verifica la FIRMA con
+ * WebCrypto. Un token finto verrebbe rifiutato, e il test misurerebbe il rifiuto invece della
+ * verifica. Qui le chiavi si generano davvero e il token si firma davvero: l'unica cosa simulata
+ * è la rete. */
+
+function b64url(b: Uint8Array | string): string {
+    const buf = typeof b === 'string' ? Buffer.from(b, 'utf8') : Buffer.from(b);
+    return buf.toString('base64url');
+}
+
+/** Un JWT firmato HS256: `getClaims()` NON può verificarlo da solo e ripiega su `getUser()`. */
+function jwtSimmetrico(scadenzaFraSec = 3_600): string {
+    const h = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+    const p = b64url(JSON.stringify({ sub: UTENTE.id, aud: 'authenticated', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + scadenzaFraSec }));
+    return `${h}.${p}.${b64url('firma-simmetrica-non-verificabile-qui')}`;
+}
+
+/**
+ * ⚠️ UN `kid` DIVERSO PER OGNI COPPIA, e non è pedanteria.
+ *
+ * Con un `kid` condiviso il verdetto di un test dipendeva da quale test avesse girato prima:
+ * `7-bis` coglieva la manomissione «non passare le chiavi» in isolamento e la MANCAVA nella suite
+ * completa. Un lock che cambia risposta secondo l'ordine non è un lock — e su questo repo è
+ * esattamente il modo in cui un difetto è già passato con la suite verde.
+ */
+let contatoreKid = 0;
+
+/** Una coppia ES256 vera, più il JWT che essa firma e la JWK pubblica da servire. */
+async function coppiaEs256(scadenzaFraSec = 3_600) {
+    const KID = `kid-di-prova-${++contatoreKid}`;
+    const coppia = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+    const pubblica = await crypto.subtle.exportKey('jwk', coppia.publicKey);
+    const h = b64url(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: KID }));
+    const p = b64url(JSON.stringify({ sub: UTENTE.id, aud: 'authenticated', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + scadenzaFraSec }));
+    const firma = await crypto.subtle.sign(
+        { name: 'ECDSA', hash: { name: 'SHA-256' } },
+        coppia.privateKey,
+        new TextEncoder().encode(`${h}.${p}`),
+    );
+    return {
+        token: `${h}.${p}.${b64url(new Uint8Array(firma))}`,
+        jwks: { keys: [{ ...pubblica, kid: KID, alg: 'ES256', use: 'sig', key_ops: ['verify'] }] },
+    };
+}
+
+/** Il cookie di sessione con un access_token DATO (e non più un segnaposto). */
+function cookieCon(urlSupabase: string, accessToken: string, scadutoDa = 3_600): string {
+    const chiave = `sb-${new URL(urlSupabase).hostname.split('.')[0]}-auth-token`;
+    const sessione = JSON.stringify({
+        access_token: accessToken,
+        refresh_token: 'refresh-di-prova',
+        expires_at: Math.floor(Date.now() / 1000) + scadutoDa,
+        expires_in: 3_600,
+        token_type: 'bearer',
+    });
+    return `${chiave}=base64-${Buffer.from(sessione, 'utf8').toString('base64url')}`;
 }
 
 /** Una richiesta di PAGINA verso un'area protetta (quindi soggetta al redirect). */
@@ -164,15 +226,19 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
         // ROSSO SE: si toglie `global: { fetch: fetchConBudget(...) }` dal `createServerClient`.
         // In quel caso auth-js ricade sul `fetch` globale — cioè sulla stessa spia — ma senza
         // nessun `signal`: è la differenza fra «la chiamata parte» e «la chiamata ha un tetto».
-        spia(async () => risposta(UTENTE));
+        spia(async (url) => (url.includes('jwks.json') ? risposta({ keys: [] }) : risposta(UTENTE)));
         const middleware = await caricaMiddleware('https://progetto.supabase.co');
 
         await middleware(paginaProtetta(cookieDiSessione('https://progetto.supabase.co', +3_600)));
 
+        // Si CERCA la chiamata, non si assume che sia la prima: dal 2026-09-07 il middleware
+        // scarica anche le chiavi di firma, e legare il test a un indice lo renderebbe fragile a
+        // ogni chiamata aggiunta altrove (è la stessa cautela già scritta nel test 2).
         expect(chiamate.length, 'nessuna chiamata a GoTrue: il cookie di sessione non è stato riletto').toBeGreaterThan(0);
-        expect(chiamate[0].url).toContain('/auth/v1/user');
-        expect(chiamate[0].signal).toBeInstanceOf(AbortSignal);
-        expect(chiamate[0].signal!.aborted, 'la scadenza è già scattata prima della chiamata').toBe(false);
+        const aGoTrue = chiamate.find((c) => c.url.includes('/auth/v1/user'));
+        expect(aGoTrue, 'nessuna chiamata a `/auth/v1/user`: il ripiego su getUser non è avvenuto').toBeDefined();
+        expect(aGoTrue!.signal).toBeInstanceOf(AbortSignal);
+        expect(aGoTrue!.signal!.aborted, 'la scadenza è già scattata prima della chiamata').toBe(false);
     });
 
     it('2. È UN BUDGET: il secondo giro di rete NON riparte da capo', async () => {
@@ -209,11 +275,14 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
 
         try {
             spia(async (url, n) => {
-                if (n === 1) {
+                // Le chiavi di firma non fanno parte della sequenza che questo test misura: si
+                // servono vuote, così `getClaims()` ripiega su `getUser()` come prima.
+                if (url.includes('jwks.json')) return risposta({ keys: [] });
+                if (n === 2) {
                     // Il rinnovo del token: risponde, ma lentamente. È il tempo che il budget perde.
                     await new Promise((r) => setTimeout(r, RITARDO_MS));
                     return risposta({
-                        access_token: 'nuovo', refresh_token: 'nuovo', expires_in: 3_600,
+                        access_token: jwtSimmetrico(), refresh_token: 'nuovo', expires_in: 3_600,
                         token_type: 'bearer', expires_at: Math.floor(Date.now() / 1000) + 3_600,
                         user: UTENTE,
                     });
@@ -229,7 +298,8 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
             AbortSignal.timeout = timeoutVero;
         }
 
-        expect(chiamate.map((c) => c.url.split('/auth/v1/')[1]?.split('?')[0]))
+        expect(chiamate.map((c) => c.url.split('/auth/v1/')[1]?.split('?')[0])
+            .filter((p) => !p?.startsWith('.well-known')))
             .toEqual(['token', 'user']);
 
         // NESSUNA DELLE DUE STRADE È SCOPERTA. Senza questa riga, applicare il tetto alla sola
@@ -246,12 +316,24 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
             `un signal non arriva da \`conTetto\`: tetti applicati = ${JSON.stringify(applicati)}`,
         ).toBe(true);
 
-        // Il PRIMO giro può prendersi il budget intero: è il primo.
-        expect(applicati[0]!).toBeLessThanOrEqual(TETTO_ATTESO_MS);
-        // Il SECONDO no: deve essere sceso di ciò che il primo ha consumato.
-        expect(applicati[1]!, 'il secondo giro ha ricevuto un tetto INTERO: è un tetto per chiamata, non un budget')
+        // ⚠️ SI CERCANO LE DUE CHIAMATE, NON SI CONTANO. Dal 2026-09-07 il middleware scarica
+        // anche le chiavi di firma, e quella chiamata sta in mezzo: legare l'asserzione agli
+        // indici avrebbe misurato il tetto del giro sbagliato — che è precisamente il modo in cui
+        // questo test è già stato smontato una volta (vedi la testata).
+        const tettoDi = (pezzo: string) => {
+            const c = chiamate.find((x) => x.url.includes(pezzo));
+            expect(c, `nessuna chiamata a \`${pezzo}\``).toBeDefined();
+            return msDelSignal.get(c!.signal as AbortSignal)!;
+        };
+        const alRinnovo = tettoDi('/auth/v1/token');
+        const allaVerifica = tettoDi('/auth/v1/user');
+
+        // Il rinnovo può prendersi quasi tutto il budget: prima di lui c'è solo il JWKS, immediato.
+        expect(alRinnovo).toBeLessThanOrEqual(TETTO_ATTESO_MS);
+        // La verifica no: deve essere scesa di ciò che il rinnovo ha consumato.
+        expect(allaVerifica, 'il secondo giro ha ricevuto un tetto INTERO: è un tetto per chiamata, non un budget')
             .toBeLessThanOrEqual(TETTO_ATTESO_MS - RITARDO_MS + 50);
-        expect(applicati[1]!, 'budget già esaurito dopo 300 ms: il conto è sbagliato').toBeGreaterThan(0);
+        expect(allaVerifica, 'budget già esaurito dopo 300 ms: il conto è sbagliato').toBeGreaterThan(0);
 
         // E LA RIGA NON MENTE: dichiara lo stesso numero che è finito sul signal. Se i due
         // argomenti divergessero, «tetto=14700» racconterebbe un budget mentre alla fetch ne
@@ -259,7 +341,7 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
         const tetto = Number(campo('tetto'));
         expect(Number.isFinite(tetto), `nessun \`tetto=\` nella riga: ${scritto()}`).toBe(true);
         expect(tetto, 'la riga di log dichiara un tetto diverso da quello davvero applicato')
-            .toBe(applicati[1]);
+            .toBe(allaVerifica);
     });
 
     it('3. un guasto di RETE lascia una riga cercabile, con il suo codice', async () => {
@@ -335,6 +417,156 @@ describe('middleware — il client di `getUser()` ha un fetch nostro, con un tet
 
         expect(res.status).toBe(200);
         expect(res.headers.get('x-request-id')).toBeTruthy();
+    });
+
+    /* ════════════════════════════════════════════════════════════════════════
+     * 7. LA FIRMA SI VERIFICA IN LOCALE — e le chiavi si tengono per ISOLATE.
+     *
+     * IL DIFETTO, misurato il 7 settembre 2026. 2.231.291 richieste a Supabase in un giorno, di
+     * cui **643.281 di autenticazione** — un costante ~28% in ogni ora. La composizione (log
+     * 10:00-13:00) non lascia dubbi su dove sia il peso:
+     *
+     *     /user    280.389   99,3%   ← «questo token è ancora buono?»
+     *     /token     2.189    0,8%   ← il rinnovo
+     *
+     * `getUser()` fa una TELEFONATA a GoTrue per ogni richiesta. `getClaims()` verifica la firma
+     * del token con WebCrypto, in locale, e non chiama nessuno — ma solo se il progetto firma con
+     * una chiave asimmetrica (il nostro pubblica una ES256 nel JWKS).
+     *
+     * ⚠️ LA CACHE PER ISOLATE È IL PUNTO, non un ornamento. `fetchJwk` tiene le chiavi
+     * sull'ISTANZA del client, e questo file ne costruisce una nuova a ogni richiesta: senza una
+     * cache di modulo si scambierebbe una chiamata a `/user` con una al JWKS, cioè guadagno ZERO.
+     * Il test 7-bis è l'unico che lo misura.
+     *
+     * PERCHÉ NON SI TOCCA IL RESTO. `getUser()` chiede al server «vale ADESSO?»; `getClaims()`
+     * verifica la firma e si fida fino alla scadenza. Una sessione revocata resterebbe buona per
+     * il residuo del token. Qui va bene perché il redirect di questo file **non è il controllo
+     * d'accesso** — lo dice il commento in cima, e lo fanno `requireArea` e i gate `require*`, che
+     * continuano a interrogare il server e dove la revoca resta immediata.
+     * ════════════════════════════════════════════════════════════════════════ */
+
+    it('7. con un token ES256 non si telefona a GoTrue: la firma si verifica in locale', async () => {
+        // ROSSO SE: si torna a `getUser()`, o si smette di passare le chiavi a `getClaims()`.
+        const { token, jwks } = await coppiaEs256();
+        spia(async (url) => url.includes('jwks.json')
+            ? risposta(jwks)
+            : risposta(UTENTE));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        const res = await middleware(paginaProtetta(cookieCon('https://progetto.supabase.co', token)));
+
+        expect(chiamate.some((c) => c.url.includes('/auth/v1/user')),
+            'ha telefonato a GoTrue nonostante la firma fosse verificabile in locale').toBe(false);
+        expect(res.status, 'una sessione valida è stata buttata al login').toBe(200);
+    });
+
+    it('7-bis. le chiavi si scaricano UNA volta sola, non a ogni richiesta', async () => {
+        // ROSSO SE: la cache delle chiavi torna a vivere sull'istanza del client invece che sul
+        // modulo. È la differenza fra togliere una chiamata di rete e spostarla altrove.
+        const { token, jwks } = await coppiaEs256();
+        spia(async (url) => (url.includes('jwks.json') ? risposta(jwks) : risposta(UTENTE)));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+        const cookie = cookieCon('https://progetto.supabase.co', token);
+
+        await middleware(paginaProtetta(cookie));
+        await middleware(paginaProtetta(cookie));
+        await middleware(paginaProtetta(cookie));
+
+        const scaricamenti = chiamate.filter((c) => c.url.includes('jwks.json')).length;
+        expect(scaricamenti, `le chiavi sono state scaricate ${scaricamenti} volte invece di 1`).toBe(1);
+        expect(chiamate.some((c) => c.url.includes('/auth/v1/user'))).toBe(false);
+    });
+
+    it('7-ter. con un token HS256 il comportamento è quello di prima: si telefona, e va bene', async () => {
+        // Il progetto potrebbe non essere ancora passato alle chiavi asimmetriche. In quel caso
+        // `getClaims()` RIPIEGA su `getUser()` da solo: nessun guadagno, ma nemmeno nessun danno e
+        // nessun cambio di sicurezza. È la ragione per cui questa modifica è sicura a prescindere.
+        spia(async (url) => (url.includes('jwks.json') ? risposta({ keys: [] }) : risposta(UTENTE)));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        const res = await middleware(paginaProtetta(cookieCon('https://progetto.supabase.co', jwtSimmetrico())));
+
+        expect(chiamate.some((c) => c.url.includes('/auth/v1/user')),
+            'il ripiego su getUser non è avvenuto: una sessione HS256 non sarebbe più verificata').toBe(true);
+        expect(res.status).toBe(200);
+    });
+
+    it('7-ter-bis. anche un JWKS VUOTO si ricorda: non si richiede a ogni richiesta', async () => {
+        // ROSSO SE: si memorizza solo l'esito positivo. Se il progetto firmasse ancora in HS256 —
+        // o se il JWKS tornasse vuoto per qualunque ragione — una cache che tiene solo i successi
+        // riproverebbe a OGNI richiesta, per sempre: un giro di rete IN PIÙ invece che in meno,
+        // cioè il contrario esatto di questa correzione. È il caso peggiore, ed è silenzioso.
+        spia(async (url) => (url.includes('jwks.json') ? risposta({ keys: [] }) : risposta(UTENTE)));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+        const cookie = cookieDiSessione('https://progetto.supabase.co', +3_600);
+
+        await middleware(paginaProtetta(cookie));
+        await middleware(paginaProtetta(cookie));
+        await middleware(paginaProtetta(cookie));
+
+        const scaricamenti = chiamate.filter((c) => c.url.includes('jwks.json')).length;
+        expect(scaricamenti, `JWKS vuoto richiesto ${scaricamenti} volte: la cache non ricorda i «no»`).toBe(1);
+        // …e le tre richieste hanno comunque funzionato, ripiegando su GoTrue.
+        expect(chiamate.filter((c) => c.url.includes('/auth/v1/user')).length).toBe(3);
+    });
+
+    it('7-quater. IL RINNOVO DEL TOKEN NON SI PERDE: una sessione scaduta si rinnova ancora', async () => {
+        // ROSSO SE: si passa a `getClaims(token)` con il token estratto a mano, saltando
+        // `getSession()`. Il rinnovo trasparente è il PRIMO compito dichiarato di questo file
+        // («rinnova la sessione Supabase dai cookie»): perderlo butterebbe fuori ogni utente allo
+        // scadere dell'ora, che è un guasto peggiore di quello che si sta correggendo.
+        const { token, jwks } = await coppiaEs256();
+        spia(async (url) => {
+            if (url.includes('jwks.json')) return risposta(jwks);
+            if (url.includes('/token')) return risposta({
+                access_token: token, refresh_token: 'refresh-rinnovato', expires_in: 3_600,
+                expires_at: Math.floor(Date.now() / 1000) + 3_600, token_type: 'bearer', user: UTENTE,
+            });
+            return risposta(UTENTE);
+        });
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        // `expires_at` nel PASSATO: la sessione va rinnovata prima di poter essere verificata.
+        const res = await middleware(paginaProtetta(cookieCon('https://progetto.supabase.co', token, -3_600)));
+
+        expect(chiamate.some((c) => c.url.includes('/token')), 'la sessione scaduta non è stata rinnovata').toBe(true);
+        const cookieNuovo = res.cookies.get('sb-progetto-auth-token')?.value ?? '';
+        const dentro = Buffer.from(cookieNuovo.replace(/^base64-/, ''), 'base64url').toString('utf8');
+        expect(dentro, 'il cookie rinnovato non è tornato al browser').toContain('refresh-rinnovato');
+    });
+
+    it('7-sexies. una chiave CORROTTA non diventa un 500 su tutto il sito: si va al login', async () => {
+        // ROSSO SE: si toglie il `try` attorno a `getClaims()`, o se il degrado diventa fail-OPEN.
+        //
+        // `getClaims()` converte in `{ data: null, error }` solo gli errori di AUTENTICAZIONE
+        // (trasporto compreso); tutto il resto lo RILANCIA. Una JWK con il `kid` giusto ma
+        // materiale crittografico invalido fa lanciare una `DOMException` a
+        // `crypto.subtle.importKey` — che non è un errore di auth. Senza il `try`, quel caso
+        // diventerebbe un 500 sul percorso da cui passa OGNI richiesta del sito: il guasto
+        // opposto, e peggiore, di quello che si sta correggendo.
+        const { token, jwks } = await coppiaEs256();
+        const chiave = jwks.keys[0] as Record<string, unknown>;
+        const corrotto = { keys: [{ ...chiave, x: 'non-e-una-coordinata', y: 'nemmeno-questa' }] };
+        spia(async (url) => (url.includes('jwks.json') ? risposta(corrotto) : risposta(UTENTE)));
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        const res = await middleware(paginaProtetta(cookieCon('https://progetto.supabase.co', token)));
+
+        expect(res.status, 'una chiave corrotta ha aperto la porta invece di chiuderla').toBe(307);
+        expect(res.headers.get('location')).toContain('/auth/login');
+    });
+
+    it('7-quinquies. se le chiavi non si raggiungono si resta FAIL-CLOSED, non si apre la porta', async () => {
+        // ROSSO SE: qualcuno «migliora» il degrado lasciando passare la navigazione quando la
+        // verifica non si può fare. Vale qui esattamente come per il test 5.
+        const { token } = await coppiaEs256();
+        spia(async () => { throw new TypeError('fetch failed'); });
+        const middleware = await caricaMiddleware('https://progetto.supabase.co');
+
+        const res = await middleware(paginaProtetta(cookieCon('https://progetto.supabase.co', token)));
+
+        expect(res.status, 'una verifica impossibile ha aperto la porta').toBe(307);
+        expect(res.headers.get('location')).toContain('/auth/login');
     });
 });
 

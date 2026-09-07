@@ -10,10 +10,36 @@ const PNG_1PX = Buffer.from(
   'base64'
 );
 
+/**
+ * ⚠️ IL TETTO DI 30 s NON BASTAVA, ED È MISURATO — non una precauzione.
+ *
+ * La CI E2E gira su `next dev` (vedi `playwright.config.ts`): questa è la PRIMA
+ * spec a colpire `/parent/chat`, `/api/chat/contacts`, `/api/chat/threads` e
+ * `/api/chat/messages`, che compilano A FREDDO. Il tetto per test di Playwright,
+ * qui non dichiarato, era quello di default: **30 secondi**.
+ *
+ * Le misure, dallo storico della CI:
+ *   · su `main`, tre run verdi di fila: **15,6 s · 14,2 s · 18,4 s**;
+ *   · sul ramo che ha introdotto il gate di abbinamento
+ *     (`@/lib/chat/rubrica`, un modulo NUOVO nel grafo di due route):
+ *     **29,2 s · 30,4 s · 30,0 s**, cioè il tetto, tre volte su tre.
+ *
+ * E i tre fallimenti non erano lo stesso: uno alla riga dell'allegato, due sul
+ * `click` del contatto. **Non era un'asserzione a cadere: era il budget a
+ * finire**, e cadeva dove capitava. Un test che fallisce in punti diversi a
+ * ogni giro sta dicendo «sono lento», non «il prodotto è rotto».
+ *
+ * Il rimedio è lo stesso già scritto — con la stessa motivazione — in testa a
+ * `e2e/teacher-attendance.spec.ts`, che a questo problema era già arrivato: un
+ * tetto esplicito e generoso, che NON cambia una sola asserzione. Il lavoro vero
+ * (leggere solo ciò che serve nel gate) è stato fatto in `rubrica.ts`; questo è
+ * il margine per il cold-compile, che non dipende da noi.
+ */
 test.describe('lato genitore', () => {
   test.use({ storageState: STORAGE.genitore });
 
   test('nuova chat con la maestra: messaggio + allegato', async ({ page }, testInfo) => {
+    test.setTimeout(150_000);
     const pngPath = testInfo.outputPath('allegato.png');
     writeFileSync(pngPath, PNG_1PX);
 
@@ -68,6 +94,7 @@ test.describe('lato docente', () => {
   test.use({ storageState: STORAGE.docente });
 
   test('la maestra vede la conversazione e il messaggio', async ({ page }) => {
+    test.setTimeout(150_000);
     await page.goto('/teacher/chat');
     await expect(page.getByText('Messaggi con le famiglie')).toBeVisible({ timeout: 15_000 });
 

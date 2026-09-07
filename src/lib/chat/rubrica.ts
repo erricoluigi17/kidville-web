@@ -182,11 +182,28 @@ export async function fattiAbbinamento(
     const a = alunnoRes.data as { id: string; section_id: string | null; scuola_id: string | null; stato: string | null } | null;
     const u = operatoreRes.data as { id: string; ruolo: AppRole | null; attivo: boolean | null; scuola_id: string | null } | null;
 
+    /**
+     * ⚠️ SI LEGGE SOLO CIÒ CHE LA REGOLA GUARDERÀ, e non è micro-ottimizzazione.
+     *
+     * La prima versione chiedeva SEMPRE sia le sezioni sia le sedi. Ma
+     * `decidiAbbinamento` è una biforcazione: per un `educator` legge le sezioni ed
+     * esce prima di nominare le sedi; per lo staff fa l'opposto. Una delle due
+     * letture era quindi sempre buttata via — un round trip in più su OGNI apertura
+     * di conversazione, per sempre.
+     *
+     * Misurato dove si vede: la spec E2E della chat è passata da ~16 s a ~30 s — il
+     * tetto per test di Playwright — quando questo gate è entrato in `chat/threads:POST`.
+     */
     let sezioni: readonly string[] = [];
     let scuole: readonly string[] = [];
     if (u) {
-        sezioni = u.ruolo === 'educator' ? await sezioniDiUtente(supabase, u.id) : [];
-        scuole = await scuoleDiUtente(supabase, { id: u.id, role: u.ruolo ?? 'genitore', scuola_id: u.scuola_id });
+        if (u.ruolo === 'educator') {
+            sezioni = await sezioniDiUtente(supabase, u.id);
+        } else if (u.ruolo && vedeTutteLeClassi({ id: u.id, role: u.ruolo })) {
+            scuole = await scuoleDiUtente(supabase, { id: u.id, role: u.ruolo, scuola_id: u.scuola_id });
+        }
+        // Né docente né staff di direzione: la regola risponde
+        // `operatore-non-e-insegnante` senza guardare né sezioni né sedi.
     }
 
     return {

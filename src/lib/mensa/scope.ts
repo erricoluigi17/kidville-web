@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AppUser } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
+import { sezioniDiUtente } from '@/lib/sezioni/docenti'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 
@@ -86,4 +87,62 @@ export async function assertConfigMensaInScope(
  */
 export function vincoloDuplicato(err: unknown): boolean {
   return (err as { code?: string } | null | undefined)?.code === '23505'
+}
+
+/**
+ * Può questa persona leggere i dati mensa di QUESTO bambino?
+ *
+ * ⚠️ Non si usa `assertAlunnoInScope` (in `@/lib/auth/scope`) e non è una svista:
+ * quella funzione, per chi non è admin/coordinator/segreteria, pretende che
+ * l'alunno stia in una sezione ASSEGNATA in `utenti_sezioni`. La **cuoca** non ha
+ * sezioni assegnate — non insegna — quindi prenderebbe 403 su ogni bambino, pur
+ * essendo la destinataria naturale di queste schermate: il report cucina le mostra
+ * già nome e allergie di tutti i prenotati del plesso.
+ *
+ * La regola giusta per la cucina è per SEDE, con una sola eccezione:
+ *  · fuori dalle sedi attive ⇒ 403 (vale per tutti, cuoca compresa);
+ *  · `educator` ⇒ in più, solo le proprie sezioni (`utenti_sezioni`), come nel
+ *    report: un insegnante non guarda i bambini delle altre classi.
+ *
+ * Fail-closed nei tre modi: errore di lettura ⇒ 500 (PostgREST NON lancia),
+ * alunno assente ⇒ 404, `scuola_id` NULL o fuori scope ⇒ 403.
+ */
+export async function assertAlunnoInScopeCucina(
+  request: NextRequest,
+  supabase: SupabaseClient,
+  user: AppUser,
+  alunnoId: string,
+): Promise<NextResponse | null> {
+  const { data, error } = await supabase
+    .from('alunni')
+    .select('id, section_id, scuola_id')
+    .eq('id', alunnoId)
+    .maybeSingle()
+  if (error) {
+    logErrore({ operazione: 'mensa/scope-alunno', stato: 500, evento: 'db' }, error)
+    return NextResponse.json({ error: 'Verifica di scope non riuscita', codice: 'MENSA_SCOPE_NON_VERIFICATO' }, { status: 500 })
+  }
+  if (!data) return NextResponse.json({ error: 'Alunno non trovato', codice: 'ALUNNO_NON_TROVATO' }, { status: 404 })
+
+  const sede = (data.scuola_id as string | null) ?? null
+  const sedi = await resolveScuoleAttive(request, supabase, user)
+  if (!sede || !sedi.includes(sede)) {
+    logEvento('auth', 'warn', {
+      tipo: 'alunno-mensa-fuori-sede', azione: 'assertAlunnoInScopeCucina',
+      utente: user.id, ruolo: user.role,
+    })
+    return rifiutoSede('SEDE_NON_ACCESSIBILE')
+  }
+
+  if (user.role === 'educator') {
+    const mie = await sezioniDiUtente(supabase, user.id)
+    const sezione = (data.section_id as string | null) ?? null
+    if (!sezione || !mie.includes(sezione)) {
+      logEvento('auth', 'warn', {
+        tipo: 'alunno-mensa-fuori-classe', azione: 'assertAlunnoInScopeCucina', utente: user.id,
+      })
+      return NextResponse.json({ error: 'Alunno non nella tua classe', codice: 'MENSA_ALUNNO_FUORI_CLASSE' }, { status: 403 })
+    }
+  }
+  return null
 }

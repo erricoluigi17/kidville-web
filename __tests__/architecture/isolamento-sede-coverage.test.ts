@@ -1671,7 +1671,20 @@ describe('coverage-lock isolamento fra sedi', () => {
             // porta esenzioni: la prima dichiara il suo scope con `assertAlunnoInScope` e
             // `assertParentInScope`, la seconda con il filtro di plesso sulla
             // candidatura.
-            routeConServiceRole: 306,
+            // 306 → 308 il 2026-09-07: sono le DUE route dei pasti residui in Mensa &
+            // Cucina — `mensa/ticket-residui:GET` (quanti ticket restano a ogni bambino)
+            // e `mensa/ticket-residui/storico:GET` (quando li ha comprati e quando li ha
+            // usati). Nessuna delle due porta esenzioni, ed è il punto da guardare:
+            //  · l'elenco filtra `alunni` per `scuola_id` risolto da
+            //    `resolveScuolaScrittura`, e i saldi li legge da `ticket_mensa` con un
+            //    join `alunni!inner` sulla STESSA sede — `ticket_mensa` non ha una
+            //    colonna di plesso, quindi senza quel join un uuid basterebbe a leggere
+            //    il saldo di un bambino di un'altra sede;
+            //  · lo storico passa da `assertAlunnoInScopeCucina` (`src/lib/mensa/scope.ts`),
+            //    che nega fuori dalle sedi attive e, per l'`educator`, fuori dalle sue
+            //    sezioni. Non riusa `assertAlunnoInScope` perché quella respingerebbe la
+            //    CUOCA, che di sezioni assegnate non ne ha: il perché sta nella sua testata.
+            routeConServiceRole: 308,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1792,7 +1805,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `admin/candidature-insegnanti/etichetta` (GET, PATCH). Anche qui il passo
             // non coincide col numero di file (+2 route, +4 handler), che è il caso
             // normale e va detto ogni volta.
-            handlerControllati: 472,
+            // 472 → 474 il 2026-09-07: i due GET delle route dei pasti residui qui
+            // sopra. Qui il passo coincide col numero di file (+2 route, +2 handler)
+            // perché entrambe espongono il solo GET: sono schermate di lettura.
+            handlerControllati: 474,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

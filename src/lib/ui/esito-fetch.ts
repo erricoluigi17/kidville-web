@@ -1768,6 +1768,27 @@ export const CODICI_ERRORE = {
      * cosa non salvata no: a schermo deve restare scritto CHE COSA non è stato salvato.
      */
     GIUDIZIO_NON_SALVATO: 'erroreGiudizioNonSalvato',
+    /**
+     * 400 — l'insegnante ha chiesto i pasti residui senza dichiarare la propria
+     * sezione (`mensa/ticket-residui:GET`). Per lui la classe non è un filtro ma
+     * un permesso: il server la pretende, come già nel report cucina.
+     */
+    MENSA_CLASSE_OBBLIGATORIA: 'erroreMensaClasseObbligatoria',
+    /** 403 — la sezione chiesta non è fra quelle assegnate al docente. */
+    MENSA_SEZIONE_NON_ASSEGNATA: 'erroreMensaSezioneNonAssegnata',
+    /**
+     * 500 — l'elenco dei bambini non si è POTUTO leggere
+     * (`mensa/ticket-residui:GET`). Non riusa `ALUNNO_NON_TROVATO`: «non c'è» e
+     * «non l'ho potuto leggere» hanno rimedi opposti, e qui la schermata vuota
+     * si leggerebbe come «nessuno ha pasti».
+     */
+    MENSA_ELENCO_NON_LETTO: 'erroreMensaElencoNonLetto',
+    /** 500 — i pasti residui o il loro storico non sono stati letti. */
+    MENSA_TICKET_NON_LETTI: 'erroreMensaTicketNonLetti',
+    /** 403 — quel bambino non è in una delle classi dell'insegnante. */
+    MENSA_ALUNNO_FUORI_CLASSE: 'erroreMensaAlunnoFuoriClasse',
+    /** 500 — non si è potuto verificare a chi appartiene quel bambino. */
+    MENSA_SCOPE_NON_VERIFICATO: 'erroreMensaScopeNonVerificato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

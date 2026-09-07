@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl';
 import { useSearchParams } from 'next/navigation';
 import { ChefHat, UtensilsCrossed } from 'lucide-react';
 import { MensaReport } from '@/components/features/admin/mensa/MensaReport';
+import { TicketResiduiPanel } from '@/components/features/admin/mensa/TicketResiduiPanel';
 import { allergeniDelGiorno, useAllergeneLabel, allergeneEmoji, type AllergeniPortate } from '@/lib/mensa/allergeni';
 import { CockpitPage, PageHeader } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -90,8 +91,16 @@ function CucinaContenuti({ userId, scuolaId, sezione }: { userId: string | null;
       </div>
 
       {/* Report pasti + allergie */}
-      <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
+      <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6 mb-4">
         {userId && <MensaReport userId={userId} scuolaId={scuolaId} sezione={sezione} />}
+      </div>
+
+      {/* Pasti ancora disponibili per bambino. In cucina serve a sapere chi ha
+          finito i ticket PRIMA di servire, non il giorno dopo dal registro cassa.
+          `sezione` arriva dall'insegnante (?sezione=…) e qui NON è cosmetica: il
+          server rifiuta un `educator` che non dichiara la propria classe. */}
+      <div className="bg-kidville-white rounded-2xl shadow-sm p-4 md:p-6">
+        {userId && <TicketResiduiPanel userId={userId} scuolaId={scuolaId} sezione={sezione} />}
       </div>
     </>
   );

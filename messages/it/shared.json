@@ -363,5 +363,11 @@
   "erroreLegameAdultoForseCreato": "L’anagrafica dell’adulto potrebbe essere già stata salvata, ma il collegamento al bambino non è confermato: ricarica la scheda e controlla la famiglia prima di riprovare, per non creare un doppione e una seconda email di credenziali.",
   "erroreLegameAdultoNonIndicato": "Indica l’adulto da collegare: scegline uno dall’archivio oppure compila la sua anagrafica.",
   "erroreMenuNonSalvato": "Non è stato possibile salvare il menu. Riprova; se l’errore resta, segnalalo.",
-  "erroreGiudizioNonSalvato": "Non è stato possibile salvare il frammento di giudizio. Riprova; se l’errore resta, segnalalo."
+  "erroreGiudizioNonSalvato": "Non è stato possibile salvare il frammento di giudizio. Riprova; se l’errore resta, segnalalo.",
+  "erroreMensaClasseObbligatoria": "Indica la tua sezione per vedere i pasti residui.",
+  "erroreMensaSezioneNonAssegnata": "Questa sezione non è fra quelle a te assegnate.",
+  "erroreMensaElencoNonLetto": "Non è stato possibile leggere l’elenco dei bambini. Riprova.",
+  "erroreMensaTicketNonLetti": "Non è stato possibile leggere i pasti residui. Riprova.",
+  "erroreMensaAlunnoFuoriClasse": "Questo bambino non è in una delle tue classi.",
+  "erroreMensaScopeNonVerificato": "Non è stato possibile verificare i permessi su questo bambino."
 }

@@ -990,5 +990,19 @@
   "reconLottoMotivoPropostoIncompleto": "The app knows who made the transfer, but their details are not enough for an electronic invoice: complete the record.",
   "reconLottoGruppoProposta": "Billed to the proposed payer",
   "reconLottoConfermoProposte": "{n, plural, =1 {I confirm the payer proposed from the transfer} other {I confirm the # payers proposed from the transfers}}",
-  "reconLottoSpuntaMancante": "Tick the box above: the batch will not start without it."
+  "reconLottoSpuntaMancante": "Tick the box above: the batch will not start without it.",
+  "reconGruppoAltriFiltri": "More filters",
+  "reconFiltroRicerca": "Search",
+  "reconFiltroRicercaSegnaposto": "reference or payer",
+  "reconFiltroPeriodoDal": "From",
+  "reconFiltroPeriodoAl": "To",
+  "reconFiltroImportoDa": "Amount from",
+  "reconFiltroImportoA": "Amount to",
+  "reconGruppoSede": "Location",
+  "reconFiltroSedeTutte": "All",
+  "reconFiltroSedeSenzaNome": "Unnamed location",
+  "reconFiltroSedeNonRiconosciuta": "Location not recognised",
+  "reconSedeDedottaNota": "The location shown here is the one the app inferred from the suggestions. Red rows, the ones still to match, have none: check them by hand.",
+  "reconSedeEscluse": "{n, plural, =1 {One row with no recognised location is not in this list} other {# rows with no recognised location are not in this list}}",
+  "reconVaiSenzaSede": "See them"
 }

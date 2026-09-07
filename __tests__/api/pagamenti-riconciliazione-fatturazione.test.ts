@@ -892,7 +892,11 @@ describe('GET /api/pagamenti/riconciliazione — «sembra di un’altra sede»',
     // Dal 2026-09-07 il nome delle sedi citate si legge anche per queste righe,
     // perché è la chiave del filtro per sede — resta UNA query su una tabella di
     // cinque righe, non «una query in più per ogni riga».
-    expect(j.data[0].sede_dedotta).toEqual({ scuola_id: 'sc-1', nome: 'Kidville Giugliano', certa: false })
+    expect(j.data[0].sede_dedotta).toEqual({ scuola_id: 'sc-1', certa: false })
+    // il nome viaggia nella busta, una volta sola: sulle righe confermate
+    // `sede_dedotta` è null per decisione, e appendere il nome a ogni riga
+    // lascerebbe senza nome proprio quelle
+    expect(j.sedi['sc-1']).toBe('Kidville Giugliano')
     expect(letturaSedi()).toHaveLength(1)
   })
 

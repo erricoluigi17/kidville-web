@@ -990,5 +990,19 @@
   "reconLottoMotivoPropostoIncompleto": "L’app sa chi ha fatto il bonifico, ma i suoi dati non bastano per la fattura elettronica: completa l’anagrafica.",
   "reconLottoGruppoProposta": "Intestate su proposta del bonifico",
   "reconLottoConfermoProposte": "{n, plural, =1 {Confermo l’intestatario proposto dal bonifico} other {Confermo i # intestatari proposti dal bonifico}}",
-  "reconLottoSpuntaMancante": "Metti la spunta qui sopra: senza, il blocco non parte."
+  "reconLottoSpuntaMancante": "Metti la spunta qui sopra: senza, il blocco non parte.",
+  "reconGruppoAltriFiltri": "Altri filtri",
+  "reconFiltroRicerca": "Cerca",
+  "reconFiltroRicercaSegnaposto": "causale o ordinante",
+  "reconFiltroPeriodoDal": "Dal",
+  "reconFiltroPeriodoAl": "Al",
+  "reconFiltroImportoDa": "Importo da",
+  "reconFiltroImportoA": "Importo a",
+  "reconGruppoSede": "Sede",
+  "reconFiltroSedeTutte": "Tutte",
+  "reconFiltroSedeSenzaNome": "Sede senza nome",
+  "reconFiltroSedeNonRiconosciuta": "Sede non riconosciuta",
+  "reconSedeDedottaNota": "La sede qui è quella che l’app ha dedotto dai suggerimenti. Le righe rosse, quelle da abbinare, non ne hanno una: vanno controllate a mano.",
+  "reconSedeEscluse": "{n, plural, =1 {Una riga senza sede riconosciuta non è in questo elenco} other {# righe senza sede riconosciuta non sono in questo elenco}}",
+  "reconVaiSenzaSede": "Vedile"
 }

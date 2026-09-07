@@ -471,8 +471,6 @@ interface AltraSedeUi {
  */
 interface SedeDedottaUi {
   scuola_id: string
-  /** `null` = sede dedotta, nome non letto. Diverso da `sede_dedotta: null`. */
-  nome: string | null
   certa: boolean
 }
 
@@ -1065,10 +1063,24 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
      * risposte alla domanda «se premo questa pillola, quante ne trovo?», e una delle due
      * riguarda sempre il bidone che in questo momento NON è aperto.
      */
+    /**
+     * ⚠️ I NOMI DELLE SEDI STANNO NELLA BUSTA, NON SU OGNI RIGA.
+     *
+     * Il filtro per sede ha bisogno del nome anche per le righe CONFERMATE, dove
+     * `sede_dedotta` è `null` per decisione (lì la sede è nota, non dedotta):
+     * appendere il nome a ogni riga lascerebbe senza nome proprio quelle. E su 500
+     * righe sarebbe lo stesso nome ripetuto cinquecento volte.
+     *
+     * Solo `id → nome`: nessun indirizzo, nessun dato di sede oltre a come si
+     * chiama — che è già quello che il pannello mostra da sempre nell'avviso
+     * «sembra di un'altra sede».
+     */
+    const sediPerNome: Record<string, string> = {}
     const rispondi = (arricchite: MovimentoArricchito[], fatturazioneDisponibile: boolean) => {
       const dati = fatturazioneDisponibile ? filtraFattura(arricchite, filtroFattura) : arricchite
       return NextResponse.json({
         success: true,
+        sedi: sediPerNome,
         // Al conteggio le righe non servono: chiederle e poi buttarle sarebbe traffico
         // pagato per niente su una finestra che arriva a 5.000.
         data: soloConteggi ? [] : dati,
@@ -1285,7 +1297,10 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
         }, errNomi)
       } else {
         for (const s of sedi as { id: string; nome: string | null }[]) {
-          if (typeof s.nome === 'string' && s.nome.trim() !== '') nomiSedi.set(s.id, s.nome)
+          if (typeof s.nome === 'string' && s.nome.trim() !== '') {
+            nomiSedi.set(s.id, s.nome)
+            sediPerNome[s.id] = s.nome
+          }
         }
       }
     }
@@ -1308,7 +1323,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
        */
       const dedotta = sediDedotte[i]
       const sedeDedottaUi: SedeDedottaUi | null = dedotta
-        ? { scuola_id: dedotta.scuola_id, nome: nomiSedi.get(dedotta.scuola_id) ?? null, certa: dedotta.certa }
+        ? { scuola_id: dedotta.scuola_id, certa: dedotta.certa }
         : null
       const conSuggerimenti = r.suggerimenti
         ? {

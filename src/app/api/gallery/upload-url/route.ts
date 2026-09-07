@@ -7,7 +7,7 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
-import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime } from '@/lib/gallery/storage';
+import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime } from '@/lib/gallery/limiti';
 
 // =============================================================================
 // GALLERIA · URL FIRMATO — il file va dal telefono allo Storage, senza passare di qui.

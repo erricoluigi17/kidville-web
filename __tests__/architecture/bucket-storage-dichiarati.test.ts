@@ -429,7 +429,7 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
     // una lista più larga qui firmerebbe caricamenti che lo Storage poi rifiuta, con
     // l'insegnante davanti a un errore che arriva DOPO aver spedito il file.
     it('la lista che FIRMA i caricamenti diretti è la stessa del bucket', () => {
-      const firma = ordinati(mimeNelCodice('src/lib/gallery/storage.ts', 'MIME_GALLERIA'))
+      const firma = ordinati(mimeNelCodice('src/lib/gallery/limiti.ts', 'MIME_GALLERIA'))
       expect(firma.length, '`MIME_GALLERIA` deve elencare i tipi ammessi.').toBeGreaterThan(0)
       expect(
         ordinati(mimeDichiarati('gallery')),
@@ -440,8 +440,8 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
     })
 
     it('il tetto usato per firmare è quello del bucket, non un numero a parte', () => {
-      const m = senzaCommenti(sorgente('src/lib/gallery/storage.ts')).match(/TETTO_GALLERIA_BYTE\s*=\s*([\d_]+)/)
-      expect(m, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/storage.ts`.').not.toBeNull()
+      const m = senzaCommenti(sorgente('src/lib/gallery/limiti.ts')).match(/TETTO_GALLERIA_BYTE\s*=\s*([\d_]+)/)
+      expect(m, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`.').not.toBeNull()
       expect(
         Number(m![1].replace(/_/g, '')),
         'Il tetto con cui si firmano i caricamenti diretti diverge da quello del bucket: ' +

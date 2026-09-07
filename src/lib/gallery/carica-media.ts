@@ -45,7 +45,7 @@
  */
 
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { TETTO_GALLERIA_BYTE } from '@/lib/gallery/storage';
+import { TETTO_GALLERIA_BYTE } from '@/lib/gallery/limiti';
 
 export type EsitoCarica =
     | { ok: true; path: string }

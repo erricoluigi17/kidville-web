@@ -250,6 +250,39 @@ export async function middleware(request: NextRequest) {
     }
   );
 
+  /**
+   * ⛔ NON SI POSSONO SALTARE I PREFETCH DA QUI. Provato e misurato il 2026-09-07 — è scritto
+   * perché costa mezza giornata riscoprirlo, e la strada sembra ovvia.
+   *
+   * L'IDEA. Il 7 settembre l'app è andata lenta per il volume: 2.231.291 richieste a Supabase in
+   * un giorno, di cui 643.281 di autenticazione (un costante ~28% in ogni ora), e di quelle il
+   * 99,3% sono `/user`, cioè questa riga qui sotto. Il `matcher` copre tutto tranne gli asset,
+   * quindi ogni prefetch RSC di Next paga un giro a GoTrue senza che nessuno stia navigando. La
+   * correzione naturale è: se `next-router-prefetch` è presente, esci prima di `getUser()`.
+   *
+   * PERCHÉ NON FUNZIONA. Next **cancella i propri header** prima di eseguire il middleware —
+   * `node_modules/next/dist/server/web/adapter.js`, dove `FLIGHT_HEADERS` (`rsc`,
+   * `next-router-state-tree`, `next-router-prefetch`, `next-hmr-refresh`,
+   * `next-router-segment-prefetch`) vengono rimossi uno per uno, col commento «Headers should only
+   * be stripped for middleware». Anche `?_rsc` sparisce, via `stripInternalSearchParams`. La guida
+   * di Next 16 (`01-app/03-api-reference/03-file-conventions/proxy.md`, riga 442) lo dichiara come
+   * scelta deliberata: impedire che una richiesta RSC venga trattata diversamente dalla sua
+   * gemella HTML. Misurato sul server di sviluppo: un header inventato sopravvive, questi cinque no.
+   *
+   * L'UNICA VIA D'USCITA È PEGGIO. `skipProxyUrlNormalize: true` in `next.config.ts` espone gli
+   * header, ma fa prendere a OGNI prefetch un 307 — verificato anche su una rotta pubblica, dove
+   * questo file non decide niente. Due viaggi invece di uno: aumenterebbe le richieste.
+   *
+   * ⚠️ E I TEST NON TI SALVANO. I test scritti per quella modifica erano tutti VERDI: vitest
+   * chiama `middleware()` direttamente con una `NextRequest` costruita a mano, e quella non passa
+   * mai da `adapter.js`. Il banco di prova non può riprodurre la richiesta vera, quindi il rosso
+   * non poteva arrivare da nessuna parte.
+   *
+   * DOVE GUARDARE INVECE. Un prefetch paga DUE `getUser()`, non uno: questo, e quello di
+   * `requireArea()` (`@/lib/auth/area-guard`) montato in tutti e tre i layout d'area. Le strade
+   * vere sono la verifica locale del JWT (`auth.getClaims()` con chiavi asimmetriche, che azzera
+   * le chiamate a `/user`) oppure togliere uno dei due giri per richiesta.
+   */
   // IMPORTANTE: non eseguire codice tra createServerClient e getUser (refresh).
   //
   // `getUser()` NON lancia su un guasto di trasporto: `auth-js` avvolge il rifiuto della `fetch`

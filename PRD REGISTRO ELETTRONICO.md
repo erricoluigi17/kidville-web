@@ -99,6 +99,140 @@
 
 ---
 
+## 🐌 Changelog — L'app lenta del 7 settembre: 2,1 milioni di richieste, e dieci orologi che parlavano a schermo spento — 2026-09-07 (branch `perf/volume-richieste`)
+
+La mattina del 7 settembre l'app è andata lenta per ore. **Non era il database** (cache 100%, zero
+deadlock, 37 connessioni su 90) e **non era Vercel** (18 errori su 408.535 risposte): era il volume.
+
+| | 6 settembre (punta) | 7 settembre (punta 11:00-12:00) |
+|---|---|---|
+| richieste a Supabase / ora | 21.099 | **399.395** |
+| di cui autenticazione | 6.488 (30,8%) | 112.530 (28,2%) |
+| fetch falliti a testa (`stato_http = 0`) | 3,65 | **9,34** |
+
+Totale del 7: **2.231.291 richieste**, di cui **643.281 di autenticazione** — circa 4.940 a testa
+su 427 famiglie collegate. Il rapporto auth/totale è **costante al ~28% in ogni ora**, di punta
+come di notte: non era cambiato il tipo di traffico, era scalato il volume. E i fetch falliti per
+persona sono **raddoppiati**, quindi c'è stata degradazione vera, non solo più utenti.
+
+Dai log di Supabase, la composizione dell'autenticazione (10:00-13:00):
+
+| endpoint | chiamate | quota |
+|---|---|---|
+| `/user` — cioè `getUser()` | **280.389** | **99,3%** |
+| `/token` — rinnovo del token | 2.189 | 0,8% |
+
+### Cosa è stato fatto: i polling si fermano quando nessuno guarda
+
+Dieci orologi, ognuno scritto a mano dentro il proprio componente, e **nessuno guardava se
+qualcuno stesse guardando**. Un genitore fermo sulla pagina della chat faceva ~11 richieste al
+minuto senza toccare niente — e continuava col telefono in tasca e lo schermo spento.
+
+Ora tutti e dieci passano da **`usePollingVisibile`** (`src/lib/hooks/use-polling-visibile.ts`):
+
+| punto | prima | dopo |
+|---|---|---|
+| chat genitore — elenco e messaggi | 15 s × 2 | **30 s × 2**, fermi a pagina nascosta |
+| chat docente — elenco e messaggi | 15 s × 2 | **30 s × 2**, fermi a pagina nascosta |
+| `useUnreadNotifications` | 30 s sempre | 30 s visibile · **5 min nascosto** |
+| centro notifiche (ogni pagina, via AppBar) | 60 s | 60 s, fermo |
+| centro notifiche admin | 60 s | 60 s, fermo (il gate della media query resta) |
+| presenze in tempo reale (admin) | 60 s | 60 s, fermo |
+| armadietto | 20 s | 20 s, fermo |
+| compiti docente | 15 s | 15 s, fermo |
+
+Il conto per una famiglia sulla chat: **da 11 richieste al minuto a 7 mentre guarda, e a 0,2 col
+telefono in tasca.** Il taglio grosso non è il 15→30: è che un'app in secondo piano smette di
+parlare.
+
+**`useUnreadNotifications` rallenta invece di fermarsi**, ed è l'unico dei dieci. È il solo punto
+che manda la notifica del browser quando la pagina NON è a fuoco (`if (document.hasFocus()) return`
+dentro `checkUnread`): sospenderlo spegnerebbe la funzione che vive lì.
+
+**Due segnali, non uno.** `document.hidden` è lo standard del web, ma l'app gira anche dentro una
+WebView Capacitor e non è dato per scontato che `visibilitychange` scatti su iOS quando l'app va in
+secondo piano. Si montano **entrambi** i segnali — `visibilitychange` e `appStateChange` di
+`@capacitor/app` — così la correttezza non dipende da quale funzioni; una sonda (evento
+`client:visibilita`, al massimo due righe per sessione nativa) registra quale sia arrivato davvero.
+⚠️ **Al rilascio la domanda è ancora aperta**: la risposta arriverà dai dati, non da questo
+paragrafo. Il precedente che impone la cautela è il campo `piattaforma`, che per 31 giorni ha detto
+`web` per 3.625 eventi su 3.626 perché Capacitor non si scrive nello user-agent.
+
+La coalescenza fra i due segnali è **strutturale** (lo stato è un booleano: senza transizione non
+succede niente) più una finestra di 1 s contro lo sfarfallio. Su Android è documentato
+(`BiometricGate.tsx:33-45`) che arrivi un `isActive:true` spurio, perché l'Activity del prompt
+biometrico è traslucida.
+
+### 🔴 Cosa NON è stato fatto, e perché: il middleware non può vedere i prefetch
+
+L'intervento previsto era togliere `getUser()` dai prefetch RSC nel middleware. **Non è
+implementabile in Next 16.3.0**, e la prova non è un'opinione — sta nel sorgente,
+`node_modules/next/dist/server/web/adapter.js:157`:
+
+```js
+// Headers should only be stripped for middleware
+if (!isEdgeRendering && !process.env.__NEXT_NO_MIDDLEWARE_URL_NORMALIZE) {
+    for (const header of FLIGHT_HEADERS){ … requestHeaders.delete(header); }
+}
+```
+
+`FLIGHT_HEADERS` sono esattamente `rsc`, `next-router-state-tree`, `next-router-prefetch`,
+`next-hmr-refresh`, `next-router-segment-prefetch` — **cancellati prima che il middleware giri** —
+e il parametro `?_rsc` è tolto da `stripInternalSearchParams`. La guida
+(`01-app/03-api-reference/03-file-conventions/proxy.md`, riga 442) lo dichiara come scelta:
+*«This is to prevent accidentally handling an RSC request differently than the HTML request as both
+need to align»*. Misurato sul server di sviluppo: un header inventato (`x-mio-test`) **sopravvive**,
+i cinque di Next **no**.
+
+L'unica via d'uscita, `skipProxyUrlNormalize: true`, è stata **provata e scartata**: espone gli
+header, ma fa prendere a **ogni prefetch un 307** — anche su un percorso pubblico dove il middleware
+non decide niente. Trasformerebbe ogni prefetch in due viaggi: aumenterebbe le richieste invece di
+ridurle.
+
+⚠️ **La lezione, che vale più dell'intervento**: i 14 test scritti per quella modifica erano
+**verdi**. Erano verdi perché vitest chiama `middleware()` direttamente con una `NextRequest`
+costruita a mano, bypassando l'`adapter.js` che in produzione spoglia gli header — cioè il banco di
+prova non poteva riprodurre la richiesta vera. È esattamente il difetto che AGENTS.md racconta: *un
+test mai visto fallire non è un test*, e qui il rosso non poteva arrivare da nessuna parte.
+
+**Resta quindi aperto il 99,3% dell'autenticazione** (`/user`, 280.389 chiamate in tre ore), e la
+strada non è più il prefetch: un prefetch paga **due** `getUser()` — uno nel middleware, uno in
+`requireArea()` (`src/lib/auth/area-guard.ts:84`), montato in tutti e tre i layout d'area. Le due
+opzioni da valutare, entrambe fuori dallo scope di questo lavoro, sono la verifica locale del JWT
+(`auth.getClaims()` con chiavi asimmetriche: azzera le chiamate a `/user` senza toccare la logica) e
+la rimozione di uno dei due `getUser()` per richiesta.
+
+### Come si verifica
+
+Non basta che i test passino. Con l'app in uso, e confrontando con i numeri qui sopra:
+
+```sql
+-- 1. richieste orarie per fonte: il rapporto auth/totale deve scendere sotto il 28%
+select toStartOfHour(timestamp) as ora, source, count(*) from logs
+where source in ('edge_logs','auth_logs') group by ora, source order by ora desc;
+
+-- 2. fetch falliti per persona: l'obiettivo è tornare sotto 4 (erano 9,34)
+SELECT giorno,
+       sum(occorrenze) FILTER (WHERE evento='client:fetch' AND stato_http=0) AS falliti,
+       count(DISTINCT utente_id) AS utenti
+FROM app_log WHERE creato_il >= now() - interval '3 days' GROUP BY giorno;
+
+-- 3. la sonda: quale segnale di visibilità arriva davvero dai dispositivi nativi
+SELECT messaggio, piattaforma, sum(occorrenze) FROM app_log
+WHERE evento = 'client:visibilita' GROUP BY messaggio, piattaforma;
+```
+
+### Rimandato di proposito
+
+- **`prefetch={false}` sulle BottomNav** — vale meno degli altri due ed è il solo che può
+  peggiorare le cose (toglie la navigazione percepita). Si decide **dopo** aver misurato, con i
+  numeri in mano.
+- **La home `/parent` e i suoi 13 endpoint** — quinto rimedio del referto, rimandato.
+- **L'istanza Supabase (2 GB)** e **l'allocazione connessioni del server Auth** (tetto fisso di 10)
+  — scelte del titolare, non di questo lavoro.
+
+---
+
 ## 🖼️ Changelog — Sette difetti misurati sugli screenshot, non ipotizzati — 2026-09-07 (branch `feat/conciliazione-e-allergie`)
 
 Quattro elementi appena rilasciati sono stati fotografati con fixture sintetiche. I difetti qui

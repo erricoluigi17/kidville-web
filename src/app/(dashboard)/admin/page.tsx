@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import Link from 'next/link';
 import { useTranslations, useLocale } from 'next-intl';
 import { motion } from 'framer-motion';
@@ -409,10 +410,9 @@ function PresenzeRealtimeCard({ userId }: { userId: string | null }) {
   }, [userId]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => {
-    const t = setInterval(() => { load(); }, 60_000);
-    return () => clearInterval(t);
-  }, [load]);
+  // Nota: qui c'era `const t = setInterval(...)`, che ombreggiava il `const t =
+  // useTranslations('adminNav')` dello scope esterno. Passando all'hook la trappola sparisce.
+  usePollingVisibile(load, 60_000);
 
   const totale = dati?.totale;
   const pct = totale && totale.iscritti > 0 ? Math.round((totale.presenti / totale.iscritti) * 100) : null;

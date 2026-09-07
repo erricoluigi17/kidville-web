@@ -15,7 +15,6 @@ import {
     type ErroriCessionario,
 } from '@/lib/fatturazione/cessionario';
 import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto';
-import type { MotivoAbbinamentoOrdinante } from '@/lib/pagamenti/ordinante-genitore';
 /**
  * ⚠️ IL BLOCCO DELL'INTESTATARIO SI IMPORTA, NON SI RICOPIA.
  *
@@ -31,6 +30,7 @@ import type { MotivoAbbinamentoOrdinante } from '@/lib/pagamenti/ordinante-genit
  */
 import type { CandidatoIntestatario, IntestatarioAnteprima } from '@/lib/aruba/intestatario-pagamento';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
+import { CHIAVE_MOTIVO_PROPOSTA, propostaApplicabile } from '@/lib/pagamenti/proposta-intestatario';
 
 interface FatturaRow { id: string; quota_label: string | null; intestatario: string }
 
@@ -128,28 +128,15 @@ const CHIAVE_ETICHETTA: Record<CampoAltro, string> = {
 };
 
 /**
- * Una frase per ciascuno dei quattro motivi, e non è ridondanza.
+ * Le frasi dei motivi e la regola «questa proposta si può usare» vivono in
+ * `@/lib/pagamenti/proposta-intestatario`, non qui: da quando anche il LOTTO
+ * emette usando la proposta del bonifico, una copia locale vorrebbe dire due
+ * regole che possono divergere su chi intestare un documento fiscale.
  *
- * Con un messaggio solo, l'interfaccia avrebbe detto «è l'intestatario sulla
- * scheda del bambino» anche quando la scheda non c'entra niente — cioè avrebbe
- * mentito a chi sta per confermare un documento fiscale. Un motivo che non
- * conosciamo non produce nessuna frase e nessuna preselezione: una proposta muta
- * non si può né confermare né smentire.
- *
- * ⚠️ L'UNIONE È IMPORTATA, NON RICOPIATA. Con una copia locale dei quattro nomi,
- * un quinto motivo aggiunto in `ordinante-genitore.ts` non farebbe rompere niente:
- * `tsc` resta verde (misurato) e a schermo la proposta sparisce in silenzio —
- * l'operatore vedrebbe solo un selettore senza preselezione, senza sapere che ce
- * n'era una. Legato al tipo, quello stesso quinto motivo diventa un errore di
- * compilazione qui, dove va scritta la frase che lo spiega. `import type` sparisce
- * a compilazione, e quel modulo è puro comunque.
+ * Il `Record` là dentro è esaustivo sull'unione dei motivi: un quinto motivo
+ * aggiunto in `ordinante-genitore.ts` resta un errore di compilazione, come prima.
  */
-const CHIAVE_MOTIVO: Record<MotivoAbbinamentoOrdinante, string> = {
-    bonifico_esatto: 'fatBtn_int_proposta_bonifico_esatto',
-    sottoinsieme_unico: 'fatBtn_int_proposta_sottoinsieme_unico',
-    sottoinsieme_scheda: 'fatBtn_int_proposta_sottoinsieme_scheda',
-    sottoinsieme_famiglia: 'fatBtn_int_proposta_sottoinsieme_famiglia',
-};
+const CHIAVE_MOTIVO = CHIAVE_MOTIVO_PROPOSTA;
 
 /** Valore del selettore per «scrivo io l'intestatario»: non è l'id di nessuno. */
 const VALORE_ALTRO = '__altro__';
@@ -232,14 +219,13 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
             setIntestatario(dati.intestatario ?? null);
             setAlunno(dati.intestatario?.alunno ?? null);
 
-            // ⚠️ NESSUN `?? candidati[0]`. Se l'id proposto non è fra i candidati
-            // letti, un ripiego sul primo intesterebbe la fattura alla persona
-            // sbagliata in SILENZIO: si preferisce nessuna preselezione.
-            const p = dati.intestatario?.proposta;
-            const propostoEsiste = !!p && (dati.intestatario?.candidati ?? []).some((c) => c.adult_id === p.adult_id);
-            if (p && propostoEsiste && CHIAVE_MOTIVO[p.motivo] && (dati.intestatario?.ordinante ?? '').trim()) {
-                setScelta(p.adult_id);
-            }
+            // Le quattro condizioni (proposta presente · il proposto è fra i
+            // candidati · il motivo lo sappiamo spiegare · l'ordinante non è vuoto)
+            // stanno nel motore condiviso col lotto. Fra le quattro, la seconda è
+            // quella che conta: senza, un ripiego su `candidati[0]` intesterebbe la
+            // fattura alla persona sbagliata in SILENZIO.
+            const usabile = propostaApplicabile(dati.intestatario);
+            if (usabile) setScelta(usabile.adult_id);
         } catch {
             // Un `catch` muto è un bug (AGENTS.md, regola 6): qui l'errore diventa il
             // messaggio a schermo che blocca l'emissione, che è il modo giusto di non

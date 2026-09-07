@@ -1851,6 +1851,8 @@ export const CODICI_ERRORE = {
      * silenzio, che è il difetto che il controllo esiste per chiudere.
      */
     APPELLO_STATO_PRIMA_NON_LETTO: 'erroreAppelloStatoPrimaNonLetto',
+    /** 409 — a questo bambino è già stata registrata una ricarica OGGI: serve la conferma esplicita. */
+    TICKET_RICARICA_DUPLICATA: 'erroreTicketRicaricaDuplicata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

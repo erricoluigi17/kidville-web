@@ -34,10 +34,13 @@ interface MockOpts {
   disponibile?: boolean;
   totali?: unknown;
   saldo?: unknown;
+  /** Le chiusure già eseguite. Prima era cablato a `[]`: «mai svuotata» e «già
+   *  svuotata» erano lo stesso caso, e un test che li distingue non esisteva. */
+  chiusure?: unknown[];
 }
 
 function installFetch(opts: MockOpts = {}) {
-  const { movimenti = [], disponibile = true, totali, saldo } = opts;
+  const { movimenti = [], disponibile = true, totali, saldo, chiusure = [] } = opts;
   const fn = vi.fn(async (url: RequestInfo | URL) => {
     const u = String(url);
     if (u.includes('/cassa/movimenti')) {
@@ -46,7 +49,7 @@ function installFetch(opts: MockOpts = {}) {
       return jsonRes(body);
     }
     if (u.includes('/cassa/saldo')) return jsonRes(saldo ?? { disponibile: false });
-    if (u.includes('/cassa/chiusura')) return jsonRes({ disponibile, chiusure: [] });
+    if (u.includes('/cassa/chiusura')) return jsonRes({ disponibile, chiusure });
     if (u.includes('/cassa/report')) return jsonRes({ disponibile, entrate_per_categoria: [], uscite_per_categoria: [], mensile: [] });
     if (u.includes('/cassa/categorie')) return jsonRes({ disponibile, categorie: [] });
     if (u.includes('/admin/settings/categorie')) return jsonRes({ success: true, data: [] });
@@ -238,5 +241,70 @@ describe('CassaPanel — badge «storno» e contrasti AA su Badge/StatCard/TH (R
     const motivo = screen.getByLabelText(/Motivo dello storno/);
     expect(motivo).toHaveAttribute('aria-invalid', 'true');
     expect(motivo.getAttribute('aria-describedby')).toBe(alert.id);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// «Svuota cassa»: la funzione esisteva già ed era completa. Il titolare, messo
+// davanti al fatto, ha risposto «c'è ma non si trova» — e i dati gli danno
+// ragione: al 2026-09-07 il database ha ZERO chiusure in tutta la sua storia, a
+// fronte di 20 uscite e 12 entrate registrate dal 20 luglio. Qualcuno usa la
+// cassa e nessuno l'ha mai svuotata.
+//
+// Quello che mancava non era un bottone in più: era il FATTO, scritto accanto al
+// numero che l'operatore guarda.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('lo svuotamento della cassa si trova', () => {
+  const TOTALI = { entrate: 100, uscite: 20 };
+  const SALDO = { disponibile: true, saldo_atteso: 340, fondo: 100, entrato_oggi: [] };
+
+  it('con zero chiusure lo dice, invece di non mostrare niente', async () => {
+    installFetch({ totali: TOTALI, saldo: SALDO, chiusure: [] });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    expect(await screen.findByText(/Mai svuotata/i)).toBeTruthy();
+  });
+
+  it("quando una chiusura c'è, mostra quando e quanto è stato ritirato", async () => {
+    installFetch({
+      totali: TOTALI, saldo: SALDO,
+      chiusure: [{ id: 'ch1', eseguita_il: '2026-08-12T18:00:00Z', saldo_atteso: 440, contato: 440, differenza: 0, prelevato: 340 }],
+    });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    const riga = await screen.findByTestId('cassa-ultimo-svuotamento');
+    expect(riga.textContent).toMatch(/12\/08\/2026/);
+    expect(riga.textContent).toMatch(/340,00/);
+  });
+
+  it('lo storico esiste anche prima della prima chiusura', async () => {
+    installFetch({ totali: TOTALI, saldo: SALDO, chiusure: [] });
+    const { container } = render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Mai svuotata/i);
+    // la sezione c'è, col suo bersaglio d'ancora: prima spariva del tutto, ed è
+    // «niente» che produce «non si trova»
+    expect(container.querySelector('#cassa-storico')).toBeTruthy();
+  });
+
+  it('il comando resta UNO SOLO: chi lo duplicasse invece di spostarlo lo scopre qui', async () => {
+    installFetch({ totali: TOTALI, saldo: SALDO, chiusure: [] });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Mai svuotata/i);
+    expect(screen.getAllByRole('button', { name: /Svuota cassa/i })).toHaveLength(1);
+  });
+
+  it('chi non vede i KPI non vede nemmeno la riga di stato', async () => {
+    installFetch({ chiusure: [] });          // niente `totali`: segreteria
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    await screen.findByText(/Registra uscita/i);
+    expect(screen.queryByText(/Mai svuotata/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Svuota cassa/i })).toBeNull();
+  });
+
+  it('col saldo degradato la riga di stato resta, e il bottone pure', async () => {
+    // il caso peggiore: se la riga fosse messa dietro `saldo &&`, sparirebbe
+    // proprio quando serve capire cosa sta succedendo
+    installFetch({ totali: TOTALI, saldo: { disponibile: false }, chiusure: [] });
+    render(<CassaPanel userId="u1" scuolaId="sc-1" />);
+    expect(await screen.findByText(/Mai svuotata/i)).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /Svuota cassa/i })).toHaveLength(1);
   });
 });

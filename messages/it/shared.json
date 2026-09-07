@@ -378,5 +378,6 @@
   "erroreFatturaTrasportoIgnoto": "La fattura è stata numerata, ma Aruba non ha confermato l’invio: nessuno sa se sia partita. NON ripremere «Emetti»: controlla prima sul pannello Aruba se il documento risulta trasmesso.",
   "erroreDiarioLetturaFallita": "Non è stato possibile leggere la registrazione da eliminare. Riprova.",
   "erroreDiarioNonEliminato": "Non è stato possibile eliminare la registrazione. Riprova.",
-  "erroreAppelloStatoPrimaNonLetto": "Non è stato possibile leggere l’appello già registrato: per non cancellare note e orari, il salvataggio è stato annullato. Riprova."
+  "erroreAppelloStatoPrimaNonLetto": "Non è stato possibile leggere l’appello già registrato: per non cancellare note e orari, il salvataggio è stato annullato. Riprova.",
+  "erroreTicketRicaricaDuplicata": "Oggi a questo bambino è già stata registrata una ricarica di ticket mensa. Controlla che non sia lo stesso pagamento registrato due volte."
 }

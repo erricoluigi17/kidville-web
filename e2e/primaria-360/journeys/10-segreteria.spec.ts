@@ -114,9 +114,17 @@ test('10 · Segreteria — anagrafiche, orario, pagamenti, ticket, config, logou
     atteso: 'Pagamenti creati e incassati (stato pagato)', osservato: `${pagOk} pagamenti creati, ${incOk} incassati`,
   });
   // ricarica ticket mensa per alunni 1..6 (prerequisito prenotazione genitore)
+  //
+  // `conferma_duplicato`: dal 2026-09-07 la route si ferma con 409 se allo stesso
+  // bambino è già stata registrata una ricarica OGGI. Questa journey gira più volte
+  // nella stessa giornata sugli stessi sei alunni — misurato: il 07/07 tre volte, il
+  // 09/07 due — quindi senza la conferma dalla seconda esecuzione in poi tutte e sei
+  // le ricariche verrebbero rifiutate e il collaudo direbbe «grave» per un motivo
+  // che non è un difetto. Il collaudo dichiara di voler ricaricare comunque: è
+  // esattamente ciò che quel campo serve a dire.
   let tick = 0;
   for (const n of [1, 2, 3, 4, 5, 6]) {
-    const t = await apiPost(page, '/api/pagamenti/ticket', { alunno_id: ALUNNI[n], pezzi: 10, costo: 40, metodo: 'contanti' });
+    const t = await apiPost(page, '/api/pagamenti/ticket', { alunno_id: ALUNNI[n], pezzi: 10, costo: 40, metodo: 'contanti', conferma_duplicato: 'gia_ricaricato_oggi' });
     if (t.status < 400) tick++;
   }
   rec.add({

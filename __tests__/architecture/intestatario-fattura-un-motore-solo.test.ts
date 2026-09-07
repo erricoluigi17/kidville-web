@@ -130,6 +130,13 @@ describe('LOCK · un solo motore per l’intestatario della fattura', () => {
   })
 
   it('nessun componente client decide CHI intesta la fattura', () => {
+    // ⚠️ `propostaApplicabile` e `intestatarioAutomaticoDelLotto` NON stanno in
+    // questo elenco, ed è una decisione, non una dimenticanza: sono chiamate DAL
+    // BROWSER per progetto — è il punto, la stessa regola applicata dove l'utente
+    // la vede. Quello che il browser non deve fare è *calcolarsela*: la regola
+    // vive nel modulo puro, e le tre prove qui sopra impediscono che se ne
+    // riscriva una copia. Chi in futuro «riparasse» questo elenco aggiungendoci i
+    // due nomi nuovi romperebbe entrambe le strade.
     const client = FILE.filter(
       (f) =>
         /^\s*['"]use client['"]/m.test(f.codice) &&
@@ -138,6 +145,49 @@ describe('LOCK · un solo motore per l’intestatario della fattura', () => {
         ),
     ).map((f) => f.relativo)
     expect(client).toEqual([])
+  })
+
+  // ── LA PROPOSTA DEL BONIFICO, DA QUANDO ANCHE IL LOTTO LA USA ──────────────
+  //
+  // «Questo bonifico l'ha fatto Rossi Maria, e Rossi Maria è la mamma» è una
+  // decisione su un documento fiscale. La prendeva solo l'emissione singola,
+  // sotto gli occhi di chi premeva; ora la prende anche il lotto, dodici volte di
+  // fila. Le due strade devono applicare LE STESSE condizioni: due copie che
+  // divergono si scoprono su una fattura già partita, e una fattura si corregge
+  // solo con una nota di variazione.
+  const PROPOSTA = path.join('src', 'lib', 'pagamenti', 'proposta-intestatario.ts')
+  const BOTTONE = path.join('src', 'components', 'features', 'admin', 'pagamenti', 'FatturaButton.tsx')
+  const PANNELLO_LOTTO = path.join('src', 'components', 'features', 'admin', 'pagamenti', 'LottoFatturePanel.tsx')
+  const MOTORE_LOTTO = path.join('src', 'lib', 'pagamenti', 'lotto-fatture.ts')
+
+  it('`propostaApplicabile` è definita in UN posto e la usano le due strade', () => {
+    const definizioni = FILE.filter((f) => /export function propostaApplicabile\b/.test(f.codice)).map((f) => f.relativo)
+    expect(definizioni).toEqual([PROPOSTA])
+    const chiamanti = chiamano('propostaApplicabile').filter((f) => f !== PROPOSTA)
+    expect(
+      chiamanti.sort(),
+      'La preselezione dell’intestatario è una regola sola: se una delle due strade se la riscrive, ' +
+        'divergono su CHI riceve il documento.',
+    ).toEqual([BOTTONE].sort())
+  })
+
+  it('`intestatarioAutomaticoDelLotto` la usa solo il lotto, e passa dal motore condiviso', () => {
+    const definizioni = FILE.filter((f) => /export function intestatarioAutomaticoDelLotto\b/.test(f.codice)).map((f) => f.relativo)
+    expect(definizioni).toEqual([PROPOSTA])
+    const chiamanti = chiamano('intestatarioAutomaticoDelLotto').filter((f) => f !== PROPOSTA)
+    expect(
+      chiamanti.sort(),
+      'Le due guardie in più del lotto — pagamento ripartito, proposto non fatturabile — valgono ' +
+        'solo se nessun altro emette saltandole.',
+    ).toEqual([MOTORE_LOTTO, PANNELLO_LOTTO].sort())
+  })
+
+  it('le frasi dei quattro motivi non esistono in copia', () => {
+    // Con una copia locale dei quattro nomi, un quinto motivo aggiunto in
+    // `ordinante-genitore.ts` non farebbe rompere niente: `tsc` resta verde e a
+    // schermo la proposta sparisce in silenzio.
+    const definizioni = FILE.filter((f) => /CHIAVE_MOTIVO_PROPOSTA\s*:\s*Record</.test(f.codice)).map((f) => f.relativo)
+    expect(definizioni).toEqual([PROPOSTA])
   })
 
   it('la forma dell’intestatario scelto non porta né `Denominazione` né `IdFiscaleIVA`', () => {

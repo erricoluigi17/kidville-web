@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { logClient } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
 import type { FormEvent } from 'react';
@@ -318,11 +319,9 @@ export function useTasks() {
   useEffect(() => { loadUserInfo(); loadMetadata(); }, [loadUserInfo, loadMetadata]);
   useEffect(() => { loadTasks(true); }, [loadTasks]);
 
-  // Poll every 15s
-  useEffect(() => {
-    const interval = setInterval(() => loadTasks(false), 15000);
-    return () => clearInterval(interval);
-  }, [loadTasks]);
+  // Poll 15s, fermo a pagina nascosta. Il tick può fare DUE fetch (elenco + conteggio
+  // «da rivedere» per admin e coordinatori): a schermo spento erano due richieste ogni 15 s.
+  usePollingVisibile(() => loadTasks(false), 15_000);
 
   const triggerToast = useCallback((msg: string, type: 'success' | 'error' = 'success') => {
     setShowToast(msg);

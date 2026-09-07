@@ -78,6 +78,12 @@ export interface MovimentoUi extends RigaFatturabile {
    * che invecchia — e non funzionerebbe sulle righe già in registro.
    */
   altra_sede?: AltraSedeUi | null
+  /**
+   * Di quale sede sembra il bonifico, dedotto dai suggerimenti — solo sulle righe
+   * NON confermate (sulle confermate `scuola_id` sta già sulla riga). `null` =
+   * l'app non l'ha capito: è il bidone «sede non riconosciuta», cioè i rossi.
+   */
+  sede_dedotta?: SedeDedottaUi | null
 }
 
 /**
@@ -89,6 +95,46 @@ export interface MovimentoUi extends RigaFatturabile {
  * l'aggancio è altrove. Un campo che viaggia nel JSON e non legge nessuno non è
  * un'informazione in più: è decorazione da mantenere.
  */
+/** La sede dedotta di un movimento: la chiave è l'uuid, il nome è per gli occhi. */
+export interface SedeDedottaUi {
+  scuola_id: string
+  /** `true` solo quando a deciderlo è stato un codice fiscale. */
+  certa: boolean
+}
+
+/** Il valore del filtro sede quando l'app non ha capito di quale plesso sia. */
+export const SEDE_NON_RICONOSCIUTA = '__ignota__'
+
+/**
+ * La sede di una riga per il FILTRO: nota se confermata, altrimenti dedotta,
+ * altrimenti il bidone dei rossi.
+ *
+ * ⚠️ Non è la stessa cosa di `sede_dedotta`: su una riga confermata la sede è
+ * NOTA (la scrive la conferma) e non si deduce niente — dedurla rimetterebbe in
+ * piedi il falso positivo che la rotta si vieta.
+ */
+export function sedeDiRiga(m: MovimentoUi): string {
+  if (m.stato === 'confermato' && typeof m.scuola_id === 'string' && m.scuola_id !== '') return m.scuola_id
+  return m.sede_dedotta?.scuola_id ?? SEDE_NON_RICONOSCIUTA
+}
+
+/**
+ * Le sedi da offrire nel filtro, DERIVATE DALLE RIGHE e mai dalle sedi attive:
+ * una segreteria ha un solo plesso accessibile ma nel registro cross-sede ne vede
+ * tre, e prendere le opzioni dal contesto ne nasconderebbe due terzi.
+ */
+export function sediDelleRighe(
+  righe: readonly MovimentoUi[],
+  nomi: Readonly<Record<string, string>> = {},
+): { id: string; nome: string | null }[] {
+  const viste = new Set<string>()
+  for (const r of righe) {
+    const id = sedeDiRiga(r)
+    if (id !== SEDE_NON_RICONOSCIUTA) viste.add(id)
+  }
+  return [...viste].map((id) => ({ id, nome: nomi[id] ?? null }))
+}
+
 export interface AltraSedeUi {
   /** `null` = la sede c'è ma il suo nome non è stato letto: si dice senza nominarla. */
   nome: string | null
@@ -117,6 +163,12 @@ export interface RispostaMovimenti {
   fatturazione_disponibile?: boolean
   /** `true` = la finestra del server era piena: ci sono altre righe oltre a queste. */
   troncato?: boolean
+  /**
+   * `id → nome` delle sedi citate dalle righe. Nella busta e non su ogni riga: il
+   * filtro per sede ha bisogno del nome anche per le confermate, dove
+   * `sede_dedotta` è `null` per decisione.
+   */
+  sedi?: Record<string, string>
   /**
    * I due numeri delle pillole, quando li si è chiesti (`?conteggi=1`).
    *

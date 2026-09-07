@@ -378,5 +378,6 @@
   "erroreFatturaTrasportoIgnoto": "The invoice was numbered, but Aruba did not confirm the upload: nobody knows whether it was sent. Do NOT press “Issue” again: first check on the Aruba panel whether the document was transmitted.",
   "erroreDiarioLetturaFallita": "The entry to delete could not be read. Please try again.",
   "erroreDiarioNonEliminato": "The entry could not be deleted. Please try again.",
-  "erroreAppelloStatoPrimaNonLetto": "The existing attendance record could not be read: to avoid erasing notes and times, the save was cancelled. Please try again."
+  "erroreAppelloStatoPrimaNonLetto": "The existing attendance record could not be read: to avoid erasing notes and times, the save was cancelled. Please try again.",
+  "erroreTicketRicaricaDuplicata": "A meal-ticket top-up has already been recorded for this child today. Check that this is not the same payment being recorded twice."
 }

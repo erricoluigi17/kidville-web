@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-06",
-  "generato_alle": "2026-09-06T13:49:29Z",
-  "sha256": "69d2acb6d89fe4806c6c97505039d1568855c56b66dba7c24445473ef3c18cd5",
+  "generato_il": "2026-09-07",
+  "generato_alle": "2026-09-07T19:29:20Z",
+  "sha256": "f53db197d32283685a4a6a29c033435806f2d3998a1c1925dd1fcea1da50c956",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -1475,13 +1475,14 @@
     },
     {
       "tabella": "pagamenti",
-      "indice": "uq_pagamenti_retta_mese",
+      "indice": "uq_pagamenti_categoria_mese",
       "parziale": true,
       "con_espressioni": false,
       "nulls_not_distinct": false,
       "ha_colonna_nullable": true,
       "colonne": [
         "alunno_id",
+        "categoria_id",
         "periodo_competenza"
       ]
     },
@@ -1642,6 +1643,29 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "nome"
+      ]
+    },
+    {
+      "tabella": "payment_categories",
+      "indice": "uq_payment_categories_slug_globale",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "slug"
+      ]
+    },
+    {
+      "tabella": "payment_categories",
+      "indice": "uq_payment_categories_slug_sede",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "scuola_id",
+        "slug"
       ]
     },
     {

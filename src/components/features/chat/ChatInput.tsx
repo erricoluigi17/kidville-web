@@ -43,6 +43,11 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
         const trimmed = text.trim();
         if (!trimmed && !attachment) return;
 
+        // Ciò che si sta MANDANDO, catturato adesso: è l'unica cosa che si avrà il
+        // diritto di cancellare quando la risposta arriverà.
+        const testoInviato = trimmed;
+        const allegatoInviato = attachment;
+
         setInviando(true);
         try {
             const esito = await onSend(
@@ -56,8 +61,30 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                 inputRef.current?.focus();
                 return;
             }
-            setText('');
-            setAttachment(null);
+
+            /**
+             * ⚠️ SI CANCELLA CIÒ CHE SI È MANDATO, NON CIÒ CHE C'È ADESSO.
+             *
+             * Attendere `onSend` è ciò che impedisce di perdere un messaggio
+             * rifiutato — ma sposta lo svuotamento a DOPO, e nel frattempo lo stato
+             * può essere cambiato. Con un `setAttachment(null)` secco si buttava via
+             * un allegato caricato MENTRE l'invio era in volo.
+             *
+             * Non è teoria: è la sequenza che ha fatto rossa `e2e/chat.spec.ts`,
+             * letta dal trace di rete della CI. `POST /api/chat/messages` parte a
+             * +8,3 s e ci mette **2.658 ms**; `POST /api/chat/upload` parte a +8,4 s
+             * e finisce prima. Alla risoluzione della prima, l'allegato era già
+             * agganciato — e spariva. Poi «Invia» risultava disabilitato
+             * (`!text.trim() && !attachment`) e il secondo invio non partiva mai:
+             * nel trace c'è UNA sola POST per due messaggi mandati.
+             *
+             * Vale per una persona quanto per il test: chi manda un messaggio e nel
+             * frattempo allega un file si vedeva sparire l'allegato, in silenzio.
+             * Il confronto per identità dice esattamente la cosa giusta — «questo è
+             * ancora quello che ho spedito?» — e in caso contrario non tocca niente.
+             */
+            setText((attuale) => (attuale.trim() === testoInviato ? '' : attuale));
+            setAttachment((attuale) => (attuale === allegatoInviato ? null : attuale));
             inputRef.current?.focus();
         } finally {
             setInviando(false);

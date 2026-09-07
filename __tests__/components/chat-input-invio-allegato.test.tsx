@@ -119,3 +119,80 @@ describe('quando il server rifiuta: non si perde niente', () => {
     await waitFor(() => expect(campo.value).toBe(''))
   })
 })
+
+describe('la corsa fra un invio in volo e un allegato appena caricato', () => {
+  /**
+   * ⚠️ IL DIFETTO CHE HA FATTO ROSSA `e2e/chat.spec.ts`, e che nessuno dei test qui
+   * sopra vedeva — perché tutti risolvono `onSend` all'istante.
+   *
+   * Dal 2026-09-07 `handleSend` ATTENDE `onSend` prima di svuotare il composer: è
+   * ciò che impedisce di perdere un messaggio rifiutato. Ma svuotare DOPO significa
+   * svuotare in un momento in cui lo stato può essere cambiato — e in quel momento
+   * `setAttachment(null)` cancellava un allegato caricato NEL FRATTEMPO.
+   *
+   * Non è teoria: è la sequenza esatta della spec E2E, letta dal trace di rete
+   * della CI. `POST /api/chat/messages` parte a +8,3 s e ci mette **2.658 ms**;
+   * `POST /api/chat/upload` parte a +8,4 s e finisce prima. Quando la prima si
+   * risolve, l'allegato è già agganciato — e veniva buttato via. Poi il pulsante
+   * «Invia» risulta disabilitato (`!text.trim() && !attachment`), il secondo invio
+   * non parte, e nel trace c'è UNA sola POST per due messaggi mandati.
+   *
+   * Prima della modifica il difetto non poteva esistere: `onSend` non veniva atteso
+   * e lo svuotamento era sincrono, quindi avveniva molto prima che l'upload
+   * finisse. È una regressione introdotta da un rimedio giusto, e il rimedio del
+   * rimedio è non sovrascrivere mai uno stato che è cambiato mentre si aspettava.
+   *
+   * ⚠️ NON È SOLO UN PROBLEMA DEL TEST: chiunque mandi un messaggio e nel frattempo
+   * alleghi un file si vedrebbe sparire l'allegato, in silenzio.
+   */
+  it('un allegato caricato MENTRE l\'invio è in volo non viene buttato via', async () => {
+    let sblocca: (v: boolean) => void = () => {}
+    const onSend = vi.fn(() => new Promise<boolean>((r) => { sblocca = r }))
+    render(<ChatInput onSend={onSend} />)
+
+    // 1. si manda un testo, e la risposta TARDA (come i 2,6 s della CI)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'primo' } })
+    invia()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+
+    // 2. nel frattempo si allega un file, e l'upload finisce PRIMA della risposta
+    await allega()
+
+    // 3. ora la risposta arriva
+    sblocca(true)
+
+    // 4. l'allegato deve essere ancora lì: non l'ha mandato nessuno
+    await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(''))
+    expect(screen.queryByText('allegato.png')).not.toBeNull()
+  })
+
+  it('e resta inviabile: il pulsante non deve restare disabilitato', async () => {
+    let sblocca: (v: boolean) => void = () => {}
+    const onSend = vi.fn(() => new Promise<boolean>((r) => { sblocca = r }))
+    render(<ChatInput onSend={onSend} />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'primo' } })
+    invia()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+    await allega()
+    sblocca(true)
+    await waitFor(() => expect(screen.getByLabelText('chatInputAriaInvia')).not.toBeDisabled())
+
+    invia()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2))
+    expect(onSend).toHaveBeenLastCalledWith('📎 Allegato', PERCORSO, 'image')
+  })
+
+  it('lo stesso vale per il TESTO scritto mentre l\'invio è in volo', async () => {
+    let sblocca: (v: boolean) => void = () => {}
+    const onSend = vi.fn(() => new Promise<boolean>((r) => { sblocca = r }))
+    render(<ChatInput onSend={onSend} />)
+    const campo = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(campo, { target: { value: 'primo' } })
+    invia()
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+    fireEvent.change(campo, { target: { value: 'secondo, scritto mentre partiva il primo' } })
+    sblocca(true)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(campo.value).toBe('secondo, scritto mentre partiva il primo')
+  })
+})

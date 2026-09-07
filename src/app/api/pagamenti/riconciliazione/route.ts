@@ -16,6 +16,7 @@ import {
   type MovimentoCsv,
   type PagamentoAperto,
   type VerdettoAltraSede,
+  sedeDedotta,
 } from '@/lib/pagamenti/riconciliazione'
 import { leggiEstrattoConto } from '@/lib/pagamenti/estratto-conto/lettura'
 import { interpretaFogli } from '@/lib/pagamenti/estratto-conto/tabella'
@@ -411,6 +412,13 @@ interface MovimentoArricchito extends MovimentoRiga {
   pagamento_stato: string | null
   fattura_stato: FatturaStato | null
   /**
+   * La sede che l'app ha DEDOTTO dai suggerimenti, per le sole righe non
+   * confermate — sulle confermate `scuola_id` sta già sulla riga, quindi è nota.
+   * `null` = l'app non ha saputo dedurla: è il bidone «sede non riconosciuta»,
+   * cioè le righe rosse che vanno controllate a mano.
+   */
+  sede_dedotta: SedeDedottaUi | null
+  /**
    * «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» — l'aggancio forte è fuori dalle
    * sedi dell'operatore, e i candidati che vedrà lui sono deboli.
    *
@@ -449,6 +457,26 @@ interface AltraSedeUi {
 }
 
 /**
+ * DI QUALE SEDE SEMBRA — e a differenza di `altra_sede` qui l'uuid SERVE, perché
+ * questo campo è la chiave di un filtro, non il soggetto di una frase.
+ *
+ * Filtrare per nome vorrebbe dire confrontare stringhe che degradano a `null`
+ * quando la lettura delle sedi cade: due sedi ignote e una sede vera senza nome
+ * finirebbero nello stesso bidone.
+ *
+ * `certa` è `true` solo quando a decidere è stato un codice fiscale. Non è
+ * decorazione: misurato sui 219 movimenti non confermati di produzione, 93 sono
+ * dedotti per CF e 93 per punteggio — l'operatore che filtra per sede ha diritto
+ * di sapere quale delle due cose sta guardando.
+ */
+interface SedeDedottaUi {
+  scuola_id: string
+  /** `null` = sede dedotta, nome non letto. Diverso da `sede_dedotta: null`. */
+  nome: string | null
+  certa: boolean
+}
+
+/**
  * I TRE CAMPI ESCONO SEMPRE, ANCHE A `null` — e «sempre» è la parte che conta.
  *
  * Se comparissero solo sulle righe che hanno qualcosa da dire, il client non potrebbe
@@ -465,8 +493,15 @@ function conFatturazione(
   pagamentoStato: string | null = null,
   fatturaStato: FatturaStato | null = null,
   altraSede: AltraSedeUi | null = null,
+  sedeDedottaUi: SedeDedottaUi | null = null,
 ): MovimentoArricchito {
-  return { ...r, pagamento_stato: pagamentoStato, fattura_stato: fatturaStato, altra_sede: altraSede }
+  return {
+    ...r,
+    pagamento_stato: pagamentoStato,
+    fattura_stato: fatturaStato,
+    altra_sede: altraSede,
+    sede_dedotta: sedeDedottaUi,
+  }
 }
 
 /**
@@ -1179,6 +1214,36 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     )
 
     /**
+     * ─── DI QUALE SEDE SEMBRA, PER IL FILTRO (2026-09-07) ────────────────────
+     *
+     * `riconciliazione_movimenti.scuola_id` è NULL finché il movimento non viene
+     * confermato: il registro è cross-sede per progetto, e la sede si assegna solo
+     * alla conferma. Quindi per le righe che l'operatore deve ancora lavorare —
+     * cioè per il lavoro — la sede non esiste come colonna, e si può solo DEDURRE
+     * dai suggerimenti.
+     *
+     * ⚠️ SOLO SULLE RIGHE NON CONFERMATE, esattamente come `agganciaFuoriSede`, e
+     * per la stessa ragione scritta qui sopra: su una confermata i `suggerimenti`
+     * sono la fotografia dell'import, e dedurne la sede rimetterebbe in piedi
+     * proprio il falso positivo che quel paragrafo racconta. E non serve: sulle
+     * confermate `scuola_id` sta GIÀ sulla riga (è in `COLONNE_REGISTRO`), quindi
+     * è nota, non dedotta.
+     *
+     * ⚠️ SI CALCOLA PRIMA DELLA MINIMIZZAZIONE, come il verdetto di perimetro:
+     * dopo, i candidati fuori sede sono stati tolti e l'informazione non c'è più.
+     */
+    const sediDedotte = righe.map((r) =>
+      r.stato === 'confermato' ? null : sedeDedotta(
+        (r.suggerimenti ?? []).map((s) => ({
+          pagamento_id: s.pagamento_id,
+          score: Number(s.score) || 0,
+          cf_match: s.cf_match === true,
+        })),
+        (pagamentoId: string) => pagDi.get(pagamentoId)?.scuola_id,
+      ),
+    )
+
+    /**
      * IL NOME DELLA SEDE — una `.in()` sugli id distinti, come fa `GET /api/pagamenti`.
      *
      * Nessun blocco da 100 qui, e non per dimenticanza: le sedi dell'intero
@@ -1192,18 +1257,30 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
      * letto, e il giorno in cui una sede si chiamasse così nessuno lo saprebbe.
      * `warn` e non `info`: la schermata sta perdendo un dato che aveva.
      */
-    const idSediFuori = [...new Set(
-      verdetti.filter((v): v is VerdettoAltraSede => v !== null).map((v) => v.scuola_id),
-    )]
+    /**
+     * ⚠️ SI CHIEDONO I NOMI DI TUTTE LE SEDI CITATE, non solo di quelle «fuori».
+     * `idSediFuori` conteneva soltanto i plessi per cui il verdetto di perimetro
+     * era scattato: non la sede di casa, non quelle dedotte sotto la soglia del
+     * verdetto, non quelle delle righe confermate. Con quella lista il filtro per
+     * sede sarebbe nato senza nome proprio sulle righe che l'operatore usa di più.
+     *
+     * Resta UNA query: le sedi dell'intero registro sono tre più le due di prova,
+     * quindi la `.in()` cresce di poche decine di byte.
+     */
+    const idSediCitate = [...new Set([
+      ...verdetti.filter((v): v is VerdettoAltraSede => v !== null).map((v) => v.scuola_id),
+      ...sediDedotte.filter((v): v is NonNullable<typeof v> => v !== null).map((v) => v.scuola_id),
+      ...righe.map((r) => r.scuola_id).filter((x): x is string => typeof x === 'string' && x !== ''),
+    ])]
     const nomiSedi = new Map<string, string>()
-    if (idSediFuori.length > 0) {
+    if (idSediCitate.length > 0) {
       // PostgREST non lancia: l'errore sta nel valore di ritorno, e si guarda.
-      const { data: sedi, error: errNomi } = await supabase.from('scuole').select('id, nome').in('id', idSediFuori)
+      const { data: sedi, error: errNomi } = await supabase.from('scuole').select('id, nome').in('id', idSediCitate)
       if (errNomi || !sedi) {
         logEvento('pagamento', 'warn', {
           operazione: OPERAZIONE_GET,
           esito: 'sedi_nome_non_risolto',
-          n: idSediFuori.length,
+          n: idSediCitate.length,
           ...dettaglioErrore(errNomi),
         }, errNomi)
       } else {
@@ -1217,6 +1294,21 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
       const verdetto = verdetti[i]
       const altraSede: AltraSedeUi | null = verdetto
         ? { nome: nomiSedi.get(verdetto.scuola_id) ?? null }
+        : null
+      /**
+       * ⚠️ LA CHIAVE È L'UUID, il nome è solo per gli occhi. Spedire il nome da
+       * solo vorrebbe dire filtrare confrontando stringhe che degradano già a
+       * `null` quando la lettura delle sedi cade: il filtro metterebbe nello
+       * stesso bidone due sedi ignote e una sede vera senza nome.
+       *
+       * ⚠️ ESCE SEMPRE, anche a `null` — la stessa regola degli altri campi
+       * derivati: `undefined` significherebbe insieme «non ho una sede» e «questa
+       * risposta non porta l'informazione», che sono opposti, e il pannello deve
+       * poter distinguere «l'app non ha capito» da «non ho potuto chiedere».
+       */
+      const dedotta = sediDedotte[i]
+      const sedeDedottaUi: SedeDedottaUi | null = dedotta
+        ? { scuola_id: dedotta.scuola_id, nome: nomiSedi.get(dedotta.scuola_id) ?? null, certa: dedotta.certa }
         : null
       const conSuggerimenti = r.suggerimenti
         ? {
@@ -1261,8 +1353,8 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
         : undefined
       const visibile = pag != null && pag.scuola_id != null && sediAttive.has(pag.scuola_id)
       return visibile
-        ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato), altraSede)
-        : conFatturazione(conSuggerimenti, null, null, altraSede)
+        ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato), altraSede, sedeDedottaUi)
+        : conFatturazione(conSuggerimenti, null, null, altraSede, sedeDedottaUi)
     })
     return rispondi(minimizzate, true)
   } catch (err) {

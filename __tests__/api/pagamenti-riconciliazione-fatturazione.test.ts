@@ -888,21 +888,31 @@ describe('GET /api/pagamenti/riconciliazione — «sembra di un’altra sede»',
 
     const j = await (await get()).json()
     expect(j.data[0].altra_sede).toBeNull()
-    expect(letturaSedi(), 'nessuna riga fuori sede ⇒ nessuna lettura di `scuole`').toHaveLength(0)
+    // ...ma la sede DEDOTTA c'è, ed è quella di casa: l'aggancio forte è su sc-1.
+    // Dal 2026-09-07 il nome delle sedi citate si legge anche per queste righe,
+    // perché è la chiave del filtro per sede — resta UNA query su una tabella di
+    // cinque righe, non «una query in più per ogni riga».
+    expect(j.data[0].sede_dedotta).toEqual({ scuola_id: 'sc-1', nome: 'Kidville Giugliano', certa: false })
+    expect(letturaSedi()).toHaveLength(1)
   })
 
-  it('nessuna riga fuori sede in TUTTA la pagina → ZERO letture di `scuole`', async () => {
+  it('nessuna sede CITABILE in tutta la pagina → ZERO letture di `scuole`', async () => {
     conSedi()
+    // Nessun candidato con una sede risolvibile, e nessuna riga confermata con la
+    // propria: non c'è NIENTE da nominare, e infatti non si legge niente.
     h.db.riconciliazione_movimenti = [
-      mov(1, 'confermato', PID(1)),
-      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(1), 90)] }),
+      mov(2, 'suggerito', null, { suggerimenti: [sugg(PID(9), 90)] }),
       mov(3, 'da_abbinare', null, { suggerimenti: [] }),
     ]
-    h.db.pagamenti = [pag(1, 'pagato', 'emessa', 'sc-1')]
+    h.db.pagamenti = []
 
     const j = await (await get()).json()
     expect(letturaSedi()).toHaveLength(0)
-    for (const r of j.data) expect(r.altra_sede).toBeNull()
+    for (const r of j.data) {
+      expect(r.altra_sede).toBeNull()
+      // il campo esce SEMPRE, anche quando non c'è niente da dire
+      expect(r.sede_dedotta).toBeNull()
+    }
   })
 
   it('una sola lettura di `scuole` per l’intera pagina, con gli id DISTINTI', async () => {
@@ -1017,8 +1027,14 @@ describe('GET /api/pagamenti/riconciliazione — «sembra di un’altra sede»',
     const j = await (await get()).json()
     expect(j.data).toHaveLength(1)
     expect(j.data[0].altra_sede, 'l’abbinamento è fatto: non c’è nessun errore da prevenire').toBeNull()
-    // e il nome della sede non si va nemmeno a leggere: non serve a nessuna riga
-    expect(letturaSedi()).toHaveLength(0)
+    // Nemmeno la sede DEDOTTA si calcola su una riga confermata, e per la stessa
+    // ragione: i suggerimenti lì sono la fotografia dell'import, e dedurne la sede
+    // rimetterebbe in piedi il falso positivo. Non serve: `scuola_id` sta già sulla
+    // riga, quindi è nota e non dedotta.
+    expect(j.data[0].sede_dedotta).toBeNull()
+    // Il nome si legge lo stesso, perché la riga confermata NOMINA la propria sede
+    // ed è quella che il filtro deve poter mostrare.
+    expect(letturaSedi()).toHaveLength(1)
   })
 
   it('…e nemmeno con un CF fuori sede, che è il segnale più forte che esista', async () => {

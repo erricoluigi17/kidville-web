@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
+import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread, SospensioneInfo } from '@/components/features/chat/ChatThreadList';
@@ -179,17 +180,18 @@ function TeacherChatContent() {
     });
 
     // ── Polling thread list per tenere i badge sincronizzati ─────────────
-    useEffect(() => {
-        const interval = setInterval(loadThreads, 15000);
-        return () => clearInterval(interval);
-    }, [loadThreads]);
+    // ── I badge si aggiornano solo mentre qualcuno guarda ───────────────
+    // Da 15 a 30 secondi, e fermo a pagina nascosta. Il 7/9/2026 un genitore
+    // fermo su questa pagina faceva ~11 richieste al minuto senza toccare
+    // niente, e continuava col telefono in tasca. Vedi `usePollingVisibile`.
+    usePollingVisibile(loadThreads, 30_000);
 
     // Polling di backup ridotto (15s)
-    useEffect(() => {
-        if (!selectedThread) return;
-        const interval = setInterval(() => loadMessages(selectedThread.id), 15000);
-        return () => clearInterval(interval);
-    }, [selectedThread, loadMessages]);
+    usePollingVisibile(
+        () => { if (selectedThread) loadMessages(selectedThread.id); },
+        30_000,
+        { attivo: !!selectedThread },
+    );
 
     // ── Mark as Read via IntersectionObserver ────────────────────────────
     const handleMarkRead = useCallback(async (ids: string[]) => {

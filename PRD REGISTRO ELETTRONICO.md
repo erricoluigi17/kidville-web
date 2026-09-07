@@ -192,6 +192,223 @@ uno solo ha un intestatario risolvibile». Rimisurato lo stesso giorno: **156** 
 un movimento confermato e un ordinante leggibile, **8** già emettibili senza proposta, **6**
 sbloccati da questa. E **145** che non hanno alcun movimento confermato e non compaiono nemmeno in
 lista: è lì il collo di bottiglia vero, e non lo tocca niente di quanto è stato fatto.
+## 🔑 Changelog — La firma del token si verifica in locale: via metà delle chiamate di autenticazione — 2026-09-07 (branch `perf/verifica-jwt-locale`)
+
+Seguito diretto del changelog qui sotto, che lasciava aperto il pezzo grosso. Il 7 settembre le
+chiamate di autenticazione erano **643.281 in un giorno**, un costante ~28% del totale in ogni ora.
+La loro composizione (log Supabase, 10:00-13:00) dice dove sta il peso:
+
+| endpoint | chiamate | quota |
+|---|---|---|
+| **`/user`** — cioè `getUser()` | **280.389** | **99,3%** |
+| `/token` — il rinnovo | 2.189 | 0,8% |
+
+`getUser()` telefona a GoTrue per ogni richiesta. **`getClaims()` verifica la firma del token con
+WebCrypto, in locale, e non chiama nessuno** — a patto che il progetto firmi con una chiave
+asimmetrica. Il nostro pubblica una **ES256** nel JWKS: `getClaims()` è utilizzabile subito, senza
+migrazioni.
+
+### Dove è stato applicato, e soprattutto dove NO
+
+**Solo nel middleware.** La ragione è scritta nel middleware stesso, da prima di questo lavoro:
+
+> *«il redirect di questo file non è il controllo d'accesso (quello sta nei gate delle route, e non
+> si tocca)»*
+
+`getUser()` chiede al server «vale **adesso**?»; `getClaims()` verifica la firma e si fida **fino
+alla scadenza** del token. Una sessione revocata resterebbe quindi buona per il tempo residuo. Nel
+middleware va bene, perché lì si decide solo «login o passa». **`requireArea` e i gate `require*`
+continuano a interrogare il server**: sono loro a proteggere anagrafiche, allergie e pagamenti, e lì
+la revoca resta immediata — cosa che su questo progetto conta, perché il cambio password revoca
+tutte le sessioni e la Segreteria rigenera le credenziali delle famiglie.
+
+### ⚠️ La cache per ISOLATE è tutto il guadagno, e senza un lock non si vedrebbe
+
+`fetchJwk` di auth-js tiene le chiavi **sull'istanza del client**, e il middleware ne costruisce una
+nuova a ogni richiesta: lasciando fare a lui si scaricherebbe il JWKS a ogni passaggio, cioè si
+**sposterebbe** una chiamata di rete invece di toglierla. Le chiavi stanno quindi in una variabile di
+modulo, che sull'Edge vive quanto l'isolate: si paga una volta all'avvio a freddo e mai più.
+
+**Misurato contro il server vero** (non solo nei test): otto richieste di pagina → **una sola**
+`GET /.well-known/jwks.json`, stato 200.
+
+### Perché è sicuro a prescindere dall'algoritmo
+
+Se il progetto firmasse ancora in HS256, `getClaims()` **ripiega da solo su `getUser()`**: nessun
+guadagno, ma nemmeno nessun danno e nessun cambio di sicurezza. Idem se il JWKS non si raggiunge.
+E si ricorda anche il **«no»**: una cache che memorizzasse solo i successi richiederebbe le chiavi a
+ogni richiesta per sempre — un giro di rete *in più* invece che in meno, in silenzio. È il caso
+peggiore, ed è coperto dal test `7-ter-bis`.
+
+### Le proprietà bloccate da un test (`__tests__/lib/middleware-tetto.test.ts`)
+
+| test | cosa impedisce |
+|---|---|
+| **7** | tornare a `getUser()` quando la firma è verificabile in locale |
+| **7-bis** | perdere la cache per isolate, o non passare le chiavi a `getClaims()` |
+| **7-ter** | perdere il ripiego su `getUser()` con i token HS256 |
+| **7-ter-bis** | ricordare solo i «sì»: il JWKS vuoto richiesto a ogni richiesta |
+| **7-quater** | **perdere il rinnovo del token** — `getClaims()` va chiamata SENZA argomento, così passa da `getSession()`. Passandole il token a mano si butterebbe fuori ogni utente allo scadere dell'ora |
+| **7-quinquies** | degradare fail-**open** quando la verifica non si può fare |
+| **7-sexies** | un 500 su tutto il sito per una chiave corrotta (`getClaims()` **rilancia** gli errori non-auth, es. una `DOMException` di WebCrypto) |
+
+I test firmano token **veri** con una coppia ES256 generata sul momento: l'unica cosa simulata è la
+rete, non la crittografia. Ogni manomissione del codice ne fa diventare rosso almeno uno.
+
+⚠️ **Due difetti trovati nei test stessi, e vale la pena saperli.** Il `kid` era una costante
+condivisa, e con essa `7-bis` coglieva una manomissione **in isolamento** ma la mancava nella suite
+completa: un lock che cambia risposta secondo l'ordine non è un lock. E il ramo `catch` fail-closed
+non era coperto da niente finché non è arrivato `7-sexies`. Entrambi trovati **rompendo il codice e
+guardando il colore**, non leggendolo.
+
+### Cosa aspettarsi, e come si verifica
+
+Se i token emessi sono ES256 — indizi forti, ma la conferma è la misura stessa — le chiamate a
+`/user` dal middleware spariscono. Restano quelle di `requireArea` e dei gate, che sono volute.
+**Attesa: il rapporto auth/totale scende dal ~28% verso il ~14%.** Se non scende, i token sono
+ancora HS256 e la strada è promuovere la chiave asimmetrica nel pannello Supabase.
+
+```sql
+select toStartOfHour(timestamp) as ora, source, count(*) from logs
+where source in ('edge_logs','auth_logs') group by ora, source order by ora desc;
+
+select log_attributes['path'] as percorso, count(*) from logs
+where source = 'auth_logs' group by percorso order by 2 desc limit 10;
+```
+
+---
+
+## 🐌 Changelog — L'app lenta del 7 settembre: 2,1 milioni di richieste, e dieci orologi che parlavano a schermo spento — 2026-09-07 (branch `perf/volume-richieste`)
+
+La mattina del 7 settembre l'app è andata lenta per ore. **Non era il database** (cache 100%, zero
+deadlock, 37 connessioni su 90) e **non era Vercel** (18 errori su 408.535 risposte): era il volume.
+
+| | 6 settembre (punta) | 7 settembre (punta 11:00-12:00) |
+|---|---|---|
+| richieste a Supabase / ora | 21.099 | **399.395** |
+| di cui autenticazione | 6.488 (30,8%) | 112.530 (28,2%) |
+| fetch falliti a testa (`stato_http = 0`) | 3,65 | **9,34** |
+
+Totale del 7: **2.231.291 richieste**, di cui **643.281 di autenticazione** — circa 4.940 a testa
+su 427 famiglie collegate. Il rapporto auth/totale è **costante al ~28% in ogni ora**, di punta
+come di notte: non era cambiato il tipo di traffico, era scalato il volume. E i fetch falliti per
+persona sono **raddoppiati**, quindi c'è stata degradazione vera, non solo più utenti.
+
+Dai log di Supabase, la composizione dell'autenticazione (10:00-13:00):
+
+| endpoint | chiamate | quota |
+|---|---|---|
+| `/user` — cioè `getUser()` | **280.389** | **99,3%** |
+| `/token` — rinnovo del token | 2.189 | 0,8% |
+
+### Cosa è stato fatto: i polling si fermano quando nessuno guarda
+
+Dieci orologi, ognuno scritto a mano dentro il proprio componente, e **nessuno guardava se
+qualcuno stesse guardando**. Un genitore fermo sulla pagina della chat faceva ~11 richieste al
+minuto senza toccare niente — e continuava col telefono in tasca e lo schermo spento.
+
+Ora tutti e dieci passano da **`usePollingVisibile`** (`src/lib/hooks/use-polling-visibile.ts`):
+
+| punto | prima | dopo |
+|---|---|---|
+| chat genitore — elenco e messaggi | 15 s × 2 | **30 s × 2**, fermi a pagina nascosta |
+| chat docente — elenco e messaggi | 15 s × 2 | **30 s × 2**, fermi a pagina nascosta |
+| `useUnreadNotifications` | 30 s sempre | 30 s visibile · **5 min nascosto** |
+| centro notifiche (ogni pagina, via AppBar) | 60 s | 60 s, fermo |
+| centro notifiche admin | 60 s | 60 s, fermo (il gate della media query resta) |
+| presenze in tempo reale (admin) | 60 s | 60 s, fermo |
+| armadietto | 20 s | 20 s, fermo |
+| compiti docente | 15 s | 15 s, fermo |
+
+Il conto per una famiglia sulla chat: **da 11 richieste al minuto a 7 mentre guarda, e a 0,2 col
+telefono in tasca.** Il taglio grosso non è il 15→30: è che un'app in secondo piano smette di
+parlare.
+
+**`useUnreadNotifications` rallenta invece di fermarsi**, ed è l'unico dei dieci. È il solo punto
+che manda la notifica del browser quando la pagina NON è a fuoco (`if (document.hasFocus()) return`
+dentro `checkUnread`): sospenderlo spegnerebbe la funzione che vive lì.
+
+**Due segnali, non uno.** `document.hidden` è lo standard del web, ma l'app gira anche dentro una
+WebView Capacitor e non è dato per scontato che `visibilitychange` scatti su iOS quando l'app va in
+secondo piano. Si montano **entrambi** i segnali — `visibilitychange` e `appStateChange` di
+`@capacitor/app` — così la correttezza non dipende da quale funzioni; una sonda (evento
+`client:visibilita`, al massimo due righe per sessione nativa) registra quale sia arrivato davvero.
+⚠️ **Al rilascio la domanda è ancora aperta**: la risposta arriverà dai dati, non da questo
+paragrafo. Il precedente che impone la cautela è il campo `piattaforma`, che per 31 giorni ha detto
+`web` per 3.625 eventi su 3.626 perché Capacitor non si scrive nello user-agent.
+
+La coalescenza fra i due segnali è **strutturale** (lo stato è un booleano: senza transizione non
+succede niente) più una finestra di 1 s contro lo sfarfallio. Su Android è documentato
+(`BiometricGate.tsx:33-45`) che arrivi un `isActive:true` spurio, perché l'Activity del prompt
+biometrico è traslucida.
+
+### 🔴 Cosa NON è stato fatto, e perché: il middleware non può vedere i prefetch
+
+L'intervento previsto era togliere `getUser()` dai prefetch RSC nel middleware. **Non è
+implementabile in Next 16.3.0**, e la prova non è un'opinione — sta nel sorgente,
+`node_modules/next/dist/server/web/adapter.js:157`:
+
+```js
+// Headers should only be stripped for middleware
+if (!isEdgeRendering && !process.env.__NEXT_NO_MIDDLEWARE_URL_NORMALIZE) {
+    for (const header of FLIGHT_HEADERS){ … requestHeaders.delete(header); }
+}
+```
+
+`FLIGHT_HEADERS` sono esattamente `rsc`, `next-router-state-tree`, `next-router-prefetch`,
+`next-hmr-refresh`, `next-router-segment-prefetch` — **cancellati prima che il middleware giri** —
+e il parametro `?_rsc` è tolto da `stripInternalSearchParams`. La guida
+(`01-app/03-api-reference/03-file-conventions/proxy.md`, riga 442) lo dichiara come scelta:
+*«This is to prevent accidentally handling an RSC request differently than the HTML request as both
+need to align»*. Misurato sul server di sviluppo: un header inventato (`x-mio-test`) **sopravvive**,
+i cinque di Next **no**.
+
+L'unica via d'uscita, `skipProxyUrlNormalize: true`, è stata **provata e scartata**: espone gli
+header, ma fa prendere a **ogni prefetch un 307** — anche su un percorso pubblico dove il middleware
+non decide niente. Trasformerebbe ogni prefetch in due viaggi: aumenterebbe le richieste invece di
+ridurle.
+
+⚠️ **La lezione, che vale più dell'intervento**: i 14 test scritti per quella modifica erano
+**verdi**. Erano verdi perché vitest chiama `middleware()` direttamente con una `NextRequest`
+costruita a mano, bypassando l'`adapter.js` che in produzione spoglia gli header — cioè il banco di
+prova non poteva riprodurre la richiesta vera. È esattamente il difetto che AGENTS.md racconta: *un
+test mai visto fallire non è un test*, e qui il rosso non poteva arrivare da nessuna parte.
+
+**Resta quindi aperto il 99,3% dell'autenticazione** (`/user`, 280.389 chiamate in tre ore), e la
+strada non è più il prefetch: un prefetch paga **due** `getUser()` — uno nel middleware, uno in
+`requireArea()` (`src/lib/auth/area-guard.ts:84`), montato in tutti e tre i layout d'area. Le due
+opzioni da valutare, entrambe fuori dallo scope di questo lavoro, sono la verifica locale del JWT
+(`auth.getClaims()` con chiavi asimmetriche: azzera le chiamate a `/user` senza toccare la logica) e
+la rimozione di uno dei due `getUser()` per richiesta.
+
+### Come si verifica
+
+Non basta che i test passino. Con l'app in uso, e confrontando con i numeri qui sopra:
+
+```sql
+-- 1. richieste orarie per fonte: il rapporto auth/totale deve scendere sotto il 28%
+select toStartOfHour(timestamp) as ora, source, count(*) from logs
+where source in ('edge_logs','auth_logs') group by ora, source order by ora desc;
+
+-- 2. fetch falliti per persona: l'obiettivo è tornare sotto 4 (erano 9,34)
+SELECT giorno,
+       sum(occorrenze) FILTER (WHERE evento='client:fetch' AND stato_http=0) AS falliti,
+       count(DISTINCT utente_id) AS utenti
+FROM app_log WHERE creato_il >= now() - interval '3 days' GROUP BY giorno;
+
+-- 3. la sonda: quale segnale di visibilità arriva davvero dai dispositivi nativi
+SELECT messaggio, piattaforma, sum(occorrenze) FROM app_log
+WHERE evento = 'client:visibilita' GROUP BY messaggio, piattaforma;
+```
+
+### Rimandato di proposito
+
+- **`prefetch={false}` sulle BottomNav** — vale meno degli altri due ed è il solo che può
+  peggiorare le cose (toglie la navigazione percepita). Si decide **dopo** aver misurato, con i
+  numeri in mano.
+- **La home `/parent` e i suoi 13 endpoint** — quinto rimedio del referto, rimandato.
+- **L'istanza Supabase (2 GB)** e **l'allocazione connessioni del server Auth** (tetto fisso di 10)
+  — scelte del titolare, non di questo lavoro.
 
 ---
 

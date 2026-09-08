@@ -210,7 +210,19 @@ export const POST = withRoute('pagamenti/fattura:POST', async (request: Request)
     // vale per QUESTO documento e basta. Persisterlo qui vorrebbe dire che una
     // fattura andata storta lascia dietro di sé un intestatario nuovo su tutte le
     // rette future del bambino, senza che nessuno l'abbia deciso. La scheda si
-    // cambia dalla scheda.
+    // cambia dalla scheda — e per l'anagrafica DIGITATA la casella «Ricorda sulla
+    // scheda» di `FatturaButton` esiste già, con la sua spunta esplicita.
+    //
+    // ⚠️ IL LOTTO INVECE SCRIVE, dal 2026-09-08, e la differenza non è una svista:
+    // `POST …/fattura/lotto` chiama `ricordaIntestatarioSullaScheda` SOLO dopo
+    // un'emissione riuscita e NUOVA, SOLO su una scheda ancora vuota, e SOLO quando a
+    // decidere l'intestatario è stata la proposta dell'ordinante del bonifico — cioè
+    // quando l'anagrafica non sapeva rispondere (16 righe su 20, misurate quel
+    // giorno). L'obiezione qui sopra — «una fattura andata storta» — non lo tocca,
+    // perché lì non si scrive niente se la fattura non è uscita.
+    //
+    // Qui, dove un essere umano ha appena letto il nome sullo schermo, il promemoria
+    // non serve: la volta dopo rileggerà. Nel lotto non c'è nessuno che legga.
     const esito = await emettiFatturaPagamento(supabase, pagamento_id, { id: auth.user.id }, {
       intestatarioScelto: intestatario,
     })

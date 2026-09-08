@@ -1084,3 +1084,86 @@ describe('il lotto usa la proposta, e la fa confermare', () => {
     expect(screen.getByText(/ripartito fra due genitori/i)).toBeTruthy();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUANDO L'ANAGRAFICA NON DICE NIENTE — il caso in cui la proposta è tutto
+//
+// `quote: []` significa che la cascata non ha saputo dire a chi intestare
+// (`determinaQuoteFatturazione`, passo 5). Misurato in Conciliazione il 2026-09-08:
+// è il caso della maggioranza delle righe selezionabili, e per quasi tutte
+// l'ordinante del bonifico nomina UN solo genitore coi dati fiscali completi. Il
+// lotto le scartava tutte dicendo «manca l'intestatario» — cioè proprio dove la
+// proposta serve di più, e dove l'emissione singola invece funziona da sempre.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('quote vuote: l’anagrafica tace, il bonifico no', () => {
+  const anteprima = (over: Record<string, unknown> = {}) => ({
+    causale: 'Retta ottobre',
+    origine: 'modello',
+    lunghezza: 20, limite: 100, eccede: false,
+    intestatario: {
+      alunno: null,
+      quote: [],                      // ← la cascata non ha saputo dire niente
+      ripartito: false,
+      candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria', relazione: 'madre', fatturabile: true, errori: {} }],
+      proposta: { adult_id: 'a-1', motivo: 'bonifico_esatto' },
+      ordinante: 'ROSSI MARIA',
+      ...over,
+    },
+  });
+
+  const apri = (dati: unknown) => {
+    const f = stubFetch({ movimenti: [daFatturare(1)], anteprimaPerId: { pg1: dati } });
+    vi.stubGlobal('fetch', f);
+    render(<LottoFatturePanel userId="u1" selezionate={[daFatturare(1) as unknown as MovimentoUi]} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+    return f;
+  };
+
+  it('nessuna quota ma pagatore riconosciuto → PRONTA, col nome e col perché', async () => {
+    apri(anteprima());
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+
+    expect(screen.getByText(/Intestate su proposta del bonifico/i)).toBeTruthy();
+    expect(screen.getAllByText(/Rossi Maria/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/Manca l[’']intestatario/i)).toBeNull();
+  });
+
+  it('la POST porta l’intestatario proposto — il pezzo che il predicato da solo non copre', async () => {
+    // ⚠️ QUESTO È IL CASO CHE VALE. Il pannello decideva se spedire l'intestatario
+    // con `!quote.every(fatturabile)`: su un elenco VUOTO `every` risponde `true`,
+    // quindi la riga sarebbe entrata nel lotto e la POST sarebbe partita SENZA
+    // intestatario — cioè il rifiuto si sposta dal browser ad Aruba, a quota spesa.
+    const f = apri(anteprima());
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
+    await finoA(() => post(f).length === 1);
+
+    const corpo = JSON.parse(String(post(f)[0]![1]!.body));
+    expect(corpo.pagamenti[0].intestatario).toEqual({ tipo: 'adult', adult_id: 'a-1' });
+  });
+
+  it('la spunta dichiara anche che l’intestatario finisce sulla scheda del bambino', async () => {
+    // Da questa versione la conferma non autorizza solo un documento: scrive
+    // nell'anagrafica di un minore. Chi la mette deve leggerlo dalla casella.
+    apri(anteprima());
+    await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
+    expect(screen.getByText(/salvati sulla scheda del bambino/i)).toBeTruthy();
+  });
+
+  it('pagatore riconosciuto ma con dati incompleti → il motivo VERO, non il generico', async () => {
+    apri(anteprima({ candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria', relazione: 'madre', fatturabile: false, errori: { codice_fiscale: 'mancante' } }] }));
+    await finoA(() => screen.queryByText(/da completare/i) !== null);
+
+    // «Manca l'intestatario» qui è falso: l'intestatario si sa, gli mancano i dati —
+    // e le due frasi mandano l'operatore in due posti diversi.
+    expect(screen.getByText(/sa chi ha fatto il bonifico/i)).toBeTruthy();
+    expect(screen.queryByText(/Manca l[’']intestatario/i)).toBeNull();
+  });
+
+  it('nessuna quota e nessun pagatore riconoscibile → resta «da completare», col generico', async () => {
+    apri(anteprima({ candidati: [], proposta: null, ordinante: null }));
+    await finoA(() => screen.queryByText(/da completare/i) !== null);
+    expect(screen.getByText(/Manca l[’']intestatario/i)).toBeTruthy();
+  });
+});

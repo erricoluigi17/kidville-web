@@ -146,6 +146,19 @@ export type EsitoEmissione =
        * documenti mai emessi oggi.
        */
       gia?: true
+      /**
+       * A CHI APPARTIENE il pagamento appena fatturato.
+       *
+       * Lo sa già questa funzione — ha letto `pagamenti` con l'alunno agganciato, e
+       * ha passato il gate di sede — e senza questo campo il chiamante dovrebbe
+       * rileggerlo. Due letture separate sono due fonti di verità su «di chi è questo
+       * pagamento», e la seconda arriva pure senza il gate che la prima ha superato.
+       *
+       * Lo usa `POST …/fattura/lotto` per ricordare l'intestatario sulla scheda del
+       * bambino. `null` quando il pagamento non è legato a nessun alunno (una vendita
+       * di merchandise, per esempio): chi scrive sulla scheda deve fermarsi lì.
+       */
+      alunnoId?: string | null
     }
   | {
       ok: false
@@ -2292,6 +2305,7 @@ export async function emettiFatturaPagamento(
     numero: okEsiti[0].numero ?? 0,
     numeroFattura: okEsiti[0].numeroFattura,
     quote: multi ? esiti : undefined,
+    alunnoId: alunno?.id ?? pag.alunno_id ?? null,
     ...(tutteGia ? { gia: true as const } : {}),
   }
 }

@@ -1019,5 +1019,6 @@
   "genrSceltaVuoto": "Nessun bambino corrisponde alla ricerca.",
   "genrSceltaConteggio": "{n, plural, =0 {Nessun bambino} =1 {Un bambino} other {# bambini}}",
   "genrSceltaBersaglio": "{n, plural, =0 {Nessuno selezionato: scegli almeno un bambino} =1 {Si genera per un bambino} other {Si genera per # bambini}}",
-  "genrGenerazioneSpenta": "La generazione automatica delle rette è disattivata nelle impostazioni di questa sede: l’anteprima qui sotto mostra i candidati, ma la conferma non scriverebbe nulla."
+  "genrGenerazioneSpenta": "La generazione automatica delle rette è disattivata nelle impostazioni di questa sede: l’anteprima qui sotto mostra i candidati, ma la conferma non scriverebbe nulla.",
+  "reconLottoConfermoProposteHint": "Gli intestatari confermati vengono salvati sulla scheda del bambino, così la prossima fattura non dovrà più dedurli. Le schede che ne hanno già uno non si toccano."
 }

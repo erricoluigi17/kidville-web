@@ -99,6 +99,90 @@
 
 ---
 
+## 🧾 Changelog — Il lotto fatture diceva «manca l'intestatario» sapendo chi aveva pagato — 2026-09-08 (branch `fix/lotto-fatture-intestatario-bonifico`)
+
+Segnalazione del titolare: *«In conciliazione quando faccio le fatture multiple dice che non possono
+emettere in quanto non ha intestatario, deve usare la stessa logica di quella singola, quindi
+suggerire chi ha effettuato il bonifico.»*
+
+**Misurato in produzione prima di toccare il codice** (lettura, nessuna scrittura), e
+**rimisurato a lavoro finito** — perché nel frattempo era già invecchiato:
+
+| | alle 16:24 | alle 16:50 |
+|---|---|---|
+| righe selezionabili (movimento confermato, pagamento saldato, nessuna fattura) | **20** | **14** |
+| con un ordinante leggibile sul bonifico | 20 | 14 |
+| pronte col predicato di **prima** | **4** | **3** |
+| pronte col predicato di **adesso** | **18** | **12** |
+| senza alcun riconoscimento possibile (restano fuori, ed è giusto) | 2 | 2 |
+
+⚠️ **I due numeri assoluti sono diversi perché sono invecchiati in ventisei minuti,
+dentro il lavoro che li ha misurati**: la lista si svuota man mano che si fattura e si
+riempie man mano che si abbina. Il risultato è il **rapporto** — da poco più di un quinto
+a circa sei settimi — non la coppia di interi. Chi rilegge non ci trova una misura: ci
+trova la query da rifare. (Il conteggio usa la sola regola del *sottoinsieme unico*, la
+più stretta di `riconosciOrdinante`: l'uguaglianza esatta e la forma senza spazi ne
+riconoscono altre, quindi il numero vero è **≥** questo.)
+
+⚠️ **La prova nell'interfaccia vera non è stata fatta**: l'estensione Chrome non era
+connessa, e l'identità via header è disattivata in locale (401), quindi il pre-volo non è
+stato esercitato attraverso la sua schermata. Ciò che è dimostrato è il predicato — con i
+test, con la prova di mutazione, e con questa misura sui dati veri.
+
+**Il difetto era una riga**, in `src/lib/pagamenti/lotto-fatture.ts`: il controllo `quote.length === 0`
+stava come **uscita anticipata** invece che dentro il primo dei due rami, e usciva prima che la
+proposta del bonifico venisse guardata. Il guard serve — `[].every()` risponde `true` — ma serve
+**solo** al ramo «l'anagrafica sa intestare ogni quota». E `quote: []` è esattamente il caso
+«nessun intestatario risolvibile in anagrafica»: cioè quello in cui la proposta è l'unica risposta
+possibile. Ora il predicato è `quoteTutteFatturabili(quote) || intestatarioAutomaticoDelLotto(…)`.
+
+**Il server era già pronto ad accettarle**: `applicaIntestatarioScelto` su zero quote ne crea UNA
+con l'intestatario scelto e il totale, e sta **prima** del 422 «intestatario non impostato». È ciò
+che fa funzionare l'emissione singola da sempre; a scartare le righe era solo il pre-volo del
+browser, che non le spediva mai.
+
+🔴 **Il secondo posto in cui la stessa lista vuota mentiva.** `LottoFatturePanel` decideva se
+spedire l'intestatario proposto con `!quote.every(q => q.fatturabile)`: su un elenco **vuoto**
+`every` è `true`, quindi la riga sarebbe entrata nel lotto e la POST sarebbe partita **senza**
+intestatario — spostando il rifiuto dal browser ad Aruba, a quota spesa. Correggere solo il
+predicato avrebbe prodotto un lotto che parte e fallisce quattordici volte. La domanda è la stessa,
+quindi ora è la **stessa funzione** (`quoteTutteFatturabili`, esportata e usata da entrambi).
+
+**Il motivo mostrato non era più vero.** Il ramo che sceglie il messaggio usava `quote.some(…)`, che
+su lista vuota è `false`: il caso «so chi ha pagato ma gli mancano i dati fiscali» cadeva sul
+generico «manca l'intestatario», che manda l'operatore nel posto sbagliato. Ora decide
+`propostaApplicabile`, che dopo il ramo `ripartito` è non-nulla esattamente in quel caso.
+
+**Novità di merito, decisa dal titolare in questa sessione**: a emissione riuscita il lotto
+**ricorda l'intestatario sulla scheda del bambino** (`alunni.intestatario_fatture`), così la fattura
+del mese dopo non deve più dedurlo. È una scrittura sull'anagrafica di un minore decisa da
+un'euristica, e le condizioni sono il contratto: **solo** dopo un'emissione riuscita e **nuova**
+(mai su una riga «già a registro»), **solo** quando a decidere è stata la proposta (se ha deciso la
+cascata non c'è niente da ricordare), e **solo su una scheda vuota** — con la condizione dentro la
+`WHERE` della UPDATE, non in una lettura fatta prima, perché fra le due una persona di Segreteria
+può aver compilato quella scheda a mano e la sua scelta batte sempre una deduzione fatta su un
+estratto conto. Misurato: dei 693 alunni, **516 hanno la colonna `NULL`** e nessuno il letterale
+jsonb `null`. Il salvataggio è **fail-open**: la fattura è già partita verso lo SdI e non si disfa,
+quindi un fallimento è un `warn` e non ferma le righe successive del blocco.
+
+La casella di conferma lo dichiara: *«Gli intestatari confermati vengono salvati sulla scheda del
+bambino… Le schede che ne hanno già uno non si toccano.»* Chi spunta deve leggerlo lì, non scoprirlo
+dopo.
+
+**L'emissione singola non cambia**, e il commento in `api/pagamenti/fattura/route.ts` che dichiara
+«qui non si scrive mai» è stato riscritto perché nomini la differenza: là un essere umano ha appena
+letto il nome sullo schermo, nel lotto non c'è nessuno che legga.
+
+**Esito**: le righe emettibili in blocco passano da **4 a 18 su 20** (misura delle 16:24) e
+da **3 a 12 su 14** (misura delle 16:50). Quelle che restano fuori sono le righe in cui
+l'ordinante non nomina nessun genitore, e devono restare fuori.
+
+**Fuori scope, e resta aperto**: i **145 pagamenti saldati senza nessun movimento confermato** non
+compaiono in questa schermata ed è lì il collo di bottiglia vero. Per loro un ordinante non esiste,
+quindi niente di tutto questo li tocca.
+
+---
+
 ## 📷 Changelog — Le foto arrivavano a una famiglia sola, e il bagno risultava a tutti — 2026-09-08 (branch `fix/foto-notifiche-e-diario-selettivo`)
 
 Due segnalazioni del titolare. Nessuna delle due era dove sembrava, ed entrambe sono state

@@ -182,6 +182,21 @@ describe('LOCK · un solo motore per l’intestatario della fattura', () => {
     ).toEqual([MOTORE_LOTTO, PANNELLO_LOTTO].sort())
   })
 
+  it('`propostaBloccataDaiDati` è definita in UN posto, e la usa solo il pannello del lotto', () => {
+    // La domanda «perché questa riga NON è entrata nel lotto» è diversa da «a chi si
+    // intesta»: la prima sceglie una frase, la seconda un documento fiscale. Tenerle
+    // separate è ciò che permette al lock qui sopra di restare stretto — il pannello
+    // NON chiama `propostaApplicabile`, che resta della sola emissione singola.
+    //
+    // Ma la diagnosi va composta col motore condiviso, non riscritta: «l'app sa chi ha
+    // pagato ma non gli si può intestare» è vero solo se lo dicono le stesse due
+    // funzioni che decidono l'ingresso nel lotto. Una copia locale direbbe la frase
+    // sbagliata il giorno in cui una delle due condizioni cambia.
+    const definizioni = FILE.filter((f) => /export function propostaBloccataDaiDati\b/.test(f.codice)).map((f) => f.relativo)
+    expect(definizioni).toEqual([PROPOSTA])
+    expect(chiamano('propostaBloccataDaiDati').filter((f) => f !== PROPOSTA)).toEqual([PANNELLO_LOTTO])
+  })
+
   it('le frasi dei quattro motivi non esistono in copia', () => {
     // Con una copia locale dei quattro nomi, un quinto motivo aggiunto in
     // `ordinante-genitore.ts` non farebbe rompere niente: `tsc` resta verde e a

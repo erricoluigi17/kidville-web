@@ -134,3 +134,22 @@ export function intestatarioAutomaticoDelLotto(a: AnteprimaConProposta | null | 
   const candidato = (a?.candidati ?? []).find((c) => c?.adult_id === p.adult_id)
   return candidato?.fatturabile === true ? p : null
 }
+
+/**
+ * «L'app sa CHI ha pagato, ma a quella persona non si può intestare una fattura»
+ * — cioè: pagatore riconosciuto, dati fiscali incompleti.
+ *
+ * Serve al pannello del lotto per scegliere la FRASE di una riga che non è entrata,
+ * e non decide nessun documento: «Manca l'intestatario» e «i suoi dati non bastano»
+ * mandano l'operatore in due posti diversi, e la prima è falsa qui.
+ *
+ * ⚠️ SI COMPONE COL MOTORE, non si riscrive: è vero esattamente quando la proposta
+ * è applicabile ma il lotto la rifiuta lo stesso. Escluso il caso `ripartito`, che
+ * ha una frase sua e va detto prima, l'unica causa rimasta è il proposto non
+ * fatturabile. Una copia locale di quella condizione direbbe la frase sbagliata il
+ * giorno in cui `intestatarioAutomaticoDelLotto` ne aggiunge una terza.
+ */
+export function propostaBloccataDaiDati(a: AnteprimaConProposta | null | undefined): boolean {
+  if (a?.ripartito === true) return false
+  return propostaApplicabile(a) !== null && intestatarioAutomaticoDelLotto(a) === null
+}

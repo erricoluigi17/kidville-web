@@ -7,6 +7,7 @@ import { creaSessioneAruba, emettiFatturaPagamento } from '@/lib/aruba/emissione
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
+import { ricordaIntestatarioSullaScheda } from '@/lib/pagamenti/intestatari'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import {
@@ -255,6 +256,44 @@ export const POST = withRoute('pagamenti/fattura/lotto:POST', async (request: Re
       // pannello «emesse 15» quando le nuove erano tre.
       if (esito.gia) giaEmesse.push(voce)
       else emesse.push(voce)
+
+      // ─── RICORDA CHI HA PAGATO ───────────────────────────────────────────────
+      // La fattura è uscita intestata al genitore riconosciuto dall'ordinante del
+      // bonifico: lo si scrive sulla scheda del bambino, così il mese prossimo la
+      // cascata risponde da sola. Misurato il 2026-09-08: la maggior parte delle righe
+      // selezionabili non aveva NESSUN intestatario in anagrafica (i conteggi, con l'ora
+      // accanto, in `lotto-fatture.ts`), ed è quel vuoto che si sta riempiendo.
+      //
+      // Le tre condizioni sono tutte necessarie e nessuna è prudenza:
+      //  · `!esito.gia` — una riga ripescata dal registro non dice niente su OGGI, e
+      //    la sua fattura può essere stata intestata da tutt'altro;
+      //  · `intestatario?.tipo === 'adult'` — se il corpo non porta un intestatario ha
+      //    deciso la cascata, cioè l'anagrafica sapeva già rispondere: non c'è niente
+      //    da ricordare;
+      //  · l'alunno dev'essere noto — `esito.alunnoId` è `null` su un pagamento non
+      //    legato a nessun bambino (una vendita di merchandise), e lì non c'è scheda.
+      // La quarta — «la scheda dev'essere vuota» — sta dentro la `WHERE` della UPDATE.
+      //
+      // ⚠️ L'ALUNNO VIENE DALL'ESITO, non da una seconda lettura di `pagamenti`: è la
+      // stessa riga che ha appena prodotto il documento, e ha già passato il gate di
+      // sede. Una lettura a parte sarebbe una seconda fonte di verità su «di chi è
+      // questo pagamento», e per giunta senza quel gate.
+      //
+      // ⚠️ FAIL-OPEN, e va detto per intero: qui la fattura è GIÀ partita verso lo SdI
+      // e non si disfa. Un promemoria non salvato è un fastidio; una `throw` in questo
+      // punto fermerebbe le quattordici righe successive di un blocco già pagato in
+      // quota. Per questo si logga, e si logga anche il successo (AGENTS.md, regola 5):
+      // senza, «nessun log» non distinguerebbe «ha sempre funzionato» da «non è mai
+      // partito niente» — che è esattamente il guasto delle email.
+      if (!esito.gia && riga.intestatario?.tipo === 'adult' && esito.alunnoId) {
+        const ricordato = await ricordaIntestatarioSullaScheda(supabase, esito.alunnoId, riga.intestatario.adult_id)
+        logEvento('fattura', ricordato === 'non_salvato' ? 'warn' : 'info', {
+          operazione: 'pagamenti/fattura/lotto:POST',
+          esito: `intestatario-${ricordato.replace(/_/g, '-')}`,
+          pagamento_id: riga.pagamento_id,
+          alunno_id: esito.alunnoId,
+        })
+      }
       continue
     }
 

@@ -190,16 +190,64 @@ export interface AnteprimaPerIlLotto extends AnteprimaConProposta {
 }
 
 /**
- * La riga si può mandare al lotto?
+ * L'ANAGRAFICA, DA SOLA, BASTA A INTESTARE OGNI QUOTA?
  *
  * ⚠️ `quote.length > 0` NON è una ridondanza: `Array.prototype.every` su un elenco
  * vuoto risponde `true`, quindi senza questo controllo un pagamento per cui
  * l'anteprima non ha saputo determinare nessuna quota — cioè il caso in cui non si
- * sa a chi intestare la fattura — passerebbe come «pronto».
+ * sa a chi intestare la fattura — risulterebbe «tutto in regola».
  *
- * ⚠️ La misura che stava qui — «dei 130 pagamenti saldati uno solo ha un
- * intestatario risolvibile» — era SBAGLIATA, e rimisurarla è servito. Contati in
- * produzione lo stesso 2026-09-07:
+ * ⚠️ ESISTE COME FUNZIONE, e non scritto in linea, perché la stessa domanda la fa
+ * anche il pannello: `prontaPerIlLotto` decide se la riga entra, e
+ * `LottoFatturePanel` decide se spedire l'intestatario PROPOSTO. Erano due copie, e
+ * la seconda sbagliava esattamente sul caso dell'elenco vuoto: dichiarava «hanno
+ * deciso le quote» dove di quote non ce n'era nessuna, e la POST partiva senza
+ * l'intestatario — cioè il rifiuto si spostava dal browser ad Aruba, a quota spesa.
+ */
+export function quoteTutteFatturabili(quote: QuotaPerIlLotto[] | null | undefined): boolean {
+  return Array.isArray(quote) && quote.length > 0 && quote.every((q) => q?.fatturabile === true)
+}
+
+/**
+ * La riga si può mandare al lotto?
+ *
+ * Due vie, e la seconda esiste perché la prima non copre il caso più frequente:
+ *
+ *  1. l'anagrafica sa intestare OGNI quota (`quoteTutteFatturabili`), oppure
+ *  2. l'app sa CHI ha fatto il bonifico, e quel genitore è fatturabile.
+ *
+ * ⚠️ IL CONTROLLO DI LUNGHEZZA APPARTIENE ALLA PRIMA VIA, NON A TUTTA LA FUNZIONE, e
+ * la differenza è il difetto corretto il 2026-09-08. Stava come uscita anticipata
+ * (`if (!Array.isArray(quote) || quote.length === 0) return false`) e usciva PRIMA
+ * che la proposta venisse guardata — cioè spegneva la seconda via proprio nel caso
+ * in cui è l'unica: `quote: []` significa «nessun intestatario risolvibile in
+ * anagrafica» (`determinaQuoteFatturazione`, passo 5).
+ *
+ * Misurato in Conciliazione il 2026-09-08, sulle righe che il lotto può vedere:
+ *
+ *              alle 16:24   alle 16:50
+ *   righe selezionabili        20           14
+ *   con un ordinante           20           14
+ *   pronte col predicato di prima    4        3
+ *   pronte col predicato di adesso  18       12
+ *
+ * ⚠️ I DUE NUMERI ASSOLUTI SONO DIVERSI PERCHÉ SONO INVECCHIATI IN VENTISEI MINUTI,
+ * dentro il lavoro che li ha misurati: la lista si svuota man mano che si fattura e
+ * si riempie man mano che si abbina. È il rapporto a essere il risultato — da poco
+ * più di un quinto a circa sei settimi — non la coppia di interi. Chi rilegge questo
+ * commento fra un mese non ci trova una misura: ci trova la query da rifare.
+ *
+ * (Il conteggio delle «pronte» qui è calcolato con la sola regola del SOTTOINSIEME
+ * unico, la più stretta di `riconosciOrdinante`: l'uguaglianza esatta e la forma
+ * senza spazi ne riconoscono altre, quindi il numero vero è ≥ questo.)
+ *
+ * Il server era già pronto ad accettarle: `applicaIntestatarioScelto` su zero quote
+ * ne crea UNA con l'intestatario scelto e il totale, e sta PRIMA del 422
+ * «intestatario non impostato». È ciò che fa funzionare l'emissione singola.
+ *
+ * ⚠️ La misura precedente — «dei 130 pagamenti saldati uno solo ha un intestatario
+ * risolvibile» — era SBAGLIATA, e rimisurarla è servito. Contati in produzione il
+ * 2026-09-07:
  *
  *   156  pagamenti saldati in attesa di fattura
  *    11  con un movimento di riconciliazione confermato e un ordinante leggibile
@@ -207,17 +255,15 @@ export interface AnteprimaPerIlLotto extends AnteprimaConProposta {
  *     6  sbloccati SOLO dalla proposta del bonifico
  *   145  senza alcun movimento confermato: non compaiono nemmeno in lista
  *
- * Le due letture sono entrambe vere e vanno tenute insieme: rispetto a ciò che il
- * lotto può vedere, la proposta è quasi tutto; rispetto all'arretrato, il collo di
+ * Le letture sono tutte vere e vanno tenute insieme: rispetto a ciò che il lotto
+ * può vedere, la proposta è quasi tutto; rispetto all'arretrato, il collo di
  * bottiglia sono i 145 — e non lo tocca niente di quanto sta in questo file.
  *
  * Resta il punto del predicato: senza spendere un colpo di quota dice in dieci
  * secondi ciò che altrimenti si scopre aprendo i popup uno per uno.
  */
 export function prontaPerIlLotto(anteprima: AnteprimaPerIlLotto | null | undefined): boolean {
-  const quote = anteprima?.quote
-  if (!Array.isArray(quote) || quote.length === 0) return false
-  if (quote.every((q) => q?.fatturabile === true)) return true
+  if (quoteTutteFatturabili(anteprima?.quote)) return true
   // ...oppure l'app sa CHI ha fatto il bonifico, e quel genitore è fatturabile:
   // è la stessa proposta che l'emissione singola preseleziona, e il lotto la
   // buttava via due volte — il suo tipo non la conteneva, e il corpo

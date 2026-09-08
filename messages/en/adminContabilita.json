@@ -1019,5 +1019,6 @@
   "genrSceltaVuoto": "No child matches the search.",
   "genrSceltaConteggio": "{n, plural, =0 {No children} =1 {One child} other {# children}}",
   "genrSceltaBersaglio": "{n, plural, =0 {None selected: pick at least one child} =1 {Will generate for one child} other {Will generate for # children}}",
-  "genrGenerazioneSpenta": "Automatic fee generation is switched off in this location’s settings: the preview below lists the candidates, but confirming would write nothing."
+  "genrGenerazioneSpenta": "Automatic fee generation is switched off in this location’s settings: the preview below lists the candidates, but confirming would write nothing.",
+  "reconLottoConfermoProposteHint": "Confirmed payers are saved on the child\u2019s record, so the next invoice will not have to infer them again. Records that already have one are left untouched."
 }

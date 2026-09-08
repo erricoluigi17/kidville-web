@@ -130,6 +130,61 @@ export function applicaIntestatarioScelto(
   }
 }
 
+/**
+ * ─── «RICORDA CHI HA PAGATO» ────────────────────────────────────────────────
+ *
+ * Scrive `alunni.intestatario_fatture` con il genitore che ha ricevuto la fattura,
+ * ma SOLO se la scheda non ne aveva già uno.
+ *
+ * La chiama un posto solo: `POST /api/pagamenti/fattura/lotto`, dopo un'emissione
+ * riuscita e NUOVA in cui a decidere l'intestatario è stata la proposta
+ * dell'ordinante del bonifico. Serve a non rifare ogni mese la stessa deduzione su
+ * uno stesso bambino.
+ *
+ * ⚠️ NON LA CHIAMA L'EMISSIONE SINGOLA, ed è voluto: là un essere umano guarda il
+ * nome sullo schermo prima di premere, e per l'anagrafica digitata a mano esiste già
+ * la casella «Ricorda sulla scheda». Il commento in `api/pagamenti/fattura/route.ts`
+ * dice perché la singola non scrive mai, e resta valido.
+ *
+ * ─── LE DUE REGOLE, CHE SONO IL CONTRATTO E NON PRUDENZA ────────────────────
+ *
+ *  1. NON SOVRASCRIVE MAI una scheda già compilata, e la condizione viaggia dentro
+ *     la `WHERE` della UPDATE — non in una lettura fatta prima. Fra la lettura e la
+ *     scrittura una persona di Segreteria può aver compilato quella scheda a mano:
+ *     la sua scelta batte una deduzione fatta su un estratto conto, sempre.
+ *  2. NON PUÒ ROMPERE NIENTE. La fattura è già partita verso lo SdI quando questa
+ *     funzione parte, e non si disfa: un fallimento qui è un `warn` del chiamante,
+ *     mai un'eccezione che ferma il blocco.
+ *
+ * Misurato in produzione il 2026-09-08: dei 693 alunni, 516 hanno la colonna `NULL`
+ * e NESSUNO ha il letterale jsonb `null` — quindi `.is(…, null)` è la condizione
+ * giusta e non ne serve una seconda.
+ *
+ * Si scrive `{ tipo, adult_id }` e basta: è la forma che legge la cascata (passo 3)
+ * ed è quella che scrive già l'import delle iscrizioni. Un `nome` accanto sarebbe
+ * una copia destinata a invecchiare al primo cambio di anagrafica.
+ *
+ * ⚠️ PostgREST non lancia (AGENTS.md, regola 7): l'esito si legge dal valore di
+ * ritorno, e `[]` — zero righe toccate — significa «la scheda era già impostata»,
+ * che non è un errore.
+ */
+export type EsitoRicorda = 'salvato' | 'gia_impostato' | 'non_salvato'
+
+export async function ricordaIntestatarioSullaScheda(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  adultId: string,
+): Promise<EsitoRicorda> {
+  const { data, error } = await supabase
+    .from('alunni')
+    .update({ intestatario_fatture: { tipo: 'adult', adult_id: adultId } })
+    .eq('id', alunnoId)
+    .is('intestatario_fatture', null)
+    .select('id')
+  if (error) return 'non_salvato'
+  return (data?.length ?? 0) > 0 ? 'salvato' : 'gia_impostato'
+}
+
 interface Voce {
   adultId: string
   peso: number

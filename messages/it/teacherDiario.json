@@ -66,11 +66,16 @@
   "bagnoVasinoPiu": "Aumenta vasino",
   "noteMediche": "Note mediche",
   "nannaAiutoCompilazione": "Riempie l’ora a tutti: si salva solo chi ce l’ha.",
-  "nannaEliminaRegistrazione": "Elimina",
-  "nannaEliminaAria": "Elimina la registrazione di {nome}",
-  "nannaConfermaElimina": "Elimini la nanna di {nome}? La registrazione sparisce dal diario del genitore.",
-  "nannaConfermaEliminaConNota": "Elimini la nanna di {nome}? Sparisce anche la nota scritta per lui/lei.",
   "salvaConOrario": "{count, plural, one {Salva # bambino} other {Salva # bambini}}",
   "nannaNessunOrario": "Nessun orario compilato",
-  "alertErroreEliminazione": "Non sono riuscito a eliminare la registrazione. Riprova."
+  "alertErroreEliminazione": "Non sono riuscito a eliminare la registrazione. Riprova.",
+  "bagnoNessunaRegistrazione": "Nessun bagno registrato",
+  "pastoNessunaPortata": "Nessuna portata segnata",
+  "umoreNessunaScelta": "Nessun umore scelto",
+  "bagnoAiutoCompilazione": "Si salva solo chi ha almeno una registrazione.",
+  "pastoAiutoCompilazione": "Si salva solo chi ha almeno una portata segnata. «Niente» è una portata: dice che non ha mangiato.",
+  "eliminaRegistrazione": "Elimina",
+  "eliminaAria": "Elimina la registrazione di {nome}",
+  "confermaElimina": "Elimini «{evento}» di {nome}? La registrazione sparisce dal diario del genitore.",
+  "confermaEliminaConNota": "Elimini «{evento}» di {nome}? Sparisce anche la nota scritta per lui/lei."
 }

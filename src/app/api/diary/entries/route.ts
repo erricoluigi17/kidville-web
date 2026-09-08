@@ -425,13 +425,26 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 //  · scriverebbe `azione: 'update'` su una cancellazione. `AzioneScrittura` ha già
 //    `'delete'`: usare l'altro è una colonna d'audit che mente.
 //
-// PERIMETRO STRETTO, DI PROPOSITO. `tipo_evento` è un `z.enum` dei soli eventi nanna,
-// non una stringa libera. Il gesto che questa porta serve è «ho sbagliato a segnare
-// la nanna», non «cancella una riga qualunque del diario»: una stringa libera
-// regalerebbe alla stessa porta la cancellazione di pranzo, bagno e attività — cose
-// che nessuna schermata chiede e che nessuno ha deciso. Se un domani servirà per il
-// bagno, si aggiunge un valore all'enum: quella è la riga in cui la decisione passa
-// sotto gli occhi di qualcuno.
+// PERIMETRO STRETTO, DI PROPOSITO. `tipo_evento` è un `z.enum`, non una stringa
+// libera: il gesto che questa porta serve è «ho sbagliato a segnare», non «cancella
+// una riga qualunque del diario».
+//
+// ⏭️ IL 2026-09-08 LA DECISIONE È PASSATA, ed è quella che la riga qui sotto
+// prevedeva. Bagno, pranzo e merenda sono diventati selettivi come la nanna, e con
+// il filtro «azzera e risalva» non cancella più niente: la riga resta in archivio
+// mentre a schermo i contatori sono a zero e il toast è verde. Per il bagno è
+// peggio che per la nanna, perché la riga sbagliata NON è vuota — porta
+// `{pipi:2}` — quindi nemmeno il filtro di lettura la rende inerte, e il genitore
+// continua a leggere «Ho fatto pipì 2 volte» del figlio di un altro.
+//
+// L'elenco vive in `@/lib/diary/registrazione` (`TIPI_ELIMINABILI`), insieme a
+// quello dei tipi selettivi: sono due facce della stessa decisione e separarle
+// significherebbe, un domani, renderne uno selettivo e dimenticare la porta.
+// `attivita` resta fuori perché non è selettivo; `umore` resta fuori per una
+// ragione scritta lì.
+//
+// L'enum si tiene comunque QUI, esplicito e letterale: il gate di una rotta che
+// cancella non si legge da una costante importata.
 //
 // NESSUNA NOTIFICA AL GENITORE, e non è una comodità: il diario ha un buffer di
 // visibilità di 10 minuti (vedi il ramo genitore della GET). Una correzione fatta
@@ -441,8 +454,9 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 
 const deleteQuerySchema = z.object({
     alunno_id: zUuid,
-    // Solo la nanna: vedi «perimetro stretto» qui sopra.
-    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine']),
+    // Nanna, bagno e pasti: vedi «perimetro stretto» qui sopra. Deve restare
+    // allineato a `TIPI_ELIMINABILI` — c'è un lock che lo verifica.
+    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda']),
     // Default dinamico (oggi), calcolato nel codice come fa la GET.
     date: zDataYMD.optional(),
 });

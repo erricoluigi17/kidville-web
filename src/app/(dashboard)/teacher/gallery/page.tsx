@@ -13,6 +13,7 @@ import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/sy
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, type MotivoVideoNonValido } from '@/lib/media/processing';
 import { analizzaContenutoVideo } from '@/lib/media/codec-sniff';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
 import { caricaMediaGalleria, messaggioCaricamento } from '@/lib/gallery/carica-media';
 import { messaggioErrore, messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { formattaMegabyte } from '@/lib/i18n/numero';
@@ -258,15 +259,46 @@ function TeacherGalleryContent() {
         }));
     };
 
+    // Quante foto il gesto riempirebbe, e quante ne perderebbero i propri tag.
+    // Servono anche all'ETICHETTA del pulsante: il numero letto prima di premere
+    // è la difesa che costa meno di tutte.
+    const daRiempire = fotoDaConfigurare(uploadedFiles, activeFileIndex);
+    const giaConfigurate = fotoGiaConfigurate(uploadedFiles, activeFileIndex);
+
+    /**
+     * «✨ APPLICA» — LA DOMANDA ARRIVA PRIMA, E DI NORMA NON SI PERDE NIENTE.
+     *
+     * Fino al 2026-09-08 questo gesto copiava i tag della foto attiva su TUTTE le
+     * altre e lo diceva DOPO, con un `alert` che non si poteva annullare. Il 6
+     * settembre un'insegnante ha caricato 37 foto taggando i bambini presenti in
+     * ognuna: in archivio tutte e 37 hanno la stessa impronta di tag, gli stessi
+     * 2 bambini (entrambi con la liberatoria, quindi non è il lucchetto privacy).
+     * Quelle due famiglie hanno ricevuto 37 foto, tutte le altre nessuna.
+     *
+     * Due strade, e nessuna delle due sorprende:
+     *  · ci sono foto ancora senza tag → si riempiono SOLO quelle. Se altre hanno
+     *    già i loro, la domanda lo dice e dichiara che non verranno toccate.
+     *  · sono tutte già configurate → l'unico gesto utile è sostituire, e allora
+     *    la domanda usa quella parola e dice cosa va perso.
+     */
     const handleApplyToAll = () => {
-        const active = uploadedFiles[activeFileIndex];
-        if (!active) return;
-        setUploadedFiles(prev => prev.map(f => ({
-            ...f,
-            tag_students: [...active.tag_students],
-            is_broadcast: active.is_broadcast
-        })));
-        alert(t('galleryAlertApplicataATutte'));
+        if (!uploadedFiles[activeFileIndex]) return;
+
+        if (daRiempire === 0) {
+            // Niente da riempire: resta solo la sostituzione, che è distruttiva
+            // e quindi non può essere il ramo silenzioso.
+            if (giaConfigurate === 0) return;
+            if (!confirm(t('galleryConfermaSostituisci', { gia: giaConfigurate }))) return;
+            setUploadedFiles(prev => applicaTagATutte(prev, activeFileIndex, { sovrascrivi: true }));
+            return;
+        }
+
+        // Si chiede solo quando c'è qualcosa da sapere. Una conferma che compare
+        // anche quando non si può perdere niente è una conferma che si impara a
+        // premere senza leggere — ed è così che si torna al difetto di prima.
+        if (giaConfigurate > 0
+            && !confirm(t('galleryConfermaApplicaParziale', { n: daRiempire, gia: giaConfigurate }))) return;
+        setUploadedFiles(prev => applicaTagATutte(prev, activeFileIndex));
     };
 
     const activeFile = uploadedFiles[activeFileIndex] || null;
@@ -417,7 +449,18 @@ function TeacherGalleryContent() {
                         // mostriamoli così l'insegnante sa chi togliere dai tag. Restano in
                         // chiaro a schermo e SOLO lì: nei log non entrano mai (sono minori).
                         const dettagli = Array.isArray(errData.nomi) && errData.nomi.length > 0 ? ` (${(errData.nomi as string[]).join(', ')})` : '';
-                        throw new Error(`«${f.file.name}»: ${motivo}${dettagli}`);
+                        // LO STATO VIAGGIA CON L'ERRORE, il nome del file no.
+                        // In `app_log` questo ramo produceva 7 righe in un giorno
+                        // tutte uguali — `gallery-pubblicazione-fallita: Error`,
+                        // `contesto` vuoto — perché `nomeErrore` restituisce il
+                        // TIPO dell'errore e un `new Error` generico si chiama
+                        // «Error» per tutti. Un 413 (file troppo grande), un 422
+                        // (Privacy Lock) e un 500 collassavano nella stessa riga:
+                        // sapevamo che sette foto non erano arrivate e nient'altro.
+                        // Lo status è un numero, quindi passa la redazione; il
+                        // messaggio contiene il nome del file — la foto di un
+                        // minore — e infatti non entra nel log, oggi come prima.
+                        throw Object.assign(new Error(`«${f.file.name}»: ${motivo}${dettagli}`), { stato: res.status });
                     }
                 }
             }
@@ -445,7 +488,14 @@ function TeacherGalleryContent() {
             // `evento|messaggio|stato`, quindi guasti diversi collassavano in una riga
             // sola — e infatti in tabella ogni riga aveva `contesto` vuoto e nessuno
             // stato, cioè non diceva niente di ciò che era andato storto.
-            logClient({ livello: 'error', evento: 'fetch', messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(err)}`, route: '/teacher/gallery' });
+            const stato = (err as { stato?: unknown })?.stato;
+            logClient({
+                livello: 'error', evento: 'fetch', route: '/teacher/gallery',
+                messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(err)}`,
+                // `stato` è parte della chiave di deduplicazione di `logClient`
+                // (`evento|messaggio|stato`): è ciò che separa il 413 dal 422.
+                ...(typeof stato === 'number' ? { stato } : {}),
+            });
             alert(err instanceof Error && err.message ? err.message : t('galleryErrCaricamentoGenerico'));
         } finally {
             setUploading(false);
@@ -649,13 +699,16 @@ function TeacherGalleryContent() {
                                         </div>
                                     </div>
                                     
-                                    {uploadedFiles.length > 1 && (
+                                    {uploadedFiles.length > 1 && (daRiempire > 0 || giaConfigurate > 0) && (
                                         <button
                                             type="button"
                                             onClick={handleApplyToAll}
                                             className="px-3.5 py-1.5 bg-kidville-yellow/20 hover:bg-kidville-yellow hover:scale-[1.02] text-kidville-green font-barlow font-bold text-[10px] uppercase rounded-full tracking-wide transition-all shadow-sm flex-shrink-0 cursor-pointer"
                                         >
-                                            {t('galleryApplicaTutte')}
+                                            {/* L'etichetta DICE quante foto toccherà: si legge prima di premere. */}
+                                            {daRiempire > 0
+                                                ? t('galleryApplicaAlleAltre', { n: daRiempire })
+                                                : t('galleryApplicaSostituisci')}
                                         </button>
                                     )}
                                 </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import { voceDaMostrare } from '@/lib/diary/registrazione';
 import { useTranslations } from 'next-intl';
 import { BookOpen, CheckCircle2, Users } from 'lucide-react';
 import { CockpitPage, PageHeader, StatCard, CockpitSelect } from '@/components/ui/cockpit';
@@ -33,7 +34,12 @@ function AdminDiaryInner() {
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (!Array.isArray(d)) return;
-        setCompilati(new Set(d.map((e: { alunno_id: string }) => e.alunno_id)).size);
+        // Contava le righe vuote, quindi diceva sempre «tutta la classe»: è il
+        // numero su cui la direzione si fida per sapere se il diario è stato
+        // compilato davvero. Ora conta chi ha una registrazione vera.
+        const vere = (d as Array<{ alunno_id: string; tipo_evento: string; dettagli?: Record<string, unknown> | null; nota_libera?: string | null; nota_bambino?: string | null }>)
+            .filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.nota_libera || e.nota_bambino) }));
+        setCompilati(new Set(vere.map(e => e.alunno_id)).size);
       })
       .catch(() => {});
   };

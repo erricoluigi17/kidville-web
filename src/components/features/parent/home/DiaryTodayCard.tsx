@@ -6,12 +6,17 @@ import { useTranslations } from 'next-intl'
 import { BookOpen, ChevronRight } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { useDateFormat } from '@/lib/i18n/date'
+import { voceDaMostrare } from '@/lib/diary/registrazione'
 
 interface Entry {
   id: string
   tipo_evento: string
   timestamp_evento: string
   note?: string | null
+  // Serve a `voceDaMostrare`: senza, «Bagno» ricomparirebbe in home anche dopo la
+  // correzione, perché qui si stampa il `tipo_evento` grezzo senza guardare cosa
+  // c'è dentro. La GET del genitore lo restituisce già.
+  dettagli?: Record<string, unknown> | null
 }
 
 interface Props {
@@ -41,7 +46,13 @@ export function DiaryTodayCard({ studentId, href }: Props) {
     fetch(`/api/diary/entries?alunno_id=${studentId}&from=${today}&to=${today}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (active && Array.isArray(d)) setEntries(d)
+        // Si filtra UNA volta sola, appena arrivano: da `entries` dipendono tre
+        // cose che altrimenti mentirebbero in tre modi diversi — lo stato vuoto,
+        // l'ora di «aggiornato alle» (che poteva essere quella di una riga vuota)
+        // e l'elenco, che stampa il `tipo_evento` grezzo.
+        if (active && Array.isArray(d)) {
+          setEntries((d as Entry[]).filter(e => voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.note) })))
+        }
       })
       .catch(() => {})
       .finally(() => {

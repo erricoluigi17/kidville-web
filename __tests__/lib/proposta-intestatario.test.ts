@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   propostaApplicabile,
   intestatarioAutomaticoDelLotto,
+  propostaBloccataDaiDati,
   CHIAVE_MOTIVO_PROPOSTA,
   MOTIVI_NOTI,
   type AnteprimaConProposta,
@@ -80,5 +81,43 @@ describe('intestatarioAutomaticoDelLotto — le due guardie in più', () => {
   it('`fatturabile` assente non vale come `true`', () => {
     const a = base({ candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria' }] })
     expect(intestatarioAutomaticoDelLotto(a)).toBe(null)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERCHÉ la riga non è entrata nel lotto: è una frase, non un documento
+//
+// «Manca l'intestatario» e «i suoi dati non bastano» mandano l'operatore in due
+// posti diversi, e la prima è falsa quando l'app il pagatore l'ha riconosciuto.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('propostaBloccataDaiDati', () => {
+  const conCandidati = (fatturabile: boolean | undefined, over: Partial<AnteprimaConProposta> = {}): AnteprimaConProposta => ({
+    quote: [],
+    ripartito: false,
+    candidati: [{ adult_id: 'a-1', nome: 'Rossi Maria', ...(fatturabile === undefined ? {} : { fatturabile }) }],
+    proposta: { adult_id: 'a-1', motivo: 'bonifico_esatto' },
+    ordinante: 'ROSSI MARIA',
+    ...over,
+  })
+
+  it('pagatore riconosciuto ma non fatturabile → true, ANCHE con le quote vuote', () => {
+    // Le quote vuote sono il caso che il vecchio `quote.some(…)` non vedeva: su un
+    // elenco vuoto rispondeva `false` e la frase giusta non usciva mai.
+    expect(propostaBloccataDaiDati(conCandidati(false))).toBe(true)
+    expect(propostaBloccataDaiDati(conCandidati(undefined))).toBe(true)
+  })
+
+  it('pagatore riconosciuto E fatturabile → false: quella riga è entrata nel lotto', () => {
+    expect(propostaBloccataDaiDati(conCandidati(true))).toBe(false)
+  })
+
+  it('nessuna proposta → false: qui «manca l’intestatario» è la frase vera', () => {
+    expect(propostaBloccataDaiDati({ quote: [], candidati: [], proposta: null, ordinante: null })).toBe(false)
+    expect(propostaBloccataDaiDati(null)).toBe(false)
+  })
+
+  it('pagamento RIPARTITO → false: ha una frase sua, e viene prima', () => {
+    // Non è «i dati non bastano»: gli intestatari sono due, ed è voluto.
+    expect(propostaBloccataDaiDati(conCandidati(false, { ripartito: true }))).toBe(false)
   })
 })

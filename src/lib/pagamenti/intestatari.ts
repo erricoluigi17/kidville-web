@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getGenitoriDiAlunno, getGenitoriDiAlunnoEsito } from '@/lib/anagrafiche/legami'
+import { logEvento } from '@/lib/logging/logger'
 import {
   anagraficaDaIntestatarioAltro,
   anagraficaDaPersonaScelta,
@@ -130,6 +131,79 @@ export function applicaIntestatarioScelto(
   }
 }
 
+/**
+ * ─── «RICORDA CHI HA PAGATO» ────────────────────────────────────────────────
+ *
+ * Scrive `alunni.intestatario_fatture` con il genitore che ha ricevuto la fattura,
+ * ma SOLO se la scheda non ne aveva già uno.
+ *
+ * La chiama un posto solo: `POST /api/pagamenti/fattura/lotto`, dopo un'emissione
+ * riuscita e NUOVA in cui a decidere l'intestatario è stata la proposta
+ * dell'ordinante del bonifico. Serve a non rifare ogni mese la stessa deduzione su
+ * uno stesso bambino.
+ *
+ * ⚠️ NON LA CHIAMA L'EMISSIONE SINGOLA, ed è voluto: là un essere umano guarda il
+ * nome sullo schermo prima di premere, e per l'anagrafica digitata a mano esiste già
+ * la casella «Ricorda sulla scheda». Il commento in `api/pagamenti/fattura/route.ts`
+ * dice perché la singola non scrive mai, e resta valido.
+ *
+ * ─── LE DUE REGOLE, CHE SONO IL CONTRATTO E NON PRUDENZA ────────────────────
+ *
+ *  1. NON SOVRASCRIVE MAI una scheda già compilata, e la condizione viaggia dentro
+ *     la `WHERE` della UPDATE — non in una lettura fatta prima. Fra la lettura e la
+ *     scrittura una persona di Segreteria può aver compilato quella scheda a mano:
+ *     la sua scelta batte una deduzione fatta su un estratto conto, sempre.
+ *  2. NON PUÒ ROMPERE NIENTE. La fattura è già partita verso lo SdI quando questa
+ *     funzione parte, e non si disfa: un fallimento qui è un `warn` del chiamante,
+ *     mai un'eccezione che ferma il blocco.
+ *
+ * Misurato in produzione il 2026-09-08: dei 693 alunni, 516 hanno la colonna `NULL`
+ * e NESSUNO ha il letterale jsonb `null` — quindi `.is(…, null)` è la condizione
+ * giusta e non ne serve una seconda.
+ *
+ * Si scrive `{ tipo, adult_id }` e basta — ed è una DIVERGENZA dichiarata, non una
+ * coincidenza: l'import delle iscrizioni e la scheda di Segreteria scrivono anche
+ * `nome` (170 righe su 170 in produttivo ce l'hanno). Nessun consumatore lo legge
+ * — verificato uno per uno su cascata, `anagraficaDaScheda`, la scheda economica,
+ * `admin/students`, l'export AdE, l'attestazione e l'anonimizzazione GDPR — e una
+ * copia del nome invecchia al primo cambio di anagrafica. A dire CHI ha scritto e
+ * QUANDO non è un campo omesso: è la riga di `audit_scritture_docente` che il
+ * chiamante registra subito dopo.
+ *
+ * ⚠️ PostgREST non lancia (AGENTS.md, regola 7): l'esito si legge dal valore di
+ * ritorno, e `[]` — zero righe toccate — significa «la scheda era già impostata»,
+ * che non è un errore.
+ */
+export type EsitoRicorda = 'salvato' | 'gia_impostato' | 'non_salvato'
+
+/**
+ * ⚠️ TORNA ANCHE L'ERRORE, non solo l'esito. Un'enumerazione a tre valori fa
+ * uscire `42703` («colonna assente», ambiente non migrato), `42501` («policy») e
+ * un timeout tutti quanti come «non salvato» — cioè uno status senza il corpo,
+ * che è il bug descritto per esteso in AGENTS.md, regola 3. I tre casi chiedono
+ * tre interventi diversi, e chi legge il log deve poterli distinguere.
+ */
+export interface RisultatoRicorda {
+  esito: EsitoRicorda
+  /** L'errore PostgREST, da passare a `logEvento`. `null` quando non ce n'è stato. */
+  error: unknown
+}
+
+export async function ricordaIntestatarioSullaScheda(
+  supabase: SupabaseClient,
+  alunnoId: string,
+  adultId: string,
+): Promise<RisultatoRicorda> {
+  const { data, error } = await supabase
+    .from('alunni')
+    .update({ intestatario_fatture: { tipo: 'adult', adult_id: adultId } })
+    .eq('id', alunnoId)
+    .is('intestatario_fatture', null)
+    .select('id')
+  if (error) return { esito: 'non_salvato', error }
+  return { esito: (data?.length ?? 0) > 0 ? 'salvato' : 'gia_impostato', error: null }
+}
+
 interface Voce {
   adultId: string
   peso: number
@@ -181,7 +255,20 @@ export async function intestatarioDefaultFamiglia(
   supabase: SupabaseClient,
   alunnoId: string,
 ): Promise<string | null> {
-  const { data: sp } = await supabase.from('student_parents').select('parent_id').eq('student_id', alunnoId)
+  const { data: sp, error: errSp } = await supabase
+    .from('student_parents')
+    .select('parent_id')
+    .eq('student_id', alunnoId)
+  if (errSp) {
+    // Senza questa riga, «il bambino non ha genitori in anagrafica» e «la lettura
+    // non ha risposto» erano la stessa cosa — e la seconda fa cadere la cascata a
+    // `[]`, che è il segnale su cui il lotto decide di scrivere sulla scheda.
+    logEvento('fattura', 'warn', {
+      operazione: 'intestatarioDefaultFamiglia',
+      esito: 'student-parents-non-letto',
+      alunno_id: alunnoId,
+    }, errSp)
+  }
   const parentIds = [...new Set(((sp ?? []) as { parent_id?: string | null }[]).map((r) => r.parent_id).filter(Boolean) as string[])]
   if (parentIds.length === 0) return null
   const def = await supabase
@@ -352,11 +439,25 @@ export async function determinaQuoteFatturazione(
   const totale = round2(Number(pagamento.importo))
 
   // 1) Ordine divise → quota unica all'ordinante.
-  const { data: ordine } = await supabase
+  //
+  // ⚠️ L'ERRORE SI GUARDA, e da oggi conta il doppio: `[]` in fondo a questa
+  // cascata non significa più solo «nessuno ha detto a chi intestare» — è anche il
+  // segnale (`cascataVuota`) su cui il lotto decide se SCRIVERE sulla scheda del
+  // bambino. Una lettura fallita che passa per un elenco vuoto farebbe scrivere lì
+  // dove una fonte forte esisteva e non si è potuta leggere. PostgREST non lancia
+  // (AGENTS.md, regola 7): il `try/catch` attorno non scatterebbe mai.
+  const { data: ordine, error: errOrdine } = await supabase
     .from('divise_ordini')
     .select('parent_id')
     .eq('pagamento_id', pagamento.id)
     .maybeSingle()
+  if (errOrdine) {
+    logEvento('fattura', 'warn', {
+      operazione: 'determinaQuoteFatturazione',
+      esito: 'divise-ordini-non-letto',
+      pagamento_id: pagamento.id,
+    }, errOrdine)
+  }
   if (ordine?.parent_id) {
     return [{ adultId: ordine.parent_id as string, importo: totale, label: 'Divise' }]
   }
@@ -364,10 +465,20 @@ export async function determinaQuoteFatturazione(
   // 2) Genitori separati.
   if (alunno.genitori_separati) {
     // 2a) quote esplicite del pagamento (l'editor Segreteria le tiene = importo).
-    const { data: quote } = await supabase
+    const { data: quote, error: errQuote } = await supabase
       .from('pagamenti_quote')
       .select('adult_id, importo, etichetta')
       .eq('pagamento_id', pagamento.id)
+    if (errQuote) {
+      // Qui il silenzio costa di più che altrove: senza le quote esplicite un
+      // pagamento di genitori separati scende ai ripieghi e può uscire intestato a
+      // una persona sola, cancellando la detrazione dell'altra.
+      logEvento('fattura', 'warn', {
+        operazione: 'determinaQuoteFatturazione',
+        esito: 'pagamenti-quote-non-lette',
+        pagamento_id: pagamento.id,
+      }, errQuote)
+    }
     if (quote && quote.length > 0) {
       const mapped = (quote as { adult_id: string; importo: number | string; etichetta: string | null }[]).map((q) => ({
         adultId: q.adult_id,

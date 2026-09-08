@@ -26,9 +26,14 @@ import {
   pausaDopoBlocco,
   stimaRimanenteMs,
   prontaPerIlLotto,
+  quoteTutteFatturabili,
   type AnteprimaPerIlLotto,
 } from '@/lib/pagamenti/lotto-fatture';
-import { intestatarioAutomaticoDelLotto, CHIAVE_MOTIVO_PROPOSTA } from '@/lib/pagamenti/proposta-intestatario';
+import {
+  intestatarioAutomaticoDelLotto,
+  propostaBloccataDaiDati,
+  CHIAVE_MOTIVO_PROPOSTA,
+} from '@/lib/pagamenti/proposta-intestatario';
 
 /**
  * ─── «EMETTI TUTTE»: LA BARRA DI MASSA DELLA RICONCILIAZIONE ────────────────
@@ -390,19 +395,41 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
         // riga RIPARTITA è semplicemente falso: l'intestatario non manca, sono due,
         // ed è voluto. Chi legge deve sapere quale delle tre cose gli è capitata,
         // perché la mossa successiva è diversa in tutti e tre i casi.
+        //
+        // ⚠️ `propostaBloccataDaiDati`, e NON `quote.some(…)` come faceva fino al
+        // 2026-09-08: su un elenco di quote VUOTO `some` risponde `false`, quindi il
+        // caso «so chi ha pagato ma gli mancano i dati» cadeva sul messaggio generico
+        // proprio quando le quote non c'erano — cioè sulla maggioranza delle righe
+        // misurate quel giorno. La diagnosi si compone col motore condiviso invece di
+        // riscriversi qui: è la stessa coppia di funzioni che decide l'ingresso.
+        //
+        // ⚠️ IL RAMO `ripartito` VIENE PRIMA E ASSORBIVA OGNI ALTRA CAUSA. Una riga
+        // ripartita con TUTTE le quote fatturabili il lotto la emette (primo ramo di
+        // `prontaPerIlLotto`); quindi se una ripartita finisce qui è perché
+        // l'anagrafica di un quotista NON basta — e «va emesso uno per volta»
+        // mandava l'operatore a emettere per trovarsi «dati fiscali incompleti»,
+        // senza che nessuno gli avesse detto quale campo manca.
         const quoteAnt = (dati.intestatario?.quote ?? []) as { fatturabile?: boolean | null }[];
         const motivo = dati.intestatario?.ripartito === true
-          ? t('reconLottoMotivoRipartito')
-          : (dati.intestatario?.proposta && quoteAnt.some((q) => q?.fatturabile !== true))
+          ? (quoteAnt.some((q) => q?.fatturabile !== true)
+              ? t('reconLottoMotivoRipartitoIncompleto')
+              : t('reconLottoMotivoRipartito'))
+          : propostaBloccataDaiDati(dati.intestatario)
             ? t('reconLottoMotivoPropostoIncompleto')
             : t('reconLottoMotivoIntestatario');
         return { daCompletare: { ...base, motivo } };
       }
-      const quote = (dati.intestatario?.quote ?? []) as { nome?: string | null }[];
+      const quote = (dati.intestatario?.quote ?? []) as { nome?: string | null; fatturabile?: boolean | null }[];
       const perQuote = quote.map((q) => (q.nome ?? '').trim()).filter(Boolean).join(' · ');
       // Se è la proposta ad aver sbloccato la riga, l'intestatario è il proposto —
       // non la concatenazione dei nomi delle quote, che qui direbbe un'altra cosa.
-      const daProposta = proposta && !quote.every((q) => (q as { fatturabile?: boolean | null }).fatturabile === true);
+      //
+      // ⚠️ `quoteTutteFatturabili` E NON `quote.every(…)` scritto qui: su un elenco
+      // VUOTO `every` risponde `true`, quindi `daProposta` diventava `false` e la POST
+      // partiva SENZA l'intestatario. La riga entrava nel lotto e veniva respinta dal
+      // 422 del server: il rifiuto si spostava dal browser ad Aruba, a quota spesa.
+      // La domanda è la stessa di `prontaPerIlLotto`, quindi è la stessa funzione.
+      const daProposta = proposta && !quoteTutteFatturabili(quote);
       return {
         pronta: {
           ...base,
@@ -844,9 +871,27 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
                         checked={confermoProposte}
                         onChange={(e) => { setConfermoProposte(e.target.checked); if (e.target.checked) setMancaSpunta(false); }}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-kidville-green"
+                        // Senza questo, uno screen reader legge «Confermo gli
+                        // intestatari proposti dal bonifico» e NON la frase che dice
+                        // cosa si sta autorizzando — cioè proprio quella che porta il
+                        // consenso a una scrittura sull'anagrafica di un minore.
+                        aria-describedby="lotto-conferma-nota"
                       />
                       <span>{t('reconLottoConfermoProposte', { n: pronteProposta.length })}</span>
                     </label>
+                    {/*
+                      Da questa versione la spunta non autorizza solo dei documenti: a
+                      emissione riuscita l'intestatario confermato viene SCRITTO sulla
+                      scheda del bambino (se ne era priva). È una scrittura
+                      sull'anagrafica di un minore — e quella riga non decide solo le
+                      fatture: diventa il «CF pagatore» della comunicazione all'Agenzia
+                      delle Entrate e l'intestatario dell'attestazione per il 730. Chi
+                      mette la spunta autorizza una DETRAZIONE, e deve poterlo leggere
+                      qui — non scoprirlo dopo.
+                    */}
+                    <p id="lotto-conferma-nota" className="mt-1 pl-6 font-maven text-[11px] text-kidville-sub">
+                      {t('reconLottoConfermoProposteHint')}
+                    </p>
                     {mancaSpunta && (
                       <p role="alert" className="mt-1 font-maven text-xs text-kidville-error-strong">
                         {t('reconLottoSpuntaMancante')}

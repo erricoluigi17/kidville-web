@@ -89,7 +89,13 @@ const zPersonaScelta = z.strictObject({
     numero_civico: z.string().trim().max(LIMITI.numeroCivico).optional(),
 })
 
-const zAdultScelto = z.strictObject({
+/**
+ * Il solo ramo `adult`. Esportato perché `POST …/fattura/lotto` accetta SOLTANTO
+ * questo: il lotto non ha nessun modulo da compilare, e accettare da lì
+ * l'anagrafica di una persona significherebbe far entrare nome, codice fiscale e
+ * residenza dal browser su un documento fiscale che nessuno rilegge.
+ */
+export const zAdultScelto = z.strictObject({
     tipo: z.literal('adult'),
     adult_id: z.string().trim().min(1),
 })

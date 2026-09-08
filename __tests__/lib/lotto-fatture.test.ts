@@ -13,6 +13,7 @@ import {
   MAX_DURATION_BLOCCO_S,
   PAUSA_DOPO_RIFIUTO_LOCALE_MS,
   prontaPerIlLotto,
+  quoteTutteFatturabili,
   corpoEmissione,
   pausaDopo,
   pausaDopoBlocco,
@@ -356,10 +357,38 @@ describe('prontaPerIlLotto — quando è la proposta a sbloccare la riga', () =>
     expect(prontaPerIlLotto(conProposta())).toBe(true)
   })
 
-  it('quote vuote restano NON pronte, anche con una proposta', () => {
-    // `every` su un elenco vuoto risponde `true`: il controllo di lunghezza non è
-    // una ridondanza, e la proposta non deve diventare la scorciatoia che lo aggira
-    expect(prontaPerIlLotto(conProposta({ quote: [] }))).toBe(false)
+  it('quote VUOTE + proposta usabile → PRONTA: è il caso in cui la proposta serve di più', () => {
+    // Zero quote significa «l'anagrafica non dice a chi intestare»
+    // (`determinaQuoteFatturazione`, passo 5). Misurato in Conciliazione il 2026-09-08:
+    // la MAGGIORANZA delle righe selezionabili sta così, e per quasi tutte l'ordinante
+    // del bonifico nomina UN solo genitore, coi dati fiscali completi. I conteggi esatti
+    // stanno in `lotto-fatture.ts` con l'ora accanto — e invecchiano in mezz'ora.
+    //
+    // Il server è già pronto ad accettarle: `applicaIntestatarioScelto` su zero quote
+    // ne crea UNA con l'intestatario scelto e il totale, e sta PRIMA del 422 — è
+    // esattamente ciò che fa funzionare l'emissione singola. A scartarle era solo
+    // questo predicato, che diceva «manca l'intestatario» sapendo chi era.
+    expect(prontaPerIlLotto(conProposta({ quote: [] }))).toBe(true)
+  })
+
+  it('quote vuote SENZA proposta restano non pronte: è il motivo per cui il controllo di lunghezza esiste', () => {
+    // `[].every()` risponde `true`. Il controllo non è sparito: si è spostato DENTRO
+    // il primo ramo, che è l'unico a cui serviva. Se sparisse davvero, un pagamento
+    // di cui non si sa nulla passerebbe come «pronto» e brucerebbe un colpo di quota.
+    expect(prontaPerIlLotto({ quote: [] })).toBe(false)
+    expect(prontaPerIlLotto({})).toBe(false)
+    expect(prontaPerIlLotto(null)).toBe(false)
+  })
+
+  it('quoteTutteFatturabili: l’elenco vuoto NON è «tutte fatturabili»', () => {
+    // Il predicato esiste per essere scritto una volta sola: `prontaPerIlLotto` e il
+    // pannello (che decide se spedire l'intestatario proposto) devono rispondere alla
+    // stessa domanda con le stesse parole. Erano due copie, e la seconda sbagliava.
+    expect(quoteTutteFatturabili([])).toBe(false)
+    expect(quoteTutteFatturabili(null)).toBe(false)
+    expect(quoteTutteFatturabili(undefined)).toBe(false)
+    expect(quoteTutteFatturabili([{ fatturabile: true }])).toBe(true)
+    expect(quoteTutteFatturabili([{ fatturabile: true }, { fatturabile: false }])).toBe(false)
   })
 
   it('pagamento ripartito → non pronta, anche con la proposta', () => {

@@ -32,11 +32,29 @@ const h = vi.hoisted(() => ({
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ assertPagamentoInScope: h.scope }))
+/**
+ * ⚠️ IL FINTO CLIENT DEVE ESSERE UNA CATENA THENABLE, non un oggetto con due metodi.
+ * Dal 2026-09-08 la route legge anche `pagamenti(id, alunno_id)` per il blocco
+ * (`select(...).in(...)`) e scrive `alunni.intestatario_fatture`
+ * (`update(...).eq(...).is(...).select(...)`). Un mock che conosce solo
+ * `update().eq()` non fa fallire un caso di merito: fa esplodere la route con
+ * «select is not a function», che è un guasto dell'impianto travestito da difetto.
+ * Cosa vada scritto su `alunni`, e QUANDO, lo misura
+ * `__tests__/api/fattura-lotto-ricorda-intestatario.test.ts`; qui basta non intralciare.
+ */
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: () => {
       const b: Record<string, unknown> = {}
-      Object.assign(b, { update: () => b, eq: async () => ({ error: null }) })
+      Object.assign(b, {
+        select: () => b,
+        update: () => b,
+        eq: () => b,
+        is: () => b,
+        in: () => b,
+        then: (ok: (r: unknown) => unknown, ko?: (e: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(ok, ko),
+      })
       return b
     },
   }),

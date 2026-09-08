@@ -84,7 +84,7 @@ export function alunnoDaPagamento(pag: PagamentoPerCausale): AlunnoPerCausale | 
 }
 
 /** Lo slug della categoria, con lo stesso srotolamento. */
-function slugCategoria(pag: PagamentoPerCausale): string | null | undefined {
+export function slugCategoria(pag: PagamentoPerCausale): string | null | undefined {
   const c = pag.payment_categories
   return (Array.isArray(c) ? c[0] : c)?.slug
 }

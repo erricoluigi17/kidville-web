@@ -1019,5 +1019,7 @@
   "genrSceltaVuoto": "No child matches the search.",
   "genrSceltaConteggio": "{n, plural, =0 {No children} =1 {One child} other {# children}}",
   "genrSceltaBersaglio": "{n, plural, =0 {None selected: pick at least one child} =1 {Will generate for one child} other {Will generate for # children}}",
-  "genrGenerazioneSpenta": "Automatic fee generation is switched off in this location’s settings: the preview below lists the candidates, but confirming would write nothing."
+  "genrGenerazioneSpenta": "Automatic fee generation is switched off in this location’s settings: the preview below lists the candidates, but confirming would write nothing.",
+  "reconLottoConfermoProposteHint": "Confirmed payers are saved on the child\u2019s record when it has none: from then on they also determine the tax-relief statement and the report to the Revenue Agency. They are only saved from tuition payments.",
+  "reconLottoMotivoRipartitoIncompleto": "The payment is split between two parents and at least one record is not complete enough for an electronic invoice: complete it, then issue the documents one at a time."
 }

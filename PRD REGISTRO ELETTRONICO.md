@@ -99,6 +99,159 @@
 
 ---
 
+## 🧾 Changelog — Il lotto fatture diceva «manca l'intestatario» sapendo chi aveva pagato — 2026-09-08 (branch `fix/lotto-fatture-intestatario-bonifico`)
+
+Segnalazione del titolare: *«In conciliazione quando faccio le fatture multiple dice che non possono
+emettere in quanto non ha intestatario, deve usare la stessa logica di quella singola, quindi
+suggerire chi ha effettuato il bonifico.»*
+
+**Misurato in produzione prima di toccare il codice** (lettura, nessuna scrittura), e
+**rimisurato a lavoro finito** — perché nel frattempo era già invecchiato:
+
+| | alle 16:24 | alle 16:50 |
+|---|---|---|
+| righe selezionabili (movimento confermato, pagamento saldato, nessuna fattura) | **20** | **14** |
+| con un ordinante leggibile sul bonifico | 20 | 14 |
+| pronte col predicato di **prima** | **4** | **3** |
+| pronte col predicato di **adesso** | **18** | **12** |
+| senza alcun riconoscimento possibile (restano fuori, ed è giusto) | 2 | 2 |
+
+⚠️ **I due numeri assoluti sono diversi perché sono invecchiati in ventisei minuti,
+dentro il lavoro che li ha misurati**: la lista si svuota man mano che si fattura e si
+riempie man mano che si abbina. Il risultato è il **rapporto** — da poco più di un quinto
+a circa sei settimi — non la coppia di interi. Chi rilegge non ci trova una misura: ci
+trova la query da rifare. (Il conteggio usa la sola regola del *sottoinsieme unico*, la
+più stretta di `riconosciOrdinante`: l'uguaglianza esatta e la forma senza spazi ne
+riconoscono altre, quindi il numero vero è **≥** questo.)
+
+⚠️ **La prova nell'interfaccia vera non è stata fatta**: l'estensione Chrome non era
+connessa, e l'identità via header è disattivata in locale (401), quindi il pre-volo non è
+stato esercitato attraverso la sua schermata. Ciò che è dimostrato è il predicato — con i
+test, con la prova di mutazione, e con questa misura sui dati veri.
+
+**Il difetto era una riga**, in `src/lib/pagamenti/lotto-fatture.ts`: il controllo `quote.length === 0`
+stava come **uscita anticipata** invece che dentro il primo dei due rami, e usciva prima che la
+proposta del bonifico venisse guardata. Il guard serve — `[].every()` risponde `true` — ma serve
+**solo** al ramo «l'anagrafica sa intestare ogni quota». E `quote: []` è esattamente il caso
+«nessun intestatario risolvibile in anagrafica»: cioè quello in cui la proposta è l'unica risposta
+possibile. Ora il predicato è `quoteTutteFatturabili(quote) || intestatarioAutomaticoDelLotto(…)`.
+
+**Il server era già pronto ad accettarle**: `applicaIntestatarioScelto` su zero quote ne crea UNA
+con l'intestatario scelto e il totale, e sta **prima** del 422 «intestatario non impostato». È ciò
+che fa funzionare l'emissione singola da sempre; a scartare le righe era solo il pre-volo del
+browser, che non le spediva mai.
+
+🔴 **Il secondo posto in cui la stessa lista vuota mentiva.** `LottoFatturePanel` decideva se
+spedire l'intestatario proposto con `!quote.every(q => q.fatturabile)`: su un elenco **vuoto**
+`every` è `true`, quindi la riga sarebbe entrata nel lotto e la POST sarebbe partita **senza**
+intestatario — spostando il rifiuto dal browser ad Aruba, a quota spesa. Correggere solo il
+predicato avrebbe prodotto un lotto che parte e fallisce quattordici volte. La domanda è la stessa,
+quindi ora è la **stessa funzione** (`quoteTutteFatturabili`, esportata e usata da entrambi).
+
+**Il motivo mostrato non era più vero.** Il ramo che sceglie il messaggio usava `quote.some(…)`, che
+su lista vuota è `false`: il caso «so chi ha pagato ma gli mancano i dati fiscali» cadeva sul
+generico «manca l'intestatario», che manda l'operatore nel posto sbagliato. Ora decide
+`propostaApplicabile`, che dopo il ramo `ripartito` è non-nulla esattamente in quel caso.
+
+**Novità di merito, decisa dal titolare in questa sessione**: a emissione riuscita il lotto
+**ricorda l'intestatario sulla scheda del bambino** (`alunni.intestatario_fatture`), così la fattura
+del mese dopo non deve più dedurlo. È una scrittura sull'anagrafica di un minore decisa da
+un'euristica, e le condizioni sono il contratto: **solo** dopo un'emissione riuscita e **nuova**
+(mai su una riga «già a registro»), **solo** quando a decidere è stata la proposta (se ha deciso la
+cascata non c'è niente da ricordare), e **solo su una scheda vuota** — con la condizione dentro la
+`WHERE` della UPDATE, non in una lettura fatta prima, perché fra le due una persona di Segreteria
+può aver compilato quella scheda a mano e la sua scelta batte sempre una deduzione fatta su un
+estratto conto. Misurato: dei 693 alunni, **516 hanno la colonna `NULL`** e nessuno il letterale
+jsonb `null`. Il salvataggio è **fail-open**: la fattura è già partita verso lo SdI e non si disfa,
+quindi un fallimento è un `warn` e non ferma le righe successive del blocco.
+
+La casella di conferma lo dichiara: *«Gli intestatari confermati vengono salvati sulla scheda del
+bambino… Le schede che ne hanno già uno non si toccano.»* Chi spunta deve leggerlo lì, non scoprirlo
+dopo.
+
+**L'emissione singola non cambia**, e il commento in `api/pagamenti/fattura/route.ts` che dichiara
+«qui non si scrive mai» è stato riscritto perché nomini la differenza: là un essere umano ha appena
+letto il nome sullo schermo, nel lotto non c'è nessuno che legga.
+
+**Esito**: le righe emettibili in blocco passano da **4 a 18 su 20** (misura delle 16:24) e
+da **3 a 12 su 14** (misura delle 16:50). Quelle che restano fuori sono le righe in cui
+l'ordinante non nomina nessun genitore, e devono restare fuori.
+
+### 🔎 Giro di critica prima del merge — sette correzioni, e il difetto peggiore era un test
+
+Il lavoro è stato passato a **due critici** (uno sul predicato e il pannello, uno sulla scrittura in
+anagrafica) con mandato di trovare, non di approvare. Hanno trovato.
+
+🔴 **Il difetto peggiore non era nel codice: era nel collaudo.** Mutando `emissione.ts` in
+`alunnoId: null` — cioè spegnendo del tutto la scrittura sulla scheda — **386 test su 31 file
+restavano verdi**, compresi i due file scritti apposta per quella funzionalità: mockavano
+`emettiFatturaPagamento` e si iniettavano il campo da soli. *Un test mai visto fallire non è un
+test.* Ora i tre campi dell'esito (`alunnoId`, `cascataVuota`, `categoriaSlug`) sono **obbligatori**
+nel tipo e collaudati sul motore vero: le tre mutazioni corrispondenti diventano rosse.
+
+**Le condizioni della scrittura sono passate da quattro a cinque**, e le due nuove chiudono danni
+misurati:
+
+- **`cascataVuota`** — si ricorda solo quando **nessuna fonte** aveva saputo dire a chi intestare.
+  Se una l'aveva detto ed era solo incompleta (uno split di genitori separati, il default di
+  famiglia, una scelta di Segreteria), la fonte forte esiste già e una deduzione da un estratto
+  conto non se ne appropria. È anche ciò che tiene fuori i **genitori separati con una quota sola**,
+  che `ripartito` — definito come `quote.length > 1` — non vede.
+- **`categoriaSlug === 'retta'`** — chi salda una mensa, un grembiule o del materiale non diventa il
+  pagatore fiscale permanente di quel bambino. Misurato: **91 righe candidate non sono rette**, e
+  per **26 bambini l'unico candidato non lo è**.
+
+🔴 **La casella di conferma diceva meno di quello che fa.** `alunni.intestatario_fatture` non decide
+solo le fatture: è il **«CF pagatore»** della comunicazione all'Agenzia delle Entrate
+(`api/pagamenti/export`) e l'intestatario dell'**attestazione per il 730**. Prima della scrittura
+quel bambino stava fra le «Escluse» per *«codice fiscale del pagatore mancante»*. Chi spunta
+autorizza una **detrazione**, e adesso il testo lo dice — con `aria-describedby`, perché uno screen
+reader leggeva la casella e non la frase che porta il consenso.
+
+Altre quattro correzioni:
+
+- **audit mancante**: ogni mutazione di `alunni` lascia una riga in `audit_scritture_docente`
+  (DL-037) e questa non la lasciava. Alla domanda «chi ha deciso che la detrazione di questo bambino
+  va a questo genitore, e quando?» non rispondeva nessuno. Ora sì.
+- **il log collassava**: `app_log` deduplica per `(fingerprint, giorno)` **senza** aggiornare il
+  contesto, quindi dodici schede scritte in un pomeriggio diventavano **una riga** che nomina il
+  primo bambino e mente sugli altri undici. Prova in produzione, stessa forma: una riga con
+  `occorrenze: 66` e un solo `pagamento_id`. Aggiunto `distingui: ['alunno_id']`.
+- **l'errore veniva buttato**: `ricordaIntestatarioSullaScheda` tornava un'enumerazione a tre valori,
+  quindi `42703` («colonna assente»), `42501` («policy») e un timeout uscivano tutti come «non
+  salvato» — uno status senza il corpo, cioè AGENTS.md regola 3 applicata a una scrittura. Ora torna
+  anche l'errore, e il log lo porta.
+- **tre `error` PostgREST ingoiati** a monte della cascata (`divise_ordini`, `pagamenti_quote`,
+  `student_parents`): `quote: []` non significava solo «nessuno l'ha detto», significava anche «una
+  lettura è fallita e nessuno l'ha guardata» — e da oggi quell'elenco vuoto **decide una scrittura**.
+  Ora si loggano.
+
+Due cose rese **vere** invece che promesse: il motivo «il pagamento è ripartito… va emesso uno per
+volta» ora dice **anche** che manca un'anagrafica (era la causa reale in ogni caso che arriva lì); e
+lo schema della POST del lotto è stretto a `zAdultScelto`, perché il commento che diceva «lo schema
+lo vieta per iscritto» descriveva una protezione che **non c'era** (accettava l'unione intera, ramo
+`persona` compreso).
+
+**Prova sul campo, col compositore reale sui dati di produzione** (85 pagamenti con bonifico
+abbinato): **51 → 80 righe pronte, zero regressioni**, e **29 su 29** delle nuove superano *tutti* i
+gate del server (`adultoEGenitoreDi`, `conflitto_quote`, quote non vuote, `validaCessionario`) —
+cioè nessuna brucia un colpo di quota Aruba. Con le condizioni più strette, **29 su 29** verrebbero
+comunque ricordate: la guardia non costa niente sui dati di oggi.
+
+⚠️ **Cosa resta non dimostrato**: la prova nell'interfaccia vera (estensione Chrome non connessa, e
+in locale l'identità via header è disattivata). E due test hanno fallito **una volta ciascuno** nella
+suite intera — `ParentDetailPanel-sedi-figli` e `AvvisoForm-allegato-orfano` — passando isolati e
+alla riesecuzione completa: instabili, senza rapporto con questo lavoro, ma vanno guardati se
+ricompaiono in CI.
+
+---
+
+**Fuori scope, e resta aperto**: i **145 pagamenti saldati senza nessun movimento confermato** non
+compaiono in questa schermata ed è lì il collo di bottiglia vero. Per loro un ordinante non esiste,
+quindi niente di tutto questo li tocca.
+
+---
+
 ## 📷 Changelog — Le foto arrivavano a una famiglia sola, e il bagno risultava a tutti — 2026-09-08 (branch `fix/foto-notifiche-e-diario-selettivo`)
 
 Due segnalazioni del titolare. Nessuna delle due era dove sembrava, ed entrambe sono state

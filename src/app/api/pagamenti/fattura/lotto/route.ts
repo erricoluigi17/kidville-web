@@ -6,7 +6,9 @@ import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { creaSessioneAruba, emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
+import { zAdultScelto } from '@/lib/fatturazione/intestatario-scelto'
+import { ricordaIntestatarioSullaScheda } from '@/lib/pagamenti/intestatari'
+import { logScrittura } from '@/lib/audit/scrittura'
 import { withRoute } from '@/lib/logging/with-route'
 import { logEvento } from '@/lib/logging/logger'
 import {
@@ -105,11 +107,19 @@ const bodySchema = z.object({
          * blocco lo butterebbe via, lasciando decidere al server la cascata predefinita
          * — fatture intestate a qualcun altro, e nessuna schermata che lo dica.
          *
-         * L'unione discriminata rende irrappresentabile l'ibrido «adult_id + anagrafica»:
-         * dal browser viaggia solo l'id, e nome, codice fiscale e residenza si rileggono
+         * ⚠️ SOLO IL RAMO `adult`, e non è una restrizione di gusto: fino al 2026-09-08
+         * qui stava l'unione INTERA (`zIntestatarioScelto`), ramo `persona` compreso,
+         * mentre il commento di `CorpoEmissione` dichiarava che «lo schema della POST lo
+         * vieta per iscritto». Non lo vietava. Il lotto non ha nessun modulo da
+         * compilare: accettare da qui nome, codice fiscale e residenza digitati nel
+         * browser significherebbe farli finire su un documento fiscale che nessuno
+         * rilegge — quindici alla volta. Adesso il commento è vero perché lo schema lo
+         * rende vero.
+         *
+         * Dal browser viaggia solo l'id; nome, codice fiscale e residenza si rileggono
          * da `parents` lato server.
          */
-        intestatario: zIntestatarioScelto.optional(),
+        intestatario: zAdultScelto.optional(),
       }),
     )
     .min(1)
@@ -255,6 +265,113 @@ export const POST = withRoute('pagamenti/fattura/lotto:POST', async (request: Re
       // pannello «emesse 15» quando le nuove erano tre.
       if (esito.gia) giaEmesse.push(voce)
       else emesse.push(voce)
+
+      // ─── RICORDA CHI HA PAGATO ───────────────────────────────────────────────
+      // La fattura è uscita intestata al genitore riconosciuto dall'ordinante del
+      // bonifico: lo si scrive sulla scheda del bambino, così il mese prossimo la
+      // cascata risponde da sola senza dedurre niente.
+      //
+      // 🔴 QUESTA SCRITTURA NON DECIDE SOLO LE FATTURE. `alunni.intestatario_fatture`
+      // è il «CF pagatore» della comunicazione all'Agenzia delle Entrate
+      // (`api/pagamenti/export`) e l'intestatario dell'attestazione per il 730
+      // (`api/pagamenti/attestazione`): prima della scrittura quel bambino stava fra
+      // le «Escluse» per «codice fiscale del pagatore mancante», dopo la sua spesa
+      // viene comunicata a nome di quell'adulto. Decide una DETRAZIONE, non una PDF.
+      //
+      // Le CINQUE condizioni sono tutte necessarie e nessuna è prudenza:
+      //  · `!esito.gia` — una riga ripescata dal registro non dice niente su OGGI, e
+      //    la sua fattura può essere stata intestata da tutt'altro;
+      //  · `intestatario?.tipo === 'adult'` — se il corpo non porta un intestatario ha
+      //    deciso la cascata, cioè l'anagrafica sapeva già rispondere;
+      //  · `esito.alunnoId` — `null` su un pagamento non legato a nessun bambino (una
+      //    vendita di merchandise), e lì non c'è nessuna scheda;
+      //  · `esito.cascataVuota` — NESSUNA fonte aveva saputo dire a chi intestare. Se
+      //    una l'aveva detto ed era solo incompleta (uno split di genitori separati,
+      //    il default di famiglia, una scelta di Segreteria), la fonte forte esiste
+      //    già e una deduzione da un estratto conto non se ne appropria. È anche ciò
+      //    che tiene fuori i genitori separati con una quota sola, che `ripartito`
+      //    — definito come `quote.length > 1` — non vede;
+      //  · `categoriaSlug === 'retta'` — chi salda una mensa, un grembiule o del
+      //    materiale non deve diventare il pagatore fiscale permanente di quel
+      //    bambino. Misurato il 2026-09-08: 91 righe candidate non sono rette, e per
+      //    26 bambini l'UNICO candidato non lo è.
+      // La sesta — «la scheda dev'essere vuota» — sta dentro la `WHERE` della UPDATE.
+      //
+      // ⚠️ L'ALUNNO E LA CASCATA VENGONO DALL'ESITO, non da una seconda lettura: è la
+      // stessa riga che ha appena prodotto il documento, e ha già passato il gate di
+      // sede. Una lettura a parte sarebbe una seconda fonte di verità su «di chi è
+      // questo pagamento», e per giunta senza quel gate.
+      //
+      // ⚠️ FAIL-OPEN, e va detto per intero: qui la fattura è GIÀ partita verso lo SdI
+      // e non si disfa. Un promemoria non salvato è un fastidio; un'eccezione in
+      // questo punto uscirebbe dal ciclo e da `withRoute` come 500, il pannello
+      // leggerebbe `stato = 0`, e `numeroInDubbio(0)` fermerebbe il lotto dicendo «il
+      // numero potrebbe essere stato consumato» su fatture che erano uscite bene —
+      // perdendo per strada l'elenco delle emesse, già costruito e mai restituito.
+      // Per questo la chiamata sta dentro un `try`, e per questo si logga anche il
+      // SUCCESSO (AGENTS.md, regola 5).
+      if (
+        !esito.gia &&
+        riga.intestatario?.tipo === 'adult' &&
+        esito.alunnoId &&
+        esito.cascataVuota &&
+        esito.categoriaSlug === 'retta'
+      ) {
+        const alunnoId = esito.alunnoId
+        const adultId = riga.intestatario.adult_id
+        try {
+          const { esito: ricordato, error: erroreRicorda } = await ricordaIntestatarioSullaScheda(
+            supabase,
+            alunnoId,
+            adultId,
+          )
+          // ⚠️ `distingui: ['alunno_id']` NON è un vezzo: `app_log` deduplica per
+          // `(fingerprint, giorno)` e l'`ON CONFLICT` somma le occorrenze SENZA
+          // aggiornare il contesto. Senza, dodici schede scritte in un pomeriggio
+          // diventano UNA riga che nomina il primo bambino e mente sugli altri
+          // undici — e questa è l'unica ricostruibilità di una scrittura decisa da
+          // un'euristica su dati di minori. Il volume è già limitato dal tetto
+          // orario di Aruba, quindi il costo della distinzione è dichiarabile.
+          logEvento(
+            'fattura',
+            ricordato === 'non_salvato' ? 'warn' : 'info',
+            {
+              operazione: 'pagamenti/fattura/lotto:POST',
+              esito: `intestatario-${ricordato.replace(/_/g, '-')}`,
+              pagamento_id: riga.pagamento_id,
+              alunno_id: alunnoId,
+            },
+            erroreRicorda ?? undefined,
+            { distingui: ['alunno_id'] },
+          )
+          // Il registro immodificabile delle scritture su `alunni` (DL-037): la
+          // stessa colonna, quando la cambia una persona dalla scheda, ne lascia
+          // una. Senza, alla domanda «chi ha deciso che la detrazione di questo
+          // bambino va a questo genitore, e quando?» non risponde nessuno.
+          if (ricordato === 'salvato') {
+            await logScrittura(supabase, {
+              attore: auth.user,
+              entitaTipo: 'alunni',
+              entitaId: alunnoId,
+              azione: 'update',
+              valoreDopo: { intestatario_fatture: { tipo: 'adult', adult_id: adultId } },
+            })
+          }
+        } catch (err) {
+          logEvento(
+            'fattura',
+            'warn',
+            {
+              operazione: 'pagamenti/fattura/lotto:POST',
+              esito: 'intestatario-non-ricordato',
+              pagamento_id: riga.pagamento_id,
+              alunno_id: alunnoId,
+            },
+            err,
+            { distingui: ['alunno_id'] },
+          )
+        }
+      }
       continue
     }
 

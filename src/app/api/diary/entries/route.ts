@@ -440,8 +440,8 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
 // L'elenco vive in `@/lib/diary/registrazione` (`TIPI_ELIMINABILI`), insieme a
 // quello dei tipi selettivi: sono due facce della stessa decisione e separarle
 // significherebbe, un domani, renderne uno selettivo e dimenticare la porta.
-// `attivita` resta fuori perché non è selettivo; `umore` resta fuori per una
-// ragione scritta lì.
+// `attivita` è entrata insieme alla sua regola selettiva; `umore` resta fuori
+// per una ragione scritta lì.
 //
 // L'enum si tiene comunque QUI, esplicito e letterale: il gate di una rotta che
 // cancella non si legge da una costante importata.
@@ -456,7 +456,7 @@ const deleteQuerySchema = z.object({
     alunno_id: zUuid,
     // Nanna, bagno e pasti: vedi «perimetro stretto» qui sopra. Deve restare
     // allineato a `TIPI_ELIMINABILI` — c'è un lock che lo verifica.
-    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda']),
+    tipo_evento: z.enum(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita']),
     // Default dinamico (oggi), calcolato nel codice come fa la GET.
     date: zDataYMD.optional(),
 });

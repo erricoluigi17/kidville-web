@@ -136,12 +136,35 @@ describe.each(['pranzo', 'merenda'] as const)('%s — «niente» è una registra
   })
 })
 
-describe('l\'attività resta di CLASSE, e non va filtrata per bambino', () => {
-  it('si salva a tutti anche senza partecipazione: l\'attività c\'è stata per tutti', async () => {
-    // Filtrarla farebbe sparire dal diario di tutti un'attività realmente svolta e
-    // non valutata bambino per bambino: sarebbe l'errore dei 29 bambini, rifatto.
+describe('l\'attività resta di CLASSE, ma non inventa più una pittura mai fatta', () => {
+  it('con una DESCRIZIONE si salva a TUTTI, anche a chi non ha una partecipazione', async () => {
+    // È la regola che la distingue dal bagno: l'attività è di classe. Filtrarla
+    // sulla partecipazione del singolo la farebbe sparire dal diario di tutti —
+    // l'errore dei 29 bambini, rifatto. 294 righe su 444 stanno in questo caso.
     const result = await montaSuEvento('attivita' as 'bagno')
+    act(() => {
+      result.current.setActivities([{ tipo: 'pittura', descrizione: 'tema autunno', studentPartecipazione: { a1: 'entusiasta', b2: null } }])
+    })
     await act(async () => { await result.current.handleSave() })
     expect(postBody).toHaveLength(2)
+    expect(postBody?.map(r => r.alunno_id).sort()).toEqual(['a1', 'b2'])
+  })
+
+  it('la sola PARTECIPAZIONE basta, senza descrizione', async () => {
+    const result = await montaSuEvento('attivita' as 'bagno')
+    act(() => {
+      result.current.setActivities([{ tipo: 'gioco', descrizione: '', studentPartecipazione: { a1: 'entusiasta', b2: null } }])
+    })
+    await act(async () => { await result.current.handleSave() })
+    // La partecipazione è per-bambino: la riga di `b2` non dice niente e non parte.
+    expect(postBody?.map(r => r.alunno_id)).toEqual(['a1'])
+  })
+
+  it('aprire e salvare SENZA scrivere niente non manda «Ho fatto pittura» a nessuno', async () => {
+    // Il tipo nasce a `pittura` e la descrizione vuota: era la trappola gemella di
+    // quella del bagno, dove i contatori nascono a zero.
+    const result = await montaSuEvento('attivita' as 'bagno')
+    await act(async () => { await result.current.handleSave() })
+    expect(postEffettuate()).toHaveLength(0)
   })
 })

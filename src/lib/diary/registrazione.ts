@@ -35,18 +35,22 @@ import { eEventoNanna, nannaCompilata } from '@/lib/diary/nanna';
 import { umoreFromDettagli } from '@/lib/diary/umore';
 import { eEventoBagno, bagnoCompilato } from '@/lib/diary/bagno';
 import { eEventoPasto, pastoCompilato } from '@/lib/diary/pasto';
+import { eEventoAttivita, attivitaCompilata } from '@/lib/diary/attivita';
 
 /**
  * I tipi evento che si salvano SOLO a chi li ha davvero.
  *
- * `attivita` non c'è, e non è una dimenticanza: la descrizione di un'attività è di
- * CLASSE per progetto — «oggi pittura, tema autunno» è vero per tutti — e l'unica
- * cosa per bambino, la partecipazione, può legittimamente restare vuota per un
- * bambino che c'era. Filtrarla farebbe sparire dal diario di tutti un'attività
- * realmente svolta: sarebbe l'errore dei 29 bambini, rifatto.
+ * In produzione i tipi evento sono SETTE (misurato il 2026-09-08) e da oggi hanno
+ * tutti una regola. `attivita` è entrata per ultima e con una regola DIVERSA dalle
+ * altre: non guarda il singolo bambino ma la riga — basta una descrizione perché
+ * l'attività valga per tutta la classe. Filtrarla sulla partecipazione del singolo
+ * farebbe sparire dal diario di tutti un'attività realmente svolta: sarebbe
+ * l'errore dei 29 bambini, rifatto. Vedi `attivita.ts`.
+ *
+ * Il fail-open di `voceDaMostrare` resta, e ora serve solo ai tipi che NASCERANNO.
  */
 export const TIPI_SELETTIVI: readonly string[] = [
-    'umore', 'nanna', 'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda',
+    'umore', 'nanna', 'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita',
 ];
 
 /** Questo tipo evento si salva solo a chi lo ha davvero? */
@@ -81,6 +85,9 @@ export function voceDaMostrare(
     if (eEventoNanna(tipo)) return nannaCompilata(tipo, dettagli);
     if (eEventoBagno(tipo)) return bagnoCompilato(tipo, dettagli);
     if (eEventoPasto(tipo)) return pastoCompilato(tipo, dettagli);
+    // ⚠️ L'attività è di CLASSE: basta una descrizione perché valga per tutti, e la
+    // partecipazione del singolo non è mai un requisito. Vedi `attivita.ts`.
+    if (eEventoAttivita(tipo)) return attivitaCompilata(dettagli);
     return true;
 }
 
@@ -104,11 +111,13 @@ export function voceDaMostrare(
  * d'attesa — non a una frase falsa nel diario di un bambino. Resta un buco noto,
  * e sta scritto qui perché si veda.
  *
- * `attivita` non è qui perché non è selettivo: si salva a tutti e non ha la
- * trappola del no-op.
+ * `attivita` è entrata il 2026-09-08 INSIEME al suo salvataggio selettivo, non
+ * dopo: renderla selettiva senza darle la porta d'uscita avrebbe armato la stessa
+ * trappola: cancellare la descrizione e risalvare non toglie la riga, la esclude
+ * soltanto dal payload — e il genitore continua a leggere l'attività di ieri.
  */
 export const TIPI_ELIMINABILI: readonly string[] = [
-    'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda',
+    'nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita',
 ];
 
 /** Questa registrazione si può cancellare dalla schermata del docente? */

@@ -167,7 +167,39 @@ correzione* — una nota scritta senza segnare nessuna portata sarebbe stata but
 silenzio. Una nota è contenuto, e il genitore la legge dentro la tessera dell'evento: ora tiene in
 piedi la voce da sola.
 
-Gate: **15.604 test verdi**, `eslint` 0, build ok. Ogni correzione ha il suo test visto **rosso
+**Seguito, stesso giorno — la regola vale ora su TUTTO il diario.** Alla domanda del titolare
+(*«vale per tutto il diario? chi non è compilato non deve comparire al genitore»*) la risposta
+misurata era **no**: in produzione i tipi evento sono **sette**, e sei avevano una regola.
+Mancava `attivita` — 444 righe, 246 bambini. Il danno era piccolo (**2 righe mute su 444**: 294
+hanno una descrizione vera, 132 la sola partecipazione) ma la trappola era la stessa del bagno: il
+tipo nasce a `pittura`, la descrizione vuota, e «Salva Attività per tutti» scriveva comunque.
+
+La regola dell'attività è però **diversa da tutte le altre, e va detto**: è di **classe**. Basta
+una descrizione perché valga per tutti; filtrarla sulla partecipazione del singolo farebbe sparire
+dal diario di tutti un'attività realmente svolta — l'errore dei 29 bambini, rifatto.
+
+Chiudendola sono emerse due cose che i test hanno trovato prima di me:
+
+- **Il filtro del salvataggio guardava uno stato diverso da quello che scriveva.** Per l'attività
+  il payload si costruisce da `activities`, mentre il filtro leggeva `studentStates` (che per
+  l'attività contiene solo `{partecipazione: null}`). Finché l'attività non era selettiva la
+  divergenza non si vedeva; nel momento in cui lo è diventata avrebbe significato «nessuna attività
+  salvata, mai» — con il toast verde. Ora si filtra su **ciò che si sta per scrivere**, e il
+  conteggio del pulsante arriva dalla stessa funzione.
+- **Un lock nuovo, `selettivo ⇒ eliminabile`**, ha trovato subito una casella scoperta: `nanna`
+  senza suffisso. È un'eccezione legittima — `ALL_EVENT_TYPES` non lo elenca e in produzione le
+  righe sono **zero** — ma prima non era scritta da nessuna parte. Le eccezioni ora stanno in una
+  mappa con la ragione accanto, e il lock impedisce che il prossimo evento reso selettivo nasca
+  senza la sua porta d'uscita.
+
+**Pulizia dei dati, su richiesta del titolare**: cancellate **437** righe vuote (353 bagno, 56
+pranzo, 28 merenda) — non 451. **14 sono state risparmiate perché avevano una nota**: vuote nei
+dettagli, non vuote come contenuto, ed è la stessa regola `conNota` del codice applicata al
+`DELETE`. Copia in `public.backup_diario_vuote_20260908` (RLS attiva, nessuna policy);
+`get_advisors` **0 ERROR**; il `DELETE` prende gli id dalla copia, non dal predicato. Restano
+fuori: 131 nanne vuote della #130 e 2 attività mute, tutte inerti in lettura.
+
+Gate: **15.620 test verdi**, `eslint` 0, build ok. Ogni correzione ha il suo test visto **rosso
 prima e rosso di nuovo dopo** averla rotta di proposito — compreso un falso verde scoperto e
 chiuso: due asserzioni negative sulla pagina del genitore passavano *prima che i dati
 arrivassero*, e ora sono legate a un'ancora positiva.

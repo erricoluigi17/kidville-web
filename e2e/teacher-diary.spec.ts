@@ -121,8 +121,22 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
   await apriEventoEAttendiRipristino(page, 'Registra Merenda');
   await expect(page.getByText('Aurora').first()).toBeVisible();
   // Le quantità sono simboli: ✗ ¼ ½ ¾ ★ (★ = "Tutto!"), prima riga = Aurora.
-  await page.getByRole('button', { name: '★' }).first().click();
-  await salvaEAttendi(page, /Salva Merenda per tutti/);
+  //
+  // ⚠️ STESSA GUARDIA DELL'UMORE, e per lo stesso motivo (vedi il blocco qui sotto):
+  // il DB E2E non si azzera fra le run, `apriEventoEAttendiRipristino` ripristina il
+  // ★ salvato la volta prima, e questo click è un TOGGLE che lo toglierebbe. Fino al
+  // 2026-09-08 la merenda si salvava comunque — il pulsante diceva «per tutti» e
+  // scriveva l'intera sezione — quindi il POST partiva lo stesso e il difetto non si
+  // vedeva. Da quando si salva solo chi ha una portata segnata, deselezionare Aurora
+  // significa zero bambini da salvare, nessun POST, e trenta secondi di attesa per
+  // una risposta che nessuno manderà.
+  const stella = page.getByRole('button', { name: '★' }).first();
+  if ((await stella.getAttribute('aria-pressed')) !== 'true') {
+    await stella.click();
+    await expect(stella).toHaveAttribute('aria-pressed', 'true');
+    // Il pulsante non promette più «per tutti»: dichiara QUANTI finiranno in archivio.
+    await salvaEAttendi(page, /Salva \d+ bambin[oi]/);
+  }
 
   // Umore (tile attiva via diario_config della scuola E2E): Aurora → Felice.
   //
@@ -143,7 +157,9 @@ test('diario: salva merenda e umore, con persistenza', async ({ page }) => {
     // Il click deve aver ATTECCHITO: se questa cade, il difetto è l'interazione, non il
     // salvataggio — e si vuole saperlo qui, non trenta secondi dopo su un'altra riga.
     await expect(felice).toHaveAttribute('aria-pressed', 'true');
-    await salvaEAttendi(page, /Salva Umore per tutti/);
+    // `umore` era selettivo da sempre, ma il pulsante diceva ancora «per tutti»:
+    // una frase falsa sul pulsante che la esegue. Ora dichiara il numero.
+    await salvaEAttendi(page, /Salva \d+ bambin[oi]/);
   }
   // Se era già «Felice» non si salva nulla: non c'è niente da scrivere, e la persistenza
   // — che è l'oggetto di questo test — è comunque quella che si verifica dopo il reload.

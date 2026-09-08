@@ -252,6 +252,13 @@ export function MealDetailInline({
                                             {MEAL_QUANTITIES.map(q => (
                                                 <button
                                                     key={q.value}
+                                                    // Il click è un TOGGLE (ritoccare la stessa quantità
+                                                    // riporta a `null`), e finora lo stato viveva solo nel
+                                                    // colore: uno screen reader non poteva saperlo, e nemmeno
+                                                    // un test poteva sapere se stava per selezionare o
+                                                    // deselezionare. È la stessa dichiarazione che i pulsanti
+                                                    // dell'umore hanno già.
+                                                    aria-pressed={selQ === q.value}
                                                     onClick={() => onMealSelect(student.id, corso.id, selQ === q.value ? null : q.value)}
                                                     className={`flex-1 py-2 rounded-xl text-xs font-bold border-2 transition-all duration-150 active:scale-95 ${
                                                         selQ === q.value

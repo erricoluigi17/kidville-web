@@ -14,6 +14,7 @@ import { zUuid, zDataYMD } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento, logErrore } from '@/lib/logging/logger';
 import { riconciliaRichieste } from '@/lib/armadietto/richieste';
+import { voceDaMostrare } from '@/lib/diary/registrazione';
 
 // Modalità genitore: default from = 14 giorni fa, to = oggi (dinamici, calcolati nel codice).
 const getParentQuerySchema = z.object({
@@ -221,6 +222,38 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
         if (scopeErr) return scopeErr;
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // LA VOCE MUTA NON ENTRA IN ARCHIVIO, E LA REGOLA STA ANCHE QUI.
+    //
+    // Non è ridondanza col filtro della schermata: è che quel filtro vive nel
+    // CLIENT, e un client si può non aggiornare. Misurato il 2026-09-08, DUE ORE
+    // dopo il rilascio del salvataggio selettivo: una maestra ha scritto 19 righe
+    // di bagno di cui 17 vuote e senza note, perché il suo tablet aveva l'app
+    // aperta da mattina e stava ancora eseguendo il bundle di prima. Tre colleghe,
+    // nella stessa finestra, ne hanno scritte zero. La regola va dove nessuno può
+    // scavalcarla: nella rotta che possiede la tabella.
+    //
+    // NON si RIFIUTA la richiesta: le altre righe sono legittime e vanno salvate.
+    // Le mute si SALTANO — ed è per questo che il salto si logga: «17 righe non
+    // scritte» in silenzio sarebbe il guasto opposto a quello che stiamo chiudendo.
+    //
+    // `voceDaMostrare` è la stessa funzione dei cinque lettori: una regola sola,
+    // e fail-open sui tipi che non ne hanno una (nessun filtro inventato qui).
+    // ─────────────────────────────────────────────────────────────────────────
+    const daScrivere = entries.filter((e) => voceDaMostrare(
+        e.tipo_evento,
+        (e.dettagli ?? null) as Record<string, unknown> | null,
+        { conNota: Boolean(String(e.nota_libera ?? '').trim() || String(e.nota_bambino ?? '').trim()) },
+    ));
+    if (daScrivere.length < entries.length) {
+        logEvento('diary', 'warn', {
+            operazione: 'diary/entries:POST',
+            esito: 'voci-mute-saltate',
+            n_ricevute: entries.length,
+            n_saltate: entries.length - daScrivere.length,
+        });
+    }
+
     const today = new Date().toISOString().split('T')[0];
     const startOfDay = `${today}T00:00:00.000Z`;
     const endOfDay = `${today}T23:59:59.999Z`;
@@ -228,7 +261,7 @@ export const POST = withRoute('diary/entries:POST', async (request: NextRequest)
     const results = [];
     const errors = [];
 
-    for (const entry of entries) {
+    for (const entry of daScrivere) {
         // Cerca se esiste già un evento per questo alunno+tipo oggi
         const { data: existing } = await admin
             .from('eventi_diario')

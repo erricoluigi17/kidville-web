@@ -177,6 +177,75 @@ letto il nome sullo schermo, nel lotto non c'è nessuno che legga.
 da **3 a 12 su 14** (misura delle 16:50). Quelle che restano fuori sono le righe in cui
 l'ordinante non nomina nessun genitore, e devono restare fuori.
 
+### 🔎 Giro di critica prima del merge — sette correzioni, e il difetto peggiore era un test
+
+Il lavoro è stato passato a **due critici** (uno sul predicato e il pannello, uno sulla scrittura in
+anagrafica) con mandato di trovare, non di approvare. Hanno trovato.
+
+🔴 **Il difetto peggiore non era nel codice: era nel collaudo.** Mutando `emissione.ts` in
+`alunnoId: null` — cioè spegnendo del tutto la scrittura sulla scheda — **386 test su 31 file
+restavano verdi**, compresi i due file scritti apposta per quella funzionalità: mockavano
+`emettiFatturaPagamento` e si iniettavano il campo da soli. *Un test mai visto fallire non è un
+test.* Ora i tre campi dell'esito (`alunnoId`, `cascataVuota`, `categoriaSlug`) sono **obbligatori**
+nel tipo e collaudati sul motore vero: le tre mutazioni corrispondenti diventano rosse.
+
+**Le condizioni della scrittura sono passate da quattro a cinque**, e le due nuove chiudono danni
+misurati:
+
+- **`cascataVuota`** — si ricorda solo quando **nessuna fonte** aveva saputo dire a chi intestare.
+  Se una l'aveva detto ed era solo incompleta (uno split di genitori separati, il default di
+  famiglia, una scelta di Segreteria), la fonte forte esiste già e una deduzione da un estratto
+  conto non se ne appropria. È anche ciò che tiene fuori i **genitori separati con una quota sola**,
+  che `ripartito` — definito come `quote.length > 1` — non vede.
+- **`categoriaSlug === 'retta'`** — chi salda una mensa, un grembiule o del materiale non diventa il
+  pagatore fiscale permanente di quel bambino. Misurato: **91 righe candidate non sono rette**, e
+  per **26 bambini l'unico candidato non lo è**.
+
+🔴 **La casella di conferma diceva meno di quello che fa.** `alunni.intestatario_fatture` non decide
+solo le fatture: è il **«CF pagatore»** della comunicazione all'Agenzia delle Entrate
+(`api/pagamenti/export`) e l'intestatario dell'**attestazione per il 730**. Prima della scrittura
+quel bambino stava fra le «Escluse» per *«codice fiscale del pagatore mancante»*. Chi spunta
+autorizza una **detrazione**, e adesso il testo lo dice — con `aria-describedby`, perché uno screen
+reader leggeva la casella e non la frase che porta il consenso.
+
+Altre quattro correzioni:
+
+- **audit mancante**: ogni mutazione di `alunni` lascia una riga in `audit_scritture_docente`
+  (DL-037) e questa non la lasciava. Alla domanda «chi ha deciso che la detrazione di questo bambino
+  va a questo genitore, e quando?» non rispondeva nessuno. Ora sì.
+- **il log collassava**: `app_log` deduplica per `(fingerprint, giorno)` **senza** aggiornare il
+  contesto, quindi dodici schede scritte in un pomeriggio diventavano **una riga** che nomina il
+  primo bambino e mente sugli altri undici. Prova in produzione, stessa forma: una riga con
+  `occorrenze: 66` e un solo `pagamento_id`. Aggiunto `distingui: ['alunno_id']`.
+- **l'errore veniva buttato**: `ricordaIntestatarioSullaScheda` tornava un'enumerazione a tre valori,
+  quindi `42703` («colonna assente»), `42501` («policy») e un timeout uscivano tutti come «non
+  salvato» — uno status senza il corpo, cioè AGENTS.md regola 3 applicata a una scrittura. Ora torna
+  anche l'errore, e il log lo porta.
+- **tre `error` PostgREST ingoiati** a monte della cascata (`divise_ordini`, `pagamenti_quote`,
+  `student_parents`): `quote: []` non significava solo «nessuno l'ha detto», significava anche «una
+  lettura è fallita e nessuno l'ha guardata» — e da oggi quell'elenco vuoto **decide una scrittura**.
+  Ora si loggano.
+
+Due cose rese **vere** invece che promesse: il motivo «il pagamento è ripartito… va emesso uno per
+volta» ora dice **anche** che manca un'anagrafica (era la causa reale in ogni caso che arriva lì); e
+lo schema della POST del lotto è stretto a `zAdultScelto`, perché il commento che diceva «lo schema
+lo vieta per iscritto» descriveva una protezione che **non c'era** (accettava l'unione intera, ramo
+`persona` compreso).
+
+**Prova sul campo, col compositore reale sui dati di produzione** (85 pagamenti con bonifico
+abbinato): **51 → 80 righe pronte, zero regressioni**, e **29 su 29** delle nuove superano *tutti* i
+gate del server (`adultoEGenitoreDi`, `conflitto_quote`, quote non vuote, `validaCessionario`) —
+cioè nessuna brucia un colpo di quota Aruba. Con le condizioni più strette, **29 su 29** verrebbero
+comunque ricordate: la guardia non costa niente sui dati di oggi.
+
+⚠️ **Cosa resta non dimostrato**: la prova nell'interfaccia vera (estensione Chrome non connessa, e
+in locale l'identità via header è disattivata). E due test hanno fallito **una volta ciascuno** nella
+suite intera — `ParentDetailPanel-sedi-figli` e `AvvisoForm-allegato-orfano` — passando isolati e
+alla riesecuzione completa: instabili, senza rapporto con questo lavoro, ma vanno guardati se
+ricompaiono in CI.
+
+---
+
 **Fuori scope, e resta aperto**: i **145 pagamenti saldati senza nessun movimento confermato** non
 compaiono in questa schermata ed è lì il collo di bottiglia vero. Per loro un ordinante non esiste,
 quindi niente di tutto questo li tocca.

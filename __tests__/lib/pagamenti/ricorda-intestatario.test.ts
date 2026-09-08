@@ -42,9 +42,10 @@ describe('ricordaIntestatarioSullaScheda', () => {
   it('scrive sulla scheda VUOTA, e la condizione «vuota» sta nella WHERE', async () => {
     const { supabase, visto } = clientFinto({ data: [{ id: 'al-1' }] })
 
-    const esito = await ricordaIntestatarioSullaScheda(supabase, 'al-1', 'a-1')
+    const { esito, error } = await ricordaIntestatarioSullaScheda(supabase, 'al-1', 'a-1')
 
     expect(esito).toBe('salvato')
+    expect(error).toBe(null)
     expect(visto.from).toBe('alunni')
     expect(visto.update).toEqual({ intestatario_fatture: { tipo: 'adult', adult_id: 'a-1' } })
     expect(visto.eq).toEqual(['id', 'al-1'])
@@ -56,13 +57,19 @@ describe('ricordaIntestatarioSullaScheda', () => {
 
   it('scheda già compilata: zero righe toccate ⇒ «gia_impostato», che non è un errore', async () => {
     const { supabase } = clientFinto({ data: [] })
-    expect(await ricordaIntestatarioSullaScheda(supabase, 'al-1', 'a-1')).toBe('gia_impostato')
+    expect((await ricordaIntestatarioSullaScheda(supabase, 'al-1', 'a-1')).esito).toBe('gia_impostato')
   })
 
   it('PostgREST non lancia: l’errore si legge dal valore di ritorno', async () => {
     // AGENTS.md, regola 7. Un `try/catch` qui non scatterebbe mai.
     const { supabase } = clientFinto({ data: null, error: { code: '42703', message: 'colonna assente' } })
-    expect(await ricordaIntestatarioSullaScheda(supabase, 'al-1', 'a-1')).toBe('non_salvato')
+    const r = await ricordaIntestatarioSullaScheda(supabase, 'al-1', 'a-1')
+    expect(r.esito).toBe('non_salvato')
+    // ⚠️ L'ERRORE NON SI BUTTA VIA (AGENTS.md, regola 3): `42703` («colonna
+    // assente», ambiente non migrato) e `42501` («policy») chiedono due interventi
+    // diversi, e un'enumerazione a tre valori li fa uscire tutti e due come
+    // «non salvato» — cioè come uno status senza il corpo.
+    expect(r.error).toMatchObject({ code: '42703' })
   })
 
   it('il campo `nome` NON viene scritto: sarebbe una copia destinata a invecchiare', async () => {

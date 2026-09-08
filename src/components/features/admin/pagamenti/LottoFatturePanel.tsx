@@ -402,8 +402,18 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
         // proprio quando le quote non c'erano — cioè sulla maggioranza delle righe
         // misurate quel giorno. La diagnosi si compone col motore condiviso invece di
         // riscriversi qui: è la stessa coppia di funzioni che decide l'ingresso.
+        //
+        // ⚠️ IL RAMO `ripartito` VIENE PRIMA E ASSORBIVA OGNI ALTRA CAUSA. Una riga
+        // ripartita con TUTTE le quote fatturabili il lotto la emette (primo ramo di
+        // `prontaPerIlLotto`); quindi se una ripartita finisce qui è perché
+        // l'anagrafica di un quotista NON basta — e «va emesso uno per volta»
+        // mandava l'operatore a emettere per trovarsi «dati fiscali incompleti»,
+        // senza che nessuno gli avesse detto quale campo manca.
+        const quoteAnt = (dati.intestatario?.quote ?? []) as { fatturabile?: boolean | null }[];
         const motivo = dati.intestatario?.ripartito === true
-          ? t('reconLottoMotivoRipartito')
+          ? (quoteAnt.some((q) => q?.fatturabile !== true)
+              ? t('reconLottoMotivoRipartitoIncompleto')
+              : t('reconLottoMotivoRipartito'))
           : propostaBloccataDaiDati(dati.intestatario)
             ? t('reconLottoMotivoPropostoIncompleto')
             : t('reconLottoMotivoIntestatario');
@@ -861,6 +871,11 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
                         checked={confermoProposte}
                         onChange={(e) => { setConfermoProposte(e.target.checked); if (e.target.checked) setMancaSpunta(false); }}
                         className="mt-0.5 h-4 w-4 shrink-0 accent-kidville-green"
+                        // Senza questo, uno screen reader legge «Confermo gli
+                        // intestatari proposti dal bonifico» e NON la frase che dice
+                        // cosa si sta autorizzando — cioè proprio quella che porta il
+                        // consenso a una scrittura sull'anagrafica di un minore.
+                        aria-describedby="lotto-conferma-nota"
                       />
                       <span>{t('reconLottoConfermoProposte', { n: pronteProposta.length })}</span>
                     </label>
@@ -868,10 +883,13 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
                       Da questa versione la spunta non autorizza solo dei documenti: a
                       emissione riuscita l'intestatario confermato viene SCRITTO sulla
                       scheda del bambino (se ne era priva). È una scrittura
-                      sull'anagrafica di un minore, e chi mette la spunta deve poterlo
-                      leggere qui — non scoprirlo dopo.
+                      sull'anagrafica di un minore — e quella riga non decide solo le
+                      fatture: diventa il «CF pagatore» della comunicazione all'Agenzia
+                      delle Entrate e l'intestatario dell'attestazione per il 730. Chi
+                      mette la spunta autorizza una DETRAZIONE, e deve poterlo leggere
+                      qui — non scoprirlo dopo.
                     */}
-                    <p className="mt-1 pl-6 font-maven text-[11px] text-kidville-sub">
+                    <p id="lotto-conferma-nota" className="mt-1 pl-6 font-maven text-[11px] text-kidville-sub">
                       {t('reconLottoConfermoProposteHint')}
                     </p>
                     {mancaSpunta && (

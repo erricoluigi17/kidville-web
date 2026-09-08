@@ -1034,3 +1034,79 @@ describe('la scelta passa dagli STESSI gate fail-closed, e nessuno di essi consu
     expect(sb._inserts.filter((i) => i.table === 'fatture_emesse')).toHaveLength(2)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// I TRE CAMPI CHE L'ESITO PORTA AL LOTTO — e che nessuno collaudava
+//
+// `POST …/fattura/lotto` decide se SCRIVERE `alunni.intestatario_fatture` — cioè
+// l'anagrafica di un minore, e con essa il pagatore che finirà nell'attestazione
+// per il 730 e nella comunicazione all'Agenzia delle Entrate — leggendo tre campi
+// di questo esito. Il test della route li MOCKA, quindi mutando la riga che li
+// produce (`alunnoId: null`) restavano verdi 386 test su 31 file: la funzionalità
+// non avrebbe scritto mai più niente e la suite non se ne sarebbe accorta.
+//
+// Un campo su cui il lotto decide una scrittura su dati di minori si collauda sul
+// motore vero, non su un mock che glielo detta.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('l’esito dice al lotto DI CHI è il pagamento, COSA ha deciso la cascata e DI CHE categoria è', () => {
+  it('emissione riuscita: `alunnoId` è il bambino del pagamento, non `null`', async () => {
+    const { emettiFatturaPagamento } = await motore()
+    const sb = makeSupabase({ pagamento: pagamentoSaldato, settings: settingsConfig, parentsById, rpc: 2329 })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(true)
+    if (esito.ok) expect(esito.alunnoId).toBe('al-1')
+  })
+
+  it('`cascataVuota` è FALSO quando la scheda del bambino nomina già un intestatario', async () => {
+    // È la condizione che impedisce di scrivere sopra una decisione presa da una
+    // persona — o dal default di famiglia — con una deduzione da un estratto conto.
+    const { emettiFatturaPagamento } = await motore()
+    const sb = makeSupabase({ pagamento: pagamentoSaldato, settings: settingsConfig, parentsById, rpc: 2329 })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(true)
+    if (esito.ok) expect(esito.cascataVuota).toBe(false)
+  })
+
+  it('`cascataVuota` è VERO solo quando nessuna fonte ha saputo dire a chi intestare', async () => {
+    const { emettiFatturaPagamento } = await motore()
+    const sb = makeSupabase({
+      pagamento: pagamentoSenzaIntestatario,
+      settings: settingsConfig,
+      parentsById,
+      rpc: 2329,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' }, {
+      intestatarioScelto: { tipo: 'adult', adult_id: PARENT_FABBRI },
+      // il bambino deve avere quel genitore, o il gate risponde 422 prima
+    })
+
+    expect(esito.ok).toBe(true)
+    if (esito.ok) {
+      expect(esito.cascataVuota).toBe(true)
+      expect(esito.alunnoId).toBe('al-1')
+    }
+  })
+
+  it('`categoriaSlug` esce srotolato dall’embed, così il lotto può fermarsi sulle non-rette', async () => {
+    // Chi salda un grembiule non deve diventare il pagatore fiscale delle rette:
+    // il lotto ricorda l'intestatario solo dalle `retta`, e per farlo deve sapere
+    // di che categoria era il pagamento che ha appena fatturato.
+    const { emettiFatturaPagamento } = await motore()
+    const sb = makeSupabase({
+      pagamento: { ...pagamentoSaldato, payment_categories: { slug: 'mensa' } },
+      settings: settingsConfig,
+      parentsById,
+      rpc: 2329,
+    })
+
+    const esito = await emettiFatturaPagamento(sb as never, 'pag-1', { id: 'staff-1' })
+
+    expect(esito.ok).toBe(true)
+    if (esito.ok) expect(esito.categoriaSlug).toBe('mensa')
+  })
+})

@@ -31,16 +31,34 @@ const h = vi.hoisted(() => ({
   schedeVuote: new Set<string>(),
   /** Fa fallire la UPDATE su `alunni` come farebbe PostgREST: valore, non eccezione. */
   erroreAlunni: null as unknown,
+  /** Le righe finite in `audit_scritture_docente`: il registro immodificabile. */
+  audit: [] as Record<string, unknown>[],
+  /** Gli eventi passati a `logEvento`, con il loro quarto argomento (l'errore). */
+  eventi: [] as { livello: string; campi: Record<string, unknown>; errore: unknown; opzioni: unknown }[],
 }))
+
+vi.mock('@/lib/logging/logger', async (originale) => {
+  const vero = await originale<typeof import('@/lib/logging/logger')>()
+  return {
+    ...vero,
+    logEvento: (evento: string, livello: string, campi: Record<string, unknown>, errore?: unknown, opzioni?: unknown) => {
+      h.eventi.push({ livello, campi, errore, opzioni })
+    },
+  }
+})
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ assertPagamentoInScope: h.scope }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (tabella: string) => {
-      const ctx: { tabella: string; payload?: unknown; filtri: Record<string, unknown>; is?: [string, unknown]; in?: [string, string[]] } =
+      const ctx: { tabella: string; payload?: unknown; insert?: unknown; filtri: Record<string, unknown>; is?: [string, unknown]; in?: [string, string[]] } =
         { tabella, filtri: {} }
       const esegui = () => {
+        if (tabella === 'audit_scritture_docente') {
+          h.audit.push((ctx.insert ?? {}) as Record<string, unknown>)
+          return { data: null, error: null }
+        }
         if (tabella === 'alunni' && ctx.payload) {
           h.scritture.push({ payload: ctx.payload, filtri: ctx.filtri, is: ctx.is })
           if (h.erroreAlunni) return { data: null, error: h.erroreAlunni }
@@ -52,6 +70,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const chain: Record<string, unknown> = {}
       Object.assign(chain, {
         select: () => chain,
+        insert: (v: unknown) => { ctx.insert = v; return chain },
         update: (v: unknown) => { ctx.payload = v; return chain },
         eq: (c: string, v: unknown) => { ctx.filtri[c] = v; return chain },
         is: (c: string, v: unknown) => { ctx.is = [c, v]; return chain },
@@ -98,13 +117,22 @@ function richiesta(conIntestatario: boolean): Request {
  * separate sarebbero due fonti di verità su «di chi è questo pagamento», e la
  * seconda arriverebbe per giunta senza il gate di sede che la prima ha già passato.
  */
-const esitoOk = { ok: true as const, fatturaStato: 'in_attesa' as const, uploadFileName: 'IT_x.p7m', numero: 2332, alunnoId: ALUNNO }
+const esitoOk = {
+  ok: true as const, fatturaStato: 'in_attesa' as const, uploadFileName: 'IT_x.p7m', numero: 2332,
+  alunnoId: ALUNNO,
+  /** Nessuna fonte sapeva dire a chi intestare: è l'unico caso in cui si ricorda. */
+  cascataVuota: true,
+  /** Solo dalle rette: chi salda un grembiule non diventa il pagatore fiscale. */
+  categoriaSlug: 'retta',
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
   h.scritture.length = 0
   h.schedeVuote = new Set([ALUNNO])
   h.erroreAlunni = null
+  h.audit.length = 0
+  h.eventi.length = 0
   h.requireStaff.mockResolvedValue({ response: null, user: { id: 'staff-1' } })
   h.scope.mockResolvedValue(null)
   h.conta.mockResolvedValue(0)
@@ -159,5 +187,71 @@ describe('l’intestatario proposto finisce sulla scheda del bambino', () => {
     const corpo = await res.json()
     expect(corpo.data.emesse).toHaveLength(1)
     expect(corpo.data.fallite).toHaveLength(0)
+  })
+
+  it('categoria NON retta ⇒ nessuna scrittura: chi salda la mensa non decide il pagatore delle rette', async () => {
+    // `alunni.intestatario_fatture` non decide solo la fattura: `pagamenti/export`
+    // lo usa come «CF pagatore» nella comunicazione all'Agenzia delle Entrate, e
+    // `pagamenti/attestazione` come intestatario della detrazione. Misurato il
+    // 2026-09-08: 91 righe candidate non sono rette, e per 26 bambini l'UNICO
+    // candidato non lo è.
+    for (const slug of ['mensa', 'materiale', 'divisa', 'doposcuola', null]) {
+      h.scritture.length = 0
+      h.emetti.mockImplementation(async () => ({ ...esitoOk, categoriaSlug: slug }))
+      await POST(richiesta(true))
+      expect(h.scritture, 'categoria ' + String(slug)).toHaveLength(0)
+    }
+  })
+
+  it('la cascata aveva già una risposta ⇒ nessuna scrittura, anche se la scheda è vuota', async () => {
+    // `quote` non vuote significa che una fonte FORTE esiste già — uno split di
+    // genitori separati, il default di famiglia, un ordine divise. Una deduzione
+    // fatta su un estratto conto non la sostituisce, e non se ne appropria.
+    h.emetti.mockImplementation(async () => ({ ...esitoOk, cascataVuota: false }))
+    await POST(richiesta(true))
+    expect(h.scritture).toHaveLength(0)
+  })
+
+  it('la scrittura lascia una riga nel registro immodificabile', async () => {
+    // È la regola del progetto per ogni mutazione di `alunni`
+    // (`api/admin/students`: «audit immutabile su ogni mutazione», DL-037).
+    // Senza, alla domanda «chi ha deciso che la detrazione di questo bambino va a
+    // questo genitore, e quando?» non risponde nessuno.
+    await POST(richiesta(true))
+    expect(h.audit).toHaveLength(1)
+    expect(h.audit[0].entita_tipo).toBe('alunni')
+    expect(h.audit[0].entita_id).toBe(ALUNNO)
+    expect(h.audit[0].azione).toBe('update')
+  })
+
+  it('scheda già impostata ⇒ nessuna riga di audit: non è successo niente', async () => {
+    h.schedeVuote = new Set()
+    await POST(richiesta(true))
+    expect(h.scritture).toHaveLength(1)   // il tentativo c'è stato...
+    expect(h.audit).toHaveLength(0)       // ...ma non ha toccato niente
+  })
+
+  it('il log del successo DISTINGUE i bambini, invece di collassare in una riga sola', async () => {
+    // `app_log` deduplica per `(fingerprint, giorno)` e l'`ON CONFLICT` somma le
+    // occorrenze SENZA aggiornare il contesto: senza `distingui`, dodici schede
+    // scritte in un pomeriggio diventano UNA riga che nomina il primo bambino e
+    // mente sugli altri undici. Trenta righe più sotto, nello stesso file, il log
+    // di fine blocco lo fa già.
+    await POST(richiesta(true))
+    const riga = h.eventi.find((e) => e.campi.esito === 'intestatario-salvato')
+    expect(riga).toBeTruthy()
+    expect(riga!.opzioni).toEqual({ distingui: ['alunno_id'] })
+  })
+
+  it('se la scrittura fallisce, il log porta il MOTIVO e non solo l’esito', async () => {
+    // AGENTS.md regola 3: uno status senza il corpo è il bug. `PGRST204` («colonna
+    // assente») e `42501` («policy») chiedono due interventi diversi, e uscivano
+    // tutti e due come «non salvato».
+    h.erroreAlunni = { code: '42501', message: 'permission denied for table alunni' }
+    await POST(richiesta(true))
+    const riga = h.eventi.find((e) => e.campi.esito === 'intestatario-non-salvato')
+    expect(riga).toBeTruthy()
+    expect(riga!.livello).toBe('warn')
+    expect(riga!.errore).toMatchObject({ code: '42501' })
   })
 })

@@ -74,7 +74,7 @@ import {
   ErroreSerieAmbigua,
   type Sezionale,
 } from '@/lib/fatturazione/sezionale'
-import { componiCausalePagamento, type PagamentoPerCausale } from './causale-pagamento'
+import { componiCausalePagamento, slugCategoria, type PagamentoPerCausale } from './causale-pagamento'
 import { leggiModuleConfig } from '@/lib/settings/module-config'
 import { annoFiscale, oggiFiscaleISO } from '@/lib/format/fiscal-date'
 import { logEvento } from '@/lib/logging/logger'
@@ -147,6 +147,21 @@ export type EsitoEmissione =
        */
       gia?: true
       /**
+       * ─── I TRE CAMPI SU CUI IL LOTTO DECIDE UNA SCRITTURA SULL'ANAGRAFICA ────
+       *
+       * `POST …/fattura/lotto` li legge per decidere se ricordare l'intestatario
+       * sulla scheda del bambino. Non sono decorazione: da quella scrittura dipende
+       * anche CHI comparirà come pagatore nell'attestazione per il 730 e nella
+       * comunicazione all'Agenzia delle Entrate.
+       *
+       * ⚠️ SONO OBBLIGATORI, e non per gusto del tipo. Da opzionali, `tsc` non
+       * pretendeva che qualcuno li valorizzasse: mutare la riga che li produce in
+       * `alunnoId: null` lasciava verdi 386 test su 31 file — la funzionalità non
+       * avrebbe scritto mai più niente, in silenzio. Obbligatori, un ritorno che li
+       * dimentica non compila.
+       */
+
+      /**
        * A CHI APPARTIENE il pagamento appena fatturato.
        *
        * Lo sa già questa funzione — ha letto `pagamenti` con l'alunno agganciato, e
@@ -154,11 +169,32 @@ export type EsitoEmissione =
        * rileggerlo. Due letture separate sono due fonti di verità su «di chi è questo
        * pagamento», e la seconda arriva pure senza il gate che la prima ha superato.
        *
-       * Lo usa `POST …/fattura/lotto` per ricordare l'intestatario sulla scheda del
-       * bambino. `null` quando il pagamento non è legato a nessun alunno (una vendita
-       * di merchandise, per esempio): chi scrive sulla scheda deve fermarsi lì.
+       * `null` quando il pagamento non è legato a nessun alunno (una vendita di
+       * merchandise, per esempio): chi scrive sulla scheda deve fermarsi lì.
        */
-      alunnoId?: string | null
+      alunnoId: string | null
+      /**
+       * La cascata degli intestatari non ha saputo dire NIENTE (`quote: []`).
+       *
+       * È la differenza fra «nessuno ha mai detto a chi intestare» e «qualcuno lo ha
+       * detto, ma i suoi dati non bastano»: solo nel primo caso il lotto può
+       * ricordare il pagatore dedotto dal bonifico. Nel secondo la fonte forte esiste
+       * già — una scelta di Segreteria, uno split di genitori separati, il default di
+       * famiglia — e una deduzione da un estratto conto non la sostituisce.
+       *
+       * ⚠️ Questa è la guardia che tiene fuori i genitori separati con una quota
+       * sola: `ripartito` nell'anteprima è `quote.length > 1`, quindi NON li vede.
+       */
+      cascataVuota: boolean
+      /**
+       * `payment_categories.slug` del pagamento fatturato, srotolato dall'embed.
+       *
+       * Serve al lotto per ricordare l'intestatario **solo dalle rette**: chi salda
+       * una mensa, un grembiule o del materiale non deve diventare il pagatore
+       * fiscale permanente di quel bambino. Misurato il 2026-09-08: 91 righe
+       * candidate non sono rette, e per 26 bambini l'UNICO candidato non lo è.
+       */
+      categoriaSlug: string | null
     }
   | {
       ok: false
@@ -2306,6 +2342,8 @@ export async function emettiFatturaPagamento(
     numeroFattura: okEsiti[0].numeroFattura,
     quote: multi ? esiti : undefined,
     alunnoId: alunno?.id ?? pag.alunno_id ?? null,
+    cascataVuota: quoteCascata.length === 0,
+    categoriaSlug: slugCategoria(pag as PagamentoPerCausale) ?? null,
     ...(tutteGia ? { gia: true as const } : {}),
   }
 }

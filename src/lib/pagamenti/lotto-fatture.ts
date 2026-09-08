@@ -283,7 +283,9 @@ export interface CorpoEmissione {
    *
    * Solo il ramo `adult`: il lotto non ha nessun modulo da compilare, e accettare
    * l'anagrafica di una persona dal browser è ciò che lo schema della POST vieta
-   * per iscritto.
+   * per iscritto — `zAdultScelto`, non l'unione intera. ⚠️ Fino al 2026-09-08 questa
+   * frase era FALSA: lo schema era `zIntestatarioScelto.optional()`, cioè accettava
+   * anche il ramo `persona`. Il commento prometteva una protezione che non c'era.
    */
   intestatario?: Extract<IntestatarioScelto, { tipo: 'adult' }>
 }

@@ -1143,12 +1143,37 @@ describe('quote vuote: l’anagrafica tace, il bonifico no', () => {
     expect(corpo.pagamenti[0].intestatario).toEqual({ tipo: 'adult', adult_id: 'a-1' });
   });
 
-  it('la spunta dichiara anche che l’intestatario finisce sulla scheda del bambino', async () => {
+  it('la spunta dichiara che l’intestatario finisce sulla scheda del bambino E che decide la detrazione', async () => {
     // Da questa versione la conferma non autorizza solo un documento: scrive
-    // nell'anagrafica di un minore. Chi la mette deve leggerlo dalla casella.
+    // nell'anagrafica di un minore, e quella riga diventa il «CF pagatore» della
+    // comunicazione all'Agenzia delle Entrate e l'intestatario dell'attestazione
+    // per il 730. Dire solo «così la prossima fattura non dovrà più dedurli»
+    // faceva firmare una cosa più piccola di quella che succede.
     apri(anteprima());
     await finoA(() => screen.queryByText(/fattura pronta|fatture pronte/) !== null);
-    expect(screen.getByText(/salvati sulla scheda del bambino/i)).toBeTruthy();
+    const nota = screen.getByText(/salvati sulla scheda del bambino/i);
+    expect(nota.textContent).toMatch(/730|Agenzia delle Entrate/i);
+
+    // …e la casella deve PUNTARE a quella frase: senza `aria-describedby` uno
+    // screen reader legge «Confermo gli intestatari proposti» e non sente la riga
+    // che dice cosa si sta autorizzando — cioè proprio quella che porta il consenso.
+    const casella = screen.getByRole('checkbox');
+    expect(casella.getAttribute('aria-describedby')).toBe(nota.getAttribute('id'));
+    expect(nota.getAttribute('id')).toBeTruthy();
+  });
+
+  it('ripartito CON un’anagrafica incompleta: il motivo non dice solo «ripartito»', async () => {
+    // «va emesso uno per volta» manda l'operatore a emettere e a trovarsi davanti
+    // «dati fiscali incompleti», senza che nessuno gli abbia detto quale campo
+    // manca. Il ramo `ripartito` viene per primo e assorbiva ogni altra causa —
+    // ed è la stessa classe di difetto che questo lavoro ha chiuso nel ramo accanto.
+    apri(anteprima({
+      ripartito: true,
+      quote: [{ adult_id: 'a-1', label: 'Mamma', importo: 50, nome: 'Rossi Maria', fatturabile: true, errori: {} },
+              { adult_id: 'a-2', label: 'Papà', importo: 50, nome: '', fatturabile: false, errori: { codice_fiscale: 'mancante' } }],
+    }));
+    await finoA(() => screen.queryByText(/da completare/i) !== null);
+    expect(screen.getByText(/ripartito/i).textContent).toMatch(/anagrafica|dati/i);
   });
 
   it('pagatore riconosciuto ma con dati incompleti → il motivo VERO, non il generico', async () => {

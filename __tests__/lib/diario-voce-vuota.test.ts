@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { bagnoCompilato, contatoreBagno, eEventoBagno } from '@/lib/diary/bagno';
 import { pastoCompilato, portateSegnate, eEventoPasto } from '@/lib/diary/pasto';
 import { voceDaMostrare, eventoSelettivo, TIPI_SELETTIVI } from '@/lib/diary/registrazione';
+import { attivitaCompilata } from '@/lib/diary/attivita';
 
 /**
  * CHI FINISCE NEL DIARIO DI UN BAMBINO.
@@ -107,13 +108,44 @@ describe('voceDaMostrare — il dispatcher, e perché è fail-OPEN', () => {
         expect(voceDaMostrare('umore', { umore: 'felice' })).toBe(true);
     });
 
+    it('un\'attività MUTA non si mostra: né descrizione né partecipazione', () => {
+        // Il tipo di default è `pittura`: aprire «Attività», non scrivere niente e
+        // salvare scriveva a tutti «🎨 Ho fatto pittura». In produzione erano solo
+        // 2 righe su 444 — ma la trappola è la stessa del bagno: un valore messo
+        // d'ufficio indistinguibile da una scelta.
+        expect(voceDaMostrare('attivita', { activities: [{ tipo: 'pittura', descrizione: '' }] })).toBe(false);
+        expect(voceDaMostrare('attivita', { activities: [] })).toBe(false);
+        expect(voceDaMostrare('attivita', {})).toBe(false);
+    });
+
+    it('ma una DESCRIZIONE la mostra a tutti: l\'attività è di classe', () => {
+        // 294 righe su 444 hanno una descrizione vera. Filtrarle sulla
+        // partecipazione del singolo bambino le farebbe sparire dal diario di
+        // tutti: è l'errore dei 29 bambini, rifatto.
+        expect(voceDaMostrare('attivita', { activities: [{ tipo: 'pittura', descrizione: 'tema autunno' }] })).toBe(true);
+    });
+
+    it('e la sola PARTECIPAZIONE basta, anche senza descrizione', () => {
+        // 132 righe su 444: la frase di partecipazione è contenuto vero.
+        expect(voceDaMostrare('attivita', { activities: [{ tipo: 'gioco', descrizione: '', partecipazione: 'entusiasta' }] })).toBe(true);
+    });
+
+    it('basta UNA attività compilata fra più: le altre non la annullano', () => {
+        expect(attivitaCompilata({ activities: [
+            { tipo: 'pittura', descrizione: '' },
+            { tipo: 'musica', descrizione: 'canzoni d\'autunno' },
+        ] })).toBe(true);
+    });
+
     it('FAIL-OPEN su ciò che non ha una regola: nel dubbio si MOSTRA', () => {
         // Un filtro che nel dubbio nasconde è il difetto opposto a quello che
         // stiamo chiudendo, e in questo repo è già costato: 29 bambini su 657
         // spariti dall'alert del pranzo per un eccesso di zelo.
-        expect(voceDaMostrare('attivita', {})).toBe(true);
+        // ⚠️ `attivita` NON è più l'esempio: da oggi ha una regola sua. Il fail-open
+        // serve ai tipi che nasceranno — ed è lì che il rischio dei 29 bambini vive.
         expect(voceDaMostrare('entrata', null)).toBe(true);
         expect(voceDaMostrare('tipo_che_non_esiste_ancora', undefined)).toBe(true);
+        expect(voceDaMostrare('uscita', {})).toBe(true);
     });
 
     it('una NOTA da sola tiene in piedi la voce, anche senza contatori', () => {
@@ -127,10 +159,54 @@ describe('voceDaMostrare — il dispatcher, e perché è fail-OPEN', () => {
         expect(voceDaMostrare('bagno', { pipi: 0 }, { conNota: false })).toBe(false);
     });
 
-    it('l\'elenco dei selettivi è esplicito, e `attivita` NON ne fa parte', () => {
+    it('in produzione ogni tipo evento ha una regola; il fail-open resta per i futuri', () => {
+        // Dal 2026-09-08 anche `attivita`: in produzione i tipi evento sono SETTE e
+        // ora hanno tutti una regola. Il fail-open resta per quelli che nasceranno.
         expect([...TIPI_SELETTIVI].sort()).toEqual(
-            ['bagno', 'merenda', 'nanna', 'nanna_fine', 'nanna_inizio', 'pranzo', 'umore']);
-        expect(eventoSelettivo('attivita')).toBe(false);
-        expect(eventoSelettivo('bagno')).toBe(true);
+            ['attivita', 'bagno', 'merenda', 'nanna', 'nanna_fine', 'nanna_inizio', 'pranzo', 'umore']);
+        expect(eventoSelettivo('attivita')).toBe(true);
+        expect(eventoSelettivo('entrata')).toBe(false);
+    });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IL LOCK: ogni evento a salvataggio selettivo ha una porta d'uscita.
+//
+// Renderne uno selettivo senza darle il cestino arma la trappola del no-op:
+// azzerare i campi e risalvare NON cancella la riga, la esclude soltanto dal
+// payload — e a schermo la ✅ sparisce e il toast è verde. È il difetto chiuso,
+// riaperto dal suo stesso rimedio. Questo test rende impossibile dimenticarlo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { TIPI_ELIMINABILI, eliminabile } from '@/lib/diary/registrazione';
+
+/** Eccezioni dichiarate: selettivi SENZA cestino, e la ragione per cui va bene. */
+const ECCEZIONI: Record<string, string> = {
+    umore: 'si corregge scegliendone un altro (update vero), non degrada in una frase falsa',
+    // `nanna` senza suffisso non lo scrive più nessuna schermata: `ALL_EVENT_TYPES`
+    // elenca attivita/merenda/pranzo/nanna_inizio/nanna_fine/bagno (+umore), e in
+    // produzione le righe con questo tipo sono ZERO (misurato il 2026-09-08). Sta
+    // fra i selettivi solo perché il filtro di LETTURA deve saperlo riconoscere se
+    // un domani ne saltasse fuori una: un cestino per un tipo che nessuno può
+    // creare sarebbe una porta su un muro.
+    nanna: 'tipo storico: nessuna schermata lo scrive e in produzione le righe sono zero',
+};
+
+describe('lock · selettivo ⇒ eliminabile', () => {
+    it.each(TIPI_SELETTIVI.filter(t => !(t in ECCEZIONI)))(
+        '%s è selettivo e ha il suo cestino', (tipo) => {
+            expect(eliminabile(tipo)).toBe(true);
+        });
+
+    it('le eccezioni sono dichiarate, non dimenticate', () => {
+        for (const tipo of Object.keys(ECCEZIONI)) {
+            expect(TIPI_SELETTIVI).toContain(tipo);
+            expect(eliminabile(tipo)).toBe(false);
+            expect(ECCEZIONI[tipo].length).toBeGreaterThan(20);
+        }
+    });
+
+    it('e non si cancella ciò che non è selettivo: non ne ha bisogno', () => {
+        for (const tipo of TIPI_ELIMINABILI) expect(TIPI_SELETTIVI).toContain(tipo);
     });
 });

@@ -413,6 +413,36 @@ export function useDiaryDay(
         setSavedStudentIds(new Set());
     };
 
+    /**
+     * I `dettagli` che finirebbero in archivio per questo bambino.
+     *
+     * Un posto solo, perché li usano DUE domande che devono dare la stessa
+     * risposta: «cosa scrivo» e «chi finisce in archivio». Finché erano due letture
+     * diverse, il pulsante poteva promettere un numero e il salvataggio scriverne
+     * un altro — ed è esattamente ciò che è successo con l'attività.
+     */
+    const dettagliDi = (studentId: string): Record<string, unknown> => {
+        if (selectedEvent === 'attivita') {
+            return {
+                activities: activities.map(a => ({
+                    tipo: a.tipo,
+                    descrizione: a.descrizione,
+                    partecipazione: a.studentPartecipazione[studentId] ?? null,
+                })),
+            };
+        }
+        return studentStates[studentId] ?? {};
+    };
+
+    /** Quanti finiranno davvero in archivio: la stessa regola del salvataggio. */
+    const daSalvare = selectedEvent === null
+        ? 0
+        : eventoSelettivo(selectedEvent)
+            ? students.filter(s => voceDaMostrare(selectedEvent, dettagliDi(s.id), {
+                conNota: notaLibera.trim().length > 0 || (noteBambino[s.id]?.trim().length ?? 0) > 0,
+              })).length
+            : students.length;
+
     const handleSave = async () => {
         setIsSaving(true);
         try {
@@ -442,27 +472,23 @@ export function useDiaryDay(
             // famiglia senza una regola. La descrizione di un'attività è di classe,
             // e filtrarla per bambino la farebbe sparire dal diario di tutti.
             const notaSezione = notaLibera.trim().length > 0;
-            const targetStudents = students.filter(s => voceDaMostrare(
-                selectedEvent, studentStates[s.id],
-                { conNota: notaSezione || (noteBambino[s.id]?.trim().length ?? 0) > 0 },
-            ));
+            // SI FILTRA SU CIÒ CHE SI STA PER SCRIVERE, non su uno stato parallelo.
+            //
+            // Fino al 2026-09-08 il filtro guardava `studentStates[s.id]` mentre il
+            // payload dell'ATTIVITÀ si costruisce da `activities`, che è uno stato
+            // diverso: per l'attività `studentStates` contiene solo
+            // `{partecipazione: null}`. Le due letture divergevano, e nel momento in
+            // cui l'attività è diventata selettiva quella divergenza avrebbe
+            // significato «nessuna attività salvata, mai» — con un toast verde.
+            // L'ha trovata un test, non io.
+            const targetStudents = students
+                .map(student => ({ student, dettagli: dettagliDi(student.id) }))
+                .filter(({ student, dettagli }) => voceDaMostrare(
+                    selectedEvent, dettagli,
+                    { conNota: notaSezione || (noteBambino[student.id]?.trim().length ?? 0) > 0 },
+                ));
             if (targetStudents.length === 0) return;
-            const payload = targetStudents.map(student => {
-                // dettagli specifico per tipo evento:
-                // - attività   → elenco attività con partecipazione per-studente
-                // - nanna/sveglia/bagno/pranzo/merenda → stato per-studente (orari, contatori, portate)
-                let dettagli: Record<string, unknown>;
-                if (selectedEvent === 'attivita') {
-                    dettagli = {
-                        activities: activities.map(a => ({
-                            tipo: a.tipo,
-                            descrizione: a.descrizione,
-                            partecipazione: a.studentPartecipazione[student.id] ?? null,
-                        })),
-                    };
-                } else {
-                    dettagli = studentStates[student.id] ?? {};
-                }
+            const payload = targetStudents.map(({ student, dettagli }) => {
                 return {
                     alunno_id: student.id,
                     maestra_id: userId,
@@ -497,7 +523,7 @@ export function useDiaryDay(
                     .filter(Boolean)
             );
             // Se nessuno ha un alunno_id nel result, segna come salvati i soli inviati (upsert silent)
-            setSavedStudentIds(savedIds.size > 0 ? savedIds : new Set(targetStudents.map(s => s.id)));
+            setSavedStudentIds(savedIds.size > 0 ? savedIds : new Set(targetStudents.map(({ student }) => student.id)));
             setShowSavedToast(true);
             setTimeout(() => setShowSavedToast(false), 2500);
             opts?.onSaved?.();
@@ -533,6 +559,7 @@ export function useDiaryDay(
         counter,
         bulkNannaOra,
         handleSave,
+        daSalvare,
         eliminaRegistrazione,
         resetSelection,
     };
@@ -549,6 +576,7 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     const {
         students, eventTypes, selectedEvent, setSelectedEvent, studentStates, savedStudentIds,
         activities, setActivities, notaLibera, setNotaLibera, notaBambino, updateNotaBambino,
+        daSalvare,
         isSaving, showSavedToast,
         handleEventSelect, updateStudent, updateMealCourse, counter, bulkNannaOra, handleSave,
         eliminaRegistrazione,
@@ -562,24 +590,21 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
     // dirlo (l'handler esce subito). Il conteggio rende visibile la regola, e il
     // pulsante disabilitato rende visibile il no-op.
     //
-    // Dal 2026-09-08 non è più solo la nanna: bagno e pasti sono selettivi come lei,
-    // e `umore` lo era da sempre senza che il pulsante lo dicesse. Il conteggio
-    // passa dallo stesso motore del salvataggio (`voceDaMostrare`), perché un
-    // pulsante che promette un numero diverso da quello che poi scrive è la
-    // versione elegante della stessa bugia.
+    // Dal 2026-09-08 non è più solo la nanna: bagno, pasti e attività sono selettivi
+    // come lei, e `umore` lo era da sempre senza che il pulsante lo dicesse. Il
+    // conteggio arriva dall'HOOK, cioè dalla stessa funzione che decide chi finisce
+    // in archivio: un pulsante che promette un numero diverso da quello che poi
+    // scrive è la versione elegante della stessa bugia. Ricalcolarlo qui era
+    // possibile, e infatti per l'attività dava un numero sbagliato — perché qui
+    // `activities` non c'è.
     const selettivo = selectedEvent !== null && eventoSelettivo(selectedEvent);
-    const daSalvare = selettivo
-        ? students.filter(s => voceDaMostrare(
-            selectedEvent!, studentStates[s.id],
-            { conNota: notaLibera.trim().length > 0 || (notaBambino[s.id]?.trim().length ?? 0) > 0 },
-          )).length
-        : students.length;
 
     /** Il «non c'è niente da salvare», detto nella lingua della routine aperta. */
     const nessunaRegistrazione = (): string => {
         if (selectedEvent === 'bagno') return t('bagnoNessunaRegistrazione');
         if (selectedEvent === 'pranzo' || selectedEvent === 'merenda') return t('pastoNessunaPortata');
         if (selectedEvent === 'umore') return t('umoreNessunaScelta');
+        if (selectedEvent === 'attivita') return t('attivitaNessunaRegistrazione');
         return t('nannaNessunOrario');
     };
 
@@ -654,6 +679,9 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 {/* ── ATTIVITÀ ── */}
                                 {selectedEvent === 'attivita' && (
                                     <ActivityDetailInline
+                                        onElimina={(studentId) => void eliminaRegistrazione(studentId)}
+                                        etichettaEvento={eventLabel(selectedEvent)}
+                                        noteBambino={notaBambino}
                                         students={students}
                                         activities={activities}
                                         onActivitiesChange={setActivities}
@@ -704,6 +732,14 @@ export function DiaryEventEditor({ day, sezione }: { day: DiaryDay; sezione: str
                                 {(selectedEvent === 'pranzo' || selectedEvent === 'merenda') && students.length > 0 && (
                                     <p className="font-maven text-[11px] text-kidville-sub text-center mb-1 px-2">
                                         {t('pastoAiutoCompilazione')}
+                                    </p>
+                                )}
+                                {/* L'attività ha la regola più diversa di tutte: è di CLASSE.
+                                    Una descrizione basta a salvarla a tutti; nessuna, e non si
+                                    salva niente — nemmeno la «pittura» che il campo propone da sé. */}
+                                {selectedEvent === 'attivita' && students.length > 0 && (
+                                    <p className="font-maven text-[11px] text-kidville-sub text-center mb-1 px-2">
+                                        {t('attivitaAiutoCompilazione')}
                                     </p>
                                 )}
 

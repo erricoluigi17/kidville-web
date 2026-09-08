@@ -77,5 +77,7 @@
   "eliminaRegistrazione": "Elimina",
   "eliminaAria": "Elimina la registrazione di {nome}",
   "confermaElimina": "Elimini «{evento}» di {nome}? La registrazione sparisce dal diario del genitore.",
-  "confermaEliminaConNota": "Elimini «{evento}» di {nome}? Sparisce anche la nota scritta per lui/lei."
+  "confermaEliminaConNota": "Elimini «{evento}» di {nome}? Sparisce anche la nota scritta per lui/lei.",
+  "attivitaNessunaRegistrazione": "Nessuna attività descritta",
+  "attivitaAiutoCompilazione": "La descrizione vale per tutta la sezione; se non ne scrivi nessuna, non si salva niente."
 }

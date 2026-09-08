@@ -115,18 +115,25 @@ describe('DELETE /api/diary/entries', () => {
     expect(h.deleteChiamata).toBe(false)
   })
 
-  it('il perimetro resta un ENUM: `attivita` è 400, non una cancellazione', async () => {
+  it('il perimetro resta un ENUM: `umore` è 400, non una cancellazione', async () => {
     // Il gesto è «ho sbagliato a segnare», non «cancella una riga qualunque del
-    // diario». `attivita` non è selettiva — si salva a tutti — quindi non ha la
-    // trappola del no-op che rende necessario il cestino, e resta fuori.
-    const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=attivita&date=2026-09-07`))
+    // diario». `umore` è l'eccezione dichiarata: un umore sbagliato si corregge
+    // SCEGLIENDONE un altro, che è un update vero e riesce — non degrada in una
+    // frase falsa nel diario di un bambino.
+    const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=umore&date=2026-09-07`))
     expect(res.status).toBe(400)
     expect(h.deleteChiamata).toBe(false)
   })
 
-  it.each(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda'])(
+  it('e un tipo inventato non apre nessuna porta', async () => {
+    const res = await DELETE(req(`alunno_id=${ALUNNO}&tipo_evento=qualunque&date=2026-09-07`))
+    expect(res.status).toBe(400)
+    expect(h.deleteChiamata).toBe(false)
+  })
+
+  it.each(['nanna_inizio', 'nanna_fine', 'bagno', 'pranzo', 'merenda', 'attivita'])(
     'ogni evento a salvataggio selettivo ha la sua porta d\'uscita: %s', async (tipo) => {
-      // Dal 2026-09-08 bagno e pasti sono selettivi come la nanna. Con il filtro,
+      // Dal 2026-09-08 bagno, pasti e attività sono selettivi come la nanna. Con il filtro,
       // «azzera i contatori e risalva» non cancella più niente: la riga resta in
       // archivio mentre a schermo la ✅ è sparita e il toast è verde. Senza questa
       // porta il difetto sarebbe chiuso e riaperto dal suo stesso rimedio.

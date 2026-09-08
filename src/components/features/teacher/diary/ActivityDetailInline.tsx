@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useTranslations } from 'next-intl';
+import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Trash2, ChevronDown, CheckCircle } from 'lucide-react';
 
@@ -57,6 +58,12 @@ interface Props {
     activities: ActivityItem[];
     onActivitiesChange: (acts: ActivityItem[]) => void;
     savedStudentIds: Set<string>;
+    /** Cestino per una registrazione segnata per errore (vedi BottoneEliminaRegistrazione). */
+    onElimina?: (studentId: string) => void;
+    /** L'etichetta leggibile della routine, per la domanda di conferma. */
+    etichettaEvento?: string;
+    /** Note per-bambino: dicono, nella conferma, che spariranno con la riga. */
+    noteBambino?: Record<string, string>;
 }
 
 // ─── Single Activity Accordion ────────────────────────────────────────────────
@@ -69,6 +76,9 @@ function ActivityAccordion({
     onChange,
     onRemove,
     savedStudentIds,
+    onElimina,
+    etichettaEvento,
+    noteBambino,
 }: {
     activity: ActivityItem;
     index: number;
@@ -77,6 +87,12 @@ function ActivityAccordion({
     onChange: (patch: Partial<ActivityItem>) => void;
     onRemove: () => void;
     savedStudentIds: Set<string>;
+    /** Cestino per una registrazione segnata per errore (vedi BottoneEliminaRegistrazione). */
+    onElimina?: (studentId: string) => void;
+    /** L'etichetta leggibile della routine, per la domanda di conferma. */
+    etichettaEvento?: string;
+    /** Note per-bambino: dicono, nella conferma, che spariranno con la riga. */
+    noteBambino?: Record<string, string>;
 }) {
     const t = useTranslations('teacherDiario');
     const [open, setOpen] = useState(true);
@@ -197,6 +213,14 @@ function ActivityAccordion({
                                                         {student.firstName} {student.lastName}
                                                         {isSaved && <span className="ml-1 text-kidville-success">✅</span>}
                                                     </span>
+                                                    {isSaved && onElimina && (
+                                                        <BottoneEliminaRegistrazione
+                                                            nome={`${student.firstName} ${student.lastName}`}
+                                                            evento={etichettaEvento ?? ''}
+                                                            haNota={Boolean(noteBambino?.[student.id]?.trim())}
+                                                            onElimina={() => onElimina(student.id)}
+                                                        />
+                                                    )}
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-1">
                                                     {PARTICIPATION_LEVELS.map(lv => (
@@ -228,7 +252,7 @@ function ActivityAccordion({
 
 // ─── Componente principale ─────────────────────────────────────────────────────
 
-export function ActivityDetailInline({ students, activities, onActivitiesChange, savedStudentIds }: Props) {
+export function ActivityDetailInline({ students, activities, onActivitiesChange, savedStudentIds, onElimina, etichettaEvento, noteBambino }: Props) {
     const t = useTranslations('teacherDiario');
 
     const addActivity = () => {
@@ -267,6 +291,9 @@ export function ActivityDetailInline({ students, activities, onActivitiesChange,
                             onChange={patch => updateActivity(idx, patch)}
                             onRemove={() => removeActivity(idx)}
                             savedStudentIds={savedStudentIds}
+                            onElimina={onElimina}
+                            etichettaEvento={etichettaEvento}
+                            noteBambino={noteBambino}
                         />
                     </motion.div>
                 ))}

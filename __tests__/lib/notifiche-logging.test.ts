@@ -79,10 +79,17 @@ function creaClient(opts: Opzioni = {}) {
       const filtri: Record<string, unknown> = { table }
       const catena: Record<string, unknown> = {
         eq: (col: string, val: unknown) => { filtri[col] = val; return catena },
-        is: async (col: string, val: unknown) => {
+        // Il debounce restringe la delete ai soli destinatari che sta per
+        // riaccodare: senza `in` qui, la catena esplode e il guasto finisce
+        // nel ramo sbagliato del log.
+        in: (col: string, val: unknown) => { filtri[col] = val; return catena },
+        is: (col: string, val: unknown) => {
           filtri[col] = val
-          deletes.push({ ...filtri })
-          return { error: opts.deleteError ?? null }
+          // La delete del debounce chiude con `.select('id')`: `is` non è il terminale.
+          return { select: async () => {
+            deletes.push({ ...filtri })
+            return { data: [], error: opts.deleteError ?? null }
+          } }
         },
         maybeSingle: async () => ({
           data: opts.utenteError ? null : { nome: 'Mario', cognome: 'Rossi' },

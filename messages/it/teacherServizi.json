@@ -10,14 +10,12 @@
   "galleryStep2": "2. Configura Tag e Privacy",
   "galleryConverto": "Converto…",
   "galleryFotoNofM": "Foto {index} di {totale}",
-  "galleryApplicaTutte": "✨ Applica a tutte",
   "galleryBroadcastLabel": "Caricamento in Broadcast (invia a tutta la classe)",
   "galleryBroadcastInfo": "📢 <strong>Caricamento Generale:</strong> I media saranno mostrati in bacheca a tutti i genitori degli alunni iscritti nella sezione <strong>{sezione}</strong>, senza tag individuali.",
   "galleryConversioneVideo": "Conversione video…",
   "galleryCaricamentoUpload": "Caricamento…",
   "galleryPubblica": "Pubblica {count, plural, one {# file} other {# file}}",
   "galleryOffline": "Sei offline. Puoi comunque caricare foto: verranno salvate in locale e caricate appena tornerai online.",
-  "galleryAlertApplicataATutte": "Configurazione applicata a tutte le foto del caricamento!",
   "galleryAlertVideoOffline": "Il video «{nome}» richiede una conversione e non può essere salvato offline. Riprova quando sei di nuovo online.",
   "galleryAlertVideoTroppoGrande": "Il video «{nome}» supera i 50 MB (attuale: {dimensione} MB). Verrà elaborato e compresso automaticamente per ridurne il peso prima del caricamento.",
   "galleryErrCaricamentoFile": "Errore durante il caricamento del file",
@@ -211,5 +209,9 @@
   "galleryErrTroppoGrande": "Il file supera i 50 MB. Registra un video più breve e riprova.",
   "galleryErrFirma": "Non è stato possibile preparare il caricamento. Riprova fra qualche minuto.",
   "galleryErrTrasferimento": "Il caricamento si è interrotto. Riprova.",
-  "galleryErrRete": "Connessione assente o instabile: il file non è partito. Riprova quando torna la rete."
+  "galleryErrRete": "Connessione assente o instabile: il file non è partito. Riprova quando torna la rete.",
+  "galleryApplicaAlleAltre": "✨ Applica alle altre {n, plural, one {# foto} other {# foto}}",
+  "galleryApplicaSostituisci": "✨ Sostituisci in tutte",
+  "galleryConfermaApplicaParziale": "Applico i bambini di questa foto {n, plural, one {all’altra foto ancora senza tag} other {alle altre # foto ancora senza tag}}?\n\n{gia, plural, one {# foto ha già i suoi tag e NON verrà toccata} other {# foto hanno già i loro tag e NON verranno toccate}}.",
+  "galleryConfermaSostituisci": "{gia, plural, one {L’altra foto ha già i suoi tag} other {Le altre # foto hanno già i loro tag}}.\n\nVuoi SOSTITUIRLI con i bambini di questa foto? Il lavoro fatto foto per foto andrà perso."
 }

@@ -10,14 +10,12 @@
   "galleryStep2": "2. Configure tags and privacy",
   "galleryConverto": "Converting…",
   "galleryFotoNofM": "Photo {index} of {totale}",
-  "galleryApplicaTutte": "✨ Apply to all",
   "galleryBroadcastLabel": "Broadcast upload (send to the whole class)",
   "galleryBroadcastInfo": "📢 <strong>General upload:</strong> the media will be shown on the board to all parents of children enrolled in section <strong>{sezione}</strong>, without individual tags.",
   "galleryConversioneVideo": "Converting video…",
   "galleryCaricamentoUpload": "Uploading…",
   "galleryPubblica": "Publish {count, plural, one {# file} other {# files}}",
   "galleryOffline": "You are offline. You can still upload photos: they will be saved locally and uploaded as soon as you are back online.",
-  "galleryAlertApplicataATutte": "Settings applied to all photos in this upload!",
   "galleryAlertVideoOffline": "The video \"{nome}\" requires conversion and cannot be saved offline. Try again when you are back online.",
   "galleryAlertVideoTroppoGrande": "The video \"{nome}\" exceeds 50 MB (current: {dimensione} MB). It will be processed and compressed automatically to reduce its size before uploading.",
   "galleryErrCaricamentoFile": "Error while uploading the file",
@@ -211,5 +209,9 @@
   "galleryErrTroppoGrande": "The file is over 50 MB. Record a shorter video and try again.",
   "galleryErrFirma": "The upload could not be prepared. Please try again in a few minutes.",
   "galleryErrTrasferimento": "The upload was interrupted. Please try again.",
-  "galleryErrRete": "No connection: the file was not sent. Try again when you are back online."
+  "galleryErrRete": "No connection: the file was not sent. Try again when you are back online.",
+  "galleryApplicaAlleAltre": "✨ Apply to {n, plural, one {# other photo} other {# other photos}}",
+  "galleryApplicaSostituisci": "✨ Replace in all",
+  "galleryConfermaApplicaParziale": "Apply this photo’s children to {n, plural, one {the other untagged photo} other {the other # untagged photos}}?\n\n{gia, plural, one {# photo already has its own tags and will NOT be touched} other {# photos already have their own tags and will NOT be touched}}.",
+  "galleryConfermaSostituisci": "{gia, plural, one {The other photo already has its own tags} other {The other # photos already have their own tags}}.\n\nReplace them with this photo’s children? The per-photo work will be lost."
 }

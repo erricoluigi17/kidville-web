@@ -1,5 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logEvento } from '@/lib/logging/logger';
+import { aBlocchi, ID_PER_QUERY } from '@/lib/db/blocchi';
+
+/** Ri-esportato: il motore sta in `@/lib/db/blocchi`, un posto solo. */
+export { aBlocchi };
 
 // =============================================================================
 // Statistiche e autori degli avvisi — IN BLOCCO, mai una query per avviso.
@@ -43,13 +47,12 @@ export const STATS_ZERO: StatsAvviso = { letti: 0, adesioni_si: 0, adesioni_no: 
 /**
  * Quanti id entrano in un solo `.in(...)`.
  *
- * PostgREST li mette in QUERY STRING: 100 uuid sono ~3.800 caratteri, che stanno
- * comodi sotto il limite di riga di qualunque proxy. Con 1000 si arriverebbe a
- * ~38 kB e la richiesta verrebbe rifiutata con un 414 — cioè il tetto qui non è
- * cosmetico, è ciò che impedisce alla correzione di rompersi da sola quando gli
- * avvisi cresceranno.
+ * La regola (PostgREST mette gli id in query string, oltre il migliaio si prende
+ * un 414) vive ora in `@/lib/db/blocchi`, perché è una proprietà del trasporto e
+ * non degli avvisi: dal 2026-09-08 la usa anche il debounce delle notifiche.
+ * Il nome resta qui per chi già lo importa.
  */
-export const AVVISI_PER_QUERY = 100;
+export const AVVISI_PER_QUERY = ID_PER_QUERY;
 
 /**
  * Righe chieste per pagina. Coincide col `db-max-rows` di default di Supabase:
@@ -68,15 +71,6 @@ export const RIGHE_PER_PAGINA = 1000;
  */
 export const MAX_PAGINE = 20;
 
-/** Divide un elenco in blocchi di dimensione fissa (l'ultimo può essere più corto). */
-export function aBlocchi<T>(elementi: readonly T[], dimensione: number): T[][] {
-    if (dimensione < 1) return elementi.length > 0 ? [[...elementi]] : [];
-    const blocchi: T[][] = [];
-    for (let i = 0; i < elementi.length; i += dimensione) {
-        blocchi.push(elementi.slice(i, i + dimensione));
-    }
-    return blocchi;
-}
 
 /** Riga di `avvisi_risposte` nella proiezione MINIMA usata per aggregare. */
 type RigaRisposta = { avviso_id?: unknown; letto_il?: unknown; risposta?: unknown };

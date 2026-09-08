@@ -12,7 +12,8 @@ import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
 import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, type MotivoVideoNonValido } from '@/lib/media/processing';
 import { analizzaContenutoVideo } from '@/lib/media/codec-sniff';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
+import { caricaMediaGalleria, messaggioCaricamento } from '@/lib/gallery/carica-media';
 import { messaggioErrore, messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { formattaMegabyte } from '@/lib/i18n/numero';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
@@ -376,30 +377,20 @@ function TeacherGalleryContent() {
                         creato_il: new Date().toISOString()
                     });
                 } else {
-                    // Caricamento online reale tramite API server-side
-                    const formData = new FormData();
-                    formData.append('file', processedFile);
-                    formData.append('userId', teacherId);
-
-                    const uploadRes = await fetch('/api/gallery/upload', {
-                        method: 'POST',
-                        // FormData: NIENTE Content-Type (lo imposta il browser col boundary).
-                        headers: { 'x-user-id': teacherId },
-                        body: formData
-                    });
-
-                    if (!uploadRes.ok) {
-                        // Il caricamento ha i suoi codici (tipo non ammesso, file troppo
-                        // grande, storage che rifiuta): tradotti, non serviti in italiano.
-                        const motivo = await messaggioErrore(uploadRes, t('galleryErrCaricamentoFile'));
-                        throw new Error(`«${f.file.name}»: ${motivo}`);
+                    // CARICAMENTO DIRETTO ALLO STORAGE (firma + `PUT`), non più multipart
+                    // attraverso una nostra route.
+                    //
+                    // ⚠️ IL MULTIPART ERA IL DIFETTO. Vercel rifiuta un corpo oltre ~4,5 MB
+                    // con un 413 scritto dall'infrastruttura PRIMA che la funzione parta:
+                    // nei log del server non restava niente, e qui usciva «Errore durante
+                    // il caricamento del file». Misurato in `app_log` il 2026-09-07: sei
+                    // volte in un giorno, e l'unico video passato pesava 4.484.198 byte,
+                    // dodici kilobyte sotto il taglio. Il bucket ne accetta 50 di milioni.
+                    const esito = await caricaMediaGalleria(processedFile, processedFile.type || (isVideo ? 'video/mp4' : 'image/jpeg'));
+                    if (!esito.ok) {
+                        throw new Error(`«${f.file.name}»: ${messaggioCaricamento(esito, t)}`);
                     }
-
-                    // Il bucket è privato: si salva il PERCORSO nel bucket, mai un
-                    // indirizzo (quello firmato scade, quello pubblico non apre più).
-                    // `fileUrl` è il nome storico della stessa cosa, tenuto per i
-                    // client vecchi: qui vale da ripiego.
-                    const { path, fileUrl } = await uploadRes.json();
+                    const path = esito.path;
 
                     // Crea il record nel DB
                     const res = await fetch('/api/gallery', {
@@ -407,7 +398,7 @@ function TeacherGalleryContent() {
                         headers: { 'Content-Type': 'application/json', 'x-user-id': teacherId },
                         body: JSON.stringify({
                             uploaded_by: teacherId,
-                            file_url: path ?? fileUrl,
+                            file_url: path,
                             file_type: isVideo ? 'video' : 'foto',
                             caption: f.file.name,
                             tag_students: f.is_broadcast ? [] : f.tag_students,
@@ -442,10 +433,19 @@ function TeacherGalleryContent() {
             setUploadedFiles([]);
             setActiveFileIndex(0);
         } catch (err) {
-            // Nel messaggio SOLO un codice: l'errore poteva contenere il nome
-            // del file, cioè la foto di un minore. All'utente si mostra il testo
-            // dell'errore, che resta a schermo e non finisce in nessuna tabella.
-            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-upload-fallito', route: '/teacher/gallery' });
+            // Nel messaggio SOLO il TIPO dell'errore: `nomeErrore` restituisce `e.name`
+            // e niente altro, mentre `e.message` porta il nome del file — cioè la foto
+            // di un minore, che resterebbe trenta giorni in `app_log`. All'utente si
+            // mostra il testo intero, che vive a schermo e non entra in nessuna tabella.
+            //
+            // Questo è il ramo CATCH-ALL, e si distingue da quelli di
+            // `@/lib/gallery/carica-media` (firma, trasferimento, taglia, formato), che
+            // hanno un messaggio e uno stato propri. Fino al 2026-09-07 il messaggio era
+            // uno solo per tutti: la deduplicazione di `logClient` ha per chiave
+            // `evento|messaggio|stato`, quindi guasti diversi collassavano in una riga
+            // sola — e infatti in tabella ogni riga aveva `contesto` vuoto e nessuno
+            // stato, cioè non diceva niente di ciò che era andato storto.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `gallery-pubblicazione-fallita: ${nomeErrore(err)}`, route: '/teacher/gallery' });
             alert(err instanceof Error && err.message ? err.message : t('galleryErrCaricamentoGenerico'));
         } finally {
             setUploading(false);

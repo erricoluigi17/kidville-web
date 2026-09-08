@@ -11,6 +11,7 @@ import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { ComunicaAssenzaCard } from '@/components/features/parent/ComunicaAssenzaCard';
 import { FasciaStatoAssenza } from '@/components/features/parent/FasciaStatoAssenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
+import { oraDiRoma } from '@/lib/presenze/orario';
 
 /** La rotta della PAGINA, per i log del client (mai la rotta della fetch). */
 const ROTTA = '/parent/primaria/assenze';
@@ -50,11 +51,9 @@ const RIEPILOGO_TILES: { key: keyof Riepilogo; labelKey: string; cls: string }[]
   { key: 'uscita_anticipata', labelKey: 'assenzeTileUsciteAnt', cls: 'bg-kidville-info-soft text-kidville-info-strong' },
 ];
 
-function oraDaTs(ts: string | null): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+// HH:MM a Roma, dal motore condiviso: la quinta copia di `getHours()` che leggeva
+// l'ora del dispositivo invece di quella della scuola.
+const oraDaTs = (ts: string | null): string => oraDiRoma(ts) ?? '';
 
 function AssenzeGenitore() {
   const { parentId, studentId, ready } = useParentIdentity();

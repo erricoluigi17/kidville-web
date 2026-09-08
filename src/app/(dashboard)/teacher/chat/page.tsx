@@ -40,6 +40,21 @@ function TeacherChatContent() {
     const [showMobile, setShowMobile] = useState<'list' | 'chat'>('list');
     const [showNewChat, setShowNewChat] = useState(false);
     const [contacts, setContacts] = useState<Contact[]>([]);
+    /**
+     * L'invio non è riuscito, e perché. `null` = nessun problema.
+     * Non è un doppione dello stato «termini» o «sospensione»: quelli sono
+     * blocchi NOTI che disabilitano il composer, questo è il rifiuto di un
+     * messaggio già scritto — e fino al 2026-09-07 non lo diceva nessuno.
+     */
+    const [erroreInvio, setErroreInvio] = useState<'rifiutato' | 'rete' | 'sospeso' | null>(null);
+
+    /**
+     * Perché la rubrica è vuota, quando lo è. La rotta lo dice (campo `motivo`),
+     * e serve a non mostrare «li hai già contattati tutti» a chi non ha nessun
+     * contatto possibile — che dopo la stretta del 2026-09-07 sarebbe una bugia.
+     */
+    const [motivoVuoto, setMotivoVuoto] = useState<string | null>(null);
+
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [unreadCount, setUnreadCount] = useState(0);
     // ID del primo messaggio non letto: bloccato all'apertura del thread
@@ -85,6 +100,7 @@ function TeacherChatContent() {
             if (res?.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
+                setMotivoVuoto(data.motivo ?? null);
             }
         } finally {
             setLoadingContacts(false);
@@ -285,19 +301,44 @@ function TeacherChatContent() {
                         ? { ...t, last_message: { content, sender_id: teacherId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
                         : t
                 ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
-                return;
+                setErroreInvio(null);
+                return true;
             }
+            /**
+             * ⚠️ DA QUI IN GIÙ, PRIMA, NON SUCCEDEVA NIENTE.
+             *
+             * Il campo di scrittura si svuotava comunque (lo faceva `ChatInput`
+             * prima di conoscere l'esito), e a schermo non compariva nulla: il
+             * messaggio era perso e chi l'aveva scritto credeva di averlo mandato.
+             * Valeva per il genitore moroso (403 `account_sospeso`), per un
+             * allegato rifiutato (400) e per qualunque 500.
+             *
+             * Adesso l'handler dice `false`, il testo resta nel campo, e l'avviso
+             * nomina il motivo quando il server ne dichiara uno.
+             */
             if (res.status === 403) {
                 // Guardia UGC (C5): se la conversazione è stata sospesa, ricarica i thread
                 // così il banner compare e il composer si disabilita. (Il gate Termini non
                 // scatta mai per un docente: guardia trasparente per lo staff.)
                 const data = await res.json().catch(() => null);
-                if ((data as { motivo?: string } | null)?.motivo === 'conversazione_sospesa') {
+                const motivo = (data as { motivo?: string } | null)?.motivo;
+                if (motivo === 'conversazione_sospesa') {
                     await loadThreads();
+                } else if (motivo === 'account_sospeso') {
+                    setErroreInvio('sospeso');
+                } else {
+                    setErroreInvio('rifiutato');
                 }
+                return false;
             }
+            setErroreInvio('rifiutato');
+            return false;
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
+            // La rete è caduta: il messaggio NON è partito. Il log serve a noi
+            // domani; questo serve a chi sta scrivendo adesso.
+            setErroreInvio('rete');
+            return false;
         }
     };
 
@@ -422,6 +463,11 @@ function TeacherChatContent() {
                                 firstUnreadId={firstUnreadId}
                                 onMarkRead={handleMarkRead}
                             />
+                            {erroreInvio && (
+                                <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+                                    {erroreInvio === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
+                                </p>
+                            )}
                             <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
                         </>
                     ) : (
@@ -482,7 +528,12 @@ function TeacherChatContent() {
                             firstUnreadId={firstUnreadId}
                             onMarkRead={handleMarkRead}
                         />
-                        <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
+                        {erroreInvio && (
+                                <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+                                    {erroreInvio === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
+                                </p>
+                            )}
+                            <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>
@@ -517,8 +568,18 @@ function TeacherChatContent() {
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
+                                        {/* Tre vuoti diversi, tre frasi diverse. «Hai già una
+                                            conversazione con tutti i genitori disponibili! 🎉» è vera
+                                            solo per il primo: alle 6 insegnanti senza sezione
+                                            assegnata direbbe il falso, e le lascerebbe a chiedersi
+                                            perché la loro classe non c'è. Il rimedio è
+                                            un'assegnazione in anagrafica, e la frase lo dice. */}
                                         <p className="font-maven text-sm text-kidville-muted">
-                                            {t('chatContattiVuoto')}
+                                            {motivoVuoto === 'nessuna-sezione-assegnata'
+                                                ? t('chatNessunaSezione')
+                                                : motivoVuoto === 'sezioni-senza-famiglie'
+                                                    ? t('chatSezioniSenzaFamiglie')
+                                                    : t('chatContattiVuoto')}
                                         </p>
                                     </div>
                                 ) : (

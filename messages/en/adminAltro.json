@@ -678,7 +678,6 @@
   "candEtichetteTroncate": "There are too many labels to read at once: the label filter stays off, because it would show fewer applications than actually exist.",
   "candEtichettaElencoTroncato": "There are too many applications to filter them all by label: narrow the list first with the other filters (location, status, period).",
   "candEtichettaNonAttiva": "Labels are not enabled in this environment.",
-
   "galSedeEyebrow": "Gallery",
   "galSedeTitolo": "Location gallery",
   "galSedeSottotitolo": "Every photo of the location, newest first. Filter by class, by child and by day.",
@@ -712,5 +711,15 @@
   "galSedePiuRecenti": "Newer",
   "galSedePiuVecchie": "Older",
   "galSedePaginaDi": "Page {pagina}/{pagine}",
-  "galSedeTaggatoSenzaNome": "Name unavailable"
+  "galSedeTaggatoSenzaNome": "Name unavailable",
+  "appelloEyebrow": "Teaching",
+  "appelloTitle": "Attendance",
+  "appelloSubtitle": "Daily and monthly attendance, for every class at this location.",
+  "appelloNessunaSezione": "No classes available for the selected locations.",
+  "appelloLabelSede": "Location",
+  "appelloLabelClasse": "Class",
+  "appelloTabOggi": "Today",
+  "appelloTabMese": "Month",
+  "appelloPrimariaSpiegazione": "Primary school attendance lives in the class register for {classe}, alongside the other registers.",
+  "appelloPrimariaApri": "Open the class register"
 }

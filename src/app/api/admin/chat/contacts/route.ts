@@ -80,14 +80,25 @@ export const GET = withRoute('admin/chat/contacts:GET', async (request: NextRequ
       .eq('ruolo', 'genitore');
     const uMap = new Map((utenti ?? []).map((u) => [u.id, u]));
 
+    /**
+     * ⚠️ LA CHIAVE È LA COPPIA, non il solo genitore.
+     *
+     * Qui c'era `seen.has(genitoreId)`: un genitore con due figli compariva **una
+     * volta sola**, agganciato al primo bambino incontrato nell'iterazione. E
+     * quello `studentId` diventa lo `student_id` del thread, che è il campo su cui
+     * la conversazione è «su un bambino». Conseguenza: la segreteria poteva
+     * scrivere a quella famiglia solo a proposito di uno dei due figli, e quale
+     * dipendeva dall'ordine delle righe.
+     */
     const seen = new Set<string>();
     const contatti: { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null; scuolaId: string | null }[] = [];
     for (const a of righeAlunni) {
       for (const genitoreId of perAlunno.get(a.id as string) ?? []) {
-        if (seen.has(genitoreId)) continue;
+        const chiave = `${genitoreId}:${a.id as string}`;
+        if (seen.has(chiave)) continue;
         const u = uMap.get(genitoreId);
         if (!u) continue; // solo genitori con account di login
-        seen.add(genitoreId);
+        seen.add(chiave);
         contatti.push({
           parentUserId: u.id,
           parentName: `${u.cognome ?? ''} ${u.nome ?? ''}`.trim() || '—',

@@ -303,14 +303,41 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
 // chat/contacts
 // -----------------------------------------------------------------------------
 
-describe('GET /api/chat/contacts — la sezione dedotta dai tag resta in sede', () => {
+describe('GET /api/chat/contacts — la sezione NON si deduce più dai tag delle foto', () => {
   beforeEach(() => {
     h.db.galleria_media_v2 = [
       { id: MEDIA_MIO, scuola_id: SEDE_A, uploaded_by: ED_A, is_broadcast: false, tag_students: [ALU_B, ALU_A], target_classes: null },
     ]
+    // Il legame VERO fra la maestra e la sua sezione, che prima questo file non
+    // aveva: la rubrica ci arrivava indovinandola dai bambini che la maestra
+    // aveva taggato nelle foto.
+    h.db.utenti_sezioni = [{ utente_id: ED_A, section_id: 'sec-a' }]
   })
 
-  it('deduce «3 ANNI» (sede A) e non «2 ANNI» (sede B), e dichiara la sede del contatto', async () => {
+  it('senza un legame in `utenti_sezioni` la rubrica è VUOTA, e i media non si guardano nemmeno', async () => {
+    // ⚠️ QUESTO CASO È IL ROVESCIO DI QUELLO CHE C'ERA, e il rovescio è il punto.
+    //
+    // Fino al 2026-09-07 una maestra senza legami in `utenti_sezioni` non restava
+    // senza rubrica: la rotta le deduceva la classe dai `tag_students` delle foto
+    // che aveva caricato. È un'inferenza che produce abbinamenti **plausibili e
+    // sbagliati** — una maestra che fotografa la recita di un'altra sezione si
+    // ritrovava in rubrica quelle famiglie — e il PRD la dichiara già peggiore del
+    // vuoto a proposito delle insegnanti senza sezione assegnata.
+    //
+    // L'asserzione che conta non è la lista vuota (quella si otterrebbe anche per
+    // sbaglio): è che `galleria_media_v2` **non compaia fra le tabelle lette**.
+    // Prova che la deduzione non viene nemmeno tentata.
+    h.db.utenti_sezioni = []
+    h.tabelle.length = 0
+    const res = await CONTACTS_GET(req(`/api/chat/contacts?userId=${ED_A}`))
+    expect(res.status).toBe(200)
+    const j = (await res.json()) as { contacts: unknown[]; motivo: string | null }
+    expect(j.contacts).toEqual([])
+    expect(j.motivo).toBe('nessuna-sezione-assegnata')
+    expect(h.tabelle).not.toContain('galleria_media_v2')
+  })
+
+  it('col legame vero: la famiglia della PROPRIA sezione, con la sede dichiarata', async () => {
     const res = await CONTACTS_GET(req(`/api/chat/contacts?userId=${ED_A}`))
     expect(res.status).toBe(200)
     const j = (await res.json()) as {

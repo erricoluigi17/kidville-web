@@ -17,7 +17,7 @@
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
   "aggiornato": "2026-09-06",
-  "totale_occorrenze": 1430,
+  "totale_occorrenze": 1429,
   "file": [
     {
       "path": "src/app/api/admin/adults/route.ts",
@@ -437,7 +437,8 @@
     },
     {
       "path": "src/app/api/chat/threads/route.ts",
-      "n": 6
+      "n": 5,
+      "nota": "Sceso da 6 a 5 il 2026-09-07: il 500 dell'insert nasce ora con `CHAT_THREAD_NON_CREATO` — e insieme ha smesso di rimandare al client il `message` di PostgREST, che portava il nome del vincolo `chat_threads_teacher_id_parent_id_student_id_key`. Le due risposte nuove della stessa modifica (il gate di abbinamento, 403 e 500) sono nate GIÀ con un codice, quindi non entrano qui."
     },
     {
       "path": "src/app/api/chat/translate/route.ts",

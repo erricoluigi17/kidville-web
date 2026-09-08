@@ -102,5 +102,10 @@
   "ugcTermsBlockedBody": "Per scrivere in chat devi prima accettare i Termini di servizio.",
   "ugcTermsBlockedCta": "Accetta i Termini per continuare",
   "chatChiudiNuova": "Chiudi nuova chat",
-  "chatRimuoviAllegato": "Rimuovi allegato"
+  "chatRimuoviAllegato": "Rimuovi allegato",
+  "chatNessunaSezione": "Non ti è stata ancora assegnata nessuna sezione. La segreteria può farlo da Admin → anagrafica del dipendente.",
+  "chatSezioniSenzaFamiglie": "Nelle tue sezioni non ci sono famiglie con un account attivo.",
+  "chatInvioNonRiuscito": "Il messaggio non è stato inviato. È rimasto qui: riprova.",
+  "chatInvioNonRiuscitoRete": "Il messaggio non è partito: connessione assente. È rimasto qui, riprova quando torni online.",
+  "chatInvioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account della famiglia è sospeso."
 }

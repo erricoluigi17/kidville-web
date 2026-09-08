@@ -11,6 +11,7 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami';
 import { parseBody, parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
+import { abbinamentoConsentito } from '@/lib/chat/rubrica';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
 import { schemaAssente } from '@/lib/news/schema-assente';
@@ -196,6 +197,64 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
             if (fuoriScope) return fuoriScope;
         }
 
+        /**
+         * ─── IL GATE DELLA COPPIA, non della propria metà ────────────────────
+         *
+         * I due controlli qui sopra guardano **solo chi chiama**: che sia uno dei
+         * due partecipanti, e che il bambino sia suo (o nel suo scope). Dell'ALTRA
+         * metà del thread non si verificava niente — bastava conoscere l'uuid di
+         * una qualunque insegnante, anche di un'altra sede, per aprirci sopra una
+         * conversazione purché il bambino fosse proprio. Gli uuid viaggiano nelle
+         * risposte API, quindi non è un'ipotesi da laboratorio: in produzione, al
+         * 2026-09-07, ci sono **32 thread con un docente fuori dalla sezione del
+         * bambino**, e crescevano di circa uno al giorno.
+         *
+         * Filtrare la sola rubrica non sarebbe bastato: una vetrina non è una
+         * porta. Questa è la stessa regola che la rubrica applica
+         * (`@/lib/chat/rubrica`), e sta in un posto solo apposta.
+         *
+         * ⚠️ I due controlli di sopra NON sono ridondanti e restano: rispondono a
+         * una domanda diversa — «chi chiama ha diritto a questo bambino?» — e
+         * devono venire PRIMA, così un chiamante senza diritti riceve il 403 senza
+         * che si vada a leggere l'anagrafica della controparte.
+         *
+         * ⚠️ `non-deciso` è **500, mai 403**: una lettura fallita non autorizza a
+         * dire a una famiglia che quella non è la sua insegnante.
+         */
+        const abbinamento = await abbinamentoConsentito(supabase, {
+            operatoreId: teacher_id,
+            genitoreId: parent_id,
+            alunnoId: student_id,
+        });
+        if (abbinamento.motivo === 'non-deciso') {
+            logEvento('chat', 'error', {
+                operazione: 'chat/threads:POST',
+                esito: 'abbinamento-non-verificato',
+                entita_id: student_id,
+            });
+            return NextResponse.json(
+                { error: 'Verifica non riuscita. Riprova.', codice: 'CHAT_ABBINAMENTO_NON_VERIFICATO' },
+                { status: 500 },
+            );
+        }
+        if (!abbinamento.consentito) {
+            // `tipo` e non `motivo`: `motivo` è una chiave REDATTA in
+            // `@/lib/logging/redact`, e uscirebbe come `[redatto:str/…]`.
+            logEvento('chat', 'warn', {
+                operazione: 'chat/threads:POST',
+                esito: 'abbinamento-rifiutato',
+                tipo: abbinamento.motivo,
+                entita_id: student_id,
+            });
+            return NextResponse.json(
+                {
+                    error: 'Non è possibile aprire una conversazione con questa persona su questo bambino.',
+                    codice: 'CHAT_ABBINAMENTO_NON_CONSENTITO',
+                },
+                { status: 403 },
+            );
+        }
+
         // Cerca se esiste già un thread per questa combinazione
         const { data: existing } = await supabase
             .from('chat_threads')
@@ -217,8 +276,31 @@ export const POST = withRoute('chat/threads:POST', async (request: Request) => {
             .single();
 
         if (error) {
+            // Corsa fra il `select` qui sopra e questa `insert`: due tocchi ravvicinati
+            // sullo stesso contatto violano l'UNIQUE `(teacher_id, parent_id,
+            // student_id)`. Visto 4 volte in `app_log`. Non è un guasto: il thread
+            // c'è, ed è quello che il chiamante voleva. Si rilegge e si restituisce.
+            if ((error as { code?: string }).code === '23505') {
+                const { data: gia } = await supabase
+                    .from('chat_threads')
+                    .select('id')
+                    .eq('teacher_id', teacher_id)
+                    .eq('parent_id', parent_id)
+                    .eq('student_id', student_id)
+                    .maybeSingle();
+                if (gia) return NextResponse.json(gia);
+            }
             logErrore({ operazione: 'chat/threads:POST', stato: 500, evento: 'db' }, error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            // IL `message` DI POSTGREST NON ESCE DA QUI, e fino a oggi usciva: porta
+            // il nome del vincolo (`chat_threads_teacher_id_parent_id_student_id_key`),
+            // cioè un pezzo di mappa dello schema consegnato a chiunque superi il
+            // gate. È la stessa «divulgazione per omissione» che `attendance/daily`
+            // documenta di aver già chiuso da sé. Il messaggio resta nel log, che è
+            // dove dice PERCHÉ.
+            return NextResponse.json(
+                { error: 'La conversazione non si è potuta aprire.', codice: 'CHAT_THREAD_NON_CREATO' },
+                { status: 500 },
+            );
         }
 
         return NextResponse.json(data, { status: 201 });

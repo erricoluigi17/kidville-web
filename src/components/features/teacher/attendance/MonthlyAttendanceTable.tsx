@@ -9,6 +9,9 @@ import type { MonthlyAttendanceRecord } from '@/app/api/attendance/monthly/route
 import { calcolaOreAssenza } from '@/lib/primaria/oreAssenza';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { parametroClasse } from '@/lib/sezioni/parametro-classe';
+import { oraDiRoma } from '@/lib/presenze/orario';
+import { OrarioCorreggibile, type CampoOrario } from '@/components/features/presenze/OrarioCorreggibile';
+import { orariAmmessi } from '@/lib/presenze/orario-ammesso';
 
 // Nomi di mesi e giorni localizzati via Intl (niente array hardcoded per lingua).
 // I giorni sono indicizzati per Date.getDay() (0 = domenica).
@@ -35,6 +38,16 @@ function nomiGiorni(locale: string): string[] {
 }
 
 type AttendanceStatus = 'presente' | 'assente' | 'ritardo' | 'uscita_anticipata' | 'nessun_dato';
+
+// Le stesse chiavi che usa l'appello del giorno: il nome accessibile di una cella
+// dice lo stato con le parole che l'insegnante legge nell'altra schermata.
+const CHIAVE_STATO_MESE: Record<AttendanceStatus, string> = {
+    presente: 'presente',
+    ritardo: 'ritardo',
+    assente: 'assente',
+    uscita_anticipata: 'uscitaAnt',
+    nessun_dato: 'nessunDato',
+};
 
 interface StudentMonthData {
     student_id: string;
@@ -147,29 +160,65 @@ export function calcSummary(s: StudentMonthData): StudentSummary {
 
 // ─── Cella ───────────────────────────────────────────────────────────────────
 
-// HH:MM da un timestamp ISO (vuoto se assente/non valido).
-function hhmm(ts: string | null | undefined): string {
-    if (!ts) return '';
-    const d = new Date(ts);
-    return isNaN(d.getTime()) ? '' : `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-}
+// HH:MM a Roma da un orario di presenza, in qualunque delle forme che la colonna
+// contiene (vuoto se assente/non valido). Il `getHours()` di prima era l'ora del
+// DISPOSITIVO: giusta per un tablet italiano, sbagliata per chiunque altro, e muta.
+const hhmm = (ts: string | null | undefined): string => oraDiRoma(ts) ?? '';
 
-function Cell({ record, isWeekend }: { record?: MonthlyAttendanceRecord; isWeekend: boolean }) {
+function Cell({ record, isWeekend, giorno, alunnoId, nomeAlunno, dataLunga, onApri }: {
+    record?: MonthlyAttendanceRecord;
+    isWeekend: boolean;
+    giorno: string;
+    alunnoId: string;
+    nomeAlunno: string;
+    dataLunga: string;
+    onApri?: (alunnoId: string, giorno: string) => void;
+}) {
     const t = useTranslations('teacherPresenze');
     const s: AttendanceStatus = record?.stato ?? 'nessun_dato';
     const cfg = STATUS_CONFIG[s];
-    const ora = s === 'ritardo' ? hhmm(record?.orario_entrata) : s === 'uscita_anticipata' ? hhmm(record?.orario_uscita) : '';
-    const title = ora ? `${s === 'ritardo' ? t('entrata') : t('uscita')} ${ora}` : undefined;
+    // L'ingresso si mostra per ogni stato che ne ha uno, non solo per il ritardo:
+    // da quando l'uscita si registra anche a chi è «presente», limitarlo a due stati
+    // nascondeva orari che ci sono davvero.
+    const entrata = hhmm(record?.orario_entrata);
+    const uscita = hhmm(record?.orario_uscita);
+    const ora = s === 'uscita_anticipata' ? (uscita || entrata) : (entrata || uscita);
+    const title = ora ? `${s === 'uscita_anticipata' ? t('uscita') : t('entrata')} ${ora}` : undefined;
     // Simboli-lettera localizzati (R/U → L/E in inglese); ✓ ✗ · restano neutri.
     const simbolo = s === 'ritardo' ? t('abbrevR') : s === 'uscita_anticipata' ? t('abbrevU') : cfg.short;
+
+    const dentro = (
+        <div className="flex flex-col items-center justify-center" style={{ height: 40 }}>
+            <span className={`text-[11px] font-black w-6 h-6 rounded-full flex items-center justify-center ${s !== 'nessun_dato' ? `${cfg.bg} ${cfg.text}` : cfg.text}`}>
+                {simbolo}
+            </span>
+            {ora && <span className="text-[8px] leading-none text-kidville-sub mt-0.5">{ora}</span>}
+        </div>
+    );
+
+    // SOLO le celle con un appello registrato sono comandi. Su una cella vuota la
+    // PATCH risponderebbe 409 `APPELLO_NON_REGISTRATO` — quel giorno l'appello non è
+    // mai stato fatto — e il rimedio giusto è non offrire il gesto, non mostrare un
+    // errore dopo averlo offerto.
+    const correggibile = Boolean(onApri) && s !== 'nessun_dato';
+
     return (
         <td className={`p-0 border-b border-kidville-line ${isWeekend ? 'bg-kidville-cream' : ''}`} style={{ width: 38 }} title={title}>
-            <div className="flex flex-col items-center justify-center" style={{ height: 40 }}>
-                <span className={`text-[11px] font-black w-6 h-6 rounded-full flex items-center justify-center ${s !== 'nessun_dato' ? `${cfg.bg} ${cfg.text}` : cfg.text}`}>
-                    {simbolo}
-                </span>
-                {ora && <span className="text-[8px] leading-none text-kidville-muted mt-0.5">{ora}</span>}
-            </div>
+            {correggibile ? (
+                <button
+                    type="button"
+                    id={`cella-${alunnoId}-${giorno}`}
+                    // La cella è 38×40: l'editor non ci sta (44px è il bersaglio minimo).
+                    // Questo bottone APRE il chip sotto la tabella, non lo contiene.
+                    onClick={() => onApri!(alunnoId, giorno)}
+                    // In una griglia di trenta colonne «modifica» da solo non dice niente:
+                    // il nome accessibile porta bambino, giorno e stato.
+                    aria-label={t('mensileCorreggiAria', { alunno: nomeAlunno, giorno: dataLunga, stato: t(CHIAVE_STATO_MESE[s]) })}
+                    className="w-full cursor-pointer hover:bg-kidville-cream-dark focus-visible:outline focus-visible:outline-2 focus-visible:outline-kidville-green"
+                >
+                    {dentro}
+                </button>
+            ) : dentro}
         </td>
     );
 }
@@ -202,7 +251,66 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
     const [students, setStudents] = useState<StudentMonthData[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isExporting, setIsExporting] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    /**
+     * IL CODICE dell'errore, non la frase tradotta.
+     *
+     * ⚠️ IL DIFETTO CHE HA FATTO CAMBIARE QUESTA RIGA, misurato il 2026-09-07 montando
+     * la tabella una volta sola in un test: **16 chiamate a `/api/attendance/monthly`**.
+     * `setError(t('...'))` metteva `t` fra le dipendenze di `fetchData`; `useTranslations`
+     * restituisce una funzione NUOVA a ogni render, quindi `fetchData` cambiava identità
+     * a ogni render, l'effect che la osserva rifiriva, il `setStudents` provocava un
+     * altro render — e il ciclo si rimordeva la coda. In esercizio significa una
+     * schermata che martella il server, e qualunque aggiornamento locale sovrascritto
+     * dalla risposta successiva.
+     *
+     * Tenendo il codice invece della frase, `t` resta solo nella resa.
+     */
+    const [error, setError] = useState<'caricamento' | 'studenti' | null>(null);
+
+    // LA CORREZIONE DAL MESE. La cella apre questo pannello invece di ospitare
+    // l'editor: 38×40 px non bastano per un bersaglio tattile da 44.
+    // La PATCH accettava già qualunque giorno — mancava solo il collegamento, e senza
+    // di esso rettificare il ritardo di martedì voleva dire tornare su «Oggi» e
+    // navigare la data all'indietro.
+    const [correzione, setCorrezione] = useState<{ alunnoId: string; giorno: string } | null>(null);
+    const [erroreOrario, setErroreOrario] = useState<string | null>(null);
+
+    const apriCorrezione = (alunnoId: string, giorno: string) => {
+        setCorrezione({ alunnoId, giorno });
+        setErroreOrario(null);
+    };
+
+    const salvaOrario = async (alunnoId: string, giorno: string, campo: CampoOrario, ora: string, nome: string) => {
+        const colonna = campo === 'entrata' ? 'orario_entrata' : 'orario_uscita';
+        let precedente: string | null = null;
+        // Ottimistico: la riga si aggiorna subito, e con lei il MONTE ORE del mese,
+        // che si somma da questi stessi orari. È il valore vero della correzione qui.
+        setStudents(prev => prev.map(st => {
+            if (st.student_id !== alunnoId) return st;
+            const riga = st.byDate[giorno];
+            if (!riga) return st;
+            precedente = (riga[colonna] as string | null) ?? null;
+            return { ...st, byDate: { ...st.byDate, [giorno]: { ...riga, [colonna]: ora } } };
+        }));
+        try {
+            const res = await fetch('/api/attendance/daily', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ alunno_id: alunnoId, data: giorno, [colonna]: ora }),
+            });
+            if (!res.ok) throw new Error(String(res.status));
+        } catch (err) {
+            setStudents(prev => prev.map(st => {
+                if (st.student_id !== alunnoId) return st;
+                const riga = st.byDate[giorno];
+                if (!riga) return st;
+                return { ...st, byDate: { ...st.byDate, [giorno]: { ...riga, [colonna]: precedente } } };
+            }));
+            // Del guasto esce il codice: l'ora d'arrivo di un minore non entra nei log.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `mensile-orario-non-salvato: ${nomeErrore(err)}`, stato: 0 });
+            setErroreOrario(nome);
+        }
+    };
 
     const MESI = useMemo(() => nomiMesi(locale), [locale]);
     const GIORNI = useMemo(() => nomiGiorni(locale), [locale]);
@@ -232,15 +340,15 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                     setStudents(mergeStudentsAndPresences(allStudents, records));
                     setError(null);
                 } else {
-                    setError(t('erroreCaricamento'));
+                    setError('caricamento');
                 }
             } else {
-                setError(t('erroreCaricamentoStudenti'));
+                setError('studenti');
             }
         } finally {
             setIsLoading(false);
         }
-    }, [year, month, paramClasse, t]);
+    }, [year, month, paramClasse]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -281,7 +389,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                 // maestra ha solo un pulsante che non fa niente. Nessun dato personale:
                 // rotta della pagina e stato HTTP.
                 logClient({ livello: 'error', evento: 'fetch', messaggio: 'registro-presenze-pdf-non-generato', route: '/teacher/attendance', stato: res.status });
-                setError(t('erroreCaricamento'));
+                setError('caricamento');
                 return;
             }
             const blob = await res.blob();
@@ -294,7 +402,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
             a.remove();
         } catch (e) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `registro-presenze-pdf-rete:${nomeErrore(e)}`, route: '/teacher/attendance' });
-            setError(t('erroreCaricamento'));
+            setError('caricamento');
         } finally {
             // L'URL dell'oggetto si revoca SEMPRE — un blob da oltre 1 MB per stampa che
             // resta appeso al documento è memoria che il tablet della sezione non riprende
@@ -367,7 +475,7 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                     <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                         className="flex items-center gap-3 bg-kidville-error-soft border border-kidville-error/25 rounded-2xl px-4 py-3">
                         <AlertCircle size={16} className="text-kidville-error flex-shrink-0" />
-                        <p className="font-maven text-sm text-kidville-error">{error}</p>
+                        <p className="font-maven text-sm text-kidville-error">{t(error === 'studenti' ? 'erroreCaricamentoStudenti' : 'erroreCaricamento')}</p>
                         <button onClick={refresh} className="ml-auto font-maven text-xs text-kidville-error hover:text-kidville-error underline">{t('riprova')}</button>
                     </motion.div>
                 )}
@@ -442,7 +550,16 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                                         </td>
                                         {/* Celle giorni */}
                                         {days.map(day => (
-                                            <Cell key={toISO(day)} record={student.byDate[toISO(day)]} isWeekend={day.getDay()===0||day.getDay()===6} />
+                                            <Cell
+                                                key={toISO(day)}
+                                                record={student.byDate[toISO(day)]}
+                                                isWeekend={day.getDay()===0||day.getDay()===6}
+                                                giorno={toISO(day)}
+                                                alunnoId={student.student_id}
+                                                nomeAlunno={`${student.student_nome} ${student.student_cognome}`}
+                                                dataLunga={`${day.getDate()} ${MESI[month - 1]}`}
+                                                onApri={apriCorrezione}
+                                            />
                                         ))}
                                         {/* Summary — sticky right */}
                                         <td style={{ position: 'sticky', right: 0, zIndex: 10, width: 150, background: rowBg }}
@@ -481,6 +598,69 @@ export function MonthlyAttendanceTable({ sezione = '', sectionId }: { sezione?: 
                     </table>
                 </div>
             </div>
+
+            {/* ── CORREZIONE DELL'ORARIO del giorno scelto ──
+                Sta FUORI dalla griglia perché una cella è 38×40 px e il bersaglio
+                tattile minimo è 44: qui i chip hanno lo spazio che serve, e sono gli
+                STESSI dell'appello del giorno — nessun secondo modo di fare lo stesso
+                gesto. Quali campi mostrare lo dice `orariAmmessi`, la stessa tabella di
+                verità del 422 del server. */}
+            {correzione && (() => {
+                const st = students.find(x => x.student_id === correzione.alunnoId);
+                const riga = st?.byDate[correzione.giorno];
+                if (!st || !riga) return null;
+                const nome = `${st.student_nome} ${st.student_cognome}`;
+                const ammessi = orariAmmessi(riga.stato ?? null);
+                return (
+                    <div className="rounded-card border border-kidville-line bg-white p-4 shadow-sm">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                            <p className="font-barlow text-sm font-bold text-kidville-green">
+                                {nome} — {correzione.giorno}
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => setCorrezione(null)}
+                                className="font-maven min-h-11 rounded-xl px-3 text-xs font-semibold text-kidville-sub hover:bg-kidville-cream-dark"
+                            >
+                                {t('annullaModifica')}
+                            </button>
+                        </div>
+                        {erroreOrario && (
+                            <p role="alert" className="kv-appello-avviso font-maven mb-2 rounded-xl bg-kidville-error-soft px-3 py-2 text-xs text-kidville-error-strong">
+                                {t('mensileOrarioNonSalvato', { alunno: erroreOrario })}
+                            </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-3">
+                            {ammessi.entrata && (
+                                <OrarioCorreggibile
+                                    campo="entrata"
+                                    valore={riga.orario_entrata ?? null}
+                                    etichetta={t('entrata')}
+                                    icona={null}
+                                    alunno={st.student_id}
+                                    nomeAlunno={nome}
+                                    ariaKey="orarioIngressoAria"
+                                    inCorso={false}
+                                    onSalva={(ora) => void salvaOrario(st.student_id, correzione.giorno, 'entrata', ora, nome)}
+                                />
+                            )}
+                            {ammessi.uscita && (
+                                <OrarioCorreggibile
+                                    campo="uscita"
+                                    valore={riga.orario_uscita ?? null}
+                                    etichetta={t('uscita')}
+                                    icona={null}
+                                    alunno={st.student_id}
+                                    nomeAlunno={nome}
+                                    ariaKey="orarioUscitaAria"
+                                    inCorso={false}
+                                    onSalva={(ora) => void salvaOrario(st.student_id, correzione.giorno, 'uscita', ora, nome)}
+                                />
+                            )}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* ── Legenda ── */}
             <div className="flex flex-wrap items-center justify-between gap-4 px-1">

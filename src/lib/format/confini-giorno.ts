@@ -79,8 +79,16 @@ function esiste(anno: number, mese: number, giorno: number): boolean {
 /**
  * L'istante ISO che corrisponde a `<ymd> <ora>` letta in `Europe/Rome`.
  * `null` se la data non è una data.
+ *
+ * ⚠️ ESPORTATA, e non era: dal 2026-09-07 la usa anche `@/lib/presenze/orario` per
+ * comporre l'istante da un `HH:MM` digitato dal docente nell'appello. È lo stesso
+ * problema di `inizioGiornoCivile` — cifre italiane → istante — e la ragione per cui
+ * vive qui invece che là è nel titolo del modulo: la matematica dell'offset di Roma
+ * sta in UN posto, con i due giorni di cambio ora provati una volta sola in
+ * `__tests__/lib/confini-giorno.test.ts`. Una seconda copia sarebbe un secondo
+ * calendario nel repo, e se ne correggerebbe uno.
  */
-function istanteCivile(ymd: string, ora: string): string | null {
+export function istanteCivile(ymd: string, ora: string): string | null {
   const m = FORMA_YMD.exec(ymd ?? '');
   if (!m) return null;
   if (!esiste(Number(m[1]), Number(m[2]), Number(m[3]))) return null;

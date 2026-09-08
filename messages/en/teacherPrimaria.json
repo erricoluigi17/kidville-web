@@ -230,5 +230,6 @@
   "prospettoToccaRiga": "Tap a row to see the per-objective detail.",
   "prospettoNessunaValutazioneMateria": "No assessment recorded for this subject.",
   "prospettoMediaMatematica": "Arithmetic average (synthetic judgements)",
-  "prospettoDescrittivo": "descriptive"
+  "prospettoDescrittivo": "descriptive",
+  "appelloOrarioNonSalvato": "Could not save {nome}’s time. The displayed time has been restored: please try again."
 }

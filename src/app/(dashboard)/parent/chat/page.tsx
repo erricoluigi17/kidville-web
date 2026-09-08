@@ -40,6 +40,21 @@ function ParentChatContent() {
     const [showMobile, setShowMobile] = useState<'list' | 'chat'>('list');
     const [showNewChat, setShowNewChat] = useState(false);
     const [contacts, setContacts] = useState<Contact[]>([]);
+    /**
+     * L'invio non è riuscito, e perché. `null` = nessun problema.
+     * Non è un doppione dello stato «termini» o «sospensione»: quelli sono
+     * blocchi NOTI che disabilitano il composer, questo è il rifiuto di un
+     * messaggio già scritto — e fino al 2026-09-07 non lo diceva nessuno.
+     */
+    const [erroreInvio, setErroreInvio] = useState<'rifiutato' | 'rete' | 'sospeso' | null>(null);
+
+    /**
+     * Perché la rubrica è vuota, quando lo è. La rotta lo dice (campo `motivo`),
+     * e serve a non mostrare «li hai già contattati tutti» a chi non ha nessun
+     * contatto possibile — che dopo la stretta del 2026-09-07 sarebbe una bugia.
+     */
+    const [motivoVuoto, setMotivoVuoto] = useState<string | null>(null);
+
     const [loadingContacts, setLoadingContacts] = useState(false);
     const [childrenNames, setChildrenNames] = useState<string[]>([]);
     const [unreadCount, setUnreadCount] = useState(0);
@@ -108,6 +123,7 @@ function ParentChatContent() {
             if (res?.ok) {
                 const data = await res.json();
                 setContacts(data.contacts ?? []);
+                setMotivoVuoto(data.motivo ?? null);
                 const names: string[] = [...new Set<string>((data.contacts ?? []).map((c: Contact) => c.student_name.split(' ')[0]))];
                 if (names.length > 0) setChildrenNames(names);
             }
@@ -329,8 +345,21 @@ function ParentChatContent() {
                         ? { ...t, last_message: { content, sender_id: parentId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
                         : t
                 ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
-                return;
+                setErroreInvio(null);
+                return true;
             }
+            /**
+             * ⚠️ DA QUI IN GIÙ, PRIMA, NON SUCCEDEVA NIENTE.
+             *
+             * Il campo di scrittura si svuotava comunque (lo faceva `ChatInput`
+             * prima di conoscere l'esito), e a schermo non compariva nulla: il
+             * messaggio era perso e chi l'aveva scritto credeva di averlo mandato.
+             * Valeva per il genitore moroso (403 `account_sospeso`), per un
+             * allegato rifiutato (400) e per qualunque 500.
+             *
+             * Adesso l'handler dice `false`, il testo resta nel campo, e l'avviso
+             * nomina il motivo quando il server ne dichiara uno.
+             */
             if (res.status === 403) {
                 // Guardie UGC (C5): il server rifiuta la scrittura. Il client mostra il
                 // CTA giusto invece di un errore muto (il testo del messaggio non entra
@@ -343,10 +372,21 @@ function ParentChatContent() {
                     // Sospensione rilevata server-side: ricarica i thread così il banner
                     // "Conversazione sospesa" compare e il composer si disabilita.
                     await loadThreads();
+                } else if (motivo === 'account_sospeso') {
+                    setErroreInvio('sospeso');
+                } else {
+                    setErroreInvio('rifiutato');
                 }
+                return false;
             }
+            setErroreInvio('rifiutato');
+            return false;
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/parent/chat' });
+            // La rete è caduta: il messaggio NON è partito. Il log serve a noi
+            // domani; questo serve a chi sta scrivendo adesso.
+            setErroreInvio('rete');
+            return false;
         }
     };
 
@@ -500,6 +540,11 @@ function ParentChatContent() {
                                 onMarkRead={handleMarkRead}
                             />
                             {terminiCta}
+                            {erroreInvio && (
+                                <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+                                    {erroreInvio === 'rete' ? t('invioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('invioNonRiuscitoSospeso') : t('invioNonRiuscito')}
+                                </p>
+                            )}
                             <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholderTeacher')} disabled={suspendedToMe} />
                         </>
                     ) : (
@@ -557,7 +602,12 @@ function ParentChatContent() {
                             onMarkRead={handleMarkRead}
                         />
                         {terminiCta}
-                        <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholder')} disabled={suspendedToMe} />
+                        {erroreInvio && (
+                                <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+                                    {erroreInvio === 'rete' ? t('invioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('invioNonRiuscitoSospeso') : t('invioNonRiuscito')}
+                                </p>
+                            )}
+                            <ChatInput onSend={handleSendMessage} placeholder={t('inputPlaceholder')} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>
@@ -592,8 +642,25 @@ function ParentChatContent() {
                                     </div>
                                 ) : contacts.length === 0 ? (
                                     <div className="flex flex-col items-center py-8 text-center">
+                                        {/* ⚠️ QUATTRO VUOTI DIVERSI, QUATTRO FRASI DIVERSE.
+                                            Qui c'era solo «Hai già una conversazione con tutte le
+                                            maestre disponibili! 🎉». Dal 2026-09-07 la rubrica mostra
+                                            le sole insegnanti della sezione dei propri figli, e quella
+                                            frase toccherebbe anche chi non ha NESSUN contatto
+                                            possibile: 23 famiglie, di cui 20 di una sola sezione — la
+                                            `Sezione delle Meraviglie (NIDO)` di Cesa, che ha 20
+                                            iscritti e zero insegnanti assegnate. Dire loro «li hai già
+                                            contattati tutti», con un'emoji, sarebbe una bugia — e le
+                                            manderebbe a cercare una conversazione che non esiste
+                                            invece che in segreteria. */}
                                         <p className="font-maven text-sm text-kidville-muted">
-                                            {t('allContactsUsed')}
+                                            {motivoVuoto === 'figli-senza-sezione'
+                                                ? t('childWithoutSection')
+                                                : motivoVuoto === 'sezione-senza-docenti' || motivoVuoto === 'nessuna-sezione-assegnata'
+                                                    ? t('noTeachersYet')
+                                                    : motivoVuoto === 'nessun-figlio'
+                                                        ? t('noChildren')
+                                                        : t('allContactsUsed')}
                                         </p>
                                     </div>
                                 ) : (

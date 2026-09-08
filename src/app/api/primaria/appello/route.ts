@@ -4,11 +4,12 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
 import { assertSezioneInScope, assertAlunniInSezione } from '@/lib/auth/scope'
 import { colonneConMotivo } from '@/lib/presenze/motivo-visibile'
+import { aOrarioIso } from '@/lib/presenze/orario'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { parseBody, parseData, parseQuery } from '@/lib/validation/http'
-import { zDataYMD, zUuid } from '@/lib/validation/common'
+import { zDataYMD, zUuid, zOraHHMM } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
@@ -51,9 +52,12 @@ const recordSchema = z.object({
   alunnoId: zUuid,
   stato: z.enum(STATI),
   noteAppello: z.string().nullish(),
-  // 'HH:MM'; altri formati ricadono su null (toTs) come oggi: nessun vincolo qui.
-  orarioEntrata: z.string().nullish(),
-  orarioUscita: z.string().nullish(),
+  // `zOraHHMM`, lo STESSO schema della rettifica 0-6. Prima era `z.string()` nudo:
+  // «pippo» superava la validazione e moriva dentro il costruttore del timestamp,
+  // che restituiva `null` — cioè un 200 e un orario sparito in silenzio. Un formato
+  // sbagliato è un errore del client e si dice: 400.
+  orarioEntrata: zOraHHMM.nullish(),
+  orarioUscita: zOraHHMM.nullish(),
 })
 const recordsSchema = z.array(recordSchema)
 
@@ -164,16 +168,30 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
     if (scopeErr) return scopeErr
 
     // Dispatch singolo/bulk come oggi: records array → bulk, altrimenti campi top-level.
-    const rawRecords = Array.isArray(b.data.records)
-      ? b.data.records
-      : [{ alunnoId: b.data.alunnoId, stato: b.data.stato, noteAppello: b.data.noteAppello, orarioEntrata: b.data.orarioEntrata, orarioUscita: b.data.orarioUscita }]
+    //
+    // ⚠️ NEL RAMO SINGOLO SI COPIANO SOLO LE CHIAVI CHE IL CORPO PORTA DAVVERO.
+    // Prima l'oggetto si costruiva elencando i cinque campi sempre, quindi
+    // `noteAppello` esisteva comunque — con valore `undefined` — e a valle non c'era
+    // più modo di distinguere «non l'ho mandato» da «mandalo vuoto». È lì che si
+    // perdeva la nota dell'appello: `setOrario` non la manda, e la riga la riscriveva
+    // a `null`. Il ramo bulk non aveva il problema perché il client i suoi campi li
+    // elenca da sé.
+    const singolo: Record<string, unknown> = {}
+    for (const campo of ['alunnoId', 'stato', 'noteAppello', 'orarioEntrata', 'orarioUscita'] as const) {
+      if (campo in (b.data as Record<string, unknown>)) singolo[campo] = (b.data as Record<string, unknown>)[campo]
+    }
+    const rawRecords = Array.isArray(b.data.records) ? b.data.records : [singolo]
     const rec = parseData(recordsSchema, rawRecords)
     if ('response' in rec) return rec.response
     const records = rec.data
 
-    // Compone un timestamp completo da data (YYYY-MM-DD) + orario (HH:MM).
-    const toTs = (orario?: string | null) =>
-      orario && /^\d{2}:\d{2}$/.test(orario) ? `${data}T${orario}:00` : null
+    // L'istante si compone col MOTORE UNICO (`@/lib/presenze/orario`), non a mano.
+    // Il vecchio `${data}T${orario}:00` produceva una forma ISO NAÏVE — senza fuso —
+    // ed era la sorgente delle righe non canoniche in colonna: alle 08:45 di
+    // settembre e alle 08:45 di gennaio scriveva la stessa identica stringa, benché
+    // siano due istanti diversi. `aOrarioIso` sa che l'orologio è quello di Roma e
+    // gestisce i due giorni dell'anno in cui l'ora cambia.
+    const toTs = (orario?: string | null) => (orario ? aOrarioIso(data, orario) : null)
 
     // Gli alunni dei record devono appartenere alla sezione asserita (no upsert cross-sezione).
     const alunniErr = await assertAlunniInSezione(supabase, records.map((r) => r.alunnoId), sectionId)
@@ -227,28 +245,74 @@ export const POST = withRoute('primaria/appello:POST', async (request: NextReque
       .eq('data', data)
       .in('alunno_id', alunnoIds)
     if (primaErr) {
-      // PostgREST non lancia (AGENTS.md, regola 7). Il salvataggio prosegue — il
-      // diff «prima» è un di più — ma un audit a metà non deve essere muto.
-      logEvento('db', 'warn', {
+      // PostgREST non lancia (AGENTS.md, regola 7).
+      //
+      // ⚠️ QUESTA LETTURA È PORTANTE, e fino al 2026-09-07 non lo era: il salvataggio
+      // proseguiva con un `warn` perché il diff «prima» era «un di più». Da quando la
+      // riga si costruisce a partire da ciò che c'era, proseguire con un `prima` vuoto
+      // significa azzerare note e orari IN SILENZIO — cioè rifare per un'altra strada
+      // il difetto che questo blocco esiste per chiudere. Meglio un 500 visibile che
+      // una nota di un docente cancellata senza che nessuno lo sappia.
+      logEvento('db', 'error', {
         operazione: 'primaria/appello:POST',
         esito: 'stato-precedente-non-letto',
         sezione: sectionId,
       }, primaErr)
+      return NextResponse.json(
+        { error: 'Stato precedente non leggibile', codice: 'APPELLO_STATO_PRIMA_NON_LETTO' },
+        { status: 500 },
+      )
     }
 
-    const rows = records.map((r) => ({
-      alunno_id: r.alunnoId,
-      section_id: sectionId,
-      scuola_id: scuolaId,
-      data,
-      stato: r.stato,
-      note_appello: r.noteAppello ?? null,
-      // Orario di entrata solo per ritardo, orario di uscita solo per uscita anticipata.
-      orario_entrata: r.stato === 'ritardo' ? toTs(r.orarioEntrata) : null,
-      orario_uscita: r.stato === 'uscita_anticipata' ? toTs(r.orarioUscita) : null,
-      // Provenienza operativa: chi ha registrato (può essere la segreteria). NON è una firma.
-      registrato_da: userId,
-    }))
+    // Ciò che c'È GIÀ in tabella, per alunno. È la base su cui si costruisce la riga
+    // nuova: l'upsert riscrive la RIGA INTERA, quindi una colonna non nominata dal
+    // corpo tornerebbe `null`.
+    const esistente = new Map<string, Record<string, unknown>>(
+      ((prima ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.alunno_id), r]),
+    )
+    // «Il corpo lo nomina?» — e non «ha un valore?». `null` esplicito è un COMANDO
+    // («togli la nota»), l'assenza del campo non lo è mai. Con `?? undefined` i due
+    // casi si confondono, ed è la confusione che cancellava le note.
+    const nominato = (r: Record<string, unknown>, campo: string) => campo in r
+
+    const rows = records.map((r) => {
+      const prec = esistente.get(r.alunnoId) ?? {}
+      const grezzo = r as unknown as Record<string, unknown>
+
+      // Un ASSENTE non ha orari: quelli si azzerano davvero (stessa regola dello 0-6).
+      // Per tutti gli altri stati l'orario si CONSERVA se il corpo non lo nomina.
+      const assente = r.stato === 'assente'
+      const orarioEntrata = assente
+        ? null
+        : nominato(grezzo, 'orarioEntrata')
+          ? toTs(r.orarioEntrata)
+          : (prec.orario_entrata ?? null)
+      const orarioUscita = assente
+        ? null
+        : nominato(grezzo, 'orarioUscita')
+          ? toTs(r.orarioUscita)
+          : (prec.orario_uscita ?? null)
+
+      return {
+        alunno_id: r.alunnoId,
+        section_id: sectionId,
+        scuola_id: scuolaId,
+        data,
+        stato: r.stato,
+        // La nota dell'appello sopravvive a un gesto che non la nomina. Correggere
+        // un orario la cancellava; «Tutti presenti» le cancellava tutte insieme.
+        note_appello: nominato(grezzo, 'noteAppello') ? (r.noteAppello ?? null) : (prec.note_appello ?? null),
+        // L'orario NON È PIÙ LEGATO ALLO STATO. Prima: entrata solo per `ritardo`,
+        // uscita solo per `uscita_anticipata`, `null` in ogni altro caso — quindi un
+        // `presente` non poteva avere un'ora d'ingresso, e chi usciva prima PERDEVA
+        // quella d'entrata. Ma chi esce prima era comunque entrato, e l'ora d'ingresso
+        // di un presente è un fatto che la scuola registra.
+        orario_entrata: orarioEntrata,
+        orario_uscita: orarioUscita,
+        // Provenienza operativa: chi ha registrato (può essere la segreteria). NON è una firma.
+        registrato_da: userId,
+      }
+    })
 
     const { data: saved, error } = await supabase
       .from('presenze')

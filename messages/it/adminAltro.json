@@ -678,7 +678,6 @@
   "candEtichetteTroncate": "Le etichette sono troppe per essere lette tutte insieme: il filtro per etichetta resta spento perché mostrerebbe meno candidature di quante ne esistono.",
   "candEtichettaElencoTroncato": "Ci sono troppe candidature per filtrarle tutte per etichetta: restringi prima con gli altri filtri (sede, stato, periodo).",
   "candEtichettaNonAttiva": "Le etichette non sono attive su questo ambiente.",
-
   "galSedeEyebrow": "Galleria",
   "galSedeTitolo": "Galleria della sede",
   "galSedeSottotitolo": "Tutte le foto del plesso, dalla più recente. Si filtra per classe, per bambino e per giornata.",
@@ -712,5 +711,15 @@
   "galSedePiuRecenti": "Più recenti",
   "galSedePiuVecchie": "Più vecchie",
   "galSedePaginaDi": "Pagina {pagina}/{pagine}",
-  "galSedeTaggatoSenzaNome": "Nome non disponibile"
+  "galSedeTaggatoSenzaNome": "Nome non disponibile",
+  "appelloEyebrow": "Didattica",
+  "appelloTitle": "Appello",
+  "appelloSubtitle": "Presenze del giorno e del mese, per ogni classe della sede.",
+  "appelloNessunaSezione": "Nessuna classe disponibile per le sedi selezionate.",
+  "appelloLabelSede": "Sede",
+  "appelloLabelClasse": "Classe",
+  "appelloTabOggi": "Oggi",
+  "appelloTabMese": "Mese",
+  "appelloPrimariaSpiegazione": "L’appello della primaria vive nel registro della classe {classe}, insieme agli altri registri.",
+  "appelloPrimariaApri": "Apri il registro della classe"
 }

@@ -1351,6 +1351,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             'un pezzo di questo lock, e questo test esiste perché la cosa passi sotto gli occhi ' +
             'di qualcuno invece che in silenzio.',
         ).toEqual({
+            // 474 → 475 il 2026-09-07: è nata `attendance/daily:PATCH`, la rettifica
+            // dell'orario dell'appello 0-6 (l'ora del TOCCO non era correggibile: la
+            // maestra segnava il ritardo alle 10:15 per un bambino arrivato alle 09:40).
+            // `routeConServiceRole` NON cresce — il file c'era già — e `handlerEsentati`
+            // resta 98: il nuovo handler è CONTROLLATO, chiama `assertAlunnoInScope` prima
+            // di qualunque lettura, e scrive con `.eq('scuola_id', …)` preso dalla riga
+            // appena verificata (non dalla richiesta).
             // 272 → 273 e 432 → 433 il 2026-08-01: è nata `avvisi/upload/rimuovi:POST`, la
             // route che butta via l'allegato di una bozza abbandonata (S35). Non porta
             // nessuna esenzione — `handlerEsentati` è fermo — perché non tocca nessuna
@@ -1699,7 +1706,21 @@ describe('coverage-lock isolamento fra sedi', () => {
             // far tacere il lock renderebbe la guardia FALSA — verde mentre il secchio è
             // già vuoto. Il precedente è `src/lib/allegati/rimozione.ts`, e la ragione è
             // scritta nella testata di quel modulo.
-            routeConServiceRole: 309,
+            // 308 → 309 il 2026-09-07: è nata `gallery/upload-url:POST`, la porta che
+            // FIRMA i caricamenti diretti allo Storage. È il rimedio al 413 di Vercel
+            // misurato in `app_log` (sei video respinti in un giorno, e l'unico passato
+            // pesava dodici kilobyte meno del tetto). Non porta esenzioni, ed è il punto
+            // da guardare: la route non tocca NESSUNA tabella — solo lo Storage — quindi
+            // non ha una sede da dichiarare, esattamente come `avvisi/upload/rimuovi:POST`
+            // qui sopra. Ciò che difende lo fa altrove: il percorso dell'oggetto è
+            // intestato all'utente del gate, mai a un campo del client.
+            // ⚠️ 309 → 310 il 2026-09-08, ED È UN NUMERO MISURATO, NON SOMMATO. Le due
+            // righe qui sopra sono nate lo stesso giorno in due sessioni diverse, e
+            // ognuna aveva scritto «308 → 309»: git le ha unite lasciando 309, che è la
+            // cifra sbagliata per entrambe. Il valore giusto l'ha detto il test, non
+            // l'aritmetica a mente — ed è il motivo per cui un'impronta numerica si
+            // rimisura invece di mergiarla.
+            routeConServiceRole: 310,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1824,7 +1845,24 @@ describe('coverage-lock isolamento fra sedi', () => {
             // sopra. Qui il passo coincide col numero di file (+2 route, +2 handler)
             // perché entrambe espongono il solo GET: sono schermate di lettura.
             // 474 → 475 il 2026-09-07: il POST di `pagamenti/fattura/lotto` (vedi sopra).
-            handlerControllati: 475,
+            //
+            // 474 → 476 il 2026-09-07, e sono DUE handler di due lavori diversi che si
+            // incontrano qui. Vanno nominati tutti e due: al merge dei due rami il
+            // numero tornava «giusto» a 475 per compensazione, cioè un handler nuovo
+            // sarebbe entrato nell'inventario senza che nessuno l'avesse guardato — che
+            // è precisamente ciò che questo lock esiste per impedire.
+            //  · `attendance/daily:PATCH` — la rettifica dell'orario dell'appello;
+            //  · `diary/entries:DELETE` — «ho segnato la nanna a un bambino per errore». `routeConServiceRole` resta 308 e
+            // `handlerEsentati` resta fermo, ed è la parte da guardare: il verbo è stato
+            // messo sulla rotta che possiede GIÀ `eventi_diario` invece che su una rotta
+            // nuova, quindi si muove UN numero solo; e non porta esenzioni perché
+            // dichiara il suo scope con `assertAlunnoInScope`, prima di leggere e prima
+            // di cancellare, esattamente come fa la POST accanto.
+            //
+            // 476 → 477 il 2026-09-07: il POST della route qui sopra.
+            // 477 → 478 il 2026-09-08: stessa unione di due sessioni (vedi la nota su
+            // `routeConServiceRole`). Misurato, non dedotto.
+            handlerControllati: 478,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

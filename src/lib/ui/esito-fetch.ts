@@ -91,6 +91,35 @@ export const CODICI_ERRORE = {
     /** 400 — l'indirizzo dell'allegato non è del nostro bucket (`src/lib/chat/allegati.ts`). */
     ALLEGATO_NON_VALIDO: 'erroreAllegatoNonValido',
     /**
+     * 409 — si sta correggendo l'orario di un appello che non è stato ancora fatto
+     * (`PATCH /api/attendance/daily`). Un orario senza una presenza registrata non
+     * significa niente, e la porta non inventa la riga: dice al docente di segnare
+     * prima se il bambino c'è.
+     */
+    APPELLO_NON_REGISTRATO: 'erroreAppelloNonRegistrato',
+    /**
+     * 422 — l'orario non sta insieme allo stato registrato: un'entrata su un
+     * assente, un'uscita anticipata su un presente. Non è un errore di forma (per
+     * quello c'è zod): è un'incoerenza che si vede solo avendo letto la riga.
+     */
+    ORARIO_INCOERENTE: 'erroreOrarioIncoerente',
+    /**
+     * 403 — non si può APRIRE una conversazione fra queste due persone su questo
+     * bambino: il docente non è della sua sezione, o non è più in servizio, o lo
+     * staff è di un altro plesso (`@/lib/chat/rubrica`). Vale sulla porta, non
+     * sui thread già aperti.
+     */
+    CHAT_ABBINAMENTO_NON_CONSENTITO: 'erroreChatAbbinamentoNonConsentito',
+    /**
+     * 500 — la verifica di cui sopra non si è POTUTA fare (una lettura è
+     * fallita). Deliberatamente distinto dal 403: negare su un guasto vorrebbe
+     * dire dire a una famiglia «questa non è la tua insegnante» perché una query
+     * è andata storta.
+     */
+    CHAT_ABBINAMENTO_NON_VERIFICATO: 'erroreChatAbbinamentoNonVerificato',
+    /** 500 — la conversazione non si è potuta aprire, per un guasto del database. */
+    CHAT_THREAD_NON_CREATO: 'erroreChatThreadNonCreato',
+    /**
      * 500 — lo Storage ha rifiutato il caricamento per un motivo IMPREVISTO
      * (`src/lib/allegati/risposte.ts`). Il messaggio del fornitore resta nel log: fino al
      * 2026-08-01 usciva invece di qui, in inglese e col nome di un vincolo interno.
@@ -1817,6 +1846,22 @@ export const CODICI_ERRORE = {
      * mano dal pannello.
      */
     LOTTO_TETTO_ORARIO_RAGGIUNTO: 'erroreLottoTettoOrario',
+    /**
+     * 500 — non si è potuto LEGGERE la registrazione di diario che si stava per
+     * cancellare (`diary/entries:DELETE`). Si legge prima di cancellare perché è
+     * l’unico momento in cui il valore di prima esiste ancora: senza quella lettura
+     * si cancellerebbe alla cieca e l’audit direbbe «non c’era niente».
+     */
+    DIARIO_LETTURA_FALLITA: 'erroreDiarioLetturaFallita',
+    /** 500 — la registrazione di diario non è stata tolta (`diary/entries:DELETE`). */
+    DIARIO_NON_ELIMINATO: 'erroreDiarioNonEliminato',
+    /**
+     * 500 — l'appello della primaria non ha potuto leggere lo stato PRECEDENTE
+     * (`primaria/appello:POST`). Da quando la riga si costruisce a partire da ciò che
+     * c'era, quella lettura è portante: proseguire senza azzererebbe note e orari in
+     * silenzio, che è il difetto che il controllo esiste per chiudere.
+     */
+    APPELLO_STATO_PRIMA_NON_LETTO: 'erroreAppelloStatoPrimaNonLetto',
     /** 409 — a questo bambino è già stata registrata una ricarica OGGI: serve la conferma esplicita. */
     TICKET_RICARICA_DUPLICATA: 'erroreTicketRicaricaDuplicata',
 } as const;

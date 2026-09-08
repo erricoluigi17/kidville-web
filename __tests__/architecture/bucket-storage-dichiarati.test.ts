@@ -420,6 +420,35 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       ).toEqual(codice)
     })
 
+    // ── LA TERZA FONTE, dal 2026-09-07 ──────────────────────────────────────
+    //
+    // `POST /api/gallery/upload-url` firma caricamenti DIRETTI allo Storage (è il
+    // rimedio al 413 di Vercel sui video) e valida il mime con `MIME_GALLERIA`, in
+    // `src/lib/gallery/storage.ts`. Fino a ieri questo lock confrontava DUE fonti —
+    // migrazione e route multipart — e la terza sarebbe nata fuori dalla sua vista:
+    // una lista più larga qui firmerebbe caricamenti che lo Storage poi rifiuta, con
+    // l'insegnante davanti a un errore che arriva DOPO aver spedito il file.
+    it('la lista che FIRMA i caricamenti diretti è la stessa del bucket', () => {
+      const firma = ordinati(mimeNelCodice('src/lib/gallery/limiti.ts', 'MIME_GALLERIA'))
+      expect(firma.length, '`MIME_GALLERIA` deve elencare i tipi ammessi.').toBeGreaterThan(0)
+      expect(
+        ordinati(mimeDichiarati('gallery')),
+        'La porta che firma i caricamenti diretti ammette tipi diversi da quelli del bucket: ' +
+          'un file firmato qui verrebbe respinto dallo Storage DOPO essere stato spedito per ' +
+          'intero — su rete mobile, dopo decine di megabyte.',
+      ).toEqual(firma)
+    })
+
+    it('il tetto usato per firmare è quello del bucket, non un numero a parte', () => {
+      const m = senzaCommenti(sorgente('src/lib/gallery/limiti.ts')).match(/TETTO_GALLERIA_BYTE\s*=\s*([\d_]+)/)
+      expect(m, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`.').not.toBeNull()
+      expect(
+        Number(m![1].replace(/_/g, '')),
+        'Il tetto con cui si firmano i caricamenti diretti diverge da quello del bucket: ' +
+          'la differenza è esattamente la fascia di file che vengono accettati e poi respinti.',
+      ).toBe(limiteDichiarato('gallery'))
+    })
+
     it('non ammette formati che una delle due piattaforme non riproduce', () => {
       // La regola dietro l'elenco, scritta come regola e non come elenco: qualunque
       // aggiunta futura deve passare di qui. `video/quicktime` è il caso che l'ha

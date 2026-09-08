@@ -208,6 +208,13 @@ describe('POST /api/diary/entries — lo scalo del pannolino nasce con la sede',
       post('http://localhost/api/diary/entries', {
         alunno_id: ALU_A,
         tipo_evento: 'bagno',
+        // ⚠️ IL CONTATORE SERVE, dal 2026-09-08. La rotta salta le voci mute — un
+        // bagno con tutti i contatori a zero non è «segnato: non ha fatto niente»,
+        // è «non l'ho toccato» — e con esso salterebbe lo scalo del pannolino, che
+        // è precisamente il difetto che quel filtro chiude: fino a ieri la scorta
+        // veniva scalata anche per bagni mai avvenuti. Qui l'oggetto del test è la
+        // SEDE sulla riga di `armadietto`, quindi serve un bagno vero.
+        dettagli: { pipi: 1, cacca: 0, vasino: 0 },
       }),
     )
     expect(res.status).toBe(200)

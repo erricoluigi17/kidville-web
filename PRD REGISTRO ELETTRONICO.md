@@ -199,7 +199,23 @@ dettagli, non vuote come contenuto, ed è la stessa regola `conNota` del codice 
 `get_advisors` **0 ERROR**; il `DELETE` prende gli id dalla copia, non dal predicato. Restano
 fuori: 131 nanne vuote della #130 e 2 attività mute, tutte inerti in lettura.
 
-Gate: **15.620 test verdi**, `eslint` 0, build ok. Ogni correzione ha il suo test visto **rosso
+**E poi la prova sul campo ha detto che non bastava.** Due ore dopo il rilascio, una maestra ha
+scritto **19 righe di bagno di cui 17 vuote e senza note**, mentre tre colleghe nella stessa
+finestra ne scrivevano zero. Il suo tablet aveva l'app aperta da mattina e stava ancora eseguendo
+il bundle di prima: **un filtro che vive solo nel client vale finché il client è aggiornato**, e in
+una WebView aperta tutto il giorno non lo è.
+
+La regola è quindi scesa anche nella rotta che possiede la tabella: `POST /api/diary/entries`
+**salta** le voci mute (non rifiuta la richiesta — le altre righe sono legittime) e **logga
+quante ne salta**, perché «17 righe non scritte» in silenzio sarebbe il guasto opposto. È la stessa
+`voceDaMostrare` dei cinque lettori: una regola sola, fail-open sui tipi che non ne hanno una.
+
+Effetto collaterale che si chiude da sé: lo **scalo del pannolino** dall'armadietto nasce da un
+evento `bagno`, e fino a ieri partiva anche per i bagni mai avvenuti. Un test esistente lo ha
+mostrato cadendo — mandava un bagno senza nessun dettaglio — ed è stato aggiornato con un bagno
+vero, che è ciò che quel test misurava davvero (la sede sulla riga di `armadietto`).
+
+Gate: **15.625 test verdi**, `eslint` 0, build ok. Ogni correzione ha il suo test visto **rosso
 prima e rosso di nuovo dopo** averla rotta di proposito — compreso un falso verde scoperto e
 chiuso: due asserzioni negative sulla pagina del genitore passavano *prima che i dati
 arrivassero*, e ora sono legate a un'ancora positiva.

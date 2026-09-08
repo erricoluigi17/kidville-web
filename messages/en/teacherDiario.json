@@ -66,11 +66,16 @@
   "bagnoVasinoPiu": "Increase potty",
   "noteMediche": "Medical notes",
   "nannaAiutoCompilazione": "Fills in the time for everyone: only those with a time are saved.",
-  "nannaEliminaRegistrazione": "Delete",
-  "nannaEliminaAria": "Delete {nome}’s entry",
-  "nannaConfermaElimina": "Delete {nome}’s nap? The entry disappears from the parent’s diary.",
-  "nannaConfermaEliminaConNota": "Delete {nome}’s nap? The note written for them disappears too.",
   "salvaConOrario": "{count, plural, one {Save # child} other {Save # children}}",
   "nannaNessunOrario": "No time filled in",
-  "alertErroreEliminazione": "I couldn’t delete the entry. Please try again."
+  "alertErroreEliminazione": "I couldn’t delete the entry. Please try again.",
+  "bagnoNessunaRegistrazione": "No bathroom recorded",
+  "pastoNessunaPortata": "No course marked",
+  "umoreNessunaScelta": "No mood chosen",
+  "bagnoAiutoCompilazione": "Only children with at least one entry are saved.",
+  "pastoAiutoCompilazione": "Only children with at least one course marked are saved. “None” is a course: it means they did not eat.",
+  "eliminaRegistrazione": "Delete",
+  "eliminaAria": "Delete {nome}’s entry",
+  "confermaElimina": "Delete “{evento}” for {nome}? The entry disappears from the parent’s diary.",
+  "confermaEliminaConNota": "Delete “{evento}” for {nome}? The note written for them disappears too."
 }

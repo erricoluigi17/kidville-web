@@ -99,6 +99,81 @@
 
 ---
 
+## 📷 Changelog — Le foto arrivavano a una famiglia sola, e il bagno risultava a tutti — 2026-09-08 (branch `fix/foto-notifiche-e-diario-selettivo`)
+
+Due segnalazioni del titolare. Nessuna delle due era dove sembrava, ed entrambe sono state
+riprodotte e **misurate sul database di produzione** prima di scrivere una riga di codice.
+
+**1. «Le foto non arrivano ai rispettivi genitori, arrivano tutte a un singolo genitore.»**
+Il tagging funzionava. A non funzionare era il **debounce delle notifiche**: la galleria passava
+`entitaId: uploaded_by` — *l'insegnante* — e il debounce cancellava le pending di **tutti** i
+destinatari che condividevano quella chiave, non solo di quelli che stava per riaccodare. Una
+foto è una POST: ogni foto di una raffica cancellava gli avvisi generati dalle precedenti, per
+famiglie che non c'entravano niente. Sopravvivevano solo i destinatari dell'**ultima** foto.
+Misurato il 7-8 settembre: **298 coppie (insegnante, giorno, genitore) attese, 130 arrivate, 168
+perse, 153 genitori distinti mai avvisati**. Erminia: 37 foto in tre minuti, 19 righe in
+`notifiche`, tutte con lo stesso `creato_il` — quello dell'ultima. E la riga era *cancellata*, non
+soppressa: `notifiche.letta_il` è ciò che accende la campanella, e una riga che non esiste non
+accende niente. La `delete` ora si restringe ai destinatari che sta per riaccodare, **a blocchi di
+100**: PostgREST mette `.in()` in query string e a Giugliano i genitori sono 345, cioè ~13 kB di
+richiesta e un 414. Il tetto vive in `@/lib/db/blocchi`, da cui `@/lib/avvisi/statistiche` lo
+ri-esporta — la regola è del trasporto, non degli avvisi. Un guardiano `warn` scatta se il
+debounce cancella più righe di quante ne riaccoda: col filtro non può succedere, quindi tace
+finché il difetto non torna.
+
+**Il secondo difetto, sotto lo stesso sintomo**: «✨ Applica a tutte» copiava i tag della foto
+attiva su TUTTE le altre e lo diceva *dopo*, con un `alert` non annullabile. Il 6 settembre 37
+foto taggate una per una sono finite in archivio con l'impronta di tag identica — gli stessi 2
+bambini, entrambi con la liberatoria, quindi non era il lucchetto privacy. La regola sta ora in
+`@/lib/gallery/applica-tag`: di norma riempie **solo le foto ancora senza tag**, l'etichetta del
+pulsante dice quante ne toccherà, e la domanda arriva **prima**. Su richiesta del titolare
+l'arretrato non si recupera: si riparte da oggi, senza raffiche retroattive di push.
+
+**2. «Il diario 0-6 salva le stesse cose per tutti: se aggiungo una pipì e una cacca per un
+bambino, poi risulta a tutti anche a chi non l'ha fatta.»**
+Lo stato React, il payload, la scrittura e la lettura sono per-bambino e corretti: verificati uno
+per uno, e non toccati. Il difetto era **chi finisce in archivio**. «Salva bagno per tutti»
+scriveva una riga anche per chi non era stato toccato — `buildInitialState` mette d'ufficio
+`{pipi:0, cacca:0, vasino:0}` a tutti — e il genitore la leggeva come un evento vero: «🚿 Sono
+stato/a al bagno oggi!». Dal 1° settembre: **323 righe di bagno su 514 completamente vuote, il
+63%**, più 40 pranzi e 26 merende senza nessuna portata.
+
+È il fratello del difetto della nanna corretto il 7 settembre, e bagno e pasti erano stati
+lasciati fuori **di proposito**, con questa ragione scritta nel codice: *«lo stato vuoto È un
+dato — "segnato: non ha mangiato niente" è diverso da "non l'ho segnato"»*. Per i pasti è vera —
+`MEAL_QUANTITIES` ha il valore `'niente'`, che la maestra sceglie con un tocco, e c'è un test che
+lo difende. **Per il bagno era falsa**: quello zero è ciò che il codice scrive a tutti, e nessun
+gesto produce «controllato, niente».
+
+La regola vive in `@/lib/diary/bagno` e `@/lib/diary/pasto`, e i **cinque** lettori la leggono da
+un dispatcher solo (`@/lib/diary/registrazione`): chi salva, chi rimette la ✅ riaprendo la
+schermata, la timeline del genitore, la card «Oggi a scuola», il contatore «Compilato» del
+cockpit — che finora diceva sempre «tutta la classe». Il dispatcher è **fail-open** al contrario
+dei moduli che chiama: su una famiglia senza regola risponde *sì*, perché un filtro che nel dubbio
+nasconde è il difetto opposto, e in questo repo è già costato 29 bambini spariti dall'alert del
+pranzo. `attivita` resta di classe e non si filtra per bambino, ora per costruzione e non per un
+`else`.
+
+**Le 323 righe già in archivio non si cancellano**: diventano inerti in lettura, senza migrazione
+e senza scrivere una riga sul database di produzione. E poiché col salvataggio selettivo «azzera e
+risalva» diventa un no-op che *sembra* riuscito — per il bagno peggio che per la nanna, perché la
+riga sbagliata non è vuota e nemmeno il filtro di lettura la rende inerte — l'enum della
+`DELETE /api/diary/entries` si è allargato a bagno, pranzo e merenda, ed è la riga in cui la
+decisione passa sotto gli occhi di qualcuno, come il commento chiedeva. `umore` resta fuori, con
+la ragione scritta.
+
+**Una cosa trovata per strada**: un test che esisteva già ha scoperto un difetto *nella
+correzione* — una nota scritta senza segnare nessuna portata sarebbe stata buttata via in
+silenzio. Una nota è contenuto, e il genitore la legge dentro la tessera dell'evento: ora tiene in
+piedi la voce da sola.
+
+Gate: **15.604 test verdi**, `eslint` 0, build ok. Ogni correzione ha il suo test visto **rosso
+prima e rosso di nuovo dopo** averla rotta di proposito — compreso un falso verde scoperto e
+chiuso: due asserzioni negative sulla pagina del genitore passavano *prima che i dati
+arrivassero*, e ora sono legate a un'ancora positiva.
+
+---
+
 ## ⏱️ Changelog — Il lotto fatture passa dal browser al server: da 87 minuti presidiati a 6 — 2026-09-07 (branch `feat/aruba-lotto-veloce`)
 
 Seconda metà del lavoro sulla velocità di emissione. La prima (vedi la voce qui sotto) ha reso la

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslations } from 'next-intl';
+import { BottoneEliminaRegistrazione } from '@/components/features/teacher/diary/BottoneEliminaRegistrazione';
 import { motion } from 'framer-motion';
 import { AlertTriangle, Stethoscope, UtensilsCrossed } from 'lucide-react';
 import { MEAL_QUANTITIES } from './eventConfig';
@@ -87,6 +88,12 @@ interface MealDetailInlineProps {
     date: string;
     classId: string;
     savedStudentIds: Set<string>;
+    /** Cestino per una registrazione segnata per errore (vedi BottoneEliminaRegistrazione). */
+    onElimina?: (studentId: string) => void;
+    /** L'etichetta leggibile della routine, per la domanda di conferma. */
+    etichettaEvento?: string;
+    /** Note per-bambino: servono solo a dire, nella conferma, che spariranno con la riga. */
+    noteBambino?: Record<string, string>;
     isMerenda?: boolean;
 }
 
@@ -108,6 +115,9 @@ export function MealDetailInline({
     onMealSelect,
     date,
     savedStudentIds,
+    onElimina,
+    etichettaEvento,
+    noteBambino,
     isMerenda = false,
 }: MealDetailInlineProps) {
     const t = useTranslations('teacherDiario');
@@ -219,6 +229,14 @@ export function MealDetailInline({
                                 {hasAllergie && <span className="ml-1">⚠️</span>}
                                 {isSaved && <span className="ml-1.5 text-kidville-success">✅</span>}
                             </span>
+                            {isSaved && onElimina && (
+                                <BottoneEliminaRegistrazione
+                                    nome={`${student.firstName} ${student.lastName}`}
+                                    evento={etichettaEvento ?? ''}
+                                    haNota={Boolean(noteBambino?.[student.id]?.trim())}
+                                    onElimina={() => onElimina(student.id)}
+                                />
+                            )}
                         </div>
 
                         {/* Portate con pulsanti quantità */}

@@ -14,7 +14,7 @@ import { fetchConCache } from '@/lib/offline/read-cache';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { useChildSchoolType } from '@/lib/auth/use-child-school-type';
 import { UMORE_CONFIG, useUmoreLabel, umoreFromDettagli, umoreNarrative } from '@/lib/diary/umore';
-import { eEventoNanna, nannaCompilata } from '@/lib/diary/nanna';
+import { voceDaMostrare } from '@/lib/diary/registrazione';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
 import { oraDiRoma } from '@/lib/presenze/orario';
@@ -458,9 +458,12 @@ function ParentDiaryContent() {
     //
     // Vale anche per le righe già in archivio: nessuna migrazione, nessuna
     // cancellazione retroattiva sul diario di un bambino.
+    // `umore` resta escluso a parte: non è una voce di timeline, ha una fascia sua.
+    // Tutto il resto passa da `voceDaMostrare`, che dal 2026-09-08 copre anche il
+    // bagno e i pasti: 323 righe di bagno su 514 erano completamente vuote e
+    // raccontavano «🚿 Sono stato/a al bagno oggi!» a chi in bagno non c'era andato.
     const timelineEntries = entries.filter(e =>
-        e.tipo_evento !== 'umore' &&
-        !(eEventoNanna(e.tipo_evento) && !nannaCompilata(e.tipo_evento, e.dettagli)),
+        e.tipo_evento !== 'umore' && voceDaMostrare(e.tipo_evento, e.dettagli, { conNota: Boolean(e.notaBambino || e.note) }),
     );
 
     const slideVariants = {

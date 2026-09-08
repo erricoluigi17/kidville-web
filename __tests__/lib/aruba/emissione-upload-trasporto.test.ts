@@ -578,10 +578,20 @@ describe('nessuna eccezione fuori controllo con il numero già allocato', () => 
     expect(registro!.codice).toBe('23505')
   })
 
-  it('il `signin` prende 429 col pavimento in cache: l\'eccezione NON esce dalla funzione', async () => {
-    // Il caso di §3.3 alla lettera: `ensureToken()` viene chiamato per la PRIMA volta subito
-    // prima dell'upload, perché il pavimento non è stato riletto. Un `429` lì risaliva fino
-    // alla route — 500, numero consumato, nessuna riga.
+  it('il `signin` prende 429 col pavimento in cache: NESSUN numero consumato, nessuna riga di trasporto', async () => {
+    // ⚠️ QUESTO CASO ASSERIVA IL CONTENIMENTO DEL DANNO. Adesso il danno non avviene.
+    //
+    // Fino al 2026-09-07 `ensureToken()` veniva chiamato per la PRIMA volta subito prima
+    // dell'upload, perché col pavimento in cache `leggiPavimentoSerie` esce presto e non
+    // lo tocca. L'ordine reale era `cache → RPC che ALLOCA → signin`, e un `429` lì
+    // lasciava un numero consumato per un accesso mai riuscito: la funzione lo registrava
+    // come «Trasporto fallito», cioè come esito IGNOTO di un upload mai partito, e chi
+    // leggeva andava a cercare su Aruba un documento che non esiste.
+    //
+    // Il vecchio assert (due righe a registro, 502, `upload-esito-ignoto`) misurava quella
+    // medicazione. Adesso `ensureToken()` sta prima della RPC: il `429` cade dove cadono
+    // gli altri guasti della numerazione, e la frase che il codice ripete in dieci punti —
+    // «nessun numero è stato consumato» — è vera invece che consolatoria.
     const { emettiFatturaPagamento } = await carica()
     reteAruba(() => risposta(UPLOAD_OK))
     const sb = scuola()
@@ -601,10 +611,20 @@ describe('nessuna eccezione fuori controllo con il numero già allocato', () => 
     const esito = await secondo
 
     expect(esito.ok).toBe(false)
-    if (!esito.ok) expect(esito.httpStatus).toBe(502)
+    if (!esito.ok) {
+      expect(esito.motivo, 'un accesso rifiutato è un guasto della numerazione, non del trasporto').toBe(
+        'numerazione_non_allineata',
+      )
+      // Insensibile alle maiuscole: la frase esiste in due forme nel codice — da sola
+      // («Nessun numero è stato consumato.») e in coda a un'altra («…e nessun numero è
+      // stato consumato.»). A contare è che ci sia, non da quale ramo arrivi.
+      expect(esito.messaggio).toMatch(/nessun numero è stato consumato/i)
+    }
     const righe = sb._inserts.filter((i) => i.table === 'fatture_emesse')
-    expect(righe).toHaveLength(2)
-    expect((righe[1].row as Record<string, unknown>).sdi_stato_label).toBe('Trasporto fallito')
-    expect(rigaConEsito('upload-esito-ignoto')).toBeTruthy()
+    expect(righe, 'solo la PRIMA emissione ha scritto a registro').toHaveLength(1)
+    expect(
+      rigaConEsito('upload-esito-ignoto'),
+      'nessun esito ignoto da dichiarare: l\'upload non è mai stato tentato',
+    ).toBeFalsy()
   })
 })

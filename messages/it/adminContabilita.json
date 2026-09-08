@@ -970,6 +970,7 @@
   "reconLottoStimaBreve": "meno di un minuto alla fine",
   "reconLottoInCorsoTitolo": "Che cosa è già uscito",
   "reconLottoSoloLePronte": "Si emettono solo le righe pronte: {n, plural, one {# resta da completare e non parte} other {# restano da completare e non partono}}.",
+  "reconLottoGiaEmesse": "{n, plural, one {# era già a registro} other {# erano già a registro}}",
   "ticketRicaricaFatta": "Ricarica registrata",
   "ticketDupTitolo": "Attenzione: oggi hai già ricaricato questo bambino",
   "ticketDupSpiega": "Se è lo stesso pagamento, registrandolo di nuovo lo conteggi due volte: la famiglia risulterà aver pagato il doppio.",

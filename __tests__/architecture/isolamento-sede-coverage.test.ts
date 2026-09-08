@@ -1691,6 +1691,21 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    che nega fuori dalle sedi attive e, per l'`educator`, fuori dalle sue
             //    sezioni. Non riusa `assertAlunnoInScope` perché quella respingerebbe la
             //    CUOCA, che di sezioni assegnate non ne ha: il perché sta nella sua testata.
+            // 308 → 309 il 2026-09-07: è nata `pagamenti/fattura/lotto:POST`, la route che
+            // emette un BLOCCO di fatture invece di una sola. Usa il service role come la
+            // route singola, e NON porta esenzioni — `handlerEsentati` è fermo a 98 —
+            // perché fa la cosa più stretta possibile: `assertPagamentoInScope` su OGNI
+            // pagamento del blocco, e basta una riga fuori sede perché l'intera richiesta
+            // sia rifiutata. Un lotto non è un lasciapassare per uscire dalla propria sede.
+            //
+            // ⚠️ La guardia sul tetto orario di Aruba, che quella route usa, conta le
+            // righe di `fatture_emesse` SENZA filtro di sede — e sta apposta in
+            // `src/lib/pagamenti/tetto-orario-aruba.ts`, fuori dalla portata di questo
+            // lock. Non è un modo di zittirlo: il limite di Aruba è per IP, e le tre sedi
+            // escono dallo stesso IP con UNA sola utenza. Mettere il filtro di sede per
+            // far tacere il lock renderebbe la guardia FALSA — verde mentre il secchio è
+            // già vuoto. Il precedente è `src/lib/allegati/rimozione.ts`, e la ragione è
+            // scritta nella testata di quel modulo.
             // 308 → 309 il 2026-09-07: è nata `gallery/upload-url:POST`, la porta che
             // FIRMA i caricamenti diretti allo Storage. È il rimedio al 413 di Vercel
             // misurato in `app_log` (sei video respinti in un giorno, e l'unico passato
@@ -1699,7 +1714,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // non ha una sede da dichiarare, esattamente come `avvisi/upload/rimuovi:POST`
             // qui sopra. Ciò che difende lo fa altrove: il percorso dell'oggetto è
             // intestato all'utente del gate, mai a un campo del client.
-            routeConServiceRole: 309,
+            // ⚠️ 309 → 310 il 2026-09-08, ED È UN NUMERO MISURATO, NON SOMMATO. Le due
+            // righe qui sopra sono nate lo stesso giorno in due sessioni diverse, e
+            // ognuna aveva scritto «308 → 309»: git le ha unite lasciando 309, che è la
+            // cifra sbagliata per entrambe. Il valore giusto l'ha detto il test, non
+            // l'aritmetica a mente — ed è il motivo per cui un'impronta numerica si
+            // rimisura invece di mergiarla.
+            routeConServiceRole: 310,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1823,6 +1844,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 472 → 474 il 2026-09-07: i due GET delle route dei pasti residui qui
             // sopra. Qui il passo coincide col numero di file (+2 route, +2 handler)
             // perché entrambe espongono il solo GET: sono schermate di lettura.
+            // 474 → 475 il 2026-09-07: il POST di `pagamenti/fattura/lotto` (vedi sopra).
             //
             // 474 → 476 il 2026-09-07, e sono DUE handler di due lavori diversi che si
             // incontrano qui. Vanno nominati tutti e due: al merge dei due rami il
@@ -1838,7 +1860,9 @@ describe('coverage-lock isolamento fra sedi', () => {
             // di cancellare, esattamente come fa la POST accanto.
             //
             // 476 → 477 il 2026-09-07: il POST della route qui sopra.
-            handlerControllati: 477,
+            // 477 → 478 il 2026-09-08: stessa unione di due sessioni (vedi la nota su
+            // `routeConServiceRole`). Misurato, non dedotto.
+            handlerControllati: 478,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

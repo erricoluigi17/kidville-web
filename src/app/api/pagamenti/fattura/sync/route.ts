@@ -123,7 +123,22 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
     }
 
     const configCache = new Map<string, ArubaConfig | null>()
+    /**
+     * ⚠️ LA CHIAVE È L'UTENZA ARUBA, NON LA SCUOLA, e la differenza vale dei `429`.
+     *
+     * Era `scuola_id`, e su tre sedi produceva **tre `signin` di fila** — mentre Aruba
+     * ne concede **uno al minuto per IP**. Il secondo e il terzo prendevano `429` da
+     * soli, e il giro si portava via anche lo slot di chiunque altro stesse emettendo:
+     * il 2026-09-07 un `signin` del lotto ha preso `429` con novanta secondi di
+     * intervallo, e questo cron gira ogni trenta minuti.
+     *
+     * Le tre sedi usano **una sola utenza** (`aruba_config->>'username'` distinto = 1
+     * su 3, misurato): chiavare sull'utenza fa un accesso solo e non aspetta niente.
+     * Se un giorno le utenze diventassero davvero tre, la chiave le distinguerebbe da
+     * sé — ed è il motivo per cui non è semplicemente una variabile fuori dal ciclo.
+     */
     const tokenCache = new Map<string, string>()
+    const chiaveUtenza = (ambiente: string | undefined, username: string) => `${ambiente ?? 'demo'}|${username}`
     // Scuole saltate per gating credenziali: MAI in silenzio (M2.4) — contate,
     // loggate e riportate nella risposta con il motivo.
     const scuoleSkipped = new Set<string>()
@@ -167,11 +182,12 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
       }
 
       // token (uno per scuola)
-      let token = tokenCache.get(f.scuola_id)
+      const chiave = chiaveUtenza(cfg.ambiente, creds.username)
+      let token = tokenCache.get(chiave)
       if (!token) {
         try {
           token = (await arubaSignin(cfg.ambiente, creds)).accessToken
-          tokenCache.set(f.scuola_id, token)
+          tokenCache.set(chiave, token)
         } catch (e) {
           // Era un `catch { continue }` MUTO, ed è il divieto n° 6 di AGENTS.md: se il
           // login ad Aruba fallisce (password ruotata, ambiente sbagliato, SDI giù) le

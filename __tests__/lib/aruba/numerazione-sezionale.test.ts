@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { arubaUltimoNumeroFattura, numeroSezionaleDaEtichetta, PAUSA_FRA_PAGINE_MS } from '@/lib/aruba/client'
+import { arubaUltimoNumeroFattura, numeroSezionaleDaEtichetta, PAGINA_SIZE, PAUSA_FRA_PAGINE_MS } from '@/lib/aruba/client'
 import { progressivoInvioFattura } from '@/lib/aruba/emissione'
 
 /**
@@ -116,8 +116,9 @@ describe('progressivoInvioFattura — un nome file diverso per ogni serie', () =
  * guarda: lo scorrimento si ferma sulla prima pagina non piena, contando i documenti.
  */
 function rispostaConNumeri(numeri: (string | number | null)[], pagina = 0): Response {
-  /** = `PAGINA_SIZE` in `src/lib/aruba/client.ts`: sotto questa soglia lo scorrimento si ferma. */
-  const SIZE = 500
+  /** Si IMPORTA da `client.ts`: dal 2026-09-07 una size echeggiata diversa da quella
+   *  chiesta è un errore che LANCIA, e un numero copiato qui mentirebbe al primo cambio. */
+  const SIZE = PAGINA_SIZE
   const content = numeri.map((n, i) => ({
     filename: `IT01879020517_${String(i).padStart(5, '0')}.xml.p7m`,
     idSdi: '17898673698',
@@ -188,18 +189,20 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     expect(url).toContain('vatcodeSender=03394870616')
   })
 
-  it('SCORRE LE PAGINE: con 2.327 documenti il massimo non sta nei primi 500', async () => {
+  it('SCORRE LE PAGINE: il massimo non sta nella prima', async () => {
     // Il vecchio codice chiedeva `page=1&size=500` e prendeva il massimo di quei 500,
     // senza che nessuno avesse mai verificato in che ORDINE Aruba li restituisce. Su una
     // serie da 2.327 documenti è il massimo di un pezzo qualunque dell'elenco.
     const paginaPiena = (da: number, pagina: number) =>
-      rispostaConNumeri(Array.from({ length: 500 }, (_, i) => `Asilo ${da + i}/2026`), pagina)
+      rispostaConNumeri(Array.from({ length: PAGINA_SIZE }, (_, i) => `Asilo ${da + i}/2026`), pagina)
     fetchMock
       .mockResolvedValueOnce(paginaPiena(1, 0))
-      .mockResolvedValueOnce(paginaPiena(501, 1))
-      .mockResolvedValueOnce(rispostaConNumeri(['Asilo 1001/2026', 'Asilo 2327/2026'], 2))
+      .mockResolvedValueOnce(paginaPiena(PAGINA_SIZE + 1, 1))
+      // Il massimo vero sta SOPRA tutto il riempitivo delle due pagine piene: se lo
+      // scorrimento si fermasse alla prima, questo numero non lo vedrebbe nessuno.
+      .mockResolvedValueOnce(rispostaConNumeri(['Asilo 1001/2026', 'Asilo 9001/2026'], 2))
 
-    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }))).toBe(2327)
+    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'Asilo' }))).toBe(9001)
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(String(fetchMock.mock.calls[2][0])).toContain('page=3')
   })
@@ -222,9 +225,35 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
     expect(String(fetchMock.mock.calls[1][0])).toContain('startDate=2025-01-01')
   })
 
-  it('nessun documento in due anni → 0 (la serie è davvero nuova)', async () => {
+  it('nessun documento in due anni → LANCIA: non è «serie nuova», è una lettura che non ha misurato niente', async () => {
+    // ⚠️ QUESTO CASO ASSERIVA L'OPPOSTO FINO AL 2026-09-07, e il cambio è deliberato.
+    //
+    // Diceva «nessun documento in due anni → 0 (la serie è davvero nuova)». La premessa
+    // era sbagliata, e si vede confrontandolo col caso qui sopra: `findByUsername` NON
+    // filtra per sezionale — restituisce tutti i documenti dell'utenza. Una serie davvero
+    // nuova vive dentro un elenco pieno di documenti altrui, ed è esattamente ciò che
+    // collauda «etichette LEGGIBILI ma di un'altra serie → 0», che resta verde e non
+    // lancia. Quel caso copre la serie nuova; questo copre tutt'altro.
+    //
+    // Zero documenti in DUE anni, su un'utenza che ne ha 3.327 (misurati il 2026-09-07),
+    // non è un dato: è una lettura che non ha misurato niente. Le cause vere sono almeno
+    // tre, tutte osservate o documentate: il rifiuto travestito da 200 con
+    // `errorCode: "0001"`, una finestra di date sbagliata, un token che vede un'altra
+    // utenza. In tutte e tre, restituire `0` significa consegnare quello zero a
+    // `leggiPavimentoSerie`, che lo passa alla RPC come pavimento — e il 1° gennaio,
+    // quando la riga del contatore per l'anno nuovo non esiste ancora, `p_min` è
+    // l'UNICA difesa: `GREATEST(0, 0) + 1` fa uscire «Asilo 1/2027» su una serie che ne
+    // ha duemilatrecento.
+    //
+    // Il prezzo dichiarato: la primissima fattura di un'utenza Aruba mai usata si ferma
+    // e chiede aiuto. È un evento unico nella vita di una sede, e vale il cambio.
     fetchMock.mockResolvedValue(rispostaConNumeri([]))
-    expect(await finoInFondo(arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }))).toBe(0)
+    const errore = await finoInFondo(
+      arubaUltimoNumeroFattura('demo', 'AT', { ...parametri, sezionale: 'FPR' }).catch((e: unknown) => e),
+    )
+    expect(errore).toBeInstanceOf(Error)
+    expect((errore as { code?: string }).code).toBe('serie-vuota')
+    expect((errore as Error).name).toBe('ArubaNumerazioneError')
   })
 
   it('ARUBA RISPONDE 200 E NON SE NE CAPISCE UN\'ETICHETTA → LANCIA, non «serie nuova»', async () => {
@@ -300,7 +329,7 @@ describe('arubaUltimoNumeroFattura — massimo della SERIE, non del mucchio', ()
       text: async () =>
         JSON.stringify({
           number: 0, // ← numero di PAGINA, non di fattura
-          size: 500,
+          size: PAGINA_SIZE,
           totalElements: numeri.length,
           content: numeri.map((n, i) => ({
             filename: `IT01879020517_0000${i}.xml.p7m`,

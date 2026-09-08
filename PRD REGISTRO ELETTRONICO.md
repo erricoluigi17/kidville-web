@@ -99,6 +99,210 @@
 
 ---
 
+## ⏱️ Changelog — Il lotto fatture passa dal browser al server: da 87 minuti presidiati a 6 — 2026-09-07 (branch `feat/aruba-lotto-veloce`)
+
+Seconda metà del lavoro sulla velocità di emissione. La prima (vedi la voce qui sotto) ha reso la
+lettura del progressivo economica; questa toglie lo spreco più grosso, che non erano gli upload.
+
+### Il fatto che decide la forma
+
+Ogni POST a `/api/pagamenti/fattura` è un'invocazione serverless nuova, quindi `tokenCache`
+riparte vuota e **ogni fattura si autentica da capo**. Aruba concede **un accesso al minuto per
+IP**: è questo — non gli upload — a imporre i novanta secondi fra una fattura e l'altra. Sessanta
+fatture costavano **cinque lotti da dodici e ~87 minuti di scheda presidiata**.
+
+Non si è tentata la scorciatoia (spostare `tokenCache` a livello di modulo), e la ragione è una
+misura: `cacheUltimoNumero` ha già esattamente quella forma, e il 2026-09-07 ha prodotto **sette
+letture per ognuna delle cinque emissioni** — riuso fra invocazioni pari a zero, cioè istanze
+sempre fredde. Il beneficio esiste solo **dentro** un'invocazione.
+
+### Che cosa c'è adesso
+
+`POST /api/pagamenti/fattura/lotto` emette un **blocco** di `TETTO_BLOCCO = 15` fatture con **un
+solo accesso** e **una sola lettura del progressivo**. Il pannello manda un blocco per volta e
+aspetta `ATTESA_FRA_BLOCCHI_MS = 65_000` fra l'uno e l'altro (65 e non 60: il limite esatto non è
+un margine, e il 07/09 un `signin` ha preso `429` **con novanta secondi** di intervallo).
+
+**Perché a blocchi e non in una chiamata sola.** Una POST che emettesse tutte e sessanta durerebbe
+~2,5 minuti contro un muro di 5, senza mostrare niente mentre lavora, e se scadesse a metà
+lascerebbe numeri consumati senza esito noto **e senza che il browser sappia dove si è fermata**.
+Un blocco dura ~40 secondi: sette volte di margine, e riprende dal punto in cui si è interrotto.
+
+| | prima | adesso |
+|---|---|---|
+| tempo **presidiato** per 60 fatture | ~87 min | **~6 min** |
+| throughput sostenibile | ~41/ora | **60/ora** (il tetto di Aruba) |
+| `signin` per 60 fatture | 60 | **4** |
+
+⚠️ **Sul throughput il guadagno è 1,5×, non 5×**, ed è giusto scriverlo: Aruba concede 60 upload
+l'ora e nessuna architettura può alzarlo. Il guadagno vero è sul **tempo di una persona davanti a
+una barra**.
+
+### Le tre frasi consolanti che erano false, e come sono state rese vere
+
+Non sono state tolte: è stato cambiato il disegno finché non hanno smesso di mentire.
+
+1. **«Un `signin` fallito non costa niente»** — falsa a cache calda, e lo era **già prima di questo
+   lavoro**. `leggiPavimentoSerie` esce presto quando il pavimento è in cache e non tocca
+   `ensureToken`: l'ordine reale era `cache → RPC che ALLOCA → signin → upload`, e un `429`
+   sull'accesso lasciava **un numero consumato per un accesso mai riuscito**, registrato come
+   «Trasporto fallito» di un upload mai partito. Adesso il token si chiede **prima della RPC**.
+2. **«Il budget copre»** — copriva la *media* in un ciclo dove un evento singolo costa **novanta
+   secondi**: il ritentativo dopo un `429` è un `await` dentro `arubaUpload`, dove il chiamante non
+   ha punti di controllo. Adesso il lotto passa `ritenta: false` (predefinito invariato) e la
+   riserva è il **costo peggiore di UNA fattura** (~155 s), non la media.
+3. **«La ripresa è gratuita grazie all'idempotenza»** — vera per i blocchi finiti, falsa per quelli
+   troncati, che sono l'unico motivo per cui la frase esisteva: morendo fra l'upload e l'INSERT non
+   resta nessuna riga da leggere. Regola scritta: dopo un blocco senza risposta leggibile **non si
+   rilancia alla cieca**, si rifà il pre-volo (che non spende quota Aruba).
+
+### Le guardie nuove
+
+- **Tetto orario** (`src/lib/pagamenti/tetto-orario-aruba.ts`): conta le fatture dell'ultima ora e
+  tronca il blocco a quel che resta. **Soglia 50 e non 60**, e **nessun filtro di sede**: il limite
+  è per IP e le tre sedi escono dallo stesso IP con **una sola utenza**; il margine è per le
+  fatture scritte a mano dal pannello, che consumano lo stesso secchio e non lasciano righe da
+  contare. Il messaggio di rifiuto non espone i volumi di un altro plesso.
+- **`504` fra i numeri in dubbio**: col ciclo sul server l'invocazione troncata diventa il modo
+  *previsto* di fallire. Oggi il pannello si salvava per caso (Vercel manda HTML, `res.json()`
+  lancia, lo stato diventa 0); un ragionevole `res.json().catch(() => null)` avrebbe riportato il
+  504 in superficie come «riga saltata» — un'affermazione falsa su quindici documenti fiscali.
+- **Il cron `fattura-sync` non ruba più lo slot**: la cache dei token era chiavata su `scuola_id` e
+  faceva **tre accessi di fila** per un'utenza sola. Adesso è chiavata sull'**utenza**.
+
+### Cosa si perde, ed è a verbale
+
+- **Chiudere la scheda non ferma più un blocco già partito**: le sue quindici fatture escono
+  comunque. «Interrompi» ferma **fra** un blocco e l'altro. Il test che asseriva il contrario è
+  stato riscritto sulla promessa nuova, non riallineato.
+- Il cron continua a fare fino a **200 `getByFilename` senza pause** su un tier da 12/min. Non è
+  stato toccato: cambiarne il ritmo cambia quante fatture in volo riesce a chiudere per giro, ed è
+  una decisione sua. **Resta un debito dichiarato.**
+
+### Due costanti dove prima ce n'era una
+
+`TETTO_LOTTO` significava sia «quante se ne selezionano» sia «quante ne partono». Adesso:
+**50** la selezione (= `SOGLIA_ORARIA_APP`, con un test che impedisce ai due numeri di divergere)
+e **15** il blocco (ciò che entra nel budget di un'invocazione). `stimaRimanenteMs` è stata
+**riscritta**, non riallineata: cambiava unità di misura, e lasciata com'era avrebbe risposto
+«quindici minuti» per un blocco che ne dura quaranta secondi.
+
+### Gate
+
+`npx eslint . --max-warnings 0` → 0 · `npx vitest run` → **15.175 verdi** · `npm run build` → ok.
+Impronte di `isolamento-sede-coverage` aggiornate a mano (308→309, 474→475); **`handlerEsentati`
+resta 98**: la route nuova non porta esenzioni.
+
+⚠️ **Nessuna migrazione.** ⚠️ `maxDuration` è un letterale `300` e non la costante da cui il budget
+si deriva: Next analizza la configurazione di segmento staticamente e un valore importato fa
+fallire il build. Il numero è scritto in due posti, e un test legge il sorgente per impedire che
+divergano.
+
+---
+
+## 🔢 Changelog — Aruba rifiutava una pagina troppo grande con un HTTP 200, e lo leggevamo come «serie vuota» — 2026-09-07 (branch `feat/aruba-lotto-veloce`)
+
+Il lavoro nasce da una domanda di velocità — *emettere una fattura richiede 43,6 secondi, e non è
+Aruba* — e ha trovato per strada un difetto di **correttezza fiscale** che non c'entrava con la
+velocità e che era senza difese.
+
+### La misura, prima del codice
+
+`scripts/collaudo/aruba-pagina-grande.collaudo.ts`, sola lettura, budget dichiarato (1 `signin` +
+5 GET distanziate di `PAUSA_FRA_PAGINE_MS`), eseguito contro l'API di **produzione**:
+
+| `size` chiesta | esito |
+|---|---|
+| 5000 | **RIFIUTATA** — HTTP **200**, `errorCode "0001"`, `content` vuoto, `size` 0 |
+| 3500 | **RIFIUTATA** — idem |
+| 2000 | **ACCETTATA** — 2.000 documenti, `totalElements` 3327, `totalPages` 2, `number` 1, `first` true |
+
+Tre assunzioni mai verificate sono cadute nello stesso giro:
+
+- **Il rifiuto arriva come successo.** Chi leggeva solo `content` lo trovava vuoto e concludeva
+  «questa serie non ha documenti». Per `leggiPavimentoSerie` quello significa pavimento **zero**, e
+  per la RPC significa emettere «Asilo 1/2026» su una serie che ne ha duemilatrecento. Nessuna
+  eccezione, nessun log. Il difetto e il rimedio erano **già scritti** in
+  `docs/fatturazione/configurazione-aruba.md` §5: qui vengono eseguiti, non scoperti.
+- **`page` è 1-BASED** (`page=1` → `number: 1`, `first: true`). Il ciclo partiva da 1 ed era giusto,
+  ma per inferenza aritmetica, non per misura.
+- **L'involucro sta IN CIMA alla risposta**, non sotto `value`. È il livello che le fixture devono
+  rispettare: una fixture al livello sbagliato è verde mentre la produzione è cieca — è
+  letteralmente l'incidente del 2026-09-02.
+
+### Che cosa c'è adesso
+
+**Quattro condizioni fermano l'emissione** invece di lasciarla proseguire su un numero inventato
+(`src/lib/aruba/client.ts`, stessa severità di `etichette-illeggibili`):
+
+| condizione | codice |
+|---|---|
+| `errorCode` diverso da `"0000"` | `involucro-errore` |
+| `size` echeggiata diversa da quella chiesta | `size-tappata` |
+| `totalElements` maggiore dei documenti analizzati | `scorrimento-incompleto` |
+| zero documenti in **due** anni di fila | `serie-vuota` |
+
+`last` si usa **solo per fermarsi prima**, mai per concludere. L'asimmetria è il motivo: `last`
+sbagliato **fallisce aperto** — chiude il giro e restituisce un massimo basso in silenzio — mentre
+il confronto sui conteggi **fallisce chiuso**: lancia, e nessuna fattura esce. Su un documento
+fiscale irreversibile si sbaglia da quella parte.
+
+**Un tetto sul pavimento** (`src/lib/aruba/emissione.ts`, `SCARTO_MASSIMO_PAVIMENTO = 10_000`).
+`prossimo_numero_fattura_sezionale` fa `GREATEST(ultimo_numero, p_min) + 1`: un pavimento troppo
+**basso** è quasi sempre innocuo, uno troppo **alto** alza il contatore e **non lo riabbassa mai**.
+`FORMA_NUMERO_SEZIONALE` accetta nove cifre e il pavimento è il massimo su tutto l'anno: **una sola
+etichetta anomala** su Aruba porterebbe la serie a un miliardo, per sempre. Adesso un pavimento
+fuori scala rispetto al contatore a registro non raggiunge la RPC. Se il contatore non si legge
+(PostgREST ritorna `{error}`, e sul DB E2E la tabella può non esserci) si logga e si prosegue: è una
+cintura in più, non l'unica.
+
+**`PAGINA_SIZE` da 500 a 2000.** I 3.327 documenti dell'anno stanno in **2 pagine e una pausa**
+invece di 7 e sei: la lettura del progressivo passa da **~35 a ~6 secondi** a ogni emissione. Non si
+insegue la pagina singola — servirebbe una `size` sopra 3.327 sotto un tetto minore di 3.500, una
+finestra che i documenti (una decina al giorno) chiudono da soli in poche settimane.
+
+### Il numero che il pannello Aruba ha preso mentre misuravamo
+
+| serie | contatore a registro | max in `fatture_emesse` | max su Aruba |
+|---|---|---|---|
+| Asilo 2026 | 2331 | 2331 | **2331** |
+| FPR 2026 | 1952 | 1952 | **1955** |
+
+Le fatture **FPR 1953, 1954, 1955 non sono nostre**: le ha emesse il pannello Aruba, sulla stessa
+serie. È il rischio messo a verbale il 2026-09-07 (le serie **non** si separano, decisione del
+titolare) ripreso in flagrante. Il meccanismo regge: la prossima FPR sarà `GREATEST(1952, 1955)+1`
+= 1956, non un duplicato — ed è esattamente il motivo per cui il progressivo si rilegge da Aruba
+ogni volta invece di fidarsi del contatore.
+
+`ultimo_numero` meno `max(fatture_emesse.numero)` vale **0 su entrambe le serie**: nessun numero
+consumato senza riga a registro. È la query che vede davvero i buchi, e sostituisce il `max()`
+raggruppato che non ne vede nessuno.
+
+### Un lock cambia verso, deliberatamente
+
+«nessun documento in due anni → 0 (la serie è davvero nuova)» adesso **lancia**. La premessa era
+sbagliata: `findByUsername` non filtra per sezionale, quindi una serie davvero nuova vive dentro un
+elenco pieno di documenti altrui — ed è il caso accanto, «etichette leggibili ma di un'altra serie
+→ 0», che resta verde e copre quello scenario. Zero documenti su un'utenza che ne ha 3.327 non è un
+dato: è una lettura che non ha misurato niente. Prezzo dichiarato: la primissima fattura di
+un'utenza Aruba mai usata si ferma e chiede aiuto, una volta nella vita di una sede.
+
+### Osservabilità
+
+`aruba:findByUsername` chiude ogni scorrimento con `esito: 'scorrimento-concluso'` e
+`{ pagine, ricevuti, totale_dichiarato }`, con **`distingui: ['pagine','anno']`**: `app_log`
+deduplica per `(fingerprint, giorno)` e somma le occorrenze **senza aggiornare il contesto**, quindi
+senza quella riga tutte le letture del giorno collasserebbero in una sola coi numeri della prima —
+e «da sette pagine a due» non si potrebbe dimostrare. Il rifiuto per pavimento fuori scala esce a
+livello `error` con il numero rifiutato e quello a registro.
+
+### Gate
+
+`npx eslint . --max-warnings 0` → 0 · `npx vitest run` → **15.134 verdi** · `npm run build` → ok.
+
+⚠️ **Nessuna migrazione**: nessuna tabella creata, nessuna colonna aggiunta.
+
+---
 ## 😴 Changelog — La nanna andava a tutti, l'appello cancellava la nota, i video non si caricavano — 2026-09-07 (branch `feat/appello-ninna-video`)
 
 Quattro richieste del titolare. Tre già in produzione, e due erano perdite di dato

@@ -970,6 +970,7 @@
   "reconLottoStimaBreve": "less than a minute left",
   "reconLottoInCorsoTitolo": "What has gone out so far",
   "reconLottoSoloLePronte": "Only the ready rows are issued: {n, plural, one {# still needs completing and will not be sent} other {# still need completing and will not be sent}}.",
+  "reconLottoGiaEmesse": "{n, plural, one {# was already on record} other {# were already on record}}",
   "ticketRicaricaFatta": "Top-up recorded",
   "ticketDupTitolo": "Careful: you already topped this child up today",
   "ticketDupSpiega": "If this is the same payment, recording it again counts it twice: the family will appear to have paid double.",

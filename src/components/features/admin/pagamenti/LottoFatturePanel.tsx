@@ -11,11 +11,19 @@ import { BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import type { MovimentoUi } from './riconciliazione-ui';
 import {
   CODICE_TRASPORTO_IGNOTO,
+  TETTO_BLOCCO,
   TETTO_LOTTO,
   corpoEmissione,
-  fermaIlLotto,
+  bloccoHaToccatoAruba,
   numeroInDubbio,
-  pausaDopo,
+  // ⚠️ `fermaIlLotto` e `pausaDopo` NON servono più QUI, e vale la pena dire perché
+  // invece di lasciarli importati per abitudine. Decidevano riga per riga: «questo
+  // status ferma il lotto?» e «quanto aspetto dopo questa risposta?». Adesso la
+  // decisione riga-per-riga vive sul server (`fattura/lotto`, che `fermaIlLotto` lo usa
+  // ancora), e qui la regola è più stretta: una POST di blocco che non torna 2xx ferma
+  // sempre — un esito che non si è potuto leggere può nascondere quindici documenti
+  // fiscali, non uno. L'attesa la decide il CONTENUTO del blocco, non il suo status.
+  pausaDopoBlocco,
   stimaRimanenteMs,
   prontaPerIlLotto,
   type AnteprimaPerIlLotto,
@@ -166,7 +174,14 @@ interface Esito {
   id: string;
   importo: number;
   data: string | null;
-  esito: 'ok' | 'saltata' | 'ignota' | 'non_tentata';
+  /**
+   * ⚠️ `gia` NON è `ok`, e tenerli separati non è pedanteria contabile: `ok`
+   * significa «questo documento fiscale è partito ADESSO». Rilanciando un blocco
+   * interrotto, contare insieme le due cose direbbe «emesse 15» quando le nuove
+   * sono tre — e chi usa quel numero per la quadratura conterebbe dodici documenti
+   * mai emessi oggi.
+   */
+  esito: 'ok' | 'gia' | 'saltata' | 'ignota' | 'non_tentata';
   /** Il progressivo della fattura emessa, quando c'è. */
   numero?: number | null;
   /** Il motivo del rifiuto, già tradotto da `messaggioDaCorpo`. */
@@ -467,33 +482,76 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
     setFase('conferma');
   };
 
-  /** Il lotto vero: una POST alla volta, col ritmo che detta Aruba. */
+  /**
+   * ─── IL LOTTO VERO: UNA POST PER BLOCCO, NON PER RIGA ───────────────────────
+   *
+   * ⚠️ FINO AL 2026-09-07 QUI C'ERA UNA POST PER FATTURA, e fra una e l'altra
+   * novanta secondi. Non erano gli upload a imporli: era il `signin`. Ogni POST è
+   * un'invocazione serverless nuova, quindi ogni fattura si autenticava da capo, e
+   * Aruba concede **un accesso al minuto per IP**. Sessanta fatture costavano circa
+   * ottantasette minuti di scheda presidiata.
+   *
+   * Adesso un blocco di `TETTO_BLOCCO` righe parte in una chiamata sola: l'accesso
+   * e la lettura del progressivo si fanno una volta per blocco. Sessanta fatture
+   * sono quattro blocchi, cioè **circa sei minuti**.
+   *
+   * ⚠️ COSA SI PERDE, E VA SAPUTO. Con il ciclo sul server, **chiudere questa
+   * scheda non ferma più un blocco già partito**: le sue fatture escono comunque,
+   * e la traccia resta a registro e nei log invece che sullo schermo.
+   * «Interrompi» ferma fra un blocco e l'altro, non a metà — al massimo escono le
+   * righe del blocco in volo. È un cambio di promessa, non un dettaglio, ed è il
+   * prezzo dei sei minuti.
+   *
+   * ─── LA CODA, E PERCHÉ NON UN INDICE ───────────────────────────────────────
+   * Il server può restituire `fermato: 'budget'` — ha finito il tempo prima di
+   * finire il blocco — insieme all'elenco delle righe che non ha tentato. Con un
+   * ciclo a indici quelle righe verrebbero saltate. Rimesse in testa alla coda,
+   * partono col blocco successivo.
+   */
   const esegui = async () => {
     stopRef.current = false;
     setFase('corso');
-    const lista = pronte;
+    const perId = new Map(pronte.map((r) => [r.pagamentoId, r]));
+    const coda: Pronta[] = [...pronte];
     const fatti: Esito[] = [];
-    let i = 0;
+    const totale = pronte.length;
+    let concluse = 0;
     let stop: Fermata | null = null;
 
-    while (i < lista.length) {
+    const esitoRiga = (riga: Pronta, esito: Esito['esito'], extra: Partial<Esito> = {}): Esito => ({
+      id: riga.id,
+      importo: riga.importo,
+      data: riga.data,
+      esito,
+      ...extra,
+    });
+
+    while (coda.length > 0) {
       if (stopRef.current) {
-        stop = { tipo: 'interrotto', dubbio: false, restanti: lista.length - i };
+        stop = { tipo: 'interrotto', dubbio: false, restanti: coda.length };
         break;
       }
-      const riga = lista[i];
-      setAvanzamento({ corrente: i + 1, totale: lista.length, attesaMs: null, concluse: i });
+      const blocco = coda.splice(0, TETTO_BLOCCO);
+      setAvanzamento({ corrente: concluse + 1, totale, attesaMs: null, concluse });
       const inizio = adesso();
       let stato = 0;
       let corpo: unknown = null;
       try {
-        const res = await fetch('/api/pagamenti/fattura', {
+        const res = await fetch('/api/pagamenti/fattura/lotto', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
           // ⚠️ `causale: null` e MAI il campo assente: `null` TOGLIE la correzione
           // manuale salvata, l'assenza la lascia congelata su ogni pagamento del
-          // lotto. Il corpo lo compone il motore, non questa riga.
-          body: JSON.stringify(corpoEmissione(riga.pagamentoId, riga.adultId)),
+          // lotto. Il corpo di ogni riga lo compone il motore, non questa riga.
+          //
+          // ⚠️ `r.adultId` NON si perde nel passaggio ai blocchi. È l'intestatario
+          // proposto dal bonifico, aggiunto nella stessa giornata da un'altra
+          // sessione: dimenticarlo qui avrebbe fatto decidere al server la cascata
+          // predefinita, cioè fatture intestate a qualcun altro senza che nessuna
+          // schermata lo dicesse. È il tipo di perdita che un merge pulito non segnala.
+          body: JSON.stringify({
+            pagamenti: blocco.map((r) => corpoEmissione(r.pagamentoId, r.adultId)),
+          }),
         });
         stato = res.status;
         corpo = await res.json();
@@ -501,82 +559,149 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
         // ⚠️ `stato = 0` anche se la risposta era arrivata e a rompersi è stato il
         // suo corpo: un esito che non si è potuto leggere è un esito IGNOTO, e su
         // un documento fiscale l'ignoto si tratta come il peggio — ci si ferma.
+        // Vale a maggior ragione adesso: un corpo illeggibile può nascondere
+        // l'esito di QUINDICI documenti, non di uno.
         stato = 0;
         corpo = null;
         logClient({
           livello: 'error',
           evento: 'fetch',
-          messaggio: `lotto-fatture-emissione-fallita: ${nomeErrore(err)}`,
+          messaggio: `lotto-fatture-blocco-fallito: ${nomeErrore(err)}`,
           route: '/admin/pagamenti',
           stato: 0,
         });
       }
 
-      // Il `codice` dichiarato dal server: è LUI a dire se il numero è in dubbio,
-      // non lo status. Letto una volta sola, e riusato per l'esito e per la fermata.
       const codiceGrezzo = (corpo as { codice?: unknown } | null)?.codice;
       const codice = typeof codiceGrezzo === 'string' ? codiceGrezzo : null;
       const dubbio = numeroInDubbio(stato, codice);
-
       const riuscita = stato >= 200 && stato < 300 && (corpo as { success?: boolean } | null)?.success === true;
-      if (riuscita) {
-        fatti.push({
-          id: riga.id,
-          importo: riga.importo,
-          data: riga.data,
-          esito: 'ok',
-          numero: (corpo as { data?: { numero?: number } }).data?.numero ?? null,
-        });
-      } else {
-        fatti.push({
-          id: riga.id,
-          importo: riga.importo,
-          data: riga.data,
-          // ⚠️ «Saltata» è un'AFFERMAZIONE: per questa riga non è successo niente.
-          // «Ignota» è l'affermazione opposta, ed è altrettanto impegnativa — manda
-          // a cercare un documento sul pannello Aruba. A decidere è `numeroInDubbio`
-          // e NON `fermaIlLotto`: «mi fermo?» va bene larga, «il numero è in
-          // dubbio?» no. Un 503 (Aruba non configurata) ferma il lotto e non
-          // consuma niente.
-          esito: dubbio ? 'ignota' : 'saltata',
-          motivo: messaggioDaCorpo(corpo, t('reconLottoErroreEmissione')),
-        });
-      }
-      setEsiti([...fatti]);
 
-      if (fermaIlLotto(stato)) {
+      if (!riuscita) {
+        // Il blocco intero non ha un esito leggibile: **tutte** le sue righe
+        // ereditano lo stesso verdetto. Dire «saltate» quando il numero è in dubbio
+        // sarebbe un'affermazione falsa su quindici documenti fiscali insieme.
+        for (const riga of blocco) {
+          fatti.push(
+            esitoRiga(riga, dubbio ? 'ignota' : 'saltata', {
+              motivo: messaggioDaCorpo(corpo, t('reconLottoErroreEmissione')),
+            }),
+          );
+          concluse += 1;
+        }
+        setEsiti([...fatti]);
         stop = {
           tipo: codice === CODICE_TRASPORTO_IGNOTO ? 'trasporto' : 'guasto',
           dubbio,
           messaggio: messaggioDaCorpo(corpo, t('reconLottoErroreEmissione')),
-          restanti: lista.length - i - 1,
+          restanti: coda.length,
         };
-        // Nei log lo STATUS e i conteggi, mai la prosa: quella può echeggiare
-        // dati del documento, e `redact` è a lista bianca per una ragione.
         logClient({
           livello: 'error',
           evento: 'fetch',
-          messaggio: `lotto-fatture-fermato: emesse=${fatti.filter((e) => e.esito === 'ok').length} non_tentate=${lista.length - i - 1}`,
+          messaggio: `lotto-fatture-fermato: emesse=${fatti.filter((e) => e.esito === 'ok').length} non_tentate=${coda.length}`,
           route: '/admin/pagamenti',
           stato,
         });
-        i += 1;
         break;
       }
 
-      i += 1;
-      if (i < lista.length) {
+      const dati = (corpo as {
+        data?: {
+          emesse?: { pagamento_id: string; numero?: number }[];
+          gia_emesse?: { pagamento_id: string }[];
+          fallite?: { pagamento_id: string; messaggio?: string; codice?: string; statoHttp?: number }[];
+          restanti?: string[];
+          fermato?: 'budget' | 'errore' | null;
+        };
+      }).data ?? {};
+
+      for (const voce of dati.emesse ?? []) {
+        const riga = perId.get(voce.pagamento_id);
+        if (riga) { fatti.push(esitoRiga(riga, 'ok', { numero: voce.numero ?? null })); concluse += 1; }
+      }
+      for (const voce of dati.gia_emesse ?? []) {
+        const riga = perId.get(voce.pagamento_id);
+        if (riga) { fatti.push(esitoRiga(riga, 'gia')); concluse += 1; }
+      }
+      let ultimaFallita: { messaggio?: string; codice?: string; statoHttp?: number } | null = null;
+      for (const voce of dati.fallite ?? []) {
+        const riga = perId.get(voce.pagamento_id);
+        if (!riga) continue;
+        // Anche dentro un blocco riuscito una riga può avere il numero in dubbio:
+        // a deciderlo è il `codice` che il server le ha attaccato, non lo status
+        // della POST — che qui è 200 per tutte.
+        const dubbioRiga = numeroInDubbio(voce.statoHttp ?? 0, voce.codice ?? null);
+        fatti.push(
+          esitoRiga(riga, dubbioRiga ? 'ignota' : 'saltata', {
+            motivo: voce.messaggio || t('reconLottoErroreEmissione'),
+          }),
+        );
+        concluse += 1;
+        ultimaFallita = voce;
+      }
+      setEsiti([...fatti]);
+
+      // Le righe che il server non ha tentato tornano in TESTA alla coda: un
+      // `fermato: 'budget'` non è un guasto, è un blocco che è finito prima del
+      // tempo e riprende dal punto in cui si è fermato.
+      const restanti = (dati.restanti ?? [])
+        .map((id) => perId.get(id))
+        .filter((r): r is Pronta => Boolean(r));
+
+      if (dati.fermato === 'errore') {
+        coda.length = 0;
+        stop = {
+          tipo: ultimaFallita?.codice === CODICE_TRASPORTO_IGNOTO ? 'trasporto' : 'guasto',
+          dubbio: numeroInDubbio(ultimaFallita?.statoHttp ?? 0, ultimaFallita?.codice ?? null),
+          messaggio: ultimaFallita?.messaggio,
+          restanti: restanti.length,
+        };
+        for (const riga of restanti) fatti.push(esitoRiga(riga, 'non_tentata'));
+        setEsiti([...fatti]);
+        logClient({
+          livello: 'error',
+          evento: 'fetch',
+          messaggio: `lotto-fatture-fermato: emesse=${fatti.filter((e) => e.esito === 'ok').length} non_tentate=${restanti.length}`,
+          route: '/admin/pagamenti',
+          stato,
+        });
+        break;
+      }
+
+      if (restanti.length > 0) {
+        // ⚠️ La guardia contro il giro a vuoto: se un blocco non conclude NIENTE e
+        // restituisce indietro tutto quello che gli era stato dato, rimetterlo in
+        // coda ripeterebbe la stessa richiesta per sempre.
+        if (restanti.length >= blocco.length) {
+          coda.length = 0;
+          stop = { tipo: 'guasto', dubbio: false, messaggio: t('reconLottoErroreEmissione'), restanti: restanti.length };
+          for (const riga of restanti) fatti.push(esitoRiga(riga, 'non_tentata'));
+          setEsiti([...fatti]);
+          break;
+        }
+        coda.unshift(...restanti);
+      }
+
+      if (coda.length > 0) {
         // La durata si calcola PRIMA di annunciarla: la live region deve dire
-        // l'attesa vera, non quella tipica.
-        const pausa = pausaDopo(stato, adesso() - inizio);
-        setAvanzamento({ corrente: i, totale: lista.length, attesaMs: pausa, concluse: i });
+        // l'attesa vera, non quella tipica. Adesso è l'attesa fra due BLOCCHI, e
+        // serve al `signin` del prossimo: uno al minuto per IP.
+        // ⚠️ NON `pausaDopo(stato, …)`: qui lo status è 200 anche quando tutte e
+        // quindici le righe sono state respinte dai NOSTRI gate, cioè quando ad
+        // Aruba non è arrivato niente. Aspettare l'attesa piena lì annuncerebbe
+        // minuti a chi ne sta aspettando secondi — e lo annuncerebbe a uno screen
+        // reader.
+        const pausa = pausaDopoBlocco(
+          adesso() - inizio,
+          bloccoHaToccatoAruba({ emesse: (dati.emesse ?? []).length, fallite: dati.fallite ?? [] }),
+        );
+        setAvanzamento({ corrente: concluse, totale, attesaMs: pausa, concluse });
         await attendi(pausa);
       }
     }
 
-    for (let k = i; k < lista.length; k++) {
-      fatti.push({ id: lista[k].id, importo: lista[k].importo, data: lista[k].data, esito: 'non_tentata' });
-    }
+    for (const riga of coda) fatti.push(esitoRiga(riga, 'non_tentata'));
     setEsiti(fatti);
     setFermata(stop);
     setAvanzamento(null);
@@ -586,6 +711,7 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
   };
 
   const riuscite = esiti.filter((e) => e.esito === 'ok');
+  const giaEmesse = esiti.filter((e) => e.esito === 'gia');
   const ignote = esiti.filter((e) => e.esito === 'ignota');
   const saltate = esiti.filter((e) => e.esito === 'saltata');
   const nonTentate = esiti.filter((e) => e.esito === 'non_tentata');
@@ -806,6 +932,10 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
               {t('reconLottoRiepilogo')}
             </p>
             {gruppoEsiti(t('reconLottoRiuscite', { n: riuscite.length }), TITOLO_OK, riuscite)}
+            {/* «Già a registro» sta accanto alle riuscite e NON dentro: rilanciando un
+                blocco interrotto, sommarle direbbe che sono partiti oggi documenti
+                fiscali partiti ieri. */}
+            {gruppoEsiti(t('reconLottoGiaEmesse', { n: giaEmesse.length }), TITOLO_OK, giaEmesse)}
 
             {/* ── L'ESITO IGNOTO STA DA SOLO, E SOPRA LE SALTATE ────────────────
                 Non è una sfumatura delle «saltate»: è la sola riga del riepilogo
@@ -861,6 +991,10 @@ export function LottoFatturePanel({ userId, selezionate, onChiudi, onDone, onLav
               {t('reconLottoInCorsoTitolo')}
             </p>
             {gruppoEsiti(t('reconLottoRiuscite', { n: riuscite.length }), TITOLO_OK, riuscite)}
+            {/* «Già a registro» sta accanto alle riuscite e NON dentro: rilanciando un
+                blocco interrotto, sommarle direbbe che sono partiti oggi documenti
+                fiscali partiti ieri. */}
+            {gruppoEsiti(t('reconLottoGiaEmesse', { n: giaEmesse.length }), TITOLO_OK, giaEmesse)}
             {gruppoEsiti(t('reconLottoIgnote', { n: ignote.length }), TITOLO_ERRORE, ignote)}
             {gruppoEsiti(t('reconLottoSaltate', { n: saltate.length }), TITOLO_ERRORE, saltate)}
           </div>

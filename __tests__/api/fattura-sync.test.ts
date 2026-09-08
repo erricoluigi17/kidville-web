@@ -161,3 +161,51 @@ describe('aggregaFatturaStato (matrice quote)', () => {
     ])).toBe('emessa')
   })
 })
+
+describe('un accesso ad Aruba per UTENZA, non per sede', () => {
+  // Il segreto lo arma il `beforeEach` del describe principale, che qui non arriva:
+  // senza queste due righe la route risponde 401 e il caso misurerebbe il gate, non
+  // il numero di accessi.
+  beforeEach(() => {
+    vi.clearAllMocks()
+    process.env.CRON_SECRET = 'topsecret'
+    process.env.ARUBA_PASSWORD = 'segretissima'
+  })
+  afterEach(() => {
+    delete process.env.CRON_SECRET
+    delete process.env.ARUBA_PASSWORD
+  })
+
+  it('due sedi con la stessa utenza fanno UN solo signin', async () => {
+    /**
+     * ⚠️ ERA `scuola_id`, e su tre sedi produceva TRE `signin` di fila mentre Aruba
+     * ne concede **uno al minuto per IP**: il secondo e il terzo prendevano `429` da
+     * soli. Non è un difetto solo di questo cron — gira ogni trenta minuti e si porta
+     * via lo slot di chiunque stia emettendo: il 2026-09-07 un `signin` del lotto ha
+     * preso `429` con novanta secondi di intervallo, che sulla carta sono sicuri.
+     *
+     * Le tre sedi usano una sola utenza (misurato: `username` distinto = 1 su 3).
+     * La chiave sull'utenza fa un accesso solo, e se un giorno le utenze diventassero
+     * davvero tre le distinguerebbe da sé.
+     */
+    h.supabase = makeSupabase({
+      fatture_emesse: [
+        { id: 'f-1', pagamento_id: 'pag-1', scuola_id: SCUOLA, numero: 7, aruba_filename: 'ITxxx_a.xml.p7m', sdi_stato: 1 },
+        { id: 'f-2', pagamento_id: 'pag-2', scuola_id: 'sede-due', numero: 8, aruba_filename: 'ITxxx_b.xml.p7m', sdi_stato: 1 },
+      ],
+      admin_settings: { aruba_config: { username: 'u', password_ref: 'ARUBA_PASSWORD', abilitato: true, ambiente: 'demo' } },
+      utenti: [{ id: 'seg-1', ruolo: 'segreteria', scuola_id: SCUOLA }],
+    })
+    vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
+    // Stato invariato: al cron interessa solo che l'accesso sia stato fatto una volta.
+    vi.mocked(arubaGetByFilename).mockResolvedValue({ stato: 1 })
+
+    const res = await POST(req('topsecret'))
+
+    expect(res.status).toBe(200)
+    expect(
+      vi.mocked(arubaSignin),
+      'due accessi di fila sul limite «uno al minuto» sono un 429 garantito',
+    ).toHaveBeenCalledTimes(1)
+  })
+})

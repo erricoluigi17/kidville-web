@@ -3,6 +3,7 @@ import { act, render, screen, fireEvent, within } from '@testing-library/react';
 import { RiconciliazionePanel } from '@/components/features/admin/pagamenti/RiconciliazionePanel';
 import { LottoFatturePanel } from '@/components/features/admin/pagamenti/LottoFatturePanel';
 import type { MovimentoUi } from '@/components/features/admin/pagamenti/riconciliazione-ui';
+import { ATTESA_FRA_BLOCCHI_MS, PAUSA_DOPO_RIFIUTO_LOCALE_MS, TETTO_BLOCCO, TETTO_LOTTO } from '@/lib/pagamenti/lotto-fatture';
 
 /**
  * ─── «EMETTI TUTTE»: LA SELEZIONE MULTIPLA DELLA RICONCILIAZIONE ────────────
@@ -115,6 +116,10 @@ function stubFetch(opts: {
   movimenti?: unknown[];
   anteprimaPerId?: Record<string, unknown>;
   postPerId?: Record<string, RispostaPost>;
+  /** Le righe che il server dichiara «già a registro» invece che emesse adesso. */
+  giaPerId?: Record<string, boolean>;
+  /** Fa fallire l'INTERA chiamata al blocco (504 di piattaforma, corpo illeggibile…). */
+  bloccoStato?: RispostaPost;
   /** Quanto ci mette UNA anteprima: serve a interrompere il pre-volo A METÀ. */
   anteprimaRitardoMs?: number;
 } = {}) {
@@ -136,10 +141,48 @@ function stubFetch(opts: {
       };
       return { ok: true, status: 200, json: async () => ({ success: true, data: dati }) };
     }
-    if (u.includes('/api/pagamenti/fattura') && init?.method === 'POST') {
-      const id = (JSON.parse(init.body ?? '{}') as { pagamento_id?: string }).pagamento_id ?? '';
-      const r = opts.postPerId?.[id] ?? { stato: 200, corpo: { success: true, data: { fattura_stato: 'in_attesa', numero: 1900 } } };
-      return { ok: r.stato >= 200 && r.stato < 300, status: r.stato, json: async () => r.corpo };
+    if (u.includes('/api/pagamenti/fattura/lotto') && init?.method === 'POST') {
+      // ⚠️ IL TRASPORTO È CAMBIATO IL 2026-09-07: una POST porta un BLOCCO di righe,
+      // non una sola. Questo ramo riproduce la semantica vera della route — emesse,
+      // già a registro, fallite, restanti, `fermato` — perché il pannello adesso deve
+      // saper mappare una risposta collettiva su righe singole, ed è lì che può
+      // sbagliare. Un finto server che rispondesse «va tutto bene» non collauderebbe
+      // quella mappatura.
+      if (opts.bloccoStato && opts.bloccoStato.stato !== 200) {
+        const b = opts.bloccoStato;
+        return { ok: false, status: b.stato, json: async () => b.corpo };
+      }
+      const righe = (JSON.parse(init.body ?? '{}') as { pagamenti?: { pagamento_id: string }[] }).pagamenti ?? [];
+      const emesse: { pagamento_id: string; numero: number }[] = [];
+      const giaEmesse: { pagamento_id: string }[] = [];
+      const fallite: { pagamento_id: string; messaggio?: string; codice?: string; statoHttp?: number }[] = [];
+      const restanti: string[] = [];
+      let fermato: 'errore' | 'budget' | null = null;
+      for (let i = 0; i < righe.length; i++) {
+        const id = righe[i].pagamento_id;
+        if (fermato) { restanti.push(id); continue; }
+        const r = opts.postPerId?.[id];
+        if (!r || (r.stato >= 200 && r.stato < 300)) {
+          if (opts.giaPerId?.[id]) giaEmesse.push({ pagamento_id: id });
+          else emesse.push({ pagamento_id: id, numero: 1900 + i });
+          continue;
+        }
+        const corpo = r.corpo as { error?: string; codice?: string } | null;
+        fallite.push({
+          pagamento_id: id,
+          messaggio: corpo?.error,
+          codice: corpo?.codice,
+          statoHttp: r.stato,
+        });
+        // Stessa regola della route: 0, 429 e ogni 5xx dicono che il problema è del
+        // canale e non della riga, e il blocco si ferma.
+        if (r.stato === 0 || r.stato === 429 || r.stato >= 500) fermato = 'errore';
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, data: { emesse, gia_emesse: giaEmesse, fallite, restanti, fermato } }),
+      };
     }
     if (u.includes('/api/pagamenti/riconciliazione')) {
       return { ok: true, status: 200, json: async () => ({ success: true, data: movs, fatturazione_disponibile: true, conteggi: CONTEGGI }) };
@@ -167,6 +210,29 @@ async function finoA(cond: () => boolean, quante = 40) {
 
 const post = (f: ReturnType<typeof stubFetch>) =>
   f.mock.calls.filter(([, init]) => (init as { method?: string } | undefined)?.method === 'POST');
+
+/**
+ * Seleziona TUTTE le righe e arriva alla conferma: serve ai casi che vogliono più di
+ * UN BLOCCO.
+ *
+ * ⚠️ Dal 2026-09-07 il lotto parte a blocchi da `TETTO_BLOCCO`, quindi tre righe
+ * selezionate sono UNA sola POST: l'attesa fra i blocchi, il progresso a metà lotto e
+ * l'interruzione non esistono più con quel campione. I casi che li misurano devono
+ * avere abbastanza righe da riempire due blocchi, altrimenti sono verdi su una
+ * situazione che non si presenta mai.
+ */
+async function finoAllaConfermaMolte(f: ReturnType<typeof stubFetch>) {
+  render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+  await finoA(() => screen.queryByText(/Bonifico lotto 0/) !== null);
+  fireEvent.click(screen.getByRole('checkbox', { name: /Seleziona tutte le da fatturare/ }));
+  await avanza(0);
+  fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
+  await finoA(() => screen.queryByText(/fatture pronte/) !== null, 400);
+  return f;
+}
+
+/** Quante righe servono per avere esattamente DUE blocchi, il secondo non pieno. */
+const DUE_BLOCCHI = TETTO_BLOCCO + 3;
 
 /** Seleziona le righe indicate e arriva fino al pannello di conferma. */
 async function finoAllaConferma(f: ReturnType<typeof stubFetch>, quali = ['m1', 'm2', 'm3']) {
@@ -263,42 +329,46 @@ describe('la casella di selezione compare SOLO sulle righe da fatturare', () => 
 });
 
 describe('il TETTO si applica alla SELEZIONE, non al momento dell’emissione', () => {
-  it('la tredicesima spunta è rifiutata: la selezione si ferma a dodici', async () => {
+  it('la spunta OLTRE IL TETTO è rifiutata: la selezione si ferma lì', async () => {
     // Troncare in silenzio al momento dell'emissione significherebbe non emettere
-    // otto fatture che l'operatore crede partite. Qui il rifiuto è visibile: la
-    // casella resta vuota e il conteggio in fondo alla barra non sale.
-    const f = stubFetch({ movimenti: molte(14) });
+    // fatture che l'operatore crede partite. Qui il rifiuto è visibile: la casella
+    // resta vuota e il conteggio in fondo alla barra non sale.
+    //
+    // ⚠️ Il tetto si IMPORTA. Dal 2026-09-07 vale 50 e non più 12, perché non è più
+    // «quante ne partono alla volta» (quello è `TETTO_BLOCCO`) ma «quante se ne
+    // possono mettere in coda»: il vincolo è il volume orario che Aruba concede.
+    const f = stubFetch({ movimenti: molte(TETTO_LOTTO + 2) });
     vi.stubGlobal('fetch', f);
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
     await finoA(() => screen.queryByText(/Bonifico lotto 0/) !== null);
 
     const caselle = screen.getAllByRole('checkbox', { name: /Seleziona il bonifico/ });
-    expect(caselle).toHaveLength(14);
-    for (const c of caselle.slice(0, 13)) fireEvent.click(c);
+    expect(caselle).toHaveLength(TETTO_LOTTO + 2);
+    for (const c of caselle.slice(0, TETTO_LOTTO + 1)) fireEvent.click(c);
     await avanza(0);
 
     const dopo = screen.getAllByRole('checkbox', { name: /Seleziona il bonifico/ }) as HTMLInputElement[];
-    expect(dopo.filter((c) => c.checked)).toHaveLength(12);
-    expect(dopo[12].checked).toBe(false);
-    expect(screen.getByText('12 bonifici selezionati')).toBeInTheDocument();
+    expect(dopo.filter((c) => c.checked)).toHaveLength(TETTO_LOTTO);
+    expect(dopo[TETTO_LOTTO].checked).toBe(false);
+    expect(screen.getByText(`${TETTO_LOTTO} bonifici selezionati`)).toBeInTheDocument();
   });
 
-  it('«Seleziona tutte» ne dichiara dodici nell’etichetta, e ne spunta dodici', async () => {
-    const f = stubFetch({ movimenti: molte(14) });
+  it('«Seleziona tutte» dichiara IL TETTO nell’etichetta, e ne spunta esattamente quel numero', async () => {
+    const f = stubFetch({ movimenti: molte(TETTO_LOTTO + 2) });
     vi.stubGlobal('fetch', f);
     render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
     await finoA(() => screen.queryByText(/Bonifico lotto 0/) !== null);
 
-    // Il numero fra parentesi è il TETTO, non quante righe ci sono: prometterne
-    // quattordici e spuntarne dodici sarebbe la stessa bugia del troncamento.
+    // Il numero fra parentesi è il TETTO, non quante righe ci sono: prometterne di
+    // più e spuntarne meno sarebbe la stessa bugia del troncamento.
     const tutte = screen.getByRole('checkbox', { name: /Seleziona tutte le da fatturare/ });
-    expect(tutte.getAttribute('aria-label') ?? tutte.closest('label')?.textContent).toContain('(12)');
+    expect(tutte.getAttribute('aria-label') ?? tutte.closest('label')?.textContent).toContain(`(${TETTO_LOTTO})`);
 
     fireEvent.click(tutte);
     await avanza(0);
     const dopo = screen.getAllByRole('checkbox', { name: /Seleziona il bonifico/ }) as HTMLInputElement[];
-    expect(dopo.filter((c) => c.checked)).toHaveLength(12);
-    expect(screen.getByText('12 bonifici selezionati')).toBeInTheDocument();
+    expect(dopo.filter((c) => c.checked)).toHaveLength(TETTO_LOTTO);
+    expect(screen.getByText(`${TETTO_LOTTO} bonifici selezionati`)).toBeInTheDocument();
   });
 
   it('la barra dichiara il tetto in italiano corretto', async () => {
@@ -308,9 +378,9 @@ describe('il TETTO si applica alla SELEZIONE, non al momento dell’emissione', 
 
     fireEvent.click(screen.getByRole('checkbox', { name: /\(01\/10\/2026\)/ }));
     await avanza(0);
-    // Il ramo `other` è quello che si vede SEMPRE (il tetto è 12): «Si emette al
-    // massimo 12 fatture» è la stringa in permanenza sotto gli occhi di chi lavora.
-    expect(screen.getByText(/Si emettono al massimo 12 fatture per volta/)).toBeInTheDocument();
+    // Il ramo `other` è quello che si vede SEMPRE (il tetto è ben oltre uno): la
+    // stringa è in permanenza sotto gli occhi di chi lavora.
+    expect(screen.getByText(new RegExp(`Si emettono al massimo ${TETTO_LOTTO} fatture per volta`))).toBeInTheDocument();
   });
 });
 
@@ -402,58 +472,73 @@ describe('il ciclo di emissione non sopravvive al pannello che lo mostra', () =>
     expect(screen.getByRole('checkbox', { name: /Seleziona tutte le da fatturare/ })).toBeDisabled();
   });
 
-  it('smontato il pannello a lotto in corso, il ciclo si FERMA: nessuna seconda POST', async () => {
-    // La seconda difesa, indipendente dalla prima: il cleanup di smontaggio non
-    // può limitarsi a cancellare il timer ESISTENTE, perché il ciclo — che nel
-    // frattempo sta risolvendo `res.json()` — ne creerebbe uno nuovo dopo lo
-    // smontaggio e ripartirebbe. Senza interfaccia, senza `beforeunload` e senza
-    // riepilogo: nessuna traccia a schermo di quali documenti siano usciti.
-    const f = stubFetch();
+  it('smontato il pannello, nessun BLOCCO nuovo parte — ma quello in volo esce lo stesso', async () => {
+    // ⚠️ QUESTO CASO PROMETTE MENO DI PRIMA, E LA DIFFERENZA VA DETTA.
+    //
+    // Con una POST per riga, smontare il pannello fermava il ciclo prima del
+    // documento successivo: al massimo usciva la fattura già in volo. Con il ciclo
+    // sul server un blocco già partito **emette tutte le sue quindici fatture**, e
+    // nessun gesto del browser lo ferma: la traccia resta a registro e nei log
+    // invece che sullo schermo.
+    //
+    // Ciò che questo caso continua a garantire è l'altra metà, che vale ancora:
+    // dopo lo smontaggio **nessun blocco NUOVO parte**. Il cleanup non può limitarsi
+    // a cancellare il timer esistente — il ciclo, che sta risolvendo `res.json()`,
+    // ne creerebbe uno nuovo dopo lo smontaggio e ripartirebbe.
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    const selezionate = [daFatturare(1), daFatturare(2), daFatturare(3)] as unknown as MovimentoUi[];
+    const selezionate = molte(DUE_BLOCCHI) as unknown as MovimentoUi[];
     const { unmount } = render(
       <LottoFatturePanel userId="u1" selezionate={selezionate} onChiudi={() => {}} onDone={() => {}} onLavoro={() => {}} />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: /Controlla ed emetti/ }));
-    await finoA(() => screen.queryByText(/fatture pronte/) !== null);
+    await finoA(() => screen.queryByText(/fatture pronte/) !== null, 400);
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => post(f).length === 1);
+    await finoA(() => post(f).length === 1, 200);
 
     unmount();
-    await avanza(90_000);
-    await avanza(90_000);
-    await avanza(90_000);
-    expect(post(f)).toHaveLength(1);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    expect(post(f), 'il secondo blocco non deve partire senza nessuno che lo guardi').toHaveLength(1);
   });
 });
 
 describe('l’emissione: una alla volta, e ci si ferma quando serve', () => {
-  it('tre selezionate → tre POST IN SEQUENZA, mai in parallelo', async () => {
-    const f = stubFetch();
+  it('diciotto selezionate → DUE blocchi, mai due in volo insieme', async () => {
+    // ⚠️ QUESTO CASO ASSERIVA «tre POST in sequenza». Il lock era sul PARALLELO —
+    // dodici POST insieme sarebbero dodici `429` con dodici numeri consumati — e
+    // adesso vale per i blocchi: uno alla volta, e il secondo non parte finché
+    // l'orologio non ha fatto passare l'attesa che serve al `signin`.
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => post(f).length === 1);
-    // ⚠️ IL CUORE DEL CASO: senza avanzare l'orologio la seconda NON deve partire.
+    await finoA(() => post(f).length === 1, 200);
+    // ⚠️ IL CUORE DEL CASO: senza avanzare l'orologio il secondo blocco NON parte.
     await avanza(0);
     expect(post(f)).toHaveLength(1);
 
-    await avanza(90_000);
-    await finoA(() => post(f).length === 2);
-    await avanza(90_000);
-    await finoA(() => post(f).length === 3);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    await finoA(() => post(f).length === 2, 200);
+    // Due blocchi e basta: le righe erano diciotto, quindici più tre.
+    await avanza(ATTESA_FRA_BLOCCHI_MS * 3);
+    expect(post(f)).toHaveLength(2);
 
-    // ogni POST porta `causale: null`, mai il campo assente
-    for (const [, init] of post(f)) {
-      const corpo = JSON.parse((init as { body: string }).body) as Record<string, unknown>;
-      expect('causale' in corpo).toBe(true);
-      expect(corpo.causale).toBeNull();
+    const primo = JSON.parse((post(f)[0][1] as { body: string }).body) as { pagamenti: Record<string, unknown>[] };
+    const secondo = JSON.parse((post(f)[1][1] as { body: string }).body) as { pagamenti: Record<string, unknown>[] };
+    expect(primo.pagamenti).toHaveLength(TETTO_BLOCCO);
+    expect(secondo.pagamenti).toHaveLength(DUE_BLOCCHI - TETTO_BLOCCO);
+    // ogni riga porta `causale: null`, mai il campo assente
+    for (const riga of [...primo.pagamenti, ...secondo.pagamenti]) {
+      expect('causale' in riga).toBe(true);
+      expect(riga.causale).toBeNull();
     }
   });
 
-  it('un 502 alla seconda: NESSUNA terza POST, e la terza risulta «non tentata»', async () => {
+  it('un 502 sulla seconda riga: il blocco si ferma, e la terza risulta «non tentata»', async () => {
     const f = stubFetch({
       postPerId: {
         pg2: {
@@ -470,13 +555,13 @@ describe('l’emissione: una alla volta, e ci si ferma quando serve', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
     await finoA(() => post(f).length === 1);
-    await avanza(90_000);
-    await finoA(() => post(f).length === 2);
 
-    // il lotto è fermo: nemmeno un'ora di orologio fa partire la terza
-    await avanza(90_000);
+    // ⚠️ Le tre righe stanno in UN blocco: il server le ha viste tutte e tre in una
+    // chiamata sola e ha dichiarato `fermato: 'errore'` con la terza fra i restanti.
+    // Il lock non è più «nessuna terza POST» ma «nessun SECONDO blocco»: nemmeno
+    // un'ora di orologio ne fa partire un altro.
     await avanza(3_600_000);
-    expect(post(f)).toHaveLength(2);
+    expect(post(f)).toHaveLength(1);
 
     const riepilogo = screen.getByTestId('lotto-riepilogo');
     expect(within(riepilogo).getByText('1 fattura emessa')).toBeInTheDocument();
@@ -495,24 +580,28 @@ describe('l’emissione: una alla volta, e ci si ferma quando serve', () => {
     expect(within(riepilogo).getByText(/45 minuti/)).toBeInTheDocument();
   });
 
-  it('«Interrompi» dopo la prima: nessuna seconda POST', async () => {
-    const f = stubFetch();
+  it('«Interrompi» dopo il primo blocco: il secondo non parte', async () => {
+    // ⚠️ COSA PROMETTE ADESSO «INTERROMPI», ed è meno di prima. Con una POST per
+    // riga fermava prima del documento successivo. Adesso ferma **fra un blocco e
+    // l'altro**: le quindici fatture del blocco in volo escono comunque. È il prezzo
+    // dei sei minuti al posto di ottantasette, ed è scritto anche nel pannello.
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => post(f).length === 1);
+    await finoA(() => post(f).length === 1, 200);
 
     // Lo stesso nodo DOM del pulsante primario: non un secondo bottone che
     // appare (il focus si perderebbe), ma la stessa casella che cambia mestiere.
     fireEvent.click(screen.getByRole('button', { name: 'Interrompi' }));
-    await avanza(90_000);
-    await avanza(90_000);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
     expect(post(f)).toHaveLength(1);
 
     const riepilogo = screen.getByTestId('lotto-riepilogo');
-    expect(within(riepilogo).getByText('1 fattura emessa')).toBeInTheDocument();
-    expect(within(riepilogo).getByText('2 righe non tentate')).toBeInTheDocument();
+    expect(within(riepilogo).getByText(`${TETTO_BLOCCO} fatture emesse`)).toBeInTheDocument();
+    expect(within(riepilogo).getByText(`${DUE_BLOCCHI - TETTO_BLOCCO} righe non tentate`)).toBeInTheDocument();
   });
 
   it('durante il lotto il pulsante primario È «Interrompi», e alla fine «Chiudi»', async () => {
@@ -539,8 +628,6 @@ describe('l’emissione: una alla volta, e ci si ferma quando serve', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
     await finoA(() => post(f).length === 1);
-    await avanza(90_000);
-    await finoA(() => post(f).length === 2);
     await avanza(0);
 
     const righe = logSpy.mock.calls.map(([e]) => JSON.stringify(e));
@@ -596,13 +683,12 @@ describe('la selezione è CONGELATA dal pre-volo fino alla fine del lotto', () =
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
     await finoA(() => post(f).length === 1);
-    await avanza(90_000);
-    await finoA(() => post(f).length === 2);
-    await avanza(90_000);
-    await finoA(() => post(f).length === 3);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
 
-    const emesse = post(f).map(([, init]) => (JSON.parse((init as { body: string }).body) as { pagamento_id: string }).pagamento_id);
-    expect(emesse).toEqual(['pg1', 'pg2', 'pg3']);
+    // Le tre righe stanno in un blocco solo: quel che conta è che siano ESATTAMENTE
+    // le tre misurate al pre-volo, nell'ordine, e nessun'altra.
+    const corpo = JSON.parse((post(f)[0][1] as { body: string }).body) as { pagamenti: { pagamento_id: string }[] };
+    expect(corpo.pagamenti.map((r) => r.pagamento_id)).toEqual(['pg1', 'pg2', 'pg3']);
   });
 });
 
@@ -640,28 +726,32 @@ describe('«mi fermo?» e «il numero è in dubbio?» sono DUE domande', () => {
 });
 
 describe('la barra annuncia l’attesa VERA, non sempre novanta secondi', () => {
-  it('dopo un rifiuto LOCALE sono cinque secondi, e la live region lo dice', async () => {
-    // `pausaDopo(409, …)` vale 5.000 ms — ad Aruba non è partito niente — ma il
-    // testo diceva «(~90 s)» comunque: su dodici righe tutte respinte da un gate
-    // locale la barra annunciava diciotto minuti mentre ne servivano sessanta
-    // secondi. È un testo che dice il falso a uno screen reader.
-    const f = stubFetch({
-      postPerId: { pg1: { stato: 409, corpo: { error: 'Per questo pagamento esiste già una fattura viva.' } } },
-    });
+  it('un blocco tutto respinto dai NOSTRI gate costa cinque secondi, non l’attesa piena', async () => {
+    // ⚠️ IL CASO È CAMBIATO CON IL TRASPORTO, ed è più insidioso di prima. Con una
+    // POST per riga bastava lo status: `pausaDopo(409, …)` valeva 5.000 ms perché ad
+    // Aruba non era partito niente. Adesso la POST del blocco risponde **200** anche
+    // quando tutte e quindici le righe sono state respinte da un gate nostro — e
+    // fidarsi dello status annuncerebbe l'attesa piena a chi non ha toccato Aruba.
+    const respinteTutte = Object.fromEntries(
+      Array.from({ length: TETTO_BLOCCO }, (_, k) => [
+        `pgx${k}`,
+        { stato: 409, corpo: { error: 'Per questo pagamento esiste già una fattura viva.' } },
+      ]),
+    );
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI), postPerId: respinteTutte });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('attendo'));
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('attendo'), 200);
 
     const testo = screen.getByTestId('lotto-avanzamento').textContent ?? '';
     expect(testo).toContain('~5 s');
-    expect(testo).not.toContain('~90 s');
+    expect(testo).not.toContain(`~${ATTESA_FRA_BLOCCHI_MS / 1000} s`);
 
-    // e i 90 s restano quelli veri quando la riga è andata ad Aruba davvero
-    await avanza(5_000);
-    await finoA(() => post(f).length === 2);
-    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('~90 s'));
+    // …e l'attesa piena resta quella vera quando il blocco ad Aruba ci è andato davvero.
+    await avanza(PAUSA_DOPO_RIFIUTO_LOCALE_MS);
+    await finoA(() => post(f).length === 2, 200);
   });
 });
 
@@ -677,23 +767,25 @@ describe('la barra annuncia l’attesa VERA, non sempre novanta secondi', () => 
  */
 describe('l’attesa si vede, si spiega e si misura', () => {
   it('la barra si riempie in proporzione alle fatture CONCLUSE', async () => {
-    const f = stubFetch();
+    // Servono DUE blocchi: con uno solo la barra andrebbe da zero a tutto in un
+    // colpo, e «si riempie in proporzione» non sarebbe osservabile.
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
 
     // Prima di premere non c'è nessuna barra: non c'è niente che avanzi.
     expect(screen.queryByTestId('lotto-barra')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => screen.queryByTestId('lotto-barra') !== null);
-    // La prima è IN VOLO: conclusa non lo è ancora, e la barra non deve mentire.
+    await finoA(() => screen.queryByTestId('lotto-barra') !== null, 200);
+    // Il primo blocco è IN VOLO: concluso non lo è ancora, e la barra non deve mentire.
     expect(screen.getByTestId('lotto-barra').getAttribute('data-concluse')).toBe('0');
 
-    await finoA(() => screen.getByTestId('lotto-barra').getAttribute('data-concluse') === '1');
+    await finoA(() => screen.getByTestId('lotto-barra').getAttribute('data-concluse') === String(TETTO_BLOCCO), 200);
     const barra = screen.getByTestId('lotto-barra');
-    expect(barra.getAttribute('data-totale')).toBe('3');
-    // Riempita per davvero, non solo contata: 1 su 3.
-    expect((barra.firstElementChild as HTMLElement).style.width).toBe('33.33333333333333%');
+    expect(barra.getAttribute('data-totale')).toBe(String(DUE_BLOCCHI));
+    // Riempita per davvero, non solo contata.
+    expect((barra.firstElementChild as HTMLElement).style.width).toBe(`${(TETTO_BLOCCO / DUE_BLOCCHI) * 100}%`);
   });
 
   it('la barra è MUTA per lo screen reader: a dire il numero è già il `role="status"`', async () => {
@@ -712,25 +804,27 @@ describe('l’attesa si vede, si spiega e si misura', () => {
   });
 
   it('la live region dice QUANTO MANCA, non solo a che punto è', async () => {
-    const f = stubFetch();
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
 
-    // Appena partita: la prima è in volo, restano due intervalli da 90 s = 3 minuti.
-    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('minuti'));
+    // Appena partito: diciotto righe sono due blocchi, cioè due durate di blocco più
+    // un'attesa fra i due. Il numero esce dal modulo puro, qui si legge tradotto.
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('minuti'), 200);
     expect(screen.getByTestId('lotto-avanzamento').textContent).toContain('circa 3 minuti alla fine');
   });
 
   it('LA RAGIONE DELL’ATTESA c’era già, e resta: «attendo il ritmo di Aruba»', async () => {
     // Non è un difetto nuovo: la frase esisteva, e lo screenshot aveva colto
     // l'istante dell'INVIO — che dura pochi secondi — invece dei novanta della pausa.
-    const f = stubFetch();
+    // L'attesa esiste solo FRA due blocchi: con uno solo non c'è niente da attendere.
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
 
-    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('attendo'));
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '').includes('attendo'), 200);
     expect(screen.getByTestId('lotto-avanzamento').textContent).toContain('attendo il ritmo di Aruba');
   });
 
@@ -738,41 +832,41 @@ describe('l’attesa si vede, si spiega e si misura', () => {
     // Un `role="status"` inserito nel DOM col contenuto già dentro resta muto su
     // NVDA e JAWS. I blocchi nuovi (elenco in corso, barra) le stanno attorno: se
     // uno di loro la facesse rimontare, la barra parlerebbe a nessuno.
-    const f = stubFetch();
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
     const prima = screen.getByTestId('lotto-avanzamento');
     expect(prima.textContent).toBe('');
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '') !== '');
+    await finoA(() => (screen.getByTestId('lotto-avanzamento').textContent ?? '') !== '', 200);
     expect(screen.getByTestId('lotto-avanzamento'), 'la live region è stata rimontata').toBe(prima);
 
     // …e resta lo stesso anche dopo che l'elenco «già uscito» è comparso e il
-    // riepilogo finale gli è nato accanto. I timer vanno avanzati a mano: il
-    // ritmo è 90 s da inizio a inizio, e `finoA` svuota i microtask, non l'orologio.
-    await avanza(90_000);
-    await finoA(() => post(f).length === 2);
-    await avanza(90_000);
-    await finoA(() => post(f).length === 3);
-    await finoA(() => screen.queryByTestId('lotto-riepilogo') !== null);
+    // riepilogo finale gli è nato accanto. I timer vanno avanzati a mano: il ritmo è
+    // da inizio a inizio di BLOCCO, e `finoA` svuota i microtask, non l'orologio.
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    await finoA(() => post(f).length === 2, 200);
+    await avanza(ATTESA_FRA_BLOCCHI_MS);
+    await finoA(() => screen.queryByTestId('lotto-riepilogo') !== null, 200);
     expect(screen.getByTestId('lotto-avanzamento')).toBe(prima);
   });
 });
 
 describe('durante il lotto si vede CHE COSA è già uscito', () => {
   it('il numero della prima fattura si legge PRIMA della fine, non solo nel riepilogo', async () => {
-    // Per diciotto minuti l'operatore non sapeva se qualcosa fosse andato: le
-    // righe concluse comparivano solo alla fine, cioè quando non servono più.
-    const f = stubFetch();
+    // L'operatore non sapeva se qualcosa fosse andato: le righe concluse comparivano
+    // solo alla fine, cioè quando non servono più. Con i blocchi il primo esito arriva
+    // dopo il primo blocco, ed è quello che questo caso guarda.
+    const f = stubFetch({ movimenti: molte(DUE_BLOCCHI) });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => screen.queryByTestId('lotto-in-corso-esiti') !== null);
+    await finoA(() => screen.queryByTestId('lotto-in-corso-esiti') !== null, 200);
 
     const inCorso = screen.getByTestId('lotto-in-corso-esiti');
-    expect(within(inCorso).getByText('1 fattura emessa')).toBeInTheDocument();
+    expect(within(inCorso).getByText(`${TETTO_BLOCCO} fatture emesse`)).toBeInTheDocument();
     expect(within(inCorso).getByText(/Fattura n\. 1900/)).toBeInTheDocument();
     // …e il riepilogo finale non c'è ancora: il lotto sta ancora girando
     expect(screen.queryByTestId('lotto-riepilogo')).toBeNull();
@@ -780,15 +874,18 @@ describe('durante il lotto si vede CHE COSA è già uscito', () => {
 
   it('anche le righe SALTATE si vedono mentre il lotto gira, col loro motivo', async () => {
     const f = stubFetch({
-      postPerId: { pg1: { stato: 409, corpo: { error: 'Per questo pagamento esiste già una fattura viva.' } } },
+      movimenti: molte(DUE_BLOCCHI),
+      postPerId: { pgx0: { stato: 409, corpo: { error: 'Per questo pagamento esiste già una fattura viva.' } } },
     });
     vi.stubGlobal('fetch', f);
-    await finoAllaConferma(f);
+    await finoAllaConfermaMolte(f);
 
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
-    await finoA(() => screen.queryByTestId('lotto-in-corso-esiti') !== null);
+    await finoA(() => screen.queryByTestId('lotto-in-corso-esiti') !== null, 200);
 
     const inCorso = screen.getByTestId('lotto-in-corso-esiti');
+    // Un 409 nasce dai NOSTRI gate: riguarda quella riga e non ferma il blocco, che
+    // infatti prosegue con le altre quattordici.
     expect(within(inCorso).getByText('1 riga saltata')).toBeInTheDocument();
     expect(within(inCorso).getByText(/esiste già una fattura viva/)).toBeInTheDocument();
   });
@@ -836,7 +933,7 @@ describe('il piè di pagina dice ciò che serve ALLA FASE in cui si trova', () =
     await finoA(() => screen.queryByText(/Bonifico retta 1/) !== null);
     fireEvent.click(screen.getByRole('checkbox', { name: /\(01\/10\/2026\)/ }));
     await avanza(0);
-    expect(screen.getByText(/Si emettono al massimo 12 fatture per volta/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Si emettono al massimo ${TETTO_LOTTO} fatture per volta`))).toBeInTheDocument();
 
     // In `conferma` la selezione è congelata: il tetto non è più una regola che
     // riguarda un gesto possibile.
@@ -946,10 +1043,17 @@ describe('il lotto usa la proposta, e la fa confermare', () => {
     fireEvent.click(screen.getByRole('button', { name: /Emetti ora/ }));
     await finoA(() => post(f).length === 1);
 
+    // ⚠️ IL CORPO ADESSO PORTA UN BLOCCO, non una riga: lo stesso giorno il lotto è
+    // passato dal browser al server (`/api/pagamenti/fattura/lotto`). Ciò che questo
+    // caso misura NON cambia — l'intestatario proposto deve arrivare nella POST — ma
+    // vive dentro `pagamenti[0]`. Se si fosse riallineato guardando solo il primo
+    // livello, il campo sarebbe risultato `undefined` e qualcuno avrebbe potuto
+    // concludere che la proposta non serviva più.
     const corpo = JSON.parse(String(post(f)[0]![1]!.body));
-    expect(corpo.intestatario).toEqual({ tipo: 'adult', adult_id: 'a-1' });
+    expect(corpo.pagamenti).toHaveLength(1);
+    expect(corpo.pagamenti[0].intestatario).toEqual({ tipo: 'adult', adult_id: 'a-1' });
     // `causale: null` resta: è ciò che toglie la correzione manuale appiccicosa
-    expect(corpo.causale).toBe(null);
+    expect(corpo.pagamenti[0].causale).toBe(null);
   });
 
   it('una riga già emettibile per anagrafica non chiede nessuna spunta', async () => {

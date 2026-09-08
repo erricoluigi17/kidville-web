@@ -48,6 +48,7 @@ import {
   richiesteArubaSpese,
   PAUSA_FRA_PAGINE_MS,
   type ArubaConfig,
+  type ArubaCredentials,
   type ArubaUploadResult,
 } from './client'
 import { buildFatturaElettronicaXml, causalePerTracciato, verificaCoerenzaIva, LIMITI, type IvaFattura } from './fatturapa-xml'
@@ -125,7 +126,27 @@ export interface EsitoQuota {
 }
 
 export type EsitoEmissione =
-  | { ok: true; fatturaStato: 'in_attesa'; uploadFileName: string; numero: number; numeroFattura?: string; quote?: EsitoQuota[] }
+  | {
+      ok: true
+      fatturaStato: 'in_attesa'
+      uploadFileName: string
+      numero: number
+      numeroFattura?: string
+      quote?: EsitoQuota[]
+      /**
+       * `true` quando NON è stata emessa niente adesso: la fattura c'era già e la
+       * chiamata è stata idempotente.
+       *
+       * ⚠️ Serviva e non c'era, e l'assenza si vedeva solo su un lotto. `EsitoQuota` ha
+       * `motivo: 'idempotente'` da sempre, ma `quote` viene popolato **solo se
+       * multi-quota**: sul caso normale — una quota sola — il chiamante non aveva modo
+       * di distinguere «emessa adesso» da «c'era già». Rilanciando un blocco
+       * parzialmente eseguito, la risposta avrebbe detto «emesse: 15» quando le nuove
+       * erano tre, e chi usa quel conteggio per la quadratura avrebbe contato dodici
+       * documenti mai emessi oggi.
+       */
+      gia?: true
+    }
   | {
       ok: false
       motivo:
@@ -163,6 +184,38 @@ interface AlunnoNested {
 }
 
 /** Le opzioni dell'emissione: tutte facoltative, e assenti = comportamento di sempre. */
+/**
+ * Un accesso ad Aruba condiviso fra più emissioni della STESSA invocazione.
+ *
+ * ─── PERCHÉ ESISTE ──────────────────────────────────────────────────────────────
+ * `tokenCache` è sempre stato locale a `emettiFatturaPagamento`, e su Vercel ogni POST
+ * è un'invocazione a sé: dodici fatture erano **dodici `signin`**, e Aruba ne concede
+ * **uno al minuto per IP**. Non sono gli upload a imporre i novanta secondi fra una
+ * fattura e l'altra — è l'autenticazione.
+ *
+ * ⚠️ Non si è provato a farne una cache di modulo, che sarebbe stata l'intervento più
+ * piccolo. La misura dice che non funzionerebbe: `cacheUltimoNumero` ha già esattamente
+ * quella forma, e il 2026-09-07 ha prodotto **sette letture per ognuna delle cinque
+ * emissioni** — riuso fra invocazioni pari a zero, cioè istanze sempre fredde. Copiare
+ * quella forma per il token significherebbe copiare l'unico meccanismo del file già
+ * misurato inefficace. Il beneficio esiste solo DENTRO un'invocazione: da lì la sessione.
+ */
+export interface SessioneAruba {
+  /** Il token, preso una volta sola e riusato. Lancia se Aruba rifiuta l'accesso. */
+  token(ambiente: string | undefined, creds: ArubaCredentials): Promise<string>
+}
+
+/** Una sessione nuova, vuota. Il `signin` avviene alla prima richiesta di token. */
+export function creaSessioneAruba(): SessioneAruba {
+  let cache: string | null = null
+  return {
+    async token(ambiente, creds) {
+      if (!cache) cache = (await arubaSignin(ambiente, creds)).accessToken
+      return cache
+    },
+  }
+}
+
 export interface OpzioniEmissione {
   /**
    * L'intestatario indicato a mano dalla segreteria, che sostituisce (o FORNISCE)
@@ -170,6 +223,20 @@ export interface OpzioniEmissione {
    * chiamanti più otto file di test a dipendere da questo.
    */
   intestatarioScelto?: IntestatarioScelto | null
+  /**
+   * L'accesso ad Aruba del chiamante, quando più emissioni girano nella stessa
+   * invocazione (il lotto sul server). **Assente ⇒ percorso identico a prima**: un
+   * `signin` per emissione, com'è sempre stato per i sei chiamanti esistenti.
+   */
+  sessione?: SessioneAruba
+  /**
+   * Se lasciare che `arubaUpload` ritenti una volta dopo un `429`. Predefinito: **sì**.
+   *
+   * Il lotto passa `false`: quei novanta secondi vivono dentro `arubaUpload`, dove chi
+   * chiama non ha punti di controllo, e in un ciclo con un budget di tempo farebbero
+   * morire l'invocazione **con il numero già allocato e nessuna riga a registro**.
+   */
+  ritentaUpload?: boolean
 }
 
 function s(v: unknown): string {
@@ -256,9 +323,67 @@ export function progressivoInvioFattura(sezionale: Sezionale, numero: number, an
  * Dopo ogni allocazione il pavimento in cache viene alzato al numero appena
  * assegnato: dentro un lotto la cache non può che salire.
  */
+/**
+ * Di quanto il pavimento letto da Aruba può superare il contatore a registro prima di
+ * essere un errore invece di un dato.
+ *
+ * ⚠️ L'ASIMMETRIA CHE RENDE NECESSARIA QUESTA COSTANTE. `prossimo_numero_fattura_sezionale`
+ * fa `GREATEST(ultimo_numero, p_min) + 1`, quindi un pavimento troppo BASSO è quasi sempre
+ * innocuo: il contatore è più avanti e vince lui. Un pavimento troppo ALTO invece **alza il
+ * contatore e non lo riabbassa mai** — la tabella si scrive solo da quella funzione, che è
+ * monotona — e per tornare indietro servirebbe una UPDATE a mano su un registro fiscale.
+ *
+ * La strada per arrivarci è corta: `FORMA_NUMERO_SEZIONALE` accetta nove cifre e il
+ * pavimento è il MASSIMO su tutto l'anno. Una sola etichetta anomala su Aruba — un
+ * documento caricato a mano con un numero sbagliato, l'import di un altro gestionale —
+ * porterebbe la serie a un miliardo, per sempre.
+ *
+ * Diecimila è largo di proposito: deve lasciar passare il funzionamento normale, compreso
+ * lo scarto vero fra Aruba e il nostro registro. Misurato il 2026-09-07: la serie FPR era
+ * a 1955 su Aruba e a 1952 da noi, perché tre fatture erano state scritte a mano dal
+ * pannello. Quello scarto è il motivo per cui Aruba la leggiamo: la guardia ferma
+ * l'assurdo, non il mestiere.
+ */
+const SCARTO_MASSIMO_PAVIMENTO = 10_000
+
 const TTL_ULTIMO_NUMERO_MS = 5 * 60 * 1000
 
 const cacheUltimoNumero = new Map<string, { valore: number; scadenza: number }>()
+
+/**
+ * Il contatore a registro per quella serie e quell'anno, o `null` se non si è potuto sapere.
+ *
+ * `null` NON significa zero: significa «non misurato», e chi chiama deve trattarlo come
+ * «non posso giudicare» invece che come «il contatore è a zero». PostgREST non lancia
+ * (AGENTS.md, regola 7): si guarda il valore di ritorno, e un errore qui — sul database
+ * E2E della CI la tabella può non esserci affatto — non deve impedire di lavorare.
+ */
+async function contatoreARegistro(
+  supabase: SupabaseClient,
+  sezionale: Sezionale,
+  anno: number,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from('fatture_numerazione_sezionale')
+    .select('ultimo_numero')
+    .eq('sezionale', sezionale)
+    .eq('anno', anno)
+    .maybeSingle()
+  if (error) {
+    logEvento('fattura', 'warn', {
+      operazione: 'emettiFatturaPagamento:contatoreARegistro',
+      esito: 'contatore-non-letto',
+      sezionale,
+      anno,
+      msg:
+        'il contatore a registro non si è potuto leggere: la guardia sul pavimento non ' +
+        'può giudicare e si prosegue (la protezione contro i valori bassi resta il GREATEST della RPC)',
+    }, error)
+    return null
+  }
+  const valore = (data as { ultimo_numero?: unknown } | null)?.ultimo_numero
+  return typeof valore === 'number' && Number.isFinite(valore) ? valore : null
+}
 
 /** Ambiente + utenza + serie + anno: due sedi con credenziali diverse non si mescolano. */
 function chiaveSerieAruba(ambiente: string | undefined, username: string, sezionale: Sezionale, anno: number): string {
@@ -960,11 +1085,11 @@ export async function emettiFatturaPagamento(
   }[]
 
   // 7. emissione indipendente per quota
-  let tokenCache: string | null = null
-  const ensureToken = async () => {
-    if (!tokenCache) tokenCache = (await arubaSignin(cfg.ambiente, creds)).accessToken
-    return tokenCache
-  }
+  // La sessione del chiamante quando c'è, altrimenti una tutta nostra: `creaSessioneAruba`
+  // ha esattamente la forma del `tokenCache` locale di prima, quindi senza `opzioni.sessione`
+  // il comportamento è quello di sempre — un `signin` per emissione.
+  const sessione = opzioni.sessione ?? creaSessioneAruba()
+  const ensureToken = () => sessione.token(cfg.ambiente, creds)
 
   // La serie e l'anno sono gli stessi per tutte le quote di questo pagamento (li
   // decide il MINORE, non chi paga): una chiave sola, e una lettura sola.
@@ -1565,6 +1690,15 @@ export async function emettiFatturaPagamento(
     // potuto allineare è un progressivo che non si conosce.
     let ultimoAruba: number
     try {
+      // ⚠️ IL `signin` VIENE PRIMA DELL'ALLOCAZIONE, ANCHE A CACHE CALDA.
+      // `leggiPavimentoSerie` esce presto quando il pavimento è in cache, e allora non
+      // tocca `ensureToken`: l'ordine diventava `cache → RPC che ALLOCA → signin`, e un
+      // `429` sull'accesso — Aruba ne concede uno al minuto per IP, col cron
+      // `fattura-sync` che ruba lo slot — lasciava un numero consumato per un accesso
+      // mai riuscito, registrato come «Trasporto fallito» di un upload mai partito.
+      // Chiedere il token qui costa nulla (la sessione lo riusa) e rende vera la frase
+      // che il codice ripete in dieci punti: «nessun numero è stato consumato».
+      await ensureToken()
       ultimoAruba = await leggiPavimentoSerie()
     } catch (e) {
       // `error` e non più `warn`: fino al 2026-08-09 qui si proseguiva «col
@@ -1624,6 +1758,39 @@ export async function emettiFatturaPagamento(
               'Aruba non ha risposto entro 30 secondi. ' +
               `${nienteEmesso} Riprova fra qualche minuto.`
             )
+          case 'size-tappata':
+            // NON è un guasto passeggero e riprovare non serve: Aruba ha cambiato il
+            // massimo di documenti per pagina che concede, e finché `PAGINA_SIZE` non
+            // torna sotto quel valore ogni lettura si fermerà qui. Misurato il
+            // 2026-09-07: sopra 2.000 la risposta è un 200 con l'elenco vuoto.
+            return (
+              `Aruba non accetta più la dimensione di pagina che chiediamo, quindi l’elenco della serie ` +
+              `«${sezionale}» non si è potuto leggere per intero. ${nienteEmesso} ` +
+              'Riprovare non serve: va corretta l’app. Segnalalo.'
+            )
+          case 'involucro-errore':
+            // Il rifiuto travestito da successo. Chi legge questo messaggio deve sapere
+            // che Aruba ha risposto «va tutto bene» a una richiesta che ha respinto.
+            return (
+              `Aruba ha risposto senza errori ma senza l’elenco delle fatture, quindi non si è potuto ` +
+              `sapere da quale numero ripartire sulla serie «${sezionale}». ${nienteEmesso} ` +
+              'Se si ripete, va corretta l’app. Segnalalo.'
+            )
+          case 'scorrimento-incompleto':
+            return (
+              `Aruba dichiara più documenti di quanti se ne siano potuti leggere: il numero più alto della ` +
+              `serie «${sezionale}» sarebbe quello di un pezzo dell’elenco, non della serie. ${nienteEmesso} ` +
+              'Riprova fra qualche minuto; se si ripete, segnalalo.'
+            )
+          case 'serie-vuota':
+            // Il caso del 1° gennaio, e quello dell'utenza appena creata. Va detto per
+            // esteso: qui si chiede una verifica umana, non un ritentativo.
+            return (
+              `Aruba non ha restituito nessun documento né per quest’anno né per lo scorso, quindi non si è ` +
+              `potuto sapere da quale numero ripartire sulla serie «${sezionale}». ${nienteEmesso} ` +
+              'Controlla sul pannello Aruba che le fatture ci siano davvero: se la serie è appena nata, ' +
+              'la prima fattura va emessa a mano. Altrimenti segnalalo.'
+            )
           case 'etichette-illeggibili':
             // Il caso del 2026-09-02. Va detto che NON è un problema di Aruba né
             // della sede, altrimenti si va a cercare nel posto sbagliato.
@@ -1645,6 +1812,41 @@ export async function emettiFatturaPagamento(
         ok: false,
         motivo: 'numerazione',
         messaggio: messaggioNumerazione,
+      })
+      continue
+    }
+
+    // ─── IL TETTO SUL PAVIMENTO, PRIMA CHE LA RPC LO RENDA IRREVERSIBILE ────────
+    // La RPC alza il contatore e non lo riabbassa mai. Un pavimento fuori scala —
+    // un'etichetta a nove cifre su Aruba — porterebbe la serie dove nessuno la
+    // riporta indietro senza una UPDATE a mano su un registro fiscale.
+    const contatore = await contatoreARegistro(supabase, sezionale, anno)
+    if (contatore !== null && ultimoAruba - contatore > SCARTO_MASSIMO_PAVIMENTO) {
+      const dettoPavimento =
+        `pavimento letto da Aruba fuori scala sulla serie ${sezionale}: ${ultimoAruba} contro ` +
+        `${contatore} a registro (scarto massimo ammesso ${SCARTO_MASSIMO_PAVIMENTO}). ` +
+        'Nessun numero è stato consumato.'
+      logEvento('fattura', 'error', {
+        operazione: 'emettiFatturaPagamento:prossimoNumero',
+        esito: 'pavimento-fuori-scala',
+        scuola_id: pag.scuola_id,
+        pagamento_id: pagamentoId,
+        sezionale,
+        anno,
+        pavimento: ultimoAruba,
+        contatore,
+        msg: dettoPavimento,
+      })
+      esiti.push({
+        adultId: q.adultId,
+        label: q.label,
+        ok: false,
+        motivo: 'numerazione',
+        messaggio:
+          `Su Aruba risulta un numero fuori scala per la serie «${sezionale}» (${ultimoAruba}), mentre a ` +
+          `registro siamo a ${contatore}. Emettere adesso sposterebbe la numerazione in modo NON reversibile. ` +
+          'La fattura non è stata emessa. Nessun numero è stato consumato. Va prima corretto il documento ' +
+          'anomalo sul pannello Aruba: segnalalo.',
       })
       continue
     }
@@ -1798,6 +2000,7 @@ export async function emettiFatturaPagamento(
       // respingere la prima fattura vera con `0093` «deleghe non valide» (vedi `arubaUpload`).
       up = await arubaUpload(cfg.ambiente, token, {
         dataFileBase64: Buffer.from(xml, 'utf-8').toString('base64'),
+        ritenta: opzioni.ritentaUpload,
       })
     } catch (e) {
       // `code` viene da `erroreAruba` (`'rete'`, o lo status quando una risposta
@@ -2078,6 +2281,10 @@ export async function emettiFatturaPagamento(
     .eq('id', pagamentoId)
   if (errAggAttesa) segnalaStatoNonAggiornato(pagamentoId, pag.scuola_id, 'in_attesa', errAggAttesa)
 
+  // «Già fatta» solo se TUTTE le quote riuscite erano già a registro: una sola davvero
+  // emessa fa di questa chiamata un'emissione, e va contata come tale.
+  const tutteGia = okEsiti.every((e) => e.motivo === 'idempotente')
+
   return {
     ok: true,
     fatturaStato: 'in_attesa',
@@ -2085,6 +2292,7 @@ export async function emettiFatturaPagamento(
     numero: okEsiti[0].numero ?? 0,
     numeroFattura: okEsiti[0].numeroFattura,
     quote: multi ? esiti : undefined,
+    ...(tutteGia ? { gia: true as const } : {}),
   }
 }
 

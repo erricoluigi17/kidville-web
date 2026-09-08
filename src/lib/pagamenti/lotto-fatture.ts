@@ -32,36 +32,120 @@ import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
  */
 
 /**
- * Quante righe si possono mandare in UN lotto.
+ * Quante righe si possono SELEZIONARE per un lotto.
  *
- * IL CONTO: 12 × 90 s ≈ **18 minuti** di scheda aperta — il limite vero non è
- * Aruba, è quanto a lungo una segretaria resta davanti a una barra che avanza —
- * e **due lotti pieni in un'ora fanno 24 upload**, cioè meno della metà del tetto
- * di 60 upload/ora, che è il margine per chi nel frattempo emette anche a mano.
+ * ⚠️ DAL 2026-09-07 QUESTO NUMERO SIGNIFICA UN'ALTRA COSA, e vale la pena dirlo
+ * perché il nome è rimasto. Prima era anche la dimensione di ciò che partiva —
+ * una POST per riga, dodici righe, dodici accessi ad Aruba. Adesso il lotto parte
+ * a BLOCCHI (`TETTO_BLOCCO`) e questo è solo il tetto della **selezione**, cioè
+ * quanto si può mettere in coda in una volta.
  *
- * ⚠️ VA RIVISTO DOPO IL PRIMO LOTTO VERO, e il numero da guardare è uno solo:
- * quanti `429` sono comparsi in `app_log` (`esito: 'upload-trasporto'`) durante
- * quei 18 minuti. Se sono zero, questo tetto è prudente e si può alzare; se ce
- * n'è anche uno, è l'intervallo a essere corto, non il tetto a essere alto.
+ * IL CONTO: 50 è la soglia che l'app si dà sul volume orario di Aruba
+ * (`SOGLIA_ORARIA_APP` in `src/lib/pagamenti/tetto-orario-aruba.ts`, che il tetto
+ * vero di 60 lo tiene sotto per lasciare margine a chi fattura a mano dal
+ * pannello). Selezionarne di più sarebbe promettere qualcosa che il provider non
+ * concede: la guardia sul server troncherebbe comunque.
+ *
+ * ⚠️ Il valore deve restare uguale a `SOGLIA_ORARIA_APP`. Non si importa perché
+ * quel modulo parla con Supabase e questo lo legge il browser: a tenerli insieme
+ * c'è un test.
  */
-export const TETTO_LOTTO = 12
+export const TETTO_LOTTO = 50
 
 /**
- * Quanto passa fra l'INIZIO di un'emissione e l'INIZIO della successiva.
+ * Quante fatture partono in UNA chiamata al server.
  *
- * ⚠️ 90 s E NON 60, e non è prudenza generica: **60 è il limite esatto del
- * `signin`** (uno al minuto per IP), e un limite esatto non è un margine — basta
- * un decimo di secondo di deriva fra l'orologio del browser e quello di Aruba per
- * prendere il `429`. E c'è la seconda aritmetica, quella che il solo `signin` non
- * racconta: quando la cache del progressivo è fredda, un'emissione fa fino a
- * **7 pagine di `findByUsername`**, e il tetto di ricerca è 12 al minuto **in
- * ogni finestra scorrevole**. Due emissioni a 60 s di distanza, entrambe con la
- * cache fredda, mettono 14 ricerche dentro una finestra da 60 s; a 90 s ne
- * mettono al massimo 7 + 7 in 90 s, cioè meno di 12 in qualunque minuto.
+ * ─── DA DOVE VIENE IL NUMERO ────────────────────────────────────────────────
+ * Non è scelto: è ciò che entra nel budget di tempo di un'invocazione. La route
+ * ha `maxDuration = 300`, e da quei 300 secondi va tolta la **riserva del costo
+ * peggiore di UNA fattura** (`RISERVA_PEGGIORE_MS`): restano ~145 secondi utili,
+ * e a ~3 secondi per fattura quindici ci stanno larghe.
  *
- * Il prezzo è dichiarato: dodici fatture costano diciotto minuti.
+ * ⚠️ NON è il tetto di Aruba e non va confuso con `TETTO_LOTTO`: quello dice
+ * quante se ne possono mettere in coda, questo quante ne parte alla volta.
  */
-export const INTERVALLO_FRA_EMISSIONI_MS = 90_000
+export const TETTO_BLOCCO = 15
+
+/**
+ * Quanto aspetta il browser fra la fine di un blocco e l'inizio del successivo.
+ *
+ * ⚠️ 65 s E NON 60: **60 è il limite esatto del `signin`** (uno al minuto per IP),
+ * e un limite esatto non è un margine — basta un decimo di secondo di deriva fra
+ * l'orologio del browser e quello di Aruba per prendere il `429`. Cinque secondi
+ * sono il minimo onesto, e il 2026-09-07 un `signin` ha preso `429` **con novanta
+ * secondi di intervallo**, perché il cron `fattura-sync` fa il suo accesso per
+ * conto proprio e ruba lo slot del minuto.
+ *
+ * ⚠️ Prima qui c'erano 90 s ed era l'attesa fra due FATTURE, non fra due blocchi.
+ * Novanta erano calibrati su un'emissione che faceva fino a sette ricerche
+ * (12 al minuto, due emissioni a 60 s di distanza ne mettevano 14 in una finestra
+ * da 60). Con `PAGINA_SIZE = 2000` le ricerche sono due, e dentro un blocco la
+ * lettura del pavimento è UNA sola: quel vincolo non lega più. Resta il `signin`.
+ */
+export const ATTESA_FRA_BLOCCHI_MS = 65_000
+
+/**
+ * Quanto si aspetta fra un upload e il successivo DENTRO un blocco.
+ *
+ * SLA §3: 30 upload al minuto per IP, cioè uno ogni 2 secondi. Con 2,5 si sta a
+ * ~24 al minuto, con margine. ⚠️ Non è questo il vincolo che conta: il volume
+ * orario (60) lo è, e lo sorveglia `tetto-orario-aruba.ts`.
+ */
+export const PAUSA_FRA_UPLOAD_MS = 2_500
+
+/**
+ * Il tempo da tenere da parte per la fattura che sta per partire.
+ *
+ * ⚠️ LA RISERVA È IL COSTO PEGGIORE DI UNA FATTURA, NON LA MEDIA, e la differenza
+ * è tutta. Il ritentativo dopo un `429` è un `await` di **novanta secondi che vive
+ * dentro `arubaUpload`**: chi chiama non ha nessun punto di controllo fra
+ * l'inizio e la fine. Una guardia che riservasse i ~3 secondi medi lascerebbe
+ * partire una fattura con sessanta secondi di margine, e quella fattura finirebbe
+ * **oltre il muro dei 300 con il numero già allocato e nessuna riga a registro**.
+ *
+ * Il conto è quello già scritto in testa a `src/app/api/pagamenti/fattura/route.ts`:
+ * pausa fra le pagine (5) + attesa dopo un 429 (90) + due tetti di risposta da 30.
+ *
+ * (Il lotto passa comunque `ritenta: false`, quindi quei novanta secondi non
+ * dovrebbero mai scattare. La riserva resta larga perché una guardia che si fida
+ * di un'altra guardia non è una guardia.)
+ */
+export const RISERVA_PEGGIORE_MS = 5_000 + 90_000 + 2 * 30_000
+
+/** I secondi dichiarati in `maxDuration` sulla route del blocco. Un test li tiene insieme. */
+export const MAX_DURATION_BLOCCO_S = 300
+
+/**
+ * Quanto si sta lontani dal muro della piattaforma.
+ *
+ * `maxDuration` è una RICHIESTA, non una garanzia: se il piano dell'account la tosasse,
+ * o se l'uccisione arrivasse un istante prima, dieci secondi sono quel che separa un
+ * blocco che si chiude ordinatamente da uno troncato a metà di una scrittura.
+ */
+export const MARGINE_PIATTAFORMA_MS = 10_000
+
+/**
+ * L'istante, dall'inizio del blocco, oltre il quale non si comincia più niente.
+ *
+ * ⚠️ NON è «il tempo di lavoro utile»: la riserva NON va sottratta qui, perché la guardia
+ * la somma al tempo trascorso ogni volta che decide. Toglierla anche da questa costante
+ * significherebbe contarla due volte — e la guardia scatterebbe **prima della prima
+ * fattura**, cioè un blocco che non emette mai niente. È il difetto che il test del
+ * budget ha trovato appena scritto: `0 + 155.000 > 145.000` è vero.
+ */
+export const BUDGET_BLOCCO_MS = MAX_DURATION_BLOCCO_S * 1_000 - MARGINE_PIATTAFORMA_MS
+
+/** Il tempo che resta davvero per emettere, una volta accantonata la riserva. */
+export const LAVORO_UTILE_MS = BUDGET_BLOCCO_MS - RISERVA_PEGGIORE_MS
+
+/**
+ * Quanto dura un blocco pieno, per la stima mostrata a chi guarda.
+ *
+ * Quindici upload a `PAUSA_FRA_UPLOAD_MS` più l'accesso e la lettura del pavimento
+ * della prima fattura. È una STIMA e si vede: serve a scrivere «circa sei minuti»
+ * accanto a una barra, non a decidere niente.
+ */
+export const DURATA_BLOCCO_STIMATA_MS = TETTO_BLOCCO * PAUSA_FRA_UPLOAD_MS + 10_000
 
 /**
  * La pausa dopo un rifiuto LOCALE (400/404/409/422).
@@ -188,20 +272,56 @@ export function corpoEmissione(pagamentoId: string, adultId?: string | null): Co
 }
 
 /**
- * Quanto aspettare PRIMA della prossima emissione, misurato **da inizio a
- * inizio**.
+ * Quanto aspettare PRIMA del prossimo BLOCCO, misurato **da inizio a inizio**.
  *
- * Non «90 secondi dopo la risposta»: il limite di Aruba conta le RICHIESTE in una
- * finestra, non le pause fra loro. Un'emissione che ha impiegato 40 s ha già speso
- * 40 dei 90; aspettarne altri 90 raddoppierebbe la durata del lotto senza
- * comprare nessun margine.
+ * ⚠️ Dal 2026-09-07 l'unità è il blocco, non la fattura: prima il browser mandava
+ * una POST per riga e questa era la pausa fra due fatture. Adesso una POST porta
+ * `TETTO_BLOCCO` fatture, e ciò che va distanziato è l'ACCESSO — uno al minuto
+ * per IP, ed è il solo limite rimasto a legare.
+ *
+ * Non «65 secondi dopo la risposta»: il limite di Aruba conta le richieste in una
+ * finestra, non le pause fra loro. Un blocco che ha impiegato 40 s ha già speso
+ * 40 dei 65; aspettarne altri 65 allungherebbe il lotto senza comprare margine.
  *
  * @param statoHttp lo status della risposta appena ricevuta (0 = mai arrivata)
- * @param durataMs quanto è durata quella chiamata
+ * @param durataMs quanto è durato quel blocco
  */
 export function pausaDopo(statoHttp: number, durataMs: number): number {
   if (RIFIUTI_LOCALI.has(statoHttp)) return PAUSA_DOPO_RIFIUTO_LOCALE_MS
-  return Math.max(0, INTERVALLO_FRA_EMISSIONI_MS - durataMs)
+  return Math.max(0, ATTESA_FRA_BLOCCHI_MS - durataMs)
+}
+
+/**
+ * Il blocco ha davvero parlato con Aruba, oppure è stato tutto respinto dai NOSTRI gate?
+ *
+ * ⚠️ SERVE PERCHÉ IL TRASPORTO È CAMBIATO. Con una POST per riga bastava lo status:
+ * `pausaDopo(409, …)` valeva cinque secondi perché ad Aruba non era partito niente.
+ * Adesso una POST porta quindici righe e risponde **200** anche quando tutte e quindici
+ * sono state respinte da `assertPagamentoInScope` o dai gate dell'intestatario — cioè
+ * quando ad Aruba non è arrivato nulla. Aspettare l'attesa piena lì significherebbe
+ * annunciare sei minuti a chi ne sta aspettando trenta secondi, e annunciarli a uno
+ * screen reader.
+ *
+ * «Già a registro» non conta come contatto: la SELECT di idempotenza sta prima del
+ * `signin`.
+ */
+export function bloccoHaToccatoAruba(dati: {
+  emesse: number
+  fallite: readonly { statoHttp?: number }[]
+}): boolean {
+  if (dati.emesse > 0) return true
+  return dati.fallite.some((f) => !RIFIUTI_LOCALI.has(f.statoHttp ?? 0))
+}
+
+/**
+ * Quanto aspettare prima del prossimo blocco, quando il blocco è ANDATO A BUON FINE.
+ *
+ * Il gemello di `pausaDopo`, che invece decide sullo status quando la POST del blocco
+ * è fallita per intero.
+ */
+export function pausaDopoBlocco(durataMs: number, haToccatoAruba: boolean): number {
+  if (!haToccatoAruba) return PAUSA_DOPO_RIFIUTO_LOCALE_MS
+  return Math.max(0, ATTESA_FRA_BLOCCHI_MS - durataMs)
 }
 
 /**
@@ -273,7 +393,16 @@ export const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
  *    peggio;
  *  · **502** — l'unico status che in `emissione.ts` esce DOPO l'upload. Col
  *    codice di trasporto il numero è consumato e l'esito ignoto; senza codice è
- *    uno scarto di merito, dove il numero è consumato lo stesso.
+ *    uno scarto di merito, dove il numero è consumato lo stesso;
+ *  · **504** — l'invocazione uccisa dalla piattaforma. Finché il ciclo girava nel
+ *    browser non si presentava (un'emissione dura ~44 s su 300 di `maxDuration`);
+ *    col ciclo sul server e un budget di tempo diventa il modo PREVISTO di
+ *    fallire, e la risposta non dice quali delle fatture del blocco siano partite.
+ *    ⚠️ Oggi il pannello si salva PER CASO: Vercel manda il 504 con un corpo HTML,
+ *    `res.json()` lancia, il `catch` mette `stato = 0` e il dubbio scatta da lì.
+ *    Un ragionevole `res.json().catch(() => null)` in una riscrittura riporterebbe
+ *    il 504 in superficie con `dubbio = false`, cioè con un'AFFERMAZIONE falsa
+ *    stampata su un documento fiscale. Meglio dentro, esplicitamente.
  *
  * CHI RESTA FUORI: **503** (sopra), **500** — l'XML non composto, che sta prima
  * dell'upload, o il `catch` della rotta — e **429**, che qui può essere solo un
@@ -285,7 +414,7 @@ export const CODICE_TRASPORTO_IGNOTO = 'FATTURA_TRASPORTO_IGNOTO'
 export function numeroInDubbio(statoHttp: number, codice?: string | null): boolean {
   if (statoHttp === 0) return true
   if (codice === CODICE_TRASPORTO_IGNOTO) return true
-  return statoHttp === 502
+  return statoHttp === 502 || statoHttp === 504
 }
 
 /**
@@ -298,28 +427,44 @@ export function numeroInDubbio(statoHttp: number, codice?: string | null): boole
  * ricarica la pagina, cioè fa la sola cosa che qui non si deve fare: perde di
  * vista quali documenti fiscali siano già partiti.
  *
- * Il conto è START-TO-START, come `pausaDopo` e per la stessa ragione: fra due
- * partenze passa `INTERVALLO_FRA_EMISSIONI_MS`, e la durata della singola POST è
- * già dentro quell'intervallo.
- *  · la riga IN VOLO non si conta: sta finendo, e quel che le resta è rumore
- *    rispetto ai novanta secondi che vengono dopo;
- *  · ogni riga successiva alla prossima costa un intervallo intero;
+ * ⚠️ DAL 2026-09-07 L'UNITÀ DI MISURA È IL BLOCCO, NON LA FATTURA, e la funzione
+ * è stata RISCRITTA, non riallineata a una costante nuova. Prima il conto era
+ * «una fattura, un intervallo»: con `ATTESA_FRA_BLOCCHI_MS` al posto dei novanta
+ * secondi per riga, lasciarla com'era avrebbe risposto **quindici minuti per un
+ * blocco che ne dura quaranta secondi** — un numero verde in tutti i test e falso
+ * sullo schermo.
+ *
+ * Il conto adesso:
+ *  · le fatture rimaste si dividono in blocchi da `TETTO_BLOCCO`, arrotondando
+ *    per eccesso: quattro fatture residue costano un blocco intero;
+ *  · ogni blocco costa `DURATA_BLOCCO_STIMATA_MS`;
+ *  · fra un blocco e il successivo passa `ATTESA_FRA_BLOCCHI_MS`, e le attese
+ *    sono una in meno dei blocchi;
  *  · l'attesa in corso si SOMMA, perché è tempo che deve ancora passare — ed è
- *    anche l'unico pezzo che sa distinguere una pausa da 90 s da una da 5 s
+ *    anche l'unico pezzo che distingue una pausa fra blocchi da una da 5 s
  *    (`pausaDopo` dopo un rifiuto locale), cioè un lotto che parla con Aruba da
  *    uno respinto dai nostri gate.
+ *
+ * IL CONTO CHE NE ESCE: sessanta fatture sono quattro blocchi, cioè **circa sei
+ * minuti** — contro i circa ottantasette di prima (cinque lotti da dodici a
+ * novanta secondi per riga).
  *
  * ⚠️ È UNA STIMA, e si aggiorna A PASSI: la si ricalcola quando cambia lo stato
  * dell'avanzamento, non con un orologio che scorre. Un contatore al secondo
  * dentro un `role="status"` sarebbe un annuncio al secondo per uno screen reader,
  * cioè la schermata resa inascoltabile proprio da ciò che doveva renderla chiara.
  *
- * @param concluse quante righe hanno già un esito
- * @param totale quante righe ha il lotto
- * @param attesaMs la pausa in corso adesso (`null` = si sta inviando)
+ * @param concluse quante FATTURE hanno già un esito
+ * @param totale quante fatture ha il lotto
+ * @param attesaMs la pausa in corso adesso (`null` = un blocco è in volo)
  */
 export function stimaRimanenteMs(concluse: number, totale: number, attesaMs: number | null): number {
   const restanti = totale - concluse
   if (restanti <= 0) return 0
-  return Math.max(0, attesaMs ?? 0) + (restanti - 1) * INTERVALLO_FRA_EMISSIONI_MS
+  const blocchi = Math.ceil(restanti / TETTO_BLOCCO)
+  return (
+    Math.max(0, attesaMs ?? 0) +
+    blocchi * DURATA_BLOCCO_STIMATA_MS +
+    (blocchi - 1) * ATTESA_FRA_BLOCCHI_MS
+  )
 }

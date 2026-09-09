@@ -3,6 +3,7 @@ import { createBrowserClient } from '@supabase/ssr';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { logClient } from '@/lib/logging/client';
 import { caricaMediaGalleria } from '@/lib/gallery/carica-media';
+import { mimeBase } from '@/lib/gallery/limiti';
 
 // Motore di sincronizzazione offline: gira NEL CLIENT, quindi dentro la WebView
 // nativa. Per questo qui non c'è (e non deve tornare) nessun `console.*`: nella
@@ -294,7 +295,16 @@ export async function syncPendingGalleryMedia() {
                 // al ritorno della rete: la riga finiva `sync_status: 'error'` e quel
                 // video NON RIPARTIVA PIÙ. Riparare la galleria online lasciando rotto il
                 // percorso pensato per la scuola senza campo sarebbe stato metà lavoro.
-                const mime = item.file_type === 'video' ? 'video/mp4' : 'image/jpeg';
+                // IL TIPO SI DERIVA DAL BLOB, non si asserisce. Fino al 2026-09-09 questa
+                // riga cablava `video/mp4` per ogni video: ma `processVideoWithWatermark`
+                // sceglie il formato in base a ciò che il dispositivo sa registrare, e
+                // altrove esce **webm**. Un webm partiva dichiarando mp4, e siccome il
+                // server deriva l'estensione dal mime VALIDATO finiva in archivio come
+                // `.mp4` — un file etichettato per quello che non è, nel bucket da cui il
+                // genitore lo scarica. Il cablaggio resta come RIPIEGO, per i blob che un
+                // tipo non ce l'hanno.
+                const mime = mimeBase(item.file_blob.type)
+                    || (item.file_type === 'video' ? 'video/mp4' : 'image/jpeg');
                 const fileObj = new File([item.file_blob], item.file_name, { type: mime });
 
                 const esito = await caricaMediaGalleria(fileObj, mime);

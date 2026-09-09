@@ -69,6 +69,14 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
     // confronto per uguaglianza: il nostro `z.enum` e `allowed_mime_types` del bucket.
     // Normalizzando qui, in una `const` sola, i tre non possono divergere; normalizzandone
     // uno alla volta si sposta il guasto di trenta righe invece di chiuderlo.
+    //
+    // CHE L'HEADER CONTASSE NON È UNA DEDUZIONE: È MISURATO. Il 2026-09-09, sullo Storage
+    // di produzione, la stessa `PUT` due volte cambiando solo il `content-type`:
+    //   `video/mp4;codecs=avc1` → 400 `invalid_mime_type`, «mime type
+    //                             video/mp4;codecs=avc1 is not supported»
+    //   `video/mp4`            → 200, 10.531.996 byte archiviati
+    // Correggendo solo lo `z.enum`, il video sarebbe stato firmato, spedito PER INTERO su
+    // rete mobile, e respinto all'ultimo passo — il guasto peggiore dei due.
     const tipo = mimeBase(mime);
 
     // ── 1. la taglia, PRIMA di spedire ──────────────────────────────────────

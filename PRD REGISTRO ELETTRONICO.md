@@ -180,6 +180,23 @@ normalizzare l'ingresso non vuol dire niente. **Non** è stato aggiunto un grep 
 sarebbe un lock per *prossimità*, la specie che in questo repo è già rimasta verde con la forma
 sbagliata rimessa a mano (il lock degli orari, 07/09).
 
+**LA PROVA SUL CAMPO, e ciò che ha rivelato.** Sullo Storage di produzione, due oggetti
+temporanei fuori da qualunque percorso applicativo, nessun record in galleria, cancellati
+entrambi subito (verificato: 0 residui). La stessa `PUT` due volte, cambiando **solo**
+l'header:
+
+| `content-type` | esito |
+|---|---|
+| `video/mp4;codecs=avc1` (come ieri) | **400 `invalid_mime_type`** — «mime type video/mp4;codecs=avc1 is not supported» |
+| `video/mp4` (come oggi) | **200**, 10.531.996 byte archiviati, `mimetype: video/mp4` |
+
+Il piano dichiarava di **non aver verificato** come lo Storage tratti i parametri, e
+progettava in modo che non importasse. Ora si sa, e la risposta cambia il giudizio su metà
+della correzione: normalizzare l'header della `PUT` **non era difesa in profondità, era
+portante**. Chi avesse corretto solo lo `z.enum` avrebbe fatto firmare il caricamento,
+spedire quaranta megabyte su rete mobile, e raccogliere il rifiuto **all'ultimo passo** —
+cioè un guasto peggiore di quello di partenza.
+
 ⚠️ **L'E2E non vede questa correzione**: non esiste nessuno spec di galleria. Va detto invece di
 lasciar credere che il gate CI la copra. La prova tecnica è il test sull'header della `PUT`; la
 prova vera è il conteggio in produzione.

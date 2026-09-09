@@ -45,11 +45,11 @@
  */
 
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { TETTO_GALLERIA_BYTE } from '@/lib/gallery/limiti';
+import { TETTO_GALLERIA_BYTE, mimeBase } from '@/lib/gallery/limiti';
 
 export type EsitoCarica =
     | { ok: true; path: string }
-    | { ok: false; motivo: 'troppo-grande' | 'formato'; stato: number | null }
+    | { ok: false; motivo: 'troppo-grande' | 'formato' | 'formato-non-ammesso'; stato: number | null }
     | { ok: false; motivo: 'firma' | 'trasferimento' | 'rete'; stato: number | null };
 
 /** La rotta che rende `messaggio` distinguibile in SQL: un ramo, un messaggio. */
@@ -63,6 +63,14 @@ function segnala(messaggio: string, stato: number | null, livello: 'warn' | 'err
 }
 
 export async function caricaMediaGalleria(file: File, mime: string): Promise<EsitoCarica> {
+    // ── 0. il solo container, UNA volta ─────────────────────────
+    // Il valore serve in TRE posti a settanta righe di distanza — il ramo dei video, il
+    // corpo della firma, l'header della `PUT` — e due di quei tre finiscono contro un
+    // confronto per uguaglianza: il nostro `z.enum` e `allowed_mime_types` del bucket.
+    // Normalizzando qui, in una `const` sola, i tre non possono divergere; normalizzandone
+    // uno alla volta si sposta il guasto di trenta righe invece di chiuderlo.
+    const tipo = mimeBase(mime);
+
     // ── 1. la taglia, PRIMA di spedire ──────────────────────────────────────
     if (file.size > TETTO_GALLERIA_BYTE) {
         segnala(`gallery-upload-troppo-grande: ${file.size} byte, limite ${TETTO_GALLERIA_BYTE}`, null, 'warn');
@@ -73,7 +81,7 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
     // Il server rifiuta un HEVC PRIMA che il file parta: su rete mobile è la
     // differenza fra scoprirlo subito e scoprirlo dopo quaranta megabyte.
     let testa_b64: string | undefined;
-    if (mime.startsWith('video/')) {
+    if (tipo.startsWith('video/')) {
         try {
             const testa = await file.slice(0, 65536).arrayBuffer();
             let bin = '';
@@ -92,7 +100,7 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
         firma = await fetch('/api/gallery/upload-url', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mime, size: file.size, testa_b64 }),
+            body: JSON.stringify({ mime: tipo, size: file.size, testa_b64 }),
         });
     } catch (err) {
         segnala(`gallery-firma-non-emessa: ${nomeErrore(err)}`, null);
@@ -102,13 +110,33 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
     if (!firma.ok) {
         // `res.ok` PRIMA di `res.json()`, sempre: su un 413 il corpo è `text/plain` e
         // il parse lancia, seppellendo l'unica informazione utile.
+        //
+        // I TRE RAMI SONO TRE GUASTI DIVERSI, e il 2026-09-08 ha dimostrato che
+        // confonderli costa. Il 400 (mime fuori lista, o corpo che il nostro stesso schema
+        // rifiuta) cadeva nel ramo generico `firma`, cioè «Riprova fra qualche minuto»:
+        // otto insegnanti hanno riprovato 33 volte e due sono finite nel 429. Il messaggio
+        // non era solo inutile — ha prodotto il guasto successivo.
+        //
+        // ⚠️ COSA SI ACCETTA, detto senza abbellirlo: un corpo malformato per una ragione
+        // NOSTRA (un campo rinominato, un bug di serializzazione) è anch'esso un 400, e
+        // direbbe all'insegnante «formato non supportato». Si accetta perché la taglia —
+        // l'altra causa possibile di 400 — è già filtrata sopra contro la stessa costante,
+        // e perché la verità resta comunque nel log del server, che porta il mime in chiaro.
+        // Il 429 invece resta `firma`, e lì «riprova fra qualche minuto» è la frase giusta.
         const formato = firma.status === 415;
+        const nonAmmesso = firma.status === 400;
         segnala(
-            formato ? 'gallery-video-non-convertibile' : 'gallery-firma-non-emessa',
+            formato ? 'gallery-video-non-convertibile'
+                : nonAmmesso ? 'gallery-formato-rifiutato'
+                : 'gallery-firma-non-emessa',
             firma.status,
-            formato ? 'warn' : 'error',
+            formato || nonAmmesso ? 'warn' : 'error',
         );
-        return { ok: false, motivo: formato ? 'formato' : 'firma', stato: firma.status };
+        return {
+            ok: false,
+            motivo: formato ? 'formato' : nonAmmesso ? 'formato-non-ammesso' : 'firma',
+            stato: firma.status,
+        };
     }
 
     const corpo = (await firma.json().catch(() => null)) as { path?: string; signedUrl?: string } | null;
@@ -124,7 +152,7 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
     try {
         put = await fetch(corpo.signedUrl, {
             method: 'PUT',
-            headers: { 'content-type': mime, 'x-upsert': 'false' },
+            headers: { 'content-type': tipo, 'x-upsert': 'false' },
             body: file,
         });
     } catch (err) {
@@ -166,6 +194,9 @@ export function messaggioCaricamento(
     switch (esito.motivo) {
         case 'troppo-grande': return t('galleryErrTroppoGrande');
         case 'formato': return t('galleryAlertVideoNonConvertibile');
+        // Frase SUA, e non quella qui sopra: `galleryAlertVideoNonConvertibile` parla di
+        // iPhone e di conversione, che per un `image/heic` respinto non vuol dire niente.
+        case 'formato-non-ammesso': return t('galleryErrFormatoNonAmmesso');
         case 'rete': return t('galleryErrRete');
         case 'trasferimento': return t('galleryErrTrasferimento');
         case 'firma': return t('galleryErrFirma');

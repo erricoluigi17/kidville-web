@@ -207,6 +207,7 @@
   "galleryAlertVideoFormatoNonSupportato": "Unsupported video format ({tipo}). Upload an .mp4 (H.264) or .webm file: .mov/HEVC videos (typical of iPhone) must be converted before uploading.",
   "galleryAlertVideoOltreIlLimite": "The video exceeds the 50 MB limit (current size: {dimensione}). Shorten it or lower its quality, then try again.",
   "galleryErrTroppoGrande": "The file is over 50 MB. Record a shorter video and try again.",
+  "galleryErrFormatoNonAmmesso": "This format is not supported. Upload a JPG, PNG or WebP photo, or an MP4 or WebM video.",
   "galleryErrFirma": "The upload could not be prepared. Please try again in a few minutes.",
   "galleryErrTrasferimento": "The upload was interrupted. Please try again.",
   "galleryErrRete": "No connection: the file was not sent. Try again when you are back online.",

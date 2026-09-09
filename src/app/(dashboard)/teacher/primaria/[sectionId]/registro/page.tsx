@@ -248,11 +248,35 @@ export default function RegistroPage() {
     }
   };
 
-  const rigaDi = (ordine: number) => righe.find((r) => r.ora_lezione === ordine);
+  const rigaDi = (ora: number) => righe.find((r) => r.ora_lezione === ora);
   const plannedMateriaId = (camp: Campanella) =>
     orarioCelle.find((o) => o.campanella_id === camp.id)?.materia_id ?? '';
   // Solo le lezioni sono firmabili/contate; intervallo e mensa sono righe informative.
   const lezioni = campanelle.filter((c) => c.tipo === 'lezione');
+
+  /**
+   * L'ORA DI LEZIONE NON È IL NUMERO DELLA CAMPANELLA — e confonderli rendeva
+   * NON FIRMABILI le ultime ore del tempo pieno.
+   *
+   * `campanelle.ordine` numera TUTTE le campanelle del giorno, pause comprese:
+   * l'intervallo dopo la 2ª ora e, nel tempo pieno, la mensa a metà giornata.
+   * `registro_orario.ora_lezione` numera invece le sole LEZIONI, e il database
+   * lo impone: `CHECK (ora_lezione >= 1 AND ora_lezione <= 8)`.
+   *
+   * Misurato sulla sede Demo il 2026-09-09, non dedotto: con il modello a 40 ore
+   * su 5 giorni le otto lezioni hanno `ordine` **1, 2, 4, 5, 7, 8, 9, 10**, e
+   * firmando le ultime due la richiesta veniva respinta — prima con un 500 e il
+   * messaggio Postgres in chiaro, poi (stretto lo zod) con un «Dati non validi».
+   * L'insegnante premeva «Firma», leggeva un errore che non spiegava niente, e
+   * quell'ora restava fuori dal registro per sempre.
+   *
+   * La correzione NON è allargare il CHECK: 1..8 è la verità (più di otto ore di
+   * lezione in un giorno non esistono, e `MAX_LEZIONI_GIORNO` lo impone a monte).
+   * È numerare le lezioni fra loro, che è ciò che «3ª ora» ha sempre voluto dire.
+   * Con 27 ore su 5 giorni il risultato non cambia dove non c'è la mensa, quindi
+   * la correzione si può verificare senza toccare le classi già configurate.
+   */
+  const oraDiLezione = (camp: Campanella) => lezioni.findIndex((c) => c.id === camp.id) + 1;
 
   return (
     <div className="rounded-card bg-white p-5 shadow-sm">
@@ -273,7 +297,7 @@ export default function RegistroPage() {
       )}
 
       {!loading && lezioni.length > 0 && (() => {
-        const firmate = lezioni.filter((c) => (rigaDi(c.ordine)?.firme_docenti?.length ?? 0) > 0).length;
+        const firmate = lezioni.filter((c) => (rigaDi(oraDiLezione(c))?.firme_docenti?.length ?? 0) > 0).length;
         const tot = lezioni.length;
         return (
           <div className="mb-4 space-y-3">
@@ -319,7 +343,8 @@ export default function RegistroPage() {
                 </li>
               );
             }
-            const riga = rigaDi(camp.ordine);
+            const ora = oraDiLezione(camp);
+            const riga = rigaDi(ora);
             const plannedId = plannedMateriaId(camp);
             const plannedName = orarioCelle.find((o) => o.campanella_id === camp.id)?.materie?.nome;
             const materiaNome = riga?.materie?.nome || riga?.materia || plannedName;
@@ -329,7 +354,7 @@ export default function RegistroPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-barlow text-sm font-bold text-kidville-green">{t('registroOra', { ora: camp.ordine })}</span>
+                      <span className="font-barlow text-sm font-bold text-kidville-green">{t('registroOra', { ora })}</span>
                       <span className="text-xs text-kidville-muted">{camp.ora_inizio?.slice(0, 5)}–{camp.ora_fine?.slice(0, 5)}</span>
                       <span className={`font-maven text-sm ${materiaNome ? 'text-kidville-ink' : 'italic text-kidville-muted'}`}>
                         · {materiaNome || t('registroOrarioDaCompletare')}
@@ -386,7 +411,7 @@ export default function RegistroPage() {
                     )}
                   </div>
                   <button
-                    onClick={() => setModal({ ordine: camp.ordine, materiaId: plannedId, riga: riga ?? null })}
+                    onClick={() => setModal({ ordine: ora, materiaId: plannedId, riga: riga ?? null })}
                     className={`font-maven inline-flex items-center gap-1.5 rounded-pill px-3 py-1.5 text-xs ${
                       firmata ? 'bg-kidville-cream text-kidville-green' : 'bg-kidville-green text-kidville-yellow'
                     }`}

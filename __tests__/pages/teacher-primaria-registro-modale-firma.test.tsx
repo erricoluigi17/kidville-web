@@ -854,3 +854,83 @@ describe('svuotare un compito: la modale dichiara di aver letto la riga', () => 
         ).toBe(false)
     })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L'ORA DI LEZIONE NON È IL NUMERO DELLA CAMPANELLA.
+//
+// Misurato sulla sede Demo il 2026-09-09, non dedotto: col modello a 40 ore su 5
+// giorni le otto lezioni hanno `ordine` 1, 2, 4, 5, 7, 8, 9, 10 — perché
+// l'intervallo e la mensa consumano un ordine — e la pagina spediva quell'ordine
+// come `oraLezione`. Il database impone `CHECK (ora_lezione >= 1 AND <= 8)`:
+// firmando la 7ª e l'8ª ora la richiesta veniva RESPINTA (prima 500 col messaggio
+// Postgres in chiaro, poi «Dati non validi»), e quell'ora restava fuori dal
+// registro. Il conto giusto è la posizione fra le sole lezioni.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('tempo pieno: le ultime ore del giorno restano firmabili', () => {
+    // La forma REALE prodotta dal generatore per 40h × 5 giorni.
+    const CAMPANELLE_40H = [
+        { id: 'c1', ordine: 1, ora_inizio: '08:30:00', ora_fine: '09:30:00', tipo: 'lezione' },
+        { id: 'c2', ordine: 2, ora_inizio: '09:30:00', ora_fine: '10:30:00', tipo: 'lezione' },
+        { id: 'ci', ordine: 3, ora_inizio: '10:30:00', ora_fine: '10:45:00', tipo: 'intervallo' },
+        { id: 'c3', ordine: 4, ora_inizio: '10:45:00', ora_fine: '11:45:00', tipo: 'lezione' },
+        { id: 'c4', ordine: 5, ora_inizio: '11:45:00', ora_fine: '12:45:00', tipo: 'lezione' },
+        { id: 'cm', ordine: 6, ora_inizio: '12:45:00', ora_fine: '13:45:00', tipo: 'mensa' },
+        { id: 'c5', ordine: 7, ora_inizio: '13:45:00', ora_fine: '14:45:00', tipo: 'lezione' },
+        { id: 'c6', ordine: 8, ora_inizio: '14:45:00', ora_fine: '15:45:00', tipo: 'lezione' },
+        { id: 'c7', ordine: 9, ora_inizio: '15:45:00', ora_fine: '16:45:00', tipo: 'lezione' },
+        { id: 'c8', ordine: 10, ora_inizio: '16:45:00', ora_fine: '17:45:00', tipo: 'lezione' },
+    ]
+    const giornata40h = () =>
+        preparaRisposte({
+            '/api/primaria/registro': {
+                body: { success: true, data: { giorno: 1, campanelle: CAMPANELLE_40H, orarioCelle: [], righe: [] } },
+            },
+        })
+
+    it('la 7ª lezione parte come ora 7, non come ordine 9', async () => {
+        giornata40h()
+        render(<RegistroPage />)
+        const bottoni = await screen.findAllByRole('button', { name: itPrimaria.registroFirma })
+        expect(bottoni, 'otto lezioni firmabili: intervallo e mensa non hanno bottone').toHaveLength(8)
+
+        fireEvent.click(bottoni[6]) // la settima lezione della giornata
+        const modale = await screen.findByRole('dialog')
+        fireEvent.change(testoDi(itPrimaria.firmaModalArgomentoClasse), { target: { value: 'Storia' } })
+        fireEvent.click(within(modale).getByRole('button', { name: itPrimaria.registroFirma }))
+
+        await waitFor(() => expect(chiamate.find((c) => c.init?.method === 'POST')).toBeTruthy())
+        const corpo = JSON.parse(String(chiamate.find((c) => c.init?.method === 'POST')!.init!.body))
+        expect(
+            corpo.oraLezione,
+            'Spedendo `ordine` (9) il database rifiuta: CHECK (ora_lezione BETWEEN 1 AND 8). ' +
+                'La maestra vede «Dati non validi» e l’ora non entra nel registro.',
+        ).toBe(7)
+    })
+
+    it('nemmeno l’ULTIMA lezione supera il tetto del database', async () => {
+        giornata40h()
+        render(<RegistroPage />)
+        const bottoni = await screen.findAllByRole('button', { name: itPrimaria.registroFirma })
+        fireEvent.click(bottoni[7]) // l'ottava e ultima
+        const modale = await screen.findByRole('dialog')
+        fireEvent.change(testoDi(itPrimaria.firmaModalArgomentoClasse), { target: { value: 'Musica' } })
+        fireEvent.click(within(modale).getByRole('button', { name: itPrimaria.registroFirma }))
+
+        await waitFor(() => expect(chiamate.find((c) => c.init?.method === 'POST')).toBeTruthy())
+        const corpo = JSON.parse(String(chiamate.find((c) => c.init?.method === 'POST')!.init!.body))
+        expect(corpo.oraLezione, 'con `ordine` sarebbe 10').toBe(8)
+        expect(corpo.oraLezione).toBeLessThanOrEqual(8)
+    })
+
+    it('a 27 ore, dove non c’è la mensa, il conto NON cambia (controllo di non-regressione)', async () => {
+        render(<RegistroPage />) // fixture di base: due lezioni, ordine 1 e 2
+        const bottoni = await screen.findAllByRole('button', { name: itPrimaria.registroModifica })
+        fireEvent.click(bottoni[1])
+        const modale = await screen.findByRole('dialog')
+        fireEvent.click(within(modale).getByRole('button', { name: itPrimaria.registroFirma }))
+
+        await waitFor(() => expect(chiamate.find((c) => c.init?.method === 'POST')).toBeTruthy())
+        const corpo = JSON.parse(String(chiamate.find((c) => c.init?.method === 'POST')!.init!.body))
+        expect(corpo.oraLezione).toBe(2)
+    })
+})

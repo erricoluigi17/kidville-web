@@ -99,6 +99,95 @@
 
 ---
 
+## 🎥 Changelog — I video non si caricavano di nuovo, e stavolta era una nostra regressione — 2026-09-09 (branch `fix/gallery-mime-codec`)
+
+Segnalazione del titolare: *«controlla i video, segna errore quando un insegnante prova a
+caricarli»*. Il changelog del 2026-09-07, due voci più in basso, dichiara questo stesso guasto
+risolto. **Lo era: ne è nato un altro, nello stesso punto, il giorno dopo.**
+
+**MISURATO, NON IPOTIZZATO.** `app_log` del 2026-09-08: `POST /api/gallery/upload-url` → **400**,
+**33 tentativi** fra le 08:26 e le 16:56, **8 insegnanti distinte in 3 sedi** — cioè tutte e tre.
+In `storage.objects` del bucket `gallery` c'erano **3 video in tutto**, l'ultimo del **2026-09-07
+alle 17:52**; la PR #130 che ha aperto la porta nuova è stata mergiata alle **23:26** dello stesso
+giorno. Da quel momento, **zero video**. Nello stesso bucket, **776 foto**, l'ultima alle 17:23
+del giorno del guasto: le foto passavano **dalla stessa porta**, mentre i video no.
+
+**La causa radice.** `MediaRecorder` non produce `video/mp4`: produce `video/mp4;codecs=avc1`
+(è il primo candidato, ed è il candidato *giusto* — H.264, riproducibile ovunque). Quel tipo
+entra nel `File` convertito e da lì, **grezzo**, in un confronto per uguaglianza:
+`mime: z.enum(MIME_GALLERIA)`. Le foto passavano perché `processImageWithWatermark` consegna un
+`image/jpeg` pulito. Nel log il guasto aveva lasciato la sua impronta e nessuno l'aveva letta: il
+campo redatto come `[redatto:str/21]` — e i tre soli mime che `MediaRecorder` può scegliere sono
+**tutti e tre lunghi 21 caratteri**.
+
+⚠️ **È LA SECONDA VOLTA, e la prima è scritta in questo stesso file.** Il changelog del
+**2026-07-13** (DL-051/052) elenca fra i rimedi: «**(d) MIME video normalizzato** (codec suffix vs
+allow-list bucket)». La lezione era stata imparata e pagata, ed è andata perduta il giorno in cui
+è nata una porta nuova — esattamente come il commit del 07/09 raccontava di sé («il repo aveva
+imparato questo guasto il 31/07 e l'aveva applicato a otto percorsi, lasciando fuori proprio
+l'unico che carica video»). Il repo normalizzava in **tre** punti — `api/gallery/upload:32`,
+`api/news/upload:55`, `validateVideoFile` — ognuno col suo `split` a mano. La porta nuova era
+l'unica che non lo faceva.
+
+**Il rimedio, e i due fili che dovevano essere uno.** `mimeBase()` in `@/lib/gallery/limiti` (il
+modulo condiviso client/server, **senza import** per contratto), usata **una volta sola** in cima
+a `caricaMediaGalleria`: il valore serve al ramo dei video, al corpo della firma e all'header
+`content-type` della `PUT`, e **due di quei tre finiscono contro un confronto per uguaglianza** —
+il nostro `z.enum` e `allowed_mime_types` del bucket. Correggerne uno solo avrebbe spostato il
+guasto di trenta righe. Sul server la stessa normalizzazione entra come `z.preprocess`: è la
+**rete, non il rimedio** (l'header della `PUT` lo scrive il client, e questa route non lo tocca),
+e si usa `preprocess` perché `parseBody` deposita il corpo **grezzo** prima di validare — cioè
+resta leggibile in `app_log` ciò che il client ha spedito davvero, che è come il guasto è stato
+diagnosticato.
+
+**Il messaggio era la metà visibile dello stesso guasto.** Il client trattava come «formato» solo
+il 415: un 400 diventava `firma`, cioè *«Riprova fra qualche minuto»*. Le otto insegnanti hanno
+riprovato 33 volte e **due sono finite nel 429** del rate limit. Il messaggio non era solo
+inutile: **ha prodotto il guasto successivo**. Ora il 400 ha un motivo suo
+(`formato-non-ammesso` → `galleryErrFormatoNonAmmesso`, it+en) e una riga di log distinta
+(`gallery-formato-rifiutato`) — la chiave di dedup di `logClient` è `evento|messaggio|stato`,
+quindi senza un messaggio proprio il ramo sarebbe rimasto invisibile in SQL. **Il 429 resta
+`firma`**, e lì «riprova fra qualche minuto» è la frase giusta.
+
+**Un difetto adiacente, lo stesso al contrario.** La coda offline cablava
+`item.file_type === 'video' ? 'video/mp4' : 'image/jpeg'`: un video convertito in **webm** — e
+`MediaRecorder` sceglie in base a ciò che il dispositivo sa registrare — sarebbe partito
+dichiarando mp4, e siccome il server deriva l'estensione dal mime *validato* sarebbe finito in
+archivio come `.mp4`. Là un tipo vero veniva respinto, qui un tipo **falso** veniva accettato.
+Ora si deriva da `file_blob.type`; il cablaggio resta come ripiego per i blob senza tipo.
+
+**COSA NON È STATO FATTO, e perché.** La chiamata di firma non manda `x-user-id`, che la pagina
+precedente mandava (è il punto (e) del 13/07, quando l'identità *era* l'header). Rimetterlo è
+stato **valutato e scartato dal titolare**: `resolveIdentity` lo accetta come identità **legacy
+non verificata** quando la sessione manca (`require-staff.ts:209-231`), e il repo sta contando
+quell'uso proprio per decidere quando sigillarlo con `ALLOW_HEADER_IDENTITY='false'`. Rimetterlo
+avrebbe permesso, senza sessione, di firmare un caricamento **nella cartella di un'altra
+insegnante** nel bucket delle foto dei bambini, e avrebbe fatto salire il contatore su cui si
+decide di chiudere quella porta — in cambio di niente: in `app_log` di quel giorno non c'è **un
+solo 401** su questa rotta. **Segnale che riaprirebbe la questione**: la comparsa di un 401 su
+`gallery/upload-url:POST`.
+
+**I test, e cosa possono davvero.** Dieci nuovi, tutti visti **rossi** prima
+(`expected 400 to be 200`, che è il sintomo di produzione parola per parola) e poi provati
+togliendo **una rete alla volta**: senza la normalizzazione del server 7 rossi, senza quella del
+client 2, senza il ramo del messaggio 1. `__tests__/lib/gallery-carica-media.test.ts` non
+esisteva affatto — la funzione era arrivata il 07/09 senza un test, e il giorno dopo ha smesso di
+funzionare senza che niente diventasse rosso. Il caso che conta di più è quello sull'header della
+`PUT`: è il filo che arriva allo Storage, e nessun test lo guardava.
+**Un lock in più, e uno detto no.** Aggiunta a `bucket-storage-dichiarati` l'asserzione che le tre
+liste siano **canoniche** (nessun parametro, nessuna maiuscola): è la premessa senza la quale
+normalizzare l'ingresso non vuol dire niente. **Non** è stato aggiunto un grep per `mimeBase(`:
+sarebbe un lock per *prossimità*, la specie che in questo repo è già rimasta verde con la forma
+sbagliata rimessa a mano (il lock degli orari, 07/09).
+
+⚠️ **L'E2E non vede questa correzione**: non esiste nessuno spec di galleria. Va detto invece di
+lasciar credere che il gate CI la copra. La prova tecnica è il test sull'header della `PUT`; la
+prova vera è il conteggio in produzione.
+
+Gate: eslint 0 · tsc 0 · **15.681 test** · `npm run build` ok.
+
+---
+
 ## 🧾 Changelog — Il lotto fatture diceva «manca l'intestatario» sapendo chi aveva pagato — 2026-09-08 (branch `fix/lotto-fatture-intestatario-bonifico`)
 
 Segnalazione del titolare: *«In conciliazione quando faccio le fatture multiple dice che non possono
@@ -19283,7 +19372,7 @@ Riuso di `RegistriClassePanel` (deep-link `/teacher/primaria/[sectionId]/[seg]?u
 | **P0 — Gate + audit mutazioni anagrafiche (DL-036/037)** | `requireStaff(['admin','coordinator','segreteria'])` | service-role | `logScrittura` (`alunni`/`genitori`/`legame`/`sezioni`/`iscrizione`) | ✅ Fatto: `/api/admin/{students,parents,sections,iscrizioni}` ora gatati + auditati (erano ungated/unaudited). Bulk iscrizioni: una riga audit per entità creata |
 | **P0 — RLS lockdown S9a+S9b (DL-038/039/040/041/044/046)** | — | RLS prod (default-deny anon; service-role passa) | — | ✅ **LOCKDOWN COMPLETO**: droppate **TUTTE** le policy permissive (migr. `20260752`→`20260759`); `pg_policies qual='true'` su anon/public = **0**. Chat realtime con policy `authenticated` partecipante. `get_advisors` **0 ERROR**. 🔶 **S13** (`ALLOW_HEADER_IDENTITY='false'`) = solo flip env operativo dopo onboarding di massa |
 | **P4 — Diario 0-6 · D1 (DL-040)** | `requireDocente` (cattura); ramo genitore service-role (gate proprietà → S13) | `assertAlunnoInScope` | `logScrittura` (`diario`) | ✅ Push genitore 1×/figlio (buffer 10' + debounce, `enqueueDiarioGenitori`); "Entrata" read-only da Presenze (`/api/diary/checkin`); filtro solo-presenti + toggle; bulk "Nanna per tutti"; input nota libera docente. **S9b Diario:** `/api/diary/entries` → service-role + DROP `eventi_diario_*_anon` (migr. `20260753`), advisors 0 ERROR. 🔶 D2: traduzione/dashboard Segreteria/riconciliazione `daily_routines` |
-| **P4 — Galleria · G1 (DL-041)** | `requireDocente` (POST); ruolo per delete/patch | service-role (visibilità tagged/broadcast in API) | — | ✅ **Privacy Lock server-side**: tag di alunni senza `consenso_privacy` → **422 con nomi** (POST+PATCH, bypass broadcast); helper `src/lib/gallery/privacy.ts`. **S9b Galleria:** DROP `galleria_media_v2` permissive (migr. `20260754`, tutti gli accessi già service-role), advisors 0 ERROR. *(broadcast, delete admin, interconnessione Diario già presenti.)* 🔄 **2026-07-13 (DL-051/052):** 422 **solo per foto di gruppo** (>1 taggato senza liberatoria); **singolo taggato = foto privata** ai soli genitori; **GET gated** (genitore→`requireParentOfStudent`, staff→`requireDocente`); **broadcast solo Direzione**; **liberatoria ora scrivibile** dall'anagrafica (`consenso_privacy` in `PATCH /api/admin/students`). 🔶 Follow-up: bucket pubblico→signed URL, DELETE su identità legacy |
+| **P4 — Galleria · G1 (DL-041)** | `requireDocente` (POST); ruolo per delete/patch | service-role (visibilità tagged/broadcast in API) | — | ✅ **Privacy Lock server-side**: tag di alunni senza `consenso_privacy` → **422 con nomi** (POST+PATCH, bypass broadcast); helper `src/lib/gallery/privacy.ts`. **S9b Galleria:** DROP `galleria_media_v2` permissive (migr. `20260754`, tutti gli accessi già service-role), advisors 0 ERROR. *(broadcast, delete admin, interconnessione Diario già presenti.)* 🔄 **2026-07-13 (DL-051/052):** 422 **solo per foto di gruppo** (>1 taggato senza liberatoria); **singolo taggato = foto privata** ai soli genitori; **GET gated** (genitore→`requireParentOfStudent`, staff→`requireDocente`); **broadcast solo Direzione**; **liberatoria ora scrivibile** dall'anagrafica (`consenso_privacy` in `PATCH /api/admin/students`). 🔶 Follow-up: bucket pubblico→signed URL, DELETE su identità legacy. ✅ **2026-09-09**: i video tornano a caricarsi — `MediaRecorder` consegna `video/mp4;codecs=avc1` e il confronto per uguaglianza lo respingeva (33 tentativi, 8 insegnanti, 3 sedi, **zero video** dal 07/09 alle 17:52). Normalizzazione in `mimeBase()` su entrambi i fili — corpo della firma **e** `content-type` della `PUT` — più `z.preprocess` sulla route. ⚠️ Seconda occorrenza della stessa lezione (già DL-051/052 del 13/07) |
 | **P4 — Comunicazione · C1 (DL-042)** | `requireUser` + rate-limit (`/api/chat/translate`) | service-role | — | ✅ **Traduzione automatica chat** via Claude `claude-haiku-4-5`, **gated su `ANTHROPIC_API_KEY`** (503 + UI nasconde se assente): servizio `src/lib/translate/claude.ts`, endpoint `/api/chat/translate`, pulsante "Traduci" sui messaggi in arrivo (target = lingua dispositivo). 🔶 S9b chat realtime (`chat_messages`/`chat_threads`) = gated onboarding; note vocali/file/super-admin lettura = slice successive |
 | **P4 — Mensa · M1 (DL-043)** | `requireUser` (`/api/parent/mensa/allergie`) | service-role; alunno per id | — | ✅ **Icona pericolo allergeni genitore**: cross menù-del-giorno↔allergeni figlio (riuso helper puri 14 UE), banner rosso nella pagina mensa genitore. *(Infra allergeni cuoca/segreteria + cron già presenti.)* 🔶 Resta: isolamento UI Cuoca, dashboard real-time tipologia, semaforo scorte, esclusioni classe |
 | **P4 — Armadietto · S9b (DL-044)** | `requireDocente` + scope (`/api/locker/materials`) | service-role | `logScrittura` (`armadietto_config`) | ✅ Migrata a service-role + **DROP** `locker_config` permissive (migr. `20260755`), advisors 0 ERROR. *(Flusso richiesta→chiusura ciclo già presente in `locker/requests`.)* ✅ **2026-09-01: lista spesa genitore e reminder FATTI** — `armadietto_richieste` + motore + cron 06:00; la voce «flusso già presente» era falsa, girava su una tabella mai migrata. 🔶 Resta: carico merci, dashboard inadempienze |

@@ -451,6 +451,15 @@ const AUTOMI_DICHIARATI: { voce: RegExp; etichetta: string; job: string }[] = [
     etichetta: 'motivo dell’assenza e note dell’appello',
     job: JOB_SCADENZA,
   },
+  {
+    // La riga del registro (chi · quale conversazione · quando) NON si cancella:
+    // è documentazione dei controlli interni. Quel che sparisce da sé a dodici
+    // mesi è il contorno personale — indirizzo, browser, termine cercato — e
+    // l'informativa promette esattamente quello, non di più.
+    voce: /consultazioni di vigilanza/i,
+    etichetta: 'indirizzo, browser e termine di ricerca del registro di vigilanza chat',
+    job: 'vigilanza-chat-retention',
+  },
 ]
 
 /** Le migrazioni che installano `job` con quel nome (`cron.schedule('job', …)`). */

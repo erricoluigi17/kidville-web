@@ -480,6 +480,33 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 indicati al punto precedente;
               </li>
               {/*
+                LA VIGILANZA SULLE CONVERSAZIONI, E PERCHÉ QUESTA VOCE ESISTE.
+                Dal 2026-09-09 la segreteria e la Direzione possono consultare le
+                conversazioni fra un genitore e un'insegnante, e la consultazione è
+                SILENZIOSA: i due interlocutori non ricevono nessun avviso. È una
+                decisione del titolare, ed è legittima — ma una sorveglianza che non
+                si vede nell'interfaccia non può essere invisibile anche
+                nell'informativa. Questa voce è la contropartita: chi scrive sa, prima
+                di scrivere, che qualcuno può leggere e che di quella lettura resta
+                traccia.
+                La traccia NON si cancella (documentazione dei controlli interni,
+                art. 5 §2). Si cancella il suo contorno personale, e quello sì
+                automaticamente: `chat_vigilanza_retention_tick`, cron mensile
+                `vigilanza-chat-retention`.
+              */}
+              <li>
+                <strong>registro delle consultazioni di vigilanza sulle comunicazioni
+                scuola-famiglia</strong>: le comunicazioni fra i genitori e il personale
+                docente possono essere consultate dalla segreteria e dalla direzione per
+                finalità di tutela dei minori e di corretto svolgimento del servizio; di
+                ogni consultazione resta traccia in un registro interno (chi ha
+                consultato, quale conversazione e quando), conservato come documentazione
+                dei controlli svolti. L&rsquo;indirizzo IP, il browser e
+                l&rsquo;eventuale termine di ricerca associati alla consultazione sono
+                cancellati automaticamente <strong>dodici mesi</strong> dopo la
+                consultazione stessa;
+              </li>
+              {/*
                 LA CANDIDATURA DI CHI CERCA LAVORO, E PERCHÉ I NUMERI SONO DUE.
                 Il modulo pubblico «Lavora con noi» raccoglie nome, recapito e curriculum
                 di una persona adulta — «e SPESSO il curriculum», diceva questa riga fino al

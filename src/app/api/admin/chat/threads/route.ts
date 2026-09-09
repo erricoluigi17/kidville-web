@@ -48,7 +48,13 @@ export const GET = withRoute('admin/chat/threads:GET', async (request: NextReque
     if (q.data.teacher_id) query = query.eq('teacher_id', q.data.teacher_id);
     if (q.data.parent_id) query = query.eq('parent_id', q.data.parent_id);
     const { data: threads, error } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    if (error) {
+      // PostgREST non lancia: ritorna `{ error }`, e il `catch` in fondo non
+      // scatta mai su questo ramo. Senza questa riga la supervisione falliva in
+      // silenzio con un 500 che nessun log spiegava (AGENTS §7).
+      logErrore({ operazione: 'admin/chat/threads:GET', stato: 500, evento: 'db' }, error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
 
     const rows = threads ?? [];
     const userIds = [...new Set(rows.flatMap((t) => [t.teacher_id, t.parent_id]).filter(Boolean))];

@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-06",
-  "generato_alle": "2026-09-06T13:52:04Z",
-  "sha256": "427498759cad0c1b24e18d88dac4f82c19ebcc8589b562063ffefa5320e6e97a",
+  "generato_il": "2026-09-09",
+  "generato_alle": "2026-09-09T11:33:03Z",
+  "sha256": "ccb57f23377dea189b02bb08441a1b761f459d29c89923269d66a9dcca347574",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -599,6 +599,46 @@
     {
       "version": "20260906122807",
       "name": "giudizio_template_chiave_conflitto_unica"
+    },
+    {
+      "version": "20260907120003",
+      "name": "chat_realtime_pubblicazione"
+    },
+    {
+      "version": "20260907181116",
+      "name": "saldo_ticket_atomico"
+    },
+    {
+      "version": "20260907192611",
+      "name": "chiave_categoria_mese_e_rette_per_alunni"
+    },
+    {
+      "version": "20260909111537",
+      "name": "chat_vigilanza_accessi"
+    },
+    {
+      "version": "20260909111608",
+      "name": "chat_vigilanza_accessi_sola_aggiunta"
+    },
+    {
+      "version": "20260909112134",
+      "name": "chat_vigilanza_ricerca"
+    },
+    {
+      "version": "20260909112206",
+      "name": "chat_vigilanza_retention"
+    },
+    {
+      "version": "20260909112234",
+      "name": "chat_permessi_stretti"
+    },
+    {
+      "version": "20260909112332",
+      "name": "chat_vigilanza_accessi_fk_sede"
+    },
+    {
+      "version": "20260909113156",
+      "name": "chat_vigilanza_ricerca_parametro_sede"
     }
   ]
 }

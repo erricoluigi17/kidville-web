@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-01",
-  "generato_alle": "2026-09-01T21:00:19Z",
-  "sha256": "d6bd58b15ad5b0c486b870998102c5e9c52e9195757185bbc75d9cead908ee79",
+  "generato_il": "2026-09-09",
+  "generato_alle": "2026-09-09T11:45:42Z",
+  "sha256": "41b98436cc27e695c7fbdf5d68c4c417f01f48bb9b082522354bba6bd77c1d49",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -493,6 +493,7 @@
     "cassa_chiusure",
     "cassa_movimenti",
     "certificati_competenze",
+    "chat_vigilanza_accessi",
     "conversazioni_sospensioni",
     "crediti_famiglia",
     "divise_articoli",
@@ -564,6 +565,8 @@
     "audit_scritture_docente",
     "avvisi",
     "avvisi_risposte",
+    "backup_diario_vuote_20260908",
+    "backup_pulizia_note_20260905",
     "campanelle",
     "candidature_insegnanti",
     "candidature_sedi",
@@ -576,6 +579,7 @@
     "certificato_competenza_livelli",
     "chat_messages",
     "chat_threads",
+    "chat_vigilanza_accessi",
     "consensi_accettazioni",
     "conversazioni_sospensioni",
     "crediti_famiglia",

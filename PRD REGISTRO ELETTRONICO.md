@@ -69,7 +69,8 @@
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
-> | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`) |
+> | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`) |
+> | **Vigilanza sulle chat** | ✅ Operativo (2026-09-09) | `/admin/messaggi` → «Tutti i messaggi» e «Registro accessi» | Segreteria e Direzione consultano qualunque conversazione della propria sede, e la consultazione è **silenziosa** per i due interlocutori. Ogni lettura e ogni ricerca finiscono in `chat_vigilanza_accessi`, in **sola aggiunta**; se il registro non si scrive il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Il registro lo legge **solo la Direzione**, senza esenzioni per sé. Ritenzione: la riga resta, IP/browser/termine si azzerano a 12 mesi |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
@@ -217,6 +218,99 @@ misura era cieca proprio dove serviva; se ne accorse il critico, non chi aveva s
 **Gate**: `tsc` 0 · `eslint` 0 warning · `vitest` 15.944/15.947 (l'unico rosso è
 `offline-html-nativo`, la trappola nota di ogni worktree nuovo: cerca due `capacitor.config.json`
 gitignorati che esistono solo dopo `npx cap sync`, e si autoesclude in CI) · `build` 0.
+## 🕵️ Changelog — La chat è già privata; a mancare era la traccia di chi la legge — 2026-09-09 (branch `feat/vigilanza-chat-tracciata`)
+
+Richiesta del titolare: *«Messaggi devono essere end to end, tra insegnante e genitore. Solo la
+segreteria e direzione possono leggere tutti i messaggi, devono poter "spiare" tra le chat.»*
+
+**Chiarito in intervista, e sono le premesse di tutto il resto**: «chiave di lettura» significa
+*permesso*, non chiave crittografica — **nessuna cifratura**; la vigilanza resta **silenziosa**
+(insegnante e genitore non vedono nulla, nessun avviso in chat); **ogni lettura va tracciata**; e
+il registro delle letture lo legge **solo la Direzione** (`admin`, `coordinator`), **non la
+segreteria**, che è la parte sorvegliata.
+
+### Tre quarti della richiesta erano già in produzione, e andava detto prima di scrivere codice
+
+- la chat **era già 1:1**: `chat_threads` è la terna `(teacher_id, parent_id, student_id)` con
+  vincolo di unicità, e `GET/POST /api/chat/messages` risponde **403 a chi non è uno dei due**
+  (test `__tests__/api/chat-messages-auth.test.ts`). Nessuna insegnante vede la chat di un'altra;
+- **la vigilanza esisteva già**: `/admin/messaggi`, scheda «Tutti i messaggi», con gate
+  `requireStaff` = `admin` · `coordinator` · `segreteria`. Docenti e cuoca fuori: esattamente il
+  perimetro chiesto;
+- **crittografia: zero** in tutto il repo, coerente con la scelta fatta.
+
+**Misurato il 2026-09-09**: 409 conversazioni, **1.631 messaggi**, 1.577 nei 30 giorni precedenti,
+90 con allegato, lunghezza media 55 caratteri. Il totale è passato da 1.608 a 1.631 **in dieci
+minuti** fra due query: chi legge questa riga rifaccia il conteggio invece di copiarlo.
+
+### I due difetti veri
+
+1. 🔴 **La spiata non lasciava traccia.** `admin/chat/messages:GET` apriva il contenuto di una
+   conversazione e non scriveva **niente** — né riga di audit né log. Chiunque avesse ruolo
+   `segreteria` poteva leggere le 1.577 conversazioni degli ultimi 30 giorni senza che risultasse
+   da nessuna parte. Il progetto sapeva già fare la cosa giusta altrove (`fascicolo_accessi_audit`
+   per il fascicolo dell'alunno); per la chat non era mai stato fatto.
+2. 🔴 **Una rete dichiarata che non c'era.** `20260727080102_conversazioni_sospensioni.sql` scrive
+   `REVOKE ALL … FROM PUBLIC, anon, authenticated`. In produzione, misurato:
+   `anon` e `authenticated` avevano **`GRANT ALL`**, `DELETE` e `TRUNCATE` compresi — su
+   `chat_threads`, `chat_messages` e `conversazioni_sospensioni`, e su **129 tabelle su 136**.
+   Non sfruttabile (RLS accesa, nessuna policy di scrittura), ma il permesso era già lì.
+
+### Cosa è stato fatto
+
+| | |
+|---|---|
+| **Registro** | Tabella `chat_vigilanza_accessi` (chi · quale conversazione · quando · quanti messaggi · azione · esito · IP · browser). Nessuna FK verso operatore, thread e alunno — deve sopravvivere all'oblio GDPR e alla cancellazione del thread; `scuola_id` **sì**, e con FK verso `schools`, perché una sede non si cancella. `scuola_id` è **congelato alla scrittura**: un trasferimento successivo non riscrive la storia. |
+| **Sola aggiunta** | `service_role` ha **solo `SELECT, INSERT`**: `UPDATE`/`DELETE`/`TRUNCATE` sono stati **REVOCATI**. La ritenzione gira come `SECURITY DEFINER` di `postgres`. |
+| **Aggancio** | `admin/chat/messages:GET` registra la lettura **prima di rispondere** ed è **bloccante**: se il registro non si scrive, il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Registra anche il tentativo su una conversazione di un'altra sede (`esito: 'fuori-scope'`). |
+| **Ricerca** | `admin/chat/ricerca:GET` cerca nel testo di tutte le conversazioni della sede, via funzione `SECURITY DEFINER` `chat_vigilanza_ricerca` — filtro di sede **dentro l'SQL**. Registrata **col termine cercato**, che sta in tabella e **mai nei log**. Anche questa bloccante. |
+| **Registro consultabile** | `admin/chat/vigilanza:GET`, `requireStaff(request, RUOLI_DIREZIONE)` — **la segreteria riceve 403**. Terza scheda «Registro accessi» in `/admin/messaggi`, visibile solo alla Direzione. |
+| **Ritenzione** | Cron mensile `vigilanza-chat-retention`: a 12 mesi azzera IP, browser e termine; **la riga resta per sempre**. Stesso stampo di `audit-docente-retention`, e logga il proprio esito in `app_log` (successo compreso). |
+| **Permessi DB** | `anon` fuori da tutte e tre le tabelle della chat; ad `authenticated` resta la sola `SELECT` su `chat_threads` e `chat_messages`. |
+| **Informativa** | Voce nuova in `/privacy`: la vigilanza è silenziosa nell'interfaccia, **non può esserlo nell'informativa**. |
+
+### 🔴 Due cose scoperte strada facendo, ed entrambe erano il difetto che questo lavoro racconta
+
+**1. `GRANT SELECT, INSERT` non rende una tabella in sola aggiunta.** La prima migrazione affidava
+la promessa «nessuno la cancella» a una `GRANT` ristretta. Supabase concede già `ALL` a
+`service_role` per privilegio predefinito: una `GRANT` di un sottoinsieme non toglie nulla,
+aggiunge. Misurato subito dopo l'apply — `DELETE, TRUNCATE, UPDATE` c'erano tutti. **Per
+restringere si REVOCA**, ed è una lezione che vale per ogni tabella append-only futura
+(migrazione `20260909111608`).
+
+**2. Il lock aveva un buco, e l'ha rivelato la contro-prova, non la lettura.** La prima versione
+verificava che `registraAccessoVigilanza` *comparisse* nel file. Ma `admin/chat/messages:GET` la
+chiama **due volte** — una sul ramo «fuori-scope», dentro un `if` che nega e torna indietro, e una
+sulla strada principale: cancellando la seconda, la prima restava e **il lock passava verde**.
+Ora cerca la registrazione **bloccante** (`const { tracciato } = await …`), quella di cui si
+guarda l'esito, che il ramo a perdere non ha. *Una chiamata dentro un ramo non copre l'altro.*
+
+### Il lock, e la prova che non è finto
+
+`__tests__/architecture/vigilanza-chat-tracciata.test.ts` porta **una fixture negativa in linea**:
+cinque sorgenti finti — conforme, lettura nuda, presidio che vive solo nei commenti, registra ma
+non sa rifiutare, registra solo nel ramo che nega — sui quali la stessa funzione di controllo deve
+dare verdetti opposti. In più, cinque rotture eseguite sul codice vero, tutte viste diventare
+rosse: via la registrazione della lettura (messaggi **e** ricerca), via il rifiuto 503, gate del
+registro allargato alla segreteria, registrazione aggiunta alla chat del partecipante.
+
+### Cosa NON è stato toccato, di proposito
+
+`src/lib/chat/rubrica.ts` (la regola «chi può parlare con chi», unificata il 07/09) · tutto
+`src/app/api/chat/**` (il lato genitore/insegnante era già corretto) · le policy RLS esistenti ·
+i `GRANT` di `parents`, `utenti`, `alunni` — la `USING` di `chat_messages_select_participant` fa
+una sottoquery su `chat_threads` e su `parents` e gira **coi permessi del ruolo chiamante**:
+togliere loro la `SELECT` spegnerebbe il **tempo reale** della chat · le altre **126 tabelle** con
+`GRANT ALL` ad `anon`, che sono un lavoro a sé.
+
+### ⏳ Da verificare a mano dopo il deploy
+
+1. **Il tempo reale della chat è ancora vivo** dopo la migrazione dei permessi — due sessioni, un
+   messaggio, nessun ricaricamento. È la cosa che si rompe in silenzio.
+2. **Il registro si riempie**: aprire una conversazione dalla scheda «Tutti i messaggi», poi
+   `select count(*), max(letto_il) from chat_vigilanza_accessi`.
+3. **La segreteria non vede il registro**: con `test.segreteria@kidville.test`,
+   `GET /api/admin/chat/vigilanza` deve dare **403** e la terza scheda non deve comparire.
 
 ---
 

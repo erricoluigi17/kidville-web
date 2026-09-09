@@ -103,9 +103,22 @@ export const TABELLE_INTATTE: readonly string[] = [
  * viene aggiunta. Perciò questa tabella sta qui e non in `TABELLE_INTATTE`: il
  * test del perimetro pretende su quelle **zero scritture**, e una voce che
  * pretende zero mentre la rotta ne fa una è la promessa che si scopre falsa il
- * giorno in cui qualcuno la verifica.
+ * giorno in cui qualcuno la verifica. *
+ * ⚠️ `chat_vigilanza_accessi` STA QUI PER LA STESSA RAGIONE, e ce ne è una in
+ * più. È il registro di chi — fra segreteria e Direzione — ha aperto le
+ * conversazioni fra questo bambino e le sue insegnanti. Liberare lo spazio
+ * CANCELLA quei messaggi; il registro di chi li aveva letti resta, altrimenti
+ * si distruggerebbe la prova insieme all'oggetto, che è il contrario di un
+ * registro di accountability (GDPR art. 5 §2). Non ha FK verso `alunni` proprio
+ * per poterlo fare: `alunno_id` resta un uuid che non punta più a niente, ed è
+ * voluto. Il contorno personale — indirizzo IP, browser, termine cercato —
+ * scade da sé a dodici mesi (`chat_vigilanza_retention_tick`), quindi non serve
+ * scrubarlo qui: quel che resta sono uuid, un'azione e una data.
  */
-export const TABELLE_CHE_RESTANO_LEGGIBILI: readonly string[] = ['audit_scritture_docente']
+export const TABELLE_CHE_RESTANO_LEGGIBILI: readonly string[] = [
+  'audit_scritture_docente',
+  'chat_vigilanza_accessi',
+]
 
 /** I bucket che restano intatti insieme alle loro tabelle. */
 export const BUCKET_INTATTI: readonly string[] = [

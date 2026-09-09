@@ -1770,7 +1770,27 @@ describe('coverage-lock isolamento fra sedi', () => {
             // cifra sbagliata per entrambe. Il valore giusto l'ha detto il test, non
             // l'aritmetica a mente — ed è il motivo per cui un'impronta numerica si
             // rimisura invece di mergiarla.
-            routeConServiceRole: 310,
+            //
+            // 🔺 310 → 312 e 478 → 480 il 2026-09-09: due route nuove della VIGILANZA CHAT.
+            // `admin/chat/ricerca:GET` cerca una parola nel testo di tutte le conversazioni
+            // della sede, e `admin/chat/vigilanza:GET` è il registro di chi le ha lette.
+            // Nessuna delle due porta esenzioni, e le due strade dell'isolamento sono
+            // diverse per una ragione che vale la pena scrivere:
+            //  · la ricerca passa da una funzione `SECURITY DEFINER` e le consegna le sedi
+            //    fra i parametri (`p_scuola_ids`), perché `chat_threads` NON ha `scuola_id`
+            //    e la sede si deriva dall'alunno: da PostgREST servirebbe un `.in(...)` con
+            //    409 uuid, ~15 KB di query string. Il parametro si chiama `p_scuola_ids` e
+            //    non `p_scuole` proprio perché QUESTO lock cerca `/scuola/i` fra gli
+            //    argomenti della `.rpc(...)`, e con `p_scuole` la segnalava come
+            //    `rpc-senza-sede` — giustamente: non poteva sapere che il filtro c'era
+            //    dentro l'SQL;
+            //  · il registro filtra DIRETTAMENTE su `chat_vigilanza_accessi.scuola_id`, una
+            //    colonna congelata al momento della lettura. È ciò che si compra con la
+            //    denormalizzazione: una lettura fatta a Giugliano resta nel registro di
+            //    Giugliano anche dopo che il bambino è stato trasferito ad Aversa.
+            //
+            // `handlerEsentati` resta fermo a 98.
+            routeConServiceRole: 312,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1912,7 +1932,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 476 → 477 il 2026-09-07: il POST della route qui sopra.
             // 477 → 478 il 2026-09-08: stessa unione di due sessioni (vedi la nota su
             // `routeConServiceRole`). Misurato, non dedotto.
-            handlerControllati: 478,
+            handlerControllati: 480,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

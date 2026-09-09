@@ -120,6 +120,15 @@ export const CODICI_ERRORE = {
     /** 500 — la conversazione non si è potuta aprire, per un guasto del database. */
     CHAT_THREAD_NON_CREATO: 'erroreChatThreadNonCreato',
     /**
+     * 503 — la lettura di vigilanza su una conversazione altrui non si è POTUTA
+     * registrare, e allora il contenuto non esce. La supervisione è silenziosa
+     * per scelta (i due interlocutori non vedono nulla): la riga di registro è
+     * l'unico contrappeso, e una lettura non tracciata è esattamente la cosa che
+     * non deve poter accadere. Distinto da un 500: non è la lettura ad essere
+     * fallita, è la sua traccia.
+     */
+    VIGILANZA_NON_TRACCIABILE: 'erroreVigilanzaNonTracciabile',
+    /**
      * 500 — lo Storage ha rifiutato il caricamento per un motivo IMPREVISTO
      * (`src/lib/allegati/risposte.ts`). Il messaggio del fornitore resta nel log: fino al
      * 2026-08-01 usciva invece di qui, in inglese e col nome di un vincolo interno.

@@ -362,6 +362,24 @@ describe('lock — pagine legali', () => {
         // accettati stamattina. Il paragrafo che avverte del difetto non ha impedito
         // di commetterlo: a fermarlo è stata la query giusta, sul campo.
         '2026-08-25': 'ca47f58ee52197fcb44ecd51dd2f7edfee114356cac68b9c439acbda39103ad8',
+
+        // 2026-09-09 — UNA voce nuova nella «Conservazione dei dati»: il registro
+        // delle consultazioni di vigilanza sulle comunicazioni scuola-famiglia.
+        //
+        // PERCHE E SOSTANZIALE, e non redazionale. Da oggi la segreteria e la
+        // Direzione possono consultare le conversazioni fra un genitore e
+        // un'insegnante, e la consultazione e SILENZIOSA: nessun avviso in chat,
+        // nessun segno nell'interfaccia. E una decisione del titolare e ha una
+        // finalita legittima — tutela dei minori — ma un trattamento che
+        // l'interessato non puo vedere e proprio quello che l'art. 13 obbliga a
+        // scrivergli. Fino a ieri l'informativa non nominava questa consultazione
+        // in nessuna forma: chi scriveva a una maestra credeva di parlare con lei
+        // soltanto. La voce dichiara chi puo leggere, che di ogni lettura resta
+        // traccia, e per quanto tempo restano indirizzo, browser e termine cercato.
+        //
+        // ⚠️ L'IMPRONTA VECCHIA RESTA DOV'E, e non si tocca: '2026-08-25' e
+        // '2026-08-20' sono citate nei `consents_log` di chi ha gia accettato.
+        '2026-09-09': 'dfc68c803f1d84e819dc732d4b7081d45fbbc418d2c48fdb0da8db778bde7866',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

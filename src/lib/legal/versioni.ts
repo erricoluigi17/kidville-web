@@ -169,8 +169,32 @@
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
 // invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// 2026-09-09 — SOLO l'informativa privacy. UNA voce nuova nella «Conservazione
+// dei dati»: il registro delle consultazioni di vigilanza sulle comunicazioni
+// scuola-famiglia.
+//
+// PERCHÉ È UNA MODIFICA SOSTANZIALE, e non un ritocco redazionale: dichiara un
+// TRATTAMENTO che il documento non nominava affatto. Da oggi la segreteria e la
+// Direzione possono consultare le conversazioni fra un genitore e un'insegnante,
+// e la consultazione è SILENZIOSA per decisione del titolare — nessun avviso in
+// chat, nessun segno nell'interfaccia. La finalità è legittima (tutela dei
+// minori e corretto svolgimento del servizio), ma una sorveglianza che
+// l'interessato non può vedere è esattamente quella che l'art. 13 obbliga a
+// scrivergli: fino a ieri un genitore che scriveva alla maestra credeva di
+// parlare con lei soltanto. La voce dice chi può leggere, che di ogni lettura
+// resta traccia in un registro interno, e che indirizzo IP, browser e termine di
+// ricerca si cancellano dopo dodici mesi.
+//
+// ⚠️ Alzarla NON invalida i consensi già raccolti e non forza nessuno a
+// riaccettare — vale la verifica del 10/08 riportata sopra: `VERSIONE_PRIVACY`
+// entra solo nelle righe scritte da qui in avanti, e nessun gate confronta la
+// versione registrata con quella corrente.
+//
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
+// invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-08-25'
+export const VERSIONE_PRIVACY = '2026-09-09'

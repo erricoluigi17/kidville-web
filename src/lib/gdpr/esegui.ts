@@ -35,6 +35,18 @@ import { logErrore, logEvento } from '@/lib/logging/logger'
 // Il genitore li aggancia per segnalante/segnalato e sospendente/sospeso;
 // l'alunno per l'OGGETTO segnalato (voce di diario, media, thread di chat).
 //
+// ⚠️ COSA L'OBLIO **NON** TOCCA, E PERCHÉ: `chat_vigilanza_accessi`.
+// È il registro di chi — fra segreteria e Direzione — ha aperto le conversazioni
+// altrui. Le sue righe portano uuid (chi ha letto, quale conversazione, quale
+// bambino), un'azione e una data: sono documentazione di accountability del
+// TITOLARE del trattamento (GDPR art. 5 §2), non dati dell'interessato, ed è per
+// questo che la tabella non ha nessuna FK — deve sopravvivere alla cancellazione
+// del thread e all'anonimizzazione dell'operatore. Cancellarla insieme
+// all'oggetto distruggerebbe la prova che quell'oggetto era stato letto.
+// L'unico testo libero che contiene, il termine cercato, non è scritto da una
+// famiglia ma da un operatore, e si azzera da sé a dodici mesi insieme a IP e
+// browser (`chat_vigilanza_retention_tick`, cron `vigilanza-chat-retention`).
+//
 // Tutte le funzioni sono best-effort: loggano ogni ramo che fallisce (mai un
 // catch muto), degradano in silenzio quando lo schema è assente (DB E2E CI non
 // migrato) e NON mettono PII nei log (solo conteggi/uuid).

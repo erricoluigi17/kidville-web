@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/fk-sede-fotografia.mjs --sql | (esegui su prod) ; node scripts/fk-sede-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-01",
-  "generato_alle": "2026-09-01T16:42:33Z",
-  "sha256": "1eb06e367364f5f592e62f0419c22b268fe4c14f27a19656330df7f3804a5f16",
+  "generato_il": "2026-09-09",
+  "generato_alle": "2026-09-09T11:45:42Z",
+  "sha256": "a830780ba1f8d865807bade3b5095f28d419e941b8dfd7af26769f88a7ab4df3",
   "tabelle": [
     {
       "tabella": "admin_settings",
@@ -80,6 +80,12 @@
       "tabella": "certificati_competenze",
       "not_null": true,
       "fk_nome": "certificati_competenze_scuola_id_fkey",
+      "fk_verso": "schools"
+    },
+    {
+      "tabella": "chat_vigilanza_accessi",
+      "not_null": false,
+      "fk_nome": "chat_vigilanza_accessi_scuola_id_fkey",
       "fk_verso": "schools"
     },
     {

@@ -58,7 +58,14 @@ const ESENTE = 'src/lib/logging/';
 // (`info` sul client non esiste: `/api/logs` lo rifiuta), col solo `nomeErrore` perché il
 // `message` di una fetch fallita si porta dietro l'URL, e in quell'URL c'è l'id di un minore.
 const MAX_FILE = 51;
-const MAX_OCCORRENZE = 81;
+// 🔻 81 → 79 il 2026-09-09: bonificati due catch muti in
+// `admin/messaggi/page.tsx` mentre si costruiva il registro di vigilanza. Erano
+// i due che contavano: uno inghiottiva il fallimento dell'elenco delle
+// conversazioni (una lista vuota per un guasto di rete è indistinguibile da
+// «nessuna conversazione»), l'altro quello dell'apertura di una conversazione —
+// che adesso può fallire per una ragione nuova, il 503 `VIGILANZA_NON_TRACCIABILE`,
+// e mostrarla come una chat vuota sarebbe stato il peggiore dei silenzi.
+const MAX_OCCORRENZE = 79;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

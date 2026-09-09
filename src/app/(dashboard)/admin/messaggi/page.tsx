@@ -2,11 +2,12 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
-import { MessageCircle, Users, Send, Loader2, Eye } from 'lucide-react';
+import { MessageCircle, Users, Send, Loader2, Eye, Search, ScrollText } from 'lucide-react';
 import { CockpitPage, CockpitSelect, PageHeader, Tabs } from '@/components/ui/cockpit';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useSediAttive } from '@/lib/context/sede-context';
 import { ThreadSospensioneBanner, type SospensioneInfo } from '@/components/features/admin/messaggi/ThreadSospensioneBanner';
+import { RegistroVigilanza } from '@/components/features/admin/messaggi/RegistroVigilanza';
 import { formattaIstante } from '@/i18n/config';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
@@ -20,6 +21,14 @@ interface OversightThread {
 }
 interface Filtri { docenti: { id: string; nome: string }[]; genitori: { id: string; nome: string }[]; classi: string[] }
 interface Msg { id: string; sender_id: string; content: string; created_at: string }
+interface RisultatoRicerca {
+  messaggio_id: string;
+  thread_id: string;
+  contenuto: string;
+  creato_il: string;
+  alunno_nome: string;
+  classe: string | null;
+}
 interface Contatto { parentUserId: string; parentName: string; studentId: string; studentName: string; classe: string | null; scuolaId: string | null }
 
 function fmtWhen(iso: string | null, locale: string) {
@@ -32,10 +41,15 @@ function MessaggiInner() {
   const t = useTranslations('adminComunicazioni');
   const locale = useLocale();
   const { userId, role } = useSessionIdentity();
-  const canReopen = role === 'admin' || role === 'coordinator';
+  // Un solo predicato per «Direzione»: riapre le conversazioni sospese E vede il
+  // registro degli accessi. Il gate vero sta nelle API — qui si decide solo cosa
+  // mostrare, e una scheda che darebbe 403 è peggio di una scheda assente.
+  const direzione = role === 'admin' || role === 'coordinator';
   // Etichetta risolta fuori dal `.map(t => …)` dei thread, dove `t` è ombreggiato
   // dalla variabile del thread (non è più la funzione di traduzione).
   const sospesaLabel = t('messaggiSospesa');
+  const conversazioneNonApertaLabel = t('messaggiConversazioneNonAperta');
+  const cercaErroreLabel = t('messaggiCercaErrore');
   // Rubrica multi-sede: il plesso si scrive accanto al contatto SOLO quando le
   // sedi accessibili sono più d'una (con una sola ripeterebbe la stessa parola
   // su ogni riga). Senza, «Rossi Anna · Alfa Rossi · 2 ANNI» può essere due
@@ -44,7 +58,7 @@ function MessaggiInner() {
   const piuSedi = sedi.length > 1;
   const nomeSede = (scuolaId: string | null) =>
     sedi.find((s) => s.id === scuolaId)?.nome ?? t('messaggiSedeSconosciuta');
-  const [tab, setTab] = useState<'genitori' | 'tutti'>('genitori');
+  const [tab, setTab] = useState<'genitori' | 'tutti' | 'registro'>('genitori');
 
   // ── Tab "Tutti i messaggi" (supervisione, sola lettura) ──
   const [threads, setThreads] = useState<OversightThread[]>([]);
@@ -59,6 +73,25 @@ function MessaggiInner() {
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [riapriBusy, setRiapriBusy] = useState(false);
   const [riapriErr, setRiapriErr] = useState('');
+  const [erroreConversazione, setErroreConversazione] = useState('');
+
+  // ── Ricerca nel testo dei messaggi (scheda "Tutti i messaggi") ──
+  // Il campo è DEBOUNCED a 300 ms, e non è una raffinatezza: ogni ricerca scrive
+  // una riga nel registro di vigilanza. Senza debounce, digitare «Rossi» ne
+  // scriverebbe cinque per un gesto solo, e un registro pieno di rumore è
+  // illeggibile quanto uno vuoto.
+  const [q, setQ] = useState('');
+  const [qCercata, setQCercata] = useState('');
+  const [dataDa, setDataDa] = useState('');
+  const [dataA, setDataA] = useState('');
+  const [risultati, setRisultati] = useState<RisultatoRicerca[]>([]);
+  const [erroreRicerca, setErroreRicerca] = useState('');
+  // La CHIAVE della ricerca a cui appartengono i risultati mostrati. «Sto
+  // cercando» si DERIVA dal confronto con la chiave corrente invece di essere
+  // uno stato che l'effect imposta: un `setState` sincrono dentro un effect
+  // innesca il render a cascata che `set-state-in-effect` vieta, e la stessa
+  // trappola è già costata una correzione altrove in questo repo.
+  const [risultatiPer, setRisultatiPer] = useState('');
 
   const fetchThreads = useCallback(() => {
     const params = new URLSearchParams();
@@ -68,20 +101,65 @@ function MessaggiInner() {
     fetch(`/api/admin/chat/threads?${params.toString()}`)
       .then(r => r.json())
       .then(j => { if (j.success) { setThreads(j.data); setFiltri(j.filtri); } })
-      .catch(() => {})
+      .catch(e => {
+        // Un elenco vuoto per un guasto di rete è indistinguibile da «nessuna
+        // conversazione»: senza questa riga la supervisione mentiva in silenzio.
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `supervisione-elenco-fallito: ${nomeErrore(e)}`, route: '/admin/messaggi' });
+      })
       .finally(() => setLoadingThreads(false));
   }, [fTeacher, fParent, fClasse]);
 
   useEffect(() => { if (tab === 'tutti') fetchThreads(); }, [tab, fetchThreads]);
 
+  useEffect(() => {
+    const id = setTimeout(() => setQCercata(q.trim()), 300);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const chiaveRicerca = `${qCercata}|${dataDa}|${dataA}`;
+
+  const cerca = useCallback(() => {
+    if (qCercata.length < 3) return;
+    const p = new URLSearchParams({ q: qCercata });
+    if (dataDa) p.set('da', dataDa);
+    if (dataA) p.set('a', dataA);
+    fetch(`/api/admin/chat/ricerca?${p.toString()}`)
+      .then(async r => ({ ok: r.ok, corpo: await r.json() }))
+      .then(({ ok, corpo }) => {
+        if (ok && corpo.success) { setErroreRicerca(''); setRisultati(corpo.data ?? []); return; }
+        setRisultati([]);
+        setErroreRicerca(cercaErroreLabel);
+      })
+      .catch(e => {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `supervisione-ricerca-fallita: ${nomeErrore(e)}`, route: '/admin/messaggi' });
+        setRisultati([]);
+        setErroreRicerca(cercaErroreLabel);
+      })
+      .finally(() => setRisultatiPer(chiaveRicerca));
+  }, [qCercata, dataDa, dataA, cercaErroreLabel, chiaveRicerca]);
+
+  useEffect(() => { if (tab === 'tutti') cerca(); }, [tab, cerca]);
+
+  const cercando = qCercata.length >= 3 && risultatiPer !== chiaveRicerca;
+
   const openOversight = (t: OversightThread) => {
     setSelThread(t);
     setOversightMsgs([]);
     setRiapriErr('');
+    setErroreConversazione('');
     fetch(`/api/admin/chat/messages?thread_id=${t.id}`)
-      .then(r => r.json())
-      .then(j => { if (j.success) setOversightMsgs(j.data); })
-      .catch(() => {});
+      .then(async r => ({ ok: r.ok, corpo: await r.json() }))
+      .then(({ ok, corpo }) => {
+        if (ok && corpo.success) { setOversightMsgs(corpo.data); return; }
+        // 503 `VIGILANZA_NON_TRACCIABILE`: la lettura non si è potuta registrare
+        // e il contenuto non è uscito. Va detto, non fatto sembrare una
+        // conversazione vuota.
+        setErroreConversazione(conversazioneNonApertaLabel);
+      })
+      .catch(e => {
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `supervisione-conversazione-fallita: ${nomeErrore(e)}`, route: '/admin/messaggi' });
+        setErroreConversazione(conversazioneNonApertaLabel);
+      });
   };
 
   // Riapertura di una conversazione sospesa (C5 §2). La Direzione media dalla
@@ -197,10 +275,11 @@ function MessaggiInner() {
 
       <Tabs
         value={tab}
-        onChange={(v) => setTab(v as 'genitori' | 'tutti')}
+        onChange={(v) => setTab(v as 'genitori' | 'tutti' | 'registro')}
         options={[
           { id: 'genitori', label: t('messaggiTabGenitori'), icon: Users },
           { id: 'tutti', label: t('messaggiTabTutti'), icon: Eye },
+          ...(direzione ? [{ id: 'registro', label: t('messaggiTabRegistro'), icon: ScrollText }] : []),
         ]}
       />
 
@@ -276,9 +355,33 @@ function MessaggiInner() {
             )}
           </div>
         </div>
+      ) : tab === 'registro' ? (
+        <RegistroVigilanza />
       ) : (
         <>
           {/* Filtri */}
+          <div className="mb-2 flex flex-wrap items-center gap-3">
+            <label className="relative flex items-center">
+              <Search size={14} className="pointer-events-none absolute left-3 text-kidville-sub" />
+              <input
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder={t('messaggiCercaPlaceholder')}
+                aria-label={t('messaggiCercaPlaceholder')}
+                className="w-64 rounded-pill border-2 border-kidville-line py-2 pl-9 pr-4 font-maven text-sm focus:border-kidville-green focus:outline-none"
+              />
+            </label>
+            <label className="font-maven text-xs text-kidville-sub">
+              {t('messaggiPeriodoDa')}{' '}
+              <input type="date" value={dataDa} onChange={e => setDataDa(e.target.value)} className="rounded-input border-2 border-kidville-line px-2 py-1 font-maven text-sm focus:border-kidville-green focus:outline-none" />
+            </label>
+            <label className="font-maven text-xs text-kidville-sub">
+              {t('messaggiPeriodoA')}{' '}
+              <input type="date" value={dataA} onChange={e => setDataA(e.target.value)} className="rounded-input border-2 border-kidville-line px-2 py-1 font-maven text-sm focus:border-kidville-green focus:outline-none" />
+            </label>
+          </div>
+          <p className="mb-3 font-maven text-[11px] text-kidville-sub">{t('messaggiCercaAvviso')}</p>
+
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <CockpitSelect
               value={fTeacher}
@@ -298,9 +401,36 @@ function MessaggiInner() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-            {/* Elenco thread */}
+            {/* Elenco: i risultati della ricerca prendono il posto dei thread */}
             <div className="rounded-card bg-kidville-white p-3 shadow-sm max-h-[70vh] overflow-y-auto">
-              {loadingThreads ? (
+              {qCercata.length >= 3 ? (
+                cercando ? (
+                  <p className="flex items-center gap-2 p-2 font-maven text-sm text-kidville-sub"><Loader2 size={14} className="animate-spin" /> {t('messaggiCercaInCorso')}</p>
+                ) : erroreRicerca ? (
+                  <p role="alert" className="rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">{erroreRicerca}</p>
+                ) : (
+                  <>
+                    <p className="px-2 pb-2 font-maven text-xs font-semibold text-kidville-ink">{t('messaggiCercaRisultati', { n: risultati.length })}</p>
+                    {risultati.map(r => (
+                      <button
+                        key={r.messaggio_id}
+                        onClick={() => {
+                          // Aprire la conversazione dal risultato registra una
+                          // LETTURA, in aggiunta alla ricerca: sono due gesti.
+                          const t0 = threads.find(x => x.id === r.thread_id);
+                          if (t0) openOversight(t0);
+                        }}
+                        className="mb-1 w-full rounded-input px-3 py-2.5 text-left transition-colors hover:bg-kidville-cream"
+                      >
+                        <p className="font-maven text-sm text-kidville-ink">{r.contenuto}</p>
+                        <p className="font-maven text-xs text-kidville-sub">{r.alunno_nome}{r.classe ? ` · ${r.classe}` : ''} · {fmtWhen(r.creato_il, locale)}</p>
+                      </button>
+                    ))}
+                  </>
+                )
+              ) : q.trim().length > 0 ? (
+                <p className="p-2 font-maven text-sm text-kidville-sub">{t('messaggiCercaMinimo')}</p>
+              ) : loadingThreads ? (
                 <p className="font-maven text-sm text-kidville-muted flex items-center gap-2 p-2"><Loader2 size={14} className="animate-spin" /> {t('caricamento')}</p>
               ) : threads.length === 0 ? (
                 <p className="font-maven text-sm text-kidville-muted p-2">{t('messaggiNessunaConversazione')}</p>
@@ -336,11 +466,16 @@ function MessaggiInner() {
                   </div>
                   <ThreadSospensioneBanner
                     sospensione={selThread.sospensione}
-                    canReopen={canReopen}
+                    canReopen={direzione}
                     onRiapri={riapri}
                     busy={riapriBusy}
                   />
                   {riapriErr && <p className="mb-2 font-maven text-xs text-kidville-error">{riapriErr}</p>}
+                  {erroreConversazione && (
+                    <p role="alert" className="mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
+                      {erroreConversazione}
+                    </p>
+                  )}
                   <div className="flex-1 overflow-y-auto space-y-2 pr-1">
                     {oversightMsgs.length === 0 && <p className="font-maven text-sm text-kidville-muted text-center py-6">{t('messaggiNessunMessaggioConv')}</p>}
                     {oversightMsgs.map(m => {

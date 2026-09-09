@@ -17,7 +17,7 @@
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
   "aggiornato": "2026-09-06",
-  "totale_occorrenze": 1429,
+  "totale_occorrenze": 1428,
   "file": [
     {
       "path": "src/app/api/admin/adults/route.ts",
@@ -978,7 +978,7 @@
     },
     {
       "path": "src/app/api/primaria/registro/route.ts",
-      "n": 9
+      "n": 8
     },
     {
       "path": "src/app/api/primaria/sblocca/route.ts",

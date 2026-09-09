@@ -1,10 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { AlertTriangle, Plus, Trash2 } from 'lucide-react';
-import { logClient, nomeErrore } from '@/lib/logging/client';
-import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { creaMuta } from '@/lib/ui/muta';
 
 interface ScalaItem { id: string; etichetta: string; ordine: number; valore_numerico: number | null; giudizio_descrittivo: string | null; attivo: boolean }
 interface TemplateItem { id: string; scuola_id: string | null; dimensione: string; valore: string; frammento: string }
@@ -35,36 +34,38 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
   useEffect(() => { load(); }, [load]);
 
   /**
-   * Esegue una mutazione e ne RIPORTA l'esito (`true` = riuscita).
+   * La stessa `muta` di prima, adesso presa da `@/lib/ui/muta`.
+   *
+   * Viveva qui dentro perché è qui che il difetto era stato visto per primo. Il
+   * corpo non è cambiato di una riga — è già in produzione — ma gli altri sei
+   * manager del cockpit continuavano a scrivere `await fetch(...)` nudo, e una
+   * funzione che serve a sette posti non è un dettaglio di un componente.
    *
    * Log obbligatorio sul rifiuto: lo `stato` è un numero (lista bianca di
    * `redact`) ed è l'unica cosa che, dai log, distingue «sede non tua» (403) da
    * «sede ambigua» (400) da «giudizio già in uso» (409). Il corpo NON si logga:
    * i frammenti descrittivi sono testo libero su un minore.
    */
-  const muta = async (url: string, init: RequestInit, evento: string): Promise<boolean> => {
-    try {
-      const res = await fetch(url, init);
-      if (!res.ok) {
-        logClient({ livello: 'error', evento: 'fetch', messaggio: evento, route: '/admin/impostazioni', stato: res.status });
-        setErrore(await messaggioErrore(res, t('giudiziErroreOperazione')));
-        load();
-        return false;
-      }
-      setErrore('');
-      load();
-      return true;
-    } catch (err) {
-      logClient({ livello: 'error', evento: 'fetch', messaggio: `${evento}: ${nomeErrore(err)}`, route: '/admin/impostazioni' });
-      setErrore(t('giudiziErroreOperazione'));
-      return false;
-    }
-  };
+  const muta = useMemo(
+    () => creaMuta({
+      route: '/admin/impostazioni',
+      ricarica: load,
+      setErrore,
+      fallback: t('giudiziErroreOperazione'),
+    }),
+    [load, t],
+  );
 
-  const postScala = (body: unknown, evento: string, action = 'scala') => muta(
+  /**
+   * `contesto` è l'etichetta della riga toccata. La scala ha una decina di voci
+   * e i frammenti sono uno per dimensione×valore: senza, l'avviso non dice quale
+   * campo rifare. Resta a schermo — non entra nei log.
+   */
+  const postScala = (body: unknown, evento: string, action = 'scala', contesto?: string) => muta(
     `/api/admin/primaria/giudizi?action=${action}&userId=${userId}`,
     { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-user-id': userId }, body: JSON.stringify(body) },
     evento,
+    contesto,
   );
 
   const addScala = async () => {
@@ -76,31 +77,32 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
     }
   };
 
-  const removeScala = async (id: string) => {
+  const removeScala = async (id: string, etichetta: string) => {
     await muta(
       `/api/admin/primaria/giudizi?tipo=scala&id=${id}&userId=${userId}`,
       { method: 'DELETE', headers: { 'x-user-id': userId } },
       'giudizi-scala-elimina-respinta',
+      etichetta,
     );
   };
 
   // Aggiorna valore numerico / giudizio descrittivo di un giudizio della scala
   // (upsert per etichetta — pattern onBlur come per i frammenti template).
   const updateScala = async (s: ScalaItem, campo: 'valoreNumerico' | 'giudizioDescrittivo', valore: string) => {
-    await postScala({ scuolaId, etichetta: s.etichetta, ordine: s.ordine, [campo]: valore }, 'giudizi-scala-aggiorna-respinta');
+    await postScala({ scuolaId, etichetta: s.etichetta, ordine: s.ordine, [campo]: valore }, 'giudizi-scala-aggiorna-respinta', 'scala', s.etichetta);
   };
 
   // Rinomina l'etichetta (UPDATE-by-id lato API, con cascade sui giudizi descrittivi).
   const renameScala = async (s: ScalaItem, etichetta: string) => {
-    await postScala({ scuolaId, id: s.id, etichetta }, 'giudizi-scala-rinomina-respinta', 'scala-rename');
+    await postScala({ scuolaId, id: s.id, etichetta }, 'giudizi-scala-rinomina-respinta', 'scala-rename', s.etichetta);
   };
 
   const toggleAttivo = async (s: ScalaItem) => {
-    await postScala({ scuolaId, etichetta: s.etichetta, ordine: s.ordine, attivo: !s.attivo }, 'giudizi-scala-attivo-respinto');
+    await postScala({ scuolaId, etichetta: s.etichetta, ordine: s.ordine, attivo: !s.attivo }, 'giudizi-scala-attivo-respinto', 'scala', s.etichetta);
   };
 
   const saveFrammento = async (t: TemplateItem, frammento: string) => {
-    await postScala({ scuolaId, dimensione: t.dimensione, valore: t.valore, frammento }, 'giudizi-template-respinto', 'template');
+    await postScala({ scuolaId, dimensione: t.dimensione, valore: t.valore, frammento }, 'giudizi-template-respinto', 'template', `${t.dimensione}=${t.valore}`);
   };
 
   return (
@@ -131,7 +133,7 @@ export function GiudiziManager({ scuolaId, userId }: { scuolaId: string; userId:
                   <input type="checkbox" checked={s.attivo} onChange={() => toggleAttivo(s)} />
                   {t('giudiziAttivo')}
                 </label>
-                <button onClick={() => removeScala(s.id)} aria-label={t('giudiziElimina')} className="text-kidville-sub hover:text-kidville-error shrink-0"><Trash2 size={15} /></button>
+                <button onClick={() => removeScala(s.id, s.etichetta)} aria-label={t('giudiziElimina')} className="text-kidville-sub hover:text-kidville-error shrink-0"><Trash2 size={15} /></button>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 <label className="font-maven text-[11px] text-kidville-sub w-14 shrink-0">{t('giudiziValore')}</label>

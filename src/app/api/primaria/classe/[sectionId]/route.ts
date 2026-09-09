@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireDocente } from '@/lib/auth/require-staff'
+// ⚠️ `haRuolo` da `predicati-ruolo` e NON da `require-staff`: 296 file di test
+// sostituiscono `require-staff` per intero — questa route compresa, riga sopra — e
+// un predicato importato di là arriverebbe `undefined` sotto mock. Le due strade
+// portano alla STESSA funzione (`require-staff` la ri-esporta), ma una sola
+// sopravvive. Il perché per esteso sta nella testata di `predicati-ruolo.ts`.
+import { haRuolo } from '@/lib/auth/predicati-ruolo'
 import { assertSezioneInScope } from '@/lib/auth/scope'
 import { loadGradoContext } from '@/lib/auth/require-grado'
 import { materieDiDocenteInSezione } from '@/lib/sezioni/docenti'
@@ -40,7 +46,23 @@ export const GET = withRoute('primaria/classe/[sectionId]:GET', async (
 
     // 3) Abilitazione al grado primaria: solo per il docente puro
     //    (admin/coordinator/segreteria bypassano — agiscono su tutta la scuola).
-    if (user.role === 'educator') {
+    //
+    // ⚠️ `haRuolo` e non `user.role`: `require-staff.ts:341-348` (`conRuoloAttivo`)
+    // scrive il cookie `kv-active-role` SOPRA `user.role` prima che la route veda
+    // l'utente. Con la veste, la maestra che è anche mamma — entrata legittimamente,
+    // perché `requireDocente` i ruoli REALI li guarda — saltava questo gate
+    // interamente: non veniva tenuta fuori, veniva fatta entrare *come Segreteria*.
+    //
+    // ⚠️ CHI CONSOLIDA QUESTO BLOCCO IN `assertGradoDocente` (`require-grado.ts:145`)
+    // LEGGA PRIMA LA RIGA 149 DI QUEL FILE: al 2026-09-09 il predicato condiviso
+    // chiede `user.role !== 'educator'`, cioè di nuovo la VESTE, e adottarlo così
+    // com'è rimette dentro esattamente il difetto corretto qui. Non è un'ipotesi:
+    // è già collegato a `primaria/registro:POST:251`, che SCRIVE. La precondizione
+    // per adottarlo è una riga — `if (!haRuolo(user, 'educator')) return null`.
+    // `primaria-classe-ruolo-reale.test.ts` esegue il predicato VERO apposta per
+    // dirlo: con la veste cadono i due casi in veste di genitore e restano verdi i
+    // gemelli in veste da maestra; con `haRuolo` sono verdi tutti e dodici.
+    if (haRuolo(user, 'educator')) {
       const ctx = await loadGradoContext(user.id)
       if (!ctx || !ctx.gradi.includes('primaria')) {
         return NextResponse.json({ error: 'Docente non abilitato alla primaria' }, { status: 403 })
@@ -56,8 +78,13 @@ export const GET = withRoute('primaria/classe/[sectionId]:GET', async (
 
     // Materie: il docente vede SOLO le proprie (contitolarità/isolamento disciplina);
     // staff/segreteria operano sull'intera classe → tutte le materie attive della sezione.
+    //
+    // ⚠️ Stessa ragione della riga 43, e qui l'effetto era il più grosso: con
+    // `user.role` un docente-genitore in veste di genitore cadeva nel ramo `else` e
+    // riceveva TUTTE le materie della sezione — quelle delle colleghe comprese.
+    // L'isolamento dichiarato due righe sopra si apriva cambiando veste.
     let materie: unknown[] = []
-    if (user.role === 'educator') {
+    if (haRuolo(user, 'educator')) {
       const materieIds = await materieDiDocenteInSezione(supabase, user.id, sectionId)
       if (materieIds.length) {
         const { data } = await supabase

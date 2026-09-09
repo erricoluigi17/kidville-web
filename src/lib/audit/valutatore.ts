@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { AppUser } from '@/lib/auth/require-staff'
+// ⚠️ Da `predicati-ruolo` e NON da `require-staff`: 296 file di test sostituiscono
+// `require-staff` per intero, e importare di là un PREDICATO (non un tipo, che
+// viene cancellato in compilazione) lo farebbe arrivare qui `undefined` — anzi,
+// farebbe lanciare vitest. Il perché per esteso sta nella testata di
+// `predicati-ruolo.ts`; `require-staff` lo ri-esporta, quindi le due strade
+// portano alla stessa funzione, ma una sola sopravvive al mock.
+import { haRuolo, type AppUser } from '@/lib/auth/predicati-ruolo'
 
 // =============================================================================
 // Preservazione del VALUTATORE (firma FEA / "vero valutatore").
@@ -65,7 +71,18 @@ export async function risolviValutatore(
   sectionId: string,
   opts: { docenteId?: string | null; materiaId?: string | null } = {},
 ): Promise<{ valutatoreId: string; response?: undefined } | { valutatoreId?: undefined; response: NextResponse }> {
-  if (attore.role === 'educator') {
+  // RUOLO REALE, non la veste indossata adesso. `require-staff.ts:341-348`
+  // (`conRuoloAttivo`) scrive il cookie `kv-active-role` SOPRA `user.role` prima
+  // che la route veda l'utente: con `attore.role === 'educator'` la maestra che è
+  // anche mamma, mentre guardava l'app come genitore, superava `requireDocente`
+  // (che i ruoli reali li guarda) e poi si sentiva chiedere di indicare «il
+  // docente titolare» — essendo lei. «È un docente?» è AUTORIZZAZIONE, e
+  // l'autorizzazione non passa mai dal cookie: `haRuolo`, non `role`.
+  //
+  // E nell'altro verso: `ruoli` porta SOLO i ruoli del database (`utenti.ruolo`
+  // + `genitore` se esiste il ponte `parents`), quindi un cookie forgiato non
+  // può farci entrare nessuno — prima invece bastava un `role` a 'educator'.
+  if (haRuolo(attore, 'educator')) {
     return { valutatoreId: attore.id }
   }
   const docenteId = opts.docenteId

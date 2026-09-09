@@ -380,5 +380,9 @@
   "erroreDiarioLetturaFallita": "Non è stato possibile leggere la registrazione da eliminare. Riprova.",
   "erroreDiarioNonEliminato": "Non è stato possibile eliminare la registrazione. Riprova.",
   "erroreAppelloStatoPrimaNonLetto": "Non è stato possibile leggere l’appello già registrato: per non cancellare note e orari, il salvataggio è stato annullato. Riprova.",
-  "erroreTicketRicaricaDuplicata": "Oggi a questo bambino è già stata registrata una ricarica di ticket mensa. Controlla che non sia lo stesso pagamento registrato due volte."
+  "erroreTicketRicaricaDuplicata": "Oggi a questo bambino è già stata registrata una ricarica di ticket mensa. Controlla che non sia lo stesso pagamento registrato due volte.",
+  "erroreSezioneNonTrovata": "Questa classe non risulta più fra quelle disponibili: torna all’elenco e riprova.",
+  "erroreClasseNonDiPrimaria": "Questa classe non appartiene alla scuola primaria: il registro di primaria non si applica.",
+  "erroreGradoNonAbilitato": "Non risulti abilitata a questo grado di scuola: chiedi alla segreteria di aggiornare il tuo profilo.",
+  "erroreFirmaNonSalvata": "Non siamo riusciti a salvare la firma del registro. Riprova fra qualche minuto."
 }

@@ -52,10 +52,20 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 const authMock = vi.hoisted(() => ({ requireDocente: vi.fn() }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireDocente: authMock.requireDocente }))
+// ⚠️ Dal 2026-09-09 la POST non passa più da `assertSezioneInScope` ma da
+// `assertSezionePrimariaFirmabile` (la SUPPLENZA nel proprio plesso: gate nuovo e
+// dedicato, per non allargare quello condiviso da valutazioni, note, pagelle e
+// fascicolo). Un `vi.mock` senza quell'export non è un test che fallisce
+// sull'asserzione: la funzione è `undefined`, la chiamata LANCIA, e tutti e sei i
+// casi diventano 500 — cioè si smette di provare quello che si voleva provare.
+// Il gate vero è coperto in `primaria-registro-supplenza.test.ts`.
 vi.mock('@/lib/auth/scope', () => ({
   assertSezioneInScope: vi.fn().mockResolvedValue(null),
   assertAlunniInSezione: vi.fn().mockResolvedValue(null),
+  assertSezionePrimariaFirmabile: vi.fn().mockResolvedValue({ supplenza: false }),
 }))
+// Gate del grado (L4-e): qui è neutro, la sua prova sta nel file della supplenza.
+vi.mock('@/lib/auth/require-grado', () => ({ assertGradoDocente: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/lib/audit/valutatore', () => ({
   risolviValutatore: vi.fn().mockResolvedValue({ valutatoreId: 'maestra-1', response: null }),

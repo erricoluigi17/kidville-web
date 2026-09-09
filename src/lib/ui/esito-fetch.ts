@@ -1864,6 +1864,28 @@ export const CODICI_ERRORE = {
     APPELLO_STATO_PRIMA_NON_LETTO: 'erroreAppelloStatoPrimaNonLetto',
     /** 409 — a questo bambino è già stata registrata una ricarica OGGI: serve la conferma esplicita. */
     TICKET_RICARICA_DUPLICATA: 'erroreTicketRicaricaDuplicata',
+    /**
+     * 404 — la sezione su cui si vuole firmare il registro di primaria non esiste
+     * (`assertSezionePrimariaFirmabile`).
+     *
+     * ⚠️ La frase di catalogo NON è «Sezione non trovata», ed è deliberato: quella
+     * stringa è scritta a mano in una dozzina di route senza codice, e il lock
+     * `errori-con-codice` — giustamente — pretende che la frase di un codice non
+     * viaggi mai senza il suo codice. Dargli quella frase renderebbe rossi file che
+     * questo lavoro non tocca. Quando qualcuno darà un codice anche a loro, li unirà.
+     */
+    SEZIONE_NON_TROVATA: 'erroreSezioneNonTrovata',
+    /** 403 — questa è la porta del registro di PRIMARIA, e la classe è di un altro grado. */
+    CLASSE_NON_DI_PRIMARIA: 'erroreClasseNonDiPrimaria',
+    /**
+     * 403 — il docente non risulta abilitato al grado di scuola richiesto
+     * (`assertGradoDocente`). Vale per primaria, infanzia e nido: la frase di
+     * catalogo è unica e non nomina il grado, che sta invece nella prosa italiana
+     * di ripiego e nel log (`grado-non-abilitato`).
+     */
+    GRADO_NON_ABILITATO: 'erroreGradoNonAbilitato',
+    /** 500 — il `catch` di `primaria/registro:POST`: la firma non è stata salvata. */
+    FIRMA_NON_SALVATA: 'erroreFirmaNonSalvata',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

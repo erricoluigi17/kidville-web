@@ -57,8 +57,17 @@ const ESENTE = 'src/lib/logging/';
 // guasto di rete non restava niente da nessuna parte. Ora è un `logClient` di livello `warn`
 // (`info` sul client non esiste: `/api/logs` lo rifiuta), col solo `nomeErrore` perché il
 // `message` di una fetch fallita si porta dietro l'URL, e in quell'URL c'è l'id di un minore.
-const MAX_FILE = 51;
-const MAX_OCCORRENZE = 81;
+// 51 → 50 e 81 → 80 il 2026-09-09: bonificato
+// `src/app/(dashboard)/teacher/primaria/[sectionId]/registro/page.tsx`. Il suo
+// `.catch(() => {})` stava sull'elenco delle sezioni per la supplenza, e accanto c'erano
+// altri due silenzi della stessa famiglia — un `load()` con `try/finally` senza nessun ramo
+// su `success: false`, e un `await r.json()` PRIMA di `setSaving(false)`. Il primo lasciava
+// la modale della firma senza materie né alunni, muta; il secondo, su un 413/502 che
+// risponde HTML, lanciava e lasciava il bottone «Firma» disabilitato per sempre. Nessuno dei
+// tre produceva una riga da nessuna parte: la maestra vedeva due tendine vuote e un bottone
+// che non rispondeva più.
+const MAX_FILE = 50;
+const MAX_OCCORRENZE = 80;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

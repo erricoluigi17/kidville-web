@@ -685,3 +685,46 @@ describe('set-tempo e l’indice unico parziale: mai due modelli accesi insieme'
     expect(campanelleDi(SEZ_A)).toHaveLength(2)
   })
 })
+
+// =============================================================================
+// (g) LA LETTURA CHE FALLISCE NON PUÒ USCIRE COME «ORARIO VUOTO»
+//
+// PostgREST non lancia: ritorna `{ error }`. Fino al 2026-09-09 la GET prendeva
+// il solo `data` e i tre errori non venivano nemmeno legati a una variabile:
+// `?? []` li trasformava in liste vuote e `success: true` le certificava come
+// lettura riuscita.
+//
+// Il danno sta tutto a valle, e questa è la metà che il client NON può riparare:
+// `OrarioManager` ha un ramo «non ho potuto leggere», ma nel corpo non c'è niente
+// che distingua il vuoto dall'errore ingoiato — quindi torna a dire «Imposta il
+// tempo scuola per generare la griglia», che AFFERMA il vuoto, e riabilita il
+// bottone che rigenera (cioè che cancella). Con nove sezioni su undici davvero
+// senza campanelle, quella frase è indistinguibile dalla verità.
+// =============================================================================
+describe('GET: una query fallita non si traveste da orario vuoto', () => {
+  const leggi = () => GET(new NextRequest(`http://localhost/api/admin/primaria/orario?sectionId=${SEZ_A}`))
+
+  it.each([
+    ['campanelle:select', 'campanelle'],
+    ['tempo_scuola:select', 'tempo_scuola'],
+    ['orario_settimanale:select', 'orario_settimanale'],
+  ])('%s che fallisce → 500 con codice, non 200 con liste vuote', async (chiave) => {
+    h.errori = { [chiave]: { code: '42703', message: 'column does not exist' } }
+    const res = await leggi()
+    const corpo = await res.json()
+
+    expect(res.status, 'un 200 qui fa dire alla schermata «non c\'è orario» su un guasto').toBe(500)
+    expect(corpo.success).toBeUndefined()
+    expect(corpo.codice, 'senza `codice` il client non sa tradurlo e mostra la stringa grezza').toBe('LETTURA_FALLITA')
+  })
+
+  it('controllo positivo: senza errori la GET risponde 200 e i dati veri', async () => {
+    const res = await leggi()
+    const corpo = await res.json()
+    expect(res.status).toBe(200)
+    expect(corpo.success).toBe(true)
+    expect(corpo.data.campanelle).toHaveLength(2)
+    expect(corpo.data.orario).toHaveLength(2)
+    expect(corpo.data.tempoScuola?.modello).toBe(27)
+  })
+})

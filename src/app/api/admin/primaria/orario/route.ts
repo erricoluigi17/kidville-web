@@ -318,7 +318,26 @@ export const GET = withRoute('admin/primaria/orario:GET', async (request: NextRe
     const fuoriScopeSez = await assertSezioneInScope(supabase, auth.user, sectionId)
     if (fuoriScopeSez) return fuoriScopeSez
 
-    const [{ data: tempoScuola }, { data: campanelle }, { data: orario }] = await Promise.all([
+    // ── «NON C'È» NON È «NON HO POTUTO LEGGERE», E QUI SI DECIDE ────────────
+    //
+    // PostgREST non lancia: ritorna `{ error }`. Fino al 2026-09-09 questa
+    // destrutturazione prendeva il solo `data`, e i tre errori non venivano
+    // nemmeno legati a una variabile: `campanelle ?? []` li trasformava in una
+    // lista vuota, e `success: true` la certificava come lettura RIUSCITA.
+    //
+    // Il danno non è teorico ed è tutto a valle. `OrarioManager` ha ora un ramo
+    // «non ho potuto leggere» — ma non può accendersi, perché nel corpo non c'è
+    // niente che distingua il vuoto dall'errore ingoiato: la schermata torna a
+    // dire «Imposta il tempo scuola per generare la griglia», cioè AFFERMA che
+    // l'orario è stato letto e non c'è, e riabilita il bottone che RIGENERA —
+    // quello che cancella le celle. Con nove sezioni su undici davvero senza
+    // campanelle, quella frase è indistinguibile dalla verità.
+    //
+    // La `select` dell'orario porta due embed (`materie`, `utenti`): possono
+    // essere respinti da soli — relazione fuori dal cache PostgREST, oppure
+    // `42703` sul DB E2E che non è migrato. Sono esattamente i casi in cui una
+    // lista vuota mente meglio.
+    const [tempoRes, campanelleRes, orarioRes] = await Promise.all([
       supabase.from('tempo_scuola').select('*').eq('section_id', sectionId).eq('attivo', true).maybeSingle(),
       supabase.from('campanelle').select('*').eq('section_id', sectionId).order('giorno_settimana').order('ordine'),
       supabase
@@ -326,10 +345,29 @@ export const GET = withRoute('admin/primaria/orario:GET', async (request: NextRe
         .select('*, materie(nome, codice), utenti(nome, cognome)')
         .eq('section_id', sectionId),
     ])
+    const guasto = ([
+      ['tempo_scuola', tempoRes.error],
+      ['campanelle', campanelleRes.error],
+      ['orario_settimanale', orarioRes.error],
+    ] as const).find(([, e]) => !!e)
+    if (guasto) {
+      logEvento('db', 'error', {
+        operazione: 'admin/primaria/orario:GET', esito: 'orario-non-letto',
+        tabella: guasto[0], sezione: sectionId,
+      }, guasto[1])
+      return NextResponse.json(
+        { error: 'Non è stato possibile leggere l\'orario di questa classe.', codice: 'LETTURA_FALLITA' },
+        { status: 500 },
+      )
+    }
 
     return NextResponse.json({
       success: true,
-      data: { tempoScuola: tempoScuola ?? null, campanelle: campanelle ?? [], orario: orario ?? [] },
+      data: {
+        tempoScuola: tempoRes.data ?? null,
+        campanelle: campanelleRes.data ?? [],
+        orario: orarioRes.data ?? [],
+      },
     })
   } catch (err) {
     // Il messaggio dell'eccezione resta nel LOG, con il suo stack. Rimandarlo al

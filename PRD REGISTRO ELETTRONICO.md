@@ -89,9 +89,9 @@
 > | Modulo | Stato | Priorità / Fase | Note |
 > |--------|-------|-----------------|------|
 > | **Valutazione conforme O.M. 3/2025** | ❌ Non conforme | Fase 1 | Oggi voti numerici: vietati alla primaria. Da convertire a motore ibrido per grado (vedi §4) |
-> | **Orario / Tempo scuola / Materie master** | ❌ Da implementare | Fase 1 | `materia` oggi è testo libero; servono materie strutturate, campanelle, modelli 27/29/40h |
+> | **Orario / Tempo scuola / Materie master** | ✅ Implementato · ⚠️ **non ancora configurato** | Fase 1 | Materie strutturate (`materie`), campanelle e modelli 27/29/40h esistono da giugno 2026: fino al 2026-09-09 questa casella diceva «❌ Da implementare» ed era **falsa**. Il fatto che conta è un altro, ed è misurato: al 2026-09-09 **`orario_settimanale` ha 0 righe in tutto il database** e **9 sezioni primaria su 11 non hanno nessuna campanella**, quindi il loro registro dice «Nessuna ora» e non è firmabile. Il generatore, fino al 2026-09-09, produceva **25 ore su 27 dichiarate** (`Math.round` invece di divisione con resto): le due sole sezioni configurate ce l'hanno addosso |
 > | **Compresenza avanzata** | 🔶 Parziale | Fase 1 | Firme indipendenti presenti; manca firma con argomenti/compiti per singoli alunni + oscuramento |
-> | **Vincoli temporali immodificabilità** | ❌ Da implementare | Fase 1 | Blocco 2gg classe/orali, 15gg scritti; sblocco solo dirigente |
+> | **Vincoli temporali immodificabilità** | 🔶 Parziale | Fase 1 | Il blocco esiste (`isOltreScadenza`, `admin_settings.timelock_giorni_classe_orale = 2` su tutte e quattro le sedi) — anche qui la casella diceva «❌ Da implementare» ed era falsa. **Fino al 2026-09-09 lo sblocco era un ciclo chiuso**: l'override si cercava solo per `entita_id`, cioè solo su una riga già scritta, mentre `POST /api/primaria/sblocca` pretendeva l'uuid di quella riga — un'ora **mai firmata** e fuori termine non era più registrabile da nessuno, dirigente compreso, e la pagina admin gli mostrava «Richiedi lo sblocco al dirigente» rivolto a sé stesso. Dal 2026-09-09 lo sblocco indirizza uno **slot** (`section_id` + `data` + `ora_lezione`, migr. `sblocchi_audit_per_slot`) e il dirigente ha un bottone. Resta da fare: 15gg per gli scritti, e `primaria/valutazioni` risponde 423 **senza alcun ramo di override** |
 > | **Scrutinio + Pagella online** | ❌ Da implementare | Fase 2 | 6 giudizi sintetici, Ed. Civica, comportamento; PDF statico (firma qualificata rimandata) |
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
@@ -100,6 +100,124 @@
 
 ---
 
+## 🏫 Changelog — La primaria: la segnalazione era vaga perché quelle schermate non dicono mai cosa è andato storto — 2026-09-09 (branch `fix/primaria-registro-orario`)
+
+Segnalazione del titolare, di seconda mano: *«ci sono vari errori, tra l'inserimento di attività, di
+compiti per casa, di inserimento di orario»*. Nessuno aveva verificato di persona, e alla domanda
+diretta su cosa comparisse a schermo la risposta è stata «non lo so».
+
+**Quella vaghezza non era un difetto della segnalazione: era il difetto.** Su questo perimetro
+esistono **tre silenzi sovrapposti**, tutti misurati:
+
+1. `OrarioManager` mandava i salvataggi e **non guardava mai la risposta** — nessun `res.ok`,
+   nessun `catch`, nessun log — aggiornando lo schermo in modo ottimistico.
+2. Il logger del browser spedisce solo `≥500` e i 4xx della lista `{408, 409, 413, 429}`
+   (`src/lib/logging/client.ts:153-157`).
+3. Il server manda **401/403/404 a livello `info`** (`with-route.ts:270-286`), e `info` non finisce
+   in tabella.
+
+Un rifiuto 403 su quelle schermate non era visibile **da nessuna parte**: né a chi lo subiva, né nei
+log del client, né in `app_log`. Chi usava il prodotto non poteva riferire l'errore perché non
+gliene veniva mostrato nessuno.
+
+### Cosa dicevano i dati, prima di toccare il codice
+
+| | |
+|---|---|
+| Sezioni `school_type='primaria'` | 11 — 5 Cesa, 5 Giugliano, 1 Demo |
+| Con un tempo scuola attivo | **2** (Giugliano «I», dal 02/09 · Demo) |
+| Con **zero campanelle** | **9 su 11** → registro non firmabile |
+| Righe in `orario_settimanale` | **0 in tutto il database** |
+| Righe in `registro_orario` | 14, **tutte sulla sede Demo** · `firme_docenti` 18 · `allegati_registro` 0 |
+| Alunni iscritti in quelle classi | **133 bambini reali** |
+
+**La segnalazione aveva quasi certamente un'altra causa, più semplice e più grave di quella
+cercata**: dieci classi vere su undici non hanno nessun orario, quindi il registro mostra «Nessuna
+ora» e non c'è niente da firmare — né attività né compiti.
+
+Che la griglia dell'orario non sia **mai** stata compilata è una conclusione per eliminazione, non
+un'ipotesi: `requireStaff` ammette solo `admin`, `coordinator` e `segreteria`, e per tutti e tre
+`vedeTutteLeClassi()` è vero, quindi un 403 di scope su `set-cell` era **impossibile** per chiunque
+potesse raggiungere quella route; e chi ha impostato il tempo scuola il 2 settembre ha superato lo
+stesso gate.
+
+### Il metodo, perché è la parte che ha retto
+
+25 rilievi da tre esplorazioni, poi una **verifica avversariale** — ogni rilievo affidato a un
+agente col mandato di *smentirlo* — e tre sweep sistematici. **22 confermati, 16 smentiti.** Poi
+dieci correzioni a file disgiunti, **ognuna con un critico** che doveva dimostrare che non reggeva:
+nessuna è passata pulita, tre sono state bocciate, tutte sono state riparate.
+
+I critici hanno trovato ciò che nessun esecutore poteva vedere da solo, perché stava **fra** i
+lotti: la correzione «chiave presente e vuota azzera il campo» rendeva **distruttiva** la coda
+offline (che manda sempre le tre chiavi condivise: una sincronizzazione avrebbe cancellato
+l'argomento del titolare); il nuovo predicato del grado decideva un'autorizzazione guardando la
+**veste** del cookie invece del ruolo reale, proprio mentre un altro lotto toglieva quell'errore; e
+un aiutante nuovo rendeva rossa la suite intera per il lock `logging-tetto`.
+
+### Cosa è stato corretto
+
+**L'orario** — il generatore arrotondava (`Math.round(modello/giorni)`) invece di dividere col
+resto: **27 ore dichiarate producevano 25 campanelle di lezione**, e solo `40×5` era esatto. Ora il
+resto si distribuisce. `ordine` contava anche intervallo e mensa mentre `ora_lezione` no, e col
+tempo pieno l'ordine arrivava a 10 contro un `CHECK (1..8)` vivo in produzione: l'ora di lezione si
+deriva ora dalle sole campanelle di tipo `lezione` — **il CHECK non è stato allargato**. Il `POST`
+non aveva **nessun** gate di sede (il `GET` sì): sei azioni erano scrivibili su una classe di
+un'altra sede, con client service-role che scavalca la RLS. Il lock che avrebbe dovuto vederlo è
+cieco per costruzione — guarda le tabelle con `scuola_id`, e quelle dell'orario non ce l'hanno per
+progetto. E `docs/audit/2026-07-30-isolamento-fra-sedi.md:210` **dichiarava chiusa quella route**:
+il commit citato toccava solo il `GET`.
+
+**Il registro** — la modale «Modifica» si apriva **vuota**, e combinata con la difesa server
+`if (compiti)` rendeva un compito assegnato per errore **impossibile da cancellare da qualunque
+interfaccia**. Ora è idratata dalla riga esistente, il server distingue «chiave assente» da «chiave
+vuota» (senza perdere la difesa B1), e la firma vuota — che rispondeva **200 con la spunta ✍ e zero
+contenuto**, unica strada possibile per il sostegno — viene rifiutata da entrambi i lati.
+Segreteria e Direzione ricevevano un 422 che chiedeva di selezionare un docente titolare **con un
+comando che l'interfaccia non aveva**: ora il selettore c'è. E la supplenza, che l'interfaccia
+offriva e il server rifiutava in 27 casi su 71, è ora un permesso vero **entro il proprio plesso**
+(decisione del titolare) — con un controllo **nuovo e dedicato alla sola firma**:
+`assertSezioneInScope` non è stato toccato, perché lo condividono valutazioni, note, pagelle e
+fascicolo, e allargarlo lì avrebbe aperto l'anagrafica di 133 bambini.
+
+**Il resto** — la coda offline accodava la classe sbagliata in supplenza e perdeva la data di
+consegna a ogni firma (13 righe su 14 in produzione la valorizzano); gli allegati puntavano al
+percorso di un bucket **privato** servito come `href`, quindi 404 per docente e genitore, e in
+«Compiti» non comparivano affatto; tredici mutazioni del cockpit non guardavano la risposta,
+compreso il **«tutti presenti» dell'appello** — 25 bambini a scuola sullo schermo della maestra e
+forse non in tabella — e un punto dove un **403 veniva scambiato per «sei offline»** e riaccodato
+all'infinito.
+
+### Migrazione
+
+`sblocchi_audit_per_slot` (applicata il 2026-09-09, `get_advisors` **0 ERROR**): tre colonne
+additive (`section_id`, `data`, `ora_lezione`), `entita_id` che smette di essere obbligatoria, e un
+`CHECK` che impone alla riga di indirizzare **comunque qualcosa** — o l'uuid, o le tre coordinate
+insieme. La tabella aveva **0 righe** (contate prima), quindi il `DROP NOT NULL` non ha indebolito
+nessun dato esistente.
+
+### ⚠️ Cosa NON è stato corretto, e non va corretto
+
+Sedici rilievi sono stati **smentiti** dalla verifica, e questa riga esiste per impedire che
+qualcuno li «sistemi» in futuro. I due più insidiosi:
+
+- **La colonna `ambito` degli allegati non filtra niente, da nessuna parte** — la route del genitore
+  non la seleziona nemmeno. La causa per cui l'allegato non compariva in «Compiti» era solo il
+  mancato rendering. «Correggere `ambito`» sarebbe costato UI, schema e select lasciando il difetto
+  intatto.
+- **L'etichetta oraria di `OrarioManager.tsx`** prende la campanella del lunedì per tutte le
+  colonne, ma è **solo display**: la scrittura usa `campanellaDi(giorno, ordine)`. Nessuna riga di
+  database ne è toccata.
+
+E un errore di chi ha diretto il lavoro, lasciato agli atti perché è il genere di cosa che si
+ripete: il mandato chiedeva di spostare la disattivazione del tempo scuola **dopo** l'inserimento.
+Sarebbe stata una violazione di `uq_tempo_scuola_section_attivo`, un indice unico **parziale** — e
+la query di verifica interrogava `pg_constraint`, che gli indici parziali **non li contiene**. La
+misura era cieca proprio dove serviva; se ne accorse il critico, non chi aveva scritto l'istruzione.
+
+**Gate**: `tsc` 0 · `eslint` 0 warning · `vitest` 15.944/15.947 (l'unico rosso è
+`offline-html-nativo`, la trappola nota di ogni worktree nuovo: cerca due `capacitor.config.json`
+gitignorati che esistono solo dopo `npx cap sync`, e si autoesclude in CI) · `build` 0.
 ## 🕵️ Changelog — La chat è già privata; a mancare era la traccia di chi la legge — 2026-09-09 (branch `feat/vigilanza-chat-tracciata`)
 
 Richiesta del titolare: *«Messaggi devono essere end to end, tra insegnante e genitore. Solo la

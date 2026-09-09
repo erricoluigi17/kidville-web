@@ -107,6 +107,25 @@ const SENZA_COLONNA: Record<string, string> = {
     utenti_sezioni: 'sede della sezione (assertSezioneInScope)',
     // Un incasso appartiene al PAGAMENTO, che ha la sede: `assertPagamentoInScope`.
     incassi: 'sede del pagamento (assertPagamentoInScope)',
+    // ── LE TRE TABELLE DELL'ORARIO, e perché il lock non le vedeva ───────────
+    // La sede è della SEZIONE a cui puntano, e non averla in colonna è una scelta
+    // di progetto, non una dimenticanza. Ma questo lock guarda solo le tabelle
+    // «sensibili» — quelle con `scuola_id` o legate all'alunno — e la fotografia
+    // `tabelle-scuola-id.json` non poteva contenerle: il `continue` saltava
+    // l'handler PRIMA di arrivare alla regola `handler-senza-scope`.
+    // Il costo, misurato il 2026-09-09: `POST /api/admin/primaria/orario` è
+    // rimasto SENZA alcun gate di sede dal 30/07 al 09/09 — sei azioni scrivibili
+    // su una classe di un'altra sede, con client service-role che scavalca la
+    // RLS — mentre l'audit dell'isolamento la dichiarava «CHIUSA» e questo lock
+    // era verde. Un lock che non può vedere un'area non la sta collaudando: è
+    // esattamente la trappola che la testata di questo file racconta di sé.
+    campanelle: 'sede della sezione (assertSezioneInScope)',
+    tempo_scuola: 'sede della sezione (assertSezioneInScope)',
+    orario_settimanale: 'sede della sezione (assertSezioneInScope)',
+    // Stessa forma: il ponte docente↔materia vive dentro una sezione, e la sezione
+    // ha la sede. Senza gate si legge e si scrive l'assegnazione delle discipline
+    // di un altro plesso.
+    utenti_sezioni_materie: 'sede della sezione (assertSezioneInScope)',
 }
 
 const CON_SEDE = new Set(foto.con_scuola_id)
@@ -897,6 +916,18 @@ const AMMESSE: Record<string, string> = {
     'chat/messages/read:PATCH': 'scope conversazione: si segnano letti solo i propri thread',
     'chat/threads/[id]/riapri:POST': 'scope conversazione: solo i partecipanti del thread',
     'chat/contacts:GET': 'rubrica: docenti/genitori con cui si PUÒ aprire un thread, derivati dalle proprie sezioni',
+    // `caricaCampanellaDellaSezione` NON è una lettura senza scope: È il gate.
+    // Legge la campanella per `id` e risponde 403 se `camp.section_id` non è la
+    // sezione richiesta — apposta in due passi, per distinguere «hai sbagliato
+    // identificativo» (404) da «questa non è tua» (403), che sono due diagnosi
+    // diverse per chi legge i log. Filtrarla nella query, come chiede la regola
+    // generale, farebbe collassare le due risposte in un 404 solo.
+    // Il riconoscitore automatico non lo vede perché pretende `scuola_id` nel
+    // corpo, e per `campanelle` la sede NON è in colonna: è quella della sezione
+    // (vedi `SENZA_COLONNA`). La deroga vale per il solo `<modulo>`: `:GET` e
+    // `:POST` restano coperti, ed è ciò che rende visibile il difetto che è
+    // rimasto aperto dal 30/07 al 09/09 — il `POST` senza alcun gate di sede.
+    'admin/primaria/orario:<modulo>': 'è il gate: legge la campanella e nega con 403 se non è della sezione (404 e 403 restano distinti)',
     'educator-sections:<modulo>': 'ricostruisce le sezioni del docente dai media che ha caricato lui (fallback storico)',
 
     // ── Job schedulati: nessun utente, iterano per sede ──────────────────────
@@ -1351,6 +1382,25 @@ describe('coverage-lock isolamento fra sedi', () => {
             'un pezzo di questo lock, e questo test esiste perché la cosa passi sotto gli occhi ' +
             'di qualcuno invece che in silenzio.',
         ).toEqual({
+            // ── 98 → 99 il 2026-09-09, ed è una decisione, non un adeguamento ──────
+            // Questo numero cresce quando il lock guarda MENO cose, quindi la sua
+            // crescita va giustificata o rifiutata. Qui è il prezzo di averlo fatto
+            // guardare di PIÙ: `campanelle`, `tempo_scuola`, `orario_settimanale` e
+            // `utenti_sezioni_materie` sono entrate in `SENZA_COLONNA`, e da quel
+            // momento il lock vede un'area che prima saltava per intero — perché
+            // quelle tabelle `scuola_id` non ce l'hanno (la sede è della sezione) e
+            // il `continue` le escludeva prima di arrivare alla regola.
+            // Il costo di quella cecità, misurato: `POST /api/admin/primaria/orario`
+            // è rimasto senza ALCUN gate di sede dal 30/07 al 09/09 — sei azioni
+            // scrivibili su una classe di un altro plesso, con client service-role —
+            // mentre l'audit dell'isolamento la dichiarava «CHIUSA» e questo lock era
+            // verde. L'unica esenzione aggiunta è `admin/primaria/orario:<modulo>`,
+            // che copre l'helper `caricaCampanellaDellaSezione`: quello NON è una
+            // lettura senza scope, È il gate — legge per `id` e nega con 403 se la
+            // campanella non è della sezione, in due passi apposta per non
+            // confondere «hai sbagliato identificativo» con «questa non è tua».
+            // `:GET` e `:POST` restano controllati, ed è ciò che rende il difetto
+            // visibile la prossima volta.
             // 474 → 475 il 2026-09-07: è nata `attendance/daily:PATCH`, la rettifica
             // dell'orario dell'appello 0-6 (l'ora del TOCCO non era correggibile: la
             // maestra segnava il ritardo alle 10:15 per un bambino arrivato alle 09:40).
@@ -2065,7 +2115,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // filtrare. Lasciare la voce avrebbe tenuto viva un'esenzione per la prossima
             // route che nascerà con quel nome — cioè esattamente ciò che la prova
             // «l'allowlist non contiene voci morte» esiste per impedire.
-            handlerEsentati: 98,
+            handlerEsentati: 99,
         })
     })
 })

@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Plus, Trash2 } from 'lucide-react';
+import { creaMuta } from '@/lib/ui/muta';
 
 interface Assegnazione {
   id: string;
@@ -65,35 +66,56 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
     load();
   }, [load]);
 
+  /**
+   * Le due mutazioni della schermata. «Assegna» il rifiuto lo mostrava già,
+   * «rimuovi» no — `await fetch(...)` nudo, e il `load()` finale rimetteva la
+   * riga al suo posto: indistinguibile da «il click non è arrivato».
+   *
+   * I due ripieghi sono diversi perché dicono in che STATO è rimasto il dato:
+   * dopo un'assegnazione rifiutata non è stato registrato niente, dopo una
+   * rimozione rifiutata l'assegnazione è ancora attiva.
+   */
+  const { mutaSalva, mutaElimina } = useMemo(() => {
+    const comuni = { route: '/admin/impostazioni', ricarica: load, setErrore: setError };
+    return {
+      mutaSalva: creaMuta({ ...comuni, fallback: t('comuneErroreSalvataggio') }),
+      mutaElimina: creaMuta({ ...comuni, fallback: t('comuneErroreEliminazione') }),
+    };
+  }, [load, t]);
+
   const add = async () => {
     if (!sel.utenteId || !sel.materiaId) return;
-    setError('');
-    const r = await fetch(`/api/admin/primaria/docenti-materie?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ utenteId: sel.utenteId, sectionId, materiaId: sel.materiaId, eContitolare: sel.eContitolare }),
-    });
-    const d = await r.json();
-    if (!r.ok) setError(d.error || t('comuneErrore'));
-    else {
-      setSel({ utenteId: '', materiaId: '', eContitolare: false });
-      load();
-    }
+    // La tripletta scelta si azzera SOLO se il server ha accettato: azzerarla su
+    // un rifiuto obbligherebbe a ricomporla per riprovare.
+    const ok = await mutaSalva(
+      `/api/admin/primaria/docenti-materie?userId=${userId}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ utenteId: sel.utenteId, sectionId, materiaId: sel.materiaId, eContitolare: sel.eContitolare }),
+      },
+      'primaria-docenti-materie-nuova-respinta',
+    );
+    if (ok) setSel({ utenteId: '', materiaId: '', eContitolare: false });
   };
 
-  const remove = async (id: string) => {
-    await fetch(`/api/admin/primaria/docenti-materie?id=${id}&userId=${userId}`, {
-      method: 'DELETE',
-      headers: { 'x-user-id': userId },
-    });
-    load();
+  const remove = async (a: Assegnazione) => {
+    await mutaElimina(
+      `/api/admin/primaria/docenti-materie?id=${a.id}&userId=${userId}`,
+      { method: 'DELETE', headers: { 'x-user-id': userId } },
+      'primaria-docenti-materie-elimina-respinta',
+      // La riga per esteso, com'è scritta in elenco: in una lista di venti
+      // assegnazioni è l'unica cosa che dice quale gesto rifare. Resta a
+      // schermo — `muta` non la logga.
+      `${a.utenti ? `${a.utenti.nome} ${a.utenti.cognome}` : a.utente_id} → ${a.materie?.nome ?? a.materia_id}`,
+    );
   };
 
   if (!sectionId) return <p className="font-maven text-kidville-muted">{t('comuneSelezionaSezione')}</p>;
 
   return (
     <div className="space-y-4">
-      {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
+      {error && <div role="alert" className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
       {docenti.length === 0 && (
         <div className="rounded-card bg-kidville-warn-soft text-kidville-warn px-4 py-2 text-sm font-maven">
           {t('docentiMaterieNessunClassificato')}
@@ -116,7 +138,7 @@ export function DocentiMaterieManager({ sectionId, scuolaId, userId, sezioni = [
               {sezioneName && <span className="ml-2 rounded-pill bg-kidville-cream text-kidville-muted px-2 py-0.5 text-[11px]">{sezioneName}</span>}
               {a.e_contitolare && <span className="ml-2 rounded-pill bg-kidville-green/10 text-kidville-green px-2 py-0.5 text-[11px]">{t('comuneContitolare')}</span>}
             </div>
-            <button onClick={() => remove(a.id)} aria-label={t('docentiMaterieRimuovi')} className="text-kidville-muted hover:text-kidville-error">
+            <button onClick={() => remove(a)} aria-label={t('docentiMaterieRimuovi')} className="text-kidville-muted hover:text-kidville-error">
               <Trash2 size={16} />
             </button>
           </li>

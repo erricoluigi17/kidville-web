@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { Plus, Trash2 } from 'lucide-react';
+import { creaMuta } from '@/lib/ui/muta';
 
 interface Obiettivo {
   id: string;
@@ -47,33 +48,50 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
     load();
   }, [load]);
 
+  /**
+   * «Aggiungi» mostrava il rifiuto, «elimina» no: la firma della dimenticanza,
+   * non della scelta. I due ripieghi restano distinti perché dicono in che
+   * STATO è il dato — non registrato, oppure ancora al suo posto.
+   */
+  const { mutaSalva, mutaElimina } = useMemo(() => {
+    const comuni = { route: '/admin/impostazioni', ricarica: load, setErrore: setError };
+    return {
+      mutaSalva: creaMuta({ ...comuni, fallback: t('comuneErroreSalvataggio') }),
+      mutaElimina: creaMuta({ ...comuni, fallback: t('comuneErroreEliminazione') }),
+    };
+  }, [load, t]);
+
   const add = async () => {
     if (!nuovo.descrizione) return;
-    setError('');
-    const r = await fetch(`/api/admin/primaria/obiettivi?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ scuolaId, materiaCodice, livello, codice: nuovo.codice || null, descrizione: nuovo.descrizione }),
-    });
-    const d = await r.json();
-    if (!r.ok) setError(d.error || t('comuneErrore'));
-    else {
-      setNuovo({ codice: '', descrizione: '' });
-      load();
-    }
+    // I campi si svuotano SOLO se il server ha accettato: la descrizione di un
+    // obiettivo è lunga da riscrivere, e riscriverla è il momento in cui si
+    // rinuncia.
+    const ok = await mutaSalva(
+      `/api/admin/primaria/obiettivi?userId=${userId}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ scuolaId, materiaCodice, livello, codice: nuovo.codice || null, descrizione: nuovo.descrizione }),
+      },
+      'primaria-obiettivo-nuovo-respinto',
+    );
+    if (ok) setNuovo({ codice: '', descrizione: '' });
   };
 
-  const remove = async (id: string) => {
-    await fetch(`/api/admin/primaria/obiettivi?id=${id}&userId=${userId}`, {
-      method: 'DELETE',
-      headers: { 'x-user-id': userId },
-    });
-    load();
+  const remove = async (o: Obiettivo) => {
+    await mutaElimina(
+      `/api/admin/primaria/obiettivi?id=${o.id}&userId=${userId}`,
+      { method: 'DELETE', headers: { 'x-user-id': userId } },
+      'primaria-obiettivo-elimina-respinto',
+      // Il codice quando c'è (è corto e identifica la riga), altrimenti la
+      // descrizione. Resta a schermo: `muta` non lo logga.
+      o.codice || o.descrizione,
+    );
   };
 
   return (
     <div className="space-y-4">
-      {error && <div className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
+      {error && <div role="alert" className="rounded-card bg-kidville-error/10 text-kidville-error px-4 py-2 text-sm font-maven">{error}</div>}
 
       <div className="flex flex-wrap items-center gap-2">
         <select
@@ -103,7 +121,7 @@ export function ObiettiviManager({ scuolaId, userId }: { scuolaId: string; userI
               {o.codice && <span className="mr-2 text-xs font-semibold text-kidville-green">{o.codice}</span>}
               {o.descrizione}
             </div>
-            <button onClick={() => remove(o.id)} aria-label={t('obiettiviElimina')} className="text-kidville-muted hover:text-kidville-error shrink-0">
+            <button onClick={() => remove(o)} aria-label={t('obiettiviElimina')} className="text-kidville-muted hover:text-kidville-error shrink-0">
               <Trash2 size={16} />
             </button>
           </li>

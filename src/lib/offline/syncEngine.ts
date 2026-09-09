@@ -1,7 +1,7 @@
-import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimariaAppello, LocalPrimariaRegistro } from './db';
+import { db, LocalAttendanceLog, LocalDiaryEntry, LocalGalleryMedia, LocalPrimariaAppello, LocalPrimariaRegistro, StatoCodaPrimaria } from './db';
 import { createBrowserClient } from '@supabase/ssr';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
-import { logClient } from '@/lib/logging/client';
+import { logClient, nomeErrore } from '@/lib/logging/client';
 import { caricaMediaGalleria } from '@/lib/gallery/carica-media';
 import { mimeBase } from '@/lib/gallery/limiti';
 
@@ -357,6 +357,187 @@ export async function syncPendingGalleryMedia() {
 // /api/primaria/* per applicare la logica server (compresenza, vincoli, notifiche).
 // ============================================================
 
+/**
+ * CHE COSA SI BUTTA VIA, E CHE COSA NO — la domanda centrale di queste due code, perché
+ * l'errore è possibile in ENTRAMBE le direzioni e le due direzioni non si equivalgono.
+ *
+ * Da un lato il ritentativo infinito: una riga che il server rifiuta *per sempre* torna
+ * `error`, `error` viene ripescato insieme a `pending` a ogni riconnessione, e la stessa POST
+ * riparte a ogni ingresso in pagina finché l'app è installata. Rumoroso, inutile, e comunque
+ * senza che il docente veda niente.
+ *
+ * Dall'altro lo scarto: `scartato` NON si ripesca (`.anyOf('pending','error')`) e oggi NON LO
+ * LEGGE NESSUNO — nessun componente in `src/` apre questi due store. Una riga scartata è una
+ * firma di registro, o la presenza di un bambino, sparita in silenzio e senza appello.
+ *
+ * Le due direzioni non si equivalgono perché il ritentativo è REVERSIBILE e lo scarto no. Da
+ * qui la politica, in tre insiemi e con il DUBBIO che pende dalla parte del ritentativo:
+ *
+ *  · DEFINITIVI — è il CORPO a essere sbagliato, e nessuno lo raddrizzerà mai: rispedirlo fra
+ *    un mese darà lo stesso identico numero. Solo questi diventano `scartato` al primo «no».
+ *
+ *  · RIMEDIABILI — il corpo è a posto, è il MONDO INTORNO che dice no, e c'è una persona
+ *    precisa che lo toglie di mezzo. Restano ritentabili, e non consumano il tetto: aspettare
+ *    non è scommettere. Qui il ritentativo non è un difetto, è il meccanismo con cui il
+ *    prodotto è progettato per farcela al secondo giro.
+ *
+ *  · tutto il resto — 5xx, 429, 408, e qualunque stato che non sappiamo leggere. Si ritenta,
+ *    ma col tetto `MAX_TENTATIVI_CONSEGNA`, perché fra questi si nasconde anche il guasto
+ *    permanente travestito da temporaneo (il 500 di un CHECK violato risponde 500 per sempre).
+ *
+ * ⚠️ NON è più la copia di `ritentabile()` di `src/lib/logging/client.ts`, e la differenza è
+ * deliberata: quella governa una coda di LOG, che si può buttare via senza che nessuno perda
+ * niente. Questa trasporta le firme del registro e le presenze dei bambini. Due code, due
+ * rischi opposti, due politiche — scritte separate apposta, con il motivo accanto.
+ */
+
+/**
+ * Il corpo è sbagliato e resterà sbagliato.
+ *  · 400 — zod ha rifiutato il corpo (`primaria/registro:POST`, `primaria/appello:POST`);
+ *  · 404 — la sezione non esiste;
+ *  · 409 — esiste già una firma principale per quell'ora;
+ *  · 413 — il corpo è troppo grande per la piattaforma;
+ *  · 422 — manca un campo che la coda non sa produrre (es. `docenteId` per Segreteria: la
+ *    modale del registro lo dice PRIMA di accodare, ma una riga già in coda da una build
+ *    precedente non lo sa).
+ */
+const DEFINITIVI: ReadonlySet<number> = new Set([400, 404, 409, 413, 422]);
+
+/**
+ * I «no» che una persona toglie di mezzo, e la persona si sa chi è. NON diventano mai
+ * `scartato`, e non consumano il tetto.
+ *
+ *  · 423 — REGISTRO CHIUSO. Scade dopo due giorni (`src/lib/primaria/timelock.ts`,
+ *    `DEFAULT_CLASSE_ORALE = 2`) e una riga può attraversare la scadenza MENTRE STA IN CODA:
+ *    è proprio quando il dispositivo è offline che la coda si riempie e i giorni passano.
+ *    `/api/primaria/sblocca` esiste letteralmente perché quel 423 diventi un 200 — la sua
+ *    stessa testata racconta che finché pretendeva `entitaId` «chi non aveva firmato in tempo
+ *    non poteva più farlo e il dirigente non poteva autorizzarlo». Scartare al primo 423
+ *    significa togliere al dirigente la cosa da sbloccare.
+ *  · 401 — SESSIONE SCADUTA. `kv_teacher_id` in `localStorage` sopravvive alla sessione, e
+ *    con `ALLOW_HEADER_IDENTITY=false` (vedi `docs/env.md`) l'header `x-user-id` che questa
+ *    coda spedisce viene ignorato: al ritorno della rete ogni riga prende 401. Il docente
+ *    rientra e riprende a lavorare; la coda deve essere ancora lì.
+ *  · 403 — DOCENTE NON ABILITATO al grado (`assertGradoDocente`) o non ancora risolto
+ *    (`utente-sconosciuto` in `require-staff.ts`). È un dato lato server che un
+ *    amministratore sistema in minuti.
+ */
+const RIMEDIABILI: ReadonlySet<number> = new Set([401, 403, 423]);
+
+/**
+ * IL TETTO DEI «NO» CHE NON SAPPIAMO SPIEGARE.
+ *
+ * Un 500 è ritentabile per definizione — è la risposta che significa «non so dirti perché».
+ * Ma il 500 di un vincolo CHECK violato risponderà 500 per sempre, e la coda non ha modo di
+ * distinguerlo dal 500 di un deploy in corso. Senza un tetto, quel caso resta esattamente il
+ * ritentativo infinito che questa modifica esiste per togliere, solo dietro un codice diverso.
+ *
+ * Cinque perché sono abbastanza da attraversare un deploy o un riavvio del database, e pochi
+ * abbastanza da non trasformare una riga malata in traffico perpetuo. Conta solo le risposte
+ * VERE del server, e solo quelle che non sappiamo leggere: i `RIMEDIABILI` non lo toccano.
+ */
+const MAX_TENTATIVI_CONSEGNA = 5;
+
+/**
+ * Che ne è di una riga a cui il server ha appena detto «no».
+ *
+ * Restituisce l'aggiornamento da scrivere in coda. `tentativiPrima` è `undefined` per le righe
+ * accodate prima che questo campo esistesse: si leggono come 0, che è la verità (nessun «no»
+ * contato).
+ */
+function esitoConsegna(
+    stato: number,
+    tentativiPrima: number | undefined,
+): { sync_status: StatoCodaPrimaria; tentativi: number } {
+    const tentativi = tentativiPrima ?? 0;
+    // Un rifiuto rimediabile lascia il contatore FERMO: sei riconnessioni in un minuto non
+    // devono bruciare l'attesa di un dirigente che risponde in giornata.
+    if (RIMEDIABILI.has(stato)) return { sync_status: 'error', tentativi };
+    const contati = tentativi + 1;
+    const finita = DEFINITIVI.has(stato) || contati >= MAX_TENTATIVI_CONSEGNA;
+    return { sync_status: finita ? 'scartato' : 'error', tentativi: contati };
+}
+
+/**
+ * Il bilancio di UN flush. Esiste perché il log dica «quante», non «è successo».
+ */
+interface ContiFlush {
+    consegnate: number;
+    scartate: number;
+    /** Rifiutate da qualcosa che una persona può togliere di mezzo: restano in coda. */
+    inAttesa: number;
+    /** Il server non poteva adesso: restano in coda, col tetto che scorre. */
+    ritentabili: number;
+    /** La richiesta non è mai arrivata: nessun tentativo consumato. */
+    reteCaduta: number;
+    /** Righe che il flush non ha nemmeno provato perché si è fermato prima (401). */
+    nonTentate: number;
+    stati: Map<number, number>;
+    errori: Set<string>;
+}
+
+function contiVuoti(): ContiFlush {
+    return {
+        consegnate: 0, scartate: 0, inAttesa: 0, ritentabili: 0, reteCaduta: 0, nonTentate: 0,
+        stati: new Map(), errori: new Set(),
+    };
+}
+
+/**
+ * UNA RIGA PER FLUSH, CON I NUMERI — e non una riga per firma.
+ *
+ * Il throttle di `logClient` deduplica su `evento|messaggio|stato` per 60 secondi (`DEDUP_MS`).
+ * Trenta firme rifiutate con lo stesso stato allo stesso tentativo producevano un messaggio
+ * IDENTICO trenta volte, cioè UNA riga in `app_log` per l'intero flush: «trenta firme perse» e
+ * «una firma persa» erano la stessa identica traccia. Contare risolve il problema e riduce il
+ * traffico verso `/api/logs` invece di aumentarlo.
+ *
+ * ⚠️ IL LIVELLO. `error` solo quando si è perso qualcosa; `warn` per tutto il resto, incluso il
+ * flush andato bene. `logClient` non ha un livello `info` — `warn` è il pavimento, ed è
+ * persistito e contabile. La riga del successo non è decorazione: AGENTS.md §5 chiede che gli
+ * eventi critici loggino ANCHE il successo, perché con i soli errori «nessun log» non
+ * distingue «tutto ok» da «non è mai partito niente». Un flush a vuoto (coda vuota) non scrive
+ * niente: parte a ogni evento `online` e sarebbe rumore puro.
+ *
+ * ⚠️ LO STATO STA NEL TESTO, NON NEL CAMPO `stato`, e non è una svista: `livelloEvento` (in
+ * `client.ts`) SOPPRIME gli eventi che portano uno `stato` 4xx ordinario — giustamente, perché
+ * quei rifiuti il server li ha già registrati per conto suo. Ma qui l'evento non è «il server
+ * ha risposto 400»: è «N firme sono state BUTTATE VIA dalla coda», e quello il server non può
+ * saperlo né registrarlo. Passare `stato: 400` renderebbe invisibile l'unica riga che racconta
+ * una perdita di dati.
+ *
+ * Conteggi e stati numerici sono STRUTTURA, non contenuto: niente id, niente nomi, niente testo
+ * dei compiti, niente nome del bambino. `nomeErrore` restituisce solo il NOME della classe
+ * d'errore, mai il messaggio (che può contenere un URL con un token). Regola 8 di AGENTS.md.
+ */
+function logFlush(coda: 'appello' | 'registro', c: ContiFlush): void {
+    const pezzi = [
+        `consegnate=${c.consegnate}`,
+        `scartate=${c.scartate}`,
+        `in-attesa=${c.inAttesa}`,
+        `ritentabili=${c.ritentabili}`,
+        `rete-caduta=${c.reteCaduta}`,
+    ];
+    if (c.nonTentate > 0) pezzi.push(`non-tentate=${c.nonTentate}`);
+    if (c.stati.size > 0) {
+        pezzi.push(`stati=${[...c.stati].map(([stato, n]) => `${stato}x${n}`).join(',')}`);
+    }
+    if (c.errori.size > 0) pezzi.push(`errori=${[...c.errori].join(',')}`);
+    logClient({
+        livello: c.scartate > 0 ? 'error' : 'warn',
+        evento: 'offline',
+        messaggio: `sync-${coda}-primaria-flush: ${pezzi.join(' ')}`,
+    });
+}
+
+/** Registra un rifiuto del server nei conti del flush, secondo l'esito che ha prodotto. */
+function contaRifiuto(c: ContiFlush, stato: number, scartata: boolean): void {
+    c.stati.set(stato, (c.stati.get(stato) ?? 0) + 1);
+    if (scartata) c.scartate++;
+    else if (RIMEDIABILI.has(stato)) c.inAttesa++;
+    else c.ritentabili++;
+}
+
 // Identità docente per la coda offline: localStorage → sessione (kv_user_id)
 // → null. Nessun fallback demo (M4): senza identità il sync resta in coda
 // (pending) e riparte alla prossima chiamata con identità risolta.
@@ -369,8 +550,10 @@ function teacherId(): string | null {
     return null;
 }
 
-export async function saveLocalAppello(data: Omit<LocalPrimariaAppello, 'sync_status'>) {
-    const row: LocalPrimariaAppello = { ...data, sync_status: 'pending' };
+// `tentativi` lo tiene la CODA, non il chiamante: è contabilità della consegna, non un dato
+// dell'appello. Per questo è escluso dall'argomento e nasce a 0.
+export async function saveLocalAppello(data: Omit<LocalPrimariaAppello, 'sync_status' | 'tentativi'>) {
+    const row: LocalPrimariaAppello = { ...data, sync_status: 'pending', tentativi: 0 };
     await db.primaria_appello.put(row);
     if (typeof window !== 'undefined' && navigator.onLine) syncPendingAppello();
 }
@@ -378,25 +561,58 @@ export async function saveLocalAppello(data: Omit<LocalPrimariaAppello, 'sync_st
 export async function syncPendingAppello() {
     if (typeof window !== 'undefined' && !navigator.onLine) return;
     try {
+        // `scartato` NON compare qui, ed è tutto il punto: è lo stato di chi non si ripesca.
         const pending = await db.primaria_appello.where('sync_status').anyOf('pending', 'error').toArray();
         if (pending.length === 0) return;
         const uid = teacherId();
         if (!uid) return; // identità non risolta: la coda resta pending
-        for (const r of pending) {
-            const res = await fetch(`/api/primaria/appello?userId=${uid}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
-                body: JSON.stringify({ sectionId: r.section_id, data: r.data, alunnoId: r.alunno_id, stato: r.stato }),
-            });
-            await db.primaria_appello.update(r.id, { sync_status: res.ok ? 'synced' : 'error' });
+        const conti = contiVuoti();
+        for (let i = 0; i < pending.length; i++) {
+            const r = pending[i];
+            // Il `try` sta DENTRO il ciclo: prima stava fuori, e una fetch che lanciava sulla
+            // prima riga lasciava le altre non tentate fino al prossimo evento `online`.
+            try {
+                const res = await fetch(`/api/primaria/appello?userId=${uid}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+                    body: JSON.stringify({ sectionId: r.section_id, data: r.data, alunnoId: r.alunno_id, stato: r.stato }),
+                });
+                if (res.ok) {
+                    await db.primaria_appello.update(r.id, { sync_status: 'synced' });
+                    conti.consegnate++;
+                    continue;
+                }
+                // 401 = la sessione è scaduta, e l'identità è la STESSA per tutte le righe:
+                // continuare vorrebbe dire spedire l'intera coda per prendere lo stesso 401 a
+                // ogni riga. Ci si ferma e si lascia tutto dov'è.
+                if (res.status === 401) {
+                    contaRifiuto(conti, 401, false);
+                    conti.nonTentate = pending.length - (i + 1);
+                    break;
+                }
+                const esito = esitoConsegna(res.status, r.tentativi);
+                await db.primaria_appello.update(r.id, esito);
+                contaRifiuto(conti, res.status, esito.sync_status === 'scartato');
+            } catch (err) {
+                // La rete è caduta con la richiesta in volo. NON consuma un tentativo: il
+                // server non ha detto niente, e questa riga va riprovata quando torna il campo.
+                conti.reteCaduta++;
+                conti.errori.add(nomeErrore(err));
+            }
         }
-    } catch {
-        logSync('sync-appello-primaria-fallito');
+        logFlush('appello', conti);
+    } catch (err) {
+        // Resta per ciò che il ciclo non copre: la lettura di Dexie, `teacherId()`, il
+        // database chiuso dal browser. Dice quale, invece di dire «fallito».
+        logSync(`sync-appello-primaria-coda-illeggibile: ${nomeErrore(err)}`);
     }
 }
 
-export async function saveLocalRegistro(data: Omit<LocalPrimariaRegistro, 'sync_status'>) {
-    const row: LocalPrimariaRegistro = { ...data, sync_status: 'pending' };
+// Come sopra: `tentativi` è della coda. `data_consegna_compiti`, invece, è del CHIAMANTE ed è
+// obbligatorio — chi accoda una firma deve dire anche quando i compiti vanno consegnati,
+// esattamente come lo dice il ramo online.
+export async function saveLocalRegistro(data: Omit<LocalPrimariaRegistro, 'sync_status' | 'tentativi'>) {
+    const row: LocalPrimariaRegistro = { ...data, sync_status: 'pending', tentativi: 0 };
     await db.primaria_registro.put(row);
     if (typeof window !== 'undefined' && navigator.onLine) syncPendingRegistro();
 }
@@ -404,23 +620,53 @@ export async function saveLocalRegistro(data: Omit<LocalPrimariaRegistro, 'sync_
 export async function syncPendingRegistro() {
     if (typeof window !== 'undefined' && !navigator.onLine) return;
     try {
+        // `scartato` NON compare qui, ed è tutto il punto: è lo stato di chi non si ripesca.
         const pending = await db.primaria_registro.where('sync_status').anyOf('pending', 'error').toArray();
         if (pending.length === 0) return;
         const uid = teacherId();
         if (!uid) return; // identità non risolta: la coda resta pending
-        for (const r of pending) {
-            const res = await fetch(`/api/primaria/registro?userId=${uid}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
-                body: JSON.stringify({
-                    sectionId: r.section_id, data: r.data, oraLezione: r.ora_lezione,
-                    materiaId: r.materia_id, argomento: r.argomento, compiti: r.compiti,
-                    tipoCompresenza: r.tipo_compresenza,
-                }),
-            });
-            await db.primaria_registro.update(r.id, { sync_status: res.ok ? 'synced' : 'error' });
+        const conti = contiVuoti();
+        for (let i = 0; i < pending.length; i++) {
+            const r = pending[i];
+            try {
+                const res = await fetch(`/api/primaria/registro?userId=${uid}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-user-id': uid },
+                    body: JSON.stringify({
+                        // `section_id` si trasporta com'è ARRIVATO, senza reinterpretarlo: in
+                        // supplenza la classe firmata non è quella della pagina, e una coda che
+                        // "aggiusta" la sezione aggancia argomento e compiti alla classe
+                        // sbagliata restituendo un 200 tranquillo.
+                        sectionId: r.section_id, data: r.data, oraLezione: r.ora_lezione,
+                        materiaId: r.materia_id, argomento: r.argomento, compiti: r.compiti,
+                        // Le righe accodate prima del 2026-09-09 non hanno il campo: il tipo
+                        // descrive ciò che si SCRIVE, IndexedDB conserva anche ciò che si
+                        // scriveva prima. `null` è ciò che il ramo online manda per «vuoto».
+                        dataConsegnaCompiti: r.data_consegna_compiti ?? null,
+                        tipoCompresenza: r.tipo_compresenza,
+                    }),
+                });
+                if (res.ok) {
+                    await db.primaria_registro.update(r.id, { sync_status: 'synced' });
+                    conti.consegnate++;
+                    continue;
+                }
+                // Vedi `syncPendingAppello`: il 401 riguarda l'identità, non la riga.
+                if (res.status === 401) {
+                    contaRifiuto(conti, 401, false);
+                    conti.nonTentate = pending.length - (i + 1);
+                    break;
+                }
+                const esito = esitoConsegna(res.status, r.tentativi);
+                await db.primaria_registro.update(r.id, esito);
+                contaRifiuto(conti, res.status, esito.sync_status === 'scartato');
+            } catch (err) {
+                conti.reteCaduta++;
+                conti.errori.add(nomeErrore(err));
+            }
         }
-    } catch {
-        logSync('sync-registro-primaria-fallito');
+        logFlush('registro', conti);
+    } catch (err) {
+        logSync(`sync-registro-primaria-coda-illeggibile: ${nomeErrore(err)}`);
     }
 }

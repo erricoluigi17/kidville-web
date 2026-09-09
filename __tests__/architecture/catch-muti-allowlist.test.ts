@@ -57,15 +57,28 @@ const ESENTE = 'src/lib/logging/';
 // guasto di rete non restava niente da nessuna parte. Ora è un `logClient` di livello `warn`
 // (`info` sul client non esiste: `/api/logs` lo rifiuta), col solo `nomeErrore` perché il
 // `message` di una fetch fallita si porta dietro l'URL, e in quell'URL c'è l'id di un minore.
-const MAX_FILE = 51;
-// 🔻 81 → 79 il 2026-09-09: bonificati due catch muti in
-// `admin/messaggi/page.tsx` mentre si costruiva il registro di vigilanza. Erano
-// i due che contavano: uno inghiottiva il fallimento dell'elenco delle
-// conversazioni (una lista vuota per un guasto di rete è indistinguibile da
-// «nessuna conversazione»), l'altro quello dell'apertura di una conversazione —
-// che adesso può fallire per una ragione nuova, il 503 `VIGILANZA_NON_TRACCIABILE`,
-// e mostrarla come una chat vuota sarebbe stato il peggiore dei silenzi.
-const MAX_OCCORRENZE = 79;
+// 51 → 50 e 81 → 80 il 2026-09-09: bonificato
+// `src/app/(dashboard)/teacher/primaria/[sectionId]/registro/page.tsx`. Il suo
+// `.catch(() => {})` stava sull'elenco delle sezioni per la supplenza, e accanto c'erano
+// altri due silenzi della stessa famiglia — un `load()` con `try/finally` senza nessun ramo
+// su `success: false`, e un `await r.json()` PRIMA di `setSaving(false)`. Il primo lasciava
+// la modale della firma senza materie né alunni, muta; il secondo, su un 413/502 che
+// risponde HTML, lanciava e lasciava il bottone «Firma» disabilitato per sempre. Nessuno dei
+// tre produceva una riga da nessuna parte: la maestra vedeva due tendine vuote e un bottone
+// che non rispondeva più.
+// 🔻 80 → 78 il 2026-09-09 (secondo ciclo dello stesso giorno, dal branch della vigilanza
+// chat): bonificati due catch muti in `admin/messaggi/page.tsx`. Erano i due che contavano:
+// uno inghiottiva il fallimento dell'elenco delle conversazioni (una lista vuota per un
+// guasto di rete è indistinguibile da «nessuna conversazione»), l'altro quello
+// dell'apertura di una conversazione — che adesso può fallire per una ragione nuova, il 503
+// `VIGILANZA_NON_TRACCIABILE`, e mostrarla come una chat vuota sarebbe stato il peggiore dei
+// silenzi.
+//
+// I due cicli sono nati in parallelo su due branch: i numeri qui sotto sono la SOMMA delle
+// due bonifiche (51−1 file, 81−1−2 occorrenze), e coincidono con le 50 voci e la somma 78
+// misurate in `docs/superpowers/catch-muti-allowlist.json`.
+const MAX_FILE = 50;
+const MAX_OCCORRENZE = 78;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

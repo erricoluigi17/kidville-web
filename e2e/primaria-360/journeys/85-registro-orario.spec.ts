@@ -36,9 +36,17 @@ test.describe('FASE 2 — registro slot esclusi + editor orari', () => {
 
         // La riga "Intervallo" è presente (slot escluso reso visibile, non firmabile).
         await expect(page.getByText('Intervallo').first()).toBeVisible({ timeout: 35000 });
-        // Le sole lezioni sono firmabili: 5 pulsanti Firma/Modifica (l'intervallo non ha pulsante).
-        await expect(page.getByRole('button', { name: /^(Firma|Modifica)$/ })).toHaveCount(5);
-        // Il conteggio "ore firmate" è su 5 (lezioni), non 6 (con intervallo).
+        // Le sole lezioni sono firmabili: l'intervallo non ha pulsante.
+        //
+        // SEI, e non più cinque, dal 2026-09-09. Fino a quel giorno il generatore
+        // faceva `Math.round(27 / 5) = 5` e produceva 25 ore a fronte di 27
+        // dichiarate: due ore a settimana, ~66 l'anno, che non esistevano nel
+        // registro e quindi non erano né firmabili né conteggiabili. Ora il resto
+        // si distribuisce — 6 + 6 + 5 + 5 + 5 = 27 — e i primi giorni portano
+        // l'ora in più, quindi il lunedì ne ha sei. Questa riga è il conto che
+        // torna: se un domani tornasse a cinque, sarebbe il difetto di ritorno.
+        await expect(page.getByRole('button', { name: /^(Firma|Modifica)$/ })).toHaveCount(6);
+        // Il conteggio "ore firmate" è sulle sole lezioni, non sull'intervallo.
         await expect(page.getByText(/ore firmate/i)).toBeVisible();
       } finally {
         await seg.dispose();

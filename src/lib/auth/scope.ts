@@ -491,6 +491,137 @@ export async function assertSezioneInScope(
 }
 
 /**
+ * FIRMA DEL REGISTRO DI PRIMARIA — un gate SUO, e il motivo per cui non è
+ * `assertSezioneInScope` con un'opzione in più.
+ *
+ * ─── LA DECISIONE (titolare, 2026-09-09) ────────────────────────────────────
+ * Un docente può firmare il registro in QUALUNQUE sezione `school_type =
+ * 'primaria'` della PROPRIA sede, anche in una che non gli è assegnata: è la
+ * supplenza, e in una scuola vera succede ogni settimana. Misurato sul database
+ * di produzione il 2026-09-09: 15 educator con grado primaria × 11 sezioni di
+ * primaria dànno 75 combinazioni nella stessa sede, di cui **38 già assegnate e
+ * 37 no**; 13 educator su 15 guadagnano almeno una classe in cui prima
+ * ricevevano 403.
+ *
+ * ─── PERCHÉ UNA FUNZIONE NUOVA E NON UN PARAMETRO SU `assertSezioneInScope` ──
+ * Perché quella la condividono valutazioni, note disciplinari, pagelle,
+ * scrutinio e fascicolo — cioè l'anagrafica e i dati sanitari di 133 bambini.
+ * Un'opzione `permettiSupplenza` lì dentro sarebbe a un `true` di distanza
+ * dall'aprire tutto il resto, e il giorno che qualcuno la passasse per sbaglio
+ * non se ne accorgerebbe nessuno: nessun test rosso, solo dati visibili a chi
+ * non doveva. Il permesso più largo si scrive dove serve, non dove si condivide.
+ *
+ * ─── I CONFINI CHE RESTANO, E QUELLO CHE CADE ───────────────────────────────
+ *  · la SEDE è invalicabile e fail-closed (`scuoleDiUtente` risponde `[]` su una
+ *    lettura fallita, e da lì si nega): la classe deve stare in un plesso
+ *    dell'utente. Ha un test negativo suo.
+ *  · il GRADO della classe deve essere `primaria`: questa è la porta del
+ *    registro di primaria, non di quello 0-6 (`register/lessons`).
+ *  · cade SOLO il requisito dell'assegnazione in `utenti_sezioni` per
+ *    l'`educator`. Non sparisce però: diventa un'ETICHETTA (`supplenza`) che il
+ *    chiamante scrive nell'audit, perché «chi ha firmato in una classe non sua»
+ *    è esattamente la domanda che ci si farà a posteriori.
+ *
+ * ⚠️ `sezioniDiUtente` risponde `[]` anche quando la lettura FALLISCE (logga e
+ * degrada). Qui quel guasto non nega niente — non è più un permesso — e sposta
+ * l'etichetta verso `supplenza: true`: si sovra-dichiara invece di tacere, che
+ * per un audit è il verso giusto in cui sbagliare.
+ */
+export type EsitoFirmaPrimaria =
+  | { response: NextResponse; supplenza?: undefined }
+  | { response?: undefined; supplenza: boolean }
+
+/**
+ * «Questa COLONNA non esiste in questo database» — il DB E2E della CI non è
+ * migrato. Fratello di `TABELLA_ASSENTE`, e tenuto separato apposta: qui una
+ * colonna assente degrada il solo controllo del GRADO, mai quello della SEDE.
+ */
+const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
+
+/**
+ * La sezione è firmabile da questo utente? Ritorna una risposta 4xx/5xx pronta,
+ * oppure `supplenza: true` quando la classe NON è fra quelle assegnate.
+ */
+export async function assertSezionePrimariaFirmabile(
+  supabase: SupabaseClient,
+  user: AppUser,
+  // `string` e non `string | null | undefined` come le `assert*` storiche: il
+  // solo chiamante è `primaria/registro:POST`, dove `sectionId` è già passato da
+  // `zUuid`. Un ramo «sectionId mancante» qui sarebbe una risposta d'errore in
+  // più che nessuna richiesta può raggiungere, e il compilatore fa il lavoro
+  // meglio di un `if`.
+  sectionId: string,
+): Promise<EsitoFirmaPrimaria> {
+  // `sections.school_type` esiste su produzione e sul DB E2E (le journey 82 e 84
+  // ci asseriscono sopra). Se un giorno non ci fosse, il GRADO degrada APERTO —
+  // con una riga che lo dice — e la SEDE resta invariata: è il solo criterio che
+  // non si degrada mai.
+  let gradoNoto = true
+  let res = await supabase
+    .from('sections')
+    .select('id, scuola_id, school_type')
+    .eq('id', sectionId)
+    .maybeSingle()
+  if (res.error && COLONNA_ASSENTE.has((res.error as { code?: string }).code ?? '')) {
+    logEvento('auth', 'warn', {
+      tipo: 'firma-primaria-grado-non-leggibile', azione: 'assertSezionePrimariaFirmabile',
+      utente: user.id, ruolo: user.role, sezione: sectionId,
+    }, res.error)
+    gradoNoto = false
+    res = await supabase.from('sections').select('id, scuola_id').eq('id', sectionId).maybeSingle()
+  }
+  // PostgREST non lancia: senza questo controllo un guasto di lettura diventa un
+  // 404 «Sezione non trovata», cioè un'affermazione su un dato che non si è letto.
+  if (res.error) {
+    return { response: scopeNonRisolto('scope-firma-primaria-non-risolta', res.error, { utente: user.id, sezione: sectionId }) }
+  }
+  const section = res.data as { id: string; scuola_id: string | null; school_type?: string | null } | null
+  if (!section) {
+    // Le due risposte NUOVE di questa funzione nascono col loro `codice`: una
+    // risposta che nasce senza è debito che ricresce dentro il lock che esiste per
+    // impedirlo (`__tests__/architecture/errori-con-codice.test.ts`). Le frasi
+    // italiane restano come ripiego per i client vecchi; quelle che l'utente legge
+    // stanno in `messages/{it,en}/shared.json`.
+    return { response: NextResponse.json({ error: 'Sezione non trovata', codice: 'SEZIONE_NON_TROVATA' }, { status: 404 }) }
+  }
+
+  // 1) LA SEDE. Fail-closed: `scuoleDiUtente` torna `[]` su lettura fallita.
+  const plessi = await scuoleDiUtente(supabase, user)
+  if (!section.scuola_id || !plessi.includes(section.scuola_id)) {
+    logEvento('auth', 'warn', {
+      tipo: 'firma-primaria-fuori-sede', azione: 'assertSezionePrimariaFirmabile',
+      utente: user.id, ruolo: user.role, sezione: sectionId,
+    })
+    // `rifiutoSede` e non una frase scritta a mano: il diniego di sede ha UN
+    // codice (`SEDE_NON_ACCESSIBILE`) e il client lo traduce. Le funzioni sopra
+    // hanno ancora la prosa italiana cablata — è il debito congelato da
+    // `__tests__/architecture/errori-con-codice.test.ts` — ma una risposta NUOVA
+    // non ha motivo di nascere già in italiano dentro un'interfaccia inglese.
+    return { response: rifiutoSede('SEDE_NON_ACCESSIBILE') }
+  }
+
+  // 2) IL GRADO DELLA CLASSE. Il registro 0-6 ha una porta sua.
+  if (gradoNoto && section.school_type !== 'primaria') {
+    logEvento('auth', 'warn', {
+      tipo: 'firma-primaria-classe-non-primaria', azione: 'assertSezionePrimariaFirmabile',
+      utente: user.id, ruolo: user.role, sezione: sectionId, grado: section.school_type ?? null,
+    })
+    return { response: NextResponse.json({ error: 'Questa classe non è di scuola primaria', codice: 'CLASSE_NON_DI_PRIMARIA' }, { status: 403 }) }
+  }
+
+  // 3) L'ASSEGNAZIONE: non è più un permesso, è un'etichetta.
+  // Chi vede tutte le classi del plesso (admin/coordinator/segreteria) non fa
+  // supplenza per definizione: agisce sull'intera scuola per progetto.
+  if (vedeTutteLeClassi(user)) return { supplenza: false }
+  const mie = await sezioniDiUtente(supabase, user.id)
+  // Si confronta `section.id` (il valore CANONICO che arriva dal database) e non
+  // la stringa del client: in Postgres `uuid` è un tipo, quindi `.eq()` avrebbe
+  // trovato la riga anche in MAIUSCOLO, mentre `Array.includes` no — e la firma
+  // di una classe propria sarebbe finita in audit come supplenza.
+  return { supplenza: !mie.includes(section.id) }
+}
+
+/**
  * Verifica che una classe identificata per NOME (es. 'Girasoli') appartenga a un
  * plesso dell'utente. Per i moduli 0-6/trasversali keyed sul nome sezione: il
  * nome viene risolto SOLO entro i plessi consentiti, così non porta mai

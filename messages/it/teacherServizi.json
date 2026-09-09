@@ -207,6 +207,7 @@
   "galleryAlertVideoFormatoNonSupportato": "Formato video non supportato ({tipo}). Carica un file .mp4 (H.264) o .webm: i video .mov/HEVC (tipici di iPhone) vanno convertiti prima del caricamento.",
   "galleryAlertVideoOltreIlLimite": "Il video supera il limite di 50 MB (dimensione attuale: {dimensione}). Accorcialo o riducine la qualità, poi riprova.",
   "galleryErrTroppoGrande": "Il file supera i 50 MB. Registra un video più breve e riprova.",
+  "galleryErrFormatoNonAmmesso": "Questo formato non \u00e8 supportato. Carica una foto JPG, PNG o WebP, oppure un video MP4 o WebM.",
   "galleryErrFirma": "Non è stato possibile preparare il caricamento. Riprova fra qualche minuto.",
   "galleryErrTrasferimento": "Il caricamento si è interrotto. Riprova.",
   "galleryErrRete": "Connessione assente o instabile: il file non è partito. Riprova quando torna la rete.",

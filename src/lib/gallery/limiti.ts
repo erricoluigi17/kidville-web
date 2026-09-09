@@ -46,6 +46,29 @@ export const MIME_GALLERIA = [
 export const TETTO_GALLERIA_BYTE = 52_428_800
 
 /**
+ * IL SOLO CONTAINER, senza i parametri che il produttore ci ha appeso.
+ *
+ * `MediaRecorder` non consegna `video/mp4`: consegna `video/mp4;codecs=avc1`, e quel
+ * tipo entra nel `File` convertito (`@/lib/media/processing`) e da lì, grezzo, in due
+ * confronti che i parametri non li tollerano — il nostro `z.enum` e `allowed_mime_types`
+ * del bucket. Il 2026-09-08 questo ha fermato TUTTI i video della galleria: 33 tentativi
+ * respinti con 400, 8 insegnanti, 3 sedi, e nel bucket nessun video nuovo per un giorno
+ * intero mentre le foto continuavano a passare dalla stessa porta.
+ *
+ * ⚠️ ERA LA SECONDA VOLTA (la prima è nel PRD al 2026-07-13, DL-051/052). Il repo la
+ * lezione la conosceva e la applicava in tre punti — `api/gallery/upload`,
+ * `api/news/upload`, `validateVideoFile` — ognuno con il suo `split` a mano. Da qui in
+ * avanti, per la galleria, la regola ha un nome solo.
+ *
+ * Il `toLowerCase` non è un di più: `MIME_GALLERIA` è tutto minuscolo, quindi senza di
+ * esso anche un `Video/MP4` — legittimo, i tipi MIME sono case-insensitive — prenderebbe
+ * lo stesso 400.
+ */
+export function mimeBase(mime: string): string {
+    return (mime || '').split(';')[0].trim().toLowerCase()
+}
+
+/**
  * L'estensione dal MIME VALIDATO, mai dal nome del file.
  *
  * Il nome di un file di galleria è `IMG_bambina-rossi.mov`: anagrafica di un minore,

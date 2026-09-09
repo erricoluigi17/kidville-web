@@ -449,6 +449,36 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       ).toBe(limiteDichiarato('gallery'))
     })
 
+    // ── LA PREMESSA DELLA NORMALIZZAZIONE, dal 2026-09-09 ────────────────────
+    //
+    // Tutto il rimedio al guasto del 2026-09-08 — `mimeBase()` in tre punti — poggia su
+    // un'assunzione muta: che il BERSAGLIO del confronto sia canonico. Se un giorno una
+    // di queste liste dichiarasse `video/mp4;codecs=avc1` o `Video/MP4`, normalizzare
+    // l'ingresso non lo farebbe più combaciare, e si tornerebbe al 400 — con la
+    // differenza che stavolta il codice sembrerebbe averlo già risolto.
+    //
+    // Questo test NON impedisce la ricomparsa del difetto (quella la misurano
+    // `gallery-upload-url.test.ts` e `gallery-carica-media.test.ts`, che sono
+    // comportamentali): afferma la premessa senza la quale quelli non vogliono dire
+    // niente. Di più sarebbe teatro — un grep per `mimeBase(` sarebbe un lock per
+    // PROSSIMITÀ, la specie che in questo repo è già rimasta verde con la forma
+    // sbagliata rimessa a mano.
+    it('le liste sono CANONICHE: nessun parametro, nessuna maiuscola', () => {
+      const fonti: Array<[string, string[]]> = [
+        ['la migrazione', mimeDichiarati('gallery')],
+        ['la route multipart', mimeBucketNelCodice('src/app/api/gallery/upload/route.ts')],
+        ['la porta che firma', mimeNelCodice('src/lib/gallery/limiti.ts', 'MIME_GALLERIA')],
+      ]
+      for (const [nome, lista] of fonti) {
+        expect(
+          lista.filter((m) => /[;\s]/.test(m) || m !== m.toLowerCase()),
+          `${nome} dichiara un mime non canonico. La normalizzazione dell'ingresso ` +
+            '(`mimeBase`) confronta contro QUESTA lista: un parametro o una maiuscola qui ' +
+            'rimetterebbe in piedi il 400 del 2026-09-08, con il codice che sembra averlo risolto.',
+        ).toEqual([])
+      }
+    })
+
     it('non ammette formati che una delle due piattaforme non riproduce', () => {
       // La regola dietro l'elenco, scritta come regola e non come elenco: qualunque
       // aggiunta futura deve passare di qui. `video/quicktime` è il caso che l'ha

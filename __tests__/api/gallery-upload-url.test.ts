@@ -53,6 +53,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { POST } from '@/app/api/gallery/upload-url/route'
+import { MIME_GALLERIA, estensioneDaMime } from '@/lib/gallery/limiti'
 
 const richiesta = (corpo: unknown) =>
   ({
@@ -81,6 +82,17 @@ const testaHevc = () => {
   b.set([0x68, 0x76, 0x63, 0x31], 8)              // 'hvc1'
   return Buffer.from(b).toString('base64')
 }
+
+/** La firma EBML (0x1A45DFA3) in testa: è così che si riconosce un webm. */
+const testaWebm = () => {
+  const b = new Uint8Array(64)
+  b.set([0x1a, 0x45, 0xdf, 0xa3], 0)
+  return Buffer.from(b).toString('base64')
+}
+
+/** La testa giusta per un mime della lista: i video ne hanno bisogno, le immagini no. */
+const testaPer = (mime: string) =>
+  mime === 'video/webm' ? testaWebm() : mime.startsWith('video/') ? testaAvc1() : undefined
 
 const CORPO_OK = { mime: 'video/mp4', size: 12_000_000, testa_b64: testaAvc1() }
 
@@ -172,5 +184,58 @@ describe('POST /api/gallery/upload-url', () => {
     // «bucket not found» non è una frase da mostrare a un'insegnante, e porta fuori
     // il nome del bucket e dei suoi vincoli (S31).
     expect(JSON.stringify(j)).not.toContain('bucket not found')
+  })
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // IL SUFFISSO CODEC — il difetto misurato il 2026-09-08.
+  //
+  // `MediaRecorder` non produce `video/mp4`: produce `video/mp4;codecs=avc1`, ed è
+  // il tipo che finisce dentro il `File` convertito (`processing.ts:330-335`) e da
+  // lì nel corpo di QUESTA richiesta. `z.enum` confronta per uguaglianza, quindi
+  // rispondeva 400 — e in `app_log` di quel giorno ci sono **33 tentativi** da
+  // 8 insegnanti in 3 sedi, fra le 08:26 e le 16:56, mentre nel bucket i video
+  // fermi a 3 in tutto, l'ultimo del 07/09 alle 17:52. Le foto passavano dalla
+  // stessa porta: `processImageWithWatermark` consegna un `image/jpeg` pulito.
+  //
+  // ⚠️ È LA SECONDA VOLTA. Il PRD registra la stessa lezione al 2026-07-13
+  // (DL-051/052, «MIME video normalizzato — codec suffix vs allow-list bucket»):
+  // era stata imparata, ed è andata persa il giorno in cui è nata una porta nuova.
+  describe('il mime col suffisso codec, che è ciò che il client produce davvero', () => {
+    it('`video/mp4;codecs=avc1` ⇒ 200 e un path .mp4, non 400', async () => {
+      const res = await POST(richiesta({ ...CORPO_OK, mime: 'video/mp4;codecs=avc1' }))
+      expect(res.status).toBe(200)
+      expect(String((await res.json()).path)).toMatch(/\.mp4$/)
+    })
+
+    it('`video/webm;codecs=vp9` ⇒ 200 e un path .webm: lo sniff gira sul tipo normalizzato', async () => {
+      const res = await POST(richiesta({ mime: 'video/webm;codecs=vp9', size: 9_000_000, testa_b64: testaWebm() }))
+      expect(res.status).toBe(200)
+      expect(String((await res.json()).path)).toMatch(/\.webm$/)
+    })
+
+    // Legato alla costante CONDIVISA, non a una lista copiata qui: se domani
+    // `MIME_GALLERIA` cambia, questo test cambia con lei invece di marcire.
+    it.each([...MIME_GALLERIA])('«%s» è accettato anche decorato, con la stessa estensione', async (base) => {
+      const decorato = base.startsWith('video/') ? `${base};codecs=xyz1` : base.toUpperCase()
+      const corpo = { size: 900_000, testa_b64: testaPer(base) }
+
+      const nudo = await POST(richiesta({ ...corpo, mime: base }))
+      const conSuffisso = await POST(richiesta({ ...corpo, mime: decorato }))
+
+      expect(conSuffisso.status, `«${decorato}» deve valere «${base}»`).toBe(nudo.status)
+      expect(nudo.status).toBe(200)
+      expect(String((await conSuffisso.json()).path)).toMatch(
+        new RegExp(`\\.${estensioneDaMime(base)}$`),
+      )
+    })
+
+    // Normalizzare non è accettare: tolto il parametro, quel che resta deve ancora
+    // passare dalla lista del bucket. Senza questo, la correzione potrebbe essere
+    // «accetto tutto» e i due test qui sopra resterebbero verdi lo stesso.
+    it('`video/quicktime;codecs=avc1` ⇒ ancora 400 e NESSUNA firma', async () => {
+      const res = await POST(richiesta({ ...CORPO_OK, mime: 'video/quicktime;codecs=avc1' }))
+      expect(res.status).toBe(400)
+      expect(h.createSignedUploadUrl).not.toHaveBeenCalled()
+    })
   })
 })

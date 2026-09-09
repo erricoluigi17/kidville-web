@@ -7,7 +7,7 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
-import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime } from '@/lib/gallery/limiti';
+import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime, mimeBase } from '@/lib/gallery/limiti';
 
 // =============================================================================
 // GALLERIA · URL FIRMATO — il file va dal telefono allo Storage, senza passare di qui.
@@ -55,7 +55,28 @@ import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime }
 const postBodySchema = z.object({
     // La stessa lista del bucket. Un mime fuori elenco qui è un 400: firmare un
     // caricamento che lo Storage poi rifiuta sposta solo il guasto più in là.
-    mime: z.enum(MIME_GALLERIA, { error: 'Formato non ammesso' }),
+    //
+    // ⚠️ IL `preprocess` NON È COSMESI, è il difetto del 2026-09-08. `z.enum` confronta
+    // per UGUAGLIANZA, e il client non manda `video/mp4`: manda `video/mp4;codecs=avc1`,
+    // perché è ciò che `MediaRecorder` scrive nel file convertito. Risultato: 33 caricamenti
+    // respinti in un giorno, 8 insegnanti, 3 sedi, e nel bucket nessun video nuovo mentre le
+    // foto continuavano a passare di qui (`processImageWithWatermark` consegna un
+    // `image/jpeg` pulito). Le due porte gemelle normalizzavano già — `gallery/upload:32`,
+    // `news/upload:55` — questa era l'unica che non lo faceva.
+    //
+    // È la RETE, non il rimedio: l'header `content-type` della `PUT` lo scrive il client e
+    // questa route non lo tocca, quindi un bundle vecchio in cache si salva solo con la
+    // normalizzazione in `@/lib/gallery/carica-media`. Vale comunque, perché una porta non
+    // deve pretendere che il chiamante sia aggiornato.
+    //
+    // `preprocess` e non un controllo a mano: il narrowing di `z.enum` sopravvive, e
+    // soprattutto `parseBody` deposita il corpo GREZZO nel contesto PRIMA di validare —
+    // quindi in `app_log` si continua a leggere ciò che il client ha spedito davvero, che
+    // è esattamente come questo guasto è stato diagnosticato.
+    mime: z.preprocess(
+        (v) => (typeof v === 'string' ? mimeBase(v) : v),
+        z.enum(MIME_GALLERIA, { error: 'Formato non ammesso' }),
+    ),
     size: z.coerce.number().int().min(1).max(TETTO_GALLERIA_BYTE, 'File troppo grande'),
     // I primi 64 KB del file, in base64, per lo sniff del codec. Obbligatori per i
     // video (vedi il fail-closed più sotto), inutili per le immagini. 64 KB in base64

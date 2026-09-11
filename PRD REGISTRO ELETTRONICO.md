@@ -100,6 +100,75 @@
 
 ---
 
+## 🧾 Changelog — «Scartata» diceva CHE, non PERCHÉ: il motivo sta nelle notifiche, dietro un parametro sbagliato da sempre — 2026-09-11 (branch `fix/aruba-motivo-scarto-notifiche`)
+
+La voce qui sotto (stesso giorno) ha sbloccato la coda: le fatture congelate sono rientrate nel giro
+del cron e **le quattro respinte dallo SDI sono emerse**, con `sdi_stato = 4`. Misurato mentre la
+coda si svuotava: 135 righe a «stato sconosciuto» alle 12:12, 6 alle 13:44, 163 depositate.
+
+Ma tutte e quattro sono arrivate a registro con questo motivo:
+
+```
+Aruba: «Scartata» — nessun motivo dal provider
+```
+
+Cioè `getByFilename` risponde `statusDescription`, `errorCode` ed `errorDescription` **tutti vuoti**.
+Lo *stato* lo dà; il *perché* no, e non lo darà mai: su quel canale non c'è. Il perché di uno scarto
+vive nelle **notifiche SdI**, e la funzione che le legge (`arubaGetNotifications`) esisteva dal primo
+giorno con **zero chiamanti** e il parametro sbagliato — mandava `filename` dove la documentazione
+ufficiale (v1 §11.2, livello A) chiede `invoiceFilename`. Era annotata in
+`docs/fatturazione/configurazione-aruba.md` come «divergenza dormiente»: non faceva danni finché
+nessuno la chiamava. Oggi serviva chiamarla.
+
+L'unico test che la toccava era un mock che **ignora l'URL**: verde col nome giusto e con quello
+sbagliato. Il test nuovo ispeziona i parametri con `URLSearchParams`, perché `invoiceFilename`
+*contiene* `filename` e un `toContain` ingenuo non distingue le due cose.
+
+### Cosa è cambiato
+
+| | |
+|---|---|
+| **Il parametro** | `filename` → `invoiceFilename` in `src/lib/aruba/client.ts` |
+| **Il motivo** | il giro, quando uno scarto non porta una descrizione, interroga le notifiche e scrive il motivo vero in `sdi_scarto_motivo` — riusando il token del giro (Aruba concede **1 signin al minuto**) e pagando la pausa del secchio prima di ogni chiamata |
+| **Le fatture già respinte** | una **seconda query** dedicata le ripesca: senza, il recupero sarebbe partito solo sulla *transizione* verso lo scarto, cioè **mai** sulle quattro che l'hanno motivato — `sdi_stato = 4` esce da `STATI_IN_VOLO` e non rientra |
+| **La Segreteria** | `sdi_scarto_motivo` era scritto in quattro punti e **letto da nessuna route**: ora `fattura/list` lo espone e `FatturaButton` lo mostra |
+| **`pg_net`** | `fatture_sdi_sync_tick()` chiamava `net.http_post` senza `timeout_milliseconds`, ereditando **5 s** su un giro che dura 185–242 s |
+
+### Le tre cose che valeva la pena sbagliare una volta sola
+
+**Il ripescaggio deve TERMINARE.** Una riga per cui le notifiche non dicono mai niente verrebbe
+richiesta a ogni giro, per sempre, due richieste ogni mezz'ora su un secchio da 12 al minuto —
+cioè la correzione sarebbe stata peggio del difetto. Dopo **un** tentativo la riga esce dalla coda
+grazie a un marcatore scritto **dentro `sdi_scarto_motivo`**, cioè nella colonna che la Segreteria
+apre: l'esclusione è visibile a chi la subisce, non solo a chi legge il codice. Il marcatore si
+scrive **anche quando la chiamata fallisce** — un `429` e un `404` da qui sono indistinguibili — ma
+il testo non mente: dice «lettura non riuscita», che è altro da «nessun motivo».
+
+**Il tetto si paga in richieste SPESE, non in righe lette.** Il taglio era applicato *prima* del
+gate della sede: una sede con Aruba spento avrebbe occupato la finestra a ogni tick, sempre con le
+stesse righe (la query non ha `ORDER BY`), e le fatture riparabili delle altre sedi non sarebbero
+state raggiunte mai — col battito che certificava `rientri: 0` come «niente da fare».
+
+**Il corpo di una notifica non si logga.** Porta denominazione, codice fiscale e partita IVA
+dell'intestatario, cioè di una famiglia, e `sanificaMessaggio` maschera email e CF ma **non** una
+ragione sociale. Quando l'estrattore non riconosce la forma si loggano i **nomi** dei campi e la
+loro forma — mai i valori — ed è ciò che permetterà di sostituire l'euristica con una misura alla
+prima notifica vera. Quella garanzia era un commento: ora è un lock, e lo si è visto fallire
+facendo passare il corpo dal quarto argomento di `logEvento`, che il primo test non guardava.
+
+### Cosa resta aperto, detto qui perché non si perda
+
+⚠️ **La forma della risposta di `getByInvoiceFilename` non è mai stata misurata contro l'API vera.**
+Non si poteva: il cron in produzione stava consumando il budget di richieste (l'08/09 sono arrivati
+**9 HTTP 429**) e le credenziali stanno in `.env.local`. L'estrattore è quindi un'euristica
+difensiva su nomi di campo plausibili. Se la forma vera è un'altra, il motivo non viene estratto e
+si torna al motivo povero di oggi — **nessuna regressione** — e la riga `forma notifiche SDI` in
+`app_log` porta i nomi dei campi per correggerlo. È il primo posto da guardare quando arriverà la
+prossima fattura respinta.
+
+⚠️ **La ritrasmissione delle quattro fatture respinte resta una decisione del titolare**: il lavoro
+prepara il motivo, non ritrasmette niente.
+
 ## 🧾 Changelog — Lo stato SDI si leggeva a un livello dove non è mai esistito, e quattro fatture respinte risultavano regolari — 2026-09-11 (branch `feat/pagamenti-fattura-senza-ricevuta`)
 
 `GET /services/invoice/out/getByFilename` è l'unica domanda che facciamo ad Aruba dopo aver spedito

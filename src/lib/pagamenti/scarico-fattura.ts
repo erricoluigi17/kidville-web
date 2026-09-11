@@ -71,6 +71,41 @@ export interface FatturaScaricabile {
      * (T10-F1). Sta qui per dichiarare il contratto, non per finire a schermo.
      */
     sdi_stato_label?: string | null;
+    /**
+     * IL PERCHÉ DI UNO SCARTO, NELLE PAROLE DI ARUBA/SDI — e la sola voce di
+     * questo contratto che si rende a schermo in UNA pelle sola.
+     *
+     * Si mostra alla SEGRETERIA, dove è l'unica informazione con cui si corregge e
+     * si ritrasmette un documento fiscale. Non si mostra MAI al GENITORE: è prosa
+     * tecnica del provider, e le schermate di famiglia prendono le loro frasi dal
+     * catalogo i18n (T10-F1) — la stessa ragione per cui `sdi_stato_label` qui
+     * sopra non si rende affatto.
+     *
+     * ⚠️ È OPZIONALE PERCHÉ IL SERVER LO OMETTE DAVVERO: `fattura/list` lo mette
+     * nel corpo solo per i ruoli di contabilità (`RUOLI_MOTIVO_SCARTO`, in
+     * `src/app/api/pagamenti/fattura/list/route.ts`). Sulla risposta che riceve
+     * una famiglia la chiave non c'è proprio — e non è una difesa in più della UI:
+     * è che una risposta HTTP si ispeziona, quindi ciò che viaggia è consegnato.
+     */
+    sdi_scarto_motivo?: string | null;
+}
+
+/**
+ * UNA FATTURA RESPINTA, ridotta a ciò che serve per dirlo a schermo.
+ *
+ * Tipo suo e non `FatturaScaricabile` perché le due cose non coincidono, ed è
+ * misurato: in produzione la riga a `sdi_stato = 2` (errore di upload) porta un
+ * motivo e NON ha nessun PDF. Chiamare «scaricabile» una fattura che non esiste
+ * come file sarebbe un nome che mente, e il giorno dopo qualcuno ci appenderebbe
+ * un pulsante «Scarica».
+ */
+export interface ScartoFattura {
+    /** Quale quota: serve come chiave di lista, non si mostra. */
+    id: string;
+    /** Il numero sezionale: è come la fattura si nomina al telefono col commercialista. */
+    numero: number | string;
+    /** La prosa del provider, già ripulita dagli spazi. Mai vuota: le vuote non entrano. */
+    motivo: string;
 }
 
 export interface ElencoFatture {
@@ -78,9 +113,35 @@ export interface ElencoFatture {
     caricamento: boolean;
     /** SOLO le righe con `pdf_disponibile` vero. Vuoto = non si rende NIENTE. */
     scaricabili: FatturaScaricabile[];
+    /**
+     * Le quote che lo SDI ha respinto, col loro motivo.
+     *
+     * ⚠️ NON È UN SOTTOINSIEME DI `scaricabili`, e non deve diventarlo: la riga
+     * misurata in produzione con l'errore di upload un PDF non ce l'ha, ed è
+     * proprio quella su cui oggi la segreteria non vede niente. Legare il motivo
+     * alla presenza del file lo nasconderebbe nel caso in cui serve di più.
+     *
+     * Per il GENITORE resta vuoto sempre, e non per una scelta di questo modulo:
+     * il server non gli manda il campo da cui si ricava.
+     */
+    scarti: ScartoFattura[];
 }
 
-const IN_CARICAMENTO: ElencoFatture = { caricamento: true, scaricabili: [] };
+const IN_CARICAMENTO: ElencoFatture = { caricamento: true, scaricabili: [], scarti: [] };
+
+/**
+ * Le righe respinte, dal corpo della risposta.
+ *
+ * Un motivo fatto di soli spazi vale «nessun motivo»: un riquadro che annuncia una
+ * spiegazione e poi non la dà è peggio di nessun riquadro — manda a cercare al
+ * telefono qualcosa che a schermo non c'è.
+ */
+function scartiDa(righe: FatturaScaricabile[]): ScartoFattura[] {
+    return righe.flatMap((f) => {
+        const motivo = typeof f?.sdi_scarto_motivo === 'string' ? f.sdi_scarto_motivo.trim() : '';
+        return motivo ? [{ id: f.id, numero: f.numero, motivo }] : [];
+    });
+}
 
 interface StatoElenco extends ElencoFatture {
     /**
@@ -144,7 +205,7 @@ export function useFattureScaricabili(pagamentoId: string, userId: string): Elen
                         evento: 'fetch',
                         messaggio: `fattura-elenco-non-letto: http-${res.status}`,
                     });
-                    if (attivo) setStato({ caricamento: false, scaricabili: [], chiave });
+                    if (attivo) setStato({ caricamento: false, scaricabili: [], scarti: [], chiave });
                     return;
                 }
                 const corpo = (await res.json()) as { success?: boolean; data?: unknown } | null;
@@ -158,6 +219,10 @@ export function useFattureScaricabili(pagamentoId: string, userId: string): Elen
                         // assente su una risposta più vecchia deve valere «non lo so»,
                         // cioè nessun comando — mai «probabilmente sì».
                         scaricabili: righe.filter((f) => f?.pdf_disponibile === true),
+                        // NON filtrato su `pdf_disponibile`: una fattura respinta il
+                        // file può non averlo affatto, ed è il caso in cui il motivo
+                        // serve di più. Vedi `ElencoFatture.scarti`.
+                        scarti: scartiDa(righe),
                         chiave,
                     });
                 }
@@ -169,7 +234,7 @@ export function useFattureScaricabili(pagamentoId: string, userId: string): Elen
                     evento: 'fetch',
                     messaggio: `fattura-elenco-non-letto: ${nomeErrore(e)}`,
                 });
-                if (attivo) setStato({ caricamento: false, scaricabili: [], chiave });
+                if (attivo) setStato({ caricamento: false, scaricabili: [], scarti: [], chiave });
             }
         };
 
@@ -179,7 +244,7 @@ export function useFattureScaricabili(pagamentoId: string, userId: string): Elen
 
     // Finché lo stato parla di un ALTRO pagamento, siamo in fase 1 per questo.
     return stato.chiave === chiaveDi(pagamentoId, userId)
-        ? { caricamento: stato.caricamento, scaricabili: stato.scaricabili }
+        ? { caricamento: stato.caricamento, scaricabili: stato.scaricabili, scarti: stato.scarti }
         : IN_CARICAMENTO;
 }
 

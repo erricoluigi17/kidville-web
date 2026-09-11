@@ -47,9 +47,12 @@ const AMMESSE = new Map<string, readonly string[]>([
   // SOLI figli di chi chiama ed è il perno delle policy «parents space» (una sottoquery dentro
   // un'espressione di policy è a sua volta soggetta alla RLS: senza di lei quelle policy non
   // funzionerebbero).
-  // Tre — `exec_sql`, `prossimo_numero_fattura`, `fatture_sdi_sync_tick` — non hanno un REVOKE
-  // nominativo in NESSUNA migrazione: in produzione risultano chiuse perché il GRANT non è mai
-  // stato dato, non perché qualcuno l'abbia tolto. Su un progetto Supabase ricostruito da zero
+  // Erano TRE — `exec_sql`, `prossimo_numero_fattura`, `fatture_sdi_sync_tick` — a non avere un
+  // REVOKE nominativo in NESSUNA migrazione: in produzione risultavano chiuse perché il GRANT non
+  // era mai stato dato, non perché qualcuno l'avesse tolto.
+  // ✅ `fatture_sdi_sync_tick` è stata sanata il 2026-09-11 da
+  // `20260911113000_fattura_sync_timeout_pg_net.sql`, che la ridefiniva per un'altra ragione e ne
+  // ha approfittato — esattamente come questo commento prescrive. Ne restano DUE. Su un progetto Supabase ricostruito da zero
   // con `ALTER DEFAULT PRIVILEGES … GRANT EXECUTE … TO anon, authenticated` attive, nascerebbero
   // aperte. Va sanato con una migrazione dedicata, non allargando questa lista.
   [

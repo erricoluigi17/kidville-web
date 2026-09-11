@@ -3,6 +3,12 @@ import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireUser } from '@/lib/auth/require-staff'
+// ⚠️ I predicati si importano da `predicati-ruolo` e MAI da `require-staff`, che
+// pure li ri-esporta: quasi 300 file di test sostituiscono `require-staff` per
+// intero con una factory `vi.mock`, e un export in più là dentro li renderebbe
+// rossi in massa («No "haUnRuolo" export is defined on the mock»). Il modulo puro
+// non fa I/O, nessuno lo mocka, ed è il motivo per cui esiste.
+import { haUnRuolo, type AppRole } from '@/lib/auth/predicati-ruolo'
 import { assertFatturaInScope } from '@/lib/pagamenti/scope-fattura'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
@@ -59,7 +65,53 @@ interface RigaFattura {
   pdf_path: string | null
   sdi_stato: number | null
   sdi_stato_label: string | null
+  /** Il perché di uno scarto, nelle parole di Aruba/SDI. Vedi `RUOLI_MOTIVO_SCARTO`. */
+  sdi_scarto_motivo: string | null
 }
+
+/**
+ * CHI PUÒ LEGGERE IL MOTIVO DI UNO SCARTO — e perché non basta il gate di questa
+ * rotta.
+ *
+ * ─── IL GATE AMMETTE DUE PUBBLICI DIVERSI ──────────────────────────────────
+ *
+ * `assertFatturaInScope` fa passare la FAMIGLIA (per legame col bambino) e lo
+ * STAFF (per plesso): questo elenco lo chiedono tutte e due le pelli, la card del
+ * genitore (`StoricoPagamenti`) e la riga della segreteria (`FatturaButton`).
+ * Sono entrambi accessi legittimi allo stesso elenco, quindi il permesso non
+ * basta a decidere quali CAMPI far viaggiare.
+ *
+ * ─── PERCHÉ QUESTO CAMPO SI FERMA QUI ──────────────────────────────────────
+ *
+ * `sdi_scarto_motivo` è prosa tecnica del provider — «00311 - Codice
+ * destinatario non valido», «Codice fiscale del cessionario non valido» — scritta
+ * per chi ritrasmette il documento. A una famiglia non dice niente di azionabile
+ * e racconta il funzionamento interno della fatturazione della scuola; per di più
+ * è testo del server, mentre le schermate di famiglia prendono le loro frasi dal
+ * catalogo i18n (T10-F1), che è la stessa ragione per cui `sdi_stato_label` non
+ * si rende (vedi il commento su `FatturaScaricabile`, in
+ * `@/lib/pagamenti/scarico-fattura`).
+ *
+ * ⚠️ E NON BASTA CHE LA UI DEL GENITORE NON LO RENDA: una risposta HTTP si
+ * ispeziona, e ciò che viaggia è consegnato. Il campo si OMETTE dal corpo, non si
+ * nasconde a schermo.
+ *
+ * ─── SUI RUOLI REALI, NON SULLA VESTE ──────────────────────────────────────
+ *
+ * `haUnRuolo` guarda `utenti.ruolo` + il ponte `parents`, non il cookie del ruolo
+ * attivo: una segretaria che è anche mamma resta una segretaria anche mentre
+ * guarda l'app da genitore. È AUTORIZZAZIONE, e l'autorizzazione non cambia con
+ * la vista che si sta guardando (`@/lib/auth/predicati-ruolo`).
+ *
+ * L'elenco è lo stesso di `RUOLI_CONTABILITA` in `@/lib/pagamenti/scope-fattura`,
+ * ed è ricopiato invece di importato per una ragione precisa: là dentro decide
+ * CHI PASSA IL GATE, qui decide COSA VEDE CHI È GIÀ PASSATO. Sono due domande
+ * diverse sullo stesso insieme di oggi, e legarle vorrebbe dire che allargare
+ * l'una allarga l'altra in silenzio — per esempio ammettendo un ruolo nuovo
+ * all'elenco delle fatture e regalandogli, senza che nessuno lo decida, anche la
+ * prosa del provider.
+ */
+const RUOLI_MOTIVO_SCARTO: readonly AppRole[] = ['admin', 'coordinator', 'segreteria']
 
 /**
  * I nomi degli oggetti che il bucket `fatture` ha DAVVERO per questo pagamento,
@@ -159,7 +211,7 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
 
     const { data, error } = await supabase
       .from('fatture_emesse')
-      .select('id, numero, anno, quota_label, quota_adult_id, intestatario, pdf_path, sdi_stato, sdi_stato_label')
+      .select('id, numero, anno, quota_label, quota_adult_id, intestatario, pdf_path, sdi_stato, sdi_stato_label, sdi_scarto_motivo')
       .eq('pagamento_id', pagamento_id)
       .order('numero', { ascending: true })
     if (error) {
@@ -196,7 +248,9 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
     }
 
     // Una riga per quota: tengo la più recente (numero massimo), così una quota
-    // scartata e poi ri-emessa non compare due volte.
+    // scartata e poi ri-emessa non compare due volte. E il motivo dello scarto
+    // segue QUELLA riga, non la più vecchia: mostrare il rifiuto di un documento
+    // già sostituito manderebbe la segreteria a correggere una fattura ripartita.
     const perQuota = new Map<string, RigaFattura>()
     for (const r of (data ?? []) as RigaFattura[]) {
       const key = r.quota_adult_id ?? '__single__'
@@ -212,6 +266,10 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
     const daVerificare = scelte.some((r) => Boolean(r.pdf_path))
     const presenti = daVerificare ? await nomiNelBucket(supabase, pagamento_id) : new Set<string>()
 
+    // La domanda si fa UNA volta, fuori dal ciclo: è una proprietà di chi chiede,
+    // non della singola riga.
+    const motivoVisibile = haUnRuolo(auth.user, RUOLI_MOTIVO_SCARTO)
+
     const fatture = scelte.map((r) => {
       const intest = r.intestatario ?? {}
       const nome = `${intest.nome ?? ''} ${intest.cognome ?? ''}`.trim()
@@ -224,6 +282,10 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
         // La colonna dice DOVE cercare, il bucket dice se c'è: servono entrambi.
         pdf_disponibile: Boolean(r.pdf_path) && presenti !== null && presenti.has(r.pdf_path as string),
         sdi_stato_label: r.sdi_stato_label,
+        // La chiave si OMETTE, non si azzera: per la famiglia questo campo non
+        // deve comparire affatto nel corpo — nemmeno come `null`, che sarebbe
+        // comunque il racconto di una colonna che non la riguarda.
+        ...(motivoVisibile ? { sdi_scarto_motivo: r.sdi_scarto_motivo ?? null } : {}),
       }
     })
 

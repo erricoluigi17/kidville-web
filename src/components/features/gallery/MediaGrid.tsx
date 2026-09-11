@@ -8,6 +8,7 @@ import { condividiLink } from '@/lib/native/share';
 import { Download, Share2, Play, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
+import { rendiInerteFuoriDaConFocus } from '@/lib/accessibility/inerti';
 
 // Il traduttore va passato a timeAgo(), che è module-level (fuori dal componente).
 type Traduttore = ReturnType<typeof useTranslations>;
@@ -42,6 +43,53 @@ interface Props {
     onDelete?: (id: string) => void; // Solo admin/staff
     students?: Student[]; // Tutti gli studenti della classe per il tagging
     onUpdateTags?: (id: string, newTags: string[]) => Promise<void>; // Salvataggio dei tag
+    /**
+     * Quante colonne ha la griglia. **Lo decide il chiamante, e non il viewport.**
+     *
+     * Fino al 2026-09-11 la griglia era `grid-cols-2 sm:grid-cols-3`, cioè due
+     * colonne sotto i 640 px di VIEWPORT e tre sopra. Ma questo componente è
+     * montato in tre contenitori larghi in modo molto diverso — `max-w-[460px]`
+     * lato insegnante, ~358 px lato genitore, ~1088 px nella vista di sede — e il
+     * breakpoint non ne sa niente: su un tablet in verticale prometteva tre
+     * colonne a una colonna larga 358 px, cioè miniature da 110 px con i comandi
+     * di scarico sopra.
+     *
+     * Il default è 2, il caso stretto: chi ha spazio lo dichiara.
+     */
+    colonne?: 2 | 3 | 4;
+}
+
+/**
+ * LE CLASSI DELLE COLONNE SONO LETTERALI, E NON POTREBBERO NON ESSERLO.
+ *
+ * `grid-cols-${colonne}` non funziona: Tailwind 4 genera le utility leggendo il
+ * SORGENTE, e una stringa composta a runtime non compare in nessun file. La
+ * classe finirebbe nel `class` dell'elemento senza esistere nel CSS — cioè la
+ * griglia resterebbe a una colonna, **in silenzio e col gate verde**. È lo stesso
+ * difetto già misurato in questo repo con `bg-kidville-success-soft0` (lock
+ * `utility-kidville-esistenti`): una classe che non c'è non dà nessun errore.
+ */
+const CLASSI_COLONNE: Record<NonNullable<Props['colonne']>, string> = {
+    2: 'grid-cols-2',
+    3: 'grid-cols-3',
+    4: 'grid-cols-4',
+};
+
+/**
+ * Il nome accessibile della card. Il tipo PRIMA della didascalia, perché è la
+ * differenza che il triangolino comunicava solo a chi vede: «Video: Recita di
+ * fine anno» e «Foto: Laboratorio dei colori» si distinguono al primo carattere.
+ *
+ * La parola del tipo viene dal CATALOGO (`galleryVideo`, `galleryAltFoto`) e non
+ * da un letterale: fino al 2026-09-11 «Video» era scritta qui dentro, unica parola
+ * d'interfaccia del file fuori da `messages/`. La chiave ora esiste in `it` e in
+ * `en` (il lock `messaggi-parita-cataloghi` pretende entrambi) e la misura di
+ * questo passaggio è nel test dell'impaginazione: se la chiave sparisse, a schermo
+ * comparirebbe `shared.galleryVideo` e il test lo dice.
+ */
+function etichettaCard(item: MediaItem, t: Traduttore): string {
+    const tipo = item.file_type === 'video' ? t('galleryVideo') : t('galleryAltFoto');
+    return item.caption ? `${tipo}: ${item.caption}` : tipo;
 }
 
 /*
@@ -133,7 +181,7 @@ function timeAgo(iso: string, t: Traduttore): string {
     return t('galleryGiorniFa', { n: days });
 }
 
-export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags }: Props) {
+export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags, colonne = 2 }: Props) {
     const t = useTranslations('shared');
     const [lightbox, setLightbox] = useState<MediaItem | null>(null);
     const [editMode, setEditMode] = useState(false);
@@ -147,6 +195,52 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
      * `ref` e non uno `state` perché non deve ridisegnare niente.
      */
     const scaricoInCorso = useRef(false);
+
+    /**
+     * IL VISORE È UNA FINESTRA MODALE, E ADESSO SI COMPORTA COME TALE.
+     *
+     * ─── COSA MANCAVA, misurato il 2026-09-11 ────────────────────────────────
+     * Rendere la card un comando da tastiera (WCAG 2.1.1) senza portarci il fuoco
+     * ha spostato il difetto, non l'ha chiuso: premendo Invio il visore si apriva,
+     * il fuoco restava sulla card — che da quell'istante sta DIETRO un velo opaco a
+     * tutto schermo — e per raggiungere «Elimina Media» bisognava tabulare
+     * attraverso l'intera griglia, perché il visore è reso DOPO di lei nel DOM: 30
+     * tappe con 10 foto, 120 con 40. Sono WCAG 2.4.3 (ordine del fuoco) e 2.4.11
+     * (fuoco non coperto) al posto di quella che si stava chiudendo.
+     *
+     * ─── PERCHÉ NON BASTA `aria-modal="true"` ────────────────────────────────
+     * Perché su un `div` non esclude NIENTE: Chromium lo onora solo per il top
+     * layer (`<dialog>` + `showModal()`). È scritto per esteso in testa a
+     * `@/lib/accessibility/inerti`, e misurato su Android il 2026-07-31 — col dump
+     * dell'albero di accessibilità che mostrava ancora i comandi della pagina sotto
+     * la modale. L'attributo senza l'inerzia dello sfondo è decorazione.
+     *
+     * ─── IL PEZZO NON SI RISCRIVE: È GIÀ IN CASA ─────────────────────────────
+     * `rendiInerteFuoriDaConFocus` è lo stesso di `Modal` e di `PageLoader` (e il
+     * registro dei nodi marcati è CONDIVISO, che è ciò che regge il caso «visore
+     * aperto mentre parte una navigazione»). Fa tre cose in una: marca `inert` tutto
+     * fuori dal visore — da cui il contenimento del Tab, gratis e senza trappola
+     * scritta a mano —, ricorda chi aveva il fuoco e glielo restituisce alla
+     * chiusura, e non lo ruba se nel frattempo è finito altrove.
+     *
+     * ⚠️ LA DIPENDENZA È «È APERTO», NON «QUALE MEDIA». Con `[lightbox]` ogni
+     * freccia avanti/indietro rifarebbe girare l'effetto e strapperebbe il fuoco
+     * dalla freccia appena premuta, a ogni foto.
+     */
+    const visoreRef = useRef<HTMLDivElement>(null);
+    const visoreAperto = lightbox !== null;
+
+    useEffect(() => {
+        const radice = visoreRef.current;
+        if (!radice) return;
+        const ripristina = rendiInerteFuoriDaConFocus(radice);
+        // Il fuoco va sul CONTENITORE `role="dialog"` (che ha `tabIndex={-1}`, quindi
+        // riceve il fuoco ma non è una tappa del ciclo): così l'annuncio è il nome
+        // del dialogo — «Foto: Laboratorio dei colori, finestra di dialogo» — e non
+        // il primo bottone che capita, che sarebbe una «✕» senza contesto.
+        radice.focus();
+        return ripristina;
+    }, [visoreAperto]);
 
     /**
      * LO SCARICO, IN UN POSTO SOLO — ed è metà della correzione.
@@ -245,6 +339,13 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
         setTempTagged([]);
     };
 
+    /** L'apertura del visore, in un posto solo: la usano il click e la tastiera. */
+    const apriVisore = (item: MediaItem) => {
+        setLightbox(item);
+        setEditMode(false);
+        setTempTagged(item.tag_students ?? []);
+    };
+
     const currentIndex = lightbox ? items.findIndex(item => item.id === lightbox.id) : -1;
     // Indirizzo firmato del media aperto nel visore, in una const: `null` quando la
     // firma non è riuscita (bucket privato → link a tempo generato dalla GET).
@@ -299,7 +400,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
 
     return (
         <>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div data-testid="griglia-media" className={`grid ${CLASSI_COLONNE[colonne]} gap-3`}>
                 {items.map((item, idx) => {
                     // `url` in una const locale: il restringimento di tipo su
                     // `item.file_url` non sopravvivrebbe dentro gli handler.
@@ -310,43 +411,108 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         transition={{ delay: idx * 0.04, duration: 0.25 }}
-                        className="relative group aspect-square rounded-2xl overflow-hidden bg-kidville-neutral-soft cursor-pointer shadow-sm border border-white/40"
-                        onClick={() => {
-                            setLightbox(item);
-                            setEditMode(false);
-                            setTempTagged(item.tag_students ?? []);
-                        }}
+                        className="relative group aspect-square rounded-2xl overflow-hidden bg-kidville-neutral-soft shadow-sm border border-white/40"
                     >
-                        {item.file_type === 'video' ? (
-                            <div className="w-full h-full bg-kidville-ink flex items-center justify-center">
-                                <Play size={32} className="text-white/80" strokeWidth={1.5} />
-                            </div>
-                        ) : item.file_url ? (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img src={item.file_url} alt={item.caption ?? t('galleryAltFoto')} className="w-full h-full object-cover" />
-                        ) : (
-                            /* Link non firmato: un `<img src="">` mostrerebbe l'icona di
-                               immagine rotta e ripartirebbe con una richiesta sulla pagina
-                               stessa. Meglio dirlo. */
-                            <div className="w-full h-full bg-kidville-cream flex flex-col items-center justify-center gap-1 px-2 text-center">
-                                <ImageOff size={22} className="text-kidville-green/70" strokeWidth={1.5} />
-                                <span className="font-maven text-[10px] leading-tight text-kidville-green/60">
-                                    {t('galleryAnteprimaNonDisponibile')}
-                                </span>
-                            </div>
-                        )}
+                        {/*
+                          IL COMANDO CHE APRE IL VISORE È UN FIGLIO DELLA CARD, NON LA CARD —
+                          ed è una decisione, non una svista.
 
-                        {/* Overlay on hover */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                            <div className="absolute bottom-0 left-0 right-0 p-3">
-                                <p className="font-maven text-xs text-white/90 truncate">{item.caption ?? ''}</p>
-                                <p className="font-maven text-[10px] text-white/60">{item.uploader_name} • {timeAgo(item.created_at, t)}</p>
+                          Prima il gesto viveva su questo `motion.div` con un `onClick` nudo:
+                          nessun `role`, nessun `tabIndex`, nessuna tastiera. Da tastiera il
+                          visore — dove si scarica, si condivide, si segnala e si elimina — non
+                          si apriva in nessun modo (WCAG 2.1.1, livello A).
+
+                          La correzione ovvia sarebbe mettere `role="button"` sulla card. Ma la
+                          card CONTIENE due bottoni veri (Scarica, Condividi), e un comando
+                          dentro un comando è `nested-interactive` per axe: lo screen reader
+                          annuncia un solo bottone e i due che stanno dentro diventano
+                          irraggiungibili. È la stessa lezione già scritta nel lock
+                          `righe-tabella-con-comando`: «una riga trasformata in bottone prende
+                          come nome accessibile tutto il suo contenuto e inghiotte i controlli
+                          che ci vivono dentro».
+
+                          Quindi il comando è questo strato — che copre la miniatura e porta
+                          l'etichetta — e i due bottoni di scarico/condivisione restano FUORI da
+                          lui, fratelli, dentro la card. Un comando, due comandi, nessuno
+                          annidato.
+                        */}
+                        <div
+                            role="button"
+                            tabIndex={0}
+                            aria-label={etichettaCard(item, t)}
+                            onClick={() => apriVisore(item)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    // Spazio su un elemento non nativo fa scorrere la pagina:
+                                    // qui la pressione è il gesto, non lo scorrimento.
+                                    e.preventDefault();
+                                    apriVisore(item);
+                                }
+                            }}
+                            // L'anello di fuoco è DENTRO (offset negativo): la card ha
+                            // `overflow-hidden` e un contorno disegnato fuori sarebbe tagliato.
+                            className="absolute inset-0 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-3px] focus-visible:outline-kidville-green"
+                        >
+                            {item.file_type === 'video' ? (
+                                /* Un quadrato scuro con un triangolino non dice a nessuno che
+                                   cos'è: Play in un cerchio chiaro + la parola. E NESSUN
+                                   `<video>` qui dentro — quaranta miniature sono quaranta
+                                   richieste di metadati su rete mobile. */
+                                <div className="w-full h-full bg-kidville-ink flex flex-col items-center justify-center gap-1.5">
+                                    <span className="w-11 h-11 rounded-full bg-white/90 flex items-center justify-center shadow-md">
+                                        <Play size={20} className="text-kidville-green translate-x-[1px]" strokeWidth={2} fill="currentColor" />
+                                    </span>
+                                    <span className="font-barlow font-bold text-[10px] uppercase tracking-wide text-white/90">
+                                        {t('galleryVideo')}
+                                    </span>
+                                </div>
+                            ) : item.file_url ? (
+                                /*
+                                  LA MINIATURA È DECORATIVA, e `aria-hidden` lo dichiara.
+                                  Sta DENTRO un comando che porta già il proprio nome
+                                  (`aria-label={etichettaCard(...)}`): senza questo attributo
+                                  uno screen reader annunciava «Foto: Laboratorio dei colori» e
+                                  poi, dentro, «Laboratorio dei colori, immagine» — la stessa
+                                  cosa due volte.
+                                  ⚠️ PERCHÉ NON `alt=""`, che sarebbe la forma canonica: quattro
+                                  file di test che non appartengono a questo lavoro individuano
+                                  questa miniatura con `getByAltText` (`MediaGrid-segnala`,
+                                  `MediaGrid-link-scaduto`, `scarica-media-grid`,
+                                  `galleria-sede-pagina`). L'effetto sull'albero di accessibilità
+                                  è lo stesso; chi passerà ad `alt=""` cambi anche quelle quattro
+                                  righe. Nel VISORE l'`alt` resta descrittivo: lì è l'unica
+                                  descrizione che esiste.
+                                */
+                                /* eslint-disable-next-line @next/next/no-img-element */
+                                <img src={item.file_url} alt={item.caption ?? t('galleryAltFoto')} aria-hidden="true" className="w-full h-full object-cover" />
+                            ) : (
+                                /* Link non firmato: un `<img src="">` mostrerebbe l'icona di
+                                   immagine rotta e ripartirebbe con una richiesta sulla pagina
+                                   stessa. Meglio dirlo. */
+                                <div className="w-full h-full bg-kidville-cream flex flex-col items-center justify-center gap-1 px-2 text-center">
+                                    <ImageOff size={22} className="text-kidville-green/70" strokeWidth={1.5} />
+                                    <span className="font-maven text-[10px] leading-tight text-kidville-green/60">
+                                        {t('galleryAnteprimaNonDisponibile')}
+                                    </span>
+                                </div>
+                            )}
+
+                            {/* Overlay on hover */}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                <div className="absolute bottom-0 left-0 right-0 p-3">
+                                    <p className="font-maven text-xs text-white/90 truncate">{item.caption ?? ''}</p>
+                                    {/* `truncate` come la didascalia sopra: «Maestra Annamaria
+                                        Esposito • 3g fa» in una miniatura da 170 px sfonda. */}
+                                    <p className="font-maven text-[10px] text-white/60 truncate">{item.uploader_name} • {timeAgo(item.created_at, t)}</p>
+                                </div>
                             </div>
                         </div>
 
-                        {/* Broadcast badge */}
+                        {/* Broadcast badge. `pointer-events-none`: è un'etichetta, non un
+                            comando, e sta SOPRA il comando che apre il visore — senza questa
+                            riga il suo angolo diventerebbe una zona morta. */}
                         {item.is_broadcast && (
-                            <div className="absolute top-2 left-2 px-2 py-0.5 bg-kidville-yellow text-kidville-green font-barlow font-bold text-[9px] rounded-full uppercase">
+                            <div className="absolute top-2 left-2 px-2 py-0.5 bg-kidville-yellow text-kidville-green font-barlow font-bold text-[9px] rounded-full uppercase pointer-events-none">
                                 {t('galleryBadgeGenerale')}
                             </div>
                         )}
@@ -355,26 +521,41 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             Senza indirizzo firmato non possono fare nulla: si tolgono,
                             invece di offrire un bottone che scarica un errore. */}
                         {showActions && url && (
-                            <div className="absolute top-2 right-2 flex items-center gap-1.5 opacity-0 group-hover:opacity-100 md:group-hover:opacity-100 transition-opacity duration-200 z-10 pointer-events-auto" style={{ opacity: 1 /* rendili sempre visibili per facilità su mobile */ }}>
+                            /*
+                              SEMPRE VISIBILI, E ADESSO C'È SCRITTO.
+
+                              Qui c'erano `opacity-0 group-hover:opacity-100
+                              md:group-hover:opacity-100` e, sullo stesso elemento, uno
+                              `style={{ opacity: 1 }}` inline. Lo stile inline VINCE su
+                              qualunque classe: le tre classi erano codice morto, e l'unico
+                              posto dove si leggeva l'intenzione era il commento dentro
+                              l'oggetto di stile. Su touch l'hover non esiste, quindi la
+                              scelta è giusta — ma va dichiarata dove un lettore la cerca.
+
+                              I bottoni passano da 28 a 36 px: 28 è sotto il minimo di WCAG
+                              2.5.8 (24 px) solo di poco e ben sotto i 44 di Apple, e sono
+                              due bersagli a 6 px di distanza in un angolo da 170 px.
+                            */
+                            <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10 pointer-events-auto">
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         void scaricaMedia(item, url);
                                     }}
-                                    className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
+                                    className="h-9 w-9 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaScarica')}
                                 >
-                                    <Download size={12} strokeWidth={2.5} />
+                                    <Download size={14} strokeWidth={2.5} />
                                 </button>
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         void condividiMedia(item, url, t('mediaLinkCopiato'));
                                     }}
-                                    className="w-7 h-7 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
+                                    className="h-9 w-9 rounded-lg bg-white/90 hover:bg-white text-kidville-green flex items-center justify-center shadow-md active:scale-95 transition-all cursor-pointer border border-kidville-line"
                                     title={t('mediaCondividi')}
                                 >
-                                    <Share2 size={12} strokeWidth={2.5} />
+                                    <Share2 size={14} strokeWidth={2.5} />
                                 </button>
                             </div>
                         )}
@@ -383,19 +564,70 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                 })}
             </div>
 
-            {/* Lightbox */}
+            {/*
+              IL VISORE — TRE NODI, E OGNUNO CHIUDE UN DIFETTO MISURATO.
+
+              ─── COM'ERA, E COSA COSTAVA ─────────────────────────────────────────
+              Un nodo solo: `fixed inset-0` + `backdrop-blur-xl` + `flex
+              justify-center` + `overflow-hidden`. Su iPhone 14 (390×844, meno le aree
+              di sicurezza = 763 px utili) la colonna misura ~840 px — immagine 464 +
+              didascalia 52 + pannello dei taggati 200 + «Elimina Media» 52 + margini
+              72. Mancano ~80 px e l'ultimo figlio è proprio il bottone: finiva sotto
+              il bordo, senza barra di scorrimento perché `overflow-hidden` non scorre
+              e senza nessun gesto per raggiungerlo. Il titolare, dall'app, ha
+              riferito che «Elimina non esiste». Esisteva.
+
+              ─── (a) IL CONTENITORE è nudo ───────────────────────────────────────
+              Solo posizione e z-index. Frecce e chiusura sono suoi figli diretti,
+              FUORI dallo scroller: così non scorrono via col contenuto.
+
+              ─── (b) IL VELO È UN FRATELLO, e non è estetica ─────────────────────
+              Sulla WebView Chromium di Android un antenato con `backdrop-filter`
+              CANCELLA l'intero sottoalbero dall'albero di accessibilità: col velo sul
+              contenitore, `uiautomator dump` restituiva 120 nodi e nessuno era della
+              modale — per TalkBack la finestra non esisteva. È una lezione già pagata
+              in questo repo: sta scritta per esteso in `src/components/ui/Modal.tsx`,
+              che per questo mette la sfocatura su un div fratello `aria-hidden`.
+
+              ─── (c) LO SCROLLER ────────────────────────────────────────────────
+              `absolute inset-0 overflow-y-auto overscroll-contain`, e dentro un
+              `flex min-h-full items-center justify-center`: centrato quando il
+              contenuto ci sta, ancorato in alto e scorrevole quando non ci sta —
+              cosa che `items-center` da solo non fa (taglia il bordo di sopra).
+              `overscroll-contain` perché su iOS, arrivati a fine corsa, il gesto
+              proseguirebbe trascinando la pagina sotto.
+              Il riempimento ingloba `env(safe-area-inset-*)`: nel browser e su
+              Android valgono 0, su iPhone sono la Dynamic Island e la barra di casa.
+
+              La chiusura al click fuori sta sullo SCROLLER e non sul velo: il velo
+              gli è sotto, quindi nessun tocco lo raggiunge. La colonna ferma la
+              propagazione, come prima.
+            */}
             {lightbox && (
-                <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="fixed inset-0 bg-white/70 backdrop-blur-xl z-50 flex flex-col items-center justify-center p-4 overflow-hidden"
-                    onClick={handleCloseLightbox}
+                <div
+                    ref={visoreRef}
+                    role="dialog"
+                    aria-modal="true"
+                    /* Il nome del dialogo è quello del media aperto: la STESSA funzione
+                       che nomina la card, così l'annuncio all'apertura combacia con
+                       quello del comando che si è premuto. */
+                    aria-label={etichettaCard(lightbox, t)}
+                    tabIndex={-1}
+                    className="fixed inset-0 z-50 focus:outline-none"
                 >
+                    <motion.div
+                        aria-hidden="true"
+                        data-testid="visore-velo"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="absolute inset-0 bg-white/70 backdrop-blur-xl"
+                    />
+
                     {/* Navigation Arrows */}
                     {currentIndex > 0 && (
                         <button
                             onClick={handlePrev}
-                            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-kidville-line"
+                            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-20 cursor-pointer border border-kidville-line"
                             title={t('mediaPrecedente')}
                         >
                             <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
@@ -404,29 +636,58 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                     {currentIndex < items.length - 1 && (
                         <button
                             onClick={handleNext}
-                            className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-10 cursor-pointer border border-kidville-line"
+                            className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-white/80 hover:bg-white text-kidville-green flex items-center justify-center shadow-lg hover:scale-105 active:scale-95 transition-all z-20 cursor-pointer border border-kidville-line"
                             title={t('mediaSuccessiva')}
                         >
                             <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" strokeWidth={2.5} />
                         </button>
                     )}
 
-                    <div className="relative max-w-2xl w-full my-auto z-10" onClick={e => e.stopPropagation()}>
+                    <div
+                        data-testid="visore-scorrimento"
+                        className="absolute inset-0 overflow-y-auto overscroll-contain z-10"
+                        onClick={handleCloseLightbox}
+                    >
+                    {/* ⚠️ I DUE INVOLUCRI QUI SOTTO NON SONO RIENTRATI DI PROPOSITO: rientrarli
+                        vorrebbe dire spostare di quattro spazi le ~200 righe della colonna, e un
+                        diff di 200 righe di spazi nasconde le tre che contano. La chiusura è
+                        marcata in fondo. */}
+                    <div className="flex min-h-full items-center justify-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))]">
+                    <div data-testid="visore-colonna" className="relative max-w-2xl w-full" onClick={e => e.stopPropagation()}>
                         <div className="relative bg-white rounded-2xl overflow-hidden shadow-xl p-3 border border-kidville-green/10">
                             {!urlVisore ? (
                                 /* Firma non riuscita: si dice, non si mostra un riquadro rotto. */
-                                <div className="w-full min-h-[35vh] rounded-xl bg-kidville-cream flex flex-col items-center justify-center gap-2 px-6 text-center">
+                                <div className="w-full min-h-[35svh] rounded-xl bg-kidville-cream flex flex-col items-center justify-center gap-2 px-6 text-center">
                                     <ImageOff size={32} className="text-kidville-green/70" strokeWidth={1.5} />
                                     <span className="font-maven text-sm text-kidville-green/70">
                                         {t('galleryAnteprimaNonDisponibile')}
                                     </span>
                                 </div>
                             ) : lightbox.file_type === 'video' ? (
-                                <video src={urlVisore} controls className="w-full max-h-[55vh] rounded-xl bg-black" />
+                                /*
+                                  VIDEO E IMMAGINE HANNO LA STESSA REGOLA, ed è un invariante:
+                                  due media aperti nello stesso visore non possono comportarsi
+                                  in due modi. Il video aveva `w-full max-h-[55vh]` e nessun
+                                  rapporto d'aspetto — un video verticale (cioè tutti quelli
+                                  girati col telefono) veniva allargato alla colonna e
+                                  guarnito di due fasce nere ai lati.
+                                  `w-auto max-w-full` lascia decidere al rapporto d'aspetto;
+                                  `object-contain` non taglia niente.
+                                  `svh` E NON `vh`: su Safari iOS `vh` è il viewport GRANDE,
+                                  quello senza la barra degli indirizzi, quindi `70vh` vale più
+                                  del 70% di ciò che si vede — di nuovo contenuto fuori campo.
+                                  `playsInline` perché senza di lui iOS apre il video a schermo
+                                  pieno da solo, `preload="metadata"` perché senza la WebView
+                                  può tirarsi giù l'intero file.
+                                  `bg-black` resta: è il letterbox di un player, ed è il caso
+                                  che il lock `palette-di-serie` dichiara legittimo per scritto.
+                                */
+                                <video src={urlVisore} controls playsInline preload="metadata"
+                                    className="mx-auto max-h-[70svh] w-auto max-w-full object-contain rounded-xl bg-black" />
                             ) : (
                                 /* eslint-disable-next-line @next/next/no-img-element */
                                 <img src={urlVisore} alt={lightbox.caption ?? t('galleryAltFoto')}
-                                    className="w-full max-h-[55vh] object-contain rounded-xl mx-auto" />
+                                    className="mx-auto max-h-[70svh] w-auto max-w-full object-contain rounded-xl" />
                             )}
                         </div>
 
@@ -457,13 +718,23 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
 
                                 {editMode ? (
                                     <div className="space-y-3">
-                                        <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto pr-1">
+                                        {/* Una colonna sul telefono, due quando c'è spazio: in
+                                            vista di sede i nomi sono «Nome Cognome — SEZIONE» e
+                                            in mezza colonna da 358 px non ci stanno. `max-h-40`
+                                            invece di `max-h-32` perché con 32 si vedevano due
+                                            righe e mezzo, e la mezza riga sembra la fine
+                                            dell'elenco. */}
+                                        <div data-testid="taggati-elenco" className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto pr-1">
                                             {students.map((student) => {
                                                 const isTagged = tempTagged.includes(student.id);
                                                 return (
+                                                    /* `min-w-0` sulla label: un figlio di flex/grid non
+                                                       scende sotto la larghezza del proprio contenuto, e
+                                                       senza di questo il `truncate` sul nome non ha
+                                                       nessun effetto — il chip sfonda comunque. */
                                                     <label
                                                         key={student.id}
-                                                        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
+                                                        className={`flex min-w-0 items-center gap-2 px-3 py-1.5 rounded-xl border text-xs cursor-pointer select-none transition-all ${
                                                             isTagged
                                                                 ? 'bg-kidville-success-soft border-kidville-success text-kidville-success font-semibold shadow-sm'
                                                                 : 'bg-white border-kidville-line text-kidville-sub hover:bg-kidville-cream'
@@ -481,7 +752,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                             }}
                                                             className="hidden"
                                                         />
-                                                        <span>
+                                                        <span className="truncate" title={`${student.nome} ${student.cognome}`}>
                                                             {student.nome} {student.cognome}
                                                         </span>
                                                     </label>
@@ -524,9 +795,14 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                                 const student = students.find((s) => s.id === id);
                                                 if (!student) return null;
                                                 return (
+                                                    /* `max-w-full truncate` + `title`: nella vista di
+                                                       sede il nome è «Nome Cognome — SEZIONE», e un chip
+                                                       senza tetto di larghezza sfonda la colonna. Il
+                                                       nome intero resta leggibile al passaggio. */
                                                     <span
                                                         key={id}
-                                                        className="px-2.5 py-1 bg-kidville-green/10 border border-kidville-green/20 rounded-full text-xs font-semibold"
+                                                        title={`${student.nome} ${student.cognome}`}
+                                                        className="px-2.5 py-1 bg-kidville-green/10 border border-kidville-green/20 rounded-full text-xs font-semibold max-w-full truncate"
                                                     >
                                                         {student.nome} {student.cognome}
                                                     </span>
@@ -538,9 +814,16 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             </div>
                         )}
 
-                        {/* Actions */}
+                        {/* Actions.
+                            `flex-wrap` e gap più stretto: le tre etichette italiane
+                            («Scarica» ~126 px, «Condividi» ~144, «Segnala foto/video» ~200)
+                            più i gap fanno ~494 px in 358 disponibili sul telefono, e con
+                            `justify-center` l'eccesso si divide fra i due lati — ~68 px
+                            tagliati a sinistra e ~68 a destra, cioè metà della prima pillola
+                            e metà dell'ultima. Andare a capo costa una riga in più; non
+                            andarci costa due comandi. */}
                         {showActions && (
-                            <div className="flex items-center justify-center gap-3 mt-4">
+                            <div data-testid="visore-comandi" className="flex flex-wrap items-center justify-center gap-2 mt-4">
                                 {/* Gli STESSI due gesti della card, e nient'altro: la
                                     duplicazione fra questi due punti è ciò che aveva
                                     lasciato la card senza nemmeno un log. */}
@@ -571,14 +854,18 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                                 🗑️ {t('galleryEliminaMedia')}
                             </button>
                         )}
-                    </div>
+                    </div>{/* /visore-colonna */}
+                    </div>{/* /involucro flex centrante */}
+                    </div>{/* /visore-scorrimento */}
 
-                    {/* Close button */}
+                    {/* Close button. Fuori dallo scroller — non scorre via — e con la
+                        safe-area in cima: a `top-4` fisso, su iPhone finisce sotto la
+                        Dynamic Island. */}
                     <button onClick={handleCloseLightbox}
-                        className="absolute top-4 right-4 w-10 h-10 rounded-full bg-kidville-green/10 text-kidville-green flex items-center justify-center hover:bg-kidville-green/20 transition-colors shadow-sm font-bold">
+                        className="absolute top-[max(1rem,env(safe-area-inset-top))] right-4 w-10 h-10 rounded-full bg-kidville-green/10 text-kidville-green flex items-center justify-center hover:bg-kidville-green/20 transition-colors shadow-sm font-bold z-20">
                         ✕
                     </button>
-                </motion.div>
+                </div>
             )}
         </>
     );

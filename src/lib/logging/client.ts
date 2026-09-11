@@ -84,6 +84,35 @@ const MESSAGGIO_MAX = 500;
 const STACK_MAX = 4_000;
 const ROUTE_MAX = 200;
 
+/**
+ * I DATI STRUTTURATI DI UN EVENTO: quanti campi, e quanto lunghi.
+ *
+ * Sono gli STESSI due numeri di `/api/logs` (`CAMPI_MAX`, `CAMPO_TESTO_MAX`), e devono restare
+ * gli stessi per la ragione già scritta sopra a `CODA_MAX`: un cap più largo qui produrrebbe
+ * campi che il server SCARTA — cioè dati che il client crede di aver spedito e che in tabella
+ * non esistono, che è il modo silenzioso di non avere un log.
+ *
+ * Il testo si TRONCA (come `messaggio`), la chiave fuori forma si BUTTA: una stringa tagliata
+ * resta una misura leggibile, una chiave inventata non si può riparare.
+ */
+const CAMPI_MAX = 12;
+const CAMPO_TESTO_MAX = 64;
+
+/**
+ * LA CHIAVE CON CUI IL CONTEGGIO DEGLI SCARTI VIAGGIA DENTRO I CAMPI STESSI.
+ *
+ * PERCHÉ NON BASTA IL CONTATORE DEL SERVER, che pure esiste. `/api/logs` conta e logga i campi
+ * che scarta LUI, ma è cieco per costruzione all'errore più probabile: un nostro chiamante che
+ * scrive `errorCode` invece di `error_code`. Quella chiave muore QUI, sul telefono, e al server
+ * non arriva niente da contare — lo scarto sarebbe muto da entrambi i lati, cioè un dato che
+ * nessuno sa di non avere. È esattamente il silenzio che questo canale è nato per chiudere: un
+ * canale che ne apre uno nuovo mentre chiude il vecchio non ha chiuso niente.
+ *
+ * STESSO NOME del campo che il server usa nel proprio `logEvento`: una query sola legge i due
+ * lati. È un NUMERO, quindi `redact` lo lascia in chiaro senza bisogno di lista bianca.
+ */
+const CAMPI_SCARTATI = 'campi_scartati';
+
 const CHIAVE_CODA = 'kv_log_coda';
 
 /**
@@ -261,7 +290,74 @@ export interface EventoClient {
     stato?: number;
     /** Il `digest` di Next: l'unica chiave che lega un errore del client al suo stack server. */
     digest?: string;
+    /**
+     * I DATI STRUTTURATI DELL'EVENTO — il PERCHÉ, che il `messaggio` da solo non porta.
+     *
+     * MISURATO IN PRODUZIONE: OGNI riga `sorgente='client'` di `app_log` ha `contesto = {}`. Non
+     * per distrazione di chi scriveva i chiamanti: questo canale non aveva un campo in cui
+     * mettere niente. Sotto quel `{}` ci sono 301 `fotocamera-errore` su iOS che dicono CHE è
+     * andata male e non dicono PERCHÉ — manca il nome della classe d'errore, il mime rifiutato,
+     * i millisecondi prima del timeout. Sono 3.626 eventi al giorno che raccontano metà cosa.
+     *
+     * COSA CI VA: contatori e codici — `{ error_code: nomeErrore(err), ms: 1200, mime: 'video/mp4' }`.
+     * In tabella finiscono sotto `contesto.campi`, la STESSA chiave dei log del server
+     * (`logger.ts → rigaEvento`): una query sola legge i due lati dello stesso guasto.
+     *
+     * COSA NON CI VA: qualunque cosa provenga dal dato di una persona. Il NOME DI UN FILE lo è
+     * (contiene spessissimo il nome del bambino), e il `message` di un errore PostgREST lo è
+     * (riecheggia filtri, colonne e valori). Chi ha in mano un errore passa `nomeErrore(err)`,
+     * che è STRUTTURA e non contenuto — è la stessa ragione per cui quella funzione esiste.
+     *
+     * ⚠️ QUI NON SI DECIDE COSA SIA SICURO, e non è delega per pigrizia: la lista bianca vive in
+     * `redact.ts`, che nel browser non è nemmeno caricabile (tira dentro `node:crypto` — vedi la
+     * REGOLA 1 in testa a questo file). Da qui escono solo FORMA e CAP; la redazione la fa
+     * `/api/logs` con lo stesso apparato di ogni altra riga del sistema. Un campo fuori lista
+     * bianca non viene rifiutato: arriva in tabella come `[redatto:str/N]`, cioè si sa che c'era
+     * e quanto era lungo, ma non si legge.
+     *
+     * IL TIPO QUI È LARGO DI PROPOSITO: questa interfaccia descrive anche gli eventi INTERNI e
+     * quelli riletti dal `localStorage`, che arrivano da fuori e non possono essere vincolati da
+     * un tipo. La rete stretta sta sulla FIRMA di `logClient` (vedi `CampiClient`), che è la
+     * porta da cui passano i chiamanti.
+     */
+    campi?: Record<string, CampoValore>;
 }
+
+/** Il valore di un campo: le tre forme che una colonna `jsonb` porta senza sorprese. */
+export type CampoValore = string | number | boolean;
+
+/**
+ * Il tipo in cui finisce una chiave che il server scarterebbe. Non è decorazione: è il messaggio
+ * che il compilatore stampa al posto di una perdita a runtime.
+ */
+export interface ChiaveCampoNonAmmessa<K> {
+    /** Le chiavi dei campi sono tutte minuscole: `error_code`, non `errorCode`. */
+    readonly chiaveCampoNonAmmessa: K;
+}
+
+/**
+ * I CAMPI VISTI DAL COMPILATORE — la rete che prende `errorCode` prima che parta.
+ *
+ * A runtime una chiave fuori forma si perde e si conta (`campiRidotti`, `CAMPI_SCARTATI`): il
+ * dato non arriva in tabella e il chiamante lo scopre leggendo un log. Qui lo scopre COMPILANDO,
+ * che è il momento giusto — `Record<string, CampoValore>` da solo ammette qualunque nome di
+ * chiave senza una parola di protesta, ed è come il canale nasceva.
+ *
+ * ⚠️ COSA PRENDE E COSA NO, detto perché nessuno creda che sia la regex: prende le MAIUSCOLE,
+ * che è l'errore che si fa davvero (il camelCase di tutto il resto del codice). NON prende la
+ * chiave che comincia per cifra, quella lunga 33 caratteri, né il trattino: TypeScript non ha un
+ * modo di esprimere `^[a-z][a-z0-9_]{0,31}$` su una chiave. Quelle restano lavoro del runtime, e
+ * da adesso vengono contate invece che perse in silenzio.
+ *
+ * `string extends K` è il ramo dell'INDEX SIGNATURE: un chiamante che costruisce i campi a
+ * runtime (`const c: Record<string, CampoValore> = …`) deve poter passare, altrimenti la rete
+ * prenderebbe soprattutto i chiamanti onesti. Misurato: senza quel ramo il caso dinamico è rosso.
+ */
+export type CampiClient<T> = {
+    [K in keyof T]: string extends K
+        ? T[K]
+        : K extends Lowercase<Extract<K, string>> ? T[K] : ChiaveCampoNonAmmessa<K>;
+};
 
 /* Stato di modulo. NON è contaminabile fra utenti: nel browser il modulo è per-scheda. */
 let coda: EventoClient[] = [];
@@ -357,10 +453,115 @@ export function nomeErrore(e: unknown): string {
 }
 
 /**
+ * La forma di una CHIAVE dei campi: la STESSA di `/api/logs` (`CHIAVE_CAMPO`), e i due pattern
+ * devono restare uguali — una chiave che passa qui e non là è un dato che il client crede di
+ * aver spedito e che in tabella non c'è.
+ *
+ * Minuscola, senza spazi e senza punteggiatura per una ragione pratica: la chiave diventa un
+ * ramo di JSONB che si interroga a mano (`contesto->'campi'->>'ms'`), e `_` non va protetto in
+ * SQL mentre uno spazio o un `-` sì. Comincia per lettera, quindi `__proto__` non è una chiave
+ * ammissibile: l'oggetto si costruisce da input, e quel nome è l'unico che assegnandolo farebbe
+ * qualcosa invece di essere un campo.
+ */
+const CHIAVE_CAMPO = /^[a-z][a-z0-9_]{0,31}$/;
+
+/**
+ * I campi che lasciano il dispositivo: FORMA e CAP, mai un giudizio su cosa sia sicuro (il
+ * perché sta nella doc di `EventoClient.campi`).
+ *
+ * NON LANCIA E NON SCARTA L'EVENTO. Un campo fuori forma si perde da solo, ed è la stessa
+ * disciplina che vale un giro più in là: `/api/logs` valida evento per evento perché un elemento
+ * rotto non affondi il batch, e `redact.ts` ricostruisce campo per campo perché si perda il
+ * campo rotto e non la riga. Qui è lo stesso principio applicato dove il dato nasce.
+ *
+ * `redigiPathNelTesto` anche sui campi, e non è una ripetizione ornamentale: la REGOLA 4 non fa
+ * eccezioni per i campi nuovi. Un `{ url: '/m/<token>' }` porterebbe via la capability che apre
+ * il modulo di preiscrizione di un minore. Si riduce PRIMA di troncare, nello stesso ordine che
+ * `/api/logs` usa sul messaggio: ciò che è stato tagliato non lo riduce più nessuno.
+ *
+ * E GLI SCARTI SI CONTANO, dentro i campi stessi (`CAMPI_SCARTATI`). Scartare in silenzio qui
+ * sarebbe il silenzio di prima spostato di un metro: il server non può contare una chiave che
+ * non gli è mai arrivata.
+ */
+function campiRidotti(v: unknown): Record<string, CampoValore> | undefined {
+    if (v === null || typeof v !== 'object') return undefined;
+    const out: Record<string, CampoValore> = {};
+    let n = 0;
+    /** Ciò che si perde: conterlo è l'unica differenza fra «non c'era» e «non è passato». */
+    let scartati = 0;
+    try {
+        const chiavi = Object.keys(v);
+        for (let i = 0; i < chiavi.length; i++) {
+            const k = chiavi[i];
+            if (n >= CAMPI_MAX) {
+                // Oltre il tetto non si guarda nemmeno: si contano in blocco, così un oggetto con
+                // mille chiavi non costa mille giri nel percorso che gira quando l'app è già rotta.
+                scartati += chiavi.length - i;
+                break;
+            }
+            if (!CHIAVE_CAMPO.test(k)) {
+                scartati++;
+                continue;
+            }
+            let valore: unknown;
+            try {
+                valore = (v as Record<string, unknown>)[k];
+            } catch {
+                // Getter ostile: si perde il campo, non l'evento.
+                scartati++;
+                continue;
+            }
+            if (typeof valore === 'string') {
+                out[k] = tronca(redigiPathNelTesto(valore), CAMPO_TESTO_MAX);
+            } else if (typeof valore === 'number' && Number.isFinite(valore)) {
+                // `NaN` e `Infinity` in JSON diventano `null`: un campo che dice `null` non è una
+                // misura, è un buco che ha l'aspetto di un valore.
+                out[k] = valore;
+            } else if (typeof valore === 'boolean') {
+                out[k] = valore;
+            } else {
+                // Oggetti, array, funzioni: questo canale porta MISURE, non strutture. Un oggetto
+                // annidato è anche il modo in cui il testo libero si traveste da chiave (vedi il
+                // rilievo M15 in `redact.ts`).
+                scartati++;
+                continue;
+            }
+            n++;
+        }
+    } catch {
+        // Proxy ostile su `Object.keys`: si tiene ciò che si è riusciti a leggere.
+    }
+    if (scartati > 0) {
+        const gia = out[CAMPI_SCARTATI];
+        if (typeof gia === 'number') {
+            // Una coda riletta dallo `localStorage` ripassa da qui (`riparato`): gli scarti del
+            // secondo giro si SOMMANO a quelli del primo invece di cancellarli, e non chiedono una
+            // casella nuova perché la casella c'è già. È ciò che tiene la funzione idempotente.
+            out[CAMPI_SCARTATI] = gia + scartati;
+        } else if (n < CAMPI_MAX) {
+            out[CAMPI_SCARTATI] = scartati;
+            n++;
+        }
+        // Tetto pieno E nessuna casella già presente: il conteggio si perde, ed è il solo caso
+        // muto che resta. È anche il meno grave: sono passati DODICI campi, cioè l'opposto di un
+        // evento senza diagnosi.
+    }
+    return n === 0 ? undefined : out;
+}
+
+/**
  * Accoda un evento. NON LANCIA MAI: è chiamata da `window.onerror`, cioè dal gestore che si
  * attiva quando l'app è GIÀ rotta — è l'ultimo posto del sistema in cui ci si può permettere
  * di sollevare una seconda eccezione.
+ *
+ * DUE FIRME, e la seconda non la vede nessun chiamante: quella pubblica è l'overload, che stringe
+ * i `campi` con `CampiClient` (una chiave in camelCase non compila). L'implementazione resta su
+ * `EventoClient` perché deve poter passare ad `accoda` anche gli eventi riletti dal
+ * `localStorage`, che non hanno un tipo da rispettare — vengono da fuori.
  */
+export function logClient<T extends Record<string, CampoValore>>(
+    e: Omit<EventoClient, 'campi'> & { campi?: CampiClient<T> },
+): void;
 export function logClient(e: EventoClient): void {
     accoda(e, true);
 }
@@ -405,6 +606,16 @@ function accoda(e: EventoClient, applicaPolitica: boolean): void {
         // La chiave del throttle NON include la `route`: lo stesso errore su venti pagine
         // diverse è lo stesso errore (ed è così che si scopre che è globale, non di una
         // pagina). Include invece lo `stato`: `→ 500` e `→ 401` sono due guasti diversi.
+        //
+        // E NON INCLUDE `campi`, per la stessa ragione per cui il contesto non entra
+        // nell'IMPRONTA di `app_log` (vedi `impronta` in `app-log.ts`): i campi portano contatori
+        // — `ms`, i fotogrammi, i byte — che cambiano a OGNI occorrenza. Metterli qui dentro
+        // vorrebbe dire una chiave nuova ogni volta, cioè un anti-tempesta spento proprio nella
+        // tempesta: è il contrario del motivo per cui `DEDUP_MS` esiste.
+        //
+        // LA CONSEGUENZA, da sapere prima di leggere una riga in SQL: i campi che partono sono
+        // quelli della PRIMA occorrenza del minuto. Sono un CAMPIONE, non l'ultima misura — e la
+        // deduplica in tabella fa lo stesso un passo dopo, per il giorno.
         const chiave = `${e.evento}|${messaggio}|${e.stato ?? ''}`;
         const ora = Date.now();
         const ultimo = visti.get(chiave);
@@ -453,6 +664,9 @@ function accoda(e: EventoClient, applicaPolitica: boolean): void {
             route: tronca(redigiPathSicuro(e.route || pagina()), ROUTE_MAX) || undefined,
             stato: typeof e.stato === 'number' && Number.isInteger(e.stato) ? e.stato : undefined,
             digest: e.digest === undefined ? undefined : tronca(String(e.digest), 64),
+            // Il PERCHÉ dell'evento. Passa da `campiRidotti`, che gli dà forma e cap: la
+            // redazione è del server, la disciplina è di qui (vedi `campiRidotti`).
+            campi: campiRidotti(e.campi),
         });
         salvaCoda();
     } catch {
@@ -508,10 +722,11 @@ function riprendiCoda(): void {
         const salvata: unknown = JSON.parse(raw);
         // Il `localStorage` è scrivibile da chiunque abbia la console aperta: ciò che si
         // rilegge non è più fidato di un input di rete. Si tiene solo ciò che ha la forma
-        // giusta, e `conMessaggio` ripara l'unico campo il cui vuoto costerebbe l'evento
-        // (`z.string().min(1)` lo scarterebbe lato server).
+        // giusta, e `riparato` rimette a posto i due campi il cui difetto costerebbe dei log
+        // (il messaggio vuoto, che `z.string().min(1)` scarterebbe lato server; e i campi, che
+        // gonfiati a mano farebbero rifiutare l'INTERO batch).
         if (!Array.isArray(salvata)) return;
-        coda = [...salvata.filter(eventoPlausibile).map(conMessaggio), ...coda].slice(-CODA_MAX);
+        coda = [...salvata.filter(eventoPlausibile).map(riparato), ...coda].slice(-CODA_MAX);
     } catch {
         // JSON corrotto: si riparte con la coda vuota.
     }
@@ -525,9 +740,25 @@ function eventoPlausibile(v: unknown): v is EventoClient {
         && typeof e.messaggio === 'string';
 }
 
-/** Un evento riletto dallo storage non deve poter far scartare sé stesso (vedi `SENZA_MESSAGGIO`). */
-function conMessaggio(e: EventoClient): EventoClient {
-    return e.messaggio === '' ? { ...e, messaggio: SENZA_MESSAGGIO } : e;
+/**
+ * Un evento riletto dallo storage non deve poter far scartare sé stesso (vedi `SENZA_MESSAGGIO`)
+ * né far scartare i suoi DICIANNOVE VICINI.
+ *
+ * I `campi` ripassano da `campiRidotti` — idempotente, quindi su una coda scritta da noi non
+ * cambia nulla — perché una coda scritta a mano dalla console potrebbe portare venti eventi con
+ * campi giganti: un corpo che `/api/logs` rifiuta con 413, e un 413 non è ritentabile (vedi
+ * `ritentabile`). Si perderebbe l'intera coda per il campo di uno.
+ *
+ * Se il secondo giro butta qualcosa, il conteggio si SOMMA a quello del primo invece di
+ * sostituirlo (vedi `CAMPI_SCARTATI`): un evento sopravvissuto a un 429 direbbe altrimenti di
+ * aver perso meno di quanto ha perso.
+ */
+function riparato(e: EventoClient): EventoClient {
+    return {
+        ...e,
+        messaggio: e.messaggio === '' ? SENZA_MESSAGGIO : e.messaggio,
+        campi: campiRidotti(e.campi),
+    };
 }
 
 /** L'id utente, se il login l'ha lasciato dove lo lascia sempre. Mai altro che un uuid. */

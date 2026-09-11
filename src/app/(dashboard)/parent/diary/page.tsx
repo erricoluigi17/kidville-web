@@ -328,7 +328,9 @@ function PhotosSection({ photos }: { photos: MediaItem[] }) {
                         className="overflow-hidden"
                     >
                         <div className="px-4 pb-4 pt-0 border-t border-kidville-line/60 bg-kidville-cream-dark rounded-b-3xl">
-                            <MediaGrid items={photos} showActions />
+                            {/* Due colonne dichiarate: qui la griglia vive dentro una scheda del
+                                diario, ancora più stretta della galleria. */}
+                            <MediaGrid items={photos} showActions colonne={2} />
                         </div>
                     </motion.div>
                 )}

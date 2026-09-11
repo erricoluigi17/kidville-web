@@ -5,6 +5,7 @@ import { appLogBatch, type RigaLog } from '@/lib/logging/app-log';
 import { impostaUtente } from '@/lib/logging/context';
 import { logEvento } from '@/lib/logging/logger';
 import { redigiPathNelTesto } from '@/lib/logging/path';
+import { redact } from '@/lib/logging/redact';
 import { descriviErrore } from '@/lib/logging/serialize';
 import { withRoute } from '@/lib/logging/with-route';
 import { clientIp, rateLimit } from '@/lib/security/rate-limit';
@@ -30,6 +31,16 @@ import { parseData } from '@/lib/validation/http';
  *  5. `sorgente` NON viene dal body: è cablata a `'client'`. `piattaforma` ed `evento` sono
  *     vincolati (enum / slug). Vedi `nomeEvento` per il motivo — non è pignoleria, è che
  *     `evento` è una COLONNA su cui si fanno le query di sorveglianza.
+ *  6. I CAMPI STRUTTURATI (`contesto.campi`) hanno forma chiusa: chiave
+ *     `^[a-z][a-z0-9_]{0,31}$`, valore solo stringa (≤64) / numero / booleano, 12 per evento, e
+ *     sopra a tutto la redazione di `redact()`. Vedi `CHIAVE_CAMPO`: qui le chiavi arrivano dal
+ *     mondo, e in `redact.ts` è la CHIAVE a decidere il trattamento del valore — lasciarla
+ *     libera sarebbe lasciar scegliere al client la propria redazione.
+ *     ⚠️ `campi_scartati` ESISTE DUE VOLTE E SONO DUE NUMERI DIVERSI, da non sommare leggendo in
+ *     SQL: quello dentro `contesto.campi` di un evento è ciò che il BROWSER ha buttato prima di
+ *     spedire (`client.ts`, `CAMPI_SCARTATI` — l'unico che può vedere una chiave in camelCase,
+ *     perché quella qui non arriva mai); quello nella riga `logs:POST`/`warn` qui sotto è ciò che
+ *     ha buttato QUESTA route. Il primo è per evento, il secondo per batch.
  *
  * UN ELEMENTO ROTTO NON AFFONDA IL BATCH. La validazione è EVENTO PER EVENTO (`safeParse`),
  * non sull'array intero, e la risposta dice quanti ne sono entrati e quanti no
@@ -40,6 +51,9 @@ import { parseData } from '@/lib/validation/http';
  * di `redact.ts` e del `perCampo` di `app-log.ts`: si perde il campo rotto, non tutta la riga.
  * Le difese che restano sul BATCH sono solo quelle che il batch non lo possono nemmeno leggere
  * (byte, JSON, cardinalità): lì non c'è nessun evento buono da salvare.
+ * Lo stesso principio scende di un altro livello con i `campi` (punto 6): un CAMPO fuori forma si
+ * perde da solo e non porta via l'evento — vedi `campiAmmessi`, dove è anche misurato perché la
+ * forma «ovvia» con `z.record` avrebbe fatto il contrario.
  *
  * L'IDENTITÀ NON SI PRENDE DAL BODY, MAI. Un utente dichiarato da chi lo usa non è
  * un'identità: è un'etichetta. Si legge server-side con `getRequestUserId` (header `x-user-id`
@@ -96,6 +110,106 @@ const EVENTO = /^[a-z][a-z0-9-]{0,29}$/;
  */
 const DIGEST = /^[\w.:-]{1,64}$/;
 
+/**
+ * I DATI STRUTTURATI DI UN EVENTO DEL CLIENT — `contesto.campi`, la colonna che era sempre `{}`.
+ *
+ * IL FATTO, misurato in produzione: ogni riga `sorgente='client'` di `app_log` ha `contesto = {}`
+ * — 3.626 eventi al giorno — e sotto quel vuoto stanno 301 `fotocamera-errore` su iOS che dicono
+ * CHE è andata male e non dicono PERCHÉ. Non era distrazione: il canale non aveva un campo.
+ *
+ * LA CHIAVE È VINCOLATA PER TRE MOTIVI CUMULATIVI, e nessuno è pignoleria:
+ *  1. questa è UNA PORTA OSTILE (vedi la testata): le chiavi arrivano dal mondo, e in `redact.ts`
+ *     il nome della chiave è ciò che DECIDE il trattamento del valore. Una chiave libera è un
+ *     modo di scegliersi la redazione;
+ *  2. la chiave diventa un ramo di JSONB che si interroga a mano (`contesto->'campi'->>'ms'`):
+ *     uno spazio o un `-` andrebbero protetti in SQL, `_` no;
+ *  3. comincia per lettera minuscola, quindi `__proto__` non è ammissibile — l'oggetto lo si
+ *     costruisce da input, e quello è l'unico nome che assegnato FA qualcosa invece di essere un
+ *     campo. (`JSON.parse` crea `__proto__` come proprietà propria: il pericolo è reale.)
+ *
+ * GLI STESSI NUMERI stanno in `client.ts` (`CAMPI_MAX`, `CAMPO_TESTO_MAX`) e devono restare
+ * uguali: un cap più largo là produce campi che qui si scartano, cioè dati che il client crede
+ * spediti e che in tabella non esistono.
+ */
+const CHIAVE_CAMPO = /^[a-z][a-z0-9_]{0,31}$/;
+const CAMPI_MAX = 12;
+const CAMPO_TESTO_MAX = 64;
+
+/**
+ * Il valore di un campo: le tre forme che una colonna `jsonb` porta senza sorprese. Niente
+ * oggetti e niente array — questo canale trasporta MISURE, non strutture, e un oggetto annidato
+ * è anche il modo in cui il testo libero si traveste da chiave (rilievo M15 di `redact.ts`).
+ *
+ * NB: `z.number()` in zod 4 rifiuta da sé `NaN` e `Infinity` (verificato, non dedotto): in JSON
+ * diventerebbero `null`, cioè un buco con l'aspetto di una misura.
+ */
+const campoValore = z.union([z.string().max(CAMPO_TESTO_MAX), z.number(), z.boolean()]);
+
+/**
+ * IL CONTRATTO SI APPLICA CAMPO PER CAMPO, e la ragione è misurata.
+ *
+ * La forma ovvia — `z.record(z.string().regex(CHIAVE_CAMPO), campoValore)` dentro `eventoSchema`
+ * — in zod 4 fa fallire l'INTERO record appena UNA chiave è fuori forma (`invalid_key`), e con
+ * il record cade l'evento: un campo scritto male porterebbe via il messaggio e lo stack che gli
+ * stavano accanto. È esattamente il difetto che questa route ha già corretto un livello più su,
+ * quando ha smesso di validare l'array intero (vedi «UN ELEMENTO ROTTO NON AFFONDA IL BATCH»).
+ * Qui è lo stesso principio un livello più in basso: si perde il CAMPO rotto, non l'evento.
+ *
+ * L'involucro resta in `eventoSchema` come `record` di `unknown` con `.catch(undefined)`: un
+ * `campi: 'pippo'` — o un array — si perde da solo senza portarsi via l'evento.
+ */
+function campiAmmessi(grezzi: Record<string, unknown> | undefined): {
+    campi?: Record<string, string | number | boolean>;
+    scartati: number;
+} {
+    if (grezzi === undefined) return { scartati: 0 };
+    // `Object.create(null)`: la chiave la sceglie il client, ed è la stessa rete che `redact.ts`
+    // tende sul body grezzo. Contro `__proto__` arrivano prima altre due difese — `z.record` lo
+    // perde da sé ricopiando per assegnazione (misurato), e `CHIAVE_CAMPO` comincia per lettera —
+    // ma un oggetto costruito da input non si costruisce mai su un prototipo.
+    const campi: Record<string, string | number | boolean> = Object.create(null);
+    let tenuti = 0;
+    let scartati = 0;
+    for (const chiave of Object.keys(grezzi)) {
+        if (tenuti >= CAMPI_MAX) {
+            // Oltre il tetto non si guarda nemmeno: si contano, così lo scarto non è muto.
+            scartati++;
+            continue;
+        }
+        if (!CHIAVE_CAMPO.test(chiave)) {
+            scartati++;
+            continue;
+        }
+        const valore = campoValore.safeParse(grezzi[chiave]);
+        if (!valore.success) {
+            scartati++;
+            continue;
+        }
+        /*
+         * `redigiPathNelTesto` SUI VALORI, e non è la ripetizione di ciò che fa già il client:
+         * è il buco che si chiude, misurato su `redact.ts` alla mano.
+         *
+         * Sotto una chiave in lista bianca (`operazione`, `stato`, `tipo`…) `FORMA_ENUMERATO`
+         * ammette anche lo slash iniziale — serve, perché `instrumentation.ts` ci scrive i pattern
+         * di rotta. Quindi un `{ operazione: '/m/<uuid>' }` ha la forma di un enumerato perfetto e
+         * uscirebbe IN CHIARO: 39 caratteri senza spazi, cioè la capability che apre il modulo di
+         * preiscrizione di un minore, dentro una colonna che vive 30 giorni e si interroga in SQL.
+         * Il client riduce già da sé (`client.ts`, regola 4) — ma il client gira su una macchina
+         * che non controlliamo, ed è la stessa ragione per cui `messaggio` qui sopra ripassa dalla
+         * stessa funzione.
+         *
+         * La riduzione può ALLUNGARE di qualche carattere (`/1/2` → `/[n]/[n]`), e nel caso raro in
+         * cui superasse il cap il valore non esce comunque: `redact` non lo riconosce più come
+         * enumerato e lo maschera. Si perde la diagnosi, non il segreto — il verso giusto.
+         */
+        campi[chiave] = typeof valore.data === 'string'
+            ? redigiPathNelTesto(valore.data)
+            : valore.data;
+        tenuti++;
+    }
+    return tenuti === 0 ? { scartati } : { campi, scartati };
+}
+
 const eventoSchema = z.object({
     livello: z.enum(['warn', 'error']),
     evento: z.string().regex(EVENTO),
@@ -107,6 +221,12 @@ const eventoSchema = z.object({
     // `0` è ammesso e ha un significato preciso: la richiesta non è mai partita (rete giù).
     stato: z.number().int().min(0).max(599).optional(),
     digest: z.string().regex(DIGEST).optional(),
+    /**
+     * I dati strutturati: qui SOLO l'involucro (un oggetto), la forma dei singoli campi la decide
+     * `campiAmmessi` — vedi lì il perché. `.catch(undefined)` è il resto della disciplina: un
+     * `campi` che non è nemmeno un oggetto si perde da solo e non fa scartare l'evento.
+     */
+    campi: z.record(z.string(), z.unknown()).optional().catch(undefined),
 });
 
 /**
@@ -179,6 +299,8 @@ export const POST = withRoute('logs:POST', async (request: Request) => {
      */
     const righe: RigaLog[] = [];
     let scartati = 0;
+    /** Campi persi per forma: uno scarto muto sarebbe un dato che nessuno sa di non avere. */
+    let campiScartati = 0;
 
     for (const grezzoEvento of dati.data.eventi) {
         // `safeParse` PER EVENTO: è qui che un elemento rotto smette di poter uccidere i suoi
@@ -218,6 +340,9 @@ export const POST = withRoute('logs:POST', async (request: Request) => {
             digest: e.digest,
         });
 
+        const c = campiAmmessi(e.campi);
+        campiScartati += c.scartati;
+
         righe.push({
             livello: e.livello,
             // `client:` — vedi `EVENTO`: rende impossibile impersonare un evento del server
@@ -237,6 +362,41 @@ export const POST = withRoute('logs:POST', async (request: Request) => {
             // `contesto().path` vale `/api/logs` per ogni riga — il nome del camion, non quello
             // del luogo dell'incidente. `appLog` la riduce comunque a pattern (`redigiPath`).
             route: e.route,
+            /*
+             * I DATI STRUTTURATI, sotto `campi` come per ogni riga del server (`logger.ts →
+             * rigaEvento`): la stessa chiave da entrambi i lati, così
+             * `contesto->'campi'->>'error_code'` è UNA query e non due.
+             *
+             * `redact()` E NON `redactInput()`, ed è la decisione da motivare per intero.
+             * `redactInput` («la chiave non apre») esiste per il payload grezzo, e la sua doc dice
+             * di non applicarlo ai `campi` — «quelli li scrive il nostro codice, e lì la lista
+             * bianca è ciò che rende `app_log` interrogabile». Qui i campi li scrive il nostro
+             * codice, ma su una macchina che non controlliamo: un'obiezione vera. Vale comunque
+             * `redact`, per due ragioni misurabili:
+             *   · con `redactInput` NESSUNA stringa uscirebbe leggibile (passano solo uuid, date,
+             *     numeri e booleani), cioè `error_code: 'NotAllowedError'` — il PERCHÉ dei 301
+             *     `fotocamera-errore`, la ragione per cui questo canale esiste — arriverebbe come
+             *     `[redatto:str/16]`. Un canale che non dice niente non è una difesa: è il vuoto
+             *     di prima con più righe di codice;
+             *   · e quello che passa qui è STRETTAMENTE MENO di quanto già passa accanto:
+             *     `messaggio` ammette 1.000 caratteri di testo quasi libero (`sanificaMessaggio`
+             *     maschera email, codici fiscali e vincoli Postgres, non la prosa), mentre sotto i
+             *     `campi` la lista bianca è di ~30 chiavi e IL VALORE DEVE CONFERMARE: niente
+             *     spazi, niente a capo, 64 caratteri, e nemmeno la forma di un codice fiscale
+             *     (`FORMA_ENUMERATO` + `FORMA_CODICE_FISCALE`). Chi volesse scrivere testo libero
+             *     in tabella non passerebbe da qui: userebbe il messaggio, come poteva già ieri.
+             * Chi un giorno volesse la versione severa cambia UNA chiamata, qui.
+             *
+             * ⚠️ A CHI LEGGERÀ `contesto->'campi'` IN SQL: su una riga DEDUPLICATA questi valori
+             * sono il CAMPIONE DELLA PRIMA OCCORRENZA DEL GIORNO, non l'insieme e non l'ultima.
+             * `campi` NON entra nell'impronta (`impronta` in `app-log.ts` non lo riceve, e non
+             * deve: porta `ms` e contatori che cambiano a ogni occorrenza, e ci sono occorrenze a
+             * migliaia — metterli nella chiave spegnerebbe la deduplica). Quindi una riga con
+             * `occorrenze = 900` e `campi.ms = 1200` NON dice che sono stati 900 volte 1.200 ms:
+             * dice che la prima volta di quel giorno furono 1.200 ms. È la stessa avvertenza che
+             * vale per `request_id` e `scuola_id`, ed è scritta anche nella migrazione.
+             */
+            contestoExtra: c.campi === undefined ? undefined : { campi: redact(c.campi) },
         });
     }
 
@@ -252,11 +412,18 @@ export const POST = withRoute('logs:POST', async (request: Request) => {
     // client non guarda la risposta, il server non lo raccontava a nessuno). `warn`, quindi
     // persistito; deduplicato per impronta, quindi una riga al giorno anche se succede mille
     // volte. Un `catch` che non logga è un bug: anche quando il `catch` si chiama `safeParse`.
-    if (scartati > 0) {
+    //
+    // Lo stesso vale un livello più in basso, per i CAMPI: un campo scartato per forma è un
+    // nostro chiamante che ha usato una chiave che il nostro schema non ammette, e senza questa
+    // riga non se ne accorgerebbe nessuno — in tabella un campo mancante è indistinguibile da un
+    // campo mai passato. `esito` dice quale dei due scarti è avvenuto (gli eventi prima: sono la
+    // perdita più grave); i due conteggi ci sono sempre entrambi.
+    if (scartati > 0 || campiScartati > 0) {
         logEvento('logs', 'warn', {
             operazione: 'logs:POST',
-            esito: 'eventi-scartati',
+            esito: scartati > 0 ? 'eventi-scartati' : 'campi-scartati',
             n: scartati,
+            campi_scartati: campiScartati,
             ricevuti,
         });
     }

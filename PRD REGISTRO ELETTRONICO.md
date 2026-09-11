@@ -100,6 +100,107 @@
 
 ---
 
+## 🖼️ Changelog — «Elimina non esiste»: esisteva, e cadeva 80 px sotto il bordo di un contenitore che non scorreva — 2026-09-11 (branch `fix/galleria-video-ios-e-cestino`)
+
+Il titolare, dall'app iOS, ha riferito che nel visore della galleria — genitore e insegnante — il
+pulsante **«Elimina Media» non esiste**. Esiste. Il conto sui pixel di un iPhone 14 (390×844, meno le
+aree di sicurezza = **763 px utili**) dice che la colonna del visore misura **~840 px**: immagine 464
++ didascalia 52 + pannello dei taggati 200 + «Elimina Media» 52 + margini 72. Mancano ~80 px, il
+bottone è l'**ultimo figlio** della colonna, e il contenitore era un `fixed inset-0` con
+`overflow-hidden`: niente barra di scorrimento, nessun gesto per raggiungerlo. Un comando che c'è e
+non si può toccare è, per chi lo usa, un comando che non c'è.
+
+### Cosa è cambiato
+
+| | |
+|---|---|
+| **Il visore era un nodo solo** | ora sono **tre**: il contenitore nudo (`fixed inset-0`, `role="dialog"`), il velo come **fratello** `aria-hidden`, e uno **scroller** `overflow-y-auto overscroll-contain` con `flex min-h-full items-center` e riempimento su `env(safe-area-inset-*)`. Frecce e «✕» restano figli del contenitore, **fuori** dallo scroller: non scorrono via |
+| **Il velo è un fratello, e non è estetica** | su WebView Chromium un antenato con `backdrop-filter` **cancella il sottoalbero dall'albero di accessibilità** — lezione già pagata e scritta in `src/components/ui/Modal.tsx` |
+| **La riga dei tre comandi** | «Scarica» + «Condividi» + «Segnala foto/video» misurano ~494 px in 358 disponibili: con `justify-center` e senza `flex-wrap` l'eccesso si divideva fra i due lati, **~68 px tagliati per lato**. Ora va a capo, col gap più stretto |
+| **Le colonne della griglia** | erano `grid-cols-2 sm:grid-cols-3`, cioè decise dal **viewport** da un componente che vive in tre contenitori larghi ~358 px (genitore), 460 px (insegnante) e ~1088 px (sede). Ora sono una **prop `colonne`** con classi letterali; la vista di sede dichiara `colonne={4}` |
+| **Video e immagine nel visore** | stessa regola per entrambi (`mx-auto max-h-[70svh] w-auto max-w-full object-contain`): il video aveva `w-full max-h-[55vh]` e nessun rapporto d'aspetto, quindi un video verticale — cioè ogni video girato col telefono — veniva allargato alla colonna e guarnito di due fasce nere. `svh` e non `vh`: su Safari iOS `vh` è il viewport **senza** la barra. Più `playsInline` e `preload="metadata"` |
+| **La miniatura di un video** | era un quadrato scuro con un triangolino: ora Play in un cerchio, la **parola** (`galleryVideo`, chiave nuova in `it` ed `en`) e un nome accessibile. Nessun `<video>` nella griglia: 40 miniature sono 40 richieste di metadati su rete mobile |
+| **La card si apre da tastiera** | `role="button"`, `tabIndex`, Invio e Spazio, e un `aria-label` che dice **prima il tipo** («Video: Recita di fine anno»), che è la differenza che il triangolino comunicava solo a chi vede. Il comando è uno **strato figlio** e non la card, perché la card contiene due bottoni veri e un comando dentro un comando è `nested-interactive` |
+| **Il visore è una modale vera** | `role="dialog"` + `aria-modal`, il fuoco **entra** all'apertura e **torna** alla card alla chiusura, sfondo **inerte** — riusando `rendiInerteFuoriDaConFocus`, lo stesso pezzo di `Modal` e `PageLoader` |
+| **Troncamenti** | la riga «chi ha caricato • quando», i chip dei taggati (`min-w-0` sulla label, `truncate` + `title` sul nome) e l'elenco in modifica (`grid-cols-1 sm:grid-cols-2`, `max-h-40`): in vista di sede i nomi sono «Nome Cognome — SEZIONE» e sfondavano |
+| **L'overlay dei comandi** | aveva `opacity-0 group-hover:opacity-100` **e** uno `style={{opacity: 1}}` inline che vinceva: le classi erano codice morto e l'intenzione si leggeva solo in un commento. Ora è dichiarata nel `className`, e i bottoni passano da 28 a **36 px** (WCAG 2.5.8 chiede 24, Apple 44) |
+
+### Le quattro cose che il collaudo interno ha fatto cambiare, e sono la parte che conta
+
+**jsdom non fa layout, quindi il test non misura pixel.** `offsetHeight` vale zero per ogni nodo e
+il CSS non è nemmeno caricato: `expect(colonna.offsetHeight).toBeLessThan(763)` sarebbe verde **con e
+senza** la correzione. Si asserisce la **struttura** e le **classi** che un dato insieme di props
+produce — «nessun antenato della colonna ha `overflow-hidden`» è una proprietà dell'albero, non del
+testo del file, e dipende dai props come una grep non può.
+
+**Un prefisso non è un nome.** Il primo test cercava `name: /Laboratorio dei colori/`: cancellando
+del tutto l'`aria-label` della card restava **verde**, perché senza l'attributo il nome accessibile si
+calcola dal contenuto e diventa «Laboratorio dei colori Insegnante • 3g fa» — cioè esattamente il
+difetto «il comando inghiotte tutto ciò che contiene» che l'attributo esiste per evitare. Ora
+l'asserzione è sul nome **intero**.
+
+**La classe composta il DOM non la vede.** `2: 'grid-cols-2'` e ``2: `grid-cols-${2}` `` producono lo
+stesso byte nel `class` renderizzato, quindi nessuna asserzione sul DOM può distinguerle — ma Tailwind
+4 genera le utility leggendo il **sorgente**, e la seconda forma fa collassare la griglia a una
+colonna *in silenzio e col gate verde*. Il controllo è quindi sul sorgente, sui commenti rimossi
+prima (il file cita il difetto per esteso).
+
+**Rendere una cosa raggiungibile da tastiera senza portarci il fuoco sposta il difetto.** Con il solo
+`role="button"` il visore si apriva e il fuoco restava sulla card, che da quell'istante sta **dietro**
+un velo opaco a tutto schermo; per arrivare a «Elimina Media» bisognava tabulare attraverso l'intera
+griglia — misurato: **30 tappe con 10 foto, 120 con 40** — perché il visore è reso *dopo* di lei nel
+DOM. Ed `aria-modal` su un `div` **non esclude niente** (Chromium lo onora solo per il top layer):
+senza l'inerzia dello sfondo sarebbe stato un attributo decorativo.
+
+### Cosa resta aperto
+
+⚠️ **La galleria insegnante (`/teacher/gallery`) non dichiara `colonne` e prende quindi il default 2**,
+dove prima del 2026-09-11 vedeva 3 colonne sopra i 640 px di viewport. Il suo contenitore è
+`max-w-[460px]`: a 3 colonne le miniature misurano ~145 px con due bottoni da 36 px sopra, a 2 ne
+misurano ~224. La riga da cambiare è una (`colonne={3}`), e la decisione è di chi ha quel file.
+
+⚠️ **La verifica sui pixel veri resta il giro sul telefono.** Qui si blocca la forma che li produce.
+
+### Lo stesso giorno, sull'altra metà della galleria: il CARICAMENTO dell'insegnante
+
+Il titolare, dalla stessa app, ha confermato altre due cose: **l'anteprima di un video era l'icona
+dell'immagine rotta**, e **un file scelto per sbaglio non si poteva togliere**.
+
+| | |
+|---|---|
+| **Le anteprime dei file scelti** | rendevano SEMPRE `<img src={objectURL}>`, anche per un filmato — che `MediaUploader` accetta da sempre (`accept="image/*,video/*"`). Un browser non disegna un frame di MP4 dentro un `<img>`: mostra il glifo del file rotto. Le stesse due righe esistevano in **TRE** posti (la griglia di scelta, la striscia delle miniature dello step 2, l'anteprima da 40 px della «foto in configurazione»), quindi la correzione è **un componente**, `src/components/features/gallery/AnteprimaMedia.tsx`, non tre toppe: un video è un `<video muted playsInline preload="metadata">`, un'immagine resta un `<img>`. Si discrimina su `file.type.startsWith('video/')` e **non sull'estensione del nome** — la libreria di iOS consegna filmati chiamati `IMG_0042.jpg`, ed è la terza volta che questo repo paga la lezione del MIME |
+| **La parola «video»** | viene da `shared.galleryVideo`, la **stessa chiave** di `MediaGrid`. Sulla griglia da ~98 px si vede; sulla striscia da 64 px, dove il badge dello stato dei tag le finirebbe sopra per ~2-9 px, resta `sr-only`: **smette di occupare pixel, non di esistere** — un triangolino non si legge ad alta voce |
+| **La X di rimozione** | era `w-5 h-5 opacity-0 group-hover:opacity-100`. Su iPhone e su tablet **l'hover non esiste**: il bottone era invisibile, ed era l'unico modo di togliere un file scelto per sbaglio. Ora **32 px** (WCAG 2.5.8 chiede 24), sempre visibile, `touch-manipulation`, su un fondo `bg-kidville-ink/90` che la stacca da una foto chiara |
+| **Allo step 2 non c'era NESSUN gesto di rimozione** | una volta passati a tag e privacy, un file di troppo ci restava: l'unica uscita era «Annulla», che butta anche i tag già messi sulle altre foto. Ora ogni miniatura ha la sua X (28 px: la tessella è di 64 e il resto della sua superficie serve a **selezionarla**), che **revoca l'objectURL**, fa **rientrare `activeFileIndex`** nei due versi e, se l'elenco si svuota, **torna al passo di scelta**. Nessuna conferma: il gesto è reversibile, e una conferma su un gesto innocuo è quella che si impara a premere senza leggere |
+| **La griglia delle anteprime** | era `grid-cols-4 sm:grid-cols-6` dentro una colonna da 460 px: sei tessere da **66 px**, in cui non si riconosce un bambino e su cui non si centra una X. Ora **tre colonne fisse** |
+| **Due bugie nell'interfaccia** | lo spinner era legato a una prop `uploading` che **nessun chiamante passava** (codice morto, via con la prop); e l'etichetta diceva «Carica N file» mentre il bottone **passa solo allo step 2** — cioè annunciava un'azione irreversibile sulle foto di bambini mentre ne faceva una reversibile. Ora dice la destinazione (`galleryModificaTag` · N), che è la sola cosa vera |
+| **Il nome del file sulla tessella** | `preload="metadata"` è la condizione **necessaria** perché compaia il primo frame, non quella sufficiente: su Safari/iOS il precaricamento è un suggerimento che il browser può ignorare, e in jsdom un `<video>` non carica mai niente — **nessun test dimostra che si veda un fotogramma**. La domanda del titolare era «non so QUALE video ho scelto», e la risposta che non dipende da un'euristica è il **nome**, che ora sta sulla tessella (più il `title` per il nome intero) |
+
+**Perché `/90` e non `/70`.** La prima stesura velava la X e la pastiglia con `bg-kidville-ink/70`, una
+variante **nuova**: il lock `__tests__/a11y/alto-contrasto-inchiostro-ereditato.test.tsx` §5.3 censisce
+le velature scure adoperate in `src/` col loro contrasto misurato e diventava **rosso** (`4.19:1`
+sulla crema), perché una velatura nuova sotto del testo va guardata da una persona. `/90` è già in
+tabella e **copre di più**: per un difetto nato da «non si vede» è la direzione giusta.
+
+**E la prova che le pretese mordono.** Otto mutazioni applicate e tutte rosse, ogni volta ripristinando
+da copia e verificando con `shasum`: la parola tornata cablata, il nome del file via, la striscia
+tornata `con-parola`, `sr-only` svuotato, la griglia dello step 1 messa a `solo-icona`, la velatura a
+`/70`, `indice < prev ? prev`, `h-4 w-4 opacity-0 group-hover`. Una in particolare vale la pena
+raccontarla: la prima stesura del test «la parola viene dal catalogo» era **verde prima della
+correzione**, perché il vecchio commento conteneva `t('galleryVideo')` dentro un periodo che diceva
+«quando la chiave esisterà». Il test ora **spoglia i commenti** e guarda il codice — è la seconda
+volta che in questo repo un lock si immunizza col proprio commento.
+
+⚠️ **Cosa resta da guardare sull'iPhone vero**: che un fotogramma compaia davvero (`preload` non lo
+garantisce), e quanti `<video>` una griglia può tenere accesi insieme. In jsdom nessuna delle due si
+misura.
+
+⚠️ **Deciso, non rimandato**: `/teacher/gallery` **resta a 2 colonne** nella griglia della galleria
+(il default di `MediaGrid`), che il changelog qui sopra lasciava aperto. Il motivo è aritmetico:
+`colonne={3}` in un contenitore `max-w-[460px]` dà 145 px da desktop ma **111 px su un telefono**,
+dove prima del 2026-09-11 le colonne erano 2 — e l'insegnante la galleria la usa dal telefono. Il
+parametro non è responsivo: si scegliesse 3, si migliorerebbe il caso raro peggiorando quello comune.
+
 ## 🧾 Changelog — «Scartata» diceva CHE, non PERCHÉ: il motivo sta nelle notifiche, dietro un parametro sbagliato da sempre — 2026-09-11 (branch `fix/aruba-motivo-scarto-notifiche`)
 
 La voce qui sotto (stesso giorno) ha sbloccato la coda: le fatture congelate sono rientrate nel giro

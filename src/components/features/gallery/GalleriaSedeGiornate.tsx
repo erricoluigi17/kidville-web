@@ -304,7 +304,19 @@ export function GalleriaSedeGiornate({ foto, testi }: Props) {
                                 {testi.conteggio(g.foto.length)}
                             </span>
                         </div>
-                        <MediaGrid items={g.foto} students={alunniDellaPagina(g.foto, testi.taggatoSenzaNome)} />
+                        {/*
+                          QUATTRO COLONNE, DICHIARATE. `MediaGrid` ha il default a 2 — il caso
+                          stretto, quello del genitore su telefono — e qui il contenitore è la
+                          pagina della segreteria, larga ~1088 px senza `max-w` restrittivo: a due
+                          colonne le miniature misurerebbero ~530 px l'una. Fino al 2026-09-11 il
+                          numero veniva da `sm:grid-cols-3`, cioè dal VIEWPORT, che di questo
+                          contenitore non sa niente.
+                        */}
+                        <MediaGrid
+                            items={g.foto}
+                            students={alunniDellaPagina(g.foto, testi.taggatoSenzaNome)}
+                            colonne={4}
+                        />
                     </section>
                 );
             })}

@@ -2,21 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as XLSX from 'xlsx'
 
 /**
- * `tipo: 'altro'` — GLI ALTRI TRE DOCUMENTI, non solo la fattura.
+ * `tipo: 'altro'` — GLI ALTRI DUE DOCUMENTI, non solo la fattura.
  *
  * ─── PERCHÉ SONO IN QUESTO LOTTO ────────────────────────────────────────────
- * Chi paga la retta di un bambino riceve fino a quattro documenti nell'arco di
- * un anno: la fattura elettronica, la ricevuta, l'attestazione per il 730 e la
- * riga nella comunicazione all'Agenzia delle Entrate. Se il selettore
- * dell'intestatario valesse solo per la prima, la stessa famiglia riceverebbe
- * quattro documenti con DUE intestatari diversi — e sui due che finiscono al
- * fisco (attestazione e comunicazione AdE) l'intestatario decide chi ottiene la
- * detrazione.
+ * Chi paga la retta di un bambino riceve fino a tre documenti nell'arco di un
+ * anno: la fattura elettronica, l'attestazione per il 730 e la riga nella
+ * comunicazione all'Agenzia delle Entrate. Se il selettore dell'intestatario
+ * valesse solo per la prima, la stessa famiglia riceverebbe tre documenti con
+ * DUE intestatari diversi — e sui due che finiscono al fisco (attestazione e
+ * comunicazione AdE) l'intestatario decide chi ottiene la detrazione.
  *
- * Fino al 2026-09-04 tutti e tre leggevano `intestatario_fatture.adult_id`, un
+ * Fino al 2026-09-04 entrambi leggevano `intestatario_fatture.adult_id`, un
  * campo che sul ramo `'altro'` non esiste: ripiegavano su «Famiglia ⟨cognome⟩»
  * (e l'export escludeva la riga per «codice fiscale del pagatore mancante»)
  * senza che nulla lo dicesse.
+ *
+ * Il quarto documento era la ricevuta contabile per singolo pagamento, con lo
+ * stesso difetto e la stessa correzione: è stata rimossa il 2026-09-10 insieme
+ * alla sua rotta. La ricevuta DI FAMIGLIA che resta si intesta al pagante e
+ * NON legge `intestatario_fatture` (ricevute.ts), quindi la premessa di questo
+ * file non la riguarda.
  *
  * Nomi e codici fiscali SINTETICI: il repository è pubblico.
  */
@@ -32,87 +37,7 @@ const DATI_ALTRO = {
 
 const ALUNNO = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa9'
 
-/* ═══════════════════════ 1 · LA RICEVUTA ═══════════════════════════════════ */
-
-describe('ricevuta — l’intestatario digitato, non «Famiglia ⟨cognome⟩»', () => {
-  function db(alunno: Record<string, unknown>) {
-    const inserts: Record<string, unknown>[] = []
-    return {
-      client: {
-        from(table: string) {
-          const b: Record<string, unknown> = {}
-          b.select = () => b
-          b.eq = () => b
-          b.in = () => b
-          b.is = () => b
-          b.limit = () => b
-          b.maybeSingle = async () => {
-            if (table === 'alunni') return { data: alunno, error: null }
-            if (table === 'ricevute_emesse') return { data: null, error: null }
-            return { data: null, error: null }
-          }
-          b.insert = (row: Record<string, unknown>) => {
-            inserts.push(row)
-            return { select: () => ({ single: async () => ({ data: { id: 'r-1', ...row }, error: null }) }) }
-          }
-          b.then = (resolve: (v: unknown) => unknown) => resolve({ data: [], error: null })
-          return b
-        },
-        rpc: async () => ({ data: 12, error: null }),
-      },
-      inserts,
-    }
-  }
-
-  it('`tipo: \'altro\'` → nome e codice fiscale digitati sulla ricevuta', async () => {
-    const { emettiORecuperaRicevuta } = await import('@/lib/pagamenti/ricevute')
-    const { client, inserts } = db({
-      id: ALUNNO,
-      nome: 'Mario',
-      cognome: 'Fabbri',
-      genitori_separati: false,
-      retta_split_config: null,
-      intestatario_fatture: { tipo: 'altro', dati: DATI_ALTRO },
-    })
-
-    await emettiORecuperaRicevuta(client as never, {
-      id: 'pag-1',
-      scuola_id: 'sc-1',
-      alunno_id: ALUNNO,
-      importo: 150,
-      importo_pagato: 150,
-      periodo_competenza: '2026-09-01',
-    } as never)
-
-    expect(inserts).toHaveLength(1)
-    expect(inserts[0].intestatario).toEqual({ nome: 'Carlo Perlini', codice_fiscale: 'PRLCRL80A01H501Z' })
-  })
-
-  it('senza intestatario resta «Famiglia ⟨cognome⟩»: il ripiego di sempre non si tocca', async () => {
-    const { emettiORecuperaRicevuta } = await import('@/lib/pagamenti/ricevute')
-    const { client, inserts } = db({
-      id: ALUNNO,
-      nome: 'Mario',
-      cognome: 'Fabbri',
-      genitori_separati: false,
-      retta_split_config: null,
-      intestatario_fatture: null,
-    })
-
-    await emettiORecuperaRicevuta(client as never, {
-      id: 'pag-1',
-      scuola_id: 'sc-1',
-      alunno_id: ALUNNO,
-      importo: 150,
-      importo_pagato: 150,
-      periodo_competenza: '2026-09-01',
-    } as never)
-
-    expect(inserts[0].intestatario).toEqual({ nome: 'Famiglia Fabbri' })
-  })
-})
-
-/* ═══════════════════════ 2 · L'ATTESTAZIONE 730 ════════════════════════════ */
+/* ═══════════════════════ 1 · L'ATTESTAZIONE 730 ════════════════════════════ */
 
 const att = vi.hoisted(() => ({
   requireStaff: vi.fn(),
@@ -201,7 +126,7 @@ describe('attestazione 730 — l’intestatario digitato arriva sul PDF', () => 
   })
 })
 
-/* ═══════════════════════ 3 · LA COMUNICAZIONE ALL'AdE ══════════════════════ */
+/* ═══════════════════════ 2 · LA COMUNICAZIONE ALL'AdE ══════════════════════ */
 
 function foglio(buf: ArrayBuffer, nome: string): Record<string, unknown>[] {
   const wb = XLSX.read(new Uint8Array(buf), { type: 'array' })

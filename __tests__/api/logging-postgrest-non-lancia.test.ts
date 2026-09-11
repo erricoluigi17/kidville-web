@@ -14,9 +14,18 @@ import { NextRequest } from 'next/server'
  *     stato segnato assente» per un'assenza già rientrata. Non una notifica mancata: una
  *     notifica FALSA — ed è proprio il caso che il commento del vecchio log prometteva di coprire.
  *
- *  2. `pagamenti/fattura:GET`. L'`error` del `download` era scartato dalla destrutturazione:
- *     l'utente che chiede la fattura ufficiale Aruba riceve la «copia di cortesia» generata al
- *     volo — un altro documento — e nei log non resta niente.
+ *  2. `pagamenti/fattura:GET`. L'`error` del `download` era scartato dalla destrutturazione, e
+ *     al suo posto la rotta serviva una «copia di cortesia» disegnata al volo: `200
+ *     application/pdf`, cioè un ALTRO documento consegnato come se fosse la fattura elettronica.
+ *     Nei log non restava niente.
+ *
+ *     ⚠️ QUESTA PROVA DICEVA CHE IL RIPIEGO ERA VOLUTO — «Logica invariata: il fallback alla
+ *     copia di cortesia c'era e resta» — e per questo va riscritta e non solo aggiustata: un
+ *     test che benedice il difetto è peggio di un test che manca, perché chi lo legge smette di
+ *     cercare. Oggi il ripiego non c'è più: senza byte dal bucket si risponde 404 con un
+ *     `codice`, e la riga di log è `error` e non più `warn` — finché l'utente riceveva comunque
+ *     *qualcosa* il risultato era degradato, adesso non riceve niente, e un guasto che si vede a
+ *     schermo va contato fra i guasti.
  *
  * In entrambi i casi il finto Supabase RISOLVE con `{ error }` (non solleva), come quello vero:
  * è la condizione che rendeva morti i catch. Se qualcuno rimettesse il log solo nel catch, questi
@@ -45,6 +54,8 @@ const h = vi.hoisted(() => ({
   deletes: [] as Array<Record<string, unknown>>,
   // fattura
   pag: null as Record<string, unknown> | null,
+  /** Le righe di `fatture_emesse` del pagamento: la rotta le legge TUTTE, non una `maybeSingle`. */
+  righeFatture: [] as Record<string, unknown>[],
   downloadError: null as unknown,
   downloadData: null as unknown,
 }))
@@ -81,7 +92,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         }
         return d
       }
-      b.then = (ok: (v: unknown) => unknown) => ok({ data: [], error: null })
+      b.then = (ok: (v: unknown) => unknown) =>
+        ok({ data: table === 'fatture_emesse' ? h.righeFatture : [], error: null })
       return b
     },
     storage: {
@@ -113,6 +125,7 @@ beforeEach(() => {
   h.deleteError = null
   h.deletes = []
   h.pag = null
+  h.righeFatture = []
   h.downloadError = null
   h.downloadData = null
 })
@@ -168,25 +181,33 @@ describe('pagamenti/fattura:GET — il PDF ufficiale che non si scarica', () => 
       fattura_stato: 'emessa', fattura_aruba_id: 'X1', fattura_pdf_path: 'fatture/x1.pdf',
       fattura_emessa_il: '2026-07-01', alunno_id: ALUNNO, alunni: { nome: 'Sofia', cognome: 'Rossi' },
     }
+    h.righeFatture = [{ id: 'f1', numero: 1948, anno: 2026, pdf_path: 'fatture/x1.pdf', sdi_stato: 7 }]
   })
 
-  it('download fallito ({ error } scartato prima) → riga `warn`, e l\'utente riceve l\'anteprima', async () => {
+  it('download fallito ({ error } scartato prima) → riga `error`, e l\'utente NON riceve niente', async () => {
     h.downloadError = { message: 'Object not found', statusCode: '404' }
 
     const res = await FATTURA(req())
 
-    // Logica invariata: il fallback alla copia di cortesia c'era e resta.
-    expect(res.status).toBe(200)
-    expect(res.headers.get('Content-Type')).toBe('application/pdf')
-    // Ma adesso si SA che l'utente non ha in mano la fattura Aruba.
-    const avvisi = righe('warn').filter((r) => r.evento === 'storage')
-    expect(avvisi).toHaveLength(1)
-    expect(avvisi[0].campi).toMatchObject({
+    // NIENTE RIPIEGO: o il documento vero, o si dice che non c'è. Il `codice` esiste
+    // perché il chiamante possa distinguere «non è ancora pronto» da «non l'ho letto».
+    expect(res.status).toBe(404)
+    expect(res.headers.get('Content-Type')).not.toContain('application/pdf')
+    expect((await res.json()).codice).toBe('FATTURA_PDF_NON_DISPONIBILE')
+
+    // Il livello è `error`, non più `warn`: adesso la conseguenza si vede a schermo.
+    expect(righe('warn').filter((r) => r.evento === 'storage')).toHaveLength(0)
+    const guasti = righe('error').filter((r) => r.evento === 'storage')
+    expect(guasti).toHaveLength(1)
+    expect(guasti[0].campi).toMatchObject({
       operazione: 'pagamenti/fattura:GET',
       bucket: 'fatture',
-      esito: 'pdf_non_recuperabile_uso_anteprima',
+      esito: 'pdf-non-scaricato',
     })
-    expect(avvisi[0].err).toBe(h.downloadError)
+    // L'errore INTERO, non il solo `statusCode`: `404` non dice niente, «Object not
+    // found» dice quale delle due cose è successa. È la regola 3 di AGENTS.md, ed è
+    // la stessa che per mesi ha tenuto nascosto il guasto delle email.
+    expect(guasti[0].err).toBe(h.downloadError)
   })
 
   it('download riuscito → il PDF vero, e nessuna riga di guasto', async () => {
@@ -195,6 +216,7 @@ describe('pagamenti/fattura:GET — il PDF ufficiale che non si scarica', () => 
     const res = await FATTURA(req())
 
     expect(res.status).toBe(200)
+    expect(res.headers.get('Content-Type')).toBe('application/pdf')
     expect(righe('warn')).toHaveLength(0)
     expect(righe('error')).toHaveLength(0)
   })

@@ -90,7 +90,7 @@ interface PagIncassoRow {
   descrizione: string | null
 }
 
-// POST /api/pagamenti/incassi  (staff) — registra una ricevuta
+// POST /api/pagamenti/incassi  (staff) — registra un incasso
 // Body: { userId, pagamento_id, importo, ..., conferma_eccedenza?, pagante_parent_id?, abbuono? }
 // Confronta SEMPRE l'importo col residuo effettivo (importo − sconto − già incassato).
 // Voce non-rata sovraincassata → 409 { eccedenza } finché non arriva la conferma
@@ -298,7 +298,7 @@ export const POST = withRoute('pagamenti/incassi:POST', async (request: Request)
           scuolaId: (pag.scuola_id as string | undefined) ?? null,
           alunnoIds: [pag.alunno_id as string],
           titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
-          corpo: `${pag.descrizione ?? 'Pagamento'}: registrato un incasso di ${importoIncasso} €.${saldato ? ' La ricevuta è disponibile.' : ''}`,
+          corpo: `${pag.descrizione ?? 'Pagamento'}: registrato un incasso di ${importoIncasso} €.`,
           link: '/parent/pagamenti',
           entitaTipo: 'pagamento',
           entitaId: pagamento_id,

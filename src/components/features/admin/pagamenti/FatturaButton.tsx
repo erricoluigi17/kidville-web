@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
 import { FileText, Download, Loader2, X, Pencil } from 'lucide-react';
@@ -31,48 +31,129 @@ import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 import type { CandidatoIntestatario, IntestatarioAnteprima } from '@/lib/aruba/intestatario-pagamento';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { CHIAVE_MOTIVO_PROPOSTA, propostaApplicabile } from '@/lib/pagamenti/proposta-intestatario';
+import {
+    nomeFileFattura,
+    urlFattura,
+    useFattureScaricabili,
+    useScaricoFattura,
+    type AvvisoScarico,
+} from '@/lib/pagamenti/scarico-fattura';
 
-interface FatturaRow { id: string; quota_label: string | null; intestatario: string }
+/** La pelle di un comando della fattura: le due ancore sono identiche a vedersi. */
+const PILL_FATTURA = 'inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20';
 
-// Download fattura(e): link singolo o menù a tendina quando il pagamento è stato
-// fatturato in più quote (genitori separati).
+/**
+ * Il testo di ognuno dei tre esiti che NON consegnano il file.
+ *
+ * Tre chiavi e non una perché chiedono tre cose diverse: «aspetta, ne sta partendo un
+ * altro», «quello che hai appena visto non ti ha dato il documento», «non è riuscito,
+ * riprova». Un testo unico ne direbbe il vero in un caso su tre.
+ *
+ * Quella di mezzo è la sola che conta davvero: sul telefono il foglio di condivisione
+ * si apre e dentro c'è un indirizzo relativo, cioè un gesto che sembra riuscito e non
+ * consegna niente. Finché quel ramo taceva, chi in segreteria manda una fattura a una
+ * famiglia credeva di averla mandata. Il perché sta per esteso su `AvvisoScarico`.
+ */
+const CHIAVI_AVVISO: Record<AvvisoScarico, string> = {
+    'in-corso': 'fatBtn_scarico_in_corso',
+    'non-consegnato': 'fatBtn_scarico_non_consegnato',
+    'non-riuscito': 'fatBtn_scarico_non_riuscito',
+};
+
+/**
+ * I comandi della fattura, per la segreteria.
+ *
+ * ⚠️ IL FAST-PATH NON C'È PIÙ, ED È IL PUNTO DI QUESTO COMPONENTE. Qui c'era
+ * `if (!fatture || fatture.length <= 1) return <a>Fattura</a>`: `fatture` è
+ * `null` anche MENTRE STA CARICANDO, quindi quel ramo rendeva il link senza
+ * sapere se dietro ci fosse un PDF. Le tre fasi ora vengono da
+ * `useFattureScaricabili` (`@/lib/pagamenti/scarico-fattura`), che è lo stesso
+ * motore della card del genitore: in caricamento non si rende NIENTE e non si
+ * riserva spazio (in una tabella di rette uno scheletro per riga sarebbe una
+ * pagina che lampeggia), senza PDF disponibili non si rende NIENTE, e solo con
+ * almeno una riga verificata sul bucket compaiono i comandi.
+ *
+ * Due ancore e non una: «Apri» legge il documento a schermo, «Scarica» chiede
+ * alla route l'`attachment`. Nessun `target="_blank"`, mai: nella WebView
+ * dell'app `window.open` non apre niente e non lo dice.
+ */
 function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
     const t = useTranslations('adminContabilita');
-    const [fatture, setFatture] = useState<FatturaRow[] | null>(null);
+    const { caricamento, scaricabili } = useFattureScaricabili(pagamentoId, userId);
+    const { apri, avviso } = useScaricoFattura();
     const [open, setOpen] = useState(false);
-    useEffect(() => {
-        let active = true;
-        fetch(`/api/pagamenti/fattura/list?pagamento_id=${pagamentoId}&userId=${userId}`, { headers: { 'x-user-id': userId } })
-            .then((r) => (r.ok ? r.json() : null))
-            .then((d) => { if (active && d?.success) setFatture(d.data); })
-            .catch(() => {});
-        return () => { active = false; };
-    }, [pagamentoId, userId]);
 
-    if (!fatture || fatture.length <= 1) {
+    // Fase 1 e fase 2: niente. Nessuno scheletro, nessun pulsante spento.
+    if (caricamento || scaricabili.length === 0) return null;
+
+    // Il titolo del foglio di sistema e il nome del file NON portano mai
+    // `intestatario` né `quota_label`: su nativo finiscono in WhatsApp o in Mail, e
+    // sarebbero il nome di una famiglia spedito fuori dall'app.
+    const comandi = scaricabili.map((f) => ({
+        id: f.id,
+        etichetta: f.quota_label || f.intestatario,
+        nomeFile: nomeFileFattura(f.numero, f.anno),
+        urlApri: urlFattura({ pagamentoId, fatturaId: f.id, userId }),
+        urlScarica: urlFattura({ pagamentoId, fatturaId: f.id, userId, scaricare: true }),
+    }));
+
+    /* IL GESTO CHE NON CONSEGNA IL FILE VA DETTO, e sul telefono il caso che capita
+       davvero NON è quello che sembra: se il plugin Filesystem non è registrato,
+       `scarica()` ripiega sul foglio di condivisione, che si apre — e dentro c'è
+       l'indirizzo RELATIVO di questa route, che nessuna app sa aprire. Chi manda una
+       fattura a una famiglia vede il gesto riuscire e non ha consegnato niente: è la
+       riga «non consegnato», e senza di lei lo schermo direbbe che è andato tutto bene.
+       Parla anche al secondo click mentre il primo è in volo («aspetta»), e al minuto
+       di attesa oltre il quale lo scarico si dichiara chiuso. Sul web resta sempre
+       vuota: lì scarica il browser e non si passa da `scarica()`. La regione è montata
+       SEMPRE — un `role` inserito nel DOM col testo già dentro spesso resta muto — e
+       sta in `sr-only` finché è vuota, così non riserva spazio in tabella. */
+    const rigaAvviso = (
+        <p role="alert" className={cx('font-maven text-[11px] text-kidville-error', !avviso && 'sr-only')}>
+            {avviso ? t(CHIAVI_AVVISO[avviso]) : ''}
+        </p>
+    );
+
+    if (comandi.length === 1) {
+        const c = comandi[0];
         return (
-            <a href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&userId=${userId}`}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20">
-                <Download size={12} /> {t('fatBtn_fattura')}
-            </a>
+            <div className="inline-flex flex-wrap items-center gap-1">
+                <a href={c.urlApri} onClick={(e) => apri(e, { url: c.urlApri, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })} className={PILL_FATTURA}>
+                    <FileText size={12} /> {t('fatBtn_apri')}
+                </a>
+                <a href={c.urlScarica} onClick={(e) => apri(e, { url: c.urlScarica, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })} className={PILL_FATTURA}>
+                    <Download size={12} /> {t('fatBtn_scarica')}
+                </a>
+                {rigaAvviso}
+            </div>
         );
     }
+
     return (
         <div className="relative inline-block">
-            <button onClick={() => setOpen((o) => !o)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20">
-                <Download size={12} /> {t('fatBtn_fatture')} ({fatture.length})
+            <button onClick={() => setOpen((o) => !o)} className={PILL_FATTURA}>
+                <Download size={12} /> {t('fatBtn_fatture')} ({comandi.length})
             </button>
             {open && (
-                <div className="absolute right-0 z-20 mt-1 w-56 rounded-card border border-kidville-line bg-kidville-white p-1" style={{ boxShadow: MODAL_SHADOW }}>
-                    {fatture.map((f) => (
-                        <a key={f.id} href={`/api/pagamenti/fattura?pagamento_id=${pagamentoId}&fattura_id=${f.id}&userId=${userId}`}
-                            className="block rounded-input px-3 py-1.5 font-maven text-xs text-kidville-green hover:bg-kidville-green-soft">
-                            {t('fatBtn_fattura_dash')} {f.quota_label || f.intestatario}
-                        </a>
+                <div className="absolute right-0 z-20 mt-1 w-64 rounded-card border border-kidville-line bg-kidville-white p-1" style={{ boxShadow: MODAL_SHADOW }}>
+                    {comandi.map((c) => (
+                        <div key={c.id} className="rounded-input px-3 py-1.5">
+                            <p className="font-maven text-xs text-kidville-ink">{t('fatBtn_fattura_dash')} {c.etichetta}</p>
+                            <div className="mt-1 flex items-center gap-2">
+                                <a href={c.urlApri} onClick={(e) => apri(e, { url: c.urlApri, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })}
+                                    className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green hover:underline">
+                                    <FileText size={12} /> {t('fatBtn_apri')}
+                                </a>
+                                <a href={c.urlScarica} onClick={(e) => apri(e, { url: c.urlScarica, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })}
+                                    className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green hover:underline">
+                                    <Download size={12} /> {t('fatBtn_scarica')}
+                                </a>
+                            </div>
+                        </div>
                     ))}
                 </div>
             )}
+            {rigaAvviso}
         </div>
     );
 }

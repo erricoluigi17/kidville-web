@@ -1,8 +1,29 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createRef } from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MovimentoDialog } from '@/components/features/admin/pagamenti/MovimentoDialog';
 import type { MovimentoUi, PagamentoApertoUi } from '@/components/features/admin/pagamenti/riconciliazione-ui';
+
+/**
+ * IL TESTO CHE IL COMPONENTE RENDERÀ, RICAVATO COME LO RICAVA `test/setup.ts`.
+ *
+ * Il mock globale di next-intl risolve una chiave contro `messages/it/<ns>.json` e,
+ * quando la chiave NON c'è, ripiega sul suo stesso nome (`adminContabilita.chiave`).
+ * Asserire sulla prosa italiana scritta a mano legherebbe questo file al momento in
+ * cui il catalogo viene aggiornato — che è un altro lavoro, su un altro file — e
+ * renderebbe rosso un test che non misura niente di rotto.
+ *
+ * Qui la tesi è un'altra e più forte: «il componente rende LA VOCE DI QUESTA CHIAVE».
+ * Resta verde prima e dopo l'aggiornamento del catalogo, e diventa rossa se il
+ * componente cambia chiave o smette di renderla — che è esattamente il difetto da
+ * intercettare.
+ */
+const CATALOGO_IT = JSON.parse(
+  readFileSync(join(process.cwd(), 'messages/it/adminContabilita.json'), 'utf8'),
+) as Record<string, string>;
+const testo = (chiave: string): string => CATALOGO_IT[chiave] ?? `adminContabilita.${chiave}`;
 
 /**
  * FatturaButton fa fetch proprie: stub per isolare il dialog.
@@ -165,7 +186,16 @@ describe('MovimentoDialog', () => {
     expect(screen.queryByRole('button', { name: /Apri Incasso unico/ })).toBeNull();
   });
 
-  it('movimento confermato + pagamento pagato → Ricevuta + Fattura + Riapri', async () => {
+  /**
+   * ─── UN SOLO DOCUMENTO NEL RIQUADRO, E LA RICEVUTA NON DEVE TORNARE ────────
+   *
+   * Questo caso si chiamava «Ricevuta + Fattura + Riapri» e pretendeva un'ancora
+   * verso `GET /api/pagamenti/ricevuta`. La rotta è stata cancellata: quel link
+   * oggi porterebbe a un 404. La prova non sparisce, si ribalta — l'assenza è ciò
+   * che va inchiodato, altrimenti la cancellazione si disfa da sola alla prima
+   * modifica di questo riquadro.
+   */
+  it('movimento confermato + pagamento pagato → Fattura + Riapri, e NESSUNA «Ricevuta»', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes('/api/pagamenti/pg1')) {
         return { ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'pagato' } }) };
@@ -174,23 +204,29 @@ describe('MovimentoDialog', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     const confermato: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
-    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    const { container } = render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
 
-    const ricevuta = await screen.findByRole('link', { name: /Ricevuta/ });
-    expect(ricevuta).toHaveAttribute('href', expect.stringContaining('/api/pagamenti/ricevuta?pagamento_id=pg1'));
-    expect(screen.getByTestId('fattura-button')).toBeInTheDocument();
+    // Ciò che DEVE esserci: senza questa metà, l'assenza qui sotto sarebbe verde
+    // anche su un riquadro che non ha renderizzato niente.
+    expect(await screen.findByTestId('fattura-button')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Riapri/ })).toBeInTheDocument();
+    // Ciò che NON deve esserci più: né la parola, né l'indirizzo.
+    expect(screen.queryByText(/Ricevuta/i)).toBeNull();
+    expect(container.innerHTML).not.toContain('/api/pagamenti/ricevuta');
     // niente suggerimenti/ricerca sui confermati
     expect(screen.queryByText(/Cerca un altro pagamento/)).toBeNull();
   });
 
-  it('movimento confermato ma non ancora pagato → nota «a saldo avvenuto», niente ricevuta', async () => {
+  it('movimento confermato ma non ancora pagato → la nota parla della sola FATTURA', async () => {
     const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ success: true, data: { stato: 'parziale' } }) }));
     vi.stubGlobal('fetch', fetchMock);
     const confermato: MovimentoUi = { ...movBase, stato: 'confermato', pagamento_id: 'pg1' };
-    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
-    await waitFor(() => expect(screen.getByText(/a saldo avvenuto/i)).toBeInTheDocument());
-    expect(screen.queryByRole('link', { name: /Ricevuta/ })).toBeNull();
+    const { container } = render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+    // La chiave è cambiata da `movdlgRicevutaFatturaSaldo` a `movdlgFatturaSaldo`:
+    // la frase vecchia prometteva «ricevuta e fattura», e la ricevuta non arriva più.
+    await waitFor(() => expect(screen.getByText(testo('movdlgFatturaSaldo'))).toBeInTheDocument());
+    expect(screen.queryByText(/Ricevuta/i)).toBeNull();
+    expect(container.innerHTML).not.toContain('/api/pagamenti/ricevuta');
   });
 });
 
@@ -703,8 +739,19 @@ describe('MovimentoDialog — il chip di stato sta sull’occhiello', () => {
     // …e non ha più la forma del pulsante che gli sta sotto
     expect(chip.className).toContain('rounded-md');
     expect(chip.className).not.toContain('rounded-pill');
-    const ricevuta = screen.getByRole('link', { name: /Ricevuta/ });
-    expect(ricevuta.className, 'i comandi restano pillole: la differenza di forma è il segnale').toContain('rounded-pill');
+    /* LA TESI RESTA, IL COMANDO SU CUI SI MISURA NO. Qui si prendeva il link
+       «Ricevuta» per dire che i comandi sono pillole e lo stato no: quel link non
+       esiste più. Il confronto si sposta su un comando che c'è ancora — «Riapri»,
+       che porta `BTN_SECONDARY` — perché la tesi non era «la ricevuta è una
+       pillola», era «lo stato NON ha la forma di un comando», e per dirlo serve
+       un comando qualunque nella stessa vista.
+       NON si misura sul pulsante della fattura: lì la pillola arriva da
+       `globals.css` (`.kv-recon-azione-fattura > button { border-radius: 9999px }`),
+       che in jsdom non è caricato — e sotto c'è comunque il mock, non il
+       componente vero. Sarebbe una prova che guarda il proprio finto. */
+    const comando = screen.getByRole('button', { name: /Riapri/ });
+    expect(comando.className, 'i comandi restano pillole: la differenza di forma è il segnale').toContain('rounded-pill');
+    expect(screen.queryByText(/Ricevuta/i), 'la ricevuta non si scarica più da qui').toBeNull();
   });
 });
 

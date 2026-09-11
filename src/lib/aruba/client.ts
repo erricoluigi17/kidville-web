@@ -41,6 +41,18 @@ import { logEvento } from '@/lib/logging/logger'
 // Solo il TIPO: nessun accoppiamento a runtime fra il client HTTP e le regole
 // fiscali. Il vocabolario delle due serie però è uno solo, e sta là.
 import type { Sezionale } from '@/lib/fatturazione/sezionale'
+/**
+ * L'UNICO import a RUNTIME verso le regole fiscali, e vale la riga che lo spiega.
+ *
+ * `Sezionale` qui sopra è di proposito un import di solo TIPO. Questo no, e non è
+ * un cedimento: `getByFilename` risponde una DICITURA italiana, non un numero
+ * (misurato il 2026-09-11), e il tipo `ArubaInvoiceStatus` deve consegnare al
+ * chiamante il codice che la coda e l'aggregazione sanno leggere. Tradurre qui
+ * significa che nessun chiamante può dimenticarsi di farlo — cioè leggere `0` e
+ * credere che Aruba abbia detto qualcosa. `codiceStatoAruba` è una funzione pura
+ * su una tabella di tre voci: nessuna I/O, nessuno stato, nessun ciclo di import.
+ */
+import { codiceStatoAruba, CODICE_NON_INTERPRETATO } from '@/lib/aruba/stato'
 
 export interface ArubaConfig {
   username?: string
@@ -122,8 +134,14 @@ export interface ArubaUploadResult {
    * `{"errorCode":"0034",…}` e nessun `429` di mezzo esce con `trasporto: true`,
    * `statoHttp: 400` e lo stesso `errorCode` — ed è un normale rifiuto di trasporto, che va
    * raccontato con il suo status e non con una frase su un `429` che non è mai arrivato.
-   * Quella frase finisce in `fatture_emesse.sdi_scarto_motivo`, dove il trigger WORM vieta
-   * il `DELETE`: una falsità scritta lì non si corregge più.
+   * Quella frase finisce in `fatture_emesse.sdi_scarto_motivo`, e ci resta: il trigger WORM
+   * vieta il `DELETE` della riga, quindi una falsità scritta lì non si toglie togliendo la
+   * riga. ⚠️ Corretto il 2026-09-11: una versione precedente diceva «non si corregge più»,
+   * ed era falso. `20260711150000_worm_registri_fiscali.sql` elenca le colonne immutabili
+   * (numero, anno, importo, xml, intestatario…) e `sdi_scarto_motivo` NON c'è — è anzi fra
+   * quelle che l'intestazione dichiara modificabili «dal polling/sync», che infatti la
+   * riscrive a ogni tick. Il costo vero è un altro, e basta: finché nessuno se ne accorge,
+   * la Segreteria legge un motivo sbagliato su un documento fiscale.
    *
    * Assente in ogni altro esito — riuscito, scarto di merito, rifiuto di trasporto.
    */
@@ -131,7 +149,63 @@ export interface ArubaUploadResult {
 }
 
 export interface ArubaInvoiceStatus {
-  stato: number // 1..10 (vedi stato.ts)
+  /**
+   * Il codice 1..10 della tabella di `stato.ts`, **tradotto dalla dicitura** che
+   * Aruba ha risposto — non un numero letto dalla risposta, che un numero non
+   * ce l'ha (vedi `arubaGetByFilename`).
+   *
+   * `0` significa «non ancora interpretato»: dicitura assente o fuori tabella.
+   * Per il cron vuol dire RESTARE IN CODA e richiedere al giro dopo; non
+   * significherà mai «emessa».
+   */
+  stato: number
+  /**
+   * La parola ESATTA di Aruba (`invoices[0].status`), non interpretata.
+   *
+   * Il corpo del provider non si butta via (AGENTS.md, regola 3): è questa
+   * stringa che arriva fino a `fatture_emesse.sdi_stato_label`, ed è l'unica
+   * cosa che permetterà a un essere umano di riconoscere una dicitura NUOVA
+   * invece di vedere soltanto uno `0` senza spiegazione.
+   *
+   * `null` quando la risposta non porta nessun `invoices[0].status`.
+   *
+   * ─── PERCHÉ NON È OPZIONALE, ED È UNA DIFESA DI COMPILAZIONE ───────────────
+   * Fino al 2026-09-11 era `statoAruba?:`. Sembrava innocuo e non lo era: i mock
+   * dei test del cron ritornavano `{ stato: 4 }` senza nessuna dicitura e
+   * restavano verdi, quindi il percorso «la parola di Aruba arriva fino al
+   * registro» era provato da NESSUN test — e sarebbe rimasto verde anche se il
+   * client avesse smesso di leggerla. Obbligatoria, `tsc` rifiuta chiunque la
+   * ometta, mock compresi: la copertura non dipende più dal fatto che qualcuno
+   * si ricordi di asserirla.
+   */
+  statoAruba: string | null
+  /**
+   * `invoices[0].statusDescription`: la spiegazione che Aruba affianca alla
+   * dicitura. Obbligatoria per la stessa ragione di `statoAruba` — le due
+   * chiavi arrivano dallo STESSO oggetto e si leggono in due righe adiacenti:
+   * se qualcuno ne cancella una, il tipo se ne accorge.
+   *
+   * Su una fattura SCARTATA questa stringa è (insieme a `errorDescription`) il
+   * MOTIVO dello scarto, cioè l'unico dato che dice come correggere il
+   * documento prima di ritrasmetterlo. Buttarla via è la regola 3 di AGENTS.md
+   * violata nel punto in cui costa di più.
+   */
+  descrizioneAruba: string | null
+  /**
+   * `errorCode` / `errorDescription` di PRIMO livello dell'involucro.
+   *
+   * Opzionali, e l'asimmetria con le due qui sopra è deliberata: `invoices[0]`
+   * ha esattamente quattro chiavi e le porta sempre, mentre questi due parlano
+   * dell'esito della RICHIESTA e sul percorso felice `errorCode` vale `'0000'`,
+   * che non è un motivo di niente. Chi li consuma deve decidere se sono
+   * significativi, e il tipo lo dice invece di fingere che ci siano sempre.
+   *
+   * `emissione.ts:2166` scrive già `errorDescription` in `sdi_scarto_motivo`
+   * sul percorso di upload: qui servono a rendere il polling coerente con la
+   * prassi che il resto del file ha già.
+   */
+  errorCode?: string | null
+  errorDescription?: string | null
   pdfBase64?: string | null
   raw?: unknown
 }
@@ -635,10 +709,78 @@ export async function arubaGetByFilename(
   })
   if (!esito.ok) throw erroreAruba('getByFilename', esito)
   const json = await leggiCorpoJson(esito.res, 'aruba:getByFilename')
-  const env = (json.value as Record<string, unknown>) ?? json
-  const stato = Number(env.status ?? env.stato ?? 0)
-  const pdf = (env.pdfFile ?? env.pdf ?? null) as string | null
-  return { stato, pdfBase64: pdf, raw: json }
+
+  // ─── LO STATO STA DENTRO `invoices[0]`, ED È UNA STRINGA ITALIANA ──────────
+  // Fino al 2026-09-11 questa riga era `Number(env.status ?? env.stato ?? 0)` su
+  // `env = (json.value) ?? json`. Ha prodotto un danno vero, in produzione, per
+  // mesi: al primo livello quei campi NON ESISTONO, quindi il `?? 0` scattava
+  // sempre, a registro finiva `sdi_stato = 0`, lo 0 non era in `STATI_IN_VOLO` e
+  // la riga usciva dalla coda del cron per non rientrarci MAI. Ogni fattura
+  // veniva interrogata una volta sola, la prima, e restava congelata. Al
+  // 2026-09-11 erano 153 righe — e quattro di quelle erano SCARTATE su Aruba, cioè
+  // fatture non emesse che in Segreteria apparivano come tutte le altre.
+  //
+  // La misura contro l'API vera dice: nessun `value`, nessuno `status` in cima,
+  // lo stato dentro `invoices[0].status` come dicitura italiana («Non
+  // consegnata», «Scartata», «Consegnata»). L'involucro `value` non si tiene
+  // nemmeno come ripiego: un ripiego verso un campo che non esiste non è una
+  // rete, è il modo in cui un difetto resta invisibile per mesi.
+  const invoices = Array.isArray(json.invoices) ? (json.invoices as unknown[]) : []
+  const primo = invoices[0] as { status?: unknown; statusDescription?: unknown } | undefined
+  const dicitura = typeof primo?.status === 'string' ? primo.status : null
+  const stato = codiceStatoAruba(dicitura)
+
+  // ─── E LA SPIEGAZIONE VIENE VIA CON LA DICITURA, NON DOPO ──────────────────
+  // `invoices[0]` ha quattro chiavi e ne stavamo leggendo una. `statusDescription`
+  // è la seconda metà della stessa frase: su una fattura SCARTATA è il MOTIVO
+  // dello scarto, cioè l'unica cosa che dice cosa correggere prima di
+  // ritrasmettere. Al 2026-09-11 quattro fatture della cooperativa risultano
+  // «Scartata» su Aruba: senza questa riga, il registro può dire CHE sono state
+  // respinte e non riuscirà mai a dire PERCHÉ.
+  //
+  // Stessa cosa per `errorCode`/`errorDescription` di primo livello — presenti
+  // nell'involucro misurato e finora scartati. `'0000'` non è un motivo: è il
+  // codice del percorso felice, e chi li legge lo sa (vedi `motivoScartoAruba`).
+  const descrizione = typeof primo?.statusDescription === 'string' ? primo.statusDescription : null
+  const errorCode = typeof json.errorCode === 'string' ? json.errorCode : null
+  const errorDescription = typeof json.errorDescription === 'string' ? json.errorDescription : null
+
+  // UNA DICITURA CHE NON SAPPIAMO LEGGERE È UN INCIDENTE, non una curiosità: quel
+  // documento resta in coda a tempo indeterminato (consumando quota Aruba a ogni
+  // giro), e se la parola nuova significasse «scartata» nessuno avviserebbe la
+  // Segreteria. Livello `error`, e la PAROLA VERA nel messaggio: senza, chi legge
+  // il log vede uno `0` e non ha modo di sapere cosa aggiungere alla tabella.
+  // Non è un dato personale: è il vocabolario di stato del provider.
+  if (stato === CODICE_NON_INTERPRETATO) {
+    logEvento(
+      'fattura',
+      'error',
+      {
+        operazione: 'aruba:getByFilename',
+        provider: 'aruba',
+        esito: 'stato-non-interpretato',
+        dicitura_presente: dicitura !== null,
+        msg: dicitura
+          ? `Aruba getByFilename: dicitura di stato fuori tabella «${dicitura}» — ` +
+            'la fattura resta in coda e va aggiunta la voce in src/lib/aruba/stato.ts'
+          : 'Aruba getByFilename: la risposta non porta nessun invoices[0].status — ' +
+            'stato non interpretabile, la fattura resta in coda',
+      },
+    )
+  }
+
+  // Il PDF invece sta IN CIMA, e da lì si è sempre letto bene: 153 PDF su 153
+  // sono arrivati così. Non si tocca — cade solo il `value` che non esiste.
+  const pdf = (json.pdfFile ?? json.pdf ?? null) as string | null
+  return {
+    stato,
+    statoAruba: dicitura,
+    descrizioneAruba: descrizione,
+    errorCode,
+    errorDescription,
+    pdfBase64: pdf,
+    raw: json,
+  }
 }
 
 /* ────────────────────────────────────────────────────────────────────────────

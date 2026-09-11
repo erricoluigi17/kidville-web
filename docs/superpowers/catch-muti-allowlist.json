@@ -19,8 +19,8 @@
     "Si logga anche il ramo !res.ok, non solo l'eccezione: un 403 è una risposta regolare, e",
     "senza quel ramo resta silenzioso esattamente come prima."
   ],
-  "aggiornato": "2026-09-09",
-  "totale_occorrenze": 78,
+  "aggiornato": "2026-09-11",
+  "totale_occorrenze": 76,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -151,10 +151,6 @@
       "n": 1
     },
     {
-      "path": "src/components/features/admin/pagamenti/FatturaButton.tsx",
-      "n": 1
-    },
-    {
       "path": "src/components/features/admin/pagamenti/FiscalePanel.tsx",
       "n": 1
     },
@@ -196,10 +192,6 @@
     },
     {
       "path": "src/components/features/parent/home/PresenzeTodayCard.tsx",
-      "n": 1
-    },
-    {
-      "path": "src/components/features/parent/pagamenti/StoricoPagamenti.tsx",
       "n": 1
     },
     {

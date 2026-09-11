@@ -1790,7 +1790,49 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    Giugliano anche dopo che il bambino è stato trasferito ad Aversa.
             //
             // `handlerEsentati` resta fermo a 98.
-            routeConServiceRole: 312,
+            //
+            // 312 → 311 il 2026-09-10: è USCITA `pagamenti/ricevuta`, cancellata insieme
+            // alla ricevuta contabile per singolo pagamento. Non è un presidio tolto: è
+            // una route che non esiste più, e il suo `createAdminClient()` con lei.
+            // Misurato, non dedotto. `handlerEsentati` resta 98: quella route non stava
+            // in `AMMESSE`, quindi non si sta togliendo nessuna esenzione. La ricevuta
+            // DI FAMIGLIA (`pagamenti/transazioni/[id]/ricevuta`) e il registro dello
+            // staff (`pagamenti/ricevute`, al plurale) restano contati: sono omonimi.
+            //
+            // ✅ Lo stesso giorno è NATO un gate, `assertFatturaInScope`
+            // (`src/lib/pagamenti/scope-fattura.ts`), e la domanda che conta non è se sia
+            // scritto bene: è se QUESTO lock lo veda. Verificato eseguendolo, non leggendo
+            // il regex: `gateDiLibreria('src/lib')` lo restituisce, e `pagamenti/fattura:GET`,
+            // `pagamenti/fattura:POST` e `pagamenti/fattura/list:GET` NON compaiono fra le
+            // scoperture. Vale la pena dire perché regge, perché le strade sono DUE e
+            // indipendenti: `GATE_OGGETTO` cerca la FORMA `assert[A-Z]…InScope(` nella
+            // route, quindi il nome nuovo entra da solo; e `helperDiScope` qualifica una
+            // funzione dal CORPO e non dal nome — lo dice la sua stessa testata («Si
+            // riconoscono dal CORPO: una funzione che al suo interno filtra per `scuola_id`
+            // o chiama un gate È un gate») e lo fa il suo `if` finale, quello su
+            // `FILTRO_SEDE || GATE_OGGETTO || GATE_MANUALE || nega` — quindi la riconosce
+            // anche perché chiama a sua volta un gate (`assertPagamentoInScope`, per il ramo
+            // contabilità).
+            // In questa nota non c'è nessun numero di riga, ed è una regola e non un vezzo:
+            // le righe si spostano a ogni modifica sopra di loro — `errori-con-codice.test.ts`
+            // la scrive per esteso, «PERCHÉ IL CONTEGGIO E NON LA RIGA». Al giro prima qui
+            // c'erano due numeri di riga, dati per la posizione e per la testata di
+            // `helperDiScope`: il secondo cadeva invece nella testata di `gateDiLibreria`,
+            // che è un'ALTRA funzione. (Il numero non si ripete qui apposta: sarebbe una
+            // citazione di riga dentro la nota che spiega perché non si citano le righe, e
+            // basterebbe un inserimento più in alto per renderla falsa a sua volta.) Il
+            // rimando che il lettore va a controllare e trova sbagliato è peggio di nessun
+            // rimando, perché gli fa smettere di credere anche alla parte vera che gli sta
+            // intorno. Si nomina la funzione, non la riga: la funzione si trova con una
+            // ricerca, e una ricerca non invecchia.
+            // Un gate rinominato NON sarebbe invisibile a questo lock, e non è una
+            // deduzione: `helperDiScope` eseguito su una funzione chiamata `verificaFattura`
+            // il cui corpo chiama `assertPagamentoInScope` restituisce `["verificaFattura"]`.
+            // È la normalità, non l'eccezione: oggi `GATE_LIB` conta 55 gate e 44 di essi
+            // NON hanno la forma `assert…InScope` (`requireParentOfStudent`,
+            // `adminDellaSede`, `classiMancantiNellaSede`, …) — se il nome fosse portante,
+            // questo lock sarebbe cieco su quattro quinti dei gate del repo.
+            routeConServiceRole: 311,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -1932,7 +1974,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 476 → 477 il 2026-09-07: il POST della route qui sopra.
             // 477 → 478 il 2026-09-08: stessa unione di due sessioni (vedi la nota su
             // `routeConServiceRole`). Misurato, non dedotto.
-            handlerControllati: 480,
+            //
+            // 480 → 479 il 2026-09-10: l'unico handler (`GET`) di `pagamenti/ricevuta`,
+            // uscito con la route. Il passo coincide col numero di file (−1 route, −1
+            // handler) perché quella rotta esponeva il solo GET. Misurato, non dedotto.
+            handlerControllati: 479,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

@@ -101,7 +101,7 @@
   "notifica_pagamento_emesso_label": "Nuova retta o rata emessa",
   "notifica_pagamento_emesso_desc": "Quando la segreteria genera un nuovo dovuto",
   "notifica_pagamento_registrato_label": "Pagamento registrato",
-  "notifica_pagamento_registrato_desc": "Quando un pagamento viene registrato e la ricevuta è disponibile",
+  "notifica_pagamento_registrato_desc": "Quando un pagamento viene registrato",
   "notifica_sospensione_morosita_label": "Sospensione per morosità",
   "notifica_sospensione_morosita_desc": "Comunicazione formale di sospensione del servizio",
   "notifica_mensa_ricarica_label": "Ricarica ticket mensa",

@@ -100,6 +100,428 @@
 
 ---
 
+## 🧾 Changelog — Lo stato SDI si leggeva a un livello dove non è mai esistito, e quattro fatture respinte risultavano regolari — 2026-09-11 (branch `feat/pagamenti-fattura-senza-ricevuta`)
+
+`GET /services/invoice/out/getByFilename` è l'unica domanda che facciamo ad Aruba dopo aver spedito
+una fattura: *in che stato è?*. La risposta veniva letta così, in `src/lib/aruba/client.ts`:
+
+```ts
+const env = (json.value as Record<string, unknown>) ?? json
+const stato = Number(env.status ?? env.stato ?? 0)
+```
+
+Al primo livello di quell'involucro **`status` non esiste, `stato` non esiste, e nemmeno `value`
+esiste**. Il `?? 0` non era un ripiego per il caso raro: scattava **sempre**, su ogni fattura, di
+ogni sede, dal primo giorno. A registro finiva `sdi_stato = 0`, che la nostra tabella traduce in
+*«Stato sconosciuto (0)»*.
+
+E lo `0` non era in `STATI_IN_VOLO`, che valeva `[1, 3, 5]` — la coda del cron
+`POST /api/pagamenti/fattura/sync`. Da lì viene il danno vero: la riga usciva dalla coda **al primo
+giro**, quello in cui di quella fattura non si sapeva ancora niente, e non ci rientrava **mai più**.
+Ogni fattura veniva interrogata **una volta sola** e restava congelata per sempre. Il cron girava
+eccome, e non falliva: ogni riga nasce a `sdi_stato = 1` («Presa in carico»,
+`src/lib/aruba/emissione.ts:2203`), cioè **dentro** la coda `[1, 3, 5]`, e il ciclo la prendeva
+davvero — è quella passata lì, l'unica, a scriverci sopra lo `0`. Trovava però **solo le fatture
+appena emesse, una interrogazione a testa, e nessuna che tornasse mai indietro**: a essere vuoto non
+era la coda, era l'**arretrato**. Un cron che gira regolare su un lavoro che non sta più facendo è
+il silenzio che sembra «è tutto a posto» e vuol dire «di quelle fatture non si è più saputo
+niente» — l'ambiguità esatta contro cui è scritta la regola 5 del logging in `AGENTS.md`.
+
+### Il danno, misurato sul database di produzione l'11/09/2026
+
+**153 righe di `fatture_emesse` erano ferme a `sdi_stato = 0`.** Non è il numero preoccupante. Il
+numero preoccupante è il sottoinsieme: interrogando Aruba una per una, **quattro di quelle fatture
+risultano «Scartata»**, cioè respinte dallo SdI.
+
+| Documento | Cosa dice Aruba | Cosa diceva il nostro registro |
+|---|---|---|
+| **FPR 1985/26** | `Scartata` | Stato sconosciuto (0) |
+| **FPR 2009/26** | `Scartata` | Stato sconosciuto (0) |
+| **Asilo 2394/2026** | `Scartata` | Stato sconosciuto (0) |
+| **Asilo 2407/2026** | `Scartata` | Stato sconosciuto (0) |
+
+**Una fattura scartata non è stata emessa.** Non è un documento con un problema di consegna: è un
+documento che per l'Agenzia delle Entrate non esiste, e che va **corretto e ritrasmesso**. In
+Segreteria quelle quattro righe apparivano come tutte le altre, senza nessun avviso — perché
+l'avviso alla Segreteria è agganciato a `isScarto`, e con `sdi_stato = 0` non era scarto: era
+«sconosciuto». Nessuno lo ha mai saputo.
+
+⏳ **DA FARE, e non è lavoro di codice.** Questo rilascio fa in modo che d'ora in avanti uno scarto
+si veda e generi la notifica; **non riemette niente**. Le quattro fatture qui sopra vanno riprese in
+Segreteria una per una, corrette e ritrasmesse. Il motivo dello scarto oggi c'è (vedi più sotto,
+`sdi_scarto_motivo`), ma per queste quattro righe comparirà solo dopo che il cron le avrà
+ri-interrogate: sono in coda, e la coda ha un ritmo dichiarato.
+
+### La misura contro l'API vera, eseguita una volta e da non rifare
+
+Aruba consente **1 `signin` al minuto**: la lettura è stata fatta il 2026-09-11 su **4.000 documenti
+veri** (anni 2026 e 2025) ed è scritta qui perché nessuno debba ripeterla.
+
+L'involucro di `getByFilename` ha queste chiavi di primo livello, e sono tutte:
+`id`, `sender`, `receiver`, `filename`, `invoices`, `username`, `lastUpdate`, `idSdi`,
+`creationDate`, `signed`, `unsignedFile`, `errorCode`, `errorDescription`, `pddAvailable`,
+`invoiceType`, `docType`.
+
+**Lo stato sta dentro `invoices[0]`**, che di chiavi ne ha esattamente quattro — `invoiceDate`,
+`number`, `status`, `statusDescription` — **ed è una STRINGA italiana**, non un numero. Di numeri,
+Aruba, non ne manda nessuno: il vocabolario `1..10` di `src/lib/aruba/stato.ts` è **nostro**, ed è
+ciò che sta nella colonna e su cui l'aggregazione sa ragionare. Mancava la traduzione fra i due, e
+adesso sta lì, accanto alla tabella che poi la legge.
+
+Le diciture distinte su 4.000 documenti sono **TRE**, non le dieci che la nostra tabella si aspetta:
+
+| Dicitura di Aruba | Occorrenze | Nostro codice | `fattura_stato` |
+|---|---:|---|---|
+| `Non consegnata` | **3.960** | 6 · Recapito impossibile (depositata) | `emessa` |
+| `Scartata` | **31** | 4 · Scartata dallo SDI | `scartata` |
+| `Consegnata` | **9** | 7 · Consegnata | `emessa` |
+
+### «Non consegnata» vuol dire EMESSA, ed è il caso normale — il pezzo che nessun documento diceva
+
+È la riga che qualcuno, fra un anno, sarà tentato di «correggere» in `in_attesa` credendo di
+sistemare un difetto. **Non lo è**, e la spiegazione l'ha data il titolare, non l'ha dedotta il
+codice.
+
+I destinatari delle nostre fatture sono **i genitori: privati cittadini**, senza cassetto fiscale e
+senza codice destinatario. Lo SdI non ha nessun canale telematico a cui recapitare il documento,
+quindi non lo recapita: **lo deposita** nell'area riservata del destinatario sul sito dell'Agenzia
+delle Entrate. «Non consegnata» descrive il **mancato recapito**, non un mancato invio: la fattura è
+stata trasmessa, ha superato i controlli, **è emessa, è valida, è fiscalmente in essere**. È in
+tutto e per tutto la voce **6** della nostra tabella, «Recapito impossibile (depositata)», che
+mappava già su `emessa` — mancava solo chi ci arrivasse.
+
+E la misura dice **3.960 su 4.000**: è il **99%**, cioè il caso **normale**, non l'eccezione.
+Mapparla su `in_attesa` metterebbe quasi tutte le fatture della cooperativa in un limbo perpetuo, e
+con esse il **PDF** — che per una famiglia senza cassetto fiscale è **l'unico modo di avere la
+propria fattura**. È esattamente il motivo per cui la schermata Pagamenti del genitore deve
+mostrarlo, e per cui il debito sull'upload (qui sotto) non era rimandabile.
+
+### La regola asimmetrica: nel dubbio si resta in coda, mai «emessa»
+
+`0` non significa «in attesa». Significa **«non ancora interpretato»**, ed è un valore con due
+proprietà volute e opposte:
+
+- **torna in coda.** `STATI_IN_VOLO` diventa `[0, 1, 3, 5]`: uno stato non interpretato deve poter
+  essere richiesto di nuovo, altrimenti si congela — che è il difetto che questa voce chiude. La
+  riga ripesca anche le **153** righe storiche, che da sole non rientrerebbero;
+- **non diventa mai `emessa`.** I due modi di sbagliare non si equivalgono: una fattura congelata si
+  scongela al giro dopo; una fattura **scartata marcata «emessa»** esce dalla coda, non genera
+  nessun avviso alla Segreteria, resta in contabilità come valida e **non viene mai corretta né
+  ritrasmessa**. Marcare emessa una scartata è peggio del congelamento, e per un ordine di
+  grandezza.
+
+Da qui tutto il resto delle scelte di `stato.ts`, che sono la stessa regola detta in modi diversi:
+la normalizzazione della dicitura è **deliberatamente stupida** (minuscole, estremi tagliati, spazi
+collassati, nient'altro) — niente `includes`, niente `startsWith`, perché un confronto per
+sottostringa riconoscerebbe «Consegnata» **dentro** «Non consegnata», scambiando due voci opposte; e
+la mappa è una `Map` e non un oggetto letterale, perché su un oggetto `DICITURA['constructor']` non
+è `undefined` ma una funzione ereditata dal prototipo, e `?? 0` non la intercetterebbe. La chiave
+qui è **testo che arriva dal provider**: non le si concede di pescare nel prototipo.
+
+Una dicitura mai vista resta `0` e viene gridata a livello **`error`** dal client, **con la parola
+vera dentro il messaggio** — non è un dato personale, è il vocabolario di stato del provider, e
+senza quella parola chi legge il log vede uno `0` e non sa cosa aggiungere alla tabella.
+
+### `sdi_scarto_motivo` diceva due volte la stessa cosa
+
+Su una fattura respinta quella colonna è il posto in cui la Segreteria va a guardare per capire
+**cosa correggere** prima di ritrasmettere. Ci veniva scritta la nostra etichetta — *«Scartata dallo
+SDI»* — cioè la stessa frase già presente in `sdi_stato_label`, ripetuta con altre parole: zero
+informazione occupata da del testo. Adesso ci finiscono `invoices[0].statusDescription` e, quando
+aggiungono qualcosa, `errorCode`/`errorDescription` di primo livello — con `'0000'` scartato perché
+è il codice del percorso felice e come motivo non dice niente. La prassi era già in casa:
+`src/lib/aruba/emissione.ts` scrive in quella stessa colonna `errorDescription ?? errorCode` sul
+percorso di upload. Il polling era incoerente col proprio file, non con un'idea nuova.
+
+Stessa famiglia la nuova etichetta a registro: `Recapito impossibile (depositata) — Aruba: «Non
+consegnata»`. La nostra tabella è una traduzione, e **una traduzione che sostituisce l'originale
+cancella l'unico modo di accorgersi che è sbagliata** (regola 3 di `AGENTS.md`, applicata a un campo
+che non è un errore). Quando le due frasi coincidono non si scrive due volte la stessa parola.
+
+### Aprire la coda l'ha riempita, e il giro non era dimensionato per una coda piena
+
+Va scritto perché è una conseguenza del rilascio, non un dettaglio interno. Con `[1, 3, 5]` il ciclo
+partiva a ogni tick, ma **lavorava una manciata di righe** — le sole fatture emesse da poco, una
+interrogazione a testa — e non si avvicinava mai al suo `.limit(200)`. È per questo che nessuno si
+era accorto che dentro non c'era **nessuna pausa** fra un `getByFilename` e il successivo: il difetto
+c'era, non aveva mai avuto abbastanza righe per manifestarsi. Ammesso lo `0`, al primo giro
+rientrano le 153 righe congelate — fino a 200 richieste di fila, a raffica, contro un tetto Aruba di
+**12 richieste al minuto per IP** (SLA §3, «rifiuta istantaneamente con HTTP 429», senza accodare).
+E il secchio è **per IP**: i `429` non se li prenderebbe solo il cron, si porterebbe via anche lo
+slot di chi in quel momento sta emettendo dal pannello.
+
+Non che nessuno l'avesse visto: **è il debito dichiarato il 2026-09-07** — voce «Il lotto fatture
+passa dal browser al server», sotto «Cosa si perde, ed è a verbale», dove sta scritto che *«il cron
+continua a fare fino a 200 `getByFilename` senza pause su un tier da 12/min … Resta un debito
+dichiarato»*. Era rimasto aperto per una ragione buona: cambiare il ritmo cambia quante fatture in
+volo si chiudono per giro, ed era una decisione da prendere, non una svista da correggere di
+straforo. Aprire la coda l'ha resa obbligata, e **qui è pagato**.
+
+La mitigazione è in tre pezzi e servono tutti e tre: `TETTO_PER_GIRO = 30` righe per tick, la
+**pausa fra una richiesta e la successiva** — `PAUSA_FRA_PAGINE_MS` (5 s), la stessa costante che
+governa la paginazione perché è lo stesso secchio, e sta **fra** le chiamate, non davanti a
+ciascuna: `if (esaminate > 0) await attendi(…)`, `sync/route.ts:325`, che davanti alla prima non ha
+niente da distanziare — e `TETTO_TEMPO_MS = 240_000` per smettere **prima** che sia la
+piattaforma a interrompere a metà di una scrittura: fra l'`UPDATE` di `fatture_emesse` e quello
+di `pagamenti` c'è la divergenza permanente fra due tabelle contro cui questo file mette già una
+guardia.
+
+⏱️ **Il conto, detto prima che qualcuno lo scopra**: 30 righe hanno **29** pause in mezzo, quindi
+29 × 5 s = **145 s** di sole attese per un tick pieno, più risposte e scritture. Le 153 righe
+rientrano quindi in **~6 tick**, cioè **circa tre ore** col cron ogni trenta minuti. È lento di
+proposito: si sta svuotando un arretrato, non inseguendo un evento.
+
+### L'upload che non controllava l'errore — il debito **(3)** del 2026-09-10 è CHIUSO
+
+La voce del 10/09 lasciava aperto un sospetto dichiarato e non misurato: in
+`src/app/api/pagamenti/fattura/sync/route.ts` il caricamento del PDF sullo Storage era
+`await storage?.from('fatture').upload(...)` **col valore di ritorno buttato via**, dentro un
+`try/catch` che non poteva scattare. Era vero, ed è corretto qui.
+
+`supabase-storage-js` **non lancia**: ritorna `{ data, error }`, esattamente come PostgREST
+(`AGENTS.md`, regola 7). Un caricamento **respinto** — bucket pieno, chiave rifiutata, permesso
+negato — usciva da quel blocco come un successo, `pdf_path` finiva a registro puntando a un file che
+non esiste, e `GET /api/pagamenti/fattura` andava poi a cercarlo. **Senza una riga di log.** È lo
+stesso difetto che `fattura/route.ts` dichiarava già corretto **sul download**: era rimasto in piedi
+**sull'upload**, che è il lato che scrive.
+
+Adesso i rami sono tre, e sono tre perché le cause sono tre e mandare chi legge sulla diagnosi
+sbagliata è tempo buttato:
+
+| Esito | Quando | Cosa vuol dire per chi legge |
+|---|---|---|
+| `pdf-storage-assente` | `storage?.` ha corto-circuitato | l'upload **non è mai partito**: forma inattesa del client, non un rifiuto del bucket |
+| `pdf-copia-rifiutata` | lo Storage ha risposto `{ error }` | il bucket ha detto di no — e il **corpo dell'errore del provider** viaggia come `cause` |
+| `pdf-copia-eccezione` | qualcosa ha lanciato davvero | base64 corrotto, guasto di trasporto |
+
+In tutti e tre `pdfPath` torna `null`: un `pdf_path` scritto senza il file dietro è una bugia a
+registro. Livello **`error`** e non `warn`, per la stessa ragione dello scarico: non è un risultato
+degradato, è un risultato **assente**. E da quando la «copia di cortesia» non esiste più (voce del
+10/09), un `pdf_path` fasullo è **un genitore che non ha nessun documento** — per una famiglia senza
+cassetto fiscale, l'unico che avrebbe potuto avere. Lo stato SDI, intanto, viene salvato lo stesso:
+non aver caricato il PDF non è una ragione per dimenticare cosa ha risposto lo SdI.
+
+### Cosa NON è stato fatto, e va detto
+
+- **Le quattro fatture scartate non sono state riemesse.** Vedi il ⏳ qui sopra: è lavoro di
+  Segreteria su documenti fiscali, non una `UPDATE`.
+- **Il cron non è stato fatto girare contro la produzione da questa sessione.** Che le 153 righe
+  rientrino in coda è la conseguenza attesa del codice qui descritto, non una cosa vista accadere:
+  si verifica contando le righe con `sdi_stato = 0` fra qualche ora, che è una lettura e non ferma
+  nessuno.
+- **La tabella `1..10` non è stata potata.** Le diciture osservate sono tre, ma «osservate su 4.000
+  documenti in due anni» non è «esistenti»: togliere le voci mai viste renderebbe `0` — cioè
+  «ritenta per sempre» — uno stato che oggi sappiamo mappare.
+
+---
+
+## 🧾 Changelog — Due documenti per lo stesso incasso, e uno dei due era disegnato al momento — 2026-09-10 (branch `feat/pagamenti-fattura-senza-ricevuta`)
+
+Una voce di pagamento saldata offriva al genitore **due** documenti per lo stesso denaro: la
+**fattura elettronica** — quella vera, trasmessa allo SdI e conservata — e una **«Ricevuta»**
+generata dall'app. E quando il PDF della fattura non era ancora tornato dallo SdI, la rotta della
+fattura **ne disegnava una al volo** con scritto in testa *«Copia di cortesia»*: un foglio che dice
+*fattura* e non è il documento depositato all'Agenzia. Chi riceveva i tre pezzi di carta non aveva
+modo di sapere quale valesse.
+
+Decisione del titolare: **un incasso, un documento**. Resta la fattura elettronica, e solo quando il
+suo PDF esiste davvero.
+
+### C'era un secondo difetto, e stava nel ramo che sembrava innocuo
+
+Il comando «Fattura» del genitore usciva da un fast-path: `if (!fatture || fatture.length <= 1)`
+rendeva il link singolo. Ma `fatture` è `null` **anche mentre la richiesta è in volo**, quindi quel
+ramo disegnava il pulsante **senza sapere se dietro ci fosse un PDF**: si cliccava e si finiva su un
+errore. Oggi i comandi si rendono **solo** per le righe che il SERVER ha verificato sul bucket
+(`pdf_disponibile`), e finché non lo sa non si rende niente — nessuno scheletro, nessun pulsante
+spento, nessuno spazio riservato. È la regola scritta una volta in `src/lib/pagamenti/scarico-fattura.ts`
+e usata dalle due pelli, quella di famiglia e quella di segreteria: **nessun PDF in archivio, nessun
+pulsante**.
+
+### Cosa sparisce
+
+| | |
+|---|---|
+| **UI del genitore** | il ramo «Ricevuta» della card di pagamento (`StoricoPagamenti.tsx`): su una voce saldata non compare più nessun comando se non c'è una fattura scaricabile |
+| **Segreteria — punto 1** | la colonna «PDF» del **Registro ricevute** (`FiscalePanel.tsx`), riga per riga |
+| **Segreteria — punto 2** | il pulsante «Ricevuta» del drawer di un pagamento (`PagamentoDrawer.tsx`), insieme al suo gemello disabilitato: sulle voci non saldate portava lo stesso nome e, come `title`, la frase **«Disponibile a saldo avvenuto»** (`drawerRicevutaDisabled`, in `HEAD` a `messages/it/adminContabilita.json:276`, reso a `HEAD:PagamentoDrawer.tsx:100`) |
+| **Segreteria — punto 3** | l'ancora «Ricevuta» del **dialogo del movimento** in riconciliazione (`MovimentoDialog.tsx`): in `HEAD` era un `<a href="/api/pagamenti/ricevuta?pagamento_id=…">` alla riga **572**, con l'etichetta `movdlgRicevuta` (**574**) e, sul ramo non ancora saldato, la nota `movdlgRicevutaFatturaSaldo` (**606**). È il punto più facile da dimenticare, e infatti il primo elenco di questo changelog lo aveva dimenticato: non sta nella pagina dei pagamenti, sta dentro un dialogo della **riconciliazione bancaria**, e ci si arriva solo aprendo un movimento |
+| **Rotta** | `GET /api/pagamenti/ricevuta` — il file `src/app/api/pagamenti/ricevuta/route.ts` è **cancellato**, non svuotato |
+| **Motore PDF** | `buildRicevutaPdf` e `RicevutaPdfInput` (`src/lib/pagamenti/pdf.ts`): l'unico consumatore era la rotta qui sopra |
+| **Motore di emissione** | `emettiORecuperaRicevuta` e `annullaRicevutaAttiva` (`src/lib/pagamenti/ricevute.ts`), coi **quattro** punti che le chiamavano — e non sono quattro emissioni: era **UNA** emissione, dentro la rotta cancellata (`pagamenti/ricevuta/route.ts:65`, che emetteva su richiesta del `GET`; in `POST /api/pagamenti/incassi` non c'era nessuna chiamata), e **TRE** annulli (`pagamenti/[id]/route.ts:287` cancellazione del pagamento, `incassi/[id]/route.ts:80` modifica dell'incasso, `incassi/storno/route.ts:145` storno) |
+| **PDF di cortesia della fattura** | il disegno al volo dentro `GET /api/pagamenti/fattura`. Quando il PDF vero non c'è la risposta è un **404 con codice** `FATTURA_PDF_NON_DISPONIBILE`, che è un'informazione; un foglio disegnato al momento era una risposta che sembrava un documento |
+| **Testo delle notifiche** | la frase «La ricevuta è disponibile» sparisce da **TRE** corpi di «pagamento registrato»: `pagamenti/[id]/route.ts` — riga **232 in `HEAD`**, dove la frase c'era; nel file di oggi quella riga è `link: '/parent/pagamenti',` e il corpo, ora «risulta saldato» e basta, sta alla **231** —, `incassi/route.ts:301` e `riconciliazione/[id]/route.ts:315` (queste due valgono in entrambe le versioni). Cade anche dalla descrizione della preferenza (`src/lib/notifiche/tipi.ts:128`, ora «Quando un pagamento viene registrato»). ⚠️ Il **quarto** corpo — `pagamenti/transazioni/route.ts:244` — **RESTA, e va lasciato**: è la ricevuta DI FAMIGLIA, che esiste ancora; bonificarlo sarebbe stato cancellare una frase vera per omonimia |
+| **Catalogo di testo — genitore** | in `messages/it/pagamenti.json` e `messages/en/pagamenti.json` sparisce la chiave `ricevuta` («Ricevuta» / «Receipt»), e `contantiTesto` smette di promettere il documento: *«In segreteria, negli orari di apertura: ricevi subito la ricevuta.»* → *«In segreteria, negli orari di apertura: il pagamento viene registrato subito e lo vedi qui.»* (la stringa è copiata da `messages/it/pagamenti.json:53`, non riassunta: una parafrasi in un changelog diventa la citazione che qualcuno cercherà col `grep` e non troverà). È la stessa categoria della riga qui sopra — una promessa che vive in un **catalogo di testi**, dove nessun test di rotta la vedrebbe |
+| **Catalogo di testo — segreteria** | in `messages/it/adminContabilita.json` e `messages/en/adminContabilita.json` spariscono `drawerRicevuta` («Ricevuta»), `drawerRicevutaDisabled` («Disponibile a saldo avvenuto») e `movdlgRicevuta` («Ricevuta»); `movdlgRicevutaFatturaSaldo` («Ricevuta e fattura disponibili a saldo avvenuto.») diventa **`movdlgFatturaSaldo`** («Fattura disponibile a saldo avvenuto.»), perché la frase prometteva due documenti e da oggi ne esiste uno. Chiave rinominata e non solo riscritta, di proposito: un nome che dice ancora «Ricevuta» sopravvive a ogni `grep` di bonifica |
+
+🔴 **RESIDUO VIVO E VISIBILE, non testo orfano — e il primo giro di questo changelog l'aveva
+derubricato.** In `messages/it/etichette.json:104` e `messages/en/etichette.json:104` la chiave
+`notifica_pagamento_registrato_desc` dice ancora *«Quando un pagamento viene registrato **e la
+ricevuta è disponibile**»*. Il primo giro l'ha dichiarata «non letta da `src/`» sulla base di un
+`grep` letterale, e la conclusione era **falsa**: quella chiave nessuno la scrive per intero, viene
+**composta a runtime** — `` `notifica_${canon}_desc` `` in `src/lib/notifiche/tipi.ts:317-318` — e
+`useTipoNotifica` la fa **vincere** sul catalogo TypeScript (`tipi.ts:321`:
+`t.has(kDesc) ? t(kDesc) : def?.descrizione`). Conseguenza misurata: nel pannello delle preferenze
+il genitore legge **ancora** la promessa di un documento che non esiste più, e la correzione a
+`src/lib/notifiche/tipi.ts:128` — il ramo `def?.descrizione` — **non la raggiunge mai**, perché è il
+ramo di ripiego. La lezione, che vale oltre questa riga: **un `grep` letterale non è una prova di
+non-uso quando la chiave si compone**. I due `etichette.json` non sono fra i file di questo lavoro:
+il residuo resta aperto e va corretto lì, non qui.
+
+
+### Cosa RESTA intatto — e va letto, perché sono tutti OMONIMI
+
+- il **registro `ricevute_emesse`**, il **trigger WORM** e la RPC `prossimo_numero_ricevuta`:
+  **nessuna migrazione**, nessun numero bruciato, nessuna riga cancellata. Le ricevute già emesse
+  restano a registro esattamente dov'erano;
+- la **ricevuta DI FAMIGLIA** (`emettiORecuperaRicevutaTransazione`,
+  `annullaRicevutaTransazioneAttiva`, `buildRicevutaFamigliaPdf`, la rotta
+  `/api/pagamenti/transazioni/[id]/ricevuta`): è il documento dell'**incasso unico di famiglia**, si
+  intesta a chi ha pagato, e non ha mai avuto niente a che fare con quella per singolo pagamento;
+- l'**attestazione 730** (`/api/pagamenti/attestazione`, `buildAttestazionePdf`): è il documento che
+  vale per la detrazione, ed è intoccato;
+- il **registro dello staff** `GET /api/pagamenti/ricevute` — al **PLURALE** — e la vista «Registro
+  ricevute» di `/admin/pagamenti?vista=fiscale`: si consulta, si esporta, non sparisce. Quello che
+  non ha più è la colonna con l'ancora al PDF;
+- la **numerazione sezionale** e tutto il percorso della fattura elettronica: emissione, lotto,
+  anteprima della causale, cron di sincronizzazione, `src/lib/aruba/**`.
+
+### 🔴 I tre debiti che questo lavoro lascia aperti, dichiarati e non addolciti
+
+**1. Le ricevute STORICHE non vengono più annullate.** Fino a ieri uno storno, la modifica di un
+incasso o la cancellazione di un pagamento annullavano la ricevuta attiva: numero bruciato, registro
+coerente. Quelle **tre** chiamate di annullo sono uscite col motore che le serviva (la quarta chiamata
+era l'emissione, ed è uscita con la rotta). **Conseguenza, detta per intero: il Registro ricevute può
+mostrare come VALIDA una ricevuta il cui incasso è stato stornato.** È una scelta del titolare, presa
+sapendolo; ma finché quelle righe sono lì, sono lì senza chi le annulli.
+
+⚠️ **Quello che NON si può dire è «tanto il registro non cresce più»**, ed è la frase con cui questo
+debito si addolcirebbe da solo. `ricevute_emesse` continua a crescere: la ricevuta DI FAMIGLIA ci
+scrive dentro a ogni transazione (`emettiORecuperaRicevutaTransazione` fa `INSERT` in
+`src/lib/pagamenti/ricevute.ts:184`, con `transazione_id` valorizzato e `pagamento_id: null`), e le sue
+righe hanno ancora il loro annullo (`annullaRicevutaTransazioneAttiva`). A smettere di crescere — e a
+restare senza chi lo annulla — è **soltanto il sottoinsieme delle ricevute per singolo pagamento**,
+cioè le righe con `pagamento_id` valorizzato.
+
+Quante siano **non è misurato in questa sessione** (lo strumento Supabase non era autenticato). È una
+lettura sola, e va ristretta a quel sottoinsieme, altrimenti conta anche le ricevute di famiglia, che
+sono legittimamente attive:
+
+```sql
+SELECT count(*) FROM ricevute_emesse WHERE pagamento_id IS NOT NULL AND annullata_il IS NULL;
+```
+
+Nessuno la ferma — contare è una lettura.
+
+**2. L'intestatario digitato a mano non ha più una ricevuta su cui atterrare.** Dal 2026-09-04 il
+selettore `tipo: 'altro'` — una persona scritta a mano sulla scheda del bambino, che non è nessuna
+riga di `parents` — era stato portato su tutti e quattro i documenti proprio perché la stessa
+famiglia non ricevesse due intestatari diversi. Uno dei quattro adesso non c'è più. Restano allineati
+i tre che contano davanti al fisco (fattura, attestazione 730, comunicazione AdE); la ricevuta di
+famiglia si intesta a **chi ha pagato** e non legge `intestatario_fatture`, quindi non è toccata. Ma
+chi aveva digitato quel nome per avere la ricevuta col nome giusto, la ricevuta non ce l'ha più.
+
+**3. SOSPETTO NON ANCORA MISURATO — il caricamento del PDF che potrebbe fallire in silenzio.** In
+`src/app/api/pagamenti/fattura/sync/route.ts` (~riga 222) il caricamento sullo Storage è
+`await storage?.from('fatture').upload(...)` **senza controllare l'errore di ritorno**, dentro un
+`try/catch`. Ma la libreria dello Storage **non lancia**, esattamente come PostgREST (AGENTS.md,
+regola 7): un caricamento **respinto** — bucket pieno, MIME rifiutato, chiave non permessa —
+ritornerebbe `{ error }`, il `catch` non scatterebbe, `pdfPath` resterebbe valorizzato e la riga di
+`fatture_emesse` verrebbe aggiornata con un `pdf_path` **che non punta a nessun file**, senza una
+riga di log. Da oggi questo conta di più di ieri: senza il ripiego di cortesia, un `pdf_path` fasullo
+è un genitore che non ha nessun documento. **È il candidato numero uno se i PDF risultassero
+mancanti**, e **non è stato corretto qui**: il cron di sincronizzazione era fuori dal perimetro di
+questo lavoro. Si misura contando le righe con `pdf_path` valorizzato e verificandole sul bucket, non
+leggendo questo paragrafo.
+
+> ✅ **CHIUSO l'11/09/2026, e il sospetto era fondato.** Il valore di ritorno dell'`upload` non
+> veniva letto davvero, e il `catch` non poteva scattare. È corretto nel changelog dell'11/09 in
+> cima a questo file, con tre esiti distinti (`pdf-storage-assente` · `pdf-copia-rifiutata` ·
+> `pdf-copia-eccezione`), il corpo dell'errore del provider portato come `cause`, e `pdfPath`
+> azzerato in tutti e tre: nessun `pdf_path` a registro senza il file dietro.
+
+### La correzione multi-sede: al genitore la sede non si applica
+
+`GET /api/pagamenti/fattura` e `GET /api/pagamenti/fattura/list` chiamavano `assertPagamentoInScope`
+**a tutti**, prima del controllo di famiglia. Quella funzione confronta `pagamenti.scuola_id` con
+`scuoleDiUtente(...)` che, per un non-admin, ritorna la sola **sede primaria** (`utenti.scuola_id`).
+Un genitore con due figli in due plessi ha una sede primaria e basta: sul documento fiscale del figlio
+iscritto nell'**altra** sede riceveva **403 «Pagamento fuori dal tuo plesso»**. Dal 2026-07-29 i
+plessi di produzione sono tre, quindi non è un caso di scuola.
+
+La dottrina non è nuova e non è stata inventata qui: sta scritta in `src/lib/auth/require-parent.ts:90`
+e regge già venti rotte —
+
+> «E al genitore la sede non si applica affatto — due fratelli possono essere iscritti in due plessi
+> diversi, il suo scope è la famiglia.»
+
+Il nuovo `assertFatturaInScope` (`src/lib/pagamenti/scope-fattura.ts`) la applica al pagamento: **per
+chi è famiglia il perimetro è il LEGAME col bambino, per chi lavora è il PLESSO**. E il legame non è
+un booleano: se la lettura dei legami **non riesce**, la risposta è **500** con codice
+`FATTURA_ACCESSO_NON_VERIFICATO` e un `logErrore`, non un 403 addosso al genitore titolare — «non
+l'ho potuto leggere» non è «non è tuo figlio». Il 403 (`FATTURA_ACCESSO_NEGATO`, con `warn`
+persistito) resta al tentativo vero, che è l'unico che il contatore deve contare. Il file sta in un
+modulo suo, e non in `@/lib/auth/scope`, perché quasi 200 test mockano quel modulo elencandone gli
+export a mano: un export in più li renderebbe rossi in massa.
+
+### I lock rimisurati, coi numeri prima e dopo
+
+Nessuna soglia è stata abbassata «perché è scesa». Ma i due passi di oggi **non sono la stessa cosa**,
+e attribuirli tutti alla strada scomparsa sarebbe rivendicare un lavoro non fatto — o negarne uno
+fatto: il primo passo (**−5**) è debito **SCOMPARSO** insieme alla rotta che lo portava, e nessuna di
+quelle risposte è stata convertita perché non esistono più i punti in cui venivano scritte; il secondo
+(**−7**, stesso giorno, stesso branch) è debito **PAGATO**, con le due rotte della fattura che hanno
+smesso di rifiutare in prosa e hanno ricevuto i loro codici. Lo dice anche il commento del lock
+(`__tests__/architecture/errori-con-codice.test.ts:159`): *«questo invece è debito PAGATO»*. Un tetto
+lasciato dov'era sarebbe stato decorazione in entrambi i casi; solo nel secondo qualcuno ha fatto il
+lavoro per abbassarlo.
+
+| Lock | Prima | Dopo | Perché |
+|---|---|---|---|
+| `errori-con-codice` · file in allowlist | **278** | **277** | `pagamenti/ricevuta/route.ts` non esiste più |
+| `errori-con-codice` · occorrenze totali · **1º passo (−5, debito SCOMPARSO)** | **1430** | **1424** | le 5 risposte senza codice della rotta cancellata. Nessuna è stata convertita: non esistono più i punti in cui venivano scritte (misura dell'allowlist: 1429 → 1424) |
+| `errori-con-codice` · occorrenze totali · **2º passo (−7, debito PAGATO)** | **1424** | **1417** | `pagamenti/fattura/route.ts` scende da **7 a 3** e `pagamenti/fattura/list/route.ts` da **4 a 1**: lo scarico della fattura ha smesso di rifiutare in prosa, coi codici `FATTURA_PDF_NON_DISPONIBILE`, `FATTURA_NON_EMESSA`, `FATTURA_PIU_QUOTE`, `PAGAMENTO_NON_TROVATO`, `FATTURA_NON_TROVATA`, `FATTURA_ACCESSO_NON_VERIFICATO`, `FATTURA_ACCESSO_NEGATO`. `MAX_FILE` **non si muove**: nessuno dei due file arriva a zero, restano in elenco entrambi |
+| `isolamento-sede-coverage` · `routeConServiceRole` | **312** | **311** | una route in meno che apre un client service-role. `handlerEsentati` **resta 98**: quella rotta non stava in `AMMESSE`, quindi non si toglie nessuna esenzione |
+| `isolamento-sede-coverage` · `handlerControllati` | **480** | **479** | l'unico handler (`GET`) di quella rotta. Il passo coincide col numero di file perché esponeva il solo `GET` |
+
+Sul disco, oggi, i due numeri finali si leggono così e non si deducono:
+`MAX_FILE = 277` (riga 179) e `MAX_OCCORRENZE = 1417` (riga 180) in
+`__tests__/architecture/errori-con-codice.test.ts`,
+e `"totale_occorrenze": 1417` (con 277 file) in `docs/superpowers/errori-senza-codice-allowlist.json`,
+`"aggiornato": "2026-09-10"`.
+
+⚠️ La voce vicina `src/app/api/pagamenti/ricevute/route.ts` (**plurale**) è rimasta in elenco e non va
+toccata: è il registro dello staff, esiste ancora, ed è un omonimo — non un parente.
+
+### Collaudo E2E: la guardia è rovesciata, non cancellata
+
+`e2e/parent-pagamenti.spec.ts` pretendeva il link «Ricevuta» e un `200 application/pdf` dalla rotta.
+Adesso pretende il contrario: quel link deve avere **conteggio 0**, e **anche «Fattura»** — sul DB
+della CI, che non è migrato, di fatture non ce n'è nessuna, quindi la risposta giusta è *nessuna
+ancora*, ed è esattamente il collaudo della decisione presa. `e2e/admin-contabilita.spec.ts` conserva
+l'asserzione che «Registro ricevute» sia **visibile** (il registro non deve sparire) e aggiunge che
+l'ancora di scarico non c'è più; di quest'ultima è dichiarato nel test anche il limite: **oggi in CI
+passa a vuoto**, perché su un DB non migrato il registro è vuoto e di righe non ce n'è nessuna da cui
+un'ancora possa nascere.
+
+⚠️ **Nessuna delle due spec è stata vista girare**, e va scritto qui invece che scoperto dopo. `npm run
+e2e` **non è stato eseguito**, ed è la scelta giusta e non una dimenticanza: in locale `.env.local`
+punta al database di **produzione** e il seed E2E ci scriverebbe dentro (la prova che non è stato
+eseguito è che `playwright-report/index.html` è fermo al 13 luglio). Le due guardie sono state passate
+soltanto da `eslint`: la verifica vera è il job **E2E (Playwright)** della CI, e finché quel job non è
+verde su questo branch valgono per quello che sono — codice scritto, non collaudo fatto. Questo file
+ripete altrove che *un test mai visto fallire non è un test*: qui la stessa regola si applica a due
+test mai visti **passare**.
+
+### Cosa NON è stato toccato, di proposito
+
+L'emissione della fattura e il lotto, `fattura/anteprima` (che è la **causale**, un'altra cosa), il
+cron `fattura/sync`, `src/lib/aruba/**`, la numerazione sezionale, la ricevuta di firma FEA
+(`/api/fea/receipt`), le email «ricevuta iscrizione» e «moduli ricevuti», gli scontrini di cassa: sono
+tutti **omonimi**, e il fatto che si chiamino «ricevuta» non li rende parenti di quella ritirata.
+
+---
+
 ## 🏫 Changelog — La primaria: la segnalazione era vaga perché quelle schermate non dicono mai cosa è andato storto — 2026-09-09 (branch `fix/primaria-registro-orario`)
 
 Segnalazione del titolare, di seconda mano: *«ci sono vari errori, tra l'inserimento di attività, di
@@ -218,6 +640,9 @@ misura era cieca proprio dove serviva; se ne accorse il critico, non chi aveva s
 **Gate**: `tsc` 0 · `eslint` 0 warning · `vitest` 15.944/15.947 (l'unico rosso è
 `offline-html-nativo`, la trappola nota di ogni worktree nuovo: cerca due `capacitor.config.json`
 gitignorati che esistono solo dopo `npx cap sync`, e si autoesclude in CI) · `build` 0.
+
+---
+
 ## 🕵️ Changelog — La chat è già privata; a mancare era la traccia di chi la legge — 2026-09-09 (branch `feat/vigilanza-chat-tracciata`)
 
 Richiesta del titolare: *«Messaggi devono essere end to end, tra insegnante e genitore. Solo la
@@ -775,6 +1200,18 @@ Non sono state tolte: è stato cambiato il disegno finché non hanno smesso di m
 - Il cron continua a fare fino a **200 `getByFilename` senza pause** su un tier da 12/min. Non è
   stato toccato: cambiarne il ritmo cambia quante fatture in volo riesce a chiudere per giro, ed è
   una decisione sua. **Resta un debito dichiarato.**
+
+> ✅ **CHIUSO l'11/09/2026, e pagato per intero.** La decisione sul ritmo è stata presa, perché
+> l'aver ammesso lo `0` in `STATI_IN_VOLO` l'ha resa obbligata: con la coda finalmente piena, le
+> duecento richieste di fila avrebbero smesso di essere teoriche. Oggi
+> `src/app/api/pagamenti/fattura/sync/route.ts` seleziona `.limit(TETTO_PER_GIRO)` con
+> `TETTO_PER_GIRO = 30` (`:94` e `:189`, dove il commento accanto dice «Era 200»), mette
+> `PAUSA_FRA_PAGINE_MS` — 5 s, `src/lib/aruba/client.ts:439` — **fra** una richiesta e la
+> successiva (`if (esaminate > 0) await attendi(…)`, `:325`) e smette da solo a
+> `TETTO_TEMPO_MS = 240_000` (`:108`), prima che sia la piattaforma a interrompere a metà di una
+> scrittura. Il ragionamento per esteso, col conto dei tick, è nel changelog dell'11/09 in cima a
+> questo file, sezione «Aprire la coda l'ha riempita, e il giro non era dimensionato per una coda
+> piena».
 
 ### Due costanti dove prima ce n'era una
 
@@ -22635,10 +23072,11 @@ _Modulo PRD: Trasversale (Auth/Accessibilità)_
 - **Decisione:** raggruppamento per `payment_categories` con helper **puro** `raggruppaPerCategoria` (`src/lib/pagamenti/categorie.ts`, golden-tested): un gruppo per categoria (icona/colore), "Altro" in coda, split da-pagare/pagati interno. `StoricoPagamenti` consuma il payload `/api/pagamenti` (già con `payment_categories`).
 - **Impatto PRD:** §Pagamenti §4.1 + §6 Stato. **Alternative scartate:** tab per categoria (più click; le sezioni in colonna sono più leggibili su mobile).
 
-### 2026-06-26 — DL-023 — [Fase P3] Ricevuta locale non fiscale, distinta dalla fattura elettronica
+### 2026-06-26 — DL-023 — [Fase P3] Ricevuta locale non fiscale, distinta dalla fattura elettronica — ⛔ **SUPERATA il 2026-09-10**
 - **Contesto:** PRD §3.1 cita "Invia Fattura/Ricevuta"; serviva una ricevuta scaricabile anche quando non si emette la fattura elettronica Aruba.
 - **Decisione:** `GET /api/pagamenti/ricevuta?pagamento_id=` genera una **ricevuta PDF non fiscale** (jsPDF) per qualunque pagamento **saldato**, con scoping staff/genitore; indipendente da Aruba e dallo stato `fattura_stato`. UI: pulsante "Ricevuta" sul pagamento saldato (`StoricoPagamenti`), affiancato al "Fattura" (quando emessa).
 - **Impatto PRD:** §Pagamenti §3.1/§4 + §6 Stato. **Alternative scartate:** riusare il PDF Aruba (è il documento fiscale, non sempre disponibile/voluto).
+- ⛔ **Superata dal changelog del 2026-09-10**: la ricevuta per singolo pagamento è stata ritirata — rotta, motore PDF e i tre comandi che la offrivano. Resta scritta perché fu vera, e perché l'alternativa scartata qui sopra («riusare il PDF Aruba») è **esattamente la strada presa poi**: oggi il genitore scarica il PDF ufficiale di Aruba, e quando quel documento non c'è non si mostra nulla. Non confonderla con le omonime rimaste in piedi: ricevuta di famiglia, registro dello staff (al plurale), attestazione 730, ricevuta di firma FEA.
 
 ### 2026-06-26 — DL-024 — [Fase P3] Logica condizionale form: singola condizione, valutata a runtime
 - **Contesto:** `FormField.condition` esisteva nello schema ma **non veniva mai valutata** — il wizard mostrava tutti i campi e l'editor non la configurava (condizioni "morte").

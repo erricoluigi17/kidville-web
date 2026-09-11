@@ -6,10 +6,21 @@ const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   emetti: vi.fn(),
   pag: null as Record<string, unknown> | null,
-  fatt: null as Record<string, unknown> | null,
   legame: null as Record<string, unknown> | null,
   fattureList: [] as Record<string, unknown>[],
   storageFile: null as unknown,
+  storageError: null as unknown,
+  /**
+  * Gli oggetti che il bucket `fatture` elenca: `list()` NON lancia, ritorna
+  * `{ data, error }`.
+  *
+  * ⚠️ QUI IL BUCKET RISPONDE SEMPRE BENE, ed è voluto: `list()` in errore è un
+  * caso a sé, con la sua riga di log e il suo degrado a «tutte false», e vive in
+  * `__tests__/api/fattura-list-verifica-bucket.test.ts`. Una leva d'errore
+  * dichiarata qui e mai spinta sarebbe impalcatura morta: sembra copertura e non
+  * misura niente.
+  */
+  bucketNomi: [] as { name: string }[],
   updates: [] as { table: string; row: unknown }[],
 }))
 
@@ -34,14 +45,24 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.limit = () => b
       b.maybeSingle = async () => ({
-        data: table === 'pagamenti' ? h.pag : table === 'fatture_emesse' ? h.fatt : table === 'legame_genitori_alunni' ? h.legame : null,
+        data: table === 'pagamenti' ? h.pag : table === 'legame_genitori_alunni' ? h.legame : null,
         error: null,
       })
       b.update = (row: unknown) => ({ eq: async () => { h.updates.push({ table, row }); return { error: null } } })
       b.then = (resolve: (v: unknown) => unknown) => resolve({ data: table === 'fatture_emesse' ? h.fattureList : [], error: null })
       return b
     },
-    storage: { from: () => ({ download: async () => ({ data: h.storageFile }) }) },
+    // ⚠️ `supabase-storage-js` NON LANCIA: `download` e `list` RISOLVONO con
+    // `{ data, error }`. Il finto di prima ritornava il solo `data`, cioè un
+    // oggetto in cui `error` è `undefined` sempre — e con quello nessuna prova
+    // poteva vedere il ramo di guasto, che è esattamente il ramo per cui la
+    // rotta non serve più un documento di ripiego.
+    storage: {
+      from: () => ({
+        download: async () => ({ data: h.storageFile, error: h.storageError }),
+        list: async () => ({ data: h.bucketNomi, error: null }),
+      }),
+    },
   }),
 }))
 vi.mock('@/lib/aruba/emissione', () => ({ emettiFatturaPagamento: h.emetti }))
@@ -143,19 +164,49 @@ describe('GET /api/pagamenti/fattura?fattura_id=', () => {
     vi.clearAllMocks()
     h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
     h.pag = { id: PID, alunno_id: 'al-1', descrizione: 'Retta', importo: 150, fattura_stato: 'emessa', fattura_pdf_path: null, fattura_aruba_id: 'X', fattura_emessa_il: '2026-01-01', fattura_causale: null, alunni: { nome: 'Mario', cognome: 'Rossi' } }
-    h.fatt = { id: FID, numero: 7, causale: 'Retta — quota Mamma', importo: 75, intestatario: { nome: 'Giulia', cognome: 'Farina' }, pdf_path: null, inviata_il: '2026-01-01' }
+    // La riga di registro si legge dall'elenco (`.eq('pagamento_id')`), non da un
+    // `maybeSingle`: la rotta legge TUTTE le righe del pagamento per accorgersi
+    // delle quote multiple. `pdf_path: null` = nessun oggetto nel bucket.
+    h.fattureList = [{ id: FID, numero: 7, anno: 2026, pdf_path: null, sdi_stato: 7 }]
+    h.storageFile = null
+    h.storageError = null
   })
 
-  it('serve l\'anteprima della singola quota (200 pdf)', async () => {
+  /**
+   * ─── IL RIPIEGO CHE CONSEGNAVA UN ALTRO DOCUMENTO ─────────────────────────
+   *
+   * Questo caso si chiamava «serve l'anteprima della singola quota (200 pdf)» e
+   * pretendeva `200 application/pdf` con `pdf_path` NULLO — cioè con nessun file
+   * nel bucket. Quel PDF la rotta se lo disegnava al volo: intestazione, numero,
+   * causale, importo, servito come `application/pdf`. Chi premeva «Scarica
+   * fattura» si ritrovava in mano un foglio che *sembra* la fattura elettronica
+   * e non lo è, senza nessun modo di accorgersene — né il genitore che se lo
+   * salva, né il commercialista che se lo vede allegare al 730.
+   *
+   * Il test non è stato cancellato perché il PERCORSO resta lo stesso: quello che
+   * cambia è la risposta. Senza byte nel bucket si dice che il documento non c'è,
+   * con un `codice` che il chiamante può leggere.
+   */
+  it('senza `pdf_path` NON si fabbrica niente: 404 con codice, e mai `application/pdf`', async () => {
+    const res = await GET(new Request(`http://localhost/api/pagamenti/fattura?pagamento_id=${PID}&fattura_id=${FID}`))
+    expect(res.status).toBe(404)
+    expect(res.headers.get('content-type')).not.toContain('application/pdf')
+    expect((await res.json()).codice).toBe('FATTURA_PDF_NON_DISPONIBILE')
+  })
+
+  it('col PDF nel bucket → 200 e i byte del bucket', async () => {
+    h.fattureList = [{ id: FID, numero: 7, anno: 2026, pdf_path: 'fatture/7.pdf', sdi_stato: 7 }]
+    h.storageFile = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])])
     const res = await GET(new Request(`http://localhost/api/pagamenti/fattura?pagamento_id=${PID}&fattura_id=${FID}`))
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toBe('application/pdf')
   })
 
   it('404 se la fattura indicata non esiste', async () => {
-    h.fatt = null
+    h.fattureList = []
     const res = await GET(new Request(`http://localhost/api/pagamenti/fattura?pagamento_id=${PID}&fattura_id=${FID}`))
     expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('FATTURA_NON_TROVATA')
   })
 
   it('403 genitore non proprietario del bambino', async () => {
@@ -175,6 +226,9 @@ describe('GET /api/pagamenti/fattura/list', () => {
       { id: 'f1', numero: 10, anno: 2026, quota_label: 'Mamma', quota_adult_id: 'u-mamma', intestatario: { nome: 'Giulia', cognome: 'Farina' }, pdf_path: 'p.pdf', sdi_stato: 7, sdi_stato_label: 'Consegnata' },
       { id: 'f2', numero: 11, anno: 2026, quota_label: 'Papà', quota_adult_id: 'u-papa', intestatario: { nome: 'Marco', cognome: 'Rossi' }, pdf_path: null, sdi_stato: 1, sdi_stato_label: 'Presa in carico' },
     ]
+    // `pdf_disponibile` non si fida più della colonna: il bucket deve elencare
+    // l'oggetto. Qui c'è, e infatti la prima riga resta `true`.
+    h.bucketNomi = [{ name: 'p.pdf' }]
   })
 
   it('401 senza sessione', async () => {

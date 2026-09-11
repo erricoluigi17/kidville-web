@@ -1845,6 +1845,79 @@ export const CODICI_ERRORE = {
      */
     FATTURA_TRASPORTO_IGNOTO: 'erroreFatturaTrasportoIgnoto',
     /**
+     * ─── IL PDF DELLA FATTURA NON C'È, E LO SI DICE ─────────────────────────
+     * 404 — `GET /api/pagamenti/fattura`: il documento non è (ancora) nel bucket
+     * `fatture`. O lo SdI non l'ha restituito, o la chiave scritta a registro non
+     * corrisponde più a nessun oggetto.
+     *
+     * ⚠️ NASCE PERCHÉ PRIMA QUESTO RIFIUTO NON ESISTEVA. La rotta, quando il PDF
+     * mancava, ne disegnava uno al volo — intestazione, numero, causale, importo
+     * — e lo serviva come `application/pdf` con `200`. Chi premeva «Scarica
+     * fattura» si ritrovava in mano un foglio che *sembra* una fattura e non è la
+     * fattura elettronica trasmessa allo SdI: né il genitore che se lo salva sul
+     * telefono, né il commercialista che se lo allega alla dichiarazione hanno
+     * modo di accorgersene. Un surrogato indistinguibile dal documento vero è
+     * peggio di un rifiuto: il rifiuto lo si legge.
+     */
+    FATTURA_PDF_NON_DISPONIBILE: 'erroreFatturaPdfNonDisponibile',
+    /**
+     * 409 — per questo pagamento non è stata emessa nessuna fattura. Non è un
+     * guasto e non è un permesso negato: è una retta che nessuno ha ancora
+     * fatturato, e la frase deve dirlo senza far pensare a un errore dell'utente.
+     */
+    FATTURA_NON_EMESSA: 'erroreFatturaNonEmessa',
+    /**
+     * ─── DUE FATTURE, DUE INTESTATARI: QUALE LO DICE CHI CHIEDE ─────────────
+     * 409 — `GET /api/pagamenti/fattura` senza `fattura_id` su un pagamento che
+     * ha PIÙ fatture vive (genitori separati: una quota a testa).
+     *
+     * ⚠️ NASCE PERCHÉ PRIMA LA ROTTA SCEGLIEVA DA SÉ, e sceglieva male: prendeva
+     * la riga col `numero` più alto. Al padre usciva la fattura intestata alla
+     * MADRE — suo codice fiscale, sua residenza, suo importo — servita come
+     * documento ufficiale e usata come base della detrazione 730. Un documento
+     * fiscale non si indovina: se le fatture sono due, si chiede quale.
+     */
+    FATTURA_PIU_QUOTE: 'erroreFatturaPiuQuote',
+    /**
+     * 404 — il pagamento indicato non risulta (`GET /api/pagamenti/fattura` e
+     * `…/fattura/list`).
+     *
+     * ⚠️ LA VOCE DI CATALOGO NON DEVE ESSERE «Pagamento non trovato». Quella
+     * frase è scritta a mano in altri punti di `src/app/api/pagamenti/**` che il
+     * codice non ce l'hanno, e il lock `errori-con-codice` pretende che la frase
+     * di un codice non viaggi mai senza il suo codice: darle quel testo
+     * renderebbe rossi file che questo lavoro non tocca. Stessa trappola già
+     * documentata su `PAGAMENTO_INESISTENTE`, e stessa uscita: una frase sua.
+     */
+    PAGAMENTO_NON_TROVATO: 'errorePagamentoNonTrovato',
+    /**
+     * 404 — la fattura indicata da `fattura_id` non esiste, oppure non è di
+     * quel pagamento. Un solo codice per i due casi, di proposito: distinguerli
+     * confermerebbe a chi non ha titolo di vederla che quella fattura esiste.
+     */
+    FATTURA_NON_TROVATA: 'erroreFatturaNonTrovata',
+    /**
+     * 500 — non si è potuto stabilire se questa fattura sia tua
+     * (`src/lib/pagamenti/scope-fattura.ts`): la lettura dei legami
+     * genitore↔figlio è fallita.
+     *
+     * Deliberatamente distinto dal 403: PostgREST non lancia, e finché il legame
+     * era un `boolean` una lettura fallita usciva come «Accesso negato» addosso al
+     * genitore TITOLARE, per giunta accendendo il contatore dei tentativi a suo
+     * nome. «Non l'ho potuto leggere» non è «non è tuo figlio».
+     */
+    FATTURA_ACCESSO_NON_VERIFICATO: 'erroreFatturaAccessoNonVerificato',
+    /**
+     * 403 — questa fattura non è né della tua famiglia né del tuo plesso
+     * (`src/lib/pagamenti/scope-fattura.ts`).
+     *
+     * Un solo codice per i due dinieghi, come per `CANDIDATURA_NON_TROVATA` e per
+     * la stessa ragione: distinguerli direbbe a chi non ha titolo di vederla che
+     * quella fattura esiste. La differenza vive nel log (`fattura-non-della-famiglia`
+     * contro `fattura-ruolo-non-ammesso`).
+     */
+    FATTURA_ACCESSO_NEGATO: 'erroreFatturaAccessoNegato',
+    /**
      * 429 — il blocco di fatture è stato rifiutato PRIMA di partire: Aruba concede
      * 60 upload l'ora per IP e per quest'ora sono esauriti.
      *

@@ -60,18 +60,39 @@ describe('PagamentoDrawer', () => {
     expect(screen.getByText('saldo')).toBeInTheDocument();
   });
 
-  it('pagato → link ricevuta attivo e niente bottone Incassa', async () => {
+  /**
+   * ─── GUARDIA DI REGRESSIONE: LA RICEVUTA NON SI SCARICA PIÙ DA QUI ──────────
+   *
+   * Questi due casi pretendevano il link «Ricevuta» — attivo a saldo avvenuto,
+   * disabilitato prima — verso `GET /api/pagamenti/ricevuta`. Quella rotta è
+   * stata CANCELLATA insieme alla ricevuta contabile per singolo pagamento: un
+   * link rimasto lì darebbe 404 a chi lo preme, e nessun test se ne
+   * accorgerebbe. Il ruolo dei due casi si ribalta: da «il link c'è» a «il link
+   * non deve tornare», che è l'unica forma in cui una cancellazione resta
+   * cancellata.
+   *
+   * ⚠️ NON SI ASSERISCE SU UN'ASSENZA E BASTA — un'assenza è verde anche se il
+   * drawer non ha rinderizzato niente. Ogni caso pretende anche ciò che DEVE
+   * esserci (il pulsante della fattura, il pulsante «Incassa»): senza quella
+   * metà la prova passerebbe su una schermata vuota.
+   *
+   * ⚠️ E NON SI CERCA IL SOLO `link`: il ramo «non saldato» rendeva un `button`
+   * disabilitato con la stessa parola. Si cerca il testo, qualunque forma abbia.
+   */
+  it('pagato → il pulsante della fattura, e NESSUN comando «Ricevuta»', async () => {
     render(
       <PagamentoDrawer pagamento={pagamentoRow} userId="u1" onClose={() => {}}
         onIncassa={() => {}} onModifica={() => {}} onRateizza={() => {}} />
     );
-    const ricevuta = await screen.findByRole('link', { name: /Ricevuta/ });
-    expect(ricevuta).toHaveAttribute('href', expect.stringContaining('/api/pagamenti/ricevuta?pagamento_id=p1'));
+    expect(await screen.findByTestId('fattura-button')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Incassa' })).toBeNull();
-    expect(screen.getByTestId('fattura-button')).toBeInTheDocument();
+    // Né ancora, né bottone, né testo: la parola non compare più in questa schermata.
+    expect(screen.queryByText(/Ricevuta/i)).toBeNull();
+    // E soprattutto: nessun indirizzo verso la rotta che non esiste più.
+    expect(document.body.innerHTML).not.toContain('/api/pagamenti/ricevuta');
   });
 
-  it('non saldato → Incassa presente (chiama onIncassa) e ricevuta disabilitata', async () => {
+  it('non saldato → Incassa presente (chiama onIncassa) e nessun comando «Ricevuta»', async () => {
     const row = { ...pagamentoRow, stato: 'da_pagare', importo_pagato: 0 };
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
@@ -84,9 +105,12 @@ describe('PagamentoDrawer', () => {
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Incassa' }));
     expect(onIncassa).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('link', { name: /Ricevuta/ })).toBeNull();
-    // il bottone ricevuta esiste ma è disabilitato con spiegazione
-    expect(screen.getByRole('button', { name: /Ricevuta/ })).toBeDisabled();
+    // Il pulsante spento «Disponibile a saldo avvenuto» non c'è più: prometteva un
+    // documento che, a saldo avvenuto, non sarebbe comunque arrivato.
+    expect(screen.queryByText(/Ricevuta/i)).toBeNull();
+    expect(document.body.innerHTML).not.toContain('/api/pagamenti/ricevuta');
+    // Prima del saldo non c'è nemmeno la fattura: il ramo è `saldato && …`.
+    expect(screen.queryByTestId('fattura-button')).toBeNull();
   });
 
   it('uno storno (importo negativo) è etichettato come tale', async () => {

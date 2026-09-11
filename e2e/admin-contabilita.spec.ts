@@ -21,7 +21,42 @@ test('lo scadenzario mostra KPI e agenda; le viste sono deep-linkabili', async (
 
   // Deep-link sulle viste nuove (empty-state graziosi su DB non migrato)
   await page.goto('/admin/pagamenti?vista=fiscale');
+  /**
+   * IL REGISTRO RESTA, E QUESTA RIGA È LA METÀ CHE CONTA (2026-09-10).
+   *
+   * Il 2026-09-10 è stata ritirata la ricevuta contabile PER SINGOLO PAGAMENTO.
+   * Non è stato ritirato il registro: `ricevute_emesse`, il trigger WORM e la
+   * numerazione sono intatti, nessuna migrazione li ha toccati, e la ricevuta DI
+   * FAMIGLIA continua a scriverci dentro. Quindi «Registro ricevute» deve
+   * ESSERCI: se un domani sparisse anche questa vista, sarebbe una perdita di
+   * dati fiscali travestita da pulizia, e questa asserzione è ciò che la ferma.
+   */
   await expect(page.getByText('Registro ricevute').first()).toBeVisible({ timeout: 15_000 });
+  /**
+   * QUELLO CHE È SPARITO: la colonna «PDF» del registro, cioè l'ancora a
+   * `GET /api/pagamenti/ricevuta`, che è la rotta cancellata. Restare avrebbe
+   * significato offrire allo staff un pulsante verso un 404.
+   *
+   * ⚠️ IL LIMITE DI QUESTA GUARDIA, detto qui invece di lasciarlo credere:
+   * OGGI IN CI PASSA A VUOTO. Il DB della CI non è migrato, `ricevute_emesse`
+   * non esiste, il pannello rende il proprio empty-state e di righe non ce n'è
+   * nessuna — quindi zero ancore le si conterebbero anche senza la correzione.
+   * È una rete di regressione che morde su un DB migrato (o il giorno in cui il
+   * seed avrà una ricevuta), non una prova che la correzione sia stata fatta:
+   * quella sta nei test unitari e nella rotta cancellata. Un `toHaveCount(0)`
+   * che non ha mai potuto essere diverso da 0 non è un test, ed è meglio
+   * scriverlo che scoprirlo.
+   *
+   * NON sono coperti qui gli ALTRI DUE punti di segreteria, e sono due, non uno:
+   * il pulsante «Ricevuta» del drawer di un pagamento saldato
+   * (`PagamentoDrawer.tsx`) e l'ancora omonima del dialogo del movimento in
+   * riconciliazione (`MovimentoDialog.tsx`, il terzo punto — quello che sta
+   * dietro `?vista=riconciliazione` e si apre solo cliccando un movimento).
+   * Per raggiungerli servirebbe in entrambi i casi un click su una riga per
+   * aprire un pannello, cioè un'interazione fragile aggiunta a un test che oggi
+   * è di sola navigazione. Lì la rete sono i test unitari.
+   */
+  await expect(page.locator('a[href*="/api/pagamenti/ricevuta"]')).toHaveCount(0);
   await page.goto('/admin/pagamenti?vista=solleciti');
   await expect(page.getByText('Solleciti di pagamento').first()).toBeVisible({ timeout: 15_000 });
   await page.goto('/admin/pagamenti?vista=riconciliazione');

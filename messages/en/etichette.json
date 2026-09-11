@@ -101,7 +101,7 @@
   "notifica_pagamento_emesso_label": "New fee or instalment issued",
   "notifica_pagamento_emesso_desc": "When the office generates a new amount due",
   "notifica_pagamento_registrato_label": "Payment recorded",
-  "notifica_pagamento_registrato_desc": "When a payment is recorded and the receipt is available",
+  "notifica_pagamento_registrato_desc": "When a payment is recorded",
   "notifica_sospensione_morosita_label": "Suspension for arrears",
   "notifica_sospensione_morosita_desc": "Formal notice of service suspension",
   "notifica_mensa_ricarica_label": "Canteen ticket top-up",

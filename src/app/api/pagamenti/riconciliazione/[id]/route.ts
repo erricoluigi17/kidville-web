@@ -312,7 +312,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
           scuolaId: pagDett.scuola_id,
           alunnoIds: [pagDett.alunno_id],
           titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
-          corpo: `${pagDett.descrizione ?? 'Pagamento'}: registrato un bonifico di ${formatEuro(mov.importo)}.${saldato ? ' La ricevuta è disponibile.' : ''}`,
+          corpo: `${pagDett.descrizione ?? 'Pagamento'}: registrato un bonifico di ${formatEuro(mov.importo)}.`,
           link: '/parent/pagamenti',
           entitaTipo: 'pagamento',
           entitaId: pagamentoId,

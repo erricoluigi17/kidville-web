@@ -92,10 +92,28 @@ const FUORI_PERIMETRO: Record<string, string> = {
     'intestata non ci aggiunge niente e costerebbe 1,1 MB a export.',
 
   // ── Nessuna banda: non hanno una testata da togliere ──────────────────────────
-  'src/app/api/pagamenti/fattura/route.ts':
-    'fattura elettronica: la forma la detta il tracciato SDI, non la carta della scuola.',
+  // ⚠️ QUI C'ERA `src/app/api/pagamenti/fattura/route.ts`, e diceva «fattura elettronica: la
+  // forma la detta il tracciato SDI, non la carta della scuola». La riga è uscita il
+  // 2026-09-10 perché quel file non costruisce più un jsPDF: il motore che c'era dentro era
+  // l'anteprima «copia di cortesia», un foglio disegnato al volo e servito con
+  // `Content-Type: application/pdf` e `200` quando il PDF vero dello SDI non c'era ancora —
+  // cioè un ripiego che si faceva passare per il documento. Oggi la route serve solo i byte
+  // letti dal bucket `fatture`, e quando non ci sono risponde 404 con
+  // `FATTURA_PDF_NON_DISPONIBILE`. Il file esiste ancora e NON è stato rinominato: è il test
+  // n. 3 qui sotto — «le due tabelle non nominano file che non esistono più» — a pretendere
+  // che la riga sparisca, perché un percorso senza `new jsPDF` in questa tabella è la
+  // definizione del lock verde che sorveglia il nulla. Misurato eseguendolo: il test era
+  // rosso su questo solo percorso prima della rimozione.
   'src/lib/pagamenti/pdf.ts':
-    'ricevute e documenti contabili: stessa ragione della fattura.',
+    "i due documenti fiscali che restano qui dentro dopo il 2026-09-10, e non sono più " +
+    "«ricevute» al plurale: la RICEVUTA DI FAMIGLIA (`buildRicevutaFamigliaPdf`) e " +
+    "l'ATTESTAZIONE 730 (`buildAttestazionePdf`). Il terzo motore del file, " +
+    "`buildRicevutaPdf` — la ricevuta contabile per singolo pagamento — è uscito con la sua " +
+    "rotta lo stesso giorno; il file RESTA in tabella perché i due superstiti costruiscono " +
+    "ancora un jsPDF ciascuno. La carta intestata non gli si applica per la ragione di prima: " +
+    "sono documenti fiscali, la loro forma la detta il fisco (la ricevuta va in mano alla " +
+    "famiglia con gli estremi che la rendono opponibile, l'attestazione finisce allegata a un " +
+    "730) e una banda della scuola in cima non aggiunge nulla e costa 1,1 MB a foglio.",
   'src/app/api/forms/export/delibera/route.ts':
     'export di lavoro del Sistema B, uso interno.',
   'src/app/(dashboard)/admin/modulistica/page.tsx':

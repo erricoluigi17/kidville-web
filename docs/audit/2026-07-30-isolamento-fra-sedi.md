@@ -189,8 +189,14 @@ manca. Non esiste lo stato «per intenzione».
 | `pagamenti/[id]/sconto` | CHIUSA | `2484a2f` 2026-07-30 (PR #60) | Sconti su pagamenti di un'altra sede |
 | `pagamenti/fattura` | CHIUSA | `2484a2f` 2026-07-30 (PR #60) | Si fatturava per un'altra sede |
 | `pagamenti/fattura/list` | CHIUSA | `2484a2f` 2026-07-30 (PR #60) | Elenco fatture di tutte le sedi |
-| `pagamenti/ricevuta` | CHIUSA | `2484a2f` 2026-07-30 · `26cf931` 2026-07-31 | Ricevute di un'altra sede |
 | `teacher/uscite` | CHIUSA | `2484a2f` 2026-07-30 (PR #60) | Moduli di uscita didattica fuori dalle proprie sezioni |
+
+La riga `pagamenti/ricevuta` stava in questo elenco fino al 2026-09-10, quando la ricevuta
+contabile per singolo pagamento è stata rimossa e la sua rotta cancellata. La voce è uscita perché
+il file non esiste più — non perché il presidio di sede sia stato tolto — e il lock accanto
+all'inventario rifiuta le voci che nominano una route inesistente. Restano, ciascuna con la propria
+voce, la ricevuta **di famiglia** (`pagamenti/transazioni/[id]/ricevuta`) e il registro dello staff
+(`pagamenti/ricevute`, al plurale): sono omonimi, non parenti.
 
 Le altre 24 route del modulo erano già in scope. Le operazioni **volutamente** cross-sede
 (riconciliazione bancaria, incasso unico di famiglia, prospetto famiglia) stanno nell'allowlist del

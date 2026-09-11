@@ -125,7 +125,7 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
   pagamento_registrato: {
     label: 'Pagamento registrato',
     gruppo: 'genitore',
-    descrizione: 'Quando un pagamento viene registrato e la ricevuta è disponibile',
+    descrizione: 'Quando un pagamento viene registrato',
   },
   sospensione_morosita: {
     label: 'Sospensione per morosità',

@@ -5,7 +5,6 @@ import { it, expect, vi, beforeEach, describe } from 'vitest'
 //  collegato all'originale; 409 se già stornato o se è esso stesso uno storno.
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
-  annulla: vi.fn(),
   orig: null as Record<string, unknown> | null,
   inserts: [] as { table: string; row: unknown }[],
   updates: [] as { table: string; row: unknown }[],
@@ -27,7 +26,6 @@ vi.mock('@/lib/auth/scope', () => ({
   resolveScuolaScrittura: vi.fn(async () => ({ scuolaId: 'sc-1' })),
 }))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
-vi.mock('@/lib/pagamenti/ricevute', () => ({ annullaRicevutaAttiva: (...a: unknown[]) => h.annulla(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     rpc: async () => ({ data: null, error: null }),
@@ -60,7 +58,6 @@ const post = (body: unknown) =>
 beforeEach(() => {
   vi.clearAllMocks()
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
-  h.annulla.mockResolvedValue(undefined)
   h.orig = { id: INC, pagamento_id: 'p-1', importo: 100, metodo: 'contanti', storno_di: null, stornato_il: null }
   h.inserts = []; h.updates = []
   h.forza22P02 = false

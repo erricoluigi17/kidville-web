@@ -20,6 +20,12 @@ import { formattaIstante, intlDateTime } from '@/i18n/config'
  * il download del PDF a una famiglia. Il test della route è diventato rosso, ed
  * è così che si è visto.
  *
+ * ⚠️ QUELLA ROTTA E QUEL TEST NON ESISTONO PIÙ: rimossi il 2026-09-10 insieme
+ * alla ricevuta contabile per singolo pagamento. Chi va a cercarli dietro questo
+ * commento non li trova — non è un refuso, è la data. Il difetto però non è
+ * rimasto senza rete: la ricevuta DI FAMIGLIA (`buildRicevutaFamigliaPdf`) è
+ * viva, è in produzione, e stampa le sue date passando di qui.
+ *
  * Questo file è la rete che impedisce di rimetterlo: se qualcuno «semplifica»
  * `formattaIstante` in un `intlDateTime(...).format(...)` diretto, qui diventa
  * rosso prima che lo diventi una ricevuta.

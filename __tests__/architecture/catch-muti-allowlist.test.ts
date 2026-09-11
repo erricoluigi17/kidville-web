@@ -57,7 +57,7 @@ const ESENTE = 'src/lib/logging/';
 // guasto di rete non restava niente da nessuna parte. Ora è un `logClient` di livello `warn`
 // (`info` sul client non esiste: `/api/logs` lo rifiuta), col solo `nomeErrore` perché il
 // `message` di una fetch fallita si porta dietro l'URL, e in quell'URL c'è l'id di un minore.
-// 51 → 50 e 81 → 80 il 2026-09-09: bonificato
+// 51 → 50 e 79 → 78 il 2026-09-09: bonificato
 // `src/app/(dashboard)/teacher/primaria/[sectionId]/registro/page.tsx`. Il suo
 // `.catch(() => {})` stava sull'elenco delle sezioni per la supplenza, e accanto c'erano
 // altri due silenzi della stessa famiglia — un `load()` con `try/finally` senza nessun ramo
@@ -66,19 +66,23 @@ const ESENTE = 'src/lib/logging/';
 // risponde HTML, lanciava e lasciava il bottone «Firma» disabilitato per sempre. Nessuno dei
 // tre produceva una riga da nessuna parte: la maestra vedeva due tendine vuote e un bottone
 // che non rispondeva più.
-// 🔻 80 → 78 il 2026-09-09 (secondo ciclo dello stesso giorno, dal branch della vigilanza
-// chat): bonificati due catch muti in `admin/messaggi/page.tsx`. Erano i due che contavano:
-// uno inghiottiva il fallimento dell'elenco delle conversazioni (una lista vuota per un
-// guasto di rete è indistinguibile da «nessuna conversazione»), l'altro quello
-// dell'apertura di una conversazione — che adesso può fallire per una ragione nuova, il 503
-// `VIGILANZA_NON_TRACCIABILE`, e mostrarla come una chat vuota sarebbe stato il peggiore dei
-// silenzi.
 //
-// I due cicli sono nati in parallelo su due branch: i numeri qui sotto sono la SOMMA delle
-// due bonifiche (51−1 file, 81−1−2 occorrenze), e coincidono con le 50 voci e la somma 78
-// misurate in `docs/superpowers/catch-muti-allowlist.json`.
-const MAX_FILE = 50;
-const MAX_OCCORRENZE = 78;
+// 🔻 50 → 48 e 78 → 76 il 2026-09-11: bonificati `FatturaButton.tsx` (staff) e
+// `StoricoPagamenti.tsx` (genitore), riscritti per lo scarico della fattura. Il loro
+// `.catch(() => {})` inghiottiva l'esito del comando «Fattura»: al genitore il pulsante
+// spariva — o non faceva niente — e di quel guasto non restava una riga da nessuna parte,
+// che è lo stesso silenzio delle email di credenziali da cui nasce la regola 6. Adesso
+// l'esito passa da `registraEsitoScarico` (`src/lib/pagamenti/scarico-fattura.ts`), che
+// logga anche il SUCCESSO: senza la riga del successo, «nessun log» non distinguerebbe
+// «va tutto bene» da «il pulsante non ha mai fatto partire niente».
+//
+// ⚠️ I due cicli sono nati su branch paralleli e si sono incontrati solo al merge. I numeri
+// qui sotto NON sono quelli di nessuno dei due rami: sono la somma delle bonifiche (51−1−2
+// file, 79−1−2 occorrenze), rimisurata sul file unito — 48 voci, somma 76 — invece di
+// prendere il minore dei due tetti. Prendere 49 o 50 avrebbe lasciato il lock più largo del
+// vero, cioè decorativo.
+const MAX_FILE = 48;
+const MAX_OCCORRENZE = 76;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

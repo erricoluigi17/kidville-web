@@ -309,6 +309,16 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
     ['src/lib/offline/syncEngine.ts',
         'BROWSER: cinque `fetch` verso `/api/**` nostre, dal motore di sincronizzazione offline. '
         + 'Nessuna esce verso un host di terzi (già verificato in `supabase-client-strumentato.test.ts`).'],
+    ['src/lib/pagamenti/scarico-fattura.ts',
+        'BROWSER: `GET /api/pagamenti/fattura/list`, una nostra route, chiesta dall\'hook che '
+        + 'decide se il comando «Fattura» ha davvero un file dietro. Stessa forma, stesso motivo '
+        + 'degli hook qui sopra: il tetto della chiamata sta nella route, dove passa dal client '
+        + 'Supabase strumentato. Un tetto in PIÙ questo file ce l\'ha — `TETTO_SCARICO_MS`, '
+        + 'dichiarato in `TETTI_DICHIARATI` — ma copre il GESTO intero (lucchetto compreso), non '
+        + 'questa `fetch`, e non è `conTetto`: `conTetto` è dello strato di trasporto, questo '
+        + 'libera un pulsante. E il silenzio non è possibile: ogni ramo, `!res.ok` compreso, '
+        + 'lascia una riga in `app_log` — è la ragione per cui le due voci dello scarico fattura '
+        + 'sono uscite da `catch-muti-allowlist.json` lo stesso giorno.'],
     ['src/lib/push/native-register.ts',
         'BROWSER: registrazione e cancellazione del token su `/api/push/subscribe`, una nostra '
         + 'route. Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
@@ -384,6 +394,19 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'un\'opinione, la scadenza ha in `app_log` un messaggio suo col numero dentro '
         + '(`modulo-allegato-upload-scaduto: 30000 ms`): se 30 s sono troppo pochi lo dice il '
         + 'conteggio, non chi carica.'],
+    ['src/lib/pagamenti/scarico-fattura.ts',
+        'quanto dura il GIRO di uno scarico fattura prima che il lucchetto si liberi e all\'utente '
+        + 'si dica che non è riuscito (2026-09-10). È il tetto più insolito dell\'inventario, e '
+        + 'vale la pena dire in che senso: non limita una `fetch` — quella il tetto ce l\'ha nella '
+        + 'route — limita il GESTO, cioè `giroInVolo`, il lucchetto che impedisce al secondo click '
+        + 'di far partire un secondo scarico. Senza, un giro che non si risolve mai lascerebbe il '
+        + 'pulsante inerte per sempre: lo stesso guasto della rotellina eterna di '
+        + '`carica-file.ts`, in discesa invece che in salita. Il numero è nato 60_000 ed è sceso a '
+        + '30_000 lo stesso giorno, quando questo lock lo ha respinto: 30 s è `MAI_OLTRE_MS`, e la '
+        + 'ragione per cui la deroga non è stata chiesta è che qui il taglio non fa il danno che '
+        + 'fa su un video da decine di megabyte (`native/scarica.ts`) — una fattura è un PDF di '
+        + 'qualche centinaio di kilobyte. Se 30 s fossero pochi lo direbbe il conteggio: la '
+        + 'scadenza lascia in `app_log` un motivo suo (`tetto-tempo`) apposta per essere contata.'],
     ['src/lib/security/rate-limit.ts',
         'quanto il tetto per IP aspetta il contatore condiviso su Postgres prima di degradare al '
         + 'conteggio locale (2026-08-04). È il tetto più corto del repo — 250 ms — e il numero '
@@ -472,6 +495,12 @@ const NON_SONO_TEMPI = new Map<string, string>([
     ['src/lib/auth/errore-accesso.ts:ESITO_TIMEOUT_DOPO_ACCESSO',
         'stessa cosa (`\'timeoutDopoAccesso\'`): l\'esito «le credenziali erano buone ma il '
         + 'seguito non è arrivato in tempo». Una stringa, non dei millisecondi.'],
+    ['src/lib/pagamenti/scarico-fattura.ts:MOTIVO_TETTO',
+        'è una STRINGA di motivo (`\'tetto-tempo\'`), cioè l\'etichetta che la scadenza dello '
+        + 'scarico fattura lascia in `app_log` per poter essere CONTATA — non la scadenza, che '
+        + 'lì accanto si chiama `TETTO_SCARICO_MS` ed è dichiarata in `TETTI_DICHIARATI`. Entra '
+        + 'in questo inventario perché il rilevatore guarda i nomi, e «TETTO» in un nome è quasi '
+        + 'sempre un tempo: qui è il nome di ciò che il tempo produce.'],
     ['src/lib/logging/supabase-fetch.ts:NOME_SCADENZA',
         'è il NOME dell\'errore (`\'SupabaseTimeoutError\'`), non la sua durata: marchia le '
         + 'scadenze perché `get_runtime_errors` raggruppa per error name, e `eScadenzaSupabase` '

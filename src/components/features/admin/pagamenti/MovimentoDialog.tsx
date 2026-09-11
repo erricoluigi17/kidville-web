@@ -5,7 +5,7 @@
 //   · i suggerimenti ordinati (i CF-match primi, badge «CF») con «Conferma questo»;
 //   · la ricerca manuale fra i pagamenti aperti (stessa fonte del pannello);
 //   · le azioni sul movimento (Ignora / Riapri);
-//   · a saldo avvenuto, Ricevuta + Fattura SdI (come il PagamentoDrawer);
+//   · a saldo avvenuto, la Fattura SdI (come il PagamentoDrawer);
 //   · il punto d'innesto «Apri Incasso unico» per i bonifici di famiglia (multi-CF):
 //     lo renderizza solo se il chiamante passa `onIncassoUnico` (impl. UI-2).
 // Le risposte del server sono gestite senza crash: 409 «già saldato» e 409
@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { AlertTriangle, Check, Clock, Download, FileCheck, FileText, Receipt, Search, X, Users } from 'lucide-react';
+import { AlertTriangle, Check, Clock, FileCheck, FileText, Receipt, Search, X, Users } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
@@ -156,7 +156,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
   const [error, setError] = useState<string | null>(null);
   const [ricerca, setRicerca] = useState('');
   // Stato del pagamento collegato: serve solo ai movimenti confermati per capire
-  // se mostrare Ricevuta (saldato) o la nota «Disponibile a saldo avvenuto».
+  // se mostrare la Fattura (saldato) o la nota «Disponibile a saldo avvenuto».
   const [pagamentoStato, setPagamentoStato] = useState<string | null>(null);
   /**
    * Stato di FATTURAZIONE del pagamento collegato. Arrivava già nella stessa
@@ -222,7 +222,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
         }
       } catch (err) {
         // Il dialog resta usabile senza lo stato: si logga, non si rompe.
-        logClient({ livello: 'error', evento: 'fetch', messaggio: `pagamento-stato-ricevuta-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `pagamento-stato-fattura-caricamento-fallito: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
       } finally {
         if (active) setLoadingPag(false);
       }
@@ -561,35 +561,32 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
               {fat && (
                 <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">{t(FRASE_FATTURAZIONE[fat.tono])}</p>
               )}
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                {/* Secondario: la ricevuta c'è sempre, non è mai l'azione da fare.
-                    Fondo trasparente (in Alto Contrasto diventa il nero della card
-                    da solo) e 44px di altezza — erano 28.
-                    L'hover è VERDE PIENO come «Abbina» e come il «Conferma questo»
-                    declassato: `hover:bg-kidville-green-soft` — che è ciò che c'era
-                    qui — in Alto Contrasto dava bianco su verde tenue, 1,19:1.
-                    Stesso difetto, stessa correzione, un posto solo dove cercarla. */}
-                <a href={`/api/pagamenti/ricevuta?pagamento_id=${movimento.pagamento_id}&userId=${userId}`}
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white">
-                  <Download size={15} /> {t('movdlgRicevuta')}
-                </a>
-                {/* «In attesa SDI» NON ha un pulsante: in quello stato FatturaButton
-                    rende solo un badge con una rotella che gira, cioè la stessa
-                    parola del chip qui sopra più un'animazione che non annuncia
-                    niente. Lo stato si dice una volta.
-                    Il guscio è ciò che dà la pelle al pulsante senza toccare
-                    `FatturaButton`, che è condiviso con altre viste: `data-tono`
-                    decide CTA pieno (c'è da emettere) o secondario (c'è già).
+              {/* ⚠️ IL CONTENITORE È CONDIZIONALE QUANTO IL SUO UNICO FIGLIO.
+                  Da quando la ricevuta non si scarica più da qui, dentro resta il
+                  solo pulsante della fattura: lasciare il div sempre montato
+                  significava, su una fattura «in attesa SDI», un `mt-4` alto e
+                  vuoto sotto la frase — uno spazio morto che sembra un pulsante
+                  che non è arrivato. Si rende il contenitore solo quando c'è
+                  qualcosa da metterci dentro.
 
-                    ⚠️ «UNA VOLTA» VALE ANCHE UN ISTANTE DOPO L'EMISSIONE, ed è ciò
-                    che questa riga ha smesso di dare per scontato. Il ramo qui sopra
-                    guarda `pagamentoFattura`, che era una fotografia del montaggio:
-                    emessa la fattura restava `non_richiesta`, quindi il CTA giallo
-                    sopravviveva accanto al badge «In attesa SDI» reso dal pulsante
-                    stesso. `onEmessa` adesso alza PRIMA il segnale di rilettura e
-                    POI avvisa la lista: quando la risposta arriva, questo ramo
-                    sparisce da sé e il chip è l'unico a parlare. */}
-                {pagamentoFattura !== 'in_attesa' && (
+                  «In attesa SDI» NON ha un pulsante: in quello stato FatturaButton
+                  rende solo un badge con una rotella che gira, cioè la stessa
+                  parola del chip qui sopra più un'animazione che non annuncia
+                  niente. Lo stato si dice una volta.
+                  Il guscio è ciò che dà la pelle al pulsante senza toccare
+                  `FatturaButton`, che è condiviso con altre viste: `data-tono`
+                  decide CTA pieno (c'è da emettere) o secondario (c'è già).
+
+                  ⚠️ «UNA VOLTA» VALE ANCHE UN ISTANTE DOPO L'EMISSIONE, ed è ciò
+                  che questa riga ha smesso di dare per scontato. Il ramo qui sopra
+                  guarda `pagamentoFattura`, che era una fotografia del montaggio:
+                  emessa la fattura restava `non_richiesta`, quindi il CTA giallo
+                  sopravviveva accanto al badge «In attesa SDI» reso dal pulsante
+                  stesso. `onEmessa` adesso alza PRIMA il segnale di rilettura e
+                  POI avvisa la lista: quando la risposta arriva, questo ramo
+                  sparisce da sé e il chip è l'unico a parlare. */}
+              {pagamentoFattura !== 'in_attesa' && (
+                <div className="mt-4 flex flex-wrap items-center gap-2">
                   <span className="kv-recon-azione-fattura" data-tono={fat?.tono ?? 'da_fatturare'}>
                     <FatturaButton
                       pagamentoId={movimento.pagamento_id}
@@ -598,12 +595,12 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                       onEmessa={() => { setRicarica((n) => n + 1); onDone(); }}
                     />
                   </span>
-                )}
-              </div>
+                </div>
+              )}
             </>
           ) : (
             <p className="mt-2 flex items-center gap-1.5 font-maven text-xs leading-relaxed text-kidville-sub">
-              <FileText size={14} className="shrink-0" /> {t('movdlgRicevutaFatturaSaldo')}
+              <FileText size={14} className="shrink-0" /> {t('movdlgFatturaSaldo')}
             </p>
           )}
         </section>

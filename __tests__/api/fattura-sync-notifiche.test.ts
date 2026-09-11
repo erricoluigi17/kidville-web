@@ -471,6 +471,169 @@ describe('FAIL-OPEN: se le notifiche falliscono, il giro non perde lo stato', ()
 })
 
 // ════════════════════════════════════════════════════════════════════════════════
+// L'ALLEGATO — la forma VERA, misurata il 2026-09-11 alle 16:30Z
+// ════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * La risposta vera di Aruba: il motivo NON è in un campo JSON — `errorCode` ed
+ * `errorDescription` della notifica sono `null` — ma dentro `file`, 6304 caratteri, che è
+ * l'XML della notifica SdI. La lettura sta in `motivoDalleNotificheSdi`; qui si guarda il
+ * GIRO: che il motivo arrivi in colonna, e che l'XML non arrivi da nessun'altra parte.
+ *
+ * 🔴 Quell'XML è una notifica fiscale: porta denominazione, codice fiscale e partita IVA
+ * dell'intestatario della fattura — di una FAMIGLIA. `sanificaMessaggio` maschera email e
+ * codici fiscali, NON una ragione sociale. I valori qui sotto sono inventati e riconoscibili
+ * come tali: il repository è pubblico.
+ */
+const INTESTATARIO = {
+  denominazione: 'Rossi Costruzioni S.r.l.',
+  partitaIVA: '01234567890',
+  codiceFiscale: 'RSSMRA80A01F839X',
+}
+
+const nsXml = (errori: string): string =>
+  `<?xml version="1.0" encoding="UTF-8"?>
+<ns3:NotificaScarto xmlns:ns3="http://www.fatturapa.gov.it/sdi/messaggi/v1.0" versione="1.0">
+  <IdentificativoSdI>0000000000</IdentificativoSdI>
+  <NomeFile>IT00000000000_00001.xml.p7m</NomeFile>
+  ${errori}
+  <CessionarioCommittente>
+    <Denominazione>${INTESTATARIO.denominazione}</Denominazione>
+    <PartitaIVA>${INTESTATARIO.partitaIVA}</PartitaIVA>
+    <CodiceFiscale>${INTESTATARIO.codiceFiscale}</CodiceFiscale>
+  </CessionarioCommittente>
+</ns3:NotificaScarto>`
+
+/** L'involucro misurato, con il campo `file` al posto suo. */
+const notificaConAllegato = (xml: string) =>
+  vi.mocked(arubaGetNotifications).mockResolvedValue({
+    count: 1,
+    notifications: [
+      {
+        filename: 'IT00000000000_00001_NS_001.xml',
+        number: null,
+        notificationDate: null,
+        docType: 'NS',
+        date: '2026-09-10T12:00:00.000+0200',
+        invoiceId: '000000000000000000000000',
+        file: Buffer.from(xml, 'utf-8').toString('base64'),
+        result: null,
+        errorCode: null,
+        errorDescription: null,
+      },
+    ],
+    errorCode: '0000',
+    errorDescription: null,
+  })
+
+describe('il motivo dentro l\'allegato arriva in colonna, e l\'allegato non arriva nei log', () => {
+  beforeEach(ambientePulito)
+  afterEach(ambientePulitoFine)
+
+  /** ⚠️ LA FORMA VERA: `errorCode` null, il motivo dentro `file`, in base64. */
+  it('la forma misurata del 2026-09-11: il motivo esce dall\'XML e finisce in `sdi_scarto_motivo`', async () => {
+    h.supabase = conUnaFattura()
+    scartoSenzaMotivo()
+    notificaConAllegato(
+      nsXml('<ListaErrori><Errore><Codice>00400</Codice><Descrizione>Natura non ammessa per aliquota diversa da zero</Descrizione></Errore></ListaErrori>'),
+    )
+
+    const res = await giro()
+    expect(res.status).toBe(200)
+
+    const fUpd = updates().find((u) => u.table === 'fatture_emesse')!
+    expect(fUpd.row.sdi_scarto_motivo).toBe('(00400) Natura non ammessa per aliquota diversa da zero')
+    expect(riga('motivo-da-notifiche')!.campi.tipo, 'il tipo arriva da `docType`').toBe('NS')
+  })
+
+  /**
+   * 🔴 IL TEST DI PRIVACY, e va letto sapendo cosa protegge. L'XML appena letto contiene la
+   * ragione sociale e la partita IVA dell'intestatario. Nessuna riga di log deve portarle —
+   * in NESSUN campo e in NESSUNO dei quattro argomenti di `logEvento`, `causa` compresa, che
+   * è il canale da cui il corpo del provider passerebbe se qualcuno «ce lo attaccasse per
+   * vederlo». Nemmeno il MOTIVO ci va: quello è testo del provider su una fattura di una
+   * famiglia, e la sua casa è `sdi_scarto_motivo`, che è una colonna.
+   */
+  it('nessuna riga di log contiene la ragione sociale, la P.IVA o il testo del motivo', async () => {
+    h.supabase = conUnaFattura()
+    scartoSenzaMotivo()
+    notificaConAllegato(
+      nsXml('<ListaErrori><Errore><Codice>00400</Codice><Descrizione>Natura non ammessa per aliquota diversa da zero</Descrizione></Errore></ListaErrori>'),
+    )
+
+    await giro()
+
+    const tutto = JSON.stringify(righeLog())
+    for (const valore of [
+      INTESTATARIO.denominazione,
+      INTESTATARIO.partitaIVA,
+      INTESTATARIO.codiceFiscale,
+      'Natura non ammessa',
+      'CessionarioCommittente',
+    ]) {
+      expect(tutto, `«${valore}» è finito in una riga di log`).not.toContain(valore)
+    }
+    // E il motivo è arrivato dove doveva: senza questa metà, il test sarebbe verde anche se
+    // la lettura dell'allegato non fosse mai partita.
+    expect(updates().find((u) => u.table === 'fatture_emesse')!.row.sdi_scarto_motivo).toContain('00400')
+  })
+
+  /**
+   * ⚠️ IL GRADINO IN PIÙ DELLA DIAGNOSTICA. Se domani l'XML non desse i tag attesi, con la
+   * sola `descriviForma` resteremmo fermi a `file: stringa(6304)` — cioè ciechi, e per
+   * vederci servirebbe un'altra interrogazione dentro un secchio da 12 richieste al minuto.
+   * La riga porta i NOMI DEI TAG. Mai il loro contenuto: quei tag sono l'anagrafica fiscale
+   * di una famiglia, e i nomi non sono dati di nessuno.
+   */
+  it('allegato senza errori riconoscibili → i NOMI dei tag XML nel log, i valori MAI', async () => {
+    h.supabase = conUnaFattura()
+    scartoSenzaMotivo()
+    notificaConAllegato(nsXml('<EsitoSconosciuto><MotivoIgnoto>x</MotivoIgnoto></EsitoSconosciuto>'))
+
+    const res = await giro()
+    expect(res.status).toBe(200)
+
+    const ignota = riga('notifiche-forma-ignota')
+    expect(ignota, 'senza questa riga la forma dell\'XML non si saprà mai').toBeTruthy()
+    expect(ignota!.livello).toBe('error')
+    expect(ignota!.causa, 'una forma non riconosciuta non è un\'eccezione: niente da allegare').toBeUndefined()
+
+    // ⚠️ I TIPI DICHIARATI, IN CHIARO — ed è il campo che dice se `NS` è la parola giusta.
+    //
+    // `docType` è entrato fra le chiavi del tipo su una misura della sua LUNGHEZZA
+    // (`stringa(2)`), non del valore. Se quelle due lettere non fossero `NS`, il filtro
+    // passerebbe da «tipo assente ⇒ ammessa» a «tipo dichiarato ≠ NS ⇒ ESCLUSA» e la
+    // funzione diventerebbe muta senza nessun segnale: la `forma` esce identica, perché non
+    // porta valori. Questo campo è l'unico modo di accorgersene.
+    //
+    // E dev'essere IN CHIARO: `redact` è a lista bianca, `tipo` c'è e `tipi` no. Con la
+    // chiave sbagliata qui leggeremmo `[redatto:str/2]`, cioè la riga che esiste per dire
+    // QUALE tipo è arrivato tacerebbe proprio quello — verde, e cieca.
+    expect(ignota!.campi.tipo, 'il tipo dichiarato non è arrivato, o è stato redatto').toBe('NS')
+
+    // ⚠️ Si guarda il messaggio DOPO `sanificaMessaggio`, che tronca a `MESSAGGIO_MAX` e
+    // taglia la CODA: i nomi dei tag stanno in fondo, ed è lì che un budget sbagliato li
+    // farebbe sparire in silenzio. È lo stesso criterio del test sul prefisso corto.
+    const scritto = sanificaMessaggio(String(ignota!.campi.msg))
+    expect(scritto).toContain('NotificaScarto')
+    expect(scritto).toContain('CessionarioCommittente')
+    expect(scritto).toContain('EsitoSconosciuto')
+    // La forma del JSON non si è persa per far posto alla traccia.
+    expect(scritto).toContain('notifications')
+    expect(scritto).toContain('docType')
+    // ⚠️ E CIÒ CHE NON CI STA SI DICHIARA. Il budget è finito: i nomi che avanzano vengono
+    // tolti INTERI — un nome tagliato a metà non è mezza informazione, è zero, perché non lo
+    // si può cercare — e il numero di quelli rimasti fuori è scritto lì.
+    expect(scritto, 'la traccia è stata tagliata in silenzio, o a metà nome').toMatch(/…\+\d+$/)
+    // 🔴 E i VALORI no, da nessuna parte nella riga — `causa` compresa.
+    const riga_ = JSON.stringify([ignota!.campi, ignota!.causa])
+    for (const valore of [INTESTATARIO.denominazione, INTESTATARIO.partitaIVA, INTESTATARIO.codiceFiscale]) {
+      expect(riga_, `il valore «${valore}» è finito nel log`).not.toContain(valore)
+    }
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════
 // IL RIENTRO — gli scarti già terminali, quelli che hanno motivato tutto il lavoro
 // ════════════════════════════════════════════════════════════════════════════════
 

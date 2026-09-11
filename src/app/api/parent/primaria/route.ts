@@ -6,6 +6,30 @@ import { limitaAiFatti } from '@/lib/presenze/finestra-trascorsa'
 import { parseQuery } from '@/lib/validation/http'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
+import { firmaPercorsi, percorsoNelBucket } from '@/lib/allegati/storage'
+
+// ─── IL CONTENITORE DEGLI ALLEGATI DEL REGISTRO ──────────────────────────────
+//
+// È PRIVATO (`public: false`, deciso in `primaria/allegati:POST`), e in tabella
+// `allegati_registro.file_url` porta il PERCORSO dentro il contenitore
+// (`registro/<uuid>/<timestamp>-<rnd>.jpg`), non un indirizzo: l'indirizzo lo
+// genera la LETTURA, firmato e a scadenza breve, dietro al gate della route che
+// lo serve. Stesso modello di galleria, avvisi, incarichi e chat.
+//
+// Il nome è ripetuto qui perché `primaria/allegati/route.ts` lo tiene in una
+// `const` non esportata. Due stringhe uguali in due file sono due cose da tenere
+// allineate: la casa giusta è `@/lib/allegati/storage`, accanto a
+// `BUCKET_AVVISI_ALLEGATI` e `BUCKET_TASK_ALLEGATI`, insieme alle altre due
+// route che lo nominano (`primaria/allegati`, `primaria/registro`).
+const BUCKET_REGISTRO_ALLEGATI = 'registro-allegati'
+
+/** Un allegato come esce dal join `allegati_registro(...)`. */
+type AllegatoRegistro = {
+  id: string
+  tipo: string | null
+  file_url: string | null
+  file_name: string | null
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // studentId lasco (niente zUuid): un valore non-GUID oggi degrada a 404 dalla
@@ -143,6 +167,38 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
         .order('ordine'),
     ])
 
+    // ─── L'ALLEGATO USCIVA COME PERCORSO, CIOÈ COME LINK MORTO ───────────────
+    //
+    // `file_url` è un percorso dentro un contenitore PRIVATO. Restituito grezzo,
+    // il browser della famiglia lo risolveva come indirizzo RELATIVO
+    // (`https://app.kidville.it/parent/compiti/registro/<uuid>/…`) e rispondeva
+    // 404: nessun errore, nessun log, soltanto un allegato che non si apre.
+    //
+    // Si firma IN BLOCCO — una chiamata allo Storage per pagina, non una per
+    // allegato — con la stessa funzione di avvisi, incarichi e chat: stesso TTL
+    // (10 minuti), stesso log col corpo dell'errore del provider, stessa
+    // gestione del fallimento. Una firma inventata qui sarebbe una quinta forma
+    // da tenere allineata.
+    //
+    // Il percorso si calcola UNA volta per allegato e si riusa: la funzione che
+    // decide che cosa firmare dev'essere la stessa che decide che cosa
+    // sostituire, altrimenti le due strade possono divergere in silenzio.
+    const percorsoPerAllegato = new Map<string, string | null>()
+    for (const r of registro ?? []) {
+      for (const a of (r.allegati_registro ?? []) as AllegatoRegistro[]) {
+        percorsoPerAllegato.set(a.id, percorsoNelBucket(BUCKET_REGISTRO_ALLEGATI, a.file_url))
+      }
+    }
+    const percorsi = [...new Set([...percorsoPerAllegato.values()].filter((p): p is string => p !== null))]
+    // `firmaPercorsi` con l'elenco vuoto non tocca lo Storage: la lezione senza
+    // allegati non paga niente.
+    const urlFirmato = await firmaPercorsi(
+      supabase,
+      BUCKET_REGISTRO_ALLEGATI,
+      percorsi,
+      'parent/primaria:GET',
+    )
+
     // Applica oscuramento: contenuti "propri" visibili solo se il figlio è destinatario.
     const lezioni = (registro ?? []).map((r) => {
       const firme = (r.firme_docenti ?? []) as { id: string; argomento_proprio: string | null; compiti_propri: string | null }[]
@@ -158,7 +214,19 @@ export const GET = withRoute('parent/primaria:GET', async (request: NextRequest)
         argomento: r.argomento,
         compiti: r.compiti,
         data_consegna_compiti: r.data_consegna_compiti,
-        allegati: r.allegati_registro ?? [],
+        // Chi non si è potuto firmare esce con `file_url: null` — MAI il
+        // percorso grezzo, che come indirizzo non funziona lo stesso e
+        // maschererebbe un guasto dello Storage da «allegato rotto». Il client
+        // non rende nessuna ancora per un allegato senza indirizzo.
+        allegati: ((r.allegati_registro ?? []) as AllegatoRegistro[]).map((a) => {
+          const p = percorsoPerAllegato.get(a.id) ?? null
+          return {
+            id: a.id,
+            tipo: a.tipo,
+            file_name: a.file_name,
+            file_url: p === null ? null : (urlFirmato.get(p) ?? null),
+          }
+        }),
         individualizzate: extra,
       }
     })

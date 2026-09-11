@@ -388,5 +388,9 @@
   "erroreDiarioLetturaFallita": "The entry to delete could not be read. Please try again.",
   "erroreDiarioNonEliminato": "The entry could not be deleted. Please try again.",
   "erroreAppelloStatoPrimaNonLetto": "The existing attendance record could not be read: to avoid erasing notes and times, the save was cancelled. Please try again.",
-  "erroreTicketRicaricaDuplicata": "A meal-ticket top-up has already been recorded for this child today. Check that this is not the same payment being recorded twice."
+  "erroreTicketRicaricaDuplicata": "A meal-ticket top-up has already been recorded for this child today. Check that this is not the same payment being recorded twice.",
+  "erroreSezioneNonTrovata": "This class is no longer available: go back to the list and try again.",
+  "erroreClasseNonDiPrimaria": "This class isn’t part of primary school: the primary register doesn’t apply to it.",
+  "erroreGradoNonAbilitato": "You aren’t enabled for this school level: ask the office to update your profile.",
+  "erroreFirmaNonSalvata": "We couldn’t save the register signature. Please try again in a few minutes."
 }

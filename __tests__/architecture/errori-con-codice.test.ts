@@ -187,13 +187,20 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  */
 const MAX_FILE = 277;
 /**
- * ⚠️ 1417 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
- * il 2026-09-10, è **1384**. I due numeri divergono di 33 per le 18 voci stantie dette qui sopra.
+ * ⚠️ 1416 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
+ * il 2026-09-10, è **1384**. I due numeri divergono di 32 per le 18 voci stantie dette qui sopra.
  * Il confronto che questo tetto governa (in fondo al file) è sulla SOMMA DELL'ELENCO, non sulla
  * misura: chi legge «stringi fino alla misura vera» e porta il tetto a 1384 senza aver prima
  * stretto quelle 18 voci rende il test rosso all'istante. L'ordine è: prima le voci, poi il tetto.
+ *
+ * 🔻 1417 → 1416 il 2026-09-11, al merge con `main`. Questo numero NON viene da nessuno dei due
+ * rami: il branch delle fatture aveva stretto 1429 → 1417, `main` 1429 → 1428, e l'auto-merge
+ * dell'elenco ha applicato ENTRAMBE le strette lasciando però il tetto a 1417, cioè uno più
+ * largo della somma vera. Git non ha segnalato niente: il conflitto era sul JSON, non qui, e
+ * `1416 <= 1417` sarebbe rimasto verde per sempre. Rimisurato sul file unito, non deciso a
+ * tavolino. Un auto-merge pulito non è un auto-merge che ha capito.
  */
-const MAX_OCCORRENZE = 1417;
+const MAX_OCCORRENZE = 1416;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

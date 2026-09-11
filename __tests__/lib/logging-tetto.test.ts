@@ -326,6 +326,18 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         'BROWSER: `GET /api/educator-sections`, una nostra route, con la cache di promesse che '
         + 'la fa chiedere una volta sola per ingresso in pagina. Stessa forma, stesso motivo: il '
         + 'tetto sta nella route, non nel chiamante.'],
+    ['src/lib/ui/muta.ts',
+        'BROWSER, ed è l\'unica voce di questo elenco che non è un chiamante ma un AIUTANTE DI '
+        + 'COMPONENTE: `creaMuta` non sceglie un indirizzo, riceve quello che il componente le '
+        + 'passa, e sono sempre nostre route relative (`/api/admin/primaria/**`, otto componenti '
+        + 'del cockpit primaria). Il tetto vive dall\'altra parte, dentro la route, dove la '
+        + 'chiamata passa dal client Supabase strumentato — stessa forma e stesso motivo dei '
+        + 'fratelli qui sopra. In più questo è il gesto di una persona che ha appena premuto un '
+        + 'bottone: l\'annullamento ce l\'ha già in mano (chiude la pagina), e un tetto lato client '
+        + 'toglierebbe la sola cosa che qui conta davvero, cioè la RISPOSTA — ogni esito passa da '
+        + '`setErrore` a schermo e da `logClient` nei log, e `livelloFetch` scarta 401/403/404 '
+        + 'prima di spedirli, sicché del 403 di sede (con tre plessi, il rifiuto più probabile) '
+        + 'resta soltanto l\'avviso davanti a chi ha premuto.'],
 ]);
 
 /**

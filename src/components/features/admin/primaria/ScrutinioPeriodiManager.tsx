@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { Plus, Trash2, GraduationCap } from 'lucide-react';
 import { DateField } from '@/components/ui/DateField';
+import { creaMuta } from '@/lib/ui/muta';
 
 interface Periodo {
   id: string; nome: string; anno_scolastico: string; ordine: number;
@@ -47,33 +48,59 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
 
   useEffect(() => { load(); }, [load]);
 
+  /**
+   * «Aggiungi periodo» mostrava il rifiuto; «elimina» e il pulsante
+   * attivo/disattivo no. Quest'ultimo è il più insidioso dei tre: un periodo
+   * che resta «attivo» a schermo ma disattivo nel database è ciò che decide se
+   * uno scrutinio si può compilare, e il docente lo scopre altrove.
+   *
+   * I due ripieghi sono distinti perché dicono in che STATO è rimasto il dato.
+   */
+  const { mutaSalva, mutaElimina } = useMemo(() => {
+    const comuni = { route: '/admin/impostazioni', ricarica: load, setErrore: setMsg };
+    return {
+      mutaSalva: creaMuta({ ...comuni, fallback: t('comuneErroreSalvataggio') }),
+      mutaElimina: creaMuta({ ...comuni, fallback: t('comuneErroreEliminazione') }),
+    };
+  }, [load, t]);
+
   const aggiungi = async () => {
     setMsg('');
     if (!nome.trim()) { setMsg(t('periodiInserisciNome')); return; }
-    const r = await fetch(`/api/admin/primaria/scrutinio-periodi?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ scuolaId, annoScolastico: anno, nome: nome.trim(), ordine: periodi.length + 1, dataInizio: dataInizio || null, dataFine: dataFine || null }),
-    });
-    const d = await r.json();
-    if (!r.ok) { setMsg(d.error || t('comuneErrore')); return; }
-    setNome(''); setDataInizio(''); setDataFine('');
-    load();
+    // I tre campi si svuotano SOLO se il server ha accettato.
+    const ok = await mutaSalva(
+      `/api/admin/primaria/scrutinio-periodi?userId=${userId}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ scuolaId, annoScolastico: anno, nome: nome.trim(), ordine: periodi.length + 1, dataInizio: dataInizio || null, dataFine: dataFine || null }),
+      },
+      'primaria-scrutinio-periodo-nuovo-respinto',
+    );
+    if (ok) { setNome(''); setDataInizio(''); setDataFine(''); }
   };
 
-  const rimuovi = async (id: string) => {
+  const rimuovi = async (p: Periodo) => {
     if (!confirm(t('periodiConfermaElimina'))) return;
-    await fetch(`/api/admin/primaria/scrutinio-periodi?id=${id}&userId=${userId}`, { method: 'DELETE', headers: { 'x-user-id': userId } });
-    load();
+    await mutaElimina(
+      `/api/admin/primaria/scrutinio-periodi?id=${p.id}&userId=${userId}`,
+      { method: 'DELETE', headers: { 'x-user-id': userId } },
+      'primaria-scrutinio-periodo-elimina-respinto',
+      p.nome,
+    );
   };
 
   const toggleAttivo = async (p: Periodo) => {
-    await fetch(`/api/admin/primaria/scrutinio-periodi?userId=${userId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ id: p.id, attivo: !p.attivo }),
-    });
-    load();
+    await mutaSalva(
+      `/api/admin/primaria/scrutinio-periodi?userId=${userId}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ id: p.id, attivo: !p.attivo }),
+      },
+      'primaria-scrutinio-periodo-attivo-respinto',
+      p.nome,
+    );
   };
 
   return (
@@ -82,6 +109,10 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
         <GraduationCap size={16} className="text-kidville-green" /> {t('periodiTitolo')}
       </h3>
       <p className="font-maven text-xs text-kidville-muted mb-4">{t('periodiSottotitolo')}</p>
+
+      {msg && (
+        <p role="alert" className="font-maven mb-4 rounded-card bg-kidville-error/10 px-4 py-2 text-sm text-kidville-error">{msg}</p>
+      )}
 
       <div className="mb-4 flex items-center gap-2">
         <label className="font-maven text-sm text-kidville-ink">{t('periodiAnnoScolastico')}</label>
@@ -104,7 +135,7 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
               <button onClick={() => toggleAttivo(p)} className={`font-maven rounded-pill px-2.5 py-0.5 text-[11px] ${p.attivo ? 'bg-kidville-success-soft text-kidville-success' : 'bg-kidville-line text-kidville-muted'}`}>
                 {p.attivo ? t('periodiAttivo') : t('periodiDisattivo')}
               </button>
-              <button onClick={() => rimuovi(p.id)} aria-label={t('periodiElimina')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
+              <button onClick={() => rimuovi(p)} aria-label={t('periodiElimina')} className="text-kidville-muted hover:text-kidville-error"><Trash2 size={15} /></button>
             </div>
           </li>
         ))}
@@ -117,7 +148,6 @@ export function ScrutinioPeriodiManager({ scuolaId, userId }: { scuolaId: string
           <DateField value={dataInizio} onChange={setDataInizio} aria-label={t('periodiAriaDataInizio')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
           <DateField value={dataFine} onChange={setDataFine} aria-label={t('periodiAriaDataFine')} className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm" />
         </div>
-        {msg && <p className="font-maven text-xs text-kidville-error mt-2">{msg}</p>}
         <button onClick={aggiungi} className="font-maven mt-2 inline-flex items-center gap-1.5 rounded-pill bg-kidville-green px-4 py-1.5 text-sm text-kidville-yellow">
           <Plus size={14} /> {t('periodiAggiungiPeriodo')}
         </button>

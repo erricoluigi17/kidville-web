@@ -9,7 +9,44 @@ import { notificaTitolariScrittura } from '@/lib/primaria/notifiche'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
-import { logErrore } from '@/lib/logging/logger'
+import { logErrore, logEvento } from '@/lib/logging/logger'
+
+/**
+ * Il guasto del DATABASE di questa route, distinto dai suoi rifiuti.
+ *
+ * PostgREST non lancia: un `const { data } = await supabase.from(…)` che non
+ * controlla l'`error` non ottiene «errore», ottiene `null` — e qui sotto `null`
+ * diventa `?? []`, cioè un INSIEME VUOTO usato per decidere. Nel POST i tre punti
+ * in cui questo cambiava la decisione, e non solo la schermata:
+ *
+ *  1. `materie` della sezione — insieme vuoto ⇒ `materiaIds.some(id => !materieOk.has(id))`
+ *     è vero ⇒ **403 «Materia non appartenente alla sezione»**. Al docente si dice
+ *     che sta scrivendo sulla classe di qualcun altro perché una query è caduta.
+ *  2. `utenti_sezioni_materie` (le materie del docente) — insieme vuoto ⇒
+ *     **403 «Materia non assegnata al docente»**, cioè «non sei tu il titolare»,
+ *     detto a chi lo è.
+ *  3. `scrutinio_giudizi` già proposti — mappa vuota ⇒ ogni giudizio sembra
+ *     NUOVO ⇒ `proposto_da` viene ricalcolato al titolare (o a `null`) e
+ *     RISCRITTO. È il «vero valutatore» del vincolo FEA, cioè chi firma il
+ *     giudizio: il ramo staff esiste apposta per preservarlo, e una lettura
+ *     caduta lo cancellava su tutta la classe in un salvataggio solo.
+ *
+ * Una funzione sola perché il lock `__tests__/architecture/errori-con-codice.test.ts`
+ * conta le risposte d'errore senza `codice`: questa assorbe le due che c'erano già
+ * sugli upsert del POST e del PATCH, che rimandavano al browser il `message` di
+ * PostgREST. Il motivo vero resta nel log.
+ *
+ * ⚠️ Il file misura ora DODICI risposte senza codice e l'allowlist ne dichiara ancora
+ * TREDICI: il lock è verde (fallisce solo se crescono), ma quella riga di scarto è
+ * spazio in cui il debito può ricrescere senza che nessuno se ne accorga. Va chiusa
+ * portando la voce a 12 e `totale_occorrenze` da 1429 a 1428 in
+ * `docs/superpowers/errori-senza-codice-allowlist.json` — un file condiviso con gli
+ * altri lotti, e per questo non toccato qui: è segnalato nel rapporto.
+ */
+function guastoDb(operazione: string, esito: string, error: unknown): NextResponse {
+  logEvento('db', 'error', { operazione, esito }, error)
+  return NextResponse.json({ error: 'Operazione sullo scrutinio non riuscita' }, { status: 500 })
+}
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // periodoId assente o '' → lista periodi configurati (come oggi: '' è falsy).
@@ -190,11 +227,14 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
     const alunniErr = await assertAlunniInSezione(supabase, valid.map((g) => g.alunnoId), sectionId)
     if (alunniErr) return alunniErr
     const materiaIds = [...new Set(valid.map((g) => g.materiaId))]
-    const { data: materieSez } = await supabase
+    const { data: materieSez, error: errMaterieSez } = await supabase
       .from('materie')
       .select('id')
       .eq('section_id', sectionId)
       .in('id', materiaIds)
+    // Senza questo ramo il catalogo non letto diventa «nessuna di queste materie
+    // è della sezione», cioè un 403 al posto di un 500.
+    if (errMaterieSez) return guastoDb('primaria/scrutinio:POST', 'materie-sezione-non-lette', errMaterieSez)
     const materieOk = new Set((materieSez ?? []).map((m) => m.id as string))
     if (materiaIds.some((id) => !materieOk.has(id))) {
       return NextResponse.json({ error: 'Materia non appartenente alla sezione' }, { status: 403 })
@@ -202,11 +242,14 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
     // L'educator propone solo per le proprie discipline (contitolarità server-side,
     // stesso criterio di mieMaterieIds nel GET). Staff/segreteria: tutte le materie.
     if (auth.user.role === 'educator') {
-      const { data: mie } = await supabase
+      const { data: mie, error: errMie } = await supabase
         .from('utenti_sezioni_materie')
         .select('materia_id')
         .eq('utente_id', auth.user.id)
         .eq('section_id', sectionId)
+      // Le assegnazioni non lette non sono «nessuna assegnazione»: negare qui
+      // vuol dire dire a un titolare che non è titolare della propria materia.
+      if (errMie) return guastoDb('primaria/scrutinio:POST', 'assegnazioni-docente-non-lette', errMie)
       const mieSet = new Set((mie ?? []).map((m) => m.materia_id as string))
       if (materiaIds.some((id) => !mieSet.has(id))) {
         return NextResponse.json({ error: 'Materia non assegnata al docente' }, { status: 403 })
@@ -227,10 +270,15 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
         proposto_da: auth.user.id,
       }))
     } else {
-      const { data: esistenti } = await supabase
+      const { data: esistenti, error: errEsistenti } = await supabase
         .from('scrutinio_giudizi')
         .select('alunno_id, materia_id, proposto_da')
         .eq('scrutinio_id', scrutinioId)
+      // Questa lettura È la conservazione di `proposto_da`. Se non arriva, il
+      // ramo qui sotto non «preserva il proponente esistente» come dice il
+      // commento: lo sostituisce. Meglio non salvare che salvare firmando al
+      // posto di un altro.
+      if (errEsistenti) return guastoDb('primaria/scrutinio:POST', 'proponenti-esistenti-non-letti', errEsistenti)
       const propByKey = new Map<string, string | null>(
         (esistenti ?? []).map((e) => [`${e.alunno_id}:${e.materia_id}`, (e.proposto_da as string | null) ?? null]),
       )
@@ -259,7 +307,7 @@ export const POST = withRoute('primaria/scrutinio:POST', async (request: NextReq
       .from('scrutinio_giudizi')
       .upsert(rows, { onConflict: 'scrutinio_id,alunno_id,materia_id' })
       .select()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) return guastoDb('primaria/scrutinio:POST', 'giudizi-non-scritti', error)
 
     await logScrittura(supabase, {
       attore: auth.user,
@@ -325,7 +373,11 @@ export const PATCH = withRoute('primaria/scrutinio:PATCH', async (request: NextR
       .from('scrutinio_comportamento')
       .upsert(rows, { onConflict: 'scrutinio_id,alunno_id' })
       .select()
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    // Gemello dell'upsert del POST, e fino a qui era rimasto l'unico punto del
+    // file che rimandava al browser il `message` di PostgREST: prosa inglese e
+    // nomi di meccanismi interni davanti a chi lavora in segreteria. Il motivo
+    // vero passa da `guastoDb`, cioè finisce nel log dove serve.
+    if (error) return guastoDb('primaria/scrutinio:PATCH', 'comportamento-non-scritto', error)
 
     await logScrittura(supabase, {
       attore: auth.user,

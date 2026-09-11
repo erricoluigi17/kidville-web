@@ -1,8 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { GraduationCap } from 'lucide-react';
+import { creaMuta } from '@/lib/ui/muta';
 
 interface Section { id: string; name: string; school_type: string }
 interface Periodo { id: string; nome: string; anno_scolastico: string }
@@ -82,15 +83,48 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
 
   useEffect(() => { loadTesti(); }, [loadTesti]);
 
-  const salva = async (materiaCodice: string, etichettaVoto: string, testo: string) => {
+  const muta = useMemo(
+    () => creaMuta({
+      route: '/admin/impostazioni',
+      ricarica: loadTesti,
+      setErrore: setMsg,
+      fallback: t('scrutinioGiudiziErroreSalvataggio'),
+    }),
+    [loadTesti, t],
+  );
+
+  /**
+   * QUESTA ERA IBRIDA, ED È IL MODO PEGGIORE DI SBAGLIARE.
+   *
+   * Mostrava l'errore — `setMsg(r.ok ? … : …)` — e un rigo prima scriveva
+   * COMUNQUE lo stato ottimistico. Il risultato: un avviso rosso in cima e, sotto,
+   * `testi` che dichiara salvato un testo che il database non ha. E `testi` non
+   * è decorazione: è il valore con cui `onBlur` confronta per decidere se
+   * risalvare. Registrato il rifiuto come se fosse riuscito, il tentativo
+   * successivo sullo stesso campo veniva scartato come «non è cambiato niente» —
+   * cioè l'avviso diceva «riprova» e il codice, riprovando, non faceva più nulla.
+   *
+   * Ora lo stato si aggiorna SOLO se il server ha accettato. Il testo digitato
+   * resta nella textarea (è a `defaultValue`), quindi riprovare costa un secondo
+   * clic fuori dal campo e non una riscrittura.
+   */
+  const salva = async (materia: Materia, etichettaVoto: string, testo: string) => {
     setMsg('');
-    const r = await fetch(`/api/admin/primaria/scrutinio-giudizio?userId=${userId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-      body: JSON.stringify({ scuolaId, livello, materiaCodice, periodoId, etichettaVoto, testo }),
-    });
-    setTesti((prev) => ({ ...prev, [materiaCodice]: { ...(prev[materiaCodice] || {}), [etichettaVoto]: testo } }));
-    setMsg(r.ok ? t('comuneSalvato') : t('scrutinioGiudiziErroreSalvataggio'));
+    const ok = await muta(
+      `/api/admin/primaria/scrutinio-giudizio?userId=${userId}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
+        body: JSON.stringify({ scuolaId, livello, materiaCodice: materia.codice, periodoId, etichettaVoto, testo }),
+      },
+      'primaria-scrutinio-giudizio-respinto',
+      // Materia e voto: la griglia è larga quanto le materie per quanti sono i
+      // voti, e senza queste due parole l'avviso non dice quale casella rifare.
+      `${materia.nome} · ${etichettaVoto}`,
+    );
+    if (!ok) return;
+    setTesti((prev) => ({ ...prev, [materia.codice]: { ...(prev[materia.codice] || {}), [etichettaVoto]: testo } }));
+    setMsg(t('comuneSalvato'));
   };
 
   return (
@@ -112,7 +146,14 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
           {periodi.length === 0 && <option value="">{t('scrutinioGiudiziNessunPeriodoOpt')}</option>}
           {periodi.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.anno_scolastico})</option>)}
         </select>
-        {msg && <span className={`font-maven text-xs ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}>{msg}</span>}
+        {msg && (
+          <span
+            role={msg.includes('✓') ? 'status' : 'alert'}
+            className={`font-maven text-xs ${msg.includes('✓') ? 'text-kidville-success' : 'text-kidville-error'}`}
+          >
+            {msg}
+          </span>
+        )}
       </div>
 
       {periodi.length === 0 ? (
@@ -137,7 +178,7 @@ export function ScrutinioGiudiziManager({ scuolaId, userId }: { scuolaId: string
                       placeholder={t('scrutinioGiudiziPlaceholder')}
                       onBlur={(e) => {
                         const v = e.target.value;
-                        if (v !== (testi[m.codice]?.[s.etichetta] ?? '')) salva(m.codice, s.etichetta, v);
+                        if (v !== (testi[m.codice]?.[s.etichetta] ?? '')) salva(m, s.etichetta, v);
                       }}
                       className="font-maven flex-1 rounded border border-kidville-line px-2 py-1.5 text-xs"
                     />

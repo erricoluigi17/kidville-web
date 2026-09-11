@@ -100,6 +100,76 @@
 
 ---
 
+## 🧾 Changelog — Il motivo non era in nessun campo: era dentro l'allegato, in 6304 caratteri — 2026-09-11 (branch `fix/notifica-sdi-xml-allegato`)
+
+La voce qui sotto (stesso giorno) si chiudeva dicendo che la forma della risposta delle notifiche
+**non era mai stata misurata** contro l'API vera, e che il primo posto da guardare sarebbe stata la
+riga `notifiche-forma-ignota` in `app_log`. È andata esattamente così.
+
+**Misurato in produzione alle 16:30Z.** `aruba:notifiche` ha risposto **HTTP 200 in 626 ms**: il
+parametro `invoiceFilename` era giusto, confermato sul campo. Il rientro ha tentato due fatture, ha
+scritto il marcatore e al giro dopo non le ha richieste. Ma l'estrattore non ha riconosciuto niente,
+e la riga diagnostica ha portato la forma vera — nomi e lunghezze, mai i valori:
+
+```
+{count: numero,
+ notifications: array(1) di {filename: stringa(35), number: null, notificationDate: null,
+   docType: stringa(2), date: stringa(29), invoiceId: stringa(24),
+   file: stringa(6304), result: null, errorCode: null, errorDescription: null},
+ errorCode: stringa(4), errorDescription: null}
+```
+
+`errorCode` ed `errorDescription` della notifica sono **`null`**: cercare il motivo nei campi JSON
+non porterà mai a niente su questo canale. Il motivo sta dentro **`file`**, che è l'XML della
+notifica SdI — per lo standard una `NS` porta `<ListaErrori>` con N `<Errore>`, ognuno con
+`<Codice>`, `<Descrizione>` e spesso `<Suggerimento>`.
+
+### Cosa è cambiato
+
+| | |
+|---|---|
+| **L'allegato si legge** | `motivoDalleNotificheSdi` decodifica il campo del documento e ne estrae codice e descrizione. **Non si dà per scontato che sia base64**: 6304 caratteri possono anche essere XML in chiaro, e si riconoscono entrambi (se comincia con `<`, dopo spazi o BOM, è già XML) |
+| **Lettore tollerante** | confronto sul nome **locale** del tag (i prefissi di namespace sono variabili: `ns3:Errore`, `p:Codice`), più errori raccolti fino a `ERRORI_MAX`, CDATA sciolto, entità XML decodificate — e `&amp;` per **ultima**, o `&amp;lt;` diventerebbe `<` e inventerebbe marcatura dentro una descrizione |
+| **Stesso formato degli altri rami** | il risultato entra in `sdi_scarto_motivo` come `(00400) Natura non ammessa`, non in un formato nuovo suo: riusa `aggiungi`, la dedup, `tronca` e `MOTIVO_NOTIFICHE_MAX` |
+| **`docType` fra le chiavi del tipo** | era l'unico nome che Aruba manda davvero, e non era riconosciuto |
+| **Niente dipendenze nuove** | nessun parser XML da npm: espressioni regolari, con un tetto misurato (sotto) |
+
+### Le tre cose che valeva la pena sbagliare una volta sola
+
+**`docType` non serve a trovare la `NS`: serve a ESCLUDERE le altre.** Finché non era fra
+`CHIAVI_TIPO_NOTIFICA`, *ogni* notifica di Aruba risultava «tipo assente» e passava per il ramo
+difensivo — cioè il filtro «`NS` o tipo assente», che esiste per tenere fuori le altre, non teneva
+fuori niente. Una `RC` (ricevuta di **consegna**, il racconto di un successo) poteva finire in
+`sdi_scarto_motivo` sotto il titolo «Perché lo SDI l'ha respinta».
+
+**Il tetto sull'allegato è un numero misurato, non prudenza generica.** Un lettore a espressioni
+regolari, su un `<Errore>` aperto e mai chiuso, costa **quadratico**: 3 ms a 16 KiB, 51 ms a 64 KiB,
+**2 secondi a 256 KiB**, 37 secondi a 1 MiB. `ALLEGATO_MAX` è 16 KiB — più del doppio della misura
+vera — e sopra il tetto non si decodifica affatto: la lunghezza finisce nella traccia diagnostica,
+così il giorno in cui servisse più spazio lo si alza su una misura. Sul caso peggiore l'estrattore
+intero costa **6,4 ms**, niente accanto ai 626 ms della chiamata HTTP che ha portato quei byte.
+
+**La diagnostica è scesa di un gradino, e il `…+N` deve dire il vero.** `descriviForma` si fermava a
+`file: stringa(6304)`: se domani l'XML non desse i tag attesi, saremmo di nuovo ciechi — e per
+vederci servirebbe un'altra interrogazione dentro un secchio da 12 al minuto. Adesso, quando
+l'allegato c'è e non dice niente, la riga porta **i nomi dei tag XML** e la lunghezza. 🔴 Mai il
+contenuto: quell'XML è una notifica fiscale e porta denominazione, codice fiscale e partita IVA
+dell'intestatario, cioè di una famiglia; `sanificaMessaggio` maschera email e CF, **non** una
+ragione sociale. E i nomi che non entrano nel budget vengono tolti **interi**, col numero di quelli
+rimasti fuori scritto accanto: mezzo nome non è mezza informazione — non si può cercare — e un
+elenco parziale che non dichiara di esserlo fa cercare il difetto nel documento sbagliato.
+
+### Cosa resta aperto
+
+⚠️ **Il percorso «errori nei campi JSON» resta in piedi e viene prima**: non sappiamo se *tutte* le
+notifiche di Aruba abbiano l'allegato, e un elenco JSON è già interpretato mentre l'XML è una
+lettura per espressioni regolari su testo del provider.
+
+⚠️ **Non è ancora arrivata una notifica vera con l'XML dentro.** Il lavoro è provato su una `NS`
+plausibile secondo lo standard SdI, non su un documento misurato: se i tag reali fossero altri, il
+motivo resta povero — **nessuna regressione** — e la riga `forma notifiche SDI` porta ora anche i
+nomi dei tag, che è esattamente ciò che servirà per correggerla senza spendere un'altra richiesta.
+
 ## 🧾 Changelog — «Scartata» diceva CHE, non PERCHÉ: il motivo sta nelle notifiche, dietro un parametro sbagliato da sempre — 2026-09-11 (branch `fix/aruba-motivo-scarto-notifiche`)
 
 La voce qui sotto (stesso giorno) ha sbloccato la coda: le fatture congelate sono rientrate nel giro
@@ -157,6 +227,10 @@ prima notifica vera. Quella garanzia era un commento: ora è un lock, e lo si è
 facendo passare il corpo dal quarto argomento di `logEvento`, che il primo test non guardava.
 
 ### Cosa resta aperto, detto qui perché non si perda
+
+⏭️ **SUPERATO il 2026-09-11 alle 16:30Z** — la misura c'è, ed è nella voce qui sopra: la risposta è
+arrivata **HTTP 200 in 626 ms**, il motivo sta dentro `file` e non nei campi JSON. Il paragrafo resta
+perché racconta perché la misura mancava, non perché vada ancora seguito.
 
 ⚠️ **La forma della risposta di `getByInvoiceFilename` non è mai stata misurata contro l'API vera.**
 Non si poteva: il cron in produzione stava consumando il budget di richieste (l'08/09 sono arrivati

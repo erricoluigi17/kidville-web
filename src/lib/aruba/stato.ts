@@ -453,8 +453,20 @@ const CONTENITORI_NOTIFICHE = [
 /**
  * Le chiavi che dichiarano il TIPO di una notifica SDI (`NS`, `RC`, `MC`, `NE`, `DT`, `AT`).
  * Sono in ordine di preferenza: il primo nome trovato vince.
+ *
+ * ─── `doctype` È L'UNICO NOME MISURATO, 2026-09-11 alle 16:30Z ──────────────
+ * Gli altri cinque sono nomi plausibili, scritti quando la forma della risposta non era nota.
+ * La prima notifica vera l'ha detta: il tipo sta in `docType`, `stringa(2)` — cioè le due
+ * lettere dello SdI, `NS` per lo scarto. Senza questa voce quella notifica risultava «tipo
+ * assente» e passava solo per il ramo difensivo.
+ *
+ * ⚠️ E L'ALTRA METÀ CONTA DI PIÙ. Finché `docType` non è stato qui, OGNI notifica di Aruba
+ * risultava «tipo assente»: il filtro «NS o tipo assente», che esiste per escludere le altre,
+ * non escludeva niente. Una `RC` — la ricevuta di CONSEGNA, cioè il racconto di un successo —
+ * poteva fornire il testo scritto in `sdi_scarto_motivo` sotto il titolo «Perché lo SDI l'ha
+ * respinta». Riconoscere il tipo non serve solo a trovare la `NS`: serve a ESCLUDERE le altre.
  */
-const CHIAVI_TIPO_NOTIFICA = ['notificationtype', 'tiponotifica', 'type', 'tipo', 'kind']
+const CHIAVI_TIPO_NOTIFICA = ['notificationtype', 'tiponotifica', 'doctype', 'type', 'tipo', 'kind']
 
 /** Le chiavi che portano l'ELENCO degli errori dentro una notifica di scarto. */
 const CHIAVI_ELENCO_ERRORI = ['errors', 'errori', 'listaerrori', 'errorlist', 'errorslist']
@@ -474,6 +486,340 @@ const CHIAVI_CODICE_ERRORE = ['errorcode', 'codiceerrore', 'codice', 'code']
 /** La notifica che dice «scartata». Le altre (`RC`, `MC`, `NE`, `DT`) parlano d'altro. */
 const TIPO_SCARTO = 'NS'
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * L'ALLEGATO — dove il motivo stava davvero, misurato il 2026-09-11 alle 16:30Z.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ─── IL FATTO ───────────────────────────────────────────────────────────────
+ * La prima notifica vera è arrivata: `aruba:notifiche` ha risposto **HTTP 200** in 626 ms,
+ * quindi `invoiceFilename` era il parametro giusto. Ma l'estrattore non ha riconosciuto
+ * niente, e la riga `notifiche-forma-ignota` ha portato in `app_log` la forma esatta:
+ *
+ *     {count: numero,
+ *      notifications: array(1) di {filename: stringa(35), number: null,
+ *        notificationDate: null, docType: stringa(2), date: stringa(29),
+ *        invoiceId: stringa(24), file: stringa(6304), result: null,
+ *        errorCode: null, errorDescription: null},
+ *      errorCode: stringa(4), errorDescription: null}
+ *
+ * `errorCode` ed `errorDescription` della notifica sono **null**: cercare il motivo nei campi
+ * JSON non porterà mai a niente su questo canale. Il motivo è dentro `file`, 6304 caratteri,
+ * che è l'XML della notifica SdI — per lo standard una `NS` porta `<ListaErrori>` con N
+ * `<Errore>`, ognuno con `<Codice>`, `<Descrizione>` e spesso `<Suggerimento>`.
+ *
+ * ─── ⚠️ NON SI DÀ PER SCONTATO CHE SIA BASE64 ───────────────────────────────
+ * 6304 caratteri possono essere base64 dell'XML oppure l'XML in chiaro: la forma dice la
+ * LUNGHEZZA, non il contenuto (ed è giusto così, vedi `descriviForma`). Si riconosce quale
+ * dei due è — se comincia con `<`, eventualmente dopo spazi o BOM, è già XML — e si gestiscono
+ * entrambi. Dare per scontata la codifica significherebbe non leggere mai il caso in chiaro e
+ * non accorgersene: il ramo difensivo risponde `null` con la stessa faccia in tutti e due.
+ *
+ * ─── E SI CERCA DOVUNQUE NEL TESTO, NON SOLO DALL'INIZIO ────────────────────
+ * L'allegato può essere FIRMATO (`.p7m`): i byte dell'XML restano dentro l'involucro CAdES,
+ * circondati da binario. Decodificato come UTF-8 il binario diventa spazzatura, ma i tag
+ * ASCII sopravvivono — e sono l'unica cosa che serve. Un lettore ancorato al primo carattere
+ * butterebbe via quel caso senza dire perché.
+ */
+
+/**
+ * Le chiavi sotto cui può stare il DOCUMENTO della notifica. `file` è l'unica misurata; le
+ * altre sono i nomi affini, nell'ordine in cui le chiediamo noi.
+ *
+ * ⚠️ `content` è anche un nome di CONTENITORE (vedi `CONTENITORI_NOTIFICHE`), e non è un
+ * conflitto: là si scende solo dentro array e oggetti, qui si guardano solo le STRINGHE.
+ * E `filename` — che nella forma misurata sta accanto a `file` — non entra da nessuna parte,
+ * perché il confronto sui nomi normalizzati è ESATTO, non per prefisso.
+ */
+const CHIAVI_ALLEGATO = ['file', 'notificationfile', 'filecontent', 'xml', 'xmlfile', 'content', 'document']
+
+/**
+ * IL TETTO DI CIÒ CHE SI DECODIFICA E SI LEGGE, e non è una questione di stile.
+ *
+ * Questo codice gira dentro il giro di un cron che ha un tetto di tempo suo
+ * (`TETTO_TEMPO_MS` in `fattura/sync`), su un campo che arriva DAL PROVIDER e di cui non
+ * controlliamo la dimensione. Un allegato enorme non deve poter far esplodere né la memoria
+ * né il tempo: sopra il tetto non si decodifica affatto, e la lunghezza finisce nella traccia
+ * diagnostica — così il giorno in cui servisse più spazio lo si alza su una MISURA, non su
+ * un'ipotesi.
+ *
+ * ⚠️ 16 KiB È SCELTO CONTRO IL BACKTRACKING, ED È UN NUMERO MISURATO. Il lettore è a
+ * espressioni regolari, e un `<Errore>` aperto e mai chiuso fa ripartire la scansione fino in
+ * fondo a ogni occorrenza: il costo peggiore è QUADRATICO nella lunghezza. Misurato su questa
+ * macchina, con quell'input avverso:
+ *
+ *      16 KiB →     3 ms          256 KiB →  2.010 ms
+ *      64 KiB →    51 ms        1.024 KiB → 36.898 ms
+ *
+ * Il tetto non è prudenza generica: fra 16 KiB e 1 MiB ci sono quattro ordini di grandezza, e
+ * il giro del cron ha `TETTO_TEMPO_MS` da rispettare per tutte le fatture, non per una. A
+ * 16 KiB l'intero estrattore costa **6,4 ms** sul caso peggiore (misurato end-to-end), cioè
+ * niente accanto ai 626 ms della chiamata HTTP che gli ha portato quei byte. Ed è più del
+ * doppio della misura vera, 6304 caratteri.
+ */
+export const ALLEGATO_MAX = 16 * 1024
+
+/**
+ * Quanti nomi di tag si RACCOLGONO al massimo, e quanto lunghi. Non è il numero che finisce
+ * nella traccia: quello lo decide il budget residuo, un nome alla volta (vedi `rendiTraccia`).
+ * Questo è solo il tetto sulla SCANSIONE, perché un XML può avere migliaia di tag distinti.
+ */
+const TAG_XML_MAX = 12
+const NOME_TAG_MAX = 32
+
+/**
+ * Lo spazio MINIMO garantito alla traccia dell'allegato dentro `FORMA_MAX`, e il separatore
+ * che la stacca dalla forma del JSON.
+ *
+ * ⚠️ Non è una divisione a metà, ed è deliberato: la forma misurata del JSON occupa ~290
+ * caratteri e ha il diritto di arrivare INTERA — è quella che ha reso possibile questo
+ * lavoro. Perciò al JSON si dà tutto ciò che gli serve fino a `FORMA_MAX` meno questo
+ * minimo, e alla traccia va tutto ciò che AVANZA davvero, che sul caso vero è ~147.
+ * Riservare invece un blocco fisso e largo taglierebbe la coda della forma del JSON, cioè
+ * proprio `errorCode` ed `errorDescription`, che sono la parte che ha detto «qui non c'è
+ * niente, guarda altrove».
+ */
+const TRACCIA_ALLEGATO_MIN = 120
+const SEPARATORE_FORMA = ' · '
+
+/** `ns3:Errore` → `Errore`. Il confronto è sul nome LOCALE: il prefisso è variabile. */
+function nomeLocaleTag(tag: string): string {
+  const i = tag.indexOf(':')
+  return i < 0 ? tag : tag.slice(i + 1)
+}
+
+/**
+ * LE ENTITÀ XML, SCIOLTE IN UN PASSAGGIO SOLO.
+ *
+ * ⚠️ L'ORDINE NON È UN DETTAGLIO, ed è il motivo per cui qui c'è UNA regex e non cinque
+ * `replace` in fila: sciogliere `&amp;` prima delle altre trasformerebbe `&amp;lt;` in
+ * `&lt;` e poi in `<`, cioè inventerebbe della marcatura dentro una descrizione. Con una
+ * sola scansione ogni entità viene toccata una volta e nessun risultato viene rivisitato.
+ *
+ * Senza questo passaggio la colonna che la Segreteria apre direbbe «Fattura &amp;amp; nota di
+ * credito» — e nelle descrizioni dello SdI le entità non sono rare: i riferimenti agli
+ * elementi della fattura (`&lt;Natura&gt;`, `&lt;AliquotaIVA&gt;`) sono la parte che dice
+ * DOVE correggere.
+ */
+const ENTITA_XML = new Map<string, string>([
+  ['amp', '&'],
+  ['lt', '<'],
+  ['gt', '>'],
+  ['quot', '"'],
+  ['apos', "'"],
+])
+
+const decodificaEntita = (s: string): string =>
+  s.replace(/&(amp|lt|gt|quot|apos);/g, (intero, nome: string) => ENTITA_XML.get(nome) ?? intero)
+
+/**
+ * Il testo dentro un tag, ripulito. L'ordine dei tre passaggi è vincolante:
+ *
+ *   1. via l'involucro `<![CDATA[…]]>`, che è marcatura e non contenuto;
+ *   2. via l'eventuale marcatura interna, sostituita da uno spazio;
+ *   3. **e solo adesso** le entità.
+ *
+ * ⚠️ Invertire 2 e 3 trasformerebbe `&lt;Natura&gt;` in `<Natura>` e il passaggio successivo
+ * se lo mangerebbe come se fosse un tag: la descrizione perderebbe esattamente il riferimento
+ * all'elemento da correggere, che è la sua parte utile.
+ */
+function testoDelContenuto(grezzo: string): string | null {
+  const senzaCdata = grezzo.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+  // ⚠️ `[^<>]` E NON `[^>]`, e la differenza è fra 0,1 ms e 119 ms sullo stesso input.
+  // Su un contenuto pieno di `<` senza `>` — XML troncato, o firma binaria — `[^>]*` è greedy
+  // e riparte da ogni `<`: costo quadratico. Escludere anche `<` dalla classe fa fallire il
+  // match in O(1), perché il primo `<` successivo chiude il tentativo invece di allungarlo.
+  // Misurato al tetto di 16 KiB: 119,41 ms → 0,10 ms, con lo stesso identico risultato sulla
+  // marcatura vera. È il passo che domina il costo dell'estrattore, non `blocchiErrore`.
+  const senzaMarcatura = senzaCdata.replace(/<[^<>]*>/g, ' ')
+  return testoUtile(decodificaEntita(senzaMarcatura).replace(/\s+/g, ' '))
+}
+
+/**
+ * Il TESTO decodificato di un allegato in base64, o `null` se base64 non è.
+ *
+ * ⚠️ LA VALIDAZIONE VA FATTA PRIMA, ED È OBBLIGATORIA. `Buffer.from(s, 'base64')` non lancia
+ * mai: sui caratteri fuori alfabeto TACE e decodifica quel che resta. Senza il controllo qui
+ * sotto, una stringa qualunque del provider diventerebbe dei byte qualunque, e da quei byte
+ * potrebbe uscire qualcosa che somiglia a un tag — cioè un motivo inventato dentro un
+ * registro fiscale. Il controllo è anche ciò che distingue «non è base64» da «è base64 di
+ * qualcosa che non è XML»: due diagnosi diverse, due righe di log diverse.
+ *
+ * `Buffer` è di Node, e `stato.ts` oggi è importato solo da route Node e da `client.ts`. Il
+ * guardiano `typeof` non è scaramanzia: `motivoDalleNotificheSdi` è chiamata FUORI da ogni
+ * `try` in `fattura/sync`, quindi un'eccezione qui diventerebbe un 500 e farebbe saltare
+ * l'intero giro del cron — un dettaglio mancante trasformato in perdita di lavoro.
+ */
+function daBase64(grezzo: string): string | null {
+  const compatto = grezzo.replace(/\s+/g, '')
+  // `% 4 === 1` non è mai un base64 valido; sotto i 16 caratteri non c'è nessun XML dentro.
+  if (compatto.length < 16 || compatto.length % 4 === 1) return null
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(compatto)) return null
+  if (typeof Buffer === 'undefined') return null
+  // base64url (`-` e `_`) riportato all'alfabeto standard: Aruba non l'ha mai usato, ma
+  // riconoscerlo costa una riga e non riconoscerlo costerebbe un giro di log per scoprirlo.
+  const standard = compatto.replace(/-/g, '+').replace(/_/g, '/')
+  return testoUtile(Buffer.from(standard, 'base64').toString('utf8'))
+}
+
+/** C'è almeno un tag plausibile? È il confine fra «XML» e «byte qualunque». */
+const SEMBRA_XML = /<[A-Za-z_]/
+
+/** L'XML dell'allegato, oppure il PERCHÉ non c'è — che è l'altra metà della diagnosi. */
+type EsitoAllegato = { xml: string; perche: null } | { xml: null; perche: string }
+
+function leggiAllegato(grezzo: string): EsitoAllegato {
+  if (grezzo.length > ALLEGATO_MAX) {
+    return { xml: null, perche: `oltre il tetto di ${ALLEGATO_MAX}` }
+  }
+  // XML IN CHIARO: comincia con `<`, eventualmente dopo spazi o BOM. Il BOM si scrive
+  // `\uFEFF` e non come carattere: un BOM letterale nel sorgente è invisibile a chi rilegge.
+  if (/^[\s\uFEFF]*</.test(grezzo)) return { xml: grezzo, perche: null }
+  const decodificato = daBase64(grezzo)
+  if (decodificato === null) return { xml: null, perche: 'non decodificabile' }
+  if (!SEMBRA_XML.test(decodificato)) return { xml: null, perche: 'decodificato, ma non è XML' }
+  return { xml: decodificato, perche: null }
+}
+
+/**
+ * I blocchi `<Errore>…</Errore>`, con qualunque prefisso di namespace e fino a `ERRORI_MAX`.
+ *
+ * ⚠️ NIENTE PARSER DA NPM, e niente regex furba. `[\s\S]*?` è pigro e seguito da un letterale:
+ * non c'è nessuna alternanza annidata su cui il motore possa esplodere. Il costo peggiore
+ * resta quadratico — un `<Errore>` aperto e mai chiuso ripetuto N volte — ed è contenuto da
+ * `ALLEGATO_MAX`, non dalla forma dell'espressione. Vedi il commento su quel tetto.
+ *
+ * La regex è LOCALE e non di modulo: una `/g` di modulo si porta dietro `lastIndex` fra una
+ * chiamata e l'altra, ed è il modo classico di leggere la seconda notifica a metà.
+ */
+function blocchiErrore(xml: string): string[] {
+  const re = /<(?:[A-Za-z_][\w.-]*:)?Errore(?:\s[^>]*)?>([\s\S]*?)<\/(?:[A-Za-z_][\w.-]*:)?Errore\s*>/gi
+  const blocchi: string[] = []
+  let m: RegExpExecArray | null
+  while (blocchi.length < ERRORI_MAX && (m = re.exec(xml)) !== null) blocchi.push(m[1])
+  return blocchi
+}
+
+/**
+ * Le espressioni per un nome di tag, costruite una volta sola. I nomi vengono dalle nostre
+ * costanti (`CHIAVI_CODICE_ERRORE`, `CHIAVI_DESCRIZIONE_ERRORE`), mai dal provider: non c'è
+ * niente da neutralizzare, ma la cache evita di ricostruire ~120 regex per notifica.
+ */
+const REGEX_TAG = new Map<string, RegExp>()
+function regexTag(nome: string): RegExp {
+  let re = REGEX_TAG.get(nome)
+  if (!re) {
+    // Nessuna `/g`: `exec` su una regex globale avanzerebbe `lastIndex` fra le chiamate.
+    re = new RegExp(
+      `<(?:[A-Za-z_][\\w.-]*:)?${nome}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[A-Za-z_][\\w.-]*:)?${nome}\\s*>`,
+      'i',
+    )
+    REGEX_TAG.set(nome, re)
+  }
+  return re
+}
+
+/**
+ * Il primo tag utile fra quelli attesi, nell'ordine in cui li chiediamo NOI — la stessa
+ * regola di `testoDaChiavi` sui campi JSON, applicata ai tag. Le stesse costanti, per la
+ * stessa ragione: due elenchi di nomi divergono, e divergono in silenzio.
+ *
+ * ⚠️ Il `>` finale fa da confine di parola: cercando `codice`, `<CodiceErrore>` NON matcha —
+ * ed è voluto, perché `codiceerrore` viene prima nell'elenco e deve poter vincere.
+ */
+function testoDelTagLocale(xml: string, attesi: readonly string[]): string | null {
+  for (const nome of attesi) {
+    const m = regexTag(nome).exec(xml)
+    if (m) {
+      const t = testoDelContenuto(m[1])
+      if (t) return t
+    }
+  }
+  return null
+}
+
+/**
+ * La traccia diagnostica di un allegato, tenuta a PEZZI e non come stringa finita: l'elenco
+ * dei nomi va reso dentro il budget che avanza, e per farlo togliendo nomi INTERI bisogna
+ * ancora saperli distinguere. Una stringa già composta si può solo tagliare a metà parola.
+ */
+interface TracciaAllegato {
+  /** `allegato(6304) tag:` — o, quando non si è letto niente, il perché per esteso. */
+  intestazione: string
+  /** I PRIMI nomi dei tag, già troncati e senza duplicati. Vuoto = niente da elencare. */
+  nomi: string[]
+  /**
+   * Quanti nomi DISTINTI ha davvero l'XML, non quanti se ne sono tenuti.
+   *
+   * ⚠️ Serve a far dire il vero al `…+N`. I nomi vengono scartati in DUE punti — il tetto
+   * sulla scansione (`TAG_XML_MAX`) e il budget della riga — e un `…+N` che contasse solo il
+   * secondo direbbe «+2» su un documento che ne ha cinquanta: chi lo legge crederebbe di aver
+   * visto quasi tutto l'XML e cercherebbe il difetto nel documento sbagliato.
+   */
+  distinti: number
+}
+
+/**
+ * LA DIAGNOSTICA DEL LIVELLO PIÙ PROFONDO: i NOMI dei tag dell'XML, MAI il loro contenuto.
+ *
+ * 🔴 È la stessa regola di `descriviForma`, scesa di un gradino. Quell'XML è una notifica
+ * fiscale: porta denominazione, codice fiscale e partita IVA dell'intestatario della fattura,
+ * cioè di una FAMIGLIA. `sanificaMessaggio` maschera email e codici fiscali, NON una ragione
+ * sociale. I nomi dei tag non sono dati di nessuno e sono esattamente ciò che, alla prossima
+ * forma sconosciuta, permetterà di riconoscerla senza spendere un'altra interrogazione dentro
+ * un secchio da 12 richieste al minuto.
+ *
+ * Solo i tag di APERTURA (`<Nome`), perché i chiusi sono duplicati; niente prologo (`<?xml`),
+ * niente commenti né CDATA (`<!`), che non cominciano per lettera. Il nome è troncato e
+ * l'insieme è finito: una spazzatura binaria che somigliasse a un tag non può occupare il
+ * budget di tutti gli altri.
+ */
+function tracciaTagXml(xml: string, lunghezza: number): TracciaAllegato {
+  const re = /<([A-Za-z_][\w.:-]*)/g
+  const nomi: string[] = []
+  const visti = new Set<string>()
+  let m: RegExpExecArray | null
+  // Si scandisce TUTTO (l'XML è già limitato da `ALLEGATO_MAX`): i nomi tenuti sono i primi
+  // `TAG_XML_MAX`, ma quanti siano in tutto va saputo, o il `…+N` mentirebbe.
+  while ((m = re.exec(xml)) !== null) {
+    const nome = tronca(nomeLocaleTag(m[1]), NOME_TAG_MAX)
+    const chiave = nome.toLowerCase()
+    if (visti.has(chiave)) continue
+    visti.add(chiave)
+    if (nomi.length < TAG_XML_MAX) nomi.push(nome)
+  }
+  return nomi.length === 0
+    ? { intestazione: `allegato(${lunghezza}): nessun tag`, nomi: [], distinti: 0 }
+    : { intestazione: `allegato(${lunghezza}) tag:`, nomi, distinti: visti.size }
+}
+
+/**
+ * LA TRACCIA RESA DENTRO IL BUDGET CHE AVANZA, TOGLIENDO NOMI INTERI E DICENDO QUANTI.
+ *
+ * ⚠️ Prima qui c'era un `tronca` secco, e tagliava a metà l'ultimo nome: `EsitoSconosciut…`.
+ * Su una riga che esiste per farsi RICONOSCERE una forma ignota, mezzo nome non è mezza
+ * informazione — è zero, perché non si può cercare. Peggio: non diceva quanti nomi mancavano,
+ * quindi chi la leggeva non sapeva nemmeno di star guardando un elenco parziale.
+ *
+ * È lo stesso difetto che `FORMA_MAX` racconta di sé stesso duecento righe più su, in un
+ * punto diverso: un budget che promette più di quanto il canale porti, e butta via la coda in
+ * silenzio. Qui la coda si butta a nomi interi e il taglio si dichiara (`…+2`).
+ */
+function rendiTraccia(t: TracciaAllegato, budget: number): string {
+  if (t.nomi.length === 0) return tronca(t.intestazione, budget)
+  const dentro: string[] = []
+  for (const nome of t.nomi) {
+    const fuori = t.distinti - dentro.length - 1
+    const candidato = `${t.intestazione} ${[...dentro, nome].join(', ')}${fuori > 0 ? ` …+${fuori}` : ''}`
+    if (candidato.length > budget) break
+    dentro.push(nome)
+  }
+  // Nemmeno il primo nome ci sta: resta l'intestazione, che almeno dice la lunghezza.
+  if (dentro.length === 0) return tronca(t.intestazione, budget)
+  const fuori = t.distinti - dentro.length
+  return `${t.intestazione} ${dentro.join(', ')}${fuori > 0 ? ` …+${fuori}` : ''}`
+}
+
 export interface MotivoDalleNotifiche {
   /** Il motivo ricavato, già troncato. `null` = non si è riconosciuto niente di utile. */
   motivo: string | null
@@ -484,7 +830,31 @@ export interface MotivoDalleNotifiche {
   notifiche: number
   /** Il tipo dichiarato della notifica da cui viene il motivo (`NS`…), se c'era. */
   tipo: string | null
-  /** La FORMA della risposta — nomi dei campi e tipi, MAI i valori. Serve al log. */
+  /**
+   * TUTTI i tipi DICHIARATI dalle notifiche della risposta, distinti, in ordine di apparizione.
+   *
+   * ⚠️ Esiste per una ragione sola, e vale la pena saperla: `docType` è entrato fra le chiavi
+   * del tipo il 2026-09-11 sulla misura `docType: stringa(2)` — cioè sulla sua LUNGHEZZA.
+   * `descriviForma` per costruzione non porta i valori, quindi che quelle due lettere siano
+   * davvero `NS` è una DEDUZIONE, non una misura.
+   *
+   * Se fossero altro, il filtro qui sotto passerebbe da «tipo assente ⇒ ammessa» a «tipo
+   * dichiarato e diverso da NS ⇒ ESCLUSA», e la funzione diventerebbe muta **in silenzio**:
+   * nessun errore, nessuna eccezione, e la riga diagnostica identica a prima, perché la forma
+   * non cambia. Sarebbe il modo peggiore di sbagliare — quello che cancella le proprie tracce.
+   *
+   * Questo campo è l'antidoto: i tipi VERI risalgono fino ad `app_log`, e la prossima notifica
+   * reale dirà se `NS` è la parola giusta, senza spendere una richiesta in più nel secchio da
+   * 12 al minuto. Sono codici a due lettere di un vocabolario pubblico, non dati di nessuno.
+   */
+  tipiVisti: string[]
+  /**
+   * La FORMA della risposta — nomi dei campi e tipi, MAI i valori. Serve al log.
+   *
+   * Quando il motivo è `null` e la notifica portava un ALLEGATO che non ha detto niente, qui
+   * si aggiunge un gradino: i nomi dei TAG dell'XML dentro l'allegato e la sua lunghezza.
+   * Sempre nomi, mai contenuto — quell'XML è una notifica fiscale.
+   */
   forma: string
 }
 
@@ -587,9 +957,12 @@ function tipoNotifica(n: Record<string, unknown>): string | null {
   return /^[A-Z0-9_-]{1,16}$/.test(t) ? t : null
 }
 
-/** I motivi leggibili dentro UNA notifica, e il suo tipo. */
-function pezziDiNotifica(n: unknown): { pezzi: string[]; tipo: string | null } {
-  if (!oggettoSemplice(n)) return { pezzi: [], tipo: null }
+/**
+ * I motivi leggibili dentro UNA notifica, il suo tipo, e — quando l'allegato c'era ma non ha
+ * detto niente — la traccia diagnostica che descrive l'XML che porta dentro.
+ */
+function pezziDiNotifica(n: unknown): { pezzi: string[]; tipo: string | null; traccia: TracciaAllegato | null } {
+  if (!oggettoSemplice(n)) return { pezzi: [], tipo: null, traccia: null }
   const tipo = tipoNotifica(n)
   const pezzi: string[] = []
   const aggiungi = (codice: string | null, descrizione: string | null) => {
@@ -615,10 +988,38 @@ function pezziDiNotifica(n: unknown): { pezzi: string[]; tipo: string | null } {
     }
   }
 
+  /* ─── L'ALLEGATO, che è dove il motivo sta DAVVERO (misurato) ─────────────────
+   * Terzo per ordine, non per importanza: prima l'elenco JSON, che è già interpretato e non
+   * va decodificato; poi questo; infine i campi piatti, che sono il ripiego più largo.
+   * L'ordine non è preferenza estetica — un elenco JSON è una lettura senza ambiguità,
+   * l'XML è una lettura per espressioni regolari su testo del provider.
+   * ──────────────────────────────────────────────────────────────────────────── */
+  let traccia: TracciaAllegato | null = null
   if (pezzi.length === 0) {
-    // Nessun elenco di errori: restano i campi piatti della notifica. E qui SERVE UN TITOLO
-    // PER PARLARE, perché questo ramo legge dei campi che su una risposta RIUSCITA valgono
-    // `errorCode: '0000'` ed `errorDescription: 'OK'` (misurato su `upload`).
+    const allegato = testoDaChiavi(n, CHIAVI_ALLEGATO)
+    if (allegato !== null) {
+      const esito = leggiAllegato(allegato)
+      if (esito.xml === null) {
+        traccia = { intestazione: `allegato(${allegato.length}): ${esito.perche}`, nomi: [], distinti: 0 }
+      } else {
+        for (const blocco of blocchiErrore(esito.xml)) {
+          aggiungi(
+            testoDelTagLocale(blocco, CHIAVI_CODICE_ERRORE),
+            testoDelTagLocale(blocco, CHIAVI_DESCRIZIONE_ERRORE),
+          )
+        }
+        // La traccia serve SOLO quando l'allegato non ha detto niente: se il motivo è uscito,
+        // la riga di log che la trasporta non viene nemmeno emessa.
+        if (pezzi.length === 0) traccia = tracciaTagXml(esito.xml, allegato.length)
+      }
+    }
+  }
+
+  if (pezzi.length === 0) {
+    // Né un elenco di errori né un allegato che parli: restano i campi piatti della notifica.
+    // E qui SERVE UN TITOLO PER PARLARE, perché questo ramo legge dei campi che su una
+    // risposta RIUSCITA valgono `errorCode: '0000'` ed `errorDescription: 'OK'` (misurato
+    // su `upload`).
     //
     // ⚠️ IL GUARDIANO DELLO ZERO DA SOLO NON BASTAVA: copriva `'0000'` e lasciava passare
     // `'0'`, `0`, `'00'`, `'000'` — e soprattutto lasciava passare il caso SENZA codice
@@ -635,12 +1036,28 @@ function pezziDiNotifica(n: unknown): { pezzi: string[]; tipo: string | null } {
     }
   }
 
-  return { pezzi, tipo }
+  return { pezzi, tipo, traccia }
+}
+
+/**
+ * LA FORMA DEL JSON, E — QUANDO SERVE — LA TRACCIA DELL'ALLEGATO, DENTRO UN BUDGET SOLO.
+ *
+ * ⚠️ Le due si contendono `FORMA_MAX`, e la divisione non è a metà. La forma misurata del
+ * JSON occupa ~290 caratteri e ha il diritto di arrivare INTERA: è quella che ha detto
+ * «`errorCode` è null, guarda dentro `file`». Perciò al JSON si dà tutto lo spazio fino a
+ * `FORMA_MAX` meno `TRACCIA_ALLEGATO_MIN`, e alla traccia va tutto ciò che AVANZA davvero —
+ * sul caso vero ~147 caratteri, cioè otto o nove nomi di tag.
+ */
+function componiForma(risposta: unknown, traccia: TracciaAllegato | null): string {
+  if (traccia === null) return descriviForma(risposta)
+  const tettoJson = FORMA_MAX - TRACCIA_ALLEGATO_MIN - SEPARATORE_FORMA.length
+  const formaJson = descriviForma(risposta, PROFONDITA_FORMA, tettoJson)
+  const tettoTraccia = FORMA_MAX - formaJson.length - SEPARATORE_FORMA.length
+  return `${formaJson}${SEPARATORE_FORMA}${rendiTraccia(traccia, tettoTraccia)}`
 }
 
 /** Il motivo di uno scarto letto dalle notifiche SDI. Vedi il blocco qui sopra. */
 export function motivoDalleNotificheSdi(risposta: unknown): MotivoDalleNotifiche {
-  const forma = descriviForma(risposta)
   const { elenco, daElenco } = elencoNotifiche(risposta)
   const notifiche = daElenco ? elenco.length : 0
 
@@ -676,15 +1093,29 @@ export function motivoDalleNotificheSdi(risposta: unknown): MotivoDalleNotifiche
    * diverso, e allora è `CHIAVI_TIPO_NOTIFICA`/`TIPO_SCARTO` che vanno aggiornati — su una
    * misura, non su un'ipotesi.
    * ──────────────────────────────────────────────────────────────────────────── */
+  // I tipi DICHIARATI, prima di filtrare: è ciò che dirà se `NS` è la parola giusta. Vedi
+  // `tipiVisti` nell'interfaccia — lì c'è la ragione per esteso, e non è un dettaglio.
+  const tipiVisti = [...new Set(lette.map((l) => l.tipo).filter((x): x is string => x !== null))]
+
   const ammesse = [
     ...lette.filter((l) => l.tipo === TIPO_SCARTO),
     ...lette.filter((l) => l.tipo === null),
   ]
   for (const l of ammesse) {
     if (l.pezzi.length === 0) continue
-    return { motivo: tronca(l.pezzi.join(' · '), MOTIVO_NOTIFICHE_MAX), notifiche, tipo: l.tipo, forma }
+    return {
+      motivo: tronca(l.pezzi.join(' · '), MOTIVO_NOTIFICHE_MAX),
+      notifiche,
+      tipo: l.tipo,
+      tipiVisti,
+      forma: componiForma(risposta, null),
+    }
   }
-  return { motivo: null, notifiche, tipo: null, forma }
+  // Nessun motivo: è il caso in cui la forma serve DAVVERO, e la traccia dell'allegato è il
+  // gradino in più. Si prende quella delle notifiche AMMESSE — descrivere l'allegato di una
+  // `RC` significherebbe portarsi dietro un documento che non stavamo nemmeno leggendo.
+  const traccia = ammesse.find((l) => l.traccia !== null)?.traccia ?? null
+  return { motivo: null, notifiche, tipo: null, tipiVisti, forma: componiForma(risposta, traccia) }
 }
 
 /**
@@ -704,9 +1135,19 @@ export function motivoDalleNotificheSdi(risposta: unknown): MotivoDalleNotifiche
  * dove gli elementi contengono `receiver.fiscalCode` di genitori reali e si logga solo
  * l'elenco delle chiavi.
  */
-/** La profondità di default è `PROFONDITA_FORMA`: il conto dei livelli sta scritto lì. */
-export function descriviForma(valore: unknown, profondita = PROFONDITA_FORMA): string {
-  return tronca(forma(valore, profondita), FORMA_MAX)
+/**
+ * La profondità di default è `PROFONDITA_FORMA`: il conto dei livelli sta scritto lì.
+ *
+ * Il `tetto` si stringe in un caso solo — quando accanto alla forma deve stare anche la
+ * traccia dell'allegato, e le due si dividono `FORMA_MAX` (vedi `componiForma`). Non si
+ * allarga mai: il budget del canale è `MESSAGGIO_MAX`, e chi lo supera non se ne accorge.
+ */
+export function descriviForma(
+  valore: unknown,
+  profondita = PROFONDITA_FORMA,
+  tetto = FORMA_MAX,
+): string {
+  return tronca(forma(valore, profondita), Math.min(tetto, FORMA_MAX))
 }
 
 function forma(v: unknown, p: number): string {

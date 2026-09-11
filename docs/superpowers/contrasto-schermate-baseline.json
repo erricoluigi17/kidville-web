@@ -188,12 +188,12 @@
     "⚠️ I contatori qui sotto NON sono stati toccati a mano: li misura la CI, e",
     "questa nota serve solo a far riconoscere il rosso quando arriva."
   ],
-  "aggiornato": "2026-09-06",
+  "aggiornato": "2026-09-11",
   "rotte": [
     {
       "rotta": "/parent/pagamenti",
       "nodiMinimi": 33,
-      "normale": 3,
+      "normale": 2,
       "altoContrasto": 0,
       "saltati": {
         "gradiente": 3,
@@ -209,7 +209,8 @@
         "saltato": "gradiente",
         "minimo": 2,
         "perche": "La card «Totale da saldare» (StoricoPagamenti.tsx:167) ha uno sfondo linear-gradient INLINE e compare solo a `!loading && !error && totaleDovuto > 0`: i suoi tre <p> (etichetta, importo, «N voci da saldare») non hanno fondo proprio e la sonda li conta fra i saltati. A guscio non ne salta nessuno — la pagina rende `t('caricamento')` e basta. Che la card ci sia lo prova già la CI: e2e/parent-pagamenti.spec.ts:41 pretende «Totale da saldare» e «€ 150,00» con la retta aperta del seme."
-      }
+      },
+      "_nota_normale": "3 -> 2 il 2026-09-11, e non e' credito non speso: e' un elemento in meno in pagina. Fino a quel giorno un pagamento saldato SENZA fattura elettronica rendeva il link «Ricevuta» (StoricoPagamenti.tsx), e quel link era il terzo fallimento. La ricevuta per singolo pagamento e' stata ritirata su decisione del titolare e al suo posto non va NULLA, quindi il link non esiste piu'. Perche' non e' una misura caduta sul guscio, che sarebbe il modo ovvio di sbagliare qui: il seme E2E (scripts/seed-e2e.mjs:813) crea DUE pagamenti e ZERO righe in `fatture_emesse`, quindi su questa rotta `FatturaLinks` non compare mai — ne' prima ne' dopo — e il fatto che ora renda nulla durante il caricamento non puo' entrarci. I due fallimenti rimasti sono gli stessi di prima: `text-kidville-muted.text-xs` 3.8:1 e `text-[10px].text-kidville-error` 4.23:1, entrambi su bianco, entrambi ancora da bonificare. `saltati` resta 3: sono i tre <p> della card «Totale da saldare», che dipende dalla retta aperta del seme e non e' stata toccata."
     },
     {
       "rotta": "/teacher",

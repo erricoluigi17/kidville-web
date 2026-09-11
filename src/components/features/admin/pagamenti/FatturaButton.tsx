@@ -37,6 +37,7 @@ import {
     useFattureScaricabili,
     useScaricoFattura,
     type AvvisoScarico,
+    type ScartoFattura,
 } from '@/lib/pagamenti/scarico-fattura';
 
 /** La pelle di un comando della fattura: le due ancore sono identiche a vedersi. */
@@ -61,6 +62,92 @@ const CHIAVI_AVVISO: Record<AvvisoScarico, string> = {
 };
 
 /**
+ * PERCHÉ LO SDI HA RESPINTO IL DOCUMENTO — la sola resa, per i QUATTRO punti che la usano.
+ *
+ * ⚠️ Quattro, non due, e vale la pena contarli: tre sono dentro `EmessaLinks` e
+ * si somigliano abbastanza da far credere che siano lo stesso. Il commento che
+ * stava qui diceva «due» — erano due il giorno in cui è stato scritto — e un
+ * numero sbagliato in cima a un componente è il modo in cui un ramo resta
+ * scoperto senza che nessuno se ne accorga:
+ *
+ *   1. `ScartoLinks`               — `fattura_stato = 'scartata'`, sotto «Riprova»;
+ *   2. `EmessaLinks`, 0 comandi    — «emessa» senza nessun PDF nel bucket;
+ *   3. `EmessaLinks`, 1 comando    — accanto ad «Apri»/«Scarica» dell'altra quota;
+ *   4. `EmessaLinks`, N comandi    — FUORI dal pannello a tendina, di proposito:
+ *      chi non lo apre deve leggere il perché lo stesso.
+ *
+ * Tutti e quattro sono coperti da
+ * `__tests__/components/motivo-scarto-solo-in-segreteria.test.tsx`, che verifica
+ * anche che il riquadro non si renda DUE VOLTE sullo stesso schermo (il caso 4 a
+ * tendina aperta).
+ *
+ * ─── IL DIFETTO CHE CHIUDE ──────────────────────────────────────────────────
+ *
+ * `fatture_emesse.sdi_scarto_motivo` era scritta in quattro punti e letta da
+ * nessuna rotta. Alla segreteria arrivava la notifica «Fattura scartata dallo
+ * SDI» e poi nessuna schermata diceva il perché: correggere e ritrasmettere
+ * restava un tirare a indovinare su un documento fiscale.
+ *
+ * ─── PERCHÉ TESTO IN LINEA, E NON UN SUGGERIMENTO ───────────────────────────
+ *
+ * La tentazione, in una tabella di rette, è un `title=` o un pallino da
+ * sorvolare. Un `title` non si apre da TASTIERA e la maggior parte dei lettori
+ * di schermo non lo annuncia: l'unica frase che dice cosa correggere finirebbe
+ * dietro un gesto che non tutti possono fare. Il riquadro sta nel flusso, si
+ * legge senza premere niente, e proprio per questo NON è un `role="alert"`: non
+ * è un aggiornamento che arriva mentre si guarda altrove, è il contenuto della
+ * riga (e un `role` inserito nel DOM col testo già dentro spesso resta muto).
+ *
+ * ─── E NON SI TRONCA ────────────────────────────────────────────────────────
+ *
+ * «Con misura» vuol dire tipo piccolo e larghezza ferma, non testo tagliato: le
+ * due prose misurate in produzione stanno in 46 e 60 caratteri, e accorciare
+ * l'unica informazione che dice cosa sistemare sarebbe riaprire il difetto con
+ * un'altra faccia.
+ *
+ * Il numero sezionale davanti al motivo non è ornamento: quando le quote sono
+ * due (genitori separati) dice QUALE delle due è stata respinta, ed è anche il
+ * modo in cui la fattura si nomina al telefono col commercialista.
+ */
+function MotiviScarto({ scarti }: { scarti: ScartoFattura[] }) {
+    const t = useTranslations('adminContabilita');
+    if (scarti.length === 0) return null;
+    return (
+        <div
+            data-testid="fattura-scarto"
+            className="mt-1 max-w-[22rem] rounded-input border-[1.5px] border-kidville-error/40 bg-kidville-error-soft px-2 py-1.5 text-left"
+        >
+            <p className="font-barlow font-bold text-[11px] uppercase text-kidville-error-strong">
+                {t('fatBtn_scarto_titolo')}
+            </p>
+            <ul className="mt-0.5 space-y-0.5">
+                {scarti.map((s) => (
+                    <li key={s.id} className="font-maven text-[11px] text-kidville-error-strong break-words">
+                        {t('fatBtn_scarto_voce', { numero: String(s.numero), motivo: s.motivo })}
+                    </li>
+                ))}
+            </ul>
+        </div>
+    );
+}
+
+/**
+ * Il motivo accanto al pulsante «Riprova fattura».
+ *
+ * Esiste come componente suo perché l'elenco delle quote si chiede con un hook, e
+ * gli hook non stanno dentro un ramo: il pulsante di ritrasmissione vive in un
+ * ternario su `stato`. Una GET in più c'è solo sulle righe SCARTATE, che in
+ * produzione sono poche — le righe «emessa» quell'elenco lo chiedevano già.
+ */
+function ScartoLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
+    const { caricamento, scarti } = useFattureScaricabili(pagamentoId, userId);
+    // In caricamento niente, come per i comandi: l'unica transizione ammessa è
+    // «niente → riquadro», che è una comparsa e non un lampeggio.
+    if (caricamento) return null;
+    return <MotiviScarto scarti={scarti} />;
+}
+
+/**
  * I comandi della fattura, per la segreteria.
  *
  * ⚠️ IL FAST-PATH NON C'È PIÙ, ED È IL PUNTO DI QUESTO COMPONENTE. Qui c'era
@@ -79,12 +166,18 @@ const CHIAVI_AVVISO: Record<AvvisoScarico, string> = {
  */
 function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
     const t = useTranslations('adminContabilita');
-    const { caricamento, scaricabili } = useFattureScaricabili(pagamentoId, userId);
+    const { caricamento, scaricabili, scarti } = useFattureScaricabili(pagamentoId, userId);
     const { apri, avviso } = useScaricoFattura();
     const [open, setOpen] = useState(false);
 
-    // Fase 1 e fase 2: niente. Nessuno scheletro, nessun pulsante spento.
-    if (caricamento || scaricabili.length === 0) return null;
+    // Fase 1: niente. Nessuno scheletro, nessun pulsante spento.
+    if (caricamento) return null;
+    // Fase 2: niente — A MENO CHE ci sia un motivo di scarto da leggere. È il caso
+    // misurato in produzione il 2026-09-11: una quota ferma su «errore di upload»
+    // sta su un pagamento che risulta «emessa» e non ha nessun PDF nel bucket, e
+    // finora questa riga rendeva il vuoto. Il vuoto era una scelta giusta quando
+    // non c'era niente da dire; qui c'è, ed è il perché il documento non è partito.
+    if (scaricabili.length === 0 && scarti.length === 0) return null;
 
     // Il titolo del foglio di sistema e il nome del file NON portano mai
     // `intestatario` né `quota_label`: su nativo finiscono in WhatsApp o in Mail, e
@@ -114,6 +207,10 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
         </p>
     );
 
+    // Nessun comando ma un motivo da leggere: il PDF non c'è davvero, e un pulsante
+    // che dà 404 non sarebbe un miglioramento. Resta il perché.
+    if (comandi.length === 0) return <MotiviScarto scarti={scarti} />;
+
     if (comandi.length === 1) {
         const c = comandi[0];
         return (
@@ -125,6 +222,7 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
                     <Download size={12} /> {t('fatBtn_scarica')}
                 </a>
                 {rigaAvviso}
+                <MotiviScarto scarti={scarti} />
             </div>
         );
     }
@@ -154,6 +252,7 @@ function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
                 </div>
             )}
             {rigaAvviso}
+            <MotiviScarto scarti={scarti} />
         </div>
     );
 }
@@ -484,11 +583,21 @@ export function FatturaButton({ pagamentoId, userId, fatturaStato, onEmessa }: P
                 </Badge>
             )
             : (
-                <button onClick={apri}
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded-pill border-[1.5px] border-kidville-line text-kidville-muted text-xs font-bold transition-colors hover:border-kidville-green hover:text-kidville-green">
-                    <FileText size={12} />
-                    {stato === 'scartata' ? t('fatBtn_riprova') : t('fatBtn_invia')}
-                </button>
+                // Il riquadro del motivo sta SOTTO il pulsante che rimanda il
+                // documento: chi legge «Riprova fattura» ha, nella stessa riga, la
+                // ragione per cui la prima volta non è andata. Colonna e non riga
+                // perché la prosa del provider è una frase, non un'etichetta.
+                <div className="inline-flex flex-col items-start gap-1">
+                    <button onClick={apri}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-pill border-[1.5px] border-kidville-line text-kidville-muted text-xs font-bold transition-colors hover:border-kidville-green hover:text-kidville-green">
+                        <FileText size={12} />
+                        {stato === 'scartata' ? t('fatBtn_riprova') : t('fatBtn_invia')}
+                    </button>
+                    {/* Solo sulle SCARTATE: su «non richiesta» non c'è nessuna fattura
+                        di cui chiedere l'esito, e l'elenco sarebbe una GET per niente
+                        su ogni riga di una tabella di rette. */}
+                    {stato === 'scartata' && <ScartoLinks pagamentoId={pagamentoId} userId={userId} />}
+                </div>
             );
 
     return (

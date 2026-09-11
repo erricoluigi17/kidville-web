@@ -5,6 +5,7 @@ import { parseQuery } from '@/lib/validation/http'
 import {
   arubaSignin,
   arubaGetByFilename,
+  arubaGetNotifications,
   resolveArubaCredentials,
   PAUSA_FRA_PAGINE_MS,
   type ArubaConfig,
@@ -15,6 +16,8 @@ import {
   aggregaFatturaStato,
   etichettaStatoAruba,
   motivoScartoAruba,
+  motivoDalleNotificheSdi,
+  scartoSenzaDescrizione,
   type RigaFatturaAgg,
 } from '@/lib/aruba/stato'
 import { enqueueNotifiche } from '@/lib/push/enqueue'
@@ -106,6 +109,109 @@ const TETTO_PER_GIRO = 30
  * scritture.
  */
 const TETTO_TEMPO_MS = 240_000
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * IL RIENTRO DEGLI SCARTI SENZA MOTIVO. Aggiunto il 2026-09-11, dopo un rilievo
+ * che diceva — a ragione — che il lavoro non arrivava alle righe per cui era nato.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * ⚠️ IL RECUPERO DAL CANALE DELLE NOTIFICHE NON RAGGIUNGEVA NESSUNA DELLE RIGHE PER CUI
+ * ERA STATO SCRITTO, e il motivo è geometrico, non concettuale.
+ *
+ * Quel codice vive DENTRO il ciclo del giro, dopo il `continue` che salta le righe il cui
+ * stato non è cambiato: è raggiungibile solo nell'istante in cui una fattura PASSA a scarto.
+ * Ma `STATI_IN_VOLO` non contiene gli stati di scarto — appena una fattura ci arriva ESCE
+ * dalla coda e nessun giro la ripesca; e se anche la ripescasse, `stato.stato === f.sdi_stato`
+ * la salterebbe, perché Aruba continua a rispondere «Scartata».
+ *
+ * Misurato in produzione il 2026-09-11: `sdi_stato = 4` su **4 righe, tutte e 4** con
+ * «nessun motivo dal provider», e zero fatture di scarto in volo. Sarebbero rimaste così per
+ * sempre — mentre la nuova scheda della Segreteria mostra un riquadro che promette una
+ * spiegazione e renderebbe quella frase.
+ *
+ * ─── PERCHÉ NON BASTA METTERE IL `4` IN `STATI_IN_VOLO` ─────────────────────
+ * Perché quello è un elenco di stati NON TERMINALI. Mettercelo rimetterebbe in coda ogni
+ * fattura scartata a OGNI giro, per sempre, a due richieste Aruba ciascuna (stato +
+ * notifiche) su un secchio da 12 al minuto **per IP** — che è anche di chi in quel momento
+ * sta emettendo dal pannello. Un difetto di spreco al posto di un difetto di silenzio.
+ *
+ * La forma sana è una SECONDA query, con un tetto suo, che non chiede lo STATO (quella
+ * fattura è terminale: lo stato non cambierà più) ma solo le NOTIFICHE, e che riscrive solo
+ * `sdi_scarto_motivo`.
+ */
+
+/**
+ * Gli stati che `stato.ts` marca `isScarto` — oggi `2`, `4`, `9`. **Derivati, non copiati**:
+ * una lista scritta a mano qui divergerebbe in silenzio il giorno in cui la tabella cambia,
+ * e il sintomo sarebbe una classe di fatture respinte che non rientra mai. Il range arriva a
+ * 20 perché le diciture note stanno in `1..10` e restare stretti sul massimo di oggi è
+ * esattamente il modo di non accorgersi di un undicesimo.
+ */
+let statiScartoCache: number[] | null = null
+function statiDiScarto(): number[] {
+  // ⚠️ PIGRA, e non per eleganza: calcolata a livello di modulo, questa lista viene costruita
+  // all'IMPORT della route. `__tests__/api/cron-secret.test.ts` sostituisce `@/lib/aruba/stato`
+  // con un mock parziale (`{ mapStatoAruba: vi.fn() }`, che ritorna `undefined`) e il file
+  // esplodeva prima che un solo test partisse — con un errore che accusava questa riga e non
+  // il mock. Un calcolo a tempo d'import che dipende dal comportamento di un altro modulo è
+  // una dipendenza nascosta: rimandarlo alla prima chiamata la toglie.
+  statiScartoCache ??= Array.from({ length: 21 }, (_, codice) => codice).filter((c) => mapStatoAruba(c).isScarto)
+  return statiScartoCache
+}
+
+/**
+ * 🔴 IL SEGNO CHE PER QUESTA RIGA IL RIENTRO HA GIÀ SPESO LA SUA RICHIESTA — cioè la
+ * TERMINAZIONE, che è la parte difficile di tutto questo blocco.
+ *
+ * Senza, una fattura le cui notifiche non danno (e non daranno) nessun motivo tornerebbe in
+ * coda a ogni tick, per sempre: un ciclo che consuma il budget Aruba in eterno è peggio del
+ * difetto che sta chiudendo. Dopo UN tentativo la riga esce, e ci esce in modo VISIBILE.
+ *
+ * Sta dentro `sdi_scarto_motivo` e non in una colonna sua per due ragioni, la seconda più
+ * importante della prima: non c'è una colonna per i tentativi e una migrazione non è in
+ * perimetro; ma soprattutto quella è **la colonna che la Segreteria apre** per capire cosa
+ * correggere prima di ritrasmettere, e «ci abbiamo provato, non c'era» è un'informazione
+ * vera che lì dentro vale molto più del silenzio. Un marcatore in una colonna tecnica
+ * l'avrebbe saputo solo chi legge il codice.
+ *
+ * ⚠️ Niente virgole, parentesi, `%` o `_`: questa stringa finisce dentro un pattern `ilike`
+ * di PostgREST, dove `%`/`_` sono jolly e la punteggiatura complica il parsing del filtro.
+ */
+const MARCATORE_RIENTRO = 'notifiche SDI interrogate'
+
+/**
+ * Il frammento che `motivoScartoAruba` lascia nei suoi DUE rami difensivi — «nessun motivo
+ * dal provider» e «nessuna descrizione dal provider». È il riconoscimento di un motivo
+ * povero fatto sulla STRINGA, e va detto che è il punto debole del blocco: `stato.ts`
+ * avverte, giustamente, che riconoscere quel ramo dal nostro testo italiano smette di
+ * funzionare il giorno in cui qualcuno riscrive la frase.
+ *
+ * Qui non c'è alternativa — nel rientro i dettagli di Aruba non ci sono più, c'è solo la
+ * riga a registro — quindi la divergenza non si previene, **si fa gridare**: un lock in
+ * `__tests__/api/fattura-sync-notifiche.test.ts` chiama `motivoScartoAruba` con dettagli
+ * vuoti e verifica che ciò che scrive contenga ancora questo frammento. Chi riscrive quella
+ * frase trova un test rosso, non un rientro muto.
+ */
+const FRAMMENTO_MOTIVO_POVERO = 'dal provider'
+
+/**
+ * Quante righe il rientro ripara al massimo in un tick: una richiesta Aruba ciascuna, più
+ * la pausa da cinque secondi che le separa.
+ *
+ * Deliberatamente piccolo. Il rientro è un ARRETRATO che si smaltisce, non un evento da
+ * inseguire: con i quattro scarti misurati il 2026-09-11 si chiude in due tick, cioè
+ * un'ora. Alzarlo comprerebbe un'ora e costerebbe slot a chi sta emettendo.
+ */
+const TETTO_RIENTRO_PER_GIRO = 2
+
+/**
+ * Quante righe si LEGGONO dal database per trovarne `TETTO_RIENTRO_PER_GIRO` da riparare.
+ * È una query Postgres, non una richiesta ad Aruba: costa pochissimo, e un tetto largo
+ * evita che un giorno le righe già tentate — che il filtro esclude in SQL — saturino la
+ * finestra e nascondano quelle nuove.
+ */
+const TETTO_LETTURA_RIENTRO = 100
 
 /**
  * `maxDuration` è la dichiarazione di quanto può durare la route, e con le pause
@@ -199,21 +305,13 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
       aruba_filename: string
       sdi_stato: number
     }[]
-    if (righe.length === 0) {
-      // Nessuna fattura in volo: è il caso normale, e ha comunque bisogno del suo «ok» —
-      // senza, il giro più frequente sembrerebbe partito e mai finito.
-      logEvento('cron', 'info', {
-        operazione: JOB,
-        esito: 'ok',
-        ms: Date.now() - t0,
-        processate: 0,
-        scartate: 0,
-        skipped: 0,
-        msg: `${JOB}: ok`,
-      })
-      return NextResponse.json({ success: true, data: { processate: 0, scartate: 0, skipped: 0 } })
-    }
-
+    // ⚠️ QUI C'ERA UNA USCITA ANTICIPATA su `righe.length === 0`, ed è stata tolta il
+    // 2026-09-11. Scriveva il battito «ok» e tornava: perfetto finché il giro aveva una cosa
+    // sola da fare. Col rientro ne ha due, e «nessuna fattura in volo» è il caso NORMALE in
+    // produzione (al 2026-09-11: zero scarti in volo, quattro scarti fermi da riparare):
+    // uscire lì significava non ripescare mai niente — cioè lasciare intatto il difetto che
+    // il rientro esiste per chiudere. Il battito «ok» non si perde: lo scrive la chiusura in
+    // fondo, con gli stessi `esito` e `msg` e qualche contatore in più.
     const configCache = new Map<string, ArubaConfig | null>()
     /**
      * ⚠️ LA CHIAVE È L'UTENZA ARUBA, NON LA SCUOLA, e la differenza vale dei `429`.
@@ -239,6 +337,259 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
     let esaminate = 0
     /** Vero se si è usciti dal ciclo per tempo, non per esaurimento delle righe. */
     let interrottoPerTempo = false
+    /** Quante volte si sono interrogate le NOTIFICHE: una richiesta ad Aruba ciascuna. */
+    let lettureNotifiche = 0
+    /** Quante righe il RIENTRO ha riparato in questo giro. */
+    let rientri = 0
+    /**
+     * Le fatture che il ciclo ha già toccato in QUESTO giro. Serve al rientro: una riga
+     * appena portata a scarto ha già pagato la sua richiesta di notifiche qui dentro, e
+     * ri-chiedergliele dieci righe più sotto sarebbero due richieste per una riga sola,
+     * nello stesso minuto, sullo stesso secchio da 12.
+     */
+    const esaminateIds = new Set<string>()
+
+    /**
+     * LE CREDENZIALI E IL TOKEN DI UNA SCUOLA, in un posto solo.
+     *
+     * Estratto dal ciclo il 2026-09-11 perché il RIENTRO ha bisogno esattamente delle stesse
+     * tre cose — config, gate sulle credenziali, token riusato — e una seconda copia sarebbe
+     * divergere: basta che una delle due dimentichi la cache dell'utenza per fare un `signin`
+     * in più, e Aruba ne concede **uno al minuto per IP**.
+     *
+     * Ritorna un esito a tre valori invece di lanciare: «errore» porta con sé la risposta 500
+     * già formata (una query fallita chiude il giro, non lo fa proseguire con dati finti),
+     * «salta» è la scuola senza Aruba, che è la normalità e va solo contata.
+     */
+    type EsitoToken =
+      | { esito: 'ok'; token: string; ambiente: string | undefined }
+      | { esito: 'salta' }
+      | { esito: 'errore'; response: NextResponse }
+
+    const tokenPerScuola = async (scuolaId: string): Promise<EsitoToken> => {
+      if (!configCache.has(scuolaId)) {
+        const { data: settings, error } = await supabase
+          .from('admin_settings')
+          .select('aruba_config')
+          .eq('scuola_id', scuolaId)
+          .maybeSingle()
+        // Una lettura fallita darebbe `cfg = null` → la scuola verrebbe saltata con il `warn`
+        // `credenziali-mancanti`, cioè con una DIAGNOSI SBAGLIATA: chi legge quella riga va a
+        // configurare Aruba per una scuola che Aruba ce l'ha già. Un log che accusa il posto
+        // sbagliato fa perdere più tempo di un log che manca.
+        if (error) {
+          return { esito: 'errore', response: queryFallita('lettura admin_settings', error, t0, scuolaId) }
+        }
+        configCache.set(scuolaId, (settings?.aruba_config ?? null) as ArubaConfig | null)
+      }
+      const cfg = configCache.get(scuolaId)
+      const creds = cfg ? resolveArubaCredentials(cfg) : null
+      if (!cfg?.abilitato || !creds) {
+        if (!scuoleSkipped.has(scuolaId)) {
+          scuoleSkipped.add(scuolaId)
+          // `warn` e non `error`: una scuola con Aruba deliberatamente spento è la
+          // normalità, non un incidente. Ma non può sparire in silenzio (M2.4) — le sue
+          // fatture restano in volo per sempre e il giro chiude comunque «ok».
+          // `scuola_id` è un uuid: `redact` lascia in chiaro i valori auto-descrittivi,
+          // quindi si legge QUALE scuola anche nella riga persistita.
+          logEvento('cron', 'warn', {
+            operazione: JOB,
+            esito: 'credenziali-mancanti',
+            scuola_id: scuolaId,
+            abilitato: Boolean(cfg?.abilitato),
+            msg: `${JOB}: scuola saltata, credenziali Aruba non configurate`,
+          })
+        }
+        return { esito: 'salta' }
+      }
+
+      const chiave = chiaveUtenza(cfg.ambiente, creds.username)
+      const inCache = tokenCache.get(chiave)
+      if (inCache) return { esito: 'ok', token: inCache, ambiente: cfg.ambiente }
+      try {
+        const token = (await arubaSignin(cfg.ambiente, creds)).accessToken
+        tokenCache.set(chiave, token)
+        return { esito: 'ok', token, ambiente: cfg.ambiente }
+      } catch (e) {
+        // Era un `catch { continue }` MUTO, ed è il divieto n° 6 di AGENTS.md: se il
+        // login ad Aruba fallisce (password ruotata, ambiente sbagliato, SDI giù) le
+        // fatture di questa scuola non vengono più interrogate — e la route risponde
+        // 200 con `processate: 0`, che si legge come «niente da fare».
+        logEvento('cron', 'error', { operazione: JOB, esito: 'aruba-signin-fallita', scuola_id: scuolaId }, e)
+        return { esito: 'salta' }
+      }
+    }
+
+    /**
+     * IL PERCHÉ DI UNO SCARTO, quando `getByFilename` non l'ha dato.
+     *
+     * ─── IL FATTO, 2026-09-11 ───────────────────────────────────────────────────
+     * La prima fattura respinta dopo la correzione della lettura di stato è emersa alle
+     * 10:31Z e a registro è finito «Aruba: «Scartata» — nessun motivo dal provider»:
+     * `statusDescription`, `errorCode` ed `errorDescription` erano TUTTI VUOTI. Non è una
+     * risposta arrivata tardi, e aspettare il tick dopo non serve: **su quel canale il
+     * motivo non c'è**. Lo SdI il perché lo scrive in una NOTIFICA (`NS`), che ha un
+     * endpoint suo.
+     *
+     * ─── LE QUATTRO REGOLE DI QUESTA CHIAMATA, tutte necessarie ─────────────────
+     *  1. SOLO sugli scarti senza descrizione. Sono 4 righe su 153, e Aruba concede 12
+     *     ricerche al minuto PER IP: una richiesta in più su ogni fattura regolare
+     *     raddoppierebbe il consumo di un secchio che è anche di chi sta emettendo.
+     *  2. LA STESSA PAUSA del resto del giro (`PAUSA_FRA_PAGINE_MS`), perché è lo stesso
+     *     secchio — e il tetto di tempo va controllato PRIMA di spenderla, o la si paga
+     *     per poi farsi tagliare da `maxDuration` a metà di una scrittura.
+     *  3. IL TOKEN DEL GIRO, mai un signin nuovo: di quelli Aruba ne concede UNO AL MINUTO.
+     *  4. FAIL-OPEN. Qualunque cosa vada storta qui — `429`, timeout, forma ignota — lo
+     *     stato SDI si scrive lo stesso, col motivo povero. Un errore su una chiamata
+     *     accessoria degrada l'informazione; non può far perdere il lavoro del giro.
+     *
+     * ─── 🔴 E LA REGOLA DI PRIVACY, che vale più delle quattro ──────────────────
+     * Il corpo di una notifica SDI contiene i dati di FATTURAZIONE di una famiglia:
+     * denominazione, codice fiscale, partita IVA dell'intestatario. Non si logga mai il
+     * corpo, e non si loggano mai i valori — nemmeno il motivo, che pure è ciò che stiamo
+     * cercando. Il motivo va in `sdi_scarto_motivo`, che è una COLONNA: è lì che la
+     * Segreteria lo legge per correggere e ritrasmettere, e lì ci deve stare. Nel log
+     * finiscono i NOMI dei campi e la loro forma (tipo, lunghezza, conteggi), che è ciò che
+     * serve a capire la struttura alla prima notifica vera e non espone nessuno. Vedi
+     * `descriviForma` in `stato.ts`.
+     */
+    /**
+     * ─── L'ESITO, E PERCHÉ NON BASTA `string | null` ───────────────────────────
+     * Il rientro deve distinguere «ho chiesto e non c'era niente» da «non sono riuscito a
+     * chiedere» da «non ho nemmeno provato, era finito il tempo»: sono tre cose diverse, e
+     * solo le prime due consumano il tentativo. Con un `null` solo, un tetto di tempo
+     * marcherebbe la riga come già tentata e le toglierebbe l'unica occasione che ha.
+     */
+    type EsitoNotifiche = {
+      motivo: string | null
+      esito: 'trovato' | 'nessun-motivo' | 'fallita' | 'tetto-tempo'
+    }
+
+    const motivoDalleNotifiche = async (
+      ambiente: string | undefined,
+      accessToken: string,
+      // `riga` e non `f`: dentro il ciclo `f` esiste già, e due nomi uguali a un livello di
+      // distanza sono il modo di leggere la fattura sbagliata senza che niente protesti.
+      riga: { id: string; scuola_id: string; numero: number; aruba_filename: string },
+    ): Promise<EsitoNotifiche> => {
+      // Il tetto di tempo si controlla PRIMA di spendere la pausa, e comprende la pausa:
+      // una scrittura tagliata a metà da `maxDuration` lascerebbe `fatture_emesse` e
+      // `pagamenti` divergenti per sempre.
+      if (Date.now() - t0 + PAUSA_FRA_PAGINE_MS > TETTO_TEMPO_MS) {
+        // ⚠️ QUI IL COMMENTO DICEVA IL FALSO, ed è stato corretto il 2026-09-11.
+        // Sosteneva che «le righe rimaste tornano al giro successivo»: vero per le righe che
+        // il ciclo non ha ESAMINATO, falso proprio per questa. Sul percorso principale lo
+        // stato terminale viene scritto lo stesso (ed è giusto: è un dato con conseguenza
+        // fiscale, e ritardarlo per una frase sarebbe il compromesso sbagliato), quindi la
+        // riga esce da `STATI_IN_VOLO` e quella coda non la ripesca mai più.
+        //
+        // Adesso la frase torna vera, ma per un'altra strada: la riga resta uno scarto col
+        // motivo povero e senza marcatore, cioè **esattamente ciò che il rientro cerca**. È
+        // la seconda query a riprenderla, non la prima — e per questo `warn` è il livello
+        // giusto: non è un guasto né una perdita, è la rinuncia deliberata a spendere uno
+        // slot del secchio quando il giro sta per chiudere.
+        logEvento('cron', 'warn', {
+          operazione: JOB,
+          esito: 'notifiche-saltate-tempo',
+          scuola_id: riga.scuola_id,
+          fattura_id: riga.id,
+          numero: riga.numero,
+          msg: `${JOB}: tetto di tempo, il motivo lo riprende il rientro al giro successivo`,
+        })
+        return { motivo: null, esito: 'tetto-tempo' }
+      }
+      await attendi(PAUSA_FRA_PAGINE_MS)
+      lettureNotifiche++
+      let risposta: unknown
+      try {
+        risposta = await arubaGetNotifications(ambiente, accessToken, riga.aruba_filename)
+      } catch (e) {
+        // Il corpo del provider viaggia come `cause` (AGENTS.md, regola 3): un `429` (nove
+        // l'08/09) e un `404` si sistemano in due modi opposti, e `notifiche-fallite` da
+        // solo non li distingue.
+        logEvento(
+          'cron',
+          'error',
+          {
+            operazione: JOB,
+            esito: 'notifiche-fallite',
+            scuola_id: riga.scuola_id,
+            fattura_id: riga.id,
+            numero: riga.numero,
+            msg: `${JOB}: notifiche SDI non lette, lo scarto resta senza motivo`,
+          },
+          e,
+        )
+        return { motivo: null, esito: 'fallita' }
+      }
+
+      const lettura = motivoDalleNotificheSdi(risposta)
+      if (lettura.motivo === null) {
+        // ⚠️ LA RIGA PIÙ IMPORTANTE DI QUESTO BLOCCO, e la ragione è che la forma della
+        // risposta NON È STATA MISURATA contro l'API vera: interrogarla per scoprirla
+        // avrebbe consumato lo stesso budget che il cron sta usando adesso. È questa riga
+        // che, alla prima notifica reale, porterà in `app_log` com'è fatta davvero — e
+        // permetterà di sostituire le euristiche di `motivoDalleNotificheSdi` con una misura.
+        //
+        // `error` e non `warn`: una forma che non si riconosce è il segnale che l'estrattore
+        // è cieco su una risposta vera, e resta da guardare anche adesso che il rientro dà
+        // alla riga una seconda occasione. (Il commento diceva «il motivo non è rimandato, è
+        // perso»: col rientro non è più vero al primo passaggio, ed è stato corretto il
+        // 2026-09-11. Dopo il tentativo del rientro, però, quello sì che è definitivo.)
+        //
+        // 🔴 La forma sta nel `msg` e non nei campi per due ragioni, entrambe vere:
+        // `app_log` deduplica per `(fingerprint, giorno)` e il `contesto` conserva quello
+        // della PRIMA occorrenza, quindi nei campi una forma nuova resterebbe invisibile;
+        // e un array di stringhe sotto una chiave non in lista bianca uscirebbe comunque
+        // `[redatto]`. È lo stesso posto in cui `client.ts` scrive già le chiavi del primo
+        // elemento quando non riconosce un'etichetta.
+        //
+        // ⚠️⚠️ E IL PREFISSO È CORTO APPOSTA — 35 caratteri, non 117 come fino al
+        // 2026-09-11. `sanificaMessaggio` (`src/lib/logging/serialize.ts`) taglia OGNI
+        // messaggio a 500 caratteri, e taglia la CODA: con la spiegazione per esteso qui
+        // dentro («nessun motivo riconoscibile nelle notifiche SDI — forma della risposta
+        // (nomi dei campi, mai i valori): »), della forma ne arrivavano ~382 e a morire
+        // erano proprio i nomi dei campi d'ERRORE — che stanno in fondo — mentre
+        // sopravviveva il blocco dell'intestatario, che non serve a nessuno. Una riga
+        // diagnostica troncata dove serve non è una riga diagnostica.
+        //
+        // Il posto della spiegazione è questo commento, non il messaggio: il messaggio è il
+        // budget della DIAGNOSI, e ogni carattere speso a raccontare è un carattere tolto
+        // alla forma. Chi è tentato di riallungarlo legga prima
+        // `__tests__/api/fattura-sync-notifiche.test.ts`, che asserisce sul messaggio DOPO
+        // `sanificaMessaggio` proprio per rendere il taglio visibile.
+        logEvento('cron', 'error', {
+          operazione: JOB,
+          esito: 'notifiche-forma-ignota',
+          scuola_id: riga.scuola_id,
+          fattura_id: riga.id,
+          numero: riga.numero,
+          notifiche: lettura.notifiche,
+          msg: `${JOB}: forma notifiche SDI: ${lettura.forma}`,
+        })
+        return { motivo: null, esito: 'nessun-motivo' }
+      }
+
+      // Il SUCCESSO si logga (AGENTS.md, regola 5): con i soli errori, «nessun log» non
+      // distingue «il motivo è stato recuperato» da «non ci ha provato nessuno».
+      logEvento('cron', 'info', {
+        operazione: JOB,
+        esito: 'motivo-da-notifiche',
+        scuola_id: riga.scuola_id,
+        fattura_id: riga.id,
+        numero: riga.numero,
+        // `tipo` ha la forma di un enumerato (`NS`, `RC`…): `redact` lo lascia in chiaro
+        // solo per quello, e `motivoDalleNotificheSdi` annulla tutto ciò che non ce l'ha.
+        tipo: lettura.tipo ?? undefined,
+        notifiche: lettura.notifiche,
+        // 🔴 LA LUNGHEZZA, NON IL TESTO. Il motivo è testo del provider su una fattura di
+        // una famiglia: va in `sdi_scarto_motivo`, non in una riga che resta trenta giorni
+        // in una tabella interrogabile. Il numero basta a dire che è arrivato qualcosa.
+        caratteri: lettura.motivo.length,
+        msg: `${JOB}: motivo dello scarto recuperato dalle notifiche SDI`,
+      })
+      return { motivo: lettura.motivo, esito: 'trovato' }
+    }
 
     for (const f of righe) {
       // ── SI SMETTE PRIMA CHE SIA LA PIATTAFORMA A INTERROMPERE ────────────────
@@ -252,57 +603,11 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
         interrottoPerTempo = true
         break
       }
-      // config + credenziali per scuola
-      if (!configCache.has(f.scuola_id)) {
-        const { data: settings, error } = await supabase
-          .from('admin_settings')
-          .select('aruba_config')
-          .eq('scuola_id', f.scuola_id)
-          .maybeSingle()
-        // Una lettura fallita darebbe `cfg = null` → la scuola verrebbe saltata con il `warn`
-        // `credenziali-mancanti`, cioè con una DIAGNOSI SBAGLIATA: chi legge quella riga va a
-        // configurare Aruba per una scuola che Aruba ce l'ha già. Un log che accusa il posto
-        // sbagliato fa perdere più tempo di un log che manca.
-        if (error) return queryFallita('lettura admin_settings', error, t0, f.scuola_id)
-        configCache.set(f.scuola_id, (settings?.aruba_config ?? null) as ArubaConfig | null)
-      }
-      const cfg = configCache.get(f.scuola_id)
-      const creds = cfg ? resolveArubaCredentials(cfg) : null
-      if (!cfg?.abilitato || !creds) {
-        if (!scuoleSkipped.has(f.scuola_id)) {
-          scuoleSkipped.add(f.scuola_id)
-          // `warn` e non `error`: una scuola con Aruba deliberatamente spento è la
-          // normalità, non un incidente. Ma non può sparire in silenzio (M2.4) — le sue
-          // fatture restano in volo per sempre e il giro chiude comunque «ok».
-          // `scuola_id` è un uuid: `redact` lascia in chiaro i valori auto-descrittivi,
-          // quindi si legge QUALE scuola anche nella riga persistita.
-          logEvento('cron', 'warn', {
-            operazione: JOB,
-            esito: 'credenziali-mancanti',
-            scuola_id: f.scuola_id,
-            abilitato: Boolean(cfg?.abilitato),
-            msg: `${JOB}: scuola saltata, credenziali Aruba non configurate`,
-          })
-        }
-        continue
-      }
-
-      // token (uno per scuola)
-      const chiave = chiaveUtenza(cfg.ambiente, creds.username)
-      let token = tokenCache.get(chiave)
-      if (!token) {
-        try {
-          token = (await arubaSignin(cfg.ambiente, creds)).accessToken
-          tokenCache.set(chiave, token)
-        } catch (e) {
-          // Era un `catch { continue }` MUTO, ed è il divieto n° 6 di AGENTS.md: se il
-          // login ad Aruba fallisce (password ruotata, ambiente sbagliato, SDI giù) le
-          // fatture di questa scuola non vengono più interrogate — e la route risponde
-          // 200 con `processate: 0`, che si legge come «niente da fare».
-          logEvento('cron', 'error', { operazione: JOB, esito: 'aruba-signin-fallita', scuola_id: f.scuola_id }, e)
-          continue
-        }
-      }
+      // config + credenziali + token della scuola, in un posto solo (lo usa anche il rientro).
+      const accesso = await tokenPerScuola(f.scuola_id)
+      if (accesso.esito === 'errore') return accesso.response
+      if (accesso.esito === 'salta') continue
+      const { token, ambiente } = accesso
 
       // stato Aruba
       // Il tipo del client, non una copia locale: la copia era ferma a `{ stato, pdfBase64 }` e
@@ -324,8 +629,10 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
       // trova una riga sola.
       if (esaminate > 0) await attendi(PAUSA_FRA_PAGINE_MS)
       esaminate++
+      // La riga ha pagato la sua richiesta in questo giro: il rientro non ci torna sopra.
+      esaminateIds.add(f.id)
       try {
-        stato = await arubaGetByFilename(cfg.ambiente, token, f.aruba_filename, { includePdf: true })
+        stato = await arubaGetByFilename(ambiente, token, f.aruba_filename, { includePdf: true })
       } catch (e) {
         // Stesso argomento del signin: senza questa riga, una fattura che Aruba non sa più
         // rileggere resta in volo all'infinito senza che nessuno sappia perché.
@@ -360,11 +667,28 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
       // Aruba quel campo è il dato con cui la Segreteria le corregge e le ritrasmette.
       // `emissione.ts:2166` scrive già `errorDescription` in questa stessa colonna sul percorso
       // di upload: qui il polling smette di essere incoerente col proprio file.
-      const motivo = motivoScartoAruba(m, stato.statoAruba, {
+      const dettagliAruba = {
         descrizioneAruba: stato.descrizioneAruba,
         errorCode: stato.errorCode,
         errorDescription: stato.errorDescription,
-      })
+      }
+      let motivo = motivoScartoAruba(m, stato.statoAruba, dettagliAruba)
+      // ── E SE IL MOTIVO È POVERO, IL PERCHÉ SI VA A CHIEDERE ALLE NOTIFICHE ────
+      // `scartoSenzaDescrizione` guarda gli STESSI pezzi che `motivoScartoAruba` ha appena
+      // guardato, non la frase che ha scritto: riconoscere il ramo difensivo cercando
+      // «nessun motivo dal provider» dentro il nostro testo italiano funzionerebbe fino al
+      // giorno in cui qualcuno riscrive quella frase, e da lì smetterebbe in silenzio.
+      //
+      // La condizione è doppia di proposito: `isScarto` tiene la chiamata in più lontana
+      // dalle fatture regolari (che sono il 97%), la seconda metà la tiene lontana dagli
+      // scarti che un motivo ce l'hanno già.
+      if (m.isScarto && scartoSenzaDescrizione(dettagliAruba)) {
+        // `?? motivo`: FAIL-OPEN. Quando le notifiche non danno niente si tiene quello che
+        // c'era, che è povero ma vero. Non si scrive mai `null` su uno scarto — `null` in
+        // quella colonna significa «non è uno scarto», e farebbe sembrare regolare una
+        // fattura respinta.
+        motivo = (await motivoDalleNotifiche(ambiente, token, f)).motivo ?? motivo
+      }
       const nowIso = new Date().toISOString()
 
       // copia di cortesia PDF (best-effort) su stato valido. Chiave PER RIGA
@@ -562,6 +886,158 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
       }
     }
 
+    /* ══════════════════════════════════════════════════════════════════════════
+     * IL RIENTRO — gli scarti già terminali a cui manca il perché.
+     *
+     * Non è il ciclo qui sopra con un filtro diverso: è un mestiere diverso. Là si chiede lo
+     * STATO di una fattura che può ancora cambiare; qui lo stato è terminale e non cambierà
+     * più — si chiede solo la NOTIFICA, e si riscrive una frase.
+     *
+     * Le cinque regole, tutte necessarie:
+     *  1. TETTO PICCOLO (`TETTO_RIENTRO_PER_GIRO`): è un arretrato che si smaltisce.
+     *  2. LA PAUSA e IL TETTO DI TEMPO sono quelli del giro — la pausa la paga
+     *     `motivoDalleNotifiche`, che controlla il tempo PRIMA di spenderla.
+     *  3. IL TOKEN DEL GIRO, mai un `signin` nuovo: `tokenPerScuola` è la stessa funzione
+     *     del ciclo e la stessa cache.
+     *  4. FAIL-OPEN, e qui vuol dire una cosa precisa: si tocca SOLO `sdi_scarto_motivo`.
+     *     Niente `sdi_stato`, niente `sdi_stato_label`, niente `pagamenti`, nessuna push —
+     *     la Segreteria è già stata avvisata quando la fattura è stata scartata. Se il
+     *     rientro sbaglia, ha sbagliato una frase; non può spostare un esito fiscale.
+     *  5. DEVE TERMINARE. Vedi `MARCATORE_RIENTRO`: dopo UN tentativo la riga esce, e ci
+     *     esce lasciando scritto che ci si è provati.
+     * ═══════════════════════════════════════════════════════════════════════════ */
+    if (!interrottoPerTempo) {
+      const { data: arretrate, error: errArretrate } = await supabase
+        .from('fatture_emesse')
+        .select('id, scuola_id, numero, aruba_filename, sdi_scarto_motivo')
+        // Gli stati di scarto — 2, 4 e 9 — e NON `STATI_IN_VOLO`: sono due code diverse
+        // con due tetti diversi, ed è tutto il punto di questo blocco.
+        .in('sdi_stato', statiDiScarto())
+        .not('aruba_filename', 'is', null)
+        // ⚠️ IL FILTRO CHE FA TERMINARE IL CICLO, e va lasciato in SQL: in memoria
+        // basterebbe che un giorno le righe già tentate superassero `TETTO_LETTURA_RIENTRO`
+        // perché saturino la finestra e nascondano quelle nuove per sempre.
+        //
+        // Nota su NULL: in SQL `NOT (NULL ILIKE '…')` vale NULL, cioè la riga NON passa —
+        // quindi uno scarto con `sdi_scarto_motivo` a `null` qui non entra. È voluto: su uno
+        // scarto `motivoScartoAruba` non ritorna MAI `null` (lì `null` significa «non è uno
+        // scarto»), quindi una riga così è un difetto d'altro tipo, e non è questo blocco a
+        // doverlo indovinare.
+        .not('sdi_scarto_motivo', 'ilike', `%${MARCATORE_RIENTRO}%`)
+        .limit(TETTO_LETTURA_RIENTRO)
+      // PostgREST non lancia (AGENTS.md, regola 7): senza questo controllo «la query è
+      // fallita» e «non c'è nessuno scarto da riparare» sono lo stesso ramo, e il secondo
+      // chiude con un «ok».
+      if (errArretrate) return queryFallita('lettura scarti senza motivo', errArretrate, t0)
+
+      const daRiparare = ((arretrate ?? []) as {
+        id: string
+        scuola_id: string
+        numero: number
+        aruba_filename: string
+        sdi_scarto_motivo: string | null
+      }[])
+        .filter((r) => {
+          // Il marcatore l'ha già escluso il filtro SQL; qui si riconosce il motivo POVERO,
+          // che in SQL non si può cercare senza inchiodare la query al nostro testo italiano
+          // (vedi `FRAMMENTO_MOTIVO_POVERO`). Il `!includes(MARCATORE)` resta come cintura:
+          // il filtro SQL è le bretelle, e le due si controllano a vicenda.
+          const m = r.sdi_scarto_motivo
+          if (typeof m !== 'string') return false
+          return m.includes(FRAMMENTO_MOTIVO_POVERO) && !m.includes(MARCATORE_RIENTRO)
+        })
+        .filter((r) => !esaminateIds.has(r.id))
+
+      // ⚠️ IL TETTO SI PAGA IN RICHIESTE SPESE, NON IN RIGHE LETTE — e la differenza non è
+      // teorica.
+      //
+      // Fino al 2026-09-11 qui c'era uno `.slice(0, TETTO_RIENTRO_PER_GIRO)`, cioè il taglio
+      // PRIMA del gate della sede. Ma il ramo `salta` qui sotto (Aruba disattivato per quella
+      // sede, o credenziali non risolvibili) non spende nessuna richiesta ad Aruba: se le
+      // prime due righe della finestra appartengono a una sede in quello stato, il rientro
+      // consuma entrambi i posti senza fare NIENTE — e li riconsuma identici al tick dopo,
+      // perché la query non ha `ORDER BY` e l'ordine fisico non cambia. Le righe riparabili
+      // delle altre sedi non verrebbero raggiunte MAI, e il battito finale certificherebbe
+      // `rientri: 0` come se non ci fosse niente da fare.
+      //
+      // È l'unico modo in cui questo blocco può morire in silenzio dichiarandosi sano. Perciò
+      // il contatore si incrementa DOPO la chiamata, e a fermare il ciclo è lui.
+      let spesi = 0
+
+      for (const r of daRiparare) {
+        if (spesi >= TETTO_RIENTRO_PER_GIRO) break
+
+        const accesso = await tokenPerScuola(r.scuola_id)
+        if (accesso.esito === 'errore') return accesso.response
+        if (accesso.esito === 'salta') continue
+
+        const esito = await motivoDalleNotifiche(accesso.ambiente, accesso.token, r)
+        if (esito.esito === 'tetto-tempo') {
+          // Nessuna richiesta spesa, nessun marcatore scritto: la riga resta com'è e il
+          // giro successivo la riprende. È l'unico dei quattro esiti che NON consuma il
+          // tentativo, e deve restare tale — un tetto di tempo è una condizione passeggera,
+          // marcarci sopra toglierebbe alla riga la sua unica occasione.
+          interrottoPerTempo = true
+          break
+        }
+
+        // Da qui in giù la richiesta ad Aruba è PARTITA — riuscita o fallita che sia, lo slot
+        // sul secchio da 12/minuto è consumato. È questo che il tetto conta, non le righe lette.
+        spesi += 1
+
+        // 🔴 IL MARCATORE SI SCRIVE ANCHE QUANDO LA CHIAMATA È FALLITA, ed è la decisione
+        // più discutibile di questo blocco, quindi è scritta per esteso.
+        //
+        // Un `429` è transitorio e un `404` no, ma da qui non si distinguono: entrambi
+        // arrivano come un'eccezione, e l'unico modo di trattarli diversamente sarebbe
+        // ritentare — cioè costruire proprio il ciclo senza fine che questo marcatore esiste
+        // per impedire. Fra «perdere l'occasione su un 429» e «consumare due richieste ogni
+        // mezz'ora per sempre su una riga che non risponderà mai», il secondo è il danno più
+        // grande e quello che cresce da solo. Il testo però NON mente: dice «lettura non
+        // riuscita», che è un'altra cosa da «nessun motivo», e chi legge la colonna sa che
+        // quella riga merita un secondo tentativo a mano.
+        //
+        // Rimetterla in coda costa un `UPDATE` che toglie il marcatore, ed è una riga di SQL.
+        const oggi = new Date().toISOString().slice(0, 10)
+        const motivoNuovo =
+          esito.motivo ??
+          `${r.sdi_scarto_motivo} · ${MARCATORE_RIENTRO} il ${oggi}: ` +
+            (esito.esito === 'fallita' ? 'lettura non riuscita' : 'nessun motivo')
+
+        const { error: errMotivo } = await supabase
+          .from('fatture_emesse')
+          // SOLO questa colonna. `aggiornata_il` non si tocca di proposito: è il timestamp
+          // del polling di STATO, e muoverlo per una frase falserebbe la lettura di quando
+          // quella fattura è stata davvero riesaminata.
+          .update({ sdi_scarto_motivo: motivoNuovo })
+          .eq('id', r.id)
+        // Se questa UPDATE salta in silenzio, il marcatore non viene scritto e la riga torna
+        // al giro dopo: una richiesta Aruba bruciata a ogni tick, per sempre, senza che
+        // nessuno sappia perché. È lo stesso argomento dell'UPDATE del ciclo qui sopra.
+        if (errMotivo) return queryFallita('aggiornamento motivo scarto', errMotivo, t0, r.scuola_id)
+
+        rientri++
+        // Il successo si logga (AGENTS.md, regola 5): senza, «nessun log» non distingue «il
+        // rientro ha riparato la riga» da «il rientro non è mai partito» — che è la stessa
+        // ambiguità per cui il difetto è rimasto invisibile fino al 2026-09-11.
+        // 🔴 Il TESTO no: quello è testo del provider su una fattura di una famiglia, e va
+        // nella colonna. Qui basta sapere che è arrivato qualcosa, e quanto.
+        logEvento('cron', 'info', {
+          operazione: JOB,
+          esito: 'rientro-scarto',
+          scuola_id: r.scuola_id,
+          fattura_id: r.id,
+          numero: r.numero,
+          recuperato: esito.esito === 'trovato',
+          caratteri: motivoNuovo.length,
+          msg:
+            esito.esito === 'trovato'
+              ? `${JOB}: motivo ritrovato su uno scarto già a registro`
+              : `${JOB}: scarto senza motivo neanche dalle notifiche, non sarà richiesto di nuovo`,
+        })
+      }
+    }
+
     // I contatori sono NUMERI: passano in chiaro anche in tabella. `scartate` soprattutto —
     // è l'unico numero di questo giro che ha una conseguenza fiscale.
     //
@@ -583,6 +1059,17 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
       esaminate,
       processate,
       scartate,
+      // ⚠️ Le richieste ad Aruba di questo giro non sono più `esaminate`: ogni scarto senza
+      // motivo ne aggiunge una. Contarle qui è ciò che rende MISURABILE il costo della
+      // chiamata in più su un secchio da 12/min per IP, invece che deducibile — se un
+      // giorno questo numero si avvicinasse a `esaminate`, la condizione che la accende si
+      // è rotta e il cron sta raddoppiando il proprio consumo.
+      letture_notifiche: lettureNotifiche,
+      // ⚠️ IL COSTO DEL RIENTRO, misurabile e non deducibile. È il numero da guardare se un
+      // giorno si sospetta che il cron stia sfondando il secchio di Aruba: deve restare
+      // basso e, soprattutto, deve ANDARE A ZERO quando l'arretrato è finito. Se non ci va,
+      // il marcatore non sta funzionando e il giro sta ripescando le stesse righe per sempre.
+      rientri,
       skipped: scuoleSkipped.size,
       msg: interrottoPerTempo
         ? `${JOB}: tetto di tempo raggiunto, le fatture restanti tornano al giro successivo`
@@ -595,6 +1082,7 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
         scartate,
         skipped: scuoleSkipped.size,
         esaminate,
+        rientri,
         ...(interrottoPerTempo ? { interrotto: 'tetto_tempo' } : {}),
         ...(scuoleSkipped.size > 0 ? { motivo: 'credenziali_non_configurate' } : {}),
       },

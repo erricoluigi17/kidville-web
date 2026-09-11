@@ -292,6 +292,8 @@
   "fatBtn_scarico_in_corso": "Un altro download è già in corso: aspetta che finisca e riprova.",
   "fatBtn_scarico_non_consegnato": "La fattura non è stata salvata: quello che si è aperto non contiene il documento. Riprova, oppure scaricala dal browser.",
   "fatBtn_scarico_non_riuscito": "Download non riuscito. Riprova fra poco.",
+  "fatBtn_scarto_titolo": "Perché lo SDI l’ha respinta",
+  "fatBtn_scarto_voce": "Fattura n. {numero}: {motivo}",
   "fatChip_attesa": "In attesa SDI",
   "fatChip_da_fatturare": "Da fatturare",
   "fatChip_fatturata": "Fatturata",

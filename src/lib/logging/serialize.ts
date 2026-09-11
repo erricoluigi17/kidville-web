@@ -19,7 +19,16 @@ const DIMENSIONE_MAX = 3_500; // Vercel tronca le righe lunghe: sotto la soglia
 const DUMP_MAX = 300; // dump di un oggetto-errore senza `message`: è un ripiego, sta stretto
 const STACK_MAX = 2_000; // uno stack non può da solo saturare il budget della riga
 const FRAME_MAX = 10;
-const MESSAGGIO_MAX = 500;
+/**
+ * Il tetto del campo `msg` di una riga di log: `sanificaMessaggio` tronca qui, e ciò che
+ * sta oltre è buttato via in silenzio.
+ *
+ * ⚠️ ESPORTATO perché chi COMPONE un `msg` lungo debba poterlo dimensionare invece di
+ * indovinarlo: `FORMA_MAX` in `src/lib/aruba/stato.ts` ne deriva il proprio budget. Un
+ * numero ricopiato a mano diverge il giorno in cui questo cambia, e diverge in silenzio —
+ * promettendo caratteri che nessuno vedrà mai.
+ */
+export const MESSAGGIO_MAX = 500;
 const PRE_TAGLIO = MESSAGGIO_MAX * 4; // vedi sanificaMessaggio: le regex non girano su un megabyte
 
 /**

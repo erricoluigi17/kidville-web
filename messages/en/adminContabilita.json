@@ -292,6 +292,8 @@
   "fatBtn_scarico_in_corso": "Another download is already in progress: wait for it to finish and try again.",
   "fatBtn_scarico_non_consegnato": "The invoice was not saved: what just opened does not contain the document. Try again, or download it from the browser.",
   "fatBtn_scarico_non_riuscito": "Download failed. Please try again shortly.",
+  "fatBtn_scarto_titolo": "Why the SDI rejected it",
+  "fatBtn_scarto_voce": "Invoice no. {numero}: {motivo}",
   "fatChip_attesa": "Awaiting SDI",
   "fatChip_da_fatturare": "To be invoiced",
   "fatChip_fatturata": "Invoiced",

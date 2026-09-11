@@ -320,6 +320,15 @@ type ProblemaCorpo = 'vuoto' | 'non-json' | 'non-oggetto' | null
 
 interface LetturaCorpo {
   oggetto: Record<string, unknown>
+  /**
+   * Il valore JSON APPENA PARSATO, di qualunque forma: oggetto, array, stringa, numero.
+   *
+   * `oggetto` resta quello che era — un `Record` vuoto quando la forma non è un oggetto — e
+   * nessuno dei quattro chiamanti storici cambia comportamento. Questo campo serve a
+   * `leggiCorpoQualunque`, cioè alle NOTIFICHE, per cui un ARRAY è una forma legittima e non
+   * un corpo da buttare.
+   */
+  valore: unknown
   problema: ProblemaCorpo
   /** Il testo grezzo, troncato: serve solo alla diagnosi, e solo quando `problema` non è null. */
   testo: string
@@ -333,7 +342,7 @@ interface LetturaCorpo {
  */
 function analizzaCorpo(grezzo: string): LetturaCorpo {
   const testo = grezzo.trim()
-  if (testo === '') return { oggetto: {}, problema: 'vuoto', testo: '' }
+  if (testo === '') return { oggetto: {}, valore: undefined, problema: 'vuoto', testo: '' }
   const breve = testo.length > CORPO_DIAGNOSI_MAX ? `${testo.slice(0, CORPO_DIAGNOSI_MAX - 1)}…` : testo
   let valore: unknown
   try {
@@ -341,12 +350,12 @@ function analizzaCorpo(grezzo: string): LetturaCorpo {
   } catch {
     // Non è un catch muto: il motivo torna al chiamante nel campo `problema`, e da lì va nel
     // log con il corpo. `JSON.parse` non porta informazione oltre «non è JSON».
-    return { oggetto: {}, problema: 'non-json', testo: breve }
+    return { oggetto: {}, valore: undefined, problema: 'non-json', testo: breve }
   }
   if (valore === null || typeof valore !== 'object' || Array.isArray(valore)) {
-    return { oggetto: {}, problema: 'non-oggetto', testo: breve }
+    return { oggetto: {}, valore, problema: 'non-oggetto', testo: breve }
   }
-  return { oggetto: valore as Record<string, unknown>, problema: null, testo: '' }
+  return { oggetto: valore as Record<string, unknown>, valore, problema: null, testo: '' }
 }
 
 /**
@@ -358,7 +367,7 @@ function analizzaCorpo(grezzo: string): LetturaCorpo {
  * stesso dato per chi legge, e il secondo è un fatto mentre il primo è un guasto.
  */
 async function leggiCorpoConDiagnosi(res: Response | undefined, operazione: string): Promise<LetturaCorpo> {
-  if (!res) return { oggetto: {}, problema: 'vuoto', testo: '' }
+  if (!res) return { oggetto: {}, valore: undefined, problema: 'vuoto', testo: '' }
   let grezzo: string
   try {
     grezzo = await res.text()
@@ -369,7 +378,7 @@ async function leggiCorpoConDiagnosi(res: Response | undefined, operazione: stri
       esito: 'corpo-illeggibile',
       msg: `Aruba ${operazione}: risposta 2xx con corpo non leggibile`,
     }, e)
-    return { oggetto: {}, problema: 'non-json', testo: '' }
+    return { oggetto: {}, valore: undefined, problema: 'non-json', testo: '' }
   }
 
   const lettura = analizzaCorpo(grezzo)
@@ -398,6 +407,64 @@ async function leggiCorpoConDiagnosi(res: Response | undefined, operazione: stri
  */
 async function leggiCorpoJson(res: Response | undefined, operazione: string): Promise<Record<string, unknown>> {
   return (await leggiCorpoConDiagnosi(res, operazione)).oggetto
+}
+
+/**
+ * Il corpo delle NOTIFICHE SDI — dove la lettura ordinaria sarebbe stata un incidente di
+ * PRIVACY, non un dettaglio di forma.
+ *
+ * ─── LA RAGIONE PRIMA, LA FORMA POI ─────────────────────────────────────────────
+ * `leggiCorpoConDiagnosi` — e quindi `leggiCorpoJson`, da cui `arubaGetNotifications`
+ * passava fino al 2026-09-11 — su un corpo non-oggetto scrive nel `msg` i primi
+ * `CORPO_DIAGNOSI_MAX` caratteri del CORPO GREZZO. Su ogni altro endpoint è la cosa giusta:
+ * sono involucri tecnici, e il corpo è la diagnosi. Su una notifica SDI no: quel corpo porta
+ * denominazione, codice fiscale e partita IVA dell'intestatario della fattura — cioè di una
+ * famiglia — e `msg` finisce in `app_log` in chiaro per trenta giorni (`sanificaMessaggio`
+ * maschera email e codici fiscali, non una ragione sociale). Finché nessuno chiamava la
+ * funzione era una mina disinnescata; con un chiamante, non lo è più.
+ *
+ * ─── E LA SECONDA METÀ ──────────────────────────────────────────────────────────
+ * Un ARRAY è una forma plausibile per un elenco di notifiche, e `analizzaCorpo` lo classifica
+ * `non-oggetto`: `leggiCorpoJson` avrebbe restituito `{}`, cioè avrebbe buttato via proprio
+ * la risposta che serve. Qui si restituisce il valore parsato com'è.
+ *
+ * Della risposta si dichiara la LUNGHEZZA, mai il contenuto: a descriverne la struttura senza
+ * mostrarla ci pensa `descriviForma` (in `stato.ts`) dalla parte del chiamante.
+ */
+async function leggiCorpoQualunque(res: Response | undefined, operazione: string): Promise<unknown> {
+  if (!res) return undefined
+  let grezzo: string
+  try {
+    grezzo = await res.text()
+  } catch (e) {
+    logEvento('fattura', 'warn', {
+      operazione,
+      provider: 'aruba',
+      esito: 'corpo-illeggibile',
+      msg: `Aruba ${operazione}: risposta 2xx con corpo non leggibile`,
+    }, e)
+    return undefined
+  }
+  const lettura = analizzaCorpo(grezzo)
+  if (lettura.problema === 'vuoto' || lettura.problema === 'non-json') {
+    logEvento('fattura', 'warn', {
+      operazione,
+      provider: 'aruba',
+      // `esito` è in lista bianca e i due casi restano distinguibili anche nella riga
+      // persistita, che è l'unica che si interroga in SQL trenta giorni dopo.
+      esito: `corpo-${lettura.problema}`,
+      // ⚠️ NIENTE `lettura.testo`, ed è tutto il punto di questa funzione. Della lunghezza,
+      // invece, si può dire tutto: distingue «200 muto» da «200 con dentro qualcosa che non
+      // è JSON», che è la sola cosa che serve sapere per andare a guardare.
+      caratteri: grezzo.length,
+      msg:
+        lettura.problema === 'vuoto'
+          ? `Aruba ${operazione}: risposta 2xx con corpo vuoto`
+          : `Aruba ${operazione}: risposta 2xx non interpretabile come JSON`,
+    })
+    return undefined
+  }
+  return lettura.valore
 }
 
 /** L'envelope di Aruba dentro un corpo d'ERRORE già letto da `externalFetch`. */
@@ -1415,19 +1482,46 @@ export async function arubaUltimoNumeroFattura(
   return massimi.get(params.sezionale) ?? 0
 }
 
-/** Notifiche SDI relative a una fattura inviata. */
+/**
+ * Le NOTIFICHE SDI di una fattura inviata: `GET /services/notification/out/getByInvoiceFilename`.
+ *
+ * È il canale su cui vive il PERCHÉ di uno scarto. `getByFilename` dice CHE la fattura è
+ * stata scartata; il 2026-09-11, sulla prima fattura respinta dopo la correzione della
+ * lettura di stato, ha risposto con `statusDescription`, `errorCode` ed `errorDescription
+ * tutti vuoti — e a registro è finito «nessun motivo dal provider». Il motivo lo scrive lo
+ * SdI in una notifica (`NS`), che sta qui.
+ *
+ * ─── ⚠️ IL PARAMETRO SI CHIAMA `invoiceFilename` ────────────────────────────────
+ * Fino al 2026-09-11 questa riga mandava `filename`, e la documentazione ufficiale (v1
+ * §11.2) chiede `invoiceFilename`. Non era un difetto nascosto: era **dichiarato**, in
+ * `docs/fatturazione/configurazione-aruba.md` (§1.5 e §5 riga 2), come «divergenza
+ * dormiente» — innocua finché la funzione non aveva chiamanti, e con l'avvertenza che «il
+ * giorno che qualcuno la chiami non funzionerà, e non sarà ovvio perché». Questo è quel
+ * giorno.
+ *
+ * Il test che esisteva non poteva accorgersene: il suo `fetch` finto ignora l'URL, quindi
+ * era verde col nome giusto e con quello sbagliato. Quello che lo prova ispeziona le CHIAVI
+ * della query (`__tests__/lib/aruba/notifiche-motivo-scarto.test.ts`), e non il testo
+ * dell'URL: `invoiceFilename` contiene `filename`, quindi un `toContain` sarebbe verde
+ * comunque.
+ *
+ * Ritorna il JSON GREZZO, di qualunque forma — a interpretarlo è `motivoDalleNotificheSdi`
+ * (`stato.ts`), difensivo perché la forma della risposta non è mai stata misurata contro
+ * l'API vera. Sul perché il corpo non passi dalla lettura ordinaria, vedi
+ * `leggiCorpoQualunque`: è un vincolo di privacy, non di forma.
+ */
 export async function arubaGetNotifications(
   ambiente: string | undefined,
   accessToken: string,
   filename: string
 ): Promise<unknown> {
   const { ws } = arubaBaseUrls(ambiente)
-  const qs = new URLSearchParams({ filename }).toString()
+  const qs = new URLSearchParams({ invoiceFilename: filename }).toString()
   const esito = await chiamaAruba(
     'aruba:notifiche',
     `${ws}/services/notification/out/getByInvoiceFilename?${qs}`,
     { method: 'GET', headers: { Authorization: `Bearer ${accessToken}` } },
   )
   if (!esito.ok) throw erroreAruba('notifiche', esito)
-  return leggiCorpoJson(esito.res, 'aruba:notifiche')
+  return leggiCorpoQualunque(esito.res, 'aruba:notifiche')
 }

@@ -57,7 +57,16 @@ const ESENTE = 'src/lib/logging/';
 // guasto di rete non restava niente da nessuna parte. Ora è un `logClient` di livello `warn`
 // (`info` sul client non esiste: `/api/logs` lo rifiuta), col solo `nomeErrore` perché il
 // `message` di una fetch fallita si porta dietro l'URL, e in quell'URL c'è l'id di un minore.
-const MAX_FILE = 51;
+// 51 → 49 e 79 → 77 il 2026-09-10: bonificati `FatturaButton.tsx` (staff) e
+// `StoricoPagamenti.tsx` (genitore), riscritti per lo scarico della fattura. Il loro
+// `.catch(() => {})` inghiottiva l'esito del comando «Fattura»: al genitore il pulsante
+// spariva — o non faceva niente — e di quel guasto non restava una riga da nessuna parte,
+// che è lo stesso silenzio delle email di credenziali da cui nasce la regola 6. Adesso
+// l'esito passa da `registraEsitoScarico` (`src/lib/pagamenti/scarico-fattura.ts`), che
+// logga anche il SUCCESSO: senza la riga del successo, «nessun log» non distinguerebbe
+// «va tutto bene» da «il pulsante non ha mai fatto partire niente».
+// Misurato, non dedotto: è questo stesso lock ad aver segnalato le due voci come bonificate.
+const MAX_FILE = 49;
 // 🔻 81 → 79 il 2026-09-09: bonificati due catch muti in
 // `admin/messaggi/page.tsx` mentre si costruiva il registro di vigilanza. Erano
 // i due che contavano: uno inghiottiva il fallimento dell'elenco delle
@@ -65,7 +74,8 @@ const MAX_FILE = 51;
 // «nessuna conversazione»), l'altro quello dell'apertura di una conversazione —
 // che adesso può fallire per una ragione nuova, il 503 `VIGILANZA_NON_TRACCIABILE`,
 // e mostrarla come una chat vuota sarebbe stato il peggiore dei silenzi.
-const MAX_OCCORRENZE = 79;
+// 🔻 79 → 77 il 2026-09-10: le due voci dello scarico fattura, vedi la nota su `MAX_FILE`.
+const MAX_OCCORRENZE = 77;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

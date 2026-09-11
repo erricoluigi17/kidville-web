@@ -7,7 +7,6 @@ const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   scuole: vi.fn(),
   notifica: vi.fn(),
-  annulla: vi.fn(),
   revoca: vi.fn(),
   pag: {} as Record<string, unknown>,
   pagErr: null as { code: string } | null,
@@ -20,7 +19,6 @@ vi.mock('@/lib/auth/require-staff', () => ({
 }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.scuole(...a) }))
 vi.mock('@/lib/notifiche/triggers', () => ({ notificaEvento: (...a: unknown[]) => h.notifica(...a) }))
-vi.mock('@/lib/pagamenti/ricevute', () => ({ annullaRicevutaAttiva: (...a: unknown[]) => h.annulla(...a) }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
@@ -52,7 +50,6 @@ beforeEach(() => {
   h.requireStaff.mockResolvedValue({ user: { id: 'seg-1', role: 'segreteria', scuola_id: 'sc-1' } })
   h.scuole.mockResolvedValue(['sc-1'])
   h.notifica.mockResolvedValue(undefined)
-  h.annulla.mockResolvedValue(undefined)
   h.revoca.mockResolvedValue({ revocati: [] })
   h.pag = { scuola_id: 'sc-1', stato: 'parziale', alunno_id: 'al-1', descrizione: 'Retta', importo_pagato: 80, sconto: 0, tipo: 'singolo' }
   h.pagErr = null

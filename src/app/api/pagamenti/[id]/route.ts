@@ -6,7 +6,6 @@ import { genitoreHasFiglio } from '@/lib/anagrafiche/legami'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { resolveScuoleAttive } from '@/lib/auth/scope'
-import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { withRoute } from '@/lib/logging/with-route'
@@ -229,7 +228,7 @@ export const PATCH = withRoute('pagamenti/[id]:PATCH', async (request: Request, 
           scuolaId: prev.scuola_id ?? null,
           alunnoIds: [prev.alunno_id],
           titolo: 'Pagamento registrato',
-          corpo: `${prev.descrizione ?? 'Pagamento'} risulta saldato. La ricevuta è disponibile.`,
+          corpo: `${prev.descrizione ?? 'Pagamento'} risulta saldato.`,
           link: '/parent/pagamenti',
           entitaTipo: 'pagamento',
           entitaId: id,
@@ -271,8 +270,8 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
       return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
     }
     // Conservazione fiscale: un pagamento con FATTURA emessa non è cancellabile
-    // (FK RESTRICT + WORM). Le RICEVUTE si annullano prima e restano a registro
-    // (numero conservato, pagamento_id azzerato via ON DELETE SET NULL).
+    // (FK RESTRICT + WORM). Le RICEVUTE già a registro restano (numero
+    // conservato, `pagamento_id` azzerato via ON DELETE SET NULL).
     const { data: fatt, error: fattErr } = await supabase.from('fatture_emesse').select('id').eq('pagamento_id', id).limit(1)
     if (!fattErr && fatt && fatt.length > 0) {
       return NextResponse.json({ error: 'Pagamento con fattura emessa: non eliminabile per conservazione fiscale. Annulla/storna prima la fattura.' }, { status: 409 })
@@ -284,7 +283,6 @@ export const DELETE = withRoute('pagamenti/[id]:DELETE', async (request: Request
     if (!tx.error && tx.data && tx.data.length > 0) {
       return NextResponse.json({ error: 'Pagamento con incassi di una transazione di famiglia: annulla prima la transazione.' }, { status: 409 })
     }
-    await annullaRicevutaAttiva(supabase, id, { da: user.id, motivo: 'cancellazione pagamento' })
     const { error } = await supabase.from('pagamenti').delete().eq('id', id)
     if (error) return NextResponse.json({ error: 'Errore eliminazione', details: error.message }, { status: 500 })
 

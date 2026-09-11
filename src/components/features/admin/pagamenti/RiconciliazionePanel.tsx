@@ -165,7 +165,7 @@ const ID_ASIMMETRIA = 'recon-conteggi-asimmetria';
  * Import dell'estratto conto (.xls/.xlsx/.csv), poi ogni movimento è una riga colorata per stato
  * (verde=confermato · giallo=suggerito · rosso=da abbinare · grigio=ignorato):
  * cliccando si apre il popup centrale (MovimentoDialog) con suggerimenti, ricerca
- * manuale, conferma/ignora/riapri e — a saldo avvenuto — ricevuta/fattura.
+ * manuale, conferma/ignora/riapri e — a saldo avvenuto — la fattura.
  */
 export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props) {
   const t = useTranslations('adminContabilita');

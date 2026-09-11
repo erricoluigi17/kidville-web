@@ -108,8 +108,16 @@ vi.mock('@/lib/pagamenti/solleciti-invio', () => solleciti)
 
 const aruba = vi.hoisted(() => ({
     arubaSignin: vi.fn(async () => ({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })),
-    arubaGetByFilename: vi.fn(async () => ({ stato: 7 })),
+    arubaGetByFilename: vi.fn(async () => ({ stato: 7, statoAruba: 'Consegnata', descrizioneAruba: null })),
     resolveArubaCredentials: vi.fn(() => ({ username: 'u', password: 'p' })),
+    // ⚠️ QUESTO `vi.mock` SOSTITUISCE L'INTERO MODULO (nessun `importActual`), quindi ogni
+    // costante che il modulo esporta e che una route importa vale `undefined` qui dentro.
+    // `fattura/sync` importa `PAUSA_FRA_PAGINE_MS` per aspettare fra due letture di stato
+    // (SLA §3: 12 richieste/minuto per IP). Dichiararlo a `0` è deliberato — questi test
+    // misurano i battiti del cron, non il ritmo, e non devono pagare 5 s per fattura — ma
+    // deve essere SCRITTO: lasciato a `undefined` sarebbe una pausa disattivata per caso,
+    // e nessuno saprebbe perché il giorno in cui il ritmo conta davvero.
+    PAUSA_FRA_PAGINE_MS: 0,
 }))
 vi.mock('@/lib/aruba/client', () => aruba)
 
@@ -242,7 +250,7 @@ beforeEach(() => {
     push.sendPush.mockResolvedValue({ ok: true })
     aruba.resolveArubaCredentials.mockReturnValue({ username: 'u', password: 'p' })
     aruba.arubaSignin.mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
-    aruba.arubaGetByFilename.mockResolvedValue({ stato: 7 })
+    aruba.arubaGetByFilename.mockResolvedValue({ stato: 7, statoAruba: 'Consegnata', descrizioneAruba: null })
     solleciti.sollecitaPagamenti.mockResolvedValue([])
     allergie.controllaAllergie.mockResolvedValue(false)
     auth.requireStaff.mockResolvedValue({

@@ -12,7 +12,6 @@ import { formatEuro } from '@/lib/format/valuta';
 
 interface RicevutaRiga {
     id: string;
-    pagamento_id: string;
     numero: number;
     anno: number;
     importo: number;
@@ -145,16 +144,15 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
                                         <th className={TH}>{t('fisc_th_alunno')}</th>
                                         <th className={cx(TH, 'text-right')}>{t('fisc_th_importo')}</th>
                                         <th className={TH}>{t('fisc_th_stato')}</th>
-                                        <th className={TH}></th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {ricevute.map((r) => <RigaRegistro key={r.id} r={r} userId={userId} mobile={false} />)}
+                                    {ricevute.map((r) => <RigaRegistro key={r.id} r={r} mobile={false} />)}
                                 </tbody>
                             </table>
                         </div>
                         <div className="space-y-2 lg:hidden">
-                            {ricevute.map((r) => <RigaRegistro key={r.id} r={r} userId={userId} mobile />)}
+                            {ricevute.map((r) => <RigaRegistro key={r.id} r={r} mobile />)}
                         </div>
                     </>
                 )}
@@ -175,25 +173,16 @@ function ChipsRicevuta({ r }: { r: RicevutaRiga }) {
     );
 }
 
-function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; mobile: boolean }) {
+function RigaRegistro({ r, mobile }: { r: RicevutaRiga; mobile: boolean }) {
     const t = useTranslations('adminContabilita');
     const f = useDateFormat();
     // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
     const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
     const alunno = `${r.alunni?.nome ?? ''} ${r.alunni?.cognome ?? ''}`.trim() || '—';
-    const pdf = !r.annullata_il && (
-        <a href={`/api/pagamenti/ricevuta?pagamento_id=${r.pagamento_id}&userId=${userId}`}
-            className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-2 py-1 text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
-            <Download size={12} /> PDF
-        </a>
-    );
     if (mobile) {
         return (
             <div className="rounded-card border-[1.5px] border-kidville-line bg-kidville-white p-3">
-                <div className="flex items-center justify-between gap-2">
-                    <p className="font-maven text-sm font-bold text-kidville-green">{t('fisc_n_abbr')} {r.numero}/{r.anno} · {alunno}</p>
-                    {pdf}
-                </div>
+                <p className="font-maven text-sm font-bold text-kidville-green">{t('fisc_n_abbr')} {r.numero}/{r.anno} · {alunno}</p>
                 <div className="mt-1 flex items-center justify-between gap-2 font-maven text-xs text-kidville-muted">
                     <span>{dataIt(r.creato_il)} · {formatEuro(r.importo)}</span>
                     <ChipsRicevuta r={r} />
@@ -208,7 +197,6 @@ function RigaRegistro({ r, userId, mobile }: { r: RicevutaRiga; userId: string; 
             <td className={cx(TD, 'text-kidville-ink')}>{alunno}</td>
             <td className={cx(TD, 'text-right text-kidville-green')}>{formatEuro(r.importo)}</td>
             <td className={TD}><ChipsRicevuta r={r} /></td>
-            <td className={cx(TD, 'text-right')}>{pdf}</td>
         </tr>
     );
 }

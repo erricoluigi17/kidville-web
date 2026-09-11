@@ -6,7 +6,6 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseBody } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
@@ -30,8 +29,8 @@ export interface StornoEsito {
  *
  * Crea un contro-incasso NEGATIVO collegato (`metodo='storno'`, `storno_di` =
  * incasso originale), marca l'originale (`stornato_il`/`storno_motivo`,
- * best-effort su DB non migrato), ricalcola lo stato del pagamento e annulla la
- * ricevuta attiva. Il MOTIVO va in colonna/registro_modifiche, MAI nei log.
+ * best-effort su DB non migrato), ricalcola lo stato del pagamento. Il MOTIVO
+ * va in colonna/registro_modifiche, MAI nei log.
  *
  * 409 se l'incasso è già stornato o se è esso stesso uno storno.
  */
@@ -140,9 +139,6 @@ export async function eseguiStornoIncasso(
       () => {},
       () => {},
     )
-
-  // La ricevuta fotografa il saldo: uno storno la invalida (numero bruciato).
-  await annullaRicevutaAttiva(supabase, pagamentoId, { da: userId, motivo: 'storno incasso' })
 
   // Evento critico: logga il SUCCESSO (id, MAI il motivo/PII).
   logEvento('pagamento', 'info', {

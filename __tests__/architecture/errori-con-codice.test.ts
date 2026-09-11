@@ -146,9 +146,54 @@ const ALLOWLIST = path.join(RADICE, 'docs/superpowers/errori-senza-codice-allowl
  * scende da 10 a 9. Le altre due `error.message` dello stesso file (rami `scala` e
  * `scala-rename`) restano: sono debito già in elenco, e convertirle qui allargherebbe lo scopo
  * di un lavoro che parla di `ON CONFLICT`. `MAX_FILE` non si muove: la voce resta in elenco.
+ *
+ * ⚠️ Prima dei due passi del 2026-09-10, una parola sul salto che si vede fra la riga qui sopra
+ * e quella qui sotto: il paragrafo del 2026-09-06 finisce a **1430**, il prossimo comincia da
+ * **1429**, e non è un refuso. A HEAD `MAX_OCCORRENZE` valeva 1430 mentre `totale_occorrenze` e la
+ * somma delle voci valevano 1429: un'unità di gioco fra il tetto e la misura, entrata in silenzio
+ * in un giro precedente. I due passi qui sotto valgono −5 e −7, cioè −12, ma il tetto scende di
+ * −13 (1430 → 1417) perché quel gioco è stato riassorbito insieme a loro. È scritto perché la
+ * catena dei numeri di questa testata è l'unica prova che i tetti non si muovono per caso: un
+ * salto non spiegato è esattamente il difetto che il paragrafo del 2026-09-01 racconta di sé.
+ *
+ * 2026-09-10 · −5 (1429 → 1424) e −1 file (278 → 277), e non è debito pagato: è debito
+ * SCOMPARSO con la strada che lo portava. `pagamenti/ricevuta:GET` — la ricevuta contabile per
+ * singolo pagamento — è stata rimossa insieme alla sua rotta, e con lei le sue cinque risposte
+ * senza codice. Nessuna di quelle cinque è stata convertita: non esistono più i punti in cui
+ * venivano scritte. Qui i due tetti scendono davvero, perché la voce è USCITA dall'elenco: un
+ * tetto lasciato dov'era sarebbe decorazione, e la riga sopra a questa lo dice da sola.
+ * ⚠️ Non toccare la voce vicina `pagamenti/ricevute/route.ts` (PLURALE): è il registro dello
+ * staff, esiste ancora, ed è un OMONIMO — non un parente.
+ *
+ * 2026-09-10 (secondo passo, stesso giorno) · −7 (1424 → 1417), e questo invece è debito PAGATO:
+ * le due rotte della fattura hanno ricevuto i loro codici. `pagamenti/fattura/route.ts` scende da
+ * 7 a 3 e `pagamenti/fattura/list/route.ts` da 4 a 1, perché lo scarico della fattura ha smesso di
+ * rifiutare in prosa: `FATTURA_PDF_NON_DISPONIBILE`, `FATTURA_NON_EMESSA`, `FATTURA_PIU_QUOTE`,
+ * `PAGAMENTO_NON_TROVATO`, `FATTURA_NON_TROVATA`, `FATTURA_ACCESSO_NON_VERIFICATO` e
+ * `FATTURA_ACCESSO_NEGATO` — questi ultimi due dal gate nuovo `assertFatturaInScope`
+ * (`src/lib/pagamenti/scope-fattura.ts`). `MAX_FILE` NON si muove: nessuno dei due file arriva a
+ * zero, restano in elenco entrambi.
+ *
+ * ⚠️ I due numeri non sono stati dedotti dal conto dei codici aggiunti: sono stati MISURATI
+ * eseguendo `inventario()` su questo stesso repository e leggendo il conteggio per file. È una
+ * distinzione che paga, perché il lock qui accanto vede solo la CRESCITA di una voce: una voce
+ * rimasta più alta della misura non fa rosso nessuno, e resta lì a far sembrare il debito più
+ * grande di quello che è. Misurando, il 2026-09-10, si sono trovate **altre 18 voci** nella stessa
+ * condizione (fra le altre `avvisi` 12→9, `public/forms/[token]/upload` 6→1, `chat/upload` 6→3, e
+ * due voci scese a ZERO: `parent/primaria/assenze` e `lib/pagamenti/sospensione`). NON sono state
+ * toccate qui: sono debito già pagato da altri lavori, e stringerle dentro un cambiamento che
+ * parla di fatture significherebbe rivendicare pagamenti non fatti in questo giro. Vanno strette,
+ * ma da chi le ha pagate — e la misura di partenza è scritta qui sopra.
  */
-const MAX_FILE = 278;
-const MAX_OCCORRENZE = 1430;
+const MAX_FILE = 277;
+/**
+ * ⚠️ 1417 è la somma DICHIARATA dalle voci dell'allowlist, non la misura del codice: la misura,
+ * il 2026-09-10, è **1384**. I due numeri divergono di 33 per le 18 voci stantie dette qui sopra.
+ * Il confronto che questo tetto governa (in fondo al file) è sulla SOMMA DELL'ELENCO, non sulla
+ * misura: chi legge «stringi fino alla misura vera» e porta il tetto a 1384 senza aver prima
+ * stretto quelle 18 voci rende il test rosso all'istante. L'ordine è: prima le voci, poi il tetto.
+ */
+const MAX_OCCORRENZE = 1417;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

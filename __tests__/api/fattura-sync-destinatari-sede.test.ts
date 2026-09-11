@@ -74,7 +74,14 @@ beforeEach(() => {
   process.env.ARUBA_PASSWORD = 'non-un-segreto-vero'
   stato.db = dbBase()
   vi.mocked(arubaSignin).mockResolvedValue({ accessToken: 'AT', refreshToken: 'RT', expiresAt: Date.now() + 1e6 })
-  vi.mocked(arubaGetByFilename).mockResolvedValue({ stato: 4 }) // 4 = Scartata (NS)
+  // `statoAruba`/`descrizioneAruba` sono obbligatori nel tipo: un mock che li omette non
+  // compila. Finché erano opzionali, tutto il percorso «la parola di Aruba arriva fino al
+  // registro» restava verde anche se il client avesse smesso di leggerla.
+  vi.mocked(arubaGetByFilename).mockResolvedValue({
+    stato: 4, // 4 = Scartata (NS)
+    statoAruba: 'Scartata',
+    descrizioneAruba: 'Codice destinatario non valido',
+  })
 })
 afterEach(() => {
   delete process.env.CRON_SECRET

@@ -5,7 +5,6 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { parseBody, parseData } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
-import { annullaRicevutaAttiva } from '@/lib/pagamenti/ricevute'
 import { eseguiStornoIncasso } from '../storno/route'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore } from '@/lib/logging/logger'
@@ -73,12 +72,6 @@ export const PATCH = withRoute('pagamenti/incassi/[id]:PATCH', async (request: R
       nuovo_valore: incasso,
       utente_id: user.id,
     }).then(() => {}, () => {})
-
-    // La ricevuta fotografa importi e metodi al saldo: se cambiano va annullata
-    // (numero bruciato); al prossimo download se ne emette una nuova.
-    if (updates.importo !== undefined || updates.metodo !== undefined) {
-      await annullaRicevutaAttiva(supabase, incasso.pagamento_id as string, { da: user.id, motivo: 'modifica incasso' })
-    }
 
     // stato pagamento ricalcolato dal trigger
     const { data: pagamento } = await supabase

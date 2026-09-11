@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { Pencil, Layers, Download, Euro } from 'lucide-react';
+import { Pencil, Layers, Euro } from 'lucide-react';
 import { Drawer } from '@/components/ui/cockpit';
 import { Badge } from '@/components/ui/Badge';
 import { FatturaChip } from './FatturaChip';
@@ -88,19 +88,8 @@ export function PagamentoDrawer({ pagamento, userId, onClose, onIncassa, onModif
                             <Euro size={15} /> {t('drawerIncassa')}
                         </button>
                     )}
-                    {saldato ? (
-                        <>
-                            <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} />
-                            <a href={`/api/pagamenti/ricevuta?pagamento_id=${pagamento.id}&userId=${userId}`}
-                                className="inline-flex items-center gap-1 rounded-pill bg-kidville-green-soft px-3 py-1.5 font-maven text-xs font-bold text-kidville-green transition-colors hover:bg-kidville-green/20">
-                                <Download size={13} /> {t('drawerRicevuta')}
-                            </a>
-                        </>
-                    ) : (
-                        <button type="button" disabled title={t('drawerRicevutaDisabled')}
-                            className="inline-flex cursor-not-allowed items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted opacity-60">
-                            <Download size={13} /> {t('drawerRicevuta')}
-                        </button>
+                    {saldato && (
+                        <FatturaButton pagamentoId={pagamento.id} userId={userId} fatturaStato={pagamento.fattura_stato} />
                     )}
                     <button type="button" onClick={onModifica}
                         className="inline-flex items-center gap-1 rounded-pill border-[1.5px] border-kidville-line px-3 py-1 font-maven text-xs font-bold text-kidville-muted transition-colors hover:border-kidville-green hover:text-kidville-green">

@@ -783,7 +783,16 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                        quello del comando che si è premuto. */
                     aria-label={etichettaCard(lightbox, t)}
                     tabIndex={-1}
-                    className="fixed inset-0 z-50 focus:outline-none"
+                    /* `z-[115]` E NON `z-50` — vedi il commento del dialogo di
+                       eliminazione qui sotto, che questa riga chiude: misurato il
+                       2026-09-12 su iPhone 16e, a pari livello la bottom-nav
+                       (dichiarata DOPO `<main>`) dipingeva sopra il visore e
+                       teneva l'ultimo comando della colonna sotto di sé, a
+                       scroller finito. 115 è il livello che `ui/cockpit.tsx` usa
+                       già per stare sopra tutto il chrome (topbar e sidebar
+                       `z-[105]`, foglio «Menu» `z-[110]`, filtri `z-[112]`).
+                       Lock: `__tests__/architecture/visore-media-sopra-la-bottom-nav`. */
+                    className="fixed inset-0 z-[115] focus:outline-none"
                 >
                     <motion.div
                         aria-hidden="true"
@@ -1063,33 +1072,46 @@ export function MediaGrid({ items, showActions, onDelete, eliminabile, students,
                         quindi l'inerzia che `Modal` aggiunge sopra si somma e si
                         sottrae senza scoprire lo sfondo del visore.
 
-                      ⚠️ E QUI IL `z-[120]` DI `Modal` NON VALE PIÙ QUELLO CHE
-                      PROMETTE — va saputo prima di fidarsene. Il visore è
-                      `fixed inset-0 z-50`: posizione più `z-index` diverso da
-                      `auto` creano un CONTESTO D'IMPILAMENTO, quindi il `z-[120]`
-                      del Modal si risolve DENTRO quel contesto e non può superare
-                      il livello 50 rispetto ai fratelli del visore. Il commento di
-                      `Modal.tsx` dice che quel 120 esiste per stare sopra il chrome
-                      del cockpit (topbar e sidebar `z-[105]`, foglio «Menu»
-                      `z-[110]`): la garanzia, annidati qui, è clampata.
-                      Conseguenza concreta su `/teacher/gallery`, che è la sola
-                      schermata che apre questo dialogo: `TeacherBottomNav` è
-                      `fixed bottom-0 … z-50` e nel layout viene DOPO
-                      `<main>{children}</main>` (righe 51 e 56 di
-                      `teacher/layout.tsx`), cioè stesso livello e più avanti nel
-                      DOM — dipinge sopra il visore, e adesso anche sopra questo
-                      dialogo, che essendo centrato non si può far scorrere via da
-                      sotto.
-                      NON È CORRETTO A OCCHIO DI PROPOSITO: una sovrapposizione vera
-                      dei bottoni non è dimostrata ai formati comuni (il dialogo è
-                      compatto e centrato, `max-h-[90vh]`, la barra occupa ~90 px in
-                      fondo) e jsdom non ha layout, quindi nessun test di questa
-                      cartella può vederlo. Si misura nel browser vero — l'E2E in
-                      CI, perché il collaudo browser in locale è documentato come
-                      impossibile (il middleware rinvia al login). Se la misura dirà
-                      che c'è, la correzione strutturale è una riga: portare il
-                      visore da `z-50` a `z-[115]`, che è il valore che
-                      `ui/cockpit.tsx:431` usa già esattamente per questo scopo.
+                      ⚠️ IL `z-[120]` DI `Modal`, ANNIDATO QUI, È CLAMPATO — va
+                      saputo prima di fidarsene, e resta vero anche adesso. Il
+                      visore è `fixed inset-0 z-[115]`: posizione più `z-index`
+                      diverso da `auto` creano un CONTESTO D'IMPILAMENTO, quindi
+                      il `z-[120]` del Modal si risolve DENTRO quel contesto e non
+                      può superare il livello del visore rispetto ai suoi
+                      FRATELLI. Non è un difetto: là dentro gli basta stare sopra
+                      i figli del visore (`z-10` lo scroller, `z-20` le frecce e
+                      la ✕), e ci sta.
+
+                      ─── LA MISURA È ARRIVATA, E LA RIGA È STATA SCRITTA ────────
+                      Questo commento, fino al 2026-09-12, diceva: «il visore è
+                      `z-50`, la bottom-nav è `fixed bottom-0 … z-50` e nel layout
+                      viene DOPO `<main>{children}</main>`, cioè stesso livello e
+                      più avanti nel DOM — dipinge sopra il visore. NON È CORRETTO
+                      A OCCHIO DI PROPOSITO: una sovrapposizione vera dei bottoni
+                      non è dimostrata ai formati comuni, e jsdom non ha layout.
+                      Si misura nel browser vero. Se la misura dirà che c'è, la
+                      correzione è una riga: da `z-50` a `z-[115]`».
+
+                      **La misura ha detto che c'è.** Simulatore iPhone 16e
+                      (390×844, iOS 26.2), app nativa contro `app.kidville.it`, un
+                      video VERTICALE aperto nel visore: lo scroller arriva a fine
+                      corsa — due schermate dopo due gesti risultavano identiche
+                      al byte — e di «Elimina Media» restava una striscia rossa di
+                      ~4 px sotto la pastiglia della barra. Non era «non
+                      dimostrata ai formati comuni»: era invisibile al formato più
+                      comune che esista, un filmato ripreso col telefono in
+                      verticale. Ciò che la nascondeva non era il dialogo compatto
+                      di cui parla il paragrafo qui sopra — era la COLONNA del
+                      visore, che con un video a `max-h-[70svh]` più didascalia,
+                      taggati e comando supera l'altezza utile.
+
+                      La riga è scritta (vedi il `className` della radice del
+                      visore) e adesso la misura ha un lock che la tiene:
+                      `__tests__/architecture/visore-media-sopra-la-bottom-nav`.
+                      Effetto collaterale voluto: `rendiInerteFuoriDaConFocus`
+                      marca inerte tutto ciò che sta FUORI dal visore, la barra
+                      compresa — prima era inerte ma visibile e sopra, cioè il
+                      peggio dei due mondi.
                     */}
                     {daEliminare && eliminaIlMedia && (
                         <DialogoEliminaMedia

@@ -48,45 +48,35 @@ const RADICE = process.cwd();
 const SRC = path.join(RADICE, 'src');
 
 /**
- * IL DEBITO NOTO, UNO SOLO, CON IL NOME DI CHI LO PAGA.
+ * ✅ L'ALLOWLIST È VUOTA, E IL DEBITO CHE CONTENEVA È STATO PAGATO IL 2026-09-12.
  *
- * 🔻 `src/app/(dashboard)/teacher/gallery/page.tsx` — `handleDeleteMedia` è già
- * `async`, quindi `tsc` è verde, ma:
- *   · apre un `confirm(t('galleryConfermaElimina'))` PRIMA del dialogo;
- *   · su `!res.ok` fa `alert(await messaggioErrore(...))` e RITORNA;
- *   · nel `catch` fa `alert(t('galleryErrReteEliminazione'))` e ritorna.
- * Cioè risolve sempre: il dialogo legge «riuscita» su un 403 e su un 500.
+ * La voce era `src/app/(dashboard)/teacher/gallery/page.tsx`: `handleDeleteMedia`
+ * apriva un `confirm()` prima del dialogo e chiudeva con due `alert()`, quindi
+ * risolveva sempre — il dialogo leggeva «riuscita» su un 403 e su un 500.
  *
- * La correzione, per chi possiede quel file (NON è di chi ha scritto il dialogo:
- * la pipeline di rilascio del 2026-09-12 l'ha assegnato a un'altra consegna):
+ * 🔑 COME SI È CHIUSA, e vale la pena saperlo perché non è andata come previsto:
+ * la voce non è stata toccata da chi l'ha scritta né dalla consegna a cui era
+ * assegnata. È stata **una prova sul simulatore iPhone** a mostrare il difetto
+ * per quello che era a schermo: eliminando una foto dall'app nativa comparivano
+ * TRE dialoghi in fila, e quello di mezzo — il `confirm` di sistema — aveva i
+ * pulsanti in INGLESE su un prodotto che parla solo italiano. Nessun test poteva
+ * vedere quella terna; questo lock invece la nominava già, con la correzione
+ * scritta per intero qui dentro. Il difetto è stato corretto copiando quella
+ * prescrizione, con una sola aggiunta: `if (!teacherId)` ora LANCIA invece di
+ * ritornare, perché un `return` lì era l'ennesimo falso successo.
  *
- *     const handleDeleteMedia = async (id: string) => {
- *         if (!teacherId) return;
- *         try {
- *             const res = await fetch(`/api/gallery?id=${id}&userId=${teacherId}`, { method: 'DELETE' });
- *             if (res.ok || res.status === 404) { await loadMedia(); return; }
- *             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-rifiutato',
- *                         route: '/teacher/gallery', stato: res.status });
- *             throw erroreElimina(await messaggioErrore(res, t('galleryErrEliminazione')), res.status);
- *         } catch (e) {
- *             if (statoDaRigetto(e) !== null) throw e;   // già tradotto e classificato
- *             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-fallito',
- *                         route: '/teacher/gallery' });
- *             throw erroreElimina(t('galleryErrReteEliminazione'), null);
- *         }
- *     };
+ * Quindi: un'allowlist scritta bene non è un permesso, è un promemoria che
+ * qualcuno prima o poi legge. Ma a farla leggere è stato un dito su un telefono,
+ * non il gate — [[silenzio_assente_vs_segnale_falso]].
  *
- * (`erroreElimina` e `statoDaRigetto` si importano da
- * `@/components/features/gallery/DialogoEliminaMedia`.) Il 404 è trattato come
- * riuscita perché l'esito voluto È raggiunto — lo dice il contratto della prop.
- * Fatto questo, si TOGLIE la riga qui sotto e il tetto scende a 0.
+ * ⚠️ TETTO A ZERO: da qui in avanti non esistono esenzioni. Chi passa `onDelete`
+ * a `MediaGrid` rigetta sul rifiuto, punto; una voce nuova in questo elenco
+ * farebbe salire `TETTO_DEBITO`, e quel numero non sale.
  */
-const ALLOWLIST: readonly string[] = [
-    'src/app/(dashboard)/teacher/gallery/page.tsx',
-];
+const ALLOWLIST: readonly string[] = [];
 
 /** Tetto monotono decrescente. Scende con l'allowlist, non sale mai. */
-const TETTO_DEBITO = 1;
+const TETTO_DEBITO = 0;
 
 // ─── Lettura dei sorgenti ───────────────────────────────────────────────────
 

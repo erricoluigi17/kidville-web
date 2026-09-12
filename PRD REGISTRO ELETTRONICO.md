@@ -77,7 +77,7 @@
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
 > | **Anagrafiche — il codice fiscale certo** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione**: le due migrazioni sono applicate, il codice attende il merge | `/admin/students` → **quinta linguetta «Codici fiscali»** (`CodiciFiscaliDaVerificare`); la cascata **provincia → comune** (`LuogoNascitaFields`) e il badge di coerenza (`BadgeCoerenzaCf`) sulle sei schede di alunno e genitore | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde. Scrittura con `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**. `GET /api/anagrafiche/comuni` serve la sola provincia scelta: le 13.656 righe della tabella Belfiore **non escono mai** verso il browser (lock `dataset-comuni-fuori-dal-bundle`). Il calcolo è locale e sincrono (`src/lib/fiscale/`): **nessuna chiamata a terzi**, `api.codicefiscale.it` è al bando |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
-> | **Foto/Video** | ✅ Operativo · **vista di sede per la segreteria dal 2026-09-06** | `/teacher/gallery` (una sezione), `/parent/gallery`, **`/admin/gallery`** (l'intero plesso: dal più recente, raggruppato per giornata, filtro per classe e per bambino, paginazione) | `/api/gallery/*` — con `scope=sede&scuolaId=…`, riservato a `requireStaff`, **sede sempre dichiarata e mai indovinata**. Lo «scarica» dei media passa da `@capacitor/filesystem` + `Share.share({files})` sul telefono e dal signed URL diretto sul web: in WebView un `<a download>` su un `blob:` non fa niente **e non solleva eccezione**, quindi il vecchio `catch` non poteva scattare |
+> | **Foto/Video** | ✅ Operativo · **vista di sede per la segreteria dal 2026-09-06** | `/teacher/gallery` (una sezione), `/parent/gallery`, **`/admin/gallery`** (l'intero plesso: dal più recente, raggruppato per giornata, filtro per classe e per bambino, paginazione, **linguetta «Pubblicate / Cestino (30 giorni)» con «Ripristina» ed «Elimina» — 2026-09-12**) | `/api/gallery/*` — con `scope=sede&scuolaId=…`, riservato a `requireStaff`, **sede sempre dichiarata e mai indovinata**. Lo «scarica» dei media passa da `@capacitor/filesystem` + `Share.share({files})` sul telefono e dal signed URL diretto sul web: in WebView un `<a download>` su un `blob:` non fa niente **e non solleva eccezione**, quindi il vecchio `catch` non poteva scattare |
 > | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
@@ -167,6 +167,70 @@ La purga (`POST /api/gdpr/retention-galleria`, cron alle 05:23 UTC) va **prima i
 e se il file non esce dallo Storage **la riga resta nel cestino** per il giro dopo. Righe trattenute
 ⇒ **500**: un 200 direbbe «fatto» a chi sorveglia, e resterebbero foto di minori nell'archivio senza
 che nessuno lo sappia.
+
+### La linguetta che mancava: il cestino c'era, il bottone della segreteria no
+
+`DialogoEliminaMedia` promette all'insegnante che «la segreteria può ripristinarlo entro 30 giorni».
+Fino a questo passaggio la promessa era vera a metà: `POST /api/gallery/ripristina` esisteva e
+**nessuna schermata lo chiamava**. Un ripristino che nessuno può chiedere non è un ripristino — è la
+stessa forma di difetto del cestino che nasconde senza dirlo, un gradino più in là.
+
+`/admin/gallery` ha adesso un gruppo di due bottoni — «Pubblicate» e «Cestino (30 giorni)» — **dentro
+la barra dei filtri della pagina che esisteva già**, non in una rotta nuova. Il motivo è quello di
+AGENTS.md: una schermata nuova avrebbe avuto un **proprio** selettore di sede, cioè un secondo posto in
+cui la sede si può indovinare. Sede, filtri classe/bambino/giorno, paginazione, raggruppamento per
+giornata e stati vuoto/errore restano gli stessi, e il cestino è **un parametro in più nella query**
+(`stato=cestino`, che la rotta ammette solo insieme a `scope=sede`) — non un filtro applicato a
+schermo.
+
+| | |
+|---|---|
+| il cestino non è un album | nel cestino **non** si monta `MediaGrid`: su una foto che si è deciso di rimuovere, «Scarica» e «Condividi» non sono comandi mancanti, sono comandi **da non avere**. Al suo posto `GrigliaCestino` mostra tre cose sole — quale foto è (anteprima al 60%, `object-contain` perché un ritaglio può togliere il soggetto), quanto le resta, e «Ripristina» |
+| il conto alla rovescia | «Eliminata il 12 settembre, 07:41» · «Restano 25 giorni», col plurale ICU e **«Scade oggi»** a zero. Arrotondato per **eccesso**: a 29,2 giorni trascorsi resta «1 giorno», perché uno «0» farebbe rinunciare a una foto che la purga non ha ancora guardato |
+| **nel cestino «Elimina» non c'è** | è già eliminata. Lo tiene un test, e che il test morda è **misurato**: rimontando `MediaGrid` nel cestino diventa rosso (fatto il 12/09, 4 casi su 42 in rosso) |
+| il 30 è scritto in **due** posti | `GIORNI_CESTINO_GALLERIA` sta in `src/lib/gallery/cestino.ts`, che importa `logEvento`, cioè il logger del **server**: importarlo da una pagina `'use client'` lo impacchetterebbe nel bundle del browser. Quindi la pagina tiene il suo `GIORNI_CESTINO = 30` e il lock `cestino-giorni-un-numero-solo` pretende che i due coincidano — il numero del client è quello che la segreteria **legge**, quello del server è quello che la purga **applica** |
+| l'errore si legge nella lingua dell'interfaccia | `messaggioErrore` su ogni rifiuto (409 `MEDIA_NON_RIPRISTINABILE`, 403 di sede, 501 dell'impianto senza cestino), e il messaggio compare **sulla card**, che resta a schermo: un errore non porta via la riga di cui parla |
+| «Elimina» per la segreteria | la pagina passa `onDelete` a `MediaGrid` **attraverso** `GalleriaSedeGiornate` e riusa `DialogoEliminaMedia`. Il gestore **rigetta** col testo già tradotto e lo `stato` HTTP attaccato, così il dialogo distingue il 403 (il comando sparisce) dal 500 (riprovare è il rimedio), e ricarica l'elenco dentro la propria risoluzione — con `ricominciaElenco`, che è la funzione che la pagina aveva già |
+
+⚠️ Il lock `media-elimina-chiamante-rigetta` ha imparato a distinguere un **tubo** da un chiamante:
+`GalleriaSedeGiornate` inoltra la prop e non dichiara nessun gestore, e prima di questo passaggio il
+lock avrebbe chiamato «illeggibile» un file che non ha niente da dichiarare — un rosso che si spegne
+solo mettendo in allowlist un caso legittimo, cioè logorando l'allowlist. Gli inoltri ora si
+**contano**, col numero atteso scritto (uno): se un domani il riconoscitore dicesse sì a tutto, i
+chiamanti veri finirebbero nel secchio degli inoltri e il lock resterebbe verde misurando il vuoto.
+
+**Gate rimisurato il 2026-09-12 alle 11:30, su `main` a `1c7c01f1`** (albero pulito, nessuna modifica
+locale): `eslint . --max-warnings 0` → 0 · `tsc --noEmit` → 0 · `vitest run` → **16.746/16.746** in
+1247 file, di cui **42** sul solo `__tests__/pages/galleria-sede-pagina.test.tsx`. Il «16.699» del
+riquadro *Gate* qui sopra è stato annotato prima che atterrassero i **47 casi** che separano i due
+conteggi: è il numero di un'ora prima, non un numero sbagliato per sempre — e il modo di distinguere
+le due cose è rieseguire il comando, non fidarsi della riga.
+
+### 🔴 E una prova mancava proprio dove il lavoro era nato: «Elimina» nella vista pubblicate
+
+Il blocco **(H)** dei test prova che nel CESTINO «Elimina» non c'è. Del verso opposto — che nella vista
+delle foto **pubblicate** ci sia — non c'era nessuna prova, e la cosa è stata **misurata** invece che
+supposta: togliendo `onDelete: eliminaMedia` dal montaggio di `GalleriaSedeGiornate`, i **42** casi di
+quel file restavano **tutti verdi**, e il comando che la segreteria aspettava sparirebbe in silenzio —
+cioè la stessa forma del difetto che questo lavoro è nato per chiudere: una rotta che c'è e nessuna
+schermata che la chiami. Lo stesso valeva per il **rifiuto**: il fixture `h.rispostaElimina` porta
+scritto «il loro RIFIUTO è la cosa che va provata: un 403 di sede … deve arrivare a schermo tradotto»,
+e **nessun test lo leggeva**. Un fixture che descrive una protezione che nessuno misura è un commento.
+
+Due casi aggiunti (blocco **(I)**), visti rossi prima che verdi (mutazione: `onDelete` via ⇒ 2 rossi su
+44, e sono i due nuovi):
+
+| | |
+|---|---|
+| il comando c'è e fa la cosa giusta | la conferma di `DialogoEliminaMedia` chiama `DELETE /api/gallery?id=…` col **metodo** giusto (un `?id=` in GET sarebbe una lettura, non un comando) e poi l'elenco si **rilegge** |
+| il 403 di sede si legge tradotto | e **dentro** il dialogo, con `lang="en"`: in italiano la prosa della route e il testo di catalogo sono la stessa stringa e la prova non separerebbe niente. Il comando sparisce — ripremerlo darebbe lo stesso rifiuto — e le immagini con quell'`alt` restano **due**, miniatura e visore: cioè il visore **non** si è chiuso sotto il messaggio, che è il difetto da cui `DialogoEliminaMedia` è nato |
+
+**Gate con i due casi in più, misurato il 2026-09-12 alle 11:36**: `eslint . --max-warnings 0` → 0 ·
+`tsc --noEmit` → 0 · `vitest run` → **16.748/16.748** in 1247 file (44 sul file della galleria di
+sede). `npm run build` **non** è stato rieseguito e va detto: le due modifiche sono un file di test e
+questo PRD, che nel bundle non entrano, e il build era verde in CI sulla PR #142.
+⏳ **Non committato**: l'albero era su `main` pulito (la #141 e la #142 sono già state mergiate e i
+branch cancellati), quindi il branch nuovo lo apre chi integra — su `main` non si committa.
 
 ### Gli strascichi, misurati e chiusi
 

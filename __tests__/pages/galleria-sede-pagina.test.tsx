@@ -1250,3 +1250,124 @@ describe('(H) il cestino della segreteria', () => {
         });
     });
 });
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * (I) «ELIMINA» NELLA VISTA PUBBLICATE — l'altra metà del cestino
+ *
+ * ─── PERCHÉ QUESTO BLOCCO ESISTE, misurato il 2026-09-12 ────────────────────
+ *
+ * Il blocco (H) prova che nel CESTINO «Elimina» non c'è. Nessuno provava il verso
+ * opposto: che nella vista delle foto PUBBLICATE ci sia. La differenza non è
+ * simmetria di stile — è che togliendo `onDelete` dal montaggio di
+ * `GalleriaSedeGiornate` la suite intera restava VERDE, e il comando che la
+ * segreteria aspettava sparirebbe in silenzio. È esattamente la forma di difetto
+ * che questa schermata è nata per chiudere: `DialogoEliminaMedia` promette un
+ * ripristino, e il ripristino c'era senza il bottone.
+ *
+ * E c'era una seconda prova mancante, dichiarata dal fixture stesso: il commento di
+ * `h.rispostaElimina` dice «il loro RIFIUTO è la cosa che va provata: un 403 di
+ * sede … deve arrivare a schermo tradotto», e nessun test lo leggeva. Un fixture
+ * che descrive una protezione che nessuno misura è un commento, non un presidio.
+ *
+ * ⚠️ LE ATTESE SONO ANCORATE A EVENTI POSITIVI. L'asserzione «la foto è ancora a
+ * schermo» dopo il 403 arriva DOPO aver atteso il riquadro del rifiuto: un
+ * `waitFor` su un'assenza (o su una permanenza) passerebbe anche mentre la
+ * schermata è vuota, ed è un falso verde già pagato in questo repo.
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe('(I) «Elimina» nella vista delle foto pubblicate', () => {
+    /**
+     * Apre il visore della foto e chiede l'eliminazione, fermandosi PRIMA della
+     * conferma: i due gesti sono separati perché il primo apre `DialogoEliminaMedia`
+     * e la richiesta parte solo col secondo — fermarsi al primo proverebbe
+     * l'apertura di un dialogo e niente sul server.
+     */
+    async function chiediEliminazione(): Promise<void> {
+        render(<AdminGalleryPage />);
+        // Il visore vive dentro `MediaGrid`: si apre dalla miniatura, che porta
+        // l'`alt` di catalogo perché queste fixture non hanno didascalia.
+        fireEvent.click(await screen.findByAltText(itShared.galleryAltFoto));
+        fireEvent.click(
+            await screen.findByRole('button', { name: new RegExp(itShared.galleryEliminaMedia) }),
+        );
+    }
+
+    /** Il bottone «Elimina» ESATTO del dialogo: non collide con «Elimina Media». */
+    const confermaElimina = () =>
+        screen.getByRole('button', { name: new RegExp(`^${itShared.galleryEliminaConferma}$`) });
+
+    it('il comando c’è, e la conferma chiama `DELETE /api/gallery?id=…` e RICARICA l’elenco', async () => {
+        await chiediEliminazione();
+        // Il dialogo è aperto e nomina il gesto: è la conferma che il comando
+        // della segreteria è cablato a `DialogoEliminaMedia` e non a un `confirm`.
+        expect(await screen.findByText(itShared.galleryEliminaTitoloFoto)).toBeInTheDocument();
+        const getPrima = chiamateGalleria().length;
+
+        fireEvent.click(confermaElimina());
+
+        await waitFor(() => {
+            expect(
+                h.fetchMock.mock.calls.some((c) => String(c[0]).startsWith('/api/gallery?id=foto-1')),
+                'senza `onDelete` la DELETE non parte mai, e la suite restava verde',
+            ).toBe(true);
+        });
+        // Il metodo conta: un `?id=` in GET sarebbe una lettura, non un comando.
+        const chiamata = h.fetchMock.mock.calls.find((c) => String(c[0]).startsWith('/api/gallery?id='));
+        expect((chiamata?.[1] as { method?: string } | undefined)?.method).toBe('DELETE');
+        // …e l'elenco si rilegge: il ricarico è del CHIAMANTE, dentro la propria
+        // risoluzione, e fino al 2026-09-12 il contratto ne prometteva uno che
+        // nessuno eseguiva.
+        await waitFor(() => {
+            expect(
+                chiamateGalleria().length,
+                'la riga eliminata resterebbe a schermo fino al prossimo gesto',
+            ).toBeGreaterThan(getPrima);
+        });
+    });
+
+    it('un 403 di sede si legge TRADOTTO dentro il dialogo, e la foto resta a schermo', async () => {
+        /* ⚠️ INTERFACCIA IN INGLESE, per la ragione scritta per esteso nel test (D):
+         * la route manda la prosa ITALIANA di catalogo accanto al `codice`, quindi
+         * con `lang="it"` «testo tradotto» e «prosa del server» sono la stessa
+         * stringa e l'asserzione non separerebbe niente — si potrebbe buttare il
+         * `codice` e restare verdi. */
+        document.documentElement.setAttribute('lang', 'en');
+        try {
+            const PROSA_SERVER = itShared.erroreSedeNonAccessibile;
+            const DA_CATALOGO = enShared.erroreSedeNonAccessibile;
+            expect(PROSA_SERVER, 'se le due frasi coincidessero il test non separerebbe nulla').not.toBe(
+                DA_CATALOGO,
+            );
+            h.rispostaElimina = {
+                ok: false,
+                status: 403,
+                body: { error: PROSA_SERVER, codice: 'SEDE_NON_ACCESSIBILE' },
+            };
+            await chiediEliminazione();
+            fireEvent.click(confermaElimina());
+
+            // Il 403 non è un rosso da riprovare: è un confine, e il dialogo lo
+            // dipinge come avviso col comando che sparisce.
+            const vietato = await screen.findByTestId('elimina-media-vietato');
+            expect(vietato.textContent).toContain(DA_CATALOGO);
+            expect(
+                vietato.textContent,
+                'la prosa italiana della route non deve arrivare a schermo',
+            ).not.toContain(PROSA_SERVER);
+            // Ancorato all'evento POSITIVO qui sopra: la foto è ancora a schermo,
+            // perché un rifiuto non porta via la riga di cui parla. Le immagini con
+            // quell'`alt` sono DUE — la miniatura della griglia e quella del visore
+            // rimasto aperto — e pretenderle entrambe dice una cosa in più: il visore
+            // NON si è chiuso, che è il difetto da cui nasce `DialogoEliminaMedia`
+            // (il rifiuto arrivava su una schermata che non mostrava più la foto).
+            expect(screen.getAllByAltText(itShared.galleryAltFoto)).toHaveLength(2);
+            expect(
+                screen.queryByRole('button', { name: new RegExp(`^${itShared.galleryEliminaConferma}$`) }),
+                'ripremere darebbe lo stesso identico rifiuto: il comando si toglie',
+            ).not.toBeInTheDocument();
+        } finally {
+            // La lingua è globale al documento: lasciarla addosso falserebbe i test
+            // che vengono dopo, in questo file e negli altri dello stesso worker.
+            document.documentElement.removeAttribute('lang');
+        }
+    });
+});

@@ -1968,6 +1968,27 @@ export const CODICI_ERRORE = {
     GRADO_NON_ABILITATO: 'erroreGradoNonAbilitato',
     /** 500 — il `catch` di `primaria/registro:POST`: la firma non è stata salvata. */
     FIRMA_NON_SALVATA: 'erroreFirmaNonSalvata',
+    /**
+     * 409 — la foto che si sta modificando è NEL CESTINO (`gallery:PATCH`).
+     *
+     * Non è un 403 e non è un 404: il titolo chi chiede ce l'ha (il gate di sede è
+     * appena passato) e la foto esiste — per 30 giorni è ancora lì e si ripristina.
+     * È lo STATO della riga a rendere l'operazione senza senso, e la frase deve dire
+     * la via d'uscita («ripristinala prima»), non il rifiuto.
+     */
+    GALLERIA_MEDIA_NEL_CESTINO: 'erroreGalleriaMediaNelCestino',
+    /**
+     * 501 — su questo impianto la galleria non ha il cestino (`gallery:DELETE`): le
+     * colonne `eliminato_il`/`file_rimosso_il` non esistono e l'archiviazione non è
+     * avvenuta. È il degrado del DB E2E della CI, non migrato.
+     *
+     * ⚠️ 501 e non 500, e la differenza è quella che l'utente deve leggere: non è un
+     * guasto passeggero da riprovare fra un minuto — è una funzione che su questo
+     * impianto non c'è. Qui NON si degrada cancellando: un `.delete()` di ripiego
+     * distruggerebbe la riga e renderebbe il file del bucket irraggiungibile per
+     * sempre, proprio dove il cestino non c'è per accoglierla.
+     */
+    GALLERIA_CESTINO_NON_DISPONIBILE: 'erroreGalleriaCestinoNonDisponibile',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

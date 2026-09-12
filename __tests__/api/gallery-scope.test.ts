@@ -32,6 +32,10 @@ const h = vi.hoisted(() => ({
   legame: null as Record<string, unknown> | null,
   // Iniezione errori per i rami di degrado.
   mediaScuolaError: null as string | null, // '42703' → la SELECT media con filtro sede fallisce
+  // '42703' → la SELECT media che NOMINA le colonne del cestino fallisce. Gemello
+  // di `mediaScuolaError` e non un suo doppione: sul DB E2E della CI mancano
+  // ENTRAMBE, e i due degradi devono poter convivere (vedi il caso (g)).
+  mediaCestinoError: null as string | null,
   insertScuolaError: null as string | null, // 'PGRST204' → l'INSERT con scuola_id fallisce
   insertedRows: [] as Array<Record<string, unknown>>,
 }))
@@ -60,7 +64,35 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 // filtro `.in('scuola_id', ...)` viene applicato davvero, così l'isolamento per
 // sede è verificato e non solo asserito.
 // -----------------------------------------------------------------------------
-type State = { table: string; filters: Record<string, unknown> }
+type State = {
+  table: string
+  filters: Record<string, unknown>
+  /**
+   * `.is(colonna, valore)` — dal 2026-09-11 le letture di `galleria_media_v2`
+   * passano da `@/lib/gallery/cestino`, e `soloVive` è `.is('eliminato_il', null)`.
+   *
+   * Si REGISTRA invece di essere ignorata, per le stesse due ragioni per cui
+   * questo finto client applica `.in('scuola_id', …)` davvero: serve a sapere se
+   * la query nomina le colonne del cestino (è ciò che rende il degrado del caso
+   * (g) una MISURA e non un'asserzione) e serve ad applicare il filtro alle
+   * righe, così un filtro messo sulla colonna sbagliata non resta verde.
+   */
+  is: Array<[string, boolean | null]>
+}
+
+/** Le colonne che sul DB E2E della CI, non migrato, non esistono. */
+const COLONNE_CESTINO = new Set(['eliminato_il', 'eliminato_da', 'file_rimosso_il'])
+
+/** `IS NULL` vale anche sulla colonna ASSENTE dal fixture: in tabella sarebbe NULL. */
+function applicaIs<T extends Record<string, unknown>>(righe: T[], is: State['is']): T[] {
+  let out = righe
+  for (const [col, val] of is) {
+    out = val === null
+      ? out.filter((r) => r[col] === null || r[col] === undefined)
+      : out.filter((r) => r[col] === val)
+  }
+  return out
+}
 
 function resolveList(state: State): { data: unknown[]; error: unknown } {
   if (state.table === 'alunni') {
@@ -95,11 +127,20 @@ function resolveSingle(state: State): { data: unknown; error: unknown } {
 
 function resolveMedia(state: State): { data: unknown[] | null; count: number | null; error: unknown } {
   const hasScuolaFilter = 'scuola_id__in' in state.filters
+  const nominaCestino = state.is.some(([c]) => COLONNE_CESTINO.has(c))
+  // Degrado: la SELECT che NOMINA le colonne del cestino fallisce (assenti su
+  // E2E CI). Prima del filtro di sede perché è la colonna più nuova — ma il
+  // punto è che i due rami sono INDIPENDENTI: una query che non nomina il
+  // cestino deve continuare a funzionare anche con questo errore armato,
+  // altrimenti il degrado non si misura, si assume.
+  if (nominaCestino && h.mediaCestinoError) {
+    return { data: null, count: null, error: { code: h.mediaCestinoError } }
+  }
   // Degrado: la SELECT con il filtro sede fallisce (colonna assente su E2E CI).
   if (hasScuolaFilter && h.mediaScuolaError) {
     return { data: null, count: null, error: { code: h.mediaScuolaError } }
   }
-  let rows = h.mediaAll.slice()
+  let rows = applicaIs(h.mediaAll.slice(), state.is)
   // Isolamento per sede: è il cuore del fix D3. (Le condizioni `.or` broadcast/tag
   // non sono emulate: qui si verifica proprio che il filtro sede escluda il
   // cross-tenant a prescindere dai tag.)
@@ -112,7 +153,7 @@ function resolveMedia(state: State): { data: unknown[] | null; count: number | n
 
 const adminClient = {
   from(table: string) {
-    const state: State = { table, filters: {} }
+    const state: State = { table, filters: {}, is: [] }
     const b: Record<string, unknown> = {}
     b.select = () => b
     b.order = () => b
@@ -120,6 +161,10 @@ const adminClient = {
     b.lte = () => b
     b.or = () => b
     b.not = () => b
+    b.is = (col: string, val: boolean | null) => {
+      state.is.push([col, val])
+      return b
+    }
     b.eq = (col: string, val: unknown) => {
       state.filters[col] = val
       return b
@@ -185,6 +230,7 @@ beforeEach(() => {
   h.media = null
   h.legame = null
   h.mediaScuolaError = null
+  h.mediaCestinoError = null
   h.insertScuolaError = null
   h.insertedRows = []
 })
@@ -253,6 +299,88 @@ describe('(d) GET /api/gallery — degrado su 42703 (SELECT senza la colonna)', 
     // Senza colonna sede il filtro cade: la lettura resta possibile (degrado pulito).
     expect(j.total).toBe(2)
     expect(haDegrado()).toBe(true)
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * (g) I DUE DEGRADI DEVONO CONVIVERE, perché sul DB E2E della CI MANCANO
+ * ENTRAMBE le colonne: `scuola_id` (mai migrata su quel progetto) e le tre del
+ * cestino (nate il 2026-09-11). I due si annunciano con lo STESSO codice
+ * PostgREST — `42703` in SELECT — che dice «una colonna non c'è» e mai QUALE,
+ * quindi la route non può indovinare: toglie un filtro alla volta e guarda se la
+ * query smette di fallire.
+ *
+ * Il rischio che questi due casi coprono non è teorico: un degrado aggiunto senza
+ * via d'uscita non «indebolisce» la galleria in CI, la SPEGNE — 500 su ogni
+ * lettura — e un degrado che indovina male toglie il filtro di SEDE quando
+ * mancava il cestino, cioè il fail-open peggiore di questa rotta (fix D3, una
+ * segreteria che legge le foto di un altro plesso).
+ * ──────────────────────────────────────────────────────────────────────────── */
+describe('(g) GET /api/gallery — nessuna delle due colonne esiste (il DB E2E della CI)', () => {
+  it('risponde comunque 200 e serve i media, con i due degradi distinti nei log', async () => {
+    h.mediaScuolaError = '42703'
+    h.mediaCestinoError = '42703'
+    h.alunniMaster = [{ id: ALU_A, classe_sezione: CLASSE_OMONIMA, scuola_id: SEDE_A }]
+    h.mediaAll = [
+      { id: 'media-A', scuola_id: SEDE_A, is_broadcast: false, tag_students: [ALU_A], uploaded_by: 'ed1' },
+      { id: 'media-B', scuola_id: SEDE_B, is_broadcast: false, tag_students: [ALU_B], uploaded_by: 'ed2' },
+    ]
+    const res = await GET(getReq(`classe=${CLASSE_OMONIMA}`))
+    // L'asserzione che conta è questa: con due filtri e una sola via d'uscita a
+    // testa, la lettura arriva in fondo. Un 500 qui vorrebbe dire galleria spenta
+    // in CI su ogni schermata che la monta.
+    expect(res.status, 'i due degradi si escludono a vicenda: la galleria e spenta in CI').toBe(200)
+    const j = await res.json()
+    expect(j.total).toBe(2)
+    // Ed è un impianto con UNA sede sola (`schools` vuota nel finto DB), quindi
+    // il degrado di sede è lecito: su un impianto multi-sede si nega, e quel caso
+    // ha il suo test in `gallery-sede-segreteria` (G).
+    expect(haDegrado(), 'il degrado del filtro di sede non e stato nemmeno tentato').toBe(true)
+    const cestino = eventiGalleria().filter(
+      (c) => (c[2] as { esito?: string })?.esito === 'degrado-cestino-colonna-assente',
+    )
+    expect(cestino).toHaveLength(1)
+    // `warn` e non `info`: su un impianto migrato questo ramo non deve scattare
+    // mai, e se scatta le righe cestinate NON sono filtrate — cioè una foto
+    // eliminata può tornare a schermo.
+    expect(cestino[0][1]).toBe('warn')
+  })
+
+  it('e con il SOLO cestino assente il filtro di SEDE non cade: la foto dell\'altro plesso resta fuori', async () => {
+    // La controprova che rende utile il caso qui sopra. Se la route indovinasse
+    // invece di misurare — togliendo il filtro di sede al primo `42703` — questo
+    // test diventerebbe rosso con `media-B` in elenco.
+    h.mediaCestinoError = '42703'
+    h.alunniMaster = [{ id: ALU_A, classe_sezione: CLASSE_OMONIMA, scuola_id: SEDE_A }]
+    h.mediaAll = [
+      { id: 'media-A', scuola_id: SEDE_A, is_broadcast: false, tag_students: [ALU_A], uploaded_by: 'ed1' },
+      { id: 'media-B', scuola_id: SEDE_B, is_broadcast: false, tag_students: [ALU_B], uploaded_by: 'ed2' },
+    ]
+    const res = await GET(getReq(`classe=${CLASSE_OMONIMA}`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    const ids = (j.media as Array<{ id: string }>).map((m) => m.id)
+    expect(ids, 'il degrado del cestino ha spento anche l\'isolamento di sede').not.toContain('media-B')
+    expect(j.total).toBe(1)
+    expect(haDegrado(), 'il filtro di sede e stato tolto per un errore che non era suo').toBe(false)
+  })
+
+  it('CONTROLLO DI VALIDITÀ — su un impianto migrato la foto nel cestino NON esce', async () => {
+    // Senza questo caso i due qui sopra resterebbero verdi anche se `soloVive`
+    // filtrasse la colonna sbagliata (o niente): il finto DB registra `.is()` e lo
+    // applica, e questa è la riga che lo dimostra. Un mock che accetta e ignora è
+    // verde con la correzione e senza.
+    h.alunniMaster = [{ id: ALU_A, classe_sezione: CLASSE_OMONIMA, scuola_id: SEDE_A }]
+    h.mediaAll = [
+      { id: 'media-viva', scuola_id: SEDE_A, is_broadcast: false, tag_students: [ALU_A], uploaded_by: 'ed1', eliminato_il: null },
+      { id: 'media-cestinata', scuola_id: SEDE_A, is_broadcast: false, tag_students: [ALU_A], uploaded_by: 'ed1', eliminato_il: '2026-09-11T10:00:00.000Z' },
+    ]
+    const res = await GET(getReq(`classe=${CLASSE_OMONIMA}`))
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    const ids = (j.media as Array<{ id: string }>).map((m) => m.id)
+    expect(ids).toEqual(['media-viva'])
+    expect(j.total).toBe(1)
   })
 })
 

@@ -81,8 +81,20 @@ const ESENTE = 'src/lib/logging/';
 // file, 79−1−2 occorrenze), rimisurata sul file unito — 48 voci, somma 76 — invece di
 // prendere il minore dei due tetti. Prendere 49 o 50 avrebbe lasciato il lock più largo del
 // vero, cioè decorativo.
-const MAX_FILE = 48;
-const MAX_OCCORRENZE = 76;
+//
+// 🔻 48 → 47 e 76 → 71 il 2026-09-12: bonificato `src/lib/media/video-mediarecorder.ts`, e la
+// bonifica non è un ripulisci-log, è la riscrittura per cui quel file esisteva. I suoi CINQUE
+// `.catch(() => {})` erano cinque chiusure diverse, ognuna con la sua copia della pulizia:
+// `play()` che rigettava chiamava il fallimento DOPO che `start()` era partito, `onstop`
+// risolveva una promise già rigettata, AudioContext e object URL venivano liberati due volte.
+// Adesso la chiusura è UNA (`chiudi`, idempotente) e il suo unico `catch` logga. In quel file
+// il silenzio non era un log perso: su iOS la conversione non rigettava MAI — zero righe di
+// `gallery-video-conversione-fallita` in tutta `app_log` — e ogni guasto usciva sotto forma di
+// FILE, un video di durata giusta, congelato su un fotogramma e muto, che il primo a vedere era
+// il genitore. Il tetto si stringe insieme al debito: lasciarlo a 48/76 dopo una bonifica di 5
+// occorrenze significa tenere credito non speso, cioè un tetto che non misura più niente.
+const MAX_FILE = 47;
+const MAX_OCCORRENZE = 71;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

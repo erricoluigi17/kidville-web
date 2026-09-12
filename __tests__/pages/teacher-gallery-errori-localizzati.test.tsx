@@ -124,16 +124,59 @@ async function salvaTag() {
     await waitFor(() => expect(h.alert).toHaveBeenCalled());
 }
 
-/** Apre il lightbox e chiede l'eliminazione del media. */
+/**
+ * Apre il lightbox, chiede l'eliminazione e CONFERMA nel dialogo.
+ *
+ * ⚠️ I GESTI SONO DUE, DAL 2026-09-11, e il secondo non è cosmetico. «Elimina
+ * Media» non elimina più: apre `DialogoEliminaMedia` — la conferma che dice cosa
+ * accade (la foto sparisce subito) e cosa resta (30 giorni nel cestino). Prima era
+ * `onDelete(id); handleCloseLightbox();`, due righe di cui la seconda non aspettava
+ * la prima: il visore si chiudeva PRIMA della risposta del server e un rifiuto
+ * arrivava su una schermata che non mostrava più la foto di cui parlava.
+ *
+ * Questo helper fermandosi al primo clic non provava più niente: il gesto apriva un
+ * dialogo e la richiesta non partiva, quindi il caso DELETE moriva sul `waitFor`
+ * senza che ci fosse nulla di rotto nel contratto che difende.
+ */
 async function eliminaMedia() {
     render(<TeacherGalleryPage />);
     await waitFor(() => expect(screen.getByAltText(MEDIA.caption)).toBeInTheDocument());
     fireEvent.click(screen.getByAltText(MEDIA.caption));
     fireEvent.click(screen.getByRole('button', { name: new RegExp(itShared.galleryEliminaMedia) }));
-    await waitFor(() => expect(h.alert).toHaveBeenCalled());
+    // La conferma distruttiva del dialogo: «Elimina» esatto, che non collide con
+    // «Elimina Media» del visore rimasto sotto.
+    fireEvent.click(screen.getByRole('button', { name: new RegExp(`^${itShared.galleryEliminaConferma}$`) }));
+    await waitFor(() => expect(testoRifiuto()).not.toBe(''));
 }
 
 const testoAvviso = () => String(h.alert.mock.calls.at(-1)?.[0] ?? '');
+
+/**
+ * IL TESTO DEL RIFIUTO, DA QUALUNQUE DEI DUE CANALI ESCA — e la ragione per cui
+ * si guardano entrambi è scritta in un lock, non è prudenza.
+ *
+ * Il contratto che questo file difende è uno: **il rifiuto del server si legge
+ * nella lingua dell'interfaccia**. Il CANALE con cui arriva all'utente, invece, è
+ * in mezzo a un cambio che non appartiene a questa consegna:
+ * `__tests__/architecture/media-elimina-chiamante-rigetta.test.ts` tiene
+ * `src/app/(dashboard)/teacher/gallery/page.tsx` in un'allowlist di UN elemento
+ * perché `handleDeleteMedia` risolve sempre — `alert()` e ritorna — mentre il
+ * contratto di `MediaGrid.onDelete` pretende che RIGETTI, così che il rifiuto si
+ * dipinga DENTRO il dialogo (`role="alert"`, `data-testid="elimina-media-vietato"`)
+ * mentre la foto è ancora a schermo. Quel lavoro è assegnato a un'altra consegna.
+ *
+ * Ancorare qui l'asserzione al solo `alert` significherebbe lasciare una mina:
+ * il giorno in cui quella pagina viene bonificata questo caso diventerebbe rosso
+ * pur essendo il contratto RISPETTATO MEGLIO di prima. Si guarda quindi ciò che
+ * l'utente legge, non da dove esce — e la severità non cala: se nessuno dei due
+ * canali porta la frase di catalogo il caso resta rosso, e la riga
+ * `not.toContain` qui sotto continua a vietare la prosa italiana del server.
+ */
+const testoRifiuto = (): string => {
+    const daAlert = testoAvviso();
+    if (daAlert !== '') return daAlert;
+    return screen.queryByTestId('elimina-media-vietato')?.textContent ?? '';
+};
 
 describe('Galleria docente — il rifiuto del server si legge nella lingua dell’interfaccia', () => {
     it('PATCH 403 con `codice`, interfaccia EN: la frase è quella inglese di catalogo', async () => {
@@ -151,7 +194,10 @@ describe('Galleria docente — il rifiuto del server si legge nella lingua dell�
 
     it('DELETE 403 con `codice`: stesso trattamento, non solo sui tag', async () => {
         await eliminaMedia();
-        expect(testoAvviso()).toBe(enShared.erroreSedeNonAccessibile);
+        expect(testoRifiuto()).toContain(enShared.erroreSedeNonAccessibile);
+        // …e NON la prosa italiana che il server manda accanto al codice, che è
+        // l'intero motivo per cui questo file esiste.
+        expect(testoRifiuto()).not.toContain(rispostaDelete.body.error as string);
     });
 
     it('senza `codice` resta la prosa del server (meglio della frase generica)', async () => {

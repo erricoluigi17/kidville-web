@@ -110,7 +110,7 @@ afterEach(() => cleanup());
 
 describe('MediaGrid — il visore scorre e non taglia via i comandi', () => {
     it('esiste uno scroller con overflow-y-auto, e NESSUN antenato della colonna clippa', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         apriVisoreFoto();
 
         const colonna = screen.getByTestId('visore-colonna');
@@ -133,7 +133,7 @@ describe('MediaGrid — il visore scorre e non taglia via i comandi', () => {
     });
 
     it('il bottone che cadeva fuori sta DENTRO la colonna che scorre', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         apriVisoreFoto();
 
         const colonna = screen.getByTestId('visore-colonna');
@@ -146,7 +146,7 @@ describe('MediaGrid — il visore scorre e non taglia via i comandi', () => {
     });
 
     it('il riempimento della colonna rispetta le aree di sicurezza del telefono', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         apriVisoreFoto();
 
         const involucro = screen.getByTestId('visore-colonna').parentElement!;
@@ -168,7 +168,7 @@ describe('MediaGrid — il visore scorre e non taglia via i comandi', () => {
         // WebView Chromium di Android un antenato con `backdrop-filter` CANCELLA
         // l'intero sottoalbero dall'albero di accessibilità — la modale c'era e per
         // TalkBack non esisteva.
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         apriVisoreFoto();
 
         const colonna = screen.getByTestId('visore-colonna');
@@ -441,7 +441,7 @@ describe('MediaGrid — il visore è una finestra modale, e il fuoco ci entra', 
      * decorazione.
      */
     it('è dichiarato `dialog` modale e porta il nome del media aperto', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         apriVisoreFoto();
 
         const dialogo = screen.getByRole('dialog');
@@ -456,7 +456,7 @@ describe('MediaGrid — il visore è una finestra modale, e il fuoco ci entra', 
     });
 
     it('il fuoco ENTRA nel visore all’apertura da tastiera, e non resta sulla card coperta', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         const card = screen.getByRole('button', { name: NOME_CARD_FOTO });
         card.focus();
         expect(document.activeElement, 'la card non ha preso il fuoco: il test non misura niente').toBe(card);
@@ -475,7 +475,7 @@ describe('MediaGrid — il visore è una finestra modale, e il fuoco ci entra', 
     });
 
     it('il fuoco TORNA alla card quando il visore si chiude', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         const card = screen.getByRole('button', { name: NOME_CARD_FOTO });
         card.focus();
         fireEvent.keyDown(card, { key: 'Enter' });
@@ -503,7 +503,7 @@ describe('MediaGrid — il visore è una finestra modale, e il fuoco ci entra', 
     });
 
     it('la griglia dietro il velo diventa inerte: il Tab non gira sui comandi coperti', () => {
-        render(<MediaGrid items={[FOTO]} showActions onDelete={() => {}} />);
+        render(<MediaGrid items={[FOTO]} showActions onDelete={async () => {}} />);
         const griglia = screen.getByTestId('griglia-media');
         expect(griglia.hasAttribute('inert'), 'la griglia è inerte prima di aprire il visore').toBe(false);
 

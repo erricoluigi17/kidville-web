@@ -222,13 +222,20 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
     ]
   })
 
-  it('DELETE: 403 sul media con `scuola_id` NULL, e la riga resta al suo posto', async () => {
+  it('DELETE: 403 sul media con `scuola_id` NULL, e la riga resta INTATTA', async () => {
     // Segreteria di proposito: cade nel ramo `isAdmin`, che autorizza TUTTO —
     // così l'unica cosa che può produrre il 403 è il controllo di sede.
     h.requireDocente.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_SENZA_SEDE}`))
     expect(res.status).toBe(403)
     expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO, MEDIA_MIO_PULITO])
+    // ⚠️ «La riga c'è ancora» non prova più niente da sola (2026-09-11): «Elimina»
+    // non distrugge, ARCHIVIA, quindi la riga sopravvive anche a un'eliminazione
+    // riuscita. Ciò che il 403 deve aver impedito è la scrittura del cestino.
+    expect(
+      h.db.galleria_media_v2.find((m) => m.id === MEDIA_SENZA_SEDE)!.eliminato_il ?? null,
+      'un media senza sede e finito nel cestino nonostante il 403',
+    ).toBeNull()
   })
 
   it('PATCH: 403 sul media con `scuola_id` NULL, e la didascalia non cambia', async () => {
@@ -245,6 +252,12 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_ALTRUI_A}`))
     expect(res.status).toBe(403)
     expect(h.db.galleria_media_v2.map((m) => m.id)).toContain(MEDIA_ALTRUI_A)
+    // Col cestino la presenza della riga non distingue più «negato» da
+    // «eliminato»: si guarda il campo che l'archiviazione scrive.
+    expect(
+      h.db.galleria_media_v2.find((m) => m.id === MEDIA_ALTRUI_A)!.eliminato_il ?? null,
+      'il media altrui della sede A e finito nel cestino nonostante il 403',
+    ).toBeNull()
   })
 
   it('PATCH: le classi del docente si deducono SOLO dai suoi alunni in sede', async () => {
@@ -257,10 +270,33 @@ describe('DELETE/PATCH /api/gallery — un media senza sede non è di nessuno', 
     expect(h.db.galleria_media_v2.find((m) => m.id === MEDIA_ALTRUI_A)?.caption).toBe('della sede A')
   })
 
-  it('DELETE: il proprio media resta cancellabile (controllo positivo)', async () => {
+  // ⚠️ IL CONTROLLO POSITIVO, RISCRITTO SUL CESTINO (2026-09-11). Asseriva
+  // `[MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO_PULITO]`, cioè la SPARIZIONE
+  // della riga: da quando «Elimina» archivia — `eliminato_il` + `eliminato_da`, la
+  // foto invisibile subito a tutti e distrutta alla purga dei 30 giorni — quella
+  // sparizione non avviene più, e non deve avvenire (il `.delete()` di prima
+  // lasciava il file nel bucket senza nessuna riga che ne scrivesse il percorso).
+  //
+  // Ciò che questo caso deve continuare a provare è identico e non si tocca: il
+  // proprio media si elimina DAVVERO, e l'effetto cade su quello e su nessun
+  // altro. Senza questa coppia di asserzioni i tre 403 qui sopra resterebbero
+  // verdi anche davanti a una DELETE che nega a chiunque.
+  it('DELETE: il proprio media resta eliminabile, e finisce nel cestino (controllo positivo)', async () => {
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_MIO}`))
     expect(res.status).toBe(200)
-    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO_PULITO])
+    expect(await res.json()).toMatchObject({ success: true, esito: 'nel-cestino' })
+
+    const mio = h.db.galleria_media_v2.find((m) => m.id === MEDIA_MIO)!
+    expect(typeof mio.eliminato_il, 'la DELETE ha risposto 200 senza archiviare niente').toBe('string')
+    expect(mio.eliminato_da).toBe(ED_A)
+
+    // Gli altri tre restano VIVI: l'`.eq('id', …)` dell'UPDATE non ha allargato.
+    for (const altro of [MEDIA_SENZA_SEDE, MEDIA_ALTRUI_A, MEDIA_MIO_PULITO]) {
+      expect(
+        h.db.galleria_media_v2.find((m) => m.id === altro)!.eliminato_il ?? null,
+        `l'eliminazione di un media ha cestinato anche ${altro}`,
+      ).toBeNull()
+    }
   })
 
   it('PATCH: il proprio media resta modificabile (controllo positivo)', async () => {

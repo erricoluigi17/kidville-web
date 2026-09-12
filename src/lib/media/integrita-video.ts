@@ -86,27 +86,29 @@ export interface MisuraConversione {
      * ⚠️ IN MANCANZA DI UNA MISURA AFFIDABILE SI PASSA `false` DA ENTRAMBI I LATI, cioè si
      * SPEGNE la regola 3 — non `true`. Le due scelte non sono simmetriche:
      *
-     *  - con `true` fisso, un video girato in silenzio che passa dal ramo `catch` della
-     *    cattura Web Audio (`video-mediarecorder.ts:103`, quello che azzera il volume e
-     *    prosegue senza traccia) viene rifiutato per `audio-perduto`. È un falso rifiuto,
-     *    cioè l'insegnante che riprova tre volte e poi chiama: il modo più rapido di far
-     *    disattivare un cancello, ed è scritto anche accanto alla regola 3;
+     *  - con `true` fisso, un video girato in silenzio viene rifiutato per `audio-perduto`
+     *    ogni volta che l'uscita non porta una traccia. È un falso rifiuto, cioè l'insegnante
+     *    che riprova tre volte e poi chiama: il modo più rapido di far disattivare un
+     *    cancello, ed è scritto anche accanto alla regola 3;
      *  - con `false` fisso la regola 3 non scatta mai, ed è una regola morta. Una regola
      *    morta non fa danni: un falso rifiuto sì.
      *
-     * Nota per chi collega: lato USCITA l'unico segnale attendibile è l'esito della cattura
-     * (`audioTrack !== null` in `video-mediarecorder.ts:101`), e attenzione perché
-     * `createMediaStreamDestination()` produce SEMPRE una traccia, anche silenziosa: dedotta
-     * dallo stream, `tracciaAudioUscita` è `true` quasi sempre. La regola 3 vive o muore sul
-     * valore in INGRESSO.
+     * Nota per chi collega, e dal 2026-09-12 è cambiata: lato USCITA l'unico segnale che la
+     * conversione sappia dare è l'esito della cattura Web Audio (si trova a colpo sicuro
+     * cercando `audio-non-catturabile` in `video-mediarecorder.ts`), e quell'esito **non è più
+     * un'informazione**: una cattura fallita adesso INTERROMPE la conversione, quindi su un file
+     * consegnato è riuscita per costruzione. Prima esisteva un ramo di ripiego che azzerava il
+     * volume e proseguiva senza traccia, ed era da lì che poteva uscire un muto; non c'è più. In
+     * più `createMediaStreamDestination()` produce SEMPRE una traccia, anche silenziosa. La
+     * regola 3 vive o muore sul valore in INGRESSO.
      */
     tracciaAudioIngresso: boolean
     /** Il PRODOTTO ha una traccia audio. Vedi la nota su `tracciaAudioIngresso`. */
     tracciaAudioUscita: boolean
     /**
      * Quanti disegni il ciclo di conversione si ASPETTAVA di fare (tipicamente
-     * `durata × fps`; i fps della tela sono i 25 di `captureStream(25)`,
-     * `video-mediarecorder.ts:117`).
+     * `durata × fps`; i fps della tela sono i 25 di `captureStream(25)`, che la conversione
+     * dichiara in `FPS_TELA` e rimanda al chiamante dentro la misura, come `fpsTela`).
      */
     fotogrammiAttesi: number
     /**
@@ -152,8 +154,9 @@ export type MotivoNonIntegro =
  * Il bitrate MINIMO cablato nella conversione.
  *
  * È il `600000` di `bitrate = Math.max(600000, Math.min(2500000, bitrate))` in
- * `src/lib/media/video-mediarecorder.ts:89` (oggi riga 89; il numero si trova a colpo sicuro
- * cercando `Math.max(600000`). Non è una scelta di questo file: è il pavimento che
+ * `src/lib/media/video-mediarecorder.ts` (il numero si trova a colpo sicuro cercando
+ * `Math.max(600000`; un numero di riga qui invecchierebbe in silenzio, e questo file ne aveva
+ * cinque sbagliati). Non è una scelta di questo file: è il pavimento che
  * `MediaRecorder` riceve, quindi il pavimento sotto cui il file prodotto non può stare se la
  * registrazione ha davvero scritto qualcosa.
  *
@@ -300,10 +303,20 @@ export function verificaIntegrita(m: MisuraConversione): { integro: true } | { i
     // Solo in questa direzione. Un video girato in silenzio (o con il microfono coperto, o
     // un timelapse) è legittimo e resta legittimo: pretendere audio dove non ce n'era
     // significherebbe rifiutare video sani, ed è il modo più rapido di far disattivare un
-    // cancello. La cattura Web Audio in `video-mediarecorder.ts:103` ha un ramo di ripiego
-    // che azzera il volume (riga 110) e prosegue SENZA traccia: è esattamente il caso che
-    // questa regola prende — a patto che il chiamante sappia misurare l'audio in ingresso,
-    // e la nota su `tracciaAudioIngresso` dice cosa fare quando non lo sa.
+    // cancello.
+    //
+    // ⚠️ SULLA STRADA DI `video-mediarecorder.ts` QUESTA REGOLA È OGGI SPENTA, e va scritto
+    // invece di lasciarlo dedurre. Fino al 2026-09-11 la cattura Web Audio aveva un ramo di
+    // ripiego che azzerava il volume dell'elemento e proseguiva SENZA traccia: era esattamente il
+    // caso che questa regola prendeva, e questo commento lo citava come giustificazione. Quel
+    // ramo NON ESISTE PIÙ — una cattura fallita interrompe la conversione
+    // (`audio-non-catturabile`, `audio-sospeso`), e il volume non si tocca — quindi su un file
+    // consegnato l'uscita ha sempre la sua traccia. Senza una sonda vera in ingresso il chiamante
+    // passa `false` da entrambi i lati, e due `false` non fanno scattare niente. La regola resta
+    // viva soltanto per chi misuri DAVVERO l'audio del sorgente; finché nessuno lo fa è spenta
+    // per scelta, e una regola spenta e dichiarata è meglio di una regola spenta che si crede
+    // accesa — che è il difetto per cui esiste questo intero modulo, applicato alla sua
+    // documentazione.
     if (m.tracciaAudioIngresso && !m.tracciaAudioUscita) {
         return { integro: false, motivo: 'audio-perduto' }
     }

@@ -243,6 +243,82 @@ export interface Unita {
 }
 
 /**
+ * Quanto sorgente si guarda a monte del ricevitore per trovare l'assegnazione che
+ * riceve la query. Era 200 caratteri, e 200 bastavano finché fra `let X =` e
+ * `supabase` non c'era niente. Oggi ci può stare un ternario a tre rami con i suoi
+ * `motivo` scritti per esteso (`gallery:GET`: 780 caratteri fra il `let` e il terzo
+ * `.from(`), e una finestra corta non «è prudente» — perde il nome, perde le
+ * continuazioni, e con esse il filtro di sede. La finestra larga non allenta
+ * niente da sola: chi decide è `soloAvvolgimenti`, che rifiuta tutto ciò che non
+ * sia avvolgimento puro.
+ */
+const LARGHEZZA_TESTA = 1500
+
+/** Il ricevitore della catena: `supabase`, `admin.schema('x')`, `await db`. */
+const RICEVITORE = /(?:await\s+)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*$/
+
+/** Una chiamata APERTA in coda: `soloVive(`, `ancheNelCestino(`, `vive(`. */
+const CHIAMATA_APERTA = /[A-Za-z_$][\w$]*\s*(?:<[^<>]*>\s*)?\(\s*$/
+
+/**
+ * Le tre forme di assegnazione che possono RICEVERE una query, in un colpo solo:
+ * `const X =`, `const { a, b } =`, `X =`. Il `(?![=>])` tiene fuori `==`, `===` e
+ * `=>` — un `=>` letto come assegnazione attribuirebbe la query al nome della
+ * funzione che la contiene.
+ */
+const ASSEGNAZIONE =
+    /(?:(?:const|let|var)\s+([A-Za-z_$][\w$]*)|(?:const|let|var)\s*\{([^{}]*)\}|(?:^|[;{}\n])\s*([A-Za-z_$][\w$]*))\s*=(?![=>])/g
+
+/**
+ * Fra il `=` e il ricevitore c'è SOLO avvolgimento?
+ *
+ * È il guardiano di tutta questa parte, ed è per questo che è scritto in bianco e
+ * non in nero: non elenca ciò che è vietato (elenco che invecchia), pretende che
+ * dopo aver togliuto i token AMMESSI non resti niente. Ammessi sono soltanto:
+ * `await`, una chiamata aperta (`soloVive(`), un nome nudo (la condizione o il
+ * ramo già chiuso di un ternario), `!`, `?`, `:`. Tutto il resto — un punto, una
+ * virgola, un `;`, una graffa, un `&&`, una parentesi tonda senza nome davanti —
+ * fa rispondere `false`, e il nome della variabile resta `null` come prima.
+ *
+ * Perché conta: `const ids = (await supabase.from('alunni').select('id')).data.map(…)`
+ * NON assegna la query a `ids`, assegna il risultato TRASFORMATO. Attribuirgli le
+ * continuazioni di `ids` significherebbe leggere `ids = ids.filter(i => i.scuola_id === s)`
+ * come «questa query filtra per sede»: un filtro in JavaScript su righe già lette,
+ * cioè esattamente la fuga che questo lock cerca. Quel caso qui si ferma sul `(`
+ * senza nome davanti e sul `.` di `.data`.
+ *
+ * I gruppi bilanciati si tolgono prima, dal più interno: un ramo di ternario già
+ * chiuso (`? soloNelCestino(supabase.from(…).select(…))`) è un nome più un gruppo,
+ * e senza quel passaggio il suo `.from` lo farebbe rifiutare.
+ */
+export function soloAvvolgimenti(tra: string): boolean {
+    let s = tra
+    // Il tetto è la terminazione su un sorgente inatteso: ogni giro toglie almeno
+    // un livello di parentesi, e 20 livelli annidati in 1500 caratteri non esistono.
+    for (let g = 0; g < 20; g++) {
+        const p = s.replace(/\([^()]*\)/g, ' ')
+        if (p === s) break
+        s = p
+    }
+    return s.replace(/\bawait\b|[A-Za-z_$][\w$]*\s*(?:<[^<>]*>\s*)?\(|[A-Za-z_$][\w$]*|[!?:]|\s+/g, '') === ''
+}
+
+/**
+ * L'assegnazione che riceve questa query: il nome a cui finisce, o i nomi
+ * destrutturati. `null`/`null` quando fra il `=` e il ricevitore c'è qualcosa che
+ * non è avvolgimento — cioè quando NON si può dire che la variabile sia la query.
+ */
+export function riceveLaQuery(senzaRicevitore: string): { variabile: string | null; destrutturato: string | null } {
+    const niente = { variabile: null, destrutturato: null }
+    ASSEGNAZIONE.lastIndex = 0
+    let ultima: RegExpExecArray | null = null
+    for (let m = ASSEGNAZIONE.exec(senzaRicevitore); m; m = ASSEGNAZIONE.exec(senzaRicevitore)) ultima = m
+    if (!ultima) return niente
+    if (!soloAvvolgimenti(senzaRicevitore.slice(ultima.index + ultima[0].length))) return niente
+    return { variabile: ultima[1] ?? ultima[3] ?? null, destrutturato: ultima[2] ?? null }
+}
+
+/**
  * Le query di un sorgente, ciascuna con tutte le sue continuazioni.
  *
  * «Una query» è la catena che parte da `.from('…')` PIÙ le riassegnazioni
@@ -263,32 +339,119 @@ export function unitaDiQuery(senzaCommenti: string, struttura: string): Unita[] 
 
         // A quale variabile è assegnata la query? Serve per riattaccarle le
         // continuazioni condizionali.
-        const prima = senzaCommenti.slice(Math.max(0, inizio - 200), inizio)
-        const senzaRicevitore = prima.replace(/(?:await\s+)?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*$/, '')
-        const variabile =
-            /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*$/.exec(senzaRicevitore)?.[1] ??
-            /(?:^|[;{}\n])\s*([A-Za-z_$][\w$]*)\s*=\s*$/.exec(senzaRicevitore)?.[1] ??
-            null
-
+        //
+        // ─── IL RICEVITORE PUÒ ESSERE AVVOLTO (2026-09-12) ───────────────────
+        //
+        // Fino a ieri «a quale variabile» si leggeva pretendendo `let X =`
+        // ATTACCATO al ricevitore. Dal 2026-09-11 la galleria scrive così, perché
+        // il lock del cestino pretende che ogni lettura DICHIARI se vede il cestino
+        // (`__tests__/architecture/cestino-galleria-ogni-lettura-dichiara.test.ts`):
+        //
+        //     let query = soloVive(supabase.from('galleria_media_v2').select('*'))
+        //     …
+        //     if (conScuola) query = query.in('scuola_id', plessi)
+        //
+        // Fra `let query =` e `supabase` c'è una CHIAMATA: il nome non si leggeva
+        // più, le continuazioni non si attaccavano, e il filtro di sede che arriva
+        // PER CONTINUAZIONE diventava invisibile. Questo lock gridava
+        // `elenco-senza-sede` sulla strada principale della galleria mentre a
+        // runtime l'isolamento c'era, scritto tre righe sotto.
+        //
+        // Tre cose devono sopravvivere a un avvolgimento, e sono tre perché erano
+        // tre le cose che si leggevano «attaccate» al ricevitore:
+        //
+        //  1. il NOME (`riceveLaQuery`), che riattacca le continuazioni;
+        //  2. la DESTRUTTURAZIONE (`const { data: media } = await ancheNelCestino(…)`),
+        //     che è come il lock sa che «il gate ha verificato `media`» vuol dire
+        //     «ha verificato la riga con quell'id»;
+        //  3. la CATENA DOPO il wrapper: `ancheNelCestino(<query>, 'perché').maybeSingle()`
+        //     — il `.maybeSingle()` sta FUORI dalle parentesi, e senza vederlo una
+        //     lettura di UNA riga per id viene contata come un ELENCO.
+        //
+        // ⚠️ Perché non è un abbassamento di soglia, e come è stato misurato. Il
+        // guardiano è `soloAvvolgimenti`, scritto in bianco: fra il `=` e il
+        // ricevitore possono stare soltanto chiamate, `await`, `!` e i rami di un
+        // ternario. Un punto, una virgola, una parentesi senza nome davanti → il
+        // nome resta `null`, come prima. E un wrapper NON può nascondere una query
+        // che il filtro non ce l'ha: il rilievo non dipende dal nome ma dal TESTO
+        // della catena più le sue continuazioni, e se nessuna continuazione porta
+        // `scuola_id` il rilievo resta. La controprova sono i quattro test
+        // «ricevitore avvolto …» in fondo a questo file, e la misura sul repo è
+        // questa, eseguita il 2026-09-12 confrontando `scoperte()` di HEAD e di
+        // quest'albero SUGLI STESSI sorgenti, su tutte le route con service-role:
+        // **157 rilievi prima, 151 dopo, ZERO aggiunti, e tutti e sei quelli che
+        // spariscono stanno in un file solo** — `src/app/api/gallery/route.ts`
+        // (GET 444/448/449, le tre teste del ternario con `.in('scuola_id', plessi)`
+        // vivo quattordici righe sotto; DELETE 1123 e PATCH 1441, le due letture per
+        // `id` con `.maybeSingle()` fuori dal wrapper; PATCH 1707, la riscrittura per
+        // `id` della riga così letta). Su `gallery/route.ts` restano 3 rilievi, e
+        // portano tutti e tre la loro voce in `AMMESSE`.
+        //
+        // ⚠️ Chi rilegge NON si fidi di questi numeri: si rifanno in dieci minuti
+        // (`git show HEAD:<questo file>` in un file accanto, importarne `scoperte` e
+        // confrontare le due liste su tutte le route). La versione precedente di questo
+        // commento dichiarava «159 rilievi prima, 156 dopo» e citava due test di
+        // controprova: i test non esistevano, e la misura vera era 157 → 157 — il patch
+        // non toccava un solo rilievo. Un commento che dichiara una misura mai eseguita
+        // è peggio di nessun commento, ed è il motivo per cui i quattro test in fondo
+        // sono stati scritti PRIMA di questa riga.
+        const finestra = Math.max(0, inizio - LARGHEZZA_TESTA)
+        // Sulla `struttura` e non su `senzaCommenti`: qui si analizza una FORMA
+        // (parentesi, `?`, `:`, `=`), e il contenuto di una stringa che dicesse
+        // `let query =` la falserebbe. I nomi delle variabili sono codice: nelle due
+        // maschere sono identici.
+        const senzaRicevitore = struttura.slice(finestra, inizio).replace(RICEVITORE, '')
+        const { variabile, destrutturato } = riceveLaQuery(senzaRicevitore)
         let usiSuccessivi = ''
+
+        // LA CATENA NON FINISCE DENTRO LE PARENTESI DEL WRAPPER. `fineCatena` parte
+        // da `.from(` e si ferma sulla virgola che separa la query dal `motivo`:
+        // tutto ciò che è appeso al RISULTATO del wrapper — `.maybeSingle()`, e in
+        // linea di principio un `.in('scuola_id', …)` — resterebbe fuori dalla
+        // query. È lo stesso oggetto builder (`soloVive` ritorna `q`), quindi è la
+        // stessa query, e va letta insieme.
+        if (CHIAMATA_APERTA.test(senzaRicevitore)) {
+            const aperta = finestra + senzaRicevitore.lastIndexOf('(')
+            let dopo = fineParentesi(struttura, aperta)
+            while (dopo < struttura.length && /\s/.test(struttura[dopo])) dopo++
+            if (struttura[dopo] === '.') tratti.push({ a: dopo, b: fineCatena(struttura, dopo) })
+        }
+
         if (variabile) {
             const riassegna = new RegExp(`\\b${variabile}\\s*=`, 'g')
             riassegna.lastIndex = fine
             for (let r = riassegna.exec(senzaCommenti); r; r = riassegna.exec(senzaCommenti)) {
-                const dopo = senzaCommenti.slice(r.index + r[0].length)
-                const cont = new RegExp(`^\\s*(?:await\\s+)?${variabile}\\s*\\.`).exec(dopo)
-                if (!cont) {
+                const daQui = r.index + r[0].length
+                const dopo = senzaCommenti.slice(daQui)
+                // Il ramo destro, fino al `;`. Serve un confine: senza, un
+                // `variabile.` trovato duecento righe più in basso verrebbe
+                // attribuito a questa riassegnazione. Il tetto di 400 caratteri è
+                // per il sorgente senza punto e virgola.
+                const taglio = dopo.indexOf(';')
+                const destra = dopo.slice(0, taglio >= 0 ? taglio : 400)
+                // OGNI `variabile.` a destra è una continuazione di QUESTA query,
+                // non solo quello in testa. `query = c ? query.order(a) : query.order(b)`
+                // — la forma con cui la galleria ordina il cestino per data di
+                // eliminazione — ne ha DUE e in testa ha la condizione: letta col
+                // vecchio criterio («la riassegnazione comincia per `query.`»)
+                // sembrava una variabile sostituita, il ciclo usciva LÌ, e le
+                // continuazioni vere — `if (conScuola) query = query.in('scuola_id', plessi)`,
+                // quattordici righe più sotto — non venivano mai raccolte.
+                const catene = [...destra.matchAll(new RegExp(`\\b${variabile}\\s*\\.`, 'g'))]
+                if (catene.length === 0) {
                     // La variabile viene RICOSTRUITA (`query = supabase.from(…)`,
                     // il ramo `if (role)` di mezzo mondo): da qui in poi le
                     // continuazioni appartengono alla query nuova. Ma quelle che
                     // seguono valgono anche per QUESTA, perché a runtime il
                     // filtro in coda si applica all'oggetto vivo, quale che sia
                     // il ramo preso. Non si esce: si continua a raccogliere.
-                    if (!new RegExp(`^\\s*(?:await\\s+)?[A-Za-z_$][\\w$.]*\\s*\\.\\s*from\\s*\\(`).test(dopo)) break
+                    if (!/^\s*(?:await\s+)?[A-Za-z_$][\w$.]*\s*\.\s*from\s*\(/.test(dopo)) break
                     continue
                 }
-                const punto = r.index + r[0].length + cont[0].length - 1
-                tratti.push({ a: punto, b: fineCatena(struttura, punto) })
+                for (const c of catene) {
+                    const punto = daQui + c.index + c[0].length - 1
+                    tratti.push({ a: punto, b: fineCatena(struttura, punto) })
+                }
             }
             // `return q.maybeSingle()` non è una continuazione della query (non
             // aggiunge filtri) ma dice che la lettura è di UNA riga: senza
@@ -301,7 +464,6 @@ export function unitaDiQuery(senzaCommenti: string, struttura: string): Unita[] 
         // `const { data: modello, error } = await supabase.from(…)`: il nome a cui
         // finisce la riga letta. Serve per capire che «il gate ha verificato
         // `modello`» significa «ha verificato la riga con quell'id».
-        const destrutturato = /(?:const|let|var)\s*\{([^}]*)\}\s*=\s*$/.exec(senzaRicevitore)?.[1]
         const risultati = destrutturato
             ? destrutturato.split(',').map((p) => (p.includes(':') ? p.split(':').pop() : p)!.trim())
                 .filter((n) => /^[A-Za-z_$][\w$]*$/.test(n) && n !== 'error' && n !== 'count')
@@ -1255,18 +1417,41 @@ const AMMESSE: Record<string, string> = {
     // Ora ogni voce nomina LA QUERY che copre, e niente di più: il gate dei tag
     // (`assertTagStudentsInScope`) e l'aggiornamento per id sono presìdi veri, e
     // questo lock li riconosce da sé.
-    'gallery:PATCH':
-        "una sola lettura resta senza filtro di sede, ed è quella dei media caricati DA CHI CHIAMA " +
-        "(`select('tag_students').eq('uploaded_by', <identità del gate>)`): serve a dedurre le classi del " +
-        'docente, la chiave è la sua stessa identità e non un id scelto dal client, e gli alunni che ne ' +
-        "escono sono subito ristretti con `.in('scuola_id', plessi)`. Tutto il resto dell'handler è " +
-        'presidiato: il media è letto per id e la sua `scuola_id` confrontata con `scuoleDiUtente` prima ' +
-        'di ogni valutazione, i tag passano da `assertTagStudentsInScope` e la riga si riscrive per id.',
+    //
+    // 🔻 `gallery:PATCH` NON È PIÙ QUI (2026-09-12), e la ragione va letta perché non
+    // è «il debito è stato pagato»: la query esentata si è SPOSTATA. La lettura dei
+    // media di chi chiama vive ora in `alunniTaggatiNeiMieiMediaVivi`, un helper di
+    // modulo che DELETE e PATCH si dividono — quindi il rilievo esce da entrambi gli
+    // handler ed entra in `gallery:<modulo>`, dove la sua ragione è scritta qui sotto
+    // per intero. Il resto dell'handler il lock lo riconosce da sé: legge il media per
+    // `id` con `.maybeSingle()` e lo riscrive con lo stesso `id` dopo
+    // `assertTagStudentsInScope` — cosa che fino al 2026-09-12 NON vedeva, perché la
+    // lettura è avvolta in `ancheNelCestino(…).maybeSingle()` e il `.maybeSingle()` sta
+    // fuori dalle parentesi (vedi `unitaDiQuery`). Un'esenzione lasciata qui sarebbe
+    // stata un permesso in bianco per il prossimo che scrive in questo handler.
     'gallery:DELETE':
-        'la stessa lettura dei propri media (stessa chiave, stessa ragione), più il `delete().eq(\'id\', id)` ' +
-        'sulla riga già letta e verificata per sede in questo stesso handler: il confronto è scritto a mano ' +
-        '(`plessi.includes(sedeMedia)`) e il lock non lo riconosce come gate, ma nega eccome — è il primo ' +
-        'blocco della DELETE, prima di qualunque permesso.',
+        "resta una scrittura, e non è più un `delete`: dal 2026-09-11 «Elimina» ARCHIVIA — " +
+        "`update({ eliminato_il, eliminato_da }).eq('id', id)`, avvolto in `soloVive` perché la " +
+        'condizione `eliminato_il IS NULL` dentro l\'UPDATE è il solo punto in cui la corsa fra due ' +
+        'impiegate che premono insieme si decide (il secondo arrivato non fa ripartire i 30 giorni). ' +
+        'La riga è stata letta per `id` poche righe sopra e la sua `scuola_id` confrontata a mano con ' +
+        '`scuoleDiUtente` (`plessi.includes(sedeMedia)`, 403, PRIMA di qualunque valutazione dei ' +
+        'permessi): `GATE_MANUALE` non lo riconosce perché pretende il nome `scuola_id` DENTRO ' +
+        "l'`.includes(…)`, e qui la colonna è già stata estratta in `sedeMedia`. Allargare quella " +
+        'regex a un `.includes(…)` qualsiasi trasformerebbe ogni `array.includes(x)` del repo in un ' +
+        'gate di sede: la voce sta qui proprio per non farlo.',
+    // ── L'helper che DELETE e PATCH si dividono (2026-09-12) ──────────────────
+    'gallery:<modulo>':
+        "helper `alunniTaggatiNeiMieiMediaVivi`: legge i media caricati DA CHI CHIAMA " +
+        "(`select('tag_students').eq('uploaded_by', userId)`) per dedurre le classi del docente. La " +
+        "chiave è l'identità che il gate ha già stabilito — `auth.user.id`, mai un id del corpo della " +
+        "richiesta — quindi la domanda non si allarga: la risposta è un sottoinsieme di ciò che quella " +
+        "persona ha caricato lei. Gli alunni che ne escono sono subito ristretti con " +
+        "`.in('scuola_id', plessi)` dai due chiamanti. Era la stessa esenzione che stava, con la stessa " +
+        'ragione, su `gallery:DELETE` e `gallery:PATCH` quando la lettura era scritta due volte dentro i ' +
+        'due handler; ora è una funzione sola, e la voce la segue. Ci sono DUE query perché la seconda è ' +
+        'il ritentativo dopo un `42703` sul DB E2E della CI, che le colonne del cestino non le ha: stessa ' +
+        'chiave, stesso perimetro, `ancheNelCestino` invece di `soloVive`.',
     // `diary/checkin:GET`, `locker/inventory:GET` e `locker/inventory:POST`
     // stavano qui e dicevano «di UN alunno, verificato prima». NON era vero: la
     // verifica esisteva solo per il genitore. Ora esiste per tutti
@@ -2372,5 +2557,115 @@ describe('il rilevatore NON segnala le forme corrette', () => {
       })
     `
         expect(scoperte(src)).toEqual([])
+    })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RICEVITORE AVVOLTO — la forma che la galleria ha introdotto il 2026-09-11
+//
+// `soloVive(supabase.from('galleria_media_v2')…)`: fra l'assegnazione e il
+// ricevitore c'è una chiamata. Questi quattro test sono la controprova che
+// `unitaDiQuery` la attraversa SENZA diventare cieca — due dicono che il filtro
+// vero si vede, due che una query senza filtro resta rossa. Vanno letti a coppie:
+// un test che passa da solo non distingue «il riconoscitore ha capito» da «il
+// riconoscitore non guarda più».
+// ─────────────────────────────────────────────────────────────────────────────
+describe('ricevitore avvolto (la forma del cestino della galleria)', () => {
+    it('attraversa il wrapper e un ternario a tre rami, e ritrova il filtro che arriva per continuazione', () => {
+        const src = `
+      export const GET = withRoute('gallery:GET', async (request) => {
+        const supabase = await createAdminClient()
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+        const buildMedia = (conScuola, conCestino) => {
+          let query = !conCestino
+            ? ancheNelCestino(
+                supabase.from('galleria_media_v2').select('*', { count: 'exact' }),
+                'il DB E2E della CI non ha le colonne del cestino e un filtro senza via d uscita spegnerebbe la galleria intera',
+              )
+            : vistaCestino
+              ? soloNelCestino(supabase.from('galleria_media_v2').select('*', { count: 'exact' }))
+              : soloVive(supabase.from('galleria_media_v2').select('*', { count: 'exact' }))
+          query = vistaCestino && conCestino
+            ? query.order('eliminato_il', { ascending: false })
+            : query.order('created_at', { ascending: false })
+          if (conScuola) {
+            query = query.in('scuola_id', plessi)
+          }
+          return query
+        }
+      })
+    `
+        expect(scoperte(src)).toEqual([])
+    })
+
+    it('…ma una catena avvolta che il filtro NON ce l ha resta rossa su tutti e tre i rami', () => {
+        // Identico al test qui sopra, meno le tre righe di `if (conScuola)`. Se il
+        // riconoscitore si fosse limitato a «c'è un wrapper, lascio perdere», questo
+        // test sarebbe verde — ed è l'unico modo di accorgersene.
+        const src = `
+      export const GET = withRoute('gallery:GET', async (request) => {
+        const supabase = await createAdminClient()
+        const plessi = await resolveScuoleAttive(request, supabase, auth.user)
+        const buildMedia = (conCestino) => {
+          let query = !conCestino
+            ? ancheNelCestino(
+                supabase.from('galleria_media_v2').select('*', { count: 'exact' }),
+                'il DB E2E della CI non ha le colonne del cestino',
+              )
+            : vistaCestino
+              ? soloNelCestino(supabase.from('galleria_media_v2').select('*', { count: 'exact' }))
+              : soloVive(supabase.from('galleria_media_v2').select('*', { count: 'exact' }))
+          query = query.order('created_at', { ascending: false })
+          return query
+        }
+      })
+    `
+        expect(scoperte(src).map((s) => `${s.handler} ${s.motivo}`)).toEqual([
+            'GET elenco-senza-sede',
+            'GET elenco-senza-sede',
+            'GET elenco-senza-sede',
+        ])
+    })
+
+    it('`.maybeSingle()` appeso al RISULTATO del wrapper è una riga sola, non un elenco', () => {
+        const { senzaCommenti, struttura } = mascheraSorgente(`
+        const { data: media, error: mediaErr } = await ancheNelCestino(
+            supabase
+                .from('galleria_media_v2')
+                .select('*')
+                .eq('id', id),
+            'gallery:DELETE deve poter rispondere «già eliminato» invece di 404',
+        ).maybeSingle();
+    `)
+        const u = unitaDiQuery(senzaCommenti, struttura)
+        expect(u).toHaveLength(1)
+        // La riga letta finisce in `media`: è così che il lock collega «il gate ha
+        // verificato `media`» a «ha verificato la riga con quell'id». (`mediaErr` ci
+        // finisce accanto perché il filtro scarta la chiave `error`, non il nome a cui
+        // la si rinomina: non serve a niente e non fa danno, un `error` non compare
+        // mai come valore di un filtro.)
+        expect(u[0].risultati).toEqual(['media', 'mediaErr'])
+        expect(u[0].singola).toBe(true)
+    })
+
+    it('un RISULTATO trasformato non è la query: le sue continuazioni non si attaccano', () => {
+        // `(await …).data.map(…)` assegna a `ids` un ARRAY, non il builder. Se
+        // `riceveLaQuery` lo accettasse, il `.filter(i => i.scuola_id === sede)` qui
+        // sotto — un filtro in JavaScript su righe GIÀ LETTE, cioè la fuga esatta che
+        // questo lock cerca — verrebbe contato come «questa query filtra per sede».
+        const src = `
+      export const GET = withRoute('admin/audit:GET', async (request) => {
+        const supabase = await createAdminClient()
+        let ids = (await supabase.from('audit_scritture_docente').select('id')).data.map((r) => r.id)
+        ids = ids.filter((i) => i.scuola_id === sede)
+      })
+    `
+        expect(scoperte(src).map((s) => s.motivo)).toEqual(['elenco-senza-sede'])
+        expect(soloAvvolgimenti('(await ')).toBe(false)
+        // E il verso buono, sulla stessa funzione: solo avvolgimento puro passa.
+        expect(soloAvvolgimenti('')).toBe(true)
+        expect(soloAvvolgimenti('await soloVive(')).toBe(true)
+        expect(soloAvvolgimenti('!c ? ancheNelCestino( ) : soloVive(')).toBe(true)
+        expect(soloAvvolgimenti('soloVive(q).data.')).toBe(false)
     })
 })

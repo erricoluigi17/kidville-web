@@ -138,6 +138,27 @@ const adminClient = {
     b.eq = (c: string, v: unknown) => { st.filters[c] = v; return b }
     b.in = () => b
     b.not = (c: string) => { st.notNull = c; return b }
+    // ── `.is()`: IL CESTINO DELLA GALLERIA PASSA DA QUI (2026-09-12) ──────────
+    // Dal 2026-09-11 ogni lettura di `galleria_media_v2` dichiara il proprio verso
+    // con le funzioni di `@/lib/gallery/cestino`, e `soloVive` aggiunge
+    // `.is('eliminato_il', null)` alla catena. `tasks:GET` la fa nel fallback che
+    // deduce le sezioni del docente dalle foto che ha caricato lui — un ramo che
+    // questo file attraversa senza volerlo (il docente finto non ha legami in
+    // `utenti_sezioni`, quindi il fallback scatta sempre).
+    //
+    // Senza questo metodo la catena finta lanciava `q.is is not a function`
+    // (misurato, non supposto), la route finiva nel proprio `catch` e rispondeva
+    // **500**: i due test della FIRMA degli allegati diventavano rossi su un
+    // difetto che non era il loro, e che la route non ha.
+    //
+    // Qui il filtro si REGISTRA e non si applica, ed è una scelta: il
+    // COMPORTAMENTO del cestino su questo ramo — foto cestinata ⇒ sezione non
+    // dedotta ⇒ promemoria di quella classe non consegnato — ha la sua prova in
+    // `__tests__/api/tasks-cestino-sezioni-dedotte.test.ts`, dove `creaFintoSupabase`
+    // applica davvero i filtri sulle righe. Applicarlo a metà anche qui darebbe
+    // una seconda verità, più debole, sullo stesso fatto: questo file collauda la
+    // firma degli allegati, e per farlo gli basta non morire.
+    b.is = (c: string, v: unknown) => { st.filters[c] = v; return b }
     b.limit = () => b
     // Statistiche avvisi in BLOCCO e paginate (T11-F2): la catena si chiude su
     // `.range()`, non più su `.then()`.

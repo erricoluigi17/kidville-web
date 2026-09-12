@@ -11,7 +11,7 @@ import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { AnteprimaMedia } from '@/components/features/gallery/AnteprimaMedia';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
-import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, type MotivoVideoNonValido } from '@/lib/media/processing';
+import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, ImageProcessingError, type MotivoVideoNonValido } from '@/lib/media/processing';
 import { analizzaContenutoVideo } from '@/lib/media/codec-sniff';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
@@ -429,7 +429,31 @@ function TeacherGalleryContent() {
                     }
                 } else {
                     // Ridimensionamento e Watermarking client-side
-                    processedFile = await processImageWithWatermark(f.file, '/watermark.png');
+                    try {
+                        processedFile = await processImageWithWatermark(f.file, '/watermark.png');
+                    } catch (e) {
+                        // ⚠️ `continue`, NON un'eccezione che esce dal ciclo — ed è la stessa
+                        // cosa che il ramo video fa venti righe più sopra. Da quando
+                        // `processImageWithWatermark` RIFIUTA una tela degenere invece di
+                        // pubblicare un file da 775 byte, questo `await` può lanciare; e il
+                        // `try` che lo avvolgeva è quello aperto PRIMA del `for`, col `catch`
+                        // dopo la sua chiusura. Su cinque foto con la seconda degenere,
+                        // l'insegnante vedeva l'avviso di UNA foto e le foto 3, 4 e 5 non
+                        // venivano mai elaborate né caricate, senza che niente lo dicesse —
+                        // e `setUploadedFiles([])` non veniva raggiunto, quindi un secondo
+                        // tentativo ripubblicava in doppio quelle già passate.
+                        //
+                        // Si intercetta il SOLO rigetto deliberato: `ImageProcessingError`
+                        // porta una frase italiana già pronta e senza il nome del file
+                        // (`MESSAGGIO_UMANO`, `lib/media/immagini.ts`). Qualunque altro
+                        // errore è un guasto inatteso e continua a salire al catch-all, che
+                        // lo logga: trattarlo come «salta questa foto» nasconderebbe un bug.
+                        if (e instanceof ImageProcessingError) {
+                            alert(e.message);
+                            continue;
+                        }
+                        throw e;
+                    }
                 }
 
                 if (offlineMode) {

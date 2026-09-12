@@ -18,8 +18,17 @@ import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
 import { alunniTaggatiDellaSede, assertAlunnoNellaSede, risolviSedeDellaVista } from '@/lib/gallery/vista-sede';
 import { proiettaPerGenitore } from './proiezione';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
+// IL CESTINO — la regola sta in UN posto, e non è questo file.
+// `soloVive` / `soloNelCestino` / `ancheNelCestino` sono le tre domande che si
+// possono porre a `galleria_media_v2` dopo il 2026-09-11, e `colonnaCestinoAssente`
+// riconosce l'impianto su cui quelle colonne non ci sono ancora (il DB E2E della
+// CI). Riscriverle qui a mano — un `.is('eliminato_il', null)` per ogni lettura —
+// sarebbe la sesta copia di una condizione di visibilità in una rotta che ne ha
+// già perse due per strada (il filtro di sede nella POST, poi nel PATCH).
+import { ancheNelCestino, colonnaCestinoAssente, soloNelCestino, soloVive } from '@/lib/gallery/cestino';
 import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
+import { logScrittura } from '@/lib/audit/scrittura';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 
@@ -43,6 +52,20 @@ const getQuerySchema = z.object({
     // silenzioso sul comportamento storico.
     scope: z.literal('sede').optional(),
     scuolaId: zUuid.optional(),
+    // ─── IL CESTINO, E UN SOLO PARAMETRO PER DIRLO ────────────────────────────
+    // `stato=cestino` è la stessa lettura di `scope=sede` con una condizione
+    // rovesciata: le foto messe nel cestino invece di quelle vive. UN parametro
+    // e non una quarta modalità, perché tutto il resto — isolamento di sede,
+    // firma dei link, `alunni_taggati`, paginazione, degrado — deve restare lo
+    // STESSO codice: su questa rotta ogni copia di una regola di visibilità è
+    // già costata una falla (il filtro di sede dei tag, corretto due volte in
+    // tre giorni perché viveva in due posti).
+    //
+    // `.default('vive')` e non `.optional()`: così il ramo «vive» è una scelta
+    // dichiarata in ogni chiamata, e nessuna lettura resta senza filtro per
+    // omissione. `z.enum` chiude la porta ai valori inventati: `stato=tutti`
+    // è un 400, non un ripiego silenzioso su ciò che fa più comodo.
+    stato: z.enum(['vive', 'cestino']).default('vive'),
 });
 
 /**
@@ -83,6 +106,23 @@ const getQuerySchemaCoerente = getQuerySchema.superRefine((q, ctx) => {
             code: 'custom',
             path: ['parentId'],
             message: 'parentId non si usa con scope=sede',
+        });
+    }
+    // IL CESTINO SI GUARDA SOLO DALLA VISTA DI SEDE, e la porta è questa riga.
+    // `scope=sede` porta con sé `requireStaff` (non `requireDocente`: una maestra
+    // resta alle sue classi), la sede DICHIARATA e il 403 `SEDE_NON_ACCESSIBILE`
+    // di `risolviSedeDellaVista`. Il cestino contiene foto di minori che qualcuno
+    // ha deciso di togliere dalla vista — fra cui, per definizione, quelle
+    // rimosse dopo una segnalazione — quindi è la lettura che va guardata meno di
+    // tutte: farla passare dal ramo del genitore (`studentId`) o da quello della
+    // classe (`classe`) vorrebbe dire mostrare a una famiglia, o a una collega,
+    // esattamente ciò che è stato nascosto. Senza `scope=sede` è un 400 di
+    // validazione, prima del gate e prima del database.
+    if (q.stato === 'cestino' && q.scope !== 'sede') {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['stato'],
+            message: 'stato=cestino si usa solo con scope=sede',
         });
     }
 });
@@ -151,10 +191,14 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
     try {
         const q = parseQuery(request, getQuerySchemaCoerente);
         if ('response' in q) return q.response;
-        const { studentId, classe, date, scuolaId } = q.data;
+        const { studentId, classe, date, scuolaId, stato } = q.data;
         // Lo schema garantisce che `scope === 'sede'` implichi `scuolaId`, e
         // viceversa: da qui in giù `vistaSede` è l'unica domanda da porsi.
         const vistaSede = q.data.scope === 'sede';
+        // …e lo schema garantisce anche che `stato === 'cestino'` implichi
+        // `scope === 'sede'`: `vistaCestino` è sempre un sottoinsieme di
+        // `vistaSede`, gate e isolamento compresi.
+        const vistaCestino = stato === 'cestino';
         const limit = Math.min(Math.max(parseInt(q.data.limit ?? '30') || 30, 1), 100);
         const offset = Math.max(parseInt(q.data.offset ?? '0') || 0, 0);
 
@@ -375,13 +419,42 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             studentIds = (students?.map(s => s.id) ?? []).filter(id => UUID_RE.test(id));
         }
 
-        // Builder dei media: `conScuola=false` toglie il SOLO filtro sede per il
-        // degrado sul DB E2E CI non migrato (colonna scuola_id assente → 42703).
-        const buildMedia = (conScuola: boolean) => {
-            let query = supabase
-                .from('galleria_media_v2')
-                .select('*', { count: 'exact' })
-                .order('created_at', { ascending: false });
+        // Builder dei media. Due interruttori, e servono ENTRAMBI al degrado del
+        // DB E2E della CI, che non è migrato: `conScuola=false` toglie il filtro
+        // di sede (colonna `scuola_id` assente → 42703), `conCestino=false`
+        // toglie il filtro del cestino (colonne `eliminato_il`/`file_rimosso_il`
+        // assenti → 42703). Sono due degradi distinti perché sono due colonne
+        // distinte, e perché sbagliare a indovinare quale manca significa
+        // spegnere un isolamento che invece c'era.
+        const buildMedia = (conScuola: boolean, conCestino: boolean) => {
+            // LE FOTO VIVE, O QUELLE NEL CESTINO: mai le due cose insieme, e mai
+            // per omissione. `soloVive` è ciò che rende «Elimina» immediato in
+            // TUTTE E TRE le modalità di lettura (famiglia, classe, sede) con una
+            // riga sola; la policy RLS della migrazione fa la stessa cosa per chi
+            // legge la tabella senza passare da qui.
+            //
+            // ⚠️ La tabella è nominata TRE VOLTE, e non è una svista da accorpare
+            // in un `if` dopo la catena: il lock
+            // `__tests__/architecture/cestino-galleria-ogni-lettura-dichiara.test.ts`
+            // misura la SINGOLA query, e un filtro applicato «da qualche parte più
+            // sotto» è per lui indistinguibile da un filtro dimenticato. Ha
+            // ragione: è esattamente così che si perde una lettura su otto.
+            let query = !conCestino
+                ? ancheNelCestino(
+                    supabase.from('galleria_media_v2').select('*', { count: 'exact' }),
+                    'degrado del DB E2E della CI, che non e migrato: le colonne del cestino non esistono e un filtro senza via duscita spegnerebbe la galleria intera invece di mostrare meno',
+                )
+                : vistaCestino
+                    ? soloNelCestino(supabase.from('galleria_media_v2').select('*', { count: 'exact' }))
+                    : soloVive(supabase.from('galleria_media_v2').select('*', { count: 'exact' }));
+
+            // L'ORDINE DEL CESTINO È QUELLO DELL'ELIMINAZIONE, non dello scatto.
+            // Chi apre il cestino cerca «la foto che ho appena buttato», e su
+            // 1318 righe una foto di settembre eliminata oggi finirebbe sotto
+            // decine di foto di ottobre eliminate la settimana scorsa.
+            query = vistaCestino && conCestino
+                ? query.order('eliminato_il', { ascending: false })
+                : query.order('created_at', { ascending: false });
 
             if (date) {
                 query = query
@@ -425,31 +498,91 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             return query.range(offset, offset + limit - 1);
         };
 
-        let mediaRes = await buildMedia(true);
-        // DB E2E CI non migrato: scuola_id assente → 42703 (o PGRST204). Qui si
-        // rileggeva SEMPRE senza il filtro di sede: su un impianto multi-sede è
-        // il fail-open peggiore, perché scatta proprio quando l'isolamento non è
-        // disponibile. Ora vale la stessa regola della modulistica
-        // (`degradoSedeLecito`): si prosegue senza filtro SOLO se non c'è niente
-        // da isolare (al più una sede reale), altrimenti si NEGA.
-        if (colonnaSedeAssente(mediaRes.error as { code?: string } | null)) {
-            if (!(await degradoSedeLecito(supabase, 'gallery:GET'))) {
-                // Configurazione d'isolamento mancante su impianto multi-sede:
-                // è un incidente, quindi `error`, mai `info`.
-                logEvento('galleria', 'error', {
+        // ─── I DUE DEGRADI, E PERCHÉ NON SI DISTINGUONO A OCCHIO ─────────────
+        //
+        // Su questa lettura possono mancare DUE colonne diverse: `scuola_id` (il
+        // filtro di sede) e `eliminato_il` (il cestino). PostgREST le annuncia
+        // con lo STESSO codice — `42703` in SELECT, `PGRST204` in scrittura — che
+        // dice «una colonna non c'è», mai QUALE: `colonnaSedeAssente` e
+        // `colonnaCestinoAssente` guardano lo stesso insieme di codici, quindi
+        // sono lo stesso predicato con due nomi, e nessuno dei due può decidere
+        // da solo cosa togliere.
+        //
+        // Perciò qui non si indovina: si MISURA. Si toglie un filtro alla volta e
+        // si guarda se la query smette di fallire. Indovinare avrebbe un costo
+        // preciso in entrambi i versi: togliere il filtro di sede quando mancava
+        // il cestino è il fail-open peggiore di questa rotta (una segreteria
+        // legge le foto di un altro plesso — è già successo, fix D3); togliere il
+        // filtro del cestino quando mancava la sede rimette in galleria le foto
+        // che qualcuno ha eliminato, magari dopo una segnalazione.
+        let mediaRes = await buildMedia(true, true);
+        let cestinoDegradato = false;
+        const colonnaAssente = (e: unknown) => {
+            const err = e as { code?: string } | null;
+            return colonnaCestinoAssente(err) || colonnaSedeAssente(err);
+        };
+
+        if (colonnaAssente(mediaRes.error)) {
+            // Primo sospettato: le colonne del cestino, che sono le più nuove (e
+            // in CI sono quelle che mancano davvero). Si toglie SOLO quel filtro e
+            // si tiene la sede: se la query guarisce, la colonna mancante era
+            // quella — misurato, non dedotto — e l'isolamento di sede non è stato
+            // toccato.
+            const senzaCestino = await buildMedia(true, false);
+            if (!colonnaAssente(senzaCestino.error)) {
+                cestinoDegradato = true;
+                mediaRes = senzaCestino;
+            } else {
+                // Manca (anche) `scuola_id`: da qui in giù è la regola storica,
+                // col suo guard. Si rileggeva SEMPRE senza il filtro di sede: su
+                // un impianto multi-sede è il fail-open peggiore, perché scatta
+                // proprio quando l'isolamento non è disponibile. Vale la stessa
+                // regola della modulistica (`degradoSedeLecito`): si prosegue
+                // senza filtro SOLO se non c'è niente da isolare (al più una sede
+                // reale), altrimenti si NEGA.
+                if (!(await degradoSedeLecito(supabase, 'gallery:GET'))) {
+                    // Configurazione d'isolamento mancante su impianto multi-sede:
+                    // è un incidente, quindi `error`, mai `info`.
+                    logEvento('galleria', 'error', {
+                        operazione: 'gallery:GET',
+                        esito: 'colonna-sede-assente-degrado-negato',
+                    });
+                    return NextResponse.json(
+                        { error: 'Isolamento per sede non disponibile' },
+                        { status: 500 }
+                    );
+                }
+                logEvento('galleria', 'info', {
                     operazione: 'gallery:GET',
-                    esito: 'colonna-sede-assente-degrado-negato',
+                    esito: 'degrado-scuola-id-assente',
                 });
-                return NextResponse.json(
-                    { error: 'Isolamento per sede non disponibile' },
-                    { status: 500 }
-                );
+                mediaRes = await buildMedia(false, true);
+                // …e se anche senza la sede fallisce, allora mancano entrambe: è
+                // esattamente il DB E2E della CI.
+                if (colonnaAssente(mediaRes.error)) {
+                    cestinoDegradato = true;
+                    mediaRes = await buildMedia(false, false);
+                }
             }
-            logEvento('galleria', 'info', {
+        }
+
+        if (cestinoDegradato) {
+            // `warn` e non `info`: su un impianto migrato non deve succedere, e
+            // se succede significa che le righe nel cestino NON sono filtrate —
+            // cioè che una foto eliminata può tornare a schermo.
+            logEvento('galleria', 'warn', {
                 operazione: 'gallery:GET',
-                esito: 'degrado-scuola-id-assente',
+                esito: 'degrado-cestino-colonna-assente',
+                stato,
             });
-            mediaRes = await buildMedia(false);
+            // IL CESTINO DI UN IMPIANTO SENZA CESTINO È VUOTO, e dirlo è l'unica
+            // risposta vera. Rileggere senza filtro restituirebbe le foto VIVE
+            // spacciate per cestinate: un elenco di foto in vista «eliminate», su
+            // cui la segreteria premerebbe «Ripristina» — o «Elimina
+            // definitivamente» — credendo di agire su ciò che aveva buttato.
+            if (vistaCestino) {
+                return NextResponse.json({ media: [], total: 0, limit, offset });
+            }
         }
         const { data: pageMedia, count, error } = mediaRes;
 
@@ -529,7 +662,12 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
             // bambino, mai un nome.
             logEvento('galleria', 'info', {
                 operazione: 'gallery:GET',
-                esito: 'vista-sede',
+                // Il cestino è una lettura DIVERSA, e va distinta nei log: è
+                // l'elenco di ciò che qualcuno ha deciso di nascondere, e «chi lo
+                // ha aperto e quando» è la sola traccia che ne resta (la riga
+                // dell'eliminazione dice chi ha buttato, non chi ha guardato).
+                esito: vistaCestino ? 'vista-cestino' : 'vista-sede',
+                stato,
                 sede_id: plessi[0],
                 utente: auth.user.id,
                 ruolo: auth.user.role,
@@ -720,11 +858,19 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             target_classes: target_classes ?? null,
         };
 
-        let insRes = await supabase
-            .from('galleria_media_v2')
-            .insert({ ...baseRecord, scuola_id: scuolaId })
-            .select()
-            .single();
+        // `ancheNelCestino` su un INSERT non filtra niente e non può: dichiara. Il
+        // lock del cestino misura OGNI `from('galleria_media_v2')`, scritture
+        // comprese, e ha ragione a non fare eccezioni per forma — `insert` e
+        // `update` sono la stessa catena di `select`, e il giorno in cui una
+        // scrittura dovesse guardare il cestino non ci sarebbe niente a ricordarlo.
+        let insRes = await ancheNelCestino(
+            supabase
+                .from('galleria_media_v2')
+                .insert({ ...baseRecord, scuola_id: scuolaId })
+                .select()
+                .single(),
+            'una riga che nasce adesso non puo essere nel cestino: qui non c-e niente da filtrare, e dirlo è il modo di non confondere questa query con una lettura a cui il filtro è stato dimenticato',
+        );
         // DB E2E CI non migrato: colonna scuola_id assente → PGRST204 (o 42703).
         // Riprova senza scuola_id così la pubblicazione resta possibile (degrado).
         if (insRes.error && ['PGRST204', '42703'].includes((insRes.error as { code?: string }).code ?? '')) {
@@ -732,11 +878,14 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
                 operazione: 'gallery:POST',
                 esito: 'degrado-scuola-id-assente',
             });
-            insRes = await supabase
-                .from('galleria_media_v2')
-                .insert(baseRecord)
-                .select()
-                .single();
+            insRes = await ancheNelCestino(
+                supabase
+                    .from('galleria_media_v2')
+                    .insert(baseRecord)
+                    .select()
+                    .single(),
+                'ritentativo della pubblicazione senza scuola_id: come il tentativo qui sopra, una riga appena creata non puo essere nel cestino',
+            );
         }
         const { data, error } = insRes;
 
@@ -812,8 +961,134 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
     }
 });
 
+/**
+ * Il minimo che `soloVive` chiede a una query, scritto a mano.
+ *
+ * `soloVive<Q extends Filtrabile<Q>>` è un vincolo RICORSIVO, e applicarlo al tipo
+ * di un `PostgrestFilterBuilder` costruito con `select('tag_students').eq(…).not(…)`
+ * fa rispondere a TypeScript **TS2589 «Type instantiation is excessively deep and
+ * possibly infinite»**: misurato, non supposto. Con `select('*')` l'inferenza regge
+ * (vedi `buildMedia`), qui no. Il parametro di tipo esplicito la interrompe senza
+ * togliere niente al controllo che conta: `is`, `not` e `lt` ci sono, e il risultato
+ * ha la forma che questo file legge davvero.
+ */
+type EsitoTagVivi = {
+    data: Array<{ tag_students: string[] | null }> | null;
+    error: { code?: string } | null;
+};
+interface QueryTagVivi extends PromiseLike<EsitoTagVivi> {
+    is(colonna: string, valore: boolean | null): QueryTagVivi;
+    not(colonna: string, operatore: string, valore: unknown): QueryTagVivi;
+    lt(colonna: string, valore: unknown): QueryTagVivi;
+}
+
+/**
+ * Gli alunni che questo docente ha taggato nei propri media — SOLO quelli VIVI.
+ *
+ * È la lettura da cui DELETE e PATCH deducono «quali sono le classi di questa
+ * maestra», e da lì se può toccare il media di un'altra. Filtrarla col cestino
+ * non è un dettaglio di coerenza: una foto eliminata è una foto che la scuola ha
+ * deciso di non avere più, e continuare a dedurne dei PERMESSI significa che un
+ * tag sbagliato — cancellato proprio per quello — resta a concedere accessi per
+ * sempre. Nei 30 giorni del cestino la riga c'è ancora, quindi senza questo
+ * filtro il comportamento non cambierebbe di un giorno: cambierebbe per sempre,
+ * perché la purga cancella la riga ma non il permesso già concesso nel frattempo.
+ *
+ * Stava scritta due volte, identica, in due handler: ora è una funzione, come il
+ * gate dei tag (`assertTagStudentsInScope`) dopo che la sua copia nella POST ha
+ * lasciato il PATCH scoperto per tre giorni.
+ *
+ * ⚠️ E CONTROLLA `{ error }`, che prima nessuna delle due copie faceva.
+ * PostgREST non lancia: un guasto di lettura usciva come `data: null`, cioè
+ * «questo docente non ha classi», cioè un **403 senza una riga di log** — il
+ * silenzio che non distingue «non ne ha titolo» da «non sono riuscito a
+ * chiederlo».
+ */
+async function alunniTaggatiNeiMieiMediaVivi(
+    supabase: Awaited<ReturnType<typeof createAdminClient>>,
+    userId: string,
+    operazione: string,
+): Promise<string[]> {
+    // Si RICOSTRUISCE, non si riusa: `is()` ritorna `this`, quindi il primo
+    // tentativo ha già mutato il builder e il filtro è già dentro l'URL. È la
+    // stessa ragione per cui `buildMedia` qui sopra nomina la tabella tre volte.
+    //
+    // ⚠️ Qui NON si usa `leggiVive` di `@/lib/gallery/cestino`, che fa esattamente
+    // questo ritentativo — e non per scelta di stile: il suo tipo
+    // (`<T>(costruisci: (vive: FiltroVive) => PromiseLike<T>)`) combina una
+    // generica di ordine superiore con il vincolo ricorsivo `Q extends
+    // Filtrabile<Q>`, e su un `PostgrestFilterBuilder` reale TypeScript ci
+    // risponde **TS2589 «Type instantiation is excessively deep»**. Misurato, non
+    // supposto — ed è lo stesso motivo per cui `soloVive` qui sotto riceve il
+    // parametro di tipo `QueryTagVivi` scritto a mano: su `select('*')` l'inferenza
+    // regge (`buildMedia`), su `select('tag_students').eq(…).not(…)` no.
+    // ⚠️ Il tipo si dichiara con un CAST sull'argomento, non con `soloVive<…>(…)`:
+    // il riconoscitore del lock legge il nome della funzione a ritroso da `(` e su
+    // `soloVive<QueryTagVivi>(` trova `>`, non `soloVive` — cioè la query risulta
+    // NON dichiarata. Con l'inferenza dall'argomento il nome resta attaccato alla
+    // parentesi e la garanzia è identica.
+    let res: EsitoTagVivi = await soloVive(
+        supabase
+            .from('galleria_media_v2')
+            .select('tag_students')
+            .eq('uploaded_by', userId)
+            .not('tag_students', 'is', null) as unknown as QueryTagVivi,
+    );
+    // DB E2E della CI non migrato: le colonne del cestino non esistono (42703).
+    // Qui si degrada senza guard di sede perché questa lettura non isola niente —
+    // è l'elenco dei tag di CHI CHIEDE, non di un plesso — ma `warn`, perché su un
+    // impianto migrato vorrebbe dire che un media cestinato concede ancora permessi.
+    if (colonnaCestinoAssente(res.error)) {
+        logEvento('galleria', 'warn', {
+            operazione,
+            esito: 'degrado-cestino-colonna-assente',
+        });
+        res = await ancheNelCestino(
+            supabase
+                .from('galleria_media_v2')
+                .select('tag_students')
+                .eq('uploaded_by', userId)
+                .not('tag_students', 'is', null),
+            'ritentativo senza filtro dopo un 42703: su un database senza le colonne del cestino non esiste nessuna riga cestinata da escludere',
+        );
+    }
+    if (res.error) {
+        logEvento('galleria', 'warn', {
+            operazione,
+            esito: 'classi-docente-illeggibili',
+        }, res.error);
+        return [];
+    }
+    return ((res.data ?? []) as Array<{ tag_students: string[] | null }>)
+        .flatMap((m) => m.tag_students ?? [])
+        .filter(Boolean);
+}
+
 // DELETE /api/gallery?id=xxx&userId=yyy
-// Cancella un media con controllo granularizzato dei ruoli
+// ─── NON CANCELLA PIÙ: METTE NEL CESTINO (2026-09-11) ────────────────────────
+// `Elimina` nasconde la foto SUBITO a tutti — genitori compresi, per la policy
+// RLS della migrazione — la lascia recuperabile 30 giorni, e solo dopo la purga
+// la distrugge davvero, riga E file.
+//
+// Prima questa route faceva `.delete()` sulla riga e **non toccava lo Storage**:
+// il file restava nel bucket per sempre, senza più nessuna riga che lo nominasse
+// — cioè la foto di un minore diventava un oggetto irraggiungibile e
+// incancellabile, perché il suo percorso non era più scritto da nessuna parte. Il
+// PRD (riga 20619) promette «eliminare … dal database e dal feed», ed era
+// esattamente ciò che faceva: dal database e dal feed, non dall'archivio.
+//
+// Lo Storage NON si tocca qui, e non è una dimenticanza: è l'unico verso in cui
+// si può sbagliare senza perdere niente. Una riga nascosta si recupera con un
+// UPDATE; un file cancellato dal bucket non torna. La rimozione definitiva è il
+// solo momento in cui va fatta — la purga a 30 giorni — e lì c'è
+// `file_rimosso_il` a renderla idempotente.
+//
+// E LE `segnalazioni` NON SI TOCCANO, né qui né dopo. Questa route non le ha mai
+// cancellate (verificato: `segnalazioni` non compare in tutto il file) e non deve
+// iniziare. Una segnalazione è la traccia di una moderazione: cancellarla insieme
+// alla foto cancellerebbe **la ragione** per cui la foto è stata rimossa, cioè
+// proprio il documento che serve se un giorno qualcuno chiede conto di quella
+// rimozione. Le orfane le ripulirà la purga, quando la riga non esisterà più.
 export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
     try {
         // Gate identità: l'utente arriva SOLO dal gate, MAI dal parametro `?userId=`.
@@ -832,12 +1107,24 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
 
         const supabase = await createAdminClient();
 
-        // 1. Recupera il record del media
-        const { data: media, error: mediaErr } = await supabase
-            .from('galleria_media_v2')
-            .select('*')
-            .eq('id', id)
-            .maybeSingle();
+        // 1. Recupera il record del media — CESTINO COMPRESO, ed è l'unica
+        // lettura di questo file che lo fa.
+        //
+        // Tutte le altre viste filtrano `soloVive`: una foto nel cestino non si
+        // elenca, non si firma e non si ritagga. Qui invece va LETTA, perché la
+        // riga che serve sapere è proprio «è già nel cestino?». Con `soloVive`
+        // questa select risponderebbe `null`, cioè **404 Media non trovato**, e
+        // due persone della segreteria che premono Elimina sulla stessa foto —
+        // una dal telefono, una dal computer, cosa che in una scuola succede —
+        // vedrebbero la seconda un errore che non descrive niente di rotto:
+        // l'operazione che voleva è già fatta.
+        const { data: media, error: mediaErr } = await ancheNelCestino(
+            supabase
+                .from('galleria_media_v2')
+                .select('*')
+                .eq('id', id),
+            'gallery:DELETE deve poter rispondere «già eliminato» invece di 404',
+        ).maybeSingle();
 
         if (mediaErr || !media) {
             return NextResponse.json({ error: 'Media non trovato' }, { status: 404 });
@@ -850,8 +1137,14 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
         // a modificare (e cancellare) le foto dei bambini di Cesa. Il media ha la
         // sua `scuola_id`: si confronta quella, e i nomi contano solo dopo.
         const plessi = await scuoleDiUtente(supabase, auth.user);
+        // `sedeMedia` vive FUORI dal blocco (prima ci stava dentro) perché adesso
+        // serve anche più in basso: è la sede che l'audit registra sulla riga di
+        // `audit_scritture_docente` e che il log di successo scrive. Dedurla una
+        // seconda volta da `auth.user.scuola_id` significherebbe attribuire
+        // l'eliminazione alla sede PRIMARIA di chi opera invece che a quella della
+        // foto — e per un admin di tre plessi sono cose diverse.
+        const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
         {
-            const sedeMedia = (media as { scuola_id?: string | null }).scuola_id ?? null;
             // Sede assente ⇒ si NEGA, come in `assertPagamentoInScope`: una riga
             // senza plesso non è attribuibile a nessuno. Il test era
             // `sedeMedia !== null && !plessi.includes(sedeMedia)`, cioè il
@@ -905,15 +1198,10 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
             } else {
                 // Oppure se il media riguarda le sue classi
                 // Ricaviamo le sezioni del docente dagli alunni che ha taggato nei suoi media precedenti
-                const { data: myMedia } = await supabase
-                    .from('galleria_media_v2')
-                    .select('tag_students')
-                    .eq('uploaded_by', userId)
-                    .not('tag_students', 'is', null);
-
-                const myTaggedStudentIds = (myMedia ?? [])
-                    .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
-                    .filter(Boolean);
+                // (solo dai media VIVI: vedi `alunniTaggatiNeiMieiMediaVivi`).
+                const myTaggedStudentIds = await alunniTaggatiNeiMieiMediaVivi(
+                    supabase, userId, 'gallery:DELETE',
+                );
 
                 let myClassNames: string[] = [];
 
@@ -962,18 +1250,171 @@ export const DELETE = withRoute('gallery:DELETE', async (request: Request) => {
             );
         }
 
-        // Esegui la cancellazione
-        const { error: deleteErr } = await supabase
-            .from('galleria_media_v2')
-            .delete()
-            .eq('id', id);
-
-        if (deleteErr) {
-            logErrore({ operazione: 'gallery:DELETE', stato: 500, evento: 'db' }, deleteErr);
-            return NextResponse.json({ error: deleteErr.message }, { status: 500 });
+        // ─── GIÀ NEL CESTINO? ALLORA È GIÀ FATTO ─────────────────────────────
+        //
+        // E il controllo sta QUI, dopo il gate di sede e dopo l'autorizzazione,
+        // non appena letta la riga: un 200 dato prima dei permessi sarebbe un
+        // oracolo — chiunque, con un uuid, saprebbe che quel media esiste e che è
+        // stato eliminato. Chi non ha titolo continua a prendersi 403/404 come
+        // prima; chi ce l'ha scopre che l'operazione che voleva è già avvenuta.
+        const giaNelCestino = ((media as { eliminato_il?: string | null }).eliminato_il ?? null) !== null;
+        if (giaNelCestino) {
+            // `info`, non `warn`: non è niente di rotto. Due persone della
+            // segreteria che premono Elimina sulla stessa foto — una dal telefono
+            // in sezione, una dal computer in ufficio — sono la normalità di una
+            // scuola, e l'unica cosa che serve saperne è che è capitato.
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:DELETE',
+                esito: 'gia-eliminato',
+                sede_id: sedeMedia,
+                ruolo_attore: role ?? auth.user.role ?? null,
+            });
+            return NextResponse.json({ success: true, esito: 'gia-eliminato' });
         }
 
-        return NextResponse.json({ success: true });
+        // ─── L'ARCHIVIAZIONE ─────────────────────────────────────────────────
+        //
+        // `.is('eliminato_il', null)` non è una cintura in più sul controllo qui
+        // sopra: è l'unico punto in cui la corsa fra due richieste si decide
+        // davvero. Fra la lettura e questa scrittura passa il tempo di quattro
+        // query, e in quella finestra l'altra impiegata può aver già premuto. Con
+        // la condizione dentro l'UPDATE, il secondo arrivato non riscrive niente —
+        // e soprattutto non fa ripartire da zero i 30 giorni del cestino, che è il
+        // modo silenzioso in cui una foto verrebbe distrutta più tardi del dovuto,
+        // o ripristinata da chi non l'aveva buttata.
+        //
+        // La condizione la mette `soloVive`, che è la stessa funzione usata dalle
+        // letture: scritta a mano (`.is('eliminato_il', null)`) sarebbe una sesta
+        // copia della regola, e la sesta copia è quella che un giorno si dimentica.
+        const oraCestino = new Date().toISOString();
+        const cestinaRes = await soloVive(
+            supabase
+                .from('galleria_media_v2')
+                .update({ eliminato_il: oraCestino, eliminato_da: userId })
+                .eq('id', id),
+        ).select('id');
+
+        // DB E2E della CI non migrato: le colonne del cestino non ci sono
+        // (`PGRST204` in UPDATE, `42703` in SELECT). Qui non si degrada
+        // cancellando: un `.delete()` di ripiego distruggerebbe la riga — e
+        // renderebbe il file del bucket irraggiungibile per sempre — proprio
+        // nell'impianto in cui il cestino non c'è per accoglierla. Si risponde
+        // 501 con una riga di log a livello `error`: l'operazione NON è avvenuta,
+        // e dirlo è meglio che farne una diversa.
+        if (colonnaCestinoAssente(cestinaRes.error as { code?: string } | null)) {
+            logEvento('galleria', 'error', {
+                operazione: 'gallery:DELETE',
+                esito: 'cestino-colonna-assente',
+                sede_id: sedeMedia,
+            });
+            // Il `codice` accanto alla prosa NON è decorazione: chi lavora con
+            // l'interfaccia in inglese lo riceve al posto di questa frase italiana
+            // (`messaggioErrore` → `CODICI_ERRORE` → catalogo). Senza, la galleria
+            // mostrerebbe italiano dentro un'interfaccia inglese — il fallimento F1
+            // del collaudo del 2026-07-31.
+            return NextResponse.json(
+                {
+                    error: 'Cestino della galleria non disponibile su questo impianto',
+                    codice: 'GALLERIA_CESTINO_NON_DISPONIBILE',
+                },
+                { status: 501 }
+            );
+        }
+
+        if (cestinaRes.error) {
+            logErrore({ operazione: 'gallery:DELETE', stato: 500, evento: 'db' }, cestinaRes.error);
+            return NextResponse.json({ error: cestinaRes.error.message }, { status: 500 });
+        }
+
+        // Zero righe toccate ⇒ qualcun altro ha vinto la corsa nel frattempo.
+        // Stessa risposta del controllo qui sopra: l'esito per chi chiama è
+        // identico, ed è vero.
+        if ((cestinaRes.data ?? []).length === 0) {
+            logEvento('galleria', 'info', {
+                operazione: 'gallery:DELETE',
+                esito: 'gia-eliminato',
+                sede_id: sedeMedia,
+                ruolo_attore: role ?? auth.user.role ?? null,
+            });
+            return NextResponse.json({ success: true, esito: 'gia-eliminato' });
+        }
+
+        // ─── L'AUDIT, che per la galleria non c'è MAI STATO ───────────────────
+        // Misurato il 2026-09-11: `audit_scritture_docente` ha **0 righe** con
+        // `entita_tipo` della galleria, mentre 63 route la scrivono. Chi ha
+        // eliminato la foto di quel pomeriggio, e quando, non era scritto da
+        // nessuna parte — e `eliminato_da` sulla riga dura quanto la riga: dopo la
+        // purga non resta niente. L'audit è il posto che ha una retention e dei
+        // permessi suoi, e non muore con la foto.
+        // `azione: 'delete'` e non `'update'`: per chi legge l'audit questo è
+        // l'atto di eliminare, non la modifica di un campo. Come la scrittura
+        // avviene è un dettaglio di questa tabella, non un fatto da registrare.
+        await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'galleria_media',
+            entitaId: id,
+            azione: 'delete',
+            scuolaId: sedeMedia,
+        });
+
+        // ─── QUANTE NOTIFICHE RESTANO IN VOLO ────────────────────────────────
+        //
+        // Si CONTANO, non si cancellano — e la differenza è una decisione presa,
+        // non una pigrizia. `gallery:POST` accoda le notifiche con
+        // `entitaId: uploaded_by` (l'INSEGNANTE, non il media): è la chiave del
+        // debounce per insegnante, corretta il 07-08/09 dopo che 168 notifiche su
+        // 298 erano andate perse e 153 genitori non erano mai stati avvisati.
+        // Ritirare «le notifiche di QUESTA foto» richiederebbe di cambiare quella
+        // chiave nell'id del media, e trasformerebbe 37 foto in un pomeriggio in
+        // 37 notifiche per famiglia: il rimedio, sullo stesso percorso che ha già
+        // prodotto l'incidente, sarebbe peggiore del buco.
+        //
+        // Il costo del non ritirare è misurato e accettato: la notifica dice
+        // «Nuove foto in galleria» e non nomina nessun media, quindi il
+        // collegamento continua a funzionare e mostra le foto rimaste. Ma il
+        // NUMERO va saputo, perché è l'unica cosa che dice quanti annunci
+        // sopravvivono alla foto che li ha generati.
+        let nNotifichePendenti: number | null = null;
+        {
+            const contate = await supabase
+                .from('notifiche')
+                .select('id', { count: 'exact', head: true })
+                .eq('tipo', 'galleria')
+                .eq('entita_id', media.uploaded_by)
+                .is('push_inviata_il', null);
+            if (contate.error) {
+                // PostgREST non lancia: senza questo controllo il conteggio
+                // sarebbe uscito `null` nel log senza dire perché.
+                logEvento('galleria', 'warn', {
+                    operazione: 'gallery:DELETE',
+                    esito: 'notifiche-pendenti-non-contate',
+                }, contate.error);
+            } else {
+                nNotifichePendenti = contate.count ?? 0;
+            }
+        }
+
+        // ─── IL LOG DI SUCCESSO (AGENTS, regola 5) ────────────────────────────
+        // Non c'era: questa route registrava solo i fallimenti, quindi «nessun
+        // log» non distingueva «la foto è nel cestino» da «non è mai partito
+        // niente». Solo conteggi, uuid e flag.
+        //
+        // ⚠️ MAI LA DIDASCALIA. `caption` della galleria È il nome del file
+        // scelto da chi carica, e nella pratica di questa scuola è «Marco al
+        // parco.jpg»: il nome di un bambino. Non è redatta «per prudenza» — è il
+        // dato che questo log non deve contenere, e la lista bianca di
+        // `@/lib/logging/redact` non la farebbe passare comunque.
+        logEvento('galleria', 'info', {
+            operazione: 'gallery:DELETE',
+            esito: 'nel-cestino',
+            sede_id: sedeMedia,
+            ruolo_attore: role ?? auth.user.role ?? null,
+            era_broadcast: media.is_broadcast === true,
+            n_tag: Array.isArray(media.tag_students) ? media.tag_students.length : 0,
+            n_notifiche_pendenti: nNotifichePendenti,
+        });
+
+        return NextResponse.json({ success: true, esito: 'nel-cestino' });
     } catch (error) {
         logErrore({ operazione: 'gallery:DELETE', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
@@ -998,12 +1439,18 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
 
         const supabase = await createAdminClient();
 
-        // 1. Recupera il record del media
-        const { data: media, error: mediaErr } = await supabase
-            .from('galleria_media_v2')
-            .select('*')
-            .eq('id', id)
-            .maybeSingle();
+        // 1. Recupera il record del media — anche se è nel cestino, per poterlo
+        // DIRE. Con `soloVive` questa select risponderebbe `null` e la PATCH su
+        // una foto cestinata sarebbe un **404 Media non trovato**: la foto esiste,
+        // è nel cestino, e per 30 giorni si può ancora ripristinare. Un 404
+        // manderebbe l'interfaccia a dire «non esiste» di una cosa che esiste.
+        const { data: media, error: mediaErr } = await ancheNelCestino(
+            supabase
+                .from('galleria_media_v2')
+                .select('*')
+                .eq('id', id),
+            'gallery:PATCH deve distinguere «nel cestino» (409) da «non esiste» (404)',
+        ).maybeSingle();
 
         if (mediaErr || !media) {
             return NextResponse.json({ error: 'Media non trovato' }, { status: 404 });
@@ -1061,16 +1508,12 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             if (media.uploaded_by === userId) {
                 authorized = true;
             } else {
-                // Oppure se il media riguarda le sue classi
-                const { data: myMedia } = await supabase
-                    .from('galleria_media_v2')
-                    .select('tag_students')
-                    .eq('uploaded_by', userId)
-                    .not('tag_students', 'is', null);
-
-                const myTaggedStudentIds = (myMedia ?? [])
-                    .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])
-                    .filter(Boolean);
+                // Oppure se il media riguarda le sue classi — dedotte dai suoi
+                // media VIVI (vedi `alunniTaggatiNeiMieiMediaVivi`: una foto
+                // eliminata non concede più permessi).
+                const myTaggedStudentIds = await alunniTaggatiNeiMieiMediaVivi(
+                    supabase, userId, 'gallery:PATCH',
+                );
 
                 let myClassNames: string[] = [];
 
@@ -1116,6 +1559,40 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
             return NextResponse.json(
                 { error: 'Non sei autorizzato a modificare questo media' },
                 { status: 403 }
+            );
+        }
+
+        // ─── UNA FOTO NEL CESTINO NON SI MODIFICA ────────────────────────────
+        //
+        // Non si ritagga, non si ridenomina e non si rende broadcast una foto che
+        // qualcuno ha eliminato. Il PATCH è l'unica strada con cui si scrivono i
+        // TAG, cioè gli uuid dei minori ritratti, e aggiungerne uno a una riga nel
+        // cestino significherebbe legare un bambino a una foto che nessuno vede
+        // più: non la annuncia a nessuno, non compare da nessuna parte, e resta
+        // scritta in tabella e nel diff dell'audit. Un dato su un minore scritto in
+        // un posto che nessuno guarda è la definizione del dato che non si doveva
+        // raccogliere.
+        //
+        // ⚠️ 409 e non 403: non è una questione di titolo — chi chiede ce l'ha, il
+        // gate è appena passato — è lo STATO della riga a rendere l'operazione
+        // senza senso. Prima si ripristina, poi si modifica.
+        //
+        // ⚠️ E DOPO il gate di sede e l'autorizzazione, non appena letta la riga:
+        // «409 nel cestino» è un'informazione sullo stato di un media, e chi non ha
+        // titolo su quel plesso deve continuare a vedere 403/404 come prima. Lo
+        // stesso ordine della DELETE, per la stessa ragione.
+        if (((media as { eliminato_il?: string | null }).eliminato_il ?? null) !== null) {
+            logEvento('galleria', 'warn', {
+                operazione: 'gallery:PATCH',
+                esito: 'media-nel-cestino',
+                sede_id: sedeMedia,
+            });
+            return NextResponse.json(
+                {
+                    error: 'Questa foto è nel cestino: ripristinala prima di modificarla.',
+                    codice: 'GALLERIA_MEDIA_NEL_CESTINO',
+                },
+                { status: 409 }
             );
         }
 
@@ -1225,12 +1702,26 @@ export const PATCH = withRoute('gallery:PATCH', async (request: Request) => {
         if (target_classes !== undefined) updateData.target_classes = target_classes;
         if (caption !== undefined) updateData.caption = caption;
 
-        const { data: updatedMedia, error: updateErr } = await supabase
-            .from('galleria_media_v2')
-            .update(updateData)
-            .eq('id', id)
-            .select()
-            .single();
+        // `ancheNelCestino` e non `soloVive`, ed è la forma che il modulo stesso
+        // prevede per «le scritture per id su una riga già letta»: chi decide se
+        // questa riga si può toccare è il 409 poche decine di righe più su, che ha
+        // letto `eliminato_il` sulla riga vera. Aggiungere qui la condizione
+        // significherebbe, in caso di corsa, un `.single()` a zero righe — cioè un
+        // **500** al posto del 409 che l'utente deve leggere.
+        // ⚠️ La corsa residua è dichiarata e non chiusa: se qualcuno cestina la
+        // foto negli istanti fra quel controllo e questa scrittura, i tag finiscono
+        // su una riga destinata alla purga. Non è una fuga (nessuno la vede) e non
+        // è un dato in più su un minore che non fosse già in quella riga, ma è il
+        // verso in cui questo handler può sbagliare, e va scritto dove sta il codice.
+        const { data: updatedMedia, error: updateErr } = await ancheNelCestino(
+            supabase
+                .from('galleria_media_v2')
+                .update(updateData)
+                .eq('id', id)
+                .select()
+                .single(),
+            'la riga e appena stata letta e il 409 «media-nel-cestino» ha già deciso che è viva: ripetere qui la condizione trasformerebbe una corsa in un 500 invece del 409 giusto',
+        );
 
         if (updateErr) {
             logErrore({ operazione: 'gallery:PATCH', stato: 500, evento: 'db' }, updateErr);

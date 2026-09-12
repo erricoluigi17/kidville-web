@@ -4,12 +4,19 @@
  * BARILE. Le due elaborazioni pesanti vivono in file separati, perché sono indipendenti e
  * vengono riscritte separatamente: `processImageWithWatermark` in `./immagini`,
  * `processVideoWithWatermark` in `./video-mediarecorder`. Qui restano la convalida
- * (`validateVideoFile`, `MotivoVideoNonValido`) e l'errore di conversione
- * (`VideoConversionError`), che i due percorsi condividono. Gli import esistenti
+ * (`validateVideoFile`, `MotivoVideoNonValido`) e `VideoConversionError`. Gli import esistenti
  * (`@/lib/media/processing`) continuano a funzionare identici: nessun chiamante cambia.
+ *
+ * ⚠️ I DUE PERCORSI NON CONDIVIDONO PIÙ L'ERRORE, e la testata lo diceva ancora quando non era
+ * già più vero. Da quando l'elaborazione delle immagini rifiuta una tela degenere invece di
+ * pubblicarla, ognuno dei due ha il proprio tipo di rigetto — `VideoConversionError` (qui) e
+ * `ImageProcessingError` (in `./immagini`). Il barile li riesporta ENTRAMBI: la pagina di
+ * galleria deve poter distinguere «questa foto non si pubblica, e all'insegnante si dice
+ * perché» da un guasto inatteso, e un chiamante che per farlo dovesse saltare il barile
+ * renderebbe il barile una mezza verità.
  */
 
-export { processImageWithWatermark } from './immagini';
+export { processImageWithWatermark, ImageProcessingError, type MotivoImmagineNonElaborabile } from './immagini';
 export { processVideoWithWatermark } from './video-mediarecorder';
 
 /**

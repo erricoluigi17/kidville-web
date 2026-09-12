@@ -9,6 +9,7 @@ import { parseQuery } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
+import { leggiVive } from '@/lib/gallery/cestino';
 
 // Uuid opzionale da query string: stringa vuota trattata come assente
 // (preserva il check truthy `requestedId ?` pre-esistente su `?userId=`).
@@ -113,11 +114,23 @@ async function sezioniDaiMediaTaggati(
     plessi: string[],
     candidate: RigaSezione[],
 ): Promise<RigaSezione[]> {
-    const { data: myMedia, error: errMedia } = await supabase
-        .from('galleria_media_v2')
-        .select('tag_students')
-        .eq('uploaded_by', userId)
-        .not('tag_students', 'is', null);
+    // ── IL CESTINO: VERSO «SOLO LE VIVE» ─────────────────────────────────────
+    // Stessa euristica di `tasks:GET`, stesso verso e per la stessa ragione: le
+    // sezioni di un docente non possono dipendere da una foto che è nel cestino.
+    // Qui pesa anche di più — questa rotta dice QUALI CLASSI un docente vede, e
+    // una foto cestinata che rimette in elenco una sezione è un permesso
+    // resuscitato da una cancellazione.
+    // `leggiVive` porta con sé il degrado per il DB E2E della CI, non migrato,
+    // dove `eliminato_il` non esiste (`42703`).
+    const { data: myMedia, error: errMedia } = await leggiVive(
+        (vive) => vive(
+            supabase
+                .from('galleria_media_v2')
+                .select('tag_students')
+                .eq('uploaded_by', userId)
+        ).not('tag_students', 'is', null),
+        'educator-sections:GET',
+    );
     if (errMedia) {
         logEvento('db', 'error', {
             operazione: 'educator-sections:GET', esito: 'media-taggati-non-letti',

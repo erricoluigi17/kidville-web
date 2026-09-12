@@ -145,6 +145,26 @@ export const IDS = {
   MEDIA_A5: 'e2e00000-0000-4000-8000-000000001001',
   MEDIA_B2: 'e2e00000-0000-4000-8000-000000001002',
 
+  // ── I TRE MEDIA CON IL FILE VERO NEL BUCKET ───────────────────────────────
+  //
+  // Sono diversi dai due qui sopra in una cosa sola, e quella cosa è tutto: il
+  // loro file ESISTE nel bucket `gallery`, quindi `firmaMediaGalleria` produce un
+  // URL firmato e `MediaGrid` rende l'immagine e il `<video>` invece del
+  // segnaposto «anteprima non disponibile». È la premessa di
+  // `e2e/impaginazione-media.spec.ts`: senza file, quel crawler misurerebbe tre
+  // riquadri grigi e sarebbe verde sul vuoto — la pillola, il `<video>` e l'URL
+  // firmato sono TUTTI condizionati all'url in `MediaGrid.tsx`.
+  //
+  // Stanno sulla «Girasoli» della sede 1 e sono taggati su Aurora (`A1`): è
+  // l'unico punto del seme visibile a ENTRAMBE le viste che il crawler apre —
+  // `/parent/gallery?id=A1` (Aurora è figlia di `GENITORE`) e `/teacher/gallery`
+  // (la docente E2E ha esattamente la Girasoli). Un solo tag per riga, quindi la
+  // regola «foto privata» (`@/lib/gallery/privacy`) non chiede nessuna
+  // liberatoria: sono visibili ai soli genitori di quel bambino.
+  MEDIA_IMP_LARGA: 'e2e00000-0000-4000-8000-000000001003',
+  MEDIA_IMP_ALTA: 'e2e00000-0000-4000-8000-000000001004',
+  MEDIA_IMP_VIDEO: 'e2e00000-0000-4000-8000-000000001005',
+
   // ── Menu mensa di OGGI, uno per sede ──────────────────────────────────────
   // Due primi DIVERSI nello stesso giorno: è l'unico modo di distinguere «il
   // menu del plesso del FIGLIO» da «il menu di `utenti.scuola_id` del genitore»
@@ -321,10 +341,27 @@ async function ensureAuthUser(id, email) {
 }
 
 // Bucket Storage privati usati dall'app ma NON auto-creati dalle route
-// (form_attachments, chat-allegati, fatture): senza questi gli upload E2E
+// (form_attachments, chat-allegati, fatture, gallery): senza questi gli upload E2E
 // falliscono con "Bucket not found". Idempotente.
+//
+// ── `gallery` È ENTRATO NELL'ELENCO IL 2026-09-11, e perché mancava ──────────
+// In produzione quel bucket lo dichiara una migrazione (`bucket_gallery_privato_50mb`
+// e seguenti, sorvegliate dal lock `bucket-storage-dichiarati`), ma il progetto
+// Supabase della CI **non viene migrato**: là il bucket semplicemente non esisteva.
+// Conseguenza misurabile e mai misurata: `createSignedUrls` non trovava l'oggetto,
+// `firmaMediaGalleria` restituiva `file_url: null`, e `MediaGrid` rendeva il
+// segnaposto «anteprima non disponibile» al posto di ogni foto e di ogni video.
+// Tutti i test che guardavano la GALLERIA guardavano dei riquadri grigi.
+//
+// ⚠️ SI CREA LO SPAZIO, NON LA POLITICA — e non è una scorciatoia. Qui non si
+// passano `allowedMimeTypes` né `fileSizeLimit`: quei due valori vivono già in tre
+// punti che il lock `bucket-storage-dichiarati` tiene allineati fra loro (la
+// migrazione, `src/lib/gallery/limiti.ts`, la route di caricamento). Ricopiarli qui
+// dentro creerebbe una QUARTA dichiarazione della stessa regola, questa senza
+// nessun lock sopra: divergerebbe in silenzio, ed è esattamente il difetto da cui
+// quel lock è nato (bucket a 50 MB, route a 200 MB, divergenti da mesi).
 async function ensureBuckets() {
-  for (const name of ['form_attachments', 'chat-allegati', 'fatture']) {
+  for (const name of ['form_attachments', 'chat-allegati', 'fatture', 'gallery']) {
     const { error } = await db.storage.createBucket(name, { public: false });
     if (error && !/exist|already|duplicate/i.test(error.message ?? '')) {
       console.error(`bucket ${name}:`, error.message);
@@ -428,6 +465,21 @@ async function seminaGalleriaDoppioProfilo() {
     },
   ];
 
+  await upsertGalleriaConDegrado(righe, 'seed doppio profilo');
+}
+
+/**
+ * L'upsert su `galleria_media_v2` con il degrado sulla colonna di sede.
+ *
+ * Estratto da `seminaGalleriaDoppioProfilo` il 2026-09-11, quando è nato un
+ * SECONDO blocco di media da seminare: due copie della stessa ritentata sono due
+ * posti dove il codice del degrado può divergere, e il ramo `PGRST204` si esercita
+ * solo sul database della CI — cioè nell'unico ambiente dove nessuno lo legge.
+ *
+ * `righe` è una FUNZIONE `(conSede) => [...]` e non due array: così la versione
+ * senza sede non può dimenticare una riga aggiunta alla versione con la sede.
+ */
+async function upsertGalleriaConDegrado(righe, etichetta) {
   const { error } = await db.from('galleria_media_v2').upsert(righe(true), { onConflict: 'id' });
   if (!error) return;
 
@@ -436,12 +488,158 @@ async function seminaGalleriaDoppioProfilo() {
     // Non è «schema più vecchio»: è un guasto, e va detto NOMINANDOLO. Non si
     // interrompe — lo spec della galleria diventerà rosso da solo, con un
     // messaggio che parla di contenuto mancante, e questa riga spiega perché.
-    console.error('galleria_media_v2 (seed doppio profilo):', error.message ?? JSON.stringify(error));
+    console.error(`galleria_media_v2 (${etichetta}):`, error.message ?? JSON.stringify(error));
     return;
   }
   console.warn('↷ galleria_media_v2 senza `scuola_id` su questo database: reinserisco senza la sede');
   const secondo = await db.from('galleria_media_v2').upsert(righe(false), { onConflict: 'id' });
-  if (secondo.error) console.error('galleria_media_v2 (senza sede):', secondo.error.message);
+  if (secondo.error) console.error(`galleria_media_v2 (${etichetta}, senza sede):`, secondo.error.message);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+ * I TRE FILE VERI DEL BUCKET `gallery` — la premessa di
+ * `e2e/impaginazione-media.spec.ts`.
+ *
+ * ─── PERCHÉ I BYTE STANNO QUI, IN BASE64 ──────────────────────────────────────
+ * Le alternative erano tre file binari nel repo o una generazione al volo con
+ * `ffmpeg`. La prima mette nel repository tre oggetti che nessuno può rileggere in
+ * una diff; la seconda fa dipendere il seme — cioè l'INTERA suite E2E — da un
+ * eseguibile che sulla macchina della CI può non esserci. Così invece i byte sono
+ * versionati, minuscoli (824 + 584 + 1551), e sopra ognuno c'è scritto che cosa
+ * sono e il comando esatto per rifarli: chi dubita li rigenera e confronta.
+ *
+ * ⚠️ NESSUNO DEI TRE È UNA FOTOGRAFIA. Sono tre rettangoli di colore pieno, e il
+ * repository è PUBBLICO: qui non entra un'immagine di un bambino nemmeno per
+ * sbaglio. Il colore è quello del marchio, così un file che comparisse dove non
+ * deve si riconosce a occhio.
+ *
+ * Rigenerati con (macOS/Linux, ffmpeg qualunque versione recente):
+ *   ffmpeg -f lavfi -i color=c=0x006A5F:s=320x320 -frames:v 1 -q:v 20 quadrata.jpg
+ *   ffmpeg -f lavfi -i color=c=0xFDC400:s=180x320 -frames:v 1 -q:v 20 alta.jpg
+ *   ffmpeg -f lavfi -i color=c=0x006A5F:s=16x16:r=1 -frames:v 1 \
+ *          -pix_fmt yuv420p -c:v libx264 -movflags +faststart minimo.mp4
+ *   base64 -i <file> | tr -d '\n'
+ *
+ * ─── PERCHÉ UNA VERTICALE, E PERCHÉ 180×320 ───────────────────────────────────
+ * Nel visore l'immagine è `w-auto max-w-full max-h-[70svh] object-contain`: è il
+ * RAPPORTO INTRINSECO a decidere l'altezza. Con solo file quadrati il crawler non
+ * potrebbe distinguere «il tetto d'altezza funziona» da «non c'è mai stato niente
+ * da tettare» — 180×320 è 9:16, cioè la forma di tutto ciò che si gira col
+ * telefono, che è il caso che aveva prodotto il difetto.
+ *
+ * ─── PERCHÉ IL VIDEO È 16×16 E DURA UN FOTOGRAMMA ─────────────────────────────
+ * Perché non serve che si VEDA: le quattro misure del crawler sono geometriche
+ * (`aspect-ratio`, `object-fit`, `max-height`, i rettangoli), e si leggono da
+ * `getComputedStyle` a prescindere dal fatto che il codec decodifichi. 16×16 è il
+ * minimo di un macroblocco H.264, e `+faststart` porta il `moov` in testa: con
+ * `preload="metadata"` la WebView legge i metadati senza una richiesta di coda.
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * JPEG 320×320, verde Kidville (`#006A5F`). Il caso «quadrato», 824 byte.
+ *
+ * ⚠️ ERA 1×1 (224 byte), e 1×1 non misurava NIENTE. Nel visore l'immagine è
+ * `w-auto max-w-full max-h-[70svh] object-contain`: un file 1×1 viene disegnato
+ * 1×1, e la sonda dell'impaginazione scarta per costruzione tutto ciò che sta sotto
+ * i 2 px per lato (ci vivono i fantasmi: lo `sr-only` è 1×1 e nel crawler di
+ * contrasto ha prodotto quattro falsi verdi). Quindi la riga «quadrata» rendeva
+ * firmabile un media — e a quello serviva — ma della GEOMETRIA non esercitava un
+ * pixel: tutta la misura sul rapporto d'aspetto la faceva il 180×320 da solo. Il
+ * commento diceva «il caso quadrato» e nessuno lo misurava: è il genere di frase
+ * che il prossimo lettore prende per buona. 320×320 costa 600 byte e mantiene la
+ * promessa.
+ */
+const JPEG_QUADRATO_B64 =
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMgD/2wBDAAgoKC8oLzc3Nzc3N0E8QUNDQ0FBQUFDQ0NISEhVVVVISEhDQ0hIUFBVVVxfXFdXVVdfX2RkZHh4c3OMjJGsrM//xABNAAEBAAAAAAAAAAAAAAAAAAAABgEBAQEAAAAAAAAAAAAAAAAAAAQGEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgBQAFAAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AiAFjFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/9k=';
+
+/** JPEG 180×320 (9:16), giallo Kidville (`#FDC400`). Il caso «verticale», 584 byte. */
+const JPEG_VERTICALE_B64 =
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjI4LjEwMgD/2wBDAAgoKC8oLzc3Nzc3N0E8QUNDQ0FBQUFDQ0NISEhVVVVISEhDQ0hIUFBVVVxfXFdXVVdfX2RkZHh4c3OMjJGsrM//xABNAAEBAAAAAAAAAAAAAAAAAAAABgEBAQEAAAAAAAAAAAAAAAAAAAYHEAEAAAAAAAAAAAAAAAAAAAAAEQEAAAAAAAAAAAAAAAAAAAAA/8AAEQgBQAC0AwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AvwGJKwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB/9k=';
+
+/** MP4 H.264 16×16, un fotogramma, `moov` in testa. 1551 byte. */
+const MP4_MINIMO_B64 =
+  'AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMVbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAj90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAAAAABAAAAAAG3bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAQABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABYm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAASJzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2Mi4yOC4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2V7ARAAAAwAEAAADAAg8SJZYAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAABZQAAAAAAAAABhzdHRzAAAAAAAAAAEAAAABAABAAAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAQAAAAEAAAAUc3RzegAAAAAAAALKAAAAAQAAABRzdGNvAAAAAAAAAAEAAANFAAAAYnVkdGEAAABabWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAtaWxzdAAAACWpdG9vAAAAHWRhdGEAAAABAAAAAExhdmY2Mi4xMi4xMDIAAAAIZnJlZQAAAtJtZGF0AAACrQYF//+p3EXpvebZSLeWLNgg2SPu73gyNjQgLSBjb3JlIDE2NSByMzIyMiBiMzU2MDVhIC0gSC4yNjQvTVBFRy00IEFWQyBjb2RlYyAtIENvcHlsZWZ0IDIwMDMtMjAyNSAtIGh0dHA6Ly93d3cudmlkZW9sYW4ub3JnL3gyNjQuaHRtbCAtIG9wdGlvbnM6IGNhYmFjPTEgcmVmPTMgZGVibG9jaz0xOjA6MCBhbmFseXNlPTB4MzoweDExMyBtZT1oZXggc3VibWU9NyBwc3k9MSBwc3lfcmQ9MS4wMDowLjAwIG1peGVkX3JlZj0xIG1lX3JhbmdlPTE2IGNocm9tYV9tZT0xIHRyZWxsaXM9MSA4eDhkY3Q9MSBjcW09MCBkZWFkem9uZT0yMSwxMSBmYXN0X3Bza2lwPTEgY2hyb21hX3FwX29mZnNldD0tMiB0aHJlYWRzPTEgbG9va2FoZWFkX3RocmVhZHM9MSBzbGljZWRfdGhyZWFkcz0wIG5yPTAgZGVjaW1hdGU9MSBpbnRlcmxhY2VkPTAgYmx1cmF5X2NvbXBhdD0wIGNvbnN0cmFpbmVkX2ludHJhPTAgYmZyYW1lcz0zIGJfcHlyYW1pZD0yIGJfYWRhcHQ9MSBiX2JpYXM9MCBkaXJlY3Q9MSB3ZWlnaHRiPTEgb3Blbl9nb3A9MCB3ZWlnaHRwPTIga2V5aW50PTI1MCBrZXlpbnRfbWluPTEgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAVZYiEABX//uzPfgU2gv4vdm7WL93h';
+
+/**
+ * I percorsi nel bucket.
+ *
+ * ⚠️ Il nome di un file di galleria è normalmente `IMG_<cognome>.jpg`, cioè
+ * anagrafica di un minore che finirebbe nella chiave dell'oggetto e da lì nei log
+ * (è il motivo per cui `estensioneDaMime` esiste, in `src/lib/gallery/limiti.ts`).
+ * Questi tre nomi descrivono la FORMA del file e nient'altro, e il prefisso
+ * `uploads/e2e/` li rende riconoscibili e cancellabili in blocco se un giorno il
+ * seme venisse puntato — non deve succedere — su un progetto che non è quello
+ * della CI.
+ */
+const FILE_IMPAGINAZIONE = [
+  { percorso: 'uploads/e2e/impaginazione-quadrata.jpg', b64: JPEG_QUADRATO_B64, mime: 'image/jpeg' },
+  { percorso: 'uploads/e2e/impaginazione-alta.jpg', b64: JPEG_VERTICALE_B64, mime: 'image/jpeg' },
+  { percorso: 'uploads/e2e/impaginazione-video.mp4', b64: MP4_MINIMO_B64, mime: 'video/mp4' },
+];
+
+/**
+ * Carica i tre file nel bucket. `upsert: true` per l'idempotenza: al secondo run
+ * il file c'è già e senza questa opzione lo Storage risponde `Duplicate`.
+ *
+ * NON usa `must()`: un guasto dello Storage non deve uccidere l'intera suite, e il
+ * crawler dell'impaginazione ha già un messaggio che dice esattamente che cosa
+ * manca («nessuna immagine con un URL FIRMATO»). Ma non tace: qui si stampa il
+ * corpo dell'errore del provider, perché «non ha caricato» senza il perché è lo
+ * stesso silenzio da cui nasce la regola 3 di AGENTS.md — `403` non dice nulla,
+ * `403 "mime type not supported"` dice tutto.
+ */
+async function caricaFileGalleriaE2E() {
+  for (const f of FILE_IMPAGINAZIONE) {
+    const { error } = await db.storage
+      .from('gallery')
+      .upload(f.percorso, Buffer.from(f.b64, 'base64'), { contentType: f.mime, upsert: true });
+    if (error) {
+      console.error(`storage gallery ${f.percorso}:`, error.message ?? JSON.stringify(error));
+    } else {
+      console.log(`  gallery ✚ ${f.percorso}`);
+    }
+  }
+}
+
+/**
+ * Le tre righe di galleria con il file vero — quelle che l'impaginazione misura.
+ *
+ * ⚠️ LE DIDASCALIE NON SONO ÀNCORE, ed è deliberato. Nessuno spec le cerca:
+ * `e2e/impaginazione-media.spec.ts` individua il video APRENDO la card e guardando
+ * se nel visore c'è un `<video>`, non leggendo un testo. Un'àncora in più qui
+ * avrebbe voluto dire un'altra costante ricopiata in `e2e/fixtures.ts` (quel file
+ * è `.ts` e non può importare un `.mjs`: la duplicazione è dichiarata in testa a
+ * entrambi), cioè un altro punto da tenere allineato a mano per niente.
+ */
+async function seminaGalleriaImpaginazione() {
+  const righe = (conSede) => [
+    {
+      id: IDS.MEDIA_IMP_LARGA, uploaded_by: IDS.DOCENTE,
+      file_url: FILE_IMPAGINAZIONE[0].percorso,
+      file_type: 'foto', caption: 'Collaudo impaginazione — quadrata',
+      tag_students: [IDS.A1], is_broadcast: false, target_classes: ['Girasoli'],
+      ...(conSede ? { scuola_id: IDS.SCUOLA } : {}),
+    },
+    {
+      id: IDS.MEDIA_IMP_ALTA, uploaded_by: IDS.DOCENTE,
+      file_url: FILE_IMPAGINAZIONE[1].percorso,
+      file_type: 'foto', caption: 'Collaudo impaginazione — verticale 9:16',
+      tag_students: [IDS.A1], is_broadcast: false, target_classes: ['Girasoli'],
+      ...(conSede ? { scuola_id: IDS.SCUOLA } : {}),
+    },
+    {
+      id: IDS.MEDIA_IMP_VIDEO, uploaded_by: IDS.DOCENTE,
+      file_url: FILE_IMPAGINAZIONE[2].percorso,
+      // `'video'` è il valore che `MediaGrid` confronta (`item.file_type === 'video'`)
+      // per rendere il `<video>` invece dell'`<img>`: è l'UNICA riga del seme che
+      // porta in scena quell'elemento.
+      file_type: 'video', caption: 'Collaudo impaginazione — video',
+      tag_students: [IDS.A1], is_broadcast: false, target_classes: ['Girasoli'],
+      ...(conSede ? { scuola_id: IDS.SCUOLA } : {}),
+    },
+  ];
+
+  await upsertGalleriaConDegrado(righe, 'impaginazione');
 }
 
 async function main() {
@@ -832,8 +1030,14 @@ async function main() {
     data: { note: 'Compilazione E2E' }, gestita_il: null, gestita_da: null,
   }, { onConflict: 'id' }));
 
-  // 15. Galleria: un media per ciascuno dei due figli del profilo doppio.
+  // 15. Galleria: un media per ciascuno dei due figli del profilo doppio…
   await seminaGalleriaDoppioProfilo();
+  // …e i TRE media della Girasoli col file VERO nel bucket. L'ordine conta: prima
+  // i file, poi le righe. Al contrario, fra l'INSERT e l'upload esisterebbe una
+  // finestra in cui la galleria ha righe che non si possono firmare — che è
+  // precisamente lo stato da cui questo blocco esiste per uscire.
+  await caricaFileGalleriaE2E();
+  await seminaGalleriaImpaginazione();
 
   // 16. Menu mensa di OGGI, diverso nelle due sedi.
   //

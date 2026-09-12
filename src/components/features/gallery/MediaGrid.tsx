@@ -8,6 +8,7 @@ import { condividiLink } from '@/lib/native/share';
 import { Download, Share2, Play, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { SegnalaContenuto } from '@/components/features/segnalazioni/SegnalaContenuto';
+import { DialogoEliminaMedia } from '@/components/features/gallery/DialogoEliminaMedia';
 import { rendiInerteFuoriDaConFocus } from '@/lib/accessibility/inerti';
 
 // Il traduttore va passato a timeAgo(), che è module-level (fuori dal componente).
@@ -35,12 +36,58 @@ export interface MediaItem {
     is_broadcast: boolean;
     created_at: string;
     uploader_name: string;
+    /**
+     * L'uuid di CHI ha caricato. Esce già da `GET /api/gallery` (la route legge
+     * `select('*')` su `galleria_media_v2` e propaga `...media`): qui mancava solo
+     * la dichiarazione, e senza di lei il predicato `eliminabile` non avrebbe
+     * nulla su cui decidere — un'insegnante può eliminare SOLO i propri
+     * caricamenti, la segreteria qualunque media della propria sede.
+     *
+     * Opzionale perché `.filter(Boolean)` nella route dice che la colonna può
+     * essere vuota, e perché i fixture dei test che non la usano restano validi.
+     * ⚠️ Non è un gate: il gate vero è nella route (`DELETE /api/gallery`). Questo
+     * serve a non MOSTRARE un comando che il server rifiuterebbe.
+     */
+    uploaded_by?: string | null;
 }
 
 interface Props {
     items: MediaItem[];
     showActions?: boolean; // Download/Share per genitore
-    onDelete?: (id: string) => void; // Solo admin/staff
+    /**
+     * L'ELIMINAZIONE VERA — e adesso è una PROMISE, che è tutta la differenza.
+     *
+     * Era `(id) => void`, e il chiamante la usava così:
+     * `onDelete(item.id); handleCloseLightbox();` — due righe, la seconda non
+     * aspetta la prima. Il visore si chiudeva PRIMA della risposta del server, e
+     * un rifiuto (403 di sede, 500) arrivava su una schermata che non mostrava più
+     * la foto di cui parlava. Con una promise il dialogo può restare aperto
+     * finché il server non ha risposto, che è l'unico modo di dire «non è andata»
+     * mentre si vede ancora di che cosa si sta parlando.
+     *
+     * DEVE RIGETTARE quando il server rifiuta, con un `Error` dal `.message` GIÀ
+     * TRADOTTO (`messaggioErrore`/`messaggioDaCorpo` di `@/lib/ui/esito-fetch`) e,
+     * se possibile, con lo stato HTTP attaccato — `erroreElimina(testo, res.status)`
+     * di `./DialogoEliminaMedia`, oppure `Object.assign(new Error(testo), { stato })`.
+     * Senza lo stato i tre esiti non si distinguono e tutto viene trattato come
+     * ritentabile, che è il ripiego prudente.
+     *
+     * ⚠️ IL RICARICO DELL'ELENCO RESTA DEL CHIAMANTE, dentro la propria
+     * risoluzione: qui non si sa che cosa sia «l'elenco». Un 404 conviene
+     * trattarlo come RIUSCITA (la riga non c'è più: l'esito voluto è raggiunto)
+     * con un `warn` nel log, così anche in quel caso l'elenco si aggiorna.
+     */
+    onDelete?: (id: string) => Promise<void>; // Solo admin/staff
+    /**
+     * CHI può eliminare QUESTO media. Decisione del titolare: l'insegnante solo i
+     * propri caricamenti, segreteria e direzione qualunque media della propria
+     * sede, il genitore mai (il genitore non passa `onDelete` affatto).
+     *
+     * Il default è «tutti, quando `onDelete` c'è»: non stringe niente da sé, e le
+     * tre superfici dichiarano la propria regola. Il gate che conta resta quello
+     * della route; questo evita di MOSTRARE un comando destinato a un 403.
+     */
+    eliminabile?: (item: MediaItem) => boolean;
     students?: Student[]; // Tutti gli studenti della classe per il tagging
     onUpdateTags?: (id: string, newTags: string[]) => Promise<void>; // Salvataggio dei tag
     /**
@@ -181,12 +228,21 @@ function timeAgo(iso: string, t: Traduttore): string {
     return t('galleryGiorniFa', { n: days });
 }
 
-export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags, colonne = 2 }: Props) {
+export function MediaGrid({ items, showActions, onDelete, eliminabile, students, onUpdateTags, colonne = 2 }: Props) {
     const t = useTranslations('shared');
     const [lightbox, setLightbox] = useState<MediaItem | null>(null);
     const [editMode, setEditMode] = useState(false);
     const [tempTagged, setTempTagged] = useState<string[]>([]);
     const [savingTags, setSavingTags] = useState(false);
+    /**
+     * IL MEDIA PER CUI SI STA CHIEDENDO CONFERMA — e non un booleano.
+     *
+     * Tenere l'OGGETTO e non un `true` è ciò che rende impossibile il caso
+     * peggiore: col dialogo aperto si elimina il media che il dialogo nomina, non
+     * «quello aperto nel visore adesso». Le due cose divergono al primo tocco di
+     * una freccia, e la seconda cancellerebbe una foto che non si sta guardando.
+     */
+    const [daEliminare, setDaEliminare] = useState<MediaItem | null>(null);
 
     /**
      * UNO SCARICO ALLA VOLTA. Non è cosmesi: su iOS presentare un secondo foglio
@@ -195,6 +251,49 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
      * `ref` e non uno `state` perché non deve ridisegnare niente.
      */
     const scaricoInCorso = useRef(false);
+
+    /**
+     * LA DELETE DELLA CONFERMA È IN VOLO — e finché è vera il visore non si chiude.
+     *
+     * ─── IL BUCO CHE CHIUDE, misurato il 2026-09-12 ──────────────────────────
+     * `DialogoEliminaMedia` ha la propria guardia per le tre strade che passano da
+     * lui (`Escape`, il tasto Indietro di Android, «Annulla»). Ne restavano DUE, e
+     * sono qui: la ✕ e lo scroller chiamano `handleCloseLightbox` DIRETTAMENTE, e
+     * quella azzera `daEliminare`, cioè smonta il dialogo. Con la DELETE in volo il
+     * 403 o il 500 che arrivava dopo faceva girare `setErrore` su un componente
+     * morto — no-op silenzioso in React, nemmeno un avviso in console: la foto
+     * restava e chi aveva premuto non vedeva niente. Lo stesso silenzio per cui il
+     * dialogo esiste invece di un `confirm()`, rientrato dalla porta di servizio.
+     *
+     * Sono anche le DUE STRADE CHE RESTANO RAGGIUNGIBILI col dialogo aperto su iOS
+     * 15.0–15.4: `inert` è di Safari 15.5, `IPHONEOS_DEPLOYMENT_TARGET` è 15.0,
+     * quindi `rendiInerteFuoriDa` ripiega su `aria-hidden`, che non blocca i click.
+     * È la stessa finestra di dispositivi con cui si giustifica l'azzeramento di
+     * `daEliminare` in `handleCloseLightbox`: non può contare per una strada e non
+     * per la sua gemella.
+     *
+     * ─── PERCHÉ UN `ref` E NON UNO `useState`, E COSA HO MISURATO ────────────
+     * Il valore si legge dentro `handleCloseLightbox`, e di `handleCloseLightbox`
+     * ce n'è una copia per render: al momento del successo ne sono vive ALMENO
+     * DUE — quella catturata dalla ✕ al render in cui la bandiera era già alzata,
+     * e quella che la `conferma()` in esecuzione tiene come `onEliminato`, nata al
+     * render PRECEDENTE alla pressione. Con un `ref` la guardia risponde al TEMPO
+     * (si scrive e si rilegge nella stessa riga); con uno `useState` risponde a
+     * QUALE chiusura sta chiedendo, e le due cose divergono esattamente qui.
+     *
+     * ⚠️ Onestà su quanto è misurato, perché la prima stesura di questo commento
+     * diceva di più: sostituito il `ref` con uno `useState`, i 42 test di
+     * `__tests__/components/DialogoEliminaMedia.test.tsx` restano TUTTI VERDI
+     * (mutazione eseguita il 2026-09-12). Il motivo è che la `conferma()` in volo
+     * tiene la `onEliminato` creata PRIMA che la bandiera salisse, e quella legge
+     * `false`: la versione con lo stato funziona per l'ordine in cui le chiusure
+     * sono state catturate, non per una regola che si possa leggere sul posto.
+     * Il `ref` resta la scelta perché toglie quella dipendenza invisibile — e
+     * perché non ridisegna la griglia (fino a 40 card) due volte per pressione: è
+     * la stessa ragione di `scaricoInCorso` qui sopra. Il segnale a schermo c'è
+     * già, ed è lo spinner sul bottone della conferma.
+     */
+    const eliminaInVolo = useRef(false);
 
     /**
      * IL VISORE È UNA FINESTRA MODALE, E ADESSO SI COMPORTA COME TALE.
@@ -334,9 +433,55 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
     }, [t]);
 
     const handleCloseLightbox = () => {
+        /*
+         * ⚠️ LA GUARDIA GEMELLA DI QUELLA DEL DIALOGO, e sta qui perché qui si
+         * smonta. Con la DELETE in volo non si chiude niente: il rifiuto che sta
+         * arrivando ha bisogno di trovare il dialogo ancora montato, altrimenti
+         * `setErrore` gira su un componente morto e non si vede da nessuna parte.
+         * Il perché per esteso è sul `ref` `eliminaInVolo`, qui sopra.
+         *
+         * Non è un vicolo cieco: la bandiera scende in `conferma()` PRIMA di
+         * qualunque richiamo al padre, quindi l'esito positivo (e il 404) chiudono
+         * il visore da sé, e un rifiuto lascia la ✕ di nuovo funzionante. Due
+         * test lo ripercorrono, perché una guardia incastrata sarebbe un visore
+         * da cui non si esce più.
+         */
+        if (eliminaInVolo.current) {
+            /*
+             * La pressione scartata si LOGGA, come già fa `scaricaMedia` con lo
+             * scarico doppio e per lo stesso motivo del §5 di AGENTS.md: senza
+             * questa riga «la ✕ è incagliata» e «nessuno l'ha premuta» sarebbero
+             * lo stesso silenzio in `app_log`. Il gesto non è muto a schermo —
+             * lo spinner sulla conferma è lì —, ma quante volte accada si misura
+             * solo se lo si scrive.
+             */
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: 'gallery-chiusura-visore-rinviata',
+            });
+            return;
+        }
         setLightbox(null);
         setEditMode(false);
         setTempTagged([]);
+        /*
+         * ⚠️ ANCHE IL MEDIA CATTURATO DALLA CONFERMA, e questa riga chiude il caso
+         * peggiore per COSTRUZIONE invece di affidarlo al supporto di `inert`.
+         *
+         * Questo è l'UNICO imbuto che smonta il visore, e il visore è l'unico
+         * contenitore del dialogo: se il visore cade e `daEliminare` resta, alla
+         * riapertura di un ALTRO media la conferma ricompare da sé NOMINANDO quello
+         * di prima — si legge la didascalia di una foto e si cancella un'altra.
+         *
+         * Non è un caso di scuola: lo scroller porta `onClick={handleCloseLightbox}`
+         * e col dialogo aperto dovrebbe essere coperto da `inert`, ma `inert` è di
+         * Safari 15.5 e `IPHONEOS_DEPLOYMENT_TARGET` è 15.0 — su iOS 15.0–15.4
+         * `rendiInerteFuoriDa` ripiega su `aria-hidden`, che NON blocca i click (sta
+         * scritto nel commento di `@/lib/accessibility/inerti`). Lo stesso vale per
+         * la ✕ qui sotto e per il tasto Indietro di Android.
+         */
+        setDaEliminare(null);
     };
 
     /** L'apertura del visore, in un posto solo: la usano il click e la tastiera. */
@@ -345,6 +490,23 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
         setEditMode(false);
         setTempTagged(item.tag_students ?? []);
     };
+
+    /**
+     * IL PREDICATO, IN UN POSTO SOLO. `onDelete` assente significa «questa
+     * superficie non elimina» (il genitore): non è una regola di ruolo, è
+     * l'assenza del comando. `eliminabile` assente significa «tutti quelli di
+     * questa superficie», perché un default che stringe da sé spegnerebbe in
+     * silenzio il comando delle due schermate che lo avevano già.
+     */
+    const puoEliminare = (item: MediaItem): boolean =>
+        onDelete !== undefined && (eliminabile ? eliminabile(item) : true);
+
+    /**
+     * L'eliminazione legata al media della conferma. Costruirla qui — e non dentro
+     * il dialogo — è ciò che tiene l'uuid FUORI dal dialogo: quel componente non
+     * lo riceve, quindi non può stamparlo a schermo per distrazione.
+     */
+    const eliminaIlMedia = daEliminare && onDelete ? () => onDelete(daEliminare.id) : null;
 
     const currentIndex = lightbox ? items.findIndex(item => item.id === lightbox.id) : -1;
     // Indirizzo firmato del media aperto nel visore, in una const: `null` quando la
@@ -372,7 +534,15 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
     }, [currentIndex, items]);
 
     useEffect(() => {
-        if (!lightbox) return;
+        /**
+         * ⚠️ `|| daEliminare` NON È UNA RIFINITURA. Con la conferma aperta, `Escape`
+         * lo gestisce già `Modal` (che fa `stopPropagation()` su `document`, cioè
+         * prima che l'evento arrivi a questo listener su `window`), ma le FRECCE no:
+         * arrivavano fin qui e cambiavano il media dietro al dialogo. Il dialogo
+         * nomina e cancella quello che ha catturato all'apertura — quindi da quel
+         * momento si sarebbe letta una didascalia e cancellata un'altra foto.
+         */
+        if (!lightbox || daEliminare) return;
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'ArrowLeft') {
                 handlePrev();
@@ -386,7 +556,7 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
         return () => window.removeEventListener('keydown', handleKeyDown);
         // handlePrev/handleNext sono memoizzate su [currentIndex, items] (già dipendenze):
         // l'effect gira esattamente quando girava prima.
-    }, [lightbox, currentIndex, items, handlePrev, handleNext]);
+    }, [lightbox, daEliminare, currentIndex, items, handlePrev, handleNext]);
 
     if (items.length === 0) {
         return (
@@ -847,9 +1017,19 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                             </div>
                         )}
 
-                        {/* Delete (admin) */}
-                        {onDelete && (
-                            <button onClick={() => { onDelete(lightbox.id); handleCloseLightbox(); }}
+                        {/*
+                          ELIMINA — E IL COMANDO RESTA SOLO QUI, non sulla miniatura.
+                          Una tessera da 171 px ha già due bersagli in un angolo
+                          (Scarica, Condividi): un terzo, DISTRUTTIVO, significa
+                          cancellare la foto di un minore con un pollice. Il gesto sta
+                          dove si è già scelto di guardare quella foto.
+
+                          E adesso non elimina: CHIEDE. Prima faceva
+                          `onDelete(id); handleCloseLightbox();` — due righe di cui la
+                          seconda non aspetta la prima.
+                        */}
+                        {puoEliminare(lightbox) && (
+                            <button onClick={() => setDaEliminare(lightbox)}
                                 className="mt-4 mx-auto flex items-center gap-1 px-4 py-2 bg-kidville-error hover:opacity-90 text-white rounded-full font-maven text-xs font-semibold transition-colors cursor-pointer">
                                 🗑️ {t('galleryEliminaMedia')}
                             </button>
@@ -865,6 +1045,84 @@ export function MediaGrid({ items, showActions, onDelete, students, onUpdateTags
                         className="absolute top-[max(1rem,env(safe-area-inset-top))] right-4 w-10 h-10 rounded-full bg-kidville-green/10 text-kidville-green flex items-center justify-center hover:bg-kidville-green/20 transition-colors shadow-sm font-bold z-20">
                         ✕
                     </button>
+
+                    {/*
+                      LA CONFERMA È FIGLIA DEL VISORE, E FRATELLA DELLO SCROLLER —
+                      non un nipote. Due ragioni misurate, non estetiche:
+
+                      · lo scroller porta `onClick={handleCloseLightbox}` («clic
+                        fuori = chiudi»). Un dialogo reso DENTRO di lui farebbe
+                        risalire ogni clic sul proprio velo fin lì: il visore si
+                        chiuderebbe portandosi via la conferma, cioè l'annullamento
+                        per distrazione che `closeOnBackdrop={false}` esiste per
+                        impedire;
+                      · dentro il visore e non fuori perché l'effetto del visore
+                        marca `inert` tutto ciò che gli sta FUORI: un dialogo là
+                        nascerebbe inerte, cioè con i suoi due comandi
+                        irraggiungibili. Il registro di `inerti` conta per elemento,
+                        quindi l'inerzia che `Modal` aggiunge sopra si somma e si
+                        sottrae senza scoprire lo sfondo del visore.
+
+                      ⚠️ E QUI IL `z-[120]` DI `Modal` NON VALE PIÙ QUELLO CHE
+                      PROMETTE — va saputo prima di fidarsene. Il visore è
+                      `fixed inset-0 z-50`: posizione più `z-index` diverso da
+                      `auto` creano un CONTESTO D'IMPILAMENTO, quindi il `z-[120]`
+                      del Modal si risolve DENTRO quel contesto e non può superare
+                      il livello 50 rispetto ai fratelli del visore. Il commento di
+                      `Modal.tsx` dice che quel 120 esiste per stare sopra il chrome
+                      del cockpit (topbar e sidebar `z-[105]`, foglio «Menu»
+                      `z-[110]`): la garanzia, annidati qui, è clampata.
+                      Conseguenza concreta su `/teacher/gallery`, che è la sola
+                      schermata che apre questo dialogo: `TeacherBottomNav` è
+                      `fixed bottom-0 … z-50` e nel layout viene DOPO
+                      `<main>{children}</main>` (righe 51 e 56 di
+                      `teacher/layout.tsx`), cioè stesso livello e più avanti nel
+                      DOM — dipinge sopra il visore, e adesso anche sopra questo
+                      dialogo, che essendo centrato non si può far scorrere via da
+                      sotto.
+                      NON È CORRETTO A OCCHIO DI PROPOSITO: una sovrapposizione vera
+                      dei bottoni non è dimostrata ai formati comuni (il dialogo è
+                      compatto e centrato, `max-h-[90vh]`, la barra occupa ~90 px in
+                      fondo) e jsdom non ha layout, quindi nessun test di questa
+                      cartella può vederlo. Si misura nel browser vero — l'E2E in
+                      CI, perché il collaudo browser in locale è documentato come
+                      impossibile (il middleware rinvia al login). Se la misura dirà
+                      che c'è, la correzione strutturale è una riga: portare il
+                      visore da `z-50` a `z-[115]`, che è il valore che
+                      `ui/cockpit.tsx:431` usa già esattamente per questo scopo.
+                    */}
+                    {daEliminare && eliminaIlMedia && (
+                        <DialogoEliminaMedia
+                            tipoMedia={daEliminare.file_type}
+                            didascalia={daEliminare.caption}
+                            onElimina={eliminaIlMedia}
+                            /* L'esito è raggiunto: via la conferma E via il visore.
+                               Una chiamata sola: `handleCloseLightbox` azzera GIÀ il
+                               media catturato, ed è giusto che la regola stia in un
+                               posto solo — un `setDaEliminare(null)` anche qui
+                               sarebbe un duplicato che nasconde la dipendenza.
+
+                               ⚠️ QUI NON SI RICARICA NIENTE, e il contratto della prop
+                               lo dice con le stesse parole: il ricarico è del
+                               chiamante, dentro la risoluzione della propria
+                               `onDelete`. Questa riga chiude, e basta. L'unico ramo in
+                               cui l'elenco resta indietro è il 404 RIGETTATO — il
+                               chiamante ha lanciato invece di ricaricare —, ed è
+                               scritto nel contratto di `onEliminato` perché non lo
+                               scopra qualcun altro a sue spese. */
+                            onEliminato={handleCloseLightbox}
+                            /* Annullare chiude SOLO la conferma: il visore resta, ed
+                               è il posto da cui si è partiti. */
+                            onChiudi={() => setDaEliminare(null)}
+                            /* LA DELETE IN VOLO SALE FIN QUI, e serve alle due strade
+                               che NON passano dal dialogo: la ✕ e lo scroller chiamano
+                               `handleCloseLightbox` direttamente, e quella smonta la
+                               conferma. `eliminaInVolo` è un `ref` e non uno stato: il
+                               perché — e cosa di quel perché è misurato e cosa no —
+                               sta sulla sua dichiarazione. */
+                            onInVolo={(inVolo) => { eliminaInVolo.current = inVolo; }}
+                        />
+                    )}
                 </div>
             )}
         </>

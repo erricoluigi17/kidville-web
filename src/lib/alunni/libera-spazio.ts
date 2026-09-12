@@ -3,6 +3,7 @@ import { obliaAllegatiChat, obliaFotoAlunno } from '@/lib/gdpr/esegui'
 import { sorteDellaFoto, type RigaMedia } from '@/lib/gdpr/foto-partizione'
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
 import { schemaAssente } from '@/lib/news/schema-assente'
+import { ancheNelCestino } from '@/lib/gallery/cestino'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -239,10 +240,23 @@ export async function contaSpazio(
   // `file_url` NON è di lusso: la sorte di un media dipende anche dall'indirizzo.
   // Se non è riconoscibile in questo archivio l'esecuzione non lo toglie, e
   // annunciarlo fra le distruzioni sarebbe una promessa vuota.
-  const { data: media, error: errMedia } = await supabase
-    .from('galleria_media_v2')
-    .select('id, file_url, file_type, tag_students')
-    .contains('tag_students', [alunnoId])
+  // ⚠️ `ancheNelCestino`: questo conteggio è il DRY-RUN di `liberaSpazio`, e
+  // `liberaSpazio` esegue `obliaFotoAlunno`, che il cestino lo vede. Filtrare qui
+  // romperebbe lo specchio in entrambe le direzioni: l'operatore confermerebbe un
+  // numero più basso del vero, e — peggio — su un bambino le cui foto sono TUTTE
+  // nel cestino il conteggio direbbe zero, cioè «niente da liberare», mentre
+  // l'esecuzione ha eccome qualcosa da distruggere. La testata di questo file dice
+  // che una regola valida per due strade vive in un posto solo: questa è quella
+  // regola, e il posto è `sorteDellaFoto` sulle righe che ARRIVANO tutte.
+  const { data: media, error: errMedia } = await ancheNelCestino(
+    supabase
+      .from('galleria_media_v2')
+      .select('id, file_url, file_type, tag_students')
+      .contains('tag_students', [alunnoId]),
+    'dry-run di liberaSpazio: deve vedere le stesse righe che obliaFotoAlunno distrugge, ' +
+      'cestino compreso; filtrando, un bambino con tutte le foto cestinate risulterebbe ' +
+      "«niente da liberare» mentre l'esecuzione distrugge.",
+  )
   if (errMedia && !schemaAssente(errMedia)) {
     logErrore({ operazione: op, evento: 'spazio_galleria_non_letta' }, errMedia)
     return { ok: false, errore: errMedia }

@@ -127,6 +127,13 @@ const adminClient = {
     b.lte = () => b
     b.or = () => b
     b.not = () => b
+    // `.is(colonna, valore)` — dal 2026-09-11 le letture di `galleria_media_v2`
+    // passano da `@/lib/gallery/cestino`, e `soloVive` e `.is('eliminato_il', null)`.
+    // Qui la catena e PASSANTE di proposito: questo file prova la FIRMA dei link,
+    // non il filtro del cestino (che ha i suoi test in `gallery-cestino.test.ts`).
+    // Senza questa riga la catena non ha il metodo, la route lancia e risponde 500:
+    // erano i quattro rossi del 2026-09-12.
+    b.is = () => b
     b.in = () => b
     b.range = async () => ({ data: h.media, count: h.media.length, error: null })
     b.maybeSingle = async () => ({ data: table === 'alunni' ? { scuola_id: SEDE } : null, error: null })

@@ -100,6 +100,14 @@
   "gallerySalvataggio": "Saving…",
   "galleryNessunTaggato": "No children tagged (general broadcast)",
   "galleryEliminaMedia": "Delete media",
+  "galleryEliminaTitoloFoto": "Delete this photo?",
+  "galleryEliminaTitoloVideo": "Delete this video?",
+  "galleryEliminaSubito": "It disappears from the parents’ gallery straight away: once you confirm, families can no longer see this item.",
+  "galleryEliminaRipristino": "This is not immediate destruction: the school office can restore it within 30 days. After 30 days it is destroyed for good, file included.",
+  "galleryEliminaConferma": "Delete",
+  "galleryEliminaInCorso": "Deleting…",
+  "galleryEliminaRifiutoTitolo": "Deletion not allowed",
+  "galleryEliminaErroreGenerico": "This item could not be deleted right now: please try again in a moment.",
   "galleryVideo": "Video",
   "galleryAltFoto": "Photo",
   "galleryAnteprimaNonDisponibile": "Preview unavailable",
@@ -393,5 +401,7 @@
   "erroreSezioneNonTrovata": "This class is no longer available: go back to the list and try again.",
   "erroreClasseNonDiPrimaria": "This class isn’t part of primary school: the primary register doesn’t apply to it.",
   "erroreGradoNonAbilitato": "You aren’t enabled for this school level: ask the office to update your profile.",
-  "erroreFirmaNonSalvata": "We couldn’t save the register signature. Please try again in a few minutes."
+  "erroreFirmaNonSalvata": "We couldn’t save the register signature. Please try again in a few minutes.",
+  "erroreGalleriaMediaNelCestino": "This photo is in the bin: restore it before editing it.",
+  "erroreGalleriaCestinoNonDisponibile": "The gallery bin isn’t available on this installation: the photo was not deleted. Please tell the office."
 }

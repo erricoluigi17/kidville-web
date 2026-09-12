@@ -201,4 +201,38 @@ describe('GET /api/educator-sections — ramo educator: identità e sede', () =>
       { id: SEC_A_3ANNI, name: '3 ANNI A', scuolaId: SEDE_A, scuolaNome: NOME_SEDE_A, school_type: 'infanzia' },
     ])
   })
+
+  /**
+   * IL CESTINO — una foto eliminata non fa più comparire una sezione.
+   *
+   * Stesso materiale della prova qui sopra, con `eliminato_il` valorizzato
+   * sull'unico media: cambia SOLO quel campo, e l'elenco deve svuotarsi. Il caso
+   * positivo accanto è ciò che rende la prova utile — senza, un elenco vuoto
+   * potrebbe venire da qualunque altra cosa.
+   *
+   * Perché conta più delle altre due letture: questa rotta dice QUALI CLASSI un
+   * docente vede. Una foto cestinata che rimette in elenco una sezione è un
+   * permesso resuscitato da una cancellazione — e da lì il docente vedrebbe i
+   * task e il registro di una classe che non è (più) sua.
+   */
+  it('euristica sui media taggati: una foto nel CESTINO non resuscita la sezione', async () => {
+    h.db.utenti_sezioni = []
+    h.db.galleria_media_v2 = [
+      {
+        id: 'm1',
+        uploaded_by: ID_DOCENTE,
+        tag_students: [ALUNNO_A],
+        eliminato_il: '2026-09-11T10:00:00.000Z',
+      },
+    ]
+    h.db.alunni = [
+      { id: ALUNNO_A, scuola_id: SEDE_A, section_id: SEC_A_3ANNI, classe_sezione: '3 ANNI A' },
+    ]
+    h.requireDocente.mockResolvedValue({ user: { id: ID_DOCENTE, role: 'educator', scuola_id: SEDE_A } })
+
+    const j = await corpo(await GET(richiesta()))
+
+    expect(j.sections).toEqual([])
+    expect(j.sectionNames).toEqual([])
+  })
 })

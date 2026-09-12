@@ -48,12 +48,31 @@ const SMOKE_ARTEFATTO = !!process.env.CI || process.env.KV_SMOKE_ARTEFATTO === '
  *  · `public-iscrizione`  il modulo pubblico, che si compila da Safari — non
  *                         dall'app — ed è il più ricco di campi nativi.
  *
+ * ─── IL QUINTO, dal 2026-09-11: `impaginazione-media` ───────────────────────
+ * È l'unico che sta qui per il MOTORE e non per il percorso. Misura in pixel veri
+ * le due gallerie a 390×844 (nessuno scorrimento laterale, niente che sporga, il
+ * visore che scorre, il video che dichiara il suo rapporto), e le unità con cui
+ * la galleria è stata riparata sono proprio quelle su cui i due motori NON
+ * concordano: `svh` e `env(safe-area-inset-*)`. Su Safari iOS `vh` è il viewport
+ * GRANDE — quello senza la barra degli indirizzi — quindi un `70vh` scritto per
+ * sbaglio invece di `70svh` è verde su Chromium e fuori campo sull'iPhone di un
+ * genitore. Senza questa riga, la misura girerebbe sull'unico motore in cui il
+ * difetto che cerca non si vede.
+ * Gira ANCHE su `chromium` (non è escluso dal progetto lì sotto): lo stesso
+ * layout su due motori sono due misure, non una ripetizione, e costa una ventina
+ * di secondi. Il crawler di CONTRASTO, invece, è escluso da `chromium` — la
+ * differenza non è un'incoerenza: là il doppio giro avrebbe ereditato i
+ * `retries: 2` della config, mentre questo spec dichiara `retries: 0` al proprio
+ * interno (`test.describe.configure`), quindi vale 0 in tutti i progetti che lo
+ * raccolgono. La ragione per esteso è nella testata dello spec.
+ *
  * È una **RegExp** e non un glob perché così il lock
  * `__tests__/architecture/e2e-webkit-installato.test.ts` può APPLICARLA agli
  * spec reali e accorgersi se un giorno non seleziona più niente: un `testMatch`
  * che matcha zero file è un progetto verde in un secondo che non prova nulla.
  */
-const SPEC_CRITICI_WEBKIT = /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione)\.spec\.ts$/;
+const SPEC_CRITICI_WEBKIT =
+  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media)\.spec\.ts$/;
 
 /**
  * Ciò che su WebKit NON si ripete. `public-iscrizione.spec.ts` contiene, oltre

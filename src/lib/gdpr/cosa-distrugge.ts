@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { sorteDellaFoto, uuidDichiarati, type RigaMedia } from './foto-partizione'
+import { ancheNelCestino } from '@/lib/gallery/cestino'
 import { CAMPI_CONTEGGIO, OBLIO_DISTRUGGE, OBLIO_RESTA } from './cosa-distrugge-voci'
 import type { CampoConteggioOblio, VoceOblio } from './cosa-distrugge-voci'
 
@@ -141,11 +142,25 @@ export async function contaCosaDistrugge(
   // riscritta. Serve anche `file_url`, perché la sorte di una foto dipende pure
   // dall'indirizzo: se non è riconoscibile in questo archivio l'oblio non la
   // toglie, e annunciarla fra le distruzioni sarebbe una promessa vuota.
+  // ⚠️ `ancheNelCestino`, E LO SPECCHIO DELL'ESECUZIONE È IL PUNTO DI QUESTA
+  // FUNZIONE. Questo è il numero che la Direzione LEGGE e CONFERMA prima di un
+  // gesto che non ha un annulla. `obliaFotoAlunno` distrugge anche le foto nel
+  // cestino (ci deve): se il preventivo filtrasse le sole vive, annuncerebbe MENO
+  // di quanto accade — e un preventivo che sottostima una distruzione irreversibile
+  // è peggio di nessun preventivo, perché fa dire sì a una cosa diversa da quella
+  // che si è letta. È lo stesso difetto che `sorteDellaFoto` è nata per chiudere:
+  // due copie della stessa regola che divergono, e la divergenza si vede solo sui
+  // dati veri.
   const media = await leggi<RigaMedia>(
-    supabase
-      .from('galleria_media_v2')
-      .select('id, file_url, tag_students')
-      .contains('tag_students', [id]),
+    ancheNelCestino(
+      supabase
+        .from('galleria_media_v2')
+        .select('id, file_url, tag_students')
+        .contains('tag_students', [id]),
+      'preventivo che la Direzione conferma: deve contare ESATTAMENTE ciò che ' +
+        "l'esecuzione distrugge, e `obliaFotoAlunno` distrugge anche le foto nel cestino; " +
+        'filtrare qui annuncerebbe meno del vero su un gesto irreversibile.',
+    ),
     'dryrun_galleria',
     op,
   )

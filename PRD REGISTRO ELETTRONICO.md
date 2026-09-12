@@ -100,6 +100,156 @@
 
 ---
 
+## 📷 Changelog — 412 volte «la fotocamera non si apre», e il perché era una chiave mancante in un file di sedici righe — 2026-09-12 (branch `fix/galleria-video-ios-e-cestino`)
+
+`fotocamera-errore` in `app_log`: **124 righe, 412 occorrenze, 32 utenti, dal 01/09 all'11/09**, e
+`contesto` **vuoto su tutte e 124**. Sapevamo che la fotocamera non si apriva centinaia di volte e
+**non sapevamo perché**: è la regola 3 di AGENTS.md violata dal lato opposto — non uno status senza
+corpo, un evento senza nulla. Il changelog del 2026-09-01 lo lasciava scritto come compito
+(«⏳ Resta aperto: *perché* la fotocamera fallisce»). Questa voce lo chiude.
+
+### La causa radice, letta nei file e non dedotta
+
+`CameraPropertyListKeys` (`node_modules/@capacitor/camera/ios/Sources/CameraPlugin/CameraTypes.swift`)
+è `CaseIterable` e ha **tre** casi: `NSPhotoLibraryAddUsageDescription`,
+`NSPhotoLibraryUsageDescription`, `NSCameraUsageDescription`. `getPhoto` (`CameraPlugin.swift`) chiama
+`checkUsageDescriptions()` come **prima istruzione** e rigetta se **una sola** manca.
+`ios/App/App/Info.plist` dichiara `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`,
+`NSMicrophoneUsageDescription`, `NSFaceIDUsageDescription` — e **non**
+`NSPhotoLibraryAddUsageDescription`, che in tutto `ios/` **non compare** (verificato con `grep`, esito
+letto senza pipe). Essendo il **primo** caso dell'enum, è il messaggio che esce sempre.
+
+| | |
+|---|---|
+| **Perché su Android zero righe** | Android non ha un Info.plist. Il rifiuto è iOS-only per costruzione |
+| **Perché `fotocamera-permesso-negato` ha zero righe da sempre** | il permesso non viene **mai chiesto**: il plugin rigetta **prima** del foglio e prima del permesso. Nello stesso periodo `push-nativa-permesso-negato` ne ha 265 (tre varianti, 747 occorrenze) |
+| **La riparazione** | ✅ **FATTA, ed è in questo branch**: `NSPhotoLibraryAddUsageDescription` è dichiarata in `ios/App/App/Info.plist` con la sua stringa di scopo, e accanto il perché — perché è una chiave che *sembra* inutile. ⚠️ **Ma non arriva agli utenti con questo rilascio**: il plist è un cambio nel progetto Xcode, non nel bundle web. Serve `npx cap sync ios` + un build nativo, che non sono di questo giro. **La riga è committata, la consegna arriva col prossimo build** |
+
+⚠️ **E quel rigetto non porta un codice**: `call.reject(missingUsageDescription)` passa il solo
+messaggio. Per il caso che vale la maggior parte delle 412 occorrenze l'**unico appiglio è il testo** —
+ed è un appiglio solido, perché `missingMessage` è una stringa letterale **inglese** compilata nel
+plugin, non un `localizedDescription`. È il motivo per cui la diagnosi ha due meccanismi e non uno.
+
+### ⚠️ Non erano tutte sulla galleria, e questo cambia la conclusione
+
+Il sospetto di partenza era l'area di tocco: in `MediaUploader` l'`onClick` che apre la fotocamera sta
+sull'**intero riquadro di trascinamento**, quindi ogni tocco a vuoto nel riquadro apre il foglio
+nativo. La misura dice che non è quella la causa:
+
+| rotta | righe | occorrenze |
+|---|---|---|
+| `/teacher/gallery` | 83 | 356 |
+| `/teacher/chat` | 33 | 48 |
+| `/parent/chat` | 8 | 8 |
+
+**14 dei 32 utenti iOS hanno fallito su entrambe le aree, e otto solo in chat** — dove la fotocamera
+si apre da un bottone di 40 px, non da mezzo schermo. Il guasto **segue il dispositivo**, non l'area
+di tocco. L'area di tocco **moltiplica** i tentativi (fino a 22 occorrenze in un giorno per un solo
+utente sulla galleria, contro 5 come massimo in chat), non li causa.
+
+🔴 **Ma un difetto vero nel riquadro esiste, ed è un altro** (misurato, non corretto qui — il file è di
+un altro intervento): il bottone «Carica da galleria», che su nativo serve a scegliere un **video**,
+chiama `inputRef.current?.click()`; l'`<input type=file>` è un **figlio** del riquadro di
+trascinamento, il click sintetico **risale**, e l'`onClick` del riquadro apre la fotocamera. Misurato
+con un test temporaneo: una pressione → **1 chiamata** a `scegliFotoNativa` dove devono essere **0**.
+Chi vuole caricare un video si trova il foglio della fotocamera, e oggi un rifiuto in più.
+
+### Cosa è cambiato nel codice
+
+| | |
+|---|---|
+| **`camera.ts` logga il PERCHÉ** | `campi: { esito, error_code, tipo, operazione, ms, plugin_presente, con_etichette, multiplo }` — il canale `campi` di `logClient` (prima ondata) arriva in `app_log.contesto->'campi'` |
+| **`error_code` viene da una LISTA BIANCA** | `CODICI_FOTOCAMERA` è un `as const`, e il tipo di ritorno di `codiceFotocamera()` è l'unione di quelle costanti: **nessuna stringa che venga dal messaggio può esserne il valore**, per costruzione e non per disciplina. Ciò che non è in elenco esce `'ignoto'` |
+| **Due meccanismi, non uno** | prima il **codice** del plugin (`OS-PLUG-CAMR-…`, mappa chiusa sui 24 dell'enum `CameraErrorCode`), che non si traduce; poi i **pattern** sui messaggi inglesi del plugin; poi `'ignoto'` |
+| **Il messaggio del plugin non lascia il dispositivo** | porta percorsi e nomi di file, e qui il nome del file di una foto contiene spessissimo il nome di un bambino. Esce solo il `.name` (`nomeErrore`, che è struttura) |
+| **`fotocamera-scatto-riuscito`** | evento nuovo, **una volta per sessione**, con `{ esito, canale, formato, byte, ms, multiplo }`: senza la riga del successo «nessun log» non distingue «funziona» da «non è mai partita» — regola 5, la stessa ambiguità che tenne nascoste per mesi le email di credenziali |
+| **`operazione`** | `import` · `scatto` · `conversione`: dice se il foglio nativo è mai comparso, e distingue un guasto del plugin da un guasto **nostro** dopo lo scatto |
+
+**Le chiavi non sono quelle che verrebbero spontanee, e non è un dettaglio di forma**:
+`@/lib/logging/redact` è una lista bianca **per chiave**, e `causa`, `codice`, `tipo_errore` non ci
+sono (`codice` è escluso con un commento esplicito: è anche il livello di una valutazione). Scritti
+così, questi campi sarebbero arrivati in tabella come `[redatto:str/7]` — **lo stesso silenzio di
+prima, con più righe e la convinzione di averlo chiuso**. Quindi `esito`, `error_code`, `tipo`,
+`operazione`, e un test che fa passare i campi dal `redact()` **vero** pretendendo che tornino
+identici.
+
+### Come si legge il perché, da domani
+
+```sql
+SELECT contesto->'campi'->>'error_code' AS codice,
+       contesto->'campi'->>'operazione' AS fase,
+       count(*) AS righe, sum(occorrenze) AS occorrenze
+FROM app_log
+WHERE messaggio IN ('fotocamera-errore', 'fotocamera-permesso-negato')
+GROUP BY 1, 2 ORDER BY occorrenze DESC;
+```
+
+### Le tre correzioni che il collaudo interno ha imposto, e sono la parte che conta
+
+**Il nome di un helper può disarmare un lock esistente.** L'helper che legge il `.message` si chiamava
+`testoGrezzo` «per rendere più difficile sbagliarsi». Misurato: era l'opposto. Il lock
+`__tests__/architecture/messaggio-errore-nei-log.test.ts` riconosce gli helper del testo d'errore **per
+nome** (riga 80); con `testoGrezzo` un travaso del messaggio interpolato dentro i `campi` del logger
+passava **in silenzio**, con `testoErrore` lo stesso travaso fa scattare il lock, che stampa
+`src/lib/native/camera.ts:517  logClient(…)  →  testoErrore(err)`. Nel file la cui ragione d'essere è non far uscire il messaggio del plugin, la
+guardia va tenuta **armata**, non nascosta.
+
+**Un annullamento su un telefono italiano era una riga `error`.** `classifica()` decide sul
+**messaggio**, e `CameraPlugin.swift:65` rigetta con `error.localizedDescription`: su un iPhone
+italiano nessun pattern inglese corrisponde. Chi chiudeva il foglio scriveva una riga
+`fotocamera-errore` a livello `error` **avendo in mano** `error_code: 'user_cancelled'` — il campo
+accanto diceva la verità e il livello diceva il contrario. Quattro codici dell'enum sono annullamenti
+(0006, 0013, 0017, 0020) e due sono permessi negati (0003, 0005): ora decide la lista bianca
+(`CAUSA_DA_SLUG`) e `classifica` è il **ripiego** per ciò che resta `'ignoto'`, dove un'euristica è al
+suo posto. Si attiva **proprio riparando l'Info.plist**: da quel momento i rigetti arrivano localizzati.
+
+**Uno slug ha un solo lavoro: nominare la riparazione.** `OS-PLUG-CAMR-0027` è `FileNotFound` (il file
+non c'è) e finiva su `file_not_writable` (non si riesce a scrivere) — due diagnosi **opposte**: chi
+legge la riga andava a cercare permessi o disco pieno per un file che non esiste. `0018`
+`ChooseMediaFailed` finiva su `unable_to_process_image`, una fase **dopo**. Slug nuovi
+`file_not_found` e `choose_media_failed`. E un lock che **legge l'enum del plugin installato** e
+pretende che ogni suo codice trovi una risposta: una `npm update` che aggiunga un codice diventa rossa
+invece di riaprire il silenzio in sordina.
+
+**Le prove, e la prova che sono prove.** 59 test nel file nuovo. **Otto** mutazioni, tutte rosse: il pattern
+generico `/info\.plist/i` spostato in testa (ruberebbe le tre chiavi che **nominano** la chiave da
+aggiungere → 5 rossi); `classifica` rimessa davanti al codice (7 rossi); `0027` e `0018` rimessi sui
+vecchi slug (1 rosso ciascuno); un codice tolto dalla mappa (il lock di completezza lo nomina); il
+travaso del messaggio nel logger. ⚠️ Un test del primo giro era una **tautologia**: asseriva che il
+messaggio del plist non diventasse `no_camera_available`, e quel pattern non corrisponde a quel
+messaggio in nessun caso — spostandolo in testa restavano **tutti verdi**. Riscritto sul pericolo vero.
+
+### Il lock che tiene riparata la causa radice, e la chiave che sembra inutile
+
+Riparare il plist **a mano** lascia il difetto a un `npm update` di distanza: `CameraPropertyListKeys`
+sta nel plugin, `checkUsageDescriptions()` rigetta alla **prima** chiave mancante, e una quarta chiave
+introdotta domani rifarebbe il guasto **identico e in silenzio** — l'unico segnale sarebbero di nuovo
+quaranta righe al giorno in `app_log`. Perciò il lock non ha un elenco scritto a mano: legge
+`CameraPropertyListKeys.allCases` dal sorgente Swift del plugin **installato** e pretende che ogni
+chiave sia dichiarata nel plist, con una stringa di scopo non vuota (una stringa vuota passa il
+controllo del plugin — che guarda solo `dict[key] != nil` — e fa **rifiutare la build** da App Review:
+il guasto si sposterebbe di un piano, dalla fotocamera alla pubblicazione).
+
+⚠️ **E la trappola vera non è la chiave assente: è che sembra inutile.** L'app **non** salva nel
+rullino (`saveToGallery: false`, deliberato — la foto di un certificato medico non deve finire nel
+backup iCloud del docente), quindi `NSPhotoLibraryAddUsageDescription` dichiara un accesso che non
+chiediamo mai, e la tentazione di togliere una dichiarazione «che non usiamo» è esattamente quella che
+riaprirebbe le 412 occorrenze. `checkUsageDescriptions()` scorre `allCases` **senza guardare le opzioni
+della chiamata**: quella chiave serve per **partire**, non per salvare. Sta scritto nel plist accanto
+alla chiave, e il lock lo tiene.
+
+⚠️ **La stringa di scopo dice il vero, e non quello che verrebbe comodo scrivere.** «Kidville salva
+nel rullino le foto che scatti» sarebbe stato falso: non le salva. Il testo dichiara che l'app non
+aggiunge foto al rullino e che la voce è richiesta dal componente di sistema — e iOS non la mostra mai
+all'utente, perché una stringa d'uso compare solo quando l'accesso viene davvero richiesto.
+
+**Due mutazioni nuove, entrambe rosse**: chiave rimossa dal plist → il lock nomina la chiave mancante
+(`Chiavi pretese da @capacitor/camera e NON dichiarate in ios/App/App/Info.plist:
+NSPhotoLibraryAddUsageDescription`); stringa di scopo svuotata → `expected 0 to be greater than 20`.
+Il plist resta valido secondo `plutil -lint` (`OK`) e la chiave si rilegge con `plutil -extract`.
+
+---
+
 ## 🖼️ Changelog — «Elimina non esiste»: esisteva, e cadeva 80 px sotto il bordo di un contenitore che non scorreva — 2026-09-11 (branch `fix/galleria-video-ios-e-cestino`)
 
 Il titolare, dall'app iOS, ha riferito che nel visore della galleria — genitore e insegnante — il
@@ -200,6 +350,308 @@ misura.
 `colonne={3}` in un contenitore `max-w-[460px]` dà 145 px da desktop ma **111 px su un telefono**,
 dove prima del 2026-09-11 le colonne erano 2 — e l'insegnante la galleria la usa dal telefono. Il
 parametro non è responsivo: si scegliesse 3, si migliorerebbe il caso raro peggiorando quello comune.
+
+### E adesso «Elimina» chiede: il dialogo di conferma, e la frase che gli dà un senso
+
+Reso raggiungibile, il comando andava reso un **gesto serio**: un tocco cancellava la foto di un
+minore, senza conferma. La forma è un dialogo dell'applicazione
+(`src/components/features/gallery/DialogoEliminaMedia.tsx`), **non** un `window.confirm`, e le
+ragioni sono misurabili, non di gusto: (1) il codice faceva `onDelete(id); handleCloseLightbox();`
+— la seconda riga non aspetta la prima, quindi il rifiuto del server arrivava su una schermata che
+non mostrava più la foto di cui parlava; (2) `confirm` più `alert` sono **due dialoghi nativi
+bloccanti in fila** nella WebView, e `alert()` blocca il thread facendo perdere i log spediti dopo;
+(3) un `confirm` nativo non ha stato — non può restare aperto durante la richiesta né distinguere un
+403 da un 500 al proprio interno.
+
+**Le due frasi che il dialogo dice, e perché la seconda non è cosmesi.**
+
+| | |
+|---|---|
+| **Che cosa accade** | «sparisce **subito** dalla galleria dei genitori: dopo la conferma le famiglie non vedono più questo contenuto» |
+| **Che cosa resta** | «non è una distruzione immediata: **la segreteria può ripristinarlo entro 30 giorni**. Passati i 30 giorni viene distrutto per sempre, file compreso» |
+
+⚠️ La seconda riga è la ragione per cui il componente esiste. **L'insegnante non ha nessuna schermata
+di cestino**: senza quella frase crede di aver distrutto la foto e non chiama nessuno, e il cestino
+appena aggiunto a `galleria_media_v2` (`eliminato_il`, `eliminato_da`, `file_rimosso_il`, migrazione
+`20260911214752`) esisterebbe senza servire a nessuno — *un ripristino che nessuno sa di poter
+chiedere non è un ripristino*. A schermo **mai l'uuid** del media (il componente non lo riceve
+nemmeno: `onElimina` è una chiusura che `MediaGrid` costruisce); la didascalia sì, perché l'utente la
+sta già guardando. Nei log **mai la didascalia** — è il nome del file, e il nome del file di una foto
+scolastica contiene spessissimo il nome di un bambino — e mai il messaggio del server: escono lo
+stato HTTP e il nome della classe d'errore, forma e non contenuto.
+
+**I tre esiti si dipingono diversi, perché un rifiuto dipinto tutto allo stesso modo trasforma una
+protezione in un guasto agli occhi di chi la incontra.**
+
+| Esito | A schermo | In `app_log` |
+|---|---|---|
+| **403** (confine di sede o di ruolo) | il messaggio resta **dentro** il dialogo e il comando **sparisce**: ripremerlo darebbe lo stesso rifiuto, e il rimedio è chiederlo alla segreteria della propria sede | `warn` — è un confine, non un guasto |
+| **404** (non c'era già più: due schede aperte, doppio invio) | **l'esito voluto è raggiunto**: si chiude e si chiede il ricarico. Mostrarlo come errore accuserebbe l'utente di non aver ottenuto ciò che ha ottenuto | `warn` — «due schermate che si pestano i piedi» è un fatto che vale sapere |
+| **500 / rete** | il messaggio resta e il comando **resta**, perché riprovare è il rimedio | `error` |
+
+Lo stato HTTP viaggia nei **`campi`** e non in `stato`: `livelloEvento` applica a ogni `stato` fra 400
+e 599 la politica di `livelloFetch`, che per un 403 e un 404 risponde «non spedire» — dichiararlo lì
+significherebbe scartare in silenzio proprio la riga che si sta aggiungendo. E **anche il successo
+lascia una riga** (regola 5 di AGENTS.md): con i soli errori «nessun log» non distingue «tutto bene»
+da «il comando non ha mai fatto partire niente», che è l'ambiguità in cui «Elimina Media» è vissuto
+per mesi cadendo fuori dallo schermo.
+
+**Chi può eliminare** (decisione del titolare): l'**insegnante** solo i propri caricamenti, la
+**segreteria/direzione** qualunque media della propria sede, il **genitore mai**. In `MediaGrid` la
+regola è una prop, `eliminabile?: (item: MediaItem) => boolean`, col default «tutti quando `onDelete`
+c'è»; il gate che conta resta quello della route (`DELETE /api/gallery`), e il predicato serve a non
+**mostrare** un comando destinato a un 403. `MediaItem` dichiara ora `uploaded_by`, che la route già
+restituiva. Il comando **resta soltanto nel visore** e non sulla miniatura: una tessera da 171 px ha
+già due bersagli in un angolo, e un terzo *distruttivo* significa cancellare la foto di un minore con
+un pollice.
+
+**Le cose che il collaudo interno ha fatto cambiare, e sono la parte che conta.**
+
+⚠️ **`closeOnBackdrop={false}` ferma il click fuori e nient'altro — e le strade erano CINQUE, non
+tre.** `Modal` chiude su `Escape` **sempre**, e il tasto Indietro di Android passa dalla stessa
+`onClose`: premuto Escape durante la DELETE il dialogo si smontava, e un 500 che arrivava dopo
+scriveva su un componente morto — no-op silenzioso in React, senza nemmeno un avviso. La foto restava
+e l'insegnante non sapeva perché: *è esattamente il silenzio per cui questo componente esiste*.
+
+Il primo giro ha chiuso **tre** strade con una guardia sola dentro il dialogo (Escape, Indietro,
+«Annulla») e questa riga del PRD diceva «tre». Il collaudo successivo ne ha misurate **altre due, e
+sono le gemelle di quelle**: la **✕ del visore** e il suo **scroller** chiamano `handleCloseLightbox`
+*direttamente*, e quella azzera il media catturato — cioè smonta il dialogo. Dimostrato con due test
+scritti prima della correzione: la ✕ in volo con rigetto 403 e lo scroller in volo con rigetto 500
+passavano **entrambi** sul codice di allora, cioè il silenzio c'era. Sono anche precisamente le due
+strade che restano raggiungibili col dialogo aperto su **iOS 15.0–15.4**, la stessa finestra di
+dispositivi con cui si giustifica la correzione del paragrafo qui sotto: non può contare per una
+strada e non per la sua gemella.
+
+**Come è chiusa.** La guardia non può vivere solo nel dialogo, perché chi smonta è il **padre**: la
+notizia sale (`onInVolo?: (inVolo: boolean) => void`, chiamata in `conferma()` attorno all'`await`),
+`MediaGrid` la tiene in un `ref` e `handleCloseLightbox` esce subito finché è vera — con la pressione
+scartata che lascia una riga in `app_log` (`gallery-chiusura-visore-rinviata`), perché «la ✕ è
+incagliata» e «nessuno l'ha premuta» non devono essere lo stesso silenzio. A richiesta finita
+l'uscita torna possibile da tutte e cinque le strade, e quattro test lo ripercorrono.
+
+⚠️ **L'ordine di quelle due righe è la parte fragile, ed è misurata.** La bandiera deve scendere
+**prima** di `onEliminato()`, perché `onEliminato` *è* `handleCloseLightbox`: con la bandiera ancora
+alzata la guardia mangerebbe proprio la chiusura che l'esito positivo chiede, e il visore non si
+chiuderebbe più — né a esito positivo né sul 404. Per questo `conferma()` **raccoglie** l'esito e non
+lo dipinge subito: un `finally` girerebbe *dopo* `onEliminato()`. Spostando quelle righe dopo,
+**tre** test diventano rossi (uno era già in suite): la guardia che chiude un silenzio non apre il
+suo, e adesso c'è la rete che lo dice.
+
+📌 **Una cosa che il PRD diceva e la misura ha smentito.** Il commento della correzione sosteneva che
+tenere la bandiera in uno `useState` invece che in un `ref` avrebbe rotto la chiusura a esito
+positivo (chiusura stantia). **Falso**: sostituito il `ref` con uno stato, i 42 test del file restano
+tutti verdi, perché la `conferma()` in volo tiene la `onEliminato` creata *prima* che la bandiera
+salisse, e quella legge `false`. Il `ref` resta la scelta — toglie una dipendenza dall'ordine in cui
+le chiusure sono state catturate, che nessuno può leggere sul posto, e non ridisegna la griglia due
+volte per pressione — ma il commento ora dice cosa è dimostrato e cosa no. *Un'affermazione più forte
+della misura è il difetto che questo repo paga da sempre.*
+
+⚠️ **Chiudere il visore non portava via il media catturato dalla conferma.** Lo scroller del visore
+porta `onClick={handleCloseLightbox}` e col dialogo aperto dovrebbe essere coperto da `inert` — ma
+`inert` è di Safari 15.5 e `IPHONEOS_DEPLOYMENT_TARGET` è **15.0**: su iOS 15.0–15.4
+`rendiInerteFuoriDa` ripiega su `aria-hidden`, che **non blocca i click**. Da lì: visore chiuso,
+`daEliminare` ancora impostato, e alla riapertura di un **altro** media la conferma ricompariva da sé
+nominando quello di prima — *si leggeva la didascalia di una foto e si cancellava un'altra*. La
+correzione è una riga nell'unico imbuto che smonta il visore, così il caso torna impossibile **per
+costruzione** invece di dipendere dal supporto di `inert`.
+
+📌 **Il contratto di `onEliminato` prometteva un ricarico che nessuna riga esegue.** Diceva «chiudi
+il dialogo e il visore, **e ricarica l'elenco**», ma il cablaggio è `onEliminato={handleCloseLightbox}`
+e lì dentro non c'è nessuna chiamata di ricarico: il ricarico è del **chiamante**, dentro la
+risoluzione della propria `onDelete`. Ora la prop dice quello, e dice anche l'unico ramo in cui
+l'elenco resta indietro — il **404 rigettato**, dove il chiamante ha lanciato invece di ricaricare:
+il dialogo chiude, la riga cancellata resta nella griglia e la si ritocca prendendo un altro 404. È
+difensivo e non quotidiano, perché il chiamante raccomandato assorbe il 404 da sé; ma è scritto,
+invece di essere scoperto da qualcun altro. Il test del 404 si chiamava «si chiude e **si ricarica**»
+mentre asseriva solo che `onEliminato` è stata chiamata: rinominato in ciò che misura.
+
+⚠️ **Annidare `Modal` dentro il visore annulla la garanzia `z-[120]` che `Modal` documenta su sé
+stesso**, e va saputo prima di fidarsene. Il visore è `fixed inset-0 z-50`: posizione più `z-index`
+creano un **contesto d'impilamento**, quindi quel 120 si risolve *dentro* il livello 50 e non può
+superare i fratelli del visore. Su `/teacher/gallery` — la sola schermata che apre il dialogo —
+`TeacherBottomNav` è `fixed bottom-0 … z-50` e nel layout viene **dopo** `<main>`: dipinge sopra il
+visore e adesso anche sopra il dialogo. **Non è corretto a occhio di proposito**: una sovrapposizione
+vera dei bottoni non è dimostrata ai formati comuni (dialogo compatto e centrato, barra ~90 px) e
+jsdom non ha layout, quindi nessun test di quella cartella può vederlo. Si misura nel browser vero —
+l'E2E in CI, dato che il collaudo browser in locale è documentato come impossibile. Il punto di
+cablaggio lo dice, con la correzione pronta se la misura la chiederà: portare il visore da `z-50` a
+`z-[115]`, il valore che `ui/cockpit.tsx` usa già per lo stesso scopo.
+
+🔻 **Cosa resta aperto, e blocca il valore di tutto il resto.** Il contratto nuovo è
+`onDelete?: (id: string) => Promise<void>` che **rigetta** sul rifiuto, ed è ciò che permette al
+dialogo di distinguere i tre esiti. L'unica schermata che elimina — `handleDeleteMedia` in
+`src/app/(dashboard)/teacher/gallery/page.tsx` — **non lo onora**: è già `async` (quindi `tsc` è
+verde e nulla costringe a correggerla), apre ancora un `confirm()` nativo davanti al dialogo, e su
+`!res.ok` come nel `catch` fa `alert()` e **ritorna**, cioè *risolve*. Il dialogo legge «riuscita» su
+un 403: visore chiuso, `gallery-elimina-riuscita` in `app_log`, e la foto ancora lì. Finché quella
+funzione non rigetta, la macchina 403/404/500 è **irraggiungibile sulla schermata vera**. Il debito è
+**misurato** dal lock `__tests__/architecture/media-elimina-chiamante-rigetta.test.ts`, che tiene un
+elenco di una sola voce con la correzione scritta per esteso e diventa rosso sia se ne nasce una
+seconda sia se quella viene sanata senza togliere la riga. ⚠️ **Quel lock oggi è VERDE**: documenta
+il debito e ne impedisce la crescita, non blocca il rilascio. Chi rilascia sappia che finché la riga
+è nell'elenco la macchina 403/404/500 è irraggiungibile sulla schermata vera, e che ogni rifiuto
+scrive `gallery-elimina-riuscita` in `app_log` — cioè avvelena proprio il segnale che la regola 5 di
+`AGENTS.md` esiste per creare.
+
+### Il cestino dal lato delle LETTURE: un modulo, tre versi, e un lock che pretende una decisione
+
+Il dialogo qui sopra promette un ripristino; questa voce è ciò che rende la promessa vera senza
+rompere altro. **Il rischio numero uno del cestino è una lettura dimenticata**: `eliminato_il` non
+fa errore se nessuno lo guarda — la foto semplicemente **riappare**, senza un 500, senza una riga di
+log, senza che nessuno lo sappia.
+
+**Lo stato in produzione, misurato il 2026-09-12 in sola lettura e non dedotto** (migrazione
+`20260911214752`):
+
+| Che cosa | Misura |
+|---|---|
+| colonne | `eliminato_il timestamptz`, `eliminato_da uuid`, `file_rimosso_il timestamptz` — tutte e tre presenti |
+| indici parziali | `idx_galleria_v2_sede_created_attive` su `(scuola_id, created_at DESC) WHERE eliminato_il IS NULL` e `idx_galleria_v2_cestino_purga` su `(eliminato_il) WHERE eliminato_il IS NOT NULL` |
+| policy RLS del genitore | comincia davvero con `(eliminato_il IS NULL) AND (…)` |
+| righe | **1327**, di cui **0** nel cestino e **0** con il file rimosso: la funzione non è ancora stata usata da nessuno in produzione |
+
+⚠️ **Ma la RLS copre solo il genitore.** Quasi tutte le letture di questo repo passano dal
+**service-role**, che la policy non la incontra nemmeno: là il filtro va scritto nella query. Da qui
+`src/lib/gallery/cestino.ts`, dove la regola vive in un posto solo:
+
+| | Che cosa fa | Dove serve |
+|---|---|---|
+| `soloVive(q)` | `eliminato_il IS NULL` | tutte le viste |
+| `soloNelCestino(q, prima?)` | `eliminato_il IS NOT NULL` **e `file_rimosso_il IS NULL`** | l'elenco del cestino e la purga |
+| `ancheNelCestino(q, motivo)` | **l'IDENTITÀ**, ma obbliga a scrivere *perché* | l'oblio GDPR e il preventivo |
+| `leggiVive(costruisci, op)` | `soloVive` **più il degrado** | dove un `42703` spegnerebbe la funzione |
+
+🔴 **Perché NON è un lock «filtra sempre», che sarebbe stato più semplice: perché sarebbe un
+DIFETTO.** Il diritto all'oblio deve togliere la foto **anche dal cestino**. Se `obliaFotoAlunno`
+filtrasse le sole vive, una foto cestinata **sopravviverebbe alla cancellazione chiesta da una
+famiglia**: riga in tabella, file nel bucket per i 30 giorni della purga — oltre il dovuto — e
+`liberaSpazio` scriverebbe comunque `spazio_liberato_il`, cioè **un «fatto» falso accanto al nome di
+un bambino**, su un gesto che non ha un annulla. Stessa cosa per il preventivo che la Direzione
+conferma (`cosa-distrugge.ts`): annunciare MENO di quanto l'esecuzione distrugge fa dire sì a una
+cosa diversa da quella letta. Perciò il lock non pretende un filtro: pretende una **dichiarazione**,
+e `ancheNelCestino` è il verso che rende la scelta leggibile invece di indistinguibile da una
+dimenticanza. I sei file fuori da `api/gallery` sono decisi uno per uno con la ragione nel commento:
+`tasks` · `segnalazioni` · `educator-sections` con `leggiVive`; `gdpr/esegui` (4 query) ·
+`gdpr/cosa-distrugge` · `alunni/libera-spazio` con `ancheNelCestino`.
+
+⚠️ **Il degrado viene prima di tutto il resto.** Il DB E2E della CI è un progetto separato e **non
+migrato**: là `.is('eliminato_il', null)` risponde `42703`. Un filtro senza via d'uscita non
+«mostrerebbe meno» in CI: **spegnerebbe la galleria**. `leggiVive` ricostruisce la query e la rilancia
+senza filtro **una** volta, a livello `warn` (in produzione le colonne ci sono: se quel ramo scatta è
+un incidente, e un `info` lo seppellirebbe). E degrada **solo** su «colonna assente» — su un `42501
+permission denied` no, perché rileggere senza filtro proprio quando l'accesso si restringe sarebbe il
+fail-open travestito da protezione.
+
+**Il lock, e le due volte che è stato provato rompendolo.** `__tests__/architecture/cestino-galleria-ogni-lettura-dichiara.test.ts`
+scandisce `src/` e per **ogni** `from('galleria_media_v2')` pretende uno dei quattro nomi nella stessa
+catena o fra i wrapper, con conteggio **esatto** (non un tetto: su un `<=` due rami paralleli lasciano
+il tetto più largo del vero, difetto già pagato in questo repo).
+
+🔴 **La prima stesura del lock era cieca, e la cecità è stata misurata, non supposta.** Pretendeva che
+`leggiVive` fosse **nominato**, non che il filtro fosse **applicato**: riscrivendo
+`leggiVive((vive) => vive(q)…)` in `leggiVive(() => (q)…)` il filtro del cestino spariva da `tasks:GET`
+e restavano verdi il lock (7/7), `eslint`, `tsc` e ogni test del repo — la stessa famiglia del lock
+che «cercava la presenza della chiamata ed era cieco al ramo». Ora il riconoscitore legge il **nome
+del parametro del thunk** e pretende che avvolga *quella* query, e la sede senza prova di
+comportamento ne ha una: `__tests__/api/tasks-cestino-sezioni-dedotte.test.ts`, dove cambia **solo**
+`eliminato_il` sull'unico media e l'euristica delle sezioni si svuota — col finto client che filtra
+davvero. Difesa da due lati indipendenti: se un giorno il riconoscitore si rompe di nuovo, la prova di
+comportamento resta.
+
+⚠️ **I 30 giorni sono duplicati, e non si può togliere la duplicazione: si può solo renderla
+rumorosa.** `GIORNI_CESTINO_GALLERIA` sta nel modulo, ma il numero che l'utente legge viene da
+`galleryEliminaRipristino` (`messages/it/shared.json` e l'inglese), dove è scritto a mano due volte —
+un file JSON non può importare una costante. Il lock legge le due chiavi e pretende che contengano il
+numero della costante: portandola a 15 diventa rosso su entrambi i file. Senza quella prova, il giorno
+in cui la purga passa a 15 il dialogo continuerebbe a promettere 30, e chi ha eliminato una foto la
+cercherebbe nel cestino dopo venti giorni senza trovarla.
+
+⚠️ **Il perimetro del lock è il codice, non il sistema**, e va detto prima che qualcuno lo dia per
+totale. Verificato in produzione: **nessuna vista** legge `galleria_media_v2`, ma **una funzione la
+scrive** — il trigger `propaga_rinomina_sezione`, che alla rinomina di una sezione riscrive
+`target_classes` senza guardare `eliminato_il`. Lì è il verso **giusto**: saltando le righe cestinate,
+una foto ripristinata entro i 30 giorni tornerebbe col nome vecchio della classe, che non corrisponde
+più a nessuna sezione — riapparirebbe invisibile. Il lock non lo vede e non può vederlo: la prossima
+vista o funzione dovrà decidere del cestino **nella migrazione**.
+
+### Le foto vuote non erano «un canvas nero»: erano una tela 1x1, e le dimensioni non si guardavano
+
+**La misura, prima della diagnosi** (produzione, `storage.objects` bucket `gallery`, letta l'11/09):
+**3 immagini di esattamente 775 byte**, **un solo eTag** — `6ffc8975fca58e4ec3d9ba87b3f0f672` — fra
+il 09/09 e il 10/09, **due insegnanti diverse**, tutte a Giugliano, pubblicate e visibili alle
+famiglie. Un md5 solo per tre file dice che non sono tre foto sfortunate: è lo *stesso* file, byte
+per byte, prodotto tre volte.
+
+⚠️ **La prima diagnosi era sbagliata e va scritto perché è la parte che insegna.** Si era detto
+«canvas nero a 1920». Un JPEG uniformemente nero a 1920x1440 costa 20-35 KB: 775 byte non poteva
+essere quello. La frontiera misurata in laboratorio dice che la tela era **minuscola**, non nera —
+lato 1-16 → 771 byte, 17-32 → **775**, 33+ → 779 — cioè 1x1, 8x8 e 16x16 danno tutti lo stesso file.
+La causa è una riga che non c'era: `processImageWithWatermark` leggeva `img.width`/`img.height` e
+**non li guardava mai**, quindi una dimensione degenere diventava `canvas.width = 1` e da lì un
+`File` risolto, caricato e pubblicato. Nessun log, nessun errore, nessun test rosso.
+
+**Le quattro reti, in `src/lib/media/immagini.ts`.** La prima chiude la causa radice; le altre tre
+sono difesa in profondità.
+
+| | Rete | Soglia |
+|---|---|---|
+| 1 | le dimensioni si **guardano** (sorgente *e* destinazione: `8000x64` passa in ingresso e sfonda in uscita a 1920x15) | `LATO_MINIMO_PX = 64` |
+| 2 | la tela **non è vuota**, su nove punti sparsi, **prima** di disegnare il watermark | 9 campioni, uguaglianza esatta dei 4 canali |
+| 3 | **pavimento sui byte**: un JPEG minuscolo da un ingresso grande è un guasto, non compressione | `< 4.096` byte **e** ingresso `≥ 32.768` |
+| 4 | il rigetto è un **`Error` vero**, non l'`Event` che `img.onerror` passa | `ImageProcessingError` |
+
+La rete 2 corre **prima** del watermark, e l'ordine è la sostanza: verificando dopo si dichiarerebbe
+buona una tela su cui l'unica cosa disegnata è il nostro logo. La rete 3 ha **due** condizioni in
+`&&` e la seconda non è prudenza: una miniatura legittima da 2 KB può comprimersi sotto i 4 KB senza
+che niente sia andato storto, e col solo pavimento la si rifiuterebbe.
+
+La rete 4 spiega anche **perché la segnalazione arrivava come «si vedono nere»** invece di «errore
+sulla foto 3»: `img.onerror` faceva `reject(err)` con un `Event`, `nomeErrore(Event)` restituisce
+`'errore'` — le righe **`gallery-pubblicazione-fallita: errore`** di `app_log` *sono* questi
+fallimenti — e in pagina `err instanceof Error` era falso, quindi l'insegnante leggeva il messaggio
+generico.
+
+🆕 **COMPORTAMENTO NUOVO, VISIBILE ALL'INSEGNANTE: una foto adesso può essere RIFIUTATA.** Dove prima
+veniva pubblicata vuota, ora non viene pubblicata e compare una frase italiana che cita il codice
+(`MESSAGGIO_UMANO`, mai il nome del file — è il nome di un bambino). I cinque codici di
+`MotivoImmagineNonElaborabile` sono `immagine-non-decodificata`, `dimensioni-degeneri`, `tela-vuota`,
+`byte-implausibili`, `codifica-jpeg-fallita`.
+
+⚠️ **E il rigetto di UNA foto non porta via il lotto.** `processImageWithWatermark` prima non lanciava
+mai; adesso lancia, e la chiamata in `teacher/gallery/page.tsx` stava dentro il `try` aperto **prima**
+del `for`, col `catch` **fuori**. Su cinque foto con la seconda degenere, l'insegnante avrebbe visto
+l'avviso di una foto e le foto 3, 4 e 5 non sarebbero state né elaborate né caricate — e
+`setUploadedFiles([])` non venendo raggiunto, un secondo tentativo avrebbe **ripubblicato in doppio**
+quelle già passate. Adesso il ramo immagine fa `alert(e.message); continue;` come già faceva il ramo
+video, e intercetta **solo** `ImageProcessingError`: ogni altro errore continua a salire al catch-all,
+perché trattarlo come «salta questa foto» nasconderebbe un bug.
+
+⚠️ **I nomi dei campi di log non sono liberi, e questa modifica l'ha imparato a spese proprie.** La
+redazione dei `campi` del client è **server-side** (`/api/logs` fa `redact(c.campi)`) e a **lista
+bianca**. Misurato eseguendo il `redact` vero, non dedotto:
+`{motivo:'dimensioni-degeneri', strada:'bitmap', fase:'img_onerror'}` →
+`{motivo:'[redatto:str/19]', strada:'[redatto:str/6]', fase:'[redatto:str/11]'}`. Tre nomi scelti
+perché descrittivi, tre colonne piene di niente — e `motivo` è dentro `RADICI_TESTO_LIBERO`, quindi
+sotto quel nome non uscirebbe in chiaro **mai**. Una colonna di `[redatto:str/6]` *sembra* una misura
+ed è un silenzio: è il difetto già pagato con `piattaforma`, che per un mese ha scritto `web` su ogni
+riga. La diagnosi viaggia quindi sotto i nomi che la lista bianca ammette già — `esito` (il motivo),
+`canale` (`bitmap` o `img`), `operazione` (`img_onerror`, `object_url`) — che sono gli stessi che
+`notifiche/triggers.ts` e `notifiche/destinatari.ts` usano da sempre. **`CHIAVI_IN_CHIARO` non è stata
+allargata**: quella lista governa anche un canale *anonimo*, perché `redact` gira sul body grezzo di
+`/api/logs`.
+
+⚠️ **Il test che misura questo passa dalla route vera.** La versione precedente asseriva
+`campi.strada` sull'argomento di `logClient`, dove il valore c'è sempre per costruzione: era verde su
+una colonna vuota. Ora `__tests__/lib/immagini-watermark.test.ts` rispedisce l'evento *vero* a
+`POST /api/logs` e legge `contesto.campi`. Su 9 mutazioni, 9 diventano rosse — comprese le due che
+sopravvivevano: `tela_verificata: true` (il campo dichiarava «rete 2 passata» anche con
+`getImageData` che lanciava) e la chiusura della bitmap a piena risoluzione, che restava viva fino al
+`finally` — ~48 MB su una foto da 12 Mpixel tenuti accanto alla tela nel momento di massima pressione
+su WKWebView, mentre il commento prometteva il contrario.
+
+⚠️ **HEIC non c'entra e non va aggiunta gestione**: in quattordici giorni di file d'origine non c'è
+**un** `.heic`. La WebView consegna già JPEG.
 
 ## 🧾 Changelog — «Scartata» diceva CHE, non PERCHÉ: il motivo sta nelle notifiche, dietro un parametro sbagliato da sempre — 2026-09-11 (branch `fix/aruba-motivo-scarto-notifiche`)
 
@@ -5404,10 +5856,20 @@ sul globale.
 prima), browser vero, shim `web`, valore fuori elenco, bridge che lancia (regola 6: il logger non può
 rompere l'app), e il ripiego user-agent.
 
-⏳ **Resta aperto**: *perché* la fotocamera fallisce. Oggi non è conoscibile — `camera.ts:117` scrive
-la parola `fotocamera-errore` e butta via la causa. Il passo successivo è dare a `classifica()`
-categorie chiuse (`non_disponibile`, `immagine_non_elaborabile`, `memoria`) senza far uscire dal
-telefono una sola stringa del plugin. La causa vera si legge **dopo il rilascio**, sulle righe nuove.
+✅ **CHIUSO il 2026-09-12** — vedi *«412 volte «la fotocamera non si apre», e il perché era una chiave
+mancante in un file di sedici righe»*. `camera.ts` porta ora `error_code` da una lista bianca chiusa,
+`operazione`, `tipo` e i contatori, senza far uscire dal telefono una sola stringa del plugin; e la
+causa non ha aspettato le righe nuove, perché era **leggibile nei file**:
+`NSPhotoLibraryAddUsageDescription` **non era** dichiarata in `ios/App/App/Info.plist`,
+`CameraPropertyListKeys.allCases` la pretende e `getPhoto` rigetta come prima istruzione. È anche il
+motivo per cui su Android quelle righe sono **zero** e `fotocamera-permesso-negato` non ne ha mai avuta
+una: il permesso non veniva mai chiesto.
+
+✅ **E la causa radice è RIPARATA, non solo diagnosticata**: la chiave è dichiarata nel plist, con un
+lock che legge `allCases` dal plugin installato perché non torni. ⚠️ Ma la riparazione dell'`Info.plist`
+**non viaggia con un deploy web**: serve `npx cap sync ios` e un build nativo. Fino a quel build gli
+iPhone già installati continuano a vedere il rigetto — con la differenza che ora la riga in `app_log`
+dice `error_code: 'plist_photo_library_add'` invece di niente.
 
 ---
 

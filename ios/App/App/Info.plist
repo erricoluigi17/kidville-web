@@ -46,6 +46,34 @@
 	<string>Kidville usa la fotocamera per scattare foto da allegare al diario, alla galleria della classe, alle comunicazioni e ai moduli.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Kidville accede alle foto per allegare immagini e documenti al diario, alla galleria, alle comunicazioni e ai moduli.</string>
+	<!-- ⚠️ QUESTA CHIAVE NON SERVE A NOI: LA PRETENDE IL PLUGIN, E SENZA DI LEI LA
+	     FOTOCAMERA NON SI APRE AFFATTO. Non cancellarla perché «l'app non salva nel
+	     rullino»: è vero (`saveToGallery: false` in `src/lib/native/camera.ts`, ed è
+	     deliberato — la foto di un certificato medico non deve finire nel rullino del
+	     docente e da lì nel backup iCloud), e non cambia niente.
+
+	     `CameraPropertyListKeys` (`@capacitor/camera`, `CameraTypes.swift`) è
+	     `CaseIterable` con TRE casi, e `NSPhotoLibraryAddUsageDescription` è il PRIMO.
+	     `checkUsageDescriptions()` scorre `allCases` e rigetta alla prima mancante
+	     SENZA guardare le opzioni della chiamata; `getPhoto` la invoca come prima
+	     istruzione, prima di qualunque foglio e di qualunque richiesta di permesso.
+	     Quindi: chiave assente ⇒ `getPhoto` rigetta SEMPRE, su OGNI iPhone, anche con
+	     il salvataggio nel rullino spento.
+
+	     COSA È COSTATO, misurato in `app_log` e non dedotto: `fotocamera-errore`
+	     124 righe / 412 occorrenze / 32 utenti fra il 01/09 e l'11/09 2026, di cui
+	     118 righe e 390 occorrenze su iOS e ZERO su Android (che non ha un
+	     Info.plist: il guasto era iOS-only per costruzione). E
+	     `fotocamera-permesso-negato` a ZERO righe da sempre, che è il corollario:
+	     il permesso non veniva mai negato perché non veniva mai chiesto.
+
+	     Il testo qui sotto dice il vero: iOS mostra una stringa d'uso solo quando
+	     l'accesso viene davvero richiesto, e questo accesso non lo chiediamo. Il lock
+	     `__tests__/lib/native-camera-diagnosi.test.ts` legge `allCases` dal plugin
+	     INSTALLATO e pretende che ogni chiave sia qui: se un aggiornamento ne
+	     aggiungesse una quarta, diventa rosso invece di ridare 40 righe al giorno. -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Kidville non aggiunge foto al rullino del telefono: le immagini che scatti restano nell'app, nel diario e nella galleria della classe. Questa voce è richiesta dal componente fotocamera di sistema, che la pretende all'avvio anche quando il salvataggio nel rullino è disattivato.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Kidville usa il microfono quando registri o alleghi video, ad esempio nella galleria della classe.</string>
 	<key>NSFaceIDUsageDescription</key>

@@ -3,7 +3,38 @@
 -- Scritta il 2026-09-12, misurando il database di produzione in SOLA LETTURA.
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
--- ─── ⚠️ NON APPLICATA, E VA APPLICATA **DOPO** IL DEPLOY DEL CODICE ───────────
+-- ─── ✅ APPLICATA IL 2026-09-12, E L'ORDINE È STATO RISPETTATO ────────────────
+--
+-- Deploy del codice in produzione alle 05:22 UTC (merge della PR #141, `0567fc7c`,
+-- Vercel `success`), migrazione applicata subito dopo, e primo giro lanciato a mano:
+-- **24 orfani rimossi su 26**, i 2 più giovani di 24 ore lasciati dalla grazia, 0
+-- righe del cestino scadute (le tre entrate quel giorno scadono il 12 ottobre), 0
+-- righe trattenute. `cron.job`: una sola riga `galleria-retention`, `23 5 * * *`,
+-- `active = true`. La voce è stata spostata da `JOB_CRON_NON_SORVEGLIATI` a
+-- `JOB_CRON` (26 h) nello stesso rilascio, come il passo 4 qui sotto prescrive.
+--
+-- ⚠️ MA IL PASSO 2 È ANDATO STORTO, E VA SCRITTO PERCHÉ SI RIPETERÀ. La migrazione
+-- è stata applicata **DUE VOLTE**: l'integrazione Supabase l'ha applicata da sé al
+-- merge, con la version del FILE (`20260912024500`, 15.012 caratteri — il file
+-- intero, commenti compresi), e subito dopo `apply_migration` l'ha riapplicata con
+-- una version propria (`20260912052647`, 4.770 caratteri). Due righe in
+-- `schema_migrations` con lo STESSO `name`, che è esattamente ciò che il lock
+-- `migrazioni-complete` esiste per trovare — e l'ha trovato.
+--
+-- Nessun danno al database: ogni istruzione qui è idempotente (`CREATE OR REPLACE`
+-- più `unschedule`/`schedule`), e il lavoro schedulato è rimasto uno. Il registro è
+-- stato bonificato togliendo la riga `…052647`, cioè il ri-apply ridondante, e il
+-- file porta la version canonica — quella con cui è entrato in git.
+--
+-- **La lezione, per la prossima volta:** quando una migrazione viaggia dentro una PR,
+-- al merge è l'integrazione ad applicarla, e la version registrata è quella del
+-- FILE. Il passo 2 qui sotto — «rinomina col nome che il database ha registrato» —
+-- vale per un `apply_migration` fatto a mano su un file NON ancora in `main`. Fatto
+-- dopo il merge, rinominare sposta il disallineamento invece di chiuderlo: prima
+-- mancava una version dalla fotografia, dopo mancava un file dal disco.
+-- **Prima di applicare a mano, si guarda se il database l'ha già.**
+--
+-- ─── (istruzioni originali, tenute perché la ragione dell'ordine vale ancora) ──
 --
 -- Questo file è stato SCRITTO, non applicato. Non è prudenza generica: è
 -- l'ORDINE, e l'ordine sbagliato è già stato pagato in questo repo.

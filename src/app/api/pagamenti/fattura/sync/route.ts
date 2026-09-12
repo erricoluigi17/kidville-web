@@ -452,6 +452,12 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
      * finiscono i NOMI dei campi e la loro forma (tipo, lunghezza, conteggi), che è ciò che
      * serve a capire la struttura alla prima notifica vera e non espone nessuno. Vedi
      * `descriviForma` in `stato.ts`.
+     *
+     * ⚠️ Dal 2026-09-11 quella traccia scende di un gradino: quando la notifica porta un
+     * ALLEGATO (misurato: `file`, 6304 caratteri, l'XML della `NS`) e l'allegato non dà
+     * nessun errore, la riga porta anche i NOMI DEI TAG XML e la lunghezza — mai il
+     * contenuto, che è l'anagrafica fiscale dell'intestatario. Vale lo stesso budget: la
+     * traccia sta dentro `FORMA_MAX`, che `sanificaMessaggio` non taglia.
      */
     /**
      * ─── L'ESITO, E PERCHÉ NON BASTA `string | null` ───────────────────────────
@@ -565,6 +571,21 @@ export const POST = withRoute('pagamenti/fattura/sync:POST', async (request: Req
           fattura_id: riga.id,
           numero: riga.numero,
           notifiche: lettura.notifiche,
+          // I TIPI DICHIARATI DALLE NOTIFICHE, ed è la riga che dice se `NS` è la parola giusta.
+          // `docType` è entrato fra le chiavi del tipo su una misura della sua LUNGHEZZA
+          // (`stringa(2)`), non del suo valore: se quelle due lettere non fossero `NS`, il
+          // filtro escluderebbe la notifica invece di ammetterla e questa funzione diventerebbe
+          // muta SENZA nessun segnale — la `forma` uscirebbe identica, perché non porta valori.
+          // Sono codici a due lettere di un vocabolario pubblico (NS, RC, MC, NE, DT, AT): non
+          // sono dati di nessuno, e sono l'unica cosa che distingue «non ho capito la forma» da
+          // «ho capito la forma e ho scartato la notifica sbagliata».
+          //
+          // ⚠️ LA CHIAVE È `tipo` E NON `tipi`, e non è una sfumatura: `redact` è a LISTA
+          // BIANCA, `tipo` c'è e `tipi` no. Con `tipi` il valore sarebbe uscito come
+          // `[redatto:str/5]` — cioè la riga che esiste per dire QUALI tipi sono arrivati
+          // avrebbe taciuto proprio quello, restando verde e inutile. La lista bianca NON si
+          // allarga per comodità (AGENTS.md regola 8): si usa la chiave che c'è già.
+          tipo: lettura.tipiVisti.join(',') || null,
           msg: `${JOB}: forma notifiche SDI: ${lettura.forma}`,
         })
         return { motivo: null, esito: 'nessun-motivo' }

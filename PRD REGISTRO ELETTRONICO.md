@@ -100,6 +100,128 @@
 
 ---
 
+## 📱 Changelog — Il collaudo sul simulatore ha detto sì al video e no a «Elimina»: la barra gli stava sopra, e le conferme erano tre — 2026-09-12 (branch `fix/visore-elimina-raggiungibile`)
+
+Le tre voci di changelog qui sotto si chiudevano tutte con la stessa riga: *«manca la
+contro-prova dal campo»*. Il titolare ha chiesto di aprire il **simulatore iOS sulla sede di
+test** e provare tutto. È stata compilata una build nativa (iPhone 16e, 390×844, iOS 26.2 —
+la geometria esatta su cui erano stati fatti i conti dei pixel) puntata su `app.kidville.it`,
+e guidata con Maestro dentro `Kidville Demo` (`e2e00000-…-d000`, galleria a **0 righe** alla
+partenza, quindi nessun dato di famiglie vere toccato).
+
+### Ciò che la prova ha CONFERMATO, con i numeri
+
+Un video costruito **come quello di un iPhone** — `.mov` HEVC, HLG BT.2020, AAC 44,1 kHz
+stereo, 12 s verticale 1080×1920, con un contatore impresso in ogni fotogramma — messo nella
+libreria del simulatore e caricato dall'app:
+
+| | ingresso | uscita pubblicata |
+|---|---|---|
+| durata | 12,000 s | **12,033 s** |
+| audio | −24,1 dB medio · −20,7 max | **−24,2 · −20,7** (`volumedetect`) |
+| congelamenti ≥ 1 s (`freezedetect`) | — | **nessuno** |
+| watermark | — | su tutti i fotogrammi estratti (1 s, 6 s, 11 s: contatore **1, 6, 11**) |
+
+E la riga di log che il 2026-09-11 non esisteva in tabella è arrivata:
+`gallery-video-conversione-riuscita` · **`audio: true`** · `ms 12.737` · `fotogrammi 699` ·
+`byte_out 814.769`, che è **esattamente** la dimensione dell'oggetto nel bucket. Più
+`fotocamera-scatto-riuscito` (`esito: ok`, `canale: prompt`): la fotocamera Capacitor **si
+apre**, cioè la chiave `NSPhotoLibraryAddUsageDescription` era davvero la causa dei 412
+rifiuti — e questa è la prima prova possibile, perché arriva solo con una build nativa.
+Foto: 4032×3024 → 1600×1200, 160.444 byte, luminanza media **128** (i tre file guasti di
+produzione pesavano 775 byte). Cestino, ripristino e permessi: `eliminato_il`/`eliminato_da`
+scritti col file **conservato**, la segreteria vede «Restano 30 giorni», il ripristino
+rimette la foto **davanti alla famiglia**, un'altra insegnante prende **403**, la doppia
+eliminazione **200 `gia-eliminato`**, un ripristino inesistente **404** tradotto. E
+`audit_scritture_docente` ha finalmente righe `galleria_media`: **4** (prima di questo lavoro
+erano zero).
+
+⚠️ **Il limite, detto prima delle conclusioni**: il simulatore non è un iPhone. Codec
+software, e soprattutto **iOS non sospende il processo** come fa con un telefono in tasca —
+quindi la causa numero uno del video congelato (`requestAnimationFrame` sospeso fuori dal
+primo piano) **qui non è riproducibile**. Questa prova dimostra che la catena produce un file
+integro e che il gate d'integrità misura; non sostituisce un video vero caricato dal
+telefono del titolare.
+
+### 🔴 Difetto 1 — su un video VERTICALE «Elimina Media» non si raggiunge
+
+Misurato: scroller del visore a **fine corsa** (due schermate dopo due gesti, identiche al
+byte, md5 `b62a289f7cdb6e3898d264323dc58fad`) e del pulsante resta una striscia rossa di
+**~4 px** sotto la pastiglia della bottom-nav. Causa: il visore era `fixed inset-0 z-50` e le
+tre bottom-nav sono `fixed bottom-0 … z-50`, dichiarate **dopo** `<main>{children}</main>`;
+a pari livello vince l'ordine nel DOM, e il riempimento in fondo allo scroller
+(`env(safe-area-inset-bottom)`, 34 px) non scavalca una barra da ~130.
+
+🔑 **Il difetto era già scritto nel file, con la sua correzione.** Un commento del 2026-09-11
+in `MediaGrid.tsx` diceva: *«NON È CORRETTO A OCCHIO DI PROPOSITO: una sovrapposizione vera
+non è dimostrata ai formati comuni … si misura nel browser vero. Se la misura dirà che c'è,
+la correzione è una riga: da `z-50` a `z-[115]`»*. Era onesto e aveva ragione a non
+correggere alla cieca — ma «formati comuni» escludeva il formato più comune che esista, un
+filmato ripreso col telefono in verticale. **Fatto**: visore a `z-[115]` (il livello che
+`ui/cockpit.tsx` usa già per stare sopra topbar `z-[105]`, foglio Menu `z-[110]` e filtri
+`z-[112]`), commento riscritto con la misura, e lock nuovo
+`__tests__/architecture/visore-media-sopra-la-bottom-nav.test.ts` — rosso su tutte e tre le
+barre se qualcuno riporta il visore a `z-50`. Effetto collaterale voluto:
+`rendiInerteFuoriDaConFocus` marca inerte anche la barra, che prima era inerte **e** sopra,
+cioè il peggio dei due mondi.
+
+### 🔴 Difetto 2 — l'insegnante confermava TRE volte, e una in inglese
+
+Eliminando una foto dall'app nativa comparivano in fila: il dialogo curato, poi il `confirm()`
+di sistema — che in WKWebView disegna i propri pulsanti **in inglese** («Cancel» / «Ok») su un
+prodotto che parla solo italiano — e infine l'`alert()` di successo, mentre il dialogo curato
+restava dietro con la rotella su «Eliminazione…». Erano `teacher/gallery/page.tsx:573` e `:579`.
+
+E il danno vero non era il fastidio: risolvendo **sempre**, `handleDeleteMedia` rendeva
+irraggiungibile l'unica cosa per cui `DialogoEliminaMedia` esiste — distinguere 403 / 404 /
+500 **leggendo il rigetto**. Un `alert` più un `return` gli arrivano come «riuscita»: il
+visore si chiudeva e il messaggio compariva su una schermata che non mostrava più la foto.
+**Fatto**: il gestore ora rigetta con `erroreElimina(testoTradotto, stato)`, tratta il 404
+come riuscita (l'esito voluto È raggiunto) e **lancia** anche quando manca `teacherId`, dove
+prima c'era un `return` che era l'ennesimo falso successo. Le due chiavi rimaste orfane
+(`galleryConfermaElimina`, `galleryAlertEliminato`) sono state tolte da `it` e `en`.
+
+🔑 **Il lock lo sapeva.** `media-elimina-chiamante-rigetta` teneva quel file in **allowlist**
+con i tre difetti elencati e la correzione scritta per intero, e la riga finale «fatto questo
+si toglie la voce e il tetto scende a 0». A farla leggere non è stato il gate — che era verde,
+perché un `async` che non lancia mai soddisfa `(id) => Promise<void>` alla perfezione — è
+stato **un dito su un telefono**. Allowlist ora **vuota**, `TETTO_DEBITO` a **0**.
+
+### Rilievi aperti da questa prova, non corretti qui
+
+1. **Il log della conversione arriva al rilancio successivo dell'app**, non a fine
+   conversione: nel collaudo, 51 minuti dopo (11:31 → 12:22). La coda del client parte con
+   `sendBeacon` sugli eventi di visibilità. Chi interroga `app_log` subito dopo un
+   caricamento **non trova niente e conclude il falso**: va saputo prima di leggere la query
+   che questo PRD chiama «definizione di fatto».
+2. **`mime_out` esce `[redatto:str/38]`**: il campo aggiunto per diagnosticare proprio il
+   difetto del MIME col suffisso codec è illeggibile, perché
+   `video/mp4;codecs="avc1…,mp4a…"` non ha la forma di un enumerato e la lista bianca lo
+   maschera. Va sostituito con un token enumerato (o un booleano «audio nel mime»).
+3. **Il cestino vuoto mostra il testo delle pubblicate**: «In questo plesso non c'è ancora
+   nessuna foto · appena ne arriva una, compare qui» — per un cestino è fuorviante due volte.
+4. Minori di lingua: «FOTO 1 DI 1» e «TAGGA I BAMBINI PRESENTI NELLA FOTO» compaiono anche
+   per un video; il foglio nativo della fotocamera non ha una riga «Annulla» (si chiude
+   toccando fuori).
+
+### Prova che i test falliscono PRIMA, e gate
+
+I due lock sono stati eseguiti **in locale, prima** della correzione — non in due commit
+separati come nella PR #141, quindi la prova è la trascrizione qui sotto e non un log di CI —
+e hanno parlato:
+`visore-media-sopra-la-bottom-nav` → `2 failed | 1 passed`, con l'elenco
+«bottom-nav insegnante/genitore/cockpit è a z-50, il visore a z-50» e i tre livelli del
+cockpit; `media-elimina-chiamante-rigetta` con l'allowlist svuotata →
+`1 failed | 4 passed`, con la riga «non lancia MAI · apre un `confirm()` nativo · mostra un
+`alert()` nativo». Dopo: verdi entrambi.
+
+**Gate misurato il 2026-09-12 alle 18:0x**: `eslint . --max-warnings 0` → **0** ·
+`tsc --noEmit` → **0** · `vitest run` → **16.751/16.751** su 1248 file (erano 16.748: i tre
+casi del lock nuovo) · `npm run build` → **ok** (`verifica-artefatto`: 2641 file JS, nessun
+segnaposto). E2E Playwright: in CI.
+
+---
+
 ## 🎥 Changelog — Il video non si fermava: la registrazione continuava su un fotogramma morto, e la conversione non ha mai detto no — 2026-09-12 (branch `fix/galleria-video-ios-e-cestino`)
 
 Segnalazione del titolare, dall'app iOS, su un video **scelto dalla galleria dell'iPhone**:

@@ -23,8 +23,6 @@
   "galleryAlertOffline": "Dispositivo offline: i media sono stati salvati in locale e verranno caricati automaticamente non appena tornerai online.",
   "galleryAlertPubblicati": "File caricati e pubblicati con successo!",
   "galleryErrCaricamentoGenerico": "Si è verificato un errore durante il caricamento.",
-  "galleryConfermaElimina": "Sei sicuro di voler eliminare questo media?",
-  "galleryAlertEliminato": "Media eliminato con successo!",
   "galleryErrEliminazione": "Errore durante l’eliminazione.",
   "galleryErrReteEliminazione": "Errore di rete durante l’eliminazione.",
   "galleryAlertTagAggiornati": "Tag aggiornati con successo!",

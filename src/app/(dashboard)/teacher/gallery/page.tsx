@@ -7,6 +7,7 @@ import { Upload, Tag, WifiOff, X } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
+import { erroreElimina, statoDaRigetto } from '@/components/features/gallery/DialogoEliminaMedia';
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { AnteprimaMedia } from '@/components/features/gallery/AnteprimaMedia';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
@@ -568,26 +569,57 @@ function TeacherGalleryContent() {
         }
     };
 
+    /**
+     * L'ELIMINAZIONE RIGETTA, e non mostra più niente da sé.
+     *
+     * ─── COM'ERA, E PERCHÉ ERA SBAGLIATO (misurato il 2026-09-12) ────────────
+     * Fino a oggi questo gestore apriva un `confirm(t('galleryConfermaElimina'))`
+     * e chiudeva con `alert(...)`. Sul simulatore iPhone 16e, eliminare una foto
+     * dall'app nativa produceva **tre dialoghi in fila**: quello curato di
+     * `DialogoEliminaMedia`, poi il `confirm` di sistema — che in WKWebView
+     * mostra i propri pulsanti in INGLESE («Cancel» / «Ok») su un prodotto che
+     * parla solo italiano — e infine l'`alert` di successo, mentre il dialogo
+     * curato restava dietro con la rotella su «Eliminazione…».
+     *
+     * E c'era di peggio del fastidio: risolvendo SEMPRE, questo gestore rendeva
+     * irraggiungibile l'unica cosa per cui `DialogoEliminaMedia` è stato
+     * scritto. Il dialogo distingue 403 (confine di sede), 404 (l'esito voluto è
+     * raggiunto) e 500/rete (riprovare è il rimedio) LEGGENDO il rigetto: un
+     * `alert` seguito da un `return` gli arriva come «riuscita», quindi il visore
+     * si chiudeva e il messaggio compariva su una schermata che non mostrava più
+     * la foto di cui parlava. `tsc` non poteva accorgersene — una funzione
+     * `async` che non lancia mai soddisfa `(id) => Promise<void>` alla perfezione
+     * — e a vederlo è stato il lock `media-elimina-chiamante-rigetta`, che teneva
+     * questo file in allowlist con la correzione già scritta dentro.
+     *
+     * ⚠️ IL 404 È UNA RIUSCITA, non un errore: la riga non c'è più, cioè l'esito
+     * che l'insegnante voleva. Lo dice il contratto della prop `onDelete`.
+     * ⚠️ `teacherId` assente LANCIA invece di ritornare: un `return` qui sarebbe
+     * l'ennesimo falso successo, con il dialogo che si chiude annunciando
+     * un'eliminazione che non è mai partita.
+     */
     const handleDeleteMedia = async (id: string) => {
-        if (!teacherId) return;
-        if (!confirm(t('galleryConfermaElimina'))) return;
+        if (!teacherId) throw erroreElimina(t('galleryErrEliminazione'), null);
         try {
             const res = await fetch(`/api/gallery?id=${id}&userId=${teacherId}`, {
                 method: 'DELETE'
             });
-            if (res.ok) {
-                alert(t('galleryAlertEliminato'));
+            if (res.ok || res.status === 404) {
                 await loadMedia();
-            } else {
-                // Il rifiuto ADESSO era muto nei log: restava solo a schermo, e il
-                // giorno dopo «la foto c'è ancora» non aveva nessuna riga a cui
-                // risalire. `stato` distingue un 403 di sede da un 500.
-                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-rifiutato', route: '/teacher/gallery', stato: res.status });
-                alert(await messaggioErrore(res, t('galleryErrEliminazione')));
+                return;
             }
-        } catch {
+            // Il rifiuto ADESSO era muto nei log: restava solo a schermo, e il
+            // giorno dopo «la foto c'è ancora» non aveva nessuna riga a cui
+            // risalire. `stato` distingue un 403 di sede da un 500.
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-rifiutato', route: '/teacher/gallery', stato: res.status });
+            throw erroreElimina(await messaggioErrore(res, t('galleryErrEliminazione')), res.status);
+        } catch (e) {
+            // Già tradotto e classificato dal ramo qui sopra: si rilancia com'è,
+            // altrimenti un 403 di sede tornerebbe indietro travestito da guasto
+            // di rete e il dialogo lascerebbe il comando premibile.
+            if (statoDaRigetto(e) !== null) throw e;
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-delete-fallito', route: '/teacher/gallery' });
-            alert(t('galleryErrReteEliminazione'));
+            throw erroreElimina(t('galleryErrReteEliminazione'), null);
         }
     };
 

@@ -3,14 +3,15 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useTranslations, useLocale } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Tag, WifiOff } from 'lucide-react';
+import { Upload, Tag, WifiOff, X } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { Btn } from '@/components/ui/Btn';
 import { MediaGrid, MediaItem } from '@/components/features/gallery/MediaGrid';
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
+import { AnteprimaMedia } from '@/components/features/gallery/AnteprimaMedia';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
-import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, type MotivoVideoNonValido } from '@/lib/media/processing';
+import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, ImageProcessingError, type MotivoVideoNonValido } from '@/lib/media/processing';
 import { analizzaContenutoVideo } from '@/lib/media/codec-sniff';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
@@ -50,6 +51,10 @@ type Step = 'gallery' | 'upload' | 'tag';
 
 function TeacherGalleryContent() {
     const t = useTranslations('teacherServizi');
+    // «Rimuovi file» vive in `shared`: è la stessa etichetta della X dello step 1,
+    // e una seconda copia in `teacherServizi` sarebbe due stringhe da tradurre
+    // per un gesto solo.
+    const tShared = useTranslations('shared');
     // La lingua dell'INTERFACCIA (cookie `KV_LOCALE`), non quella del runtime:
     // serve a formattare i numeri che finiscono dentro le frasi qui sotto.
     const locale = useLocale();
@@ -213,6 +218,43 @@ function TeacherGalleryContent() {
         })));
         setActiveFileIndex(0);
         setStep('tag');
+    };
+
+    /**
+     * TOGLIE UN FILE DALLO STEP 2 — perché fino a oggi non si poteva.
+     *
+     * La striscia delle miniature non aveva NESSUN gesto di rimozione: una volta
+     * passati allo step 2, un file scelto per sbaglio ci restava, e l'unica via
+     * d'uscita era «Annulla» — che butta anche i tag già messi sulle altre foto.
+     * Su un caricamento da 37 foto (è successo il 6 settembre) significa rifare
+     * tutto per un file di troppo.
+     *
+     * NESSUNA CONFERMA, di proposito. Il gesto è reversibile — il file si
+     * riscegli — e una conferma su un gesto innocuo è quella che si impara a
+     * premere senza leggere: la stessa ragione scritta per esteso in
+     * `handleApplyToAll` qui sotto, che invece la chiede perché lì si perde
+     * lavoro fatto a mano.
+     *
+     * Le tre cose che devono succedere insieme, e che qui stanno in un posto solo:
+     *  1. l'objectURL si REVOCA (altrimenti il blob resta in memoria fino al
+     *     ricaricamento della pagina: un video da 14 MB per volta);
+     *  2. `activeFileIndex` RIENTRA, altrimenti punta oltre la fine dell'elenco e
+     *     la scheda dei tag smette di comparire senza dire perché;
+     *  3. se l'elenco si svuota si torna al passo di scelta, non a uno step 2
+     *     vuoto da cui non si esce.
+     */
+    const rimuoviFileSelezionato = (indice: number) => {
+        const rimosso = uploadedFiles[indice];
+        if (!rimosso) return;
+        URL.revokeObjectURL(rimosso.preview);
+        const restanti = uploadedFiles.filter((_, i) => i !== indice);
+        setUploadedFiles(restanti);
+        // Se ho tolto una foto PRIMA di quella attiva, l'attiva è scalata di uno;
+        // se ho tolto proprio l'attiva (o una dopo), basta non sforare la fine.
+        setActiveFileIndex(prev => (
+            indice < prev ? prev - 1 : Math.min(prev, Math.max(restanti.length - 1, 0))
+        ));
+        if (restanti.length === 0) setStep('upload');
     };
 
     const handleToggleTag = (studentId: string) => {
@@ -387,7 +429,31 @@ function TeacherGalleryContent() {
                     }
                 } else {
                     // Ridimensionamento e Watermarking client-side
-                    processedFile = await processImageWithWatermark(f.file, '/watermark.png');
+                    try {
+                        processedFile = await processImageWithWatermark(f.file, '/watermark.png');
+                    } catch (e) {
+                        // ⚠️ `continue`, NON un'eccezione che esce dal ciclo — ed è la stessa
+                        // cosa che il ramo video fa venti righe più sopra. Da quando
+                        // `processImageWithWatermark` RIFIUTA una tela degenere invece di
+                        // pubblicare un file da 775 byte, questo `await` può lanciare; e il
+                        // `try` che lo avvolgeva è quello aperto PRIMA del `for`, col `catch`
+                        // dopo la sua chiusura. Su cinque foto con la seconda degenere,
+                        // l'insegnante vedeva l'avviso di UNA foto e le foto 3, 4 e 5 non
+                        // venivano mai elaborate né caricate, senza che niente lo dicesse —
+                        // e `setUploadedFiles([])` non veniva raggiunto, quindi un secondo
+                        // tentativo ripubblicava in doppio quelle già passate.
+                        //
+                        // Si intercetta il SOLO rigetto deliberato: `ImageProcessingError`
+                        // porta una frase italiana già pronta e senza il nome del file
+                        // (`MESSAGGIO_UMANO`, `lib/media/immagini.ts`). Qualunque altro
+                        // errore è un guasto inatteso e continua a salire al catch-all, che
+                        // lo logga: trattarlo come «salta questa foto» nasconderebbe un bug.
+                        if (e instanceof ImageProcessingError) {
+                            alert(e.message);
+                            continue;
+                        }
+                        throw e;
+                    }
                 }
 
                 if (offlineMode) {
@@ -654,8 +720,18 @@ function TeacherGalleryContent() {
                                                 : 'opacity-65 hover:opacity-100 border border-kidville-line'
                                         }`}
                                     >
-                                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                                        <img src={f.preview} alt="" className="w-full h-full object-cover" />
+                                        {/* Un video si guarda con `<video>`: era la SECONDA
+                                            delle tre copie che rendevano un MP4 dentro un
+                                            `<img>`, cioè il glifo del file rotto.
+                                            `solo-icona` perché qui la tessella è di 64 px (80
+                                            solo da `sm:`, cioè su nessun telefono) e il badge
+                                            dello stato dei tag sta in basso a destra: la
+                                            pastiglia intera arriverebbe a ~52 px e il badge
+                                            comincia fra ~43 e ~50, quindi gli ultimi pixel
+                                            della parola finirebbero sotto un fondo opaco.
+                                            Con `solo-icona` la pastiglia scende a ~20 px e la
+                                            parola resta per chi usa uno screen reader. */}
+                                        <AnteprimaMedia file={f.file} src={f.preview} etichetta="solo-icona" />
 
                                         {/* Spinner PER FILE durante la conversione video */}
                                         {convertingIndex === i && (
@@ -677,6 +753,40 @@ function TeacherGalleryContent() {
                                                 <span className="bg-kidville-error text-white text-[8px] sm:text-[9px] font-bold px-1 rounded uppercase">!</span>
                                             )}
                                         </div>
+
+                                        {/*
+                                          LA X — allo step 2 non c'era NESSUN modo di togliere
+                                          un file. 28 px (sopra il minimo di 24×24 di WCAG
+                                          2.5.8) e non 32 come nella griglia dello step 1:
+                                          qui la tessella è di 64 px e il resto della sua
+                                          superficie serve a SELEZIONARLA, quindi il bersaglio
+                                          della rimozione non deve mangiarsela.
+                                          `stopPropagation` perché la tessella intera è un
+                                          comando: senza, togliere un file cambierebbe anche
+                                          la foto in configurazione.
+                                          Spenta durante il caricamento: il ciclo di
+                                          `handleConfirmUpload` sta scorrendo QUESTO elenco, e
+                                          `convertingIndex` è un indice su di esso.
+                                          Sta in fondo alla tessella di proposito: i badge
+                                          sopra si trovano per `.absolute` in ordine di
+                                          documento, e infilarsi prima di loro li renderebbe
+                                          irraggiungibili a chi li cerca così.
+                                          Il fondo è `kidville-ink/90` e non `/70`: le velature
+                                          scure adoperate in `src/` sono censite dal lock
+                                          `__tests__/a11y/` §5.3 col loro contrasto misurato, e
+                                          `/70` era una variante nuova che lo faceva diventare
+                                          rosso. `/90` è già in tabella — e copre di più, che
+                                          per una X che «non si vedeva» è la direzione giusta.
+                                        */}
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); rimuoviFileSelezionato(i); }}
+                                            disabled={uploading}
+                                            aria-label={tShared('galleryRimuoviFile')}
+                                            className="absolute top-1 right-1 h-7 w-7 rounded-full bg-kidville-ink/90 text-kidville-white flex items-center justify-center touch-manipulation active:scale-95 transition-transform disabled:opacity-40"
+                                        >
+                                            <X size={14} strokeWidth={2.25} />
+                                        </button>
                                     </div>
                                 ))}
                             </div>
@@ -685,9 +795,12 @@ function TeacherGalleryContent() {
                             {activeFile && (
                                 <div className="mb-4 p-3 bg-kidville-cream/35 border border-kidville-green/10 rounded-2xl flex items-center justify-between gap-4">
                                     <div className="flex items-center gap-2.5 min-w-0">
-                                        <div className="w-10 h-10 rounded-xl overflow-hidden bg-kidville-cream flex-shrink-0">
-                                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                                            <img src={activeFile.preview} alt="" className="w-full h-full object-cover" />
+                                        <div className="relative w-10 h-10 rounded-xl overflow-hidden bg-kidville-cream flex-shrink-0">
+                                            {/* La TERZA copia dello stesso difetto. Qui la
+                                                pastiglia si spegne: su 40 px coprirebbe
+                                                l'anteprima invece di descriverla, e il tipo di
+                                                file è già detto dalla miniatura selezionata. */}
+                                            <AnteprimaMedia file={activeFile.file} src={activeFile.preview} etichetta="nessuna" />
                                         </div>
                                         <div className="min-w-0">
                                             <p className="font-barlow font-bold text-xs text-kidville-green uppercase tracking-wide">

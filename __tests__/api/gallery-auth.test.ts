@@ -48,6 +48,16 @@ vi.mock('@/lib/supabase/server-client', () => ({
       // spezzava e la route rispondeva 500. Un mock che regge una sola forma
       // di catena non prova nulla sulle altre.
       b.in = () => b
+      // `.is()` — dal 2026-09-11 «Elimina» non distrugge: NASCONDE, e ogni lettura
+      // di `galleria_media_v2` dichiara il proprio verso col modulo
+      // `@/lib/gallery/cestino`. La GET passa da `soloVive`, cioè
+      // `.is('eliminato_il', null)`, e un metodo assente sulla catena finta non
+      // viene «ignorato»: lancia `TypeError`, il catch della route lo raccoglie e
+      // risponde **500**. Il caso «200 genitore col PROPRIO parentId» diventava
+      // rosso per il mock, non per la route. Chainable come `.in()`, e per la
+      // stessa ragione scritta lì sopra: il filtro del cestino è seguito da
+      // `.order()`, `.in()`, `.or()` e `.range()`.
+      b.is = () => b
       b.then = (resolve: (v: unknown) => void) =>
         resolve({ data: table === 'alunni' ? h.alunni : [], error: null })
       b.maybeSingle = async () => ({

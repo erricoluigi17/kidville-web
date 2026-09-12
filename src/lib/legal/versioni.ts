@@ -193,8 +193,42 @@
 // I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
 // invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
 
+// 2026-09-12 — SOLO l'informativa privacy. UNA voce nuova nella «Conservazione
+// dei dati»: la fotografia o il video che il personale ELIMINA.
+//
+// PERCHÉ È UNA MODIFICA SOSTANZIALE, e non un ritocco redazionale: dichiara un
+// periodo di conservazione che fino all'11/09 non poteva ESISTERE. Prima di quel
+// giorno «Elimina» cancellava subito e per sempre; dal 2026-09-11 NASCONDE — la
+// riga resta in `galleria_media_v2` con `eliminato_il` valorizzato, il file resta
+// nel bucket privato, e la segreteria può ripristinare per trenta giorni.
+//
+// Quei trenta giorni sono un trattamento in più su una fotografia di un minore, e
+// il documento non li diceva. Peggio: diceva qualcosa che da quel giorno è
+// incompleto — «fotografie e video: fino alla revoca del consenso» — mentre dopo
+// la revoca, o dopo l'eliminazione, la foto resta in effetti un mese ancora. Un
+// termine vero e non scritto da nessuna parte è esattamente ciò che l'art. 13 §2
+// lett. a pretende sia comunicato, e la sua assenza fa rinunciare a chiedere: una
+// famiglia che chiede la cancellazione di una foto crede che sia immediata.
+//
+// ⚠️ NON DICE «AUTOMATICAMENTE», ed è deliberato. Il lock
+// `informativa-conservazione-dichiarata` lega quella parola all'esistenza
+// dell'automa: il job `galleria-retention` esiste come route e come file di
+// migrazione, ma la migrazione va applicata DOPO il deploy del codice (il difetto
+// misurato l'11/08/2026 su `candidature-retention`: cron applicato prima del
+// deploy, tre ore di chiamate a un 404). Finché non è applicata e attestata, il
+// documento dichiara il TERMINE e non il meccanismo — che è ciò che la famiglia
+// ha diritto di sapere.
+//
+// ⚠️ Alzarla NON invalida i consensi già raccolti e non forza nessuno a
+// riaccettare — vale la verifica del 10/08 riportata sopra: `VERSIONE_PRIVACY`
+// entra solo nelle righe scritte da qui in avanti, e nessun gate confronta la
+// versione registrata con quella corrente.
+//
+// I TERMINI DI SERVIZIO NON SONO STATI TOCCATI: `src/app/termini/page.tsx` è
+// invariato, quindi `VERSIONE_TERMINI` resta al 2026-07-31.
+
 /** Versione corrente dei Termini di servizio. */
 export const VERSIONE_TERMINI = '2026-07-31'
 
 /** Versione corrente dell'Informativa privacy. */
-export const VERSIONE_PRIVACY = '2026-09-09'
+export const VERSIONE_PRIVACY = '2026-09-12'

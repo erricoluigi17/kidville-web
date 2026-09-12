@@ -75,8 +75,11 @@ async function apriTreFoto() {
     const input = vista.container.querySelector('input[type="file"]') as HTMLInputElement;
     const files = [1, 2, 3].map(i => new File(['x'], `foto${i}.jpg`, { type: 'image/jpeg' }));
     fireEvent.change(input, { target: { files } });
-    // upload → tag
-    fireEvent.click(await screen.findByRole('button', { name: new RegExp(itShared.mediaCaricaVerbo) }));
+    // upload → tag. ⚠️ Il bottone diceva «Carica 3 file» e non caricava niente:
+    // porta allo step 2, e il caricamento parte solo da lì. Corretto il
+    // 2026-09-11 (adesso è il solo conteggio, «3 file»); qui cambia il
+    // SELETTORE, non ciò che il test verifica.
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(`${files.length} ${itShared.mediaFilePlurale}`) }));
     await waitFor(() => expect(screen.getByText(`${ADA.nome} ${ADA.cognome}`)).toBeInTheDocument());
     return vista;
 }

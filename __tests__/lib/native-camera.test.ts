@@ -7,7 +7,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 vi.mock('@/lib/push/native-register', () => ({ isNativeApp: vi.fn() }))
 
 const logClient = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/logging/client', () => ({ logClient }))
+// Mock PARZIALE: si sostituisce `logClient` e si tiene il resto del modulo vero.
+// `camera.ts` usa anche `nomeErrore` — che è la politica «del messaggio non si
+// prende niente, si prende il `.name`» — e reimplementarla qui vorrebbe dire
+// collaudare la copia invece dell'originale.
+vi.mock('@/lib/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/logging/client')>()),
+  logClient,
+}))
 
 const getPhotoMock = vi.hoisted(() => vi.fn())
 vi.mock('@capacitor/camera', () => ({

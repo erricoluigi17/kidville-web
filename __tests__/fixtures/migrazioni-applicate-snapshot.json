@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-09",
-  "generato_alle": "2026-09-09T11:33:03Z",
-  "sha256": "ccb57f23377dea189b02bb08441a1b761f459d29c89923269d66a9dcca347574",
+  "generato_il": "2026-09-11",
+  "generato_alle": "2026-09-11T21:53:14Z",
+  "sha256": "022ae8e665b6773850bdcc3def8c1f7d064c9c093e00977eb56e26cd46e5511f",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -639,6 +639,18 @@
     {
       "version": "20260909113156",
       "name": "chat_vigilanza_ricerca_parametro_sede"
+    },
+    {
+      "version": "20260909121501",
+      "name": "sblocchi_audit_per_slot"
+    },
+    {
+      "version": "20260911113000",
+      "name": "fattura_sync_timeout_pg_net"
+    },
+    {
+      "version": "20260911214752",
+      "name": "galleria_cestino_30_giorni"
     }
   ]
 }

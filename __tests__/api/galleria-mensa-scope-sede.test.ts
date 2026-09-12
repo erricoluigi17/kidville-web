@@ -109,13 +109,43 @@ beforeEach(() => {
 describe('gallery PATCH/DELETE — la segreteria non tocca i media di un altro plesso', () => {
   // Controllo positivo. `not.toBe(403)` era verde su un 500 (il finto client non
   // aveva `delete()`: TypeError → catch → 500, e 500 non è 403). Qui si asserisce
-  // lo stato ESATTO e l'EFFETTO: la riga della propria sede sparisce davvero,
-  // quella dell'altra sede resta al suo posto.
-  it('DELETE: cancella davvero il media della PROPRIA sede e lascia intatto quello dell\'altra', async () => {
+  // lo stato ESATTO e l'EFFETTO: l'eliminazione avviene davvero sulla riga della
+  // propria sede, e quella dell'altra sede resta intatta.
+  //
+  // ⚠️ L'EFFETTO NON È PIÙ «LA RIGA SPARISCE» (2026-09-11), e la riga cambiata è
+  // questa. Prima si asseriva `[MEDIA_B]`, cioè la distruzione di `MEDIA_A`: da
+  // quando esiste il cestino a 30 giorni «Elimina» ARCHIVIA — scrive
+  // `eliminato_il`/`eliminato_da`, la foto sparisce subito da ogni vista (RLS del
+  // genitore compresa) e si distrugge alla purga. La garanzia che questo test
+  // difende è la stessa di prima, e non si tocca: l'operazione ha un effetto VERO
+  // sul media del proprio plesso e NESSUNO su quello dell'altro. Cambia il fatto
+  // in cui quell'effetto si misura.
+  //
+  // E che la riga RESTI è la metà nuova della garanzia, non un dettaglio: il
+  // `.delete()` di prima non toccava lo Storage, quindi il file del bambino
+  // rimaneva nel bucket senza più nessuna riga che ne scrivesse il percorso —
+  // irraggiungibile e incancellabile. Se un giorno tornasse un `delete()` qui,
+  // `toHaveLength(2)` diventa rosso.
+  it('DELETE: mette nel CESTINO il media della PROPRIA sede e lascia intatto quello dell\'altra', async () => {
     h.requireDocente.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_A}`, 'DELETE'))
     expect(res.status).toBe(200)
-    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_B])
+    expect(await res.json()).toMatchObject({ success: true, esito: 'nel-cestino' })
+
+    // Nessuna riga distrutta: il file nel bucket ha ancora chi lo nomina.
+    expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_A, MEDIA_B])
+
+    const mio = h.db.galleria_media_v2.find((m) => m.id === MEDIA_A)!
+    expect(typeof mio.eliminato_il, 'la DELETE non ha archiviato niente').toBe('string')
+    expect(new Date(mio.eliminato_il as string).toString()).not.toBe('Invalid Date')
+    // CHI ha eliminato: sulla riga dura quanto la riga, ed è l'unica traccia
+    // finché la purga non la porta via.
+    expect(mio.eliminato_da).toBe(SEG_A)
+
+    // …e il media dell'altro plesso non è stato sfiorato.
+    const altro = h.db.galleria_media_v2.find((m) => m.id === MEDIA_B)!
+    expect(altro.eliminato_il ?? null, 'il media dell\'altra sede e finito nel cestino').toBeNull()
+    expect(altro.eliminato_da ?? null).toBeNull()
   })
 
   it('PATCH: 403 sul media di un\'altra sede con lo stesso nome-classe', async () => {
@@ -134,8 +164,16 @@ describe('gallery PATCH/DELETE — la segreteria non tocca i media di un altro p
     h.requireDocente.mockResolvedValue({ user: { id: SEG_A, role: 'segreteria', scuola_id: SEDE_A } })
     const res = await GALLERY_DELETE(req(`/api/gallery?id=${MEDIA_B}`, 'DELETE'))
     expect(res.status).toBe(403)
-    // Il 403 da solo non basta: la riga dell'altra sede deve essere ancora lì.
+    // Il 403 da solo non basta: la riga dell'altra sede deve essere ancora lì…
     expect(h.db.galleria_media_v2.map((m) => m.id)).toEqual([MEDIA_A, MEDIA_B])
+    // …e da sola nemmeno QUESTA riga basta più, da quando «Elimina» archivia
+    // invece di distruggere (2026-09-11): con il cestino la riga sopravvive anche
+    // a un'eliminazione RIUSCITA, quindi «c'è ancora» avrebbe smesso di misurare
+    // l'unica cosa che interessa. L'effetto si legge su `eliminato_il`.
+    expect(
+      h.db.galleria_media_v2.find((m) => m.id === MEDIA_B)!.eliminato_il ?? null,
+      'il media dell\'altra sede e stato messo nel cestino nonostante il 403',
+    ).toBeNull()
   })
 })
 

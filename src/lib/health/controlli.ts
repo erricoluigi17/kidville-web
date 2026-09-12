@@ -294,6 +294,39 @@ export const JOB_CRON_NON_SORVEGLIATI: readonly { nome: string; perche: string }
             'Job di sola SQL, non passa da una route HTTP: qui sarebbe sempre rosso. Vale anche ' +
             'per consensi-retention, audit-docente-retention e app-log-bonifica-pii.',
     },
+    {
+        nome: 'galleria-retention',
+        // ⚠️ QUESTA VOCE È TEMPORANEA, ED È UN VINCOLO DI SEQUENZA — non una decisione.
+        //
+        // `galleria-retention` (`POST /api/gdpr/retention-galleria`, `23 5 * * *`) è
+        // GIORNALIERO e il suo battito dichiara `esito: 'ok'` da `logEvento` su
+        // `evento='cron'`: ha tutte le proprietà per stare in `JOB_CRON` con
+        // `finestraMs: 26 * ORA`, e lì deve finire. Non ci sta ANCORA per una ragione
+        // sola: la migrazione che lo schedula
+        // (`supabase/migrations/…_galleria_retention_cron.sql`) va applicata **dopo**
+        // il deploy del codice, altrimenti il cron chiama una route che non esiste —
+        // è il difetto misurato l'11/08/2026 su `candidature-retention`, tre ore e
+        // undici minuti di chiamate a un 404, ed è scritto per esteso accanto a quella
+        // voce qui sopra. Finché la migrazione non è nella fotografia delle applicate,
+        // il nome in `JOB_CRON` manderebbe `/api/health` in `degradato` dal primo
+        // deploy e per sempre su un lavoro che non esiste: il lock
+        // `__tests__/architecture/cron-sorvegliato-e-applicato.test.ts` lo vieta, e
+        // questa costante è la via d'uscita che quel lock stesso dichiara.
+        //
+        // ⚠️ CHI APPLICA LA MIGRAZIONE SPOSTA QUESTA VOCE, nello stesso rilascio. Se
+        // resta qui, il lavoro che distrugge le foto dei bambini oltre i trenta giorni
+        // promessi può smettere di girare senza che niente lo dica — e sarebbe la
+        // forma peggiore, perché la promessa sullo schermo continuerebbe a essere
+        // scritta. Il passo 4 della testata di quella migrazione dice esattamente
+        // questo.
+        perche:
+            'Il lavoro è GIORNALIERO e il suo battito è nella forma che `controlloBattitoCron` legge: ' +
+            'sta qui solo finché la sua migrazione non è applicata, perché un nome in `JOB_CRON` la cui ' +
+            'migrazione non è nella fotografia manda /api/health in `degradato` dal primo deploy e per ' +
+            'sempre, su un lavoro che non esiste ancora. Va SPOSTATO in `JOB_CRON` (26 h) nello stesso ' +
+            'rilascio in cui si applica `…_galleria_retention_cron.sql`: non è una scelta di ' +
+            'sorveglianza, è un vincolo di sequenza.',
+    },
 ]
 
 /** La finestra più larga: quanto indietro serve leggere `app_log` per coprirle tutte. */

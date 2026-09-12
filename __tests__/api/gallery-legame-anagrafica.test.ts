@@ -27,6 +27,13 @@ vi.mock('@/lib/supabase/server-client', () => ({
       const chain = () => b
       b.select = chain; b.eq = chain; b.in = chain; b.or = chain; b.not = chain
       b.gte = chain; b.lte = chain; b.order = chain; b.limit = chain
+      // `.is()` — il filtro del cestino (`soloVive`: `eliminato_il IS NULL`), dal
+      // 2026-09-11 su OGNI lettura di `galleria_media_v2`. Qui il mock è piatto per
+      // scelta (il tema del file è il LEGAME genitore-figlio, non le righe), ma un
+      // metodo che non esiste non è «ignorato»: fa esplodere la catena e la route
+      // risponde 500 — cioè questi tre casi diventavano rossi su un difetto che non
+      // era loro. Chainable come gli altri.
+      b.is = chain
       b.range = async () => ({ data: righe(), count: righe().length, error: null })
       b.maybeSingle = async () => ({ data: righe()[0] ?? null, error: null })
       b.then = (res: (v: { data: unknown; error: null }) => unknown) => res({ data: righe(), error: null })

@@ -143,7 +143,10 @@ function ParentGalleryContent() {
                         </motion.div>
                     ) : (
                         <div className="bg-white rounded-2xl border border-kidville-green/10 p-3 sm:p-4 shadow-sm">
-                            <MediaGrid items={media} showActions />
+                            {/* Due colonne DICHIARATE: la colonna del genitore è larga ~358 px sul
+                                telefono, e il numero non si deduce dal viewport (vedi la prop
+                                `colonne` di MediaGrid). */}
+                            <MediaGrid items={media} showActions colonne={2} />
                         </div>
                     )}
 

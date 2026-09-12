@@ -16,6 +16,7 @@ import { zUuid } from '@/lib/validation/common'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
+import { leggiVive } from '@/lib/gallery/cestino'
 
 // =============================================================================
 // Segnalazioni UGC (C5 §2): un utente segnala un contenuto (messaggio chat, media
@@ -388,12 +389,33 @@ async function verificaAccesso(
     // fra un filtro e un controllo che si può dimenticare in un ramo — e questo
     // handler ne aveva uno per i genitori e nessuno per tutti gli altri.
     // Scope vuoto ⇒ `.in(…, [])` non restituisce niente ⇒ si nega.
-    const { data: media, error } = await supabase
-      .from('galleria_media_v2')
-      .select('is_broadcast, tag_students, scuola_id')
-      .eq('id', oggettoId!)
-      .in('scuola_id', sedi)
-      .maybeSingle()
+    //
+    // ── IL CESTINO: VERSO «SOLO LE VIVE» ────────────────────────────────────
+    // Una foto nel cestino non è più visibile a nessuno — la policy RLS del
+    // genitore la nasconde, e la galleria non la elenca. Non si può segnalare
+    // ciò che non si vede, e lasciar passare la segnalazione avrebbe un effetto
+    // peggiore del rifiuto: la risposta CONFERMEREBBE che quella foto esiste, a
+    // chi non ha più il diritto di vederla. Il verso fail-closed, qui, è anche
+    // quello che non perde niente: se la foto è stata cestinata *perché* era da
+    // togliere, la segnalazione non ha più un oggetto.
+    //
+    // `leggiVive` porta il degrado per il DB E2E della CI (colonna assente →
+    // `42703`): senza, questo gate risponderebbe «non tua» a ogni segnalazione
+    // su un media, cioè negherebbe tutto invece di degradare.
+    // ⚠️ Il filtro entra PRIMA di `.maybeSingle()`: dopo la trasformazione il
+    // builder non ha più `is()`, e il filtro non potrebbe più entrare nella
+    // query. È il motivo per cui `leggiVive` consegna `vive` invece di
+    // avvolgere la catena da fuori.
+    const { data: media, error } = await leggiVive(
+      (vive) => vive(
+        supabase
+          .from('galleria_media_v2')
+          .select('is_broadcast, tag_students, scuola_id')
+          .eq('id', oggettoId!)
+          .in('scuola_id', sedi)
+      ).maybeSingle(),
+      'segnalazioni:POST',
+    )
     // PostgREST non lancia: senza questo controllo un guasto di lettura si
     // travestirebbe da «media non tuo», cioè da un tentativo cross-sede — e
     // riempirebbe di falsi positivi l'unico contatore che quel tentativo lo

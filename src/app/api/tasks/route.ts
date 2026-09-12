@@ -13,6 +13,7 @@ import { firmaAllegatiTask, normalizzaAllegatiTask } from '@/lib/allegati/storag
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { etichetteAllergie } from '@/lib/mensa/allergeni';
+import { leggiVive } from '@/lib/gallery/cestino';
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Gli id (userId, studentId, author_id, assignees) restano stringhe libere:
@@ -416,12 +417,42 @@ export const GET = withRoute('tasks:GET', async (request: Request) => {
             // transitato in sede rimetteva in gioco il nome di una classe che il
             // docente non ha: è il gemello del difetto R112, chiuso il 30/07
             // solo sul secondo passaggio (gli alunni, qui sotto).
-            const { data: myMedia } = await supabase
-                .from('galleria_media_v2')
-                .select('tag_students')
-                .eq('uploaded_by', activeUserId)
-                .in('scuola_id', plessi)
-                .not('tag_students', 'is', null);
+            //
+            // ── IL CESTINO: VERSO «SOLO LE VIVE» ─────────────────────────────
+            // Questo ramo deduce le CLASSI del docente dalle foto che ha
+            // caricato lui. Una foto che qualcuno ha messo nel cestino non è più
+            // la prova di niente: continuare a contarla terrebbe in vita il nome
+            // di una classe che il docente potrebbe non avere più, e gli
+            // mostrerebbe i task di quella classe. Il verso giusto qui non è
+            // dubbio — è l'unico che non fa dipendere i permessi di oggi da una
+            // foto cancellata.
+            //
+            // `leggiVive` e non `soloVive` a mano: sul DB E2E della CI, che è un
+            // progetto separato e non migrato, `eliminato_il` non esiste e il
+            // filtro risponde `42703`. Senza via d'uscita questo ramo non
+            // «vedrebbe meno»: morirebbe, e con lui il fallback delle sezioni.
+            const { data: myMedia, error: errMyMedia } = await leggiVive(
+                (vive) => vive(
+                    supabase
+                        .from('galleria_media_v2')
+                        .select('tag_students')
+                        .eq('uploaded_by', activeUserId)
+                        .in('scuola_id', plessi)
+                ).not('tag_students', 'is', null),
+                'tasks:GET',
+            );
+            // PostgREST non lancia: qui l'errore veniva buttato via, e una
+            // lettura fallita si travestiva da «questo docente non ha caricato
+            // niente» — cioè da «nessuna sezione», che è la risposta che lo
+            // lascia senza i task della sua classe. Non si interrompe la
+            // richiesta (il docente vede comunque global/role/authored/assigned),
+            // ma di quel silenzio resta una riga.
+            if (errMyMedia) {
+                logEvento('galleria', 'error', {
+                    operazione: 'tasks:GET',
+                    esito: 'media-taggati-non-letti',
+                }, errMyMedia);
+            }
 
             const myTaggedIds = (myMedia ?? [])
                 .flatMap((m: { tag_students: string[] | null }) => m.tag_students ?? [])

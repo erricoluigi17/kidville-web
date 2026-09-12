@@ -9,6 +9,7 @@ import {
 import { scrubProvaConsensi } from '@/lib/gdpr/consensi-oblio'
 import { schemaAssente } from '@/lib/news/schema-assente'
 import { BUCKET_GALLERIA } from '@/lib/gallery/storage'
+import { ancheNelCestino } from '@/lib/gallery/cestino'
 import { sorteDellaFoto, type RigaMedia } from './foto-partizione'
 import { percorsoNelBucket as percorsoDelBucket } from '@/lib/allegati/storage'
 import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegati'
@@ -1194,10 +1195,23 @@ export async function obliaFotoAlunno(
   alunnoId: string,
   op: string,
 ): Promise<{ fotoRimosse: number; fotoSganciate: number; fileNonRimossi: number; letto: boolean }> {
-  const { data, error } = await supabase
-    .from('galleria_media_v2')
-    .select('id, file_url, tag_students')
-    .contains('tag_students', [alunnoId])
+  // ⚠️ `ancheNelCestino` E NON `soloVive`, ED È IL PUNTO PIÙ IMPORTANTE DI
+  // TUTTO IL CESTINO. Qui filtrare le sole foto vive sarebbe un DIFETTO, non una
+  // protezione: una foto messa nel cestino **sopravviverebbe alla cancellazione
+  // chiesta da una famiglia**. La riga resterebbe in tabella, il file resterebbe
+  // nel bucket per i 30 giorni della purga — cioè oltre il dovuto — e chi ha
+  // chiamato (`liberaSpazio`) scriverebbe comunque `spazio_liberato_il`: un
+  // «fatto» falso accanto al nome di un bambino, su un gesto che non ha un
+  // annulla. L'oblio è l'unica lettura che deve vedere tutto, cestino compreso.
+  const { data, error } = await ancheNelCestino(
+    supabase
+      .from('galleria_media_v2')
+      .select('id, file_url, tag_students')
+      .contains('tag_students', [alunnoId]),
+    "diritto all'oblio: una foto nel cestino va distrutta come le altre, altrimenti " +
+      'sopravvive alla cancellazione chiesta dalla famiglia e il file resta nel bucket ' +
+      'per i 30 giorni della purga, con `spazio_liberato_il` scritto — un fatto falso.',
+  )
   if (error) {
     // Schema assente = DB E2E della CI non migrato: la tabella non c'è, quindi
     // «nessuna foto» è la risposta VERA e la lettura si considera riuscita.
@@ -1226,10 +1240,21 @@ export async function obliaFotoAlunno(
       trattenute.push(sorte.id)
       continue
     }
-    const { error: errU } = await supabase
-      .from('galleria_media_v2')
-      .update({ tag_students: sorte.altri })
-      .eq('id', r.id)
+    // `ancheNelCestino` su una SCRITTURA: la riga è già stata letta qui sopra e
+    // si riscrive per `id`. La dichiarazione non aggiunge un filtro — dice che
+    // questa `update` non deve curarsi dello stato del cestino, ed è vero per una
+    // ragione precisa: togliere il tag di un bambino da una foto di gruppo va
+    // fatto anche se la foto è cestinata, perché fra i 30 giorni della purga e un
+    // eventuale ripristino quel collegamento identificante tornerebbe a vivere.
+    const { error: errU } = await ancheNelCestino(
+      supabase
+        .from('galleria_media_v2')
+        .update({ tag_students: sorte.altri })
+        .eq('id', r.id),
+      'sgancio del tag su foto di gruppo: va fatto anche se la foto è nel cestino, ' +
+        'altrimenti un ripristino entro i 30 giorni farebbe tornare in vita il legame ' +
+        'identificante «questo è X» che l\'oblio doveva togliere.',
+    )
     if (errU) logErrore({ operazione: op, evento: 'oblio_galleria_untag' }, errU)
     else fotoSganciate++
   }
@@ -1263,10 +1288,15 @@ export async function obliaFotoAlunno(
       (m) => !(m.percorso !== null && esito.fermi.has(m.percorso)),
     )
     if (cancellabili.length > 0) {
-      const { error: errDel } = await supabase
-        .from('galleria_media_v2')
-        .delete()
-        .in('id', cancellabili.map((m) => m.id))
+      const { error: errDel } = await ancheNelCestino(
+        supabase
+          .from('galleria_media_v2')
+          .delete()
+          .in('id', cancellabili.map((m) => m.id)),
+        'cancellazione definitiva delle righe il cui file è già uscito dal bucket: gli ' +
+          'id vengono dalla lettura qui sopra, che il cestino lo vede, e una riga cestinata ' +
+          'il cui file non c\'è più sarebbe un puntatore a niente che nessuno ritroverebbe.',
+      )
       if (errDel) logErrore({ operazione: op, evento: 'oblio_galleria_delete' }, errDel)
       else fotoRimosse = cancellabili.length
     }
@@ -1762,10 +1792,19 @@ export async function anonimizzaAlunno(
   }
 
   // 3f-b) Segnalazioni su media di galleria taggati all'alunno.
-  const { data: mediaRows, error: errMedia } = await supabase
-    .from('galleria_media_v2')
-    .select('id')
-    .contains('tag_students', [alunno.id])
+  // `ancheNelCestino`: questa lettura serve a TROVARE le segnalazioni da bonificare,
+  // e il testo libero di una segnalazione su una foto cestinata è PII su un minore
+  // esattamente come quello su una foto viva. Filtrare qui non lascerebbe in piedi
+  // una foto: lascerebbe in piedi il `motivo` scritto da un adulto su un bambino.
+  const { data: mediaRows, error: errMedia } = await ancheNelCestino(
+    supabase
+      .from('galleria_media_v2')
+      .select('id')
+      .contains('tag_students', [alunno.id]),
+    'ricerca delle segnalazioni da bonificare: il motivo e le note scritte su una foto ' +
+      'cestinata sono testo libero su un minore come quelli su una foto viva, e filtrare ' +
+      "qui li lascerebbe in tabella dopo l'oblio.",
+  )
   if (errMedia && !schemaAssente(errMedia)) {
     logErrore({ operazione: op, evento: 'oblio_segnalazioni_media_select' }, errMedia)
   }

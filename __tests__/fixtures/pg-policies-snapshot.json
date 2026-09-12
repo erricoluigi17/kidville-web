@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-09",
-  "generato_alle": "2026-09-09T11:45:42Z",
-  "sha256": "41b98436cc27e695c7fbdf5d68c4c417f01f48bb9b082522354bba6bd77c1d49",
+  "generato_il": "2026-09-11",
+  "generato_alle": "2026-09-11T21:53:14Z",
+  "sha256": "286af306ff01a58e2fc1f6e16e6413e25ea349bb3eeb9442ecfc3663830e0382",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -145,7 +145,7 @@
       "ruoli": [
         "authenticated"
       ],
-      "using_expr": "((EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id = ANY (ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))) AND (a.scuola_id = galleria_media_v2.scuola_id)))) AND ((is_broadcast = true) OR (tag_students && ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
+      "using_expr": "((eliminato_il IS NULL) AND (EXISTS ( SELECT 1 FROM alunni a WHERE ((a.id = ANY (ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))) AND (a.scuola_id = galleria_media_v2.scuola_id)))) AND ((is_broadcast = true) OR (tag_students && ARRAY( SELECT current_parent_student_ids() AS current_parent_student_ids))))",
       "check_expr": ""
     },
     {

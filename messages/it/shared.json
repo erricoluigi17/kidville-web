@@ -100,6 +100,15 @@
   "gallerySalvataggio": "Salvataggio…",
   "galleryNessunTaggato": "Nessun bambino taggato (Broadcast generale)",
   "galleryEliminaMedia": "Elimina Media",
+  "galleryEliminaTitoloFoto": "Eliminare questa foto?",
+  "galleryEliminaTitoloVideo": "Eliminare questo video?",
+  "galleryEliminaSubito": "Sparisce subito dalla galleria dei genitori: dopo la conferma le famiglie non vedono più questo contenuto.",
+  "galleryEliminaRipristino": "Non è una distruzione immediata: la segreteria può ripristinarlo entro 30 giorni. Passati i 30 giorni viene distrutto per sempre, file compreso.",
+  "galleryEliminaConferma": "Elimina",
+  "galleryEliminaInCorso": "Eliminazione…",
+  "galleryEliminaRifiutoTitolo": "Eliminazione non consentita",
+  "galleryEliminaErroreGenerico": "Non è stato possibile eliminare il contenuto in questo momento: riprova fra qualche istante.",
+  "galleryVideo": "Video",
   "galleryAltFoto": "Foto",
   "galleryAnteprimaNonDisponibile": "Anteprima non disponibile",
   "galleryFotoDaKidville": "Foto da Kidville",
@@ -392,5 +401,11 @@
   "erroreSezioneNonTrovata": "Questa classe non risulta più fra quelle disponibili: torna all’elenco e riprova.",
   "erroreClasseNonDiPrimaria": "Questa classe non appartiene alla scuola primaria: il registro di primaria non si applica.",
   "erroreGradoNonAbilitato": "Non risulti abilitata a questo grado di scuola: chiedi alla segreteria di aggiornare il tuo profilo.",
-  "erroreFirmaNonSalvata": "Non siamo riusciti a salvare la firma del registro. Riprova fra qualche minuto."
+  "erroreFirmaNonSalvata": "Non siamo riusciti a salvare la firma del registro. Riprova fra qualche minuto.",
+  "erroreGalleriaMediaNelCestino": "Questa foto è nel cestino: ripristinala prima di modificarla.",
+  "erroreGalleriaCestinoNonDisponibile": "Su questo impianto la galleria non ha il cestino: la foto non è stata eliminata. Avvisa la segreteria.",
+  "erroreGalleriaMediaNonTrovato": "Questa foto non esiste più: aggiorna l’elenco del cestino.",
+  "erroreMediaNonRipristinabile": "Questa foto non si può ripristinare: non è nel cestino, oppure il suo file è stato distrutto allo scadere dei 30 giorni. Aggiorna l’elenco.",
+  "erroreGalleriaRipristinoNonDisponibile": "Su questo impianto la galleria non ha il cestino: la foto non è stata ripristinata. Avvisa la segreteria.",
+  "erroreMediaNonRipristinato": "Non siamo riusciti a ripristinare la foto: è rimasta nel cestino. Riprova fra qualche minuto."
 }

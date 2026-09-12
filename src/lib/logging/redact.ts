@@ -239,6 +239,13 @@ const FORMA_PATH = /^(\/|[A-Za-z][A-Za-z0-9+.-]*:\/\/)/;
  * ESPORTATO perché il lock `logging-redact-canale-testo-libero.test.ts` gira sull'ELENCO e
  * non su un campione: una chiave aggiunta domani è coperta il giorno in cui viene aggiunta,
  * che è il solo momento in cui nessuno la sta guardando.
+ *
+ * ⚠️ AGGIUNGERE UNA CHIAVE QUI ALLARGA ANCHE UN CANALE ANONIMO. Dal 2026-09-11 i `campi` degli
+ * eventi di `/api/logs` passano da `redact`, e quella porta non chiede di autenticarsi: una
+ * chiave nuova in questo elenco diventa una chiave il cui valore, spedito da chiunque sappia
+ * fare una POST, esce in chiaro in `app_log` — purché rispetti `FORMA_ENUMERATO`. Non è un
+ * motivo per non aggiungerla: è il motivo per guardare, prima, se la sola forma basta a
+ * chiuderla (è quello che `FORMA_CODICE_FISCALE` fa per `sezione`).
  */
 export const CHIAVI_IN_CHIARO = [
     'tipo', 'tipo_evento', 'stato', 'esito', 'azione', 'operazione', 'metodo',
@@ -720,6 +727,14 @@ export function redact(v: unknown): unknown {
  * rende `app_log` interrogabile. Il residuo noto è dichiarato: una route che rimette un query
  * param dentro i campi (`sezione`) riporta il valore del client in un canale fidato — per quel
  * caso la difesa è sulla forma, vedi `FORMA_CODICE_FISCALE`.
+ *
+ * ⚠️ E DAL 2026-09-11 C'È UN'ECCEZIONE VERA A «LI SCRIVE IL NOSTRO CODICE»: i `campi` di
+ * `/api/logs`. Quella porta è anonima e dichiaratamente ostile, e le chiavi arrivano dalla rete —
+ * la premessa della PROVENIENZA lì non vale. Passa comunque da `redact` (non da `redactInput`), e
+ * il posto in cui la scelta è motivata per intero è `src/app/api/logs/route.ts`: in una riga, la
+ * FORMA CHIUSA fa il lavoro che qui fa la provenienza — chiave `^[a-z][a-z0-9_]{0,31}$`, valore
+ * solo stringa ≤64 / numero / booleano, 12 campi per evento, quindi niente spazi, niente a capo e
+ * niente prosa. Chi legge questo paragrafo e non quello sbaglierebbe di poco, ma sbaglierebbe.
  */
 export function redactInput(v: unknown): unknown {
     try {

@@ -380,6 +380,32 @@ describe('lock — pagine legali', () => {
         // ⚠️ L'IMPRONTA VECCHIA RESTA DOV'E, e non si tocca: '2026-08-25' e
         // '2026-08-20' sono citate nei `consents_log` di chi ha gia accettato.
         '2026-09-09': 'dfc68c803f1d84e819dc732d4b7081d45fbbc418d2c48fdb0da8db778bde7866',
+
+        // 2026-09-12 — UNA voce nuova nella «Conservazione dei dati»: la fotografia o
+        // il video che il personale ELIMINA.
+        //
+        // PERCHE E SOSTANZIALE, e non redazionale. Fino all'11/09 «Elimina» cancellava
+        // subito e per sempre, quindi non c'era nessun tempo intermedio da dichiarare.
+        // Dal 2026-09-11 «Elimina» NASCONDE: la riga resta con `eliminato_il`
+        // valorizzato, il file resta nel bucket privato, e la segreteria puo
+        // ripristinare per trenta giorni. Sono trenta giorni di conservazione in piu su
+        // una fotografia di un minore, e il documento non li diceva — diceva
+        // «fotografie e video: fino alla revoca del consenso», che da quel giorno e
+        // incompleto. Un termine vero e non dichiarato e ciò che l'art. 13 §2 lett. a
+        // obbliga a comunicare, e la sua assenza fa rinunciare a chiedere: una famiglia
+        // che chiede la cancellazione di una foto crede che sia immediata.
+        //
+        // ⚠️ LA VOCE NON DICE «automaticamente», e non e una svista: il lock
+        // `informativa-conservazione-dichiarata` lega quella parola a un automa che
+        // esiste E la cui migrazione e applicata. `…_galleria_retention_cron.sql` e
+        // scritta e va applicata DOPO il deploy del codice. Il giorno in cui lo sara, si
+        // potra aggiungere la parola insieme alla voce in `AUTOMI_DICHIARATI` — e quella
+        // sara una modifica al testo legale come questa, con la sua versione.
+        //
+        // ⚠️ LE IMPRONTE VECCHIE RESTANO DOVE SONO, e non si toccano: '2026-09-09',
+        // '2026-08-25' e '2026-08-20' sono i testi che le persone hanno letto, e sono
+        // citate nei `consents_log` di chi ha gia accettato.
+        '2026-09-12': '4fd9ea87d6ce3c332dafcedfdceb89ec2a4b01b872f1f26208bc1a850b28683e',
         // 2026-08-20 — la voce «candidature spontanee di personale» dichiara la COPIA
         // che arriva nella casella di OGNI sede scelta, e il fatto che quella copia il
         // job di cancellazione NON la tocca.

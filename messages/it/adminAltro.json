@@ -721,5 +721,16 @@
   "appelloTabOggi": "Oggi",
   "appelloTabMese": "Mese",
   "appelloPrimariaSpiegazione": "L’appello della primaria vive nel registro della classe {classe}, insieme agli altri registri.",
-  "appelloPrimariaApri": "Apri il registro della classe"
+  "appelloPrimariaApri": "Apri il registro della classe",
+  "galSedeVistaGruppo": "Che cosa mostrare",
+  "galSedeVistaPubblicate": "Pubblicate",
+  "galSedeVistaCestino": "Cestino ({giorni, plural, one {# giorno} other {# giorni}})",
+  "galSedeCestinoEliminataIl": "Eliminata il {data}",
+  "galSedeCestinoRestanoGiorni": "{n, plural, =0 {Scade oggi} one {Resta # giorno} other {Restano # giorni}}",
+  "galSedeCestinoRipristina": "Ripristina",
+  "galSedeCestinoRipristinoInCorso": "Ripristino…",
+  "galSedeCestinoAnteprimaAssente": "Anteprima non disponibile",
+  "galSedeErroreElimina": "Non è stato possibile eliminare la foto. Riprova.",
+  "galSedeErroreRipristino": "Non è stato possibile ripristinare la foto. Riprova.",
+  "galSedeErroreRete": "Nessuna risposta dal server. Controlla la connessione e riprova."
 }

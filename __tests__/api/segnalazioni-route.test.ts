@@ -80,7 +80,7 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
   logEvento: h.logEvento,
 }))
 
-function resolveSingle(s: { table: string; mode: string }) {
+function resolveSingle(s: { table: string; mode: string; filters?: Record<string, unknown> }) {
   const t = s.table
   if (s.mode === 'insert') {
     if (t === 'segnalazioni') return { data: h.insertErr ? null : { id: h.newId }, error: h.insertErr }
@@ -94,7 +94,16 @@ function resolveSingle(s: { table: string; mode: string }) {
   if (t === 'segnalazioni') return { data: h.segnalazioneRiga, error: null }
   if (t === 'chat_messages') return { data: h.chatMessage, error: null }
   if (t === 'chat_threads') return { data: h.thread, error: null }
-  if (t === 'galleria_media_v2') return { data: h.media, error: null }
+  if (t === 'galleria_media_v2') {
+    // ⚠️ IL FINTO CLIENT FILTRA DAVVERO SUL CESTINO, e non è pedanteria: se
+    // ignorasse `.is('eliminato_il', null)` sarebbe verde CON e SENZA il filtro
+    // nella route, cioè un mock piatto — e la prova «una foto cestinata non si
+    // segnala» non proverebbe niente. Qui la condizione c'è, quindi togliendo
+    // `leggiVive` dalla route quella prova diventa rossa.
+    const soloVive = s.filters !== undefined && 'eliminato_il' in s.filters && s.filters.eliminato_il === null
+    if (soloVive && h.media !== null && h.media.eliminato_il != null) return { data: null, error: null }
+    return { data: h.media, error: null }
+  }
   if (t === 'eventi_diario') return { data: h.voce, error: null }
   if (t === 'legame_genitori_alunni') return { data: h.legameSingle, error: null }
   if (t === 'alunni') return { data: h.alunnoRiga, error: null }
@@ -124,6 +133,10 @@ const adminClient = {
     b.order = () => b
     b.eq = (c: string, v: unknown) => { state.filters[c] = v; return b }
     b.in = (c: string, v: unknown) => { state.filters[c] = v; return b }
+    // `is` serve al filtro del cestino (`.is('eliminato_il', null)`): senza di
+    // esso la route lanciava «b.is is not a function» e la POST rispondeva 500.
+    b.is = (c: string, v: unknown) => { state.filters[c] = v; return b }
+    b.not = (c: string, _o: string, v: unknown) => { state.filters[c] = v; return b }
     b.or = (cond: string) => { state.orCond = cond; return b }
     b.insert = (row: Record<string, unknown>) => { state.mode = 'insert'; h.inserted[table] = row; return b }
     b.update = (row: Record<string, unknown>) => { state.mode = 'update'; h.updated[table] = row; return b }
@@ -327,6 +340,27 @@ describe('POST /api/segnalazioni — inserimento e notifica', () => {
     const res = await POST(postReq({ tipo_oggetto: 'media_galleria', oggetto_id: MEDIA, categoria: 'contenuto_inappropriato' }))
     expect(res.status).toBe(201)
     expect(h.inserted.segnalazioni.oggetto_id).toBe(MEDIA)
+  })
+
+  /**
+   * IL CESTINO — una foto eliminata non è più segnalabile (dal 2026-09-12).
+   *
+   * Lo stesso media broadcast della prova qui sopra, con `eliminato_il`
+   * valorizzato: cambia SOLO quel campo, e la risposta deve passare da 201 a 403.
+   * È la coppia che rende la prova utile — senza il caso positivo accanto, un 403
+   * potrebbe venire da qualunque altro gate.
+   *
+   * Perché il verso è questo: una foto nel cestino non la vede più nessuno (la
+   * policy RLS del genitore ha `eliminato_il IS NULL` come prima condizione, e la
+   * galleria non la elenca). Accettare la segnalazione avrebbe un effetto peggiore
+   * del rifiuto: la risposta CONFERMEREBBE che quella foto esiste, a chi non ha
+   * più il diritto di vederla.
+   */
+  it('403 media_galleria nel cestino: una foto eliminata non è più segnalabile', async () => {
+    h.media = { is_broadcast: true, tag_students: [], scuola_id: 'sc-1', eliminato_il: '2026-09-11T10:00:00.000Z' }
+    const res = await POST(postReq({ tipo_oggetto: 'media_galleria', oggetto_id: MEDIA, categoria: 'contenuto_inappropriato' }))
+    expect(res.status).toBe(403)
+    expect(h.inserted.segnalazioni).toBeUndefined()
   })
 })
 

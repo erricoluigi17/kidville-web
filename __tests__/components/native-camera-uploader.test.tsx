@@ -45,8 +45,15 @@ describe('MediaUploader — fotocamera nativa', () => {
     scegliMock.mockResolvedValue([new File(['x'], 'foto-1.jpg', { type: 'image/jpeg' })])
     render(<MediaUploader onUpload={vi.fn()} />)
     fireEvent.click(screen.getByText(/Trascina foto o video/i))
-    // A foto acquisita compare il pulsante di invio "Carica 1 file"
-    await waitFor(() => expect(screen.getByText(/Carica 1 file/i)).toBeInTheDocument())
+    // A foto acquisita compare il pulsante che porta allo step dei tag, col
+    // conteggio. ⚠️ Diceva «Carica 1 file» — e non caricava niente: il caricamento
+    // vero parte solo dopo lo step 2. L'etichetta è stata corretta il 2026-09-11
+    // insieme all'anteprima dei video; qui cambia il SELETTORE, non l'intento.
+    // Si cerca per RUOLO e NOME ACCESSIBILE e si pretende l'assenza del verbo
+    // sbagliato: un `/1 file/i` da solo corrisponderebbe anche alla vecchia
+    // etichetta, cioè non distinguerebbe più il prima dal dopo.
+    const avanti = await screen.findByRole('button', { name: /1 file/i })
+    expect(avanti.textContent, 'il bottone non carica: porta ai tag').not.toMatch(/carica/i)
     expect(scegliMock).toHaveBeenCalledWith(
       expect.objectContaining({
         multiplo: true,

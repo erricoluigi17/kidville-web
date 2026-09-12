@@ -319,6 +319,30 @@ export default function AdminGalleryPage() {
     const [classeNome, setClasseNome] = useState('');
     const [bambinoId, setBambinoId] = useState('');
     const [giorno, setGiorno] = useState('');
+    /**
+     * LA VISTA: pubblicate oppure cestino.
+     *
+     * Sta fra i filtri perche si comporta come loro — cambiarla riporta alla prima
+     * pagina, e passa da `cambiaFiltro` come tutti: la pagina 7 delle pubblicate non
+     * esiste nel cestino.
+     */
+    const [vistaCestino, setVistaCestino] = useState(false);
+    /**
+     * IL CONTATORE DEI RICARICHI, e serve per una ragione misurata.
+     *
+     * `ricominciaElenco()` azzera le foto e rimette `caricamento`, ma l'effetto che
+     * legge osserva i FILTRI: finche un filtro non cambia, la rilettura non parte.
+     * Per i filtri va bene — `cambiaFiltro` ne cambia sempre uno. Ma dopo
+     * un'eliminazione o un ripristino **nessun filtro cambia**, e l'elenco restava
+     * quello di prima: la foto appena eliminata continuava a comparire finche non si
+     * toccava un'altra cosa.
+     *
+     * Non e un'ipotesi: il test «un ripristino riuscito ricarica l'elenco» e ROSSO
+     * senza questa riga. Ed e esattamente il contratto che `DialogoEliminaMedia`
+     * dichiara di lasciare al chiamante — e che, prima di oggi, nessun chiamante
+     * eseguiva.
+     */
+    const [ricarichi, setRicarichi] = useState(0);
     const [offset, setOffset] = useState(0);
 
     // ─── Le tendine ──────────────────────────────────────────────────────────
@@ -393,6 +417,12 @@ export default function AdminGalleryPage() {
             if (classeNome) qs.set('classe', classeNome);
             if (bambinoId) qs.set('studentId', bambinoId);
             if (giorno) qs.set('date', giorno);
+            // `stato=cestino` vale SOLO insieme a `scope=sede` (la rotta lo pretende, ed
+            // e giusto: il cestino e una vista di plesso, con `requireStaff` e la sede
+            // dichiarata). Nel ramo normale non si manda affatto: il default della rotta
+            // e `vive`, e un parametro superfluo e un parametro che un giorno qualcuno
+            // leggera al contrario.
+            if (vistaCestino) qs.set('stato', 'cestino');
 
             const res = await fetch(`/api/gallery?${qs.toString()}`).catch((e: unknown) => {
                 motivo = nomeErrore(e);
@@ -427,6 +457,16 @@ export default function AdminGalleryPage() {
                     messaggio: 'galleria-sede-non-letta',
                     route: ROTTA_LOG,
                     stato: res.status,
+                    // `ricarico` dice se questa lettura era una RIPARTENZA dopo un
+                    // comando (eliminazione o ripristino) invece del primo giro. Serve
+                    // a leggere il log senza indovinare: un rifiuto al primo
+                    // caricamento è un problema di sede o di permessi, lo stesso
+                    // rifiuto subito dopo un'eliminazione è un'altra storia — e senza
+                    // questo numero le due righe in `app_log` sono identiche.
+                    // (È anche il motivo per cui `ricarichi` sta fra le dipendenze di
+                    // questo callback e non è una dipendenza «inutile»: senza di essa
+                    // la lettura non ripartirebbe affatto.)
+                    campi: { ricarico: ricarichi, vista: vistaCestino ? 'cestino' : 'vive' },
                 });
                 return;
             }
@@ -498,7 +538,11 @@ export default function AdminGalleryPage() {
             // caricamento non è finito, è ricominciato.
             if (mio === giroFoto.current && !riparto) setCaricamento(false);
         }
-    }, [sede, classeNome, bambinoId, giorno, offset]);
+        // `vistaCestino` e `ricarichi` STANNO QUI, e non sono un dettaglio: la prima si
+        // comporta come un filtro, il secondo e cio che fa ripartire la lettura dopo
+        // un'eliminazione. Senza la prima, il bottone cambia colore e non l'elenco —
+        // cioe la forma peggiore di difetto: un comando che sembra aver funzionato.
+    }, [sede, classeNome, bambinoId, giorno, offset, vistaCestino, ricarichi]);
 
     useEffect(() => {
         // ⚠️ `.catch()` E NON `void` NUDO. Una promise rifiutata lasciata cadere
@@ -582,11 +626,95 @@ export default function AdminGalleryPage() {
      * rosso di un 403 sopravvive per tutta la richiesta nuova, sotto un filtro
      * che nel frattempo è cambiato (`riprova` lo azzerava, i filtri no).
      */
+    /**
+     * I GIORNI DI CUSTODIA DEL CESTINO, scritti QUI e non importati.
+     *
+     * `GIORNI_CESTINO_GALLERIA` vive in `@/lib/gallery/cestino`, che e la sua casa —
+     * ma quel modulo importa `logEvento` da `@/lib/logging/logger`, il logger del
+     * SERVER: importarlo da questa pagina (`'use client'`) lo impacchetterebbe nel
+     * bundle del browser. Quindi il numero si ripete, UNA volta sola in tutto il
+     * client, e il lock `__tests__/architecture/cestino-giorni-un-numero-solo.test.ts`
+     * pretende che i due coincidano: se un domani la custodia diventasse 60 giorni e
+     * qualcuno cambiasse solo la costante del server, il gate diventa rosso invece di
+     * mostrare alla segreteria un conto alla rovescia che mente.
+     */
+    const GIORNI_CESTINO = 30;
+
+    /**
+     * L'eliminazione dalla vista di plesso. Il dialogo di conferma lo monta
+     * `MediaGrid`; qui c'e solo la chiamata, e il contratto e quello: **rigettare** con
+     * un `Error` dal `.message` GIA TRADOTTO, e con lo `stato` numerico attaccato
+     * perche il dialogo distingua il 403 (non si ripropone) dal 500 (riprovare e il
+     * rimedio).
+     */
+    const eliminaMedia = async (id: string): Promise<void> => {
+        const res = await fetch(`/api/gallery?id=${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(
+            (e: unknown) => {
+                logClient({
+                    livello: 'warn',
+                    evento: 'fetch',
+                    messaggio: `gallery-sede-elimina-fallita: ${nomeErrore(e)}`,
+                    route: '/admin/gallery',
+                });
+                return null;
+            },
+        );
+        if (res === null) throw new Error(t('galSedeErroreRete'));
+        if (!res.ok) {
+            const motivo = await messaggioErrore(res, t('galSedeErroreElimina'));
+            logClient({
+                livello: res.status >= 500 ? 'error' : 'warn',
+                evento: 'fetch',
+                messaggio: 'gallery-sede-elimina-rifiutata',
+                route: '/admin/gallery',
+                stato: res.status,
+            });
+            throw Object.assign(new Error(motivo), { stato: res.status });
+        }
+        // IL RICARICO STA QUI, nella risoluzione: il dialogo non sa che cosa sia
+        // «l'elenco», e fino al 2026-09-12 il contratto prometteva un ricarico che
+        // nessun chiamante eseguiva.
+        ricominciaElenco();
+    };
+
+    /** Il ripristino dal cestino. Stesso contratto: rigetta con un messaggio tradotto. */
+    const ripristinaMedia = async (id: string): Promise<void> => {
+        const res = await fetch('/api/gallery/ripristina', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+        }).catch((e: unknown) => {
+            logClient({
+                livello: 'warn',
+                evento: 'fetch',
+                messaggio: `gallery-sede-ripristino-fallito: ${nomeErrore(e)}`,
+                route: '/admin/gallery',
+            });
+            return null;
+        });
+        if (res === null) throw new Error(t('galSedeErroreRete'));
+        if (!res.ok) {
+            const motivo = await messaggioErrore(res, t('galSedeErroreRipristino'));
+            logClient({
+                livello: res.status >= 500 ? 'error' : 'warn',
+                evento: 'fetch',
+                messaggio: 'gallery-sede-ripristino-rifiutato',
+                route: '/admin/gallery',
+                stato: res.status,
+            });
+            throw Object.assign(new Error(motivo), { stato: res.status });
+        }
+        ricominciaElenco();
+    };
+
     const ricominciaElenco = () => {
         setFoto([]);
         setTotale(0);
         setErroreFoto(null);
         setCaricamento(true);
+        // Il contatore e cio che fa RIPARTIRE la lettura: senza, le tre righe qui sopra
+        // svuotano la schermata e nessuno la riempie. Vedi `ricarichi`.
+        setRicarichi((n) => n + 1);
     };
 
     /** Ogni cambio di filtro riporta alla prima pagina: la pagina 7 di un altro elenco non esiste. */
@@ -776,6 +904,42 @@ export default function AdminGalleryPage() {
 
             {/* ─── Barra: sede + filtri ───────────────────────────────────── */}
             <div className="mb-6 rounded-card bg-kidville-white p-4 shadow-sm">
+                {/*
+                  PUBBLICATE | CESTINO — un gruppo di due bottoni, non una tendina.
+                  Sono due stati esclusivi e sempre visibili entrambi: una tendina
+                  nasconderebbe l'esistenza del cestino a chi non la apre, e il cestino
+                  e precisamente la cosa che si deve poter trovare senza sapere che c'e.
+                  `role="tablist"` no: non ci sono pannelli fratelli che restano montati,
+                  la lista e la stessa e cambia il filtro. `aria-pressed` dice lo stato.
+                */}
+                <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label={t('galSedeVistaGruppo')}>
+                    {([false, true] as const).map((cestino) => {
+                        const attivo = vistaCestino === cestino;
+                        return (
+                            <button
+                                key={cestino ? 'cestino' : 'vive'}
+                                type="button"
+                                aria-pressed={attivo}
+                                onClick={() => {
+                                    if (attivo) return;
+                                    // Passa da `cambiaFiltro` come gli altri: azzera
+                                    // l'offset e ricarica. Senza, si resterebbe alla
+                                    // pagina 4 di un elenco che nel cestino ha tre righe.
+                                    cambiaFiltro(() => setVistaCestino(cestino));
+                                }}
+                                className={
+                                    attivo
+                                        ? 'rounded-pill bg-kidville-green px-4 py-2 font-maven text-[13px] font-semibold text-kidville-yellow'
+                                        : 'rounded-pill border border-kidville-line bg-kidville-white px-4 py-2 font-maven text-[13px] font-semibold text-kidville-ink transition-colors hover:border-kidville-green'
+                                }
+                            >
+                                {cestino
+                                    ? t('galSedeVistaCestino', { giorni: GIORNI_CESTINO })
+                                    : t('galSedeVistaPubblicate')}
+                            </button>
+                        );
+                    })}
+                </div>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     {/* La sede si sceglie solo quando c'è qualcosa da scegliere. */}
                     {opzioniSede.length > 1 && (
@@ -923,6 +1087,19 @@ export default function AdminGalleryPage() {
                             conteggio: (n: number) => t('galSedeFotoDelGiorno', { n }),
                             taggatoSenzaNome: t('galSedeTaggatoSenzaNome'),
                         }}
+                        {...(vistaCestino
+                            ? {
+                                  onRipristina: ripristinaMedia,
+                                  giorniTotali: GIORNI_CESTINO,
+                                  testiCestino: {
+                                      eliminataIl: (data: string) => t('galSedeCestinoEliminataIl', { data }),
+                                      restanoGiorni: (n: number) => t('galSedeCestinoRestanoGiorni', { n }),
+                                      ripristina: t('galSedeCestinoRipristina'),
+                                      ripristinaInCorso: t('galSedeCestinoRipristinoInCorso'),
+                                      anteprimaNonDisponibile: t('galSedeCestinoAnteprimaAssente'),
+                                  },
+                              }
+                            : { onDelete: eliminaMedia })}
                     />
 
                     {(cePaginaPrecedente || cePaginaSuccessiva) && (

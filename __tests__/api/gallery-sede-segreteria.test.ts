@@ -79,6 +79,17 @@ type Stato = {
     contiene: Array<[string, unknown[]]>
     gte: Array<[string, string]>
     lte: Array<[string, string]>
+    /**
+     * `.is(colonna, valore)` — il filtro del CESTINO, dal 2026-09-11.
+     *
+     * Ogni lettura di `galleria_media_v2` dichiara il proprio verso col modulo
+     * `@/lib/gallery/cestino`, e la vista di sede passa da `soloVive`, cioè
+     * `.is('eliminato_il', null)`. Si REGISTRA e si APPLICA, non si ignora: un
+     * `b.is = () => b` sarebbe verde con il filtro sulla colonna giusta e con
+     * quello sulla colonna sbagliata, ed è la forma di mock che questo file
+     * rifiuta in testa (righe 14-19).
+     */
+    is: Array<[string, boolean | null]>
     or: string[]
     ordine: Array<{ col: string; asc: boolean }>
 }
@@ -151,6 +162,14 @@ function applica(s: Stato): Riga[] {
     }
     for (const [col, val] of s.gte) righe = righe.filter((r) => String(r[col]) >= val)
     for (const [col, val] of s.lte) righe = righe.filter((r) => String(r[col]) <= val)
+    // `IS NULL` vale anche sulla colonna ASSENTE dal fixture: in tabella sarebbe
+    // NULL, e riscrivere le tre colonne del cestino su ogni riga di prova
+    // aggiungerebbe rumore senza aggiungere una garanzia.
+    for (const [col, val] of s.is) {
+        righe = val === null
+            ? righe.filter((r) => r[col] === null || r[col] === undefined)
+            : righe.filter((r) => r[col] === val)
+    }
     // `.or()` chiamata più volte ⇒ le condizioni si sommano in AND (come PostgREST).
     for (const espressione of s.or) {
         righe = righe.filter((r) => pezzi(espressione).some((c) => condizione(r, c)))
@@ -167,7 +186,7 @@ function applica(s: Stato): Riga[] {
 
 const adminClient = {
     from(tabella: string) {
-        const s: Stato = { tabella, eq: [], dentro: [], contiene: [], gte: [], lte: [], or: [], ordine: [] }
+        const s: Stato = { tabella, eq: [], dentro: [], contiene: [], gte: [], lte: [], is: [], or: [], ordine: [] }
         const b: Record<string, unknown> = {}
         b.select = () => b
         b.eq = (col: string, val: unknown) => {
@@ -192,6 +211,10 @@ const adminClient = {
         }
         b.or = (espressione: string) => {
             s.or.push(espressione)
+            return b
+        }
+        b.is = (col: string, val: boolean | null) => {
+            s.is.push([col, val])
             return b
         }
         b.not = () => b

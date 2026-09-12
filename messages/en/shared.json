@@ -403,5 +403,9 @@
   "erroreGradoNonAbilitato": "You aren’t enabled for this school level: ask the office to update your profile.",
   "erroreFirmaNonSalvata": "We couldn’t save the register signature. Please try again in a few minutes.",
   "erroreGalleriaMediaNelCestino": "This photo is in the bin: restore it before editing it.",
-  "erroreGalleriaCestinoNonDisponibile": "The gallery bin isn’t available on this installation: the photo was not deleted. Please tell the office."
+  "erroreGalleriaCestinoNonDisponibile": "The gallery bin isn’t available on this installation: the photo was not deleted. Please tell the office.",
+  "erroreGalleriaMediaNonTrovato": "This photo no longer exists: refresh the bin list.",
+  "erroreMediaNonRipristinabile": "This photo can’t be restored: it isn’t in the bin, or its file was destroyed when the 30 days ran out. Refresh the list.",
+  "erroreGalleriaRipristinoNonDisponibile": "The gallery bin isn’t available on this installation: the photo was not restored. Please tell the office.",
+  "erroreMediaNonRipristinato": "We couldn’t restore the photo: it’s still in the bin. Please try again in a few minutes."
 }

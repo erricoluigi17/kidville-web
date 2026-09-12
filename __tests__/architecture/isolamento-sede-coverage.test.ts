@@ -1314,6 +1314,69 @@ const AMMESSE: Record<string, string> = {
     // dalla prima: nessuna allarga la domanda. La sede la porta comunque la riga.
     'gdpr/retention-personale:POST': "conservazione dell'anagrafica del personale — scansione del documento d'identità compresa, ed è l'unico posto del repo che la toglie dal bucket: come l'oblio, il termine deve valere su TUTTE le sedi, perché una fotocopia di carta d'identità scade lo stesso giorno a Giugliano, Aversa e Cesa e un filtro di sede la lascerebbe in archivio in silenzio, col battito che dice «ok». Le due `delete` lavorano su id già letti dalla prima query, non allargano la domanda. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret (`cron.job` 22, `17 5 * * *`); il lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro.",
     'gdpr/retention-candidature:<modulo>': "helper `spazzaCurriculumOrfani`: chiede quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i curriculum reclamati dalle altre due sedi e li cancellerebbe, lasciando quelle candidature con un `cv_path` che punta al nulla. Legge una sola colonna (`cv_path`) e solo per i percorsi che ha già in mano: la risposta è un sottoinsieme dell'input. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
+    // ── QUARTA DELLA FAMIGLIA (2026-09-12) — la purga del cestino della galleria,
+    //     e le due ragioni sono state VERIFICATE una per una invece di ereditate.
+    //
+    // (1) UN TERMINE DI CONSERVAZIONE NON HA CONFINI DI SEDE. Vale qui come per
+    //     iscrizioni, candidature e personale, e la posta è la più alta delle
+    //     quattro: qui il dato è la FOTOGRAFIA DI UN BAMBINO, e il termine — trenta
+    //     giorni nel cestino — non è dedotto da una norma, è **scritto sullo
+    //     schermo** dell'insegnante che preme Elimina («la segreteria può
+    //     ripristinarla entro 30 giorni», poi «viene distrutta»). Una foto messa nel
+    //     cestino a Giugliano scade lo stesso giorno di una di Aversa e di una di
+    //     Cesa: un `.in('scuola_id', plessi)` qui lascerebbe nel bucket le foto dei
+    //     plessi che il job non conosce, e le lascerebbe IN SILENZIO, perché il
+    //     conteggio nel battito direbbe comunque «ok».
+    //
+    // (2) NON C'È NESSUN UTENTE DA CUI DERIVARE UNO SCOPE. La chiamante è pg_net con
+    //     l'header `x-cron-secret` (`segretoCronValido`); il lancio manuale dello
+    //     staff passa da `requireStaff`, ma fa lo stesso identico lavoro — la
+    //     conservazione non è un elenco che cambia a seconda di chi guarda.
+    //
+    // Le cinque righe che questo lock segnala sull'handler: la lettura delle righe
+    // scadute nel cestino, la rilettura di quelle il cui file è già uscito (la
+    // RIPRESA dopo una `delete` fallita), l'UPDATE che timbra `file_rimosso_il`, la
+    // `delete` delle righe e la `delete` delle `segnalazioni` rimaste senza oggetto.
+    // Le ultime tre lavorano su id che vengono dalle prime due: nessuna allarga la
+    // domanda. La sede la porta comunque la riga (`galleria_media_v2.scuola_id`).
+    //
+    // ⚠️ E LA `segnalazioni` NON SI TOCCA PRIMA: una segnalazione è la traccia di una
+    // moderazione, e cancellarla insieme alla foto cancellerebbe la RAGIONE per cui
+    // la foto è stata rimossa. Si ripulisce solo quando la riga della foto non esiste
+    // più, cioè quando quel riferimento non punta più a niente.
+    'gdpr/retention-galleria:POST': "purga del cestino della galleria a 30 giorni — la foto e il video di un minore, riga E file: come l'oblio, il termine deve valere su TUTTE le sedi, perché una foto messa nel cestino scade lo stesso giorno a Giugliano, Aversa e Cesa e un filtro di sede la lascerebbe nell'archivio in silenzio, col battito che dice «ok». Il termine qui non è dedotto: è scritto sullo schermo dell'insegnante che preme Elimina. L'UPDATE del timbro, la `delete` delle righe e quella delle `segnalazioni` orfane lavorano su id già letti dalle due query in testa, non allargano la domanda. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret; il lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro.",
+    // ── LA SPAZZATA DEGLI ORFANI DEL BUCKET, che sta FUORI dall'handler ──────
+    //
+    // Voce a sé, come per il gemello dei curriculum, e per la stessa ragione di
+    // progetto: `spazzaMediaOrfani` e `reclamiConfrontabili` sono funzioni di modulo,
+    // e questo lock tratta il codice fuori da ogni handler come uno span suo
+    // (`<modulo>`). Un'esenzione data al `POST` non deve estendersi in silenzio a un
+    // helper che qualcuno scriverà dopo.
+    //
+    // COSA SEGNALA IL LOCK: due letture di `galleria_media_v2` senza filtro di sede —
+    // `.select('file_url').in('file_url', lotto)` (chi reclama questi percorsi?) e
+    // `.select('id', { count: 'exact', head: true })` (quante righe NON portano un
+    // percorso nudo?). La forma è quella giusta da segnalare; qui la risposta è che il
+    // filtro non ci deve stare, e la ragione è più forte di «serve su tutte le sedi».
+    //
+    // ⚠️ UN FILTRO DI SEDE QUI NON PROTEGGEREBBE: CANCELLEREBBE LA FOTO DI UN BAMBINO.
+    // L'elenco di partenza non viene dal database — viene dallo STORAGE
+    // (`list('uploads')` e poi ogni cartella-utente), e un oggetto in un bucket non ha
+    // una sede. La domanda che queste query pongono è «questo percorso è reclamato da
+    // UNA QUALUNQUE riga?», e il job rimuove tutto ciò che nessuna riga nomina.
+    // Restringere la domanda a un plesso significa rispondere «nessuno» per i media
+    // delle altre due sedi, cioè dichiararli orfani e PORTARLI VIA: la foto resterebbe
+    // in galleria come riquadro rotto per le famiglie di quei plessi. È il caso in cui
+    // il filtro di sede è esattamente il difetto, non il presidio — e qui il danno non
+    // è un file conservato in più, è un file di un minore distrutto mentre la sua riga
+    // è viva.
+    //
+    // COSA NON LEGGONO, che è la metà che rende la voce difendibile: una sola colonna
+    // (`file_url`) e solo per i percorsi che la spazzata ha già in mano — la risposta è
+    // un sottoinsieme dell'input; la seconda non legge nemmeno quella, chiede un
+    // CONTEGGIO (`head: true`) e nessun percorso attraversa la funzione. Nessun nome,
+    // nessuna didascalia, nessun uuid di famiglia. A leggerle è un cron.
+    'gdpr/retention-galleria:<modulo>': "helper `spazzaMediaOrfani` + `reclamiConfrontabili`: chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono, e quante righe portino un percorso non confrontabile. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i media reclamati dalle altre due sedi e li cancellerebbe — la foto di un bambino distrutta mentre la sua riga è viva, e un riquadro rotto in galleria per quelle famiglie. Leggono una sola colonna (`file_url`) e solo per i percorsi che hanno già in mano, o un puro conteggio con `head: true`: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
     // fa il gate (`assertAlunnoInScope`, che il confine di sede lo verifica eccome,
@@ -2017,7 +2080,26 @@ describe('coverage-lock isolamento fra sedi', () => {
             // NON hanno la forma `assert…InScope` (`requireParentOfStudent`,
             // `adminDellaSede`, `classiMancantiNellaSede`, …) — se il nome fosse portante,
             // questo lock sarebbe cieco su quattro quinti dei gate del repo.
-            routeConServiceRole: 311,
+            // ── 311 → 313 e 479 → 481 il 2026-09-12, ED È UN PASSO DA DUE FATTO DA
+            //    DUE AGENTI IN PARALLELO SULLO STESSO ALBERO. Va scritto, perché un
+            //    «+2» su una riga che di solito cresce di uno è la traccia di una cosa
+            //    che questo repo ha già pagato (vedi la nota su `routeConServiceRole`
+            //    più sopra, 477 → 478 il 2026-09-08).
+            //
+            //    Le due route, misurate e non dedotte, una per agente:
+            //      · `gdpr/retention-galleria:POST` — la purga del cestino della
+            //        galleria a 30 giorni, che porta DUE esenzioni (vedi `AMMESSE`);
+            //      · `gallery/ripristina:POST` — il «Ripristina» della segreteria,
+            //        che di esenzioni non ne porta nessuna.
+            //    Un solo handler ciascuna, quindi i due numeri salgono dello stesso
+            //    passo.
+            //
+            // ⚠️ CHI UNISCE I DUE RAMI RIMISURI QUESTA RIGA SUL FILE UNITO invece di
+            //    sommare a mente: se uno dei due lavori non arriva in `main`, il numero
+            //    qui scritto resta più alto del vero. L'uguaglianza esatta fa diventare
+            //    rosso il caso — è il verso buono in cui sbagliare — ma il rosso va
+            //    letto rimisurando, non abbassando il numero fino a farlo passare.
+            routeConServiceRole: 313,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2163,7 +2245,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 480 → 479 il 2026-09-10: l'unico handler (`GET`) di `pagamenti/ricevuta`,
             // uscito con la route. Il passo coincide col numero di file (−1 route, −1
             // handler) perché quella rotta esponeva il solo GET. Misurato, non dedotto.
-            handlerControllati: 479,
+            //
+            // 479 → 481 il 2026-09-12: i due handler delle due route nuove, uno per
+            // agente. La nota sta accanto a `routeConServiceRole`, sopra.
+            handlerControllati: 481,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -2346,7 +2431,40 @@ describe('coverage-lock isolamento fra sedi', () => {
             // filtrare. Lasciare la voce avrebbe tenuto viva un'esenzione per la prossima
             // route che nascerà con quel nome — cioè esattamente ciò che la prova
             // «l'allowlist non contiene voci morte» esiste per impedire.
-            handlerEsentati: 99,
+            //
+            // 🔻 99 → 101 il 2026-09-12, ED È UN NUMERO CHE SALE: le due voci di
+            // `gdpr/retention-galleria` (`:POST` e `:<modulo>`). Il commento in testa a
+            // questo numero dice che sale solo quando qualcuno toglie un pezzo di
+            // questo lock, e la frase va presa sul serio anche quando non è il caso —
+            // quindi va scritto perché queste due passano.
+            //
+            // È la QUARTA volta che la stessa forma entra qui, e le tre precedenti sono
+            // la ragione per cui questa non si legge come una novità:
+            // `gdpr/retention-iscrizioni:POST` (01/08), `gdpr/retention-candidature:POST`
+            // (10/08) e il suo `:<modulo>` (15/08), `gdpr/retention-personale:POST`
+            // (01/09). Un termine di conservazione vale su tutte e tre le sedi, e un
+            // cron non ha un utente da cui derivare uno scope.
+            //
+            // ⚠️ MA QUI IL FILTRO DI SEDE NON SAREBBE «INUTILE»: SAREBBE IL DIFETTO, e
+            // per lo `<modulo>` in modo misurabile. La spazzata degli orfani parte dallo
+            // STORAGE, dove un oggetto non ha una sede, e RIMUOVE ciò che nessuna riga
+            // reclama: restringere la domanda a un plesso dichiarerebbe orfani i media
+            // delle altre due sedi e li porterebbe via — la foto di un bambino distrutta
+            // mentre la sua riga è viva. La differenza si misura: dando a quella query
+            // un `.eq('scuola_id', …)` questa voce diventerebbe MORTA (il test
+            // «l'allowlist non contiene voci morte» la respingerebbe) e il cron
+            // comincerebbe a cancellare foto vive. Cioè: qui l'esenzione è la difesa,
+            // non il buco nella difesa.
+            //
+            // Ciò che tiene ferma l'affermazione non sta qui ma in
+            // `__tests__/api/gdpr-retention-galleria.test.ts`, che la spazzata la
+            // esercita per davvero: scende nelle cartelle-utente, distingue «sotto il
+            // prefisso» da «orfano», non tocca gli oggetti più giovani di 24 ore, e
+            // verifica il fail-closed quando la lettura dei reclami fallisce o quando un
+            // `file_url` non è confrontabile. Se un giorno quel file smettesse di
+            // coprire la spazzata, questa voce resterebbe verde sull'esenzione e cieca
+            // sul comportamento.
+            handlerEsentati: 101,
         })
     })
 })

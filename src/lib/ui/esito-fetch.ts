@@ -1989,6 +1989,49 @@ export const CODICI_ERRORE = {
      * sempre, proprio dove il cestino non c'è per accoglierla.
      */
     GALLERIA_CESTINO_NON_DISPONIBILE: 'erroreGalleriaCestinoNonDisponibile',
+    /* ── Il ritorno dal cestino (`gallery/ripristina:POST`, 2026-09-12) ──────── */
+    /**
+     * 404 — non esiste nessuna foto con quell'id (`gallery/ripristina:POST`).
+     *
+     * Distinto da `MEDIA_NON_RIPRISTINABILE` qui sotto perché sono due cose che
+     * l'interfaccia deve trattare in modo diverso: «questa riga non c'è» si chiude
+     * togliendola dall'elenco, «c'è ma non si può ripristinare» si chiude
+     * ricaricando l'elenco e spiegando perché.
+     */
+    GALLERIA_MEDIA_NON_TROVATO: 'erroreGalleriaMediaNonTrovato',
+    /**
+     * 409 — la foto non si può riportare in galleria (`gallery/ripristina:POST`), e
+     * i due stati che lo impediscono sono entrambi qui dentro.
+     *
+     *  · `eliminato_il IS NULL` — non era nel cestino: chi ha premuto Ripristina
+     *    sta guardando un elenco che non è più vero, e la via d'uscita è ricaricarlo
+     *    (non si risponde 200 «già fatto», che gli lascerebbe credere di aver
+     *    recuperato qualcosa);
+     *  · `file_rimosso_il IS NOT NULL` — il file è uscito dallo Storage allo scadere
+     *    dei 30 giorni. La riga si riporterebbe in vita in un millisecondo, e
+     *    sarebbe la cosa peggiore: in galleria comparirebbe una foto ROTTA.
+     *
+     * Non è un 403 e non è un 404: il titolo chi chiede ce l'ha (il gate di sede è
+     * appena passato) e la riga esiste. È lo STATO a rendere l'operazione senza
+     * senso — lo stesso ragionamento di `GALLERIA_MEDIA_NEL_CESTINO`, nell'altro
+     * verso.
+     */
+    MEDIA_NON_RIPRISTINABILE: 'erroreMediaNonRipristinabile',
+    /**
+     * 501 — su questo impianto la galleria non ha il cestino e il ripristino non è
+     * avvenuto (`gallery/ripristina:POST`). È il gemello di
+     * `GALLERIA_CESTINO_NON_DISPONIBILE` per il gesto INVERSO, e non lo riusa per
+     * una ragione sola: quella frase dice «la foto non è stata eliminata», che a chi
+     * ha premuto Ripristina racconta il contrario di quello che è successo.
+     */
+    GALLERIA_RIPRISTINO_NON_DISPONIBILE: 'erroreGalleriaRipristinoNonDisponibile',
+    /**
+     * 500 — il ripristino è stato tentato e NON è avvenuto: la scrittura è stata
+     * respinta dal database, o un'eccezione è arrivata al `catch` dell'handler
+     * (`gallery/ripristina:POST`). La foto è rimasta nel cestino, quindi la frase
+     * dice «riprova» e non «è stata ripristinata».
+     */
+    MEDIA_NON_RIPRISTINATO: 'erroreMediaNonRipristinato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

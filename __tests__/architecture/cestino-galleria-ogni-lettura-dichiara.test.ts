@@ -344,6 +344,32 @@ const MAX_SCOPERTE = 0
  * `SOGLIA_SANITA`.
  */
 const COPERTI_ATTESI: Record<string, number> = {
+    // `gdpr/retention-galleria` — la purga del cestino, nata il 2026-09-12. Entra qui
+    // dal giorno uno, e con il conteggio ESATTO, perché è il file in cui un verso
+    // sbagliato costa più che altrove: è il solo posto del repo che DISTRUGGE una foto
+    // di galleria insieme al suo file. Le sei occorrenze, e il verso di ciascuna:
+    //   · `soloNelCestino(q, soglia)`  — le righe scadute il cui file è ancora lì;
+    //   · `ancheNelCestino`            — la RIPRESA: le righe il cui file è già uscito,
+    //                                    che `soloNelCestino` esclude per costruzione;
+    //   · `soloNelCestino(q)`          — l'UPDATE che timbra `file_rimosso_il`: cintura,
+    //                                    non si timbra mai una riga viva;
+    //   · `ancheNelCestino`            — la `delete`, che deve raggiungere le righe già
+    //                                    timbrate;
+    //   · `ancheNelCestino` ×2         — la spazzata degli orfani: «chi reclama questi
+    //                                    percorsi?» e «quante righe non ne portano uno
+    //                                    confrontabile?». Lì filtrare le sole vive
+    //                                    dichiarerebbe orfano il file di ogni foto nel
+    //                                    cestino e lo porterebbe via a 24 ore, cioè
+    //                                    distruggerebbe ciò che il prodotto promette di
+    //                                    custodire per trenta giorni.
+    // 2026-09-12, salito da 6 a 7: la route ha guadagnato una settima lettura
+    // dichiarata mentre la si finiva (il giro dei reclami sugli orfani ne fa una in
+    // più di quanto la prima stesura prevedeva). SETTE e non «>= 6»: il controllo
+    // positivo di questo lock confronta il numero ESATTO, e un `>=` renderebbe
+    // invisibile proprio il caso che qui conta — una lettura aggiunta di nascosto
+    // in un file che distrugge foto. Le SCOPERTE restano zero, ed è quella la metà
+    // che dice che non c'è un difetto: sette lette, sette dichiarate.
+    'src/app/api/gdpr/retention-galleria/route.ts': 7,
     'src/app/api/tasks/route.ts': 1,
     'src/app/api/segnalazioni/route.ts': 1,
     'src/app/api/educator-sections/route.ts': 1,

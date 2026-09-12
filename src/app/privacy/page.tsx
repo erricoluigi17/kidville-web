@@ -779,6 +779,50 @@ export default async function PrivacyPage({ searchParams }: { searchParams?: Pro
                 <strong>fotografie e video</strong>: fino alla revoca del consenso e comunque non
                 oltre la durata dell&rsquo;iscrizione;
               </li>
+              {/*
+                LA FOTO ELIMINATA DAL PERSONALE — voce nuova del 2026-09-12, ed è nuova
+                perché fino all'11/09 il gesto non esisteva: «Elimina» cancellava subito e
+                per sempre, e non c'era nessun tempo intermedio da dichiarare.
+                Dal 2026-09-11 «Elimina» NASCONDE: la riga resta in `galleria_media_v2` con
+                `eliminato_il` valorizzato, il file resta nel bucket privato, e la
+                segreteria può ripristinare per trenta giorni. Quei trenta giorni sono un
+                periodo di conservazione in più su una fotografia di un minore, quindi
+                l'art. 13 §2 lett. a pretende che siano DICHIARATI: senza questa voce
+                l'informativa direbbe che la foto è conservata «fino alla revoca del
+                consenso», e dopo la revoca resterebbe invece un mese ancora — un termine
+                vero e non scritto da nessuna parte.
+                IL NUMERO NON È SCRITTO QUI E LÀ: in codice sta in
+                `GIORNI_CESTINO_GALLERIA` (`src/lib/gallery/cestino.ts`), che è la stessa
+                costante letta dalla purga e dall'elenco del cestino; il testo che
+                l'insegnante legge nel dialogo di eliminazione lo prende da
+                `galleryEliminaRipristino` (`messages/it/shared.json`), e il lock
+                `cestino-galleria-ogni-lettura-dichiara` pretende che le due cose dicano lo
+                stesso trenta.
+                CHI LA FA SCADERE: il job `galleria-retention` (`23 5 * * *`), che chiama
+                `POST /api/gdpr/retention-galleria` — toglie PRIMA il file dal bucket e POI
+                la riga, e lascia il proprio battito in `app_log`.
+                ⚠️ QUESTA RIGA NON DICE «automaticamente», E NON È UNA SVISTA. Il lock
+                `informativa-conservazione-dichiarata` lega quella parola a tre cose: una
+                voce in `AUTOMI_DICHIARATI`, un `cron.schedule` con quel nome, e la
+                migrazione che lo installa NON marcata «NON APPLICATA». Al 2026-09-12 la
+                terza manca: `…_galleria_retention_cron.sql` è scritta e non ancora
+                applicata, perché va applicata DOPO il deploy del codice (altrimenti il
+                cron chiama una route che non esiste — difetto misurato l'11/08/2026 su
+                `candidature-retention`). Ciò che la famiglia ha diritto di sapere è il
+                TERMINE, non il meccanismo; il giorno in cui la migrazione sarà applicata e
+                attestata in testata si potrà aggiungere la parola insieme alla voce in
+                `AUTOMI_DICHIARATI`. La parola tira con sé una prova, ed è giusto così: la
+                versione precedente di questo paragrafo, su un'altra voce, ha promesso
+                «automaticamente» due settimane prima che l'automa esistesse.
+              */}
+              <li>
+                <strong>fotografia o video eliminati dal personale</strong>: la foto sparisce{' '}
+                <strong>subito</strong> dalla galleria delle famiglie, e resta recuperabile
+                dalla segreteria per <strong>trenta giorni</strong> — il tempo di rimediare a
+                un&rsquo;eliminazione sbagliata. Scaduti quelli viene distrutta in modo
+                definitivo, <strong>sia la registrazione sia il file</strong>, e non è più
+                recuperabile da nessuno;
+              </li>
               <li>
                 <strong>log tecnici di accesso e di utilizzo</strong>: <strong>30 giorni</strong>,
                 dopodiché sono cancellati automaticamente;

@@ -398,7 +398,29 @@ for (const caso of [
         test(`${caso.rotta} — niente sporge né si nasconde, il visore scorre, il video dichiara il rapporto`, async ({ page }) => {
             test.setTimeout(TIMEOUT_TEST_MS);
 
-            const risposta = await page.goto(caso.rotta, { waitUntil: 'load' });
+            /**
+             * `domcontentloaded` E NON `load`, ED È UNA MISURA NON UNA PREFERENZA.
+             *
+             * Su WebKit questo `goto` con `load` **non si risolveva mai**: due minuti
+             * di timeout su `/parent/gallery` e su `/teacher/gallery` nella CI del
+             * 2026-09-12, mentre su chromium le stesse due rotte finivano in 6-7
+             * secondi. `load` attende OGNI sottorisorsa, e queste due schermate ne
+             * hanno una che su WebKit resta pendente: il `<video preload="metadata">`
+             * del visore, che punta a un link firmato del bucket. Chromium considera
+             * l'evento raggiunto comunque; WebKit no.
+             *
+             * Attendere `load` qui non serviva a niente di ciò che questo spec misura:
+             * il layout lo si misura quando il DOM e il CSS ci sono, e l'attesa vera —
+             * che la griglia sia in scena e i caricamenti finiti — la fa
+             * `attendiFineCaricamento` più sotto, che è ancorata a un segnale POSITIVO
+             * invece che a un evento del browser.
+             *
+             * ⚠️ Il costo di quel `load` non era solo questo spec: i due timeout da due
+             * minuti lasciavano il server di prova così impantanato che `parent-home`,
+             * che gira DOPO e non ha niente a che vedere con la galleria, andava in
+             * timeout a sua volta. Tre spec rossi per un evento che non serviva.
+             */
+            const risposta = await page.goto(caso.rotta, { waitUntil: 'domcontentloaded' });
             expect(risposta?.ok(), `la rotta ${caso.rotta} non ha risposto 2xx`).toBe(true);
             await attendiFineCaricamento(page);
 

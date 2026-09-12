@@ -100,6 +100,119 @@
 
 ---
 
+## 🎥 Changelog — Il video non si fermava: la registrazione continuava su un fotogramma morto, e la conversione non ha mai detto no — 2026-09-12 (branch `fix/galleria-video-ios-e-cestino`)
+
+Segnalazione del titolare, dall'app iOS, su un video **scelto dalla galleria dell'iPhone**:
+> «si ferma ad un certo punto, e mostra lo stesso frame fino alla fine del video, ed è muto, spesso le
+> foto si vedono nere»
+
+Tre sintomi, tre cause distinte, e una quarta che spiega perché nessuno se n'era accorto.
+
+### Il video non viene caricato: viene **ri-registrato dal vivo**
+
+`processVideoWithWatermark` riproduce il filmato in un elemento nascosto, lo ridisegna su un
+`<canvas>` a 720p e registra **quel canvas** con `MediaRecorder` per un tempo pari alla durata del
+video. Da qui tutto il resto.
+
+| il sintomo | la causa, misurata |
+|---|---|
+| **muto** | `new AudioContext().state` in WebKit nasce **`"suspended"`** e `resume()` non esisteva in tutto `src/` (verificato con grep). E su iOS `createMediaElementSource` **lancia**: `traccia-audio-non-catturata`, **4 occorrenze, tutte `ios`**, e il ramo di ripiego faceva `volume = 0` e proseguiva **senza traccia audio**. Il `mimeType` scelto dichiarava il solo codec video, mentre `isTypeSupported('video/mp4;codecs=avc1,mp4a.40.2')` risponde **`true`**: la forma completa era disponibile |
+| **fotogramma congelato per tutta la durata** | l'unica chiusura della registrazione era un ciclo `requestAnimationFrame` che guardava `video.paused \|\| video.ended`; **`video.onended` non esisteva**. iOS **sospende rAF** quando la WebView non è in primo piano: la tela resta ferma e `captureStream` continua a emetterla. Più un secondo meccanismo indipendente: un'eccezione **dentro** `drawFrame` (un `wm.width` a 0 rende `wmHeight` NaN e `drawImage` lancia) uccideva il ciclo in silenzio e lasciava la promise **appesa per sempre** |
+| **foto nere** | la tela usciva **1×1**. Riprodotto in laboratorio: un file da **775 byte** con md5 `6ffc8975fca58e4ec3d9ba87b3f0f672`, che è **l'eTag dei tre file di produzione** letto dal database. Non una somiglianza: lo stesso file. ⚠️ La prima diagnosi — «canvas nero a 1920» — era **sbagliata**, e la misura l'ha corretta: un nero uniforme a 1920×1440 costa 20-35 KB, non 775 byte |
+
+### 🔴 E il fatto che rendeva tutto questo *pubblicabile*
+
+`gallery-video-conversione-fallita` ha **ZERO righe in tutta la tabella**. Su iOS la conversione **non
+rigettava mai**: risolveva sempre, e consegnava qualunque cosa avesse in mano. C'era anche un ramo che
+lo faceva di proposito, con un commento che lo dichiarava — `video.onerror` a metà strada chiamava
+`stop()` e passava il pezzo parziale «come integro», **senza un solo log**.
+
+Non era un difetto di un `if`: era l'assenza di un cancello. Ora esiste
+(`src/lib/media/integrita-video.ts`, modulo **puro e senza DOM** così non può divergere fra le due
+strade di conversione) e rifiuta: durata divergente oltre `max(0,5 s; 5%)`, audio perduto quando
+l'ingresso ne aveva, byte implausibili, e **fotogrammi congelati** — che conta solo i disegni in cui
+`currentTime` è **cambiato**, così una tela ferma resta inchiodata. È quest'ultima regola a catturare
+il sintomo riferito.
+
+Quando il controllo dice no, **il video non si pubblica e il file non si perde**: entra nella coda
+locale già esistente, con un messaggio azionabile invece di «errore generico». Fra un video mancante
+che si ricarica e un video congelato e muto in bacheca davanti a quarantacinque famiglie, si sceglie
+il primo — è visibile e reversibile, l'altro è invisibile a noi e permanente per loro. È la stessa
+scelta già scritta in `api/news/[id]:338-346`.
+
+### Il cestino a 30 giorni, e perché «Elimina» non cancellava il file
+
+`DELETE /api/gallery` cancellava la riga e **lasciava il file nel bucket per sempre**, senza nessuna
+riga che lo nominasse. Il PRD prometteva «elimina dal database **e dal feed**»: cioè esattamente ciò
+che faceva, e che lasciava il file nell'archivio.
+
+Decisione del titolare: premere Elimina fa sparire la foto **subito** dalla vista di tutti (genitori
+compresi), la lascia recuperabile **30 giorni**, poi la distrugge davvero — riga **e** file.
+
+Migrazione `20260911214752`, **applicata**: tre colonne (`eliminato_il`, `eliminato_da`,
+`file_rimosso_il`), due indici **parziali**, e `eliminato_il IS NULL` come **prima** condizione della
+policy RLS del genitore — così «Elimina» nasconde subito anche a chi leggesse la tabella senza passare
+dalla route. `eliminato_da` è `ON DELETE SET NULL` e **mai CASCADE**: con CASCADE, cancellare
+l'impiegata che ha premuto Elimina cancellerebbe le foto che ha eliminato lei, cioè proprio quelle che
+nei trenta giorni si potrebbero voler ripristinare.
+
+⚠️ **Un lock «filtra sempre» sarebbe stato un difetto**, ed è la parte che vale la pena aver capito: il
+diritto all'oblio deve togliere la foto **anche dal cestino**, altrimenti una foto sopravvive alla
+cancellazione chiesta da una famiglia con `spazio_liberato_il` scritto — cioè un «fatto» falso. Per
+questo `src/lib/gallery/cestino.ts` ha **tre** funzioni e non due, e la terza —
+`ancheNelCestino(q, motivo)` — è l'identità ma **obbliga a scrivere perché**. Il lock non promette «il
+filtro è giusto»: promette che nessuno può aggiungere una lettura senza aver deciso.
+
+La purga (`POST /api/gdpr/retention-galleria`, cron alle 05:23 UTC) va **prima il file, poi la riga**,
+e se il file non esce dallo Storage **la riga resta nel cestino** per il giro dopo. Righe trattenute
+⇒ **500**: un 200 direbbe «fatto» a chi sorveglia, e resterebbero foto di minori nell'archivio senza
+che nessuno lo sappia.
+
+### Gli strascichi, misurati e chiusi
+
+| | |
+|---|---|
+| 3 foto da 775 byte, **visibili alle famiglie** | messe nel cestino il 12/09 (non cancellate: reversibili 30 giorni). Primo uso reale del cestino in produzione: 1327 righe, 1324 vive, 3 nel cestino |
+| **26 file orfani**, 18,93 MB, dal **26 maggio** | li toglie la spazzata notturna, con una **grazia di 24 ore** che protegge i caricamenti in volo (2 lo erano al momento della misura) |
+| ⚠️ un oggetto del bucket **nominato da DUE righe** | trovato dallo strumento di diagnosi, non dal piano: un `DELETE` ingenuo ne avrebbe rotta una viva. Per questo la spazzata chiede «chi lo reclama?» invece di fidarsi di un elenco |
+
+### Rilievi aperti, dichiarati
+
+1. 🔴 **La causa degli orfani resta aperta**: una `PUT` allo Storage riuscita con la `POST /api/gallery`
+   fallita lascia l'oggetto senza riga. Servirebbe una rimozione firmata lato client come
+   `avvisi/upload/rimuovi`. Mitigazione in esercizio: la spazzata notturna li copre con un ritardo
+   massimo di 24 ore. **Nascono da soli: 26 in tre mesi e mezzo.**
+2. **WebCodecs è pronto e misurato, e NON è entrato di proposito.** Uno spike in tre giri ha
+   dimostrato che la strada esiste (`mp4box` apre il `.mov` HEVC dell'iPhone per intero, l'audio AAC
+   passa **bit-a-bit identico**, 52,7 KB gzip di librerie contro i 64,7 MB **GPL** di `ffmpeg.wasm`) e
+   che è più veloce — ma **meno di quanto sembrava**: 5,5-6,2× sul 1080p e **2,2-2,4× sul 4K**, e il
+   4K è **47 file su 63**. Il 17,2× misurato all'inizio era l'encode a 720p su una tela sintetica.
+   ⚠️ E al terzo giro è emerso il motivo vero per cui non entra adesso: i video dell'iPhone sono
+   **HLG BT.2020 su 63 file veri su 63**, con Dolby Vision `dvvC` profilo 8.4, e passando per la tela
+   senza dichiarare lo spazio colore i colori escono **desaturati del 36%** — una regressione visibile
+   su **ogni** video. La correzione esiste (`new VideoFrame(buffer, { colorSpace })`, con
+   `fullRange: true` e non `false`) e costa +11%, ma è **calibrata su un fotogramma di un file**: va
+   validata su più file e più istanti, e resa condizionata. Scambiare un difetto noto con una
+   regressione di colore su ogni video non è un affare.
+3. `uploaded_by → utenti(id)` è **`ON DELETE CASCADE`**: cancellare un'insegnante dall'anagrafica
+   cancella **tutte le sue foto**. Preesistente, fuori scopo, e da decidere.
+4. Il **poster** dei video lato server (oggi la miniatura è un quadrato scuro con Play), le **container
+   query** al posto dei breakpoint di viewport, il **ritiro selettivo** delle notifiche (che oggi non
+   si fa, e il perché è nel codice: `entitaId` è la chiave del debounce per insegnante, e cambiarla
+   trasformerebbe 37 foto in un pomeriggio in 37 notifiche per famiglia), e il **visore duplicato** in
+   `TaskCard.tsx`.
+
+### Gate
+
+`eslint` 0 · `tsc` 0 · **`vitest` 16.699/16.699** · `build` ok col postbuild.
+⚠️ La correzione della **fotocamera** (vedi il changelog qui sotto) è l'unica del lavoro che **non
+arriva col deploy**: tocca `Info.plist` e richiede una build nativa e il passaggio dall'App Store.
+⚠️ La migrazione del **cron della purga** (`20260912024500`) va applicata **DOPO** il deploy del
+codice, altrimenti il cron chiama una route che non esiste e produce «job senza battito» per un guasto
+inventato.
+
+---
+
 ## 📷 Changelog — 412 volte «la fotocamera non si apre», e il perché era una chiave mancante in un file di sedici righe — 2026-09-12 (branch `fix/galleria-video-ios-e-cestino`)
 
 `fotocamera-errore` in `app_log`: **124 righe, 412 occorrenze, 32 utenti, dal 01/09 all'11/09**, e

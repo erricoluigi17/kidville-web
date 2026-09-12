@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useLocale } from 'next-intl';
 import { dataCivile, formattaIstante } from '@/i18n/config';
 import { conIniziale } from '@/lib/i18n/date';
@@ -73,6 +73,13 @@ export interface AlunnoTaggato {
 /** Una foto della vista di sede: quello che `MediaGrid` legge, più i taggati. */
 export interface FotoSede extends MediaItem {
     alunni_taggati?: AlunnoTaggato[] | null;
+    /**
+     * Quando la foto e stata messa nel cestino. La manda `GET /api/gallery?scope=sede`
+     * SOLO nel ramo `stato=cestino`: nella vista normale e assente, e deve restarlo —
+     * una foto viva non ha una data di eliminazione, e un campo sempre presente
+     * inviterebbe a leggerlo dove non significa niente.
+     */
+    eliminato_il?: string | null;
 }
 
 /** Le foto di una giornata, dalla più recente. */
@@ -263,6 +270,49 @@ export interface TestiGiornate {
 interface Props {
     foto: readonly FotoSede[];
     testi: TestiGiornate;
+    /**
+     * L'eliminazione, quando chi guarda puo farla. Assente = nessun comando, ed e
+     * cosi che il genitore non lo vede: il predicato vive in `MediaGrid`, qui si
+     * inoltra e basta. **Rigetta** con un `Error` dal `.message` gia tradotto.
+     */
+    onDelete?: (id: string) => Promise<void>;
+    /**
+     * IL RIPRISTINO, E LA SUA PRESENZA DECIDE LA VISTA.
+     *
+     * Quando c'e, questo componente rende la griglia del CESTINO invece di
+     * `MediaGrid`. Non e una scorciatoia: il cestino e una vista amministrativa,
+     * non una galleria da sfogliare. Il visore di `MediaGrid` porta le frecce, la
+     * navigazione con la tastiera, i tag, lo scarico e la condivisione — tutte cose
+     * che su una foto eliminata non hanno senso o sono da evitare, e la prima
+     * (scaricare una foto che si e deciso di rimuovere) sarebbe un difetto.
+     * Qui servono tre cose sole: vedere cos'e, quanto le resta, e ripescarla.
+     */
+    onRipristina?: (id: string) => Promise<void>;
+    /** I testi del cestino. Obbligatori quando `onRipristina` c'e. */
+    testiCestino?: TestiCestino;
+    /**
+     * I giorni di custodia del cestino, dal chiamante.
+     *
+     * ⚠️ NON si importa `GIORNI_CESTINO_GALLERIA` da `@/lib/gallery/cestino`: quel
+     * modulo importa `logEvento` da `@/lib/logging/logger`, che e il logger del
+     * SERVER, e tirarlo dentro un componente client lo impacchetterebbe nel bundle
+     * del browser. Il numero arriva quindi per prop da un punto solo del client, e
+     * il lock `__tests__/architecture/cestino-giorni-un-numero-solo.test.ts` verifica
+     * che quel punto e la costante vera non divergano.
+     */
+    giorniTotali?: number;
+}
+
+/** Le parole del cestino: il chiamante le prende dal catalogo, questo file non traduce. */
+export interface TestiCestino {
+    /** «Eliminata il {data}» — la data arriva gia formattata. */
+    eliminataIl: (data: string) => string;
+    /** «resta 1 giorno» / «resta N giorni» / «scade oggi»: il plurale lo fa il catalogo. */
+    restanoGiorni: (n: number) => string;
+    ripristina: string;
+    ripristinaInCorso: string;
+    /** L'anteprima non si puo mostrare (link scaduto o file gia rimosso). */
+    anteprimaNonDisponibile: string;
 }
 
 /**
@@ -272,7 +322,7 @@ interface Props {
  * dentro l'elenco che riceve, e una griglia unica farebbe scorrere il 5 settembre
  * dentro il 4 senza che l'intestazione lo dica.
  */
-export function GalleriaSedeGiornate({ foto, testi }: Props) {
+export function GalleriaSedeGiornate({ foto, testi, onDelete, onRipristina, testiCestino, giorniTotali = 30 }: Props) {
     const locale = useLocale();
     const giornate = useMemo(() => raggruppaPerGiornata(foto), [foto]);
 
@@ -312,14 +362,168 @@ export function GalleriaSedeGiornate({ foto, testi }: Props) {
                           numero veniva da `sm:grid-cols-3`, cioè dal VIEWPORT, che di questo
                           contenitore non sa niente.
                         */}
-                        <MediaGrid
-                            items={g.foto}
-                            students={alunniDellaPagina(g.foto, testi.taggatoSenzaNome)}
-                            colonne={4}
-                        />
+                        {onRipristina && testiCestino ? (
+                            <GrigliaCestino
+                                foto={g.foto}
+                                onRipristina={onRipristina}
+                                testi={testiCestino}
+                                locale={locale}
+                                giorniTotali={giorniTotali}
+                            />
+                        ) : (
+                            <MediaGrid
+                                items={g.foto}
+                                students={alunniDellaPagina(g.foto, testi.taggatoSenzaNome)}
+                                colonne={4}
+                                onDelete={onDelete}
+                            />
+                        )}
                     </section>
                 );
             })}
         </div>
     );
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * LA GRIGLIA DEL CESTINO — tre cose sole, e nessuna di piu
+ *
+ * Vedi la prop `onRipristina` sopra per il perche non si riusa `MediaGrid`. In una
+ * riga: su una foto che si e deciso di rimuovere, «Scarica» e «Condividi» non sono
+ * comandi mancanti, sono comandi da NON avere.
+ *
+ * Quello che serve qui e: capire QUALE foto e, sapere QUANTO le resta, e poterla
+ * ripescare. L'anteprima resta piccola e non si apre: il cestino e una lista di
+ * cose da decidere, non un album.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+function giorniRimanenti(eliminatoIl: string | null | undefined, giorniTotali: number): number | null {
+    if (!eliminatoIl) return null
+    const t = Date.parse(eliminatoIl)
+    if (Number.isNaN(t)) return null
+    // Si arrotonda per ECCESSO: a 29,2 giorni trascorsi resta «1 giorno», non «0».
+    // Un «0» direbbe «scaduta» a una foto che la purga non ha ancora guardato, e chi
+    // legge rinuncerebbe a ripristinarla credendo di essere in ritardo.
+    const trascorsiMs = Date.now() - t
+    const rimastiMs = giorniTotali * 24 * 60 * 60 * 1000 - trascorsiMs
+    return Math.max(0, Math.ceil(rimastiMs / (24 * 60 * 60 * 1000)))
+}
+
+function GrigliaCestino({
+    foto,
+    onRipristina,
+    testi,
+    locale,
+    giorniTotali,
+}: {
+    foto: readonly FotoSede[]
+    onRipristina: (id: string) => Promise<void>
+    testi: TestiCestino
+    locale: string
+    giorniTotali: number
+}) {
+    // Lo stato e PER FOTO e non globale: due membri della segreteria che ripristinano
+    // due foto diverse non devono vedere lo spinner l'uno sull'altra, e un errore su
+    // una non deve cancellare il messaggio dell'altra.
+    const [inCorso, setInCorso] = useState<string | null>(null)
+    const [errori, setErrori] = useState<Record<string, string>>({})
+
+    async function ripristina(id: string): Promise<void> {
+        if (inCorso !== null) return
+        setInCorso(id)
+        setErrori((p) => {
+            const q = { ...p }
+            delete q[id]
+            return q
+        })
+        try {
+            await onRipristina(id)
+            // Riuscito: non si tocca niente qui. L'elenco lo ricarica il chiamante
+            // dentro la risoluzione della propria `onRipristina` — questo componente
+            // non sa che cosa sia «l'elenco», ed e la stessa divisione di
+            // `DialogoEliminaMedia`.
+        } catch (e) {
+            // Il messaggio arriva GIA TRADOTTO dal chiamante (`messaggioErrore`): qui
+            // non si traduce e non si inventa. Un catch che non mostra niente
+            // lascerebbe il bottone fermo senza dire perche.
+            setErrori((p) => ({ ...p, [id]: e instanceof Error && e.message ? e.message : testi.ripristina }))
+        } finally {
+            setInCorso(null)
+        }
+    }
+
+    return (
+        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {foto.map((f) => {
+                const resta = giorniRimanenti(f.eliminato_il, giorniTotali)
+                const quando =
+                    f.eliminato_il != null
+                        ? formattaIstante(f.eliminato_il, locale, {
+                              day: 'numeric',
+                              month: 'long',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                          })
+                        : null
+                const errore = errori[f.id]
+                return (
+                    <li
+                        key={f.id}
+                        className="flex flex-col overflow-hidden rounded-2xl border border-kidville-line bg-white"
+                    >
+                        {/*
+                          `bg-kidville-ink` sotto l'anteprima e non un grigio: una foto
+                          verticale in un riquadro quadrato lascia due fasce, e su fondo
+                          scuro si leggono come cornice invece che come vuoto.
+                          `object-contain` e non `cover`: qui si deve CAPIRE quale foto
+                          e, e un ritaglio puo togliere proprio il soggetto.
+                        */}
+                        <div className="relative aspect-square w-full bg-kidville-ink">
+                            {f.file_url ? (
+                                // eslint-disable-next-line @next/next/no-img-element -- il link e firmato e scade: `next/image` lo cacherebbe oltre la firma
+                                <img
+                                    src={f.file_url}
+                                    alt=""
+                                    className="h-full w-full object-contain opacity-60"
+                                />
+                            ) : (
+                                <span className="absolute inset-0 flex items-center justify-center px-2 text-center font-maven text-[11.5px] text-white/80">
+                                    {testi.anteprimaNonDisponibile}
+                                </span>
+                            )}
+                        </div>
+                        <div className="flex min-w-0 flex-1 flex-col gap-1 p-2.5">
+                            {quando !== null && (
+                                <span className="truncate font-maven text-[12px] text-kidville-sub" title={quando}>
+                                    {testi.eliminataIl(quando)}
+                                </span>
+                            )}
+                            {resta !== null && (
+                                <span className="font-maven text-[12px] font-semibold text-kidville-green">
+                                    {testi.restanoGiorni(resta)}
+                                </span>
+                            )}
+                            {errore != null && (
+                                <span role="alert" className="font-maven text-[11.5px] text-kidville-error">
+                                    {errore}
+                                </span>
+                            )}
+                            <button
+                                type="button"
+                                onClick={() => void ripristina(f.id)}
+                                // `aria-disabled` e non `disabled`: `disabled` durante una
+                                // richiesta manda il fuoco su `<body>`, cioe in cima al
+                                // documento — la ragione sta in testa a `@/components/ui/Btn`.
+                                // Il doppio invio lo ferma la guardia in `ripristina`.
+                                aria-disabled={inCorso !== null}
+                                className="mt-1 rounded-pill bg-kidville-green px-3 py-1.5 font-maven text-[12.5px] font-semibold text-kidville-yellow aria-disabled:opacity-60"
+                            >
+                                {inCorso === f.id ? testi.ripristinaInCorso : testi.ripristina}
+                            </button>
+                        </div>
+                    </li>
+                )
+            })}
+        </ul>
+    )
 }

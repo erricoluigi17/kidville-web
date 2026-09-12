@@ -170,6 +170,46 @@ function corpoDelGestore(src: string, nome: string): string | null {
     return null;
 }
 
+/**
+ * L'IDENTIFICATORE È UNA PROP INOLTRATA, non un gestore dichiarato qui?
+ *
+ * ─── PERCHÉ QUESTA DISTINZIONE ESISTE ───────────────────────────────────────
+ * `GalleriaSedeGiornate` monta `MediaGrid` una volta per giornata e le passa
+ * `onDelete={onDelete}`, dove `onDelete` è una **sua prop**: non è un chiamante, è
+ * un tubo. Il contratto — rigettare con un `Error` dal messaggio già tradotto — lo
+ * deve rispettare chi lo RIEMPIE, cioè `admin/gallery/page.tsx`, e quello il lock lo
+ * misura già.
+ *
+ * Senza questa funzione il lock dichiarava «dichiarazione non trovata» e diventava
+ * rosso su un file che non ha niente da dichiarare: un rosso che si spegne solo
+ * mettendo in allowlist un caso legittimo, cioè logorando l'allowlist fino a
+ * renderla rumore. E l'alternativa peggiore sarebbe stata accettare
+ * `onDelete={qualcosa}` senza guardare: è precisamente ciò che questo lock rifiuta
+ * di fare.
+ *
+ * ⚠️ CHE COSA IL CONTEGGIO CATTURA, E CHE COSA NO — misurato, non supposto.
+ * Gli inoltri vengono contati, e il test in fondo pretende il numero ESATTO. Provato
+ * con due mutazioni:
+ *   · `eUnInoltro` che dice sempre NO → DUE test diventano rossi (il controllo
+ *     positivo, perché il file torna «illeggibile», e il conteggio, che scende a zero).
+ *     È il caso che conta: il riconoscitore che si rompe in silenzio.
+ *   · `eUnInoltro` che dice sempre SÌ → il lock **resta verde**, e va detto invece di
+ *     lasciarlo credere il contrario. Non è un buco: questa funzione è interpellata
+ *     SOLO nel ramo `corpo === null`, cioè quando la dichiarazione non esiste e il
+ *     gestore non sarebbe misurabile comunque. I chiamanti veri non passano da qui.
+ */
+function eUnInoltro(src: string, nome: string): boolean {
+    const fuga = nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // `function Componente({ … nome … }: Props)` oppure `({ … nome = x … })`:
+    // si guarda SOLO la lista di parametri destrutturati, non tutto il file, così un
+    // `const nome = …` da qualche parte non si traveste da prop.
+    for (const m of src.matchAll(/function\s+[A-Z][\w$]*\s*\(\s*\{([^}]*)\}/g)) {
+        const parametri = m[1];
+        if (new RegExp(`(^|[,\\s])${fuga}\\s*(?:[,=:]|$)`).test(parametri)) return true;
+    }
+    return false;
+}
+
 // ─── La popolazione: chi passa `onDelete` a `MediaGrid` ─────────────────────
 
 interface Chiamante {
@@ -180,6 +220,8 @@ interface Chiamante {
 
 const chiamanti: Chiamante[] = [];
 const illeggibili: string[] = [];
+/** Gli inoltri riconosciuti: contati, perché un conto a zero è un lock che non vede. */
+const inoltri: string[] = [];
 
 for (const file of fileSotto(SRC)) {
     const grezzo = fs.readFileSync(file, 'utf8');
@@ -197,6 +239,11 @@ for (const file of fileSotto(SRC)) {
         }
         const corpo = corpoDelGestore(pulito, valore);
         if (corpo === null) {
+            // Prima di chiamarlo illeggibile: è un tubo? Vedi `eUnInoltro`.
+            if (eUnInoltro(pulito, valore)) {
+                inoltri.push(`${relativo}: \`${valore}\` è una prop inoltrata`);
+                continue;
+            }
             illeggibili.push(`${relativo}: dichiarazione di \`${valore}\` non trovata`);
             continue;
         }
@@ -223,6 +270,34 @@ describe('lock — il chiamante di `MediaGrid.onDelete` rigetta sul rifiuto', ()
             chiamanti.length,
             'nessun chiamante di `onDelete` trovato: il lock è diventato cieco, non il repo virtuoso',
         ).toBeGreaterThan(0);
+    });
+
+    /**
+     * GLI INOLTRI SI CONTANO, e il numero è UNO.
+     *
+     * Il commento di `eUnInoltro` promette che gli inoltri vengono contati: questa è
+     * la riga che mantiene la promessa, perché un commento che dichiara una
+     * protezione inesistente è peggio di nessun commento.
+     *
+     * Il numero esatto e non `>= 0`: se un domani `eUnInoltro` cominciasse a dire sì
+     * a tutto — per un errore nella regex, o perché qualcuno la «semplifica» — i
+     * chiamantiveri finirebbero nel secchio degli inoltri e il lock resterebbe verde
+     * misurando il vuoto. Con il conto esatto, quel giorno questo test parla.
+     *
+     * Se aggiungi un componente che INOLTRA `onDelete` invece di dichiararlo, alza il
+     * numero **e scrivi qui perché**: l'elenco degli inoltri è una lista di tubi, e
+     * ogni tubo nuovo è un posto in più in cui il contratto non si vede.
+     */
+    it('gli inoltri riconosciuti sono esattamente quelli attesi (uno: `GalleriaSedeGiornate`)', () => {
+        expect(
+            inoltri.map((r) => r.split(':')[0]).sort(),
+            `Gli inoltri di \`onDelete\` sono cambiati. Attesi: la sola ` +
+                `\`GalleriaSedeGiornate\`, che monta una \`MediaGrid\` per giornata e inoltra la ` +
+                `prop ricevuta dalla pagina. Trovati: ${inoltri.join(' | ') || '(nessuno)'}. ` +
+                `Se ne hai aggiunto uno legittimo, aggiungilo qui con la sua ragione; se invece ` +
+                `sono SPARITI, \`eUnInoltro\` ha smesso di riconoscerli e il lock sta per ` +
+                `chiamare «illeggibile» un file che non ha niente da dichiarare.`,
+        ).toEqual(['src/components/features/gallery/GalleriaSedeGiornate.tsx']);
     });
 
     it('nessun chiamante NUOVO risolve dove il server ha rifiutato', () => {

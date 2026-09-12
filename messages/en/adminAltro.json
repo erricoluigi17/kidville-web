@@ -721,5 +721,16 @@
   "appelloTabOggi": "Today",
   "appelloTabMese": "Month",
   "appelloPrimariaSpiegazione": "Primary school attendance lives in the class register for {classe}, alongside the other registers.",
-  "appelloPrimariaApri": "Open the class register"
+  "appelloPrimariaApri": "Open the class register",
+  "galSedeVistaGruppo": "What to show",
+  "galSedeVistaPubblicate": "Published",
+  "galSedeVistaCestino": "Trash ({giorni, plural, one {# day} other {# days}})",
+  "galSedeCestinoEliminataIl": "Deleted on {data}",
+  "galSedeCestinoRestanoGiorni": "{n, plural, =0 {Expires today} one {# day left} other {# days left}}",
+  "galSedeCestinoRipristina": "Restore",
+  "galSedeCestinoRipristinoInCorso": "Restoring…",
+  "galSedeCestinoAnteprimaAssente": "Preview unavailable",
+  "galSedeErroreElimina": "The photo could not be deleted. Please try again.",
+  "galSedeErroreRipristino": "The photo could not be restored. Please try again.",
+  "galSedeErroreRete": "No response from the server. Check your connection and try again."
 }

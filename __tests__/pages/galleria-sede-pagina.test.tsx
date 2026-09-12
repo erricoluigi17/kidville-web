@@ -86,6 +86,14 @@ const h = vi.hoisted(() => ({
      */
     sospendiGalleria: false,
     /**
+     * La risposta di `DELETE /api/gallery` e di `POST /api/gallery/ripristina`.
+     * Sono i due comandi della vista di plesso, e il loro RIFIUTO e la cosa che va
+     * provata: un 403 di sede e un 409 «non piu ripristinabile» devono arrivare a
+     * schermo tradotti, non come prosa del server.
+     */
+    rispostaElimina: { ok: true, status: 200, body: { success: true } } as { ok: boolean; status: number; body: unknown },
+    rispostaRipristino: { ok: true, status: 200, body: { success: true } } as { ok: boolean; status: number; body: unknown },
+    /**
      * Quando è impostata, `/api/gallery` risponde con questa funzione invece che
      * con `rispostaGalleria`: serve ai casi in cui il corpo DIPENDE
      * dall'indirizzo chiesto — l'`offset` — che è il solo modo di provare una
@@ -175,6 +183,8 @@ beforeEach(() => {
     h.sediLoading = false;
     h.sospendiGalleria = false;
     h.rispostaPerIndirizzo = null;
+    h.rispostaElimina = { ok: true, status: 200, body: { success: true } };
+    h.rispostaRipristino = { ok: true, status: 200, body: { success: true } };
     righeAlunni = [
         { id: ALU_1, nome: 'Primo', cognome: 'Finto', classe_sezione: CLASSE, section_id: SEZ_1 },
         { id: ALU_2, nome: 'Secondo', cognome: 'Finto', classe_sezione: ALTRA_CLASSE, section_id: SEZ_2 },
@@ -191,6 +201,18 @@ beforeEach(() => {
     };
     h.fetchMock.mockImplementation((url: string) => {
         const u = String(url);
+        // ⚠️ QUESTI DUE RAMI VANNO PRIMA di `/api/gallery`: il ramo sotto usa
+        // `startsWith`, e `/api/gallery/ripristina` comincia per `/api/gallery` —
+        // messo dopo, il ripristino riceverebbe il corpo dell'ELENCO e il test
+        // sarebbe verde senza aver mai chiamato la rotta giusta.
+        if (u.startsWith('/api/gallery/ripristina')) {
+            const r = h.rispostaRipristino;
+            return Promise.resolve({ ok: r.ok, status: r.status, headers: new Headers(), json: async () => r.body });
+        }
+        if (u.startsWith('/api/gallery?id=')) {
+            const r = h.rispostaElimina;
+            return Promise.resolve({ ok: r.ok, status: r.status, headers: new Headers(), json: async () => r.body });
+        }
         if (u.startsWith('/api/gallery')) {
             // Mai risolta: la richiesta resta in volo finché il test guarda.
             if (h.sospendiGalleria) return new Promise(() => {});
@@ -1097,5 +1119,134 @@ describe('(F) registrazione e cataloghi', () => {
             morte,
             `Chiavi che nessuna riga chiede più: ${morte.join(', ')}. Toglile da ENTRAMBI i cataloghi.`,
         ).toEqual([]);
+    });
+});
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * (H) IL CESTINO — la promessa del dialogo, mantenuta
+ *
+ * `DialogoEliminaMedia` dice all'insegnante che «la segreteria può ripristinarla
+ * entro 30 giorni». Fino al 2026-09-12 quella frase era vera solo lato server: la
+ * rotta esisteva e il bottone no. Questi test sono ciò che tiene la promessa legata
+ * all'interfaccia — se la linguetta sparisce, diventano rossi.
+ * ══════════════════════════════════════════════════════════════════════════ */
+describe('(H) il cestino della segreteria', () => {
+    /** Una foto nel cestino: come le altre, più la data di eliminazione. */
+    const fotoCestinata = (id: string, giorniFa: number): FotoSede => ({
+        ...foto(id, '2026-09-04T09:00:00.000Z'),
+        // Relativa ad ADESSO e non una data fissa: il conto alla rovescia si misura
+        // da `Date.now()`, e una data congelata renderebbe questo test rosso al primo
+        // giorno in cui lo si esegue — è la trappola del «test scaduto col calendario»
+        // già pagata in questo repo.
+        eliminato_il: new Date(Date.now() - giorniFa * 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    /** Rende la pagina, attende il primo elenco, passa al cestino e attende la sua GET. */
+    async function apriCestino(): Promise<void> {
+        render(<AdminGalleryPage />);
+        await waitFor(() => expect(chiamateGalleria().length).toBe(1));
+        // L'etichetta del bottone porta i giorni dentro («Cestino (30 giorni)»), quindi
+        // si cerca per PREFISSO dal catalogo e non per stringa intera: il numero viene
+        // dalla pagina, e fissarlo qui renderebbe questo test un secondo posto in cui
+        // il 30 e scritto — proprio ci che il lock `cestino-giorni-un-numero-solo`
+        // esiste per evitare.
+        fireEvent.click(screen.getByRole('button', { name: /cestino/i }));
+        await waitFor(() => {
+            expect(chiamateGalleria().some((u) => u.includes('stato=cestino'))).toBe(true);
+        });
+    }
+
+    it('la linguetta chiede `stato=cestino`, e la vista normale NON manda il parametro', async () => {
+        h.rispostaPerIndirizzo = (u) => ({
+            ok: true,
+            status: 200,
+            body: {
+                media: u.includes('stato=cestino') ? [fotoCestinata('c-1', 5)] : [foto('v-1', '2026-09-04T09:00:00.000Z')],
+                total: 1,
+                limit: 30,
+                offset: 0,
+            },
+        });
+        await apriCestino();
+
+        // Il parametro non deve comparire nella vista normale: il default della rotta
+        // è `vive`, e un parametro superfluo è un parametro che un giorno qualcuno
+        // legge al contrario.
+        const prima = chiamateGalleria().filter((u) => !u.includes('stato='));
+        expect(prima.length).toBeGreaterThan(0);
+    });
+
+    it('mostra quando è stata eliminata e quanto le resta', async () => {
+        h.rispostaPerIndirizzo = () => ({
+            ok: true,
+            status: 200,
+            body: { media: [fotoCestinata('c-1', 5)], total: 1, limit: 30, offset: 0 },
+        });
+        await apriCestino();
+
+        // 30 giorni di custodia, 5 trascorsi ⇒ 25. Il numero si calcola qui invece di
+        // scriverlo: se la custodia cambiasse, questo test seguirebbe la regola e non
+        // una costante copiata (e il lock `cestino-giorni-un-numero-solo` tiene legati
+        // i due punti in cui il 30 è scritto).
+        expect(await screen.findByText(/25/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: new RegExp(itAdminAltro.galSedeCestinoRipristina, 'i') })).toBeInTheDocument();
+    });
+
+    it('🔴 nel cestino il comando ELIMINA non c’è: è già eliminata', async () => {
+        h.rispostaPerIndirizzo = () => ({
+            ok: true,
+            status: 200,
+            body: { media: [fotoCestinata('c-1', 5)], total: 1, limit: 30, offset: 0 },
+        });
+        await apriCestino();
+        // L'attesa è ancorata a un evento POSITIVO — il bottone Ripristina, che c'è —
+        // PRIMA di asserire l'assenza. Un `waitFor` su un'assenza passa mentre la
+        // schermata è ancora vuota, ed è un falso verde che questo repo ha già pagato.
+        await screen.findByRole('button', { name: new RegExp(itAdminAltro.galSedeCestinoRipristina, 'i') });
+        expect(screen.queryByRole('button', { name: /elimina/i })).not.toBeInTheDocument();
+    });
+
+    it('un 409 si legge nella lingua dell’interfaccia, e l’elenco NON si svuota', async () => {
+        h.rispostaPerIndirizzo = () => ({
+            ok: true,
+            status: 200,
+            body: { media: [fotoCestinata('c-1', 5)], total: 1, limit: 30, offset: 0 },
+        });
+        h.rispostaRipristino = {
+            ok: false,
+            status: 409,
+            body: { error: 'Il media non è più ripristinabile', codice: 'MEDIA_NON_RIPRISTINABILE' },
+        };
+        await apriCestino();
+        fireEvent.click(await screen.findByRole('button', { name: new RegExp(itAdminAltro.galSedeCestinoRipristina, 'i') }));
+
+        const avviso = await screen.findByRole('alert');
+        expect(avviso).toBeInTheDocument();
+        // La foto resta a schermo: un errore non deve portarsi via la riga di cui
+        // parla, altrimenti chi legge il messaggio non sa più a quale foto si
+        // riferisce.
+        expect(screen.getByRole('button', { name: new RegExp(itAdminAltro.galSedeCestinoRipristina, 'i') })).toBeInTheDocument();
+    });
+
+    it('un ripristino riuscito chiama la rotta giusta e ricarica l’elenco', async () => {
+        h.rispostaPerIndirizzo = () => ({
+            ok: true,
+            status: 200,
+            body: { media: [fotoCestinata('c-1', 5)], total: 1, limit: 30, offset: 0 },
+        });
+        await apriCestino();
+        const primaDelClick = h.fetchMock.mock.calls.length;
+        fireEvent.click(await screen.findByRole('button', { name: new RegExp(itAdminAltro.galSedeCestinoRipristina, 'i') }));
+
+        await waitFor(() => {
+            const chiamate = h.fetchMock.mock.calls.map((c) => String(c[0]));
+            expect(chiamate.some((u) => u.startsWith('/api/gallery/ripristina'))).toBe(true);
+        });
+        // E il ricarico: dopo la risoluzione parte una GET nuova. È la metà del
+        // contratto che il dialogo di eliminazione NON aveva — prometteva un ricarico
+        // che nessun chiamante eseguiva.
+        await waitFor(() => {
+            expect(h.fetchMock.mock.calls.length).toBeGreaterThan(primaDelClick + 1);
+        });
     });
 });

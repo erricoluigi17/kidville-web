@@ -265,6 +265,19 @@ const leggi = (lingua: Lingua, ns: string): Catalogo =>
 const CONTABILITA: Record<Lingua, Catalogo> = { it: leggi('it', 'adminContabilita'), en: leggi('en', 'adminContabilita') }
 const SHARED: Record<Lingua, Catalogo> = { it: leggi('it', 'shared'), en: leggi('en', 'shared') }
 
+/**
+ * Le chiavi della TRANSAZIONE CONTABILE, cioè la famiglia che «occupa» la parola
+ * «transazione» e per cui la riga bancaria si chiama «bonifico».
+ *
+ * Si CONTANO, non si dichiarano: il messaggio d'errore della regola sul glossario
+ * portava il numero **6** scritto a mano, e ricontate sono **74**. Un numero
+ * incollato accanto alla misura invece che dentro è lo stesso debito delle «740
+ * etichette» e dei «21 divieti» che erano 19.
+ */
+const chiaviTrans = (lingua: Lingua): string[] =>
+    Object.keys(CONTABILITA[lingua]).filter((k) => k.startsWith('trans'))
+const CHIAVI_TRANS = chiaviTrans('it')
+
 // ── 1 · La via d'uscita ──────────────────────────────────────────────────────
 
 /** Le parole con cui, in questo prodotto, si esce da un pannello. */
@@ -1088,9 +1101,33 @@ describe('lock architettura · i testi del pannello «Componi il pagamento»', (
             `La stessa riga di estratto conto ha due nomi nella stessa schermata:\n  ${guasti.join('\n  ')}\n` +
             `È il difetto n. 2 di \`messaggi-plurali-e-glossario\` dentro una famiglia sola. Il termine ` +
             `scelto è «bonifico» / «bank transfer»: «transazione»/«transaction» è già occupato dalla ` +
-            `TRANSAZIONE CONTABILE (le 6 chiavi \`trans*\` del namespace), e riusarlo qui vorrebbe dire ` +
-            `chiamare con lo stesso nome la riga della banca e la scrittura che ne nasce.`,
+            `TRANSAZIONE CONTABILE (le ${CHIAVI_TRANS.length} chiavi \`trans*\` del namespace), e ` +
+            `riusarlo qui vorrebbe dire chiamare con lo stesso nome la riga della banca e la ` +
+            `scrittura che ne nasce.`,
         ).toEqual([])
+    })
+
+    it('la famiglia `trans*` che «occupa» la parola esiste, e il messaggio la CONTA invece di dichiararla', () => {
+        // ⚠️ QUI C'ERA IL NUMERO **6**, SCRITTO A MANO. Ricontate il 2026-09-13 le
+        // chiavi di `adminContabilita` che cominciano per `trans` sono **74**, in
+        // tutt'e due le lingue: il messaggio d'errore di questa regola sbagliava
+        // di un ordine di grandezza il denominatore su cui poggia il proprio
+        // argomento («quella parola è già occupata»). Non cambia la conclusione —
+        // 6 o 74, la parola è occupata lo stesso — ma è la terza volta che questo
+        // file paga un numero scritto accanto alla misura invece che dentro: le
+        // «740 etichette», le «152 chiavi», i «21 divieti» che erano 19. Adesso il
+        // messaggio lo interpola da `CHIAVI_TRANS`, che non può invecchiare.
+        expect(
+            CHIAVI_TRANS.length,
+            'la famiglia `trans*` è sparita dal namespace: l’argomento «quella parola è già ' +
+            'occupata dalla transazione contabile» non regge più, e la regola qui sopra va ' +
+            'riscritta invece che lasciata appesa a un precedente che non c’è.',
+        ).toBeGreaterThanOrEqual(60)
+        // Le due lingue portano la STESSA famiglia: se divergessero, il numero
+        // interpolato nel messaggio parlerebbe di un catalogo solo.
+        expect(chiaviTrans('en').length, 'le due lingue non hanno la stessa famiglia `trans*`').toBe(
+            CHIAVI_TRANS.length,
+        )
     })
 
     it('la deroga apre alla frase che nomina DAVVERO due entità, e non a chi rinomina la riga', () => {
@@ -1168,13 +1205,30 @@ describe('lock architettura · i testi del pannello «Componi il pagamento»', (
         // → `costo_unitario` → tutte le chiavi che cominciano per
         // `reconComponiErrCostoUnitario`, cioè anche quelle di un codice fratello.
         const contraddizioni: string[] = []
+        /**
+         * ⚠️ IL PAVIMENTO, e qui serviva più che altrove: questa è l'unica regola
+         * DERIVATA di questo file che non ne avesse uno. Le altre si appoggiano a
+         * un elenco di codici che, sparendo, fa saltare `chiaveDelCodice`; questa
+         * no — si deriva da un SUFFISSO (`_non_positivo`). Il giorno in cui il
+         * motore rinominasse quei codici, `famigliaCheVietaLoZero` risponderebbe
+         * `null` a tutti, il ciclo qui sotto non guarderebbe NESSUNA chiave e la
+         * prova resterebbe verde: verde per non aver guardato niente, che è il
+         * colore peggiore che possa avere un lock. Oggi non è vuota — tre famiglie
+         * (`importo`, `costo_unitario`, `movimento`) e 4 chiavi per lingua,
+         * contate il 2026-09-13 — ma «oggi non è vuota» e «non può svuotarsi» sono
+         * due cose diverse, e solo la seconda è un presidio.
+         */
+        let sorvegliate = 0
+        const famiglieViste: string[] = []
         for (const codice of CODICI) {
             const famiglia = famigliaCheVietaLoZero(codice)
             if (!famiglia) continue
+            famiglieViste.push(famiglia)
             const prefisso = chiaveDelCodice(famiglia)
             for (const lingua of LINGUE) {
                 for (const [chiave, testo] of Object.entries(CONTABILITA[lingua])) {
                     if (!chiave.startsWith(prefisso) || typeof testo !== 'string') continue
+                    sorvegliate += 1
                     if (ZERO_CONCESSO[lingua].test(testo)) {
                         contraddizioni.push(
                             `messages/${lingua}/adminContabilita.json → \`${chiave}\` = «${testo}» ` +
@@ -1192,6 +1246,23 @@ describe('lock architettura · i testi del pannello «Componi il pagamento»', (
             `stessa famiglia può concederlo. Dove lo zero ha un rimedio, il rimedio si scrive nel ` +
             `testo del codice che lo vieta — non in quello del codice accanto.`,
         ).toEqual([])
+        // Il pavimento. I due numeri sono MINIMI misurati, non valori attesi: si
+        // alzano quando il motore cresce, non si abbassano mai «perché sono scesi»
+        // — abbassare la soglia di un lock lo trasforma in decorazione.
+        expect(
+            [...new Set(famiglieViste)].sort(),
+            `Nessun codice del motore finisce più per \`${SUFFISSO_NON_POSITIVO}\`: questa regola non ` +
+            `sta guardando NIENTE, e resterebbe verde qualunque cosa dicano i testi. O il divieto ` +
+            `dello zero non esiste più (e allora questa prova va tolta, dicendolo), o i codici sono ` +
+            `stati rinominati e il suffisso da cui la famiglia si deriva va aggiornato.`,
+        ).toEqual(['costo_unitario', 'importo', 'movimento'])
+        expect(
+            sorvegliate,
+            `Le chiavi di catalogo esaminate da questa regola sono ${sorvegliate}: erano 8 ` +
+            `(4 per lingua) il 2026-09-13. Sotto quella soglia la famiglia si è svuotata — i testi ` +
+            `sono stati rinominati fuori dal prefisso \`reconComponiErr…\`, e la contraddizione che ` +
+            `questa prova esiste per prendere passerebbe senza essere letta.`,
+        ).toBeGreaterThanOrEqual(8)
     })
 
     it('il riconoscitore della concessione vede le due direzioni, e non scambia il divieto per una concessione', () => {

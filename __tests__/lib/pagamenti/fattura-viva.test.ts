@@ -12,10 +12,13 @@ import { mapStatoAruba } from '@/lib/aruba/stato'
  * «viva» direbbero due cose diverse dello stesso documento: una fermerebbe e
  * l'altra lascerebbe passare, con un 200 sopra.
  *
- * ⚠️ LA SORELLA NON È ANCORA MIGRATA QUI, ed è deliberato: al 2026-09-13
- * `[id]/route.ts` è chiusa e approvata, e ne tiene una copia locale. Questo file
- * è la sede NUOVA, non la seconda copia: chi tocca quella route la faccia
- * migrare e cancelli la sua.
+ * 🔑 E DAL 2026-09-13 I CHIAMANTI SONO CINQUE, non due: oltre alle porte ci sono
+ * il chip «fatturata» del registro (`pagamenti/riconciliazione:GET`), la consegna
+ * del PDF (`pagamenti/fattura:GET`) e — la più cara — la guardia di idempotenza
+ * dell'emissione (`emissione.ts`), quella che impedisce che allo SDI partano due
+ * documenti per la stessa retta. Le prove qui sotto valgono per tutte e cinque;
+ * che nessuna torni a derivarlo in casa lo tiene il lock
+ * `__tests__/architecture/annullo-riapre-movimento.test.ts`.
  */
 const riga = (sdi_stato: number | null): RigaFatturaEmessa => ({
   numero: 2328,

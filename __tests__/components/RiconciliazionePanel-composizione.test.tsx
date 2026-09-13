@@ -236,3 +236,74 @@ describe('RiconciliazionePanel — il rimbalzo a «Incasso unico» resta', () =>
     expect(apri.mock.calls[0][0].tot).toBe(150);
   });
 });
+
+/**
+ * ─── UN SUCCESSO DICHIARATO SUL NULLA ────────────────────────────
+ *
+ * Rilievo misurato dal critico di questa fetta: con un esito MALFORMATO la fascia
+ * usciva verde e diceva «Pagamento registrato: 0 voci · € 0,00».
+ *
+ * LA STRADA SCELTA È L'AVVISO, NON IL SILENZIO, e la ragione va detta perché l'altra
+ * era altrettanto difendibile. `onDone(esito)` lo chiama SOLO il ramo in cui la
+ * rotta ha risposto bene: quando i numeri sono illeggibili, il denaro è scritto
+ * lo stesso. Nascondere la fascia toglierebbe alla segreteria l'unica conferma che
+ * il pagamento è stato registrato — e il pericolo dichiarato di questa schermata è
+ * proprio che lei ricomponga: sulle voci nuove e sui ticket il secondo giro crea
+ * righe nuove, e non c'è nessun residuo che la fermi. Il silenzio, qui, è più
+ * pericoloso di un avviso.
+ *
+ * La distinzione che la frase deve reggere: «la scrittura è fallita» — che non è
+ * questo caso, e non deve sembrarlo — contro «la scrittura è riuscita ma il
+ * riepilogo è illeggibile».
+ */
+describe('RiconciliazionePanel — esito malformato', () => {
+  beforeEach(() => { esitoCorrente.valore = ESITO; });
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  it('numeri illeggibili: avviso, mai il verde con «0 voci · € 0,00»', async () => {
+    esitoCorrente.valore = { voci: Number.NaN, ticket: -4, totale: Number.NaN };
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await apriIlPopup();
+
+    fireEvent.click(screen.getByRole('button', { name: 'composizione riuscita' }));
+
+    const fascia = await screen.findByRole('alert');
+    // La frase intera: dice che il pagamento c'è (non rifarlo) e che il dettaglio no.
+    expect(fascia.textContent).toContain(
+      'Pagamento registrato, ma il riepilogo di che cosa copre è arrivato illeggibile. Non ricomporre il bonifico: il denaro è già a registro. Controlla le voci della famiglia.',
+    );
+    // I numeri ripuliti NON si mostrano: sono lo zero della ripulitura, non un fatto.
+    expect(screen.queryByText(/0 voci/)).toBeNull();
+    expect(screen.queryByText(/Pagamento registrato: /)).toBeNull();
+    // Nessuna pelle da conferma riuscita, e nessun `role="status"` accanto.
+    expect(fascia.className).not.toContain('kidville-success');
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('l’elenco si ricarica lo stesso: il denaro è scritto, la lista deve rileggerlo', async () => {
+    esitoCorrente.valore = { voci: Number.NaN, ticket: -4, totale: Number.NaN };
+    const fetchMock = stubFetch();
+    vi.stubGlobal('fetch', fetchMock);
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await apriIlPopup();
+    const prima = getElenco(fetchMock).length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'composizione riuscita' }));
+
+    await waitFor(() => expect(getElenco(fetchMock).length).toBeGreaterThan(prima));
+  });
+
+  it('e il controllo positivo: l’esito vero resta verde', async () => {
+    // Senza questa riga, una fascia che finisse SEMPRE in avviso passerebbe il test
+    // qui sopra e spegnerebbe la conferma su ogni composizione riuscita.
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await apriIlPopup();
+
+    fireEvent.click(screen.getByRole('button', { name: 'composizione riuscita' }));
+
+    expect(await screen.findByText('Pagamento registrato: 3 voci e 20 ticket · € 150,00')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+});

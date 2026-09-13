@@ -5,7 +5,7 @@ import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { assertFatturaInScope } from '@/lib/pagamenti/scope-fattura'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
-import { mapStatoAruba } from '@/lib/aruba/stato'
+import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
 import { parseBody, parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { zIntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
@@ -178,21 +178,6 @@ interface RigaRegistro {
   anno: number | string | null
   pdf_path: string | null
   sdi_stato: number | null
-}
-
-/**
- * Una riga di registro è VIVA se non risulta SCARTATA.
- *
- * Stessa regola di `viveNonScartate` (`src/lib/aruba/emissione.ts:1184-1185`), e
- * va tenuta identica: là decide se si può riemettere, qui se un documento si può
- * consegnare. Una fattura scartata dallo SDI o rifiutata dal destinatario è un
- * numero bruciato, non un documento da mettere in mano a una famiglia.
- *
- * `sdi_stato` nullo NON è scarto: è la riga «trasporto fallito» (numero
- * consumato, esito ignoto), e conta come viva esattamente come in `emissione.ts`.
- */
-function eViva(r: RigaRegistro): boolean {
-  return !(r.sdi_stato != null && mapStatoAruba(Number(r.sdi_stato)).isScarto)
 }
 
 /**
@@ -516,7 +501,28 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     if (fatturaId) {
       fatt = tutte[0]
     } else {
-      const vive = tutte.filter(eViva)
+      // ─── «VIVA» LA DICE `fattura-viva.ts`, NON QUESTO FILE ─────────────────
+      //
+      // Una fattura scartata dallo SDI o rifiutata dal destinatario è un numero
+      // bruciato, non un documento da mettere in mano a una famiglia; una riga
+      // con `sdi_stato` ASSENTE («trasporto fallito», numero consumato ed esito
+      // ignoto) resta invece viva, perché nessuno sa se quel documento sia
+      // partito. È la stessa regola con cui `emissione.ts` decide se si può
+      // riemettere: là si guarda per non emettere due volte, qui per non
+      // consegnare due volte lo stesso numero — ed è per quello che la
+      // definizione sta in un posto solo.
+      //
+      // ⚠️ FINO AL 2026-09-13 QUI C'ERA UNA COPIA (`eViva`) con un `Number()` in
+      // più, e quel `Number()` non era innocuo: su una stringa come `'02'` le due
+      // forme DIVERGONO — `mapStatoAruba('02')` cade sul ramo difensivo («viva»),
+      // `mapStatoAruba(Number('02'))` trova lo scarto 2 («non viva»). Misurato il
+      // 2026-09-13 su `information_schema.columns`: `fatture_emesse.sdi_stato` è
+      // `smallint`, e PostgREST lo serializza come NUMERO JSON non quotato
+      // (verificato con `row_to_json` sulle righe vere). Su tutto ciò che il
+      // database può restituire — 0-20, `null`, assente — le due forme danno lo
+      // stesso verdetto: il `Number()` era rumore, e non è stato portato nel
+      // modulo perché normalizzerebbe un input che non esiste.
+      const vive = tutte.filter(fatturaViva)
       if (vive.length > 1) {
         // `warn` e persistito: è un chiamante che chiede un documento fiscale
         // senza dire quale, cioè un punto dell'app (o un link salvato) rimasto

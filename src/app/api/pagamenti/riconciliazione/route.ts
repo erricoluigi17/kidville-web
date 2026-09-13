@@ -25,7 +25,7 @@ import { LIMITE_UPLOAD_BYTE, LIMITE_UPLOAD_MB } from '@/lib/upload/limite-piatta
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
-import { mapStatoAruba } from '@/lib/aruba/stato'
+import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
 import { formattaNumeroFattura } from '@/lib/fatturazione/sezionale'
 /**
  * IL MOTORE DELLO STATO DI FATTURAZIONE — la stessa politica che disegna il chip.
@@ -758,6 +758,17 @@ type FatturaMovimento = FatturaMovimentoUi
  * vecchia — la lista sparirebbe per colpa di un'etichetta. Quindi il sezionale si verifica
  * prima di chiamarla, e senza si ripiega su `numero/anno`, che è come quel documento è
  * sempre stato citato.
+ *
+ * 🔴 E NON È `etichettaFattura` DI `@/lib/pagamenti/fattura-viva` — che questo file ORA
+ * IMPORTA, quindi la somiglianza è a portata di mano di chi passa di qui domani. NON SI
+ * UNISCONO, e le tre differenze sono misurate (2026-09-13): su sezionale `FPR` questa
+ * passa da `formattaNumeroFattura`, che TRONCA l'anno a due cifre — `FPR 12/26`, com'è
+ * scritto sul documento vero — mentre `etichettaFattura` scrive `FPR 12/2026`; un
+ * sezionale sconosciuto qui viene SCARTATO (`12/2026`) e lì TENUTO (`Boh 12/2026`); e
+ * qui un numero o un anno fuori scala danno `null` — nessun chip, che è il
+ * comportamento voluto — mentre quella una stringa la restituisce sempre, ripiegando
+ * sull'anno corrente. Unirle vorrebbe dire cambiare il NUMERO STAMPATO di un documento
+ * fiscale sulla lista dei movimenti, in silenzio e senza che un test rosso lo dica.
  */
 function numeroLeggibile(r: RigaFatturaMovimento): string | null {
   const numero = Number(r.numero)
@@ -773,9 +784,13 @@ function numeroLeggibile(r: RigaFatturaMovimento): string | null {
 /**
  * Da righe di `fatture_emesse` allo stato per PAGAMENTO.
  *
- * Le righe VIVE sono quelle che non sono uno scarto SDI (2/4/9), stessa definizione di
- * `emissione.ts`: uno scarto non è un documento in circolazione, è un tentativo fallito che
- * si riemette. Poi una riga per QUOTA, tenendo il numero massimo (un pagamento ripartito fra
+ * Le righe VIVE le decide `fatturaViva` (`@/lib/pagamenti/fattura-viva`), che è anche la
+ * definizione che usano `emissione.ts` e la consegna del PDF: uno scarto non è un documento
+ * in circolazione, è un tentativo fallito che si riemette. Fino al 2026-09-13 questa riga
+ * teneva la propria copia del predicato e il commento diceva «stessa definizione di
+ * `emissione.ts`» — una promessa che nessun test faceva rispettare, su un predicato che
+ * cambia il giorno in cui Aruba aggiunge uno stato di scarto.
+ * Poi una riga per QUOTA, tenendo il numero massimo (un pagamento ripartito fra
  * due genitori ha due fatture, e una quota riemessa dopo uno scarto non deve comparire due
  * volte) — la stessa regola di `pagamenti/fattura/list`.
  *
@@ -795,7 +810,7 @@ function fattureDeiPagamenti(righe: RigaFatturaMovimento[]): Map<string, Fattura
       vive = new Map<string, RigaFatturaMovimento>()
       vivePerPagamento.set(pid, vive)
     }
-    if (r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto) continue
+    if (!fatturaViva(r)) continue
     const quota = r.quota_adult_id ?? '__unica__'
     const corrente = vive.get(quota)
     if (!corrente || Number(r.numero ?? 0) >= Number(corrente.numero ?? 0)) vive.set(quota, r)

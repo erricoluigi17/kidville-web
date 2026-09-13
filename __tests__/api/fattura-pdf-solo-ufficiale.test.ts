@@ -195,6 +195,62 @@ describe('b · a registro non c’è nessuna chiave', () => {
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
+/**
+ * b-bis · UNA RIGA SCARTATA NON SI CONSEGNA — e fino al 2026-09-13 non lo diceva
+ * nessuno.
+ *
+ * La rotta filtra le righe con un predicato «viva», e al 2026-09-13 quel
+ * predicato era una COPIA locale (`eViva`) di quello di `emissione.ts`, scritta
+ * con un `Number()` in più. Misurato: **nessuno** dei test di questo file, né di
+ * `fattura-route.test.ts`, né di `fattura-download-disposition.test.ts`, passava
+ * un solo `sdi_stato` di scarto — tutte le righe dei fixture valevano `7`. Cioè
+ * il filtro si poteva invertire, o cancellare, col gate verde.
+ *
+ * È lo stesso difetto della (d) qui sotto, a un ramo di distanza: una fattura
+ * scartata dallo SDI è un numero bruciato, non un documento da mettere in mano a
+ * una famiglia. Consegnarla è consegnare una carta che entra in una pratica.
+ */
+describe('b-bis · lo scarto SDI non esce dal registro', () => {
+  it('unica riga SCARTATA (4) → 404, e il bucket non viene interrogato: un numero bruciato non si consegna', async () => {
+    h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 4 }]
+
+    const res = await chiedi()
+
+    expect(res.status).toBe(404)
+    expect((await res.json()).codice).toBe('FATTURA_PDF_NON_DISPONIBILE')
+    expect(res.headers.get('content-type') ?? '').not.toContain('application/pdf')
+    // La chiave c'ERA: se il filtro sparisse, il documento uscirebbe.
+    expect(h.chiamateDownload).toBe(0)
+  })
+
+  it('scartata + riemessa viva → esce la VIVA, e senza il 409 «più fatture»', async () => {
+    // Due righe sullo stesso pagamento, come dopo uno scarto rimesso in corsa.
+    // Se il filtro fosse invertito uscirebbe la scartata; se non filtrasse
+    // affatto, la rotta vedrebbe due documenti e risponderebbe 409.
+    h.righe = [
+      { id: 'ff000000-0000-4000-8000-00000000000a', numero: 1948, anno: 2026, pdf_path: 'fatture/scartata.pdf', sdi_stato: 4 },
+      { id: FID, numero: 1990, anno: 2026, pdf_path: 'fatture/viva.pdf', sdi_stato: 7 },
+    ]
+    h.scaricato = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])])
+
+    const res = await chiedi()
+
+    expect(res.status).toBe(200)
+    expect(h.chiaviChieste).toEqual(['fatture/viva.pdf'])
+  })
+
+  it('`sdi_stato` ASSENTE (trasporto fallito) → resta VIVA: nessuno sa se il documento sia partito', async () => {
+    h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: null }]
+    h.scaricato = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])])
+
+    const res = await chiedi()
+
+    expect(res.status).toBe(200)
+    expect(h.chiaviChieste).toEqual(['fatture/1948.pdf'])
+  })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
 describe('c · il documento c’è', () => {
   it('200 con i BYTE DEL BUCKET, non con byte fabbricati qui', async () => {
     // Byte riconoscibili: se la risposta fosse un PDF disegnato al volo sarebbero

@@ -24,6 +24,7 @@ import {
   type ConteggiFattura,
   type SuggerimentoUi,
   type EsitoImport,
+  type EsitoComposizione,
   type MovimentoUi,
 } from '@/components/features/admin/pagamenti/riconciliazione-ui'
 // La POLITICA sta nella lib e non fra i componenti: la legge anche la rotta del
@@ -1033,5 +1034,103 @@ describe('reconComposizioneRegistrata — la frase che l’operatrice legge', ()
     expect(rende('en', { voci: 1, ticket: 1, totale: '€ 10,00' })).toBe('Payment recorded: 1 item and 1 meal ticket · € 10,00')
     expect(rende('en', { voci: 3, ticket: 20, totale: '€ 150,00' })).toBe('Payment recorded: 3 items and 20 meal tickets · € 150,00')
     expect(rende('en', { voci: 2, ticket: 0, totale: '€ 20,00' })).not.toContain('ticket')
+  })
+})
+
+/**
+ * ─── UN SUCCESSO DICHIARATO SUL NULLA ────────────────────────────────────────
+ *
+ * Misurato dal critico della fetta F11: passato al pannello un esito MALFORMATO,
+ * la fascia usciva VERDE e diceva «Pagamento registrato: 0 voci · € 0,00».
+ * Meglio di «NaN voci», e comunque un'affermazione su un fatto che quei numeri
+ * non raccontano.
+ *
+ * Perché non è cosmetico: questa fascia è l'unico posto in cui la segreteria legge
+ * che il bonifico è stato incassato. Un verde con zero voci e zero euro afferma
+ * una cosa che non è successa, e in quel momento non c'è nient'altro da guardare.
+ *
+ * ⚠️ LA RIPULITURA NON È UNA DIAGNOSI, ed è il difetto in una riga. `intero()`
+ * trasforma `NaN` e i negativi in `0` perché «NaN voci» sopra a un incasso vero
+ * sarebbe peggio — ma dopo la ripulitura un esito malformato è INDISTINGUIBILE da
+ * un esito vero che vale zero. Il tono va deciso PRIMA di ripulire, sui numeri
+ * come sono arrivati: è quello che fa `numeriLeggibili`.
+ *
+ * Il criterio, e da dove viene ciascun pezzo:
+ *  · i tre campi devono essere numeri finiti e non negativi — vengono da un JSON,
+ *    e fra la RPC che li conta e questo componente c'è la rete;
+ *  · `totale > 0`, perché la rotta `…/componi` rifiuta un bonifico non positivo
+ *    (`reconComponiErrMovimentoNonPositivo`): un totale a zero non è un pagamento;
+ *  · `voci + ticket > 0`, perché una composizione che non salda niente e non
+ *    accredita niente non esiste. `voci: 0` DA SOLO resta legittimo: una
+ *    composizione di soli ticket non salda nessuna voce aperta.
+ */
+describe('riepilogoComposizione — quando i numeri non si possono leggere', () => {
+  it('l’esito del critico: NaN e conteggi negativi non sono un riepilogo', () => {
+    const r = riepilogoComposizione({ voci: Number.NaN, ticket: -4, totale: Number.NaN })
+    // I valori restano ripuliti: se qualcosa si mostra, non deve mai dire «NaN».
+    expect(r.valori).toEqual({ voci: 0, ticket: 0, totale: '€ 0,00' })
+    // Ma non si dichiara riuscito niente.
+    expect(r.numeriLeggibili).toBe(false)
+  })
+
+  it('i campi che non arrivano affatto: un JSON troncato, o un client più vecchio', () => {
+    expect(riepilogoComposizione({} as unknown as EsitoComposizione).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: 3, ticket: 0 } as unknown as EsitoComposizione).numeriLeggibili).toBe(false)
+  })
+
+  it('i numeri che non sono numeri: una stringa passa il typeof di nessuno', () => {
+    expect(
+      riepilogoComposizione({ voci: '3', ticket: 0, totale: 150 } as unknown as EsitoComposizione).numeriLeggibili,
+    ).toBe(false)
+  })
+
+  /**
+   * ⚠️ QUESTO BLOCCO ESISTE PERCHÉ META' DELLA GUARDIA NON ERA DIFESA DA NIENTE.
+   *
+   * `arrivato` chiede tre cose — `typeof v === 'number'`, `Number.isFinite(v)` e
+   * `v >= 0` — e il 2026-09-13 un critico ha misurato che **togliendo le ultime
+   * due restavano tutti e 96 i test verdi**. Non era un mutante equivalente: il
+   * codice si comportava davvero in modo diverso, e nessuno se ne accorgeva.
+   *
+   * Il codice era (ed è) giusto: nessuna famiglia ha mai visto la differenza. A
+   * mancare era la difesa della difesa — cioè la sola cosa che impedisce a
+   * qualcuno, fra sei mesi, di «semplificare» quelle due condizioni col gate
+   * verde. Vedi il promemoria «rompi il codice e guarda il test diventare rosso».
+   *
+   * I tre casi qui sotto sono quelli su cui le due forme divergono, misurati:
+   * un conteggio negativo, un conteggio negativo nell'altro campo, e un
+   * `Infinity` — che è un `number` a tutti gli effetti per `typeof`, e che
+   * `formatEuro` renderebbe come «€ ∞».
+   */
+  it('i numeri impossibili: negativi e infiniti sono «number», e non sono numeri', () => {
+    expect(riepilogoComposizione({ voci: -4, ticket: 10, totale: 100 }).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: 2, ticket: -1, totale: 100 }).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: Infinity, ticket: 0, totale: 100 }).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: Infinity }).numeriLeggibili).toBe(false)
+  })
+
+  it('tutto a zero è «niente», non «fatto»', () => {
+    expect(riepilogoComposizione({ voci: 0, ticket: 0, totale: 0 }).numeriLeggibili).toBe(false)
+    // Un totale non positivo non è un pagamento, nemmeno con delle voci accanto.
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: 0 }).numeriLeggibili).toBe(false)
+    // E nemmeno delle voci a zero con del denaro: la RPC non scrive denaro senza righe.
+    expect(riepilogoComposizione({ voci: 0, ticket: 0, totale: 150 }).numeriLeggibili).toBe(false)
+  })
+
+  it('il controllo positivo: un esito VERO resta leggibile, coi ticket e senza', () => {
+    // Senza queste tre righe, un `numeriLeggibili` che dicesse sempre `false`
+    // spegnerebbe la fascia su ogni composizione riuscita, col gate verde.
+    expect(riepilogoComposizione({ voci: 3, ticket: 20, totale: 150 }).numeriLeggibili).toBe(true)
+    expect(riepilogoComposizione({ voci: 1, ticket: 0, totale: 75.5 }).numeriLeggibili).toBe(true)
+    // Composizione di SOLI ticket: nessuna voce aperta saldata, e va benissimo.
+    expect(riepilogoComposizione({ voci: 0, ticket: 20, totale: 150 }).numeriLeggibili).toBe(true)
+  })
+
+  it('il tono d’avviso del movimento non legato resta una cosa diversa', () => {
+    // Due guasti diversi: «la riga bancaria non si è legata» e «i numeri non si
+    // leggono». Confonderli farebbe sparire l'uno dietro l'altro.
+    const r = riepilogoComposizione({ voci: 2, ticket: 0, totale: 80, movimentoLegato: false })
+    expect(r.avviso).toBe(true)
+    expect(r.numeriLeggibili).toBe(true)
   })
 })

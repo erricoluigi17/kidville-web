@@ -217,7 +217,28 @@ export function ComposizioneBonifico({
     const [nuove, setNuove] = useState<FormNuova[]>([])
     const [ticket, setTicket] = useState<FormTicket[]>([])
     const [sedeScelta, setSedeScelta] = useState('')
-    /** `''` = àncora proposta dal motore. Altrimenti `specie:indiceLocale`. */
+    /**
+     * `''` = àncora proposta dal motore. Altrimenti `specie:indiceLocale`.
+     *
+     * ⚠️ È UNA POSIZIONE, NON UN'IDENTITÀ, E VA AZZERATA DA OGNI GESTO CHE RIORDINA.
+     * La forma `specie:indice` non è una scorciatoia: è quella che il payload manda,
+     * perché una voce che NASCE qui non ha ancora un uuid (lo risolve la RPC dopo
+     * l'INSERT). Il prezzo è che un riordino cambia il significato di quel numero
+     * senza toccarlo — l'indice resta 1 e sotto l'1 c'è un'altra riga — e da lì il
+     * server ricava `body.voci[indice].pagamento_id`, cioè `ancora_pagamento_id`,
+     * cioè l'INTESTATARIO DEL DOCUMENTO FISCALE (e la detrazione 730 di qualcuno).
+     *
+     * Perciò i CINQUE gesti che riordinano gli elenchi la azzerano tutti, senza
+     * eccezioni: `commutaVoce` (nei due versi), `aggiungiVoce`, `aggiungiTicket` e i
+     * due «Rimuovi voce». Azzerata, torna a valere la proposta del motore, che è
+     * SEMPRE coerente con l'elenco di adesso — e si vede nella tendina.
+     * Un bounds-check non basterebbe e sarebbe peggio: `indice: 1` dopo il riordino
+     * esiste ancora, punta solo a un'altra riga. Il presidio è
+     * `__tests__/components/ComposizioneBonifico.test.tsx`, «i CINQUE gesti che
+     * riordinano azzerano l’àncora» (il nome è cercabile così com'è scritto): una
+     * prova per gesto, e togliendo la riga da UNO dei cinque diventa rossa quella del
+     * gesto corrispondente — misurato una mutazione alla volta, tutte e cinque.
+     */
     const [ancoraScelta, setAncoraScelta] = useState('')
     const [invio, setInvio] = useState(false)
     /** Come `erroreCtx`: si tiene il corpo, la frase la sceglie il render. */
@@ -406,8 +427,34 @@ export function ComposizioneBonifico({
         return dentro.length > 0 ? dentro : toccate
     }, [righe, sediComponibili])
 
-    /** Con una sede sola si preseleziona; con più d'una NON si indovina (400 lato server). */
-    const sedeDocumento = sedeScelta || (sediSceglibili.length === 1 ? sediSceglibili[0] : '')
+    /**
+     * Con una sede sola si preseleziona; con più d'una NON si indovina (400 lato server).
+     *
+     * ⚠️ E LA SCELTA VALE FINCHÉ È FRA LE OPZIONI, non per sempre. `sedeScelta` è uno
+     * stato, `sediSceglibili` è derivato dalle righe: togliendo le righe di un plesso,
+     * la scelta di prima resta in memoria mentre la tendina non la offre più. Misurato
+     * prima di questa guardia, due figli in due plessi: scelta Aversa, tolta la riga di
+     * Aversa → campo «Sede del documento» VUOTO a schermo (il valore non è fra le
+     * opzioni), pulsante ACCESO, nessun motivo elencato, e nel payload
+     * `scuola_id` = Aversa su una composizione di sola Giugliano. Il server non se ne
+     * accorge: verifica che la sede sia ACCESSIBILE a chi la dichiara (§3 di
+     * `componi`, decisione 15), non che c'entri con le righe. Risultato:
+     * `pagamenti_transazioni.scuola_id` e `riconciliazione_movimenti.scuola_id` nel
+     * plesso sbagliato, in silenzio — e «ogni scrittura dichiara la sua sede» smette
+     * di essere vera proprio dove si decide un documento fiscale.
+     *
+     * Perché una GUARDIA sul valore derivato e non un `setSedeScelta('')` nei gesti
+     * (come per `ancoraScelta`): l'àncora è una POSIZIONE, e una posizione dopo un
+     * riordino non è più verificabile — si azzera e basta. La sede è un'IDENTITÀ: si
+     * può chiedere se è ancora offerta, e finché lo è la scelta dell'operatrice resta
+     * sua. Azzerarla a ogni riordino cancellerebbe la scelta legittima di un bonifico
+     * cross-sede, che è il caso per cui questa schermata esiste. Le due prove
+     * «la sede del DOCUMENTO non sopravvive alle righe» tengono ferme tutt'e due le
+     * direzioni.
+     */
+    const sedeDocumento =
+        (sedeScelta && sediSceglibili.includes(sedeScelta) ? sedeScelta : '') ||
+        (sediSceglibili.length === 1 ? sediSceglibili[0] : '')
 
     const paganteCorrente = paganteScelto ?? ctx?.pagante.proposto?.parent_id ?? ''
 
@@ -591,8 +638,15 @@ export function ComposizioneBonifico({
      * può SOTTO-riempire (ogni id si consuma una volta sola), e con la capienza
      * esaurita non propone niente — lì si ricade sul residuo, che sfora in modo
      * VISIBILE invece di scrivere uno 0 muto. A decidere resta `puoConfermare`.
+     *
+     * ⚠️ E AZZERA L'ÀNCORA, come gli altri quattro gesti che riordinano (vedi la
+     * regola sopra `ancoraScelta`). Questo era il quinto, ed era l'unico a non farlo:
+     * misurato, tre voci da 50 contro un bonifico da 100, scelta la seconda come voce
+     * da cui intestare la fattura e tolta la spunta alla PRIMA, il payload partiva con
+     * `{ specie: 'esistente', indice: 1 }` su un elenco che nel frattempo era
+     * scalato — cioè `body.voci[1]` = la GITA, e `ancora_pagamento_id` con lei.
      */
-    const commutaVoce = (i: number, voceId: string, residuo: number) =>
+    const commutaVoce = (i: number, voceId: string, residuo: number) => {
         setSpunte((prec) => {
             const dopo = { ...prec }
             if (dopo[i] !== undefined) {
@@ -604,6 +658,8 @@ export function ComposizioneBonifico({
             dopo[i] = String(proposta?.importo ?? residuo)
             return dopo
         })
+        setAncoraScelta('')
+    }
 
     const aggiungiVoce = () => {
         setNuove((p) => [
@@ -772,6 +828,26 @@ export function ComposizioneBonifico({
                                                     htmlFor={idSpunta}
                                                     className="flex-1 font-maven text-sm text-kidville-ink"
                                                 >
+                                                    {/* ⚠️ LA DESCRIZIONE ARRIVA COM'È, ANCHE PER UN FIGLIO FUORI SEDE,
+                                                        e qui si dichiara invece di lasciarlo scoprire. Del bambino di
+                                                        un altro plesso il contesto manda `nome: null` (lo fa apposta:
+                                                        «il nome di un minore esce solo per le sedi dell'operatore»),
+                                                        ma `voci_aperte` lo passa con uno spread e la `descrizione` —
+                                                        testo libero scritto dalla segreteria — non è redatta da
+                                                        nessuno. Una descrizione che contenesse il nome del bambino
+                                                        aggirerebbe quel `nome: null` da sotto (e qui non se ne scrive
+                                                        uno d'esempio: in questo repository, pubblico, un nome
+                                                        «inventato» in un commento è già corrisposto a un bambino vero).
+                                                        MISURATO il 2026-09-13 in produzione, con un `count` (nessuna
+                                                        riga letta): 410 voci aperte, tutte con descrizione, e
+                                                        **0** contengono il nome o il cognome del bambino a cui sono
+                                                        intestate. Oggi non perde niente.
+                                                        E NON SI REDIGE QUI. Il criterio di ciò che esce è della
+                                                        rotta, che è l'unica a sapere chi sta guardando: inventarne
+                                                        uno nel pannello vorrebbe dire due criteri, e il giorno in cui
+                                                        divergono vince quello che nessuno ha scritto apposta. Se un
+                                                        giorno servirà, si taglia là — e questo punto la seguirà
+                                                        senza modifiche. */}
                                                     {voce.descrizione || '—'}
                                                     <span className="ml-2 text-kidville-sub">
                                                         {nomeFiglio(figlio)} · {formatEuro(residuo)}

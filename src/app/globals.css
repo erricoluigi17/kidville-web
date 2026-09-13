@@ -2543,8 +2543,12 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    appoggiato sopra la decisione di non dipingere un riquadro d'avviso, che in Alto
    Contrasto è finito a 3,10:1 — e i suoi chip, bianchi su una superficie diventata
    nera, a **1,00:1**: invisibili. Rimisurato con la formula del lock
-   `__tests__/architecture/riconciliazione-a11y-css.test.ts`.
-   `@theme inline` INLINA l'hex nelle utility:
+   `__tests__/pagamenti/riconciliazione-a11y-css.test.ts` — che sta in
+   `__tests__/pagamenti/`, non in `__tests__/architecture/` dove lo si cerca per
+   abitudine.
+
+   E non si rimedia ridefinendo il token, perché `@theme inline` INLINA l'hex
+   nelle utility:
    ridefinire `--color-kidville-warn-strong` sotto `[data-contrast="high"]` non
    toccherebbe una sola classe già generata, quindi una superficie nuova o è
    dipinta a mano o in Alto Contrasto non esiste.

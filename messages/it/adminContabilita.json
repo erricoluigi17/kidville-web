@@ -1072,5 +1072,6 @@
   "reconComponiEsitoRiaperto": "Bonifico riaperto",
   "reconComponiEsitoRigheRiaperte": "{n, plural, one {Una riga dell’estratto conto è tornata in coda} other {# righe dell’estratto conto sono tornate in coda}}",
   "reconComponiEsitoIncassiStornati": "{n, plural, one {Un incasso è stato stornato} other {# incassi sono stati stornati}}",
-  "reconComponiEsitoFattureVive": "Fatture ancora in essere"
+  "reconComponiEsitoFattureVive": "Fatture ancora in essere",
+  "reconComposizioneNonLeggibile": "Pagamento registrato, ma il riepilogo di che cosa copre è arrivato illeggibile. Non ricomporre il bonifico: il denaro è già a registro. Controlla le voci della famiglia."
 }

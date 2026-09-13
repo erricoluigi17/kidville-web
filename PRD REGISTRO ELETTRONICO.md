@@ -73,7 +73,7 @@
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`) |
 > | **Vigilanza sulle chat** | ✅ Operativo (2026-09-09) | `/admin/messaggi` → «Tutti i messaggi» e «Registro accessi» | Segreteria e Direzione consultano qualunque conversazione della propria sede, e la consultazione è **silenziosa** per i due interlocutori. Ogni lettura e ogni ricerca finiscono in `chat_vigilanza_accessi`, in **sola aggiunta**; se il registro non si scrive il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Il registro lo legge **solo la Direzione**, senza esenzioni per sé. Ritenzione: la riga resta, IP/browser/termine si azzerano a 12 mesi |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
-> | **Conciliazione composita — un bonifico, più voci** | ✅ Completa sul branch `feat/conciliazione-composita` (13/09/2026) · ⏳ **non ancora in produzione**: tre migrazioni da applicare (`20260912180000`, `…180100`, `…180200`) | `/admin/pagamenti` → *Riconciliazione* → popup del movimento → **«Componi il pagamento»** (`ComposizioneBonifico`, dentro il popup e non in una pagina a sé) | `GET /api/pagamenti/riconciliazione/[id]/contesto` (**non scrive niente**: di chi è il bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie, quanto costa un ticket in quella sede) e `POST /api/pagamenti/riconciliazione/[id]/componi` (registra l'intera composizione in **una** transazione atomica — RPC `registra_transazione_contabile` — con compare-and-swap sul movimento). Spunta le voci aperte, **ne crea di nuove**, **aggiunge ticket mensa** (quantità × costo unitario, che accreditano anche i pasti), e conferma **solo quando quadra all'esatto**: niente eccedenza, niente residuo. Funziona anche per **fratelli di plessi diversi**. 🔴 **Una sola fattura, con una riga sola, per il totale del bonifico e la descrizione della voce àncora** — con la conseguenza fiscale che ne segue, scritta per intero nel changelog del 13/09 |
+> | **Conciliazione composita — un bonifico, più voci** | ✅ Completa sul branch `feat/conciliazione-composita` (13/09/2026) · ⏳ **non ancora in produzione** — **le tre migrazioni (`20260912180000`, `…180100`, `…180200`) sono già applicate sul database (le tre `version` risultano presenti in `supabase_migrations.schema_migrations`, verificato il 13/09, e il fixture `__tests__/fixtures/migrazioni-applicate-snapshot.json` le elenca): NON riapplicarle**; manca il rilascio del **codice**. ⚠️ *Qui si leggeva «applicate **dal 12/09**»: la data è stata tolta perché **quella tabella non sa quando**. Le sue colonne sono `version`, `statements`, `name`, `created_by`, `idempotency_key`, `rollback` — nessuna è una data — e la strada per ricavarla dal commit è chiusa: `track_commit_timestamp` è `off`, quindi `pg_xact_commit_timestamp(xmin)` risponde `55000: could not get commit timestamp data` (provato il 13/09). Il «12/09» era il timestamp del **nome del file**, non una misura: resta vero che sono applicate, non quando* | `/admin/pagamenti` → *Riconciliazione* → popup del movimento → **«Componi il pagamento»** (`ComposizioneBonifico`, dentro il popup e non in una pagina a sé) | `GET /api/pagamenti/riconciliazione/[id]/contesto` (**non scrive niente**: di chi è il bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie, quanto costa un ticket in quella sede) e `POST /api/pagamenti/riconciliazione/[id]/componi` (registra l'intera composizione in **una** transazione atomica — RPC `registra_transazione_contabile` — con compare-and-swap sul movimento). Spunta le voci aperte, **ne crea di nuove**, **aggiunge ticket mensa** (quantità × costo unitario, che accreditano anche i pasti), e conferma **solo quando quadra all'esatto**: niente eccedenza, niente residuo. Funziona anche per **fratelli di plessi diversi**. 🔴 **Una sola fattura, con una riga sola, per il totale del bonifico e la descrizione della voce àncora** — con la conseguenza fiscale che ne segue, scritta per intero nel changelog del 13/09 |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -142,6 +142,27 @@ incassa due volte.
 > effetto collaterale scoperto dopo. Il generatore XML *supporta* le righe multiple
 > (`righe: [...]` di `buildFatturaElettronicaXml`): se ne usa **una sola**, deliberatamente. Chi
 > legge quel codice non lo «corregga» spacchettando il documento in una riga per voce.
+>
+> ⚠️ **Un'eccezione viva, e va detta qui perché questo riquadro promette di non ammorbidire niente:
+> se la voce àncora è RIPARTITA FRA GENITORI SEPARATI, l'ancoraggio NON si applica.** Lì si emette
+> come sempre **una fattura per quota, sull'importo della SOLA VOCE**, e la parte restante del
+> bonifico **resta non fatturata** — cioè denaro incassato senza documento. Non è un buco scoperto
+> dopo: il codice lo sa e lo dichiara (`esito: 'ancoraggio-non-applicato-multi-quota'`, ramo `multi`
+> di `src/lib/aruba/emissione.ts`, col commento «questa riga esiste perché qualcuno se ne accorga e
+> decida con la segreteria»). La ragione è che ripartire fra due genitori un totale che comprende le
+> voci di altri figli e altre categorie vorrebbe dire inventare due importi che nessuno ha deciso, su
+> documenti che non si correggono.
+>
+> **Quanto pesa, misurato il 2026-09-13: 3 alunni su 727.** Pochi, ma veri e in produzione.
+> ```sql
+> SELECT count(*) FILTER (WHERE genitori_separati AND retta_split_config IS NOT NULL) AS con_split,
+>        count(*) AS alunni
+> FROM alunni;
+> ```
+>
+> 🔴 **La decisione NON è presa**, e questo riquadro dice che manca — non quale sia. Il titolare non
+> si è espresso su cosa debba accadere a quella parte di bonifico; finché non lo fa, il codice non
+> inventa nulla e lascia un `warn`. Il rimando sta fra i punti aperti, qui sotto.
 
 Meccanicamente non c'è nessuna colonna nuova: `fatture_emesse.pagamento_id` è `NOT NULL`, unico e
 protetto da trigger WORM, e la fattura resta ancorata al `pagamento_id` della voce àncora — quello
@@ -174,6 +195,29 @@ Il prezzo del documento unico, misurato e non dedotto: la riga bancaria finisce 
 del **documento**, quindi la vede anche chi il plesso del pagamento non ce l'ha fra i propri — e per
 lui il chip di fatturazione resta muto e la casella del lotto spenta, per minimizzazione. Coerente,
 ma da sapere prima e non dopo.
+
+### Nell'elenco, due aggiunte: la fascia di riepilogo e il perché una riga non è fatturabile
+
+**Dopo una composizione riuscita compare una fascia di riepilogo** — «Pagamento registrato: N voci e
+M ticket · € X» (`riepilogoComposizione` in `riconciliazione-ui.ts`, chiave
+`reconComposizioneRegistrata`, **plurale ICU in italiano e in inglese**), accanto a quella dell'import
+e con la stessa forma. Su un'operazione che può saldare sei voci di tre fratelli e accreditare venti
+ticket in un colpo, «la riga è diventata verde» non è un esito: è il minimo comune denominatore fra
+«ha fatto tutto» e «ha fatto metà». La fascia esce in tono d'**avviso** quando il denaro è scritto ma
+la riga bancaria non si è legata; e — **aggiunta del 13/09**, `reconComposizioneNonLeggibile`, anch'essa
+nelle due lingue — **quando i tre numeri arrivano illeggibili lo dice**, invece di scrivere «0 voci ·
+€ 0,00» in verde: un successo dichiarato sul nulla, sull'unica schermata in cui la segreteria legge
+che il bonifico è incassato. Quel testo porta l'istruzione che serve davvero — *«non ricomporre il
+bonifico: il denaro è già a registro»* — perché sulle voci nuove e sui ticket un secondo giro crea
+righe nuove e nessun residuo lo ferma.
+
+**E accanto a una riga confermata senza chip di fatturazione compare la spiegazione del perché non è
+fatturabile** (`motivoNonFatturabile`, `riconciliazione-ui.ts`): **cinque** guardie in cascata prima
+del verdetto — la fatturazione dev'essere disponibile, la riga `confermato`, il `pagamento_id`
+presente, `pagamento_stato` e `fattura_stato` **entrambi** assenti (la firma della minimizzazione per
+sede del server), e nessun chip già a parlare. Il verdetto **non nomina mai il plesso né il minore**,
+e non è una limatura: quel dato il client non ce l'ha — è precisamente ciò che il server gli ha tolto
+— e inventarlo vorrebbe dire dire a una segreteria il nome di una sede che non ha modo di verificare.
 
 ### La riapertura: storna, non avvisa il genitore, non cancella le voci create
 
@@ -247,11 +291,62 @@ li ha visti mancare:
 
 ### Le prove
 
-File di prova nuovi: **13, con 413 casi, tutti verdi** — eseguiti il 2026-09-13 **alle 16:14** con
-`npx vitest run` sull'elenco che `git status --short` restituisce. ⚠️ **Il numero cresce mentre lo
-si scrive**, e vale la pena dirlo qui: cinque minuti prima, alle 16:09, i file erano **12** e i casi
-**399**; nel frattempo un'altra fetta ne ha chiuso uno. È il motivo per cui in questa voce accanto a
-ogni numero c'è il comando che lo rifà.
+File di prova nuovi: **14, con 439 casi, tutti verdi** — rieseguiti il 2026-09-13 **alle 18:19**,
+al momento del commit, con questo comando, che i 14 file li **elenca uno per uno** invece di
+chiederli a `git`:
+
+```bash
+npx vitest run \
+  __tests__/api/pagamenti-riconciliazione-componi.test.ts \
+  __tests__/api/pagamenti-riconciliazione-contesto.test.ts \
+  __tests__/api/pagamenti-riconciliazione-riapri.test.ts \
+  __tests__/architecture/annullo-riapre-movimento.test.ts \
+  __tests__/architecture/pagante-ammesso-un-motore-solo.test.ts \
+  __tests__/architecture/pannello-componi-testi-completi.test.ts \
+  __tests__/architecture/rpc-transazione-composita.test.ts \
+  __tests__/components/ComposizioneBonifico.test.tsx \
+  __tests__/components/MovimentoDialog-componi-riapertura.test.tsx \
+  __tests__/components/RiconciliazionePanel-composizione.test.tsx \
+  __tests__/lib/aruba/emissione-fattura-ancorata.test.ts \
+  __tests__/lib/conciliazione-composita.test.ts \
+  __tests__/lib/pagamenti/fattura-viva.test.ts \
+  __tests__/lib/pagamenti/pagante-ammesso.test.ts
+# Test Files  14 passed (14)  ·  Tests  439 passed (439)   ← 2026-09-13, 18:19
+```
+
+⚠️ **Il numero cresce mentre lo si scrive**, e vale la pena dirlo qui: alle 16:09 erano **12 file e
+399 casi**, alle 16:14 **13 e 413**, alle 17:45 e alle 17:57 **13 e 433**, alle 18:02 **13 e 434**,
+alle 18:19 **14 e 439**. A muoversi sono soprattutto i **casi**, perché altre fette in lavorazione
+sullo stesso albero toccano questi stessi file — ma il 13→14 dice che **anche l'elenco si muove**:
+il quattordicesimo (`pagante-ammesso-un-motore-solo`) è nato non tracciato mentre questa voce
+veniva scritta, e chi l'ha scritta non poteva vederlo. L'ha aggiunto l'orchestratore al momento del
+commit, rifacendo la misura invece di ricopiarla. È il motivo per cui accanto a ogni numero c'è il
+comando che lo rifà — e per cui prima del merge va **rifatto, non ricopiato**.
+
+⚠️ **E il comando va PROVATO, non solo scritto — qui è già costato due stesure.** La prima
+elencava i file con `git status --short | grep '^??'`: è scaduta lo stesso giorno, appena quei
+file sono stati committati, e rispondeva **1 invece di 13**. La seconda li chiedeva a
+`npx vitest run $(git diff --name-only --diff-filter=A main...HEAD -- __tests__)`, motivandola con
+«l'elenco non dipende da cosa è già committato»: vero, ma la proprietà che serviva era un'altra —
+**non dipendere da dove sta `main`** — e quel comando ci dipende **di più**. `main...HEAD` è a tre
+punti, cioè confronta col merge-base: il giorno del merge — il giorno esatto in cui questa voce
+si legge da `main` — `HEAD` **è** `main`, il diff è vuoto (provato: `git diff --name-only
+--diff-filter=A main...main -- __tests__` → **0 file**), e l'espansione vuota lascia `npx vitest run`
+**nudo**, che non esegue *meno*: esegue **tutto**. Misurato il 13/09: `npx vitest list | wc -l` →
+**17.236**. Non fallisce: risponde un numero quaranta volte più grande con l'aria di aver rifatto
+la misura, ed è peggio del comando che aveva sostituito.
+
+Per questo l'elenco qui sopra è scritto per esteso: non interroga `git`, quindi dà lo stesso numero
+prima e dopo il merge. Il suo modo di invecchiare è l'opposto, ed è stato provato anche quello: se un
+file viene rinominato, `vitest` esegue i rimanenti e **il conteggio scende** — provato passandogli
+due percorsi di cui uno inesistente: `Test Files  1 passed (1)`, uscita **0**, nessun avviso
+sull'assente; se spariscono tutti esce **1** con «No test files found». Quindi non protesta, ma
+restituisce **meno** di 14 file: una misura che cala si vede; una che si gonfia all'intera suite
+sembra solo un altro numero verde. La riserva, scritta perché non se ne accorga qualcun altro al posto
+nostro: **l'elenco non si aggiorna da sé**. ⚠️ E non è un'ipotesi: quando questa riga è stata scritta
+diceva «un quattordicesimo file va aggiunto qui a mano» — **ed è successo lo stesso giorno**, un'ora
+dopo. Un quindicesimo andrà aggiunto allo stesso modo, altrimenti il comando continua a rispondere
+**14 file** senza sbagliare un numero e senza contarlo.
 
 Fra questi file:
 il motore puro (`__tests__/lib/conciliazione-composita.test.ts`), le due rotte nuove, la riapertura,
@@ -269,6 +364,15 @@ di residuo. Non servono importi astronomici: sono cifre di tutti i giorni.
 
 ### 🔴 Ciò che questo lavoro lascia aperto, scritto invece che nascosto
 
+- 🔴 **Una decisione fiscale che il titolare non ha preso: il bonifico composito di una famiglia
+  con genitori separati.** Quando la voce àncora è ripartita fra due intestatari l'ancoraggio del
+  totale **non si applica**, si emette una fattura per quota sull'importo della sola voce, e **la
+  parte restante del bonifico non viene fatturata** (riquadro fiscale qui sopra;
+  `esito: 'ancoraggio-non-applicato-multi-quota'`). Misurato il 2026-09-13: **3 alunni su 727** hanno
+  `genitori_separati` con `retta_split_config`. Il codice fa la cosa prudente — non inventa importi e
+  logga — ma prudente non vuol dire risolto: è **denaro incassato senza documento**, e la strada è
+  una decisione presa **con la segreteria**, non una riga di codice. Finché non c'è, questa voce
+  resta qui: fino a oggi la parola «separati» non compariva da nessuna parte in questo changelog.
 - **Il controllo che tiene insieme migrazione e guardia sorveglia una porta sola.**
   `__tests__/architecture/annullo-riapre-movimento.test.ts` legge la migrazione dell'annullo e
   **un** file di route (`pagamenti/riconciliazione/[id]/route.ts`). Le porte sullo stato «movimento
@@ -342,7 +446,7 @@ chiedono conferma a nessuno, e invecchiano da sole.
 | Confermati con una fattura **viva** sul pagamento abbinato | **167 su 174 — 96%** (171 con una fattura di qualunque stato) | `count(*) FILTER (WHERE EXISTS (SELECT 1 FROM fatture_emesse f WHERE f.pagamento_id = m.pagamento_id AND (f.sdi_stato IS NULL OR f.sdi_stato NOT IN (2,4,9))))` su `riconciliazione_movimenti m WHERE m.stato='confermato'` |
 | Pacchetti ticket configurati, per sede | Giugliano **1** · Cesa **0** · Aversa **0** (la sede Demo non ha nemmeno la riga in `admin_settings`) | `SELECT s.nome, jsonb_array_length(a.ticket_pacchetti) FROM schools s LEFT JOIN admin_settings a ON a.scuola_id = s.id;` |
 | Alunni per sede | Giugliano 333 (327 iscritti) · Cesa 245 (242) · Aversa 120 (119) · Demo 25 · E2E 4 — **727** in tutto | `SELECT s.nome, count(*), count(*) FILTER (WHERE a.stato='iscritto') FROM alunni a JOIN schools s ON s.id=a.scuola_id GROUP BY s.nome;` |
-| Prove del lavoro | **13 file, 413 casi, verdi** (alle 16:14; erano 12 e 399 alle 16:09 — cresce) | `npx vitest run $(git status --short \| grep '^??' \| grep __tests__ \| awk '{print $2}')` |
+| Prove del lavoro | **14 file, 439 casi, verdi** (alle 18:19, al commit; 13 e 434 alle 18:02, 13 e 433 alle 17:45, 13 e 413 alle 16:14, 12 e 399 alle 16:09 — crescono i casi perché altre fette toccano gli stessi file, ed è cresciuto anche l'elenco: il 14° è nato mentre questa voce veniva scritta) | `npx vitest run` **seguito dai 14 file scritti uno per uno**: il blocco copiabile sta nella sezione «Le prove» di questa stessa voce. È per esteso di proposito, perché nessuna delle due forme che chiedevano l'elenco a `git` regge: `$(git status --short \| grep '^??')` è scaduta al primo commit (**1 invece di 13**), e `$(git diff --name-only --diff-filter=A main...HEAD -- __tests__)` collassa **il giorno del merge**, quando `HEAD` è `main` e il diff a tre punti è vuoto: `npx vitest run` resta nudo ed esegue **17.236** casi invece di 439 |
 | Codici di violazione con un testo in catalogo | **12** (10 di riga + 2 d'insieme) | `CodiceViolazione` e `CodiceViolazioneComposizione` in `src/lib/pagamenti/conciliazione-composita.ts`; il lock `pannello-componi-testi-completi.test.ts` li estrae dal sorgente |
 
 *Nota sui riferimenti: in questa voce i punti del codice si citano per **contenuto** (una stringa
@@ -356,7 +460,10 @@ più volte in tre giorni, e i numeri di riga della stesura precedente erano scad
 scoperto l'annullo: `annulla_transazione_contabile` stornava incassi, ricariche mensa e credito, e
 lasciava la riga dell'estratto conto `confermato` — verde, abbinata e conclusa, mentre l'incasso che
 la giustificava non esisteva più. Quel bonifico non sarebbe **mai** ricomparso in coda. La quarta
-classe è stata aggiunta alla RPC (migrazione `20260912180200_…`, si applica nello stesso rilascio).
+classe è stata aggiunta alla RPC (migrazione `20260912180200_…`, **applicata sul database — la
+`version` risulta in `supabase_migrations.schema_migrations`, verificato il 13/09: non va
+riapplicata** — il rilascio che manca riguarda solo il codice). ⚠️ Qui non c'è una data perché non
+è conoscibile: vedi l'inciso alla riga della tabella dei moduli, e non reintrodurla.
 
 ### Il difetto della prima stesura: la correzione apriva la falla che diceva di chiudere
 La migrazione azzerava tutti i legami del movimento riaperto, `pagamento_id` compreso — e

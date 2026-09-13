@@ -13,8 +13,9 @@ import {
   type CandidatoGenitore,
   type MotivoAbbinamentoOrdinante,
 } from '@/lib/pagamenti/ordinante-genitore'
-import { scegliPaganteComune, type LegameGenitoreAlunno } from '@/lib/pagamenti/pagante-comune'
-import { getFigliDiGenitoreEsito, getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
+import { scegliPaganteComune } from '@/lib/pagamenti/pagante-comune'
+import { pagantiAmmessiPerAlunni } from '@/lib/pagamenti/pagante-ammesso'
+import { getFigliDiGenitoreEsito } from '@/lib/anagrafiche/legami'
 import { eAncoraIscritto } from '@/lib/alunni/stato'
 
 /**
@@ -39,10 +40,18 @@ import { eAncoraIscritto } from '@/lib/alunni/stato'
  *  · `residuoEffettivo` (`@/lib/pagamenti/aging`) — importo − sconto − incassato,
  *    **clampato a 0**. Non si rifà a mano: un sovraincasso con residuo negativo
  *    diventerebbe un credito che compensa in silenzio la voce di un altro figlio.
- *  · i legami genitore↔figlio dalle DUE sorgenti vive (`@/lib/anagrafiche/legami`):
- *    `student_parents` (anagrafica) e `legame_genitori_alunni` (runtime). Con la
- *    sola anagrafica i tutori di un bambino arrivato dal modulo pubblico «non
- *    risultavano» — difetto già pagato una volta.
+ *  · i legami genitore↔figlio dalle DUE sorgenti vive: `student_parents`
+ *    (anagrafica) e `legame_genitori_alunni` (runtime, via `@/lib/anagrafiche/legami`).
+ *    Con la sola anagrafica i tutori di un bambino arrivato dal modulo pubblico
+ *    «non risultavano» — difetto già pagato una volta.
+ *  · `pagantiAmmessiPerAlunni` (`@/lib/pagamenti/pagante-ammesso`) — l'unione di
+ *    quelle due sorgenti, e da qui viene l'elenco dei candidati. **Fino al
+ *    2026-09-13 quella regola stava scritta due volte**: qui, e nel modulo che la
+ *    SCRITTURA (`…/componi:POST`) usa per rifiutare un pagante estraneo. Erano
+ *    equivalenti — misurato su 2000 scenari, coppie identiche — ed è proprio per
+ *    questo che sono state unite: due copie non divergono il giorno in cui
+ *    nascono, divergono dopo, e quel giorno questa schermata offrirebbe un
+ *    pagante che la scrittura rifiuta.
  *
  * La risposta è modellata su ciò che il motore `conciliazione-composita.ts` sa
  * già leggere: ogni voce esce nella forma di `VoceApertaDb`, così il pannello
@@ -252,63 +261,34 @@ export const GET = withRoute(
       // L'insieme resta piccolissimo per la stessa ragione di
       // `ordinante-genitore.ts`: un omonimo, qui, non sbaglia una classe —
       // intesta una fattura a un estraneo, col suo codice fiscale.
-      const legami: LegameGenitoreAlunno[] = []
-      const relazioni = new Map<string, string | null>()
-      let candidatiCompleti = true
-
-      if (alunniCitati.length > 0) {
-        const sp = await supabase
-          .from('student_parents')
-          .select('parent_id, student_id, relation_type')
-          .in('student_id', alunniCitati)
-        if (sp.error) {
-          candidatiCompleti = false
-          logEvento('pagamento', 'warn', {
-            operazione: OPERAZIONE,
-            esito: 'legami-anagrafica-non-letti',
-            n: alunniCitati.length,
-            ...codiceErroreDi(sp.error),
-          }, sp.error)
-        }
-        for (const r of (sp.data ?? []) as { parent_id?: string | null; student_id?: string | null; relation_type?: string | null }[]) {
-          if (!r.parent_id || !r.student_id) continue
-          legami.push({ parent_id: r.parent_id, student_id: r.student_id })
-          relazioni.set(r.parent_id, r.relation_type ?? null)
-        }
-
-        // Il ponte RUNTIME, portato nello spazio del registro. `getGenitoriDiAlunniEsito`
-        // scarta i `parents` senza account: quello che aggiunge è esattamente il
-        // genitore che l'anagrafica non conosce ancora.
-        const runtime = await getGenitoriDiAlunniEsito(supabase, alunniCitati)
-        if (!runtime.completo) candidatiCompleti = false
-        const accountIds = [...new Set([...runtime.perAlunno.values()].flat())]
-        if (accountIds.length > 0) {
-          const ponte = await supabase.from('parents').select(SEL_PARENTS).in('auth_user_id', accountIds)
-          if (ponte.error) {
-            candidatiCompleti = false
-            logEvento('pagamento', 'warn', {
-              operazione: OPERAZIONE,
-              esito: 'legami-ponte-non-letto',
-              n: accountIds.length,
-              ...codiceErroreDi(ponte.error),
-            }, ponte.error)
-          }
-          const perAccount = new Map<string, ParentRiga>()
-          for (const p of (ponte.data ?? []) as ParentRiga[]) {
-            if (p.auth_user_id) perAccount.set(p.auth_user_id, p)
-          }
-          for (const [alunnoId, accounts] of runtime.perAlunno) {
-            for (const acc of accounts) {
-              const p = perAccount.get(acc)
-              if (p?.id) legami.push({ parent_id: p.id, student_id: alunnoId })
-            }
-          }
-        }
-      }
-
+      //
+      // ⚠️ LA REGOLA NON È SCRITTA QUI, ed è la correzione del 2026-09-13. Le due
+      // porte che decidono chi può essere pagante — questa, che lo MOSTRA, e
+      // `…/componi:POST`, che lo SCRIVE — ne tenevano una copia per una. Adesso
+      // passano tutt'e due da `pagantiAmmessiPerAlunni`: chi cambia la regola le
+      // cambia insieme, che è l'unico modo in cui non possono più divergere.
       // I candidati sono i genitori LEGATI, non tutte le righe che una query ha
-      // riportato: un `parents` senza legame con questi bambini non è un candidato.
-      const parentIds = [...new Set(legami.map((l) => l.parent_id).filter((v): v is string => !!v))]
+      // riportato: un `parents` senza legame con questi bambini non è un candidato,
+      // e infatti `parentIds` è la derivata delle COPPIE, non una seconda query.
+      const ammessi = await pagantiAmmessiPerAlunni(supabase, alunniCitati, OPERAZIONE)
+      const legami = ammessi.legami
+      const relazioni = ammessi.relazioni
+      const parentIds = [...ammessi.parentIds]
+      /**
+       * Il `completo` del modulo, che questa rotta può solo PEGGIORARE con la sua
+       * terza lettura (i nomi, qui sotto). Non ci si rifiuta niente: esce nella
+       * riga di battito, e serve a distinguere «di questi bambini non si conosce
+       * nessun genitore» da «non li abbiamo potuti leggere».
+       *
+       * ⚠️ UNA DIFFERENZA MISURATA, e dichiarata invece di essere nascosta: la
+       * copia che stava qui abbassava questo flag anche sui codici «schema
+       * assente» (42P01 · 42703 · PGRST204 · PGRST205), il modulo no — per la
+       * ragione scritta lì, cioè che sul DB E2E della CI, mai migrato, quei
+       * codici sono l'ambiente e non un guasto. Su 2000 scenari generati è
+       * l'UNICA divergenza fra le due copie (coppie, id e relazioni: identici), e
+       * tocca soltanto ciò che si legge nel log.
+       */
+      let candidatiCompleti = ammessi.completo
       const anagrafiche = new Map<string, ParentRiga>()
       const intestatariDefault = new Set<string>()
       if (parentIds.length > 0) {

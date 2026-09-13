@@ -787,11 +787,36 @@ export const POST = withRoute(
         //  · `completo: false` = una lettura non è riuscita. Rifiutare qui
         //    scaricherebbe sul banco della segreteria un guasto del database,
         //    travestito da «questo genitore non è di questa famiglia».
-        //  · insieme VUOTO = di quei bambini non si conosce nessun genitore. In
-        //    produzione il 2026-09-13 sono 5 alunni su 727, di cui 2 CON voci
-        //    aperte: rifiutare renderebbe i loro insoluti impossibili da incassare
-        //    da questa schermata. Non è un permesso che si allarga: è un insieme
-        //    su cui non c'è niente da decidere.
+        //  · insieme VUOTO = di quei bambini non si conosce nessun genitore, e
+        //    non è un'ipotesi: l'anagrafica ne contiene, oggi e da sempre — un
+        //    bambino appena importato, uno il cui tutore ha un account ma non
+        //    ancora una riga `parents`. Rifiutare qui renderebbe i loro insoluti
+        //    impossibili da incassare da questa schermata. Non è un permesso che
+        //    si allarga: è un insieme su cui non c'è niente da decidere.
+        //
+        //    ⚠️ QUI C'ERA UN CONTEGGIO («5 su 727, di cui 2 con voci aperte»), e
+        //    i due numeri erano veri ma dicevano una cosa falsa: TUTTE E DUE le
+        //    voci aperte stanno nelle sedi FITTIZIE, non in una famiglia vera.
+        //    Cioè la frase giustificava il fail-open con una conseguenza di
+        //    produzione che in produzione non c'è. Un numero dentro un commento
+        //    invecchia da solo; questo si è anche portato dietro la sede
+        //    sbagliata. La ragione del fail-open regge senza numeri — e chi ne
+        //    vuole uno lo RIFACCIA, sono due query e sono letture:
+        //
+        //      -- i bambini per cui questo gate non trova nessun pagante:
+        //      --   NOT EXISTS su `student_parents`
+        //      --   AND NOT EXISTS su `legame_genitori_alunni` JOIN `parents`
+        //      --       ON parents.auth_user_id = legame_genitori_alunni.genitore_id
+        //      -- di questi, quelli con residuo > 0 su `pagamenti`.
+        //
+        //    ⚠️ E si raggruppi per SEDE, escludendo le sedi di prova dall'ID e
+        //    mai dal nome: sono DUE, entrambe col prefisso `e2e00000-`
+        //    («Kidville E2E» e «Kidville Demo»), e chi filtra per nome ne prende
+        //    una sola. ⚠️ E il JOIN su `parents` non è un dettaglio: senza,
+        //    si conta «chi non ha nessuna riga di legame» invece di «chi non ha
+        //    nessun pagante AMMESSO» — due domande diverse, e il gate pone la
+        //    seconda. Misurato il 2026-09-13: differivano di un bambino, che ha
+        //    il legame runtime ma non la riga `parents` a cui il ponte arriva.
         // In tutt'e due i casi si prosegue, ma non in silenzio: un presidio spento
         // che nessuno vede è la prima metà di ogni guasto lungo di questo repo.
         if (!ammessi.completo || ammessi.parentIds.size === 0) {

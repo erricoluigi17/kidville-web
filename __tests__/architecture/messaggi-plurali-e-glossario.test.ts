@@ -275,6 +275,55 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // allargarsi, e il fatto che stavolta a far scendere il numeratore sia stata una
     // chiave CANCELLATA — non un plurale rotto — è la sola differenza.
     // Le righe datate restano come sono: erano vere alla loro data.
+    // ── 2026-09-13 · LE TRE FRASI NUOVE DELLA CONCILIAZIONE COMPOSITA ───────
+    // LA MISURA CHE LE PORTA QUI, rifatta prima di scrivere la riga invece che
+    // riletta: rotto di proposito il plurale italiano di
+    // `reconComposizioneRegistrata` (`one {# voce}` → `one {# voci}`), questo lock
+    // è rimasto VERDE — 17 test passati, exit 0 — e l'unico rosso è arrivato dal
+    // test di resa che quella frase l'ha scritta
+    // (`__tests__/pagamenti/riconciliazione-ui.test.ts:1021`). È il caso esatto per
+    // cui `CONTATORI` esiste: la chiave nasce ICU, quindi il RICONOSCITORE DI FORMA
+    // in fondo al file la salta per costruzione, e la sola sorveglianza che resta è
+    // un test che un giorno cambierà qualcuno che non sa dell'altro.
+    //
+    // Le altre due — `reconComponiEsitoRigheRiaperte` e
+    // `reconComponiEsitoIncassiStornati` — un test ce l'hanno, e rotte apposta lo
+    // fanno rosso (`MovimentoDialog-componi-riapertura.test.tsx:465`). Ma quel test
+    // rende in ITALIANO soltanto: `IntlMessageFormat(testo, 'it')` sul solo
+    // `messages/it`. Il loro INGLESE non lo rende nessun unit test, ed è
+    // precisamente il vuoto che questo lock è l'unico a coprire. Il commento del
+    // 2026-09-12 qui sopra le escludeva perché «il singolare di entrambe è diverso
+    // dal plurale per costruzione»: è vero oggi, in italiano, e «per costruzione»
+    // non è una misura — è la stessa fiducia che questo file smonta da quaranta
+    // righe. La riga costa tre parole.
+    //
+    // `extra` di `reconComposizioneRegistrata`: `ticket` e `totale` ci sono perché
+    // senza quei segnaposto il formattatore lancia. `ticket: 3` esercita anche la
+    // clausola non-zero, e `totale` non contiene un «2» isolato, che il confronto
+    // d'invarianza sostituirebbe con un «1» (`due.replace(/\b2\b/, '1')`).
+    //
+    // ⚠️ IL SECONDO PLURALE DI `reconComposizioneRegistrata` RESTA SCOPERTO, e si
+    // dice col motivo invece di lasciarlo sembrare chiuso. Quella frase ha DUE
+    // blocchi `plural` — `voci` e `ticket` — e questa riga ne sorveglia uno:
+    // `voci`. Per `ticket` servirebbe una seconda riga con `variabile: 'ticket'`,
+    // che in ITALIANO farebbe rosso su un testo GIUSTO («1 ticket» / «2 ticket»:
+    // prestito invariante). L'unica eccezione disponibile, `INVARIANTI_IN_INGLESE`,
+    // è indicizzata per `ns.chiave` e non per variabile: dichiarare invariante
+    // questa chiave scuserebbe anche la riga `voci`, cioè spegnerebbe il controllo
+    // che questa aggiunta accende. Coprire `ticket` chiede un'eccezione PER
+    // VARIABILE — una modifica alla FORMA del lock, non una riga in coda — e va
+    // fatta di proposito, non di sponda. Oggi il suo inglese («# meal ticket» /
+    // «# meal tickets») lo rende solo `riconciliazione-ui.test.ts`, con lo stesso
+    // difetto detto sopra.
+    //
+    // IL CONTEGGIO, CONTATO E NON DEDOTTO (2026-09-13, `grep -c` sull'array e
+    // `readdirSync` sul catalogo): con queste tre le voci di questo array passano
+    // da **25** a **28**, e le chiavi che aprono un blocco `plural`/`selectordinal`
+    // in `messages/it` sono **150**. Il buco dichiarato più su resta aperto, e si
+    // stringe di tre.
+    { ns: 'adminContabilita', chiave: 'reconComposizioneRegistrata', variabile: 'voci', extra: { ticket: 3, totale: '€ 75,50' } },
+    { ns: 'adminContabilita', chiave: 'reconComponiEsitoRigheRiaperte', variabile: 'n' },
+    { ns: 'adminContabilita', chiave: 'reconComponiEsitoIncassiStornati', variabile: 'n' },
 ]
 
 /**

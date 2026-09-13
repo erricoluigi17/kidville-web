@@ -12,7 +12,17 @@ import { notificaEvento } from '@/lib/notifiche/triggers'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
 import { residuoEffettivo } from '@/lib/pagamenti/aging'
 import { formatEuro } from '@/lib/format/valuta'
-import { mapStatoAruba } from '@/lib/aruba/stato'
+// «QUESTO DOCUMENTO È ANCORA VIVO?» HA UNA DEFINIZIONE SOLA, e non sta più qui.
+// Fino al 2026-09-13 questa rotta ne teneva una copia locale (`fatturaViva`,
+// `etichettaFattura`, `RigaFattura`), nata quando `componi` non poteva toccarla.
+// Le due espressioni erano identiche — misurato: stesso verdetto su tutti gli
+// stati SDI 0-20, su `null` e sui fuori scala, e stessa etichetta su 100
+// combinazioni di numero/anno/sezionale — ed è per questo che sono state unite.
+// Le due porte che arrivano allo stesso riabbinamento sono QUESTA (la conferma a
+// voce singola) e `…/componi:POST` (la composizione): due definizioni di «viva»
+// direbbero due cose diverse dello stesso documento, una fermerebbe e l'altra
+// lascerebbe passare — la seconda con un 200 sopra.
+import { fatturaViva, etichettaFattura, type RigaFatturaEmessa } from '@/lib/pagamenti/fattura-viva'
 // LO STORNO DI UN INCASSO SINGOLO HA UN POSTO SOLO, ed è quello. `eseguiStornoIncasso`
 // crea il contro-incasso NEGATIVO tracciato (`storno_di`), marca l'originale, ricalcola
 // lo stato del pagamento e scrive l'audit col motivo: riscriverne una copia qui
@@ -85,40 +95,6 @@ interface Movimento {
   transazione_id?: string | null
   suggerimenti?: { pagamento_id: string }[] | null
 }
-
-/**
- * Il numero di una fattura come si legge sul documento, a prova di riga storica.
- *
- * NON è `formattaNumeroFattura` di `@/lib/fatturazione/sezionale`, ed è una scelta:
- * quella LANCIA su un sezionale assente o su un anno fuori scala, perché nasce per
- * comporre il numero di un documento che sta per partire. Qui si sta solo NOMINANDO
- * una riga già a registro — magari una storica, senza sezionale — e un'eccezione
- * trasformerebbe un avviso in un 500. Sta qui, in un posto solo, perché la usano i
- * due punti che parlano di fatture in questo file: la guardia del riabbinamento e
- * l'avviso della riapertura. Due copie direbbero due numeri diversi dello stesso
- * documento.
- */
-function etichettaFattura(r: { numero: number; anno: number | null; sezionale: string | null }): string {
-  const anno = r.anno ?? new Date().getFullYear()
-  return r.sezionale ? `${r.sezionale} ${r.numero}/${anno}` : `${r.numero}/${anno}`
-}
-
-/** Una riga di `fatture_emesse`, come la leggono i due punti di questo file. */
-interface RigaFattura {
-  numero: number
-  /** L'anno del SEZIONALE di quella riga, che non è per forza quello di oggi. */
-  anno: number | null
-  sezionale: string | null
-  sdi_stato: number | null
-}
-
-/**
- * Le righe VIVE: tutto ciò che non è uno scarto SDI (2/4/9). Stesso predicato di
- * `emissione.ts`, e per lo stesso motivo: una riga scartata si riemette — chiuderle
- * la strada renderebbe uno scarto definitivo — mentre una riga senza stato (rifiuto
- * di trasporto) resta viva, perché nessuno sa se quel documento sia partito.
- */
-const fatturaViva = (r: RigaFattura): boolean => !(r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto)
 
 /**
  * L'avviso che viaggia SU UNA RISPOSTA 200, accanto a `success: true`.
@@ -459,7 +435,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
               numeri: [],
             }
           } else {
-            const numeri = ((righeFattura ?? []) as RigaFattura[]).filter(fatturaViva).map(etichettaFattura)
+            const numeri = ((righeFattura ?? []) as RigaFatturaEmessa[]).filter(fatturaViva).map(etichettaFattura)
             fattureVive = numeri.length
             if (numeri.length > 0) {
               avviso = {
@@ -847,7 +823,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
           { status: 503 },
         )
       }
-      const righe = (righeFattura ?? []) as RigaFattura[]
+      const righe = (righeFattura ?? []) as RigaFatturaEmessa[]
       // Le righe VIVE: il predicato sta in `fatturaViva`, in un posto solo — lo
       // legge anche l'avviso della riapertura, e due definizioni di «viva»
       // direbbero due cose diverse dello stesso documento.

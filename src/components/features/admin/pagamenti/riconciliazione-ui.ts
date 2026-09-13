@@ -731,6 +731,19 @@ export interface RiepilogoComposizioneUi {
    * giro crea righe nuove — non c'è nessun residuo che la fermi.
    */
   avviso: boolean
+  /**
+   * `false` = i tre numeri non raccontano niente, e la fascia NON deve dichiarare
+   * un successo: il pagamento è registrato (questa funzione la chiama solo il ramo
+   * in cui la rotta ha risposto bene), ma di che cosa copra non si può dire nulla.
+   *
+   * ⚠️ VA DECISO PRIMA DELLA RIPULITURA, ed è tutto il punto. `intero()` porta
+   * `NaN` e i negativi a `0` perché «NaN voci» sopra a un incasso vero sarebbe
+   * peggio — ma da dopo quella riga un esito malformato è INDISTINGUIBILE da un
+   * esito che vale zero, e la fascia usciva verde dicendo «0 voci · € 0,00».
+   * Un successo dichiarato sul nulla, su l'unica schermata in cui la segreteria
+   * legge che il bonifico è stato incassato.
+   */
+  numeriLeggibili: boolean
 }
 
 /**
@@ -743,8 +756,29 @@ export interface RiepilogoComposizioneUi {
  */
 export function riepilogoComposizione(e: EsitoComposizione): RiepilogoComposizioneUi {
   const intero = (v: number): number => (Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0)
+  /**
+   * Un numero È ARRIVATO: non una stringa, non `null`, non un `NaN`, non un
+   * negativo. `typeof` prima di `Number.isFinite` perché quest'ultimo accetta
+   * soltanto i `number` ma il campo viene da un JSON, dove ci può stare di tutto
+   * e TypeScript non è di guardia a runtime.
+   */
+  const arrivato = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  /**
+   * Quando i numeri raccontano davvero qualcosa. I tre criteri, e da dove viene
+   * ciascuno:
+   *  · tutti e tre devono essere arrivati come numeri;
+   *  · `totale > 0`: la rotta `…/componi` rifiuta un bonifico non positivo
+   *    (`reconComponiErrMovimentoNonPositivo`), quindi un totale a zero non è un
+   *    pagamento — è un campo che non è arrivato;
+   *  · `voci + ticket > 0`: una composizione che non salda nessuna voce e non
+   *    accredita nessun ticket non esiste. `voci: 0` DA SOLO resta legittimo: una
+   *    composizione di soli ticket non salda nessuna voce aperta.
+   */
+  const numeriLeggibili =
+    arrivato(e.voci) && arrivato(e.ticket) && arrivato(e.totale) && e.totale > 0 && e.voci + e.ticket > 0
   return {
     valori: { voci: intero(e.voci), ticket: intero(e.ticket), totale: formatEuro(e.totale) },
     avviso: e.movimentoLegato === false,
+    numeriLeggibili,
   }
 }

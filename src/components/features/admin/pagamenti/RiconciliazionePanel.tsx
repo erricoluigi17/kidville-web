@@ -844,17 +844,44 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           distanza due vestiti diversi per lo stesso concetto si leggono come due
           concetti. Il tono, invece, cambia: v. `avviso`. */}
       {riepilogoUi && (
-        riepilogoUi.avviso ? (
-          /* ⚠️ `role="alert"` E TONO D'AVVISO, NON DI CONFERMA. Il denaro è
-             scritto ma la riga bancaria non si è legata: una fascia verde qui
-             direbbe «fatto» di un lavoro rimasto a metà, e l'operatrice
-             ricomporrebbe — sulle voci nuove e sui ticket il secondo giro crea
-             righe nuove, e non c'è nessun residuo che la fermi. La frase è quella
-             che la route dichiara col proprio codice: non se ne scrive una seconda. */
+        riepilogoUi.avviso || !riepilogoUi.numeriLeggibili ? (
+          /* ⚠️ `role="alert"` E TONO D'AVVISO, NON DI CONFERMA. Due guasti diversi
+             finiscono qui, e la fascia li distingue invece di impastarli.
+
+             NON LEGATO: il denaro è scritto ma la riga bancaria non si è legata.
+             Una fascia verde direbbe «fatto» di un lavoro rimasto a metà, e
+             l'operatrice ricomporrebbe — sulle voci nuove e sui ticket il secondo
+             giro crea righe nuove, e non c'è nessun residuo che la fermi. La frase
+             è quella che la route dichiara col proprio codice: non se ne scrive una
+             seconda.
+
+             NUMERI ILLEGGIBILI (`numeriLeggibili === false`): il pagamento è
+             registrato — questo ramo lo raggiunge solo un `onDone(esito)`, che il
+             popup chiama dopo una risposta buona — ma i tre conteggi non
+             raccontano niente, e la ripulitura li ha portati a zero. Prima, la
+             fascia usciva VERDE con «Pagamento registrato: 0 voci · € 0,00»: un
+             successo dichiarato sul nulla, sull'unica schermata in cui la
+             segreteria legge che il bonifico è stato incassato.
+
+             ⚠️ E PERCHÉ SI PARLA INVECE DI TACERE. Nascondere la fascia sarebbe
+             coerente con «senza esito non si inventa nessun riepilogo», ma lì
+             l'esito non c'è perché l'azione non era una composizione; qui c'è
+             stata, e il denaro è scritto. Il silenzio lascerebbe la segreteria
+             senza l'unica conferma che il pagamento è passato, ed è esattamente la
+             condizione in cui ricompone. La frase dice le due cose in
+             quest'ordine: «registrato», «non rifarlo», «controlla le voci» — non
+             «è andata male», che sarebbe falso e la farebbe rifare. I numeri
+             ripuliti NON si mostrano: quello zero è della ripulitura, non un fatto. */
           <p role="alert" className="mt-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-sm text-kidville-warn-strong">
-            {t('reconComposizioneRegistrata', riepilogoUi.valori)}
-            {' — '}
-            {ts('erroreConciliazioneMovimentoNonLegato')}
+            {riepilogoUi.numeriLeggibili
+              ? t('reconComposizioneRegistrata', riepilogoUi.valori)
+              : t('reconComposizioneNonLeggibile')}
+            {riepilogoUi.avviso && (
+              <>
+                {' — '}
+                {ts('erroreConciliazioneMovimentoNonLegato')}
+              </>
+            )}
           </p>
         ) : (
           <p role="status" className="mt-3 flex items-center gap-1.5 rounded-card bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success">

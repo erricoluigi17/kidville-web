@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
+import { mapStatoAruba } from '@/lib/aruba/stato'
 
 /**
  * LOCK · L'ANNULLO RIAPRE IL MOVIMENTO **SENZA** DISARMARE LA GUARDIA CHE LO PROTEGGE.
@@ -38,6 +40,30 @@ import { join } from 'node:path'
  * questa. Quella prova la danno `apply_migration` e la fotografia di
  * `__tests__/fixtures/migrazioni-applicate-snapshot.json`
  * (`migrazioni-complete.test.ts`). Qui si sorveglia l'intenzione scritta.
+ *
+ * ─── 🔴 E LE PORTE SONO DUE, NON UNA (corretto il 2026-09-13) ────────────────
+ *
+ * Fino a oggi questo file leggeva UNA sola route — `[id]/route.ts`, la conferma a
+ * voce singola — e diceva di tenere insieme «le due metà». Ma sul movimento
+ * riaperto si affacciano DUE porte, e la seconda è `[id]/componi/route.ts`
+ * (blocco §9), nata proprio perché la prima copriva metà del caso: il movimento
+ * di cui parla l'annullo non è `confermato`, è **riaperto**, cioè `da_abbinare`,
+ * e da lì ci si passa anche componendo.
+ *
+ * **Misurato**: cancellando la guardia §9 da `componi`, questo lock restava
+ * VERDE. Non era cieco per il motivo solito — il presidio comportamentale c'è,
+ * e sono i 4 test del blocco «componi — un bonifico non si fattura due volte»
+ * di `__tests__/api/pagamenti-riconciliazione-componi.test.ts` — ma un lock che
+ * DICHIARA di tenere insieme la migrazione e la guardia che la giustifica, e
+ * poi ne guarda una su due, dice il falso su sé stesso. È la stessa specie di
+ * difetto che il riquadro qui sopra racconta d'aver già pagato.
+ *
+ * Si è scelto di ESTENDERLO invece di dichiarare la copertura parziale, e la
+ * ragione è nel testo della migrazione: `pagamento_id` si conserva perché una
+ * guardia lo legga. Se le guardie che lo leggono sono due, una dichiarazione
+ * lascerebbe a chi legge il compito di ricordarsi della seconda — ed è
+ * esattamente ciò che non è successo per sei settimane. Ciò che resta
+ * dichiarato, perché non è sorvegliato qui, sta nel riquadro sopra ogni `it`.
  */
 
 const RADICE = process.cwd()
@@ -47,24 +73,14 @@ const FILE_SQL = join(
     'migrations',
     '20260912180200_annulla_transazione_riapre_movimento.sql',
 )
-const FILE_GUARDIA = join(
-    RADICE,
-    'src',
-    'app',
-    'api',
-    'pagamenti',
-    'riconciliazione',
-    '[id]',
-    'route.ts',
-)
+const API = join(RADICE, 'src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]')
 
 const SQL = readFileSync(FILE_SQL, 'utf8')
-const GUARDIA = readFileSync(FILE_GUARDIA, 'utf8')
 
 /**
- * La route SENZA i suoi commenti. Non è una raffinatezza: è la stessa pulizia
+ * Una route SENZA i suoi commenti. Non è una raffinatezza: è la stessa pulizia
  * che `istruzioneUpdate()` fa qui sotto sull'SQL, per la stessa identica
- * ragione, su un file che la pretende anche di più. La prosa di quella route
+ * ragione, su file che la pretendono anche di più. La prosa di queste route
  * NOMINA ciò che le asserzioni cercano — `mov.pagamento_id != null` compare
  * anche nel commento del campo `pagamento_id` (quello che spiega perché la
  * migrazione lo conserva) e `BONIFICO_GIA_FATTURATO` anche nel commento sopra
@@ -79,15 +95,157 @@ const GUARDIA = readFileSync(FILE_GUARDIA, 'utf8')
  * legge anche i commenti; se il commento nomina ciò che il lock cerca, il lock
  * è cieco per costruzione — e la beffa è che quel commento sta lì proprio per
  * spiegare la protezione che il lock crede di sorvegliare.
- *
- * Che lo strip a regex basti QUI è anch'esso misurato, non supposto: rimuove
- * esattamente gli stessi byte (16.935 → 10.881, sha identico) che rimuove il
- * parser di TypeScript (`createSourceFile` + `getLeadingCommentRanges`); e dei
- * 120 letterali del file — stringhe, template, regex — ZERO contengono una
- * sequenza che possa disallinearlo (due sbarre, o un delimitatore di commento
- * a blocco). La prima asserzione dell'`it` sorveglia che resti vero.
  */
-const GUARDIA_CODICE = GUARDIA.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+const senzaCommenti = (t: string): string =>
+    t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+
+/**
+ * Le diagnostiche SINTATTICHE di un pezzo di TypeScript.
+ *
+ * ⚠️ Serve a misurare una cosa che prima era PROMESSA in prosa: che lo strip a
+ * regex tolga i commenti e nient'altro. La stesura precedente lo dichiarava
+ * confrontando a mano i byte con il parser di TypeScript, su UN file e in UN
+ * giorno — cioè un numero destinato a invecchiare in silenzio come tutti gli
+ * altri di questo repository. Adesso la condizione si verifica a ogni giro e su
+ * ogni porta: se una route guadagnasse un letterale con due sbarre dentro (un
+ * URL) o un delimitatore di commento, lo strip taglierebbe del codice vero e il
+ * risultato smetterebbe di essere TypeScript valido. Il caso opposto — un
+ * commento sopravvissuto — lo prende la prova sui delimitatori residui.
+ */
+const diagnosticheSintattiche = (codice: string): string[] =>
+    (ts.transpileModule(codice, {
+        reportDiagnostics: true,
+        fileName: 'porta.ts',
+        compilerOptions: { target: ts.ScriptTarget.ESNext, isolatedModules: true },
+    }).diagnostics ?? []).map((d) => ts.flattenDiagnosticMessageText(d.messageText, ' '))
+
+/**
+ * LE DUE PORTE che arrivano al movimento riaperto, ognuna con la forma esatta
+ * della propria guardia. Sono scritte diversamente perché fanno cose diverse —
+ * l'una riabbina a UNA voce, l'altra ricompone su più voci — e appiattirle in
+ * una regex sola vorrebbe dire cercare una somiglianza invece della guardia.
+ */
+const PORTE = [
+    {
+        nome: 'la conferma a voce singola',
+        file: join(API, 'route.ts'),
+        dove: 'src/app/api/pagamenti/riconciliazione/[id]/route.ts',
+        firma: "withRoute('pagamenti/riconciliazione/[id]:PATCH'",
+        /** La memoria del movimento, confrontata col pagamento che si sta per legare. */
+        guardia: /mov\.pagamento_id\s*!=\s*null/,
+        guardiaTesto: 'mov.pagamento_id != null',
+    },
+    {
+        nome: 'la composizione (blocco §9)',
+        file: join(API, 'componi', 'route.ts'),
+        dove: 'src/app/api/pagamenti/riconciliazione/[id]/componi/route.ts',
+        firma: "'pagamenti/riconciliazione/[id]/componi:POST'",
+        guardia: /const\s+pagamentoDiPrima\s*=\s*movimento\.pagamento_id[\s\S]*?pagamentoDiPrima\s*!=\s*null/,
+        guardiaTesto: 'const pagamentoDiPrima = movimento.pagamento_id … pagamentoDiPrima != null',
+    },
+] as const
+
+/**
+ * CHI CHIEDE «QUESTO DOCUMENTO È ANCORA VIVO?» — tutti quanti, non le sole porte.
+ *
+ * Le due porte qui sopra sono il motivo per cui `@/lib/pagamenti/fattura-viva`
+ * esiste, ma non sono le sole a fare quella domanda: la stessa riga di
+ * `fatture_emesse` la interrogano anche il registro dei movimenti (per il chip
+ * «fatturata»), la consegna del PDF e — la più pesante delle tre — la guardia di
+ * idempotenza dell'emissione fiscale, quella che impedisce che allo SDI partano
+ * due documenti per la stessa retta.
+ *
+ * ⚠️ QUELL'ULTIMA È CITATA DALLA TESTATA DI `fattura-viva.ts` come la ragione
+ * della propria esistenza. Finché ne teneva una copia in casa, quella testata
+ * prometteva un'unificazione che non c'era — la stessa specie di frase che
+ * questo file ha già dovuto correggere una volta (riquadro «E LE PORTE SONO
+ * DUE»). Perciò l'elenco non si ferma alle porte.
+ *
+ * Le tre aggiunte NON portano `firma`/`guardia`: quelle appartengono al
+ * riabbinamento, e chiederle qui vorrebbe dire cercare una somiglianza invece
+ * della cosa. Di comune hanno una cosa sola, ed è quella che si misura: la
+ * definizione di «viva» la prendono da fuori.
+ */
+const CONSUMATORI = [
+    ...PORTE.map((p) => ({ dove: p.dove, file: p.file })),
+    {
+        dove: 'src/app/api/pagamenti/riconciliazione/route.ts',
+        file: join(RADICE, 'src', 'app', 'api', 'pagamenti', 'riconciliazione', 'route.ts'),
+    },
+    {
+        dove: 'src/app/api/pagamenti/fattura/route.ts',
+        file: join(RADICE, 'src', 'app', 'api', 'pagamenti', 'fattura', 'route.ts'),
+    },
+    {
+        dove: 'src/lib/aruba/emissione.ts',
+        file: join(RADICE, 'src', 'lib', 'aruba', 'emissione.ts'),
+    },
+] as const
+
+const CODICE_CONSUMATORE = new Map(
+    CONSUMATORI.map((c) => [c.dove, senzaCommenti(readFileSync(c.file, 'utf8'))]),
+)
+
+/** Le due porte sono un sottoinsieme dei consumatori: stesso testo, stessa pulizia. */
+const CODICE_PORTA = CODICE_CONSUMATORE
+
+/**
+ * I CODICI CHE OGGI SONO SCARTO, CHIESTI A `mapStatoAruba` MENTRE IL TEST GIRA.
+ *
+ * Scriverli a mano qui — `[2, 4, 9]` — sarebbe esattamente il peccato che la regola
+ * costruita con questa lista vieta ai cinque consumatori: il lock resterebbe fermo al
+ * 2026-09-13 e il giorno in cui Aruba aggiunge uno stato di scarto smetterebbe di
+ * sorvegliare proprio la copia nuova, cioè l'unica che conta. Il range arriva a 20 perché
+ * le diciture note stanno in `1..10` e restare stretti sul massimo di oggi è il modo di
+ * non accorgersi di un undicesimo: è lo stesso calcolo, e per la stessa ragione, di
+ * `statiDiScarto()` in `src/app/api/pagamenti/fattura/sync/route.ts`.
+ */
+const STATI_DI_SCARTO = Array.from({ length: 21 }, (_, codice) => codice).filter(
+    (c) => mapStatoAruba(c).isScarto,
+)
+
+/**
+ * Un letterale di array fatto SOLO di numeri.
+ *
+ * ⚠️ La `[` NON deve essere preceduta da un'espressione, altrimenti è
+ * un'INDICIZZAZIONE e non un letterale: `righe[0]`, `mov.suggerimenti?.[0]`. È la
+ * differenza fra 0 e 18 — nei cinque file ripuliti dai commenti le indicizzazioni
+ * numeriche sono 18 (14 delle quali in `emissione.ts`) e i letterali numerici ZERO,
+ * misurato il 2026-09-13 con l'AST di TypeScript, non con una regex.
+ *
+ * ⚠️ QUI PRIMA C'ERA SCRITTA UNA CONSEGUENZA DEDOTTA, spacciata per misurata:
+ * «senza questa distinzione la regola darebbe rosso su un `?.[0]` innocuo».
+ * Rimisurato togliendo il lookbehind: il lock restava **11/11 verde**, perché a
+ * scartare `?.[0]` bastava già `every()` qui sotto — `[0]` non contiene 2, 4 e 9.
+ * Il lookbehind non era portante, e il commento diceva che lo era: è il difetto che
+ * questo file punisce dalla riga uno.
+ *
+ * **Adesso lo è**, e non per una frase: per un'asserzione. `a[2, 4, 9]` è
+ * un'INDICIZZAZIONE valida — l'operatore virgola — e i suoi numeri sono esattamente
+ * i codici di scarto: senza il lookbehind la regex la scambia per un letterale e il
+ * lock dà rosso su codice innocuo. La prova sta nel controllo positivo in fondo al
+ * file, ed è stata vista fallire: tolto il lookbehind, **un test rosso, e solo
+ * quello**.
+ *
+ * ⚠️ IL FALSO POSITIVO VERO STA ALTROVE, e va nominato perché nessuno lo scopra
+ * col rosso in mano: `every()` morde su QUALUNQUE array che contenga 2, 4 e 9 —
+ * i mesi `[1,…,12]`, le cifre `[0,…,9]`, i pesi del codice fiscale
+ * `[1,2,4,9,13,5,7,17]`. Incidenza misurata il 2026-09-13: **0 su 48** array
+ * numerici distinti di tutto `src/`. Rischio reale, non imminente: chi ritocca
+ * questo file lo stringa (per esempio pretendendo che l'array non contenga ALTRO
+ * oltre ai codici di scarto).
+ */
+const LETTERALE_NUMERICO = /(?<![\w$)\]'"`.?])\[\s*-?\d+(?:\s*,\s*-?\d+)*\s*,?\s*\]/g
+
+/**
+ * I letterali numerici che contengono TUTTI i codici di scarto: la copia scritta a
+ * mano, cioè la forma che `mapStatoAruba`/`isScarto` non intercettano.
+ */
+const copieLetterali = (codice: string): string[] =>
+    (codice.match(LETTERALE_NUMERICO) ?? []).filter((lit) => {
+        const numeri = new Set((lit.match(/-?\d+/g) ?? []).map(Number))
+        return numeri.size > 0 && STATI_DI_SCARTO.every((c) => numeri.has(c))
+    })
 
 /**
  * L'unica istruzione `UPDATE` su `riconciliazione_movimenti` del file, dalla
@@ -170,51 +328,227 @@ describe("lock architettura · l'annullo riapre il movimento senza accecare la g
         ).toBe(false)
     })
 
-    it('🔴 la guardia che giustifica la scelta qui sopra ESISTE ancora nel CODICE della route', () => {
-        // Le due metà viaggiano insieme: se un giorno la guardia cambia forma o
-        // sparisce, conservare `pagamento_id` non protegge più niente e chi legge
-        // la migrazione crederebbe il contrario.
-        //
-        // Si asserisce su GUARDIA_CODICE, MAI su GUARDIA: entrambe le stringhe
-        // cercate qui sotto compaiono anche nella prosa di quella route, e sul
-        // file grezzo questo blocco restava verde con la guardia cancellata.
-
-        // Sanity dello strip, prima di tutto: se domani la route guadagnasse un
-        // letterale con due sbarre dentro (un URL) o un delimitatore di commento,
-        // la pulizia potrebbe disallinearsi — tagliare del codice, o peggio
-        // lasciare in piedi un commento e con lui la cecità che si sta chiudendo.
-        const delimitatoriResidui = GUARDIA_CODICE.match(/\/\/|\/\*|\*\//g) ?? []
+    it("l'attrezzo che misura lo strip vede davvero una rottura (controllo positivo)", () => {
+        // Un attrezzo mai visto fallire non è un attrezzo. Senza questa riga, un
+        // `transpileModule` che restituisse sempre zero diagnostiche renderebbe
+        // vera per sempre la prova sullo strip, qualunque cosa lo strip faccia.
+        expect(diagnosticheSintattiche('const a = 1'), 'codice valido').toEqual([])
         expect(
-            delimitatoriResidui,
-            `Dopo la pulizia dei commenti restano dei delimitatori (${delimitatoriResidui.join(' ')}): ` +
-                'o un commento è sopravvissuto, o lo strip a regex si è disallineato su un letterale ' +
-                'che li contiene. In entrambi i casi le due asserzioni qui sotto non stanno più ' +
-                'leggendo il solo codice: si passi a una pulizia col parser di TypeScript ' +
-                '(`createSourceFile` + `getLeadingCommentRanges`, o `transpileModule` con ' +
-                '`removeComments`).',
+            diagnosticheSintattiche('const a = { b: 1').length,
+            'il parser non vede nemmeno una graffa mai chiusa',
+        ).toBeGreaterThan(0)
+    })
+
+    it('la regola sul letterale MORDE, e non è vuota (controllo positivo)', () => {
+        // ⚠️ PERCHÉ QUESTO `it` ESISTE, ed è la parte fragile di tutto il blocco.
+        // `STATI_DI_SCARTO` è DERIVATA da `mapStatoAruba` — che è il punto — ma una
+        // derivazione che restituisse una lista VUOTA non renderebbe rossa la regola:
+        // la renderebbe MUTA. Con l'elenco vuoto `.every()` è vero per definizione, e
+        // siccome nei cinque file oggi i letterali numerici sono ZERO il lock
+        // resterebbe verde 10 su 10 senza vietare più niente — la stessa specie di
+        // decorazione che questo file racconta d'aver già pagato due volte. Qui la
+        // lista vuota diventa ROSSA: `[].join(', ')` è la stringa vuota, la copia
+        // sintetica qui sotto diventa `const X = []`, il regex pretende almeno una
+        // cifra e non morde più.
+        expect(
+            STATI_DI_SCARTO.length,
+            '`mapStatoAruba` non marca `isScarto` NESSUN codice fra 0 e 20: o la tabella di ' +
+                '`src/lib/aruba/stato.ts` è stata svuotata, o il modulo è mockato in questo file. ' +
+                'In entrambi i casi la regola sul letterale non vieterebbe niente restando verde.',
+        ).toBeGreaterThan(0)
+
+        const copiaSintetica = `const STATI_BRUCIATI = [${STATI_DI_SCARTO.join(', ')}]`
+        expect(
+            copieLetterali(copiaSintetica),
+            `la regola non morde sulla copia scritta a mano \`${copiaSintetica}\`: è l'unica ` +
+                'forma che il divieto su `mapStatoAruba`/`isScarto` non vede, ed è quella che ' +
+                'smette di seguire il motore Aruba in silenzio.',
+        ).toHaveLength(1)
+        expect(
+            copieLetterali(`const spazi = [ ${STATI_DI_SCARTO.slice().reverse().join(' , ')} , ]`),
+            'la regola si lascia aggirare da un ordine diverso, da una virgola in coda o da ' +
+                'qualche spazio: allora non è una regola, è un confronto con una stringa.',
+        ).toHaveLength(1)
+
+        // E l'altro verso: un array numerico che NON è la copia deve restare muto,
+        // altrimenti il lock dà rosso su codice innocuo e verrà spento dal primo che
+        // ci inciampa. `[0]` è la forma che compare davvero in questi file — 18 volte.
+        expect(
+            copieLetterali('const soloUno = [0]\nconst righe = mov.suggerimenti?.[0]'),
+            'la regola morde su un array numerico innocuo',
         ).toEqual([])
-        expect(
-            GUARDIA_CODICE,
-            'la pulizia dei commenti ha divorato anche il corpo della route: non ci si legge più ' +
-                'nemmeno la firma del `withRoute`. Le asserzioni qui sotto sarebbero verdi o rosse ' +
-                'sul nulla — si vada col parser.',
-        ).toContain("withRoute('pagamenti/riconciliazione/[id]:PATCH'")
 
+        // ⚠️ E QUESTA È L'ASSERZIONE CHE RENDE PORTANTE IL LOOKBEHIND, invece di
+        // limitarsi a dichiararlo. `righe[2, 4, 9]` è un'INDICIZZAZIONE valida in
+        // JavaScript — l'operatore virgola: vale `righe[9] `— e i suoi numeri sono
+        // esattamente i codici di scarto. Senza il lookbehind la regex la scambia per
+        // un letterale, `every()` passa, e il lock dà rosso su codice innocuo.
+        // Provato togliendo il lookbehind: questa riga diventa ROSSA, l'altra no.
         expect(
-            /mov\.pagamento_id\s*!=\s*null/.test(GUARDIA_CODICE),
-            'In `src/app/api/pagamenti/riconciliazione/[id]:PATCH` non c\'è più la guardia ' +
-                '`mov.pagamento_id != null` — non nel CODICE: i commenti che la nominano non ' +
-                'contano, ed è esattamente il motivo per cui qui si legge la route ripulita. La ' +
-                'migrazione dell\'annullo conserva `pagamento_id` PROPRIO perché quella guardia lo ' +
-                'legga: senza, la riapertura automatica torna a essere una strada aperta verso il ' +
-                'doppio incasso. Si aggiornano insieme, o si scrive qui perché non serva più.',
-        ).toBe(true)
+            copieLetterali(`const righe = mov.suggerimenti[${STATI_DI_SCARTO.join(', ')}]`),
+            "la regola scambia un'INDICIZZAZIONE per un letterale: `a[2, 4, 9]` è " +
+                "l'operatore virgola, non una lista di codici, e un lock che dà rosso " +
+                'lì lo disattiva il primo che ci inciampa.',
+        ).toEqual([])
+    })
+
+    it.each(PORTE)(
+        '🔴 la guardia che giustifica la scelta qui sopra ESISTE ancora nel CODICE — $nome',
+        ({ dove, firma, guardia, guardiaTesto }) => {
+            // Le due metà viaggiano insieme: se un giorno la guardia cambia forma o
+            // sparisce, conservare `pagamento_id` non protegge più niente e chi legge
+            // la migrazione crederebbe il contrario. E le guardie sono DUE: questo
+            // blocco gira su tutt'e due le porte, perché fino al 2026-09-13 girava
+            // solo sulla prima e cancellare la seconda lasciava il lock verde.
+            //
+            // Si asserisce sul CODICE RIPULITO, MAI sul file grezzo: tutte le
+            // stringhe cercate qui sotto compaiono anche nella prosa di quelle
+            // route — che le nomina proprio per spiegare questa protezione.
+            const codice = CODICE_PORTA.get(dove)!
+
+            // Sanity dello strip, prima di tutto, e in due direzioni opposte:
+            // un commento SOPRAVVISSUTO riporterebbe la cecità che si sta
+            // chiudendo; del CODICE DIVORATO renderebbe rosse (o verdi) sul nulla
+            // le asserzioni vere.
+            const delimitatoriResidui = codice.match(/\/\/|\/\*|\*\//g) ?? []
+            expect(
+                delimitatoriResidui,
+                `${dove}: dopo la pulizia dei commenti restano dei delimitatori ` +
+                    `(${delimitatoriResidui.join(' ')}): o un commento è sopravvissuto, o lo strip ` +
+                    'a regex si è disallineato su un letterale che li contiene. In entrambi i casi ' +
+                    'le asserzioni qui sotto non stanno più leggendo il solo codice: si passi a una ' +
+                    'pulizia col parser di TypeScript.',
+            ).toEqual([])
+            const rotture = diagnosticheSintattiche(codice)
+            expect(
+                rotture.slice(0, 3),
+                `${dove}: dopo la pulizia dei commenti il file non è più TypeScript valido. Lo ` +
+                    'strip a regex ha tagliato del CODICE — quasi certamente perché in questo file ' +
+                    'è comparso un letterale che contiene due sbarre (un URL) o un delimitatore di ' +
+                    'commento. Si passi a una pulizia col parser.',
+            ).toEqual([])
+            expect(
+                codice,
+                `${dove}: la pulizia dei commenti ha divorato il corpo della route — non ci si ` +
+                    'legge più nemmeno la firma del `withRoute`.',
+            ).toContain(firma)
+
+            expect(
+                guardia.test(codice),
+                `In \`${dove}\` non c'è più la guardia \`${guardiaTesto}\` — non nel CODICE: i ` +
+                    'commenti che la nominano non contano, ed è esattamente il motivo per cui qui ' +
+                    'si legge la route ripulita. La migrazione dell\'annullo conserva ' +
+                    '`pagamento_id` PROPRIO perché quella guardia lo legga: senza, la riapertura ' +
+                    'automatica torna a essere una strada aperta verso il doppio incasso — una ' +
+                    'fattura viva senza l\'incasso che la giustifica, e un secondo incasso ' +
+                    'altrove. Si aggiornano insieme, o si scrive qui perché non serva più.',
+            ).toBe(true)
+            expect(
+                codice,
+                `${dove}: il codice \`BONIFICO_GIA_FATTURATO\` non compare più nel codice della ` +
+                    'route (il commento che lo cita non conta): è il 409 che ferma il ' +
+                    'riabbinamento di un bonifico già fatturato.',
+            ).toContain('BONIFICO_GIA_FATTURATO')
+            expect(
+                codice,
+                `${dove}: la guardia non legge più \`fatture_emesse\`. Una guardia che non ` +
+                    'guarda i documenti non è una guardia: lascerebbe passare il riabbinamento ' +
+                    'senza sapere se ne esiste uno vivo.',
+            ).toContain("from('fatture_emesse')")
+        },
+    )
+
+    it('🔴 e TUTTI i consumatori usano LA STESSA definizione di «fattura viva»', () => {
+        // La guardia può esserci in tutt'e due e dire cose diverse. Fino al
+        // 2026-09-13 `[id]/route.ts` teneva una copia locale di `fatturaViva`,
+        // `etichettaFattura` e della riga di `fatture_emesse`: identiche a quelle
+        // del modulo — misurato su tutti gli stati SDI 0-20 e su 100 combinazioni
+        // di numero/anno/sezionale — ed è per questo che sono state unite. Due
+        // definizioni di «viva» direbbero due cose diverse dello stesso documento:
+        // una fermerebbe e l'altra lascerebbe passare, la seconda con un 200 sopra.
+        //
+        // ⚠️ E IL NOME NON BASTA. Delle quattro copie trovate il 2026-09-13, UNA
+        // sola si chiamava come il modulo: le altre erano `eViva`, `viveNonScartate`
+        // e una condizione anonima dentro un `continue`. Un elenco di NOMI vietati
+        // le avrebbe lasciate passare tutte e tre col lock verde. Perciò qui si
+        // vietano DUE FORME: la materia prima — `mapStatoAruba`, `isScarto` — e i
+        // codici di scarto riscritti a mano in un letterale di array.
+        //
+        // 🔴 DUE FORME, NON «TUTTE», e la differenza è stata pagata. Fino al
+        // 2026-09-13 qui c'era scritto che vietare la materia prima bastava, «perché
+        // comunque la si chiami, una copia del predicato deve per forza passare di
+        // lì». È FALSO, misurato con tre tentativi sulla guardia di idempotenza di
+        // `emissione.ts` — quella che impedisce il secondo documento fiscale:
+        //   · `import { mapStatoAruba as m }` + copia locale → ROSSO (la regex cerca
+        //     il nome importato, e l'alias non lo nasconde);
+        //   · un MODULO PONTE che ri-esporti `(c) => mapStatoAruba(c).isScarto` →
+        //     VERDE, 10 test su 10, e resta verde anche oggi;
+        //   · `const STATI_BRUCIATI = [2, 4, 9]` scritto a mano → era VERDE 10/10 con
+        //     eslint a zero, ed è il caso PEGGIORE: la copia NON DERIVATA, l'unica
+        //     che smette di seguire il motore Aruba il giorno in cui Aruba aggiunge
+        //     uno stato di scarto — cioè esattamente la ragione per cui
+        //     `@/lib/pagamenti/fattura-viva` esiste. Ed è comportamentalmente
+        //     identica oggi, quindi nessuno dei 33 test di quella guardia morde: il
+        //     lock era l'unica difesa, e cedeva.
+        // La terza da oggi è rossa. Il modulo ponte NO, e nemmeno una lista importata
+        // da altrove o una catena `s === 2 || s === 4 || s === 9`: restano scoperte,
+        // e sono scritte qui perché nessuno creda il contrario. Questo lock alza il
+        // prezzo di una copia, non la rende impossibile — è lo stesso file che otto
+        // righe più su condanna un lock che dice il falso su sé stesso.
+        const guasti: string[] = []
+        for (const { dove } of CONSUMATORI) {
+            const codice = CODICE_CONSUMATORE.get(dove)!
+            // Sanity dello strip anche qui, e non per simmetria: questa lista si è
+            // appena allungata di tre file che nessuno aveva mai ripulito, e uno
+            // (`emissione.ts`) è il più lungo del repository. Un commento
+            // sopravvissuto renderebbe ROSSO il lock su una prosa che NOMINA
+            // `mapStatoAruba` — e la prosa di questi file lo nomina, eccome.
+            const residui = codice.match(/\/\/|\/\*|\*\//g) ?? []
+            expect(
+                residui,
+                `${dove}: dopo la pulizia dei commenti restano dei delimitatori ` +
+                    `(${residui.slice(0, 5).join(' ')}): le asserzioni qui sotto leggerebbero anche ` +
+                    'la prosa, che questi predicati li nomina tutti.',
+            ).toEqual([])
+            expect(
+                diagnosticheSintattiche(codice).slice(0, 3),
+                `${dove}: dopo la pulizia dei commenti il file non è più TypeScript valido: lo ` +
+                    'strip a regex ha tagliato del CODICE. Si passi a una pulizia col parser.',
+            ).toEqual([])
+
+            if (!codice.includes("from '@/lib/pagamenti/fattura-viva'")) {
+                guasti.push(`${dove}: non importa più \`@/lib/pagamenti/fattura-viva\``)
+            }
+            if (/(?:const|function)\s+(?:fatturaViva|etichettaFattura)\b/.test(codice)) {
+                guasti.push(`${dove}: ridefinisce in casa \`fatturaViva\`/\`etichettaFattura\``)
+            }
+            if (/\bisScarto\b/.test(codice) || /\bmapStatoAruba\b/.test(codice)) {
+                guasti.push(
+                    `${dove}: torna a derivare «viva» in casa da \`mapStatoAruba\`/\`isScarto\` ` +
+                        '(nel CODICE, non in un commento)',
+                )
+            }
+            for (const lit of copieLetterali(codice)) {
+                guasti.push(
+                    `${dove}: riscrive A MANO i codici di scarto in un letterale \`${lit}\` ` +
+                        `(oggi \`mapStatoAruba\` ne marca ${STATI_DI_SCARTO.length}: ` +
+                        `${STATI_DI_SCARTO.join(', ')}). È la copia NON DERIVATA, la peggiore: ` +
+                        'non chiama nessuno, quindi nessun lock sui nomi la vede, ed è identica ' +
+                        'alla definizione buona fino al giorno in cui Aruba aggiunge uno stato di ' +
+                        'scarto — il giorno in cui questo elenco smette di seguirlo in silenzio',
+                )
+            }
+        }
         expect(
-            GUARDIA_CODICE,
-            'il codice `BONIFICO_GIA_FATTURATO` non compare più nel codice della route (il ' +
-                'commento che lo cita non conta): è il 409 che ferma il riabbinamento di un ' +
-                'bonifico già fatturato.',
-        ).toContain('BONIFICO_GIA_FATTURATO')
+            guasti,
+            `${guasti.join('\n  ')}\n` +
+                '«Questo documento è ancora vivo?» ha UNA definizione, in `@/lib/pagamenti/fattura-viva`, ' +
+                'e il suo predicato è DERIVATO da `mapStatoAruba` invece che copiato: il giorno in cui ' +
+                'Aruba aggiunge uno stato di scarto lo segue da sé. Una copia locale no. E le copie non ' +
+                'sono un difetto teorico: la più cara delle quattro stava in `src/lib/aruba/emissione.ts`, ' +
+                'cioè nella guardia che impedisce che allo SDI partano DUE documenti per la stessa retta — ' +
+                'un errore che non si annulla con un UPDATE, ma con una nota di variazione.',
+        ).toEqual([])
     })
 
     it('🔴 un movimento `ignorato` non resuscita', () => {

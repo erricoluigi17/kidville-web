@@ -52,7 +52,7 @@ import {
   type ArubaUploadResult,
 } from './client'
 import { buildFatturaElettronicaXml, causalePerTracciato, verificaCoerenzaIva, LIMITI, type IvaFattura } from './fatturapa-xml'
-import { mapStatoAruba } from './stato'
+import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
 import {
   adultoEGenitoreDi,
   applicaIntestatarioScelto,
@@ -1432,13 +1432,25 @@ export async function emettiFatturaPagamento(
   }
 
   /**
-   * Le righe VIVE: tutto ciò che non è uno scarto SDI (2/4/9). Una riga scartata
-   * non blocca niente — riemettere dopo uno scarto è l'unica via d'uscita che
-   * esista — mentre una riga viva è un documento fiscale in circolazione.
+   * Le righe VIVE: tutto ciò che non è uno scarto SDI (oggi 2, 4 e 9). Una riga
+   * scartata non blocca niente — riemettere dopo uno scarto è l'unica via
+   * d'uscita che esista — mentre una riga viva è un documento fiscale in
+   * circolazione.
+   *
+   * Il predicato NON sta più qui: sta in `@/lib/pagamenti/fattura-viva`, che è
+   * anche la definizione del registro dei movimenti e della consegna del PDF, ed
+   * è DERIVATO da `mapStatoAruba` invece che copiato — il giorno in cui Aruba
+   * aggiunge uno stato di scarto lo segue da sé.
+   *
+   * ⚠️ E QUESTA È LA COPIA CHE COSTAVA PIÙ DELLE ALTRE. La testata di
+   * `fattura-viva.ts` cita proprio questa guardia — «un bonifico non si fattura
+   * due volte» — come la ragione della propria esistenza: finché il predicato
+   * viveva anche qui, quella testata prometteva un'unificazione che non c'era, e
+   * una divergenza si sarebbe pagata con un SECONDO documento fiscale allo SDI
+   * per la stessa retta. Le fatture emesse sono WORM: quello non si annulla con
+   * un UPDATE, si corregge con una nota di variazione.
    */
-  const viveNonScartate = righeEsistenti.filter(
-    (r) => !(r.sdi_stato != null && mapStatoAruba(r.sdi_stato).isScarto)
-  )
+  const viveNonScartate = righeEsistenti.filter(fatturaViva)
 
   // ── 🔴 MULTI-QUOTA: UNA RIGA VIVA CHE NON C'ENTRA CON LE QUOTE DI OGGI ───────
   // La guardia qui sotto (`gia_emessa_altro_intestatario`) è esclusa dal ramo

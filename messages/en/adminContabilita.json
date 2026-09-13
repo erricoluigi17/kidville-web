@@ -1072,5 +1072,6 @@
   "reconComponiEsitoRiaperto": "Bank transfer reopened",
   "reconComponiEsitoRigheRiaperte": "{n, plural, one {One bank statement row is back in the queue} other {# bank statement rows are back in the queue}}",
   "reconComponiEsitoIncassiStornati": "{n, plural, one {One payment has been reversed} other {# payments have been reversed}}",
-  "reconComponiEsitoFattureVive": "Invoices still in force"
+  "reconComponiEsitoFattureVive": "Invoices still in force",
+  "reconComposizioneNonLeggibile": "Payment recorded, but the summary of what it covers came through unreadable. Do not recompose the bank transfer: the money is already recorded. Check the family’s items."
 }

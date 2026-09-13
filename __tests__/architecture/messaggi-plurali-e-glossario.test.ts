@@ -246,6 +246,35 @@ const CONTATORI: Array<{ ns: string; chiave: string; variabile: string; extra?: 
     // «1 restano da completare» sembrerebbe l'errore che sta spiegando.
     { ns: 'adminContabilita', chiave: 'reconLottoStimaMinuti', variabile: 'minuti' },
     { ns: 'adminContabilita', chiave: 'reconLottoSoloLePronte', variabile: 'n' },
+    // ── 2026-09-12 → 2026-09-13 · LA RIGA CHE C'ERA QUI, E PERCHÉ NON C'È PIÙ ──
+    // Sorvegliava `adminContabilita.reconComponiAvvisoRiapertura`, l'avviso che
+    // avrebbe dovuto comparire PRIMA di riaprire un bonifico già fatturato. La
+    // chiave è stata tolta dal catalogo il 2026-09-13, e la ragione non è che il
+    // plurale non contasse: è che quell'avviso non si può dare prima. I numeri
+    // delle fatture vive li legge il SERVER al momento della riapertura e li manda
+    // sulla risposta (`avviso.numeri` di `riconciliazione/[id]:PATCH`); la rotta
+    // `…/contesto`, che è l'unica lettura che il popup fa prima, non li porta. Una
+    // conferma preventiva avrebbe potuto mostrare solo il chip già a schermo, e la
+    // frase era al futuro («riaprendolo, gli incassi verranno stornati»): detta
+    // dopo, avrebbe descritto al futuro storni già avvenuti.
+    // Il fatto si dice adesso DOPO, con la frase che la rotta dichiara col proprio
+    // codice (`RIAPERTURA_CON_FATTURA_VIVA` →
+    // `shared.erroreRiaperturaConFatturaViva`, al passato) più l'elenco dei numeri,
+    // e i due contatori nuovi del riquadro d'esito — `reconComponiEsitoRigheRiaperte`
+    // e `reconComponiEsitoIncassiStornati` — nascono ICU, quindi non chiedono una
+    // riga qui: il riconoscitore di forma in fondo a questo file salta per
+    // costruzione ogni stringa che apre un blocco `plural`, e il singolare di
+    // entrambe è diverso dal plurale per costruzione («Una riga…» / «# righe…»).
+    //
+    // IL CONTEGGIO, RIMISURATO OGGI INVECE CHE CORRETTO A MENTE. Il commento che
+    // stava qui diceva «26 voci (25 prima della mia) su 148 ICU», vero il
+    // 2026-09-12: contate oggi sull'albero di lavoro, le voci di questo array sono
+    // **25** e le chiavi che aprono un blocco `plural`/`selectordinal` in
+    // `messages/it` sono **150**. Il numeratore è sceso di uno e il denominatore è
+    // salito di due IN UN GIORNO: il buco dichiarato lì sopra continua ad
+    // allargarsi, e il fatto che stavolta a far scendere il numeratore sia stata una
+    // chiave CANCELLATA — non un plurale rotto — è la sola differenza.
+    // Le righe datate restano come sono: erano vere alla loro data.
 ]
 
 /**
@@ -284,6 +313,41 @@ function coppiaSingolarePlurale(
 const TERMINE_BANDITO = /read receipt/i
 const TERMINE_SCELTO = /acknowledg/i
 const PRESA_VISIONE_IT = /pres[ae] visione/i
+
+// ── Glossario · il secondo termine, aggiunto il 2026-09-12: il PAGAMENTO ─────
+// Stesso difetto della «presa visione», dall'altra parte: là erano due nomi inglesi
+// per la stessa cosa, qui è la stessa chiave che in italiano parla del PAGAMENTO e
+// in inglese di tutt'altro. `adminContabilita.reconComponiConferma` — il pulsante
+// principale del pannello «Componi il pagamento» — diceva «Conferma il pagamento»
+// e «Confirm the breakdown»: l'italiano conferma il pagamento, l'inglese la
+// scomposizione, e l'inglese contraddiceva per giunta il proprio titolo
+// (`reconComponiTitolo` = «Compose the payment»).
+//
+// IL DENOMINATORE, MISURATO E NON SUPPOSTO (2026-09-12, su tutti i 39 namespace —
+// `ls messages/it | wc -l` = 39, tutti `.json`, e questo lock li legge tutti con
+// `readdirSync`): le chiavi italiane che contengono «pagament» sono 94, e le dicono
+// tutte «payment» in inglese tranne quella qui sopra, che è il motivo della regola.
+// Non è una regola imposta a un catalogo che non la seguiva: è la regola che il
+// catalogo già seguiva da 90 parti su 91, scritta perché la novantunesima non torni.
+//
+// ⚠️ QUI C'ERANO DUE NUMERI FALSI, dentro una riga intitolata «MISURATO E NON
+// SUPPOSTO»: «38 namespace» (sono 39) e «91» (erano già 93 nel momento in cui la
+// riga veniva scritta). Rimisurati il 2026-09-12 rieseguendo il conto invece di
+// rileggerlo, e la differenza è ricostruibile cifra per cifra: 89 su `main`; +2 con
+// `reconComponiTitolo` e `reconComponiConferma`, ed è lì che il conto si è fermato a
+// 91; +2 con le due delle cinque `erroreConciliazione*` appese a `shared.json` che
+// nominano il pagamento; +1 con `reconComponiErrComposizioneVuota`. Totale 94.
+// Le due chiavi ANNIDATE che il conto attraversa — `offline.etichette.segmenti.pagamenti`
+// e `prestampatiSegreteria.modelli.sollecitoPagamento` — sono dentro il totale da
+// sempre, perché `vociPiatte` scende nei sottoalberi: NON c'entrano con la
+// differenza, e attribuirgliela sarebbe stato il terzo numero sbagliato di seguito.
+//
+// Perché nessun lock lo prendeva: `messaggi-parita-cataloghi` confronta le CHIAVI e
+// dichiara per iscritto di non guardare i valori («che la traduzione inglese sia
+// diversa dall'italiana… sarebbe solo rumore»); e a ragione, in generale. Un
+// termine di prodotto è l'eccezione: lì la parola è la cosa.
+const PAGAMENTO_IT = /pagament/i
+const PAGAMENTO_EN = /payment/i
 
 /** Le voci di una lingua che contengono un termine, con il loro indirizzo. */
 const conTermine = (lingua: Lingua, termine: RegExp) =>
@@ -438,6 +502,45 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
             disallineate,
             `Queste voci parlano di «presa visione» in italiano ma non di «acknowledgement» in inglese:\n  ` +
             `${disallineate.join('\n  ')}`,
+        ).toEqual([])
+    })
+
+    it('ogni voce che in italiano parla di «pagamento» dice «payment» in inglese', () => {
+        // La stessa chiave non può parlare di due cose diverse nelle due lingue: chi
+        // legge l'inglese non ha modo di sapere che il pulsante che dice «Confirm the
+        // breakdown» è quello che il manuale, le email e il resto della schermata
+        // chiamano «payment».
+        const disallineate: string[] = []
+        let esaminate = 0
+        for (const ns of Object.keys(CATALOGHI.it).sort()) {
+            const en = CATALOGHI.en[ns]
+            if (!en) continue
+            for (const [chiave, valore] of vociPiatte(CATALOGHI.it[ns])) {
+                if (typeof valore !== 'string' || !PAGAMENTO_IT.test(valore)) continue
+                esaminate++
+                const controparte = vociPiatte(en).find(([k]) => k === chiave)?.[1]
+                if (typeof controparte !== 'string' || !PAGAMENTO_EN.test(controparte)) {
+                    disallineate.push(`${ns}.json → ${chiave}: IT «${valore}» ⟶ EN «${String(controparte)}»`)
+                }
+            }
+        }
+        // Senza questo, un giorno in cui il catalogo non nominasse più il pagamento da
+        // nessuna parte questa prova sarebbe verde per non aver guardato niente. Il
+        // conto misurato il 2026-09-12 è 94: la soglia lascia 14 di margine, il 15%,
+        // che basta a non doverla ritoccare a ogni rilascio.
+        // ⚠️ NON è vero, come diceva questa riga, che la soglia «si accorge di un
+        // namespace sparito»: se ne accorge di UNO SOLO. `adminContabilita` da solo ne
+        // porta 45, e senza di lui resterebbero 49, sotto la soglia. Gli altri 11
+        // potrebbero sparire uno per uno restando verdi — i due più grossi,
+        // `pagamenti` e `shared`, ne portano 12 a testa e ne lascerebbero 82. Misurato
+        // namespace per namespace, non dedotto dalla dimensione della soglia.
+        expect(esaminate, 'nessuna chiave italiana nomina il pagamento: il lock non sta guardando niente').toBeGreaterThanOrEqual(80)
+        expect(
+            disallineate,
+            `Queste voci parlano di «pagamento» in italiano e di altro in inglese:\n  ` +
+            `${disallineate.join('\n  ')}\n` +
+            `Il termine di prodotto è uno: «pagamento» ⟶ «payment». Lo rispettavano già 90 chiavi ` +
+            `su 91 quando la regola è nata, e oggi lo rispettano tutte e 94.`,
         ).toEqual([])
     })
 

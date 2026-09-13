@@ -2032,6 +2032,281 @@ export const CODICI_ERRORE = {
      * dice «riprova» e non «è stata ripristinata».
      */
     MEDIA_NON_RIPRISTINATO: 'erroreMediaNonRipristinato',
+    /* ── «Componi il pagamento»: un bonifico ripartito su più voci (2026-09-12) ─ */
+    /**
+     * 422 — la somma delle voci composte non è uguale all'importo del bonifico.
+     *
+     * È il rifiuto CENTRALE della schermata, e non è un capriccio di forma: una
+     * composizione che non quadra scrive incassi che non corrispondono a nessun
+     * denaro arrivato in banca, e il buco ricompare mesi dopo nello scadenzario di
+     * una famiglia che aveva pagato. Il conto lo rifà il server — il totale che si
+     * vede a schermo è quello del browser, e fra i due c'è una rete.
+     *
+     * 422 e non 400: il corpo è ben formato e zod lo accetta: è la RELAZIONE fra i
+     * numeri a non stare in piedi, e si vede solo avendo letto il movimento.
+     */
+    CONCILIAZIONE_NON_QUADRA: 'erroreConciliazioneNonQuadra',
+    /**
+     * 403 — una delle voci composte sta in un plesso che l'operatore non può
+     * toccare.
+     *
+     * NON è `SEDE_NON_ACCESSIBILE`, e la differenza è quella che l'operatore deve
+     * leggere: lì la sede rifiutata è quella DELL'OPERAZIONE (l'ha indicata lui, o
+     * viene dal cookie), qui l'operazione è legittima e a essere fuori portata è
+     * UNA RIGA fra quelle che ha messo nel pagamento — spesso un fratello iscritto
+     * in un altro plesso. La via d'uscita è togliere quella voce, non cambiare
+     * sede, e `rifiutoSede` direbbe il contrario.
+     */
+    CONCILIAZIONE_SEDE_NON_ACCESSIBILE: 'erroreConciliazioneSedeNonAccessibile',
+    /**
+     * 400 — non è stata indicata la voce su cui ANCORARE la fattura.
+     *
+     * L'àncora non è un dettaglio del documento: da quella voce si prendono
+     * l'intestatario e la sede in cui la fattura viene archiviata. Senza, la route
+     * dovrebbe indovinare — ed è esattamente il modo in cui un documento finisce
+     * nel plesso sbagliato in silenzio.
+     */
+    CONCILIAZIONE_ANCORA_MANCANTE: 'erroreConciliazioneAncoraMancante',
+    /**
+     * 409 — la riga bancaria è cambiata mentre la si stava componendo: un altro
+     * operatore l'ha abbinata, riaperta o fatturata nel frattempo.
+     *
+     * Non si risponde 200 «fatto»: la composizione che si sta confermando è stata
+     * pensata su uno stato che non c'è più, e applicarla scriverebbe incassi
+     * doppi. La frase dice di ricaricare, che è l'unica cosa che rimette
+     * l'operatore davanti alla realtà.
+     */
+    CONCILIAZIONE_MOVIMENTO_CAMBIATO: 'erroreConciliazioneMovimentoCambiato',
+    /**
+     * ⚠️ NON È UN RIFIUTO: è un AVVISO su una risposta **200**.
+     *
+     * Si è riaperto un movimento che aveva già prodotto una fattura VIVA (emessa,
+     * consegnata o in attesa dello SDI: tutto tranne una scartata). Il documento
+     * resta in piedi mentre l'incasso che lo giustificava è stato stornato — cioè
+     * un numero di fattura senza più niente sotto, che si chiude solo con una nota
+     * di variazione. Chi riapre deve saperlo, e deve sapere QUALI documenti
+     * guardare: la prosa del server porta i numeri, che il catalogo non può
+     * conoscere, e il campo `avviso.numeri` li porta anche in forma di elenco.
+     *
+     * ⚠️ FINO AL 2026-09-13 QUESTO BLOCCO DICEVA «409» e la frase di catalogo
+     * diceva «annullala prima di riaprirlo». Era un divieto, ed è stato MISURATO
+     * che cosa avrebbe vietato: in produzione, **167 movimenti confermati su 174**
+     * hanno una fattura viva sul pagamento abbinato — il 96%. Una riapertura che
+     * rifiuta il 96% dei casi non è una riapertura: è un pulsante che non funziona
+     * mai. Decisione del titolare, esplicita: «riapri comunque, avvisando».
+     *
+     * Le SCARTATE non passano di qui: quelle vanno rifatte, ed è il caso normale.
+     */
+    RIAPERTURA_CON_FATTURA_VIVA: 'erroreRiaperturaConFatturaViva',
+    /**
+     * ⚠️ Anche questo è un AVVISO su una risposta **200**, non un rifiuto.
+     *
+     * Se una fattura viva ci sia non si è potuto LEGGERE (PostgREST ha risposto
+     * con un errore). La riapertura NON si ferma — il titolare ha deciso che si
+     * riapre sempre — ma tacere trasformerebbe un guasto di lettura in un
+     * «nessuna fattura viva» che nessuno ha verificato, e sarebbe la stessa specie
+     * di silenzio che questo repo passa il tempo a chiudere.
+     *
+     * NON riusa `BONIFICO_FATTURA_NON_VERIFICABILE`, che dice «l'operazione è
+     * stata fermata»: qui l'operazione è ANDATA, e dire il contrario manderebbe
+     * l'operatrice a rifare una riapertura già avvenuta.
+     */
+    RIAPERTURA_FATTURE_NON_VERIFICATE: 'erroreRiaperturaFattureNonVerificate',
+    /**
+     * 503 — la riapertura di un movimento composito passa dalla RPC
+     * `annulla_transazione_contabile`, che su questo ambiente non c'è
+     * (`PGRST202`/`42883`: il DB E2E della CI non è migrato).
+     *
+     * Niente è stato scritto: lo storno e la riapertura vivono dentro quella
+     * chiamata, e senza di lei non parte nemmeno la prima riga.
+     */
+    RIAPERTURA_NON_DISPONIBILE: 'erroreRiaperturaNonDisponibile',
+    /**
+     * 409 — la transazione che questo bonifico ha saldato ha generato un credito
+     * di eccedenza che la famiglia ha già speso: annullarla lascerebbe il saldo
+     * negativo (`KV410` della RPC).
+     *
+     * Il rimedio non è ritentare: è recuperare prima il credito speso. Per questo
+     * non riusa `CONCILIAZIONE_MOVIMENTO_CAMBIATO`, che invece invita a ricaricare.
+     */
+    RIAPERTURA_CREDITO_GIA_SPESO: 'erroreRiaperturaCreditoGiaSpeso',
+    /**
+     * 500 — lo storno che la riapertura deve fare PRIMA di rimettere il bonifico in
+     * coda non è riuscito: il movimento non è stato toccato.
+     *
+     * L'ordine (prima si storna, poi si riapre) non è un dettaglio implementativo e
+     * spiega perché questo codice esiste: nel verso opposto resterebbe un movimento
+     * libero con l'incasso ancora vivo, che si fa riabbinare a un'altra voce — cioè
+     * lo stesso denaro incassato due volte. Meglio non riaprire.
+     */
+    RIAPERTURA_NON_RIUSCITA: 'erroreRiaperturaNonRiuscita',
+    /**
+     * 500 — la riga dell'estratto conto non si è potuta LEGGERE.
+     *
+     * Non è «non esiste»: PostgREST non lancia, e fino al 2026-09-13 qualunque
+     * guasto di lettura qui usciva come 404 «Movimento non trovato» — un messaggio
+     * che manda a cercare una riga che invece c'è.
+     *
+     * ⚠️ **500 È LO STATO VERO, e per un po' non lo è stato.** Lo stesso giorno in
+     * cui questo blocco è nato, il codice usciva anche su un **503** — il gate di
+     * sede della riapertura composita, dove però la cosa non letta è la
+     * TRANSAZIONE, non la riga bancaria di cui parla la frase qui sotto. Quel punto
+     * ha ora il suo codice (`RIAPERTURA_SEDE_NON_VERIFICATA`): qui resta soltanto
+     * la lettura del movimento, che è 500 e parla del movimento.
+     */
+    MOVIMENTO_NON_LETTO: 'erroreMovimentoNonLetto',
+    /**
+     * 404 — la riga bancaria che si stava per comporre non c'è (più).
+     *
+     * Distinto da `CONCILIAZIONE_MOVIMENTO_CAMBIATO` (409), che è il caso in cui
+     * il movimento esiste ancora ma non è più nello stato su cui la composizione
+     * era stata pensata: lì si ricarica e si ricompone, qui non c'è più niente da
+     * comporre. Dirli con lo stesso codice manderebbe l'operatrice a ricaricare
+     * una schermata che resterà vuota.
+     */
+    CONCILIAZIONE_MOVIMENTO_NON_TROVATO: 'erroreConciliazioneMovimentoNonTrovato',
+    /**
+     * 500 — il contesto del pannello «Componi il pagamento» non si è potuto
+     * leggere (una query del database non ha risposto).
+     *
+     * ⚠️ ESISTE PERCHÉ UN GUASTO NON DEVE TRAVESTIRSI DA ELENCO VUOTO. PostgREST
+     * non lancia: ritorna `{ error }`, e una route che lo ignorasse risponderebbe
+     * 200 con zero voci aperte — cioè «questa famiglia non deve niente» detto a
+     * chi sta per incassare un bonifico. Chi legge questo codice sa di non aver
+     * ricevuto un elenco corto: sa di non aver ricevuto l'elenco.
+     */
+    CONCILIAZIONE_CONTESTO_NON_LETTO: 'erroreConciliazioneContestoNonLetto',
+    /**
+     * 403 — il pagante indicato a mano non è fra i genitori dei bambini che
+     * questo bonifico nomina.
+     *
+     * La proposta si cambia, ma si cambia SCEGLIENDO fra i candidati che la
+     * schermata mostra. Accettare un `parents.id` qualunque farebbe di questa
+     * rotta un modo per sfogliare le famiglie dell'intero archivio — voci aperte,
+     * importi e plessi — conoscendo un solo uuid. Non è un errore di forma (per
+     * quello c'è zod): è una richiesta ben scritta a cui si risponde di no.
+     */
+    CONCILIAZIONE_PAGANTE_NON_AMMESSO: 'erroreConciliazionePaganteNonAmmesso',
+    /**
+     * 403 — una voce NUOVA o una ricarica ticket è intestata a un bambino che non
+     * è più attivo: ritirato, oppure con l'anagrafica cancellata dall'oblio GDPR.
+     *
+     * ⚠️ NON è `CONCILIAZIONE_SEDE_NON_ACCESSIBILE`, e la differenza è quella che
+     * l'operatrice deve leggere: quel codice parla di PLESSO e manda a togliere una
+     * voce che appartiene a un'altra sede. Qui il bambino è della sua sede, e il
+     * problema è il suo stato — dirle «sede che non puoi gestire» la manderebbe a
+     * cercare un errore di plesso che non c'è.
+     *
+     * Misurato sul database vivo il 2026-09-13, su 727 alunni: **10 ritirati**
+     * (lo stato `archiviato` non esiste: gli stati sono due, `iscritto` e
+     * `ritirato`) e **4 anonimizzati**, tutti e quattro dentro i dieci ritirati.
+     * La RPC `registra_transazione_contabile` accetta qualunque `alunno_id`
+     * ESISTA: il rifiuto è un gate applicativo e il suo posto è la route.
+     *
+     * Vale solo per le voci che NASCONO qui. Una voce già a sistema resta
+     * incassabile anche dopo il ritiro: un insoluto si salda anche quando il
+     * bambino non frequenta più, ed è il caso normale di fine anno.
+     */
+    CONCILIAZIONE_ALUNNO_NON_ATTIVO: 'erroreConciliazioneAlunnoNonAttivo',
+    /**
+     * 503 — la conciliazione composita non è disponibile su questo ambiente, e
+     * NIENTE è stato scritto.
+     *
+     * Due cause, una sola risposta: la RPC estesa non c'è (`PGRST202`/`42883`) o
+     * il legame movimento→transazione non esiste ancora (`42703` su
+     * `riconciliazione_movimenti.transazione_id`). Il DB E2E della CI è un
+     * progetto separato e non migrato: là questa strada non esiste affatto.
+     *
+     * ⚠️ Il 503 sulla COLONNA assente non è pignoleria. La RPC *vecchia* esiste e
+     * accetta lo stesso payload: ignorerebbe `movimento_id` in silenzio,
+     * scriverebbe gli incassi e lascerebbe la riga bancaria rossa — cioè
+     * esattamente il difetto che questa funzionalità esiste per chiudere, con un
+     * 200 sopra. Meglio non partire.
+     */
+    CONCILIAZIONE_NON_DISPONIBILE: 'erroreConciliazioneNonDisponibile',
+    /**
+     * 500 — la registrazione non è riuscita: la RPC ha risposto con un errore che
+     * non è né «non ci sono» né «hai perso la corsa».
+     *
+     * Il `message` grezzo della RPC NON esce di qui. La funzione è stata scritta
+     * apposta per non interpolare testo libero nei propri `RAISE` — le voci si
+     * nominano con l'indice, mai con la descrizione — ma il patto si mantiene da
+     * tutt'e due i capi: quel messaggio resta nel log, dove ha un lettore, e non
+     * nel corpo della risposta, dove diventerebbe un canale.
+     */
+    CONCILIAZIONE_NON_REGISTRATA: 'erroreConciliazioneNonRegistrata',
+    /**
+     * 409 — LO STORNO È AVVENUTO, la riga bancaria non è tornata in coda.
+     *
+     * ⚠️ ESISTE PERCHÉ `CONCILIAZIONE_MOVIMENTO_CAMBIATO` QUI DICEVA IL CONTRARIO.
+     * Quel codice era stato messo su questa risposta proprio per «dichiarare lo
+     * storno», e la prosa del server lo dichiarava davvero — ma
+     * `CONCILIAZIONE_MOVIMENTO_CAMBIATO` NON sta in `CODICI_CON_DETTAGLIO`:
+     * `messaggioDaCorpo` scarta la prosa appena riconosce il codice, e a schermo
+     * usciva la frase di catalogo, «un altro operatore ha appena modificato questo
+     * bonifico: ricarica l'elenco e ricomponi il pagamento». Del denaro restituito,
+     * niente. Misurato eseguendo `messaggioDaCorpo`, non dedotto.
+     *
+     * La via non era aggiungere quel codice a `CODICI_CON_DETTAGLIO`: la sua frase
+     * INVITA A RICOMPORRE, ed è giusta dov'è usata (la composizione perde la corsa
+     * e si rifà). Qui il fatto è un altro, ed è l'unico che conti: il denaro è già
+     * stato stornato, e chi ripreme il pulsante non ne raddoppia lo storno.
+     *
+     * Sta su un 409 e non su un 500 perché non è un guasto: è una corsa persa
+     * sulla SECONDA metà di un'operazione la cui prima metà è riuscita.
+     */
+    RIAPERTURA_STORNATA_NON_RIAPERTA: 'erroreRiaperturaStornataNonRiaperta',
+    /**
+     * 503 — non si è potuta LEGGERE la transazione di cui il bonifico fa parte,
+     * quindi non si è potuta verificare la sua SEDE: la riapertura è stata fermata
+     * prima di qualunque storno.
+     *
+     * ⚠️ NON è `MOVIMENTO_NON_LETTO`, e per due motivi che erano entrambi sbagliati
+     * insieme: quel codice è documentato **500** (ed è 500 dov'è usato davvero,
+     * sulla lettura della riga bancaria) mentre questa risposta è **503**; e la sua
+     * frase dice «questa riga dell'estratto conto», mentre la cosa che qui non si è
+     * potuta leggere è la TRANSAZIONE. Un codice che porta lo stato sbagliato e il
+     * soggetto sbagliato non è un'imprecisione: manda a guardare l'oggetto che non
+     * c'entra.
+     *
+     * Fail-closed: `annulla_transazione_contabile` gira a service-role e storna
+     * incassi, ricariche mensa e credito di famiglia senza che nessun filtro le
+     * arrivi addosso. Senza quella lettura non si sa di CHI sia il denaro.
+     */
+    RIAPERTURA_SEDE_NON_VERIFICATA: 'erroreRiaperturaSedeNonVerificata',
+    /**
+     * 422 — una delle voci scelte è un CONTENITORE di rate (`pagamenti.tipo =
+     * 'padre'`): il totale di un piano, non una cosa che si incassa.
+     *
+     * Incassarlo lo porterebbe a `pagato` LASCIANDO APERTE le rate figlie: lo
+     * stesso denaro a registro due volte, e la famiglia che resta morosa sulle
+     * rate. Il resto dell'applicazione lo esclude da sempre — nove punti, da
+     * `/api/pagamenti` alla dashboard — ma sempre in LETTURA: sulla rotta che
+     * scrive i soldi il filtro non c'era, e una voce `padre` passava con 200
+     * (sonda del 2026-09-13). Una guardia sulla lettura non protegge la scrittura.
+     *
+     * Il rimedio che la frase deve dare è preciso: non «riprova», ma «togli quella
+     * riga e scegli le rate». In produzione al 2026-09-13 c'è UNA riga `padre` su
+     * 825 pagamenti, ed è già `pagato`: il varco era dormiente, non chiuso.
+     */
+    CONCILIAZIONE_VOCE_CONTENITORE: 'erroreConciliazioneVoceContenitore',
+    /**
+     * 200 (sì, DUECENTO) — l'incasso è stato registrato, ma la riga dell'estratto
+     * conto non è stata legata alla transazione.
+     *
+     * ⚠️ È L'UNICO CODICE DI QUESTO ELENCO CHE VIAGGIA SU UNA RISPOSTA RIUSCITA, ed
+     * è deliberato. Succede nella finestra stretta in cui la colonna
+     * `riconciliazione_movimenti.transazione_id` esiste ma la RPC è ancora quella
+     * VECCHIA: gli incassi vengono scritti e il compare-and-swap non avviene. Un
+     * 500 direbbe «nulla è stato scritto» — falso — e inviterebbe a ritentare; un
+     * 200 muto lascia leggere «fatto» davanti a una riga che resta rossa, e
+     * l'operatrice ritenta lo stesso. Al secondo giro il doppio incasso è fermato
+     * dal residuo riletto SOLO per le voci esistenti: le voci nuove e i ticket
+     * nascono di nuovo, e niente li trattiene.
+     *
+     * Perciò la frase dice una cosa sola e la dice in imperativo: non ripetere.
+     */
+    CONCILIAZIONE_MOVIMENTO_NON_LEGATO: 'erroreConciliazioneMovimentoNonLegato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

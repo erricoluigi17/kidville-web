@@ -30,7 +30,10 @@ import {
   numeroPillolaFattura,
   suggerimentoPrincipaleCf,
   riepilogoImport,
+  riepilogoComposizione,
+  motivoNonFatturabile,
   type ConteggiFattura,
+  type EsitoComposizione,
   type MovimentoUi,
   type PagamentoApertoUi,
   type EsitoImport,
@@ -169,6 +172,15 @@ const ID_ASIMMETRIA = 'recon-conteggi-asimmetria';
  */
 export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props) {
   const t = useTranslations('adminContabilita');
+  /**
+   * Il catalogo `shared` serve a UNA frase sola, e non è una scorciatoia: quando
+   * la composizione registra il denaro ma non lega la riga bancaria, ciò che va
+   * detto è già scritto — `erroreConciliazioneMovimentoNonLegato`, la stessa frase
+   * che la route dichiara col codice `CONCILIAZIONE_MOVIMENTO_NON_LEGATO`.
+   * Riscriverla qui vorrebbe dire due testi per lo stesso fatto, nella stessa
+   * schermata, che è il difetto n. 2 del lock del glossario.
+   */
+  const ts = useTranslations('shared');
   const f = useDateFormat();
   // Data breve localizzata (IT identica a `toLocaleDateString('it-IT')`); '—' se assente.
   const dataIt = (d?: string | null) => (d ? f.dataBreve(d) : '—');
@@ -178,6 +190,20 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [esito, setEsito] = useState<EsitoImport | null>(null);
+  /**
+   * ─── CHE COSA HA REGISTRATO L'ULTIMA COMPOSIZIONE ─────────────────────────
+   *
+   * Fino al 2026-09-13 la chiusura riuscita del popup faceva una cosa sola:
+   * ricaricare. La lista tornava con una riga verde in più e nient'altro. Su una
+   * composizione — che salda voci di più fratelli e accredita ticket dentro una
+   * transazione atomica — «la riga è diventata verde» è il minimo comune
+   * denominatore fra «ha fatto tutto» e «ha fatto metà», e l'unico modo di sapere
+   * quale delle due sia è riaprire la famiglia e rifare i conti a mano.
+   *
+   * `null` = nessuna composizione in questa sessione di schermata, e non «zero
+   * voci»: la fascia non si monta affatto.
+   */
+  const [riepilogo, setRiepilogo] = useState<EsitoComposizione | null>(null);
   /**
    * IL GUASTO IN CORSO — uno solo, di uno dei tre tipi (v. `Guasto` qui sopra).
    *
@@ -531,6 +557,10 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     setBusy(true);
     setGuasto(null);
     setEsito(null);
+    // Un import nuovo spegne il riepilogo della composizione precedente: due
+    // fasce verdi che parlano di due fatti diversi, una sopra l'altra, si leggono
+    // come una sola — ed è la seconda che viene letta come esito della prima.
+    setRiepilogo(null);
     try {
       const corpo = new FormData();
       corpo.append('file', file);
@@ -560,6 +590,28 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
   // riconosciuti per CF e apre il wizard «Incasso unico» precompilato. Se il ponte
   // non risolve un pagante (parent null) si apre comunque, allo step «scegli
   // pagante», con riferimento e totale già impostati (degradazione graziosa).
+  //
+  // ─── PERCHÉ QUI L'ID DEL MOVIMENTO NON C'È, E RESTA COSÌ (2026-09-13) ───────
+  //
+  // Questo rimbalzo perde l'id del movimento, quindi la riga bancaria resta rossa
+  // anche dopo che «Incasso unico» ha registrato l'incasso. È un difetto vero, e
+  // NON si chiude aggiungendo un quinto campo qui: MISURATO, nessuno lo
+  // riceverebbe.
+  //  · `PrecompilaTransazione` (`TransazioniPanel.tsx`) dichiara quattro campi, e
+  //    l'effetto che la consuma li destruttura tutti e quattro — `{ parent, rif,
+  //    tot, alunni }` — senza leggerne altri;
+  //  · `POST /api/pagamenti/transazioni` non ha nessun campo per il movimento
+  //    nella sua `zod` (`postBodySchema`), e il payload che passa alla RPC non
+  //    porta `movimento_id`: la RPC quel parametro lo accetta — è la stessa di
+  //    `…/componi` — ma solo la rotta della conciliazione glielo manda.
+  // Un campo che viaggia nel JSON e non legge nessuno non è un'informazione in
+  // più: è decorazione da mantenere (è già successo con `per_cf`, tolto il giorno
+  // dopo esserci entrato). Chiudere il buco vuol dire far accettare il movimento
+  // alla rotta di «Incasso unico» — e quella, per decisione n. 11 del titolare,
+  // NON si tocca in questo lavoro: è la strada dell'eccedenza → credito famiglia,
+  // l'unica rimasta per il caso che la quadratura esatta del pannello nuovo
+  // rifiuta. Il pin di questa decisione è il `toEqual` in
+  // `__tests__/components/RiconciliazionePanel-composizione.test.tsx`.
   const gestisciIncassoUnico = useCallback(async (m: MovimentoUi) => {
     const alunni = [...new Set(
       (m.suggerimenti ?? [])
@@ -620,6 +672,14 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     }
     return parziale ? t('reconConteggioFatturateParziale', { n }) : t('reconConteggioFatturate', { n });
   };
+
+  /**
+   * I numeri del riepilogo della composizione, ripuliti dal motore (`null` quando
+   * non c'è nessuna composizione da raccontare). Il TESTO lo compone il JSX con
+   * `t()`, così la chiave resta un letterale — la forma con cui il lock delle
+   * chiavi orfane la vede — e la frase non si spezza in due `t()` concatenati.
+   */
+  const riepilogoUi = riepilogo ? riepilogoComposizione(riepilogo) : null;
 
   /**
    * L'avviso si mostra SOLO col sottofiltro acceso: senza, non c'è nessun filtro
@@ -777,6 +837,31 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           <SaveCheck size={16} />
           {riepilogoImport(esito)}
         </p>
+      )}
+      {/* ─── CHE COSA HA REGISTRATO L'ULTIMA COMPOSIZIONE ───────────────────
+          Accanto al riepilogo dell'import e con la stessa forma, perché rispondono
+          alla stessa domanda («che cosa è appena successo») e a due centimetri di
+          distanza due vestiti diversi per lo stesso concetto si leggono come due
+          concetti. Il tono, invece, cambia: v. `avviso`. */}
+      {riepilogoUi && (
+        riepilogoUi.avviso ? (
+          /* ⚠️ `role="alert"` E TONO D'AVVISO, NON DI CONFERMA. Il denaro è
+             scritto ma la riga bancaria non si è legata: una fascia verde qui
+             direbbe «fatto» di un lavoro rimasto a metà, e l'operatrice
+             ricomporrebbe — sulle voci nuove e sui ticket il secondo giro crea
+             righe nuove, e non c'è nessun residuo che la fermi. La frase è quella
+             che la route dichiara col proprio codice: non se ne scrive una seconda. */
+          <p role="alert" className="mt-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-sm text-kidville-warn-strong">
+            {t('reconComposizioneRegistrata', riepilogoUi.valori)}
+            {' — '}
+            {ts('erroreConciliazioneMovimentoNonLegato')}
+          </p>
+        ) : (
+          <p role="status" className="mt-3 flex items-center gap-1.5 rounded-card bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success">
+            <SaveCheck size={16} />
+            {t('reconComposizioneRegistrata', riepilogoUi.valori)}
+          </p>
+        )
       )}
       {testoGuasto !== null && (
         <p role="alert" className="mt-3 font-maven text-xs text-kidville-error-strong">
@@ -1029,6 +1114,13 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
             // riga ancora da lavorare non esiste nessun pagamento da fatturare, e la
             // lettura fallita (`null`) non diventa un chip — non si dichiara ciò che non
             // si sa.
+            //
+            // ⚠️ La guardia su `pagamento_id` NON basta più da sola, e il presidio non
+            // è qui: un movimento riaperto dall'annullo della transazione conserva
+            // `pagamento_id` pur essendo tornato `da_abbinare`. È il SERVER a non
+            // mandargli più i documenti (`pagamentoAbbinatoDi` in
+            // `pagamenti/riconciliazione:GET`), perché lo stato del movimento lì c'è e
+            // nel tipo d'ingresso del chip no.
             const fat = chipFatturazione(m);
             return (
               <li key={m.id} className="flex items-stretch gap-1">
@@ -1126,6 +1218,30 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                       <span className={cx('mt-1 block truncate font-maven text-xs', s.sub)} title={m.causale ?? ''}>
                         {m.causale || t('reconNessunaCausale')}{m.controparte ? ` · ${m.controparte}` : ''}
                       </span>
+                      {/* ── PERCHÉ QUESTA RIGA NON SI PUÒ FATTURARE ──────────
+                          La riga è confermata, ha un pagamento, e non porta né
+                          chip né casella: senza questa frase l'operatrice legge
+                          «non c'è niente da fare», che è il falso negativo
+                          peggiore di questa schermata — una fattura saltata non la
+                          ferma nessuna guardia. Il quando è tutto in
+                          `motivoNonFatturabile`, che senza la guardia «nessun
+                          chip» scriverebbe la stessa frase su cento righe già a
+                          posto (misura del 2026-09-13 accanto alla funzione).
+
+                          ⚠️ INCHIOSTRO DEL SEMAFORO (`s.sub`), MAI
+                          `text-kidville-sub`: quello vale 6,46:1 su carta bianca,
+                          ma qui il fondo è il VERDE PIENO della riga confermata.
+                          È la stessa leva della causale due righe sopra, e il
+                          motivo per cui la pelle sta nel semaforo e non qui.
+
+                          ⚠️ NIENTE `truncate`: la causale si può tagliare — è un
+                          dato che si rilegge aprendo la riga — una spiegazione no.
+                          Una frase troncata a metà spiega meno di nessuna frase. */}
+                      {motivoNonFatturabile(m, fatturazioneDisponibile) && (
+                        <span className={cx('mt-1 block font-maven text-[11px]', s.sub)}>
+                          {t('reconPagamentoAltraSede')}
+                        </span>
+                      )}
                     </span>
                     <span className="flex basis-full items-center gap-2 sm:min-w-44 sm:basis-auto sm:shrink-0 sm:justify-end">
                       {cf && (
@@ -1203,8 +1319,26 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
           onClose={() => setSelezionato(null)}
           /* È il momento in cui una fattura è appena partita (o un abbinamento è
              stato fatto): il numero DEVE scendere, o resterebbe a schermo un
-             conteggio che l'operatore ha appena smentito con le proprie mani. */
-          onDone={() => { void load(); riconta(); }}
+             conteggio che l'operatore ha appena smentito con le proprie mani.
+
+             ⚠️ L'ARGOMENTO È FACOLTATIVO, E NON PER TOLLERANZA. Le azioni del
+             popup sono più d'una — conferma, ignora, riapri, emissione — e una
+             sola di esse produce un riepilogo da leggere: la COMPOSIZIONE, che è
+             l'unica in cui il denaro si spalma su righe che a schermo non si
+             vedono. Con l'esito assente non si inventa niente e si ricarica, com'è
+             sempre stato; con l'esito, si dice che cosa è stato scritto. È anche
+             ciò che rende questo pannello indipendente dall'avanzamento del
+             popup, che in questo stesso branch sta cambiando. */
+          onDone={(composizione?: EsitoComposizione) => {
+            if (composizione) {
+              // Due fasce verdi che parlano di due fatti diversi si leggono come
+              // una sola: quella dell'import si spegne (e la sua spegne questa).
+              setEsito(null);
+              setRiepilogo(composizione);
+            }
+            void load();
+            riconta();
+          }}
           onIncassoUnico={onIncassoUnico ? gestisciIncassoUnico : undefined}
         />
       )}

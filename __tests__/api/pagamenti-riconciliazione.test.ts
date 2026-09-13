@@ -297,9 +297,21 @@ describe('PATCH /api/pagamenti/riconciliazione/[id]', () => {
     expect(h.updates.find((u) => u.table === 'riconciliazione_movimenti')!.row.stato).toBe('da_abbinare')
   })
 
-  it('riapri di un movimento già confermato → 409', async () => {
+  it('riapri di un movimento già confermato → 200: adesso lo storno lo fa la route', async () => {
+    // ⚠️ QUESTA RIGA ASSERIVA 409 FINO AL 2026-09-13, e il cambio è deliberato.
+    // Quel rifiuto diceva «stornare prima l’incasso», cioè mandava l’operatrice a
+    // cercare a mano, nel registro incassi, la riga che il bonifico aveva creato —
+    // e senza niente che tenesse insieme le due operazioni: chi stornava e non
+    // riapriva lasciava una riga verde sopra un incasso che non c’era più.
+    // Il contratto nuovo — storno + riapertura nella stessa richiesta, avviso sulle
+    // fatture ancora vive, nessuna notifica al genitore — sta in
+    // `__tests__/api/pagamenti-riconciliazione-riapri.test.ts`. Qui resta il minimo
+    // che impedisce al 409 di tornare di soppiatto.
     h.movimento = { ...h.movimento!, stato: 'confermato' }
-    expect((await patch({ azione: 'riapri' })).status).toBe(409)
+    const res = await patch({ azione: 'riapri' })
+    expect(res.status).toBe(200)
+    expect(h.updates.find((u) => u.table === 'riconciliazione_movimenti')!.row.stato).toBe('da_abbinare')
+    expect(h.notificaEvento, 'uno storno non avvisa il genitore').not.toHaveBeenCalled()
   })
 
   it('ignora di un movimento già confermato → 409', async () => {

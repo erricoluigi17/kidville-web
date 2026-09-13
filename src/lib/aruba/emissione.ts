@@ -607,6 +607,191 @@ function segnalaStatoNonAggiornato(
   }, erroreConCausa(detto, errore))
 }
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * L'ANCORAGGIO COMPOSITO — quando un bonifico solo paga più voci
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** L'ambiente non ha (ancora) la conciliazione composita: colonna o tabella assenti. */
+const COMPOSITA_NON_MIGRATA = new Set(['42703', 'PGRST204', '42P01', 'PGRST205'])
+
+/**
+ * Che cosa si è potuto sapere del legame «questa voce ancora un incasso composito».
+ *
+ * Tre stati e non due, e il terzo è il punto: `non-verificabile` NON è `nessuno`.
+ * Una fattura è un documento immodificabile (trigger WORM su `fatture_emesse`):
+ * emetterla per l'importo della sola voce perché una lettura è fallita significa
+ * mandare allo SDI un documento SBAGLIATO che si corregge solo con una nota di
+ * variazione. Nel dubbio non si emette — costa un ritentativo, non un documento.
+ */
+type AncoraggioComposito =
+  | { stato: 'nessuno' }
+  | { stato: 'composito'; transazioneId: string; totale: number; scuolaTransazione: string | null }
+  | { stato: 'non-verificabile'; messaggio: string }
+
+/**
+ * ─── UNA FATTURA SOLA, UNA RIGA SOLA, PER L'INTERO BONIFICO ──────────────────
+ *
+ * DECISIONE DEL TITOLARE, e va scritta per intero perché ha conseguenze fiscali:
+ * un bonifico da 150 € che salda 100 € di retta e 50 € di ticket mensa produce
+ * **una sola fattura da 150 € con UNA riga sola, intestata come retta**. Non due
+ * documenti, non due righe. La famiglia porta in detrazione quel documento, e ciò
+ * che vi legge è la descrizione della voce ÀNCORA per un importo che comprende
+ * anche ciò che retta non è. Chiesto esplicitamente, con la conseguenza mostrata
+ * prima della decisione. Vale anche per DUE FIGLI («una sola da 300») e per due
+ * PLESSI («un documento solo»).
+ *
+ * ⚠️ IL GENERATORE SUPPORTA RIGHE MULTIPLE (`righe: [...]` di
+ * `buildFatturaElettronicaXml`): qui se ne usa UNA SOLA, deliberatamente. Non è
+ * una dimenticanza, ed è scritto qui perché il prossimo che legge non la
+ * «corregga» spacchettando il documento in una riga per voce.
+ *
+ * ─── PERCHÉ NON C'È UNA COLONNA ─────────────────────────────────────────────
+ * `fatture_emesse.pagamento_id` è NOT NULL, ha un indice unico e trigger WORM
+ * (`20260711150000_worm_registri_fiscali.sql`): una riga emessa non si modifica.
+ * La fattura resta ancorata al `pagamento_id` della voce àncora — quello che la
+ * conferma ha scritto su `riconciliazione_movimenti` — e ciò che cambia è solo
+ * l'importo costruito qui. Nessuna colonna nuova, nessuna migrazione.
+ *
+ * ─── COME SI TROVA L'ÀNCORA ─────────────────────────────────────────────────
+ * Non si sceglie qui: la sceglie la segreteria quando compone il pagamento (la
+ * voce con categoria `retta`, o quella indicata a mano — `proponiAncora` in
+ * `@/lib/pagamenti/conciliazione-composita`), e il suo id finisce in
+ * `riconciliazione_movimenti.pagamento_id`. Qui si fa la domanda inversa: «di
+ * quale transazione questa voce è l'àncora?».
+ */
+async function leggiAncoraggioComposito(
+  supabase: SupabaseClient,
+  pagamentoId: string,
+): Promise<AncoraggioComposito> {
+  const { data: righe, error } = await supabase
+    .from('riconciliazione_movimenti')
+    .select('transazione_id')
+    .eq('pagamento_id', pagamentoId)
+    // ⚠️ `stato = 'confermato'` NON è ridondante: dal 2026-09-12 un movimento
+    // riaperto dall'annullo CONSERVA `pagamento_id` (è la memoria su cui poggia la
+    // guardia «un bonifico non si fattura due volte»). Senza questo filtro si
+    // fatturerebbe il totale di una transazione già annullata.
+    .eq('stato', 'confermato')
+  if (error) {
+    const code = (error as { code?: string }).code ?? ''
+    if (COMPOSITA_NON_MIGRATA.has(code)) {
+      // DB E2E della CI, mai migrato: la conciliazione composita non esiste, e su
+      // quell'ambiente «nessun ancoraggio» è la verità, non un ripiego.
+      logEvento('fattura', 'info', {
+        operazione: 'emettiFatturaPagamento:ancoraggio',
+        esito: 'conciliazione-composita-non-migrata',
+        pagamento_id: pagamentoId,
+      })
+      return { stato: 'nessuno' }
+    }
+    // PostgREST non lancia: senza questo ramo `data` sarebbe null, «nessuna
+    // transazione» e «non l'abbiamo potuta leggere» diventerebbero la stessa cosa,
+    // e ne uscirebbe una fattura di 100 € per un bonifico da 150 €.
+    logEvento('fattura', 'error', {
+      operazione: 'emettiFatturaPagamento:ancoraggio',
+      esito: 'legame-composito-non-letto',
+      pagamento_id: pagamentoId,
+    }, error)
+    return {
+      stato: 'non-verificabile',
+      messaggio:
+        'Non è stato possibile verificare se questo pagamento faccia parte di un bonifico composito: ' +
+        'la fattura non è stata emessa, per non rischiare un documento con l’importo sbagliato. ' +
+        'Nessun numero è stato consumato — riprova fra poco.',
+    }
+  }
+  const ids = [
+    ...new Set(
+      ((righe ?? []) as { transazione_id?: string | null }[])
+        .map((r) => r.transazione_id)
+        .filter((v): v is string => typeof v === 'string' && v !== ''),
+    ),
+  ]
+  if (ids.length === 0) return { stato: 'nessuno' }
+  if (ids.length > 1) {
+    // Due bonifici che saldano in parte la stessa voce: prendere il primo che
+    // capita vorrebbe dire fatturare un totale a caso su un documento che non si
+    // corregge più.
+    logEvento('fattura', 'error', {
+      operazione: 'emettiFatturaPagamento:ancoraggio',
+      esito: 'ancoraggio-ambiguo',
+      pagamento_id: pagamentoId,
+      quante: ids.length,
+      msg: 'questa voce ancora più di una transazione: quale totale fatturare non è decidibile qui',
+    })
+    return {
+      stato: 'non-verificabile',
+      messaggio:
+        'Questa voce risulta ancorata a più di un bonifico composito: non è possibile stabilire ' +
+        'l’importo del documento. Riapri uno dei due movimenti e riprova. Nessun numero è stato consumato.',
+    }
+  }
+  const { data: trx, error: errTrx } = await supabase
+    .from('pagamenti_transazioni')
+    .select('id, importo_totale, scuola_id, annullata_il')
+    .eq('id', ids[0])
+    .maybeSingle()
+  if (errTrx) {
+    logEvento('fattura', 'error', {
+      operazione: 'emettiFatturaPagamento:ancoraggio',
+      esito: 'transazione-non-letta',
+      pagamento_id: pagamentoId,
+      transazione_id: ids[0],
+    }, errTrx)
+    return {
+      stato: 'non-verificabile',
+      messaggio:
+        'Non è stato possibile leggere il bonifico composito a cui questa voce appartiene: la fattura ' +
+        'non è stata emessa. Nessun numero è stato consumato — riprova fra poco.',
+    }
+  }
+  const riga = trx as { importo_totale?: number | string; scuola_id?: string | null; annullata_il?: string | null } | null
+  if (!riga) {
+    // Legame appeso a una transazione che non c'è: non si fattura un totale che
+    // nessuno può più leggere, ma non si blocca nemmeno un documento dovuto.
+    logEvento('fattura', 'warn', {
+      operazione: 'emettiFatturaPagamento:ancoraggio',
+      esito: 'transazione-inesistente',
+      pagamento_id: pagamentoId,
+      transazione_id: ids[0],
+    })
+    return { stato: 'nessuno' }
+  }
+  if (riga.annullata_il) {
+    // L'annullo ha già stornato tutto: fatturare quel totale sarebbe un documento
+    // per denaro restituito.
+    logEvento('fattura', 'info', {
+      operazione: 'emettiFatturaPagamento:ancoraggio',
+      esito: 'transazione-annullata',
+      pagamento_id: pagamentoId,
+      transazione_id: ids[0],
+    })
+    return { stato: 'nessuno' }
+  }
+  const totale = Number(riga.importo_totale)
+  if (!Number.isFinite(totale) || totale <= 0) {
+    logEvento('fattura', 'error', {
+      operazione: 'emettiFatturaPagamento:ancoraggio',
+      esito: 'totale-transazione-non-valido',
+      pagamento_id: pagamentoId,
+      transazione_id: ids[0],
+      msg: 'il totale della transazione non è un importo utilizzabile: emissione fermata',
+    })
+    return {
+      stato: 'non-verificabile',
+      messaggio:
+        'Il totale del bonifico composito a cui questa voce appartiene non è un importo valido: la ' +
+        'fattura non è stata emessa. Nessun numero è stato consumato.',
+    }
+  }
+  return {
+    stato: 'composito',
+    transazioneId: ids[0],
+    totale: Math.round(totale * 100) / 100,
+    scuolaTransazione: riga.scuola_id ?? null,
+  }
+}
+
 export async function emettiFatturaPagamento(
   supabase: SupabaseClient,
   pagamentoId: string,
@@ -655,6 +840,15 @@ export async function emettiFatturaPagamento(
       messaggio: 'La fattura può essere emessa solo per pagamenti saldati',
       httpStatus: 400,
     }
+
+  // 1-bis. QUESTA VOCE ANCORA UN BONIFICO COMPOSITO? (v. `leggiAncoraggioComposito`)
+  //   Si chiede SUBITO, prima di ogni configurazione e molto prima che un numero
+  //   venga allocato: se la risposta non si può avere, non si emette — e allora è
+  //   giusto fermarsi qui, dove non è stato ancora speso niente.
+  const ancoraggio = await leggiAncoraggioComposito(supabase, pagamentoId)
+  if (ancoraggio.stato === 'non-verificabile') {
+    return { ok: false, motivo: 'errore', messaggio: ancoraggio.messaggio, httpStatus: 503 }
+  }
 
   // 2. config Aruba + credenziali (lato server)
   const { data: settings, error: errSettings } = await supabase
@@ -985,7 +1179,7 @@ export async function emettiFatturaPagamento(
       httpStatus: 409,
     }
   }
-  const quote = scelta.quote
+  let quote = scelta.quote
 
   // ── L'ADULTO SCELTO DEV'ESSERE UN GENITORE DI QUESTO BAMBINO ─────────────
   // Contro un operatore che vuole sbagliare non protegge niente: col ramo
@@ -1050,6 +1244,67 @@ export async function emettiFatturaPagamento(
       httpStatus: 422,
     }
   const multi = quote.length > 1
+
+  // 5-ter. L'IMPORTO DEL DOCUMENTO, quando la voce ancora un bonifico composito.
+  //
+  //   È qui che la decisione del titolare diventa un numero: la quota unica vale
+  //   il TOTALE della transazione, non l'importo della voce. La descrizione non si
+  //   tocca — resta quella dell'àncora (`causaleBase`), ed è il punto della
+  //   decisione: un documento solo, una riga sola, intestata come retta.
+  //
+  //   L'IVA, il bollo virtuale e lo scorporo dell'imponibile si calcolano più sotto
+  //   a partire da `q.importo`, quindi seguono da soli: un bollo che scatta sopra i
+  //   77,47 € è corretto che si calcoli sull'importo DEL DOCUMENTO.
+  if (ancoraggio.stato === 'composito') {
+    if (multi) {
+      // ⚠️ GENITORI SEPARATI + BONIFICO COMPOSITO: l'ancoraggio NON si applica, e
+      // la scelta è deliberata. Ripartire fra due genitori un totale che comprende
+      // le voci di altri figli e altre categorie vorrebbe dire inventare due
+      // importi che nessuno ha deciso, su documenti che non si correggono. Si
+      // emette come sempre (una fattura per quota, sull'importo della voce): il
+      // resto del bonifico resta non fatturato, ed è esattamente ciò che accadeva
+      // prima di questa fetta. Non è silenzioso: questa riga esiste perché qualcuno
+      // se ne accorga e decida con la segreteria.
+      logEvento('fattura', 'warn', {
+        operazione: 'emettiFatturaPagamento:ancoraggio',
+        esito: 'ancoraggio-non-applicato-multi-quota',
+        pagamento_id: pagamentoId,
+        transazione_id: ancoraggio.transazioneId,
+        quote: quote.length,
+        msg:
+          'pagamento ripartito fra più intestatari e insieme àncora di un bonifico composito: ' +
+          'il documento resta sull’importo della voce, il resto del bonifico non è fatturato',
+      })
+    } else {
+      if (ancoraggio.scuolaTransazione && ancoraggio.scuolaTransazione !== pag.scuola_id) {
+        // Decisione n. 15: un bonifico può pagare figli di sedi diverse e produrre
+        // UN documento, intestato alla sede scelta dall'operatrice. Il documento
+        // però nasce con la configurazione Aruba e il cedente della sede della VOCE
+        // ÀNCORA — è da lì che vengono credenziali, serie e anagrafica fiscale — e
+        // cambiare quello qui significherebbe emettere con un'altra utenza e
+        // un'altra numerazione. Non si ferma niente: si dice che le due sedi
+        // divergono, perché l'àncora andrebbe scelta nella sede del documento.
+        logEvento('fattura', 'warn', {
+          operazione: 'emettiFatturaPagamento:ancoraggio',
+          esito: 'sede-documento-diversa-dalla-transazione',
+          pagamento_id: pagamentoId,
+          transazione_id: ancoraggio.transazioneId,
+          scuola_id: pag.scuola_id,
+          msg:
+            'la sede scelta per il bonifico composito non è quella della voce àncora: il documento ' +
+            'esce con la configurazione fiscale della voce',
+        })
+      }
+      quote = [{ ...quote[0], importo: ancoraggio.totale }]
+      logEvento('fattura', 'info', {
+        operazione: 'emettiFatturaPagamento:ancoraggio',
+        esito: 'documento-ancorato-al-bonifico',
+        pagamento_id: pagamentoId,
+        transazione_id: ancoraggio.transazioneId,
+        importo: ancoraggio.totale,
+      })
+    }
+  }
 
   // 6. righe fatture_emesse già presenti (per l'idempotenza per-quota)
   //

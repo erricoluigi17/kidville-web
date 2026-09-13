@@ -12,7 +12,13 @@ const h = vi.hoisted(() => ({
   removed: [] as string[],
   // Bonifica riconciliazione/incassi (D1): pagamenti dell'alunno + righe collegate.
   pagamenti: [] as { id: string }[],
-  movConfermati: [] as Record<string, unknown>[],
+  // Le righe che il ramo 3a dell'oblio pesca dal PAGAMENTO (`.in('pagamento_id', …)`).
+  // Fino al 2026-09-12 si chiamavano `movConfermati` e il finto le restituiva a chi
+  // filtrava `stato = 'confermato'`: quel filtro è stato tolto, perché perdeva i
+  // movimenti RIAPERTI dall'annullo (pagamento vivo, stato tornato `da_abbinare`) —
+  // cioè il nome di una famiglia lasciato su una riga bancaria dopo l'oblio di un
+  // minore. Il finto ora distingue i rami dal filtro che ciascuno usa davvero.
+  movDelPagamento: [] as Record<string, unknown>[],
   movCfMatch: [] as { id: string; suggerimenti?: unknown }[],
   incassiBonificati: [] as { id: string }[],
   // P6 — bonifica del testo libero dei movimenti di cassa per CF.
@@ -59,7 +65,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from: (table: string) => {
       // Ogni `from()` è un nuovo builder con stato filtri proprio.
-      const state: { stato?: string; neqStato?: string } = {}
+      const state: { stato?: string; neqStato?: string; inPagamenti?: boolean } = {}
       const dataFor = () => {
         if (table === 'student_parents') return h.links
         if (table === 'pagamenti') return h.pagamenti
@@ -75,8 +81,8 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'chat_threads') return h.threadChat
         if (table === 'chat_messages') return h.messaggiConAllegato
         if (table === 'riconciliazione_movimenti') {
-          if (state.stato === 'confermato') return h.movConfermati
-          if (state.neqStato === 'confermato') return h.movCfMatch
+          if (state.inPagamenti) return h.movDelPagamento // 3a: aggancio dal pagamento
+          if (state.neqStato === 'confermato') return h.movCfMatch // 3c/3d: non confermati
           return []
         }
         return []
@@ -86,7 +92,11 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = (col: string, val: unknown) => { if (col === 'stato') state.stato = String(val); return b }
       b.is = () => b
       b.neq = (col: string, val: unknown) => { if (col === 'stato') state.neqStato = String(val); return b }
-      b.in = (col: string, vals: unknown) => { if (table === 'news_visualizzazioni' && col === 'utente_id') h.newsVisDeleteFilter = vals as string[]; return b }
+      b.in = (col: string, vals: unknown) => {
+        if (table === 'news_visualizzazioni' && col === 'utente_id') h.newsVisDeleteFilter = vals as string[]
+        if (col === 'pagamento_id') state.inPagamenti = true
+        return b
+      }
       b.or = () => b
       b.ilike = () => b
       // Dal 2026-08-01 l'oblio interroga anche `enrollment_submissions` e
@@ -172,7 +182,7 @@ beforeEach(() => {
   h.links = [{ parent_id: 'p-1' }]
   h.parentChildren = { 'p-1': [] } // orfano
   h.updates = []; h.removed = []
-  h.pagamenti = []; h.movConfermati = []; h.movCfMatch = []; h.incassiBonificati = []
+  h.pagamenti = []; h.movDelPagamento = []; h.movCfMatch = []; h.incassiBonificati = []
   h.cassaBonificati = []
   h.parentsAuth = []; h.newsVisDeleted = []; h.newsVisError = null
   h.newsVisDeleteFilter = null; h.deletedTables = []
@@ -416,7 +426,7 @@ describe('POST /api/admin/gdpr/erase', () => {
   // confermati (causale/controparte/suggerimenti.label) e nella nota dell'incasso.
   it('execute: bonifica movimenti confermati + nota incasso dei pagamenti dell\'alunno', async () => {
     h.pagamenti = [{ id: 'pag-1' }]
-    h.movConfermati = [{ id: 'mov-1', suggerimenti: [{ pagamento_id: 'pag-1', score: 1050, label: 'Marco Rossi' }] }]
+    h.movDelPagamento = [{ id: 'mov-1', suggerimenti: [{ pagamento_id: 'pag-1', score: 1050, label: 'Marco Rossi' }] }]
     h.incassiBonificati = [{ id: 'inc-1' }]
     const res = await POST(req({ alunno_id: 'al-1', mode: 'execute', confirm: 'rossi marco' }))
     expect(res.status).toBe(200)

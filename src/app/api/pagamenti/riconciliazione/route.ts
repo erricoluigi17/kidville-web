@@ -398,6 +398,43 @@ interface MovimentoRiga {
   [k: string]: unknown
 }
 
+/**
+ * ─── IL PAGAMENTO DI UNA RIGA, o `null` — E SONO DUE CAMPI, NON UNO ──────────
+ *
+ * Fino al 2026-09-12 in questo file l'abbinamento si leggeva in due modi diversi:
+ * `pagamento_id != null` per attaccare i DOCUMENTI, e `stato === 'confermato' &&
+ * pagamento_id` per i due campi derivati dal pagamento. Le due coincidevano, perché
+ * `pagamento_id` lo scriveva solo la conferma — cioè per un'invariante, non per una
+ * regola scritta da qualche parte.
+ *
+ * ⚠️ QUELL'INVARIANTE NON VALE PIÙ. `annulla_transazione_contabile` (conciliazione
+ * composita) riapre il movimento della transazione annullata — `stato` torna
+ * `da_abbinare` — e gli LASCIA `pagamento_id`: è la memoria su cui poggia la guardia
+ * «un bonifico non si fattura due volte» in `pagamenti/riconciliazione/[id]:PATCH`,
+ * che comincia con `if (mov.pagamento_id != null && …)` e con NULL non scatterebbe
+ * mai. Una riga riaperta ha quindi il pagamento vecchio addosso ed è ROSSA insieme.
+ *
+ * Da qui in avanti la domanda si fa in un posto solo: chi la ripete a mano riapre la
+ * possibilità che le due copie divergano di nuovo, e la prima volta è costata un chip
+ * «Fattura FPR 1947/26» su un movimento che chiedeva lavoro.
+ *
+ * I PUNTI CHE LA FANNO SONO QUATTRO, e passano tutti di qui — enumerati senza numeri di
+ * riga, che invecchiano, e verificabili con un `grep pagamentoAbbinatoDi` su questo file:
+ *   1. quali pagamenti chiedere a `fatture_emesse` (`pagamentiAbbinati`);
+ *   2. a quali righe attaccare il campo `fattura`;
+ *   3. quali righe mettere nell'insieme dei pagamenti da risolvere (`confermateConPagamento`);
+ *   4. per quali righe valorizzare `pagamento_stato` e `fattura_stato` — cioè gli altri due
+ *      campi da cui il chip ricava il tono quando il documento manca.
+ * Il quarto è stato l'ultimo ad arrivare (2026-09-12): era scritto a mano, e la prova che
+ * avrebbe dovuto vederlo aveva una fixture senza `suggerimenti`, cioè non percorreva quel
+ * ramo affatto. Chi aggiunge un quinto punto lo faccia chiamando questa funzione: se
+ * qualcosa qui cambia, deve cambiare per tutti insieme.
+ */
+function pagamentoAbbinatoDi(r: MovimentoRiga): string | null {
+  if (r.stato !== 'confermato') return null
+  return typeof r.pagamento_id === 'string' && r.pagamento_id !== '' ? r.pagamento_id : null
+}
+
 /** I quattro valori che `pagamenti.fattura_stato` può assumere (baseline, colonna non nullable in pratica). */
 type FatturaStato = 'non_richiesta' | 'in_attesa' | 'emessa' | 'scartata'
 const FATTURA_STATI = new Set<string>(['non_richiesta', 'in_attesa', 'emessa', 'scartata'])
@@ -939,10 +976,16 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // lavorato); se cade solo la batch valgono i documenti e il degrado dichiarato.
     // Confonderle in una sola lettura vorrebbe dire perdere entrambe insieme.
     //
-    // «Già abbinato» è `pagamento_id != null` (lo scrive solo la conferma). Per quelle
-    // righe si legge `fatture_emesse` una volta per l'intera pagina — mai una query per
-    // riga: 500 movimenti confermati farebbero 500 round-trip su una lista che oggi ne fa
-    // una. Se nessuna riga è abbinata non si interroga affatto.
+    // «Già abbinato» è `stato === 'confermato' && pagamento_id != null` — DUE campi, e
+    // dal 2026-09-12 il secondo da solo non basta più: l'annullo della transazione riapre
+    // il movimento (`stato` → `da_abbinare`) e gli LASCIA `pagamento_id`, che è la memoria
+    // su cui poggia la guardia «un bonifico non si fattura due volte»
+    // (`pagamenti/riconciliazione/[id]:PATCH`). Con il solo `pagamento_id` una riga tornata
+    // ROSSA riceveva addosso il documento del pagamento a cui ERA legata, e la coda le
+    // disegnava il chip «Fattura FPR 1947/26» sopra un movimento che chiede lavoro.
+    // Per quelle righe si legge `fatture_emesse` una volta per l'intera pagina — mai una
+    // query per riga: 500 movimenti confermati farebbero 500 round-trip su una lista che
+    // oggi ne fa una. Se nessuna riga è confermata e abbinata non si interroga affatto.
     //
     // Si leggono solo NUMERO e STATO: nessun intestatario, nessun importo, nessun XML.
     // La riga bancaria è globale per tutte le segreterie (l'estratto conto è uno), quindi
@@ -964,8 +1007,8 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // ricevute, e il degrado onesto è lo stesso della lettura fallita: `fattura: null`.
     const pagamentiAbbinati = [...new Set(
       finestra
-        .map((r) => r.pagamento_id)
-        .filter((v): v is string => typeof v === 'string' && v !== ''),
+        .map(pagamentoAbbinatoDi)
+        .filter((v): v is string => v !== null),
     )]
     // `null` non è «da fatturare»: è «non lo so». Sono due chip diversi, e uno dei due
     // sarebbe una bugia detta con sicurezza.
@@ -1000,9 +1043,10 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // L'arricchimento sta QUI, prima di ogni uscita: sotto ce ne sono tre (nessun
     // pagamento da risolvere, sedi non risolte, elenco minimizzato) e la fattura deve
     // comparire su tutte e tre. Una riga NON abbinata non porta il campo affatto: assente e
-    // «da fatturare» sono cose diverse anche per il client.
+    // «da fatturare» sono cose diverse anche per il client — e «non abbinata» comprende la
+    // riga RIAPERTA dall'annullo, che conserva `pagamento_id` ma è tornata da lavorare.
     const righe: MovimentoRiga[] = finestra.map((r) => {
-      const pid = typeof r.pagamento_id === 'string' && r.pagamento_id !== '' ? r.pagamento_id : null
+      const pid = pagamentoAbbinatoDi(r)
       if (!pid) return r
       if (fattureDi === null) return { ...r, fattura: null }
       return { ...r, fattura: fattureDi.get(pid) ?? { stato: 'da_fatturare', numeri: [] } }
@@ -1097,9 +1141,7 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
     // ha `pagamento_id`: senza questa seconda metà la riga verde resterebbe muta, che è
     // esattamente il difetto — su un registro di centinaia di righe verdi indistinguibili
     // nessuno può dire quali restano da fatturare, e una fattura saltata non se ne accorge nessuno.
-    const confermateConPagamento = righe.filter(
-      (r) => r.stato === 'confermato' && typeof r.pagamento_id === 'string' && r.pagamento_id !== '',
-    )
+    const confermateConPagamento = righe.filter((r) => pagamentoAbbinatoDi(r) !== null)
     const pagIds = [...new Set([
       ...righe.flatMap((r) => (r.suggerimenti ?? []).map((s) => s.pagamento_id)),
       ...confermateConPagamento.map((r) => r.pagamento_id as string),
@@ -1361,11 +1403,21 @@ export const GET = withRoute('pagamenti/riconciliazione:GET', async (request: Ne
        * della PROPRIA sede; «Fatturate» guarda i documenti e resta cross-sede. È voluto:
        * la prima è una lista di cose da fare, la seconda un controllo.
        *
-       * Lock: `__tests__/api/pagamenti-riconciliazione-fatturazione.test.ts`.
+       * ⚠️ E L'ABBINAMENTO SI CHIEDE A `pagamentoAbbinatoDi`, non a mano. Fino al
+       * 2026-09-12 questa congiunzione era riscritta qui parola per parola — la
+       * QUARTA copia, nello stesso file che dichiara di averne una sola — e nessuna
+       * prova la copriva: rilassandola (tolto `stato === 'confermato'`) la suite
+       * restava verde, 78 test passati, perché la riga riaperta della fixture non
+       * portava i suggerimenti che nella realtà la RPC dell'annullo le LASCIA e senza
+       * i quali questo ramo non viene nemmeno eseguito. È lo stesso difetto che il
+       * paragrafo qui sopra racconta di sé: una protezione documentata e assente.
+       *
+       * Lock: `__tests__/api/pagamenti-riconciliazione-fatturazione.test.ts` (le
+       * combinazioni di sede) e `__tests__/api/pagamenti-riconciliazione-fatture.test.ts`
+       * (la riga riaperta, coi suggerimenti veri: è quella che vede questa riga).
        */
-      const pag = r.stato === 'confermato' && typeof r.pagamento_id === 'string'
-        ? pagDi.get(r.pagamento_id)
-        : undefined
+      const pid = pagamentoAbbinatoDi(r)
+      const pag = pid ? pagDi.get(pid) : undefined
       const visibile = pag != null && pag.scuola_id != null && sediAttive.has(pag.scuola_id)
       return visibile
         ? conFatturazione(conSuggerimenti, pag.stato ?? null, normalizzaFattura(pag.fattura_stato), altraSede, sedeDedottaUi)

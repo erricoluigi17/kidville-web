@@ -9,8 +9,19 @@ interface Cfg {
   newsDel?: { post_id: string }[]
   newsErr?: { code: string } | null
   pagamenti?: { id: string }[]
-  movConf?: { id: string; suggerimenti?: unknown }[]
-  movNc?: { id: string; suggerimenti?: unknown }[]
+  /**
+   * Le righe di `riconciliazione_movimenti` COL LORO STATO VERO — e il finto le filtra
+   * come farebbe PostgREST (`eq`/`neq` su `stato`, `in` su `pagamento_id`, `ilike` su
+   * `causale`), invece di indovinare dal filtro ricevuto QUALE ramo dell'oblio lo sta
+   * chiamando e rispondergli l'elenco che si aspetta.
+   *
+   * ⚠️ Prima era una dispatch per ramo (`stato === 'confermato'` → `movConf`, altrimenti
+   * `movNc`), e con quella un test sul buco del movimento RIAPERTO sarebbe stato inutile:
+   * togliere `.eq('stato','confermato')` dal ramo 3a non ne allargava la presa, gli faceva
+   * sparire le righe sotto i piedi. Il finto rispondeva alla domanda sbagliata, e il test
+   * sarebbe stato verde con e senza la correzione.
+   */
+  movimenti?: MovimentoFinto[]
   incassi?: { id: string }[]
   cassa?: { id: string }[]
   consensi?: { id: string }[] // W5 — prove di consenso da cui togliere ip/user_agent
@@ -28,11 +39,28 @@ interface Cfg {
   err?: Record<string, { code: string }>
 }
 
+interface MovimentoFinto {
+  id: string
+  stato: string
+  pagamento_id?: string | null
+  causale?: string | null
+  suggerimenti?: unknown
+}
+
 interface QState {
   stato?: string
   neqStato?: string
   tipoOggetto?: string
   inThread?: boolean
+  inPagamenti?: string[]
+  ilike?: { col: string; pattern: string }
+  update?: Record<string, unknown>
+}
+
+/** `ILIKE '%x%'` come lo fa Postgres, per ciò che serve qui: NULL non corrisponde MAI. */
+function contieneIlike(valore: unknown, pattern: string): boolean {
+  if (typeof valore !== 'string') return false
+  return valore.toLowerCase().includes(pattern.replace(/^%|%$/g, '').toLowerCase())
 }
 
 function arrayFor(table: string, state: QState, cfg: Cfg) {
@@ -55,15 +83,23 @@ function arrayFor(table: string, state: QState, cfg: Cfg) {
     return cfg.sospensioni ?? [] // scrub a livello genitore (.or, senza thread_id)
   }
   if (table === 'riconciliazione_movimenti') {
-    if (state.stato === 'confermato') return cfg.movConf ?? []
-    if (state.neqStato === 'confermato') return cfg.movNc ?? []
-    return []
+    return (cfg.movimenti ?? []).filter((m) =>
+      (state.stato === undefined || m.stato === state.stato)
+      && (state.neqStato === undefined || m.stato !== state.neqStato)
+      && (state.inPagamenti === undefined
+        || (typeof m.pagamento_id === 'string' && state.inPagamenti.includes(m.pagamento_id)))
+      && (state.ilike === undefined || contieneIlike(m.causale, state.ilike.pattern)))
   }
   return []
 }
 
 function makeFake(cfg: Cfg) {
   const updates: Record<string, unknown>[] = []
+  // Gli update mirati a UNA riga (`.update(...).eq('id', x)`): senza l'id non si
+  // distingue il ramo 3a — che aggiorna riga per riga — da un ramo che chiama
+  // `.update()` con un filtro che non pesca niente, e `updates` registra la chiamata
+  // comunque. Una riga «bonificata» in un elenco vuoto è un falso verde.
+  const updateIds: { table: string; id: string; riga: Record<string, unknown> }[] = []
   const deletedTables: string[] = []
   const orFilters: { table: string; filter: string }[] = []
   const newsFilter: { v: string[] | null } = { v: null }
@@ -75,6 +111,7 @@ function makeFake(cfg: Cfg) {
       b.eq = (col: string, val: unknown) => {
         if (col === 'stato') state.stato = String(val)
         if (col === 'tipo_oggetto') state.tipoOggetto = String(val)
+        if (col === 'id' && state.update) updateIds.push({ table, id: String(val), riga: state.update })
         return b
       }
       b.neq = (col: string, val: unknown) => { if (col === 'stato') state.neqStato = String(val); return b }
@@ -82,14 +119,15 @@ function makeFake(cfg: Cfg) {
       b.in = (col: string, vals: unknown) => {
         if (table === 'news_visualizzazioni' && col === 'utente_id') newsFilter.v = vals as string[]
         if (col === 'thread_id') state.inThread = true
+        if (col === 'pagamento_id') state.inPagamenti = vals as string[]
         return b
       }
       b.is = () => b
       b.or = (filter: string) => { orFilters.push({ table, filter }); return b }
-      b.ilike = () => b
+      b.ilike = (col: string, pattern: string) => { state.ilike = { col, pattern }; return b }
       b.contains = () => b
       b.delete = () => { deletedTables.push(table); return b }
-      b.update = (row: Record<string, unknown>) => { updates.push({ table, ...row }); return b }
+      b.update = (row: Record<string, unknown>) => { state.update = row; updates.push({ table, ...row }); return b }
       b.maybeSingle = async () => ({
         data: table === 'parents' ? { auth_user_id: cfg.parentAuth ?? null } : null,
         error: null,
@@ -107,7 +145,7 @@ function makeFake(cfg: Cfg) {
     // client Supabase.
     storage: { from: () => ({ remove: async () => ({ error: null }), list: async () => ({ data: [], error: null }) }) },
   }
-  return { client, updates, deletedTables, orFilters, newsFilter }
+  return { client, updates, updateIds, deletedTables, orFilters, newsFilter }
 }
 
 const AT = '2026-07-24T00:00:00Z'
@@ -215,7 +253,12 @@ describe('anonimizzaAlunno', () => {
   it('applica patchAlunno e bonifica i movimenti confermati collegati ai pagamenti', async () => {
     const f = makeFake({
       pagamenti: [{ id: 'pag-1' }],
-      movConf: [{ id: 'mov-1', suggerimenti: [{ pagamento_id: 'pag-1', score: 1050, label: 'Marco Rossi' }] }],
+      movimenti: [{
+        id: 'mov-1',
+        stato: 'confermato',
+        pagamento_id: 'pag-1',
+        suggerimenti: [{ pagamento_id: 'pag-1', score: 1050, label: 'Marco Rossi' }],
+      }],
     })
     const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
     const aUpd = f.updates.find((u) => u.table === 'alunni')
@@ -227,6 +270,69 @@ describe('anonimizzaAlunno', () => {
     const sugg = movUpd!.suggerimenti as Record<string, unknown>[]
     expect('label' in sugg[0]).toBe(false)
     expect(sugg[0]).toMatchObject({ pagamento_id: 'pag-1', score: 1050 })
+    expect(r.riconciliazione).toBe(1)
+  })
+
+  /**
+   * ─── IL MOVIMENTO RIAPERTO DALL'ANNULLO (2026-09-12) ───────────────────────
+   *
+   * `annulla_transazione_contabile` riporta in coda il bonifico della transazione
+   * annullata: `stato` torna `da_abbinare`, `pagamento_id` RESTA (è la memoria su
+   * cui poggia la guardia «un bonifico non si fattura due volte»). Quella riga è
+   * agganciata all'alunno esattamente come una confermata — dal pagamento — ma il
+   * ramo 3a la perdeva, perché chiedeva anche `stato = 'confermato'`.
+   *
+   * Gli altri due rami non la recuperano: 3c pretende che la causale contenga il
+   * codice fiscale in forma ESATTA (una causale bancaria vera dice «RETTA SETTEMBRE
+   * ROSSI», non il CF), 3d che i suggerimenti citino il pagamento. Restava scritto
+   * il nome di una famiglia su una riga bancaria dopo l'oblio di un minore.
+   */
+  it('bonifica ANCHE il movimento riaperto dall’annullo: pagamento vivo, stato non più confermato', async () => {
+    const f = makeFake({
+      pagamenti: [{ id: 'pag-1' }],
+      movimenti: [{
+        id: 'mov-riaperto',
+        stato: 'da_abbinare',
+        pagamento_id: 'pag-1',
+        // Né il CF nella causale né i suggerimenti: 3c e 3d non la vedono. O la prende
+        // 3a, o resta scritta.
+        causale: 'BONIFICO SEPA 4471 RETTA SETTEMBRE',
+        suggerimenti: null,
+      }],
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1', codice_fiscale: 'TSTTST00T00T000T' }, AT, 'test')
+
+    const bonificato = f.updateIds.find((u) => u.table === 'riconciliazione_movimenti' && u.id === 'mov-riaperto')
+    expect(
+      bonificato,
+      'il movimento riaperto dall’annullo non è stato bonificato: ha `pagamento_id` ma non è ' +
+        'più `confermato`, e il ramo 3a lo filtrava via. Sulla riga bancaria resta il nome ' +
+        'della famiglia di un minore cancellato.',
+    ).toBeTruthy()
+    expect(bonificato!.riga.causale).toBeNull()
+    expect(bonificato!.riga.controparte).toBeNull()
+    expect(r.riconciliazione).toBe(1)
+  })
+
+  it('non lo conta due volte quando anche i suggerimenti citano il pagamento (3a e 3d si sovrappongono)', async () => {
+    // Da quando 3a non filtra più per stato, una riga NON confermata può cadere sotto
+    // entrambi i rami. Il conteggio finisce nel referto dell'oblio: due righe bonificate
+    // dove ce n'era una è un numero inventato, cioè la stessa classe di bugia del «nessun
+    // errore» che non distingue «tutto ok» da «non è partito niente».
+    const f = makeFake({
+      pagamenti: [{ id: 'pag-1' }],
+      movimenti: [{
+        id: 'mov-riaperto',
+        stato: 'da_abbinare',
+        pagamento_id: 'pag-1',
+        causale: 'BONIFICO SEPA 4471',
+        suggerimenti: [{ pagamento_id: 'pag-1', score: 900, label: 'Marco Rossi' }],
+      }],
+    })
+    const r = await anonimizzaAlunno(f.client as never, { id: 'al-1' }, AT, 'test')
+
+    const tocchi = f.updateIds.filter((u) => u.table === 'riconciliazione_movimenti' && u.id === 'mov-riaperto')
+    expect(tocchi).toHaveLength(1)
     expect(r.riconciliazione).toBe(1)
   })
 

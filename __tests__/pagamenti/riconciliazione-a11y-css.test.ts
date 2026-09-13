@@ -518,7 +518,14 @@ describe('MovimentoDialog — nessun fondo in hover senza il suo Alto Contrasto'
  * verifica `MovimentoDialog.test.tsx`; in Alto Contrasto no, e non per una svista:
  * `@theme inline` INLINA l'hex dentro le utility, quindi le superfici crema del
  * popup diventano tutte #1A1A1A e il filetto `warn-strong` resta l'unico segnale —
- * a 5,62:1, cioè leggibile ma spento proprio nella modalità di chi fa più fatica.
+ * a **3,10:1**, cioè NON leggibile: sotto i 4,5:1 di WCAG 1.4.3, proprio nella
+ * modalità di chi fa più fatica.
+ * ⚠️ Fino al 2026-09-13 questa riga diceva «5,62:1, leggibile ma spento», e quel
+ * numero è stato copiato due volte prima che qualcuno lo rimisurasse: è il rapporto
+ * di `error-strong` #C62828 su BIANCO, non di `warn-strong` su questo nero. Una
+ * fetta ci ha appoggiato sopra la decisione di non dipingere un riquadro d'avviso
+ * nuovo, finito a 3,10:1 con i chip a 1,00:1 — invisibili. La formula che smentisce
+ * il numero è quella di questo stesso file, poche righe più sotto.
  *
  * La regola dedicata porta filetto e inchiostro a #FFB84D: **10,12:1** su #1A1A1A.
  * Non è il giallo #FFE500 dei comandi — l'invariante qui sopra continua a valere.

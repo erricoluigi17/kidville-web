@@ -11,12 +11,13 @@
 // Le risposte del server sono gestite senza crash: 409 «già saldato» e 409
 // «già riconciliato da un altro operatore» diventano messaggi chiari (+ refetch).
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
-import { AlertTriangle, Check, Clock, FileCheck, FileText, Receipt, Search, X, Users } from 'lucide-react';
+import { AlertTriangle, Check, Clock, FileCheck, FileText, Layers, Receipt, Search, X, Users } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
+import { ComposizioneBonifico } from './ComposizioneBonifico';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
@@ -29,6 +30,7 @@ import {
   movimentoMultiCf,
   testoRicercaPagamento,
   FRASE_FATTURAZIONE,
+  type EsitoComposizione,
   type MovimentoUi,
   type PagamentoApertoUi,
   type StatoFattura,
@@ -40,8 +42,18 @@ interface Props {
   aperti: PagamentoApertoUi[];
   userId: string;
   onClose: () => void;
-  /** Refetch della lista dopo un'azione riuscita (o una corsa persa). */
-  onDone: () => void;
+  /**
+   * Refetch della lista dopo un'azione riuscita (o una corsa persa).
+   *
+   * ⚠️ L'ARGOMENTO È FACOLTATIVO DI PROPOSITO, e «assente» non è «andata male».
+   * Le azioni di questo popup sono più d'una — conferma, ignora, riapri, emissione
+   * della fattura — e **una sola** produce un riepilogo che vale la pena leggere:
+   * la COMPOSIZIONE, che spalma il denaro su righe che nella lista non si vedono.
+   * Tutte le altre chiamano `onDone()` nudo, e la fascia di riepilogo dell'elenco
+   * non si monta affatto. Trattare «non me l'hanno detto» come «è andata male»
+   * farebbe comparire un avviso su ogni conferma riuscita.
+   */
+  onDone: (esito?: EsitoComposizione) => void;
   /** Ripristino focus WCAG 2.4.3: la riga che ha aperto il dialog. */
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
   /**
@@ -60,7 +72,8 @@ const TITLE_ID = 'movimento-dialog-title';
  * non in `ui.ts` perché è la voce di questa schermata (intestazione del popup,
  * etichette dei campi, titoletto dei documenti) e non una primitiva dell'app.
  */
-const OCCHIELLO = 'font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em] text-kidville-green';
+const OCCHIELLO_TIPO = 'font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em]';
+const OCCHIELLO = `${OCCHIELLO_TIPO} text-kidville-green`;
 
 /**
  * Il glifo di ogni chip di fatturazione. Mappa STATICA — nessuna icona costruita
@@ -137,6 +150,119 @@ export function ChipFatturazione({ fat, suCarta = false }: {
 const CTA_SUGGERIMENTO = 'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill bg-kidville-green px-4 font-maven text-sm font-bold text-kidville-white transition-colors hover:bg-kidville-green-dark disabled:opacity-50';
 const CTA_SUGGERIMENTO_DEBOLE = 'inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white disabled:opacity-50';
 
+/**
+ * ─── L'AVVISO CHE VIAGGIA SU UNA RISPOSTA 200 ────────────────────────────────
+ *
+ * `riconciliazione/[id]:PATCH` lo mette accanto a `success: true` quando riapre un
+ * bonifico che ha ancora fatture vive. **Non è un errore travestito**: la decisione
+ * del titolare (n. 17) è «si riapre SEMPRE, avvisando», non «si vieta». Perciò il
+ * server risponde 200 — e finché il popup buttava via il corpo, l'avviso non lo
+ * leggeva nessuno. Misurato sul database vivo: 167 riaperture su 174 (96%) hanno
+ * una fattura viva, cioè **nessuna** delle riaperture di oggi avviserebbe.
+ *
+ * I `numeri` stanno in un campo LORO e non solo dentro la frase: si elencano senza
+ * fare il parsing di una prosa, che è esattamente il difetto che questo file chiude
+ * dall'altra parte (v. `vaRisincronizzato`). `codice` c'è perché la frase sia
+ * traducibile come tutte le altre; `messaggio` porta il dettaglio che il catalogo
+ * non può conoscere ed è il ripiego se il codice non è riconosciuto.
+ */
+interface AvvisoRiapertura {
+  codice?: string;
+  messaggio?: string;
+  numeri?: string[];
+}
+
+/** Il corpo di una risposta della PATCH, per intero: niente finisce nel cestino. */
+interface CorpoAzione {
+  success?: boolean;
+  error?: string;
+  codice?: string;
+  data?: {
+    stato?: string;
+    transazione_annullata?: boolean;
+    movimenti_riaperti?: number;
+    incassi_stornati?: number;
+  } | null;
+  avviso?: AvvisoRiapertura | null;
+}
+
+/**
+ * Che cosa è appena successo, quando c'è qualcosa da RACCONTARE **QUI DENTRO**.
+ *
+ * Finché è `null` il popup è quello di sempre. Quando è valorizzato, l'abbinamento
+ * sparisce: lasciare a schermo «Conferma questo» o la ricerca manuale su un
+ * bonifico appena riaperto vorrebbe dire lavorare su uno stato che non c'è più.
+ *
+ * ⚠️ UN TIPO SOLO, ED È LA RIAPERTURA. La COMPOSIZIONE non passa di qui, ed è una
+ * decisione di coordinamento: tre fette sanno raccontarla — il pannello, questo
+ * popup, la fascia dell'elenco — e se parlassero insieme la stessa cosa si
+ * leggerebbe due volte. Andata bene → parla la fascia dell'elenco (e il popup si
+ * chiude); incasso scritto ma riga non legata → parla il pannello, che resta
+ * montato. In tutt'e due i casi questo riquadro non c'entra.
+ *
+ * Resta un'unione con un ramo solo perché la riapertura è ciò che il popup è
+ * l'unico a sapere: `movimenti_riaperti`, `incassi_stornati` e l'avviso delle
+ * fatture vive arrivano sulla risposta della PATCH e non hanno nessun'altra strada
+ * per arrivare all'operatrice.
+ */
+type EsitoAzione = { tipo: 'riapertura'; righeRiaperte: number; incassiStornati: number; avviso: AvvisoRiapertura | null };
+
+/**
+ * ─── QUANDO LA LISTA VA RILETTA, E PERCHÉ NON LO DECIDE PIÙ UNA FRASE ───────
+ *
+ * Fino al 2026-09-13 qui c'era `/operatore|confermato/i.test(msg)`: la lista si
+ * risincronizzava solo se la frase MOSTRATA conteneva una di quelle due parole.
+ * Era un'euristica sul testo TRADOTTO, con tre difetti misurati:
+ *
+ *  · era già cieca in inglese — «Someone else has just changed this bank transfer»
+ *    non contiene «operatore»;
+ *  · è cieca sulla frase nuova `RIAPERTURA_STORNATA_NON_RIAPERTA` in TUTT'E DUE le
+ *    lingue, ed è la peggiore su cui essere ciechi: dichiara uno storno GIÀ
+ *    REGISTRATO, cioè proprio il caso in cui la lista a schermo è falsa;
+ *  · e legava una decisione di programma alle parole di un file di traduzione, che
+ *    cambia per ragioni che non c'entrano niente con questo codice.
+ *
+ * Adesso decide lo STATO HTTP, che è il posto dove quel fatto è dichiarato: **409
+ * significa «la richiesta è in conflitto con lo stato attuale della risorsa»**, e
+ * ogni 409 di questa rotta è esattamente quello — la corsa persa del CAS, il
+ * movimento già confermato, la transazione sparita, lo storno registrato senza
+ * riapertura, la voce già saldata sotto ai piedi. In tutti, ciò che il popup ha in
+ * mano è vecchio. Rileggere è gratis e non toglie nulla: l'errore resta a schermo e
+ * il popup non si chiude.
+ *
+ * ⚠️ NON è «rileggi sempre»: un 500 o un 503 non dicono che lo stato è cambiato,
+ * dicono che non si è potuto fare. Lì la lista resta quella che è. E la
+ * distinzione avviene DAVVERO: questa funzione è chiamata su ogni risposta non-ok,
+ * non dentro un ramo che ha già scelto il 409 al posto suo. Vedi `azione`.
+ *
+ * ⚠️ E PERCHÉ LO STATO E NON IL `codice`, visto che la consegna diceva «guarda il
+ * codice». Perché un elenco di codici sarebbe stato la stessa euristica con un
+ * vestito migliore: **CINQUE dei nove 409 di questa rotta non hanno nessun
+ * codice**. Contati uno per uno su `riconciliazione/[id]/route.ts`, col loro
+ * indirizzo, perché un numero scritto a memoria è il difetto che questo blocco
+ * racconta:
+ *   · `:356` «Movimento già confermato: stornare prima l'incasso»
+ *   · `:788` «Movimento già confermato»
+ *   · `:917` «Pagamento già saldato: ignora la riga o scegli un'altra voce»
+ *   · `:923` «L'importo del bonifico supera il residuo»
+ *   · `:962` «Movimento già riconciliato da un altro operatore»
+ * Gli altri quattro (`:539`, `:550`, `:719`, `:878`) ce l'hanno. I due che la
+ * frase pescava per caso, in italiano, sono `:788` e `:962`: sono fra i ciechi.
+ * Su tutti e cinque un controllo sul codice sarebbe nato cieco il giorno stesso, e
+ * la prova sarebbe stata verde perché i test li avrebbero scritti con il codice.
+ * Lo stato c'è sempre, lo manda il server, e nessuna traduzione lo può cambiare.
+ *
+ * ⚠️ E SUL ROVESCIO — «risincronizzare su un 409 che non l'ha chiesto fa danno?» —
+ * la risposta è no, su tutti e nove: `onDone()` nudo è una rilettura della lista e
+ * nient'altro, l'errore resta a schermo e il popup non si chiude. Il costo è una
+ * GET; il costo di non farlo è lavorare su uno stato che non c'è più.
+ *
+ * Contro-prova eseguita, non dedotta: rimessa l'euristica vecchia, i tre test del
+ * blocco «il 409 si risincronizza sul CODICE, mai sulla frase» diventano rossi con
+ * «expected onDone to be called at least once», e gli altri due restano verdi.
+ */
+const vaRisincronizzato = (stato: number): boolean => stato === 409;
+
 /** Pill «CF» dell'aggancio per codice fiscale (su card bianca del dialog). */
 function CfPill() {
   const t = useTranslations('adminContabilita');
@@ -144,6 +270,128 @@ function CfPill() {
     <span className="rounded-pill bg-kidville-green px-2 py-1 font-barlow text-[10px] font-extrabold uppercase leading-none text-kidville-white">
       {t('movdlgBadgeCf')}
     </span>
+  );
+}
+
+/**
+ * IL VESTITO DI UN AVVISO, dentro un riquadro che sta già raccontando un successo.
+ *
+ * Stessa ricetta del riquadro «questo bonifico sembra di un'altra sede», e per la
+ * stessa ragione: il peso lo danno un FILETTO da 4px, un GLIFO e l'INCHIOSTRO
+ * d'avviso — non il fondo, che resta quello del riquadro che lo ospita. Un avviso
+ * col vestito di ciò che informa è una nota, non un avviso.
+ *
+ * ⚠️ MAI il rosso: qui non è fallito niente. La composizione è stata registrata e
+ * la riapertura è avvenuta; ciò che resta da sapere è una CONSEGUENZA, non un
+ * errore. Dipingerla di rosso inviterebbe a ripremere, che è precisamente il gesto
+ * da cui l'avviso del «non legato» mette in guardia.
+ *
+ * ⚠️ E PORTA `kv-recon-avviso-sede`, che fino al 2026-09-13 questo commento
+ * dichiarava di NON volere. La ragione scritta allora era: «in Alto Contrasto il
+ * fondo crema diventa il grigio scurissimo e `warn-strong` ci vale 5,62:1, sopra
+ * i 4,5:1 di WCAG 1.4.3». **Quel 5,62 non era di questa coppia.** Ricalcolato con
+ * la formula del lock `riconciliazione-a11y-css.test.ts`, `warn-strong` sulla
+ * superficie scura del popup vale **3,10:1** — SOTTO soglia — e l'etichetta dei
+ * numeri qui sotto è a 11px extra-grassetto, cioè testo NORMALE per WCAG (il
+ * «testo grande» parte da 18pt, o 14pt in grassetto): i 3:1 del testo grande non
+ * la riguardano. Il 5,62 è il rapporto di `error-strong` sul BIANCO, ed era già
+ * scritto sbagliato in `globals.css`: una decisione appoggiata su un numero che
+ * nessuno aveva misurato, preso per buono perché stava scritto.
+ *
+ * La classe non è un'appropriazione: quella regola dipinge d'ambra il filetto e
+ * l'inchiostro d'avviso di QUALUNQUE riquadro del popup che la porti — **10,12:1**
+ * sul nero — ed è esattamente ciò che serve qui. I due riquadri non coesistono mai
+ * a schermo (l'altra sede vive nell'abbinamento, questo lo sostituisce), e
+ * `globals.css` — condiviso con altri lavori — non si tocca: era la ragione
+ * dichiarata per non farlo, e resta soddisfatta.
+ */
+function AvvisoEsito({ testo, etichettaNumeri, numeri }: {
+  testo: string;
+  etichettaNumeri?: string;
+  numeri?: string[];
+}) {
+  const elenco = numeri ?? [];
+  return (
+    <div className="kv-recon-avviso-sede mt-4 flex gap-3 border-l-4 border-kidville-warn-strong pl-3">
+      {/* `aria-hidden`: il glifo ripete ciò che la frase dice per esteso. */}
+      <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-kidville-warn-strong" />
+      <div className="min-w-0">
+        {/* Mai `text-kidville-muted` (2,51:1): c'è un lock, e il motivo è che non si legge. */}
+        <p className="font-maven text-xs leading-relaxed text-kidville-sub">{testo}</p>
+        {/* I NUMERI, elencati perché arrivano in un campo loro: nessun parsing di
+            prosa, e nessun elenco vuoto quando il server non ha potuto leggerli. */}
+        {elenco.length > 0 && (
+          <>
+            {/* L'occhiello prende l'inchiostro dell'avviso, non il verde: in Alto
+                Contrasto il verde di questo popup diventa il giallo di segnale, e
+                quel giallo qui dentro è di ciò che si preme. */}
+            {etichettaNumeri && (
+              <p className={cx(OCCHIELLO_TIPO, 'mt-4 block text-kidville-warn-strong')}>{etichettaNumeri}</p>
+            )}
+            {/* ⚠️ IL FILETTO NON È UN ORNAMENTO: È CIÒ CHE TIENE IN VITA LA
+                PILLOLA IN ALTO CONTRASTO. `bg-kidville-white` dentro il popup
+                diventa il grigio scurissimo, e la sezione che ospita questo
+                elenco è già quel grigio: **1,00:1**, cioè la pillola sparisce e
+                l'elenco dei documenti diventa una fila di parole. Il testo si
+                legge lo stesso (l'inchiostro passa a bianco), ma perde la forma
+                che dice «questi sono numeri di documento, uno per uno».
+                Il criterio è già scritto in `globals.css` accanto alle fasce
+                piene di stato — «due neri vicini si separano col filetto e non
+                più col colore» — e `border-kidville-line` è il solo filetto che
+                la regola di Alto Contrasto del popup ridipinge (a bianco, 17,4:1
+                su quel fondo). Nessuna riga nuova nel foglio condiviso. */}
+            <ul className="mt-2 flex flex-wrap gap-2">
+              {elenco.map((n) => (
+                <li key={n} className="rounded-pill border border-kidville-line bg-kidville-white px-2 py-1 font-maven text-xs font-bold text-kidville-ink">{n}</li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * IL RIQUADRO DELL'ESITO — ciò che il popup, fino al 2026-09-13, buttava via.
+ *
+ * Due specie, un solo posto: la composizione appena registrata e la riapertura
+ * appena avvenuta. Vivono qui e non dentro `MovimentoDialog` perché quel corpo è
+ * già lungo, e perché questo riquadro non ha bisogno di nient'altro che del proprio
+ * esito — nessuno stato, nessuna fetch.
+ *
+ * ⚠️ La composizione NON ha un occhiello suo: la sua frase si apre già con
+ * «Pagamento registrato», e un titolo che ripetesse quelle due parole direbbe lo
+ * stesso stato due volte a due centimetri di distanza. La riapertura invece ha un
+ * occhiello, perché le sue righe sono CONTEGGI e da soli non dicono di che cosa
+ * siano il conto.
+ */
+function PannelloEsito({ esito }: { esito: EsitoAzione }) {
+  const t = useTranslations('adminContabilita');
+  const { righeRiaperte, incassiStornati, avviso } = esito;
+  return (
+    <section role={avviso ? 'alert' : 'status'} className="rounded-card bg-kidville-cream p-4">
+      <h3 className={OCCHIELLO}>{t('reconComponiEsitoRiaperto')}</h3>
+      {/* I due conteggi che il server manda e che nessuno leggeva. Si mostrano solo
+          se dicono qualcosa: «0 incassi stornati» è rumore su una riga che non
+          aveva incassi. */}
+      {(righeRiaperte > 0 || incassiStornati > 0) && (
+        <ul className="mt-2 space-y-1 font-maven text-sm text-kidville-ink">
+          {righeRiaperte > 0 && <li>{t('reconComponiEsitoRigheRiaperte', { n: righeRiaperte })}</li>}
+          {incassiStornati > 0 && <li>{t('reconComponiEsitoIncassiStornati', { n: incassiStornati })}</li>}
+        </ul>
+      )}
+      {/* La decisione n. 17 è «riapri comunque, AVVISANDO»: ecco l'avvisando.
+          Frase dal `codice` (traducibile come tutte le altre), numeri dal campo
+          `numeri` — che il server tiene separato dalla prosa apposta. */}
+      {avviso && (
+        <AvvisoEsito
+          testo={messaggioDaCorpo({ error: avviso.messaggio, codice: avviso.codice }, t('reconComponiEsitoFattureVive'))}
+          etichettaNumeri={t('reconComponiEsitoFattureVive')}
+          numeri={avviso.numeri}
+        />
+      )}
+    </section>
   );
 }
 
@@ -187,6 +435,45 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
    * (lock: «aprire il popup costa UNA lettura sola»).
    */
   const [ricarica, setRicarica] = useState(0);
+  /**
+   * Il pannello «Componi il pagamento» è CHIUSO all'apertura, e non è pigrizia:
+   * si carica da sé (contesto, figli, categorie, pacchetti mensa) e montarlo
+   * sempre vorrebbe dire pagare quella lettura su ogni riga aperta, comprese le
+   * novantanove su cento che si chiudono con un «Conferma questo».
+   */
+  const [componiAperto, setComponiAperto] = useState(false);
+  /**
+   * «Su questo bonifico il denaro è già stato scritto», e serve a una cosa sola: a
+   * non riportare all'abbinamento chi chiude il pannello dopo una composizione
+   * registrata ma non legata. Vedi `onChiudi`, più sotto.
+   */
+  const [composto, setComposto] = useState(false);
+  /** Che cosa è appena successo. Vedi `EsitoAzione`: finché è `null`, popup di sempre. */
+  const [esito, setEsito] = useState<EsitoAzione | null>(null);
+  /**
+   * ⚠️ IL RIENTRO DEL FUOCO, CHIUSO IL PANNELLO (WCAG 2.4.3).
+   *
+   * MISURATO: premuto «Chiudi» dentro il pannello, il pulsante che aveva il fuoco
+   * viene smontato e `document.activeElement` finisce su `<body>`. Il focus-trap
+   * del `Modal` lo recupera al primo Tab — quindi non si esce dalla finestra — ma
+   * chi naviga da tastiera riparte dall'inizio del dialog, e l'unico posto sensato
+   * dove tornare è il pulsante da cui si era entrati.
+   *
+   * ⚠️ E SOLO PER QUELLA VIA D'USCITA, che è il motivo del flag. Quando la
+   * composizione riesce il popup si CHIUDE, e lì il fuoco è del `returnFocusRef`
+   * del `Modal` (la riga della lista): prenderglielo per darlo a un pulsante che
+   * sta smontando sarebbe una seconda regressione al posto della prima. Il flag è
+   * un `ref` e non uno stato perché non deve far ridisegnare niente — e perché un
+   * `setState` dentro l'effetto che lo consuma è proprio ciò che
+   * `react-hooks/set-state-in-effect` vieta in questo repo.
+   */
+  const componiBtnRef = useRef<HTMLButtonElement | null>(null);
+  const rientraSuComponi = useRef(false);
+  useEffect(() => {
+    if (componiAperto || !rientraSuComponi.current) return;
+    rientraSuComponi.current = false;
+    componiBtnRef.current?.focus();
+  }, [componiAperto]);
 
   const stato = movimento.stato;
   const puoAbbinare = stato !== 'confermato';
@@ -240,19 +527,52 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
         body: JSON.stringify({ azione: az, pagamento_id: pagamentoId }),
       });
       // Nessun catch muto sul parse: un corpo non-JSON risale al catch che LOGGA.
-      const j = (await r.json()) as { error?: string; success?: boolean };
-      if (r.status === 409) {
-        const msg = messaggioDaCorpo(j, t('movdlgOperazioneNonPossibile'));
-        setError(msg);
-        // Corsa persa / stato già cambiato da un altro operatore → risincronizza la lista.
-        if (/operatore|confermato/i.test(msg)) onDone();
-        return;
-      }
+      const j = (await r.json()) as CorpoAzione;
+      /**
+       * ⚠️ UN RAMO SOLO PER TUTTE LE RISPOSTE CHE NON SONO ANDATE, ed è ciò che
+       * rende `vaRisincronizzato` una DECISIONE invece di una tautologia. Fino al
+       * 2026-09-13 il 409 aveva un `if` tutto suo e la funzione veniva chiamata
+       * DENTRO, cioè in un punto dove lo stato poteva essere solo 409: su un 500
+       * non veniva invocata affatto. MISURATO: mutandola in `stato >= 400`
+       * restavano 82 test su 82 verdi, e toglierla del tutto pure. Il suo ⚠️ qui
+       * sotto descriveva una distinzione che in quel punto non avveniva.
+       * Ora la valuta ogni risposta non-ok, e il test del 500 diventa rosso se la
+       * soglia si allarga.
+       *
+       * Il RIPIEGO resta diverso per i due casi, e non è un dettaglio: «operazione
+       * non possibile in questo momento» dice che lo stato del server non la
+       * permette — su un guasto sarebbe falso; «errore nell'operazione» su un
+       * conflitto direbbe «qualcosa si è rotto» a chi deve solo ricaricare. Si
+       * vede solo col corpo muto: appena c'è una prosa o un codice riconosciuto,
+       * `messaggioDaCorpo` non arriva mai fin qui.
+       */
       if (!r.ok || !j.success) {
-        setError(messaggioDaCorpo(j, t('movdlgErroreOperazione')));
+        setError(messaggioDaCorpo(j, r.status === 409 ? t('movdlgOperazioneNonPossibile') : t('movdlgErroreOperazione')));
+        // Lo stato sul server non è più quello che questo popup crede: si rilegge.
+        // Il PERCHÉ — e perché non è più la frase a deciderlo — sta su `vaRisincronizzato`.
+        if (vaRisincronizzato(r.status)) onDone();
         return;
       }
       onDone();
+      /**
+       * ⚠️ IL CORPO DI UNA RIAPERTURA NON SI BUTTA VIA. Qui c'era `onClose()` e
+       * basta: `data` (quante righe bancarie sono tornate in coda, quanti incassi
+       * sono stati stornati) e `avviso` (le fatture rimaste vive) esistevano, e non
+       * li leggeva nessuno — con il popup che si chiudeva un istante dopo.
+       * Chiudere è giusto solo quando non c'è niente da dire: è il caso del
+       * movimento IGNORATO, che torna in coda senza storni e risponde `{ success:
+       * true }` nudo. Un avviso che comparisse sempre smetterebbe di essere un
+       * avviso; uno che non compare mai non è mai esistito.
+       */
+      if (az === 'riapri' && (j.data || j.avviso)) {
+        setEsito({
+          tipo: 'riapertura',
+          righeRiaperte: Number(j.data?.movimenti_riaperti ?? 0),
+          incassiStornati: Number(j.data?.incassi_stornati ?? 0),
+          avviso: j.avviso ?? null,
+        });
+        return;
+      }
       onClose();
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `riconciliazione-${az}-fallita: ${nomeErrore(err)}`, route: '/admin/pagamenti', stato: 0 });
@@ -362,11 +682,19 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
 
       {error && <p role="alert" className="mb-4 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{error}</p>}
 
+      {/* ── L'ESITO, quando c'è qualcosa da raccontare ───────────────────────
+          Sta PRIMA dell'abbinamento e lo SOSTITUISCE, non gli si affianca: dopo
+          una composizione registrata, «Conferma questo» e la ricerca manuale
+          sarebbero due modi di incassare una seconda volta lo stesso bonifico —
+          e nel caso «incasso registrato, riga non legata» il ritentativo è
+          esattamente il gesto che il server chiede di NON fare. Vedi `EsitoAzione`. */}
+      {esito && <PannelloEsito esito={esito} />}
+
       {/* ── Abbinamento (movimenti non confermati) ─────────────────────────── */}
-      {puoAbbinare && (
+      {!esito && puoAbbinare && (
         <div className="space-y-4">
           {/* Bonifico di famiglia: innesto «Incasso unico» (impl. UI-2) */}
-          {multiCf && onIncassoUnico && (
+          {!composto && multiCf && onIncassoUnico && (
             <div className="rounded-card border-[1.5px] border-kidville-green-soft bg-kidville-green-soft p-4">
               <p className="flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-green">
                 <Users size={15} /> {t('movdlgBonificoFamiglia')}
@@ -458,7 +786,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
               non esiste. La schermata resta coerente (il PATCH risponde 404 sullo
               stesso insieme), ed è la frase a doversi limitare a ciò che è vero:
               parla di QUESTA schermata e di dove si abbina, non di chi lo farà. */}
-          {altraSede && (
+          {!composto && altraSede && (
             <section className="kv-recon-avviso-sede flex gap-3 rounded-card border-l-4 border-kidville-warn-strong bg-kidville-cream p-4">
               {/* `aria-hidden`: il glifo ripete ciò che la frase accanto dice per
                   esteso, e uno screen reader non deve sentire due volte la stessa
@@ -478,7 +806,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           )}
 
           {/* Suggerimenti ordinati (CF-match primi) */}
-          {suggerimenti.length > 0 && (
+          {!composto && suggerimenti.length > 0 && (
             <div>
               <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgSuggerimenti')}</h3>
               <div className="space-y-2">
@@ -501,7 +829,110 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
             </div>
           )}
 
-          {/* Ricerca manuale fra i pagamenti aperti (stessa fonte del pannello) */}
+          {/* ── «COMPONI IL PAGAMENTO» — il terzo modo, e sta SOTTO i suggerimenti
+              (decisione n. 1 del titolare: il pannello vive dentro questo popup).
+
+              Perché sotto e non sopra: i suggerimenti sono la risposta al caso
+              normale — un bonifico, una voce — e restano il primo posto dove
+              guardare. Questo è il caso dell'altro bonifico, quello di famiglia,
+              che paga la retta di due fratelli più i ticket mensa: lì nessun
+              suggerimento è giusto, perché nessuno da solo lo è.
+
+              ⚠️ I DUE PERCORSI DI PRIMA NON SI TOCCANO. «Conferma questo» e la
+              ricerca manuale restano dove sono, con la stessa pelle e la stessa
+              PATCH: il caso a voce singola è la maggioranza del lavoro, e
+              spostarlo per far posto a una funzione nuova lo renderebbe più
+              lento per tutti. Il pannello si apre solo se qualcuno lo chiede, e
+              `onChiudi` rimette la schermata com'era.
+
+              ⚠️ E il pulsante è SECONDARIO, non un CTA: il verde pieno in questa
+              schermata è dell'abbinamento suggerito. Se «Componi» fosse l'unico
+              pulsante pieno, sarebbe lui a sembrare la cosa da fare anche sui
+              nove bonifici su dieci che hanno un suggerimento buono.
+
+              Il pannello NON riceve dati da qui: si carica e si registra da sé
+              (contratto fissato dall'orchestratore). Questo popup gli passa
+              l'identità del bonifico e riceve indietro l'esito. */}
+          {componiAperto ? (
+            <ComposizioneBonifico
+              movimentoId={movimento.id}
+              importoMovimento={movimento.importo}
+              dataOperazione={movimento.data_operazione}
+              onFatto={(r) => {
+                /**
+                 * ─── DUE ESITI, DUE POSTI, E NESSUNA FRASE DETTA DUE VOLTE ─────
+                 *
+                 * Tre fette di questo lavoro sanno raccontare la stessa cosa — il
+                 * pannello qui dentro, questo popup, la fascia dell'elenco — e se
+                 * parlassero insieme l'operatrice leggerebbe lo stesso fatto due
+                 * volte a due centimetri di distanza. La divisione, decisa dal
+                 * coordinamento, è netta:
+                 *
+                 * ANDATA BENE → il popup si CHIUDE e il riepilogo lo mostra la
+                 * FASCIA DELL'ELENCO, che è il vestito del riepilogo d'import: uno
+                 * che l'operatrice conosce già, e che resta a schermo mentre guarda
+                 * la riga appena diventata verde. «Conferma questo» non può
+                 * riapparire, perché non c'è più la finestra.
+                 *
+                 * NON LEGATA → il denaro è scritto, la riga bancaria no. Parla il
+                 * PANNELLO, che è rimasto montato e mostra la frase che la rotta
+                 * dichiara col proprio codice (`CONCILIAZIONE_MOVIMENTO_NON_LEGATO`
+                 * → `shared.erroreConciliazioneMovimentoNonLegato`, quella che dice
+                 * «non ripetere l'operazione»); il suo pulsante di conferma è già
+                 * sparito da sé. Qui non si scrive una seconda frase e non si
+                 * chiude niente: un avviso che se ne va da solo è un avviso che non
+                 * è stato letto. All'elenco va `onDone()` NUDO, così il ramo
+                 * d'avviso della fascia — che si accende su `movimentoLegato ===
+                 * false` — resta spento e non ripete la stessa cosa più in là.
+                 *
+                 * I quattro campi si inoltrano COM'È: questo strato non li
+                 * interpreta e non li converte. `ticket` in particolare è già la
+                 * QUANTITÀ di pasti — non il numero di righe — perché il pannello
+                 * la somma alla fonte, dove le quantità ci sono; qui non ci
+                 * sarebbero, e ricalcolarla significherebbe inventarla.
+                 */
+                if (r.movimentoConfermato) {
+                  setComponiAperto(false);
+                  onDone({ voci: r.voci, ticket: r.ticket, totale: r.totale, movimentoLegato: true });
+                  onClose();
+                  return;
+                }
+                // Il denaro è a registro: da qui in poi questo popup non ha più
+                // niente da offrire su questa riga (v. `composto`, sotto).
+                setComposto(true);
+                onDone();
+              }}
+              /**
+               * ⚠️ LA VIA D'USCITA DEL PANNELLO CAMBIA SIGNIFICATO UNA VOLTA CHE IL
+               * DENARO È SCRITTO. Prima di comporre, «Chiudi» riporta
+               * all'abbinamento, ed è giusto: si è cambiato idea. Dopo, quel ritorno
+               * significherebbe «Conferma questo» e la ricerca manuale SU UN
+               * BONIFICO IL CUI INCASSO È GIÀ A REGISTRO — il secondo incasso,
+               * offerto dalla stessa schermata che ha appena avvisato di non farlo.
+               * Perciò si esce dal popup, non dal pannello.
+               */
+              onChiudi={() => {
+                if (composto) { onClose(); return; }
+                // Il solo caso «sono tornato indietro»: qui il fuoco ha un posto
+                // dove rientrare. Vedi `rientraSuComponi`, in cima al componente.
+                rientraSuComponi.current = true;
+                setComponiAperto(false);
+              }}
+            />
+          ) : !composto && (
+            <button type="button" ref={componiBtnRef} onClick={() => setComponiAperto(true)} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
+              <Layers size={15} /> {t('reconComponiTitolo')}
+            </button>
+          )}
+
+          {/* ── Ricerca manuale fra i pagamenti aperti (stessa fonte del pannello)
+              ⚠️ `!composto`, come i suggerimenti qui sopra: una volta che la
+              composizione ha SCRITTO il denaro, questi due percorsi non sono più
+              «l'altra strada», sono un SECONDO incasso sullo stesso bonifico — e
+              starebbero a schermo accanto all'avviso che dice di non rifarlo.
+              Prima di quel momento restano intatti, ed è il loro caso: il bonifico
+              che paga una voce sola. */}
+          {!composto && (
           <div>
             <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgCercaAltroPagamento')}</h3>
             <div className="relative mb-2">
@@ -523,6 +954,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
               ))}
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -540,7 +972,7 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           Crema PIENO, mai `bg-kidville-cream/50`: con l'alfa dentro il nome della
           classe la regola di Alto Contrasto `.bg-kidville-cream` non lo
           raggiungerebbe, e il riquadro resterebbe chiaro sulla card nera. */}
-      {isConfermato && (
+      {!esito && isConfermato && (
         <section className="rounded-card bg-kidville-cream p-4">
           {/* Lo stato sta SULLA RIGA DELL'OCCHIELLO — «DOCUMENTI … FATTURATA» — e
               non più sopra i pulsanti: lì era il terzo di tre pillole identiche di
@@ -606,14 +1038,27 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
         </section>
       )}
 
-      {/* ── Azioni sul movimento: un PIEDE, non due pillole che galleggiano ─── */}
+      {/* ── Azioni sul movimento: un PIEDE, non due pillole che galleggiano ───
+          ⚠️ A COSE FATTE RESTA IL SOLO «Chiudi», e le due condizioni sono DUE
+          perché i due modi di «fatto» sono diversi: `esito` è la riapertura appena
+          avvenuta, `composto` è il denaro appena scritto da una composizione. In
+          entrambi la prop `movimento` è la FOTOGRAFIA DI PRIMA, quindi `stato`
+          direbbe ancora di sì.
+
+          ⚠️ «IGNORA» DOPO UNA COMPOSIZIONE NON LEGATA È IL PEGGIORE DEI DUE, ed è
+          il motivo per cui `composto` compare anche qui. `ignora` porta il
+          movimento a `ignorato`, cioè FUORI dalla coda: su una riga il cui incasso
+          è già scritto e che non si è legata, nasconderla significa non legarla mai
+          più — resterebbe un incasso senza la riga bancaria che lo giustifica, e
+          nessuno a cercarla. La riga deve restare visibile e rossa finché qualcuno
+          non la lega. */}
       <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-kidville-line pt-4">
-        {(stato === 'da_abbinare' || stato === 'suggerito') && (
+        {!esito && !composto && (stato === 'da_abbinare' || stato === 'suggerito') && (
           <button type="button" onClick={() => azione('ignora')} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
             <X size={15} /> {t('movdlgIgnora')}
           </button>
         )}
-        {(isConfermato || isIgnorato) && (
+        {!esito && !composto && (isConfermato || isIgnorato) && (
           <button type="button" onClick={() => azione('riapri')} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
             {t('movdlgRiapri')}
           </button>

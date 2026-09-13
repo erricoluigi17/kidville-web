@@ -1205,6 +1205,21 @@ const AMMESSE: Record<string, string> = {
     'pagamenti/riconciliazione:GET': 'estratto conto unico: le righe bancarie non hanno sede finché non sono abbinate; il nome del minore nei suggerimenti è filtrato per sede attiva',
     'pagamenti/riconciliazione:POST': 'dedup GLOBALE sull hash del movimento (UNIQUE non più per sede) + lettura dei pagamenti aperti per abbinamento cross-sede',
     'pagamenti/transazioni:POST': 'incasso unico di famiglia: le voci sono verificate una per una contro le sedi attive prima di registrare',
+    // Gemella della riga qui sopra, e per la stessa ragione — con una differenza
+    // che vale la pena scrivere, perché è il motivo per cui il filtro in query
+    // sarebbe PEGGIO e non solo inutile. Qui le letture di `pagamenti` e `alunni`
+    // sono per ID (`.in('id', …)`), e lo scope si applica DOPO: le righe si leggono
+    // tutte e quelle di un plesso non accessibile fanno scattare un **403**
+    // (`CONCILIAZIONE_SEDE_NON_ACCESSIBILE`). Con `.in('scuola_id', plessi)` in
+    // query quelle stesse righe sparirebbero, e la route direbbe «questa voce non
+    // esiste» — un 404 su un dato che esiste, cioè il segnale di un tentativo
+    // cross-sede trasformato in un errore di battitura. Lo scope c'è, ed è più
+    // stretto della rotta gemella: copre le voci ESISTENTI, gli alunni delle voci
+    // NUOVE e quelli dei ticket (che la RPC accetterebbe da qualunque plesso), e in
+    // più rifiuta i bambini non attivi e le sedi di collaudo. La sede del DOCUMENTO
+    // passa da `resolveScuoleAttive` + `rifiutoSede`. La RPC riceve `p.scuola_id`
+    // già validata, e le sedi delle singole voci le deriva lei da `alunni.scuola_id`.
+    'pagamenti/riconciliazione/[id]/componi:POST': 'conciliazione composita: le voci e i bambini si leggono per ID e si verificano UNO PER UNO contro le sedi attive (403, non 404) prima di registrare; la sede del documento passa da `resolveScuoleAttive` + `rifiutoSede`',
     'pagamenti/transazioni/[id]:GET': 'dettaglio di una transazione già verificata: incassi e crediti si leggono per `transazione_id`',
     'pagamenti/transazioni/[id]/annulla:POST': 'annullo atomico via RPC sulla transazione già verificata (`p.transazione_id`)',
     'pagamenti/incassi/storno:<modulo>': 'helper: ricalcola lo stato del pagamento appena stornato (`p_id` della riga verificata dal chiamante)',
@@ -1531,6 +1546,35 @@ const AMMESSE: Record<string, string> = {
     // `task_interni_scuola_obbligatoria` che rende `scuola_id` NOT NULL (la
     // tabella era vuota in produzione: 0 righe, verificato lo stesso giorno).
     // Resta solo la voce `tasks:<modulo>` qui sopra, che è un'altra cosa.
+
+    // ── Un bonifico di famiglia attraversa i plessi: è il suo mestiere ───────
+    // `pagamenti/riconciliazione/[id]/contesto:GET` legge `alunni` per ID e non
+    // per sede, ed è una DECISIONE (n. 10 del titolare, 2026-09-13), non una
+    // dimenticanza: una famiglia paga con un bonifico solo la retta di due
+    // fratelli iscritti in due plessi diversi, e un `.in('scuola_id', plessi)`
+    // qui farebbe sparire dal pannello proprio il fratello per cui metà di quel
+    // denaro è arrivato. L'operatrice vedrebbe un bonifico che non quadra e
+    // nessun modo di farlo quadrare.
+    //
+    // GLI ID NON ARRIVANO DAL CLIENT, e questa è la metà che rende sicura la
+    // prima: sono i figli del PAGANTE, e il pagante o è proposto dal server
+    // (`riconosciOrdinante` / `scegliPaganteComune` sui bambini che il bonifico
+    // nomina) o è scelto dall'operatrice fra i CANDIDATI — un `?pagante=` fuori
+    // da quell'elenco è un 403 (`CONCILIAZIONE_PAGANTE_NON_AMMESSO`). Non
+    // esiste un parametro con cui chiedere a questa rotta gli alunni di una
+    // famiglia qualunque.
+    //
+    // E LA PROTEZIONE VERA È ALTROVE, perché qui il dato sensibile è il NOME:
+    // la rotta lo minimizza esattamente come i `label` dei suggerimenti nel GET
+    // della lista — fuori dalle sedi attive esce `nome: null` e il nome del
+    // PLESSO, mai quello del minore. Lo misura
+    // `__tests__/api/pagamenti-riconciliazione-contesto.test.ts` («🔴 i nomi dei
+    // minori escono SOLO per le sedi dell'operatore»), e quel test è stato visto
+    // fallire togliendo la minimizzazione.
+    'pagamenti/riconciliazione/[id]/contesto:GET':
+        'bonifico di famiglia cross-sede (decisione n. 10): i figli si leggono per ID — id che ' +
+        'vengono dal pagante proposto o scelto fra i candidati, mai dal client — e il NOME del ' +
+        'minore resta minimizzato alle sole sedi attive',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2099,7 +2143,16 @@ describe('coverage-lock isolamento fra sedi', () => {
             //    qui scritto resta più alto del vero. L'uguaglianza esatta fa diventare
             //    rosso il caso — è il verso buono in cui sbagliare — ma il rosso va
             //    letto rimisurando, non abbassando il numero fino a farlo passare.
-            routeConServiceRole: 313,
+            // 313 → 315 il 2026-09-13: le due route nuove della conciliazione
+            // composita — `pagamenti/riconciliazione/[id]/contesto:GET` (il contesto
+            // del pannello «Componi il pagamento») e
+            // `pagamenti/riconciliazione/[id]/componi:POST` (la scrittura). Una per
+            // agente, sullo stesso albero di lavoro, e vale la riga d'avvertimento
+            // qui sopra più che mai: chi unisce i rami RIMISURI questo numero sul
+            // file unito. Se una delle due non arriva in `main`, 315 resta più alto
+            // del vero — e un tetto più largo della misura è il difetto che il
+            // paragrafo dell'auto-merge racconta due volte in questo file.
+            routeConServiceRole: 315,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2248,7 +2301,10 @@ describe('coverage-lock isolamento fra sedi', () => {
             //
             // 479 → 481 il 2026-09-12: i due handler delle due route nuove, uno per
             // agente. La nota sta accanto a `routeConServiceRole`, sopra.
-            handlerControllati: 481,
+            // 481 → 483 il 2026-09-13: i due handler delle due route della
+            // conciliazione composita, uno ciascuna. Stessa avvertenza di
+            // `routeConServiceRole`: si rimisura sul file unito.
+            handlerControllati: 483,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -2464,7 +2520,41 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `file_url` non è confrontabile. Se un giorno quel file smettesse di
             // coprire la spazzata, questa voce resterebbe verde sull'esenzione e cieca
             // sul comportamento.
-            handlerEsentati: 101,
+            // 101 → 102 il 2026-09-13, ed è il numero che questo test chiede di
+            // guardare in faccia invece di adeguare: UNA esenzione in più, per
+            // `pagamenti/riconciliazione/[id]/contesto:GET`. Il lock guarda una cosa
+            // in meno, quindi la crescita si paga con una ragione — che sta per
+            // esteso in `AMMESSE`, in fondo all'elenco, e si riassume così: un
+            // bonifico di famiglia paga i fratelli di DUE plessi, quindi i figli si
+            // leggono per ID e non per sede; gli id non arrivano mai dal client (o
+            // dal pagante proposto dal server, o dai candidati, e fuori di lì è un
+            // 403); e il dato che qui va protetto — il NOME del minore — resta
+            // minimizzato alle sole sedi attive, con un test che è stato visto
+            // fallire togliendo la minimizzazione.
+            //
+            // ── 102 → 103 il 2026-09-13 · `pagamenti/riconciliazione/[id]/componi:POST`
+            // È nata la rotta che registra un bonifico ripartito su più voci —
+            // «Componi il pagamento» — e porta UNA esenzione, gemella di quella di
+            // `pagamenti/transazioni:POST`. Vale la pena dire perché un filtro in
+            // query qui sarebbe stato PEGGIO che inutile, invece di limitarsi a
+            // esentare: le letture sono per ID (`.in('id', …)`) e lo scope si applica
+            // DOPO, perché una voce di un plesso non accessibile deve dare **403**
+            // e non sparire. Con `.in('scuola_id', plessi)` in query quelle righe
+            // diventerebbero invisibili e la risposta direbbe «non esiste» — un
+            // tentativo cross-sede travestito da errore di battitura, cioè il segnale
+            // spento proprio dove serve.
+            // Lo scope che l'esenzione copre è più stretto di quello della gemella,
+            // e non solo pari: verifica le voci ESISTENTI, gli alunni delle voci
+            // NUOVE e quelli dei TICKET — che la RPC `registra_transazione_contabile`
+            // accetterebbe da qualunque plesso, perché non ha né `request` né utente
+            // chiamante — e in più rifiuta i bambini non attivi (10 ritirati, 4
+            // anonimizzati e 29 di sede E2E su 727, misurati il 2026-09-13). La sede
+            // del DOCUMENTO passa da `resolveScuoleAttive` + `rifiutoSede`, ed è
+            // loggata: senza quel log «sede scelta dall'operatore» sarebbe una frase
+            // in un commento.
+            // `routeConServiceRole` e `handlerControllati` non cambiano per mano mia:
+            // erano già stati adeguati in questo stesso branch.
+            handlerEsentati: 103,
         })
     })
 })

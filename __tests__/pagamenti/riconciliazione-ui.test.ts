@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { createTranslator } from 'use-intl'
 import {
   suggerimentoPrincipaleCf,
   movimentoMultiCf,
@@ -18,9 +19,12 @@ import {
   FILTRI_FATTURA,
   numeroPillolaFattura,
   etichettaConteggio,
+  riepilogoComposizione,
+  motivoNonFatturabile,
   type ConteggiFattura,
   type SuggerimentoUi,
   type EsitoImport,
+  type EsitoComposizione,
   type MovimentoUi,
 } from '@/components/features/admin/pagamenti/riconciliazione-ui'
 // La POLITICA sta nella lib e non fra i componenti: la legge anche la rotta del
@@ -856,5 +860,277 @@ describe('numeroPillolaFattura / etichettaConteggio — il numero sulle pillole'
       const n = numeroPillolaFattura(f.id, conteggi)
       expect(f.id === '' ? n === null : typeof n === 'number').toBe(true)
     }
+  })
+})
+
+/**
+ * ─── IL RIEPILOGO DI CIÒ CHE LA COMPOSIZIONE HA REGISTRATO ───────────────────
+ *
+ * Fino al 2026-09-13 la chiusura riuscita del popup faceva UNA cosa sola:
+ * ricaricare. La lista tornava con una riga verde in più e nient'altro — nessuna
+ * traccia di che cosa fosse appena stato scritto. Su una composizione, che può
+ * saldare sei voci di tre fratelli e accreditare venti ticket in un colpo, «la
+ * riga è diventata verde» non è un esito: è il minimo comune denominatore fra
+ * «ha fatto tutto» e «ha fatto metà».
+ *
+ * Qui si prova la parte PURA: quali numeri vanno nella frase, e quando il
+ * riepilogo cambia tono. Il testo è di catalogo (ICU) e lo rende il pannello.
+ *
+ * ⚠️ I NUMERI ARRIVANO DA UN JSON, quindi possono non essere numeri. Un `NaN`
+ * che scivola dentro un plurale ICU non esplode: scrive «NaN voci» sopra a un
+ * incasso appena registrato.
+ */
+describe('riepilogoComposizione — che cosa è stato registrato, in numeri', () => {
+  it('voci e ticket insieme, con l’importo formattato in euro', () => {
+    const r = riepilogoComposizione({ voci: 3, ticket: 20, totale: 150 })
+    expect(r.valori).toEqual({ voci: 3, ticket: 20, totale: '€ 150,00' })
+    expect(r.avviso).toBe(false)
+  })
+
+  it('senza ticket il conteggio resta ZERO: è l’ICU a togliere il pezzo, non questa funzione', () => {
+    // Due posti che decidono la stessa cosa — qui e nel catalogo — sono due posti
+    // da cui un giorno diverge. La frase ha già `=0 {}`.
+    const r = riepilogoComposizione({ voci: 1, ticket: 0, totale: 75.5 })
+    expect(r.valori.ticket).toBe(0)
+    expect(r.valori.totale).toBe('€ 75,50')
+  })
+
+  it('numeri non numeri → 0, mai «NaN voci» sopra a un incasso vero', () => {
+    const r = riepilogoComposizione({ voci: Number.NaN, ticket: -4, totale: Number.NaN })
+    expect(r.valori.voci).toBe(0)
+    expect(r.valori.ticket).toBe(0)
+    expect(r.valori.totale).toBe('€ 0,00')
+  })
+
+  it('i conteggi si troncano a intero: «2,5 voci» non esiste', () => {
+    expect(riepilogoComposizione({ voci: 2.7, ticket: 1.9, totale: 10 }).valori).toMatchObject({ voci: 2, ticket: 1 })
+  })
+
+  it('movimento NON legato → tono d’avviso: un verde accanto a una riga rossa è la bugia peggiore', () => {
+    // La rotta lo dice col codice `CONCILIAZIONE_MOVIMENTO_NON_LEGATO`: il denaro
+    // è scritto, la riga bancaria no. Se il riepilogo dicesse «fatto» e basta,
+    // l'operatrice ricomporrebbe — e sulle voci nuove e sui ticket il secondo giro
+    // crea righe nuove.
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: 80, movimentoLegato: false }).avviso).toBe(true)
+  })
+
+  it('il campo ASSENTE non è un allarme: «non me l’hanno detto» ≠ «è andata male»', () => {
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: 80 }).avviso).toBe(false)
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: 80, movimentoLegato: true }).avviso).toBe(false)
+  })
+})
+
+/**
+ * ─── «PERCHÉ QUESTA RIGA LA VEDO E NON LA POSSO FATTURARE» ───────────────────
+ *
+ * Conseguenza dichiarata della decisione n. 15 del titolare (un bonifico che paga
+ * figli di sedi diverse produce UN documento solo): il movimento prende la sede
+ * del DOCUMENTO, mentre i due campi che decidono la fatturazione
+ * (`pagamento_stato`, `fattura_stato`) il server li manda solo a chi ha fra le
+ * proprie la sede del PAGAMENTO d'ancoraggio. Le due sedi possono divergere, e
+ * allora la riga compare nel filtro di chi non la può fatturare: chip muto,
+ * nessuna casella, nessuna spiegazione.
+ *
+ * MISURA del 2026-09-13 sul database vivo, che è ciò che stabilisce il perimetro
+ * di questa spiegazione:
+ *  · 239 movimenti, 174 confermati, **0** con la sede del documento diversa da
+ *    quella del proprio pagamento — il caso nasce col primo bonifico composto;
+ *  · 855 famiglie, 151 con più figli, **4** con figli in sedi diverse, e **1
+ *    sola** con voci aperte in più di una sede: è quella che oggi lo produrrebbe;
+ *  · senza la guardia «nessun chip», l'avviso comparirebbe su **100 righe** per
+ *    l'operatrice di Giugliano, 120 per Aversa, 128 per Cesa — tutte righe che
+ *    dicono già «Fattura FPR …». Con la guardia: 2, 3 e 1. È la differenza fra
+ *    una spiegazione e del rumore, ed è il motivo per cui la guardia c'è.
+ */
+describe('motivoNonFatturabile — la riga muta dice perché', () => {
+  const base: MovimentoUi = {
+    id: 'm', data_operazione: '2026-09-13', importo: 100, stato: 'confermato',
+    pagamento_id: 'pg-1', suggerimenti: [],
+  }
+
+  it('confermata, con pagamento, e i due campi derivati ASSENTI → il pagamento è di un altro plesso', () => {
+    expect(motivoNonFatturabile(base, true)).toBe('pagamento_altro_plesso')
+  })
+
+  it('se un DOCUMENTO parla, la riga non è muta: niente spiegazione', () => {
+    // I documenti sono cross-sede per progetto: «Fattura FPR 1947/26» su una riga
+    // di un altro plesso è l'informazione «è a posto, non toccarla».
+    expect(motivoNonFatturabile({ ...base, fattura: { stato: 'emessa', numeri: ['FPR 1/26'] } }, true)).toBeNull()
+    expect(motivoNonFatturabile({ ...base, fattura: { stato: 'scartata', numeri: [] } }, true)).toBeNull()
+  })
+
+  it('propria sede: i due campi arrivano, e allora il motivo è un altro (o non c’è)', () => {
+    // Saldata e da fatturare → c'è il chip giallo, che è già la spiegazione.
+    expect(motivoNonFatturabile({ ...base, pagamento_stato: 'pagato', fattura_stato: 'non_richiesta' }, true)).toBeNull()
+    // Non saldata → nessun chip, ma il motivo NON è la sede: dirlo sarebbe falso.
+    expect(motivoNonFatturabile({ ...base, pagamento_stato: 'parziale', fattura_stato: 'non_richiesta' }, true)).toBeNull()
+  })
+
+  it('la riga RIAPERTA dall’annullo conserva il pagamento e NON è di un altro plesso', () => {
+    // `annulla_transazione_contabile` riapre il movimento (`da_abbinare`) e gli
+    // lascia `pagamento_id`. Senza la guardia sullo stato, ogni riga riaperta si
+    // porterebbe addosso una spiegazione falsa — e sono righe che chiedono lavoro.
+    expect(motivoNonFatturabile({ ...base, stato: 'da_abbinare' }, true)).toBeNull()
+    expect(motivoNonFatturabile({ ...base, stato: 'suggerito' }, true)).toBeNull()
+    expect(motivoNonFatturabile({ ...base, stato: 'ignorato' }, true)).toBeNull()
+  })
+
+  it('senza pagamento abbinato non c’è niente da fatturare, quindi niente da spiegare', () => {
+    expect(motivoNonFatturabile({ ...base, pagamento_id: null }, true)).toBeNull()
+    expect(motivoNonFatturabile({ ...base, pagamento_id: '' }, true)).toBeNull()
+  })
+
+  it('fatturazione NON disponibile → si tace: i campi mancano per un GUASTO, non per la sede', () => {
+    // Quando la batch dei pagamenti cade, il server manda i due campi `null` su
+    // TUTTE le righe e lo dichiara con `fatturazione_disponibile: false`. Dire lì
+    // «è di un altro plesso» sarebbe un verdetto inventato su tutto il registro —
+    // e c'è già la fascia che dice che il filtro non è stato applicato.
+    expect(motivoNonFatturabile(base, false)).toBeNull()
+  })
+})
+
+/**
+ * ─── LA FRASE DEL RIEPILOGO, RESA DAVVERO, IN TUTT'E DUE LE LINGUE ───────────
+ *
+ * ⚠️ QUESTA FRASE NON LA GUARDA NESSUN ALTRO LOCK, e non per una svista:
+ * `messaggi-plurali-e-glossario` ha un riconoscitore di forma che salta PER
+ * COSTRUZIONE ogni stringa che apre un blocco `plural` (`APRE_BLOCCO_ICU`), e il
+ * suo perimetro a mano (`CONTATORI`) elenca due sole chiavi di questo namespace.
+ * Un contatore esce dalla sorveglianza automatica nel momento esatto in cui viene
+ * portato a ICU: se non si rende qui, «1 voci» non lo vede nessuno.
+ *
+ * E i test unitari non rendono MAI in inglese: il mock di next-intl carica il solo
+ * `messages/it` con locale fisso. Qui si costruiscono due traduttori veri.
+ */
+describe('reconComposizioneRegistrata — la frase che l’operatrice legge', () => {
+  const rende = (lingua: 'it' | 'en', valori: Record<string, unknown>): string => {
+    const messages = JSON.parse(
+      readFileSync(join(process.cwd(), 'messages', lingua, 'adminContabilita.json'), 'utf8'),
+    ) as Record<string, string>
+    const t = createTranslator({
+      locale: lingua,
+      messages: { adminContabilita: messages } as never,
+      namespace: 'adminContabilita' as never,
+      // `onError` che RILANCIA: un ICU malformato in produzione degrada nel nome
+      // della chiave, cioè nel guasto che non si vede. Qui deve fare rosso.
+      onError: (e) => { throw e },
+    })
+    return (t as unknown as (k: string, v: Record<string, unknown>) => string)('reconComposizioneRegistrata', valori)
+  }
+
+  it('italiano: singolare e plurale delle voci sono DIVERSI', () => {
+    expect(rende('it', { voci: 1, ticket: 0, totale: '€ 75,50' })).toBe('Pagamento registrato: 1 voce · € 75,50')
+    expect(rende('it', { voci: 3, ticket: 0, totale: '€ 150,00' })).toBe('Pagamento registrato: 3 voci · € 150,00')
+  })
+
+  it('italiano: i ticket compaiono solo quando ci sono', () => {
+    expect(rende('it', { voci: 3, ticket: 20, totale: '€ 150,00' })).toBe('Pagamento registrato: 3 voci e 20 ticket · € 150,00')
+    // Zero ticket ⇒ il pezzo sparisce: «e 0 ticket» su un bonifico di sole rette
+    // è rumore, e il conteggio a zero esce lo stesso dalla funzione pura.
+    expect(rende('it', { voci: 1, ticket: 0, totale: '€ 10,00' })).not.toContain('ticket')
+  })
+
+  it('inglese: plurali propri (voci E ticket), che nessun altro test rende', () => {
+    expect(rende('en', { voci: 1, ticket: 1, totale: '€ 10,00' })).toBe('Payment recorded: 1 item and 1 meal ticket · € 10,00')
+    expect(rende('en', { voci: 3, ticket: 20, totale: '€ 150,00' })).toBe('Payment recorded: 3 items and 20 meal tickets · € 150,00')
+    expect(rende('en', { voci: 2, ticket: 0, totale: '€ 20,00' })).not.toContain('ticket')
+  })
+})
+
+/**
+ * ─── UN SUCCESSO DICHIARATO SUL NULLA ────────────────────────────────────────
+ *
+ * Misurato dal critico della fetta F11: passato al pannello un esito MALFORMATO,
+ * la fascia usciva VERDE e diceva «Pagamento registrato: 0 voci · € 0,00».
+ * Meglio di «NaN voci», e comunque un'affermazione su un fatto che quei numeri
+ * non raccontano.
+ *
+ * Perché non è cosmetico: questa fascia è l'unico posto in cui la segreteria legge
+ * che il bonifico è stato incassato. Un verde con zero voci e zero euro afferma
+ * una cosa che non è successa, e in quel momento non c'è nient'altro da guardare.
+ *
+ * ⚠️ LA RIPULITURA NON È UNA DIAGNOSI, ed è il difetto in una riga. `intero()`
+ * trasforma `NaN` e i negativi in `0` perché «NaN voci» sopra a un incasso vero
+ * sarebbe peggio — ma dopo la ripulitura un esito malformato è INDISTINGUIBILE da
+ * un esito vero che vale zero. Il tono va deciso PRIMA di ripulire, sui numeri
+ * come sono arrivati: è quello che fa `numeriLeggibili`.
+ *
+ * Il criterio, e da dove viene ciascun pezzo:
+ *  · i tre campi devono essere numeri finiti e non negativi — vengono da un JSON,
+ *    e fra la RPC che li conta e questo componente c'è la rete;
+ *  · `totale > 0`, perché la rotta `…/componi` rifiuta un bonifico non positivo
+ *    (`reconComponiErrMovimentoNonPositivo`): un totale a zero non è un pagamento;
+ *  · `voci + ticket > 0`, perché una composizione che non salda niente e non
+ *    accredita niente non esiste. `voci: 0` DA SOLO resta legittimo: una
+ *    composizione di soli ticket non salda nessuna voce aperta.
+ */
+describe('riepilogoComposizione — quando i numeri non si possono leggere', () => {
+  it('l’esito del critico: NaN e conteggi negativi non sono un riepilogo', () => {
+    const r = riepilogoComposizione({ voci: Number.NaN, ticket: -4, totale: Number.NaN })
+    // I valori restano ripuliti: se qualcosa si mostra, non deve mai dire «NaN».
+    expect(r.valori).toEqual({ voci: 0, ticket: 0, totale: '€ 0,00' })
+    // Ma non si dichiara riuscito niente.
+    expect(r.numeriLeggibili).toBe(false)
+  })
+
+  it('i campi che non arrivano affatto: un JSON troncato, o un client più vecchio', () => {
+    expect(riepilogoComposizione({} as unknown as EsitoComposizione).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: 3, ticket: 0 } as unknown as EsitoComposizione).numeriLeggibili).toBe(false)
+  })
+
+  it('i numeri che non sono numeri: una stringa passa il typeof di nessuno', () => {
+    expect(
+      riepilogoComposizione({ voci: '3', ticket: 0, totale: 150 } as unknown as EsitoComposizione).numeriLeggibili,
+    ).toBe(false)
+  })
+
+  /**
+   * ⚠️ QUESTO BLOCCO ESISTE PERCHÉ META' DELLA GUARDIA NON ERA DIFESA DA NIENTE.
+   *
+   * `arrivato` chiede tre cose — `typeof v === 'number'`, `Number.isFinite(v)` e
+   * `v >= 0` — e il 2026-09-13 un critico ha misurato che **togliendo le ultime
+   * due restavano tutti e 96 i test verdi**. Non era un mutante equivalente: il
+   * codice si comportava davvero in modo diverso, e nessuno se ne accorgeva.
+   *
+   * Il codice era (ed è) giusto: nessuna famiglia ha mai visto la differenza. A
+   * mancare era la difesa della difesa — cioè la sola cosa che impedisce a
+   * qualcuno, fra sei mesi, di «semplificare» quelle due condizioni col gate
+   * verde. Vedi il promemoria «rompi il codice e guarda il test diventare rosso».
+   *
+   * I tre casi qui sotto sono quelli su cui le due forme divergono, misurati:
+   * un conteggio negativo, un conteggio negativo nell'altro campo, e un
+   * `Infinity` — che è un `number` a tutti gli effetti per `typeof`, e che
+   * `formatEuro` renderebbe come «€ ∞».
+   */
+  it('i numeri impossibili: negativi e infiniti sono «number», e non sono numeri', () => {
+    expect(riepilogoComposizione({ voci: -4, ticket: 10, totale: 100 }).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: 2, ticket: -1, totale: 100 }).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: Infinity, ticket: 0, totale: 100 }).numeriLeggibili).toBe(false)
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: Infinity }).numeriLeggibili).toBe(false)
+  })
+
+  it('tutto a zero è «niente», non «fatto»', () => {
+    expect(riepilogoComposizione({ voci: 0, ticket: 0, totale: 0 }).numeriLeggibili).toBe(false)
+    // Un totale non positivo non è un pagamento, nemmeno con delle voci accanto.
+    expect(riepilogoComposizione({ voci: 2, ticket: 0, totale: 0 }).numeriLeggibili).toBe(false)
+    // E nemmeno delle voci a zero con del denaro: la RPC non scrive denaro senza righe.
+    expect(riepilogoComposizione({ voci: 0, ticket: 0, totale: 150 }).numeriLeggibili).toBe(false)
+  })
+
+  it('il controllo positivo: un esito VERO resta leggibile, coi ticket e senza', () => {
+    // Senza queste tre righe, un `numeriLeggibili` che dicesse sempre `false`
+    // spegnerebbe la fascia su ogni composizione riuscita, col gate verde.
+    expect(riepilogoComposizione({ voci: 3, ticket: 20, totale: 150 }).numeriLeggibili).toBe(true)
+    expect(riepilogoComposizione({ voci: 1, ticket: 0, totale: 75.5 }).numeriLeggibili).toBe(true)
+    // Composizione di SOLI ticket: nessuna voce aperta saldata, e va benissimo.
+    expect(riepilogoComposizione({ voci: 0, ticket: 20, totale: 150 }).numeriLeggibili).toBe(true)
+  })
+
+  it('il tono d’avviso del movimento non legato resta una cosa diversa', () => {
+    // Due guasti diversi: «la riga bancaria non si è legata» e «i numeri non si
+    // leggono». Confonderli farebbe sparire l'uno dietro l'altro.
+    const r = riepilogoComposizione({ voci: 2, ticket: 0, totale: 80, movimentoLegato: false })
+    expect(r.avviso).toBe(true)
+    expect(r.numeriLeggibili).toBe(true)
   })
 })

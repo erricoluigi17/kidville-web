@@ -32,6 +32,7 @@
 > | `protocolli` (+ `protocolli_allegati`, `protocolli_categorie`, `protocolli_numerazione`) | Registro di protocollo DPR 445/2000: trigger WORM (annullo una-tantum art. 54; DELETE solo via `protocollo_elimina()` senza tracce), numerazione atomica per scuola/anno, titolario con seed | ✅ RLS + policy service_role |
 > | `pagamenti` | Scadenziario rette e quote (+ `sconto`/`sconto_motivo` per voce, Contabilità v2) | Schema creato, non ancora popolato |
 > | `pagamenti_transazioni` | Contenitore «incasso unico di famiglia»: un versamento → più voci di più figli + ricariche mensa (pagante = `parents.id`, metodo, riferimento/CRO, data valuta, note, annullo tracciato) | ✅ RLS + policy service_role |
+> | `riconciliazione_movimenti` | L'estratto conto della banca, **unico per le tre sedi** (`scuola_id` nullable dal 2026-07-19). Dal branch `feat/conciliazione-composita` porta **`transazione_id`** (migr. `20260912180000`): quando un bonifico salda più voci insieme il movimento si lega alla **transazione**, che diventa la sorgente di verità di importo e righe; `pagamento_id` e `incasso_id` **non** vengono svuotati e restano puntati sulla **voce àncora**, quella su cui si emette la fattura (li leggono il chip di fatturazione della coda, il lotto fatture e `src/lib/aruba/intestatario-pagamento.ts`, da cui passa la detrazione 730). ⚠️ **`scuola_id` cambia significato** su una riga confermata dalla composizione: è la sede del **DOCUMENTO**, dichiarata dall'operatore, non quella del pagamento àncora — su un bonifico multi-plesso le due **possono divergere per costruzione**. Rimisurato il 2026-09-13 (`SELECT stato, count(*), count(pagamento_id) FROM riconciliazione_movimenti GROUP BY stato`): **239 righe** — 174 `confermato` (tutte e 174 con `pagamento_id`), 33 `da_abbinare`, 31 `suggerito`, 1 `ignorato`, e **zero** righe non confermate con un `pagamento_id` addosso: lo stato «riaperto» che questo lavoro introduce oggi non esiste su nessuna riga | ✅ RLS + policy `service_role` (1 policy, `ALL`) |
 > | `crediti_famiglia` | Ledger del credito di famiglia (causali eccedenza/utilizzo/rettifica/storno con `saldo_dopo`, ancorato a `parents.id`) — visibile **solo alla segreteria** | ✅ RLS + policy service_role |
 > | `cassa_movimenti` (+ `cassa_categorie`, `cassa_chiusure`, `admin_settings.cassa_config`) | Registro di cassa contanti per sede: ledger **immutabile** (entrata/uscita/prelievo/rettifica, solo storno tracciato), entrate auto dagli incassi contanti calcolate a query-time, svuotamento con differenza + prelievo (RPC atomica `registra_chiusura_cassa`), categorie di uscita con seed («Versamento in banca» `is_sistema`), giustificativo su Storage **privato**. Saldo/«entrato oggi»/totali/report/svuotamento **solo admin** | ✅ RLS service_role (RPC SECURITY DEFINER, REVOKE anon/authenticated) |
 > | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
@@ -72,6 +73,7 @@
 > | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`) |
 > | **Vigilanza sulle chat** | ✅ Operativo (2026-09-09) | `/admin/messaggi` → «Tutti i messaggi» e «Registro accessi» | Segreteria e Direzione consultano qualunque conversazione della propria sede, e la consultazione è **silenziosa** per i due interlocutori. Ogni lettura e ogni ricerca finiscono in `chat_vigilanza_accessi`, in **sola aggiunta**; se il registro non si scrive il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Il registro lo legge **solo la Direzione**, senza esenzioni per sé. Ritenzione: la riga resta, IP/browser/termine si azzerano a 12 mesi |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
+> | **Conciliazione composita — un bonifico, più voci** | ✅ Completa sul branch `feat/conciliazione-composita` (13/09/2026) · ⏳ **non ancora in produzione** — **le tre migrazioni (`20260912180000`, `…180100`, `…180200`) sono già applicate sul database (le tre `version` risultano presenti in `supabase_migrations.schema_migrations`, verificato il 13/09, e il fixture `__tests__/fixtures/migrazioni-applicate-snapshot.json` le elenca): NON riapplicarle**; manca il rilascio del **codice**. ⚠️ *Qui si leggeva «applicate **dal 12/09**»: la data è stata tolta perché **quella tabella non sa quando**. Le sue colonne sono `version`, `statements`, `name`, `created_by`, `idempotency_key`, `rollback` — nessuna è una data — e la strada per ricavarla dal commit è chiusa: `track_commit_timestamp` è `off`, quindi `pg_xact_commit_timestamp(xmin)` risponde `55000: could not get commit timestamp data` (provato il 13/09). Il «12/09» era il timestamp del **nome del file**, non una misura: resta vero che sono applicate, non quando* | `/admin/pagamenti` → *Riconciliazione* → popup del movimento → **«Componi il pagamento»** (`ComposizioneBonifico`, dentro il popup e non in una pagina a sé) | `GET /api/pagamenti/riconciliazione/[id]/contesto` (**non scrive niente**: di chi è il bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie, quanto costa un ticket in quella sede) e `POST /api/pagamenti/riconciliazione/[id]/componi` (registra l'intera composizione in **una** transazione atomica — RPC `registra_transazione_contabile` — con compare-and-swap sul movimento). Spunta le voci aperte, **ne crea di nuove**, **aggiunge ticket mensa** (quantità × costo unitario, che accreditano anche i pasti), e conferma **solo quando quadra all'esatto**: niente eccedenza, niente residuo. Funziona anche per **fratelli di plessi diversi**. 🔴 **Una sola fattura, con una riga sola, per il totale del bonifico e la descrizione della voce àncora** — con la conseguenza fiscale che ne segue, scritta per intero nel changelog del 13/09 |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
 > | **Archivio documenti firmati** | ✅ Completo sul branch `feat/documenti-firmati` (13/08/2026) · ⏳ non ancora in produzione | `/admin/documenti-firmati` (segreteria, filtri sede·classe·alunno) · `/teacher/documenti-firmati` (le sole sezioni assegnate) | `GET /api/documenti-firmati` (elenco unificato di **tre tabelle già esistenti** — `forms_submissions`, `student_documents`, `certificati_medici` — **nessuna migrazione**), `GET /api/documenti-firmati/dettaglio` (apre il singolo documento: link firmato a 60 s per i file, risposte + traccia di firma per i moduli). **Gate a due strati**: scope ordinario (sede attiva + sezioni assegnate) e, per i documenti SANITARI, `puoAccedereFascicolo` — segreteria del plesso e insegnanti contitolari della sezione, nessun altro. Ogni apertura di un sanitario è registrata in `fascicolo_accessi_audit` PRIMA di restituire il contenuto |
@@ -99,6 +101,473 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
 
 ---
+
+## 🏦 Changelog — Un bonifico paga la retta, il pomeridiano e i ticket di due fratelli in due plessi, e produce UNA fattura sola — 2026-09-13 (branch `feat/conciliazione-composita`)
+
+**Il fatto da cui è nata.** Un movimento bancario si abbinava a **una voce sola**. Ma il bonifico
+vero di una famiglia ne paga più d'una in un colpo: la retta arretrata, il pomeridiano, la ricarica
+dei ticket mensa — magari per due figli, magari in due sedi diverse. Quando l'importo superava il
+residuo della voce, la schermata rimbalzava a «Incasso unico» **perdendo l'id del movimento**: la
+riga dell'estratto conto restava rossa per sempre e un secondo operatore poteva riabbinarla,
+incassando due volte lo stesso denaro.
+
+Da oggi quella riga si **compone**. Nel popup del movimento (non in una pagina a parte: decisione
+n. 1) la segreteria spunta le voci aperte di **tutti** i figli della famiglia, **ne crea di nuove**
+già saldate da questo bonifico, **aggiunge ticket mensa** a quantità × costo unitario — che
+accreditano davvero i pasti, `varia_saldo_ticket` + ledger `mensa_ticket_movimenti` — e conferma
+**solo quando quadra all'esatto**. Niente eccedenza e niente residuo (decisione n. 11): l'eccedenza
+a credito resta la strada di «Incasso unico», che non è stata toccata.
+
+Due rotte nuove, entrambe avvolte in `withRoute` col nome esatto del lock:
+`pagamenti/riconciliazione/[id]/contesto:GET` — **non scrive niente**, risponde a cinque domande
+(di chi è questo bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie
+esistono, quanto costa un ticket in quella sede) — e
+`pagamenti/riconciliazione/[id]/componi:POST`, che registra tutto in **una** transazione atomica
+(RPC `registra_transazione_contabile`, migr. `20260912180100`) chiudendo con un **compare-and-swap**
+sul movimento: due operatori sulla stessa riga, uno perde la corsa (`KV409` → HTTP 409) e non si
+incassa due volte.
+
+### 🔴 La conseguenza fiscale, detta per intero e senza ammorbidirla
+
+> **Un bonifico che salda più voci produce UNA SOLA FATTURA, con UNA RIGA SOLA, dell'importo
+> TOTALE del bonifico, con la descrizione della voce ÀNCORA** (la retta se c'è — `proponiAncora`
+> preferisce lo slug `retta`, altrimenti la voce maggiore — oppure quella scelta a mano dalla
+> segreteria).
+>
+> **La famiglia porta in detrazione quel documento. Nel 730 comparirà l'intero importo sotto la
+> dicitura della retta, anche per la parte che retta non è**: ticket mensa, laboratori, divise,
+> uscite didattiche.
+>
+> **È una decisione esplicita del titolare, presa con la conseguenza sotto gli occhi** e non un
+> effetto collaterale scoperto dopo. Il generatore XML *supporta* le righe multiple
+> (`righe: [...]` di `buildFatturaElettronicaXml`): se ne usa **una sola**, deliberatamente. Chi
+> legge quel codice non lo «corregga» spacchettando il documento in una riga per voce.
+>
+> ⚠️ **Un'eccezione viva, e va detta qui perché questo riquadro promette di non ammorbidire niente:
+> se la voce àncora è RIPARTITA FRA GENITORI SEPARATI, l'ancoraggio NON si applica.** Lì si emette
+> come sempre **una fattura per quota, sull'importo della SOLA VOCE**, e la parte restante del
+> bonifico **resta non fatturata** — cioè denaro incassato senza documento. Non è un buco scoperto
+> dopo: il codice lo sa e lo dichiara (`esito: 'ancoraggio-non-applicato-multi-quota'`, ramo `multi`
+> di `src/lib/aruba/emissione.ts`, col commento «questa riga esiste perché qualcuno se ne accorga e
+> decida con la segreteria»). La ragione è che ripartire fra due genitori un totale che comprende le
+> voci di altri figli e altre categorie vorrebbe dire inventare due importi che nessuno ha deciso, su
+> documenti che non si correggono.
+>
+> **Quanto pesa, misurato il 2026-09-13: 3 alunni su 727.** Pochi, ma veri e in produzione.
+> ```sql
+> SELECT count(*) FILTER (WHERE genitori_separati AND retta_split_config IS NOT NULL) AS con_split,
+>        count(*) AS alunni
+> FROM alunni;
+> ```
+>
+> 🔴 **La decisione NON è presa**, e questo riquadro dice che manca — non quale sia. Il titolare non
+> si è espresso su cosa debba accadere a quella parte di bonifico; finché non lo fa, il codice non
+> inventa nulla e lascia un `warn`. Il rimando sta fra i punti aperti, qui sotto.
+
+Meccanicamente non c'è nessuna colonna nuova: `fatture_emesse.pagamento_id` è `NOT NULL`, unico e
+protetto da trigger WORM, e la fattura resta ancorata al `pagamento_id` della voce àncora — quello
+che la conferma scrive su `riconciliazione_movimenti`. Ciò che cambia è **solo l'importo**, letto
+a monte di tutto da `leggiAncoraggioComposito` (in `src/lib/aruba/emissione.ts`) con la domanda
+inversa: *di quale transazione questa voce è l'àncora?*
+
+Quella lettura ha **tre** esiti e non due, e il terzo è il punto: `non-verificabile` **non** è
+`nessuno`. Una fattura non si modifica; emetterla per l'importo della sola voce perché una lettura
+è fallita significa mandare allo SdI un documento sbagliato che si chiude solo con una nota di
+variazione. Nel dubbio **non si emette** (503, nessun numero consumato): costa un ritentativo, non
+un documento. Stessa regola quando una voce risulta àncora di **più** bonifici, o quando il totale
+non è un importo utilizzabile. Se la transazione è **annullata**, l'ancoraggio decade e si torna
+all'importo della voce — fatturare quel totale sarebbe un documento per denaro restituito.
+
+### Due figli una fattura sola; due plessi un documento solo — ma la sede fiscale è quella dell'àncora
+
+Due figli → **una fattura sola**. Due plessi → **un documento solo**, intestato alla sede che
+l'operatrice **sceglie** (decisione n. 15): quella sede finisce in `pagamenti_transazioni.scuola_id`
+e — nuovo — in `riconciliazione_movimenti.scuola_id`.
+
+⚠️ **La sede FISCALE del documento resta però quella della voce àncora.** Da lì vengono le
+credenziali Aruba, la serie del sezionale e l'anagrafica del cedente: cambiarle in emissione
+vorrebbe dire spedire con un'altra utenza e un'altra numerazione. Quando le due divergono non si
+ferma niente e si **logga** (`esito: 'sede-documento-diversa-dalla-transazione'`). Detto in modo
+operativo, ed è la frase che serve alla segreteria: **l'àncora va scelta nella sede in cui si vuole
+il documento.**
+
+Il prezzo del documento unico, misurato e non dedotto: la riga bancaria finisce nel filtro di sede
+del **documento**, quindi la vede anche chi il plesso del pagamento non ce l'ha fra i propri — e per
+lui il chip di fatturazione resta muto e la casella del lotto spenta, per minimizzazione. Coerente,
+ma da sapere prima e non dopo.
+
+### Nell'elenco, due aggiunte: la fascia di riepilogo e il perché una riga non è fatturabile
+
+**Dopo una composizione riuscita compare una fascia di riepilogo** — «Pagamento registrato: N voci e
+M ticket · € X» (`riepilogoComposizione` in `riconciliazione-ui.ts`, chiave
+`reconComposizioneRegistrata`, **plurale ICU in italiano e in inglese**), accanto a quella dell'import
+e con la stessa forma. Su un'operazione che può saldare sei voci di tre fratelli e accreditare venti
+ticket in un colpo, «la riga è diventata verde» non è un esito: è il minimo comune denominatore fra
+«ha fatto tutto» e «ha fatto metà». La fascia esce in tono d'**avviso** quando il denaro è scritto ma
+la riga bancaria non si è legata; e — **aggiunta del 13/09**, `reconComposizioneNonLeggibile`, anch'essa
+nelle due lingue — **quando i tre numeri arrivano illeggibili lo dice**, invece di scrivere «0 voci ·
+€ 0,00» in verde: un successo dichiarato sul nulla, sull'unica schermata in cui la segreteria legge
+che il bonifico è incassato. Quel testo porta l'istruzione che serve davvero — *«non ricomporre il
+bonifico: il denaro è già a registro»* — perché sulle voci nuove e sui ticket un secondo giro crea
+righe nuove e nessun residuo lo ferma.
+
+**E accanto a una riga confermata senza chip di fatturazione compare la spiegazione del perché non è
+fatturabile** (`motivoNonFatturabile`, `riconciliazione-ui.ts`): **cinque** guardie in cascata prima
+del verdetto — la fatturazione dev'essere disponibile, la riga `confermato`, il `pagamento_id`
+presente, `pagamento_stato` e `fattura_stato` **entrambi** assenti (la firma della minimizzazione per
+sede del server), e nessun chip già a parlare. Il verdetto **non nomina mai il plesso né il minore**,
+e non è una limatura: quel dato il client non ce l'ha — è precisamente ciò che il server gli ha tolto
+— e inventarlo vorrebbe dire dire a una segreteria il nome di una sede che non ha modo di verificare.
+
+### La riapertura: storna, non avvisa il genitore, non cancella le voci create
+
+Annullare l'abbinamento — l'intera transazione, o un singolo incasso — **riapre il movimento** e
+rimette la riga in coda. Tre cose che conviene sapere prima di premerlo:
+
+- **Non avvisa il genitore.** Decisione esplicita: la conferma avvisa («Pagamento registrato»), lo
+  storno no. Un «il tuo pagamento non risulta più» su una correzione di segreteria sarebbe
+  allarmante e quasi sempre sbagliato, perché la riga viene rilavorata subito dopo.
+- **Non cancella le voci create.** Restano a sistema, e dopo lo storno degli incassi ci pensa il
+  trigger `incassi_ricalcola` → `ricalcola_stato_pagamento` a riportarle da sé nello stato giusto.
+  ⚠️ **«Stato giusto» non è sempre `da_pagare`**: letto il corpo vivo della funzione sul database,
+  con `importo_pagato` tornato a 0 lo stato diventa **`scaduto`** se la scadenza è già passata,
+  `parziale` se un altro incasso resta, e perfino `pagato` se il dovuto è 0 (voce interamente
+  scontata). «Torna a `da_pagare`» sarebbe un'aspettativa sbagliata, su cui un giorno qualcuno
+  costruirebbe un test verde per caso.
+- **Si fa anche con fatture vive, avvisando.** Non è una guardia e non ferma niente: l'avviso dice
+  quali documenti restano in essere, coi loro numeri, e la frase tradotta aggiunge la conseguenza —
+  *«il documento resta in essere e si chiude solo con una nota di variazione»*
+  (`erroreRiaperturaConFatturaViva`).
+
+**La misura che regge quest'ultima decisione**, ed è il motivo per cui è un avviso e non un divieto:
+rimisurata il 2026-09-13, **167 movimenti confermati su 174 hanno una fattura viva** sul pagamento
+abbinato — **il 96%**. Un 409 avrebbe reso il pulsante inutilizzabile quasi sempre. (Con una fattura
+di qualunque stato, scarti compresi, sono 171 su 174; «viva» è tutto ciò che non è uno scarto SdI,
+ed è **derivato** da `mapStatoAruba`, non copiato, così il giorno in cui Aruba aggiunge uno stato di
+scarto il predicato lo segue da sé.)
+
+### Una colonna cambia significato, e nasce uno stato che prima non esisteva
+
+`riconciliazione_movimenti.scuola_id` **diventa la sede del DOCUMENTO**, non quella del pagamento
+àncora. È un cambio **deliberato** rispetto alla `PATCH` esistente, che su quella riga commenta «il
+movimento assume la sede del pagamento confermato»: su un bonifico multi-sede le due **possono
+divergere per costruzione**, e va bene così. Oggi non divergono mai — misurato: 0 righe con sede
+diversa da quella del proprio pagamento — perché a crearle è questa fetta.
+
+`pagamento_id`, invece, **si conserva** quando il movimento viene riaperto: è la memoria di ciò a
+cui quel bonifico era legato, ed è la **prima condizione** della guardia «un bonifico non si fattura
+due volte» (`mov.pagamento_id != null && …`). Con NULL quella guardia non scatterebbe mai — la
+prima stesura della migrazione dell'annullo lo azzerava, ed è la storia raccontata nel changelog
+del 12/09 qui sotto.
+
+Da queste due decisioni nasce una combinazione che **prima non esisteva**: **`da_abbinare` con
+`pagamento_id` valorizzato**. Rimisurato il 2026-09-13, 239 movimenti — 174 `confermato` (tutti con
+`pagamento_id`), 33 `da_abbinare`, 31 `suggerito`, 1 `ignorato` — e **zero** righe non confermate
+con un `pagamento_id` addosso. Cioè lo stato nuovo oggi non c'è su nessuna riga: il presidio arriva
+insieme a chi lo crea, invece che dopo il primo annullo.
+
+### I gate che la RPC per costruzione non può avere
+
+La RPC non ha né `request` né utente chiamante: i gate applicativi stanno nella rotta, e sono
+**nove**. Vale la pena citarne quattro, perché tre di loro sono stati aggiunti dopo una sonda che
+li ha visti mancare:
+
+- **La sede del MOVIMENTO va guardata.** La `SELECT` portava a casa `scuola_id` e non lo usava mai:
+  un operatore di Cesa consumava il bonifico di Giugliano **e gli riscriveva la sede**, facendolo
+  sparire dal filtro del plesso che avrebbe dovuto lavorarlo — e che a quel punto non poteva più
+  nemmeno riaprirlo. La rotta sorella quel gate ce l'ha nel ramo `riapri`: questo è il suo gemello
+  sull'altra porta.
+- **La sede del DOCUMENTO è dichiarata dal client**, quindi si verifica che sia accessibile a chi la
+  dichiara, **e si logga**. Senza quel log, «sede scelta dall'operatore» resta una frase in un
+  commento.
+- **Gli alunni non attivi.** La RPC accetta qualunque `alunno_id` che *esista*. Il gate vale sulle
+  voci che **nascono** qui; una voce già a registro resta incassabile anche dopo il ritiro, perché
+  un insoluto si salda anche quando il bambino non frequenta più.
+- **Il pagante.** `pagante_parent_id` finisce sulla **fattura**: da lì si prendono nome e codice
+  fiscale dell'intestatario, e la sua FK verifica solo che quella riga esista. Ora si controlla che
+  sia legato ad almeno uno dei bambini del bonifico, prendendo l'**unione dei due ponti vivi**
+  (`student_parents` anagrafico e `legame_genitori_alunni` runtime): una guardia su un ponte solo
+  rifiuterebbe incassi legittimi, perché i due divergono davvero.
+
+### Le prove
+
+File di prova nuovi: **14, con 439 casi, tutti verdi** — rieseguiti il 2026-09-13 **alle 18:19**,
+al momento del commit, con questo comando, che i 14 file li **elenca uno per uno** invece di
+chiederli a `git`:
+
+```bash
+npx vitest run \
+  __tests__/api/pagamenti-riconciliazione-componi.test.ts \
+  __tests__/api/pagamenti-riconciliazione-contesto.test.ts \
+  __tests__/api/pagamenti-riconciliazione-riapri.test.ts \
+  __tests__/architecture/annullo-riapre-movimento.test.ts \
+  __tests__/architecture/pagante-ammesso-un-motore-solo.test.ts \
+  __tests__/architecture/pannello-componi-testi-completi.test.ts \
+  __tests__/architecture/rpc-transazione-composita.test.ts \
+  __tests__/components/ComposizioneBonifico.test.tsx \
+  __tests__/components/MovimentoDialog-componi-riapertura.test.tsx \
+  __tests__/components/RiconciliazionePanel-composizione.test.tsx \
+  __tests__/lib/aruba/emissione-fattura-ancorata.test.ts \
+  __tests__/lib/conciliazione-composita.test.ts \
+  __tests__/lib/pagamenti/fattura-viva.test.ts \
+  __tests__/lib/pagamenti/pagante-ammesso.test.ts
+# Test Files  14 passed (14)  ·  Tests  439 passed (439)   ← 2026-09-13, 18:19
+```
+
+⚠️ **Il numero cresce mentre lo si scrive**, e vale la pena dirlo qui: alle 16:09 erano **12 file e
+399 casi**, alle 16:14 **13 e 413**, alle 17:45 e alle 17:57 **13 e 433**, alle 18:02 **13 e 434**,
+alle 18:19 **14 e 439**. A muoversi sono soprattutto i **casi**, perché altre fette in lavorazione
+sullo stesso albero toccano questi stessi file — ma il 13→14 dice che **anche l'elenco si muove**:
+il quattordicesimo (`pagante-ammesso-un-motore-solo`) è nato non tracciato mentre questa voce
+veniva scritta, e chi l'ha scritta non poteva vederlo. L'ha aggiunto l'orchestratore al momento del
+commit, rifacendo la misura invece di ricopiarla. È il motivo per cui accanto a ogni numero c'è il
+comando che lo rifà — e per cui prima del merge va **rifatto, non ricopiato**.
+
+⚠️ **E il comando va PROVATO, non solo scritto — qui è già costato due stesure.** La prima
+elencava i file con `git status --short | grep '^??'`: è scaduta lo stesso giorno, appena quei
+file sono stati committati, e rispondeva **1 invece di 13**. La seconda li chiedeva a
+`npx vitest run $(git diff --name-only --diff-filter=A main...HEAD -- __tests__)`, motivandola con
+«l'elenco non dipende da cosa è già committato»: vero, ma la proprietà che serviva era un'altra —
+**non dipendere da dove sta `main`** — e quel comando ci dipende **di più**. `main...HEAD` è a tre
+punti, cioè confronta col merge-base: il giorno del merge — il giorno esatto in cui questa voce
+si legge da `main` — `HEAD` **è** `main`, il diff è vuoto (provato: `git diff --name-only
+--diff-filter=A main...main -- __tests__` → **0 file**), e l'espansione vuota lascia `npx vitest run`
+**nudo**, che non esegue *meno*: esegue **tutto**. Misurato il 13/09: `npx vitest list | wc -l` →
+**17.236**. Non fallisce: risponde un numero quaranta volte più grande con l'aria di aver rifatto
+la misura, ed è peggio del comando che aveva sostituito.
+
+Per questo l'elenco qui sopra è scritto per esteso: non interroga `git`, quindi dà lo stesso numero
+prima e dopo il merge. Il suo modo di invecchiare è l'opposto, ed è stato provato anche quello: se un
+file viene rinominato, `vitest` esegue i rimanenti e **il conteggio scende** — provato passandogli
+due percorsi di cui uno inesistente: `Test Files  1 passed (1)`, uscita **0**, nessun avviso
+sull'assente; se spariscono tutti esce **1** con «No test files found». Quindi non protesta, ma
+restituisce **meno** di 14 file: una misura che cala si vede; una che si gonfia all'intera suite
+sembra solo un altro numero verde. La riserva, scritta perché non se ne accorga qualcun altro al posto
+nostro: **l'elenco non si aggiorna da sé**. ⚠️ E non è un'ipotesi: quando questa riga è stata scritta
+diceva «un quattordicesimo file va aggiunto qui a mano» — **ed è successo lo stesso giorno**, un'ora
+dopo. Un quindicesimo andrà aggiunto allo stesso modo, altrimenti il comando continua a rispondere
+**14 file** senza sbagliare un numero e senza contarlo.
+
+Fra questi file:
+il motore puro (`__tests__/lib/conciliazione-composita.test.ts`), le due rotte nuove, la riapertura,
+la fattura ancorata (`__tests__/lib/aruba/emissione-fattura-ancorata.test.ts`) e tre lock
+d'architettura che leggono il sorgente: il contratto della RPC, la coppia migrazione↔guardia
+dell'annullo, e il catalogo dei testi del pannello — che estrae dal sorgente i **12** codici di
+violazione del motore (10 di riga + 2 d'insieme) e **diventa rosso** se il motore ne aggiunge uno
+senza il testo corrispondente.
+
+Il gate della composizione è **uno solo**, e si chiama `puoConfermare(righe, importoMovimento)`.
+Ricomporlo a mano — `violazioniRighe(...).length === 0 && quadra(...)` — compila, passa `tsc`,
+passa ogni lock, e lascia passare **due righe sulla stessa voce** che insieme ne sforano il residuo:
+misurato, quella coppia dava `violazioniRighe` = `[]` e gate **VERO**, cioè 200 € incassati su 100 €
+di residuo. Non servono importi astronomici: sono cifre di tutti i giorni.
+
+### 🔴 Ciò che questo lavoro lascia aperto, scritto invece che nascosto
+
+- 🔴 **Una decisione fiscale che il titolare non ha preso: il bonifico composito di una famiglia
+  con genitori separati.** Quando la voce àncora è ripartita fra due intestatari l'ancoraggio del
+  totale **non si applica**, si emette una fattura per quota sull'importo della sola voce, e **la
+  parte restante del bonifico non viene fatturata** (riquadro fiscale qui sopra;
+  `esito: 'ancoraggio-non-applicato-multi-quota'`). Misurato il 2026-09-13: **3 alunni su 727** hanno
+  `genitori_separati` con `retta_split_config`. Il codice fa la cosa prudente — non inventa importi e
+  logga — ma prudente non vuol dire risolto: è **denaro incassato senza documento**, e la strada è
+  una decisione presa **con la segreteria**, non una riga di codice. Finché non c'è, questa voce
+  resta qui: fino a oggi la parola «separati» non compariva da nessuna parte in questo changelog.
+- **Il controllo che tiene insieme migrazione e guardia sorveglia una porta sola.**
+  `__tests__/architecture/annullo-riapre-movimento.test.ts` legge la migrazione dell'annullo e
+  **un** file di route (`pagamenti/riconciliazione/[id]/route.ts`). Le porte sullo stato «movimento
+  riaperto» adesso sono **due**: cancellare la guardia gemella da `componi` lo lascia **verde**. Il
+  presidio della seconda porta è **comportamentale** (i test di rotta), non strutturale.
+- **Il controllo della funzione SQL guarda un file solo.** `rpc-transazione-composita.test.ts` legge
+  `…180100_transazione_voci_nuove.sql`. Il branch ne porta altri due: un `CREATE TRIGGER` o un
+  `ALTER` scritto in `…180000` o `…180200` sarebbe **invisibile** a quel lock.
+- **La guardia «un bonifico non si fattura due volte» si aggira per un centesimo.** La condizione è
+  *«la voce di prima è ancora dentro la composizione»*, non *«la voce di prima è coperta»*:
+  rimettendo la voce già fatturata con `importo: 0.01` la guardia tace. Non è un buco di sicurezza —
+  serve un operatore autorizzato — ed è l'estremo degenere di un caso legittimo (ricomporre lo
+  stesso bonifico su quella voce **più** altre, che vietare renderebbe impossibile). Ma la
+  differenza fra le due condizioni va saputa.
+- **Dopo una composizione in cui l'incasso è scritto ma la riga non si è agganciata**
+  (`movimento_confermato: false`, la risposta 200 onesta che si dà quando la RPC che ha risposto è
+  la vecchia), la protezione che spegne i pulsanti pericolosi — «Conferma questo», «Abbina»,
+  «Componi» e soprattutto **«Ignora»** — **dura quanto la finestra**: è uno stato del popup, il
+  popup si rimonta senza `key` a ogni selezione, e chiudendolo e ricliccando la riga **tornano
+  tutti**, su un bonifico il cui incasso è già scritto. Lato server **non resta nessun marcatore**,
+  perché in quel caso il movimento viene lasciato nello stato di prima. Il rimedio durevole non è
+  codice del popup: è **un marcatore sul movimento** o **un vestito sulla riga dell'elenco**. Finché
+  non c'è, la frase «una volta registrato il denaro i pulsanti spariscono» vale **solo dentro quella
+  finestra**.
+- **Il controllo sul pagante ha un varco dichiarato.** Quando i legami non si leggono, o quando di
+  quei bambini non si conosce **nessun** genitore, si **passa** invece di rifiutare: rifiutare
+  scaricherebbe sul banco della segreteria un guasto del database travestito da «questo genitore non
+  è di questa famiglia». È la scelta giusta, ma chi facesse fallire quella lettura spegnerebbe il
+  controllo. Non è silenzioso: lascia un `warn` (`esito: 'pagante-non-verificato'`, col tipo che
+  distingue «legami non letti» da «nessun legame noto»).
+- **I pacchetti ticket sono configurati in una sede su tre.** Rimisurato il 2026-09-13: **Giugliano
+  1 pacchetto, Cesa 0, Aversa 0**. Là il costo unitario si digita a mano — mai proposto un numero
+  inventato, che sarebbe il prezzo di un altro plesso spacciato per il suo. **È configurazione di
+  segreteria, non codice**, e riguarda le due sedi con più bambini dopo Giugliano (Cesa 245 in
+  anagrafica, 242 iscritti; Aversa 120 e 119).
+- ⚠️ **Un difetto di dati: due bambini senza NESSUN genitore collegato** — né in `student_parents`
+  né in `legame_genitori_alunni` — e sono **a Giugliano**. Su di loro la proposta del pagante non ha
+  candidati. Da segnalare alla segreteria; nessuno dei due ha voci aperte, quindi oggi non blocca
+  nessun incasso.
+
+> ⚠️ **Una misura che girava in questo lavoro, e che rifatta dice un'altra cosa.** Il commento del
+> gate sul pagante in `componi/route.ts` dichiara «in produzione il 2026-09-13 sono 5 alunni su 727,
+> di cui 2 **con voci aperte**», e il materiale di consegna ne ricavava un difetto di dati da
+> segnalare. Rieseguita il 2026-09-13 spezzando il conteggio **per sede**, la risposta è diversa:
+> gli alunni senza nessuno dei due legami sono **4** (727 il totale, quello sì), e i **2 con voci
+> aperte stanno nella sede fittizia di collaudo `Kidville E2E`** — dati finti. Nelle tre sedi reali
+> i bambini con voci aperte e nessun genitore sono **zero**. Restano veri i 2 di Giugliano del punto
+> qui sopra, che però voci aperte non ne hanno.
+>
+> Non è pignoleria: contare su `alunni` senza escludere le due sedi di prova (**entrambe** col
+> prefisso `e2e00000-…`, non solo quella che si chiama «E2E») è il modo esatto in cui questo
+> progetto si è già raccontato numeri sbagliati. La query che lo rifà, e che va copiata al posto del
+> numero:
+> ```sql
+> SELECT s.nome, count(*) FILTER (
+>          WHERE NOT EXISTS (SELECT 1 FROM student_parents sp WHERE sp.student_id = a.id)
+>            AND NOT EXISTS (SELECT 1 FROM legame_genitori_alunni lg WHERE lg.alunno_id = a.id)
+>        ) AS senza_nessun_genitore
+> FROM alunni a JOIN schools s ON s.id = a.scuola_id GROUP BY s.nome ORDER BY s.nome;
+> ```
+
+### Le misure di questo changelog, e i comandi che le rifanno
+
+Ogni numero qui sopra è stato **rieseguito il 2026-09-13**, non ereditato. Sono letture: non
+chiedono conferma a nessuno, e invecchiano da sole.
+
+| Misura | Valore al 2026-09-13 | Come si rifà |
+|---|---|---|
+| Movimenti per stato, e quanti portano un `pagamento_id` | 239 = 174 `confermato` (174 con pagamento) · 33 `da_abbinare` · 31 `suggerito` · 1 `ignorato`; **0** non confermati con pagamento | `SELECT stato, count(*), count(pagamento_id) FROM riconciliazione_movimenti GROUP BY stato;` |
+| Righe conciliabili (ciò che la schermata deve poter chiudere) | **65** | i tre stati diversi da `confermato`, dalla query qui sopra |
+| Confermati con una fattura **viva** sul pagamento abbinato | **167 su 174 — 96%** (171 con una fattura di qualunque stato) | `count(*) FILTER (WHERE EXISTS (SELECT 1 FROM fatture_emesse f WHERE f.pagamento_id = m.pagamento_id AND (f.sdi_stato IS NULL OR f.sdi_stato NOT IN (2,4,9))))` su `riconciliazione_movimenti m WHERE m.stato='confermato'` |
+| Pacchetti ticket configurati, per sede | Giugliano **1** · Cesa **0** · Aversa **0** (la sede Demo non ha nemmeno la riga in `admin_settings`) | `SELECT s.nome, jsonb_array_length(a.ticket_pacchetti) FROM schools s LEFT JOIN admin_settings a ON a.scuola_id = s.id;` |
+| Alunni per sede | Giugliano 333 (327 iscritti) · Cesa 245 (242) · Aversa 120 (119) · Demo 25 · E2E 4 — **727** in tutto | `SELECT s.nome, count(*), count(*) FILTER (WHERE a.stato='iscritto') FROM alunni a JOIN schools s ON s.id=a.scuola_id GROUP BY s.nome;` |
+| Prove del lavoro | **14 file, 439 casi, verdi** (alle 18:19, al commit; 13 e 434 alle 18:02, 13 e 433 alle 17:45, 13 e 413 alle 16:14, 12 e 399 alle 16:09 — crescono i casi perché altre fette toccano gli stessi file, ed è cresciuto anche l'elenco: il 14° è nato mentre questa voce veniva scritta) | `npx vitest run` **seguito dai 14 file scritti uno per uno**: il blocco copiabile sta nella sezione «Le prove» di questa stessa voce. È per esteso di proposito, perché nessuna delle due forme che chiedevano l'elenco a `git` regge: `$(git status --short \| grep '^??')` è scaduta al primo commit (**1 invece di 13**), e `$(git diff --name-only --diff-filter=A main...HEAD -- __tests__)` collassa **il giorno del merge**, quando `HEAD` è `main` e il diff a tre punti è vuoto: `npx vitest run` resta nudo ed esegue **17.236** casi invece di 439 |
+| Codici di violazione con un testo in catalogo | **12** (10 di riga + 2 d'insieme) | `CodiceViolazione` e `CodiceViolazioneComposizione` in `src/lib/pagamenti/conciliazione-composita.ts`; il lock `pannello-componi-testi-completi.test.ts` li estrae dal sorgente |
+
+*Nota sui riferimenti: in questa voce i punti del codice si citano per **contenuto** (una stringa
+che si incolla in un `grep`) e mai per numero di riga. I file di questa fetta sono stati riscritti
+più volte in tre giorni, e i numeri di riga della stesura precedente erano scaduti il giorno dopo.*
+
+## 🏦 Changelog — L'annullo riapriva il bonifico cancellandogli la memoria, e disarmava la guardia che citava come propria giustificazione — 2026-09-12 (branch `feat/conciliazione-composita`)
+
+**Contesto.** La conciliazione composita lega il movimento bancario alla transazione che salda
+(`riconciliazione_movimenti.transazione_id`), perché un bonifico vero paga più voci insieme. Restava
+scoperto l'annullo: `annulla_transazione_contabile` stornava incassi, ricariche mensa e credito, e
+lasciava la riga dell'estratto conto `confermato` — verde, abbinata e conclusa, mentre l'incasso che
+la giustificava non esisteva più. Quel bonifico non sarebbe **mai** ricomparso in coda. La quarta
+classe è stata aggiunta alla RPC (migrazione `20260912180200_…`, **applicata sul database — la
+`version` risulta in `supabase_migrations.schema_migrations`, verificato il 13/09: non va
+riapplicata** — il rilascio che manca riguarda solo il codice). ⚠️ Qui non c'è una data perché non
+è conoscibile: vedi l'inciso alla riga della tabella dei moduli, e non reintrodurla.
+
+### Il difetto della prima stesura: la correzione apriva la falla che diceva di chiudere
+La migrazione azzerava tutti i legami del movimento riaperto, `pagamento_id` compreso — e
+`pagamento_id` è **la prima condizione** della guardia «un bonifico non si fattura due volte»
+(`if (mov.pagamento_id != null && …)` in `pagamenti/riconciliazione/[id]:PATCH`, PR #116): **con NULL
+non scatta mai.** Lo scenario, per intero: il bonifico M salda la transazione T la cui voce di
+ancoraggio è P1 → su P1 si emette la fattura → si annulla T → M torna `da_abbinare` **senza memoria
+di P1** → l'operatore lo riabbina a P3 → la guardia è cieca. Restano **una fattura viva su P1 senza
+incasso e un secondo incasso su P3**, con un 200 sopra e nessuna riga d'errore da nessuna parte.
+Prima della riapertura automatica quella strada non esisteva (`ignora` e `riapri` rispondono 409 su
+un confermato): la migrazione la apriva e chiudeva insieme l'unica cosa che la sorvegliasse, citando
+proprio quella guardia nella propria testata.
+
+Adesso si azzerano solo i legami **morti** — `transazione_id` (la transazione non c'è più),
+`incasso_id` (l'incasso è stornato, non cancellato: puntava a una riga viva e morta insieme, il
+peggior tipo di puntatore) e la firma `confermato_da`/`confermato_il`. **`pagamento_id` resta.**
+
+### «Tanto filtrano tutti su `stato`»: la giustificazione era vera per due su tre
+Il file, il PRD e il lock dicevano la stessa frase: *i tre consumatori di `pagamento_id` — chip
+fattura della coda, lotto fatture, `intestatario-pagamento.ts` — filtrano tutti su `stato =
+'confermato'`.* **Misurata leggendoli, era falsa per il primo.**
+
+| Consumatore | Filtra su `confermato`? |
+|---|---|
+| lotto fatture — `daFatturareInListaDiLavoro` | **sì**: `r.stato === 'confermato' && …` è la prima condizione |
+| `src/lib/aruba/intestatario-pagamento.ts` (da cui passa la **detrazione 730**) | **sì**: `.eq('pagamento_id', …).eq('stato', 'confermato')` |
+| **chip fattura della coda** | **no, e non può**: il suo tipo d'ingresso `RigaFatturabile` **non porta lo stato del movimento**, di proposito |
+
+La conseguenza che la frase nascondeva: il GET attaccava i DOCUMENTI guardando **solo**
+`pagamento_id`, quindi un movimento riaperto — rosso, `da_abbinare`, che chiede lavoro — si portava
+addosso il chip **«Fattura FPR 1947/26»**. Nessuna perdita di denaro (il semaforo resta
+`da_abbinare`, il lotto non lo spunta, i bidoni `?fattura=` impongono `stato=confermato`), ma un
+falso positivo su una schermata che quel tipo di errore l'ha già pagato — due definizioni di «da
+fatturare», una nel browser e una nel server, sono la storia della PR #118.
+
+Misurato in produzione il 2026-09-12, prima di scrivere la correzione: `riconciliazione_movimenti`
+ha **239 righe** — 174 `confermato` (tutte e 174 con `pagamento_id`), 33 `da_abbinare`, 31
+`suggerito`, 1 `ignorato`, e **zero righe non confermate con un `pagamento_id` addosso**. Cioè la
+restrizione **oggi non cambia nessuna riga**: è la migrazione di questo stesso rilascio a creare il
+caso, e il presidio arriva insieme a lei invece che dopo il primo annullo.
+
+Chiuso **alla fonte** invece che nel chip, perché è nella rotta che lo stato del movimento esiste:
+`pagamenti/riconciliazione:GET` attacca i documenti con `pagamentoAbbinatoDi(r)` — `stato ===
+'confermato' && pagamento_id` — e la stessa funzione serve ora anche i due campi derivati, che la
+domanda la facevano già così. Le tre copie della frase (migrazione, PRD, lock) dicono ciascuna quale
+consumatore fa cosa, con la misura accanto.
+
+### Il buco che la riapertura apriva nell'oblio GDPR, chiuso nello stesso lavoro
+`src/lib/gdpr/esegui.ts` (ramo 3a) azzerava causale e controparte dei movimenti bancari con
+`.in('pagamento_id', pagIds).eq('stato', 'confermato')`. **Un movimento riaperto ha il pagamento e
+non è confermato**: sfuggiva — e gli altri rami non lo recuperano (3c pretende il codice fiscale
+scritto per esteso nella causale, e una causale bancaria vera dice «RETTA SETTEMBRE ROSSI»; 3d che i
+suggerimenti citino il pagamento). Restava **il nome di una famiglia scritto su una riga bancaria
+dopo la cancellazione di un minore**. Il filtro utile è `pagamento_id` e basta: il `.eq('stato', …)`
+è stato tolto. Poiché 3a ora si sovrappone a 3d, un `Set` delle righe già bonificate impedisce che
+il referto conti due volte la stessa riga.
+
+### Altre tre cose che non tornavano, misurate e chiuse
+- **Il conteggio nasceva morto.** `movimenti_riaperti` usciva dal jsonb e **non lo leggeva nessuno**:
+  né la risposta, né `registro_modifiche`, né il log di successo. Intanto l'UPDATE cancella
+  `confermato_da`/`confermato_il`, cioè *chi* aveva confermato quel bonifico, mentre il verso opposto
+  (la conferma) scrive `logScrittura`. Se un giorno la riapertura toccasse 0 righe dove doveva
+  toccarne 1, **niente lo direbbe**. Ora il numero viaggia in tutti e tre i posti (regola 5 del
+  logging: gli eventi critici loggano anche il successo), e `?? 0` tiene separati «zero» e «non lo
+  so» sul DB della CI, che non è migrato.
+- **Una motivazione scritta nel file era falsa.** Il commento sosteneva che la posizione dell'UPDATE
+  evitasse un deadlock, perché la conferma «prende `incassi` e poi `riconciliazione_movimenti` nello
+  stesso verso». Nella route quelle sono **due richieste PostgREST distinte**, cioè due transazioni
+  separate: i due lock non sono mai tenuti insieme e quel deadlock non è mai stato possibile. Il
+  presidio vero è il **CAS ottimistico** `.eq('stato', mov.stato)`. La posizione resta giusta per la
+  sola ragione logica; la protezione inventata è stata cancellata. *Una protezione documentata e
+  inesistente dentro una funzione che muove denaro è peggio di nessuna protezione.*
+- **L'UPDATE resuscitava gli ignorati.** Non filtrava per stato: riportava in coda anche una riga che
+  un operatore aveva **scartato**. Oggi irraggiungibile — un movimento ignorato non ha transazione —
+  ma «irraggiungibile oggi» è esattamente la frase che questa stessa migrazione ha dovuto smentire
+  sulla guardia. Ora `CASE WHEN stato = 'ignorato' THEN stato ELSE 'da_abbinare' END`.
+
+### Le prove, e sono prove di mutazione
+Il blocco nuovo non era coperto da niente: `transazioni-annulla.test.ts` non nominava
+`movimenti_riaperti` né `riconciliazione_movimenti` (`grep -c` = 0), e i suoi test restavano verdi
+**anche cancellando l'intero blocco dalla migrazione**. Aggiunti un lock d'architettura che legge il
+`.sql` (`__tests__/architecture/annullo-riapre-movimento.test.ts`, 7 asserzioni: i quattro azzeramenti,
+il `pagamento_id` conservato, la guardia ancora presente nella route, l'`ignorato`, il conteggio,
+`SECURITY DEFINER`/`REVOKE`/`GRANT`) e 3 test di route. Rosso→verde visto, non dedotto:
+
+| Mutazione | Esito |
+|---|---|
+| il file `.sql` di partenza (con `pagamento_id = NULL`, senza `CASE`) | **2 rossi su 7** |
+| cancellato l'intero blocco della riapertura dal `.sql` | **4 rossi su 7** (la sanity cade per prima) |
+| la route senza `movimenti_riaperti` | **2 rossi su 13** |
+| tolta la **sola** riga del `logEvento`, risposta e audit intatti | **2 rossi** — il log è asserito da sé |
+| il GET che attacca i documenti col solo `pagamento_id` | **2 rossi**: la riga riaperta porta la fattura, e il chip VERO risponde `{tono:'fatturata', numeri:'FPR 1947/26'}` invece di `null` |
+| l'oblio col `.eq('stato','confermato')` nel ramo 3a | **1 rosso**: il movimento riaperto non viene bonificato |
+| tolto il `Set` anti-doppio-conteggio da 3d | **1 rosso**: la stessa riga aggiornata 2 volte |
+
+Le prove nuove non recitano il chip a mano: prendono la riga **come esce dal GET** e la passano a
+`chipFatturazione`, cioè alla stessa funzione che `RiconciliazionePanel` chiama su ogni riga
+visibile, con la contro-prova accanto (lo stesso documento riattaccato a mano → il chip torna a
+parlare). E il finto client dell'oblio è stato reso onesto: filtrava per *ramo chiamante*
+(`stato === 'confermato'` → un elenco, altrimenti un altro), e con quello togliere il filtro da 3a
+faceva **sparire** le righe invece di allargarne la presa — un test verde con e senza la correzione.
+Adesso tiene le righe col loro stato vero e applica `eq`/`neq`/`in`/`ilike` come PostgREST.
+
+Ogni file mutato è stato ripristinato e verificato **byte-identico** con `sha256`.
 
 ## 📱 Changelog — Il collaudo sul simulatore ha detto sì al video e no a «Elimina»: la barra gli stava sopra, e le conferme erano tre — 2026-09-12 (branch `fix/visore-elimina-raggiungibile`)
 
@@ -4606,6 +5075,55 @@ lei. Ma **il «buco del riabbinamento» non esisteva**, ed è stato escluso legg
 dedurlo: `ignora` e `riapri` rispondono 409 su un movimento confermato, lo storno dell'incasso non
 tocca la tabella, l'hash del movimento è unico globale. Resterebbe una riapertura fatta a mano dopo
 uno storno — e per quella ora c'è una guardia.
+
+> ⚠️ **Aggiornato il 2026-09-12: la riapertura non è più «fatta a mano».** La conciliazione
+> composita (branch `feat/conciliazione-composita`) lega il movimento bancario alla transazione, e
+> l'annullo della transazione **riapre il movimento da solo**, dentro la stessa transazione atomica:
+> la strada che il paragrafo qui sopra chiamava ipotetica adesso è quella normale, e la percorre il
+> sistema, non un operatore. Le due righe restano vere nei fatti (`ignora`/`riapri` danno ancora 409
+> su un confermato) ma la conclusione — «resterebbe solo una riapertura manuale» — non lo è più.
+>
+> La guardia continua a scattare **perché il movimento riaperto conserva il suo `pagamento_id`**.
+> La prima stesura della migrazione dell'annullo lo azzerava insieme agli altri legami, e così
+> facendo disarmava proprio la guardia che citava come giustificazione: `mov.pagamento_id != null`
+> è la sua prima condizione, con NULL non scatta mai. Si azzerano solo i legami **morti**
+> (`transazione_id`, `incasso_id`, `confermato_da`, `confermato_il`); `pagamento_id` resta, ed è la
+> memoria di ciò a cui quel bonifico era legato. Sorvegliato dal lock
+> `__tests__/architecture/annullo-riapre-movimento.test.ts`, che tiene insieme le due metà: se la
+> guardia sparisce dalla route, o se la migrazione torna ad azzerare `pagamento_id`, diventa rosso.
+>
+> ⚠️ **Il prezzo di tenerlo, misurato invece che asserito.** La rassicurazione che viene spontanea —
+> «tanto chi legge quella colonna (chip fattura della coda, lotto fatture,
+> `intestatario-pagamento.ts`) filtra comunque su `stato = 'confermato'`» — è stata verificata
+> lettore per lettore invece che creduta. Vero per due su tre: il **lotto** comincia con `r.stato === 'confermato'`
+> e `intestatario-pagamento.ts` legge con `.eq('stato','confermato')` (da lì passa la detrazione
+> 730). **Il chip no, e non può**: il suo tipo d'ingresso `RigaFatturabile` non porta lo stato del
+> movimento — chi chiede «che fattura risulta di questa riga» non deve sapere che esistono i
+> movimenti da abbinare. Finché il GET gli passava i documenti guardando solo `pagamento_id`, una
+> riga riaperta mostrava **«Fattura FPR 1947/26» su un movimento tornato da lavorare**. Ristretto
+> alla fonte (`pagamentoAbbinatoDi` in `pagamenti/riconciliazione:GET`: `confermato` **e**
+> `pagamento_id`), con la prova che passa la riga del GET al chip vero della schermata.
+>
+> ⚠️ **«In un posto solo» è stato verificato contando i posti, non dichiarandolo.** Il predicato
+> nasce con un commento che promette «da qui in avanti la domanda si fa in un posto solo», e nello
+> stesso file la domanda era ripetuta a mano una **quarta** volta — proprio dove si decidono
+> `pagamento_stato` e `fattura_stato`, cioè gli altri due campi da cui il chip ricava il tono quando
+> il documento manca. Nessuna prova la copriva: rilassata quella sola riga, i due file di test della
+> fatturazione restavano verdi (**78 test passati**), perché la riga riaperta della fixture non
+> portava i **suggerimenti** che la RPC dell'annullo le lascia addosso — il suo UPDATE tocca `stato`,
+> `transazione_id`, `incasso_id`, `confermato_da`, `confermato_il` e nient'altro — e senza quelli la
+> rotta esce dalla scorciatoia «nessun pagamento da risolvere» e quel ramo non viene eseguito
+> affatto. Fixture resa vera, mutazione tornata **rossa**, quarto punto ricondotto al predicato: il
+> comportamento di oggi non cambia (in produzione, rimisurato: **0** righe non confermate con
+> `pagamento_id` su 239 movimenti, 174 confermate e abbinate), cambia la capacità della suite di
+> accorgersene domani. Una protezione documentata e assente è il difetto che questa stessa
+> migrazione punisce nel proprio commento.
+>
+> ⚠️ **E l'oblio GDPR**, che la stessa differenza apriva dall'altro lato: il ramo 3a di
+> `src/lib/gdpr/esegui.ts` bonificava i movimenti con `.in('pagamento_id', …).eq('stato',
+> 'confermato')` e perdeva proprio le righe riaperte — nome della famiglia scritto su una riga
+> bancaria dopo la cancellazione di un minore. Il filtro di stato è stato tolto: l'aggancio utile è
+> il pagamento.
 
 `PATCH /api/pagamenti/riconciliazione/[id]` legge anche il `pagamento_id` del movimento e, **prima di
 ogni altra lettura e di ogni scrittura**, se il bonifico portava già un pagamento diverso interroga le

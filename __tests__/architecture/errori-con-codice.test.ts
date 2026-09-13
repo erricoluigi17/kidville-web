@@ -199,8 +199,19 @@ const MAX_FILE = 277;
  * largo della somma vera. Git non ha segnalato niente: il conflitto era sul JSON, non qui, e
  * `1416 <= 1417` sarebbe rimasto verde per sempre. Rimisurato sul file unito, non deciso a
  * tavolino. Un auto-merge pulito non è un auto-merge che ha capito.
+ *
+ * 🔻 1416 → 1415 il 2026-09-13, con la conciliazione composita. Di nuovo NON una decisione:
+ * `jq '.totale_occorrenze' docs/superpowers/errori-senza-codice-allowlist.json` dice **1415**,
+ * il tetto diceva 1416, e il confronto è `<=`. Cioè una risposta d'errore senza codice poteva
+ * tornare — dentro il lock che esiste per impedirlo, col gate verde. È la stessa forma esatta
+ * del paragrafo qui sopra, che a sua volta racconta la stessa forma del 2026-09-10: il tetto si
+ * abbassa quando si paga il debito, e chi paga si dimentica di stringerlo. Il tetto non è una
+ * misura, è una promessa; e una promessa più larga della misura non promette niente.
+ * Rimisurato al momento di scrivere, non copiato da un rapporto: il paragrafo del 2026-09-10
+ * spiega perché i due numeri divergono comunque dalla misura del CODICE (le voci stantie), e
+ * questo tetto governa la SOMMA DELL'ELENCO.
  */
-const MAX_OCCORRENZE = 1416;
+const MAX_OCCORRENZE = 1415;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

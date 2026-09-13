@@ -10,6 +10,16 @@ import { it, expect, vi, beforeEach, describe } from 'vitest'
 //   (c) motivo mancante/troppo corto → 400
 //   (d) doppio annullo → 409 (sia pre-check sia EXCEPTION KV409 della RPC)
 //   + credito eccedenza già speso (KV410) → 409; transazione non trovata → 404.
+//
+//  (f) 2026-09-12 — LA QUARTA CLASSE: il movimento bancario riaperto.
+//   Da `20260912180200_annulla_transazione_riapre_movimento.sql` la RPC riapre
+//   anche il movimento dell'estratto conto legato alla transazione e ne restituisce
+//   il conteggio (`movimenti_riaperti`). Quel numero deve ARRIVARE da qualche parte:
+//   l'UPDATE cancella `confermato_da`/`confermato_il`, cioè si perde chi aveva
+//   confermato quel bonifico, mentre il verso opposto (la conferma) scrive
+//   `logScrittura`. Con il conteggio letto da nessuno, una riapertura che tocca 0
+//   righe dove doveva toccarne 1 non lascerebbe traccia in nessun posto — ed è la
+//   regola 5 del logging (AGENTS): gli eventi critici loggano anche il SUCCESSO.
 const h = vi.hoisted(() => ({
   requireStaff: vi.fn(),
   scope: vi.fn(),
@@ -23,8 +33,14 @@ const h = vi.hoisted(() => ({
   pagamentiRevoca: [] as Record<string, unknown>[],
   inserts: [] as { table: string; row: unknown }[],
   updates: [] as { table: string; row: unknown }[],
+  logCalls: [] as unknown[][],
 }))
 
+vi.mock('@/lib/logging/logger', () => ({
+  logOk: (...a: unknown[]) => h.logCalls.push(a),
+  logErrore: (...a: unknown[]) => h.logCalls.push(a),
+  logEvento: (...a: unknown[]) => h.logCalls.push(a),
+}))
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
 vi.mock('@/lib/auth/scope', () => ({ resolveScuoleAttive: (...a: unknown[]) => h.scope(...a) }))
 vi.mock('@/lib/pagamenti/sospensione', () => ({ verificaRevocaSospensioneMorosita: (...a: unknown[]) => h.revoca(...a) }))
@@ -76,8 +92,17 @@ beforeEach(() => {
   h.txErr = null
   h.incassiRevoca = [{ pagamento_id: 'pag-1' }]
   h.pagamentiRevoca = [{ alunno_id: 'alu-1' }]
-  h.inserts = []; h.updates = []; h.rpcCalls = []
+  h.inserts = []; h.updates = []; h.rpcCalls = []; h.logCalls = []
 })
+
+/** L'evento di successo dell'annullo, fra le chiamate al logger (withRoute logga le sue). */
+const eventoAnnullo = () =>
+  h.logCalls.find((c) => (c[2] as { esito?: string } | undefined)?.esito === 'transazione_annullata')?.[2] as
+    | Record<string, unknown>
+    | undefined
+/** La riga d'audit scritta in `registro_modifiche`. */
+const audit = () =>
+  (h.inserts.find((i) => i.table === 'registro_modifiche')?.row ?? {}) as { nuovo_valore?: Record<string, unknown> }
 
 describe('POST annulla transazione — via RPC atomica', () => {
   it('(c) senza motivo → 400 (RPC non chiamata)', async () => {
@@ -153,5 +178,47 @@ describe('POST annulla transazione — via RPC atomica', () => {
     const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
     expect(res.status).toBe(404)
     expect(h.rpcCalls).toHaveLength(0)
+  })
+
+  it('🔴 (f) il movimento bancario riaperto ARRIVA a destinazione: risposta, audit e log di successo', async () => {
+    h.rpc.mockResolvedValue({
+      data: { incassi_stornati: 2, ricariche_stornate: 0, credito_stornato: 0, ticket_gia_consumati: false, movimenti_riaperti: 1 },
+      error: null,
+    })
+    const res = await POST(post({ motivo: 'bonifico di un altro plesso' }), ctx)
+    expect(res.status).toBe(200)
+
+    // 1) all'OPERATORE: «annullata; 1 movimento bancario è tornato in coda».
+    const body = await res.json()
+    expect(body.data.movimenti_riaperti).toBe(1)
+
+    // 2) nel REGISTRO: l'UPDATE della RPC cancella confermato_da/confermato_il,
+    //    cioè chi aveva confermato quel bonifico. Se non lo scrive qui, non lo
+    //    scrive nessuno.
+    expect(audit().nuovo_valore?.movimenti_riaperti).toBe(1)
+
+    // 3) nel LOG di successo (numeri e uuid soltanto: mai il motivo, mai la causale).
+    expect(eventoAnnullo()).toMatchObject({ esito: 'transazione_annullata', movimenti_riaperti: 1 })
+  })
+
+  it('(f bis) RPC vecchia senza la chiave → 0, mai `undefined`', async () => {
+    // Il DB E2E della CI non è migrato e la funzione lì è quella di prima: il
+    // jsonb non porta `movimenti_riaperti`. «0» e «non lo so» non devono
+    // diventare la stessa cosa a schermo per colpa di un `undefined`.
+    h.rpc.mockResolvedValue({ data: { incassi_stornati: 1, ricariche_stornate: 0, credito_stornato: 0, ticket_gia_consumati: false }, error: null })
+    const res = await POST(post({ motivo: 'errore di registrazione' }), ctx)
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.data.movimenti_riaperti).toBe(0)
+    expect(audit().nuovo_valore?.movimenti_riaperti).toBe(0)
+    expect(eventoAnnullo()).toMatchObject({ movimenti_riaperti: 0 })
+  })
+
+  it('(f ter) il MOTIVO non finisce mai nei log, nemmeno adesso che i campi sono cinque', async () => {
+    const motivo = 'bonifico della famiglia sbagliata, segnalato al telefono'
+    await POST(post({ motivo }), ctx)
+    expect(JSON.stringify(h.logCalls)).not.toContain('telefono')
+    // …ma resta nel registro DB, che è il posto giusto per leggerlo.
+    expect(audit().nuovo_valore?.annullo_motivo).toBe(motivo)
   })
 })

@@ -66,6 +66,10 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { GET } from '@/app/api/pagamenti/riconciliazione/route'
+// Il chip VERO della schermata (`RiconciliazionePanel` chiama proprio questo) e il tipo
+// della riga su cui lavora: la prova «che cosa vede l'operatore» non si recita a mano.
+import { chipFatturazione } from '@/components/features/admin/pagamenti/riconciliazione-ui'
+import type { RigaFatturabile } from '@/lib/pagamenti/fatturazione-riga'
 
 const M1 = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1'
 const M2 = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd2'
@@ -302,5 +306,80 @@ describe('GET /api/pagamenti/riconciliazione — stato della fattura sulle righe
     const j = (await (await get()).json()) as { data: (RigaConFattura & { suggerimenti: { label: string | null }[] })[] }
     expect(j.data[0].suggerimenti[0].label).toBeNull()
     expect(j.data[0].fattura).toEqual({ stato: 'emessa', numeri: ['FPR 1947/26'] })
+  })
+})
+
+/**
+ * ─── IL MOVIMENTO RIAPERTO DALL'ANNULLO (2026-09-12, conciliazione composita) ──
+ *
+ * `annulla_transazione_contabile` riporta in coda il bonifico della transazione
+ * annullata (`stato` → `da_abbinare`) e gli LASCIA `pagamento_id`: è la memoria su
+ * cui poggia la guardia «un bonifico non si fattura due volte». Da quel giorno
+ * l'invariante «`pagamento_id` valorizzato ⇒ riga confermata» non è più vera, e
+ * queste due prove misurano l'unica conseguenza visibile che aveva aperto: una riga
+ * ROSSA, che chiede lavoro, con addosso il chip «Fattura FPR 1947/26».
+ *
+ * Non è una perdita di denaro — il semaforo resta `da_abbinare`, il lotto non la
+ * spunta, i bidoni `?fattura=` impongono `stato=confermato` — ma è un falso positivo
+ * su una schermata che ha già pagato quel tipo di errore (PR #118: due definizioni di
+ * «da fatturare», una nel browser e una nel server).
+ */
+describe('GET /api/pagamenti/riconciliazione — il movimento riaperto dall’annullo', () => {
+  it('riga riaperta (pagamento_id vivo, stato tornato «da_abbinare») → nessun documento addosso, e fatture_emesse non si legge affatto', async () => {
+    h.movimenti = [{ id: M1, stato: 'da_abbinare', pagamento_id: P1 }]
+    h.fatture = [{ pagamento_id: P1, numero: 1947, anno: 2026, sezionale: 'FPR', sdi_stato: 7, quota_adult_id: null }]
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = (await res.json()) as { data: RigaConFattura[] }
+    expect(
+      'fattura' in j.data[0],
+      'la riga riaperta porta il DOCUMENTO del pagamento a cui era legata: sulla coda ' +
+        'compare «Fattura FPR 1947/26» su un movimento tornato da lavorare.',
+    ).toBe(false)
+    expect(
+      letturaFatture(),
+      'fatture_emesse è stata interrogata per una riga non confermata: lavoro (e una lettura ' +
+        'di documenti fiscali) per un campo che non deve uscire.',
+    ).toBe(0)
+  })
+
+  it('e infatti l’operatore non vede nessun chip su quella riga — misurato col chip VERO della schermata', async () => {
+    /**
+     * ⚠️ LA RIGA RIAPERTA È QUELLA VERA, SUGGERIMENTI COMPRESI — e non è un dettaglio
+     * della fixture: è ciò che rende questa prova capace di fallire.
+     *
+     * `annulla_transazione_contabile` NON azzera `suggerimenti`: il suo UPDATE tocca
+     * `stato`, `transazione_id`, `incasso_id`, `confermato_da`, `confermato_il` e basta.
+     * Una riga tornata in coda arriva quindi col proprio suggerimento addosso, quel
+     * pagamento entra in `pagIds`, e la rotta percorre il ramo LUNGO — quello che calcola
+     * `pagamento_stato` e `fattura_stato`, cioè gli altri due campi da cui
+     * `chipFatturazione` ricava il chip quando `fattura` manca.
+     *
+     * Senza suggerimenti `pagIds` resta vuoto, la rotta esce dalla scorciatoia «niente da
+     * risolvere» e quel ramo non viene eseguito affatto: misurato il 2026-09-12,
+     * rilassando la sola congiunzione che lo governa la suite restava verde
+     * (78 test passati). Con questa fixture la stessa mutazione diventa rossa.
+     */
+    h.movimenti = [{ id: M1, stato: 'da_abbinare', pagamento_id: P1, suggerimenti: [{ pagamento_id: P1 }] }]
+    h.sedi = [{ id: P1, scuola_id: 'sc-1', stato: 'pagato', fattura_stato: 'emessa' }]
+    h.fatture = [{ pagamento_id: P1, numero: 1947, anno: 2026, sezionale: 'FPR', sdi_stato: 7, quota_adult_id: null }]
+
+    const j = (await (await get()).json()) as { data: RigaConFattura[] }
+    const riga = j.data[0] as unknown as RigaFatturabile
+    expect(
+      chipFatturazione(riga),
+      'su una riga riaperta il pannello disegna un chip di fatturazione: `RiconciliazionePanel` ' +
+        'chiama `chipFatturazione(m)` incondizionatamente su ogni riga visibile.',
+    ).toBeNull()
+
+    // CONTRO-PROVA — il chip non tace per caso: con lo STESSO documento attaccato alla
+    // riga (cioè se la rotta non filtrasse) direbbe il numero della fattura, a caratteri
+    // pieni, su un movimento che chiede lavoro.
+    expect(chipFatturazione({ ...riga, fattura: { stato: 'emessa', numeri: ['FPR 1947/26'] } })).toMatchObject({
+      tono: 'fatturata',
+      labelKey: 'reconFatturaEmessa',
+      params: { n: 1, numeri: 'FPR 1947/26' },
+    })
   })
 })

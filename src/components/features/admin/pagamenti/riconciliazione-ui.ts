@@ -497,9 +497,19 @@ export interface ChipFatturazioneUi {
  * movimenti confermati di una sede dell'operatore (stessa minimizzazione delle
  * label dei suggerimenti), quindi su una riga suggerita/ignorata arrivano `null`
  * e il chip non nasce — senza duplicare qui la regola di visibilità del server.
- * Su `fattura` quella regola non c'è, e la fa `pagamento_id`: senza abbinamento
- * non esiste nessun pagamento da fatturare, e un documento su una riga non
- * abbinata sarebbe comunque roba d'altri.
+ *
+ * ⚠️ ANCHE `fattura` ORA ARRIVA SOLO SULLE CONFERMATE, e fino al 2026-09-12 qui
+ * c'era scritto il contrario: «su `fattura` quella regola non c'è, e la fa
+ * `pagamento_id`». Era vero finché `pagamento_id` lo scriveva solo la conferma.
+ * Da quando `annulla_transazione_contabile` riapre il movimento della transazione
+ * annullata LASCIANDOGLI `pagamento_id` (è la memoria su cui poggia la guardia
+ * «un bonifico non si fattura due volte»), una riga ROSSA può avere un pagamento
+ * addosso — e con la vecchia regola si portava anche il suo documento, cioè il
+ * chip «Fattura FPR 1947/26» su un movimento che chiede lavoro. Il server adesso
+ * attacca i documenti con `stato === 'confermato' && pagamento_id`
+ * (`pagamentoAbbinatoDi` in `pagamenti/riconciliazione:GET`): la restrizione sta
+ * alla fonte, perché è là che lo stato del movimento esiste — qui dentro no, e
+ * non deve (v. `RigaFatturabile`).
  */
 export function chipFatturazione(m: RigaFatturabile): ChipFatturazioneUi | null {
   const esito = esitoFatturazione(m)
@@ -521,6 +531,70 @@ export function chipFatturazione(m: RigaFatturabile): ChipFatturazioneUi | null 
     return { tono: 'scartata', ...CHIP_FATTURAZIONE.scartata, labelKey: 'reconFatturaScartata' }
   }
   return { tono: esito.tono, ...CHIP_FATTURAZIONE[esito.tono] }
+}
+
+// ─── «PERCHÉ QUESTA RIGA LA VEDO E NON LA POSSO FATTURARE» ───────────────────
+//
+// IL FATTO, ed è una conseguenza dichiarata della decisione n. 15 del titolare
+// (un bonifico che paga figli di sedi diverse produce UN documento solo,
+// intestato a una sede che l'operatrice SCEGLIE): la riga bancaria prende la sede
+// del DOCUMENTO — `registra_transazione_contabile` le scrive `scuola_id = v_scuola`
+// — mentre i due campi che decidono la fatturazione (`pagamento_stato`,
+// `fattura_stato`) il server li manda soltanto a chi ha fra le proprie la sede del
+// PAGAMENTO D'ANCORAGGIO. Le due sedi possono divergere: allora la riga compare nel
+// filtro di sede di chi NON la può fatturare, senza chip e senza casella del lotto.
+// La migrazione `20260912180100` lo scrive per esteso e lascia alla schermata la
+// decisione se dirlo. Si dice.
+//
+// ⚠️ E SI DICE SOLO QUI, non su ogni riga senza chip. Senza la guardia «nessun
+// chip» l'avviso comparirebbe — MISURATO il 2026-09-13 sul database vivo, 174
+// movimenti confermati — su 100 righe per l'operatrice di Giugliano, 120 per
+// Aversa, 128 per Cesa: righe che portano già «Fattura FPR 1947/26», perché i
+// DOCUMENTI restano cross-sede per progetto. Con la guardia diventano 2, 3 e 1. Un
+// avviso su cento righe non è una spiegazione, è la ragione per cui si smette di
+// leggere gli avvisi.
+
+/** Il motivo per cui una riga visibile non si può fatturare, o `null` se non ce n'è uno da dire. */
+export type MotivoNonFatturabile = 'pagamento_altro_plesso'
+
+/**
+ * Perché questa riga è muta — quando lo si sa, e solo allora.
+ *
+ * `null` significa «non c'è niente da spiegare»: o la riga un chip ce l'ha (e il
+ * chip è già la spiegazione), o non è una riga su cui la fatturazione esista, o il
+ * silenzio dipende da un GUASTO e non dalla sede.
+ *
+ * LE CINQUE CONDIZIONI, e perché ciascuna:
+ *  · `stato === 'confermato'` — su una riga da lavorare non c'è niente da
+ *    fatturare. Comprende la riga RIAPERTA dall'annullo della transazione, che
+ *    conserva `pagamento_id` pur essendo tornata rossa: senza questa guardia si
+ *    porterebbe addosso una spiegazione falsa;
+ *  · `pagamento_id` — senza abbinamento non esiste nessun pagamento;
+ *  · nessun chip (`chipFatturazione`) — se un documento parla, la riga non è muta;
+ *  · `pagamento_stato` e `fattura_stato` ENTRAMBI assenti — è la firma della
+ *    minimizzazione per sede del server (`conFatturazione(…, null, null, …)`).
+ *    MISURATO il 2026-09-13: su 825 pagamenti, ZERO hanno `stato` o
+ *    `fattura_stato` nulli in tabella, quindi «assenti» qui non può voler dire
+ *    altro. Bastarne uno solo sarebbe stato più fragile: si pretendono tutti e due;
+ *  · `fatturazioneDisponibile` — quando la batch dei pagamenti cade, il server manda
+ *    i due campi `null` su TUTTE le righe e lo dichiara. Lì «è di un altro plesso»
+ *    sarebbe un verdetto inventato su tutto il registro, e la fascia che dice che il
+ *    filtro non è stato applicato c'è già.
+ *
+ * Il verdetto NON nomina il plesso, e non è una limatura: il client quel dato non
+ * ce l'ha — è precisamente ciò che il server gli ha tolto — e inventarlo sarebbe
+ * dire a una segreteria il nome di una sede che non ha modo di verificare.
+ */
+export function motivoNonFatturabile(
+  m: MovimentoUi,
+  fatturazioneDisponibile: boolean,
+): MotivoNonFatturabile | null {
+  if (!fatturazioneDisponibile) return null
+  if (m.stato !== 'confermato') return null
+  if (typeof m.pagamento_id !== 'string' || m.pagamento_id === '') return null
+  if (m.pagamento_stato != null || m.fattura_stato != null) return null
+  if (chipFatturazione(m) !== null) return null
+  return 'pagamento_altro_plesso'
 }
 
 /**
@@ -608,4 +682,103 @@ export function numeroPillolaFattura(
  */
 export function etichettaConteggio(n: number, parziale: boolean): string {
   return parziale ? `≥ ${n}` : String(n)
+}
+
+// ─── IL RIEPILOGO DI CIÒ CHE LA COMPOSIZIONE HA REGISTRATO ───────────────────
+//
+// Fino al 2026-09-13 la chiusura riuscita del popup faceva una cosa sola:
+// ricaricare. La lista tornava con una riga verde in più e nient'altro. Su una
+// composizione — che può saldare sei voci di tre fratelli e accreditare venti
+// ticket in un colpo, tutto dentro una transazione atomica — «la riga è diventata
+// verde» non è un esito: è il minimo comune denominatore fra «ha fatto tutto» e
+// «ha fatto metà». Il riepilogo dell'import esiste da sempre per la stessa ragione
+// (v. `riepilogoImport`), e quello scrive righe di un file; questo scrive denaro.
+
+/**
+ * L'esito di una composizione, come il popup lo consegna al pannello.
+ *
+ * ⚠️ I TRE NUMERI VENGONO DA UN JSON, quindi possono non essere numeri: la RPC li
+ * conta e la route li rimanda, ma fra i due c'è la rete. Un `NaN` dentro un plurale
+ * ICU non esplode — scrive «NaN voci» sopra a un incasso appena registrato — ed è
+ * per questo che `riepilogoComposizione` li ripulisce invece di fidarsi.
+ */
+export interface EsitoComposizione {
+  /** Quante voci sono state saldate o create (gli incassi scritti dalla RPC). */
+  voci: number
+  /** Quanti TICKET mensa sono stati accreditati: la QUANTITÀ, non il numero di righe. */
+  ticket: number
+  /** L'importo registrato, in euro. */
+  totale: number
+  /**
+   * `false` = il denaro è scritto ma la riga bancaria NON si è legata — è il
+   * `codice: 'CONCILIAZIONE_MOVIMENTO_NON_LEGATO'` della route.
+   *
+   * ⚠️ ASSENTE NON È `false`. «Non me l'hanno detto» e «è andata male» sono due
+   * cose diverse, e trattarle uguale farebbe comparire un avviso rosso su ogni
+   * composizione riuscita di un client che non manda ancora il campo.
+   */
+  movimentoLegato?: boolean
+}
+
+/** Che cosa scrivere nel riepilogo: i valori dell'ICU, più il tono. */
+export interface RiepilogoComposizioneUi {
+  /** I valori di `t('reconComposizioneRegistrata', …)`. L'importo è già formattato. */
+  valori: { voci: number; ticket: number; totale: string }
+  /**
+   * `true` = riepilogo in tono d'AVVISO, non di conferma. Un banner verde accanto a
+   * una riga bancaria rimasta rossa è la bugia peggiore che questa schermata possa
+   * dire: l'operatrice ricomporrebbe, e sulle voci nuove e sui ticket il secondo
+   * giro crea righe nuove — non c'è nessun residuo che la fermi.
+   */
+  avviso: boolean
+  /**
+   * `false` = i tre numeri non raccontano niente, e la fascia NON deve dichiarare
+   * un successo: il pagamento è registrato (questa funzione la chiama solo il ramo
+   * in cui la rotta ha risposto bene), ma di che cosa copra non si può dire nulla.
+   *
+   * ⚠️ VA DECISO PRIMA DELLA RIPULITURA, ed è tutto il punto. `intero()` porta
+   * `NaN` e i negativi a `0` perché «NaN voci» sopra a un incasso vero sarebbe
+   * peggio — ma da dopo quella riga un esito malformato è INDISTINGUIBILE da un
+   * esito che vale zero, e la fascia usciva verde dicendo «0 voci · € 0,00».
+   * Un successo dichiarato sul nulla, su l'unica schermata in cui la segreteria
+   * legge che il bonifico è stato incassato.
+   */
+  numeriLeggibili: boolean
+}
+
+/**
+ * I numeri del riepilogo, ripuliti.
+ *
+ * ⚠️ IL «SENZA TICKET» NON SI DECIDE QUI: il conteggio esce com'è (zero) e a
+ * togliere il pezzo di frase è l'ICU (`{ticket, plural, =0 {} …}`). Due posti che
+ * decidono la stessa cosa — questa funzione e il catalogo — sono due posti da cui
+ * un giorno diverge, e in italiano e in inglese la frase si spezza in punti diversi.
+ */
+export function riepilogoComposizione(e: EsitoComposizione): RiepilogoComposizioneUi {
+  const intero = (v: number): number => (Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0)
+  /**
+   * Un numero È ARRIVATO: non una stringa, non `null`, non un `NaN`, non un
+   * negativo. `typeof` prima di `Number.isFinite` perché quest'ultimo accetta
+   * soltanto i `number` ma il campo viene da un JSON, dove ci può stare di tutto
+   * e TypeScript non è di guardia a runtime.
+   */
+  const arrivato = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  /**
+   * Quando i numeri raccontano davvero qualcosa. I tre criteri, e da dove viene
+   * ciascuno:
+   *  · tutti e tre devono essere arrivati come numeri;
+   *  · `totale > 0`: la rotta `…/componi` rifiuta un bonifico non positivo
+   *    (`reconComponiErrMovimentoNonPositivo`), quindi un totale a zero non è un
+   *    pagamento — è un campo che non è arrivato;
+   *  · `voci + ticket > 0`: una composizione che non salda nessuna voce e non
+   *    accredita nessun ticket non esiste. `voci: 0` DA SOLO resta legittimo: una
+   *    composizione di soli ticket non salda nessuna voce aperta.
+   */
+  const numeriLeggibili =
+    arrivato(e.voci) && arrivato(e.ticket) && arrivato(e.totale) && e.totale > 0 && e.voci + e.ticket > 0
+  return {
+    valori: { voci: intero(e.voci), ticket: intero(e.ticket), totale: formatEuro(e.totale) },
+    avviso: e.movimentoLegato === false,
+    numeriLeggibili,
+  }
 }

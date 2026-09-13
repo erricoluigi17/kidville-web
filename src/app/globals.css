@@ -2535,8 +2535,20 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    Qui l'Alto Contrasto, dove quelle tre non bastano e non per una svista: le
    superfici crema del popup diventano tutte #1A1A1A per la regola
    `.kv-recon-dialog .bg-kidville-cream`, e su quel nero il filetto `warn-strong`
-   #A64F09 vale 5,62:1 — legge, ma smette di gridare, proprio nella modalità di
-   chi fa più fatica a leggere. `@theme inline` INLINA l'hex nelle utility:
+   #A64F09 vale **3,10:1** — cioè NON legge: è sotto i 4,5:1 di WCAG 1.4.3, proprio
+   nella modalità di chi fa più fatica a leggere.
+   ⚠️ Fino al 2026-09-13 qui c'era scritto «5,62:1 — legge, ma smette di gridare», e
+   quel numero ha fatto danno due volte: è il rapporto di `error-strong` #C62828 su
+   BIANCO (warn-strong su bianco è 5,61), non di questa coppia. Un'altra fetta ci ha
+   appoggiato sopra la decisione di non dipingere un riquadro d'avviso, che in Alto
+   Contrasto è finito a 3,10:1 — e i suoi chip, bianchi su una superficie diventata
+   nera, a **1,00:1**: invisibili. Rimisurato con la formula del lock
+   `__tests__/pagamenti/riconciliazione-a11y-css.test.ts` — che sta in
+   `__tests__/pagamenti/`, non in `__tests__/architecture/` dove lo si cerca per
+   abitudine.
+
+   E non si rimedia ridefinendo il token, perché `@theme inline` INLINA l'hex
+   nelle utility:
    ridefinire `--color-kidville-warn-strong` sotto `[data-contrast="high"]` non
    toccherebbe una sola classe già generata, quindi una superficie nuova o è
    dipinta a mano o in Alto Contrasto non esiste.

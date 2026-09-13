@@ -214,3 +214,130 @@ describe('RiconciliazionePanel — lo stato della fattura sulla riga', () => {
     expect(chip).toHaveLength(3);
   });
 });
+
+/**
+ * ─── «PERCHÉ QUESTA RIGA LA VEDO E NON LA POSSO FATTURARE» ───────────────────
+ *
+ * Conseguenza dichiarata della decisione n. 15 del titolare — un bonifico che paga
+ * figli di sedi diverse produce UN documento solo, intestato a una sede che
+ * l'operatrice sceglie — e scritta per esteso nella migrazione
+ * `20260912180100_transazione_voci_nuove.sql`, che chiude il paragrafo lasciando
+ * alla schermata la decisione se dirlo. Si dice.
+ *
+ * IL FATTO: il movimento prende la sede del DOCUMENTO, mentre i due campi che
+ * decidono la fatturazione (`pagamento_stato`, `fattura_stato`) il server li manda
+ * soltanto a chi ha fra le proprie la sede del PAGAMENTO D'ANCORAGGIO. Quando le
+ * due divergono, la riga compare nel filtro di sede di chi NON la può fatturare:
+ * chip muto, nessuna casella del lotto, e niente che dica perché.
+ *
+ * MISURATO il 2026-09-13 sul database vivo, ed è ciò che stabilisce il perimetro:
+ *  · 239 movimenti, 174 confermati, **0** con la sede del documento diversa da
+ *    quella del proprio pagamento — il caso nasce col primo bonifico composto;
+ *  · 855 famiglie, **4** con figli in sedi diverse, di cui **1 sola** con voci
+ *    aperte in più di una sede: è quella che oggi lo produrrebbe. Raro, e la
+ *    rarità è ciò che lo rende peggiore: un vuoto che si incontra una volta
+ *    l'anno non genera un'abitudine, genera una segnalazione di guasto;
+ *  · senza la guardia «nessun chip» l'avviso comparirebbe su **100 righe** per
+ *    l'operatrice di Giugliano, 120 per Aversa, 128 per Cesa — tutte righe che
+ *    dicono già «Fattura FPR …», perché i DOCUMENTI restano cross-sede per
+ *    progetto. Con la guardia: 2, 3 e 1.
+ */
+describe('RiconciliazionePanel — la riga muta dice perché', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+
+  const SPIEGAZIONE = 'Il pagamento di questa riga è di un’altra sede: da qui non si può fatturare.';
+
+  it('confermata, con pagamento, e i due campi derivati assenti → lo spiega', async () => {
+    // È il fixture `BONIFICO QUATTRO`: `fattura: null` e nessuno dei due campi
+    // derivati, cioè esattamente ciò che il server manda su una riga il cui
+    // pagamento sta fuori dalle sedi di chi guarda.
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO QUATTRO/)).toBeInTheDocument());
+
+    expect(rigaDi('BONIFICO QUATTRO').textContent).toContain(SPIEGAZIONE);
+  });
+
+  it('non nomina nessun plesso: quel dato il browser non ce l’ha', async () => {
+    // È precisamente ciò che il server gli ha tolto. Inventarlo vorrebbe dire dire
+    // a una segreteria il nome di una sede che non ha modo di verificare.
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO QUATTRO/)).toBeInTheDocument());
+
+    const riga = rigaDi('BONIFICO QUATTRO').textContent ?? '';
+    for (const sede of ['Giugliano', 'Aversa', 'Cesa']) expect(riga).not.toContain(sede);
+  });
+
+  it('se un DOCUMENTO parla, la riga non è muta: nessuna spiegazione di troppo', async () => {
+    // La guardia che tiene l'avviso su 2 righe invece che su 100.
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO UNO/)).toBeInTheDocument());
+
+    expect(rigaDi('BONIFICO UNO').textContent).not.toContain(SPIEGAZIONE);
+    expect(rigaDi('BONIFICO DUE').textContent).not.toContain(SPIEGAZIONE);
+    // e nemmeno su quella della PROPRIA sede, che il chip giallo ce l'ha
+    expect(rigaDi('BONIFICO TRE').textContent).not.toContain(SPIEGAZIONE);
+    // una sola spiegazione su tutto l'elenco, non una per riga senza chip
+    expect(screen.queryAllByText(SPIEGAZIONE)).toHaveLength(1);
+  });
+
+  it('la riga RIAPERTA dall’annullo conserva il pagamento e NON è di un’altra sede', async () => {
+    // `annulla_transazione_contabile` riapre il movimento (`da_abbinare`) e gli
+    // LASCIA `pagamento_id`. Senza la guardia sullo stato, ogni riga riaperta si
+    // porterebbe addosso una spiegazione falsa — e sono righe che chiedono lavoro,
+    // cioè quelle su cui una frase sbagliata costa di più.
+    vi.stubGlobal('fetch', stubFetch([
+      { id: 'mr', data_operazione: '2026-09-13', importo: 120, causale: 'BONIFICO RIAPERTO', controparte: '', stato: 'da_abbinare', pagamento_id: 'pg-riaperto', suggerimenti: [{ pagamento_id: 'pg-riaperto', score: 900, motivi: ['importo esatto'], alunno_id: 'a1' }] },
+    ]));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO RIAPERTO/)).toBeInTheDocument());
+
+    const riga = rigaDi('BONIFICO RIAPERTO').textContent ?? '';
+    expect(riga).toContain('Da abbinare');
+    expect(riga).not.toContain(SPIEGAZIONE);
+    // e nemmeno il chip: il server non le attacca i documenti (`pagamentoAbbinatoDi`)
+    expect(riga).not.toContain('Fattur');
+  });
+
+  it('propria sede, pagamento non saldato → si tace: il motivo NON è la sede', async () => {
+    vi.stubGlobal('fetch', stubFetch([
+      { id: 'mp', data_operazione: '2026-09-13', importo: 90, causale: 'BONIFICO PARZIALE', controparte: '', stato: 'confermato', pagamento_id: 'pg-8', suggerimenti: [], fattura: { stato: 'da_fatturare', numeri: [] }, pagamento_stato: 'parziale', fattura_stato: 'non_richiesta' },
+    ]));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO PARZIALE/)).toBeInTheDocument());
+
+    expect(rigaDi('BONIFICO PARZIALE').textContent).not.toContain(SPIEGAZIONE);
+  });
+
+  it('fatturazione NON disponibile → nessuna spiegazione: i campi mancano per un GUASTO', async () => {
+    // Quando la batch dei pagamenti cade, il server manda i due campi `null` su
+    // TUTTE le righe e lo DICHIARA. Scrivere lì «è di un’altra sede» sarebbe un
+    // verdetto inventato sull'intero registro.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (String(url).includes('/api/pagamenti/riconciliazione')) {
+        return { ok: true, status: 200, json: async () => ({ success: true, data: movimenti, fatturazione_disponibile: false }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true, data: aperti }) };
+    }));
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    await waitFor(() => expect(screen.getByText(/BONIFICO QUATTRO/)).toBeInTheDocument());
+
+    expect(screen.queryAllByText(SPIEGAZIONE)).toHaveLength(0);
+  });
+
+  it('l’inchiostro è quello del semaforo, non un grigio su fondo verde', async () => {
+    // La riga confermata ha fondo VERDE PIENO: `text-kidville-sub` (giusto su
+    // carta bianca, 6,46:1) lì scenderebbe sotto AA. Si eredita `SEMAFORO.sub`,
+    // che è ciò che la causale usa già due righe sopra.
+    vi.stubGlobal('fetch', stubFetch());
+    render(<RiconciliazionePanel userId="u1" scuolaId="s1" />);
+    const nota = await screen.findByText(SPIEGAZIONE);
+
+    expect(nota.className).toContain('text-kidville-white');
+    expect(nota.className).not.toContain('text-kidville-muted');
+    expect(nota.className).not.toContain('text-kidville-sub');
+    expect(nota.className).not.toMatch(/#[0-9a-fA-F]{6}/);
+  });
+});

@@ -27,6 +27,15 @@ const TABELLA_ASSENTE = new Set(['42P01', 'PGRST205', 'PGRST204', '42703'])
 // saldo ticket, mai negativo) e l'eventuale eccedenza a credito. La vecchia
 // enumerazione manuale dimenticava le ricariche mensa → i ticket restavano
 // regalati alla famiglia (bug corretto). Il motivo è obbligatorio.
+//
+// Dal 2026-09-12 le classi stornate sono QUATTRO: la RPC riapre anche il MOVIMENTO
+// BANCARIO dell'estratto conto legato alla transazione (`riconciliazione_movimenti`)
+// e ne restituisce il conteggio in `movimenti_riaperti`. Quel numero viaggia fino in
+// fondo — risposta, `registro_modifiche`, log di successo — perché la riapertura
+// cancella `confermato_da`/`confermato_il`: senza, «chi aveva confermato quel
+// bonifico» si perderebbe e una riapertura a 0 righe sarebbe indistinguibile da una
+// riuscita. Il movimento riaperto CONSERVA `pagamento_id`: è ciò che tiene viva la
+// guardia `BONIFICO_GIA_FATTURATO` di `pagamenti/riconciliazione/[id]:PATCH`.
 export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (request: Request, context: { params: Promise<{ id: string }> }) => {
   try {
     const auth = await requireStaff(request)
@@ -107,6 +116,14 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
       ricariche_stornate?: number
       credito_stornato?: number
       ticket_gia_consumati?: boolean
+      /**
+       * Quanti movimenti bancari sono tornati in coda (dal 2026-09-12: la RPC
+       * riapre anche la riga dell'estratto conto legata alla transazione).
+       * `?? 0` e non `undefined`: sul DB E2E della CI, mai migrato, la funzione è
+       * quella di prima e questa chiave non c'è — «0» e «non lo so» non devono
+       * diventare la stessa cosa a schermo.
+       */
+      movimenti_riaperti?: number
     }
 
     // Annulla la ricevuta famiglia attiva (numero bruciato) — come oggi.
@@ -122,6 +139,10 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
         incassi_stornati: conteggi.incassi_stornati ?? 0,
         ricariche_stornate: conteggi.ricariche_stornate ?? 0,
         credito_stornato: conteggi.credito_stornato ?? 0,
+        // La riapertura del movimento bancario cancella `confermato_da`/`confermato_il`:
+        // chi aveva confermato quel bonifico si perde. Se non lo scrive questa riga,
+        // non lo scrive nessuno — il verso opposto (la conferma) passa da `logScrittura`.
+        movimenti_riaperti: conteggi.movimenti_riaperti ?? 0,
       },
       utente_id: user.id,
     }).then(() => {}, () => {})
@@ -134,6 +155,10 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
       incassi_stornati: conteggi.incassi_stornati ?? 0,
       ricariche_stornate: conteggi.ricariche_stornate ?? 0,
       ticket_gia_consumati: conteggi.ticket_gia_consumati === true,
+      // Un numero, come gli altri: «quante volte un annullo ha rimesso un bonifico
+      // in coda» diventa una query. Se un giorno riaprisse 0 righe dove doveva
+      // riaprirne 1, questo è l'unico posto in cui si vedrebbe.
+      movimenti_riaperti: conteggi.movimenti_riaperti ?? 0,
     })
 
     // Lo storno riapre lo scaduto: verificaRevoca non riattiva mai una sospensione,
@@ -162,6 +187,9 @@ export const POST = withRoute('pagamenti/transazioni/[id]/annulla:POST', async (
         ricariche_stornate: conteggi.ricariche_stornate ?? 0,
         credito_stornato: conteggi.credito_stornato ?? 0,
         ticket_gia_consumati: conteggi.ticket_gia_consumati === true,
+        // «Annullata; 1 movimento bancario è tornato in coda»: senza questo campo
+        // l'operatore non saprebbe che deve rilavorare quel bonifico.
+        movimenti_riaperti: conteggi.movimenti_riaperti ?? 0,
       },
     })
   } catch (err) {

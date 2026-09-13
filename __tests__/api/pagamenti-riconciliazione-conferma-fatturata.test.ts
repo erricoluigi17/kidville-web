@@ -13,15 +13,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  * Il risultato è una retta incassata due volte a registro, con una fattura viva
  * intestata a un pagamento che quel bonifico non paga più.
  *
- * ─── È UNA GUARDIA DIFENSIVA, e va detto ─────────────────────────────────────
- * Oggi dall'interfaccia quello stato NON è raggiungibile: `pagamento_id` lo scrive
- * solo la conferma, e un movimento `confermato` non torna indietro (`ignora` e
- * `riapri` rispondono 409, lo storno dell'incasso non tocca questa tabella). Ma
- * «non raggiungibile oggi» non è una difesa: basta una riapertura fatta a mano
- * dopo uno storno — che è la cosa naturale da chiedere — perché la strada si
- * apra, e si aprirebbe **in silenzio**, con un 200 e una notifica «Pagamento
- * registrato» al genitore. La guardia costa una lettura e chiude la strada prima
- * che qualcuno la costruisca.
+ * ─── NON È PIÙ UNA GUARDIA DIFENSIVA: DAL 2026-09-12 È LA STRADA NORMALE ─────
+ * Fino a quel giorno lo stato che la fa scattare era irraggiungibile: `pagamento_id`
+ * lo scriveva solo la conferma, e un movimento `confermato` non tornava indietro
+ * (`ignora` e `riapri` rispondono 409). Adesso `annulla_transazione_contabile`
+ * (conciliazione composita) riapre il movimento della transazione annullata —
+ * `stato` torna `da_abbinare` — e gli LASCIA `pagamento_id`, che è la memoria di
+ * ciò a cui era legato; e l'annullo non è un intervento a mano, è un pulsante del
+ * registro transazioni (`TransazioniPanel` → `pagamenti/transazioni/[id]/annulla:POST`).
+ * Il percorso «il bonifico M salda la transazione T, la cui voce di ancoraggio è P1
+ * → su P1 si emette la fattura → si annulla T → M torna in coda → l'operatore lo
+ * riabbina a P2» è quindi normale amministrazione, non un'ipotesi, e si percorrerebbe
+ * **in silenzio**, con un 200 e una notifica «Pagamento registrato» al genitore. La
+ * guardia costa una lettura ed è l'unica cosa che lo ferma. Il lock
+ * `__tests__/architecture/annullo-riapre-movimento.test.ts` tiene insieme le due
+ * metà: se la guardia sparisce dalla route, lì diventa rosso.
  *
  * ─── COME MORDE ──────────────────────────────────────────────────────────────
  * Il finto Supabase distingue per TABELLA e REGISTRA le letture: «`fatture_emesse`

@@ -14,9 +14,10 @@
  * SINTETICO.
  *
  * La rotta appende `{ stato: 'da_fatturare', numeri: [] }` a ogni riga abbinata
- * che in `fatture_emesse` non ha nessuna riga — quindi per il filtro «un
- * documento» c'era sempre, e il ripiego sul riassunto non scattava mai. Il chip
- * invece ci ripiega ogni volta che il documento non è `emessa` né `scartata`.
+ * (dal 2026-09-12: CONFERMATA e con un pagamento) che in `fatture_emesse` non ha
+ * nessuna riga — quindi per il filtro «un documento» c'era sempre, e il ripiego sul
+ * riassunto non scattava mai. Il chip invece ci ripiega ogni volta che il documento
+ * non è `emessa` né `scartata`.
  *
  * Il caso in cui divergevano è quello che `src/lib/aruba/emissione.ts` chiama
  * «il caso più velenoso»: la fattura è partita verso lo SdI e la scrittura in
@@ -96,6 +97,13 @@ export interface RigaFatturabile {
   /**
    * L'abbinamento. Senza, non esiste nessun pagamento da fatturare — e un documento
    * su una riga non abbinata sarebbe comunque roba d'altri.
+   *
+   * ⚠️ Valorizzato NON implica «movimento confermato»: dal 2026-09-12 l'annullo di una
+   * transazione riapre il bonifico (`stato` → `da_abbinare`) e gli LASCIA il pagamento,
+   * perché è la memoria su cui poggia la guardia «un bonifico non si fattura due volte».
+   * Qui dentro quella differenza non si può vedere — questo tipo NON porta lo stato del
+   * movimento, di proposito — e per questo la restrizione vive nel server, che i
+   * documenti (`fattura`) li attacca solo alle righe `confermato` con un pagamento.
    */
   pagamento_id?: string | null
   /**
@@ -201,7 +209,13 @@ export function fatturaDaFare(m: RigaFatturabile): boolean {
  * non deve sapere che esistono i movimenti da abbinare.
  */
 export interface RigaListaDiLavoro extends RigaFatturabile {
-  /** `riconciliazione_movimenti.stato`: solo un movimento CONFERMATO ha un pagamento. */
+  /**
+   * `riconciliazione_movimenti.stato`. Solo un movimento CONFERMATO ha un pagamento da
+   * fatturare — che è cosa diversa da «solo un movimento confermato ha un
+   * `pagamento_id`», come diceva questa riga fino al 2026-09-12: quello lo conserva
+   * anche il bonifico riaperto dall'annullo, ed è esattamente il caso che rende questo
+   * campo necessario invece che ridondante.
+   */
   stato?: string | null
 }
 

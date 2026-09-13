@@ -1676,6 +1676,22 @@ export async function anonimizzaAlunno(
   let riconciliazione = 0
   let incassi = 0
   let cassa = 0
+  // Le righe già bonificate dal ramo 3a. Da quando 3a non filtra più per stato i suoi
+  // insiemi possono SOVRAPPORSI a quelli di 3d (entrambi vedono le non confermate), e
+  // `riconciliazione` finisce nel referto dell'oblio: due righe dove ce n'era una è un
+  // numero inventato. (3c non si sovrappone da sé: gira dopo, e `ILIKE` su una causale
+  // già azzerata non corrisponde mai.)
+  //
+  // ⚠️ QUESTO INSIEME COPRE SOLO 3a — e fra 3c e 3d il doppio conteggio resta possibile.
+  // Una riga non confermata che cita il CF nella causale E porta un suggerimento sul
+  // pagamento dell'alunno la conta 3c (+1, azzerandole la causale) e poi di nuovo 3d (+1,
+  // perché qui dentro finiscono solo gli id di 3a). È PREESISTENTE, non aperto dalla
+  // conciliazione composita: in `main` 3d non guardava nessun insieme. E non è un dato
+  // rimasto in chiaro — le due passate fanno lo stesso lavoro, a sbagliare è solo il numero
+  // del referto. Scritto qui perché non si riscopra da capo: chiuderlo significa raccogliere
+  // anche gli id che 3c già si fa tornare (`.select('id')` c'è) e non è stato fatto in
+  // questo lavoro per non allargarne il perimetro.
+  const giaBonificati = new Set<string>()
 
   // Pagamenti dell'alunno (l'aggancio movimento→alunno passa dal pagamento).
   const { data: pagRows, error: errPag } = await supabase.from('pagamenti').select('id').eq('alunno_id', alunno.id)
@@ -1683,20 +1699,34 @@ export async function anonimizzaAlunno(
   const pagIds = ((pagRows ?? []) as { id: string }[]).map((p) => p.id)
 
   if (pagIds.length > 0) {
-    // 3a. Movimenti CONFERMATI collegati → azzera causale/controparte + scrub label.
-    const { data: movConf, error: errMovSel } = await supabase
+    // 3a. Movimenti collegati AL PAGAMENTO → azzera causale/controparte + scrub label.
+    //
+    //     ⚠️ NESSUN filtro su `stato`, e fino al 2026-09-12 ce n'era uno (`confermato`).
+    //     L'aggancio utile è `pagamento_id`, non il semaforo: da quando
+    //     `annulla_transazione_contabile` riapre il movimento della transazione annullata
+    //     (`stato` → `da_abbinare`) LASCIANDOGLI `pagamento_id` — è la memoria su cui
+    //     poggia la guardia «un bonifico non si fattura due volte» — esiste una riga
+    //     agganciata all'alunno che il filtro scartava. Gli altri rami non la
+    //     recuperavano: 3c pretende il CF scritto per esteso nella causale (una causale
+    //     bancaria vera dice «RETTA SETTEMBRE ROSSI»), 3d che i suggerimenti citino il
+    //     pagamento. Restava il nome di una famiglia su una riga bancaria dopo l'oblio
+    //     di un minore.
+    const { data: movDelPagamento, error: errMovSel } = await supabase
       .from('riconciliazione_movimenti')
       .select('id, suggerimenti')
       .in('pagamento_id', pagIds)
-      .eq('stato', 'confermato')
     if (errMovSel) logErrore({ operazione: op, evento: 'bonifica_riconciliazione_select' }, errMovSel)
-    for (const m of (movConf ?? []) as { id: string; suggerimenti: unknown }[]) {
+    for (const m of (movDelPagamento ?? []) as { id: string; suggerimenti: unknown }[]) {
       const { error: errU } = await supabase
         .from('riconciliazione_movimenti')
         .update({ causale: null, controparte: null, suggerimenti: scrubSuggerimenti(m.suggerimenti) })
         .eq('id', m.id)
       if (errU) logErrore({ operazione: op, evento: 'bonifica_riconciliazione_update' }, errU)
-      else riconciliazione++
+      // Segnata come fatta SOLO se l'update è riuscito: se qui è fallita, 3d più sotto
+      // può ancora pescare la stessa riga e riprovare. Una riga bonificata due volte non
+      // costa niente; una riga che nessuno ritenta è il nome di un bambino che resta
+      // scritto.
+      else { riconciliazione++; giaBonificati.add(m.id) }
     }
 
     // 3b. Incassi generati dalla riconciliazione (nota «Riconciliazione: …») → azzera la nota.
@@ -1735,7 +1765,7 @@ export async function anonimizzaAlunno(
       const riferito = sugg.some(
         (s) => s && typeof s === 'object' && pagSet.has(String((s as { pagamento_id?: unknown }).pagamento_id)),
       )
-      if (!riferito) continue
+      if (!riferito || giaBonificati.has(m.id)) continue
       const { error: errU } = await supabase
         .from('riconciliazione_movimenti')
         .update({ causale: null, controparte: null, suggerimenti: scrubSuggerimenti(m.suggerimenti) })

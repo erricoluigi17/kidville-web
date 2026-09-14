@@ -5,8 +5,15 @@ import { IDS, STORAGE, attendiNomeFileVisibile } from './fixtures';
 // Flusso pubblico /iscrizione (happy path) + import admin con degrado email
 // VISIBILE (provider non configurato). CF/email fissi: il seed ripulisce gli
 // artefatti (submission, alunno, parents, account) al run successivo.
-const CF_CHILD = 'TSTBNE20A01H501X';
-const CF_ADULT = 'TSTDLT80A01H501Y';
+//
+// ⚠️ I DUE CODICI DEVONO SUPERARE IL CARATTERE DI CONTROLLO: dal 2026-09-14 il
+// modulo lo verifica, e un codice che non torna ferma «Avanti» al primo passo. Fino
+// a quel giorno erano `…H501X`/`…H501Y`, con la forma giusta e il carattere di
+// controllo sbagliato — la stessa cecità che ha fatto nascere gli alunni doppi.
+// `Z999` non è il codice catastale di nessun luogo: non sono di nessuno. Devono
+// coincidere con `ISCRIZIONE_E2E` di `scripts/seed-e2e.mjs`, che li ripulisce.
+const CF_CHILD = 'TSTBNE20A01Z999X';
+const CF_ADULT = 'TSTDLT80A01Z999M';
 const EMAIL_ISCRIZIONE = 'iscrizione.e2e@kidville.test';
 
 const PNG_1PX = Buffer.from(

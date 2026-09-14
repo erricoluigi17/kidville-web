@@ -732,5 +732,6 @@
   "galSedeCestinoAnteprimaAssente": "Anteprima non disponibile",
   "galSedeErroreElimina": "Non è stato possibile eliminare la foto. Riprova.",
   "galSedeErroreRipristino": "Non è stato possibile ripristinare la foto. Riprova.",
-  "galSedeErroreRete": "Nessuna risposta dal server. Controlla la connessione e riprova."
+  "galSedeErroreRete": "Nessuna risposta dal server. Controlla la connessione e riprova.",
+  "ricevutiUsaSchedaEsistente": "È lo stesso bambino: usa la scheda esistente"
 }

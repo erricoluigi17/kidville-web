@@ -427,5 +427,7 @@
   "erroreRiaperturaStornataNonRiaperta": "The payment recorded for this bank transfer has been reversed, but the row has not gone back to the queue. Reload the list and reopen the bank transfer again: the second attempt recognises the reversal already recorded and will not repeat it.",
   "erroreRiaperturaSedeNonVerificata": "We could not verify the location of this combined bank transfer: the reopening was stopped and no reversal was made. Please try again shortly.",
   "erroreConciliazioneVoceContenitore": "One of the selected items is the total of an instalment plan: you collect the instalments, not the container. Remove it from the composition and pick the instalments to settle.",
-  "erroreConciliazioneMovimentoNonLegato": "The payment has been recorded, but the bank statement row was not linked: do not repeat the operation, the money would be recorded twice. Report it so that the row can be linked."
+  "erroreConciliazioneMovimentoNonLegato": "The payment has been recorded, but the bank statement row was not linked: do not repeat the operation, the money would be recorded twice. Report it so that the row can be linked.",
+  "errorePossibileDoppione": "A child with the same name and date of birth, but a different tax code, is already enrolled at this location: if the family sent the application twice, reject this one; if it is the same child, use the existing record.",
+  "erroreAbbinamentoNonValido": "The existing record indicated cannot be used for this child: nothing was saved. Reopen the application and try the import again."
 }

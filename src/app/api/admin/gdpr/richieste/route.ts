@@ -5,6 +5,7 @@ import { requireStaff } from '@/lib/auth/require-staff'
 import { resolveScuoleAttive, scuoleDiUtente } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { anonimizzaParent, anonimizzaAlunno, type AlunnoOblio } from '@/lib/gdpr/esegui'
+import { contaAccountOblio } from '@/lib/gdpr/account-oblio'
 import { contaCosaDistrugge, sommaConteggiOblio } from '@/lib/gdpr/cosa-distrugge'
 import { eNonPiuIscritto, eAncoraIscritto } from '@/lib/alunni/stato'
 import { schemaAssente } from '@/lib/news/schema-assente'
@@ -334,20 +335,25 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       })
     }
 
-    // 1. Anonimizza il genitore richiedente.
-    const rParent = await anonimizzaParent(admin, parentId, at, op)
-    const newsVisualizzazioniRimosse = rParent.newsVisualizzazioniRimosse
-    // W5: prove di consenso ripulite di `ip`/`user_agent` (il fatto resta).
-    const consensiProvaBonificati = rParent.provaConsensiScrubbate ?? 0
-    let segnalazioni = rParent.segnalazioniBonificate
-    let sospensioni = rParent.sospensioniBonificate
+    // ─── PRIMA I FIGLI, POI IL GENITORE (2026-09-14) ─────────────────────────
+    //
+    // Fino a oggi l'ordine era il contrario, e non costava niente: i due passi non
+    // si leggono a vicenda. Da quando `anonimizzaParent` libera anche l'ACCOUNT di
+    // accesso, sì: l'account si libera solo se nessun bambino legato a lui è ancora
+    // vivo, cioè con `anonimizzato_il` a NULL. Anonimizzando il genitore per primo,
+    // i figli di QUESTA stessa richiesta risultavano vivi e l'account non si
+    // liberava mai — proprio nel canale in cui a chiederlo è la persona stessa.
+    // I conteggi sono somme: l'ordine non ne cambia nessuno.
+
     // S22 — l'oblio segue il dato: domanda d'iscrizione, allegati e foto. I
     // conteggi arrivano fin qui perché un oblio PARZIALE dev'essere visibile a
     // chi lo esegue e a chi rilegge la richiesta fra un mese: `esito` viene
     // persistito sulla riga e nell'audit. `?? 0` per prudenza sui campi nuovi.
-    let iscrizioni = rParent.iscrizioniScrubbate ?? 0
-    let file = rParent.fileRimossi ?? 0
-    let fileNonRimossi = rParent.fileNonRimossi ?? 0
+    let segnalazioni = 0
+    let sospensioni = 0
+    let iscrizioni = 0
+    let file = 0
+    let fileNonRimossi = 0
     let fotoRimosse = 0
     let fotoSganciate = 0
     // Il motivo dell'assenza (`presenze.giustificazione_testo`) e le note
@@ -359,9 +365,9 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // Le notifiche già recapitate che nominavano il minore: la campanella è un
     // archivio, non un rivolo. Arriva fin qui per la stessa ragione delle altre
     // — un oblio si racconta con dei numeri, non con un «fatto».
-    let notificheRimosse = rParent.notificheRimosse ?? 0
+    let notificheRimosse = 0
 
-    // 2. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
+    // 1. Anonimizza i figli NON iscritti + bonifica finanziaria/UGC collegata.
     let ricon = 0
     let incassi = 0
     let cassa = 0
@@ -370,7 +376,7 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
     // `student_documents` faceva marcare la richiesta come `evasa` — con un esito
     // che diceva zero file non rimossi — mentre il fascicolo sanitario del bambino
     // non era stato nemmeno letto.
-    let lettureFallite = rParent.lettureFallite ?? 0
+    let lettureFallite = 0
     for (const f of nonIscritti) {
       const r = await anonimizzaAlunno(admin, f as AlunnoOblio, at, op)
       ricon += r.riconciliazione
@@ -388,17 +394,34 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       lettureFallite += r.lettureFallite ?? 0
     }
 
+    // 2. Anonimizza il genitore richiedente — per ULTIMO, vedi sopra — e con lui
+    //    il suo account di accesso, se non serve più a nessun bambino vivo.
+    const rParent = await anonimizzaParent(admin, parentId, at, op)
+    const newsVisualizzazioniRimosse = rParent.newsVisualizzazioniRimosse
+    // W5: prove di consenso ripulite di `ip`/`user_agent` (il fatto resta).
+    const consensiProvaBonificati = rParent.provaConsensiScrubbate ?? 0
+    segnalazioni += rParent.segnalazioniBonificate
+    sospensioni += rParent.sospensioniBonificate
+    iscrizioni += rParent.iscrizioniScrubbate ?? 0
+    file += rParent.fileRimossi ?? 0
+    fileNonRimossi += rParent.fileNonRimossi ?? 0
+    notificheRimosse += rParent.notificheRimosse ?? 0
+    lettureFallite += rParent.lettureFallite ?? 0
+    const account = contaAccountOblio([rParent.account])
+
     // Un oblio incompleto non passa inosservato: alla famiglia è stato risposto
     // che quei file non ci sono più. Riga PERSISTITA (`gdpr` è in
-    // EVENTI_PERSISTITI), solo conteggi e uuid. «Incompleto» sono DUE cose: file
-    // rimasti dentro, e archivi che nessuno ha potuto aprire.
-    if (fileNonRimossi > 0 || lettureFallite > 0) {
+    // EVENTI_PERSISTITI), solo conteggi e uuid. «Incompleto» sono TRE cose: file
+    // rimasti dentro, archivi che nessuno ha potuto aprire e — dal 2026-09-14 —
+    // un account che non si è potuto liberare, con email e nome della persona.
+    if (fileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0) {
       logEvento('gdpr', 'error', {
         operazione: op,
         esito: 'oblio-parziale',
         richiesta: id,
         n_file: fileNonRimossi,
         n_letture_fallite: lettureFallite,
+        n_account_non_liberati: account.nonLiberati,
       })
     }
 
@@ -426,6 +449,11 @@ export const POST = withRoute('admin/gdpr/richieste:POST', async (request: NextR
       sospensioni_bonificate: sospensioni,
       presenze_bonificate: presenzeBonificate,
       notifiche_rimosse: notificheRimosse,
+      // L'account di accesso del genitore: chi rilegge la richiesta deve poter
+      // sapere se l'email e il nome della persona sono usciti anche da lì.
+      account_rimossi: account.rimossi,
+      account_anonimizzati: account.anonimizzati,
+      account_non_liberati: account.nonLiberati,
     }
 
     // 3. Marca la richiesta come evasa.

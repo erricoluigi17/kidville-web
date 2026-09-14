@@ -60,5 +60,6 @@
   "scegliOpzione": "Choose at least one option to continue",
   "scegliDaElenco": "Select an option to continue",
   "sostituisci": "Replace",
-  "leggiInformativaCompleta": "Read the full privacy notice"
+  "leggiInformativaCompleta": "Read the full privacy notice",
+  "codiceFiscaleNonValido": "The tax code is not valid: check the letters and numbers"
 }

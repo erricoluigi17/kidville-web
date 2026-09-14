@@ -809,16 +809,30 @@ async function documentiDiUnaPraticaViva(
  *   comuni soppressi, cioè persone vere a cui si direbbe che il proprio codice
  *   fiscale non esiste. La regola del repo è «segnala sempre, non blocca mai», ed è
  *   la stessa che tiene grigio invece che rosso il pannello dei codici fiscali.
+ *
+ * ── DOVE BLOCCA, DAL 14/09/2026 ─────────────────────────────────────────────
+ *
+ * Il primo controllo non vive più qui: lo fa `validateField`, quindi `validatePage`
+ * al punto 4 — la STESSA regola che il wizard applica premendo «Avanti», e che vale
+ * per ogni campo di codice fiscale di ogni modulo pubblico (sull'iscrizione dei
+ * bambini mancava, ed erano nati alunni doppi da un refuso). Fino a quel giorno qui
+ * c'era un rifiuto dedicato con sei frasi, una per motivo: col controllo spostato
+ * alla fonte non sarebbe stato più raggiungibile, e tenerlo avrebbe lasciato nel
+ * codice un secondo messaggio per lo stesso difetto, diverso da quello che il modulo
+ * mostra. Il MOTIVO resta nel log, come enumerato: lo ricava questa funzione.
+ *
+ * `null` quando il codice fiscale non è fra i campi respinti, e quando manca: mancante
+ * non è sbagliato, e «Campo obbligatorio» l'ha già detto `validatePage`.
  */
-const MESSAGGIO_CF: Record<MotivoCfNonValido, string> = {
-  vuoto: 'Inserisci il codice fiscale',
-  lunghezza: 'Il codice fiscale ha 16 caratteri: controlla di non averne saltato uno',
-  forma: 'Questo codice fiscale non è scritto in una forma valida: ricontrollalo',
-  giorno: 'Le due cifre del giorno di nascita non sono valide: ricontrolla il codice fiscale',
-  'data-inesistente':
-    'La data di nascita scritta nel codice fiscale non esiste sul calendario: ricontrollalo',
-  checksum:
-    'L’ultima lettera del codice fiscale non torna: di solito è un carattere digitato male',
+function motivoCodiceFiscaleRespinto(
+  campi: Record<string, string>,
+  dati: Record<string, unknown>,
+): MotivoCfNonValido | null {
+  if (campi.fiscal_code === undefined) return null
+  const cf = testo(dati.fiscal_code)
+  if (cf === null) return null
+  const esito = validaCodiceFiscale(cf)
+  return esito.valido ? null : (esito.motivi[0] ?? 'forma')
 }
 
 /*
@@ -1034,6 +1048,19 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
         esito: esitoConElenco('campi-non-validi', Object.keys(campi)),
         n: Object.keys(campi).length,
       })
+      // Il codice fiscale respinto dice anche PERCHÉ, come enumerato —
+      // `codice-fiscale-non-valido-checksum`, `…-giorno` — così si conta in SQL quale
+      // refuso arriva davvero, senza che il codice ci finisca dentro: sedici caratteri
+      // senza spazi sono un enumerato perfetto, e `redact()` li redige solo grazie a
+      // `FORMA_CODICE_FISCALE`. Non ci si appoggia a quella rete: qui il valore non si
+      // scrive proprio.
+      const motivoCf = motivoCodiceFiscaleRespinto(campi, normalizzati)
+      if (motivoCf !== null) {
+        logEvento('personale', 'warn', {
+          operazione: OPERAZIONE,
+          esito: `codice-fiscale-non-valido-${motivoCf}`,
+        })
+      }
       return NextResponse.json(
         {
           error: 'Alcuni campi non sono validi. Controlla i dati e riprova.',
@@ -1058,29 +1085,10 @@ export const POST = withRoute('iscrizione/personale:POST', async (request: NextR
 
     // ── 5. IL CODICE FISCALE, PRIMO LIVELLO: È SCRITTO BENE? ────────────────
     //
-    // Blocca (vedi la testata di `MESSAGGIO_CF`). Il motivo NON esce nel log come
-    // testo ma come enumerato — `cf-checksum`, `cf-giorno` — così si può contare in
-    // SQL quale tipo di refuso arriva davvero, senza che il codice ci finisca dentro:
-    // sedici caratteri senza spazi sono un enumerato perfetto, e `redact()` li
-    // riconosce e li redige solo grazie a `FORMA_CODICE_FISCALE`. Non ci si appoggia
-    // a quella rete: qui il valore non si scrive proprio.
+    // Già deciso al punto 4, da `validatePage`: arrivati qui il codice ha la forma
+    // giusta e il carattere di controllo torna (vedi la testata di
+    // `motivoCodiceFiscaleRespinto`, che dice perché il rifiuto dedicato non c'è più).
     const cf = testo(normalizzati.fiscal_code)
-    const esitoCf = validaCodiceFiscale(cf)
-    if (!esitoCf.valido) {
-      const motivo = esitoCf.motivi[0] ?? 'forma'
-      logEvento('personale', 'warn', {
-        operazione: OPERAZIONE,
-        esito: `codice-fiscale-non-valido-${motivo}`,
-      })
-      return NextResponse.json(
-        {
-          error: 'Alcuni campi non sono validi. Controlla i dati e riprova.',
-          codice: 'PRATICA_NON_INVIATA',
-          campi: { fiscal_code: MESSAGGIO_CF[motivo] },
-        },
-        { status: 400 },
-      )
-    }
 
     // ── 5-bis. SECONDO LIVELLO: È DI QUESTA PERSONA? ────────────────────────
     //

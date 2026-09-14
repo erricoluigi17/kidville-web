@@ -1,6 +1,7 @@
 import { expect, vi } from 'vitest'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import itPublic from '../../messages/it/public.json'
+import { calcolaCodiceFiscale } from '@/lib/fiscale/calcolo'
 import { SEDE_A, SEDE_B, SEDE_C } from './sedi'
 import { allegaAlCampoFile } from '../helpers/allega-curriculum'
 
@@ -19,9 +20,9 @@ import { allegaAlCampoFile } from '../helpers/allega-curriculum'
  * ── DENTRO NON C'È NESSUN DATO DI PERSONA VERA ─────────────────────────────
  *
  * Il repository è pubblico. L'anagrafica di prova è inventata, l'email è del
- * dominio riservato agli esempi (`example.test`), il codice fiscale è una stringa
- * di forma valida che non appartiene a nessuno, e i toponimi con i loro codici
- * catastali sono dati aperti dell'Agenzia delle Entrate — non dati personali.
+ * dominio riservato agli esempi (`example.test`), il codice fiscale è CALCOLATO su un
+ * luogo che non esiste (vedi `CF_PROVA`), e i toponimi con i loro codici catastali
+ * sono dati aperti dell'Agenzia delle Entrate — non dati personali.
  *
  * ── E IL TEMPO NON SI LEGGE MAI DALL'OROLOGIO ──────────────────────────────
  *
@@ -35,6 +36,40 @@ import { allegaAlCampoFile } from '../helpers/allega-curriculum'
 
 /** Il giorno civile con cui girano i collaudi. Iniettato, mai letto dall'orologio. */
 export const OGGI = '2026-08-12'
+
+/**
+ * Il codice fiscale che `passoDati` scrive: CALCOLATO, non incollato.
+ *
+ * ⚠️ FINO AL 2026-09-14 QUI C'ERA UN LETTERALE con la forma giusta e il carattere di
+ * controllo sbagliato, e i collaudi lo attraversavano tutti senza accorgersene: la
+ * regola del modulo guardava la sola forma. Da quel giorno `validateField` verifica
+ * anche il carattere di controllo (la ragione è in `validate-fields.ts`), e un codice
+ * che non torna ferma «Avanti» — cioè ogni collaudo che passa da qui si sarebbe
+ * fermato al secondo passo per un difetto del banco, non del prodotto.
+ *
+ * Si calcola invece di incollarlo — è la regola scritta in
+ * `anagrafica-personale-post.test.ts`: un letterale non dice PERCHÉ è valido — con il
+ * nome, il cognome, il sesso e la data che `passoDati` compila, e un luogo che NON è
+ * quello della tendina: `Z999`, che non è il codice catastale di nessun luogo. Le
+ * ragioni sono due, e la seconda è misurata:
+ *  · un codice su un luogo inesistente non può essere di nessuno;
+ *  · un codice COERENTE conterrebbe `H501` — il codice catastale che la tendina finta
+ *    associa a NAPOLI — e il riepilogo si collauda proprio perché quel valore tecnico
+ *    non compaia a schermo (`AnagraficaPersonaleWizard-riepilogo`, «il luogo di nascita
+ *    è UNA riga»): con `H501` dentro il codice fiscale quel collaudo cade.
+ * Il badge di coerenza al passo dei dati resta quindi ROSSO con la proposta, come con
+ * il letterale di prima: allora per il carattere di controllo, ora per il luogo. Il
+ * badge non blocca, e nessun collaudo che passa da qui ne dipende.
+ */
+const ESITO_CF_PROVA = calcolaCodiceFiscale({
+  nome: 'Prova',
+  cognome: 'Esempio',
+  sesso: 'F',
+  dataNascita: '1985-03-07',
+  codiceBelfiore: 'Z999',
+})
+if (!ESITO_CF_PROVA.ok) throw new Error(`anagrafica di prova non calcolabile: ${ESITO_CF_PROVA.motivo}`)
+export const CF_PROVA = ESITO_CF_PROVA.codice
 
 /** Le tre sedi finte, coi nomi nella forma vera: marchio + comune. */
 export const ALFA = { id: SEDE_A, nome: 'Kidville Aversa' }
@@ -221,7 +256,7 @@ export async function passoSede(id: string = ALFA.id): Promise<void> {
 
 /** Compila «I tuoi dati», luogo di nascita compreso, e prosegue. */
 export async function passoDati({
-  codiceFiscale = 'SPRMRA85C47F839K',
+  codiceFiscale = CF_PROVA,
 }: { codiceFiscale?: string } = {}): Promise<void> {
   await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
   fireEvent.change(screen.getByPlaceholderText('Es. Maria'), { target: { value: 'Prova' } })

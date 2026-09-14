@@ -25,10 +25,16 @@
 // oltre alla forma, si valida l'APPARTENENZA all'elenco reale (`isSiglaProvincia`),
 // così un dato inesistente viene bloccato al primo controllo — nel wizard e nel
 // POST — e non muore a valle, al pre-flight dell'import in segreteria (vicolo cieco).
+//
+// Lo stesso vale per il CODICE FISCALE (dal 14/09/2026): la forma non dice se il
+// carattere di controllo torna, e un refuso di una lettera — a valle — faceva nascere
+// un secondo alunno, perché la deduplica per codice fiscale non lo riconosceva più.
+// Il campo si riconosce dal significato (`id` o `db_mapping`), non dal pattern.
 // =============================================================================
 
 import type { FormField } from '@/types/database.types'
 import { isSiglaProvincia } from '@/lib/anagrafiche/province'
+import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
 
 /**
  * ── I DUE MESSAGGI DELL'OBBLIGO, ESPORTATI (25/08/2026) ──────────────────────
@@ -85,6 +91,20 @@ export const MSG_ALLEGA_FILE = 'Allega un file per proseguire'
  */
 export const MSG_SCEGLI_OPZIONE = 'Scegli almeno un’opzione per proseguire'
 export const MSG_SCEGLI_DA_ELENCO = 'Seleziona un’opzione per proseguire'
+/**
+ * ── IL CODICE FISCALE CHE HA LA FORMA GIUSTA E NON È DI NESSUNO (14/09/2026) ──
+ *
+ * MISURATO in produzione: nella stessa sede 7 coppie di alunni DOPPI, e in tutte i
+ * due codici fiscali differiscono per un carattere solo e uno dei due ha il carattere
+ * di controllo sbagliato. Il refuso della famiglia passava il modulo pubblico, perché
+ * qui si guardava la sola FORMA (`pattern`); la deduplica per codice fiscale non
+ * riconosceva il bambino e ne nasceva un secondo, con le rette doppie ai genitori.
+ *
+ * È una COSTANTE, e non una frase ribattuta nella funzione, per la ragione scritta
+ * sopra per l'obbligo: il client la mostra a schermo e `useMessaggioCampo` la scambia
+ * con la voce `codiceFiscaleNonValido` del catalogo, in italiano e in inglese.
+ */
+export const MSG_CODICE_FISCALE_NON_VALIDO = 'Il codice fiscale non è valido: controlla lettere e numeri'
 
 /** Tipi decorativi: non raccolgono un valore, non si validano mai. */
 const TIPI_DECORATIVI = new Set(['section_header', 'paragraph', 'signature'])
@@ -107,6 +127,24 @@ export function isProvinceField(field: FormField): boolean {
 function idSemplice(id: string): string {
   const parti = id.split('.')
   return parti[parti.length - 1] ?? id
+}
+
+/** I due nomi di colonna con cui questo schema chiama un codice fiscale. */
+const NOMI_CODICE_FISCALE = new Set(['codice_fiscale', 'fiscal_code'])
+
+/**
+ * Un campo è un CODICE FISCALE se lo dice il suo significato, non il suo pattern.
+ *
+ * ⚠️ IL PATTERN NON È UN SEGNALE AFFIDABILE: il modello del modulo arriva anche dal
+ * database (il costruttore della segreteria), dove il pattern può mancare o essere
+ * diverso — e i due template in codice ne hanno già due diversi, con e senza omocodia.
+ * Il significato sta in due posti: l'`id` (anche sotto il namespace del wizard,
+ * `children.0.codice_fiscale`) e il `db_mapping` (`alunni.codice_fiscale`), che è
+ * l'unico segnale dei campi preimpostati di `anagrafica-fields.ts`, il cui `id` è un uuid.
+ */
+function isCodiceFiscaleField(field: FormField): boolean {
+  if (NOMI_CODICE_FISCALE.has(idSemplice(field.id).toLowerCase())) return true
+  return /\.(codice_fiscale|fiscal_code)$/i.test(field.db_mapping ?? '')
 }
 
 /** True se il valore è "vuoto" ai fini della validazione. */
@@ -253,6 +291,16 @@ export function validateField(field: FormField, value: unknown): string | null {
   // sul client lo snap su blur e sul server la normalizzazione lo riducono PRIMA).
   if (isProvinceField(field) && !isSiglaProvincia(str)) {
     return `Sigla di provincia inesistente (es. ${esempioProvincia(field)})`
+  }
+
+  // 6) Codice fiscale: superata la FORMA, deve tornare il CARATTERE DI CONTROLLO (e
+  // il giorno deve esistere sul calendario). È lo stesso ragionamento delle province:
+  // una stringa che ha la forma giusta ma non è di nessuno passava il wizard e il
+  // POST, e moriva a valle — qui come un secondo bambino nato da un refuso.
+  // `validaCodiceFiscale` accetta l'omocodia (codici veri, assegnati dall'Agenzia) e
+  // ripulisce spazi e minuscole: la FORMA stretta, se c'è, l'ha già detta il pattern.
+  if (isCodiceFiscaleField(field) && !validaCodiceFiscale(str).valido) {
+    return MSG_CODICE_FISCALE_NON_VALIDO
   }
 
   return null

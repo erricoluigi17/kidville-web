@@ -21,6 +21,21 @@ import { decidiStatoElenco } from '@/lib/ui/filtri/motore'
 import { campiRicevuti } from './filtri-ricevuti'
 import { opzioniSedeAttive } from '@/components/features/admin/opzioni-sede'
 
+/**
+ * Un errore bloccante dell'import. I campi oltre a `dove`/`messaggio` esistono solo
+ * dove il pannello deve fare qualcosa di diverso dal mostrare il testo: oggi il
+ * doppione (`POSSIBILE_DOPPIONE`, 2026-09-14), a cui si risponde riusando la scheda.
+ */
+interface ErroreImport {
+  dove: string
+  messaggio: string
+  codice?: string
+  /** L'indice del bambino nella domanda, da zero: la chiave di `abbinamenti`. */
+  bambino?: number
+  /** L'unica scheda gemella; assente quando sono più d'una e non se ne propone nessuna. */
+  alunno_esistente_id?: string
+}
+
 // Esito dell'import. `success:false` = almeno un errore BLOCCANTE (referente/figlio non
 // creati): l'invio resta tra i "Da importare" e va mostrato il pannello d'errore in evidenza.
 interface ImportResult {
@@ -28,7 +43,14 @@ interface ImportResult {
   credentials?: { email: string; password: string } | null
   credentialsEmailSent?: boolean
   warnings?: string[]
-  errors?: { dove: string; messaggio: string }[]
+  errors?: ErroreImport[]
+}
+
+/** La scheda esistente che si può proporre per questo errore, oppure `null`. */
+function schedaProponibile(er: ErroreImport): { bambino: number; alunnoId: string } | null {
+  if (er.codice !== 'POSSIBILE_DOPPIONE') return null
+  if (typeof er.bambino !== 'number' || typeof er.alunno_esistente_id !== 'string') return null
+  return { bambino: er.bambino, alunnoId: er.alunno_esistente_id }
 }
 
 // "Moduli ricevuti": iscrizioni compilate via /iscrizione (enrollment_submissions)
@@ -151,6 +173,14 @@ export function ModuliRicevuti() {
   const [intestatari, setIntestatari] = useState<Record<string, string>>({})
   const [giorniScadenza, setGiorniScadenza] = useState<Record<string, string>>({})
   const [referenteIndex, setReferenteIndex] = useState(0)
+  /**
+   * «È lo stesso bambino»: indice del bambino → scheda esistente da riusare.
+   *
+   * Si ACCUMULA fra un tentativo e l'altro: con due bambini doppi la segreteria
+   * risponde al primo, l'import si ferma sul secondo, e la seconda risposta non deve
+   * far dimenticare la prima. Si azzera solo aprendo un'altra domanda.
+   */
+  const [abbinamenti, setAbbinamenti] = useState<Record<string, string>>({})
   const [working, setWorking] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
   /** La URL firmata che il browser ha rifiutato di aprire: si offre come link. */
@@ -299,6 +329,7 @@ export function ModuliRicevuti() {
     setIntestatari({})
     setGiorniScadenza({})
     setReferenteIndex(0)
+    setAbbinamenti({})
     setResult(null)
     try {
       const res = await fetch(`/api/admin/iscrizioni?id=${encodeURIComponent(row.id)}`, {
@@ -356,8 +387,19 @@ export function ModuliRicevuti() {
     else if (esito.esito === 'errore') alert(t('ricevutiDocumentoErrore'))
   }
 
-  async function doImport() {
+  /**
+   * @param nuovoAbbinamento  la risposta a un `POSSIBILE_DOPPIONE` («è lo stesso
+   *   bambino»): si aggiunge a quelle già date e l'import si ripete con TUTTO ciò che
+   *   la segreteria aveva scelto — classe, retta, intestatario. Arriva come argomento,
+   *   e non letto dallo stato dopo averlo scritto, perché `setAbbinamenti` non
+   *   aggiorna lo stato in tempo per questa stessa chiamata.
+   */
+  async function doImport(nuovoAbbinamento?: { bambino: number; alunnoId: string }) {
     if (!selected) return
+    const daMandare = nuovoAbbinamento
+      ? { ...abbinamenti, [String(nuovoAbbinamento.bambino)]: nuovoAbbinamento.alunnoId }
+      : abbinamenti
+    if (nuovoAbbinamento) setAbbinamenti(daMandare)
     setWorking(true)
     setResult(null)
     try {
@@ -377,6 +419,7 @@ export function ModuliRicevuti() {
           retteACarico: indiciDaCampi(retteACarico),
           intestatari: indiciDaCampi(intestatari),
           giorniScadenza: numeriDaCampi(giorniScadenza, {}),
+          abbinamenti: daMandare,
         }),
       })
       const json = await res.json()
@@ -597,7 +640,10 @@ export function ModuliRicevuti() {
                 setReferenteIndex={setReferenteIndex}
                 working={working}
                 result={result}
-                onImport={doImport}
+                // Una funzione che non passa l'evento: `doImport` accetta un
+                // abbinamento come primo argomento, e il clic gli darebbe il MouseEvent.
+                onImport={() => doImport()}
+                onUsaSchedaEsistente={(proposta) => doImport(proposta)}
                 onReject={doReject}
                 onViewDoc={viewDoc}
                 docBloccato={docBloccato}
@@ -627,7 +673,7 @@ function DetailPanel({
   rette, setRette, retteACarico, setRetteACarico,
   intestatari, setIntestatari, giorniScadenza, setGiorniScadenza,
   referenteIndex, setReferenteIndex,
-  working, result, onImport, onReject, onViewDoc, docBloccato, onBack,
+  working, result, onImport, onUsaSchedaEsistente, onReject, onViewDoc, docBloccato, onBack,
 }: {
   row: SubmissionRow
   sections: Section[]
@@ -647,6 +693,8 @@ function DetailPanel({
   working: boolean
   result: ImportResult | null
   onImport: () => void
+  /** Ripete l'import riusando la scheda proposta da un `POSSIBILE_DOPPIONE`. */
+  onUsaSchedaEsistente: (proposta: { bambino: number; alunnoId: string }) => void
   onReject: () => void
   onViewDoc: (path?: string) => void
   /** URL firmata che il browser ha bloccato: sta in cima, non accanto al bottone
@@ -894,9 +942,27 @@ function DetailPanel({
           </p>
           {result.errors && result.errors.length > 0 && (
             <ul className="text-xs text-kidville-error-strong list-disc ml-5 space-y-0.5">
-              {result.errors.map((er, i) => (
-                <li key={i}><strong>{er.dove}:</strong> {er.messaggio}</li>
-              ))}
+              {result.errors.map((er, i) => {
+                // Il doppione ha due uscite: rifiutare la domanda (il pulsante c'è già,
+                // qui sotto) o riusare la scheda esistente, che si offre solo quando il
+                // server ne ha trovata UNA — fra più d'una, sceglierla sarebbe indovinare.
+                const proposta = schedaProponibile(er)
+                return (
+                  <li key={i}>
+                    <strong>{er.dove}:</strong> {er.messaggio}
+                    {proposta && !done && (
+                      <button
+                        type="button"
+                        onClick={() => onUsaSchedaEsistente(proposta)}
+                        disabled={working}
+                        className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-kidville-green/40 bg-kidville-white px-3 py-1.5 text-xs font-semibold text-kidville-green hover:bg-kidville-green-soft disabled:opacity-50"
+                      >
+                        <CheckCircle2 size={13} /> {t('ricevutiUsaSchedaEsistente')}
+                      </button>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           )}
           {result.warnings && result.warnings.length > 0 && (

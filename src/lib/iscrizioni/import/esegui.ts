@@ -71,6 +71,7 @@ import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
 import { normalizzaNome } from './normalizza'
 import { consensiFotoDellaDomanda } from '@/lib/iscrizioni/consensi-foto'
+import { cercaGemelloGenitore } from '@/lib/iscrizioni/doppioni'
 import { invitaGenitore, normalizzaEmail } from './inviti'
 import type { AssegnazioneBambino, Domanda } from './analisi'
 import { pausaFraEmail } from '@/lib/email/ritmo'
@@ -101,11 +102,19 @@ function campo(o: unknown, chiave: string): string | null {
   return s === '' ? null : s
 }
 
-/** Trova un `parents` per codice fiscale, oppure lo crea. */
-async function parentDiRiferimento(
+/**
+ * Trova un `parents` per codice fiscale — o, se il codice non ne trova nessuno, per
+ * nome e data di nascita — oppure lo crea.
+ *
+ * Esportata per il collaudo (`__tests__/api/iscrizioni-import-genitore-gemello.test.ts`):
+ * è il punto in cui un refuso nel codice dell'adulto diventava una seconda scheda per
+ * la stessa persona, e provarlo da fuori significa guardare CHE COSA viene scritto.
+ */
+export async function parentDiRiferimento(
   supabase: SupabaseClient,
   grezzo: unknown,
   submissionId: string,
+  contesto: { scuolaId: string; indice: number },
 ): Promise<{ id: string; creato: boolean } | { errore: string }> {
   const cf = campo(grezzo, 'fiscal_code')?.toUpperCase() ?? null
 
@@ -115,6 +124,46 @@ async function parentDiRiferimento(
     const { data, error } = await supabase.from('parents').select('id').eq('fiscal_code', cf).maybeSingle()
     if (error) return { errore: `lettura genitore non riuscita: ${error.message}` }
     if (data) return { id: (data as { id: string }).id, creato: false }
+
+    // ─── IL GENITORE GEMELLO (2026-09-14) ─────────────────────────────────────
+    // Fra le sette coppie di alunni doppi sanate a mano quel giorno, una aveva
+    // anche la scheda genitore doppia: nata dalla seconda domanda della famiglia,
+    // con un refuso nel codice dell'adulto. Una scheda UNICA con lo stesso nome e la
+    // stessa data di nascita si riusa, come la strada manuale — e come per il codice
+    // identico NON si segna fra le create: è di una famiglia già in archivio, e se
+    // l'invito fallisse `iscrizioni_annulla` non deve toccarla.
+    //
+    // L'invito, dopo, rilegge le email della SCHEDA (`invitaGenitore`), non quelle
+    // della domanda: una corrispondenza per nome non può spostare un accesso.
+    //
+    // Più di una: non si sceglie, si crea come prima. Lettura fallita: già nel log
+    // (`cercaGemelloGenitore`), e si crea come prima — non sapere non è bocciare.
+    const gemello = await cercaGemelloGenitore(
+      supabase,
+      {
+        nome: campo(grezzo, 'first_name'),
+        cognome: campo(grezzo, 'last_name'),
+        dataNascita: campo(grezzo, 'birth_date'),
+        codiceFiscale: cf,
+      },
+      { operazione: OPERAZIONE, indice: contesto.indice + 1, domandaId: submissionId },
+    )
+    if (gemello.esito === 'trovato') {
+      const unica = gemello.schede.length === 1 ? gemello.schede[0] : null
+      // Solo uuid, indice e conteggio: nome, codice e data sono dati personali.
+      logEvento('iscrizione', 'warn', {
+        operazione: OPERAZIONE,
+        esito: unica ? 'genitore-abbinato-per-anagrafica' : 'possibile-doppione',
+        entita: 'genitore',
+        entita_tipo: 'parents',
+        indice: contesto.indice + 1,
+        sede_id: contesto.scuolaId,
+        entita_id: submissionId,
+        genitore_esistente_id: unica?.id,
+        n: gemello.schede.length,
+      })
+      if (unica) return { id: unica.id, creato: false }
+    }
   }
 
   const record = buildParentRecord({
@@ -402,8 +451,8 @@ export async function eseguiDomanda(
   /** Gli adulti con un'email, in ordine: il primo è il referente. */
   const conEmail: { parentId: string; grezzo: unknown; email: string }[] = []
 
-  for (const a of adultiGrezzi) {
-    const esito = await parentDiRiferimento(supabase, a, domanda.id)
+  for (const [indice, a] of adultiGrezzi.entries()) {
+    const esito = await parentDiRiferimento(supabase, a, domanda.id, { scuolaId, indice })
     if ('errore' in esito) return fallisci(esito.errore)
     parentIds.push(esito.id)
     const email = campo(a, 'email')

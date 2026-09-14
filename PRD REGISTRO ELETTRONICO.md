@@ -102,6 +102,109 @@
 
 ---
 
+## 👯 Changelog — Sette bambini doppi e un solo carattere sbagliato: il codice fiscale non lo controllava nessuno, e l'oblio lasciava l'account — 2026-09-14 (branch `fix/doppioni-cf-e-oblio`)
+
+**Il fatto.** Tre segnalazioni della segreteria nello stesso giorno:
+- due bambini uguali, genitori compresi;
+- genitori che vedevano ancora i bambini tolti dalle classi, con rette doppie;
+- l'account di una dipendente che non si riusciva a creare dal suo modulo.
+
+Misurate sul database, le prime due sono **un difetto solo**.
+- Nella stessa sede c'erano **7 coppie** di alunni con stesso nome, cognome e data di nascita e un
+  codice fiscale diverso per **un carattere**. In **tutte e 7** uno dei due codici non superava il
+  carattere di controllo.
+- La famiglia aveva inviato la domanda due volte, una con il refuso. L'import riconosceva il bambino
+  solo per codice fiscale identico, quindi ne nasceva un secondo, e a volte anche un secondo genitore.
+- Archiviare la copia non la toglieva ai genitori: per scelta l'archiviazione non tocca legami e
+  rette, e `GET /api/pagamenti` legge i figli senza filtri. Per un vero ritirato che deve dei soldi
+  è giusto; per un doppione no.
+
+I danni erano già concreti:
+- **una retta pagata con bonifico sulla copia archiviata**, mentre quella della copia vera restava
+  scaduta;
+- **due solleciti** partiti per una retta fantasma;
+- in 5 coppie su 7 la copia attiva aveva il codice **sbagliato**, cioè quello che finisce in
+  fattura: una fattura è già stata emessa con quel codice;
+- in 4 famiglie un genitore era collegato solo al doppione, e oggi non vedeva nessun figlio.
+
+**La sanatoria** è stata eseguita in produzione lo stesso giorno, famiglia per famiglia, dentro il
+piano approvato. Istruzioni, guardie, verifica e ritorno sono in
+`docs/sanatoria-doppioni-e-account-orfano-2026-09-14.md`, solo uuid.
+- I genitori mancanti sono passati sulla copia buona. **Chi paga resta chi paga oggi**, per
+  decisione del titolare: il genitore aggiunto vede ma non è intestatario.
+- Le rette fantasma sono cancellate e la retta pagata è spostata.
+- Il codice fiscale valido è sulla copia che resta, e i doppioni sono archiviati.
+
+**La correzione** interviene in tre punti.
+
+1. **Alla fonte: il carattere di controllo nel modulo pubblico.**
+   - `validateField` (`src/lib/forms/validate-fields.ts`) applica `validaCodiceFiscale` a ogni campo
+     codice fiscale, riconosciuto da `db_mapping` (`.codice_fiscale`/`.fiscal_code`) o dall'`id` e
+     non dal pattern, perché il modello del modulo arriva anche dal DB.
+   - Vale per il wizard e per le rotte pubbliche: il 400 nomina il campo, con la frase «Il codice
+     fiscale non è valido: controlla lettere e numeri».
+   - La rotta del personale perde il suo rifiuto dedicato, ormai irraggiungibile; il log con il
+     motivo resta.
+   - In produzione i campi codice fiscale esistono solo nel modulo d'iscrizione standard, per
+     bambino e adulto: nessun modulo li usa per una partita IVA.
+2. **All'import: il gemello non nasce più.** Nuovo `src/lib/iscrizioni/doppioni.ts`, condiviso.
+   - **Import manuale.** Codice non trovato ma bambino con lo stesso nome e data di nascita in sede
+     → errore bloccante `POSSIBILE_DOPPIONE`, e nel pannello il pulsante «È lo stesso bambino: usa
+     la scheda esistente». Il pulsante manda `abbinamenti`, accettati solo se l'id è fra i gemelli
+     trovati dal server e passa il gate di sede; altrimenti `ABBINAMENTO_NON_VALIDO`.
+   - **Import massivo.** La domanda va in `da_controllare` con il motivo.
+   - **Genitori.** Un gemello unico si riusa, con un avviso. L'accesso resta sull'email **della
+     scheda**, non su quella del modulo: nome e data di nascita non bastano a spostare il login di
+     qualcuno.
+   - **Codice fiscale errato.** Diventa un avviso non bloccante, perché la domanda non si corregge
+     dall'interfaccia.
+3. **L'oblio libera l'account** (`src/lib/gdpr/account-oblio.ts`).
+   - `anonimizzaParent` anonimizzava la scheda ma lasciava `utenti` e `auth.users`, cioè email,
+     nome e `ruolo='genitore'`. Uno di questi account, di prova e mai usato, teneva occupata
+     l'email di una dipendente, e la sua pratica del personale si fermava su `email_gia_genitore`.
+   - **Quando l'account si libera:** se è di un genitore (non del personale) e non ha figli vivi né
+     altre schede vive. Legami residui e utente auth si cancellano.
+   - **Quando si anonimizza invece:** se ha conversazioni o risposte agli avvisi, che la cascata
+     distruggerebbe e l'oblio conserva, o se Postgres rifiuta la cancellazione. L'anonimizzazione
+     mette email non instradabile, nome segnaposto, `attivo=false` e ban.
+   - Un account non liberato rende l'oblio `oblio-parziale`, non «eseguito».
+   - Nel canale delle richieste i figli si anonimizzano **prima** del genitore, altrimenti risultano
+     ancora vivi e l'account non si libera mai.
+
+**Logging:**
+- `iscrizione`: `possibile-doppione`, `abbinato-a-scheda-esistente`, `abbinamento-rifiutato`,
+  `genitore-abbinato-per-anagrafica`, `gemello-non-verificabile`;
+- `gdpr`: `account-rimosso`, `account-anonimizzato`, `account-non-toccato-*`, `account-non-riuscito`;
+- solo uuid, indici e conteggi.
+
+**Test:** 5 file nuovi sull'import, 3 sull'oblio e 1 sulla traduzione del messaggio, più i test
+estesi di `validate-fields`.
+- Ogni test è stato visto rosso prima del codice.
+- Ogni correzione è stata poi rotta apposta, e il test giusto è tornato rosso.
+- I codici fiscali fittizi di E2E, seed e fixture ora superano il carattere di controllo
+  (catastale `Z999`, che non appartiene a nessuno). Il reset del seed toglie anche i vecchi, rimasti
+  nel DB della CI.
+
+**Nessuna migrazione.**
+
+⚠️ **Cosa resta aperto, detto qui perché non si perda:**
+- **La fattura emessa con il codice errato del bambino.** SDI la segna «Recapito impossibile»,
+  quindi è emessa e depositata. Serve una decisione contabile: nota di credito e riemissione,
+  oppure nulla.
+- **Altre ~16 anagrafiche attive con il codice errato** e senza doppione: restano nel riquadro
+  «Codici fiscali da verificare».
+- **Difetto preesistente, trovato lavorando qui e NON corretto in questo rilascio.** Quando l'import
+  manuale riconosce un genitore per codice fiscale **identico**, passa a `ensureParentIdentity`
+  l'email **della domanda**, e `allineaIndirizzoAccesso` riscrive il login dell'account esistente.
+  Una domanda con il codice di un genitore già in archivio e un'altra email, una volta importata,
+  sposta il suo accesso su quell'email.
+- **L'avviso di conferma dell'oblio** (`OBLIO_DISTRUGGE`) non annuncia ancora la cancellazione
+  dell'account di accesso.
+- **Il modulo d'iscrizione respinge i codici omocodici.** È un difetto preesistente, nel pattern di
+  `enrollment-template.ts`.
+
+---
+
 ## 🏦 Changelog — Un bonifico paga la retta, il pomeridiano e i ticket di due fratelli in due plessi, e produce UNA fattura sola — 2026-09-13 (branch `feat/conciliazione-composita`)
 
 **Il fatto da cui è nata.** Un movimento bancario si abbinava a **una voce sola**. Ma il bonifico

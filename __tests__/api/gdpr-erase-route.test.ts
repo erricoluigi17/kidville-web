@@ -389,6 +389,11 @@ describe('POST /api/admin/gdpr/erase', () => {
         'consensi_prova_bonificati',
         'push_subscriptions_rimosse',
         'notifiche_rimosse',
+        // Che ne è stato degli ACCOUNT dei genitori (2026-09-14): anche questi
+        // descrivono COM'È ANDATA l'esecuzione, non un conteggio fatto prima.
+        'account_rimossi',
+        'account_anonimizzati',
+        'account_non_liberati',
       ].sort(),
     )
     // L'asserzione che regge il titolo, e che l'elenco da solo non renderebbe

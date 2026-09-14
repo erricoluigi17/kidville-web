@@ -468,6 +468,23 @@ const AMMESSE: Record<string, Esenzione> = {
       'il filtro esiste ed è in `src/lib/sidi/payload.ts` (`a.stato !== STATO_ISCRITTO || !a.section_id`): questa route legge `stato` proprio per passarglielo',
   },
 
+  // ── RICONOSCERE UN DOPPIONE: l'archiviato è proprio quello da trovare ──────
+  // (2026-09-14) Prima di creare un alunno, i due import cercano in sede un bambino
+  // con lo stesso nome e la stessa data di nascita ma un codice fiscale diverso.
+  // Quel giorno le coppie di doppioni erano sette, e le copie sbagliate erano quasi
+  // tutte ARCHIVIATE: archiviare non stacca legami e rette, quindi i genitori
+  // continuavano a vedere il doppione e a riceverne i solleciti. Un filtro di stato
+  // qui renderebbe la ricerca cieca esattamente sul caso che ha fatto nascere il
+  // controllo — e creerebbe il terzo alunno accanto ai due che esistono già.
+  // Non è un elenco operativo: non mostra niente a nessuno, e il suo esito ferma un
+  // import (o lo mette fra le «da controllare») invece di popolare una schermata.
+  // Gli anonimizzati si scartano nella funzione: di quel bambino non resta nessuno.
+  'src/lib/iscrizioni/doppioni.ts::cercaGemelloAlunno': {
+    scoperte: 1,
+    ragione:
+      'riconoscimento dei doppioni all’import: una copia ARCHIVIATA è ancora legata a genitori e rette, ed è proprio il gemello da trovare — con un filtro di stato l’import creerebbe un terzo alunno accanto a due già esistenti',
+  },
+
   // ───────────────────────────────────────────────────────────────────────────
   // LETTURE PER SEZIONE — dal 2026-08-13 non più esenti per forma
   //

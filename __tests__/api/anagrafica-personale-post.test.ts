@@ -559,6 +559,7 @@ import {
 import { VERSIONE_PRIVACY } from '@/lib/legal/versioni'
 import { calcolaCodiceFiscale } from '@/lib/fiscale/calcolo'
 import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
+import { MSG_CODICE_FISCALE_NON_VALIDO } from '@/lib/forms/validate-fields'
 // Il serializzatore VERO: le prove sul dossier nel log devono passare dalla catena
 // che gira in produzione (`logErrore` → `descriviErrore` → `sanificaMessaggio`), non
 // da una sua imitazione. Un test che rifacesse la maschera proverebbe sé stesso.
@@ -1275,6 +1276,11 @@ describe('POST /api/iscrizione/personale · il codice fiscale, due livelli disti
     const corpo = await res.json()
     expect(corpo.codice).toBe('PRATICA_NON_INVIATA')
     expect(Object.keys(corpo.campi)).toEqual(['fiscal_code'])
+    // ⚠️ E CON LA STESSA FRASE DEL MODULO. Dal 2026-09-14 il carattere di controllo lo
+    // verifica `validateField`, che il wizard rigira su «Avanti»: una frase diversa qui
+    // sarebbe un secondo messaggio per lo stesso difetto, e la persona lo leggerebbe
+    // sotto lo stesso campo dopo l'invio.
+    expect(corpo.campi.fiscal_code).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
     expect(h.inserts, 'un codice fiscale inesistente è arrivato in tabella').toHaveLength(0)
 
     // Il MOTIVO si logga come enumerato, così si può contare in SQL quale refuso

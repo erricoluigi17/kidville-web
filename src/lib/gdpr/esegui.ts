@@ -15,6 +15,7 @@ import { percorsoNelBucket as percorsoDelBucket } from '@/lib/allegati/storage'
 import { BUCKET_CHAT_ALLEGATI, normalizzaAllegatoChat } from '@/lib/chat/allegati'
 import { rimuoviEVerifica, bloccanti } from '@/lib/storage/rimozione-verificata'
 import { obliaFotoNewsAlunno } from '@/lib/news/permanenza-consenso'
+import { liberaAccountGenitore, type EsitoAccountOblio } from '@/lib/gdpr/account-oblio'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 
 // =============================================================================
@@ -1309,7 +1310,9 @@ export async function obliaFotoAlunno(
  * (che lo azzera), applica il patch PII, cancella il tracciamento di lettura
  * news legato a quell'identità (altrimenti resterebbe joinabile a tempo
  * indefinito) e bonifica il testo libero UGC (segnalazioni + sospensioni) in
- * cui il genitore è coinvolto. Ritorna i conteggi delle righe toccate.
+ * cui il genitore è coinvolto. Per ULTIMO libera l'account di accesso
+ * (`liberaAccountGenitore`, dal 2026-09-14). Ritorna i conteggi delle righe
+ * toccate e l'esito dell'account.
  */
 export async function anonimizzaParent(
   supabase: SupabaseClient,
@@ -1334,6 +1337,13 @@ export async function anonimizzaParent(
    * riporterebbe «zero» per metà dell'operazione.
    */
   lettureFallite: number
+  /**
+   * Che ne è stato dell'ACCOUNT di accesso (`utenti` + `auth.users`). Campo nato il
+   * 2026-09-14: fino ad allora l'oblio si fermava alla scheda e lasciava email, nome e
+   * `ruolo = 'genitore'` della persona. `non-deciso` e `non-riuscito` rendono l'oblio
+   * PARZIALE: le route li contano in `account_non_liberati`. Vedi `account-oblio.ts`.
+   */
+  account: EsitoAccountOblio
 }> {
   // 1. Raccogli PRIMA dell'azzeramento: l'`auth_user_id` (ponte verso lo
   //    spazio-id `utenti`), il codice fiscale e il percorso del documento
@@ -1516,6 +1526,10 @@ export async function anonimizzaParent(
   //     spazi (la route li accetta entrambi come destinatario): si cercano tutti
   //     e due.
   let allegatiChat = { rimossi: 0, nonRimossi: 0, letto: true }
+  // Quanti thread ha l'account: al passo 8 decide se l'account si può CANCELLARE,
+  // perché `chat_threads.parent_id` è ON DELETE CASCADE verso `utenti`. `null` =
+  // non si è potuto leggere, e allora non si cancella.
+  let threadChatAccount: number | null = null
   if (authUserId) {
     const { data: threadRows, error: errThread } = await supabase
       .from('chat_threads')
@@ -1527,9 +1541,13 @@ export async function anonimizzaParent(
         // Senza l'elenco dei thread non si è nemmeno guardato dentro la chat: gli
         // allegati restano, e il chiamante deve saperlo (vedi `EsitoTabellaOblio.letto`).
         allegatiChat = { rimossi: 0, nonRimossi: 0, letto: false }
+      } else {
+        // Schema della chat assente: nessun thread, e nessuna cascata da temere.
+        threadChatAccount = 0
       }
     } else {
       const threadIds = ((threadRows ?? []) as { id: string }[]).map((t) => t.id)
+      threadChatAccount = threadIds.length
       allegatiChat = await obliaAllegatiChat(supabase, threadIds, op)
     }
   }
@@ -1540,6 +1558,25 @@ export async function anonimizzaParent(
   //    Chi scrive l'audit usa l'uno o l'altro a seconda del punto della
   //    codebase: cercarne uno solo lascerebbe indietro metà delle righe.
   await bonificaAuditScritture(supabase, [parentId, authUserId], op)
+
+  // 8. L'ACCOUNT DI ACCESSO (2026-09-14). Fino a qui l'oblio si fermava alla
+  //    scheda: `utenti` e `auth.users` conservavano email, nome e `ruolo =
+  //    'genitore'` della persona, e quella email restava «occupata» — misurato:
+  //    l'approvazione della pratica di una dipendente con lo stesso indirizzo
+  //    rispondeva 409 `email_gia_genitore`.
+  //
+  //    Sta IN CODA, e l'ordine non è di stile: cancellare l'utente porta via in
+  //    CASCADE `chat_threads` e `chat_messages` (FK del baseline), cioè le righe da
+  //    cui il passo 6-bis ritrova gli allegati da togliere dal bucket. Anticipato,
+  //    lascerebbe nell'archivio file che nessuna riga nomina più — il guasto
+  //    invisibile descritto in testa a `obliaFileDaTabella`.
+  //
+  //    Usa l'`authUserId` letto al punto 1: `patchParent` l'ha già azzerato.
+  const account = await liberaAccountGenitore(
+    supabase,
+    { parentId, authUserId, schedaAnonimizzata: !errU, threadChat: threadChatAccount },
+    op,
+  )
 
   return {
     newsVisualizzazioniRimosse,
@@ -1557,6 +1594,7 @@ export async function anonimizzaParent(
     // non riesce a elencare il bucket lo dice già alzando `nonRimossi` (non ha una
     // tabella-indice: l'elenco È il suo inventario).
     lettureFallite: [iscr.letto, allegatiChat.letto].filter((l) => l === false).length,
+    account,
   }
 }
 

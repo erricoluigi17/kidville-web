@@ -427,5 +427,7 @@
   "erroreRiaperturaStornataNonRiaperta": "L’incasso di questo bonifico è stato stornato, ma la riga non è tornata in coda. Ricarica l’elenco e riapri di nuovo il bonifico: il secondo tentativo riconosce lo storno già registrato e non lo ripete.",
   "erroreRiaperturaSedeNonVerificata": "Non siamo riusciti a verificare la sede di questo bonifico composito: la riapertura è stata fermata e nessuno storno è partito. Riprova fra poco.",
   "erroreConciliazioneVoceContenitore": "Una delle voci scelte è il totale di un piano a rate: si incassano le rate, non il contenitore. Toglila dalla composizione e scegli le rate da saldare.",
-  "erroreConciliazioneMovimentoNonLegato": "L’incasso è stato registrato, ma la riga dell’estratto conto non è stata legata: non ripetere l’operazione, il denaro risulterebbe incassato due volte. Segnala l’accaduto perché la riga venga legata."
+  "erroreConciliazioneMovimentoNonLegato": "L’incasso è stato registrato, ma la riga dell’estratto conto non è stata legata: non ripetere l’operazione, il denaro risulterebbe incassato due volte. Segnala l’accaduto perché la riga venga legata.",
+  "errorePossibileDoppione": "In questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso: se la famiglia ha inviato la domanda due volte, rifiuta questa; se è lo stesso bambino, usa la scheda esistente.",
+  "erroreAbbinamentoNonValido": "La scheda esistente indicata non si può usare per questo bambino: non è stato scritto nulla. Riapri la domanda e riprova l’import."
 }

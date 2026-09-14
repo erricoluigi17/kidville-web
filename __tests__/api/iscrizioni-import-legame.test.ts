@@ -216,14 +216,18 @@ describe('import iscrizioni — legame runtime oltre a student_parents', () => {
         createdAuth: false, createdUtenti: false, boundNow: false, password: null,
       })
       .mockResolvedValueOnce({ ok: false, reason: 'email_conflict', message: 'già collegata' })
+    // Codici fiscali fittizi ma VALIDI (catastale Z999, non assegnato a nessuno stato):
+    // dal 2026-09-14 un codice che non regge produce un avviso suo, e questo test deve
+    // continuare a pretendere ZERO avvisi — cioè a provare che la casella condivisa,
+    // da sola, non ne produce nessuno.
     h.sub = {
       id: SUB_ID,
       scuola_id: 'sc-1',
       data: {
-        children: [{ nome: 'Bimbo', codice_fiscale: 'CFC1' }],
+        children: [{ nome: 'Bimbo', codice_fiscale: 'XQQYKV19C07Z999T' }],
         adults: [
-          { first_name: 'Anna', fiscal_code: 'CF1', email: 'unica@example.test', ruolo: 'mother' },
-          { first_name: 'Bruno', fiscal_code: 'CF2', email: 'unica@example.test', ruolo: 'father' },
+          { first_name: 'Anna', fiscal_code: 'XQQYKV80A01Z999I', email: 'unica@example.test', ruolo: 'mother' },
+          { first_name: 'Bruno', fiscal_code: 'XQQYKV82B41Z999N', email: 'unica@example.test', ruolo: 'father' },
         ],
       },
     }

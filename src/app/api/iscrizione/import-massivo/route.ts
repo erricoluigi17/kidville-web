@@ -70,6 +70,7 @@ import {
 } from '@/lib/iscrizioni/import/lotto'
 import { decidi } from '@/lib/iscrizioni/import/analisi'
 import { eseguiDomanda } from '@/lib/iscrizioni/import/esegui'
+import { primoGemelloFraIBambini } from '@/lib/iscrizioni/doppioni'
 import { normalizzaNomeSezione } from '@/lib/alunni/sezione'
 import { invitiPrevisti, riprendiInvitiSospesi, emailSpediteOggi } from '@/lib/iscrizioni/import/inviti'
 import { pausaFraEmail } from '@/lib/email/ritmo'
@@ -487,6 +488,67 @@ export const POST = withRoute('iscrizione/import-massivo:POST', async (request: 
             }
             continue
           }
+        }
+
+        // ── PRE-FLIGHT doppione: lo stesso bambino, con un codice diverso? ──
+        //
+        // Misurato il 2026-09-14: sette coppie di alunni doppi nella stessa sede,
+        // tutte con stesso nome, cognome e data di nascita e codici fiscali diversi
+        // per UN carattere — spesso la famiglia aveva inviato il modulo due volte,
+        // una col refuso. `alunnoDiRiferimento` riconosce un bambino solo per codice
+        // IDENTICO, quindi il refuso passava da «bambino nuovo»: un secondo alunno,
+        // due rette, i solleciti sulla retta fantasma.
+        //
+        // Qui non c'è una persona davanti, e il gemello non si risolve da solo: se la
+        // domanda è doppia va rifiutata, se è la stessa con un refuso va riusata la
+        // scheda — e fra le due sa scegliere solo la segreteria, che nell'import a
+        // mano trova il pulsante per farlo. Stessa forma del pre-flight sulla sezione:
+        // `da_controllare` col motivo scritto, nessuna scrittura (non è ancora stato
+        // creato niente), e una lettura fallita NON boccia la domanda.
+        //
+        // Il codice della domanda è quello che `alunnoDiRiferimento` cercherà: chi lo
+        // porta identico è la stessa scheda, non un gemello (una re-iscrizione).
+        const gemello = await primoGemelloFraIBambini(
+          supabase,
+          scuolaId,
+          decisione.assegnazioni.map((a) => ({
+            indice: a.indice,
+            nome: domanda.bambini[a.indice]?.nome,
+            cognome: domanda.bambini[a.indice]?.cognome,
+            dataNascita: domanda.bambini[a.indice]?.dataNascita,
+            codiceFiscale: domanda.bambini[a.indice]?.codiceFiscale,
+          })),
+          { operazione: JOB, domandaId: id },
+        )
+        if (gemello) {
+          daControllare++
+          perSede(scuolaId).daControllare++
+          const n = gemello.schede.length
+          // Solo uuid, indice e conteggio: il nome e il codice con cui si è cercato
+          // sono di un minore. Il nome sta nel MOTIVO, che legge la segreteria.
+          logEvento('iscrizione', 'warn', {
+            operazione: JOB,
+            esito: 'possibile-doppione',
+            entita: 'bambino',
+            entita_tipo: 'alunni',
+            indice: gemello.indice + 1,
+            sede_id: scuolaId,
+            entita_id: id,
+            alunno_esistente_id: n === 1 ? gemello.schede[0].id : undefined,
+            n,
+          })
+          if (!dryRun) {
+            const b = domanda.bambini[gemello.indice]
+            const chi = `${b?.cognome ?? ''} ${b?.nome ?? ''}`.trim() || `Il bambino ${gemello.indice + 1}`
+            await supabase.rpc('iscrizioni_sospendi', {
+              p_submission_id: id,
+              p_stato: 'da_controllare',
+              p_motivo: n === 1
+                ? `${chi}: in questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso. Se la famiglia ha inviato la domanda due volte, questa va rifiutata; se è lo stesso bambino, va importata a mano scegliendo di usare la scheda esistente.`
+                : `${chi}: in questa sede esistono già ${n} bambini con lo stesso nome e la stessa data di nascita, ma con codici fiscali diversi: potrebbero essere già dei doppioni. Prima di importare vanno controllate quelle schede; se la famiglia ha inviato la domanda due volte, questa va rifiutata.`,
+            })
+          }
+          continue
         }
 
         // ── IL TETTO, MISURATO PRIMA DI COMINCIARE ────────────────────────

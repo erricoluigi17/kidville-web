@@ -93,8 +93,18 @@ const ESENTE = 'src/lib/logging/';
 // FILE, un video di durata giusta, congelato su un fotogramma e muto, che il primo a vedere era
 // il genitore. Il tetto si stringe insieme al debito: lasciarlo a 48/76 dopo una bonifica di 5
 // occorrenze significa tenere credito non speso, cioè un tetto che non misura più niente.
-const MAX_FILE = 47;
-const MAX_OCCORRENZE = 71;
+//
+// 🔻 47 → 46 e 71 → 69 il 2026-09-14: la logica della chat esce dalle due pagine gemelle e va in
+// `useConversazioneChat`, e con lei la PATCH «segna letto» immediata, che in entrambe finiva in
+// `.catch(() => {/* silenzioso */})`. Quel silenzio non perdeva una riga di log qualunque: un
+// messaggio segnato letto (o NON segnato) dal realtime non lasciava traccia da nessuna parte,
+// mentre il mittente guardava la spunta. Nel hook il ramo logga (`chat-segna-letti-fallito`).
+// `teacher/chat/page.tsx` scende a zero ed esce dall'allowlist; `parent/chat/page.tsx` scende a 1
+// (resta il `.catch` sulla configurazione degli orari, fuori da questo intervento). Le parti
+// successive dello stesso lavoro toccano gli stessi file: i numeri vanno RIMISURATI sul ramo
+// unito, non presi da qui.
+const MAX_FILE = 46;
+const MAX_OCCORRENZE = 69;
 
 /**
  * I percorsi bonificati in questo ciclo, che NON possono tornare in allowlist. Non è un

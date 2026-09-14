@@ -364,8 +364,28 @@ describe('useConversazioneChat — D1: il polling dei messaggi è silenzioso', (
     });
 });
 
+/**
+ * La conversazione montata a schermo, come la monta la pagina: un contenitore `chat-messaggi`. Il hook
+ * manda la PATCH immediata solo se ce n'è uno visibile e non coperto da `inert`; senza, il test della
+ * deduplica passerebbe per il motivo sbagliato (nessuna PATCH immediata da deduplicare).
+ */
+function montaContenitore(coperto = false): () => void {
+    const radice = document.createElement('div');
+    if (coperto) radice.setAttribute('inert', '');
+    const contenitore = document.createElement('div');
+    contenitore.setAttribute('data-testid', 'chat-messaggi');
+    radice.appendChild(contenitore);
+    document.body.appendChild(radice);
+    return () => radice.remove();
+}
+
 describe('useConversazioneChat — D3: segnare letto solo ciò che si è visto, una volta', () => {
+    let smonta: () => void = () => {};
+    beforeEach(() => {
+        smonta = montaContenitore();
+    });
     afterEach(() => {
+        smonta();
         Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
         Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
     });
@@ -773,5 +793,26 @@ describe('useConversazioneChat — D4: al rientro del realtime si recupera ciò 
         expect(conta('GET', '/api/chat/threads')).toBe(primaT);
         expect(conta('GET', '/api/chat/messages')).toBe(primaM);
         expect(rientri()[0]).toMatchObject({ messaggio: 'chat-realtime-rientrato: pagina-nascosta' });
+    });
+});
+
+describe('useConversazioneChat — [inert]: sotto il blocco biometrico non si segna letto niente', () => {
+    it('con la conversazione coperta da inert, un messaggio altrui dal realtime non parte come letto', async () => {
+        const smonta = montaContenitore(true);
+        try {
+            rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T08:00:00.000Z' })];
+            const { result } = monta();
+            await pronto(result);
+            act(() => result.current.apri(TA as never));
+            await waitFor(() => expect(result.current.messaggi).toHaveLength(1));
+            const prima = conta('PATCH', '/api/chat/messages/read');
+
+            act(() => realtime().onNewMessage(nuovoMessaggio({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:05:00.000Z' })));
+            await scorri();
+
+            expect(conta('PATCH', '/api/chat/messages/read'), 'segnato letto un messaggio coperto dal blocco: il mittente vede la spunta').toBe(prima);
+        } finally {
+            smonta();
+        }
     });
 });

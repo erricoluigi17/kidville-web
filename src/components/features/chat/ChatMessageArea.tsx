@@ -346,6 +346,13 @@ export function ChatMessageArea({
     // osservava anche le bolle dell'altra: ogni lotto di letti partiva due volte. E l'effetto dipende
     // anche da `loading`: i messaggi arrivati mentre c'era lo spinner (niente contenitore montato)
     // non venivano più osservati quando lo spinner spariva, perché l'array dei messaggi era lo stesso.
+    //
+    // ⚠️ CIÒ CHE È COPERTO NON È VISTO (2026-09-14). `BiometricGate` lascia la pagina montata sotto
+    // un `inert`, e una modale rende inerte lo sfondo: una bolla lì sotto interseca il viewport ma
+    // nessuno la sta leggendo. Con l'apertura della conversazione dal tocco su una notifica, a
+    // freddo, si segnavano letti messaggi coperti dal blocco — e il mittente vedeva la spunta. Una
+    // bolla coperta non si segna e NON si smette di osservare; quando un `inert` sparisce si riosserva,
+    // perché l'IntersectionObserver da solo non riscatta se l'intersezione non è cambiata.
     useEffect(() => {
         if (!onMarkRead) return;
 
@@ -354,11 +361,14 @@ export function ChatMessageArea({
         const contenitore = contenitoreRef.current;
         if (!contenitore) return;
 
-        observerRef.current = new IntersectionObserver(
-            (entries) => {
-                let hasNew = false;
-                entries.forEach((entry) => {
-                    if (entry.isIntersecting) {
+        const osserva = () => {
+            observerRef.current?.disconnect();
+            observerRef.current = new IntersectionObserver(
+                (entries) => {
+                    let hasNew = false;
+                    entries.forEach((entry) => {
+                        if (!entry.isIntersecting) return;
+                        if ((entry.target as Element).closest('[inert]')) return; // coperto: non visto
                         const id = (entry.target as HTMLElement).dataset.messageId;
                         if (id) {
                             pendingMarkRead.current.add(id);
@@ -366,18 +376,26 @@ export function ChatMessageArea({
                             // Smetti di osservare una volta visto
                             observerRef.current?.unobserve(entry.target);
                         }
-                    }
-                });
-                if (hasNew) scheduleFlush();
-            },
-            { threshold: 0.5 }
-        );
+                    });
+                    if (hasNew) scheduleFlush();
+                },
+                { threshold: 0.5 }
+            );
 
-        // Osserva i messaggi non letti dell'interlocutore di QUESTO contenitore
-        const unreadEls = contenitore.querySelectorAll('[data-unread="true"]');
-        unreadEls.forEach(el => observerRef.current?.observe(el));
+            // Osserva i messaggi non letti dell'interlocutore di QUESTO contenitore
+            const unreadEls = contenitore.querySelectorAll('[data-unread="true"]');
+            unreadEls.forEach(el => observerRef.current?.observe(el));
+        };
+        osserva();
+
+        // Uno sblocco (o una modale che si chiude) toglie un `inert`: si riosserva.
+        const coperture = typeof MutationObserver === 'undefined'
+            ? null
+            : new MutationObserver(() => osserva());
+        coperture?.observe(document.body, { attributes: true, attributeFilter: ['inert'], subtree: true });
 
         return () => {
+            coperture?.disconnect();
             observerRef.current?.disconnect();
             if (debounceTimer.current) clearTimeout(debounceTimer.current);
         };

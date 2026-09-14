@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, act } from '@testing-library/react';
 import { ChatMessageArea, type ChatMessage } from '@/components/features/chat/ChatMessageArea';
 
 /**
@@ -136,5 +136,56 @@ describe('ChatMessageArea — l’observer dei letti guarda solo DENTRO il propr
         vi.advanceTimersByTime(600);
         expect(onMarkRead).toHaveBeenCalledWith(['m-a']);
         vi.useRealTimers();
+    });
+});
+
+describe('ChatMessageArea — [inert]: ciò che è coperto non è visto', () => {
+    beforeAll(() => {
+        vi.stubGlobal('IntersectionObserver', FintoIO as unknown as typeof IntersectionObserver);
+    });
+
+    afterEach(() => {
+        osservatori.length = 0;
+        vi.useRealTimers();
+    });
+
+    it('dentro un elemento inert (il blocco biometrico lascia la pagina montata) una bolla visibile non arriva a onMarkRead', () => {
+        vi.useFakeTimers();
+        const onMarkRead = vi.fn();
+        render(
+            <div inert>
+                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={onMarkRead} />
+            </div>,
+        );
+        const o = attivi().find((x) => x.osservati.length > 0);
+        expect(o, 'la bolla non è nemmeno osservata').toBeDefined();
+        o?.cb([{ isIntersecting: true, target: o.osservati[0] }]);
+        vi.advanceTimersByTime(600);
+        expect(onMarkRead, 'segnata letta una bolla coperta dal blocco').not.toHaveBeenCalled();
+    });
+
+    it('tolto l’inert, la bolla già visibile torna sotto osservazione e viene segnata', async () => {
+        const onMarkRead = vi.fn();
+        render(
+            <div data-testid="copertura" inert>
+                <ChatMessageArea messages={[nonLetto('m-a', 'Bolla di A')]} currentUserId="gen-1" otherUserName="Dora" firstUnreadId={null} onMarkRead={onMarkRead} />
+            </div>,
+        );
+        const primo = attivi().find((x) => x.osservati.length > 0);
+        primo?.cb([{ isIntersecting: true, target: primo.osservati[0] }]);
+        const creatiPrima = osservatori.length;
+
+        // Lo sblocco: l'IntersectionObserver da solo non riscatta, perché l'intersezione non cambia.
+        await act(async () => {
+            screen.getByTestId('copertura').removeAttribute('inert');
+            await Promise.resolve();
+        });
+
+        const nuovo = osservatori.slice(creatiPrima).find((x) => !x.scollegato && x.osservati.length > 0);
+        expect(nuovo, 'dopo lo sblocco nessuno osserva più la bolla: resterà non letta').toBeDefined();
+        vi.useFakeTimers();
+        nuovo?.cb([{ isIntersecting: true, target: nuovo.osservati[0] }]);
+        vi.advanceTimersByTime(600);
+        expect(onMarkRead).toHaveBeenCalledWith(['m-a']);
     });
 });

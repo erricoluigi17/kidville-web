@@ -71,6 +71,20 @@ export type EsitoInvio =
  */
 export type EsitoApertura = 'aperto' | 'non-trovato' | 'errore' | 'annullato';
 
+/**
+ * La conversazione è davvero davanti agli occhi di qualcuno, adesso?
+ *
+ * Pagina visibile, e almeno un contenitore dei messaggi montato e NON dentro un elemento `inert`:
+ * `BiometricGate` lascia la pagina montata sotto un `inert` finché non si sblocca, e una modale rende
+ * inerte lo sfondo. Senza contenitore (lista vuota, spinner) non lo si può dire: la PATCH immediata
+ * non parte, e ci pensa l'IntersectionObserver quando la bolla compare davvero.
+ */
+function conversazioneVisibileAdesso(): boolean {
+    if (typeof document === 'undefined' || document.visibilityState !== 'visible') return false;
+    const contenitori = document.querySelectorAll('[data-testid="chat-messaggi"]');
+    return Array.from(contenitori).some((c) => !c.closest('[inert]'));
+}
+
 interface Opzioni {
     userId: string | null;
     ready: boolean;
@@ -374,10 +388,11 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                 if (!propriaPostInVolo) void caricaMessaggi(msg.thread_id, { silenzioso: true, nonPrimaDi: Date.now() });
             }
             // Il messaggio altrui arriva nella conversazione aperta: lo si segna letto subito — ma
-            // SOLO se la pagina è visibile. Col telefono in tasca (D3) il mittente vedeva la spunta
-            // gialla su un messaggio che nessuno aveva letto. Passa da `segnaLetti`, che non
-            // ripete la PATCH quando poi l'IntersectionObserver vede la bolla.
-            if (msg.sender_id !== userId && document.visibilityState === 'visible') {
+            // SOLO se la conversazione si vede davvero. Col telefono in tasca (D3) o sotto il blocco
+            // biometrico ([inert]) il mittente vedeva la spunta gialla su un messaggio che nessuno
+            // aveva letto. Passa da `segnaLetti`, che non ripete la PATCH quando poi
+            // l'IntersectionObserver vede la bolla.
+            if (msg.sender_id !== userId && conversazioneVisibileAdesso()) {
                 void segnaLetti([msg.id], { contaNelBadge: false });
             }
         },

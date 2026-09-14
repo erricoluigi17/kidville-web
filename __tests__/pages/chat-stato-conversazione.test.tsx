@@ -408,3 +408,66 @@ describe.each(PAGINE)('chat del $nome — C1: un messaggio inviato è UNA bolla'
         }
     });
 });
+
+describe.each(PAGINE)('chat del $nome — D2: ciò che appartiene a una conversazione non finisce in un’altra', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    it('la risposta LENTA dei messaggi di A, arrivata dopo aver aperto B, non compare sotto B', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA), thread(p, TH_B, p.nomeB)];
+        rete.messaggi[TH_A] = [messaggio('m-a', TH_A, p.altro, 'Messaggio di A')];
+        rete.messaggi[TH_B] = [messaggio('m-b', TH_B, p.altro, 'Messaggio di B')];
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.includes(`threadId=${TH_A}`);
+        render(<p.Pagina />);
+
+        await apri(p.nomeA);
+        await waitFor(() => expect(rete.trattenute).toHaveLength(1));
+        await apri(p.nomeB);
+        await screen.findAllByText('Messaggio di B');
+
+        await libera('GET', `threadId=${TH_A}`);
+
+        const scatole = contenitori();
+        expect(scatole.length).toBeGreaterThan(0);
+        for (const c of scatole) {
+            expect(within(c).getByText('Messaggio di B')).toBeInTheDocument();
+            expect(within(c).queryByText('Messaggio di A'), 'i messaggi di una famiglia sotto la conversazione di un’altra').toBeNull();
+        }
+    });
+
+    it('il testo scritto per A non resta nel campo quando si apre B', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA), thread(p, TH_B, p.nomeB)];
+        rete.messaggi[TH_A] = [messaggio('m-a', TH_A, p.altro, 'Messaggio di A')];
+        rete.messaggi[TH_B] = [messaggio('m-b', TH_B, p.altro, 'Messaggio di B')];
+        render(<p.Pagina />);
+        await apri(p.nomeA);
+        await screen.findAllByText('Messaggio di A');
+
+        const campo = (await screen.findAllByRole('textbox'))[0] as HTMLTextAreaElement;
+        fireEvent.change(campo, { target: { value: 'Scritto per A' } });
+        expect(campo.value).toBe('Scritto per A');
+
+        await apri(p.nomeB);
+        await screen.findAllByText('Messaggio di B');
+        for (const t of screen.getAllByRole('textbox') as HTMLTextAreaElement[]) {
+            expect(t.value, 'il testo per una famiglia è rimasto pronto a partire verso un’altra').toBe('');
+        }
+    });
+
+    it('l’avviso di un invio fallito su A non compare su B', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA), thread(p, TH_B, p.nomeB)];
+        rete.messaggi[TH_A] = [messaggio('m-a', TH_A, p.altro, 'Messaggio di A')];
+        rete.messaggi[TH_B] = [messaggio('m-b', TH_B, p.altro, 'Messaggio di B')];
+        rete.esitoPost = () => ok({ error: 'x' }, 500);
+        render(<p.Pagina />);
+        await apri(p.nomeA);
+        await screen.findAllByText('Messaggio di A');
+        await scrivi('Non partirà');
+        expect((await screen.findAllByRole('alert')).some((el) => el.textContent === p.invioNonRiuscito)).toBe(true);
+
+        await apri(p.nomeB);
+        await screen.findAllByText('Messaggio di B');
+        expect(screen.queryAllByRole('alert').some((el) => el.textContent === p.invioNonRiuscito)).toBe(false);
+    });
+});

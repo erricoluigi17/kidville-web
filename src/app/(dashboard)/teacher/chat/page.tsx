@@ -38,8 +38,11 @@ function TeacherChatContent() {
      * Non è un doppione dello stato «termini» o «sospensione»: quelli sono
      * blocchi NOTI che disabilitano il composer, questo è il rifiuto di un
      * messaggio già scritto — e fino al 2026-09-07 non lo diceva nessuno.
+     *
+     * Appartiene al THREAD da cui il messaggio è partito (2026-09-14, D2): prima era uno stato
+     * della pagina, e un invio fallito su una conversazione mostrava l'avviso sopra un'altra.
      */
-    const [erroreInvio, setErroreInvio] = useState<'rifiutato' | 'rete' | 'sospeso' | null>(null);
+    const [erroreInvio, setErroreInvio] = useState<{ threadId: string; tipo: 'rifiutato' | 'rete' | 'sospeso' } | null>(null);
 
     /**
      * Perché la rubrica è vuota, quando lo è. La rotta lo dice (campo `motivo`),
@@ -116,7 +119,7 @@ function TeacherChatContent() {
         const esito = await chat.invia(content, attachmentUrl, attachmentType);
         if (esito.esito === 'nessun-thread') return;
         if (esito.esito === 'ok') {
-            setErroreInvio(null);
+            setErroreInvio(prev => (prev?.threadId === esito.threadId ? null : prev));
             return true;
         }
         /**
@@ -134,7 +137,7 @@ function TeacherChatContent() {
         if (esito.esito === 'rete') {
             // La rete è caduta: il messaggio NON è partito. Il log l'ha già scritto il hook;
             // questo serve a chi sta scrivendo adesso.
-            setErroreInvio('rete');
+            setErroreInvio({ threadId: esito.threadId, tipo: 'rete' });
             return false;
         }
         if (esito.stato === 403) {
@@ -144,13 +147,13 @@ function TeacherChatContent() {
             if (esito.motivo === 'conversazione_sospesa') {
                 await chat.ricaricaThreads();
             } else if (esito.motivo === 'account_sospeso') {
-                setErroreInvio('sospeso');
+                setErroreInvio({ threadId: esito.threadId, tipo: 'sospeso' });
             } else {
-                setErroreInvio('rifiutato');
+                setErroreInvio({ threadId: esito.threadId, tipo: 'rifiutato' });
             }
             return false;
         }
-        setErroreInvio('rifiutato');
+        setErroreInvio({ threadId: esito.threadId, tipo: 'rifiutato' });
         return false;
     };
 
@@ -168,6 +171,8 @@ function TeacherChatContent() {
     const activeThread = selectedThread ? (threads.find(t => t.id === selectedThread.id) ?? selectedThread) : null;
     const susp = activeThread?.sospensione ?? null;
     const suspendedToMe = !!susp && susp.sospesaVerso === teacherId;
+    // L'avviso d'invio si mostra solo sulla conversazione da cui il messaggio è partito.
+    const erroreQui = erroreInvio && activeThread && erroreInvio.threadId === activeThread.id ? erroreInvio.tipo : null;
     const controparteId = activeThread ? (activeThread.teacher_id === teacherId ? activeThread.parent_id : activeThread.teacher_id) : '';
     const lastIncomingMessageId = messages.length
         ? ([...messages].reverse().find(m => m.sender_id !== teacherId)?.id ?? null)
@@ -275,12 +280,15 @@ function TeacherChatContent() {
                                 firstUnreadId={chat.primoNonLettoId}
                                 onMarkRead={chat.segnaLetti}
                             />
-                            {erroreInvio && (
+                            {erroreQui && (
                                 <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
-                                    {erroreInvio === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
+                                    {erroreQui === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreQui === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
                                 </p>
                             )}
-                            <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
+                            {/* `key` sul thread (D2, 2026-09-14): il campo tiene testo e allegato in uno
+                                stato suo, e senza key ciò che si era scritto per una famiglia restava
+                                lì, pronto a partire, aprendo la conversazione con un'altra. */}
+                            <ChatInput key={selectedThread.id} onSend={handleSendMessage} disabled={suspendedToMe} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -340,12 +348,12 @@ function TeacherChatContent() {
                             firstUnreadId={chat.primoNonLettoId}
                             onMarkRead={chat.segnaLetti}
                         />
-                        {erroreInvio && (
+                        {erroreQui && (
                                 <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
-                                    {erroreInvio === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
+                                    {erroreQui === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreQui === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
                                 </p>
                             )}
-                            <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
+                            <ChatInput key={selectedThread.id} onSend={handleSendMessage} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>

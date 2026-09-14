@@ -1,9 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { allegatoMostrabile, unisciElenco, type ChatMessage } from '@/lib/chat/stato-conversazione';
+import {
+    CONVERSAZIONE_VUOTA,
+    allegatoMostrabile,
+    applicaMessaggioAThread,
+    azzeraNonLettiThread,
+    riduciConversazione,
+    type ChatMessage,
+} from '@/lib/chat/stato-conversazione';
 import type { ChatThread, SospensioneInfo } from './ChatThreadList';
 import { useChatRealtime } from './useChatRealtime';
 import { useUnreadNotifications } from './useUnreadNotifications';
@@ -22,6 +29,17 @@ import { useUnreadNotifications } from './useUnreadNotifications';
  * Le pagine tengono solo la UI (vista mobile, rubrica, termini, errore d'invio). Qui sta tutto ciò
  * che parla con la rete. Le parti successive del lavoro (i messaggi precedenti, l'apertura dalla
  * notifica) si innestano su questo hook, non sulle pagine.
+ *
+ * ─── A QUALE CONVERSAZIONE APPARTIENE UNA RISPOSTA (D2) ─────────────────────
+ *
+ * Una GET o una POST partite con la conversazione A aperta possono tornare quando è aperta B. Per
+ * un docente voleva dire vedere i messaggi di una famiglia sotto l'intestazione di un'altra. Le
+ * difese sono due, e indipendenti:
+ *  · lo stato dei messaggi è un riduttore (`riduciConversazione`) che IGNORA ogni azione per un
+ *    thread diverso da quello aperto;
+ *  · `threadApertoIdRef` e `conversazioneRef` si scrivono in modo SINCRONO dentro `apri`, e ogni
+ *    continuazione dopo un `await` li riconfronta. Prima il thread aperto arrivava ai callback
+ *    da un ref aggiornato in un effect, cioè un render dopo.
  */
 
 export type RottaChat = '/parent/chat' | '/teacher/chat';
@@ -31,12 +49,13 @@ export type StatoThreads = 'caricamento' | 'pronto' | 'errore';
 
 /**
  * Com'è andato un invio. La pagina lo traduce in UI (termini, sospensione, avviso): il hook non sa
- * niente di quali banner esistano.
+ * niente di quali banner esistano. `threadAncoraAperto` dice se chi ha scritto è ancora lì: un
+ * avviso d'errore appartiene al thread da cui è partito il messaggio, non a quello aperto adesso.
  */
 export type EsitoInvio =
-    | { esito: 'ok'; threadId: string }
-    | { esito: 'rifiutato'; threadId: string; stato: number; motivo: string | null }
-    | { esito: 'rete'; threadId: string }
+    | { esito: 'ok'; threadId: string; threadAncoraAperto: boolean }
+    | { esito: 'rifiutato'; threadId: string; threadAncoraAperto: boolean; stato: number; motivo: string | null }
+    | { esito: 'rete'; threadId: string; threadAncoraAperto: boolean }
     | { esito: 'nessun-thread' };
 
 interface Opzioni {
@@ -51,19 +70,32 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [statoThreads, setStatoThreads] = useState<StatoThreads>('caricamento');
     const [threadAperto, setThreadAperto] = useState<ChatThread | null>(null);
-    const [messaggi, setMessaggi] = useState<ChatMessage[]>([]);
+    const [conversazione, dispatch] = useReducer(riduciConversazione, CONVERSAZIONE_VUOTA);
     const [caricamentoMessaggi, setCaricamentoMessaggi] = useState(false);
-    // ID del primo messaggio non letto: calcolato al caricamento del thread
-    // e "bloccato" finché l'utente non invia un messaggio o cambia chat.
-    const [primoNonLettoId, setPrimoNonLettoId] = useState<string | null>(null);
     const [nonLetti, setNonLetti] = useState(0);
 
-    // Ref stabile per il thread aperto (evita re-render nei callback realtime)
-    const threadApertoRef = useRef<ChatThread | null>(null);
-    useEffect(() => {
-        threadApertoRef.current = threadAperto;
-    }, [threadAperto]);
-    const leggiThreadAperto = useCallback(() => threadApertoRef.current?.id ?? null, []);
+    /** Il thread aperto ADESSO. Scritto in modo sincrono in `apri`: mai in ritardo di un render. */
+    const threadApertoIdRef = useRef<string | null>(null);
+    /**
+     * L'identità della conversazione aperta: cambia a ogni apertura. Una risposta partita con un
+     * valore diverso appartiene a una conversazione che non c'è più.
+     */
+    const conversazioneRef = useRef(0);
+    /** Solo il caricamento in primo piano più recente può spegnere lo spinner. */
+    const seqPrimoPianoRef = useRef(0);
+    const leggiThreadAperto = useCallback(() => threadApertoIdRef.current, []);
+
+    /**
+     * La lista dei thread, specchiata in un ref: i conti (badge, anteprima) si fanno sull'ultima
+     * lista, non su quella che un callback aveva in mano quando è stato creato.
+     */
+    const threadsRef = useRef<ChatThread[]>([]);
+    const impostaThreads = useCallback((prossimi: ChatThread[] | ((prev: ChatThread[]) => ChatThread[])) => {
+        const valore = typeof prossimi === 'function' ? prossimi(threadsRef.current) : prossimi;
+        if (valore === threadsRef.current) return;
+        threadsRef.current = valore;
+        setThreads(valore);
+    }, []);
 
     /** Una lista è arrivata almeno una volta: prima, ogni thread sarebbe «sconosciuto». */
     const listaCaricataRef = useRef(false);
@@ -90,7 +122,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
             const res = await fetch(`/api/chat/threads?userId=${userId}`).catch(() => null);
             if (res?.ok) {
                 const data: ChatThread[] = await res.json();
-                setThreads(data);
+                impostaThreads(data);
                 onThreadsCaricatiRef.current?.(data);
                 listaCaricataRef.current = true;
                 lista = data;
@@ -99,7 +131,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
             setStatoThreads('pronto');
         }
         return lista;
-    }, [ready, userId]);
+    }, [ready, userId, impostaThreads]);
 
     useEffect(() => {
         void caricaThreads();
@@ -109,35 +141,32 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     // rifirmato) — non deve far comparire lo spinner al posto della conversazione.
     const caricaMessaggi = useCallback(
         async (threadId: string, silenzioso = false) => {
+            const conv = conversazioneRef.current;
+            const primoPiano = silenzioso ? null : ++seqPrimoPianoRef.current;
             if (!silenzioso) setCaricamentoMessaggi(true);
             try {
                 const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
                 if (res.ok) {
                     const data = await res.json();
-                    const msgs: ChatMessage[] = data.messages ?? [];
-                    // Merge, non replace: se questo fetch è partito PRIMA di un invio
-                    // (es. subito dopo la creazione di un nuovo thread) e risolve DOPO
-                    // che l'invio ha già aggiunto il messaggio in locale, un replace secco
-                    // lo cancellerebbe dalla UI. Si preservano i messaggi locali non ancora
-                    // presenti nella risposta del server.
-                    setMessaggi((prev) => {
-                        const serverIds = new Set(msgs.map((m) => m.id));
-                        const pendingLocali = prev.filter((m) => !serverIds.has(m.id));
-                        return [...msgs, ...pendingLocali].sort(
-                            (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-                        );
-                    });
-                    // Blocca il separatore al primo messaggio non letto al momento
-                    // dell'apertura — non cambierà finché l'utente non invia o cambia chat
-                    const firstUnread = msgs.find((m) => m.sender_id !== userId && m.read_at === null);
-                    setPrimoNonLettoId(firstUnread?.id ?? null);
+                    // D2: la conversazione è cambiata mentre la risposta era in volo → non è più sua.
+                    if (conversazioneRef.current === conv) {
+                        dispatch({
+                            tipo: 'caricati',
+                            threadId,
+                            messaggi: (data.messages ?? []) as ChatMessage[],
+                            precedenti: typeof data.precedenti === 'number' ? data.precedenti : 0,
+                            utenteId: userId ?? '',
+                        });
+                    }
                 }
             } catch (err) {
                 // Solo la CLASSE dell'errore: il `.message` di una chat riecheggia il testo dei
                 // messaggi fra una famiglia e la maestra, che è il dato più sensibile della pagina.
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-caricamento-messaggi-fallito: ${nomeErrore(err)}`, route: rotta });
             } finally {
-                if (!silenzioso) setCaricamentoMessaggi(false);
+                // Lo spinner lo spegne solo il caricamento in primo piano più recente: quello di A,
+                // tornato dopo che si è aperto B, non deve scoprire una lista di B ancora vuota.
+                if (primoPiano !== null && primoPiano === seqPrimoPianoRef.current) setCaricamentoMessaggi(false);
             }
         },
         [userId, rotta],
@@ -146,11 +175,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     // ── Realtime: nuovo messaggio nel thread attivo ──────────────────────
     const handleRealtimeNewMessage = useCallback(
         (msg: ChatMessage) => {
-            setMessaggi((prev) => {
-                // Evita duplicati (il polling potrebbe già averlo aggiunto)
-                if (prev.some((m) => m.id === msg.id)) return prev;
-                return [...prev, msg];
-            });
+            dispatch({ tipo: 'arrivato', messaggio: msg });
             // Il Realtime consegna la riga del database GREZZA: da S32 l'allegato è
             // un percorso nel bucket privato, e il link firmato lo genera la route.
             // Si ricarica il thread — che firma — invece di aspettare il polling.
@@ -172,33 +197,23 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     );
 
     // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
-    // Merge per id, mai append: è lo stesso messaggio con read_at/delivered_at aggiornati.
+    // Merge per id, mai append, e monotono: una spunta non torna indietro e un percorso grezzo
+    // non cancella il link firmato dell'allegato.
     const handleRealtimeMessageUpdate = useCallback((msg: ChatMessage) => {
-        setMessaggi((prev) => prev.map((m) => (m.id === msg.id ? { ...m, ...msg } : m)));
+        dispatch({ tipo: 'cambiato', messaggio: msg });
     }, []);
 
-    // ── Realtime: nuovo messaggio in thread non attivo → aggiorna badge ──
-    const handleRealtimeThreadUnread = useCallback((threadId: string, msg: ChatMessage) => {
-        setThreads((prev) =>
-            prev
-                .map((t) => {
-                    if (t.id !== threadId) return t;
-                    return {
-                        ...t,
-                        unread_count: t.unread_count + 1,
-                        last_message: {
-                            content: msg.content,
-                            sender_id: msg.sender_id,
-                            created_at: msg.created_at,
-                        },
-                        last_message_at: msg.created_at,
-                    };
-                })
-                .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
-        );
-        // Aggiorna anche il contatore globale nella intestazione
-        setNonLetti((prev) => prev + 1);
-    }, []);
+    // ── Realtime: nuovo messaggio in thread non attivo → anteprima e badge ──
+    // Il +1 vale solo per i messaggi ALTRUI: il proprio messaggio scritto da un altro dispositivo
+    // accendeva il badge a chi l'aveva appena mandato.
+    const handleRealtimeThreadUnread = useCallback(
+        (_threadId: string, msg: ChatMessage) => {
+            const esito = applicaMessaggioAThread(threadsRef.current, msg, userId ?? '', { inBackground: true });
+            impostaThreads(esito.threads);
+            if (esito.incrementoNonLetti) setNonLetti((prev) => prev + 1);
+        },
+        [userId, impostaThreads],
+    );
 
     // ── Realtime: INSERT di un thread che la lista non conosce ──────────
     // Una conversazione appena aperta dall'altra parte: il messaggio non va perso fino al polling.
@@ -236,7 +251,8 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     // ── Polling di backup sui messaggi (solo fallback) ──────────
     usePollingVisibile(
         () => {
-            if (threadAperto) void caricaMessaggi(threadAperto.id);
+            const id = threadApertoIdRef.current;
+            if (id) void caricaMessaggi(id);
         },
         30_000,
         { attivo: !!threadAperto },
@@ -246,62 +262,67 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     const segnaLetti = useCallback(
         async (ids: string[]) => {
             if (ids.length === 0) return;
+            const threadId = threadApertoIdRef.current;
             try {
                 await fetch('/api/chat/messages/read', {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ messageIds: ids, userId }),
                 });
-                // Aggiornamento ottimistico locale
-                const now = new Date().toISOString();
-                setMessaggi((prev) => prev.map((m) => (ids.includes(m.id) ? { ...m, read_at: now } : m)));
-                // Azzera unread_count sul thread corrente
-                if (threadApertoRef.current) {
-                    const apertoId = threadApertoRef.current.id;
-                    setThreads((prev) => prev.map((t) => (t.id === apertoId ? { ...t, unread_count: 0 } : t)));
+                if (threadId) {
+                    // Aggiornamento ottimistico locale, solo sulla conversazione da cui è partito
+                    dispatch({ tipo: 'letti', threadId, ids, at: new Date().toISOString() });
+                    impostaThreads((prev) => azzeraNonLettiThread(prev, threadId));
                     setNonLetti((prev) => Math.max(0, prev - ids.length));
                 }
             } catch (err) {
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: rotta });
             }
         },
-        [userId, rotta],
+        [userId, rotta, impostaThreads],
     );
 
     const apri = useCallback(
         (thread: ChatThread) => {
+            // SINCRONO, prima di qualunque altra cosa: da questo istante ogni risposta partita con la
+            // conversazione di prima è di un'altra conversazione, e il realtime instrada qui.
+            threadApertoIdRef.current = thread.id;
+            conversazioneRef.current++;
             setThreadAperto(thread);
-            setMessaggi([]);
-            setPrimoNonLettoId(null); // reset prima del caricamento, sarà ri-calcolato
+            // Riaprire lo stesso thread lo ricarica da capo, come prima.
+            dispatch({ tipo: 'chiudi' });
+            dispatch({ tipo: 'apri', threadId: thread.id });
             void caricaMessaggi(thread.id);
             // Azzeramento ottimistico immediato del badge
-            setThreads((prev) => prev.map((t) => (t.id === thread.id ? { ...t, unread_count: 0 } : t)));
-            setNonLetti((prev) => {
-                const threadUnread = threads.find((t) => t.id === thread.id)?.unread_count ?? 0;
-                return Math.max(0, prev - threadUnread);
-            });
+            const nonLettiDelThread = threadsRef.current.find((t) => t.id === thread.id)?.unread_count ?? 0;
+            impostaThreads((prev) => azzeraNonLettiThread(prev, thread.id));
+            setNonLetti((prev) => Math.max(0, prev - nonLettiDelThread));
         },
-        [caricaMessaggi, threads],
+        [caricaMessaggi, impostaThreads],
     );
 
     /** Ricarica la lista dei thread (dopo una creazione, o dopo un 403 di sospensione). */
     const ricaricaThreads = caricaThreads;
 
     /** Aggiorna in-place un thread (es. la sospensione dopo sospendi/riapri). */
-    const aggiornaThread = useCallback((threadId: string, patch: { sospensione: SospensioneInfo | null }) => {
-        setThreads((prev) => prev.map((t) => (t.id === threadId ? { ...t, ...patch } : t)));
-    }, []);
+    const aggiornaThread = useCallback(
+        (threadId: string, patch: { sospensione: SospensioneInfo | null }) => {
+            impostaThreads((prev) => prev.map((t) => (t.id === threadId ? { ...t, ...patch } : t)));
+        },
+        [impostaThreads],
+    );
 
     const invia = useCallback(
         async (content: string, attachmentUrl?: string, attachmentType?: string): Promise<EsitoInvio> => {
-            const thread = threadAperto;
-            if (!thread || !userId) return { esito: 'nessun-thread' };
+            const threadId = threadApertoIdRef.current;
+            if (!threadId || !userId) return { esito: 'nessun-thread' };
+            const ancoraAperto = () => threadApertoIdRef.current === threadId;
             try {
                 const res = await fetch('/api/chat/messages', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        thread_id: thread.id,
+                        thread_id: threadId,
                         sender_id: userId,
                         content,
                         attachment_url: attachmentUrl,
@@ -309,26 +330,17 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                     }),
                 });
                 if (res.ok) {
-                    const newMsg: ChatMessage = await res.json();
+                    const nuovo: ChatMessage = await res.json();
                     /**
                      * C1 — UPSERT PER ID, NON APPEND. Dal 7/9 il realtime è attivo, e il suo INSERT
                      * arriva quasi sempre PRIMA di questa 201, che attende la notifica e la firma
-                     * dell'allegato: accodare qui produceva due bolle dello stesso messaggio (e due
-                     * righe identiche nel DB E2E fanno pensare a un doppio invio, che non c'è stato).
+                     * dell'allegato: accodare qui produceva due bolle dello stesso messaggio.
+                     * D2 — il riduttore la applica solo se il thread del messaggio è ancora aperto;
+                     * l'anteprima del SUO thread invece si aggiorna comunque.
                      */
-                    setMessaggi((prev) => unisciElenco(prev, [newMsg], thread.id, 'server'));
-                    // L'utente ha inviato → il separatore non serve più
-                    setPrimoNonLettoId(null);
-                    setThreads((prev) =>
-                        prev
-                            .map((t) =>
-                                t.id === thread.id
-                                    ? { ...t, last_message: { content, sender_id: userId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
-                                    : t,
-                            )
-                            .sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()),
-                    );
-                    return { esito: 'ok', threadId: thread.id };
+                    dispatch({ tipo: 'inviato', messaggio: nuovo });
+                    impostaThreads((prev) => applicaMessaggioAThread(prev, nuovo, userId, { inBackground: false }).threads);
+                    return { esito: 'ok', threadId, threadAncoraAperto: ancoraAperto() };
                 }
                 let motivo: string | null = null;
                 if (res.status === 403) {
@@ -337,14 +349,14 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                     const data = await res.json().catch(() => null);
                     motivo = (data as { motivo?: string } | null)?.motivo ?? null;
                 }
-                return { esito: 'rifiutato', threadId: thread.id, stato: res.status, motivo };
+                return { esito: 'rifiutato', threadId, threadAncoraAperto: ancoraAperto(), stato: res.status, motivo };
             } catch (err) {
                 logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: rotta });
                 // La rete è caduta: il messaggio NON è partito.
-                return { esito: 'rete', threadId: thread.id };
+                return { esito: 'rete', threadId, threadAncoraAperto: ancoraAperto() };
             }
         },
-        [threadAperto, userId, rotta],
+        [userId, rotta, impostaThreads],
     );
 
     return {
@@ -353,9 +365,9 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         ricaricaThreads,
         aggiornaThread,
         threadAperto,
-        messaggi,
+        messaggi: conversazione.messaggi,
         caricamentoMessaggi,
-        primoNonLettoId,
+        primoNonLettoId: conversazione.primoNonLettoId,
         nonLetti,
         apri,
         invia,

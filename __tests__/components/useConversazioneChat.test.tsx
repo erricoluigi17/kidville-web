@@ -232,3 +232,83 @@ describe('useConversazioneChat — C1: un messaggio inviato è UN messaggio', ()
         expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-9']);
     });
 });
+
+describe('useConversazioneChat — D2: una risposta lenta non tocca la conversazione aperta dopo', () => {
+    it('GET di A in volo, si apre B: i messaggi restano di B e lo spinner scende con la GET di B', async () => {
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-a', thread_id: 'th-a', sender_id: 'doc-1' })];
+        rete.messaggi['th-b'] = [nuovoMessaggio({ id: 'm-b', thread_id: 'th-b', sender_id: 'doc-1' })];
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.includes('/api/chat/messages?');
+        const { result } = monta();
+        await pronto(result);
+
+        act(() => result.current.apri(TA as never));
+        act(() => result.current.apri(TB as never));
+        const [getA, getB] = rete.richieste.filter((r) => r.percorso === '/api/chat/messages');
+        expect(getA.url).toContain('threadId=th-a');
+        expect(getB.url).toContain('threadId=th-b');
+
+        await act(async () => {
+            getA.risolvi(rispostaNormale('GET', getA.url));
+        });
+        await scorri();
+        expect(result.current.messaggi.map((m) => m.id), 'la risposta di A è finita sotto B').toEqual([]);
+        expect(result.current.caricamentoMessaggi, 'lo spinner di B l’ha spento la GET di A').toBe(true);
+
+        await act(async () => {
+            getB.risolvi(rispostaNormale('GET', getB.url));
+        });
+        await scorri();
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-b']);
+        expect(result.current.caricamentoMessaggi).toBe(false);
+    });
+
+    it('POST su A in volo, si apre B, arriva la 201: B resta com’è, l’anteprima di A si aggiorna, e l’esito lo dice', async () => {
+        rete.messaggi['th-b'] = [nuovoMessaggio({ id: 'm-b', thread_id: 'th-b', sender_id: 'doc-1' })];
+        rete.trattieni = (metodo) => metodo === 'POST';
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await scorri();
+
+        let invio: Promise<{ esito: string; threadAncoraAperto?: boolean }> = Promise.resolve({ esito: 'x' });
+        act(() => {
+            invio = result.current.invia('Per A') as never;
+        });
+        await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
+        act(() => result.current.apri(TB as never));
+        await scorri();
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-b']);
+
+        const post = rete.richieste.find((r) => r.metodo === 'POST');
+        let esito: { esito: string; threadAncoraAperto?: boolean } = { esito: 'x' };
+        await act(async () => {
+            post?.risolvi(ok(nuovoMessaggio({ id: 'm-per-a', thread_id: 'th-a', content: 'Per A' }), 201));
+            esito = await invio;
+        });
+
+        expect(result.current.messaggi.map((m) => m.id), 'la 201 di A è finita sotto B').toEqual(['m-b']);
+        expect(result.current.threads.find((th) => th.id === 'th-a')?.last_message?.content).toBe('Per A');
+        expect(esito).toMatchObject({ esito: 'ok', threadAncoraAperto: false });
+    });
+
+    it('il realtime legge il thread aperto SUBITO dopo apri(), senza aspettare un render', () => {
+        const { result } = monta();
+        act(() => {
+            result.current.apri(TA as never);
+            // Stesso turno: nessun effect è ancora girato. Un INSERT che arriva qui va instradato su A.
+            expect(realtime().threadAperto?.()).toBe('th-a');
+        });
+    });
+
+    it('un MIO messaggio arrivato in un thread in background non accende il badge', async () => {
+        const { result } = monta();
+        await pronto(result);
+        act(() => realtime().onThreadUnread('th-b', nuovoMessaggio({ id: 'm-mio', thread_id: 'th-b', sender_id: IO, created_at: '2026-09-14T10:00:00.000Z' })));
+        expect(result.current.threads.find((th) => th.id === 'th-b')?.unread_count).toBe(0);
+        expect(result.current.nonLetti).toBe(0);
+
+        act(() => realtime().onThreadUnread('th-b', nuovoMessaggio({ id: 'm-suo', thread_id: 'th-b', sender_id: 'doc-1', created_at: '2026-09-14T10:01:00.000Z' })));
+        expect(result.current.threads.find((th) => th.id === 'th-b')?.unread_count).toBe(1);
+        expect(result.current.nonLetti).toBe(1);
+    });
+});

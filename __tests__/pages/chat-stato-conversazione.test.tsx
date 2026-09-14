@@ -543,3 +543,24 @@ describe.each(PAGINE)('chat del $nome — D3: «Indietro» chiude davvero la con
         expect(chiamate('GET', '/api/chat/messages').length, 'il polling continua su una conversazione chiusa').toBe(getPrima);
     });
 });
+
+describe.each(PAGINE)('chat del $nome — D6: un caricamento fallito non si traveste da «Nessuna chat»', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    it('la prima GET dei thread fallisce: compare l’errore con Riprova, e Riprova carica la lista', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA)];
+        rete.threadsCheFalliscono = 1;
+        render(<p.Pagina />);
+
+        expect((await screen.findAllByText('threadsNonCaricatiTitolo')).length).toBeGreaterThan(0);
+        expect(screen.queryAllByText('noChats'), 'un guasto di rete presentato come «non hai conversazioni»').toHaveLength(0);
+
+        fireEvent.click(screen.getAllByRole('button', { name: 'riprova' })[0]);
+
+        expect((await screen.findAllByText(p.nomeA)).length).toBeGreaterThan(0);
+        expect(screen.queryAllByText('threadsNonCaricatiTitolo')).toHaveLength(0);
+        expect(chiamate('GET', '/api/chat/threads')).toHaveLength(2);
+    });
+});

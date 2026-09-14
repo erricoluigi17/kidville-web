@@ -32,6 +32,13 @@ interface Props {
     selectedId: string | null;
     currentUserId: string;
     onSelect: (thread: ChatThread) => void;
+    /**
+     * La lista NON si è caricata (nessuna lista mai arrivata). Fino al 2026-09-14 quel caso
+     * mostrava «Nessuna chat»: un guasto di rete presentato come «non hai conversazioni».
+     */
+    errore?: boolean;
+    onRiprova?: () => void;
+    riprovando?: boolean;
 }
 
 function timeAgo(iso: string, t: (key: string, values?: Record<string, number>) => string): string {
@@ -45,8 +52,32 @@ function timeAgo(iso: string, t: (key: string, values?: Record<string, number>) 
     return t('timeDays', { n: days });
 }
 
-export function ChatThreadList({ threads, selectedId, currentUserId, onSelect }: Props) {
+export function ChatThreadList({ threads, selectedId, currentUserId, onSelect, errore, onRiprova, riprovando }: Props) {
     const t = useTranslations('parentChat');
+    const tCommon = useTranslations('common');
+
+    if (threads.length === 0 && errore) {
+        return (
+            <div role="alert" className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                <div className="w-16 h-16 bg-kidville-cream rounded-full flex items-center justify-center mb-4">
+                    <MessageSquare size={24} className="text-kidville-green" strokeWidth={1.5} />
+                </div>
+                <p className="font-barlow font-bold text-base text-kidville-green uppercase mb-1">{t('threadsNonCaricatiTitolo')}</p>
+                <p className="mb-4 font-maven text-sm text-kidville-muted">{t('threadsNonCaricatiCorpo')}</p>
+                {onRiprova && (
+                    <button
+                        type="button"
+                        onClick={onRiprova}
+                        disabled={riprovando}
+                        aria-busy={riprovando}
+                        className="inline-flex items-center rounded-full bg-kidville-green px-4 py-2 font-barlow text-xs font-bold uppercase tracking-wide text-white transition-colors hover:bg-kidville-green-dark disabled:opacity-60"
+                    >
+                        {tCommon('riprova')}
+                    </button>
+                )}
+            </div>
+        );
+    }
 
     if (threads.length === 0) {
         return (

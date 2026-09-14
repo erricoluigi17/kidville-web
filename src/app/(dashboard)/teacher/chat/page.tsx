@@ -249,7 +249,8 @@ function TeacherChatContent() {
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         <ChatThreadList threads={threads} selectedId={selectedThread?.id ?? null}
-                            currentUserId={teacherId} onSelect={handleSelectThread} />
+                            currentUserId={teacherId} onSelect={handleSelectThread}
+                            errore={chat.statoThreads === 'errore'} onRiprova={() => void chat.riprovaThreads()} riprovando={chat.riprovando} />
                     </div>
                 </div>
 
@@ -314,7 +315,8 @@ function TeacherChatContent() {
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                         className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                         <ChatThreadList threads={threads} selectedId={null}
-                            currentUserId={teacherId} onSelect={handleSelectThread} />
+                            currentUserId={teacherId} onSelect={handleSelectThread}
+                            errore={chat.statoThreads === 'errore'} onRiprova={() => void chat.riprovaThreads()} riprovando={chat.riprovando} />
                     </motion.div>
                 ) : selectedThread && (
                     // Conversazione a schermo intero su mobile: si adatta a qualsiasi

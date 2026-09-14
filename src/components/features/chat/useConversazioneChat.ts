@@ -69,6 +69,8 @@ interface Opzioni {
 export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }: Opzioni) {
     const [threads, setThreads] = useState<ChatThread[]>([]);
     const [statoThreads, setStatoThreads] = useState<StatoThreads>('caricamento');
+    /** Una «Riprova» della lista è in volo: lo stato resta 'errore', il pulsante si disabilita. */
+    const [riprovando, setRiprovando] = useState(false);
     const [threadAperto, setThreadAperto] = useState<ChatThread | null>(null);
     const [conversazione, dispatch] = useReducer(riduciConversazione, CONVERSAZIONE_VUOTA);
     const [caricamentoMessaggi, setCaricamentoMessaggi] = useState(false);
@@ -122,23 +124,62 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
     });
 
+    /** Lo stato della lista specchiato: il log del guasto parte solo alla TRANSIZIONE verso 'errore'. */
+    const statoThreadsRef = useRef<StatoThreads>('caricamento');
+
     const caricaThreads = useCallback(async (): Promise<ChatThread[] | null> => {
         if (!ready || !userId) return null; // in risoluzione o non autenticato (redirect dell'hook)
         let lista: ChatThread[] | null = null;
+        /** Il perché del guasto, come gettone: `http-<stato>` o la classe dell'errore. Mai il `.message`. */
+        let guasto = 'sconosciuto';
         try {
-            const res = await fetch(`/api/chat/threads?userId=${userId}`).catch(() => null);
-            if (res?.ok) {
-                const data: ChatThread[] = await res.json();
+            const res = await fetch(`/api/chat/threads?userId=${userId}`).catch((err: unknown) => {
+                guasto = nomeErrore(err);
+                return null;
+            });
+            if (res && !res.ok) guasto = `http-${res.status}`;
+            const data = res?.ok
+                ? ((await res.json().catch((err: unknown) => {
+                      guasto = nomeErrore(err);
+                      return null;
+                  })) as ChatThread[] | null)
+                : null;
+            if (data) {
                 impostaThreads(data);
                 onThreadsCaricatiRef.current?.(data);
                 listaCaricataRef.current = true;
                 lista = data;
             }
         } finally {
-            setStatoThreads('pronto');
+            /**
+             * D6 — «pronto» solo se una lista è arrivata, adesso o prima. Fino al 2026-09-14 un primo
+             * caricamento fallito finiva comunque in «caricato», e la pagina diceva «Nessuna chat»:
+             * un guasto di rete travestito da «non hai conversazioni». Con una lista già in mano, un
+             * polling fallito non la svuota e non cambia niente a schermo.
+             */
+            if (listaCaricataRef.current) {
+                statoThreadsRef.current = 'pronto';
+                setStatoThreads('pronto');
+            } else {
+                if (statoThreadsRef.current !== 'errore') {
+                    logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-conversazioni-non-caricate: ${guasto}`, route: rotta });
+                }
+                statoThreadsRef.current = 'errore';
+                setStatoThreads('errore');
+            }
         }
         return lista;
-    }, [ready, userId, impostaThreads]);
+    }, [ready, userId, rotta, impostaThreads]);
+
+    /** «Riprova» della lista che non si era caricata. */
+    const riprovaThreads = useCallback(async () => {
+        setRiprovando(true);
+        try {
+            await caricaThreads();
+        } finally {
+            setRiprovando(false);
+        }
+    }, [caricaThreads]);
 
     useEffect(() => {
         void caricaThreads();
@@ -404,6 +445,8 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     return {
         threads,
         statoThreads,
+        riprovando,
+        riprovaThreads,
         ricaricaThreads,
         aggiornaThread,
         threadAperto,

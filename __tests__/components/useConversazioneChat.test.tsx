@@ -432,3 +432,68 @@ describe('useConversazioneChat — D3: segnare letto solo ciò che si è visto, 
         expect(realtime().threadAperto?.()).toBeNull();
     });
 });
+
+describe('useConversazioneChat — D6: lo stato della lista dice la verità', () => {
+    it('prima GET fallita → «errore» e UN log col gettone nel messaggio; Riprova riuscita → «pronto»', async () => {
+        let falliscono = 2;
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads') && falliscono-- > 0;
+        const { result } = monta();
+
+        await waitFor(() => expect(rete.richieste.filter((r) => r.percorso === '/api/chat/threads')).toHaveLength(1));
+        await act(async () => {
+            rete.richieste[0].rompi(new TypeError('Failed to fetch https://app.example/api/chat/threads?userId=gen-1'));
+        });
+        await scorri();
+        expect(result.current.statoThreads).toBe('errore');
+        expect(result.current.threads).toEqual([]);
+
+        const logLista = h.logClient.mock.calls.map((c) => c[0] as { messaggio: string; livello: string; evento: string });
+        const nonCaricate = logLista.filter((e) => e.messaggio.startsWith('chat-conversazioni-non-caricate'));
+        expect(nonCaricate).toHaveLength(1);
+        expect(nonCaricate[0]).toMatchObject({ livello: 'warn', evento: 'fetch', messaggio: 'chat-conversazioni-non-caricate: TypeError' });
+        expect(JSON.stringify(nonCaricate[0])).not.toContain('gen-1');
+
+        // Riprova, che fallisce ancora con un 500: resta «errore», e nessun secondo log per lo stesso guasto.
+        const r = result.current as unknown as { riprovaThreads: () => Promise<void>; riprovando: boolean };
+        expect(typeof r.riprovaThreads, 'nessun modo di riprovare').toBe('function');
+        let riprova: Promise<void> = Promise.resolve();
+        act(() => {
+            riprova = (result.current as unknown as { riprovaThreads: () => Promise<void> }).riprovaThreads();
+        });
+        expect((result.current as unknown as { riprovando: boolean }).riprovando).toBe(true);
+        const seconda = rete.richieste.filter((x) => x.percorso === '/api/chat/threads')[1];
+        await act(async () => {
+            seconda.risolvi(ok({ error: 'x' }, 500));
+            await riprova;
+        });
+        expect(result.current.statoThreads).toBe('errore');
+        expect((result.current as unknown as { riprovando: boolean }).riprovando).toBe(false);
+        expect(h.logClient.mock.calls.filter((c) => String((c[0] as { messaggio: string }).messaggio).startsWith('chat-conversazioni-non-caricate'))).toHaveLength(1);
+
+        // La terza va.
+        await act(async () => {
+            await (result.current as unknown as { riprovaThreads: () => Promise<void> }).riprovaThreads();
+        });
+        expect(result.current.statoThreads).toBe('pronto');
+        expect(result.current.threads.map((th) => th.id)).toEqual(['th-a', 'th-b']);
+    });
+
+    it('con una lista già caricata, una GET fallita non la svuota e non passa a «errore»', async () => {
+        const { result } = monta();
+        await pronto(result);
+        expect(result.current.threads).toHaveLength(2);
+
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        let ricarica: Promise<unknown> = Promise.resolve();
+        act(() => {
+            ricarica = result.current.ricaricaThreads();
+        });
+        const ultima = rete.richieste.filter((x) => x.percorso === '/api/chat/threads').at(-1);
+        await act(async () => {
+            ultima?.rompi(new TypeError('Failed to fetch'));
+            await ricarica;
+        });
+        expect(result.current.statoThreads).toBe('pronto');
+        expect(result.current.threads).toHaveLength(2);
+    });
+});

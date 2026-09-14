@@ -69,5 +69,7 @@
   "noChildren": "Non risultano bambini collegati a questo account. Contatta la segreteria.",
   "invioNonRiuscito": "Il messaggio non è stato inviato. È rimasto qui: riprova.",
   "invioNonRiuscitoRete": "Il messaggio non è partito: connessione assente. È rimasto qui, riprova quando torni online.",
-  "invioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account è sospeso. Contatta la segreteria."
+  "invioNonRiuscitoSospeso": "Il messaggio non è stato inviato: l’account è sospeso. Contatta la segreteria.",
+  "threadsNonCaricatiTitolo": "Conversazioni non caricate",
+  "threadsNonCaricatiCorpo": "Non è stato possibile caricare le conversazioni. Controlla la connessione e riprova."
 }

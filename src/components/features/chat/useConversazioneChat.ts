@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { logClient, nomeErrore } from '@/lib/logging/client';
-import { allegatoMostrabile, type ChatMessage } from '@/lib/chat/stato-conversazione';
+import { allegatoMostrabile, unisciElenco, type ChatMessage } from '@/lib/chat/stato-conversazione';
 import type { ChatThread, SospensioneInfo } from './ChatThreadList';
 import { useChatRealtime } from './useChatRealtime';
 import { useUnreadNotifications } from './useUnreadNotifications';
@@ -309,8 +309,14 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                     }),
                 });
                 if (res.ok) {
-                    const newMsg = await res.json();
-                    setMessaggi((prev) => [...prev, newMsg]);
+                    const newMsg: ChatMessage = await res.json();
+                    /**
+                     * C1 — UPSERT PER ID, NON APPEND. Dal 7/9 il realtime è attivo, e il suo INSERT
+                     * arriva quasi sempre PRIMA di questa 201, che attende la notifica e la firma
+                     * dell'allegato: accodare qui produceva due bolle dello stesso messaggio (e due
+                     * righe identiche nel DB E2E fanno pensare a un doppio invio, che non c'è stato).
+                     */
+                    setMessaggi((prev) => unisciElenco(prev, [newMsg], thread.id, 'server'));
                     // L'utente ha inviato → il separatore non serve più
                     setPrimoNonLettoId(null);
                     setThreads((prev) =>

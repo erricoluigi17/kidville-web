@@ -155,6 +155,17 @@ function chiamate(metodo: string, percorso: string) {
     return rete.chiamate.filter((c) => c.metodo === metodo && c.percorso === percorso);
 }
 
+/** Libera la prima richiesta trattenuta che corrisponde, lasciando girare le risposte. */
+async function libera(metodo: string, frammento: string) {
+    const i = rete.trattenute.findIndex((r) => r.metodo === metodo && r.url.includes(frammento));
+    if (i < 0) throw new Error(`nessuna richiesta trattenuta ${metodo} ${frammento}`);
+    const [r] = rete.trattenute.splice(i, 1);
+    await act(async () => {
+        r.libera();
+        for (let k = 0; k < 5; k++) await Promise.resolve();
+    });
+}
+
 /* ── Il realtime finto, che instrada come quello vero ─────────────────────── */
 
 function realtime(): OpzioniRealtime {
@@ -365,5 +376,35 @@ describe.each(PAGINE)('chat del $nome — caratterizzazione (identica prima e do
         rete.esitoPost = () => ok({ error: 'x' }, 500);
         await scrivi('Secondo tentativo');
         expect((await screen.findAllByRole('alert')).some((el) => el.textContent === p.invioNonRiuscito)).toBe(true);
+    });
+});
+
+describe.each(PAGINE)('chat del $nome — C1: un messaggio inviato è UNA bolla', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    it('l’INSERT del realtime arriva PRIMA della 201 (la POST attende notifica e firma): una bolla per contenitore', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA)];
+        rete.messaggi[TH_A] = [messaggio('m-1', TH_A, p.altro, 'Buongiorno')];
+        rete.trattieni = (metodo) => metodo === 'POST';
+        render(<p.Pagina />);
+        await apri(p.nomeA);
+        await screen.findAllByText('Buongiorno');
+
+        await scrivi('Ciao, a domani');
+        await waitFor(() => expect(rete.trattenute.some((r) => r.metodo === 'POST')).toBe(true));
+
+        // Il realtime consegna la riga del database mentre la POST è ancora in volo.
+        emettiInsert(messaggio('m-post-1', TH_A, p.io, 'Ciao, a domani', { created_at: '2026-09-14T09:00:01.000Z' }));
+        await libera('POST', '/api/chat/messages');
+
+        await waitFor(() => expect(chiamate('POST', '/api/chat/messages')).toHaveLength(1));
+        const scatole = contenitori();
+        expect(scatole.length).toBeGreaterThan(0);
+        for (const c of scatole) {
+            expect(within(c).getAllByText('Buongiorno')).toHaveLength(1);
+            expect(within(c).getAllByText('Ciao, a domani'), 'il messaggio inviato compare due volte').toHaveLength(1);
+        }
     });
 });

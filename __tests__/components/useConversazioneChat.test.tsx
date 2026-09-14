@@ -155,3 +155,80 @@ describe('useConversazioneChat — thread sconosciuti dal realtime', () => {
         expect(conta('GET', '/api/chat/threads')).toBe(prima + 1);
     });
 });
+
+function nuovoMessaggio(extra: Json = {}): Json {
+    return {
+        id: 'm-9',
+        thread_id: 'th-a',
+        sender_id: IO,
+        content: 'Ciao',
+        attachment_url: null,
+        attachment_type: null,
+        read_at: null,
+        delivered_at: null,
+        created_at: '2026-09-14T09:00:00.000Z',
+        ...extra,
+    };
+}
+
+async function pronto(result: { current: { statoThreads: string } }) {
+    await waitFor(() => expect(result.current.statoThreads).toBe('pronto'));
+}
+
+describe('useConversazioneChat — C1: un messaggio inviato è UN messaggio', () => {
+    it('INSERT del realtime prima della 201 dello stesso messaggio: resta uno', async () => {
+        rete.trattieni = (metodo) => metodo === 'POST';
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await scorri();
+
+        let invio: Promise<unknown> = Promise.resolve();
+        act(() => {
+            invio = result.current.invia('Ciao');
+        });
+        await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
+
+        act(() => realtime().onNewMessage(nuovoMessaggio()));
+        const post = rete.richieste.find((r) => r.metodo === 'POST');
+        await act(async () => {
+            post?.risolvi(ok(nuovoMessaggio(), 201));
+            await invio;
+        });
+
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-9']);
+    });
+
+    it('…e con un polling che lo porta già, fra l’INSERT e la 201', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        rete.trattieni = (metodo) => metodo === 'POST';
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await scorri();
+
+        let invio: Promise<unknown> = Promise.resolve();
+        act(() => {
+            invio = result.current.invia('Ciao');
+        });
+        await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
+        act(() => realtime().onNewMessage(nuovoMessaggio()));
+
+        // Il server ha già la riga: il tick di polling la riporta prima che la 201 torni.
+        rete.messaggi['th-a'] = [nuovoMessaggio()];
+        const primaDelTick = conta('GET', '/api/chat/messages');
+        await act(async () => {
+            vi.advanceTimersByTime(30_000);
+        });
+        await waitFor(() => expect(conta('GET', '/api/chat/messages')).toBe(primaDelTick + 1));
+        await scorri();
+
+        const post = rete.richieste.find((r) => r.metodo === 'POST');
+        await act(async () => {
+            post?.risolvi(ok(nuovoMessaggio(), 201));
+            await invio;
+        });
+
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-9']);
+    });
+});

@@ -54,6 +54,8 @@ const rete = {
     messaggi: {} as Record<string, Json[]>,
     /** Se restituisce `true` la richiesta resta in sospeso finché il test non la chiude. */
     trattieni: (() => false) as (metodo: string, url: string) => boolean,
+    /** Lo stato HTTP della PATCH di lettura (200 se non indicato). */
+    statoPatch: 200,
 };
 
 function ok(data: unknown, status = 200): Risposta {
@@ -67,7 +69,7 @@ function rispostaNormale(metodo: string, url: string): Risposta {
         const threadId = new URL(url, 'http://x').searchParams.get('threadId') ?? '';
         return ok({ messages: rete.messaggi[threadId] ?? [], total: 0 });
     }
-    if (percorso === '/api/chat/messages/read') return ok({ success: true });
+    if (percorso === '/api/chat/messages/read') return ok({ success: rete.statoPatch < 400 }, rete.statoPatch);
     return ok({});
 }
 
@@ -128,6 +130,7 @@ beforeEach(() => {
     rete.threads = [TA, TB];
     rete.messaggi = {};
     rete.trattieni = () => false;
+    rete.statoPatch = 200;
     h.realtime = null;
     h.logClient.mockClear();
     vi.stubGlobal('fetch', vi.fn(fetchFinto));
@@ -358,5 +361,74 @@ describe('useConversazioneChat — D1: il polling dei messaggi è silenzioso', (
 
         expect(storia.includes(true), 'il polling ha acceso lo spinner (la lista si smonta e si torna in cima)').toBe(false);
         expect(result.current.primoNonLettoId).toBe('m-1');
+    });
+});
+
+describe('useConversazioneChat — D3: segnare letto solo ciò che si è visto, una volta', () => {
+    afterEach(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+
+    async function aperto(extra: Json[] = []) {
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T08:00:00.000Z' }), ...extra];
+        const reso = monta();
+        await pronto(reso.result);
+        act(() => reso.result.current.apri(TA as never));
+        await waitFor(() => expect(reso.result.current.messaggi).toHaveLength(1 + extra.length));
+        return reso;
+    }
+
+    it('la PATCH immediata del realtime e quella dell’IntersectionObserver per lo stesso id partono UNA volta', async () => {
+        const { result } = await aperto();
+        const altrui = nuovoMessaggio({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:01:00.000Z' });
+        act(() => realtime().onNewMessage(altrui));
+        await scorri();
+        await act(async () => {
+            await result.current.segnaLetti(['m-2']);
+        });
+        await scorri();
+        const patch = rete.richieste.filter((r) => r.percorso === '/api/chat/messages/read');
+        expect(patch, 'due PATCH per lo stesso messaggio').toHaveLength(1);
+        expect(patch[0].body).toMatchObject({ messageIds: ['m-2'] });
+    });
+
+    it('una PATCH rifiutata (500) non segna letto in locale, e lo stesso id si può ritentare', async () => {
+        // Il non letto arriva dalla GET (non dal realtime): è il percorso dell'IntersectionObserver.
+        const { result } = await aperto([nuovoMessaggio({ id: 'm-3', sender_id: 'doc-1', read_at: null, created_at: '2026-09-14T09:02:00.000Z' })]);
+        rete.statoPatch = 500;
+        await act(async () => {
+            await result.current.segnaLetti(['m-3']);
+        });
+        await scorri();
+        expect(result.current.messaggi.find((m) => m.id === 'm-3')?.read_at, 'segnato letto in locale un messaggio che il server non ha registrato').toBeNull();
+
+        rete.statoPatch = 200;
+        const prima = conta('PATCH', '/api/chat/messages/read');
+        await act(async () => {
+            await result.current.segnaLetti(['m-3']);
+        });
+        await scorri();
+        expect(conta('PATCH', '/api/chat/messages/read')).toBe(prima + 1);
+        expect(result.current.messaggi.find((m) => m.id === 'm-3')?.read_at).not.toBeNull();
+    });
+
+    it('un messaggio altrui arrivato a documento NASCOSTO non parte come letto', async () => {
+        await aperto();
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        const prima = conta('PATCH', '/api/chat/messages/read');
+        act(() => realtime().onNewMessage(nuovoMessaggio({ id: 'm-4', sender_id: 'doc-1', created_at: '2026-09-14T09:03:00.000Z' })));
+        await scorri();
+        expect(conta('PATCH', '/api/chat/messages/read'), 'segnato letto col telefono in tasca').toBe(prima);
+    });
+
+    it('chiudi(): nessun thread aperto, e il realtime instrada il messaggio in background', async () => {
+        const { result } = await aperto();
+        expect(typeof (result.current as { chiudi?: unknown }).chiudi, 'il hook non sa chiudere una conversazione').toBe('function');
+        act(() => (result.current as unknown as { chiudi: () => void }).chiudi());
+        expect(result.current.threadAperto).toBeNull();
+        expect(result.current.messaggi).toEqual([]);
+        expect(realtime().threadAperto?.()).toBeNull();
     });
 });

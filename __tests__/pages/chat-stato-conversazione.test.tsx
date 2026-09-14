@@ -203,6 +203,7 @@ type Pagina = {
     nomeB: string;
     ruoloAltro: string;
     invioNonRiuscito: string;
+    indietro: string;
 };
 
 const PAGINE: Pagina[] = [
@@ -215,6 +216,7 @@ const PAGINE: Pagina[] = [
         nomeB: 'Ada Altra',
         ruoloAltro: 'teacher',
         invioNonRiuscito: 'invioNonRiuscito',
+        indietro: 'backToList',
     },
     {
         nome: 'docente',
@@ -225,6 +227,7 @@ const PAGINE: Pagina[] = [
         nomeB: 'Ugo Uno',
         ruoloAltro: 'parent',
         invioNonRiuscito: 'chatInvioNonRiuscito',
+        indietro: 'chatTornaAllaLista',
     },
 ];
 
@@ -500,5 +503,43 @@ describe.each(PAGINE)('chat del $nome — D1: il polling non tocca ciò che si s
 
         await libera('GET', `threadId=${TH_A}`);
         expect(screen.getAllByText('Buongiorno')[0], 'la lista è stata ricreata: lo scorrimento riparte da capo').toBe(nodo);
+    });
+});
+
+describe.each(PAGINE)('chat del $nome — D3: «Indietro» chiude davvero la conversazione', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    it('dopo Indietro un messaggio in arrivo accende il badge, non parte nessuna PATCH e il polling dei messaggi si ferma', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        rete.threads = [thread(p, TH_A, p.nomeA)];
+        rete.messaggi[TH_A] = [messaggio('m-1', TH_A, p.altro, 'Buongiorno', { read_at: '2026-09-14T08:05:00.000Z' })];
+        render(<p.Pagina />);
+        await apri(p.nomeA);
+        await screen.findAllByText('Buongiorno');
+
+        fireEvent.click(screen.getByLabelText(p.indietro));
+        // L'ancora positiva: la lista è tornata (su mobile la conversazione a schermo intero è sparita).
+        await waitFor(() => expect(screen.queryByLabelText(p.indietro)).toBeNull());
+
+        const patchPrima = chiamate('PATCH', '/api/chat/messages/read').length;
+        emettiInsert(messaggio('m-2', TH_A, p.altro, 'Arrivato dopo Indietro', { created_at: '2026-09-14T08:10:00.000Z' }));
+
+        const riga = (await screen.findAllByText(p.nomeA))[0].closest('button') as HTMLElement;
+        await waitFor(() => expect(within(riga).getByText('1')).toBeInTheDocument());
+        expect(
+            chiamate('PATCH', '/api/chat/messages/read').length,
+            'segnato letto un messaggio che nessuno ha visto: il mittente vede la spunta',
+        ).toBe(patchPrima);
+
+        const getPrima = chiamate('GET', '/api/chat/messages').length;
+        await act(async () => {
+            vi.advanceTimersByTime(30_000);
+        });
+        await act(async () => {
+            for (let k = 0; k < 5; k++) await Promise.resolve();
+        });
+        expect(chiamate('GET', '/api/chat/messages').length, 'il polling continua su una conversazione chiusa').toBe(getPrima);
     });
 });

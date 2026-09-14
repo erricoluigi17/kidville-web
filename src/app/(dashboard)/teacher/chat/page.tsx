@@ -324,7 +324,9 @@ function TeacherChatContent() {
                         className="fixed inset-0 z-[60] bg-kidville-cream flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
                         {/* Header conversazione del design: barra verde, back white/15, avatar tinta persona */}
                         <div className="flex items-center gap-2.5 bg-kidville-green px-3 py-2.5 pt-[max(10px,env(safe-area-inset-top))]">
-                            <button onClick={() => setShowMobile('list')} aria-label={t('chatTornaAllaLista')}
+                            {/* «Indietro» CHIUDE la conversazione (D3, 2026-09-14): cambiare solo la vista la
+                                lasciava aperta per il realtime, e i messaggi in arrivo partivano come letti. */}
+                            <button onClick={() => { chat.chiudi(); setShowMobile('list'); }} aria-label={t('chatTornaAllaLista')}
                                 className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95">
                                 <ArrowLeft size={18} strokeWidth={2.2} />
                             </button>

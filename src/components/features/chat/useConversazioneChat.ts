@@ -97,6 +97,13 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         setThreads(valore);
     }, []);
 
+    /**
+     * Gli id già mandati come letti (o in volo). La PATCH immediata del realtime e quella
+     * dell'IntersectionObserver riguardano lo stesso messaggio: prima partivano entrambe — e con
+     * due istanze di `ChatMessageArea` montate, anche di più.
+     */
+    const lettiInviatiRef = useRef(new Set<string>());
+
     /** Una lista è arrivata almeno una volta: prima, ogni thread sarebbe «sconosciuto». */
     const listaCaricataRef = useRef(false);
     /** I thread sconosciuti per cui si è già chiesta la lista: al massimo una GET per id per sessione. */
@@ -172,6 +179,46 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         [userId, rotta],
     );
 
+    // ── Segna letti: IntersectionObserver e PATCH immediata del realtime ──
+    /**
+     * D3 — si segna letto SOLO ciò che si è potuto vedere, e UNA volta.
+     *  · serve una conversazione aperta: dopo «Indietro» non c'è niente da segnare;
+     *  · un id già mandato non riparte (PATCH immediata + observer = una PATCH);
+     *  · `!res.ok` non marca in locale: il server non l'ha registrato, e l'id torna ritentabile.
+     *    Prima la spunta locale diventava «letto» comunque, e il badge del thread spariva.
+     *  · `contaNelBadge: false` per il messaggio arrivato col thread aperto, che nel contatore
+     *    globale non era mai entrato.
+     */
+    const segnaLetti = useCallback(
+        async (ids: string[], opz?: { contaNelBadge?: boolean }) => {
+            const threadId = threadApertoIdRef.current;
+            if (!threadId || !userId) return;
+            const nuovi = ids.filter((id) => !lettiInviatiRef.current.has(id));
+            if (nuovi.length === 0) return;
+            nuovi.forEach((id) => lettiInviatiRef.current.add(id));
+            const rendiRitentabili = () => nuovi.forEach((id) => lettiInviatiRef.current.delete(id));
+            try {
+                const res = await fetch('/api/chat/messages/read', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messageIds: nuovi, userId }),
+                });
+                if (!res.ok) {
+                    // Lo stato e la rotta li registra già il `fetch` strumentato del logger client.
+                    rendiRitentabili();
+                    return;
+                }
+                dispatch({ tipo: 'letti', threadId, ids: nuovi, at: new Date().toISOString() });
+                impostaThreads((prev) => azzeraNonLettiThread(prev, threadId));
+                if (opz?.contaNelBadge !== false) setNonLetti((prev) => Math.max(0, prev - nuovi.length));
+            } catch (err) {
+                rendiRitentabili();
+                logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: rotta });
+            }
+        },
+        [userId, rotta, impostaThreads],
+    );
+
     // ── Realtime: nuovo messaggio nel thread attivo ──────────────────────
     const handleRealtimeNewMessage = useCallback(
         (msg: ChatMessage) => {
@@ -182,18 +229,15 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
             if (msg.attachment_url && !allegatoMostrabile(msg.attachment_url)) {
                 void caricaMessaggi(msg.thread_id, true);
             }
-            // Il messaggio è già nel viewport → marcalo come letto immediatamente
-            // (l'IntersectionObserver lo catturerà, ma lo mandiamo anche ora in background).
-            // Il catch LOGGA: prima era muto, e un «letto» mai registrato non lasciava traccia.
-            fetch('/api/chat/messages/read', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messageIds: [msg.id], userId }),
-            }).catch((err) => {
-                logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: rotta });
-            });
+            // Il messaggio altrui arriva nella conversazione aperta: lo si segna letto subito — ma
+            // SOLO se la pagina è visibile. Col telefono in tasca (D3) il mittente vedeva la spunta
+            // gialla su un messaggio che nessuno aveva letto. Passa da `segnaLetti`, che non
+            // ripete la PATCH quando poi l'IntersectionObserver vede la bolla.
+            if (msg.sender_id !== userId && document.visibilityState === 'visible') {
+                void segnaLetti([msg.id], { contaNelBadge: false });
+            }
         },
-        [userId, rotta, caricaMessaggi],
+        [userId, caricaMessaggi, segnaLetti],
     );
 
     // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
@@ -264,30 +308,6 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         { attivo: !!threadAperto },
     );
 
-    // ── Mark as Read via IntersectionObserver ────────────────────────────
-    const segnaLetti = useCallback(
-        async (ids: string[]) => {
-            if (ids.length === 0) return;
-            const threadId = threadApertoIdRef.current;
-            try {
-                await fetch('/api/chat/messages/read', {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messageIds: ids, userId }),
-                });
-                if (threadId) {
-                    // Aggiornamento ottimistico locale, solo sulla conversazione da cui è partito
-                    dispatch({ tipo: 'letti', threadId, ids, at: new Date().toISOString() });
-                    impostaThreads((prev) => azzeraNonLettiThread(prev, threadId));
-                    setNonLetti((prev) => Math.max(0, prev - ids.length));
-                }
-            } catch (err) {
-                logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: rotta });
-            }
-        },
-        [userId, rotta, impostaThreads],
-    );
-
     const apri = useCallback(
         (thread: ChatThread) => {
             // SINCRONO, prima di qualunque altra cosa: da questo istante ogni risposta partita con la
@@ -306,6 +326,22 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         },
         [caricaMessaggi, impostaThreads],
     );
+
+    /**
+     * Chiude la conversazione aperta («Indietro» su mobile). D3: prima «Indietro» cambiava solo la
+     * vista, il thread restava aperto per il hook — il realtime lo trattava come visibile, i
+     * messaggi in arrivo partivano come letti senza che nessuno li vedesse, niente badge, e il
+     * polling dei messaggi continuava.
+     */
+    const chiudi = useCallback(() => {
+        if (threadApertoIdRef.current === null) return;
+        threadApertoIdRef.current = null;
+        conversazioneRef.current++;
+        seqPrimoPianoRef.current++;
+        setThreadAperto(null);
+        dispatch({ tipo: 'chiudi' });
+        setCaricamentoMessaggi(false);
+    }, []);
 
     /** Ricarica la lista dei thread (dopo una creazione, o dopo un 403 di sospensione). */
     const ricaricaThreads = caricaThreads;
@@ -376,6 +412,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         primoNonLettoId: conversazione.primoNonLettoId,
         nonLetti,
         apri,
+        chiudi,
         invia,
         segnaLetti,
     };

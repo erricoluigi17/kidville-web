@@ -15,7 +15,11 @@ import { renderHook, act } from '@testing-library/react';
  *
  * ─── D4: IL CANALE CHE CADE NON TACE PIÙ ─────────────────────────────────────
  *
- * (casi aggiunti con la correzione del callback di `subscribe`)
+ * Il callback di `subscribe` guardava solo CHANNEL_ERROR, ignorava l'errore che lo accompagna e
+ * scriveva un log per OGNI tentativo (2.034 da iOS in 8 giorni, motivo mai registrato). Dopo una
+ * caduta nessuno recuperava gli INSERT persi, e un CLOSED non chiesto lasciava il canale morto.
+ * Qui: un log per interruzione col motivo come gettone nel messaggio, `onRiconnesso` al rientro,
+ * il CLOSED del proprio smontaggio ignorato, quello inatteso ricreato al massimo tre volte.
  */
 
 type Handler = (payload: { new: Record<string, unknown> }) => void;
@@ -24,7 +28,11 @@ type CallbackStato = (status: string, err?: unknown) => void;
 const sb = vi.hoisted(() => ({
     creati: [] as Array<{ topic: string; api: unknown; handlers: Record<string, Handler>; stato: CallbackStato | null }>,
     rimossi: 0,
-    /** Il `removeChannel` vero emette CLOSED in modo sincrono (leave di phoenix): lo si imita. */
+    /**
+     * Il `removeChannel` vero emette CLOSED: subito se il socket non è connesso (leave di phoenix
+     * senza ack), dopo l'ack se lo è. Qui subito, che è il caso in cui il flag dello smontaggio
+     * deve già essere alzato.
+     */
     closedAllaRimozione: true,
 }));
 
@@ -163,5 +171,117 @@ describe('useChatRealtime — D5: il canale non si rifà a ogni riordino', () =>
         act(() => ultimo().handlers.UPDATE({ new: messaggio('th-a', { read_at: 'x' }) }));
         act(() => ultimo().handlers.UPDATE({ new: messaggio('th-b', { read_at: 'x' }) }));
         expect(cb.onMessageUpdate).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('useChatRealtime — D4: il canale che cade dice perché, una volta, e al rientro lo annuncia', () => {
+    it('il primo SUBSCRIBED è silenzioso: niente log, niente rientro', () => {
+        const { cb } = monta({ userId: 'u-1', threads: [A], aperto: null });
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        expect(logClient).not.toHaveBeenCalled();
+        expect(cb.onRiconnesso).not.toHaveBeenCalled();
+    });
+
+    it('CHANNEL_ERROR ripetuti: UN log per interruzione, col gettone nel MESSAGGIO e senza il testo dell’errore', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-09-14T10:00:00.000Z'));
+        const { cb } = monta({ userId: 'u-1', threads: [A], aperto: null });
+        const stato = ultimo().stato!;
+        act(() => stato('SUBSCRIBED'));
+
+        const err = new Error('socket closed: 1006 (riservato-zeta)', { cause: { code: 1006, reason: 'riservato-zeta' } });
+        act(() => stato('CHANNEL_ERROR', err));
+        vi.setSystemTime(new Date('2026-09-14T10:00:05.000Z'));
+        act(() => stato('CHANNEL_ERROR', err));
+
+        expect(logClient, 'un log per ogni errore: la serie misura i tentativi, non le interruzioni').toHaveBeenCalledTimes(1);
+        const evento = logClient.mock.calls[0][0] as { messaggio: string; campi?: Record<string, unknown> };
+        // Il gettone sta nel MESSAGGIO: i campi non entrano nell'impronta di app_log né nel
+        // throttle del client, quindi un motivo scritto lì si vedrebbe solo la prima volta al giorno.
+        expect(evento).toMatchObject({ livello: 'warn', evento: 'react', messaggio: 'chat-realtime-errore: socket-chiuso-1006', route: '/parent/chat' });
+        expect(JSON.stringify(evento)).not.toContain('riservato-zeta');
+        for (const valore of Object.values(evento.campi ?? {})) expect(typeof valore).toBe('number');
+
+        vi.setSystemTime(new Date('2026-09-14T10:00:30.000Z'));
+        act(() => stato('SUBSCRIBED'));
+        expect(cb.onRiconnesso).toHaveBeenCalledTimes(1);
+        expect(cb.onRiconnesso).toHaveBeenCalledWith({
+            riconnessoAt: Date.parse('2026-09-14T10:00:30.000Z'),
+            ms: 30_000,
+            errori: 2,
+        });
+
+        // Un SUBSCRIBED senza interruzione in mezzo non è un rientro.
+        act(() => stato('SUBSCRIBED'));
+        expect(cb.onRiconnesso).toHaveBeenCalledTimes(1);
+
+        // Una nuova interruzione si logga di nuovo.
+        act(() => stato('CHANNEL_ERROR', new Error('channel error: connection lost')));
+        expect(logClient).toHaveBeenCalledTimes(2);
+        expect((logClient.mock.calls[1][0] as { messaggio: string }).messaggio).toBe('chat-realtime-errore: connessione-persa');
+    });
+
+    it('TIMED_OUT apre un’interruzione con il suo gettone', () => {
+        const { cb } = monta({ userId: 'u-1', threads: [A], aperto: null });
+        const stato = ultimo().stato!;
+        act(() => stato('TIMED_OUT'));
+        act(() => stato('TIMED_OUT'));
+        expect(logClient).toHaveBeenCalledTimes(1);
+        expect((logClient.mock.calls[0][0] as { messaggio: string }).messaggio).toBe('chat-realtime-timeout');
+        act(() => stato('SUBSCRIBED'));
+        expect(cb.onRiconnesso).toHaveBeenCalledWith(expect.objectContaining({ errori: 2 }));
+    });
+
+    it('il CLOSED del proprio smontaggio non logga e non ricrea niente', () => {
+        vi.useFakeTimers();
+        const { unmount } = monta({ userId: 'u-1', threads: [A], aperto: null });
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        unmount(); // removeChannel emette CLOSED in modo sincrono
+        act(() => {
+            vi.advanceTimersByTime(60_000);
+        });
+        expect(logClient).not.toHaveBeenCalled();
+        expect(sb.creati).toHaveLength(1);
+    });
+
+    it('un CLOSED inatteso ricrea il canale dopo 10 s, al massimo 3 volte, poi si arrende con un log', () => {
+        vi.useFakeTimers();
+        monta({ userId: 'u-1', threads: [A], aperto: null });
+
+        for (let tentativo = 1; tentativo <= 3; tentativo++) {
+            act(() => ultimo().stato?.('CLOSED'));
+            act(() => {
+                vi.advanceTimersByTime(9_999);
+            });
+            expect(sb.creati, `ricreato prima dei 10 s (tentativo ${tentativo})`).toHaveLength(tentativo);
+            act(() => {
+                vi.advanceTimersByTime(1);
+            });
+            expect(sb.creati, `non ricreato dopo 10 s (tentativo ${tentativo})`).toHaveLength(tentativo + 1);
+        }
+
+        act(() => ultimo().stato?.('CLOSED'));
+        act(() => {
+            vi.advanceTimersByTime(120_000);
+        });
+        expect(sb.creati, 'oltre il terzo tentativo il canale si ricrea ancora').toHaveLength(4);
+
+        const messaggi = logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio);
+        expect(messaggi).toContain('chat-realtime-chiuso-inatteso');
+        expect(messaggi.filter((m) => m === 'chat-realtime-abbandonato')).toHaveLength(1);
+    });
+
+    it('il SUBSCRIBED del canale ricreato è un rientro: i messaggi del buco vanno recuperati', () => {
+        vi.useFakeTimers();
+        const { cb } = monta({ userId: 'u-1', threads: [A], aperto: null });
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        act(() => ultimo().stato?.('CLOSED'));
+        act(() => {
+            vi.advanceTimersByTime(10_000);
+        });
+        expect(sb.creati).toHaveLength(2);
+        act(() => ultimo().stato?.('SUBSCRIBED'));
+        expect(cb.onRiconnesso).toHaveBeenCalledTimes(1);
+        expect(cb.onRiconnesso).toHaveBeenCalledWith(expect.objectContaining({ ms: 10_000, errori: 1 }));
     });
 });

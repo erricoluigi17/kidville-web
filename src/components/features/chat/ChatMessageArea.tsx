@@ -6,20 +6,16 @@ import { formattaIstante } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
+import { allegatoMostrabile, type ChatMessage } from '@/lib/chat/stato-conversazione';
 
-export interface ChatMessage {
-    id: string;
-    thread_id: string;
-    sender_id: string;
-    content: string;
-    attachment_url: string | null;
-    attachment_type: string | null;
-    read_at: string | null;
-    /** Consegnato (scaricato dal destinatario). OPZIONALE: il payload E2E non lo ha
-     *  finché il DB della CI non è migrato — l'assenza degrada a "solo inviato". */
-    delivered_at?: string | null;
-    created_at: string;
-}
+/**
+ * Il tipo del messaggio e la regola dell'allegato vivono nel modulo puro
+ * `@/lib/chat/stato-conversazione` dal 2026-09-14: li usa anche l'unione dei messaggi, che non
+ * può dipendere da un componente React. Si riesportano da qui perché i chiamanti e i test che li
+ * importano da questo file restino validi senza toccarli.
+ */
+export { allegatoMostrabile };
+export type { ChatMessage };
 
 interface Props {
     messages: ChatMessage[];
@@ -50,24 +46,6 @@ interface Props {
  */
 export function formatMessageTime(iso: string, locale: string): string {
     return formattaIstante(new Date(iso), locale, { hour: '2-digit', minute: '2-digit' });
-}
-
-/**
- * L'allegato si mostra solo quando è un indirizzo che il browser può aprire.
- *
- * Da S32 (2026-08-01) in `chat_messages.attachment_url` c'è il PERCORSO nel
- * bucket privato, non più un link firmato a 365 giorni: le route lo firmano al
- * momento della lettura, ma il Realtime di Supabase consegna la riga del
- * database così com'è e per qualche istante la bolla ha in mano un percorso.
- * Un percorso dentro un `<img src>` è un'immagine rotta, e «la chat è rotta» è
- * la conclusione sbagliata che se ne trae: meglio niente, finché il ricarico
- * non porta il link firmato.
- *
- * Vale anche come rete di sicurezza sugli schemi non-http (`javascript:`), che
- * era già la regola per i documenti e non lo era per le immagini.
- */
-export function allegatoMostrabile(url: string | null | undefined): boolean {
-    return !!url && /^https?:\/\//i.test(url);
 }
 
 /** Etichette localizzate per i separatori relativi (da `common.oggi`/`common.ieri`). */
@@ -309,6 +287,12 @@ export function ChatMessageArea({
     const tCommon = useTranslations('common');
     const t = useTranslations('parentChat');
     const bottomRef = useRef<HTMLDivElement>(null);
+    /**
+     * Il contenitore che scorre. Le pagine montano questo componente DUE volte (desktop e mobile
+     * a schermo intero), e nel DOM ci sono entrambe le istanze: tutto ciò che cerca bolle deve
+     * cercarle QUI DENTRO, non in `document`.
+     */
+    const contenitoreRef = useRef<HTMLDivElement>(null);
     const separatorRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<IntersectionObserver | null>(null);
     const pendingMarkRead = useRef<Set<string>>(new Set());
@@ -425,7 +409,11 @@ export function ChatMessageArea({
     const groups = groupByDate(messages, locale, { oggi: tCommon('oggi'), ieri: tCommon('ieri') });
 
     return (
-        <div className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4">
+        <div
+            ref={contenitoreRef}
+            data-testid="chat-messaggi"
+            className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4"
+        >
             {groups.map((group) => (
                 <div key={group.date}>
                     {/* Separatore giorno — pillola del design */}

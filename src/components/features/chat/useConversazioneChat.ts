@@ -63,6 +63,12 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     useEffect(() => {
         threadApertoRef.current = threadAperto;
     }, [threadAperto]);
+    const leggiThreadAperto = useCallback(() => threadApertoRef.current?.id ?? null, []);
+
+    /** Una lista è arrivata almeno una volta: prima, ogni thread sarebbe «sconosciuto». */
+    const listaCaricataRef = useRef(false);
+    /** I thread sconosciuti per cui si è già chiesta la lista: al massimo una GET per id per sessione. */
+    const threadIgnotiRef = useRef(new Set<string>());
 
     const onThreadsCaricatiRef = useRef(onThreadsCaricati);
     useEffect(() => {
@@ -86,6 +92,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                 const data: ChatThread[] = await res.json();
                 setThreads(data);
                 onThreadsCaricatiRef.current?.(data);
+                listaCaricataRef.current = true;
                 lista = data;
             }
         } finally {
@@ -193,13 +200,29 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         setNonLetti((prev) => prev + 1);
     }, []);
 
+    // ── Realtime: INSERT di un thread che la lista non conosce ──────────
+    // Una conversazione appena aperta dall'altra parte: il messaggio non va perso fino al polling.
+    // Una sola GET della lista per thread per sessione (se la RLS consegna un thread che la lista
+    // non elenca, ripeterla a ogni messaggio sarebbe un ciclo di richieste senza esito).
+    const handleThreadSconosciuto = useCallback(
+        (msg: ChatMessage) => {
+            if (!listaCaricataRef.current) return; // la prima lista in volo lo conterrà
+            if (threadIgnotiRef.current.has(msg.thread_id)) return;
+            threadIgnotiRef.current.add(msg.thread_id);
+            void caricaThreads();
+        },
+        [caricaThreads],
+    );
+
     useChatRealtime({
         userId: userId ?? '', // il hook ignora gli id falsy
-        selectedThreadId: threadAperto?.id ?? null,
+        threadAperto: leggiThreadAperto,
         threads,
+        rotta,
         onNewMessage: handleRealtimeNewMessage,
         onThreadUnread: handleRealtimeThreadUnread,
         onMessageUpdate: handleRealtimeMessageUpdate,
+        onThreadSconosciuto: handleThreadSconosciuto,
     });
 
     // ── I badge si aggiornano solo mentre qualcuno guarda ───────────────

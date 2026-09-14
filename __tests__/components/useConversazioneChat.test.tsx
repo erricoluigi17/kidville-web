@@ -688,3 +688,90 @@ describe('useConversazioneChat — carico: le richieste in volo si riusano, le a
         expect(conta('GET', '/api/chat/messages'), 'la 201 porta già il link firmato: la GET di rifirma è di troppo').toBe(primaGet);
     });
 });
+
+describe('useConversazioneChat — D4: al rientro del realtime si recupera ciò che il canale ha perso, senza GET doppie', () => {
+    afterEach(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+
+    async function apertoSuA() {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(new Date('2026-09-14T10:00:00.000Z'));
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T09:00:00.000Z' })];
+        const reso = monta();
+        await pronto(reso.result);
+        act(() => reso.result.current.apri(TA as never));
+        await waitFor(() => expect(reso.result.current.messaggi).toHaveLength(1));
+        return reso;
+    }
+
+    function rientri() {
+        return h.logClient.mock.calls
+            .map((c) => c[0] as { messaggio: string; campi?: Record<string, unknown> })
+            .filter((e) => e.messaggio.startsWith('chat-realtime-rientrato'));
+    }
+
+    it('richieste partite poco prima del rientro lo coprono: nessuna GET in più, e il log lo dice', async () => {
+        await apertoSuA();
+        const rt = realtime();
+        expect(typeof rt.onRiconnesso, 'il hook non ascolta il rientro del realtime').toBe('function');
+        vi.setSystemTime(new Date('2026-09-14T10:00:01.000Z')); // 1 s dopo le GET: dentro il margine
+        const primaT = conta('GET', '/api/chat/threads');
+        const primaM = conta('GET', '/api/chat/messages');
+
+        act(() => rt.onRiconnesso?.({ riconnessoAt: Date.now(), ms: 8_000, errori: 2 }));
+        await scorri();
+
+        expect(conta('GET', '/api/chat/threads')).toBe(primaT);
+        expect(conta('GET', '/api/chat/messages')).toBe(primaM);
+        expect(rientri()).toHaveLength(1);
+        expect(rientri()[0]).toMatchObject({ messaggio: 'chat-realtime-rientrato: nessuno' });
+        for (const v of Object.values(rientri()[0].campi ?? {})) expect(typeof v).toBe('number');
+    });
+
+    it('nessuna richiesta nel margine: UNA GET della lista e UNA dei messaggi aperti, silenziose', async () => {
+        const { result } = await apertoSuA();
+        vi.setSystemTime(new Date('2026-09-14T10:00:30.000Z')); // 30 s dopo: le GET di prima non coprono il buco
+        const primaT = conta('GET', '/api/chat/threads');
+        const primaM = conta('GET', '/api/chat/messages');
+
+        act(() => realtime().onRiconnesso?.({ riconnessoAt: Date.now(), ms: 25_000, errori: 1 }));
+        expect(result.current.caricamentoMessaggi, 'il recupero ha acceso lo spinner').toBe(false);
+        await scorri();
+
+        expect(conta('GET', '/api/chat/threads')).toBe(primaT + 1);
+        expect(conta('GET', '/api/chat/messages')).toBe(primaM + 1);
+        expect(rientri()[0]).toMatchObject({ messaggio: 'chat-realtime-rientrato: ricarica' });
+    });
+
+    it('una GET dei messaggi ancora in volo ma partita PRIMA del margine non basta: ne parte una nuova', async () => {
+        const { result } = await apertoSuA();
+        vi.setSystemTime(new Date('2026-09-14T10:00:10.000Z'));
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/messages?');
+        act(() => result.current.apri(TA as never)); // GET silenziosa, trattenuta, partita a :10
+        await scorri();
+        const primaM = conta('GET', '/api/chat/messages');
+
+        vi.setSystemTime(new Date('2026-09-14T10:00:30.000Z'));
+        act(() => realtime().onRiconnesso?.({ riconnessoAt: Date.now(), ms: 15_000, errori: 1 }));
+        await scorri();
+        expect(conta('GET', '/api/chat/messages'), 'la GET vecchia non contiene i messaggi persi dopo di lei').toBe(primaM + 1);
+    });
+
+    it('a pagina NASCOSTA nessuna GET: la ripresa ne farà una, dopo il rientro', async () => {
+        await apertoSuA();
+        vi.setSystemTime(new Date('2026-09-14T10:00:30.000Z'));
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        const primaT = conta('GET', '/api/chat/threads');
+        const primaM = conta('GET', '/api/chat/messages');
+
+        act(() => realtime().onRiconnesso?.({ riconnessoAt: Date.now(), ms: 25_000, errori: 1 }));
+        await scorri();
+
+        expect(conta('GET', '/api/chat/threads')).toBe(primaT);
+        expect(conta('GET', '/api/chat/messages')).toBe(primaM);
+        expect(rientri()[0]).toMatchObject({ messaggio: 'chat-realtime-rientrato: pagina-nascosta' });
+    });
+});

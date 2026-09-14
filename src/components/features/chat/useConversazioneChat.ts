@@ -5,9 +5,11 @@ import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import {
     CONVERSAZIONE_VUOTA,
+    MARGINE_RIENTRO_MS,
     allegatoMostrabile,
     applicaMessaggioAThread,
     azzeraNonLettiThread,
+    decidiRecupero,
     riduciConversazione,
     type ChatMessage,
 } from '@/lib/chat/stato-conversazione';
@@ -416,8 +418,56 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         [caricaThreads],
     );
 
+    // ── Realtime: il canale è tornato dopo un'interruzione (D4) ──────────
+    /**
+     * Gli INSERT arrivati fra la caduta e il nuovo SUBSCRIBED non sono stati consegnati. Prima nessuno
+     * li recuperava: comparivano al polling successivo, o mai se la pagina restava nascosta.
+     *
+     * La regola è sull'istante del RIENTRO (`riconnessoAt`), non su quello dell'errore: una GET
+     * partita dopo la caduta ma molto prima del rientro non contiene i messaggi arrivati dopo di lei.
+     *  · pagina nascosta → niente: la GET della ripresa (`usePollingVisibile`) partirà dopo;
+     *  · per la lista e per i messaggi aperti, una GET partita da `riconnessoAt − 2 s` in poi (in
+     *    volo o conclusa) copre, e non se ne fa un'altra; altrimenti UNA silenziosa;
+     *  · nessuna riprova: se fallisce, resta il polling a 30 s.
+     *
+     * Il log è il SUCCESSO del recupero, col suo esito nel messaggio (cardinalità chiusa): serve a
+     * misurare quante GET costa il rientro. Nei campi solo numeri.
+     */
+    const handleRiconnesso = useCallback(
+        ({ riconnessoAt, ms, errori }: { riconnessoAt: number; ms: number; errori: number }) => {
+            if (document.visibilityState === 'hidden') {
+                logClient({ livello: 'warn', evento: 'react', messaggio: 'chat-realtime-rientrato: pagina-nascosta', route: rotta, campi: { ms, errori } });
+                return;
+            }
+            const soglia = riconnessoAt - MARGINE_RIENTRO_MS;
+            let ricariche = 0;
+            if (decidiRecupero(ultimaPartenzaThreadsRef.current, riconnessoAt) === 'ricarica') {
+                void caricaThreads({ nonPrimaDi: soglia });
+                ricariche++;
+            }
+            const aperto = threadApertoIdRef.current;
+            if (aperto) {
+                const ultima = ultimaPartenzaMessaggiRef.current;
+                const partitaAt = ultima && ultima.threadId === aperto && ultima.conv === conversazioneRef.current ? ultima.at : null;
+                if (decidiRecupero(partitaAt, riconnessoAt) === 'ricarica') {
+                    void caricaMessaggi(aperto, { silenzioso: true, nonPrimaDi: soglia });
+                    ricariche++;
+                }
+            }
+            logClient({
+                livello: 'warn',
+                evento: 'react',
+                messaggio: `chat-realtime-rientrato: ${ricariche > 0 ? 'ricarica' : 'nessuno'}`,
+                route: rotta,
+                campi: { ms, errori, ricariche },
+            });
+        },
+        [rotta, caricaThreads, caricaMessaggi],
+    );
+
     useChatRealtime({
         userId: userId ?? '', // il hook ignora gli id falsy
+        onRiconnesso: handleRiconnesso,
         threadAperto: leggiThreadAperto,
         threads,
         rotta,

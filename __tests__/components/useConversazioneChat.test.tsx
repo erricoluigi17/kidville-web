@@ -497,3 +497,194 @@ describe('useConversazioneChat — D6: lo stato della lista dice la verità', ()
         expect(result.current.threads).toHaveLength(2);
     });
 });
+
+type ConApertura = {
+    apriPerId: (id: string) => Promise<'aperto' | 'non-trovato' | 'errore' | 'annullato'>;
+    ricaricaThreads: (opz?: { forza?: boolean }) => Promise<unknown>;
+};
+
+describe('useConversazioneChat — carico: le richieste in volo si riusano, le aperture non si scavalcano', () => {
+    it('apri() sullo stesso thread con la GET dei messaggi in volo non ne fa partire un’altra', async () => {
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/messages?');
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        act(() => result.current.apri(TA as never));
+        await scorri();
+        expect(conta('GET', '/api/chat/messages'), 'due GET per lo stesso thread in volo').toBe(1);
+    });
+
+    it('apri() sullo stesso thread già caricato: UNA GET silenziosa, lista mai azzerata, niente spinner', async () => {
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1' })];
+        const storia: Array<{ n: number; spinner: boolean }> = [];
+        const { result } = renderHook(() => {
+            const r = useConversazioneChat({ userId: IO, ready: true, rotta: '/parent/chat' });
+            storia.push({ n: r.messaggi.length, spinner: r.caricamentoMessaggi });
+            return r;
+        });
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(1));
+        await waitFor(() => expect(result.current.caricamentoMessaggi).toBe(false));
+
+        storia.length = 0;
+        const prima = conta('GET', '/api/chat/messages');
+        act(() => result.current.apri(TA as never));
+        await scorri();
+        expect(conta('GET', '/api/chat/messages')).toBe(prima + 1);
+        expect(storia.some((x) => x.n === 0), 'la conversazione già aperta è stata svuotata').toBe(false);
+        expect(storia.some((x) => x.spinner), 'la conversazione già aperta è stata coperta dallo spinner').toBe(false);
+    });
+
+    it('il tick del polling con la GET dei messaggi ancora in volo non ne aggiunge un’altra', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        const { result } = monta();
+        await pronto(result);
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/messages?');
+        act(() => result.current.apri(TA as never));
+        await scorri();
+        await act(async () => {
+            vi.advanceTimersByTime(30_000);
+        });
+        await scorri();
+        expect(conta('GET', '/api/chat/messages')).toBe(1);
+    });
+
+    it('apriPerId(X) con la lista in volo, poi l’utente tocca Y: alla risposta resta aperto Y', async () => {
+        const { result } = monta();
+        await pronto(result);
+        const r = result.current as unknown as ConApertura;
+        expect(typeof r.apriPerId, 'il hook non sa aprire una conversazione per id').toBe('function');
+
+        rete.threads = [TA, TB, { ...TA, id: 'th-x' }];
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        let esito: Promise<string> = Promise.resolve('');
+        act(() => {
+            esito = (result.current as unknown as ConApertura).apriPerId('th-x');
+        });
+        await waitFor(() => expect(rete.richieste.filter((x) => x.percorso === '/api/chat/threads' && !x.chiusa)).toHaveLength(1));
+
+        act(() => result.current.apri(TB as never)); // la scelta dell'utente
+        const inVolo = rete.richieste.find((x) => x.percorso === '/api/chat/threads' && !x.chiusa);
+        let valore = '';
+        await act(async () => {
+            inVolo?.risolvi(rispostaNormale('GET', inVolo.url));
+            valore = await esito;
+        });
+
+        expect(result.current.threadAperto?.id, 'la notifica ha scavalcato la conversazione scelta a mano').toBe('th-b');
+        expect(valore).toBe('annullato');
+    });
+
+    it('apriPerId durante il caricamento iniziale attende QUELLA lista e apre, senza GET in più', async () => {
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        const { result } = monta();
+        await waitFor(() => expect(conta('GET', '/api/chat/threads')).toBe(1));
+        let esito: Promise<string> = Promise.resolve('');
+        act(() => {
+            esito = (result.current as unknown as ConApertura).apriPerId('th-b');
+        });
+        await scorri();
+        const iniziale = rete.richieste.find((x) => x.percorso === '/api/chat/threads');
+        let valore = '';
+        await act(async () => {
+            iniziale?.risolvi(rispostaNormale('GET', iniziale.url));
+            valore = await esito;
+        });
+        expect(valore).toBe('aperto');
+        expect(result.current.threadAperto?.id).toBe('th-b');
+        expect(conta('GET', '/api/chat/threads')).toBe(1);
+    });
+
+    it('apriPerId di un id che la lista non ha: UNA ricarica, poi «non-trovato»', async () => {
+        const { result } = monta();
+        await pronto(result);
+        let valore = '';
+        await act(async () => {
+            valore = await (result.current as unknown as ConApertura).apriPerId('th-estraneo');
+        });
+        expect(valore).toBe('non-trovato');
+        expect(conta('GET', '/api/chat/threads')).toBe(2);
+        expect(result.current.threadAperto).toBeNull();
+    });
+
+    it('apriPerId con la lista che non si carica: «errore», e nessuna conversazione aperta', async () => {
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        const { result } = monta();
+        await waitFor(() => expect(conta('GET', '/api/chat/threads')).toBe(1));
+        let esito: Promise<string> = Promise.resolve('');
+        act(() => {
+            esito = (result.current as unknown as ConApertura).apriPerId('th-b');
+        });
+        await scorri();
+        let valore = '';
+        await act(async () => {
+            for (const x of rete.richieste.filter((y) => y.percorso === '/api/chat/threads' && !y.chiusa)) x.rompi(new TypeError('Failed to fetch'));
+            valore = await esito;
+        });
+        expect(valore).toBe('errore');
+        expect(result.current.threadAperto).toBeNull();
+    });
+
+    it('un thread sconosciuto dal realtime e l’apertura dalla notifica dello stesso thread: UNA ricarica sola', async () => {
+        const { result } = monta();
+        await pronto(result);
+        rete.threads = [TA, TB, { ...TA, id: 'th-x' }];
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        const prima = conta('GET', '/api/chat/threads');
+
+        act(() => realtime().onThreadSconosciuto?.(nuovoMessaggio({ id: 'm-x', thread_id: 'th-x', sender_id: 'doc-1' })));
+        let esito: Promise<string> = Promise.resolve('');
+        act(() => {
+            esito = (result.current as unknown as ConApertura).apriPerId('th-x');
+        });
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'due ricariche forzate concorrenti non si sono fuse').toBe(prima + 1);
+
+        let valore = '';
+        await act(async () => {
+            for (const x of rete.richieste.filter((y) => y.percorso === '/api/chat/threads' && !y.chiusa)) x.risolvi(rispostaNormale('GET', x.url));
+            valore = await esito;
+        });
+        expect(valore).toBe('aperto');
+    });
+
+    it('ricaricaThreads({forza}) non si fonde con una GET partita PRIMA; senza forza sì', async () => {
+        const { result } = monta();
+        await pronto(result);
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        const prima = conta('GET', '/api/chat/threads');
+        act(() => {
+            void (result.current as unknown as ConApertura).ricaricaThreads();
+        });
+        act(() => {
+            void (result.current as unknown as ConApertura).ricaricaThreads();
+        });
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'due ricariche semplici concorrenti non si sono fuse').toBe(prima + 1);
+
+        await new Promise((r) => setTimeout(r, 5));
+        act(() => {
+            void (result.current as unknown as ConApertura).ricaricaThreads({ forza: true });
+        });
+        await scorri();
+        expect(conta('GET', '/api/chat/threads'), 'la ricarica forzata ha riusato una lista partita prima').toBe(prima + 2);
+    });
+
+    it('INSERT realtime del PROPRIO allegato (percorso) con la POST in volo: nessuna GET di rifirma', async () => {
+        rete.trattieni = (metodo) => metodo === 'POST';
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await scorri();
+        const primaGet = conta('GET', '/api/chat/messages');
+        act(() => {
+            void result.current.invia('📎 Allegato', 'gen-1/foto.png', 'image');
+        });
+        await waitFor(() => expect(conta('POST', '/api/chat/messages')).toBe(1));
+
+        act(() => realtime().onNewMessage(nuovoMessaggio({ id: 'm-foto', attachment_url: 'gen-1/foto.png', attachment_type: 'image', content: '📎 Allegato' })));
+        await scorri();
+        expect(conta('GET', '/api/chat/messages'), 'la 201 porta già il link firmato: la GET di rifirma è di troppo').toBe(primaGet);
+    });
+});

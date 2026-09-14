@@ -103,9 +103,9 @@ function TeacherChatContent() {
             });
             if (res.ok) {
                 setShowNewChat(false);
-                await chat.ricaricaThreads();
                 const newThread = await res.json();
-                const allThreads = await chat.ricaricaThreads();
+                // UNA lista, forzata: una GET partita prima della creazione non la conterrebbe.
+                const allThreads = await chat.ricaricaThreads({ forza: true });
                 const found = allThreads?.find(t => t.id === newThread.id);
                 if (found) handleSelectThread(found);
             }
@@ -145,7 +145,7 @@ function TeacherChatContent() {
             // così il banner compare e il composer si disabilita. (Il gate Termini non
             // scatta mai per un docente: guardia trasparente per lo staff.)
             if (esito.motivo === 'conversazione_sospesa') {
-                await chat.ricaricaThreads();
+                await chat.ricaricaThreads({ forza: true });
             } else if (esito.motivo === 'account_sospeso') {
                 setErroreInvio({ threadId: esito.threadId, tipo: 'sospeso' });
             } else {

@@ -89,6 +89,9 @@ const rete = {
     threadsCheFalliscono: 0,
     esitoPost: null as null | ((body: Json) => Risposta),
     contatorePost: 0,
+    contatti: [] as Json[],
+    /** Il thread che la POST /api/chat/threads «crea»: entra nella lista da quel momento. */
+    threadCreato: null as null | Json,
 };
 
 function ok(data: unknown, status = 200): Risposta {
@@ -119,7 +122,11 @@ function rispondi(metodo: string, url: string, body: Json | undefined): Risposta
         rete.messaggi[String(body.thread_id)] = [...(rete.messaggi[String(body.thread_id)] ?? []), nuovo];
         return ok(nuovo, 201);
     }
-    if (percorso === '/api/chat/contacts') return ok({ contacts: [], motivo: null });
+    if (percorso === '/api/chat/contacts') return ok({ contacts: rete.contatti, motivo: null });
+    if (percorso === '/api/chat/threads' && metodo === 'POST' && rete.threadCreato) {
+        rete.threads = [rete.threadCreato, ...rete.threads];
+        return ok(rete.threadCreato, 201);
+    }
     return ok({});
 }
 
@@ -204,6 +211,7 @@ type Pagina = {
     ruoloAltro: string;
     invioNonRiuscito: string;
     indietro: string;
+    nuovaChat: string;
 };
 
 const PAGINE: Pagina[] = [
@@ -217,6 +225,7 @@ const PAGINE: Pagina[] = [
         ruoloAltro: 'teacher',
         invioNonRiuscito: 'invioNonRiuscito',
         indietro: 'backToList',
+        nuovaChat: 'newChat',
     },
     {
         nome: 'docente',
@@ -228,6 +237,7 @@ const PAGINE: Pagina[] = [
         ruoloAltro: 'parent',
         invioNonRiuscito: 'chatInvioNonRiuscito',
         indietro: 'chatTornaAllaLista',
+        nuovaChat: 'chatNuova',
     },
 ];
 
@@ -301,6 +311,8 @@ beforeEach(() => {
     rete.threadsCheFalliscono = 0;
     rete.esitoPost = null;
     rete.contatorePost = 0;
+    rete.contatti = [];
+    rete.threadCreato = null;
     h.realtime = null;
     h.logClient.mockClear();
     vi.stubGlobal('fetch', vi.fn(fetchFinto));
@@ -562,5 +574,26 @@ describe.each(PAGINE)('chat del $nome — D6: un caricamento fallito non si trav
         expect((await screen.findAllByText(p.nomeA)).length).toBeGreaterThan(0);
         expect(screen.queryAllByText('threadsNonCaricatiTitolo')).toHaveLength(0);
         expect(chiamate('GET', '/api/chat/threads')).toHaveLength(2);
+    });
+});
+
+describe.each(PAGINE)('chat del $nome — carico: una conversazione nuova costa UNA lista', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    it('creare una conversazione dalla rubrica ricarica i thread una volta sola e la apre', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA)];
+        rete.contatti = [{ user_id: p.altro, user_name: 'Contatto Nuovo', user_role: p.ruoloAltro, student_id: 'alu-2', student_name: 'Alunno Due', sezione: 'Girasoli' }];
+        rete.threadCreato = thread(p, TH_B, p.nomeB);
+        render(<p.Pagina />);
+        await screen.findAllByText(p.nomeA);
+
+        fireEvent.click(screen.getByRole('button', { name: new RegExp(p.nuovaChat) }));
+        fireEvent.click(await screen.findByText('Contatto Nuovo'));
+
+        await waitFor(() => expect(chiamate('POST', '/api/chat/threads')).toHaveLength(1));
+        await waitFor(() => expect(chiamate('GET', '/api/chat/messages').map((c) => c.url)).toContain(`/api/chat/messages?threadId=${TH_B}`));
+        expect(chiamate('GET', '/api/chat/threads'), 'dopo la creazione la lista è stata chiesta due volte di fila').toHaveLength(2);
     });
 });

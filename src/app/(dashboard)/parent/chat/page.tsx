@@ -131,8 +131,8 @@ function ParentChatContent() {
             if (res.ok) {
                 setShowNewChat(false);
                 const newThread = await res.json();
-                await chat.ricaricaThreads();
-                const allThreads = await chat.ricaricaThreads();
+                // UNA lista, forzata: una GET partita prima della creazione non la conterrebbe.
+                const allThreads = await chat.ricaricaThreads({ forza: true });
                 const found = allThreads?.find(t => t.id === newThread.id);
                 if (found) handleSelectThread(found);
             }
@@ -176,7 +176,7 @@ function ParentChatContent() {
             } else if (esito.motivo === 'conversazione_sospesa') {
                 // Sospensione rilevata server-side: ricarica i thread così il banner
                 // "Conversazione sospesa" compare e il composer si disabilita.
-                await chat.ricaricaThreads();
+                await chat.ricaricaThreads({ forza: true });
             } else if (esito.motivo === 'account_sospeso') {
                 setErroreInvio({ threadId: esito.threadId, tipo: 'sospeso' });
             } else {

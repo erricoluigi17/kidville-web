@@ -340,11 +340,19 @@ export function ChatMessageArea({
     }, [messages.length]);
 
     // IntersectionObserver per marcare come letti i messaggi non letti
+    //
+    // ⚠️ SI OSSERVA SOLO DENTRO IL PROPRIO CONTENITORE (2026-09-14). Le pagine montano questo
+    // componente due volte (desktop e mobile), e con `document.querySelectorAll` ciascuna istanza
+    // osservava anche le bolle dell'altra: ogni lotto di letti partiva due volte. E l'effetto dipende
+    // anche da `loading`: i messaggi arrivati mentre c'era lo spinner (niente contenitore montato)
+    // non venivano più osservati quando lo spinner spariva, perché l'array dei messaggi era lo stesso.
     useEffect(() => {
         if (!onMarkRead) return;
 
         // Disconnetti observer precedente
         observerRef.current?.disconnect();
+        const contenitore = contenitoreRef.current;
+        if (!contenitore) return;
 
         observerRef.current = new IntersectionObserver(
             (entries) => {
@@ -365,17 +373,17 @@ export function ChatMessageArea({
             { threshold: 0.5 }
         );
 
-        // Osserva tutti i messaggi non letti dell'interlocutore
-        const unreadEls = document.querySelectorAll('[data-unread="true"]');
+        // Osserva i messaggi non letti dell'interlocutore di QUESTO contenitore
+        const unreadEls = contenitore.querySelectorAll('[data-unread="true"]');
         unreadEls.forEach(el => observerRef.current?.observe(el));
 
         return () => {
             observerRef.current?.disconnect();
             if (debounceTimer.current) clearTimeout(debounceTimer.current);
         };
-    // Ri-osserva quando cambiano i messaggi
+    // Ri-osserva quando cambiano i messaggi o finisce il caricamento
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [messages, scheduleFlush]);
+    }, [messages, loading, scheduleFlush]);
 
     if (loading) {
         return (

@@ -223,6 +223,24 @@ export const CODICI_ERRORE = {
     /** 400 — l'adulto scelto per le fatture non è fra quelli della domanda. */
     INTESTATARIO_NON_VALIDO: 'erroreIntestatarioNonValido',
     /**
+     * Import di una domanda — il BAMBINO GEMELLO (2026-09-14): in sede c'è già un
+     * bambino con lo stesso nome e la stessa data di nascita, ma un codice fiscale
+     * diverso. Viaggia dentro `errors[]` della risposta (non da solo come corpo
+     * d'errore), e il pannello risponde offrendo «usa la scheda esistente».
+     *
+     * Misurato quel giorno: sette coppie di alunni doppi nella stessa sede, codici
+     * diversi per UN carattere. L'import riconosceva solo il codice identico.
+     */
+    POSSIBILE_DOPPIONE: 'errorePossibileDoppione',
+    /**
+     * 400 / bloccante — l'abbinamento a una scheda esistente («è lo stesso bambino»)
+     * non si può onorare: il bambino non è nella domanda, oppure l'uuid scelto dal
+     * client non è fra i gemelli che il server trova, o è fuori scope. Si ferma tutto
+     * invece di proseguire: proseguire creerebbe proprio l'alunno doppio che la
+     * segreteria ha appena detto di non volere.
+     */
+    ABBINAMENTO_NON_VALIDO: 'erroreAbbinamentoNonValido',
+    /**
      * 409 — si è scelto un intestatario per un pagamento RIPARTITO fra due genitori.
      *
      * Non si scavalca la ripartizione, e non è prudenza: con i genitori separati la
@@ -2353,6 +2371,8 @@ export const CODICI_CON_DETTAGLIO: ReadonlySet<CodiceErrore> = new Set<CodiceErr
     'RETTA_FRATELLO_NON_VALIDO',
     'RETTA_FRATELLO_SENZA_CIFRA',
     'INTESTATARIO_NON_VALIDO',
+    // Stessa ragione dei cinque qui sopra: la prosa dice QUALE bambino («Bambino 2: …»).
+    'ABBINAMENTO_NON_VALIDO',
     // Il NUMERO della fattura viva («Asilo 2328/2026»): senza, chi riceve il
     // rifiuto sa che c'è un documento di mezzo e non sa quale andare a guardare
     // — cioè non può fare la sola cosa che il messaggio gli chiede.

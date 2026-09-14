@@ -3,7 +3,7 @@ import { istanteEmissioneCredenziali } from '@/lib/email/istante-emissione'
 import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { STATO_ISCRITTO } from '@/lib/alunni/stato'
-import { resolveScuoleAttive, resolveScuolaScrittura, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
+import { assertAlunnoInScope, resolveScuoleAttive, resolveScuolaScrittura, restringiSedi, scuoleDiUtente } from '@/lib/auth/scope'
 import { rifiutoSede } from '@/lib/auth/rifiuto-sede'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { riassuntoCampi } from '@/lib/audit/riassunto'
@@ -24,6 +24,13 @@ import { scrubSanitariDomanda } from '@/lib/gdpr/anonimizza'
 import { consensiFotoDaProva, type ProvaConsensi } from '@/lib/iscrizioni/consensi-foto'
 import { LIMITE_ISCRIZIONI_DEFAULT, LIMITE_ISCRIZIONI_MAX } from '@/lib/api/paginazione'
 import { normalizzaNomeSezione, SCHEMA_ASSENTE } from '@/lib/alunni/sezione'
+import {
+  cercaGemelloAlunno,
+  cercaGemelloGenitore,
+  type SchedaAlunnoGemella,
+  type SchedaGenitoreGemella,
+} from '@/lib/iscrizioni/doppioni'
+import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
 import { z } from 'zod'
 import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from '@/types/database.types'
 
@@ -32,6 +39,52 @@ import type { EnrollmentSubmissionData, EnrollmentAdult, EnrollmentChild } from 
 interface ImportError {
   dove: string
   messaggio: string
+  /**
+   * Un codice stabile, SOLO dove il pannello deve fare qualcosa di diverso dal
+   * mostrare il testo: il doppione (offre «usa la scheda esistente») e
+   * l'abbinamento rifiutato. Gli altri errori restano prosa, come sono sempre stati.
+   */
+  codice?: 'POSSIBILE_DOPPIONE' | 'ABBINAMENTO_NON_VALIDO'
+  /** L'indice del bambino nella domanda, DA ZERO: è la chiave di `abbinamenti`. */
+  bambino?: number
+  /** L'unica scheda gemella. Assente quando sono più d'una: sceglierla sarebbe indovinare. */
+  alunno_esistente_id?: string
+}
+
+/** Nome e cognome come li ha scritti la famiglia, per gli avvisi al pannello (MAI nei log). */
+function nomeDi(nome: unknown, cognome: unknown): string {
+  return [nome, cognome]
+    .map((v) => (typeof v === 'string' ? v.trim() : ''))
+    .filter(Boolean)
+    .join(' ')
+}
+
+/**
+ * L'avviso su un codice fiscale che non regge — NON bloccante, e il perché.
+ *
+ * Le sette coppie di doppioni del 2026-09-14 avevano tutte un codice su due col
+ * carattere di controllo sbagliato, e nessuno lo aveva visto: il modulo pubblico
+ * lo accettava e l'import lo copiava. Bloccare qui non servirebbe — la domanda non
+ * si può correggere dall'interfaccia, e la famiglia l'ha già inviata — quindi si
+ * DICE, nel momento in cui una persona sta guardando proprio quella domanda: il
+ * codice si corregge nella scheda, dove finisce e da dove va in fattura.
+ *
+ * Il messaggio porta il nome perché la risposta va allo staff che ha la domanda
+ * aperta davanti. Nei log non va: lì restano indici e uuid.
+ */
+function avvisoCodiceFiscale(dove: string, persona: string, cf: unknown): string | null {
+  if (typeof cf !== 'string' || cf.trim() === '') return null
+  const esito = validaCodiceFiscale(cf)
+  if (esito.valido) return null
+  const difetto = esito.motivi.includes('checksum')
+    ? 'non supera il carattere di controllo'
+    : 'non è scritto come un codice fiscale valido'
+  return `${dove}: il codice fiscale${persona ? ` di ${persona}` : ''} ${difetto}: correggerlo nella scheda dopo l'import.`
+}
+
+/** Lo stesso avviso, quando il codice sbagliato è sulla scheda che si propone (o si riusa). */
+function avvisoCodiceSchedaEsistente(ci: number): string {
+  return `Bambino ${ci + 1}: il codice fiscale della scheda esistente non è valido: correggerlo nella scheda.`
 }
 
 // Normalizza una provincia (residence/birth) alla sigla ufficiale. Rete di sicurezza per
@@ -410,6 +463,25 @@ const patchBodySchema = z.object({
   // 1..28: oltre il 28 non tutti i mesi hanno quel giorno, e una scadenza al 31
   // febbraio è una scadenza che non arriva mai.
   giorniScadenza: z.record(z.string(), z.number().int().min(1).max(28)).nullish(),
+  /**
+   * «È LO STESSO BAMBINO»: indice del bambino nella domanda → uuid della scheda
+   * esistente da riusare (2026-09-14).
+   *
+   * È la risposta della segreteria all'errore `POSSIBILE_DOPPIONE`: in sede c'è già
+   * un bambino con lo stesso nome e la stessa data di nascita, ma un codice fiscale
+   * diverso. Senza questa strada l'import avrebbe due sole uscite, entrambe
+   * sbagliate per una famiglia che ha solo sbagliato un carattere: rifiutare la
+   * domanda giusta, o creare il doppione.
+   *
+   * ⚠️ L'uuid arriva dal CLIENT e da solo non vale niente: la route lo accetta solo
+   * se è fra i gemelli che trova LEI, e se l'alunno è nello scope di chi importa.
+   * Altrimenti la famiglia della domanda si potrebbe agganciare al bambino di
+   * un'altra famiglia scegliendone l'id.
+   *
+   * Chiave senza zeri in testa: `"01"` non è l'indice `1`, e un abbinamento che non
+   * combacia con nessun bambino verrebbe ignorato in silenzio.
+   */
+  abbinamenti: z.record(z.string().regex(/^(0|[1-9]\d*)$/), zUuid).nullish(),
 })
 
 /**
@@ -725,9 +797,11 @@ export const GET = withRoute('admin/iscrizioni:GET', async (request: NextRequest
 // PATCH: rifiuto o import nelle anagrafiche.
 // Body import: { id, action:'import', assignments: { [childIndex]: classe }, referenteIndex,
 //                rette: { [childIndex]: number>0 }, retteACarico: { [childIndex]: indiceFratello },
-//                intestatari: { [childIndex]: indiceAdulto }, giorniScadenza: { [childIndex]: 1..28 } }
+//                intestatari: { [childIndex]: indiceAdulto }, giorniScadenza: { [childIndex]: 1..28 },
+//                abbinamenti: { [childIndex]: uuidAlunnoEsistente } }
 // I quattro campi economici sono nati il 2026-09-02: senza la retta il bambino
 // entrava a 0, che la generazione mensile rilegge come «default di sede» (150 €).
+// `abbinamenti` è nato il 2026-09-14: è la risposta a `POSSIBILE_DOPPIONE`.
 // Body reject: { id, action:'reject' }
 export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextRequest) => {
   const auth = await requireStaff(request)
@@ -950,6 +1024,22 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       }
     }
 
+    // E un abbinamento a una scheda esistente parla di un bambino di QUESTA domanda.
+    // Una chiave che non corrisponde a nessuno non si ignora: il ciclo qui sotto non
+    // la guarderebbe mai, e la segreteria crederebbe riusata una scheda che non lo è.
+    const abbinamenti: Record<string, string> = b.data.abbinamenti || {}
+    for (const chiave of Object.keys(abbinamenti)) {
+      if (Number(chiave) >= children.length) {
+        return NextResponse.json(
+          {
+            error: `Bambino ${Number(chiave) + 1}: la domanda non contiene questo bambino, quindi non c'è niente da abbinare a una scheda esistente`,
+            codice: 'ABBINAMENTO_NON_VALIDO',
+          },
+          { status: 400 },
+        )
+      }
+    }
+
     // Bloccanti (impediscono l'approvazione) vs warnings (non bloccanti).
     const errors: ImportError[] = []
     const warnings: string[] = []
@@ -1073,9 +1163,121 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
     // valle avrebbe comunque creato il `parents`, l'account e spedito le credenziali a chi
     // sta tentando l'aggancio. Qui non si scrive niente: l'invio resta 'pending'.
     const dedupCf: (string | null)[] = children.map(() => null)
+    /**
+     * I bambini che la segreteria ha dichiarato «lo stesso» di una scheda esistente
+     * (`abbinamenti`), con la scheda che la route ha VERIFICATO. Serve dopo: al log del
+     * riuso e all'avviso sul codice fiscale, che per loro riguarda la scheda e non la
+     * domanda.
+     */
+    const abbinati = new Map<number, SchedaAlunnoGemella>()
+    /**
+     * Un abbinamento che non si può onorare ferma l'import. Mai «si ignora e si
+     * prosegue»: proseguire vorrebbe dire creare proprio l'alunno doppio che la
+     * segreteria ha appena detto di non volere. E l'uuid arriva dal client: che non
+     * sia fra i gemelli, o che non si sia potuto verificare, per la route è lo stesso.
+     */
+    const rifiutaAbbinamento = (ci: number) => {
+      errors.push({
+        dove: `Bambino ${ci + 1}`,
+        messaggio:
+          'La scheda indicata non si può usare per questo bambino: non risulta fra quelle con lo stesso nome e la stessa data di nascita in questa sede, oppure non è stato possibile verificarla. Non è stato scritto nulla: riaprire la domanda e riprovare l\'import.',
+        codice: 'ABBINAMENTO_NON_VALIDO',
+        bambino: ci,
+      })
+      // L'uuid chiesto resta nel log: è un id scelto dal client verso il bambino di
+      // qualcuno, e se qualcuno ci provasse è l'unica traccia che resta.
+      logEvento('iscrizione', 'warn', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'abbinamento-rifiutato',
+        entita: 'bambino',
+        entita_tipo: 'alunni',
+        indice: ci + 1,
+        sede_id: scuolaId,
+        entita_id: id,
+        alunno_richiesto_id: abbinamenti[String(ci)],
+      })
+    }
+    const utente = auth.user
+    /**
+     * (C) IL GEMELLO — lo stesso bambino, arrivato con un codice fiscale diverso.
+     *
+     * Misurato il 2026-09-14: sette coppie di alunni doppi nella stessa sede, tutte con
+     * stesso nome, cognome e data di nascita e codici diversi per UN carattere — uno dei
+     * due col carattere di controllo sbagliato, spesso perché la famiglia aveva inviato
+     * il modulo due volte. (A) e (B) cercano il codice IDENTICO, quindi il refuso passava
+     * da «bambino nuovo»: un secondo alunno, due rette, i solleciti sulla retta
+     * fantasma, un bonifico riconciliato sulla copia sbagliata.
+     *
+     * Il gemello FERMA l'import e non lo risolve da solo: se la famiglia ha inviato la
+     * domanda due volte la risposta giusta è rifiutarla, se è la stessa domanda con un
+     * refuso è usare la scheda esistente, e fra le due sa scegliere solo una persona.
+     * Sta nel PRE-FLIGHT per la stessa ragione di (B): qui non si è ancora scritto niente.
+     */
+    const cercaDoppione = async (ci: number, c: EnrollmentChild, cf: unknown, richiesto: string | undefined) => {
+      const gemello = await cercaGemelloAlunno(
+        supabase,
+        { scuolaId, nome: c.nome, cognome: c.cognome, dataNascita: c.data_nascita, codiceFiscale: cf },
+        { operazione: 'admin/iscrizioni:PATCH', indice: ci + 1, domandaId: id },
+      )
+      if (gemello.esito !== 'trovato') {
+        // `nessuno`: il bambino è nuovo. `non_verificabile`: è già nel log, e un'iscrizione
+        // non si boccia per una lettura fallita — come per la dedup per codice. Ma un
+        // abbinamento chiesto non si può onorare senza aver visto il gemello.
+        if (richiesto) rifiutaAbbinamento(ci)
+        return
+      }
+
+      if (richiesto) {
+        const scheda = gemello.schede.find((s) => s.id === richiesto)
+        // Il gate sull'OGGETTO, oltre al filtro di sede già dentro la ricerca: la scheda la
+        // sceglie il client, e un gate che guarda solo CHI chiede non basta.
+        if (!scheda || (await assertAlunnoInScope(supabase, utente, scheda.id))) {
+          rifiutaAbbinamento(ci)
+          return
+        }
+        dedupCf[ci] = scheda.id
+        abbinati.set(ci, scheda)
+        return
+      }
+
+      const unica = gemello.schede.length === 1 ? gemello.schede[0] : null
+      errors.push({
+        dove: `Bambino ${ci + 1}`,
+        messaggio: unica
+          ? 'In questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso. Se la famiglia ha inviato la domanda due volte, rifiuta questa. Se è lo stesso bambino, usa la scheda esistente.'
+          : `In questa sede esistono già ${gemello.schede.length} bambini con lo stesso nome e la stessa data di nascita, ma con codici fiscali diversi: potrebbero essere già dei doppioni. Prima di importare vanno controllate quelle schede; se la famiglia ha inviato la domanda due volte, rifiuta questa.`,
+        codice: 'POSSIBILE_DOPPIONE',
+        bambino: ci,
+        // Una sola scheda si può proporre; fra più d'una scegliere sarebbe indovinare.
+        ...(unica ? { alunno_esistente_id: unica.id } : {}),
+      })
+      // Quale dei due codici è sbagliato è ciò che decide fra «rifiuta» e «usa la
+      // scheda»: se è quello della scheda, la domanda che si ha davanti è la giusta.
+      if (unica?.codiceFiscaleValido === false) warnings.push(avvisoCodiceSchedaEsistente(ci))
+      // Solo uuid, indici e conteggi: il nome, il codice e la data con cui si è cercato
+      // sono di un minore.
+      logEvento('iscrizione', 'warn', {
+        operazione: 'admin/iscrizioni:PATCH',
+        esito: 'possibile-doppione',
+        entita: 'bambino',
+        entita_tipo: 'alunni',
+        indice: ci + 1,
+        sede_id: scuolaId,
+        entita_id: id,
+        alunno_esistente_id: unica?.id,
+        n: gemello.schede.length,
+      })
+    }
     for (let ci = 0; ci < children.length; ci++) {
-      const cf = (children[ci] as EnrollmentChild).codice_fiscale
-      if (!cf) continue
+      const c = children[ci] as EnrollmentChild
+      const cf = c.codice_fiscale
+      const richiesto = abbinamenti[String(ci)]
+      if (!cf) {
+        // Senza codice fiscale non c'è nessun doppione da risolvere qui (lo copre la dedup
+        // soft più sotto), e quindi nemmeno un abbinamento da onorare.
+        if (richiesto) rifiutaAbbinamento(ci)
+        continue
+      }
 
       // (A) La dedup vera e propria, RISTRETTA alla sede: un bambino con lo stesso CF in
       // un'altra sede NON è il record da riusare in questo import.
@@ -1097,9 +1299,12 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           indice: ci + 1,
           error_code: codice,
         }, inSedeErr)
+        if (richiesto) rifiutaAbbinamento(ci)
         continue
       }
       if (inSede?.id) {
+        // Il codice fiscale IDENTICO vince su un abbinamento: è la chiave forte, e se
+        // nel frattempo qualcuno ha corretto il codice della scheda, è proprio lei.
         dedupCf[ci] = inSede.id as string
         continue
       }
@@ -1127,12 +1332,18 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           },
           altroveErr ?? undefined,
         )
+        if (richiesto) rifiutaAbbinamento(ci)
         continue
       }
       const altraSede = (altrove as { scuola_id?: unknown }[]).find(
         (r) => typeof r?.scuola_id === 'string' && r.scuola_id !== scuolaId,
       )
-      if (!altraSede) continue
+      if (!altraSede) {
+        // (C) Nessun bambino con questo codice, né qui né altrove: è davvero NUOVO, oppure
+        // è lo stesso bambino arrivato con un codice diverso? Vedi `cercaDoppione`, sopra.
+        await cercaDoppione(ci, c, cf, richiesto)
+        continue
+      }
       errors.push({
         dove: `Bambino ${ci + 1}`,
         messaggio:
@@ -1148,6 +1359,28 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
         sede_id: scuolaId,
         sede_esistente_id: String(altraSede.scuola_id),
       })
+    }
+
+    // ─── AVVISO: i codici fiscali che non superano il controllo ───────────────────
+    // NON bloccante (vedi `avvisoCodiceFiscale`), e calcolato QUI, prima del ritorno del
+    // pre-flight: accanto a un `POSSIBILE_DOPPIONE` è proprio questo avviso a dire quale
+    // delle due domande porta il refuso.
+    for (let ci = 0; ci < children.length; ci++) {
+      const c = children[ci] as EnrollmentChild
+      const abbinata = abbinati.get(ci)
+      if (abbinata) {
+        // Per un bambino abbinato il codice della DOMANDA non si scrive da nessuna parte:
+        // conta quello della scheda che si riusa.
+        if (abbinata.codiceFiscaleValido === false) warnings.push(avvisoCodiceSchedaEsistente(ci))
+        continue
+      }
+      const avviso = avvisoCodiceFiscale(`Bambino ${ci + 1}`, nomeDi(c.nome, c.cognome), c.codice_fiscale)
+      if (avviso) warnings.push(avviso)
+    }
+    for (let ai = 0; ai < adults.length; ai++) {
+      const a = adults[ai] as EnrollmentAdult
+      const avviso = avvisoCodiceFiscale(`Adulto ${ai + 1}`, nomeDi(a.first_name, a.last_name), a.fiscal_code)
+      if (avviso) warnings.push(avviso)
     }
 
     if (errors.length > 0) {
@@ -1189,15 +1422,75 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       // filtrare: la sede di un adulto è un attributo dei suoi LEGAMI, non suo.
       // Il riuso qui non concede alcun accesso da sé: l'accesso nasce dal legame
       // genitore↔alunno, ed è quello che va difeso (vedi il pre-flight sui CF dei bambini).
+      /** La scheda riconosciuta per nome e data di nascita, quando il codice non ne trova una. */
+      let schedaGemella: SchedaGenitoreGemella | null = null
       if (a.fiscal_code) {
-        const { data: existing } = await supabase
+        const { data: existing, error: existingErr } = await supabase
           .from('parents')
           .select('id, auth_user_id')
           .eq('fiscal_code', a.fiscal_code)
           .maybeSingle()
-        if (existing) {
+        if (existingErr) {
+          // PostgREST non lancia: fino al 2026-09-14 questo errore spariva, e «lettura
+          // fallita» diventava «nessuna scheda». Si crea come prima — ma NON si cerca il
+          // gemello: senza sapere se la scheda con questo codice esiste, riusarne una
+          // scelta per nome potrebbe scavalcare proprio quella giusta.
+          const codice = (existingErr as { code?: string }).code ?? null
+          logEvento('db', codice && SCHEMA_ASSENTE.has(codice) ? 'info' : 'error', {
+            operazione: 'admin/iscrizioni:PATCH',
+            esito: 'dedup-cf-genitore-non-disponibile',
+            entita: 'adulto',
+            indice: ai + 1,
+            error_code: codice,
+          }, existingErr)
+        } else if (existing) {
           parentId = existing.id
           parentAuthId = (existing as { auth_user_id?: string | null }).auth_user_id ?? null
+        } else {
+          // ─── IL GENITORE GEMELLO (2026-09-14) ─────────────────────────────────
+          // La coppia 7 delle sette sanate quel giorno aveva anche una scheda GENITORE
+          // doppia, nata dalla seconda domanda con un refuso nel codice dell'adulto. Una
+          // scheda UNICA con lo stesso nome e la stessa data di nascita si riusa, e lo si
+          // dice: l'avviso non blocca, perché a questo punto è la stessa persona in quasi
+          // tutti i casi, e un genitore doppio si scopre solo quando non vede un figlio.
+          // Più di una: non si sceglie — si crea come prima, e lo si dice.
+          const gemello = await cercaGemelloGenitore(
+            supabase,
+            { nome: a.first_name, cognome: a.last_name, dataNascita: a.birth_date, codiceFiscale: a.fiscal_code },
+            { operazione: 'admin/iscrizioni:PATCH', indice: ai + 1, domandaId: id },
+          )
+          if (gemello.esito === 'trovato' && gemello.schede.length === 1) {
+            schedaGemella = gemello.schede[0]
+            parentId = schedaGemella.id
+            parentAuthId = schedaGemella.authUserId
+            warnings.push(
+              `Adulto ${ai + 1}: riconosciuto per nome e data di nascita in una scheda esistente con codice fiscale diverso: verificare il codice fiscale.`,
+            )
+            logEvento('iscrizione', 'warn', {
+              operazione: 'admin/iscrizioni:PATCH',
+              esito: 'genitore-abbinato-per-anagrafica',
+              entita: 'genitore',
+              entita_tipo: 'parents',
+              indice: ai + 1,
+              sede_id: scuolaId,
+              entita_id: id,
+              genitore_esistente_id: schedaGemella.id,
+            })
+          } else if (gemello.esito === 'trovato') {
+            warnings.push(
+              `Adulto ${ai + 1}: esistono già ${gemello.schede.length} schede con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso: non potendo sceglierne una, l'import usa una scheda nuova. Verificare il codice fiscale e unificare le schede.`,
+            )
+            logEvento('iscrizione', 'warn', {
+              operazione: 'admin/iscrizioni:PATCH',
+              esito: 'possibile-doppione',
+              entita: 'genitore',
+              entita_tipo: 'parents',
+              indice: ai + 1,
+              sede_id: scuolaId,
+              entita_id: id,
+              n: gemello.schede.length,
+            })
+          }
         }
       }
 
@@ -1282,11 +1575,32 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
       // `intestatario_fattura` e `percentuale_pagamento` (punto 3 più sotto).
       // Chi paga è un'altra cosa da chi vede.
       const adultEmail = a.email ? String(a.email) : ''
-      if (adultEmail && parentId) {
+      /**
+       * L'indirizzo con cui si crea — o si ritrova — l'accesso.
+       *
+       * ⚠️ PER UNA SCHEDA RICONOSCIUTA PER NOME È L'EMAIL DELLA SCHEDA, NON DELLA DOMANDA.
+       * `ensureParentIdentity` allinea il login di un account esistente all'indirizzo che
+       * riceve («vince l'anagrafica», 2026-09-04): passargli l'email scritta in un modulo
+       * pubblico vorrebbe dire riscrivere l'accesso di un genitore già in archivio, e un
+       * nome con una data di nascita sono molto meno di un codice fiscale identico — sono
+       * dati che conosce chiunque conosca la famiglia. Se la domanda porta un'altra email,
+       * resta fuori dall'accesso e lo si dice a chi importa.
+       */
+      const emailAccesso = schedaGemella ? (schedaGemella.emails[0] ?? '') : adultEmail
+      if (
+        schedaGemella &&
+        adultEmail.trim() !== '' &&
+        !schedaGemella.emails.some((e) => e.trim().toLowerCase() === adultEmail.trim().toLowerCase())
+      ) {
+        warnings.push(
+          `Adulto ${ai + 1}: l'email indicata nella domanda non è fra quelle della scheda esistente, e non è stata usata per l'accesso: se è corretta, aggiungerla dalla scheda del genitore.`,
+        )
+      }
+      if (emailAccesso && parentId) {
         const identita = await ensureParentIdentity(supabase, {
           id: parentId,
           auth_user_id: parentAuthId,
-          emails: [adultEmail],
+          emails: [emailAccesso],
           first_name: a.first_name != null ? String(a.first_name) : null,
           last_name: a.last_name != null ? String(a.last_name) : null,
           phone: a.phone != null ? String(a.phone) : null,
@@ -1295,7 +1609,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           parentAuthId = identita.authUserId
           if (isReferente) {
             referenteUserId = identita.authUserId
-            credentials = { email: adultEmail, password: identita.password ?? '(account già esistente)' }
+            credentials = { email: emailAccesso, password: identita.password ?? '(account già esistente)' }
           }
 
           // Il genitore ha ORA un account: è il momento in cui i suoi legami
@@ -1315,13 +1629,13 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
             const sede = await risolviContestoSede(supabase, scuolaId, 'admin/iscrizioni:POST')
             const messaggio = messaggioCredenziali({
               nome: a.first_name != null ? String(a.first_name) : null,
-              email: adultEmail,
+              email: emailAccesso,
               password: identita.password,
               occasione: 'iscrizione-approvata',
               emessaIl: istanteEmissioneCredenziali(),
             }, sede)
             const invio = await sendEmailDetailed({
-              to: adultEmail,
+              to: emailAccesso,
               subject: messaggio.oggetto,
               text: messaggio.testo,
               html: messaggio.html,
@@ -1330,7 +1644,7 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
             if (invio.ok) {
               credenzialiInviate++
             } else {
-              warnings.push(`Email credenziali NON inviata a ${adultEmail}: ${invio.error ?? 'motivo sconosciuto'} — comunicarle manualmente.`)
+              warnings.push(`Email credenziali NON inviata a ${emailAccesso}: ${invio.error ?? 'motivo sconosciuto'} — comunicarle manualmente.`)
             }
           }
         } else if (identita.reason === 'email_conflict' && !isReferente) {
@@ -1409,6 +1723,21 @@ export const PATCH = withRoute('admin/iscrizioni:PATCH', async (request: NextReq
           scuolaId,
           valoreDopo: daScrivere,
         })
+        if (abbinati.has(ci)) {
+          // Il riuso di una scheda scelta dalla segreteria si scrive QUI, dove avviene, e
+          // non nel pre-flight: un import bloccato da un altro bambino non ha riusato
+          // niente, e un log che dice il contrario manda a cercare un legame che non c'è.
+          logEvento('iscrizione', 'info', {
+            operazione: 'admin/iscrizioni:PATCH',
+            esito: 'abbinato-a-scheda-esistente',
+            entita: 'bambino',
+            entita_tipo: 'alunni',
+            indice: ci + 1,
+            sede_id: scuolaId,
+            entita_id: id,
+            alunno_esistente_id: studentId,
+          })
+        }
       }
 
       // Dedup SOFT per gli alunni SENZA codice fiscale (nome+cognome+data_nascita+scuola).

@@ -4,7 +4,7 @@ import itPublic from '../../messages/it/public.json'
 import { PERSONALE_FIELDS } from '@/lib/forms/personale-template'
 import { validateField } from '@/lib/forms/validate-fields'
 import {
-  ALFA, OGGI, apriTendina, avanti, passoSede, reteFinta, scegliNapoli,
+  ALFA, CF_PROVA, OGGI, apriTendina, avanti, passoSede, reteFinta, scegliNapoli,
 } from '../fixtures/anagrafica-personale'
 
 /**
@@ -191,16 +191,24 @@ describe('AnagraficaPersonaleWizard — il badge NON blocca: blocca solo `valida
   })
 
   it('⚠️ un OMOCODICO non viene respinto dalla forma: è un codice vero di una persona vera', () => {
-    // La regola che blocca è `validateField` sul `pattern` del template, e quel
-    // pattern ammette le lettere nelle posizioni numeriche. Se un giorno tornasse
-    // quello di `enrollment-template.ts`, un modulo pubblico direbbe a qualcuno
-    // che il proprio codice fiscale non esiste.
-    expect(validateField(CAMPO_CF, 'SPRMRA85C47F839K')).toBeNull()
-    expect(validateField(CAMPO_CF, 'SPRMRAL5C47F839K')).toBeNull()
-    expect(validateField(CAMPO_CF, 'SPRMRALMCQ7F839K'.slice(0, 16))).toBeNull()
-    // …e ciò che non ha la forma di un codice fiscale resta respinto.
-    expect(validateField(CAMPO_CF, 'SPRMRA85C47F839')).not.toBeNull()
+    // La regola che blocca è `validateField`: il `pattern` del template, che ammette
+    // le lettere nelle posizioni numeriche, e dal 2026-09-14 il carattere di
+    // controllo, che l'omocodia la conosce. Se un giorno tornasse il pattern di
+    // `enrollment-template.ts`, un modulo pubblico direbbe a qualcuno che il proprio
+    // codice fiscale non esiste.
+    //
+    // ⚠️ FINO AL 2026-09-14 i tre codici qui sotto avevano la forma giusta e il
+    // carattere di controllo SBAGLIATO, e la prova li dava per buoni: misurava la sola
+    // forma, cioè la stessa cecità che ha fatto nascere gli alunni doppi. `Z999` non è
+    // il codice catastale di nessun luogo: questi codici tornano e non sono di nessuno.
+    expect(validateField(CAMPO_CF, 'XQQYKV19C07Z999T')).toBeNull()
+    expect(validateField(CAMPO_CF, 'XQQYKV19CLTZ999B')).toBeNull()
+    expect(validateField(CAMPO_CF, 'XQQYKVMVCLTZVVVV')).toBeNull()
+    // …ciò che non ha la forma di un codice fiscale resta respinto…
+    expect(validateField(CAMPO_CF, 'XQQYKV19C07Z999')).not.toBeNull()
     expect(validateField(CAMPO_CF, '1234567890123456')).not.toBeNull()
+    // …e anche la forma giusta col carattere di controllo sbagliato: è un refuso.
+    expect(validateField(CAMPO_CF, 'XQQYKV19C07Z999A')).not.toBeNull()
   })
 })
 
@@ -222,12 +230,12 @@ describe('AnagraficaPersonaleWizard — nessun dato esce verso un terzo', () => 
     await finoAiDati()
     compilaAnagrafica()
     await scegliNapoli()
-    fireEvent.change(campoCf(), { target: { value: 'SPRMRA85C47F839K' } })
+    fireEvent.change(campoCf(), { target: { value: CF_PROVA } })
     avanti()
 
     await waitFor(() => expect(screen.getByPlaceholderText('Es. Maria')).toBeInTheDocument())
     for (const [riga] of h.logClient.mock.calls) {
-      expect(JSON.stringify(riga)).not.toContain('SPRMRA85C47F839K')
+      expect(JSON.stringify(riga)).not.toContain(CF_PROVA)
     }
   })
 })
@@ -276,7 +284,7 @@ describe('AnagraficaPersonaleWizard — il luogo di nascita non è un vicolo cie
   /** Tutto il passo «I tuoi dati» TRANNE il luogo di nascita: la cascata resta vuota. */
   function tuttoTranneIlLuogo(): void {
     compilaAnagrafica()
-    fireEvent.change(screen.getByLabelText(/^Codice fiscale/), { target: { value: 'SPRMRA85C47F839K' } })
+    fireEvent.change(screen.getByLabelText(/^Codice fiscale/), { target: { value: CF_PROVA } })
     fireEvent.change(screen.getByLabelText(/^Cittadinanza/), { target: { value: 'Italiana' } })
     fireEvent.change(screen.getByLabelText(/^Titolo di studio/), { target: { value: 'laurea_triennale' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'Infanzia (3-6)' }))

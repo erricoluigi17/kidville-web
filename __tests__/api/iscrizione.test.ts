@@ -55,6 +55,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
 }))
 
 import { POST } from '@/app/api/iscrizione/route'
+import { MSG_CODICE_FISCALE_NON_VALIDO } from '@/lib/forms/validate-fields'
 
 const req = (body: unknown) =>
   new Request('http://localhost/api/iscrizione', {
@@ -152,5 +153,63 @@ describe('POST /api/iscrizione — validazione province', () => {
     const json = await res.json() as { campi: { children?: Record<string, Record<string, string>> } }
     // cognome è obbligatorio in CHILD_FIELDS (template di codice).
     expect(json.campi.children!['0'].cognome).toBe('Campo obbligatorio')
+  })
+})
+
+/**
+ * IL CARATTERE DI CONTROLLO, SUL SERVER (2026-09-14).
+ *
+ * Il refuso di una famiglia nel codice fiscale del bambino passava il modulo, e la
+ * deduplica per codice fiscale non riconosceva più il bambino: in produzione 7 coppie
+ * di alunni doppi nella stessa sede. Qui si prova l'ultima difesa, il POST pubblico,
+ * con un modello COME ARRIVA DAL DATABASE: `id` uuid e nessun pattern, così il campo
+ * si riconosce soltanto dal `db_mapping`.
+ *
+ * `Z999` non è il codice catastale di nessun luogo: i codici non sono di nessuno.
+ */
+describe('POST /api/iscrizione — il carattere di controllo del codice fiscale', () => {
+  const ID_CF_BAMBINO = '6b1f0d8e-2c3a-4e5f-9a7b-1c2d3e4f5a6b'
+  const ID_CF_ADULTO = '7c2e1f9a-3d4b-4f6a-8b9c-2d3e4f5a6b7c'
+  const CF_VALIDO = 'XQQYKV19C07Z999T'
+  const CF_CONTROLLO_SBAGLIATO = 'XQQYKV19C07Z999A'
+  const modelloConCf = {
+    schema: {
+      version: '1',
+      pages: [
+        { id: 'bambino', title: 'B', fields: [
+          { id: 'nome', type: 'text', label: 'Nome', required: true },
+          { id: ID_CF_BAMBINO, type: 'text', label: 'Codice fiscale', required: true, db_mapping: 'alunni.codice_fiscale' },
+        ] },
+        { id: 'adulto', title: 'A', fields: [
+          { id: ID_CF_ADULTO, type: 'text', label: 'Codice fiscale', required: true, db_mapping: 'parents.fiscal_code' },
+        ] },
+      ],
+    },
+  }
+
+  it('carattere di controllo sbagliato → 400 che NOMINA il campo, sotto il bambino e sotto l’adulto, e nessun insert', async () => {
+    h.model = modelloConCf
+    const res = await POST(req({ data: { presa_visione_informativa: true,
+      children: [{ nome: 'Prova', [ID_CF_BAMBINO]: CF_CONTROLLO_SBAGLIATO }],
+      adults: [{ [ID_CF_ADULTO]: CF_CONTROLLO_SBAGLIATO }],
+    } }))
+    expect(res.status).toBe(400)
+    expect(h.inserts, 'una domanda con un codice fiscale di nessuno è stata archiviata').toHaveLength(0)
+    const json = await res.json() as {
+      campi: { children?: Record<string, Record<string, string>>; adults?: Record<string, Record<string, string>> }
+    }
+    // È la forma che il wizard sa rimettere sotto il campo: `campi.<gruppo>.<indice>.<id>`.
+    expect(json.campi.children?.['0']).toEqual({ [ID_CF_BAMBINO]: MSG_CODICE_FISCALE_NON_VALIDO })
+    expect(json.campi.adults?.['0']).toEqual({ [ID_CF_ADULTO]: MSG_CODICE_FISCALE_NON_VALIDO })
+  })
+
+  it('codici validi → 201', async () => {
+    h.model = modelloConCf
+    const res = await POST(req({ data: { presa_visione_informativa: true,
+      children: [{ nome: 'Prova', [ID_CF_BAMBINO]: CF_VALIDO }],
+      adults: [{ [ID_CF_ADULTO]: CF_VALIDO }],
+    } }))
+    expect(res.status).toBe(201)
+    expect(h.inserts).toHaveLength(1)
   })
 })

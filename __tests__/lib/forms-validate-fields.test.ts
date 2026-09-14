@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { validateField, validatePage, isProvinceField, MSG_SCEGLI_OPZIONE, MSG_SCEGLI_DA_ELENCO } from '@/lib/forms/validate-fields'
+import {
+  validateField, validatePage, isProvinceField, MSG_SCEGLI_OPZIONE, MSG_SCEGLI_DA_ELENCO,
+  MSG_CODICE_FISCALE_NON_VALIDO,
+} from '@/lib/forms/validate-fields'
+import { validaCodiceFiscale } from '@/lib/fiscale/validazione'
+import { CHILD_FIELDS, ADULT_FIELDS } from '@/lib/forms/enrollment-template'
+import { PERSONALE_FIELDS } from '@/lib/forms/personale-template'
+import { ANAGRAFICA_GROUPS } from '@/lib/forms/anagrafica-fields'
 import type { FormField } from '@/types/database.types'
 
 const f = (over: Partial<FormField> & { id: string; type: FormField['type'] }): FormField => ({
@@ -110,8 +117,143 @@ describe('validateField — pattern CAP e codice fiscale', () => {
   })
   it('codice fiscale non valido → messaggio dedicato', () => {
     const cf = f({ id: 'codice_fiscale', type: 'text', validation: { pattern: '^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$', min_length: 16, max_length: 16 } })
-    expect(validateField(cf, 'RSSMRC99A01H501Z')).toBeNull()
+    // ⚠️ Fino al 2026-09-14 qui c'era un codice con la FORMA giusta e il carattere di
+    // controllo sbagliato, e il test lo dava per valido: era la stessa cecità che ha
+    // fatto nascere i doppioni (vedi il blocco sul carattere di controllo qui sotto).
+    // `Z999` non è il codice catastale di nessun comune: il codice non è di nessuno.
+    expect(validateField(cf, 'XQQYKV19C07Z999T')).toBeNull()
     expect(validateField(cf, 'ABC')).toContain('codice fiscale')
+  })
+})
+
+/**
+ * ── IL CARATTERE DI CONTROLLO, ALLA FONTE (2026-09-14) ──────────────────────────
+ *
+ * MISURATO in produzione: nella stessa sede 7 coppie di alunni DOPPI, e in tutte i due
+ * codici fiscali differiscono per un carattere solo, e uno dei due ha il carattere di
+ * controllo sbagliato. Il refuso della famiglia nel modulo pubblico passava, perché la
+ * regola guardava la sola FORMA (`pattern`): la deduplica per codice fiscale non
+ * riconosceva il bambino, e ne nasceva un secondo — con le rette doppie ai genitori.
+ *
+ * Il campo si riconosce dal SIGNIFICATO, non dal pattern: il modello del modulo arriva
+ * anche dal database (costruttore della segreteria), dove il pattern può mancare o
+ * essere diverso, e l'`id` di un campo preimpostato è un uuid.
+ *
+ * I codici qui sotto usano `Z999`, che non è il codice catastale di nessun luogo: sono
+ * aritmeticamente validi e non appartengono a nessuno (il repository è pubblico).
+ */
+describe('validateField — codice fiscale: il carattere di controllo, non solo la forma', () => {
+  const CF_VALIDO = 'XQQYKV19C07Z999T'
+  const CF_CONTROLLO_SBAGLIATO = 'XQQYKV19C07Z999A'
+  const CF_OMOCODICO = 'XQQYKV19CLTZ999B'
+  /** La forma del modulo d'iscrizione: senza omocodia. */
+  const PATTERN_ISCRIZIONE = '^[A-Z]{6}[0-9]{2}[A-Z][0-9]{2}[A-Z][0-9]{3}[A-Z]$'
+
+  it('i codici di prova sono davvero quello che dicono di essere', () => {
+    // Se uno di questi cadesse, i test sotto proverebbero un ramo diverso da quello
+    // che nominano, e resterebbero verdi senza dirlo.
+    expect(validaCodiceFiscale(CF_VALIDO).valido).toBe(true)
+    expect(validaCodiceFiscale(CF_CONTROLLO_SBAGLIATO).motivi).toEqual(['checksum'])
+    expect(validaCodiceFiscale(CF_OMOCODICO)).toMatchObject({ valido: true, omocodia: true })
+    // ⚠️ PRIMA CHE LA COSTANTE ESISTA `undefined === undefined` è vero: senza questa
+    // riga un confronto con la costante approverebbe un messaggio mai scritto.
+    expect(MSG_CODICE_FISCALE_NON_VALIDO).toBe('Il codice fiscale non è valido: controlla lettere e numeri')
+  })
+
+  it('carattere di controllo sbagliato → respinto, anche se la FORMA combacia col pattern', () => {
+    const cf = f({ id: 'codice_fiscale', type: 'text', required: true, db_mapping: 'alunni.codice_fiscale', validation: { pattern: PATTERN_ISCRIZIONE, min_length: 16, max_length: 16 } })
+    expect(validateField(cf, CF_CONTROLLO_SBAGLIATO)).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+  })
+
+  it('codice valido → nessun errore', () => {
+    const cf = f({ id: 'codice_fiscale', type: 'text', required: true, db_mapping: 'alunni.codice_fiscale', validation: { pattern: PATTERN_ISCRIZIONE, min_length: 16, max_length: 16 } })
+    expect(validateField(cf, CF_VALIDO)).toBeNull()
+  })
+
+  it('omocodico valido → nessun errore: è un codice vero, assegnato dall’Agenzia', () => {
+    const senzaPattern = f({ id: 'fiscal_code', type: 'text', required: true, db_mapping: 'pratiche_personale.fiscal_code' })
+    expect(validateField(senzaPattern, CF_OMOCODICO)).toBeNull()
+    expect(validateField(senzaPattern, 'XQQYKVMVCLTZVVVV')).toBeNull()
+  })
+
+  it('campo vuoto: facoltativo passa, obbligatorio resta «Campo obbligatorio»', () => {
+    // Mancante non è sbagliato: dire «non è valido» a chi non ha scritto niente
+    // direbbe che quello che non c'è è scritto male.
+    const facoltativo = f({ id: 'fiscal_code', type: 'text', db_mapping: 'adults.fiscal_code' })
+    expect(validateField(facoltativo, '')).toBeNull()
+    expect(validateField(facoltativo, '   ')).toBeNull()
+    expect(validateField(facoltativo, undefined)).toBeNull()
+    const obbligatorio = f({ id: 'fiscal_code', type: 'text', required: true, db_mapping: 'adults.fiscal_code' })
+    expect(validateField(obbligatorio, '')).toBe('Campo obbligatorio')
+  })
+
+  it('riconosciuto dal `db_mapping`, SENZA pattern e con un id qualunque (costruttore di moduli)', () => {
+    // È la forma dei campi preimpostati di `anagrafica-fields.ts`: id = uuid.
+    for (const db_mapping of ['alunni.codice_fiscale', 'adults.fiscal_code', 'parents.fiscal_code']) {
+      const campo = f({ id: '3f1c9a52-7d4e-4b8a-9c21-5e6f7a8b9c0d', type: 'text', db_mapping })
+      expect(validateField(campo, CF_CONTROLLO_SBAGLIATO), db_mapping).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+      expect(validateField(campo, CF_VALIDO), db_mapping).toBeNull()
+    }
+  })
+
+  it('riconosciuto dall’`id`, anche quando il wizard lo mette sotto un gruppo ripetuto', () => {
+    for (const id of ['codice_fiscale', 'fiscal_code', 'children.0.codice_fiscale', 'adults.1.fiscal_code']) {
+      const campo = f({ id, type: 'text' })
+      expect(validateField(campo, CF_CONTROLLO_SBAGLIATO), id).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+      expect(validateField(campo, CF_VALIDO), id).toBeNull()
+    }
+  })
+
+  it('senza pattern respinge anche ciò che non ha nemmeno la forma di un codice fiscale', () => {
+    const campo = f({ id: 'fiscal_code', type: 'text' })
+    expect(validateField(campo, 'ABC')).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+    expect(validateField(campo, '1234567890123456')).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+  })
+
+  it('CONTROLLO NEGATIVO: un campo che non è un codice fiscale non passa da questo controllo', () => {
+    // Senza queste righe il riconoscimento potrebbe allargarsi a qualunque testo di
+    // sedici caratteri e questo blocco resterebbe verde.
+    const nonCf = [
+      f({ id: 'document_number', type: 'text', db_mapping: 'parents.document_number' }),
+      f({ id: 'nome', type: 'text', db_mapping: 'alunni.nome' }),
+      f({ id: 'codice_fiscale_intestatario', type: 'text', db_mapping: 'fatture.codice_fiscale_intestatario' }),
+    ]
+    for (const campo of nonCf) expect(validateField(campo, CF_CONTROLLO_SBAGLIATO), campo.id).toBeNull()
+  })
+
+  it('i template VERI respingono il refuso: iscrizione (bambino e adulto), personale, preimpostati', () => {
+    // Se un template cambiasse `id` o `db_mapping`, il suo codice fiscale tornerebbe a
+    // essere controllato per la sola forma — e questo test lo direbbe per nome.
+    const preimpostati = ANAGRAFICA_GROUPS.flatMap((g) => g.fields)
+      .filter((p) => /\.(codice_fiscale|fiscal_code)$/.test(p.presetId))
+      .map((p) => p.toFormField())
+    const campi: [string, FormField | undefined][] = [
+      ['CHILD_FIELDS', CHILD_FIELDS.find((c) => c.id === 'codice_fiscale')],
+      ['ADULT_FIELDS', ADULT_FIELDS.find((c) => c.id === 'fiscal_code')],
+      ['PERSONALE_FIELDS', PERSONALE_FIELDS.find((c) => c.id === 'fiscal_code')],
+      ...preimpostati.map((c, i): [string, FormField] => [`preimpostato ${i}`, c]),
+    ]
+    // Bambino + tre adulti preimpostati: se il filtro non trovasse niente, il ciclo
+    // sotto approverebbe un elenco vuoto.
+    expect(preimpostati).toHaveLength(4)
+    for (const [nome, campo] of campi) {
+      expect(campo, `${nome}: il campo del codice fiscale non c'è più`).toBeDefined()
+      expect(validateField(campo!, CF_CONTROLLO_SBAGLIATO), nome).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+      expect(validateField(campo!, CF_VALIDO), nome).toBeNull()
+    }
+  })
+
+  it('validatePage riporta il codice fiscale sotto il SUO id: è ciò che il 400 del server manda al modulo', () => {
+    const campi = [
+      f({ id: 'nome', type: 'text', required: true }),
+      f({ id: 'codice_fiscale', type: 'text', required: true, db_mapping: 'alunni.codice_fiscale' }),
+    ]
+    // Le CHIAVI prima del testo: `toEqual` tratta `{}` e `{ codice_fiscale: undefined }`
+    // come uguali, e un confronto sul solo oggetto approverebbe un campo mai segnalato.
+    const errori = validatePage(campi, { nome: 'Prova', codice_fiscale: CF_CONTROLLO_SBAGLIATO })
+    expect(Object.keys(errori)).toEqual(['codice_fiscale'])
+    expect(errori.codice_fiscale).toBe(MSG_CODICE_FISCALE_NON_VALIDO)
+    expect(validatePage(campi, { nome: 'Prova', codice_fiscale: CF_VALIDO })).toEqual({})
   })
 })
 

@@ -221,10 +221,26 @@ export const CREDENZIALI = {
 };
 
 // Artefatti del flusso pubblico di iscrizione (creati DAI TEST, puliti qui).
+//
+// ⚠️ I DUE CODICI FISCALI DEVONO SUPERARE IL CARATTERE DI CONTROLLO. Dal 2026-09-14
+// il modulo pubblico lo verifica (`validateField`), e un codice che non torna ferma
+// il wizard al primo passo. `Z999` non è il codice catastale di nessun luogo: sono
+// codici aritmeticamente validi che non appartengono a nessuno. Devono coincidere con
+// `CF_CHILD`/`CF_ADULT` di `e2e/public-iscrizione.spec.ts`.
 export const ISCRIZIONE_E2E = {
-  cfChild: 'TSTBNE20A01H501X',
-  cfAdult: 'TSTDLT80A01H501Y',
+  cfChild: 'TSTBNE20A01Z999X',
+  cfAdult: 'TSTDLT80A01Z999M',
   email: 'iscrizione.e2e@kidville.test',
+  // ⚠️ I CODICI DEI RUN PRECEDENTI, e il reset li cancella ancora. Fino al 2026-09-14
+  // i due codici qui sopra erano `…H501X`/`…H501Y`, col carattere di controllo
+  // sbagliato: il database della CI contiene gli artefatti dell'ultimo run con quei
+  // codici. Senza queste due righe il reset non li troverebbe più, e l'alunno
+  // «Tino Iscrizione-E2E» rimasto lì — stesso nome, stessa data, stessa sede, codice
+  // diverso — verrebbe riconosciuto dall'import come un GEMELLO del nuovo
+  // (`src/lib/iscrizioni/doppioni.ts`): l'import si fermerebbe per un difetto del
+  // banco. Si possono togliere quando un run verde con i codici nuovi ha ripulito.
+  cfChildPrecedenti: ['TSTBNE20A01H501X'],
+  cfAdultPrecedenti: ['TSTDLT80A01H501Y'],
 };
 
 /**
@@ -898,7 +914,10 @@ async function main() {
   // NB: l'alunno importato ha id RANDOM (non è in ALUNNI_E2E), quindi le sue
   // righe dipendenti (diario/presenze/…, create dalla suite del run precedente)
   // vanno eliminate PRIMA, o il delete viola le FK (eventi_diario_alunno_id_fkey).
-  const alunniIscr = await db.from('alunni').select('id').eq('codice_fiscale', ISCRIZIONE_E2E.cfChild);
+  // I codici di questo run E quelli dei run precedenti: vedi `cfChildPrecedenti`.
+  const cfBambiniIscr = [ISCRIZIONE_E2E.cfChild, ...ISCRIZIONE_E2E.cfChildPrecedenti];
+  const cfAdultiIscr = [ISCRIZIONE_E2E.cfAdult, ...ISCRIZIONE_E2E.cfAdultPrecedenti];
+  const alunniIscr = await db.from('alunni').select('id').in('codice_fiscale', cfBambiniIscr);
   must('lettura alunni iscrizione', alunniIscr);
   const alunniIscrIds = (alunniIscr.data ?? []).map((a) => a.id);
   if (alunniIscrIds.length > 0) {
@@ -908,15 +927,18 @@ async function main() {
     must('reset armadietto iscrizione', await db.from('armadietto').delete().in('alunno_id', alunniIscrIds));
     must('reset legami iscrizione', await db.from('legame_genitori_alunni').delete().in('alunno_id', alunniIscrIds));
   }
-  must('reset iscrizione alunni', await db.from('alunni').delete().eq('codice_fiscale', ISCRIZIONE_E2E.cfChild));
-  must('reset iscrizione parents', await db.from('parents').delete().eq('fiscal_code', ISCRIZIONE_E2E.cfAdult));
+  must('reset iscrizione alunni', await db.from('alunni').delete().in('codice_fiscale', cfBambiniIscr));
+  must('reset iscrizione parents', await db.from('parents').delete().in('fiscal_code', cfAdultiIscr));
   const utenteIscr = await db.from('utenti').select('id').eq('email', ISCRIZIONE_E2E.email).maybeSingle();
   if (utenteIscr.data?.id) {
     must('reset iscrizione utenti', await db.from('utenti').delete().eq('id', utenteIscr.data.id));
     await db.auth.admin.deleteUser(utenteIscr.data.id).catch(() => {});
   }
-  must('reset enrollment_submissions', await db.from('enrollment_submissions').delete()
-    .contains('data', { children: [{ codice_fiscale: ISCRIZIONE_E2E.cfChild }] }));
+  // `contains` su un jsonb confronta UN documento per volta: un giro per codice.
+  for (const cf of cfBambiniIscr) {
+    must('reset enrollment_submissions', await db.from('enrollment_submissions').delete()
+      .contains('data', { children: [{ codice_fiscale: cf }] }));
+  }
 
   // ── Artefatti dei DUE moduli pubblici del personale ────────────────────────
   //

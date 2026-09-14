@@ -51,9 +51,10 @@ const NOME = 'Ines';
 const COGNOME = 'Anagrafica-E2E';
 
 /**
- * ⚠️ IL CARATTERE DI CONTROLLO DEVE TORNARE: la rotta passa il codice a
- * `validaCodiceFiscale` e un checksum sbagliato è un **400 che blocca l'invio**
- * (`fiscal_code: «L'ultima lettera del codice fiscale non torna»`).
+ * ⚠️ IL CARATTERE DI CONTROLLO DEVE TORNARE: dal 2026-09-14 lo verifica
+ * `validateField`, quindi un checksum sbagliato ferma già «Avanti» al passo dei dati
+ * e, fuori dal wizard, è un **400 che blocca l'invio** (`fiscal_code: «Il codice
+ * fiscale non è valido: controlla lettere e numeri»`).
  *
  * Questo non è inventato: è il valore che `calcolaCodiceFiscale`
  * (`@/lib/fiscale/calcolo`) restituisce per l'anagrafica compilata qui sotto —

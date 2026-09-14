@@ -60,5 +60,6 @@
   "scegliOpzione": "Scegli almeno un’opzione per proseguire",
   "scegliDaElenco": "Seleziona un’opzione per proseguire",
   "sostituisci": "Sostituisci",
-  "leggiInformativaCompleta": "Leggi l’informativa completa sulla privacy"
+  "leggiInformativaCompleta": "Leggi l’informativa completa sulla privacy",
+  "codiceFiscaleNonValido": "Il codice fiscale non è valido: controlla lettere e numeri"
 }

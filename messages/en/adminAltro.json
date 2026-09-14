@@ -732,5 +732,6 @@
   "galSedeCestinoAnteprimaAssente": "Preview unavailable",
   "galSedeErroreElimina": "The photo could not be deleted. Please try again.",
   "galSedeErroreRipristino": "The photo could not be restored. Please try again.",
-  "galSedeErroreRete": "No response from the server. Check your connection and try again."
+  "galSedeErroreRete": "No response from the server. Check your connection and try again.",
+  "ricevutiUsaSchedaEsistente": "Same child: use the existing record"
 }

@@ -6,6 +6,7 @@ import { assertAlunnoInScope } from '@/lib/auth/scope'
 import { logScrittura } from '@/lib/audit/scrittura'
 import { confermaValida } from '@/lib/gdpr/anonimizza'
 import { anonimizzaAlunno, anonimizzaParent } from '@/lib/gdpr/esegui'
+import { contaAccountOblio, type EsitoAccountOblio } from '@/lib/gdpr/account-oblio'
 import { contaCosaDistrugge } from '@/lib/gdpr/cosa-distrugge'
 import { leggiAltriFigliIscritti } from '@/lib/gdpr/orfano'
 import { eNonPiuIscritto, STATO_RITIRATO } from '@/lib/alunni/stato'
@@ -265,6 +266,9 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     let fileAdultiNonRimossi = 0
     let notificheRimosse = esitoAlunno.notificheRimosse
     let lettureFallite = esitoAlunno.lettureFallite ?? 0
+    // L'ACCOUNT di ciascun genitore (2026-09-14): `anonimizzaParent` lo libera per
+    // ultimo e dice com'è andata. Qui si somma, e basta.
+    const esitiAccount: (EsitoAccountOblio | undefined)[] = []
     for (const pid of parentiOrfani) {
       const e = await anonimizzaParent(supabase, pid, at, OP)
       newsVisualizzazioniRimosse += e.newsVisualizzazioniRimosse
@@ -275,7 +279,9 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       fileAdultiNonRimossi += e.fileNonRimossi
       notificheRimosse += e.notificheRimosse
       lettureFallite += e.lettureFallite ?? 0
+      esitiAccount.push(e.account)
     }
+    const account = contaAccountOblio(esitiAccount)
 
     const nFileNonRimossi = esitoAlunno.fileNonRimossi + fileAdultiNonRimossi
 
@@ -316,6 +322,12 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
       // chiude il «per sempre»; l'art. 17 chiede «senza ingiustificato ritardo»,
       // e questo è il numero che lo dimostra.
       notifiche_rimosse: notificheRimosse,
+      // Gli ACCOUNT di accesso dei genitori anonimizzati. Fino al 2026-09-14 l'oblio
+      // si fermava alla scheda e l'account restava con email e nome della persona.
+      // `account_non_liberati` > 0 vuol dire che quei dati sono ancora lì.
+      account_rimossi: account.rimossi,
+      account_anonimizzati: account.anonimizzati,
+      account_non_liberati: account.nonLiberati,
     }
 
     // Un oblio incompleto non può passare inosservato: riga PERSISTITA (`gdpr` è
@@ -327,7 +339,10 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
     // passava dal ramo `else` — cioè si dichiarava eseguito. Un inventario non letto
     // non è un archivio vuoto: è un archivio ignoto, e sul fascicolo sanitario di un
     // minore la differenza è fra «tolto» e «non l'ho nemmeno guardato».
-    if (nFileNonRimossi > 0 || lettureFallite > 0) {
+    //
+    // Dal 2026-09-14 le cose sono TRE: anche un account che non si è potuto liberare
+    // lascia l'email e il nome di una persona che ha chiesto di sparire.
+    if (nFileNonRimossi > 0 || lettureFallite > 0 || account.nonLiberati > 0) {
       logEvento('gdpr', 'error', {
         operazione: OP,
         esito: 'oblio-parziale',
@@ -335,9 +350,11 @@ export const POST = withRoute('admin/gdpr/erase:POST', async (request: Request) 
         entita_id: alunno_id,
         n_file: nFileNonRimossi,
         n_letture_fallite: lettureFallite,
+        n_account_non_liberati: account.nonLiberati,
         msg:
           `${OP}: ${nFileNonRimossi} file di un interessato NON sono usciti dall'archivio` +
-          (lettureFallite > 0 ? ` · ${lettureFallite} archivi non si sono potuti leggere` : ''),
+          (lettureFallite > 0 ? ` · ${lettureFallite} archivi non si sono potuti leggere` : '') +
+          (account.nonLiberati > 0 ? ` · ${account.nonLiberati} account non liberati` : ''),
       })
     } else {
       // Evento critico → si logga anche il SUCCESSO. Con i soli errori, «nessun

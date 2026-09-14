@@ -7,6 +7,7 @@ import {
   MSG_ALLEGA_FILE,
   MSG_SCEGLI_OPZIONE,
   MSG_SCEGLI_DA_ELENCO,
+  MSG_CODICE_FISCALE_NON_VALIDO,
 } from '@/lib/forms/validate-fields'
 
 /**
@@ -45,6 +46,9 @@ import {
  * italiano ed è debito dichiarato nella testata di `validate-fields`: si chiude
  * con questa stessa forma, una costante per messaggio, quando lo si affronterà.
  * Un messaggio che non riconosce passa di qui invariato.
+ *
+ * Il codice fiscale col carattere di controllo sbagliato (14/09/2026) è nato
+ * direttamente in questa forma, invece di allungare il residuo.
  */
 export function useMessaggioCampo(): (errore: unknown) => string | undefined {
   const t = useTranslations('parentForms')
@@ -55,6 +59,7 @@ export function useMessaggioCampo(): (errore: unknown) => string | undefined {
       if (grezzo === MSG_SCEGLI_OPZIONE) return t('scegliOpzione')
       if (grezzo === MSG_SCEGLI_DA_ELENCO) return t('scegliDaElenco')
       if (grezzo === MSG_CAMPO_OBBLIGATORIO) return t('campoObbligatorio')
+      if (grezzo === MSG_CODICE_FISCALE_NON_VALIDO) return t('codiceFiscaleNonValido')
       return grezzo
     },
     [t],

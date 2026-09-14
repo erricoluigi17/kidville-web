@@ -56,6 +56,11 @@ const rete = {
     trattieni: (() => false) as (metodo: string, url: string) => boolean,
     /** Lo stato HTTP della PATCH di lettura (200 se non indicato). */
     statoPatch: 200,
+    /**
+     * Il server della parte B, quando serve: la finestra e le pagine precedenti (`primaDi`), con il
+     * conteggio `precedenti`. Assente = il server di oggi (`{ messages, total }`).
+     */
+    pagine: null as null | ((threadId: string, primaDi: string | null) => { messages: Json[]; precedenti: number }),
 };
 
 function ok(data: unknown, status = 200): Risposta {
@@ -66,7 +71,9 @@ function rispostaNormale(metodo: string, url: string): Risposta {
     const percorso = url.split('?')[0];
     if (percorso === '/api/chat/threads' && metodo === 'GET') return ok(rete.threads);
     if (percorso === '/api/chat/messages' && metodo === 'GET') {
-        const threadId = new URL(url, 'http://x').searchParams.get('threadId') ?? '';
+        const parametri = new URL(url, 'http://x').searchParams;
+        const threadId = parametri.get('threadId') ?? '';
+        if (rete.pagine) return ok(rete.pagine(threadId, parametri.get('primaDi')));
         return ok({ messages: rete.messaggi[threadId] ?? [], total: 0 });
     }
     if (percorso === '/api/chat/messages/read') return ok({ success: rete.statoPatch < 400 }, rete.statoPatch);
@@ -131,6 +138,7 @@ beforeEach(() => {
     rete.messaggi = {};
     rete.trattieni = () => false;
     rete.statoPatch = 200;
+    rete.pagine = null;
     h.realtime = null;
     h.logClient.mockClear();
     vi.stubGlobal('fetch', vi.fn(fetchFinto));
@@ -814,5 +822,136 @@ describe('useConversazioneChat — [inert]: sotto il blocco biometrico non si se
         } finally {
             smonta();
         }
+    });
+});
+
+type ConPrecedenti = {
+    haPrecedenti: boolean;
+    caricandoPrecedenti: boolean;
+    errorePrecedenti: boolean;
+    caricaPrecedenti: () => Promise<void>;
+};
+
+/** Sessanta messaggi nel thread A: il server di B risponde con gli ultimi 50 e poi con i 10 prima. */
+function serverConStorico(threadId = 'th-a') {
+    const tutti = Array.from({ length: 60 }, (_, i) =>
+        nuovoMessaggio({
+            id: `m-${String(i + 1).padStart(3, '0')}`,
+            thread_id: threadId,
+            sender_id: 'doc-1',
+            read_at: '2026-09-14T08:00:00.000Z',
+            created_at: new Date(Date.UTC(2026, 8, 14, 8, 0, 0) + i * 60_000).toISOString(),
+        }),
+    );
+    rete.pagine = (id, primaDi) => {
+        if (id !== threadId) return { messages: [], precedenti: 0 };
+        if (!primaDi) return { messages: tutti.slice(10), precedenti: 10 };
+        const indice = tutti.findIndex((m) => m.id === primaDi);
+        return { messages: tutti.slice(Math.max(0, indice - 50), indice), precedenti: Math.max(0, indice - 50) };
+    };
+}
+
+describe('useConversazioneChat — innesto della parte B: i messaggi precedenti', () => {
+    it('col server di oggi (nessun `precedenti` in risposta) il pulsante non c’è', async () => {
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1' })];
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(1));
+        expect((result.current as unknown as ConPrecedenti).haPrecedenti).toBe(false);
+    });
+
+    it('carica la pagina precedente con primaDi, la antepone, e il pulsante sparisce quando non ce ne sono altre', async () => {
+        serverConStorico();
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(50));
+        const r = () => result.current as unknown as ConPrecedenti;
+        expect(r().haPrecedenti, 'la finestra dichiara 10 precedenti ma il pulsante non c’è').toBe(true);
+        expect(typeof r().caricaPrecedenti).toBe('function');
+
+        await act(async () => {
+            await r().caricaPrecedenti();
+        });
+
+        const conCursore = rete.richieste.filter((x) => x.url.includes('primaDi='));
+        expect(conCursore).toHaveLength(1);
+        expect(conCursore[0].url).toBe('/api/chat/messages?threadId=th-a&primaDi=m-011');
+        expect(result.current.messaggi).toHaveLength(60);
+        expect(result.current.messaggi[0].id).toBe('m-001');
+        expect(r().haPrecedenti).toBe(false);
+        expect(r().caricandoPrecedenti).toBe(false);
+        expect(r().errorePrecedenti).toBe(false);
+    });
+
+    it('doppio click: una GET sola, e «caricando» mentre è in volo', async () => {
+        serverConStorico();
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(50));
+        rete.trattieni = (metodo, url) => url.includes('primaDi=');
+
+        act(() => {
+            void (result.current as unknown as ConPrecedenti).caricaPrecedenti();
+            void (result.current as unknown as ConPrecedenti).caricaPrecedenti();
+        });
+        await scorri();
+        expect(rete.richieste.filter((x) => x.url.includes('primaDi='))).toHaveLength(1);
+        expect((result.current as unknown as ConPrecedenti).caricandoPrecedenti).toBe(true);
+    });
+
+    it('la pagina di A arrivata dopo aver aperto B non entra in B e non accende nessun avviso', async () => {
+        serverConStorico();
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(50));
+        rete.trattieni = (metodo, url) => url.includes('primaDi=');
+        act(() => {
+            void (result.current as unknown as ConPrecedenti).caricaPrecedenti();
+        });
+        await scorri();
+
+        act(() => result.current.apri(TB as never));
+        await waitFor(() => expect(result.current.caricamentoMessaggi).toBe(false));
+        const pagina = rete.richieste.find((x) => x.url.includes('primaDi='));
+        await act(async () => {
+            pagina?.risolvi(rispostaNormale('GET', pagina.url));
+        });
+        await scorri();
+
+        expect(result.current.messaggi.some((m) => m.thread_id === 'th-a'), 'i precedenti di A sono finiti sotto B').toBe(false);
+        expect((result.current as unknown as ConPrecedenti).caricandoPrecedenti).toBe(false);
+        expect((result.current as unknown as ConPrecedenti).errorePrecedenti).toBe(false);
+    });
+
+    it('rete caduta: avviso, UN log col gettone e senza testo dei messaggi, nessuna riprova automatica', async () => {
+        serverConStorico();
+        const { result } = monta();
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(50));
+        rete.trattieni = (metodo, url) => url.includes('primaDi=');
+        let chiamata: Promise<void> = Promise.resolve();
+        act(() => {
+            chiamata = (result.current as unknown as ConPrecedenti).caricaPrecedenti();
+        });
+        await scorri();
+        const pagina = rete.richieste.find((x) => x.url.includes('primaDi='));
+        await act(async () => {
+            pagina?.rompi(new TypeError('Failed to fetch Messaggio 11'));
+            await chiamata;
+        });
+        await scorri();
+
+        expect((result.current as unknown as ConPrecedenti).errorePrecedenti).toBe(true);
+        expect((result.current as unknown as ConPrecedenti).caricandoPrecedenti).toBe(false);
+        const eventi = h.logClient.mock.calls.map((c) => c[0] as { messaggio: string; livello: string; evento: string });
+        const falliti = eventi.filter((e) => e.messaggio.startsWith('chat-caricamento-precedenti-fallito'));
+        expect(falliti).toEqual([expect.objectContaining({ livello: 'warn', evento: 'fetch', messaggio: 'chat-caricamento-precedenti-fallito: TypeError' })]);
+        expect(JSON.stringify(falliti)).not.toContain('Messaggio');
+        expect(rete.richieste.filter((x) => x.url.includes('primaDi=')), 'è partita una riprova automatica').toHaveLength(1);
     });
 });

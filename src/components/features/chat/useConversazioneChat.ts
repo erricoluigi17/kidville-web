@@ -10,6 +10,7 @@ import {
     applicaMessaggioAThread,
     azzeraNonLettiThread,
     decidiRecupero,
+    haPrecedenti,
     riduciConversazione,
     type ChatMessage,
 } from '@/lib/chat/stato-conversazione';
@@ -85,6 +86,16 @@ function conversazioneVisibileAdesso(): boolean {
     return Array.from(contenitori).some((c) => !c.closest('[inert]'));
 }
 
+/**
+ * L'URL della GET dei messaggi di una conversazione: UN posto solo, per la finestra (senza cursore) e
+ * per le pagine precedenti (`primaDi`, parte B). Chi aggiunge un parametro lo aggiunge qui.
+ */
+function urlMessaggi(threadId: string, primaDi?: string): string {
+    const query = new URLSearchParams({ threadId });
+    if (primaDi) query.set('primaDi', primaDi);
+    return `/api/chat/messages?${query.toString()}`;
+}
+
 interface Opzioni {
     userId: string | null;
     ready: boolean;
@@ -102,6 +113,15 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     const [conversazione, dispatch] = useReducer(riduciConversazione, CONVERSAZIONE_VUOTA);
     const [caricamentoMessaggi, setCaricamentoMessaggi] = useState(false);
     const [nonLetti, setNonLetti] = useState(0);
+    /** «Carica messaggi precedenti»: in volo, o fallito, per la conversazione aperta. */
+    const [precedentiUi, setPrecedentiUi] = useState<{ caricando: boolean; errore: boolean }>({ caricando: false, errore: false });
+    /** Lo stato della conversazione dell'ultimo render, per chi agisce su un click (la testa della lista). */
+    const conversazioneStatoRef = useRef(conversazione);
+    useEffect(() => {
+        conversazioneStatoRef.current = conversazione;
+    }, [conversazione]);
+    /** La conversazione per cui una pagina precedente è in volo: il doppio click non ne chiede un'altra. */
+    const precedentiInVoloRef = useRef<number | null>(null);
 
     /** Il thread aperto ADESSO. Scritto in modo sincrono in `apri`: mai in ritardo di un render. */
     const threadApertoIdRef = useRef<string | null>(null);
@@ -264,14 +284,13 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     }, [caricaThreads]);
 
     /**
-     * Una GET dei messaggi e l'applicazione della risposta. La chiama solo `caricaMessaggi`, che è
-     * l'UNICO punto da cui parte la GET della conversazione: la parte B (i messaggi precedenti)
-     * aggiunge qui i parametri, non altrove.
+     * Una GET della finestra dei messaggi e l'applicazione della risposta. La chiama solo
+     * `caricaMessaggi`; l'URL lo costruisce solo `urlMessaggi`.
      */
     const scaricaMessaggi = useCallback(
         async (threadId: string, conv: number): Promise<void> => {
             try {
-                const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
+                const res = await fetch(urlMessaggi(threadId));
                 if (!res.ok) return;
                 const data = await res.json();
                 // D2: la conversazione è cambiata mentre la risposta era in volo → non è più sua.
@@ -536,6 +555,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
             threadApertoIdRef.current = thread.id;
             conversazioneRef.current++;
             setThreadAperto(thread);
+            setPrecedentiUi({ caricando: false, errore: false });
             dispatch({ tipo: 'apri', threadId: thread.id });
             void caricaMessaggi(thread.id);
         },
@@ -555,6 +575,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         conversazioneRef.current++;
         seqPrimoPianoRef.current++;
         setThreadAperto(null);
+        setPrecedentiUi({ caricando: false, errore: false });
         dispatch({ tipo: 'chiudi' });
         setCaricamentoMessaggi(false);
     }, []);
@@ -605,6 +626,50 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         },
         [caricaThreads, apri],
     );
+
+    /**
+     * «Carica messaggi precedenti» (innesto della parte B): la pagina più vecchia della testa attuale.
+     *  · una GET per click, e il doppio click non ne chiede un'altra;
+     *  · la risposta vale solo per la conversazione da cui è partita (D2), e il riduttore la scarta se
+     *    nel frattempo la testa della lista è cambiata;
+     *  · nessuna riprova automatica: l'avviso resta, e il pulsante per riprovare a mano;
+     *  · il log è sul guasto di rete, col solo nome della classe; un `!res.ok` lo registra già il
+     *    `fetch` strumentato del logger client.
+     */
+    const caricaPrecedenti = useCallback(async () => {
+        const threadId = threadApertoIdRef.current;
+        const primo = conversazioneStatoRef.current.messaggi[0];
+        if (!threadId || !primo) return;
+        const conv = conversazioneRef.current;
+        if (precedentiInVoloRef.current === conv) return;
+        precedentiInVoloRef.current = conv;
+        setPrecedentiUi({ caricando: true, errore: false });
+        let errore = false;
+        try {
+            const res = await fetch(urlMessaggi(threadId, primo.id));
+            if (!res.ok) {
+                errore = true;
+                return;
+            }
+            const data = await res.json();
+            if (conversazioneRef.current !== conv) return;
+            dispatch({
+                tipo: 'precedenti',
+                threadId,
+                pagina: (data.messages ?? []) as ChatMessage[],
+                primoIdAtteso: primo.id,
+                precedenti: typeof data.precedenti === 'number' ? data.precedenti : 0,
+                utenteId: userId ?? '',
+            });
+        } catch (err) {
+            errore = true;
+            logClient({ livello: 'warn', evento: 'fetch', messaggio: `chat-caricamento-precedenti-fallito: ${nomeErrore(err)}`, route: rotta });
+        } finally {
+            if (precedentiInVoloRef.current === conv) precedentiInVoloRef.current = null;
+            // Un esito di un'altra conversazione non accende né spegne niente in quella aperta adesso.
+            if (conversazioneRef.current === conv) setPrecedentiUi({ caricando: false, errore });
+        }
+    }, [userId, rotta]);
 
     /** Aggiorna in-place un thread (es. la sospensione dopo sospendi/riapri). */
     const aggiornaThread = useCallback(
@@ -683,5 +748,9 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         chiudi,
         invia,
         segnaLetti,
+        haPrecedenti: haPrecedenti(conversazione),
+        caricandoPrecedenti: precedentiUi.caricando,
+        errorePrecedenti: precedentiUi.errore,
+        caricaPrecedenti,
     };
 }

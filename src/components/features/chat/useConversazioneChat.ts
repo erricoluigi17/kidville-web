@@ -249,10 +249,16 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     }, 30_000);
 
     // ── Polling di backup sui messaggi (solo fallback) ──────────
+    /**
+     * D1 — SILENZIOSO, al tick e alla ripresa (`usePollingVisibile` chiama questa stessa funzione
+     * quando la pagina torna visibile). Prima era un caricamento in primo piano: ogni 30 secondi lo
+     * spinner prendeva il posto della conversazione, la lista si smontava e si rimontava, e chi
+     * stava leggendo un messaggio più su si ritrovava da capo. Lo spinner resta solo per l'apertura.
+     */
     usePollingVisibile(
         () => {
             const id = threadApertoIdRef.current;
-            if (id) void caricaMessaggi(id);
+            if (id) void caricaMessaggi(id, true);
         },
         30_000,
         { attivo: !!threadAperto },

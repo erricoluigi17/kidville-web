@@ -471,3 +471,34 @@ describe.each(PAGINE)('chat del $nome — D2: ciò che appartiene a una conversa
         expect(screen.queryAllByRole('alert').some((el) => el.textContent === p.invioNonRiuscito)).toBe(false);
     });
 });
+
+describe.each(PAGINE)('chat del $nome — D1: il polling non tocca ciò che si sta leggendo', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    it('al tick di 30 s niente spinner e la lista resta la STESSA (stesso nodo DOM, nessun salto in cima)', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        rete.threads = [thread(p, TH_A, p.nomeA)];
+        // Messaggio SENZA allegato: `firmaAllegatiChat` rifirma a ogni GET, quindi un messaggio con
+        // allegato cambia identità a ogni polling anche quando nulla è cambiato davvero.
+        rete.messaggi[TH_A] = [messaggio('m-1', TH_A, p.altro, 'Buongiorno', { read_at: '2026-09-14T08:05:00.000Z' })];
+        render(<p.Pagina />);
+        await apri(p.nomeA);
+        const nodo = (await screen.findAllByText('Buongiorno'))[0];
+
+        const primaDelTick = chiamate('GET', '/api/chat/messages').length;
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.includes('/api/chat/messages?');
+        await act(async () => {
+            vi.advanceTimersByTime(30_000);
+        });
+        await waitFor(() => expect(chiamate('GET', '/api/chat/messages').length).toBe(primaDelTick + 1));
+
+        // La GET del polling è ancora in volo: è qui che lo spinner prendeva il posto della lista.
+        expect(screen.queryAllByText('loadingMessages'), 'il polling ha smontato la conversazione per mostrare lo spinner').toHaveLength(0);
+        expect(screen.getAllByText('Buongiorno')[0]).toBe(nodo);
+
+        await libera('GET', `threadId=${TH_A}`);
+        expect(screen.getAllByText('Buongiorno')[0], 'la lista è stata ricreata: lo scorrimento riparte da capo').toBe(nodo);
+    });
+});

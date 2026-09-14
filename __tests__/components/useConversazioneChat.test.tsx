@@ -312,3 +312,51 @@ describe('useConversazioneChat — D2: una risposta lenta non tocca la conversaz
         expect(result.current.nonLetti).toBe(1);
     });
 });
+
+function visibilita(nascosta: boolean) {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => nascosta });
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (nascosta ? 'hidden' : 'visible') });
+    document.dispatchEvent(new Event('visibilitychange'));
+}
+
+describe('useConversazioneChat — D1: il polling dei messaggi è silenzioso', () => {
+    afterEach(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+
+    it('né il tick di 30 s né la ripresa accendono caricamentoMessaggi, e il separatore resta quello dell’apertura', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: null })];
+        const storia: boolean[] = [];
+        const { result } = renderHook(() => {
+            const r = useConversazioneChat({ userId: IO, ready: true, rotta: '/parent/chat' });
+            storia.push(r.caricamentoMessaggi);
+            return r;
+        });
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-1']));
+        await waitFor(() => expect(result.current.caricamentoMessaggi).toBe(false));
+        expect(result.current.primoNonLettoId).toBe('m-1');
+
+        // Il server nel frattempo li ha segnati letti: il separatore deve restare dov'era.
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T09:10:00.000Z' })];
+        storia.length = 0;
+        const prima = conta('GET', '/api/chat/messages');
+
+        await act(async () => {
+            vi.advanceTimersByTime(30_000);
+        });
+        await waitFor(() => expect(conta('GET', '/api/chat/messages')).toBe(prima + 1));
+        await scorri();
+
+        act(() => visibilita(true));
+        act(() => visibilita(false));
+        await waitFor(() => expect(conta('GET', '/api/chat/messages')).toBe(prima + 2));
+        await scorri();
+
+        expect(storia.includes(true), 'il polling ha acceso lo spinner (la lista si smonta e si torna in cima)').toBe(false);
+        expect(result.current.primoNonLettoId).toBe('m-1');
+    });
+});

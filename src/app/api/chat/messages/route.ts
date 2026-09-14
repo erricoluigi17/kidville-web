@@ -8,8 +8,8 @@ import { requireUser } from '@/lib/auth/require-staff';
 import { agisceComeGenitore } from '@/lib/auth/predicati-ruolo';
 import { notificaEvento, nomeUtente } from '@/lib/notifiche/triggers';
 import { controparteThread } from '@/lib/notifiche/destinatari';
-import { parseBody, parseQuery } from '@/lib/validation/http';
-import { zUuid, zPaginazione } from '@/lib/validation/common';
+import { parseBody, parseQuery, validationError } from '@/lib/validation/http';
+import { zUuid, zLimite } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { marcaConsegnati } from '@/lib/chat/delivered';
@@ -23,7 +23,17 @@ import { sedeDiAlunno, sedeDiAccount } from '@/lib/anagrafiche/sedi';
 const getQuerySchema = z.object({
     threadId: zUuid,
     markRead: zUuid.or(z.literal('')).optional(),
-    ...zPaginazione.shape,
+    /** Quanti messaggi, contando dal più NUOVO. Stesso intervallo e stesso default di prima (1-200, 50). */
+    limit: zLimite({ predefinito: 50, max: 200 }),
+    /** Il messaggio più vecchio che il client ha già in mano: si restituisce la pagina prima di lui. */
+    primaDi: zUuid.optional(),
+    /**
+     * RIFIUTATO, non ignorato. Fino al 2026-09-14 `offset` contava dalla TESTA della conversazione;
+     * oggi la lettura parte dalla coda, e lo stesso numero vorrebbe dire un'altra cosa. Nessun client
+     * lo manda: se ne arriva uno, è un client vecchio o un errore, e il 400 lo dice invece di
+     * rispondere in silenzio con una pagina diversa da quella chiesta.
+     */
+    offset: z.never('Parametro «offset» non più supportato: per i messaggi precedenti usa «primaDi»').optional(),
 });
 
 const postBodySchema = z.object({
@@ -36,8 +46,8 @@ const postBodySchema = z.object({
     attachment_type: z.string().nullish(),
 });
 
-// GET /api/chat/messages?threadId=xxx&limit=50&offset=0&markRead=userId
-// Lista messaggi per un thread con paginazione
+// GET /api/chat/messages?threadId=xxx&limit=50&primaDi=<id>&markRead=userId
+// Gli ULTIMI `limit` messaggi di un thread (dal più vecchio al più nuovo), o la pagina prima di `primaDi`.
 export const GET = withRoute('chat/messages:GET', async (request: Request) => {
     try {
         // Gate identità IN TESTA: mai lettura anonima o da non-partecipante. Prima
@@ -50,7 +60,7 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
 
         const q = parseQuery(request, getQuerySchema);
         if ('response' in q) return q.response;
-        const { threadId, limit, offset } = q.data;
+        const { threadId, limit, primaDi } = q.data;
         // `markRead` resta solo un TRIGGER opt-in del mark-read (usato dalla pagina
         // admin/messaggi): il suo VALORE è ignorato, l'identità è `uid` dal gate.
         const vuoleMarkRead = Boolean(q.data.markRead);
@@ -87,6 +97,35 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
             );
         }
 
+        // ── Il cursore: DOPO il controllo di partecipazione, PRIMA di ogni scrittura ──
+        // Il client manda l'id del messaggio più vecchio che ha in mano; l'istante lo legge il
+        // server, al microsecondo, dal database. `thread_id` nella stessa lettura: un id di un altro
+        // thread risponde come un id inesistente (nessun oracolo), e una richiesta respinta non
+        // segna letto niente perché il mark-read viene dopo.
+        let cursore: { id: string; created_at: string } | null = null;
+        if (primaDi) {
+            const { data: riga, error: cursoreErr } = await supabase
+                .from('chat_messages')
+                .select('id, created_at')
+                .eq('id', primaDi)
+                .eq('thread_id', threadId)
+                .maybeSingle();
+            if (cursoreErr) {
+                logErrore({ operazione: 'chat/messages:GET', stato: 500, evento: 'db' }, cursoreErr);
+                return NextResponse.json(
+                    { error: 'Non è stato possibile leggere i messaggi precedenti. Riprova fra poco.', codice: 'LETTURA_FALLITA' },
+                    { status: 500 }
+                );
+            }
+            // Una riga senza istante non ha un «prima»: stesso 400 dell'id che non c'è.
+            if (!riga?.created_at) {
+                return validationError([
+                    { path: ['primaDi'], message: 'Il messaggio di riferimento non appartiene a questa conversazione' },
+                ]);
+            }
+            cursore = { id: String(riga.id), created_at: String(riga.created_at) };
+        }
+
         if (vuoleMarkRead) {
             // PRIMA del mark-read: consegna (delivered_at) di tutto il thread, in una query
             // SEPARATA. Mai unita al mark-read: sul DB E2E la colonna delivered_at non esiste
@@ -112,58 +151,83 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
         }
 
         /**
-         * ⚠️ SI LEGGONO I PRIMI 50, E OGGI È GIUSTO COSÌ — ma non lo sarà per sempre.
+         * ─── SI LEGGE LA CODA, E SI PAGINA ALL'INDIETRO (C2, 2026-09-14) ─────────────────────
          *
-         * Questa `select` ordina dal più VECCHIO e si ferma a 50, e nessuno dei tre
-         * client passa mai `limit`/`offset`: di ogni conversazione si caricano quindi
-         * i 50 messaggi più vecchi. Al cinquantunesimo la conversazione si
-         * «congelerà» — chi ricarica vedrà sparire ciò che si sono detti di recente,
-         * e il polling continuerà a ri-scrivere lo stesso blocco.
+         * Fino al 2026-09-14 questa `select` ordinava dal più VECCHIO e si fermava a 50: di ogni
+         * conversazione arrivavano i 50 messaggi più vecchi, e dal cinquantunesimo in poi niente.
+         * Misurato in produzione il 2026-09-14: 7 thread oltre i 50 messaggi (il più lungo 68), 48
+         * messaggi mai mostrati a nessuno e 45 mai letti — fra i non letti, il 93,8% stava oltre il
+         * cinquantesimo, contro l'1,7% degli altri. È la segnalazione del titolare: la notifica
+         * arriva, si apre la chat, e il messaggio nuovo non c'è.
          *
-         * ⚠️ IL RIMEDIO C'ERA ED È STATO TOLTO, il 2026-09-07, e la ragione va scritta
-         * per intero perché è una decisione, non una dimenticanza.
+         * La lettura dalla coda era già stata scritta e TOLTA il 2026-09-07 (`74ecf831`), perché
+         * `e2e/chat.spec.ts` era diventato rosso nella stessa consegna; il commento che stava qui
+         * chiedeva, per rimetterla, «prima un test che crei davvero un thread con più di 50
+         * messaggi». La causa di quel rosso era un'altra (il click perso durante l'invio,
+         * `085d5bfe`), e il test adesso c'è due volte: `__tests__/api/chat-messages-coda.test.ts`,
+         * con un database finto che ordina e pagina davvero, ed `e2e/chat-precedenti.spec.ts`, che
+         * in CI semina 60 messaggi e prova la sintassi su un PostgREST vero.
          *
-         * Il rimedio leggeva la CODA (`ascending: false` + `range`, poi `reverse`).
-         * Nella stessa consegna `e2e/chat.spec.ts` è diventata rossa in CI: il
-         * messaggio con allegato non compariva nel thread, tre tentativi su tre.
-         * La causa NON è stata trovata — e ciò che è stato escluso, con test scritti
-         * apposta e rimasti nel repo, è: `ChatInput`
-         * (`chat-input-invio-allegato.test.tsx`, l'invio con allegato manda i tre
-         * argomenti giusti), il percorso della pagina genitore
-         * (`parent-chat-invio-sequenza.test.tsx`, testo + allegato arrivano entrambi
-         * a schermo), `firmaAllegatiChat` (non scarta mai righe, mappa 1:1) e
-         * `loadMessages` (fonde, non sostituisce: un poll non può cancellare il
-         * messaggio ottimistico).
+         * ─── PERCHÉ UN CURSORE (KEYSET) E NON `offset` ───────────────────────────────────────
          *
-         * Restava questa lettura come unica modifica non verificabile da qui —
-         * l'E2E in locale è in `deny`, il seed scriverebbe sul database di
-         * produzione. Si toglie perché è il rimedio a un difetto **latente**:
-         * misurato il 2026-09-07, il thread più lungo in produzione ha **18**
-         * messaggi, quindi oggi non morde nessuno. Un rimedio che non serve ancora
-         * non vale il blocco di un rilascio che ne contiene due che servono adesso.
+         * «Carica messaggi precedenti» chiede la pagina prima del messaggio più vecchio in mano. Con
+         * un `offset` contato dalla coda, ogni messaggio arrivato fra la prima pagina e il click
+         * sposterebbe la finestra: un messaggio ripetuto, o uno saltato. Il keyset su
+         * `(created_at, id)` non scivola: «più vecchi di QUESTO messaggio» resta vero qualunque cosa
+         * arrivi dopo. `offset` è rifiutato (vedi lo schema), non tenuto con un altro significato.
          *
-         * COME RIMETTERLO, quando si rimetterà: prima un test che crei davvero un
-         * thread con più di 50 messaggi (nessuno lo fa, ed è per questo che il
-         * difetto è passato inosservato), poi la lettura dalla coda, poi la CI.
+         * ─── PERCHÉ LO SPAREGGIO SULL'ID ─────────────────────────────────────────────────────
+         *
+         * Due messaggi con lo stesso `created_at` esistono. Con il solo `created_at.lt` quello col
+         * pareggio sul confine di pagina sparirebbe: non sta nella pagina di prima (non è «minore»)
+         * e non è stato mostrato. L'ordine è quindi `created_at DESC, id DESC`, lo stesso con cui il
+         * client ordina (`confrontaMessaggi`), e il cursore dice «prima di» su entrambe le chiavi.
+         * L'istante sta fra VIRGOLETTE: contiene `.`, `:` e `+`, che nella sintassi di `.or()` di
+         * PostgREST sono separatori.
+         *
+         * `total` è il numero di righe che soddisfano i filtri: senza cursore, tutto il thread (come
+         * prima); con il cursore, quelle più vecchie di lui. `precedenti` è quanti ne restano prima
+         * della pagina restituita — è ciò che accende il pulsante.
+         *
+         * `admin/messaggi` (la scheda «Con i genitori») usa questa stessa GET senza parametri: ottiene
+         * la coda senza modifiche. La supervisione (`/api/admin/chat/messages`) è un'altra rotta.
          */
-        const { data, error, count } = await supabase
+        let lettura = supabase
             .from('chat_messages')
             .select('*', { count: 'exact' })
-            .eq('thread_id', threadId)
-            .order('created_at', { ascending: true })
-            .range(offset, offset + limit - 1);
+            .eq('thread_id', threadId);
+        if (cursore) {
+            const istante = `"${cursore.created_at}"`;
+            lettura = lettura.or(`created_at.lt.${istante},and(created_at.eq.${istante},id.lt.${cursore.id})`);
+        }
+        const { data, error, count } = await lettura
+            .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(0, limit - 1);
 
         if (error) {
             logErrore({ operazione: 'chat/messages:GET', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: error.message }, { status: 500 });
         }
 
+        // Dal più NUOVO al più vecchio per prendere la coda; al client si restituisce in ordine di
+        // lettura, dal più vecchio al più nuovo.
+        const pagina = [...(data ?? [])].reverse();
+
         // In tabella c'è il PERCORSO nel bucket privato: il link firmato lo
         // genera la lettura, a tempo, dietro al gate appena superato (S32). Una
         // sola chiamata allo Storage per pagina, mai una per messaggio.
-        const messages = await firmaAllegatiChat(supabase, data ?? [], 'chat/messages:GET');
+        const messages = await firmaAllegatiChat(supabase, pagina, 'chat/messages:GET');
+        const totale = count ?? 0;
 
-        return NextResponse.json({ messages, total: count ?? 0 });
+        if (cursore) {
+            // Il SUCCESSO di «Carica messaggi precedenti»: `withRoute` non persiste i 2xx, e senza
+            // questa riga «nessun log» non distinguerebbe «nessuno lo usa» da «non funziona». Solo
+            // col cursore: la finestra normale è anche il polling, e scriverebbe una riga ogni 30 s.
+            logEvento('chat', 'info', { operazione: 'chat/messages:GET', esito: 'precedenti-caricati' });
+        }
+
+        return NextResponse.json({ messages, total: totale, precedenti: Math.max(0, totale - pagina.length) });
     } catch (error) {
         logErrore({ operazione: 'chat/messages:GET', stato: 500 }, error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });

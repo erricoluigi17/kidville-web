@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslations } from 'next-intl';
 import { Send, Paperclip, X } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
+import { leggiBozza, scriviBozza } from './bozze-chat';
 
 interface Props {
     /**
@@ -19,16 +20,35 @@ interface Props {
     onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void | boolean | Promise<void | boolean>;
     disabled?: boolean;
     placeholder?: string;
+    /**
+     * La conversazione a cui appartiene ciò che si scrive (`<utente>:<thread>`): testo e allegato non
+     * inviati tornano quando si torna sulla conversazione (`bozze-chat.ts`). Va con `key` sulla stessa
+     * conversazione: la key rimonta il campo, e un campo rimontato riparte dalla bozza della chiave nuova.
+     */
+    chiaveBozza?: string;
 }
 
-export function ChatInput({ onSend, disabled, placeholder }: Props) {
+export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props) {
     const t = useTranslations('teacherComunicazioni');
-    const [text, setText] = useState('');
+    const [text, setText] = useState(() => leggiBozza(chiaveBozza)?.testo ?? '');
     // `riferimento` è ciò che si manda al server: dal 2026-08-01 (S32) è il
     // PERCORSO nel bucket privato, non più un link firmato a 365 giorni.
     // L'anteprima qui sotto mostra solo il nome del file, quindi un indirizzo
     // apribile non serve a nessuno prima dell'invio.
-    const [attachment, setAttachment] = useState<{ name: string; riferimento: string; type: string } | null>(null);
+    const [attachment, setAttachment] = useState<{ name: string; riferimento: string; type: string } | null>(
+        () => leggiBozza(chiaveBozza)?.allegato ?? null,
+    );
+
+    /**
+     * La bozza si scrive sempre sotto la chiave con cui il campo è NATO, non sotto quella di adesso.
+     * Con la `key` delle pagine le due coincidono; senza, una chiave cambiata al volo avrebbe salvato il
+     * testo scritto per una conversazione come bozza di un'altra — che è esattamente il difetto da cui
+     * nasce la `key`.
+     */
+    const chiaveDiNascitaRef = useRef(chiaveBozza);
+    useEffect(() => {
+        scriviBozza(chiaveDiNascitaRef.current, { testo: text, allegato: attachment });
+    }, [text, attachment]);
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
     const inputRef = useRef<HTMLTextAreaElement>(null);

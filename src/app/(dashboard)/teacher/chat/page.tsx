@@ -308,8 +308,10 @@ function TeacherChatContent() {
                             )}
                             {/* `key` sul thread (D2, 2026-09-14): il campo tiene testo e allegato in uno
                                 stato suo, e senza key ciò che si era scritto per una famiglia restava
-                                lì, pronto a partire, aprendo la conversazione con un'altra. */}
-                            <ChatInput key={selectedThread.id} onSend={handleSendMessage} disabled={suspendedToMe} />
+                                lì, pronto a partire, aprendo la conversazione con un'altra. Dal 2026-09-15 ciò che
+                                non è partito non si perde: torna, per `chiaveBozza`, quando si torna su QUESTA
+                                conversazione (`bozze-chat.ts`, solo in memoria). */}
+                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -378,7 +380,7 @@ function TeacherChatContent() {
                                     {erroreQui === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreQui === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
                                 </p>
                             )}
-                            <ChatInput key={selectedThread.id} onSend={handleSendMessage} disabled={suspendedToMe} />
+                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>

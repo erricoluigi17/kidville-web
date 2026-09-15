@@ -142,6 +142,10 @@ function rispondi(metodo: string, url: string): Risposta {
         const lista = rete.messaggi[threadId] ?? [];
         return ok({ messages: lista, total: lista.length, precedenti: 0 });
     }
+    if (percorso === '/api/chat/messages' && metodo === 'POST') {
+        const corpo = rete.chiamate[rete.chiamate.length - 1].body ?? {};
+        return ok(messaggio(String(corpo.thread_id), `m-post-${rete.chiamate.length}`, h.utente, String(corpo.content)), 201);
+    }
     if (percorso === '/api/chat/messages/read') return ok({ success: true });
     if (percorso === '/api/chat/contacts') return ok({ contacts: [], motivo: null });
     return ok({});
@@ -459,5 +463,47 @@ describe.each(PAGINE)('chat del $nome — il tocco sulla notifica apre la conver
         expect(chiamate('GET', '/api/chat/threads')).toHaveLength(2);
         expect(window.location.search).toBe('');
         expect(logApertura()).toEqual([expect.objectContaining({ messaggio: 'chat-apertura-da-notifica: aperta (url)' })]);
+    });
+});
+
+describe.each(PAGINE)('chat del $nome — la bozza quando una notifica cambia conversazione', (p) => {
+    beforeEach(() => {
+        h.utente = p.io;
+    });
+
+    /** I campi di scrittura: [0] quello desktop, [1] quello della conversazione a schermo intero di un telefono. */
+    const campi = () => screen.getAllByRole('textbox') as HTMLTextAreaElement[];
+
+    it('scritto per A, il tocco apre B: campo vuoto; tornati su A il testo c’è; l’invio da B porta solo il testo di B', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA), thread(p, TH_B, p.nomeB)];
+        rete.messaggi[TH_A] = [messaggio(TH_A, 'm-a', p.altro, 'Messaggio di A')];
+        rete.messaggi[TH_B] = [messaggio(TH_B, 'm-b', p.altro, 'Messaggio di B')];
+        suPagina(p.rotta);
+        render(<p.Pagina />);
+        await apri(p.nomeA);
+        await aSchermo('Messaggio di A');
+
+        // Sul telefono si scrive nella conversazione a schermo intero.
+        fireEvent.change(campi()[1], { target: { value: 'Scritto per la famiglia A' } });
+
+        act(() => {
+            richiediAperturaThread(TH_B);
+        });
+        await aSchermo('Messaggio di B');
+        for (const c of campi()) expect(c.value, 'il testo scritto per A è pronto a partire verso B').toBe('');
+
+        await apri(p.nomeA);
+        await aSchermo('Messaggio di A');
+        expect(campi()[1].value, 'tornati su A, la bozza si è persa').toBe('Scritto per la famiglia A');
+
+        act(() => {
+            richiediAperturaThread(TH_B);
+        });
+        await aSchermo('Messaggio di B');
+        fireEvent.change(campi()[1], { target: { value: 'Solo per B' } });
+        fireEvent.click(screen.getAllByLabelText('Invia messaggio')[1]);
+
+        await waitFor(() => expect(chiamate('POST', '/api/chat/messages')).toHaveLength(1));
+        expect(chiamate('POST', '/api/chat/messages')[0].body).toMatchObject({ thread_id: TH_B, content: 'Solo per B' });
     });
 });

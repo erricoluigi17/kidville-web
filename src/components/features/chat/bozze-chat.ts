@@ -40,7 +40,10 @@
 
 export interface BozzaChat {
     testo: string;
-    /** Lo stesso oggetto che tiene `ChatInput`: `riferimento` è il PERCORSO nel bucket privato, non un link. */
+    /**
+     * `riferimento` è il PERCORSO nel bucket privato, non un link. L'oggetto resta lo stesso finché nessuno
+     * lo cambia: all'esito di un invio `ChatInput` riconosce l'allegato partito per IDENTITÀ.
+     */
     allegato: { name: string; riferimento: string; type: string } | null;
 }
 
@@ -95,8 +98,9 @@ export function iniziaInvio(chiave: string | undefined): void {
 }
 
 /**
- * Un invio per questa conversazione è finito, com'è finito (l'esito tocca alla bozza, non a questo conto).
- * Un `concludiInvio` senza il suo inizio non porta il conto sotto zero.
+ * Un invio per questa conversazione è finito, con qualunque esito: togliere dalla bozza ciò che è partito
+ * tocca a chi l'ha mandato, non a questo conto. Un `concludiInvio` senza il suo inizio non porta il conto
+ * sotto zero.
  */
 export function concludiInvio(chiave: string | undefined): void {
     if (!chiave || !inviiInVolo.has(chiave)) return;
@@ -106,7 +110,10 @@ export function concludiInvio(chiave: string | undefined): void {
     avvisa(chiave);
 }
 
-/** Avvisa `avviso` a ogni cambiamento della bozza di una conversazione. Restituisce la funzione per smettere. */
+/**
+ * Avvisa `avviso` a ogni cambiamento di una conversazione: la sua bozza, o i suoi invii in volo. Restituisce
+ * la funzione per smettere.
+ */
 export function ascoltaBozza(chiave: string | undefined, avviso: () => void): () => void {
     if (!chiave) return () => {};
     let insieme = ascoltatori.get(chiave);

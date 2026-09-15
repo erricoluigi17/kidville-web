@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -807,9 +807,9 @@ describe('service worker — il click su una notifica apre ciò che indica', () 
 
     interface FinestraFinta {
         url: string;
-        focus: ReturnType<typeof vi.fn>;
-        postMessage: ReturnType<typeof vi.fn>;
-        navigate?: ReturnType<typeof vi.fn>;
+        focus: Mock<() => Promise<FinestraFinta>>;
+        postMessage: Mock<(m: unknown) => void>;
+        navigate?: Mock<(url: string) => Promise<FinestraFinta>>;
         /** I messaggi arrivati a QUESTA finestra (i log del SW arrivano a tutte). */
         ricevuti: Array<Record<string, unknown>>;
     }

@@ -1,6 +1,6 @@
 'use client'
 
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core'
 import { logClient, nomeErrore } from '@/lib/logging/client'
 
 // Registrazione push NATIVA (Capacitor iOS/Android) lato client. Su web tutte le
@@ -93,6 +93,28 @@ function dimenticaToken(): void {
 const ATTESA_REGISTRAZIONE_MS = 20_000
 
 /**
+ * GLI ASCOLTATORI CHE QUESTO FILE AGGANCIA, E SOLO QUELLI (2026-09-15).
+ *
+ * La disattivazione finiva con `PushNotifications.removeAllListeners()`, che svuota TUTTI gli
+ * ascoltatori del plugin, sul lato nativo: anche quello del tocco su una notifica, che
+ * `setupNativeShell` aggancia una volta sola all'avvio. Dopo «disattiva» in PushOptIn il tocco su
+ * una push non apriva più niente, fino al riavvio dell'app — e ora che il tocco apre la
+ * conversazione di chat, sarebbe stato un difetto molto più visibile di prima.
+ *
+ * Qui si tengono le maniglie di `registration` e `registrationError`, TUTTE quelle agganciate in
+ * questa sessione (una coppia per ogni `registerNativePush`: l'automatica all'accesso e «attiva»
+ * possono arrivare entrambe). Si tolgono SOLO in `unregisterNativePush`, e tutte: una maniglia persa
+ * lascerebbe un ascoltatore che, alla prossima rotazione del token, riscrive in
+ * `push_subscriptions` un dispositivo appena disattivato.
+ *
+ * ⚠️ NON si tolgono all'esito della registrazione (`done`). Su Android `onNewToken` emette
+ * `registration` anche ad app aperta, quando FCM ruota il token: senza l'ascoltatore il token nuovo
+ * non arriverebbe più a `/api/push/subscribe`, e le notifiche smetterebbero di arrivare senza una
+ * riga da nessuna parte.
+ */
+const ascoltatoriRegistrazione: Array<Promise<PluginListenerHandle>> = []
+
+/**
  * Richiede il permesso, registra la push nativa e invia il token a
  * /api/push/subscribe con la piattaforma. No-op (con esito) su web.
  *
@@ -143,7 +165,8 @@ export async function registerNativePush(userId?: string | null): Promise<{ ok: 
         done({ ok: false, error: 'registration_timeout' })
       }, ATTESA_REGISTRAZIONE_MS)
 
-      void PushNotifications.addListener('registration', (token) => {
+      // Gli ascoltatori restano agganciati anche dopo `done`: vedi `ascoltatoriRegistrazione`.
+      const registrazione = PushNotifications.addListener('registration', (token) => {
         ricordaToken(token.value)
         fetch('/api/push/subscribe', {
           method: 'POST',
@@ -181,7 +204,7 @@ export async function registerNativePush(userId?: string | null): Promise<{ ok: 
             done({ ok: false, error: 'subscribe_failed' })
           })
       })
-      void PushNotifications.addListener('registrationError', (err) => {
+      const errore = PushNotifications.addListener('registrationError', (err) => {
         // Il messaggio del sistema è l'unica cosa che spiega un fallimento APNs
         // (`aps-environment` sbagliato, dispositivo senza rete, profilo non abilitato):
         // buttarlo via è il difetto descritto dalla regola 3, applicata a un provider
@@ -194,6 +217,7 @@ export async function registerNativePush(userId?: string | null): Promise<{ ok: 
         })
         done({ ok: false, error: dettaglio })
       })
+      ascoltatoriRegistrazione.push(registrazione, errore)
       void PushNotifications.register()
     })
   } catch (e) {
@@ -208,9 +232,10 @@ export async function registerNativePush(userId?: string | null): Promise<{ ok: 
 
 /**
  * Disattiva la push nativa di QUESTO dispositivo: rimuove la riga lato server e
- * i listener. La chiamano l'opt-in (il genitore che spegne i promemoria) e il
- * LOGOUT (`doLogout`), e i due casi non sono intercambiabili — vedi lì il perché
- * dell'ordine.
+ * gli ascoltatori della registrazione — solo quelli, non il tocco sulle notifiche
+ * (vedi `ascoltatoriRegistrazione`). La chiamano l'opt-in (il genitore che spegne i
+ * promemoria) e il LOGOUT (`doLogout`), e i due casi non sono intercambiabili — vedi
+ * lì il perché dell'ordine.
  *
  * ⚠️ `DELETE /api/push/subscribe` passa da `requireUser`: senza sessione risponde
  * 401 e il token resta registrato. Va quindi chiamata PRIMA di `auth.signOut()`.
@@ -225,7 +250,6 @@ export async function registerNativePush(userId?: string | null): Promise<{ ok: 
 export async function unregisterNativePush(): Promise<void> {
   if (!isNativeApp()) return
   try {
-    const { PushNotifications } = await import('@capacitor/push-notifications')
     const token = tokenDaDisattivare()
     if (token) {
       let rimosso = false
@@ -251,11 +275,16 @@ export async function unregisterNativePush(): Promise<void> {
       }
       if (rimosso) dimenticaToken()
     }
-    await PushNotifications.removeAllListeners()
+    // Non `removeAllListeners()`: spegneva anche il tocco sulle notifiche. Si tolgono tutte le
+    // maniglie agganciate da `registerNativePush`, ognuna con la sua `remove()`; se una fallisce,
+    // le altre partono lo stesso e il guasto arriva al catch qui sotto, che lo registra. Per questo
+    // qui non serve più importare il plugin: la maniglia sa togliersi da sé.
+    await Promise.all(ascoltatoriRegistrazione.splice(0).map(async (maniglia) => (await maniglia).remove()))
   } catch (e) {
     // best-effort: la disattivazione non deve mai lanciare — ma non deve nemmeno
-    // sparire. Qui ci si arriva col plugin assente o rotto, cioè con un
-    // dispositivo che continua a ricevere le push e nessuno che lo sappia.
+    // sparire. Qui ci si arriva col plugin rotto: un ascoltatore della registrazione
+    // che non si toglie resta agganciato, e alla prossima rotazione del token può
+    // riscrivere il dispositivo appena disattivato, senza che nessuno lo sappia.
     logClient({
       livello: 'error',
       evento: 'push',

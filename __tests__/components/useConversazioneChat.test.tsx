@@ -372,16 +372,31 @@ describe('useConversazioneChat — D1: il polling dei messaggi è silenzioso', (
     });
 });
 
+/** Altezze e scorrimento di un contenitore, come li misurerebbe un browser (jsdom non impagina). */
+type Geometria = { scrollHeight: number; clientHeight: number; scrollTop: number };
+
+/** Impaginato, e chi legge è in fondo: l'ultimo messaggio si vede. */
+const IN_FONDO: Geometria = { scrollHeight: 3000, clientHeight: 500, scrollTop: 2500 };
+/** Impaginato, e chi legge è in cima a una conversazione lunga: l'ultimo messaggio è sotto la piega. */
+const PIU_SU: Geometria = { scrollHeight: 3000, clientHeight: 500, scrollTop: 0 };
+/** `display:none` — l'istanza nascosta delle due che le pagine montano: tutte le misure a zero. */
+const NON_IMPAGINATO: Geometria = { scrollHeight: 0, clientHeight: 0, scrollTop: 0 };
+
 /**
  * La conversazione montata a schermo, come la monta la pagina: un contenitore `chat-messaggi`. Il hook
- * manda la PATCH immediata solo se ce n'è uno visibile e non coperto da `inert`; senza, il test della
- * deduplica passerebbe per il motivo sbagliato (nessuna PATCH immediata da deduplicare).
+ * manda la PATCH immediata solo se ce n'è uno visibile, non coperto da `inert`, e con chi legge in
+ * fondo; senza, il test della deduplica passerebbe per il motivo sbagliato (nessuna PATCH immediata da
+ * deduplicare). Per questo la geometria di default è «in fondo»: ogni caso che si aspetta NESSUNA PATCH
+ * deve averla per una ragione sola, quella che dichiara.
  */
-function montaContenitore(coperto = false): () => void {
+function montaContenitore(coperto = false, geometria: Geometria = IN_FONDO): () => void {
     const radice = document.createElement('div');
     if (coperto) radice.setAttribute('inert', '');
     const contenitore = document.createElement('div');
     contenitore.setAttribute('data-testid', 'chat-messaggi');
+    for (const [chiave, valore] of Object.entries(geometria)) {
+        Object.defineProperty(contenitore, chiave, { configurable: true, get: () => valore });
+    }
     radice.appendChild(contenitore);
     document.body.appendChild(radice);
     return () => radice.remove();
@@ -412,6 +427,9 @@ describe('useConversazioneChat — D3: segnare letto solo ciò che si è visto, 
         const altrui = nuovoMessaggio({ id: 'm-2', sender_id: 'doc-1', created_at: '2026-09-14T09:01:00.000Z' });
         act(() => realtime().onNewMessage(altrui));
         await scorri();
+        // L'ancora: la PATCH immediata è partita davvero. Senza, la deduplica qui sotto sarebbe verde
+        // anche togliendola, perché resterebbe solo quella dell'observer.
+        expect(conta('PATCH', '/api/chat/messages/read'), 'la PATCH immediata non è partita: niente da deduplicare').toBe(1);
         await act(async () => {
             await result.current.segnaLetti(['m-2']);
         });
@@ -822,6 +840,78 @@ describe('useConversazioneChat — [inert]: sotto il blocco biometrico non si se
         } finally {
             smonta();
         }
+    });
+});
+
+describe('useConversazioneChat — chi legge più su non si vede segnare letto il messaggio che arriva in coda', () => {
+    /**
+     * Dal 2026-09-14 un messaggio in arrivo porta in fondo SOLO chi era già in fondo (`ChatMessageArea`,
+     * regola `vicinoAlFondo`): chi sta leggendo più su resta dov'è, e il messaggio nuovo resta sotto la
+     * piega. La PATCH immediata del realtime guardava solo che la conversazione fosse visibile, e il
+     * mittente vedeva «letto» su un messaggio che nessuno aveva ancora raggiunto. Deve decidere con la
+     * stessa regola del componente; per chi legge più su ci pensa l'IntersectionObserver, quando la bolla
+     * compare davvero.
+     */
+    let smonta: Array<() => void> = [];
+    beforeEach(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    });
+    afterEach(() => {
+        smonta.forEach((f) => f());
+        smonta = [];
+    });
+
+    async function apertoConUnMessaggio() {
+        rete.messaggi['th-a'] = [nuovoMessaggio({ id: 'm-1', sender_id: 'doc-1', read_at: '2026-09-14T08:00:00.000Z' })];
+        const reso = monta();
+        await pronto(reso.result);
+        act(() => reso.result.current.apri(TA as never));
+        await waitFor(() => expect(reso.result.current.messaggi).toHaveLength(1));
+        return reso;
+    }
+
+    const arrivaAltrui = (id: string) =>
+        act(() => realtime().onNewMessage(nuovoMessaggio({ id, sender_id: 'doc-1', created_at: '2026-09-14T09:20:00.000Z' })));
+
+    it('chi legge più su: il messaggio altrui compare, ma NON parte come letto', async () => {
+        smonta.push(montaContenitore(false, PIU_SU));
+        const { result } = await apertoConUnMessaggio();
+        const prima = conta('PATCH', '/api/chat/messages/read');
+
+        arrivaAltrui('m-2');
+        await scorri();
+
+        expect(result.current.messaggi.map((m) => m.id)).toEqual(['m-1', 'm-2']);
+        expect(conta('PATCH', '/api/chat/messages/read'), 'segnato letto un messaggio rimasto sotto la piega: il mittente vede la spunta').toBe(prima);
+    });
+
+    it('l’istanza nascosta (display:none, misure a zero) non decide per quella che si vede', async () => {
+        // Le pagine montano DUE ChatMessageArea, e su un telefono quella desktop è display:none. Per
+        // `vicinoAlFondo` le sue misure a zero valgono «in fondo»: da sola non deve bastare a segnare letto.
+        smonta.push(montaContenitore(false, NON_IMPAGINATO));
+        smonta.push(montaContenitore(false, PIU_SU));
+        await apertoConUnMessaggio();
+        const prima = conta('PATCH', '/api/chat/messages/read');
+
+        arrivaAltrui('m-2');
+        await scorri();
+
+        expect(conta('PATCH', '/api/chat/messages/read'), 'l’istanza che non si vede ha segnato letto per quella che si vede').toBe(prima);
+    });
+
+    it('chi è in fondo alla conversazione che si vede: la PATCH immediata parte, per quel messaggio', async () => {
+        smonta.push(montaContenitore(false, NON_IMPAGINATO));
+        smonta.push(montaContenitore(false, IN_FONDO));
+        await apertoConUnMessaggio();
+        const prima = conta('PATCH', '/api/chat/messages/read');
+
+        arrivaAltrui('m-2');
+        await scorri();
+
+        const patch = rete.richieste.filter((r) => r.percorso === '/api/chat/messages/read');
+        expect(patch, 'chi è in fondo non si vede più segnare letto il messaggio appena arrivato').toHaveLength(prima + 1);
+        expect(patch[patch.length - 1].body).toMatchObject({ messageIds: ['m-2'] });
     });
 });
 

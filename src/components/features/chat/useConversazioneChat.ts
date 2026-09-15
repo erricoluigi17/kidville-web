@@ -12,6 +12,7 @@ import {
     decidiRecupero,
     haPrecedenti,
     riduciConversazione,
+    vicinoAlFondo,
     type ChatMessage,
 } from '@/lib/chat/stato-conversazione';
 import type { ChatThread, SospensioneInfo } from './ChatThreadList';
@@ -73,17 +74,34 @@ export type EsitoInvio =
 export type EsitoApertura = 'aperto' | 'non-trovato' | 'errore' | 'annullato';
 
 /**
- * La conversazione è davvero davanti agli occhi di qualcuno, adesso?
+ * Il messaggio che arriva IN CODA alla conversazione sarà davanti agli occhi di qualcuno, adesso?
  *
- * Pagina visibile, e almeno un contenitore dei messaggi montato e NON dentro un elemento `inert`:
- * `BiometricGate` lascia la pagina montata sotto un `inert` finché non si sblocca, e una modale rende
- * inerte lo sfondo. Senza contenitore (lista vuota, spinner) non lo si può dire: la PATCH immediata
- * non parte, e ci pensa l'IntersectionObserver quando la bolla compare davvero.
+ *  · la pagina è visibile;
+ *  · c'è un contenitore dei messaggi NON dentro un elemento `inert`: `BiometricGate` lascia la pagina
+ *    montata sotto un `inert` finché non si sblocca, e una modale rende inerte lo sfondo;
+ *  · quel contenitore è IMPAGINATO (`clientHeight > 0`): le pagine montano due `ChatMessageArea`,
+ *    desktop e mobile, e una delle due è sempre `display:none`, con tutte le misure a zero;
+ *  · e chi legge è IN FONDO a quel contenitore (`vicinoAlFondo`).
+ *
+ * ⚠️ PERCHÉ «IN FONDO» (2026-09-15). Dal 2026-09-14 un messaggio in arrivo porta in fondo solo chi
+ * era già in fondo: chi legge più su — lo storico caricato con «Carica messaggi precedenti», o
+ * semplicemente la conversazione scorsa all'indietro — resta dov'è, e il messaggio nuovo resta sotto
+ * la piega. Qui si guardava solo che la conversazione fosse visibile, e il mittente vedeva «letto» su
+ * un messaggio che nessuno aveva ancora raggiunto. La regola è `vicinoAlFondo`, LA STESSA con cui
+ * `ChatMessageArea` decide se scorrere: con due soglie si segnerebbe letto un messaggio che il
+ * componente lascia sotto la piega. E l'istanza nascosta non vota: per `vicinoAlFondo` le sue misure a
+ * zero valgono «in fondo», e da sola basterebbe a segnare letto per quella che si vede.
+ *
+ * Le misure sono quelle di PRIMA che il messaggio entri nella lista (il riduttore rende dopo): cioè
+ * dove stava chi legge quando è arrivato, che è ciò che decide anche lo scorrimento del componente.
+ *
+ * Quando dice no, non si perde niente: la bolla resta fra i non letti, e l'IntersectionObserver la
+ * segna quando la si raggiunge davvero. Senza contenitore (spinner, conversazione vuota) vale lo stesso.
  */
-function conversazioneVisibileAdesso(): boolean {
+function ultimoMessaggioInVista(): boolean {
     if (typeof document === 'undefined' || document.visibilityState !== 'visible') return false;
-    const contenitori = document.querySelectorAll('[data-testid="chat-messaggi"]');
-    return Array.from(contenitori).some((c) => !c.closest('[inert]'));
+    const contenitori = document.querySelectorAll<HTMLElement>('[data-testid="chat-messaggi"]');
+    return Array.from(contenitori).some((c) => !c.closest('[inert]') && c.clientHeight > 0 && vicinoAlFondo(c));
 }
 
 /**
@@ -407,11 +425,11 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
                 if (!propriaPostInVolo) void caricaMessaggi(msg.thread_id, { silenzioso: true, nonPrimaDi: Date.now() });
             }
             // Il messaggio altrui arriva nella conversazione aperta: lo si segna letto subito — ma
-            // SOLO se la conversazione si vede davvero. Col telefono in tasca (D3) o sotto il blocco
-            // biometrico ([inert]) il mittente vedeva la spunta gialla su un messaggio che nessuno
-            // aveva letto. Passa da `segnaLetti`, che non ripete la PATCH quando poi
-            // l'IntersectionObserver vede la bolla.
-            if (msg.sender_id !== userId && conversazioneVisibileAdesso()) {
+            // SOLO se lo si vede davvero. Col telefono in tasca (D3), sotto il blocco biometrico
+            // ([inert]) o leggendo più su (il messaggio resta sotto la piega) il mittente vedeva la
+            // spunta gialla su un messaggio che nessuno aveva letto. Passa da `segnaLetti`, che non
+            // ripete la PATCH quando poi l'IntersectionObserver vede la bolla.
+            if (msg.sender_id !== userId && ultimoMessaggioInVista()) {
                 void segnaLetti([msg.id], { contaNelBadge: false });
             }
         },

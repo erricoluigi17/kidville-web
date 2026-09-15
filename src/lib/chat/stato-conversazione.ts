@@ -291,7 +291,9 @@ export function unisciFinestra(
  *
  * Un contenitore non impaginato (`display:none`, com'è l'istanza desktop su un telefono) ha tutte e
  * tre le misure a zero, e risulta «in fondo»: non si vede, e lo scorrimento che gli si chiede non fa
- * niente.
+ * niente. Chi invece decide per il contenitore che SI VEDE (la PATCH immediata di
+ * `useConversazioneChat`) deve prima scartare quelli non impaginati: da solo, quello nascosto direbbe
+ * «in fondo» anche mentre si legge più su nell'altro.
  */
 const SOGLIA_FONDO_PX = 150;
 

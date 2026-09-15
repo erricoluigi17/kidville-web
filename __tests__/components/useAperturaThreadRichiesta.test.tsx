@@ -202,6 +202,63 @@ describe('useAperturaThreadRichiesta — la coda', () => {
         unmount();
     });
 
+    /**
+     * Il ritocco della conversazione IN VOLO è l'ultima richiesta anche se non ne fa partire un'altra
+     * (2026-09-15). Prima usciva e basta: C, chiesta prima, restava in coda e partiva finita B.
+     */
+    it.each([
+        { esito: 'aperto', log: 'chat-apertura-da-notifica: aperta (url)', aperture: 1 },
+        { esito: 'non-trovato', log: 'chat-apertura-da-notifica: non-trovata (url)', aperture: 0 },
+    ] as const)('B, poi C, poi di nuovo B mentre B si sta aprendo: B finisce $esito e C non parte, l’ultima richiesta era B', async ({ esito, log, aperture }) => {
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { onAperta, unmount } = monta(f);
+        await scorri();
+        act(() => {
+            richiediAperturaThread(C);
+        });
+        await scorri();
+        act(() => {
+            richiediAperturaThread(B);
+        });
+        await scorri();
+        expect(f.apriPerId.mock.calls.map((c) => c[0]), 'il ritocco di B ne ha fatta partire una seconda').toEqual([B]);
+
+        await concludi(f.stato, B, esito);
+        expect(f.apriPerId.mock.calls.map((c) => c[0]), 'finita B è partita C, chiesta PRIMA dell’ultimo tocco').toEqual([B]);
+        expect(onAperta).toHaveBeenCalledTimes(aperture);
+        expect(h.logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio)).toEqual([log]);
+        expect(window.location.search).toBe('');
+        unmount();
+    });
+
+    it('B, poi C, poi di nuovo B, e B finisce in «errore»: C non parte, e con la lista nuova si ritenta B', async () => {
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { rerender, onAperta, unmount } = monta(f);
+        await scorri();
+        act(() => {
+            richiediAperturaThread(C);
+        });
+        await scorri();
+        act(() => {
+            richiediAperturaThread(B);
+        });
+        await scorri();
+
+        await concludi(f.stato, B, 'errore');
+        expect(f.apriPerId.mock.calls.map((c) => c[0]), 'dopo l’errore di B è partita C, chiesta prima dell’ultimo tocco').toEqual([B]);
+        expect(window.location.search, 'B aspetta la lista: il parametro resta').toBe(`?thread=${B}`);
+
+        rerender({ chat: f.chat('pronto', [{ id: 'lista-nuova' }]) });
+        await scorri();
+        expect(f.apriPerId.mock.calls.map((c) => c[0]), 'con la lista nuova non si è ritentata B').toEqual([B, B]);
+        await concludi(f.stato, B, 'aperto');
+        expect(f.apriPerId.mock.calls.map((c) => c[0]), 'aperta B, è partita C').toEqual([B, B]);
+        expect(onAperta).toHaveBeenCalledTimes(1);
+        unmount();
+    });
+
     it('«errore» da sola: niente di nuovo finché non arriva una lista nuova, poi UN ritentativo', async () => {
         window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
         const f = conversazioneFinta();

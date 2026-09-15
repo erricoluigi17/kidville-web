@@ -48,8 +48,9 @@ import type { EsitoApertura, RottaChat, StatoThreads } from './useConversazioneC
  *
  * Una richiesta alla volta; quella arrivata dopo prende il posto di quella in attesa, e la stessa
  * conversazione già in corso non si chiede due volte (React in sviluppo esegue gli effetti due volte, e
- * un tocco può arrivare insieme alla ripresa della pagina). Dopo un `errore` mai subito: vorrebbe dire
- * ripetere a raffica la GET appena fallita.
+ * un tocco può arrivare insieme alla ripresa della pagina). Il doppione però resta la richiesta arrivata
+ * DOPO: toglie quella in attesa, altrimenti B, C e di nuovo B aprirebbero C. Dopo un `errore` mai subito:
+ * vorrebbe dire ripetere a raffica la GET appena fallita.
  *
  * La richiesta rimandata ricorda la GENERAZIONE della selezione di quando è arrivata: se al momento di
  * ritentare è cambiata, qualcuno ha scelto a mano, e la notifica non apre più niente. Per un docente,
@@ -209,7 +210,13 @@ export function useAperturaThreadRichiesta(chat: Conversazione, { rotta, onApert
     const chiedi = useCallback(
         (id: string, origine: Origine) => {
             const coda = codaRef.current;
-            if (coda.inCorso?.id === id) return; // la stessa conversazione si sta già aprendo
+            if (coda.inCorso?.id === id) {
+                // La stessa conversazione si sta già aprendo: non se ne chiede un'altra. Ma questa è
+                // l'ULTIMA richiesta, e quella in attesa, arrivata prima, non deve partire dopo.
+                // (`attendeNuovaLista` qui è già false: diventa true solo senza niente in volo.)
+                coda.inAttesa = null;
+                return;
+            }
             coda.inAttesa = { id, origine, selezione: leggiSelezioneRef.current() };
             coda.attendeNuovaLista = false;
             avanza();

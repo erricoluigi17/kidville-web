@@ -76,17 +76,27 @@ export function formatMessageDate(iso: string, locale: string, labels: Etichette
     return formattaIstante(d, locale, { day: 'numeric', month: 'long' });
 }
 
-function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { date: string; messages: ChatMessage[] }[] {
-    const groups: { date: string; messages: ChatMessage[] }[] = [];
-    let currentDate = '';
+/**
+ * I messaggi di un giorno sotto il suo separatore.
+ *
+ * ⚠️ IL GRUPPO È LA DATA DI CALENDARIO, NON L'ETICHETTA (2026-09-14). Prima un gruppo finiva quando
+ * cambiava l'etichetta, e l'etichetta era anche la chiave React. Con «Carica messaggi precedenti» lo
+ * storico copre anche due anni, e «5 novembre» è l'etichetta di due giorni diversi: due gruppi con
+ * la stessa chiave (React può farne sparire o duplicare uno), oppure — se consecutivi — un anno
+ * intero sotto un separatore solo. La data si prende nel fuso della scuola, lo stesso delle
+ * etichette: a Roma la mezzanotte non è quella di Greenwich.
+ */
+function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { chiave: string; date: string; messages: ChatMessage[] }[] {
+    const groups: { chiave: string; date: string; messages: ChatMessage[] }[] = [];
 
     messages.forEach(msg => {
-        const date = formatMessageDate(msg.created_at, locale, labels);
-        if (date !== currentDate) {
-            currentDate = date;
-            groups.push({ date, messages: [] });
+        const chiave = formattaIstante(msg.created_at, 'it', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        const ultimo = groups[groups.length - 1];
+        if (ultimo && ultimo.chiave === chiave) {
+            ultimo.messages.push(msg);
+            return;
         }
-        groups[groups.length - 1].messages.push(msg);
+        groups.push({ chiave, date: formatMessageDate(msg.created_at, locale, labels), messages: [msg] });
     });
 
     return groups;
@@ -557,7 +567,7 @@ export function ChatMessageArea({
                 </div>
             )}
             {groups.map((group) => (
-                <div key={group.date}>
+                <div key={group.chiave}>
                     {/* Separatore giorno — pillola del design */}
                     <div className="my-4 flex justify-center">
                         <span className="rounded-pill border border-kidville-line bg-white/70 px-3 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-kidville-muted">

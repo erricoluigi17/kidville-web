@@ -26,6 +26,16 @@ interface Props {
     firstUnreadId?: string | null;
     /** Callback quando messaggi non letti entrano nel viewport (debounced 500ms) */
     onMarkRead?: (ids: string[]) => void;
+    /**
+     * Il server ha messaggi più vecchi di quelli in lista: in cima compare «Carica messaggi
+     * precedenti». Dal 2026-09-14 la GET porta gli ULTIMI 50, lo storico si chiede a mano.
+     */
+    haPrecedenti?: boolean;
+    /** La pagina precedente è in volo: il pulsante è occupato (e un secondo tocco non ne chiede un'altra). */
+    caricandoPrecedenti?: boolean;
+    /** L'ultimo tentativo non è riuscito: l'avviso resta finché non si riprova a mano. */
+    errorePrecedenti?: boolean;
+    onCaricaPrecedenti?: () => void;
 }
 
 /**
@@ -282,6 +292,10 @@ export function ChatMessageArea({
     loading,
     firstUnreadId,
     onMarkRead,
+    haPrecedenti,
+    caricandoPrecedenti,
+    errorePrecedenti,
+    onCaricaPrecedenti,
 }: Props) {
     const locale = useLocale();
     const tCommon = useTranslations('common');
@@ -440,6 +454,37 @@ export function ChatMessageArea({
             data-testid="chat-messaggi"
             className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4"
         >
+            {/* In cima, DENTRO il contenitore che scorre: si raggiunge scorrendo verso l'alto, dove
+                finiscono i messaggi. La riga ha un'altezza fissa: il passaggio a «Caricamento…» non
+                sposta la conversazione sotto. Niente opacità sul disabilitato: il testo verde sul
+                bianco resta leggibile anche mentre carica. */}
+            {haPrecedenti && onCaricaPrecedenti && (
+                <div className="flex flex-col items-center gap-1.5">
+                    <div className="flex h-11 items-center justify-center">
+                        <button
+                            type="button"
+                            onClick={onCaricaPrecedenti}
+                            disabled={caricandoPrecedenti}
+                            aria-busy={caricandoPrecedenti ? true : undefined}
+                            className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line bg-white px-3 py-1.5 font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em] text-kidville-green transition-colors hover:bg-kidville-green-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-green disabled:cursor-wait"
+                        >
+                            {caricandoPrecedenti ? (
+                                <>
+                                    <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                                    {t('loadingMessages')}
+                                </>
+                            ) : (
+                                t('caricaPrecedenti')
+                            )}
+                        </button>
+                    </div>
+                    {errorePrecedenti && (
+                        <p role="alert" className="text-center font-maven text-xs text-kidville-error-strong">
+                            {t('caricaPrecedentiErrore')}
+                        </p>
+                    )}
+                </div>
+            )}
             {groups.map((group) => (
                 <div key={group.date}>
                     {/* Separatore giorno — pillola del design */}

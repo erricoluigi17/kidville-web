@@ -35,6 +35,8 @@
   "statusDelivered": "Consegnato",
   "statusSent": "Inviato",
   "loadingMessages": "Caricamento messaggi…",
+  "caricaPrecedenti": "Carica messaggi precedenti",
+  "caricaPrecedentiErrore": "Non è stato possibile caricare i messaggi precedenti. Riprova.",
   "startConversation": "Inizia la conversazione",
   "writeMessageTo": "Scrivi un messaggio a {name}",
   "ugcMenuLabel": "Opzioni conversazione",

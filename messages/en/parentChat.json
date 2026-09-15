@@ -35,6 +35,8 @@
   "statusDelivered": "Delivered",
   "statusSent": "Sent",
   "loadingMessages": "Loading messages…",
+  "caricaPrecedenti": "Load earlier messages",
+  "caricaPrecedentiErrore": "Could not load earlier messages. Please try again.",
   "startConversation": "Start the conversation",
   "writeMessageTo": "Write a message to {name}",
   "ugcMenuLabel": "Conversation options",

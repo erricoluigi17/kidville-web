@@ -111,6 +111,26 @@ export const IDS = {
   DOCENTE2: 'e2e00000-0000-4000-8000-000000000207',
   GENITORE2: 'e2e00000-0000-4000-8000-000000000208',
   AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
+  /** La conversazione lunga `DOCENTE2` ↔ `GENITORE2` su `B1`: vedi `CHAT_LUNGA_E2E`. */
+  THREAD_LUNGO: 'e2e00000-0000-4000-8000-000000001201',
+};
+
+/**
+ * LA CONVERSAZIONE LUNGA — 60 messaggi fra `DOCENTE2` e `GENITORE2`, sulla bambina `B1`.
+ *
+ * ⚠️ RICOPIATA da `CHAT_LUNGA_E2E` di `scripts/seed-e2e.mjs`, stessa duplicazione
+ * dichiarata in cima a questo file (gli spec Playwright non importano moduli `.mjs`).
+ * Il perché di ogni scelta — 60, il pareggio fra il 10 e l'11, i microsecondi, tutti
+ * letti — sta scritto là, accanto al dato. Se le due copie divergono, lo spec cerca
+ * messaggi che nessuno ha scritto e diventa rosso su un prodotto sano.
+ */
+export const CHAT_LUNGA_E2E = {
+  totale: 60,
+  /** L'id del messaggio `n`: 1 è il più vecchio, 60 il più nuovo. */
+  idMessaggio: (n: number): string => `e2e00000-0000-4000-8000-0000000c00${String(n).padStart(2, '0')}`,
+  testo: (n: number): string => `Messaggio lungo ${String(n).padStart(2, '0')}`,
+  /** La forma di OGNI testo della conversazione, e di nessun altro testo a schermo. */
+  formaTesto: /^Messaggio lungo \d{2}$/,
 };
 
 /**

@@ -57,6 +57,7 @@ cui gira `e2e/isolamento-sedi.spec.ts`.
 | Utenti Auth | `segreteria2.e2e@kidville.test` (segreteria), `docente2.e2e@kidville.test` (educator, la Girasoli della sede 2), `genitore2.e2e@kidville.test` (genitore di Emma). Nessun ponte `utenti_scuole`: ogni account ha UNA sede, come in produzione per segreteria ed educator. |
 | Config scuola | Identica a quella della sede 1 (di proposito: una configurazione diversa renderebbe verde un test d'isolamento per il motivo sbagliato). |
 | Dati di contorno | 1 avviso `presa_visione` con `target_classes: ['Girasoli']` — l'**ancora** delle asserzioni negative: distingue «l'avviso dell'altra sede non c'è» da «la pagina non ha caricato niente». |
+| Chat | 1 conversazione `docente2` ↔ `genitore2` su Emma (`IDS.THREAD_LUNGO`) con **60 messaggi**: id fissi `e2e00000-…-0000000c00NN`, testo sintetico «Messaggio lungo NN», mittente alternato, istanti al microsecondo a un minuto l'uno dall'altro — tranne il 10 e l'11, **identici**, sul confine della finestra degli ultimi 50. Tutti letti (lo spec gira su chromium e webkit sulle stesse righe), nessun `delivered_at` (colonna assente sul DB della CI). È la premessa di `e2e/chat-precedenti.spec.ts`; i perché per esteso stanno accanto al dato, in `CHAT_LUNGA_E2E`. |
 
 Entrambe le sedi restano **fuori dagli elenchi pubblici**: `isScuolaE2E`
 (`src/lib/scuole/reali.ts`) le riconosce dal prefisso `e2e00000` e da «e2e» nel nome,
@@ -66,7 +67,8 @@ quindi il selettore di sede del wizard `/iscrizione` non le mostra.
 
 Il seed è upsert su UUID fissi e **azzera i soli dati E2E mutabili** a ogni run:
 presenze/diario/agenda/notifiche/pagamenti/armadietto/chat degli utenti-alunni E2E di
-**entrambe** le sedi, risposte agli avvisi seminati, avvisi creati dai docenti E2E nei
+**entrambe** le sedi (per la chat: i thread di `genitore` e di `genitore2`, con i loro
+messaggi — la conversazione lunga si cancella e si riscrive da zero), risposte agli avvisi seminati, avvisi creati dai docenti E2E nei
 test (prima le risposte, poi gli avvisi: c'è una FK), e gli artefatti del flusso pubblico
 d'iscrizione (submission con CF `TSTBNE20A01H501X`, anagrafiche e account
 `iscrizione.e2e@kidville.test` creati dall'import admin). Eseguibile N volte.

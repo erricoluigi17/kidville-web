@@ -13,7 +13,7 @@
  * mai verso un'altra, e muore con la pagina (il logout fa una navigazione dura). Nessuno storage.
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react';
 
 vi.mock('next-intl', () => {
     const t = (k: string) => k;
@@ -34,6 +34,26 @@ let T2 = '';
 const campo = () => screen.getByRole('textbox') as HTMLTextAreaElement;
 const scrivi = (testo: string) => fireEvent.change(campo(), { target: { value: testo } });
 const invia = () => fireEvent.click(screen.getByLabelText('chatInputAriaInvia'));
+const allega = async () => {
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, {
+        target: { files: [new File(['x'], 'allegato.png', { type: 'image/png' })] },
+    });
+    await screen.findByText('allegato.png');
+};
+
+/** Un `onSend` che risponde a comando: la POST vera ci mette secondi (2,6 s misurati in CI). */
+function invioTrattenuto() {
+    let sblocca: (esito: boolean) => void = () => {};
+    const onSend = vi.fn(() => new Promise<boolean>((r) => {
+        sblocca = r;
+    }));
+    const concludi = async (esito: boolean) => {
+        await act(async () => {
+            sblocca(esito);
+        });
+    };
+    return { onSend, concludi };
+}
 
 beforeEach(() => {
     n++;
@@ -138,5 +158,116 @@ describe('ChatInput — la bozza di una conversazione', () => {
 
         render(<ChatInput onSend={onSend} />);
         expect(campo().value).toBe('');
+    });
+});
+
+/**
+ * ─── L'ESITO DELL'INVIO È DELLA CONVERSAZIONE, NON DEL CAMPO (2026-09-15) ────
+ *
+ * Il campo che manda un messaggio può non esserci più quando la POST risponde: si preme Invia e subito
+ * dopo «Indietro», o si apre un'altra conversazione, o si tocca una notifica. La POST va a buon fine e il
+ * messaggio arriva alla famiglia — ma lo svuotamento avveniva nello stato del campo smontato, cioè da
+ * nessuna parte, e nella bozza restava il testo scritto durante la digitazione. Riaperta la conversazione,
+ * il messaggio già consegnato era di nuovo nel campo: un Invio distratto, e nel database c'è un doppione
+ * vero. È il sintomo che questo branch esiste per togliere.
+ *
+ * I casi qui sotto sono gli ordini in cui la cosa succede davvero: la POST finisce a campo smontato, o a
+ * campo già rimontato, o con due campi della stessa conversazione montati insieme (le pagine ne montano
+ * uno per il desktop e uno a schermo intero per il telefono).
+ */
+describe('ChatInput — la bozza quando il campo si smonta con l’invio in volo', () => {
+    it('la POST finisce a campo smontato: tornando sulla conversazione, il messaggio consegnato non è nel campo', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const { unmount } = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('Già consegnato');
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        unmount();
+        await concludi(true);
+
+        render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        expect(campo().value, 'il messaggio già consegnato è tornato nel campo: un Invio lo manda due volte').toBe('');
+    });
+
+    it('lo stesso per l’allegato: consegnato a campo smontato, il chip non torna', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const { unmount } = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        await allega();
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledWith('📎 Allegato', 'u/allegato.png', 'image'));
+        unmount();
+        await concludi(true);
+
+        render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        expect(screen.queryByText('allegato.png'), 'l’allegato già consegnato è tornato agganciato al campo').toBeNull();
+    });
+
+    it('rifiutato a campo smontato: la bozza resta, perché il messaggio non è partito', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const { unmount } = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('Non partito');
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        unmount();
+        await concludi(false);
+
+        render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        expect(campo().value).toBe('Non partito');
+    });
+
+    it('scritto altro mentre la POST era in volo, poi smontato: resta solo ciò che non è partito', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const { unmount } = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('Primo');
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        await allega();
+        scrivi('Secondo, scritto mentre partiva il primo');
+        unmount();
+        await concludi(true);
+
+        render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        expect(campo().value).toBe('Secondo, scritto mentre partiva il primo');
+        expect(screen.getByText('allegato.png'), 'l’allegato caricato durante l’invio non era partito, e si è perso').toBeInTheDocument();
+    });
+
+    it('tornati sulla conversazione PRIMA che la POST finisca: consegnato il messaggio, il campo si svuota', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const primo = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('Già consegnato');
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        primo.unmount();
+
+        render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        expect(campo().value, 'mentre l’invio è in volo il testo resta, come nel campo che l’ha mandato').toBe('Già consegnato');
+        await concludi(true);
+        expect(campo().value, 'consegnato, il messaggio è rimasto nel campo rimontato: un Invio lo manda due volte').toBe('');
+    });
+
+    it('due campi della stessa conversazione montati insieme, come nelle pagine: l’invio riuscito dall’uno svuota anche l’altro', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const prima = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('Già consegnato');
+        prima.unmount();
+
+        render(
+            <>
+                <div>
+                    <ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />
+                </div>
+                <div>
+                    <ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />
+                </div>
+            </>,
+        );
+        const [desktop, telefono] = screen.getAllByRole('textbox') as HTMLTextAreaElement[];
+        expect(desktop.value).toBe('Già consegnato');
+        fireEvent.click(screen.getAllByLabelText('chatInputAriaInvia')[1]);
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        await concludi(true);
+
+        expect(telefono.value).toBe('');
+        expect(desktop.value, 'l’altro campo della stessa conversazione tiene il messaggio consegnato').toBe('');
     });
 });

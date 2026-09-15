@@ -7,8 +7,8 @@
  * testo di un messaggio già mandato non ha motivo di sopravvivere, nemmeno come stringa vuota accanto
  * all'id di una conversazione.
  */
-import { describe, it, expect } from 'vitest';
-import { leggiBozza, scriviBozza } from '@/components/features/chat/bozze-chat';
+import { describe, it, expect, vi } from 'vitest';
+import { ascoltaBozza, leggiBozza, scriviBozza } from '@/components/features/chat/bozze-chat';
 
 const ALLEGATO = { name: 'foto.png', riferimento: 'u/foto.png', type: 'image' };
 
@@ -40,5 +40,36 @@ describe('bozze-chat', () => {
         scriviBozza('', { testo: 'chiave vuota', allegato: null });
         expect(leggiBozza(undefined)).toBeNull();
         expect(leggiBozza('')).toBeNull();
+    });
+
+    /**
+     * L'ascolto esiste per i campi che mostrano la bozza (2026-09-15): l'esito di un invio si scrive qui
+     * anche quando il campo che l'ha mandato non c'è più, e ogni campo montato della stessa conversazione
+     * deve vederlo. Senza avviso, un campo rimontato durante l'invio terrebbe il messaggio già consegnato.
+     */
+    it('chi ascolta una conversazione sa quando la sua bozza cambia, e dopo aver smesso non sa più niente', () => {
+        const avviso = vi.fn();
+        const smetti = ascoltaBozza('u1:ascolto', avviso);
+
+        scriviBozza('u1:ascolto', { testo: 'a', allegato: null });
+        expect(avviso).toHaveBeenCalledTimes(1);
+        scriviBozza('u1:altra', { testo: 'b', allegato: null });
+        expect(avviso, 'la bozza di un’altra conversazione ha avvisato chi ascolta questa').toHaveBeenCalledTimes(1);
+        scriviBozza('u1:ascolto', null);
+        expect(avviso).toHaveBeenCalledTimes(2);
+        scriviBozza('u1:ascolto', null);
+        expect(avviso, 'cancellare una bozza che non c’è non cambia niente').toHaveBeenCalledTimes(2);
+
+        smetti();
+        scriviBozza('u1:ascolto', { testo: 'c', allegato: null });
+        expect(avviso).toHaveBeenCalledTimes(2);
+    });
+
+    it('senza chiave non si ascolta niente', () => {
+        const avviso = vi.fn();
+        const smetti = ascoltaBozza(undefined, avviso);
+        scriviBozza(undefined, { testo: 'senza chiave', allegato: null });
+        expect(avviso).not.toHaveBeenCalled();
+        expect(() => smetti()).not.toThrow();
     });
 });

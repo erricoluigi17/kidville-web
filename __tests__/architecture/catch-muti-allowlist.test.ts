@@ -103,6 +103,9 @@ const ESENTE = 'src/lib/logging/';
 // (resta il `.catch` sulla configurazione degli orari, fuori da questo intervento). Le parti
 // successive dello stesso lavoro toccano gli stessi file: i numeri vanno RIMISURATI sul ramo
 // unito, non presi da qui.
+// Rimisurati il 2026-09-15 sul ramo finale (`fix/chat-doppioni-coda-notifica`, dopo le parti B e C,
+// che toccano pagine chat, `ChatMessageArea`, Service Worker, pannelli e shell nativa), con la stessa
+// misura di questo file: 46 file e 69 occorrenze, uguali all'allowlist. I tetti restano quelli.
 const MAX_FILE = 46;
 const MAX_OCCORRENZE = 69;
 

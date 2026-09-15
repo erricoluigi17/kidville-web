@@ -330,6 +330,19 @@ occorrenze**, gli stessi numeri.
   - Misurando è venuta fuori una sorpresa, scritta in testa allo spec: anche il WebKit di Playwright
     compensa da sé a conversazione già scorsa, e nessuno dei due motori lo fa da `scrollTop` 0.
 
+### Gate
+
+Il 15/09, sul ramo finale: `eslint` 0 · `tsc --noEmit` 0, girato anche senza cache incrementale ·
+`vitest` **17.664 su 17.664**, in 1.292 file · `build` ok.
+
+⚠️ **Il primo giro della suite completa era rosso, e i giri mirati non potevano vederlo.**
+`__tests__/a11y/testo-muted-allowlist.test.ts` misurava 4 usi di `text-kidville-muted` in
+`ChatThreadList.tsx`, contro i 3 dichiarati. Il quarto era il corpo del nuovo avviso «Conversazioni
+non caricate» (D6): testo a 2,51:1 su bianco, dove WCAG AA chiede 4,5:1. La parte che ha scritto quella
+riga aveva chiuso con un gate mirato, che comprendeva tutti i lock di `__tests__/architecture/`. Questo
+lock però sta in `__tests__/a11y/`. Adesso quella riga usa `text-kidville-sub`, come il lock
+prescrive.
+
 ### Effetto al rilascio
 
 - **I 48 messaggi invisibili compaiono** alla prossima apertura, e si segnano letti quando il

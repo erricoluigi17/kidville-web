@@ -3,6 +3,7 @@ import { chiudiOverlayInCima } from '@/lib/mobile/overlay-indietro'
 import { nascondiSplashNativo } from '@/lib/mobile/splash'
 import { applicaStiloStatusBar } from '@/lib/mobile/status-bar'
 import { logClient, nomeErrore } from '@/lib/logging/client'
+import { apriLinkNotifica } from '@/lib/chat/apertura-thread'
 
 // Setup della shell nativa Capacitor (M10.5). Chiamato UNA sola volta e SOLO su
 // piattaforma nativa (vedi NativeInit). Ogni plugin è import dinamico e
@@ -98,7 +99,9 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
 
   // 3. Back button Android (chiude l'overlay in cima, altrimenti naviga indietro o esce
   //    alla radice) + deep link schema kidville:// (es. kidville://parent/agenda →
-  //    /parent/agenda).
+  //    /parent/agenda). Il deep link passa dalla stessa regola del tocco su una push
+  //    (punto 4): chiunque può aprire un indirizzo kidville://, e `kidville://\evil.example`
+  //    diventava `/\evil.example`, che per il browser è un altro sito.
   try {
     const { App } = await import('@capacitor/app')
     void App.addListener('backButton', ({ canGoBack }) => {
@@ -114,20 +117,34 @@ export async function setupNativeShell(navigate: (path: string) => void): Promis
     })
     void App.addListener('appUrlOpen', ({ url }) => {
       const m = /^kidville:\/\/(.*)$/i.exec(url)
-      if (m) navigate('/' + m[1].replace(/^\/+/, ''))
+      if (m) apriLinkNotifica('/' + m[1].replace(/^\/+/, ''), navigate)
     })
   } catch (e) {
     plugineMancante('App', 'il tasto Indietro e i deep link kidville:// non rispondono', e)
   }
 
-  // 4. Tap su una push nativa → deep-link sul link della notifica. Il payload
-  //    FCM include data.url (vedi src/lib/push/native-push.ts); si accettano
-  //    solo percorsi interni ('/...') — mai URL esterni.
+  // 4. Tap su una push nativa → il link della notifica. Il payload FCM include
+  //    data.url (vedi src/lib/push/native-push.ts). Ci passano il tocco ad app chiusa
+  //    (il plugin trattiene l'evento finché questo ascoltatore non c'è), ad app in
+  //    background e sul banner con l'app aperta.
+  //
+  //    ⚠️ QUI C'ERA `if (url.startsWith('/')) navigate(url)`, e il commento diceva «solo
+  //    percorsi interni, mai URL esterni». Non era vero: `'//evil.example'` comincia con
+  //    '/', e per il browser è l'indirizzo di un altro sito. Il controllo adesso sta in UN
+  //    posto solo, `instradaLinkNotifica` (`@/lib/chat/link-conversazione`), che legge il
+  //    link come lo legge il browser; un rifiuto lascia una riga di log, senza l'URL.
+  //    Da quella regola (2026-09-15, parte C della correzione chat) il tocco riceve anche
+  //    due comportamenti nuovi:
+  //     · sulla pagina chat già aperta la conversazione si apre con un evento, senza
+  //       navigare — in Next 16 una push allo stesso URL non rimonta la pagina, e il
+  //       ritocco della stessa notifica non apriva niente;
+  //     · a chi ha due profili, un link dell'altra area si riscrive nell'area in cui si
+  //       trova: altrimenti la guardia d'area lo rimanda alla home e la conversazione si perde.
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications')
     void PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-      const url = (action.notification?.data as { url?: string } | undefined)?.url
-      if (typeof url === 'string' && url.startsWith('/')) navigate(url)
+      const url = (action.notification?.data as { url?: unknown } | undefined)?.url
+      if (typeof url === 'string') apriLinkNotifica(url, navigate)
     })
   } catch (e) {
     plugineMancante('PushNotifications', 'il tocco su una push non apre più la sua schermata', e)

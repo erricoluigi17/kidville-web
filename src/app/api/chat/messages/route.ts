@@ -17,6 +17,7 @@ import { assertGenitoreNonSospeso } from '@/lib/pagamenti/sospensione';
 import { assertConversazioneNonSospesa } from '@/lib/chat/sospensione-conversazione';
 import { assertTerminiAccettatiSeGenitore } from '@/lib/onboarding/consensi';
 import { firmaAllegatiChat, normalizzaAllegatoChat } from '@/lib/chat/allegati';
+import { linkConversazione } from '@/lib/chat/link-conversazione';
 import { sedeDiAlunno, sedeDiAccount } from '@/lib/anagrafiche/sedi';
 
 // markRead='' è ammesso per retro-compatibilità: equivale ad assente (nessun mark-read).
@@ -473,7 +474,12 @@ export const POST = withRoute('chat/messages:POST', async (request: Request) => 
                     utenteIds: [controparte.utenteId],
                     titolo: 'Nuovo messaggio in chat',
                     corpo: nome ? `Hai un nuovo messaggio da ${nome}` : 'Hai un nuovo messaggio',
-                    link: controparte.versoGenitore ? '/parent/chat' : '/teacher/chat',
+                    // Il link APRE LA CONVERSAZIONE (2026-09-15): prima portava alla sola lista, e chi
+                    // toccava la notifica doveva cercare la famiglia giusta. L'area è il posto che la
+                    // controparte occupa nel thread — il server non sa quale veste sia attiva sul suo
+                    // telefono: per chi ha due profili la riscrive il client (`instradaLinkNotifica`).
+                    // La push nativa (`data.url`) e il dispatch web (`url: n.link`) lo portano com'è.
+                    link: linkConversazione(controparte.versoGenitore ? 'parent' : 'teacher', thread_id),
                     entitaTipo: 'chat_thread',
                     entitaId: thread_id,
                     bufferMin: 0,

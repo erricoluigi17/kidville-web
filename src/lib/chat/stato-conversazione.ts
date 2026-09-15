@@ -274,6 +274,32 @@ export function unisciFinestra(
     return { messaggi: unisciElenco(tenuti, utili, threadId, 'server'), buco: true };
 }
 
+/**
+ * CHI LEGGE È IN FONDO ALLA CONVERSAZIONE? (2026-09-14)
+ *
+ * Dal 2026-09-14 lo storico si carica a mano («Carica messaggi precedenti»), e chi lo sta leggendo è
+ * più su dell'ultimo messaggio. Un messaggio che arriva in coda fa scorrere in fondo SOLO chi era già
+ * in fondo, o chi l'ha scritto (`ChatMessageArea`): prima scorreva sempre, e chi leggeva lo storico
+ * veniva strappato via a ogni messaggio in arrivo.
+ *
+ * «In fondo» è a non più di 150 px dal fondo, o di un terzo dell'altezza visibile quando è di più:
+ * l'ultima bolla può essere un'immagine alta, e chi la sta guardando è in fondo.
+ *
+ * ⚠️ È UNA REGOLA SOLA. Ogni altra decisione che dipenda da «chi legge vede l'ultimo messaggio» —
+ * per esempio segnarlo letto appena arriva — usa questa funzione, non una soglia ricopiata: con due
+ * soglie si segnerebbe letto un messaggio che il componente lascia sotto la piega.
+ *
+ * Un contenitore non impaginato (`display:none`, com'è l'istanza desktop su un telefono) ha tutte e
+ * tre le misure a zero, e risulta «in fondo»: non si vede, e lo scorrimento che gli si chiede non fa
+ * niente.
+ */
+const SOGLIA_FONDO_PX = 150;
+
+export function vicinoAlFondo(m: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean {
+    const distanza = m.scrollHeight - m.scrollTop - m.clientHeight;
+    return distanza <= Math.max(SOGLIA_FONDO_PX, m.clientHeight / 3);
+}
+
 /** Il primo messaggio non letto DELL'INTERLOCUTORE (i propri non contano). */
 export function primoNonLetto(messaggi: ChatMessage[], utenteId: string): string | null {
     return messaggi.find((m) => m.sender_id !== utenteId && m.read_at === null)?.id ?? null;

@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { formattaIstante } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
-import { allegatoMostrabile, type ChatMessage } from '@/lib/chat/stato-conversazione';
+import { allegatoMostrabile, vicinoAlFondo, type ChatMessage } from '@/lib/chat/stato-conversazione';
 
 /**
  * Il tipo del messaggio e la regola dell'allegato vivono nel modulo puro
@@ -285,6 +285,15 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
     );
 }
 
+/**
+ * La bolla di un messaggio dentro UN contenitore, per id. Gli id vengono dal database (uuid): uno
+ * che non ha quella forma non entra in un selettore, dove un apice lo trasformerebbe in un altro.
+ */
+function messaggioNelContenitore(contenitore: HTMLElement, id: string): HTMLElement | null {
+    if (!/^[\w-]+$/.test(id)) return null;
+    return contenitore.querySelector<HTMLElement>(`[data-msg-id="${id}"]`);
+}
+
 export function ChatMessageArea({
     messages,
     currentUserId,
@@ -338,20 +347,81 @@ export function ChatMessageArea({
         } else {
             bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
-    // Solo quando cambia il thread (messages.length da 0 a N)
+    // Solo quando la conversazione COMPARE: cambio di thread, o fine del caricamento. Fino al
+    // 2026-09-14 la chiave era il solo thread, e un messaggio del realtime arrivato mentre c'era lo
+    // spinner la accendeva allora — senza niente a schermo da scorrere — e mai più: la conversazione
+    // restava aperta in cima. L'effetto sulla lunghezza lo copriva per caso, ed è stato tolto.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [messages.length > 0 ? messages[0]?.thread_id : null]);
+    }, [!loading && messages.length > 0 ? messages[0]?.thread_id : null]);
 
-    // Scroll al fondo per nuovi messaggi in ingresso (non al caricamento iniziale)
-    const prevLengthRef = useRef(messages.length);
-    useEffect(() => {
-        const prev = prevLengthRef.current;
-        prevLengthRef.current = messages.length;
-        // Scrolla al fondo solo se sono arrivati nuovi messaggi (non il caricamento iniziale)
-        if (prev > 0 && messages.length > prev) {
-            bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    /* ─── IN TESTA O IN CODA: lo scorrimento che non salta (2026-09-14) ───────────────────────────
+     *
+     * Qui c'era un effetto su `messages.length`: se la lista cresceva, in fondo. Andava bene finché
+     * la lista cresceva solo in coda. Con «Carica messaggi precedenti» cresce anche in TESTA, e quel
+     * effetto rispediva all'ultimo messaggio chi aveva appena chiesto i primi. Sapere QUANTI sono non
+     * basta: bisogna sapere DOVE sono arrivati, e lo dicono il primo e l'ultimo id.
+     *
+     *  · IN TESTA (cambia il primo, l'ultimo resta): il messaggio che era in cima resta dov'era a
+     *    schermo. `scrollTop += spostamento dell'àncora`. WebKit (la WebView dell'app iOS) non ha lo
+     *    scroll anchoring dei browser Chromium; dove c'è ed è già intervenuto lo spostamento misurato
+     *    vale zero, quindi la correzione non si somma alla sua;
+     *  · IN CODA (cambia l'ultimo): in fondo SOLO se il messaggio è mio, o se chi legge era già in
+     *    fondo (`vicinoAlFondo`, regola del modulo puro: chi decide altro su «in fondo» usa quella).
+     *
+     * La «foto di prima» (`vistaRef`) si prende dopo OGNI commit e a ogni scroll: il commit che
+     * aggiunge i messaggi ha già il DOM nuovo, quindi la posizione di prima va letta prima. I due
+     * `useLayoutEffect` stanno in quest'ordine (React li esegue in ordine di dichiarazione) e prima
+     * delle `return` anticipate; girano prima che il browser dipinga, quindi il salto non si vede.
+     */
+    const threadId = messages[0]?.thread_id ?? null;
+    const primoId = messages[0]?.id ?? null;
+    const ultimo = messages.length > 0 ? messages[messages.length - 1] : null;
+    const ultimoId = ultimo?.id ?? null;
+    const ultimoMio = !!ultimo && ultimo.sender_id === currentUserId;
+    const vistaRef = useRef<{
+        threadId: string | null;
+        primoId: string | null;
+        ultimoId: string | null;
+        /** Distanza a schermo del primo messaggio dal bordo alto del contenitore. */
+        ancoraTop: number | null;
+        inFondo: boolean;
+    }>({ threadId: null, primoId: null, ultimoId: null, ancoraTop: null, inFondo: true });
+
+    const misura = useCallback(() => {
+        const vista = vistaRef.current;
+        const contenitore = contenitoreRef.current;
+        if (!contenitore) {
+            // Niente lista a schermo (spinner, conversazione vuota): la prossima si apre in fondo.
+            vista.ancoraTop = null;
+            vista.inFondo = true;
+            return;
         }
-    }, [messages.length]);
+        vista.inFondo = vicinoAlFondo(contenitore);
+        const ancora = vista.primoId ? messaggioNelContenitore(contenitore, vista.primoId) : null;
+        vista.ancoraTop = ancora ? ancora.getBoundingClientRect().top - contenitore.getBoundingClientRect().top : null;
+    }, []);
+
+    useLayoutEffect(() => {
+        const prima = vistaRef.current;
+        const contenitore = contenitoreRef.current;
+        const stessoThread = prima.threadId !== null && prima.threadId === threadId;
+        if (stessoThread && contenitore) {
+            if (primoId !== prima.primoId && ultimoId === prima.ultimoId) {
+                const ancora = prima.primoId && prima.ancoraTop !== null ? messaggioNelContenitore(contenitore, prima.primoId) : null;
+                if (ancora && prima.ancoraTop !== null) {
+                    const ora = ancora.getBoundingClientRect().top - contenitore.getBoundingClientRect().top;
+                    contenitore.scrollTop += ora - prima.ancoraTop;
+                }
+            } else if (ultimoId !== prima.ultimoId && (ultimoMio || prima.inFondo)) {
+                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+        vistaRef.current = { ...prima, threadId, primoId, ultimoId };
+    }, [threadId, primoId, ultimoId, ultimoMio]);
+
+    useLayoutEffect(() => {
+        misura();
+    });
 
     // IntersectionObserver per marcare come letti i messaggi non letti
     //
@@ -452,6 +522,7 @@ export function ChatMessageArea({
         <div
             ref={contenitoreRef}
             data-testid="chat-messaggi"
+            onScroll={misura}
             className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4"
         >
             {/* In cima, DENTRO il contenitore che scorre: si raggiunge scorrendo verso l'alto, dove
@@ -516,6 +587,9 @@ export function ChatMessageArea({
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         transition={{ delay: idx * 0.02, duration: 0.2 }}
                                         className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
+                                        // L'àncora dello scorrimento: TUTTI i messaggi. Distinto da
+                                        // `data-message-id`, che segna solo i non letti da osservare.
+                                        data-msg-id={msg.id}
                                         // Attributi per IntersectionObserver
                                         data-message-id={isUnread ? msg.id : undefined}
                                         data-unread={isUnread ? 'true' : undefined}

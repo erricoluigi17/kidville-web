@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import {
@@ -133,9 +133,18 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     const [nonLetti, setNonLetti] = useState(0);
     /** «Carica messaggi precedenti»: in volo, o fallito, per la conversazione aperta. */
     const [precedentiUi, setPrecedentiUi] = useState<{ caricando: boolean; errore: boolean }>({ caricando: false, errore: false });
-    /** Lo stato della conversazione dell'ultimo render, per chi agisce su un click (la testa della lista). */
+    /**
+     * Lo stato della conversazione dell'ultimo commit, per chi agisce su un tocco (la testa della lista).
+     *
+     * ⚠️ IN `useLayoutEffect`, NON IN `useEffect` (2026-09-15). Dopo il commit che dipinge la lista e il
+     * pulsante «Carica messaggi precedenti», React cede il passo al browser prima di eseguire gli
+     * `useEffect`: un tocco può arrivare lì in mezzo. Con lo specchio aggiornato in `useEffect` quel
+     * tocco leggeva la lista di PRIMA — vuota all'apertura — e `caricaPrecedenti` usciva senza chiedere
+     * niente e senza dirlo. Il `useLayoutEffect` gira dentro il commit stesso: nessun evento arriva fra
+     * il pulsante a schermo e lo specchio aggiornato.
+     */
     const conversazioneStatoRef = useRef(conversazione);
-    useEffect(() => {
+    useLayoutEffect(() => {
         conversazioneStatoRef.current = conversazione;
     }, [conversazione]);
     /** La conversazione per cui una pagina precedente è in volo: il doppio click non ne chiede un'altra. */

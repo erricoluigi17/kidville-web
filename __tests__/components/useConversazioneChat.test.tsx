@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 
 /**
  * `useConversazioneChat` — IL HOOK, DA SOLO, CON LA RETE IN MANO.
@@ -973,6 +974,36 @@ describe('useConversazioneChat — innesto della parte B: i messaggi precedenti'
         expect(r().haPrecedenti).toBe(false);
         expect(r().caricandoPrecedenti).toBe(false);
         expect(r().errorePrecedenti).toBe(false);
+    });
+
+    it('il tocco che arriva appena la lista è a schermo, prima degli effetti passivi, chiede la pagina (non esce in silenzio)', async () => {
+        // Dopo il commit che dipinge la lista e il pulsante, React cede il passo al browser prima di
+        // eseguire gli `useEffect`: un tocco può arrivare lì in mezzo. Il `useLayoutEffect` del banco gira
+        // proprio in quel punto — dopo il commit, prima di ogni `useEffect` — ed è il tocco più rapido
+        // possibile. Trovato dal test di pagina `__tests__/pages/chat-precedenti.test.tsx`, dove i timer
+        // finti allargano quella finestra: il tocco non partiva, e nessun avviso lo diceva.
+        serverConStorico();
+        const tocchi: Array<Promise<void>> = [];
+        const { result } = renderHook(() => {
+            const r = useConversazioneChat({ userId: IO, ready: true, rotta: '/parent/chat' });
+            const aSchermo = r.messaggi.length;
+            useLayoutEffect(() => {
+                if (aSchermo === 50 && tocchi.length === 0) tocchi.push((r as unknown as ConPrecedenti).caricaPrecedenti());
+            });
+            return r;
+        });
+        await pronto(result);
+        act(() => result.current.apri(TA as never));
+        await waitFor(() => expect(tocchi).toHaveLength(1));
+        await act(async () => {
+            await tocchi[0];
+        });
+
+        expect(
+            rete.richieste.filter((x) => x.url.includes('primaDi=')).map((x) => x.url),
+            'il tocco sul pulsante appena comparso non ha chiesto niente: la testa della lista era ancora vuota',
+        ).toEqual(['/api/chat/messages?threadId=th-a&primaDi=m-011']);
+        await waitFor(() => expect(result.current.messaggi).toHaveLength(60));
     });
 
     it('doppio click: una GET sola, e «caricando» mentre è in volo', async () => {

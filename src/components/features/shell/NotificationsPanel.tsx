@@ -4,8 +4,9 @@
  * Centro notifiche della AppBar genitore/docente: campanella pill (stile
  * AppBar) con badge conteggio non lette + dropdown con le ultime 20 notifiche
  * da GET /api/notifiche, poll 60s (mirror di AdminNotificationsPanel, stile
- * shell). Il click su una notifica la segna letta (PATCH { id }) e naviga sul
- * link; "Segna tutte lette" fa il PATCH senza id. Footer: link agli avvisi.
+ * shell). Il click su una notifica la segna letta (PATCH { id }) e apre il suo
+ * link (una notifica di chat apre la conversazione, vedi `apri`); "Segna tutte
+ * lette" fa il PATCH senza id. Footer: link agli avvisi.
  * Identità: fetch sempre con ?userId= (pattern parent/localStorage); i link di
  * navigazione portano ?userId= solo lato docente (rotte genitore nude).
  */
@@ -19,6 +20,8 @@ import Link from 'next/link';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
 import { impostaBadgeNonLette } from '@/lib/native/badge';
+import { linkEffettivoNotifica } from '@/lib/chat/link-conversazione';
+import { apriLinkNotifica } from '@/lib/chat/apertura-thread';
 
 interface Notifica {
   id: string;
@@ -26,6 +29,9 @@ interface Notifica {
   titolo: string | null;
   corpo: string | null;
   link: string | null;
+  /** Cosa nomina la notifica (`chat_thread` per un messaggio): `/api/notifiche` lo restituisce già. */
+  entita_tipo: string | null;
+  entita_id: string | null;
   letta_il: string | null;
   creato_il: string;
 }
@@ -98,7 +104,14 @@ export function NotificationsPanel({ area, userId }: { area: 'teacher' | 'parent
       }).catch(() => null);
       void load();
     }
-    if (n.link) router.push(withUser(n.link));
+    // Il link passa dalla regola del tocco (`@/lib/chat/apertura-thread`), come sulla push nativa.
+    // `linkEffettivoNotifica` ricostruisce `?thread=` per le notifiche di chat nate prima del
+    // 2026-09-15, che portano la lista ma nominano la conversazione in `entita_*`; `apriLinkNotifica`
+    // apre la conversazione nella pagina chat già montata (lì una push allo stesso percorso non
+    // rimonterebbe niente), riscrive il percorso nell'area in cui ci si trova e rifiuta, con un log,
+    // un link che non è di questa app.
+    const link = linkEffettivoNotifica(n);
+    if (link) apriLinkNotifica(withUser(link), (url) => router.push(url));
   };
 
   const segnaTutte = async () => {

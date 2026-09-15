@@ -54,6 +54,8 @@ import type { EsitoApertura, RottaChat, StatoThreads } from './useConversazioneC
  * La richiesta rimandata ricorda la GENERAZIONE della selezione di quando è arrivata: se al momento di
  * ritentare è cambiata, qualcuno ha scelto a mano, e la notifica non apre più niente. Per un docente,
  * ritrovarsi da solo nella conversazione di un'altra famiglia è esattamente il difetto da evitare.
+ * L'apertura fatta dalla coda stessa fa crescere la stessa generazione, ma non è una scelta a mano: la
+ * richiesta arrivata durante quell'apertura si allinea, e parte (vedi `elabora`).
  *
  * ─── L'URL ───────────────────────────────────────────────────────────────────
  *
@@ -150,6 +152,23 @@ export function useAperturaThreadRichiesta(chat: Conversazione, { rotta, onApert
                 });
             }
             coda.inCorso = null;
+            /**
+             * ⚠️ UN'APERTURA FATTA DALLA CODA NON È UNA SCELTA A MANO (2026-09-15).
+             *
+             * `apriPerId` apre con `apri`, e `apri` fa crescere la generazione della selezione come per un
+             * tocco sulla lista. Una richiesta arrivata mentre questa era in volo aveva preso la generazione di
+             * PRIMA, e al suo turno risultava «annullata» dall'apertura di quella precedente: in silenzio,
+             * senza log, con la richiesta arrivata dopo che perdeva contro quella arrivata prima (tocco su B,
+             * che aspetta la ricarica della lista; tocco su C; arriva B, e C non si apriva più).
+             *
+             * Si allinea solo la richiesta che ha visto la STESSA generazione di questa. Una scelta a mano fatta
+             * nel frattempo avrebbe fatto finire questa apertura in 'annullato', e qui non si arriva; una fatta
+             * prima che la richiesta in attesa arrivasse ha già una generazione diversa, e resta com'è.
+             */
+            const inAttesa = coda.inAttesa;
+            if (esito === 'aperto' && inAttesa && inAttesa.selezione === r.selezione) {
+                coda.inAttesa = { ...inAttesa, selezione: leggiSelezioneRef.current() };
+            }
             // Pagina smontata nel frattempo: l'URL e la vista sono di un'altra pagina, non si toccano.
             if (!montatoRef.current) return;
 

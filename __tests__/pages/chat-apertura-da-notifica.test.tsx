@@ -446,6 +446,47 @@ describe.each(PAGINE)('chat del $nome — il tocco sulla notifica apre la conver
         expect(logApertura()).toEqual([]);
     });
 
+    /**
+     * Due tocchi ravvicinati (2026-09-15). B è appena nata dall'altra parte e la lista in mano non la
+     * contiene: la sua apertura aspetta la ricarica. In quel momento arriva il tocco su A. Quando la
+     * ricarica porta B, l'apertura di B fa crescere la generazione della selezione — ed era proprio quel
+     * numero a dire ad A «qualcuno ha scelto a mano»: A veniva annullata in silenzio, senza log, e restava
+     * aperta B. La richiesta arrivata dopo deve vincere, e non può perdere contro l'apertura automatica di
+     * quella prima.
+     */
+    it('un tocco su A mentre B aspetta la ricarica della lista: si apre B, poi A, e le due aperture si registrano', async () => {
+        rete.threads = [thread(p, TH_A, p.nomeA)];
+        rete.messaggi[TH_A] = [messaggio(TH_A, 'm-a', p.altro, 'Messaggio di A')];
+        rete.messaggi[TH_B] = [messaggio(TH_B, 'm-b', p.altro, 'Messaggio di B')];
+        rete.trattieni = (metodo, url) => metodo === 'GET' && url.startsWith('/api/chat/threads');
+        suPagina(`${p.rotta}?thread=${TH_B}`);
+
+        render(<p.Pagina />);
+        await waitFor(() => expect(rete.trattenute).toHaveLength(1));
+        // La prima lista è già calcolata senza B; la ricarica, che parte dopo, la troverà.
+        rete.threads = [thread(p, TH_A, p.nomeA), thread(p, TH_B, p.nomeB)];
+        await libera('/api/chat/threads');
+        await waitFor(() => expect(rete.trattenute, 'B non è nella lista: doveva partire la ricarica').toHaveLength(1));
+
+        let consegnato = false;
+        act(() => {
+            consegnato = richiediAperturaThread(TH_A);
+        });
+        expect(consegnato, 'la pagina chat montata non ascolta l’evento').toBe(true);
+        await libera('/api/chat/threads');
+
+        await aSchermo('Messaggio di A');
+        for (const c of screen.getAllByTestId('chat-messaggi')) {
+            expect(within(c).queryByText('Messaggio di B'), 'la richiesta arrivata dopo ha perso contro l’apertura di quella prima').toBeNull();
+        }
+        expect(chiamate('GET', '/api/chat/threads'), 'A è nella lista: nessuna ricarica in più').toHaveLength(2);
+        await waitFor(() => expect(window.location.search).toBe(''));
+        expect(logApertura().map((e) => e.messaggio)).toEqual([
+            'chat-apertura-da-notifica: aperta (url)',
+            'chat-apertura-da-notifica: aperta (evento)',
+        ]);
+    });
+
     it('la prima lista non si carica: la richiesta aspetta, e dopo «Riprova» la conversazione si apre', async () => {
         rete.threads = [thread(p, TH_A, p.nomeA), thread(p, TH_B, p.nomeB)];
         rete.messaggi[TH_B] = [messaggio(TH_B, 'm-b', p.altro, 'Messaggio di B')];

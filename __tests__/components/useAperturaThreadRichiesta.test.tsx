@@ -53,14 +53,24 @@ async function scorri() {
     });
 }
 
-/** Chiude la prima apertura in volo per `id`. */
-async function concludi(stato: { attese: Attesa[] }, id: string, esito: EsitoApertura | Error) {
+/**
+ * Chiude la prima apertura in volo per `id`.
+ *
+ * ⚠️ Un'apertura riuscita FA CRESCERE LA GENERAZIONE DELLA SELEZIONE, come il vero `apriPerId`: apre con
+ * `apri`, e `apri` incrementa `selezioneRef` (useConversazioneChat). Fino al 2026-09-15 il finto non lo
+ * faceva, e il caso «C mentre B si apre» era verde con e senza il difetto: nella pagina vera l'apertura di
+ * B annullava C, come se l'utente avesse scelto a mano.
+ */
+async function concludi(stato: { selezione: number; attese: Attesa[] }, id: string, esito: EsitoApertura | Error) {
     const i = stato.attese.findIndex((a) => a.id === id);
     if (i < 0) throw new Error(`nessuna apertura in volo per ${id}`);
     const [a] = stato.attese.splice(i, 1);
     await act(async () => {
         if (esito instanceof Error) a.rompi(esito);
-        else a.risolvi(esito);
+        else {
+            if (esito === 'aperto') stato.selezione++;
+            a.risolvi(esito);
+        }
         for (let k = 0; k < 10; k++) await Promise.resolve();
     });
 }
@@ -143,9 +153,34 @@ describe('useAperturaThreadRichiesta — la coda', () => {
         expect(f.apriPerId.mock.calls.map((c) => c[0])).toEqual([B]);
 
         await concludi(f.stato, B, 'aperto');
-        expect(f.apriPerId.mock.calls.map((c) => c[0])).toEqual([B, C]);
+        expect(
+            f.apriPerId.mock.calls.map((c) => c[0]),
+            'l’apertura di B, fatta dalla coda, ha annullato la richiesta arrivata dopo come una scelta a mano',
+        ).toEqual([B, C]);
         await concludi(f.stato, C, 'aperto');
         expect(onAperta).toHaveBeenCalledTimes(2);
+        expect(h.logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio)).toEqual([
+            'chat-apertura-da-notifica: aperta (url)',
+            'chat-apertura-da-notifica: aperta (evento)',
+        ]);
+        unmount();
+    });
+
+    it('un tocco su C mentre B si sta aprendo, poi una scelta a mano prima che C parta: vince la scelta', async () => {
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { onAperta, unmount } = monta(f);
+        await scorri();
+        act(() => {
+            richiediAperturaThread(C);
+        });
+        await scorri();
+
+        // Mentre B è in volo l'utente sceglie da sé: B finisce «annullato», e C (arrivata prima della scelta) non parte.
+        f.stato.selezione++;
+        await concludi(f.stato, B, 'annullato');
+        expect(f.apriPerId.mock.calls.map((c) => c[0]), 'la notifica arrivata prima ha scavalcato la scelta fatta a mano').toEqual([B]);
+        expect(onAperta).not.toHaveBeenCalled();
         unmount();
     });
 

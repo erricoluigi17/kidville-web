@@ -10,6 +10,7 @@ import { ChatConversationMenu } from '@/components/features/chat/ChatConversatio
 import { ChatSuspensionBanner } from '@/components/features/chat/ChatSuspensionBanner';
 import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
 import { useConversazioneChat } from '@/components/features/chat/useConversazioneChat';
+import { useAperturaThreadRichiesta } from '@/components/features/chat/useAperturaThreadRichiesta';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTranslations } from 'next-intl';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -58,6 +59,12 @@ function TeacherChatContent() {
      * vive in `useConversazioneChat`, condiviso con la pagina del genitore. Qui resta la UI.
      */
     const chat = useConversazioneChat({ userId: teacherId, ready, rotta: '/teacher/chat' });
+    /**
+     * Il tocco su una notifica di chat apre la conversazione (2026-09-15): la chiede `?thread=` nell'URL
+     * o l'evento `kv:chat-apri-thread` a pagina già aperta, e su un telefono si passa subito alla
+     * conversazione a schermo intero. Dall'URL si toglie solo `thread`: `?userId=` resta.
+     */
+    useAperturaThreadRichiesta(chat, { rotta: '/teacher/chat', onAperta: () => setShowMobile('chat') });
     const threads = chat.threads;
     const selectedThread = chat.threadAperto;
     const messages = chat.messaggi;

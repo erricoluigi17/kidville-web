@@ -180,6 +180,13 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
     /** Invii in volo per thread: con la propria POST in volo la GET di rifirma dell'allegato è inutile. */
     const inviiInVoloRef = useRef(new Map<string, number>());
     const leggiThreadAperto = useCallback(() => threadApertoIdRef.current, []);
+    /**
+     * La generazione della selezione ADESSO. Per chi RIMANDA un'apertura (il tocco su una notifica la cui
+     * lista non si è caricata, `useAperturaThreadRichiesta`): se nel frattempo è cambiata, qualcuno ha
+     * scelto o chiuso una conversazione a mano, e quella scelta vince. `apriPerId` la confronta da solo
+     * solo per la durata della propria chiamata.
+     */
+    const leggiSelezione = useCallback(() => selezioneRef.current, []);
 
     /**
      * La lista dei thread, specchiata in un ref: i conti (badge, anteprima) si fanno sull'ultima
@@ -772,6 +779,7 @@ export function useConversazioneChat({ userId, ready, rotta, onThreadsCaricati }
         nonLetti,
         apri,
         apriPerId,
+        leggiSelezione,
         chiudi,
         invia,
         segnaLetti,

@@ -32,6 +32,10 @@
  *
  * Adesso ogni scrittura avvisa chi ascolta quella conversazione (`ascoltaBozza`), e ogni campo montato
  * mostra la stessa bozza.
+ *
+ * Per lo stesso motivo anche l'invio in volo è della conversazione (`iniziaInvio`/`concludiInvio`): un
+ * campo rimontato mentre la POST attende mostra il messaggio che sta partendo, e con «Invia» acceso un
+ * Invio lo manderebbe una seconda volta.
  */
 
 export interface BozzaChat {
@@ -47,7 +51,14 @@ export interface BozzaChat {
 export const BOZZA_VUOTA: BozzaChat = Object.freeze({ testo: '', allegato: null });
 
 const bozze = new Map<string, BozzaChat>();
+/** Quanti invii sono in volo per conversazione: una conversazione senza invii non c'è. */
+const inviiInVolo = new Map<string, number>();
 const ascoltatori = new Map<string, Set<() => void>>();
+
+function avvisa(chiave: string): void {
+    // Una copia dell'elenco: chi viene avvisato può smettere di ascoltare mentre si avvisano gli altri.
+    for (const avviso of [...(ascoltatori.get(chiave) ?? [])]) avviso();
+}
 
 /** La bozza di una conversazione, o `null`. Senza chiave non c'è memoria. */
 export function leggiBozza(chiave: string | undefined): BozzaChat | null {
@@ -67,8 +78,32 @@ export function scriviBozza(chiave: string | undefined, bozza: BozzaChat | null)
         if (bozze.get(chiave) === bozza) return;
         bozze.set(chiave, bozza);
     }
-    // Una copia dell'elenco: chi viene avvisato può smettere di ascoltare mentre si avvisano gli altri.
-    for (const avviso of [...(ascoltatori.get(chiave) ?? [])]) avviso();
+    avvisa(chiave);
+}
+
+/** C'è un invio in volo per questa conversazione? Senza chiave, mai. */
+export function invioInVolo(chiave: string | undefined): boolean {
+    if (!chiave) return false;
+    return (inviiInVolo.get(chiave) ?? 0) > 0;
+}
+
+/** Un invio parte per questa conversazione, e chi la mostra lo sa. */
+export function iniziaInvio(chiave: string | undefined): void {
+    if (!chiave) return;
+    inviiInVolo.set(chiave, (inviiInVolo.get(chiave) ?? 0) + 1);
+    avvisa(chiave);
+}
+
+/**
+ * Un invio per questa conversazione è finito, com'è finito (l'esito tocca alla bozza, non a questo conto).
+ * Un `concludiInvio` senza il suo inizio non porta il conto sotto zero.
+ */
+export function concludiInvio(chiave: string | undefined): void {
+    if (!chiave || !inviiInVolo.has(chiave)) return;
+    const restanti = (inviiInVolo.get(chiave) ?? 1) - 1;
+    if (restanti > 0) inviiInVolo.set(chiave, restanti);
+    else inviiInVolo.delete(chiave);
+    avvisa(chiave);
 }
 
 /** Avvisa `avviso` a ogni cambiamento della bozza di una conversazione. Restituisce la funzione per smettere. */

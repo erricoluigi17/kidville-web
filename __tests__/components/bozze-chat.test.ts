@@ -8,7 +8,14 @@
  * all'id di una conversazione.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { ascoltaBozza, leggiBozza, scriviBozza } from '@/components/features/chat/bozze-chat';
+import {
+    ascoltaBozza,
+    concludiInvio,
+    iniziaInvio,
+    invioInVolo,
+    leggiBozza,
+    scriviBozza,
+} from '@/components/features/chat/bozze-chat';
 
 const ALLEGATO = { name: 'foto.png', riferimento: 'u/foto.png', type: 'image' };
 
@@ -71,5 +78,42 @@ describe('bozze-chat', () => {
         scriviBozza(undefined, { testo: 'senza chiave', allegato: null });
         expect(avviso).not.toHaveBeenCalled();
         expect(() => smetti()).not.toThrow();
+    });
+
+    /**
+     * L'invio in volo è della conversazione, come la bozza: un campo rimontato mentre la POST attende non
+     * deve poter mandare lo stesso messaggio una seconda volta.
+     */
+    it('un invio in volo è della conversazione: avvisa chi ascolta, e finisce quando finiscono tutti', () => {
+        const avviso = vi.fn();
+        const smetti = ascoltaBozza('u1:volo', avviso);
+        expect(invioInVolo('u1:volo')).toBe(false);
+
+        iniziaInvio('u1:volo');
+        expect(invioInVolo('u1:volo')).toBe(true);
+        expect(avviso, 'chi mostra la conversazione non sa che un invio è partito').toHaveBeenCalled();
+        expect(invioInVolo('u1:altra'), 'un invio in volo ha fermato un’altra conversazione').toBe(false);
+
+        iniziaInvio('u1:volo');
+        concludiInvio('u1:volo');
+        expect(invioInVolo('u1:volo'), 'finito uno dei due invii, l’altro è ancora in volo').toBe(true);
+
+        const primaDellaFine = avviso.mock.calls.length;
+        concludiInvio('u1:volo');
+        expect(invioInVolo('u1:volo')).toBe(false);
+        expect(avviso.mock.calls.length, 'chi mostra la conversazione non sa che l’invio è finito').toBeGreaterThan(primaDellaFine);
+        smetti();
+    });
+
+    it('un concludi senza inizio non porta il conto sotto zero, e senza chiave non c’è niente in volo', () => {
+        concludiInvio('u1:mai-partito');
+        iniziaInvio('u1:mai-partito');
+        expect(invioInVolo('u1:mai-partito')).toBe(true);
+        concludiInvio('u1:mai-partito');
+        expect(invioInVolo('u1:mai-partito')).toBe(false);
+
+        iniziaInvio(undefined);
+        expect(invioInVolo(undefined)).toBe(false);
+        expect(() => concludiInvio(undefined)).not.toThrow();
     });
 });

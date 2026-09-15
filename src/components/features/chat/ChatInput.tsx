@@ -4,7 +4,16 @@ import { useState, useRef, useCallback, useSyncExternalStore } from 'react';
 import { useTranslations } from 'next-intl';
 import { Send, Paperclip, X } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
-import { BOZZA_VUOTA, ascoltaBozza, leggiBozza, scriviBozza, type BozzaChat } from './bozze-chat';
+import {
+    BOZZA_VUOTA,
+    ascoltaBozza,
+    concludiInvio,
+    iniziaInvio,
+    invioInVolo,
+    leggiBozza,
+    scriviBozza,
+    type BozzaChat,
+} from './bozze-chat';
 
 interface Props {
     /**
@@ -76,7 +85,15 @@ export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props)
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
-    const [inviando, setInviando] = useState(false);
+    /**
+     * Con la chiave, anche l'invio in volo è della conversazione (2026-09-15). Un campo rimontato mentre la
+     * POST attende — Invia, «Indietro», e subito di nuovo dentro — mostra il messaggio che sta partendo, come
+     * il campo che l'ha mandato; con uno stato suo avrebbe avuto «Invia» acceso, e un Invio lo mandava due
+     * volte. Senza chiave lo stato resta del campo.
+     */
+    const [inviandoLocale, setInviandoLocale] = useState(false);
+    const inVoloNellaConversazione = useSyncExternalStore(ascolta, () => invioInVolo(chiave), () => false);
+    const inviando = chiave ? inVoloNellaConversazione : inviandoLocale;
 
     const handleSend = useCallback(async () => {
         // Niente invio con upload in corso: il messaggio partirebbe senza
@@ -90,7 +107,8 @@ export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props)
         const testoInviato = trimmed;
         const allegatoInviato = attachment;
 
-        setInviando(true);
+        if (chiave) iniziaInvio(chiave);
+        else setInviandoLocale(true);
         try {
             const esito = await onSend(
                 trimmed || (attachment ? '📎 Allegato' : ''),
@@ -136,9 +154,10 @@ export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props)
             }));
             inputRef.current?.focus();
         } finally {
-            setInviando(false);
+            if (chiave) concludiInvio(chiave);
+            else setInviandoLocale(false);
         }
-    }, [text, attachment, onSend, uploading, inviando, aggiornaBozza]);
+    }, [text, attachment, onSend, uploading, inviando, aggiornaBozza, chiave]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {

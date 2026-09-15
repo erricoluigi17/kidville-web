@@ -270,4 +270,43 @@ describe('ChatInput — la bozza quando il campo si smonta con l’invio in volo
         expect(telefono.value).toBe('');
         expect(desktop.value, 'l’altro campo della stessa conversazione tiene il messaggio consegnato').toBe('');
     });
+
+    /**
+     * Anche l'invio in volo è della conversazione. Il campo rimontato mostra il messaggio che sta partendo,
+     * come il campo che l'ha mandato; se «Invia» fosse acceso, un Invio lo manderebbe una seconda volta
+     * mentre la prima POST attende ancora notifica e firma — e a quel punto il messaggio è già nel database,
+     * spesso già a schermo col realtime.
+     */
+    it('tornati sulla conversazione mentre l’invio è in volo: «Invia» resta spento, e l’Invio non manda un doppione', async () => {
+        const { onSend, concludi } = invioTrattenuto();
+        const primo = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('In volo');
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        primo.unmount();
+
+        render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        expect(campo().value).toBe('In volo');
+        expect(screen.getByLabelText('chatInputAriaInvia'), 'il messaggio in volo si può mandare una seconda volta').toBeDisabled();
+        fireEvent.keyDown(campo(), { key: 'Enter' });
+        expect(onSend, 'l’Invio sul campo rimontato ha mandato di nuovo il messaggio in volo').toHaveBeenCalledTimes(1);
+
+        // Rifiutato: il testo resta, e adesso si può riprovare.
+        await concludi(false);
+        expect(campo().value).toBe('In volo');
+        expect(screen.getByLabelText('chatInputAriaInvia')).not.toBeDisabled();
+    });
+
+    it('l’invio in volo di una conversazione non spegne «Invia» in un’altra', async () => {
+        const { onSend } = invioTrattenuto();
+        const primo = render(<ChatInput key={T1} chiaveBozza={T1} onSend={onSend} />);
+        scrivi('Per la conversazione 1');
+        invia();
+        await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+        primo.unmount();
+
+        render(<ChatInput key={T2} chiaveBozza={T2} onSend={onSend} />);
+        scrivi('Per la conversazione 2');
+        expect(screen.getByLabelText('chatInputAriaInvia')).not.toBeDisabled();
+    });
 });

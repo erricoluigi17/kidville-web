@@ -63,7 +63,7 @@ export function ChatThreadList({ threads, selectedId, currentUserId, onSelect, e
                     <MessageSquare size={24} className="text-kidville-green" strokeWidth={1.5} />
                 </div>
                 <p className="font-barlow font-bold text-base text-kidville-green uppercase mb-1">{t('threadsNonCaricatiTitolo')}</p>
-                <p className="mb-4 font-maven text-sm text-kidville-muted">{t('threadsNonCaricatiCorpo')}</p>
+                <p className="mb-4 font-maven text-sm text-kidville-sub">{t('threadsNonCaricatiCorpo')}</p>
                 {onRiprova && (
                     <button
                         type="button"

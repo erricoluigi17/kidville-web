@@ -1,9 +1,19 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useSyncExternalStore } from 'react';
 import { useTranslations } from 'next-intl';
 import { Send, Paperclip, X } from 'lucide-react';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
+import {
+    BOZZA_VUOTA,
+    ascoltaBozza,
+    concludiInvio,
+    iniziaInvio,
+    invioInVolo,
+    leggiBozza,
+    scriviBozza,
+    type BozzaChat,
+} from './bozze-chat';
 
 interface Props {
     /**
@@ -19,22 +29,71 @@ interface Props {
     onSend: (content: string, attachmentUrl?: string, attachmentType?: string) => void | boolean | Promise<void | boolean>;
     disabled?: boolean;
     placeholder?: string;
+    /**
+     * La conversazione a cui appartiene ciò che si scrive (`<utente>:<thread>`): testo e allegato non
+     * inviati tornano quando si torna sulla conversazione (`bozze-chat.ts`). Va con `key` sulla stessa
+     * conversazione: la key rimonta il campo, e un campo rimontato riparte dalla bozza della chiave nuova.
+     */
+    chiaveBozza?: string;
 }
 
-export function ChatInput({ onSend, disabled, placeholder }: Props) {
+export function ChatInput({ onSend, disabled, placeholder, chiaveBozza }: Props) {
     const t = useTranslations('teacherComunicazioni');
-    const [text, setText] = useState('');
-    // `riferimento` è ciò che si manda al server: dal 2026-08-01 (S32) è il
-    // PERCORSO nel bucket privato, non più un link firmato a 365 giorni.
-    // L'anteprima qui sotto mostra solo il nome del file, quindi un indirizzo
-    // apribile non serve a nessuno prima dell'invio.
-    const [attachment, setAttachment] = useState<{ name: string; riferimento: string; type: string } | null>(null);
+
+    /**
+     * La bozza si legge e si scrive sempre sotto la chiave con cui il campo è NATO, non sotto quella di adesso.
+     * Con la `key` delle pagine le due coincidono; senza, una chiave cambiata al volo avrebbe salvato il
+     * testo scritto per una conversazione come bozza di un'altra — che è esattamente il difetto da cui
+     * nasce la `key`.
+     */
+    const [chiave] = useState(chiaveBozza);
+
+    /**
+     * ⚠️ TESTO E ALLEGATO STANNO NELLA BOZZA DELLA CONVERSAZIONE, NON IN UNO STATO DEL CAMPO (2026-09-15).
+     *
+     * Prima il campo li teneva in uno stato suo e li ricopiava nella bozza a ogni cambiamento. L'esito di
+     * un invio arrivava così solo a quello stato, e il campo può non esserci più quando la POST risponde
+     * (Invia, e subito «Indietro» o un'altra conversazione): il messaggio consegnato restava nella bozza,
+     * e riaperta la conversazione un Invio distratto lo mandava due volte. La storia intera è in
+     * `bozze-chat.ts`. Adesso c'è una copia sola, che ogni campo montato della conversazione mostra.
+     *
+     * `riferimento` è ciò che si manda al server: dal 2026-08-01 (S32) è il PERCORSO nel bucket privato,
+     * non più un link firmato a 365 giorni. L'anteprima qui sotto mostra solo il nome del file, quindi un
+     * indirizzo apribile non serve a nessuno prima dell'invio.
+     *
+     * Senza chiave il campo non ricorda niente, e testo e allegato restano in uno stato suo.
+     */
+    const [bozzaLocale, setBozzaLocale] = useState<BozzaChat>(BOZZA_VUOTA);
+    const ascolta = useCallback((avviso: () => void) => ascoltaBozza(chiave, avviso), [chiave]);
+    const bozzaCondivisa = useSyncExternalStore(ascolta, () => leggiBozza(chiave) ?? BOZZA_VUOTA, () => BOZZA_VUOTA);
+    const { testo: text, allegato: attachment } = chiave ? bozzaCondivisa : bozzaLocale;
+
+    /**
+     * Cambia la bozza partendo da quella di ADESSO, mai da una copia presa prima. Con la chiave vale anche a
+     * campo smontato: è così che la risposta di un invio arriva alla conversazione anche quando il campo
+     * che l'ha mandato non c'è più.
+     */
+    const aggiornaBozza = useCallback(
+        (cambia: (attuale: BozzaChat) => BozzaChat) => {
+            if (chiave) scriviBozza(chiave, cambia(leggiBozza(chiave) ?? BOZZA_VUOTA));
+            else setBozzaLocale(cambia);
+        },
+        [chiave],
+    );
     const [uploading, setUploading] = useState(false);
     const [uploadError, setUploadError] = useState('');
     const inputRef = useRef<HTMLTextAreaElement>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
-    const [inviando, setInviando] = useState(false);
+    /**
+     * Con la chiave, anche l'invio in volo è della conversazione (2026-09-15). Un campo rimontato mentre la
+     * POST attende — Invia, «Indietro», e subito di nuovo dentro — mostra il messaggio che sta partendo, come
+     * il campo che l'ha mandato; con uno stato suo avrebbe avuto «Invia» acceso, e un Invio lo mandava due
+     * volte. Senza chiave lo stato resta del campo.
+     */
+    const [inviandoLocale, setInviandoLocale] = useState(false);
+    const inVoloNellaConversazione = useSyncExternalStore(ascolta, () => invioInVolo(chiave), () => false);
+    const inviando = chiave ? inVoloNellaConversazione : inviandoLocale;
 
     const handleSend = useCallback(async () => {
         // Niente invio con upload in corso: il messaggio partirebbe senza
@@ -48,7 +107,8 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
         const testoInviato = trimmed;
         const allegatoInviato = attachment;
 
-        setInviando(true);
+        if (chiave) iniziaInvio(chiave);
+        else setInviandoLocale(true);
         try {
             const esito = await onSend(
                 trimmed || (attachment ? '📎 Allegato' : ''),
@@ -82,14 +142,22 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
              * frattempo allega un file si vedeva sparire l'allegato, in silenzio.
              * Il confronto per identità dice esattamente la cosa giusta — «questo è
              * ancora quello che ho spedito?» — e in caso contrario non tocca niente.
+             *
+             * Si toglie dalla BOZZA, non da uno stato del campo (2026-09-15): a
+             * questo punto il campo può essere già smontato, e il messaggio
+             * consegnato non deve restare nella conversazione ad aspettare un
+             * secondo Invio.
              */
-            setText((attuale) => (attuale.trim() === testoInviato ? '' : attuale));
-            setAttachment((attuale) => (attuale === allegatoInviato ? null : attuale));
+            aggiornaBozza((attuale) => ({
+                testo: attuale.testo.trim() === testoInviato ? '' : attuale.testo,
+                allegato: attuale.allegato === allegatoInviato ? null : attuale.allegato,
+            }));
             inputRef.current?.focus();
         } finally {
-            setInviando(false);
+            if (chiave) concludiInvio(chiave);
+            else setInviandoLocale(false);
         }
-    }, [text, attachment, onSend, uploading, inviando]);
+    }, [text, attachment, onSend, uploading, inviando, aggiornaBozza, chiave]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -120,14 +188,15 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
             // server nuovo lo riporta comunque a percorso prima di scrivere.
             const riferimento = data?.path ?? data?.url;
             if (res?.ok && riferimento) {
-                setAttachment({ name: data.name ?? file.name, riferimento, type: data.attachment_type ?? 'document' });
+                const allegato = { name: data.name ?? file.name, riferimento, type: data.attachment_type ?? 'document' };
+                aggiornaBozza((attuale) => ({ ...attuale, allegato }));
             } else {
                 setUploadError(data?.error ?? t('chatInputUploadErrore'));
             }
         } finally {
             setUploading(false);
         }
-    }, [t]);
+    }, [t, aggiornaBozza]);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -146,7 +215,7 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                         <span className="font-maven text-xs text-kidville-green truncate">{attachment.name}</span>
                     </div>
                     <button
-                        onClick={() => setAttachment(null)}
+                        onClick={() => aggiornaBozza((attuale) => ({ ...attuale, allegato: null }))}
                         aria-label={t('chatRimuoviAllegato')}
                         className="w-7 h-7 rounded-full bg-kidville-cream-dark flex items-center justify-center text-kidville-sub transition-colors hover:text-kidville-green"
                     >
@@ -211,7 +280,10 @@ export function ChatInput({ onSend, disabled, placeholder }: Props) {
                     <textarea
                         ref={inputRef}
                         value={text}
-                        onChange={e => setText(e.target.value)}
+                        onChange={(e) => {
+                            const testo = e.target.value;
+                            aggiornaBozza((attuale) => ({ ...attuale, testo }));
+                        }}
                         onKeyDown={handleKeyDown}
                         disabled={disabled}
                         rows={1}

@@ -4,7 +4,8 @@
  * Centro notifiche della TopBar admin (M7.3). Campanella con badge
  * condizionale (non_lette > 0, stesso markup del pallino DR) + dropdown con
  * le ultime 20 notifiche da GET /api/notifiche, poll 60s. Il click su una
- * notifica la segna letta (PATCH { id }) e naviga sul link; "Segna tutte
+ * notifica la segna letta (PATCH { id }) e apre il suo link (una notifica di
+ * chat apre la conversazione, vedi `apri`); "Segna tutte
  * lette" fa il PATCH senza id. Stile on-token mirror del dropdown
  * SedeSelector (card bianca SHADOW_FLOAT, righe hover cream).
  */
@@ -16,6 +17,8 @@ import { useTranslations, useLocale } from 'next-intl';
 import { intlDateTime } from '@/i18n/config';
 import { Bell, BellOff } from 'lucide-react';
 import { SHADOW_FLOAT } from '@/components/ui/Card';
+import { linkEffettivoNotifica } from '@/lib/chat/link-conversazione';
+import { apriLinkNotifica } from '@/lib/chat/apertura-thread';
 
 interface Notifica {
   id: string;
@@ -23,6 +26,9 @@ interface Notifica {
   titolo: string | null;
   corpo: string | null;
   link: string | null;
+  /** Cosa nomina la notifica (`chat_thread` per un messaggio): `/api/notifiche` lo restituisce già. */
+  entita_tipo: string | null;
+  entita_id: string | null;
   letta_il: string | null;
   creato_il: string;
 }
@@ -124,7 +130,11 @@ export function AdminNotificationsPanel({
       }).catch(() => null);
       void load();
     }
-    if (n.link) router.push(withUser(n.link));
+    // Stessa regola del centro notifiche di genitori e docenti (`NotificationsPanel`): lo staff che è
+    // docente di un thread riceve `chat_docente`, e da /admin il tocco naviga a `/teacher/chat?thread=`
+    // col suo `?userId=`. Un link che non è di questa app si rifiuta, con un log.
+    const link = linkEffettivoNotifica(n);
+    if (link) apriLinkNotifica(withUser(link), (url) => router.push(url));
   };
 
   const segnaTutte = async () => {

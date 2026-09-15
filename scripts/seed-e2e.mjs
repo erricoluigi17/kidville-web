@@ -199,6 +199,12 @@ export const IDS = {
   GENITORE2: 'e2e00000-0000-4000-8000-000000000208',
   P_GENITORE2: 'e2e00000-0000-4000-8000-000000000303',
   AVVISO_S2: 'e2e00000-0000-4000-8000-000000000402',
+  /**
+   * La CONVERSAZIONE LUNGA della sede 2: `DOCENTE2` ↔ `GENITORE2`, sulla bambina `B1`.
+   * I suoi 60 messaggi hanno gli id di `CHAT_LUNGA_E2E.idMessaggio(n)`, più sotto.
+   * È la premessa di `e2e/chat-precedenti.spec.ts`.
+   */
+  THREAD_LUNGO: 'e2e00000-0000-4000-8000-000000001201',
 };
 
 export const CREDENZIALI = {
@@ -289,6 +295,53 @@ export const DOPPIO_PROFILO_E2E = {
   primoSede2: 'Riso E2E della sede 2',
   /** Nota di diario di `A5`: prova che il diario del figlio si APRE e ha contenuto. */
   notaDiarioA5: 'Nota E2E per il genitore-docente',
+};
+
+/**
+ * LA CONVERSAZIONE LUNGA — 60 messaggi fra `DOCENTE2` e `GENITORE2`, sulla bambina `B1`.
+ *
+ * ─── PERCHÉ ESISTE ──────────────────────────────────────────────────────────
+ * Dal 2026-09-14 `GET /api/chat/messages` legge gli ULTIMI 50 messaggi di una
+ * conversazione, e lo storico si chiede a mano con «Carica messaggi precedenti»
+ * (il cursore `primaDi`). Prima leggeva i 50 più VECCHI e dal cinquantunesimo in poi
+ * niente: in produzione, quel giorno, 48 messaggi mai mostrati in 7 thread. Nessuna
+ * conversazione del seed superava i 50 messaggi, quindi nessuno spec poteva vedere né
+ * il difetto né la correzione. Con 60 la finestra è 11…60, e restano 10 precedenti.
+ *
+ * ─── PERCHÉ IL 10 E L'11 HANNO LO STESSO ISTANTE ────────────────────────────
+ * Il confine della finestra cade fra il 10 e l'11, e lì c'è un PAREGGIO sul
+ * `created_at`. La coda deve contenere l'11 e non il 10; la pagina prima dell'11 deve
+ * contenere il 10. Lo decide solo lo spareggio sull'id (`created_at DESC, id DESC`, e
+ * nel cursore `and(created_at.eq.…,id.lt.…)`): senza un pareggio proprio sul confine,
+ * un cursore che confrontasse il solo istante sarebbe verde lo stesso.
+ *
+ * ─── PERCHÉ I MICROSECONDI, E UNA DATA FISSA ────────────────────────────────
+ * In produzione `created_at` nasce da `DEFAULT CURRENT_TIMESTAMP`, al microsecondo, e
+ * PostgREST lo restituisce senza gli zeri in coda (`…08:09:00.37069+00:00`). La route
+ * rimanda quell'istante dentro `.or()`, dove `.`, `:` e `+` sono separatori, e lo mette
+ * fra virgolette: se basti lo dice soltanto un PostgREST vero. Con i secondi interi il
+ * punto non ci sarebbe, e la prova sarebbe a metà. La data è FISSA (le 10 del mattino a
+ * Roma): i sessanta minuti stanno nello stesso giorno di calendario, sotto un separatore
+ * solo, qualunque sia l'ora in cui gira la CI.
+ *
+ * Il testo è sintetico e numerato a due cifre («Messaggio lungo 07»): nessun dato di
+ * persona, e nessun testo che contenga un altro come sottostringa.
+ *
+ * ⚠️ RICOPIATA in `e2e/fixtures.ts` (gli spec Playwright non importano moduli `.mjs`
+ * del repo, la stessa duplicazione dichiarata lì in testa). Se le due copie divergono,
+ * lo spec cerca messaggi che nessuno ha scritto e diventa rosso su un prodotto sano.
+ */
+export const CHAT_LUNGA_E2E = {
+  totale: 60,
+  /** L'id del messaggio `n`: 1 è il più vecchio, 60 il più nuovo. */
+  idMessaggio: (n) => `e2e00000-0000-4000-8000-0000000c00${String(n).padStart(2, '0')}`,
+  testo: (n) => `Messaggio lungo ${String(n).padStart(2, '0')}`,
+  /** Un minuto fra un messaggio e il successivo, tranne fra il 10 e l'11: stesso istante. */
+  istante: (n) => {
+    const minuti = n <= 10 ? n - 1 : n - 2;
+    const ore = String(8 + Math.floor(minuti / 60)).padStart(2, '0');
+    return `2026-09-01T${ore}:${String(minuti % 60).padStart(2, '0')}:00.37069+00:00`;
+  },
 };
 
 // Perimetri di reset: TUTTI gli alunni e TUTTI gli utenti E2E, sede 2 inclusa —
@@ -901,8 +954,18 @@ async function main() {
   must('reset pagamenti', await db.from('pagamenti').delete().in('alunno_id', ALUNNI_E2E));
   must('reset armadietto', await db.from('armadietto').delete().in('alunno_id', ALUNNI_E2E));
 
-  // Chat: thread e messaggi del genitore E2E
-  const threads = await db.from('chat_threads').select('id').eq('parent_id', IDS.GENITORE);
+  // Chat: thread e messaggi delle DUE famiglie E2E.
+  //  · `GENITORE`: la conversazione che `e2e/chat.spec.ts` crea a ogni run (la modale
+  //    «Nuova Chat» offre solo le maestre con cui un thread non c'è ancora);
+  //  · `GENITORE2`: la conversazione lunga del punto 17 (`IDS.THREAD_LUNGO`). I suoi
+  //    messaggi si CANCELLANO e si riscrivono: un upsert non toglie niente, e un
+  //    messaggio che un test mandasse lì sopravviverebbe al run successivo spostando
+  //    la finestra degli ultimi 50 — cioè il confine fra il 10 e l'11, che è ciò che
+  //    `e2e/chat-precedenti.spec.ts` misura. Si cancella il thread intero, non i soli
+  //    messaggi: `chat_threads` è unica su (teacher_id, parent_id, student_id), e un
+  //    thread della stessa coppia creato da un test con un altro id farebbe fallire
+  //    l'inserimento — con `must()`, l'intera suite prima del primo test.
+  const threads = await db.from('chat_threads').select('id').in('parent_id', [IDS.GENITORE, IDS.GENITORE2]);
   must('lettura thread', threads);
   const threadIds = (threads.data ?? []).map((t) => t.id);
   if (threadIds.length > 0) {
@@ -1096,6 +1159,50 @@ async function main() {
       note: 'Menu E2E della sede 2',
     },
   ]));
+
+  // 17. La conversazione lunga della sede 2 (vedi `CHAT_LUNGA_E2E`): il thread e i
+  //     suoi 60 messaggi, riscritti da zero — il reset del punto 6 li ha cancellati.
+  //
+  //     Perché QUESTA coppia: `e2e/chat.spec.ts` lavora su `GENITORE` e `DOCENTE`, e
+  //     il nome «Diana Docente2-E2E» lo cerca solo nella modale di `GENITORE`, dove una
+  //     conversazione di `GENITORE2` non compare. Nessun altro spec apre queste chat.
+  //
+  //     ⚠️ TUTTI I `read_at` SONO VALORIZZATI, e non per realismo. Il seed gira UNA volta
+  //     per run (`global-setup`), mentre lo spec gira su DUE progetti (`chromium` e
+  //     `webkit`) sulle stesse righe. Un solo messaggio non letto verrebbe segnato letto
+  //     dall'IntersectionObserver del primo progetto (`PATCH /api/chat/messages/read`),
+  //     e il secondo troverebbe un'altra conversazione: senza il separatore «Nuovi
+  //     messaggi», aperta in un altro punto. I due motori misurerebbero due stati
+  //     diversi, e l'esito del secondo dipenderebbe dall'ordine. Per questo lo spec
+  //     pretende che le risposte della GET non contengano messaggi non letti e che
+  //     nessuna PATCH di lettura parta: se qualcuno toglie un `read_at` da qui, il rosso
+  //     arriva lì, e rimanda a queste righe.
+  //
+  //     Nessun `delivered_at`, nemmeno `null`: il database della CI non è migrato e la
+  //     colonna non c'è. Nominarla farebbe rispondere `PGRST204`, e `must()` fermerebbe
+  //     l'intera suite per un campo che a questo spec non serve.
+  //
+  //     Il mittente si alterna (dispari la maestra, pari la famiglia), come in una
+  //     conversazione vera: lo spec guarda anche le bolle dei due lati.
+  const LETTI_IL = '2026-09-01T09:30:00+00:00';
+  must('chat_threads (conversazione lunga)', await db.from('chat_threads').insert({
+    id: IDS.THREAD_LUNGO, teacher_id: IDS.DOCENTE2, parent_id: IDS.GENITORE2, student_id: IDS.B1,
+    created_at: CHAT_LUNGA_E2E.istante(1),
+    last_message_at: CHAT_LUNGA_E2E.istante(CHAT_LUNGA_E2E.totale),
+  }));
+  must('chat_messages (conversazione lunga)', await db.from('chat_messages').insert(
+    Array.from({ length: CHAT_LUNGA_E2E.totale }, (_, i) => {
+      const n = i + 1;
+      return {
+        id: CHAT_LUNGA_E2E.idMessaggio(n),
+        thread_id: IDS.THREAD_LUNGO,
+        sender_id: n % 2 === 1 ? IDS.DOCENTE2 : IDS.GENITORE2,
+        content: CHAT_LUNGA_E2E.testo(n),
+        created_at: CHAT_LUNGA_E2E.istante(n),
+        read_at: LETTI_IL,
+      };
+    }),
+  ));
 
   console.log('✅ Seed E2E completato (idempotente, 2 sedi). Oggi (Europe/Rome):', oggi);
 }

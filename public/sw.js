@@ -797,15 +797,152 @@ self.addEventListener('push', function (event) {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+/* ─────────────────────── il click su una notifica ──────────────────────────── */
+
+// ─── IL CLICK APRE CIÒ CHE LA NOTIFICA INDICA (2026-09-15) ─────────────────────
+// Parte C della correzione chat. Il link della notifica di un messaggio diventa
+// `/<area>/chat?thread=<id>`: il tocco deve portare DENTRO la conversazione, non
+// alla lista (decisione del titolare del 2026-09-14).
+//
+// Qui c'era `client.url.includes(url)`, e sbagliava in tre modi:
+//  · col link nuovo non riconosceva mai la pagina chat già aperta — `/parent/chat`
+//    non contiene `/parent/chat?thread=…` — e apriva una scheda NUOVA ogni volta;
+//  · col link vecchio metteva a fuoco la chat, ma la conversazione restava da cercare;
+//  · un link di un altro sito (`https://…`, `//host`) finiva così com'era in
+//    `openWindow`: il click su una notifica apriva un sito che non è questa app.
+//
+// Le regole adesso, in ordine (`apriDaNotifica`):
+//  1. un link che, letto come lo legge il browser, non è di QUESTA origine si scarta:
+//     si va alla radice e lo si riferisce (senza l'URL);
+//  2. link di una conversazione, con una finestra già su una pagina chat (di una
+//     qualunque delle due aree) → a quella finestra si manda `kv-apri-thread` e la si
+//     porta davanti. La pagina resta montata: la conversazione si apre senza ricaricare
+//     niente, e la bozza e lo scorrimento restano dove sono. `ServiceWorkerRegister`
+//     trasforma il messaggio nella stessa richiesta del tocco su una push nativa;
+//  3. la radice: basta portare davanti la finestra più recente dell'app (era ciò che
+//     faceva `includes('/')`, e le notifiche senza indirizzo arrivano qui);
+//  4. una finestra sulla stessa pagina che mostra già la query della notifica (anche
+//     con un `?userId=` in più) → solo il fuoco. Navigarla la ricaricherebbe per
+//     portarla dove già si trova, e a una docente che scrive toglierebbe la bozza;
+//  5. una finestra sulla stessa pagina con un'altra query → fuoco e `navigate`. Su una
+//     finestra che questo Service Worker non controlla `navigate` rigetta, e un browser
+//     può non esporlo affatto: allora si apre una finestra nuova, e lo si riferisce;
+//  6. altrimenti una finestra nuova sull'indirizzo della notifica.
+//
+// Cosa NON fa, di proposito: riscrivere il percorso nell'area in cui ci si trova, come
+// fa `instradaLinkNotifica` (`src/lib/chat/link-conversazione.ts`) per chi ha due
+// profili. Qui sarebbe una seconda copia a mano, in JavaScript senza tipi, di una
+// regola che vale per poche persone e solo sul web a finestre chiuse. Il residuo,
+// dichiarato: una docente con la veste di insegnante e nessuna finestra dell'app
+// aperta, che tocca la web push di un messaggio da genitore, apre `/parent/chat` e la
+// guardia d'area la riporta alla home.
+//
+// Un secondo residuo: i due avvisi raggiungono `app_log` solo attraverso una finestra
+// aperta (vedi `avvisa`). Senza finestre il rifiuto del link avviene lo stesso, ma non
+// lascia la sua riga.
+//
+// `VERSIONE` NON sale, e non è una dimenticanza: il suo bump serve a buttare la cache
+// del guscio, e qui la cache non c'entra. Per far installare questo codice bastano i
+// byte nuovi del file, che il browser confronta a ogni registrazione; e il lock
+// `sw-versione-offline` riguarda solo l'impronta di /offline, che non cambia.
+
+/** Le due pagine chat: percorso ESATTO, come `leggiLinkChat` (niente `/parent/chatbot`). */
+const RX_PAGINA_CHAT = /^\/(parent|teacher)\/chat$/;
+
+/** Un id di conversazione: la forma di `zUuid` e di `leggiIdThread`. */
+const RX_ID_THREAD = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * L'indirizzo a cui porta la notifica, se è di questa origine. Letto con `new URL`,
+ * cioè come lo legge il browser: `//host`, `/\host` e un tab in mezzo portano tutti
+ * su un altro host, e l'origine lo dice senza doverli elencare.
+ *
+ * Qualunque altra cosa — un altro sito, `javascript:`, un valore che non è una stringa
+ * — diventa la radice dell'app, e lo si riferisce: nessun link di questa app ha quella
+ * forma, quindi se compare è un difetto di chi l'ha scritto.
+ */
+function destinazioneNotifica(grezzo) {
+  let dest = null;
+  if (typeof grezzo === 'string') {
+    try {
+      dest = new URL(grezzo, self.location.origin);
+    } catch {
+      // Indirizzo illeggibile: si tratta come uno di un altro sito, e lo si riferisce qui sotto.
+      dest = null;
+    }
+  }
+  if (dest && dest.origin === self.location.origin) return dest;
+  avvisa('sw-notifica-link-non-interno', 'warn', 'altro');
+  return new URL('/', self.location.origin);
+}
+
+/** L'indirizzo di una finestra, o `null` se non si legge (non succede: è una difesa). */
+function indirizzoFinestra(client) {
+  try {
+    return new URL(client.url);
+  } catch {
+    return null; // una finestra senza indirizzo leggibile non è una finestra dell'app da riusare
+  }
+}
+
+/** La finestra mostra già ogni parametro della notifica, con lo stesso valore? (Può averne altri.) */
+function mostraGiaLaQuery(indirizzo, dest) {
+  for (const [chiave, valore] of dest.searchParams) {
+    if (!indirizzo.searchParams.getAll(chiave).includes(valore)) return false;
+  }
+  return true;
+}
+
+async function apriDaNotifica(grezzo) {
+  const dest = destinazioneNotifica(grezzo);
+  const finestre = [];
+  for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+    const indirizzo = indirizzoFinestra(client);
+    if (indirizzo) finestre.push({ client: client, indirizzo: indirizzo });
+  }
+
+  const threadId = RX_PAGINA_CHAT.test(dest.pathname) ? dest.searchParams.get('thread') : null;
+  if (threadId && RX_ID_THREAD.test(threadId)) {
+    const chat = finestre.find(function (f) {
+      return RX_PAGINA_CHAT.test(f.indirizzo.pathname);
+    });
+    if (chat) {
+      chat.client.postMessage({ tipo: 'kv-apri-thread', threadId: threadId });
+      return chat.client.focus();
+    }
+  }
+
+  if (dest.pathname === '/') {
+    if (finestre.length > 0) return finestre[0].client.focus();
+    return self.clients.openWindow(dest.href);
+  }
+
+  const stessaPagina = finestre.filter(function (f) {
+    return f.indirizzo.pathname === dest.pathname;
+  });
+  const giaLi = stessaPagina.find(function (f) {
+    return mostraGiaLaQuery(f.indirizzo, dest);
+  });
+  if (giaLi) return giaLi.client.focus();
+
+  if (stessaPagina.length > 0) {
+    const client = stessaPagina[0].client;
+    try {
+      await client.focus();
+      if (typeof client.navigate !== 'function') throw new TypeError('navigate non disponibile');
+      return await client.navigate(dest.href);
+    } catch {
+      // Si riferisce (mai l'URL: solo il gruppo della rotta) e si ripiega sulla finestra nuova.
+      avvisa('sw-notifica-navigate-fallito', 'warn', bucketRotta(dest.pathname));
+    }
+  }
+
+  return self.clients.openWindow(dest.href);
+}
+
 self.addEventListener('notificationclick', function (event) {
   event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || '/';
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (clientsArr) {
-      for (const client of clientsArr) {
-        if (client.url.includes(url) && 'focus' in client) return client.focus();
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(url);
-    })
-  );
+  // Una notifica senza indirizzo porta alla radice, come prima: il listener `push` qui sopra
+  // scrive già `data.url || '/'`.
+  event.waitUntil(apriDaNotifica((event.notification.data && event.notification.data.url) || '/'));
 });

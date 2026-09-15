@@ -2,6 +2,8 @@
 
 import { useEffect } from 'react'
 import { logClient, type EventoNome } from '@/lib/logging/client'
+import { richiediAperturaThread } from '@/lib/chat/apertura-thread'
+import { PARAM_THREAD, leggiIdThread, leggiLinkChat } from '@/lib/chat/link-conversazione'
 
 /**
  * Registra il Service Worker (`/sw.js`) su TUTTE le piattaforme — web e nativo
@@ -19,6 +21,9 @@ import { logClient, type EventoNome } from '@/lib/logging/client'
  * `public/sw.js`, funzione `avvisa`): il SW non può importare il logger, quindi
  * manda un `postMessage` e qui lo si traduce in `logClient`, dentro la pipeline
  * ufficiale (redazione, deduplica, `app_log`).
+ *
+ * E da PONTE PER IL CLIC SU UNA WEB PUSH DI CHAT (dal 2026-09-15): vedi
+ * `apriThreadDalServiceWorker`.
  */
 
 /** Quanto si aspetta prima di dichiarare che il SW non controlla la pagina. */
@@ -29,6 +34,45 @@ interface MessaggioSW {
   evento?: unknown
   livello?: unknown
   bucket?: unknown
+  /** Solo in `kv-apri-thread`: la conversazione da aprire. */
+  threadId?: unknown
+}
+
+/**
+ * IL CLIC SU UNA WEB PUSH DI CHAT, CON LA CHAT GIÀ APERTA (parte C della correzione chat).
+ *
+ * `public/sw.js` non naviga una finestra che è già su una pagina chat: le manda
+ * `{ tipo: 'kv-apri-thread', threadId }` e la porta davanti, così la pagina resta montata
+ * con la sua bozza e il suo scorrimento. Qui il messaggio diventa la stessa richiesta del
+ * tocco su una push nativa (`richiediAperturaThread`): la pagina chat la tratta con le sue
+ * regole, e ne registra l'esito.
+ *
+ * Se nessuna pagina ascolta — l'URL dice chat, ma l'ascoltatore non è ancora montato (una
+ * navigazione appena confermata) — la richiesta non si butta: il thread va nell'URL con
+ * `replaceState`, che in Next 16 aggiorna `useSearchParams` senza una richiesta al server,
+ * e la pagina lo legge al montaggio. È il ripiego «si naviga al link con ?thread=» che
+ * `richiediAperturaThread` chiede a chi riceve `false`; sulla voce corrente della
+ * cronologia, perché nessuno ha cambiato pagina.
+ *
+ * Se la finestra nel frattempo non è più sulla chat, da qui non si naviga: il ponte non ha
+ * un router, e a portarla via dalla chat è stato qualcos'altro, per esempio un rinvio al
+ * login a sessione scaduta, che una navigazione verso la chat scavalcherebbe. La
+ * conversazione non si apre, e lo si scrive. Nel log mai l'id della conversazione.
+ *
+ * Un `threadId` che non è un id si scarta in silenzio: il Service Worker lo ha già
+ * controllato, quindi non arriva da questa app.
+ */
+function apriThreadDalServiceWorker(threadId: unknown): void {
+  const id = leggiIdThread(threadId)
+  if (!id) return
+  if (richiediAperturaThread(id)) return
+  if (!leggiLinkChat(window.location.pathname)) {
+    logClient({ livello: 'warn', evento: 'push', messaggio: 'chat-apertura-da-notifica: nessuna-pagina-chat (sw)' })
+    return
+  }
+  const parametri = new URLSearchParams(window.location.search)
+  parametri.set(PARAM_THREAD, id)
+  window.history.replaceState(null, '', `${window.location.pathname}?${parametri.toString()}${window.location.hash}`)
 }
 
 export function ServiceWorkerRegister() {
@@ -65,9 +109,13 @@ export function ServiceWorkerRegister() {
       }
     }, ATTESA_CONTROLLO_MS)
 
-    // Ponte di log dal Service Worker.
+    // Ponte dal Service Worker: il clic su una web push di chat, e i log.
     const onMessage = (ev: MessageEvent) => {
       const m = (ev.data ?? {}) as MessaggioSW
+      if (m.tipo === 'kv-apri-thread') {
+        apriThreadDalServiceWorker(m.threadId)
+        return
+      }
       if (m.tipo !== 'kv-sw-log') return
       if (typeof m.evento !== 'string') return
       const livello = m.livello === 'error' ? 'error' : 'warn'

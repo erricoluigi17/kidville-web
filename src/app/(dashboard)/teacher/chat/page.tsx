@@ -1,17 +1,16 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense, useRef } from 'react';
-import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { useState, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, MessageSquare, Plus, X, UserPlus } from 'lucide-react';
 import { ChatThreadList, ChatThread, SospensioneInfo } from '@/components/features/chat/ChatThreadList';
-import { ChatMessageArea, ChatMessage, allegatoMostrabile } from '@/components/features/chat/ChatMessageArea';
+import { ChatMessageArea } from '@/components/features/chat/ChatMessageArea';
 import { ChatInput } from '@/components/features/chat/ChatInput';
 import { ChatConversationMenu } from '@/components/features/chat/ChatConversationMenu';
 import { ChatSuspensionBanner } from '@/components/features/chat/ChatSuspensionBanner';
 import { ChatListSkeleton } from '@/components/features/chat/ChatListSkeleton';
-import { useUnreadNotifications } from '@/components/features/chat/useUnreadNotifications';
-import { useChatRealtime } from '@/components/features/chat/useChatRealtime';
+import { useConversazioneChat } from '@/components/features/chat/useConversazioneChat';
+import { useAperturaThreadRichiesta } from '@/components/features/chat/useAperturaThreadRichiesta';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useTranslations } from 'next-intl';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -32,11 +31,6 @@ function TeacherChatContent() {
     const t = useTranslations('teacherComunicazioni');
     const { userId: teacherId, ready } = useSessionIdentity();
 
-    const [threads, setThreads] = useState<ChatThread[]>([]);
-    const [selectedThread, setSelectedThread] = useState<ChatThread | null>(null);
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [loadingMessages, setLoadingMessages] = useState(false);
     const [showMobile, setShowMobile] = useState<'list' | 'chat'>('list');
     const [showNewChat, setShowNewChat] = useState(false);
     const [contacts, setContacts] = useState<Contact[]>([]);
@@ -45,8 +39,11 @@ function TeacherChatContent() {
      * Non è un doppione dello stato «termini» o «sospensione»: quelli sono
      * blocchi NOTI che disabilitano il composer, questo è il rifiuto di un
      * messaggio già scritto — e fino al 2026-09-07 non lo diceva nessuno.
+     *
+     * Appartiene al THREAD da cui il messaggio è partito (2026-09-14, D2): prima era uno stato
+     * della pagina, e un invio fallito su una conversazione mostrava l'avviso sopra un'altra.
      */
-    const [erroreInvio, setErroreInvio] = useState<'rifiutato' | 'rete' | 'sospeso' | null>(null);
+    const [erroreInvio, setErroreInvio] = useState<{ threadId: string; tipo: 'rifiutato' | 'rete' | 'sospeso' } | null>(null);
 
     /**
      * Perché la rubrica è vuota, quando lo è. La rotta lo dice (campo `motivo`),
@@ -56,39 +53,26 @@ function TeacherChatContent() {
     const [motivoVuoto, setMotivoVuoto] = useState<string | null>(null);
 
     const [loadingContacts, setLoadingContacts] = useState(false);
-    const [unreadCount, setUnreadCount] = useState(0);
-    // ID del primo messaggio non letto: bloccato all'apertura del thread
-    const [firstUnreadId, setFirstUnreadId] = useState<string | null>(null);
+
+    /**
+     * Thread, messaggi, polling, realtime, invio e segna-letti: tutto ciò che parla con la rete
+     * vive in `useConversazioneChat`, condiviso con la pagina del genitore. Qui resta la UI.
+     */
+    const chat = useConversazioneChat({ userId: teacherId, ready, rotta: '/teacher/chat' });
+    /**
+     * Il tocco su una notifica di chat apre la conversazione (2026-09-15): la chiede `?thread=` nell'URL
+     * o l'evento `kv:chat-apri-thread` a pagina già aperta, e su un telefono si passa subito alla
+     * conversazione a schermo intero. Dall'URL si toglie solo `thread`: `?userId=` resta.
+     */
+    useAperturaThreadRichiesta(chat, { rotta: '/teacher/chat', onAperta: () => setShowMobile('chat') });
+    const threads = chat.threads;
+    const selectedThread = chat.threadAperto;
+    const messages = chat.messaggi;
 
     // Aggiorna in-place la sospensione di un thread (dopo sospendi/riapri).
-    const applySospensione = useCallback((threadId: string, sospensione: SospensioneInfo | null) => {
-        setThreads(prev => prev.map(t => (t.id === threadId ? { ...t, sospensione } : t)));
-    }, []);
-
-    // Ref stabile per selectedThread (evita re-render nei callback realtime)
-    const selectedThreadRef = useRef<ChatThread | null>(null);
-    useEffect(() => { selectedThreadRef.current = selectedThread; }, [selectedThread]);
-
-    // Notifiche non letti + badge titolo pagina (mantenuto come fallback)
-    useUnreadNotifications({
-        userId: teacherId ?? '', // il hook ignora gli id falsy
-        enabled: true,
-        onUnreadChange: setUnreadCount,
-        pollInterval: 30000, // ridotto a 30s ora che c'è il realtime
-    });
-
-    // Carica thread
-    const loadThreads = useCallback(async () => {
-        if (!ready || !teacherId) return; // in risoluzione o non autenticato (redirect dell'hook)
-        try {
-            const res = await fetch(`/api/chat/threads?userId=${teacherId}`).catch(() => null);
-            if (res?.ok) setThreads(await res.json());
-        } finally {
-            setLoading(false);
-        }
-    }, [ready, teacherId]);
-
-    useEffect(() => { loadThreads(); }, [loadThreads]);
+    const applySospensione = (threadId: string, sospensione: SospensioneInfo | null) => {
+        chat.aggiornaThread(threadId, { sospensione });
+    };
 
     // Carica contatti disponibili
     // NB: lo spinner contatti (loadingContacts) viene attivato dall'handler di
@@ -107,146 +91,9 @@ function TeacherChatContent() {
         }
     }, [teacherId]);
 
-    // `silenzioso`: ricarico di servizio (l'allegato arrivato dal Realtime va
-    // rifirmato) — non deve far comparire lo spinner al posto della conversazione.
-    const loadMessages = useCallback(async (threadId: string, silenzioso = false) => {
-        if (!silenzioso) setLoadingMessages(true);
-        try {
-            const res = await fetch(`/api/chat/messages?threadId=${threadId}`);
-            if (res.ok) {
-                const data = await res.json();
-                const msgs: ChatMessage[] = data.messages ?? [];
-                // Merge, non replace: vedi il commento gemello in parent/chat/page.tsx
-                // (un fetch partito prima di un invio e risolto dopo non deve
-                // cancellare dalla UI il messaggio appena aggiunto in locale).
-                setMessages(prev => {
-                    const serverIds = new Set(msgs.map(m => m.id));
-                    const pendingLocali = prev.filter(m => !serverIds.has(m.id));
-                    return [...msgs, ...pendingLocali].sort(
-                        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                    );
-                });
-                const firstUnread = msgs.find(
-                    m => m.sender_id !== teacherId && m.read_at === null
-                );
-                setFirstUnreadId(firstUnread?.id ?? null);
-            }
-        } catch (err) {
-            // Solo la CLASSE dell'errore: il `.message` di una chat riecheggia il testo dei
-            // messaggi fra la maestra e una famiglia, che è il dato più sensibile della pagina.
-            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-caricamento-messaggi-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
-        } finally {
-            if (!silenzioso) setLoadingMessages(false);
-        }
-    }, [teacherId]);
-
-    // ── Realtime: nuovo messaggio nel thread attivo ──────────────────────
-    const handleRealtimeNewMessage = useCallback((msg: ChatMessage) => {
-        setMessages(prev => {
-            if (prev.some(m => m.id === msg.id)) return prev;
-            return [...prev, msg];
-        });
-        // Il Realtime consegna la riga del database GREZZA: da S32 l'allegato è
-        // un percorso nel bucket privato, e il link firmato lo genera la route.
-        // Si ricarica il thread — che firma — invece di aspettare il polling:
-        // altrimenti l'allegato resta invisibile fino a 15 secondi.
-        if (msg.attachment_url && !allegatoMostrabile(msg.attachment_url)) {
-            void loadMessages(msg.thread_id, true);
-        }
-        // Segna subito come letto (il thread è aperto)
-        fetch('/api/chat/messages/read', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messageIds: [msg.id], userId: teacherId }),
-        }).catch(() => {/* silenzioso */});
-    }, [teacherId, loadMessages]);
-
-    // ── Realtime: un messaggio del thread aperto è cambiato (spunta consegnato/letto) ──
-    // Merge per id, mai append: è lo stesso messaggio con read_at/delivered_at aggiornati.
-    const handleRealtimeMessageUpdate = useCallback((msg: ChatMessage) => {
-        setMessages(prev => prev.map(m => (m.id === msg.id ? { ...m, ...msg } : m)));
-    }, []);
-
-    // ── Realtime: nuovo messaggio in thread non attivo → aggiorna badge ──
-    const handleRealtimeThreadUnread = useCallback((threadId: string, msg: ChatMessage) => {
-        setThreads(prev => prev.map(t => {
-            if (t.id !== threadId) return t;
-            return {
-                ...t,
-                unread_count: t.unread_count + 1,
-                last_message: {
-                    content: msg.content,
-                    sender_id: msg.sender_id,
-                    created_at: msg.created_at,
-                },
-                last_message_at: msg.created_at,
-            };
-        }).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
-        setUnreadCount(prev => prev + 1);
-    }, []);
-
-    // Attiva il realtime
-    useChatRealtime({
-        userId: teacherId ?? '', // il hook ignora gli id falsy
-        selectedThreadId: selectedThread?.id ?? null,
-        threads,
-        onNewMessage: handleRealtimeNewMessage,
-        onThreadUnread: handleRealtimeThreadUnread,
-        onMessageUpdate: handleRealtimeMessageUpdate,
-    });
-
-    // ── Polling thread list per tenere i badge sincronizzati ─────────────
-    // ── I badge si aggiornano solo mentre qualcuno guarda ───────────────
-    // Da 15 a 30 secondi, e fermo a pagina nascosta. Il 7/9/2026 un genitore
-    // fermo su questa pagina faceva ~11 richieste al minuto senza toccare
-    // niente, e continuava col telefono in tasca. Vedi `usePollingVisibile`.
-    usePollingVisibile(loadThreads, 30_000);
-
-    // Polling di backup ridotto (15s)
-    usePollingVisibile(
-        () => { if (selectedThread) loadMessages(selectedThread.id); },
-        30_000,
-        { attivo: !!selectedThread },
-    );
-
-    // ── Mark as Read via IntersectionObserver ────────────────────────────
-    const handleMarkRead = useCallback(async (ids: string[]) => {
-        if (ids.length === 0) return;
-        try {
-            await fetch('/api/chat/messages/read', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messageIds: ids, userId: teacherId }),
-            });
-            // Aggiornamento ottimistico locale
-            const now = new Date().toISOString();
-            setMessages(prev => prev.map(m =>
-                ids.includes(m.id) ? { ...m, read_at: now } : m
-            ));
-            if (selectedThreadRef.current) {
-                setThreads(prev => prev.map(t =>
-                    t.id === selectedThreadRef.current!.id
-                        ? { ...t, unread_count: 0 }
-                        : t
-                ));
-                setUnreadCount(prev => Math.max(0, prev - ids.length));
-            }
-        } catch (err) {
-            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-segna-letti-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
-        }
-    }, [teacherId]);
-
     const handleSelectThread = (thread: ChatThread) => {
-        setSelectedThread(thread);
+        chat.apri(thread);
         setShowMobile('chat');
-        setMessages([]);
-        setFirstUnreadId(null);
-        loadMessages(thread.id);
-        setThreads(prev => prev.map(t => t.id === thread.id ? { ...t, unread_count: 0 } : t));
-        setUnreadCount(prev => {
-            const threadUnread = threads.find(t => t.id === thread.id)?.unread_count ?? 0;
-            return Math.max(0, prev - threadUnread);
-        });
     };
 
     const handleNewChat = async (contact: Contact) => {
@@ -263,15 +110,11 @@ function TeacherChatContent() {
             });
             if (res.ok) {
                 setShowNewChat(false);
-                await loadThreads();
                 const newThread = await res.json();
-                const fresh = await fetch(`/api/chat/threads?userId=${teacherId}`);
-                if (fresh.ok) {
-                    const allThreads: ChatThread[] = await fresh.json();
-                    setThreads(allThreads);
-                    const found = allThreads.find(t => t.id === newThread.id);
-                    if (found) handleSelectThread(found);
-                }
+                // UNA lista, forzata: una GET partita prima della creazione non la conterrebbe.
+                const allThreads = await chat.ricaricaThreads({ forza: true });
+                const found = allThreads?.find(t => t.id === newThread.id);
+                if (found) handleSelectThread(found);
             }
         } catch (err) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-creazione-conversazione-fallita: ${nomeErrore(err)}`, route: '/teacher/chat' });
@@ -280,73 +123,52 @@ function TeacherChatContent() {
 
     const handleSendMessage = async (content: string, attachmentUrl?: string, attachmentType?: string) => {
         if (!selectedThread || !teacherId) return;
-        try {
-            const res = await fetch('/api/chat/messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    thread_id: selectedThread.id,
-                    sender_id: teacherId,
-                    content,
-                    attachment_url: attachmentUrl,
-                    attachment_type: attachmentType,
-                }),
-            });
-            if (res.ok) {
-                const newMsg = await res.json();
-                setMessages(prev => [...prev, newMsg]);
-                setFirstUnreadId(null); // inviato → separatore rimosso
-                setThreads(prev => prev.map(t =>
-                    t.id === selectedThread.id
-                        ? { ...t, last_message: { content, sender_id: teacherId, created_at: newMsg.created_at }, last_message_at: newMsg.created_at }
-                        : t
-                ).sort((a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()));
-                setErroreInvio(null);
-                return true;
-            }
-            /**
-             * ⚠️ DA QUI IN GIÙ, PRIMA, NON SUCCEDEVA NIENTE.
-             *
-             * Il campo di scrittura si svuotava comunque (lo faceva `ChatInput`
-             * prima di conoscere l'esito), e a schermo non compariva nulla: il
-             * messaggio era perso e chi l'aveva scritto credeva di averlo mandato.
-             * Valeva per il genitore moroso (403 `account_sospeso`), per un
-             * allegato rifiutato (400) e per qualunque 500.
-             *
-             * Adesso l'handler dice `false`, il testo resta nel campo, e l'avviso
-             * nomina il motivo quando il server ne dichiara uno.
-             */
-            if (res.status === 403) {
-                // Guardia UGC (C5): se la conversazione è stata sospesa, ricarica i thread
-                // così il banner compare e il composer si disabilita. (Il gate Termini non
-                // scatta mai per un docente: guardia trasparente per lo staff.)
-                const data = await res.json().catch(() => null);
-                const motivo = (data as { motivo?: string } | null)?.motivo;
-                if (motivo === 'conversazione_sospesa') {
-                    await loadThreads();
-                } else if (motivo === 'account_sospeso') {
-                    setErroreInvio('sospeso');
-                } else {
-                    setErroreInvio('rifiutato');
-                }
-                return false;
-            }
-            setErroreInvio('rifiutato');
-            return false;
-        } catch (err) {
-            logClient({ livello: 'error', evento: 'fetch', messaggio: `chat-invio-messaggio-fallito: ${nomeErrore(err)}`, route: '/teacher/chat' });
-            // La rete è caduta: il messaggio NON è partito. Il log serve a noi
-            // domani; questo serve a chi sta scrivendo adesso.
-            setErroreInvio('rete');
+        const esito = await chat.invia(content, attachmentUrl, attachmentType);
+        if (esito.esito === 'nessun-thread') return;
+        if (esito.esito === 'ok') {
+            setErroreInvio(prev => (prev?.threadId === esito.threadId ? null : prev));
+            return true;
+        }
+        /**
+         * ⚠️ DA QUI IN GIÙ, PRIMA, NON SUCCEDEVA NIENTE.
+         *
+         * Il campo di scrittura si svuotava comunque (lo faceva `ChatInput`
+         * prima di conoscere l'esito), e a schermo non compariva nulla: il
+         * messaggio era perso e chi l'aveva scritto credeva di averlo mandato.
+         * Valeva per il genitore moroso (403 `account_sospeso`), per un
+         * allegato rifiutato (400) e per qualunque 500.
+         *
+         * Adesso l'handler dice `false`, il testo resta nel campo, e l'avviso
+         * nomina il motivo quando il server ne dichiara uno.
+         */
+        if (esito.esito === 'rete') {
+            // La rete è caduta: il messaggio NON è partito. Il log l'ha già scritto il hook;
+            // questo serve a chi sta scrivendo adesso.
+            setErroreInvio({ threadId: esito.threadId, tipo: 'rete' });
             return false;
         }
+        if (esito.stato === 403) {
+            // Guardia UGC (C5): se la conversazione è stata sospesa, ricarica i thread
+            // così il banner compare e il composer si disabilita. (Il gate Termini non
+            // scatta mai per un docente: guardia trasparente per lo staff.)
+            if (esito.motivo === 'conversazione_sospesa') {
+                await chat.ricaricaThreads({ forza: true });
+            } else if (esito.motivo === 'account_sospeso') {
+                setErroreInvio({ threadId: esito.threadId, tipo: 'sospeso' });
+            } else {
+                setErroreInvio({ threadId: esito.threadId, tipo: 'rifiutato' });
+            }
+            return false;
+        }
+        setErroreInvio({ threadId: esito.threadId, tipo: 'rifiutato' });
+        return false;
     };
 
 
     // Skeleton finché l'identità non è risolta e i thread non sono caricati.
-    // `loading` viene azzerato da loadThreads appena l'identità è valida, quindi
+    // `statoThreads` esce da 'caricamento' appena la prima lista risponde, quindi
     // niente skeleton infinito; con identità risolta-a-null l'hook reindirizza.
-    if (!ready || loading || !teacherId) {
+    if (!ready || chat.statoThreads === 'caricamento' || !teacherId) {
         return <ChatListSkeleton />;
     }
 
@@ -356,10 +178,24 @@ function TeacherChatContent() {
     const activeThread = selectedThread ? (threads.find(t => t.id === selectedThread.id) ?? selectedThread) : null;
     const susp = activeThread?.sospensione ?? null;
     const suspendedToMe = !!susp && susp.sospesaVerso === teacherId;
+    // L'avviso d'invio si mostra solo sulla conversazione da cui il messaggio è partito.
+    const erroreQui = erroreInvio && activeThread && erroreInvio.threadId === activeThread.id ? erroreInvio.tipo : null;
     const controparteId = activeThread ? (activeThread.teacher_id === teacherId ? activeThread.parent_id : activeThread.teacher_id) : '';
     const lastIncomingMessageId = messages.length
         ? ([...messages].reverse().find(m => m.sender_id !== teacherId)?.id ?? null)
         : null;
+    /**
+     * «Carica messaggi precedenti» (2026-09-15): la GET porta gli ultimi 50 messaggi, lo storico si
+     * chiede a mano. Le stesse quattro prop vanno a ENTRAMBE le `ChatMessageArea` qui sotto (desktop e
+     * schermo intero), da un oggetto solo: passate a una istanza sola, il telefono resterebbe senza
+     * pulsante con tutti i test dei pezzi verdi (`__tests__/pages/chat-precedenti.test.tsx`).
+     */
+    const precedenti = {
+        haPrecedenti: chat.haPrecedenti,
+        caricandoPrecedenti: chat.caricandoPrecedenti,
+        errorePrecedenti: chat.errorePrecedenti,
+        onCaricaPrecedenti: () => void chat.caricaPrecedenti(),
+    };
 
     const menuTriggerLight = 'flex h-9 w-9 items-center justify-center rounded-full text-kidville-muted transition-colors hover:bg-kidville-neutral-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-green';
     const menuTriggerOnGreen = 'flex h-9 w-9 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-yellow';
@@ -395,7 +231,7 @@ function TeacherChatContent() {
                 title={t('chatTitolo')}
                 badge={
                     <AnimatePresence>
-                        {unreadCount > 0 && (
+                        {chat.nonLetti > 0 && (
                             <motion.span
                                 initial={{ scale: 0, opacity: 0 }}
                                 animate={{ scale: 1, opacity: 1 }}
@@ -403,7 +239,7 @@ function TeacherChatContent() {
                                 transition={{ type: 'spring', stiffness: 500, damping: 25 }}
                                 className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-kidville-yellow text-kidville-green font-barlow font-bold text-xs shadow-lg shadow-sm"
                             >
-                                {unreadCount > 99 ? '99+' : unreadCount}
+                                {chat.nonLetti > 99 ? '99+' : chat.nonLetti}
                             </motion.span>
                         )}
                     </AnimatePresence>
@@ -432,7 +268,8 @@ function TeacherChatContent() {
                     </div>
                     <div className="flex-1 overflow-y-auto">
                         <ChatThreadList threads={threads} selectedId={selectedThread?.id ?? null}
-                            currentUserId={teacherId} onSelect={handleSelectThread} />
+                            currentUserId={teacherId} onSelect={handleSelectThread}
+                            errore={chat.statoThreads === 'errore'} onRiprova={() => void chat.riprovaThreads()} riprovando={chat.riprovando} />
                     </div>
                 </div>
 
@@ -459,16 +296,22 @@ function TeacherChatContent() {
                                 messages={messages}
                                 currentUserId={teacherId}
                                 otherUserName={selectedThread.other_user.first_name}
-                                loading={loadingMessages}
-                                firstUnreadId={firstUnreadId}
-                                onMarkRead={handleMarkRead}
+                                loading={chat.caricamentoMessaggi}
+                                firstUnreadId={chat.primoNonLettoId}
+                                onMarkRead={chat.segnaLetti}
+                                {...precedenti}
                             />
-                            {erroreInvio && (
+                            {erroreQui && (
                                 <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
-                                    {erroreInvio === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
+                                    {erroreQui === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreQui === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
                                 </p>
                             )}
-                            <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
+                            {/* `key` sul thread (D2, 2026-09-14): il campo tiene testo e allegato in uno
+                                stato suo, e senza key ciò che si era scritto per una famiglia restava
+                                lì, pronto a partire, aprendo la conversazione con un'altra. Dal 2026-09-15 ciò che
+                                non è partito non si perde: torna, per `chiaveBozza`, quando si torna su QUESTA
+                                conversazione (`bozze-chat.ts`, solo in memoria). */}
+                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} />
                         </>
                     ) : (
                         <div className="flex-1 flex items-center justify-center">
@@ -494,7 +337,8 @@ function TeacherChatContent() {
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                         className="bg-white rounded-3xl border border-kidville-line shadow-sm overflow-hidden">
                         <ChatThreadList threads={threads} selectedId={null}
-                            currentUserId={teacherId} onSelect={handleSelectThread} />
+                            currentUserId={teacherId} onSelect={handleSelectThread}
+                            errore={chat.statoThreads === 'errore'} onRiprova={() => void chat.riprovaThreads()} riprovando={chat.riprovando} />
                     </motion.div>
                 ) : selectedThread && (
                     // Conversazione a schermo intero su mobile: si adatta a qualsiasi
@@ -504,7 +348,9 @@ function TeacherChatContent() {
                         className="fixed inset-0 z-[60] bg-kidville-cream flex flex-col overflow-hidden pb-[env(safe-area-inset-bottom)]">
                         {/* Header conversazione del design: barra verde, back white/15, avatar tinta persona */}
                         <div className="flex items-center gap-2.5 bg-kidville-green px-3 py-2.5 pt-[max(10px,env(safe-area-inset-top))]">
-                            <button onClick={() => setShowMobile('list')} aria-label={t('chatTornaAllaLista')}
+                            {/* «Indietro» CHIUDE la conversazione (D3, 2026-09-14): cambiare solo la vista la
+                                lasciava aperta per il realtime, e i messaggi in arrivo partivano come letti. */}
+                            <button onClick={() => { chat.chiudi(); setShowMobile('list'); }} aria-label={t('chatTornaAllaLista')}
                                 className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full bg-white/15 text-white transition-transform active:scale-95">
                                 <ArrowLeft size={18} strokeWidth={2.2} />
                             </button>
@@ -524,16 +370,17 @@ function TeacherChatContent() {
                             messages={messages}
                             currentUserId={teacherId}
                             otherUserName={selectedThread.other_user.first_name}
-                            loading={loadingMessages}
-                            firstUnreadId={firstUnreadId}
-                            onMarkRead={handleMarkRead}
+                            loading={chat.caricamentoMessaggi}
+                            firstUnreadId={chat.primoNonLettoId}
+                            onMarkRead={chat.segnaLetti}
+                            {...precedenti}
                         />
-                        {erroreInvio && (
+                        {erroreQui && (
                                 <p role="alert" className="mx-4 mb-2 rounded-2xl bg-kidville-error-soft px-3 py-2 font-maven text-sm text-kidville-error-strong">
-                                    {erroreInvio === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreInvio === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
+                                    {erroreQui === 'rete' ? t('chatInvioNonRiuscitoRete') : erroreQui === 'sospeso' ? t('chatInvioNonRiuscitoSospeso') : t('chatInvioNonRiuscito')}
                                 </p>
                             )}
-                            <ChatInput onSend={handleSendMessage} disabled={suspendedToMe} />
+                            <ChatInput key={selectedThread.id} chiaveBozza={`${teacherId}:${selectedThread.id}`} onSend={handleSendMessage} disabled={suspendedToMe} />
                     </motion.div>
                 )}
             </div>

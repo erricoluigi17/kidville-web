@@ -66,13 +66,26 @@ const SMOKE_ARTEFATTO = !!process.env.CI || process.env.KV_SMOKE_ARTEFATTO === '
  * interno (`test.describe.configure`), quindi vale 0 in tutti i progetti che lo
  * raccolgono. La ragione per esteso è nella testata dello spec.
  *
+ * ─── IL SESTO, dal 2026-09-15: `chat-precedenti` ─────────────────────────────
+ * Anche questo sta qui per il MOTORE. «Carica messaggi precedenti» aggiunge dieci
+ * messaggi IN TESTA a una conversazione che scorre, e il messaggio che si stava
+ * leggendo deve restare dov'era: lo tiene fermo `ChatMessageArea`, scrivendo
+ * `scrollTop` in un `useLayoutEffect` — frazioni di pixel, tempi di impaginazione e
+ * scroll anchoring sono esattamente le cose su cui i motori possono non concordare,
+ * e la WebView dell'app iOS è WebKit. La misura con cui lo spec è stato scritto
+ * (nella sua testata) ha già trovato una sorpresa: anche il WebKit di Playwright
+ * compensa da sé a conversazione scorsa, e nessuno dei due lo fa da `scrollTop` 0.
+ * Come il quinto, gira ANCHE su `chromium`, con `retries: 0` dichiarato nello spec.
+ * Non segna letto niente (lo spec lo verifica): i due progetti leggono la stessa
+ * conversazione seminata, nello stesso stato.
+ *
  * È una **RegExp** e non un glob perché così il lock
  * `__tests__/architecture/e2e-webkit-installato.test.ts` può APPLICARLA agli
  * spec reali e accorgersi se un giorno non seleziona più niente: un `testMatch`
  * che matcha zero file è un progetto verde in un secondo che non prova nulla.
  */
 const SPEC_CRITICI_WEBKIT =
-  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media)\.spec\.ts$/;
+  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|chat-precedenti)\.spec\.ts$/;
 
 /**
  * Ciò che su WebKit NON si ripete. `public-iscrizione.spec.ts` contiene, oltre

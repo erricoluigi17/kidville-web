@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
@@ -74,7 +74,13 @@ interface ScopeSW {
     showNotification: ReturnType<typeof vi.fn>;
     openWindow: ReturnType<typeof vi.fn>;
     clientFocus: ReturnType<typeof vi.fn>;
-    clientsFinti: Array<{ url: string; focus: () => void; postMessage: (m: unknown) => void }>;
+    clientsFinti: Array<{
+        url: string;
+        focus: () => unknown;
+        postMessage: (m: unknown) => void;
+        /** `WindowClient.navigate`: c'è solo nei browser che lo espongono, e rigetta su una finestra non controllata. */
+        navigate?: (url: string) => Promise<unknown>;
+    }>;
 }
 
 function creaScopeSW(): ScopeSW {
@@ -772,6 +778,239 @@ describe('service worker — push (non-regressione)', () => {
         });
         await Promise.all(attese);
         expect(s.clientFocus).toHaveBeenCalled();
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+});
+
+/**
+ * ─── IL CLICK SU UNA WEB PUSH APRE CIÒ CHE LA NOTIFICA INDICA (2026-09-15) ────
+ * Parte C della correzione chat: il link di un messaggio diventa
+ * `/<area>/chat?thread=<id>`, e il tocco deve aprire QUELLA conversazione.
+ *
+ * Il click confrontava le finestre con `client.url.includes(url)`. Col link nuovo
+ * non trovava mai la pagina chat già aperta (`/parent/chat` non contiene
+ * `/parent/chat?thread=…`) e apriva una scheda nuova; con un link di un altro sito
+ * (`https://…` o `//host`) apriva l'altro sito. Qui:
+ *  · finestra già sulla pagina chat → le si chiede di aprire la conversazione con un
+ *    messaggio (`kv-apri-thread`), senza ricaricarla: la bozza e lo scorrimento restano;
+ *  · finestra sulla stessa pagina con un'altra query → la si naviga;
+ *  · link che non è di questa app → la radice, e lo si riferisce (senza l'URL).
+ *
+ * PROVA DI VALIDITÀ: col confronto `includes` di prima i casi della chat, della
+ * query diversa, del `navigate` che fallisce e del link esterno sono ROSSI. I casi
+ * marcati «presidio» sono verdi anche prima, e restano qui perché una lettura
+ * letterale della regola nuova («stesso percorso → navigate») li romperebbe.
+ */
+describe('service worker — il click su una notifica apre ciò che indica', () => {
+    const T = 'dddddddd-0000-4000-8000-000000000014';
+    const U = 'aaaaaaaa-0000-4000-8000-000000000011';
+
+    interface FinestraFinta {
+        url: string;
+        focus: Mock<() => Promise<FinestraFinta>>;
+        postMessage: Mock<(m: unknown) => void>;
+        navigate?: Mock<(url: string) => Promise<FinestraFinta>>;
+        /** I messaggi arrivati a QUESTA finestra (i log del SW arrivano a tutte). */
+        ricevuti: Array<Record<string, unknown>>;
+    }
+
+    let s: ScopeSW;
+    beforeEach(() => {
+        s = creaScopeSW();
+    });
+
+    /**
+     * Una finestra dell'app. `navigate`: `'ok'` la naviga, `'rifiuta'` rigetta come fa il
+     * browser su una finestra che il Service Worker non controlla, `'assente'` non la espone.
+     */
+    function finestra(percorso: string, navigate: 'ok' | 'rifiuta' | 'assente' = 'ok'): FinestraFinta {
+        const f: FinestraFinta = {
+            url: ORIGIN + percorso,
+            focus: vi.fn(async () => f),
+            postMessage: vi.fn((m: unknown) => {
+                f.ricevuti.push(m as Record<string, unknown>);
+                s.messaggi.push(m as Record<string, unknown>);
+            }),
+            ricevuti: [],
+        };
+        if (navigate === 'ok') f.navigate = vi.fn(async () => f);
+        if (navigate === 'rifiuta') {
+            f.navigate = vi.fn(async () => {
+                throw new TypeError("This service worker is not the client's active service worker.");
+            });
+        }
+        return f;
+    }
+
+    /** Le finestre che `matchAll` restituisce, nel suo ordine: la più recente per prima. */
+    function conFinestre(...lista: FinestraFinta[]) {
+        s.clientsFinti.splice(0, s.clientsFinti.length, ...lista);
+    }
+
+    async function clicca(data: Record<string, unknown>) {
+        const close = vi.fn();
+        const attese: Promise<unknown>[] = [];
+        await s.ascoltatori.get('notificationclick')?.({
+            notification: { close, data },
+            waitUntil: (p: Promise<unknown>) => attese.push(p),
+        });
+        await Promise.all(attese);
+        // `avvisa` non si aspetta: i log del SW partono un giro dopo.
+        await new Promise((r) => setTimeout(r, 0));
+        return { close };
+    }
+
+    const aperturaChiesta = (f: FinestraFinta) => f.ricevuti.filter((m) => m.tipo === 'kv-apri-thread');
+
+    /** L'indirizzo passato a `openWindow`, reso assoluto: `/x` e `https://…/x` sono la stessa finestra. */
+    const aperte = () => s.openWindow.mock.calls.map((c) => new URL(String(c[0]), ORIGIN).href);
+
+    it('finestra già sulla chat: la conversazione si apre lì con un messaggio, senza ricaricare né aprire schede', async () => {
+        const home = finestra('/parent/home');
+        const chat = finestra('/parent/chat');
+        conFinestre(home, chat);
+
+        const { close } = await clicca({ url: `/parent/chat?thread=${T}` });
+
+        expect(close).toHaveBeenCalled();
+        expect(aperturaChiesta(chat)).toEqual([{ tipo: 'kv-apri-thread', threadId: T }]);
+        expect(chat.focus).toHaveBeenCalled();
+        expect(chat.navigate).not.toHaveBeenCalled();
+        expect(aperturaChiesta(home)).toEqual([]);
+        expect(home.focus).not.toHaveBeenCalled();
+        expect(home.navigate).not.toHaveBeenCalled();
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+
+    it('la pagina chat dell’altra area va bene lo stesso: chi ha due profili resta dove si trova', async () => {
+        const chat = finestra(`/teacher/chat?userId=${U}`);
+        conFinestre(chat);
+
+        await clicca({ url: `/parent/chat?thread=${T}` });
+
+        expect(aperturaChiesta(chat)).toEqual([{ tipo: 'kv-apri-thread', threadId: T }]);
+        expect(chat.focus).toHaveBeenCalled();
+        expect(chat.navigate).not.toHaveBeenCalled();
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+
+    it('un thread che non è un id non diventa un messaggio: la finestra sulla chat si naviga', async () => {
+        const chat = finestra('/parent/chat');
+        conFinestre(chat);
+
+        await clicca({ url: '/parent/chat?thread=abc' });
+
+        expect(aperturaChiesta(chat)).toEqual([]);
+        expect(chat.focus).toHaveBeenCalled();
+        expect(chat.navigate).toHaveBeenCalledWith(`${ORIGIN}/parent/chat?thread=abc`);
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+
+    it('stessa pagina con un’altra query: la finestra viene davanti e si naviga all’indirizzo della notifica', async () => {
+        const modulistica = finestra('/parent/modulistica');
+        conFinestre(modulistica);
+
+        await clicca({ url: '/parent/modulistica?tab=certificati' });
+
+        expect(modulistica.focus).toHaveBeenCalled();
+        expect(modulistica.navigate).toHaveBeenCalledWith(`${ORIGIN}/parent/modulistica?tab=certificati`);
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+
+    it('presidio — la finestra mostra già ciò che la notifica indica (con un ?userId= in più): solo il fuoco, nessuna ricarica', async () => {
+        // Un link di chat nato prima del 2026-09-15 (`/teacher/chat`, senza thread) su una docente che
+        // sta scrivendo in `/teacher/chat?userId=…`: navigarla ricaricherebbe la pagina e le toglierebbe
+        // la bozza, per portarla dove già si trova.
+        const chat = finestra(`/teacher/chat?userId=${U}`);
+        const avvisi = finestra(`/teacher/avvisi?userId=${U}`);
+        conFinestre(chat, avvisi);
+
+        await clicca({ url: '/teacher/chat' });
+        await clicca({ url: '/teacher/avvisi' });
+
+        expect(chat.focus).toHaveBeenCalledTimes(1);
+        expect(avvisi.focus).toHaveBeenCalledTimes(1);
+        expect(chat.navigate).not.toHaveBeenCalled();
+        expect(avvisi.navigate).not.toHaveBeenCalled();
+        expect(s.openWindow).not.toHaveBeenCalled();
+    });
+
+    it('navigate che rigetta (finestra non controllata) o che manca: si apre una finestra, e lo si riferisce senza URL', async () => {
+        for (const modo of ['rifiuta', 'assente'] as const) {
+            s = creaScopeSW();
+            const modulistica = finestra('/parent/modulistica', modo);
+            conFinestre(modulistica);
+
+            await clicca({ url: '/parent/modulistica?tab=certificati' });
+
+            expect(aperte(), modo).toEqual([`${ORIGIN}/parent/modulistica?tab=certificati`]);
+            expect(s.messaggi, modo).toContainEqual({
+                tipo: 'kv-sw-log',
+                evento: 'sw-notifica-navigate-fallito',
+                livello: 'warn',
+                bucket: '/parent',
+            });
+            expect(JSON.stringify(s.messaggi), modo).not.toContain('certificati');
+        }
+    });
+
+    it('un link che non è di questa app non si apre: si va alla radice, e lo si riferisce senza URL', async () => {
+        for (const esterno of [
+            'https://evil.example/parent/chat',
+            '//evil.example/parent/chat',
+            '/\\evil.example/parent/chat',
+            '/\t/evil.example/parent/chat',
+            'javascript:alert(1)',
+        ]) {
+            s = creaScopeSW();
+            const home = finestra('/parent/home');
+            conFinestre(home);
+
+            await clicca({ url: esterno });
+
+            expect(s.openWindow, esterno).not.toHaveBeenCalled();
+            expect(home.navigate, esterno).not.toHaveBeenCalled();
+            expect(home.focus, esterno).toHaveBeenCalled();
+            expect(s.messaggi, esterno).toContainEqual({
+                tipo: 'kv-sw-log',
+                evento: 'sw-notifica-link-non-interno',
+                livello: 'warn',
+                bucket: 'altro',
+            });
+            expect(JSON.stringify(s.messaggi), esterno).not.toContain('evil');
+        }
+
+        // Senza finestre aperte si apre la radice dell'app, mai l'altro sito.
+        s = creaScopeSW();
+        conFinestre();
+        await clicca({ url: 'https://evil.example/x' });
+        expect(aperte()).toEqual([`${ORIGIN}/`]);
+    });
+
+    it('presidio — nessuna finestra sulla pagina: se ne apre una sull’indirizzo della notifica, e nessuna pagina simile riceve la conversazione', async () => {
+        const home = finestra('/parent/home');
+        const quasiChat = finestra('/parent/chatbot');
+        conFinestre(home, quasiChat);
+
+        await clicca({ url: `/parent/chat?thread=${T}` });
+
+        expect(aperte()).toEqual([`${ORIGIN}/parent/chat?thread=${T}`]);
+        expect(aperturaChiesta(home)).toEqual([]);
+        expect(aperturaChiesta(quasiChat)).toEqual([]);
+        expect(home.focus).not.toHaveBeenCalled();
+        expect(quasiChat.focus).not.toHaveBeenCalled();
+    });
+
+    it('presidio — la radice (una notifica senza indirizzo): basta portare davanti la finestra più recente', async () => {
+        const avvisi = finestra('/parent/avvisi');
+        const home = finestra('/parent/home');
+        conFinestre(avvisi, home);
+
+        await clicca({});
+
+        expect(avvisi.focus).toHaveBeenCalled();
+        expect(home.focus).not.toHaveBeenCalled();
+        expect(avvisi.navigate).not.toHaveBeenCalled();
         expect(s.openWindow).not.toHaveBeenCalled();
     });
 });

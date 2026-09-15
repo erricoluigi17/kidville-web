@@ -35,6 +35,8 @@
   "statusDelivered": "Delivered",
   "statusSent": "Sent",
   "loadingMessages": "Loading messages…",
+  "caricaPrecedenti": "Load earlier messages",
+  "caricaPrecedentiErrore": "Could not load earlier messages. Please try again.",
   "startConversation": "Start the conversation",
   "writeMessageTo": "Write a message to {name}",
   "ugcMenuLabel": "Conversation options",
@@ -69,5 +71,7 @@
   "noChildren": "No children are linked to this account. Please contact the office.",
   "invioNonRiuscito": "The message was not sent. It is still here: try again.",
   "invioNonRiuscitoRete": "The message was not sent: no connection. It is still here — try again when you are back online.",
-  "invioNonRiuscitoSospeso": "The message was not sent: the account is suspended. Please contact the office."
+  "invioNonRiuscitoSospeso": "The message was not sent: the account is suspended. Please contact the office.",
+  "threadsNonCaricatiTitolo": "Conversations not loaded",
+  "threadsNonCaricatiCorpo": "We couldn’t load your conversations. Check your connection and try again."
 }

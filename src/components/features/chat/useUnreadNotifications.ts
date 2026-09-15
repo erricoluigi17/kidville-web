@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { usePollingVisibile } from '@/lib/hooks/use-polling-visibile';
+import { richiediAperturaThread } from '@/lib/chat/apertura-thread';
 
 /**
  * Il ritmo a pagina nascosta: 5 minuti. Non zero, perché è da nascosto che questo hook fa il suo
@@ -105,6 +106,7 @@ export function useUnreadNotifications({
 }
 
 interface ChatThreadInfo {
+    id: string;
     unread_count: number;
     other_user: { first_name: string; last_name: string };
     last_message?: { content?: string } | null;
@@ -136,8 +138,20 @@ function sendBrowserNotification(newCount: number, threads: ChatThreadInfo[]) {
             requireInteraction: false,
         });
 
+        /**
+         * Il clic apre la CONVERSAZIONE del messaggio, non solo la finestra (2026-09-15). Fino a oggi
+         * faceva `window.focus()` e basta: la scheda tornava davanti, ma la conversazione restava da
+         * cercare, anche se questa notifica la conosce — è `unreadThread`, da cui prende nome e testo.
+         *
+         * La richiesta va alla pagina chat montata con lo stesso evento del tocco su una push
+         * (`richiediAperturaThread`), e la pagina la tratta come quella: aspetta la lista, lascia perdere
+         * se nel frattempo si sceglie a mano un'altra conversazione, registra l'esito. Se nessuna pagina
+         * chat ascolta più (la notifica resta a schermo cinque secondi), il clic porta davanti la
+         * finestra e basta, come prima: qui non c'è un router con cui navigare.
+         */
         notif.onclick = () => {
             window.focus();
+            if (unreadThread) richiediAperturaThread(unreadThread.id);
             notif.close();
         };
 

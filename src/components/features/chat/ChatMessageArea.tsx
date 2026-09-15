@@ -1,25 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react';
 import { useLocale, useTranslations } from 'next-intl';
 import { formattaIstante } from '@/i18n/config';
 import { motion } from 'framer-motion';
 import { Check, CheckCheck, Languages, Loader2 } from 'lucide-react';
 import { sembraItaliano } from '@/lib/translate/lingua';
+import { allegatoMostrabile, vicinoAlFondo, type ChatMessage } from '@/lib/chat/stato-conversazione';
 
-export interface ChatMessage {
-    id: string;
-    thread_id: string;
-    sender_id: string;
-    content: string;
-    attachment_url: string | null;
-    attachment_type: string | null;
-    read_at: string | null;
-    /** Consegnato (scaricato dal destinatario). OPZIONALE: il payload E2E non lo ha
-     *  finché il DB della CI non è migrato — l'assenza degrada a "solo inviato". */
-    delivered_at?: string | null;
-    created_at: string;
-}
+/**
+ * Il tipo del messaggio e la regola dell'allegato vivono nel modulo puro
+ * `@/lib/chat/stato-conversazione` dal 2026-09-14: li usa anche l'unione dei messaggi, che non
+ * può dipendere da un componente React. Si riesportano da qui perché i chiamanti e i test che li
+ * importano da questo file restino validi senza toccarli.
+ */
+export { allegatoMostrabile };
+export type { ChatMessage };
 
 interface Props {
     messages: ChatMessage[];
@@ -30,6 +26,16 @@ interface Props {
     firstUnreadId?: string | null;
     /** Callback quando messaggi non letti entrano nel viewport (debounced 500ms) */
     onMarkRead?: (ids: string[]) => void;
+    /**
+     * Il server ha messaggi più vecchi di quelli in lista: in cima compare «Carica messaggi
+     * precedenti». Dal 2026-09-14 la GET porta gli ULTIMI 50, lo storico si chiede a mano.
+     */
+    haPrecedenti?: boolean;
+    /** La pagina precedente è in volo: il pulsante è occupato (e un secondo tocco non ne chiede un'altra). */
+    caricandoPrecedenti?: boolean;
+    /** L'ultimo tentativo non è riuscito: l'avviso resta finché non si riprova a mano. */
+    errorePrecedenti?: boolean;
+    onCaricaPrecedenti?: () => void;
 }
 
 /**
@@ -52,24 +58,6 @@ export function formatMessageTime(iso: string, locale: string): string {
     return formattaIstante(new Date(iso), locale, { hour: '2-digit', minute: '2-digit' });
 }
 
-/**
- * L'allegato si mostra solo quando è un indirizzo che il browser può aprire.
- *
- * Da S32 (2026-08-01) in `chat_messages.attachment_url` c'è il PERCORSO nel
- * bucket privato, non più un link firmato a 365 giorni: le route lo firmano al
- * momento della lettura, ma il Realtime di Supabase consegna la riga del
- * database così com'è e per qualche istante la bolla ha in mano un percorso.
- * Un percorso dentro un `<img src>` è un'immagine rotta, e «la chat è rotta» è
- * la conclusione sbagliata che se ne trae: meglio niente, finché il ricarico
- * non porta il link firmato.
- *
- * Vale anche come rete di sicurezza sugli schemi non-http (`javascript:`), che
- * era già la regola per i documenti e non lo era per le immagini.
- */
-export function allegatoMostrabile(url: string | null | undefined): boolean {
-    return !!url && /^https?:\/\//i.test(url);
-}
-
 /** Etichette localizzate per i separatori relativi (da `common.oggi`/`common.ieri`). */
 export interface EtichetteGiorno {
     oggi: string;
@@ -88,17 +76,27 @@ export function formatMessageDate(iso: string, locale: string, labels: Etichette
     return formattaIstante(d, locale, { day: 'numeric', month: 'long' });
 }
 
-function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { date: string; messages: ChatMessage[] }[] {
-    const groups: { date: string; messages: ChatMessage[] }[] = [];
-    let currentDate = '';
+/**
+ * I messaggi di un giorno sotto il suo separatore.
+ *
+ * ⚠️ IL GRUPPO È LA DATA DI CALENDARIO, NON L'ETICHETTA (2026-09-14). Prima un gruppo finiva quando
+ * cambiava l'etichetta, e l'etichetta era anche la chiave React. Con «Carica messaggi precedenti» lo
+ * storico copre anche due anni, e «5 novembre» è l'etichetta di due giorni diversi: due gruppi con
+ * la stessa chiave (React può farne sparire o duplicare uno), oppure — se consecutivi — un anno
+ * intero sotto un separatore solo. La data si prende nel fuso della scuola, lo stesso delle
+ * etichette: a Roma la mezzanotte non è quella di Greenwich.
+ */
+function groupByDate(messages: ChatMessage[], locale: string, labels: EtichetteGiorno): { chiave: string; date: string; messages: ChatMessage[] }[] {
+    const groups: { chiave: string; date: string; messages: ChatMessage[] }[] = [];
 
     messages.forEach(msg => {
-        const date = formatMessageDate(msg.created_at, locale, labels);
-        if (date !== currentDate) {
-            currentDate = date;
-            groups.push({ date, messages: [] });
+        const chiave = formattaIstante(msg.created_at, 'it', { year: 'numeric', month: '2-digit', day: '2-digit' });
+        const ultimo = groups[groups.length - 1];
+        if (ultimo && ultimo.chiave === chiave) {
+            ultimo.messages.push(msg);
+            return;
         }
-        groups[groups.length - 1].messages.push(msg);
+        groups.push({ chiave, date: formatMessageDate(msg.created_at, locale, labels), messages: [msg] });
     });
 
     return groups;
@@ -297,6 +295,15 @@ function MessageBubble({ msg, isMine, currentUserId }: { msg: ChatMessage; isMin
     );
 }
 
+/**
+ * La bolla di un messaggio dentro UN contenitore, per id. Gli id vengono dal database (uuid): uno
+ * che non ha quella forma non entra in un selettore, dove un apice lo trasformerebbe in un altro.
+ */
+function messaggioNelContenitore(contenitore: HTMLElement, id: string): HTMLElement | null {
+    if (!/^[\w-]+$/.test(id)) return null;
+    return contenitore.querySelector<HTMLElement>(`[data-msg-id="${id}"]`);
+}
+
 export function ChatMessageArea({
     messages,
     currentUserId,
@@ -304,11 +311,21 @@ export function ChatMessageArea({
     loading,
     firstUnreadId,
     onMarkRead,
+    haPrecedenti,
+    caricandoPrecedenti,
+    errorePrecedenti,
+    onCaricaPrecedenti,
 }: Props) {
     const locale = useLocale();
     const tCommon = useTranslations('common');
     const t = useTranslations('parentChat');
     const bottomRef = useRef<HTMLDivElement>(null);
+    /**
+     * Il contenitore che scorre. Le pagine montano questo componente DUE volte (desktop e mobile
+     * a schermo intero), e nel DOM ci sono entrambe le istanze: tutto ciò che cerca bolle deve
+     * cercarle QUI DENTRO, non in `document`.
+     */
+    const contenitoreRef = useRef<HTMLDivElement>(null);
     const separatorRef = useRef<HTMLDivElement>(null);
     const observerRef = useRef<IntersectionObserver | null>(null);
     const pendingMarkRead = useRef<Set<string>>(new Set());
@@ -340,33 +357,112 @@ export function ChatMessageArea({
         } else {
             bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
-    // Solo quando cambia il thread (messages.length da 0 a N)
+    // Solo quando la conversazione COMPARE: cambio di thread, o fine del caricamento. Fino al
+    // 2026-09-14 la chiave era il solo thread, e un messaggio del realtime arrivato mentre c'era lo
+    // spinner la accendeva allora — senza niente a schermo da scorrere — e mai più: la conversazione
+    // restava aperta in cima. L'effetto sulla lunghezza lo copriva per caso, ed è stato tolto.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [messages.length > 0 ? messages[0]?.thread_id : null]);
+    }, [!loading && messages.length > 0 ? messages[0]?.thread_id : null]);
 
-    // Scroll al fondo per nuovi messaggi in ingresso (non al caricamento iniziale)
-    const prevLengthRef = useRef(messages.length);
-    useEffect(() => {
-        const prev = prevLengthRef.current;
-        prevLengthRef.current = messages.length;
-        // Scrolla al fondo solo se sono arrivati nuovi messaggi (non il caricamento iniziale)
-        if (prev > 0 && messages.length > prev) {
-            bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    /* ─── IN TESTA O IN CODA: lo scorrimento che non salta (2026-09-14) ───────────────────────────
+     *
+     * Qui c'era un effetto su `messages.length`: se la lista cresceva, in fondo. Andava bene finché
+     * la lista cresceva solo in coda. Con «Carica messaggi precedenti» cresce anche in TESTA, e quel
+     * effetto rispediva all'ultimo messaggio chi aveva appena chiesto i primi. Sapere QUANTI sono non
+     * basta: bisogna sapere DOVE sono arrivati, e lo dicono il primo e l'ultimo id.
+     *
+     *  · IN TESTA (cambia il primo, l'ultimo resta): il messaggio che era in cima resta dov'era a
+     *    schermo. `scrollTop += spostamento dell'àncora`. WebKit (la WebView dell'app iOS) non ha lo
+     *    scroll anchoring dei browser Chromium; dove c'è ed è già intervenuto lo spostamento misurato
+     *    vale zero, quindi la correzione non si somma alla sua;
+     *  · IN CODA (cambia l'ultimo): in fondo SOLO se il messaggio è mio, o se chi legge era già in
+     *    fondo (`vicinoAlFondo`, regola del modulo puro: chi decide altro su «in fondo» usa quella).
+     *
+     * La «foto di prima» (`vistaRef`) si prende dopo OGNI commit e a ogni scroll: il commit che
+     * aggiunge i messaggi ha già il DOM nuovo, quindi la posizione di prima va letta prima. I due
+     * `useLayoutEffect` stanno in quest'ordine (React li esegue in ordine di dichiarazione) e prima
+     * delle `return` anticipate; girano prima che il browser dipinga, quindi il salto non si vede.
+     */
+    const threadId = messages[0]?.thread_id ?? null;
+    const primoId = messages[0]?.id ?? null;
+    const ultimo = messages.length > 0 ? messages[messages.length - 1] : null;
+    const ultimoId = ultimo?.id ?? null;
+    const ultimoMio = !!ultimo && ultimo.sender_id === currentUserId;
+    const vistaRef = useRef<{
+        threadId: string | null;
+        primoId: string | null;
+        ultimoId: string | null;
+        /** Distanza a schermo del primo messaggio dal bordo alto del contenitore. */
+        ancoraTop: number | null;
+        inFondo: boolean;
+    }>({ threadId: null, primoId: null, ultimoId: null, ancoraTop: null, inFondo: true });
+
+    const misura = useCallback(() => {
+        const vista = vistaRef.current;
+        const contenitore = contenitoreRef.current;
+        if (!contenitore) {
+            // Niente lista a schermo (spinner, conversazione vuota): la prossima si apre in fondo.
+            vista.ancoraTop = null;
+            vista.inFondo = true;
+            return;
         }
-    }, [messages.length]);
+        vista.inFondo = vicinoAlFondo(contenitore);
+        const ancora = vista.primoId ? messaggioNelContenitore(contenitore, vista.primoId) : null;
+        vista.ancoraTop = ancora ? ancora.getBoundingClientRect().top - contenitore.getBoundingClientRect().top : null;
+    }, []);
+
+    useLayoutEffect(() => {
+        const prima = vistaRef.current;
+        const contenitore = contenitoreRef.current;
+        const stessoThread = prima.threadId !== null && prima.threadId === threadId;
+        if (stessoThread && contenitore) {
+            if (primoId !== prima.primoId && ultimoId === prima.ultimoId) {
+                const ancora = prima.primoId && prima.ancoraTop !== null ? messaggioNelContenitore(contenitore, prima.primoId) : null;
+                if (ancora && prima.ancoraTop !== null) {
+                    const ora = ancora.getBoundingClientRect().top - contenitore.getBoundingClientRect().top;
+                    contenitore.scrollTop += ora - prima.ancoraTop;
+                }
+            } else if (ultimoId !== prima.ultimoId && (ultimoMio || prima.inFondo)) {
+                bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+        vistaRef.current = { ...prima, threadId, primoId, ultimoId };
+    }, [threadId, primoId, ultimoId, ultimoMio]);
+
+    useLayoutEffect(() => {
+        misura();
+    });
 
     // IntersectionObserver per marcare come letti i messaggi non letti
+    //
+    // ⚠️ SI OSSERVA SOLO DENTRO IL PROPRIO CONTENITORE (2026-09-14). Le pagine montano questo
+    // componente due volte (desktop e mobile), e con `document.querySelectorAll` ciascuna istanza
+    // osservava anche le bolle dell'altra: ogni lotto di letti partiva due volte. E l'effetto dipende
+    // anche da `loading`: i messaggi arrivati mentre c'era lo spinner (niente contenitore montato)
+    // non venivano più osservati quando lo spinner spariva, perché l'array dei messaggi era lo stesso.
+    //
+    // ⚠️ CIÒ CHE È COPERTO NON È VISTO (2026-09-14). `BiometricGate` lascia la pagina montata sotto
+    // un `inert`, e una modale rende inerte lo sfondo: una bolla lì sotto interseca il viewport ma
+    // nessuno la sta leggendo. Con l'apertura della conversazione dal tocco su una notifica, a
+    // freddo, si segnavano letti messaggi coperti dal blocco — e il mittente vedeva la spunta. Una
+    // bolla coperta non si segna e NON si smette di osservare; quando un `inert` sparisce si riosserva,
+    // perché l'IntersectionObserver da solo non riscatta se l'intersezione non è cambiata.
     useEffect(() => {
         if (!onMarkRead) return;
 
         // Disconnetti observer precedente
         observerRef.current?.disconnect();
+        const contenitore = contenitoreRef.current;
+        if (!contenitore) return;
 
-        observerRef.current = new IntersectionObserver(
-            (entries) => {
-                let hasNew = false;
-                entries.forEach((entry) => {
-                    if (entry.isIntersecting) {
+        const osserva = () => {
+            observerRef.current?.disconnect();
+            observerRef.current = new IntersectionObserver(
+                (entries) => {
+                    let hasNew = false;
+                    entries.forEach((entry) => {
+                        if (!entry.isIntersecting) return;
+                        if ((entry.target as Element).closest('[inert]')) return; // coperto: non visto
                         const id = (entry.target as HTMLElement).dataset.messageId;
                         if (id) {
                             pendingMarkRead.current.add(id);
@@ -374,24 +470,32 @@ export function ChatMessageArea({
                             // Smetti di osservare una volta visto
                             observerRef.current?.unobserve(entry.target);
                         }
-                    }
-                });
-                if (hasNew) scheduleFlush();
-            },
-            { threshold: 0.5 }
-        );
+                    });
+                    if (hasNew) scheduleFlush();
+                },
+                { threshold: 0.5 }
+            );
 
-        // Osserva tutti i messaggi non letti dell'interlocutore
-        const unreadEls = document.querySelectorAll('[data-unread="true"]');
-        unreadEls.forEach(el => observerRef.current?.observe(el));
+            // Osserva i messaggi non letti dell'interlocutore di QUESTO contenitore
+            const unreadEls = contenitore.querySelectorAll('[data-unread="true"]');
+            unreadEls.forEach(el => observerRef.current?.observe(el));
+        };
+        osserva();
+
+        // Uno sblocco (o una modale che si chiude) toglie un `inert`: si riosserva.
+        const coperture = typeof MutationObserver === 'undefined'
+            ? null
+            : new MutationObserver(() => osserva());
+        coperture?.observe(document.body, { attributes: true, attributeFilter: ['inert'], subtree: true });
 
         return () => {
+            coperture?.disconnect();
             observerRef.current?.disconnect();
             if (debounceTimer.current) clearTimeout(debounceTimer.current);
         };
-    // Ri-osserva quando cambiano i messaggi
+    // Ri-osserva quando cambiano i messaggi o finisce il caricamento
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [messages, scheduleFlush]);
+    }, [messages, loading, scheduleFlush]);
 
     if (loading) {
         return (
@@ -425,9 +529,45 @@ export function ChatMessageArea({
     const groups = groupByDate(messages, locale, { oggi: tCommon('oggi'), ieri: tCommon('ieri') });
 
     return (
-        <div className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4">
+        <div
+            ref={contenitoreRef}
+            data-testid="chat-messaggi"
+            onScroll={misura}
+            className="flex-1 overflow-y-auto bg-kidville-cream/50 px-4 py-4 space-y-4"
+        >
+            {/* In cima, DENTRO il contenitore che scorre: si raggiunge scorrendo verso l'alto, dove
+                finiscono i messaggi. La riga ha un'altezza fissa: il passaggio a «Caricamento…» non
+                sposta la conversazione sotto. Niente opacità sul disabilitato: il testo verde sul
+                bianco resta leggibile anche mentre carica. */}
+            {haPrecedenti && onCaricaPrecedenti && (
+                <div className="flex flex-col items-center gap-1.5">
+                    <div className="flex h-11 items-center justify-center">
+                        <button
+                            type="button"
+                            onClick={onCaricaPrecedenti}
+                            disabled={caricandoPrecedenti}
+                            aria-busy={caricandoPrecedenti ? true : undefined}
+                            className="inline-flex items-center gap-1.5 rounded-pill border border-kidville-line bg-white px-3 py-1.5 font-barlow text-[11px] font-extrabold uppercase tracking-[0.08em] text-kidville-green transition-colors hover:bg-kidville-green-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-green disabled:cursor-wait"
+                        >
+                            {caricandoPrecedenti ? (
+                                <>
+                                    <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+                                    {t('loadingMessages')}
+                                </>
+                            ) : (
+                                t('caricaPrecedenti')
+                            )}
+                        </button>
+                    </div>
+                    {errorePrecedenti && (
+                        <p role="alert" className="text-center font-maven text-xs text-kidville-error-strong">
+                            {t('caricaPrecedentiErrore')}
+                        </p>
+                    )}
+                </div>
+            )}
             {groups.map((group) => (
-                <div key={group.date}>
+                <div key={group.chiave}>
                     {/* Separatore giorno — pillola del design */}
                     <div className="my-4 flex justify-center">
                         <span className="rounded-pill border border-kidville-line bg-white/70 px-3 py-1 font-barlow text-[10.5px] font-extrabold uppercase tracking-[0.08em] text-kidville-muted">
@@ -457,6 +597,9 @@ export function ChatMessageArea({
                                         animate={{ opacity: 1, y: 0, scale: 1 }}
                                         transition={{ delay: idx * 0.02, duration: 0.2 }}
                                         className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}
+                                        // L'àncora dello scorrimento: TUTTI i messaggi. Distinto da
+                                        // `data-message-id`, che segna solo i non letti da osservare.
+                                        data-msg-id={msg.id}
                                         // Attributi per IntersectionObserver
                                         data-message-id={isUnread ? msg.id : undefined}
                                         data-unread={isUnread ? 'true' : undefined}

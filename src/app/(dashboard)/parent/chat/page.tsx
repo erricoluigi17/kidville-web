@@ -207,6 +207,18 @@ function ParentChatContent() {
     const lastIncomingMessageId = messages.length
         ? ([...messages].reverse().find(m => m.sender_id !== parentId)?.id ?? null)
         : null;
+    /**
+     * «Carica messaggi precedenti» (2026-09-15): la GET porta gli ultimi 50 messaggi, lo storico si
+     * chiede a mano. Le stesse quattro prop vanno a ENTRAMBE le `ChatMessageArea` qui sotto (desktop e
+     * schermo intero), da un oggetto solo: passate a una istanza sola, il telefono resterebbe senza
+     * pulsante con tutti i test dei pezzi verdi (`__tests__/pages/chat-precedenti.test.tsx`).
+     */
+    const precedenti = {
+        haPrecedenti: chat.haPrecedenti,
+        caricandoPrecedenti: chat.caricandoPrecedenti,
+        errorePrecedenti: chat.errorePrecedenti,
+        onCaricaPrecedenti: () => void chat.caricaPrecedenti(),
+    };
 
     const menuTriggerLight = 'flex h-9 w-9 items-center justify-center rounded-full text-kidville-muted transition-colors hover:bg-kidville-neutral-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-green';
     const menuTriggerOnGreen = 'flex h-9 w-9 items-center justify-center rounded-full text-white/90 transition-colors hover:bg-white/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-kidville-yellow';
@@ -336,6 +348,7 @@ function ParentChatContent() {
                                 loading={chat.caricamentoMessaggi}
                                 firstUnreadId={chat.primoNonLettoId}
                                 onMarkRead={chat.segnaLetti}
+                                {...precedenti}
                             />
                             {terminiCta}
                             {erroreQui && (
@@ -404,6 +417,7 @@ function ParentChatContent() {
                             loading={chat.caricamentoMessaggi}
                             firstUnreadId={chat.primoNonLettoId}
                             onMarkRead={chat.segnaLetti}
+                            {...precedenti}
                         />
                         {terminiCta}
                         {erroreQui && (

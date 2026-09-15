@@ -70,7 +70,7 @@
 > | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
-> | **Chat** | ✅ Operativo | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`) |
+> | **Chat** | ✅ Operativo · 🔧 correzione del 14/09 sul branch `fix/chat-doppioni-coda-notifica`, ⏳ **non ancora in produzione** | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`). **Dal branch del 14/09** (vedi il changelog): `GET /api/chat/messages` legge gli **ultimi 50** e pagina all'indietro con il cursore `primaDi` (`offset` → 400), con **«Carica messaggi precedenti»** in cima alla conversazione — fino a quel giorno leggeva i 50 più **vecchi**, e 48 messaggi in 7 conversazioni non erano mai stati mostrati; il messaggio inviato **non compare più due volte**; il tocco su una notifica di chat **apre la conversazione** (link `/<area>/chat?thread=<uuid>`) da push nativa, web push, notifica del browser e centro notifiche. Stato e regole in `useConversazioneChat` + `@/lib/chat/stato-conversazione`, condivisi dalle due pagine |
 > | **Vigilanza sulle chat** | ✅ Operativo (2026-09-09) | `/admin/messaggi` → «Tutti i messaggi» e «Registro accessi» | Segreteria e Direzione consultano qualunque conversazione della propria sede, e la consultazione è **silenziosa** per i due interlocutori. Ogni lettura e ogni ricerca finiscono in `chat_vigilanza_accessi`, in **sola aggiunta**; se il registro non si scrive il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Il registro lo legge **solo la Direzione**, senza esenzioni per sé. Ritenzione: la riga resta, IP/browser/termine si azzerano a 12 mesi |
 > | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)) |
 > | **Conciliazione composita — un bonifico, più voci** | ✅ Completa sul branch `feat/conciliazione-composita` (13/09/2026) · ⏳ **non ancora in produzione** — **le tre migrazioni (`20260912180000`, `…180100`, `…180200`) sono già applicate sul database (le tre `version` risultano presenti in `supabase_migrations.schema_migrations`, verificato il 13/09, e il fixture `__tests__/fixtures/migrazioni-applicate-snapshot.json` le elenca): NON riapplicarle**; manca il rilascio del **codice**. ⚠️ *Qui si leggeva «applicate **dal 12/09**»: la data è stata tolta perché **quella tabella non sa quando**. Le sue colonne sono `version`, `statements`, `name`, `created_by`, `idempotency_key`, `rollback` — nessuna è una data — e la strada per ricavarla dal commit è chiusa: `track_commit_timestamp` è `off`, quindi `pg_xact_commit_timestamp(xmin)` risponde `55000: could not get commit timestamp data` (provato il 13/09). Il «12/09» era il timestamp del **nome del file**, non una misura: resta vero che sono applicate, non quando* | `/admin/pagamenti` → *Riconciliazione* → popup del movimento → **«Componi il pagamento»** (`ComposizioneBonifico`, dentro il popup e non in una pagina a sé) | `GET /api/pagamenti/riconciliazione/[id]/contesto` (**non scrive niente**: di chi è il bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie, quanto costa un ticket in quella sede) e `POST /api/pagamenti/riconciliazione/[id]/componi` (registra l'intera composizione in **una** transazione atomica — RPC `registra_transazione_contabile` — con compare-and-swap sul movimento). Spunta le voci aperte, **ne crea di nuove**, **aggiunge ticket mensa** (quantità × costo unitario, che accreditano anche i pasti), e conferma **solo quando quadra all'esatto**: niente eccedenza, niente residuo. Funziona anche per **fratelli di plessi diversi**. 🔴 **Una sola fattura, con una riga sola, per il totale del bonifico e la descrizione della voce àncora** — con la conseguenza fiscale che ne segue, scritta per intero nel changelog del 13/09 |
@@ -80,7 +80,7 @@
 > | **Anagrafiche — il codice fiscale certo** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione**: le due migrazioni sono applicate, il codice attende il merge | `/admin/students` → **quinta linguetta «Codici fiscali»** (`CodiciFiscaliDaVerificare`); la cascata **provincia → comune** (`LuogoNascitaFields`) e il badge di coerenza (`BadgeCoerenzaCf`) sulle sei schede di alunno e genitore | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde. Scrittura con `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**. `GET /api/anagrafiche/comuni` serve la sola provincia scelta: le 13.656 righe della tabella Belfiore **non escono mai** verso il browser (lock `dataset-comuni-fuori-dal-bundle`). Il calcolo è locale e sincrono (`src/lib/fiscale/`): **nessuna chiamata a terzi**, `api.codicefiscale.it` è al bando |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo · **vista di sede per la segreteria dal 2026-09-06** | `/teacher/gallery` (una sezione), `/parent/gallery`, **`/admin/gallery`** (l'intero plesso: dal più recente, raggruppato per giornata, filtro per classe e per bambino, paginazione, **linguetta «Pubblicate / Cestino (30 giorni)» con «Ripristina» ed «Elimina» — 2026-09-12**) | `/api/gallery/*` — con `scope=sede&scuolaId=…`, riservato a `requireStaff`, **sede sempre dichiarata e mai indovinata**. Lo «scarica» dei media passa da `@capacitor/filesystem` + `Share.share({files})` sul telefono e dal signed URL diretto sul web: in WebView un `<a download>` su un `blob:` non fa niente **e non solleva eccezione**, quindi il vecchio `catch` non poteva scattare |
-> | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero) |
+> | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero). ⏳ Dal branch `fix/chat-doppioni-coda-notifica` (14/09, non ancora in produzione) il tocco su una notifica di chat **apre la conversazione**, anche per le notifiche già in tabella col link vecchio: `?thread=` si ricostruisce da `entita_tipo`/`entita_id` (`linkEffettivoNotifica`), e un link che non è di questa app si rifiuta |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
 > | **«Lavora con noi» — candidature di personale** | ✅ In produzione · **aperto a tutte le posizioni dal 15/08/2026** (non più solo insegnanti) · ⏳ **curriculum obbligatorio e «Disponibilità» rimossa: NON ancora in produzione** (vedi il riquadro sul ramo, più sotto) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede ed elenco unico delle **sette posizioni** — le tre docenti portano la fascia nel nome — più «Altro» con casella condizionale; ⏳ **curriculum OBBLIGATORIO — scritto, non rilasciato**: il modulo vivo su `app.kidville.it` accetta ancora candidature senza allegato, e continuerà finché il merge non è fatto. La verifica che il rilascio abbia avuto effetto è una query sola: `select count(*) filter (where cv_path is null) from candidature_insegnanti;` smette di crescere), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `POST /api/iscrizione/insegnanti/upload` (anonima, 6/10 min per IP, bucket `form_attachments` sotto `candidature/`), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione` **solo per le candidature docenti**), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi + spazzata dei curriculum orfani a 24 h). ⚠️ **L'account nasce SOLO per le posizioni da insegnante**: un account `educator` legge l'anagrafica dei bambini, e cuoca/collaboratrice/segreteria si approvano senza crearne nessuno (`esitoAccount: nessuno`) |
@@ -99,6 +99,334 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 💬 Changelog — Il messaggio compariva due volte, e dal cinquantunesimo in poi non compariva affatto: la chat leggeva i 50 più vecchi — 2026-09-14 (branch `fix/chat-doppioni-coda-notifica`)
+
+**La segnalazione del titolare (2026-09-14)**, in due frasi:
+- chi invia un messaggio lo vede **due volte**, e riaperta l'app ne resta uno;
+- arrivano il messaggio e la notifica, ma aperta la chat **il messaggio nuovo non c'è**.
+
+**Le misure**, solo aggregati, prese il 2026-09-14. Sono di quel giorno: le query per rifarle sono in
+fondo al blocco.
+
+| | misura |
+|---|---|
+| conversazioni oltre i 50 messaggi | **7** (la più lunga 68), con 7 genitori e 3 docenti. Il primo cinquantunesimo messaggio è del 10/09; altre 2 conversazioni erano fra 41 e 50 messaggi, e 8 fra 31 e 40 |
+| messaggi oltre il 50°, mai mostrati a nessuno | **48**, e **45** mai letti |
+| non letti fra i messaggi con più di 24 ore (ultimi 7 giorni) | **93,8%** oltre il 50° (15 su 16), contro l'**1,7%** entro il 50° (37 su 2.161) |
+| doppioni veri in `chat_messages`, ultimi 30 giorni | **2**, a circa 3 s l'uno dall'altro. Il doppio che vede il titolare **non è in tabella**: nasce nel telefono |
+| `CHANNEL_ERROR` del realtime da iOS, in 8 giorni | **2.034**, e di nessuno si sa il motivo: il callback ignorava l'argomento che lo conteneva |
+
+**Le cause**, confermate in sola lettura da tre verificatori indipendenti per causa (3 su 3).
+
+- **C1: il proprio messaggio entrava due volte.** Dal 7/9 il realtime funziona (migr.
+  `20260907120003`), e l'INSERT arriva anche a chi scrive, **prima** della risposta della POST, che
+  aspetta notifica e firma dell'allegato (circa 2,6 s). L'eco del realtime entrava per id. La
+  risposta invece veniva **accodata senza guardare l'id** (`handleSendMessage` nelle due pagine).
+  Risultato: una riga in tabella, due bolle a schermo, e alla riapertura la GET ne restituiva una.
+- **C2: la GET leggeva i 50 messaggi più VECCHI** (`order` ascendente e `range(0, 49)`), e nessun
+  client chiedeva altro. Dal 51° in poi la conversazione restava **congelata**. L'anteprima e il badge
+  della lista, che leggono l'ultimo messaggio, annunciavano un messaggio che la conversazione non
+  mostrava, e che quindi nessuno poteva segnare letto. La lettura dalla coda era stata scritta e
+  **tolta il 7/9** (`74ecf831`) per un E2E rosso. La causa vera di quel rosso era un'altra: il click
+  perso durante l'invio (`085d5bfe`, changelog del 07/09, §4).
+
+Difetti veri trovati insieme (3 su 3):
+- **D1**: il polling a 30 s non era silenzioso. A ogni giro compariva lo spinner, e la conversazione
+  tornava **in cima**.
+- **D2**: una risposta lenta si applicava alla conversazione aperta **dopo**. Per un docente
+  significava vedere i messaggi di una famiglia sotto l'intestazione di un'altra. In più, il proprio
+  messaggio dava +1 al badge.
+- **D3**: «Indietro» su mobile lasciava la conversazione attiva. I messaggi in arrivo si segnavano
+  **letti senza essere visti**, e il mittente vedeva la spunta.
+- **D4**: dopo una caduta del realtime non c'era nessun recupero. Gli INSERT persi durante la caduta
+  comparivano solo al giro di polling successivo, e il log non diceva perché il canale era caduto.
+- **D5**: la chiave del canale cambiava a ogni riordino della lista. Ogni volta un leave e un join,
+  con circa un secondo di buco in cui un INSERT si perde. *Smentito* (0 su 3) che il canale restasse
+  morto.
+- **D6**: se la lista delle conversazioni non si caricava, la pagina diceva «Nessuna chat».
+- **D7**: `/admin/messaggi`, scheda dei genitori, usa la stessa GET e aveva lo stesso C2.
+
+**Le decisioni del titolare (2026-09-14):**
+1. il tocco sulla notifica apre **direttamente la conversazione giusta**, nello stesso rilascio;
+2. si caricano gli **ultimi 50** messaggi, con in cima **«Carica messaggi precedenti»**.
+
+### Cosa cambia
+
+**1 · Lo stato della conversazione ha un proprietario solo.** Prima le due pagine gemelle
+(`parent/chat` e `teacher/chat`, circa 700 righe ciascuna) facevano ognuna da sé fetch, polling,
+realtime e invio. Adesso lo stato sta in due posti, condivisi.
+- `src/lib/chat/stato-conversazione.ts` è **puro**:
+  - unisce i messaggi per id. Le spunte `read_at`/`delivered_at` non tornano mai indietro, e un
+    allegato già firmato non viene sovrascritto dal suo percorso;
+  - ordina come Postgres: `created_at` al microsecondo, poi `id`. La frazione si riempie a 6 cifre,
+    perché PostgREST scrive `…41.37069` senza zeri finali, e senza riempimento l'ordine a pari
+    millisecondo si inverte;
+  - contiene il riduttore della conversazione aperta. **Un'azione che riguarda un'altra
+    conversazione non cambia niente**: D2 è chiuso per costruzione.
+- `src/components/features/chat/useConversazioneChat.ts` è il hook delle due pagine:
+  - la lista ha tre stati, `caricamento`, `pronto` ed `errore`, con «Riprova» (D6);
+  - le richieste in volo si riusano, e il polling è **silenzioso** (D1);
+  - l'invio si unisce per id (C1), e il segna-letti non parte due volte;
+  - `apriPerId` usa un contatore di generazione: un'apertura lenta non scavalca mai una scelta fatta
+    a mano nel frattempo.
+- Alle pagine resta l'interfaccia. «Indietro» chiude davvero la conversazione (D3), e il campo di
+  scrittura nasce con `key={thread.id}`.
+
+**2 · Si segna letto solo ciò che si è visto.**
+- L'IntersectionObserver guarda solo le bolle del **proprio** contenitore. Le pagine ne montano due,
+  desktop e schermo intero, e ognuno osservava anche le bolle dell'altro: le PATCH partivano doppie.
+- Ignora ciò che sta sotto un `[inert]`, cioè il blocco biometrico. Col tocco sulla notifica la
+  conversazione si apre anche dietro lo sblocco, e senza questa regola ne segnerebbe letti i messaggi.
+- La PATCH immediata sul messaggio in arrivo parte solo a pagina visibile e **se chi legge è in
+  fondo**. Prima finiva in un `.catch(() => {})` muto, in entrambe le pagine.
+
+**3 · La GET legge la coda, e pagina all'indietro con un cursore** (`GET /api/chat/messages`).
+- Senza parametri restituisce gli **ultimi** `limit` messaggi, di default 50 e al massimo 200, in
+  ordine di lettura.
+- `primaDi=<id del messaggio più vecchio già a schermo>`: il server legge dal DB l'istante di quel
+  messaggio e restituisce la pagina prima di lui su `(created_at, id)`. La lettura avviene dopo il
+  controllo di partecipazione e prima del mark-read.
+  - Un id di un'altra conversazione risponde **400**, come un id inesistente.
+  - Una lettura fallita risponde **500 `LETTURA_FALLITA`**.
+- `offset` risponde **400**. Contava dalla testa, e oggi lo stesso numero vorrebbe dire un'altra
+  cosa. Nessun client lo manda.
+- La risposta è `{ messages, total, precedenti }`. Nessuna migrazione: l'indice
+  `idx_chat_messages_thread (thread_id, created_at DESC)` c'era già.
+
+Perché un cursore e non `offset`: ogni messaggio arrivato fra la prima pagina e il tocco sposterebbe la
+finestra, e un messaggio comparirebbe due volte o sparirebbe. Perché lo spareggio sull'id: due messaggi
+con lo stesso `created_at` esistono, e sul confine di pagina uno dei due si perderebbe.
+
+**4 · «Carica messaggi precedenti»**, in cima al contenitore che scorre (`ChatMessageArea`).
+- I precedenti arrivano sopra **senza spostare il messaggio che si stava leggendo**. Lo tiene fermo un
+  `useLayoutEffect`, e non si conta sullo scroll anchoring del browser: la WebView iOS è WebKit.
+- Un messaggio nuovo in coda porta in fondo solo chi era già in fondo, o chi l'ha scritto.
+- I gruppi del giorno si dividono per data di calendario.
+- Si carica una pagina per tocco, senza riprove automatiche.
+- Chiavi nuove, in italiano e in inglese: `caricaPrecedenti`, `caricaPrecedentiErrore`,
+  `threadsNonCaricatiTitolo`, `threadsNonCaricatiCorpo`.
+
+**5 · Il realtime** (`useChatRealtime`).
+- Il canale dipende dall'utente e da una generazione, non più dall'elenco delle conversazioni (D5).
+  Nasce anche con zero conversazioni.
+- Una conversazione che la lista non conosce ancora costa una ricarica sola per sessione.
+- Un `CLOSED` inatteso si ricrea dopo 10 s, al massimo 3 volte.
+- Al rientro dopo una caduta (D4) si ricaricano in silenzio la lista e la conversazione aperta. Non si
+  ricarica se una richiesta è partita da 2 s prima del rientro in poi. La ripresa della pagina e il
+  rientro del canale arrivano quasi insieme: senza quel margine, ogni risveglio pagherebbe due GET, ed
+  è il volume che il 7/9 ha rallentato l'app.
+
+**6 · Il tocco sulla notifica apre la conversazione** (decisione 1), su ogni percorso.
+- **Il link.** Il server scrive `/<area>/chat?thread=<uuid>` (`linkConversazione`). L'area è il posto
+  che il destinatario occupa nella conversazione.
+- **Una regola sola** per il client: `instradaLinkNotifica`, in `src/lib/chat/link-conversazione.ts`,
+  pura.
+  - Se la pagina chat è già montata, parte l'evento `kv:chat-apri-thread`. In Next 16.3 una
+    navigazione allo stesso URL non rimonta la pagina e non cambia `useSearchParams`.
+  - Per chi ha due profili, il percorso si riscrive nell'area in cui si trova. Negli altri casi si
+    naviga.
+  - **I link non interni si rifiutano.** `'//evil'.startsWith('/')` è vero, e prima un link così
+    passava. Adesso il link si normalizza come fa il browser, poi si rifiuta ogni `//` o `\` nel
+    percorso.
+- **La pagina** (`useAperturaThreadRichiesta`):
+  - aspetta la lista e apre la conversazione. Se non la trova, ricarica la lista **una** volta e poi
+    rinuncia con un log;
+  - l'ultima richiesta vince, e una scelta fatta a mano annulla quella della notifica;
+  - toglie `?thread=` con `history.replaceState`, lasciando `?userId=`;
+  - se la lista non si carica, il parametro resta e si ritenta con la lista successiva.
+- **Push nativa e deep link.** Il tocco, a caldo e a freddo, e il deep link `kidville://` passano dalla
+  regola (`native-shell.ts`). `native-register.ts` non chiama più `removeAllListeners()`: dopo
+  «disattiva» spegneva **anche** l'ascoltatore del tocco, fino al riavvio. Adesso toglie solo le
+  proprie maniglie.
+- **Web push** (`public/sw.js`). Il confronto si fa sul pathname: prima `includes` non trovava mai
+  `?thread=` e apriva una scheda nuova.
+  - Con una finestra già sulla chat: `postMessage` e fuoco.
+  - Sulla stessa pagina con una query diversa: `navigate`, con ripiego su una finestra nuova.
+  - Con il link di un altro sito: la radice, e un avviso.
+  - `VERSIONE` non si alza. Il ponte verso la pagina è `ServiceWorkerRegister`.
+- **La notifica del browser** di `useUnreadNotifications` apre la conversazione nella pagina chat
+  aperta. Senza una pagina chat porta davanti la finestra, come prima.
+- **Il centro notifiche** (`NotificationsPanel`, `AdminNotificationsPanel`) ricostruisce `?thread=` da
+  `entita_tipo`/`entita_id` (`linkEffettivoNotifica`), anche per le notifiche **già in tabella** col
+  link vecchio.
+
+**7 · Le bozze.**
+- Con `key={thread.id}`, il testo scritto per una famiglia non parte più verso un'altra quando il tocco
+  cambia conversazione. È la correzione di sicurezza, ma da sola costava la bozza.
+- `bozze-chat.ts` tiene la bozza **in memoria**, sotto `<utente>:<conversazione>`: niente storage, e
+  col logout sparisce.
+- La bozza è l'unica copia del testo: i due campi montati mostrano la stessa.
+- Anche l'invio in volo appartiene alla conversazione. Un campo rimontato mentre la POST aspetta non
+  manda il messaggio una seconda volta, e un messaggio consegnato dopo aver lasciato la conversazione
+  non torna nel campo.
+
+**Non incluso, di proposito:** la ricarica quando arriva una push con l'app aperta
+(`pushNotificationReceived`). La coprono il realtime e il recupero, e costerebbe una GET per push.
+
+### Logging
+
+Lato client **il motivo sta nel messaggio**, con un insieme chiuso di valori. I `campi` non entrano
+nell'impronta di `app_log` né nella chiave del throttle: di un motivo messo lì resterebbe solo la prima
+occorrenza per utente e giorno. Mai `err.message`, che può portare il topic con l'uuid dell'utente o
+l'URL `wss` con la chiave. Mai il testo di un messaggio, mai l'id di una conversazione.
+
+| messaggio | livello · evento | quando |
+|---|---|---|
+| `chat-realtime-errore: <motivo>` · `chat-realtime-timeout` | warn · react | **uno per interruzione**. Motivi: `socket-chiuso-<codice>`, `trasporto`, `connessione-persa`, `binding-diversi`, `join-rifiutato-token`/`-permessi`/`-limite`, `join-rifiutato`, `nessun-motivo`, `altro-<nome>` |
+| `chat-realtime-chiuso-inatteso` · `chat-realtime-abbandonato` | warn · react | un `CLOSED` non chiesto; la resa dopo 3 ricreazioni |
+| `chat-realtime-rientrato: ricarica` / `nessuno` / `pagina-nascosta` | warn · react | il **successo** del recupero, con `ms` ed `errori` |
+| `chat-conversazioni-non-caricate: <motivo>` | warn · fetch | la lista che non arriva (D6) |
+| `chat-caricamento-precedenti-fallito: <nome>` | warn · fetch | il pulsante che non carica |
+| `chat-apertura-da-notifica: aperta` / `non-trovata` `(url o evento)`, `id-non-valido (url)`, `nessuna-pagina-chat (sw)` | warn · push | l'esito del tocco, **successo compreso** |
+| `chat-apertura-da-notifica: guasto (url o evento)` | error · push | un'eccezione dentro l'apertura |
+| `notifica-link-rifiutato: non interno` | warn · push | senza l'URL |
+| `sw-notifica-link-non-interno` · `sw-notifica-navigate-fallito` | warn · offline | dal Service Worker, attraverso il ponte |
+
+`chat-segna-letti-fallito` c'era già, e adesso copre anche la PATCH immediata.
+
+Lato server, due righe nuove:
+- `logErrore` sulla lettura del cursore (500 `LETTURA_FALLITA`);
+- `logEvento('chat', 'info', { esito: 'precedenti-caricati' })`, **solo col cursore**: è il successo
+  del pulsante. La finestra normale è anche il polling, e scriverebbe una riga ogni 30 s.
+
+I 400 li registra `withRoute`.
+
+🔴 **La serie `CHANNEL_ERROR` è SOSTITUITA, non continuata.** Il messaggio `Chat realtime:
+CHANNEL_ERROR (realtime non abilitato o caduto, fallback sul polling)` **non esiste più**. Dal rilascio
+quella riga smette di crescere **anche se il realtime cade esattamente come prima**. Il vecchio testo
+diceva «realtime non abilitato», ma misurava altro: phoenix emette l'errore di canale a **ogni**
+chiusura del socket, e la WebView iOS in background il socket lo chiude. Dopo il rilascio si leggono
+`chat-realtime-errore: %` e `chat-realtime-timeout`. Si contano **interruzioni**, non errori: i numeri
+di prima e di dopo non si confrontano uno a uno. Vale anche per la verifica del changelog del 07/09
+(«`CHANNEL_ERROR` deve smettere di crescere»): da oggi smette comunque, e non prova niente.
+
+**Lock dei catch muti.** La PATCH immediata esce dalle pagine insieme al suo `.catch(() => {})` muto.
+`parent/chat/page.tsx` scende da 2 a 1, `teacher/chat/page.tsx` esce dall'allowlist, il totale passa
+da **71 a 69**, e i tetti scendono con lui: `MAX_FILE` da 47 a 46, `MAX_OCCORRENZE` da 71 a 69.
+Rimisurati il 15/09 sul ramo finale, dopo le parti che toccano gli stessi file: **46 voci, 69
+occorrenze**, gli stessi numeri.
+
+### Test
+
+- **21 file nuovi**, di unità e di pagina, più `__tests__/offline/sw.test.ts` e
+  `__tests__/components/ServiceWorkerRegister.test.tsx` estesi. I due rossi che contano:
+  - `__tests__/pages/chat-stato-conversazione.test.tsx`, per C1: **una** bolla per contenitore quando
+    l'INSERT arriva prima della 201, per il genitore e per il docente;
+  - `__tests__/api/chat-messages-coda.test.ts`, per C2, con un Supabase finto che ordina e pagina
+    **davvero** e accetta solo la forma `.or()` attesa.
+- Ogni test nuovo è stato **visto rosso** rimettendo il difetto, e ogni correzione è stata poi rotta
+  apposta.
+- ⚠️ Il test di pagina che c'era, `parent-chat-invio-sequenza`, **spegneva il realtime**
+  (`useChatRealtime: () => {}`). Per questo C1 non l'aveva preso nessuno.
+- **E2E in CI**: `e2e/chat-precedenti.spec.ts`, su chromium **e webkit**.
+  - Il seed crea una conversazione di **60 messaggi** fra `docente2` e `genitore2`, con id fissi e
+    testo sintetico. Il 10 e l'11 hanno lo stesso istante, sul confine della finestra.
+  - Lo spec verifica che la coda mostri 11..60, che il pulsante porti 1..10 senza doppioni né buchi,
+    e che l'11 non si sposti più di 2 px.
+  - È l'unica prova della sintassi `.or()` su un PostgREST vero.
+  - Misurando è venuta fuori una sorpresa, scritta in testa allo spec: anche il WebKit di Playwright
+    compensa da sé a conversazione già scorsa, e nessuno dei due motori lo fa da `scrollTop` 0.
+
+### Effetto al rilascio
+
+- **I 48 messaggi invisibili compaiono** alla prossima apertura, e si segnano letti quando il
+  destinatario li vede. Nei giorni dopo il rilascio **compariranno `read_at` scritti su messaggi di
+  giorni prima**, e le spunte dei mittenti passeranno a «letto». Non è un difetto: è ciò che doveva
+  succedere allora.
+- Chi scrive vede **una** bolla, il polling non riporta più in cima, e «Indietro» non segna più letto.
+- Il tocco su una notifica **arrivata dopo il rilascio** apre la conversazione. Le push già consegnate
+  col link vecchio aprono la lista come prima. Nel centro notifiche aprono la conversazione anche
+  quelle.
+- **Nessuna migrazione, nessuna variabile d'ambiente, nessun rilascio sugli store**: le app native
+  caricano `server.url` remoto. `sw.js` si reinstalla da solo al primo caricamento, perché i suoi byte
+  cambiano.
+- `/admin/messaggi` mostra gli ultimi 50 messaggi di una conversazione, non più i primi 50. Il pulsante
+  lì non c'è.
+
+### Verifica in produzione (solo `SELECT` aggregati)
+
+1. **I messaggi prima invisibili.** I non letti oltre il 50° devono **calare**, da 45 verso 0:
+
+```sql
+with r as (
+  select read_at, row_number() over (partition by thread_id order by created_at, id) as dalla_testa
+  from chat_messages
+)
+select count(*) filter (where dalla_testa > 50) as oltre_50,
+       count(*) filter (where dalla_testa > 50 and read_at is null) as oltre_50_non_letti
+from r;
+```
+
+2. **Il link delle notifiche chat.** Dopo il rilascio `senza_thread` deve restare a 0:
+
+```sql
+select tipo, count(*) as totale,
+       count(*) filter (where link not like '%?thread=%') as senza_thread
+from notifiche
+where tipo in ('chat_genitore', 'chat_docente') and creato_il >= '<istante del rilascio>'
+group by tipo;
+```
+
+3. **Il realtime, finalmente col motivo.** Distribuzione per giorno e piattaforma; ci si aspetta
+   `errore` e `rientrato` più o meno pari per utente, e `abbandonato` vicino a 0:
+
+```sql
+select giorno, piattaforma, messaggio, sum(occorrenze) as occ, count(distinct utente_id) as utenti
+from app_log
+where sorgente = 'client'
+  and (messaggio like 'Chat realtime:%' or messaggio like 'chat-realtime-%')
+  and giorno >= current_date - 14
+group by 1, 2, 3 order by 1, 2, 3;
+```
+
+4. **I percorsi nuovi.** Nei giorni con notifiche chat `chat-apertura-da-notifica: aperta` deve essere
+   sopra 0 su ios e su android, e `non-trovata` vicino a 0. `notifica-link-rifiutato` e
+   `sw-notifica-link-non-interno` devono restare a 0. Le righe `precedenti-caricati` (evento `chat`)
+   compaiono quando qualcuno usa il pulsante.
+5. **Rifiuti ed errori della GET.** Su `chat/messages:GET` i 400 devono stare vicino a 0: se ci sono, è
+   un client vecchio che manda `offset`, o un cursore cancellato dall'oblio. I 500 devono stare a 0, e
+   un `LETTURA_FALLITA` va aperto.
+6. **Il carico.** Le chiamate a `/api/chat/*` per utente attivo non devono salire rispetto alla
+   settimana prima. Se salgono, rientro del realtime, ripresa e tocco stanno moltiplicando le GET.
+7. **Prima del merge, da contare.** La policy realtime consegna anche conversazioni che
+   `GET /api/chat/threads` non elenca, e ognuna costa una ricarica forzata per sessione. Se sono più di
+   zero, quelle famiglie oggi non vedono la conversazione, ed è un difetto a sé:
+
+```sql
+select count(*) from chat_threads t where not exists (select 1 from utenti u where u.id = t.parent_id);
+```
+
+8. **A mano, su un telefono, sulle conversazioni del titolare:**
+   - un invio senza doppione, anche riaprendo l'app;
+   - in una conversazione lunga, «Carica messaggi precedenti», con lo scorrimento che resta fermo;
+   - il tocco su una push con l'app in background e con l'app chiusa;
+   - un docente con aperta la conversazione di un'altra famiglia tocca la push: la conversazione
+     cambia e il campo è vuoto;
+   - una web push con la chat aperta in una scheda non apre una scheda nuova;
+   - «disattiva», «riattiva», poi una push: il tocco apre ancora la conversazione;
+   - «Indietro», poi un messaggio in arrivo: badge sulla riga, e nessuna spunta dal lato del mittente.
+
+⚠️ **Cosa resta aperto, detto qui perché non si perda:**
+- **Chi ha due profili, sul web e senza finestre aperte**, e tocca la web push di un messaggio
+  arrivato all'altro profilo, finisce sulla chat dell'altra area, e la guardia d'area lo porta alla
+  home. Sul nativo e nel centro notifiche la riscrittura d'area lo evita.
+- **Il tasto Indietro di Android**, dopo un'apertura dalla notifica, esce dalla pagina chat invece di
+  chiudere la conversazione. Succedeva già con l'apertura a mano; adesso capita più spesso.
+- **La notifica del browser di `useUnreadNotifications` mostra il nome del mittente e l'anteprima del
+  testo**, contro la regola delle push inviate dal server. Nello stesso file restano due `catch` con il
+  solo commento e un `if (!res.ok) return` silenzioso, che il lock non conta. Preesistenti, fuori
+  perimetro.
+- **Ogni GET rifirma gli allegati.** Un messaggio con allegato cambia URL a ogni giro di polling, e
+  l'immagine si riscarica ogni 30 s, come prima.
+- **Il badge può contare uno in meno** fino al polling successivo (al massimo 30 s), quando un
+  messaggio arriva mentre si legge più su.
+- **Un invio che non si conclude mai** lascia «Invia» spento per quella conversazione fino al
+  ricaricamento della pagina: `chat.invia` non ha un timeout.
+- **La geometria vera**, cioè i precedenti che non spostano ciò che si legge, la prova solo l'E2E in
+  CI. Su un iPhone vero WebKit può essere di un'altra versione: resta il collaudo a mano del punto 8.
 
 ---
 
@@ -3623,6 +3951,13 @@ giorni** — e ripiega sul polling a 15 s. Il codice lo diceva già nel proprio 
 ⚠️ **Si verifica guardando i log**: `CHANNEL_ERROR` deve smettere di crescere. *Una
 configurazione mai vista funzionare non è configurata.*
 
+> 🔻 **Dal rilascio del branch `fix/chat-doppioni-coda-notifica` questa verifica NON VALE PIÙ**
+> (changelog del 14/09). Il messaggio `Chat realtime: CHANNEL_ERROR (…)` non esiste più, quindi
+> smette di crescere anche col realtime che cade. Il motivo della caduta adesso sta in
+> `chat-realtime-errore: <motivo>` e `chat-realtime-timeout`, una riga per interruzione. E il vecchio
+> testo misurava altro: phoenix emette l'errore di canale a ogni chiusura del socket, anche con il
+> realtime abilitato.
+
 **b) Un invio che fallisce non diceva niente.** `ChatInput` svuotava il campo **prima** di sapere
 l'esito, e nessuno dei tre handler aveva un ramo per `!res.ok` fuori da due casi di 403 — quello
 di `/admin/messaggi` non leggeva `res.ok` affatto. Genitore moroso, allegato rifiutato, 500: il
@@ -3647,6 +3982,12 @@ blocco di un rilascio che ne contiene due che servono adesso.
 
 Per rimetterlo servirà prima un test che crei davvero un thread con più di 50 messaggi: nessuno
 lo fa, ed è per questo che il difetto è passato inosservato.
+
+> ✅ **Rimesso sul branch `fix/chat-doppioni-coda-notifica`** (changelog del 14/09). Il difetto non è
+> rimasto latente a lungo: dal 10/09 sette conversazioni avevano superato i 50 messaggi, e il 14/09
+> 48 messaggi non erano mai stati mostrati a nessuno. Il test che mancava adesso c'è, due volte:
+> `__tests__/api/chat-messages-coda.test.ts` ed `e2e/chat-precedenti.spec.ts`, con 60 messaggi
+> seminati.
 
 **d) La causa dell'E2E rossa È STATA TROVATA — 2026-09-07, dal trace di rete conservato.**
 Il paragrafo qui sopra dice «la causa non è stata trovata»: valeva quel giorno, non vale più, e

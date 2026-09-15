@@ -157,8 +157,9 @@ export const GET = withRoute('chat/messages:GET', async (request: Request) => {
          * Fino al 2026-09-14 questa `select` ordinava dal più VECCHIO e si fermava a 50: di ogni
          * conversazione arrivavano i 50 messaggi più vecchi, e dal cinquantunesimo in poi niente.
          * Misurato in produzione il 2026-09-14: 7 thread oltre i 50 messaggi (il più lungo 68), 48
-         * messaggi mai mostrati a nessuno e 45 mai letti — fra i non letti, il 93,8% stava oltre il
-         * cinquantesimo, contro l'1,7% degli altri. È la segnalazione del titolare: la notifica
+         * messaggi mai mostrati a nessuno e 45 mai letti. Fra i messaggi con più di 24 ore, quelli
+         * oltre il cinquantesimo erano non letti nel 93,8% dei casi, quelli entro il cinquantesimo
+         * nell'1,7%: la firma di un messaggio mai mostrato. È la segnalazione del titolare: la notifica
          * arriva, si apre la chat, e il messaggio nuovo non c'è.
          *
          * La lettura dalla coda era già stata scritta e TOLTA il 2026-09-07 (`74ecf831`), perché

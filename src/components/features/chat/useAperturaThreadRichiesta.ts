@@ -49,8 +49,10 @@ import type { EsitoApertura, RottaChat, StatoThreads } from './useConversazioneC
  * Una richiesta alla volta; quella arrivata dopo prende il posto di quella in attesa, e la stessa
  * conversazione già in corso non si chiede due volte (React in sviluppo esegue gli effetti due volte, e
  * un tocco può arrivare insieme alla ripresa della pagina). Il doppione però resta la richiesta arrivata
- * DOPO: toglie quella in attesa, altrimenti B, C e di nuovo B aprirebbero C. Dopo un `errore` mai subito:
- * vorrebbe dire ripetere a raffica la GET appena fallita.
+ * DOPO: toglie quella in attesa, altrimenti B, C e di nuovo B aprirebbero C. Ed è un doppione solo se
+ * nessuno ha scelto a mano da quando l'apertura in volo è partita: dopo una scelta quella finirà
+ * «annullata», e il nuovo tocco va in attesa come gli altri. Dopo un `errore` mai subito: vorrebbe dire
+ * ripetere a raffica la GET appena fallita.
  *
  * La richiesta rimandata ricorda la GENERAZIONE della selezione di quando è arrivata: se al momento di
  * ritentare è cambiata, qualcuno ha scelto a mano, e la notifica non apre più niente. Per un docente,
@@ -210,14 +212,18 @@ export function useAperturaThreadRichiesta(chat: Conversazione, { rotta, onApert
     const chiedi = useCallback(
         (id: string, origine: Origine) => {
             const coda = codaRef.current;
-            if (coda.inCorso?.id === id) {
-                // La stessa conversazione si sta già aprendo: non se ne chiede un'altra. Ma questa è
-                // l'ULTIMA richiesta, e quella in attesa, arrivata prima, non deve partire dopo.
-                // (`attendeNuovaLista` qui è già false: diventa true solo senza niente in volo.)
+            const selezione = leggiSelezioneRef.current();
+            // Un doppione è la stessa conversazione già in volo, partita dopo l'ultima scelta a mano. Se nel
+            // frattempo si è scelto a mano, quell'apertura finirà «annullata» e non vale per questo tocco,
+            // arrivato DOPO la scelta: va in attesa come ogni altra richiesta.
+            if (coda.inCorso?.id === id && coda.inCorso.selezione === selezione) {
+                // Non se ne chiede un'altra. Ma questa è l'ULTIMA richiesta, e quella in attesa, arrivata
+                // prima, non deve partire dopo. (`attendeNuovaLista` qui è già false: diventa true solo
+                // senza niente in volo.)
                 coda.inAttesa = null;
                 return;
             }
-            coda.inAttesa = { id, origine, selezione: leggiSelezioneRef.current() };
+            coda.inAttesa = { id, origine, selezione };
             coda.attendeNuovaLista = false;
             avanza();
         },

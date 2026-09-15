@@ -259,6 +259,30 @@ describe('useAperturaThreadRichiesta — la coda', () => {
         unmount();
     });
 
+    it('B si sta aprendo, si sceglie a mano, poi di nuovo B: il tocco arrivato DOPO la scelta apre B', async () => {
+        window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
+        const f = conversazioneFinta();
+        const { onAperta, unmount } = monta(f);
+        await scorri();
+
+        f.stato.selezione++; // l'utente apre da sé un'altra conversazione…
+        act(() => {
+            richiediAperturaThread(B); // …e poi tocca di nuovo la notifica di B
+        });
+        await scorri();
+        // L'apertura in volo è partita prima della scelta: si annulla, come fa il vero apriPerId.
+        await concludi(f.stato, B, 'annullato');
+
+        expect(
+            f.apriPerId.mock.calls.map((c) => c[0]),
+            'il tocco arrivato dopo la scelta è stato scartato come doppione di un’apertura che la scelta aveva già annullato',
+        ).toEqual([B, B]);
+        await concludi(f.stato, B, 'aperto');
+        expect(onAperta).toHaveBeenCalledTimes(1);
+        expect(h.logClient.mock.calls.map((c) => (c[0] as { messaggio: string }).messaggio)).toEqual(['chat-apertura-da-notifica: aperta (evento)']);
+        unmount();
+    });
+
     it('«errore» da sola: niente di nuovo finché non arriva una lista nuova, poi UN ritentativo', async () => {
         window.history.replaceState(null, '', `/parent/chat?thread=${B}`);
         const f = conversazioneFinta();

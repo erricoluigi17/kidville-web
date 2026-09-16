@@ -33,6 +33,18 @@
   "fatturaScaricoInCorso": "Un altro download è già in corso: aspetta che finisca e riprova.",
   "fatturaScaricoNonConsegnato": "La fattura non è stata salvata sul telefono: quello che si è aperto non contiene il documento. Riprova, oppure chiedila in segreteria.",
   "fatturaScaricoNonRiuscito": "Download non riuscito. Riprova fra poco.",
+  "fatturaViewerTitolo": "Anteprima fattura",
+  "fatturaViewerCaricamento": "Caricamento fattura…",
+  "fatturaViewerPreparazione": "Preparazione pagina…",
+  "fatturaViewerErrore": "Impossibile mostrare la fattura.",
+  "fatturaViewerRiprova": "Riprova",
+  "fatturaViewerChiudi": "Chiudi anteprima fattura",
+  "fatturaViewerPagina": "Pagina {corrente} di {totale}",
+  "fatturaViewerPrecedente": "Pagina precedente",
+  "fatturaViewerSuccessiva": "Pagina successiva",
+  "fatturaViewerZoomMeno": "Riduci zoom",
+  "fatturaViewerZoomPiu": "Aumenta zoom",
+  "fatturaViewerTestoPagina": "Testo della pagina {pagina}",
   "promemoriaAttivi": "Promemoria attivi",
   "attivaPromemoria": "Attiva promemoria pagamenti",
   "causaleTitolo": "Causale consigliata per il bonifico",
@@ -65,5 +77,7 @@
   "ariaCopiatoIban": "Copiato: IBAN",
   "ariaCopiatoIbanSede": "{count, plural, one {Copiato: IBAN della sede {sedi}} other {Copiato: IBAN delle sedi {sedi}}}",
   "copiaFallitaIban": "Copia non riuscita: seleziona l’IBAN qui sopra e copialo a mano.",
-  "copiaFallitaCausale": "Copia non riuscita: seleziona la causale qui sopra e copiala a mano."
+  "copiaFallitaCausale": "Copia non riuscita: seleziona la causale qui sopra e copiala a mano.",
+  "fatture": "Fatture",
+  "fatturaApriBrowserSalvare": "Apri nel browser per salvare"
 }

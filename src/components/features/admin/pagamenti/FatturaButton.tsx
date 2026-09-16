@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
-import { FileText, Download, Loader2, X, Pencil } from 'lucide-react';
+import { FileText, Loader2, X, Pencil } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
@@ -31,35 +31,8 @@ import type { IntestatarioScelto } from '@/lib/fatturazione/intestatario-scelto'
 import type { CandidatoIntestatario, IntestatarioAnteprima } from '@/lib/aruba/intestatario-pagamento';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { CHIAVE_MOTIVO_PROPOSTA, propostaApplicabile } from '@/lib/pagamenti/proposta-intestatario';
-import {
-    nomeFileFattura,
-    urlFattura,
-    useFattureScaricabili,
-    useScaricoFattura,
-    type AvvisoScarico,
-    type ScartoFattura,
-} from '@/lib/pagamenti/scarico-fattura';
-
-/** La pelle di un comando della fattura: le due ancore sono identiche a vedersi. */
-const PILL_FATTURA = 'inline-flex items-center gap-1 px-2 py-1 rounded-pill bg-kidville-green-soft text-kidville-green text-xs font-bold transition-colors hover:bg-kidville-green/20';
-
-/**
- * Il testo di ognuno dei tre esiti che NON consegnano il file.
- *
- * Tre chiavi e non una perché chiedono tre cose diverse: «aspetta, ne sta partendo un
- * altro», «quello che hai appena visto non ti ha dato il documento», «non è riuscito,
- * riprova». Un testo unico ne direbbe il vero in un caso su tre.
- *
- * Quella di mezzo è la sola che conta davvero: sul telefono il foglio di condivisione
- * si apre e dentro c'è un indirizzo relativo, cioè un gesto che sembra riuscito e non
- * consegna niente. Finché quel ramo taceva, chi in segreteria manda una fattura a una
- * famiglia credeva di averla mandata. Il perché sta per esteso su `AvvisoScarico`.
- */
-const CHIAVI_AVVISO: Record<AvvisoScarico, string> = {
-    'in-corso': 'fatBtn_scarico_in_corso',
-    'non-consegnato': 'fatBtn_scarico_non_consegnato',
-    'non-riuscito': 'fatBtn_scarico_non_riuscito',
-};
+import type { ScartoFattura } from '@/lib/pagamenti/scarico-fattura';
+import { FatturaDocumenti } from '@/components/features/pagamenti/FatturaDocumenti';
 
 /**
  * PERCHÉ LO SDI HA RESPINTO IL DOCUMENTO — la sola resa, per i QUATTRO punti che la usano.
@@ -140,11 +113,14 @@ function MotiviScarto({ scarti }: { scarti: ScartoFattura[] }) {
  * produzione sono poche — le righe «emessa» quell'elenco lo chiedevano già.
  */
 function ScartoLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
-    const { caricamento, scarti } = useFattureScaricabili(pagamentoId, userId);
-    // In caricamento niente, come per i comandi: l'unica transizione ammessa è
-    // «niente → riquadro», che è una comparsa e non un lampeggio.
-    if (caricamento) return null;
-    return <MotiviScarto scarti={scarti} />;
+    return (
+        <FatturaDocumenti
+            pagamentoId={pagamentoId}
+            userId={userId}
+            aspetto="segreteria"
+            renderScarti={(scarti) => <MotiviScarto scarti={scarti} />}
+        />
+    );
 }
 
 /**
@@ -165,95 +141,13 @@ function ScartoLinks({ pagamentoId, userId }: { pagamentoId: string; userId: str
  * dell'app `window.open` non apre niente e non lo dice.
  */
 function EmessaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
-    const t = useTranslations('adminContabilita');
-    const { caricamento, scaricabili, scarti } = useFattureScaricabili(pagamentoId, userId);
-    const { apri, avviso } = useScaricoFattura();
-    const [open, setOpen] = useState(false);
-
-    // Fase 1: niente. Nessuno scheletro, nessun pulsante spento.
-    if (caricamento) return null;
-    // Fase 2: niente — A MENO CHE ci sia un motivo di scarto da leggere. È il caso
-    // misurato in produzione il 2026-09-11: una quota ferma su «errore di upload»
-    // sta su un pagamento che risulta «emessa» e non ha nessun PDF nel bucket, e
-    // finora questa riga rendeva il vuoto. Il vuoto era una scelta giusta quando
-    // non c'era niente da dire; qui c'è, ed è il perché il documento non è partito.
-    if (scaricabili.length === 0 && scarti.length === 0) return null;
-
-    // Il titolo del foglio di sistema e il nome del file NON portano mai
-    // `intestatario` né `quota_label`: su nativo finiscono in WhatsApp o in Mail, e
-    // sarebbero il nome di una famiglia spedito fuori dall'app.
-    const comandi = scaricabili.map((f) => ({
-        id: f.id,
-        etichetta: f.quota_label || f.intestatario,
-        nomeFile: nomeFileFattura(f.numero, f.anno),
-        urlApri: urlFattura({ pagamentoId, fatturaId: f.id, userId }),
-        urlScarica: urlFattura({ pagamentoId, fatturaId: f.id, userId, scaricare: true }),
-    }));
-
-    /* IL GESTO CHE NON CONSEGNA IL FILE VA DETTO, e sul telefono il caso che capita
-       davvero NON è quello che sembra: se il plugin Filesystem non è registrato,
-       `scarica()` ripiega sul foglio di condivisione, che si apre — e dentro c'è
-       l'indirizzo RELATIVO di questa route, che nessuna app sa aprire. Chi manda una
-       fattura a una famiglia vede il gesto riuscire e non ha consegnato niente: è la
-       riga «non consegnato», e senza di lei lo schermo direbbe che è andato tutto bene.
-       Parla anche al secondo click mentre il primo è in volo («aspetta»), e al minuto
-       di attesa oltre il quale lo scarico si dichiara chiuso. Sul web resta sempre
-       vuota: lì scarica il browser e non si passa da `scarica()`. La regione è montata
-       SEMPRE — un `role` inserito nel DOM col testo già dentro spesso resta muto — e
-       sta in `sr-only` finché è vuota, così non riserva spazio in tabella. */
-    const rigaAvviso = (
-        <p role="alert" className={cx('font-maven text-[11px] text-kidville-error', !avviso && 'sr-only')}>
-            {avviso ? t(CHIAVI_AVVISO[avviso]) : ''}
-        </p>
-    );
-
-    // Nessun comando ma un motivo da leggere: il PDF non c'è davvero, e un pulsante
-    // che dà 404 non sarebbe un miglioramento. Resta il perché.
-    if (comandi.length === 0) return <MotiviScarto scarti={scarti} />;
-
-    if (comandi.length === 1) {
-        const c = comandi[0];
-        return (
-            <div className="inline-flex flex-wrap items-center gap-1">
-                <a href={c.urlApri} onClick={(e) => apri(e, { url: c.urlApri, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })} className={PILL_FATTURA}>
-                    <FileText size={12} /> {t('fatBtn_apri')}
-                </a>
-                <a href={c.urlScarica} onClick={(e) => apri(e, { url: c.urlScarica, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })} className={PILL_FATTURA}>
-                    <Download size={12} /> {t('fatBtn_scarica')}
-                </a>
-                {rigaAvviso}
-                <MotiviScarto scarti={scarti} />
-            </div>
-        );
-    }
-
     return (
-        <div className="relative inline-block">
-            <button onClick={() => setOpen((o) => !o)} className={PILL_FATTURA}>
-                <Download size={12} /> {t('fatBtn_fatture')} ({comandi.length})
-            </button>
-            {open && (
-                <div className="absolute right-0 z-20 mt-1 w-64 rounded-card border border-kidville-line bg-kidville-white p-1" style={{ boxShadow: MODAL_SHADOW }}>
-                    {comandi.map((c) => (
-                        <div key={c.id} className="rounded-input px-3 py-1.5">
-                            <p className="font-maven text-xs text-kidville-ink">{t('fatBtn_fattura_dash')} {c.etichetta}</p>
-                            <div className="mt-1 flex items-center gap-2">
-                                <a href={c.urlApri} onClick={(e) => apri(e, { url: c.urlApri, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })}
-                                    className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green hover:underline">
-                                    <FileText size={12} /> {t('fatBtn_apri')}
-                                </a>
-                                <a href={c.urlScarica} onClick={(e) => apri(e, { url: c.urlScarica, nomeFile: c.nomeFile, titolo: t('fatBtn_fattura') })}
-                                    className="inline-flex items-center gap-1 font-maven text-xs font-bold text-kidville-green hover:underline">
-                                    <Download size={12} /> {t('fatBtn_scarica')}
-                                </a>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
-            {rigaAvviso}
-            <MotiviScarto scarti={scarti} />
-        </div>
+        <FatturaDocumenti
+            pagamentoId={pagamentoId}
+            userId={userId}
+            aspetto="segreteria"
+            renderScarti={(scarti) => <MotiviScarto scarti={scarti} />}
+        />
     );
 }
 

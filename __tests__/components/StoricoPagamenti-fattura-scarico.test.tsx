@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 
 /**
  * ════════════════════════════════════════════════════════════════════════════
@@ -70,12 +70,6 @@ const F1 = 'cccccccc-0000-4000-8000-000000000021';
 const F2 = 'cccccccc-0000-4000-8000-000000000022';
 const FS = 'cccccccc-0000-4000-8000-0000000000ff';
 
-/** Gli indirizzi attesi, SCRITTI A MANO: costruirli con `urlFattura` sarebbe tautologico. */
-const APRI_F1 = `/api/pagamenti/fattura?pagamento_id=${PAG}&userId=${UTENTE}&fattura_id=${F1}`;
-const SCARICA_F1 = `${APRI_F1}&download=1`;
-const APRI_F2 = `/api/pagamenti/fattura?pagamento_id=${PAG}&userId=${UTENTE}&fattura_id=${F2}`;
-const SCARICA_F2 = `${APRI_F2}&download=1`;
-
 /**
  * Una voce già FATTURATA: senza `fattura_stato: 'emessa'` la card non monta nemmeno
  * `FatturaLinks`, e la prova misurerebbe il nulla.
@@ -95,7 +89,9 @@ const VOCE = {
     stato: 'pagato',
     tipo: 'singolo',
     obbligatorio: true,
-    fattura_stato: 'emessa',
+    // Lo stato aggregato non governa più la visibilità: può essere scartato per
+    // un'altra quota mentre l'elenco autorizza questa.
+    fattura_stato: 'scartata',
     causale_suggerita: null,
     alunni: { nome: 'Mara', cognome: 'Bianchi', codice_fiscale: 'AAAAAA00A00A000A' },
 };
@@ -142,9 +138,16 @@ beforeEach(() => {
 afterEach(cleanup);
 
 const chiamateElenco = () => chiamate.filter((u) => u.includes('/api/pagamenti/fattura/list'));
-/** Le ancore della fattura DI UN pagamento: il controllo e la prova non si confondono. */
-const ancoreDi = (pagamento: string) =>
-    [...document.querySelectorAll<HTMLAnchorElement>(`a[href*="pagamento_id=${pagamento}"]`)];
+/** I comandi della fattura DI UN pagamento: il controllo e la prova non si confondono. */
+const comandiDi = (pagamento: string) => {
+    const descrizione = pagamento === PAG ? VOCE.descrizione : VOCE_SENT.descrizione;
+    const titolo = screen.queryByText(descrizione);
+    const card = titolo?.closest('.rounded-card');
+    if (!card) return [];
+    return within(card as HTMLElement).queryAllByRole('button').filter((bottone) =>
+        bottone.textContent?.includes(testo('fatturaApri'))
+        || bottone.textContent?.includes(testo('fatturaScarica')));
+};
 
 /**
  * Monta la pagina e aspetta che entrambe le card siano a schermo E che i due elenchi
@@ -187,46 +190,34 @@ async function montaEAspettaLaFase1(): Promise<void> {
 async function consegnaEAssorbi(righe: unknown[]): Promise<void> {
     consegnaPer[PAG]?.(righe);
     consegnaPer[SENT]?.([riga(FS, 9001, true)]);
-    await waitFor(() => expect(ancoreDi(SENT)).toHaveLength(2));
+    await waitFor(() => expect(comandiDi(SENT)).toHaveLength(2));
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe('StoricoPagamenti · FatturaLinks — le tre fasi sulla card del genitore', () => {
-    it('sospeso → nessun comando; consegnato → «Apri» e «Scarica», e `download=1` SOLO sulla seconda', async () => {
+    it('sospeso → nessun comando; consegnato → apertura interna e salvataggio separati', async () => {
         await montaEAspettaLaFase1();
 
         // FASE 1 — le risposte sono in volo: niente comando, su nessuna delle due card.
-        expect(ancoreDi(PAG)).toHaveLength(0);
-        expect(ancoreDi(SENT)).toHaveLength(0);
+        expect(comandiDi(PAG)).toHaveLength(0);
+        expect(comandiDi(SENT)).toHaveLength(0);
 
         // FASE 3 — la risposta arriva e dice che il PDF è nel bucket.
         await consegnaEAssorbi([riga(F1, 1948, true)]);
 
-        const link = ancoreDi(PAG);
-        expect(link).toHaveLength(2);
-        // L'ORDINE conta: prima si legge, poi si salva.
-        expect(link[0]).toHaveAttribute('href', APRI_F1);
-        expect(link[1]).toHaveAttribute('href', SCARICA_F1);
-        // `download=1` sta su UNA sola delle due, e non è un dettaglio: su entrambe,
-        // «Apri» salverebbe un file invece di mostrarlo; su nessuna, «Scarica»
-        // aprirebbe il PDF senza salvare niente.
-        expect(link[0].getAttribute('href')).not.toContain('download=');
-        expect(link[1].getAttribute('href')).toContain('download=1');
-
-        // Due parole diverse, due chiavi diverse del catalogo.
-        expect(link[0].textContent).toContain(testo('fatturaApri'));
-        expect(link[1].textContent).toContain(testo('fatturaScarica'));
+        const comandi = comandiDi(PAG);
+        expect(comandi).toHaveLength(2);
+        expect(comandi[0].textContent).toContain(testo('fatturaApri'));
+        expect(comandi[1].textContent).toContain(testo('fatturaScarica'));
         expect(testo('fatturaApri')).not.toBe(testo('fatturaScarica'));
-
-        // MAI `target="_blank"`: nella WebView `window.open` non apre e non lo dice.
-        for (const a of link) expect(a.getAttribute('target')).toBeNull();
+        expect(screen.queryAllByRole('link')).toHaveLength(0);
     });
 
     it('FASE 2 · `pdf_disponibile: false` → nessun comando, benché la fattura esista', async () => {
         await montaEAspettaLaFase1();
         await consegnaEAssorbi([riga(F1, 1948, false)]);
 
-        expect(ancoreDi(PAG)).toHaveLength(0);
+        expect(comandiDi(PAG)).toHaveLength(0);
         expect(document.body.innerHTML).not.toContain(`pagamento_id=${PAG}`);
     });
 
@@ -237,7 +228,7 @@ describe('StoricoPagamenti · FatturaLinks — le tre fasi sulla card del genito
         await montaEAspettaLaFase1();
         await consegnaEAssorbi([]);
 
-        expect(ancoreDi(PAG)).toHaveLength(0);
+        expect(comandiDi(PAG)).toHaveLength(0);
     });
 
     it('FASE 2 · `pdf_disponibile` ASSENTE (server più vecchio) → nessun comando', async () => {
@@ -247,7 +238,7 @@ describe('StoricoPagamenti · FatturaLinks — le tre fasi sulla card del genito
         // fiscale di una famiglia.
         await consegnaEAssorbi([{ id: F1, numero: 1948, anno: 2026, quota_label: null, intestatario: 'X' }]);
 
-        expect(ancoreDi(PAG)).toHaveLength(0);
+        expect(comandiDi(PAG)).toHaveLength(0);
     });
 
     it('FASE 3 · due quote (genitori separati): solo quelle col PDF verificato, due comandi ciascuna', async () => {
@@ -259,9 +250,10 @@ describe('StoricoPagamenti · FatturaLinks — le tre fasi sulla card del genito
             riga('dddddddd-0000-4000-8000-000000000023', 1950, false, 'Nonna'),
         ]);
 
-        const link = ancoreDi(PAG);
-        expect(link).toHaveLength(4);
-        expect(link.map((a) => a.getAttribute('href'))).toEqual([APRI_F1, SCARICA_F1, APRI_F2, SCARICA_F2]);
+        const comandi = comandiDi(PAG);
+        expect(comandi).toHaveLength(4);
+        expect(comandi.filter((b) => b.textContent?.includes(testo('fatturaApri')))).toHaveLength(2);
+        expect(comandi.filter((b) => b.textContent?.includes(testo('fatturaScarica')))).toHaveLength(2);
         expect(screen.queryByText(/Nonna/)).toBeNull();
     });
 });

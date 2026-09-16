@@ -1935,6 +1935,12 @@ export const CODICI_ERRORE = {
      * contro `fattura-ruolo-non-ammesso`).
      */
     FATTURA_ACCESSO_NEGATO: 'erroreFatturaAccessoNegato',
+    /** 409 — la revisione storica è già stata finalizzata o la sede è già attiva. */
+    FATTURA_REVISIONE_IMMUTABILE: 'erroreFatturaRevisioneImmutabile',
+    /** 409 — l’insieme delle irrisolte è cambiato dopo l’anteprima mostrata allo staff. */
+    FATTURA_ANTEPRIMA_CAMBIATA: 'erroreFatturaAnteprimaCambiata',
+    /** 409 — almeno una fattura storica non ha ancora una revisione verificata. */
+    FATTURA_REVISIONI_INCOMPLETE: 'erroreFatturaRevisioniIncomplete',
     /**
      * 429 — il blocco di fatture è stato rifiutato PRIMA di partire: Aruba concede
      * 60 upload l'ora per IP e per quest'ora sono esauriti.

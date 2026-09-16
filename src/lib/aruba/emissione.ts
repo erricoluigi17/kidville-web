@@ -1341,7 +1341,11 @@ export async function emettiFatturaPagamento(
   // fatto» e il pagamento finisce in un «in attesa» che nessun `sync` chiuderà.
   const { data: esistenti, error: errEsistenti } = await supabase
     .from('fatture_emesse')
-    .select('id, numero, sezionale, anno, aruba_filename, sdi_stato, quota_adult_id, importo, intestatario')
+    // `modalita_emissione` è anche un PREFLIGHT DI SCHEMA: questa lettura precede
+    // sia la RPC che consuma il numero sia ogni chiamata ad Aruba. Se il writer
+    // arriva prima della migrazione, PostgREST risponde 42703 e il ramo
+    // fail-closed qui sotto ferma l'emissione senza lasciare un documento orfano.
+    .select('id, numero, sezionale, anno, aruba_filename, sdi_stato, quota_adult_id, importo, intestatario, modalita_emissione')
     .eq('pagamento_id', pagamentoId)
   if (errEsistenti) {
     logEvento('fattura', 'error', {
@@ -1369,6 +1373,7 @@ export async function emettiFatturaPagamento(
     aruba_filename: string | null
     sdi_stato: number | null
     quota_adult_id: string | null
+    modalita_emissione: 'ordinaria' | 'quote_separate' | null
     /**
      * L'importo di QUELLA riga — `numeric(10,2) NOT NULL` a schema, quindi in
      * produzione c'è sempre, e PostgREST può restituirlo come numero o come
@@ -2289,6 +2294,11 @@ export async function emettiFatturaPagamento(
       quota_adult_id: q.adultId,
       quota_label: q.label || null,
       parent_registry_id: intest.registryId,
+      // `multi` nasce da `quote.length` DOPO l'eventuale override manuale. È lo
+      // snapshot della decisione che ha prodotto il documento, non una deduzione
+      // da `genitori_separati` né dal numero di INSERT poi riusciti: se una delle
+      // due quote fallisce la validazione, l'altra resta comunque quote_separate.
+      modalita_emissione: multi ? 'quote_separate' : 'ordinaria',
       bollo_virtuale: bolloImporto > 0,
     }
 

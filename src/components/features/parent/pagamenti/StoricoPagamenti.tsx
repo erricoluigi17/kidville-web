@@ -2,15 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslations } from 'next-intl';
-import { AlertTriangle, Download, FileText } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { getSupabase } from '@/lib/supabase/browser-client';
-import {
-    nomeFileFattura,
-    urlFattura,
-    useFattureScaricabili,
-    useScaricoFattura,
-    type AvvisoScarico,
-} from '@/lib/pagamenti/scarico-fattura';
+import { FatturaDocumenti } from '@/components/features/pagamenti/FatturaDocumenti';
 import { raggruppaPerCategoria } from '@/lib/pagamenti/categorie';
 import { residuoEffettivo } from '@/lib/pagamenti/aging';
 import { isoToIt } from '@/lib/format/data';
@@ -241,93 +235,8 @@ export function StoricoPagamenti({ userId }: Props) {
     );
 }
 
-/** La pelle di un comando della fattura: le due ancore sono identiche a vedersi. */
-const PILL_FATTURA = 'flex items-center gap-1 px-3 py-1 rounded-full bg-kidville-green/10 text-kidville-green text-xs font-bold hover:bg-kidville-green/20';
-
-/**
- * Il testo di ognuno dei tre esiti che NON consegnano il file.
- *
- * Tre chiavi e non una perché chiedono al genitore tre cose diverse: «aspetta, ne
- * sta partendo un altro», «quello che hai appena visto non ti ha dato il documento»,
- * «non è riuscito, riprova». Un testo unico ne direbbe il vero in un caso su tre.
- *
- * Quella di mezzo è la sola che conta davvero, ed è arrivata tardi: è il caso in cui
- * sul telefono si APRE il foglio di condivisione e dentro c'è un indirizzo relativo,
- * cioè un gesto che sembra riuscito e non consegna niente. Finché quel ramo taceva,
- * il genitore restava convinto di avere la fattura. Il perché sta per esteso su
- * `AvvisoScarico`.
- */
-const CHIAVI_AVVISO: Record<AvvisoScarico, string> = {
-    'in-corso': 'fatturaScaricoInCorso',
-    'non-consegnato': 'fatturaScaricoNonConsegnato',
-    'non-riuscito': 'fatturaScaricoNonRiuscito',
-};
-
-/**
- * I comandi della fattura, per il genitore.
- *
- * ⚠️ IL FAST-PATH NON C'È PIÙ, ED È IL PUNTO DI QUESTO COMPONENTE. Qui c'era
- * `if (!fatture || fatture.length <= 1) return <a>Fattura</a>`: `fatture` è
- * `null` anche MENTRE STA CARICANDO, quindi quel ramo rendeva il link senza
- * sapere se dietro ci fosse un PDF. Le tre fasi ora vengono da
- * `useFattureScaricabili` (`@/lib/pagamenti/scarico-fattura`), che è lo stesso
- * motore della pelle di segreteria: in caricamento non si rende NIENTE e non si
- * riserva spazio, senza PDF disponibili non si rende NIENTE, e solo con almeno
- * una riga verificata sul bucket compaiono i comandi.
- *
- * Due ancore e non una: «Apri» legge il documento a schermo, «Scarica» chiede
- * alla route l'`attachment`. Nessun `target="_blank"`, mai: nella WebView
- * dell'app `window.open` non apre niente e non lo dice.
- */
 function FatturaLinks({ pagamentoId, userId }: { pagamentoId: string; userId: string }) {
-    const t = useTranslations('pagamenti');
-    const { caricamento, scaricabili } = useFattureScaricabili(pagamentoId, userId);
-    const { apri, avviso } = useScaricoFattura();
-
-    // Fase 1 e fase 2: niente. Nessuno scheletro, nessun pulsante spento.
-    if (caricamento || scaricabili.length === 0) return null;
-
-    const unaSola = scaricabili.length === 1;
-    return (
-        <div className="flex flex-col items-end gap-1">
-            {scaricabili.map((f) => {
-                // Il titolo del foglio di sistema e il nome del file NON portano mai
-                // `intestatario` né `quota_label`: su nativo finiscono in WhatsApp o in
-                // Mail, e sarebbero il nome di una famiglia spedito fuori dall'app.
-                const bersaglio = { nomeFile: nomeFileFattura(f.numero, f.anno), titolo: t('fattura') };
-                const urlApri = urlFattura({ pagamentoId, fatturaId: f.id, userId });
-                const urlScarica = urlFattura({ pagamentoId, fatturaId: f.id, userId, scaricare: true });
-                return (
-                    <div key={f.id} className="flex flex-wrap items-center justify-end gap-1.5">
-                        <span className="font-maven text-[11px] text-kidville-sub">
-                            {unaSola ? t('fattura') : t('fatturaConEtichetta', { etichetta: f.quota_label || f.intestatario })}
-                        </span>
-                        <a href={urlApri} onClick={(e) => apri(e, { ...bersaglio, url: urlApri })} className={PILL_FATTURA}>
-                            <FileText size={13} /> {t('fatturaApri')}
-                        </a>
-                        <a href={urlScarica} onClick={(e) => apri(e, { ...bersaglio, url: urlScarica })} className={PILL_FATTURA}>
-                            <Download size={13} /> {t('fatturaScarica')}
-                        </a>
-                    </div>
-                );
-            })}
-            {/* IL GESTO CHE NON CONSEGNA IL FILE VA DETTO, e sul telefono il caso che
-                capita davvero NON è quello che sembra: se il plugin Filesystem non è
-                registrato, `scarica()` ripiega sul foglio di condivisione, che si apre
-                — e dentro c'è l'indirizzo RELATIVO di questa route, che nessuna app sa
-                aprire. Il genitore vede il gesto riuscire e non ha la fattura: è la
-                riga «non consegnato», e senza di lei lo schermo direbbe che è andato
-                tutto bene. Parla anche al secondo click mentre il primo è in volo
-                («aspetta»), e al minuto di attesa oltre il quale lo scarico si dichiara
-                chiuso. Sul web resta sempre vuota: lì scarica il browser e non si passa
-                da `scarica()`. La regione è montata SEMPRE — un `role` inserito nel DOM
-                col testo già dentro spesso resta muto — e sta in `sr-only` finché è
-                vuota, così non riserva spazio. */}
-            <p role="alert" className={`font-maven text-[11px] text-kidville-error ${avviso ? '' : 'sr-only'}`}>
-                {avviso ? t(CHIAVI_AVVISO[avviso]) : ''}
-            </p>
-        </div>
-    );
+    return <FatturaDocumenti pagamentoId={pagamentoId} userId={userId} aspetto="genitore" />;
 }
 
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
@@ -349,7 +258,6 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
     // il residuo per-quota non è calcolabile qui, quindi non si mostra "(resta …)".
     // Per i non-split: importo − sconto − pagato, mai negativo (guard sui sovraincassi).
     const resto = residuoEffettivo(p);
-    const fatturaPronta = p.fattura_stato === 'emessa';
 
     return (
         <div className={`bg-white rounded-card border p-3 ${p.stato === 'scaduto' ? 'border-kidville-error/40' : 'border-kidville-line'}`}>
@@ -376,7 +284,7 @@ function PagamentoCard({ p, userId }: { p: Pagamento; userId: string }) {
                     più perché quella route non c'è più. Resta un solo documento per una
                     voce di pagamento, la FATTURA, e i suoi comandi si rendono da soli
                     solo quando il PDF esiste davvero. */}
-                {fatturaPronta && <FatturaLinks pagamentoId={p.id} userId={userId} />}
+                <FatturaLinks pagamentoId={p.id} userId={userId} />
             </div>
         </div>
     );

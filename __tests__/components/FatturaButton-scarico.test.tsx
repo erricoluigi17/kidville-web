@@ -62,11 +62,6 @@ const F1 = 'cccccccc-0000-4000-8000-000000000011'
 const F2 = 'cccccccc-0000-4000-8000-000000000012'
 
 /** Gli indirizzi attesi, SCRITTI A MANO: costruirli con `urlFattura` sarebbe tautologico. */
-const APRI_F1 = `/api/pagamenti/fattura?pagamento_id=${PAG}&userId=${UTENTE}&fattura_id=${F1}`
-const SCARICA_F1 = `${APRI_F1}&download=1`
-const APRI_F2 = `/api/pagamenti/fattura?pagamento_id=${PAG}&userId=${UTENTE}&fattura_id=${F2}`
-const SCARICA_F2 = `${APRI_F2}&download=1`
-
 const riga = (id: string, numero: number, disponibile: boolean, etichetta: string | null = null) => ({
     id, numero, anno: 2026, quota_label: etichetta, intestatario: 'Intestatario',
     pdf_disponibile: disponibile, sdi_stato_label: 'Consegnata',
@@ -125,14 +120,14 @@ describe('fase 1 · in caricamento non si rende NIENTE', () => {
         // L'elenco è stato chiesto: il vuoto qui sotto è «non lo so ancora», non
         // «non è partito niente».
         await waitFor(() => expect(chiamateElenco()).toHaveLength(1))
-        expect(screen.queryAllByRole('link')).toHaveLength(0)
+        expect(screen.queryAllByRole('button')).toHaveLength(0)
         // Nemmeno uno scheletro: il nodo è vuoto, non «vuoto ma alto».
         expect(container.innerHTML).toBe('')
 
         // …e ora la risposta arriva. Senza questa metà, la prova sarebbe verde
         // anche su un componente che non rende MAI niente.
         await consegnaEAssorbi([riga(F1, 1948, true)])
-        expect(screen.queryAllByRole('link')).toHaveLength(2)
+        expect(screen.queryAllByRole('button')).toHaveLength(2)
     })
 })
 
@@ -143,7 +138,7 @@ describe('fase 2 · senza PDF verificato non si rende NIENTE', () => {
         await waitFor(() => expect(chiamateElenco()).toHaveLength(1))
         await consegnaEAssorbi([riga(F1, 1948, false)])
 
-        expect(screen.queryAllByRole('link')).toHaveLength(0)
+        expect(screen.queryAllByRole('button')).toHaveLength(0)
         expect(document.body.innerHTML).not.toContain('/api/pagamenti/fattura?')
     })
 
@@ -155,7 +150,7 @@ describe('fase 2 · senza PDF verificato non si rende NIENTE', () => {
         // scritto `!== false` accetterebbe questa riga, e il comando comparirebbe
         // su una fattura di cui nessuno ha verificato il PDF.
         await consegnaEAssorbi([{ id: F1, numero: 1948, anno: 2026, quota_label: null, intestatario: 'X' }])
-        expect(screen.queryAllByRole('link')).toHaveLength(0)
+        expect(screen.queryAllByRole('button')).toHaveLength(0)
     })
 
     it('elenco vuoto → nessun link', async () => {
@@ -166,36 +161,23 @@ describe('fase 2 · senza PDF verificato non si rende NIENTE', () => {
         emessa()
         await waitFor(() => expect(chiamateElenco()).toHaveLength(1))
         await consegnaEAssorbi([])
-        expect(screen.queryAllByRole('link')).toHaveLength(0)
+        expect(screen.queryAllByRole('button')).toHaveLength(0)
     })
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
-describe('fase 3 · una quota sola: due affordance, e `download=1` SOLO sulla seconda', () => {
-    it('«Apri» va all’inline, «Scarica» chiede l’allegato', async () => {
+describe('fase 3 · una quota sola: apertura e salvataggio restano gesti separati', () => {
+    it('rende due pulsanti distinti e nessun link che possa navigare fuori dal viewer', async () => {
         emessa()
         await waitFor(() => expect(chiamateElenco()).toHaveLength(1))
         await consegnaEAssorbi([riga(F1, 1948, true)])
 
-        const link = screen.getAllByRole('link')
-        expect(link).toHaveLength(2)
-
-        // L'ORDINE conta: prima si legge, poi si salva.
-        expect(link[0]).toHaveAttribute('href', APRI_F1)
-        expect(link[1]).toHaveAttribute('href', SCARICA_F1)
-        // `download=1` sta su UNA sola delle due, e non è un dettaglio: se stesse su
-        // entrambe, «Apri» salverebbe un file invece di mostrarlo, e se non stesse su
-        // nessuna «Scarica» aprirebbe il PDF senza salvare niente.
-        expect(link[0].getAttribute('href')).not.toContain('download=')
-        expect(link[1].getAttribute('href')).toContain('download=1')
-
-        // Due parole diverse: due chiavi diverse del catalogo, non la stessa due volte.
-        expect(link[0].textContent).toContain(testo('fatBtn_apri'))
-        expect(link[1].textContent).toContain(testo('fatBtn_scarica'))
+        const pulsanti = screen.getAllByRole('button')
+        expect(pulsanti).toHaveLength(2)
+        expect(pulsanti[0].textContent).toContain(testo('fatBtn_apri'))
+        expect(pulsanti[1].textContent).toContain(testo('fatBtn_scarica'))
         expect(testo('fatBtn_apri')).not.toBe(testo('fatBtn_scarica'))
-
-        // MAI `target="_blank"`: nella WebView `window.open` non apre e non lo dice.
-        for (const a of link) expect(a.getAttribute('target')).toBeNull()
+        expect(screen.queryAllByRole('link')).toHaveLength(0)
     })
 
     it('la regione d’avviso è montata SEMPRE, e da vuota non occupa spazio', async () => {
@@ -227,9 +209,9 @@ describe('fase 3 · due quote (genitori separati): un menù, e due comandi per c
         expect(apri.textContent).toContain('(2)')      // due, non tre
         fireEvent.click(apri)
 
-        const link = screen.getAllByRole('link')
-        expect(link).toHaveLength(4)
-        expect(link.map((a) => a.getAttribute('href'))).toEqual([APRI_F1, SCARICA_F1, APRI_F2, SCARICA_F2])
+        expect(screen.getAllByRole('button', { name: testo('fatBtn_apri') })).toHaveLength(2)
+        expect(screen.getAllByRole('button', { name: testo('fatBtn_scarica') })).toHaveLength(2)
+        expect(screen.queryAllByRole('link')).toHaveLength(0)
         expect(screen.queryByText(/Nonna/)).toBeNull()
     })
 })

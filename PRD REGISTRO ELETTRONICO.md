@@ -9,8 +9,8 @@
 >
 > L'applicazione comunica con il database tramite API Routes server-side (Next.js), che utilizzano il client Supabase in demo e un client PostgreSQL diretto in produzione. Le credenziali sono isolate in variabili d'ambiente (`.env.local`).
 >
-> ### Schema Database Attivo
-> Le tabelle attualmente create e operative su Supabase sono:
+> ### Schema Database attivo e preparazioni di rilascio
+> Le tabelle operative su Supabase e le preparazioni di rilascio sono:
 > | Tabella | Descrizione | RLS |
 > |---------|-------------|-----|
 > | `schools` | Anagrafica sedi (multi-tenant) | ✅ Policy anon SELECT |
@@ -31,6 +31,7 @@
 > | `mensa_alternative` | Alternativa pasto per allergia/richiesta genitore (UNIQUE alunno+data, origine segreteria/genitore) | ✅ RLS + policy service_role |
 > | `protocolli` (+ `protocolli_allegati`, `protocolli_categorie`, `protocolli_numerazione`) | Registro di protocollo DPR 445/2000: trigger WORM (annullo una-tantum art. 54; DELETE solo via `protocollo_elimina()` senza tracce), numerazione atomica per scuola/anno, titolario con seed | ✅ RLS + policy service_role |
 > | `pagamenti` | Scadenziario rette e quote (+ `sconto`/`sconto_motivo` per voce, Contabilità v2) | Schema creato, non ancora popolato |
+> | `fatture_emesse` — visibilità famiglie | Preparazione della visibilità del **PDF originale Aruba**: lo snapshot di emissione distingue `ordinaria` e `quote_separate`; l'intestatario resta uno snapshot fiscale. Ordinaria: documento visibile a entrambi i genitori autorizzati, anche se l'intestatario è terzo. Quote separate: ciascun genitore vede soltanto la propria quota. Storico: nessuna deduzione automatica; richiede revisione esplicita dello staff per sede e le irrisolte restano solo staff dopo l'attivazione. Le migrazioni preparatorie `20260916120000` e `20260916120100` sono applicate in CI e produzione, con FK della sede; alla verifica erano zero sedi attivate, revisioni, classificazioni e audit. Pannello staff, lifecycle StrictMode e pulsanti sono PASS; restano i gate globali finali e la prova E2E autenticata, mentre il rendering PDF nativo non è ancora provato. Schema applicato, funzione non pubblicata né attivata. | 🔶 Preparazione, non rilasciata |
 > | `pagamenti_transazioni` | Contenitore «incasso unico di famiglia»: un versamento → più voci di più figli + ricariche mensa (pagante = `parents.id`, metodo, riferimento/CRO, data valuta, note, annullo tracciato) | ✅ RLS + policy service_role |
 > | `riconciliazione_movimenti` | L'estratto conto della banca, **unico per le tre sedi** (`scuola_id` nullable dal 2026-07-19). Dal branch `feat/conciliazione-composita` porta **`transazione_id`** (migr. `20260912180000`): quando un bonifico salda più voci insieme il movimento si lega alla **transazione**, che diventa la sorgente di verità di importo e righe; `pagamento_id` e `incasso_id` **non** vengono svuotati e restano puntati sulla **voce àncora**, quella su cui si emette la fattura (li leggono il chip di fatturazione della coda, il lotto fatture e `src/lib/aruba/intestatario-pagamento.ts`, da cui passa la detrazione 730). ⚠️ **`scuola_id` cambia significato** su una riga confermata dalla composizione: è la sede del **DOCUMENTO**, dichiarata dall'operatore, non quella del pagamento àncora — su un bonifico multi-plesso le due **possono divergere per costruzione**. Rimisurato il 2026-09-13 (`SELECT stato, count(*), count(pagamento_id) FROM riconciliazione_movimenti GROUP BY stato`): **239 righe** — 174 `confermato` (tutte e 174 con `pagamento_id`), 33 `da_abbinare`, 31 `suggerito`, 1 `ignorato`, e **zero** righe non confermate con un `pagamento_id` addosso: lo stato «riaperto» che questo lavoro introduce oggi non esiste su nessuna riga | ✅ RLS + policy `service_role` (1 policy, `ALL`) |
 > | `crediti_famiglia` | Ledger del credito di famiglia (causali eccedenza/utilizzo/rettifica/storno con `saldo_dopo`, ancorato a `parents.id`) — visibile **solo alla segreteria** | ✅ RLS + policy service_role |
@@ -101,6 +102,36 @@
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
 
 ---
+
+## 🧾 Changelog — Fatture dei genitori: preparazione della visibilità del PDF Aruba — 2026-09-16 (branch `codex/fatture-genitori-pdf-quote`)
+
+La fattura mostrata alla famiglia sarà sempre il **PDF originale ricevuto da Aruba e conservato nel bucket privato**; non viene generata una copia di cortesia. **Apri** apre il PDF originale Aruba nel visualizzatore interno pagina per pagina, con zoom e testo accessibile. **Scarica** è l'azione separata sul web e nelle app con Filesystem. Nelle app prive di Filesystem compare **Apri nel browser per salvare**: dopo gli stessi gate restituisce un URL firmato valido **300 secondi**, utilizzabile da chi lo possiede fino alla scadenza. **Riprova** è disponibile solo per un errore di visualizzazione e lo ripete senza chiudere il dialogo; per ritentare il salvataggio si preme di nuovo **Scarica** oppure **Apri nel browser per salvare**. L'avviso del salvataggio è nel dialogo quando aperto, altrimenti nella pagina.
+
+La regola è scritta sul documento al momento dell'emissione, mai ricostruita dalle quote o dall'anagrafica corrente:
+
+| Snapshot di emissione | Visibilità della famiglia dopo l'attivazione della sede |
+|---|---|
+| `ordinaria` | Entrambi i genitori autorizzati del minore, anche se il documento è intestato a uno solo o a un terzo |
+| `quote_separate` | Solo il genitore indicato nello snapshot della singola quota |
+| `NULL` storico non classificato | Solo staff della sede; non concede visibilità alla famiglia |
+
+Lo staff della sede vede tutte le fatture. Un account che sia anche genitore ma non appartenga allo staff di quella sede segue la regola familiare. Elenco, PDF interno e collegamento esterno applicano lo stesso controllo, dopo il gate famiglia/sede. Un errore durante la lettura della policy non concede accesso.
+
+Lo storico sarà esaminato **per sede** senza autoclassificazione. Durante la preparazione le decisioni `ordinaria`, `quote_separate` e `irrisolta` sono bozze correggibili e auditabili. L'attivazione avviene solo dopo la verifica staff: finalizza gli snapshot risolti in una transazione e conserva nascoste ai genitori le irrisolte. Uno snapshot già scritto, sia alla nuova emissione sia con la finalizzazione dello storico, è immutabile anche prima dell'attivazione della sede. L'audit è append-only e registra solo metadati tecnici, senza dati personali nei log. L'anteprima delle irrisolte è parte della richiesta di attivazione: se cambia, l'operatore deve ricaricarla.
+
+Le migrazioni `20260916120000_fatture_visibilita_snapshot.sql` (snapshot, flag per sede e bozza) e `20260916120100_fatture_visibilita_revisione.sql` (audit append-only, revisione e attivazione atomica) sono già applicate in CI e produzione. La verifica ha confermato la FK della sede e zero sedi attivate, revisioni, classificazioni e righe audit: lo schema è solo preparatorio. L'ordine di rollout è: gate di qualità → PR, merge e pubblicazione del codice → revisione manuale dello storico per ogni sede → preview → attivazione manuale della singola sede. Non esiste un rilevamento né un avvio automatico dell'attivazione. La pubblicazione del codice resta subordinata ai gate e alle prove native; lo schema già applicato non abilita il filtro.
+
+Stato: pannello staff, lifecycle StrictMode e collegamento dei pulsanti sono PASS nel ledger. Restano i gate globali finali. Gli script E2E Chromium/WebKit sono pronti ma i due tentativi locali si sono fermati al login per refresh token scaduto, quindi non dimostrano il rendering autenticato. Le app iOS e Android già installate si avviano fino al login, ma manca un accesso di collaudo per provare il rendering di un PDF reale. Gli esiti correnti restano nel ledger del piano `docs/superpowers/plans/2026-09-16-fatture-genitori-pdf-quote.md`; non sono qui dichiarati superati.
+
+Checklist di rilascio ancora pendente:
+
+- [x] ESLint senza warning, typecheck, Vitest completo (17.826 test) e build di produzione con postbuild.
+- [ ] E2E Chromium/WebKit con PDF sintetico multipagina e rendering effettivo.
+- [ ] Collaudo su app iOS/Android già installate, con accesso di test: apertura, chiusura, zoom, scaricamento e ritorno dal browser.
+- [ ] PR, merge e pubblicazione del codice dopo i gate; poi verifica staff della classificazione storica e preview per ogni sede, infine attivazione esplicita della sede.
+- [ ] CI E2E, push e deploy conclusi prima di qualsiasi revisione o attivazione.
+
+Procedura per la Segreteria: `docs/fatturazione/revisione-visibilita-fatture.md`.
 
 ## 💬 Changelog — Il messaggio compariva due volte, e dal cinquantunesimo in poi non compariva affatto: la chat leggeva i 50 più vecchi — 2026-09-14 (branch `fix/chat-doppioni-coda-notifica`)
 

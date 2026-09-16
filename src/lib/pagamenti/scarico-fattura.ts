@@ -1,9 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { isNativeApp } from '@/lib/push/native-register';
 import { scarica, type RisultatoScarico } from '@/lib/native/scarica';
+import { registraEsitoFattura } from '@/lib/pagamenti/esito-fattura';
+import { SUPABASE_URL } from '@/lib/supabase/public-config';
 
 /**
  * LE DUE PELLI DELLA FATTURA, UN MOTORE SOLO.
@@ -461,9 +464,12 @@ export async function apriOScaricaFattura(bersaglio: BersaglioFattura): Promise<
  * altrimenti una unhandled rejection — l'unico esito che non lascerebbe traccia da
  * nessuna parte — e per giunta lascerebbe il lucchetto chiuso fino al tetto.
  */
-async function eseguiScarico(bersaglio: BersaglioFattura): Promise<RisultatoScarico> {
+async function eseguiScarico(
+    bersaglio: BersaglioFattura,
+    signal?: AbortSignal,
+): Promise<RisultatoScarico> {
     try {
-        return await scarica(bersaglio);
+        return await scarica(signal ? { ...bersaglio, signal } : bersaglio);
     } catch (e) {
         return { esito: 'non-riuscito', motivo: nomeErrore(e) };
     }
@@ -618,4 +624,339 @@ export function useScaricoFattura(): GestoreScaricoFattura {
     }, []);
 
     return { apri, avviso };
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * Il gesto SALVA, separato dall'apertura nel viewer
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+export type ModalitaSalvataggioFattura =
+    | 'download-web'
+    | 'filesystem-nativo'
+    | 'browser-esterno';
+
+export interface PresentazioneSalvataggioFattura {
+    modalita: ModalitaSalvataggioFattura;
+    etichetta: 'Salva' | 'Apri nel browser per salvare';
+}
+
+export interface SalvaFatturaInput {
+    pagamentoId: string;
+    fatturaId: string;
+    userId: string;
+    numero: number | string;
+    anno: number | string;
+    titolo?: string;
+    /** Lo smontaggio annulla fetch, scritture successive e ogni handoff tardivo. */
+    signal?: AbortSignal;
+}
+
+export type RisultatoSalvataggioFattura =
+    | {
+        ok: true;
+        modalita: ModalitaSalvataggioFattura;
+        avviso: null;
+      }
+    | {
+        ok: false;
+        modalita: ModalitaSalvataggioFattura;
+        motivo: string;
+        riprovabile: true;
+        avviso: AvvisoScarico | null;
+      };
+
+function filesystemDisponibile(): boolean {
+    try {
+        return Capacitor.isPluginAvailable('Filesystem');
+    } catch (errore) {
+        logClient({
+            livello: 'warn',
+            evento: 'fetch',
+            messaggio: `fattura-filesystem-non-verificato:${nomeErrore(errore)}`,
+        });
+        return false;
+    }
+}
+
+/** Contratto usato dal futuro pulsante: decide testo e strada prima del click. */
+export function presentazioneSalvataggioFattura(): PresentazioneSalvataggioFattura {
+    if (!isNativeApp()) return { modalita: 'download-web', etichetta: 'Salva' };
+    return filesystemDisponibile()
+        ? { modalita: 'filesystem-nativo', etichetta: 'Salva' }
+        : { modalita: 'browser-esterno', etichetta: 'Apri nel browser per salvare' };
+}
+
+function risultatoNegativo(
+    modalita: ModalitaSalvataggioFattura,
+    motivo: string,
+    avviso: AvvisoScarico | null = 'non-riuscito',
+): RisultatoSalvataggioFattura {
+    return { ok: false, modalita, motivo, riprovabile: true, avviso };
+}
+
+function registraAvvio(input: SalvaFatturaInput, esito: 'browser_avviato' | 'salvataggio_avviato'): void {
+    void registraEsitoFattura({
+        pagamentoId: input.pagamentoId,
+        fatturaId: input.fatturaId,
+        esito,
+    });
+}
+
+function urlDownload(input: SalvaFatturaInput): string {
+    return urlFattura({
+        pagamentoId: input.pagamentoId,
+        fatturaId: input.fatturaId,
+        userId: input.userId,
+        scaricare: true,
+    });
+}
+
+function urlEndpointEsterno(input: SalvaFatturaInput): string {
+    const url = new URL(urlDownload(input), globalThis.location.origin);
+    url.searchParams.delete('download');
+    url.searchParams.set('esterno', '1');
+    return `${url.pathname}${url.search}`;
+}
+
+interface RispostaUrlEsterno {
+    success: true;
+    data: { url: string; scade_il: string };
+}
+
+function urlEsternoValido(corpo: unknown, adesso: number): corpo is RispostaUrlEsterno {
+    if (!corpo || typeof corpo !== 'object') return false;
+    const risposta = corpo as { success?: unknown; data?: unknown };
+    if (risposta.success !== true || !risposta.data || typeof risposta.data !== 'object') return false;
+    const data = risposta.data as { url?: unknown; scade_il?: unknown };
+    if (typeof data.url !== 'string' || typeof data.scade_il !== 'string') return false;
+    try {
+        const url = new URL(data.url);
+        const storage = new URL(SUPABASE_URL);
+        const scadeIl = Date.parse(data.scade_il);
+        return url.protocol === 'https:'
+            && url.origin === storage.origin
+            && url.pathname.startsWith('/storage/v1/object/sign/fatture/')
+            && Boolean(url.searchParams.get('token'))
+            && Number.isFinite(scadeIl)
+            && scadeIl > adesso
+            && scadeIl <= adesso + 310_000;
+    } catch {
+        return false;
+    }
+}
+
+type EsitoFetchEsterno =
+    | { tipo: 'corpo'; corpo: unknown }
+    | { tipo: 'http'; stato: number }
+    | { tipo: 'json-non-valido'; errore: unknown }
+    | { tipo: 'errore'; errore: unknown }
+    | { tipo: 'annullato' }
+    | { tipo: 'timeout' };
+
+async function fetchUrlEsterno(input: SalvaFatturaInput): Promise<EsitoFetchEsterno> {
+    if (input.signal?.aborted) return { tipo: 'annullato' };
+    const controller = new AbortController();
+    let chiudiAttesa: ((esito: EsitoFetchEsterno) => void) | null = null;
+    const interruzione = new Promise<EsitoFetchEsterno>((resolve) => { chiudiAttesa = resolve; });
+    const annulla = () => {
+        controller.abort();
+        chiudiAttesa?.({ tipo: 'annullato' });
+    };
+    input.signal?.addEventListener('abort', annulla, { once: true });
+    const timer = setTimeout(() => {
+        controller.abort();
+        chiudiAttesa?.({ tipo: 'timeout' });
+    }, TETTO_SCARICO_MS);
+    const richiesta = (async (): Promise<EsitoFetchEsterno> => {
+        try {
+            const risposta = await fetch(urlEndpointEsterno(input), {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                signal: controller.signal,
+            });
+            if (!risposta.ok) return { tipo: 'http', stato: risposta.status };
+            try {
+                return { tipo: 'corpo', corpo: await risposta.json() };
+            } catch (errore) {
+                return { tipo: 'json-non-valido', errore };
+            }
+        } catch (errore) {
+            return { tipo: 'errore', errore };
+        }
+    })();
+    try {
+        return await Promise.race([richiesta, interruzione]);
+    } finally {
+        clearTimeout(timer);
+        input.signal?.removeEventListener('abort', annulla);
+    }
+}
+
+type EsitoScaricoConTetto =
+    | { tipo: 'risultato'; risultato: RisultatoScarico }
+    | { tipo: 'annullato'; completamento: Promise<void> }
+    | { tipo: 'timeout'; completamento: Promise<void> };
+
+async function scaricaConTetto(
+    bersaglio: BersaglioFattura,
+    signal?: AbortSignal,
+): Promise<EsitoScaricoConTetto> {
+    if (signal?.aborted) {
+        return { tipo: 'annullato', completamento: Promise.resolve() };
+    }
+    const controller = new AbortController();
+    let chiudiAttesa: ((esito: EsitoScaricoConTetto) => void) | null = null;
+    const interruzione = new Promise<EsitoScaricoConTetto>((resolve) => { chiudiAttesa = resolve; });
+    const operazione = eseguiScarico(bersaglio, controller.signal).then<EsitoScaricoConTetto>(
+        (risultato) => ({ tipo: 'risultato', risultato }),
+    );
+    const completamento = operazione.then(() => undefined);
+    const annulla = () => {
+        chiudiAttesa?.({ tipo: 'annullato', completamento });
+        controller.abort();
+    };
+    signal?.addEventListener('abort', annulla, { once: true });
+    const timer = setTimeout(() => {
+        chiudiAttesa?.({ tipo: 'timeout', completamento });
+        controller.abort();
+    }, TETTO_SCARICO_MS);
+    try {
+        return await Promise.race([operazione, interruzione]);
+    } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', annulla);
+    }
+}
+
+function statoHttpScarico(motivo: string | undefined): number | undefined {
+    const corrispondenza = /^http-(\d{3})(?:\||$)/.exec(motivo ?? '');
+    if (!corrispondenza) return undefined;
+    const stato = Number(corrispondenza[1]);
+    return stato >= 100 && stato <= 599 ? stato : undefined;
+}
+
+/**
+ * Registra soltanto esiti che non hanno consegnato il PDF. Il messaggio usa un
+ * codice chiuso derivato dall'enum; URL, token, nome file e motivo libero non
+ * entrano mai nel log. Il successo resta la telemetria `salvataggio_avviato`.
+ */
+function registraEsitoSalvataggioNativo(risultato: RisultatoScarico): void {
+    if (risultato.esito === 'nativo-file' || risultato.esito === 'web-blob') return;
+    const codice = risultato.esito === 'ripiego-condivisione'
+        ? 'ripiego-condivisione'
+        : risultato.esito === 'ripiego-appunti'
+            ? 'ripiego-appunti'
+            : 'non-riuscito';
+    const stato = statoHttpScarico(risultato.motivo);
+    logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `fattura-salvataggio-nativo:${codice}`,
+        ...(stato ? { stato } : {}),
+    });
+}
+
+/**
+ * Avvia il salvataggio senza confonderlo con l'apertura nel viewer.
+ * Non dichiara mai che il file sia stato salvato: la telemetria registra soltanto
+ * l'avvio del gesto che il browser o il foglio nativo completeranno fuori dall'app.
+ */
+export async function salvaFattura(input: SalvaFatturaInput): Promise<RisultatoSalvataggioFattura> {
+    const presentazione = presentazioneSalvataggioFattura();
+    if (input.signal?.aborted) {
+        return risultatoNegativo(presentazione.modalita, 'annullato', null);
+    }
+    if (giroInVolo) {
+        logClient({ livello: 'warn', evento: 'fetch', messaggio: 'fattura-salvataggio-gia-in-corso' });
+        return risultatoNegativo(presentazione.modalita, MOTIVO_GIA_IN_CORSO, 'in-corso');
+    }
+
+    const mio = Symbol('salvataggio-fattura');
+    giroInVolo = mio;
+    let sbloccoDifferito: Promise<void> | null = null;
+    try {
+        if (presentazione.modalita === 'filesystem-nativo') {
+            registraAvvio(input, 'salvataggio_avviato');
+            const esito = await scaricaConTetto({
+                url: urlDownload(input),
+                nomeFile: nomeFileFattura(input.numero, input.anno),
+                titolo: input.titolo,
+            }, input.signal);
+            if (esito.tipo === 'timeout') {
+                sbloccoDifferito = esito.completamento;
+                logClient({
+                    livello: 'error',
+                    evento: 'fetch',
+                    messaggio: 'fattura-salvataggio-nativo:tetto-tempo',
+                });
+                return risultatoNegativo(presentazione.modalita, MOTIVO_TETTO);
+            }
+            if (esito.tipo === 'annullato') {
+                sbloccoDifferito = esito.completamento;
+                return risultatoNegativo(presentazione.modalita, 'annullato', null);
+            }
+            const risultato = esito.risultato;
+            registraEsitoSalvataggioNativo(risultato);
+            return risultato.esito === 'nativo-file' || risultato.esito === 'web-blob'
+                ? { ok: true, modalita: presentazione.modalita, avviso: null }
+                : risultatoNegativo(
+                    presentazione.modalita,
+                    risultato.motivo ?? 'salvataggio-non-riuscito',
+                    avvisoDa(risultato),
+                );
+        }
+
+        if (presentazione.modalita === 'download-web') {
+            registraAvvio(input, 'salvataggio_avviato');
+            globalThis.location.assign(urlDownload(input));
+            return { ok: true, modalita: presentazione.modalita, avviso: null };
+        }
+
+        const esitoFetch = await fetchUrlEsterno(input);
+        if (esitoFetch.tipo === 'timeout') {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'fattura-browser-esterno:tetto-tempo' });
+            return risultatoNegativo(presentazione.modalita, MOTIVO_TETTO);
+        }
+        if (esitoFetch.tipo === 'annullato') {
+            return risultatoNegativo(presentazione.modalita, 'annullato', null);
+        }
+        if (esitoFetch.tipo === 'errore') {
+            const motivo = nomeErrore(esitoFetch.errore);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `fattura-browser-esterno:${motivo}` });
+            return risultatoNegativo(presentazione.modalita, motivo);
+        }
+        if (esitoFetch.tipo === 'http') {
+            const motivo = `http-${esitoFetch.stato}`;
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `fattura-browser-esterno:${motivo}` });
+            return risultatoNegativo(presentazione.modalita, motivo);
+        }
+        if (esitoFetch.tipo === 'json-non-valido') {
+            const motivo = nomeErrore(esitoFetch.errore);
+            logClient({ livello: 'error', evento: 'fetch', messaggio: `fattura-browser-esterno-json:${motivo}` });
+            return risultatoNegativo(presentazione.modalita, 'risposta-non-valida');
+        }
+        if (input.signal?.aborted || giroInVolo !== mio) {
+            return risultatoNegativo(presentazione.modalita, 'annullato', null);
+        }
+        if (!urlEsternoValido(esitoFetch.corpo, Date.now())) {
+            logClient({ livello: 'error', evento: 'fetch', messaggio: 'fattura-browser-esterno:url-non-valido' });
+            return risultatoNegativo(presentazione.modalita, 'url-non-valido');
+        }
+
+        registraAvvio(input, 'browser_avviato');
+        globalThis.location.assign(esitoFetch.corpo.data.url);
+        return { ok: true, modalita: presentazione.modalita, avviso: null };
+    } catch (errore) {
+        const motivo = nomeErrore(errore);
+        logClient({ livello: 'error', evento: 'fetch', messaggio: `fattura-salvataggio:${motivo}` });
+        return risultatoNegativo(presentazione.modalita, motivo);
+    } finally {
+        if (sbloccoDifferito) {
+            void sbloccoDifferito.then(() => {
+                if (giroInVolo === mio) giroInVolo = null;
+            });
+        } else if (giroInVolo === mio) {
+            giroInVolo = null;
+        }
+    }
 }

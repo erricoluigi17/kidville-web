@@ -150,11 +150,11 @@ beforeEach(() => {
   h.legami = [{ genitore: GENITORE, alunno: ALUNNO_MIO }]
   h.fatture = {
     [PAG_ALTRA_SEDE]: [{
-      id: FATTURA, numero: 1948, anno: 2026, quota_label: null, quota_adult_id: null,
+      id: FATTURA, scuola_id: SEDE_B, numero: 1948, anno: 2026, quota_label: null, quota_adult_id: null,
       intestatario: null, pdf_path: 'fattura-b.pdf', sdi_stato: 7, sdi_stato_label: 'Consegnata',
     }],
     [PAG_ALTRUI]: [{
-      id: 'f9', numero: 1949, anno: 2026, quota_label: null, quota_adult_id: null,
+      id: 'f9', scuola_id: SEDE_A, numero: 1949, anno: 2026, quota_label: null, quota_adult_id: null,
       intestatario: null, pdf_path: 'fattura-x.pdf', sdi_stato: 7, sdi_stato_label: 'Consegnata',
     }],
   }

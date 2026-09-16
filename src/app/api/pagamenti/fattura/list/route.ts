@@ -10,6 +10,7 @@ import { requireUser } from '@/lib/auth/require-staff'
 // non fa I/O, nessuno lo mocka, ed è il motivo per cui esiste.
 import { haUnRuolo, type AppRole } from '@/lib/auth/predicati-ruolo'
 import { assertFatturaInScope } from '@/lib/pagamenti/scope-fattura'
+import { caricaVisibilitaFatture } from '@/lib/pagamenti/visibilita-fatture'
 import { parseQuery } from '@/lib/validation/http'
 import { zUuid } from '@/lib/validation/common'
 import { withRoute } from '@/lib/logging/with-route'
@@ -57,6 +58,7 @@ const CODICE_PAGAMENTO_NON_TROVATO = 'PAGAMENTO_NON_TROVATO'
 
 interface RigaFattura {
   id: string
+  scuola_id: string | null
   numero: number
   anno: number
   quota_label: string | null
@@ -67,6 +69,16 @@ interface RigaFattura {
   sdi_stato_label: string | null
   /** Il perché di uno scarto, nelle parole di Aruba/SDI. Vedi `RUOLI_MOTIVO_SCARTO`. */
   sdi_scarto_motivo: string | null
+  modalita_emissione: 'ordinaria' | 'quote_separate' | null
+  parent_registry_id: string | null
+}
+
+function stessaSedeFattura(scuolaFattura: unknown, scuolaPagamento: unknown): boolean {
+  return typeof scuolaFattura === 'string'
+    && typeof scuolaPagamento === 'string'
+    && scuolaFattura.trim() !== ''
+    && scuolaPagamento.trim() !== ''
+    && scuolaFattura.trim().toLowerCase() === scuolaPagamento.trim().toLowerCase()
 }
 
 /**
@@ -186,7 +198,7 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
     // famiglia il perimetro è il LEGAME col bambino e non il plesso.
     const { data: pag, error: errPag } = await supabase
       .from('pagamenti')
-      .select('id, alunno_id')
+      .select('id, scuola_id, alunno_id')
       .eq('id', pagamento_id)
       .maybeSingle()
     // PostgREST non lancia: senza questo controllo un guasto di lettura sarebbe
@@ -209,9 +221,16 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
     const fuoriScope = await assertFatturaInScope(supabase, auth.user, pagamento_id, pag.alunno_id as string | null)
     if (fuoriScope) return fuoriScope
 
+    const visibilita = await caricaVisibilitaFatture(
+      supabase,
+      auth.user,
+      pag.scuola_id as string,
+    )
+    if (visibilita.esito === 'errore') return visibilita.response
+
     const { data, error } = await supabase
       .from('fatture_emesse')
-      .select('id, numero, anno, quota_label, quota_adult_id, intestatario, pdf_path, sdi_stato, sdi_stato_label, sdi_scarto_motivo')
+      .select('id, scuola_id, numero, anno, quota_label, quota_adult_id, intestatario, pdf_path, sdi_stato, sdi_stato_label, sdi_scarto_motivo, modalita_emissione, parent_registry_id')
       .eq('pagamento_id', pagamento_id)
       .order('numero', { ascending: true })
     if (error) {
@@ -251,8 +270,23 @@ export const GET = withRoute('pagamenti/fattura/list:GET', async (request: Reque
     // scartata e poi ri-emessa non compare due volte. E il motivo dello scarto
     // segue QUELLA riga, non la più vecchia: mostrare il rifiuto di un documento
     // già sostituito manderebbe la segreteria a correggere una fattura ripartita.
+    const tutte = (data ?? []) as RigaFattura[]
+    const dellaSede = tutte.filter((riga) => stessaSedeFattura(riga.scuola_id, pag.scuola_id))
+    const righeFuoriSede = tutte.length - dellaSede.length
+    if (righeFuoriSede > 0) {
+      logEvento('fattura', 'error', {
+        operazione: 'pagamenti/fattura/list:GET',
+        esito: 'registro-sede-incoerente',
+        pagamento_id,
+        scuola_id: pag.scuola_id,
+        righe_fuori_sede: righeFuoriSede,
+      }, undefined, { distingui: ['pagamento_id', 'scuola_id'] })
+    }
+
     const perQuota = new Map<string, RigaFattura>()
-    for (const r of (data ?? []) as RigaFattura[]) {
+    // Il filtro viene PRIMA del dedupe: una riemissione più recente ma intestata
+    // all'altro genitore non può cancellare dall'elenco la quota visibile.
+    for (const r of dellaSede.filter(visibilita.puoVedere)) {
       const key = r.quota_adult_id ?? '__single__'
       const cur = perQuota.get(key)
       if (!cur || r.numero >= cur.numero) perQuota.set(key, r)

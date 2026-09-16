@@ -48,6 +48,7 @@ vi.mock('@/lib/logging/logger', () => log)
 /** uuid sintetici: il repository è pubblico. */
 const PID = 'aaaaaaaa-0000-4000-8000-0000000000d1'
 const ALUNNO = 'bbbbbbbb-0000-4000-8000-0000000000d2'
+const SCUOLA = 'sc-1'
 
 /** Prosa tecnica del provider: un codice SDI vero, nessun dato di nessuno. */
 const MOTIVO = '00311 - Codice destinatario non valido'
@@ -93,7 +94,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.limit = () => b
       b.maybeSingle = async () => ({
-        data: table === 'pagamenti' ? { id: PID, alunno_id: ALUNNO } : null,
+        data: table === 'pagamenti' ? { id: PID, scuola_id: SCUOLA, alunno_id: ALUNNO } : null,
         error: null,
       })
       // PostgREST non lancia e NON regala colonne: torna ciò che gli è stato chiesto.
@@ -121,6 +122,7 @@ const GENITORE = { id: 'e0e0e0e0-0000-4000-8000-0000000000d4', role: 'genitore',
 /** Una quota SCARTATA: il PDF c'è (è il caso `sdi_stato = 4` misurato in produzione). */
 const rigaScartata = (numero = 1948) => ({
   id: `f-${numero}`,
+  scuola_id: SCUOLA,
   numero,
   anno: 2026,
   quota_label: null,

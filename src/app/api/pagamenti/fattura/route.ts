@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff, requireUser } from '@/lib/auth/require-staff'
 import { assertPagamentoInScope } from '@/lib/auth/scope'
 import { assertFatturaInScope } from '@/lib/pagamenti/scope-fattura'
+import { caricaVisibilitaFatture } from '@/lib/pagamenti/visibilita-fatture'
 import { emettiFatturaPagamento } from '@/lib/aruba/emissione'
 import { fatturaViva } from '@/lib/pagamenti/fattura-viva'
 import { parseBody, parseQuery } from '@/lib/validation/http'
@@ -158,26 +159,49 @@ const CODICE_FATTURA_NON_TROVATA = 'FATTURA_NON_TROVATA'
  */
 const CODICE_LETTURA_FALLITA = 'LETTURA_FALLITA'
 
-const getQuerySchema = z.object({
-  pagamento_id: zUuid,
-  // opzionale: scarica il PDF di UNA specifica fattura (quota) del pagamento.
-  fattura_id: zUuid.optional(),
-  /**
-   * `1` → il browser SALVA il file (`attachment`); assente o `0` → lo apre nella
-   * pagina (`inline`). Enumerato e non booleano: in una query string `?download=`
-   * arriva sempre come stringa, e `z.coerce.boolean()` considera vera qualunque
-   * stringa non vuota — `?download=0` diventerebbe «sì».
-   */
-  download: z.enum(['0', '1']).optional(),
-})
+const getQuerySchema = z
+  .object({
+    pagamento_id: zUuid,
+    // opzionale: scarica il PDF di UNA specifica fattura (quota) del pagamento.
+    fattura_id: zUuid.optional(),
+    /**
+     * `1` → il browser SALVA il file (`attachment`); assente o `0` → lo apre nella
+     * pagina (`inline`). Enumerato e non booleano: in una query string `?download=`
+     * arriva sempre come stringa, e `z.coerce.boolean()` considera vera qualunque
+     * stringa non vuota — `?download=0` diventerebbe «sì».
+     */
+    download: z.enum(['0', '1']).optional(),
+    /** `1` restituisce un collegamento Storage firmato, valido cinque minuti. */
+    esterno: z.literal('1').optional(),
+  })
+  .superRefine((query, ctx) => {
+    if (query.esterno === '1' && query.download !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['download'],
+        message: 'download non si usa insieme a esterno=1',
+      })
+    }
+  })
 
 /** Una riga del registro `fatture_emesse`, ridotta a ciò che serve per servire il PDF. */
 interface RigaRegistro {
   id: string
+  scuola_id: string | null
   numero: number | string | null
   anno: number | string | null
   pdf_path: string | null
   sdi_stato: number | null
+  modalita_emissione: 'ordinaria' | 'quote_separate' | null
+  parent_registry_id: string | null
+}
+
+function stessaSedeFattura(scuolaFattura: unknown, scuolaPagamento: unknown): boolean {
+  return typeof scuolaFattura === 'string'
+    && typeof scuolaPagamento === 'string'
+    && scuolaFattura.trim() !== ''
+    && scuolaPagamento.trim() !== ''
+    && scuolaFattura.trim().toLowerCase() === scuolaPagamento.trim().toLowerCase()
 }
 
 /**
@@ -197,6 +221,11 @@ function cifre(v: unknown): string {
   return solo || '0'
 }
 
+/** Un solo nome per risposta diretta e collegamento firmato. */
+function nomeFilePdf(riga: RigaRegistro): string {
+  return `fattura-${cifre(riga.numero)}-${cifre(riga.anno)}.pdf`
+}
+
 /**
  * La risposta col PDF VERO — l'unico punto del file che può dire
  * `application/pdf`.
@@ -211,7 +240,7 @@ function cifre(v: unknown): string {
  * sicuro di ritrovarsi due copie della stessa fattura con due nomi diversi.
  */
 function rispostaPdf(byte: ArrayBuffer, riga: RigaRegistro, comeAllegato: boolean): NextResponse {
-  const nome = `fattura-${cifre(riga.numero)}-${cifre(riga.anno)}.pdf`
+  const nome = nomeFilePdf(riga)
   return new NextResponse(byte, {
     status: 200,
     headers: {
@@ -256,6 +285,81 @@ async function scaricaPdf(
       bucket: 'fatture',
       esito: 'pdf-non-scaricato',
     }, e)
+    return null
+  }
+}
+
+const DURATA_URL_ESTERNO_SECONDI = 300
+
+function codiceStorageNoto(nome: unknown): string | undefined {
+  switch (nome) {
+    case 'StorageError': return 'StorageError'
+    case 'StorageApiError': return 'StorageApiError'
+    case 'StorageUnknownError': return 'StorageUnknownError'
+    default: return undefined
+  }
+}
+
+function diagnosticaFirmaPdf(
+  errore: unknown,
+  fallback: 'StorageError' | 'SignedUrlMissing',
+): { stato?: number; error_code: string } {
+  try {
+    const oggetto = errore !== null && typeof errore === 'object'
+      ? errore as Record<string, unknown>
+      : null
+    const statoGrezzo = oggetto?.status
+    const stato = typeof statoGrezzo === 'number'
+      && Number.isInteger(statoGrezzo)
+      && statoGrezzo >= 400
+      && statoGrezzo <= 599
+      ? statoGrezzo
+      : undefined
+    // I codici restituiti dal servizio sono stringhe libere e possono contenere
+    // capability, dati fiscali o altro testo controllato dal provider. Anche una
+    // stringa corta e apparentemente innocua resta quindi privata. Esponiamo
+    // soltanto nomi di classi Storage scelti qui; tutto il resto usa il fallback
+    // interno del ramo chiamante.
+    const error_code = codiceStorageNoto(oggetto?.name) ?? fallback
+    return { stato, error_code }
+  } catch {
+    return { error_code: fallback }
+  }
+}
+
+function registraErroreFirmaPdf(
+  errore: unknown,
+  fallback: 'StorageError' | 'SignedUrlMissing',
+): void {
+  logEvento('storage', 'error', {
+    operazione: 'pagamenti/fattura:GET',
+    bucket: 'fatture',
+    esito: 'url-firmato-non-generato',
+    ...diagnosticaFirmaPdf(errore, fallback),
+  })
+}
+
+/**
+ * Firma il documento per l'apertura fuori dalla WebView. La firma parte solo
+ * dopo scope, policy e selezione della riga; una URL firmata è utilizzabile
+ * senza sessione e non deve essere generata per una riga che verrà poi negata.
+ */
+async function firmaPdf(
+  supabase: Awaited<ReturnType<typeof createAdminClient>>,
+  chiave: string,
+  nomeFile: string,
+): Promise<string | null> {
+  try {
+    const { data, error } = await supabase.storage
+      .from('fatture')
+      .createSignedUrl(chiave, DURATA_URL_ESTERNO_SECONDI, { download: nomeFile })
+    if (error || !data?.signedUrl) {
+      registraErroreFirmaPdf(error, error ? 'StorageError' : 'SignedUrlMissing')
+      return null
+    }
+    return data.signedUrl
+  } catch (errore) {
+    registraErroreFirmaPdf(errore, 'StorageError')
     return null
   }
 }
@@ -406,7 +510,7 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     if (auth.response) return auth.response
     const q = parseQuery(request, getQuerySchema)
     if ('response' in q) return q.response
-    const { pagamento_id: pagamentoId, fattura_id: fatturaId, download } = q.data
+    const { pagamento_id: pagamentoId, fattura_id: fatturaId, download, esterno } = q.data
     const comeAllegato = download === '1'
 
     const supabase = await createAdminClient()
@@ -421,7 +525,7 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     // La lettura non espone niente: quello che esce lo decide il gate qui sotto.
     const { data: pag, error: errPag } = await supabase
       .from('pagamenti')
-      .select('id, fattura_stato, fattura_pdf_path, alunno_id')
+      .select('id, scuola_id, fattura_stato, fattura_pdf_path, alunno_id')
       .eq('id', pagamentoId)
       .maybeSingle()
     // PostgREST NON LANCIA (AGENTS.md, regola 7): senza questo controllo un guasto
@@ -444,16 +548,14 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     const fuoriScope = await assertFatturaInScope(supabase, auth.user, pagamentoId, pag.alunno_id as string | null)
     if (fuoriScope) return fuoriScope
 
-    // Percorso LEGACY (nessun `fattura_id`): la fattura dev'essere emessa. Il
-    // controllo resta PRIMA della lettura del registro, come è sempre stato: a chi
-    // chiede la fattura di una retta non ancora fatturata si risponde «non c'è
-    // ancora», non «non l'ho trovata».
-    if (!fatturaId && pag.fattura_stato !== 'emessa') {
-      return NextResponse.json(
-        { error: 'Fattura non ancora emessa per questo pagamento', codice: CODICE_NON_EMESSA },
-        { status: 409 },
-      )
-    }
+    // Il gate sul pagamento viene prima del contesto documento: senza questo
+    // ordine un UUID fuori scope farebbe comunque leggere flag e anagrafiche.
+    const visibilita = await caricaVisibilitaFatture(
+      supabase,
+      auth.user,
+      pag.scuola_id as string,
+    )
+    if (visibilita.esito === 'errore') return visibilita.response
 
     // ─── LA RIGA DI REGISTRO: numero, anno e la chiave nel bucket ─────────────
     //
@@ -484,11 +586,13 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     // `fattura_id`, e l'elenco per intestatario ce l'ha già da `…/fattura/list`.
     const base = supabase
       .from('fatture_emesse')
-      .select('id, numero, anno, pdf_path, sdi_stato')
+      .select('id, scuola_id, numero, anno, pdf_path, sdi_stato, modalita_emissione, parent_registry_id')
       .eq('pagamento_id', pagamentoId)
-    const { data: righe, error: errFatt } = fatturaId
-      ? await base.eq('id', fatturaId).limit(1)
-      : await base
+    // Si legge SEMPRE il registro totale. Filtrare qui per `fattura_id`
+    // falserebbe la condizione del fallback legacy: due documenti sembrerebbero
+    // uno solo dopo il filtro e `pagamenti.fattura_pdf_path` potrebbe appartenere
+    // all'altra quota.
+    const { data: righe, error: errFatt } = await base
     if (errFatt) {
       logErrore({ operazione: 'pagamenti/fattura:GET', stato: 500, evento: 'db' }, errFatt)
       return NextResponse.json(
@@ -497,9 +601,23 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
       )
     }
     const tutte = (righe ?? []) as RigaRegistro[]
+    const dellaSede = tutte.filter((riga) => stessaSedeFattura(riga.scuola_id, pag.scuola_id))
+    const righeFuoriSede = tutte.length - dellaSede.length
+    if (righeFuoriSede > 0) {
+      logEvento('fattura', 'error', {
+        operazione: 'pagamenti/fattura:GET',
+        esito: 'registro-sede-incoerente',
+        pagamento_id: pagamentoId,
+        scuola_id: pag.scuola_id,
+        righe_fuori_sede: righeFuoriSede,
+      }, undefined, { distingui: ['pagamento_id', 'scuola_id'] })
+    }
+    const visibili = dellaSede.filter(visibilita.puoVedere)
     let fatt: RigaRegistro | undefined
     if (fatturaId) {
-      fatt = tutte[0]
+      // Riga assente e riga non visibile sono intenzionalmente indistinguibili:
+      // non si conferma l'esistenza del documento dell'altro genitore.
+      fatt = visibili.find((riga) => riga.id.toLowerCase() === fatturaId.toLowerCase())
     } else {
       // ─── «VIVA» LA DICE `fattura-viva.ts`, NON QUESTO FILE ─────────────────
       //
@@ -522,7 +640,7 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
       // database può restituire — 0-20, `null`, assente — le due forme danno lo
       // stesso verdetto: il `Number()` era rumore, e non è stato portato nel
       // modulo perché normalizzerebbe un input che non esiste.
-      const vive = tutte.filter(fatturaViva)
+      const vive = visibili.filter(fatturaViva)
       if (vive.length > 1) {
         // `warn` e persistito: è un chiamante che chiede un documento fiscale
         // senza dire quale, cioè un punto dell'app (o un link salvato) rimasto
@@ -554,15 +672,25 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
           { status: 404 },
         )
       }
-      // Senza: il pagamento risulta «emessa» ma a registro non c'è niente. È una
-      // divergenza fra due tabelle, non un errore dell'utente: il PDF non c'è.
+      // Nessuna riga a registro e pagamento non emesso conserva la risposta
+      // storica 409. Se invece il registro contiene righe non visibili, si dà un
+      // 404: non si rivela che esiste una quota dell'altro genitore.
+      if (tutte.length === 0 && pag.fattura_stato !== 'emessa') {
+        return NextResponse.json(
+          { error: 'Fattura non ancora emessa per questo pagamento', codice: CODICE_NON_EMESSA },
+          { status: 409 },
+        )
+      }
+      // Senza righe visibili il PDF non è disponibile per chi chiede. Quando il
+      // registro totale è vuoto ma il pagamento risulta emesso, è una divergenza
+      // fra due tabelle.
       //
       // ⚠️ E se il pagamento porta anche una CHIAVE nel bucket, la divergenza è
       // grave e va detta: c'è un file pagato dallo SdI che nessuna riga di
       // registro rivendica, quindi non se ne conoscono numero e anno — cioè le due
       // sole cose che possono stare nel nome. Servirlo come `fattura-0-0.pdf`
       // sarebbe consegnare un documento fiscale senza saper dire quale.
-      if (pag.fattura_pdf_path) {
+      if (tutte.length === 0 && pag.fattura_pdf_path) {
         logEvento('fattura', 'error', {
           operazione: 'pagamenti/fattura:GET',
           esito: 'pdf-senza-riga-a-registro',
@@ -588,13 +716,38 @@ export const GET = withRoute('pagamenti/fattura:GET', async (request: Request) =
     // documento diverso da quello di cui si sono appena letti numero e anno — e il
     // file uscirebbe col nome sbagliato, che su una fattura è il documento
     // sbagliato.
-    const unaSolaARegistro = tutte.length <= 1
+    const unaSolaARegistro = tutte.length === 1
     const chiave =
       fatt.pdf_path ?? (!fatturaId && unaSolaARegistro ? (pag.fattura_pdf_path as string | null) : null)
     if (!chiave) {
       return NextResponse.json(
         { error: 'Il PDF della fattura non è ancora disponibile', codice: CODICE_PDF_NON_DISPONIBILE },
         { status: 404 },
+      )
+    }
+
+    if (esterno === '1') {
+      const url = await firmaPdf(supabase, chiave, nomeFilePdf(fatt))
+      if (!url) {
+        return NextResponse.json(
+          { error: 'Il PDF della fattura non è disponibile', codice: CODICE_PDF_NON_DISPONIBILE },
+          { status: 404 },
+        )
+      }
+
+      const scadeIl = new Date(Date.now() + DURATA_URL_ESTERNO_SECONDI * 1000).toISOString()
+      logEvento('fattura', 'info', {
+        operazione: 'pagamenti/fattura:GET',
+        esito: 'url-firmato-generato',
+        pagamento_id: pagamentoId,
+        fattura_id: fatt.id,
+        numero: Number(fatt.numero) || null,
+        anno: Number(fatt.anno) || null,
+        durata_secondi: DURATA_URL_ESTERNO_SECONDI,
+      })
+      return NextResponse.json(
+        { success: true, data: { url, scade_il: scadeIl } },
+        { headers: { 'Cache-Control': 'no-store' } },
       )
     }
 

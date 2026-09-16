@@ -102,6 +102,16 @@ describe('scarica() — nativo contro web', () => {
     click.mockRestore()
   })
 
+  it('resta retrocompatibile con i chiamanti che non passano un AbortSignal', async () => {
+    nativo.mockReturnValue(true)
+
+    await expect(scarica({ url: URL_FIRMATO, nomeFile: 'foto.jpg' })).resolves.toMatchObject({
+      esito: 'nativo-file',
+    })
+
+    expect(fetch).toHaveBeenCalledWith(URL_FIRMATO)
+  })
+
   it('su WEB clicca un <a download> su un blob: e non tocca il filesystem nativo', async () => {
     nativo.mockReturnValue(false)
     const creaUrl = vi.fn(() => 'blob:kidville/1')

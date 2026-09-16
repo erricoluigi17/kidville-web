@@ -149,7 +149,7 @@ const ABORTSIGNAL_TIMEOUT = [
  * È la TERZA primitiva possibile, e prima di questa riga non la vedeva nessuno: il lock cercava
  * `Promise.race(` e `AbortSignal.timeout`, cioè le due forme che qualcuno aveva già scritto. Un
  * controller e un timer sono esattamente la stessa cosa — una scadenza che interrompe una
- * chiamata — assemblata a mano, e in `src/` ce n'è già una (la sonda della pagina offline).
+ * chiamata — assemblata a mano. Ogni uso legittimo deve restare dichiarato qui sotto.
  */
 const TETTO_A_MANO = /setTimeout\s*\([\s\S]{0,200}?\.abort\s*\(/;
 
@@ -162,8 +162,8 @@ interface Primitiva {
 }
 
 /**
- * LE PRIMITIVE DI TETTO DEL REPO. Sono TRE, e nessuna è un doppione: si aggiunge qui solo ciò
- * che è davvero un meccanismo diverso, con scritto PERCHÉ non può essere il primo.
+ * LE PRIMITIVE DI TETTO DEL REPO. Ogni coppia file/meccanismo è dichiarata: lo stesso file può
+ * averne due, ma deve spiegare separatamente PERCHÉ non può usare la primitiva condivisa.
  *
  * ⚠️ LA TERZA È COMPARSA IL 2026-08-03, SERA, e non perché qualcuno l'abbia scritta quel giorno:
  * `src/app/offline/script-offline.ts` assemblava un tetto a mano da settimane, e questo lock non
@@ -171,7 +171,7 @@ interface Primitiva {
  * file — ed è la ragione per cui adesso ogni primitiva porta il proprio RILEVATORE e l'elenco è
  * verificato per esclusività, invece di essere una lista di nomi che qualcuno ricorda.
  */
-const PRIMITIVE_DI_TETTO = new Map<string, Primitiva>([
+const PRIMITIVE_DI_TETTO: ReadonlyArray<readonly [string, Primitiva]> = [
     ['src/lib/logging/tetto.ts', {
         meccanismo: 'AbortSignal.timeout',
         rilevatore: ABORTSIGNAL_TIMEOUT,
@@ -208,7 +208,38 @@ const PRIMITIVE_DI_TETTO = new Map<string, Primitiva>([
             + 'funzionare sulle WebView vecchie, dove `AbortController` c\'è da sempre. Il '
             + 'tetto è 3 secondi: una sonda che non risponde vale «non c\'è rete».',
     }],
-]);
+    ['src/lib/pagamenti/scarico-fattura.ts', {
+        meccanismo: 'Promise.race',
+        rilevatore: [/Promise\.race\(/],
+        perche:
+            'Il budget del salvataggio fattura deve correre sia contro una `fetch` a una nostra '
+            + 'route sia contro `eseguiScarico()`, che può attraversare il bridge nativo. Quel '
+            + 'bridge non garantisce di rigettare subito quando riceve l\'abort: la corsa restituisce '
+            + 'quindi il verdetto di timeout o annullamento senza perdere la promessa di completamento, '
+            + 'che tiene il mutex fino alla vera chiusura. `conTetto` può solo decorare una `fetch` e '
+            + 'non rappresenta questa operazione composta. Il limite resta `TETTO_SCARICO_MS`, 30 s.',
+    }],
+    ['src/lib/pagamenti/scarico-fattura.ts', {
+        meccanismo: 'AbortController + setTimeout',
+        rilevatore: [TETTO_A_MANO],
+        perche:
+            'Il controller unico propaga sia l\'annullamento del chiamante sia la scadenza alla '
+            + 'richiesta interna e al bridge di scarico. Non usa `AbortSignal.timeout`: sulle WebView '
+            + 'iOS 15 quella API manca, mentre `AbortController` è disponibile; inoltre occorre '
+            + 'conservare la promessa sottostante per liberare il mutex solo quando il bridge nativo '
+            + 'ha davvero concluso. Il timer è sempre ripulito e non supera i 30 s dichiarati.',
+    }],
+    ['src/components/features/pagamenti/FatturaViewer.tsx', {
+        meccanismo: 'AbortController + setTimeout',
+        rilevatore: [TETTO_A_MANO],
+        perche:
+            'Il viewer deve interrompere la stessa richiesta PDF sia dopo 25 secondi sia appena la '
+            + 'modale viene chiusa o sostituita. Un controller posseduto dall\'effect consente entrambe '
+            + 'le uscite e funziona anche nelle WebView iOS 15, dove `AbortSignal.timeout` non esiste. '
+            + 'Il cleanup cancella timer, fetch e render PDF.js; il tetto resta sotto il limite globale '
+            + 'di 30 secondi: `TIMEOUT_MS` vale 25 s.',
+    }],
+];
 
 /**
  * L'INVENTARIO DELLE `fetch` NUDE, lato server — chi chiama la rete SENZA passare dal tetto.
@@ -310,15 +341,19 @@ const FETCH_SENZA_TETTO = new Map<string, string>([
         'BROWSER: cinque `fetch` verso `/api/**` nostre, dal motore di sincronizzazione offline. '
         + 'Nessuna esce verso un host di terzi (già verificato in `supabase-client-strumentato.test.ts`).'],
     ['src/lib/pagamenti/scarico-fattura.ts',
-        'BROWSER: `GET /api/pagamenti/fattura/list`, una nostra route, chiesta dall\'hook che '
-        + 'decide se il comando «Fattura» ha davvero un file dietro. Stessa forma, stesso motivo '
-        + 'degli hook qui sopra: il tetto della chiamata sta nella route, dove passa dal client '
-        + 'Supabase strumentato. Un tetto in PIÙ questo file ce l\'ha — `TETTO_SCARICO_MS`, '
-        + 'dichiarato in `TETTI_DICHIARATI` — ma copre il GESTO intero (lucchetto compreso), non '
-        + 'questa `fetch`, e non è `conTetto`: `conTetto` è dello strato di trasporto, questo '
-        + 'libera un pulsante. E il silenzio non è possibile: ogni ramo, `!res.ok` compreso, '
-        + 'lascia una riga in `app_log` — è la ragione per cui le due voci dello scarico fattura '
-        + 'sono uscite da `catch-muti-allowlist.json` lo stesso giorno.'],
+        'BROWSER: le `fetch` vanno soltanto a nostre route: `GET /api/pagamenti/fattura/list` '
+        + 'decide se il comando ha davvero un file dietro, mentre `/api/pagamenti/fattura` con '
+        + '`esterno=1` chiede il link firmato per il browser di sistema. La prima eredita il tetto '
+        + 'server dal client Supabase strumentato; la seconda ha anche il budget client composto '
+        + 'di `fetchUrlEsterno`, dichiarato in `PRIMITIVE_DI_TETTO`. `TETTO_SCARICO_MS` copre '
+        + 'inoltre il gesto e il mutex del bridge nativo. Ogni fallimento viene registrato con '
+        + '`logClient`, quindi nessuna delle due strade sparisce in silenzio.'],
+    ['src/lib/pagamenti/esito-fattura.ts',
+        'BROWSER: `POST /api/pagamenti/fattura/esito`, una nostra route `withRoute` che registra '
+        + 'telemetria best-effort con `keepalive` quando il viewer si chiude o il browser esterno '
+        + 'parte. Il database è raggiunto soltanto dal server tramite il client Supabase strumentato. '
+        + 'Un timeout applicativo sul beacon non renderebbe più affidabile la consegna durante '
+        + 'l\'uscita dalla pagina; risposta non-ok e rigetto sono entrambi registrati con `logClient`.'],
     ['src/lib/push/native-register.ts',
         'BROWSER: registrazione e cancellazione del token su `/api/push/subscribe`, una nostra '
         + 'route. Stessa forma, stesso motivo: il tetto sta nella route, non nel chiamante.'],
@@ -407,6 +442,12 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'fa su un video da decine di megabyte (`native/scarica.ts`) — una fattura è un PDF di '
         + 'qualche centinaio di kilobyte. Se 30 s fossero pochi lo direbbe il conteggio: la '
         + 'scadenza lascia in `app_log` un motivo suo (`tetto-tempo`) apposta per essere contata.'],
+    ['src/components/features/pagamenti/FatturaViewer.tsx',
+        'quanto il viewer aspetta il PDF prima di interrompere la richiesta e restituire il '
+        + 'controllo all\'utente (2026-09-16). Sono 25 s: il download può includere latenza, '
+        + 'trasferimento e lettura del body, ma deve chiudersi prima del limite globale di 30 s. '
+        + 'Lo stesso `AbortController` serve anche alla chiusura della modale, quindi il numero '
+        + 'vive nell\'effect che possiede richiesta e cleanup.'],
     ['src/lib/security/rate-limit.ts',
         'quanto il tetto per IP aspetta il contatore condiviso su Postgres prima di degradare al '
         + 'conteggio locale (2026-08-04). È il tetto più corto del repo — 250 ms — e il numero '
@@ -549,7 +590,7 @@ function scadenza(nome: string): boolean {
 
 /** I file DICHIARATI come primitiva con un certo meccanismo, in ordine. */
 function conMeccanismo(meccanismo: string): string[] {
-    return [...PRIMITIVE_DI_TETTO.entries()]
+    return PRIMITIVE_DI_TETTO
         .filter(([, p]) => p.meccanismo === meccanismo)
         .map(([f]) => f)
         .sort();
@@ -749,6 +790,17 @@ describe('lock — il tetto è scritto in un posto solo, e il lock guarda tutto 
         for (const nonNumerica of ['TETTO_MS_DEFAULT', 'Number(process.env.X) || 1_000', "'timeoutAccesso' as const"]) {
             expect(valoreDelTetto(nonNumerica), `${nonNumerica} non è un numero`).toBeNull();
         }
+    });
+
+    it('il timeout del viewer resta inventariato e una mutazione oltre 30 s viene respinta', () => {
+        const viewer = CODICE_SRC.get('src/components/features/pagamenti/FatturaViewer.tsx')!;
+        const [presente] = [...viewer.matchAll(COSTANTE_DI_MODULO)]
+            .filter((m) => m[1] === 'TIMEOUT_MS');
+        expect(presente?.[2]).toBe('25_000');
+
+        const [mutata] = [...'const TIMEOUT_MS = 60_000;'.matchAll(COSTANTE_DI_MODULO)];
+        expect(mutata?.[1]).toBe('TIMEOUT_MS');
+        expect(valoreDelTetto(mutata[2])).toBeGreaterThan(30_000);
     });
 });
 

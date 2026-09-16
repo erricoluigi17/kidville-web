@@ -72,6 +72,7 @@ import { GET as LIST } from '@/app/api/pagamenti/fattura/list/route'
 
 const PID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
 const FID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1'
+const SCUOLA = 'sc-1'
 function post(body: unknown) {
   return new Request('http://localhost/api/pagamenti/fattura', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -163,11 +164,11 @@ describe('GET /api/pagamenti/fattura?fattura_id=', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
-    h.pag = { id: PID, alunno_id: 'al-1', descrizione: 'Retta', importo: 150, fattura_stato: 'emessa', fattura_pdf_path: null, fattura_aruba_id: 'X', fattura_emessa_il: '2026-01-01', fattura_causale: null, alunni: { nome: 'Mario', cognome: 'Rossi' } }
+    h.pag = { id: PID, scuola_id: SCUOLA, alunno_id: 'al-1', descrizione: 'Retta', importo: 150, fattura_stato: 'emessa', fattura_pdf_path: null, fattura_aruba_id: 'X', fattura_emessa_il: '2026-01-01', fattura_causale: null, alunni: { nome: 'Mario', cognome: 'Rossi' } }
     // La riga di registro si legge dall'elenco (`.eq('pagamento_id')`), non da un
     // `maybeSingle`: la rotta legge TUTTE le righe del pagamento per accorgersi
     // delle quote multiple. `pdf_path: null` = nessun oggetto nel bucket.
-    h.fattureList = [{ id: FID, numero: 7, anno: 2026, pdf_path: null, sdi_stato: 7 }]
+    h.fattureList = [{ id: FID, scuola_id: SCUOLA, numero: 7, anno: 2026, pdf_path: null, sdi_stato: 7 }]
     h.storageFile = null
     h.storageError = null
   })
@@ -195,7 +196,7 @@ describe('GET /api/pagamenti/fattura?fattura_id=', () => {
   })
 
   it('col PDF nel bucket → 200 e i byte del bucket', async () => {
-    h.fattureList = [{ id: FID, numero: 7, anno: 2026, pdf_path: 'fatture/7.pdf', sdi_stato: 7 }]
+    h.fattureList = [{ id: FID, scuola_id: SCUOLA, numero: 7, anno: 2026, pdf_path: 'fatture/7.pdf', sdi_stato: 7 }]
     h.storageFile = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])])
     const res = await GET(new Request(`http://localhost/api/pagamenti/fattura?pagamento_id=${PID}&fattura_id=${FID}`))
     expect(res.status).toBe(200)
@@ -221,10 +222,10 @@ describe('GET /api/pagamenti/fattura/list', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     h.requireUser.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
-    h.pag = { id: PID, alunno_id: 'al-1' }
+    h.pag = { id: PID, scuola_id: SCUOLA, alunno_id: 'al-1' }
     h.fattureList = [
-      { id: 'f1', numero: 10, anno: 2026, quota_label: 'Mamma', quota_adult_id: 'u-mamma', intestatario: { nome: 'Giulia', cognome: 'Farina' }, pdf_path: 'p.pdf', sdi_stato: 7, sdi_stato_label: 'Consegnata' },
-      { id: 'f2', numero: 11, anno: 2026, quota_label: 'Papà', quota_adult_id: 'u-papa', intestatario: { nome: 'Marco', cognome: 'Rossi' }, pdf_path: null, sdi_stato: 1, sdi_stato_label: 'Presa in carico' },
+      { id: 'f1', scuola_id: SCUOLA, numero: 10, anno: 2026, quota_label: 'Mamma', quota_adult_id: 'u-mamma', intestatario: { nome: 'Giulia', cognome: 'Farina' }, pdf_path: 'p.pdf', sdi_stato: 7, sdi_stato_label: 'Consegnata' },
+      { id: 'f2', scuola_id: SCUOLA, numero: 11, anno: 2026, quota_label: 'Papà', quota_adult_id: 'u-papa', intestatario: { nome: 'Marco', cognome: 'Rossi' }, pdf_path: null, sdi_stato: 1, sdi_stato_label: 'Presa in carico' },
     ]
     // `pdf_disponibile` non si fida più della colonna: il bucket deve elencare
     // l'oggetto. Qui c'è, e infatti la prima riga resta `true`.

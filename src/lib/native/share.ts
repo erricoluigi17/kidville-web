@@ -38,14 +38,23 @@ export type EsitoCondivisione =
  * È l'implementazione vera; `condividi()` qui sotto ne è l'involucro `void` per
  * i chiamanti a cui l'esito non serve.
  */
-export async function condividiLink(input: CondivisioneInput): Promise<EsitoCondivisione> {
+export async function condividiLink(
+  input: CondivisioneInput,
+  signal?: AbortSignal,
+): Promise<EsitoCondivisione> {
+  if (signal?.aborted) return 'non-riuscita'
+
   // 1. Nativo: plugin Capacitor.
   if (isNativeApp()) {
     try {
       const { Share } = await import('@capacitor/share')
+      // L'import dinamico non è annullabile: il segnale va ricontrollato quando
+      // termina, prima di aprire un foglio ormai estraneo all'azione corrente.
+      if (signal?.aborted) return 'non-riuscita'
       await Share.share(input)
       return 'foglio'
     } catch (e) {
+      if (signal?.aborted) return 'non-riuscita'
       // Annullamento utente → il meccanismo ha funzionato. Plugin assente → no.
       return annullatoDallUtente(e) ? 'foglio' : 'non-riuscita'
     }
@@ -54,9 +63,11 @@ export async function condividiLink(input: CondivisioneInput): Promise<EsitoCond
   // 2. Web con Web Share API.
   if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
     try {
+      if (signal?.aborted) return 'non-riuscita'
       await navigator.share(input)
       return 'foglio'
     } catch (e) {
+      if (signal?.aborted) return 'non-riuscita'
       // NON si ricade sugli appunti: il foglio è stato offerto, e riproporre una
       // copia dopo che l'utente ha chiuso il pannello è un secondo gesto che lui
       // non ha chiesto. Era il comportamento di prima e resta.
@@ -72,6 +83,7 @@ export async function condividiLink(input: CondivisioneInput): Promise<EsitoCond
     typeof navigator.clipboard?.writeText === 'function'
   ) {
     try {
+      if (signal?.aborted) return 'non-riuscita'
       await navigator.clipboard.writeText(testo)
       return 'appunti'
     } catch {
@@ -106,13 +118,20 @@ export async function condividi(input: CondivisioneInput): Promise<void> {
  * chiamarlo guasto significherebbe scrivere in `app_log` una riga d'errore ogni
  * volta che qualcuno tocca «Annulla».
  */
-export async function condividiFileLocale(uri: string, titolo?: string): Promise<boolean> {
-  if (!uri || !isNativeApp()) return false
+export async function condividiFileLocale(
+  uri: string,
+  titolo?: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!uri || !isNativeApp() || signal?.aborted) return false
   try {
     const { Share } = await import('@capacitor/share')
+    // Come sopra: l'import può finire dopo che il chiamante ha annullato.
+    if (signal?.aborted) return false
     await Share.share({ files: [uri], ...(titolo ? { title: titolo } : {}) })
     return true
   } catch (e) {
+    if (signal?.aborted) return false
     return annullatoDallUtente(e)
   }
 }

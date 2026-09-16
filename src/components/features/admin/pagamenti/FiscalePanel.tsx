@@ -9,6 +9,7 @@ import { SectionTitle, TABLE_WRAP, TABLE, TH, TD, TROW } from '@/components/ui/c
 import { Badge } from '@/components/ui/Badge';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
+import { RevisioneFatturePanel } from './RevisioneFatturePanel';
 
 interface RicevutaRiga {
     id: string;
@@ -74,6 +75,8 @@ export function FiscalePanel({ userId, scuolaId }: Props) {
 
     return (
         <div className="space-y-8">
+            <RevisioneFatturePanel userId={userId} scuolaId={scuolaId} />
+
             <div>
                 <SectionTitle icon={FileSpreadsheet} title={t('fisc_att_title')}
                     sub={t('fisc_att_sub')} />

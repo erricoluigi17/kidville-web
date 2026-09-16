@@ -43,6 +43,8 @@ interface ModalProps {
   title: string
   labelledBy?: string
   closeOnBackdrop?: boolean
+  /** Mantiene il pannello dentro tutte le safe-area del viewport (notch e home indicator). */
+  safeArea?: boolean
   className?: string
   /** Stile inline del pannello dialog (es. box-shadow fluttuante). Retrocompatibile: opzionale. */
   style?: React.CSSProperties
@@ -75,7 +77,7 @@ interface ModalProps {
  * SOPRA il velo (che è `absolute` e viene prima in ordine di documento): senza,
  * il velo se lo mangerebbe insieme a tutti i suoi click.
  */
-export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true, className, style, returnFocusRef, children }: ModalProps) {
+export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true, safeArea = false, className, style, returnFocusRef, children }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const contenitoreRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
@@ -185,6 +187,12 @@ export function Modal({ open, onClose, title, labelledBy, closeOnBackdrop = true
       // la fascia in cui la primitiva disegna intestazione e ✕: su iPhone il tap
       // sulla chiusura colpiva la campanella delle notifiche.
       className="fixed inset-0 z-[120] flex items-center justify-center p-4"
+      style={safeArea ? {
+        paddingTop: 'max(1rem, env(safe-area-inset-top))',
+        paddingRight: 'max(1rem, env(safe-area-inset-right))',
+        paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+        paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+      } : undefined}
       // La chiusura al click fuori si decide sul DIALOGO, non sull'identità del
       // bersaglio: col velo diventato un fratello, `e.target` è il velo e non più
       // il contenitore. La regola «il gesto è cominciato fuori dal dialogo» resta

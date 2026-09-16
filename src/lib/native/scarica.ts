@@ -1,7 +1,7 @@
 'use client'
 
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import { nomeErrore } from '@/lib/logging/client'
+import { logClient, nomeErrore } from '@/lib/logging/client'
 import { isNativeApp } from '@/lib/push/native-register'
 import { condividiFileLocale, condividiLink } from './share'
 
@@ -111,6 +111,8 @@ interface FilesystemMinimo {
     recursive?: boolean
   }): Promise<{ uri?: string }>
   getUri(opzioni: { path: string; directory: string }): Promise<{ uri?: string }>
+  /** Presente nei plugin correnti; opzionale per non rompere shell native più vecchie. */
+  deleteFile?(opzioni: { path: string; directory: string }): Promise<void>
 }
 
 /**
@@ -199,6 +201,8 @@ export interface ScaricoInput {
   /** Il nome che il file avrà, estensione compresa: vedi `nomeFileScarico`. */
   nomeFile: string
   titolo?: string
+  /** Annulla fetch e impedisce write/share/ripieghi tardivi. Facoltativo per i chiamanti esistenti. */
+  signal?: AbortSignal
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -295,34 +299,67 @@ function ripulisciNome(valore: string | null | undefined): string {
  * `RisultatoScarico` che chi chiama deve loggare.
  */
 export async function scarica(input: ScaricoInput): Promise<RisultatoScarico> {
+  if (input.signal?.aborted) return annullato()
   return isNativeApp() ? scaricaSuNativo(input) : scaricaSuWeb(input)
 }
 
 async function scaricaSuNativo(input: ScaricoInput): Promise<RisultatoScarico> {
   if (!pluginDisponibile()) return ripiego(input, 'plugin-filesystem-assente')
+  let fs: FilesystemMinimo | null = null
+  let fileScritto = false
   try {
-    const risposta = await fetch(input.url)
+    const risposta = await fetchScarico(input)
+    if (input.signal?.aborted) return annullato()
     if (!risposta.ok) return ripiego(input, `http-${risposta.status}`)
 
-    const dati = await blobInBase64(await risposta.blob())
+    const blob = await risposta.blob()
+    if (input.signal?.aborted) return annullato()
+    const dati = await blobInBase64(blob)
+    if (input.signal?.aborted) return annullato()
     if (!dati) return ripiego(input, 'corpo-vuoto')
 
-    const fs = plugin()
+    fs = plugin()
+    if (input.signal?.aborted) return annullato()
     const scritto = await fs.writeFile({
       path: input.nomeFile,
       data: dati,
       directory: DIRECTORY_CACHE,
       recursive: true,
     })
+    fileScritto = true
+    if (input.signal?.aborted) {
+      await pulisciFileAnnullato(fs, input.nomeFile)
+      return annullato()
+    }
     // `writeFile` ritorna già l'uri su entrambe le piattaforme; `getUri` è la
     // seconda strada per le versioni del plugin che non lo fanno.
     const uri = scritto?.uri || (await fs.getUri({ path: input.nomeFile, directory: DIRECTORY_CACHE })).uri
+    if (input.signal?.aborted) {
+      await pulisciFileAnnullato(fs, input.nomeFile)
+      return annullato()
+    }
     if (!uri) return ripiego(input, 'uri-assente')
 
-    const consegnato = await condividiFileLocale(uri, input.titolo)
+    // Ultimo cancello prima dell'unico effetto che non possiamo ritirare: il
+    // foglio di sistema. Un abort durante writeFile/getUri non può oltrepassarlo.
+    if (input.signal?.aborted) {
+      await pulisciFileAnnullato(fs, input.nomeFile)
+      return annullato()
+    }
+    const consegnato = input.signal
+      ? await condividiFileLocale(uri, input.titolo, input.signal)
+      : await condividiFileLocale(uri, input.titolo)
+    if (input.signal?.aborted && !consegnato) {
+      await pulisciFileAnnullato(fs, input.nomeFile)
+      return annullato()
+    }
     if (!consegnato) return ripiego(input, 'foglio-file-non-aperto')
     return { esito: 'nativo-file' }
   } catch (e) {
+    if (input.signal?.aborted) {
+      if (fileScritto && fs) await pulisciFileAnnullato(fs, input.nomeFile)
+      return annullato()
+    }
     return ripiego(input, nomeErrore(e))
   }
 }
@@ -330,10 +367,14 @@ async function scaricaSuNativo(input: ScaricoInput): Promise<RisultatoScarico> {
 async function scaricaSuWeb(input: ScaricoInput): Promise<RisultatoScarico> {
   let indirizzoBlob: string | null = null
   try {
-    const risposta = await fetch(input.url)
+    const risposta = await fetchScarico(input)
+    if (input.signal?.aborted) return annullato()
     if (!risposta.ok) return ripiego(input, `http-${risposta.status}`)
 
-    indirizzoBlob = URL.createObjectURL(await risposta.blob())
+    const blob = await risposta.blob()
+    if (input.signal?.aborted) return annullato()
+    indirizzoBlob = URL.createObjectURL(blob)
+    if (input.signal?.aborted) return annullato()
     const ancora = document.createElement('a')
     ancora.href = indirizzoBlob
     ancora.download = input.nomeFile
@@ -343,6 +384,7 @@ async function scaricaSuWeb(input: ScaricoInput): Promise<RisultatoScarico> {
     ancora.remove()
     return { esito: 'web-blob' }
   } catch (e) {
+    if (input.signal?.aborted) return annullato()
     return ripiego(input, nomeErrore(e))
   } finally {
     // La revoca è RITARDATA di proposito: revocare nello stesso tick del click
@@ -365,11 +407,16 @@ async function scaricaSuWeb(input: ScaricoInput): Promise<RisultatoScarico> {
  * `app_log` si legge quante volte la strada buona non è stata percorribile.
  */
 async function ripiego(input: ScaricoInput, motivo: string): Promise<RisultatoScarico> {
+  if (input.signal?.aborted) return annullato()
   try {
-    const esito = await condividiLink({
+    const condivisione = {
       url: input.url,
       ...(input.titolo ? { title: input.titolo } : {}),
-    })
+    }
+    const esito = input.signal
+      ? await condividiLink(condivisione, input.signal)
+      : await condividiLink(condivisione)
+    if (input.signal?.aborted) return annullato()
     // `condividiLink` dice se un canale c'è stato davvero: senza questo controllo
     // «ho ripiegato» significherebbe «ho chiamato una funzione», non «l'utente ha
     // ottenuto qualcosa» — che è la differenza fra un log utile e un log che
@@ -385,9 +432,44 @@ async function ripiego(input: ScaricoInput, motivo: string): Promise<RisultatoSc
     // «Scarica», non ottiene il file, e non gli si dice niente.
     return { esito: esito === 'appunti' ? 'ripiego-appunti' : 'ripiego-condivisione', motivo }
   } catch (e) {
+    if (input.signal?.aborted) return annullato()
     // `condividiLink()` non lancia; se lancia lo stesso, l'utente non ha ottenuto
     // NIENTE — ed è l'unico caso che merita un `error`.
     return { esito: 'non-riuscito', motivo: `${motivo}|${nomeErrore(e)}` }
+  }
+}
+
+function annullato(): RisultatoScarico {
+  return { esito: 'non-riuscito', motivo: 'annullato' }
+}
+
+/** Mantiene identica la chiamata storica a fetch quando il signal non è fornito. */
+function fetchScarico(input: ScaricoInput): Promise<Response> {
+  return input.signal ? fetch(input.url, { signal: input.signal }) : fetch(input.url)
+}
+
+/**
+ * `writeFile` non è annullabile. Se il segnale arriva mentre il bridge sta
+ * scrivendo, si aspetta il suo ritorno e si rimuove il file prima di liberare il
+ * mutex del chiamante. Il path non entra mai nei log: può contenere una didascalia.
+ */
+async function pulisciFileAnnullato(fs: FilesystemMinimo, path: string): Promise<void> {
+  if (!fs.deleteFile) {
+    logClient({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: 'scarico-nativo-pulizia-non-disponibile',
+    })
+    return
+  }
+  try {
+    await fs.deleteFile({ path, directory: DIRECTORY_CACHE })
+  } catch {
+    logClient({
+      livello: 'warn',
+      evento: 'fetch',
+      messaggio: 'scarico-nativo-pulizia-fallita',
+    })
   }
 }
 

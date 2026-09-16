@@ -137,7 +137,9 @@ const VOCE = {
     stato: 'pagato',
     tipo: 'singolo',
     obbligatorio: true,
-    fattura_stato: 'emessa',
+    // Lo stato aggregato può essere scartato perché un'altra quota è stata respinta:
+    // la quota autorizzata dal nuovo elenco deve restare apribile lo stesso.
+    fattura_stato: 'scartata',
     causale_suggerita: null,
     // Dati SINTETICI: il bambino non esiste e quello non è un codice fiscale.
     alunni: { nome: 'Mara', cognome: 'Bianchi', codice_fiscale: 'AAAAAA00A00A000A' },
@@ -265,9 +267,11 @@ async function consegnaEAssorbi(quale: string, righe: unknown[]): Promise<void> 
     await act(async () => { consegna(righe); });
 }
 
-/** Le ancore della fattura DI UN pagamento: due card non si confondono. */
-const ancoreDi = (pagamento: string, radice: ParentNode = document) =>
-    [...radice.querySelectorAll<HTMLAnchorElement>(`a[href*="pagamento_id=${pagamento}"]`)];
+/** I due gesti della fattura dentro una superficie: apertura interna e salvataggio. */
+const comandiFatturaIn = (radice: HTMLElement) =>
+    within(radice).queryAllByRole('button').filter((bottone) =>
+        bottone.textContent?.includes(PAGAMENTI.fatturaApri)
+        || bottone.textContent?.includes(PAGAMENTI.fatturaScarica));
 
 const riquadri = () => screen.queryAllByTestId('fattura-scarto');
 const riquadriIn = (radice: HTMLElement) => within(radice).queryAllByTestId('fattura-scarto');
@@ -345,7 +349,7 @@ describe('segreteria · fattura «emessa»: i tre rami di EmessaLinks, tutti e t
 
         // Il comando resta assente: il PDF davvero non c'è, e un pulsante che dà 404
         // non è un miglioramento.
-        expect(screen.queryAllByRole('link')).toHaveLength(0);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaApri })).toHaveLength(0);
         expect(riquadri()).toHaveLength(1);
         expect(screen.getByTestId('fattura-scarto').textContent).toContain(MOTIVO);
     });
@@ -363,10 +367,8 @@ describe('segreteria · fattura «emessa»: i tre rami di EmessaLinks, tutti e t
         ]);
 
         // Evidenza POSITIVA: «Apri» e «Scarica» della quota scaricabile ci sono.
-        const link = screen.queryAllByRole('link');
-        expect(link).toHaveLength(2);
-        expect(link[0].textContent).toContain(CONTABILITA.fatBtn_apri);
-        expect(link[1].textContent).toContain(CONTABILITA.fatBtn_scarica);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaApri })).toHaveLength(1);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaScarica })).toHaveLength(1);
 
         // UNO SOLO, e parla della quota giusta.
         expect(riquadri()).toHaveLength(1);
@@ -389,7 +391,7 @@ describe('segreteria · fattura «emessa»: i tre rami di EmessaLinks, tutti e t
         const tendina = screen.getByRole('button');
         expect(tendina.textContent).toContain(`${CONTABILITA.fatBtn_fatture} (2)`);
         // A tendina CHIUSA i link non sono a schermo…
-        expect(screen.queryAllByRole('link')).toHaveLength(0);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaApri })).toHaveLength(0);
         // …ma il riquadro sì: sta fuori dal `{open && …}`, ed è la ragione per cui
         // è scritto così — chi non apre niente deve comunque leggere il perché.
         expect(riquadri()).toHaveLength(1);
@@ -399,7 +401,8 @@ describe('segreteria · fattura «emessa»: i tre rami di EmessaLinks, tutti e t
 
         // Aperta: i quattro comandi delle due quote compaiono, e il riquadro NON si
         // duplica — non è dentro il pannello, e nessuno ce l'ha ricopiato.
-        expect(screen.queryAllByRole('link')).toHaveLength(4);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaApri })).toHaveLength(2);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaScarica })).toHaveLength(2);
         expect(riquadri()).toHaveLength(1);
     });
 
@@ -410,7 +413,8 @@ describe('segreteria · fattura «emessa»: i tre rami di EmessaLinks, tutti e t
 
         // Evidenza positiva PRIMA dell'assenza: i comandi ci sono, quindi la
         // risposta è arrivata e il componente ha reso.
-        expect(screen.queryAllByRole('link')).toHaveLength(2);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaApri })).toHaveLength(1);
+        expect(screen.queryAllByRole('button', { name: PAGAMENTI.fatturaScarica })).toHaveLength(1);
         expect(riquadri()).toHaveLength(0);
     });
 });
@@ -436,7 +440,7 @@ describe('segreteria · gli stati in cui l’elenco non si chiede nemmeno', () =
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe('genitore · la prosa del provider non arriva mai sulla card di famiglia', () => {
-    it('LA STESSA riga: in segreteria accende il riquadro, sulla card di famiglia non lascia traccia', async () => {
+    it('con stato aggregato scartato mostra la quota autorizzata, ma non la prosa tecnica alla famiglia', async () => {
         // ⚠️ QUESTO È IL LOCK, ed è sul COMPORTAMENTO. Le due pelli montano lo stesso
         // motore (`useFattureScaricabili`) e qui ricevono LO STESSO oggetto di
         // risposta, col campo che il server non manda più. La metà «segreteria» non è
@@ -469,10 +473,10 @@ describe('genitore · la prosa del provider non arriva mai sulla card di famigli
         expect(riquadriIn(segreteria)[0].textContent).toContain(MOTIVO);
 
         // ── EVIDENZA POSITIVA n.2 — la card di famiglia ha applicato LA STESSA
-        //    risposta: le sue due ancore compaiono solo dopo.
-        const ancore = ancoreDi(PAG, genitore);
-        expect(ancore).toHaveLength(2);
-        expect(ancore[0].textContent).toContain(PAGAMENTI.fatturaApri);
+        //    risposta: i suoi due gesti compaiono solo dopo.
+        const comandi = comandiFatturaIn(genitore);
+        expect(comandi).toHaveLength(2);
+        expect(comandi[0].textContent).toContain(PAGAMENTI.fatturaApri);
 
         // ── E SOLO ADESSO l'assenza, che a questo punto significa qualcosa.
         expect(riquadriIn(genitore)).toHaveLength(0);

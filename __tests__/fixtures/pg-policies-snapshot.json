@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node scripts/rls-fotografia.mjs --sql | (esegui su prod) ; node scripts/rls-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-11",
-  "generato_alle": "2026-09-11T21:53:14Z",
-  "sha256": "286af306ff01a58e2fc1f6e16e6413e25ea349bb3eeb9442ecfc3663830e0382",
+  "generato_il": "2026-09-16",
+  "generato_alle": "2026-09-16T12:01:50Z",
+  "sha256": "1dce5ef4cf67138c2de1f45df8f882cf96d030bb645eda851042727c2779330f",
   "policy_solo_service_role": 74,
   "policies": [
     {
@@ -502,6 +502,7 @@
     "eventi_agenda",
     "fatture_emesse",
     "fatture_numerazione",
+    "fatture_visibilita_audit",
     "form_models",
     "form_submissions",
     "forms_templates",
@@ -594,6 +595,8 @@
     "fatture_emesse",
     "fatture_numerazione",
     "fatture_numerazione_sezionale",
+    "fatture_visibilita_audit",
+    "fatture_visibilita_revisioni",
     "fea_audit_log",
     "fea_signatures",
     "firme_docenti",

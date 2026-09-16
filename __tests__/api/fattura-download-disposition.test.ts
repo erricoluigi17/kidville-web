@@ -35,6 +35,7 @@ vi.mock('@/lib/logging/logger', () => ({ logEvento: vi.fn(), logErrore: vi.fn(),
 
 const PID = 'aaaaaaaa-0000-4000-8000-0000000000a1'
 const FID = 'bbbbbbbb-0000-4000-8000-0000000000b1'
+const SCUOLA = 'sc-1'
 
 const h = vi.hoisted(() => ({
   righe: [] as Record<string, unknown>[],
@@ -62,7 +63,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.limit = () => b
       b.maybeSingle = async () => ({
         data: table === 'pagamenti'
-          ? { id: PID, alunno_id: 'al-1', fattura_stato: 'emessa', fattura_pdf_path: null }
+          ? { id: PID, scuola_id: SCUOLA, alunno_id: 'al-1', fattura_stato: 'emessa', fattura_pdf_path: null }
           : null,
         error: null,
       })
@@ -88,7 +89,7 @@ const disposizione = (r: Response) => r.headers.get('content-disposition') ?? ''
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 7 }]
+  h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 7 }]
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -141,18 +142,18 @@ describe('un valore che non è né 0 né 1 si RIFIUTA, non si indovina', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 describe('il nome del file non porta fuori niente di personale', () => {
   it('solo cifre: un numero sporco («FPR 1948/A») esce come 1948', async () => {
-    h.righe = [{ id: FID, numero: 'FPR 1948/A', anno: '2026', pdf_path: 'fatture/x.pdf', sdi_stato: 7 }]
+    h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 'FPR 1948/A', anno: '2026', pdf_path: 'fatture/x.pdf', sdi_stato: 7 }]
     expect(disposizione(await chiedi('&download=1'))).toBe('attachment; filename="fattura-1948-2026.pdf"')
   })
 
   it('numero e anno assenti → `fattura-0-0.pdf`, che si legge (non `fattura--.pdf`)', async () => {
-    h.righe = [{ id: FID, numero: null, anno: null, pdf_path: 'fatture/x.pdf', sdi_stato: 7 }]
+    h.righe = [{ id: FID, scuola_id: SCUOLA, numero: null, anno: null, pdf_path: 'fatture/x.pdf', sdi_stato: 7 }]
     expect(disposizione(await chiedi(''))).toBe('inline; filename="fattura-0-0.pdf"')
   })
 
   it('mai l’uuid del pagamento, mai l’intestatario, mai il nome del bambino', async () => {
     h.righe = [{
-      id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 7,
+      id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 7,
       // Dati SINTETICI: il repository è pubblico. Sono qui solo per verificare
       // che NON escano — se un giorno qualcuno mettesse `intestatario` nel nome
       // «perché è più comodo», questa riga diventa rossa.

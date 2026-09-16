@@ -45,6 +45,7 @@ vi.mock('@/lib/logging/logger', () => log)
 
 const PID = 'aaaaaaaa-0000-4000-8000-000000000001'
 const FID = 'bbbbbbbb-0000-4000-8000-000000000002'
+const SCUOLA = 'sc-1'
 
 const h = vi.hoisted(() => ({
   pag: null as Record<string, unknown> | null,
@@ -116,8 +117,8 @@ function guasti() {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.pag = { id: PID, alunno_id: 'al-1', fattura_stato: 'emessa', fattura_pdf_path: null }
-  h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 7 }]
+  h.pag = { id: PID, scuola_id: SCUOLA, alunno_id: 'al-1', fattura_stato: 'emessa', fattura_pdf_path: null }
+  h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 7 }]
   h.scaricato = null
   h.erroreScarico = null
   h.chiamateDownload = 0
@@ -174,7 +175,7 @@ describe('a · il bucket risponde con un errore', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 describe('b · a registro non c’è nessuna chiave', () => {
   it('`pdf_path` nullo → 404, e il bucket non viene nemmeno interrogato', async () => {
-    h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: null, sdi_stato: 7 }]
+    h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: null, sdi_stato: 7 }]
 
     const res = await chiedi()
 
@@ -187,7 +188,7 @@ describe('b · a registro non c’è nessuna chiave', () => {
   })
 
   it('`pdf_path` nullo ANCHE chiedendo una quota per id → stesso 404, stesso silenzio', async () => {
-    h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: null, sdi_stato: 7 }]
+    h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: null, sdi_stato: 7 }]
     const res = await chiedi(`&fattura_id=${FID}`)
     expect(res.status).toBe(404)
     expect(h.chiamateDownload).toBe(0)
@@ -212,7 +213,7 @@ describe('b · a registro non c’è nessuna chiave', () => {
  */
 describe('b-bis · lo scarto SDI non esce dal registro', () => {
   it('unica riga SCARTATA (4) → 404, e il bucket non viene interrogato: un numero bruciato non si consegna', async () => {
-    h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 4 }]
+    h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: 4 }]
 
     const res = await chiedi()
 
@@ -228,8 +229,8 @@ describe('b-bis · lo scarto SDI non esce dal registro', () => {
     // Se il filtro fosse invertito uscirebbe la scartata; se non filtrasse
     // affatto, la rotta vedrebbe due documenti e risponderebbe 409.
     h.righe = [
-      { id: 'ff000000-0000-4000-8000-00000000000a', numero: 1948, anno: 2026, pdf_path: 'fatture/scartata.pdf', sdi_stato: 4 },
-      { id: FID, numero: 1990, anno: 2026, pdf_path: 'fatture/viva.pdf', sdi_stato: 7 },
+      { id: 'ff000000-0000-4000-8000-00000000000a', scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/scartata.pdf', sdi_stato: 4 },
+      { id: FID, scuola_id: SCUOLA, numero: 1990, anno: 2026, pdf_path: 'fatture/viva.pdf', sdi_stato: 7 },
     ]
     h.scaricato = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])])
 
@@ -240,7 +241,7 @@ describe('b-bis · lo scarto SDI non esce dal registro', () => {
   })
 
   it('`sdi_stato` ASSENTE (trasporto fallito) → resta VIVA: nessuno sa se il documento sia partito', async () => {
-    h.righe = [{ id: FID, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: null }]
+    h.righe = [{ id: FID, scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/1948.pdf', sdi_stato: null }]
     h.scaricato = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46])])
 
     const res = await chiedi()

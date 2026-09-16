@@ -79,13 +79,20 @@ const SMOKE_ARTEFATTO = !!process.env.CI || process.env.KV_SMOKE_ARTEFATTO === '
  * Non segna letto niente (lo spec lo verifica): i due progetti leggono la stessa
  * conversazione seminata, nello stesso stato.
  *
+ * ─── IL SETTIMO, dal 2026-09-16: `fatture-pdf` ───────────────────────────────
+ * Il PDF fiscale passa da PDF.js, canvas, testo accessibile e cancellazione dei
+ * render: tutte API con implementazioni diverse nei due motori. Lo spec serve due
+ * PDF veri e multipagina, verifica i pixel disegnati e il testo estratto, quindi
+ * naviga, ingrandisce, chiude, riapre e cambia documento. Intercetta soltanto le
+ * API del caso e non scrive sul database; anche qui `retries: 0` vive nello spec.
+ *
  * È una **RegExp** e non un glob perché così il lock
  * `__tests__/architecture/e2e-webkit-installato.test.ts` può APPLICARLA agli
  * spec reali e accorgersi se un giorno non seleziona più niente: un `testMatch`
  * che matcha zero file è un progetto verde in un secondo che non prova nulla.
  */
 const SPEC_CRITICI_WEBKIT =
-  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|chat-precedenti)\.spec\.ts$/;
+  /(?:^|[\\/])(?:auth|parent-home|parent-pagamenti|public-iscrizione|impaginazione-media|chat-precedenti|fatture-pdf)\.spec\.ts$/;
 
 /**
  * Ciò che su WebKit NON si ripete. `public-iscrizione.spec.ts` contiene, oltre

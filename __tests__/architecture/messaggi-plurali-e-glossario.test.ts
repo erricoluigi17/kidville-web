@@ -762,6 +762,7 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         ['parentForms.firmatarioNdi2', 'forma «N di 2»: posizione in una sequenza'],
         ['parentForms.passo', 'forma «passo N di M»: posizione in una sequenza'],
         ['public.wizardPassoDi', 'forma «passo N di M»: posizione in una sequenza'],
+        ['pagamenti.fatturaViewerPagina', 'forma «pagina N di M»: posizione del documento, non quantità da pluralizzare'],
         ['teacherPresenze.pdfPiePagina', 'forma «pagina N di M»: posizione in una sequenza'],
         ['teacherServizi.galleryFotoNofM', 'forma «foto N di M»: posizione in una sequenza'],
 
@@ -891,7 +892,13 @@ describe('lock architettura · plurali, glossario ed esempi nei cataloghi', () =
         // significherebbe rinunciare alla frase leggibile che questa chiave esiste per
         // dare — cioè piegare un messaggio a una regexp, che è la scelta già scartata
         // due volte il 12 e il 13 agosto.
-        expect(NON_CONTATORI.size).toBeLessThanOrEqual(39)
+        //
+        // 2026-09-16 · 39 → 40. `pagamenti.fatturaViewerPagina` descrive la pagina
+        // corrente rispetto al totale del PDF («Pagina 2 di 7»): è una posizione in
+        // una sequenza, come `teacherPresenze.pdfPiePagina`, e nessun sostantivo deve
+        // concordare col numero. La forma ICU plural sarebbe semanticamente falsa;
+        // cambiare «di/of» per schivare l'euristica piegherebbe invece il testo al lock.
+        expect(NON_CONTATORI.size).toBeLessThanOrEqual(40)
         // …e ogni eccezione porta una ragione scritta, non una riga muta.
         for (const [chiave, motivo] of NON_CONTATORI) {
             expect(motivo.length, `${chiave} è dichiarata senza motivo`).toBeGreaterThan(8)

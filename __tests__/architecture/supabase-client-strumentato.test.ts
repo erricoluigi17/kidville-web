@@ -122,6 +122,13 @@ const FETCH_VERSO_SUPABASE = new Map<string, string>([
     ['src/lib/offline/syncEngine.ts',
         'FALSO POSITIVO dichiarato, stessa forma: i suoi cinque `fetch` vanno tutti a `/api/**` nostre. '
         + 'Nessuno di essi esce verso l\'host Supabase.'],
+    ['src/lib/pagamenti/scarico-fattura.ts',
+        'FALSO POSITIVO dichiarato: importa `SUPABASE_URL` soltanto per confrontare l\'origine del '
+        + 'link Storage firmato restituito dal server, insieme a protocollo, percorso, token e '
+        + 'scadenza. Le sue `fetch` usano URL relativi verso `/api/pagamenti/fattura/list` e '
+        + '`/api/pagamenti/fattura?esterno=1`; è la route server, tramite il factory strumentato, '
+        + 'a parlare con Supabase e a produrre il link. Il browser non invia mai richieste grezze '
+        + 'all\'host Supabase da questo file.'],
     ['src/middleware.ts',
         'FALSO POSITIVO dichiarato, e sta QUI e non in un\'eccezione dentro la regex — che è dove '
         + 'stava prima, con l\'esclusione del punto in `FETCH_GREZZO`, e da lì apriva il buco a tutti '

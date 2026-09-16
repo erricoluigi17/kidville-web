@@ -40,6 +40,7 @@ const log = vi.hoisted(() => ({ logEvento: vi.fn(), logErrore: vi.fn(), logOk: v
 vi.mock('@/lib/logging/logger', () => log)
 
 const PID = 'aaaaaaaa-0000-4000-8000-0000000000c1'
+const SCUOLA = 'sc-1'
 
 const h = vi.hoisted(() => ({
   righe: [] as Record<string, unknown>[],
@@ -71,7 +72,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.limit = () => b
       b.maybeSingle = async () => ({
-        data: table === 'pagamenti' ? { id: PID, alunno_id: 'al-1' } : null,
+        data: table === 'pagamenti' ? { id: PID, scuola_id: SCUOLA, alunno_id: 'al-1' } : null,
         error: null,
       })
       // PostgREST NON lancia: `{ data, error }` anche quando la tabella non esiste.
@@ -106,8 +107,8 @@ function righeLog(canale: string, livello: string) {
 
 /** Due quote (genitori separati): una col PDF caricato, una senza. */
 const DUE_QUOTE = [
-  { id: 'f1', numero: 10, anno: 2026, quota_label: 'Mamma', quota_adult_id: 'u-m', intestatario: { nome: 'Giulia', cognome: 'Farina' }, pdf_path: `${PID}-10.pdf`, sdi_stato: 7, sdi_stato_label: 'Consegnata' },
-  { id: 'f2', numero: 11, anno: 2026, quota_label: 'Papà', quota_adult_id: 'u-p', intestatario: { nome: 'Marco', cognome: 'Rossi' }, pdf_path: `${PID}-11.pdf`, sdi_stato: 7, sdi_stato_label: 'Consegnata' },
+  { id: 'f1', scuola_id: SCUOLA, numero: 10, anno: 2026, quota_label: 'Mamma', quota_adult_id: 'u-m', intestatario: { nome: 'Giulia', cognome: 'Farina' }, pdf_path: `${PID}-10.pdf`, sdi_stato: 7, sdi_stato_label: 'Consegnata' },
+  { id: 'f2', scuola_id: SCUOLA, numero: 11, anno: 2026, quota_label: 'Papà', quota_adult_id: 'u-p', intestatario: { nome: 'Marco', cognome: 'Rossi' }, pdf_path: `${PID}-11.pdf`, sdi_stato: 7, sdi_stato_label: 'Consegnata' },
 ]
 
 beforeEach(() => {

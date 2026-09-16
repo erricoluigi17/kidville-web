@@ -110,6 +110,7 @@ import { GET as FATTURA } from '@/app/api/pagamenti/fattura/route'
 
 const ALUNNO = '22222222-2222-4222-8222-222222222222'
 const PAG = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1'
+const SCUOLA = 's1'
 
 const ERR_PG = { code: '42501', message: 'permission denied for table notifiche', details: null, hint: null }
 
@@ -177,11 +178,11 @@ describe('pagamenti/fattura:GET — il PDF ufficiale che non si scarica', () => 
 
   beforeEach(() => {
     h.pag = {
-      id: PAG, descrizione: 'Retta', fattura_causale: null, importo: 100,
+      id: PAG, scuola_id: SCUOLA, descrizione: 'Retta', fattura_causale: null, importo: 100,
       fattura_stato: 'emessa', fattura_aruba_id: 'X1', fattura_pdf_path: 'fatture/x1.pdf',
       fattura_emessa_il: '2026-07-01', alunno_id: ALUNNO, alunni: { nome: 'Sofia', cognome: 'Rossi' },
     }
-    h.righeFatture = [{ id: 'f1', numero: 1948, anno: 2026, pdf_path: 'fatture/x1.pdf', sdi_stato: 7 }]
+    h.righeFatture = [{ id: 'f1', scuola_id: SCUOLA, numero: 1948, anno: 2026, pdf_path: 'fatture/x1.pdf', sdi_stato: 7 }]
   })
 
   it('download fallito ({ error } scartato prima) → riga `error`, e l\'utente NON riceve niente', async () => {

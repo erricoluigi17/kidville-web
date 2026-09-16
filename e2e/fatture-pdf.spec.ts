@@ -27,6 +27,23 @@ interface PaginaSintetica {
   sfondo: RGB
 }
 
+function verificaTentativiApertura(
+  richieste: string[],
+  indiceIniziale: number,
+  fatturaId: string,
+): void {
+  const tentativi = richieste.slice(indiceIniziale)
+
+  // In produzione l'effect parte una volta; `next dev` con App Router usa
+  // StrictMode e fa setup -> cleanup -> setup, quindi il primo fetch può essere
+  // già visibile alla route Playwright quando AbortController lo dismette. Il
+  // limite a due conserva il lock contro loop e fetch spurii, mentre l'uguaglianza
+  // verifica l'ID su OGNI tentativo (non soltanto sul documento poi renderizzato).
+  expect(tentativi.length).toBeGreaterThanOrEqual(1)
+  expect(tentativi.length).toBeLessThanOrEqual(2)
+  expect(tentativi).toEqual(Array(tentativi.length).fill(fatturaId))
+}
+
 async function creaPdf(pagine: PaginaSintetica[]): Promise<Buffer> {
   const documento = await PDFDocument.create()
   const font = await documento.embedFont(StandardFonts.HelveticaBold)
@@ -68,7 +85,7 @@ async function installaRisposte(
   pdfA: Buffer,
   pdfB: Buffer,
   pdfRichiesti: string[],
-  esiti: Array<{ fattura_id?: string; esito?: string }>,
+  esiti: Array<{ fattura_id?: string; pagamento_id?: string; esito?: string }>,
   apiImpreviste: string[],
 ): Promise<void> {
   await page.routeWebSocket('**/realtime/v1/**', (socket) => socket.close())
@@ -210,7 +227,11 @@ async function installaRisposte(
     }
 
     if (url.pathname === '/api/pagamenti/fattura/esito') {
-      esiti.push((richiesta.postDataJSON() ?? {}) as { fattura_id?: string; esito?: string })
+      esiti.push((richiesta.postDataJSON() ?? {}) as {
+        fattura_id?: string
+        pagamento_id?: string
+        esito?: string
+      })
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' })
       return
     }
@@ -252,7 +273,7 @@ test('renderizza, naviga, ingrandisce e cambia due fatture reali senza errori as
   ])
   const erroriPagina: string[] = []
   const pdfRichiesti: string[] = []
-  const esiti: Array<{ fattura_id?: string; esito?: string }> = []
+  const esiti: Array<{ fattura_id?: string; pagamento_id?: string; esito?: string }> = []
   const apiImpreviste: string[] = []
 
   page.on('pageerror', (errore) => erroriPagina.push(`${errore.name}: ${errore.message}`))
@@ -276,6 +297,8 @@ test('renderizza, naviga, ingrandisce e cambia due fatture reali senza errori as
   await expect(page.getByText('Aggregato scartato')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Apri' })).toHaveCount(2)
 
+  let inizioTentativi = pdfRichiesti.length
+  let inizioAperture = esiti.length
   await page.getByRole('button', { name: 'Apri' }).nth(0).click()
   let dialogo = page.getByRole('dialog', { name: 'Fattura' })
   await expect(dialogo).toBeVisible()
@@ -289,6 +312,12 @@ test('renderizza, naviga, ingrandisce e cambia due fatture reali senza errori as
     return alfa === 255 && rosso > verde + 80 && rosso > blu + 80
   }).toBe(true)
 
+  await expect.poll(() => esiti.slice(inizioAperture)).toEqual([
+    { fattura_id: FATTURA_A, pagamento_id: PAGAMENTO, esito: 'visualizzata' },
+  ])
+  verificaTentativiApertura(pdfRichiesti, inizioTentativi, FATTURA_A)
+
+  const richiestePrimaDellaPagina = pdfRichiesti.length
   await dialogo.getByRole('button', { name: 'Pagina successiva' }).click()
   await expect(dialogo.getByLabel('Testo della pagina 2')).toContainText('FATTURA-A PAGINA-2')
   await expect(dialogo.getByText('Pagina 2 di 2')).toBeVisible()
@@ -296,30 +325,41 @@ test('renderizza, naviga, ingrandisce e cambia due fatture reali senza errori as
     const [rosso, verde, blu, alfa] = await pixelInterno(canvas)
     return alfa === 255 && verde > rosso + 80 && verde > blu + 50
   }).toBe(true)
+  expect(pdfRichiesti).toHaveLength(richiestePrimaDellaPagina)
 
   const larghezzaPrima = await canvas.evaluate((elemento) =>
     (elemento as HTMLCanvasElement).getBoundingClientRect().width,
   )
+  const richiestePrimaDelloZoom = pdfRichiesti.length
   await dialogo.getByRole('button', { name: 'Aumenta zoom' }).click()
   await expect(dialogo.getByText('125%')).toBeVisible()
   await expect(dialogo.getByLabel('Testo della pagina 2')).toContainText('FATTURA-A PAGINA-2')
   await expect.poll(async () => canvas.evaluate((elemento) =>
     (elemento as HTMLCanvasElement).getBoundingClientRect().width,
   )).toBeGreaterThan(larghezzaPrima * 1.2)
+  expect(pdfRichiesti).toHaveLength(richiestePrimaDelloZoom)
 
   await dialogo.getByRole('button', { name: 'Chiudi anteprima fattura' }).click()
   await expect(dialogo).toHaveCount(0)
 
   // La riapertura deve ripartire dalla prima pagina e dallo zoom iniziale.
+  inizioTentativi = pdfRichiesti.length
+  inizioAperture = esiti.length
   await page.getByRole('button', { name: 'Apri' }).nth(0).click()
   dialogo = page.getByRole('dialog', { name: 'Fattura' })
   await expect(dialogo.getByLabel('Testo della pagina 1')).toContainText('FATTURA-A PAGINA-1')
   await expect(dialogo.getByText('Pagina 1 di 2')).toBeVisible()
   await expect(dialogo.getByText('100%')).toBeVisible()
+  await expect.poll(() => esiti.slice(inizioAperture)).toEqual([
+    { fattura_id: FATTURA_A, pagamento_id: PAGAMENTO, esito: 'visualizzata' },
+  ])
+  verificaTentativiApertura(pdfRichiesti, inizioTentativi, FATTURA_A)
   await dialogo.getByRole('button', { name: 'Chiudi anteprima fattura' }).click()
   await expect(dialogo).toHaveCount(0)
 
   // Il secondo comando deve caricare il secondo PDF, non riusare il documento A.
+  inizioTentativi = pdfRichiesti.length
+  inizioAperture = esiti.length
   await page.getByRole('button', { name: 'Apri' }).nth(1).click()
   dialogo = page.getByRole('dialog', { name: 'Fattura' })
   await expect(dialogo.getByLabel('Testo della pagina 1')).toContainText('FATTURA-B PAGINA-1')
@@ -330,16 +370,21 @@ test('renderizza, naviga, ingrandisce e cambia due fatture reali senza errori as
     return alfa === 255 && blu > rosso + 80 && blu > verde + 80
   }).toBe(true)
 
+  await expect.poll(() => esiti.slice(inizioAperture)).toEqual([
+    { fattura_id: FATTURA_B, pagamento_id: PAGAMENTO, esito: 'visualizzata' },
+  ])
+  verificaTentativiApertura(pdfRichiesti, inizioTentativi, FATTURA_B)
+
+  const richiestePrimaDellaPaginaB = pdfRichiesti.length
   await dialogo.getByRole('button', { name: 'Pagina successiva' }).click()
   await expect(dialogo.getByLabel('Testo della pagina 2')).toContainText('FATTURA-B PAGINA-2')
   await expect(dialogo.getByText('Pagina 2 di 2')).toBeVisible()
+  expect(pdfRichiesti).toHaveLength(richiestePrimaDellaPaginaB)
 
-  expect(pdfRichiesti).toEqual([FATTURA_A, FATTURA_A, FATTURA_B])
-  await expect.poll(() => esiti.filter((e) => e.esito === 'visualizzata').length).toBe(3)
-  expect(esiti.filter((e) => e.esito === 'visualizzata').map((e) => e.fattura_id)).toEqual([
-    FATTURA_A,
-    FATTURA_A,
-    FATTURA_B,
+  expect(esiti).toEqual([
+    { fattura_id: FATTURA_A, pagamento_id: PAGAMENTO, esito: 'visualizzata' },
+    { fattura_id: FATTURA_A, pagamento_id: PAGAMENTO, esito: 'visualizzata' },
+    { fattura_id: FATTURA_B, pagamento_id: PAGAMENTO, esito: 'visualizzata' },
   ])
   expect(erroriPagina).toEqual([])
   expect(apiImpreviste).toEqual([])

@@ -54,7 +54,12 @@ function differita<T>() {
 }
 
 function rispostaPdf(stato = 200): Response {
-  return new Response(stato === 200 ? new Blob(['pdf'], { type: 'application/pdf' }) : null, { status: stato })
+  const corpo = new Blob(['pdf'], { type: 'application/pdf' })
+  return {
+    ok: stato >= 200 && stato < 300,
+    status: stato,
+    blob: async () => corpo,
+  } as Response
 }
 
 beforeEach(() => {

@@ -44,11 +44,21 @@ const input = (signal?: AbortSignal) => ({
   signal,
 })
 
-function rispostaEsterna(scadeFraMs = 300_000, url = `${STORAGE}/storage/v1/object/sign/fatture/f.pdf?token=segreto`) {
+function rispostaEsterna(
+  scadeFraMs = 300_000,
+  url = `${STORAGE}/storage/v1/object/sign/fatture/f.pdf?token=segreto`,
+  dataRisposta?: string,
+) {
   return new Response(JSON.stringify({
     success: true,
     data: { url, scade_il: new Date(Date.now() + scadeFraMs).toISOString() },
-  }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      ...(dataRisposta === undefined ? {} : { date: dataRisposta }),
+    },
+  })
 }
 
 function differita<T>() {
@@ -136,6 +146,56 @@ describe('salvaFattura', () => {
     expect(h.assign).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/uimulkjyekgemjakmepp\.supabase\.co\//))
   })
 
+  it('accetta il TTL firmato dal server quando il server è avanti di 15 secondi', async () => {
+    vi.useFakeTimers()
+    const oraServer = new Date('2026-09-16T10:00:00.000Z')
+    const oraClient = new Date(oraServer.getTime() - 15_000)
+    vi.setSystemTime(oraClient)
+    const scadeIl = Date.now() + 315_000
+    expect(scadeIl - oraServer.getTime()).toBe(300_000)
+    expect(scadeIl - oraClient.getTime()).toBeGreaterThan(310_000)
+    h.nativo = true
+    vi.mocked(fetch).mockResolvedValue(rispostaEsterna(
+      315_000,
+      `${STORAGE}/storage/v1/object/sign/fatture/f.pdf?token=segreto`,
+      oraServer.toUTCString(),
+    ))
+
+    const esito = await salvaFattura(input())
+
+    expect(esito).toEqual({ ok: true, modalita: 'browser-esterno', avviso: null })
+    expect(h.assign).toHaveBeenCalledOnce()
+    expect(h.telemetria).toHaveBeenCalledWith(expect.objectContaining({ esito: 'browser_avviato' }))
+  })
+
+  it.each([
+    ['assente', undefined],
+    ['non valida', 'non-una-data'],
+  ])('senza Date %s ripiega sull’orologio locale', async (_caso, dataRisposta) => {
+    h.nativo = true
+    vi.mocked(fetch).mockResolvedValue(rispostaEsterna(300_000, undefined, dataRisposta))
+
+    const esito = await salvaFattura(input())
+
+    expect(esito).toEqual({ ok: true, modalita: 'browser-esterno', avviso: null })
+    expect(h.assign).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['TTL server oltre limite', 400_000],
+    ['URL già scaduto', -1_000],
+  ])('con Date valida rifiuta %s', async (_caso, ttl) => {
+    const oraServer = new Date()
+    h.nativo = true
+    vi.mocked(fetch).mockResolvedValue(rispostaEsterna(ttl, undefined, oraServer.toUTCString()))
+
+    const esito = await salvaFattura(input())
+
+    expect(esito).toMatchObject({ ok: false, motivo: 'url-non-valido', riprovabile: true })
+    expect(h.assign).not.toHaveBeenCalled()
+    expect(h.telemetria).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['http non sicuro', 300_000, `http://uimulkjyekgemjakmepp.supabase.co/storage/v1/object/sign/fatture/f.pdf?token=x`],
     ['host estraneo', 300_000, 'https://evil.test/storage/v1/object/sign/fatture/f.pdf?token=x'],
@@ -209,6 +269,7 @@ describe('salvaFattura', () => {
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       status: 200,
+      headers: new Headers(),
       json: () => corpo.promise,
     } as Response)
     const salvataggio = salvaFattura(input())

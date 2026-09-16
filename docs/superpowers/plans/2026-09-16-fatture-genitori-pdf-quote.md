@@ -105,10 +105,26 @@ Una correzione della safe area è in corso. Il retest iOS resta pendente e quest
 
 La correzione del viewer estende l'opt-in della modale alla safe area su tutti e quattro i lati e rende coerenti i limiti di altezza `vh`/`dvh`; conserva inoltre la classe letterale richiesta dal lock architetturale. Il critico Astra ha dato PASS finale al codice. Dopo la correzione sono verdi i gate locali: ESLint senza warning, typecheck, Vitest completo (**1.311 file / 17.827 test**), build di produzione con postbuild (**2.689 file JavaScript**) e harness del renderer **4/4** su Chromium/WebKit.
 
-Il retest iOS sul tocco al centro della X è in corso: questi risultati non dichiarano un PASS nativo. Il collaudo Android con app già installata e documento reale è avviato. L'utente ha riferito di avere verificato personalmente nel simulatore che la fattura è visibile e scaricabile e ha autorizzato merge e deploy; la sua verifica manuale è annotata come tale e non è presentata come prova strumentata di ogni interazione. CI E2E autenticata, push, merge, pubblicazione e verifica pubblicata restano pendenti.
+Il retest iOS sul tocco al centro della X è stato poi superato nel simulatore, come registrato nell'aggiornamento seguente. Il collaudo Android con app già installata e documento reale è avviato. L'utente ha riferito di avere verificato personalmente nel simulatore che la fattura è visibile e scaricabile e ha autorizzato merge e deploy; la sua verifica manuale è annotata come tale e non è presentata come prova strumentata di ogni interazione. La CI E2E autenticata, merge, pubblicazione e verifica pubblicata restano pendenti.
 
 ## Retest iOS indipendente — PASS limitato al simulatore
 
 Il retest indipendente del PDF Aruba reale nel simulatore iPhone 17 Pro con iOS 26.2 è **PASS**. L'header dell'anteprima risulta sotto la status bar e il target della X è interamente attivo: il tocco al centro geometrico visibile e quello tramite etichetta accessibile hanno entrambi chiuso il viewer al primo tentativo, con ritorno alla schermata Pagamenti entro cinque secondi. Dopo due cicli di chiusura, una terza riapertura ha confermato documento, footer dei comandi e zoom minimo al 75%.
 
-Questo PASS copre il simulatore iOS 26.2, non un dispositivo fisico o la baseline iOS 15. Il collaudo Android resta in corso; ritorno dal browser e CI E2E autenticata restano pendenti. Il push iniziale del branch è riuscito, mentre la correzione safe area deve ancora essere committata; merge, pubblicazione e verifica pubblicata non sono ancora avvenuti.
+Questo PASS copre il simulatore iOS 26.2, non un dispositivo fisico o la baseline iOS 15. Il collaudo Android resta in corso; ritorno dal browser e CI E2E autenticata restano pendenti. Lo stato di push, merge e pubblicazione è aggiornato nei blocchi successivi.
+
+## Collaudo Android e riferimento temporale del link — 2026-09-16
+
+Il primo collaudo Android con app già installata e PDF Aruba reale ha dato PASS per rendering, zoom, chiusura e riapertura. Il passaggio al browser ha invece rilevato un FAIL quando l'orologio del client è indietro di 15 secondi: il client interpretava un URL firmato dal server, valido 300 secondi, come già oltre la finestra prevista.
+
+La correzione conserva la durata di 300 secondi: usa la data HTTP validata dal server come riferimento quando disponibile e mantiene il fallback all'orologio del client. Il critico Astra ha dato PASS al codice e alle **19/19** regressioni. Il retest Android di passaggio al browser e ritorno nell'app è in corso. I gate locali finali sono verdi: ESLint senza warning, typecheck, Vitest completo (**1.311 file / 17.832 test**) e build di produzione con postbuild (**2.689 file JavaScript**).
+
+La PR [#148](https://github.com/erricoluigi17/kidville-web/pull/148) è aperta e la CI della versione in revisione è pendente. Merge, pubblicazione e verifica pubblicata non sono ancora avvenuti.
+
+## Retest Android e gate locali finali — 2026-09-16
+
+Il retest Android indipendente è **PASS**: il PDF Aruba reale è stato renderizzato, ingrandito, chiuso e riaperto; il download è apparso nel viewer Chrome e il ritorno a Kidville è riuscito. Insieme al PASS iOS già registrato, il collaudo nativo copre le app già installate nei rispettivi ambienti; il PASS iOS resta limitato al simulatore iOS 26.2, senza prova su dispositivo fisico o iOS 15.
+
+La CI della PR ha inizialmente fallito per due difetti dei test: il conteggio E2E in StrictMode e una fixture jsdom Blob su Node 22. Le correzioni sono circoscritte ai test; non modificano il prodotto oltre alla correzione del riferimento temporale del link. Il critico Astra ha dato PASS alla fixture su Node 22 (**5/5**) e anche su Node 24. L'E2E locale autenticato, avviato con Next dev e API dell'app simulata senza seed, è **2/2 PASS** su Chromium/WebKit; il run dura 4,7 s. I gate locali finali restano: ESLint senza warning, typecheck, build con postbuild (**2.689 file JavaScript**) e Vitest completo **PASS** sia su Node 24 sia su Node 22.23.1 (**1.311 file / 17.832 test** per entrambe; Node 22 in 108,60 s).
+
+L'esito aggiornato della CI e ogni stato di merge, pubblicazione e verifica pubblicata vanno letti dalla fonte viva della [PR #148](https://github.com/erricoluigi17/kidville-web/pull/148); qui non sono dichiarati superati. La revisione manuale dello storico e l'attivazione delle sedi restano rollout operativo successivo al rilascio verificato.

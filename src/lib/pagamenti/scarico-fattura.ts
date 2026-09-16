@@ -746,7 +746,7 @@ function urlEsternoValido(corpo: unknown, adesso: number): corpo is RispostaUrlE
 }
 
 type EsitoFetchEsterno =
-    | { tipo: 'corpo'; corpo: unknown }
+    | { tipo: 'corpo'; corpo: unknown; riferimentoTemporale: number }
     | { tipo: 'http'; stato: number }
     | { tipo: 'json-non-valido'; errore: unknown }
     | { tipo: 'errore'; errore: unknown }
@@ -775,8 +775,10 @@ async function fetchUrlEsterno(input: SalvaFatturaInput): Promise<EsitoFetchEste
                 signal: controller.signal,
             });
             if (!risposta.ok) return { tipo: 'http', stato: risposta.status };
+            const dataRisposta = Date.parse(risposta.headers.get('date') ?? '');
+            const riferimentoTemporale = Number.isFinite(dataRisposta) ? dataRisposta : Date.now();
             try {
-                return { tipo: 'corpo', corpo: await risposta.json() };
+                return { tipo: 'corpo', corpo: await risposta.json(), riferimentoTemporale };
             } catch (errore) {
                 return { tipo: 'json-non-valido', errore };
             }
@@ -938,7 +940,7 @@ export async function salvaFattura(input: SalvaFatturaInput): Promise<RisultatoS
         if (input.signal?.aborted || giroInVolo !== mio) {
             return risultatoNegativo(presentazione.modalita, 'annullato', null);
         }
-        if (!urlEsternoValido(esitoFetch.corpo, Date.now())) {
+        if (!urlEsternoValido(esitoFetch.corpo, esitoFetch.riferimentoTemporale)) {
             logClient({ livello: 'error', evento: 'fetch', messaggio: 'fattura-browser-esterno:url-non-valido' });
             return risultatoNegativo(presentazione.modalita, 'url-non-valido');
         }

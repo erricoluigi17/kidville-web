@@ -21,12 +21,13 @@ vi.mock('@/lib/logging/client', () => ({
 }))
 
 vi.mock('@/components/ui/Modal', () => ({
-  Modal: ({ open, title, className, children }: {
+  Modal: ({ open, title, safeArea, className, children }: {
     open: boolean
     title: string
+    safeArea?: boolean
     className?: string
     children: React.ReactNode
-  }) => open ? <div role="dialog" aria-label={title} className={className}>{children}</div> : null,
+  }) => open ? <div role="dialog" aria-label={title} data-safe-area={safeArea || undefined} className={className}>{children}</div> : null,
 }))
 
 import { FatturaViewer } from '@/components/features/pagamenti/FatturaViewer'
@@ -96,15 +97,18 @@ afterEach(() => {
 })
 
 describe('FatturaViewer', () => {
-  it('usa 100vh come fallback iOS 15 e applica 100dvh soltanto quando supportato', () => {
+  it('resta nelle safe-area e usa 100vh come fallback iOS 15, con 100dvh quando supportato', () => {
     global.fetch = vi.fn(() => new Promise<Response>(() => {})) as typeof fetch
 
     render(<FatturaViewer open onClose={vi.fn()} url="/api/fatture/uno" />)
 
     const dialogo = screen.getByRole('dialog')
-    expect(dialogo).toHaveClass('max-h-[calc(100vh-2rem)]')
+    expect(dialogo).toHaveAttribute('data-safe-area', 'true')
+    expect(dialogo).toHaveClass(
+      'max-h-[calc(100vh_-_max(1rem,env(safe-area-inset-top))_-_max(1rem,env(safe-area-inset-bottom)))]',
+    )
     expect(dialogo.className.split(/\s+/)).toContain(
-      'supports-[height:100dvh]:max-h-[calc(100dvh-2rem)]',
+      'supports-[height:100dvh]:max-h-[calc(100dvh_-_max(1rem,env(safe-area-inset-top))_-_max(1rem,env(safe-area-inset-bottom)))]',
     )
   })
 

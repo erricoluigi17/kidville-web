@@ -337,10 +337,13 @@ export function FatturaViewer({
       onClose={chiudi}
       title={titoloDialogo}
       labelledBy={titoloId}
+      safeArea
       // Safari 15.0–15.3 ignora `dvh`: la classe `vh` resta quindi il limite
       // effettivo sulla baseline iOS 15. Da Safari 15.4 il feature query applica
       // l'altezza dinamica, che segue le barre mobili senza cambiare il fallback.
-      className="flex max-h-[calc(100vh-2rem)] supports-[height:100dvh]:max-h-[calc(100dvh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-kidville-white shadow-2xl"
+      // Il limite sottrae gli stessi inset usati dal contenitore: intestazione e
+      // controlli non possono quindi finire sotto notch o home indicator.
+      className="flex max-h-[calc(100vh_-_max(1rem,env(safe-area-inset-top))_-_max(1rem,env(safe-area-inset-bottom)))] supports-[height:100dvh]:max-h-[calc(100dvh_-_max(1rem,env(safe-area-inset-top))_-_max(1rem,env(safe-area-inset-bottom)))] w-full max-w-5xl flex-col overflow-hidden rounded-3xl bg-kidville-white shadow-2xl"
     >
       <header className="flex shrink-0 items-center gap-3 border-b border-kidville-line px-4 py-3 sm:px-5">
         <h2 id={titoloId} className="min-w-0 flex-1 truncate font-barlow text-lg font-black text-kidville-ink">

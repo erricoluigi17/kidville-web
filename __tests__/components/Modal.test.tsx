@@ -15,6 +15,29 @@ describe('Modal (primitive accessibile)', () => {
     expect(d).toHaveAttribute('aria-label', 'Titolo')
   })
 
+  it('protegge tutti i lati del viewport quando la safe-area è richiesta', () => {
+    const { rerender } = render(
+      <Modal open onClose={() => {}} title="Titolo" safeArea>
+        <button>ok</button>
+      </Modal>
+    )
+
+    const contenitore = screen.getByRole('dialog').parentElement
+    expect(contenitore).toHaveStyle({
+      paddingTop: 'max(1rem, env(safe-area-inset-top))',
+      paddingRight: 'max(1rem, env(safe-area-inset-right))',
+      paddingBottom: 'max(1rem, env(safe-area-inset-bottom))',
+      paddingLeft: 'max(1rem, env(safe-area-inset-left))',
+    })
+
+    rerender(
+      <Modal open onClose={() => {}} title="Titolo" safeArea={false}>
+        <button>ok</button>
+      </Modal>
+    )
+    expect(screen.getByRole('dialog').parentElement).not.toHaveAttribute('style')
+  })
+
   it('non renderizza nulla quando chiuso', () => {
     render(
       <Modal open={false} onClose={() => {}} title="X">

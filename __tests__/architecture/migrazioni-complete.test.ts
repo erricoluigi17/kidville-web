@@ -97,6 +97,17 @@ const IN_CODA: Record<string, string> = {
         'fail, cancel, uploaded. Stessa ragione della migrazione qui sopra, e stessa sorte: ' +
         'si applicano insieme, perché le RPC senza le tabelle non hanno su cosa girare. ' +
         'Manca ancora `finalize`, che arriverà in una migrazione sua.',
+    '20260916190200_video_intent_lifecycle.sql':
+        'Il ciclo di vita degli intent video (V04-bis): `video_intent_open`, `add_job`, ' +
+        '`confirm`, `finalize`, `supersede`, `revoke`, più i tre RPC che svuotano ' +
+        '`video_outbox`. È il `finalize` che mancava alla migrazione qui sopra, e si ' +
+        'applica insieme alle altre due: da sola non avrebbe né le tabelle né le ' +
+        'transizioni dei job su cui girare. NON crea nessuna policy su `storage.objects`, ' +
+        'e la testata del file spiega perché con le misure: la tabella è di ' +
+        '`supabase_storage_admin` e le migrazioni girano come `postgres`, che non ne è ' +
+        'membro — un `CREATE POLICY` fallirebbe con 42501 in mezzo al rilascio — e ' +
+        "comunque l'upload TUS passa da `/upload/resumable/sign` con la firma del service " +
+        'role, che non attraversa RLS.',
 }
 
 const RADICE = process.cwd()

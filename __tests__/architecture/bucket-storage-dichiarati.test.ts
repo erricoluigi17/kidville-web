@@ -362,8 +362,34 @@ const ordinati = (v: string[]) => [...new Set(v)].sort()
  * che il client applica. Alzarlo è possibile (il piano Pro arriva a 500 GB): chi
  * lo facesse aggiorni QUESTO numero, altrimenti il lock diventa una bugia con
  * l'aria dell'autorevolezza.
+ *
+ * ─── ED È SUCCESSO ESATTAMENTE COSÌ ──────────────────────────────────────────
+ * Il 2026-09-16, per preparare la pipeline video, il tetto è stato portato a
+ * 2.000.000.000 in CI e in produzione. Questo numero non è stato aggiornato, e per
+ * un giorno il lock è stato verde su una cifra falsa: il paragrafo qui sopra aveva
+ * previsto il proprio guasto e non è bastato a impedirlo.
+ *
+ * RIMISURATO il 2026-09-17, non copiato da un documento:
+ *   GET https://api.supabase.com/v1/projects/<ref>/config/storage
+ *   → { "fileSizeLimit": 2000000000 }
+ * Entitlement massimo del piano verificato: 536.870.912.000 byte; nessun cambio di
+ * abbonamento. La decisione di alzarlo è del titolare, 2026-09-16, e ribalta quella
+ * del 2026-09-01 per un motivo preciso: un originale video può arrivare a 2 GB, e
+ * Supabase applica `min(limite del bucket, tetto globale)` — con 50 MiB globali i
+ * bucket `video_originals` e `video_processing` sarebbero nati morti.
+ *
+ * ATTENZIONE, ed è il vero costo di questa riga: il tetto globale è GLOBALE. I
+ * bucket che non dichiarano un `file_size_limit` proprio non hanno più 50 MiB di
+ * soffitto, ne hanno 2 GB. Misurati in produzione il 2026-09-17: sono tre su
+ * sedici — `certificati-medici`, `credenziali`, `fatture`. Vanno pinnati con una
+ * migrazione, e insieme va tolto il `return` che qui sotto fa saltare il controllo
+ * quando il limite dichiarato è `null`.
+ *
+ * Questa costante resta una DICHIARAZIONE, non una misura: non c'è una fotografia
+ * versionata del pannello. Finché non c'è, invecchia in silenzio come ha appena
+ * fatto. Chi la tocca rifaccia la GET, non fidandosi di questo commento.
  */
-const TETTO_GLOBALE_STORAGE_B = 52_428_800
+const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
 
 describe('lock architettura · i bucket dello storage sono dichiarati in migrazione', () => {
   it('le migrazioni si leggono davvero (sanity)', () => {
@@ -552,23 +578,45 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
     })
 
-    it('il tetto dichiarato qui è quello che il client applica davvero (controllo incrociato)', () => {
+    it('il tetto che il client applica è quello della Galleria (controllo incrociato)', () => {
       // Una costante scritta in un test è una dichiarazione, non una misura: se
       // nessuno la confronta con niente, invecchia in silenzio come è invecchiato
       // il «200 MB» per tre mesi. Il client è il terzo posto dove lo stesso numero
       // vive, e lì ha un effetto visibile (il video viene rifiutato prima di
       // partire): se i due divergono, uno dei due sta mentendo.
+      //
+      // Fino al 2026-09-17 questo caso confrontava `MAX_SIZE` con il tetto GLOBALE
+      // dello Storage. Erano lo stesso numero per coincidenza, non per una regola:
+      // il giorno in cui il globale è salito a 2 GB, il confronto avrebbe preteso
+      // dal client un tetto di 2 GB — cioè avrebbe chiesto di ALLARGARE il client
+      // per far tacere un lock. Il numero che ha davvero un effetto sul client è
+      // `TETTO_GALLERIA_BYTE`: è quello che la route usa come `.max()` quando firma
+      // il caricamento. Il tetto globale resta un limite superiore, e come tale è
+      // verificato dal caso qui sopra.
       const client = sorgente('src/app/(dashboard)/teacher/gallery/page.tsx').match(
         /MAX_SIZE\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/,
       )
       expect(client, 'Il client deve dichiarare `MAX_SIZE = N * 1024 * 1024`.').not.toBeNull()
+
+      const g = senzaCommenti(sorgente('src/lib/gallery/limiti.ts')).match(
+        /TETTO_GALLERIA_BYTE\s*=\s*([\d_]+)/,
+      )
+      expect(g, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`.').not.toBeNull()
+      const tettoGalleria = Number(g![1].replaceAll('_', ''))
+
       expect(
         Number(client![1]) * 1024 * 1024,
-        'Il tetto che il client applica ai video e il tetto globale dello Storage non ' +
-          'coincidono più: o è cambiato il pannello Supabase (e va aggiornata la costante ' +
-          '`TETTO_GLOBALE_STORAGE_B`), o è cambiato il client — e allora una maestra vedrà ' +
-          'rifiutato dal server un file che l\'applicazione le ha lasciato scegliere.',
-      ).toBe(TETTO_GLOBALE_STORAGE_B)
+        'Il tetto che il client applica ai video e `TETTO_GALLERIA_BYTE` non coincidono ' +
+          'più: la route usa `TETTO_GALLERIA_BYTE` come `.max()` quando firma il ' +
+          'caricamento, quindi una maestra vedrà rifiutato dal server un file che ' +
+          'l\'applicazione le ha lasciato scegliere — oppure il contrario, un file ' +
+          'scartato dall\'applicazione che il server avrebbe accettato.',
+      ).toBe(tettoGalleria)
+      expect(
+        tettoGalleria,
+        'Il tetto della Galleria supera il tetto globale dello Storage: Supabase applica ' +
+          '`min(bucket, globale)` e quel numero non entrerebbe mai in vigore.',
+      ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
     })
   })
 

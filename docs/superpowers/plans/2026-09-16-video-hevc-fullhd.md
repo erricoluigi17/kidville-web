@@ -156,3 +156,53 @@ Manca un pezzo solo, e sono venti righe: `video_job_claim` vuole un `p_job_id`
 Il nome del Sandbox deve essere **deterministico e contenere `fence_epoch`**: così una doppia
 partenza diventa innocua a livello di piattaforma, senza toccare lo schema, e si aggiunge alle tre
 guardie che il database ha già (`LEASE_ACTIVE`, `FENCE_MISMATCH`, `OUTPUT_CONFLICT`).
+
+---
+
+# Ripresa del 2026-09-17 — stato fuori dai transcript
+
+Questa sezione esiste perché il 16/09 il lavoro si è interrotto e lo stato reale viveva solo nei
+transcript degli agenti: il file del piano diceva il falso su tre microtask. Qui si scrive ciò
+che serve a ripartire senza ricostruire niente.
+
+## Dove sta il lavoro, adesso
+
+- Branch `codex/video-hevc-fullhd`, **pushato** su `origin`.
+- **PR #149, in bozza** — aperta presto apposta, non a lavoro finito.
+
+Il motivo della bozza è una misura, non una preferenza: su un Mac con Homebrew **nessun test che
+esegue ffmpeg per davvero può girare**, perché `brew install ffmpeg` 8.1.2 non ha `zscale` (niente
+libzimg) e `zscale` è il primo filtro della catena HDR→SDR. In locale quei casi risultano
+`skipped` — misurato: 40 passati, 12 saltati. L'unico posto dove si misurano è la CI, con la build
+pinnata. È la stessa forma dell'E2E, vietato in locale perché `.env.local` punta alla produzione.
+**Chi riprende questo lavoro non cerchi di far girare le fixture video qui: non è un problema di
+configurazione, è una build senza zimg.**
+
+## L'ondata 1 della ripresa: cinque mini-task su perimetri disgiunti
+
+Divise per **file posseduti in esclusiva**, non per argomento: è l'unico taglio che permette a più
+agenti di lavorare nello stesso albero senza sabotarsi.
+
+| | Mini-task | Possiede |
+|---|---|---|
+| 1 | I tre difetti della pipeline (SEI HDR, VUI assente, tetto VBV) | `encode.ts` · `verify.ts` · `build.ts` + i loro test · le fixture |
+| 2 | Contratto zod condiviso + codici d'errore (M3) | `contratto.ts` · `messages/it` · `messages/en` |
+| 3 | Lock sul `matcher` del middleware | un solo file nuovo in `__tests__/architecture/` |
+| 4 | Migrazione che pinna i 3 bucket senza limite | la migrazione + `bucket-storage-dichiarati.test.ts` |
+| 5 | RPC `video_job_next`, la presa in carico dalla coda (M4, pezzo SQL) | la migrazione + il suo test PGlite |
+
+Regole date a tutti e cinque, e che vanno ridate a chiunque lavori in parallelo qui dentro:
+niente `git`, niente `npm install`, niente `npx vitest run` senza argomenti, niente PRD. Il gate
+completo, i commit e `IN_CODA` restano a chi coordina — `IN_CODA` in particolare perché due delle
+cinque mini-task aggiungono una migrazione e sarebbe stato l'unico punto di collisione.
+
+## Una trappola che ha ucciso il primo giro di CI
+
+Entrambi i check richiesti sono morti in otto secondi su `npm ci`, prima di qualunque test:
+`Missing: @emnapi/runtime`, `@emnapi/core`, `@floating-ui/dom` dal lock. Questa macchina ha npm 11,
+la CI gira su npm 10, e npm 11 **pota** dal lock le voci `optional`/`peer` che npm 10 esige.
+
+Il gate locale non poteva vederlo: **`npm ci` in locale non lo esegue nessuno.** Rigenerato in una
+cartella pulita fuori dall'albero (con cinque agenti dentro, `node_modules` non si poteva
+spostare), verificato con `npm@10 ci --dry-run` — «added 1292 packages», uscita 0 — e con il
+conteggio delle voci sparite rispetto a `main`: 7 nel lock committato, **0** in quello rigenerato.

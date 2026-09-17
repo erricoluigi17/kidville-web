@@ -80,7 +80,24 @@ type Fotografia = {
 // morte» diventa rossa il giorno in cui la migrazione viene applicata, e la voce va
 // tolta. Una dichiarazione che sopravvive al suo motivo è un'allowlist che marcisce.
 // ─────────────────────────────────────────────────────────────────────────────
-const IN_CODA: Record<string, string> = {}
+const IN_CODA: Record<string, string> = {
+    '20260916190000_video_jobs.sql':
+        'Schema dei job video (V02 del lavoro «Video HEVC e Full HD»): `video_intents`, ' +
+        '`video_jobs`, `video_outbox` e i bucket privati `video_originals` / ' +
+        '`video_processing`. Scritta il 2026-09-16, NON applicata: il codice che la usa — ' +
+        'runner, route e finalizer — non esiste ancora, e applicare uno schema che nessuno ' +
+        'interroga significa portarsi in produzione tabelle che nessun test esercita. ' +
+        'QUANDO SI APPLICA: rigenerare anche `bucket-storage-snapshot.json` (nascono due ' +
+        'bucket) e registrare `video_originals` e `video_processing` in ' +
+        '`REGISTRO_BUCKET_OBLIO` (`src/lib/gdpr/esegui.ts`), altrimenti ' +
+        '`gdpr-oblio-completo.test.ts` diventa rosso: un bucket senza responsabile di oblio ' +
+        'e un archivio di minori che nessuno sa svuotare.',
+    '20260916190100_video_job_transitions.sql':
+        'Le sei RPC di transizione dei job video (V04): claim con lease, heartbeat, ready, ' +
+        'fail, cancel, uploaded. Stessa ragione della migrazione qui sopra, e stessa sorte: ' +
+        'si applicano insieme, perché le RPC senza le tabelle non hanno su cosa girare. ' +
+        'Manca ancora `finalize`, che arriverà in una migrazione sua.',
+}
 
 const RADICE = process.cwd()
 const CARTELLA_MIGRAZIONI = join(RADICE, 'supabase', 'migrations')

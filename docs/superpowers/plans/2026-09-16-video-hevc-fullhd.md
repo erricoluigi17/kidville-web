@@ -108,3 +108,51 @@ globale è stato alzato il 16/09. Misurati il 17/09: tre su sedici — `certific
 in `bucket-storage-dichiarati.test.ts` fa saltare il controllo quando il limite è `null`. E il matcher
 del middleware resta un meccanismo di esenzione che nessun lock guarda: `prefissi-pubblici` sorveglia
 `PUBLIC_PREFIXES`, non il matcher.
+
+## V03-bis — l'uscita può sfondare i 2 GB, e se ne accorge solo dopo aver pagato la conversione
+
+Misurato il 2026-09-17 con gli argomenti veri di `buildVideoEncodeArgs`, canale `gallery`, ffmpeg
+limitato a 2 thread: un ingresso 1080p30 di 180 s a 94,5 Mbit/s (2,13 GB) ha prodotto un'uscita di
+**2.073.793.213 byte** — sopra il tetto di 2.000.000.000.
+
+Il job fallirebbe **dopo** aver pagato la conversione: `video_jobs_output_chk` e `video_job_ready`
+(`20260916190100_video_job_transitions.sql:408-410`) tagliano a 2 GB, e `verifyVideoOutput` risponde
+`OUTPUT_TOO_LARGE`. Nel campione misurato quei byte sono costati **709 secondi di wall e 1.452
+secondi di CPU** su due thread.
+
+La causa è in `src/lib/media/video/encode.ts:284-316`: `-crf 18` è un obiettivo di **qualità senza
+tetto di bitrate** — non c'è `-maxrate`, non c'è `-bufsize`. Su una sorgente già molto densa, x264
+spende quanto serve per tenere la qualità richiesta, e nessuno lo ferma.
+
+Il campione era rumore sintetico, quindi patologico: un video di telefono non ci arriva. Ma il buco è
+reale e si chiude prima, non dopo: un tetto VBV ricavato dal budget di 2 GB diviso la durata che il
+probe ha già misurato. Va in una V03-bis, con la sua regressione.
+
+## V06 — il dimensionamento è una scelta, non un vincolo
+
+Dalla stessa sessione di misura, sulla stessa sorgente: 2 thread danno 261 s di wall e 572 s di CPU;
+16 thread danno 49 s di wall e 722 s di CPU. Aggiungere core costa **quasi niente in CPU-secondi** e
+restituisce quasi tutto in tempo d'attesa, perché la fatturazione è a `GB × ore` e il tempo si
+accorcia. Vercel Sandbox su Pro arriva a 8 vCPU.
+
+Scalato su `dub1` con una banda dichiarata 1,5×–2,5× per il valore del singolo core: a **2 vCPU** il
+caso tipico sta fra 392 e 653 secondi, a **4 vCPU** fra 212 e 353 — **1,85 volte più veloce a costo
+praticamente identico** (+8 %). Resta comunque fuori dai 300 s di una singola invocazione, quindi la
+scelta architetturale non cambia; cambia quanto aspetta un genitore.
+
+## V06 — perché il Sandbox basta da solo
+
+La ragione per cui l'orchestratore esterno non serve, misurata e non dedotta: **Vercel Sandbox è esso
+stesso durevole**. Sessione fino a 24 ore su Pro, `runCommand({ detached: true })` ritorna subito, e
+`Sandbox.get({ name })` riaggancia una MicroVM viva **da un altro processo o dopo un riavvio dello
+script** — è la documentazione del pacchetto a dirlo. Il coordinatore non deve *contenere* la
+conversione: deve solo *sorvegliarla*.
+
+Manca un pezzo solo, e sono venti righe: `video_job_claim` vuole un `p_job_id`
+(`20260916190100:161-165`), non pesca da sé. Serve una RPC `video_job_next` che legga la coda con
+`FOR UPDATE SKIP LOCKED` — l'indice parziale `video_jobs_coda_idx`
+(`20260916190000_video_jobs.sql:288`) è già lì per questo.
+
+Il nome del Sandbox deve essere **deterministico e contenere `fence_epoch`**: così una doppia
+partenza diventa innocua a livello di piattaforma, senza toccare lo schema, e si aggiunge alle tre
+guardie che il database ha già (`LEASE_ACTIVE`, `FENCE_MISMATCH`, `OUTPUT_CONFLICT`).

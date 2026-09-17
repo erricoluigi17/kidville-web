@@ -34,11 +34,11 @@ Le transizioni worker richiedono fence_epoch e lease validi. Cancel e pubblicazi
 Ogni microtask ha un esecutore Sol e un critico Astra distinto. Un FAIL passa a un nuovo esecutore. Gli esecutori possiedono solo i file assegnati, non committano e non modificano il PRD condiviso: il coordinatore integra i loro riscontri.
 
 - [x] V01 Probe e matrice formati — PASS dopo correzione da nuovo esecutore, 71 test e 14 regressioni indipendenti
-- [x] V02 Schema job/intent/outbox e bucket — PASS critico dopo correzione da nuovo esecutore: scope/revision immutabili e vincoli SQL NULL-safe (12 test)
-- [ ] V03 Profilo e argomenti FFmpeg, HDR/rotazione/audio
-- [ ] V04 RPC atomiche claim/lease/ready/cancel/finalize
-- [ ] V05 Verifica output e fixture video reali
-- [ ] V06 Runner Sandbox e workflow durevole
+- [x] V02 Schema job/intent/outbox e bucket — PASS critico dopo correzione da nuovo esecutore: scope/revision immutabili e vincoli SQL NULL-safe (12 test). ⚠️ Manca la policy di scrittura su `storage.objects` per `video_originals`: senza, un upload TUS col token di sessione prende 403 al primo byte. Da aggiungere in V04-bis.
+- [x] V03 Profilo e argomenti FFmpeg, HDR/rotazione/audio — PASS critico, 21/21 test, con transcodifica MJPEG reale e watermark misurato col filtro `bbox`
+- [~] V04 RPC atomiche claim/lease/ready/cancel/finalize — sei RPC su sette, con le due correzioni di concorrenza del critico applicate e verificate. **Manca `finalize`**, nessuna RPC scrive `video_outbox`, nessuna RPC sugli intent (confirm/supersede/revoke). Il critico non ha mai riemesso il verdetto: va rifatto passare
+- [~] V05 Verifica output e fixture video reali — logica completa con le due correzioni del critico applicate. **Mancano le fixture reali**: `video-verify.test.ts` non esegue mai ffmpeg, e i due casi reali di `video-encode.test.ts` sono `it.runIf` che si saltano in silenzio. Critico da rifare passare
+- [ ] V06 Runner Sandbox e orchestrazione durevole — **senza il pacchetto `workflow`**, vedi la nota qui sotto
 - [ ] V07 Init/upload-complete/stato/conferma/cancel API
 - [ ] V08 Pubblicazione Galleria e gate correnti
 - [ ] V09 Allegati/revisioni/pubblicazione News
@@ -59,3 +59,52 @@ ESLint zero warning; Vitest completo; build; Playwright CI; iOS e Android; loggi
 Main `9a30ff67`: PR #148 mergeata, CI/unit/E2E verdi, produzione Vercel Ready. Unica modifica locale preesistente: `supabase/.temp/cli-latest`, esclusa dall'intervento. Vercel Pro attivo; produzione Supabase eu-west-1; bucket gallery/news/news_bozze a 52.428.800 byte prima dell'intervento.
 
 Configurazione globale Storage portata a 2.000.000.000 byte il 16 settembre, prima in CI e poi produzione, con GET di verifica. Entitlement dell'organizzazione verificato: massimo configurabile 536.870.912.000 byte; nessun cambio di abbonamento. Migrazione schema non ancora applicata. Revisioni intent: UUID nuova e numero revisione crescente; nessun aggiornamento in place della revisione già referenziata dall'outbox.
+
+## Ripresa del 2026-09-17 — che cosa è stato messo in salvo e che cosa è stato rimandato
+
+Il lavoro si era interrotto il 16/09 alle 21:01 per esaurimento dei limiti d'uso, con V04 e V05 in
+correzione e V06 appena avviata. Niente era committato: tutto viveva nell'albero di lavoro.
+
+**Messo in salvo** (branch `codex/video-hevc-fullhd`): V01–V05, 138 test video verdi, gate completo
+verde — `eslint --max-warnings 0`, `tsc --noEmit`, 17.973 test su 17.973, `next build`.
+
+**Rimandato, con il motivo:**
+
+- **Il 2 GB sui bucket di dominio** `gallery`/`news`/`news_bozze` è uscito dalla migrazione. Non
+  abilitava niente finché il finalizer non esiste, e toglieva l'ultima delle tre reti di sicurezza.
+  Torna in V08 **insieme** alla riscrittura del lock `bucket-storage-dichiarati` nella forma a tre
+  asserzioni: il bucket è il tetto dell'OGGETTO e sale, `TETTO_GALLERIA_BYTE` è il tetto di ciò che
+  il BROWSER spedisce da sé e resta 50 MiB. Un `<=` senza le uguaglianze accanto rende il lock
+  decorativo.
+- **`vercel.json`** non è stato committato. Dichiarava `src/app/api/video-uploads/**` su una cartella
+  inesistente, e un pattern `functions` senza match fa fallire la build su Vercel: avrebbe bloccato
+  ogni deploy, compreso un hotfix su tutt'altro. Torna in V07 con la route, e si collauda su un
+  **preview deploy** — l'unico posto dove quella validazione si può misurare.
+- **Le due migrazioni restano non applicate** e sono dichiarate in `IN_CODA`
+  (`__tests__/architecture/migrazioni-complete.test.ts`) con il promemoria di ciò che va fatto il
+  giorno dell'applicazione: rigenerare `bucket-storage-snapshot.json` e registrare i due bucket nuovi
+  in `REGISTRO_BUCKET_OBLIO`.
+
+**Il pacchetto `workflow@5.0.0-beta.53` è stato rimosso**, e V06 va riscritta senza. Era stato
+installato in anticipo sul runner e non orchestrava niente (`npm run build` stampava «0 workflows»);
+portava 571 pacchetti in `dependencies` di produzione, fra cui `@nestjs/core`, `@nuxt/kit` e l'intero
+`@aws-sdk/*`, perché è multi-framework; generava due route pubbliche per le quali il matcher del
+middleware era stato modificato in modo che **nessun lock del repo le sorvegliasse**; e rendeva
+`next.config.ts` una config phase-based, tanto che il lock di sicurezza `header-sicurezza.test.ts` era
+stato adattato a eseguire un generatore che scrive dentro `src/`. Dopo la rimozione i pacchetti nuovi
+sono 54, tutti di `@vercel/sandbox`.
+
+**Al suo posto**: le RPC di V04 sono già un protocollo di coda completo (claim con lease, heartbeat,
+`fence_epoch`, cancel che vince alzando il fence), il repo usa già `pg_cron` in otto migrazioni e
+`pg_net` per le chiamate HTTP da SQL, e `video_outbox` aspetta solo uno scrittore. La conversione non
+sta comunque dentro una richiesta sola — qui le route più pesanti dichiarano `maxDuration = 300` e una
+transcodifica di 180 s Full HD a CRF 18 su 2 vCPU lo supera — quindi il disegno è «Sandbox detached
+più sorveglianza a battiti» in entrambi i casi, e un cron lo regge quanto un orchestratore durevole.
+
+**Trovato strada facendo, fuori dal perimetro del video e già vero in produzione:** i bucket che non
+dichiarano un `file_size_limit` proprio sono passati da 50 MiB a 2 GB di soffitto quando il tetto
+globale è stato alzato il 16/09. Misurati il 17/09: tre su sedici — `certificati-medici`,
+`credenziali`, `fatture`. Serve una migrazione che li pinni, insieme alla rimozione del `return` che
+in `bucket-storage-dichiarati.test.ts` fa saltare il controllo quando il limite è `null`. E il matcher
+del middleware resta un meccanismo di esenzione che nessun lock guarda: `prefissi-pubblici` sorveglia
+`PUBLIC_PREFIXES`, non il matcher.

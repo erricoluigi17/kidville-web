@@ -103,6 +103,38 @@
 
 ---
 
+## Changelog — Video HEVC e Full HD: il lavoro interrotto rimesso in salvo — 2026-09-17 (branch `codex/video-hevc-fullhd`)
+
+**Ancora in implementazione, non rilasciato.** Il lavoro del 16/09 si era fermato a metà per
+esaurimento dei limiti d'uso, con due microtask in correzione e una appena avviata, e **niente era
+committato**: circa 3.500 righe fra codice, SQL e test vivevano solo nell'albero di lavoro, dove un
+`git checkout` da un'altra sessione le avrebbe cancellate. Sono state messe in salvo.
+
+In salvo: il parser ffprobe, lo schema dei job, il generatore di argomenti FFmpeg, il verificatore
+dell'output e le sei RPC di transizione — comprese le correzioni che i critici avevano chiesto su
+concorrenza e colore, verificate riga per riga invece che sulla parola. Gate completo verde: nessun
+warning ESLint, tipi puliti, 17.973 test su 17.973, build riuscita.
+
+**Rimandato con il motivo scritto**: l'aumento a 2 GB dei bucket `gallery`, `news` e `news_bozze`
+torna insieme al finalizer che ci depositerà i video, perché prima di allora non abilita niente e
+toglie una rete; la configurazione di regione `vercel.json` torna insieme alla route che nomina,
+perché puntava a una cartella inesistente e un pattern senza corrispondenza fa fallire ogni deploy
+del progetto; le due migrazioni restano non applicate e sono dichiarate in coda, con il promemoria
+di registrare i due bucket nuovi fra quelli che il diritto all'oblio sa svuotare.
+
+**Tolto**: il pacchetto di orchestrazione installato in anticipo. Non orchestrava niente, portava 571
+pacchetti dentro le dipendenze di produzione, apriva due indirizzi pubblici che nessun controllo del
+repository sorvegliava, e aveva trasformato un controllo di sicurezza in un generatore di build. La
+durabilità della conversione si ottiene con quello che c'è già: le RPC con lease e contatore di
+recinto, e la pianificazione dentro il database che il progetto usa in otto migrazioni.
+
+**Trovato misurando, fuori dal perimetro dei video e già vero in produzione**: alzare il tetto globale
+dello Storage il 16/09 ha portato da 50 MiB a 2 GB il soffitto dei tre archivi che non dichiarano un
+limite proprio — certificati medici, credenziali e fatture. Non cambia chi può scrivere, ma è una
+porta allargata di quaranta volte che nessuno aveva deciso di allargare: va richiusa con una
+migrazione dedicata. E il filtro che decide quali indirizzi passano dal controllo di accesso resta
+l'unico meccanismo di esenzione che nessun test guarda.
+
 ## Changelog — Video HEVC e Full HD in Galleria e News — 2026-09-16 (branch `codex/video-hevc-fullhd`)
 
 **In implementazione, non rilasciato.** Piano approvato in `docs/superpowers/plans/2026-09-16-video-hevc-fullhd.md`: originali fino a 180 secondi e 2.000.000.000 byte, upload TUS privato, conversione FFmpeg su Vercel Sandbox a Dublino e coordinamento durevole. Output MP4 H.264 CRF 18, Full HD anche verticale senza ingrandimento, audio AAC e conversione HDR in SDR; logo solo Galleria. Per News, allegati sotto il testo e bozza privata automatica, consenso fotografico invariato.

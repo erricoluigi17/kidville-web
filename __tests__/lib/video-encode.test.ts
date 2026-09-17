@@ -1,8 +1,12 @@
-import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import {
+  binariVideo,
+  eseguiFfmpeg,
+  generaFixture,
+  inCartellaTemporanea,
+  sondaFfprobe,
+} from '../fixtures/ffmpeg'
 import {
   buildVideoEncodeArgs,
   outputVideoColorMetadata,
@@ -10,10 +14,15 @@ import {
 } from '@/lib/media/video/encode'
 import type { VideoProbe } from '@/lib/media/video/probe'
 
-const ffmpegDisponibile = (() => {
-  const risultato = spawnSync('ffmpeg', ['-version'], { encoding: 'utf8' })
-  return risultato.status === 0
-})()
+/* ════════════════════════════════════════════════════════════════════════════
+ * QUI C'ERA UN `ffmpegDisponibile` CALCOLATO CON UNO `spawnSync`, e i due casi che
+ * eseguono ffmpeg davvero ci stavano appesi. Su una macchina senza FFmpeg quei due
+ * sparivano e il file restava verde: undici casi su undici, e nessuno che avesse
+ * toccato un encoder. Adesso la risoluzione dei binari sta in
+ * `__tests__/fixtures/ffmpeg.ts`, fallisce rumorosamente quando FFmpeg manca o non
+ * sa fare il lavoro, e l'unica uscita è una variabile d'ambiente esplicita che in
+ * CI viene rifiutata.
+ * ════════════════════════════════════════════════════════════════════════════ */
 
 const probeBase: VideoProbe = {
   durationSeconds: 90,
@@ -268,28 +277,29 @@ describe('buildVideoEncodeArgs', () => {
     })).toEqual({ colorPrimaries, colorTransfer, colorSpace, colorRange: 'tv' })
   })
 
-  it.runIf(ffmpegDisponibile)(
+  it(
     'transcodifica un MJPEG AVI con sola matrice bt470bg senza invocare zscale',
-    () => {
-      const directory = mkdtempSync(join(tmpdir(), 'kidville-mjpeg-sdr-'))
-      const inputPath = join(directory, 'input.avi')
-      const outputPath = join(directory, 'output.mp4')
+    (contesto) => {
+      const binari = binariVideo(contesto)
+      inCartellaTemporanea('kidville-mjpeg-sdr-', (directory) => {
+        const inputPath = join(directory, 'input.avi')
+        const outputPath = join(directory, 'output.mp4')
 
-      try {
-        const fixture = spawnSync('ffmpeg', [
-          '-hide_banner',
-          '-loglevel', 'error',
-          '-f', 'lavfi',
-          '-i', 'testsrc2=size=160x120:rate=1:duration=1',
-          '-an',
-          '-c:v', 'mjpeg',
-          '-pix_fmt', 'yuvj420p',
-          '-color_primaries', 'unspecified',
-          '-color_trc', 'unspecified',
-          '-colorspace', 'bt470bg',
-          '-y', inputPath,
-        ], { encoding: 'utf8' })
-        expect(fixture.status, fixture.stderr).toBe(0)
+        generaFixture(
+          binari,
+          [
+            '-f', 'lavfi',
+            '-i', 'testsrc2=size=160x120:rate=1:duration=1',
+            '-an',
+            '-c:v', 'mjpeg',
+            '-pix_fmt', 'yuvj420p',
+            '-color_primaries', 'unspecified',
+            '-color_trc', 'unspecified',
+            '-colorspace', 'bt470bg',
+            inputPath,
+          ],
+          'fixture MJPEG AVI con matrice bt470bg',
+        )
 
         const args = buildVideoEncodeArgs(
           {
@@ -312,23 +322,21 @@ describe('buildVideoEncodeArgs', () => {
         )
 
         expect(filterGraph(args)).not.toContain('zscale=')
-        const risultato = spawnSync('ffmpeg', args, { encoding: 'utf8' })
-        expect(risultato.status, risultato.stderr).toBe(0)
+        eseguiFfmpeg(binari, args, 'transcodifica MJPEG')
 
-        const verifica = spawnSync('ffprobe', [
-          '-v', 'error',
-          '-select_streams', 'v:0',
-          '-show_entries', 'stream=color_space,color_transfer,color_primaries',
-          '-of', 'json',
-          outputPath,
-        ], { encoding: 'utf8' })
-        expect(verifica.status, verifica.stderr).toBe(0)
-        expect(JSON.parse(verifica.stdout).streams[0]).toEqual({ color_space: 'bt709' })
-      } finally {
-        rmSync(directory, { recursive: true, force: true })
-      }
+        const streams = (sondaFfprobe(binari, outputPath) as {
+          streams: Record<string, unknown>[]
+        }).streams
+        const video = streams.find((stream) => stream.codec_type === 'video')
+        // Solo la matrice viaggia: swscale la porta a BT.709 e x264 la scrive nel VUI.
+        // Primarie e transfer restano taciute, perché la sorgente non le dichiarava e
+        // inventarle significherebbe dire al lettore un colore che nessuno ha misurato.
+        expect(video).toMatchObject({ color_space: 'bt709' })
+        expect(video?.color_transfer).toBeUndefined()
+        expect(video?.color_primaries).toBeUndefined()
+      })
     },
-    15_000,
+    30_000,
   )
 
   it('applica il watermark soltanto alla Galleria con geometria invariata', () => {
@@ -352,7 +360,8 @@ describe('buildVideoEncodeArgs', () => {
     expect(filterGraph(news)).not.toContain('overlay=')
   })
 
-  it.runIf(ffmpegDisponibile)('rende il watermark al 70% del video mantenendo il rapporto del logo', () => {
+  it('rende il watermark al 70% del video mantenendo il rapporto del logo', (contesto) => {
+    const binari = binariVideo(contesto)
     const args = buildVideoEncodeArgs(
       {
         ...probeBase,
@@ -373,24 +382,27 @@ describe('buildVideoEncodeArgs', () => {
       },
     )
     const graphConBbox = `${filterGraph(args).replace(/\[vout\]$/, '[composited]')};[composited]bbox=min_val=32[vout]`
-    const risultato = spawnSync('ffmpeg', [
-      '-hide_banner',
-      '-loglevel', 'info',
-      '-f', 'lavfi',
-      '-i', 'color=c=black:s=640x360:r=1:d=1',
-      '-f', 'lavfi',
-      '-i', 'color=c=white:s=100x20:r=1:d=1',
-      '-filter_complex', graphConBbox,
-      '-map', '[vout]',
-      '-frames:v', '1',
-      '-f', 'null',
-      '-',
-    ], { encoding: 'utf8' })
+    const stderr = eseguiFfmpeg(
+      binari,
+      [
+        '-hide_banner',
+        '-loglevel', 'info',
+        '-f', 'lavfi',
+        '-i', 'color=c=black:s=640x360:r=1:d=1',
+        '-f', 'lavfi',
+        '-i', 'color=c=white:s=100x20:r=1:d=1',
+        '-filter_complex', graphConBbox,
+        '-map', '[vout]',
+        '-frames:v', '1',
+        '-f', 'null',
+        '-',
+      ],
+      'misura del watermark col filtro bbox',
+    )
 
-    expect(risultato.status, risultato.stderr).toBe(0)
-    const bbox = risultato.stderr.match(/x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+) w:(\d+) h:(\d+)/)
+    const bbox = stderr.match(/x1:(\d+) x2:(\d+) y1:(\d+) y2:(\d+) w:(\d+) h:(\d+)/)
     expect(bbox?.slice(1).map(Number)).toEqual([96, 543, 252, 341, 448, 90])
-  })
+  }, 30_000)
 
   it('rifiuta una Galleria senza watermark', () => {
     expect(() => buildVideoEncodeArgs(probeBase, {

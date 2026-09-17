@@ -1,6 +1,18 @@
+import { statSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import type { VideoProbe } from '@/lib/media/video/probe'
+import {
+  binariVideo,
+  eseguiFfmpeg,
+  generaFixture,
+  inCartellaTemporanea,
+  provaDiDecodifica,
+  sondaFfprobe,
+  type BinariVideo,
+} from '../fixtures/ffmpeg'
+import { buildVideoEncodeArgs } from '@/lib/media/video/encode'
+import { parseVideoProbe, type VideoProbe } from '@/lib/media/video/probe'
 import { verifyVideoOutput } from '@/lib/media/video/verify'
 
 const source: VideoProbe = {
@@ -62,7 +74,17 @@ function outputProbe() {
 
 const decoded = { exitCode: 0, decodedFrames: 300 }
 
-describe('verifyVideoOutput', () => {
+/* ════════════════════════════════════════════════════════════════════════════
+ * I CASI SINTETICI RESTANO, e non per affetto.
+ *
+ * Coprono rami che un video vero non raggiunge: un probe malformato, un errore di
+ * ffprobe, un'uscita da 2.000.000.001 byte, una durata che manca del tutto. Quello
+ * che NON possono coprire — e per due settimane hanno finto di coprire — è se
+ * ffmpeg produca davvero ciò che questo JSON descrive. Quella parte sta nel
+ * secondo blocco, e il primo giro con file veri ha trovato due difetti che nessuno
+ * di questi ventun casi poteva vedere.
+ * ════════════════════════════════════════════════════════════════════════════ */
+describe('verifyVideoOutput — casi sintetici', () => {
   it('accetta un MP4 H.264/AAC SDR decodificato per intero e restituisce metadati normalizzati', () => {
     expect(verifyVideoOutput(source, outputProbe(), 80_000_000, decoded)).toEqual({
       ok: true,
@@ -376,4 +398,479 @@ describe('verifyVideoOutput', () => {
       code: 'OUTPUT_DURATION_UNKNOWN',
     })
   })
+})
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * IL GIRO COMPLETO, CON FFMPEG VERO E FILE VERI.
+ *
+ * lavfi → ffmpeg (fixture) → ffprobe → `parseVideoProbe` → `buildVideoEncodeArgs`
+ * → ffmpeg (conversione di produzione, argomenti non ritoccati) → ffprobe
+ * → `verifyVideoOutput`. Nessun JSON scritto a mano in mezzo: ogni numero che le
+ * asserzioni leggono l'ha prodotto un encoder.
+ *
+ * Perché serviva: i casi sintetici qui sopra descrivono un'uscita IDEALE, e per
+ * due settimane hanno dichiarato verde una pipeline che su due classi di video
+ * veri rifiuta la propria stessa conversione. Ci sono i due casi qui sotto a
+ * dirlo, e sono rossi nel senso che conta — dicono `ok: false` su un video che
+ * la conversione ha trattato correttamente.
+ *
+ * Le fixture si generano e si distruggono: il repository è PUBBLICO e un HEVC 4K
+ * committato resta nella storia di git anche dopo il `rm`.
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/** `-color_*` DA SOLI non bastano a x265: senza `-x265-params` il VUI resta a metà. */
+const COLORE_BT709_SORGENTE = [
+  '-color_primaries',
+  'bt709',
+  '-color_trc',
+  'bt709',
+  '-colorspace',
+  'bt709',
+]
+
+function probeDiIngresso(binari: BinariVideo, percorso: string): VideoProbe {
+  const esito = parseVideoProbe(sondaFfprobe(binari, percorso), statSync(percorso).size)
+  if (!esito.ok) {
+    throw new Error(`parseVideoProbe ha rifiutato la fixture ${percorso}: ${esito.code}`)
+  }
+  return esito.probe
+}
+
+function converti(
+  binari: BinariVideo,
+  probe: VideoProbe,
+  ingresso: string,
+  uscita: string,
+  ritocco?: (argomenti: string[]) => void,
+): void {
+  const argomenti = buildVideoEncodeArgs(probe, {
+    channel: 'news',
+    inputPath: ingresso,
+    outputPath: uscita,
+  })
+  ritocco?.(argomenti)
+  eseguiFfmpeg(binari, argomenti, `conversione di ${ingresso}`)
+}
+
+function verifica(binari: BinariVideo, probe: VideoProbe, uscita: string) {
+  return verifyVideoOutput(
+    probe,
+    sondaFfprobe(binari, uscita),
+    statSync(uscita).size,
+    provaDiDecodifica(binari, uscita),
+  )
+}
+
+/** I soli campi della traccia video che serve guardare a mano, letti dal JSON vero. */
+function tracciaVideo(sonda: unknown): Record<string, unknown> {
+  const streams = (sonda as { streams?: Record<string, unknown>[] }).streams ?? []
+  const video = streams.find((stream) => stream.codec_type === 'video')
+  if (!video) throw new Error('la sonda non contiene una traccia video')
+  return video
+}
+
+function sideData(sonda: unknown): string[] {
+  const lista = (tracciaVideo(sonda).side_data_list ?? []) as { side_data_type?: string }[]
+  return lista.map((voce) => voce.side_data_type ?? '')
+}
+
+describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
+  it('HEVC 4K SDR con audio: esce Full HD H.264/AAC e la verifica lo accetta', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-4k-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=3840x2160:rate=30:duration=1',
+          '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=1',
+          '-c:v', 'libx265', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+          ...COLORE_BT709_SORGENTE,
+          '-x265-params', 'colorprim=bt709:transfer=bt709:colormatrix=bt709',
+          '-c:a', 'aac', '-b:a', '128k', '-shortest', ingresso,
+        ],
+        'fixture HEVC 4K',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({ videoCodec: 'hevc', width: 3840, height: 2160, hasAudio: true })
+
+      converti(binari, probe, ingresso, uscita)
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: {
+          width: 1920,
+          height: 1080,
+          videoCodec: 'h264',
+          pixelFormat: 'yuv420p',
+          hasAudio: true,
+          audioCodec: 'aac',
+          fps: 30,
+        },
+      })
+    })
+  }, 60_000)
+
+  it('HDR10 PQ/BT.2020: la tripletta esce BT.709 e l’uscita non porta side data HDR', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-hdr-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=1',
+          '-vf', 'format=yuv420p10le',
+          '-c:v', 'libx265', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p10le',
+          '-color_primaries', 'bt2020', '-color_trc', 'smpte2084', '-colorspace', 'bt2020nc',
+          '-x265-params', 'colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc',
+          '-an', ingresso,
+        ],
+        'fixture HDR10 PQ',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({
+        isHdr: true,
+        colorTransfer: 'smpte2084',
+        colorPrimaries: 'bt2020',
+        colorSpace: 'bt2020nc',
+      })
+
+      converti(binari, probe, ingresso, uscita)
+      const sonda = sondaFfprobe(binari, uscita)
+      expect(tracciaVideo(sonda)).toMatchObject({
+        color_primaries: 'bt709',
+        color_transfer: 'bt709',
+        color_space: 'bt709',
+        color_range: 'tv',
+      })
+      expect(sideData(sonda)).toEqual([])
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { colorPrimaries: 'bt709', colorTransfer: 'bt709', colorSpace: 'bt709' },
+      })
+    })
+  }, 60_000)
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * 🔴 DIFETTO TROVATO DA QUESTA FIXTURE, 2026-09-17 — non è una stranezza del test.
+   *
+   * Un HDR10 vero (iPhone, Android di fascia alta, qualunque camera HDR) porta i SEI
+   * di *mastering display* e *content light level*. La catena `hdrToSdrFilters()`
+   * converte i PIXEL — l'uscita è BT.709 su tutte e tre le voci, lo dice
+   * l'asserzione qui sotto — ma quei due SEI ATTRAVERSANO il transcode e si
+   * ritrovano nell'H.264: `-map_metadata -1` non li tocca, perché non sono metadati
+   * del contenitore ma side data dei frame, e libx264 li riscrive.
+   *
+   * `verifyVideoOutput` chiama `hasHdrSideData(video)` e per quella sola riga
+   * risponde `OUTPUT_NOT_SDR`. Effetto in produzione: **ogni video HDR girato col
+   * telefono verrebbe convertito bene e poi respinto**, con un codice che dice
+   * «non è SDR» mentre lo è.
+   *
+   * QUESTO CASO ASSERISCE LA REALTÀ DI OGGI, non il desiderio: serve a renderla
+   * visibile e a impedire che cambi di nascosto. Quando la correzione arriverà —
+   * `src/lib/media/video/encode.ts`, che deve buttare via quei side data (per
+   * esempio un `-bsf:v filter_units` o lo strip esplicito del mastering display) —
+   * questo test diventerà ROSSO, ed è il verso giusto: chi corregge lo aggiorna
+   * insieme al codice, invece di scoprire fra sei mesi che nessuno se n'era accorto.
+   * `encode.ts` e `verify.ts` non appartengono a questa microtask.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('HDR10 con mastering display: i SEI sopravvivono all’H.264 e l’uscita viene RIFIUTATA', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-hdr-sei-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30:duration=1',
+          '-vf', 'format=yuv420p10le',
+          '-c:v', 'libx265', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p10le',
+          '-color_primaries', 'bt2020', '-color_trc', 'smpte2084', '-colorspace', 'bt2020nc',
+          '-x265-params',
+          'colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:' +
+            'master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):' +
+            'max-cll=1000,400',
+          '-an', ingresso,
+        ],
+        'fixture HDR10 con mastering display',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe.isHdr).toBe(true)
+
+      converti(binari, probe, ingresso, uscita)
+      const sonda = sondaFfprobe(binari, uscita)
+
+      // I pixel SONO stati convertiti: la conversione colore ha funzionato.
+      expect(tracciaVideo(sonda)).toMatchObject({
+        color_primaries: 'bt709',
+        color_transfer: 'bt709',
+        color_space: 'bt709',
+      })
+      // E i SEI dell'HDR sono ancora lì, nell'H.264.
+      expect(sideData(sonda)).toEqual(
+        expect.arrayContaining(['Mastering display metadata', 'Content light level metadata']),
+      )
+      expect(verifica(binari, probe, uscita)).toEqual({ ok: false, code: 'OUTPUT_NOT_SDR' })
+    })
+  }, 60_000)
+
+  it('verticale con rotazione 90 nel display matrix: nessun ingrandimento e rotazione 0 in uscita', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-rot-', (cartella) => {
+      const orizzontale = join(cartella, 'orizzontale.mp4')
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30:duration=1',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+          ...COLORE_BT709_SORGENTE,
+          '-x264-params', 'colorprim=bt709:transfer=bt709:colormatrix=bt709',
+          '-an', orizzontale,
+        ],
+        'fixture orizzontale da ruotare',
+      )
+      // La matrice di display si scrive così: `-metadata:s:v rotate=90` viene ignorato
+      // dal muxer mov dalla 7 in poi, e il file uscirebbe senza rotazione — una fixture
+      // che non contiene il caso che dice di contenere.
+      generaFixture(
+        binari,
+        ['-display_rotation', '90', '-i', orizzontale, '-c', 'copy', ingresso],
+        'fixture con display matrix a 90°',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({ rotation: 90, width: 360, height: 640 })
+
+      converti(binari, probe, ingresso, uscita)
+      const sonda = sondaFfprobe(binari, uscita)
+      expect(tracciaVideo(sonda)).toMatchObject({ width: 360, height: 640 })
+      expect(sideData(sonda)).toEqual([])
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { width: 360, height: 640 },
+      })
+    })
+  }, 45_000)
+
+  it('120 fps escono a 60, con la durata intatta', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-120-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=120:duration=1',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+          ...COLORE_BT709_SORGENTE,
+          '-x264-params', 'colorprim=bt709:transfer=bt709:colormatrix=bt709',
+          '-an', ingresso,
+        ],
+        'fixture a 120 fps',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe.fps).toBe(120)
+
+      converti(binari, probe, ingresso, uscita)
+      expect(tracciaVideo(sondaFfprobe(binari, uscita))).toMatchObject({ avg_frame_rate: '60/1' })
+      expect(verifica(binari, probe, uscita)).toMatchObject({ ok: true, output: { fps: 60 } })
+    })
+  }, 45_000)
+
+  it('senza traccia audio: gli argomenti portano -an e l’uscita non inventa audio', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-muto-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25:duration=1',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+          ...COLORE_BT709_SORGENTE,
+          '-x264-params', 'colorprim=bt709:transfer=bt709:colormatrix=bt709',
+          '-an', ingresso,
+        ],
+        'fixture senza audio',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({ hasAudio: false, audioStreamIndex: null })
+      const argomenti = buildVideoEncodeArgs(probe, {
+        channel: 'news',
+        inputPath: ingresso,
+        outputPath: uscita,
+      })
+      expect(argomenti).toContain('-an')
+      expect(argomenti).not.toContain('-c:a')
+
+      eseguiFfmpeg(binari, argomenti, 'conversione muta')
+      const streams = (sondaFfprobe(binari, uscita) as { streams: Record<string, unknown>[] }).streams
+      expect(streams.filter((stream) => stream.codec_type === 'audio')).toEqual([])
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { hasAudio: false, audioCodec: null, audioStreamIndex: null },
+      })
+    })
+  }, 45_000)
+
+  it('ProRes 422: il decoder promesso da limiti.ts legge davvero, e l’uscita passa', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-prores-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mov')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=25:duration=1',
+          '-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le',
+          ...COLORE_BT709_SORGENTE,
+          '-an', ingresso,
+        ],
+        'fixture ProRes 422',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({ videoCodec: 'prores', pixelFormat: 'yuv422p10le' })
+
+      converti(binari, probe, ingresso, uscita)
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { width: 1280, height: 720, videoCodec: 'h264', pixelFormat: 'yuv420p' },
+      })
+    })
+  }, 45_000)
+
+  it('DNxHR: il decoder dnxhd copre anche DNxHR, e l’uscita passa', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-dnxhd-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mov')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=25:duration=1',
+          '-c:v', 'dnxhd', '-profile:v', 'dnxhr_lb', '-pix_fmt', 'yuv422p',
+          ...COLORE_BT709_SORGENTE,
+          '-an', ingresso,
+        ],
+        'fixture DNxHR',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe.videoCodec).toBe('dnxhd')
+
+      converti(binari, probe, ingresso, uscita)
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { width: 1280, height: 720, videoCodec: 'h264' },
+      })
+    })
+  }, 45_000)
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * IL CASO NEGATIVO, e senza di lui gli altri non dimostrano niente.
+   *
+   * Sei uscite accettate provano che ffmpeg funziona — non che `verifyVideoOutput`
+   * sappia dire di NO, che è l'unica cosa per cui quel modulo esiste. Qui la STESSA
+   * riga di comando produce due file: uno a 1920×1080 e uno identico in tutto tranne
+   * il `scale`, a 1280×720. Il primo passa, il secondo no: la differenza è una sola,
+   * quindi il rifiuto è attribuibile a quella.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('un’uscita ricodificata di proposito a 1280×720 viene RIFIUTATA, quella corretta passa', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-neg-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const corretta = join(cartella, 'corretta.mp4')
+      const ridotta = join(cartella, 'ridotta.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=25:duration=1',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+          ...COLORE_BT709_SORGENTE,
+          '-x264-params', 'colorprim=bt709:transfer=bt709:colormatrix=bt709',
+          '-an', ingresso,
+        ],
+        'fixture Full HD',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      converti(binari, probe, ingresso, corretta)
+      expect(verifica(binari, probe, corretta)).toMatchObject({
+        ok: true,
+        output: { width: 1920, height: 1080 },
+      })
+
+      converti(binari, probe, ingresso, ridotta, (argomenti) => {
+        const indice = argomenti.indexOf('-filter_complex')
+        expect(argomenti[indice + 1]).toContain('scale=1920:1080')
+        argomenti[indice + 1] = argomenti[indice + 1].replace('scale=1920:1080', 'scale=1280:720')
+      })
+      expect(tracciaVideo(sondaFfprobe(binari, ridotta))).toMatchObject({ width: 1280, height: 720 })
+      expect(verifica(binari, probe, ridotta)).toEqual({
+        ok: false,
+        code: 'OUTPUT_DIMENSIONS_INVALID',
+      })
+    })
+  }, 45_000)
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * 🔴 SECONDO DIFETTO TROVATO DALLE FIXTURE VERE, 2026-09-17.
+   *
+   * Quando la sorgente non dichiara NESSUNO dei tre valori colore — succede sui
+   * vecchi AVI, su certe registrazioni di schermo e su parecchi encoder Android —
+   * `outputVideoColorMetadata()` restituisce `{null, null, null, colorRange: 'tv'}`
+   * e la riga di comando passa `colorprim=undef:transfer=undef:colormatrix=undef`.
+   * A quel punto x264 NON scrive il VUI: `video_full_range_flag = 0` è già il suo
+   * default, quindi non c'è niente da segnalare. Risultato: ffprobe sull'uscita non
+   * riporta `color_range` affatto, `normalizedColorRange(undefined)` è `null`, e il
+   * confronto con `colorRange: 'tv'` fallisce → `OUTPUT_NOT_SDR`.
+   *
+   * Una conversione perfettamente riuscita viene respinta perché il verificatore
+   * pretende un campo che l'encoder non ha motivo di scrivere. I ventun casi
+   * sintetici non potevano vederlo: il loro JSON scrive `color_range: 'tv'` sempre,
+   * anche dove ffmpeg non lo scriverebbe mai.
+   *
+   * La correzione sta in `src/lib/media/video/verify.ts` (accettare `null` quando
+   * anche il contratto è interamente `null`) oppure in `encode.ts` (forzare il VUI).
+   * Nessuno dei due è di questa microtask; questo caso pinna la realtà perché non
+   * torni a essere invisibile.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('sorgente senza metadati colore: x264 non scrive il VUI e l’uscita viene RIFIUTATA', (contesto) => {
+    const binari = binariVideo(contesto)
+    inCartellaTemporanea('kidville-video-senza-colore-', (cartella) => {
+      const ingresso = join(cartella, 'sorgente.mp4')
+      const uscita = join(cartella, 'uscita.mp4')
+      generaFixture(
+        binari,
+        [
+          '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=25:duration=1',
+          '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p',
+          '-an', ingresso,
+        ],
+        'fixture senza metadati colore',
+      )
+
+      const probe = probeDiIngresso(binari, ingresso)
+      expect(probe).toMatchObject({
+        colorPrimaries: null,
+        colorTransfer: null,
+        colorSpace: null,
+        isHdr: false,
+      })
+
+      converti(binari, probe, ingresso, uscita)
+      const video = tracciaVideo(sondaFfprobe(binari, uscita))
+      expect(video.color_range).toBeUndefined()
+      expect(verifica(binari, probe, uscita)).toEqual({ ok: false, code: 'OUTPUT_NOT_SDR' })
+    })
+  }, 45_000)
 })

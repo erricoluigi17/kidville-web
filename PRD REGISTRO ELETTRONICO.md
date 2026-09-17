@@ -103,6 +103,14 @@
 
 ---
 
+## Changelog — Video HEVC e Full HD in Galleria e News — 2026-09-16 (branch `codex/video-hevc-fullhd`)
+
+**In implementazione, non rilasciato.** Piano approvato in `docs/superpowers/plans/2026-09-16-video-hevc-fullhd.md`: originali fino a 180 secondi e 2.000.000.000 byte, upload TUS privato, conversione FFmpeg su Vercel Sandbox a Dublino e coordinamento durevole. Output MP4 H.264 CRF 18, Full HD anche verticale senza ingrandimento, audio AAC e conversione HDR in SDR; logo solo Galleria. Per News, allegati sotto il testo e bozza privata automatica, consenso fotografico invariato.
+
+Job persistenti e conferme versionate devono distinguere trasferimento, elaborazione e pubblicazione. La pubblicazione rivaluta permessi e destinatari; annullamenti e tentativi scaduti non possono pubblicare. Originali riusciti conservati sette giorni dalla verifica; termini separati per fallimenti e upload abbandonati. Le code video precedenti restano recuperabili e i nuovi originali richiedono connessione. Volume atteso: 26 video al giorno; tempi e costi devono ancora essere misurati. Ogni microtask è sottoposta a critico indipendente; gate completi e collaudi nativi ancora da eseguire.
+
+Preparazione verificata: limite globale Storage **2.000.000.000 byte applicato e riletto in CI e produzione**; nessun cambio di piano, entitlement massimo verificato 500 GiB. Parser ffprobe e schema job hanno ricevuto PASS dei rispettivi critici dopo correzioni da nuovi esecutori. Schema ancora non applicato. Build FFmpeg n9.0.1-30-g9258bacca5 fissata con SHA-256 e verificata in Sandbox `dub1`; prima prova sintetica HEVC Main10 PQ→SDR riuscita. Profilo definitivo, integrazioni e rilascio ancora in lavorazione.
+
 ## 🧾 Changelog — Fatture dei genitori: preparazione della visibilità del PDF Aruba — 2026-09-16 (branch `codex/fatture-genitori-pdf-quote`)
 
 La fattura mostrata alla famiglia sarà sempre il **PDF originale ricevuto da Aruba e conservato nel bucket privato**; non viene generata una copia di cortesia. **Apri** apre il PDF originale Aruba nel visualizzatore interno pagina per pagina, con zoom e testo accessibile. **Scarica** è l'azione separata sul web e nelle app con Filesystem. Nelle app prive di Filesystem compare **Apri nel browser per salvare**: dopo gli stessi gate restituisce un URL firmato valido **300 secondi**, utilizzabile da chi lo possiede fino alla scadenza. **Riprova** è disponibile solo per un errore di visualizzazione e lo ripete senza chiudere il dialogo; per ritentare il salvataggio si preme di nuovo **Scarica** oppure **Apri nel browser per salvare**. L'avviso del salvataggio è nel dialogo quando aperto, altrimenti nella pagina.

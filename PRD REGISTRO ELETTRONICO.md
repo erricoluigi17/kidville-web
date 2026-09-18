@@ -103,6 +103,87 @@
 
 ---
 
+## Changelog — Video HEVC e Full HD: i tre difetti della pipeline chiusi, e due porte chiuse fuori dal video — 2026-09-18 (branch `codex/video-hevc-fullhd`, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149))
+
+**Ancora in implementazione, non rilasciato.** PR in **bozza**, aperta presto di proposito: su un
+Mac con Homebrew nessun test che esegue ffmpeg per davvero può girare — manca `zscale`, perché
+Homebrew non compila libzimg — quindi l'unico posto dove la conversione si misura è la CI, con la
+build pinnata. È la stessa forma dell'E2E, vietato in locale perché `.env.local` punta alla
+produzione.
+
+**La CI ha eseguito le fixture vere, e il conto torna**: 18.019 test, **12 saltati in locale contro
+2 in CI**. I dieci collaudi video reali hanno girato sulla build `n9.0.1-30-g9258bacca5-20260915`,
+la stessa del Sandbox di produzione. Non è un dettaglio di collaudo: significa che i difetti qui
+sotto **si riproducono sulla build che convertirà i video dei bambini**, non su una stranezza locale.
+
+### I tre difetti della pipeline, chiusi
+
+1. **Ogni video HDR girato col telefono sarebbe stato convertito bene e poi respinto.** I SEI di
+   *mastering display* e *content light level* sono side data dei **frame**, non metadati del
+   contenitore: `-map_metadata -1` non li tocca, attraversano il transcode e libx264 li riscrive
+   nell'H.264, dove il verificatore rispondeva `OUTPUT_NOT_SDR` su un video che era SDR. Chiuso con
+   due `sidedata=mode=delete` in fondo alla catena — e non con `filter_units=remove_types=6`, che
+   avrebbe buttato via **tutti** i SEI, compreso quello con cui x264 si firma.
+2. **Le sorgenti senza metadati colore** — vecchi AVI, registrazioni di schermo, parecchi encoder
+   Android — venivano respinte perché x264 non scrive il VUI quando non c'è niente da dichiarare, e
+   il verificatore pretendeva un campo che l'encoder non ha motivo di scrivere. Chiuso allentando
+   `verify.ts`, **non** inventando primarie in `encode.ts`. L'allentamento è stretto e misurato in
+   entrambi i versi: «campo assente» e «`pc`» prima collassavano entrambi in `null` e ora sono
+   distinti, quindi un output che dichiara *full range* resta respinto.
+3. **`-crf 18` senza tetto VBV.** Un'uscita misurata ha raggiunto 2.073.793.213 byte — oltre il
+   tetto — e il rifiuto arrivava **dopo 709 secondi di conversione già pagata**. Aggiunti
+   `-maxrate`/`-bufsize` derivati da `MAX_VIDEO_INPUT_BYTES` e `MAX_VIDEO_DURATION_SECONDS`: se un
+   tetto cambia, il numero si muove da solo.
+
+**Scoperta non cercata**: il ramo Dolby Vision del verificatore era **cieco**. Cercava
+`'dolby vision'`, che è il nome del side data dei *frame*; quello di *stream* — l'unico che
+`-show_streams` stampa, cioè l'unico che quella funzione legge — si chiama `DOVI configuration
+record`. Corretto.
+
+### Il resto dell'ondata
+
+- **`video_job_next`**: la presa in carico dalla coda che mancava al runner. Lo `SKIP LOCKED` sta
+  sull'**intent** e non sul job, perché pescare il job per primo invertirebbe l'ordine dei lock di
+  tutte le altre RPC e renderebbe un `video_job_cancel` concorrente un deadlock. Non duplica
+  `video_job_claim`: lo **chiama**, e un test con una spia lo dimostra.
+  ⚠️ Lo `SKIP LOCKED` **non è provato da nessun test**, ed è misurato: togliendolo, i tredici test
+  restano verdi, perché PGlite ha una connessione sola. Serve un Postgres vero con due client.
+- **Contratto zod condiviso** e messaggi nei due cataloghi: **63 codici** raccolti da quattro fonti,
+  **15** esposti a una famiglia. Tutti e diciotto gli esiti di `verify.ts` finiscono in un messaggio
+  solo — quale ramo abbia respinto l'uscita è informazione da log, non da schermo — e
+  `SCOPE_REQUIRED` riusa `SEDE_DA_SPECIFICARE`, che 137 route mandano già. L'elenco è esaustivo per
+  costruzione: il test legge le fonti e ha trovato da solo `EMPTY_QUEUE`, comparso in una migrazione
+  scritta pochi minuti prima.
+
+### Due porte chiuse che col video non c'entrano
+
+- **Tre bucket di produzione su sedici non dichiaravano un `file_size_limit`**: `certificati-medici`,
+  `credenziali`, `fatture`. Il loro tetto seguiva quello globale, che il 16/09 è salito da 50 MiB a
+  2 GB per far passare i video — quaranta volte più larghi, su certificati medici di minori,
+  credenziali e fatture, senza che nessuno l'avesse deciso. Migrazione **scritta e non applicata**
+  che li pinna a valori misurati. E il lock che avrebbe dovuto accorgersene **si spegneva da solo**
+  proprio sui bucket col limite a `null`: adesso un limite implicito deve essere dichiarato con la
+  sua misura, e la dichiarazione muore da sola quando la migrazione lo pinna.
+  🔴 **Restano aperti**: gli stessi tre bucket hanno `allowed_mime_types` a `NULL` — accettano
+  qualunque tipo di file — e altri cinque non hanno un limite dichiarato in nessuna migrazione.
+- **Il `matcher` del middleware era un meccanismo di esenzione che nessun lock sorvegliava**, al
+  contrario di `PUBLIC_PREFIXES`. Un percorso messo lì dentro salta l'autenticazione e resta
+  invisibile a `gate-coverage` e `logging-coverage`. Nuovo lock su **quattordici famiglie** di
+  aggiramento, fra cui il catch-all ristretto (che nessuna analisi delle negazioni può vedere) e il
+  `matcher` assegnato da una variabile. Segue il **file** e non il nome, perché in Next 16.3
+  `middleware.js` è deprecato in favore di `proxy.js` e un lock legato al nome si spegnerebbe
+  **restando verde**.
+
+### Una trappola che ha ucciso il primo giro di CI
+
+Entrambi i check richiesti sono morti in otto secondi su `npm ci`, prima di qualunque test: npm 11
+locale **pota** dal lock le voci `optional`/`peer` che l'npm 10 della CI esige. Il gate locale non
+poteva vederlo, perché **`npm ci` in locale non lo esegue nessuno**. Lock rigenerato con npm 10 e
+verificato con lo stesso comando della CI.
+
+**Gate locale**: eslint 0 · tsc 0 · **18.081 test verdi su 1.321 file**, 12 saltati e dichiarati ·
+build verde. Le migrazioni restano **non applicate** e dichiarate in `IN_CODA`.
+
 ## Changelog — Video HEVC e Full HD: il lavoro interrotto rimesso in salvo — 2026-09-17 (branch `codex/video-hevc-fullhd`)
 
 **Ancora in implementazione, non rilasciato.** Il lavoro del 16/09 si era fermato a metà per

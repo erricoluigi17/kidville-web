@@ -108,6 +108,39 @@ const IN_CODA: Record<string, string> = {
         'membro — un `CREATE POLICY` fallirebbe con 42501 in mezzo al rilascio — e ' +
         "comunque l'upload TUS passa da `/upload/resumable/sign` con la firma del service " +
         'role, che non attraversa RLS.',
+    '20260917210000_video_job_next.sql':
+        'La presa in carico dalla coda (V06): `video_job_next`, la RPC che sceglie e reclama ' +
+        'atomicamente il prossimo job eleggibile con `FOR UPDATE SKIP LOCKED` sull\'intent, e poi ' +
+        'DELEGA a `video_job_claim` invece di copiarne la logica. Lo `SKIP LOCKED` sta ' +
+        'sull\'INTENT e non sul job di proposito: pescare il job per primo invertirebbe l\'ordine ' +
+        'dei lock rispetto a tutte le altre RPC — intent prima, job poi — e un `video_job_cancel` ' +
+        'concorrente diventerebbe un deadlock. Stessa sorte delle tre migrazioni video qui ' +
+        'sopra: senza le tabelle e senza `video_job_claim` non ha né su cosa girare né chi ' +
+        'chiamare, quindi si applica insieme a loro, dopo. Non crea tabelle né bucket e non ' +
+        'tocca `storage.objects`: aggiunge una sola funzione SECURITY DEFINER service-only, ' +
+        'quindi non allunga la lista di cose da rigenerare che le tre voci qui sopra elencano. ' +
+        '\u26a0\ufe0f LO `SKIP LOCKED` NON \u00c8 PROVATO DA NESSUN TEST, ed \u00e8 misurato, non temuto: ' +
+        'togliendolo dall\'SQL i tredici test restano VERDI, perché PGlite ha una connessione ' +
+        'sola e nessuna riga risulta mai contesa. Per dimostrarlo servono due client su un ' +
+        'Postgres vero, e va asserito che la seconda chiamata NON si metta in attesa — è la ' +
+        'latenza, non l\'esito, a distinguere `SKIP LOCKED` da un `FOR UPDATE` normale.',
+    '20260917233752_bucket_limite_esplicito_certificati_credenziali_fatture.sql':
+        'Pinna il `file_size_limit` dei tre bucket che in produzione non ne dichiarano nessuno ' +
+        '\u2014 `certificati-medici` (15728640), `credenziali` (4194304), `fatture` (8388608) \u2014 ' +
+        'misurati il 2026-09-17 insieme al fatto che li ha resi urgenti: quel giorno il tetto ' +
+        'globale dello Storage \u00e8 passato da 52428800 a 2000000000 per la pipeline video, e ' +
+        '`min(limite del bucket, tetto globale)` ha allargato di quaranta volte tre archivi che ' +
+        'con i video non c\'entrano \u2014 certificati medici di minori, credenziali, fatture. ' +
+        'I numeri non sono scelti a occhio: il pi\u00f9 grande oggetto misurato \u00e8 5.364 byte in ' +
+        '`credenziali` e 54.498 in `fatture`, e `certificati-medici` \u00e8 vuoto; i 15 MiB sono ' +
+        'quelli di `sensitive_documents`, che \u00e8 il bucket ALTERNATIVO sullo stesso file ' +
+        '(`magazziniAmmessi()`), e due tetti diversi vorrebbero dire la stessa foto accettata da ' +
+        'una porta e respinta dall\'altra. Scritta e NON applicata: tocca `storage.buckets` in ' +
+        'produzione e va mostrata prima di essere eseguita. QUANDO SI APPLICA: NON serve ' +
+        'rigenerare `bucket-storage-snapshot.json` (la fotografia porta id e visibilit\u00e0, non il ' +
+        'limite, e qui nessun bucket nasce o cambia visibilit\u00e0); si rilegga invece ' +
+        '`select id, file_size_limit from storage.buckets` per verificare che i tre numeri siano ' +
+        'entrati davvero.',
 }
 
 const RADICE = process.cwd()

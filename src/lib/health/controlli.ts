@@ -153,6 +153,23 @@ export const JOB_CRON: readonly JobCron[] = [
     { nome: 'notifiche-promemoria', finestraMs: 26 * ORA },
     { nome: 'pagamenti-solleciti', finestraMs: 26 * ORA },
     { nome: 'mensa-allergie-check', finestraMs: 26 * ORA },
+    // I DUE DELLA PIPELINE VIDEO, entrati qui il 2026-09-18 **nello stesso rilascio** in cui le
+    // loro migrazioni sono state applicate — non un minuto prima, perché il lock
+    // `cron-sorvegliato-e-applicato` vieta di sorvegliare un lavoro la cui migrazione non è nella
+    // fotografia, e perché un nome dichiarato in anticipo manda `/api/health` in `degradato` dal
+    // primo deploy e per sempre. Un allarme che suona da solo viene spento, e quando il guasto
+    // arriva davvero non se ne accorge nessuno: è successo l'11/08 a `candidature-retention`.
+    //
+    // `video-runner-tick` (`1,6,11,…,56 * * * *`, OGNI CINQUE MINUTI) è ciò che FA PARTIRE la
+    // conversione: se smette, i video caricati restano in coda e nessuno se ne accorge, perché in
+    // coda non è uno stato d'errore. La finestra è 20 minuti, cioè tre giri saltati.
+    { nome: 'video-runner-tick', finestraMs: 20 * MIN },
+    // `video-retention` (`3,13,…,53 * * * *`, OGNI DIECI MINUTI) toglie da `video_originals` gli
+    // originali scaduti — video di minori in un bucket privato — e svuota la coda delle notifiche.
+    // Fa due mestieri con due orologi: la conservazione è guidata da una data assoluta, le
+    // notifiche no, e lì c'è una famiglia che aspetta di vedere comparire il video. Finestra 40
+    // minuti, cioè tre giri saltati su una cadenza di dieci.
+    { nome: 'video-retention', finestraMs: 40 * MIN },
     // `presenze-giustificazioni-retention` (`59 4 * * *`, OGNI NOTTE): fa scadere il motivo
     // dell'assenza, che è un dato sanitario di un minore, e l'informativa promette alle
     // famiglie che quella cancellazione è automatica. Una promessa mantenuta da un lavoro che

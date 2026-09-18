@@ -15,6 +15,23 @@ import { zUuid } from '@/lib/validation/common';
 import { alunniSenzaConsenso } from '@/lib/gallery/privacy';
 import { assertTagStudentsInScope } from '@/lib/gallery/tag-scope';
 import { firmaMediaGalleria, percorsoNelBucket } from '@/lib/gallery/storage';
+import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
+// ─── V08 · LA PUBBLICAZIONE DI UN VIDEO ──────────────────────────────────────
+// La metà «Storage» sta in un modulo suo (copia + compensazione); la metà
+// «risposta» si prende da dove vive già per tutta la pipeline video, invece di
+// riscriverla qui: `rispostaVideo` è uno switch di quindici letterali che
+// `errori-con-codice.test.ts` LEGGE, e una seconda traduzione codice→HTTP
+// divergerebbe dalla prima entro un mese — è la ragione per cui quel modulo
+// esiste, scritta nella sua testata.
+import { annullaCopiaVideoInGalleria, copiaVideoInGalleria } from '@/lib/gallery/video-pubblicazione';
+import { codiceMessaggioVideo, type CodiceInternoVideo } from '@/lib/media/video/contratto';
+import {
+    logVideo,
+    pipelineAssente,
+    rispostaPipelineAssente,
+    rispostaVideo,
+    statoHttpVideo,
+} from '@/app/api/video-uploads/risposte';
 import { alunniTaggatiDellaSede, assertAlunnoNellaSede, risolviSedeDellaVista } from '@/lib/gallery/vista-sede';
 import { proiettaPerGenitore } from './proiezione';
 import { colonnaSedeAssente, degradoSedeLecito } from '@/lib/forms/degrado-sede';
@@ -30,7 +47,7 @@ import { notificaEvento } from '@/lib/notifiche/triggers';
 import { genitoriDiAlunni, genitoriDiClassi, genitoriDiScuola } from '@/lib/notifiche/destinatari';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { withRoute } from '@/lib/logging/with-route';
-import { logErrore, logEvento } from '@/lib/logging/logger';
+import { logErrore, logEvento, type Valore } from '@/lib/logging/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -129,7 +146,13 @@ const getQuerySchemaCoerente = getQuerySchema.superRefine((q, ctx) => {
 
 const postBodySchema = z.object({
     // `uploaded_by` dal client è volutamente ignorato (si usa l'utente del gate).
-    file_url: z.string().min(1, 'file_url è obbligatorio'),
+    //
+    // ⚠️ `optional()` dal 2026-09-18, e NON è un allentamento: lo rende
+    // obbligatorio `postBodySchemaCoerente` qui sotto ogni volta che non c'è un
+    // `video_intent_id`. Un video convertito dalla pipeline un `file_url` non ce
+    // l'ha e non deve averlo — il percorso nel bucket lo decide il server dopo la
+    // copia, mai il client.
+    file_url: z.string().min(1, 'file_url è obbligatorio').optional(),
     file_type: z.string().nullish(),
     caption: z.string().nullish(),
     // `zUuid` e non `z.string()` (2026-08-03). Era «lasco: oggi nessun vincolo
@@ -148,7 +171,94 @@ const postBodySchema = z.object({
     // renderla obbligatoria — e a rispondere 400 — quando i plessi sono più
     // d'uno e nessuno è indicato né selezionato nel SedeSelector.
     scuola_id: zUuid.nullish(),
+    // ─── V08 · LA PUBBLICAZIONE DI UN VIDEO GIÀ CONVERTITO ────────────────────
+    // L'impegno aperto da `POST /api/video-uploads` e confermato dalla `PATCH`.
+    // Quando c'è, il file NON arriva dal client: arriva dal bucket di lavorazione,
+    // e il suo percorso lo decide questo server dopo la copia.
+    video_intent_id: zUuid.nullish(),
+    // La revisione che il client CREDE corrente. Non è un di più: fra la conferma
+    // e questa richiesta l'intento può essere stato superato da una modifica, e
+    // pubblicare la revisione vecchia vorrebbe dire mettere in galleria il video
+    // che l'insegnante ha appena sostituito. La confronta anche la RPC, sotto
+    // lock (`REVISION_MISMATCH`); qui si risparmia una copia inutile.
+    video_revisione: z.number().int().min(1).nullish(),
 });
+
+/**
+ * LA SORGENTE DEL FILE È UNA SOLA, e lo dice il 400.
+ *
+ * ⚠️ `z.object` NON è strict: i campi fuori schema — e le combinazioni che lo
+ * schema non vieta — passano in silenzio, ed è già costato tre incidenti in questo
+ * repository. Qui le combinazioni mute sarebbero tre, tutte brutte:
+ *
+ *  · `video_intent_id` senza `video_revisione`: la revisione non si può dedurre
+ *    («prendo quella corrente» significa «pubblico qualunque cosa ci sia adesso»,
+ *    cioè l'esatto contrario di ciò per cui la revisione esiste);
+ *  · `video_intent_id` INSIEME a `file_url`: due sorgenti per un file solo. Una
+ *    delle due verrebbe ignorata, e chi pubblica non saprebbe quale — sarebbe la
+ *    stessa bugia dello `scuolaId` scartato in silenzio nella GET, un parametro
+ *    in meno;
+ *  · nessuno dei due: il caso storico, dove `file_url` è e resta obbligatorio.
+ */
+const postBodySchemaCoerente = postBodySchema.superRefine((b, ctx) => {
+    if (b.video_intent_id) {
+        if (b.video_revisione == null) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['video_revisione'],
+                message: 'Con video_intent_id la revisione va dichiarata: manca video_revisione',
+            });
+        }
+        if (b.file_url) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['file_url'],
+                message: 'file_url non si usa con video_intent_id: il percorso lo decide il server',
+            });
+        }
+        return;
+    }
+    if (b.video_revisione != null) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['video_intent_id'],
+            message: 'video_revisione si usa solo con video_intent_id',
+        });
+    }
+    if (!b.file_url) {
+        ctx.addIssue({ code: 'custom', path: ['file_url'], message: 'file_url è obbligatorio' });
+    }
+});
+
+/**
+ * Un rifiuto della pubblicazione video: il codice INTERNO resta nel log, quello
+ * MOSTRABILE esce nella risposta.
+ *
+ * Sono due pubblici diversi, e non si scambiano fra loro: `JOBS_NOT_READY` a
+ * un'insegnante non dice niente, `VIDEO_NON_ANCORA_PRONTO` a chi indaga non dice
+ * quale dei quindici rifiuti è scattato. È la stessa divisione — e la stessa
+ * tabella `codice → stato HTTP` — che la pipeline usa in `rispostaEsitoRpc`:
+ * scriverne una seconda qui vorrebbe dire due numeri diversi per lo stesso
+ * rifiuto entro un mese.
+ *
+ * `warn` e non `error` sotto il 500: un `REVISION_MISMATCH` è il protocollo che
+ * funziona, non un guasto. Ma va visto — «nessuna riga» non deve significare
+ * insieme «non succede mai» e «succede e non lo sappiamo».
+ */
+function rifiutoVideoGalleria(
+    codice: CodiceInternoVideo,
+    contesto: Record<string, Valore>,
+): NextResponse {
+    const stato = statoHttpVideo(codice);
+    logVideo('gallery', stato >= 500 ? 'error' : 'warn', {
+        operazione: 'gallery:POST',
+        esito: 'video-non-pubblicabile',
+        error_code: codice,
+        stato,
+        ...contesto,
+    });
+    return rispostaVideo(codiceMessaggioVideo(codice), stato);
+}
 
 const deleteQuerySchema = z.object({
     id: zUuid,
@@ -695,12 +805,25 @@ export const GET = withRoute('gallery:GET', async (request: Request) => {
 
 // POST /api/gallery
 // Body: { uploaded_by, file_url, file_type?, caption?, tag_students?, is_broadcast?, target_classes? }
+//
+// ─── E DAL 2026-09-18 ANCHE LA PUBBLICAZIONE DI UN VIDEO CONVERTITO (V08) ────
+// Con `video_intent_id` + `video_revisione` al posto di `file_url`, questa stessa
+// rotta conclude un impegno della pipeline video: copia l'uscita dentro `gallery`,
+// scrive la riga e chiama `video_intent_finalize` NELLA STESSA RICHIESTA.
+//
+// ⚠️ NON è una seconda porta, ed è la decisione che conta di tutta V08. I gate
+// della Galleria — ruolo, sede DICHIARATA, tag nel perimetro, liberatoria
+// fotografica — vivono qui e sono quattro. Una rotta nuova sarebbe stata la loro
+// seconda copia, e in questo repository la seconda copia è già costata: il gate
+// dei tag scritto dentro questo handler lasciò scoperta la PATCH per tre giorni,
+// ed è il motivo per cui oggi sta in `@/lib/gallery/tag-scope`. Il ramo video
+// entra DOPO quei quattro gate, non accanto.
 export const POST = withRoute('gallery:POST', async (request: Request) => {
     try {
         const auth = await requireDocente(request);
         if (auth.response) return auth.response;
 
-        const b = await parseBody(request, postBodySchema);
+        const b = await parseBody(request, postBodySchemaCoerente);
         if ('response' in b) return b.response;
         const {
             file_url,
@@ -710,6 +833,8 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             is_broadcast,
             target_classes,
             scuola_id,
+            video_intent_id,
+            video_revisione,
         } = b.data;
 
         // L'uploader è l'utente del gate (no spoofing del campo uploaded_by).
@@ -838,6 +963,149 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             );
         }
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // V08 · IL RAMO VIDEO — e l'ordine è il punto, non un dettaglio
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // Si arriva qui DOPO i quattro gate applicativi: ruolo (`requireDocente`),
+        // sede dichiarata (`resolveScuolaScrittura`), tag nel perimetro
+        // (`assertTagStudentsInScope`) e liberatoria fotografica
+        // (`alunniSenzaConsenso`). Non è una preferenza di lettura: è ciò che
+        // rende vero il criterio d'accettazione del piano — **consenso revocato
+        // fra la conferma e la pubblicazione ⇒ 422, e nessun file resta in
+        // `gallery`**. Con il Privacy Lock PRIMA della copia quella seconda metà è
+        // vera per costruzione, non per compensazione: non c'è niente da
+        // ripulire perché non è stato copiato niente. Spostare la copia più su la
+        // renderebbe una promessa da mantenere invece che un fatto.
+        //
+        // Quello che resta scoperto, detto per intero: il consenso può essere
+        // revocato fra questo gate e la RPC, che distano una copia di file. È una
+        // finestra che nessuna richiesta singola può chiudere — la RPC i consensi
+        // non li conosce, e non deve conoscerli (due verità che invecchiano
+        // separatamente sono il difetto che questo repository ha già pagato). La
+        // riduzione, non la chiusura, è che la finestra sia l'ULTIMA cosa prima
+        // della scrittura invece che la prima.
+        let percorsoVideoCopiato: string | null = null;
+        if (video_intent_id) {
+            // ── L'INTENTO, letto col perimetro DENTRO la query ──────────────────
+            // `owner_id` e `scuola_id` sono filtri, non confronti dopo: così un
+            // intento di un'altra persona o di un altro plesso risponde **404**
+            // invece di 403. Gli uuid non si indovinano, e un 403 direbbe a chi
+            // prova che quell'id esiste — è la stessa scelta di
+            // `video-uploads/[id]`, e qui vale di più perché la sede è l'unica
+            // cosa che separa tre plessi di bambini.
+            const { data: intento, error: errIntento } = await supabase
+                .from('video_intents')
+                .select('id, owner_id, scuola_id, channel, revision, status')
+                .eq('id', video_intent_id)
+                .eq('owner_id', uploaded_by)
+                .eq('scuola_id', scuolaId)
+                .eq('channel', 'gallery')
+                .maybeSingle();
+
+            // PostgREST non lancia: ritorna `{ error }`. Sul DB E2E della CI — e
+            // in produzione finché le migrazioni video non sono applicate — quelle
+            // tabelle non esistono: 503 con un `error` di configurazione, non un
+            // 500 con lo stack di un guasto che non c'è.
+            if (errIntento) {
+                if (pipelineAssente(errIntento)) {
+                    return rispostaPipelineAssente('gallery:POST', 'video_intents', errIntento);
+                }
+                // `logErrore` di suo: `withRoute` non vede le eccezioni CATTURATE, e
+                // qui non c'è nemmeno un'eccezione — PostgREST non lancia, ritorna
+                // `{ error }`. Senza questa riga un guasto di lettura uscirebbe come
+                // un 500 muto. E la risposta porta un CODICE: «Internal Server Error»
+                // non è una frase, è l'assenza di una frase.
+                logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, errIntento);
+                return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500);
+            }
+            if (!intento) return rifiutoVideoGalleria('NOT_FOUND', {});
+
+            // Lo stato dell'intento, tradotto nel codice che dice PERCHÉ. Sono
+            // tutte e tre condizioni che la RPC ricontrolla sotto lock: qui si
+            // risparmia una copia di file che verrebbe buttata un istante dopo.
+            const stato = String(intento.status ?? '');
+            if (stato !== 'confirmed') {
+                return rifiutoVideoGalleria(
+                    stato === 'published'
+                        ? 'INTENT_PUBLISHED'
+                        : stato === 'cancelled' || stato === 'superseded'
+                            ? 'INTENT_REVOKED'
+                            : 'NOT_CONFIRMED',
+                    { intento: String(intento.id) },
+                );
+            }
+            if (Number(intento.revision) !== video_revisione) {
+                return rifiutoVideoGalleria('REVISION_MISMATCH', { intento: String(intento.id) });
+            }
+
+            // ── I JOB, con la sede ancora addosso ───────────────────────────────
+            const { data: jobs, error: errJob } = await supabase
+                .from('video_jobs')
+                .select('id, status, verified_at, output_bucket, output_path, output_size')
+                .eq('intent_id', video_intent_id)
+                .eq('scuola_id', scuolaId);
+            if (errJob) {
+                if (pipelineAssente(errJob)) {
+                    return rispostaPipelineAssente('gallery:POST', 'video_jobs', errJob);
+                }
+                logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, errJob);
+                return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500);
+            }
+            const elenco = (jobs ?? []) as Array<Record<string, unknown>>;
+            if (elenco.length === 0) return rifiutoVideoGalleria('NO_JOBS', {});
+            // Una Galleria collega UN solo job (lo impone `video_intent_add_job`
+            // con `SINGLE_JOB_CHANNEL`). Trovarne due qui non è una richiesta
+            // arrivata tardi: è un difetto nostro, e 500 lo dice.
+            if (elenco.length > 1) return rifiutoVideoGalleria('SINGLE_JOB_CHANNEL', { n: elenco.length });
+
+            const job = elenco[0];
+            const percorsoUscita = typeof job.output_path === 'string' ? job.output_path : '';
+            const bucketUscita = typeof job.output_bucket === 'string' ? job.output_bucket : '';
+            // `verified_at` e non il solo `status = 'ready'`: è la data in cui
+            // l'uscita è stata RILETTA e verificata. Uno stato pronto senza
+            // verifica è una promessa senza prova — e la RPC pretende la stessa
+            // cosa (`JOBS_NOT_READY`).
+            if (job.status !== 'ready' || !job.verified_at || !percorsoUscita || !bucketUscita) {
+                return rifiutoVideoGalleria('JOBS_NOT_READY', { job: String(job.id) });
+            }
+
+            // ⚠️ `output_size` È UN `bigint`, e questa riga era `typeof === 'number'`
+            // — cioè una guardia che, davanti a una stringa, non diventava rossa ma
+            // **saltava**: `byte: null`, tetto non confrontato, pubblicazione
+            // riuscita. PostgREST oggi serializza `bigint` come numero e quindi il
+            // caso non si presenta; ma basta un `numeric`, una vista, un cast nel
+            // `select` o una versione diversa perché arrivi come stringa, e il
+            // controllo si spegnerebbe senza lasciare traccia. Le due forme si
+            // accettano entrambe, e tutto il resto vale `null` — che non autorizza
+            // niente: fa solo saltare il confronto, e lo Storage resta l'ultima rete.
+            const byteUscita =
+                typeof job.output_size === 'number'
+                    ? job.output_size
+                    : typeof job.output_size === 'string' && /^\d+$/.test(job.output_size)
+                        ? Number(job.output_size)
+                        : null;
+
+            const copia = await copiaVideoInGalleria(supabase, {
+                bucketSorgente: bucketUscita,
+                percorsoSorgente: percorsoUscita,
+                byte: byteUscita,
+                ownerId: uploaded_by,
+                operazione: 'gallery:POST',
+            });
+            if (!copia.ok) {
+                // `OUTPUT_TOO_LARGE` è un rifiuto della pipeline e ha già il suo
+                // 422; una copia non riuscita è invece un guasto di trasporto, e
+                // la Galleria ha da sempre una risposta per quello — col corpo
+                // dell'errore del fornitore rimasto nel log, mai nel corpo HTTP.
+                if (copia.codice === 'OUTPUT_TOO_LARGE') {
+                    return rifiutoVideoGalleria('OUTPUT_TOO_LARGE', { job: String(job.id) });
+                }
+                return rispostaAllegatoNonCaricato();
+            }
+            percorsoVideoCopiato = copia.percorso;
+        }
+
         // In tabella si archivia il PERCORSO nel bucket, mai un indirizzo.
         // `gallery/upload` ormai restituisce già il percorso, ma un client
         // vecchio (o un telefono col bundle in cache) può ancora rimandare
@@ -846,12 +1114,20 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
         // che nessuna firma successiva saprebbe recuperare. Ciò che NON
         // appartiene a questo bucket resta invece intatto: non si riscrive un
         // dato che non si è certi di saper interpretare.
-        const fileUrlDaSalvare = percorsoNelBucket(file_url) ?? file_url;
+        //
+        // Per un video il percorso NON viene dal client e non passa di qui: lo ha
+        // appena scelto il server dentro `copiaVideoInGalleria`, ed è già la
+        // forma canonica.
+        const fileUrlDaSalvare = percorsoVideoCopiato ?? percorsoNelBucket(file_url ?? '') ?? (file_url ?? '');
 
         const baseRecord: Record<string, unknown> = {
             uploaded_by,
             file_url: fileUrlDaSalvare,
-            file_type: file_type ?? 'foto',
+            // Un video convertito è un video, e non lo decide un campo del client:
+            // `file_type` comanda l'icona, il visore e la parola del dialogo di
+            // eliminazione (`MediaGrid`, `DialogoEliminaMedia`). Un `'foto'`
+            // spedito per sbaglio metterebbe un MP4 dentro un `<img>`.
+            file_type: percorsoVideoCopiato ? 'video' : (file_type ?? 'foto'),
             caption: caption ?? null,
             tag_students: tag_students ?? [],
             is_broadcast: is_broadcast ?? false,
@@ -891,7 +1167,101 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
 
         if (error) {
             logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'db' }, error);
+            // La riga non c'è, quindi il file copiato un istante fa non lo nomina
+            // più nessuno: si toglie. Senza questa riga sarebbe l'esatto difetto
+            // W1-bis delle News preso dal lato della Galleria — un video di un
+            // minore dentro il bucket, invisibile all'oblio e alla retention, che
+            // partono entrambi dalla riga.
+            if (percorsoVideoCopiato) {
+                await annullaCopiaVideoInGalleria(supabase, [percorsoVideoCopiato], 'gallery:POST');
+            }
             return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // V08 · IL CANCELLO TRANSAZIONALE — nella stessa richiesta dei gate
+        // ═══════════════════════════════════════════════════════════════════════
+        //
+        // `video_intent_finalize` lega il target all'intento, lo porta a
+        // `published` e accoda l'evento di outbox: o tutt'e tre, o niente. Quello
+        // che NON fa è rivalutare i permessi — ruolo, sede, consenso sono appena
+        // stati attraversati qui sopra, e duplicarli in SQL significherebbe due
+        // verità che invecchiano separatamente. Riverifica solo ciò che un
+        // TypeScript non può sapere: che sotto lock la revisione sia ancora quella,
+        // che nessun altro abbia già vinto, che lo scope non sia cambiato.
+        //
+        // ⚠️ La sede che le si passa è quella appena risolta da
+        // `resolveScuolaScrittura`, NON quella riletta dall'intento: il confronto
+        // che la RPC fa (`SCOPE_CHANGED`) ha senso solo se i due valori vengono da
+        // due strade diverse. Passarle la sede dell'intento sarebbe un confronto
+        // con sé stesso, cioè un controllo che non può fallire mai.
+        if (video_intent_id && data) {
+            const idMedia = String((data as { id?: unknown }).id ?? '');
+            const { data: esitoRpc, error: erroreRpc } = await supabase.rpc('video_intent_finalize', {
+                p_intent_id: video_intent_id,
+                p_owner_id: uploaded_by,
+                p_revision: video_revisione,
+                p_scuola_id: scuolaId,
+                p_channel: 'gallery',
+                p_target_id: idMedia,
+                p_event_type: 'gallery.published',
+                // Nel payload dell'outbox solo uuid e numeri: la didascalia la
+                // scrive una maestra e può contenere il nome di un bambino.
+                p_payload: { media_id: idMedia, scuola_id: scuolaId, revision: video_revisione },
+            });
+
+            const ok = !erroreRpc && (esitoRpc as { ok?: unknown } | null)?.ok === true;
+            if (!ok) {
+                // ── LA COMPENSAZIONE, e l'ordine fra le due metà non è arbitrario.
+                // Prima la RIGA, poi il FILE: se la riga resta e il file no, in
+                // galleria compare un riquadro rotto — un guasto visibile alle
+                // famiglie e non più recuperabile. Se invece il file resta e la
+                // riga no, il rimedio esiste (e lo si grida). Fra i due mali si
+                // sceglie quello reversibile.
+                // ⚠️ `.eq('scuola_id', scuolaId)` ACCANTO all'id, e non è ridondanza
+                // per il lock. Questa è l'unica `delete` non reversibile di questo
+                // handler, e l'id da solo la renderebbe una cancellazione per
+                // identificatore su una tabella che contiene tre plessi di foto di
+                // bambini. La sede è quella appena risolta e appena SCRITTA su
+                // quella stessa riga: se le due non combaciano, la riga non è
+                // quella che credo di aver appena creato, e allora non si tocca.
+                const { error: erroreAnnullo } = await ancheNelCestino(
+                    supabase
+                        .from('galleria_media_v2')
+                        .delete()
+                        .eq('id', idMedia)
+                        .eq('scuola_id', scuolaId),
+                    'annullo di una riga nata un istante fa e mai stata visibile: non c-e nessun cestino da consultare, e dirlo è il modo di non confondere questa scrittura con una a cui il filtro è stato dimenticato',
+                );
+                if (erroreAnnullo) {
+                    // `withRoute` non vede questo ramo: la richiesta risponde 4xx e
+                    // l'eccezione non c'è. Senza questa riga resterebbe in galleria
+                    // un video che nessun intento dichiara pubblicato — e un
+                    // secondo tentativo ne creerebbe un doppione.
+                    logEvento('galleria', 'error', {
+                        operazione: 'gallery:POST',
+                        esito: 'video-riga-non-annullata',
+                        sede_id: scuolaId,
+                        media: idMedia,
+                        msg: 'gallery:POST: la riga di un video non pubblicato è rimasta in galleria e il suo file con lei',
+                    }, erroreAnnullo);
+                } else if (percorsoVideoCopiato) {
+                    await annullaCopiaVideoInGalleria(supabase, [percorsoVideoCopiato], 'gallery:POST');
+                }
+
+                if (erroreRpc) {
+                    if (pipelineAssente(erroreRpc)) {
+                        return rispostaPipelineAssente('gallery:POST', 'video_intent_finalize', erroreRpc);
+                    }
+                    logErrore({ operazione: 'gallery:POST', stato: 500, evento: 'rpc' }, erroreRpc);
+                    return rispostaVideo('VIDEO_OPERAZIONE_NON_RIUSCITA', 500);
+                }
+                const codice = (esitoRpc as { code?: unknown } | null)?.code;
+                return rifiutoVideoGalleria(
+                    (typeof codice === 'string' ? codice : 'INVALID_STATE') as CodiceInternoVideo,
+                    { intento: video_intent_id, media: idMedia },
+                );
+            }
         }
 
         // Notifica ai genitori interessati (best-effort): alunni taggati →
@@ -952,6 +1322,12 @@ export const POST = withRoute('gallery:POST', async (request: Request) => {
             nTag: (tag_students ?? []).length,
             broadcast: is_broadcast ?? false,
             n_destinatari: nDestinatari,
+            // I due percorsi non costano lo stesso e non falliscono allo stesso
+            // modo: un video è passato da una conversione di minuti, da una copia
+            // fra bucket e da una RPC che poteva rifiutare. Senza questo flag le
+            // due storie finiscono nella stessa riga, e la domanda «ieri quanti
+            // video sono davvero usciti?» non ha più risposta.
+            video: Boolean(percorsoVideoCopiato),
         });
 
         return NextResponse.json(data, { status: 201 });

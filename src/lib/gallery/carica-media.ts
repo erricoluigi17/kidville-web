@@ -46,11 +46,12 @@
 
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { TETTO_GALLERIA_BYTE, mimeBase } from '@/lib/gallery/limiti';
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 
 export type EsitoCarica =
     | { ok: true; path: string }
     | { ok: false; motivo: 'troppo-grande' | 'formato' | 'formato-non-ammesso'; stato: number | null }
-    | { ok: false; motivo: 'firma' | 'trasferimento' | 'rete'; stato: number | null };
+    | { ok: false; motivo: 'firma' | 'trasferimento' | 'rete' | 'app-da-aggiornare'; stato: number | null };
 
 /** La rotta che rende `messaggio` distinguibile in SQL: un ramo, un messaggio. */
 function segnala(messaggio: string, stato: number | null, livello: 'warn' | 'error' = 'error') {
@@ -116,6 +117,34 @@ export async function caricaMediaGalleria(file: File, mime: string): Promise<Esi
     }
 
     if (!firma.ok) {
+        // ── IL PERCORSO VECCHIO È STATO CHIUSO, e non è un «riprova» ─────────────
+        // 409 `VIDEO_APP_DA_AGGIORNARE`: la porta storica ha smesso di accettare
+        // video perché la pipeline nuova è viva e questo client non sa parlarle.
+        // Senza un ramo suo, il 409 cadrebbe nel generico `firma` — «Riprova fra
+        // qualche minuto» davanti a un blocco che riprovando non passa MAI. È il
+        // difetto del 2026-09-08 rifatto identico: allora il 400 cadeva lì, otto
+        // insegnanti hanno riprovato 33 volte e due sono finite nel rate limit.
+        //
+        // ⚠️ SI GUARDA IL CODICE, NON IL NUMERO. Se un giorno questa porta
+        // rispondesse 409 per un'altra ragione, dire «aggiorna l'app» sarebbe una
+        // bugia azionabile — peggio di una frase generica, perché manda la persona
+        // a fare una cosa che non serve. Qui il corpo si può leggere senza rischio:
+        // il `.catch()` copre il caso in cui non sia JSON, che è la ragione per cui
+        // il resto di questa funzione il corpo non lo tocca (vedi il ramo 2 della
+        // testata: su un 413 è `text/plain` e il parse lancia).
+        if (firma.status === 409) {
+            const corpo409 = (await firma.json().catch(() => null)) as { codice?: string } | null;
+            if (corpo409?.codice === 'VIDEO_APP_DA_AGGIORNARE') {
+                // `warn` e non `error`: è il protocollo che funziona come previsto, un
+                // client vecchio fermato apposta. Ma con un messaggio SUO, perché la
+                // chiave di dedup di `logClient` è `evento|messaggio|stato` e il giorno
+                // dell'accensione bisogna poter contare quanti telefoni parlano ancora
+                // la lingua vecchia — separatamente dai guasti veri della firma.
+                segnala('gallery-app-da-aggiornare', firma.status, 'warn');
+                return { ok: false, motivo: 'app-da-aggiornare', stato: firma.status };
+            }
+        }
+
         // `res.ok` PRIMA di `res.json()`, sempre: su un 413 il corpo è `text/plain` e
         // il parse lancia, seppellendo l'unica informazione utile.
         //
@@ -202,6 +231,16 @@ export function messaggioCaricamento(
     switch (esito.motivo) {
         case 'troppo-grande': return t('galleryErrTroppoGrande');
         case 'formato': return t('galleryAlertVideoNonConvertibile');
+        // La frase NON viene da `teacherServizi` e non è scritta qui: è quella del
+        // codice `VIDEO_APP_DA_AGGIORNARE`, che esiste già nel catalogo condiviso in
+        // italiano e in inglese ed è la stessa che il server manda nel corpo del 409.
+        // Scriverne una seconda vorrebbe dire due frasi per lo stesso rifiuto, che
+        // divergono al primo ritocco — ed è l'unico modo in cui una porta e la sua
+        // schermata finiscono per dire due cose diverse alla stessa persona.
+        // Il `fallback` è il vecchio ramo generico: se un giorno quella chiave
+        // sparisse dal catalogo, si legge una frase imperfetta invece del silenzio.
+        case 'app-da-aggiornare':
+            return soloCatalogoDaCorpo({ codice: 'VIDEO_APP_DA_AGGIORNARE' }, t('galleryErrFirma'));
         // Frase SUA, e non quella qui sopra: `galleryAlertVideoNonConvertibile` parla di
         // iPhone e di conversione, che per un `image/heic` respinto non vuol dire niente.
         case 'formato-non-ammesso': return t('galleryErrFormatoNonAmmesso');

@@ -10,6 +10,8 @@
 
 import { useRef, useState } from 'react';
 import { Upload, ShieldQuestion } from 'lucide-react';
+
+import { soloCatalogoDaCorpo } from '@/lib/ui/esito-fetch';
 import { useTranslations } from 'next-intl';
 import { Modal } from '@/components/ui/Modal';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -65,8 +67,13 @@ export function NewsMediaUploader({
       } else if (res.status === 404) {
         setErrore(t('uploaderNonDisponibile'));
       } else {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        setErrore(j?.error ?? t('uploaderImpossibileCaricare'));
+        const j = (await res.json().catch(() => null)) as { error?: string; codice?: string } | null;
+        // La prosa del server e' SEMPRE italiana: mostrarla qui lasciava un'utente in
+        // inglese davanti a una frase italiana, e il difetto non si vede finche' non si
+        // cambia lingua. `soloCatalogoDaCorpo` traduce il `codice` dichiarato e ripiega
+        // sulla frase locale quando il codice non c'e' — che e' anche la strada per cui
+        // il 409 `CLIENT_UPDATE_REQUIRED` del blocco legacy arriva gia' tradotto.
+        setErrore(soloCatalogoDaCorpo(j, t('uploaderImpossibileCaricare')));
       }
     } catch (err) {
       logClient({ livello: 'error', evento: 'fetch', messaggio: `news-media-upload-fallito: ${nomeErrore(err)}`, route: '/admin/news', stato: 0 });

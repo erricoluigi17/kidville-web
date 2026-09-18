@@ -10,6 +10,9 @@ import path from 'node:path';
  * (path relativi a src/app/api; coprono ogni route.ts sottostante).
  */
 const GRUPPI_COPERTI: string[] = [
+    // Le due route della pipeline video (V07). Validano gia' con zod: la riga serve
+    // perche' il gruppo resti sorvegliato contro una regressione futura, non a sanare oggi.
+    'video-uploads',
     // M3.2 (zod 1/14)
     'attendance',
     'avvisi',

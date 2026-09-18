@@ -28,6 +28,58 @@ jobs:
       - run: npm ci
       - name: ESLint (zero warning)
         run: npx eslint . --max-warnings 0
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # FFMPEG PINNATO — non `apt-get install ffmpeg`, e non è pignoleria.
+      #
+      # La conversione video gira in un Vercel Sandbox su una build scaricata da
+      # BtbN e FISSATA alla release datata del 2026-09-15. Se qui girasse la build
+      # di Ubuntu, un test verde direbbe che *una certa* FFmpeg fa una certa cosa —
+      # non che la faccia quella che convertirà i video dei bambini. Che due build
+      # della stessa famiglia divergano non è un'ipotesi: misurato il 2026-09-17,
+      # `brew install ffmpeg` 8.1.2 NON ha il filtro `zscale`, e senza `zscale`
+      # l'intero ramo HDR→SDR di `src/lib/media/video/encode.ts` non esiste. Un
+      # collaudo su quella build non sta misurando la nostra conversione.
+      #
+      # Lo sha256 qui sotto è lo STESSO numero di `src/lib/media/video/build.ts` e
+      # della spec `docs/superpowers/specs/2026-09-16-video-build-verificata.md`:
+      # un numero, tre posti, e il lock `__tests__/architecture/fixture-video-reali`
+      # fallisce se divergono. Si verifica PRIMA di estrarre — è codice preso da
+      # Internet che sta per girare sui nostri file.
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: Cache dell'archivio FFmpeg pinnato
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/kidville-ffmpeg
+          key: ffmpeg-btbn-adb2d107287cdace0c5d00dd986cd3674c1e86776501640bff3b5cf7d2cf2e71
+      - name: FFmpeg pinnato (la build del Sandbox di produzione, non quella della distro)
+        env:
+          ARCHIVIO_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-15-13-18/ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0.tar.xz
+          ARCHIVIO_SHA256: adb2d107287cdace0c5d00dd986cd3674c1e86776501640bff3b5cf7d2cf2e71
+          RADICE_ARCHIVIO: ffmpeg-n9.0.1-30-g9258bacca5-linux64-gpl-9.0
+        run: |
+          set -euo pipefail
+          CACHE="$HOME/.cache/kidville-ffmpeg"
+          DEST="$HOME/.local/kidville-ffmpeg"
+          mkdir -p "$CACHE" "$DEST"
+          ARCHIVIO="$CACHE/ffmpeg-pinnato.tar.xz"
+          if [ ! -f "$ARCHIVIO" ]; then
+            echo "::notice::archivio non in cache, lo scarico"
+            curl -fsSL --retry 3 --retry-delay 5 -o "$ARCHIVIO" "$ARCHIVIO_URL"
+          fi
+          echo "$ARCHIVIO_SHA256  $ARCHIVIO" | sha256sum -c -
+          tar -xJf "$ARCHIVIO" --strip-components=2 -C "$DEST" \
+            "$RADICE_ARCHIVIO/bin/ffmpeg" "$RADICE_ARCHIVIO/bin/ffprobe"
+          chmod +x "$DEST/ffmpeg" "$DEST/ffprobe"
+          "$DEST/ffmpeg" -version | head -1
+          # Meglio saperlo qui, in una riga, che dal rosso di dieci casi fra due minuti.
+          FILTRI="$("$DEST/ffmpeg" -hide_banner -filters)"
+          if ! grep -qw zscale <<< "$FILTRI"; then
+            echo "::error::la build pinnata non espone il filtro zscale: la catena HDR→SDR non può girare"
+            exit 1
+          fi
+          echo "KIDVILLE_VIDEO_FFMPEG_DIR=$DEST" >> "$GITHUB_ENV"
+
       - name: Typecheck + Unit (tsc --noEmit && vitest run)
         run: npm run gate
       # IL QUARTO COMANDO DEL GATE, che fino al 2026-08-04 non è mai girato in CI.

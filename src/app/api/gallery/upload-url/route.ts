@@ -7,6 +7,7 @@ import { parseBody } from '@/lib/validation/http';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
+import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video';
 import { BUCKET_GALLERIA, MIME_GALLERIA, TETTO_GALLERIA_BYTE, estensioneDaMime, mimeBase } from '@/lib/gallery/limiti';
 
 // =============================================================================
@@ -111,6 +112,23 @@ export const POST = withRoute('gallery/upload-url:POST', async (request: Request
         const b = await parseBody(request, postBodySchema);
         if ('response' in b) return b.response;
         const { mime, size, testa_b64 } = b.data;
+
+        // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ──────────
+        // Di qui passano il browser dell'insegnante e la coda offline Dexie
+        // (`syncPendingGalleryMedia` → `caricaMediaGalleria`): il filmato è già stato
+        // compresso dal client e questa route si limita a firmare la `PUT`. Con la
+        // pipeline nuova viva, un file firmato così resterebbe in archivio senza che
+        // nessuno lo converta. Il rifiuto arriva PRIMA della firma: firmare e poi
+        // pentirsi vorrebbe dire lasciare una `PUT` autorizzata in mano al client.
+        //
+        // ⚠️ OGGI SPENTO, interruttore unico in
+        // `src/lib/media/interruttore-legacy-video.ts`. La riga in coda NON si perde:
+        // resta in Dexie con `sync_status: 'error'`, e `syncPendingGalleryMedia`
+        // ripesca le righe `pending` **e** `error` — che è il motivo per cui la frase
+        // del catalogo può promettere che i filmati in attesa ripartono da soli.
+        if (videoLegacyDaFermare(mime)) {
+            return rifiutoLegacyVideo('galleria', 'gallery/upload-url:POST', mime, size);
+        }
 
         // ── LO SNIFF, che con l'upload diretto è l'ultima cosa che il server vede ──
         if (mime.startsWith('video/')) {

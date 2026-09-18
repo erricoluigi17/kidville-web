@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, Suspense } from 'react';
-import { useTranslations, useLocale } from 'next-intl';
+import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
+import { useTranslations } from 'next-intl';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Upload, Tag, WifiOff, X } from 'lucide-react';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
@@ -11,16 +11,18 @@ import { erroreElimina, statoDaRigetto } from '@/components/features/gallery/Dia
 import { MediaUploader } from '@/components/features/gallery/MediaUploader';
 import { AnteprimaMedia } from '@/components/features/gallery/AnteprimaMedia';
 import { StudentTagger } from '@/components/features/gallery/StudentTagger';
+import { VideoInLavorazione } from '@/components/features/gallery/VideoInLavorazione';
+import { useVideoGalleria } from '@/components/features/gallery/use-video-galleria';
 import { saveLocalGalleryMedia, syncPendingGalleryMedia } from '@/lib/offline/syncEngine';
-import { processImageWithWatermark, validateVideoFile, processVideoWithWatermark, ImageProcessingError, type MotivoVideoNonValido } from '@/lib/media/processing';
-import { analizzaContenutoVideo } from '@/lib/media/codec-sniff';
+import { processImageWithWatermark, ImageProcessingError } from '@/lib/media/processing';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { applicaTagATutte, fotoDaConfigurare, fotoGiaConfigurate } from '@/lib/gallery/applica-tag';
 import { caricaMediaGalleria, messaggioCaricamento } from '@/lib/gallery/carica-media';
+import { durataVideoDalFile, sedeDelCaricamento, sediDalCookie } from '@/lib/gallery/video-galleria-flusso';
 import { messaggioErrore, messaggioDaCorpo } from '@/lib/ui/esito-fetch';
-import { formattaMegabyte } from '@/lib/i18n/numero';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { useOnlineStatus } from '@/lib/hooks/use-online-status';
+import { useClientValue } from '@/lib/hooks/use-client-value';
 
 // =============================================================================
 // GLI ERRORI DEL SERVER SI LEGGONO NELLA LINGUA DELL'INTERFACCIA (2026-08-03).
@@ -56,46 +58,30 @@ function TeacherGalleryContent() {
     // e una seconda copia in `teacherServizi` sarebbe due stringhe da tradurre
     // per un gesto solo.
     const tShared = useTranslations('shared');
-    // La lingua dell'INTERFACCIA (cookie `KV_LOCALE`), non quella del runtime:
-    // serve a formattare i numeri che finiscono dentro le frasi qui sotto.
-    const locale = useLocale();
     const { userId: teacherId } = useSessionIdentity();
 
-    /**
-     * Il motivo per cui un video è stato rifiutato, nella lingua dell'interfaccia.
-     *
-     * La DECISIONE resta in `validateVideoFile` (una sola, condivisa con chiunque
-     * altro la usi); qui si sceglie solo come DIRLA. Prima si mostrava `val.error`,
-     * che quella libreria costruisce in italiano perché gira anche sul server: con
-     * l'interfaccia in inglese era prosa italiana a schermo, come il 403 dei tag.
-     * `val.error` resta il ripiego per un motivo che il catalogo ancora non
-     * conosce: meglio una frase nella lingua sbagliata che nessuna frase.
-     */
-    const motivoVideoNonValido = (
-        codice: MotivoVideoNonValido | undefined,
-        file: File,
-        ripiego: string | undefined,
-    ): string => {
-        if (codice === 'formato-non-supportato') {
-            return t('galleryAlertVideoFormatoNonSupportato', { tipo: file.type || '—' });
-        }
-        if (codice === 'file-troppo-grande') {
-            // La dimensione arriva GIÀ FORMATTATA, unità compresa: `MB` è un
-            // simbolo invariante e — come gli importi in euro — non entra nella
-            // frase come parola separata (cfr. il lock `messaggi-plurali-e-glossario`,
-            // che su «{n} parola» chiede la forma ICU plurale, qui fuori luogo).
-            //
-            // ⚠️ E il SEPARATORE decimale segue la lingua dell'INTERFACCIA, non
-            // quella del runtime. Qui c'era `toLocaleString(undefined, …)`, che
-            // `undefined` lo risolve sul sistema operativo di chi guarda (o sul
-            // processo, lato server): con interfaccia inglese su un browser
-            // italiano usciva «50,3 MB» dentro una frase inglese. Stesso difetto
-            // delle date, stessa medicina: il locale è un parametro.
-            return t('galleryAlertVideoOltreIlLimite', { dimensione: formattaMegabyte(file.size, locale) });
-        }
-        return ripiego ?? t('galleryErrCaricamentoGenerico');
-    };
-
+    // =========================================================================
+    // V11 · I VIDEO NON PASSANO PIÙ DALLA PORTA DELLE FOTO.
+    //
+    // Fino al 2026-09-18 un video di galleria veniva convertito DENTRO il
+    // browser del telefono (`processVideoWithWatermark`, watermark su `<canvas>`)
+    // e poi spedito come una foto qualunque, con un tetto di 50 MiB scritto a
+    // mano proprio qui — cinquanta mebibyte come prodotto di tre numeri, che nel
+    // sorgente erano tre letterali. Tre limiti veri:
+    //
+    //  · un iPhone che converte tre minuti di filmato impiega minuti, e a volte
+    //    non ci riesce affatto (la frase «questo video non può essere convertito
+    //    su questo dispositivo» esiste perché succedeva);
+    //  · 50 MiB sono pochi per un telefono moderno;
+    //  · e finché la conversione gira nel browser, chiudere l'app butta via tutto.
+    //
+    // Adesso il file parte com'è verso un bucket privato (upload TUS, ripartibile)
+    // e la conversione la fa il server. I due tetti non sono più scritti qui: sono
+    // `MAX_VIDEO_INPUT_BYTES`/`MAX_VIDEO_DURATION_SECONDS` della pipeline, e li
+    // applica `rifiutoLocaleVideo` PRIMA che parta un byte. Il tetto delle FOTO —
+    // `TETTO_GALLERIA_BYTE`, che resta 50 MiB e deve restarci — lo applica
+    // `caricaMediaGalleria`, che è la sola porta che il browser usa da sé.
+    // =========================================================================
     const [media, setMedia] = useState<MediaItem[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
     const [loading, setLoading] = useState(true);
@@ -108,12 +94,32 @@ function TeacherGalleryContent() {
     }[]>([]);
     const [activeFileIndex, setActiveFileIndex] = useState<number>(0);
     const [uploading, setUploading] = useState(false);
-    // Indice del file in conversione video (per lo spinner PER FILE): la conversione dura
-    // ~quanto il video, quindi va segnalata sulla miniatura giusta, non con un solo spinner.
-    const [convertingIndex, setConvertingIndex] = useState<number | null>(null);
     const [userRole, setUserRole] = useState<string>('educator');
     // SSR-safe (niente hydration mismatch né setState-in-effect).
     const isOnline = useOnlineStatus();
+
+    // ── LA SEDE DEL VIDEO ────────────────────────────────────────────────────
+    // `POST /api/video-uploads` pretende un uuid di sede: a differenza della
+    // pubblicazione di una foto, che il server può dedurre dal cookie o dall'unico
+    // plesso dell'utente, qui l'intento nasce PRIMA e deve già sapere dove
+    // archivierà. Perciò la sede si risolve qui, con la stessa regola del server
+    // (`resolveScuolaScrittura`), e quando non si può sapere si CHIEDE invece di
+    // indovinare: un video archiviato nel plesso sbagliato non lo scopre nessuno.
+    const [scuolaPrimaria, setScuolaPrimaria] = useState<string | null>(null);
+    const [sediAccessibili, setSediAccessibili] = useState<string[] | null>(null);
+    // Il cookie si legge SOLO nel browser, e si legge come STRINGA: `useClientValue`
+    // gira su `useSyncExternalStore`, che pretende uno snapshot stabile fra due
+    // render — un array nuovo ogni volta sarebbe un ciclo infinito. È anche il modo
+    // per non scrivere uno stato dentro un effetto (`react-hooks/set-state-in-effect`)
+    // né produrre un disallineamento di hydration fra server e browser.
+    const cookieSedi = useClientValue(() => (typeof document !== 'undefined' ? document.cookie : ''), '');
+    const sediSelezionate = useMemo(() => sediDalCookie(cookieSedi), [cookieSedi]);
+    const sedeVideo = sedeDelCaricamento({
+        ruolo: userRole,
+        scuolaPrimaria,
+        sediSelezionate,
+        sediAccessibili,
+    });
 
     // Sezione reale da /api/educator-sections: init vuoto, mai hardcoded
     // (i loader sono guardati da `if (!sezione) return`).
@@ -189,6 +195,7 @@ function TeacherGalleryContent() {
     }, [isOnline, loadMedia]);
 
     // Carica ruolo utente corrente (via /api/me gated, niente lettura anon di `utenti`)
+    // e, con lui, la SEDE del profilo: da V11 serve a dichiarare dove finirà il video.
     useEffect(() => {
         const fetchUserRole = async () => {
             if (!teacherId) return;
@@ -198,6 +205,7 @@ function TeacherGalleryContent() {
                 const me = await res.json().catch(() => null);
                 const ruolo = me?.ruolo ?? me?.role;
                 if (ruolo) setUserRole(ruolo);
+                if (typeof me?.scuola_id === 'string') setScuolaPrimaria(me.scuola_id);
             } catch {
                 logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-ruolo-fallito', route: '/teacher/gallery' });
             }
@@ -205,10 +213,60 @@ function TeacherGalleryContent() {
         fetchUserRole();
     }, [teacherId]);
 
+    /**
+     * LE SEDI, PER CHI PUÒ AVERNE PIÙ D'UNA.
+     *
+     * `scuoleDiUtente` (server) restituisce il solo `utenti.scuola_id` a tutti i
+     * ruoli tranne `admin`: per un'educatrice o una coordinatrice «la sede del
+     * profilo» e «l'unica sede» sono lo stesso valore, e non c'è niente da
+     * chiedere. Per un admin no — e chiedere è l'unico modo di non indovinare.
+     *
+     * Il cookie `sedi_attive` è la scelta fatta nel cockpit: non è un segreto (il
+     * server la ri-valida sempre) e qui serve a non ri-chiedere a chi ha già
+     * scelto.
+     */
+    useEffect(() => {
+        if (userRole !== 'admin' || !teacherId) return;
+        const fetchSedi = async () => {
+            try {
+                const res = await fetch('/api/admin/sedi', { headers: { 'x-user-id': teacherId } });
+                if (!res.ok) return;
+                const corpo = await res.json().catch(() => null);
+                const elenco = Array.isArray(corpo?.data)
+                    ? (corpo.data as { id?: unknown }[]).map((s) => String(s.id)).filter(Boolean)
+                    : null;
+                if (elenco) setSediAccessibili(elenco);
+            } catch {
+                // Elenco non arrivato: `sediAccessibili` resta `null`, che per un
+                // admin significa «non lo so» — e `sedeDelCaricamento` in quel caso
+                // NON ripiega sulla sede del profilo. Meglio chiedere di scegliere
+                // che archiviare il video di un bambino nel plesso sbagliato.
+                logClient({ livello: 'error', evento: 'fetch', messaggio: 'gallery-sedi-fallito', route: '/teacher/gallery' });
+            }
+        };
+        fetchSedi();
+    }, [teacherId, userRole]);
+
     useEffect(() => {
         loadMedia();
         loadStudents();
     }, [loadMedia, loadStudents]);
+
+    /**
+     * I VIDEO IN LAVORAZIONE — la parte di questa schermata che vive più a lungo
+     * della schermata stessa.
+     *
+     * L'hook si occupa di tre cose che la pagina non può fare: riprendere al
+     * rientro i caricamenti rimasti a metà, tornare a interrogare i job che il
+     * server sta convertendo, e pubblicare quando sono pronti. Vedi la testata di
+     * `use-video-galleria.ts` per il perché.
+     */
+    const videoGalleria = useVideoGalleria({
+        utenteId: teacherId,
+        sede: sedeVideo,
+        classi: sezione ? [sezione] : [],
+        onPubblicato: loadMedia,
+    });
 
     const handleUploadFiles = (files: { file: File; preview: string }[]) => {
         setUploadedFiles(files.map(f => ({
@@ -354,80 +412,58 @@ function TeacherGalleryContent() {
         try {
             const offlineMode = !isOnline;
 
+            // Che cosa è successo davvero, per dirlo alla fine senza inventare: le
+            // due strade adesso finiscono in modo diverso — una foto è PUBBLICATA,
+            // un video è soltanto PARTITO, e annunciarli con la stessa frase
+            // («File caricati e pubblicati con successo!») sarebbe la bugia da cui
+            // nasce il secondo caricamento.
+            let fotoConcluse = 0;
+            let videoAvviati = 0;
+
             for (let i = 0; i < uploadedFiles.length; i++) {
                 const f = uploadedFiles[i];
                 let processedFile = f.file;
                 const isVideo = f.file.type.startsWith('video/');
                 if (isVideo) {
-                    const MAX_SIZE = 50 * 1024 * 1024; // 50MB
-
-                    // Sniff del codec/container sui primi 64KB: da iPhone parte HEVC/.mov, che
-                    // Chrome/Android non decodificano. Se serve, la conversione è OBBLIGATORIA.
-                    const testa = await f.file.slice(0, 65536).arrayBuffer().catch(() => null);
-                    const analisi = testa
-                        ? analizzaContenutoVideo(testa, f.file.type)
-                        : { daConvertire: true, motivo: 'header-illeggibile' };
-
-                    if (analisi.daConvertire) {
-                        // Un video da convertire NON si accoda mai alla coda offline: la conversione
-                        // richiede il dispositivo attivo e il server ne verifica il codec al caricamento.
-                        if (offlineMode) {
-                            alert(t('galleryAlertVideoOffline', { nome: f.file.name }));
-                            continue;
-                        }
-
-                        setConvertingIndex(i);
-                        let videoFile: File;
-                        try {
-                            videoFile = await processVideoWithWatermark(f.file, '/watermark.png', MAX_SIZE, { obbligatoria: true });
-                        } catch {
-                            // Conversione impossibile su questo dispositivo: messaggio azionabile e
-                            // SKIP del file (gli altri file del batch proseguono). Nessun log con PII.
-                            logClient({ livello: 'warn', evento: 'js', messaggio: 'gallery-video-conversione-fallita', route: '/teacher/gallery', stato: 415 });
-                            // Il testo di `MESSAGGIO_VIDEO_NON_CONVERTIBILE` vive in una
-                            // libreria condivisa client+server e nasce italiano: qui il
-                            // locale c'è, quindi si mostra la frase del catalogo.
-                            alert(t('galleryAlertVideoNonConvertibile'));
-                            continue;
-                        } finally {
-                            setConvertingIndex(null);
-                        }
-
-                        const val = validateVideoFile(videoFile);
-                        if (!val.valid) {
-                            alert(motivoVideoNonValido(val.codice, videoFile, val.error));
-                            continue;
-                        }
-                        processedFile = videoFile;
-                    } else {
-                        // Già riproducibile (H.264/webm): watermark + compressione, con fallback
-                        // all'originale ammesso (il codec è già compatibile).
-                        if (f.file.size > MAX_SIZE) {
-                            // Il gemello del messaggio qui sopra, e con lo stesso
-                            // difetto al contrario: qui il locale era CABLATO a
-                            // `it-IT`, quindi l'interfaccia inglese leggeva «50,3».
-                            // `unita: false` perché questa frase il «MB» ce l'ha
-                            // già scritto dentro, in tutti e due i cataloghi.
-                            alert(t('galleryAlertVideoTroppoGrande', {
-                                nome: f.file.name,
-                                dimensione: formattaMegabyte(f.file.size, locale, { unita: false }),
-                            }));
-                        }
-                        setConvertingIndex(i);
-                        let videoFile: File;
-                        try {
-                            videoFile = await processVideoWithWatermark(f.file, '/watermark.png', MAX_SIZE);
-                        } finally {
-                            setConvertingIndex(null);
-                        }
-
-                        const val = validateVideoFile(videoFile);
-                        if (!val.valid) {
-                            alert(motivoVideoNonValido(val.codice, videoFile, val.error));
-                            continue;
-                        }
-                        processedFile = videoFile;
+                    // ── V11 · IL VIDEO PARTE COM'È, E LA CONVERSIONE LA FA IL SERVER ──
+                    //
+                    // Niente `<canvas>`, niente `MediaRecorder`, nessun tetto di 50 MiB
+                    // scritto qui: il file va in un bucket privato con un upload TUS che
+                    // riprende da dove si era interrotto, e il resto lo fa la pipeline.
+                    // Quello che resta a questa pagina è dire di no PRIMA — e dirlo con
+                    // i numeri veri della pipeline, non con una loro copia.
+                    //
+                    // ⚠️ OFFLINE NO, e per una ragione diversa da prima: la coda offline
+                    // spedisce col percorso delle FOTO (`syncPendingGalleryMedia`), che
+                    // per un video non è più la strada giusta. Meglio dirlo subito che
+                    // accodare qualcosa che nessuno convertirà mai.
+                    if (offlineMode) {
+                        alert(t('galleryAlertVideoOffline', { nome: f.file.name }));
+                        continue;
                     }
+
+                    // La durata è best-effort (vedi `durataVideoDalFile`): quando il
+                    // browser la sa, un video di quattro minuti viene fermato QUI invece
+                    // che dopo due gigabyte di caricamento e una conversione pagata.
+                    const durata = await durataVideoDalFile(f.file);
+                    const avvio = await videoGalleria.avviaVideo(f.file, {
+                        tag: f.is_broadcast ? [] : f.tag_students,
+                        broadcast: f.is_broadcast,
+                        durataSecondi: durata,
+                    });
+                    if (!avvio.ok) {
+                        // Il messaggio arriva già tradotto dal catalogo (mai la prosa del
+                        // server) e `continue` perché gli altri file del lotto proseguono:
+                        // è la stessa regola delle foto qui sotto.
+                        alert(avvio.messaggio);
+                        continue;
+                    }
+                    videoAvviati++;
+                    // Da qui in poi il video vive per conto suo: la scheda «in
+                    // preparazione» ne racconta l'avanzamento nella schermata della
+                    // galleria, e la riga di `galleria_media_v2` nascerà solo quando la
+                    // conversione sarà finita e verificata.
+                    continue;
                 } else {
                     // Ridimensionamento e Watermarking client-side
                     try {
@@ -470,11 +506,15 @@ function TeacherGalleryContent() {
                         tag_students: f.is_broadcast ? [] : f.tag_students,
                         is_broadcast: f.is_broadcast,
                         target_classes: f.is_broadcast ? [sezione] : null,
-                        file_type: isVideo ? 'video' : 'foto',
+                        // Qui arrivano solo FOTO: il ramo video esce prima con un
+                        // `continue`, perché la coda offline parla il protocollo delle
+                        // immagini e un video non ci passerebbe comunque.
+                        file_type: 'foto',
                         file_blob: processedFile,
                         file_name: processedFile.name,
                         creato_il: new Date().toISOString()
                     });
+                    fotoConcluse++;
                 } else {
                     // CARICAMENTO DIRETTO ALLO STORAGE (firma + `PUT`), non più multipart
                     // attraverso una nostra route.
@@ -485,7 +525,7 @@ function TeacherGalleryContent() {
                     // il caricamento del file». Misurato in `app_log` il 2026-09-07: sei
                     // volte in un giorno, e l'unico video passato pesava 4.484.198 byte,
                     // dodici kilobyte sotto il taglio. Il bucket ne accetta 50 di milioni.
-                    const esito = await caricaMediaGalleria(processedFile, processedFile.type || (isVideo ? 'video/mp4' : 'image/jpeg'));
+                    const esito = await caricaMediaGalleria(processedFile, processedFile.type || 'image/jpeg');
                     if (!esito.ok) {
                         throw new Error(`«${f.file.name}»: ${messaggioCaricamento(esito, t)}`);
                     }
@@ -498,7 +538,7 @@ function TeacherGalleryContent() {
                         body: JSON.stringify({
                             uploaded_by: teacherId,
                             file_url: path,
-                            file_type: isVideo ? 'video' : 'foto',
+                            file_type: 'foto',
                             caption: f.file.name,
                             tag_students: f.is_broadcast ? [] : f.tag_students,
                             is_broadcast: f.is_broadcast,
@@ -529,14 +569,23 @@ function TeacherGalleryContent() {
                         // minore — e infatti non entra nel log, oggi come prima.
                         throw Object.assign(new Error(`«${f.file.name}»: ${motivo}${dettagli}`), { stato: res.status });
                     }
+                    fotoConcluse++;
                 }
             }
 
+            // ⚠️ SI ANNUNCIA SOLO CIÒ CHE È DAVVERO SUCCESSO. Prima qui c'era un
+            // `alert` incondizionato: scegliendo un solo video e vedendolo rifiutato,
+            // l'insegnante leggeva comunque «File caricati e pubblicati con
+            // successo!» — e andava a cercarlo in galleria. Adesso ogni frase ha il
+            // suo conteggio dietro.
             if (offlineMode) {
-                alert(t('galleryAlertOffline'));
-            } else {
+                if (fotoConcluse > 0) alert(t('galleryAlertOffline'));
+            } else if (fotoConcluse > 0) {
                 alert(t('galleryAlertPubblicati'));
             }
+            // Un video non è pubblicato: è PARTITO. La differenza è minuti, e dirla
+            // è ciò che impedisce il secondo caricamento.
+            if (videoAvviati > 0) alert(t('galleryVideoAvviato'));
 
             await loadMedia();
             setStep('gallery');
@@ -705,6 +754,43 @@ function TeacherGalleryContent() {
                 {/* Step: Gallery */}
                 {step === 'gallery' && (
                     <motion.div key="gallery" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-5">
+                        {/*
+                          I VIDEO IN LAVORAZIONE STANNO SOPRA LA GRIGLIA, E NON È UNA
+                          QUESTIONE DI ORDINE. Un video che si sta preparando NON è in
+                          galleria: metterlo dentro la griglia lo farebbe sembrare
+                          pubblicato — cioè già visto dalle famiglie — mentre è ancora
+                          niente. Sopra, e con la sua scheda, dice le due cose che
+                          servono: a che punto è, e che si può chiudere l'app.
+
+                          Sta nello step «galleria» perché è lì che si torna dopo aver
+                          premuto «Pubblica», ed è lì che si rientra riaprendo l'app.
+                        */}
+                        <VideoInLavorazione
+                            righe={videoGalleria.righe}
+                            onPubblica={videoGalleria.pubblica}
+                            onRiprendi={videoGalleria.riprendi}
+                            onRimuovi={videoGalleria.rimuovi}
+                            renderTagger={(jobId) => (
+                                <StudentTagger
+                                    students={students}
+                                    selectedIds={videoGalleria.tagDi(jobId)}
+                                    onToggle={(studentId) => videoGalleria.cambiaTag(jobId, studentId)}
+                                    onSelectAll={() => {
+                                        // «Tutti» = tutti quelli CON liberatoria: la stessa
+                                        // regola dello step 2, e la stessa di `StudentTagger`,
+                                        // che senza consenso apre il ramo della foto privata.
+                                        for (const s of students) {
+                                            if (s.consenso_privacy && !videoGalleria.tagDi(jobId).includes(s.id)) {
+                                                videoGalleria.cambiaTag(jobId, s.id);
+                                            }
+                                        }
+                                    }}
+                                    onDeselectAll={() => {
+                                        for (const id of videoGalleria.tagDi(jobId)) videoGalleria.cambiaTag(jobId, id);
+                                    }}
+                                />
+                            )}
+                        />
                         {loading ? (
                             <div className="flex flex-col items-center justify-center py-20 gap-3">
                                 <div className="w-7 h-7 border-[3px] border-kidville-green/20 border-t-kidville-green rounded-full animate-spin" />
@@ -765,13 +851,15 @@ function TeacherGalleryContent() {
                                             parola resta per chi usa uno screen reader. */}
                                         <AnteprimaMedia file={f.file} src={f.preview} etichetta="solo-icona" />
 
-                                        {/* Spinner PER FILE durante la conversione video */}
-                                        {convertingIndex === i && (
-                                            <div className="absolute inset-0 bg-kidville-green/70 flex flex-col items-center justify-center gap-1" role="status" aria-live="polite">
-                                                <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                                                <span className="text-white text-[8px] font-bold uppercase tracking-wide">{t('galleryConverto')}</span>
-                                            </div>
-                                        )}
+                                        {/*
+                                          QUI C'ERA LO SPINNER «Converto…» PER FILE, e con V11
+                                          non ha più niente da segnalare: la conversione non
+                                          avviene più sul telefono. L'attesa che resta — quella
+                                          vera, di minuti — vive nella scheda «Video in
+                                          preparazione» dello step galleria, che si vede anche
+                                          dopo aver chiuso e riaperto l'app. Una rotellina su
+                                          una miniatura non poteva farlo.
+                                        */}
 
                                         {/* Badge stato tag */}
                                         <div className="absolute bottom-1 right-1 flex gap-0.5 pointer-events-none select-none">
@@ -798,7 +886,8 @@ function TeacherGalleryContent() {
                                           la foto in configurazione.
                                           Spenta durante il caricamento: il ciclo di
                                           `handleConfirmUpload` sta scorrendo QUESTO elenco, e
-                                          `convertingIndex` è un indice su di esso.
+                                          togliergli una voce sotto i piedi sposterebbe gli
+                                          indici di tutte quelle che lo seguono.
                                           Sta in fondo alla tessella di proposito: i badge
                                           sopra si trovano per `.absolute` in ordine di
                                           documento, e infilarsi prima di loro li renderebbe
@@ -896,7 +985,10 @@ function TeacherGalleryContent() {
                             disabled={uploading || uploadedFiles.some(f => !f.is_broadcast && f.tag_students.length === 0)}
                             className="w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20"
                         >
-                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {convertingIndex !== null ? t('galleryConversioneVideo') : t('galleryCaricamentoUpload')}</>
+                            {/* Una sola etichetta: da V11 questo bottone non aspetta più
+                                nessuna conversione — apre gli intenti, elabora le foto e
+                                lascia. L'attesa lunga sta nella scheda dei video. */}
+                            {uploading ? <><div className="w-5 h-5 border-2 border-kidville-yellow/40 border-t-kidville-yellow rounded-full animate-spin" /> {t('galleryCaricamentoUpload')}</>
                                 : <><Upload size={16} strokeWidth={1.5} /> {t('galleryPubblica', { count: uploadedFiles.length })}</>}
                         </button>
                     </motion.div>

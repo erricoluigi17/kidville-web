@@ -19,9 +19,15 @@ import {
 import { useTranslations } from 'next-intl';
 import { cx } from '@/lib/ui/cx';
 import { NewsMediaUploader } from './NewsMediaUploader';
+import { NewsVideoAllegati } from './NewsVideoAllegati';
+import { paragrafoAllegatoVideo } from './video/allegato-bozza';
 
 interface Props {
   userId: string;
+  /** La sede della comunicazione: serve all'intento del video, che la dichiara. */
+  scuolaId: string;
+  /** «Tutte le sedi»: il video nasce senza plesso e con l'ambito globale. */
+  tuttiSedi: boolean;
   value?: JSONContent | null;
   onChange: (json: JSONContent) => void;
   consensoFoto: boolean;
@@ -54,7 +60,7 @@ function Btn({ onClick, attivo, etichetta, children }: { onClick: () => void; at
 
 // StarterKit v3 include già Link e Underline: NON li registro a parte (darebbe
 // «Duplicate extension names»). Aggiungo solo Image e Placeholder.
-export function NewsRichTextEditor({ userId, value, onChange, consensoFoto, onConsensoFoto, placeholder }: Props) {
+export function NewsRichTextEditor({ userId, scuolaId, tuttiSedi, value, onChange, consensoFoto, onConsensoFoto, placeholder }: Props) {
   const t = useTranslations('adminComunicazioni');
   const editor = useEditor({
     immediatelyRender: false,
@@ -118,6 +124,19 @@ export function NewsRichTextEditor({ userId, value, onChange, consensoFoto, onCo
         />
         <span className="inline-flex items-center gap-1 font-maven text-[11px] text-kidville-sub"><ImagePlus size={12} /> {t('rteNotaImmagini')}</span>
       </div>
+
+      {/* Il filmato pronto si aggiunge IN FONDO al testo e SENZA rubare il fuoco:
+          fra la scelta del file e il `ready` passano minuti, e in quei minuti chi
+          scrive è quasi sempre dentro un altro paragrafo. Spostargli il cursore
+          perché una conversione è finita sarebbe un'interruzione, non un aiuto. */}
+      <NewsVideoAllegati
+        userId={userId}
+        scuolaId={scuolaId}
+        tuttiSedi={tuttiSedi}
+        onPronto={(url, etichetta) => {
+          editor.commands.insertContentAt(editor.state.doc.content.size, paragrafoAllegatoVideo(url, etichetta));
+        }}
+      />
     </div>
   );
 }

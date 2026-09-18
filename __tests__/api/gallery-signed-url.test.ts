@@ -54,12 +54,31 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 }))
 
 /**
- * Il TETTO GLOBALE di upload del progetto: 50 MB (Supabase → Settings → Storage →
- * «Global file size limit»). È una scelta, non un valore di fabbrica dimenticato:
- * tiene fuori il singolo video che si mangia lo spazio, ed è lo stesso limite che
- * il client applica in `teacher/gallery/page.tsx`.
+ * Il TETTO GLOBALE di upload del progetto (Supabase → Settings → Storage →
+ * «Global file size limit»).
+ *
+ * ⚠️ QUESTO NUMERO ERA SCADUTO, e il modo in cui lo si è scoperto è la parte che
+ * vale. Fino al 2026-09-18 qui c'era scritto `52_428_800` con il commento «è una
+ * scelta, non un valore di fabbrica dimenticato: tiene fuori il singolo video che
+ * si mangia lo spazio». Era vero fino al **16 settembre**, quando il titolare ha
+ * portato il tetto globale a 2.000.000.000 per far entrare gli originali video —
+ * e questa costante non l'ha seguito. Per due giorni ha simulato uno Storage più
+ * stretto di quello vero, cioè ha reso questo file capace di far fallire una
+ * configurazione che in produzione sarebbe passata.
+ *
+ * Non se n'è accorto nessuno perché non c'era niente che dichiarasse più di 50
+ * MiB: si è visto solo il giorno in cui il bucket `gallery` è salito a 2 GB per i
+ * video. È la stessa forma di guasto che `bucket-storage-dichiarati` racconta di
+ * sé stesso al 2026-09-16 — *una costante scritta in un test è una dichiarazione,
+ * non una misura*.
+ *
+ * DA OGGI NON PUÒ PIÙ SCADERE IN SILENZIO: `bucket-storage-dichiarati.test.ts`
+ * confronta questa riga con la propria `TETTO_GLOBALE_STORAGE_B`, che è la
+ * dichiarazione di riferimento. Se le due divergono, quel lock diventa rosso.
+ * Chi cambia il tetto nel pannello le aggiorna entrambe — o, meglio, rifà la GET
+ * `/v1/projects/<ref>/config/storage` invece di fidarsi di questo commento.
  */
-const TETTO_GLOBALE_B = 52_428_800
+const TETTO_GLOBALE_B = 2_000_000_000
 
 /**
  * Lo Storage simulato si comporta come quello VERO, su due punti che qui contano

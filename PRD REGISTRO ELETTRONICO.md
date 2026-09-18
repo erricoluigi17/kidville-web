@@ -103,6 +103,213 @@
 
 ---
 
+## Changelog — Video HEVC e Full HD: la pipeline è completa dietro le quinte, e il pezzo che mancava era quello che non sbagliava niente — 2026-09-18 (branch `codex/video-hevc-fullhd`, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149))
+
+**Ancora in implementazione, non rilasciato.** Backend, conversione e pubblicazione ci sono;
+mancano l'interfaccia, i collaudi su dispositivo e il rilascio.
+
+### Il difetto più silenzioso di tutti
+
+La pipeline aveva **tutti i pezzi e nessuno che la avviasse**: misurato, `eseguiProssimoJobVideo`
+non aveva un solo chiamante fuori dal proprio modulo e nessun cron lo nominava. In produzione:
+il genitore carica, l'upload riesce, il job entra in coda come `queued` e **ci resta per sempre**,
+senza che comparisse un errore — perché non sbagliava niente, non partiva niente. È la stessa
+forma del guasto delle email di credenziali. Chiuso con `POST /api/video/runner` e un cron.
+
+**La cadenza è cinque minuti, e il vincolo non è il cron**: il runner sorveglia un job fino a
+240 secondi, poi esce lasciando la MicroVM accesa perché il tick dopo la riagganci. Al minuto,
+due tick si aggancerebbero allo **stesso** Sandbox e il secondo scriverebbe un `error` su una
+conversione **riuscita** — e un allarme che suona sempre viene spento.
+
+### Due cammini che lasciavano un video di minori invisibile
+
+`video_jobs_retention_originali_idx` è un indice **parziale**: una riga senza data di
+cancellazione non è «in ritardo», è **fuori dall'indice**, e nessun conteggio la nomina. Restavano
+aperti i due casi più probabili — l'**upload abbandonato** (il telefono si spegne, nessuno annulla
+perché dal lato di chi carica non è successo niente) e la **coda incagliata**. Chiusi, con sotto
+una rete che non dipende da chi ha scritto la riga e che **grida il giorno stesso** se pesca.
+
+Sopra c'è un lock che rende la regola strutturale: ogni `UPDATE` che tocca lo stato di un job
+tocca anche la sua scadenza, o sta in un'allowlist con la ragione scritta.
+
+🔴 **Un cammino resta aperto e dichiarato**: il bucket di lavorazione non ha nessuna scadenza
+nello schema, quindi l'uscita di un job concluso male resta lì per sempre. Non è stata inventata
+una scadenza — distruggerebbe l'uscita di un video pronto che il finalizer deve ancora copiare —
+ma **il numero esce**, così la decisione parte da una misura.
+
+### Galleria e News
+
+Il video diventa un elemento della Galleria passando dai **quattro gate che esistono già** in
+`gallery:POST` — nessuna rotta nuova, perché una porta nuova sarebbe stata la loro seconda copia.
+Consenso revocato prima della richiesta → **422 senza toccare lo Storage**; revocato fra la copia
+e la scrittura → 409, riga cancellata, file rimosso e verificato.
+
+Per News il video entra come **allegato di bozza ordinario** e `media-bozza.ts` è **identico al
+byte**: la copia avviene al momento del *ready*, così la promozione è quella che già esiste e la
+superficie di privacy più delicata del repository resta intatta. Un lock lo impone leggendo quel
+file **senza i commenti**.
+
+**Due difetti trovati dai test, non dedotti**: un file rimasto nel bucket veniva dichiarato
+rimosso (l'esito vuoto di una rimozione fallita si legge «tutto a posto»), e la guardia sul peso
+dell'uscita **non guardava niente**, perché `bigint` arriva come stringa e `typeof === 'number'`
+davanti a una stringa non diventa falso: salta.
+
+### Le app già installate
+
+Il blocco che le fermerà con un 409 è **scritto e spento**, dietro **un interruttore solo** — e
+l'unicità non è un commento: le tre porte passano da 200 a 409 insieme sostituendo quel solo
+modulo, e la prova che da spento non cambia niente è fatta col valore vero committato, senza mock.
+Accenderlo prima che la pipeline nuova funzioni lascerebbe i genitori senza **nessun** modo di
+caricare un video.
+
+Il percorso vecchio serve **anche il web**, quindi la frase ora vale per entrambi i mezzi: a
+un'insegnante su Chrome «aggiorna l'app» non dice niente di azionabile.
+
+### 🟡 Una decisione sul consenso fotografico che non ha preso nessuno
+
+Il gate si comporta in **due modi** a seconda di *dove* sta il video: nel testo dell'articolo non
+scatta (esente, come vuole il piano), in copertina scatta — perché `contieneFoto` guarda solo se
+la copertina è valorizzata, ed è quindi vero per qualunque media. **Non è stato toccato** e due
+test inchiodano la misura: restringere quel controllo allargherebbe la superficie di privacy,
+allargarlo cambierebbe il prodotto. La direzione attuale è la prudente.
+
+### Lo Storage, chiuso da entrambi i lati
+
+`gallery`, `news` e `news_bozze` salgono a 2 GB **solo ora che il finalizer esiste** — l'aumento
+era stato tolto il 17/09 perché non abilitava niente e toglieva una rete. Le tre asserzioni del
+lock, che prima erano lo stesso numero per coincidenza, adesso dicono cose diverse: la foto sta
+**strettamente sotto** il bucket, il video è ≤ bucket, il bucket è **esattamente** `max(foto, video)`.
+
+E `IN_ATTESA_DI_UN_LIMITE` è **vuota**: nessun bucket può più esistere senza un limite dichiarato
+in una migrazione. Chiudendola è saltato fuori che il lock **non guardava il ramo `INSERT`** di un
+`INSERT … ON CONFLICT` — la forma con cui otto bucket su sedici sono dichiarati.
+
+**Gate locale**: eslint 0 · tsc 0 · **18.380 test verdi su 1.339 file**, 12 saltati e dichiarati ·
+build verde. Le migrazioni restano **non applicate** e dichiarate in `IN_CODA`, ciascuna col suo
+ordine: i due cron si applicano **dopo** il deploy delle loro route, altrimenti chiamano un 404 e
+`cron.job_run_details` dice `succeeded` lo stesso, perché misura l'accodamento e non l'esito.
+
+## Changelog — Video HEVC e Full HD: i tre difetti della pipeline chiusi, e due porte chiuse fuori dal video — 2026-09-18 (branch `codex/video-hevc-fullhd`, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149))
+
+**Ancora in implementazione, non rilasciato.** PR in **bozza**, aperta presto di proposito: su un
+Mac con Homebrew nessun test che esegue ffmpeg per davvero può girare — manca `zscale`, perché
+Homebrew non compila libzimg — quindi l'unico posto dove la conversione si misura è la CI, con la
+build pinnata. È la stessa forma dell'E2E, vietato in locale perché `.env.local` punta alla
+produzione.
+
+**La CI ha eseguito le fixture vere, e il conto torna**: 18.019 test, **12 saltati in locale contro
+2 in CI**. I dieci collaudi video reali hanno girato sulla build `n9.0.1-30-g9258bacca5-20260915`,
+la stessa del Sandbox di produzione. Non è un dettaglio di collaudo: significa che i difetti qui
+sotto **si riproducono sulla build che convertirà i video dei bambini**, non su una stranezza locale.
+
+### I tre difetti della pipeline, chiusi
+
+1. **Ogni video HDR girato col telefono sarebbe stato convertito bene e poi respinto.** I SEI di
+   *mastering display* e *content light level* sono side data dei **frame**, non metadati del
+   contenitore: `-map_metadata -1` non li tocca, attraversano il transcode e libx264 li riscrive
+   nell'H.264, dove il verificatore rispondeva `OUTPUT_NOT_SDR` su un video che era SDR. Chiuso con
+   due `sidedata=mode=delete` in fondo alla catena — e non con `filter_units=remove_types=6`, che
+   avrebbe buttato via **tutti** i SEI, compreso quello con cui x264 si firma.
+2. **Le sorgenti senza metadati colore** — vecchi AVI, registrazioni di schermo, parecchi encoder
+   Android — venivano respinte perché x264 non scrive il VUI quando non c'è niente da dichiarare, e
+   il verificatore pretendeva un campo che l'encoder non ha motivo di scrivere. Chiuso allentando
+   `verify.ts`, **non** inventando primarie in `encode.ts`. L'allentamento è stretto e misurato in
+   entrambi i versi: «campo assente» e «`pc`» prima collassavano entrambi in `null` e ora sono
+   distinti, quindi un output che dichiara *full range* resta respinto.
+3. **`-crf 18` senza tetto VBV.** Un'uscita misurata ha raggiunto 2.073.793.213 byte — oltre il
+   tetto — e il rifiuto arrivava **dopo 709 secondi di conversione già pagata**. Aggiunti
+   `-maxrate`/`-bufsize` derivati da `MAX_VIDEO_INPUT_BYTES` e `MAX_VIDEO_DURATION_SECONDS`: se un
+   tetto cambia, il numero si muove da solo.
+
+**Scoperta non cercata**: il ramo Dolby Vision del verificatore era **cieco**. Cercava
+`'dolby vision'`, che è il nome del side data dei *frame*; quello di *stream* — l'unico che
+`-show_streams` stampa, cioè l'unico che quella funzione legge — si chiama `DOVI configuration
+record`. Corretto.
+
+### Il resto dell'ondata
+
+- **`video_job_next`**: la presa in carico dalla coda che mancava al runner. Lo `SKIP LOCKED` sta
+  sull'**intent** e non sul job, perché pescare il job per primo invertirebbe l'ordine dei lock di
+  tutte le altre RPC e renderebbe un `video_job_cancel` concorrente un deadlock. Non duplica
+  `video_job_claim`: lo **chiama**, e un test con una spia lo dimostra.
+  ⚠️ Lo `SKIP LOCKED` **non è provato da nessun test**, ed è misurato: togliendolo, i tredici test
+  restano verdi, perché PGlite ha una connessione sola. Serve un Postgres vero con due client.
+- **Contratto zod condiviso** e messaggi nei due cataloghi: **63 codici** raccolti da quattro fonti,
+  **15** esposti a una famiglia. Tutti e diciotto gli esiti di `verify.ts` finiscono in un messaggio
+  solo — quale ramo abbia respinto l'uscita è informazione da log, non da schermo — e
+  `SCOPE_REQUIRED` riusa `SEDE_DA_SPECIFICARE`, che 137 route mandano già. L'elenco è esaustivo per
+  costruzione: il test legge le fonti e ha trovato da solo `EMPTY_QUEUE`, comparso in una migrazione
+  scritta pochi minuti prima.
+
+### Due porte chiuse che col video non c'entrano
+
+- **Tre bucket di produzione su sedici non dichiaravano un `file_size_limit`**: `certificati-medici`,
+  `credenziali`, `fatture`. Il loro tetto seguiva quello globale, che il 16/09 è salito da 50 MiB a
+  2 GB per far passare i video — quaranta volte più larghi, su certificati medici di minori,
+  credenziali e fatture, senza che nessuno l'avesse deciso. Migrazione **scritta e non applicata**
+  che li pinna a valori misurati. E il lock che avrebbe dovuto accorgersene **si spegneva da solo**
+  proprio sui bucket col limite a `null`: adesso un limite implicito deve essere dichiarato con la
+  sua misura, e la dichiarazione muore da sola quando la migrazione lo pinna.
+  🔴 **Restano aperti**: gli stessi tre bucket hanno `allowed_mime_types` a `NULL` — accettano
+  qualunque tipo di file — e altri cinque non hanno un limite dichiarato in nessuna migrazione.
+- **Il `matcher` del middleware era un meccanismo di esenzione che nessun lock sorvegliava**, al
+  contrario di `PUBLIC_PREFIXES`. Un percorso messo lì dentro salta l'autenticazione e resta
+  invisibile a `gate-coverage` e `logging-coverage`. Nuovo lock su **quattordici famiglie** di
+  aggiramento, fra cui il catch-all ristretto (che nessuna analisi delle negazioni può vedere) e il
+  `matcher` assegnato da una variabile. Segue il **file** e non il nome, perché in Next 16.3
+  `middleware.js` è deprecato in favore di `proxy.js` e un lock legato al nome si spegnerebbe
+  **restando verde**.
+
+### Una trappola che ha ucciso il primo giro di CI
+
+Entrambi i check richiesti sono morti in otto secondi su `npm ci`, prima di qualunque test: npm 11
+locale **pota** dal lock le voci `optional`/`peer` che l'npm 10 della CI esige. Il gate locale non
+poteva vederlo, perché **`npm ci` in locale non lo esegue nessuno**. Lock rigenerato con npm 10 e
+verificato con lo stesso comando della CI.
+
+**Gate locale**: eslint 0 · tsc 0 · **18.081 test verdi su 1.321 file**, 12 saltati e dichiarati ·
+build verde. Le migrazioni restano **non applicate** e dichiarate in `IN_CODA`.
+
+## Changelog — Video HEVC e Full HD: il lavoro interrotto rimesso in salvo — 2026-09-17 (branch `codex/video-hevc-fullhd`)
+
+**Ancora in implementazione, non rilasciato.** Il lavoro del 16/09 si era fermato a metà per
+esaurimento dei limiti d'uso, con due microtask in correzione e una appena avviata, e **niente era
+committato**: circa 3.500 righe fra codice, SQL e test vivevano solo nell'albero di lavoro, dove un
+`git checkout` da un'altra sessione le avrebbe cancellate. Sono state messe in salvo.
+
+In salvo: il parser ffprobe, lo schema dei job, il generatore di argomenti FFmpeg, il verificatore
+dell'output e le sei RPC di transizione — comprese le correzioni che i critici avevano chiesto su
+concorrenza e colore, verificate riga per riga invece che sulla parola. Gate completo verde: nessun
+warning ESLint, tipi puliti, 17.973 test su 17.973, build riuscita.
+
+**Rimandato con il motivo scritto**: l'aumento a 2 GB dei bucket `gallery`, `news` e `news_bozze`
+torna insieme al finalizer che ci depositerà i video, perché prima di allora non abilita niente e
+toglie una rete; la configurazione di regione `vercel.json` torna insieme alla route che nomina,
+perché puntava a una cartella inesistente e un pattern senza corrispondenza fa fallire ogni deploy
+del progetto; le due migrazioni restano non applicate e sono dichiarate in coda, con il promemoria
+di registrare i due bucket nuovi fra quelli che il diritto all'oblio sa svuotare.
+
+**Tolto**: il pacchetto di orchestrazione installato in anticipo. Non orchestrava niente, portava 571
+pacchetti dentro le dipendenze di produzione, apriva due indirizzi pubblici che nessun controllo del
+repository sorvegliava, e aveva trasformato un controllo di sicurezza in un generatore di build. La
+durabilità della conversione si ottiene con quello che c'è già: le RPC con lease e contatore di
+recinto, e la pianificazione dentro il database che il progetto usa in otto migrazioni.
+
+**Trovato misurando, fuori dal perimetro dei video e già vero in produzione**: alzare il tetto globale
+dello Storage il 16/09 ha portato da 50 MiB a 2 GB il soffitto dei tre archivi che non dichiarano un
+limite proprio — certificati medici, credenziali e fatture. Non cambia chi può scrivere, ma è una
+porta allargata di quaranta volte che nessuno aveva deciso di allargare: va richiusa con una
+migrazione dedicata. E il filtro che decide quali indirizzi passano dal controllo di accesso resta
+l'unico meccanismo di esenzione che nessun test guarda.
+
+## Changelog — Video HEVC e Full HD in Galleria e News — 2026-09-16 (branch `codex/video-hevc-fullhd`)
+
+**In implementazione, non rilasciato.** Piano approvato in `docs/superpowers/plans/2026-09-16-video-hevc-fullhd.md`: originali fino a 180 secondi e 2.000.000.000 byte, upload TUS privato, conversione FFmpeg su Vercel Sandbox a Dublino e coordinamento durevole. Output MP4 H.264 CRF 18, Full HD anche verticale senza ingrandimento, audio AAC e conversione HDR in SDR; logo solo Galleria. Per News, allegati sotto il testo e bozza privata automatica, consenso fotografico invariato.
+
+Job persistenti e conferme versionate devono distinguere trasferimento, elaborazione e pubblicazione. La pubblicazione rivaluta permessi e destinatari; annullamenti e tentativi scaduti non possono pubblicare. Originali riusciti conservati sette giorni dalla verifica; termini separati per fallimenti e upload abbandonati. Le code video precedenti restano recuperabili e i nuovi originali richiedono connessione. Volume atteso: 26 video al giorno; tempi e costi devono ancora essere misurati. Ogni microtask è sottoposta a critico indipendente; gate completi e collaudi nativi ancora da eseguire.
+
+Preparazione verificata: limite globale Storage **2.000.000.000 byte applicato e riletto in CI e produzione**; nessun cambio di piano, entitlement massimo verificato 500 GiB. Parser ffprobe e schema job hanno ricevuto PASS dei rispettivi critici dopo correzioni da nuovi esecutori. Schema ancora non applicato. Build FFmpeg n9.0.1-30-g9258bacca5 fissata con SHA-256 e verificata in Sandbox `dub1`; prima prova sintetica HEVC Main10 PQ→SDR riuscita. Profilo definitivo, integrazioni e rilascio ancora in lavorazione.
+
 ## 🧾 Changelog — Fatture dei genitori: preparazione della visibilità del PDF Aruba — 2026-09-16 (branch `codex/fatture-genitori-pdf-quote`)
 
 La fattura mostrata alla famiglia sarà sempre il **PDF originale ricevuto da Aruba e conservato nel bucket privato**; non viene generata una copia di cortesia. **Apri** apre il PDF originale Aruba nel visualizzatore interno pagina per pagina, con zoom e testo accessibile. **Scarica** è l'azione separata sul web e nelle app con Filesystem. Nelle app prive di Filesystem compare **Apri nel browser per salvare**: dopo gli stessi gate restituisce un URL firmato valido **300 secondi**, utilizzabile da chi lo possiede fino alla scadenza. **Riprova** è disponibile solo per un errore di visualizzazione e lo ripete senza chiudere il dialogo; per ritentare il salvataggio si preme di nuovo **Scarica** oppure **Apri nel browser per salvare**. L'avviso del salvataggio è nel dialogo quando aperto, altrimenti nella pagina.

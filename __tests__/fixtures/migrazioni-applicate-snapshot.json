@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/migrazioni-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-13",
-  "generato_alle": "2026-09-13T11:25:10Z",
-  "sha256": "ce975a751f7d326bcb136addf5b0cccf6febce8d471250a0473869e5964c9e67",
+  "generato_il": "2026-09-18",
+  "generato_alle": "2026-09-18T11:29:51Z",
+  "sha256": "83a0df88419e0665076aea22c2fa94e98c1be0ab781183cdac1e1b621d9fa589",
   "migrazioni": [
     {
       "version": "20260704120000",
@@ -667,6 +667,54 @@
     {
       "version": "20260912180200",
       "name": "annulla_transazione_riapre_movimento"
+    },
+    {
+      "version": "20260916120000",
+      "name": "fatture_visibilita_snapshot"
+    },
+    {
+      "version": "20260916120100",
+      "name": "fatture_visibilita_revisione"
+    },
+    {
+      "version": "20260916190000",
+      "name": "video_jobs"
+    },
+    {
+      "version": "20260916190100",
+      "name": "video_job_transitions"
+    },
+    {
+      "version": "20260916190200",
+      "name": "video_intent_lifecycle"
+    },
+    {
+      "version": "20260917210000",
+      "name": "video_job_next"
+    },
+    {
+      "version": "20260917233752",
+      "name": "bucket_limite_esplicito_certificati_credenziali_fatture"
+    },
+    {
+      "version": "20260918025900",
+      "name": "bucket_limite_esplicito_cassa_chat_pagelle_protocollo_sensitive"
+    },
+    {
+      "version": "20260918104500",
+      "name": "bucket_gallery_tetto_video"
+    },
+    {
+      "version": "20260918110000",
+      "name": "video_retention_riconciliazione"
+    },
+    {
+      "version": "20260918113000",
+      "name": "bucket_news_tetto_video"
+    },
+    {
+      "version": "20260918120000",
+      "name": "video_runner_tick"
     }
   ]
 }

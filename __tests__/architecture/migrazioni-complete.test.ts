@@ -80,7 +80,14 @@ type Fotografia = {
 // morte» diventa rossa il giorno in cui la migrazione viene applicata, e la voce va
 // tolta. Una dichiarazione che sopravvive al suo motivo è un'allowlist che marcisce.
 // ─────────────────────────────────────────────────────────────────────────────
-const IN_CODA: Record<string, string> = {}
+const IN_CODA: Record<string, string> = {
+    // VUOTA dal 2026-09-18. Le dieci migrazioni della pipeline video — schema, RPC,
+    // ciclo di vita degli intent, presa in carico dalla coda, i cinque bucket pinnati,
+    // i tetti di Galleria e News, retention e i due cron — sono state APPLICATE, e la
+    // fotografia qui accanto le contiene. La prova gemella, quella che boccia le voci
+    // morte, e' diventata rossa su tutte e dieci nel momento esatto in cui il push e'
+    // finito: e' cosi' che questa mappa si e' svuotata, non per diligenza di qualcuno.
+}
 
 const RADICE = process.cwd()
 const CARTELLA_MIGRAZIONI = join(RADICE, 'supabase', 'migrations')

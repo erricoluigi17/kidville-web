@@ -212,5 +212,19 @@
   "galleryApplicaAlleAltre": "✨ Applica alle altre {n, plural, one {# foto} other {# foto}}",
   "galleryApplicaSostituisci": "✨ Sostituisci in tutte",
   "galleryConfermaApplicaParziale": "Applico i bambini di questa foto {n, plural, one {all’altra foto ancora senza tag} other {alle altre # foto ancora senza tag}}?\n\n{gia, plural, one {# foto ha già i suoi tag e NON verrà toccata} other {# foto hanno già i loro tag e NON verranno toccate}}.",
-  "galleryConfermaSostituisci": "{gia, plural, one {L’altra foto ha già i suoi tag} other {Le altre # foto hanno già i loro tag}}.\n\nVuoi SOSTITUIRLI con i bambini di questa foto? Il lavoro fatto foto per foto andrà perso."
+  "galleryConfermaSostituisci": "{gia, plural, one {L’altra foto ha già i suoi tag} other {Le altre # foto hanno già i loro tag}}.\n\nVuoi SOSTITUIRLI con i bambini di questa foto? Il lavoro fatto foto per foto andrà perso.",
+  "galleryVideoLavorazioneTitolo": "Video in preparazione",
+  "galleryVideoFaseCaricamento": "Caricamento in corso…",
+  "galleryVideoFaseInCoda": "In attesa di essere preparato…",
+  "galleryVideoFaseConversione": "Preparazione in corso: può volerci qualche minuto. Puoi chiudere l’app, il lavoro prosegue da solo.",
+  "galleryVideoFasePronto": "Pronto: manca solo la pubblicazione",
+  "galleryVideoFaseInterrotto": "Caricamento interrotto: riprende da dove si era fermato",
+  "galleryVideoFaseAnnullato": "Caricamento annullato",
+  "galleryVideoFasePubblicazione": "Pubblicazione in corso…",
+  "galleryVideoChiediTag": "Scegli i bambini ripresi nel video, poi pubblica",
+  "galleryVideoPubblica": "Pubblica",
+  "galleryVideoRiprendi": "Riprendi",
+  "galleryVideoRimuovi": "Rimuovi",
+  "galleryVideoAvanzamento": "Avanzamento del caricamento",
+  "galleryVideoAvviato": "Il video è in preparazione. Puoi chiudere l’app: lo ritrovi qui quando è pronto."
 }

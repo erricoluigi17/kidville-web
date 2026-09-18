@@ -368,6 +368,17 @@ export const REGISTRO_BUCKET_OBLIO: Record<string, CoperturaBucket> = {
       'lett. b vale come per le fatture.',
   },
 
+  video_originals: {
+    stato: 'coperto-fuori-oblio',
+    come:
+      'L\u2019ORIGINALE caricato da un telefono, prima della conversione. Non lo tocca nessun canale di oblio, e non per dimenticanza: l\u2019oggetto \u00e8 indicizzato per chi ha caricato e per job, non per il bambino ripreso, quindi una cancellazione per alunno non saprebbe quale file guardare. A svuotarlo \u00e8 la CONSERVAZIONE: `video_retention_scadenze` d\u00e0 a ogni job concluso una data di cancellazione (sette giorni dalla verifica, subito per gli annullati) e il giro di `/api/gdpr/retention-video` toglie il file prima della riga, per riga. Il video pubblicato \u2014 quello che una famiglia vede \u2014 vive in `gallery` o in `news`, ed \u00e8 l\u00ec che l\u2019oblio per alunno lo raggiunge. \u26a0\ufe0f FINESTRA RESIDUA DICHIARATA: fra una richiesta di cancellazione e la scadenza dell\u2019originale possono passare fino a sette giorni. \u00c8 una scelta, non una svista, e il numero sta in un posto solo.',
+  },
+  video_processing: {
+    stato: 'escluso',
+    motivo:
+      '\ud83d\udd34 NON \u00c8 UNA DECISIONE, \u00c8 UNA LACUNA APERTA, e sta scritta qui perch\u00e9 non sparisca. Il bucket conserva l\u2019USCITA convertita di ogni tentativo, ed \u00e8 video di minori. Misurato il 2026-09-18, subito dopo l\u2019applicazione: NESSUN codice cancella mai da qui \u2014 la spazzata di `/api/gdpr/retention-video` guarda solo `video_originals`, e lo schema non ha un `output_delete_after` perch\u00e9 le colonne della conservazione sono sull\u2019intento, non sul job. Oggi il bucket \u00e8 VUOTO (nessuna conversione \u00e8 ancora girata), quindi la lacuna non sta facendo danno: \u00e8 il momento giusto per chiuderla, non per scoprirla. PERCH\u00c9 NON L\u2019HO CHIUSA SUBITO: la regola ovvia \u2014 \u00abcancella l\u2019uscita dei job conclusi\u00bb \u2014 distruggerebbe l\u2019uscita di un job `ready` che il finalizer deve ancora copiare, e fra la conversione e la pubblicazione possono passare giorni. Un bucket che cresce si svuota domani; un video cancellato mentre un\u2019insegnante stava per pubblicarlo non torna. IL NUMERO ESCE GI\u00c0: `video_riconciliazione.output_di_job_conclusi` lo conta a ogni giro, quindi la decisione parte da una misura invece che da un\u2019ipotesi.',
+  },
+
   // ── esclusi, con la ragione scritta ────────────────────────────────────────
   fatture: {
     stato: 'escluso',

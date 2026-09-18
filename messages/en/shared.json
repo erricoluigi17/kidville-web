@@ -432,5 +432,19 @@
   "erroreConciliazioneVoceContenitore": "One of the selected items is the total of an instalment plan: you collect the instalments, not the container. Remove it from the composition and pick the instalments to settle.",
   "erroreConciliazioneMovimentoNonLegato": "The payment has been recorded, but the bank statement row was not linked: do not repeat the operation, the money would be recorded twice. Report it so that the row can be linked.",
   "errorePossibileDoppione": "A child with the same name and date of birth, but a different tax code, is already enrolled at this location: if the family sent the application twice, reject this one; if it is the same child, use the existing record.",
-  "erroreAbbinamentoNonValido": "The existing record indicated cannot be used for this child: nothing was saved. Reopen the application and try the import again."
+  "erroreAbbinamentoNonValido": "The existing record indicated cannot be used for this child: nothing was saved. Reopen the application and try the import again.",
+  "erroreVideoFileNonValido": "This file does not contain a readable video: it may be incomplete, or it may have been spoiled while being saved. Please try another clip.",
+  "erroreVideoTroppoGrande": "This video is larger than 2 GB. Record it at a lower quality, or upload only the part you want to show.",
+  "erroreVideoTroppoLungo": "This video is longer than 3 minutes. Please shorten it before uploading: on a phone you can trim it straight from the clip library.",
+  "erroreVideoFormatoNonSupportato": "We cannot convert this video format. Please try a clip filmed with a phone, or save it as MP4.",
+  "erroreVideoProtetto": "This video is copy protected and cannot be converted: please choose a clip you filmed yourself.",
+  "erroreVideoNonLeggibile": "We cannot open this video: the file looks spoiled. Try downloading it again on your phone and uploading it once more.",
+  "erroreVideoConversioneNonRiuscita": "We could not prepare this video, and nothing was published. Please try again: if it happens again, let the office know.",
+  "erroreVideoRiprova": "Something changed while the video was being uploaded. Reload the page and try again: nothing has been lost.",
+  "erroreVideoGiaConcluso": "This post has already been completed or withdrawn: reload the page to see how it stands now.",
+  "erroreVideoNonAncoraPronto": "The videos are not ready yet. Please wait until they are and try again: you can close the app, the work carries on by itself.",
+  "erroreVideoNonTrovato": "This upload no longer exists: it may have been called off, or it may have expired. Please start again.",
+  "erroreVideoNonAutorizzato": "This upload belongs to someone else, or to another location: nothing has been changed.",
+  "erroreVideoAppDaAggiornare": "Uploading videos needs the latest version: update the app, or reload the page if you are on a browser. Clips already waiting will resume by themselves.",
+  "erroreVideoOperazioneNonRiuscita": "The operation on this video did not succeed: please try again shortly. If it keeps happening, report it to the office."
 }

@@ -7,6 +7,7 @@ import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte'
 import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff'
+import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video'
 import { NEWS_BUCKET } from '@/lib/news/tipi'
 import { NEWS_BUCKET_BOZZE, SCADENZA_ANTEPRIMA_SECONDI } from '@/lib/news/media-bozza'
 
@@ -53,6 +54,20 @@ export const POST = withRoute('news/upload:POST', async (request: Request) => {
 
     // Il tipo del File può portare un suffisso codec (`video/webm;codecs=vp9`).
     const contentType = (file.type || 'application/octet-stream').split(';')[0].trim()
+
+    // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ────────
+    // Terza e ultima porta che riceve un filmato già compresso dal browser. Il
+    // rifiuto sta PRIMA del gate sui tipi apposta: con il blocco acceso anche un
+    // `video/quicktime` deve sentirsi dire «aggiorna l'app» e non «formato non
+    // ammesso», perché col client nuovo quel formato la pipeline lo accetta — un
+    // messaggio che manda l'utente contro un muro è peggio di nessun messaggio.
+    //
+    // ⚠️ OGGI SPENTO, interruttore unico in
+    // `src/lib/media/interruttore-legacy-video.ts`. Le immagini — che qui sono la
+    // quasi totalità dei caricamenti — non toccano questo ramo.
+    if (videoLegacyDaFermare(contentType)) {
+      return rifiutoLegacyVideo('news', 'news/upload:POST', contentType, file.size)
+    }
 
     // GATE APPLICATIVO sui tipi. Il bucket ha la stessa lista (dichiarata in
     // migrazione) e resta l'ultima difesa, ma se il rifiuto arrivasse solo da lì

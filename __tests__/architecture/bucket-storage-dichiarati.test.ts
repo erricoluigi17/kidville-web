@@ -616,16 +616,52 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       // lock. È esattamente il verso in cui un lock non deve mai spingere, ed è la
       // ragione per cui qui il confronto è con `TETTO_GALLERIA_BYTE` e il globale
       // resta soltanto un limite superiore.
-      const client = sorgente('src/app/(dashboard)/teacher/gallery/page.tsx').match(
-        /MAX_SIZE\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/,
-      )
-      expect(client, 'Il client deve dichiarare `MAX_SIZE = N * 1024 * 1024`.').not.toBeNull()
+      // ⚠️ RISCRITTA IL 2026-09-18 (V11), E NELLA DIREZIONE PIÙ STRETTA, NON PIÙ LARGA.
+      //
+      // Fino a oggi questa prova cercava nella pagina della Galleria docente un
+      // `MAX_SIZE = N * 1024 * 1024` e ne confrontava il VALORE con la costante. Due
+      // difetti, ed entrambi si sono visti lo stesso giorno:
+      //
+      //  1. cercava un LETTERALE, cioè pretendeva che il numero fosse scritto una
+      //     seconda volta. Due dichiarazioni dello stesso tetto possono divergere per
+      //     definizione, e il compito di questo lock era accorgersene DOPO. Adesso il
+      //     client applica la COSTANTE, e per identità non può più divergere: non c'è
+      //     un secondo numero da confrontare, c'è un solo numero da usare;
+      //  2. leggeva il sorgente GREZZO, commenti compresi. Quando la pagina ha smesso
+      //     di avere quel letterale, il lock è rimasto verde per un COMMENTO che
+      //     raccontava com'era prima — misurato, non temuto: è la stessa forma con
+      //     cui in questo repository un lock si è già immunizzato da solo, e sta nel
+      //     PRD. Da qui in avanti si guarda `senzaCommenti`.
+      //
+      // ⚠️ E IL POSTO GIUSTO NON È PIÙ LA PAGINA. Da V11 i video non passano più dalla
+      // porta delle foto (vanno in TUS verso `video_originals`, e il loro tetto è
+      // quello della pipeline): l'unico punto in cui il BROWSER applica ancora questo
+      // tetto è `caricaMediaGalleria`, che è la sola porta che un telefono usa da sé.
+      //
+      // LA LEZIONE DEL 2026-09-17 resta e vale: fino a quel giorno il tetto del client
+      // si confrontava con quello GLOBALE dello Storage. Erano lo stesso numero per
+      // coincidenza, non per una regola — e il giorno in cui il globale è salito a 2 GB
+      // per i video, quel confronto avrebbe preteso dal client un tetto di 2 GB, cioè
+      // avrebbe chiesto di ALLARGARE il client per far tacere un lock. È il verso in
+      // cui un lock non deve mai spingere.
+      const clientFoto = senzaCommenti(sorgente('src/lib/gallery/carica-media.ts'))
       expect(
-        Number(client![1]) * 1024 * 1024,
-        'Il tetto che il client applica e `TETTO_GALLERIA_BYTE` non coincidono più: una ' +
-          'maestra vedrà rifiutato dal server un file che l\'applicazione le ha lasciato ' +
-          'scegliere — oppure il contrario.',
-      ).toBe(tettoFoto)
+        /file\.size\s*>\s*TETTO_GALLERIA_BYTE\b/.test(clientFoto),
+        'Il caricatore del browser non confronta più la taglia con `TETTO_GALLERIA_BYTE`: ' +
+          'il file parte e viene rifiutato dallo Storage a trasferimento finito, su rete ' +
+          'mobile. È il tetto che deve dire di no PRIMA, e deve dirlo con la costante.',
+      ).toBe(true)
+
+      // E la pagina non deve reintrodurre un tetto SUO, scritto a mano: sarebbe una
+      // seconda dichiarazione dello stesso numero, invisibile a questo confronto
+      // proprio perché non passa dalla costante.
+      const paginaDocente = senzaCommenti(sorgente('src/app/(dashboard)/teacher/gallery/page.tsx'))
+      expect(
+        /\d+\s*\*\s*1024\s*\*\s*1024/.test(paginaDocente),
+        'La pagina della Galleria docente è tornata a scrivere un tetto in byte a mano. ' +
+          'I tetti hanno un posto solo: `TETTO_GALLERIA_BYTE` per ciò che il browser ' +
+          'spedisce da sé, `MAX_VIDEO_INPUT_BYTES` per ciò che entra nella pipeline video.',
+      ).toBe(false)
 
       // E la porta che FIRMA i caricamenti diretti deve usare QUELLA costante, non
       // un numero suo: è il `.max()` dello zod, cioè l'unico punto in cui questo

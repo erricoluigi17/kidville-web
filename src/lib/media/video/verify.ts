@@ -83,9 +83,23 @@ function normalizedColorValue(value: unknown): string | null {
   return normalized === 'unknown' || normalized === 'unspecified' ? null : normalized
 }
 
-function normalizedColorRange(value: unknown): 'tv' | null {
+/**
+ * IL RANGE ASSENTE E IL RANGE SBAGLIATO SONO DUE COSE DIVERSE.
+ *
+ * Prima finivano tutti e due in `null`, e una conversione riuscita veniva respinta
+ * insieme a una sbagliata. Misurato il 2026-09-17 eseguendo la riga di comando vera:
+ *   · sorgente senza metadati colore → x264 non ha niente da segnalare, non scrive
+ *     il VUI, e ffprobe NON riporta `color_range`. Il campo manca, e «manca» in
+ *     H.264 significa `video_full_range_flag = 0`, cioè limited: è giusto così.
+ *   · stessa sorgente forzata a full → il VUI c'è (full non è il default) e ffprobe
+ *     riporta `color_range: 'pc'`. Questo va respinto, sempre.
+ */
+type RangeDiUscita = 'tv' | 'assente' | 'altro'
+
+function outputColorRange(value: unknown): RangeDiUscita {
   const normalized = normalizedColorValue(value)
-  return normalized === 'tv' || normalized === 'limited' ? 'tv' : null
+  if (normalized === null) return 'assente'
+  return normalized === 'tv' || normalized === 'limited' ? 'tv' : 'altro'
 }
 
 function positiveNumber(value: unknown): number | null {
@@ -182,6 +196,16 @@ function outputRotation(stream: JsonObject): number | null {
   return ((Math.round(parsed) % 360) + 360) % 360
 }
 
+/**
+ * I side data che tradiscono un'uscita non davvero SDR.
+ *
+ * `dovi` non è un sinonimo ridondante di `dolby vision`: è l'UNICA forma che possa
+ * comparire qui. Misurato il 2026-09-17 sui nomi dentro le librerie — «Dolby Vision
+ * RPU Data» e «Dolby Vision Metadata» sono nomi di side data dei FRAME (libavutil),
+ * che `ffprobe -show_streams` non stampa; il side data di stream, quello che questa
+ * funzione legge, si chiama «DOVI configuration record» (libavcodec). Il ramo
+ * `dolby vision` da solo era quindi cieco proprio dove doveva vedere.
+ */
 function hasHdrSideData(stream: JsonObject): boolean {
   const sideData = Array.isArray(stream.side_data_list) ? stream.side_data_list : []
   return sideData.some((entry) => {
@@ -189,7 +213,8 @@ function hasHdrSideData(stream: JsonObject): boolean {
     return (
       type?.includes('mastering display') === true ||
       type?.includes('content light level') === true ||
-      type?.includes('dolby vision') === true
+      type?.includes('dolby vision') === true ||
+      type?.includes('dovi') === true
     )
   })
 }
@@ -329,13 +354,24 @@ export function verifyVideoOutput(
   const colorTransfer = normalizedColorValue(video.color_transfer)
   const colorPrimaries = normalizedColorValue(video.color_primaries)
   const colorSpace = normalizedColorValue(video.color_space)
-  const colorRange = normalizedColorRange(video.color_range)
+  const colorRange = outputColorRange(video.color_range)
   const expectedColor = outputVideoColorMetadata(source)
+  // Quando il contratto non dichiara NIENTE — vecchi AVI, registrazioni di schermo,
+  // parecchi encoder Android — x264 non ha motivo di scrivere il VUI e ffprobe non
+  // riporta il range. Solo lì «assente» vale quanto `tv`: l'allentamento finisce
+  // esattamente dove l'encoder tornerebbe a scrivere qualcosa, e un `pc` esplicito
+  // resta respinto in ogni caso perché è `altro`, non `assente`.
+  const contrattoInteramenteIgnoto =
+    expectedColor.colorPrimaries === null &&
+    expectedColor.colorTransfer === null &&
+    expectedColor.colorSpace === null
+  const rangeCoerente =
+    colorRange === expectedColor.colorRange || (colorRange === 'assente' && contrattoInteramenteIgnoto)
   if (
     colorTransfer !== expectedColor.colorTransfer ||
     colorPrimaries !== expectedColor.colorPrimaries ||
     colorSpace !== expectedColor.colorSpace ||
-    colorRange !== expectedColor.colorRange ||
+    !rangeCoerente ||
     hasHdrSideData(video)
   ) {
     return { ok: false, code: 'OUTPUT_NOT_SDR' }

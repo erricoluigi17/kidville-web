@@ -5,8 +5,11 @@ import { join } from 'node:path'
 import {
   ARCHIVIO_FFMPEG_SHA256,
   ARCHIVIO_FFMPEG_URL,
+  FILTRI_RICHIESTI,
   RADICE_ARCHIVIO_FFMPEG,
 } from '@/lib/media/video/build'
+import { buildVideoEncodeArgs } from '@/lib/media/video/encode'
+import type { VideoProbe } from '@/lib/media/video/probe'
 import { VARIABILE_CARTELLA, VARIABILE_RINUNCIA, rinunciaDichiarata } from '../fixtures/ffmpeg'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +104,75 @@ function impronteIn(percorso: string): Set<string> {
   return new Set(leggi(percorso).match(/\b[0-9a-f]{64}\b/g) ?? [])
 }
 
+/** Un probe qualunque: i rami li scelgono le varianti in `ogniFiltroDiProduzione`. */
+const PROBE: VideoProbe = {
+  durationSeconds: 30,
+  width: 3840,
+  height: 2160,
+  codedWidth: 3840,
+  codedHeight: 2160,
+  rotation: 0,
+  fps: 30,
+  hasAudio: true,
+  audioCodec: 'aac',
+  videoCodec: 'hevc',
+  pixelFormat: 'yuv420p10le',
+  colorTransfer: 'bt709',
+  colorPrimaries: 'bt709',
+  colorSpace: 'bt709',
+  isHdr: false,
+  videoStreamIndex: 0,
+  audioStreamIndex: 1,
+}
+
+/**
+ * I nomi dei filtri dentro un filtergraph: via le etichette `[x]`, poi il token
+ * prima del primo `=`. `[base][wm]overlay=x='…'` dà `overlay`.
+ */
+function filtriNominati(graph: string): string[] {
+  return graph
+    .split(/[;,]/)
+    .map((segmento) => segmento.replace(/^\s*(?:\[[^\]]*\]\s*)+/, '').trim())
+    .map((segmento) => segmento.match(/^([a-z][a-z0-9_]*)/)?.[1])
+    .filter((nome): nome is string => nome !== undefined)
+}
+
+/** Ogni filtro che `buildVideoEncodeArgs` può scrivere, su tutti i suoi rami. */
+function ogniFiltroDiProduzione(): Set<string> {
+  const varianti: { probe: VideoProbe; watermark: boolean }[] = [
+    { probe: PROBE, watermark: false },
+    // Il watermark della Galleria, che aggiunge `overlay` e `setsar`.
+    { probe: PROBE, watermark: true },
+    // HDR → SDR: `zscale` e `tonemap`.
+    { probe: { ...PROBE, isHdr: true, colorTransfer: 'smpte2084' }, watermark: false },
+    // SDR completo non BT.709: la catena `zscale` senza tonemap.
+    {
+      probe: { ...PROBE, colorTransfer: 'bt2020-10', colorPrimaries: 'bt2020', colorSpace: 'bt2020nc' },
+      watermark: false,
+    },
+    // Oltre i 60 fps: `fps`.
+    { probe: { ...PROBE, fps: 120 }, watermark: false },
+  ]
+
+  const nomi = new Set<string>()
+  for (const { probe, watermark } of varianti) {
+    const args = watermark
+      ? buildVideoEncodeArgs(probe, {
+          channel: 'gallery',
+          inputPath: '/tmp/in.mov',
+          outputPath: '/tmp/out.mp4',
+          watermarkPath: '/tmp/wm.png',
+        })
+      : buildVideoEncodeArgs(probe, {
+          channel: 'news',
+          inputPath: '/tmp/in.mov',
+          outputPath: '/tmp/out.mp4',
+        })
+    for (const nome of filtriNominati(args[args.indexOf('-filter_complex') + 1])) nomi.add(nome)
+  }
+  return nomi
+}
+
 describe('fixture video reali', () => {
   it('i file di collaudo video esistono ancora, e sono quelli attesi', () => {
     // Se questa lista si svuota, tutto il resto del lock passerebbe a vuoto.
@@ -154,6 +226,32 @@ describe('fixture video reali', () => {
     const codice = senzaCommenti(leggi(join(CARTELLA_LIB, 'video-encode.test.ts')))
     expect(codice).toContain("from '../fixtures/ffmpeg'")
     expect([...codice.matchAll(/binariVideo\(contesto\)/g)].length).toBeGreaterThanOrEqual(2)
+  })
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * L'INVENTARIO SI RICAVA DAL FILTERGRAPH, non si ricopia a mano.
+   *
+   * `FILTRI_RICHIESTI` esiste perché una build che perde un filtro non fallisce
+   * all'installazione: fallisce al primo video che imbocca quel ramo, cioè in
+   * produzione e sul file di un genitore. Ma finché l'elenco era scritto a mano,
+   * la sua tenuta dipendeva dal fatto che chi aggiunge un filtro si ricordasse
+   * anche di questo file — e il 2026-09-17, aggiungendo `sidedata`, si è visto che
+   * l'elenco aveva già perso `setsar`, che il ramo Galleria nomina da sempre.
+   * Adesso i nomi li conta il filtergraph vero, su tutti i suoi rami.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('ogni filtro che il filtergraph di produzione nomina è dichiarato in FILTRI_RICHIESTI', () => {
+    const nominati = [...ogniFiltroDiProduzione()].sort()
+    // Controllo positivo: se l'estrattore smettesse di trovare i nomi, «nessun
+    // filtro mancante» e «nessun filtro visto» avrebbero lo stesso colore.
+    expect(nominati).toEqual(expect.arrayContaining(['scale', 'overlay', 'zscale', 'tonemap']))
+
+    const nonDichiarati = nominati.filter((nome) => !FILTRI_RICHIESTI.includes(nome as never))
+    expect(
+      nonDichiarati,
+      `questi filtri finiscono nella riga di comando ma non nell’inventario di ` +
+        `src/lib/media/video/build.ts: la CI installerebbe una build che non sa eseguirli, ` +
+        `e la scoperta arriverebbe da uno stderr in produzione.`,
+    ).toEqual([])
   })
 
   it('l’helper verifica l’inventario della build, non solo che il file esista', () => {

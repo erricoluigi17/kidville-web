@@ -12,6 +12,7 @@ import {
   outputVideoColorMetadata,
   type VideoEncodeOptions,
 } from '@/lib/media/video/encode'
+import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from '@/lib/media/video/limiti'
 import type { VideoProbe } from '@/lib/media/video/probe'
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -48,6 +49,13 @@ function filterGraph(args: string[]): string {
   const index = args.indexOf('-filter_complex')
   expect(index).toBeGreaterThanOrEqual(0)
   return args[index + 1]
+}
+
+/** Il valore che segue un'opzione, con l'asserzione che l'opzione ci sia davvero. */
+function valoreDi(args: string[], opzione: string): string {
+  const indice = args.indexOf(opzione)
+  expect(indice, `${opzione} non compare negli argomenti`).toBeGreaterThanOrEqual(0)
+  return args[indice + 1]
 }
 
 describe('buildVideoEncodeArgs', () => {
@@ -165,6 +173,110 @@ describe('buildVideoEncodeArgs', () => {
       'zscale=primaries=bt709',
       'zscale=transfer=bt709:matrix=bt709:range=limited',
     ].join(','))
+  })
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * I SEI HDR NON SONO METADATI DEL CONTENITORE, e `-map_metadata -1` non li vede.
+   *
+   * Misurato il 2026-09-17 su `/opt/homebrew/bin/ffmpeg` 8.1.2: una sorgente HEVC
+   * con `master-display` e `max-cll` porta «Mastering display metadata» e «Content
+   * light level metadata» come side data DEI FRAME. Attraversano il filtergraph,
+   * libx264 li rilegge e li riscrive nell'H.264 — l'uscita è SDR nei pixel e HDR
+   * nei SEI, e `verifyVideoOutput` la rifiuta con `OUTPUT_NOT_SDR`.
+   *
+   * La cancellazione è INCONDIZIONATA e non solo sul ramo HDR: `hasHdrSideData`
+   * guarda l'uscita, non la sorgente, e un file rimasterizzato da un HDR può
+   * portarsi dietro quei SEI pur dichiarandosi SDR. Su un video che non li ha, il
+   * filtro non fa nulla.
+   * ────────────────────────────────────────────────────────────────────────── */
+  const CANCELLA_MASTERING = 'sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA'
+  const CANCELLA_CLL = 'sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL'
+
+  it.each([
+    { descrizione: 'HDR', isHdr: true },
+    { descrizione: 'SDR', isHdr: false },
+  ])('cancella i SEI di mastering display e content light level anche da una sorgente $descrizione', ({ isHdr }) => {
+    const graph = filterGraph(
+      buildVideoEncodeArgs(
+        { ...probeBase, isHdr },
+        { channel: 'news', inputPath: '/tmp/in.mov', outputPath: '/tmp/out.mp4' },
+      ),
+    )
+
+    expect(graph).toContain(CANCELLA_MASTERING)
+    expect(graph).toContain(CANCELLA_CLL)
+    // `filter_units=remove_types=6` avrebbe buttato via TUTTI i SEI, compresa la
+    // firma dell'encoder: un'amputazione al posto di una cancellazione mirata.
+    expect(graph).not.toContain('filter_units')
+  })
+
+  it('cancella i SEI HDR prima del watermark, così l’overlay non se li ricopia', () => {
+    const graph = filterGraph(
+      buildVideoEncodeArgs(
+        { ...probeBase, isHdr: true },
+        {
+          channel: 'gallery',
+          inputPath: '/tmp/in.mov',
+          outputPath: '/tmp/out.mp4',
+          watermarkPath: '/tmp/wm.png',
+        },
+      ),
+    )
+
+    // Prima che ci sia un ORDINE da controllare, i due pezzi devono esserci: un
+    // `indexOf` che vale -1 è minore di qualunque posizione, e senza queste due
+    // righe il caso passerebbe proprio quando la cancellazione manca del tutto.
+    expect(graph).toContain(CANCELLA_CLL)
+    expect(graph).toContain('overlay=')
+    // `overlay` copia le proprietà del frame principale, side data compresi: se la
+    // cancellazione stesse dopo, il ramo Galleria resterebbe scoperto.
+    expect(graph.indexOf(CANCELLA_CLL)).toBeLessThan(graph.indexOf('overlay='))
+  })
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * IL TETTO VBV, e perché non è un numero scelto a occhio.
+   *
+   * Misura del 2026-09-17: `-crf 18` senza `-maxrate` ha prodotto un'uscita da
+   * 2.073.793.213 byte — sopra `MAX_VIDEO_INPUT_BYTES` — e il rifiuto
+   * `OUTPUT_TOO_LARGE` è arrivato DOPO 709 s di wall e 1.452 s di CPU. Il lavoro
+   * era già stato fatto, pagato e buttato.
+   *
+   * Questo caso non ricopia il numero che `encode.ts` calcola — sarebbe una
+   * tautologia. Rifà il CONTO al contrario partendo dagli argomenti emessi: nel
+   * caso peggiore ammesso (durata massima, buffer pieno) i byte devono stare sotto
+   * il tetto. Un `-maxrate 200M` scritto a mano lo farebbe cadere.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('impone un tetto VBV che tiene l’uscita sotto il limite anche nel caso peggiore', () => {
+    const args = buildVideoEncodeArgs(probeBase, {
+      channel: 'news',
+      inputPath: '/tmp/in.mov',
+      outputPath: '/tmp/out.mp4',
+    })
+
+    const maxrate = Number(valoreDi(args, '-maxrate:v'))
+    const bufsize = Number(valoreDi(args, '-bufsize:v'))
+    expect(Number.isSafeInteger(maxrate) && maxrate > 0).toBe(true)
+    expect(Number.isSafeInteger(bufsize) && bufsize > 0).toBe(true)
+
+    // Il VBV garantisce: in una finestra di T secondi i bit non superano
+    // `maxrate × T + bufsize`. L'audio viaggia accanto, col suo bitrate — che il
+    // caso LEGGE invece di bloccarlo: qui si misura la garanzia, non il numero.
+    const bitrateAudio = valoreDi(args, '-b:a')
+    expect(bitrateAudio).toMatch(/^\d+k$/)
+    const bpsAudio = Number(bitrateAudio.slice(0, -1)) * 1000
+    const bitPeggiori =
+      maxrate * MAX_VIDEO_DURATION_SECONDS + bufsize + bpsAudio * MAX_VIDEO_DURATION_SECONDS
+    expect(bitPeggiori / 8).toBeLessThanOrEqual(MAX_VIDEO_INPUT_BYTES)
+
+    // …e nemmeno un tetto così basso da degradare ogni video per mettersi al
+    // sicuro: resta capped CRF, con CRF 18 a guidare e il tetto che morde solo nei
+    // casi patologici. Abbassare la soglia per far passare un rosso è la forma in
+    // cui questo caso smetterebbe di misurare qualcosa.
+    expect(bitPeggiori / 8).toBeGreaterThan(MAX_VIDEO_INPUT_BYTES * 0.95)
+
+    // La qualità continua a decidere il bitrate: il tetto è un tetto, non un target.
+    expect(args).toEqual(expect.arrayContaining(['-crf', '18']))
+    expect(args).not.toContain('-b:v')
   })
 
   it('non interpola metadati colore non fidati nel filtergraph', () => {

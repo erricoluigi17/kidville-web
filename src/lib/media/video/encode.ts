@@ -1,3 +1,4 @@
+import { MAX_VIDEO_DURATION_SECONDS, MAX_VIDEO_INPUT_BYTES } from './limiti'
 import type { VideoProbe } from './probe'
 
 /**
@@ -63,6 +64,40 @@ function hdrToSdrFilters(): string[] {
     'zscale=primaries=bt709',
     'tonemap=tonemap=hable:desat=0',
     'zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=limited',
+  ]
+}
+
+/**
+ * I SEI HDR VANNO CANCELLATI A MANO: `-map_metadata -1` non li vede.
+ *
+ * Misurato il 2026-09-17 (ffmpeg 8.1.2): una sorgente HEVC con `master-display` e
+ * `max-cll` porta «Mastering display metadata» e «Content light level metadata»
+ * come side data DEI FRAME, non come metadati del contenitore. Attraversano tutto
+ * il filtergraph, libx264 li rilegge e li riscrive nell'H.264 — così l'uscita è
+ * SDR nei pixel (`hdrToSdrFilters` ha fatto il suo lavoro) e HDR nei SEI, e
+ * `verifyVideoOutput` la respinge con `OUTPUT_NOT_SDR`. Cioè: ogni video HDR
+ * girato col telefono veniva convertito bene e poi buttato.
+ *
+ * `sidedata=mode=delete` toglie un tipo per volta, perciò servono due istanze.
+ * La stessa prova con la cancellazione attiva lascia il side data di uscita vuoto,
+ * conservando il SEI «User Data Unregistered» con cui x264 si firma.
+ *
+ * PERCHÉ NON `-bsf:v filter_units=remove_types=6`: quello butta via TUTTI i SEI
+ * dell'H.264, non i due dell'HDR — firma dell'encoder, picture timing, closed
+ * caption comprese. È un'amputazione dove serve una cancellazione mirata.
+ *
+ * PERCHÉ SOLO QUESTI DUE E NON I TIPI DOLBY VISION: ogni nome scritto qui è una
+ * dipendenza dura dalla build. Misurato: un tipo che la build non conosce fa
+ * fallire l'apertura del filtergraph («Unable to parse "type" option value»),
+ * cioè romperebbe OGNI conversione, non solo quelle DV. E un RPU Dolby Vision non
+ * può comunque finire in un H.264 di libx264, che non sa scriverlo. Il ramo
+ * «dolby vision» di `hasHdrSideData` resta: se un domani ci arrivasse, deve dirlo
+ * forte invece di passare.
+ */
+function cancellaSideDataHdr(): string[] {
+  return [
+    'sidedata=mode=delete:type=MASTERING_DISPLAY_METADATA',
+    'sidedata=mode=delete:type=CONTENT_LIGHT_LEVEL',
   ]
 }
 
@@ -213,8 +248,62 @@ function videoFilters(probe: VideoProbe): string[] {
   // Nessun filtro FPS sotto o alla soglia: i timestamp originali restano intatti.
   if (probe.fps > 60) filters.push('fps=60')
   filters.push('format=yuv420p')
+  // In fondo, e incondizionata: `hasHdrSideData` guarda l'USCITA, non la sorgente,
+  // e un file rimasterizzato da un HDR porta quei SEI pur dichiarandosi SDR. Su un
+  // video che non li ha il filtro non fa niente. Sta prima dell'`overlay` della
+  // Galleria, che ricopierebbe i side data del frame principale.
+  filters.push(...cancellaSideDataHdr())
   return filters
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+ * IL TETTO VBV — «capped CRF», e il conto che lo produce.
+ *
+ * IL DIFETTO, misurato il 2026-09-17: `-crf 18` senza `-maxrate` non ha nessun
+ * limite superiore. Un'uscita ha raggiunto 2.073.793.213 byte — sopra
+ * `MAX_VIDEO_INPUT_BYTES` — e il rifiuto `OUTPUT_TOO_LARGE` è arrivato DOPO 709 s
+ * di wall e 1.452 s di CPU: la conversione era già stata fatta, pagata e buttata.
+ *
+ * IL CONTO, con i numeri di oggi. Cambiarne uno muove gli altri, ed è il motivo
+ * per cui sta scritto qui invece di finire in una costante nuda:
+ *
+ *   tetto           2.000.000.000 byte × 8            = 16.000.000.000 bit
+ *   − audio         192.000 bit/s × 180 s             =     34.560.000 bit
+ *                                                       ───────────────
+ *                                                       15.965.440.000 bit
+ *   − 1% contenitore (moov, tabelle, interleaving)    = 15.805.785.600 bit
+ *   ÷ finestra VBV  180 s di durata + 2 s di buffer   =            182 s
+ *                                                       ───────────────
+ *   -maxrate:v                                          86.844.975 bit/s
+ *   -bufsize:v      = 2 × maxrate                      173.689.950 bit
+ *
+ * Il VBV garantisce che in una finestra di T secondi i bit non superino
+ * `maxrate × T + bufsize`: nel caso peggiore ammesso l'uscita pesa 1.980.043.181
+ * byte, cioè 19,9 MB sotto il tetto. `OUTPUT_TOO_LARGE` resta in `verify.ts` come
+ * rete: qui si evita che il caso patologico accada, là si continua a misurarlo.
+ *
+ * NON È UN DEGRADO DELLA QUALITÀ. Resta CRF 18 a decidere il bitrate: il tetto è
+ * un tetto, non un target (`-b:v` non compare). A 86,8 Mbit/s morde solo su
+ * sorgenti che a Full HD non esistono nella pratica — cioè esattamente il caso
+ * patologico che ha prodotto quei 2,07 GB.
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+
+/** Lo stesso `192k` che finisce in `-b:a`: se cambia lì, cambia il conto qui. */
+const BITRATE_AUDIO_BPS = 192_000
+/** Secondi di buffer VBV: più largo lascia respirare il CRF, ma va contato nel tetto. */
+const SECONDI_BUFFER_VBV = 2
+/** Quota del tetto lasciata al contenitore MP4. Aritmetica intera, niente virgola. */
+const PERCENTUALE_RISERVATA_AL_CONTENITORE = 1
+
+const BIT_VIDEO_DISPONIBILI = Math.floor(
+  ((MAX_VIDEO_INPUT_BYTES * 8 - BITRATE_AUDIO_BPS * MAX_VIDEO_DURATION_SECONDS) *
+    (100 - PERCENTUALE_RISERVATA_AL_CONTENITORE)) /
+    100,
+)
+const MAXRATE_VIDEO_BPS = Math.floor(
+  BIT_VIDEO_DISPONIBILI / (MAX_VIDEO_DURATION_SECONDS + SECONDI_BUFFER_VBV),
+)
+const BUFSIZE_VIDEO_BIT = MAXRATE_VIDEO_BPS * SECONDI_BUFFER_VBV
 
 function requirePath(value: string, name: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.includes('\0')) {
@@ -276,7 +365,9 @@ export function buildVideoEncodeArgs(probe: VideoProbe, options: VideoEncodeOpti
     if (probe.audioStreamIndex === null || !Number.isInteger(probe.audioStreamIndex) || probe.audioStreamIndex < 0) {
       throw new TypeError('audioStreamIndex non valido')
     }
-    args.push('-map', `0:${probe.audioStreamIndex}`, '-c:a', 'aac', '-b:a', '192k')
+    // Il bitrate audio esce dalla stessa costante che il conto del tetto VBV
+    // sottrae: scritto due volte, prima o poi i due numeri divergono in silenzio.
+    args.push('-map', `0:${probe.audioStreamIndex}`, '-c:a', 'aac', '-b:a', `${BITRATE_AUDIO_BPS / 1000}k`)
   } else {
     args.push('-an')
   }
@@ -294,6 +385,11 @@ export function buildVideoEncodeArgs(probe: VideoProbe, options: VideoEncodeOpti
     'medium',
     '-crf',
     '18',
+    // Capped CRF: il tetto vale sulla sola traccia video, l'audio ha già `-b:a`.
+    '-maxrate:v',
+    String(MAXRATE_VIDEO_BPS),
+    '-bufsize:v',
+    String(BUFSIZE_VIDEO_BIT),
     '-pix_fmt',
     'yuv420p',
     // libx264 scrive questi valori anche nel VUI H.264: le sole opzioni generiche

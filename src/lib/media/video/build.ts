@@ -51,14 +51,21 @@ export const FFPROBE_NELL_ARCHIVIO = `${RADICE_ARCHIVIO_FFMPEG}/bin/ffprobe`
  * al primo video che imbocca quel ramo, cioè in produzione e su un file di un genitore.
  * Chi risolve un binario (il collaudo oggi, il runner domani) verifica questa lista e si
  * rifiuta di partire se manca qualcosa, invece di scoprirlo per via di uno stderr.
+ *
+ * NON SI TIENE ALLINEATO A MANO. Il lock `__tests__/architecture/fixture-video-reali.test.ts`
+ * ricava i nomi dal filtergraph vero, su tutti i suoi rami, e cade se qui ne manca uno:
+ * è così che il 2026-09-17, aggiungendo `sidedata`, è venuto fuori che l'elenco aveva già
+ * perso `setsar` — nominato dal ramo Galleria da sempre, e mai dichiarato.
  */
 export const FILTRI_RICHIESTI = [
   'zscale', // HDR→SDR e conversione SDR completa: senza libzimg non esiste
   'tonemap', // compressione della gamma dinamica, `tonemap=hable`
   'scale', // Full HD senza upscale, con `reset_sar`
   'overlay', // watermark della Galleria
+  'setsar', // pixel quadrati sul watermark prima dell'overlay
   'fps', // riduzione a 60 fps sopra soglia
   'format', // `gbrpf32le` in mezzo alla catena, `yuv420p` alla fine
+  'sidedata', // cancella i SEI di mastering display e content light level
 ] as const
 
 /** I decoder degli originali che `./limiti.ts` promette di saper leggere. */

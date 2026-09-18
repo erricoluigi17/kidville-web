@@ -381,6 +381,79 @@ describe('verifyVideoOutput — casi sintetici', () => {
     })
   })
 
+  /* ──────────────────────────────────────────────────────────────────────────
+   * IL RANGE ASSENTE NON È UN RANGE SBAGLIATO, e la differenza è tutta qui.
+   *
+   * Misurato il 2026-09-17 su ffmpeg 8.1.2, eseguendo la riga di comando vera:
+   *   · contratto colore interamente ignoto → x264 non ha niente da segnalare, non
+   *     scrive il VUI, e ffprobe NON riporta `color_range`: il campo manca.
+   *   · stessa sorgente forzata a `full` → il VUI c'è, perché `full_range = 1` non
+   *     è il default, e ffprobe riporta `color_range: 'pc'`.
+   *
+   * Sono due silenzi opposti: «assente» vuol dire limited (il default H.264 è
+   * `video_full_range_flag = 0`), «pc» vuol dire full ed è un errore. Prima
+   * finivano tutti e due in `null` e il primo veniva respinto insieme al secondo.
+   * L'allentamento vale SOLO quando anche il contratto è interamente ignoto: dove
+   * x264 un VUI lo scrive, pretenderlo resta giusto.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it('accetta un color_range assente solo dove x264 non ha motivo di scrivere il VUI', () => {
+    const senzaColore = {
+      ...source,
+      isHdr: false,
+      pixelFormat: 'yuv420p',
+      colorTransfer: null,
+      colorPrimaries: null,
+      colorSpace: null,
+    }
+
+    const senzaVui = outputProbe()
+    senzaVui.streams[0].color_transfer = 'unknown'
+    senzaVui.streams[0].color_primaries = 'unspecified'
+    senzaVui.streams[0].color_space = 'N/A'
+    delete (senzaVui.streams[0] as { color_range?: string }).color_range
+    expect(verifyVideoOutput(senzaColore, senzaVui, 1, decoded)).toMatchObject({ ok: true })
+
+    // Un'uscita che DICHIARA full range resta rifiutata: è l'unica cosa che
+    // l'allentamento non deve portarsi dietro.
+    const fullRange = structuredClone(senzaVui)
+    fullRange.streams[0].color_range = 'pc'
+    expect(verifyVideoOutput(senzaColore, fullRange, 1, decoded)).toEqual({
+      ok: false,
+      code: 'OUTPUT_NOT_SDR',
+    })
+
+    // E dove il contratto NON è vuoto, il VUI x264 lo scrive: continuare a
+    // pretenderlo è la strettezza che non va allentata.
+    const bt709SenzaRange = outputProbe()
+    delete (bt709SenzaRange.streams[0] as { color_range?: string }).color_range
+    expect(verifyVideoOutput(source, bt709SenzaRange, 1, decoded)).toEqual({
+      ok: false,
+      code: 'OUTPUT_NOT_SDR',
+    })
+  })
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * IL CASO NEGATIVO DEI SIDE DATA HDR, e serve proprio adesso.
+   *
+   * Dal 2026-09-17 `encode.ts` cancella i SEI di mastering display e content light
+   * level, quindi il caso reale che li trovava è diventato verde. Senza questo
+   * caso sintetico, `hasHdrSideData` potrebbe sparire da `verify.ts` senza che
+   * niente diventi rosso: la rete resterebbe scritta nella storia e non nel codice.
+   * ────────────────────────────────────────────────────────────────────────── */
+  it.each(['Mastering display metadata', 'Content light level metadata', 'DOVI configuration record'])(
+    'rifiuta un’uscita BT.709 che si porta dietro «%s»',
+    (tipo) => {
+      const conSideData = outputProbe()
+      ;(conSideData.streams[0] as Record<string, unknown>).side_data_list = [
+        { side_data_type: tipo },
+      ]
+      expect(verifyVideoOutput(source, conSideData, 1, decoded)).toEqual({
+        ok: false,
+        code: 'OUTPUT_NOT_SDR',
+      })
+    },
+  )
+
   it('rifiuta probe malformati, errori ffprobe e durate video mancanti', () => {
     expect(verifyVideoOutput(source, null, 1, decoded)).toEqual({
       ok: false,
@@ -555,29 +628,29 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
   }, 60_000)
 
   /* ──────────────────────────────────────────────────────────────────────────
-   * 🔴 DIFETTO TROVATO DA QUESTA FIXTURE, 2026-09-17 — non è una stranezza del test.
+   * IL DIFETTO CHE QUESTA FIXTURE HA TROVATO IL 2026-09-17, e com'è stato chiuso.
    *
    * Un HDR10 vero (iPhone, Android di fascia alta, qualunque camera HDR) porta i SEI
    * di *mastering display* e *content light level*. La catena `hdrToSdrFilters()`
-   * converte i PIXEL — l'uscita è BT.709 su tutte e tre le voci, lo dice
-   * l'asserzione qui sotto — ma quei due SEI ATTRAVERSANO il transcode e si
-   * ritrovano nell'H.264: `-map_metadata -1` non li tocca, perché non sono metadati
-   * del contenitore ma side data dei frame, e libx264 li riscrive.
+   * convertiva i PIXEL — l'uscita era BT.709 su tutte e tre le voci — ma quei due
+   * SEI ATTRAVERSAVANO il transcode e si ritrovavano nell'H.264: `-map_metadata -1`
+   * non li tocca, perché non sono metadati del contenitore ma side data dei frame, e
+   * libx264 li rileggeva e li riscriveva. `hasHdrSideData(video)` rispondeva
+   * `OUTPUT_NOT_SDR` su un video che ERA SDR: ogni video HDR girato col telefono
+   * veniva convertito bene e poi buttato.
    *
-   * `verifyVideoOutput` chiama `hasHdrSideData(video)` e per quella sola riga
-   * risponde `OUTPUT_NOT_SDR`. Effetto in produzione: **ogni video HDR girato col
-   * telefono verrebbe convertito bene e poi respinto**, con un codice che dice
-   * «non è SDR» mentre lo è.
+   * LA CORREZIONE sta in `encode.ts`, in fondo a `videoFilters()`: due istanze di
+   * `sidedata=mode=delete` — il filtro ne cancella un tipo per volta. NON è
+   * `-bsf:v filter_units=remove_types=6`, che avrebbe buttato via TUTTI i SEI
+   * dell'H.264 invece dei due dell'HDR. Misurato sullo stesso giro: dopo la
+   * cancellazione il side data di stream dell'uscita è vuoto.
    *
-   * QUESTO CASO ASSERISCE LA REALTÀ DI OGGI, non il desiderio: serve a renderla
-   * visibile e a impedire che cambi di nascosto. Quando la correzione arriverà —
-   * `src/lib/media/video/encode.ts`, che deve buttare via quei side data (per
-   * esempio un `-bsf:v filter_units` o lo strip esplicito del mastering display) —
-   * questo test diventerà ROSSO, ed è il verso giusto: chi corregge lo aggiorna
-   * insieme al codice, invece di scoprire fra sei mesi che nessuno se n'era accorto.
-   * `encode.ts` e `verify.ts` non appartengono a questa microtask.
+   * QUESTO CASO RESTA, ribaltato: è l'unica cosa che si accorgerebbe se quei SEI
+   * tornassero a passare. Il verso di lettura è cambiato — prima pinnava la realtà
+   * rotta, adesso pretende quella giusta — ma la fixture è la stessa, con
+   * `master-display` e `max-cll` veri dentro.
    * ────────────────────────────────────────────────────────────────────────── */
-  it('HDR10 con mastering display: i SEI sopravvivono all’H.264 e l’uscita viene RIFIUTATA', (contesto) => {
+  it('HDR10 con mastering display: i SEI non sopravvivono all’H.264 e l’uscita passa', (contesto) => {
     const binari = binariVideo(contesto)
     inCartellaTemporanea('kidville-video-hdr-sei-', (cartella) => {
       const ingresso = join(cartella, 'sorgente.mp4')
@@ -610,11 +683,14 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
         color_transfer: 'bt709',
         color_space: 'bt709',
       })
-      // E i SEI dell'HDR sono ancora lì, nell'H.264.
-      expect(sideData(sonda)).toEqual(
-        expect.arrayContaining(['Mastering display metadata', 'Content light level metadata']),
-      )
-      expect(verifica(binari, probe, uscita)).toEqual({ ok: false, code: 'OUTPUT_NOT_SDR' })
+      // E adesso i SEI dell'HDR non ci sono più. Non «nessuno dei due che
+      // guardiamo»: proprio nessun side data, il che dice anche che la
+      // cancellazione mirata non ha portato via nient'altro per sbaglio.
+      expect(sideData(sonda)).toEqual([])
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { colorPrimaries: 'bt709', colorTransfer: 'bt709', colorSpace: 'bt709' },
+      })
     })
   }, 60_000)
 
@@ -823,7 +899,7 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
   }, 45_000)
 
   /* ──────────────────────────────────────────────────────────────────────────
-   * 🔴 SECONDO DIFETTO TROVATO DALLE FIXTURE VERE, 2026-09-17.
+   * IL SECONDO DIFETTO TROVATO DALLE FIXTURE VERE IL 2026-09-17, e come s'è chiuso.
    *
    * Quando la sorgente non dichiara NESSUNO dei tre valori colore — succede sui
    * vecchi AVI, su certe registrazioni di schermo e su parecchi encoder Android —
@@ -831,20 +907,25 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
    * e la riga di comando passa `colorprim=undef:transfer=undef:colormatrix=undef`.
    * A quel punto x264 NON scrive il VUI: `video_full_range_flag = 0` è già il suo
    * default, quindi non c'è niente da segnalare. Risultato: ffprobe sull'uscita non
-   * riporta `color_range` affatto, `normalizedColorRange(undefined)` è `null`, e il
-   * confronto con `colorRange: 'tv'` fallisce → `OUTPUT_NOT_SDR`.
+   * riporta `color_range` affatto — e il confronto con `'tv'` faceva cadere una
+   * conversione perfettamente riuscita su un campo che l'encoder non ha motivo di
+   * scrivere. I ventun casi sintetici non potevano vederlo: il loro JSON scrive
+   * `color_range: 'tv'` sempre, anche dove ffmpeg non lo scriverebbe mai.
    *
-   * Una conversione perfettamente riuscita viene respinta perché il verificatore
-   * pretende un campo che l'encoder non ha motivo di scrivere. I ventun casi
-   * sintetici non potevano vederlo: il loro JSON scrive `color_range: 'tv'` sempre,
-   * anche dove ffmpeg non lo scriverebbe mai.
+   * LA CORREZIONE sta in `verify.ts`, non in `encode.ts`, e la scelta ha un motivo:
+   * forzare il VUI avrebbe richiesto di dichiarare primarie o transfer che la
+   * sorgente non dichiara — `-x264-params range=tv` da solo non basta, perché
+   * limited È il default e x264 non scrive un VUI per ripetere un default. Sarebbe
+   * stato dire al lettore un colore che nessuno ha misurato, contro il principio
+   * scritto in `encode.ts` sopra `outputVideoColorMetadata`.
    *
-   * La correzione sta in `src/lib/media/video/verify.ts` (accettare `null` quando
-   * anche il contratto è interamente `null`) oppure in `encode.ts` (forzare il VUI).
-   * Nessuno dei due è di questa microtask; questo caso pinna la realtà perché non
-   * torni a essere invisibile.
+   * L'allentamento è stretto: «assente» vale quanto `tv` SOLO dove il contratto è
+   * interamente ignoto, e un'uscita che dichiara `pc` resta respinta — c'è un caso
+   * sintetico qui sopra che lo prova su tutti e tre i versi. L'asserzione sul
+   * `color_range` assente RESTA, perché è la misura del fatto: se un domani x264
+   * cambiasse idea, va visto qui e non in produzione.
    * ────────────────────────────────────────────────────────────────────────── */
-  it('sorgente senza metadati colore: x264 non scrive il VUI e l’uscita viene RIFIUTATA', (contesto) => {
+  it('sorgente senza metadati colore: x264 non scrive il VUI e l’uscita passa lo stesso', (contesto) => {
     const binari = binariVideo(contesto)
     inCartellaTemporanea('kidville-video-senza-colore-', (cartella) => {
       const ingresso = join(cartella, 'sorgente.mp4')
@@ -870,7 +951,10 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
       converti(binari, probe, ingresso, uscita)
       const video = tracciaVideo(sondaFfprobe(binari, uscita))
       expect(video.color_range).toBeUndefined()
-      expect(verifica(binari, probe, uscita)).toEqual({ ok: false, code: 'OUTPUT_NOT_SDR' })
+      expect(verifica(binari, probe, uscita)).toMatchObject({
+        ok: true,
+        output: { colorPrimaries: null, colorTransfer: null, colorSpace: null },
+      })
     })
   }, 45_000)
 })

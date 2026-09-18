@@ -432,5 +432,19 @@
   "erroreConciliazioneVoceContenitore": "Una delle voci scelte è il totale di un piano a rate: si incassano le rate, non il contenitore. Toglila dalla composizione e scegli le rate da saldare.",
   "erroreConciliazioneMovimentoNonLegato": "L’incasso è stato registrato, ma la riga dell’estratto conto non è stata legata: non ripetere l’operazione, il denaro risulterebbe incassato due volte. Segnala l’accaduto perché la riga venga legata.",
   "errorePossibileDoppione": "In questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso: se la famiglia ha inviato la domanda due volte, rifiuta questa; se è lo stesso bambino, usa la scheda esistente.",
-  "erroreAbbinamentoNonValido": "La scheda esistente indicata non si può usare per questo bambino: non è stato scritto nulla. Riapri la domanda e riprova l’import."
+  "erroreAbbinamentoNonValido": "La scheda esistente indicata non si può usare per questo bambino: non è stato scritto nulla. Riapri la domanda e riprova l’import.",
+  "erroreVideoFileNonValido": "Questo file non contiene un video leggibile: potrebbe essere incompleto, oppure essersi rovinato durante il salvataggio. Riprova con un altro filmato.",
+  "erroreVideoTroppoGrande": "Questo video supera i 2 GB. Registralo a una qualità più bassa, oppure carica solo la parte che vuoi mostrare.",
+  "erroreVideoTroppoLungo": "Questo video dura più di 3 minuti. Accorcialo prima di caricarlo: dal telefono si ritaglia direttamente nella raccolta dei filmati.",
+  "erroreVideoFormatoNonSupportato": "Il formato di questo video non è fra quelli che riusciamo a convertire. Riprova con un filmato girato dal telefono, oppure salvalo in MP4.",
+  "erroreVideoProtetto": "Questo video è protetto dalla copia e non si può convertire: scegli un filmato girato da te.",
+  "erroreVideoNonLeggibile": "Non riusciamo ad aprire questo video: il file sembra rovinato. Prova a scaricarlo di nuovo sul telefono e a caricarlo un’altra volta.",
+  "erroreVideoConversioneNonRiuscita": "La preparazione di questo video non è riuscita e il filmato non è stato pubblicato. Riprova: se succede di nuovo, avvisa la segreteria.",
+  "erroreVideoRiprova": "Qualcosa è cambiato mentre il video veniva caricato. Ricarica la pagina e riprova: non è andato perso niente.",
+  "erroreVideoGiaConcluso": "Questa pubblicazione è già stata conclusa o ritirata: ricarica la pagina per vedere com’è adesso.",
+  "erroreVideoNonAncoraPronto": "I video non hanno ancora finito di essere preparati. Aspetta che l’attesa finisca e riprova: puoi anche chiudere l’app, il lavoro prosegue da solo.",
+  "erroreVideoNonTrovato": "Questo caricamento non esiste più: potrebbe essere stato annullato, oppure essere scaduto. Ricomincia dall’inizio.",
+  "erroreVideoNonAutorizzato": "Questo caricamento non è tuo, oppure è di un altro plesso: non è stato modificato niente.",
+  "erroreVideoAppDaAggiornare": "Per caricare i video serve la versione aggiornata dell’app. Aggiornala e riprova: i filmati già in attesa ripartono da soli.",
+  "erroreVideoOperazioneNonRiuscita": "L’operazione sul video non è riuscita: riprova fra poco. Se continua, segnalalo alla segreteria."
 }

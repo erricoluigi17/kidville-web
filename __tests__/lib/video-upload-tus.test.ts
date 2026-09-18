@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { HttpRequest, HttpResponse, HttpStack } from 'tus-js-client'
 
+import { SEDE_A } from '../fixtures/sedi'
 import { ArchivioCaricamentiInMemoria } from '@/lib/media/video/upload/archivio-memoria'
 import type { CoordinateCaricamentoVideo } from '@/lib/media/video/contratto'
 
@@ -62,7 +63,10 @@ const COORDINATE: CoordinateCaricamentoVideo = {
   protocollo: 'tus',
   endpoint: ENDPOINT,
   bucket: 'video_originals',
-  percorso: `d53b0fbc-a9eb-4073-b302-73d1d5abd529/${JOB}.mp4`,
+  // La sede viene dal banco di prova, mai dall'anagrafica vera: il repository e' PUBBLICO,
+  // e il lock `migrazioni-senza-sede-cablata` esiste perche' un uuid reale in un test
+  // diventa, prima o poi, un uuid reale in un ramo di produzione.
+  percorso: `${SEDE_A}/${JOB}.mp4`,
   contentType: 'video/mp4',
   // Il minimo che il contratto ammette: sotto 1 MiB `schemaCoordinateCaricamentoVideo`
   // rifiuta. Con un originale da 2 MiB e mezzo fanno tre PATCH, cioè abbastanza

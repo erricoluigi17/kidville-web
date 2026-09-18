@@ -106,6 +106,17 @@ dettagli in `docs/e2e.md`.
 
 ## Note operative
 
+## Conversione video (pipeline HEVC / Full HD)
+
+Le tre qui sotto si impostano **a mano su Vercel**, in produzione e in preview. Le credenziali
+del Sandbox non sono fra queste: arrivano dal token OIDC di piattaforma.
+
+| Variabile | Dove | Se manca o e' sbagliata |
+|---|---|---|
+| `VIDEO_RUNNER_OWNER_ID` | solo server | Uuid del worker. **Deve restare STABILE fra le invocazioni**, e non e' un dettaglio: la durevolezza del runner poggia sul riprendere la propria lease con lo stesso owner, che ridà lo stesso `fence_epoch` e quindi lo stesso nome di MicroVM da riagganciare. Con un uuid casuale a ogni invocazione, **ogni conversione lunga ricomincerebbe da capo all'infinito, senza un solo errore nei log**. Assente → il runner non parte, riga `config`/`error`. |
+| `VIDEO_SANDBOX_REGION` | solo server | Regione della MicroVM. Assente → `dub1`, dove sta lo Storage: convertire altrove significherebbe far attraversare l'Atlantico a un originale da 2 GB, due volte. Valore che non e' una regione → riga `config`/`error` e ripiego. |
+| `VIDEO_SANDBOX_VCPUS` | solo server | Core della MicroVM. Assente → 4 (misurato: 1,85× piu' veloce di 2 vCPU a +8 % di costo). Fuori da 1–8 → riga `config`/`error` e ripiego. |
+
 - Le route con dipendenze d'ambiente usano `src/lib/security/require-env.ts`
   (fail esplicito a runtime, non a import-time).
 - Verifica del sigillo identità (M4.6):

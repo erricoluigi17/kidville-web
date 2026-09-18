@@ -175,6 +175,24 @@ export const CODICI_ESITO_VIDEO = [
   'SOURCE_CONFLICT',
   'TARGET_CONFLICT',
   'UNIQUE_CONFLICT',
+
+  // ── La QUINTA fonte: il runner (`runner/codici.ts`), nata dopo le altre quattro.
+  // Fino al 2026-09-18 questo elenco non la conosceva, e il lock non la scandiva:
+  // `codiceMessaggioVideo()` ripiegava sul messaggio generico, quindi niente si
+  // rompeva e nessuno se ne accorgeva — la forma di guasto silenzioso che questo
+  // repository combatte. Dieci nomi e non uno solo perché `video_jobs.error_code` è
+  // la colonna su cui si risponde a «perché i video non escono più?», e le dieci
+  // cause si riparano in dieci posti diversi.
+  'BUILD_DOWNLOAD_FAILED',
+  'BUILD_HASH_MISMATCH',
+  'BUILD_EXTRACT_FAILED',
+  'BUILD_INCOMPLETE',
+  'SANDBOX_UNAVAILABLE',
+  'SOURCE_DOWNLOAD_FAILED',
+  'PROBE_COMMAND_FAILED',
+  'ENCODE_FAILED',
+  'OUTPUT_UPLOAD_FAILED',
+  'CONVERSION_TIMEOUT',
 ] as const
 export type CodiceEsitoVideo = (typeof CODICI_ESITO_VIDEO)[number]
 
@@ -399,6 +417,27 @@ export const MAPPA_MESSAGGIO_VIDEO: Record<CodiceInternoVideo, CodiceMostratoVid
    * invece del nome di una RPC.
    */
   EMPTY_QUEUE: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+
+  // ── Il runner. La ripartizione non e' meccanica: separa cio' che passa da solo
+  // (rete, piattaforma) da cio' che non passera' mai riprovando.
+  /** GitHub irraggiungibile o lento: il prossimo battito riprova, e di solito basta. */
+  BUILD_DOWNLOAD_FAILED: 'VIDEO_RIPROVA',
+  /**
+   * Lo SHA-256 dell'archivio non e' quello atteso. NON e' `VIDEO_RIPROVA`: riprovare a
+   * eseguire un binario che non e' quello misurato e' peggio che fermarsi, e nessun
+   * numero di tentativi lo fara' diventare quello giusto.
+   */
+  BUILD_HASH_MISMATCH: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+  BUILD_EXTRACT_FAILED: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+  BUILD_INCOMPLETE: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+  /** La MicroVM non si e' aperta: e' la piattaforma, non il video. */
+  SANDBOX_UNAVAILABLE: 'VIDEO_RIPROVA',
+  SOURCE_DOWNLOAD_FAILED: 'VIDEO_RIPROVA',
+  /** `ffprobe` non e' partito — diverso da «il JSON e' sbagliato», che e' del video. */
+  PROBE_COMMAND_FAILED: 'VIDEO_NON_LEGGIBILE',
+  ENCODE_FAILED: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
+  OUTPUT_UPLOAD_FAILED: 'VIDEO_RIPROVA',
+  CONVERSION_TIMEOUT: 'VIDEO_CONVERSIONE_NON_RIUSCITA',
 
   // ── Il bordo HTTP.
   CLIENT_UPDATE_REQUIRED: 'VIDEO_APP_DA_AGGIORNARE',

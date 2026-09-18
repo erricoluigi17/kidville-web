@@ -66,6 +66,21 @@ function membriUnione(sorgente: string, nome: string): string[] {
   return [...blocco.matchAll(/'([A-Z][A-Z0-9_]*)'/g)].map((m) => m[1])
 }
 
+/**
+ * I membri di un elenco letterale (`export const X = ['A', 'B'] as const`): si legge
+ * dal `=` alla parentesi quadra chiusa. Serve per il runner, che dichiara i suoi
+ * codici cosi' invece che come unione di tipo — e leggerli dalla FONTE, non da un
+ * import, e' il punto: un import seguirebbe una rinomina in silenzio, un testo no.
+ */
+function membriElencoLetterale(sorgente: string, nome: string): string[] {
+  const inizio = sorgente.indexOf(`export const ${nome} = [`)
+  if (inizio === -1) return []
+  const resto = sorgente.slice(inizio)
+  const fine = resto.indexOf('\n]')
+  const blocco = fine === -1 ? resto : resto.slice(0, fine)
+  return [...blocco.matchAll(/'([A-Z][A-Z0-9_]*)'/g)].map((m) => m[1])
+}
+
 /** I `code` letterali restituiti dalle RPC video: `'code', 'BAD_INPUT'`. */
 function codiciDelleMigrazioni(): string[] {
   const file = readdirSync(MIGRAZIONI).filter((n) => /_video[_.]/.test(n) && n.endsWith('.sql'))
@@ -99,6 +114,19 @@ const FONTI: { nome: string; minimo: number; codici: () => string[] }[] = [
     nome: 'supabase/migrations/*_video_*.sql → RPC',
     minimo: 25,
     codici: codiciDelleMigrazioni,
+  },
+  {
+    // LA QUINTA FONTE. È nata dopo le altre quattro, e per un giorno il lock non l'ha
+    // scandita: i dieci codici del runner esistevano, non rendevano rosso niente, e
+    // `codiceMessaggioVideo()` ripiegava sulla frase generica. Nessun guasto visibile —
+    // che è precisamente il motivo per cui sarebbe potuta restare così a lungo.
+    nome: 'src/lib/media/video/runner/codici.ts → CODICI_RUNNER_VIDEO',
+    minimo: 10,
+    codici: () =>
+      membriElencoLetterale(
+        readFileSync(join(VIDEO, 'runner', 'codici.ts'), 'utf8'),
+        'CODICI_RUNNER_VIDEO',
+      ),
   },
 ]
 
@@ -136,7 +164,8 @@ describe('contratto video · i codici d’errore sono ESAUSTIVI per costruzione'
     )
     expect(
       mancanti,
-      'Questi codici escono da una fonte della pipeline (limiti/probe/verify o una RPC) e non sono ' +
+      'Questi codici escono da una fonte della pipeline (limiti/probe/verify, una RPC o il ' +
+      'runner) e non sono ' +
         'in `CODICI_ESITO_VIDEO`. Il client non saprebbe tradurli e ricadrebbe sulla prosa del ' +
         'server: dichiarali nel contratto e dai a ciascuno una destinazione in ' +
         '`MAPPA_MESSAGGIO_VIDEO`.',

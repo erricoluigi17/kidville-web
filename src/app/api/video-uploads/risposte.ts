@@ -147,6 +147,26 @@ const STATO_HTTP_VIDEO: Record<CodiceInternoVideo, number> = {
   SINGLE_JOB_CHANNEL: 500,
   EMPTY_QUEUE: 500,
 
+  // ── IL RUNNER. Questi dieci non escono MAI come stato di una risposta: nascono
+  //    nella MicroVM, finiscono in `video_jobs.error_code` e una famiglia li vede
+  //    come stato di un job dentro un 200, non come il codice della richiesta.
+  //    Stanno qui perché il `Record` è totale — e il valore non è una formalità: se
+  //    un giorno uno di loro finisse davvero in una risposta, questo numero decide
+  //    se la riga di `withRoute` che ne segue è un guasto da guardare o un rifiuto
+  //    ordinario da contare e basta. Sono tutti guasti nostri o della piattaforma,
+  //    mai colpa di chi ha caricato: nessun 4xx.
+  BUILD_DOWNLOAD_FAILED: 500,
+  BUILD_HASH_MISMATCH: 500,
+  BUILD_EXTRACT_FAILED: 500,
+  BUILD_INCOMPLETE: 500,
+  /** La MicroVM non si apre: è la piattaforma che non c'è, e torna da sola. */
+  SANDBOX_UNAVAILABLE: 503,
+  SOURCE_DOWNLOAD_FAILED: 500,
+  PROBE_COMMAND_FAILED: 500,
+  ENCODE_FAILED: 500,
+  OUTPUT_UPLOAD_FAILED: 500,
+  CONVERSION_TIMEOUT: 500,
+
   // ── Il bordo HTTP: l'app installata non sa parlare con questa pipeline.
   CLIENT_UPDATE_REQUIRED: 409,
 }

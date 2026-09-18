@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import {
+    DIMENSIONE_BLOCCO_TUS_BYTE,
   AZIONI_INTENT_VIDEO,
   CANALI_VIDEO,
   CHIAVI_MESSAGGIO_VIDEO,
@@ -483,6 +484,22 @@ describe('contratto video · gli schemi zod tengono il bordo', () => {
     const risalita = structuredClone(esito)
     risalita.job[0].caricamento.percorso = '../altro-utente/segreto.mov'
     expect(schemaEsitoAperturaIntentVideo.safeParse(risalita).success).toBe(false)
+
+    // Il blocco TUS è UN VALORE SOLO, non un intervallo. Fino al 2026-09-18 lo schema
+    // ammetteva 1–64 MiB, e la documentazione di Supabase Storage dice invece «it must be
+    // set to 6MB (for now) do not change it»: ogni altro valore è un upload che il servizio
+    // rifiuta al primo blocco, DOPO che un genitore ha già iniziato a caricare da un telefono.
+    // I due vicini sono la prova che serve: 5 MiB e 8 MiB passavano entrambi, ieri.
+    for (const sbagliata of [5 * 1024 * 1024, 8 * 1024 * 1024, 1024 * 1024, 64 * 1024 * 1024]) {
+      const blocco = structuredClone(esito)
+      blocco.job[0].caricamento.dimensioneBloccoByte = sbagliata
+      expect(
+        schemaEsitoAperturaIntentVideo.safeParse(blocco).success,
+        `${sbagliata} byte non è la dimensione di blocco che Supabase Storage accetta: ` +
+          `l'unica è DIMENSIONE_BLOCCO_TUS_BYTE (${DIMENSIONE_BLOCCO_TUS_BYTE}).`,
+      ).toBe(false)
+    }
+    expect(DIMENSIONE_BLOCCO_TUS_BYTE).toBe(6 * 1024 * 1024)
   })
 
   it('lo stato letto in polling non mescola «in corso» ed «errore»', () => {

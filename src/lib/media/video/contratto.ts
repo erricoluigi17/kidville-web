@@ -534,6 +534,14 @@ export const schemaAperturaIntentVideo = z
 export type AperturaIntentVideo = z.infer<typeof schemaAperturaIntentVideo>
 
 /** Dove e come il client spedisce i byte dell'originale. */
+/**
+ * L'unica dimensione di blocco che l'implementazione TUS di Supabase Storage
+ * accetta. Verificata sulla documentazione ufficiale il 2026-09-18: «it must be
+ * set to 6MB (for now) do not change it». Il «for now» è loro, non nostro: se un
+ * giorno cambiasse, cambia QUI e il contratto si adegua da solo dappertutto.
+ */
+export const DIMENSIONE_BLOCCO_TUS_BYTE = 6 * 1024 * 1024
+
 export const schemaCoordinateCaricamentoVideo = z.object({
   protocollo: z.literal('tus'),
   endpoint: schemaEndpointSicuro,
@@ -542,14 +550,21 @@ export const schemaCoordinateCaricamentoVideo = z.object({
   contentType: z.string().min(3).max(255).regex(MIME_DICHIARABILE),
   /**
    * La dimensione del blocco TUS. Sta nel contratto perché è una proprietà del
-   * servizio, non una preferenza del client: sbagliarla significa upload che
+   * SERVIZIO, non una preferenza del client: sbagliarla significa upload che
    * ripartono da capo su una rete mobile.
+   *
+   * ⚠️ È UN VALORE SOLO, NON UN INTERVALLO, e fino al 2026-09-18 questo schema
+   * ammetteva `1 MiB … 64 MiB`. La documentazione di Supabase Storage lo dice
+   * senza margini — «it must be set to 6MB (for now) do not change it» — quindi
+   * quell'intervallo conteneva 64 valori sbagliati su 64: uno schema VERDE
+   * poteva produrre coordinate che lo Storage rifiuta al primo blocco, dopo che
+   * il genitore ha già iniziato a caricare da un telefono.
+   *
+   * È esattamente il guasto che il commento qui sopra descriveva, lasciato
+   * possibile dal campo che avrebbe dovuto impedirlo. `z.literal` lo rende
+   * irrappresentabile: nessuna route può più dichiararne un altro.
    */
-  dimensioneBloccoByte: z
-    .number()
-    .int()
-    .min(1024 * 1024)
-    .max(64 * 1024 * 1024),
+  dimensioneBloccoByte: z.literal(DIMENSIONE_BLOCCO_TUS_BYTE),
 })
 export type CoordinateCaricamentoVideo = z.infer<typeof schemaCoordinateCaricamentoVideo>
 

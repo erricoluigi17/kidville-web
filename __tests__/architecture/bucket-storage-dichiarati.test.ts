@@ -381,15 +381,92 @@ const ordinati = (v: string[]) => [...new Set(v)].sort()
  * ATTENZIONE, ed è il vero costo di questa riga: il tetto globale è GLOBALE. I
  * bucket che non dichiarano un `file_size_limit` proprio non hanno più 50 MiB di
  * soffitto, ne hanno 2 GB. Misurati in produzione il 2026-09-17: sono tre su
- * sedici — `certificati-medici`, `credenziali`, `fatture`. Vanno pinnati con una
- * migrazione, e insieme va tolto il `return` che qui sotto fa saltare il controllo
- * quando il limite dichiarato è `null`.
+ * sedici — `certificati-medici`, `credenziali`, `fatture`.
+ *
+ * FATTO lo stesso giorno, ed è la ragione per cui questo paragrafo non è più una
+ * cosa da fare: la migrazione
+ * `20260917233752_bucket_limite_esplicito_certificati_credenziali_fatture.sql` li
+ * pinna (15 MiB · 4 MiB · 8 MiB, scelti dagli oggetti che ci sono davvero dentro), e
+ * il `return` che qui sotto faceva saltare il controllo quando il limite dichiarato
+ * era `null` non c'è più: adesso è rosso, a meno di una voce dichiarata in
+ * `IN_ATTESA_DI_UN_LIMITE`. ⚠️ La migrazione è scritta, NON applicata — finché
+ * qualcuno non la applica, in produzione quei tre limiti restano NULL. Questo lock
+ * misura ciò che il repo DICHIARA; che sia anche applicato lo dice `IN_CODA` in
+ * `migrazioni-complete.test.ts`.
  *
  * Questa costante resta una DICHIARAZIONE, non una misura: non c'è una fotografia
  * versionata del pannello. Finché non c'è, invecchia in silenzio come ha appena
  * fatto. Chi la tocca rifaccia la GET, non fidandosi di questo commento.
  */
 const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
+
+/**
+ * I bucket classificati che NESSUNA migrazione pinna ancora — dichiarati uno per uno,
+ * con la misura e la ragione, come `IN_CODA` in `migrazioni-complete.test.ts`.
+ *
+ * PERCHÉ ESISTE QUESTA MAPPA, e perché non è un'assoluzione. Fino al 2026-09-17 il caso
+ * «limite non dichiarato» usciva dal controllo qui sotto con un `return`: il lock si
+ * spegneva da solo esattamente sui bucket che non dichiarano niente, cioè quelli che
+ * avrebbe dovuto denunciare per primi. Adesso il silenzio non basta più — si scrive.
+ *
+ * QUELLO CHE UNA VOCE QUI DENTRO AMMETTE, detto per intero: quel bucket ha per tetto il
+ * TETTO GLOBALE del progetto, e il tetto globale non si legge in nessun file del repo.
+ * Il 2026-09-16 è passato da 52.428.800 a 2.000.000.000 per far entrare i video, e con
+ * lui — senza che nessuno lo decidesse, e senza che nessuno riaprisse questo file — sono
+ * passati da 50 MiB a 2 GB anche i bucket che un limite proprio non ce l'hanno.
+ *
+ * CHE COSA CI PUÒ STARE. Solo un bucket il cui limite, pur non essendo in una migrazione,
+ * è comunque DICHIARATO nel repo e MISURATO in produzione: un `createBucket(…)` o una
+ * guardia `file.size >` in una route lo scrive, e quel numero è quello che il database ha
+ * davvero. È un tetto che esiste, ma che vive nel posto sbagliato — un `createBucket` su
+ * un bucket che esiste già non viene mai eseguito, e una guardia applicativa vale solo
+ * per la porta che la contiene: chiunque scriva nel bucket da un'altra strada non la
+ * incontra. Va portato in migrazione; finché non lo è, sta scritto qui.
+ *
+ * CHE COSA NON CI PUÒ STARE: un bucket che in produzione ha `file_size_limit = NULL`. Per
+ * quello non c'è niente da dichiarare — c'è una migrazione da scrivere, ed è quello che è
+ * stato fatto il 2026-09-17 per `certificati-medici`, `credenziali` e `fatture`.
+ * ⚠️ Questo lock NON può verificarlo da sé: la fotografia versionata porta l'id e la
+ * visibilità, non il limite (`bucket-storage-fotografia.mjs` lascia fuori di proposito il
+ * limite, che cambia spesso e non c'entra con la regola di sicurezza). Chi aggiunge una
+ * voce qui dentro la misura sul database, e la misura la scrive — la prova gemella qui
+ * sotto pretende che nella ragione ci sia il numero.
+ *
+ * COME MUORE UNA VOCE: da sola, il giorno in cui una migrazione pinna quel bucket. La
+ * prova «non contiene voci morte» diventa rossa e la fa togliere, come fa `IN_CODA` in
+ * `migrazioni-complete.test.ts` con le migrazioni che nel frattempo sono state applicate.
+ * Un'esenzione che sopravvive al suo motivo è un buco che nessuno ricorda di aver aperto.
+ */
+const IN_ATTESA_DI_UN_LIMITE: Record<string, string | undefined> = {
+  'cassa-giustificativi':
+    'Misurato in produzione il 2026-09-17: `file_size_limit` = 10485760 (10 MiB). Il numero ' +
+    'è nel repo — `CASSA_MAX_MB = 10` in `src/lib/cassa/store.ts`, che lo passa al ' +
+    '`createBucket` della cassa — ma non in una migrazione: il bucket esiste, quindi quella ' +
+    'creazione non viene mai eseguita e in un ambiente nuovo il tetto dipende da chi apre ' +
+    'per primo la cassa. Va portato in migrazione.',
+  'chat-allegati':
+    'Misurato in produzione il 2026-09-17: `file_size_limit` = 10485760 (10 MiB). È il più ' +
+    'fragile dei cinque: nessun `createBucket` lo nomina (è nato dalla console), e l\'unico ' +
+    '10 MB scritto nel repo è la guardia `MAX_MB` di `src/app/api/chat/upload/route.ts` — ' +
+    'che vale per quella porta e per nessun\'altra. Se il bucket venisse ricreato altrove, ' +
+    'nascerebbe senza tetto. Va portato in migrazione.',
+  pagelle:
+    'Misurato in produzione il 2026-09-17: `file_size_limit` = 10485760 (10 MiB), lo stesso ' +
+    'che `src/lib/primaria/pagella-store.ts` passa al suo `createBucket`. Dentro ci sono le ' +
+    'pagelle in PDF dei bambini della primaria. Va portato in migrazione.',
+  protocollo:
+    'Misurato in produzione il 2026-09-17: `file_size_limit` = 26214400 (25 MiB), lo stesso ' +
+    'che `PROTOCOLLO_MAX_MB = 25` (`src/lib/protocolli/store.ts`) passa al `createBucket` ' +
+    'del registro di protocollo. È il più alto dei cinque perché qui finiscono scansioni ' +
+    'multipagina. Va portato in migrazione.',
+  sensitive_documents:
+    'Misurato in produzione il 2026-09-17: `file_size_limit` = 15728640 (15 MiB), lo stesso ' +
+    'che `src/app/api/primaria/fascicolo/route.ts` (`MAX_SIZE`) e `BUCKET_FASCICOLO_MAX` in ' +
+    '`banco-famiglia.ts` dichiarano. È il fascicolo sanitario del bambino, art. 9 GDPR, e ' +
+    'la migrazione del 2026-09-17 ha pinnato `certificati-medici` proprio a questo numero ' +
+    'perché per due campi su tre i due bucket sono alternativi sullo stesso allegato: ' +
+    'quando toccherà a questo, il valore è già deciso.',
+}
 
 describe('lock architettura · i bucket dello storage sono dichiarati in migrazione', () => {
   it('le migrazioni si leggono davvero (sanity)', () => {
@@ -548,7 +625,35 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       '`%s` dichiara un limite che lo Storage può davvero accettare',
       (bucket) => {
         const dichiarato = limiteDichiarato(bucket)
-        if (dichiarato === null) return // non tutti i bucket dichiarano un limite
+        // ── IL LOCK NON SI SPEGNE PIÙ SUI BUCKET CHE NON DICHIARANO NIENTE ──────
+        //
+        // Qui c'era `if (dichiarato === null) return`, col commento «non tutti i
+        // bucket dichiarano un limite». Era vero, e per questo era il difetto: il
+        // controllo saltava proprio sui bucket senza limite, cioè sugli unici il cui
+        // tetto non lo decide il repo. Un limite implicito non è «nessun limite»: è
+        // il TETTO GLOBALE del progetto, che sta nel pannello di Supabase, che nessun
+        // file di questa cartella può leggere e che cambia senza che nessuno riapra
+        // questo test. Il 2026-09-16 è successo: da 50 MiB a 2 GB in un pomeriggio,
+        // per i video, e con lui si sono allargati di quaranta volte tre archivi che
+        // con i video non c'entrano niente — certificati medici di minori,
+        // credenziali, fatture. Il lock era verde durante tutto il pomeriggio.
+        if (dichiarato === null) {
+          expect(
+            Object.hasOwn(IN_ATTESA_DI_UN_LIMITE, bucket)
+              ? (IN_ATTESA_DI_UN_LIMITE[bucket] ?? '')
+              : null,
+            `Nessuna migrazione dichiara \`file_size_limit\` per \`${bucket}\`: il suo tetto ` +
+              `è quello GLOBALE del progetto — oggi ${TETTO_GLOBALE_STORAGE_B} byte — e quel ` +
+              `numero non vive nel repo. Sta nel pannello di Supabase, lo cambia chi serve a ` +
+              `un'altra funzionalità, e questo file non se ne accorge: il 2026-09-16 è passato ` +
+              `da 52428800 a 2000000000 per la pipeline video, e ha allargato di quaranta ` +
+              `volte anche i bucket che con i video non c'entrano. Scrivi una migrazione che ` +
+              `pinni il limite di \`${bucket}\` al valore che vuoi davvero — oppure, se un ` +
+              `tetto dichiarato nel repo esiste già ma sta in un \`createBucket\`, mettilo in ` +
+              `\`IN_ATTESA_DI_UN_LIMITE\` con la misura di produzione e la ragione.`,
+          ).not.toBeNull()
+          return
+        }
         expect(
           dichiarato,
           `La migrazione dichiara ${dichiarato} byte per \`${bucket}\`, sopra il tetto globale ` +
@@ -561,6 +666,45 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
         ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
       },
     )
+
+    // ── LA PROVA GEMELLA: un'attesa che finisce, finisce anche qui ─────────────
+    //
+    // Stessa forma di «IN_CODA non contiene voci morte» in
+    // `migrazioni-complete.test.ts`, e per la stessa ragione: la prova qui sopra si
+    // ADDOLCISCE per ogni voce di `IN_ATTESA_DI_UN_LIMITE`, quindi senza qualcosa che
+    // le faccia scadere, l'elenco diventa in sei mesi il posto dove si infila quello
+    // che dà fastidio — e lo diventa senza che nessun test cambi colore.
+    it('`IN_ATTESA_DI_UN_LIMITE` non contiene voci morte (né voci senza misura)', () => {
+      const classificati = new Set<string>([...RISERVATI, ...Object.keys(PUBBLICI_PER_DECISIONE)])
+      const morte = Object.keys(IN_ATTESA_DI_UN_LIMITE).filter(
+        (b) => limiteDichiarato(b) !== null || !classificati.has(b),
+      )
+      expect(
+        morte,
+        `Queste voci non descrivono più un bucket «classificato e senza limite in ` +
+          `migrazione»:\n  ${morte.join('\n  ')}\n` +
+          `O una migrazione lo pinna ormai (allora l'attesa è finita: togli la voce), o il ` +
+          `bucket non è più in \`RISERVATI\`/\`PUBBLICI_PER_DECISIONE\` (e allora questo file ` +
+          `sta assolvendo un nome che non significa più niente).`,
+      ).toEqual([])
+
+      for (const [bucket, ragione] of Object.entries(IN_ATTESA_DI_UN_LIMITE)) {
+        expect(
+          (ragione ?? '').trim().length,
+          `\`${bucket}\` è in attesa senza una ragione scritta. Scrivi DOVE vive oggi quel ` +
+            `tetto, e perché non è ancora in una migrazione.`,
+        ).toBeGreaterThan(60)
+        // La MISURA, non l'impressione. Il limite non sta nella fotografia versionata:
+        // l'unico modo perché una voce sia falsificabile è che porti il numero letto sul
+        // database, così chi la rilegge può rifare la query e vedere se è ancora vero.
+        expect(
+          /\b\d{6,}\b/.test(ragione ?? ''),
+          `La voce \`${bucket}\` non porta il valore misurato in produzione. Una voce senza ` +
+            `numero non si può smentire: esegui \`select id, file_size_limit from ` +
+            `storage.buckets where id = '${bucket}'\` e scrivi cosa hai letto.`,
+        ).toBe(true)
+      }
+    })
 
     it('la route non spedisce allo Storage un limite che verrebbe respinto', () => {
       // IL GUASTO, misurato il 2026-09-01: `gallery/upload` mandava

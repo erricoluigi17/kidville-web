@@ -958,3 +958,68 @@ describe('verifyVideoOutput — giro completo con ffmpeg vero', () => {
     })
   }, 45_000)
 })
+
+/* ──────────────────────────────────────────────────────────────────────────────
+ * 🔴 IL DIFETTO CHE HA TROVATO IL PRIMO VIDEO VERO, 2026-09-18.
+ *
+ * Un `.mov` girato con un iPhone, 256 MB, caricato in Galleria mezz'ora dopo il
+ * rilascio. La MicroVM si è aperta, la build pinnata si è scaricata, `ffmpeg` ha
+ * convertito per due minuti e cinquantaquattro secondi e ha chiuso con il suo
+ * riepilogo — «video:134586KiB audio:3254KiB, muxing overhead 0,10%», cioè
+ * RIUSCITO. Poi `verifyVideoOutput` ha risposto `OUTPUT_VIDEO_INVALID`.
+ *
+ * L'uscita, scaricata e sondata a mano, era perfetta: una traccia h264, una aac,
+ * `attached_pic=0`, 1080×1920, yuv420p. Le mancava una cosa sola: il campo
+ * `sample_aspect_ratio`, che il verificatore pretendeva uguale a `'1:1'`.
+ *
+ * NON È UN'ANOMALIA DEL FILE, È COME FUNZIONA MP4. Quando i pixel sono quadrati il
+ * muxer non scrive l'atomo `pasp`, perché 1:1 è il valore predefinito e non c'è
+ * niente da dichiarare; `ffprobe` quindi non riporta il campo affatto. Pretenderlo
+ * significa pretendere che l'encoder scriva ciò che non ha motivo di scrivere —
+ * ED È ESATTAMENTE IL GEMELLO del difetto sul `color_range` chiuso il giorno
+ * prima. Ne abbiamo corretto uno e non abbiamo cercato l'altro.
+ *
+ * PERCHÉ NÉ I 21 CASI SINTETICI NÉ LE FIXTURE VERE L'HANNO VISTO. I sintetici
+ * scrivono `sample_aspect_ratio: '1:1'` in ogni caso — è nel loro modello, riga 52.
+ * E le fixture vere nascono da `testsrc2`, che il SAR lo DICHIARA: l'uscita lo
+ * eredita e il confronto passa. Misurato il 2026-09-18 provando a costruire una
+ * fixture che lo omettesse — `.ts`, `.mkv`, `.avi`, `setsar=0`, e perfino
+ * `h264_metadata=sample_aspect_ratio=0/1` su `.mov`: la build locale lo scrive
+ * SEMPRE. Un iPhone no.
+ *
+ * È la lezione che questi casi portano: una fixture generata resta una fixture.
+ * Eseguire ffmpeg davvero ha chiuso il divario fra «il parser legge il JSON» e
+ * «ffmpeg produce quel JSON», ma non quello fra la nostra sorgente sintetica e il
+ * telefono di un genitore.
+ * ────────────────────────────────────────────────────────────────────────────── */
+describe('il SAR assente di un video vero', () => {
+  it('accetta un\u2019uscita che NON dichiara `sample_aspect_ratio`: assente significa quadrato', () => {
+    const uscita = outputProbe()
+    delete (uscita.streams[0] as { sample_aspect_ratio?: string }).sample_aspect_ratio
+
+    expect(
+      verifyVideoOutput(source, uscita, 80_000_000, decoded),
+    ).toMatchObject({ ok: true })
+  })
+
+  it('accetta anche le due forme con cui ffprobe dice \u00abnon saprei\u00bb', () => {
+    for (const valore of ['0:1', 'N/A']) {
+      const uscita = outputProbe()
+      uscita.streams[0].sample_aspect_ratio = valore
+      expect(
+        verifyVideoOutput(source, uscita, 80_000_000, decoded),
+        `${valore} non \u00e8 una dichiarazione di pixel non quadrati: \u00e8 l\u2019assenza di una dichiarazione`,
+      ).toMatchObject({ ok: true })
+    }
+  })
+
+  it('RESPINGE invece un SAR dichiarato e NON quadrato, che \u00e8 la cosa da respingere', () => {
+    // L'allentamento dev'essere stretto: 4:3 su pixel rettangolari deforma
+    // l'immagine, e un lettore che lo onora mostrerebbe un video schiacciato.
+    const uscita = outputProbe()
+    uscita.streams[0].sample_aspect_ratio = '4:3'
+    expect(
+      verifyVideoOutput(source, uscita, 80_000_000, decoded),
+    ).toEqual({ ok: false, code: 'OUTPUT_VIDEO_INVALID' })
+  })
+})

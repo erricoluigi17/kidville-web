@@ -7,6 +7,7 @@ import { rispostaAllegatoNonCaricato } from '@/lib/allegati/risposte';
 import { withRoute } from '@/lib/logging/with-route';
 import { logErrore, logEvento } from '@/lib/logging/logger';
 import { analizzaContenutoVideo, MESSAGGIO_VIDEO_NON_CONVERTIBILE } from '@/lib/media/codec-sniff';
+import { rifiutoLegacyVideo, videoLegacyDaFermare } from '@/lib/media/blocco-legacy-video';
 import { BUCKET_GALLERIA, TTL_FIRMA_GALLERIA_S } from '@/lib/gallery/storage';
 
 const postFormSchema = z.object({
@@ -30,6 +31,23 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
         // Il tipo del File elaborato può portare un suffisso codec (es.
         // `video/webm;codecs=vp9`): si normalizza al solo tipo base.
         const contentType = (file.type || 'application/octet-stream').split(';')[0].trim();
+
+        // ── IL PERCORSO VECCHIO DEI VIDEO, quando sarà ora, si chiude qui ──────────
+        // Questa è LA porta delle shell native col bundle in cache: il telefono
+        // comprime il filmato da sé e lo spedisce come un file qualunque. Con la
+        // pipeline nuova viva quel file non lo convertirebbe nessuno — resterebbe in
+        // archivio come un video che la maestra crede caricato e che nessun genitore
+        // vedrà mai. Il rifiuto arriva PRIMA di `arrayBuffer()`: non ha senso tirarsi
+        // in memoria quaranta megabyte per poi buttarli.
+        //
+        // ⚠️ OGGI QUESTO RAMO È SPENTO, e l'interruttore è uno solo:
+        // `src/lib/media/interruttore-legacy-video.ts`. Accenderlo prima che la
+        // pipeline nuova funzioni lascerebbe tutti senza NESSUN modo di caricare un
+        // video. Le immagini non passano di qui: `videoLegacyDaFermare` guarda il mime.
+        if (videoLegacyDaFermare(contentType)) {
+            return rifiutoLegacyVideo('galleria', 'gallery/upload:POST', contentType, file.size);
+        }
+
         const fileBuffer = await file.arrayBuffer();
 
         // DIFESA IN PROFONDITÀ. Il client converte HEVC/.mov prima di caricare; ma un client
@@ -126,7 +144,23 @@ export const POST = withRoute('gallery/upload:POST', async (request: Request) =>
                             'image/jpeg', 'image/png', 'image/webp',
                             'video/mp4', 'video/webm'
                         ],
-                        fileSizeLimit: 52428800 // 50MB — quanto il tetto globale del progetto
+                        // IL TETTO DEL BUCKET, che dal 2026-09-18 NON è più il tetto
+                        // di ciò che passa da questa porta. Sono due numeri diversi e
+                        // dicono due cose diverse:
+                        //  · 2.000.000.000 è quanto l'OGGETTO può pesare, ed esiste
+                        //    per il video convertito che il finalizer della Galleria
+                        //    (`POST /api/gallery` con `video_intent_id`) copia dentro
+                        //    con la chiave di servizio — mai un browser;
+                        //  · i 50 MiB di `TETTO_GALLERIA_BYTE` restano il tetto di ciò
+                        //    che il BROWSER spedisce da sé, e vivono nello `z.max()`
+                        //    di `gallery/upload-url` e nel `MAX_SIZE` del client.
+                        // Questo numero deve coincidere con quello della migrazione
+                        // `20260918104500_bucket_gallery_tetto_video.sql`: è la ricetta
+                        // con cui il bucket NASCEREBBE in un ambiente nuovo, e se
+                        // dicesse meno quell'ambiente partirebbe quaranta volte più
+                        // stretto della produzione — con la pipeline video morta dentro
+                        // e nessuno a dirlo. Lo verifica `bucket-storage-dichiarati`.
+                        fileSizeLimit: 2000000000
                     });
                     logEvento('storage', esitoCreazione.error ? 'error' : 'info', {
                         operazione: 'gallery/upload:POST',

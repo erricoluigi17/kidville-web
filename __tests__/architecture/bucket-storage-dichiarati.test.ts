@@ -355,6 +355,18 @@ function mimeBucketNelCodice(rel: string): string[] {
   return [...m[1].matchAll(/'([a-z]+\/[a-z0-9.+-]+)'/gi)].map((x) => x[1])
 }
 
+/**
+ * Il numero dietro `const <NOME> = 1_234` in un sorgente (commenti esclusi).
+ *
+ * Gli underscore si tolgono: `2_000_000_000` e `2000000000` sono lo stesso numero
+ * e devono confrontarsi, altrimenti il lock diventerebbe una regola sulla
+ * PUNTEGGIATURA — verde o rosso a seconda di come qualcuno ha scritto una cifra.
+ */
+function costanteNumerica(rel: string, nome: string): number | null {
+  const m = senzaCommenti(sorgente(rel)).match(new RegExp(`${nome}\\s*=\\s*([\\d_]+)`))
+  return m ? Number(m[1].replaceAll('_', '')) : null
+}
+
 /** I letterali MIME dentro `const <NOME> = [ … ]` (commenti esclusi). */
 function mimeNelCodice(rel: string, costante: string): string[] {
   const m = senzaCommenti(sorgente(rel)).match(
@@ -506,6 +518,34 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
     expect(STATEMENT.length).toBeGreaterThan(100)
   })
 
+  it('il tetto globale non è dichiarato due volte con due numeri diversi', () => {
+    // LA SECONDA DICHIARAZIONE, e il giorno in cui è scaduta. `gallery-signed-url`
+    // simula lo Storage rifiutando con `EntityTooLarge` qualunque `fileSizeLimit`
+    // sopra il tetto globale: per farlo tiene una copia di QUESTO numero. Il
+    // 2026-09-16 il globale è passato da 52.428.800 a 2.000.000.000 e quella copia
+    // non l'ha seguito — per due giorni ha simulato uno Storage più stretto di
+    // quello vero, senza che niente diventasse rosso, perché nessun bucket
+    // dichiarava più di 50 MiB. Si è visto solo il 18/09, quando `gallery` è salito
+    // a 2 GB per i video.
+    //
+    // Non si è spostata la costante in un file comune: `bucket-storage-dichiarati`
+    // è un lock che legge i SORGENTI come testo, e farlo dipendere da un modulo
+    // condiviso con i test funzionali gli darebbe un import che oggi non ha. Si
+    // confrontano le due dichiarazioni — che è ciò che serviva: adesso la seconda
+    // non può più invecchiare in silenzio.
+    const gemella = costanteNumerica('__tests__/api/gallery-signed-url.test.ts', 'TETTO_GLOBALE_B')
+    expect(gemella, '`TETTO_GLOBALE_B` deve esistere in `__tests__/api/gallery-signed-url.test.ts`.').not.toBeNull()
+    expect(
+      gemella,
+      `\`gallery-signed-url.test.ts\` simula lo Storage con un tetto globale di ${gemella} byte, ` +
+        `questo lock ne dichiara ${TETTO_GLOBALE_STORAGE_B}. Uno dei due è invecchiato: quel file ` +
+        `respinge con \`EntityTooLarge\` ogni configurazione sopra il SUO numero, quindi se è più ` +
+        `basso fa fallire bucket che in produzione nascerebbero benissimo — e se è più alto lascia ` +
+        `passare configurazioni che in produzione verrebbero respinte per intero, \`public\` compreso. ` +
+        `Rifai la GET \`/v1/projects/<ref>/config/storage\` e allinea entrambe le righe.`,
+    ).toBe(TETTO_GLOBALE_STORAGE_B)
+  })
+
   it('i commenti del codice non vengono scambiati per valori (sanity)', () => {
     // Se `senzaCommenti` smettesse di funzionare, ogni confronto «codice contro
     // migrazione» qui sotto potrebbe leggere un numero citato in una frase invece
@@ -534,14 +574,173 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
       ).not.toBeNull()
     })
 
-    it('il limite della migrazione è lo stesso che dichiara la route', () => {
-      const codice = limiteNelCodice('src/app/api/gallery/upload/route.ts')
-      expect(codice, 'La route deve dichiarare `fileSizeLimit`.').not.toBeNull()
+    // ═════════════════════════════════════════════════════════════════════════
+    // I TRE TETTI DELLA GALLERIA — e perché dal 2026-09-18 sono TRE e non uno
+    // ═════════════════════════════════════════════════════════════════════════
+    //
+    // Fino al 17 settembre `gallery` aveva un numero solo, 52.428.800, ripetuto in
+    // tre posti che dicevano tutti la stessa cosa: qui bastava confrontarli a due a
+    // due e pretendere l'uguaglianza. Con i video quel numero si SDOPPIA, e i tre
+    // posti smettono di descrivere la stessa regola:
+    //
+    //   ① quanto può pesare una FOTO — cioè quanto il BROWSER può spedire da sé.
+    //      Resta 50 MiB, e il suo valore sta nell'essere PICCOLO;
+    //   ② quanto può pesare un VIDEO — l'uscita già convertita e verificata, che
+    //      nessun browser spedisce: la copia il finalizer con la chiave di servizio;
+    //   ③ quanto il BUCKET permette al massimo, che è l'ultima rete e vale per
+    //      TUTTE le porte, comprese quelle che ancora non esistono.
+    //
+    // ⚠️ IL MODO SBAGLIATO DI FARLE PASSARE, scritto qui perché è la tentazione che
+    // si presenta per prima: allentare i due confronti in `<=` e chiamarla coerenza.
+    // Un `<=` senza le uguaglianze accanto è verde su qualunque combinazione — il
+    // tetto delle foto portato a 2 GB, il bucket allargato a piacere, la ricetta del
+    // `createBucket` rimasta indietro di quaranta volte — e un lock che non può
+    // diventare rosso non sta collaudando niente. Le tre prove qui sotto sono tre
+    // perché le tre affermazioni sono tre, e ciascuna si può falsificare da sola.
+    it('① la FOTO: quanto il BROWSER può spedire da sé, e non è il tetto del bucket', () => {
+      const tettoFoto = costanteNumerica('src/lib/gallery/limiti.ts', 'TETTO_GALLERIA_BYTE')
+      expect(tettoFoto, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`.').not.toBeNull()
+
+      // Il client è il posto dove lo stesso numero ha un effetto VISIBILE: il file
+      // viene rifiutato prima di partire. Se i due divergono, uno dei due mente —
+      // e la differenza è esattamente la fascia di file che l'applicazione lascia
+      // scegliere e il server poi rifiuta (o viceversa).
+      //
+      // ⚠️ LA LEZIONE DEL 2026-09-17, che questa prova ha ereditato da «il tetto che
+      // il client applica è quello della Galleria» (assorbita qui il 18/09, per non
+      // tenere due prove sullo stesso confronto): fino a quel giorno il tetto del
+      // client si confrontava con quello GLOBALE dello Storage. Erano lo stesso
+      // numero per coincidenza, non per una regola — e il giorno in cui il globale è
+      // salito a 2 GB per i video, quel confronto avrebbe preteso dal client un
+      // tetto di 2 GB, cioè avrebbe chiesto di ALLARGARE il client per far tacere un
+      // lock. È esattamente il verso in cui un lock non deve mai spingere, ed è la
+      // ragione per cui qui il confronto è con `TETTO_GALLERIA_BYTE` e il globale
+      // resta soltanto un limite superiore.
+      const client = sorgente('src/app/(dashboard)/teacher/gallery/page.tsx').match(
+        /MAX_SIZE\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/,
+      )
+      expect(client, 'Il client deve dichiarare `MAX_SIZE = N * 1024 * 1024`.').not.toBeNull()
       expect(
-        limiteDichiarato('gallery'),
-        `La route accetta ${codice} byte, la migrazione ne dichiara altri: il file che sta ` +
-          'nel mezzo passa i controlli dell\'applicazione e viene respinto dallo Storage.',
-      ).toBe(codice)
+        Number(client![1]) * 1024 * 1024,
+        'Il tetto che il client applica e `TETTO_GALLERIA_BYTE` non coincidono più: una ' +
+          'maestra vedrà rifiutato dal server un file che l\'applicazione le ha lasciato ' +
+          'scegliere — oppure il contrario.',
+      ).toBe(tettoFoto)
+
+      // E la porta che FIRMA i caricamenti diretti deve usare QUELLA costante, non
+      // un numero suo: è il `.max()` dello zod, cioè l'unico punto in cui questo
+      // tetto ha davvero un effetto lato server. Un letterale lì sarebbe una quarta
+      // dichiarazione dello stesso numero, invisibile a tutti e tre i confronti.
+      expect(
+        /\.max\(\s*TETTO_GALLERIA_BYTE\b/.test(
+          senzaCommenti(sorgente('src/app/api/gallery/upload-url/route.ts')),
+        ),
+        'La porta che firma i caricamenti diretti non usa `TETTO_GALLERIA_BYTE` nel suo ' +
+          '`.max()`: il tetto delle foto è tornato a essere un numero scritto a mano, e ' +
+          'nessuno dei confronti di questo file lo vedrebbe più cambiare.',
+      ).toBe(true)
+
+      // STRETTAMENTE sotto il tetto del bucket, e il `toBeLessThan` è voluto. Il
+      // valore di questo numero sta nell'essere piccolo: è ciò che impedisce a un
+      // telefono di riversare un gigabyte dentro il bucket delle foto dei bambini
+      // senza che nessuno l'abbia convertito, verificato o guardato. Portarlo pari
+      // al bucket «per semplificare» sarebbe un allargamento di quaranta volte
+      // della porta rivolta al browser, ed è la cosa che questa riga deve rendere
+      // impossibile da fare in silenzio: chi lo volesse davvero, riscriva questa
+      // prova — che è un gesto visibile in revisione.
+      expect(
+        tettoFoto!,
+        'Il tetto delle FOTO ha raggiunto quello del bucket. Sono due regole diverse: il ' +
+          'bucket è largo per il video che il finalizer ci copia dentro con la chiave di ' +
+          'servizio, non per ciò che un browser può spedire.',
+      ).toBeLessThan(limiteDichiarato('gallery')!)
+      expect(
+        tettoFoto!,
+        'Il tetto della Galleria supera il tetto globale dello Storage: Supabase applica ' +
+          '`min(bucket, globale)` e quel numero non entrerebbe mai in vigore.',
+      ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
+    })
+
+    it('② il VIDEO: quanto pesa l’uscita convertita, ed è il numero della pipeline', () => {
+      const tettoVideo = costanteNumerica('src/lib/gallery/limiti.ts', 'TETTO_VIDEO_GALLERIA_BYTE')
+      expect(
+        tettoVideo,
+        '`TETTO_VIDEO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`: è il ' +
+          'tetto di ciò che il finalizer copia dentro `gallery`.',
+      ).not.toBeNull()
+
+      // Non è un numero scelto in galleria: è quello che la pipeline si dà
+      // sull'ingresso e che il database impone all'uscita (`video_jobs_output_chk`,
+      // `video_job_ready`). Se divergessero, un job arriverebbe a `ready` — minuti
+      // di conversione già pagati — e verrebbe respinto al momento della copia, che
+      // è il posto più caro in cui scoprire un limite.
+      const pipeline = costanteNumerica('src/lib/media/video/limiti.ts', 'MAX_VIDEO_INPUT_BYTES')
+      expect(pipeline, '`MAX_VIDEO_INPUT_BYTES` deve esistere in `src/lib/media/video/limiti.ts`.').not.toBeNull()
+      expect(
+        tettoVideo,
+        'Il tetto dei video della Galleria e quello della pipeline non coincidono più: la ' +
+          'differenza è la fascia di video che vengono convertiti per intero e poi rifiutati ' +
+          'al momento di entrare in galleria.',
+      ).toBe(pipeline)
+
+      // Una costante che nessuno APPLICA è decorazione: il lock la vedrebbe
+      // coerente per sempre mentre il codice non la guarda. Il finalizer la usa per
+      // rifiutare PRIMA di spedire i byte.
+      expect(
+        />\s*TETTO_VIDEO_GALLERIA_BYTE\b/.test(
+          senzaCommenti(sorgente('src/lib/gallery/video-pubblicazione.ts')),
+        ),
+        'Il finalizer non confronta più niente con `TETTO_VIDEO_GALLERIA_BYTE`: la costante ' +
+          'è diventata un numero che nessuno applica, e il rifiuto arriverebbe dallo Storage ' +
+          'alla fine del trasferimento invece che prima.',
+      ).toBe(true)
+
+      expect(
+        tettoVideo!,
+        'Un video ammesso pesa più di quanto il bucket accetti: la copia del finalizer ' +
+          'verrebbe respinta dopo che la conversione è già stata pagata.',
+      ).toBeLessThanOrEqual(limiteDichiarato('gallery')!)
+    })
+
+    it('③ il BUCKET: ESATTAMENTE il più grande dei due, e la ricetta della route lo ripete', () => {
+      const bucket = limiteDichiarato('gallery')
+      const tettoFoto = costanteNumerica('src/lib/gallery/limiti.ts', 'TETTO_GALLERIA_BYTE')
+      const tettoVideo = costanteNumerica('src/lib/gallery/limiti.ts', 'TETTO_VIDEO_GALLERIA_BYTE')
+      expect(bucket).not.toBeNull()
+      expect(tettoFoto).not.toBeNull()
+      expect(tettoVideo).not.toBeNull()
+
+      // LA RICETTA DEL `createBucket` è la seconda dichiarazione dello stesso
+      // tetto, e vale nell'unico ambiente in cui la migrazione non è (ancora)
+      // passata: uno nuovo. Se dicesse meno, quell'ambiente nascerebbe più stretto
+      // della produzione e nessuno lo saprebbe finché un video non viene respinto.
+      const ricetta = limiteNelCodice('src/app/api/gallery/upload/route.ts')
+      expect(ricetta, 'La route deve dichiarare `fileSizeLimit`.').not.toBeNull()
+      expect(
+        ricetta,
+        `La migrazione dichiara ${bucket} byte e il \`createBucket\` della route ${ricetta}: ` +
+          'in un ambiente nuovo il bucket nascerebbe con il secondo numero, e il file che sta ' +
+          'nel mezzo passerebbe i controlli dell\'applicazione per farsi respingere dallo Storage.',
+      ).toBe(bucket)
+
+      // NÉ PIÙ STRETTO NÉ PIÙ LARGO del più grande dei due tetti dichiarati.
+      // `toBe` e non `toBeGreaterThanOrEqual`: il bucket è l'ultima rete e vale per
+      // tutte le porte, anche quelle che non esistono ancora. Un bucket più largo
+      // del necessario non abilita niente e toglie una rete — è esattamente la
+      // ragione per cui questo aumento era stato rimandato dal 16 al 18 settembre.
+      expect(
+        bucket,
+        `Il tetto del bucket (${bucket}) non è il più grande fra il tetto delle foto ` +
+          `(${tettoFoto}) e quello dei video (${tettoVideo}). Se è più piccolo, qualcosa che ` +
+          'il repo dichiara ammesso viene respinto dallo Storage; se è più grande, il bucket ' +
+          'accetta silenziosamente file che nessuna regola scritta autorizza.',
+      ).toBe(Math.max(tettoFoto!, tettoVideo!))
+
+      expect(
+        bucket!,
+        `Il tetto del bucket supera quello globale di ${TETTO_GLOBALE_STORAGE_B}: Supabase ` +
+          'applica `min(bucket, globale)` e quel numero non entrerebbe mai in vigore.',
+      ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
     })
 
     it('i tipi ammessi dal bucket sono ESATTAMENTE quelli che dichiara la route', () => {
@@ -572,16 +771,6 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
           'un file firmato qui verrebbe respinto dallo Storage DOPO essere stato spedito per ' +
           'intero — su rete mobile, dopo decine di megabyte.',
       ).toEqual(firma)
-    })
-
-    it('il tetto usato per firmare è quello del bucket, non un numero a parte', () => {
-      const m = senzaCommenti(sorgente('src/lib/gallery/limiti.ts')).match(/TETTO_GALLERIA_BYTE\s*=\s*([\d_]+)/)
-      expect(m, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`.').not.toBeNull()
-      expect(
-        Number(m![1].replace(/_/g, '')),
-        'Il tetto con cui si firmano i caricamenti diretti diverge da quello del bucket: ' +
-          'la differenza è esattamente la fascia di file che vengono accettati e poi respinti.',
-      ).toBe(limiteDichiarato('gallery'))
     })
 
     // ── LA PREMESSA DELLA NORMALIZZAZIONE, dal 2026-09-09 ────────────────────
@@ -751,47 +940,6 @@ describe('lock architettura · i bucket dello storage sono dichiarati in migrazi
         codice,
         `La route dichiara ${codice} byte, sopra il tetto globale di ` +
           `${TETTO_GLOBALE_STORAGE_B}: la chiamata allo Storage verrebbe respinta per intero.`,
-      ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
-    })
-
-    it('il tetto che il client applica è quello della Galleria (controllo incrociato)', () => {
-      // Una costante scritta in un test è una dichiarazione, non una misura: se
-      // nessuno la confronta con niente, invecchia in silenzio come è invecchiato
-      // il «200 MB» per tre mesi. Il client è il terzo posto dove lo stesso numero
-      // vive, e lì ha un effetto visibile (il video viene rifiutato prima di
-      // partire): se i due divergono, uno dei due sta mentendo.
-      //
-      // Fino al 2026-09-17 questo caso confrontava `MAX_SIZE` con il tetto GLOBALE
-      // dello Storage. Erano lo stesso numero per coincidenza, non per una regola:
-      // il giorno in cui il globale è salito a 2 GB, il confronto avrebbe preteso
-      // dal client un tetto di 2 GB — cioè avrebbe chiesto di ALLARGARE il client
-      // per far tacere un lock. Il numero che ha davvero un effetto sul client è
-      // `TETTO_GALLERIA_BYTE`: è quello che la route usa come `.max()` quando firma
-      // il caricamento. Il tetto globale resta un limite superiore, e come tale è
-      // verificato dal caso qui sopra.
-      const client = sorgente('src/app/(dashboard)/teacher/gallery/page.tsx').match(
-        /MAX_SIZE\s*=\s*(\d+)\s*\*\s*1024\s*\*\s*1024/,
-      )
-      expect(client, 'Il client deve dichiarare `MAX_SIZE = N * 1024 * 1024`.').not.toBeNull()
-
-      const g = senzaCommenti(sorgente('src/lib/gallery/limiti.ts')).match(
-        /TETTO_GALLERIA_BYTE\s*=\s*([\d_]+)/,
-      )
-      expect(g, '`TETTO_GALLERIA_BYTE` deve esistere in `src/lib/gallery/limiti.ts`.').not.toBeNull()
-      const tettoGalleria = Number(g![1].replaceAll('_', ''))
-
-      expect(
-        Number(client![1]) * 1024 * 1024,
-        'Il tetto che il client applica ai video e `TETTO_GALLERIA_BYTE` non coincidono ' +
-          'più: la route usa `TETTO_GALLERIA_BYTE` come `.max()` quando firma il ' +
-          'caricamento, quindi una maestra vedrà rifiutato dal server un file che ' +
-          'l\'applicazione le ha lasciato scegliere — oppure il contrario, un file ' +
-          'scartato dall\'applicazione che il server avrebbe accettato.',
-      ).toBe(tettoGalleria)
-      expect(
-        tettoGalleria,
-        'Il tetto della Galleria supera il tetto globale dello Storage: Supabase applica ' +
-          '`min(bucket, globale)` e quel numero non entrerebbe mai in vigore.',
       ).toBeLessThanOrEqual(TETTO_GLOBALE_STORAGE_B)
     })
   })

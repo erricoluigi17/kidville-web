@@ -36,14 +36,64 @@ export const MIME_GALLERIA = [
 ] as const
 
 /**
- * Il tetto vero: 50 MB.
+ * QUANTO IL BROWSER PUÒ SPEDIRE DA SÉ: 50 MiB.
  *
- * ⚠️ È quello GLOBALE del progetto, non un numero scelto qui. Supabase applica
- * `min(limite del bucket, tetto globale)`, e dichiararne uno più alto fa rifiutare
- * l'INTERA chiamata di configurazione con `EntityTooLarge` — è il difetto misurato il
+ * ⚠️ FINO AL 2026-09-17 QUI C'ERA SCRITTO CHE QUESTO NUMERO È IL TETTO GLOBALE DEL
+ * PROGETTO. Non lo è più, ed è la parte che va letta invece di saltata: il 16
+ * settembre il tetto globale è salito a 2.000.000.000 per far entrare gli originali
+ * video, e questo è rimasto dov'era — per scelta, non per dimenticanza. I due numeri
+ * erano uguali per coincidenza, e da quel giorno dicono cose diverse.
+ *
+ * Che cosa dice OGGI, in una riga: è il `.max()` con cui `gallery/upload-url` firma
+ * un caricamento diretto, ed è il `MAX_SIZE` che il client applica prima ancora di
+ * partire. Cioè il tetto della porta rivolta al BROWSER, l'unica che un telefono
+ * possa usare.
+ *
+ * Non si alza «già che ci siamo»: il suo valore sta nell'essere piccolo. È ciò che
+ * impedisce a un telefono di riversare un gigabyte dentro il bucket delle foto dei
+ * bambini senza che nessuno l'abbia convertito, verificato o guardato — e il lock
+ * `bucket-storage-dichiarati` lo pretende STRETTAMENTE sotto il tetto del bucket,
+ * proprio perché quel giorno arrivi in revisione e non di soppiatto.
+ *
+ * Resta comunque vero, e vale per tutti e tre i numeri di questo file: Supabase
+ * applica `min(limite del bucket, tetto globale)`, e una `createBucket`/
+ * `updateBucket` che dichiarasse più del globale verrebbe respinta INTERA con
+ * `EntityTooLarge`, senza applicare nemmeno `public` — è il difetto misurato il
  * 2026-09-01, per cui la richiusura automatica del bucket non è mai avvenuta.
  */
 export const TETTO_GALLERIA_BYTE = 52_428_800
+
+/**
+ * QUANTO PUÒ PESARE UN VIDEO CONVERTITO: 2 GB.
+ *
+ * ⚠️ NON È «il tetto della galleria alzato»: è un SECONDO tetto, accanto a quello
+ * qui sopra, e i due dicono cose diverse.
+ *
+ *  · `TETTO_GALLERIA_BYTE` (50 MiB) è quanto il BROWSER può spedire da sé. Lo usa
+ *    `gallery/upload-url` come `.max()` quando firma un caricamento diretto, e lo
+ *    applica il client prima ancora di partire. Resta dov'è, e non si alza «già
+ *    che ci siamo»: è ciò che impedisce a un telefono di riversare un gigabyte
+ *    nel bucket senza che nessuno l'abbia convertito, verificato o guardato.
+ *  · `TETTO_VIDEO_GALLERIA_BYTE` (2 GB) è quanto può pesare l'USCITA della
+ *    pipeline video — un MP4 H.264 già convertito, verificato e copiato dentro
+ *    `gallery` dal finalizer con la chiave di servizio. Nessun browser lo spedisce.
+ *
+ * Il tetto del BUCKET, che è una terza cosa ancora, deve valere il più grande dei
+ * due: lo dichiara la migrazione
+ * `20260918…_bucket_gallery_tetto_video.sql` e lo verifica
+ * `__tests__/architecture/bucket-storage-dichiarati.test.ts`, che dal 2026-09-18
+ * porta tre asserzioni separate invece di un numero solo. Un lock che le confonde
+ * smette di dire qualcosa di vero su entrambe.
+ *
+ * PERCHÉ PROPRIO 2.000.000.000, e non un numero scelto qui: è lo stesso tetto che
+ * la pipeline si dà sull'INGRESSO (`MAX_VIDEO_INPUT_BYTES`,
+ * `src/lib/media/video/limiti.ts`) e che il database impone all'uscita
+ * (`video_jobs_output_chk`, `video_job_ready`). Se i due divergessero, un job
+ * potrebbe arrivare a `ready` — 700 secondi di conversione già pagati — e poi
+ * trovarsi respinto dallo Storage al momento della copia, che è il posto più caro
+ * in cui scoprire un limite. Il lock lo confronta voce per voce.
+ */
+export const TETTO_VIDEO_GALLERIA_BYTE = 2_000_000_000
 
 /**
  * IL SOLO CONTAINER, senza i parametri che il produttore ci ha appeso.

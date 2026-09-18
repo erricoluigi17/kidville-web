@@ -206,3 +206,43 @@ Il gate locale non poteva vederlo: **`npm ci` in locale non lo esegue nessuno.**
 cartella pulita fuori dall'albero (con cinque agenti dentro, `node_modules` non si poteva
 spostare), verificato con `npm@10 ci --dry-run` — «added 1292 packages», uscita 0 — e con il
 conteggio delle voci sparite rispetto a `main`: 7 nel lock committato, **0** in quello rigenerato.
+
+## Ondate 2 e 3 — cosa è stato costruito, e i tre verdi muti dichiarati
+
+**Ondata 2** (chiusa, in `origin`): runner Sandbox · route `/api/video-uploads` + `vercel.json` ·
+uploader TUS ripartibile · chiusura della mappa dei bucket senza limite.
+
+**Ondata 3** (in corso): pubblicazione in Galleria + il 2 GB sui bucket di dominio · video come
+allegato di News · retention e cron · blocco delle app vecchie.
+
+### I verdi muti, scritti qui perché non spariscano
+
+Tre cose sono **verdi ma non dimostrate**, e chi riprende questo lavoro deve saperlo prima di
+fidarsi del gate:
+
+1. **Lo `SKIP LOCKED` di `video_job_next`.** Togliendolo dall'SQL i tredici test restano verdi:
+   PGlite ha una connessione sola e nessuna riga risulta mai contesa. Serve un Postgres vero con
+   due client, e va asserito che la seconda chiamata **non si metta in attesa** — è la latenza,
+   non l'esito, a distinguere `SKIP LOCKED` da un `FOR UPDATE` normale.
+2. **`Sandbox.get({name, resume})` che riaggancia una MicroVM con una conversione in corso, da
+   un'altra invocazione.** È l'ipotesi su cui poggia l'**intera** durevolezza del runner, e non
+   c'è modo di provarla senza un Sandbox vero.
+3. **`archivio-dexie.ts` non è mai eseguito contro un motore IndexedDB**: jsdom non ne ha e
+   `fake-indexeddb` non è installabile qui. Il suo test è un lock strutturale sulla stringa di
+   dichiarazione, non comportamentale.
+
+### I glob di `vercel.json`
+
+Non sono verificabili in locale — `next build` non legge quel file. Si misurano **solo su un
+preview deploy**, ed è lì che vanno guardati prima del merge. È il motivo per cui il file era
+stato tolto: un pattern `functions` senza match fa fallire la build su Vercel e blocca **ogni**
+deploy, compreso un hotfix su tutt'altro.
+
+### Due trappole che ci sono costate tempo, e che si ripresenteranno
+
+- **`vitest run` con un percorso inesistente lo ignora in silenzio ed esce 0.** Un agente ha
+  ricevuto da me tre percorsi, uno sbagliato, e ne sono girati due: se non avesse contato
+  `Test Files N passed` avrebbe riportato un PASS su un collaudo mai eseguito.
+- **`npm install` con npm 11 pota dal lock le voci che l'npm 10 della CI esige.** Entrambi i
+  check richiesti muoiono in otto secondi su `npm ci`, prima di qualunque test. Il gate locale
+  non può vederlo: `npm ci` in locale non lo esegue nessuno.

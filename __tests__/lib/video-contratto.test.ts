@@ -470,6 +470,10 @@ describe('contratto video · gli schemi zod tengono il bordo', () => {
             contentType: 'video/quicktime',
             dimensioneBloccoByte: 6 * 1024 * 1024,
           },
+          // Senza la firma il client ha un indirizzo e nessuna chiave: le coordinate da
+          // sole non aprono niente. Dichiarata nel contratto il 2026-09-18, dopo che la
+          // route la restituiva gia' e `z.object` la scartava in silenzio.
+          firma: 'firma-di-prova-non-e-un-segreto',
         },
       ],
     }

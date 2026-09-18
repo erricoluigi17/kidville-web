@@ -1,3 +1,4 @@
+import { CHIAVI_MESSAGGIO_VIDEO } from '@/lib/media/video/contratto';
 import it from '../../../messages/it/shared.json';
 import en from '../../../messages/en/shared.json';
 import { DEFAULT_LOCALE, isLocale, type Locale } from '@/i18n/config';
@@ -69,6 +70,27 @@ import { DEFAULT_LOCALE, isLocale, type Locale } from '@/i18n/config';
  * difetto di partenza, perché ricadrebbe sulla prosa italiana.
  */
 export const CODICI_ERRORE = {
+    /**
+     * I QUATTORDICI CODICI DELLA PIPELINE VIDEO, innestati invece che ribattuti.
+     *
+     * `src/lib/media/video/contratto.ts` li dichiara insieme alla mappa che li ricava dai
+     * sessantadue codici INTERNI della pipeline. Una seconda copia qui divergerebbe dalla
+     * prima il giorno in cui `verifyVideoOutput` aggiunge un ramo o una RPC un `code` — ed
+     * è il modo in cui un catalogo smette di dire la verità senza che nessun test lo noti.
+     *
+     * \u26a0\ufe0f PERCHE' LO SPREAD STA IN TESTA E NON IN FONDO, che è dove verrebbe naturale
+     * metterlo: `CHIAVI_MESSAGGIO_VIDEO` contiene anche `SEDE_DA_SPECIFICARE` —
+     * deliberatamente, perché i video non inventino un secondo diniego di sede accanto a
+     * quello che `rifiutoSede` manda già da 137 route. In fondo all'oggetto quella chiave
+     * sovrascriverebbe la voce esplicita qui sotto, e `tsc` lo dice con un TS2783
+     * («specified more than once, so this usage will be overwritten»).
+     *
+     * Misurato, non previsto — e la parte che conta è che ESLINT TACE: `no-dupe-keys`
+     * guarda le chiavi letterali, non gli spread. In fondo, il difetto lo prenderebbe solo
+     * il typecheck. In testa l'ordine si rovescia e a vincere è la riga esplicita, che è
+     * quella giusta.
+     */
+    ...CHIAVI_MESSAGGIO_VIDEO,
     /** 403 — la sede indicata (nel corpo o nel cookie) non è fra le proprie. */
     SEDE_NON_ACCESSIBILE: 'erroreSedeNonAccessibile',
     /** 400 — più sedi accessibili e nessuna indicata: l'operatore deve scegliere. */

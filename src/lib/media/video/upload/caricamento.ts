@@ -67,8 +67,20 @@ import {
 export interface DipendenzeCaricamentoVideo {
   archivio: ArchivioCaricamentiVideo
   /**
-   * Le intestazioni con cui autenticare l'upload — tipicamente
-   * `{ authorization: 'Bearer <access_token>' }`.
+   * Le intestazioni con cui autenticare l'upload: `{ 'x-signature': <firma> }`.
+   *
+   * \u26a0\ufe0f NON un `Bearer <access_token>`, e la distinzione non e' formale. L'upload
+   * TUS passa da `/upload/resumable/sign`, dove la firma la conia la ROUTE con la
+   * chiave di servizio (`POST /api/video-uploads`, campo `firma` accanto alle
+   * coordinate): il browser allo Storage non presenta mai un token di sessione, ed e'
+   * lo stesso motivo per cui nessuna policy su `storage.objects` e' necessaria — quella
+   * strada non attraversa RLS. La testata di
+   * `supabase/migrations/20260916190200_video_intent_lifecycle.sql` lo spiega con le misure.
+   *
+   * E' una FUNZIONE apposta: una firma scade, e alla ripresa ne serve una fresca.
+   * Riaprire l'intento con le stesse chiavi di idempotenza restituisce LO STESSO job
+   * con una firma nuova — e' il percorso deterministico su cui le due meta' di questa
+   * pipeline si incontrano.
    *
    * È una funzione, non un valore, e la differenza è tutto il punto: un
    * caricamento ripreso tre giorni dopo deve usare la sessione di ADESSO. Con un

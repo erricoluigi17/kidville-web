@@ -581,6 +581,23 @@ export const schemaEsitoAperturaIntentVideo = z.object({
         jobId: z.string().uuid(),
         chiaveIdempotenza: z.string().min(1).max(128),
         caricamento: schemaCoordinateCaricamentoVideo,
+        /**
+         * La firma con cui il browser autentica l'upload allo Storage, da presentare
+         * come intestazione `x-signature`. Senza, il client ha un indirizzo e nessuna
+         * chiave: le coordinate da sole non aprono niente.
+         *
+         * La conia la route con la CHIAVE DI SERVIZIO, non il browser: e' il motivo per
+         * cui nessuna policy su `storage.objects` serve — quella strada non attraversa
+         * RLS. E scade insieme a `scadenzaCaricamentoIl`, quindi alla ripresa di un
+         * upload interrotto se ne chiede una nuova riaprendo l'intento con le stesse
+         * chiavi di idempotenza, che restituisce lo STESSO job.
+         *
+         * Dichiarata qui il 2026-09-18: la route la restituiva gia', ma il contratto non
+         * la nominava, e `z.object` scarta in silenzio cio' che non dichiara. Un campo che
+         * il client deve usare e che lo schema non conosce e' una dipendenza che nessun
+         * test regge.
+         */
+        firma: z.string().min(1),
       }),
     )
     .min(1)

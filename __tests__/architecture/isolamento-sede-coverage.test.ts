@@ -2155,7 +2155,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 315 → 318 il 2026-09-16: telemetria fattura autenticata e i due
             // handler di revisione visibilità. Tutti passano da gate staff/sede o
             // pagamento/fattura, senza nuove esenzioni.
-            routeConServiceRole: 318,
+            routeConServiceRole: 320,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2309,7 +2309,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `routeConServiceRole`: si rimisura sul file unito.
             // 483 → 486 il 2026-09-16: telemetria fattura e GET/POST della
             // revisione visibilità descritti qui sopra.
-            handlerControllati: 486,
+            handlerControllati: 489,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

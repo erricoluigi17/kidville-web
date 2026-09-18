@@ -147,14 +147,39 @@ function valoriInsert(sql: string): Record<string, string> | null {
   return Object.fromEntries(colonne.map((c, i) => [c, valori[i]]))
 }
 
-/** L'ULTIMO limite di dimensione dichiarato in migrazione per quel bucket. */
+/**
+ * L'ULTIMO limite di dimensione dichiarato in migrazione per quel bucket.
+ *
+ * DENTRO UN SINGOLO STATEMENT VINCE IL PIÙ ALTO, non l'ultimo letto — ed è una
+ * correzione del 2026-09-18, trovata provando a falsificare questo stesso lock.
+ * Un `INSERT … ON CONFLICT DO UPDATE` dichiara il limite DUE volte, una per ramo:
+ * quello dell'`insert` vale in un ambiente nuovo (dove il bucket nasce da lì),
+ * quello del `do update` vale in produzione (dove il bucket esiste già). Fino a
+ * oggi la riga dell'`update` sovrascriveva quella dell'`insert` in una variabile
+ * sola, quindi **il ramo INSERT non veniva mai guardato**: un
+ * `values (…, 2000000001) on conflict do update set file_size_limit = 10485760`
+ * passava verde, e in un ambiente ricostruito da zero quel bucket sarebbe nato con
+ * 2 GB di tetto. Provato: il lock è rimasto verde su quella riga esatta.
+ *
+ * Non è un caso di scuola, ed è per questo che la correzione arriva adesso: dal
+ * 2026-09-17 l'`INSERT … ON CONFLICT` è la forma STANDARD con cui questo repo
+ * dichiara un bucket (otto su sedici la usano), cioè la forma in cui i due rami
+ * possono divergere è diventata la normale.
+ *
+ * `Math.max` è la lettura che non assolve: se uno dei due rami è più largo, il
+ * bucket è largo così in almeno un ambiente. È la stessa scelta che
+ * `visibilitaDichiarata()` fa da sempre sulla colonna `public` (`valori.some`),
+ * per la stessa ragione. Fra statement DIVERSI continua a vincere l'ultimo: quella
+ * è cronologia, una migrazione successiva sovrascrive la precedente.
+ */
 function limiteDichiarato(bucket: string): number | null {
   let ultimo: number | null = null
   for (const s of statementDelBucket(bucket)) {
+    const valori: number[] = []
     const inserito = valoriInsert(s.sql)?.file_size_limit
-    if (inserito && /^\d+$/.test(inserito)) ultimo = Number(inserito)
-    const assegnato = [...s.sql.matchAll(/file_size_limit\s*=\s*(\d+)/gi)]
-    if (assegnato.length) ultimo = Number(assegnato[assegnato.length - 1][1])
+    if (inserito && /^\d+$/.test(inserito)) valori.push(Number(inserito))
+    for (const m of s.sql.matchAll(/file_size_limit\s*=\s*(\d+)/gi)) valori.push(Number(m[1]))
+    if (valori.length) ultimo = Math.max(...valori)
   }
   return ultimo
 }
@@ -382,6 +407,10 @@ const ordinati = (v: string[]) => [...new Set(v)].sort()
  * bucket che non dichiarano un `file_size_limit` proprio non hanno più 50 MiB di
  * soffitto, ne hanno 2 GB. Misurati in produzione il 2026-09-17: sono tre su
  * sedici — `certificati-medici`, `credenziali`, `fatture`.
+ * Rimisurato il 2026-09-18 (`select count(*) filter (where file_size_limit is null),
+ * count(*) from storage.buckets`): **ancora tre su sedici, gli stessi tre** — perché
+ * la migrazione di ieri è scritta e non applicata. Il numero non è invecchiato; lo
+ * si è riletto invece di copiarlo, che è l'unico modo di saperlo.
  *
  * FATTO lo stesso giorno, ed è la ragione per cui questo paragrafo non è più una
  * cosa da fare: la migrazione
@@ -403,6 +432,38 @@ const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
 /**
  * I bucket classificati che NESSUNA migrazione pinna ancora — dichiarati uno per uno,
  * con la misura e la ragione, come `IN_CODA` in `migrazioni-complete.test.ts`.
+ *
+ * ─── DAL 2026-09-18 QUESTA MAPPA È VUOTA, E VUOTA È IL SUO PUNTO D'ARRIVO ──────
+ *
+ * Ci stavano gli ultimi cinque: `cassa-giustificativi`, `chat-allegati`, `pagelle`,
+ * `protocollo`, `sensitive_documents`. Li pinna
+ * `20260918025900_bucket_limite_esplicito_cassa_chat_pagelle_protocollo_sensitive.sql`,
+ * ai numeri che avevano già (10 MiB · 10 MiB · 10 MiB · 25 MiB · 15 MiB, riletti dal
+ * database e non copiati da un documento), quindi in produzione quella migrazione non
+ * cambia un solo valore. **Il guadagno non è un numero diverso: è che adesso il numero
+ * esiste in un file.** Prima era vero finché nessuno lo cambiava dalla console — la
+ * stessa garanzia che il 2026-09-16 non ha retto, quando il tetto globale è passato da
+ * 50 MiB a 2 GB per i video e si è portato dietro tre archivi che con i video non
+ * c'entravano niente.
+ *
+ * COSA SIGNIFICA PER CHI LEGGE OGGI: la prova qui sotto non ha più nessuna via
+ * d'uscita. Un bucket in `RISERVATI` o in `PUBBLICI_PER_DECISIONE` senza
+ * `file_size_limit` dichiarato in una migrazione è rosso, e l'unico modo di farlo
+ * tacere è riaprire questa mappa e scriverci una misura — che è un gesto visibile in
+ * revisione, non un silenzio.
+ *
+ * ⚠️ E QUELLO CHE UNA MAPPA VUOTA NON DIMOSTRA, detto prima che qualcuno ci si appoggi:
+ * la prova gemella qui sotto gira su zero voci, quindi è verde per costruzione. Non è
+ * lei a tenere in piedi la regola — è la prova principale, che adesso interroga tutti e
+ * sedici i bucket classificati e non ne assolve nessuno. La gemella serve il giorno in
+ * cui qualcuno riapre la mappa, e quel giorno pretenderà una ragione e un numero.
+ * ⚠️ E questo lock misura ciò che il repo DICHIARA, non ciò che il database ha:
+ * rimisurato il 2026-09-18, in produzione tre bucket su sedici hanno ancora
+ * `file_size_limit = NULL` (`certificati-medici`, `credenziali`, `fatture`), perché la
+ * migrazione di ieri è scritta e non applicata. Che sia anche applicata lo dice
+ * `IN_CODA` in `migrazioni-complete.test.ts`, non questo file.
+ *
+ * ─── il meccanismo, che resta qui per il giorno in cui servirà di nuovo ────────
  *
  * PERCHÉ ESISTE QUESTA MAPPA, e perché non è un'assoluzione. Fino al 2026-09-17 il caso
  * «limite non dichiarato» usciva dal controllo qui sotto con un `return`: il lock si
@@ -437,36 +498,7 @@ const TETTO_GLOBALE_STORAGE_B = 2_000_000_000
  * `migrazioni-complete.test.ts` con le migrazioni che nel frattempo sono state applicate.
  * Un'esenzione che sopravvive al suo motivo è un buco che nessuno ricorda di aver aperto.
  */
-const IN_ATTESA_DI_UN_LIMITE: Record<string, string | undefined> = {
-  'cassa-giustificativi':
-    'Misurato in produzione il 2026-09-17: `file_size_limit` = 10485760 (10 MiB). Il numero ' +
-    'è nel repo — `CASSA_MAX_MB = 10` in `src/lib/cassa/store.ts`, che lo passa al ' +
-    '`createBucket` della cassa — ma non in una migrazione: il bucket esiste, quindi quella ' +
-    'creazione non viene mai eseguita e in un ambiente nuovo il tetto dipende da chi apre ' +
-    'per primo la cassa. Va portato in migrazione.',
-  'chat-allegati':
-    'Misurato in produzione il 2026-09-17: `file_size_limit` = 10485760 (10 MiB). È il più ' +
-    'fragile dei cinque: nessun `createBucket` lo nomina (è nato dalla console), e l\'unico ' +
-    '10 MB scritto nel repo è la guardia `MAX_MB` di `src/app/api/chat/upload/route.ts` — ' +
-    'che vale per quella porta e per nessun\'altra. Se il bucket venisse ricreato altrove, ' +
-    'nascerebbe senza tetto. Va portato in migrazione.',
-  pagelle:
-    'Misurato in produzione il 2026-09-17: `file_size_limit` = 10485760 (10 MiB), lo stesso ' +
-    'che `src/lib/primaria/pagella-store.ts` passa al suo `createBucket`. Dentro ci sono le ' +
-    'pagelle in PDF dei bambini della primaria. Va portato in migrazione.',
-  protocollo:
-    'Misurato in produzione il 2026-09-17: `file_size_limit` = 26214400 (25 MiB), lo stesso ' +
-    'che `PROTOCOLLO_MAX_MB = 25` (`src/lib/protocolli/store.ts`) passa al `createBucket` ' +
-    'del registro di protocollo. È il più alto dei cinque perché qui finiscono scansioni ' +
-    'multipagina. Va portato in migrazione.',
-  sensitive_documents:
-    'Misurato in produzione il 2026-09-17: `file_size_limit` = 15728640 (15 MiB), lo stesso ' +
-    'che `src/app/api/primaria/fascicolo/route.ts` (`MAX_SIZE`) e `BUCKET_FASCICOLO_MAX` in ' +
-    '`banco-famiglia.ts` dichiarano. È il fascicolo sanitario del bambino, art. 9 GDPR, e ' +
-    'la migrazione del 2026-09-17 ha pinnato `certificati-medici` proprio a questo numero ' +
-    'perché per due campi su tre i due bucket sono alternativi sullo stesso allegato: ' +
-    'quando toccherà a questo, il valore è già deciso.',
-}
+const IN_ATTESA_DI_UN_LIMITE: Record<string, string | undefined> = {}
 
 describe('lock architettura · i bucket dello storage sono dichiarati in migrazione', () => {
   it('le migrazioni si leggono davvero (sanity)', () => {

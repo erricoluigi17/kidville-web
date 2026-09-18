@@ -141,6 +141,20 @@ const IN_CODA: Record<string, string> = {
         'limite, e qui nessun bucket nasce o cambia visibilit\u00e0); si rilegga invece ' +
         '`select id, file_size_limit from storage.buckets` per verificare che i tre numeri siano ' +
         'entrati davvero.',
+    '20260918025900_bucket_limite_esplicito_cassa_chat_pagelle_protocollo_sensitive.sql':
+        'Pinna il `file_size_limit` degli ultimi cinque bucket classificati che nessuna ' +
+        'migrazione dichiarava — `cassa-giustificativi` (10485760), `chat-allegati` (10485760), ' +
+        '`pagelle` (10485760), `protocollo` (26214400), `sensitive_documents` (15728640) — ai ' +
+        'numeri che hanno GIA\', riletti dal database il 2026-09-18 e non copiati. In produzione ' +
+        'non cambia un solo valore, ed e\' quello il punto: prima quei tetti vivevano solo nella ' +
+        'console, cioe\' erano veri finche\' nessuno li cambiava da li\' — la stessa garanzia che ' +
+        'il 2026-09-16 non ha retto. Con questa, `IN_ATTESA_DI_UN_LIMITE` resta VUOTA e nessun ' +
+        'bucket puo\' piu\' esistere senza un limite dichiarato. Dichiara anche `public = false`, ' +
+        'che per questi cinque nessuna migrazione aveva mai scritto: dentro ci sono allegati di ' +
+        'chat fra famiglie e maestre, pagelle, protocolli e fascicoli sanitari di minori. ' +
+        'Nessuno dei 950 oggetti misurati supera i 5 MiB. Scritta e NON applicata. QUANDO SI ' +
+        'APPLICA: non serve rigenerare `bucket-storage-snapshot.json`; si rilegga ' +
+        '`select id, file_size_limit, public from storage.buckets` per verificare i cinque numeri.',
     '20260918104500_bucket_gallery_tetto_video.sql':
         'Il bucket `gallery` sale da 52428800 a 2000000000 byte (V08): da oggi ci entra un video ' +
         'convertito, copiato col service-role dal finalizer di `POST /api/gallery`. L\'aumento era ' +

@@ -112,6 +112,29 @@ export interface DipendenzeRunner {
   /** L'indirizzo pubblico del watermark della Galleria. Non è firmato e non è un segreto. */
   urlWatermark: string
   tettoInvocazioneMs?: number
+  /**
+   * LA CONSEGNA DELL'USCITA NELL'AREA DI SOSTA DI NEWS, chiamata subito dopo che il
+   * database ha accettato il `ready`. Iniettata come tutto il resto: il runner è un
+   * modulo di media e non deve sapere che cosa sia una comunicazione: sa solo che per
+   * il canale `news` c'è un passo in più, e chi glielo dà è `index.ts`.
+   *
+   * ⚠️ PERCHÉ ESISTE, e non è un abbellimento. Il percorso News è costruito perché il
+   * video diventi un allegato di bozza ORDINARIO: l'editor scrive nell'articolo un
+   * link a `news_bozze/uploads/<proprietario>/<job>.mp4` — deterministico, ricavato
+   * senza chiedere niente a nessuno — e la promozione a pubblicato è quella che esiste
+   * già, senza una riga nuova in `media-bozza.ts`.
+   *
+   * Se questa consegna non avviene, quel link punta a un file che NON C'È. E il guasto
+   * non si ferma lì: `promuoviMediaBozza` legge il «not found» dello Storage come «già
+   * promosso» e scrive nella riga dell'articolo l'indirizzo pubblico di un oggetto
+   * inesistente. Risultato: un video rotto per le famiglie, scritto in silenzio, senza
+   * un errore da nessuna parte. Fino al 2026-09-18 questa porta non esisteva e
+   * `consegnaVideoInBozzaNews` non aveva NESSUN chiamante fuori dai test.
+   *
+   * Facoltativa perché un runner senza News resta un runner: se manca, il canale
+   * `news` lo dice a voce alta invece di fingere.
+   */
+  consegnaNews?: (job: JobVideo, percorsoUscita: string, bucketUscita: string) => Promise<{ ok: boolean; codice?: string }>
 }
 
 export type EsitoRunnerVideo =
@@ -378,6 +401,29 @@ async function concludi(
   if (!scritto.ok) {
     loggaEsito(job, 'error', { esito: 'esito-non-scritto', error_code: scritto.code })
     return { esito: 'esito-non-scritto', jobId: job.id, codice: scritto.code }
+  }
+
+  // ── LA CONSEGNA A NEWS ───────────────────────────────────────────────────
+  //
+  // Dopo il `ready` e non prima: si copia solo ciò che il database ha già accettato
+  // come pronto, altrimenti un fallimento della scrittura lascerebbe nell'area di
+  // sosta l'uscita di un job che non è mai esistito.
+  //
+  // Un fallimento qui NON annulla il `ready`: la conversione è riuscita davvero, e
+  // dichiararla fallita vorrebbe dire rifarla da capo per un guasto di una copia.
+  // Si grida, e la riconciliazione della retention conta gli allegati mancanti.
+  if (job.channel === 'news') {
+    if (!d.consegnaNews) {
+      loggaEsito(job, 'error', { esito: 'consegna-news-non-configurata' })
+    } else {
+      const consegna = await d.consegnaNews(job, percorsoUscita, BUCKET_LAVORAZIONE)
+      if (!consegna.ok) {
+        loggaEsito(job, 'error', {
+          esito: 'consegna-news-fallita',
+          ...(consegna.codice ? { error_code: consegna.codice } : {}),
+        })
+      }
+    }
   }
 
   // ⚠️ IL SUCCESSO SI LOGGA (AGENTS, regola 5). `galleria` e `news` sono entrambi in

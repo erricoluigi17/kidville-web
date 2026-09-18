@@ -1,6 +1,7 @@
 import { logEvento } from '@/lib/logging/logger'
 import { appUrl } from '@/lib/email/tema'
 import { createAdminClient } from '@/lib/supabase/server-client'
+import { consegnaVideoInBozzaNews } from '@/lib/news/video-allegato'
 
 import { archivioSupabase, codaSupabase, macchinaVercel } from './adattatori'
 import { eseguiUnJobVideo, type EsitoRunnerVideo } from './esegui'
@@ -155,5 +156,22 @@ export async function eseguiProssimoJobVideo(): Promise<
     // un indirizzo firmato. `appUrl()` è la definizione unica di quell'indirizzo —
     // riscriverla qui vorrebbe dire due sorgenti di verità per lo stesso URL.
     urlWatermark: `${appUrl().replace(/\/+$/, '')}/watermark.png`,
+    // Il passo in più del canale `news`: l'uscita viene copiata nell'area di sosta
+    // delle bozze, dove diventa un allegato ORDINARIO. È qui che il runner incontra
+    // le comunicazioni, e in nessun altro punto — `esegui.ts` sa solo che per quel
+    // canale c'è una porta da chiamare.
+    consegnaNews: async (job, percorsoUscita, bucketUscita) => {
+      const esito = await consegnaVideoInBozzaNews(
+        supabase,
+        {
+          id: job.id,
+          ownerId: job.owner_id,
+          bucketUscita,
+          percorsoUscita,
+        },
+        'video-runner',
+      )
+      return esito.ok ? { ok: true } : { ok: false, codice: esito.codice }
+    },
   })
 }

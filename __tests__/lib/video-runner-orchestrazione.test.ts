@@ -699,3 +699,90 @@ describe('runner video · la conversione che dura più di un’invocazione', () 
     expect(s.avviati).toEqual([])
   })
 })
+
+describe('runner video · la consegna a News', () => {
+  /*
+   * Perché questi quattro casi esistono: fino al 2026-09-18
+   * `consegnaVideoInBozzaNews` non aveva NESSUN chiamante fuori dai test. L'editor
+   * delle comunicazioni scrive nell'articolo un link deterministico a
+   * `news_bozze/uploads/<proprietario>/<job>.mp4`, e senza la consegna quel link
+   * punta a un file che non c'è. Il guasto non si ferma lì: `promuoviMediaBozza`
+   * legge il «not found» dello Storage come «già promosso» e scrive nella riga
+   * l'indirizzo pubblico di un oggetto inesistente — un video rotto per le
+   * famiglie, scritto in silenzio.
+   */
+
+  it('per il canale `news` consegna l’uscita, DOPO che il database ha accettato il pronto', async () => {
+    const ordine: string[] = []
+    const c = codaFinta({ prossimo: { ok: true, job: job({ channel: 'news' }) } })
+    const codaSpiata = {
+      ...c.coda,
+      pronto: async (...a: Parameters<typeof c.coda.pronto>) => {
+        ordine.push('pronto')
+        return c.coda.pronto(...a)
+      },
+    }
+    const s = sandboxFinta({ risposta: rispostaFelice() })
+    const consegnati: { jobId: string; bucket: string; percorso: string }[] = []
+
+    const esito = await eseguiUnJobVideo(
+      dipendenze(codaSpiata, s.macchina, {
+        consegnaNews: async (j, percorso, bucket) => {
+          ordine.push('consegna')
+          consegnati.push({ jobId: j.id, bucket, percorso })
+          return { ok: true }
+        },
+      }),
+    )
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+    // L'ORDINE è la cosa da provare: consegnare prima del `ready` lascerebbe
+    // nell'area di sosta l'uscita di un job che il database non ha mai accettato.
+    expect(ordine).toEqual(['pronto', 'consegna'])
+    expect(consegnati).toHaveLength(1)
+    expect(consegnati[0].bucket).toBe('video_processing')
+  })
+
+  it('per la Galleria NON consegna niente: quel canale copia per conto suo, dal finalizer', async () => {
+    const c = codaFinta({ prossimo: { ok: true, job: job({ channel: 'gallery' }) } })
+    const s = sandboxFinta({ risposta: rispostaFelice() })
+    let chiamate = 0
+
+    await eseguiUnJobVideo(
+      dipendenze(c.coda, s.macchina, {
+        consegnaNews: async () => {
+          chiamate += 1
+          return { ok: true }
+        },
+      }),
+    )
+
+    expect(chiamate).toBe(0)
+  })
+
+  it('una consegna fallita NON annulla il pronto, ma si grida', async () => {
+    const c = codaFinta({ prossimo: { ok: true, job: job({ channel: 'news' }) } })
+    const s = sandboxFinta({ risposta: rispostaFelice() })
+
+    const esito = await eseguiUnJobVideo(
+      dipendenze(c.coda, s.macchina, {
+        consegnaNews: async () => ({ ok: false, codice: 'BUCKET_BOZZE_MANCANTE' }),
+      }),
+    )
+
+    // La conversione è riuscita DAVVERO: dichiararla fallita vorrebbe dire rifarla da
+    // capo — minuti di CPU pagati due volte — per un guasto di una copia.
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+  })
+
+  it('se la porta non è stata cablata lo dice a voce alta, invece di fingere', async () => {
+    const c = codaFinta({ prossimo: { ok: true, job: job({ channel: 'news' }) } })
+    const s = sandboxFinta({ risposta: rispostaFelice() })
+
+    // `consegnaNews` assente: è la configurazione in cui il difetto è vissuto per due
+    // giorni senza che nulla lo segnalasse.
+    const esito = await eseguiUnJobVideo(dipendenze(c.coda, s.macchina))
+
+    expect(esito).toMatchObject({ esito: 'pronto', jobId: JOB_ID })
+  })
+})

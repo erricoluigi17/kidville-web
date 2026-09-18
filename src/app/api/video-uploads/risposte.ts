@@ -146,6 +146,11 @@ const STATO_HTTP_VIDEO: Record<CodiceInternoVideo, number> = {
   BAD_INPUT: 500,
   SINGLE_JOB_CHANNEL: 500,
   EMPTY_QUEUE: 500,
+  // Le due risposte con cui la retention rifiuta di timbrare un originale. Come
+  // `EMPTY_QUEUE` non escono mai da una route — parlano a un cron — ma se ci
+  // finissero sarebbero un difetto NOSTRO, non un rifiuto legittimo: 500.
+  NON_ANCORA_SCADUTO: 500,
+  SENZA_SCADENZA: 500,
 
   // ── IL RUNNER. Questi dieci non escono MAI come stato di una risposta: nascono
   //    nella MicroVM, finiscono in `video_jobs.error_code` e una famiglia li vede

@@ -175,6 +175,13 @@ export const CODICI_ESITO_VIDEO = [
   'SOURCE_CONFLICT',
   'TARGET_CONFLICT',
   'UNIQUE_CONFLICT',
+  // Le due risposte con cui `video_retention_originale_rimosso` RIFIUTA di timbrare un
+  // originale come cancellato: rilegge la scadenza sotto lock invece di obbedire a chi
+  // chiama. Non raggiungono nessuno schermo — sta parlando un cron con una RPC — ma
+  // stanno qui perché la mappa è totale, e perché il lock di esaustività le ha trovate
+  // da solo appena la migrazione è comparsa nell'albero.
+  'NON_ANCORA_SCADUTO',
+  'SENZA_SCADENZA',
 
   // ── La QUINTA fonte: il runner (`runner/codici.ts`), nata dopo le altre quattro.
   // Fino al 2026-09-18 questo elenco non la conosceva, e il lock non la scandiva:
@@ -417,6 +424,16 @@ export const MAPPA_MESSAGGIO_VIDEO: Record<CodiceInternoVideo, CodiceMostratoVid
    * invece del nome di una RPC.
    */
   EMPTY_QUEUE: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  /**
+   * Come `EMPTY_QUEUE`: sono la risposta di una RPC a un cron, non a una persona.
+   * `NON_ANCORA_SCADUTO` significa che la retention ha chiesto di timbrare un originale
+   * che non e' ancora scaduto — cioe' che qualcuno ha sbagliato i conti, non che una
+   * famiglia abbia fatto qualcosa. `SENZA_SCADENZA` e' peggio e va guardato: un job
+   * concluso senza data di cancellazione e' un video di minori invisibile alla
+   * retention, ed e' esattamente il difetto che la rete del ramo (c) esiste per pescare.
+   */
+  NON_ANCORA_SCADUTO: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
+  SENZA_SCADENZA: 'VIDEO_OPERAZIONE_NON_RIUSCITA',
 
   // ── Il runner. La ripartizione non e' meccanica: separa cio' che passa da solo
   // (rete, piattaforma) da cio' che non passera' mai riprovando.

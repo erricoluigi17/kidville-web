@@ -141,6 +141,51 @@ const IN_CODA: Record<string, string> = {
         'limite, e qui nessun bucket nasce o cambia visibilit\u00e0); si rilegga invece ' +
         '`select id, file_size_limit from storage.buckets` per verificare che i tre numeri siano ' +
         'entrati davvero.',
+    '20260918104500_bucket_gallery_tetto_video.sql':
+        'Il bucket `gallery` sale da 52428800 a 2000000000 byte (V08): da oggi ci entra un video ' +
+        'convertito, copiato col service-role dal finalizer di `POST /api/gallery`. L\'aumento era ' +
+        'stato TOLTO da `20260916190000` il 17/09 perche\' non abilitava niente e toglieva una rete; ' +
+        'ora il finalizer esiste. QUANDO SI APPLICA: rileggere prima il tetto globale del progetto — ' +
+        'se fosse sceso sotto i 2 GB la riga non entrerebbe in vigore e una `updateBucket` verrebbe ' +
+        'respinta INTERA, `public` compreso. Costo dichiarato: il tetto del bucket era l\'ultima rete ' +
+        'valida per tutte le porte, e alzandolo un client che ottiene una firma dichiarando 1 MB e ' +
+        'poi ne carica 1,9 GB non trova piu\' lo Storage a fermarlo — restano `requireDocente`, ' +
+        '30 firme ogni 10 minuti e `allowed_mime_types`.',
+    '20260918110000_video_retention_riconciliazione.sql':
+        'Retention, riconciliazione e cron della pipeline video (V14): `video_retention_scadenze` ' +
+        '(dichiara conclusi gli upload abbandonati e le code incagliate, e da\' a ogni job concluso ' +
+        'senza scadenza la data di cancellazione dell\'originale), `video_retention_originale_rimosso` ' +
+        '(il timbro DOPO la conferma dello Storage, che rilegge la scadenza sotto lock invece di ' +
+        'obbedire), `video_riconciliazione` (14 conteggi in sola lettura), piu\' ' +
+        '`cron.schedule(\'video-retention\', \'3,13,23,33,43,53 * * * *\')`. Chiude i DUE cammini che ' +
+        'lasciavano un originale di minori INVISIBILE alla retention: l\'upload abbandonato e la coda ' +
+        'incagliata — una riga con `original_delete_after` a NULL non e\' «in ritardo», e\' fuori ' +
+        'dall\'indice parziale, e nessun conteggio la nomina. Si applica DOPO le migrazioni video qui ' +
+        'sopra e DOPO il deploy di `POST /api/gdpr/retention-video`: applicata prima, il cron ' +
+        'chiamerebbe un 404 e `cron.job_run_details` direbbe `succeeded` lo stesso, perche\' misura ' +
+        'l\'accodamento e non l\'esito (misurato l\'11/08/2026: tre ore di chiamate a vuoto lette come ' +
+        'riuscite). QUANDO SI APPLICA: spostare `video-retention` in `JOB_CRON` con ' +
+        '`finestraMs: 40 * MIN`, non un minuto prima, e innescare il primo battito a mano.',
+    '20260918113000_bucket_news_tetto_video.sql':
+        'I bucket `news` e `news_bozze` salgono a 2000000000 byte (V09). Erano fermi a 52428800 dal ' +
+        '2026-09-01, quando quello era il tetto globale: dal 16/09 il globale e\' 2 GB e quei 50 MiB ' +
+        'sono diventati l\'unico limite vero. Senza, il runner converte — nel campione del piano 700 ' +
+        'secondi di CPU — il job arriva a `ready`, e la copia viene respinta: il limite si scopre nel ' +
+        'posto piu\' caro possibile. Li alza ENTRAMBI con lo stesso numero di proposito: alzare solo ' +
+        'l\'area di sosta sposterebbe il rifiuto alla PROMOZIONE, cioe\' dopo che il consenso e\' stato ' +
+        'verificato, su un articolo pronto.',
+    '20260918120000_video_runner_tick.sql':
+        'Il battito che fa PARTIRE la conversione: `video_runner_tick_http()` e ' +
+        '`cron.schedule(\'video-runner-tick\', \'1,6,11,...,56 * * * *\')`, che chiama ' +
+        '`POST /api/video/runner` ogni cinque minuti. Chiude il difetto piu\' silenzioso di tutta la ' +
+        'pipeline: fino al 2026-09-18 `eseguiProssimoJobVideo` non aveva un solo chiamante fuori dal ' +
+        'proprio modulo e nessun cron lo nominava, quindi un video caricato sarebbe rimasto `queued` ' +
+        'PER SEMPRE senza che comparisse un errore — non sbagliava niente, non partiva niente. ' +
+        'La cadenza e\' piu\' lunga del tetto dell\'invocazione del runner (240 s) e non e\' una ' +
+        'preferenza: al minuto, due tick si aggancerebbero allo STESSO Sandbox e il secondo ' +
+        'scriverebbe un `error` su una conversione riuscita. Si applica DOPO il deploy della route, ' +
+        'per la stessa ragione della voce qui sopra. QUANDO SI APPLICA: spostare `video-runner-tick` ' +
+        'in `JOB_CRON` con `finestraMs: 20 * MIN`, non prima.',
 }
 
 const RADICE = process.cwd()

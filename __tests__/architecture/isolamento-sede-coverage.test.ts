@@ -1392,6 +1392,44 @@ const AMMESSE: Record<string, string> = {
     // CONTEGGIO (`head: true`) e nessun percorso attraversa la funzione. Nessun nome,
     // nessuna didascalia, nessun uuid di famiglia. A leggerle è un cron.
     'gdpr/retention-galleria:<modulo>': "helper `spazzaMediaOrfani` + `reclamiConfrontabili`: chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga, per rimuovere quelli che non lo sono, e quante righe portino un percorso non confrontabile. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI i media reclamati dalle altre due sedi e li cancellerebbe — la foto di un bambino distrutta mentre la sua riga è viva, e un riquadro rotto in galleria per quelle famiglie. Leggono una sola colonna (`file_url`) e solo per i percorsi che hanno già in mano, o un puro conteggio con `head: true`: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
+    // ── LA CONSERVAZIONE DEGLI ORIGINALI VIDEO (2026-09-18, V14) ────────────
+    //
+    // COSA SEGNALA IL LOCK: tre `rpc()` senza parametro di sede —
+    // `video_retention_scadenze`, `video_retention_originale_rimosso` e
+    // `video_riconciliazione` — più `video_outbox_claim` fuori dagli handler.
+    //
+    // ⚠️ LA SEDE NON MANCA: NON C'È PROPRIO. Nessuna di quelle RPC prende un
+    // `p_scuola_id`, e non è una svista di chi le ha scritte: un TERMINE DI
+    // CONSERVAZIONE non ha confini di plesso. L'originale di un video caricato a
+    // Giugliano scade lo stesso giorno di uno di Aversa e di uno di Cesa, e una RPC
+    // che accettasse un elenco di plessi lascerebbe indietro — IN SILENZIO, col
+    // battito che dice «ok» — proprio i plessi che il job non conosce. È la stessa
+    // ragione, parola per parola, delle tre voci `gdpr/retention-*` qui sopra.
+    //
+    // ⚠️ E QUI IL FILTRO DI SEDE SAREBBE PEGGIO CHE INUTILE, esattamente come sulla
+    // galleria: il passo che rimuove gli orfani parte dallo STORAGE
+    // (`list` su `video_originals`), dove un oggetto non ha una sede. La domanda che
+    // `video_jobs.select('original_path').in('original_path', lotto)` pone è «questo
+    // percorso è reclamato da UNA QUALUNQUE riga?», e ciò che nessuno reclama viene
+    // distrutto. Restringere la domanda a un plesso significa rispondere «nessuno»
+    // per gli originali delle altre due sedi, cioè dichiararli orfani e portarli via
+    // — il video di un bambino distrutto mentre il suo job è vivo e in coda per la
+    // conversione.
+    //
+    // COSA NON LEGGONO, che è la metà che rende le voci difendibili: le tre RPC
+    // restituiscono CONTEGGI e la riga del solo job nominato; la lettura degli
+    // scaduti prende due colonne (`id`, `original_path`) filtrando sull'indice
+    // parziale della retention; la ricevuta dell'outbox chiede un `count` con
+    // `head: true`, quindi nessun percorso attraversa la funzione. Nessun nome,
+    // nessun `source_mime`, nessun uuid di famiglia. A leggerle è un cron.
+    //
+    // Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret; il
+    // lancio manuale passa da `requireStaff` ma fa lo stesso identico lavoro — la
+    // conservazione non è un elenco che cambia a seconda di chi guarda.
+    'gdpr/retention-video:POST':
+        "conservazione degli originali video in `video_originals` (sette giorni dalla verifica per i riusciti, sette dalla dichiarazione per falliti e abbandonati, subito per gli annullati) più riconciliazione e svuotamento di `video_outbox`. Le tre RPC — `video_retention_scadenze`, `video_retention_originale_rimosso`, `video_riconciliazione` — NON hanno un parametro di sede, e non per dimenticanza: un termine di conservazione non ha confini di plesso, e un filtro qui lascerebbe in silenzio nell'archivio gli originali dei plessi che il job non conosce, col battito che dice «ok». Restituiscono conteggi e la riga del solo job nominato; la lettura degli scaduti prende `id` e `original_path` dall'indice parziale `video_jobs_retention_originali_idx`. La sede la porta comunque la riga (`video_jobs.scuola_id`): non si perde nulla, semplicemente non si filtra. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
+    'gdpr/retention-video:<modulo>':
+        "helper `spazzaOriginaliOrfani` + `svuotaOutbox` + `ricevutaRetention`: chiedono quali percorsi elencati nello STORAGE siano reclamati da una riga di `video_jobs`, per rimuovere quelli che non lo sono, e drenano `video_outbox` con le tre RPC che il database già espone. L'elenco di partenza viene dal bucket, dove un oggetto non ha una sede: un `.in('scuola_id', plessi)` qui non restringerebbe una lettura, dichiarerebbe ORFANI gli originali reclamati dalle altre due sedi e li cancellerebbe — il video di un bambino distrutto mentre il suo job è vivo e in coda per la conversione. Leggono una sola colonna (`original_path`) e solo per i percorsi che hanno già in mano, o un puro conteggio con `head: true`: nessun percorso e nessun nome escono da qui. Nessun utente da cui derivare uno scope: la chiama pg_net col cron secret.",
     // `admin/gdpr/erase:POST` NON è più qui, e non perché la regola sia cambiata.
     // Dal 2026-08-02 quella route non interroga più nessuna tabella per conto suo:
     // fa il gate (`assertAlunnoInScope`, che il confine di sede lo verifica eccome,
@@ -2155,7 +2193,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // 315 → 318 il 2026-09-16: telemetria fattura autenticata e i due
             // handler di revisione visibilità. Tutti passano da gate staff/sede o
             // pagamento/fattura, senza nuove esenzioni.
-            routeConServiceRole: 320,
+            // 320 → 321 il 2026-09-18: `gdpr/retention-video`, la conservazione
+            // degli originali video (V14). Una route sola, un handler solo.
+            // ⚠️ Vale la riga d'avvertimento qui sopra più che mai: sullo STESSO
+            // albero di lavoro stanno lavorando altri agenti, e `video-uploads`
+            // (V07) porterà altre route con `createAdminClient`. Chi unisce i rami
+            // RIMISURI questo numero sul file unito invece di sommare a mente.
+            routeConServiceRole: 321,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2309,7 +2353,11 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `routeConServiceRole`: si rimisura sul file unito.
             // 483 → 486 il 2026-09-16: telemetria fattura e GET/POST della
             // revisione visibilità descritti qui sopra.
-            handlerControllati: 489,
+            // 489 → 490 il 2026-09-18: l'unico handler (`POST`) della route della
+            // conservazione video. Il passo coincide col numero di file (+1 route,
+            // +1 handler) perché quella rotta espone il solo POST. Misurato, non
+            // dedotto.
+            handlerControllati: 490,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -2559,7 +2607,26 @@ describe('coverage-lock isolamento fra sedi', () => {
             // in un commento.
             // `routeConServiceRole` e `handlerControllati` non cambiano per mano mia:
             // erano già stati adeguati in questo stesso branch.
-            handlerEsentati: 103,
+            // 103 → 105 il 2026-09-18, e il numero SALE: due esenzioni nuove, il
+            // `POST` e il `<modulo>` di `gdpr/retention-video`. La riga in cima dice
+            // che se sale «qualcuno ha appena tolto un pezzo di questo lock», ed è
+            // vero: va detto per esteso invece di far quadrare i conti.
+            //
+            // Ciò che si toglie è la sorveglianza sul filtro di sede di quattro
+            // chiamate RPC e di due letture di `video_jobs`. Ciò che resta al posto
+            // suo non è niente: è il fatto che **quelle RPC un parametro di sede non
+            // ce l'hanno**, perché un termine di conservazione non ha confini di
+            // plesso — e che sul cammino degli orfani il filtro di sede non sarebbe
+            // un presidio ma il difetto, perché dichiarerebbe orfani gli originali
+            // delle altre due sedi e li distruggerebbe. La ragione per esteso, con
+            // le due forme che il lock segnala, sta accanto alle due voci in
+            // `AMMESSE`.
+            //
+            // È lo stesso conto, e la stessa forma, delle due voci di
+            // `gdpr/retention-galleria` (`:POST` e `:<modulo>`): una per l'handler,
+            // una per gli helper di modulo, perché un'esenzione data al `POST` non
+            // deve estendersi in silenzio a un helper scritto dopo.
+            handlerEsentati: 105,
         })
     })
 })

@@ -416,6 +416,17 @@ const TETTI_DICHIARATI = new Map<string, string>([
         'la sonda di rete della pagina `/offline` e l\'ultima attesa di React. È entrata '
         + 'nell\'inventario il 2026-08-03 non perché fosse nuova, ma perché la regola qui sotto '
         + 'pretendeva che una costante si chiamasse `TETTO…`: `TIMEOUT_SONDA_MS` non ci entrava.'],
+    ['src/components/features/admin/news/NewsVideoAllegati.tsx',
+        'quanto il browser aspetta i METADATI di un filmato prima di rinunciare a misurarne la '
+        + 'durata (2026-09-18). Un secondo e mezzo, che e\' poco di proposito: la durata serve a '
+        + 'rifiutare SUBITO un video oltre i tre minuti invece di far caricare due gigabyte per '
+        + 'poi dire di no, ma non e\' l\'unica difesa — se scade si prosegue senza, e il rifiuto '
+        + 'arriva dal probe dopo l\'upload. Cioe\' questo tetto non decide se un video passa: '
+        + 'decide solo quanto presto lo sappiamo. Un numero alto bloccherebbe la scelta del file '
+        + 'davanti a una persona che non capisce perche\', per guadagnare un errore piu\' precoce '
+        + 'che arriva comunque. Su iOS e\' da rimisurare (V15): se 1,5 s non bastassero a un '
+        + '`.mov` HEVC da iPhone, il ripiego scatterebbe SEMPRE e il tetto diventerebbe '
+        + 'decorazione — peggio di un tetto assente, perche\' sembra una difesa.'],
     ['src/lib/upload/carica-file.ts',
         'quanto si aspetta un CARICAMENTO prima di dichiararlo perso (2026-08-12). È il tetto '
         + 'più lungo del repo — 30 s, cioè il massimo che `MAI_OLTRE_MS` qui sotto ammette — e '
@@ -492,6 +503,26 @@ const TETTI_DICHIARATI = new Map<string, string>([
         + 'E ognuno dei cinque ha un CASO nella suite che lo prova pendente un passo prima della '
         + 'scadenza e rigettato subito dopo: questo lock pretende la dichiarazione del tetto, non '
         + 'la sua prova, e un tetto che SEMBRA coperto da un lock è peggio di uno scoperto.'],
+    ['src/lib/gallery/video-galleria-flusso.ts',
+        'quanto si aspettano i METADATI di un video scelto dall\'insegnante prima di dichiarare '
+        + '«la durata non si sa» e caricarlo lo stesso (`TETTO_METADATI_MS`, 4 s — 2026-09-18). '
+        + 'Non limita una `fetch`: limita un\'ATTESA DI EVENTO nel browser, il `loadedmetadata` di '
+        + 'un `<video>` a cui si è dato l\'objectURL del file. È lo stesso guasto di '
+        + '`video-mediarecorder.ts` — `preload="metadata"` è un SUGGERIMENTO che il browser può '
+        + 'ignorare (Safari/iOS in Risparmio Energetico, rete cellulare), e un elemento che non '
+        + 'emette né `loadedmetadata` né `error` lascerebbe la `Promise` appesa per sempre, col '
+        + 'caricamento fermo dietro di lei e l\'insegnante davanti a una rotellina eterna. '
+        + '⚠️ IL NUMERO È CORTO DI PROPOSITO, all\'opposto dei cinque tetti qui sopra: là una '
+        + 'scadenza butterebbe via una conversione RIUSCITA, qui scaduto il tempo non si rifiuta '
+        + 'niente — si carica con `durataSecondi: null` e la misura vera la fa ffprobe sul server. '
+        + 'Sbagliare per difetto costa un controllo anticipato in meno, non un video perso: '
+        + 'l\'unico effetto è che un video di quattro minuti verrà fermato DOPO il caricamento '
+        + 'invece che prima. Quattro secondi sono già molti per leggere l\'intestazione di un file '
+        + 'che sta sul telefono. '
+        + 'La scadenza NON lascia una riga sua, ed è una decisione: su un browser che ignora '
+        + '`preload` è il caso normale, e contarlo riempirebbe `app_log` di rumore. Si logga il '
+        + 'ramo che non dovrebbe capitare — `video-galleria-durata-non-misurabile`, quando nemmeno '
+        + 'l\'objectURL si crea, cioè quando lo storage del browser è bloccato.'],
 ]);
 
 /**

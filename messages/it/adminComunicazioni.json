@@ -266,5 +266,20 @@
   "registroTermine": "Cercava: «{termine}»",
   "registroFiltroTuttiOperatori": "Chiunque",
   "registroFiltroTutteAzioni": "Tutte le azioni",
-  "registroTotale": "{n, plural, =0 {Nessun accesso} one {Un accesso} other {# accessi}}"
+  "registroTotale": "{n, plural, =0 {Nessun accesso} one {Un accesso} other {# accessi}}",
+
+  "videoAllegatiTitolo": "Video",
+  "videoAggiungi": "Aggiungi un video",
+  "videoNota": "Fino a tre minuti. Dopo il caricamento il filmato viene preparato sui nostri server: ci vogliono alcuni minuti, e nel frattempo puoi chiudere la pagina.",
+  "videoStatoPreparazione": "Preparazione del caricamento…",
+  "videoStatoCaricamento": "Caricamento in corso: {pct}%",
+  "videoStatoInCoda": "Il filmato è arrivato ed è in attesa di essere preparato.",
+  "videoStatoConversione": "Stiamo preparando il filmato. Puoi chiudere la pagina: il lavoro prosegue da solo.",
+  "videoStatoPronto": "Pronto: il collegamento al filmato è in fondo al testo.",
+  "videoStatoAnnullato": "Caricamento annullato.",
+  "videoEtichettaLink": "Guarda il video",
+  "videoAnnulla": "Annulla",
+  "videoTogli": "Togli",
+  "videoRiapertura": "Questi filmati erano ancora in preparazione quando hai chiuso la pagina: riprendono da soli.",
+  "videoSoloNelTesto": "I filmati si allegano al testo, non alla copertina: la copertina resta una fotografia."
 }

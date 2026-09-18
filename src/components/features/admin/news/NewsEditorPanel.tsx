@@ -456,6 +456,8 @@ export function NewsEditorPanel({ userId, scuolaId, modalita, canAllSedi = false
           <span className={labelCls}>{t('editorContenuto')}</span>
           <NewsRichTextEditor
             userId={userId}
+            scuolaId={scuolaId}
+            tuttiSedi={canAllSedi && tuttiSedi}
             value={contenutoJson}
             onChange={setContenutoJson}
             consensoFoto={dichiarazioneResa}

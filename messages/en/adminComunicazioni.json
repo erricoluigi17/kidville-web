@@ -266,5 +266,20 @@
   "registroTermine": "Searched for: “{termine}”",
   "registroFiltroTuttiOperatori": "Anyone",
   "registroFiltroTutteAzioni": "All actions",
-  "registroTotale": "{n, plural, =0 {No access} one {One access} other {# accesses}}"
+  "registroTotale": "{n, plural, =0 {No access} one {One access} other {# accesses}}",
+
+  "videoAllegatiTitolo": "Video",
+  "videoAggiungi": "Add a video",
+  "videoNota": "Up to three minutes. Once uploaded, the clip is prepared on our servers: it takes a few minutes, and you can close the page meanwhile.",
+  "videoStatoPreparazione": "Getting the upload ready…",
+  "videoStatoCaricamento": "Uploading: {pct}%",
+  "videoStatoInCoda": "The clip has arrived and is waiting to be prepared.",
+  "videoStatoConversione": "We are preparing the clip. You can close the page: the work carries on by itself.",
+  "videoStatoPronto": "Ready: the link to the clip is at the end of the text.",
+  "videoStatoAnnullato": "Upload called off.",
+  "videoEtichettaLink": "Watch the video",
+  "videoAnnulla": "Call off",
+  "videoTogli": "Remove",
+  "videoRiapertura": "These clips were still being prepared when you closed the page: they carry on by themselves.",
+  "videoSoloNelTesto": "Clips are attached to the text, not to the cover image: the cover stays a photograph."
 }

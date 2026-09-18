@@ -206,6 +206,34 @@ function outputRotation(stream: JsonObject): number | null {
  * funzione legge, si chiama «DOVI configuration record» (libavcodec). Il ramo
  * `dolby vision` da solo era quindi cieco proprio dove doveva vedere.
  */
+/**
+ * I pixel dell'uscita sono quadrati — e «non dichiarato» CONTA COME QUADRATO.
+ *
+ * ⚠️ Fino al 2026-09-18 qui c'era `normalizedString(video.sample_aspect_ratio) !== '1:1'`,
+ * e ha respinto il primo video vero della pipeline: un `.mov` da iPhone convertito
+ * per due minuti e cinquantaquattro secondi, uscita h264/aac perfetta, rifiutata
+ * con `OUTPUT_VIDEO_INVALID` perche' le mancava un campo.
+ *
+ * Non era un'anomalia del file, e' come funziona MP4: quando i pixel sono quadrati
+ * il muxer NON scrive l'atomo `pasp`, perche' 1:1 e' il valore predefinito e non
+ * c'e' niente da dichiarare — quindi `ffprobe` non riporta il campo affatto.
+ * Pretenderlo significa pretendere che l'encoder scriva cio' che non ha motivo di
+ * scrivere, ed e' il GEMELLO del difetto sul `color_range` chiuso il giorno prima:
+ * ne abbiamo corretto uno e non abbiamo cercato l'altro.
+ *
+ * L'allentamento e' stretto, e la distinzione e' quella che conta: si accetta
+ * l'ASSENZA di una dichiarazione (campo mancante, `0:1`, `N/A` — le tre forme con
+ * cui ffprobe dice «non saprei»), si respinge una dichiarazione di pixel NON
+ * quadrati, che deformerebbe l'immagine su ogni lettore che la onora.
+ */
+function pixelQuadrati(stream: JsonObject): boolean {
+  const dichiarato = normalizedString(stream.sample_aspect_ratio)
+  if (dichiarato === null || dichiarato === '' || dichiarato === 'n/a' || dichiarato === '0:1') {
+    return true
+  }
+  return dichiarato === '1:1'
+}
+
 function hasHdrSideData(stream: JsonObject): boolean {
   const sideData = Array.isArray(stream.side_data_list) ? stream.side_data_list : []
   return sideData.some((entry) => {
@@ -339,7 +367,7 @@ export function verifyVideoOutput(
     fps === null ||
     normalizedString(video.codec_name) !== 'h264' ||
     normalizedString(video.pix_fmt) !== 'yuv420p' ||
-    normalizedString(video.sample_aspect_ratio) !== '1:1'
+    !pixelQuadrati(video)
   ) {
     return { ok: false, code: 'OUTPUT_VIDEO_INVALID' }
   }

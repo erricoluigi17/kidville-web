@@ -103,6 +103,92 @@
 
 ---
 
+## Changelog — Video HEVC e Full HD: la pipeline è completa dietro le quinte, e il pezzo che mancava era quello che non sbagliava niente — 2026-09-18 (branch `codex/video-hevc-fullhd`, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149))
+
+**Ancora in implementazione, non rilasciato.** Backend, conversione e pubblicazione ci sono;
+mancano l'interfaccia, i collaudi su dispositivo e il rilascio.
+
+### Il difetto più silenzioso di tutti
+
+La pipeline aveva **tutti i pezzi e nessuno che la avviasse**: misurato, `eseguiProssimoJobVideo`
+non aveva un solo chiamante fuori dal proprio modulo e nessun cron lo nominava. In produzione:
+il genitore carica, l'upload riesce, il job entra in coda come `queued` e **ci resta per sempre**,
+senza che comparisse un errore — perché non sbagliava niente, non partiva niente. È la stessa
+forma del guasto delle email di credenziali. Chiuso con `POST /api/video/runner` e un cron.
+
+**La cadenza è cinque minuti, e il vincolo non è il cron**: il runner sorveglia un job fino a
+240 secondi, poi esce lasciando la MicroVM accesa perché il tick dopo la riagganci. Al minuto,
+due tick si aggancerebbero allo **stesso** Sandbox e il secondo scriverebbe un `error` su una
+conversione **riuscita** — e un allarme che suona sempre viene spento.
+
+### Due cammini che lasciavano un video di minori invisibile
+
+`video_jobs_retention_originali_idx` è un indice **parziale**: una riga senza data di
+cancellazione non è «in ritardo», è **fuori dall'indice**, e nessun conteggio la nomina. Restavano
+aperti i due casi più probabili — l'**upload abbandonato** (il telefono si spegne, nessuno annulla
+perché dal lato di chi carica non è successo niente) e la **coda incagliata**. Chiusi, con sotto
+una rete che non dipende da chi ha scritto la riga e che **grida il giorno stesso** se pesca.
+
+Sopra c'è un lock che rende la regola strutturale: ogni `UPDATE` che tocca lo stato di un job
+tocca anche la sua scadenza, o sta in un'allowlist con la ragione scritta.
+
+🔴 **Un cammino resta aperto e dichiarato**: il bucket di lavorazione non ha nessuna scadenza
+nello schema, quindi l'uscita di un job concluso male resta lì per sempre. Non è stata inventata
+una scadenza — distruggerebbe l'uscita di un video pronto che il finalizer deve ancora copiare —
+ma **il numero esce**, così la decisione parte da una misura.
+
+### Galleria e News
+
+Il video diventa un elemento della Galleria passando dai **quattro gate che esistono già** in
+`gallery:POST` — nessuna rotta nuova, perché una porta nuova sarebbe stata la loro seconda copia.
+Consenso revocato prima della richiesta → **422 senza toccare lo Storage**; revocato fra la copia
+e la scrittura → 409, riga cancellata, file rimosso e verificato.
+
+Per News il video entra come **allegato di bozza ordinario** e `media-bozza.ts` è **identico al
+byte**: la copia avviene al momento del *ready*, così la promozione è quella che già esiste e la
+superficie di privacy più delicata del repository resta intatta. Un lock lo impone leggendo quel
+file **senza i commenti**.
+
+**Due difetti trovati dai test, non dedotti**: un file rimasto nel bucket veniva dichiarato
+rimosso (l'esito vuoto di una rimozione fallita si legge «tutto a posto»), e la guardia sul peso
+dell'uscita **non guardava niente**, perché `bigint` arriva come stringa e `typeof === 'number'`
+davanti a una stringa non diventa falso: salta.
+
+### Le app già installate
+
+Il blocco che le fermerà con un 409 è **scritto e spento**, dietro **un interruttore solo** — e
+l'unicità non è un commento: le tre porte passano da 200 a 409 insieme sostituendo quel solo
+modulo, e la prova che da spento non cambia niente è fatta col valore vero committato, senza mock.
+Accenderlo prima che la pipeline nuova funzioni lascerebbe i genitori senza **nessun** modo di
+caricare un video.
+
+Il percorso vecchio serve **anche il web**, quindi la frase ora vale per entrambi i mezzi: a
+un'insegnante su Chrome «aggiorna l'app» non dice niente di azionabile.
+
+### 🟡 Una decisione sul consenso fotografico che non ha preso nessuno
+
+Il gate si comporta in **due modi** a seconda di *dove* sta il video: nel testo dell'articolo non
+scatta (esente, come vuole il piano), in copertina scatta — perché `contieneFoto` guarda solo se
+la copertina è valorizzata, ed è quindi vero per qualunque media. **Non è stato toccato** e due
+test inchiodano la misura: restringere quel controllo allargherebbe la superficie di privacy,
+allargarlo cambierebbe il prodotto. La direzione attuale è la prudente.
+
+### Lo Storage, chiuso da entrambi i lati
+
+`gallery`, `news` e `news_bozze` salgono a 2 GB **solo ora che il finalizer esiste** — l'aumento
+era stato tolto il 17/09 perché non abilitava niente e toglieva una rete. Le tre asserzioni del
+lock, che prima erano lo stesso numero per coincidenza, adesso dicono cose diverse: la foto sta
+**strettamente sotto** il bucket, il video è ≤ bucket, il bucket è **esattamente** `max(foto, video)`.
+
+E `IN_ATTESA_DI_UN_LIMITE` è **vuota**: nessun bucket può più esistere senza un limite dichiarato
+in una migrazione. Chiudendola è saltato fuori che il lock **non guardava il ramo `INSERT`** di un
+`INSERT … ON CONFLICT` — la forma con cui otto bucket su sedici sono dichiarati.
+
+**Gate locale**: eslint 0 · tsc 0 · **18.380 test verdi su 1.339 file**, 12 saltati e dichiarati ·
+build verde. Le migrazioni restano **non applicate** e dichiarate in `IN_CODA`, ciascuna col suo
+ordine: i due cron si applicano **dopo** il deploy delle loro route, altrimenti chiamano un 404 e
+`cron.job_run_details` dice `succeeded` lo stesso, perché misura l'accodamento e non l'esito.
+
 ## Changelog — Video HEVC e Full HD: i tre difetti della pipeline chiusi, e due porte chiuse fuori dal video — 2026-09-18 (branch `codex/video-hevc-fullhd`, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149))
 
 **Ancora in implementazione, non rilasciato.** PR in **bozza**, aperta presto di proposito: su un

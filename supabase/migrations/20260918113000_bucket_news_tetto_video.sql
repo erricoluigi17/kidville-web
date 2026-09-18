@@ -61,7 +61,8 @@
 -- `USCITA_TROPPO_GRANDE` e non lascia niente a metà (`src/lib/news/video-allegato.ts`).
 -- Nessun file già archiviato viene toccato, e le immagini continuano a funzionare.
 --
--- ⚠️ NON APPLICATA da chi l'ha scritta: tocca `storage.buckets` in produzione e va
+-- ⚠️ APPLICATA il 2026-09-18, dopo essere stata mostrata: tocca `storage.buckets` in
+--    produzione, e la regola del 2026-07-31 pretende che si mostri prima di eseguire. Va
 --    mostrata prima di essere eseguita (regola del 2026-07-31: in produzione ci
 --    sono dati reali di minori). Il timestamp è POSTERIORE alla fotografia
 --    `migrazioni-applicate-snapshot.json` (2026-09-17T17:44:57Z), quindi non serve

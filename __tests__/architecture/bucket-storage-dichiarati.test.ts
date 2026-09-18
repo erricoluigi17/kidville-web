@@ -238,6 +238,17 @@ const RISERVATI = [
   // distanza dall'esserlo anche lui. La strada è chiusa due volte — qui e in
   // `.gitignore`, dichiarata nel lock `pii-nei-file-tracciati`.
   'iscrizioni_elenchi',
+  // I due della pipeline video, nati il 2026-09-18. `video_originals` custodisce
+  // l'originale caricato dal telefono di un genitore o di un'insegnante, prima che
+  // FFmpeg lo tocchi; `video_processing` l'uscita convertita, prima che il finalizer
+  // la copi dove una famiglia potra' vederla. Entrambi PRIVATI e a 2 GB: il tetto
+  // alto e' la ragione per cui esistono come bucket separati invece che dentro
+  // `gallery` — un originale da due gigabyte non deve poter entrare da nessuna delle
+  // porte che servono le foto. La loro copertura di oblio sta in
+  // `REGISTRO_BUCKET_OBLIO`, e per `video_processing` quella voce dichiara una
+  // LACUNA APERTA invece di fingere una copertura.
+  'video_originals',
+  'video_processing',
   // ⚠️ TROVATO, NON CREATO da questo lavoro. È comparso in produzione fra la
   // fotografia dell'11/08 e quella del 16/08, e nel repository non c'è nessuna
   // migrazione che lo dichiari né nessuna route che lo nomini: è nato dalla

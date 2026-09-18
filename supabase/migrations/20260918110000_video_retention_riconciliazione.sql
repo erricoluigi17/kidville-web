@@ -1,6 +1,11 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- V14 — RETENTION DEGLI ORIGINALI, RICONCILIAZIONE E COMPITO NOTTURNO.
--- Scritta il 2026-09-18. NON APPLICATA: vedi «L'ORDINE» in fondo alla testata.
+-- Scritta il 2026-09-18. APPLICATA il 2026-09-18 al database di produzione, nello
+-- stesso rilascio in cui `video-retention` e' entrato in `JOB_CRON`: le due mosse
+-- sono una sola, e separarle manda `/api/health` in `degradato` per sempre su un
+-- lavoro che non esiste ancora. Verificato dopo l'apply: RLS attiva e forzata sulle
+-- tre tabelle, nessuna SECURITY DEFINER senza `search_path`, nessuna funzione
+-- eseguibile da `anon` o `authenticated`, e lo schedule presente e attivo in `cron.job`.
 -- ═══════════════════════════════════════════════════════════════════════════════
 --
 -- ─── IL DIFETTO CHE QUESTA MIGRAZIONE CHIUDE, DETTO CON L'INDICE ────────────

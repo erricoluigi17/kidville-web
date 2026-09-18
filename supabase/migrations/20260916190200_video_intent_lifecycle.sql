@@ -85,11 +85,23 @@
 --     `CanaleOblio = 'alunno' | 'genitore'`, e ogni sua voce si aggancia a una colonna
 --     del bambino o del genitore. Il prefisso di questo percorso è invece l'uuid di
 --     CHI CARICA — un insegnante, il gate è `requireDocente` — quindi elencare la
---     cartella di un insegnante non trova il video di un bambino. E `video_originals`
---     / `video_processing` in quel registro non compaiono affatto: zero occorrenze,
---     verificato. Il buco è già tracciato dove va chiuso, cioè nella voce IN_CODA di
---     `20260916190000` in `__tests__/architecture/migrazioni-complete.test.ts`, che
---     ordina di registrare i due bucket quando la migrazione si applica.
+--     cartella di un insegnante non trova il video di un bambino.
+--
+--     AGGIORNATO IL 2026-09-18, il giorno dell'apply: i due bucket ADESSO sono nel
+--     registro, e non come «coperti». `video_originals` è `coperto-fuori-oblio` —
+--     a svuotarlo è la conservazione, non un canale per alunno, e la voce dichiara
+--     la finestra residua di sette giorni fra una richiesta di cancellazione e la
+--     scadenza dell'originale. `video_processing` è registrato come LACUNA APERTA:
+--     misurato quel giorno, nessun codice cancella mai da lì, e la regola ovvia
+--     («cancella l'uscita dei job conclusi») distruggerebbe l'uscita di un `ready`
+--     che il finalizer deve ancora copiare. Il conteggio esce dalla riconciliazione,
+--     così la decisione parte da una misura invece che da un'ipotesi.
+--
+--     Questa nota è stata riscritta perché un test l'ha PRETESO: la frase «in quel
+--     registro non compaiono affatto» era vera ieri e falsa oggi, e
+--     `video-intents.test.ts` è diventato rosso nell'istante in cui il registro è
+--     cambiato. È il verso giusto — una prosa che descrive un database che non
+--     esiste più inganna il prossimo lock che la legge.
 --
 --   · Quello che il vincolo compra davvero, ed è il motivo per cui resta: ogni
 --     originale è attribuibile al proprio caricatore senza interrogare il database, e

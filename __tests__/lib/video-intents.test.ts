@@ -1045,15 +1045,40 @@ describe('la decisione su `storage.objects`: nessuna policy, e il motivo', () =>
         '`20260916190200` va rivista insieme a questo cambio.',
     ).toContain("export type CanaleOblio = 'alunno' | 'genitore'")
 
-    // E i due bucket video nel registro dell'oblio non ci sono affatto. Il giorno in
-    // cui ce li si mette — come ordina la voce IN_CODA di `20260916190000` in
-    // `migrazioni-complete.test.ts` — questo test diventa rosso e la testata va
-    // riscritta. È esattamente ciò che NON è successo alla frase che c'era prima.
+    // IL FILO TESO HA FATTO IL SUO MESTIERE, il 2026-09-18. Fino a quel giorno qui
+    // c'era scritto che i due bucket video NON erano nel registro, con accanto la
+    // frase «il giorno in cui ce li si mette, questo test diventa rosso e la testata
+    // va riscritta». Le migrazioni sono state applicate, i bucket sono nati, il
+    // registro li ha accolti — e questo test è diventato rosso nell'istante esatto,
+    // come previsto. La testata è stata riscritta.
+    //
+    // L'asserzione ora guarda dalla parte opposta, perché il legame che serve tenere
+    // vivo è lo stesso: registro e testata devono dire la MEDESIMA cosa. Se domani
+    // qualcuno togliesse un bucket dal registro senza toccare la prosa, o riscrivesse
+    // la prosa senza guardare il registro, questo torna rosso.
+    for (const bucket of ['video_originals', 'video_processing']) {
+      expect(
+        oblio,
+        `\`${bucket}\` è nato con le migrazioni del 2026-09-18 e deve stare in ` +
+          '`REGISTRO_BUCKET_OBLIO`: un bucket senza responsabile di oblio è un archivio ' +
+          'di minori che nessuno sa svuotare.',
+      ).toContain(bucket)
+      expect(
+        INTENT,
+        `La testata di \`20260916190200\` non nomina \`${bucket}\`, ma il registro sì. ` +
+          'Una prosa che descrive un database che non esiste più inganna il prossimo ' +
+          'lock che la legge: è il difetto che questa stessa nota racconta di sé.',
+      ).toContain(bucket)
+    }
+
+    // E la lacuna dichiarata resta dichiarata: `video_processing` non è «coperto».
+    // Se qualcuno lo promuovesse senza scrivere chi lo svuota, questo cade.
     expect(
-      /video_originals|video_processing/.test(oblio),
-      'I bucket video sono entrati in `REGISTRO_BUCKET_OBLIO`: la testata di ' +
-        '`20260916190200` dice ancora che l\'oblio non li raggiunge. Aggiornala.',
-    ).toBe(false)
+      oblio,
+      '`video_processing` è registrato come lacuna aperta perché NESSUN codice cancella ' +
+        'mai da lì — misurato il 2026-09-18. Se è stato coperto davvero, questa riga va ' +
+        'cambiata insieme al codice che lo svuota; se no, la lacuna resta scritta.',
+    ).toMatch(/video_processing:\s*\{\s*stato:\s*'escluso'/)
 
     expect(INTENT).toContain('CHI CARICA')
   })

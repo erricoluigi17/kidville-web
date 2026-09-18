@@ -445,6 +445,6 @@
   "erroreVideoNonAncoraPronto": "The videos are not ready yet. Please wait until they are and try again: you can close the app, the work carries on by itself.",
   "erroreVideoNonTrovato": "This upload no longer exists: it may have been called off, or it may have expired. Please start again.",
   "erroreVideoNonAutorizzato": "This upload belongs to someone else, or to another location: nothing has been changed.",
-  "erroreVideoAppDaAggiornare": "Uploading videos needs the latest version of the app. Please update it and try again: clips already waiting will resume by themselves.",
+  "erroreVideoAppDaAggiornare": "Uploading videos needs the latest version: update the app, or reload the page if you are on a browser. Clips already waiting will resume by themselves.",
   "erroreVideoOperazioneNonRiuscita": "The operation on this video did not succeed: please try again shortly. If it keeps happening, report it to the office."
 }

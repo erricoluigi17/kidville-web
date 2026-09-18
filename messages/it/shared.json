@@ -445,6 +445,6 @@
   "erroreVideoNonAncoraPronto": "I video non hanno ancora finito di essere preparati. Aspetta che l’attesa finisca e riprova: puoi anche chiudere l’app, il lavoro prosegue da solo.",
   "erroreVideoNonTrovato": "Questo caricamento non esiste più: potrebbe essere stato annullato, oppure essere scaduto. Ricomincia dall’inizio.",
   "erroreVideoNonAutorizzato": "Questo caricamento non è tuo, oppure è di un altro plesso: non è stato modificato niente.",
-  "erroreVideoAppDaAggiornare": "Per caricare i video serve la versione aggiornata dell’app. Aggiornala e riprova: i filmati già in attesa ripartono da soli.",
+  "erroreVideoAppDaAggiornare": "Per caricare i video serve la versione aggiornata: aggiorna l’app, oppure ricarica la pagina se sei da browser. I filmati già in attesa ripartono da soli.",
   "erroreVideoOperazioneNonRiuscita": "L’operazione sul video non è riuscita: riprova fra poco. Se continua, segnalalo alla segreteria."
 }

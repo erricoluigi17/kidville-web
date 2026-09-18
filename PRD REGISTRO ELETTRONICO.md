@@ -103,6 +103,63 @@
 
 ---
 
+## Changelog — Video HEVC e Full HD: IN PRODUZIONE, e il primo video vero ha trovato in mezz'ora ciò che 18.000 test non vedevano — 2026-09-18
+
+**Rilasciato.** Migrazioni applicate, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149)
+e [#150](https://github.com/erricoluigi17/kidville-web/pull/150) mergiate, `main` unico ramo.
+
+### Il difetto che solo un telefono vero poteva trovare
+
+Mezz'ora dopo il rilascio, due educatrici — una a **Giugliano**, una a **Cesa** — hanno caricato
+un video dalla Galleria. Entrambi respinti con `OUTPUT_VIDEO_INVALID` **dopo** una conversione
+riuscita: quello di Giugliano dopo 2 minuti e 54 secondi di CPU pagata.
+
+L'uscita, scaricata e sondata a mano, era perfetta. Le mancava `sample_aspect_ratio`, che il
+verificatore pretendeva uguale a `1:1`. **Non è un'anomalia del file, è come funziona MP4**:
+quando i pixel sono quadrati il muxer non scrive l'atomo `pasp`, perché 1:1 è il predefinito.
+
+È il **gemello esatto** del difetto sul `color_range` chiuso il giorno prima — «il verificatore
+pretende un campo che l'encoder non ha motivo di scrivere». Ne era stato corretto uno e non erano
+stati cercati gli altri campi con la stessa natura.
+
+⚠️ **Perché nessun test l'aveva visto, ed è la lezione che resta**: i casi sintetici scrivono
+`sample_aspect_ratio: '1:1'` in ogni modello; e le fixture che eseguono **ffmpeg davvero** nascono
+da `testsrc2`, che il SAR lo **dichiara**. Provato a costruirne una che lo omettesse — `.ts`,
+`.mkv`, `.avi`, `setsar=0`, `h264_metadata=sample_aspect_ratio=0/1` su `.mov`: la build locale lo
+scrive sempre, un iPhone no. **Una fixture generata resta una fixture**, e ne condivide le
+proprietà sistematiche — proprio quelle che nessun caso limite pensa di variare.
+
+### Cosa è dimostrato in produzione, e cosa NO
+
+| | |
+|---|---|
+| caricamento TUS su bucket privato | ✅ provato su video veri |
+| coda → MicroVM → build pinnata verificata → conversione | ✅ provato |
+| verifica dell'uscita | ✅ provato (dopo la correzione) |
+| **pubblicazione in Galleria** | ❌ **mai eseguita** |
+| **un genitore che vede il video** | ❌ **mai eseguita** |
+
+Il video di Cesa è arrivato a `ready` alle 16:01:42 (1080×1920, 17 s, 19,8 MB) — **primo giro
+completo della pipeline su un file vero**, compreso il riaggancio della MicroVM, che nessun test
+poteva dimostrare. Ma il suo intento resta `confirmed` con `published_at` a NULL: il finalizer non
+è mai stato chiamato, né per quel video né per nessun altro.
+
+Non è un guasto, è il disegno: la pubblicazione automatica scatta solo **mentre qualcuno guarda**,
+e al rientro l'interfaccia richiede i tag dei bambini, perché sono identificativi di minori e non
+vengono persistiti sul dispositivo. L'educatrice aveva chiuso la pagina cinquantadue minuti prima.
+
+**Per chiudere la domanda «i genitori li vedono?» serve un giro fatto da qualcuno dall'inizio alla
+fine senza chiudere la pagina.** Finché non avviene, la metà del percorso che tocca le famiglie —
+copia nel bucket pubblico, gate del consenso, riga di galleria, visualizzazione — non è mai girata
+in produzione.
+
+### Lo stato dei lavori periodici
+
+`video-retention` gira e riporta `ok`. `video-runner-tick` ha convertito e poi riportato
+`coda-vuota`. Le tre variabili d'ambiente sono impostate su produzione e preview, **non-sensitive
+di proposito**: create come `Sensitive` non sarebbero più rileggibili, e un refuso su una regione
+o su un numero di core resterebbe invisibile per sempre.
+
 ## Changelog — Video HEVC e Full HD: la pipeline è completa dietro le quinte, e il pezzo che mancava era quello che non sbagliava niente — 2026-09-18 (branch `codex/video-hevc-fullhd`, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149))
 
 **Ancora in implementazione, non rilasciato.** Backend, conversione e pubblicazione ci sono;

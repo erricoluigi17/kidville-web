@@ -337,7 +337,35 @@ davvero: `6 confermate (12 posti) + 4 in attesa`, più un'undicesima a posti zer
 Quindici voci. Nessuna è un difetto scoperto dopo: sono le cose che questo lavoro **non** ha chiuso,
 scritte qui perché non le scopra qualcun altro fra sei mesi.
 
-1. **La concorrenza sui posti non è dimostrata da `vitest`.** La protegge il
+1. ✅ **DIMOSTRATA il 2026-09-20** — run `35471783810`, 47 secondi, sul DB della CI. Due sessioni
+   `psql` hanno chiesto lo **stesso ultimo posto**:
+
+   ```
+   sondaggio 1: sessioni in attesa di Lock = 1
+   la seconda sessione è BLOCCATA sul lock della prima ✔
+   A:ammessa
+   B:in_attesa
+   posti occupati: 1 (tetto: 1)
+   ```
+
+   La seconda sessione **si è fermata** — verificato interrogando `pg_stat_activity`, non dedotto —
+   e alla conferma della prima è finita **in coda** invece di sfondare il tetto. Una ammessa, una in
+   attesa, **un posto occupato su uno**.
+
+   ⚠️ **E subito un limite, perché è la stessa domanda posta a tutti i lock quel giorno: quella prova
+   non era mai stata vista fallire.** Il sondaggio ha risposto `1` al primo colpo, senza nessuna
+   misura di riferimento a zero — cioè un contatore che nessuno ha mai visto dire zero, che è una
+   costante travestita finché non lo dimostri. Aggiunto perciò un **controllo negativo**: prima che
+   la gara cominci il sondaggio viene eseguito a vuoto e **deve** rispondere `0`; se rispondesse `1`
+   il filtro pescherebbe qualcos'altro, e il «✔ bloccata» non dimostrerebbe più niente.
+
+   ⏳ **Restano due casi** che il rischio elencava e che la prova non copre ancora: `p_forza => null`
+   (dove `NOT NULL AND NOT false` vale `NULL` e un `IF` con condizione `NULL` **non scatta**) e la
+   **rimozione**. Estendere il workflow, non riscriverlo.
+
+   *Il testo originale del rischio, lasciato perché spiega perché lo strumento è dovuto nascere:*
+
+   **La concorrenza sui posti non è dimostrata da `vitest`.** La protegge il
    `SELECT … FOR UPDATE` della RPC, che conta **dopo** il lock; i test unitari la misurano con dei
    finti, e un mock piatto è verde con e senza la correzione. La **prova a due sessioni** è scritta
    per esteso nella migrazione (riga 1560 e seguenti, modellata su quella di `20260907181116`) e

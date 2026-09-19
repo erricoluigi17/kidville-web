@@ -207,6 +207,30 @@ jobs:
                     'Riga creata dal workflow prova-concorrenza-posti. Se la trovi, il workflow e morto a meta: cancellala.',
                     'adesione', 'globale', '$SCUOLA', now() + interval '1 day', now() + interval '1 day', 1)"
 
+          # ── Atto 0-bis: IL CONTROLLO NEGATIVO ────────────────────────────
+          #
+          # Aggiunto il 2026-09-20, dopo che il primo giro era passato al PRIMO
+          # sondaggio (`sessioni in attesa di Lock = 1`) senza che nessuno avesse
+          # mai visto quel sondaggio rispondere ZERO. Un contatore che nessuno ha
+          # visto dire zero non è un contatore: è una costante travestita, e
+          # questo repo ci è già cascato abbastanza volte da non doverlo rifare.
+          #
+          # Qui nessuna sessione sta ancora chiamando la RPC, quindi il sondaggio
+          # DEVE rispondere 0. Se rispondesse 1, il filtro pescherebbe qualcos'altro
+          # — e il «✔ bloccata» dell'Atto 2 non dimostrerebbe più niente.
+          sonda() {
+            psql -d "$PGURL" -v ON_ERROR_STOP=1 -At -c "
+              select count(*) from pg_stat_activity
+               where wait_event_type = 'Lock' and state = 'active'
+                 and query ilike '%avviso_adesione_registra%'"
+          }
+          base=$(sonda)
+          echo "controllo negativo — sessioni in attesa PRIMA di cominciare: $base"
+          if [ "${base:-9}" != "0" ]; then
+            echo "::error::il sondaggio dice $base con NESSUNA sessione in gara: il filtro pesca qualcosa che non è la nostra prova, e il «bloccata ✔» dell'atto 2 non dimostrerebbe niente. (Possibile causa: un giro precedente di questo stesso workflow è rimasto appeso.)"
+            exit 1
+          fi
+
           # ── Atto 1: A prende l'ultimo posto e NON conferma ────────────────
           #
           # `pg_sleep` invece di `\! sleep`: la pausa avviene DENTRO il server,
@@ -245,10 +269,7 @@ jobs:
           # sembrerebbe giusto. Qui si pretende di VEDERE B fermo su un Lock.
           bloccato=0
           for i in $(seq 1 15); do
-            n=$(psql -d "$PGURL" -v ON_ERROR_STOP=1 -At -c "
-              select count(*) from pg_stat_activity
-               where wait_event_type = 'Lock' and state = 'active'
-                 and query ilike '%avviso_adesione_registra%'")
+            n=$(sonda)
             echo "  sondaggio $i: sessioni in attesa di Lock = $n"
             if [ "${n:-0}" -ge 1 ]; then bloccato=1; break; fi
             sleep 2
@@ -281,6 +302,7 @@ jobs:
             echo ""
             echo "| grandezza | atteso | misurato |"
             echo "|---|---|---|"
+            echo "| sondaggio PRIMA della gara (controllo negativo) | 0 | **$base** |"
             echo "| la 2ª sessione si ferma su un Lock | sì | **sì** |"
             echo "| stati delle due adesioni | \`ammessa,in_attesa\` | \`$esito\` |"
             echo "| posti occupati (tetto 1) | 1 | **$occupati** |"

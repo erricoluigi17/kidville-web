@@ -346,3 +346,55 @@ export async function attendiNomeFileVisibile(riquadro: Locator, nome: string) {
     })
     .toBe(nome);
 }
+
+/**
+ * Compila la SCADENZA AVVISO nel modulo «Nuovo Avviso», che dal 2026-09-19 è
+ * OBBLIGATORIA su ogni avviso (decisione n. 3 del cantiere avvisi).
+ *
+ * ─── PERCHÉ ESISTE, E PERCHÉ STA QUI E NON DENTRO UNO SPEC ─────────────────
+ *
+ * Senza questo campo il bottone «Pubblica Avviso» resta `aria-disabled="true"`
+ * — non `disabled`, perché deve restare raggiungibile dallo screen reader e
+ * spiegarsi via `aria-describedby` — e `locator.click()` non fallisce subito:
+ * ATTENDE che l'elemento diventi cliccabile e muore nel timeout del test. È
+ * successo davvero il 2026-09-19 su DUE spec insieme (`teacher-avvisi` e
+ * `isolamento-sedi`), che hanno bruciato 4 minuti ciascuna per tre tentativi,
+ * e il messaggio d'arresto parlava di un click, non di un campo mancante.
+ * Due copie di questa procedura sarebbero divergute al primo ritocco del
+ * modulo: qualunque spec futuro che pubblica un avviso passa da qui.
+ *
+ * ─── LA DATA È CALCOLATA, MAI CABLATA ──────────────────────────────────────
+ *
+ * Una data fissa nel futuro invecchia e un giorno rende rosso uno spec che
+ * nessuno ha toccato — la trappola del «test scaduto col calendario», già
+ * pagata in questo repo. Trenta giorni avanti è abbastanza perché l'avviso
+ * resti in bacheca per tutta la durata della suite.
+ *
+ * ─── L'ORA NON SI TOCCA ────────────────────────────────────────────────────
+ *
+ * `DateTimeField` preimposta `23:59` appena la data è valida (`ORA_DI_SERIE`):
+ * riempirla a mano qui significherebbe duplicare quella scelta in un secondo
+ * posto, e il giorno in cui cambia questo file direbbe il falso in silenzio.
+ *
+ * Il campo data è un `<input type="text">` MASCHERATO in gg/mm/aaaa, non un
+ * `<input type="date">` nativo: l'ordine dei campi di quello dipende dalla
+ * lingua dell'OS del runner, e su una CI non è garantito.
+ */
+export async function compilaScadenzaAvviso(page: Page, fraGiorni = 30) {
+  const quando = new Date(Date.now() + fraGiorni * 86_400_000);
+  const gg = String(quando.getDate()).padStart(2, '0');
+  const mm = String(quando.getMonth() + 1).padStart(2, '0');
+  const aaaa = String(quando.getFullYear());
+
+  // Il gruppo `role="group"` etichettato «Scadenza avviso» contiene DUE campi
+  // etichettati «Data» e «Ora». Senza restringere al gruppo, `getByLabel('Data')`
+  // pescherebbe anche la «Data» della scadenza adesione quando quel blocco è
+  // aperto — i sosia di `getByText`, nella loro versione per label.
+  const gruppo = page.getByRole('group', { name: 'Scadenza avviso' });
+  await gruppo.getByLabel('Data').fill(`${gg}/${mm}/${aaaa}`);
+
+  // POSITIVO, e non è pignoleria: se il modulo cambiasse forma e il `fill`
+  // finisse in un campo qualunque, il click dopo andrebbe di nuovo in timeout
+  // e il prossimo lettore ricomincerebbe da capo questa indagine.
+  await expect(gruppo.getByLabel('Ora')).toHaveValue(/^\d{2}:\d{2}$/);
+}

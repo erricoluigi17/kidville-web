@@ -355,6 +355,18 @@ scritte qui perché non le scopra qualcun altro fra sei mesi.
    cantiere fa soltanto letture. Ciò che è stato verificato davvero con `SELECT` è l'**aritmetica**
    del fuso e il **catalogo** (volatilità, `DEFAULT`, `NOT NULL`, trigger esistenti). La prima
    analisi sintattica vera sarà l'applicazione al merge.
+
+   ✅ **SUPERATO il 2026-09-19, e prima del merge invece che dopo.** Il file è stato applicato al
+   **DB E2E della CI** con `migrate-ci.yml` (run `35467499162`, 13 secondi, `psql` con
+   `ON_ERROR_STOP=1` e `--single-transaction`): non solo ha passato il parser, l'ha **eseguito per
+   intero** su un Postgres vero. Traccia dal log, nell'ordine: `CREATE FUNCTION` ·
+   `ALTER TABLE` ×2 (le undici colonne) · `CREATE TRIGGER` · **`UPDATE 2`** e **`UPDATE 1`** (il
+   backfill, sui due avvisi seminati e sull'unico di tipo `adesione`) · `ALTER TABLE` (il
+   `SET NOT NULL`, che quindi **ha retto** sul backfill) · `DO` (i cinque `CHECK`) ·
+   `CREATE INDEX` ×5 · le tre RPC con `REVOKE`/`GRANT` · `DROP FUNCTION` (la firma a 6 argomenti) ·
+   `NOTIFY`. Nessun `ERROR`, un solo `NOTICE` atteso («trigger … does not exist, skipping»).
+   Resta vero che la produzione ha **35 avvisi** invece di 2: il backfill è provato nella sua
+   *meccanica*, non ancora nel suo *volume*.
 3. **Il DB E2E della CI non è migrato.** È un progetto Supabase separato con
    `supabase_migrations.schema_migrations` vuoto, e `.github/workflows/migrate-ci.yml` è
    `workflow_dispatch`: si lancia a mano. Finché non lo si fa, `POST /api/avvisi` sfila le sette
@@ -364,6 +376,26 @@ scritte qui perché non le scopra qualcun altro fra sei mesi.
    guarda) e l'export **503**. I tre spec riconoscono quella condizione **dal prodotto** (la riga
    senza `scadenza_avviso`, il 503 col suo codice), la **dichiarano** e proseguono degradati: senza,
    il primo push dopo il merge tingerebbe la CI di rosso per una ragione che non è il codice.
+
+   ✅ **FATTO il 2026-09-19, prima del merge** (run `35467499162`). Da qui in avanti quei tre spec
+   collaudano la funzione **vera**, non il ramo di degrado — che però resta in piedi, e deve
+   restarci: il progetto CI non ha storico delle migrazioni, quindi la prossima colonna nuova
+   ritroverà lo stesso vuoto finché qualcuno non rilancia il workflow a mano.
+
+   🔴 **E la CI ha trovato subito qualcosa che nessuno dei dodici critici aveva visto.** Il primo
+   giro sul ramo è finito **rosso su due spec** — `teacher-avvisi.spec.ts:8` e
+   `isolamento-sedi.spec.ts:142` — entrambe con lo stesso arresto: `locator.click` in timeout su
+   «Pubblica Avviso», bottone `aria-disabled="true"`. Causa: la scadenza avviso è **obbligatoria**
+   (decisione 3), le due spec compilano il modulo vecchio, e il bottone resta spento **a ragione**.
+   Il cantiere D2 aveva aggiornato `20-docenti`, `30-genitori` e lo spec nuovo della lista d'attesa —
+   che però creano gli avvisi via **API**. Le uniche due che passano dal **modulo** non erano
+   nell'elenco, e nessuno se n'era accorto perché in locale l'E2E è in `deny`.
+   ⚠️ La lezione non è «mancavano due spec»: è che **un `click` su un bottone disabilitato non
+   fallisce, ASPETTA** — quei due test hanno bruciato 4 minuti ciascuno per tre tentativi, e il
+   messaggio d'arresto parlava di un click, mai del campo mancante. Chiuso con **un solo** helper
+   condiviso, `compilaScadenzaAvviso` in `e2e/fixtures.ts`: due copie sarebbero divergute al primo
+   ritocco del modulo, ed è esattamente il difetto che questo cantiere ha già chiuso tre volte
+   altrove.
 4. **`pg_cron` schedula in UTC, il conteggio dei giorni è civile romano.** Il promemoria «tre giorni
    prima» conta giorni italiani; il tick parte a un'ora UTC. Nei due cambi d'ora l'istante di
    partenza scivola di un'ora rispetto al giorno civile: non sposta il *giorno* del promemoria, ma è
@@ -511,6 +543,47 @@ scritte qui perché non le scopra qualcun altro fra sei mesi.
 > binario: `144` file, `22`. La voce che stai leggendo, che parla di uno scanner incapace di
 > accorgersi di non aver guardato niente, alla prima stesura era stata compilata **con uno scanner
 > che su due file non guardava**. Da valutare se sostituire i due NUL con `'\0'`.
+
+#### ✅ L'audit è stato fatto — 2026-09-19, e il verdetto NON è «22 lock ciechi»
+
+La voce qui sopra prometteva una lista da cui cominciare, e diffidava di sé stessa. Aveva ragione a
+diffidare: la lista era **un indizio**, e messa alla prova si è ridotta a un terzo.
+
+**Metodo**, nell'ordine, perché il primo passo da solo mente:
+
+1. **A byte** (`read_bytes` in Python), mai `grep`. Conferma dei due file col NUL crudo, per nome.
+2. **Il pavimento si riconosce dalla forma, non dal numero.** La prima passata cercava solo
+   `toBeGreaterThan(0)` e accusava **73** lock: falso. I lock ben fatti scrivono il pavimento con
+   una **costante nominata** (`MEDIA_MINIMI`, `PIENI_MINIMI`) o con un numero alto
+   (`toBeGreaterThan(400)`). Accettando qualunque argomento: **121 con pavimento, 20 senza**.
+   ⚠️ Fra i 73 falsi accusati c'era `media-con-rapporto-daspetto`, che ha perfino un test intitolato
+   *«il lock non è cieco per costruzione»*. Un audit che accusa un lock di essere cieco leggendo il
+   contrario di ciò che quel lock dichiara di sé è un audit da rifare, non da pubblicare.
+3. **Poi la prova sul campo, che è l'unica che conta**: accecare la radice di scansione (puntarla a
+   una cartella vuota) e guardare il colore. Dodici lock provati uno per uno.
+
+**Esito.** Su 144 lock: 141 leggono dal disco, 121 hanno il pavimento, **20 no**. Dei 20:
+
+| | lock | prova |
+|---|---|---|
+| 🔴 **3 ciechi** | `console-suppressions` · `orario-presenze-un-motore-solo` · `e2e-sede-dichiarata` | restano **verdi** scansionando **zero** file |
+| ✅ 8 vedono | `causale-fattura-un-motore-solo` · `cestino-galleria-ogni-lettura-dichiara` · `identita-client-negli-attributi` · `interruttore-legacy-video` · `wizard-pubblici-un-solo-guscio` · `app-log-bonifica-pii` · `maestro-bonifica-segreti` · `stati-alunno-classificati` | diventano rossi |
+| ✅ 9 non possono mentire | leggono **un file singolo** (`admin-layout-shell` provato: `ENOENT`, la suite non parte) | esplodono rumorosamente |
+
+**Il peggiore dei tre è `console-suppressions`**: con `src/` sostituito da una cartella vuota resta
+**`3 passed (3)`**. È il lock che impedisce a un `console.log` di entrare nel codice sorgente, cioè
+la **regola 1** del logging obbligatorio di `AGENTS.md`. L'unica traccia del fatto che non stesse
+guardando niente era il tempo: **136 ms → 2 ms**. Nessun essere umano legge quel numero.
+
+**Pavimenti da mettere, su misure di oggi**: sorgenti `.ts`/`.tsx` sotto `src/` = **1232** (⇒ `> 1000`
+per `console-suppressions` e `orario-presenze-un-motore-solo`); file `.ts` in `e2e/` primo livello =
+**38** (⇒ `> 30` per `e2e-sede-dichiarata`). Basso rispetto al misurato, così sopravvive a una
+potatura normale, ma **mai zero**: deve morire su uno scanner rotto.
+
+⏳ **Non corretti in questo ramo, e il perché è una scelta**: un commit in più avrebbe fatto
+ripartire una CI da venticinque minuti per un difetto che non appartiene a questo cantiere e che
+esiste da prima. Vanno in un ramo successivo — che il workflow del repo consente di aprire solo
+**dopo** un deploy riuscito.
 
 ### La fotografia delle migrazioni: si rigenera DOPO il merge, non prima
 

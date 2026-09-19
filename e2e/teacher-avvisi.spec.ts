@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { STORAGE } from './fixtures';
+import { STORAGE, compilaScadenzaAvviso } from './fixtures';
 
 // Bacheca docente (/teacher/avvisi): lista di plesso + pubblicazione
 // (consentita al gruppo teacher via avvisi_config della scuola E2E).
@@ -27,6 +27,10 @@ test('bacheca: vede l’avviso seedato e ne pubblica uno per la propria classe',
   await page
     .getByPlaceholder('Scrivi il testo dell’avviso')
     .fill('Contenuto creato dalla suite Playwright.');
+
+  // La scadenza dell'avviso è obbligatoria dal 2026-09-19: senza, il bottone
+  // resta `aria-disabled` e il click muore nel timeout invece di dire cosa manca.
+  await compilaScadenzaAvviso(page);
 
   // La classe propria è già selezionata → pubblico direttamente.
   await page.getByRole('button', { name: 'Pubblica Avviso' }).click();

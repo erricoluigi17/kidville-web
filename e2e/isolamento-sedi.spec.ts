@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { EMAILS, IDS, login, attendiFineCaricamento } from './fixtures';
+import { EMAILS, IDS, login, attendiFineCaricamento, compilaScadenzaAvviso } from './fixtures';
 import itStudents from '../messages/it/adminStudents.json';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +161,9 @@ test('un avviso pubblicato nella sede 1 non compare nella sede 2', async ({ page
   await page
     .getByPlaceholder('Scrivi il testo dell’avviso')
     .fill('Contenuto della sede 1: non deve uscire dal plesso.');
+  // Obbligatoria dal 2026-09-19. Senza, il bottone resta `aria-disabled` e questo
+  // test bruciava i suoi 240 secondi in un click che non poteva riuscire.
+  await compilaScadenzaAvviso(page);
   await page.getByRole('button', { name: 'Pubblica Avviso' }).click();
 
   // POSITIVO: la pubblicazione è riuscita. Se il POST fosse stato respinto (per

@@ -51,9 +51,20 @@ const TOKEN = 'text-kidville-muted';
  *             genitore rimasta indietro. Misura reale su disco a quella data: 172 file /
  *             1150 occorrenze; i tetti restano allineati ai totali DICHIARATI
  *             nell'allowlist, che il test confronta a sua volta con la propria lunghezza.
+ * 2026-09-19: 177 / 1170, **una sola occorrenza in meno** — l'etichetta delle due tendine
+ *             nuove di `/parent/compiti` (`LezioniCompitiSections.tsx`, `ETICHETTA_FILTRO`),
+ *             passata a `text-kidville-sub`; l'allowlist di quel file scende da 7 a 6.
+ *             ⚠️ IL MOTIVO PER CUI SCENDE VA LETTO, perché quel 7 era VERDE per
+ *             compensazione: nello stesso lavoro era sparita un'altra occorrenza del token
+ *             (lo stato vuoto scritto a mano, sostituito da `StatoElenco`) e la riga NUOVA
+ *             ne aveva occupato il posto, a conteggio invariato. È il caso descritto in
+ *             testa a questo file — un elenco che non si abbassa quando una voce muore
+ *             lascia un posto libero a chi verrà dopo — e il tetto scende di uno proprio
+ *             per non lasciarlo libero un'altra volta. `TETTO_FILE` resta 177: il file usa
+ *             ancora il token altrove, non è stato bonificato.
  */
 const TETTO_FILE = 177;
-const TETTO_OCCORRENZE = 1171;
+const TETTO_OCCORRENZE = 1170;
 
 /**
  * Bonificati, e non possono rientrare.

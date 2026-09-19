@@ -2199,7 +2199,14 @@ describe('coverage-lock isolamento fra sedi', () => {
             // albero di lavoro stanno lavorando altri agenti, e `video-uploads`
             // (V07) porterà altre route con `createAdminClient`. Chi unisce i rami
             // RIMISURI questo numero sul file unito invece di sommare a mente.
-            routeConServiceRole: 321,
+            // 321 → 322 il 2026-09-19: `primaria/compiti`, l'elenco dei compiti
+            // per casa di una classe che alimenta la linguetta «Compiti» del
+            // registro (docente e segreteria). Una route sola, un handler solo.
+            // Passa da `requireDocente` + `assertSezioneInScope`, e la query
+            // porta `scuola_id` accanto a `section_id` nella STESSA select: è
+            // un handler CONTROLLATO, non esentato — `handlerEsentati` resta
+            // 105 e se sale vuol dire che qualcuno ha tolto un presidio.
+            routeConServiceRole: 322,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2357,7 +2364,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // conservazione video. Il passo coincide col numero di file (+1 route,
             // +1 handler) perché quella rotta espone il solo POST. Misurato, non
             // dedotto.
-            handlerControllati: 490,
+            // 490 → 491 il 2026-09-19: l'unico handler (`GET`) di
+            // `primaria/compiti`. Il passo coincide col numero di file (+1
+            // route, +1 handler) perché quella rotta espone il solo GET. La
+            // nota sta accanto a `routeConServiceRole`, sopra. Misurato
+            // rieseguendo il lock, non dedotto.
+            handlerControllati: 491,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

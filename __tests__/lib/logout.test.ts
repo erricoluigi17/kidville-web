@@ -19,6 +19,22 @@ import { doLogout } from '@/lib/auth/logout'
 
 const KV_KEYS = ['kv_user_id', 'kv_user_role', 'kv_parent_id', 'kv_student_id', 'kv_teacher_id']
 
+/**
+ * Le voci del grado per figlio, `kv_grado_<uuid>`. Scritte a mano e non
+ * importate dal modulo, per la stessa ragione di
+ * `__tests__/lib/grado-figlio-memorizzato.test.tsx`: la chiave è un contratto
+ * con i dispositivi già in giro, e un test che importasse la costante
+ * seguirebbe una rinomina invece di accorgersene.
+ *
+ * DUE e non una: `togliGradi` raccoglie prima e cancella dopo perché
+ * `removeItem` dentro il giro rinumera gli indici di `key(i)`. Con una sola voce
+ * quel bug non si vedrebbe. Gli uuid sono inventati (repo pubblico).
+ */
+const GRADI = [
+  ['kv_grado_11111111-1111-4111-8111-111111111111', 'primaria'],
+  ['kv_grado_22222222-2222-4222-8222-222222222222', 'nido'],
+] as const
+
 describe('doLogout', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
@@ -33,6 +49,11 @@ describe('doLogout', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    // `restoreAllMocks` e non solo `clearAllMocks`: qui sotto si spia
+    // `Storage.prototype.removeItem` facendolo LANCIARE, e uno spione lasciato
+    // in piedi renderebbe rosso il test successivo per una ragione che non è
+    // sua.
+    vi.restoreAllMocks()
     localStorage.clear()
   })
 
@@ -85,6 +106,55 @@ describe('doLogout', () => {
     impostaBadgeNonLette.mockRejectedValueOnce(new Error('plugin assente'))
     svuotaCacheLocale.mockRejectedValueOnce(new Error('indexeddb ko'))
     await doLogout()
+    expect(location.href).toBe('/auth/login')
+  })
+
+  // ── IL GRADO DI OGNI FIGLIO: la pulizia che non era protetta da niente ──────
+  //
+  // `logout.ts` chiama `dimenticaTuttiIGradi()` invece di ricopiare il prefisso
+  // `kv_grado_` dentro `LOCAL_KEYS`, e il commento accanto difende quella scelta
+  // da una RINOMINA della chiave. Ma dalla sparizione della CHIAMATA — o dal suo
+  // spostamento DOPO `window.location.href`, che la hard navigation cancella —
+  // non la difendeva niente: misurato il 2026-09-19, disattivando quella riga
+  // `__tests__/{lib,pages,ui,components}` restava verde su 670 file e 10.032
+  // test. È la stessa forma del difetto della push raccontato in `logout.ts`
+  // («un fix che sembra esserci e non c'è»), e qui vale altrettanto: nel
+  // suffisso della chiave c'è l'uuid di un minore, su telefoni e tablet che
+  // passano di mano.
+  //
+  // NON si mocka `@/lib/auth/use-child-school-type`: un finto che conta le
+  // chiamate resterebbe verde anche se la funzione vera non togliesse niente. Si
+  // seminano le voci vere e si guarda il `localStorage`.
+  it('TOGLIE il grado memorizzato di OGNI figlio: nella chiave c’è l’uuid di un minore', async () => {
+    for (const [chiave, grado] of GRADI) localStorage.setItem(chiave, grado)
+
+    await doLogout()
+
+    for (const [chiave] of GRADI) {
+      expect(
+        localStorage.getItem(chiave),
+        `la voce ${chiave} è sopravvissuta al logout: l'uuid di un minore resta sul dispositivo ` +
+          'di chi è appena uscito',
+      ).toBeNull()
+    }
+    // E non è una scopa: porta via le proprie voci, non tutto il localStorage.
+    expect(localStorage.getItem('kv_altro')).toBe('resta')
+    expect(
+      location.href,
+      'la pulizia dei gradi ha fermato l’uscita: un passo best-effort è diventato un blocco',
+    ).toBe('/auth/login')
+  })
+
+  it('lo storage che lancia durante la pulizia dei gradi non ferma l’uscita', async () => {
+    // Finestra privata, storage negato, WebView antica: `removeItem` lancia. Il
+    // logout deve uscire lo stesso — il passo è best-effort come tutti gli altri.
+    for (const [chiave, grado] of GRADI) localStorage.setItem(chiave, grado)
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new DOMException('accesso negato', 'SecurityError')
+    })
+
+    await doLogout()
+
     expect(location.href).toBe('/auth/login')
   })
 })

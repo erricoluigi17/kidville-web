@@ -897,6 +897,10 @@ describe('tempo pieno: le ultime ore del giorno restano firmabili', () => {
         const modale = await screen.findByRole('dialog')
         fireEvent.change(testoDi(itPrimaria.firmaModalArgomentoClasse), { target: { value: 'Storia' } })
         fireEvent.click(within(modale).getByRole('button', { name: itPrimaria.registroFirma }))
+        // Argomento pieno e compiti vuoti: dal 2026-09-19 si interpone il promemoria
+        // «i genitori non vedranno nulla nella bacheca Compiti». Questo caso misura
+        // l'ora spedita, non il promemoria: si conferma e si prosegue.
+        fireEvent.click(await screen.findByRole('button', { name: itPrimaria.firmaModalPromemoriaSalva }))
 
         await waitFor(() => expect(chiamate.find((c) => c.init?.method === 'POST')).toBeTruthy())
         const corpo = JSON.parse(String(chiamate.find((c) => c.init?.method === 'POST')!.init!.body))
@@ -915,6 +919,8 @@ describe('tempo pieno: le ultime ore del giorno restano firmabili', () => {
         const modale = await screen.findByRole('dialog')
         fireEvent.change(testoDi(itPrimaria.firmaModalArgomentoClasse), { target: { value: 'Musica' } })
         fireEvent.click(within(modale).getByRole('button', { name: itPrimaria.registroFirma }))
+        // Come sopra: si conferma il promemoria dei compiti vuoti e si prosegue.
+        fireEvent.click(await screen.findByRole('button', { name: itPrimaria.firmaModalPromemoriaSalva }))
 
         await waitFor(() => expect(chiamate.find((c) => c.init?.method === 'POST')).toBeTruthy())
         const corpo = JSON.parse(String(chiamate.find((c) => c.init?.method === 'POST')!.init!.body))

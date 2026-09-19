@@ -13,7 +13,9 @@
 
   "hubTitolo": "Primary School",
   "hubLezioni": "Lessons",
-  "hubLezioniSub": "Topics and homework",
+  "hubLezioniSub": "Topics covered in class",
+  "hubCompiti": "Homework",
+  "hubCompitiSub": "The homework assigned by the teachers",
   "hubOrario": "Timetable",
   "hubOrarioSub": "Class weekly timetable",
   "hubValutazioni": "Grades",
@@ -161,7 +163,6 @@
   "lezioniAttivitaIndividuale": "Individual activity: {value}",
   "lezioniAllegato": "attachment",
   "compitiTitolo": "Homework",
-  "compitiVuoto": "No homework assigned recently.",
   "compitiLezione": "Lesson",
   "compitiIndividuali": "Individual homework: {value}",
   "compitiConsegna": "Due: {data}"

@@ -13,7 +13,9 @@
 
   "hubTitolo": "Scuola Primaria",
   "hubLezioni": "Lezioni",
-  "hubLezioniSub": "Argomenti e compiti",
+  "hubLezioniSub": "Argomenti svolti in classe",
+  "hubCompiti": "Compiti",
+  "hubCompitiSub": "I compiti per casa assegnati dalle insegnanti",
   "hubOrario": "Orario",
   "hubOrarioSub": "Orario settimanale della classe",
   "hubValutazioni": "Valutazioni",
@@ -161,7 +163,6 @@
   "lezioniAttivitaIndividuale": "Attività individuale: {value}",
   "lezioniAllegato": "allegato",
   "compitiTitolo": "Compiti",
-  "compitiVuoto": "Nessun compito assegnato di recente.",
   "compitiLezione": "Lezione",
   "compitiIndividuali": "Compiti individuali: {value}",
   "compitiConsegna": "Consegna: {data}"

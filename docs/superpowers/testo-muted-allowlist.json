@@ -2,7 +2,7 @@
   "_": "Debito misurato di `text-kidville-muted` come INCHIOSTRO. Vedi __tests__/a11y/testo-muted-allowlist.test.ts. Questa lista può solo accorciarsi.",
   "misurato_il": "2026-08-02",
   "totale_file": 176,
-  "totale_occorrenze": 1164,
+  "totale_occorrenze": 1163,
   "file": [
     {
       "path": "src/app/(dashboard)/admin/armadietto/page.tsx",
@@ -582,7 +582,7 @@
     },
     {
       "path": "src/components/features/parent/LezioniCompitiSections.tsx",
-      "n": 7
+      "n": 6
     },
     {
       "path": "src/components/features/parent/forms/OtpSignatureModal.tsx",

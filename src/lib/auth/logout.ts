@@ -1,6 +1,7 @@
 import { getSupabase } from '@/lib/supabase/browser-client';
 import { impostaBadgeNonLette } from '@/lib/native/badge';
 import { impostaBiometria } from '@/lib/native/biometric';
+import { dimenticaTuttiIGradi } from '@/lib/auth/use-child-school-type';
 import { svuotaCacheLocale } from '@/lib/offline/pulizia-cache';
 import { unregisterNativePush } from '@/lib/push/native-register';
 
@@ -93,6 +94,19 @@ export async function doLogout(): Promise<void> {
     for (const k of LOCAL_KEYS) window.localStorage.removeItem(k);
   } catch {
     /* ignore */
+  }
+  try {
+    // Il grado di ogni figlio è memorizzato per dispositivo con una chiave a
+    // SUFFISSO VARIABILE (`kv_grado_<uuid>`), quindi in `LOCAL_KEYS` — che è una
+    // lista di nomi esatti — non può entrare. Si chiama la funzione del modulo
+    // che possiede il prefisso, per la stessa ragione già scritta sopra per
+    // `impostaBiometria(false)`: ricopiare qui la stringa farebbe due fonti di
+    // verità, e a una rinomina il logout smetterebbe di ripulirla in silenzio.
+    // Non è cosmetico: nel suffisso c'è l'uuid di un minore, e questi telefoni
+    // e tablet passano di mano.
+    dimenticaTuttiIGradi();
+  } catch {
+    /* ignore: non lancia già di suo, e comunque l'uscita non dipende da lei */
   }
   // Hard navigation: scarta qualunque stato in memoria e rivaluta le guardie.
   window.location.href = '/auth/login';

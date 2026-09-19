@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useTranslations } from 'next-intl';
-import { MessageCircle, BookOpen, Camera, CalendarX2, GraduationCap, Hourglass, Info } from 'lucide-react';
+import { MessageCircle, BookOpen, Camera, CalendarX2, ClipboardList, GraduationCap, Hourglass, Info } from 'lucide-react';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { withIdentity } from '@/lib/auth/current-user';
 import { useParentIdentity, eMotivoNonPiuIscritto } from '@/lib/auth/use-parent-identity';
@@ -35,7 +35,10 @@ function ParentHomeContent() {
   // `home`: sono un testo dell'AREA famiglia, non del riquadro di benvenuto.
   const tServizi = useTranslations('parentServizi');
   const { parentId, studentId, inAttesa, motivoAssenza, ready } = useParentIdentity();
-  const { schoolType } = useChildSchoolType();
+  // `ready` NON si butta via: serve al ramo «figli non ancora visibili» qui sotto
+  // e a `gradoIgnoto`, dove è il segno del PRIMO fotogramma — quello in cui
+  // `studentId` è ancora `null` perché la risoluzione dell'identità è in volo.
+  const { schoolType, ready: gradoLetto } = useChildSchoolType();
   const isPrimaria = schoolType === 'primaria';
 
   const [firstName, setFirstName] = useState('');
@@ -135,6 +138,45 @@ function ParentHomeContent() {
   // Con studentId assente non si resta in caricamento: si mostra il saluto neutro.
   const nameLoading = !!studentId && !nameResolved;
 
+  // ── «IL GRADO NON SI SA ANCORA», che non è «il grado è 0-6» ─────────────────
+  //
+  // `isPrimaria` da solo non distingue le due cose: `schoolType` vale `null`
+  // tanto mentre la fetch di `useChildSchoolType` è in volo quanto per un
+  // bambino di nido. Il segno che le separa è il `ready` che `useChildSchoolType`
+  // ritorna accanto a `schoolType` (qui `gradoLetto`) — la home lo scartava con
+  // una destrutturazione parziale.
+  //
+  // ⚠️ DUE CONDIZIONI, E NESSUNA DELLE DUE È ORNAMENTALE.
+  //
+  // `!ready` è il fotogramma 1 VERO, ed è la parte che mancava. `useParentIdentity`
+  // inizializza `studentId` da `searchParams.get('id')` e lo risolve solo dentro
+  // un `useEffect` che aspetta `/api/parent/students`: al mount `studentId` è
+  // `null` ogni volta che si arriva su `/parent` senza `?id=`, cioè dalla tab
+  // Home della bottom-nav (`BottomNav`, `mainTabs`, id `home`, href `/parent`
+  // nudo) e a ogni avvio a freddo — non è un caso limite, è la strada larga. Col
+  // solo `!!studentId` questa riga era falsa proprio nel fotogramma che doveva
+  // coprire: la colonna in più veniva riservata un fotogramma TROPPO TARDI, e
+  // per il 0-6 la riga faceva `4 → 5 → 4`, due assestamenti dove ne bastava zero.
+  //
+  // `!!studentId` è ciò che impedisce che la riserva diventi permanente:
+  // `useChildSchoolType` esce dall'effetto PRIMA di `setReady(true)` quando manca
+  // `studentId`, quindi per un account senza figli visibili `gradoLetto` resta
+  // `false` per tutta la vita della pagina. Il `return` anticipato qui sopra
+  // (`ready && inAttesa`) NON lo copre: `inAttesa` è
+  // `figli.length === 0 && body.in_attesa === true` e resta `false` quando la
+  // lettura dei figli fallisce, cioè offline a freddo — quell'account la home
+  // intera la vede. È lo stesso motivo — e la stessa forma — di `nameLoading`.
+  //
+  // In `||` e non in `&&` perché i due casi sono consecutivi, non simultanei:
+  // `!ready` copre prima che si sappia se un figlio c'è, `!!studentId` dopo.
+  //
+  // ⚠️ Dal 2026-09-19 `gradoLetto` può essere vero SENZA che la rete abbia
+  // risposto: `useChildSchoolType` semina il grado dalla memoria del dispositivo
+  // (`kv_grado_<figlio>`, una voce per figlio). Le due condizioni qui sopra non
+  // cambiano — cambia quanto dura il fotogramma che coprono, e il conto sta
+  // nella tabella più sotto.
+  const gradoIgnoto = (!ready || !!studentId) && !gradoLetto;
+
   // Azioni rapide (DR QuickActions): solo navigazione verso pagine reali.
   // "Segnala assenza" porta alla pagina assenze (dove vive il submit reale).
   const wi = (href: string) => withIdentity(href, parentId, studentId);
@@ -154,7 +196,115 @@ function ParentHomeContent() {
     isPrimaria
       ? { id: 'scuola', label: t('azioneScuola'), icon: GraduationCap, href: wi('/parent/primaria'), bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' }
       : { id: 'diario', label: t('azioneDiario'), icon: BookOpen, href: wi('/parent/diary'), bg: 'bg-kidville-success-soft', fg: 'text-kidville-success' },
+    // ── «COMPITI», E SOLO PER LA PRIMARIA ──────────────────────────────────
+    // Un bambino di nido o infanzia non ha compiti per casa: la scorciatoia
+    // passa dallo STESSO `isPrimaria` che decide «Scuola primaria» invece di
+    // «Diario di oggi», e non da un secondo meccanismo di grado — due criteri
+    // che devono restare d'accordo sono un criterio che prima o poi non lo è.
+    // L'ICONA è la stessa della voce di menu (`BottomNav`, id `compiti`):
+    // `ClipboardList`. I TOKEN sono quelli canonici della funzione «compiti»
+    // (`TINTA_FUNZIONE.compiti` = `#E6720A` = `--color-kidville-warn`), quindi
+    // la coppia `warn-soft`/`warn`, la stessa dell'hub «Scuola».
+    //
+    // ⚠️ Il colore RESO qui non è però `#E6720A` ma `warn-strong` (`#A64F09`):
+    // `globals.css:1121` ridipinge `.text-kidville-warn` — e ogni inchiostro di
+    // stato sulle fasce chiare — con la variante «strong», perché `#E6720A` su
+    // `warn-soft` sta sotto i 4,5:1 di WCAG AA. Nel menu la stessa tinta arriva
+    // come stile INLINE (`style={{ color: it.tint }}`), che la regola CSS non
+    // aggancia: lì resta `#E6720A`. La divergenza è deliberata: è il prezzo del
+    // contrasto, non una svista da allineare.
+    //
+    // La voce «Note» usa la STESSA coppia Tailwind e subisce lo STESSO remap, ma
+    // la sua divergenza non è la stessa: la sua tinta canonica è
+    // `TINTA_FUNZIONE.note` = `#B5651D` (`kv-subj-storia`), non `#E6720A`. Quindi
+    // «Compiti» va `#E6720A` → `#A64F09` e «Note» `#B5651D` → `#A64F09`: stessa
+    // destinazione, due partenze.
+    //
+    // L'ETICHETTA sta in `home` e non in `parentPrimaria`: in home le cinque
+    // scorciatoie sono scritte su DUE righe (`\n` + `whitespace-pre-line`, vedi
+    // sotto), nell'hub la voce è una riga sola. Sono due testi con due
+    // tipografie, non una stringa duplicata; il lock in
+    // `__tests__/pages/parent-primaria-hub.test.tsx` pretende l'a-capo su tutte
+    // e cinque, così la convenzione non dipende da chi se la ricorda.
+    ...(isPrimaria
+      ? [{
+          id: 'compiti',
+          label: t('azioneCompiti'),
+          icon: ClipboardList,
+          href: wi('/parent/compiti'),
+          bg: 'bg-kidville-warn-soft',
+          fg: 'text-kidville-warn',
+        } as QuickAction]
+      : []),
   ];
+
+  // ── LE COLONNE DELLA RIGA, E CHI PAGA L'ASSESTAMENTO CHE RESTA ─────────────
+  //
+  // La griglia segue il NUMERO di scorciatoie: con le cinque della primaria una
+  // riga da quattro manderebbe l'ultima a capo da sola. Entrambe le classi sono
+  // scritte per esteso perché il generatore di Tailwind legge stringhe letterali
+  // e una classe composta (`grid-cols-${n}`) non verrebbe mai emessa.
+  //
+  // `|| gradoIgnoto`: finché il grado non si sa, la quinta colonna è riservata e
+  // resta vuota. Con `gradoIgnoto` scritto come sopra la riserva parte dal PRIMO
+  // fotogramma; col solo `!!studentId` partiva dal secondo, e quel fotogramma in
+  // più era un assestamento in più — per tutti e due i rami.
+  //
+  // ⚠️ L'ASSESTAMENTO CHE RESTA, E CHI LO PAGA. Contato per ramo, dal mount al
+  // regime, e confrontato con lo stato PRECEDENTE di ciascun ramo e non solo con
+  // l'ipotesi «cinque colonne fisse per tutti». Dal 2026-09-19
+  // `useChildSchoolType` RICORDA il grado sul dispositivo (`kv_grado_<figlio>` in
+  // `localStorage`, una voce per figlio), quindi le righe sono diventate due:
+  //
+  //                     prima apertura        aperture successive   prima della corsia
+  //     primaria        5 → 5 → 5 (zero)      5 → 5 (zero)          4 fisso   (nessuno)
+  //     nido/infanzia   5 → 5 → 4 (uno)       5 → 4 (uno)           4 fisso   (nessuno)
+  //
+  // L'ultima colonna è lo stato del ramo PRIMA di tutto questo lavoro, ed è lo
+  // stesso per entrambi: su `HEAD` le scorciatoie erano QUATTRO (nessun
+  // «Compiti») e la riga era il letterale `grid-cols-4`, invariante — zero
+  // assestamenti di colonna, per la primaria come per il 0-6.
+  //
+  // ⚠️ Qui c'era «(prima della corsia: 4 → 5, uno)» sulla primaria, ed era FALSO:
+  // quel `4 → 5` è lo stato INTERMEDIO di questa corsia — la quinta card già
+  // aggiunta e la riserva non ancora scritta — non lo stato di partenza. Le due
+  // righe usavano due basi diverse, e da lì nasceva una seconda frase falsa:
+  // «l'assestamento è stato SPOSTATO dalla primaria al 0-6». Non è stato
+  // spostato. Sul **0-6**, che è la maggioranza delle famiglie, ne abbiamo
+  // INTRODOTTO uno dove non ce n'era nessuno — è il prezzo della scorciatoia
+  // aggiunta per la primaria; sulla **primaria** ne abbiamo EVITATO uno che
+  // sarebbe nato per causa nostra. Chi paga è il 0-6, e non in cambio di niente
+  // che avesse prima.
+  //
+  // Le due colonne contano lo stesso numero di assestamenti, e il conto da solo
+  // non dice la cosa che conta: a cambiare è QUANDO. Senza memoria il 0-6 si
+  // assesta alla risposta di `/api/parent/primaria`, cioè dopo DUE giri di rete,
+  // col dito già sullo schermo; con la memoria calda si assesta all'HYDRATION,
+  // senza aver chiesto niente a nessuno. Il lampo resta, ma smette di aspettare
+  // la rete.
+  //
+  // PERCHÉ NON ARRIVA A ZERO, detto invece che lasciato sperare: il primo render
+  // lo fa il SERVER (il layout radice fa `await cookies()`, quindi ogni rotta è
+  // dinamica) e il server non può leggere il `localStorage` di quel telefono —
+  // seminare il grado durante il render sarebbe un mismatch di hydration. Per
+  // togliere anche quel fotogramma il grado dovrebbe arrivare al server (un
+  // cookie) o la riga non dovrebbe rendersi prima di saperlo: due lavori diversi
+  // da questo, e nessuno dei due sta in questo file.
+  //
+  // Il verso, quando l'assestamento c'è, resta quello scelto: da cinque a quattro
+  // le stesse quattro card si ALLARGANO nello spazio già riservato, nello stesso
+  // ordine e senza che ne compaia una nuova; nell'altro verso *appare* un
+  // bersaglio in mezzo a quelli che il dito stava già mirando, ed è quella la
+  // forma che fa aprire la pagina sbagliata.
+  //
+  // ⚠️ «Diverso» non vuol dire «innocuo», e non va raccontato come tale: con
+  // quattro card il centro della quarta passa da ~0,70 a ~0,875 della larghezza,
+  // quindi un dito puntato sul vecchio centro atterra DENTRO la terza card.
+  //
+  // L'ALTRA alternativa — cinque colonne fisse per tutti — non è la stessa cosa:
+  // lascerebbe al 0-6 un buco permanente in fondo alla riga a ogni apertura della
+  // home, un difetto che dura per sempre al posto di uno che dura una fetch.
+  const colonneAzioni = quickActions.length > 4 || gradoIgnoto ? 'grid-cols-5' : 'grid-cols-4';
 
   return (
     <div className="min-h-screen bg-kidville-cream pb-[100px]">
@@ -172,7 +322,7 @@ function ParentHomeContent() {
       {parentId && <SospensioneBanner userId={parentId} className="px-4 pt-4" />}
 
       {/* ── QUICK ACTIONS ──────────────────────────── */}
-      <div className="grid grid-cols-4 gap-[9px] px-4 pt-4">
+      <div className={`grid ${colonneAzioni} gap-[9px] px-4 pt-4`}>
         {quickActions.map((a) => {
           const Icon = a.icon;
           return (

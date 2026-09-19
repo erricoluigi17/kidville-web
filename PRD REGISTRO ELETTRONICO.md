@@ -359,6 +359,28 @@ scritte qui perché non le scopra qualcun altro fra sei mesi.
    la gara cominci il sondaggio viene eseguito a vuoto e **deve** rispondere `0`; se rispondesse `1`
    il filtro pescherebbe qualcos'altro, e il «✔ bloccata» non dimostrerebbe più niente.
 
+   ✅ **Giro completo, run `35473823495` — e il controllo negativo ha fatto il suo mestiere:**
+
+   ```
+   controllo negativo — sessioni in attesa PRIMA di cominciare: 0
+   sondaggio 1: sessioni in attesa di Lock = 1
+   la seconda sessione è BLOCCATA sul lock della prima ✔
+   A:ammessa    B:in_attesa    posti occupati: 1 (tetto: 1)
+   atto 4 — ammissione oltre capienza con p_forza => null: code=POSTI_ESAURITI
+   atto 5 — rimozione ok=true · posti dopo=0 · promozione ok=true · posti finali=1
+   ```
+
+   🔑 **Il sondaggio ha detto `0`, poi `1`.** È la riga che trasforma questa prova da «ha funzionato»
+   a «funziona»: un contatore che si è visto rispondere in entrambi i modi non è una costante
+   travestita. Senza quella prima riga, le cinque sotto sarebbero state altrettanto verdi e non
+   avrebbero significato niente — ed è esattamente il difetto trovato lo stesso giorno su tre lock
+   di `__tests__/architecture/`.
+
+   E `atto 4 → POSTI_ESAURITI` è la prova diretta della correzione fatta durante il cantiere: con un
+   `NOT p_forza` nudo quella riga avrebbe risposto `ok=true`, ammettendo oltre il tetto **senza un
+   errore, senza un log, e senza che nessuno se ne accorgesse fino al marciapiede davanti al
+   pullman**.
+
    ✅ **E i due casi che mancavano sono stati aggiunti** (atti 4 e 5 dello stesso workflow), perché
    lasciarli fuori avrebbe significato dichiarare «dimostrato» un terzo di quello che il rischio
    elencava:

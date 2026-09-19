@@ -712,6 +712,36 @@ Cinque cose, nell'ordine in cui vanno fatte. Nessuna è facoltativa, e nessuna l
    seguenti, **mai eseguita da nessuno**). Deve coprire anche `p_forza => null` — dove
    `NOT NULL AND NOT false` vale `NULL` e un `IF` con condizione `NULL` **non scatta** — e la
    rimozione.
+
+   🔧 **Lo strumento adesso esiste**: `.github/workflows/prova-concorrenza-posti.yml`
+   (`workflow_dispatch`, 2026-09-19). Gira sul **DB della CI**, non sulla produzione: quello è il
+   database nato per essere scritto, e la stessa guardia di `migrate-ci.yml` si rifiuta di partire
+   se i dati assomigliano a quelli veri. Non serviva chiedere di toccare la produzione — bastava
+   guardare quale database era già migrato.
+
+   ⚠️ **Perché NON è «due POST in parallelo da Playwright»**, che era la strada ovvia e sbagliata:
+   due richieste HTTP «insieme» non garantiscono che le transazioni si sovrappongano. Sarebbero
+   verdi anche **senza** il lock, ogni volta che il caso le serializza da sé — cioè quasi sempre. Un
+   test che passa per fortuna è peggio di nessun test, perché qualcuno si fida.
+
+   🔑 **Qui la sovrapposizione si VERIFICA, non si spera.** La sessione A apre la transazione e non
+   la chiude (`pg_sleep`, che mette in pausa il *server* — con un `\! sleep` del client una `psql`
+   uccisa dal runner chiuderebbe la connessione, rilascerebbe il lock, e la prova sarebbe verde
+   senza aver provato niente). Poi si interroga `pg_stat_activity` finché B non risulta
+   **`wait_event_type = 'Lock'`**, e solo allora A conferma. Se il `FOR UPDATE` sparisse, B non
+   aspetterebbe nessuno e **quel passo fallirebbe** — cioè il contrario di un test che diventa verde
+   per caso.
+
+   **Tre cose imparate scrivendolo, tutte verificate su `pg_constraint` prima di eseguire:**
+   · `avvisi_risposte` ha FK su `utenti(id)` e `alunni(id)`: con uuid inventati la prova sarebbe
+   fallita con un errore di chiave esterna che **sembra un difetto del prodotto**. Gli
+   identificativi si prendono dal seed. · Servono due coppie **distinte**: con la stessa, la seconda
+   chiamata sarebbe una *modifica* della prima, non una gara. · Niente heredoc dentro un `run:` di
+   GitHub Actions — il terminatore deve stare a colonna zero, e lì il blocco YAML è già finito: il
+   file non si carica nemmeno, con un errore che non nomina né bash né l'heredoc.
+
+   ⏳ **Resta da LANCIARLO** (`gh workflow run "Prova concorrenza posti (CI)"`), e da estendere agli
+   altri due casi che il rischio elenca: `p_forza => null` e la rimozione.
 3. ✅ **FATTO il 2026-09-19, PRIMA del merge** (`.github/workflows/migrate-ci.yml`, run
    `35467499162`, 13 secondi). Finché non si faceva, `e2e/avvisi-lista-attesa.spec.ts` era **verde
    avendo misurato solo il 403 al docente**: metà collaudo, e lo spec lo dichiarava invece di

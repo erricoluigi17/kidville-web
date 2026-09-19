@@ -1,6 +1,6 @@
 ---
 name: tester-opus-privacy
-description: Collauda la privacy di Kidville — GDPR e dati di minori: cosa finisce nei log, chi può leggere cosa, quanto si conserva, PII nel repo. Un solo test, un solo report. Non modifica codice.
+description: Collaudo privacy GDPR e dati di minori: log, accessi, retention, PII nel repo.
 model: claude-opus-5
 effort: max
 color: purple

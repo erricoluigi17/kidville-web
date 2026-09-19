@@ -1,6 +1,6 @@
 ---
 name: esecutore-opus
-description: Implementa gli step del piano nella pipeline /ship-cycle — codice, migrazioni Supabase, variabili d'ambiente (solo nomi), logging e test. Girato dal Dynamic Workflow "ultracode" come esecutore-opus-1, -2, -3…
+description: Implementa gli step del piano di /ship-cycle: codice, migrazioni, logging, test.
 model: claude-opus-5
 effort: max
 color: orange

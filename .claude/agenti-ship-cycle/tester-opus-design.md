@@ -1,6 +1,6 @@
 ---
 name: tester-opus-design
-description: Collauda l'aderenza al design system Kidville — token di colore #006A5F / #FDC400 / #FEF1E4, tipografia, spaziature, raggi, coerenza con i mockup. Un solo test, un solo report. Non modifica codice.
+description: Collaudo design system: token di colore, tipografia, spaziature, raggi.
 model: claude-opus-5
 effort: max
 color: yellow

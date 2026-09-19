@@ -1,6 +1,6 @@
 ---
 name: tester-opus-accessibilita
-description: Collauda l'accessibilità di Kidville — contrasto colori, navigazione da tastiera, screen reader, focus, target touch, Alto Contrasto. Un solo test, un solo report. Non modifica codice.
+description: Collaudo accessibilita: contrasto, tastiera, screen reader, focus, touch.
 model: claude-opus-5
 effort: max
 color: purple

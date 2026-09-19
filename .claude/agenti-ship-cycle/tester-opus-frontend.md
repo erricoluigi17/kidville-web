@@ -1,6 +1,6 @@
 ---
 name: tester-opus-frontend
-description: Collauda il frontend di Kidville — rendering, hydration, stati (loading/vuoto/errore), interazioni reali nel browser, console pulita, responsive. Un solo test, un solo report. Non modifica codice.
+description: Collaudo frontend nel browser vero: rendering, hydration, stati, console.
 model: claude-opus-5
 effort: max
 color: cyan

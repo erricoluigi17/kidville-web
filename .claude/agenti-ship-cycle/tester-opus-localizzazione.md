@@ -1,6 +1,6 @@
 ---
 name: tester-opus-localizzazione
-description: Collauda la localizzazione di Kidville — coerenza it-IT di testi, date, numeri e valute, tenuta del layout con stringhe lunghe, e prontezza al bilinguismo. Un solo test, un solo report. Non modifica codice.
+description: Collaudo localizzazione it-IT: testi, date, valute, tenuta del layout.
 model: claude-opus-5
 effort: max
 color: blue

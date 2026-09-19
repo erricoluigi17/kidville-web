@@ -1,6 +1,6 @@
 ---
 name: tester-opus-backend
-description: Collauda il backend di Kidville — route API, gate di ruolo, validazione zod, query Supabase/PostgREST, migrazioni, test unit. Un solo test, un solo report. Non modifica codice.
+description: Collaudo backend: route API, gate di ruolo, zod, PostgREST, migrazioni.
 model: claude-opus-5
 effort: max
 color: green

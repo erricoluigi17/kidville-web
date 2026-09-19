@@ -96,23 +96,32 @@ gira da sola *pianifica → implementa → collauda → correggi* finché tutti 
 branch secondario, PRD aggiornato, logging obbligatorio, gate di verifica.
 
 Spiegazione completa in **`CLAUDE.md`** — dove sta anche il blocco sulle **conferme umane**.
-🟢 **Stato dal 2026-09-02** (decisione del titolare, sostituisce la revoca del 2026-08-03):
-**LEGGERE dal database non chiede mai conferma** — mai, nemmeno in produzione, nemmeno sulle
-anagrafiche di minori. **SCRIVERE la chiede**: `INSERT`/`UPDATE`/`DELETE`/DDL, `apply_migration`,
-merge, `git push`, deploy. Con un'eccezione che conta: **se l'utente ha approvato un piano che
-contiene quella scrittura, il piano È la conferma** e non si richiede. Il meccanismo è il blocco
-`autoMode` in `.claude/settings.json`, non le regole `allow`/`ask` — quelle non sanno distinguere
-una `SELECT` da un `UPDATE`, perché passano dallo stesso strumento.
-⚠️ **Il lato scrittura non è ancora dimostrato**: il giorno stesso, un `DROP TABLE` di prova è
-passato senza fermarsi, perché le regole `autoMode` si leggono all'**avvio** della sessione. Prima
-di fidarsi di questo paragrafo, riavviare e rifare la prova — istruzioni in `CLAUDE.md`.
-🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**.
-**583 domande di iscrizione, misurate il 2026-09-04** — erano 542 il 2 settembre, 403 il 20 agosto,
-302 il 4 agosto, 227 il 31 luglio: **circa venti al giorno**, e non è la prima volta che questa riga
-trova il proprio ritmo raddoppiato. Mentre leggi sono già di più. Non copiare questo numero: rifai il conteggio, è una query sola — ed è
-una **lettura**, quindi non ti fermerà nessuno. Chi lavora qui mostri comunque cosa sta per
-applicare: *mostrare* non è *chiedere*, non costa niente, ed è l'unica cosa rimasta fra un errore e
-le famiglie che stanno dietro quelle righe.
+🟩 **Stato dal 2026-09-18**: **autonomia piena, i prompt non arrivano più all'utente** — né in
+lettura né in scrittura, né sul DB di produzione, né su merge, `git push`, deploy o migrazioni.
+🔴 Resta vero, e non cambia con i permessi: in produzione ci sono **dati reali di minori**. Non
+copiare un conteggio da un file: rifallo con `SELECT count(*) FROM enrollment_submissions;` — è una
+**lettura**, non ti fermerà nessuno. E mostra comunque cosa stai per applicare: *mostrare* non è
+*chiedere*, non costa niente, ed è l'unica cosa fra un errore e le famiglie dietro quelle righe.
+Dettagli operativi (hook, `autoMode`, vie di fuga) in **`CLAUDE.md`**; come ci si è arrivati, con
+tutte le volte in cui la documentazione ha detto il falso su sé stessa, in
+**`docs/storia-permessi-e-conferme.md`**.
+
+## Come si legge il codice (il contesto si paga a ogni turno)
+
+Il contesto di avvio viene riletto **a ogni scambio**: quello che entra una volta lo paghi per tutta
+la sessione. Quattro abitudini, misurate su questo repo:
+
+1. **Si legge con `Read`, non con `cat`/`sed` dentro `Bash`.** Non è una preferenza di stile: le
+   regole di `.claude/rules/` si attivano sul **Read** di un file che corrisponde ai loro `paths`.
+   Chi legge via `Bash` non le riceve mai. (Misurato: 1.914 `Bash` contro 42 `Read`, 0 `Grep`.)
+2. **File grosso: `Read` con `offset`/`limit`.** Una lettura costa in media 2.632 token perché si
+   prende il file intero dove bastava una fetta.
+3. **Si cerca con `Grep`/`Glob`**, che restituiscono solo ciò che corrisponde.
+4. **Ogni comando che può stampare molto passa da `head`/`tail`.** `BASH_MAX_OUTPUT_LENGTH` è
+   impostato a **5.000** caratteri in `.claude/settings.json`: oltre quella soglia il risultato non
+   entra in contesto, arriva un'anteprima di 2 KB e il resto finisce in un file che puoi leggere con
+   `Read`. Non perdi niente, ma se ti serve tutto devi fare un giro in più. (Misurato: il 50% dei
+   comandi sta sotto i 443 caratteri, il 95% sotto 3.403; la soglia morde il 3%.)
 
 ## Note
 - `utenti.role` è una colonna **generata** da `ruolo`: non scriverla mai.

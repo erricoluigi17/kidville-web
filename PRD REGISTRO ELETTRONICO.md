@@ -337,7 +337,48 @@ davvero: `6 confermate (12 posti) + 4 in attesa`, più un'undicesima a posti zer
 Quindici voci. Nessuna è un difetto scoperto dopo: sono le cose che questo lavoro **non** ha chiuso,
 scritte qui perché non le scopra qualcun altro fra sei mesi.
 
-1. **La concorrenza sui posti non è dimostrata da `vitest`.** La protegge il
+1. ✅ **DIMOSTRATA il 2026-09-20** — run `35471783810`, 47 secondi, sul DB della CI. Due sessioni
+   `psql` hanno chiesto lo **stesso ultimo posto**:
+
+   ```
+   sondaggio 1: sessioni in attesa di Lock = 1
+   la seconda sessione è BLOCCATA sul lock della prima ✔
+   A:ammessa
+   B:in_attesa
+   posti occupati: 1 (tetto: 1)
+   ```
+
+   La seconda sessione **si è fermata** — verificato interrogando `pg_stat_activity`, non dedotto —
+   e alla conferma della prima è finita **in coda** invece di sfondare il tetto. Una ammessa, una in
+   attesa, **un posto occupato su uno**.
+
+   ⚠️ **E subito un limite, perché è la stessa domanda posta a tutti i lock quel giorno: quella prova
+   non era mai stata vista fallire.** Il sondaggio ha risposto `1` al primo colpo, senza nessuna
+   misura di riferimento a zero — cioè un contatore che nessuno ha mai visto dire zero, che è una
+   costante travestita finché non lo dimostri. Aggiunto perciò un **controllo negativo**: prima che
+   la gara cominci il sondaggio viene eseguito a vuoto e **deve** rispondere `0`; se rispondesse `1`
+   il filtro pescherebbe qualcos'altro, e il «✔ bloccata» non dimostrerebbe più niente.
+
+   ✅ **E i due casi che mancavano sono stati aggiunti** (atti 4 e 5 dello stesso workflow), perché
+   lasciarli fuori avrebbe significato dichiarare «dimostrato» un terzo di quello che il rischio
+   elencava:
+
+   · **Atto 4 — `p_forza => null` deve ancora rifiutare.** È il caso più insidioso della migrazione.
+   `p_forza boolean DEFAULT false` vale `false` solo se il parametro è **omesso**; PostgREST lo manda
+   **esplicitamente `null`** quando l'interfaccia ha una spunta facoltativa lasciata vuota — il caso
+   normale, non un incidente. E `NOT NULL` vale `NULL`, `NULL AND qualunque` vale `NULL`, e un `IF`
+   con condizione `NULL` **non scatta**: con un `NOT p_forza` nudo il rifiuto per capienza
+   sparirebbe **in silenzio**, e la segreteria ammetterebbe oltre il tetto credendo di essere dentro.
+   La riga che lo regge è `IF NOT COALESCE(p_forza, false) AND NOT v_giu`; l'atto pretende
+   `POSTI_ESAURITI`.
+   · **Atto 5 — la rimozione libera davvero il posto** (decisione 30): si toglie l'ammesso
+   (`p_stato='nessuna'`), si verifica che i posti occupati tornino a **0**, e solo allora si ammette
+   chi era in coda **senza forzatura**. È la prova che il posto liberato non resta contato da
+   qualche parte — altrimenti la coda non avanzerebbe mai, e nessun errore lo direbbe.
+
+   *Il testo originale del rischio, lasciato perché spiega perché lo strumento è dovuto nascere:*
+
+   **La concorrenza sui posti non è dimostrata da `vitest`.** La protegge il
    `SELECT … FOR UPDATE` della RPC, che conta **dopo** il lock; i test unitari la misurano con dei
    finti, e un mock piatto è verde con e senza la correzione. La **prova a due sessioni** è scritta
    per esteso nella migrazione (riga 1560 e seguenti, modellata su quella di `20260907181116`) e

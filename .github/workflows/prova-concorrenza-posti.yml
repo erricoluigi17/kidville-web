@@ -297,6 +297,44 @@ jobs:
           echo "stati delle due adesioni: $esito"
           echo "posti occupati: $occupati (tetto: 1)"
 
+          # ── Atto 4: `p_forza => null` DEVE ancora rifiutare ───────────────
+          #
+          # È il caso più insidioso di tutta la migrazione, e la riga che lo
+          # regge è `IF NOT COALESCE(p_forza, false) AND NOT v_giu THEN`.
+          #
+          # PERCHÉ IL `COALESCE` NON È PIGNOLERIA. `p_forza boolean DEFAULT false`
+          # vale `false` solo se il parametro è OMESSO. PostgREST invece lo manda
+          # ESPLICITAMENTE come `null` quando l'interfaccia ha una spunta
+          # facoltativa lasciata vuota — che è il caso normale, non un incidente.
+          # E in Postgres `NOT NULL` vale `NULL`, `NULL AND qualunque` vale `NULL`,
+          # e un `IF` con condizione `NULL` **NON SCATTA**. Con un `NOT p_forza`
+          # nudo il rifiuto per capienza sparirebbe IN SILENZIO: nessun errore,
+          # nessun log, e la segreteria ammetterebbe oltre il tetto credendo di
+          # essere dentro. Qui l'avviso è a 1 posto su 1 e B è in coda: ammetterlo
+          # senza forzare deve tornare `POSTI_ESAURITI`.
+          RISPOSTA_B=$(leggi "select id from public.avvisi_risposte
+                               where avviso_id='$AVVISO' and stato_adesione='in_attesa' limit 1")
+          forza_null=$(leggi "select public.avviso_adesione_gestisci(
+                                '$AVVISO','$RISPOSTA_B','ammessa', null, null, null, now()) ->> 'code'")
+          echo "atto 4 — ammissione oltre capienza con p_forza => null: code=${forza_null:-(nessuno)}"
+
+          # ── Atto 5: la rimozione libera il posto ─────────────────────────
+          #
+          # Decisione 30, presa in corso d'opera perché senza di essa
+          # un'ammissione sbagliata era irreversibile. Si toglie A
+          # (`p_stato = 'nessuna'`), e solo allora B deve poter entrare SENZA
+          # forzatura: è la prova che il posto liberato torna davvero disponibile
+          # e non resta contato da qualche parte.
+          RISPOSTA_A=$(leggi "select id from public.avvisi_risposte
+                               where avviso_id='$AVVISO' and stato_adesione='ammessa' limit 1")
+          rimozione=$(leggi "select public.avviso_adesione_gestisci(
+                               '$AVVISO','$RISPOSTA_A','nessuna', null, null, null, now()) ->> 'ok'")
+          dopo_rimozione=$(leggi "select public.avviso_posti_occupati('$AVVISO', null)")
+          promozione=$(leggi "select public.avviso_adesione_gestisci(
+                                '$AVVISO','$RISPOSTA_B','ammessa', null, null, null, now()) ->> 'ok'")
+          finale=$(leggi "select public.avviso_posti_occupati('$AVVISO', null)")
+          echo "atto 5 — rimozione ok=$rimozione · posti dopo la rimozione=$dopo_rimozione · promozione ok=$promozione · posti finali=$finale"
+
           {
             echo "### Prova di concorrenza sul tetto dei posti"
             echo ""
@@ -306,21 +344,41 @@ jobs:
             echo "| la 2ª sessione si ferma su un Lock | sì | **sì** |"
             echo "| stati delle due adesioni | \`ammessa,in_attesa\` | \`$esito\` |"
             echo "| posti occupati (tetto 1) | 1 | **$occupati** |"
+            echo "| ammissione con \`p_forza => null\` | \`POSTI_ESAURITI\` | \`${forza_null:-(nessuno)}\` |"
+            echo "| rimozione di A | \`true\` | \`$rimozione\` |"
+            echo "| posti dopo la rimozione | 0 | **$dopo_rimozione** |"
+            echo "| promozione di B dopo il posto liberato | \`true\` | \`$promozione\` |"
+            echo "| posti finali | 1 | **$finale** |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           # La pulizia PRIMA delle asserzioni finali: un fallimento non deve
           # lasciare righe di prova sul database di collaudo.
           psql -d "$PGURL" -c "delete from public.avvisi_risposte where avviso_id='$AVVISO'; delete from public.avvisi where id='$AVVISO';" >/dev/null
 
+          rosso=0
           if [ "$esito" != "ammessa,in_attesa" ]; then
             echo "::error::stati «$esito» invece di «ammessa,in_attesa»: il tetto non ha retto, oppure l'adesione è stata spezzata."
-            exit 1
+            rosso=1
           fi
           if [ "$occupati" != "1" ]; then
             echo "::error::posti occupati $occupati su un tetto di 1: due adesioni sono entrate."
-            exit 1
+            rosso=1
           fi
-          echo "::notice::tetto rispettato: una ammessa, una in coda, 1 posto occupato su 1"
+          if [ "$forza_null" != "POSTI_ESAURITI" ]; then
+            echo "::error::atto 4: ammettere oltre capienza con p_forza => null ha risposto «${forza_null:-(nessun codice, cioè è RIUSCITO)}» invece di POSTI_ESAURITI. È il caso del NULL a tre valori: con un «NOT p_forza» nudo l'IF non scatta e il rifiuto per capienza sparisce IN SILENZIO. Serve «NOT COALESCE(p_forza, false)»."
+            rosso=1
+          fi
+          if [ "$rimozione" != "true" ] || [ "$dopo_rimozione" != "0" ]; then
+            echo "::error::atto 5: la rimozione ha risposto ok=$rimozione e ha lasciato $dopo_rimozione posti occupati invece di 0: il posto liberato resta contato da qualche parte, e la coda non avanzerà mai."
+            rosso=1
+          fi
+          if [ "$promozione" != "true" ] || [ "$finale" != "1" ]; then
+            echo "::error::atto 5: dopo il posto liberato la promozione ha risposto ok=$promozione e i posti finali sono $finale invece di 1."
+            rosso=1
+          fi
+
+          [ "$rosso" -ne 0 ] && exit 1
+          echo "::notice::tetto rispettato (1/1), p_forza=>null rifiutato con POSTI_ESAURITI, rimozione e promozione corrette"
 
       # Se qualcosa muore a metà, l'avviso di prova resta: questo passo lo toglie
       # comunque. Filtra sul TITOLO, che è scritto per essere riconoscibile, e

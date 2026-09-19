@@ -53,16 +53,22 @@ minori, allergie e note mediche in testo libero. Il lancio commerciale non è av
 sono arrivati lo stesso**, e per due settimane questo file ha sostenuto il contrario perché nessuno
 l'aveva più riletto da quando il modulo pubblico era andato online.
 
-| | 31/07 | 04/08 | 20/08 | 02/09 | 04/09 |
-|---|---|---|---|---|---|
-| domande di iscrizione | 227 | 302 | 403 | 542 | **583** |
-| codici fiscali distinti di minori | 152 | **324** | *non rimisurato* | 567 | *non rimisurato* |
+| | 31/07 | 04/08 | 20/08 | 02/09 | 04/09 | 19/09 |
+|---|---|---|---|---|---|---|
+| domande di iscrizione | 227 | 302 | 403 | 542 | 583 | **705** |
+| codici fiscali distinti di minori | 152 | **324** | *non rimisurato* | 567 | *non rimisurato* | *non rimisurato* |
 
-Cinque misurazioni, e **tre volte di fila il ritmo di crescita è stato trovato raddoppiato** rispetto
-alla riga che lo stimava: ~6 al giorno, poi ~11, poi ~20. Non invecchia solo il numero: invecchia più
-in fretta la **stima di quanto in fretta invecchia**. Mentre leggi sono già di più.
+Sei misurazioni. Per tre volte di fila il ritmo di crescita era stato trovato **raddoppiato** rispetto
+alla riga che lo stimava — ~6 al giorno, poi ~11, poi ~20 — e la lezione scritta qui era che invecchia
+più in fretta la **stima di quanto in fretta invecchia**.
 
-**Non copiare quel 583. Contalo:**
+La misura del 19/09 rompe quella sequenza, e va detto invece di nasconderlo: 583 → 705 in quindici
+giorni fa **~8 al giorno**, cioè *meno* della metà dell'ultima stima. Non è una smentita del
+pericolo: è la prova che **il ritmo non si estrapola in nessuna delle due direzioni**, né verso l'alto
+né verso il basso. L'unica cosa che vale è il conteggio del giorno in cui si legge. Mentre leggi, il
+numero qui sopra è già vecchio.
+
+**Non copiare quel 705. Contalo:**
 
 ```sql
 SELECT count(*) FROM enrollment_submissions;

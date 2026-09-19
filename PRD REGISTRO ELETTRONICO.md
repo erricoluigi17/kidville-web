@@ -68,7 +68,7 @@
 > |--------|-------|--------|------------|
 > | **Diario 0-6** | ✅ Operativo | `/teacher/diary`, `/admin/diary` | `/api/diary/students`, `/api/diary/entries` (+ **`DELETE`**: toglie una nanna segnata per errore, solo eventi nanna, con audit `delete` e nessuna notifica al genitore) — dal 2026-09-07 **la nanna si salva SOLO per i bambini con l'orario compilato** (prima una riga per ogni presente, e il genitore di chi non aveva dormito leggeva «Ho fatto un bel sonnellino»); regola in `@/lib/diary/nanna`, condivisa fra chi salva, chi rimette la ✅ e chi racconta al genitore |
 > | **Presenze** | ✅ Operativo | `/teacher/attendance`, **`/admin/appello`** (segreteria: tutte le classi della sede, nido·infanzia in pagina e primaria col link al registro), `/parent/attendance`, `/parent/primaria/assenze` | `/api/panic-alert`, `/api/attendance/*` (+ **`PATCH /api/attendance/daily`**: rettifica dell'orario di **QUALUNQUE grado** — la tabella è una sola e la chiave `(alunno_id, data)` non sa cosa sia un grado — anche sui giorni passati, con traccia in `audit_scritture_docente`), `/api/primaria/appello`, `/api/parent/presenze/*` (comunica-assenza `POST`+`DELETE`, giustifica con OTP). Dal 2026-09-07: l'**uscita si registra anche a chi è «presente»** (chi esce all'orario normale prima non aveva nessuna ora d'uscita) e la regola sta in `@/lib/presenze/orario-ammesso`, un posto solo per il 422 del server e le tre interfacce |
-> | **Registro Primaria** | 🔶 UI pronta | `/teacher/register`, `/parent/register` | `/api/grades`, `/api/notes` |
+> | **Registro Primaria** | 🔶 **In uso su 1 sede su 2 che hanno la primaria** — non «UI pronta»: è compilato tutti i giorni a Cesa e mai a Giugliano | Le rotte vive sono `/teacher/primaria/[sectionId]/registro` (+ `compiti`, `appello`, `valutazioni`, `note`, `orario`, `prospetto`, `scrutinio`, `fascicolo`) e, per il genitore, `/parent/primaria` (hub) con `/parent/compiti` e `/parent/lezioni`. `/teacher/register` e `/parent/register` esistono ancora ma sono **legacy** | `/api/primaria/*` (registro, appello, allegati, sblocca, valutazioni, **`compiti` dal 2026-09-19**), `/api/parent/primaria`. `/api/grades` e `/api/notes` sono le rotte legacy. ⚠️ **Rimisurato il 2026-09-19**: 83 righe di registro negli ultimi 30 giorni, **tutte a Cesa** (5 sezioni su 5 configurate); **Giugliano 0 righe di sempre**, ma per due motivi diversi: **II–V (4 sezioni su 5) non hanno nessuna campanella**, il loro registro dice «Nessuna ora» e **non è firmabile** — lì manca la configurazione; la **I ha 32 campanelle su tutti e cinque i giorni** (27 lezioni: 6·6·5·5·5) ed **è firmabile nei cinque giorni di lezione**. ⚠️ E qui c'era scritto «firmabile **oggi**»: il 2026-09-19 è un **sabato**, e le campanelle della I coprono i giorni 1-5 — quindi proprio oggi quella griglia è vuota e mostra «Nessuna ora», la stessa schermata che questa riga attribuisce a II–V. Vale per **tutte** le sezioni, Cesa compresa: «Nessuna ora» nel fine settimana **non** è il segnale che manca la configurazione. L'orario manca a tutte e 5, ma pre-compila solo la materia e **non è condizione per firmare** (la griglia nasce dalle campanelle; il vincolo è «almeno materia **o** argomento **o** compiti»): per la I il registro è **non compilato**, non **non compilabile**. **Aversa non ha la primaria.** Delle 21 righe con l'argomento, **17 hanno i compiti vuoti**: da qui il promemoria non bloccante in firma |
 > | **Armadietto** | ✅ Operativo *(ciclo di rifornimento completato il 2026-09-01)* | `/teacher/locker` (vista «Da portare»), `/parent/locker`, `/admin/armadietto` | `/api/locker/*` |
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
 > | **Chat** | ✅ Operativo · 🔧 correzione del 14/09 sul branch `fix/chat-doppioni-coda-notifica`, ⏳ **non ancora in produzione** | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`). **Dal branch del 14/09** (vedi il changelog): `GET /api/chat/messages` legge gli **ultimi 50** e pagina all'indietro con il cursore `primaDi` (`offset` → 400), con **«Carica messaggi precedenti»** in cima alla conversazione — fino a quel giorno leggeva i 50 più **vecchi**, e 48 messaggi in 7 conversazioni non erano mai stati mostrati; il messaggio inviato **non compare più due volte**; il tocco su una notifica di chat **apre la conversazione** (link `/<area>/chat?thread=<uuid>`) da push nativa, web push, notifica del browser e centro notifiche. Stato e regole in `useConversazioneChat` + `@/lib/chat/stato-conversazione`, condivisi dalle due pagine |
@@ -92,14 +92,326 @@
 > | Modulo | Stato | Priorità / Fase | Note |
 > |--------|-------|-----------------|------|
 > | **Valutazione conforme O.M. 3/2025** | ❌ Non conforme | Fase 1 | Oggi voti numerici: vietati alla primaria. Da convertire a motore ibrido per grado (vedi §4) |
-> | **Orario / Tempo scuola / Materie master** | ✅ Implementato · ⚠️ **non ancora configurato** | Fase 1 | Materie strutturate (`materie`), campanelle e modelli 27/29/40h esistono da giugno 2026: fino al 2026-09-09 questa casella diceva «❌ Da implementare» ed era **falsa**. Il fatto che conta è un altro, ed è misurato: al 2026-09-09 **`orario_settimanale` ha 0 righe in tutto il database** e **9 sezioni primaria su 11 non hanno nessuna campanella**, quindi il loro registro dice «Nessuna ora» e non è firmabile. Il generatore, fino al 2026-09-09, produceva **25 ore su 27 dichiarate** (`Math.round` invece di divisione con resto): le due sole sezioni configurate ce l'hanno addosso |
-> | **Compresenza avanzata** | 🔶 Parziale | Fase 1 | Firme indipendenti presenti; manca firma con argomenti/compiti per singoli alunni + oscuramento |
+> | **Orario / Tempo scuola / Materie master** | ✅ Implementato · ⚠️ **non ancora configurato** | Fase 1 | Materie strutturate (`materie`), campanelle e modelli 27/29/40h esistono da giugno 2026: fino al 2026-09-09 questa casella diceva «❌ Da implementare» ed era **falsa**. Il fatto che conta è un altro, ed è misurato: al 2026-09-09 **`orario_settimanale` ha 0 righe in tutto il database** e **9 sezioni primaria su 11 non hanno nessuna campanella**, quindi il loro registro dice «Nessuna ora» e non è firmabile. 🔄 **Rimisurato il 2026-09-19, ed è cambiato per metà**: `orario_settimanale` ha ora **125 righe** e le campanelle **216**. A **Cesa** tutte e **5** le sezioni sono configurate (30-32 campanelle e 25 ore ciascuna) e il registro si compila davvero; a **Giugliano 4 sezioni su 5 (II–V) non hanno ancora nessuna campanella e nessuna delle 5 ha l'orario**, e il suo registro ha **0 righe di sempre**. ⚠️ Le due cose **non** stanno in rapporto di causa per tutte: la **I ha 32 campanelle** sui cinque giorni di lezione ed è **firmabile dal lunedì al venerdì** — l'orario che le manca pre-compila solo la materia. ⚠️ Non «oggi»: il 2026-09-19 è un **sabato**, e in un giorno senza campanelle la griglia è vuota per ogni sezione, anche le cinque di Cesa. Lo zero di Giugliano è «non compilabile» per II–V e «non compilato» per la I (changelog del 19/09). La casella resta «non configurato» **per Giugliano soltanto** — è lavoro di segreteria, nessuna correzione di codice lo chiude. Il generatore, fino al 2026-09-09, produceva **25 ore su 27 dichiarate** (`Math.round` invece di divisione con resto): le due sole sezioni configurate ce l'hanno addosso |
+> | **Compresenza avanzata** | 🔶 Parziale | Fase 1 | Firme indipendenti presenti; manca firma con argomenti/compiti per singoli alunni + oscuramento. ⚠️ **Nota del 2026-09-19: questa casella è falsa in entrambe le metà, e non da oggi.** La firma con argomenti/compiti per singoli alunni **c'è** (`destinatariIds`, `argomentoProprio`/`compitiPropri`, `registro_destinatari`, `firme_docenti.argomento_proprio` — in `primaria/registro:POST`, nella modale del registro e nel database), e **anche l'oscuramento c'è**: `api/parent/primaria` filtra i contenuti «propri» e li mostra **solo se il figlio è fra i destinatari** di quella firma. Nessuna delle due è stata resa vera dal lavoro del 19/09 — erano già così su `main`, e la casella non è stata riletta. È **annotata e non riscritta** per la stessa ragione del §3 sugli allegati: lo stato vero va rimisurato da chi possiede questa riga, non dedotto di corsa da una lettura del codice. È la stessa classe di guasto che il changelog del 19/09 celebra di aver colto sulla voce «Compiti» dell'hub: **una casella di stato scritta come requisito, letta per mesi come misura** |
 > | **Vincoli temporali immodificabilità** | 🔶 Parziale | Fase 1 | Il blocco esiste (`isOltreScadenza`, `admin_settings.timelock_giorni_classe_orale = 2` su tutte e quattro le sedi) — anche qui la casella diceva «❌ Da implementare» ed era falsa. **Fino al 2026-09-09 lo sblocco era un ciclo chiuso**: l'override si cercava solo per `entita_id`, cioè solo su una riga già scritta, mentre `POST /api/primaria/sblocca` pretendeva l'uuid di quella riga — un'ora **mai firmata** e fuori termine non era più registrabile da nessuno, dirigente compreso, e la pagina admin gli mostrava «Richiedi lo sblocco al dirigente» rivolto a sé stesso. Dal 2026-09-09 lo sblocco indirizza uno **slot** (`section_id` + `data` + `ora_lezione`, migr. `sblocchi_audit_per_slot`) e il dirigente ha un bottone. Resta da fare: 15gg per gli scritti, e `primaria/valutazioni` risponde 423 **senza alcun ramo di override** |
 > | **Scrutinio + Pagella online** | ❌ Da implementare | Fase 2 | 6 giudizi sintetici, Ed. Civica, comportamento; PDF statico (firma qualificata rimandata) |
 > | **Fascicolo Personale + PEI/PDP** | 🔶 Parziale | Fase 2 | Oggi solo flag BES/DSA + delegati; serve fascicolo completo, RBAC ristretto, audit accessi |
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 📒 Changelog — «I genitori non vedono i compiti»: la bacheca c'era, mancava la strada per arrivarci — e gli altri due difetti non erano lo stesso difetto — 2026-09-19 (branch `feat/compiti-registro-date`)
+
+**La segnalazione del titolare**, in due frasi:
+- i genitori **non vedono i compiti**;
+- nel registro **non si torna indietro con le date**.
+
+Sembrava un guasto solo. Interrogando il database ne sono usciti **tre distinti**, con tre rimedi
+diversi — e **uno dei tre non è un difetto software**.
+
+### Le misure, prese il 2026-09-19
+
+Solo conteggi e aggregati. Le query per rifarle sono in fondo al blocco: **non si ricopiano, si
+rieseguono.**
+
+**Registro di classe, ultimi 30 giorni** — 83 righe in tutto, su 6 giornate distinte, **tutte a
+Cesa**:
+
+| sede · classe | righe | con argomento | con compiti |
+|---|---:|---:|---:|
+| Cesa · I ELEMENTARE | 3 | 1 | 1 |
+| Cesa · II ELEMENTARE | 17 | 6 | **0** |
+| Cesa · III ELEMENTARE | 30 | 6 | **0** |
+| Cesa · IV ELEMENTARE | 16 | 4 | 2 |
+| Cesa · V ELEMENTARE | 17 | 4 | 2 |
+| **totale** | **83** | **21** | **5** |
+
+Il numero che spiega tutto: **17 righe su 21** hanno l'argomento scritto e i compiti vuoti. Una
+sola ha il contrario. Le due classi che scrivono di più — II e III, 47 righe delle 83 — non hanno
+mai compilato «Compiti» nemmeno una volta.
+
+**Di sempre**: Cesa 83 righe (dal 2026-09-11, cioè tutte dentro la finestra dei 30 giorni),
+Giugliano **0**, Aversa **0**, sede Demo 14 (luglio), sede E2E 0.
+
+### I tre difetti
+
+**1 · Non c'era la strada.** `/parent/compiti` esisteva, funzionava e leggeva i dati giusti, ma non
+era fra le voci dell'hub «Scuola» — che è la destinazione **sia** della linguetta principale **sia**
+della card in home. L'unica via era Menu → Didattica → Compiti, tre tocchi dentro un menu a tendina.
+Un genitore che non l'avesse trovato per caso non poteva concludere altro che «non ci sono».
+
+⚠️ **Questo PRD dichiarava la voce come esistente** — riga «Pulsante 'Compiti' (bacheca compiti
+dedicata)» nella checklist di `/parent/primaria`, scritta al tempo del consolidamento O.M. 3/2025.
+Era un requisito, ed è stato letto per mesi come uno stato. È la stessa classe di guasto della
+casella «Orario / Tempo scuola» che fino al 2026-09-09 diceva «❌ Da implementare» di codice che
+c'era: **una checklist di collaudo non è una misura.**
+
+**2 · Il campo sbagliato.** A Cesa II e III le maestre compilano «Argomento» e mai «Compiti». La
+bacheca del genitore filtra su `compiti`, e su `compiti` soltanto: per quelle due classi era
+legittimamente vuota. Nessuna riga di codice avrebbe potuto indovinare che l'argomento fosse in
+realtà il compito — e **non deve indovinarlo**: i due campi hanno destinatari diversi, e solo i
+compiti arrivano alle famiglie.
+
+**3 · A Giugliano il registro non è compilato — e per quattro classi su cinque non può esserlo.**
+Zero righe, mai, da nessuna classe. Il riassunto «a Giugliano il registro non è firmabile» è però
+**falso per la prima**, e la differenza decide chi deve muoversi. Rimisurato sezione per sezione il
+2026-09-19:
+
+| Giugliano · sezione | campanelle | di cui lezioni | giorni coperti | righe di orario |
+|---|---:|---:|---:|---:|
+| **I** | **32** | **27** (6·6·5·5·5) | **5 su 5** | 0 |
+| II | 0 | 0 | 0 | 0 |
+| III | 0 | 0 | 0 | 0 |
+| IV | 0 | 0 | 0 | 0 |
+| V | 0 | 0 | 0 | 0 |
+
+**II, III, IV e V — quattro su cinque — non hanno nessuna campanella**, e lì il registro dice
+davvero «Nessuna ora» e **non è firmabile**: manca la configurazione, ed è lavoro di segreteria.
+
+**La I è firmabile nei giorni di lezione** (lun-ven), e lo è perché la griglia nasce dalle **campanelle**, non dall'orario:
+`api/primaria/registro:GET` legge `campanelle` filtrando per `giorno_settimana`, e lo stato vuoto
+scatta su `lezioni.length === 0` in `…/registro/page.tsx`, dove `lezioni` sono le campanelle di tipo
+`lezione`. `orario_settimanale` serve **soltanto** a pre-compilare la materia della riga: quando
+manca, al suo posto compare il segnaposto «orario da completare» — una frase, non un blocco.
+Firmare non lo richiede: `materiaId` è `.nullish()` nello schema della POST, il vincolo del server è
+«indica **almeno** la materia, l'argomento **o** i compiti di questa ora», e il bottone «Firma» è
+disabilitato solo da `saving`, dai destinatari mancanti in assegnazione mirata e dal docente non
+risolto. Le materie da scegliere a mano ci sono: Giugliano ne ha **63** di primaria in anagrafica,
+**11** attaccate alla I.
+
+Per la I, quindi, il registro è **non compilato**, non **non compilabile** — e la distinzione cambia
+la richiesta al titolare: sulle altre quattro serve la segreteria, sulla I basta che qualcuno entri
+e firmi. L'orario della I resta da completare, ma è una comodità (la materia già scritta), non una
+condizione.
+
+A **Cesa** la diagnosi del 2026-09-09 **non vale più**: tutte e 5 le sezioni hanno ora le campanelle
+(30-32 ciascuna) e 25 ore di orario a testa. In tutto il database: 216 campanelle e 125 righe di
+`orario_settimanale`, dove il 2026-09-09 se ne contavano **0**.
+
+**Aversa non c'entra**, e vale la pena scriverlo perché il suo zero sembra il difetto di Giugliano:
+Aversa ha 3 sezioni di nido e 4 di infanzia, e **nessuna primaria**. Lì non c'è niente da compilare.
+
+**Nessuna correzione software chiude il difetto 3, ma nemmeno tutta la segreteria lo chiude.** Per
+II–V vanno configurate le campanelle — è la stessa voce già aperta dal 2026-09-09. Per la I non c'è
+niente da correggere né da configurare per poter firmare: c'è solo un registro che nessuno compila.
+
+### Cosa cambia per il genitore
+
+- **«Compiti» entra nell'hub «Scuola»** ed è la seconda voce delle sette; in home compare una
+  **scorciatoia dedicata**, solo per le famiglie della primaria.
+- **Filtro di periodo** (14 / 30 / 90 giorni / anno scolastico, preimpostato **14 giorni**) e
+  **filtro per materia**. L'anno scolastico parte dal 1° agosto, con un tetto a 364 giorni indietro.
+- **Quattro stati distinti** invece di uno: caricamento · nessun compito · nessun risultato per i
+  filtri scelti · errore con «Riprova». Prima «non ci sono compiti» e «non sono riuscito a leggerli»
+  si assomigliavano troppo, ed è la differenza fra un silenzio vero e un silenzio falso.
+- **La finestra è dichiarata**: quando la lettura è stata troncata, la pagina lo dice invece di
+  lasciar credere che oltre non ci sia niente. Il riquadro compare solo se la lettura corrente è
+  valida — un errore non porta con sé un avviso di troncamento che non ha misurato.
+- Quando l'elenco **non rappresenta più lo stato corrente** è `aria-busy` e attenuato al 75%: la
+  condizione è `caricamento || errore`, **non la sola ricarica** — dopo un errore le righe restano a
+  schermo, e un elenco vecchio a piena opacità con `aria-busy="false"` direbbe che è aggiornato.
+  Attenuato al 75% e non al 60% né al 70%, perché sul riquadro giallo quei due valori scendono a
+  3,30:1 e 4,32:1. ⚠️ Calcolato a mano e **dichiarato qui**: nessun lock lo sorveglia — `/parent/compiti` non è fra le rotte del collaudo di contrasto, e quella sonda non compone l'opacità di un antenato, quindi misurerebbe 10,25:1 e passerebbe anche al 60%. Presidiarlo davvero vuol dire aggiungere la rotta **e** insegnare alla sonda a comporre l'opacità. Scriverlo come gate esistente sarebbe peggio del vuoto: questo repository ha già pagato tre gate che sembravano armati e non lo erano.
+
+### Cosa cambia per docenti e segreteria
+
+- **Nuova linguetta «Compiti» dentro la classe**: è la **terza** voce di `NAV` (`ClasseShell`),
+  subito dopo Panoramica e Registro e **prima** di Appello — il registro un giorno alla volta, i
+  compiti tutto il periodo insieme, e chi cerca i compiti parte da lì. Stesso indirizzo riesportato
+  per la segreteria. Raccoglie in un posto solo ciò che finora si leggeva giorno per giorno.
+- **Filtro di periodo** (30 / 90 giorni / anno scolastico, preimpostato **30 giorni**) e
+  **paginazione** con «Carica altri compiti».
+- **Marca sull'allegato** quando il suo ambito non è «compiti»: si legge «(argomento della lezione)»
+  oppure «(ambito non indicato)».
+
+> **Perché la linguetta del docente pagina e la bacheca del genitore no.** Sono due misure diverse
+> dello stesso dato. Il genitore guarda **un figlio** dentro una finestra dichiarata, e quella
+> finestra è già il tetto: una seconda pagina sarebbe un secondo tetto sopra il primo. Il docente
+> guarda **una classe intera** per un anno, che è l'ordine di grandezza in cui una lista si sfoglia.
+> Il prezzo è che i due preimpostati sono diversi — 14 giorni e 30 — e ciascuno è giusto per il suo
+> lettore.
+
+### Cosa cambia nel registro
+
+- **Frecce ‹ › e «Oggi»**, con il giorno calcolato sul fuso `Europe/Rome` e **ricalcolato al
+  clic**, non al montaggio: alle 00:05 «Oggi» deve portare a oggi.
+- **La data sta nell'URL** (`?data=`) e **sopravvive a F5**, perché lo stato nasce leggendola —
+  filtrata per forma *e* per validità di calendario, con ripiego su oggi.
+- **La data segue il giro fra le linguette**: passando da Registro ad Appello e ritorno non si torna
+  a oggi.
+- ⚠️ **Ma i tasti avanti/indietro del browser non rifanno il giro delle date, ed è voluto.** Si usa
+  `replace`, non `push`: venti giorni sfogliati non devono diventare venti passi indietro prima di
+  uscire dalla pagina. La conseguenza, dichiarata perché non è gratis: non esiste nessun effetto che
+  risincronizzi l'URL verso la griglia, quindi un `?data=` cambiato da fuori senza smontare la
+  pagina non la aggiornerebbe.
+- **Una lettura fallita azzera la griglia** invece di lasciare a schermo quella di un altro giorno.
+  Una griglia vuota sotto un banner rosso è onesta; la griglia di martedì con la data di giovedì è
+  una bugia su cui si firma.
+- **Una guardia contro la corsa fra due cambi rapidi**, a contatore di richiesta e non a flag: la
+  lettura parte da tre punti diversi (l'effetto, il rientro in rete, il caricamento di un allegato) e
+  la pulizia dell'effetto ne copre uno solo.
+
+### Cosa cambia nella modale di firma
+
+- **Un aiuto che spiega la differenza fra i due campi**: «Argomento» è quello che si è fatto in
+  classe, «Compiti» è quello che il bambino deve fare a casa — e **solo i compiti arrivano alla
+  bacheca delle famiglie**. Compare in **entrambi i modi**, compresa l'assegnazione mirata del
+  sostegno: lì `perAlunni` è forzato, e senza la seconda copia la docente di sostegno avrebbe
+  ricevuto il promemoria senza aver mai letto la spiegazione.
+- **Un promemoria non bloccante** quando l'argomento è pieno e i compiti sono vuoti: «Torna ai
+  compiti» oppure «Salva lo stesso», e una volta sciolto non si ripresenta. Non cambia nessun dato e
+  non rifiuta nessuna firma. È rivolto alle 17 righe su 21 misurate sopra, non a tutte.
+- **Le sue esclusioni**, perché un promemoria che compare a sproposito si impara a chiudere senza
+  leggerlo: non compare in supplenza in un'altra classe, non in compresenza, non se l'argomento è
+  vuoto, non se i compiti ci sono già, **non se i compiti sono stati tolti apposta in quella stessa
+  modale**, e non in assegnazione mirata quando la classe i compiti li ha già.
+
+### API
+
+- **`GET /api/primaria/compiti` è nuova**: gate `requireDocente` più il vincolo di sezione,
+  validazione `zod`, paginazione a **cursore opaco** (keyset in base64url, con la sezione dentro —
+  un cursore di un'altra sezione viene rifiutato con 400, non seguito) e log distinti per cursore
+  illeggibile, pagina vuota, pagina successiva e lettura fallita. Il cursore non finisce mai nei log.
+- **`GET /api/parent/primaria`** accetta `dataDa` opzionale — oltre 365 giorni risponde **400**,
+  non taglia in silenzio — e restituisce `finestraRegistro { troncata, lette, totale }` su **ogni ramo che risponde con un payload** —
+  ramo, anche quello non-primaria, così che chi legge non debba distinguere «campo assente» da
+  «finestra intera».
+
+### Altro
+
+Il **grado del figlio è ricordato per dispositivo** (una voce di `localStorage` per bambino), perché
+la prima schermata non debba aspettare la rete per sapere se mostrare le voci della primaria. Al
+logout le voci si cancellano tutte: nel suffisso della chiave c'è l'uuid di un minore.
+
+---
+
+### 🔴 I rischi e i debiti, dichiarati
+
+**`allegati_registro.ambito` non viene mai scritto dal caricatore dell'app.** La colonna esiste, ha
+`DEFAULT 'argomento'` e un `CHECK` a due valori (verificati entrambi nel baseline), ma il caricatore
+del registro manda solo file, riga e utente: **ogni allegato caricato dall'app nasce «argomento»**,
+qualunque cosa sia. ⚠️ Il meccanismo non è il `DEFAULT` di colonna, che **non scatta mai** perché
+l'insert valorizza sempre il campo: a mettere «argomento» d'ufficio è il **default `zod` della
+rotta** (`ambito: z.string().default('argomento')` in `primaria/allegati:POST`). La conseguenza è
+identica, la causa no — e chi andasse a togliere il `DEFAULT` dalla tabella non cambierebbe niente.
+Per questo la linguetta del docente **mostra** la marca invece di filtrarci sopra: un filtro
+`ambito = 'compiti'` darebbe una lista vuota per sempre. Chi vorrà filtrare cominci dal caricatore.
+Dimensione del danno oggi, misurata il 2026-09-19: **`allegati_registro` ha 0 righe**. Il debito è
+reale e non ha ancora toccato nessuno — ed è il momento buono per chiuderlo, perché non c'è niente
+da correggere all'indietro.
+
+**Follow-up dichiarato, preesistente e non di questa corsia: nel registro del docente l'indirizzo
+dell'allegato è grezzo.** `…/registro/page.tsx` rende `href={a.file_url}`, cioè il **percorso dentro
+il contenitore**, mentre il contenitore `registro-allegati` è **privato** (`public: false`, deciso
+in `primaria/allegati:POST`) — e `api/primaria/registro:GET` restituisce quel campo senza firmarlo.
+È un **link morto**, ed è la stessa classe del difetto corretto qui nella rotta del genitore, dove
+chi non si è potuto firmare esce con `file_url: null` invece che col percorso grezzo. **Identico su
+`main`, non introdotto qui**, e non corretto qui per non mescolare due lavori in un ramo solo: è
+scritto in questo riquadro perché tutto il riquadro parla di `allegati_registro`, e perché regge
+sulla stessa misura — **0 righe** — che rende oggi il difetto invisibile e domani no. Chi lo
+chiuderà passi da `firmaPercorsi` (`@/lib/allegati/storage`), come fanno già le altre letture.
+
+**`valutazioni` e `note_disciplinari` sono strutturalmente senza tetto** nella rotta del genitore:
+niente finestra, niente `.limit()`, niente `count` — l'unica lettura con un tetto è quella del
+registro. Crescono per tutta la carriera dell'alunno e si fermeranno al **`max_rows` di PostgREST,
+1.000** (`supabase/config.toml`), che **taglia senza dirlo**. Misurato il 2026-09-19: `valutazioni`
+23 righe in tutto, **massimo 4 per alunno**; `note_disciplinari` 60 righe, **massimo 12 per alunno**.
+Due ordini di grandezza sotto la soglia: il debito non morde oggi, e per questo è scritto qui invece
+che risolto di fretta.
+
+**I percorsi che `GET /api/primaria/compiti` manda allo Storage sono senza tetto — ed è un debito di
+questo lavoro, non ereditato.** La paginazione mette un tetto alle **righe** (`RIGHE_PER_PAGINA` =
+**300**), non ai percorsi da firmare: quelli sono `RIGHE_PER_PAGINA × allegati per riga`, e **il
+secondo fattore non ha nessun limite** — `primaria/allegati:POST` vincola la sola **dimensione** del
+file (10 MB per un PDF, 3 MB per un'immagine), mai il **numero** di allegati per `registro_id`:
+nessun conteggio, nessun `.limit()`, nessun vincolo in tabella. 300 righe con due allegati ciascuna
+fanno **600 percorsi** da ~71 caratteri in una sola POST a `createSignedUrls`, cioè **~44 KB** di JSON (600 × ~74 byte a voce, virgolette e virgole comprese). ⚠️ Qui c'era «~120 KB», sbagliato di un fattore 2,7 — in una frase che rimprovera le misure scritte con sicurezza e mai rifatte.
+È la stessa forma della voce qui sopra — una struttura che cresce senza che niente la fermi — e
+regge sulla stessa misura che rende innocuo il debito dell'`ambito`: **`allegati_registro` ha 0
+righe** (2026-09-19). Un tetto sui percorsi **non** si mette: tagliare l'elenco farebbe uscire gli
+allegati oltre il taglio con `file_url: null`, indistinguibili da un guasto dello Storage — cioè la
+perdita silenziosa contro cui questa rotta è costruita. La risposta giusta è spezzare in blocchi
+dentro `firmaPercorsi` (`@/lib/allegati/storage`), che ha **cinque** chiamanti e quindi va toccato
+una volta sola per tutti. Nel frattempo il codice **lo dichiara e lo sorveglia**: oltre 300 percorsi
+parte una riga `warn` (`firme-oltre-la-stima`, con `n_percorsi` e `n_righe`). È l'informazione da
+cui si deciderà se spezzare — senza, il giorno in cui succedesse non lo saprebbe nessuno.
+
+**La rotta del genitore scarta l'errore di tutte e otto le letture PostgREST.** Si destruttura il solo `{ data }` in sette casi su otto (la lettura del registro prende anche `count`), e in nessuno si legge `error`. Si destruttura il
+solo `{ data }`. PostgREST non lancia: un guasto non diventa un 500, diventa un **200 con elenchi
+vuoti** — cioè esattamente il sintomo per cui questo lavoro è nato. **Preesistente, identico su
+`main`, non introdotto qui**, e non corretto qui per non mescolare due lavori in un ramo solo; è
+dichiarato riga per riga nel codice. Solo la prima delle otto (l'alunno) si vede, perché sfocia in
+un 404.
+
+**Il caret del campo data salta a fine campo** scrivendo in mezzo: la maschera `gg/mm/aaaa` è una
+funzione pura di stringa, non riceve né restituisce la posizione del cursore, e l'input controllato
+riporta il caret in coda a ogni riassegnazione. Preesistente e **non limitato a questo lavoro**:
+riguarda ogni consumatore del campo data. Il lock esistente prova i valori restituiti, mai il caret.
+
+**La memoria del grado non scade e attraversa l'estate.** Un bambino che passa da infanzia a
+primaria, alla prima apertura di settembre, trova per un istante le voci del grado vecchio. Dura un
+giro di rete e si ripara da sé — la rete vince sempre e riscrive. **Una volta per bambino, una volta
+l'anno.** Chiuderlo vorrebbe dire datare la voce con l'anno scolastico; è stato scritto invece che
+fatto, e questa riga è il perché.
+
+**Le famiglie 0-6 pagano la scorciatoia aggiunta per la primaria.** La riga delle azioni rapide in
+home ha 4 voci per il nido e l'infanzia e 5 per la primaria, e finché il grado non è noto la quinta
+colonna è **riservata dal primo fotogramma**: la primaria non si assesta mai, le famiglie 0-6 — che
+sono la maggioranza — vedono un assestamento da 5 a 4 colonne che prima non avevano. È il prezzo
+scelto: l'alternativa era far ballare la primaria, cioè proprio chi la scorciatoia la usa.
+
+**Il periodo preimpostato della bacheca non è legato da nessun lock alla costante della rotta.**
+Sono due 14 in due file, uno nel client e uno nel server, e oggi coincidono perché qualcuno li ha
+scritti uguali. Se divergessero, il client chiederebbe una finestra e ne mostrerebbe un'altra senza
+che niente diventi rosso.
+
+**Giugliano**: il registro della primaria non è compilato, e i due motivi vanno a persone diverse.
+**II–V (4 sezioni su 5) non hanno nemmeno le campanelle** per poter essere firmate: lì serve la
+segreteria, e nessuna correzione di codice lo cambierà. La **I invece è firmabile dal lunedì al venerdì** — 32
+campanelle su tutti e cinque i giorni — e il suo zero non ha nessuna causa tecnica: manca solo che
+qualcuno entri e firmi. L'orario, che a Giugliano manca a tutte e 5, pre-compila la materia e **non
+è condizione per firmare**. Se la richiesta al titolare fosse «configurate Giugliano», per la I
+sarebbe la richiesta sbagliata.
+
+**Cesa II e III**: il promemoria aiuta, ma resta un problema d'uso, non di software. Se fra trenta
+giorni quelle due classi hanno ancora 0 compiti su decine di righe, la risposta non è un altro
+avviso — è una conversazione.
+
+### Le query, da rieseguire e non da ricopiare
+
+```sql
+-- registro per sede e classe, ultimi 30 giorni
+SELECT s.nome AS sede, coalesce(sec.name, r.classe_sezione) AS classe, count(*) AS righe,
+       count(*) FILTER (WHERE coalesce(btrim(r.argomento),'') <> '') AS con_argomento,
+       count(*) FILTER (WHERE coalesce(btrim(r.compiti),'')   <> '') AS con_compiti
+FROM registro_orario r
+JOIN schools s ON s.id = r.scuola_id
+LEFT JOIN sections sec ON sec.id = r.section_id
+WHERE r.data >= current_date - interval '30 days'
+GROUP BY 1,2 ORDER BY 1,2;
+
+-- QUALI sezioni possono essere firmate, e quali no.
+-- Il discrimine è `campanelle`, NON `orario`: l'orario pre-compila la materia e
+-- non è condizione per firmare. `campanelle = 0` → «Nessuna ora» → non firmabile.
+-- ⚠️ Il conto è PER GIORNO DELLA SETTIMANA: le campanelle coprono i giorni 1-5, quindi il
+--    sabato e la domenica «Nessuna ora» compare su OGNI sezione, anche configurata.
+-- `campanelle > 0` con `orario = 0` → firmabile, con «orario da completare».
+SELECT s.nome, sec.name,
+       (SELECT count(*) FROM campanelle c        WHERE c.section_id = sec.id) AS campanelle,
+       (SELECT count(*) FROM campanelle c        WHERE c.section_id = sec.id AND c.tipo = 'lezione') AS lezioni,
+       (SELECT count(DISTINCT c.giorno_settimana) FROM campanelle c WHERE c.section_id = sec.id) AS giorni_coperti,
+       (SELECT count(*) FROM orario_settimanale o WHERE o.section_id = sec.id) AS orario
+FROM sections sec JOIN schools s ON s.id = sec.scuola_id
+WHERE sec.school_type = 'primaria' ORDER BY 1,2;
+
+-- i due debiti senza tetto, e quello che non ha ancora righe
+SELECT (SELECT count(*) FROM allegati_registro) AS allegati,
+       (SELECT coalesce(max(c),0) FROM (SELECT count(*) c FROM valutazioni       GROUP BY alunno_id) a) AS max_valutazioni_alunno,
+       (SELECT coalesce(max(c),0) FROM (SELECT count(*) c FROM note_disciplinari GROUP BY alunno_id) b) AS max_note_alunno;
+```
 
 ---
 
@@ -22554,7 +22866,7 @@ direzione scolastica nella valutazione periodica e negli adempimenti di scrutini
 
 ## 3. Gestione della Didattica (Argomenti e Compiti)
 • Compilazione della Lezione: Contestualmente alla firma dell'ora, l'insegnante è tenuto a inserire l'argomento svolto in classe e i compiti assegnati per casa.
-• Allegati Multimediali: Per entrambe le voci (argomenti e compiti), il docente ha la possibilità di allegare file multimediali (es. foto della lavagna, pagina del libro o schede).
+• Allegati Multimediali: Per entrambe le voci (argomenti e compiti), il docente ha la possibilità di allegare file multimediali (es. foto della lavagna, pagina del libro o schede). ⚠️ **Nella pratica la distinzione fra le due voci non è registrata** (verificato il 2026-09-19): la colonna `allegati_registro.ambito` esiste con `DEFAULT 'argomento'` e un `CHECK` a due valori (entrambi verificati nel baseline), ma il caricatore dell'app **non la manda mai** — spedisce solo file, riga e utente. Ogni allegato caricato dall'app nasce quindi «argomento», qualunque cosa sia. ⚠️ A metterlo d'ufficio **non è il `DEFAULT` di colonna**, che non scatta mai perché l'insert valorizza sempre il campo: è il **default `zod` della rotta** (`ambito: z.string().default('argomento')` in `primaria/allegati:POST`). Conseguenza identica, causa diversa — togliere il `DEFAULT` dalla tabella non cambierebbe niente. Per questo la linguetta «Compiti» del docente **mostra** la marca d'ambito invece di filtrarci sopra: un filtro `ambito = 'compiti'` darebbe una lista vuota per sempre. Dimensione del danno oggi: `allegati_registro` ha **0 righe** — il debito è reale e non ha ancora toccato nessuno. Chi vorrà chiuderlo cominci dal caricatore, non dal lettore.
 • Visibilità e Assegnazione Compiti:
   • I compiti appaiono in una bacheca dedicata nell'app genitore/alunno.
   • Nessuna Notifica: L'assegnazione dei compiti non genera notifiche push (modalità consultazione pull).
@@ -23423,12 +23735,23 @@ _Modulo PRD: Primaria §3_
 - Campo testo compiti assegnati
 - Indicatore 'Consegna' (data scadenza compito)
 - Indicatore 'Compiti' attività individualizzata (sostegno)
-- Banner 'Nessun compito assegnato di recente'
+- Banner di elenco vuoto, **per periodo** (dal 2026-09-19): «negli ultimi N giorni» · «nell'anno scolastico» · «fra le lezioni lette» quando la finestra è troncata. La vecchia stringa unica «Nessun compito assegnato di recente» è stata **rimossa** dai cataloghi
 - Azione 'Apri allegato' del compito (foto/scheda/PDF)
-- Filtro per materia
-- Filtro per data
+- Filtro per materia — ✅ **esiste dal 2026-09-19** (lato client, opzioni derivate dai compiti letti)
+- Filtro per data — ✅ **esiste dal 2026-09-19**: periodo a 14 / 30 / 90 giorni / anno scolastico,
+  preimpostato **14 giorni**; l'anno scolastico parte dal 1° agosto, con tetto a 364 giorni indietro
+- Banner 'Finestra di lettura troncata' (2026-09-19) — compare quando il registro ha restituito meno
+  righe di quante ne esistono, e **solo se la lettura corrente è valida**: un errore non porta con sé
+  un avviso di troncamento che non ha misurato
 - Banner 'Visibile anche se assente' (diritto al recupero)
 - Indicatore 'Sezione disponibile solo per la primaria'
+- Voce 'Compiti' nell'hub «Scuola» come via d'accesso (2026-09-19) — è la destinazione della
+  linguetta principale e della card in home; è **la** strada, non una scorciatoia in più
+- Scorciatoia 'Compiti' nella riga azioni rapide della home (2026-09-19, solo primaria)
+- Stati distinti: caricamento · nessun compito · nessun risultato per i filtri · errore con 'Riprova'
+- Indicatore 'aria-busy' e attenuazione dell'elenco al 75% — su `caricamento` **e** su `errore`, non
+  solo durante il ricaricamento: dopo un errore le righe vecchie restano a schermo e devono dichiarare
+  di non rappresentare più lo stato corrente
 - Pulsante 'Vai al Diario'
 
 ### `/parent/diary` — Diario 0-6 (Timeline)
@@ -23665,13 +23988,18 @@ _Modulo PRD: Pagamenti §4 + Aruba §5_
 _Modulo PRD: Primaria (navigazione)_
 
 **Checklist controlli richiesti:**
-- Pulsante 'Lezioni' (Argomenti e compiti)
+- Pulsante 'Lezioni' (Argomenti svolti in classe) — ⚠️ fino al 2026-09-19 il sottotitolo prometteva
+  **anche i compiti**, ed era falso: `/parent/lezioni` monta il solo `LezioniList`, che rende
+  materia, argomento e allegati e **non ha mai letto il campo `compiti`**. I compiti stanno in
+  `/parent/compiti`
 - Pulsante 'Valutazioni' (Giudizi e medie per materia)
 - Pulsante 'Note' (Note disciplinari e didattiche)
 - Pulsante 'Presenze' (Assenze, ritardi e giustifiche)
 - Pulsante 'Pagelle' (Scarica e firma le pagelle)
 - Pulsante 'Orario' (Orario settimanale e materie del figlio)
-- Pulsante 'Compiti' (bacheca compiti dedicata)
+- Pulsante 'Compiti' (bacheca compiti dedicata) — ✅ **esiste dal 2026-09-19**, seconda delle sette
+  voci. Fino a quel giorno questa riga era un requisito letto come uno stato: la voce **non c'era**,
+  e l'unica strada per la bacheca era Menu → Didattica → Compiti (vedi il changelog del 19/09)
 - Indicatore 'Scuola Primaria' (titolo sezione con icona)
 - Selettore figlio (per famiglie con più alunni primaria)
 
@@ -24218,6 +24546,9 @@ _Modulo PRD: Primaria (sezione)_
 
 **Checklist controlli richiesti:**
 - Tab 'Registro'
+- Tab 'Compiti' (2026-09-19) — **terza** voce di `NAV` (dopo Panoramica e Registro) e quindi
+  **prima** di Appello, non dopo; elenco dei compiti della classe con filtro di periodo
+  (30 / 90 giorni / anno scolastico, preimpostato 30) e paginazione «Carica altri compiti»
 - Tab 'Appello'
 - Tab 'Valutazioni'
 - Tab 'Note'
@@ -24273,6 +24604,16 @@ _Modulo PRD: Primaria §3 + §7_
 
 **Checklist controlli richiesti:**
 - Selettore data registro
+- Pulsante 'Giorno precedente' / 'Giorno successivo' (frecce ‹ ›, 2026-09-19)
+- Pulsante 'Oggi' (2026-09-19) — giorno sul fuso `Europe/Rome`, ricalcolato **al clic**
+- Indicatore 'Data nell'URL' (`?data=`, 2026-09-19) — sopravvive a F5, al re-mount e al giro fra le
+  linguette. ⚠️ Quello che i tasti avanti/indietro **non** fanno è **rifare il giro dei giorni
+  sfogliati**: `cambiaData` usa `replace` e non `push`, per scelta, perché venti giorni sfogliati non
+  diventino venti passi indietro prima di uscire dal registro. Tornando al registro **da un'altra
+  linguetta** col tasto indietro, invece, **la data c'è**: le linguette di `ClasseShell` sono `<Link>`
+  (push), la pagina si rimonta e `dataDaUrl` rilegge `?data=`
+- Banner 'Giornata non caricata' con griglia azzerata (2026-09-19) — mai la griglia di un altro
+  giorno sotto la data corrente
 - Lista campanelle (ore di lezione)
 - Indicatore ora e fascia oraria
 - Indicatore materia della lezione
@@ -24281,6 +24622,11 @@ _Modulo PRD: Primaria §3 + §7_
 - Badge ✅ firma apposta
 - Campo 'Argomento svolto'
 - Campo 'Compiti'
+- Indicatore 'Aiuto argomento vs compiti' (2026-09-19) — in **entrambi** i modi, sostegno compreso:
+  solo i compiti arrivano alla bacheca delle famiglie
+- Banner 'Promemoria compiti vuoti' **non bloccante** (2026-09-19) — «Torna ai compiti» / «Salva lo
+  stesso», con le sue esclusioni (supplenza, compresenza, argomento vuoto, compiti già pieni,
+  compiti tolti apposta, compiti di classe già presenti in assegnazione mirata)
 - Indicatore argomento lezione (riga)
 - Badge 'Compiti' (riga)
 - Azione 'Allega' file multimediale

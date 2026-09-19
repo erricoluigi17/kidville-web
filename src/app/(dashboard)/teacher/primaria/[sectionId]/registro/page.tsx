@@ -1,15 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useId, useState } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useParams, usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { PenLine, BookOpen, Check, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
+import { PenLine, BookOpen, Check, Paperclip, FileText, Image as ImageIcon, AlertTriangle } from 'lucide-react';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { saveLocalRegistro, syncPendingRegistro } from '@/lib/offline/syncEngine';
 import { nomeCompleto } from '@/lib/format/nome';
 import { isoToIt } from '@/lib/format/data';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { DateField } from '@/components/ui/DateField';
+import { NavigatoreData } from '@/components/ui/NavigatoreData';
+import { Modal } from '@/components/ui/Modal';
+import { btnClass } from '@/components/ui/Btn';
+import { oggiFiscaleISO } from '@/lib/format/fiscal-date';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
 
 /** La rotta della PAGINA: è il luogo dell'incidente, non l'URL della fetch. */
@@ -106,7 +110,86 @@ function tipoFirmaDa(valore: string | null | undefined): TipoFirma {
   return TIPI_FIRMA.includes(valore as TipoFirma) ? (valore as TipoFirma) : 'principale';
 }
 
-function oggiIso() { return new Date().toISOString().slice(0, 10); }
+/**
+ * La FORMA `yyyy-mm-dd`, e nient'altro: il PRIMO dei due controlli, mai l'unico.
+ *
+ * Da sola non basta a nessuno dei due chiamanti — `2026-02-30` ha questa forma e
+ * non esiste — ed è esattamente l'errore che `dataDaUrl` ha commesso fino al
+ * 2026-09-19. Chi la usa direttamente rilegga il riquadro «PERCHÉ
+ * `dataInterrogabile`» qui sotto prima di fidarsene.
+ */
+const FORMA_ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * La data che l'API del registro accetterebbe: forma giusta E giorno che esiste
+ * nel calendario.
+ *
+ * È la stessa domanda che `zDataYMD` (`@/lib/validation/common`) fa sul server —
+ * regex più `dataCalendarioValida` — riproposta qui perché la richiesta che il
+ * server respingerebbe con un 400 non deve nemmeno partire: quel 400 finiva in
+ * `setErroreCaricamento`, cioè in un banner rosso a video, su una schermata dove
+ * chi legge non ha ancora sbagliato niente (bastava un `?data=` vuoto, o una
+ * battuta intermedia del campo mascherato).
+ *
+ * ⚠️ Il round-trip non è ornamentale e non si sostituisce con `Date.parse`:
+ * `Date.parse('2026-02-30T12:00:00Z')` in V8 **non** è `NaN` — vale
+ * `2026-03-02T12:00:00Z`. Il 30 febbraio passerebbe, che è il caso per cui
+ * questa funzione esiste. (Misurato il 2026-09-19; lo stesso errore era finito
+ * nella rete finta del lock, sotto un commento che dichiarava il contrario.)
+ */
+function dataInterrogabile(iso: string): boolean {
+  if (!FORMA_ISO.test(iso)) return false;
+  const [anno, mese, giorno] = iso.split('-').map(Number);
+  const d = new Date(`${iso}T12:00:00`);
+  return !Number.isNaN(d.getTime())
+    && d.getFullYear() === anno && d.getMonth() + 1 === mese && d.getDate() === giorno;
+}
+
+/**
+ * La data su cui si apre il registro: quella dell'URL, se c'è ed è un giorno
+ * VERO, altrimenti OGGI NEL FUSO DELL'ISTITUTO.
+ *
+ * ─── PERCHÉ DALL'URL ─────────────────────────────────────────────────────────
+ * Fino al 2026-09-19 il giorno viveva solo in `useState`: un F5, il pulsante
+ * «indietro» del browser o un re-mount della pagina riportavano a oggi. Dal di
+ * fuori sembrava che il registro «non restasse indietro» — cioè esattamente il
+ * difetto segnalato — anche dopo aver scelto un altro giorno.
+ *
+ * ⚠️ IL GIRO SULLE ALTRE LINGUETTE ERA IL BUCO DI QUESTA CORREZIONE, E NON LO È
+ * PIÙ. Fino al 2026-09-19 gli href dei tab portavano il solo `?userId=`
+ * (`withUser`), quindi Registro → Appello → Registro riapriva su oggi, e qui
+ * stava scritto che serviva «un intervento su quel componente»: l'intervento
+ * c'è. `ClasseShell` rilegge `?data=` dall'URL filtrandolo con un controllo di
+ * calendario (`giornoDaUrl` in `ClasseShell.tsx`) e lo riapplica a TUTTE le voci di
+ * `NAV` con `conGiorno(withUser(…))` (`:196`); lock:
+ * `__tests__/ui/classe-shell-data.test.tsx`. Da qui non si aggiunge niente: una
+ * seconda propagazione scriverebbe `?data=` due volte nello stesso href.
+ *
+ * ─── PERCHÉ `dataInterrogabile` E NON LA SOLA FORMA ──────────────────────────
+ * Qui c'era `FORMA_ISO.test(scritta)`, cioè la forma e basta, mentre la guardia
+ * sulla fetch quindici righe più in là pretendeva forma E calendario: due
+ * domande diverse sulla stessa data. Con `?data=2026-02-30` — forma giusta,
+ * giorno inesistente — la pagina si apriva in un vicolo cieco MISURATO: campo
+ * `30/02/2026`, ENTRAMBE le frecce disabilitate (`giornoNavigabile` di
+ * `NavigatoreData` rifiuta un giorno che non c'è), zero chiamate, nessun banner,
+ * e a schermo «Nessun'ora prevista dall'orario in questo giorno» — una frase
+ * FALSA su un giorno che non esiste, senza via d'uscita se non «Oggi». Le due
+ * domande sulla stessa data ora sono la stessa domanda.
+ *
+ * ─── PERCHÉ NON `toISOString()` ──────────────────────────────────────────────
+ * Qui c'era `new Date().toISOString().slice(0, 10)`, cioè UTC: fra mezzanotte e
+ * l'una (le due d'estate) italiane il registro apriva GIÀ SU IERI. È lo stesso
+ * difetto misurato alle 01:2x dell'8 agosto sulla pagina gemella dell'appello
+ * (`../appello/page.tsx:54-70`), dove è documentato per esteso: qui pesa meno che
+ * là — il registro non salva sul giorno mostrato senza che l'insegnante apra una
+ * modale — ma l'ora firmata ieri notte risultava comunque non firmata, e le ore
+ * di oggi sparivano. Una sola idea di «oggi», e non è quella di UTC.
+ * Lock: `__tests__/pages/teacher-registro-date.test.tsx`.
+ */
+function dataDaUrl(search: URLSearchParams | null): string {
+  const scritta = search?.get('data');
+  return scritta && dataInterrogabile(scritta) ? scritta : oggiFiscaleISO();
+}
 
 /** L'esito di una GET applicativa: mai un'eccezione, sempre qualcosa da mostrare. */
 interface Esito<T> { dati: T | null; errore: string | null }
@@ -137,10 +220,16 @@ export default function RegistroPage() {
   const t = useTranslations('teacherPrimaria');
   const params = useParams();
   const search = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const sectionId = params?.sectionId as string;
   const userId = getCurrentTeacherId(search);
 
-  const [data, setData] = useState(oggiIso());
+  // Inizializzatore PIGRO: la query si legge una volta sola, al montaggio, e non
+  // a ogni render. Non è un `setState` dentro un effetto — la regola ESLint di
+  // questo repo lo vieta, e qui non serve: il valore iniziale si deriva in fase
+  // di costruzione dello stato.
+  const [data, setData] = useState(() => dataDaUrl(search));
   const [campanelle, setCampanelle] = useState<Campanella[]>([]);
   const [orarioCelle, setOrarioCelle] = useState<OrarioCella[]>([]);
   const [righe, setRighe] = useState<Riga[]>([]);
@@ -178,21 +267,113 @@ export default function RegistroPage() {
     return () => { vivo = false; };
   }, [userId]);
 
+  /**
+   * Cambia giorno E lo scrive nell'URL, che è dove la data sopravvive a un F5 e
+   * a un re-mount della pagina.
+   *
+   * ⚠️ Sul pulsante «indietro» del browser qui c'era scritto che la data
+   * «sopravvive», e letto insieme al terzo trattino qui sotto suonava come il suo
+   * contrario. La formulazione esatta è **duplice**, e va detta per intero:
+   *  · i giorni **sfogliati** non si ripercorrono all'indietro — è lo scopo di
+   *    `replace`, e si vede dieci righe più giù;
+   *  · ma **tornando al registro da un'altra linguetta** la data c'è, perché
+   *    `ClasseShell` usa `<Link>` (che è `push`) e al re-mount `dataDaUrl`
+   *    rilegge `?data=`.
+   * Due gesti diversi con lo stesso tasto, e una frase sola non li copriva.
+   *
+   * Sopravvive anche al giro sulle altre linguette della cornice di classe:
+   * `ClasseShell` rilegge `?data=` e lo rimette negli href di tutti i tab
+   * (`giornoDaUrl` e `conGiorno` in `ClasseShell.tsx` — si citano per NOME e non
+   * per riga: i numeri sono già invecchiati una volta, e `:196` era arrivato a
+   * puntare l'UNICO link a cui `conGiorno` di proposito non si applica, la
+   * freccia «indietro»), quindi Registro → Appello → Registro
+   * riapre sul giorno scelto. Non si propaga una seconda volta da qui — vedi il
+   * riquadro di `dataDaUrl`.
+   *
+   * Tre dettagli che non sono dettagli:
+   *  · si riscrive UNA chiave su quelle già presenti, così `?userId=` — che
+   *    `ClasseShell` mette negli href di tutti i tab — non si perde per strada;
+   *  · `replace` e non `push`: venti giorni sfogliati non devono diventare venti
+   *    passi del pulsante «indietro» del browser prima di uscire dal registro;
+   *  · `scroll: false`: cambiare giorno non deve riportare la pagina in cima.
+   *
+   * ─── QUANTO COSTA UN CAMBIO DI GIORNO ───────────────────────────────────────
+   * Due `fetch` (`primaria/registro` + `primaria/classe/…`), e nient'altro: gli
+   * effetti di `sezioni` e `me` dipendono dal solo `userId` e non ripartono.
+   * Misurato, non stimato — il lock lo conta e fallisce se diventano tre.
+   * A quelle due si aggiunge UNA soft navigation (`router.replace`), che in
+   * produzione può valere un giro RSC sul segmento: in jsdom il router è finto e
+   * quel giro NON è misurabile da qui, quindi è DICHIARATO e non contato. Questa
+   * app ha già pagato un incidente da volume di richieste (2,23 M/giorno da
+   * polling): se un domani il registro si sfoglia tenendo premuta la freccia, è
+   * questo il numero da rimisurare, e sulla rete vera.
+   */
+  const cambiaData = useCallback((iso: string) => {
+    setData(iso);
+    const q = new URLSearchParams(search?.toString() ?? '');
+    q.set('data', iso);
+    router.replace(`${pathname}?${q.toString()}`, { scroll: false });
+  }, [router, pathname, search]);
+
+  /**
+   * L'ordine d'ARRIVO delle risposte non è l'ordine di PARTENZA delle richieste.
+   *
+   * Ogni `load` prende un numero; dopo ogni `await` confronta il proprio numero
+   * con l'ultimo emesso e, se è stata sorpassata, non scrive niente.
+   *
+   * ─── perché un contatore e non il solito `let vivo` ──────────────────────────
+   * I due effetti qui sopra si difendono con un `let vivo` nella cleanup, e va
+   * bene perché sono l'unico posto da cui partono. `load` no: la chiamano
+   * l'effetto, il listener `online` (flush della coda offline) e
+   * `uploadAllegato`. Gli ultimi due quella cleanup non la vedono nemmeno, e un
+   * `let vivo` li lascerebbe scoperti. Il contatore vive quanto il componente e
+   * copre tutti e tre.
+   *
+   * ─── e perché adesso, se la corsa c'era anche prima ──────────────────────────
+   * Perché prima costava otto cifre da ridigitare in un campo mascherato, e ora
+   * costa DUE CLICK sulla freccia `‹`. Misurato con la rete finta che ritarda la
+   * risposta del penultimo giorno di 120 ms e quella dell'ultimo di 10 ms: senza
+   * token il campo mostra il 16 e la griglia gli argomenti del 17 — e la modale
+   * «Firma» salva sul giorno del CAMPO, cioè su un giorno diverso da quello che
+   * la maestra sta leggendo. Lock: `__tests__/pages/teacher-registro-date.test.tsx`.
+   */
+  const richieste = useRef(0);
+
   const load = useCallback(async () => {
+    const mio = ++richieste.current;
     // `try { … } finally { setLoading(false) }` e NIENTE blocco `catch`: il ramo
     // d'errore vive dentro `chiediJson`, che non lancia mai. Spostare il setter nel
     // corpo lineare fa scattare la regola sui setState dentro un effetto.
     try {
+      // La richiesta che il server respingerebbe non parte: `data` deve essere una
+      // data vera. Il bundle di classe invece parte comunque — non dipende dal
+      // giorno, e senza di lui la modale «Firma» resterebbe senza materie né alunni.
+      //
+      // ⚠️ PRESIDIO SENZA DENTI, E SI DICHIARA. Da quando `dataDaUrl` filtra con
+      // `dataInterrogabile` e `NavigatoreData` non lascia uscire un ISO incompleto,
+      // `data` non può più essere un giorno inesistente: dall'interfaccia il ramo
+      // `false` di questo ternario è IRRAGGIUNGIBILE, e nessun caso di test può
+      // più coprirlo dalla pagina. Resta perché costa nulla ed è l'ultima rete se
+      // un domani `data` tornasse a essere scritta da qualcun altro — ma va saputo
+      // che sembra coperto e non lo è.
+      type Giornata = { campanelle: Campanella[]; orarioCelle: OrarioCella[]; righe: Riga[] };
+      const giornata: Promise<Esito<Giornata>> = dataInterrogabile(data)
+        ? chiediJson<Giornata>(
+            `/api/primaria/registro?sectionId=${sectionId}&data=${data}&userId=${userId}`,
+            'registro-giornata-non-caricata',
+          )
+        : Promise.resolve({ dati: null, errore: null });
       const [reg, ctx] = await Promise.all([
-        chiediJson<{ campanelle: Campanella[]; orarioCelle: OrarioCella[]; righe: Riga[] }>(
-          `/api/primaria/registro?sectionId=${sectionId}&data=${data}&userId=${userId}`,
-          'registro-giornata-non-caricata',
-        ),
+        giornata,
         chiediJson<{ materie?: Materia[]; alunni?: Alunno[] }>(
           `/api/primaria/classe/${sectionId}?userId=${userId}`,
           'registro-bundle-classe-non-caricato',
         ),
       ]);
+      // Sorpassata: nel frattempo è partito un altro `load`, su un altro giorno.
+      // Scrivere qui vorrebbe dire rimettere a schermo la griglia di un giorno che
+      // il campo data non mostra più.
+      if (mio !== richieste.current) return;
       if (reg.dati) {
         // Teniamo TUTTE le campanelle (lezione + intervallo/mensa): le pause
         // vengono mostrate come righe non firmabili così la numerazione delle ore
@@ -201,6 +382,39 @@ export default function RegistroPage() {
         setCampanelle(reg.dati.campanelle);
         setOrarioCelle(reg.dati.orarioCelle);
         setRighe(reg.dati.righe);
+      } else {
+        /*
+         * LA GIORNATA CHE NON ARRIVA AZZERA LA GRIGLIA, e non è pulizia estetica.
+         *
+         * Fino al 2026-09-19 qui c'era il solo ramo `if`, che scrive in caso di
+         * successo e non svuota niente in caso di fallimento: un 500, un 403 o la
+         * rete giù mentre si cambia giorno lasciavano a video campanelle, orario e
+         * righe del giorno PRECEDENTE, con il campo data già sul giorno NUOVO. È lo
+         * stesso disallineamento campo↔griglia che il contatore di `load` chiude per
+         * la corsa, raggiunto però SENZA corsa e con UN SOLO click di freccia — e in
+         * una WebView sulla rete di una scuola una fetch fallisce senza chiedere
+         * permesso.
+         *
+         * Il danno è misurato, non cosmetico: con il campo sul 17 e la griglia del
+         * 18, «Allega» spediva il `registroId` della riga del 18 — l'allegato finiva
+         * sulla riga di un altro giorno e spariva dalla vista al ricaricamento — e
+         * «Firma» apriva `setModal({ riga })` su una riga del giorno sbagliato.
+         * Meglio una griglia VUOTA sotto il banner rosso: il vuoto si vede, il giorno
+         * sbagliato no.
+         *
+         * ⚠️ QUESTO RAMO COPRE ANCHE IL PRESIDIO SENZA DENTI qui sopra — con
+         * `dataInterrogabile(data)` falsa la giornata vale `{ dati: null, errore:
+         * null }` e si finisce qui, banner compreso a `null`, cioè griglia vuota e
+         * nessun errore. È sicuro PROPRIO PERCHÉ quel ramo è irraggiungibile
+         * dall'interfaccia (`dataDaUrl` filtra, `NavigatoreData` non lascia uscire un
+         * ISO incompleto). Se un domani qualcuno lo rianimasse — rimettendo a `data`
+         * l'ISO vuoto che `DateField` emette a ogni battuta intermedia — la griglia si
+         * svuoterebbe mentre la maestra digita. Chi tocca quella guardia rilegga qui.
+         * Lock: `__tests__/pages/teacher-registro-date.test.tsx`.
+         */
+        setCampanelle([]);
+        setOrarioCelle([]);
+        setRighe([]);
       }
       if (ctx.dati) {
         setMaterie(ctx.dati.materie ?? []);
@@ -211,7 +425,18 @@ export default function RegistroPage() {
       // da nessuna parte, che dicesse perché.
       setErroreCaricamento(reg.errore ?? ctx.errore ?? null);
     } finally {
-      setLoading(false);
+      // PRESIDIO SENZA DENTI ANCHE QUESTO, e si dichiara com'è già stato fatto per
+      // la guardia sulla fetch. Qui stava scritto che lo `false` di una richiesta
+      // sorpassata spegnerebbe «Caricamento…» mentre quella buona è ancora in volo:
+      // è vero solo nella finestra del PRIMO caricamento, perché `setLoading(true)`
+      // non viene MAI più chiamato dopo il montaggio — `loading` parte `true` e va
+      // `false` una volta sola. A giorno già cambiato non c'è nessuno spinner da
+      // proteggere, e infatti nessun caso di test la copre: togliendo la guardia
+      // (`setLoading(false)` nudo) la suite di `teacher-registro-date` resta tutta
+      // verde. Resta perché costa nulla e perché il giorno in cui un cambio di
+      // giorno tornasse ad accendere lo spinner sarebbe di nuovo l'unica cosa fra
+      // una risposta sorpassata e un «Caricamento…» spento troppo presto.
+      if (mio === richieste.current) setLoading(false);
     }
   }, [sectionId, data, userId]);
 
@@ -282,11 +507,14 @@ export default function RegistroPage() {
     <div className="rounded-card bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-barlow text-lg font-bold text-kidville-ink">{t('registroTitolo')}</h2>
-        <DateField
+        {/* Niente `max` né `min`: dal registro si va sia indietro (la lezione di
+            ieri da completare) sia AVANTI — l'orario è programmato, e una maestra
+            può preparare la lezione di domani. Prima qui c'era un `DateField`
+            nudo: per tornare a ieri bisognava ridigitare tutta la data. */}
+        <NavigatoreData
           value={data}
-          onChange={setData}
+          onChange={cambiaData}
           aria-label={t('registroDataAria')}
-          className="font-maven rounded-pill border border-kidville-line px-3 py-1.5 text-sm"
         />
       </div>
 
@@ -523,6 +751,59 @@ function FirmaModal({
   const [error, setError] = useState('');
 
   /**
+   * IL PROMEMORIA «argomento sì, compiti no»: se è a schermo, e se è già stato
+   * sciolto una volta in questa modale. Il perché di entrambi sta più sotto,
+   * accanto a `compitiDimenticati`, che è il posto dove si capiscono.
+   *
+   * STANNO QUI, in cima agli stati, per una ragione meccanica: le due
+   * ri-idratazioni subito sotto (cambio di classe, cambio di docente titolare)
+   * devono poter azzerare `promemoriaSciolto`, e girano DURANTE il render —
+   * una `useState` dichiarata più in basso sarebbe ancora nella propria zona
+   * morta temporale e il render esploderebbe con un ReferenceError.
+   */
+  const [promemoria, setPromemoria] = useState(false);
+  /**
+   * Chiesto e sciolto: dopo un «Salva lo stesso» in questa modale non si
+   * ridomanda. Conta sul RITENTO dopo un rifiuto del server — il dialogo resta
+   * aperto, il bottone si ripreme — dove una seconda domanda identica sarebbe
+   * quel muro che il promemoria esiste apposta per non essere.
+   */
+  const [promemoriaSciolto, setPromemoriaSciolto] = useState(false);
+
+  /**
+   * Il riquadro dei compiti del modo CORRENTE — quello di classe o quello
+   * «solo per gli alunni selezionati»: uno solo dei due è montato alla volta,
+   * quindi la stessa ref li copre entrambi senza ambiguità. Serve a «Torna ai
+   * compiti», che deve riportare il fuoco dove l'etichetta promette.
+   */
+  const compitiRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * «Torna ai compiti» è un'uscita diversa da Escape e dal tasto Indietro: quelle
+   * due sono un annullamento, e il ripristino del fuoco al bottone «Firma» che fa
+   * `Modal` è esattamente ciò che serve. Questa, invece, PROMETTE un riquadro.
+   * Una ref e non uno stato: non deve ridisegnare niente.
+   */
+  const tornaAiCompiti = useRef(false);
+  /*
+   * IL FUOCO SI RIMETTE FUORI DAL CICLO DI SMONTAGGIO, e non è pignoleria.
+   * La cleanup di `Modal` (`Modal.tsx:161-177`) restituisce il fuoco a
+   * `previouslyFocused` — in un browser vero il bottone «Firma», in jsdom
+   * `<body>` — e gira DOPO qualunque `focus()` sincrono chiamato dal gestore del
+   * click: quel fuoco verrebbe sovrascritto. `returnFocusRef` non è la strada:
+   * quella primitiva lo onora solo quando `previouslyFocused` è nullo o `<body>`
+   * (`Modal.tsx:175`), cioè proprio non nel caso normale.
+   * Questo effetto è PASSIVO come quello di `Modal`, e React esegue tutte le
+   * cleanup passive di un commit prima di qualunque effetto passivo: quando
+   * arriva qui, la modale del promemoria è smontata e il suo ripristino è già
+   * avvenuto. L'ultimo a scrivere è questo.
+   */
+  useEffect(() => {
+    if (promemoria || !tornaAiCompiti.current) return;
+    tornaAiCompiti.current = false;
+    compitiRef.current?.focus();
+  }, [promemoria]);
+
+  /**
    * Cambiare CLASSE cambia la RIGA di registro, e i contenuti condivisi sono di
    * quella riga: portarseli dietro scriverebbe l'argomento della 1ª A dentro la 2ª B.
    * Della classe altrui non sappiamo niente (la GET carica solo la propria), quindi si
@@ -537,6 +818,13 @@ function FirmaModal({
     setArgomento(propria ? (riga?.argomento ?? '') : '');
     setCompiti(propria ? (riga?.compiti ?? '') : '');
     setDataConsegnaCompiti(propria ? (riga?.data_consegna_compiti ?? '') : '');
+    // Il promemoria sciolto valeva per LA RIGA di prima. Cambiata la classe è
+    // cambiata la riga, e i due riquadri sono appena stati riazzerati: tenerselo
+    // vorrebbe dire salvare la riga NUOVA senza mai aver chiesto niente su di
+    // lei. Percorso stretto ma reale: si arriva qui solo ritentando dopo un
+    // rifiuto del server, che è l'unico modo in cui la modale resta aperta dopo
+    // un «Salva lo stesso».
+    setPromemoriaSciolto(false);
   }
 
   /**
@@ -554,6 +842,10 @@ function FirmaModal({
     setCompitiPropri(f?.compiti_propri ?? '');
     setDestinatari(dest);
     setPerAlunniSel(assegnazioneMirata(f));
+    // Come sopra: cambiato il titolare è cambiata LA FIRMA che si sta scrivendo,
+    // e i due riquadri «propri» vengono riletti dalla sua. Un «Salva lo stesso»
+    // dato sulla firma precedente non dice niente su questa.
+    setPromemoriaSciolto(false);
   }
 
   /**
@@ -621,6 +913,118 @@ function FirmaModal({
    */
   const senzaDestinatari = perAlunni && destinatari.length === 0;
   const senzaDocente = serveDocente && !docenteId;
+
+  /**
+   * ─── IL PROMEMORIA «ARGOMENTO SÌ, COMPITI NO» ───────────────────────────────
+   *
+   * Misurato sul database di produzione, ultimi 30 giorni: in II e III elementare
+   * di Cesa 12 righe di registro su 12 portano l'ARGOMENTO e nessun COMPITO. Non
+   * è un guasto del software: la bacheca del genitore mostra le lezioni che i
+   * compiti ce li hanno davvero — `LezioniCompitiSections` filtra su
+   * `l.compiti || l.individualizzate.some((i) => i.compiti)` — quindi quel testo
+   * finisce in `/parent/lezioni` e in «Compiti» non arriva niente. È un campo
+   * scambiato per un altro, dodici volte su dodici, e nessuno se n'è accorto
+   * perché dalla parte del docente tutto sembrava salvato (e lo era).
+   *
+   * Qui NON cambia nessun dato: si chiede, e si prosegue con un clic.
+   *
+   * SI GUARDA LA COPPIA CHE PARTE DAVVERO, non due stati fissi. In assegnazione
+   * mirata i condivisi non si inviano nemmeno (`perAlunni ? undefined : …`) e a
+   * contare sono i «propri», che la bacheca legge eccome (`individualizzate`);
+   * leggere i condivisi lì dentro farebbe scattare il promemoria su una riga già
+   * idratata con l'argomento del titolare mentre i compiti mirati ci sono.
+   *
+   * Le esclusioni, e il perché di ciascuna:
+   *  · COMPRESENZA — chi affianca non ha un argomento di classe da compilare:
+   *    quello è del titolare. Chiederglielo sarebbe rumore su ogni sua ora, e il
+   *    rumore è il modo più rapido per far ignorare un avviso che serve altrove.
+   *  · COMPITI PIENI (condivisi o propri, secondo la modalità) — non c'è niente
+   *    da ricordare.
+   *  · ARGOMENTO VUOTO — non c'è nessuno scambio di campo in corso.
+   *  · COMPITO TOLTO APPOSTA — la riga i compiti li AVEVA e il riquadro è stato
+   *    svuotato qui dentro. Non è una dimenticanza: è il gesto esplicito per cui
+   *    esiste metà di questo file (il patto `condivisiIdratati` col server nasce
+   *    perché «un compito assegnato per errore non si poteva più togliere»).
+   *    Chiedere «sicura? i genitori non vedranno nulla» a chi sta facendo
+   *    esattamente quello sarebbe rumore sull'unica strada costruita apposta.
+   *  · SUPPLENZA (`altraClasse`) — e questa è l'esclusione che costa di più
+   *    spiegare, perché sembra il caso in cui l'avviso servirebbe di più.
+   *    Il testo del promemoria dice «i genitori non vedranno nulla nella bacheca
+   *    Compiti». In un'altra classe è un'affermazione che questa modale NON PUÒ
+   *    FARE: la GET carica solo la propria sezione, quella riga non è mai stata
+   *    letta, e i compiti del suo titolare possono esserci già. Peggio: il corpo
+   *    della POST in supplenza non contiene nemmeno la chiave `compiti`, perché
+   *    `condiviso()` la OMETTE — «non lo so» non è «è vuoto». Quindi la frase non
+   *    descrive niente che stia per succedere.
+   *    E chi le desse retta farebbe un danno: digitare i compiti in supplenza
+   *    spedisce `compiti: "…"`, e un valore PIENO il server lo scrive sempre —
+   *    SOVRASCRIVE il testo del titolare su una riga che il modulo non ha mai
+   *    visto, cioè la regressione B1 dalla porta accanto.
+   *    (Il nesso con `condivisiIdratati: false` qui è più debole di come è stato
+   *    scritto fino al 2026-09-19: quella bandiera difende dall'AZZERAMENTO — il
+   *    server rifiuta il `''` a chi non dichiara di aver letto — non da una
+   *    sovrascrittura. A fare il danno è il valore pieno, da solo.)
+   *    Un avviso che spinge verso una scrittura distruttiva è peggio di nessun
+   *    avviso.
+   *    Il prezzo è dichiarato: chi firma in un'altra classe e scambia i due campi
+   *    non viene avvisato. È lo stesso prezzo della compresenza, e per lo stesso
+   *    motivo — non si può dire il vero, quindi si tace.
+   *    QUANTO COSTA, misurato: 0 firme fuori sezione su 83 negli ultimi 60 giorni,
+   *    e 0 su 17 nel sottoinsieme delle righe da cui è partito tutto. Ma la misura
+   *    va letta per intero, perché dimostra meno di quanto sembri: `altraClasse`
+   *    non significa «supplenza», significa «una classe DIVERSA da quella della
+   *    pagina». E i firmatari del caso d'origine sono 17 su 17 assegnati a più di
+   *    una sezione: la tendina «Classe» era disponibile a tutti loro, quindi una
+   *    maestra di II che compili la III dal registro della II finisce in questo
+   *    ramo silenzioso pur essendone titolare. A database le due strade sono
+   *    indistinguibili: lo zero dice che finora non è successo, non che non possa.
+   *    La guardia sta QUI e non dentro `compitiPrima`: una condizione sola, in un
+   *    posto solo, e un test che la toglie diventa rosso.
+   *  · COMPITI DI CLASSE GIÀ SULLA RIGA, in assegnazione MIRATA — e qui non è
+   *    «non possiamo saperlo»: è che la frase sarebbe FALSA.
+   *    In mirata i condivisi non si spediscono (`perAlunni ? undefined : …`),
+   *    quindi ciò che le famiglie vedranno non è il textarea ma la riga a
+   *    DATABASE, `riga.compiti`. E se quei compiti di classe ci sono,
+   *    `api/parent/primaria` serve `compiti: r.compiti` senza
+   *    filtrare i destinatari — solo `individualizzate` è filtrato per
+   *    `alunno_id` (si cita per NOME: quel file è cresciuto di ~290 righe
+   *    mentre questo lavoro era in corso) — quindi arrivano anche alle famiglie degli alunni
+   *    selezionati, e «i genitori non vedranno nulla nella bacheca Compiti» dice
+   *    esattamente il contrario del vero.
+   *    È lo stesso criterio della supplenza, applicato dove la modale SA: lì non
+   *    poteva sapere e taceva; qui sa, e parlando direbbe il falso.
+   *    Misurato in produzione: 1 firma in 180 giorni ha questa forma (compiti di
+   *    classe pieni + argomento «proprio» pieno + compiti «propri» vuoti). Rara,
+   *    ma reale — e costa una clausola.
+   *
+   * `.trim()`: uno spazio battuto per sbaglio non è un compito assegnato.
+   *
+   * NON si distingue la FIRMA dalla MODIFICA, ed è una decisione: «Modifica» è
+   * la strada da cui si riparano proprio le righe già a database con l'argomento
+   * e senza compiti, cioè le dodici da cui è partito tutto. Tacere lì
+   * silenzierebbe il promemoria esattamente dove serve di più. Il prezzo del
+   * falso positivo — la maestra che quel giorno compiti non ne ha dati e riapre
+   * l'ora per correggere la materia — è un clic; quello del falso negativo è un
+   * compito che le famiglie non vedono mai.
+   */
+  const argomentoInUso = perAlunni ? argomentoProprio : argomento;
+  const compitiInUso = perAlunni ? compitiPropri : compiti;
+  /** Che cosa c'era nel riquadro dei compiti quando la modale si è aperta. */
+  const compitiPrima = perAlunni ? (firmaIniziale?.compiti_propri ?? '') : (riga?.compiti ?? '');
+  /**
+   * La sesta esclusione, e si legge sulla riga A DATABASE apposta: in mirata i
+   * condivisi non partono, quindi ciò che le famiglie vedranno è `riga.compiti`,
+   * non il textarea di classe (che qui non è nemmeno disegnato). Il perché — e la
+   * misura — stanno nell'elenco delle esclusioni, sopra.
+   */
+  const compitiDiClasseGiaPresenti = perAlunni && (riga?.compiti ?? '').trim() !== '';
+  const compitiDimenticati =
+    !altraClasse &&
+    tipo !== 'compresenza' &&
+    argomentoInUso.trim() !== '' &&
+    compitiInUso.trim() === '' &&
+    compitiPrima.trim() === '' &&
+    !compitiDiClasseGiaPresenti;
 
   const toggleDest = (id: string) =>
     setDestinatari((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -781,7 +1185,41 @@ function FirmaModal({
     } else onSaved();
   };
 
+  /**
+   * IL GESTO «Firma», con il promemoria interposto QUI e non dentro `salva`.
+   *
+   * Così la conferma richiama `salva` così com'è — nessun parametro «ignora il
+   * promemoria» da ricordarsi di passare, e nessuna guardia scavalcata: le due
+   * che fermano davvero il salvataggio (`senzaDestinatari`, `senzaDocente`)
+   * restano dove sono e vengono prima. Il corpo della POST non cambia di un
+   * campo: è la garanzia che un avviso non tocchi i dati.
+   */
+  const firma = () => {
+    if (senzaDestinatari || senzaDocente) return;
+    if (compitiDimenticati && !promemoriaSciolto) { setPromemoria(true); return; }
+    void salva();
+  };
+
+  const salvaLoStesso = () => {
+    setPromemoria(false);
+    setPromemoriaSciolto(true);
+    /*
+     * ANCHE IL PROMEMORIA ACCETTATO LASCIA UNA RIGA. Senza, «quante volte si
+     * firma sapendo di non aver messo compiti» non è misurabile, e fra un mese
+     * nessuno saprebbe dire se l'aiuto ha funzionato o se è soltanto un clic in
+     * più: è la stessa ambiguità del §5 di AGENTS.md, dove i soli errori non
+     * distinguono «tutto bene» da «non è mai partito niente».
+     * `warn` e non `info` perché `/api/logs` accetta solo `warn|error`.
+     * `evento: 'fetch'` + `route`: la riga annota la POST che parte subito dopo,
+     * ed è l'unico evento del catalogo che quel contesto ce l'ha. Nessun campo:
+     * qui non c'è niente da contare che non sia il fatto stesso.
+     */
+    logClient({ livello: 'warn', evento: 'fetch', messaggio: 'registro-firma-senza-compiti-confermata', route: ROTTA });
+    void salva();
+  };
+
   return (
+    <>
     <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-kidville-ink/40 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm">
       <div role="dialog" aria-modal="true" aria-labelledby={campo('titolo')} className="flex max-h-[85dvh] w-full max-w-md flex-col rounded-card bg-white shadow-xl">
         <div className="flex items-center gap-2 rounded-t-card bg-kidville-green p-4 text-kidville-yellow">
@@ -805,8 +1243,11 @@ function FirmaModal({
           {/* Segreteria/Direzione: la firma è del docente, mai della Segreteria. */}
           {serveDocente && (
             <div>
-              {/* `text-kidville-sub` e NON `muted`: quel token sta a 2,51:1 su bianco, sotto i
+              {/* `text-kidville-sub` e NON `muted`: quel token sta a 3,80:1 su bianco, sotto i
                   4,5:1 di WCAG AA, e il suo debito può solo calare (`__tests__/a11y/testo-muted-allowlist`).
+                  (Qui c'è stato scritto 2,51:1 fino al 2026-09-19: era il vecchio `#9AA6A2`. Oggi
+                  il token vale `#7B8582` — `globals.css:106`, e il 3,80:1 sta in `globals.css:633-634`.
+                  La conclusione non cambia: resta sotto AA.)
                   Le etichette qui accanto lo usano perché sono più vecchie del lock, non perché vada bene. */}
               <label htmlFor={campo('docente')} className="block font-maven text-xs text-kidville-sub">{t('firmaModalDocenteTitolare')}</label>
               <select
@@ -883,11 +1324,25 @@ function FirmaModal({
             <>
               <div>
                 <label htmlFor={campo('argomento')} className="block font-maven text-xs text-kidville-muted">{t('firmaModalArgomentoClasse')}</label>
-                <textarea id={campo('argomento')} value={argomento} onChange={(e) => setArgomento(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
+                {/* `aria-describedby` su ENTRAMBI i riquadri e non sul solo «Compiti»:
+                    l'aiuto spiega la DIFFERENZA fra i due, e chi legge con uno screen
+                    reader arriva all'argomento per primo — è lì che la distinzione
+                    serve, prima di scrivere, non dopo. */}
+                <textarea id={campo('argomento')} aria-describedby={campo('aiuto')} value={argomento} onChange={(e) => setArgomento(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
               </div>
               <div>
                 <label htmlFor={campo('compiti')} className="block font-maven text-xs text-kidville-muted">{t('firmaModalCompitiClasse')}</label>
-                <textarea id={campo('compiti')} value={compiti} onChange={(e) => setCompiti(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
+                <textarea ref={compitiRef} id={campo('compiti')} aria-describedby={campo('aiuto')} value={compiti} onChange={(e) => setCompiti(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
+                {/* L'AIUTO: una riga, sotto i campi che riguarda, e non in cima a una
+                    modale già densa — in cima sarebbe letto prima di sapere di cosa
+                    parla, e soprattutto scorrerebbe via. La mezza frase che conta è
+                    l'ultima: «solo i compiti arrivano alla bacheca delle famiglie».
+                    `text-kidville-sub` (6,46:1) e non `muted`, che sta a 3,80:1 su
+                    bianco — sotto i 4,5:1 di WCAG AA per il testo piccolo
+                    (`__tests__/a11y/testo-muted-allowlist`, debito che può solo calare). */}
+                <p id={campo('aiuto')} className="mt-1 font-maven text-[11px] leading-snug text-kidville-sub">
+                  {t('firmaModalAiutoCompiti')}
+                </p>
               </div>
             </>
           ) : (
@@ -910,10 +1365,33 @@ function FirmaModal({
                   {t('firmaModalNessunDestinatario')}
                 </p>
               )}
+              {/* STESSO AIUTO, STESSO `aria-describedby`, anche qui — e non è una
+                  copia per simmetria.
+                  Per il SOSTEGNO `perAlunni` è forzato a `true` (vedi sopra): una
+                  docente di sostegno non vede MAI il ramo di classe, quindi senza
+                  i due `aria-describedby` e la riga d'aiuto in fondo a questo
+                  riquadro riceverebbe il promemoria — che di qui scatta eccome —
+                  senza aver mai letto la spiegazione, cioè metà dell'intervento e
+                  proprio la metà che insegna qualcosa.
+                  Il testo è LO STESSO, non una variante: la frase che conta
+                  («solo i compiti arrivano alla bacheca delle famiglie») è vera
+                  parola per parola anche qui, perché la bacheca filtra su
+                  `l.compiti || l.individualizzate.some((i) => i.compiti)` —
+                  i compiti mirati ci arrivano. Le due etichette dicono già «solo
+                  per gli alunni selezionati»: ripeterlo nell'aiuto allungherebbe
+                  la riga esattamente dove la modale è più densa (riquadro info +
+                  elenco degli alunni) senza aggiungere un'informazione.
+                  L'`id` è lo stesso perché i due rami sono ESCLUSIVI: non esiste
+                  un render in cui entrambe le `<p>` siano montate. */}
               <label htmlFor={campo('argomento-propri')} className="block font-maven text-xs text-kidville-muted">{t('firmaModalArgomentoSelezionati')}</label>
-              <textarea id={campo('argomento-propri')} value={argomentoProprio} onChange={(e) => setArgomentoProprio(e.target.value)} rows={2} className="mb-2 font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
+              <textarea id={campo('argomento-propri')} aria-describedby={campo('aiuto')} value={argomentoProprio} onChange={(e) => setArgomentoProprio(e.target.value)} rows={2} className="mb-2 font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
               <label htmlFor={campo('compiti-propri')} className="block font-maven text-xs text-kidville-muted">{t('firmaModalCompitiSelezionati')}</label>
-              <textarea id={campo('compiti-propri')} value={compitiPropri} onChange={(e) => setCompitiPropri(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
+              <textarea ref={compitiRef} id={campo('compiti-propri')} aria-describedby={campo('aiuto')} value={compitiPropri} onChange={(e) => setCompitiPropri(e.target.value)} rows={2} className="font-maven w-full rounded-card border border-kidville-line px-3 py-2 text-sm" />
+              {/* `text-kidville-sub` su `bg-kidville-info-soft`: come nel ramo di
+                  classe, e per la stessa ragione — `muted` non basta. */}
+              <p id={campo('aiuto')} className="mt-1 font-maven text-[11px] leading-snug text-kidville-sub">
+                {t('firmaModalAiutoCompiti')}
+              </p>
             </div>
           )}
 
@@ -935,11 +1413,76 @@ function FirmaModal({
         </div>
         <div className="flex justify-end gap-2 border-t border-kidville-line p-4">
           <button onClick={onClose} className="font-maven rounded-pill bg-kidville-cream px-4 py-2 text-sm text-kidville-ink">{t('firmaModalAnnulla')}</button>
-          <button onClick={salva} disabled={saving || senzaDestinatari || senzaDocente} className="font-maven rounded-pill bg-kidville-green px-4 py-2 text-sm text-kidville-yellow disabled:opacity-50">
+          <button onClick={firma} disabled={saving || senzaDestinatari || senzaDocente} className="font-maven rounded-pill bg-kidville-green px-4 py-2 text-sm text-kidville-yellow disabled:opacity-50">
             {saving ? t('comuneSalvataggio') : t('registroFirma')}
           </button>
         </div>
       </div>
     </div>
+
+    {/*
+      IL PROMEMORIA, E PERCHÉ NON `confirm()`.
+      Un dialogo nativo blocca il thread della WebView e l'automazione dei
+      collaudi, e il repo non lo usa da nessuna parte: il modello è
+      `DialogoEliminaMedia`, cioè la primitiva `Modal` (`@/components/ui/Modal`)
+      più `btnClass` — focus-trap, Escape, tasto Indietro di Android e sfondo
+      reso inerte compresi. Fratello della modale di firma e non figlio: lo
+      stack di `Modal` regge i dialoghi annidati, e il velo che sfoca non deve
+      finire ANTENATO del dialogo (su Android cancellerebbe il sottoalbero
+      dall'albero di accessibilità).
+      NON È UN MURO: «Salva lo stesso» salva, con un clic e con lo stesso
+      identico corpo di richiesta. Chi quel giorno compiti non ne ha dati esce
+      di lì immediatamente.
+    */}
+    {promemoria && (
+      <Modal
+        open
+        onClose={() => setPromemoria(false)}
+        title={t('firmaModalPromemoriaTitolo')}
+        // `labelledBy` sull'`<h2>` che il titolo ce l'ha già a schermo: col solo
+        // `title` la primitiva mette un `aria-label`, e uno screen reader
+        // annuncerebbe «Compiti non compilati» due volte di fila — una come nome
+        // del dialogo, una leggendo l'intestazione. `title` resta perché la prop
+        // è obbligatoria, ma con `labelledBy` la primitiva non emette l'attributo.
+        labelledBy={campo('promemoria-titolo')}
+        // Come per la conferma di eliminazione: un click distratto sullo sfondo
+        // non deve valere né come «salva» né come «annulla». Escape e Indietro
+        // restano aperti — sono un annullamento esplicito.
+        closeOnBackdrop={false}
+        className="w-full max-w-md rounded-card bg-kidville-white p-5 shadow-xl"
+      >
+        <div className="mb-3 flex items-start gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-kidville-warn-soft text-kidville-warn-strong">
+            <AlertTriangle size={22} strokeWidth={1.9} aria-hidden="true" />
+          </div>
+          <h2 id={campo('promemoria-titolo')} className="font-barlow text-lg font-bold uppercase leading-tight text-kidville-green">
+            {t('firmaModalPromemoriaTitolo')}
+          </h2>
+        </div>
+        <p className="font-maven text-[13px] leading-snug text-kidville-ink">{t('firmaModalPromemoriaCorpo')}</p>
+        <div className="mt-4 flex flex-wrap justify-end gap-2">
+          {/*
+            «TORNA AI COMPITI» DEVE PORTARE AI COMPITI, non solo chiudere.
+            Misurato prima di questa riga: dopo il click `document.activeElement`
+            era `<body>` in jsdom e il bottone «Firma» in un browser vero — mai il
+            riquadro che l'etichetta nomina. Per chi naviga da tastiera o con uno
+            screen reader quel bottone era un semplice «annulla» con un'altra
+            etichetta. La ref alzata qui la legge l'effetto in cima a `FirmaModal`,
+            DOPO che la cleanup della primitiva ha finito di spostare il fuoco.
+          */}
+          <button
+            type="button"
+            onClick={() => { tornaAiCompiti.current = true; setPromemoria(false); }}
+            className={btnClass('ghost', 'sm')}
+          >
+            {t('firmaModalPromemoriaTorna')}
+          </button>
+          <button type="button" onClick={salvaLoStesso} className={btnClass('primary', 'sm')}>
+            {t('firmaModalPromemoriaSalva')}
+          </button>
+        </div>
+      </Modal>
+    )}
+    </>
   );
 }

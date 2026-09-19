@@ -2015,6 +2015,41 @@ export const CODICI_ERRORE = {
     /** 500 — il `catch` di `primaria/registro:POST`: la firma non è stata salvata. */
     FIRMA_NON_SALVATA: 'erroreFirmaNonSalvata',
     /**
+     * 400 — la linguetta «Compiti» del registro ha chiesto più di 365 giorni in una
+     * volta (`GET /api/primaria/compiti`).
+     *
+     * ⚠️ ESISTE PERCHÉ SENZA CODICE IL MOTIVO NON ARRIVAVA. Fino al 2026-09-19 il
+     * tetto viveva in un `superRefine` dello schema, quindi il rifiuto usciva come
+     * `{ error: 'Dati non validi', details: [{ message: 'Periodo troppo lungo…' }] }`:
+     * la forma ordinata di tutti gli ingressi rifiutati del repo, e anche quella che
+     * NESSUNO legge — `messaggioDaCorpo`, `soloCatalogoDaCorpo` ed `erroreDaRisposta`
+     * guardano `error` e `codice`, e l'unico consumatore di `details` in `src/`
+     * (`CassaMovimentoModal`) ne usa il `path`. Il docente leggeva «Dati non validi»
+     * davanti a un intervallo da restringere, senza sapere che cosa restringere.
+     *
+     * NON sta in `CODICI_CON_DETTAGLIO`. La prosa del server porta il numero di
+     * giorni chiesti, ma è un numero che il client HA GIÀ — le due date le ha scelte
+     * lui — e appenderla vorrebbe dire mostrare a un'interfaccia inglese una coda di
+     * italiano per un dato che sapeva già: il difetto che i codici hanno chiuso,
+     * riaperto per comodità. Il numero resta nella prosa per chi legge i log e per il
+     * ripiego italiano.
+     */
+    PERIODO_TROPPO_LUNGO: 'errorePeriodoTroppoLungo',
+    /**
+     * 400 — l'intervallo chiesto finisce prima di cominciare (`dataA` precedente a
+     * `dataDa`, `GET /api/primaria/compiti`).
+     *
+     * NON riusa `PERIODO_TROPPO_LUNGO`: quello chiede di RESTRINGERE, e qui
+     * restringere non serve a niente. Fino al 2026-09-19 questo caso rispondeva 200
+     * con elenco vuoto, cioè «in questo periodo non sono stati assegnati compiti» —
+     * una frase vera solo per caso, che mandava il docente a cercare compiti
+     * inesistenti invece dei due campi che aveva invertito.
+     *
+     * Non sta in `CODICI_CON_DETTAGLIO` per la stessa ragione dell'altro: le due
+     * date che la prosa ripete sono quelle che il client ha appena mandato.
+     */
+    PERIODO_ROVESCIATO: 'errorePeriodoRovesciato',
+    /**
      * 409 — la foto che si sta modificando è NEL CESTINO (`gallery:PATCH`).
      *
      * Non è un 403 e non è un 404: il titolo chi chiede ce l'ha (il gate di sede è

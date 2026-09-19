@@ -131,9 +131,17 @@ const destinatari = (): string[] =>
 const sedeNotificata = () =>
   (h.notificaEvento.mock.calls[0]?.[1] as { scuolaId?: string | null })?.scuolaId
 
+/**
+ * Scadenza RELATIVA: dal 2026-09-19 `scadenza_avviso` è obbligatoria sul POST e una
+ * già passata è un 400. Una costante scritta a mano renderebbe rossi questi test a
+ * una data futura per un motivo che non ha niente a che vedere con la sede.
+ */
+const SCADENZA_LOCALE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 16)
+
 const corpoAvviso = (extra: Record<string, unknown> = {}) => ({
   titolo: 'Uscita didattica',
   contenuto: 'Servono le adesioni entro venerdì.',
+  scadenza_avviso: SCADENZA_LOCALE,
   ...extra,
 })
 

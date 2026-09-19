@@ -7,7 +7,17 @@ import {
     rispostePerAvvisoDelGenitore,
     AVVISI_PER_QUERY,
     RIGHE_PER_PAGINA,
+    STATS_ZERO,
+    type StatsAvviso,
 } from '@/lib/avvisi/statistiche'
+
+/**
+ * Le attese si scrivono COMPLETE, a partire dallo zero: `toEqual` su un oggetto
+ * parziale non esiste, e usare `toMatchObject` per non riscrivere cinque chiavi
+ * renderebbe invisibile proprio ciò che il cantiere A2 aggiunge — un
+ * `persone_ammesse` sbagliato passerebbe finché nessuno lo nomina.
+ */
+const stats = (p: Partial<StatsAvviso>): StatsAvviso => ({ ...STATS_ZERO, ...p })
 
 // T11-F2 — le statistiche degli avvisi si leggono IN BLOCCO.
 //
@@ -43,27 +53,126 @@ describe('aggregaStatistiche — i conti, senza database', () => {
         const m = aggregaStatistiche([A1, A2, A3], righeDiProva())
         // Valori ASSOLUTI: pinnare solo l'ordine relativo lascerebbe passare una
         // mutazione che moltiplica tutto.
-        expect(m.get(A1)).toEqual({ letti: 5, adesioni_si: 3, adesioni_no: 2 })
-        expect(m.get(A2)).toEqual({ letti: 1, adesioni_si: 0, adesioni_no: 4 })
+        expect(m.get(A1)).toEqual(stats({ letti: 5, adesioni_si: 3, adesioni_no: 2, adesioni_senza_numero: 3 }))
+        expect(m.get(A2)).toEqual(stats({ letti: 1, adesioni_si: 0, adesioni_no: 4 }))
         // Avviso richiesto e mai risposto: presente, a zero. Non `undefined`.
-        expect(m.get(A3)).toEqual({ letti: 0, adesioni_si: 0, adesioni_no: 0 })
+        expect(m.get(A3)).toEqual(stats({}))
     })
 
     it('una riga di un avviso NON richiesto non entra nei conti di nessuno', () => {
         const estranea = { avviso_id: '99999999-9999-4999-8999-999999999999', letto_il: 'x', risposta: 'si' }
         const m = aggregaStatistiche([A1], [...righeDiProva(), estranea])
-        expect(m.get(A1)).toEqual({ letti: 5, adesioni_si: 3, adesioni_no: 2 })
+        expect(m.get(A1)).toEqual(stats({ letti: 5, adesioni_si: 3, adesioni_no: 2, adesioni_senza_numero: 3 }))
         expect(m.size).toBe(1)
     })
 
     it('`letto_il` valorizzato conta come letto anche con risposta data', () => {
         const m = aggregaStatistiche([A1], [{ avviso_id: A1, letto_il: '2026-08-01', risposta: 'si' }])
-        expect(m.get(A1)).toEqual({ letti: 1, adesioni_si: 1, adesioni_no: 0 })
+        expect(m.get(A1)).toEqual(stats({ letti: 1, adesioni_si: 1, adesioni_no: 0, adesioni_senza_numero: 1 }))
     })
 
     it('una risposta diversa da si/no non finisce in nessuna delle due colonne', () => {
         const m = aggregaStatistiche([A1], [{ avviso_id: A1, letto_il: null, risposta: 'forse' }])
-        expect(m.get(A1)).toEqual({ letti: 0, adesioni_si: 0, adesioni_no: 0 })
+        expect(m.get(A1)).toEqual(stats({}))
+    })
+})
+
+// ═════════════════════════════════════════════════════════════════════════════
+// I CINQUE CONTEGGI NUOVI (cantiere A2): posti in PERSONE, coda, e le adesioni
+// che un numero non l'hanno mai dichiarato.
+// ═════════════════════════════════════════════════════════════════════════════
+describe('aggregaStatistiche — i posti si contano in PERSONE, non in adesioni', () => {
+    it('somma `numero_partecipanti` sulle ammesse e tiene la coda separata', () => {
+        const m = aggregaStatistiche([A1], [
+            { avviso_id: A1, letto_il: 'x', risposta: 'si', stato_adesione: 'ammessa', numero_partecipanti: 4 },
+            { avviso_id: A1, letto_il: 'x', risposta: 'si', stato_adesione: 'ammessa', numero_partecipanti: 2 },
+            { avviso_id: A1, letto_il: 'x', risposta: 'si', stato_adesione: 'in_attesa', numero_partecipanti: 3 },
+            { avviso_id: A1, letto_il: 'x', risposta: 'no', stato_adesione: null, numero_partecipanti: null },
+        ])
+        // Sei persone ammesse in DUE adesioni: il numero che si confronta col tetto
+        // è 6, non 2. Contare le righe è il modo di riempire un pullman da 50 con
+        // 120 persone e scoprirlo il mattino della gita.
+        expect(m.get(A1)).toEqual(stats({
+            letti: 4, adesioni_si: 3, adesioni_no: 1,
+            adesioni_ammesse: 2, persone_ammesse: 6,
+            adesioni_in_attesa: 1, persone_in_attesa: 3,
+            adesioni_senza_numero: 0,
+        }))
+    })
+
+    it('`numero_partecipanti` assente vale UNA persona — gemello del COALESCE in SQL', () => {
+        // ⚠️ Se questo valesse 0, `avviso_posti_occupati` (SQL) direbbe 2 e questa
+        // schermata direbbe 0: ciascuna metà coerente con sé stessa, nessun test
+        // rosso, e il tetto applicato diverso da quello mostrato.
+        const m = aggregaStatistiche([A1], [
+            { avviso_id: A1, letto_il: null, risposta: 'si', stato_adesione: 'ammessa', numero_partecipanti: null },
+            { avviso_id: A1, letto_il: null, risposta: 'si', stato_adesione: 'ammessa' },
+        ])
+        expect(m.get(A1)?.persone_ammesse).toBe(2)
+        expect(m.get(A1)?.adesioni_senza_numero).toBe(2)
+    })
+
+    it('un `NaN` non rende NaN il totale: vale 1 come qualunque altro non-numero', () => {
+        const m = aggregaStatistiche([A1], [
+            { avviso_id: A1, letto_il: null, risposta: 'si', stato_adesione: 'ammessa', numero_partecipanti: Number.NaN },
+            { avviso_id: A1, letto_il: null, risposta: 'si', stato_adesione: 'ammessa', numero_partecipanti: 5 },
+        ])
+        expect(m.get(A1)?.persone_ammesse).toBe(6)
+    })
+
+    it('SOLO `ammessa` occupa: uno stato nuovo non finisce nei posti (lista bianca)', () => {
+        const m = aggregaStatistiche([A1], [
+            { avviso_id: A1, letto_il: null, risposta: 'si', stato_adesione: 'annullata', numero_partecipanti: 9 },
+        ])
+        // Con una lista NERA (`!== 'in_attesa'`) queste 9 persone occuperebbero
+        // posti che nessuno conta più.
+        expect(m.get(A1)?.persone_ammesse).toBe(0)
+        expect(m.get(A1)?.adesioni_in_attesa).toBe(0)
+    })
+
+    it('le tre chiavi storiche non cambiano significato: contano RIGHE, non persone', () => {
+        const m = aggregaStatistiche([A1], [
+            { avviso_id: A1, letto_il: 'x', risposta: 'si', stato_adesione: 'ammessa', numero_partecipanti: 7 },
+        ])
+        expect(m.get(A1)?.adesioni_si).toBe(1)
+        expect(m.get(A1)?.letti).toBe(1)
+        expect(m.get(A1)?.persone_ammesse).toBe(7)
+    })
+})
+
+describe('statistichePerAvviso — il degrado della proiezione (DB E2E non migrato)', () => {
+    it('42703 sulla colonna nuova: riprova con la proiezione storica invece di dare zero', async () => {
+        const spia = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const { client, query, proiezioni } = clientFinto({
+            righe: righeDiProva(),
+            colonnaAssente: 'stato_adesione',
+        })
+        const m = await statistichePerAvviso(client, [A1, A2], 'test')
+
+        // 🔴 IL PUNTO: i tre conteggi storici tornano VERI. Prima di questo degrado
+        // sarebbero stati tutti a zero — «nessuno ha letto» su ogni avviso, che non
+        // è un errore visibile ma un dato falso.
+        expect(m.get(A1)).toEqual(stats({ letti: 5, adesioni_si: 3, adesioni_no: 2, adesioni_senza_numero: 3 }))
+        expect(m.get(A2)).toEqual(stats({ letti: 1, adesioni_si: 0, adesioni_no: 4 }))
+        // Due tentativi sulla PRIMA pagina: quello allargato e quello ridotto.
+        expect(query.avvisi_risposte).toBe(2)
+        expect(proiezioni[0]).toContain('stato_adesione')
+        expect(proiezioni[1]).not.toContain('stato_adesione')
+        spia.mockRestore()
+    })
+
+    it('un errore che NON è una colonna mancante resta un errore: niente ripiego', async () => {
+        const spia = vi.spyOn(console, 'error').mockImplementation(() => {})
+        const { client, query } = clientFinto({
+            righe: righeDiProva(),
+            erroreRisposte: { code: '42P01', message: 'relation does not exist' },
+        })
+        const m = await statistichePerAvviso(client, [A1], 'test')
+        // Una sola query: su `42P01` non si riprova niente, e i conteggi restano a
+        // zero DICHIARANDOLO col log — il comportamento di prima, non toccato.
+        expect(query.avvisi_risposte).toBe(1)
+        expect(m.get(A1)).toEqual(stats({}))
+        spia.mockRestore()
     })
 })
 
@@ -84,16 +193,29 @@ function clientFinto(opzioni: {
     /** Tetto di righe per risposta, come `db-max-rows` su Supabase. */
     tettoServer?: number
     erroreRisposte?: { code: string; message: string } | null
+    /**
+     * Colonna che il finto DB NON ha: ogni `select` che la nomina risponde `42703`,
+     * come PostgREST su un progetto non migrato. È l'unico modo di provare il
+     * degrado della proiezione senza un mock piatto — con `erroreRisposte` l'errore
+     * arriverebbe anche al secondo tentativo, e il test sarebbe verde su un ramo
+     * che non ha mai funzionato.
+     */
+    colonnaAssente?: string
 }) {
     const righe = opzioni.righe ?? []
     const tetto = opzioni.tettoServer ?? RIGHE_PER_PAGINA
     const query = { avvisi_risposte: 0, utenti: 0 }
+    const proiezioni: string[] = []
 
     const client = {
         from(tabella: string) {
-            const st = { ids: [] as string[], parent: null as string | null }
+            const st = { ids: [] as string[], parent: null as string | null, colonne: '' }
             const b: Record<string, unknown> = {}
-            b.select = () => b
+            b.select = (c?: string) => {
+                st.colonne = c ?? ''
+                if (tabella === 'avvisi_risposte') proiezioni.push(st.colonne)
+                return b
+            }
             b.in = (_c: string, v: string[]) => { st.ids = v; return b }
             b.eq = (_c: string, v: string) => { st.parent = v; return b }
             b.range = async (da: number, a: number) => {
@@ -101,6 +223,13 @@ function clientFinto(opzioni: {
                     query.avvisi_risposte++
                     if (opzioni.erroreRisposte) {
                         return { data: null, count: null, error: opzioni.erroreRisposte }
+                    }
+                    if (opzioni.colonnaAssente && st.colonne.includes(opzioni.colonnaAssente)) {
+                        return {
+                            data: null,
+                            count: null,
+                            error: { code: '42703', message: `column avvisi_risposte.${opzioni.colonnaAssente} does not exist` },
+                        }
                     }
                     const filtrate = righe.filter(
                         (r) => st.ids.includes(r.avviso_id as string) &&
@@ -123,7 +252,7 @@ function clientFinto(opzioni: {
             return b
         },
     }
-    return { client: client as never, query }
+    return { client: client as never, query, proiezioni }
 }
 
 describe('statistichePerAvviso — il numero di query NON dipende dagli avvisi', () => {
@@ -131,9 +260,9 @@ describe('statistichePerAvviso — il numero di query NON dipende dagli avvisi',
         const { client, query } = clientFinto({ righe: righeDiProva() })
         const m = await statistichePerAvviso(client, [A1, A2, A3], 'test')
         expect(query.avvisi_risposte).toBe(1)
-        expect(m.get(A1)).toEqual({ letti: 5, adesioni_si: 3, adesioni_no: 2 })
-        expect(m.get(A2)).toEqual({ letti: 1, adesioni_si: 0, adesioni_no: 4 })
-        expect(m.get(A3)).toEqual({ letti: 0, adesioni_si: 0, adesioni_no: 0 })
+        expect(m.get(A1)).toEqual(stats({ letti: 5, adesioni_si: 3, adesioni_no: 2, adesioni_senza_numero: 3 }))
+        expect(m.get(A2)).toEqual(stats({ letti: 1, adesioni_si: 0, adesioni_no: 4 }))
+        expect(m.get(A3)).toEqual(stats({}))
     })
 
     it('con 100 avvisi resta UNA query — prima ne sarebbero servite 300', async () => {
@@ -163,7 +292,7 @@ describe('statistichePerAvviso — il numero di query NON dipende dagli avvisi',
         const { client, query } = clientFinto({ righe: righeDiProva() })
         const m = await statistichePerAvviso(client, [A1, A1, A1, A2], 'test')
         expect(query.avvisi_risposte).toBe(1)
-        expect(m.get(A1)).toEqual({ letti: 5, adesioni_si: 3, adesioni_no: 2 })
+        expect(m.get(A1)).toEqual(stats({ letti: 5, adesioni_si: 3, adesioni_no: 2, adesioni_senza_numero: 3 }))
     })
 })
 
@@ -180,7 +309,7 @@ describe('statistichePerAvviso — il troncamento del server NON diventa un nume
         const { client, query } = clientFinto({ righe, tettoServer: 1000 })
         const m = await statistichePerAvviso(client, [A1], 'test')
 
-        expect(m.get(A1)).toEqual({ letti: 1400, adesioni_si: 700, adesioni_no: 400 })
+        expect(m.get(A1)).toEqual(stats({ letti: 1400, adesioni_si: 700, adesioni_no: 400, adesioni_senza_numero: 700 }))
         // 2500 righe / 1000 per pagina = 3 pagine. Non 1 (troncato), non 25.
         expect(query.avvisi_risposte).toBe(3)
     })
@@ -189,7 +318,7 @@ describe('statistichePerAvviso — il troncamento del server NON diventa un nume
         const spia = vi.spyOn(console, 'error').mockImplementation(() => {})
         const { client } = clientFinto({ righe: righeDiProva(), erroreRisposte: { code: '42P01', message: 'relation does not exist' } })
         const m = await statistichePerAvviso(client, [A1], 'test')
-        expect(m.get(A1)).toEqual({ letti: 0, adesioni_si: 0, adesioni_no: 0 })
+        expect(m.get(A1)).toEqual(stats({}))
         spia.mockRestore()
     })
 })
@@ -197,7 +326,7 @@ describe('statistichePerAvviso — il troncamento del server NON diventa un nume
 describe('rispostePerAvvisoDelGenitore', () => {
     it('indicizza per avviso e per figlio, filtrando sul genitore, in UNA query', async () => {
         const righe = [
-            { avviso_id: A1, student_id: 's1', parent_id: 'p1', letto_il: '2026-08-01', risposta: 'si', risposto_il: '2026-08-01' },
+            { avviso_id: A1, student_id: 's1', parent_id: 'p1', letto_il: '2026-08-01', risposta: 'si', risposto_il: '2026-08-01', stato_adesione: 'ammessa', numero_partecipanti: 3 },
             { avviso_id: A1, student_id: 's2', parent_id: 'p1', letto_il: null, risposta: null, risposto_il: null },
             { avviso_id: A2, student_id: 's1', parent_id: 'p1', letto_il: '2026-08-02', risposta: 'no', risposto_il: '2026-08-02' },
             // Altro genitore: non deve comparire.
@@ -207,9 +336,24 @@ describe('rispostePerAvvisoDelGenitore', () => {
         const m = await rispostePerAvvisoDelGenitore(client, [A1, A2], 'p1', 'test')
 
         expect(query.avvisi_risposte).toBe(1)
-        expect(m.get(A1)?.get('s1')).toEqual({ letto_il: '2026-08-01', risposta: 'si', risposto_il: '2026-08-01' })
-        expect(m.get(A1)?.get('s2')).toEqual({ letto_il: null, risposta: null, risposto_il: null })
-        expect(m.get(A2)?.get('s1')).toEqual({ letto_il: '2026-08-02', risposta: 'no', risposto_il: '2026-08-02' })
+        // 🔴 `stato_adesione` e `numero_partecipanti` sono LA PROPRIA RIGA, non una
+        // statistica di capienza: dicono dove sta questa famiglia, non quanto spazio
+        // resta agli altri. Senza di loro il genitore non ha modo di sapere «sei in
+        // lista d'attesa», che è l'informazione per cui la coda esiste.
+        expect(m.get(A1)?.get('s1')).toEqual({
+            letto_il: '2026-08-01', risposta: 'si', risposto_il: '2026-08-01',
+            stato_adesione: 'ammessa', numero_partecipanti: 3,
+        })
+        // Riga senza le due colonne nuove (le 869 storiche): `null`, mai `undefined`
+        // e mai `NaN` — chi legge distingue «non ha un numero» da «non l'ho letto».
+        expect(m.get(A1)?.get('s2')).toEqual({
+            letto_il: null, risposta: null, risposto_il: null,
+            stato_adesione: null, numero_partecipanti: null,
+        })
+        expect(m.get(A2)?.get('s1')).toEqual({
+            letto_il: '2026-08-02', risposta: 'no', risposto_il: '2026-08-02',
+            stato_adesione: null, numero_partecipanti: null,
+        })
         // La riga dell'altro genitore è stata esclusa dal filtro, non dall'indice.
         expect(m.get(A1)?.get('s9')).toBeUndefined()
     })
@@ -219,6 +363,29 @@ describe('rispostePerAvvisoDelGenitore', () => {
         const m = await rispostePerAvvisoDelGenitore(client, [A1], '', 'test')
         expect(query.avvisi_risposte).toBe(0)
         expect(m.size).toBe(0)
+    })
+
+    it('sul DB non migrato ripiega sulle colonne STORICHE invece di tornare a mani vuote', async () => {
+        // Il DB E2E della CI non ha `stato_adesione`/`numero_partecipanti`: senza il
+        // ripiego il `42703` produrrebbe ZERO righe, cioè `my_response: null` su ogni
+        // avviso — a schermo «non hai mai risposto» detto a chi ha risposto.
+        const righe = [
+            { avviso_id: A1, student_id: 's1', parent_id: 'p1', letto_il: '2026-08-01', risposta: 'si', risposto_il: '2026-08-01' },
+        ]
+        const { client, query, proiezioni } = clientFinto({ righe, colonnaAssente: 'stato_adesione' })
+        const m = await rispostePerAvvisoDelGenitore(client, [A1], 'p1', 'test')
+
+        // Due tentativi sulla PRIMA pagina: quello allargato e quello ridotto. Se
+        // fosse uno solo il ripiego non sarebbe mai scattato e il verde qui sotto
+        // verrebbe da una proiezione che non ha mai fallito.
+        expect(query.avvisi_risposte).toBe(2)
+        expect(proiezioni[0]).toContain('stato_adesione')
+        expect(proiezioni[1]).not.toContain('stato_adesione')
+
+        expect(m.get(A1)?.get('s1')).toEqual({
+            letto_il: '2026-08-01', risposta: 'si', risposto_il: '2026-08-01',
+            stato_adesione: null, numero_partecipanti: null,
+        })
     })
 })
 

@@ -30,6 +30,44 @@ import path from 'node:path';
  * lock sui numeri di riga sarebbe rosso per motivi che non c'entrano niente, e un lock che
  * suona a vuoto è un lock che si impara a spegnere. Il conteggio si muove solo quando si
  * aggiunge o si toglie un catch muto — che è esattamente l'evento da sorvegliare.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────────────
+ * ⚠️ IL LIMITE DI QUESTO LOCK, misurato il 2026-09-19 — leggerlo PRIMA di fidarsi del verde.
+ *
+ * Il nome dice «catch muti». Per metà non è vero, e la metà mancante è proprio la forma che
+ * AGENTS.md regola 6 CITA fra le due vietate:
+ *
+ *     «`.catch(() => {})` e `catch { /* ignora *\/ }` sono vietati»
+ *
+ * Il secondo esempio questo lock NON lo prende. Il motivo è nella misura qui sopra: per le
+ * CLAUSOLE i commenti vengono mascherati con `§` (non-spazio) apposta per seguire `no-empty`,
+ * che ignora i blocchi contenenti un commento. Risultato: `catch {}` è rosso, e
+ * `catch { /* noop *\/ }` — lo stesso silenzio, con una riga di scuse dentro — è verde. Lo ha
+ * trovato il 2026-09-19 chi stava bonificando `AvvisiPreview.tsx`: rimettere la versione
+ * commentata lasciava il lock a 7/7.
+ *
+ * Un commento dentro un `catch` NON è un log. Non finisce in `app_log`, non si interroga in
+ * SQL, non dice niente a nessuno alle tre di notte. È lo stesso identico silenzio delle email
+ * di credenziali da cui nasce la regola 6.
+ *
+ * QUANTO GRANDE È IL BUCO — misurato il 2026-09-19 su tutto `src/`, escluso il logger:
+ * **59 occorrenze in 44 file** (40 fuori allowlist per 55 occorrenze, 4 dentro per 5).
+ * I concentratori: `src/lib/auth/logout.ts` (8), `src/lib/pagamenti/solleciti-invio.ts` (3),
+ * e poi 1-2 a testa su rotte API, hook di identità, shim nativi, `middleware.ts`,
+ * `instrumentation.ts`, `src/lib/supabase/server-client.ts`.
+ *
+ * PERCHÉ NON È STATO ACCESO QUEL GIORNO. Accendere il criterio esteso significava 59
+ * violazioni da bonificare in un colpo solo, quasi tutte in file che questo lavoro non tocca e
+ * su cui in quel momento stavano lavorando altri quattro cantieri: avrebbe portato al rosso il
+ * gate di un branch lungo per codice di nessuno, e un gate rosso per colpa di terzi è un gate
+ * che si impara a spegnere. La scelta è stata **dichiarare il limite invece di nasconderlo**.
+ *
+ * MA IL NUMERO NON È UN COMMENTO. Questo repo ha già pagato i numeri scritti a mano che
+ * invecchiano in silenzio: sotto c'è `MAX_SOLO_COMMENTI`, un tetto monotono decrescente
+ * RIMISURATO a ogni run, gemello degli altri due. Non pretende zero — non è quello il momento
+ * — ma la categoria non può più CRESCERE, e chi ne bonifica una stringe il tetto. Quando
+ * arriverà a zero, le due mascherature si fondono in una e questo riquadro si cancella.
+ * ────────────────────────────────────────────────────────────────────────────────────────
  */
 
 const RADICE = process.cwd();
@@ -234,15 +272,70 @@ function sorgenti(dir = SRC): string[] {
     return out;
 }
 
-/** Quante volte quel file tace. `0` significa bonificato. */
-function quantiMuti(rel: string): number {
-    const sorgente = fs.readFileSync(path.join(RADICE, rel), 'utf8');
+/**
+ * Quante volte quel file tace, **con il criterio di ESLint** — cioè senza i `catch` il cui
+ * corpo contiene soltanto commenti. Per quelli vedi `soloCommenti()` e il riquadro in testata:
+ * `0` qui NON significa «questo file logga sempre», significa «questo file non ha catch
+ * sintatticamente vuoti». La differenza è la metà scoperta del lock.
+ */
+function contaMuti(sorgente: string): number {
     CLAUSOLA_MUTA.lastIndex = 0;
     HANDLER_MUTO.lastIndex = 0;
     const clausole = (mascheraCommenti(sorgente, '§').match(CLAUSOLA_MUTA) ?? []).length;
     const handler = (mascheraCommenti(sorgente, ' ').match(HANDLER_MUTO) ?? []).length;
     return clausole + handler;
 }
+
+function quantiMuti(rel: string): number {
+    return contaMuti(fs.readFileSync(path.join(RADICE, rel), 'utf8'));
+}
+
+/**
+ * LA METÀ SCOPERTA: le clausole `catch { /* … *\/ }` il cui corpo è SOLO commenti.
+ *
+ * Si ottengono per differenza fra le due mascherature, che hanno la stessa lunghezza carattere
+ * per carattere (`//` → due `riempi`, ogni char di commento → un `riempi`, i ritorni a capo
+ * intatti): quindi gli indici combaciano e ciò che compare con gli spazi ma non con i `§` è
+ * esattamente un blocco che contiene solo commenti. Gli HANDLER non entrano qui: quelli sono
+ * già contati da `quantiMuti`, perché `no-restricted-syntax` lavora sull'AST, dove i commenti
+ * non esistono.
+ */
+function trovaSoloCommenti(sorgente: string): { riga: number; testo: string }[] {
+    const conSegno = mascheraCommenti(sorgente, '§');
+    const conSpazi = mascheraCommenti(sorgente, ' ');
+
+    const gia = new Set<number>();
+    CLAUSOLA_MUTA.lastIndex = 0;
+    for (let m = CLAUSOLA_MUTA.exec(conSegno); m; m = CLAUSOLA_MUTA.exec(conSegno)) gia.add(m.index);
+
+    const fuori: { riga: number; testo: string }[] = [];
+    CLAUSOLA_MUTA.lastIndex = 0;
+    for (let m = CLAUSOLA_MUTA.exec(conSpazi); m; m = CLAUSOLA_MUTA.exec(conSpazi)) {
+        if (gia.has(m.index)) continue;
+        fuori.push({
+            riga: sorgente.slice(0, m.index).split('\n').length,
+            testo: sorgente.slice(m.index, m.index + m[0].length).replace(/\s+/g, ' ').slice(0, 100),
+        });
+    }
+    return fuori;
+}
+
+function soloCommenti(rel: string): { riga: number; testo: string }[] {
+    return trovaSoloCommenti(fs.readFileSync(path.join(RADICE, rel), 'utf8'));
+}
+
+/**
+ * TETTI MONOTONI DECRESCENTI della metà scoperta — misura del 2026-09-19, prima volta che
+ * questa categoria viene contata. 59 occorrenze in 44 file, logger escluso.
+ *
+ * Non sono un permesso: sono il debito dichiarato. Salgono mai — chi ne aggiunge uno lo vede
+ * qui e ha davanti la scelta giusta, che è `logClient`/`logEvento` a livello `info` con scritto
+ * PERCHÉ l'errore è ignorabile. Chi ne bonifica uno porta giù il numero, come per gli altri
+ * due tetti: lasciarlo largo significa tenere credito non speso, cioè un tetto che non misura
+ * più niente.
+ */
+const MAX_SOLO_COMMENTI = 59;
+const MAX_FILE_SOLO_COMMENTI = 44;
 
 type Voce = { path: string; n: number };
 type Allowlist = { totale_occorrenze: number; file: Voce[] };
@@ -251,7 +344,7 @@ function leggiAllowlist(): Allowlist {
     return JSON.parse(fs.readFileSync(ALLOWLIST, 'utf8')) as Allowlist;
 }
 
-describe('lock — catch muti (AGENTS.md regola 6)', () => {
+describe('lock — catch muti: VUOTI vietati, con soli commenti solo contati (AGENTS.md regola 6)', () => {
     it('l’allowlist esiste, è ben formata e non ha doppioni', () => {
         expect(
             fs.existsSync(ALLOWLIST),
@@ -399,5 +492,82 @@ describe('lock — catch muti (AGENTS.md regola 6)', () => {
             'Soppressione inline di `no-restricted-syntax` fuori da src/lib/logging/**. La ' +
                 'deroga è ammessa solo lì, e lì la dà la config: non serve scriverla nei file.',
         ).toEqual([]);
+    });
+
+    it('la metà scoperta (catch con SOLI commenti) è contata e non può crescere', () => {
+        const perFile = sorgenti()
+            .filter((f) => !f.startsWith(ESENTE))
+            .map((f) => ({ f, occorrenze: soloCommenti(f) }))
+            .filter(({ occorrenze }) => occorrenze.length > 0);
+
+        const totale = perFile.reduce((s, v) => s + v.occorrenze.length, 0);
+        const elenco = perFile
+            .map(({ f, occorrenze }) => `  ${f} (${occorrenze.length}): ${occorrenze.map((o) => `L${o.riga}`).join(', ')}`)
+            .join('\n');
+
+        expect(
+            totale,
+            `I \`catch { /* … */ }\` con dentro SOLO commenti sono ${totale} (tetto ` +
+                `${MAX_SOLO_COMMENTI}, misurato il 2026-09-19).\n` +
+                'Se è SALITO: ne hai scritto uno nuovo, ed è la forma che AGENTS.md regola 6 cita ' +
+                'testualmente fra le vietate. ESLint non la prende (`no-empty` ignora i blocchi ' +
+                'con un commento) e per questo la conta questo test. Un commento non è un log: ' +
+                'non sta in `app_log`, non si interroga in SQL, non dice niente a nessuno alle tre ' +
+                'di notte. Usa `logClient({ livello: "warn", … })` nel browser o `logEvento(…)` ' +
+                'sul server, a livello `info` se l\'errore è davvero ignorabile — scrivendoci ' +
+                'PERCHÉ lo è, che è quello che il commento voleva dire.\n' +
+                'Se è SCESO: hai bonificato, abbassa il tetto invece di lasciare credito non ' +
+                'speso.\n' +
+                `Occorrenze trovate:\n${elenco}`,
+        ).toBeLessThanOrEqual(MAX_SOLO_COMMENTI);
+
+        expect(
+            perFile.length,
+            `I file coinvolti sono ${perFile.length} (tetto ${MAX_FILE_SOLO_COMMENTI}). La ` +
+                'categoria può solo restringersi: un file in più è un file nuovo che ha imparato ' +
+                'a tacere.',
+        ).toBeLessThanOrEqual(MAX_FILE_SOLO_COMMENTI);
+    });
+
+    it('lo scanner vede davvero qualcosa, e le due misure riconoscono un campione noto', () => {
+        // L'AUTOINGANNO che questa asserzione chiude: ogni altro test qui sopra confronta una
+        // lista con `[]`. Se `sorgenti()` tornasse vuota — una cartella rinominata, un filtro
+        // sbagliato, `src/` spostato — oppure se le due regex smettessero di agganciare per una
+        // modifica alla mascheratura, il file resterebbe verde su SETTE test senza aver esaminato
+        // una riga. Un lock che non può fallire non è un lock: lo si fa fallire apposta.
+        const visti = sorgenti();
+        expect(
+            visti.length,
+            `Lo scanner ha trovato ${visti.length} file .ts/.tsx sotto src/. Se è crollato, non ` +
+                'sta più guardando il codice: questo lock non misura più niente e il verde qui ' +
+                'sopra non vale nulla. Controlla SRC e il filtro in `sorgenti()`.',
+        ).toBeGreaterThan(800);
+
+        // Lo strumento provato sui suoi stessi casi, scritti qui in chiaro: se una maschera o una
+        // regex cambia, è QUESTO a diventare rosso, non un conteggio che scende in silenzio.
+        //
+        // Il campione sta in una stringa e non in un file di `src/`: un file vero, anche solo per
+        // il tempo del test, lo vedrebbero gli altri lock architetturali che scandiscono `src/` in
+        // parallelo (`logging-coverage`, `zod-coverage`, …), e li farebbe cadere a caso. Le due
+        // funzioni pure qui sotto sono le stesse che leggono i file veri: si prova lo strumento,
+        // non una sua copia.
+        const campione = [
+            'function a() { try { a(); } catch {} }', //                        vuoto      → muto
+            'function b() { try { b(); } catch (e) {} }', //                    vuoto      → muto
+            'const c = () => Promise.resolve().catch(() => {});', //            handler    → muto
+            'function d() { try { d(); } catch { /* solo scuse */ } }', //      commenti   → scoperto
+            'function e() { try { e(); } catch { return 1; } }', //             fa qualcosa→ innocuo
+            'const f = "catch {}";', //                                         in stringa → muto (*)
+        ].join('\n');
+
+        // (*) Sì, anche quello in stringa: è una scelta, non una svista. Le stringhe restano
+        // INTATTE sotto entrambe le maschere perché `src/app/offline/*` serve al browser uno
+        // script ES5 dentro una stringa, e lì un `catch {}` gira davvero — per il genitore in
+        // metropolitana è codice, non testo. ESLint quei due non li vede; questo lock sì.
+        expect(contaMuti(campione), 'le due regex non agganciano più i catch VUOTI').toBe(4);
+        expect(
+            trovaSoloCommenti(campione).map((o) => o.riga),
+            'la differenza fra le due mascherature non isola più il catch con soli commenti',
+        ).toEqual([4]);
     });
 });

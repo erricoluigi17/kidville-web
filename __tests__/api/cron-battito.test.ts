@@ -65,9 +65,20 @@ const db = vi.hoisted(() => {
                     state.calls.push({ table, m })
                     return qb
                 }
+                // ⚠️ L'ELENCO DEVE COPRIRE OGNI OPERATORE CHE LE CINQUE ROUTE USANO, e un buco
+                // qui non si legge come un buco: il builder rende `undefined` sul metodo che non
+                // conosce, la catena esplode con un `TypeError` e la scansione che lo usava
+                // risulta CADUTA — cioè un 500 e una riga `scansione-fallita` che sembrano un
+                // difetto del codice e sono invece un difetto di questo finto. È successo il
+                // 2026-09-19 con `gt`, che nessuna delle tre scansioni di allora usava e che la
+                // quarta (le adesioni in chiusura) usò per il confine basso della finestra finché
+                // non venne allineata a `gte` — l'operatore che la regola della scadenza impone
+                // («la scadenza è l'ultimo istante valido, incluso», `@/lib/avvisi/scadenze`).
+                // Entrambi restano nell'elenco: `gt` perché un'altra route potrebbe usarlo domani,
+                // e perché toglierlo ricreerebbe esattamente il buco appena descritto.
                 for (const m of [
                     'select', 'is', 'or', 'order', 'limit', 'in', 'update', 'delete',
-                    'eq', 'neq', 'not', 'lt', 'lte', 'gte',
+                    'eq', 'neq', 'not', 'lt', 'lte', 'gt', 'gte',
                 ]) qb[m] = rec(m)
                 qb.maybeSingle = async () => prendi(table)
                 qb.single = async () => prendi(table)
@@ -395,6 +406,16 @@ describe('DIFETTO 1 — una query fallita NON chiude il giro con «ok»', () => 
         //
         // Il terzo stato è la risposta: il giro resta 200 (non c'è niente da riparare stanotte),
         // ma NON dice «ok» — dice «ok-parziale» e NOMINA ciò che non ha guardato.
+        //
+        // ⚠️ `azione` VALE TRE NOMI SU QUATTRO PERCHÉ QUESTO FINTO È UNA CODA FIFO, non perché
+        // la quarta scansione sia immune. `avvisi` ha UN solo elemento in coda: la prima lettura
+        // (la scansione dei moduli) riceve `TABELLA_ASSENTE`, la seconda (le adesioni in
+        // chiusura) riceve il `{ data: null }` di riempimento e quindi NON salta. In un ambiente
+        // dove `avvisi` davvero non esiste salterebbe anche lei, e `azione` direbbe
+        // «moduli+armadietto+documenti+adesioni». Quel caso reale è già coperto, con un finto che
+        // ha uno stato, in `__tests__/api/avvisi-promemoria-adesioni.test.ts` («colonna assente
+        // (DB E2E non migrato) → 200, "ok-parziale", e `adesioni` NOMINATO»): qui si resta sulla
+        // coda perché ciò che questo file misura sono i BATTITI, non lo schema.
         db.state.code = {
             avvisi: [{ error: TABELLA_ASSENTE }],
             armadietto_richieste: [{ error: TABELLA_ASSENTE_PGRST }],

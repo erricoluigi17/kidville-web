@@ -210,8 +210,36 @@ const MAX_FILE = 277;
  * Rimisurato al momento di scrivere, non copiato da un rapporto: il paragrafo del 2026-09-10
  * spiega perché i due numeri divergono comunque dalla misura del CODICE (le voci stantie), e
  * questo tetto governa la SOMMA DELL'ELENCO.
+ *
+ * 🔻 1415 → 1414 il 2026-09-19, con le adesioni agli avvisi (branch
+ * `feat/avvisi-scadenze-adesioni`). Pagata un'unità su
+ * `src/app/api/avvisi/[id]/risposte/route.ts` — 7 → 6 nell'elenco — riscrivendo quella POST
+ * sulla RPC che serializza i posti. **Terza volta che succede la stessa cosa**: chi paga il
+ * debito abbassa la propria riga e lascia il tetto dov'era, e il confronto `<=` fa rientrare
+ * in silenzio ciò che si è appena tolto. Le due volte precedenti — i due paragrafi qui sopra —
+ * la dimenticanza l'ha trovata qualcun altro un giro dopo; questa l'ha trovata il critico dello
+ * stesso cantiere, prima del merge. Il tetto scende **con** la somma, sempre.
+ *
+ * 🔻 1414 → 1413 il 2026-09-19 (stesso giorno, stesso branch `feat/avvisi-scadenze-adesioni`).
+ * Pagata un'altra unità sullo STESSO file — `src/app/api/avvisi/[id]/risposte/route.ts`, 6 → 5
+ * nell'elenco: il 500 della GET del riepilogo adesioni rimandava al client il `message` GREZZO
+ * di PostgREST (`{ error: error.message }`), che è prosa inglese e **può nominare una colonna**
+ * — la stessa fuga di `value too long for type character varying(255)` da cui è nato
+ * `src/lib/validation/avvisi.ts`. Ora è `LETTURA_FALLITA`, con il messaggio del database che
+ * resta nel log, dove serve. Lo status non si muove: era un 500 e resta un 500.
+ *
+ * ⚠️ Il lock qui accanto NON poteva vedere quella riga, e vale la pena scriverlo: le regole di
+ * questo file cercano i nomi di colonna nei LETTERALI e nel catalogo, non in una stringa
+ * costruita a runtime. Un `error.message` è fuori dalla portata di qualunque controllo statico —
+ * si chiude togliendo la sorgente, non aggiungendo una regola.
+ *
+ * 🔴 **Quarta volta** che il tetto rischiava di restare indietro rispetto a chi paga il debito,
+ * ed è il paragrafo qui sopra a dire che la terza era già stata una volta di troppo. `<=` non
+ * protegge nulla se il tetto non scende insieme alla somma: rimisurato, non dedotto —
+ * `jq '.totale_occorrenze' docs/superpowers/errori-senza-codice-allowlist.json` dice **1413**.
+ * `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero.
  */
-const MAX_OCCORRENZE = 1415;
+const MAX_OCCORRENZE = 1413;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

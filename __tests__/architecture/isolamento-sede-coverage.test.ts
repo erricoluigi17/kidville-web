@@ -1523,7 +1523,29 @@ const AMMESSE: Record<string, string> = {
     'primaria/classe/[sectionId]:GET': 'materie della sezione verificata (`materieDiDocenteInSezione`)',
     'primaria/prospetto:GET': "materie della sezione dell'alunno verificato",
     'primaria/registro:GET': 'nomi dei docenti che hanno firmato le righe già lette per sezione',
-    'avvisi/[id]/risposte:POST': 'risposta a un avviso già verificato: la riga esistente si cerca per `avviso_id`',
+    // ⚠️ RISCRITTA il 2026-09-19, e la vecchia frase va detta perché era MEZZA
+    // VERA, che è peggio di una falsa: diceva «risposta a un avviso già
+    // verificato: la riga esistente si cerca per `avviso_id`» e faceva credere
+    // che l'esenzione coprisse una `select`. Misurato togliendo la voce: il lock
+    // non segnala nessuna query — segnala `rpc-senza-sede` su
+    // `rpc:avviso_adesione_registra` (route.ts:285), e null'altro. La `select`
+    // nominata esiste ancora (è nel ramo di ripiego «pura presa visione», quando
+    // la RPC non c'è) ma non è mai stata ciò che veniva esentato: chi rileggeva
+    // la riga credeva di sapere cosa il lock stesse lasciando passare, e sapeva
+    // la cosa sbagliata.
+    //
+    // COSA GUADAGNA DAVVERO L'ESENZIONE. Qui il perimetro NON è la sede: è la
+    // FAMIGLIA. Chi chiama è un genitore (`requireUser`), e prima di qualunque
+    // scrittura passa da `genitoreHasFiglio(parent_id, student_id)` — nessuno
+    // scrive per un figlio che non è suo, staff compreso. La RPC riceve
+    // `p_avviso_id` dal PERCORSO e `p_parent_id` dalla SESSIONE (mai dal corpo:
+    // è il difetto G4), e la scrittura la confina dentro di sé, sotto il proprio
+    // `FOR UPDATE` su `avvisi`. Un `p_scuola_id` in più non aggiungerebbe niente
+    // a quel confine: direbbe una sede che la funzione non usa per decidere.
+    'avvisi/[id]/risposte:POST':
+        'RPC del genitore: `p_avviso_id` dal percorso e `p_parent_id` dalla SESSIONE, dopo ' +
+        '`genitoreHasFiglio` — il perimetro è la FAMIGLIA, non la sede, e la scrittura resta ' +
+        'confinata dentro la funzione',
     // ⚠️ Queste due voci dicevano «il media è letto, l'autorizzazione verificata
     // e poi aggiornato per id», e con quella frase esentavano l'INTERO handler.
     // Era più larga della realtà, e la larghezza si è pagata: il `PATCH`
@@ -2206,7 +2228,27 @@ describe('coverage-lock isolamento fra sedi', () => {
             // porta `scuola_id` accanto a `section_id` nella STESSA select: è
             // un handler CONTROLLATO, non esentato — `handlerEsentati` resta
             // 105 e se sale vuol dire che qualcuno ha tolto un presidio.
-            routeConServiceRole: 322,
+            // 322 → 324 il 2026-09-19 (cantiere B2, adesioni agli avvisi): sono
+            // nate `avvisi/[id]/risposte/[rispostaId]` (PATCH: la segreteria
+            // ammette dalla coda, corregge il numero, toglie) e
+            // `avvisi/[id]/risposte/esporta` (GET: l'elenco delle adesioni in CSV).
+            // Una route ciascuna, un handler ciascuna.
+            // 🔴 `handlerEsentati` NON si muove e resta 105: sono ENTRAMBI handler
+            // CONTROLLATI, non esentati. Passano da `requireStaff` +
+            // `assertAvvisoInScope(…, avvisoId)` come PRIME istruzioni, e da lì in
+            // poi il lock li segue da sé — la `.rpc('avviso_adesione_gestisci', …)`
+            // porta `avvisoId` fra gli argomenti (cioè l'oggetto che il gate ha
+            // appena verificato), e la lettura in blocco di `alunni` filtra per la
+            // sede dell'avviso. È il motivo per cui questo passaggio non aggiunge
+            // nemmeno una riga ad AMMESSE: la prima stesura del PATCH costruiva i
+            // parametri della RPC in una variabile, il lock ha segnalato
+            // `rpc-senza-sede` e aveva ragione — con `rpc('…', parametri)` nessuno,
+            // leggendo quella riga, può più dire su quale plesso si sta scrivendo.
+            // La correzione è stata mettere l'oggetto in linea, non zittire il lock.
+            // ⚠️ Vale la riga d'avvertimento qui sopra: sullo STESSO albero lavorano
+            // altri cantieri sugli avvisi. Chi unisce i rami RIMISURI questo numero
+            // sul file unito invece di sommare a mente.
+            routeConServiceRole: 324,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2369,7 +2411,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // route, +1 handler) perché quella rotta espone il solo GET. La
             // nota sta accanto a `routeConServiceRole`, sopra. Misurato
             // rieseguendo il lock, non dedotto.
-            handlerControllati: 491,
+            // 491 → 493 il 2026-09-19 (cantiere B2): l'unico handler di
+            // `avvisi/[id]/risposte/[rispostaId]` (`PATCH`) e l'unico di
+            // `avvisi/[id]/risposte/esporta` (`GET`). Il passo coincide col numero
+            // di file (+2 route, +2 handler) perché ciascuna rotta espone un solo
+            // metodo. La nota sta accanto a `routeConServiceRole`, sopra. Misurato
+            // rieseguendo il lock, non dedotto.
+            // 🔴 `avvisi/[id]/risposte:POST` NON conta qui come route nuova: il file
+            // c'era già, e la sua riscrittura sulla RPC non ha aggiunto handler.
+            handlerControllati: 493,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

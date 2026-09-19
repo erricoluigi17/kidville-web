@@ -50,6 +50,37 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     gruppo: 'genitore',
     descrizione: 'Sollecito automatico dopo i giorni impostati in Modulistica',
   },
+  // ── Le tre voci delle ADESIONI (cantiere A2/B3) ───────────────────────────
+  //
+  // ⚠️ SONO TIPI NUOVI, E NON UN RIUSO. Le due alternative che verrebbero
+  // naturali sono state valutate e SCARTATE, e il motivo va scritto qui o il
+  // prossimo che passa le riproverà:
+  //
+  //  · NON `modulo_promemoria`. La sua etichetta dice, alla lettera, «dopo i
+  //    giorni impostati in **Modulistica**»: è il toggle dei solleciti dei
+  //    MODULI. Appendergli anche i solleciti delle adesioni significa che una
+  //    sede che spegne i primi perde in silenzio i secondi — cioè un
+  //    interruttore che mente su ciò che spegne, e che nessun test può vedere
+  //    mentire perché tecnicamente funziona.
+  //
+  //  · NON `consenso_uscita`. Quello è il tipo della PUBBLICAZIONE dell'avviso
+  //    di adesione, parte con `debounce: true` e con lo STESSO `entita_id`
+  //    (l'avviso). Un promemoria che condividesse tipo ed entità verrebbe
+  //    CANCELLATO da una ripubblicazione mentre è ancora pending: è alla lettera
+  //    il guasto della galleria documentato in `@/lib/notifiche/triggers`
+  //    (righe 85-105), 168 notifiche perse e 153 famiglie mai avvisate — con la
+  //    differenza che lì la riga spariva dalla coda, qui sparirebbe anche dalla
+  //    campanella, perché una notifica cancellata non accende niente.
+  adesione_promemoria: {
+    label: 'Promemoria adesioni',
+    gruppo: 'genitore',
+    descrizione: 'Quando si avvicina la scadenza per aderire a un avviso e non hai ancora risposto',
+  },
+  adesione_ammessa: {
+    label: 'Ammissione dalla lista d’attesa',
+    gruppo: 'genitore',
+    descrizione: 'Quando si libera un posto e la tua adesione passa da lista d’attesa a confermata',
+  },
   chat_genitore: {
     label: 'Chat: nuovo messaggio',
     gruppo: 'genitore',
@@ -265,6 +296,17 @@ export const TIPI_NOTIFICA: Record<string, TipoNotifica> = {
     label: 'Documenti in scadenza',
     gruppo: 'staff',
     descrizione: 'Quando un documento di un alunno scade entro 30 giorni',
+  },
+  // Il terzo tipo delle adesioni, e l'unico che NON va a una famiglia: quando un
+  // ritiro libera posti su un avviso con gente in coda, qualcuno deve DECIDERE
+  // chi entra. `gruppo: 'staff'` e non `'docente'` perché la lista d'attesa è
+  // gestita a mano dalla segreteria (`avviso_adesione_gestisci`): la migrazione
+  // A2 dichiara per esteso che nessuno viene promosso in automatico, quindi
+  // questa notifica è un invito ad agire rivolto a chi ha quel bottone.
+  posti_liberati: {
+    label: 'Posti liberati',
+    gruppo: 'staff',
+    descrizione: 'Quando un ritiro libera posti su un avviso con persone in lista d’attesa',
   },
   // Il gemello per il PERSONALE, e sono due voci separate di proposito: qui i
   // destinatari sono l'interessata e la segreteria, là le famiglie non c'entrano

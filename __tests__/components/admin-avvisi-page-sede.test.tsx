@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import itAdmin from '../../messages/it/adminComunicazioni.json'
 import enAdmin from '../../messages/en/adminComunicazioni.json'
@@ -96,6 +96,14 @@ async function apriModuloECompila() {
     fireEvent.click(screen.getByRole('button', { name: new RegExp(itAdmin.avvisiNuovoAvviso, 'i') }))
     fireEvent.change(await screen.findByPlaceholderText(itTeacher.formPlaceholderTitolo), { target: { value: 'Chiusura straordinaria' } })
     fireEvent.change(screen.getByPlaceholderText(itTeacher.formPlaceholderContenuto), { target: { value: 'Venerdì la sede resta chiusa.' } })
+    // Dal 2026-09-19 la scadenza avviso è obbligatoria su OGNI avviso (la colonna è
+    // `NOT NULL` e il POST la pretende): senza, il modulo non è inviabile e questi
+    // lock misurerebbero soltanto un bottone spento. Basta la DATA — l'ora si scrive
+    // da sola alla prima data valida (23:59, la fine del giorno scelto).
+    const scadenza = screen.getByRole('group', { name: itTeacher.formScadenzaAvviso })
+    fireEvent.change(within(scadenza).getByLabelText(itTeacher.formScadenzaAvvisoData), {
+        target: { value: '31/12/2026' },
+    })
 }
 
 const pubblica = () => screen.getByRole('button', { name: new RegExp(itTeacher.formSubmitPubblicaAvviso, 'i') })

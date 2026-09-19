@@ -3,13 +3,15 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations, useLocale } from 'next-intl';
-import { AlertTriangle, Bell, ClipboardList, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
-import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW } from '@/components/ui/cockpit';
+import { AlertTriangle, Bell, ClipboardList, Eye, Hourglass, Pencil, Plus, Trash2 } from 'lucide-react';
+import { CockpitPage, HEADER_BTN, PageHeader, StatCard, TABLE, TABLE_WRAP, TD, TH, TROW, Tabs } from '@/components/ui/cockpit';
+import { Badge } from '@/components/ui/Badge';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoForm, type ClasseAvviso, type DatiAvviso, type EsitoInvioAvviso } from '@/components/features/avvisi/AvvisoForm';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { messaggioErrore } from '@/lib/ui/esito-fetch';
+import { scadenzaLeggibile } from '@/components/features/avvisi/dettaglio/scadenza-leggibile';
 import { formattaIstante } from '@/i18n/config';
 
 // Bacheca avvisi nel cockpit: lista full-width; il dettaglio/monitoraggio apre
@@ -17,20 +19,70 @@ import { formattaIstante } from '@/i18n/config';
 
 interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: string; name: string; school_type: string }[] }
 
+/**
+ * L'avviso COME LO MANDA IL RAMO STAFF, che porta più campi di quanti ne dichiari
+ * l'interfaccia condivisa con la card del docente.
+ *
+ * ⚠️ `Avviso` vive in `AvvisoCard.tsx`, un file di un altro cantiere: qui i campi
+ * in più si dichiarano invece di essere letti con un cast sparso per il file. Sono
+ * tutti FACOLTATIVI perché su un ambiente non migrato (il DB E2E della CI) le
+ * colonne non esistono e la rotta li omette — e `undefined` deve restare
+ * distinguibile da zero.
+ */
+type StatsStaff = Avviso['stats'] & {
+    /** Le PERSONE ammesse (non le adesioni): la grandezza che si confronta col tetto. */
+    persone_ammesse?: number;
+    adesioni_in_attesa?: number;
+    persone_in_attesa?: number;
+};
+
+type AvvisoStaff = Omit<Avviso, 'stats'> & {
+    stats: StatsStaff;
+    /** Il tetto, in persone. `null`/assente = nessun tetto. */
+    posti_totali?: number | null;
+    /** Calcolato dal SERVER: `persone_ammesse > posti_totali`. */
+    sopra_capienza?: boolean;
+};
+
 /** Riconosce una voce di `target_classes` che è in realtà un ID di sezione. */
 const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** I tre stati del filtro sopra la tabella. `attivi` è il predefinito. */
+type FiltroScadenza = 'attivi' | 'scaduti' | 'tutti';
+
+/**
+ * La scadenza EFFETTIVA di una riga: quella nuova quando c'è, altrimenti la
+ * vecchia colonna `scadenza`. Stessa regola del server (`scadenzaEffettiva` in
+ * `GET /api/avvisi`): senza il ripiego un avviso pubblicato prima del cantiere
+ * delle scadenze risulterebbe «senza scadenza», cioè eterno.
+ */
+function scadenzaEffettiva(a: AvvisoStaff): string | null {
+    return a.scadenza_avviso ?? a.scadenza ?? null;
+}
 
 function AdminAvvisiInner() {
     const router = useRouter();
     const t = useTranslations('adminComunicazioni');
+    // Il vuoto-da-filtro ha già le sue parole nel catalogo condiviso: «Nessun
+    // avviso · crea il primo» sarebbe falso davanti a ottantasette avvisi di cui
+    // nessuno scaduto.
+    const tShared = useTranslations('shared');
     const locale = useLocale();
     const { userId } = useSessionIdentity();
 
-    const [avvisi, setAvvisi] = useState<Avviso[]>([]);
+    const [avvisi, setAvvisi] = useState<AvvisoStaff[]>([]);
     const [loading, setLoading] = useState(true);
     const [showForm, setShowForm] = useState(false);
     const [editingAvviso, setEditingAvviso] = useState<Avviso | null>(null);
     const [scuole, setScuole] = useState<ScuolaScoped[]>([]);
+    /**
+     * 🔴 «ATTIVI» È IL PREDEFINITO, e non è un dettaglio di comodo: al primo
+     * sguardo la schermata deve restare quella di ieri. Gli avvisi scaduti però
+     * NON spariscono — il cockpit è anche l'archivio di ciò che è stato pubblicato,
+     * e «sparito dalla bacheca delle famiglie» non vuol dire «sparito dal lavoro
+     * della segreteria»: si raggiungono con una linguetta, non si perdono.
+     */
+    const [filtroScadenza, setFiltroScadenza] = useState<FiltroScadenza>('attivi');
     // Errore dell'ultima operazione sulla LISTA (eliminazione): il modale ha il
     // suo, ma un DELETE respinto avviene fuori dal modale e prima non lo diceva
     // nessuno — la riga restava a schermo e sembrava un ritardo di caricamento.
@@ -200,6 +252,25 @@ function AdminAvvisiInner() {
     };
 
     const adesioni = avvisi.filter(a => a.tipo === 'adesione').length;
+    const personeInAttesa = avvisi.reduce((somma, a) => somma + (a.stats?.persone_in_attesa ?? 0), 0);
+
+    /**
+     * Il filtro si applica sul BOOLEANO `scaduto` che manda il server, e non si
+     * ricalcola qui.
+     *
+     * ⚠️ Fino al 2026-09-19 la card del docente faceva
+     * `new Date(avviso.scadenza) < new Date()`: mezzanotte UTC, cioè le 02:00
+     * italiane d'estate, quindi dalle 02:00 in poi un avviso che scadeva quel
+     * giorno risultava già morto — per ventidue ore su ventiquattro dell'ULTIMO
+     * giorno utile. E il confronto lo faceva l'orologio del DISPOSITIVO. Il server
+     * lo calcola con un unico istante e con le stesse funzioni che la funzione di
+     * database usa per decidere chi entra: rifarlo qui vorrebbe dire due verità
+     * sulla stessa scadenza.
+     */
+    const avvisiFiltrati = avvisi.filter(a => {
+        if (filtroScadenza === 'tutti') return true;
+        return filtroScadenza === 'scaduti' ? a.scaduto === true : a.scaduto !== true;
+    });
 
     return (
         <CockpitPage max={1360}>
@@ -225,7 +296,7 @@ function AdminAvvisiInner() {
                 </div>
             )}
 
-            <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:max-w-[560px]">
+            <div className="mb-4 grid gap-3 sm:grid-cols-3 lg:max-w-[840px]">
                 <StatCard icon={Bell} label={t('avvisiStatPubblicati')} value={loading ? '…' : avvisi.length} />
                 {/* Il numero di una KPI è INFORMAZIONE, non decorazione: il
                     giallo del brand (`--color-kidville-yellow`) su bianco è
@@ -244,6 +315,15 @@ function AdminAvvisiInner() {
                     value={<span className="text-kidville-green">{loading ? '…' : adesioni}</span>}
                     tone="yellow"
                 />
+                {/* Le PERSONE in coda su tutti gli avvisi. Non è lo stesso numero di
+                    «senza risposta», ed è l'unico che corrisponde a qualcuno che sta
+                    aspettando una telefonata: se resta fermo mentre dei posti si
+                    liberano, c'è del lavoro che nessuno sta facendo. */}
+                <StatCard
+                    icon={Hourglass}
+                    label={t('avvisiStatInAttesa')}
+                    value={loading ? '…' : personeInAttesa}
+                />
             </div>
 
             {loading ? (
@@ -259,6 +339,32 @@ function AdminAvvisiInner() {
                 </div>
             ) : (
                 <div className="rounded-card bg-kidville-white p-4 shadow-sm">
+                    {/* Il filtro STA SOPRA la tabella e il conteggio lo accompagna: «12/87»
+                        è l'unica cosa che distingue «non ce ne sono» da «ne stai guardando
+                        una fetta». In `role="status"` perché cambia sotto le dita di chi
+                        preme una linguetta, e chi usa uno screen reader deve sentirlo. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <Tabs
+                            value={filtroScadenza}
+                            onChange={(id) => setFiltroScadenza(id as FiltroScadenza)}
+                            className="mb-0"
+                            options={[
+                                { id: 'attivi', label: t('avvisiFiltroAttivi') },
+                                { id: 'scaduti', label: t('avvisiFiltroScaduti') },
+                                { id: 'tutti', label: t('avvisiFiltroTutti') },
+                            ]}
+                        />
+                        <span role="status" className="font-maven text-xs font-semibold text-kidville-sub">
+                            {t('avvisiFiltroConteggio', { mostrati: avvisiFiltrati.length, totale: avvisi.length })}
+                        </span>
+                    </div>
+
+                    {avvisiFiltrati.length === 0 ? (
+                        <div className="py-10 text-center">
+                            <h2 className="font-barlow text-base font-bold uppercase text-kidville-green">{tShared('filtriSenzaRisultatiTitolo')}</h2>
+                            <p className="font-maven mt-1 text-sm text-kidville-sub">{tShared('filtriSenzaRisultatiCorpo')}</p>
+                        </div>
+                    ) : (
                     <div className={TABLE_WRAP}>
                         <table className={TABLE}>
                             <thead>
@@ -273,10 +379,18 @@ function AdminAvvisiInner() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {avvisi.map(a => (
+                                {avvisiFiltrati.map(a => (
                                     <tr key={a.id} className={`${TROW} cursor-pointer`} onClick={() => openDetail(a.id)}>
                                         <td className={TD}>
                                             <span className="font-maven block max-w-[360px] truncate text-sm font-semibold text-kidville-ink">{a.titolo}</span>
+                                            {/* 🔴 LA RIGA SCADUTA NON SI SBIADISCE. Un'opacità
+                                                ridotta abbassa il contrasto di TUTTA la riga —
+                                                titolo, destinatari, conteggi — ed è il modo
+                                                classico di rendere illeggibile una tabella per
+                                                dire una cosa sola. Lo stato lo dice una parola. */}
+                                            {a.scaduto && (
+                                                <Badge tone="neutral" className="mt-1">{t('avvisiBadgeScaduto')}</Badge>
+                                            )}
                                             <span className="font-maven block text-xs text-kidville-sub">
                                                 {a.author ? `${a.author.first_name} ${a.author.last_name}` : ''} · {formattaIstante(new Date(a.created_at), locale)}
                                             </span>
@@ -304,11 +418,55 @@ function AdminAvvisiInner() {
                                                 })}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-sub`}>
-                                            {a.scadenza ? formattaIstante(new Date(a.scadenza), locale) : '—'}
+                                            {(() => {
+                                                const scadenza = scadenzaEffettiva(a);
+                                                if (!scadenza) return '—';
+                                                const testo = scadenzaLeggibile(scadenza, locale);
+                                                return (
+                                                    <>
+                                                        <span className="block">
+                                                            {a.scaduto ? t('avvisiScadutoIl', { data: testo }) : testo}
+                                                        </span>
+                                                        {/* La seconda scadenza è un'ALTRA cosa: dopo
+                                                            quella non si aderisce più, ma l'avviso
+                                                            resta in bacheca. Senza questa riga la
+                                                            segreteria legge una data sola e crede
+                                                            che valga per entrambe. */}
+                                                        {a.scadenza_adesione && (
+                                                            <span className="mt-0.5 block text-xs">
+                                                                {t('avvisiAdesioniEntro', { data: scadenzaLeggibile(a.scadenza_adesione, locale) })}
+                                                            </span>
+                                                        )}
+                                                    </>
+                                                );
+                                            })()}
                                         </td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>{a.stats?.letti ?? 0}</td>
                                         <td className={`${TD} font-maven text-sm text-kidville-ink`}>
-                                            {a.tipo === 'adesione' ? t('avvisiAdesioniSiNo', { si: a.stats?.adesioni_si ?? 0, no: a.stats?.adesioni_no ?? 0 }) : '—'}
+                                            {a.tipo === 'adesione' ? (
+                                                <>
+                                                    <span className="block">
+                                                        {t('avvisiAdesioniSiNo', { si: a.stats?.adesioni_si ?? 0, no: a.stats?.adesioni_no ?? 0 })}
+                                                    </span>
+                                                    {/* Il tetto e la coda stanno QUI, in seconda riga, e
+                                                        non in una colonna nuova: le colonne sono già
+                                                        sette e sul telefono la tabella scorre in
+                                                        orizzontale — l'ottava la vedrebbe solo chi
+                                                        pensa a trascinare. */}
+                                                    {typeof a.posti_totali === 'number' && (
+                                                        <span className="mt-0.5 block text-xs text-kidville-sub">
+                                                            {t('avvisiPostiRiga', {
+                                                                persone: a.stats?.persone_ammesse ?? 0,
+                                                                posti: a.posti_totali,
+                                                                attesa: a.stats?.persone_in_attesa ?? 0,
+                                                            })}
+                                                        </span>
+                                                    )}
+                                                    {a.sopra_capienza && (
+                                                        <Badge tone="error" className="mt-1">{t('avvisiSopraCapienza')}</Badge>
+                                                    )}
+                                                </>
+                                            ) : '—'}
                                         </td>
                                         <td className={TD}>
                                             <div className="flex items-center justify-end gap-1.5" onClick={e => e.stopPropagation()}>
@@ -340,6 +498,7 @@ function AdminAvvisiInner() {
                             </tbody>
                         </table>
                     </div>
+                    )}
                 </div>
             )}
 

@@ -5,7 +5,16 @@ import { requireDocente } from '@/lib/auth/require-staff';
 import { assertAvvisoInScope } from '@/lib/auth/scope-avvisi';
 import { verificaTargetAvvisoDocente } from '@/lib/avvisi/target-gate';
 import { classiMancantiNellaSede, classiTargetValide } from '@/lib/avvisi/classi-sede';
-import { zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso, zScadenzaAvviso, zTargetClassesAvviso } from '@/lib/validation/avvisi';
+import {
+    zTitoloAvviso, zContenutoAvviso, zTipoAvviso, zTargetScopeAvviso,
+    zScadenzaAvvisoDataOra, zTargetClassesAvviso, formaAdesioneAvviso,
+    ETICHETTA_NUMERO_PREDEFINITA,
+} from '@/lib/validation/avvisi';
+import { intervallo, MIN_PREDEFINITO, MAX_PREDEFINITO } from '@/lib/avvisi/partecipanti';
+import { risolviScadenze } from '@/lib/avvisi/scadenze';
+import { riepilogoPosti } from '@/lib/avvisi/posti';
+import { dataCivile } from '@/i18n/config';
+import { oraCivile } from '@/lib/format/confini-giorno';
 import { logScrittura } from '@/lib/audit/scrittura';
 import { parseBody, parseData } from '@/lib/validation/http';
 import { zUuid } from '@/lib/validation/common';
@@ -17,6 +26,25 @@ import { logErrore, logEvento } from '@/lib/logging/logger';
 interface RouteParams {
     params: Promise<{ id: string }>;
 }
+
+/**
+ * PostgREST torna `42703` (SELECT) / `PGRST204` (INSERT/UPDATE) quando una colonna
+ * manca: è il linguaggio del DB E2E della CI, che è un progetto separato e NON è
+ * migrato. Stessa funzione, stesso nome e stessa ragione del gemello in
+ * `src/app/api/avvisi/route.ts`.
+ */
+function colonnaMancante(err: { code?: string } | null | undefined): boolean {
+    return !!err && ['PGRST204', '42703'].includes(err.code ?? '');
+}
+
+/**
+ * Quante colonne il degrado dell'UPDATE può sfilare prima di arrendersi. Stesso
+ * numero e stessa ragione del gemello nel POST: PostgREST ne nomina UNA per volta,
+ * e il cantiere A2 ne ha aggiunte sette a `avvisi`. Resta un TETTO perché un ciclo
+ * che sfila senza fine, il giorno in cui `42703` arrivasse per un'altra ragione,
+ * girerebbe finché la richiesta non scade.
+ */
+const MAX_COLONNE_SFILATE = 12;
 
 // ─── I RESTI DI UN AVVISO ────────────────────────────────────────────────────
 //
@@ -55,9 +83,124 @@ const putBodySchema = z.object({
     tipo: zTipoAvviso.nullish(),
     target_scope: zTargetScopeAvviso.nullish(),
     target_classes: zTargetClassesAvviso.optional(),
-    scadenza: zScadenzaAvviso.nullish(),
+    /**
+     * `.nullish()` e non obbligatoria come sul POST: qui «assente» vuol dire **non
+     * toccare**, e la colonna è `NOT NULL` — un avviso senza istante di uscita non
+     * esiste, quindi non lo si può nemmeno cancellare. Il valore che conta per i
+     * controlli non è questo: è lo STATO RISULTANTE, vedi più sotto.
+     */
+    scadenza_avviso: zScadenzaAvvisoDataOra.nullish(),
+    // Lo stesso blocco del POST, dalla stessa definizione: è il presidio contro il
+    // difetto che questo file porta già scritto due volte — una regola chiusa su
+    // una strada e lasciata aperta su quella accanto.
+    ...formaAdesioneAvviso,
     attachment_url: z.string().nullish(),
 });
+
+/**
+ * ─── DALL'ISTANTE IN COLONNA ALLE CIFRE CHE `risolviScadenze` SA LEGGERE ─────
+ *
+ * `risolviScadenze` riceve la forma LOCALE italiana (`YYYY-MM-DDTHH:MM`), quella
+ * che produce `<input type="datetime-local">`; in tabella c'è invece un istante
+ * `timestamptz`. Per valutare lo stato RISULTANTE — cioè quello che resterà dopo
+ * questo PUT — le due scadenze già archiviate vanno riportate a quella forma, e si
+ * fa con `dataCivile` + `oraCivile`, che esistono esattamente per chiudere questo
+ * giro (`istanteDaLocale` → colonna → campo).
+ *
+ * ⚠️ IL RITORNO PERDE I SECONDI, e va detto invece di lasciarlo scoprire: un
+ * istante archiviato alle `23:59:59.999` torna indietro come `…T23:59`, cioè
+ * 59,999 secondi PRIMA. La troncatura cade dalla parte conservativa — la scadenza
+ * usata per il confronto è al più un minuto più PRECOCE di quella vera, quindi un
+ * ordine «adesione ≤ avviso» che passa qui passa anche in colonna.
+ *
+ * ⚠️ E DAL 2026-09-19 QUEL VALORE **VIENE RISCRITTO**. Questo riquadro sosteneva
+ * che la troncatura toccasse i soli CONFRONTI, perché «`scadenza_avviso` si
+ * aggiorna solo quando il corpo ne manda una nuova»: la mitigazione non esiste
+ * più, il modulo `AvvisoForm` manda `scadenza_avviso` a OGNI salvataggio (è
+ * obbligatoria per poter inviare), quindi la riga scatta sempre e il valore
+ * archiviato si accorcia davvero. Misurato: `…T21:59:59.999Z` (backfill a grana
+ * giorno) → `−59,999 s`; `…T14:23:47.123Z` (backfill `created_at + 30gg`) →
+ * `−47,123 s`; `…T21:59:00.000Z` (già arrotondato) → `0`. Cioè: vale **< 60 s**,
+ * è **una tantum** (il secondo giro è stabile, perché i secondi sono già a zero) e
+ * cade sempre dalla parte conservativa. Non si corregge qui perché il valore
+ * salvato resta quello che l'operatore LEGGE nel campo, che è la cosa difendibile;
+ * si scrive perché un commento che mente in questo repo è già costato una
+ * giornata.
+ *
+ * Una `date` pura (la vecchia colonna `scadenza`, che resta in tabella e che il DB
+ * E2E non migrato è l'unico ad avere) diventa `…T23:59`: la FINE del giorno civile,
+ * che è l'unica lettura che qualcuno abbia mai dato a quel campo — nessuna
+ * segreteria che ha scritto «scadenza: 19 settembre» intendeva «fino all'01:59 del
+ * 19».
+ */
+function aFormaLocale(valore: string | null | undefined): string | null {
+    if (!valore) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(valore)) return `${valore}T23:59`;
+    const d = new Date(valore);
+    if (Number.isNaN(d.getTime())) return null;
+    const ora = oraCivile(valore);
+    if (!ora) return null;
+    return `${dataCivile(d)}T${ora}`;
+}
+
+/**
+ * IL RIFIUTO DELLE SCADENZE — gemello di quello in `src/app/api/avvisi/route.ts`.
+ *
+ * ⚠️ Quattro rami e `codice` LETTERALE, non `codice: esito.codice`: il lock
+ * `__tests__/architecture/errori-con-codice.test.ts` legge il sorgente e un valore
+ * che non sa leggere smette di essere confrontato con `CODICI_ERRORE` e con i due
+ * cataloghi. Le frasi sono quelle di `messages/{it,en}/shared.json`: due versioni
+ * diverse dello stesso rifiuto sono il difetto F1 del collaudo del 2026-07-31.
+ */
+function rifiutoScadenze(
+    codice: 'SCADENZE_INCOERENTI' | 'SCADENZA_ADESIONE_MANCANTE' | 'SCADENZA_AVVISO_MANCANTE' | 'SCADENZA_NEL_PASSATO',
+    campi: Record<string, string | number | boolean | null>,
+): NextResponse {
+    const esito = {
+        SCADENZE_INCOERENTI: 'scadenze-incoerenti',
+        SCADENZA_ADESIONE_MANCANTE: 'scadenza-adesione-mancante',
+        SCADENZA_AVVISO_MANCANTE: 'scadenza-avviso-mancante',
+        SCADENZA_NEL_PASSATO: 'scadenza-nel-passato',
+    }[codice];
+    // `warn` → persistito, come `classe-fuori-sede` qui sotto e per la stessa
+    // ragione: è quasi sempre un modulo da correggere, non un tentativo.
+    logEvento('avvisi', 'warn', { operazione: 'avvisi/[id]:PUT', esito, ...campi });
+
+    switch (codice) {
+        case 'SCADENZE_INCOERENTI':
+            return NextResponse.json(
+                {
+                    error: 'La data entro cui si può aderire viene dopo la scadenza dell’avviso: correggi una delle due. L’avviso non è stato salvato.',
+                    codice: 'SCADENZE_INCOERENTI',
+                },
+                { status: 400 },
+            );
+        case 'SCADENZA_ADESIONE_MANCANTE':
+            return NextResponse.json(
+                {
+                    error: 'Controlla entro quando si può aderire: se quella data e ora manca o non è valida, l’avviso non viene salvato.',
+                    codice: 'SCADENZA_ADESIONE_MANCANTE',
+                },
+                { status: 400 },
+            );
+        case 'SCADENZA_NEL_PASSATO':
+            return NextResponse.json(
+                {
+                    error: 'Una delle due scadenze è già passata: correggila. L’avviso non è stato salvato.',
+                    codice: 'SCADENZA_NEL_PASSATO',
+                },
+                { status: 400 },
+            );
+        default:
+            return NextResponse.json(
+                {
+                    error: 'Controlla fino a quando l’avviso resta visibile in bacheca: se quella data e ora manca o non è valida, l’avviso non viene salvato.',
+                    codice: 'SCADENZA_AVVISO_MANCANTE',
+                },
+                { status: 400 },
+            );
+    }
+}
 
 // Il controllo di sede sta in `@/lib/auth/scope-avvisi`: fino al 2026-07-31 era
 // una copia locale che non guardava `{ error }` di PostgREST, e rispondeva 403
@@ -136,7 +279,11 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
 
         const b = await parseBody(request, putBodySchema);
         if ('response' in b) return b.response;
-        const { titolo, contenuto, tipo, target_scope, target_classes, scadenza, attachment_url } = b.data;
+        const {
+            titolo, contenuto, tipo, target_scope, target_classes, attachment_url,
+            scadenza_avviso, scadenza_adesione, chiedi_numero, etichetta_numero,
+            numero_min, numero_max, posti_totali,
+        } = b.data;
 
         const supabase = await createAdminClient();
         const scopeErr = await assertAvvisoInScope(supabase, auth.user, id);
@@ -178,11 +325,45 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // dire «non toccare», per questo era diventato «cancella». Perciò lo scope e
         // le classi si ricavano dalla riga quando il corpo tace, e la guardia decide
         // su ciò che resterà in tabella.
-        const { data: rigaPrima, error: erroreRiga } = await supabase
+        //
+        // ⚠️ LA PRE-LETTURA SI È ALLARGATA il 2026-09-19, e non per comodità: con
+        // due scadenze, un contatore e un tetto, «lo stato risultante» smette di
+        // essere solo lo scope e le classi. `tipo` decide se `scadenza_adesione` è
+        // obbligatoria, le due scadenze si confrontano fra loro anche quando il
+        // corpo ne manda una sola, `posti_totali` serve a sapere se il tetto è
+        // CAMBIATO e `chiedi_numero` a non spegnerlo per sbaglio.
+        const COLONNE_PRIMA =
+            'scuola_id, target_scope, target_classes, tipo, scadenza, scadenza_avviso, scadenza_adesione, posti_totali, chiedi_numero';
+        const COLONNE_PRIMA_STORICHE = 'scuola_id, target_scope, target_classes, tipo, scadenza';
+        let letturaPrima = await supabase
             .from('avvisi')
-            .select('scuola_id, target_scope, target_classes')
+            .select(COLONNE_PRIMA)
             .eq('id', id)
             .maybeSingle();
+        // DB E2E della CI, non migrato: `42703` sulle colonne nuove. Si rilegge con
+        // la proiezione storica invece di rispondere 500 su una modifica legittima.
+        if (colonnaMancante(letturaPrima.error as { code?: string } | null)) {
+            letturaPrima = await supabase
+                .from('avvisi')
+                .select(COLONNE_PRIMA_STORICHE)
+                .eq('id', id)
+                .maybeSingle();
+            // ⚠️ E ANCHE QUESTO DEGRADO SI DICHIARA, come gli altri del cantiere.
+            // Da qui in poi «lo stato risultante» torna a essere quello di prima
+            // del 2026-09-19: sede, scope, classi e la vecchia `scadenza`. Le due
+            // scadenze nuove, `posti_totali` e `chiedi_numero` valgono `undefined`,
+            // quindi il PUT decide come se il corpo fosse l'unica verità — le
+            // scadenze non si confrontano più fra loro quando il corpo ne manda
+            // una sola, e «il tetto è CAMBIATO?» risponde sempre sì. È un 200 che
+            // salva, non un errore: senza questa riga sarebbe indistinguibile da
+            // una modifica andata come doveva.
+            logEvento('avvisi', 'warn', {
+                operazione: 'avvisi/[id]:PUT',
+                esito: 'degrado-prelettura-colonne-storiche',
+                entitaId: id,
+            });
+        }
+        const { data: rigaPrima, error: erroreRiga } = letturaPrima;
         if (erroreRiga) {
             logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, erroreRiga);
             return NextResponse.json(
@@ -190,7 +371,12 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
                 { status: 500 },
             );
         }
-        const prima = rigaPrima as { scuola_id?: string; target_scope?: string; target_classes?: string[] | null } | null;
+        const prima = rigaPrima as {
+            scuola_id?: string; target_scope?: string; target_classes?: string[] | null;
+            tipo?: string | null; scadenza?: string | null;
+            scadenza_avviso?: string | null; scadenza_adesione?: string | null;
+            posti_totali?: number | null; chiedi_numero?: boolean | null;
+        } | null;
         const scopeEffettivo = target_scope ?? prima?.target_scope ?? 'globale';
         // `undefined` = il campo non è stato mandato → si conservano le classi che
         // l'avviso ha già. Un array vuoto, invece, è una richiesta esplicita di
@@ -261,6 +447,65 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
             }
         }
 
+        // ─── LE DUE SCADENZE: SI VALUTA LO STATO RISULTANTE, MAI IL CORPO ─────
+        //
+        // 🔴 È IL PUNTO PIÙ PROBABILE DI BUG DI QUESTA FUNZIONE, e la cicatrice sta
+        // in QUESTO STESSO FILE, venti righe più su: la prima versione del gate
+        // delle classi leggeva `target_scope` dal BODY e, quando il campo mancava,
+        // ricadeva su `'globale'` senza pretendere nessuna classe — mentre la
+        // scrittura azzerava `target_classes`. Un PUT di solo titolo su un avviso di
+        // classe lo lasciava `scope='classe'` con ZERO destinatari, rispondendo 200.
+        //
+        // Qui la stessa asimmetria produrrebbe un danno peggiore: un PUT di solo
+        // titolo su un avviso di adesione, letto dal corpo, non avrebbe nessuna
+        // scadenza e verrebbe rifiutato — oppure, sfilando il controllo, potrebbe
+        // scriverne una incoerente con quella già archiviata. Perciò ogni valore che
+        // il corpo non manda si prende DALLA RIGA, e `risolviScadenze` vede ciò che
+        // resterà in tabella.
+        //
+        // ⚠️ `vietaPassato: false`, e NON è una dimenticanza del POST. Una scadenza
+        // nel passato, qui, è il gesto legittimo con cui la segreteria chiude SUBITO
+        // un avviso — la gita è annullata, le adesioni si fermano adesso. Vietarlo
+        // le lascerebbe solo la strada di cancellare l'avviso, cioè di buttare via
+        // anche le adesioni già raccolte e le prese visione.
+        const tipoRisultante = tipo ?? prima?.tipo ?? null;
+        const scadenzaAvvisoLocale =
+            scadenza_avviso ?? aFormaLocale(prima?.scadenza_avviso ?? prima?.scadenza);
+        // `undefined` = campo non mandato → si conserva quella archiviata.
+        // `null` esplicito = «togli il termine per aderire», ed è legittimo.
+        const scadenzaAdesioneLocale =
+            scadenza_adesione !== undefined
+                ? scadenza_adesione
+                : aFormaLocale(prima?.scadenza_adesione);
+        const scad = risolviScadenze({
+            tipo: tipoRisultante,
+            scadenzaAvvisoLocale,
+            scadenzaAdesioneLocale,
+            vietaPassato: false,
+            adessoISO: new Date().toISOString(),
+        });
+        if (!scad.ok) return rifiutoScadenze(scad.codice, { uid: auth.user.id, entitaId: id });
+
+        // L'intervallo del contatore: un vincolo fra DUE campi, che zod non può
+        // esprimere e che il `CHECK` della colonna respingerebbe con un 23514 → 500.
+        // Si valuta lo stato RISULTANTE anche qui, con i predefiniti della colonna.
+        const numeri = intervallo({ numero_min, numero_max });
+        if (numeri.min > numeri.max) {
+            logEvento('avvisi', 'warn', {
+                operazione: 'avvisi/[id]:PUT',
+                esito: 'numero-intervallo-non-valido',
+                uid: auth.user.id,
+                entitaId: id,
+            });
+            return NextResponse.json(
+                {
+                    error: 'L’intervallo di persone indicato non è valido: controlla il minimo, il massimo e il valore proposto. L’avviso non è stato salvato.',
+                    codice: 'NUMERO_INTERVALLO_NON_VALIDO',
+                },
+                { status: 400 },
+            );
+        }
+
         // In tabella il PERCORSO nel bucket, mai l'indirizzo firmato che il modulo
         // di modifica rimanda indietro dopo averlo riletto.
         const allegatoNuovo = normalizzaAllegatoAvviso(attachment_url);
@@ -269,26 +514,132 @@ export const PUT = withRoute('avvisi/[id]:PUT', async (request: Request, { param
         // gli effetti un orfano — l'avviso non lo nomina più.
         const allegatoPrima = await percorsoAllegatoArchiviatoAvviso(supabase, id, 'avvisi/[id]:PUT');
 
-        const { data, error } = await supabase
-            .from('avvisi')
-            .update({
-                titolo,
-                contenuto,
-                tipo,
-                target_scope,
-                // L'insieme VALIDATO, mai l'array grezzo: fino al 2026-08-01 qui
-                // finivano duplicati e stringhe vuote, mai confrontati con niente.
-                target_classes: classiTarget.length > 0 ? classiTarget : null,
-                scadenza: scadenza || null,
-                attachment_url: allegatoNuovo,
-            })
-            .eq('id', id)
-            .select()
-            .single();
+        // ── COSA SI SCRIVE, E COSA NON SI TOCCA MAI ──────────────────────────
+        //
+        // ⚠️ `scadenza` (la vecchia `date`) NON compare più: la deriva il trigger
+        // `trg_avvisi_scadenza_compat` da `scadenza_avviso`, a ogni UPDATE. Il
+        // `scadenza: scadenza || null` che c'era qui avrebbe ora due sorgenti per la
+        // stessa colonna, ed è la coppia che quel trigger esiste per tenere unita.
+        //
+        // ⚠️ E QUESTA ROTTA NON TOCCA **MAI** `avvisi_risposte`. Lo scrivo a chiare
+        // lettere perché il prossimo che passa penserà di «fare pulizia»: spegnere
+        // `chiedi_numero` con adesioni già raccolte è PERMESSO — decisione esplicita
+        // del committente — e i numeri già dichiarati restano dove sono e continuano
+        // a contare nel tetto. Riaccendere la bandierina non deve invalidare le
+        // adesioni arrivate prima; spegnerla non deve cancellarle. Una `update` su
+        // `avvisi_risposte` da qui butterebbe via dati di famiglie per una
+        // bandierina cambiata in un modulo.
+        const patch: Record<string, unknown> = {
+            titolo,
+            contenuto,
+            tipo,
+            target_scope,
+            // L'insieme VALIDATO, mai l'array grezzo: fino al 2026-08-01 qui
+            // finivano duplicati e stringhe vuote, mai confrontati con niente.
+            target_classes: classiTarget.length > 0 ? classiTarget : null,
+            attachment_url: allegatoNuovo,
+        };
+        // Solo ciò che il corpo ha MANDATO: per ogni altro campo «assente» vuol dire
+        // «non toccare», ed è l'asimmetria che il 2026-08-01 aveva già azzerato i
+        // destinatari di un avviso rispondendo 200.
+        if (scadenza_avviso !== undefined && scadenza_avviso !== null) {
+            patch.scadenza_avviso = scad.scadenzaAvviso;
+        }
+        if (scadenza_adesione !== undefined) patch.scadenza_adesione = scad.scadenzaAdesione;
+        if (chiedi_numero !== undefined && chiedi_numero !== null) {
+            patch.chiedi_numero = chiedi_numero;
+            // A contatore spento i tre campi sono rumore e non si archiviano — ma
+            // `numero_min`/`numero_max` sono `NOT NULL`: si scrivono i predefiniti.
+            patch.etichetta_numero = chiedi_numero
+                ? ((etichetta_numero ?? '').trim() || ETICHETTA_NUMERO_PREDEFINITA)
+                : null;
+            patch.numero_min = chiedi_numero ? numeri.min : MIN_PREDEFINITO;
+            patch.numero_max = chiedi_numero ? numeri.max : MAX_PREDEFINITO;
+        } else {
+            if (etichetta_numero !== undefined) {
+                patch.etichetta_numero = (etichetta_numero ?? '').trim() || null;
+            }
+            if (numero_min !== undefined && numero_min !== null) patch.numero_min = numeri.min;
+            if (numero_max !== undefined && numero_max !== null) patch.numero_max = numeri.max;
+        }
+        if (posti_totali !== undefined) patch.posti_totali = posti_totali ?? null;
+
+        // Update resiliente alle colonne nuove mancanti (DB E2E della CI, non
+        // migrato): PostgREST risponde `PGRST204` nominando la colonna che non ha e
+        // si riprova senza. Ogni colonna sfilata lascia la sua riga — `colonna` è
+        // fuori dalla lista bianca di `redact`, quindi il nome viaggia anche dentro
+        // `msg`, che finisce in `app_log.messaggio` in chiaro e sanificato.
+        //
+        // ⚠️ Qui NON c'è il caso `scuola_id` del POST, e non è una dimenticanza:
+        // questa patch non contiene la chiave di tenancy — un PUT non sposta un
+        // avviso di plesso — quindi non esiste il degrado pericoloso da negare.
+        let updRes = await supabase.from('avvisi').update(patch).eq('id', id).select().single();
+        let sfilate = 0;
+        while (updRes.error && colonnaMancante(updRes.error as { code?: string } | null) && sfilate < MAX_COLONNE_SFILATE) {
+            const m = /Could not find the '([a-z_]+)' column|column "?([a-z_]+)"? of relation/i.exec(updRes.error.message);
+            const col = m?.[1] ?? m?.[2];
+            if (!col || !(col in patch)) break;
+            logEvento('avvisi', 'warn', {
+                operazione: 'avvisi/[id]:PUT',
+                esito: 'degrado-colonna-sfilata',
+                colonna: col,
+                msg: `avvisi/[id]:PUT: colonna "${col}" assente sul DB, sfilata dalla modifica`,
+            });
+            delete patch[col];
+            updRes = await supabase.from('avvisi').update(patch).eq('id', id).select().single();
+            sfilate++;
+        }
+        const { data, error } = updRes;
 
         if (error) {
             logErrore({ operazione: 'avvisi/[id]:PUT', stato: 500, evento: 'db' }, error);
             return NextResponse.json({ error: 'Aggiornamento dell\'avviso non riuscito' }, { status: 500 });
+        }
+
+        // ── IL TETTO ABBASSATO SOTTO L'OCCUPATO: PERMESSO, E REGISTRATO ──────
+        //
+        // Decisione esplicita del committente: la sala si è rimpicciolita, la
+        // segreteria deve poterlo scrivere subito e poi decidere con calma chi esce.
+        // **Nessuno viene espulso** — né qui né da un vincolo del database, che
+        // apposta non esiste (§ 5 della migrazione, terzo vincolo non scritto).
+        //
+        // Ma un fatto del genere non può restare solo DIPINTO A SCHERMO: la
+        // «segnalazione sopra capienza» della card la vede chi guarda quella card in
+        // quel momento, e nessun altro, mai più. Una lettura in più — solo quando il
+        // tetto è CAMBIATO davvero, non a ogni salvataggio del titolo — e la riga
+        // resta in `app_log`, dove si può chiedere «su quali avvisi è successo».
+        if (posti_totali !== undefined && posti_totali !== null && posti_totali !== prima?.posti_totali) {
+            const { data: righeAdesioni, error: erroreAdesioni } = await supabase
+                .from('avvisi_risposte')
+                .select('numero_partecipanti, stato_adesione, parent_id')
+                .eq('avviso_id', id);
+            if (erroreAdesioni) {
+                // PostgREST non lancia: senza questo ramo il guasto diventerebbe
+                // «zero persone ammesse», cioè un tetto che sembra capiente. Non fa
+                // fallire il PUT — la modifica è già scritta — ma non resta muto.
+                logEvento('avvisi', 'warn', {
+                    operazione: 'avvisi/[id]:PUT',
+                    esito: 'tetto-occupato-non-verificato',
+                    entitaId: id,
+                    posti_totali,
+                }, erroreAdesioni);
+            } else {
+                const riepilogo = riepilogoPosti(
+                    (righeAdesioni ?? []) as Array<{ numero_partecipanti?: number | null; stato_adesione?: string | null; parent_id?: string | null }>,
+                    posti_totali,
+                );
+                if (riepilogo.sopraCapienza) {
+                    logEvento('avvisi', 'warn', {
+                        operazione: 'avvisi/[id]:PUT',
+                        esito: 'tetto-sotto-occupato',
+                        entitaId: id,
+                        uid: auth.user.id,
+                        posti_totali,
+                        persone_ammesse: riepilogo.persone,
+                        n_famiglie: riepilogo.famiglie,
+                    });
+                }
+            }
         }
 
         // Solo DOPO che l'update è riuscito: se fallisse, l'avviso conserverebbe

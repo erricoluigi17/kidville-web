@@ -126,11 +126,15 @@ const dbBase = (): DBFinto => ({
 })
 
 const avvisiScritti = () => h.db.avvisi ?? []
+/** Scadenza RELATIVA: obbligatoria dal 2026-09-19, e mai una data scritta a mano. */
+const SCADENZA_LOCALE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 16)
+
 const corpo = (extra: Record<string, unknown> = {}) => ({
   titolo: 'Chiusura per festività',
   contenuto: 'La sede resta chiusa lunedì.',
   target_scope: 'classe',
   target_classes: [CLASSE],
+  scadenza_avviso: SCADENZA_LOCALE,
   ...extra,
 })
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react'
 import { axe, toHaveNoViolations } from 'jest-axe'
 
 import itTeacher from '../../messages/it/teacherComunicazioni.json'
@@ -91,6 +91,24 @@ function montaUnaSede(onSubmit?: Invio) {
     )
 }
 
+/**
+ * La scadenza avviso è obbligatoria su OGNI avviso dal 2026-09-19 (la colonna è
+ * `NOT NULL`): senza, il modulo non è inviabile e metà di questi lock proverebbero
+ * soltanto che il bottone resta spento. Basta la DATA — l'ora si scrive da sola alla
+ * prima data valida (23:59, la fine del giorno scelto), ed è visibile e modificabile.
+ */
+const DATA_SCADENZA = '31/12/2026'
+
+function campoData(gruppo: string) {
+    return within(screen.getByRole('group', { name: gruppo })).getByLabelText(
+        gruppo === itTeacher.formScadenzaAvviso ? itTeacher.formScadenzaAvvisoData : itTeacher.formScadenzaAdesioneData,
+    )
+}
+
+function compilaScadenza(gruppo: string, data = DATA_SCADENZA) {
+    fireEvent.change(campoData(gruppo), { target: { value: data } })
+}
+
 const axeOpts = {
     rules: {
         // Regole di documento: non si applicano a un componente isolato in jsdom.
@@ -119,7 +137,13 @@ describe('AvvisoForm — le etichette sono legate ai campi', () => {
     it.each([
         ['titolo', itTeacher.formLabelTitolo, 'INPUT'],
         ['contenuto', itTeacher.formLabelContenuto, 'TEXTAREA'],
-        ['scadenza', itTeacher.formScadenzaAvviso, 'INPUT'],
+        // ⚠️ «scadenza» non è più in questo elenco, e NON perché il lock si sia
+        // abbassato: perché ha cambiato OGGETTO. Il campo unico `<input type="date">`
+        // non esiste più — al suo posto ci sono due controlli (data e ora) dentro un
+        // `role="group"` etichettato, e ciascuno ha la propria `<label>`. Un'etichetta
+        // che nomina DUE campi non ne etichetta nessuno, quindi la verifica giusta non
+        // è più «dall'etichetta si arriva al campo» ma «il gruppo ha un nome e i suoi
+        // controlli ce l'hanno ciascuno il proprio»: è il blocco qui sotto.
         ['link esterno', itTeacher.formLabelLinkEsterno, 'INPUT'],
     ])('il campo «%s» si raggiunge dalla sua etichetta visibile', (_nome, etichetta, tag) => {
         montaUnaSede()
@@ -146,19 +170,47 @@ describe('AvvisoForm — le etichette sono legate ai campi', () => {
         }
     })
 
-    it('il campo data — quello che non aveva NESSUN nome — è un input `date` etichettato', () => {
+    it('la scadenza avviso è un GRUPPO con due controlli, ciascuno con la sua `<label>`', () => {
+        // 🔑 NON È UN LOCK INDEBOLITO: È UN LOCK CHE HA CAMBIATO OGGETTO.
+        // Fino al 2026-09-19 qui si pretendeva `input.type === 'date'` su un campo
+        // solo. Quel campo è sparito per due ragioni, e nessuna delle due è estetica:
+        // una scadenza senza ORA non dice quando l'avviso esce dalla bacheca, e
+        // `<input type="date">` mostra l'ordine dei campi deciso dall'OS (`mm/dd/yyyy`
+        // su una macchina in inglese) senza che nessuna etichetta possa correggerlo.
+        // Oggi i controlli sono due — data mascherata italiana e ora nativa — e ciò
+        // che va provato è che abbiano ciascuno il proprio nome e stiano sotto un
+        // gruppo etichettato: è più forte di prima, non meno.
         montaUnaSede()
-        const data = screen.getByLabelText(itTeacher.formScadenzaAvviso) as HTMLInputElement
-        expect(data.type).toBe('date')
+        const gruppo = screen.getByRole('group', { name: itTeacher.formScadenzaAvviso })
+        const data = within(gruppo).getByLabelText(itTeacher.formScadenzaAvvisoData) as HTMLInputElement
+        const ora = within(gruppo).getByLabelText(itTeacher.formScadenzaAvvisoOra) as HTMLInputElement
         expect(data.labels?.length).toBe(1)
+        expect(ora.labels?.length).toBe(1)
+        // La data è MASCHERATA (gg/mm/aaaa deterministico), l'ora è nativa: il
+        // formato macchina `HH:mm` è identico in ogni locale, l'ordine no.
+        expect(data.type).toBe('text')
+        expect(data.inputMode).toBe('numeric')
+        expect(ora.type).toBe('time')
     })
 
-    it('l’etichetta della scadenza segue il tipo di avviso, e resta associata', () => {
+    it('le due scadenze COESISTONO sugli avvisi di adesione, e su una presa visione no', () => {
+        // Prima l'etichetta di UN campo cambiava a runtime fra le due frasi: due
+        // significati diversi nello stesso posto, mai visibili insieme. È la
+        // condizione per cui nessuno poteva accorgersi che le adesioni si chiudono
+        // DOPO che l'avviso è già sparito dalla bacheca.
         montaUnaSede()
+        expect(screen.queryByRole('group', { name: itTeacher.formScadenzaAdesione })).toBeNull()
+
         fireEvent.click(screen.getByRole('button', { name: new RegExp(itTeacher.formTipoAdesione, 'i') }))
-        const data = screen.getByLabelText(itTeacher.formScadenzaAdesione) as HTMLInputElement
-        expect(data.type).toBe('date')
-        expect(screen.queryByLabelText(itTeacher.formScadenzaAvviso)).toBeNull()
+        const avviso = screen.getByRole('group', { name: itTeacher.formScadenzaAvviso })
+        const adesione = screen.getByRole('group', { name: itTeacher.formScadenzaAdesione })
+        expect(within(avviso).getByLabelText(itTeacher.formScadenzaAvvisoData)).toBeInTheDocument()
+        expect(within(adesione).getByLabelText(itTeacher.formScadenzaAdesioneData)).toBeInTheDocument()
+
+        // …e tornando indietro il blocco adesione SI SMONTA: un campo nascosto ma
+        // presente nell'albero resta raggiungibile col Tab (e spedibile).
+        fireEvent.click(screen.getByRole('button', { name: new RegExp(itTeacher.formTipoPresaVisione, 'i') }))
+        expect(screen.queryByRole('group', { name: itTeacher.formScadenzaAdesione })).toBeNull()
     })
 
     it('i campi obbligatori si dichiarano tali (`aria-required`)', () => {
@@ -207,6 +259,20 @@ describe('AvvisoForm — axe non trova più violazioni di etichetta', () => {
             />,
         )
         expect(screen.getByRole('group', { name: itTeacher.formLabelLeTueClassi })).toBeInTheDocument()
+        expect(await axe(container, axeOpts)).toHaveNoViolations()
+    })
+
+    it('nessuna violazione axe col blocco «Adesione e posti» APERTO', async () => {
+        // Il ramo più ricco dell'albero, e quello nato per ultimo: due gruppi di
+        // scadenze, una checkbox che governa un gruppo che si monta e si smonta, tre
+        // contatori ± con i loro bottoni a sola icona. È esattamente il posto in cui
+        // un `aria-controls` che punta a un id assente o un ± senza nome passerebbero
+        // inosservati a occhio.
+        const { container } = montaUnaSede()
+        fireEvent.click(screen.getByRole('button', { name: new RegExp(itTeacher.formTipoAdesione, 'i') }))
+        fireEvent.click(screen.getByLabelText(itTeacher.formChiediPartecipanti))
+        expect(screen.getByRole('group', { name: itTeacher.formAdesioneSezione })).toBeInTheDocument()
+        expect(screen.getByLabelText(itTeacher.formLabelDomandaPartecipanti)).toBeInTheDocument()
         expect(await axe(container, axeOpts)).toHaveNoViolations()
     })
 
@@ -275,6 +341,7 @@ describe('AvvisoForm — i toggle dicono se sono premuti', () => {
 
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelTitolo), { target: { value: 'Chiusura per ponte' } })
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelContenuto), { target: { value: 'La scuola resta chiusa venerdì.' } })
+        compilaScadenza(itTeacher.formScadenzaAvviso)
         fireEvent.click(bottone(itTeacher.formDestinatariPerClasse))
 
         const pillola = screen.getByRole('button', { name: '3 ANNI A' })
@@ -393,6 +460,7 @@ describe('AvvisoForm — l’invio non butta via il focus', () => {
     function compila() {
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelTitolo), { target: { value: 'Uscita anticipata' } })
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelContenuto), { target: { value: 'Domani si esce alle 12.' } })
+        compilaScadenza(itTeacher.formScadenzaAvviso)
     }
 
     it('durante l’invio il bottone NON si disabilita: resta focalizzabile e a fuoco', async () => {
@@ -452,7 +520,14 @@ describe('AvvisoForm — l’invio non butta via il focus', () => {
         // annuncia i cambiamenti di un live region che era lì prima: se nascesse
         // insieme al testo, l'annuncio si perderebbe. Ecco perché il controllo
         // positivo è «c'è ed è vuota», non «non c'è».
-        const stato = screen.getByRole('status')
+        //
+        // ⚠️ Dal 2026-09-19 le regioni `role="status"` sono DUE: questa (l'annuncio
+        // dell'invio, uno `<span class="sr-only">`) e la riga «cosa manca» sopra il
+        // bottone, che è un `<p>` ed è visibile. `getByRole('status')` nudo
+        // fallirebbe con «found multiple», quindi si prende quella giusta per tipo di
+        // nodo — e il test resta specifico invece di accontentarsi della prima.
+        const stato = container.querySelector('span[role="status"]') as HTMLElement
+        expect(stato).not.toBeNull()
         expect(stato).toBeEmptyDOMElement()
         expect(container.querySelector('[aria-busy="true"]')).toBeNull()
 
@@ -481,6 +556,30 @@ describe('AvvisoForm — l’invio non butta via il focus', () => {
 
         fireEvent.click(cta)
         expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it('…e non è più MUTO: dice che cosa manca, e il bottone lo indica', () => {
+        // L'altra metà della decisione «niente `disabled`»: con otto condizioni di
+        // blocco, un bottone spento e silenzioso è l'incidente dei 442 click.
+        montaUnaSede()
+        const cta = pubblica()
+        const idMotivo = cta.getAttribute('aria-describedby')
+        expect(idMotivo).toBeTruthy()
+        const motivo = document.getElementById(idMotivo as string) as HTMLElement
+        expect(motivo).toHaveAttribute('role', 'status')
+        expect(motivo).toHaveTextContent(itTeacher.formMancaTitolo)
+
+        // …e segue il modulo: riempito il titolo, il motivo diventa il successivo.
+        fireEvent.change(screen.getByLabelText(itTeacher.formLabelTitolo), { target: { value: 'Uscita anticipata' } })
+        expect(motivo).toHaveTextContent(itTeacher.formMancaContenuto)
+        fireEvent.change(screen.getByLabelText(itTeacher.formLabelContenuto), { target: { value: 'Domani si esce alle 12.' } })
+        expect(motivo).toHaveTextContent(itTeacher.formMancaScadenzaAvviso)
+
+        // Completato tutto, la riga torna VUOTA (e resta nell'albero: è una regione
+        // viva, e una regione creata insieme al testo non viene annunciata).
+        compilaScadenza(itTeacher.formScadenzaAvviso)
+        expect(motivo).toBeEmptyDOMElement()
+        expect(pubblica()).toHaveAttribute('aria-disabled', 'false')
     })
 })
 

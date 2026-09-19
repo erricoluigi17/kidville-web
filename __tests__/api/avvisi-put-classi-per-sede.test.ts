@@ -108,6 +108,14 @@ const dbBase = (): DBFinto => ({
       target_scope: 'classe',
       target_classes: [OMONIMA],
       scadenza: null,
+      // Dal 2026-09-19 il PUT valuta lo STATO RISULTANTE delle due scadenze: una
+      // riga senza `scadenza_avviso` non è più rappresentabile (la colonna è
+      // `NOT NULL`), e un PUT di solo titolo su una riga così sarebbe un 400 su un
+      // dato che in produzione non esiste. Relativa, mai scritta a mano.
+      scadenza_avviso: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      scadenza_adesione: null,
+      posti_totali: null,
+      chiedi_numero: false,
       attachment_url: null,
       scuola_id: SEDE_A,
     },

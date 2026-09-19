@@ -10,13 +10,14 @@ import { withRoute } from '@/lib/logging/with-route'
 import { segretoCronValido } from '@/lib/security/segreto-cron'
 import { tabellaMancante } from '@/lib/db/tolleranza-schema'
 import { riconciliaTutto } from '@/lib/armadietto/richieste'
+import { promemoriaAdesioni } from '@/lib/avvisi/promemoria-adesioni'
 
 // =============================================================================
 // POST /api/notifiche/promemoria — giro promemoria GIORNALIERO.
 // SERVICE-TO-SERVICE: header `x-cron-secret` (pattern /api/push/dispatch).
 // Lo invoca pg_cron via notifiche_promemoria_tick() (migr 20260712180000).
 //
-// Tre scansioni, ognuna best-effort e gated dal proprio toggle notifiche:
+// QUATTRO scansioni, ognuna best-effort e gated dal proprio toggle notifiche:
 //  1. moduli non compilati (avvisi con form_model_id, dopo N giorni —
 //     admin_settings.modulistica_config.promemoria_giorni, default 3)
 //  2. richieste armadietto aperte mai ricordate (armadietto_richieste,
@@ -25,7 +26,27 @@ import { riconciliaTutto } from '@/lib/armadietto/richieste'
 //     nascono da sole, le apre il confronto fra stock e soglie.
 //  3. documenti alunno in scadenza ≤30gg → segreteria (sostituisce la edge fn
 //     document-expiry-alert, storicamente rotta: colonne inesistenti)
+//  4. adesioni in chiusura (cantiere A2/B3): «mancano N giorni per aderire»
+//     alle famiglie che non hanno ancora risposto — admin_settings
+//     .avvisi_config.promemoria_giorni_prima, default 3, 0 = spento.
 // Ogni tabella può mancare su ambienti non migrati (DB E2E CI) → skip.
+//
+// ⚠️ LA QUARTA SCANSIONE VIVE IN `@/lib/avvisi/promemoria-adesioni`, non qui
+// dentro, e il precedente è la seconda: `riconciliaTutto`. La ragione è la stessa
+// — la parte che può sbagliare i conti si deve poter provare senza costruire una
+// Request, un segreto cron e un NextResponse per misurare un `if`. Alla route
+// restano il `try/catch`, il contatore e il battito.
+//
+// ⚠️ E VIVE IN QUESTA ROUTE, NON IN UNA NUOVA. Il nome
+// `notifiche/promemoria:POST` è già nel lock `logging-coverage`, il gruppo è già
+// in `zod-coverage`, il gate è già `segretoCronValido`, e lo schedule
+// `notifiche-promemoria` è già in `JOB_CRON` (`@/lib/health/controlli`) **e già
+// applicato**. Una route nuova avrebbe preteso un `cron.schedule` in migrazione,
+// una GUC da impostare a mano in produzione e un nome nuovo in `JOB_CRON`: e
+// finché quella migrazione non è nella fotografia delle applicate, il lock
+// `cron-sorvegliato-e-applicato` è rosso e `/api/health` resta `degradato` dal
+// primo deploy — un allarme che suona da solo, cioè un allarme che si smette di
+// guardare. Tre modi nuovi di rompersi per zero vantaggio.
 // =============================================================================
 
 const MS_GIORNO = 86_400_000
@@ -114,8 +135,8 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
 
     const supabase = await createAdminClient()
     const oggi = new Date().toISOString().slice(0, 10)
-    const esiti = { moduli: 0, armadietto: 0, documenti: 0 }
-    // Quali delle tre scansioni sono cadute. Le scansioni restano BEST-EFFORT — una che salta non
+    const esiti = { moduli: 0, armadietto: 0, documenti: 0, adesioni: 0 }
+    // Quali delle quattro scansioni sono cadute. Le scansioni restano BEST-EFFORT — una che salta non
     // deve impedire alle altre due di girare, ed è il motivo per cui ognuna ha il suo try/catch —
     // ma il battito di CHIUSURA non è best-effort: è la dichiarazione che il giro ha fatto il suo
     // lavoro. Con `esiti` a zero perché una scansione è morta, un «ok» direbbe «non c'era niente da
@@ -353,6 +374,28 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
       falliti.push('documenti')
     }
 
+    // ── 4. Adesioni in chiusura → famiglie che non hanno ancora risposto ──────
+    //
+    // Il corpo sta in `@/lib/avvisi/promemoria-adesioni` (vedi la testata). Qui
+    // resta ciò che è affare della route: il try/catch, il contatore e — sotto —
+    // il battito, che da oggi deve riportare anche QUESTO numero. Senza,
+    // «zero promemoria di adesione» sarebbe indistinguibile da «non ho
+    // guardato»: è il difetto che questo file racconta per intero, misurato il
+    // 2026-08-04 alle 06:00:02 su una scansione morta che dichiarava «ok».
+    try {
+      const esito = await promemoriaAdesioni(supabase)
+      esiti.adesioni = esito.inviati
+      // `saltata` è il TERZO STATO, e arriva da qui perché è la scansione a
+      // sapere se le colonne del cantiere A2 esistono in questo ambiente. Sul DB
+      // E2E della CI non esistono (progetto separato, mai migrato) e non è un
+      // guasto; in produzione, DOPO il deploy della migrazione, lo sarebbe — e
+      // si legge nella riga `ok-parziale`, che la NOMINA.
+      if (esito.saltata) saltate.push('adesioni')
+    } catch (e) {
+      logEvento('cron', 'error', { operazione: JOB, esito: 'scansione-fallita', azione: 'adesioni' }, e)
+      falliti.push('adesioni')
+    }
+
     // IL BATTITO NON PUÒ MENTIRE. Se anche una sola scansione è caduta, il giro NON è «ok»: i suoi
     // contatori a zero non dicono «non c'era niente da ricordare», dicono «non ho guardato» — e
     // chi sorveglia i cron cerca proprio l'`esito: 'ok'` per sapere che la notte è andata bene.
@@ -373,6 +416,7 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         moduli: esiti.moduli,
         armadietto: esiti.armadietto,
         documenti: esiti.documenti,
+        adesioni: esiti.adesioni,
         msg: `${JOB}: giro incompleto (${falliti.join(', ')})`,
       })
       return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -397,16 +441,17 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
         moduli: esiti.moduli,
         armadietto: esiti.armadietto,
         documenti: esiti.documenti,
-        msg: `${JOB}: ok parziale — scansioni saltate (tabella assente): ${saltate.join(', ')}`,
+        adesioni: esiti.adesioni,
+        msg: `${JOB}: ok parziale — scansioni saltate (schema non migrato): ${saltate.join(', ')}`,
       })
       // `warn` e non `info`: `vaPersistito` scrive comunque gli eventi `cron`, ma il livello è ciò
       // che distingue in tabella una notte normale da una notte in cui una funzionalità non c'era.
       return NextResponse.json({ success: true, data: esiti, saltate })
     }
 
-    // I tre contatori sono NUMERI: passano in chiaro anche in tabella. Un giro che parte
+    // I quattro contatori sono NUMERI: passano in chiaro anche in tabella. Un giro che parte
     // ogni notte e ricorda sempre zero moduli non è «tranquillo», è sospetto — e senza
-    // questi tre numeri nella riga non ci sarebbe modo di distinguere i due casi.
+    // questi quattro numeri nella riga non ci sarebbe modo di distinguere i due casi.
     logEvento('cron', 'info', {
       operazione: JOB,
       esito: 'ok',
@@ -414,6 +459,7 @@ export const POST = withRoute('notifiche/promemoria:POST', async (request: Reque
       moduli: esiti.moduli,
       armadietto: esiti.armadietto,
       documenti: esiti.documenti,
+      adesioni: esiti.adesioni,
       msg: `${JOB}: ok`,
     })
     return NextResponse.json({ success: true, data: esiti })

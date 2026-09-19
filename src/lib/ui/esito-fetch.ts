@@ -2388,6 +2388,191 @@ export const CODICI_ERRORE = {
      * Perciò la frase dice una cosa sola e la dice in imperativo: non ripetere.
      */
     CONCILIAZIONE_MOVIMENTO_NON_LEGATO: 'erroreConciliazioneMovimentoNonLegato',
+
+    /* ── Avvisi con adesione: due scadenze, posti e lista d'attesa (cantiere B4) ──
+     *
+     * La scadenza dell'avviso (quando sparisce dalla bacheca) e la scadenza
+     * dell'adesione (ultimo istante per rispondere) sono due colonne distinte, con
+     * data E ora. Dodici codici: cinque sul salvataggio dell'avviso da parte della
+     * segreteria/docente (`POST`/`PATCH /api/avvisi`), cinque sulla risposta del
+     * genitore (`POST /api/avvisi/[id]/risposte`), uno di degrado e uno
+     * sull'esportazione riservata. Nessuna delle frasi tradotte nomina le due
+     * colonne: si dice «la scadenza dell'avviso» e «la data entro cui si può
+     * aderire», mai `scadenza_avviso`/`scadenza_adesione`.
+     */
+
+    /**
+     * 400 — la data/ora dopo cui l'avviso sparisce dalla bacheca non è utilizzabile:
+     * non è più opzionale.
+     *
+     * ⚠️ «MANCANTE» NEL NOME, «manca o non è valida» NELLA FRASE, e la differenza è
+     * stata misurata: `risolviScadenze` (`@/lib/avvisi/scadenze`) risponde con questo
+     * codice anche quando il campo È compilato ma illeggibile — `2026-06-01T99:99`,
+     * `2026-02-30T10:00`. Il testo precedente diceva «senza questa data e ora»,
+     * cioè mandava la segreteria a cercare un campo vuoto che aveva invece
+     * riempito: un messaggio sbagliato con l'aria di essere a posto, la stessa forma
+     * di `NEWS_FILE_NON_RIMOSSI` usato sulla PATCH.
+     *
+     * Il codice NON è stato sdoppiato in un `…_NON_LEGGIBILE`, ed è una decisione:
+     * dietro lo schema (`zScadenzaAvvisoDataOra`) quel ramo non è raggiungibile —
+     * zod rifiuta prima, con un messaggio che dice DOVE è lo sbaglio — quindi un
+     * secondo codice sarebbe una voce di catalogo in due lingue per una frase che
+     * nessuno può leggere. Il ragionamento per esteso, con il rapporto fra le due
+     * difese, sta accanto al ramo in `scadenze.ts`.
+     */
+    SCADENZA_AVVISO_MANCANTE: 'erroreScadenzaAvvisoMancante',
+    /**
+     * 400 — la data/ora entro cui si può aderire non è utilizzabile (assente o
+     * illeggibile), su un avviso che chiede un'adesione. Distinto da
+     * `SCADENZA_AVVISO_MANCANTE`: sono due campi, due validazioni, e la frase deve
+     * dire quale dei due. Stessa storia del testo, qui sopra.
+     */
+    SCADENZA_ADESIONE_MANCANTE: 'erroreScadenzaAdesioneMancante',
+    /**
+     * 400 — la scadenza per aderire cade DOPO la scadenza dell'avviso: l'avviso
+     * sparirebbe dalla bacheca lasciando adesioni ancora aperte, oppure le
+     * adesioni si chiuderebbero su un avviso che nessuno vede più da tempo.
+     */
+    SCADENZE_INCOERENTI: 'erroreScadenzeIncoerenti',
+    /** 400 — una delle due scadenze è già passata al momento del salvataggio. */
+    SCADENZA_NEL_PASSATO: 'erroreScadenzaNelPassato',
+    /**
+     * 400 — la segreteria sta configurando l'intervallo di persone per adesione
+     * (minimo, massimo, valore predefinito) e i tre numeri non stanno insieme:
+     * minimo sopra il massimo, o predefinito fuori dai due. Distinto da
+     * `NUMERO_PARTECIPANTI_FUORI_INTERVALLO`, che è lo stesso controllo ma sulla
+     * risposta del GENITORE contro un intervallo già salvato e valido.
+     */
+    NUMERO_INTERVALLO_NON_VALIDO: 'erroreNumeroIntervalloNonValido',
+    /**
+     * 400 — l'avviso chiede il numero di partecipanti e il genitore ha risposto
+     * senza indicarlo (`POST /api/avvisi/[id]/risposte`).
+     */
+    NUMERO_PARTECIPANTI_RICHIESTO: 'erroreNumeroPartecipantiRichiesto',
+    /**
+     * 400 — il numero di partecipanti indicato dal genitore è fuori
+     * dall'intervallo minimo/massimo che la segreteria ha configurato per questo
+     * avviso.
+     */
+    NUMERO_PARTECIPANTI_FUORI_INTERVALLO: 'erroreNumeroPartecipantiFuoriIntervallo',
+    /**
+     * 409 — la scadenza per aderire è già passata quando arriva la risposta: la
+     * risposta non viene registrata, nemmeno in lista d'attesa.
+     */
+    ADESIONE_SCADUTA: 'erroreAdesioneScaduta',
+    /**
+     * 409 — il tetto di posti (contato in persone, non in famiglie) non lascia
+     * spazio per questa adesione, e la lista d'attesa non fa parte di questa
+     * risposta (è la segreteria ad ammettere a mano quando si libera un posto).
+     *
+     * 🔴 La frase NON dice quanti posti restano, per decisione esplicita del
+     * committente: il numero libero non si mostra mai al genitore. Alla
+     * segreteria i numeri arrivano da un canale diverso (il riepilogo del
+     * dettaglio avviso), non da questa stringa: lo stesso testo deve valere per
+     * entrambi i pubblici senza rivelare nulla al primo.
+     */
+    POSTI_ESAURITI: 'errorePostiEsauriti',
+    /**
+     * 503 — la lettura o la scrittura di un'adesione non è riuscita (conteggio
+     * posti, tetto configurato, lista d'attesa): degrado, non un rifiuto di
+     * merito. Riprovare può bastare.
+     */
+    ADESIONI_NON_DISPONIBILI: 'erroreAdesioniNonDisponibili',
+    /**
+     * 404 — l'id di risposta indicato (per correggere il numero, ritirare
+     * un'adesione, o ammettere dalla lista d'attesa) non appartiene all'avviso
+     * della richiesta. Un solo codice per «non esiste» e «è di un altro avviso»,
+     * come altrove in questo file: distinguerli non aiuterebbe chi guarda, e la
+     * differenza vive nel log.
+     */
+    RISPOSTA_NON_DELLAVVISO: 'erroreRispostaNonDellAvviso',
+    /*
+     * 🔻 `ESPORTAZIONE_RISERVATA` È STATO TOLTO il 2026-09-19, insieme alle sue
+     * due voci di catalogo. Era nato per il 403 di `avvisi/[id]/risposte/esporta`
+     * e non l'ha mai mandato nessuno: `grep` su `src/` e `__tests__/` trovava la
+     * dichiarazione e null'altro. Quel 403 lo costruisce `requireStaff`, che
+     * risponde con la propria forma e senza `codice` — quindi il codice non era
+     * «da collegare», era decorazione.
+     *
+     * PERCHÉ TOLTO E NON EMESSO. Emetterlo vuol dire riscrivere il ramo 403
+     * dentro la route dell'export, che questo lavoro non tocca; e un codice
+     * dichiarato che nessuno manda è peggio di un codice assente, perché il lock
+     * `errori-con-codice` lo vede verde (è dichiarato, è tradotto in due lingue) e
+     * chi legge questo elenco crede che quel rifiuto sia già tradotto. Un catalogo
+     * che dice il falso su sé stesso è il difetto, non la sua misura.
+     *
+     * Chi un giorno darà un `codice` a quel 403 lo ridichiari qui — in FONDO, come
+     * ogni voce nuova: i cataloghi non si riordinano, e un riordino produce
+     * migliaia di righe di diff che non sono di nessuno.
+     */
+    /**
+     * 404 — l'avviso indicato non esiste (o non esiste più).
+     *
+     * NON si riusa `RISPOSTA_NON_DELLAVVISO`, che direbbe una cosa falsa: lì il
+     * problema è la risposta, qui manca l'avviso intero. Due frasi diverse perché
+     * mandano a guardare due posti diversi.
+     */
+    AVVISO_NON_TROVATO: 'erroreAvvisoNonTrovato',
+    /**
+     * 400 — un valore su un enumerato chiuso delle adesioni non è fra quelli
+     * ammessi: la `risposta` del genitore (`si`/`no`) o lo `stato` che la
+     * segreteria sta assegnando (`ammessa`/`in_attesa`/`nessuna`).
+     *
+     * UN CODICE SOLO PER I DUE CASI, e non è pigrizia. Sono due sbagli del
+     * CLIENT sullo stesso genere di campo, e per chi legge non sono due
+     * situazioni diverse: in entrambe non c'è niente da correggere nel proprio
+     * dato: c'è una schermata da ricaricare. La differenza — quale dei due — vive
+     * nel log, dove serve a chi indaga.
+     */
+    ADESIONE_VALORE_NON_VALIDO: 'erroreAdesioneValoreNonValido',
+    /**
+     * 409 — la segreteria sta ammettendo una famiglia che aveva risposto **NO**.
+     *
+     * 🔴 NON È UN ERRORE: È UNA DOMANDA. Il «no» di una famiglia e l'istante in
+     * cui l'ha espresso sono un dato suo; sovrascriverli li farebbe sparire dal
+     * database. La funzione si ferma e restituisce ciò che ha trovato proprio
+     * perché l'interfaccia possa CHIEDERE — «questa famiglia aveva rifiutato:
+     * confermi?» — e ripresentarsi con `ignora_rifiuto`. Il testo deve dire cosa
+     * succede al sì, non «operazione fallita»: chi legge deve poter decidere.
+     */
+    RISPOSTA_CONTRARIA: 'erroreRispostaContraria',
+    /**
+     * 503 — la funzione di database che serializza le adesioni ha rifiutato di
+     * lavorare fuori da `READ COMMITTED`: fuori di lì il conteggio dei posti non
+     * è protetto e due ammissioni concorrenti sfonderebbero il tetto in silenzio.
+     *
+     * ⚠️ RIUSA LA VOCE DI `ADESIONI_NON_DISPONIBILI`, e la decisione va motivata
+     * perché è l'unico riuso di questo file. Tre ragioni:
+     *  · per chi legge è lo STESSO fatto — «adesso non si può, riprova» — e una
+     *    seconda frase direbbe la stessa cosa con altre parole, cioè due testi da
+     *    tenere allineati per nessun guadagno;
+     *  · una frase propria dovrebbe nominare il livello di isolamento di una
+     *    transazione per essere più informativa di così, e questo file vieta di
+     *    mostrare a chi lavora in segreteria il funzionamento interno del
+     *    database (regola 3 del lock `errori-con-codice`);
+     *  · le route non emettono MAI questo codice al client: lo traducono in
+     *    `ADESIONI_NON_DISPONIBILI` e scrivono il nome vero nel log. La voce sta
+     *    qui come rete per il giorno in cui un codice della RPC uscisse
+     *    verbatim — meglio la frase giusta che la prosa italiana del server.
+     */
+    ISOLAMENTO_NON_SUPPORTATO: 'erroreAdesioniNonDisponibili',
+    /**
+     * 403 — il bambino indicato non è destinatario di questo avviso: è iscritto
+     * in un altro plesso, oppure l'avviso è rivolto a certe classi e la sua non è
+     * fra quelle (`POST /api/avvisi/[id]/risposte`).
+     *
+     * 🔴 NON si riusa `ADESIONE_VALORE_NON_VALIDO` né `AVVISO_NON_TROVATO`, e la
+     * differenza non è di sfumatura: quei due mandano a ricaricare la pagina, e
+     * ricaricare qui non cambia niente. Qui l'avviso c'è, il bambino è davvero
+     * suo, e il rifiuto riguarda l'ACCOPPIAMENTO fra i due — l'unica strada è
+     * chiedere alla segreteria, che è ciò che la frase deve dire.
+     *
+     * ⚠️ E la frase non nomina né la sede né la classe: sono i due casi che
+     * questo codice unisce, e distinguerli a schermo direbbe a chi legge dove è
+     * iscritto un bambino che non ha davanti. La differenza vive nel log
+     * (`adesione-alunno-fuori-avviso`, campo `tipo`), dove serve a chi indaga.
+     */
+    ADESIONE_ALUNNO_FUORI_AVVISO: 'erroreAdesioneAlunnoFuoriAvviso',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

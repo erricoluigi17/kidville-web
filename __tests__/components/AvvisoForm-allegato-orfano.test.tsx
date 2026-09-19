@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import itTeacher from '../../messages/it/teacherComunicazioni.json'
 import { SEDE_A, NOME_SEDE_A } from '../fixtures/sedi'
@@ -110,6 +110,15 @@ describe('AvvisoForm · l’allegato caricato e mai pubblicato non resta nel buc
 
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelTitolo), { target: { value: 'TEST titolo' } })
         fireEvent.change(screen.getByLabelText(itTeacher.formLabelContenuto), { target: { value: 'TEST contenuto' } })
+        // La scadenza avviso è obbligatoria dal 2026-09-19: senza, non si pubblica —
+        // e questo lock proverebbe soltanto che un invio mai partito non cancella
+        // niente, cioè diventerebbe verde per la ragione sbagliata.
+        fireEvent.change(
+            within(screen.getByRole('group', { name: itTeacher.formScadenzaAvviso })).getByLabelText(
+                itTeacher.formScadenzaAvvisoData,
+            ),
+            { target: { value: '31/12/2026' } },
+        )
         fireEvent.click(screen.getByRole('button', { name: new RegExp(itTeacher.formSubmitPubblicaAvviso, 'i') }))
         await waitFor(() => expect(screen.queryByText('circolare.pdf')).toBeNull())
 

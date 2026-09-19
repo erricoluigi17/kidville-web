@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FORMA_DATA_ORA_LOCALE } from '@/lib/format/confini-giorno';
 
 /**
  * Schemi zod riusabili tra le route API (M3).
@@ -149,6 +150,69 @@ export function zPeriodo<C extends string>(chiave: C) {
         [`${chiave}A`]: estremo,
     } as Record<`${C}Da` | `${C}A`, typeof estremo>);
 }
+
+/**
+ * UNA DATA CON L'ORA, COME LA DIGITA UNA PERSONA IN ITALIA — `YYYY-MM-DDTHH:MM`.
+ *
+ * È esattamente ciò che `<input type="datetime-local">` mette nel `value`, e
+ * nient'altro: niente secondi, niente `Z`, niente `+02:00`. Il nome dice la cosa
+ * importante — è un'ora **locale**, cioè cifre su un orologio a muro italiano, non
+ * un istante. L'istante lo compone il server con `istanteDaLocale`
+ * (`@/lib/format/confini-giorno`).
+ *
+ * ── PERCHÉ NON SI ACCETTA UN ISO ────────────────────────────────────────────
+ *
+ * È la stessa decisione già presa per `zOraHHMM` qui sopra, e la prima delle due
+ * ragioni vale identica:
+ *
+ * (a) **un ISO costruito dal browser porta con sé l'orologio E il fuso del
+ *     tablet.** `new Date(...).toISOString()` su un tablet della segreteria
+ *     configurato male — o semplicemente su un fuso diverso, cosa che capita
+ *     quando un dispositivo torna da un aggiornamento con `America/Los_Angeles` —
+ *     produce un istante che nessuno ha digitato. La conversione in istante la fa
+ *     il SERVER, dove il fuso è dichiarato (`APP_TIMEZONE`) e provato
+ *     (`__tests__/lib/confini-giorno.test.ts`). Qui sul filo passano le cifre che
+ *     la persona ha visto, e la responsabilità di interpretarle sta in un posto
+ *     solo.
+ *
+ * (b) la seconda ragione di `zOraHHMM` — «un ISO matcha `DATA_ISO` di
+ *     `@/lib/logging/redact` e uscirebbe in chiaro in `app_log`» — ⚠️ **QUI NON
+ *     DISCRIMINA, ed è stato verificato invece che ricopiato.** `DATA_ISO` è
+ *     `/^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:?\d{2})?)?$/`:
+ *     il gruppo dopo la data è OPZIONALE fino ai secondi, quindi `2026-06-01T18:00`
+ *     la matcha esattamente come `2026-06-01T16:00:00.000Z`. Nessuna delle due
+ *     forme viene redatta, e scrivere il contrario in questo commento sarebbe un
+ *     file che dice il falso su sé stesso. La differenza vera è che qui **va bene
+ *     così**: `redact.ts` lascia passare le date per tipo proprio per «istanti,
+ *     scadenze, giorni», e la scadenza di un avviso è materiale della stessa
+ *     famiglia di `creato_il` — non è il dato di un minore. Il caso di `zOraHHMM`
+ *     era l'opposto (l'orario d'ARRIVO di un bambino), ed è per quello che lì la
+ *     ragione (b) conta e qui no. Se un giorno questa forma finisse a descrivere
+ *     una persona invece di un avviso, la difesa da aggiungere è sulla CHIAVE
+ *     (come `RADICI_NASCITA`), non sul formato: `2019-05-03` e `2026-08-31` sono
+ *     indistinguibili a guardare il valore.
+ *
+ * La parte DATA passa dallo stesso `.refine(dataCalendarioValida)` di `zDataYMD`:
+ * la regex valida il formato, non il calendario, e `2026-02-30T10:00` la
+ * supererebbe per finire in un 22008 → 500 — il difetto RC4, di nuovo.
+ * L'ora è ancorata come in `zOraHHMM`: `([01]\d|2[0-3]):[0-5]\d`, non `\d{2}:\d{2}`
+ * che accetta `99:99`. E il caso è PROVATO, non promesso:
+ * `__tests__/validation/zdata-ymd.test.ts` rifiuta `99:99`, `24:00` e `23:60` uno
+ * per uno — fino al 2026-09-19 questa frase era l'unica cosa che sosteneva
+ * l'ancoraggio, e sostituire la regex con quella permissiva lasciava la suite
+ * intera verde con numeri identici.
+ *
+ * ⚠️ LA FORMA NON È SCRITTA QUI. Arriva da `FORMA_DATA_ORA_LOCALE`
+ * (`@/lib/format/confini-giorno`), che è lo stesso oggetto che `istanteDaLocale`
+ * usa per DESTRUTTURARE la stringa. Le due regex sono state due per un po', e la
+ * seconda era la versione permissiva di questa: la ragione per cui adesso è una
+ * sola sta scritta accanto alla costante. Chi vuole cambiare la forma la cambia
+ * là, e cambia i due posti insieme perché sono lo stesso posto.
+ */
+export const zDataOraLocale = z
+    .string({ error: 'Data e ora mancanti' })
+    .regex(FORMA_DATA_ORA_LOCALE, 'Data e ora non valide (atteso YYYY-MM-DDTHH:MM)')
+    .refine((s) => dataCalendarioValida(s.slice(0, 10)), 'Data inesistente nel calendario');
 
 /** Booleano tollerante per query param: 'true'/'1'/'si' → true, 'false'/'0'/'no' → false. */
 export const zBool = z.preprocess((v) => {

@@ -123,11 +123,19 @@ const post = (body: unknown) =>
     body: JSON.stringify(body),
   })
 
+/**
+ * Scadenza RELATIVA: dal 2026-09-19 `scadenza_avviso` è obbligatoria sul POST e una
+ * già passata è un 400. Una costante scritta a mano renderebbe rossi questi test a
+ * una data futura per un motivo che non ha niente a che vedere con i log.
+ */
+const SCADENZA_LOCALE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 16)
+
 const corpoAvviso = (extra: Record<string, unknown> = {}) => ({
   titolo: 'Uscita didattica',
   contenuto: 'Servono le adesioni entro venerdì.',
   target_scope: 'globale',
   scuola_id: SEDE,
+  scadenza_avviso: SCADENZA_LOCALE,
   ...extra,
 })
 
@@ -207,6 +215,7 @@ describe('F2 — la pubblicazione logga il SUCCESSO, col numero di famiglie ragg
     const res = await POST(
       post({
         titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: ['2 ANNI'], scuola_id: SEDE,
+        scadenza_avviso: SCADENZA_LOCALE,
       }),
     )
 

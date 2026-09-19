@@ -9,6 +9,8 @@ import { CockpitPage } from '@/components/ui/cockpit';
 import { Avviso } from '@/components/features/avvisi/AvvisoCard';
 import { AvvisoDetailsContent } from '@/components/features/avvisi/AvvisoDetailsContent';
 import { useSessionIdentity } from '@/lib/auth/use-session-identity';
+import { etichettaDestinatario, type ClasseNota } from '@/lib/avvisi/destinatari';
+import { scadenzaLeggibile } from '@/components/features/avvisi/dettaglio/scadenza-leggibile';
 import { formattaIstante } from '@/i18n/config';
 
 // Dettaglio avviso a tutta area contenuto (sidebar e header del cockpit
@@ -17,11 +19,24 @@ import { formattaIstante } from '@/i18n/config';
 
 interface ScuolaScoped { scuolaId: string; scuolaNome: string; sezioni: { id: string; name: string; school_type: string }[] }
 
+/**
+ * I ruoli che possono SCRIVERE sulle adesioni, e lo stesso insieme che il server
+ * pretende su `PATCH …/risposte/[rispostaId]` e sull'esportazione.
+ *
+ * 🔴 QUESTO È UN AFFORDANCE GATE, NON UNA DIFESA. `useSessionIdentity` legge il
+ * ruolo dal **`localStorage`** (`kv_user_role`), che è scrivibile da chiunque apra
+ * la console del browser: di qui non passa nessuna sicurezza, passa solo la
+ * decisione di che cosa ha senso mostrare. La difesa è il server, che risponde
+ * **403** a chi non è segreteria — e i docenti, per decisione del committente,
+ * restano in sola lettura sulle adesioni.
+ */
+const RUOLI_SCRITTURA_ADESIONI = ['admin', 'coordinator', 'segreteria'];
+
 function AdminAvvisoDetailInner() {
     const params = useParams<{ id: string }>();
     const t = useTranslations('adminComunicazioni');
     const locale = useLocale();
-    const { userId } = useSessionIdentity();
+    const { userId, role } = useSessionIdentity();
 
     const [avviso, setAvviso] = useState<Avviso | null>(null);
     const [loading, setLoading] = useState(true);
@@ -32,6 +47,22 @@ function AdminAvvisoDetailInner() {
         () => [...new Set(scuole.flatMap(g => g.sezioni.map(s => s.name)))],
         [scuole]
     );
+
+    /**
+     * Le classi note CON la loro sede, per risolvere `target_classes`.
+     *
+     * Non è `availableClasses`: quello è un elenco di NOMI deduplicati, e con tre
+     * plessi «2 ANNI» esiste ad Aversa e a Cesa — un Set di nomi fa di due classi
+     * diverse la stessa cosa. Qui serve l'identità (l'id) e la sede.
+     */
+    const classiNote = useMemo<ClasseNota[]>(
+        () => scuole.flatMap(g =>
+            g.sezioni.map(s => ({ id: s.id, nome: s.name, scuolaId: g.scuolaId, scuolaNome: g.scuolaNome })),
+        ),
+        [scuole]
+    );
+
+    const permessiScrittura = RUOLI_SCRITTURA_ADESIONI.includes((role ?? '').toLowerCase());
 
     useEffect(() => {
         if (!userId || !params?.id) return;
@@ -59,6 +90,25 @@ function AdminAvvisoDetailInner() {
     }, [userId]);
 
     const backHref = `/admin/avvisi${userId ? `?userId=${userId}` : ''}`;
+
+    /**
+     * La scadenza EFFETTIVA: quella nuova quando c'è, altrimenti la vecchia colonna
+     * `scadenza` (una `date` pura, che resta sugli avvisi pubblicati prima). Senza
+     * il ripiego un avviso migrato a metà risulterebbe «senza scadenza», cioè eterno.
+     */
+    const scadenzaMostrata = avviso?.scadenza_avviso ?? avviso?.scadenza ?? null;
+
+    /**
+     * I destinatari, LEGGIBILI. Una voce che ha la forma di un uuid e non si
+     * risolve non si stampa: un identificativo interno non è un'informazione per
+     * nessuno, e l'etichetta neutra la sceglie qui il chiamante, in italiano.
+     */
+    const destinatariLeggibili = (avviso?.target_classes ?? [])
+        .map((voce) => {
+            const etichetta = etichettaDestinatario(voce, classiNote);
+            return etichetta.risolta ? etichetta.testo : t('avvisiClasseSconosciuta');
+        })
+        .join(', ');
 
     return (
         <CockpitPage max={1360}>
@@ -89,12 +139,36 @@ function AdminAvvisoDetailInner() {
                             </span>
                             <span className="font-maven text-xs text-kidville-muted">
                                 {avviso.author ? `${avviso.author.first_name} ${avviso.author.last_name}` : ''} · {formattaIstante(new Date(avviso.created_at), locale)}
-                                {avviso.scadenza ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: formattaIstante(new Date(avviso.scadenza), locale) })}` : ''}
+                                {/* Le due scadenze passano da `scadenzaLeggibile`, la stessa
+                                    funzione della bacheca: una `date` pura si mostra senza ora
+                                    (quel «02:00» non l'ha scritto nessuno), un istante vero con
+                                    l'ora — perché «entro le 12:00» è un'informazione. Qui si
+                                    leggeva la sola data anche sulle scadenze nuove: nessun
+                                    errore, ma due letture dello stesso valore a due file di
+                                    distanza, ed è così che una regola diverge. */}
+                                {scadenzaMostrata ? ` · ${t('avvisiDettaglioScadenzaEtichetta', { data: scadenzaLeggibile(scadenzaMostrata, locale) })}` : ''}
+                                {avviso.scadenza_adesione ? ` · ${t('avvisiDettaglioScadenzaAdesione', { data: scadenzaLeggibile(avviso.scadenza_adesione, locale) })}` : ''}
                             </span>
                         </div>
                         <h1 className="font-barlow mt-2 text-3xl font-black uppercase leading-none text-kidville-green">{avviso.titolo}</h1>
+                        {/*
+                            🔴 QUI C'ERA `target_classes.join(', ')` GREZZO, e in produzione
+                            ci sono record che in quel campo portano l'UUID della sezione: la
+                            schermata mostrava `219cab6a-…` alla voce «Destinatari», mentre
+                            l'elenco accanto — e il cockpit — risolvevano i nomi. Due letture
+                            diverse dello stesso dato, e quella povera era proprio la
+                            schermata in cui la segreteria adesso passerà molto tempo.
+                            `etichettaDestinatario` è la funzione condivisa: risolve prima per
+                            id (l'identità vera), poi per nome, aggiunge la sede solo quando è
+                            deducibile senza indovinare, e su un uuid che non risolve NON
+                            restituisce testo — l'etichetta neutra la sceglie chi mostra.
+                        */}
                         <p className="font-maven mt-1 text-xs text-kidville-muted">
-                            {t('avvisiDettaglioDestinatari', { valore: avviso.target_scope === 'globale' ? t('avvisiTuttoIstituto') : t('avvisiDettaglioClassi', { classi: avviso.target_classes?.join(', ') || '' }) })}
+                            {t('avvisiDettaglioDestinatari', {
+                                valore: avviso.target_scope === 'globale'
+                                    ? t('avvisiTuttoIstituto')
+                                    : t('avvisiDettaglioClassi', { classi: destinatariLeggibili }),
+                            })}
                         </p>
                         <p className="font-maven mt-4 whitespace-pre-line text-sm leading-relaxed text-kidville-ink">{avviso.contenuto}</p>
                         {avviso.attachment_url && (
@@ -111,7 +185,13 @@ function AdminAvvisoDetailInner() {
 
                     {/* Monitoraggio letture/adesioni (condiviso col drawer docente) */}
                     <div className="rounded-card bg-kidville-white p-6 shadow-sm">
-                        <AvvisoDetailsContent avviso={avviso} availableClasses={availableClasses} userId={userId} layout="page" />
+                        <AvvisoDetailsContent
+                            avviso={avviso}
+                            availableClasses={availableClasses}
+                            userId={userId}
+                            layout="page"
+                            permessiScrittura={permessiScrittura}
+                        />
                     </div>
                 </>
             )}

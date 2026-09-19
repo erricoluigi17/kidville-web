@@ -488,6 +488,54 @@ ALTER TABLE public.avvisi
   ALTER COLUMN scadenza_avviso SET NOT NULL;
 
 
+-- ── LE ADESIONI GIÀ DATE DIVENTANO «ammessa» ────────────────────────────────
+--
+-- AGGIUNTO IL 2026-09-19, DOPO aver simulato il post-deploy invece di dedurlo.
+--
+-- IL DIFETTO CHE CHIUDE. `riepilogoPosti` (src/lib/avvisi/posti.ts:111) conta
+-- solo `stato_adesione = 'ammessa'`, e `misurato`
+-- (dettaglio/numeri-adesioni.ts:162) distingue `undefined` — colonna ASSENTE,
+-- database non migrato — da `null`. Dopo questa migrazione la colonna ESISTE,
+-- quindi PostgREST restituisce `null`, `misurato` vale **true**, e la schermata
+-- della segreteria dichiara con sicurezza «0 persone» su avvisi dove ci sono
+-- adesioni vere. La guardia c'è ed è scritta bene, ma è tarata sul database non
+-- migrato: il caso «colonna presente, dato storico» le passa accanto. Il
+-- commento di quel file chiama quella frase «l'unica capace di far sembrare
+-- vuoto un pullman pieno» — e senza questa UPDATE la scriverebbe da sola.
+--
+-- MISURATO IN PRODUZIONE IL 2026-09-19, non supposto:
+--     risposta='si'  →  65 righe, TUTTE su avvisi `tipo='adesione'` (8 avvisi)
+--     risposta='no'  →   0 righe, su qualunque tipo
+--     risposta NULL  → 798 righe (prese visione: non sono adesioni)
+--   e nessun avviso ha `posti_totali` (colonna appena nata): nessun tetto può
+--   essere sfondato da questa scrittura, e nessuna coda può nascerne.
+--
+-- PERCHÉ 'ammessa' E NON UN NUOVO STATO. Quelle famiglie hanno detto sì quando
+-- una capienza non esisteva: erano dentro, e nessuno le ha mai messe in coda.
+-- 'ammessa' non inventa niente, TRADUCE. `posto_assegnato_il` resta NULL di
+-- proposito: scriverci un istante significherebbe fabbricare la data di
+-- un'ammissione che non è mai avvenuta attraverso il flusso nuovo. Nessun
+-- codice in `src/` legge quella colonna (verificato con `grep`), quindi il NULL
+-- non rompe niente.
+--
+-- IDEMPOTENTE: filtrata su `stato_adesione IS NULL`, al secondo giro tocca 0 righe.
+--
+-- 🔙 PER TORNARE INDIETRO, se il titolare decide che le adesioni storiche non
+--    devono occupare posti. Una riga, e riporta esattamente allo stato di prima
+--    perché nessun'altra istruzione di questo file scrive `stato_adesione`:
+--      UPDATE public.avvisi_risposte
+--         SET stato_adesione = NULL
+--       WHERE risposta = 'si' AND stato_adesione = 'ammessa'
+--         AND posto_assegnato_il IS NULL;
+--    L'ultima condizione è ciò che distingue le righe convertite da qui (mai
+--    passate dal flusso nuovo) da quelle ammesse a mano dalla segreteria DOPO
+--    il deploy, che non vanno toccate.
+UPDATE public.avvisi_risposte
+   SET stato_adesione = 'ammessa'
+ WHERE risposta = 'si'
+   AND stato_adesione IS NULL;
+
+
 -- ═════════════════════════════════════════════════════════════════════════════
 -- 5. I VINCOLI
 -- ═════════════════════════════════════════════════════════════════════════════

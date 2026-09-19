@@ -671,15 +671,45 @@ Cinque cose, nell'ordine in cui vanno fatte. Nessuna è facoltativa, e nessuna l
    seguenti, **mai eseguita da nessuno**). Deve coprire anche `p_forza => null` — dove
    `NOT NULL AND NOT false` vale `NULL` e un `IF` con condizione `NULL` **non scatta** — e la
    rimozione.
-3. **Applicare la migrazione al DB E2E della CI** (`.github/workflows/migrate-ci.yml`, manuale).
-   Finché non si fa, `e2e/avvisi-lista-attesa.spec.ts` è **verde avendo misurato solo il 403 al
-   docente**: metà collaudo, e lo spec lo dichiara invece di saltare. Un `test.skip()` avrebbe
-   fatto sparire quella metà dal conteggio, cioè l'avrebbe resa indistinguibile da uno spec mai
-   scritto.
-4. **Contare la riconciliazione dopo il deploy**:
-   `SELECT count(*) FROM avvisi_risposte WHERE risposta = 'si' AND stato_adesione IS NULL;` —
-   separando i residui della finestra merge→deploy dalle rimozioni deliberate della segreteria con
-   `in_coda_dal IS NULL AND posto_assegnato_il IS NULL`. Base misurata oggi: **65 su 869**.
+3. ✅ **FATTO il 2026-09-19, PRIMA del merge** (`.github/workflows/migrate-ci.yml`, run
+   `35467499162`, 13 secondi). Finché non si faceva, `e2e/avvisi-lista-attesa.spec.ts` era **verde
+   avendo misurato solo il 403 al docente**: metà collaudo, e lo spec lo dichiarava invece di
+   saltare. Un `test.skip()` avrebbe fatto sparire quella metà dal conteggio, cioè l'avrebbe resa
+   indistinguibile da uno spec mai scritto.
+   ⚠️ **Va rilanciato ogni volta che cambia l'SQL eseguibile** di quel file: è successo lo stesso
+   giorno, quando il backfill del punto 4 è stato aggiunto dopo la prima applicazione. Il workflow è
+   idempotente apposta, e costa tredici secondi — ma nessuno lo lancia al posto tuo, e un DB di
+   collaudo indietro di una `UPDATE` è un collaudo che misura un'altra cosa.
+4. ✅ **RISOLTO NELLA MIGRAZIONE, il 2026-09-19 — e non era solo un conteggio.**
+   Simulando il post-deploy invece di dedurlo è venuto fuori che **lasciare quelle righe a
+   `stato_adesione IS NULL` faceva mentire la schermata della segreteria**, non solo restare
+   incompleta. `riepilogoPosti` conta solo `'ammessa'` (`posti.ts:111`) e `misurato`
+   (`numeri-adesioni.ts:162`) distingue `undefined` — colonna assente, DB non migrato — da `null`.
+   **Dopo** la migrazione la colonna esiste: PostgREST manda `null`, `misurato` vale `true`, e il
+   riquadro dichiara con sicurezza **«0 persone»** su otto avvisi che hanno adesioni vere. La
+   guardia contro il «non lo so scambiato per zero» c'è ed è scritta bene, ma è tarata sul database
+   non migrato, e il caso «colonna presente, dato storico» le passa accanto. Il commento di quel
+   file chiama quella frase *«l'unica capace di far sembrare vuoto un pullman pieno»*: l'avrebbe
+   scritta da sola.
+   **Misurato prima di decidere** (produzione, 2026-09-19): i 65 `risposta='si'` stanno **tutti** su
+   avvisi `tipo='adesione'`, 8 avvisi; `risposta='no'` è **0** ovunque; le altre 798 righe sono
+   prese visione senza risposta; e nessun avviso ha `posti_totali`, quindi nessun tetto può essere
+   sfondato e nessuna coda può nascerne.
+   La migrazione ora porta `UPDATE avvisi_risposte SET stato_adesione='ammessa' WHERE risposta='si'
+   AND stato_adesione IS NULL`, idempotente. **'ammessa' non inventa: traduce** — quelle famiglie
+   hanno detto sì quando una capienza non esisteva, erano dentro, e nessuno le ha mai messe in coda.
+   `posto_assegnato_il` resta `NULL` di proposito (fabbricare l'istante di un'ammissione mai
+   avvenuta sarebbe una bugia, e nessun codice in `src/` legge quella colonna).
+   🔒 Protetta dal lock `avvisi-posti-un-numero-solo` § «le adesioni già date non diventano zero
+   persone», che legge il SQL **spogliato dei soli commenti** — provato rosso commentando l'UPDATE e
+   lasciando intatte le venti righe che la spiegano, che è la forma di falso più difficile da vedere
+   rileggendo. ⚠️ Non si poteva riusare il `soloSql` già presente in quel file: spegne anche il
+   *contenuto* delle stringhe, quindi `'ammessa'` diventa spazi — e un `.not.toMatch` contro una
+   stringa svuotata sarebbe **verde sempre**.
+   ⏳ **Resta da contare dopo il deploy** la sola finestra merge→deploy, in cui il codice vecchio può
+   aver scritto altri `risposta='si'` senza stato:
+   `SELECT count(*) FROM avvisi_risposte WHERE risposta='si' AND stato_adesione IS NULL;`
+   — atteso **0**, e ogni riga sopra lo zero è un'adesione arrivata in quei minuti.
 5. **`e2e/primaria-360/` non gira in CI e non passa nemmeno dai tipi**: `tsconfig.json` la elenca in
    `exclude`, quindi `npx tsc --noEmit` **non la vede**. Chi la modifica rifaccia a mano il giro con
    un `tsconfig` temporaneo che la includa (`extends` del principale, `include:

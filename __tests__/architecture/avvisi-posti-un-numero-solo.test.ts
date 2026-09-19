@@ -304,3 +304,122 @@ describe('LOCK · il gemello dell’ARITMETICA: una riga senza numero vale UNA p
         expect(riepilogoPosti([{ stato_adesione: 'ammessa' }], null).persone).toBe(1);
     });
 });
+
+/**
+ * ─── IL BACKFILL DELLE ADESIONI STORICHE ────────────────────────────────────
+ *
+ * Aggiunto il 2026-09-19, dopo aver simulato il post-deploy invece di dedurlo.
+ *
+ * `riepilogoPosti` conta solo `stato_adesione === 'ammessa'`, e `misurato`
+ * (`dettaglio/numeri-adesioni.ts`) distingue `undefined` — colonna ASSENTE, cioè
+ * database non migrato — da `null`. Dopo la migrazione la colonna ESISTE: PostgREST
+ * restituisce `null`, `misurato` vale `true`, e senza il backfill la schermata della
+ * segreteria dichiara «0 persone» su otto avvisi che in produzione hanno 65 adesioni
+ * vere. La guardia esiste ed è scritta bene, ma è tarata sul database non migrato;
+ * il caso «colonna presente, dato storico» le passa accanto.
+ *
+ * PERCHÉ UN LOCK E NON LA SOLA MIGRAZIONE: il file porta venti righe di commento che
+ * SPIEGANO quella UPDATE. Cancellando l'istruzione e lasciando il commento, la
+ * migrazione continuerebbe a raccontare un backfill che non avviene — ed è la forma
+ * di falso più difficile da vedere rileggendo, perché il testo dice la cosa giusta.
+ * Questo test legge il file SPOGLIATO dei commenti: se l'UPDATE diventa un commento,
+ * qui diventa rosso.
+ *
+ * ⚠️ NON si può riusare `SQL` di questo stesso file: `soloSql` spegne anche il
+ * CONTENUTO delle stringhe — serve a impedire che `'Tetto assoluto 999'` venga letto
+ * come un 999 — e quindi `'ammessa'` e `'si'` diventano spazi. Un'asserzione scritta
+ * contro `SQL` sarebbe rossa per il motivo sbagliato, e peggio: un `.not.toMatch`
+ * contro una stringa svuotata sarebbe VERDE sempre. Serve la variante che toglie i
+ * commenti e TIENE le stringhe, ed è l'unica differenza fra le due funzioni.
+ */
+function senzaCommenti(testo: string): string {
+    let out = '';
+    let i = 0;
+    while (i < testo.length) {
+        if (testo[i] === '-' && testo[i + 1] === '-') {
+            let j = testo.indexOf('\n', i);
+            if (j < 0) j = testo.length;
+            // Gli a capo si tengono: senza, due istruzioni lontane diventerebbero
+            // adiacenti e una forma che pretende `\s+` combacerebbe dove non deve.
+            out += '\n';
+            i = j + 1;
+            continue;
+        }
+        if (testo[i] === '/' && testo[i + 1] === '*') {
+            const fine = testo.indexOf('*/', i + 2);
+            i = fine < 0 ? testo.length : fine + 2;
+            out += ' ';
+            continue;
+        }
+        if (testo[i] === "'") {
+            // La stringa si COPIA per intero, delimitatori compresi: è esattamente
+            // ciò che qui bisogna poter leggere. `''` è un apice letterale, non la fine.
+            let j = i + 1;
+            while (j < testo.length) {
+                if (testo[j] === "'" && testo[j + 1] === "'") {
+                    j += 2;
+                    continue;
+                }
+                if (testo[j] === "'") {
+                    j += 1;
+                    break;
+                }
+                j += 1;
+            }
+            out += testo.slice(i, j);
+            i = j;
+            continue;
+        }
+        out += testo[i];
+        i += 1;
+    }
+    return out;
+}
+
+const SQL_CON_STRINGHE = senzaCommenti(leggi(MIGRAZIONE));
+
+describe('LOCK · le adesioni già date non diventano «zero persone»', () => {
+    it('la migrazione converte `risposta=si` senza stato in `ammessa` — e lo fa in SQL, non in un commento', () => {
+        // Una sola forma, tollerante sugli spazi e sugli a capo, severa sull'ordine
+        // dei pezzi: colonna, valore, e le DUE condizioni.
+        const backfill =
+            /UPDATE\s+public\.avvisi_risposte\s+SET\s+stato_adesione\s*=\s*'ammessa'\s+WHERE\s+risposta\s*=\s*'si'\s+AND\s+stato_adesione\s+IS\s+NULL/i;
+
+        expect(
+            SQL_CON_STRINGHE,
+            'La UPDATE che converte le adesioni storiche in «ammessa» non è più nel SQL ESEGUIBILE ' +
+                'della migrazione (i commenti qui non contano). Senza, dopo il deploy il riepilogo ' +
+                'della segreteria dice «0 persone» dove ci sono adesioni vere: 65 righe su 8 avvisi, ' +
+                'misurate in produzione il 2026-09-19.',
+        ).toMatch(backfill);
+    });
+
+    it('è filtrata su `IS NULL`, quindi non riscrive uno stato deciso dalla segreteria', () => {
+        // Il `WHERE` deve contenere `stato_adesione IS NULL`. Senza quel filtro la
+        // UPDATE sarebbe ancora idempotente sul VALORE, ma al secondo giro
+        // schiaccerebbe a «ammessa» anche una riga che nel frattempo qualcuno ha
+        // messo in coda o rimosso a mano. Non è una sottigliezza: è la differenza fra
+        // una conversione e una riscrittura periodica.
+        const senzaFiltro =
+            /UPDATE\s+public\.avvisi_risposte\s+SET\s+stato_adesione\s*=\s*'ammessa'\s+WHERE\s+risposta\s*=\s*'si'\s*;/i;
+
+        expect(
+            SQL_CON_STRINGHE,
+            'La UPDATE del backfill ha perso il filtro `AND stato_adesione IS NULL`: così ' +
+                'rieseguirla riporterebbe a «ammessa» righe che la segreteria ha messo in coda ' +
+                'o rimosso.',
+        ).not.toMatch(senzaFiltro);
+    });
+
+    it('il lock non è cieco: `SQL` contiene davvero il DDL di questa migrazione', () => {
+        // Se `soloSql` un giorno restituisse stringa vuota (percorso sbagliato,
+        // spogliatura troppo aggressiva), i due test qui sopra direbbero cose opposte
+        // e sbagliate: il primo rosso, il secondo VERDE per il motivo sbagliato — e un
+        // `.not.toMatch` su una stringa vuota passa sempre.
+        expect(
+            SQL_CON_STRINGHE.length,
+            'Il SQL spogliato dei soli commenti è troppo corto: lo scanner non sta leggendo la migrazione.',
+        ).toBeGreaterThan(5_000);
+        expect(SQL_CON_STRINGHE).toContain('avvisi_risposte');
+    });
+});

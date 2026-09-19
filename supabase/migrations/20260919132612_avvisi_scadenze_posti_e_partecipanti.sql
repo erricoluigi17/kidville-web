@@ -29,6 +29,22 @@
 --   momento dell'applicazione risulterà scaduto. È UNO, è noto, ed è il prezzo
 --   dichiarato della conversione — non una sorpresa da scoprire dopo. Gli altri
 --   21 restano vivi perché più recenti di 30 giorni.
+--   ⚠️ NON CONFONDERE «1» CON «QUANTI RISULTERANNO SCADUTI». Rimisurato il
+--   2026-09-19 eseguendo il backfill A VUOTO (una `SELECT` con la stessa
+--   espressione, zero scritture), la scomposizione dei 35 è:
+--         11  avevano già una `scadenza` PASSATA  → erano GIÀ invisibili
+--          1  senza scadenza e più vecchio di 30gg → NUOVO, è il prezzo sopra
+--         21  senza scadenza ma recenti            → restano visibili
+--          2  con scadenza futura                  → restano visibili
+--   Quindi dopo l'applicazione gli avvisi scaduti sono **12**, non 1: il
+--   filtro «Scaduti» del cockpit ne mostrerà dodici, e chi si aspettava uno
+--   penserà a un difetto. L'UNO è il numero di avvisi che CAMBIANO STATO, ed
+--   è quello che conta per le famiglie — ma è un numero diverso, e le due
+--   frasi si assomigliano abbastanza da essere scambiate.
+--   Verifica, sempre in sola lettura:
+--     select count(*) filter (where scadenza is not null and scadenza < current_date),
+--            count(*) filter (where scadenza is null and created_at + interval '30 days' < now())
+--     from avvisi;
 --   `created_at IS NULL` non esiste su nessuna riga (la colonna ha
 --   `DEFAULT CURRENT_TIMESTAMP` dal 2026-07-04): il `COALESCE(..., now())` nella
 --   funzione di conversione è una rete, non un percorso che questo backfill

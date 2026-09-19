@@ -580,10 +580,51 @@ per `console-suppressions` e `orario-presenze-un-motore-solo`); file `.ts` in `e
 **38** (⇒ `> 30` per `e2e-sede-dichiarata`). Basso rispetto al misurato, così sopravvive a una
 potatura normale, ma **mai zero**: deve morire su uno scanner rotto.
 
-⏳ **Non corretti in questo ramo, e il perché è una scelta**: un commit in più avrebbe fatto
-ripartire una CI da venticinque minuti per un difetto che non appartiene a questo cantiere e che
-esiste da prima. Vanno in un ramo successivo — che il workflow del repo consente di aprire solo
-**dopo** un deploy riuscito.
+⏳ **Non corretti nel ramo degli avvisi, e il perché è una scelta**: un commit in più avrebbe fatto
+ripartire una CI da venticinque minuti per un difetto che non appartiene a quel cantiere e che
+esiste da prima. Sono andati nel ramo successivo, aperto **dopo** il deploy riuscito come impone
+il workflow.
+
+#### ✅ E sono stati chiusi — `fix/lock-ciechi-e-fotografia`, 2026-09-19
+
+Tutti e tre hanno ora l'asserzione, e **ciascuno è stato provato rosso** accecandogli la radice di
+scansione, non solo scritto:
+
+| lock | integro | accecato |
+|---|---|---|
+| `console-suppressions` | 4 passed | **1 failed** — «ha trovato 0 file .ts/.tsx sotto src/, meno di 1000» |
+| `orario-presenze-un-motore-solo` | 4 passed | **1 failed** — «ha caricato 0 file da src/» |
+| `e2e-sede-dichiarata` | 5 passed | **1 failed** — «ha trovato 0 file .spec.ts in e2e/, meno di 30» |
+
+I pavimenti sono `> 1000` sorgenti (misurati **1232**) e `> 30` spec (misurati **38**): bassi
+rispetto al vero perché devono reggere una potatura normale, e non zero perché devono morire su uno
+scanner rotto. A `orario-presenze` è stata aggiunta anche la pretesa che il **motore** (`orario.ts`)
+sia fra i file letti: se si sposta, le prove che confrontano «chi tocca le colonne» con «chi è il
+motore» cambierebbero significato in silenzio invece di fallire.
+
+### 🔴 Rigenerare la fotografia delle migrazioni ARMA il lock. Non lo spegne.
+
+Scoperto il 2026-09-19 rigenerandola davvero, e contraddice quello che
+`__tests__/fixtures/migrazioni-fotografia.mjs` dichiarava di sé in testata:
+*«va rigenerata dopo ogni `apply_migration`. Finché non lo fai il lock resta rosso: è voluto»*.
+
+**Misurato nei due versi**, invece di riletto:
+
+| fotografia | migrazione `20260919132612` | `migrazioni-complete` |
+|---|---|---|
+| 178 righe, datata **18/09** | applicata il 19/09, non nella foto | **VERDE**, 11/11 |
+| 178 righe, datata **19/09** | idem | **ROSSO**, col messaggio giusto |
+
+Il motivo è `sogliaFotografia`: le migrazioni **più recenti dello scatto sono esentate**, e
+giustamente — una migrazione appena scritta è legittimamente in attesa di essere applicata. Ma
+quella che scrivi e applichi *oggi* è sempre più recente della fotografia di *ieri*: resta esente
+**per sempre**, finché nessuno rigenera.
+
+🔑 Quindi il verso è l'opposto di come si leggeva: **la rigenerazione sposta avanti la soglia, e da
+quel momento ogni file rimasto indietro diventa visibile.** Non c'è nessun rosso che ti ricorda di
+farla — l'unica cosa che la fa rispettare è la disciplina di chi applica una migrazione, ed è
+esattamente il motivo per cui va scritta invece che sottintesa. La testata dello script è stata
+riscritta con le due misure sopra.
 
 ### La fotografia delle migrazioni: si rigenera DOPO il merge, non prima
 

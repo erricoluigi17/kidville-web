@@ -92,7 +92,38 @@ function scopeCoerente(sorgente: string): boolean {
     return sorgente.includes('adminTutteLeSedi') || sorgente.includes('sedi_attive')
 }
 
+/**
+ * Quanti `.spec.ts` lo scanner DEVE trovare in `e2e/`. Misurati il 2026-09-19:
+ * 38 file `.ts` al primo livello, di cui la grande maggioranza sono spec. Il
+ * pavimento sta a 30 apposta: regge l'estrazione o la fusione di qualche spec, e
+ * cade quando la cartella non viene letta.
+ */
+const SPEC_MINIMI = 30;
+
 describe('LOCK · la sede dell’admin E2E è dichiarata nello storageState', () => {
+    /**
+     * ─── L'ASSERZIONE DI AUTOINGANNO ──────────────────────────────────────────
+     *
+     * Aggiunta il 2026-09-19 dopo averlo PROVATO: puntando l'enumerazione a una
+     * cartella vuota questo file restava **verde, 4 test su 4**. La prova centrale
+     * confronta l'elenco dei colpevoli con `[]`, e su zero spec letti quell'elenco
+     * è vuoto esattamente come quando è tutto a posto.
+     *
+     * ⚠️ Qui il rischio è più concreto che altrove: questo lock protegge lo SCOPE
+     * DI SEDE degli spec, e il repo ha tre plessi di produzione. Un lock di
+     * isolamento che ha smesso di guardare è peggio di nessun lock, perché
+     * qualcuno si fida.
+     */
+    it('lo scanner ha davvero letto la cartella e2e/ (senza questa, la prova sotto è decorazione)', () => {
+        const spec = readdirSync(join(RADICE, 'e2e')).filter((f) => f.endsWith('.spec.ts'));
+        expect(
+            spec.length,
+            `Lo scanner ha trovato ${spec.length} file .spec.ts in e2e/, meno di ${SPEC_MINIMI}. ` +
+                'O gli spec sono stati spostati, o questo lock ha smesso di guardare e la prova ' +
+                'qui sotto sta confrontando una lista vuota con una lista vuota.',
+        ).toBeGreaterThan(SPEC_MINIMI);
+    });
+
     it('il setup scrive `sedi_attive` prima di salvare lo stato dell’admin', () => {
         const sorgente = readFileSync(SETUP, 'utf8')
         expect(dichiaraLaSedePrimaDiSalvare(sorgente), COME_SI_CORREGGE).toBe(true)

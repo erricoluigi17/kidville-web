@@ -264,6 +264,8 @@ describe('S17 · /iscrizione — la schermata dei consensi ha un nome, e si legg
 
 // ── AvvisoCard ───────────────────────────────────────────────────────────────
 import { AvvisoCard, type Avviso } from '@/components/features/avvisi/AvvisoCard'
+import { IntlMessageFormat } from 'intl-messageformat'
+import itAvvisi from '../../messages/it/avvisi.json'
 
 /** 2026-07-30 22:30 UTC = 2026-07-31 00:30 a Roma: server e famiglia in due giorni. */
 const ISTANTE = '2026-07-30T22:30:00Z'
@@ -303,15 +305,27 @@ describe('S17 · AvvisoCard — livello del titolo e fuso della scadenza', () =>
     beforeAll(() => { process.env.TZ = 'UTC' })
     afterAll(() => { process.env.TZ = TZ })
 
-    it('CONTROLLO POSITIVO: in questo ambiente la formattazione ingenua sbaglia giorno', () => {
+    it('CONTROLLO POSITIVO: in questo ambiente la formattazione ingenua sbaglia giorno E ora', () => {
       expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe('UTC')
       expect(
         new Date(ISTANTE).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' }),
       ).toBe('30 luglio 2026')
+      // Dal 2026-09-19 la card mostra anche l'ORA (le scadenze del cantiere A2 ne
+      // hanno una): l'ingenuo sbaglia entrambe, ed è il caso peggiore — «scade il
+      // 30 alle 22:30» detto a una famiglia che ha tempo fino a mezzanotte e mezza
+      // del 31 è un'ora tolta, non un dettaglio tipografico.
+      expect(
+        new Date(ISTANTE).toLocaleString('it-IT', {
+          day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+        }),
+      ).toContain('30/07/2026')
+      expect(
+        new Date(ISTANTE).toLocaleString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+      ).toBe('22:30')
     })
 
-    it('la scadenza resta il giorno ITALIANO, non quello del processo', () => {
-      render(<AvvisoCard avviso={AVVISO} index={0} isTeacher />)
+    it('la scadenza resta il giorno E L’ORA ITALIANI, non quelli del processo', () => {
+      const { container } = render(<AvvisoCard avviso={AVVISO} index={0} isTeacher />)
       // Il controllo che apre la card è il BOTTONE dentro l'intestazione, non
       // l'intestazione stessa: dal 2026-08-02 la card è un disclosure APG
       // (`h2` → `button` con `aria-expanded`/`aria-controls` → pannello), e un
@@ -319,9 +333,19 @@ describe('S17 · AvvisoCard — livello del titolo e fuso della scadenza', () =>
       // titolo resta verificato dal test qui sopra; lo STATO ha il suo lock in
       // `__tests__/a11y/disclosure-avviso-card.test.tsx`.
       fireEvent.click(screen.getByRole('button', { name: AVVISO.titolo }))
-      const box = screen.getByText(/luglio 2026/)
-      expect(box.textContent).toContain('31 luglio 2026')
-      expect(box.textContent).not.toContain('30 luglio 2026')
+
+      // ⚠️ L'asserzione è DIVENTATA PIÙ SEVERA, non è stata adattata al ribasso.
+      // Fino al 2026-09-19 la card rendeva `formatData(…, 'lunga')` e qui si
+      // cercava «31 luglio 2026»: il giorno giusto con l'ora sbagliata sarebbe
+      // passato. Ora la card rende `dataOra`, e si pretendono ENTRAMBI — 00:30 del
+      // 31 a Roma, non 22:30 del 30 in UTC. La frase si prende dal catalogo: una
+      // stringa battuta a mano resterebbe verde anche dopo averla cambiata a
+      // schermo.
+      const atteso = String(new IntlMessageFormat(itAvvisi.visibileFinoAl, 'it').format({ data: '31/07/2026, 00:30' }))
+      expect(container.textContent).toContain(atteso)
+      // Le due negative, che senza la positiva qui sopra non varrebbero niente.
+      expect(container.textContent).not.toContain('30/07/2026')
+      expect(container.textContent).not.toContain('22:30')
     })
   })
 })

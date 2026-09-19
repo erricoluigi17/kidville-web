@@ -121,11 +121,20 @@ const dbBase = (): DBFinto => ({
 })
 
 const righeAvvisi = () => h.db.avvisi ?? []
+/**
+ * Scadenza RELATIVA e mai una data scritta a mano: dal 2026-09-19 `scadenza_avviso`
+ * è obbligatoria sul POST e una già passata è un 400. Una costante renderebbe questi
+ * test rossi a una data futura per un motivo che non c'entra niente con il tetto dei
+ * titoli — e la correzione giusta non è congelare l'orologio, è togliere la data.
+ */
+const SCADENZA_LOCALE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 16)
+
 const corpo = (titolo: string, extra: Record<string, unknown> = {}) => ({
   titolo,
   contenuto: 'Il corpo dell’avviso.',
   target_scope: 'globale',
   scuola_id: SEDE_A,
+  scadenza_avviso: SCADENZA_LOCALE,
   ...extra,
 })
 
@@ -185,8 +194,8 @@ describe('POST /api/avvisi — anche i campi che non hanno una LARGHEZZA sono va
   // altre due colonne della stessa tabella. Il criterio giusto non è «come è fatto
   // il tipo» ma «che cosa può arrivare dal client».
 
-  it('una `scadenza` che non è una data ⇒ 400, non il 500 di Postgres', async () => {
-    const res = await post(corpo('Titolo valido', { scadenza: 'non-una-data' }))
+  it('una `scadenza_avviso` che non è una data ⇒ 400, non il 500 di Postgres', async () => {
+    const res = await post(corpo('Titolo valido', { scadenza_avviso: 'non-una-data' }))
     expect(res.status).toBe(400)
     const corpoRisposta = JSON.stringify(await res.json())
     // `22007 invalid input syntax for type date` non deve arrivare al client.
@@ -196,12 +205,17 @@ describe('POST /api/avvisi — anche i campi che non hanno una LARGHEZZA sono va
   })
 
   it('CONTROLLO POSITIVO: una scadenza valida passa ancora', async () => {
-    const res = await post(corpo('Titolo valido', { scadenza: '2026-12-31' }))
+    const res = await post(corpo('Titolo valido', { scadenza_avviso: SCADENZA_LOCALE }))
     expect(res.status).toBe(201)
   })
 
   it('una data inesistente nel calendario ⇒ 400 (il 31 febbraio non è una scadenza)', async () => {
-    const res = await post(corpo('Titolo valido', { scadenza: '2026-02-31' }))
+    const res = await post(corpo('Titolo valido', { scadenza_avviso: '2026-02-31T10:00' }))
+    expect(res.status).toBe(400)
+  })
+
+  it('un\'ora che non esiste ⇒ 400 (la forma non basta: `99:99` ha la forma giusta)', async () => {
+    const res = await post(corpo('Titolo valido', { scadenza_avviso: '2026-12-31T99:99' }))
     expect(res.status).toBe(400)
   })
 

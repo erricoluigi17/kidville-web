@@ -185,11 +185,40 @@ const zRetteConfig = z.object({
     .optional(),
 })
 
+/**
+ * `avvisi_config`, per la SOLA chiave che ha effetto lato SERVER.
+ *
+ * `promemoria_giorni_prima` è la finestra con cui il cron `notifiche-promemoria`
+ * decide chi sollecitare stanotte (`@/lib/avvisi/promemoria-adesioni`), e fino ad
+ * oggi la limitavano **solo** i `min`/`max` del `<NumberField>`. Una PATCH fatta
+ * a mano con `10000` sarebbe entrata in colonna così com'era, e il filtro
+ * grossolano della scansione avrebbe cominciato a trascinare dal database
+ * trent'anni di avvisi ogni notte. Rischio basso, costo una riga.
+ *
+ * ⚠️ `z.looseObject` E NON `z.object`, ed è la differenza che conta: un oggetto
+ * chiuso SCARTA in silenzio le chiavi che non conosce, e `avvisi_config` ne porta
+ * altre quattro — `ruoli_pubblicazione` (che decide chi può pubblicare),
+ * `allegati_max_mb`, `scadenza_default_giorni`, `conferma_lettura_abilitata`. Il
+ * pannello salva l'oggetto INTERO a ogni «Salva»: con un oggetto chiuso, il primo
+ * salvataggio avrebbe azzerato i ruoli di pubblicazione della sede. È lo stesso
+ * difetto che `prestampati/genera` documenta al contrario, e qui sarebbe costato
+ * la pubblicazione degli avvisi.
+ *
+ * Gli estremi sono quelli della schermata (0–30), e restano gemelli: `0` = spento
+ * (la scansione lo legge così), 30 è il tetto oltre il quale un «promemoria» non
+ * è più un promemoria.
+ */
+const zAvvisiConfig = z.looseObject({
+  promemoria_giorni_prima: z.coerce.number().int().min(0).max(30).optional(),
+})
+
 const patchBodySchema = z.object({
   scuola_id: zScuolaId,
   ...Object.fromEntries(ALLOWED_FIELDS.map((f) => [f, z.unknown().optional()])),
   // Override della validazione permissiva: rette_config ha una shape nota.
   rette_config: zRetteConfig.optional(),
+  // Idem per `avvisi_config`, ma solo sulla chiave con effetto lato server.
+  avvisi_config: zAvvisiConfig.optional(),
 })
 
 /**

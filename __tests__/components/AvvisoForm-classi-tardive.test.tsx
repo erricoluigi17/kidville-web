@@ -55,6 +55,12 @@ function compila() {
   const campi = screen.getAllByRole('textbox')
   fireEvent.change(campi[0], { target: { value: 'Titolo di prova' } })
   fireEvent.change(campi[1], { target: { value: 'Contenuto di prova' } })
+  // Dal 2026-09-19 la scadenza avviso è obbligatoria: senza, il bottone resta
+  // spento per una ragione che non è quella misurata qui, e i tre lock di questo
+  // file direbbero «bloccato» sempre — cioè non proverebbero più niente.
+  // ⚠️ Qui il mock di next-intl rende la CHIAVE, non il testo: l'etichetta del
+  // campo data è `formScadenzaAvvisoData`. Basta la data, l'ora si scrive da sola.
+  fireEvent.change(screen.getByLabelText('formScadenzaAvvisoData'), { target: { value: '31/12/2026' } })
 }
 
 /** Il modulo aperto SUBITO, con le classi che arrivano solo dopo un click. */

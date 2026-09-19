@@ -47,6 +47,46 @@ export function withUser(url: string, appId?: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}userId=${appId}`;
 }
 
+// ─── LE SCADENZE DEGLI AVVISI, NELLA FORMA CHE IL SERVER ACCETTA ─────────────
+//
+// `zScadenzaAvvisoDataOra` (= `zDataOraLocale`) pretende `YYYY-MM-DDTHH:MM` e
+// RIFIUTA un ISO: la regex `FORMA_DATA_ORA_LOCALE` non ammette né i secondi né
+// la `Z` finale. Sono le cifre che una persona legge sull'orologio a muro
+// ITALIANO, non un istante assoluto — mandare `toISOString()` significherebbe
+// spedire l'ora di Greenwich e vedersela interpretare come ora di Roma, cioè
+// due ore di scarto in estate su una scadenza.
+//
+// ⚠️ `'sv-SE'` NON È UN VEZZO: è l'unico locale comune che formatta
+// `YYYY-MM-DD HH:MM`, cioè l'ISO con uno spazio al posto della `T`. Il fuso è
+// DICHIARATO (`Europe/Rome`) invece che ereditato dal processo, perché la
+// macchina che lancia il journey può essere in un fuso qualunque e i due lock
+// `date-con-timezone`/`date-senza-fuso` esistono per questo. `hourCycle: 'h23'`
+// e non `hour12: false`: quest'ultimo, su alcune versioni di ICU, stampa `24`
+// per la mezzanotte — un valore che la regex del server respinge.
+const FORMATO_DATA_ORA_LOCALE = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Europe/Rome',
+  year: 'numeric', month: '2-digit', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+});
+
+/** Un istante → `YYYY-MM-DDTHH:MM`, cifre locali italiane. */
+export function dataOraLocale(istante: Date): string {
+  return FORMATO_DATA_ORA_LOCALE.format(istante).replace(' ', 'T');
+}
+
+/**
+ * Fra `giorni` giorni, alla stessa ora di adesso, in cifre locali italiane.
+ *
+ * 🔴 SI USA QUESTA, MAI UNA DATA SCRITTA A MANO. La costante `'2026-07-31'` che
+ * stava nel journey dei docenti ha fatto girare per mesi l'intero percorso della
+ * gita su un avviso che la bacheca dei genitori non mostrava più — e nessuna
+ * riga è mai diventata rossa. Il commento per esteso è in `20-docenti.spec.ts`,
+ * accanto alla chiamata.
+ */
+export function fraGiorni(giorni: number): string {
+  return dataOraLocale(new Date(Date.now() + giorni * 86_400_000));
+}
+
 function slug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
 }
@@ -203,6 +243,7 @@ async function apiCall(page: Page, method: string, url: string, body?: unknown):
     const opts = body !== undefined ? { data: body } : {};
     const r = method === 'POST' ? await req.post(url, opts)
       : method === 'PATCH' ? await req.patch(url, opts)
+      : method === 'PUT' ? await req.put(url, opts)
       : await req.get(url);
     let json: unknown = null; try { json = await r.json(); } catch { /* noop */ }
     return { status: r.status(), json };
@@ -216,4 +257,5 @@ export const httpOk = (s: number) => s >= 200 && s < 400;
 
 export const apiPost = (page: Page, url: string, body: unknown) => apiCall(page, 'POST', url, body);
 export const apiPatch = (page: Page, url: string, body: unknown) => apiCall(page, 'PATCH', url, body);
+export const apiPut = (page: Page, url: string, body: unknown) => apiCall(page, 'PUT', url, body);
 export const apiGet = (page: Page, url: string) => apiCall(page, 'GET', url);

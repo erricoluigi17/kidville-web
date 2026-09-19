@@ -2,7 +2,21 @@
 // Prestampato import anagrafiche (alunno + genitori) — contratto colonne.
 // Le intestazioni sono in italiano e mappate ai campi interni dal parser.
 // Usato dallo strumento Import (client) e dalla route /api/admin/import/anagrafiche.
+//
+// La citazione NON è più scritta qui: viene da `@/lib/export/csv`, che è la casa
+// unica delle regole del CSV in uscita. La copia privata che stava a riga 41
+// citava su `/[",\n;]/` — SENZA `\r`, cioè una cella con un ritorno a capo vecchio
+// stile usciva non citata e spezzava la riga. È la stessa lezione già pagata con
+// `@/lib/avvisi/classi-sede`: una regola valida per più strade vive in un posto
+// solo, o le copie divergono e la prima che diverge è quella che nessuno guarda.
+//
+// `csvCell` e non `csvCellSicura` di proposito: qui i valori sono NOSTRI —
+// intestazioni costanti e una riga d'esempio scritta da noi — e nessuno comincia
+// per `=`/`+`/`-`/`@`. È esattamente il caso che la documentazione di `csvCell`
+// descrive come suo.
 // ============================================================
+
+import { csvCell } from '@/lib/export/csv';
 
 export const TEMPLATE_HEADERS = [
   'Nome alunno',
@@ -37,12 +51,6 @@ const EXAMPLE_ROW = [
   'Anna', 'Bianchi', '', 'anna.bianchi@email.com', '3331234567', 'madre',
   'Luca', 'Rossi', '', 'luca.rossi@email.com', '3339876543', 'padre',
 ];
-
-function csvCell(v: unknown): string {
-  if (v == null) return '';
-  const s = String(v);
-  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 /** Genera il CSV prestampato (BOM per gli accenti corretti in Excel). */
 export function buildTemplateCsv(): string {

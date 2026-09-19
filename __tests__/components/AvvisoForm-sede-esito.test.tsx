@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 
 import itTeacher from '../../messages/it/teacherComunicazioni.json'
 import enTeacher from '../../messages/en/teacherComunicazioni.json'
@@ -46,6 +46,13 @@ const CLASSI: ClasseAvviso[] = [
 function compila(titolo = 'Chiusura per ponte', contenuto = 'La scuola resta chiusa venerdì.') {
     fireEvent.change(screen.getByPlaceholderText(itTeacher.formPlaceholderTitolo), { target: { value: titolo } })
     fireEvent.change(screen.getByPlaceholderText(itTeacher.formPlaceholderContenuto), { target: { value: contenuto } })
+    // Dal 2026-09-19 la scadenza avviso è obbligatoria su OGNI avviso: senza, il
+    // modulo non è inviabile e questi lock misurerebbero soltanto un bottone spento.
+    // Basta la data: l'ora si scrive da sola (23:59, la fine del giorno scelto).
+    const scadenza = screen.getByRole('group', { name: itTeacher.formScadenzaAvviso })
+    fireEvent.change(within(scadenza).getByLabelText(itTeacher.formScadenzaAvvisoData), {
+        target: { value: '31/12/2026' },
+    })
 }
 
 const pubblica = () => screen.getByRole('button', { name: new RegExp(itTeacher.formSubmitPubblicaAvviso, 'i') })

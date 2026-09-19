@@ -2,6 +2,8 @@ import { useState, useRef, useId } from 'react';
 import { useTranslations } from 'next-intl';
 import { X, Send, Upload, Link, AlertTriangle, Check } from 'lucide-react';
 import { Avviso } from './AvvisoCard';
+import { AvvisoFormScadenze, useScadenze, type MotivoScadenza, type PayloadScadenze } from './AvvisoFormScadenze';
+import { AvvisoFormAdesione, useCampiAdesione, type PayloadAdesione } from './AvvisoFormAdesione';
 import { Modal } from '@/components/ui/Modal';
 import { getCurrentTeacherId } from '@/lib/auth/current-teacher';
 import { ScattaFotoButton } from '@/components/features/native/ScattaFotoButton';
@@ -27,17 +29,66 @@ export interface ClasseAvviso {
     scuolaNome?: string | null;
 }
 
-/** Il corpo consegnato al chiamante: `scuola_id` è parte del contratto, non un extra. */
-export interface DatiAvviso {
+/** La parte di corpo che questo modulo scrive da sé: `scuola_id` è contratto, non extra. */
+interface CampiComuniAvviso {
     titolo: string;
     contenuto: string;
     tipo: string;
     target_scope: string;
     target_classes: string[];
-    scadenza: string | null;
     attachment_url: string | null;
     /** Sede su cui si pubblica; `null` quando il chiamante non la conosce. */
     scuola_id: string | null;
+}
+
+/**
+ * Il corpo intero. Le due fette nuove — scadenze e contatore — le dichiarano i
+ * componenti che le rendono, insieme alla loro conversione: così il contratto non
+ * può divergere dal campo che lo riempie. `scadenza` (la vecchia `date` a grana
+ * giorno) non c'è più: non la accetta nemmeno la rotta, che adesso la deriva da
+ * `scadenza_avviso` con un trigger.
+ */
+export type DatiAvviso = CampiComuniAvviso & PayloadScadenze & PayloadAdesione;
+
+/** Ciò che manca per pubblicare, in CODICE. Le due voci sulle scadenze le dà `useScadenze`. */
+export type MotivoMancante = 'TITOLO' | 'CONTENUTO' | 'SEDE' | 'DESTINATARI' | MotivoScadenza;
+
+/**
+ * LA PRIMA COSA CHE MANCA, E SOLO LA PRIMA — perché il bottone d'invio non usa
+ * `disabled` e con quattro condizioni «spento e muto» era tollerabile: adesso sono
+ * otto, e l'incidente è agli atti (442 click su un bottone morto misurati in CI il
+ * 2026-08-02, senza che niente dicesse che cosa mancava).
+ *
+ * ⚠️ Torna un CODICE e non una chiave i18n perché il chiamante traduce con uno
+ * `switch` di chiavi LETTERALI: un `t(codice)` è invisibile al lock sulle chiavi
+ * morte, che cerca il nome della chiave dentro i sorgenti.
+ *
+ * ⚠️ Nomina i campi VUOTI, che è ciò che nient'altro a schermo dice. Scadenze
+ * incoerenti, domanda mancante e minimo oltre il massimo hanno già il proprio
+ * messaggio accanto al campo che li causa, e ripeterlo quassù darebbe due frasi
+ * diverse per lo stesso guasto.
+ *
+ * ⚠️ L'ALLEGATO IN CARICAMENTO NON STA QUI, e non è una dimenticanza: la cornice
+ * «Per pubblicare manca ancora: …» pretende un sintagma nominale, e un file che si
+ * sta caricando non MANCA — c'è, e sta arrivando. Infilarcelo direbbe il falso
+ * («manca ancora: file allegato» su un file già scelto). Quello stato è un
+ * «che cosa sta succedendo adesso», e lo annuncia la regione `role="status"`
+ * accanto al bottone, insieme a «sto pubblicando».
+ */
+export function motivoMancante(stato: {
+    titolo: string;
+    contenuto: string;
+    chiedeSede: boolean;
+    scuolaId: string;
+    scope: string;
+    classiScelte: number;
+    scadenze: MotivoScadenza;
+}): MotivoMancante {
+    if (!stato.titolo.trim()) return 'TITOLO';
+    if (!stato.contenuto.trim()) return 'CONTENUTO';
+    if (stato.chiedeSede && !stato.scuolaId) return 'SEDE';
+    if (stato.scope === 'classe' && stato.classiScelte === 0) return 'DESTINATARI';
+    return stato.scadenze;
 }
 
 /**
@@ -134,6 +185,17 @@ function sediDi(classi: ClasseAvviso[]): { id: string; nome: string }[] {
  *     usa `aria-disabled` + la guardia nell'handler, che è anche la difesa
  *     contro il doppio invio.
  *
+ * LE DUE SCADENZE (2026-09-19). «Il campo data» di cui sopra non esiste più: era
+ * UNA casella `<input type="date">` la cui etichetta cambiava a runtime fra
+ * «Scadenza avviso» e «Scadenza adesione» — due significati nello stesso posto,
+ * mai visibili insieme, e senza ORA. Adesso i campi sono due (`AvvisoFormScadenze`)
+ * e coesistono, perché è l'unica condizione in cui ci si accorge a occhio che le
+ * adesioni si chiudono DOPO che l'avviso è sparito dalla bacheca. Con loro arriva
+ * il blocco «Adesione e posti» (`AvvisoFormAdesione`), e con otto condizioni di
+ * blocco il bottone senza `disabled` non poteva più restare anche MUTO: sopra c'è
+ * la riga che nomina la prima cosa che manca. Questo modulo ne resta il
+ * COMPOSITORE — lo stato è suo, il codice che lo governa sta accanto ai campi.
+ *
  * PIANI (z-index) — la scala in uso nel repo, dal basso. I numeri sono scritti
  * NUDI di proposito: il lock `native-privacy-lock` cerca la forma `z-[…]` in
  * tutti i file di `src`, commenti compresi, e un esempio in un commento gli
@@ -180,15 +242,23 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
     const idTipo = `${uid}-tipo`;
     const idDestinatari = `${uid}-destinatari`;
     const idClassi = `${uid}-classi`;
-    const idScadenza = `${uid}-scadenza`;
     const idAllegato = `${uid}-allegato`;
     const idLink = `${uid}-link`;
+    const idMotivo = `${uid}-motivo`;
     const [titolo, setTitolo] = useState('');
     const [contenuto, setContenuto] = useState('');
     const [tipo, setTipo] = useState<'presa_visione' | 'adesione'>('presa_visione');
     const [scope, setScope] = useState<'globale' | 'classe'>('globale');
     const [selectedClasses, setSelectedClasses] = useState<string[]>([]);
-    const [scadenza, setScadenza] = useState('');
+    // 🔴 Le due scadenze e il contatore stanno QUI, anche se il codice che li
+    // governa vive accanto ai campi che li mostrano: così sopravvivono allo
+    // smontaggio della sezione «Adesione e posti» — tornare a «presa visione» e poi
+    // indietro non deve cancellare quello che si era scritto.
+    const scadenze = useScadenze(tipo);
+    const adesione = useCampiAdesione(tipo);
+    // Un invio fermato dalla guardia: da qui in poi gli errori dei campi mai toccati
+    // si vedono. Premere un bottone spento deve produrre una spiegazione.
+    const [tentatoInvio, setTentatoInvio] = useState(false);
     const [attachmentUrl, setAttachmentUrl] = useState(''); // File URL
     const [linkUrl, setLinkUrl] = useState(''); // External Link
     const [fileUploading, setFileUploading] = useState(false);
@@ -253,6 +323,9 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
             // frattempo può essere stato pubblicato.
             setPercorsoCaricato(null);
             setSigilloCaricato(null);
+            // Nessun invio è stato ancora tentato su QUESTA apertura: i campi
+            // ripartono senza rimproveri addosso.
+            setTentatoInvio(false);
             if (initialAvviso) {
                 setTitolo(initialAvviso.titolo);
                 setContenuto(initialAvviso.contenuto);
@@ -266,8 +339,15 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                         ? availableClasses.map((c) => c.nome)
                         : initClasses,
                 );
-                setScadenza(initialAvviso.scadenza || '');
-                
+                // ⚠️ OGNI STATO NUOVO VA RIPOPOLATO QUI DENTRO. Questo è l'unico
+                // punto in cui il modulo si riempie da un record, e un campo
+                // dimenticato non resta vuoto: resta con il valore dell'avviso
+                // PRECEDENTE addosso a quello che si sta aprendo adesso. Le due
+                // fette estratte sanno riempirsi da sole, ed è per questo che
+                // qui basta una riga per ciascuna invece di sette.
+                scadenze.daRecord(initialAvviso);
+                adesione.daRecord(initialAvviso);
+
                 // Decodifica allegato (JSON o link semplice)
                 let fUrl = '';
                 let lUrl = '';
@@ -298,7 +378,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 // Docente: scope forzato a 'classe' con le proprie classi preselezionate.
                 setScope(soloClassiProprie ? 'classe' : 'globale');
                 setSelectedClasses(soloClassiProprie ? availableClasses.map((c) => c.nome) : []);
-                setScadenza('');
+                // Stessa regola dall'altro lato: in creazione si riparte dai valori
+                // d'apertura — nessuna scadenza, bandierina spenta, minimo e massimo
+                // non indicati (il segnaposto mostra l'1 e il 20 che applicherebbe il
+                // server), nessun tetto di posti.
+                scadenze.azzera();
+                adesione.azzera();
                 setAttachmentUrl('');
                 setLinkUrl('');
                 setFileName('');
@@ -487,13 +572,71 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         !titolo.trim() ||
         !contenuto.trim() ||
         (chiedeSede && !scuolaId) ||
-        (scope === 'classe' && selectedClasses.length === 0);
+        (scope === 'classe' && selectedClasses.length === 0) ||
+        // Scadenza avviso obbligatoria su OGNI avviso (la colonna è `NOT NULL`),
+        // scadenza adesione sugli avvisi di adesione, e le due mai in contraddizione:
+        // le tre condizioni le decide `useScadenze` con la stessa funzione che il
+        // server applica al corpo della richiesta (`risolviScadenze`).
+        scadenze.bloccante ||
+        adesione.bloccante;
+
+    // ── LA RIGA «COSA MANCA», SOPRA IL BOTTONE ──────────────────────────────
+    // Codice → chiave con uno `switch` di chiavi LETTERALI: mai `t(codice)`, che
+    // renderebbe queste sei voci invisibili al lock sulle chiavi morte.
+    const motivo = motivoMancante({
+        titolo,
+        contenuto,
+        chiedeSede,
+        scuolaId,
+        scope,
+        classiScelte: selectedClasses.length,
+        scadenze: scadenze.manca,
+    });
+    const testoMotivo = (() => {
+        switch (motivo) {
+            case 'TITOLO': return t('formMancaTitolo');
+            case 'CONTENUTO': return t('formMancaContenuto');
+            case 'SEDE': return t('formMancaSede');
+            case 'DESTINATARI': return t('formMancaDestinatari');
+            case 'SCADENZA_AVVISO': return t('formMancaScadenzaAvviso');
+            case 'SCADENZA_ADESIONE': return t('formMancaScadenzaAdesione');
+            default: return '';
+        }
+    })();
+
+    // ── CHE COSA STA SUCCEDENDO ADESSO, IN UNA REGIONE SOLA ─────────────────
+    // Due stati che l'operatore non può dedurre da nient'altro se non guarda lo
+    // schermo, e che non sono «cose che mancano»: l'invio in corso e l'allegato in
+    // caricamento. Il secondo spegne il bottone d'invio (`nonInviabile`) e finora
+    // lo faceva in silenzio — la riga «cosa manca» resta vuota, perché niente
+    // manca: chi arriva col Tab su un bottone `aria-disabled="true"` non sentiva
+    // NESSUNA ragione. `formFileCaricamento` («Caricamento…» / «Uploading…») è già
+    // a schermo sul bottone di caricamento ed è autoportante fuori da qualunque
+    // cornice: nessuna chiave nuova, nessun catalogo toccato.
+    //
+    // ⚠️ UNA regione, non due: si annuncia in quella che esiste già ed è già viva.
+    // Una `aria-live` che nasce insieme al proprio testo non viene annunciata, e i
+    // due stati si escludono a vicenda (con un file in volo il modulo non è
+    // inviabile, quindi `submitting` non può essere vero).
+    const annuncioStato = fileUploading
+        ? t('formFileCaricamento')
+        : submitting
+          ? initialAvviso
+              ? t('formSubmitSalvataggio')
+              : t('formSubmitPubblicazione')
+          : '';
 
     const handleSubmit = async () => {
         // La guardia è la SOSTANZA, non una formalità: senza `disabled`, il
         // bottone resta cliccabile durante la POST e due click distratti
         // pubblicherebbero due volte lo stesso avviso a tutte le famiglie.
-        if (submitting || nonInviabile) return;
+        if (submitting || nonInviabile) {
+            // Il rifiuto non è più muto: da qui in poi anche i campi che nessuno ha
+            // ancora toccato dicono che cosa gli manca. È la metà «dopo il click»
+            // del rimedio ai 442 click; l'altra metà è la riga sopra il bottone.
+            setTentatoInvio(true);
+            return;
+        }
         if (chiedeSede && !scuolaId) return;
         setSubmitting(true);
         setErrore('');
@@ -510,7 +653,12 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         const esito = await onSubmit({
             titolo: titolo.trim(), contenuto: contenuto.trim(), tipo,
             target_scope: scope, target_classes: scope === 'classe' ? selectedClasses : [],
-            scadenza: scadenza || null,
+            // 🔴 Le due fette arrivano già pronte, con dentro la regola che conta: a
+            // bandierina spenta — o fuori dagli avvisi di adesione — i campi partono
+            // `null` PUR RESTANDO riempiti a schermo. Un campo nascosto che continua a
+            // viaggiare è il modo in cui un tetto riappare su un avviso che non lo vuole.
+            ...scadenze.payload,
+            ...adesione.payload,
             attachment_url: serializedAttachment,
             // La sede si DICHIARA. `null` solo quando davvero non la si conosce:
             // in quel caso decide il server, e se resta ambigua risponde 400.
@@ -529,7 +677,10 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
         }
 
         setTitolo(''); setContenuto(''); setTipo('presa_visione');
-        setScope('globale'); setSelectedClasses([]); setScadenza(''); setAttachmentUrl(''); setLinkUrl(''); setFileName('');
+        setScope('globale'); setSelectedClasses([]); setAttachmentUrl(''); setLinkUrl(''); setFileName('');
+        // Le due scadenze e il contatore tornano al valore d'apertura: l'avviso è
+        // partito, e quello dopo non deve nascere con addosso la gita di ieri.
+        scadenze.azzera(); adesione.azzera(); setTentatoInvio(false);
         setPreviewUrl(null);
         // L'avviso è pubblicato: quel file NON è più un orfano, è il suo allegato. Il
         // sigillo si getta senza usarlo — chiudere adesso non deve cancellare niente.
@@ -695,16 +846,19 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     </div>
                 )}
                 
-                <div>
-                    {/* Era il campo messo peggio di tutti: `read_page` sull'albero
-                        di accessibilità lo dava come «textbox» con nome VUOTO —
-                        non il placeholder, proprio niente. */}
-                    <label htmlFor={idScadenza} className="font-maven font-medium text-xs text-kidville-sub uppercase tracking-wide mb-1.5 block">
-                        {tipo === 'presa_visione' ? t('formScadenzaAvviso') : t('formScadenzaAdesione')}
-                    </label>
-                    <input id={idScadenza} type="date" value={scadenza} onChange={e => setScadenza(e.target.value)}
-                        className="w-full border-2 border-kidville-line rounded-2xl px-4 py-2.5 font-maven text-sm text-kidville-green bg-white focus:outline-none focus:ring-2 focus:ring-kidville-green/20 focus:border-kidville-green/40 transition-all" />
-                </div>
+                {/* ── LE DUE SCADENZE, E IL BLOCCO «ADESIONE E POSTI» ─────────
+                    Era UNA casella `<input type="date">` la cui etichetta cambiava
+                    a runtime fra «Scadenza avviso» e «Scadenza adesione»: due
+                    significati diversi nello stesso campo, mai visibili insieme —
+                    e nessuna ora, su una scadenza che decide chi entra in gita.
+                    Adesso i campi sono due e coesistono: è l'unica condizione in cui
+                    ci si accorge a occhio che le adesioni si chiudono dopo che
+                    l'avviso è già sparito dalla bacheca. */}
+                <AvvisoFormScadenze idPrefix={uid} tipo={tipo} scadenze={scadenze}>
+                    {tipo === 'adesione' && (
+                        <AvvisoFormAdesione idPrefix={uid} campi={adesione} mostraErrori={tentatoInvio} />
+                    )}
+                </AvvisoFormScadenze>
 
                 {/* Upload File */}
                 <div>
@@ -787,12 +941,30 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                 {/* La regione viva nasce VUOTA e vive quanto il modulo: un
                     `role="status"` creato insieme al testo non viene annunciato,
                     perché lo screen reader legge i CAMBIAMENTI di una regione che
-                    era già lì. Qui dentro finisce l'unico stato che l'operatore
-                    non può dedurre da solo — «sto pubblicando» — che prima non
-                    veniva detto in nessun modo. */}
+                    era già lì. Qui dentro finiscono gli stati che l'operatore non
+                    può dedurre da solo se non guarda — «sto pubblicando» e «sto
+                    caricando l'allegato» — che prima non venivano detti in nessun
+                    modo. Il secondo spegne anche il bottone d'invio: senza questa
+                    riga, chi ci arriva col Tab trova un `aria-disabled="true"` e
+                    nessuna ragione, perché in «cosa manca» non manca niente. */}
                 <span role="status" className="sr-only">
-                    {submitting ? (initialAvviso ? t('formSubmitSalvataggio') : t('formSubmitPubblicazione')) : ''}
+                    {annuncioStato}
                 </span>
+                {/* ── COSA MANCA PER PUBBLICARE ───────────────────────────────
+                    Il bottone resta senza `disabled` (vedi sotto) ed era anche MUTO:
+                    442 click in CI su un bottone che non faceva niente e non diceva
+                    perché. Qui c'è la PRIMA cosa che manca — una, non un elenco — e il
+                    bottone la indica con `aria-describedby`, così chi lo raggiunge col
+                    Tab la sente insieme al nome. Regione viva sempre presente e creata
+                    VUOTA: un `role="status"` che nasce col testo non viene annunciato. */}
+                <p id={idMotivo} role="status" className={testoMotivo ? 'flex items-start gap-2 mb-2 font-maven text-xs text-kidville-sub' : ''}>
+                    {testoMotivo && (
+                        <>
+                            <AlertTriangle size={14} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0" />
+                            <span>{t('formMotivoIntestazione', { motivo: testoMotivo })}</span>
+                        </>
+                    )}
+                </p>
                 {/* NIENTE `disabled`. Un elemento che si disabilita mentre ha il
                     fuoco lo scarica su `<body>`: misurato, e da lì il Tab usciva
                     dal dialogo proprio nell'istante in cui si preme «Pubblica».
@@ -805,6 +977,7 @@ export function AvvisoForm({ open, onClose, onSubmit, availableClasses = [], ini
                     type="button"
                     onClick={handleSubmit}
                     aria-disabled={submitting || nonInviabile}
+                    aria-describedby={idMotivo}
                     className={`w-full py-3.5 rounded-2xl bg-kidville-green text-kidville-yellow font-barlow font-black text-lg uppercase tracking-wide active:scale-[0.98] transition-all flex items-center justify-center gap-2 shadow-lg shadow-kidville-green/20 ${submitting || nonInviabile ? 'opacity-60 cursor-not-allowed' : 'hover:opacity-90'}`}
                 >
                     {submitting ? (

@@ -164,6 +164,12 @@ beforeEach(() => {
         titolo: 'Uscita al parco',
         contenuto: 'Dettagli',
         scuola_id: SEDE_MIA,
+        // Dal 2026-09-19 il PUT valuta lo STATO RISULTANTE delle due scadenze: la
+        // riga letta deve averne una, come in produzione dove la colonna è
+        // `NOT NULL`. Relativa, mai scritta a mano.
+        scadenza_avviso: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+        scadenza_adesione: null,
+        tipo: 'presa_visione',
         created_at: '2026-07-31T10:00:00Z',
     }
     h.task = {

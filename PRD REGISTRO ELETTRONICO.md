@@ -41,6 +41,8 @@
 > | `conversazioni_sospensioni` | Storico **append-only** delle sospensioni di conversazione chat (C5): al più una riga attiva per thread (indice unico parziale `WHERE riaperta_il IS NULL`), riapertura = UPDATE dei soli campi `riaperta_*`, mai un nuovo INSERT. Unica FK: `thread_id → chat_threads` | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `candidature_insegnanti` | Candidature spontanee di personale dal modulo **pubblico** `/lavora-con-noi` — dal 15/08/2026 **non più solo docente**: `posizioni text[]` (sette valori, almeno uno, `CHECK cardinality(...) >= 1`) porta anche collaboratrice, cucina, segreteria e un «altro» scritto a mano in `posizione_altro`; `gradi` non si chiede più e si **deriva** dalle posizioni docenti (vuoto è legittimo). Dal 25/08/2026 anche **`disponibilita` non si chiede più** — la colonna **resta** con i suoi valori storici (**227 righe al 25/08, h 12:08** — `SELECT count(disponibilita) …`, non ricopiare: cresce fino al deploy) e la scheda di segreteria mostra la riga solo quando il valore c'è; e il **`cv_path` è obbligatorio in via APPLICATIVA** (template `required: true` + `validateField` client e server), **non** con un `NOT NULL`: **98 righe storiche su 237** (25/08 h 12:08) lo hanno vuoto e il vincolo non si potrebbe applicare. Base giuridica art. 6.1.b, **nessun codice fiscale**, conservazione 24 mesi solo col consenso facoltativo. **Dal 2026-09-06** porta `etichetta` (+ `etichetta_aggiornata_il`/`_da`, migr. `20260906013119`): una nota di selezione **interna**, vocabolario chiuso in `CHECK` (già chiamata · non idonea · da richiamare · in valutazione · assunta), che **non raggiunge mai** la persona candidata — un lock rende rossa la suite se la rotta che la scrive arriva, anche transitivamente, a un percorso di invio email. Non riusa `stato`, che è l'aggregato ricalcolato dal trigger `candidature_ricalcola_stato()` e la sovrascriverebbe in silenzio: al 2026-09-06 sono **461 `pending` su 462**, cioè lo stato non distingue nulla. `cv_path` **unico** (`candidature_insegnanti_cv_unico`). **Non è un account**: l'account `utenti` nasce solo all'approvazione — una riga in `utenti` con `attivo=false` avrebbe accesso pieno all'area docente, perché `attivo` non è letto da nessun gate. Dedup su `lower(email)` **globale** (una candidatura viva vale per tutta la cooperativa) | ✅ RLS abilitata **senza policy** (solo `service_role`) |
 > | `consensi_accettazioni` | Prova **append-only** di accettazione Privacy/Termini (C5, valore probatorio art. 1341 c.c.): una riga per consenso, con `versione` decisa **server-side** (mai spoofabile dal client). Affianca `parents.consensi_gdpr` (che resta il flag booleano corrente), non lo sostituisce | ✅ RLS abilitata **senza policy** (solo `service_role`) |
+> | `avvisi` | Bacheca e circolari. ⏳ **Dal branch `feat/avvisi-scadenze-adesioni` (migr. `20260919132612`, NON ancora applicata: la applica l'integrazione al merge)** porta **sette colonne nuove**: `scadenza_avviso timestamptz NOT NULL` (l'istante in cui l'avviso esce dalla bacheca dei genitori) e `scadenza_adesione timestamptz` (l'istante oltre il quale non si aderisce più, mai posteriore alla prima — `CHECK avvisi_scadenza_adesione_entro_avviso_chk`), più `chiedi_numero boolean NOT NULL DEFAULT false`, `etichetta_numero varchar(120)` (la domanda che la segreteria scrive alla famiglia), `numero_min smallint NOT NULL DEFAULT 1`, `numero_max smallint NOT NULL DEFAULT 20` e `posti_totali integer` (il tetto, contato in **PERSONE** e non in adesioni). ⚠️ **`scadenza date` RESTA, come STORICO backfillato**: non si scrive più dal codice — la deriva il trigger `trg_avvisi_scadenza_compat` da `scadenza_avviso` a ogni INSERT e UPDATE — e la regola di conversione (`avviso_scadenza_da_legacy`) è una sola: `scadenza + 23:59:59.999` a `Europe/Rome`, oppure `created_at + 30 giorni` quando la data manca. Il drop di quella colonna sta in una PR successiva, perché fra merge e deploy (e per tutta la durata di un rollback) è il CODICE VECCHIO a girare contro questo schema. **Misurato in produzione il 2026-09-19**: 35 avvisi, 22 senza scadenza, **1** che col backfill risulta scaduto all'istante, 10 di tipo `adesione` | ✅ RLS + policy service_role |
+> | `avvisi_risposte` | Prese visione e adesioni, una riga per `(avviso, genitore, alunno)`. ⏳ **Stesso branch, stessa migrazione**: `numero_partecipanti smallint` (quante persone porta quella famiglia), `stato_adesione varchar(10)` (`ammessa` · `in_attesa` · `NULL` = nessuna, `CHECK avvisi_risposte_stato_adesione_chk`), `in_coda_dal timestamptz` e `posto_assegnato_il timestamptz`. 🔴 **Nessuna promozione automatica**: quando un ritiro libera dei posti la coda NON avanza da sola — la segreteria riceve la notifica `posti_liberati` e *una persona* decide chi entra, perché «il prossimo della lista» non è sempre la risposta giusta (fratelli, accompagnatori, famiglie già avvisate). Chi arriva a posti finiti non viene mai respinto: entra `in_attesa` con un 200. Termine, numero, tetto e coda li decidono le due RPC `avviso_adesione_registra` / `avviso_adesione_gestisci`, che serializzano su `SELECT … FROM avvisi WHERE id = … FOR UPDATE` e contano **dopo** quel lock. **Misurato in produzione il 2026-09-19**: 869 righe, di cui 65 con `risposta='si'` | ✅ RLS + policy service_role |
 >
 > ### Isolamento fra sedi (multi-tenant) — stato al 2026-07-31
 > Dal 2026-07-29 i plessi in produzione sono **tre**, non uno. Il nome di una classe ha smesso
@@ -81,7 +83,7 @@
 > | **Anagrafiche — il codice fiscale certo** | ✅ Completo sul branch `feat/insegnanti-codice-fiscale` (11/08/2026) · ⏳ **non ancora in produzione**: le due migrazioni sono applicate, il codice attende il merge | `/admin/students` → **quinta linguetta «Codici fiscali»** (`CodiciFiscaliDaVerificare`); la cascata **provincia → comune** (`LuogoNascitaFields`) e il badge di coerenza (`BadgeCoerenzaCf`) sulle sei schede di alunno e genitore | `GET /api/admin/anagrafiche/codici-fiscali` — confronta il codice fiscale con l'anagrafica e propone quello corretto quando lo sa calcolare. **Tre stati** (`incoerente` · `non-verificabile` · `da-compilare`): un dato mancante non è un errore. Verifica in Node (`verificaCoerenza`), quindi filtro non indicizzabile ⇒ paginazione in memoria, scansione con tetto dichiarato (2000 righe) e `troncato: true` in risposta quando morde. Scrittura con `PATCH /api/admin/students` o `/api/admin/parents`, **un id per volta**. `GET /api/anagrafiche/comuni` serve la sola provincia scelta: le 13.656 righe della tabella Belfiore **non escono mai** verso il browser (lock `dataset-comuni-fuori-dal-bundle`). Il calcolo è locale e sincrono (`src/lib/fiscale/`): **nessuna chiamata a terzi**, `api.codicefiscale.it` è al bando |
 > | **Registro Protocolli** | ✅ Operativo (solo admin+segreteria) | `/admin/protocolli` | `/api/admin/protocolli/*` (upload-url diretto, analizza, registrazione/annullo/eliminazione, file firmati, verifica integrità, categorie, export XLSX/PDF, da-documento, genera-documento) |
 > | **Foto/Video** | ✅ Operativo · **vista di sede per la segreteria dal 2026-09-06** | `/teacher/gallery` (una sezione), `/parent/gallery`, **`/admin/gallery`** (l'intero plesso: dal più recente, raggruppato per giornata, filtro per classe e per bambino, paginazione, **linguetta «Pubblicate / Cestino (30 giorni)» con «Ripristina» ed «Elimina» — 2026-09-12**) | `/api/gallery/*` — con `scope=sede&scuolaId=…`, riservato a `requireStaff`, **sede sempre dichiarata e mai indovinata**. Lo «scarica» dei media passa da `@capacitor/filesystem` + `Share.share({files})` sul telefono e dal signed URL diretto sul web: in WebView un `<a download>` su un `blob:` non fa niente **e non solleva eccezione**, quindi il vecchio `catch` non poteva scattare |
-> | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` (cron giornaliero). ⏳ Dal branch `fix/chat-doppioni-coda-notifica` (14/09, non ancora in produzione) il tocco su una notifica di chat **apre la conversazione**, anche per le notifiche già in tabella col link vecchio: `?thread=` si ricostruisce da `entita_tipo`/`entita_id` (`linkEffettivoNotifica`), e un link che non è di questa app si rifiuta |
+> | **Centro Notifiche** | ✅ Operativo | campanella AppBar (genitore+docente+admin), `/admin/impostazioni?sezione=notifiche` | `/api/notifiche` (feed+segna lette), `/api/push/*` (subscribe/dispatch/vapid), `/api/notifiche/promemoria` — il giro notturno, che ha **QUATTRO scansioni e non tre**: (1) moduli non compilati dopo N giorni (`modulistica_config.promemoria_giorni`, default 3), (2) richieste armadietto pendenti, (3) documenti in scadenza ≤30gg alla segreteria, e ⏳ (4) **promemoria delle adesioni** (branch `feat/avvisi-scadenze-adesioni`, non ancora in produzione): N giorni prima di `scadenza_adesione`, a chi non ha ancora risposto — `avvisi_config.promemoria_giorni_prima`, **predefinito 3**, **`0` = spento**, con un toggle notifiche suo (`adesione_promemoria`) perché appenderlo a quello dei moduli avrebbe fatto sparire in silenzio i secondi a chi spegne i primi. Il corpo della quarta vive in `@/lib/avvisi/promemoria-adesioni`, e il battito del job non può dire `ok` se una scansione è caduta. ⏳ Dal branch `fix/chat-doppioni-coda-notifica` (14/09, non ancora in produzione) il tocco su una notifica di chat **apre la conversazione**, anche per le notifiche già in tabella col link vecchio: `?thread=` si ricostruisce da `entita_tipo`/`entita_id` (`linkEffettivoNotifica`), e un link che non è di questa app si rifiuta |
 > | **News (blog · Instagram · digest mensile)** | ✅ Operativo | `/admin/news` (5 viste: Elenco·Editor·Proposte·Categorie·Digest), `/teacher/news`, `/parent/news` (feed·dettaglio·archivio digest) + widget home + voce Menu sheet | `/api/news/*` (14 route: gestione CRUD+workflow bozza→proposta→programmata→pubblicata, feed genitore server-derived **fail-closed**, digest mensile via email a tutte le famiglie della sede, cron `tick`+`digest`) |
 > | **Cancellazione account pubblica + Moderazione UGC** (C5, Google Play) | ✅ Operativo | `/cancellazione-account`(+`/conferma`, pubbliche, bilingue), `/admin/moderazione` (coda segnalazioni), menu ⋮ in chat (segnala/sospendi), `/parent/onboarding` (gate Termini) | `/api/public/cancellazione-account/*`, `/api/segnalazioni`, `/api/admin/segnalazioni`, `/api/chat/threads/[id]/{sospendi,riapri}`, guardie in `POST /api/chat/messages` |
 > | **«Lavora con noi» — candidature di personale** | ✅ In produzione · **aperto a tutte le posizioni dal 15/08/2026** (non più solo insegnanti) · ⏳ **curriculum obbligatorio e «Disponibilità» rimossa: NON ancora in produzione** (vedi il riquadro sul ramo, più sotto) · ⏸️ E2E in attesa del DB della CI | `/lavora-con-noi` (**pubblica, senza login**, wizard a cinque passi, sede ed elenco unico delle **sette posizioni** — le tre docenti portano la fascia nel nome — più «Altro» con casella condizionale; ⏳ **curriculum OBBLIGATORIO — scritto, non rilasciato**: il modulo vivo su `app.kidville.it` accetta ancora candidature senza allegato, e continuerà finché il merge non è fatto. La verifica che il rilascio abbia avuto effetto è una query sola: `select count(*) filter (where cv_path is null) from candidature_insegnanti;` smette di crescere), scheda **Candidature** di `/admin/modulistica` (cockpit di segreteria) | `POST /api/iscrizione/insegnanti` (anonima, 3/ora per IP, doppio invio ⇒ **201**, mai 409), `POST /api/iscrizione/insegnanti/upload` (anonima, 6/10 min per IP, bucket `form_attachments` sotto `candidature/`), `GET`/`PATCH /api/admin/candidature-insegnanti` (gate `requireStaff`; approva/rifiuta **solo Direzione**, claim atomico `pending → in_approvazione` **solo per le candidature docenti**), `POST /api/gdpr/retention-candidature` (job `candidature-retention`, `5 5 * * *`, 12/24 mesi + spazzata dei curriculum orfani a 24 h). ⚠️ **L'account nasce SOLO per le posizioni da insegnante**: un account `educator` legge l'anagrafica dei bambini, e cuoca/collaboratrice/segreteria si approvano senza crearne nessuno (`esitoAccount: nessuno`) |
@@ -100,6 +102,522 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 📢 Changelog — Il server accettava le adesioni DOPO la scadenza, e la card dava per morto un avviso vivo per 22 ore su 24 — 2026-09-19 (branch `feat/avvisi-scadenze-adesioni`)
+
+Il lavoro chiesto era «aggiungere il numero di partecipanti e una lista d'attesa». Scrivendolo sono
+venuti fuori **tre difetti preesistenti** che nessun test vedeva, e che riguardavano la cosa su cui
+tutto il resto poggia: **quando un avviso è scaduto**.
+
+### Le misure, prese il 2026-09-19 — e da rifare, non da ricopiare
+
+Solo conteggi e aggregati, su produzione, in sola lettura. **Rieseguite al momento di scrivere questo
+blocco**, non riprese da una relazione: in questo repo un numero copiato da un documento ha già
+detto il falso per due settimane.
+
+```sql
+-- Gli avvisi, e cosa fa loro il backfill
+SELECT count(*) FILTER (WHERE scadenza IS NULL AND created_at < now() - interval '30 days') AS spariranno_subito,
+       count(*) FILTER (WHERE scadenza IS NULL)                                             AS senza_scadenza,
+       count(*) FILTER (WHERE tipo = 'adesione')                                            AS di_adesione,
+       count(*)                                                                             AS totale
+  FROM public.avvisi;
+-- Le risposte già raccolte
+SELECT count(*) AS righe_risposte, count(*) FILTER (WHERE risposta = 'si') AS risposta_si
+  FROM public.avvisi_risposte;
+```
+
+| | valore |
+|---|---|
+| avvisi in tutto | **35** |
+| senza nessuna scadenza | **22** |
+| che il backfill manda **subito** oltre il termine | **1** |
+| di tipo `adesione` | **10** |
+| righe in `avvisi_risposte` | **869** (di cui `risposta='si'`: **65**) |
+
+L'unico numero che fa male è quel **1**: è un avviso pubblicato più di trenta giorni fa e mai
+scaduto, che nel momento dell'applicazione sparirà dalla bacheca delle famiglie. È **uno**, è
+**noto**, ed è il prezzo dichiarato della conversione — non una sorpresa da scoprire dopo.
+
+### I tre difetti preesistenti, chiusi
+
+**1. Il server accettava le adesioni DOPO la scadenza.** Non «l'interfaccia le mostrava»: il server
+le scriveva. `POST /api/avvisi/[id]/risposte` non guardava nessun termine — faceva un upsert e
+rispondeva 200. Il campo lo ha già dimostrato una volta, e la prova è nel repo: il journey
+`e2e/primaria-360/journeys/20-docenti.spec.ts` portava una `scadenza: '2026-07-31'` scritta a mano,
+quindi **dal 1° agosto 2026** le dieci adesioni delle famiglie di collaudo venivano registrate ogni
+volta su un avviso che la bacheca non mostrava più. Nessuna riga è mai diventata rossa. Adesso il
+termine lo fa valere `avviso_adesione_registra` — dentro il lock, con l'orologio del database — e
+la risposta è **409 `ADESIONE_SCADUTA`**.
+
+**2. Server e client non erano d'accordo su «scaduto», e il client aveva torto per 22 ore su 24.**
+`AvvisoCard.tsx` faceva `new Date(avviso.scadenza) < new Date()`. `new Date('2026-09-19')` è
+mezzanotte **UTC**, cioè le 02:00 italiane d'estate: dalle 02:00 in poi un avviso che scadeva quel
+giorno risultava già morto — la card si mostrava scaduta per **ventidue ore su ventiquattro
+dell'ultimo giorno utile**, con i bottoni spenti mentre il server avrebbe accettato. E il confronto
+lo faceva l'orologio del DISPOSITIVO: un tablet con la data sbagliata mostrava bottoni che il server
+rifiutava. Ora `scaduto` e `adesioni_chiuse` arrivano **calcolati dal server**, con l'unico istante
+della richiesta e con le stesse funzioni (`@/lib/avvisi/scadenze`) che la RPC usa per decidere chi
+entra. Il client non confronta più niente.
+
+> 🔴 **La regola arbitrata, una volta per tutte: la scadenza è l'ULTIMO ISTANTE VALIDO, INCLUSO.**
+> `avvisoScaduto` usa `adesso > scadenza`, la RPC `v_ora > v_termine`, il feed `.gte` e non `.gt`.
+> Con `.gt` un avviso sparirebbe dalla bacheca nel millisecondo esatto in cui è ancora valido per il
+> server che raccoglie le adesioni: due regole a un millisecondo di distanza, cioè il difetto meno
+> riproducibile che si possa scrivere.
+
+**3. L'interfaccia non consentiva di correggere una risposta che l'API accettava.** Il `PATCH` c'era
+e funzionava; il bottone no. Una famiglia che sbagliava a rispondere doveva telefonare.
+
+### Altri due difetti, chiusi sulla stessa rotta: `GET /api/avvisi/[id]/risposte`
+
+Non erano nell'elenco di sopra perché non c'entrano con le scadenze: li ha trovati e chiusi lo
+stesso lavoro, sulla rotta che la segreteria apre per guardare chi va in gita.
+
+**4. Il riepilogo diceva «0 persone» su ogni degrado, perché la `select` non chiedeva i due campi.**
+La proiezione si fermava alle sei colonne storiche: `numero_partecipanti` e `stato_adesione` non
+venivano letti affatto, quindi il chip delle persone e la riga «in lista d'attesa» nascevano vuoti
+anche su un database migrato. Ora la proiezione è **doppia** (`PROIEZIONE_RISPOSTE` /
+`PROIEZIONE_RISPOSTE_STORICA`): si tenta quella piena, e **solo** sui codici di colonna mancante
+(`42703`/`PGRST204`) si ripiega su quella storica, con un `warn` che dichiara il degrado e dice **su
+quante righe**. 🔴 I due campi restano **assenti**, mai `0` e mai `'ammessa'`: `undefined` significa
+«non misurato», e uno zero scritto da un `??` non si distingue più da uno zero contato — è la forma
+esatta del `?? 0` che ha congelato per sempre lo stato SDI di una fattura.
+
+**5. Due query per RIGA: un avviso di plesso apriva centinaia di richieste.** I nomi del genitore e
+dell'alunno si leggevano `utenti` e `alunni` **dentro il `.map()`**: trecento adesioni facevano
+seicento letture per una sola apertura di schermata. Il `Promise.all` esterno le parallelizzava, ed
+è il motivo per cui il cronometro non se ne accorgeva con dieci righe mentre il pool di connessioni
+se ne sarebbe accorto con trecento — la stessa N+1 che `avvisi-niente-n-piu-uno` aveva già chiuso su
+`GET /api/avvisi` e che qui era rimasta aperta. Ora sono **due query per TABELLA**, a blocchi
+(`aBlocchi` + `ID_PER_QUERY`: `.in()` non viaggia nel corpo ma nell'URL, e mille uuid fanno ~38 kB
+di riga di richiesta, cioè un 414) — e la risoluzione vive in **un posto solo**,
+`@/lib/avvisi/nomi-risposte`, importato sia da questa rotta sia da quella di esportazione, invece di
+essere scritta due volte. L'errore di lettura dei nomi adesso **si logga** invece di essere
+destrutturato via, perché un `'?'` muto era indistinguibile da «quel genitore non c'è».
+
+Il lock è `__tests__/api/avvisi-risposte-get-adesioni.test.ts`, e non è un mock piatto: il finto
+sbaglia **in base alle colonne chieste**, non sempre, perché è l'unico modo di far fallire il primo
+tentativo e riuscire il secondo — un finto che sbaglia sempre proverebbe metà proprietà. Le **due
+prove di rottura sono dichiarate eseguite in testa al file** (righe 36-43, datate 2026-09-19):
+togliendo i due campi dalla proiezione, e togliendo il ramo di ripiego, il test diventa **rosso** in
+entrambi i casi. Chi rilegge questa voce le rifaccia invece di crederci sulla parola — *un test mai
+visto fallire non è un test*, e una prova di rottura scritta in un commento è esattamente il genere
+di affermazione che questo repo ha già visto invecchiare male.
+
+### Cosa c'è adesso
+
+**Due scadenze invece di una**, con data **e ora** (fuso `Europe/Rome`, mai un ISO dal client):
+`scadenza_avviso` — obbligatoria su ogni avviso, l'istante in cui esce dalla bacheca dei genitori — e
+`scadenza_adesione` — obbligatoria sugli avvisi di adesione, mai successiva alla prima. Sono due
+perché la richiesta era letterale: *«le adesioni si chiudono venerdì, ma l'avviso deve restare
+leggibile fino alla gita»*. Un avviso con le adesioni chiuse e la scadenza ancora lontana resta
+visibile **in sola lettura**.
+
+**Un numero di partecipanti**, attivabile per avviso (`chiedi_numero`), con la domanda scritta dalla
+segreteria (`etichetta_numero`), minimo e massimo facoltativi, e **un tetto di posti contato in
+PERSONE e non in adesioni** (`posti_totali`): una famiglia da quattro ne occupa quattro.
+
+**Una lista d'attesa che non si spezza.** Chi arriva a posti finiti **non viene respinto**: entra
+`in_attesa` con un 200 — `POSTI_ESAURITI` è riservato a chi è *già dentro* e prova ad aumentare il
+numero. E **nessuna promozione è automatica**: quando un ritiro libera posti la coda non avanza da
+sola. La segreteria riceve `posti_liberati` e *una persona* decide chi entra.
+
+**Per il genitore**: il bottone si spegne quando il termine è passato, e lo decide il server; vede
+lo stato della PROPRIA adesione («in lista d'attesa», «confermata») e può correggere la risposta.
+🔴 **Non vede MAI quanti posti restano** — decisione del committente, e il difetto non era un campo
+chiamato «posti liberi»: era una **sottrazione**. Il payload portava `posti_totali` accanto a
+`persone_ammesse`, due numeri leciti presi da soli, il residuo esatto messi accanto. Chi legge
+«restano 3 posti» non decide con più calma, corre — ed è la corsa che la lista d'attesa esiste per
+evitare. Il ramo genitore ha ora una **lista bianca** delle statistiche, non una lista nera: una
+statistica nuova nasce FUORI dal payload e chi la vuole dentro deve passare da lì.
+
+**Per la segreteria**: ammette dalla coda, corregge il numero, **rimuove** un'adesione, ed **esporta
+l'elenco in CSV** (`Content-Disposition: attachment`, `Cache-Control: no-store` — è un elenco di
+minori, non deve restare nella cache di un computer di sportello usato da più persone). Vede
+`sopra_capienza` quando il tetto è stato abbassato sotto l'occupato: **è uno stato legittimo**,
+nessuno viene espulso, ma va mostrato. Ogni ammissione e ogni rimozione finiscono nel registro
+immodificabile, non solo nei log a 30 giorni.
+
+**Per i docenti**: **sola lettura**. Vedono le adesioni, non ammettono e non esportano — chi va in
+gita lo decide la segreteria. L'export ha una route sua (`requireStaff`) invece di un `if` dentro
+l'handler condiviso, perché *un gate dentro un ramo `if` non domina il ramo `else`*.
+
+**Un promemoria notturno** N giorni prima di `scadenza_adesione`, a chi non ha ancora risposto:
+`avvisi_config.promemoria_giorni_prima`, predefinito **3**, **`0` = spento**. È la **quarta**
+scansione del giro di `notifiche/promemoria`, non la terza.
+
+**Tre notifiche nuove**: `adesione_promemoria` (al genitore), `adesione_ammessa` (al genitore
+promosso dalla coda), `posti_liberati` (**alla segreteria della sede, mai ai docenti**, e solo se
+c'è davvero qualcuno in coda). 🔴 Nessuna delle tre nomina un bambino, una famiglia o il titolo
+dell'avviso: arrivano in notifica di sistema e si leggono **a schermo bloccato**.
+
+### Le due decisioni prese in corso d'opera (non erano nell'intervista iniziale)
+
+1. **La segreteria può RIMUOVERE un'adesione** (`stato: 'nessuna'`): porta `stato_adesione` a `NULL`
+   e libera il posto **senza toccare `risposta`**. Serviva un gesto per «questa famiglia non viene
+   più» che non cancellasse il fatto che aveva risposto. ⚠️ Il PATCH non emette `posti_liberati`, ed
+   è una decisione: quel ritiro l'ha appena fatto la segreteria stessa.
+2. **Ammettere chi ha risposto «no» richiede una conferma esplicita.** La RPC risponde **409
+   `RISPOSTA_CONTRARIA`** e si ferma: quel «no» è un fatto della famiglia, e sovrascriverlo lo
+   farebbe sparire dal database. Non è un errore, **è una domanda**: l'interfaccia chiede conferma e
+   si ripresenta con `ignora_rifiuto: true`.
+
+### I collaudi E2E
+
+`e2e/avvisi-lista-attesa.spec.ts` (nuovo): la segreteria ammette una riga in coda → la **campanella
+della famiglia** mostra `adesione_ammessa`; l'export risponde **200 all'admin** e **403 al docente**,
+con asserzione sul `Content-Disposition`.
+
+> 🔑 **E prova che i posti si contano in PERSONE, che è il titolo della funzione e l'unica cosa che
+> nessun altro gate misura contro un database vero.** La somma autorevole vive in PL/pgSQL
+> (`avviso_posti_occupati` → `SUM(COALESCE(numero_partecipanti, 1))`); `vitest` copre il gemello
+> TypeScript `riepilogoPosti`, non la funzione SQL; e l'unico altro posto dove due persone per
+> famiglia incontrano un tetto è `30-genitori`, **che in CI non gira**. Fino al 2026-09-19 questo
+> spec mandava `numero_partecipanti: 1` su `posti_totali: 1`, e con **una persona per adesione
+> `SUM(…)` e `COUNT(*)` sono indistinguibili**: una regressione da somma a conteggio sarebbe passata
+> **verde**. Adesso i posti sono **3** ed entrambe le famiglie ne chiedono **2**: la prima entra
+> (`0+2 <= 3`), la seconda trova `2+2 > 3` e va `in_attesa`. Sotto un `COUNT(*)` la seconda
+> risulterebbe ammessa e l'asserzione cadrebbe — che è ciò che un lock deve fare. Lo spec continua a
+> provare tutto quello che provava prima: l'ammissione dalla coda passa comunque la capienza
+> (`0+2 <= 3` dopo la rimozione), l'export e il 403 al docente non cambiano.
+
+I due journey 360° (`20-docenti`, `30-genitori`) mandano ora le due scadenze **relative**
+(`Date.now() + N giorni`, cifre locali italiane) e dieci adesioni da
+**2 persone** contro un tetto di **12 posti** — l'unica configurazione in cui la coda si forma
+davvero: `6 confermate (12 posti) + 4 in attesa`, più un'undicesima a posti zero e una dodicesima
+**dopo** che un PUT ha spostato la scadenza indietro, che deve prendere **409**.
+
+> 🔴 **`e2e/primaria-360/**` NON GIRA IN CI, e va detto forte invece che in nota.**
+> `playwright.config.ts:113` lo esclude con `testIgnore: '**/primaria-360/**'`, e il progetto
+> `chromium` ripete l'esclusione al proprio interno (riga 148) perché un `testIgnore` di progetto
+> **sostituisce** quello di config invece di sommarsi. Il job `e2e` di `ci.yml` lancia `npm run e2e`,
+> cioè `playwright test` con quella config: **i due journey aggiornati qui sopra non vengono
+> eseguiti da nessuna integrazione.** Il valore del loro aggiornamento è **documentario** finché
+> qualcuno non li riabilita o non li lancia a mano con
+> `playwright.primaria360.config.ts` (che pretende `KV_TEST_PASSWORD` e `KV_SCUOLA_ID`, e parla col
+> database di **produzione**). L'unico spec di questo cantiere che la CI esegue davvero è
+> `e2e/avvisi-lista-attesa.spec.ts`.
+>
+> ⚠️ E c'è un secondo silenzio, nello stesso posto: quei journey registrano i rilievi con un
+> `Recorder`, e l'unica asserzione di ciascun file è `expect(rec.findings.length).toBeGreaterThan(0)`.
+> Un rilievo `gravita: 'grave'` **non fa cadere il test**. È di proposito — la campagna 360° produce
+> un rapporto da triagiare, non un semaforo — ma significa che «il percorso ha smesso di
+> funzionare» e «il percorso non è mai partito» hanno lo stesso colore. Per questo `30-genitori`
+> porta ora l'**unica asserzione dura** del file: senza `avvisoGitaId` il journey fallisce invece di
+> finire verde avendo collaudato zero adesioni.
+>
+> 🔴 **E quell'asserzione da sola non bastava, perché chiudeva «id assente» e non «id di un altro
+> run» — che è lo stesso silenzio.** `run/state.json` è la staffetta fra i journey e **non lo
+> cancellava nessuno**: `playwright.primaria360.config.ts` non ha `globalSetup` (lo dichiara alla
+> riga 3) e in tutto `primaria-360/` non esisteva un solo `rmSync`. Nell'albero di lavoro c'era la
+> prova: un `avvisoGitaId` del **9 luglio**, 72 giorni prima. Un id vecchio è **truthy**, quindi
+> lanciando `30-genitori` da solo — cioè come si fa quando si itera — o facendo morire `20-docenti`
+> prima della riga che scrive l'id, `expect(avvisoId).toBeTruthy()` passava, le dieci adesioni
+> andavano su un **avviso morto**, il contatore restava 0, ogni rilievo era `gravita:'grave'` (che
+> non fa cadere niente) e il journey finiva **verde**. È la forma esatta della data cablata,
+> rientrata dalla porta accanto. Dal 2026-09-19 lo stato si cancella all'inizio del run, in
+> `auth.setup.ts` — l'unico file che gira **sempre per primo**, perché il progetto `journeys` lo ha
+> come `dependencies` anche quando si esegue un solo journey con `-g`. Un id residuo non può più
+> esistere, e `toBeTruthy()` diventa una misura vera; il `?? null` scritto da `20-docenti` resta
+> come seconda rete per la pubblicazione fallita **dentro lo stesso run**. (`run/` è gitignored:
+> quel file non è mai stato versionato — verificato nell'indice di git, non supposto.)
+>
+> ⚠️ **E quella correzione nessun gate la compila:** `tsconfig.json:33` esclude `e2e/primaria-360`,
+> quindi `npx tsc --noEmit` non guarda né `auth.setup.ts` né i quattro journey. Un errore di tipo lì
+> dentro non lo vedrebbe nessuno — la cartella non gira in CI **e** non passa dal controllo dei tipi,
+> due silenzi sovrapposti sulla stessa directory. La modifica è stata verificata a parte, con un
+> `tsconfig` temporaneo che include `e2e/primaria-360/**/*.ts` ed eredita il resto: **exit 0**. Chi
+> tocca quei file rifaccia quel giro, perché il gate di progetto non glielo dirà.
+
+### 🔴 I rischi e i debiti, dichiarati
+
+Quindici voci. Nessuna è un difetto scoperto dopo: sono le cose che questo lavoro **non** ha chiuso,
+scritte qui perché non le scopra qualcun altro fra sei mesi.
+
+1. **La concorrenza sui posti non è dimostrata da `vitest`.** La protegge il
+   `SELECT … FOR UPDATE` della RPC, che conta **dopo** il lock; i test unitari la misurano con dei
+   finti, e un mock piatto è verde con e senza la correzione. La **prova a due sessioni** è scritta
+   per esteso nella migrazione (riga 1560 e seguenti, modellata su quella di `20260907181116`) e
+   **non l'ha eseguita nessuno**: al momento della scrittura la migrazione non era applicata, e su
+   questa macchina non c'è `psql`. Va fatta **dopo il merge**, e deve coprire anche `p_forza => null`
+   (dove `NOT NULL AND NOT false` vale `NULL`, e un `IF` con condizione `NULL` **non scatta**: il
+   rifiuto per capienza sparirebbe in silenzio) e la **rimozione**.
+2. **Le 1698 righe di file — 494 di SQL — non sono mai passate da un parser.** Il conteggio è
+   `wc -l` sul file della migrazione: 1698 righe in tutto, di cui **1102 di puro commento `--`** e
+   **494 di SQL** vero. Fino al 2026-09-19 questa voce diceva «~1.650 righe di SQL», che gonfiava la
+   parte eseguibile di oltre tre volte: sbagliava nella direzione prudente — dichiarava più rischio
+   del vero, mai meno — ma era **l'unico numero di questo changelog che non reggeva a un `wc`**, in
+   un blocco che rivendica di aver rimisurato ogni cifra. Su questa macchina non c'è `psql`,
+   né Docker, né un Postgres locale, e l'unico server raggiungibile è la PRODUZIONE, dove questo
+   cantiere fa soltanto letture. Ciò che è stato verificato davvero con `SELECT` è l'**aritmetica**
+   del fuso e il **catalogo** (volatilità, `DEFAULT`, `NOT NULL`, trigger esistenti). La prima
+   analisi sintattica vera sarà l'applicazione al merge.
+3. **Il DB E2E della CI non è migrato.** È un progetto Supabase separato con
+   `supabase_migrations.schema_migrations` vuoto, e `.github/workflows/migrate-ci.yml` è
+   `workflow_dispatch`: si lancia a mano. Finché non lo si fa, `POST /api/avvisi` sfila le sette
+   colonne nuove e risponde **201 con una riga mutilata**, `POST …/risposte` risponde **503
+   `ADESIONI_NON_DISPONIBILI`** (di proposito: nessun ripiego che ACCETTI, perché un upsert di
+   comodo rimetterebbe il buco delle adesioni fuori termine proprio nell'ambiente che nessuno
+   guarda) e l'export **503**. I tre spec riconoscono quella condizione **dal prodotto** (la riga
+   senza `scadenza_avviso`, il 503 col suo codice), la **dichiarano** e proseguono degradati: senza,
+   il primo push dopo il merge tingerebbe la CI di rosso per una ragione che non è il codice.
+4. **`pg_cron` schedula in UTC, il conteggio dei giorni è civile romano.** Il promemoria «tre giorni
+   prima» conta giorni italiani; il tick parte a un'ora UTC. Nei due cambi d'ora l'istante di
+   partenza scivola di un'ora rispetto al giorno civile: non sposta il *giorno* del promemoria, ma è
+   una divergenza fra due orologi che va saputa prima di stringere la finestra.
+5. **Gli avvisi senza scadenza più vecchi di 30 giorni spariscono subito dalla bacheca.** È la
+   regola di conversione scelta (`created_at + 30 giorni`) ed è **deciso**: oggi riguarda **1**
+   avviso su 35 (rimisurato il 2026-09-19).
+6. **Doppio conteggio fratelli — mitigato, non eliminato.** L'etichetta del contatore è riferita al
+   BAMBINO («quante persone accompagnano il bambino?»), quindi due fratelli chiedono due volte; e
+   nulla impedisce a due genitori dello stesso bambino di dichiarare lo stesso accompagnatore. Il
+   tetto conta persone dichiarate, non persone distinte.
+7. **Due chiavi i18n orfane, e nessun gate le ricorderà mai.**
+   `formLabelPartecipantiPredefiniti` e `formErrorePredefinitoFuoriIntervallo` in
+   `messages/{it,en}/teacherComunicazioni.json`: il campo «valore predefinito» **non è stato
+   costruito**, perché nessuna colonna lo regge. `SOTTO_TUTELA` del lock
+   `messaggi-chiavi-orfane` contiene **solo** `adminModulistica` e `password`.
+   🔑 **E c'è una ragione in più, peggiore della configurazione: quelle due chiavi si sono
+   IMMUNIZZATE COL PROPRIO COMMENTO.** In tutto `src/` compaiono una volta sola ciascuna, dentro il
+   riquadro di `AvvisoFormAdesione.tsx:52-53` che spiega **perché sono orfane**. La scansione del
+   lock è testuale sul contenuto dei file `.ts`/`.tsx` (`messaggi-chiavi-orfane.test.ts:87-101`:
+   `readFileSync` → un `RegExp` sul nome come parola intera), e i commenti sono contenuto: mettendo
+   `teacherComunicazioni` sotto tutela il lock le troverebbe nominate e le dichiarerebbe **usate**.
+   È la trappola che questo repo ha già pagato — *un test che legge un file come testo legge anche i
+   commenti* — e va saputa prima di provare a chiudere questa voce allargando `SOTTO_TUTELA`: non
+   basterebbe.
+8. **Paginazione duplicata** fra `@/lib/avvisi/statistiche` (`leggiTutte`) e
+   `@/lib/avvisi/promemoria-adesioni`. Le costanti (`RIGHE_PER_PAGINA`, `MAX_PAGINE`) sono
+   **importate**, quindi almeno quelle non divergono; il ciclo è scritto due volte. **Il seguito è
+   una riga sola**: esportare `leggiTutte`.
+9. **`MAX_OCCORRENZE` del lock `errori-con-codice` è sceso a 1414** insieme alla misura (era 1415).
+   **Terza volta di fila** che chi paga il debito abbassa la propria riga e lascia il tetto dov'era:
+   il confronto è `<=`, quindi un tetto più largo della somma fa rientrare in silenzio ciò che si è
+   appena tolto. Il tetto scende **con** la somma, sempre.
+10. **Dopo il deploy va contata la riconciliazione.**
+    `SELECT count(*) FROM avvisi_risposte WHERE risposta = 'si' AND stato_adesione IS NULL;`
+    conterrà **due cose diverse sommate**: i residui della finestra merge→deploy (adesioni arrivate
+    col codice vecchio, senza stato) **e** le rimozioni deliberate della segreteria (che portano
+    `stato_adesione` a `NULL` lasciando `risposta` intatta). Il numero da solo non distingue le due,
+    e un conteggio che non si può interpretare è peggio di nessun conteggio: si separano con
+    `in_coda_dal IS NULL AND posto_assegnato_il IS NULL` (mai passata dalla RPC) contro il resto.
+    Base di partenza, misurata il 2026-09-19 **prima** dell'applicazione: 65 righe con
+    `risposta='si'` su 869.
+11. **Tre falsi allarmi nel lock `avvisi-scadenza-un-motore-solo`, sui generici multiriga.**
+    `Record<⏎ string,⏎ ScadenzaAvviso⏎>` e `Promise<⏎ ScadenzaAdesione⏎>` fanno scattare il guard su
+    codice **giusto**, e lo stesso vale per un JSX multiriga col `>` isolato dentro un file di
+    avvisi. La causa è nominata: il riconoscitore prova il carattere **dopo** il `<`
+    (`avvisi-scadenza-un-motore-solo.test.ts:443-445`), e in un generico multiriga quel carattere è
+    un a capo — cioè uno spazio, cioè «operatore». Sono **preesistenti e non sono mai scattati su
+    `src/`**, perché tutti i testi passano da `t()` e nessun letterale italiano finisce nel JSX:
+    rossi-su-codice-giusto, mai verdi-su-codice-sbagliato. Da chiudere senza urgenza — ma va
+    scritto, perché **un lock che fa rosso sul codice giusto è un lock che qualcuno spegne**.
+12. **Il lock delle chiavi morte è cieco per COSTRUZIONE, non solo per configurazione.** In
+    `messages/{it,en}/avvisi.json` è rimasta orfana `scadenza`, sostituita da `visibileFinoAl`.
+    🔑 **Anche mettendo `avvisi` sotto tutela il lock resterebbe cieco**: la scansione è testuale su
+    tutto `src/`, e `t('scadenza')` compare in
+    `src/components/features/teacher/tasks/TaskEditModal.tsx:216` con un **namespace diverso** —
+    falso negativo garantito. È un limite del meccanismo, non una dimenticanza.
+    ⚠️ **Rettifica del 2026-09-19.** Fino alle 19:17 questa voce ne nominava **due**, aggiungendo
+    `titoloNessunaRisposta` («Nessuna Risposta (In attesa)»), e **in quel momento era esatta**: la
+    chiave era in `messages/it/avvisi.json` e in `messages/en/avvisi.json`, più un commento in
+    `AvvisoDetailsContent.tsx:645`. Alle **19:34** un altro lavoro sullo stesso ramo l'ha tolta da
+    entrambi i cataloghi (il commento alle 19:59). ⚠️ *«Un altro lavoro», e non «un cantiere
+    gemello»: gli mtime dicono **quando**, non **chi** — attribuirlo sarebbe una parola in più di
+    quanto la misura sostenga.* Oggi ha **zero** occorrenze in
+    `messages/` e in `src/`, quindi la voce è di **una** chiave sola. Non è un nome dichiarato e mai
+    verificato: è **una misura vera invecchiata in quaranta minuti**, ed è la stessa cosa che il
+    riquadro dei gate dice delle cifre dei test — **su un ramo con più cantieri in parallelo un
+    numero e un nome scadono allo stesso modo**.
+13. **La regola axe `empty-table-header` è spenta con la motivazione scritta accanto**, in una sola
+    asserzione (`__tests__/components/admin-avvisi-cockpit-scaduti.test.tsx:230-243`): il settimo
+    `<th>` — la colonna dei comandi — è vuoto. **Non è un difetto di questa tabella**: lo stesso
+    schema sta su `admin/merchandise` (due tabelle) e `admin/protocolli`. Si chiude con una chiave
+    «Azioni» in `it` **e** `en` applicata a tutte e quattro insieme; farlo su una sola lascerebbe
+    tre tabelle identiche e una diversa senza che nessuno sappia perché.
+14. **`admin/avvisi/page.tsx:139` ha una copia locale di `etichettaDestinatario`** che **diverge**
+    dalla libreria condivisa `@/lib/avvisi/destinatari` (mette l'uuid nel `title`). Non è stata
+    unificata perché un test asserisce proprio su quel `title`. È la forma «una regola in due
+    posti» che questo repo ha già pagato con `classi-sede`.
+15. **Il numero dichiarato in una relazione non sempre è ricostruibile.** In questo stesso lavoro un
+    cantiere ha dichiarato 125 test dove il critico ne ha contati **104**, e un altro «59» dove
+    erano **29**. Nessuno dei due è un difetto di prodotto, ma è la ragione per cui **ogni numero di
+    questo changelog è stato rimisurato** al momento di scriverlo — i conteggi di produzione con le
+    query qui sopra, i conteggi dei test con le righe `Test Files N passed` incollate qui sotto — e
+    non ripreso da nessun rapporto.
+    ⚠️ **E UNO è stato ripreso lo stesso, trovato il 2026-09-19 da una rilettura**: le «~1.650
+    righe di SQL» del rischio 2 (sono **1698 righe di file, 494 di SQL**: `wc -l` contro
+    `grep -vc` su commenti e righe vuote). È l'unico che quella rilettura ha trovato **non reggere
+    al comando che lo riproduce**, e stava nell'elenco dei rischi — cioè nella parte che questo
+    blocco presenta come la più controllata. Porta ora la rettifica scritta accanto, invece della
+    correzione silenziosa.
+    ⚠️ **Qui ce n'era un secondo, ed è stato tolto da questo elenco: non gli apparteneva.** Era la
+    seconda chiave del rischio 12, che oggi davvero non esiste — ma esisteva quando la voce è stata
+    scritta, ed è sparita quaranta minuti dopo per mano di un altro lavoro sullo stesso ramo (la
+    cronologia, con la stessa cautela sull'attribuzione, è accanto al rischio 12). Metterla qui avrebbe insegnato a chi legge fra sei mesi che quella
+    misura era sciatta, **quando era giusta**: una cancellazione concorrente non è un numero
+    dichiarato e mai ricostruito, è un'altra specie — e confonderle proprio nel punto che si
+    presenta come il più controllato è peggio dell'errore che si voleva confessare.
+16. **Il lock dei `catch` muti esentava proprio la forma che `AGENTS.md` cita come vietata.** La
+    regola 6 vieta testualmente `catch { /* ignora */ }`; il lock che dovrebbe farla rispettare
+    **saltava i blocchi con dentro un commento**. Misurato rimettendo il difetto: lock **verde**;
+    con un `catch {}` davvero vuoto, **rosso**. La categoria scoperta vale **59 occorrenze in 44
+    file** di `src/` (logger escluso) — ricontate qui replicando lo scanner invece di riprendere il
+    numero dalla testata: coincidono, concentratori compresi (`src/lib/auth/logout.ts` **8**,
+    `src/lib/pagamenti/solleciti-invio.ts` **3**, più una ventina di file con 1-2). Il **93%** sta
+    in codice che questo ramo non tocca.
+    **La regola NON è stata accesa**: sei volte la soglia, e avrebbe reso rosso il gate del ramo per
+    debito di nessuno — cioè avrebbe prodotto **il gate che si impara a spegnere**. Al suo posto due
+    tetti monotoni decrescenti (`MAX_SOLO_COMMENTI = 59`, `MAX_FILE_SOLO_COMMENTI = 44`)
+    **rimisurati a ogni run**, così la categoria non può crescere e il numero in testata non può
+    diventare falso in silenzio; e il `describe` dichiara ora il proprio limite («vuoti vietati, con
+    soli commenti **solo contati**») invece di sembrare più severo di quanto è.
+    ⚠️ **Effetto nuovo, da oggi**: un `catch { /* … */ }` scritto da qui in avanti **rende rosso il
+    gate**. È voluto, ma prima non succedeva.
+    ✅ **E una nota buona, perché anche quelle vanno misurate**: l'allowlist di quel lock era **già
+    allineata** — `46 file · somma 69 · tetto 69` — il primo dei tre tetti controllati oggi a non
+    avere credito non speso. Gli altri due sono stati stretti.
+
+> 🔴 **E questa è una CATEGORIA, non due casi.** Il difetto della voce 16 e quello della voce 11
+> sono lo stesso animale visto in due lock diversi: una regola che il guardiano **esenta proprio
+> nella forma che il regolamento vieta**, o che scatta sul codice giusto. Ma la scoperta che vale
+> più di entrambe è **come** la 16 è venuta fuori: quel lock **non aveva l'asserzione di
+> autoinganno**. Tutte le sue verifiche confrontavano liste con `[]`, e `[] === []` è vero anche
+> quando lo scanner non ha guardato niente. Rendendolo **cieco** di proposito (zero file trovati),
+> **8 test su 9 restavano verdi**:
+> ```
+> AssertionError: Lo scanner ha trovato 0 file .ts/.tsx sotto src/: expected 0 to be greater than 800
+> Tests  1 failed | 8 passed (9)
+> ```
+> **Tutti i lock di `__tests__/architecture/` andrebbero controllati per quell'asserzione**: è un
+> lavoro di una sera e chiude una classe intera di finti verdi. Da dove partire, misurato qui:
+> dei **144** lock della cartella, **22 non contengono nessun `toBeGreaterThan`**. ⚠️ È un
+> **indizio, non una condanna** — parecchi di quei 22 non scansionano nessun corpus
+> (`soglia-fotografia.test.ts` prova una funzione pura, i vari `*-un-motore-solo` confrontano
+> costanti), e presentarli come «22 lock ciechi» sarebbe esattamente la forma di falso che questo
+> elenco denuncia. È la lista da cui cominciare a guardare, non il verdetto.
+>
+> ⚠️ Il conteggio è **22**, non 21 come diceva la prima stesura, e lo scarto è la stessa lezione al
+> secondo giro: due lock (`offline-etichette-rotte.test.ts:106`,
+> `sw-versione-offline.test.ts:87`) contengono un **byte NUL crudo** dentro una stringa — non
+> l'escape `'\0'` — quindi `file` li dichiara `data`, `grep` li tratta da binari e sbaglia **in
+> silenzio**: `-L` ne perde uno (`sw-versione-offline`, che davvero non ha l'asserzione), un ciclo
+> con `-q` ne conta uno di troppo (`offline-etichette-rotte`, che ce l'ha), ed **entrambi i metodi
+> restano verdi**. I file sono UTF-8 validi e in tutta la cartella sono questi due soli: inganna
+> solo il NUL. **L'audit dei lock si fa a byte, non con `grep`** — ricontato in Python leggendo in
+> binario: `144` file, `22`. La voce che stai leggendo, che parla di uno scanner incapace di
+> accorgersi di non aver guardato niente, alla prima stesura era stata compilata **con uno scanner
+> che su due file non guardava**. Da valutare se sostituire i due NUL con `'\0'`.
+
+### La fotografia delle migrazioni: si rigenera DOPO il merge, non prima
+
+`20260919132612_avvisi_scadenze_posti_e_partecipanti` **non è applicata** (verificato il 2026-09-19:
+l'ultima `version` in `supabase_migrations.schema_migrations` è `20260918120000`), e la applicherà
+l'integrazione al merge **con la version del file** — riapplicarla a mano produrrebbe due righe.
+
+Il lock `migrazioni-complete` è **verde così com'è**, e non per caso: la fotografia è stata scattata
+il `2026-09-18T11:29:51Z`, quindi la soglia (`sogliaFotografia`) è `20260918112951` e il file, che
+porta `20260919132612`, risulta correttamente **«in coda, non ancora applicata»** — né intercalato
+nella storia già scritta, né anteriore allo scatto. Rigenerarla **adesso** sarebbe inutile nel
+migliore dei casi (la query non troverebbe la migrazione, perché non c'è) e dannoso nel peggiore:
+toccherebbe la fotografia senza che nessuno stia guardando se repo e database dicono la stessa cosa,
+che è l'unico momento in cui quel gesto ha un valore. **Si rigenera dopo il merge**, quando la
+migrazione è applicata davvero — e allora il lock diventa rosso da solo, com'è progettato.
+
+### I gate, eseguiti
+
+```
+npx vitest run __tests__/architecture   → Test Files  144 passed (144)   · Tests   1627 passed (1627)
+npx vitest run                          → Test Files 1387 passed (1387)  · Tests  19205 passed | 12 skipped (19217)
+npx tsc --noEmit                        → exit 0, nessun errore
+npx tsc -p <tsconfig temporaneo>        → exit 0  (e2e/primaria-360/**, che il tsconfig di progetto ESCLUDE)
+npx eslint . --max-warnings 0           → exit 0
+npm run build                           → exit 0 (+ postbuild: 2732 file JS esaminati, nessun segnaposto)
+```
+
+⚠️ I sei exit code sono stati letti **senza pipe**: `comando | tail; echo $?` riporta l'uscita di
+`tail`, non del comando, e non verifica niente. E i sei gate **non sono una fotografia**: su questo
+ramo lavoravano più cantieri insieme, e in una stessa sweep `npx tsc --noEmit` è uscito verde e
+`npm run build` rosso **sullo stesso file** — non perché un controllo copra ciò che l'altro non vede
+(quell'errore `tsc` lo diagnostica come **TS2588**, `Cannot assign to 'avviso' because it is a
+constant`: verificato con una sonda, `exit 2`), ma perché i due comandi hanno letto il file **in due
+istanti diversi**, e fra i due qualcuno stava scrivendo. Concorre anche `"incremental": true` con il
+`tsconfig.tsbuildinfo` da 1,1 MB in radice. **La lezione non è «i due controlli non si coprono»: è
+che su un albero in movimento due comandi in sequenza non misurano lo stesso albero** — la stessa
+cosa che è successa alla riga `Test Files N passed`, e la ragione per cui il conteggio si fa
+**dentro** il comando della corsa.
+
+🔑 **La riga `Test Files N passed` non si legge da sola: si confronta con i file su disco**, perché
+`vitest run <file inesistente>` esce 0 senza dirlo. Fatto, e i due conteggi coincidono:
+`144` file in `__tests__/architecture/` (l'unica voce in più della cartella è `soglia-fotografia.ts`,
+che è un modulo, non un test) e `1387` file `*.test.{ts,tsx}` / `*.spec.{ts,tsx}` sotto la radice
+tolte le cartelle escluse dalla config (`e2e/`, `ios/`, `android/`, `.claude/`).
+⚠️ **E il confronto si fa nello stesso comando della corsa**, contando prima e dopo: una corsa
+precedente aveva dato `1386 passed` contro `1387` file su disco, e non era un file saltato — era un
+cantiere gemello che ne aveva scritto uno **mentre vitest collezionava**. Contare dopo, in un
+comando separato, misura un albero diverso da quello che ha girato.
+
+⚠️ **Queste cifre si muovono da sole, e sono già cambiate cinque volte in un giorno.** Scritte la
+prima volta come `1384 · 19.165`, poi `1385 · 19.175`, `1386 · 19.187`, `1386 · 19.189`, e infine
+`1387 · 19.205`: sullo stesso ramo lavoravano più cantieri in parallelo, e ogni file di test nuovo
+sposta le due righe senza toccare una virgola di questo lavoro. **Non sono un'impronta, sono una
+fotografia**: chi le trova diverse rifaccia la corsa invece di cercare una regressione. Il conteggio
+che vale è quello del giorno in cui si legge — lo stesso principio della riga
+`enrollment_submissions` in `CLAUDE.md`.
+
+⚠️ **E una corsa rossa, su questo ramo, va riletta prima di essere attribuita.** Durante la chiusura
+di questo blocco la suite è uscita **rossa su 6 file e 20 test** — tutti `expected 403 to be 200` su
+`…/risposte:POST` — per un gate che un cantiere gemello aveva appena aggiunto alla rotta senza aver
+ancora aggiornato i propri finti. Nessuno dei sei file era stato toccato qui. Rifatta più tardi,
+**verde**. Sullo stesso principio `npx tsc --noEmit` è uscito `exit 2` su `aBlocchi`/`ID_PER_QUERY`
+mentre quel cantiere stava spostando la risoluzione dei nomi in `@/lib/avvisi/nomi-risposte`: un
+albero di lavoro condiviso produce rossi che non sono regressioni, e **il primo gesto è rifare la
+corsa, non cercare il colpevole nel proprio diff**.
+
+🔴 `npm run e2e` e `npm run e2e:seed` **non si eseguono in locale** (sono in `deny`): `.env.local`
+punta al database di **produzione** e il seed ci scriverebbe dentro. Gli E2E girano in CI su push —
+con l'eccezione, scritta sopra, di `e2e/primaria-360/**`, che in CI non gira affatto.
+
+### Cosa resta da fare — la parte che sopravvive a questa sessione
+
+Cinque cose, nell'ordine in cui vanno fatte. Nessuna è facoltativa, e nessuna la ricorderà un gate.
+
+0. ✅ **Prima del merge — fatto.** L'audit dei lock non è rimandabile alla voce 6 di questo elenco
+   solo perché è lungo: la misura da cui parte è già presa e sta scritta nella voce 16 dei rischi
+   (`144` file, `22` senza asserzione di non-vuoto, contati **a byte**). Chi lo eseguirà non deve
+   rifare il conteggio, deve leggere quei 22 uno per uno.
+1. **Rigenerare la fotografia delle migrazioni, DOPO il merge.** Al 2026-09-19 sono **178**
+   applicate, l'ultima `20260918120000` (`SELECT count(*), max(version) FROM
+   supabase_migrations.schema_migrations`). Quando l'integrazione applicherà `20260919132612` il
+   lock `migrazioni-complete` **diventerà rosso da solo**: è progettato così, ed è l'unico momento
+   in cui qualcuno guarda davvero se repo e database dicono la stessa cosa.
+2. **Eseguire la prova a due sessioni sul tetto dei posti** (scritta nella migrazione, riga 1560 e
+   seguenti, **mai eseguita da nessuno**). Deve coprire anche `p_forza => null` — dove
+   `NOT NULL AND NOT false` vale `NULL` e un `IF` con condizione `NULL` **non scatta** — e la
+   rimozione.
+3. **Applicare la migrazione al DB E2E della CI** (`.github/workflows/migrate-ci.yml`, manuale).
+   Finché non si fa, `e2e/avvisi-lista-attesa.spec.ts` è **verde avendo misurato solo il 403 al
+   docente**: metà collaudo, e lo spec lo dichiara invece di saltare. Un `test.skip()` avrebbe
+   fatto sparire quella metà dal conteggio, cioè l'avrebbe resa indistinguibile da uno spec mai
+   scritto.
+4. **Contare la riconciliazione dopo il deploy**:
+   `SELECT count(*) FROM avvisi_risposte WHERE risposta = 'si' AND stato_adesione IS NULL;` —
+   separando i residui della finestra merge→deploy dalle rimozioni deliberate della segreteria con
+   `in_coda_dal IS NULL AND posto_assegnato_il IS NULL`. Base misurata oggi: **65 su 869**.
+5. **`e2e/primaria-360/` non gira in CI e non passa nemmeno dai tipi**: `tsconfig.json` la elenca in
+   `exclude`, quindi `npx tsc --noEmit` **non la vede**. Chi la modifica rifaccia a mano il giro con
+   un `tsconfig` temporaneo che la includa (`extends` del principale, `include:
+   ["e2e/primaria-360/**/*.ts"]`, `incremental: false`) — e controlli con `--listFiles` che i file
+   toccati ci siano davvero dentro, perché un `tsc` che non compila niente esce 0 esattamente come
+   uno che compila tutto. **Il gate non glielo dirà.**
+6. **Passare i 22 lock senza asserzione di non-vuoto** (voce 16 dei rischi): una sera di lavoro che
+   chiude una classe intera di finti verdi. Si legge ciascuno e si decide se scansiona davvero un
+   corpus — se sì, gli si aggiunge la prova che lo scanner ha guardato qualcosa; se no, non serve.
+   E si valuta se sostituire con `'\0'` i due byte NUL crudi che hanno reso sbagliato il primo
+   conteggio, così che il prossimo audit non debba ricordarsi di non usare `grep`.
 
 ---
 

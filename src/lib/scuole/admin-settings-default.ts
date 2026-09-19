@@ -162,18 +162,41 @@ export const DEFAULT_SOLLECITI_SEDE_NUOVA = { enabled: false } as const
 export const RUOLI_PUBBLICAZIONE_DEFAULT = ['admin', 'teacher'] as const
 
 /**
- * `avvisi_config` con cui nasce una sede: **solo** `ruoli_pubblicazione`.
+ * A2 — Quanti giorni prima della scadenza parte il promemoria di un avviso.
+ *
+ * Tre è il valore che il cron usa quando la sede non ha deciso altrimenti: due
+ * giorni pieni per accorgersene più quello della scadenza. Non è una regola
+ * didattica, è un punto di partenza che la Direzione cambia da Impostazioni →
+ * Avvisi.
+ */
+export const PROMEMORIA_GIORNI_PRIMA_DEFAULT = 3
+
+/**
+ * `avvisi_config` con cui nasce una sede: le chiavi con **effetto lato server**.
+ *
+ * LA REGOLA NON È CAMBIATA, è cambiato quante chiavi la soddisfano. Qui si
+ * scrive ciò che il SERVER legge, e nient'altro. `ruoli_pubblicazione` decide
+ * chi riceve 403 da `POST /api/avvisi`; `promemoria_giorni_prima` (A2) decide
+ * quando il cron dei promemoria sveglia le famiglie. Entrambe hanno un effetto
+ * che non dipende da nessuna schermata, e una sede che nasce senza le eredita
+ * da un ripiego scritto altrove — cioè da un quarto posto che diverge.
  *
  * Le altre tre chiavi della schermata (`allegati_max_mb`,
- * `scadenza_default_giorni`, `conferma_lettura_abilitata`) NON si scrivono qui,
- * per la stessa ragione dei livelli di sollecito: nessuna ha effetto lato
- * server, tutte hanno già il proprio valore di ripiego nel componente, e
- * congelarle nel database alla data della migrazione le farebbe divergere in
- * silenzio da quelle mostrate in Impostazioni. `ruoli_pubblicazione` invece un
- * effetto ce l'ha — decide chi riceve 403 — e per questo va scritta.
+ * `scadenza_default_giorni`, `conferma_lettura_abilitata`) restano FUORI, per la
+ * stessa ragione dei livelli di sollecito: nessuna ha effetto lato server, tutte
+ * hanno già il proprio valore di ripiego nel componente, e congelarle nel
+ * database alla data della migrazione le farebbe divergere in silenzio da quelle
+ * mostrate in Impostazioni.
+ *
+ * ⚠️ GEMELLA SQL: `public.avvisi_config_default()`, confrontata carattere per
+ * carattere dal lock `__tests__/architecture/provisiona-sede-default-gemello.test.ts`.
  */
-export const DEFAULT_AVVISI_CONFIG: { ruoli_pubblicazione: string[] } = {
+export const DEFAULT_AVVISI_CONFIG: {
+  ruoli_pubblicazione: string[]
+  promemoria_giorni_prima: number
+} = {
   ruoli_pubblicazione: [...RUOLI_PUBBLICAZIONE_DEFAULT],
+  promemoria_giorni_prima: PROMEMORIA_GIORNI_PRIMA_DEFAULT,
 }
 
 /** La riga `admin_settings` con cui provisionare una sede nuova. */
@@ -181,7 +204,7 @@ export function defaultAdminSettingsRow(scuolaId: string): {
   scuola_id: string
   funzioni_matrice: Record<string, Record<string, boolean>>
   solleciti_config: { enabled: boolean }
-  avvisi_config: { ruoli_pubblicazione: string[] }
+  avvisi_config: typeof DEFAULT_AVVISI_CONFIG
 } {
   return {
     scuola_id: scuolaId,
@@ -189,6 +212,18 @@ export function defaultAdminSettingsRow(scuolaId: string): {
     // mutare il default globale passando di qui.
     funzioni_matrice: JSON.parse(JSON.stringify(DEFAULT_FUNZIONI_MATRICE)) as Record<string, Record<string, boolean>>,
     solleciti_config: { ...DEFAULT_SOLLECITI_SEDE_NUOVA },
-    avvisi_config: { ruoli_pubblicazione: [...RUOLI_PUBBLICAZIONE_DEFAULT] },
+    // Si DIFFONDE il default invece di ribattere a mano le sue chiavi: ribattere
+    // creava un terzo posto in cui la configurazione di una sede nuova è scritta
+    // (la RPC SQL, la costante qui sopra, e questa riga), e un terzo posto è un
+    // posto che un giorno resta indietro senza che niente diventi rosso. È
+    // esattamente la storia raccontata dal commento di `DEFAULT_AVVISI_CONFIG`:
+    // il default degli avvisi viveva in quattro posti che non coincidevano, e la
+    // segreteria di due sedi su tre non poteva pubblicare un avviso.
+    // L'array si ricopia a parte perché lo spread è superficiale, e la riga va in
+    // una INSERT: nessuno deve poter mutare il default globale passando di qui.
+    avvisi_config: {
+      ...DEFAULT_AVVISI_CONFIG,
+      ruoli_pubblicazione: [...DEFAULT_AVVISI_CONFIG.ruoli_pubblicazione],
+    },
   }
 }

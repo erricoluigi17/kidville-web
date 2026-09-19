@@ -305,6 +305,8 @@
   "avAllegatiMax": "Allegati: dimensione max (MB)",
   "avScadenzaDefault": "Scadenza default (giorni)",
   "avConfermaLettura": "Presa visione richiesta ai genitori",
+  "avPromemoriaAdesioni": "Promemoria adesioni: giorni prima",
+  "avPromemoriaAdesioniAiuto": "Quanti giorni prima della scadenza per aderire inviare un promemoria alle famiglie che non hanno ancora risposto. Con 0 il promemoria è disattivato.",
   "avHint": "I ruoli di pubblicazione sono applicati automaticamente al momento della creazione dell’avviso.",
 
   "chTitolo": "Chat",

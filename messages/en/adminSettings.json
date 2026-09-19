@@ -305,6 +305,8 @@
   "avAllegatiMax": "Attachments: max size (MB)",
   "avScadenzaDefault": "Default expiry (days)",
   "avConfermaLettura": "Acknowledgement required from parents",
+  "avPromemoriaAdesioni": "Sign-up reminder: days before",
+  "avPromemoriaAdesioniAiuto": "How many days before the sign-up deadline to send a reminder to families who haven’t answered yet. With 0 the reminder is switched off.",
   "avHint": "Publishing roles are applied automatically when the notice is created.",
 
   "chTitolo": "Chat",

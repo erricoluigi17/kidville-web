@@ -3,20 +3,23 @@
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useTranslations } from 'next-intl';
 import { AvvisoCard, Avviso } from '@/components/features/avvisi/AvvisoCard';
+import { AdesioneNumeroModal, type ModoAdesione } from '@/components/features/avvisi/AdesioneNumeroModal';
 import { PageHeaderCard } from '@/components/ui/PageHeaderCard';
 import { OfflineBadge } from '@/components/ui/OfflineBadge';
 import { useParentIdentity } from '@/lib/auth/use-parent-identity';
 import { fetchConCache } from '@/lib/offline/read-cache';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 
-// m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce (nome + student_id),
-// così il feed unificato può mostrare a chi si riferisce ogni comunicazione senza
-// duplicare l'avviso. Il campo è aggiunto server-side dal ramo genitore.
-interface FiglioRiferito {
-    student_id: string;
-    nome: string;
-}
-type AvvisoConFigli = Avviso & { figli?: FiglioRiferito[] };
+// m3: ogni avviso porta l'elenco dei FIGLI cui si riferisce — nome, `student_id`
+// e, dal 2026-09-19, lo STATO DELLA RIGA di ciascuno — così il feed unificato può
+// mostrare a chi si riferisce ogni comunicazione senza duplicare l'avviso. Il
+// campo è aggiunto server-side dal ramo genitore.
+//
+// ⚠️ La forma sta in UN posto solo (`FiglioAvviso`, accanto ad `Avviso`), e non
+// più anche qui: due definizioni della stessa riga sono il modo in cui una delle
+// due resta indietro — è così che i numeri per figlio sarebbero arrivati alla
+// modale senza che il tipo di questa pagina li conoscesse.
+type AvvisoConFigli = Avviso;
 
 // Identità dalla sessione (URL → localStorage → /api/me), senza fallback demo (M4).
 function ParentAvvisiContent() {
@@ -89,11 +92,52 @@ function ParentAvvisiContent() {
         }
     };
 
-    const handleAdesione = async (avvisoId: string, risposta: 'si' | 'no') => {
-        const ids = figliDiAvviso(avvisoId);
+    // ── LA MODALE È UNA SOLA, E VIVE QUI ────────────────────────────────────
+    //
+    // Non dentro `AvvisoCard`. ⚠️ La ragione scritta qui era falsa — «la stessa
+    // comunicazione è renderizzata nella lista E nell'anteprima in home»: la home
+    // monta `AvvisiPreview`, non questa card. La conclusione però regge, e la
+    // ragione vera è la lista stessa: una card per avviso, quindi una modale per
+    // card sono N dialoghi nel DOM, N focus-trap in ascolto sullo stesso
+    // `document`, e alla chiusura un fuoco da ripristinare su un elemento che nel
+    // frattempo è scorso via. Lo stato è la coppia «su quale avviso» + «cosa si
+    // sta facendo».
+    const [modale, setModale] = useState<{ avviso: AvvisoConFigli; modo: ModoAdesione } | null>(null);
+
+    const chiudiModale = useCallback(() => {
+        setModale(null);
+        // Si ricarica SEMPRE, anche dopo un annullamento: fra l'apertura e la
+        // chiusura può essere stata scritta una riga (conferma andata a buon fine
+        // per un figlio e respinta per l'altro), e una bacheca ferma mostrerebbe
+        // alla famiglia uno stato che non è più il suo.
+        void loadAvvisi();
+    }, [loadAvvisi]);
+
+    /**
+     * ─── IL GESTO DEL GENITORE, NON LA SCRITTURA ─────────────────────────────
+     *
+     * Qui prima c'era `handleAdesione(avvisoId, risposta)`, che rispondeva IN
+     * BLOCCO per tutti i figli con la stessa risposta: una famiglia con due bambini
+     * di cui uno solo va in gita non aveva alcun modo di dirlo.
+     *
+     * 🔴 «Aderisco» NON scrive quando l'avviso chiede quante persone: apre la
+     * modale, e la riga nasce alla conferma — una volta sola. Senza il numero
+     * l'adesione non vale, e registrarla comunque significherebbe contarla come UNA
+     * persona per convenzione contro il tetto dei posti.
+     *
+     * Il flusso a UN TOCCO resta per gli avvisi senza contatore: lì non c'è niente
+     * da chiedere, e una modale che domanda una cosa sola già decisa sarebbe un
+     * passo in più su ogni circolare della scuola.
+     */
+    const handleAdesione = async (avviso: AvvisoConFigli, risposta: 'si' | 'no') => {
+        if (risposta === 'si' && avviso.chiedi_numero === true) {
+            setModale({ avviso, modo: 'nuova' });
+            return;
+        }
+        const ids = figliDiAvviso(avviso.id);
         if (ids.length === 0) return;
         try {
-            await Promise.all(ids.map((sid) => postRisposta(avvisoId, sid, risposta)));
+            await Promise.all(ids.map((sid) => postRisposta(avviso.id, sid, risposta)));
             await loadAvvisi();
         } catch (err) {
             logClient({
@@ -169,12 +213,30 @@ function ParentAvvisiContent() {
                                 )}
                                 <AvvisoCard avviso={avviso} index={idx}
                                     onReadReceipt={handleReadReceipt}
-                                    onAdesione={handleAdesione} />
+                                    onAdesione={handleAdesione}
+                                    onModificaNumero={(a) => setModale({ avviso: a as AvvisoConFigli, modo: 'modifica' })} />
                             </div>
                         );
                     })}
                 </div>
             )}
+
+            {/* Una sola modale per tutta la pagina — vedi il riquadro su `modale`. */}
+            <AdesioneNumeroModal
+                open={modale !== null}
+                avviso={modale?.avviso ?? null}
+                // I figli cui l'avviso si riferisce. Il ripiego sul figlio attivo è
+                // lo stesso di `figliDiAvviso`: senza, un feed che non portasse i
+                // nomi aprirebbe una modale senza nessuna riga da compilare.
+                figli={
+                    (modale?.avviso.figli ?? []).length > 0
+                        ? (modale?.avviso.figli ?? [])
+                        : (studentId ? [{ student_id: studentId, nome: t('figlioFallback') }] : [])
+                }
+                modo={modale?.modo ?? 'nuova'}
+                parentId={parentId}
+                onChiudi={chiudiModale}
+            />
 
             {/* Footer */}
             <div className="mt-8 p-4 bg-white rounded-2xl border border-kidville-line text-center">

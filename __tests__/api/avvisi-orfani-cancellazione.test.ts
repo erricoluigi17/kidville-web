@@ -89,6 +89,9 @@ vi.mock('@/lib/logging/logger', async (orig) => ({
 // `@/lib/allegati/storage` NON è mockato: la decodifica dell'allegato (JSON
 // `{file,link}`, URL storico, stringa nuda) è esattamente la parte che qui deve
 // funzionare davvero. Un mock la sostituirebbe con la propria idea di percorso.
+/** Scadenza RELATIVA, mai una data scritta a mano (test scaduto col calendario). */
+const SCADENZA_ISO = new Date(Date.now() + 30 * 86_400_000).toISOString()
+
 vi.mock('@/lib/supabase/server-client', () => ({
     createAdminClient: async () => ({
         from(tabella: string) {
@@ -106,6 +109,21 @@ vi.mock('@/lib/supabase/server-client', () => ({
                 }
                 if (q.tipo === 'update') return { data: { id: AVVISO_ID, ...(q.valori ?? {}) }, error: null }
                 if (tabella === 'avvisi' && q.sel === 'scuola_id') return { data: { scuola_id: SEDE_MIA }, error: null }
+                // La PRE-LETTURA del PUT (dal 2026-09-19 porta anche `tipo` e le due
+                // scadenze): senza una riga vera il PUT valuterebbe lo stato
+                // risultante su un `null` e risponderebbe 400 invece di 200, e questi
+                // test parlerebbero dell'allegato senza arrivare mai all'allegato.
+                if (tabella === 'avvisi' && q.sel.startsWith('scuola_id, target_scope')) {
+                    return {
+                        data: {
+                            scuola_id: SEDE_MIA, target_scope: 'globale', target_classes: null,
+                            tipo: 'presa_visione', scadenza: null,
+                            scadenza_avviso: SCADENZA_ISO, scadenza_adesione: null,
+                            posti_totali: null, chiedi_numero: false,
+                        },
+                        error: null,
+                    }
+                }
                 if (tabella === 'avvisi' && q.sel === 'attachment_url') {
                     return h.erroreLetturaAllegato
                         ? { data: null, error: h.erroreLetturaAllegato }

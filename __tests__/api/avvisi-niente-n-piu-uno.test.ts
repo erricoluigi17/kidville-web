@@ -56,9 +56,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(tabella: string) {
       h.query[tabella] = (h.query[tabella] ?? 0) + 1
-      const st = { ids: [] as string[], parent: null as string | null }
+      const st = { ids: [] as string[], parent: null as string | null, gte: null as [string, unknown] | null }
       const dati = () => {
-        if (tabella === 'avvisi') return h.avvisi
+        if (tabella === 'avvisi') {
+          // `.gte` si applica DAVVERO: un finto client che lo accettasse
+          // ignorandolo renderebbe verde questo test con e senza il filtro che
+          // toglie gli scaduti dal feed.
+          const g = st.gte
+          if (!g) return h.avvisi
+          return h.avvisi.filter((a) => {
+            const v = a[g[0]]
+            return typeof v === 'string' && v >= String(g[1])
+          })
+        }
         if (tabella === 'alunni') return h.alunni
         if (tabella === 'utenti') return h.utenti.filter((u) => st.ids.includes(u.id as string))
         if (tabella === 'avvisi_risposte') {
@@ -74,6 +84,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.eq = (_c: string, v: unknown) => { st.parent = v as string; return b }
       b.in = (_c: string, v: string[]) => { st.ids = v; return b }
       b.not = () => b
+      b.gte = (c: string, v: unknown) => { st.gte = [c, v]; return b }
       b.limit = () => b
       b.range = async (da: number, a: number) => {
         const tutte = dati()
@@ -88,6 +99,14 @@ vi.mock('@/lib/supabase/server-client', () => ({
 
 import { GET } from '@/app/api/avvisi/route'
 
+/**
+ * Scadenza RELATIVA: questo test conta le QUERY, e un avviso scaduto uscirebbe dal
+ * feed del genitore facendo sparire proprio le righe da contare. Mai una data
+ * scritta a mano — la correzione di un test scaduto col calendario non è congelare
+ * l'orologio, è togliere la data.
+ */
+const SCADENZA_ISO = new Date(Date.now() + 30 * 86_400_000).toISOString()
+
 const req = () => ({
   url: 'http://test/api/avvisi',
   method: 'GET',
@@ -101,7 +120,14 @@ function preparaAvvisi(n: number) {
   h.avvisi = Array.from({ length: n }, (_, i) => ({
     id: `av-${i}`, author_id: `aut-${i}`, titolo: `T${i}`, contenuto: 'c',
     tipo: 'presa_visione', target_scope: 'globale', target_classes: null,
-    scadenza: null, attachment_url: null, created_at: '2026-08-01',
+    scadenza: null, scadenza_avviso: SCADENZA_ISO, scadenza_adesione: null,
+    attachment_url: null, created_at: '2026-08-01',
+    // 🔴 `scuola_id` NON È DECORAZIONE, dal 2026-09-19: il ramo globale del feed
+    // offre i figli DI QUELLA SEDE (prima li offriva tutti, e la bacheca proponeva
+    // un bottone che `POST …/risposte` rifiuta con 403). Un avviso senza sede in
+    // fixture è un avviso che in produzione non arriverebbe mai qui — la query lo
+    // scarta con `.in('scuola_id', scuoleFigli)` — e lascerebbe `figli` vuoto.
+    scuola_id: 'sc-1',
   }))
   h.utenti = Array.from({ length: n }, (_, i) => ({
     id: `aut-${i}`, first_name: `Nome${i}`, last_name: `Cognome${i}`, role: 'educator',
@@ -160,9 +186,9 @@ describe('GET /api/avvisi — ramo staff: le query non crescono con gli avvisi',
     const a0 = j.find((a) => a.id === 'av-0')!
     const a1 = j.find((a) => a.id === 'av-1')!
     const a2 = j.find((a) => a.id === 'av-2')!
-    expect(a0.stats).toEqual({ letti: 3, adesioni_si: 2, adesioni_no: 1 })
-    expect(a1.stats).toEqual({ letti: 0, adesioni_si: 0, adesioni_no: 1 })
-    expect(a2.stats).toEqual({ letti: 0, adesioni_si: 0, adesioni_no: 0 })
+    expect(a0.stats).toMatchObject({ letti: 3, adesioni_si: 2, adesioni_no: 1 })
+    expect(a1.stats).toMatchObject({ letti: 0, adesioni_si: 0, adesioni_no: 1 })
+    expect(a2.stats).toMatchObject({ letti: 0, adesioni_si: 0, adesioni_no: 0 })
     // L'autore giusto sul proprio avviso: la lettura in blocco deve riassociare,
     // non distribuire il primo a tutti.
     expect(a0.author).toEqual({ first_name: 'Nome0', last_name: 'Cognome0', role: 'educator' })

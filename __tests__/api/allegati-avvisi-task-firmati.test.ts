@@ -20,6 +20,15 @@ const AVVISO_ID = 'cccccccc-0000-4000-8000-000000000003'
 const TASK_ID = 'dddddddd-0000-4000-8000-000000000004'
 const PROGETTO = 'https://abcdefgh.supabase.co'
 
+/**
+ * Scadenza RELATIVA, mai scritta a mano: dal 2026-09-19 `scadenza_avviso` è
+ * obbligatoria sul POST, e una riga senza di lei non è più rappresentabile (la
+ * colonna è `NOT NULL`). Qui non si sta provando il calendario, si stanno provando
+ * gli allegati: la data non deve poter rendere rosso questo file.
+ */
+const SCADENZA_ISO = new Date(Date.now() + 30 * 86_400_000).toISOString()
+const SCADENZA_LOCALE = SCADENZA_ISO.slice(0, 16)
+
 const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   requireDocente: vi.fn(),
@@ -137,6 +146,10 @@ const adminClient = {
     b.order = () => b
     b.eq = (c: string, v: unknown) => { st.filters[c] = v; return b }
     b.in = () => b
+    // Il feed del genitore filtra gli scaduti con `.gte('scadenza_avviso', adesso)`
+    // dal 2026-09-19: senza questo metodo la catena esplode, e il filtro vero lo
+    // prova `avvisi-feed-scadenza-istante.test.ts`.
+    b.gte = () => b
     b.not = (c: string) => { st.notNull = c; return b }
     // ── `.is()`: IL CESTINO DELLA GALLERIA PASSA DA QUI (2026-09-12) ──────────
     // Dal 2026-09-11 ogni lettura di `galleria_media_v2` dichiara il proprio verso
@@ -333,6 +346,7 @@ describe('GET /api/avvisi — l\'allegato esce FIRMATO', () => {
   const avvisoConAllegato = (attachment_url: string) => ({
     id: AVVISO_ID, author_id: 'aut1', titolo: 'Gita', contenuto: 'x', tipo: 'presa_visione',
     target_scope: 'globale', target_classes: null, scadenza: null, attachment_url,
+    scadenza_avviso: SCADENZA_ISO, scadenza_adesione: null,
     created_at: '2026-07-31', scuola_id: SEDE,
   })
 
@@ -394,7 +408,7 @@ describe('GET /api/avvisi/[id] — anche il dettaglio firma', () => {
 describe('Scrittura avvisi — in tabella il PERCORSO, non un indirizzo che scade', () => {
   it('POST: un URL firmato rimandato dal client viene normalizzato a percorso', async () => {
     const res = await AVVISI_POST(bodyReq('/api/avvisi', {
-      titolo: 'T', contenuto: 'C', target_scope: 'globale',
+      titolo: 'T', contenuto: 'C', target_scope: 'globale', scadenza_avviso: SCADENZA_LOCALE,
       attachment_url: JSON.stringify({
         file: `${PROGETTO}/storage/v1/object/sign/avvisi_allegati/modulo.pdf?token=SCADUTO`,
         link: 'https://comune.example/bando',
@@ -408,7 +422,7 @@ describe('Scrittura avvisi — in tabella il PERCORSO, non un indirizzo che scad
   })
 
   it('PUT: idem sull\'aggiornamento', async () => {
-    h.avvisi = [{ id: AVVISO_ID, scuola_id: SEDE, author_id: 'aut1' }]
+    h.avvisi = [{ id: AVVISO_ID, scuola_id: SEDE, author_id: 'aut1', tipo: 'presa_visione', scadenza_avviso: SCADENZA_ISO, scadenza_adesione: null }]
     const res = await AVVISO_PUT(
       bodyReq(`/api/avvisi/${AVVISO_ID}`, {
         titolo: 'T', contenuto: 'C',

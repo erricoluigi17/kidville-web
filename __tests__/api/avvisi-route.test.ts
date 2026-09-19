@@ -11,6 +11,17 @@ import { NextResponse } from 'next/server'
 
 const PARENT_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
 
+/**
+ * Scadenze RELATIVE, mai una data scritta a mano: dal 2026-09-19 il POST rifiuta
+ * una scadenza già passata, quindi una costante `'2026-12-31'` renderebbe questi
+ * test rossi il 1° gennaio per un motivo che non c'entra niente con ciò che
+ * provano. È la lezione del test scaduto col calendario — e la correzione giusta
+ * non è congelare l'orologio, è rendere il test indipendente dalla data.
+ */
+const FRA_TRENTA_GIORNI = new Date(Date.now() + 30 * 86_400_000).toISOString()
+/** La stessa, nella forma LOCALE `YYYY-MM-DDTHH:MM` che il corpo deve mandare. */
+const SCADENZA_LOCALE = FRA_TRENTA_GIORNI.slice(0, 16)
+
 const h = vi.hoisted(() => ({
   requireUser: vi.fn(),
   requireDocente: vi.fn(),
@@ -59,11 +70,24 @@ vi.mock('@/lib/audit/scrittura', () => ({ logScrittura: (...a: unknown[]) => h.l
 vi.mock('@/lib/supabase/server-client', () => ({
   createAdminClient: async () => ({
     from(table: string) {
-      const st: { count: boolean; notNull: string | null; filters: Record<string, unknown>; inserted: Record<string, unknown> | null } =
-        { count: false, notNull: null, filters: {}, inserted: null }
+      const st: { count: boolean; notNull: string | null; filters: Record<string, unknown>; inserted: Record<string, unknown> | null; gte: [string, unknown] | null } =
+        { count: false, notNull: null, filters: {}, inserted: null, gte: null }
       const result = () => {
         if (table === 'alunni') return { data: h.alunni, error: null }
-        if (table === 'avvisi') return { data: h.avvisi, error: null }
+        if (table === 'avvisi') {
+          // `.gte` si APPLICA DAVVERO: dal 2026-09-19 il feed del genitore toglie
+          // gli avvisi scaduti con `.gte('scadenza_avviso', adesso)`, e un finto
+          // client che accettasse il filtro ignorandolo renderebbe verde il test
+          // con e senza quel filtro — la prima delle cinque forme di verde falso.
+          const g = st.gte
+          const righe = g
+            ? h.avvisi.filter((a) => {
+                const v = a[g[0]]
+                return typeof v === 'string' && v >= String(g[1])
+              })
+            : h.avvisi
+          return { data: righe, error: null }
+        }
         if (table === 'sections') return { data: h.sezioni, error: null }
         if (table === 'utenti') return { data: [h.author], error: null }
         if (table === 'avvisi_risposte') {
@@ -82,6 +106,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.eq = (c: string, v: unknown) => { st.filters[c] = v; return b }
       b.in = () => b
+      b.gte = (c: string, v: unknown) => { st.gte = [c, v]; return b }
       b.not = (c: string) => { st.notNull = c; return b }
       b.limit = () => b
       // Le statistiche degli avvisi si leggono in BLOCCO e paginate (T11-F2):
@@ -128,10 +153,17 @@ beforeEach(() => {
     { id: 's1', nome: 'Bruna', classe_sezione: '1A', scuola_id: 'sc-1' },
     { id: 's2', nome: 'Bruno', classe_sezione: '1B', scuola_id: 'sc-1' },
   ]
+  // 🔴 `scuola_id` SU OGNI AVVISO, dal 2026-09-19: il ramo globale del feed offre
+  // i figli DI QUELLA SEDE (prima li offriva tutti, e la bacheca proponeva un
+  // bottone che `POST …/risposte` rifiuta con 403 `ADESIONE_ALUNNO_FUORI_AVVISO`).
+  // Un avviso senza sede in fixture è un avviso che in produzione non arriverebbe
+  // mai fin qui — `.in('scuola_id', scuoleFigli)` lo scarta — e lascerebbe `figli`
+  // vuoto per una ragione che non c'entra con ciò che questi test provano.
+  // L'isolamento vero fra plessi ha il suo file: `avvisi-cerchio-bacheca-adesione`.
   h.avvisi = [
-    { id: 'av-glob', author_id: 'aut1', titolo: 'Chiusura', contenuto: 'x', tipo: 'presa_visione', target_scope: 'globale', target_classes: null, scadenza: null, attachment_url: null, created_at: '2026-07-03' },
-    { id: 'av-1a', author_id: 'aut1', titolo: 'Gita 1A', contenuto: 'y', tipo: 'adesione', target_scope: 'classe', target_classes: ['1A'], scadenza: null, attachment_url: null, created_at: '2026-07-02' },
-    { id: 'av-3c', author_id: 'aut1', titolo: 'Altra classe', contenuto: 'z', tipo: 'presa_visione', target_scope: 'classe', target_classes: ['3C'], scadenza: null, attachment_url: null, created_at: '2026-07-01' },
+    { id: 'av-glob', author_id: 'aut1', titolo: 'Chiusura', contenuto: 'x', tipo: 'presa_visione', target_scope: 'globale', target_classes: null, scadenza: null, scadenza_avviso: FRA_TRENTA_GIORNI, scadenza_adesione: null, attachment_url: null, created_at: '2026-07-03', scuola_id: 'sc-1' },
+    { id: 'av-1a', author_id: 'aut1', titolo: 'Gita 1A', contenuto: 'y', tipo: 'adesione', target_scope: 'classe', target_classes: ['1A'], scadenza: null, scadenza_avviso: FRA_TRENTA_GIORNI, scadenza_adesione: FRA_TRENTA_GIORNI, attachment_url: null, created_at: '2026-07-02', scuola_id: 'sc-1' },
+    { id: 'av-3c', author_id: 'aut1', titolo: 'Altra classe', contenuto: 'z', tipo: 'presa_visione', target_scope: 'classe', target_classes: ['3C'], scadenza: null, scadenza_avviso: FRA_TRENTA_GIORNI, scadenza_adesione: null, attachment_url: null, created_at: '2026-07-01', scuola_id: 'sc-1' },
   ]
   h.sezioni = [{ name: '1A' }, { name: '1B' }]
   h.requireUser.mockResolvedValue({ user: { id: PARENT_ID, role: 'genitore', scuola_id: 'sc-1' } })
@@ -166,13 +198,43 @@ describe('GET /api/avvisi — ramo genitore (G3 + m3)', () => {
     expect(h.getFigliDiGenitore).toHaveBeenCalledWith(expect.anything(), PARENT_ID)
   })
 
-  it('m3: ogni avviso porta i figli cui si riferisce (globale=tutti, classe=in classe)', async () => {
+  it('m3: ogni avviso porta i figli cui si riferisce, con lo STATO della riga di ciascuno', async () => {
+    // ── PERCHÉ I DUE CAMPI PER FIGLIO NON SONO DECORAZIONE ─────────────────
+    //
+    // L'aggregato `my_response` è `null` quando i figli non concordano — ed è
+    // giusto che lo sia: quella famiglia non HA uno stato. Ma `null`, a valle,
+    // vale AMMESSO (le 869 righe storiche hanno lo stato nullo e quelle famiglie
+    // sono dentro davvero), quindi senza il dato per figlio un genitore con un
+    // bambino in coda legge «Hai aderito ✓» e la modale «modifica» riparte dal
+    // minimo invece che dal numero di ciascuno — 2 e 4 che diventano 1 e 1.
+    //
+    // 🔴 E `stato_adesione`/`numero_partecipanti` NON sono una capienza: sono la
+    // PROPRIA riga. Da «Bruna è in coda» non si ricava nessun posto libero.
+    h.risposte = [
+      {
+        avviso_id: 'av-1a', student_id: 's1', parent_id: PARENT_ID,
+        letto_il: 'x', risposta: 'si', risposto_il: 'x',
+        stato_adesione: 'in_attesa', numero_partecipanti: 4,
+      },
+    ]
     const res = await GET(getReq())
-    const j = (await res.json()) as Array<{ id: string; figli: Array<{ student_id: string; nome: string }> }>
+    const j = (await res.json()) as Array<{ id: string; figli: Array<Record<string, unknown>> }>
     const glob = j.find((a) => a.id === 'av-glob')!
     const uno = j.find((a) => a.id === 'av-1a')!
     expect(glob.figli.map((f) => f.student_id).sort()).toEqual(['s1', 's2'])
-    expect(uno.figli).toEqual([{ student_id: 's1', nome: 'Bruna' }])
+    // `toEqual`, cioè uguaglianza ESATTA e non `toMatchObject`: è quello che
+    // impedisce a un campo di capienza di rientrare di nascosto nel payload del
+    // genitore, come `posti_totali` era già rientrato una volta. I due campi
+    // stanno nell'atteso con i VALORI VERI, così questa riga prova anche che il
+    // dato per figlio arriva davvero; un terzo campo, domani, fa ancora rosso.
+    expect(uno.figli).toEqual([
+      { student_id: 's1', nome: 'Bruna', stato_adesione: 'in_attesa', numero_partecipanti: 4 },
+    ])
+    // Il figlio che non ha risposto porta i due campi a `null`, non assenti:
+    // «non ha ancora risposto» è un fatto, e si legge come tale.
+    expect(glob.figli.find((f) => f.student_id === 's2')).toEqual({
+      student_id: 's2', nome: 'Bruno', stato_adesione: null, numero_partecipanti: null,
+    })
   })
 
   it('genitore senza figli → lista vuota', async () => {
@@ -197,25 +259,25 @@ describe('GET /api/avvisi — ramo staff', () => {
 
 describe('POST /api/avvisi — autore e target', () => {
   it('M7: usa l\'autore di SESSIONE e ignora author_id del body', async () => {
-    const res = await POST(postReq({ author_id: 'SPOOF-DOCENTE', titolo: 'T', contenuto: 'C', target_scope: 'globale' }))
+    const res = await POST(postReq({ author_id: 'SPOOF-DOCENTE', titolo: 'T', contenuto: 'C', target_scope: 'globale', scadenza_avviso: SCADENZA_LOCALE }))
     expect(res.status).toBe(201)
     expect(h.lastInsert?.author_id).toBe('seg-1')
     expect(h.lastInsert?.author_id).not.toBe('SPOOF-DOCENTE')
   })
 
   it('M8: target_scope=classe con classi vuote → 400', async () => {
-    const res = await POST(postReq({ titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: [] }))
+    const res = await POST(postReq({ titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: [], scadenza_avviso: SCADENZA_LOCALE }))
     expect(res.status).toBe(400)
     expect(h.lastInsert).toBeNull()
   })
 
   it('M8: target_scope=classe con classi solo whitespace → 400', async () => {
-    const res = await POST(postReq({ titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: ['', '  '] }))
+    const res = await POST(postReq({ titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: ['', '  '], scadenza_avviso: SCADENZA_LOCALE }))
     expect(res.status).toBe(400)
   })
 
   it('classe con classi valide → 201', async () => {
-    const res = await POST(postReq({ titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: ['1A'] }))
+    const res = await POST(postReq({ titolo: 'T', contenuto: 'C', target_scope: 'classe', target_classes: ['1A'], scadenza_avviso: SCADENZA_LOCALE }))
     expect(res.status).toBe(201)
     expect(h.lastInsert?.author_id).toBe('seg-1')
   })

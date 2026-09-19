@@ -16,8 +16,8 @@
     "`codice` accanto a `error`. Per i due dinieghi di sede esiste già `rifiutoSede()`",
     "(src/lib/auth/rifiuto-sede.ts): quella è la forma da copiare."
   ],
-  "aggiornato": "2026-09-11",
-  "totale_occorrenze": 1415,
+  "aggiornato": "2026-09-19",
+  "totale_occorrenze": 1413,
   "file": [
     {
       "path": "src/app/api/admin/adults/route.ts",
@@ -401,7 +401,7 @@
     },
     {
       "path": "src/app/api/avvisi/[id]/risposte/route.ts",
-      "n": 7
+      "n": 5
     },
     {
       "path": "src/app/api/avvisi/[id]/route.ts",

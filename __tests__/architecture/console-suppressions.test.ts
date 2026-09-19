@@ -100,7 +100,41 @@ function chiamateConsole(rel: string): string[] {
         .map(({ n, riga }) => `${rel}:${n} ${riga.trim()}`);
 }
 
+/**
+ * Quanti sorgenti lo scanner DEVE trovare perché le due prove qui sotto valgano
+ * qualcosa. Misurati il 2026-09-19: `find src -name '*.ts' -o -name '*.tsx'` → **1232**.
+ * Il pavimento è messo apposta molto sotto (mille): deve sopravvivere a una potatura
+ * normale — un'estrazione, una cartella che si sposta — e morire soltanto quando lo
+ * scanner non sta guardando.
+ */
+const SORGENTI_MINIME = 1_000;
+
 describe('lock — soppressioni ESLint', () => {
+    /**
+     * ─── L'ASSERZIONE DI AUTOINGANNO, E COME MANCAVA ────────────────────────
+     *
+     * Aggiunta il 2026-09-19 dopo averlo PROVATO, non sospettato: puntando `SRC` a
+     * una cartella vuota questo file restava **verde, 3 test su 3**. Le due prove
+     * sotto confrontano liste con `[]`, e `[] === []` è vero anche quando lo scanner
+     * non ha aperto un solo file. L'unica traccia era il tempo dei test — 136 ms
+     * diventati 2 — che nessuno legge.
+     *
+     * Non è un lock qualunque: è quello che tiene i `console.*` fuori da `src/`,
+     * cioè la REGOLA 1 del logging obbligatorio di AGENTS.md. Un `console.log` in
+     * `src/` salta `redact()`, e qui i dati sono di minori.
+     */
+    it('lo scanner ha davvero guardato src/ (senza questa, le due prove sotto sono decorazione)', () => {
+        const trovati = sorgenti();
+        expect(
+            trovati.length,
+            `Lo scanner ha trovato ${trovati.length} file .ts/.tsx sotto src/, meno di ` +
+                `${SORGENTI_MINIME}. O la cartella si è svuotata, o — molto più probabile — ` +
+                'questo lock ha smesso di guardare e le due prove qui sotto stanno confrontando ' +
+                'una lista vuota con una lista vuota. Prima di alzare o togliere questo numero: ' +
+                'un lock che non può fallire non è un lock.',
+        ).toBeGreaterThan(SORGENTI_MINIME);
+    });
+
     it('il file di soppressioni non esiste più (e non deve tornare)', () => {
         expect(
             fs.existsSync(SOPPRESSIONI),

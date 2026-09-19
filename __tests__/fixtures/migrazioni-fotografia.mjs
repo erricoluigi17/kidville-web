@@ -27,9 +27,24 @@
  * 3. `node __tests__/fixtures/migrazioni-fotografia.mjs < risposta.json`
  * 4. `npx vitest run __tests__/architecture/migrazioni-complete.test.ts`
  *
- * VA RIGENERATA DOPO OGNI `apply_migration`. Finche' non lo fai il lock resta rosso:
- * e' voluto — e' l'unico momento in cui qualcuno guarda davvero se il repo e il
- * database raccontano la stessa storia.
+ * VA RIGENERATA DOPO OGNI `apply_migration`.
+ *
+ * 🔴 E QUI C'ERA UNA FRASE FALSA, corretta il 2026-09-19 dopo averla MESSA ALLA PROVA.
+ * Diceva: «finche' non lo fai il lock resta rosso: e' voluto». Non e' vero nel caso
+ * normale, ed e' stato misurato cosi':
+ *   · fotografia del 18/09 (178 migrazioni), migrazione `20260919132612` scritta il
+ *     19/09 e applicata il 19/09, fotografia NON rigenerata → lock **VERDE**, 11/11;
+ *   · stessa fotografia a 178 righe ma DATATA 19/09 → lock **ROSSO**, con il
+ *     messaggio giusto («portano un timestamp ANTERIORE all'istante dello scatto»).
+ * Il motivo e' `sogliaFotografia`: le migrazioni piu' RECENTI dello scatto sono
+ * esentate, e giustamente — una migrazione appena scritta e' legittimamente in
+ * attesa. Ma quella che scrivi e applichi oggi e' sempre piu' recente della
+ * fotografia di ieri, quindi resta esente **per sempre**, finche' nessuno rigenera.
+ *
+ * 🔑 Quindi, al contrario di come suonava: **rigenerare la fotografia e' cio' che ARMA
+ * il lock, non cio' che lo spegne.** Sposta avanti la soglia, e da quel momento ogni
+ * file rimasto indietro diventa visibile. Niente ti obbliga a farlo — la disciplina e'
+ * l'unica cosa che la fa rispettare, e per questo va scritta qui e non sottintesa.
  *
  * NON si connette da solo al database: `.env.local` punta alla PRODUZIONE e uno
  * script che si collega da se' e' uno script che prima o poi ci scrive. Qui entra

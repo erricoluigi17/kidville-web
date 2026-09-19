@@ -115,7 +115,41 @@ function righeColpevoli(rel: string, testo: string): string[] {
   return colpe
 }
 
+/**
+ * Quanti sorgenti lo scanner DEVE aver letto. Misurati il 2026-09-19:
+ * `find src -name '*.ts' -o -name '*.tsx'` → **1232**. Il pavimento sta molto sotto
+ * apposta: deve reggere una potatura normale e cadere solo su uno scanner rotto.
+ */
+const SORGENTI_MINIME = 1_000
+
 describe('LOCK · un motore solo per l\'orario delle presenze', () => {
+  /**
+   * ─── L'ASSERZIONE DI AUTOINGANNO ──────────────────────────────────────────
+   *
+   * Aggiunta il 2026-09-19 dopo averlo PROVATO: puntando `RADICE` a una cartella
+   * vuota questo file restava **verde, 3 test su 3**. Tutte le sue prove
+   * confrontano liste di colpevoli con `[]`, e una lista vuota combacia con `[]`
+   * tanto quando il repo è pulito quanto quando nessuno ha guardato. Le due cose
+   * sono indistinguibili dall'esterno, ed è esattamente la differenza fra un lock
+   * e un commento ottimista.
+   */
+  it('lo scanner ha davvero letto src/ (senza questa, le prove sotto sono decorazione)', () => {
+    expect(
+      FILE.length,
+      `Lo scanner ha caricato ${FILE.length} file .ts/.tsx da src/, meno di ${SORGENTI_MINIME}. ` +
+        'O la cartella si è svuotata, o questo lock ha smesso di guardare e sta confrontando ' +
+        'liste vuote con liste vuote.',
+    ).toBeGreaterThan(SORGENTI_MINIME)
+
+    // E il motore dev'essere fra quei file: se `orario.ts` si sposta, le prove che
+    // confrontano «chi tocca le colonne» con «chi è il motore» cambiano significato
+    // in silenzio, invece di fallire.
+    expect(
+      FILE.some((f) => f.rel === MOTORE),
+      `Il motore ${MOTORE} non è fra i file letti: o è stato spostato, o lo scanner non arriva lì.`,
+    ).toBe(true)
+  })
+
   it('nessun file di src/ ricava ore e minuti da un orario di presenza per conto suo', () => {
     const colpe = FILE.flatMap(({ rel, testo }) => righeColpevoli(rel, testo))
     expect(

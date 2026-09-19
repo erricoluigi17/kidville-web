@@ -103,6 +103,62 @@
 
 ---
 
+## Changelog — Il contesto che si paga a ogni turno: CLAUDE.md da 34.774 a 6.279 byte — 2026-09-18 (branch `docs/prd-video-in-produzione`)
+
+**Nessun cambiamento a codice, funzionalità o schema dati.** È un intervento sui file di contesto
+agentico, registrato qui perché la regola 2 di `AGENTS.md` non fa eccezioni.
+
+### Il problema, misurato
+
+Ogni sessione di lavoro su questo repo partiva con **~87.000 token già occupati** (mediana delle
+ultime 5 sessioni) prima di una riga di conversazione. Quel costo **non si paga una volta: si paga a
+ogni turno**, perché il contesto viene riletto a ogni scambio — sulle ultime 10 sessioni la mediana
+di consumo è **89 milioni di token**, quasi tutti `cache_read_input_tokens`. Di quei 87.000,
+**11.117 erano `CLAUDE.md` + `AGENTS.md`** e 4.951 l'indice della memoria.
+
+### Cosa è stato spostato, e cosa no
+
+Il criterio è uno: **resta sempre caricato ciò che va letto _prima_ di scrivere in produzione; si
+sposta ciò che serve _quando_ si mette mano a quella cosa specifica.** Non è stata cancellata
+una riga.
+
+| File | Prima | Dopo | |
+|---|---:|---:|---|
+| `CLAUDE.md` | 34.774 B | 6.279 B | −82% |
+| `AGENTS.md` | 9.693 B | 8.453 B | −13% |
+| `MEMORY.md` (indice memoria) | 19.804 B | 15.696 B | −21% |
+| descrizioni dei 13 agenti | 2.581 car. | 935 car. | −64% |
+
+- **Nuovo: `docs/storia-permessi-e-conferme.md`** — le 369 righe della cronistoria dei permessi
+  (31/07 → 18/09), copiate con `sed` e verificate identiche byte per byte. Comprese le parti che si
+  smentiscono a vicenda: le contraddizioni fra un riquadro e il successivo *sono* il contenuto.
+- **Restano in `CLAUDE.md`, sempre caricati**: che in produzione ci sono dati reali di minori, la
+  tabella dei conteggi con le date, la query che li conta, lo stato dei permessi di oggi e le regole
+  del kit di collaudo.
+- **Restano in `AGENTS.md`, parola per parola**: lingua, workflow branch/PRD/deploy, **tutti e 9 i
+  punti del logging obbligatorio**, gate di verifica, note su `utenti.role` e le tre sedi.
+- **`MEMORY.md`**: «Lavoro aperto» e «Trappole che costano ore» copiate verbatim (verificate
+  identiche); compresse solo le code di link a memorie già chiuse. I 190 file di memoria non sono
+  stati toccati.
+
+### Il difetto trovato per strada
+
+L'indice della memoria viene **troncato a 200 righe o 25.000 byte**, quello che arriva prima, e **le
+voci in fondo spariscono senza alcun avviso** (costanti `qD=200` / `aU=25000`, lette nel binario
+della CLI 2.1.259, non dedotte dalla documentazione). `MEMORY.md` era a 19.804 byte: **al 79% del
+tetto**. Adesso è a 15.696, e l'avvertenza è scritta in testa al file stesso, dove la vede chi
+aggiunge una voce. È la stessa classe di guasto del blocco `autoMode` finito nel file sbagliato:
+ignorato in silenzio per sedici giorni.
+
+### Risultato
+
+Contesto iniziale stimato **~87.000 → ~78.000 token (−10%)**, che sulla sessione mediana valgono
+~9 milioni di token di rilettura in meno. Resta fuori, per scelta del titolare, il pezzo più grosso
+ancora sul tavolo: **9 connettori MCP espongono 470 strumenti e sono stati chiamati 6 volte in 30
+giorni** (~6.200 token a sessione, un altro −7%), disattivabili da `/mcp`.
+
+---
+
 ## Changelog — Video HEVC e Full HD: IN PRODUZIONE, e il primo video vero ha trovato in mezz'ora ciò che 18.000 test non vedevano — 2026-09-18
 
 **Rilasciato.** Migrazioni applicate, PR [#149](https://github.com/erricoluigi17/kidville-web/pull/149)

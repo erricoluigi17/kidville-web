@@ -1,6 +1,6 @@
 ---
 name: scrittore-di-piani
-description: Scrive il piano di implementazione della pipeline /ship-cycle (step ordinati, criteri di accettazione verificabili, cosa NON toccare) e rielabora i report dei tester-opus in un nuovo piano di correzione. Non scrive codice: scrive piani.
+description: Scrive i piani di implementazione e di correzione di /ship-cycle. Non scrive codice.
 model: claude-fable-5
 effort: high
 color: blue

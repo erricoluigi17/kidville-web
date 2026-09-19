@@ -2216,7 +2216,7 @@ const PREDICATI_CRASH_INVALIDI = [
 
 /** I file che dicono ai tester mobile come catturare i crash. */
 const ISTRUZIONI_CATTURA_CRASH = [
-  '.claude/agents/tester-opus-mobile-ios.md',
+  '.claude/agenti-ship-cycle/tester-opus-mobile-ios.md', // spostato dal 2026-09-19: fuori dall'elenco agenti, vedi il README lì
   '.codex/agents/tester-opus-mobile-ios.toml',
   'docs/collaudo/prompt/tester-15-ios.md',
 ];

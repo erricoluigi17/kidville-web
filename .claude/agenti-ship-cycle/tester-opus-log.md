@@ -1,6 +1,6 @@
 ---
 name: tester-opus-log
-description: Collauda i log applicativi di Kidville — withRoute su ogni route, corpo degli errori esterni, catch muti, successi loggati, warning che i test formali non colgono. Un solo test, un solo report. Non modifica codice.
+description: Collaudo log applicativi: withRoute, corpo degli errori esterni, catch muti.
 model: claude-opus-5
 effort: max
 color: orange

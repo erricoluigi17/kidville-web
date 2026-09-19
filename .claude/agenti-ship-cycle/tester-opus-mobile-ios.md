@@ -1,6 +1,6 @@
 ---
 name: tester-opus-mobile-ios
-description: Collauda l'app nativa iOS (Capacitor) di Kidville con un percorso utente reale via Maestro sul simulatore — login, dashboard, presenze, comunicazioni. Un solo test, un solo report. Non modifica codice.
+description: Collaudo app nativa iOS via Maestro sul simulatore.
 model: claude-opus-5
 effort: max
 color: cyan

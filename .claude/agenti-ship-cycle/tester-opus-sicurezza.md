@@ -1,6 +1,6 @@
 ---
 name: tester-opus-sicurezza
-description: Collauda la sicurezza di Kidville — RLS e permessi Supabase, bypass di autenticazione, escalation di ruolo, injection, IDOR, esposizione di segreti. Un solo test, un solo report. Non modifica codice.
+description: Collaudo sicurezza: RLS, permessi Supabase, injection, bypass auth, IDOR.
 model: claude-opus-5
 effort: max
 color: red

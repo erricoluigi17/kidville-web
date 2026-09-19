@@ -1,6 +1,6 @@
 ---
 name: tester-opus-debug
-description: Caccia la CAUSA RADICE dei difetti di Kidville, non il sintomo — riproduce, isola, bisectiona, formula e falsifica ipotesi. Un solo test, un solo report. Non modifica codice.
+description: Collaudo: caccia la causa radice, non il sintomo. Riproduce e falsifica ipotesi.
 model: claude-opus-5
 effort: max
 color: red

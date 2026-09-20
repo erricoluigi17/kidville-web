@@ -61,6 +61,37 @@ vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
   },
 }));
 
+/**
+ * IL PANNELLO «COMPONI IL PAGAMENTO» — lo stub REGISTRA LE PROPS.
+ *
+ * ⚠️ UNO STUB CHE RENDESSE UN SEGNAPOSTO SAREBBE VERDE CON E SENZA LA
+ * CORREZIONE: il difetto che le prove in fondo a questo file intercettano è *una
+ * prop non passata* (`alunniIniziali`), e `<ComposizioneBonifico movimentoId … />`
+ * e `<ComposizioneBonifico … alunniIniziali={[…]} />` producono lo stesso `<div>`.
+ * È la stessa ragione per cui lo stub di `FatturaButton`, qui sopra, le registra.
+ *
+ * Il mock non tocca nessuna prova esistente: il pannello si monta solo su
+ * richiesta, e nessuna di quelle qui sotto lo apre.
+ *
+ * Lo stub porta anche la VIA D'USCITA del pannello — il «Chiudi» che dentro il
+ * pannello vero chiama `onChiudi`. Senza un modo di premerla dal test, «che cosa
+ * resta puntato quando si torna indietro» non si potrebbe misurare: è un difetto
+ * che si vede solo RIAPRENDO.
+ */
+const spiaComponi = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
+vi.mock('@/components/features/admin/pagamenti/ComposizioneBonifico', () => ({
+  ComposizioneBonifico: (props: Record<string, unknown>) => {
+    spiaComponi.props.push(props);
+    return (
+      <div data-testid="pannello-componi">
+        <button type="button" onClick={() => (props.onChiudi as (() => void) | undefined)?.()}>
+          FINTO torna indietro
+        </button>
+      </div>
+    );
+  },
+}));
+
 // Etichette dei pagamenti aperti volutamente DISTINTE da quelle dei suggerimenti,
 // così un'asserzione sulla ricerca manuale non pesca anche la lista suggerimenti.
 const aperti: PagamentoApertoUi[] = [
@@ -1357,5 +1388,413 @@ describe('MovimentoDialog — «questo bonifico sembra di un’altra sede»', ()
       expect(token(b)).toContain('bg-kidville-green');
       expect(token(b)).not.toContain('border-kidville-green');
     }
+  });
+});
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * UNA CASELLA SOLA, DUE GRUPPI — e la strada che sul rosso non esisteva.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Il filtro sulle VOCI APERTE è locale e istantaneo, ed è il 90% del lavoro: non
+ * deve rallentare perché accanto è comparso un secondo gruppo. Il gruppo
+ * «Bambini» passa dalla rotta, con soglia e debounce, e serve al caso che nel
+ * primo non può comparire mai — il bambino che una voce aperta non ce l'ha.
+ *
+ * ⚠️ LE TRE COSE CHE UNA RICERCA NON PUÒ TACERE, e che qui sono asserite una per
+ * una: la SOGLIA (sotto i due caratteri non parte niente, e si dice perché), il
+ * TRONCAMENTO (un elenco tagliato che tace fa concludere «quel bambino non c'è»)
+ * e il GUASTO (che non è un elenco vuoto: «non l'ho trovato» e «non ho potuto
+ * guardare» hanno rimedi opposti).
+ */
+describe('MovimentoDialog — la ricerca dei bambini nel popup', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; spiaComponi.props.length = 0; });
+
+  const ALUNNO = 'a1b2c3d4-0000-4000-8000-000000000001';
+
+  /** Una risposta della rotta `…/riconciliazione/alunni`, nella sua forma vera. */
+  const rispostaAlunni = (over: Record<string, unknown> = {}) => ({
+    success: true,
+    data: [
+      {
+        alunno_id: ALUNNO,
+        nome: 'Primo Bambino',
+        classe_sezione: '1A',
+        scuola_id: 's1',
+        attivo: true,
+        voci_aperte: 0,
+        residuo_aperto: 0,
+        ha_pagante: true,
+        trovato_per_cf: false,
+      },
+    ],
+    troncato: false,
+    sedi: { s1: 'Sede di prova' },
+    ...over,
+  });
+
+  const reteConRicerca = (corpo: unknown, status = 200) => {
+    const chiamate: string[] = [];
+    const fn = vi.fn(async (url: string) => {
+      if (String(url).includes('/riconciliazione/alunni')) {
+        chiamate.push(String(url));
+        return { ok: status < 400, status, json: async () => corpo };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+    return { fn, chiamate };
+  };
+
+  const cerca = (valore: string) =>
+    fireEvent.change(screen.getByLabelText(/Cerca un pagamento aperto/), { target: { value: valore } });
+
+  it('sotto i due caratteri non chiama la rete, e la regione viva dice perché', async () => {
+    // Non è un'ottimizzazione: `%a%` su tre plessi è l'intero registro letto per
+    // una lettera battuta per sbaglio. Il silenzio, però, si spiega.
+    const { fn, chiamate } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('a');
+
+    await waitFor(() => expect(screen.getByTestId('movdlg-ricerca-stato')).toHaveTextContent(/almeno 2/));
+    // ⚠️ UN `data-testid` NON DISTINGUE UNA REGIONE VIVA DA UN PARAGRAFO QUALUNQUE:
+    // tolti gli attributi da quel `<p>` — lasciando tutto il resto — sessantasei
+    // prove restavano verdi mentre l'elenco cambiava in silenzio per chi non vede
+    // lo schermo. Qui si asserisce che quell'elemento È la regione viva.
+    //
+    // ⚠️ `aria-live` + `aria-atomic` E NON `role="status"`, che è quello che c'era
+    // fino al 2026-09-20: per un lettore di schermo sono la stessa cosa, ma lo
+    // `status` di questa superficie è UNO ed è la barra di quadratura del
+    // pannello, che con la composizione aperta sta a schermo INSIEME a questa
+    // casella. Quella coppia questo file non può vederla — qui
+    // `ComposizioneBonifico` è uno stub — e la prova che la guarda sta in
+    // `ComposizioneBonifico-dall-alunno.test.tsx`, che monta i due veri.
+    const vivo = screen.getByTestId('movdlg-ricerca-stato');
+    expect(vivo, 'la riga di stato è la regione viva').toHaveAttribute('aria-live', 'polite');
+    expect(vivo).toHaveAttribute('aria-atomic', 'true');
+    expect(screen.queryAllByRole('status'), 'col pannello chiuso non c’è nessuno `status`').toHaveLength(0);
+    expect(chiamate, 'nessuna richiesta sotto la soglia').toHaveLength(0);
+    // …e il filtro locale sulle voci aperte ha lavorato lo stesso, all'istante.
+    expect(screen.getByText('Voci aperte')).toBeInTheDocument();
+  });
+
+  it('da due caratteri in su cerca davvero, e mostra il bambino senza nessuna voce aperta', async () => {
+    const { fn, chiamate } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    await screen.findByText('Primo Bambino');
+    expect(chiamate.at(-1), 'il termine viaggia nella query').toContain('q=primo');
+    // È il motivo per cui questo gruppo esiste: nel primo non potrebbe comparire.
+    expect(screen.getByText(/Nessuna voce aperta/)).toBeInTheDocument();
+    expect(screen.getByTestId('movdlg-ricerca-stato')).toHaveTextContent(/1 bambino trovato/);
+  });
+
+  it('ELENCO TRONCATO: si scrive. Un elenco tagliato che tace fa concludere «non c’è»', async () => {
+    const { fn } = reteConRicerca(rispostaAlunni({ troncato: true }));
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    await screen.findByText('Primo Bambino');
+    await waitFor(() =>
+      expect(screen.getByTestId('movdlg-ricerca-stato'), 'il troncamento è un DATO, non un dettaglio')
+        .toHaveTextContent(/troncato/i),
+    );
+  });
+
+  it('una ricerca FALLITA non diventa un elenco vuoto: stato suo, frase sua', async () => {
+    const { fn } = reteConRicerca({ error: 'no', codice: 'CONCILIAZIONE_RICERCA_ALUNNI_NON_LETTA' }, 500);
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const avviso = await screen.findByRole('alert');
+    expect(avviso.textContent ?? '').not.toBe('');
+    expect(screen.getByTestId('movdlg-ricerca-stato')).toHaveTextContent(testo('reconRicercaAlunniNonRiuscita'));
+    // …e non si traveste da «non l'ho trovato».
+    expect(screen.queryByText(testo('reconRicercaAlunniVuoto'))).toBeNull();
+  });
+
+  it('«Componi per questo bambino» monta il pannello con `alunniIniziali` NON VUOTO', async () => {
+    // ⚠️ È LA PROVA CHE CHIUDE IL DIFETTO DAL LATO DEL POPUP. La spia guarda le
+    // PROPS: uno stub che rendesse un segnaposto sarebbe verde anche se la prop
+    // non partisse — e senza quella prop il pannello si apre sul contesto vuoto,
+    // cioè col pulsante «Conferma» spento e nessuna strada per accenderlo.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(testo('movdlgComponiPerQuesto')) }));
+
+    expect(screen.getByTestId('pannello-componi')).toBeInTheDocument();
+    expect(spiaComponi.props.at(-1)).toMatchObject({ movimentoId: 'm1', alunniIniziali: [ALUNNO] });
+  });
+
+  it('senza quel gesto il pannello non nasce aperto, e `alunniIniziali` resta vuoto', () => {
+    // La composizione si carica da sé (contesto, figli, categorie, pacchetti):
+    // montarla sempre vorrebbe dire pagare quella lettura su ogni riga aperta.
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: testo('reconComponiTitolo') }));
+    expect(spiaComponi.props.at(-1)).toMatchObject({ alunniIniziali: [] });
+  });
+
+  it('TORNATO INDIETRO, il bersaglio si azzera: il pulsante generico riapre PULITO', async () => {
+    // ⚠️ IL PERICOLO SCRITTO IN `componiPerAlunno`, RIENTRATO DA UN'ALTRA PORTA:
+    // «un elenco che cresce a ogni click farebbe comporre su bambini scelti tre
+    // ricerche fa, senza che si veda». Qui l'elenco non cresce — RESTA: aperto il
+    // pannello su un bambino e chiuso tornando indietro, «Componi il pagamento»
+    // lo riapriva ancora puntato su di lui, e a schermo non c'era niente che lo
+    // dicesse. Non si scrive nulla di sbagliato (`?alunni=` ALLARGA il contesto),
+    // ma il pannello non nasce nello stato che l'operatrice ha chiesto.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(testo('movdlgComponiPerQuesto')) }));
+    expect(spiaComponi.props.at(-1)).toMatchObject({ alunniIniziali: [ALUNNO] });
+
+    // Indietro: il pannello se ne va, e con lui il bersaglio.
+    fireEvent.click(screen.getByRole('button', { name: /FINTO torna indietro/ }));
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: testo('reconComponiTitolo') }));
+    expect(screen.getByTestId('pannello-componi')).toBeInTheDocument();
+    expect(spiaComponi.props.at(-1), 'riaperto dal pulsante generico, non punta più a nessuno')
+      .toMatchObject({ alunniIniziali: [] });
+  });
+
+  /**
+   * ─── `voci_aperte: null` NON È ZERO ──────────────────────────────────────
+   *
+   * 🔴 La regola era scritta in rosso nei commenti di DUE file e non la teneva
+   * ferma nessun test: sostituito il ramo `null` con «Nessuna voce aperta» —
+   * cioè fatta dire alla schermata esattamente la bugia che il commento vieta —
+   * settantun prove restavano verdi. «Non ho potuto contare» e «non deve niente»
+   * portano a due gesti opposti di chi sta incassando, e il secondo travestito da
+   * primo chiude un movimento su una famiglia che ha ancora un debito aperto.
+   *
+   * Stessa prova per `attivo: false` e `trovato_per_cf`, che erano codice mai
+   * eseguito da nessun test: le due fixture dichiaravano sempre valori pieni.
+   * La funzione adesso è UNA (`use-ricerca-alunni`), quindi questa prova copre
+   * anche il pannello di composizione.
+   */
+  it('`voci_aperte: null` NON È ZERO: si scrive «non verificate», mai «nessuna voce aperta»', async () => {
+    const { fn } = reteConRicerca(
+      rispostaAlunni({
+        data: [
+          {
+            alunno_id: ALUNNO,
+            nome: 'Primo Bambino',
+            classe_sezione: '1A',
+            scuola_id: 's1',
+            // Non più iscritto: la riga NON sparisce, si incassa anche un arretrato.
+            attivo: false,
+            // `null` = «non ho potuto contare», e la rotta lo dichiara.
+            voci_aperte: null,
+            residuo_aperto: null,
+            ha_pagante: true,
+            trovato_per_cf: true,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const riga = await screen.findByText('Primo Bambino');
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniVociIgnote'));
+    // 🔴 L'ASSENZA È LA META DELLA PROVA: senza questa riga il ramo `null`
+    // potrebbe scrivere «Nessuna voce aperta» e restare verde.
+    expect(screen.queryByText(new RegExp(testo('reconRicercaAlunniNessunaVoce')))).toBeNull();
+    // …e le due note che oggi nessun test eseguiva.
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniRitirato'));
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniPerCf'));
+  });
+
+  it('CONTROPROVA · con `voci_aperte: 0` la frase è l’altra, e «non verificate» non c’è', async () => {
+    // Senza questa metà, la prova qui sopra passerebbe anche se il codice dicesse
+    // «non verificate» SEMPRE — cioè con i due rami collassati in uno.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const riga = await screen.findByText('Primo Bambino');
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniNessunaVoce'));
+    expect(screen.queryByText(new RegExp(testo('reconRicercaAlunniVociIgnote')))).toBeNull();
+    // La fixture di base è iscritto e trovato per nome: nessuna delle due note.
+    expect(riga).not.toHaveTextContent(testo('reconRicercaAlunniRitirato'));
+    expect(riga).not.toHaveTextContent(testo('reconRicercaAlunniPerCf'));
+  });
+
+  /**
+   * ─── CLASSE E PLESSO, E LA SOGLIA CHE DECIDE SE IL PLESSO SI SCRIVE ───────
+   *
+   * 🔴 IN QUESTO REPO LE SEDI DI PRODUZIONE SONO TRE, e il plesso è ciò che
+   * distingue due «Rossi» omonimi PRIMA che si scriva un incasso. Erano due
+   * delle quattro cose che la riga deve portare, e non le teneva ferme niente:
+   * tutte le fixture avevano UNA sede sola, quindi il ramo del plesso era codice
+   * morto per la suite e `classe_sezione` non era mai asserito. Tre mutazioni
+   * sopravvivevano: soglia `> 1` abbassata a `> 0` (il plesso scritto anche
+   * quando è uno solo, cioè la stessa parola su ogni riga), plesso tolto del
+   * tutto, classe e plesso tolti insieme.
+   *
+   * Le due prove qui sotto sono la coppia — con due sedi il plesso c'è, con una
+   * NON c'è — ed è la seconda a tenere ferma la soglia.
+   */
+  const ALUNNO_ALTRA_SEDE = 'a1b2c3d4-0000-4000-8000-000000000002';
+
+  /** Due omonimi in due plessi: il caso per cui la colonna del plesso esiste. */
+  const dueOmonimiDueSedi = {
+    success: true,
+    data: [
+      {
+        alunno_id: ALUNNO,
+        nome: 'Rossi Ada',
+        classe_sezione: '1A',
+        scuola_id: 's1',
+        attivo: true,
+        voci_aperte: 0,
+        residuo_aperto: 0,
+        ha_pagante: true,
+        trovato_per_cf: false,
+      },
+      {
+        alunno_id: ALUNNO_ALTRA_SEDE,
+        nome: 'Rossi Ivo',
+        classe_sezione: '2B',
+        scuola_id: 's2',
+        attivo: true,
+        voci_aperte: 0,
+        residuo_aperto: 0,
+        ha_pagante: true,
+        trovato_per_cf: false,
+      },
+    ],
+    troncato: false,
+    sedi: { s1: 'Sede di prova', s2: 'Seconda sede' },
+  };
+
+  it('PIÙ SEDI: su ogni riga si scrive il plesso, o due omonimi sono indistinguibili', async () => {
+    const { fn } = reteConRicerca(dueOmonimiDueSedi);
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('rossi');
+
+    const prima = await screen.findByText('Rossi Ada');
+    expect(prima).toHaveTextContent('1A');
+    expect(prima, 'senza il plesso i due omonimi sono la stessa riga').toHaveTextContent('Sede di prova');
+
+    const seconda = screen.getByText('Rossi Ivo');
+    expect(seconda).toHaveTextContent('2B');
+    expect(seconda).toHaveTextContent('Seconda sede');
+  });
+
+  it('CONTROPROVA · con UNA sola sede il plesso NON si scrive: sarebbe la stessa parola ovunque', async () => {
+    // Senza questa metà, «scrivi sempre il plesso» passerebbe: è la riga che
+    // tiene ferma la soglia `Object.keys(sedi).length > 1`.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const riga = await screen.findByText('Primo Bambino');
+    expect(riga, 'la classe si scrive sempre').toHaveTextContent('1A');
+    expect(riga, 'con un plesso solo il suo nome è rumore su ogni riga').not.toHaveTextContent('Sede di prova');
+  });
+});
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * IL GIALLO CHE NON HA NESSUN'ALTRA STRADA — l'unico caso che nasce aperto.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * «Alunno riconosciuto, nessuna voce aperta»: il bambino è noto e le voci non ci
+ * sono. Non c'è nessun suggerimento da confermare, e la ricerca fra le voci
+ * aperte non può restituire niente — comporre è l'unica strada, e un pannello
+ * chiuso la nasconde dietro un pulsante. Ovunque altrove resta chiuso, perché si
+ * carica da sé e montarlo sempre pagherebbe quella lettura su ogni riga.
+ *
+ * ⚠️ QUESTO È IL CONTRATTO SCRITTO IN ANTICIPO. Il campo con cui il verdetto
+ * arriva sulla riga del registro non viaggia ANCORA fin qui: lo sta aggiungendo
+ * al matcher un lavoro parallelo a questo. Il ramo nel componente è dietro un
+ * controllo difensivo, quindi finché il campo manca il popup si comporta
+ * esattamente come prima.
+ *
+ * 🔴 MA IL NOME NON È PIÙ INDOVINATO, e fino al 2026-09-20 lo era: qui si
+ * asserivano DUE forme plausibili e nessuna delle due vere, cioè il lotto sarebbe
+ * restato verde il giorno dell'atterraggio mentre la funzione non partiva — il
+ * «segnale falso» di `silenzio_assente_vs_segnale_falso.md`. La forma qui sotto è
+ * quella che il produttore scrive, letta in `src/lib/pagamenti/riconciliazione.ts`:
+ * `motivo_stato` (una stringa sola, di tipo `MotivoStato`) e `alunni_senza_voci`
+ * (uuid, mai il CF). Anche il valore è tipato: `alunno_senza_voci_aperte` è un
+ * `MotivoRinuncia & MotivoStato` nel componente, quindi un rinominio da una delle
+ * due parti diventa rosso in `tsc` prima che in una prova.
+ *
+ * ⚠️ E LA FORMA È UNA SOLA. Per un giro se ne asserivano tre — «annidata» e
+ * «piatta» accanto a quella vera — su campi che nessuno scrive: due prove su tre
+ * giravano su dati inventati qui dentro, cioè alzavano il conteggio senza coprire
+ * niente e avrebbero tenuto in vita quattro letture morte nel componente. Un caso
+ * di prova vale se esiste un produttore che scrive quella forma.
+ */
+describe('MovimentoDialog — la composizione nasce aperta solo sul giallo senza voci', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; spiaComponi.props.length = 0; });
+
+  const ALUNNO = 'a1b2c3d4-0000-4000-8000-000000000009';
+  /**
+   * La riga come arriverà dal registro, nella forma che il matcher scrive:
+   * `motivo_stato` e `alunni_senza_voci` di `RisultatoMatch`.
+   */
+  const conVerdetto = (): MovimentoUi => ({
+    ...movBase,
+    stato: 'suggerito',
+    suggerimenti: [],
+    motivo_stato: 'alunno_senza_voci_aperte',
+    alunni_senza_voci: [ALUNNO],
+  } as MovimentoUi);
+
+  it('verdetto «alunno riconosciuto, nessuna voce aperta» → pannello già aperto e puntato', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={conVerdetto()} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    expect(screen.getByTestId('pannello-componi')).toBeInTheDocument();
+    expect(spiaComponi.props.at(-1)).toMatchObject({ alunniIniziali: [ALUNNO] });
+  });
+
+  it('CONTROPROVA · un altro motivo, o nessun bambino, e il pannello resta CHIUSO', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    // Motivo diverso: non è questo il caso senza uscite.
+    const { unmount } = render(
+      <MovimentoDialog
+        movimento={{ ...movBase, motivo_stato: 'importo_non_quadra', alunni_senza_voci: [ALUNNO] } as MovimentoUi}
+        aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />,
+    );
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
+    unmount();
+
+    // Motivo giusto ma nessun bambino su cui puntare: aprirlo rimetterebbe in
+    // piedi il difetto di partenza (contesto vuoto → «Conferma» spento).
+    render(
+      <MovimentoDialog
+        movimento={{ ...movBase, suggerimenti: [], motivo_stato: 'alunno_senza_voci_aperte', alunni_senza_voci: [] } as MovimentoUi}
+        aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />,
+    );
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
   });
 });

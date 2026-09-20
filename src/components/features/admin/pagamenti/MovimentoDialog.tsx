@@ -11,13 +11,19 @@
 // Le risposte del server sono gestite senza crash: 409 «già saldato» e 409
 // «già riconciliato da un altro operatore» diventano messaggi chiari (+ refetch).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'next-intl';
 import { useDateFormat } from '@/lib/i18n/date';
 import { AlertTriangle, Check, Clock, FileCheck, FileText, Layers, Receipt, Search, X, Users } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
 import { ComposizioneBonifico } from './ComposizioneBonifico';
+// Ricerca dei bambini, frasi della regione viva e «che cosa si legge accanto al
+// nome» (classe, plesso, e `voci_aperte: null` che NON è zero): stanno tutte in
+// `use-ricerca-alunni`, una volta sola, perché due copie divergono in silenzio.
+import { dettaglioAlunno, fraseRicercaAlunni, useRicercaAlunni } from './use-ricerca-alunni';
+import type { MotivoRinuncia } from '@/lib/pagamenti/riconciliazione-auto';
+import type { MotivoStato } from '@/lib/pagamenti/riconciliazione';
 import { MODAL_CARD_QUASI_SCHERMO, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
@@ -263,6 +269,100 @@ type EsitoAzione = { tipo: 'riapertura'; righeRiaperte: number; incassiStornati:
  */
 const vaRisincronizzato = (stato: number): boolean => stato === 409;
 
+/**
+ * ─── IL GIALLO CHE NON HA NESSUN'ALTRA STRADA ────────────────────────────────
+ *
+ * «Alunno riconosciuto, nessuna voce aperta» è l'unico esito su cui la
+ * composizione NASCE APERTA. Non è una preferenza di comodo: su quella riga il
+ * bambino è noto e le voci non ci sono, quindi non c'è nessun suggerimento da
+ * confermare e la ricerca fra le voci aperte non può restituire niente. Comporre
+ * è l'unica strada, e il pannello chiuso la nasconde dietro un pulsante.
+ *
+ * ⚠️ OVUNQUE ALTROVE RESTA CHIUSO, e il motivo sta scritto su `componiAperto`:
+ * il pannello si carica da sé (contesto, figli, categorie, pacchetti mensa), e
+ * montarlo sempre vorrebbe dire pagare quella lettura su ogni riga aperta,
+ * comprese le novantanove su cento che si chiudono con un «Conferma questo».
+ *
+ * ⚠️ IL RAMO È DIETRO UN CONTROLLO DIFENSIVO PERCHÉ IL CAMPO NON È ANCORA SULLA
+ * RIGA — ma il suo NOME, dal 2026-09-20, NON si indovina più: si legge.
+ * `RisultatoMatch` lo dichiara in `src/lib/pagamenti/riconciliazione.ts`
+ * (`motivo_stato?: MotivoStato`, UNA stringa; `alunni_senza_voci?: string[]`), e
+ * il commento del terzo parametro di quel file dichiara testualmente a che cosa
+ * serve: «così che il pannello possa aprirsi sulla composizione già puntata su
+ * quel bambino». Quel pannello è questo. Fino a quel giorno qui si leggevano
+ * quattro nomi PLAUSIBILI e nessuno dei due veri: il campo sarebbe atterrato con
+ * il lotto tutto verde e la funzione non sarebbe partita — il «segnale falso» di
+ * `silenzio_assente_vs_segnale_falso.md`.
+ *
+ * Perciò il literal qui sotto è tipato contro TUTT'E DUE i tipi veri:
+ * `MotivoRinuncia` del motore (`valutaCertezza`) e `MotivoStato` del matcher. Un
+ * rinominio da una qualunque delle due parti diventa rosso in `tsc`, non un
+ * giallo che smette in silenzio di aprirsi.
+ *
+ * ⚠️ E SI LEGGONO SOLO I DUE NOMI VERI. Per un giro qui ne stavano accanto altri
+ * quattro (`certezza.motivi`, `motivi_certezza`, `certezza.alunni`,
+ * `alunni_riconosciuti`), tenuti «perché costano una riga». Costavano di più: un
+ * `grep` su `src/` e `__tests__/` li trovava soltanto qui e nella prova che se li
+ * fabbricava da sola, cioè erano letture morte esercitate da prove su dati che
+ * nessun produttore scrive — conteggio gonfiato, copertura zero. Il campo vero è
+ * tipato e `tsc` lo difende: un ripiego non tipato accanto a un nome tipato non è
+ * una rete di sicurezza, è il posto dove un rinominio si nasconde. Finché il campo
+ * non viaggia fin qui, `motiviDelVerdetto` ritorna un elenco vuoto, la condizione
+ * è falsa e il popup si comporta esattamente come prima: nessun cambiamento di
+ * comportamento e nessun `any`.
+ */
+const MOTIVO_SENZA_VOCI: MotivoRinuncia & MotivoStato = 'alunno_senza_voci_aperte';
+
+/** Le stringhe di un array sconosciuto, senza `any` e senza fidarsi della forma. */
+const soloStringhe = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '') : [];
+
+/** Una stringa sola, dove il campo ne porta UNA e non un elenco (`motivo_stato`). */
+const soloStringa = (v: unknown): string[] => (typeof v === 'string' && v !== '' ? [v] : []);
+
+/** I motivi del verdetto automatico, se la riga li porta. Vuoto = non lo so. */
+function motiviDelVerdetto(m: MovimentoUi): string[] {
+  const riga = m as unknown as {
+    /** Il nome VERO, da `RisultatoMatch`: una stringa sola, non un elenco. */
+    motivo_stato?: unknown;
+  };
+  return soloStringa(riga.motivo_stato);
+}
+
+/**
+ * La composizione nasce aperta? Solo sul giallo «alunno riconosciuto, nessuna
+ * voce aperta», e solo se si sa SU CHI puntarla: aprirla senza bambini
+ * rimetterebbe in piedi il difetto di partenza (contesto vuoto → nessun candidato
+ * → «Conferma» spento) con in più la lettura pagata su una riga qualunque.
+ */
+function nasceAperta(m: MovimentoUi): boolean {
+  if (m.stato === 'confermato' || m.stato === 'ignorato') return false;
+  if (!motiviDelVerdetto(m).includes(MOTIVO_SENZA_VOCI)) return false;
+  return alunniDelVerdetto(m).length > 0;
+}
+
+/**
+ * I bambini che il verdetto ha riconosciuto su questa riga. Dai suggerimenti —
+ * che è il campo che esiste oggi — più l'elenco del verdetto, se arriva.
+ * Deduplicati, perché su un bonifico di famiglia lo stesso bambino compare in più
+ * di un candidato.
+ *
+ * Il nome VERO è `alunni_senza_voci` (`RisultatoMatch`, stesso file del motivo), e
+ * porta SOLO gli uuid: il codice fiscale che li ha fatti riconoscere non esce da
+ * lì, come non esce da `…/riconciliazione/alunni`. È l'unico nome letto, per la
+ * ragione scritta sopra su `motivo_stato`.
+ */
+function alunniDelVerdetto(m: MovimentoUi): string[] {
+  const riga = m as unknown as {
+    /** Il nome VERO, da `RisultatoMatch`: uuid, mai il CF. */
+    alunni_senza_voci?: unknown;
+  };
+  const daiSuggerimenti = (m.suggerimenti ?? [])
+    .map((s) => s.alunno_id)
+    .filter((a): a is string => typeof a === 'string' && a !== '');
+  return [...new Set([...soloStringhe(riga.alunni_senza_voci), ...daiSuggerimenti])];
+}
+
 /** Pill «CF» dell'aggancio per codice fiscale (su card bianca del dialog). */
 function CfPill() {
   const t = useTranslations('adminContabilita');
@@ -441,7 +541,16 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
    * sempre vorrebbe dire pagare quella lettura su ogni riga aperta, comprese le
    * novantanove su cento che si chiudono con un «Conferma questo».
    */
-  const [componiAperto, setComponiAperto] = useState(false);
+  const [componiAperto, setComponiAperto] = useState(() => nasceAperta(movimento));
+  /**
+   * I bambini su cui puntare la composizione: l'IDENTITÀ di ciò su cui si lavora,
+   * non un dato (vedi la testata di `ComposizioneBonifico`). Nasce dal verdetto —
+   * il giallo «alunno riconosciuto, nessuna voce aperta» apre già puntato — e
+   * cambia quando si preme «Componi per questo bambino» su una riga della ricerca.
+   */
+  const [alunniComponi, setAlunniComponi] = useState<readonly string[]>(() =>
+    nasceAperta(movimento) ? alunniDelVerdetto(movimento) : [],
+  );
   /**
    * «Su questo bonifico il denaro è già stato scritto», e serve a una cosa sola: a
    * non riportare all'abbinamento chi chiude il pannello dopo una composizione
@@ -601,8 +710,48 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
     }
   }, [movimento.id, userId, onDone, onClose, t]);
 
+  /**
+   * «Componi per questo bambino»: apre il pannello PUNTATO su di lui.
+   *
+   * ⚠️ SOSTITUISCE, non somma. Il bersaglio dichiarato da qui è uno — quello che
+   * si è appena premuto — e un elenco che cresce a ogni click farebbe comporre su
+   * bambini scelti tre ricerche fa, senza che si veda. Aggiungerne altri si fa
+   * DENTRO il pannello, dove l'elenco di chi è in composizione è a schermo e si
+   * può togliere.
+   */
+  const componiPerAlunno = useCallback((alunnoId: string) => {
+    setAlunniComponi([alunnoId]);
+    setComponiAperto(true);
+  }, []);
+
   const q = ricerca.trim().toLowerCase();
   const apertiFiltrati = (q.length === 0 ? aperti : aperti.filter((p) => testoRicercaPagamento(p).includes(q))).slice(0, 25);
+
+  /**
+   * ─── UNA CASELLA SOLA, DUE GRUPPI ────────────────────────────────────────
+   *
+   * Il filtro sulle VOCI APERTE resta quello di prima — locale, istantaneo, sulla
+   * lista che la pagina ha già in mano — ed è il 90% del lavoro: non deve
+   * rallentare di un millisecondo perché accanto è comparso un secondo gruppo. La
+   * ricerca degli ALUNNI passa dalla rotta, con la sua soglia e il suo debounce
+   * (`use-ricerca-alunni`), e serve al caso opposto: il bambino che una voce
+   * aperta non ce l'ha, e che quindi in quella lista non potrebbe comparire mai.
+   *
+   * Due caselle sarebbero state due posti dove cercare la stessa cosa.
+   */
+  const ricercaAlunni = useRicercaAlunni(ricerca, userId);
+  const uid = useId();
+  const idAiutoRicerca = `${uid}-aiuto-ricerca`;
+
+  /**
+   * La frase della regione viva del gruppo «Alunni». QUALI frasi — quattro, non
+   * tre — sta in `use-ricerca-alunni`, accanto alla ricerca che le produce: era
+   * scritta due volte, identica, anche nel pannello (`ComposizioneBonifico`), e le
+   * due copie divergevano già in silenzio (misurato: cambiato «Sto cercando» in
+   * tutt'e due, centodiciannove prove restavano verdi). Si chiama al render e
+   * prende `t`, che quindi non entra in nessuna dipendenza.
+   */
+  const fraseRicerca = fraseRicercaAlunni(ricercaAlunni, t);
 
   const saldato = isConfermato && pagamentoStato === 'pagato';
   /**
@@ -1024,6 +1173,10 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                     movimentoId={movimento.id}
                     importoMovimento={movimento.importo}
                     dataOperazione={movimento.data_operazione}
+                    /* I bambini su cui puntare la composizione: identità, non dati
+                       (v. la testata del pannello). Vuoto sui casi normali, dove il
+                       bonifico i suoi bambini li nomina da sé. */
+                    alunniIniziali={alunniComponi}
                     onFatto={(r) => {
                       /**
                        * ─── DUE ESITI, DUE POSTI, E NESSUNA FRASE DETTA DUE VOLTE ─────
@@ -1082,6 +1235,17 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                       // Il solo caso «sono tornato indietro»: qui il fuoco ha un posto
                       // dove rientrare. Vedi `rientraSuComponi`, in cima al componente.
                       rientraSuComponi.current = true;
+                      // ⚠️ E IL BERSAGLIO SI AZZERA CON IL PANNELLO. Senza questa riga
+                      // «Componi per questo bambino» → indietro → «Componi il
+                      // pagamento» riapriva la composizione ANCORA PUNTATA su quel
+                      // bambino, senza che niente a schermo dicesse perché: è il
+                      // pericolo scritto in `componiPerAlunno` («comporre su bambini
+                      // scelti tre ricerche fa, senza che si veda») rientrato da
+                      // un'altra porta. Non si scrive niente di sbagliato — `?alunni=`
+                      // ALLARGA il contesto e i figli in più si vedono in elenco — ma
+                      // il pannello non nasce nello stato che l'operatrice ha chiesto.
+                      // Il ramo `composto` qui sopra resta intatto: lì il popup chiude.
+                      setAlunniComponi([]);
                       setComponiAperto(false);
                     }}
                   />
@@ -1103,9 +1267,18 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                   <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgCercaAltroPagamento')}</h3>
                   <div className="relative mb-2">
                     <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-kidville-sub" />
+                    {/* ⚠️ IL NOME ACCESSIBILE NON CAMBIA, e non è pigrizia: è il nome
+                        con cui questa casella è documentata, collaudata e conosciuta
+                        da chi la usa da mesi. Quello che è cambiato è che adesso
+                        cerca anche fra i BAMBINI, e lo dice la frase qui sotto, che
+                        la casella porta come `aria-describedby` — una descrizione si
+                        aggiunge al nome, non lo sostituisce. */}
                     <input type="text" value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder={t('movdlgCercaPlaceholder')}
-                      className={cx(INPUT, 'pl-9')} aria-label={t('movdlgCercaAriaLabel')} />
+                      className={cx(INPUT, 'pl-9')} aria-label={t('movdlgCercaAriaLabel')} aria-describedby={idAiutoRicerca} />
                   </div>
+                  <p id={idAiutoRicerca} className="mb-4 font-maven text-xs text-kidville-sub">{t('movdlgCercaAncheBambini')}</p>
+
+                  <h4 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgGruppoVociAperte')}</h4>
                   {/* ⚠️ NIENTE `max-h-56 overflow-y-auto` QUI: era uno scorrimento
                       DENTRO lo scorrimento del popup, cioè due rotelle sovrapposte
                       in 224px — e su trackpad la rotella prende quella interna, che
@@ -1127,6 +1300,73 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
                       </div>
                     ))}
                   </div>
+
+                  {/* ── IL SECONDO GRUPPO: I BAMBINI ────────────────────────────
+                      Serve al bonifico che paga un bambino SENZA voci aperte — un
+                      arretrato, una ricarica mensa, una voce che ancora non
+                      esiste. Nel gruppo qui sopra non potrebbe comparire mai: là
+                      dentro ci sono i pagamenti, e di pagamenti non ne ha. */}
+                  <h4 className={cx(OCCHIELLO, 'mb-2 mt-4 block')}>{t('movdlgGruppoAlunni')}</h4>
+
+                  {/* La regione viva: è l'unica cosa che dice a chi non vede lo
+                      schermo che la lista è cambiata — o che non è cambiata, e
+                      perché.
+
+                      ⚠️ `aria-live="polite"` + `aria-atomic`, e NON un secondo
+                      `role="status"` — che è quello che c'era fino al
+                      2026-09-20, con accanto un commento che guardava il vicino
+                      sbagliato («l'esito e l'abbinamento non coesistono mai»).
+                      Il concorrente non è l'esito: è la BARRA DI QUADRATURA del
+                      pannello («Totale … · manca ancora …», `role="status"` in
+                      `ComposizioneBonifico`), e con `componiAperto` i due stanno
+                      a schermo INSIEME, perché questo blocco è guardato da
+                      `!composto` e non da `!componiAperto` — è fratello del
+                      ternario del pannello, dentro lo stesso `div`. MISURATO col
+                      pannello vero montato: due `status` a schermo, non uno.
+                      Per un lettore di schermo i due attributi qui sotto sono la
+                      stessa cosa (`status` implica esattamente loro), e lasciano
+                      UNA sola regione `status` per superficie: quella che dice
+                      se si può confermare. */}
+                  <p aria-live="polite" aria-atomic="true" data-testid="movdlg-ricerca-stato" className="mb-2 font-maven text-xs text-kidville-sub">
+                    {fraseRicerca}
+                  </p>
+
+                  {/* ⚠️ UNA RICERCA FALLITA NON DIVENTA UN ELENCO VUOTO. «Non l'ho
+                      trovato» e «non ho potuto guardare» hanno rimedi opposti, e
+                      il secondo travestito da primo manda a creare una scheda per
+                      un bambino che esiste già. La frase è quella che la rotta
+                      dichiara col proprio codice. */}
+                  {ricercaAlunni.stato === 'errore' && (
+                    <p role="alert" className="mb-2 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">
+                      {messaggioDaCorpo(ricercaAlunni.errore?.corpo, t('reconRicercaAlunniErrore'))}
+                    </p>
+                  )}
+
+                  {ricercaAlunni.stato === 'pronta' && (
+                    <div className="space-y-1">
+                      {ricercaAlunni.righe.length === 0 ? (
+                        <p className="px-1 py-2 font-maven text-xs text-kidville-sub">{t('reconRicercaAlunniVuoto')}</p>
+                      ) : ricercaAlunni.righe.map((a) => (
+                        <div key={a.alunno_id} className="flex items-center justify-between gap-2 rounded-input bg-kidville-cream px-3 py-2">
+                          <span className="min-w-0 font-maven text-xs text-kidville-ink">
+                            {a.nome}
+                            <span className="ml-2 text-kidville-sub">{dettaglioAlunno(a, ricercaAlunni.sedi, t)}</span>
+                          </span>
+                          {/* Lo STESSO vestito di «Abbina» qui sopra — contorno verde
+                              a riposo, verde PIENO in hover — e non uno nuovo: in
+                              Alto Contrasto l'inchiostro del popup è forzato al
+                              bianco, quindi un `hover:bg-*` chiaro farebbe sparire il
+                              pulsante sotto il puntatore (misurato: 1,19:1). Il lock
+                              `riconciliazione-a11y-css` rifiuta ogni fondo in hover
+                              che non sia scuro o che non abbia la sua regola HC. */}
+                          <button type="button" disabled={busy} onClick={() => componiPerAlunno(a.alunno_id)}
+                            className={CTA_SUGGERIMENTO_DEBOLE}>
+                            <Layers size={14} /> {t('movdlgComponiPerQuesto')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 )}
               </div>

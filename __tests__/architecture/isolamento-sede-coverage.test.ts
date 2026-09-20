@@ -2248,7 +2248,15 @@ describe('coverage-lock isolamento fra sedi', () => {
             // ⚠️ Vale la riga d'avvertimento qui sopra: sullo STESSO albero lavorano
             // altri cantieri sugli avvisi. Chi unisce i rami RIMISURI questo numero
             // sul file unito invece di sommare a mente.
-            routeConServiceRole: 324,
+            // 2026-09-20 · +1 route e +2 handler: `admin/staff/eliminazione`
+            // (GET anteprima + POST esecuzione). `handlerEsentati` NON cambia — i
+            // due handler sono CONTROLLATI: passano da `requireStaff` +
+            // `assertUtenteInScope` e le scritture portano il filtro di sede
+            // nell'istruzione stessa (`.in('scuola_id', plessi)` su `utenti` e su
+            // `task_interni`). La prima stesura le aveva fuori dal filtro, il lock
+            // ha segnalato `scrittura-senza-sede` e aveva ragione: la correzione è
+            // stata aggiungere il filtro, non aggiungere una voce ad AMMESSE.
+            routeConServiceRole: 325,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2419,7 +2427,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // rieseguendo il lock, non dedotto.
             // 🔴 `avvisi/[id]/risposte:POST` NON conta qui come route nuova: il file
             // c'era già, e la sua riscrittura sulla RPC non ha aggiunto handler.
-            handlerControllati: 493,
+            handlerControllati: 495,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

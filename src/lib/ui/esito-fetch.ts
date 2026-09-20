@@ -2643,6 +2643,17 @@ export const CODICI_ERRORE = {
      * renderebbe quelle scansioni irraggiungibili invece che cancellate.
      */
     FASCICOLO_NON_CANCELLATO: 'erroreFascicoloNonCancellato',
+    /**
+     * 500 — il ramo `catch` delle route del personale.
+     *
+     * ⚠️ LA FRASE NON DICE «nessun dato è stato modificato», e la differenza è
+     * onestà: un `catch` non sa a che punto si è fermato. Queste operazioni
+     * toccano lo Storage, poi una RPC, poi `utenti`, e un'eccezione può
+     * arrivare in mezzo. Dire «non è cambiato niente» sarebbe una promessa che
+     * il codice non può mantenere; «ricarica e controlla com'è rimasta» è ciò
+     * che serve davvero a chi ha appena premuto il bottone.
+     */
+    PERSONALE_OPERAZIONE_NON_RIUSCITA: 'errorePersonaleOperazioneNonRiuscita',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -9,6 +9,10 @@ import { PERSONALE_LIMITI } from '@/lib/forms/personale-template'
 // Le colonne che tengono il documento si LEGGONO dal template, non si ribattono: il
 // riquadro che spiega perché sta più in basso, dove viveva la copia scritta a mano.
 import { COLONNE_DOCUMENTO } from '@/lib/personale/percorso-documento'
+import {
+    percorsiDelDocumento,
+    type ConDocumento as ConDocumentoCondiviso,
+} from '@/lib/personale/documento-righe'
 
 /**
  * LA CONSERVAZIONE DELL'ANAGRAFICA DEL PERSONALE — scansione del documento
@@ -379,10 +383,7 @@ const TETTO_LOTTO = 500
 const TETTO_REGISTRO = 25
 
 /** Le due facce, come arrivano da PostgREST: assenti se la colonna non c'è. */
-type ConDocumento = {
-    documento_fronte_path?: string | null
-    documento_retro_path?: string | null
-}
+type ConDocumento = ConDocumentoCondiviso
 
 type Pratica = ConDocumento & {
     id: string
@@ -512,29 +513,11 @@ function testoDi(v: unknown): string | null {
  * per il prossimo che se ne servirà.
  */
 function percorsiDi(riga: ConDocumento): string[] {
-    // ⚠️ LA LETTURA È PER CHIAVE DINAMICA, e il tipo largo vive QUI — su una riga sola,
-    // dentro la funzione — invece di allargare `ConDocumento`.
-    //
-    // `COLONNE_DOCUMENTO` si legge da `PERSONALE_FIELDS` a runtime (è il punto del
-    // modulo condiviso: il nome della colonna sta scritto in un posto solo), quindi per
-    // TypeScript è `readonly string[]` e non l'unione delle due chiavi: `riga[c]` su un
-    // tipo chiuso è `TS7053`, ed è stato un gate rosso il 13/08/2026.
-    //
-    // Allargare `ConDocumento` a un tipo con index signature avrebbe tolto il rosso in
-    // un modo che costa caro altrove: `Pratica` e `Anagrafica` lo intersecano, e con una
-    // chiave libera `testoDi(r.origine_pratica_idX)` compilerebbe restituendo `null` per
-    // sempre — cioè il legame fascicolo→pratica si spezzerebbe in silenzio, che è
-    // esattamente il guasto che `legata` esiste per impedire. I tipi restano chiusi; è
-    // questa funzione a dichiarare che sta leggendo per chiave calcolata.
-    //
-    // Stessa forma già adottata in `src/app/api/iscrizione/personale/route.ts`, che
-    // itera sulle stesse colonne su righe lette da PostgREST.
-    const campi: Record<string, unknown> = riga
-    return [
-        ...new Set(
-            COLONNE_DOCUMENTO.map((c) => testoDi(campi[c])).filter((p): p is string => p !== null),
-        ),
-    ]
+    // Il corpo vive in `src/lib/personale/documento-righe.ts` da quando i posti
+    // che cancellano scansioni del personale sono diventati due: qui e il comando
+    // «Elimina docente». Una seconda copia è ciò che
+    // `colonne-documento-un-posto-solo.test.ts` esiste per impedire.
+    return percorsiDelDocumento(riga)
 }
 
 // POST /api/gdpr/retention-personale

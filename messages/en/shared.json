@@ -501,5 +501,6 @@
   "erroreRiportaGenitoreSenzaPonte": "This person is not linked to any child as a parent yet: link them from the pupil’s record, then try again.",
   "erroreRiportaGenitoreGiaGenitore": "This person is already a parent: there is nothing to change.",
   "erroreRiportaGenitoreGiaDeciso": "The role changed in the meantime: reload the record.",
-  "erroreFascicoloNonCancellato": "We could not remove the documents from storage: no data has been deleted. Please try again in a few minutes."
+  "erroreFascicoloNonCancellato": "We could not remove the documents from storage: no data has been deleted. Please try again in a few minutes.",
+  "errorePersonaleOperazioneNonRiuscita": "We could not complete the operation. Reload the record and check its state before trying again."
 }

@@ -1,6 +1,8 @@
 import { createAdminClient, createClient } from '@/lib/supabase/server-client'
 import { logEvento } from '@/lib/logging/logger'
+import { schemaAssente } from '@/lib/news/schema-assente'
 import { areaForRole, type Area } from './active-role'
+import { profiloStaffRevocato } from './predicati-ruolo'
 import type { AppRole } from './require-staff'
 
 /**
@@ -32,17 +34,49 @@ export async function getProfiliForAuthUid(authUid: string): Promise<Profilo[]> 
 
   // NB: un errore DB transiente qui degrada in "meno profili" (fail-closed:
   // al peggio si torna al login) — va comunque a log per l'osservabilità.
-  const { data: staff, error: errStaff } = await supabase
+  // ⚠️ `archiviato_il` sta nella select, e la select degrada: PostgREST, su una
+  // colonna assente, fallisce la query INTERA con `42703`. Finché la migrazione
+  // non è applicata — il DB E2E della CI, e la produzione fra il deploy e il
+  // merge — chiedere quel campo senza ripiego toglierebbe i profili a TUTTI.
+  let { data: staff, error: errStaff } = await supabase
     .from('utenti')
-    .select('id, role, ruolo')
+    .select('id, role, ruolo, archiviato_il')
     .eq('id', authUid)
     .maybeSingle()
+  if (errStaff && schemaAssente(errStaff)) {
+    logEvento('auth', 'warn', {
+      operazione: 'getProfiliForAuthUid',
+      esito: 'archiviazione-non-verificabile',
+      error_code: (errStaff as { code?: string }).code,
+    })
+    ;({ data: staff, error: errStaff } = await supabase
+      .from('utenti')
+      .select('id, role, ruolo')
+      .eq('id', authUid)
+      .maybeSingle())
+  }
   // L'errore va passato INTERO al logger, non il solo `.message`: un errore
   // PostgREST porta `code`/`details`/`hint`, ed è quella la terna che dice se è
   // una colonna mancante (42703) o un permesso negato. Il messaggio da solo no.
   if (errStaff)
     logEvento('auth', 'warn', { operazione: 'getProfiliForAuthUid', esito: 'utenti-non-letti' }, errStaff)
-  const ruoloStaff = (staff?.role || staff?.ruolo) as AppRole | undefined
+  /*
+   * L'ARCHIVIAZIONE TOGLIE IL PROFILO STAFF, NON LA PERSONA.
+   *
+   * Si filtra qui, prima di comporre l'elenco, e non a valle: `decideAreaAccess`
+   * ragiona sui profili, quindi un profilo `educator` lasciato in elenco
+   * continuerebbe ad aprire l'area docente a chi non ci lavora più.
+   *
+   * Chi ha anche il ponte `parents` resta con UN profilo, `genitore`, e il
+   * commutatore sparisce da sé (`CambiaProfiloMenuButton` non disegna niente
+   * sotto i due profili). Chi non ce l'ha resta con ZERO profili: è il caso che
+   * `GET /api/me` intercetta con un 403 esplicito, perché zero profili da soli
+   * manderebbero al login in un giro senza uscita.
+   */
+  const archiviato = profiloStaffRevocato(
+    (staff as { archiviato_il?: string | null } | null)?.archiviato_il,
+  )
+  const ruoloStaff = archiviato ? undefined : ((staff?.role || staff?.ruolo) as AppRole | undefined)
   if (ruoloStaff) profili.push({ ruolo: ruoloStaff, area: areaForRole(ruoloStaff) })
 
   const { data: parent, error: errParent } = await supabase

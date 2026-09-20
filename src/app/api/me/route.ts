@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createAdminClient, createClient } from '@/lib/supabase/server-client'
 import { getRequestUserId } from '@/lib/auth/require-staff'
+// Dal modulo dei predicati PURI, non da `require-staff`: 296 file di test
+// sostituiscono quest'ultimo per intero, e il predicato sparirebbe col mock.
+import { profiloStaffRevocato } from '@/lib/auth/predicati-ruolo'
 import { areaForRole } from '@/lib/auth/active-role'
 import type { Profilo } from '@/lib/auth/profili'
 import { parseQuery } from '@/lib/validation/http'
@@ -63,12 +66,44 @@ export const GET = withRoute('me:GET', async (request: Request) => {
       supabase.from('utenti').select('*').eq('id', authUid).maybeSingle(),
       supabase.from('parents').select('*').eq('auth_user_id', authUid).maybeSingle(),
     ])
-    data = (staff ?? parent) as Record<string, unknown> | null
-    daParents = !staff && !!parent
+    /*
+     * L'ARCHIVIAZIONE, E PERCHÉ VA GESTITA **QUI** E NON SOLO IN `profili.ts`.
+     *
+     * Questa route è la SECONDA copia della logica dei profili (vedi il commento
+     * in cima: fu scritta a mano per togliere 6-8 round-trip). Toccando solo
+     * `getProfiliForAuthUid` si costruisce un giro infinito, ed è stato
+     * ricostruito riga per riga:
+     *
+     *   requireArea → profili vuoti → `/auth/login` → `signInWithPassword`
+     *   RIESCE (GoTrue non sa niente di `archiviato_il`, e il cookie viene
+     *   scritto) → `/api/me` → `profs = []` → `login/page.tsx` ripiega su
+     *   `me.role`, che la riga `utenti` porta ancora → `router.replace('/teacher')`
+     *   → requireArea → login. Senza un messaggio, e senza uscita.
+     *
+     * Il 403 col codice è l'unica cosa che rompe l'anello: la pagina di accesso
+     * lo tratta già come guasto post-accesso e mostra la frase invece di navigare.
+     *
+     * ⚠️ Chi ha ANCHE il ponte non prende nessun 403: gli si toglie la veste da
+     * staff e resta quella da genitore. Sono dodici persone al 2026-09-20.
+     */
+    const staffArchiviato = profiloStaffRevocato(
+      (staff as { archiviato_il?: string | null } | null)?.archiviato_il,
+    )
+    if (staffArchiviato && !parent) {
+      logEvento('auth', 'warn', { operazione: 'me:GET', esito: 'account-archiviato' })
+      return NextResponse.json(
+        { error: 'Accesso negato: questo accesso non è più attivo', codice: 'ACCOUNT_ARCHIVIATO' },
+        { status: 403 },
+      )
+    }
+    const staffVivo = staffArchiviato ? null : staff
+
+    data = (staffVivo ?? parent) as Record<string, unknown> | null
+    daParents = !staffVivo && !!parent
 
     // Profili derivati dalle stesse righe (logica di getProfiliForAuthUid:
     // ruolo staff + genitore dal ponte, dedup sul ruolo genitore).
-    const ruoloStaff = (staff?.role || staff?.ruolo) as Profilo['ruolo'] | undefined
+    const ruoloStaff = (staffVivo?.role || staffVivo?.ruolo) as Profilo['ruolo'] | undefined
     if (ruoloStaff) profili.push({ ruolo: ruoloStaff, area: areaForRole(ruoloStaff) })
     if (parent && !profili.some((p) => p.ruolo === 'genitore')) {
       profili.push({ ruolo: 'genitore', area: 'parent' })

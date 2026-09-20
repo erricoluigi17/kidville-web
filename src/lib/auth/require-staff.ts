@@ -9,7 +9,16 @@ import { ACTIVE_ROLE_COOKIE, leggiCookie, risolviRuoloAttivo } from './active-ro
 // `eFamiglia` — restano raggiungibili dall'esterno grazie alla sola
 // ri-esportazione qui sotto: importarli anche per nome li renderebbe variabili non
 // usate, e `no-unused-vars` è un errore nel gate.
-import { haUnRuolo, ruoliDi, type AppRole, type AppUser, type StaffRole } from './predicati-ruolo'
+import {
+  haUnRuolo,
+  profiloStaffRevocato,
+  ruoliDi,
+  type AppRole,
+  type AppUser,
+  type StaffRole,
+} from './predicati-ruolo'
+import { schemaAssente } from '@/lib/news/schema-assente'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 /* ────────────────────────────────────────────────────────────────────────────
  * I TIPI E I PREDICATI STANNO IN `predicati-ruolo.ts`, E DA QUI SI RI-ESPORTANO
@@ -83,7 +92,20 @@ export function getRequestUserId(request: Request): string | null {
 export type IdentitySource = 'session' | 'header'
 
 /** Le colonne di `utenti` che compongono un `AppUser`: una sola lista, due letture. */
-const COLONNE_UTENTE = 'id, nome, cognome, ruolo, role, scuola_id'
+const COLONNE_UTENTE = 'id, nome, cognome, ruolo, role, scuola_id, archiviato_il'
+
+/**
+ * La stessa lista SENZA `archiviato_il`, per l'ambiente in cui quella colonna non
+ * esiste ancora.
+ *
+ * ⚠️ NON È UNA CAUTELA GENERICA. PostgREST, su una colonna assente, non risponde
+ * «quel campo non c'è»: fallisce la SELECT INTERA con `42703`. Cioè, finché la
+ * migrazione non è applicata, aggiungere un campo alla lista non renderebbe
+ * `archiviato_il` illeggibile — renderebbe illeggibile L'INTERA IDENTITÀ, su ogni
+ * richiesta, per tutti. È il DB E2E della CI, ed è anche la produzione nella
+ * finestra fra il deploy del codice e l'applicazione della migrazione.
+ */
+const COLONNE_UTENTE_SENZA_ARCHIVIAZIONE = 'id, nome, cognome, ruolo, role, scuola_id'
 
 /** La riga `utenti` così com'è letta: `role` è GENERATA da `ruolo`, non si scrive mai. */
 export interface RigaUtenti {
@@ -93,6 +115,56 @@ export interface RigaUtenti {
   ruolo?: string | null
   role?: string | null
   scuola_id?: string | null
+  /**
+   * Quando è stato revocato il profilo staff. `null` = attivo.
+   * `undefined` = la colonna non è stata letta (schema non migrato): vale
+   * «non archiviato», perché «non ho potuto leggere» non è «è archiviato».
+   */
+  archiviato_il?: string | null
+}
+
+/**
+ * Legge la riga `utenti` degradando sulla colonna che potrebbe non esserci.
+ *
+ * Fail-OPEN, e il verso è deciso: se `archiviato_il` non si può leggere, la
+ * persona entra. Un gate di sicurezza che si chiude su un guasto di schema
+ * chiuderebbe fuori TUTTI — non gli archiviati, tutti — e lo farebbe nel momento
+ * peggiore, cioè fra il deploy del codice e l'applicazione della migrazione.
+ * È la stessa regola di `non-deciso` in `src/lib/chat/rubrica.ts` e di
+ * `soloDocentiAttivi` in `src/lib/sezioni/docenti.ts`: «non l'ho letto» ≠ «è falso».
+ */
+async function leggiRigaUtenti(
+  supabase: SupabaseClient,
+  id: string,
+  modo: 'maybeSingle' | 'single',
+): Promise<{ data: RigaUtenti | null; error: unknown }> {
+  // ⚠️ IL METODO FINALE È UN PARAMETRO, e non è un vezzo: `risolviDaAuthUid` ha
+  // sempre usato `maybeSingle` (l'assenza è un caso normale: l'uid può essere di
+  // un genitore) e `loadAppUser` ha sempre usato `single`. Uniformarli cambia il
+  // comportamento su «zero righe» e, di riflesso, ciò che i test mockano — nove
+  // test di tre file esistenti, misurati, che non hanno niente a che vedere con
+  // questo lavoro. Un cambiamento che si paga riscrivendo i test altrui è quasi
+  // sempre un cambiamento che non serviva.
+  const chiudi = <T extends { maybeSingle: () => unknown; single: () => unknown }>(q: T) =>
+    (modo === 'single' ? q.single() : q.maybeSingle()) as Promise<{ data: unknown; error: unknown }>
+
+  const primo = await chiudi(supabase.from('utenti').select(COLONNE_UTENTE).eq('id', id))
+  if (!primo.error) return { data: (primo.data ?? null) as RigaUtenti | null, error: null }
+  if (!schemaAssente(primo.error)) return { data: null, error: primo.error }
+
+  // La colonna non c'è ancora: si rilegge senza, e lo si dice. `warn` e non
+  // `info` perché questa riga è la prova che l'archiviazione NON sta mordendo:
+  // se comparisse in produzione dopo il merge, il comando «Elimina docente»
+  // starebbe archiviando persone che continuano a entrare.
+  logEvento('auth', 'warn', {
+    operazione: 'resolveIdentity',
+    esito: 'archiviazione-non-verificabile',
+    error_code: (primo.error as { code?: string } | null)?.code,
+  })
+  const secondo = await chiudi(
+    supabase.from('utenti').select(COLONNE_UTENTE_SENZA_ARCHIVIAZIONE).eq('id', id),
+  )
+  return { data: (secondo.data ?? null) as RigaUtenti | null, error: secondo.error ?? null }
 }
 
 /** Ciò che si sa della persona dopo aver risolto la sua identità. */
@@ -134,7 +206,7 @@ async function risolviDaAuthUid(authUid: string): Promise<{
 }> {
   const supabase = await createAdminClient()
   const [staffRes, parentRes] = await Promise.all([
-    supabase.from('utenti').select(COLONNE_UTENTE).eq('id', authUid).maybeSingle(),
+    leggiRigaUtenti(supabase, authUid, 'maybeSingle'),
     supabase.from('parents').select('id').eq('auth_user_id', authUid).maybeSingle(),
   ])
 
@@ -289,13 +361,24 @@ function proiettaAppUser(riga: RigaUtenti): AppUser {
  */
 export async function loadAppUser(userId: string): Promise<AppUser | null> {
   const supabase = await createAdminClient()
-  const { data, error } = await supabase
-    .from('utenti')
-    .select(COLONNE_UTENTE)
-    .eq('id', userId)
-    .single()
+  const { data, error } = await leggiRigaUtenti(supabase, userId, 'single')
   if (error || !data) return null
-  return proiettaAppUser(data as RigaUtenti)
+  return proiettaAppUser(data)
+}
+
+/**
+ * La riga `utenti` grezza, per chi deve decidere sull'ARCHIVIAZIONE e non solo
+ * sul ruolo.
+ *
+ * `loadAppUser` proietta su `AppUser`, che non porta `archiviato_il` — e non deve
+ * portarlo: `AppUser` è ciò che 296 test costruiscono a mano, e aggiungerci un
+ * campo di sicurezza significherebbe che ognuno di quei fixture decide, per
+ * omissione, se una persona è archiviata. Il dato resta dov'è stato letto.
+ */
+export async function leggiUtenteGrezzo(userId: string): Promise<RigaUtenti | null> {
+  const supabase = await createAdminClient()
+  const { data, error } = await leggiRigaUtenti(supabase, userId, 'single')
+  return error ? null : data
 }
 
 /**
@@ -357,7 +440,7 @@ function conRuoloAttivo(user: AppUser, request: Request, source: IdentitySource 
  */
 async function utenteDellaRichiesta(
   request: Request,
-): Promise<{ userId: string | null; user: AppUser | null }> {
+): Promise<{ userId: string | null; user: AppUser | null; archiviato?: true }> {
   const ident = await resolveIdentity(request)
   if (!ident.userId) return { userId: null, user: null }
 
@@ -369,8 +452,33 @@ async function utenteDellaRichiesta(
   const gia = ident.rigaUtenti
   const riusabile = gia && gia.id === ident.userId && (gia.role || gia.ruolo) ? gia : null
 
-  const letto = riusabile ? proiettaAppUser(riusabile) : await loadAppUser(ident.userId)
-  if (!letto) return { userId: ident.userId, user: null }
+  const riga = riusabile ?? (await leggiUtenteGrezzo(ident.userId))
+  if (!riga) return { userId: ident.userId, user: null }
+  const letto = proiettaAppUser(riga)
+
+  /*
+   * L'ARCHIVIAZIONE REVOCA IL PROFILO STAFF, NON L'ACCESSO DELLA PERSONA.
+   *
+   * `archiviato_il` è una proprietà della riga `utenti`, cioè del profilo di
+   * lavoro. Il ponte genitore vive su `parents.auth_user_id` e non ha nessuna
+   * archiviazione: al 2026-09-20 dodici persone hanno entrambe le cose, e fra
+   * loro c'è chi insegna e insieme ha un figlio iscritto qui.
+   *
+   * 🔴 Scritta come «archiviato ⇒ 401» questa regola chiuderebbe fuori il diario
+   * di un bambino a sua madre. Si toglie la veste da staff e si lascia quella da
+   * genitore — che è esattamente ciò che l'archiviazione vuole dire.
+   *
+   * La latenza di revoca è UNA RICHIESTA: i gate rileggono `utenti` a ogni
+   * chiamata, quindi non serve nessuna acrobazia su GoTrue per invalidare un
+   * token che vive un'ora.
+   */
+  if (profiloStaffRevocato(riga.archiviato_il)) {
+    if (ident.ponteGenitore === true) {
+      const genitore: AppRole = 'genitore'
+      return { userId: ident.userId, user: { ...letto, role: genitore, ruoli: [genitore] } }
+    }
+    return { userId: ident.userId, user: null, archiviato: true }
+  }
 
   const conRuoli = conPonteGenitore(letto, ident.ponteGenitore === true)
   return { userId: ident.userId, user: conRuoloAttivo(conRuoli, request, ident.source) }
@@ -404,8 +512,33 @@ async function utenteDellaRichiesta(
  * fra «ha ricevuto un 403» e «un `genitore` ha bussato a una route staff».
  * ──────────────────────────────────────────────────────────────────────────── */
 
-/** Perché il gate ha detto no. Chiave `tipo`: è in lista bianca, sopravvive a `redact()`. */
-type MotivoDiniego = 'non-autenticato' | 'utente-sconosciuto' | 'ruolo-negato'
+/**
+ * Perché il gate ha detto no. Chiave `tipo`: è in lista bianca, sopravvive a `redact()`.
+ *
+ * `account-archiviato` è distinto da `utente-sconosciuto` e non è pignoleria:
+ * «non so chi sei» e «so chi sei e non lavori più qui» sono due contatori
+ * diversi, e il secondo è quello che si guarda per sapere chi continua a bussare
+ * dopo un'archiviazione. È la stessa disciplina di `MotivoIncarico` in
+ * `incarico-staff.ts`.
+ */
+type MotivoDiniego =
+  | 'non-autenticato'
+  | 'utente-sconosciuto'
+  | 'ruolo-negato'
+  | 'account-archiviato'
+
+/**
+ * Il 403 di un account archiviato, uguale per tutti e quattro i gate.
+ *
+ * Porta il `codice`, che il resto dei dinieghi non ha: è l'unico caso in cui la
+ * persona deve LEGGERE qualcosa di diverso dal solito «accesso negato», e senza
+ * il codice `soloCatalogoDaCorpo` non trova niente da tradurre. La frase è in
+ * `messages/{it,en}/shared.json`, chiave `erroreAccountArchiviato`.
+ */
+const ARCHIVIATO = {
+  messaggio: 'Accesso negato: questo accesso non è più attivo',
+  codice: 'ACCOUNT_ARCHIVIATO',
+} as const
 
 /** Il testo del 401 è identico in tutti e quattro i gate: i client lo confrontano. Non cambiarlo. */
 const NON_AUTENTICATO = 'Non autenticato: userId mancante'
@@ -462,6 +595,7 @@ function nega(
   tipo: MotivoDiniego,
   messaggio: string,
   user?: AppUser,
+  codice?: string,
 ): AuthResult {
   if (user) impostaUtente({ userId: user.id, ruolo: user.role, scuolaId: user.scuola_id })
   // `logEvento` è fail-open per costruzione: non serve un try qui attorno, e un gate di
@@ -475,8 +609,20 @@ function nega(
   // non dice niente, mentre l'assenza dice già «persona con una sola veste». È un booleano,
   // quindi passa la lista bianca di `redact()` senza aggiungere chiavi nuove.
   const doppio = user && ruoliDi(user).length > 1 ? true : undefined
-  logEvento('auth', 'info', { tipo, azione, ruolo: user?.role, doppio })
-  return { response: NextResponse.json({ error: messaggio }, { status: stato }) }
+  // ⚠️ `account-archiviato` esce a `warn`, non a `info` come gli altri dinieghi.
+  // La regola generale («i dinieghi sono `info`, o `app_log` diventa una tabella
+  // di 401 innocui») vale per gli eventi che ogni cookie scaduto produce a
+  // raffica; questo no: sono al massimo N righe al giorno, una per archiviato, e
+  // sono la sola risposta alla domanda «chi continua a bussare dopo che gli
+  // abbiamo tolto l'accesso?». `app_log` deduplica per `(fingerprint, giorno)`.
+  const livello = tipo === 'account-archiviato' ? 'warn' : 'info'
+  logEvento('auth', livello, { tipo, azione, ruolo: user?.role, doppio })
+  return {
+    response: NextResponse.json(
+      codice ? { error: messaggio, codice } : { error: messaggio },
+      { status: stato },
+    ),
+  }
 }
 
 /**
@@ -606,9 +752,11 @@ export async function requireStaff(
   allowed: readonly StaffRole[] = ['admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
   const NEGATO = messaggioNegatoStaff(allowed)
-  const { userId, user } = await utenteDellaRichiesta(request)
+  const { userId, user, archiviato } = await utenteDellaRichiesta(request)
   if (!userId) return nega('requireStaff', 401, 'non-autenticato', NON_AUTENTICATO)
 
+  if (archiviato)
+    return nega('requireStaff', 403, 'account-archiviato', ARCHIVIATO.messaggio, undefined, ARCHIVIATO.codice)
   if (!user) return nega('requireStaff', 403, 'utente-sconosciuto', NEGATO)
   if (!haUnRuolo(user, allowed)) {
     return nega('requireStaff', 403, 'ruolo-negato', NEGATO, user)
@@ -630,9 +778,11 @@ export async function requireKitchenRead(
   allowed: readonly AppRole[] = ['admin', 'coordinator', 'segreteria', 'cuoca', 'educator']
 ): Promise<AuthResult> {
   const NEGATO = 'Accesso negato: operazione riservata a cucina/staff'
-  const { userId, user } = await utenteDellaRichiesta(request)
+  const { userId, user, archiviato } = await utenteDellaRichiesta(request)
   if (!userId) return nega('requireKitchenRead', 401, 'non-autenticato', NON_AUTENTICATO)
 
+  if (archiviato)
+    return nega('requireKitchenRead', 403, 'account-archiviato', ARCHIVIATO.messaggio, undefined, ARCHIVIATO.codice)
   if (!user) return nega('requireKitchenRead', 403, 'utente-sconosciuto', NEGATO)
   if (!haUnRuolo(user, allowed)) {
     return nega('requireKitchenRead', 403, 'ruolo-negato', NEGATO, user)
@@ -646,11 +796,17 @@ export async function requireKitchenRead(
  * va poi fatto in query via `legame_genitori_alunni`.
  */
 export async function requireUser(request: Request): Promise<AuthResult> {
-  const { userId, user } = await utenteDellaRichiesta(request)
+  const { userId, user, archiviato } = await utenteDellaRichiesta(request)
   if (!userId) return nega('requireUser', 401, 'non-autenticato', NON_AUTENTICATO)
 
   // NB: qui l'utente sconosciuto è un 401 (non un 403) — «non so chi sei», non «non puoi».
   // Lo status è quello di prima: i client lo distinguono.
+  // 403 e non 401 come la riga sotto, ed è la differenza che conta: «non so chi
+  // sei» manda a rifare l'accesso, e qui rifarlo riuscirebbe — GoTrue non sa
+  // niente di `archiviato_il` — riportando la persona allo stesso punto. È
+  // l'anello del giro infinito, visto dal lato dei dati.
+  if (archiviato)
+    return nega('requireUser', 403, 'account-archiviato', ARCHIVIATO.messaggio, undefined, ARCHIVIATO.codice)
   if (!user) return nega('requireUser', 401, 'utente-sconosciuto', 'Utente non trovato')
   // Nessun controllo di ruolo: questo gate chiede solo «chi sei». È l'unico dei quattro
   // che resta identico riga per riga — non ha una lista di ammessi da confrontare.
@@ -689,9 +845,11 @@ export async function requireDocente(
   allowed: readonly AppRole[] = ['educator', 'admin', 'coordinator', 'segreteria']
 ): Promise<AuthResult> {
   const NEGATO = 'Accesso negato: riservato al personale docente'
-  const { userId, user } = await utenteDellaRichiesta(request)
+  const { userId, user, archiviato } = await utenteDellaRichiesta(request)
   if (!userId) return nega('requireDocente', 401, 'non-autenticato', NON_AUTENTICATO)
 
+  if (archiviato)
+    return nega('requireDocente', 403, 'account-archiviato', ARCHIVIATO.messaggio, undefined, ARCHIVIATO.codice)
   if (!user) return nega('requireDocente', 403, 'utente-sconosciuto', NEGATO)
   if (!haUnRuolo(user, allowed)) {
     return nega('requireDocente', 403, 'ruolo-negato', NEGATO, user)

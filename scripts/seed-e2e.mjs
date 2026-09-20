@@ -205,6 +205,22 @@ export const IDS = {
    * È la premessa di `e2e/chat-precedenti.spec.ts`.
    */
   THREAD_LUNGO: 'e2e00000-0000-4000-8000-000000001201',
+
+  /* ── RICONCILIAZIONE BANCARIA — un import e i TRE colori del semaforo ──────
+   *
+   * La premessa di `e2e/admin-riconciliazione-popup.spec.ts`. Senza queste
+   * quattro righe quel file non può che asserire lo stato vuoto: il popup del
+   * movimento si apre SOLO cliccando una riga della lista, e una lista vuota non
+   * ha righe da cliccare. Tutto il resto — il 95% dello schermo, il piede
+   * raggiungibile, le due colonne, «Conferma» che si accende — vive lì dentro.
+   *
+   * Il dettaglio di ogni scelta sta in `seminaRiconciliazione()`, accanto al
+   * dato; qui restano i soli identificativi.
+   */
+  RIC_IMPORT: 'e2e00000-0000-4000-8000-000000001301',
+  RIC_MOV_ROSSO: 'e2e00000-0000-4000-8000-000000001302',
+  RIC_MOV_GIALLO: 'e2e00000-0000-4000-8000-000000001303',
+  RIC_MOV_VERDE: 'e2e00000-0000-4000-8000-000000001304',
 };
 
 export const CREDENZIALI = {
@@ -295,6 +311,58 @@ export const DOPPIO_PROFILO_E2E = {
   primoSede2: 'Riso E2E della sede 2',
   /** Nota di diario di `A5`: prova che il diario del figlio si APRE e ha contenuto. */
   notaDiarioA5: 'Nota E2E per il genitore-docente',
+};
+
+/**
+ * LE ÀNCORE DEI TRE MOVIMENTI BANCARI — causali, ordinanti e importi.
+ *
+ * ─── PERCHÉ SONO DATO DEL SEED E NON TESTO DI CATALOGO ──────────────────────
+ * Stessa ragione di `DOPPIO_PROFILO_E2E` qui sopra: lo spec cerca a schermo la
+ * riga da aprire, e cercarla per una frase dei `messages/` la renderebbe rossa
+ * alla prima riscrittura editoriale. Queste stringhe le scrive il seed e le
+ * rilegge lo spec.
+ *
+ * ─── PERCHÉ SONO TUTTE MAIUSCOLE E SENZA RIFERIMENTI ────────────────────────
+ * Un estratto conto vero arriva in maiuscolo dalla banca. Ma soprattutto:
+ * **nessuna delle tre deve contenere un identificativo agganciabile**, né un
+ * codice fiscale (`estraiCodiciFiscali`) né un codice voce nella forma
+ * `#K7MXN3P` o nuda (`estraiCodiciVoce`). Verificato a mano contro le due
+ * regex — non dedotto: le QUATTRO forme (codice col sigillo, codice nudo, CF
+ * esatto, CF di omocodia) sono state rigiocate sulle tre coppie causale +
+ * ordinante, su entrambe le varianti che quelle funzioni provano (il testo
+ * com'è e quello senza spazi), e non agganciano niente. L'argomento regge da
+ * sé: nessun token di sette caratteri sta per intero nell'alfabeto
+ * `23456789CFHKMNPRTVXY` (ogni parola porta una vocale, che quell'alfabeto non
+ * ha), e nessuna finestra di sedici caratteri cade fra due confini di parola
+ * nemmeno nella variante compressa. Un
+ * riferimento nato per caso renderebbe queste righe agganciabili, e il colore
+ * che il seed dichiara smetterebbe di essere quello che il prodotto calcola.
+ *
+ * ─── I TRE IMPORTI SONO DIVERSI, E UNO È UNA MISURA ─────────────────────────
+ * Diversi perché lo spec apre la riga cercandola per causale e ne verifica la
+ * cifra: due righe con lo stesso importo renderebbero ambiguo il locator.
+ *
+ * ⚠️ `importoRosso` NON è un numero di comodo: è **esattamente** il residuo
+ * della voce aperta di Aurora (`IDS.PAG_APERTO`, 150 € con 0 incassati). È ciò
+ * che fa accendere «Conferma il pagamento» nel quarto passaggio dello spec,
+ * dove si spunta quella voce e la somma deve quadrare al centesimo. Cambiare
+ * l'uno senza l'altro rende quel passaggio rosso su un prodotto sano.
+ */
+export const RICONCILIAZIONE_E2E = {
+  /** Il ROSSO: nessun identificativo in causale, nessun suggerimento. */
+  causaleRosso: 'BONIFICO E2E DA ABBINARE A MANO',
+  controparteRosso: 'ORDINANTE E2E SCONOSCIUTO',
+  /** Il GIALLO: un candidato proposto, che una persona deve confermare. */
+  causaleGiallo: 'BONIFICO E2E CON UN SUGGERIMENTO',
+  controparteGiallo: 'ORDINANTE E2E CON SUGGERIMENTO',
+  /** Il VERDE: già confermato, e marcato come deciso dalla macchina. */
+  causaleVerde: 'BONIFICO E2E GIA CONFERMATO',
+  controparteVerde: 'ORDINANTE E2E CONFERMATO',
+  /** ⚠️ Il residuo esatto di `IDS.PAG_APERTO`: vedi la testata. */
+  importoRosso: 150,
+  importoGiallo: 90,
+  /** Quanto vale «Gita E2E» (`IDS.PAG_PAGATO`), la voce a cui il verde è legato. */
+  importoVerde: 25,
 };
 
 /**
@@ -709,6 +777,220 @@ async function seminaGalleriaImpaginazione() {
   ];
 
   await upsertGalleriaConDegrado(righe, 'impaginazione');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+ * RICONCILIAZIONE BANCARIA — un import e i tre colori del semaforo
+ *
+ * ─── COSA MANCAVA, E PERCHÉ NON SI POTEVA COLLAUDARE NIENTE ────────────────────
+ *
+ * Fino a qui il seed non seminava **una sola riga** di riconciliazione: né un
+ * import, né un movimento. La vista `?vista=riconciliazione` mostrava quindi il
+ * proprio stato vuoto, e l'unico asserto possibile era che quello stato vuoto ci
+ * fosse — cioè niente. Il popup del movimento, che è la superficie da collaudare
+ * (95% dello schermo, tre fasce, due colonne, un solo elemento che scorre), si
+ * apre SOLO cliccando una riga della lista: senza righe non esiste il gesto che
+ * lo apre, e nessuna di quelle tesi può essere misurata.
+ *
+ * ─── 🔴 PERCHÉ QUESTO BLOCCO NON USA `must()` ─────────────────────────────────
+ *
+ * `riconciliazione_import` e `riconciliazione_movimenti` **non sono nel
+ * baseline**: le crea `20260710150000_contabilita_riconciliazione.sql`, cioè una
+ * migrazione POSTERIORE a `20260704120000_baseline.sql`. Il database E2E della CI
+ * è un progetto Supabase separato con `supabase_migrations.schema_migrations`
+ * vuoto, e `.github/workflows/migrate-ci.yml` è `workflow_dispatch`: si applica a
+ * mano, un file per volta. Finché quel lancio non è avvenuto le due tabelle lì
+ * non esistono, PostgREST risponde `PGRST205`/`42P01`, e `must()` farebbe morire
+ * l'INTERA suite prima del primo test — per una funzionalità che in quell'ambiente
+ * non c'è. Si avvisa NOMINANDO la tabella saltata e si prosegue, come fanno già
+ * `ripulisciModuliPersonale()` e `upsertGalleriaConDegrado()`.
+ *
+ * Il degrado non è muto e non è una scusa: lo spec
+ * `e2e/admin-riconciliazione-popup.spec.ts` riconosce la stessa condizione **dal
+ * prodotto** (il pannello che dice «Riconciliazione non ancora disponibile», o la
+ * lista vuota), la dichiara nel rapporto Playwright e dice quale metà non ha
+ * potuto misurare.
+ *
+ * ─── PERCHÉ TUTTE E QUATTRO LE RIGHE DICHIARANO LA SEDE ───────────────────────
+ *
+ * In produzione un movimento nasce **senza** sede (`scuola_id` NULL): la sede si
+ * assegna alla conferma, e prima di allora la lista la deduce. Qui la si scrive
+ * comunque, su tutte e tre, per una ragione d'ambiente: la migrazione che crea le
+ * tabelle dichiara `scuola_id NOT NULL`, e a toglierlo è
+ * `20260719100000_riconciliazione_v2_cross_sede.sql` — un file successivo, che sul
+ * database della CI può benissimo non essere stato applicato. Un `null` lì
+ * diventerebbe un `23502` e un seed che avvisa invece di seminare. La sede
+ * dichiarata costa un filtro in più a schermo (la pillola del plesso) e non tocca
+ * nessuna delle quattro tesi dello spec.
+ *
+ * ─── IL COLORE LO SCRIVE IL SEED, NON LO CALCOLA IL PRODOTTO ──────────────────
+ *
+ * Queste righe entrano dalla porta del database, non dal `POST` dell'import:
+ * `valutaCertezza` non le guarda mai, e la fase automatica non gira su di loro.
+ * Quindi `stato` e `suggerimenti` sono ciò che c'è scritto qui, non un verdetto —
+ * e va detto, perché uno spec che leggesse questi tre colori come la prova che il
+ * motore automatico funziona misurerebbe il seed invece del prodotto. Il motore
+ * lo collaudano i test unitari di `riconciliazione-auto`; qui si semina la
+ * SUPERFICIE su cui il popup si apre.
+ * ═══════════════════════════════════════════════════════════════════════════════ */
+async function seminaRiconciliazione() {
+  /**
+   * DUE predicati e non uno, perché sono DUE fatti diversi con due rimedi
+   * diversi, e un avviso che nomina la causa sbagliata manda a cercare dove non
+   * è: la TABELLA che manca si ripara con `migrate-ci.yml`, la COLONNA che manca
+   * si aggira degradando. Un `assente()` unico che li confondesse scriverebbe
+   * «la tabella non esiste» davanti a un `PGRST204`, che parla di una colonna.
+   */
+  const tabellaAssente = (e) => /PGRST205|42P01/i.test(`${e?.code ?? ''}`)
+    || /relation .* does not exist/i.test(`${e?.message ?? ''}`);
+  const colonnaAssente = (e) => /PGRST204|42703/i.test(`${e?.code ?? ''}`);
+
+  const adesso = new Date().toISOString();
+  const R = RICONCILIAZIONE_E2E;
+
+  /**
+   * Si CANCELLA e si reinserisce, mai `upsert`. Il database della CI è
+   * persistente e il popup di un run precedente può aver cambiato lo stato di una
+   * di queste righe (il quarto passaggio dello spec si ferma prima di scrivere,
+   * ma «Ignora» e «Riapri» restano a un click di distanza per chiunque apra quel
+   * popup a mano). Un `upsert` rimetterebbe i campi che nomina e lascerebbe gli
+   * altri come li ha trovati: il semaforo del run successivo non sarebbe più
+   * quello dichiarato qui, e lo spec cercherebbe un rosso diventato verde.
+   *
+   * I movimenti PRIMA dell'import, benché la FK sia `ON DELETE CASCADE`:
+   * l'ordine dice l'intenzione a chi legge, e non dipende da un `CASCADE` che
+   * nessuno di questi due file dichiara.
+   */
+  const puliziaMovimenti = await db.from('riconciliazione_movimenti').delete().eq('import_id', IDS.RIC_IMPORT);
+  if (puliziaMovimenti.error) {
+    if (tabellaAssente(puliziaMovimenti.error)) {
+      console.warn('↷ riconciliazione saltata: la tabella riconciliazione_movimenti non esiste su questo database');
+      return;
+    }
+    console.error('reset riconciliazione_movimenti:', puliziaMovimenti.error.message);
+  }
+  const puliziaImport = await db.from('riconciliazione_import').delete().eq('id', IDS.RIC_IMPORT);
+  if (puliziaImport.error) {
+    if (tabellaAssente(puliziaImport.error)) {
+      console.warn('↷ riconciliazione saltata: la tabella riconciliazione_import non esiste su questo database');
+      return;
+    }
+    console.error('reset riconciliazione_import:', puliziaImport.error.message);
+  }
+
+  const testata = await db.from('riconciliazione_import').insert({
+    id: IDS.RIC_IMPORT,
+    scuola_id: IDS.SCUOLA,
+    filename: 'estratto-conto-e2e.csv',
+    righe_totali: 3,
+    caricato_da: IDS.ADMIN,
+  });
+  if (testata.error) {
+    // Senza la testata i movimenti violerebbero la FK: si dichiara e si esce, invece
+    // di produrre tre errori identici che parlano tutti della stessa causa.
+    if (tabellaAssente(testata.error)) {
+      console.warn('↷ riconciliazione saltata: riconciliazione_import non accetta l’inserimento su questo database');
+    } else {
+      console.error('riconciliazione_import:', testata.error.message);
+    }
+    return;
+  }
+
+  /**
+   * Le tre righe, come funzione di `conMarca` — e non due array, per la stessa
+   * ragione dichiarata su `upsertGalleriaConDegrado`: una seconda copia è una copia
+   * che un giorno dimentica una riga aggiunta all'altra.
+   *
+   * `abbinato_auto_il` (migrazione `20260920124742`) è la marca «l'ha deciso la
+   * macchina»: sta SOLO sul verde, perché è l'unico già confermato, ed è la
+   * premessa dell'annullamento in blocco. Sul database non migrato quella colonna
+   * non c'è e l'INSERT risponde `PGRST204`: si riprova senza, e le tre righe
+   * restano — perdere il semaforo intero per una colonna sarebbe il prezzo
+   * sbagliato.
+   *
+   * `hash_movimento` è l'impronta anti-doppio-import, `NOT NULL` e unica per sede:
+   * qui sono tre stringhe fisse e parlanti, non l'output di `hashMovimento()`.
+   * Queste righe non sono mai passate da un CSV, e calcolare un'impronta vera
+   * suggerirebbe il contrario.
+   */
+  const righe = (conMarca) => [
+    {
+      id: IDS.RIC_MOV_ROSSO,
+      import_id: IDS.RIC_IMPORT,
+      scuola_id: IDS.SCUOLA,
+      data_operazione: ymdRoma(-1),
+      importo: R.importoRosso,
+      causale: R.causaleRosso,
+      controparte: R.controparteRosso,
+      hash_movimento: 'e2e-riconciliazione-rosso',
+      stato: 'da_abbinare',
+      // Vuoto, e non «pochi»: è la riga su cui lo spec cerca un bambino a mano,
+      // cioè il caso in cui la macchina non ha saputo proporre niente.
+      suggerimenti: [],
+    },
+    {
+      id: IDS.RIC_MOV_GIALLO,
+      import_id: IDS.RIC_IMPORT,
+      scuola_id: IDS.SCUOLA,
+      data_operazione: ymdRoma(-2),
+      importo: R.importoGiallo,
+      causale: R.causaleGiallo,
+      controparte: R.controparteGiallo,
+      hash_movimento: 'e2e-riconciliazione-giallo',
+      stato: 'suggerito',
+      /**
+       * UN candidato, senza `cf_match`: l'aggancio debole, quello che una persona
+       * deve confermare. Con `cf_match: true` la riga porterebbe anche il badge
+       * «CF», che è un'altra affermazione — «questo bonifico nomina quel bambino» —
+       * e in questa causale non c'è nessun codice fiscale che la sostenga.
+       */
+      suggerimenti: [
+        {
+          pagamento_id: IDS.PAG_APERTO,
+          alunno_id: IDS.A1,
+          score: 40,
+          motivi: ['importo compatibile'],
+          label: 'Retta E2E luglio · Arcobaleno-E2E Aurora',
+        },
+      ],
+    },
+    {
+      id: IDS.RIC_MOV_VERDE,
+      import_id: IDS.RIC_IMPORT,
+      scuola_id: IDS.SCUOLA,
+      data_operazione: ymdRoma(-3),
+      importo: R.importoVerde,
+      causale: R.causaleVerde,
+      controparte: R.controparteVerde,
+      hash_movimento: 'e2e-riconciliazione-verde',
+      stato: 'confermato',
+      suggerimenti: [],
+      // Legato alla voce GIÀ SALDATA (`Gita E2E`, 25 €): un confermato che
+      // puntasse alla voce ancora aperta di Aurora racconterebbe un incasso che
+      // il registro dei pagamenti smentisce due schermate più in là.
+      pagamento_id: IDS.PAG_PAGATO,
+      confermato_da: IDS.ADMIN,
+      confermato_il: adesso,
+      ...(conMarca ? { abbinato_auto_il: adesso } : {}),
+    },
+  ];
+
+  const primo = await db.from('riconciliazione_movimenti').insert(righe(true));
+  if (!primo.error) {
+    console.log('  🏦 riconciliazione: 1 import + 3 movimenti (rosso · giallo · verde, con la marca automatica)');
+    return;
+  }
+  if (!colonnaAssente(primo.error)) {
+    console.error('riconciliazione_movimenti:', primo.error.message ?? JSON.stringify(primo.error));
+    return;
+  }
+  console.warn('↷ riconciliazione_movimenti senza `abbinato_auto_il` su questo database: reinserisco senza la marca');
+  const secondo = await db.from('riconciliazione_movimenti').insert(righe(false));
+  if (secondo.error) {
+    console.error('riconciliazione_movimenti (senza marca):', secondo.error.message ?? JSON.stringify(secondo.error));
+    return;
+  }
+  console.log('  🏦 riconciliazione: 1 import + 3 movimenti (rosso · giallo · verde, senza la marca automatica)');
 }
 
 async function main() {
@@ -1203,6 +1485,17 @@ async function main() {
       };
     }),
   ));
+
+  // 18. Riconciliazione bancaria: un import e i TRE colori del semaforo.
+  //
+  //     ⚠️ DOPO il punto 12 (i pagamenti), e non è un ordine intercambiabile: il
+  //     movimento verde porta `pagamento_id → pagamenti.id`, e una FK non si lega
+  //     a una riga che non è ancora nata.
+  //
+  //     Non usa `must()` — le due tabelle non sono nel baseline e sul database
+  //     della CI possono non esistere affatto. Il perché per esteso, con la via
+  //     per accenderle, sta sulla funzione.
+  await seminaRiconciliazione();
 
   console.log('✅ Seed E2E completato (idempotente, 2 sedi). Oggi (Europe/Rome):', oggi);
 }

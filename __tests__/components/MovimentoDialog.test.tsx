@@ -26,6 +26,21 @@ const CATALOGO_IT = JSON.parse(
 const testo = (chiave: string): string => CATALOGO_IT[chiave] ?? `adminContabilita.${chiave}`;
 
 /**
+ * IL SORGENTE DEL COMPONENTE, per le prove che il DOM non può reggere.
+ *
+ * Se ne serve una sola: `safeArea`. È una prop booleana che `Modal` traduce in
+ * `padding: max(1rem, env(safe-area-inset-*))` sul contenitore, e in jsdom quella
+ * dichiarazione NON sopravvive — misurato: con e senza la prop il contenitore esce
+ * con `getAttribute('style') === null` e `style.paddingTop === ''`, perché jsdom
+ * scarta il valore `env(...)`. Una prova sul DOM sarebbe verde in tutti e due i
+ * casi, cioè il classico lock che non può fallire.
+ */
+const SORGENTE_DIALOG = readFileSync(
+  join(process.cwd(), 'src/components/features/admin/pagamenti/MovimentoDialog.tsx'),
+  'utf8',
+);
+
+/**
  * FatturaButton fa fetch proprie: stub per isolare il dialog.
  *
  * ⚠️ IL MOCK REGISTRA LE PROPS, e non è un dettaglio: il difetto che questo file
@@ -42,6 +57,37 @@ vi.mock('@/components/features/admin/pagamenti/FatturaButton', () => ({
         onClick={() => (props.onEmessa as (() => void) | undefined)?.()}>
         Emetti fattura
       </button>
+    );
+  },
+}));
+
+/**
+ * IL PANNELLO «COMPONI IL PAGAMENTO» — lo stub REGISTRA LE PROPS.
+ *
+ * ⚠️ UNO STUB CHE RENDESSE UN SEGNAPOSTO SAREBBE VERDE CON E SENZA LA
+ * CORREZIONE: il difetto che le prove in fondo a questo file intercettano è *una
+ * prop non passata* (`alunniIniziali`), e `<ComposizioneBonifico movimentoId … />`
+ * e `<ComposizioneBonifico … alunniIniziali={[…]} />` producono lo stesso `<div>`.
+ * È la stessa ragione per cui lo stub di `FatturaButton`, qui sopra, le registra.
+ *
+ * Il mock non tocca nessuna prova esistente: il pannello si monta solo su
+ * richiesta, e nessuna di quelle qui sotto lo apre.
+ *
+ * Lo stub porta anche la VIA D'USCITA del pannello — il «Chiudi» che dentro il
+ * pannello vero chiama `onChiudi`. Senza un modo di premerla dal test, «che cosa
+ * resta puntato quando si torna indietro» non si potrebbe misurare: è un difetto
+ * che si vede solo RIAPRENDO.
+ */
+const spiaComponi = vi.hoisted(() => ({ props: [] as Record<string, unknown>[] }));
+vi.mock('@/components/features/admin/pagamenti/ComposizioneBonifico', () => ({
+  ComposizioneBonifico: (props: Record<string, unknown>) => {
+    spiaComponi.props.push(props);
+    return (
+      <div data-testid="pannello-componi">
+        <button type="button" onClick={() => (props.onChiudi as (() => void) | undefined)?.()}>
+          FINTO torna indietro
+        </button>
+      </div>
     );
   },
 }));
@@ -580,14 +626,338 @@ describe('MovimentoDialog — forma, bersagli e àncore di stile', () => {
    *
    * Il tetto è in `dvh` e non in `vh`: su iOS `vh` conta anche la barra degli
    * indirizzi che poi si ritira, cioè misura una finestra che non c'è.
+   *
+   * ⚠️ LA TESI NON È CAMBIATA, L'ASSERZIONE SÌ — e non perché quella di prima
+   * fosse diventata scomoda. Quella prova difendeva una cosa sola, «il piede
+   * resta raggiungibile», e lo faceva per via INDIRETTA: se la card ha un tetto
+   * e scorre, scorrendo prima o poi ci arrivi. Ora il piede è FUORI dall'area
+   * che scorre, quindi la stessa tesi si può asserire dritta — ed è più forte,
+   * perché non dipende più da quanto è lungo il contenuto. Cancellare
+   * l'asserzione vecchia e basta l'avrebbe trasformata in decorazione: al suo
+   * posto ce ne sono QUATTRO, e la quarta è quella che tiene morto il
+   * `max-h-56` della lista impedendogli di rientrare da un'altra parte.
    */
-  it('la card ha un tetto d’altezza e scorre: il piede resta raggiungibile', async () => {
+  /**
+   * Chi scorre, cercato per TOKEN di classe: `overflow-hidden` non è uno scroller.
+   *
+   * ⚠️ LE VARIANTI CONTANO. Ancorata a `^overflow`, questa sonda non vedeva
+   * `lg:overflow-y-auto`: lo scorrimento annidato della lista rientrava da `lg` in
+   * su — cioè proprio sul monitor grande per cui il popup è stato allargato — con
+   * il gate tutto verde. Il prefisso di variante si consuma qui, non si ignora.
+   */
+  const SCROLLATORE = /^(?:[a-z0-9-]+:)*overflow(?:-[xy])?-(?:auto|scroll)$/;
+  /**
+   * …e la classe non è l'unica porta: su questa card lo `style` inline è già usato
+   * (il `boxShadow`), quindi `style={{ overflowY: 'auto' }}` non è un'ipotesi di
+   * scuola, è una via aperta accanto a quella sorvegliata.
+   */
+  const scorreInline = (e: HTMLElement): boolean =>
+    [e.style.overflow, e.style.overflowY, e.style.overflowX].some((v) => /^(?:auto|scroll)$/.test(v ?? ''));
+  const scrollatoriIn = (radice: HTMLElement): HTMLElement[] =>
+    [...radice.querySelectorAll<HTMLElement>('*')].filter(
+      (e) => (e.getAttribute('class') ?? '').split(/\s+/).some((c) => SCROLLATORE.test(c)) || scorreInline(e),
+    );
+
+  /**
+   * I token di una FAMIGLIA di proprietà (`max-w-`, `max-h-`), spogliati della
+   * variante responsive.
+   *
+   * ⚠️ `max-width` e `max-height` sono proprietà a ULTIMO-CHE-VINCE: asserire la
+   * PRESENZA di `max-w-[95%]` non dice NIENTE sull'effetto, perché un `sm:max-w-lg`
+   * rimesso accanto vince da `sm` in su e riporta il popup a 512px con l'asserzione
+   * ancora verde. La variante si toglie proprio perché `sm:max-w-lg` deve contare:
+   * è il difetto di partenza che rientra travestito.
+   */
+  const famiglia = (classi: string[], prefisso: string): string[] =>
+    classi.map((c) => c.replace(/^(?:[a-z0-9-]+:)*/, '')).filter((c) => c.startsWith(prefisso));
+
+  it('1/4 · la radice ha il tetto in `dvh` e NON scorre più: a scorrere è il corpo', async () => {
     vi.stubGlobal('fetch', rispostaPagamento('emessa'));
     render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
 
     const card = screen.getByRole('dialog');
-    expect(card.className).toContain('overflow-y-auto');
+    const classi = card.className.split(/\s+/);
     expect(card.className, 'il tetto va in dvh: su iOS vh misura una finestra che si ritira').toContain('dvh');
+    expect(card.className, 'la card ritaglia: se scorresse lei, testa e piede scorrerebbero con tutto il resto').toContain('overflow-hidden');
+    expect(classi).not.toContain('overflow-y-auto');
+
+    // ⚠️ LA LARGHEZZA È IL MOTIVO PER CUI QUESTO LAVORO ESISTE, e fino a qui non
+    // la teneva nessuna delle quattro prove: difendevano tutte l'ALTEZZA. Rimettere
+    // `max-w-md` sulla costante riporta il popup a 448px su un monitor da 2560 —
+    // cioè il difetto di partenza, con il gate tutto verde.
+    //
+    // ⚠️ E NON BASTA CHIEDERE CHE `max-w-[95%]` CI SIA: un `toContain` è verde anche
+    // con `sm:max-w-lg` scritto accanto, che da `sm` in su vince per ordine di CSS e
+    // riporta la card a 512px. È successo davvero, ed è il motivo per cui questa riga
+    // è stata riscritta: si asserisce l'INSIEME della famiglia — uno e uno solo — non
+    // la presenza di un suo membro. Per TOKEN e non per sottostringa, perché un lock
+    // che si accontenta di `includes` si lascia soddisfare da un commento.
+    expect(
+      famiglia(classi, 'max-w-'),
+      'un secondo `max-w-*` vince per ordine di CSS e riporta il popup a 512px: di questa famiglia ce n’è uno solo',
+    ).toEqual(['max-w-[95%]']);
+
+    // ⚠️ E UN TETTO NON È UNA LARGHEZZA. La riga qui sopra dichiara di difendere
+    // il 95%, ma `max-w-*` dice soltanto fin DOVE la card può arrivare: chi la
+    // porta fin lì è `w-full`. Misurato: tolto `w-full` dalla costante, il file
+    // resta verde 54/54 — la card è un figlio flex senza `flex-grow`, quindi si
+    // dimensiona sul contenuto, e `max-w-[95%]` diventa un limite che non viene
+    // mai raggiunto. Il popup non è più «quasi a tutto schermo», che è la
+    // decisione da cui nasce tutto questo lavoro.
+    // Stessa famiglia di difetto dello `sticky` più sotto: un token che resta
+    // scritto ed è inerte perché gli è stato tolto il compagno.
+    expect(
+      classi,
+      '`max-w-*` è un TETTO, non una larghezza: senza `w-full` la card si dimensiona sul contenuto e il 95% non lo raggiunge mai',
+    ).toContain('w-full');
+
+    // ⚠️ TOGLIERE IL CONTESTO FLEX È PEGGIO DEL DIFETTO DI PARTENZA, non un
+    // arretramento: senza `flex flex-col` sulla card, il `min-h-0 flex-1` del corpo
+    // non fa più niente (il corpo prende altezza `auto` e il suo `overflow-y-auto`
+    // non genera nessuno scorrimento) e l'`overflow-hidden` qui sopra RITAGLIA VIA
+    // il piede. «Chiudi» non torna «in fondo al rotolo»: diventa irraggiungibile,
+    // senza nemmeno una rotella da girare. Le prove 2/4 e 4/4 restano verdi lo
+    // stesso — la 2/4 guarda il FIGLIO, la 4/4 conta ancora un solo scroller — ed è
+    // esattamente per questo che la tesi va asserita sul PADRE, qui.
+    expect(
+      classi,
+      'senza contesto flex il `flex-1`/`min-h-0` del corpo non fa niente e l’`overflow-hidden` ritaglia via il piede',
+    ).toEqual(expect.arrayContaining(['flex', 'flex-col']));
+
+    // ⚠️ `max-h-full` È LA GUARDIA, e `h-[95dvh]` da solo soddisfa il `dvh` qui
+    // sopra: senza, il lock non la copre. Con `safeArea` il contenitore di `Modal`
+    // imbottisce di `max(1rem, env(safe-area-inset-*))` per lato, quindi lo spazio
+    // vero è `100dvh − (inset sopra + inset sotto)`; su un telefono con notch e
+    // barra di gesto quello spazio scende sotto il 95dvh chiesto dalla card, che
+    // essendo centrata (`items-center`) sfora simmetricamente SOPRA e SOTTO — la ✕
+    // sotto il notch, i pulsanti del piede sotto l'home indicator. Cioè le due cose
+    // da cui si esce.
+    //
+    // ⚠️ STESSA TRAPPOLA DELLA LARGHEZZA, e qui morde più forte: `max-height` è a
+    // ultimo-che-vince, quindi un `max-h-[calc(100dvh-2rem)]` rimesso accanto alla
+    // guardia vince — ed è proprio il `calc` a mano che tutto il commento della
+    // costante dichiara di aver ucciso, quello che sottrae 2rem fissi mentre con
+    // `safeArea` l'imbottitura vera è `max(1rem, env(safe-area-inset-*))`. Cioè il
+    // numero sbagliato torna in vigore esattamente nel caso per cui è sbagliato.
+    expect(
+      famiglia(classi, 'max-h-'),
+      'la guardia è una sola: un secondo `max-h-*` vince per ordine di CSS, e il `calc` a mano è sbagliato proprio quando `safeArea` è attivo',
+    ).toEqual(['max-h-full']);
+
+    // …e la guardia presuppone `safeArea`. In jsdom la prop non lascia traccia nel
+    // DOM (vedi `SORGENTE_DIALOG`), quindi si asserisce sul sorgente — con un'àncora
+    // di riga intera e non con un `includes('safeArea')`: quel file nomina «safeArea»
+    // anche nei propri commenti, e un lock che si immunizza da solo col proprio
+    // commento è una trappola già pagata in questo repo.
+    expect(
+      SORGENTE_DIALOG,
+      'senza `safeArea` la card al 95% finisce sotto il notch e sotto la barra di gesto',
+    ).toMatch(/^\s*safeArea\s*$/m);
+  });
+
+  it('2/4 · il corpo è il pezzo che scorre, e `min-h-0` è ciò che glielo permette', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const classi = screen.getByTestId('movdlg-corpo').className.split(/\s+/);
+    expect(
+      classi,
+      'senza `min-h-0` un figlio flex non si comprime sotto il proprio contenuto (`min-height: auto`): la fascia cresce e il corpo non scorre',
+    ).toContain('min-h-0');
+    expect(classi).toContain('flex-1');
+    expect(classi).toContain('overflow-y-auto');
+  });
+
+  it('3/4 · il piede è FRATELLO del corpo, non un suo discendente: «Chiudi» non si scorre', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const corpo = screen.getByTestId('movdlg-corpo');
+    const piede = screen.getByTestId('movdlg-piede');
+    const testa = screen.getByTestId('movdlg-testa');
+    expect(corpo.contains(piede), 'dentro il corpo il piede tornerebbe in fondo al rotolo: è il difetto di partenza').toBe(false);
+    expect(piede.parentElement, 'testa, corpo e piede sono tre fratelli della stessa colonna flex').toBe(corpo.parentElement);
+    expect(testa.parentElement).toBe(corpo.parentElement);
+    // La cifra sta nella fascia fissa, non nel rotolo: è l'unica cosa che dice
+    // QUANTO si sta incassando, e scorreva via al primo suggerimento.
+    expect(testa.contains(screen.getByRole('heading', { name: /150,00/ }))).toBe(true);
+    expect(corpo.contains(screen.getByRole('button', { name: 'Chiudi il movimento' }))).toBe(false);
+    // «Chiudi», non «Chiudi il movimento»: sono due comandi diversi, e quello
+    // del piede è l'unico che deve restare a vista senza scorrere.
+    expect(piede.contains(screen.getByRole('button', { name: 'Chiudi' }))).toBe(true);
+
+    // ⚠️ ESSERE FRATELLI NON BASTA: in una colonna flex il valore iniziale di
+    // `flex-shrink` è 1, quindi il corpo — che cresce quanto vuole — comprime le
+    // due fasce fisse invece di lasciarle intere. Senza `shrink-0` i pulsanti del
+    // piede si schiacciano e la cifra della testa pure: restano dove sono, ma
+    // alti pochi pixel, che è un altro modo di non poterli usare.
+    expect(piede.className.split(/\s+/), 'senza `shrink-0` il corpo comprime il piede e i pulsanti si schiacciano').toContain('shrink-0');
+    expect(testa.className.split(/\s+/), 'stessa cosa per la testa: la cifra e la ✕ si lasciano comprimere dal corpo').toContain('shrink-0');
+  });
+
+  it('4/4 · un solo scroller in tutto il popup: il `max-h-56` della lista non rientra da un’altra parte', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    // CONTROPROVA: senza, una sonda che non pesca più niente direbbe «tutto a posto».
+    //
+    // ⚠️ E LA CONTROPROVA SI ESERCITA IN TUTTE LE DIREZIONI IN CUI LA SONDA PUÒ
+    // FALLIRE, non solo in quella in cui funziona. Con il solo token nudo qui dentro,
+    // la sonda è stata verde mentre `lg:overflow-y-auto` e `style={{ overflowY }}`
+    // le passavano accanto: tre nodi, tre vie diverse allo stesso difetto.
+    const finto = document.createElement('div');
+    finto.innerHTML =
+      '<div class="max-h-56 space-y-1 overflow-y-auto"></div>' +
+      '<div class="max-h-56 lg:overflow-y-auto"></div>' +
+      '<div class="max-h-56" style="overflow-y: auto"></div>' +
+      '<div class="overflow-hidden"></div>';
+    expect(
+      scrollatoriIn(finto),
+      'la sonda pesca il token nudo, la VARIANTE e lo stile inline — e non l’`overflow-hidden`',
+    ).toHaveLength(3);
+
+    expect(
+      scrollatoriIn(screen.getByRole('dialog')),
+      'due rotelle sovrapposte: quella interna finisce e la pagina sotto sussulta',
+    ).toEqual([screen.getByTestId('movdlg-corpo')]);
+  });
+
+  /**
+   * ─── IL FATTO A SINISTRA, IL LAVORO A DESTRA ────────────────────────────────
+   *
+   * A 512px stava tutto in colonna: causale, avvisi, suggerimenti, il form di
+   * composizione, la lista. Con la card quasi a tutto schermo le due cose si
+   * separano — ciò che la banca ha mandato non si muove, ciò che si preme sta
+   * dall'altra parte — e i due binari sono `minmax(0,…)` tutti e due: il minimo
+   * implicito di una traccia è `auto`, quindi una causale lunghissima senza
+   * spazi allargherebbe il binario invece di andare a capo.
+   */
+  it('a `lg` il corpo ha due binari, e sotto `lg` l’aside viene PRIMO senza nessun `order-*`', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const aside = screen.getByRole('complementary');
+    const lavoro = screen.getByTestId('movdlg-lavoro');
+    const griglia = aside.parentElement as HTMLElement;
+    expect(lavoro.parentElement, 'le due colonne stanno nella stessa griglia').toBe(griglia);
+
+    // ⚠️ I BINARI NON SONO LA GRIGLIA: `grid-template-columns` su un box che è
+    // rimasto `display: block` è INERTE, e le due colonne tornano impilate senza
+    // che nessuna di queste righe se ne accorga. Misurato: tolto il solo token
+    // `grid` dal contenitore, il file resta verde 54/54 e il deliverable — FATTO
+    // a sinistra, LAVORO a destra — sparisce.
+    //
+    // E si asserisce per TOKEN, non per sottostringa: `toContain('grid-cols-1')`
+    // su una stringa è soddisfatto anche da un `lg:grid-cols-1` che di colonna
+    // sola non ne ha nessuna. È la stessa lezione del `border-kidville-line` che
+    // CONTIENE «order-», dieci righe più sotto.
+    const classiGriglia = griglia.className.split(/\s+/);
+    expect(
+      classiGriglia,
+      'senza `grid` il `grid-cols-*` è inerte: i binari non esistono e le colonne tornano una',
+    ).toContain('grid');
+    expect(classiGriglia).toContain('lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]');
+    expect(classiGriglia, 'sotto `lg` è una colonna sola').toContain('grid-cols-1');
+    expect(griglia.children[0], 'in colonna sola il FATTO si legge prima del lavoro').toBe(aside);
+
+    // Lo `sticky` è la ragione dichiarata della colonna sinistra: la causale si
+    // legge MENTRE si compone a destra, e prima scorreva via al primo
+    // suggerimento. Senza `lg:sticky` le due colonne restano due, ma la sinistra
+    // torna a sparire in alto — cioè il difetto si riapre con l'impaginazione
+    // ancora giusta.
+    //
+    // ⚠️ E LO `STICKY` SI SPEGNE LASCIANDOLO SCRITTO, in due modi che il solo
+    // `toContain('lg:sticky')` non vedeva: `position: sticky` con `top: auto` non si
+    // incolla mai a niente, e un elemento di griglia è alto quanto la riga
+    // (`align-items: stretch`), quindi senza `self-start` non ha nessun margine
+    // entro cui scorrere. Sono i due motivi che il sorgente scrive accanto alle
+    // classi: qui si asseriscono tutti e tre i token, non solo quello che dà il nome
+    // alla tecnica.
+    expect(
+      aside.className.split(/\s+/),
+      'lo sticky si spegne anche restando scritto: senza offset `top` non si incolla, e senza `self-start` la colonna è alta quanto la riga e non ha margine per scorrere',
+    ).toEqual(expect.arrayContaining(['lg:sticky', 'lg:top-0', 'lg:self-start']));
+    // `min-w-0` è la stessa tesi dei `minmax(0,…)` dei binari, un piano più giù:
+    // il minimo implicito di un elemento di griglia è `auto`, quindi una riga
+    // lunga senza spazi (una causale, un'etichetta) sfonda il binario `1fr`
+    // invece di andare a capo. Quella dei binari è coperta qui sopra; questa no.
+    expect(lavoro.className.split(/\s+/), 'senza `min-w-0` una riga lunga sfonda il binario `1fr` invece di andare a capo').toContain('min-w-0');
+
+    // Le classi come TOKEN: `border-kidville-line` CONTIENE «order-», e un
+    // `[class*="order-"]` scatterebbe su ogni filetto del popup.
+    //
+    // ⚠️ LE VARIANTI SONO IL RIORDINO, non un contorno: `order-*` nudo non lo
+    // scrive nessuno, si scrive `max-lg:order-last`. Ancorata a `(?:[a-z]+:)?`
+    // questa sonda era cieca proprio lì — `max-lg:` ha un trattino, `2xl:`
+    // comincia per cifra, e il `?` ne ammetteva UNA sola, quindi le sfuggiva
+    // anche `lg:hover:order-2`. Misurato: con `max-lg:order-last 2xl:order-2`
+    // sull'`aside` il file restava verde 54/54 con l'`aside` visivamente ULTIMO
+    // sotto `lg`, cioè esattamente ciò che questa prova dichiara di vietare.
+    // Stessa cecità sul prefisso già corretta in `SCROLLATORE` e in `famiglia`:
+    // il prefisso di variante si CONSUMA, e se ne consumano quanti ce ne sono.
+    const riordinati = [...griglia.querySelectorAll<HTMLElement>('*')]
+      .flatMap((e) => (e.getAttribute('class') ?? '').split(/\s+/))
+      .filter((c) => /^(?:[a-z0-9-]+:)*-?order-/.test(c));
+    expect(riordinati, 'un ordine visuale diverso da quello di tabulazione è un difetto di accessibilità (WCAG 1.3.2)').toEqual([]);
+  });
+
+  it('il FATTO e il LAVORO sono due regioni con un nome accessibile distinto', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const aside = screen.getByRole('complementary');
+    const lavoro = screen.getByTestId('movdlg-lavoro');
+    const nomeFatto = aside.getAttribute('aria-label') ?? '';
+    const nomeLavoro = lavoro.getAttribute('aria-label') ?? '';
+    // Un `aside` senza nome accessibile non è un landmark: è un contenitore, e
+    // chi naviga per regioni non lo trova.
+    expect(nomeFatto).not.toBe('');
+    expect(nomeLavoro).not.toBe('');
+    expect(nomeLavoro, 'due landmark con lo stesso nome non si distinguono').not.toBe(nomeFatto);
+    expect(screen.getByRole('complementary', { name: nomeFatto })).toBe(aside);
+    expect(screen.getByRole('region', { name: nomeLavoro })).toBe(lavoro);
+  });
+
+  /**
+   * ─── DOVE IL LAVORO NON C'È, LE DUE COLONNE NON HANNO PIÙ UNA PREMESSA ──────
+   *
+   * Misurato sul render, non dedotto: su `stato: 'confermato'` la colonna di
+   * destra usciva con `childElementCount = 0` e `innerHTML = ""`, sotto un
+   * `aria-label` che dice «Abbina». Due guasti in uno.
+   *
+   * (a) Accessibilità: chi naviga per landmark trova una regione annunciata col
+   *     nome di un comando, ci entra, e dentro non c'è niente. Un landmark vuoto
+   *     è peggio di un landmark assente, perché promette.
+   * (b) Impaginazione, ed è il paradosso: il binario `1fr` resta vuoto, quindi
+   *     l'unico contenuto — causale, documenti — vive nei 22rem = 352px del
+   *     binario sinistro, con mezzo schermo di vuoto accanto. Cioè PIÙ STRETTO
+   *     dei ~472px che aveva nella card da 512px, dentro un popup che adesso è
+   *     95dvh × 95%. Il popup è diventato enorme e il suo unico contenuto si è
+   *     ristretto.
+   *
+   * Le altre prove di questo file usano `movBase` (`stato: 'suggerito'`), dove
+   * `haLavoro` è vero e non cambia niente: questa è l'unica che guarda l'altro
+   * ramo, ed è il ramo che nessuno guardava.
+   */
+  it('su un movimento confermato la colonna del LAVORO non esiste, e il FATTO prende tutta la larghezza', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('emessa'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByText('Fatturata');
+
+    expect(screen.queryByTestId('movdlg-lavoro'), 'un `region` vuoto col nome di un comando che lì non c’è').toBeNull();
+    expect(
+      screen.queryByRole('region', { name: testo('movdlgAbbina') }),
+      'e non deve restare nemmeno come landmark: chi naviga per regioni ci entrerebbe per trovare il vuoto',
+    ).toBeNull();
+
+    // Un solo binario: senza, il FATTO resterebbe nei 22rem del binario sinistro
+    // con il `1fr` vuoto accanto — più stretto di com'era nella card da 512px.
+    const aside = screen.getByRole('complementary');
+    const griglia = aside.parentElement as HTMLElement;
+    expect(griglia.className, 'niente secondo binario quando non c’è un secondo contenuto').not.toContain('lg:grid-cols-[');
+    expect(griglia.className, 'resta una griglia a una colonna, non un’altra impaginazione').toContain('grid-cols-1');
+    expect(griglia.children, 'il FATTO è rimasto l’unico figlio della griglia').toHaveLength(1);
   });
 });
 
@@ -1018,5 +1388,413 @@ describe('MovimentoDialog — «questo bonifico sembra di un’altra sede»', ()
       expect(token(b)).toContain('bg-kidville-green');
       expect(token(b)).not.toContain('border-kidville-green');
     }
+  });
+});
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * UNA CASELLA SOLA, DUE GRUPPI — e la strada che sul rosso non esisteva.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Il filtro sulle VOCI APERTE è locale e istantaneo, ed è il 90% del lavoro: non
+ * deve rallentare perché accanto è comparso un secondo gruppo. Il gruppo
+ * «Bambini» passa dalla rotta, con soglia e debounce, e serve al caso che nel
+ * primo non può comparire mai — il bambino che una voce aperta non ce l'ha.
+ *
+ * ⚠️ LE TRE COSE CHE UNA RICERCA NON PUÒ TACERE, e che qui sono asserite una per
+ * una: la SOGLIA (sotto i due caratteri non parte niente, e si dice perché), il
+ * TRONCAMENTO (un elenco tagliato che tace fa concludere «quel bambino non c'è»)
+ * e il GUASTO (che non è un elenco vuoto: «non l'ho trovato» e «non ho potuto
+ * guardare» hanno rimedi opposti).
+ */
+describe('MovimentoDialog — la ricerca dei bambini nel popup', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; spiaComponi.props.length = 0; });
+
+  const ALUNNO = 'a1b2c3d4-0000-4000-8000-000000000001';
+
+  /** Una risposta della rotta `…/riconciliazione/alunni`, nella sua forma vera. */
+  const rispostaAlunni = (over: Record<string, unknown> = {}) => ({
+    success: true,
+    data: [
+      {
+        alunno_id: ALUNNO,
+        nome: 'Primo Bambino',
+        classe_sezione: '1A',
+        scuola_id: 's1',
+        attivo: true,
+        voci_aperte: 0,
+        residuo_aperto: 0,
+        ha_pagante: true,
+        trovato_per_cf: false,
+      },
+    ],
+    troncato: false,
+    sedi: { s1: 'Sede di prova' },
+    ...over,
+  });
+
+  const reteConRicerca = (corpo: unknown, status = 200) => {
+    const chiamate: string[] = [];
+    const fn = vi.fn(async (url: string) => {
+      if (String(url).includes('/riconciliazione/alunni')) {
+        chiamate.push(String(url));
+        return { ok: status < 400, status, json: async () => corpo };
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    });
+    return { fn, chiamate };
+  };
+
+  const cerca = (valore: string) =>
+    fireEvent.change(screen.getByLabelText(/Cerca un pagamento aperto/), { target: { value: valore } });
+
+  it('sotto i due caratteri non chiama la rete, e la regione viva dice perché', async () => {
+    // Non è un'ottimizzazione: `%a%` su tre plessi è l'intero registro letto per
+    // una lettera battuta per sbaglio. Il silenzio, però, si spiega.
+    const { fn, chiamate } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('a');
+
+    await waitFor(() => expect(screen.getByTestId('movdlg-ricerca-stato')).toHaveTextContent(/almeno 2/));
+    // ⚠️ UN `data-testid` NON DISTINGUE UNA REGIONE VIVA DA UN PARAGRAFO QUALUNQUE:
+    // tolti gli attributi da quel `<p>` — lasciando tutto il resto — sessantasei
+    // prove restavano verdi mentre l'elenco cambiava in silenzio per chi non vede
+    // lo schermo. Qui si asserisce che quell'elemento È la regione viva.
+    //
+    // ⚠️ `aria-live` + `aria-atomic` E NON `role="status"`, che è quello che c'era
+    // fino al 2026-09-20: per un lettore di schermo sono la stessa cosa, ma lo
+    // `status` di questa superficie è UNO ed è la barra di quadratura del
+    // pannello, che con la composizione aperta sta a schermo INSIEME a questa
+    // casella. Quella coppia questo file non può vederla — qui
+    // `ComposizioneBonifico` è uno stub — e la prova che la guarda sta in
+    // `ComposizioneBonifico-dall-alunno.test.tsx`, che monta i due veri.
+    const vivo = screen.getByTestId('movdlg-ricerca-stato');
+    expect(vivo, 'la riga di stato è la regione viva').toHaveAttribute('aria-live', 'polite');
+    expect(vivo).toHaveAttribute('aria-atomic', 'true');
+    expect(screen.queryAllByRole('status'), 'col pannello chiuso non c’è nessuno `status`').toHaveLength(0);
+    expect(chiamate, 'nessuna richiesta sotto la soglia').toHaveLength(0);
+    // …e il filtro locale sulle voci aperte ha lavorato lo stesso, all'istante.
+    expect(screen.getByText('Voci aperte')).toBeInTheDocument();
+  });
+
+  it('da due caratteri in su cerca davvero, e mostra il bambino senza nessuna voce aperta', async () => {
+    const { fn, chiamate } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    await screen.findByText('Primo Bambino');
+    expect(chiamate.at(-1), 'il termine viaggia nella query').toContain('q=primo');
+    // È il motivo per cui questo gruppo esiste: nel primo non potrebbe comparire.
+    expect(screen.getByText(/Nessuna voce aperta/)).toBeInTheDocument();
+    expect(screen.getByTestId('movdlg-ricerca-stato')).toHaveTextContent(/1 bambino trovato/);
+  });
+
+  it('ELENCO TRONCATO: si scrive. Un elenco tagliato che tace fa concludere «non c’è»', async () => {
+    const { fn } = reteConRicerca(rispostaAlunni({ troncato: true }));
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    await screen.findByText('Primo Bambino');
+    await waitFor(() =>
+      expect(screen.getByTestId('movdlg-ricerca-stato'), 'il troncamento è un DATO, non un dettaglio')
+        .toHaveTextContent(/troncato/i),
+    );
+  });
+
+  it('una ricerca FALLITA non diventa un elenco vuoto: stato suo, frase sua', async () => {
+    const { fn } = reteConRicerca({ error: 'no', codice: 'CONCILIAZIONE_RICERCA_ALUNNI_NON_LETTA' }, 500);
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const avviso = await screen.findByRole('alert');
+    expect(avviso.textContent ?? '').not.toBe('');
+    expect(screen.getByTestId('movdlg-ricerca-stato')).toHaveTextContent(testo('reconRicercaAlunniNonRiuscita'));
+    // …e non si traveste da «non l'ho trovato».
+    expect(screen.queryByText(testo('reconRicercaAlunniVuoto'))).toBeNull();
+  });
+
+  it('«Componi per questo bambino» monta il pannello con `alunniIniziali` NON VUOTO', async () => {
+    // ⚠️ È LA PROVA CHE CHIUDE IL DIFETTO DAL LATO DEL POPUP. La spia guarda le
+    // PROPS: uno stub che rendesse un segnaposto sarebbe verde anche se la prop
+    // non partisse — e senza quella prop il pannello si apre sul contesto vuoto,
+    // cioè col pulsante «Conferma» spento e nessuna strada per accenderlo.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(testo('movdlgComponiPerQuesto')) }));
+
+    expect(screen.getByTestId('pannello-componi')).toBeInTheDocument();
+    expect(spiaComponi.props.at(-1)).toMatchObject({ movimentoId: 'm1', alunniIniziali: [ALUNNO] });
+  });
+
+  it('senza quel gesto il pannello non nasce aperto, e `alunniIniziali` resta vuoto', () => {
+    // La composizione si carica da sé (contesto, figli, categorie, pacchetti):
+    // montarla sempre vorrebbe dire pagare quella lettura su ogni riga aperta.
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: testo('reconComponiTitolo') }));
+    expect(spiaComponi.props.at(-1)).toMatchObject({ alunniIniziali: [] });
+  });
+
+  it('TORNATO INDIETRO, il bersaglio si azzera: il pulsante generico riapre PULITO', async () => {
+    // ⚠️ IL PERICOLO SCRITTO IN `componiPerAlunno`, RIENTRATO DA UN'ALTRA PORTA:
+    // «un elenco che cresce a ogni click farebbe comporre su bambini scelti tre
+    // ricerche fa, senza che si veda». Qui l'elenco non cresce — RESTA: aperto il
+    // pannello su un bambino e chiuso tornando indietro, «Componi il pagamento»
+    // lo riapriva ancora puntato su di lui, e a schermo non c'era niente che lo
+    // dicesse. Non si scrive nulla di sbagliato (`?alunni=` ALLARGA il contesto),
+    // ma il pannello non nasce nello stato che l'operatrice ha chiesto.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+    fireEvent.click(await screen.findByRole('button', { name: new RegExp(testo('movdlgComponiPerQuesto')) }));
+    expect(spiaComponi.props.at(-1)).toMatchObject({ alunniIniziali: [ALUNNO] });
+
+    // Indietro: il pannello se ne va, e con lui il bersaglio.
+    fireEvent.click(screen.getByRole('button', { name: /FINTO torna indietro/ }));
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: testo('reconComponiTitolo') }));
+    expect(screen.getByTestId('pannello-componi')).toBeInTheDocument();
+    expect(spiaComponi.props.at(-1), 'riaperto dal pulsante generico, non punta più a nessuno')
+      .toMatchObject({ alunniIniziali: [] });
+  });
+
+  /**
+   * ─── `voci_aperte: null` NON È ZERO ──────────────────────────────────────
+   *
+   * 🔴 La regola era scritta in rosso nei commenti di DUE file e non la teneva
+   * ferma nessun test: sostituito il ramo `null` con «Nessuna voce aperta» —
+   * cioè fatta dire alla schermata esattamente la bugia che il commento vieta —
+   * settantun prove restavano verdi. «Non ho potuto contare» e «non deve niente»
+   * portano a due gesti opposti di chi sta incassando, e il secondo travestito da
+   * primo chiude un movimento su una famiglia che ha ancora un debito aperto.
+   *
+   * Stessa prova per `attivo: false` e `trovato_per_cf`, che erano codice mai
+   * eseguito da nessun test: le due fixture dichiaravano sempre valori pieni.
+   * La funzione adesso è UNA (`use-ricerca-alunni`), quindi questa prova copre
+   * anche il pannello di composizione.
+   */
+  it('`voci_aperte: null` NON È ZERO: si scrive «non verificate», mai «nessuna voce aperta»', async () => {
+    const { fn } = reteConRicerca(
+      rispostaAlunni({
+        data: [
+          {
+            alunno_id: ALUNNO,
+            nome: 'Primo Bambino',
+            classe_sezione: '1A',
+            scuola_id: 's1',
+            // Non più iscritto: la riga NON sparisce, si incassa anche un arretrato.
+            attivo: false,
+            // `null` = «non ho potuto contare», e la rotta lo dichiara.
+            voci_aperte: null,
+            residuo_aperto: null,
+            ha_pagante: true,
+            trovato_per_cf: true,
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const riga = await screen.findByText('Primo Bambino');
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniVociIgnote'));
+    // 🔴 L'ASSENZA È LA META DELLA PROVA: senza questa riga il ramo `null`
+    // potrebbe scrivere «Nessuna voce aperta» e restare verde.
+    expect(screen.queryByText(new RegExp(testo('reconRicercaAlunniNessunaVoce')))).toBeNull();
+    // …e le due note che oggi nessun test eseguiva.
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniRitirato'));
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniPerCf'));
+  });
+
+  it('CONTROPROVA · con `voci_aperte: 0` la frase è l’altra, e «non verificate» non c’è', async () => {
+    // Senza questa metà, la prova qui sopra passerebbe anche se il codice dicesse
+    // «non verificate» SEMPRE — cioè con i due rami collassati in uno.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const riga = await screen.findByText('Primo Bambino');
+    expect(riga).toHaveTextContent(testo('reconRicercaAlunniNessunaVoce'));
+    expect(screen.queryByText(new RegExp(testo('reconRicercaAlunniVociIgnote')))).toBeNull();
+    // La fixture di base è iscritto e trovato per nome: nessuna delle due note.
+    expect(riga).not.toHaveTextContent(testo('reconRicercaAlunniRitirato'));
+    expect(riga).not.toHaveTextContent(testo('reconRicercaAlunniPerCf'));
+  });
+
+  /**
+   * ─── CLASSE E PLESSO, E LA SOGLIA CHE DECIDE SE IL PLESSO SI SCRIVE ───────
+   *
+   * 🔴 IN QUESTO REPO LE SEDI DI PRODUZIONE SONO TRE, e il plesso è ciò che
+   * distingue due «Rossi» omonimi PRIMA che si scriva un incasso. Erano due
+   * delle quattro cose che la riga deve portare, e non le teneva ferme niente:
+   * tutte le fixture avevano UNA sede sola, quindi il ramo del plesso era codice
+   * morto per la suite e `classe_sezione` non era mai asserito. Tre mutazioni
+   * sopravvivevano: soglia `> 1` abbassata a `> 0` (il plesso scritto anche
+   * quando è uno solo, cioè la stessa parola su ogni riga), plesso tolto del
+   * tutto, classe e plesso tolti insieme.
+   *
+   * Le due prove qui sotto sono la coppia — con due sedi il plesso c'è, con una
+   * NON c'è — ed è la seconda a tenere ferma la soglia.
+   */
+  const ALUNNO_ALTRA_SEDE = 'a1b2c3d4-0000-4000-8000-000000000002';
+
+  /** Due omonimi in due plessi: il caso per cui la colonna del plesso esiste. */
+  const dueOmonimiDueSedi = {
+    success: true,
+    data: [
+      {
+        alunno_id: ALUNNO,
+        nome: 'Rossi Ada',
+        classe_sezione: '1A',
+        scuola_id: 's1',
+        attivo: true,
+        voci_aperte: 0,
+        residuo_aperto: 0,
+        ha_pagante: true,
+        trovato_per_cf: false,
+      },
+      {
+        alunno_id: ALUNNO_ALTRA_SEDE,
+        nome: 'Rossi Ivo',
+        classe_sezione: '2B',
+        scuola_id: 's2',
+        attivo: true,
+        voci_aperte: 0,
+        residuo_aperto: 0,
+        ha_pagante: true,
+        trovato_per_cf: false,
+      },
+    ],
+    troncato: false,
+    sedi: { s1: 'Sede di prova', s2: 'Seconda sede' },
+  };
+
+  it('PIÙ SEDI: su ogni riga si scrive il plesso, o due omonimi sono indistinguibili', async () => {
+    const { fn } = reteConRicerca(dueOmonimiDueSedi);
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('rossi');
+
+    const prima = await screen.findByText('Rossi Ada');
+    expect(prima).toHaveTextContent('1A');
+    expect(prima, 'senza il plesso i due omonimi sono la stessa riga').toHaveTextContent('Sede di prova');
+
+    const seconda = screen.getByText('Rossi Ivo');
+    expect(seconda).toHaveTextContent('2B');
+    expect(seconda).toHaveTextContent('Seconda sede');
+  });
+
+  it('CONTROPROVA · con UNA sola sede il plesso NON si scrive: sarebbe la stessa parola ovunque', async () => {
+    // Senza questa metà, «scrivi sempre il plesso» passerebbe: è la riga che
+    // tiene ferma la soglia `Object.keys(sedi).length > 1`.
+    const { fn } = reteConRicerca(rispostaAlunni());
+    vi.stubGlobal('fetch', fn);
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    cerca('primo');
+
+    const riga = await screen.findByText('Primo Bambino');
+    expect(riga, 'la classe si scrive sempre').toHaveTextContent('1A');
+    expect(riga, 'con un plesso solo il suo nome è rumore su ogni riga').not.toHaveTextContent('Sede di prova');
+  });
+});
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * IL GIALLO CHE NON HA NESSUN'ALTRA STRADA — l'unico caso che nasce aperto.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * «Alunno riconosciuto, nessuna voce aperta»: il bambino è noto e le voci non ci
+ * sono. Non c'è nessun suggerimento da confermare, e la ricerca fra le voci
+ * aperte non può restituire niente — comporre è l'unica strada, e un pannello
+ * chiuso la nasconde dietro un pulsante. Ovunque altrove resta chiuso, perché si
+ * carica da sé e montarlo sempre pagherebbe quella lettura su ogni riga.
+ *
+ * ⚠️ QUESTO È IL CONTRATTO SCRITTO IN ANTICIPO. Il campo con cui il verdetto
+ * arriva sulla riga del registro non viaggia ANCORA fin qui: lo sta aggiungendo
+ * al matcher un lavoro parallelo a questo. Il ramo nel componente è dietro un
+ * controllo difensivo, quindi finché il campo manca il popup si comporta
+ * esattamente come prima.
+ *
+ * 🔴 MA IL NOME NON È PIÙ INDOVINATO, e fino al 2026-09-20 lo era: qui si
+ * asserivano DUE forme plausibili e nessuna delle due vere, cioè il lotto sarebbe
+ * restato verde il giorno dell'atterraggio mentre la funzione non partiva — il
+ * «segnale falso» di `silenzio_assente_vs_segnale_falso.md`. La forma qui sotto è
+ * quella che il produttore scrive, letta in `src/lib/pagamenti/riconciliazione.ts`:
+ * `motivo_stato` (una stringa sola, di tipo `MotivoStato`) e `alunni_senza_voci`
+ * (uuid, mai il CF). Anche il valore è tipato: `alunno_senza_voci_aperte` è un
+ * `MotivoRinuncia & MotivoStato` nel componente, quindi un rinominio da una delle
+ * due parti diventa rosso in `tsc` prima che in una prova.
+ *
+ * ⚠️ E LA FORMA È UNA SOLA. Per un giro se ne asserivano tre — «annidata» e
+ * «piatta» accanto a quella vera — su campi che nessuno scrive: due prove su tre
+ * giravano su dati inventati qui dentro, cioè alzavano il conteggio senza coprire
+ * niente e avrebbero tenuto in vita quattro letture morte nel componente. Un caso
+ * di prova vale se esiste un produttore che scrive quella forma.
+ */
+describe('MovimentoDialog — la composizione nasce aperta solo sul giallo senza voci', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); spiaFattura.props.length = 0; spiaComponi.props.length = 0; });
+
+  const ALUNNO = 'a1b2c3d4-0000-4000-8000-000000000009';
+  /**
+   * La riga come arriverà dal registro, nella forma che il matcher scrive:
+   * `motivo_stato` e `alunni_senza_voci` di `RisultatoMatch`.
+   */
+  const conVerdetto = (): MovimentoUi => ({
+    ...movBase,
+    stato: 'suggerito',
+    suggerimenti: [],
+    motivo_stato: 'alunno_senza_voci_aperte',
+    alunni_senza_voci: [ALUNNO],
+  } as MovimentoUi);
+
+  it('verdetto «alunno riconosciuto, nessuna voce aperta» → pannello già aperto e puntato', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={conVerdetto()} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    expect(screen.getByTestId('pannello-componi')).toBeInTheDocument();
+    expect(spiaComponi.props.at(-1)).toMatchObject({ alunniIniziali: [ALUNNO] });
+  });
+
+  it('CONTROPROVA · un altro motivo, o nessun bambino, e il pannello resta CHIUSO', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    // Motivo diverso: non è questo il caso senza uscite.
+    const { unmount } = render(
+      <MovimentoDialog
+        movimento={{ ...movBase, motivo_stato: 'importo_non_quadra', alunni_senza_voci: [ALUNNO] } as MovimentoUi}
+        aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />,
+    );
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
+    unmount();
+
+    // Motivo giusto ma nessun bambino su cui puntare: aprirlo rimetterebbe in
+    // piedi il difetto di partenza (contesto vuoto → «Conferma» spento).
+    render(
+      <MovimentoDialog
+        movimento={{ ...movBase, suggerimenti: [], motivo_stato: 'alunno_senza_voci_aperte', alunni_senza_voci: [] } as MovimentoUi}
+        aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />,
+    );
+    expect(screen.queryByTestId('pannello-componi')).toBeNull();
   });
 });

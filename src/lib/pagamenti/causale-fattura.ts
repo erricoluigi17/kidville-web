@@ -33,11 +33,13 @@
 
 import { causalePerTracciato } from '@/lib/aruba/fatturapa-xml'
 import {
+    PLACEHOLDER_CAUSALE,
     renderCausale,
     risolviModelloCausale,
     type ConfigCausali,
     type DatiCausale,
     type OrigineModelloCausale,
+    type SegnapostoCausale,
 } from './causale'
 
 /** La colonna JSONB di `admin_settings` che tiene i modelli di causale delle fatture. */
@@ -71,6 +73,40 @@ export const DEFAULT_CAUSALE_FATTURA_TEMPLATE =
  * su quella scritta a schermo: vedi `lunghezzaCausaleFatturaPA` qui sotto.
  */
 export const LIMITE_CAUSALE_FATTURAPA = 200
+
+/** I segnaposto che esistono per il BONIFICO e sulla fattura non vanno offerti. */
+const SEGNAPOSTO_SOLO_BONIFICO = new Set(['codice'])
+
+/**
+ * I segnaposto che l'editor admin può offrire per la causale della FATTURA: quelli del
+ * bonifico **meno** `{codice}`. Sta qui, accanto a `LIMITE_CAUSALE_FATTURAPA`, perché è
+ * l'altro vincolo che appartiene alla fattura e non al bonifico.
+ *
+ * ─── PERCHÉ I DUE CATALOGHI SI SEPARANO ────────────────────────────────────────────
+ * L'editor è un componente solo, usato due volte, e riceveva lo stesso
+ * `PLACEHOLDER_CAUSALE` in entrambi i pannelli. Da quando quel catalogo porta
+ * `{codice}`, senza questa separazione l'admin vedrebbe il chip anche nell'editor della
+ * fattura — dove a runtime `dati.codice` non arriva mai e il segnaposto rende **vuoto**.
+ * E `renderCausale` omette con grazia un segmento i cui segnaposto sono tutti vuoti:
+ * chi lo mettesse in un segmento suo vedrebbe quel segmento sparire da un documento
+ * fiscale senza nessun errore, cioè la forma di guasto che questo repo paga più cara.
+ * Un chip che non può funzionare è una promessa fatta a schermo e non mantenuta.
+ *
+ * ─── LA FATTURA NON PORTA IL CODICE: È UNA DECISIONE, NON UN LIMITE TECNICO ────────
+ * Tecnicamente ci starebbe, ed è bene dirlo perché chi lo leggesse come un limite
+ * proverebbe ad aggirarlo: il `#` attraversa il tracciato FatturaPA senza essere
+ * translitterato (`causalePerTracciato`, lock nei test) e otto caratteri lasciano la
+ * causale di fabbrica molto sotto i 200. Il codice non c'è perché il titolare non lo
+ * vuole su un documento fiscale: serve a riconciliare un bonifico, e la fattura non è il
+ * posto dove si riconcilia.
+ *
+ * Il catalogo del bonifico si FILTRA, non si ricopia: una seconda copia dell'elenco
+ * diverge al primo segnaposto nuovo, e diverge in silenzio perché nessuna delle due
+ * sarebbe sbagliata da sola.
+ */
+export const PLACEHOLDER_CAUSALE_FATTURA: SegnapostoCausale[] = PLACEHOLDER_CAUSALE.filter(
+    (p) => !SEGNAPOSTO_SOLO_BONIFICO.has(p.chiave),
+)
 
 export interface IngressoCausaleFattura {
     /** I modelli per categoria: `admin_settings.fattura_causali_config` così com'è. */

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import ts from 'typescript'
 import { mapStatoAruba } from '@/lib/aruba/stato'
@@ -12,8 +12,8 @@ import { mapStatoAruba } from '@/lib/aruba/stato'
  * `annulla_transazione_contabile` (migrazione `…180200_…`) riapre il movimento
  * bancario legato alla transazione annullata. La prima stesura azzerava anche
  * `pagamento_id` — e quella colonna non è un ornamento: è l'unico appiglio della
- * guardia «un bonifico non si fattura due volte» in
- * `src/app/api/pagamenti/riconciliazione/[id]/route.ts`, che comincia con
+ * guardia «un bonifico non si fattura due volte», che dal 2026-09-20 vive in
+ * `src/lib/pagamenti/riconciliazione-conferma.ts` e comincia con
  * `if (mov.pagamento_id != null && mov.pagamento_id !== pagamentoId)`.
  * **Con `pagamento_id` a NULL quella guardia non scatta mai.**
  *
@@ -64,18 +64,74 @@ import { mapStatoAruba } from '@/lib/aruba/stato'
  * lascerebbe a chi legge il compito di ricordarsi della seconda — ed è
  * esattamente ciò che non è successo per sei settimane. Ciò che resta
  * dichiarato, perché non è sorvegliato qui, sta nel riquadro sopra ogni `it`.
+ *
+ * ─── IL PERIMETRO DELLA MARCA, E CIÒ CHE RESTA FUORI (2026-09-20) ───────────
+ *
+ * L'estensione di questo file a `abbinato_auto_il` sorveglia UNA porta sola: la
+ * funzione di database `annulla_transazione_contabile`, cioè l'azzeramento che
+ * vive nell'SQL. L'azzeramento gemello lato TypeScript — la riga
+ * `if (colonnaMarca) patch.abbinato_auto_il = null` di
+ * `src/lib/pagamenti/riapertura-movimento.ts` — **qui non è sorvegliato**:
+ * quel file compare nell'elenco `CONSUMATORI` per un'altra regola (la
+ * definizione di «fattura viva», che non deve ridefinirsi in casa), e nessuna
+ * asserzione di questo lock guarda il patch che scrive.
+ *
+ * **Misurato**, togliendo quella riga dal sorgente: 2 rossi, tutt'e due in
+ * `__tests__/api/pagamenti-riconciliazione-riapri.test.ts`, e questo lock
+ * VERDE. La copertura c'è ed è di specie migliore — esegue il codice invece di
+ * leggerlo — ma sta **lì**, non qui: chi toglie l'azzeramento lato
+ * applicazione lo vede rosso in quel file, e chi cerca in questo la ragione
+ * per cui non è successo niente sta guardando il lock sbagliato.
+ *
+ * Qui si DICHIARA il limite invece di estendere il perimetro — al contrario di
+ * quanto fatto per le due porte del riquadro qui sopra — perché lì le due metà
+ * erano la stessa asserzione testuale su due file gemelli, e una sola delle due
+ * era guardata; qui la seconda metà ha già un presidio che ESEGUE. Una copia
+ * testuale in più non aggiungerebbe una classe di difetti sorvegliata:
+ * aggiungerebbe solo un secondo posto da cambiare.
  */
 
 const RADICE = process.cwd()
-const FILE_SQL = join(
-    RADICE,
-    'supabase',
-    'migrations',
-    '20260912180200_annulla_transazione_riapre_movimento.sql',
-)
-const API = join(RADICE, 'src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]')
+const CARTELLA_MIGRAZIONI = join(RADICE, 'supabase', 'migrations')
+const LIB_PAGAMENTI = join(RADICE, 'src', 'lib', 'pagamenti')
 
-const SQL = readFileSync(FILE_SQL, 'utf8')
+/**
+ * ─── 🔴 IL FILE NON SI NOMINA PIÙ: SI CERCA (2026-09-20) ────────────────────
+ *
+ * Fino a oggi qui c'era scritto `'20260912180200_annulla_transazione_riapre_movimento.sql'`,
+ * e per otto giorni è stato giusto. Poi la marca dell'abbinamento automatico ha
+ * preteso un `CREATE OR REPLACE` in più — `abbinato_auto_il` va azzerato insieme
+ * agli altri legami morti — e quel `CREATE OR REPLACE` NON poteva stare nel file
+ * del 12/09: quella `version` è già in `supabase_migrations.schema_migrations`,
+ * e una migrazione già applicata non la riapplica nessuno. Correggerla avrebbe
+ * prodotto un repository che descrive una funzione e un database che ne esegue
+ * un'altra, senza un errore da nessuna parte.
+ *
+ * Quindi il corpo vivo sta in un file NUOVO, e un lock che continuasse a nominare
+ * il vecchio resterebbe **verde sorvegliando un corpo che il database non esegue
+ * più**: la specie di cecità che questo file ha già raccontato due volte di sé.
+ * Si cerca perciò l'ULTIMA migrazione che ridefinisce la funzione — l'ultima in
+ * ordine di `version`, che è l'ordine in cui il CLI le applica, cioè quella che
+ * vince — e la prossima riscrittura sarà seguita da sé.
+ *
+ * ⚠️ Si guarda il TESTO GREZZO, commenti compresi, e va bene così: un file che
+ * NOMINA la funzione senza ridefinirla farebbe scegliere il file sbagliato, ma il
+ * `sanity` qui sotto se ne accorge subito (nessun `UPDATE` sui movimenti, oppure
+ * nessun `REVOKE` sulla funzione). Il verso dell'errore è quello rumoroso.
+ */
+const FIRMA_FUNZIONE = 'CREATE OR REPLACE FUNCTION public.annulla_transazione_contabile'
+
+function ultimaMigrazioneDellAnnullo(): string {
+    const candidati = readdirSync(CARTELLA_MIGRAZIONI)
+        .filter((f) => f.endsWith('.sql'))
+        .sort()
+        .filter((f) => readFileSync(join(CARTELLA_MIGRAZIONI, f), 'utf8').includes(FIRMA_FUNZIONE))
+    if (candidati.length === 0) return ''
+    return candidati[candidati.length - 1]
+}
+
+const NOME_FILE_SQL = ultimaMigrazioneDellAnnullo()
+const SQL = NOME_FILE_SQL ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_FILE_SQL), 'utf8') : ''
 
 /**
  * Una route SENZA i suoi commenti. Non è una raffinatezza: è la stessa pulizia
@@ -124,22 +180,40 @@ const diagnosticheSintattiche = (codice: string): string[] =>
  * della propria guardia. Sono scritte diversamente perché fanno cose diverse —
  * l'una riabbina a UNA voce, l'altra ricompone su più voci — e appiattirle in
  * una regex sola vorrebbe dire cercare una somiglianza invece della guardia.
+ *
+ * ─── 🔴 E DAL 2026-09-20 NESSUNA DELLE DUE È PIÙ UNA ROUTE ───────────────────
+ *
+ * Le due guardie hanno cambiato file, e questo lock è stato spostato con loro:
+ * vivono in `src/lib/pagamenti/riconciliazione-conferma.ts` e
+ * `src/lib/pagamenti/conciliazione-registra.ts`. Il motivo dello spostamento è
+ * lo stesso che rende questo lock necessario: le porte stanno per diventare
+ * TRE — l'import dell'estratto conto confermerà da sé i bonifici che riconosce —
+ * e una terza copia della guardia sarebbe divergente il giorno dopo essere nata.
+ * Ora la guardia è una funzione sola, e ci passano tutti.
+ *
+ * ⚠️ Perché questo file è stato modificato invece di lasciarlo puntare alle
+ * rotte: continuando a leggere `…/[id]/route.ts` sarebbe rimasto VERDE — quelle
+ * rotte sono gusci, e un guscio non contiene nessuna guardia da perdere. Cioè
+ * avrebbe smesso di sorvegliare esattamente ciò che dichiara di tenere insieme
+ * con la migrazione, restando del colore giusto. È la terza volta che questo
+ * file lo scrive di sé stesso, e le altre due volte era un difetto: qui è il
+ * prezzo di uno spostamento, ed è pagato guardando dove il codice è andato.
  */
 const PORTE = [
     {
         nome: 'la conferma a voce singola',
-        file: join(API, 'route.ts'),
-        dove: 'src/app/api/pagamenti/riconciliazione/[id]/route.ts',
-        firma: "withRoute('pagamenti/riconciliazione/[id]:PATCH'",
+        file: join(LIB_PAGAMENTI, 'riconciliazione-conferma.ts'),
+        dove: 'src/lib/pagamenti/riconciliazione-conferma.ts',
+        firma: 'export async function confermaSuVoceSingola(',
         /** La memoria del movimento, confrontata col pagamento che si sta per legare. */
         guardia: /mov\.pagamento_id\s*!=\s*null/,
         guardiaTesto: 'mov.pagamento_id != null',
     },
     {
         nome: 'la composizione (blocco §9)',
-        file: join(API, 'componi', 'route.ts'),
-        dove: 'src/app/api/pagamenti/riconciliazione/[id]/componi/route.ts',
-        firma: "'pagamenti/riconciliazione/[id]/componi:POST'",
+        file: join(LIB_PAGAMENTI, 'conciliazione-registra.ts'),
+        dove: 'src/lib/pagamenti/conciliazione-registra.ts',
+        firma: 'export async function registraConciliazione(',
         guardia: /const\s+pagamentoDiPrima\s*=\s*movimento\.pagamento_id[\s\S]*?pagamentoDiPrima\s*!=\s*null/,
         guardiaTesto: 'const pagamentoDiPrima = movimento.pagamento_id … pagamentoDiPrima != null',
     },
@@ -168,6 +242,19 @@ const PORTE = [
  */
 const CONSUMATORI = [
     ...PORTE.map((p) => ({ dove: p.dove, file: p.file })),
+    {
+        // ⚠️ AGGIUNTO IL 2026-09-20, insieme allo spostamento delle due porte: è
+        // l'AVVISO della riapertura — «restano fatture vive su quella voce» — che
+        // stava dentro `…/[id]/route.ts` ed è uscito con lo storno. Non è una
+        // porta (non ferma niente, per decisione misurata del titolare: 167
+        // riaperture su 174 hanno una fattura viva), ma la domanda che fa è la
+        // stessa, e se un giorno se la ridefinisse in casa l'avviso della
+        // riapertura e il 409 del riabbinamento direbbero due cose diverse dello
+        // stesso documento. Lasciarlo fuori dall'elenco avrebbe rifatto,
+        // sull'altro verso, l'errore del riquadro «E LE PORTE SONO DUE».
+        dove: 'src/lib/pagamenti/riapertura-movimento.ts',
+        file: join(LIB_PAGAMENTI, 'riapertura-movimento.ts'),
+    },
     {
         dove: 'src/app/api/pagamenti/riconciliazione/route.ts',
         file: join(RADICE, 'src', 'app', 'api', 'pagamenti', 'riconciliazione', 'route.ts'),
@@ -273,13 +360,23 @@ const azzera = (colonna: string) => new RegExp(`\\b${colonna}\\s*=\\s*NULL\\b`, 
 describe("lock architettura · l'annullo riapre il movimento senza accecare la guardia", () => {
     it("l'istruzione si legge davvero (sanity: senza, ogni asserzione qui sotto sarebbe verde sul vuoto)", () => {
         expect(
+            NOME_FILE_SQL,
+            'nessun file di `supabase/migrations/` contiene ' +
+                `\`${FIRMA_FUNZIONE}\`. O la funzione è stata rinominata, o il suo corpo è stato ` +
+                'spostato fuori dalle migrazioni: in entrambi i casi questo lock non starebbe ' +
+                'guardando niente, e la riapertura automatica del movimento bancario resterebbe ' +
+                'senza nessuna sorveglianza.',
+        ).not.toBe('')
+        expect(
             SQL.length,
-            'la migrazione dell\'annullo non si legge: questo lock non starebbe misurando niente.',
+            `la migrazione dell'annullo (\`${NOME_FILE_SQL}\`) non si legge: questo lock non ` +
+                'starebbe misurando niente.',
         ).toBeGreaterThan(1000)
         expect(
             UPDATE_MOV,
             'nessun `UPDATE public.riconciliazione_movimenti` nella migrazione ' +
-                '`20260912180200_annulla_transazione_riapre_movimento.sql`. O la riapertura del ' +
+                `\`${NOME_FILE_SQL}\` — che è l'ULTIMA a ridefinire ` +
+                '`annulla_transazione_contabile`, cioè quella che vince. O la riapertura del ' +
                 'movimento bancario è stata tolta, o è scritta in un altro modo: in entrambi i casi ' +
                 'le asserzioni qui sotto non guarderebbero nessuna riga di SQL.',
         ).toContain('SET')
@@ -290,10 +387,29 @@ describe("lock architettura · l'annullo riapre il movimento senza accecare la g
         ).toMatch(/WHERE\s+transazione_id\s*=\s*v_txid/i)
     })
 
-    it('🔴 azzera i QUATTRO legami morti: transazione, incasso, firma di conferma', () => {
-        const mancanti = ['transazione_id', 'incasso_id', 'confermato_da', 'confermato_il'].filter(
-            (c) => !azzera(c),
-        )
+    it('🔴 azzera i CINQUE legami morti: transazione, incasso, firma di conferma, marca automatica', () => {
+        // ⚠️ ERANO QUATTRO fino al 2026-09-20, e il quinto non è un'aggiunta
+        // cosmetica: `abbinato_auto_il` (migrazione `20260920124742`) è l'unico
+        // appiglio dell'annullamento in blocco — «disfa tutto ciò che l'import ha
+        // deciso da solo». Una riga riaperta che se la tiene torna in coda
+        // dicendo di essere stata abbinata dalla macchina: un'operatrice la
+        // riconferma A MANO, e l'annullamento in blocco disfa il suo lavoro senza
+        // che nessuno veda un errore. La marca non si azzera «anche»: si azzera
+        // O MENTE.
+        //
+        // ⚠️ PERIMETRO: questa asserzione guarda la SOLA porta SQL, cioè
+        // `annulla_transazione_contabile`. L'azzeramento gemello lato
+        // applicazione (`riapertura-movimento.ts`) lo copre
+        // `__tests__/api/pagamenti-riconciliazione-riapri.test.ts`, ed è lì che
+        // diventa rosso chi lo toglie — non qui. Il riquadro «IL PERIMETRO
+        // DELLA MARCA» in testata dice perché non si è esteso.
+        const mancanti = [
+            'transazione_id',
+            'incasso_id',
+            'confermato_da',
+            'confermato_il',
+            'abbinato_auto_il',
+        ].filter((c) => !azzera(c))
         expect(
             mancanti,
             mancanti.length === 0
@@ -303,8 +419,25 @@ describe("lock architettura · l'annullo riapre il movimento senza accecare la g
                   'ed è morto (stornato, non cancellato) — il peggior tipo di puntatore, quello che ' +
                   'sembra valido; una che conserva `transazione_id` cita una transazione annullata; ' +
                   'una che conserva `confermato_da`/`confermato_il` attribuisce a un operatore una ' +
-                  'conferma che non è più in piedi.',
+                  'conferma che non è più in piedi; una che conserva `abbinato_auto_il` dichiara ' +
+                  'automatico un abbinamento che da quel momento può essere rifatto a mano, e ' +
+                  'l\'annullamento in blocco la troverà comunque.',
         ).toEqual([])
+    })
+
+    it('🔴 la marca si spegne DENTRO lo stesso UPDATE, non in uno dopo', () => {
+        // Un secondo `UPDATE` non sarebbe dentro la transazione atomica
+        // dell'annullo: un rollback resusciterebbe la marca su una riga già
+        // riaperta, e nessuno se ne accorgerebbe. La prova è che gli `UPDATE` su
+        // `riconciliazione_movimenti` in questo file restano UNO.
+        const quanti = (SQL.match(/UPDATE\s+public\.riconciliazione_movimenti/gi) ?? []).length
+        expect(
+            quanti,
+            `in \`${NOME_FILE_SQL}\` gli UPDATE su \`riconciliazione_movimenti\` sono ${quanti}, ` +
+                'non uno. La riapertura e lo spegnimento della marca devono stare nella STESSA ' +
+                'istruzione: separarli apre una finestra dentro cui la riga è riaperta e ancora ' +
+                'marcata, e un rollback ne lascerebbe in piedi solo una metà.',
+        ).toBe(1)
     })
 
     it('🔴 NON azzera `pagamento_id`: è la memoria su cui poggia la guardia del riabbinamento', () => {
@@ -312,7 +445,7 @@ describe("lock architettura · l'annullo riapre il movimento senza accecare la g
             azzera('pagamento_id'),
             'L\'UPDATE che riapre il movimento azzera `pagamento_id`. Quella colonna è l\'UNICO ' +
                 'appiglio della guardia «un bonifico non si fattura due volte» ' +
-                '(`src/app/api/pagamenti/riconciliazione/[id]/route.ts`), che comincia con ' +
+                '(`src/lib/pagamenti/riconciliazione-conferma.ts`), che comincia con ' +
                 '`if (mov.pagamento_id != null && …)`: con NULL non scatta mai. Il movimento ' +
                 'riaperto verrebbe riabbinato a un\'altra voce senza che nessuno veda la fattura ' +
                 'già emessa su quella vecchia — una fattura viva senza incasso e un secondo ' +

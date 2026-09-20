@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client';
 import { requireStaff } from '@/lib/auth/require-staff';
 import { assertAlunnoInScope, assertParentInScope, scuoleDiUtente } from '@/lib/auth/scope';
 import { parseBody, parseQuery } from '@/lib/validation/http';
+import { ripulisciTermineRicerca } from '@/lib/validation/ricerca-testo';
 import { zUuid } from '@/lib/validation/common';
 import { withRoute } from '@/lib/logging/with-route';
 import { logEvento } from '@/lib/logging/logger';
@@ -204,10 +205,8 @@ const postBodySchema = z.discriminatedUnion('azione', [
 /** Le colonne dell'adulto che servono a SCEGLIERLO in un elenco, e nient'altro. */
 const COLONNE_GENITORE = 'id, first_name, last_name, fiscal_code, emails, auth_user_id';
 
-/** Neutralizza i metacaratteri di `ilike` (%/_) e della sintassi `or()` di PostgREST. */
-function ripulisci(q: string): string {
-    return q.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim();
-}
+// La ripulitura del termine stava qui, identica a quella di `admin/search`:
+// adesso è una sola, in `@/lib/validation/ricerca-testo`.
 
 /** La riga d'errore delle letture: PostgREST non lancia, e il codice va conservato. */
 function letturaFallita(esito: string, tabella: string, err: unknown): NextResponse {
@@ -244,7 +243,7 @@ export const GET = withRoute('admin/legami-familiari:GET', async (request: Reque
         if (fuori) return fuori;
     }
 
-    const testo = ripulisci(q.data.q ?? '');
+    const testo = ripulisciTermineRicerca(q.data.q ?? '');
     if (testo.length < MINIMO_RICERCA) {
         return NextResponse.json(tipo === 'alunni' ? { alunni: [] } : { genitori: [] });
     }

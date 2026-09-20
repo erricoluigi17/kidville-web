@@ -10,6 +10,7 @@ import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
 import { ChipFatturazione, MovimentoDialog } from './MovimentoDialog';
+import { RiepilogoImportDialog, type EsitoAnnullo } from './RiepilogoImportDialog';
 import { LottoFatturePanel } from './LottoFatturePanel';
 import type { PrecompilaTransazione } from './TransazioniPanel';
 import { BTN_PRIMARY_AA } from './ui';
@@ -57,6 +58,35 @@ interface Props {
 }
 
 const hdr = (u: string) => ({ 'Content-Type': 'application/json', 'x-user-id': u });
+
+/**
+ * ─── CHE COSA HA CHIUSO DA SOLO L'ULTIMO IMPORT ───────────────────────────────
+ *
+ * I tre campi che il `POST` dell'import restituisce accanto ai conteggi di
+ * sempre, più l'`import_id` — che è l'appiglio con cui si riapre il riepilogo e
+ * si annulla in blocco.
+ *
+ * ⚠️ DICHIARATO QUI E NON DENTRO `EsitoImport` (`./riconciliazione-ui`), e non è
+ * una preferenza: quel file è il vocabolario condiviso della feature ed è in
+ * mano ad altri lotti in questo stesso momento. Un campo aggiunto là avrebbe
+ * toccato un file fuori perimetro per una comodità di tipo. Qui invece
+ * l'estensione vive accanto al suo unico lettore, che è la fascia di questa
+ * schermata, e il giorno in cui servirà altrove si sposta in una riga.
+ *
+ * Tutti e quattro sono FACOLTATIVI: un server che non li manda ancora (o un
+ * import fatto da una versione precedente) non deve far comparire nessuna
+ * fascia. `undefined` significa «non me l'ha detto», che non è zero.
+ */
+interface EsitoImportAuto {
+  import_id?: string | null;
+  auto_singole?: number;
+  auto_composite?: number;
+  auto_saltati?: number;
+}
+
+/** Quante righe ha chiuso la macchina in quell'import, o 0 se non l'ha detto. */
+const chiusiAutomaticamente = (e: EsitoImportAuto | null): number =>
+  (e?.auto_singole ?? 0) + (e?.auto_composite ?? 0);
 
 /**
  * ⚠️ GLI HEADER DI UN UPLOAD: SOLO L'IDENTITÀ, MAI IL `Content-Type`.
@@ -204,6 +234,44 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
    * voci»: la fascia non si monta affatto.
    */
   const [riepilogo, setRiepilogo] = useState<EsitoComposizione | null>(null);
+  /**
+   * ─── L'ULTIMO IMPORT, E CHE COSA HA CHIUSO DA SOLO ────────────────────────
+   *
+   * `null` = nessun import in questa sessione di schermata. Vive accanto a
+   * `esito` e non dentro, perché risponde a un'altra domanda: `esito` dice
+   * «quante righe sono entrate», questo dice «quante ne ha chiuse la macchina, e
+   * dove si va a vederle».
+   */
+  const [auto, setAuto] = useState<EsitoImportAuto | null>(null);
+  /**
+   * Il riepilogo è aperto?
+   *
+   * ⚠️ È uno STATO SUO e non `auto !== null`, ed è la regola n. 1 di quella
+   * schermata: il popup si apre da solo **solo** se l'import ha chiuso almeno
+   * una riga, ma poi si chiude — e deve restare riapribile dalla fascia, senza
+   * che la chiusura cancelli l'`import_id`. Legare l'apertura all'esistenza
+   * dell'import avrebbe fatto riaprire il popup a ogni render.
+   */
+  const [riepilogoAperto, setRiepilogoAperto] = useState(false);
+  /**
+   * L'esito dell'ultimo annullo in blocco, per la fascia. `null` = non è stato
+   * annullato niente in questa sessione — e non «zero righe riaperte», che
+   * sarebbe un'affermazione.
+   */
+  const [esitoAnnullo, setEsitoAnnullo] = useState<EsitoAnnullo | null>(null);
+  /**
+   * 🔴 QUANTE FAMIGLIE L'AVVISO NON HA RAGGIUNTO, quando la finestra di lettura
+   * si è chiusa prima dell'import. `null` = non è successo.
+   *
+   * Non è un dettaglio da log, ed è il difetto che questo stato chiude: la rotta
+   * `riepilogo-visto` restituisce `troncato` da sempre, e l'unico chiamante —
+   * questa funzione — guardava solo `r.ok`. A schermo non compariva niente, e le
+   * righe oltre la finestra restavano senza avviso IN SILENZIO. Peggio: riaprire
+   * il riepilogo non le recupera — l'ordine di lettura è stabile e la rotta
+   * ripesca sempre le stesse — quindi l'operatrice deve saperlo adesso, mentre
+   * ha ancora l'import davanti.
+   */
+  const [avvisiTroncati, setAvvisiTroncati] = useState<number | null>(null);
   /**
    * IL GUASTO IN CORSO — uno solo, di uno dei tre tipi (v. `Guasto` qui sopra).
    *
@@ -557,6 +625,13 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
     setBusy(true);
     setGuasto(null);
     setEsito(null);
+    // Un import nuovo azzera anche il riepilogo automatico del precedente: il
+    // pulsante «Vedi e annulla» della fascia porta un `import_id`, e lasciarlo
+    // acceso su quello vecchio significherebbe offrire di annullare un import
+    // che non è quello appena caricato — sullo stesso identico pulsante.
+    setAuto(null);
+    setRiepilogoAperto(false);
+    setEsitoAnnullo(null);
     // Un import nuovo spegne il riepilogo della composizione precedente: due
     // fasce verdi che parlano di due fatti diversi, una sopra l'altra, si leggono
     // come una sola — ed è la seconda che viene letta come esito della prima.
@@ -575,6 +650,18 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       const j = await r.json();
       if (!r.ok || !j.success) { setGuasto({ tipo: 'import', testo: messaggioDaCorpo(j, t('reconErroreImport')) }); return; }
       setEsito(j.data as EsitoImport);
+      // ── IL RIEPILOGO SI APRE SOLO SE C'È QUALCOSA DA GUARDARE ────────────
+      // Un modale che si apre a ogni import diventa un ostacolo da chiudere
+      // dodici volte al giorno, e il tredicesimo lo si chiude senza leggerlo:
+      // cioè una schermata di controllo che smette di controllare qualcosa. Se
+      // la macchina non ha chiuso niente resta la fascia di sempre, invariata.
+      // `import_id` serve comunque — anche a zero — perché è l'appiglio del
+      // pulsante di riapertura, che però non compare se il conteggio è zero.
+      const datiAuto = j.data as EsitoImportAuto;
+      setAuto(datiAuto);
+      if (typeof datiAuto.import_id === 'string' && chiusiAutomaticamente(datiAuto) > 0) {
+        setRiepilogoAperto(true);
+      }
       await load();
       // L'import porta righe nuove: quante ne restino da fatturare è cambiato.
       riconta();
@@ -585,6 +672,68 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       setBusy(false);
     }
   };
+
+  /**
+   * ─── «HO GUARDATO IL RIEPILOGO E NON HO ANNULLATO» ──────────────────────────
+   *
+   * È il gesto umano da cui parte l'avviso alle famiglie. La fase automatica non
+   * avvisa nessuno apposta — decisione del titolare: un avviso mandato non si
+   * disfa, e se la macchina sbaglia si annulla in blocco — quindi l'avviso
+   * aspetta che una persona abbia guardato l'elenco e l'abbia lasciato stare.
+   *
+   * ⚠️ NON blocca la chiusura del popup e non mostra nessun errore: l'esito di
+   * questa chiamata non è una cosa su cui l'operatrice debba decidere qualcosa —
+   * gli abbinamenti restano validi comunque, e la rotta è idempotente, quindi il
+   * rimedio (riaprire il riepilogo e richiudere) è già nelle sue mani. Ma il
+   * guasto NON è muto: il `catch` logga, e il lato server ha la sua riga di
+   * successo coi conteggi. «Best-effort» vuol dire che non ferma l'operatrice,
+   * non che nessuno se ne accorge.
+   */
+  const riepilogoVisto = useCallback(async (importIdVisto: string) => {
+    try {
+      const r = await fetch('/api/pagamenti/riconciliazione/riepilogo-visto', {
+        method: 'POST',
+        headers: hdr(userId),
+        body: JSON.stringify({ import_id: importIdVisto }),
+      });
+      if (!r.ok) {
+        // Un rifiuto del server è una riga di log, non una fascia: il 503
+        // fail-closed di quella rotta significa «nessuna famiglia ha ricevuto
+        // niente», e la si rimanda riaprendo il riepilogo.
+        logClient({
+          livello: 'error',
+          evento: 'fetch',
+          messaggio: `riepilogo-visto-rifiutato: ${r.status}`,
+          route: '/admin/pagamenti',
+          stato: r.status,
+        });
+        return;
+      }
+      // 🔴 IL SUCCESSO SI LEGGE, non si butta. `troncato` è l'unico caso in cui
+      // un 200 nasconde un guasto che nessun altro vedrà: gli avvisi sono
+      // partiti solo per le righe entrate nella finestra, e riaprire il
+      // riepilogo NON recupera le altre. È una fascia, non una riga di log.
+      const j = (await r.json()) as { data?: { troncato?: boolean; letti?: number } };
+      if (j.data?.troncato === true) {
+        setAvvisiTroncati(typeof j.data.letti === 'number' ? j.data.letti : 0);
+        logClient({
+          livello: 'error',
+          evento: 'fetch',
+          messaggio: `riepilogo-visto-troncato: ${j.data.letti ?? 0}`,
+          route: '/admin/pagamenti',
+          stato: r.status,
+        });
+      }
+    } catch (err) {
+      logClient({
+        livello: 'error',
+        evento: 'fetch',
+        messaggio: `riepilogo-visto-fallito: ${nomeErrore(err)}`,
+        route: '/admin/pagamenti',
+        stato: 0,
+      });
+    }
+  }, [userId]);
 
   // Bonifico di famiglia (multi-CF): risolve il pagante COMUNE agli alunni
   // riconosciuti per CF e apre il wizard «Incasso unico» precompilato. Se il ponte
@@ -833,9 +982,94 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
       </p>
 
       {esito && (
-        <p role="status" className="mt-3 flex items-center gap-1.5 rounded-card bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success">
+        <p role="status" className="mt-3 flex flex-wrap items-center gap-1.5 rounded-card bg-kidville-success-soft px-3 py-2 font-maven text-sm text-kidville-success">
           <SaveCheck size={16} />
           {riepilogoImport(esito)}
+          {/* ─── «… · 12 chiusi automaticamente — Vedi e annulla» ────────────
+              In coda alla stessa fascia e non in una seconda: è lo stesso fatto
+              («che cosa ha prodotto questo import»), e due fasce verdi una sotto
+              l'altra si leggono come una sola — la seconda viene letta come
+              esito della prima.
+
+              ⚠️ Il pulsante è ciò che rende il riepilogo RIAPRIBILE dopo che lo
+              si è chiuso, ed è il motivo per cui il popup può permettersi di
+              aprirsi una volta sola. Compare solo se la macchina ha chiuso
+              qualcosa e solo se l'`import_id` è arrivato: senza quell'uuid non
+              c'è niente da riaprire, e un pulsante che non può funzionare è
+              peggio di un pulsante assente. */}
+          {typeof auto?.import_id === 'string' && chiusiAutomaticamente(auto) > 0 && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span>{t('reconAutoChiusi', { n: chiusiAutomaticamente(auto) })}</span>
+              <button
+                type="button"
+                onClick={() => setRiepilogoAperto(true)}
+                data-testid="recon-vedi-riepilogo-auto"
+                className="min-h-11 rounded-pill px-2 font-maven text-sm font-bold text-kidville-green underline underline-offset-2 transition-colors hover:text-kidville-green-dark"
+              >
+                {t('reconAutoVediAnnulla')}
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      {/* ─── CHE COSA HA DISFATTO L'ULTIMO ANNULLO IN BLOCCO ─────────────────
+          Tono d'AVVISO e non di conferma, e non è una sfumatura: l'annullo non è
+          atomico — sono N storni indipendenti — quindi «fatto» sarebbe vero solo
+          quando `falliti` è vuoto. Le due frasi dicono cose diverse perché i due
+          esiti si riparano in modi diversi: tutto riaperto ⇒ non c'è altro da
+          fare; qualcosa indietro ⇒ quelle righe hanno ancora denaro attaccato e
+          vanno riaperte a mano dal registro filtrato per questo import. */}
+      {esitoAnnullo && (
+        <p
+          role={esitoAnnullo.falliti.length > 0 ? 'alert' : 'status'}
+          className={cx(
+            'mt-3 rounded-card px-3 py-2 font-maven text-sm',
+            esitoAnnullo.falliti.length > 0
+              ? 'bg-kidville-warn-soft text-kidville-warn-strong'
+              : 'bg-kidville-success-soft text-kidville-success',
+          )}
+        >
+          {esitoAnnullo.falliti.length > 0
+            ? t('reconAnnulloParziale', {
+                riaperti: esitoAnnullo.riaperti,
+                falliti: esitoAnnullo.falliti.length,
+              })
+            : t('reconAnnulloEsito', { riaperti: esitoAnnullo.riaperti })}
+          {/* ─── LE FATTURE RIMASTE VIVE, COI LORO NUMERI ──────────────────
+              Il punto 5 della consegna: l'avviso si AGGREGA in «un elenco di
+              movimenti con i numeri di fattura». Il server lo costruisce e lo
+              manda; fino a questa riga non arrivava a schermo, e i numeri dei
+              documenti — l'unica cosa con cui l'operatrice può andare ad
+              annullarli — restavano solo dentro un log.
+
+              ⚠️ Prima dell'annullo il popup dice già, in prosa, che le fatture
+              emesse restano emesse. Questa è l'altra metà: DOPO, quali. E
+              dovrebbe essere vuoto sempre — l'automatismo non emette fatture —
+              quindi se compare, la notizia è che l'annullo è arrivato tardi. */}
+          {esitoAnnullo.fatture.length > 0 && (
+            <span className="mt-1 block font-bold" data-testid="recon-annullo-fatture">
+              {t('reconAnnulloFattureVive', {
+                n: esitoAnnullo.fatture.length,
+                numeri: esitoAnnullo.fatture.flatMap((f) => f.numeri).join(', '),
+              })}
+            </span>
+          )}
+        </p>
+      )}
+      {/* ─── GLI AVVISI CHE NON SONO PARTITI, E CHE NON PARTIRANNO ──────────
+          `role="alert"` e tono d'avviso: è l'unico esito irreversibile di tutto
+          il meccanismo. Le righe oltre la finestra di lettura non hanno ricevuto
+          l'avviso, e riaprire il riepilogo non le recupera — la rotta ripesca
+          sempre le stesse. Dirlo qui, mentre l'import è ancora davanti, è
+          l'unica cosa che lo rende recuperabile a mano. */}
+      {avvisiTroncati !== null && (
+        <p
+          role="alert"
+          data-testid="recon-avvisi-troncati"
+          className="mt-3 rounded-card bg-kidville-warn-soft px-3 py-2 font-maven text-sm text-kidville-warn-strong"
+        >
+          {t('reconAvvisiTroncati', { n: avvisiTroncati })}
         </p>
       )}
       {/* ─── CHE COSA HA REGISTRATO L'ULTIMA COMPOSIZIONE ───────────────────
@@ -1367,6 +1601,76 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
             riconta();
           }}
           onIncassoUnico={onIncassoUnico ? gestisciIncassoUnico : undefined}
+        />
+      )}
+
+      {/* ─── IL RIEPILOGO DELL'IMPORT ────────────────────────────────────────
+          Accanto al popup del movimento e con la stessa taglia: è lo stesso
+          genere di schermata — un elenco da leggere e su cui decidere — e due
+          taglie diverse per la stessa cosa sarebbero il difetto che la
+          revisione del popup ha appena chiuso.
+
+          Montato solo quando c'è un `import_id`: senza, la rotta non avrebbe
+          niente da chiedere. */}
+      {riepilogoAperto && typeof auto?.import_id === 'string' && (
+        <RiepilogoImportDialog
+          importId={auto.import_id}
+          userId={userId}
+          /* CHIUSURA SENZA ANNULLO = «ho guardato, va bene così»: è il gesto da
+             cui parte l'avviso alle famiglie, che la fase automatica non manda
+             apposta. Parte di qui e non dentro il popup perché il popup può
+             essere chiuso anche con Escape o dallo sfondo, e quei due percorsi
+             passano per `onClose` — cioè per questa riga.
+
+             🔴 E «CHIUSO» NON BASTA: serve `visto`. Le due uscite che non hanno
+             mostrato niente — il guasto di lettura, e l'Escape mentre l'elenco è
+             ancora in volo — chiudono il popup esattamente come le altre, ma lì
+             nessuno ha guardato nessuna riga. Mandare comunque gli avvisi
+             sarebbe l'unico errore di questo meccanismo che non si ripara: un
+             avviso alle famiglie non si ritira, mentre un avviso che non parte
+             si rimedia riaprendo il riepilogo dalla fascia e richiudendolo (la
+             rotta è idempotente). Il popup dichiara se l'elenco era a schermo;
+             qui ci si fida solo di quello. */
+          onChiudi={(visto) => {
+            setRiepilogoAperto(false);
+            if (visto && typeof auto?.import_id === 'string') void riepilogoVisto(auto.import_id);
+          }}
+          onAnnullato={(esitoAnn) => {
+            setRiepilogoAperto(false);
+            // ⚠️ NESSUN avviso alle famiglie qui, ed è il punto di tutto il
+            // meccanismo: l'import è stato disfatto, quindi non c'è nessun
+            // pagamento da annunciare. Chiudere il popup passando da `onChiudi`
+            // avrebbe mandato gli avvisi di ciò che si è appena annullato.
+            setEsitoAnnullo(esitoAnn);
+            // ─── LA FASCIA SPARISCE SOLO SE NON È RIMASTO NIENTE ─────────────
+            // Tutto riaperto ⇒ «N chiusi automaticamente» non è più vero, e
+            // resta solo l'esito dell'annullo.
+            //
+            // 🔴 ANNULLO PARZIALE ⇒ la fascia RESTA, e non è una sfumatura: le
+            // righe che lo storno non è riuscito a riaprire sono ancora
+            // `confermato` con la marca accesa, cioè famiglie che aspettano
+            // ancora il loro avviso. Con l'`import_id` buttato via non ci
+            // sarebbe più nessuna porta da cui farlo partire — né la riapertura
+            // del riepilogo né `riepilogo-visto` — e quelle famiglie
+            // resterebbero senza avviso finché qualcuno non ritrova quell'import
+            // a mano. Tenendo `auto` il pulsante «Vedi e annulla» continua a
+            // funzionare: riapre il riepilogo su ciò che è rimasto (la query
+            // guarda i `confermato` con la marca, quindi le riaperte non ci sono
+            // già più), e richiuderlo manda gli avvisi delle sole righe rimaste.
+            //
+            // ⚠️ IL PREZZO, dichiarato: dopo un annullo parziale il numero nella
+            // fascia resta quello dell'IMPORT (`auto_singole + auto_composite`),
+            // non quello delle righe rimaste — è vero come fatto storico («la
+            // macchina ne ha chiuse 12»), ma non è più il conteggio di ciò che
+            // c'è ancora da guardare. Lo si tiene così invece di ritoccarlo a
+            // mano perché la fascia dell'annullo, subito sotto, dice quante sono
+            // tornate in coda e quante no — e perché il numero che conta davvero
+            // (quello che si DIGITA per confermare) non viene mai da qui: lo
+            // ricalcola il server a ogni apertura del riepilogo.
+            if (esitoAnn.falliti.length === 0) setAuto(null);
+            void load();
+            riconta();
+          }}
         />
       )}
     </div>

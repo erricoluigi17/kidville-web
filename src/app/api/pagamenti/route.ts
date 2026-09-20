@@ -14,7 +14,15 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { residuoEffettivo, statoEffettivo } from '@/lib/pagamenti/aging'
 import { getModuleConfig } from '@/lib/settings/module-config'
-import { renderCausale, modelloCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
+// `causaleBonifico`, NON `renderCausale`: è l'unica porta che applica `conCodiceVoce`,
+// cioè la garanzia che il `{codice}` ci sia anche nei modelli che le tre sedi hanno
+// scritto quando il codice non esisteva. Di qui passa anche il motore dei solleciti:
+// due porte diverse per la stessa stringa manderebbero al genitore due causali per lo
+// stesso pagamento — una in app, una nell'email.
+import { causaleBonifico, modelloCausale, DEFAULT_CAUSALE_TEMPLATE } from '@/lib/pagamenti/causale'
+// Il codice della voce si calcola QUI, nel chiamante: il motore delle causali riceve
+// valori già formattati (come `importo` e `scadenza`) e non conosce gli id delle righe.
+import { codiceVoce } from '@/lib/pagamenti/codice-voce'
 // Le coordinate del bonifico si compongono in UN posto solo (lo usa anche il
 // motore dei solleciti): la pagina e l'email devono dire lo stesso IBAN e lo
 // stesso intestatario. Lock: `coordinate-bonifico-un-motore-solo`.
@@ -390,7 +398,7 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
         const template = modelloCausale(cfg, slug, DEFAULT_CAUSALE_TEMPLATE)
         const al = r.alunni as { nome?: string | null; cognome?: string | null; codice_fiscale?: string | null } | null | undefined
         const { mese, anno } = meseAnnoDaPeriodo(r.periodo_competenza as string | null)
-        const causale_suggerita = renderCausale(template, {
+        const causale_suggerita = causaleBonifico({
           descrizione: r.descrizione as string | null,
           nome: al?.nome,
           cognome: al?.cognome,
@@ -400,7 +408,17 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
           anno,
           importo: formatEuro(r.importo),
           scadenza: isoToIt((r.scadenza as string | null) ?? ''),
-        })
+          // L'id della RIGA che si sta guardando, sempre: ogni voce dell'elenco ha il
+          // proprio codice, ed è ciò che il codice deve dire («quale voce stai
+          // pagando»). Per una quota di uno split `r.id` resta quello del pagamento —
+          // `quota_id` è un'altra riga, di un'altra tabella, e due genitori separati
+          // che pagano la stessa voce devono poterla nominare allo stesso modo, come
+          // già fa il sollecito. Le righe `tipo: 'padre'` (il contenitore rateale) il
+          // genitore non le vede affatto: sono filtrate più su, e allo staff che le
+          // legge il codice nomina il contenitore, cioè esattamente la riga di cui
+          // questa causale descrive descrizione e importo.
+          codice: codiceVoce(r.id),
+        }, template)
         return { ...r, scuola_nome: sede, causale_suggerita }
       }),
     }, { headers: SENZA_CACHE })

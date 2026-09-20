@@ -9,7 +9,10 @@ import { logErrore } from '@/lib/logging/logger'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
 import { residuoEffettivo } from './aging'
-import { DEFAULT_CAUSALE_TEMPLATE, causaleBonifico, modelloCausale, rigaCausaleSollecito } from './causale'
+import { DEFAULT_CAUSALE_TEMPLATE, causaleBonifico, modelloCausale, rigaCausaleSollecito, type DatiCausale } from './causale'
+// Il codice della voce si calcola QUI, nel chiamante: il motore delle causali riceve
+// valori già formattati (come `importo` e `scadenza`) e non conosce gli id delle righe.
+import { codiceVoce } from './codice-voce'
 import { meseAnnoDaPeriodo } from './periodo'
 import { coordinateBonificoSede } from './coordinate-bonifico'
 import {
@@ -193,10 +196,15 @@ export async function sollecitaPagamenti(
         const slug = pag.payment_categories?.slug ?? undefined
         const templateCausale = modelloCausale(causaliCfg, slug, DEFAULT_CAUSALE_TEMPLATE)
         const { mese, anno } = meseAnnoDaPeriodo(pag.periodo_competenza)
-        // Il CF del bambino va SOLO nel corpo dell'email (destinatario = tutore →
-        // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e
-        // `sendEmail`/`externalFetch` non loggano il body della richiesta.
-        const corpo = `${renderTemplate(liv.testo, ctx)}\n\n${rigaCausaleSollecito({
+        // I DATI DELLA CAUSALE, COMPOSTI UNA VOLTA SOLA PER QUESTA VOCE.
+        //
+        // La stessa email li stampa DUE volte: nel corpo testuale (`rigaCausaleSollecito`,
+        // che è anche l'anteprima dell'operatore e la colonna d'audit `solleciti.corpo`) e
+        // nel riquadro «Dati per il bonifico» dell'HTML. Erano due oggetti gemelli scritti
+        // di seguito, cioè due posti da aggiornare: il giorno in cui se ne tocca uno solo
+        // la famiglia legge due causali diverse dentro lo stesso messaggio — senza un
+        // errore, senza un log, e con la riconciliazione che torna a indovinare.
+        const datiCausale: DatiCausale = {
             descrizione: pag.descrizione,
             nome: pag.alunni?.nome,
             cognome: pag.alunni?.cognome,
@@ -206,7 +214,19 @@ export async function sollecitaPagamenti(
             anno,
             importo: formatEuro(pag.importo),
             scadenza: isoToIt(pag.scadenza ?? ''),
-        }, templateCausale)}`
+            // L'id della VOCE che si sta sollecitando, lo stesso da cui l'elenco pagamenti
+            // ricava il codice della stessa riga: il genitore ne ricopia UNA sola di
+            // causale — quella dell'app o quella dell'email — e la riconciliazione legge
+            // ciò che è finito nel bonifico. Se le due strade calcolassero il codice da
+            // due campi diversi, metà delle famiglie pagherebbe con un codice che non
+            // nomina la voce che stanno saldando.
+            codice: codiceVoce(pag.id),
+        }
+        // Il CF del bambino va SOLO nel corpo dell'email (destinatario = tutore →
+        // dato lecito), MAI nei log: `corpo` non viene passato a nessun logger, e
+        // `sendEmail`/`externalFetch` non loggano il body della richiesta. Lo stesso
+        // vale per il `codice`, che nella causale viaggia accanto a quel CF.
+        const corpo = `${renderTemplate(liv.testo, ctx)}\n\n${rigaCausaleSollecito(datiCausale, templateCausale)}`
 
         // destinatari: titolari quota (split) oppure tutori del bambino
         let adultIds: string[] = []
@@ -255,17 +275,10 @@ export async function sollecitaPagamenti(
                 giorniRitardo,
                 importo: residuo,
             }],
-            causale: causaleBonifico({
-                descrizione: pag.descrizione,
-                nome: pag.alunni?.nome,
-                cognome: pag.alunni?.cognome,
-                codiceFiscale: pag.alunni?.codice_fiscale,
-                sede: sedeNome,
-                mese,
-                anno,
-                importo: formatEuro(pag.importo),
-                scadenza: isoToIt(pag.scadenza ?? ''),
-            }, templateCausale),
+            // La STESSA stringa del corpo testuale qui sopra: stessi dati, stesso
+            // modello, stessa porta (`causaleBonifico`, l'unica che applica
+            // `conCodiceVoce`). Il riquadro è ciò che la famiglia copia davvero.
+            causale: causaleBonifico(datiCausale, templateCausale),
             intestatario,
             iban,
         }, contestoSede)

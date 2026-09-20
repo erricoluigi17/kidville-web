@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { CausaliPanel, CausaliFatturaPanel } from '@/components/features/admin/pagamenti/CausaliPanel';
 import { DEFAULT_CAUSALE_TEMPLATE, PLACEHOLDER_CAUSALE } from '@/lib/pagamenti/causale';
-import { DEFAULT_CAUSALE_FATTURA_TEMPLATE, LIMITE_CAUSALE_FATTURAPA } from '@/lib/pagamenti/causale-fattura';
+import { DEFAULT_CAUSALE_FATTURA_TEMPLATE, LIMITE_CAUSALE_FATTURAPA, PLACEHOLDER_CAUSALE_FATTURA } from '@/lib/pagamenti/causale-fattura';
 import { buildFatturaElettronicaXml } from '@/lib/aruba/fatturapa-xml';
 
 /**
@@ -318,14 +318,33 @@ describe('la misura è leggibile anche da chi non vede lo schermo', () => {
     // codice, mentre tutto il resto del pannello passa da next-intl e il catalogo
     // inglese è tradotto: un utente con l'interfaccia in inglese leggeva «Del/della
     // minore» in mezzo a testi inglesi.
-    render(<CausaliFatturaPanel userId="u1" scuolaId="sc-1" />);
-    await screen.findByLabelText('Predefinito');
-    for (const p of PLACEHOLDER_CAUSALE) {
-      const chip = screen.getByRole('button', { name: new RegExp(`\\{${p.chiave}\\}`) });
-      // Il mock di next-intl risolve sui messaggi ITALIANI reali: se la chiave
-      // mancasse dal catalogo, qui comparirebbe «adminContabilita.caus_ph_…».
-      expect(chip.textContent ?? '').not.toMatch(/adminContabilita\./);
-      expect(chip.getAttribute('title') ?? '').not.toMatch(/adminContabilita\./);
+    //
+    // ⚠️ OGNI PANNELLO COL SUO CATALOGO, e i due non coincidono più: la fattura non
+    // offre `{codice}`. Iterando `PLACEHOLDER_CAUSALE` sul solo pannello delle fatture —
+    // com'era fino al codice della voce — questo test diventava verde nel momento
+    // esatto in cui il chip spariva di lì, e `caus_ph_codice` poteva restare fuori dai
+    // cataloghi: l'admin avrebbe letto «adminContabilita.caus_ph_codice» nell'editor del
+    // BONIFICO, che è l'unico dove quel chip esiste. Il catalogo del bonifico si prova
+    // sul pannello del bonifico, e quello della fattura sul suo.
+    render(<><CausaliPanel userId="u1" scuolaId="sc-1" /><CausaliFatturaPanel userId="u1" scuolaId="sc-1" /></>);
+    await waitFor(() => expect(screen.getAllByLabelText('Predefinito')).toHaveLength(2));
+    const [sezioneBonifico, sezioneFattura] = screen.getAllByRole('region');
+    const casi = [
+      { sezione: sezioneBonifico, catalogo: PLACEHOLDER_CAUSALE },
+      { sezione: sezioneFattura, catalogo: PLACEHOLDER_CAUSALE_FATTURA },
+    ];
+    // Il conteggio prima del ciclo: un catalogo svuotato per sbaglio renderebbe il
+    // `for` un giro a vuoto, cioè un test verde che non ha guardato niente.
+    expect(PLACEHOLDER_CAUSALE.length).toBeGreaterThan(PLACEHOLDER_CAUSALE_FATTURA.length);
+    expect(PLACEHOLDER_CAUSALE_FATTURA.length).toBeGreaterThan(0);
+    for (const { sezione, catalogo } of casi) {
+      for (const p of catalogo) {
+        const chip = within(sezione).getByRole('button', { name: new RegExp(`\\{${p.chiave}\\}`) });
+        // Il mock di next-intl risolve sui messaggi ITALIANI reali: se la chiave
+        // mancasse dal catalogo, qui comparirebbe «adminContabilita.caus_ph_…».
+        expect(chip.textContent ?? '').not.toMatch(/adminContabilita\./);
+        expect(chip.getAttribute('title') ?? '').not.toMatch(/adminContabilita\./);
+      }
     }
   });
 });

@@ -551,6 +551,29 @@ const AMMESSE: Record<string, Esenzione> = {
     ragione:
       'modulistica della classe: stessa ragione della stampa unione — il modulo che serve più spesso per un bambino uscito è quello che si compila DOPO che è uscito',
   },
+
+  // ── RICERCA DEL BAMBINO PER COMPORRE UN BONIFICO ───────────────────────────
+  // Qui l'assenza del filtro di stato NON è un elenco operativo distratto: è la
+  // ragione per cui questa rotta esiste separata da
+  // `/api/admin/legami-familiari?tipo=alunni`, che i ritirati li ESCLUDE. Un
+  // bonifico che salda l'arretrato di un bambino che ha lasciato è il caso
+  // normale di fine anno, e nasconderlo qui vorrebbe dire non poter più
+  // incassare quel denaro — con la riga bancaria che resta rossa per sempre.
+  //
+  // Non è nemmeno una schermata che «prenota» qualcosa a un non iscritto (la
+  // trappola della mensa, descritta in cima a questa allowlist): da qui si
+  // incassa ciò che è GIÀ a registro. Il gate che impedisce di aprire una voce
+  // NUOVA su un ritirato sta nella scrittura (`CONCILIAZIONE_ALUNNO_NON_ATTIVO`),
+  // e questa rotta lo anticipa invece di ignorarlo: lo stato esce come `attivo`
+  // su ogni riga, perché il pannello sappia PRIMA cosa la conferma rifiuterà.
+  //
+  // Due letture, non una: la seconda è il ritentativo senza la colonna `stato`
+  // sul DB E2E della CI, non migrato (`42703`).
+  'src/app/api/pagamenti/riconciliazione/alunni/route.ts::pagamenti/riconciliazione/alunni:GET': {
+    scoperte: 2,
+    ragione:
+      'ricerca del bambino da cui comporre un bonifico: un arretrato si salda anche dopo il ritiro, ed è il caso normale di fine anno — lo stato non filtra, ESCE (`attivo`), così il pannello sa in anticipo che su un ritirato la scrittura rifiuta le voci nuove; la seconda lettura è il ripiego `42703` senza la colonna `stato`',
+  },
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

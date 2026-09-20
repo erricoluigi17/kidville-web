@@ -48,9 +48,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.limit = () => b
       // `.range()` — la dedup non chiede più una lista di 6.779 hash (una URL da 450 KB che
-      // PostgREST rifiuta) ma la finestra di date, letta a pagine. Il finto qui restituisce
-      // tutto in una pagina sola: `h.esistenti` sta sempre sotto il blocco.
-      b.range = () => b
+      // PostgREST rifiuta) ma la finestra di date, letta a pagine; dal 2026-09-20 si pagina
+      // allo stesso modo anche l'elenco dei pagamenti APERTI.
+      //
+      // ⚠️ IL FINTO RISPETTA IL RANGE, e prima lo ignorava. Restituire ogni volta l'elenco
+      // intero vuol dire una pagina mai vuota: il ciclo si ferma solo sul tetto dei
+      // round-trip, e l'elenco torna centuplicato. Sugli aperti diventa cento copie dello
+      // stesso pagamento, cioè cento pari merito, cioè nessun suggerimento — un rosso che
+      // parla del finto e non del codice.
+      b.range = (da: number, a: number) => { b._da = da; b._a = a; return b }
       b.maybeSingle = async () => ({
         data: table === 'riconciliazione_movimenti' ? h.movimento : table === 'pagamenti' ? h.pagamento : null,
         error: null,
@@ -62,8 +68,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
         const err = h.fail23502.has(table) && nullSede
           ? { code: '23502', message: 'null value in column "scuola_id" violates not-null constraint' }
           : null
+        // ⚠️ `.insert(…).select(…)` DEVE essere attendibile, e prima non lo era.
+        // Dal 2026-09-20 l'insert dei movimenti chiede indietro le righe scritte
+        // (`.select('id, hash_movimento')`: la fase automatica ha bisogno degli uuid appena
+        // assegnati). Con un `select()` che restituiva solo `{ single }`, `await` su quella
+        // catena consegnava l'OGGETTO — `error` `undefined` — e il ramo `23502` del DB E2E
+        // non migrato non scattava più: il finto diceva «insert riuscito» dove il database
+        // vero dice «scuola_id NOT NULL». Un verde che parlava del finto, non del codice.
+        const righeScritte = rows.map((r, i) => ({ id: `${table}-${i}`, hash_movimento: r.hash_movimento }))
         return {
-          select: () => ({ single: async () => ({ data: err ? null : { id: `${table}-new`, ...(Array.isArray(row) ? {} : row) }, error: err }) }),
+          select: () => ({
+            single: async () => ({ data: err ? null : { id: `${table}-new`, ...(Array.isArray(row) ? {} : row) }, error: err }),
+            then: (r: (v: unknown) => unknown) => r({ data: err ? null : righeScritte, error: err }),
+          }),
           then: (r: (v: unknown) => unknown) => r({ data: null, error: err }),
         }
       }
@@ -83,11 +100,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
           if (h.apertiCfError && cols.includes('codice_fiscale')) error = h.apertiCfError
           else if (h.batchSedeError && cols.startsWith('id, scuola_id')) error = h.batchSedeError
         }
+        /** La fetta chiesta: senza range, tutto (è il caso delle letture non paginate). */
+        const pagina = (righe: Record<string, unknown>[]): Record<string, unknown>[] => {
+          const da = typeof b._da === 'number' ? (b._da as number) : 0
+          const a = typeof b._a === 'number' ? (b._a as number) : righe.length - 1
+          return righe.slice(da, a + 1)
+        }
         return resolve({
           data:
             table === 'riconciliazione_movimenti'
-              ? (h.esistenti.length || h.movimenti.length ? (h.esistenti.length ? h.esistenti : h.movimenti) : [])
-              : table === 'pagamenti' ? h.aperti
+              ? pagina(h.esistenti.length || h.movimenti.length ? (h.esistenti.length ? h.esistenti : h.movimenti) : [])
+              : table === 'pagamenti' ? pagina(h.aperti)
               : [],
           error,
         })

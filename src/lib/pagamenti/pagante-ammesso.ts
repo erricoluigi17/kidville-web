@@ -19,13 +19,50 @@ import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 // fatta. Oggi le due porte che decidono chi può essere il pagante passano di qui:
 //   · `…/contesto:GET` — costruisce l'elenco che la schermata MOSTRA, e risponde
 //     403 `CONCILIAZIONE_PAGANTE_NON_AMMESSO` a un `?pagante=` fuori elenco;
-//   · `…/componi:POST` — la SCRITTURA, con lo stesso 403.
+//   · la SCRITTURA, con lo stesso 403 — che dal 2026-09-20 non è più la rotta
+//     `…/componi:POST` ma `@/lib/pagamenti/conciliazione-registra`, dove i suoi
+//     nove gate si sono spostati per essere attraversati anche dall'import che
+//     concilierà da sé. La porta è la stessa, il file no: il lock qui sotto è
+//     stato spostato con lei, perché un lock che punta al file da cui il codice
+//     è uscito non sorveglia più niente restando verde.
 // Erano equivalenti il giorno della migrazione, ed è proprio questo che rendeva
 // urgente chiuderle in una: due copie non divergono il giorno in cui nascono —
 // divergono dopo, e quel giorno la schermata offre un pagante che la scrittura
 // rifiuta, o peggio il contrario. Chi tocca questa funzione le cambia ENTRAMBE,
 // ed è il punto. Il lock che lo tiene fermo è
 // `__tests__/architecture/pagante-ammesso-un-motore-solo.test.ts`.
+//
+// ─── E DAL 2026-09-20 UN TERZO CHIAMANTE, CHE PORTA NON È ───────────────────
+// `pagamenti/riconciliazione/alunni:GET` — la ricerca del bambino da cui
+// comporre un bonifico — chiama questa funzione per un solo booleano,
+// `ha_pagante`: non concede e non nega, ANTICIPA. Serve a non offrire come
+// pronto un bambino per cui la conferma non troverebbe nessun intestatario.
+// È dichiarato nel lock insieme alle due porte, e sotto le stesse tre regole,
+// perché un lettore è esattamente il chiamante che si scriverebbe in casa una
+// query «giusto per sapere se c'è un genitore»: sarebbe la terza traduzione del
+// ponte account→`parents`, cioè la divergenza di sempre entrata di servizio.
+// ⚠️ Chi legge quel booleano deve distinguere `false` da `null`: `null` è
+// `completo === false`, cioè «una delle due sorgenti non si è letta», e dirlo
+// `false` manderebbe la segreteria a creare un genitore che esiste già.
+//
+// ─── E UN QUARTO CHIAMANTE, CHE È L'UNICO SENZA NESSUNO A GUARDARE ──────────
+// Dal 2026-09-20 chiama anche `@/lib/pagamenti/riconciliazione-auto-import`, la
+// fase che dentro l'import abbina i bonifici certi senza che nessuno clicchi.
+// Non aggiunge una regola: usa questa. Ma la usa in VERSO OPPOSTO, ed è una
+// decisione scritta, non un caso —
+//
+//   · `registraConciliazione` fa **fail-OPEN** quando l'insieme non è completo o
+//     è vuoto: rifiutare lì scaricherebbe un guasto del database sul banco della
+//     segreteria, e comunque c'è una persona che legge il nome sul documento;
+//   · l'automatismo fa **fail-CLOSED** negli stessi due casi, più un terzo (il
+//     pagante scelto che non cade dentro l'insieme ammesso): niente automatismo,
+//     motivo `pagante_non_determinato`, la riga resta gialla e la lavora una
+//     persona.
+//
+// La differenza è tutta lì: il fail-open esiste perché c'è qualcuno che guarda.
+// In automatico non c'è. Chi un giorno volesse uniformare i due versi legga
+// prima questo riquadro: sono la stessa funzione usata da due chiamanti con due
+// reti di sicurezza diverse, non una dimenticanza da pareggiare.
 //
 // ─── DUE PONTI, E DIVERGONO DAVVERO ─────────────────────────────────────────
 // Misurato sul database di produzione il 2026-09-13, confrontando coppia per

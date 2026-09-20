@@ -452,8 +452,15 @@
   "erroreMovimentoNonLetto": "We could not read this bank statement row: it has not disappeared, the read itself failed. Please try again shortly.",
   "erroreRiaperturaStornataNonRiaperta": "The payment recorded for this bank transfer has been reversed, but the row has not gone back to the queue. Reload the list and reopen the bank transfer again: the second attempt recognises the reversal already recorded and will not repeat it.",
   "erroreRiaperturaSedeNonVerificata": "We could not verify the location of this combined bank transfer: the reopening was stopped and no reversal was made. Please try again shortly.",
+  "erroreAnnulloImportNonLetto": "We could not read what the import closed on its own: no row was touched and no reversal was made. Please try again shortly.",
+  "erroreAnnulloImportNonDisponibile": "Bulk cancellation is not available in this environment: reopen the bank transfers one by one from the movements register.",
+  "erroreAnnulloImportTroppeRighe": "This import closed too many bank transfers on its own to cancel them in one go. Open the register filtered by this import and reopen them in groups.",
+  "erroreAnnulloImportFuoriPerimetro": "Some of these bank transfers were closed at locations you do not manage: cancelling them is a reversal, and a reversal is made from your own location. No row was touched.",
+  "erroreRiepilogoNotificheNonInviate": "We could not send the notifications to families: no family received anything and the matches remain valid. Reopen the import summary to try again.",
   "erroreConciliazioneVoceContenitore": "One of the selected items is the total of an instalment plan: you collect the instalments, not the container. Remove it from the composition and pick the instalments to settle.",
   "erroreConciliazioneMovimentoNonLegato": "The payment has been recorded, but the bank statement row was not linked: do not repeat the operation, the money would be recorded twice. Report it so that the row can be linked.",
+  "erroreConciliazioneAlunnoNonTrovato": "One of the children you picked is not among those you can manage: check your choice and try again.",
+  "erroreConciliazioneRicercaAlunniNonLetta": "We could not search for children: the empty list above does not mean there are none. Please try again in a few minutes before creating a new record.",
   "errorePossibileDoppione": "A child with the same name and date of birth, but a different tax code, is already enrolled at this location: if the family sent the application twice, reject this one; if it is the same child, use the existing record.",
   "erroreAbbinamentoNonValido": "The existing record indicated cannot be used for this child: nothing was saved. Reopen the application and try the import again.",
   "erroreVideoFileNonValido": "This file does not contain a readable video: it may be incomplete, or it may have been spoiled while being saved. Please try another clip.",
@@ -502,5 +509,7 @@
   "erroreRiportaGenitoreGiaGenitore": "This person is already a parent: there is nothing to change.",
   "erroreRiportaGenitoreGiaDeciso": "The role changed in the meantime: reload the record.",
   "erroreFascicoloNonCancellato": "We could not remove the documents from storage: no data has been deleted. Please try again in a few minutes.",
-  "errorePersonaleOperazioneNonRiuscita": "We could not complete the operation. Reload the record and check its state before trying again."
+  "errorePersonaleOperazioneNonRiuscita": "We could not complete the operation. Reload the record and check its state before trying again.",
+  "erroreAnnulloImportInterrotto": "The cancellation stopped halfway: some bank transfers may already be back in the queue. Open the register filtered by this import and check which ones are still green before trying again.",
+  "erroreRiepilogoNotificheInterrotte": "Sending the notifications to families stopped halfway: some have already gone out. Reopen the summary to finish sending — anyone already notified will not be notified twice."
 }

@@ -288,6 +288,18 @@ const corpo = async (res: Response) => (await res.json()) as {
 
 const letteDa = (tabella: string) => h.letture.filter((l) => l.table === tabella)
 
+/**
+ * La riga di battito del §6 — l'unica che esca con un `esito` che comincia per
+ * `proposta`. Si cerca per prefisso e non per valore esatto perché il motivo fa
+ * parte dell'esito (`proposta-pagante_comune`, `proposta-assente`, …): un
+ * `=== 'proposta'` non troverebbe mai niente, e un test che non trova niente
+ * dove cerca una riga è verde solo finché non gli si chiede di asserirci sopra.
+ */
+const battito = () =>
+  h.logEvento.mock.calls
+    .map((c) => c[2] as { esito?: string } | undefined)
+    .find((c) => typeof c?.esito === 'string' && c.esito.startsWith('proposta'))
+
 beforeEach(() => {
   vi.clearAllMocks()
   h.letture = []
@@ -1007,5 +1019,272 @@ describe('le voci alimentano `rigaDaVoceAperta` senza adattatori nel browser', (
       expect(v, `manca \`${campo}\`: il motore non potrebbe comporre la riga`).toHaveProperty(campo)
     }
     expect((v.payment_categories as { slug?: string } | null)?.slug).toBe('retta')
+  })
+})
+
+/**
+ * ─── `?alunni=`: È QUI CHE SI SBLOCCA IL LAVORO SUI MOVIMENTI ROSSI ──────────
+ *
+ * Su un movimento che il matcher non ha saputo abbinare non c'è nessun
+ * suggerimento. Senza suggerimenti non c'è nessun bambino citato; senza bambini
+ * non c'è nessun genitore candidato; senza candidati la tendina dei figli è
+ * vuota e «Conferma» resta spento. Non è un difetto del riconoscimento
+ * dell'ordinante: anche riconoscendolo alla perfezione non avrebbe su cosa
+ * decidere.
+ *
+ * ⚠️ E `?alunni=` è un uuid CHE ARRIVA DAL CLIENT, l'unico di questa rotta
+ * insieme a `?pagante=`. Senza la verifica di sede farebbe di una schermata di
+ * incasso un modo per sfogliare l'archivio — voci aperte, residui e nomi dei
+ * genitori di una famiglia qualunque — conoscendo un solo id.
+ */
+/** Un bambino della sede dell'operatore che NESSUN genitore risulta seguire. */
+const BIMBO_SENZA_GENITORI = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb7'
+/** Un uuid ben formato che in `alunni` non esiste affatto. */
+const BIMBO_INESISTENTE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb8'
+
+/** Il movimento ROSSO: nessun suggerimento, nessun pagamento già abbinato. */
+const rendiRosso = () => {
+  h.movimenti = [
+    { ...h.movimenti[0], controparte: 'CHI NON ESISTE', suggerimenti: [], pagamento_id: null },
+    ...h.movimenti.slice(1),
+  ]
+}
+
+describe('un movimento ROSSO si compone solo se si può dire DI CHI è', () => {
+  it('senza `?alunni=` non c’è nessun candidato: è il difetto, e si misura', async () => {
+    // IL CONTROLLO NEGATIVO, e senza di lui il test qui sotto non proverebbe
+    // niente: «candidati non vuoti» è una frase vera anche su una rotta che li
+    // avrebbe trovati comunque. Questa è la schermata che l'operatrice vede oggi
+    // su un bonifico rosso — e da cui non può fare nulla.
+    rendiRosso()
+    const b = await corpo(await get())
+    expect(b.data!.pagante.candidati).toEqual([])
+    expect(b.data!.pagante.proposto).toBeNull()
+    expect(b.data!.figli, 'la tendina dei figli non è vuota: il difetto non è riprodotto').toEqual([])
+  })
+
+  it('`?alunni=` sblocca candidati, pagante proposto e figli: è la prova che chiude il difetto', async () => {
+    rendiRosso()
+    const b = await corpo(await get(`&alunni=${BIMBO_IN}`))
+    // I candidati sono i genitori di quel bambino, dalle due sorgenti.
+    expect(
+      b.data!.pagante.candidati.map((c) => c.parent_id),
+      'i bambini indicati a mano non arrivano al calcolo dei candidati',
+    ).toEqual([GENITORE])
+    // L'ordinante è illeggibile («CHI NON ESISTE»): il pagante lo dà il legame,
+    // ed è il ripiego che `scegliPaganteComune` già sapeva fare.
+    expect(b.data!.pagante.proposto).toEqual({ parent_id: GENITORE, motivo: 'pagante_comune' })
+    // ...e con il pagante arrivano i figli, quello indicato compreso.
+    expect(b.data!.figli.map((f) => f.alunno_id)).toContain(BIMBO_IN)
+    // La famiglia estranea resta fuori: la strada nuova non apre una porta
+    // laterale a quella che il muro di `.eq('parent_id', …)` tiene chiusa.
+    expect(b.data!.figli.map((f) => f.alunno_id)).not.toContain(BIMBO_ESTRANEO)
+  })
+
+  it('e le voci aperte di quel bambino ci sono: è ciò che si sta per incassare', async () => {
+    rendiRosso()
+    const b = await corpo(await get(`&alunni=${BIMBO_IN}`))
+    expect(b.data!.figli.find((f) => f.alunno_id === BIMBO_IN)!.voci_aperte.map((v) => v.id)).toEqual([PAG_1])
+  })
+
+  it('il battito conta le due sorgenti SEPARATE: il successo di `?alunni=` lascia una traccia', async () => {
+    // AGENTS.md, regola 5: gli eventi critici loggano anche il SUCCESSO. Finché
+    // si scriveva solo il rifiuto (`alunno-chiesto-fuori-perimetro`), «nessuna
+    // riga» non distingueva «nessuno usa `?alunni=`» da «lo usano tutti e
+    // funziona sempre» — cioè la funzionalità per cui esiste questo lotto era
+    // invisibile in produzione proprio quando funziona.
+    //
+    // E c'è una seconda ragione, che è il motivo per cui il campo è NUOVO invece
+    // di essere il vecchio riletto: `alunni_citati` ha cambiato significato senza
+    // cambiare nome (da «quelli che il bonifico nomina» a «quelli che nomina PIÙ
+    // quelli indicati a mano»). Senza un secondo conteggio accanto, una riga di
+    // ieri e una di oggi sarebbero indistinguibili interrogando `app_log`.
+    rendiRosso()
+
+    await get()
+    const senza = battito()
+    expect(senza, 'il giro senza `?alunni=` non ha lasciato battito').toBeDefined()
+    expect(senza, 'sul giro senza parametro il conteggio non parte da zero').toMatchObject({
+      alunni_citati: 0,
+      alunni_indicati: 0,
+    })
+
+    // Solo il registratore dei log, non i mock di tutto il file: azzerare anche
+    // `requireStaff` farebbe fallire il secondo giro sul gate invece che sul
+    // battito, e il rosso parlerebbe della cosa sbagliata.
+    h.logEvento.mockClear()
+    await get(`&alunni=${BIMBO_IN}`)
+    const con = battito()
+    expect(con, 'il giro con `?alunni=` non ha lasciato battito').toBeDefined()
+    // 1 e 1: su un rosso i suggerimenti sono zero per definizione, quindi
+    // `alunni_citati` qui è tutto e solo ciò che è arrivato a mano — ed è
+    // esattamente la differenza che i due numeri insieme rendono leggibile.
+    expect(con, 'il successo di `?alunni=` non si conta: resta indistinguibile dal non averlo usato').toMatchObject({
+      alunni_citati: 1,
+      alunni_indicati: 1,
+    })
+
+    // Conteggi, mai gli uuid: il battito esce anche quando i bambini indicati
+    // sono leciti, ed è la riga che si legge più spesso.
+    const loggato = JSON.stringify([h.logEvento.mock.calls, h.logErrore.mock.calls, h.logOk.mock.calls])
+    expect(loggato, 'l’uuid di un bambino è finito in `app_log`').not.toMatch(BIMBO_IN)
+    expect(loggato, 'il nome di un minore è in un log').not.toMatch(/luca|sara|giulia/i)
+  })
+
+  it('`?alunni=` vuoto non è un 400: è una richiesta senza bambini indicati', async () => {
+    // Il pannello appende il parametro anche quando non ha ancora scelto nessuno:
+    // un 400 su `&alunni=` renderebbe rosso ogni caricamento della schermata.
+    rendiRosso()
+    const res = await get('&alunni=')
+    expect(res.status).toBe(200)
+    expect((await corpo(res)).data!.pagante.candidati).toEqual([])
+  })
+})
+
+describe('🔴 `?alunni=` non è un modo per sfogliare l’archivio: la sede si verifica PRIMA', () => {
+  it('un bambino di un plesso che l’operatore non gestisce è un 404 col suo codice', async () => {
+    // Controllo positivo: quel bambino ESISTE davvero nella fixture, ed è in
+    // `sc-2`. Senza questa riga il test sarebbe una frase su una tabella vuota.
+    expect(h.alunni.some((a) => a.id === BIMBO_FUORI && a.scuola_id === 'sc-2')).toBe(true)
+    expect(h.sediAttive).toEqual(['sc-1'])
+
+    rendiRosso()
+    const res = await get(`&alunni=${BIMBO_FUORI}`)
+    expect(res.status, 'un 403 direbbe che quel bambino esiste altrove').toBe(404)
+    const b = await corpo(res)
+    expect(b.codice).toBe('CONCILIAZIONE_ALUNNO_NON_TROVATO')
+    // ⚠️ E NON un 200 con un elenco vuoto: un diniego travestito da «non c'è
+    // niente» manda l'operatrice a cercare un bonifico che invece si può comporre.
+    expect(b.data, 'il rifiuto è uscito come una risposta felice vuota').toBeUndefined()
+  })
+
+  it('un uuid che in `alunni` non esiste affatto riceve la STESSA risposta', async () => {
+    // È il punto dei 404: «non è tuo» e «non esiste» devono essere
+    // indistinguibili, o la differenza fra le due risposte diventa essa stessa
+    // l'informazione — «quel bambino è iscritto in un altro plesso».
+    rendiRosso()
+    const res = await get(`&alunni=${BIMBO_INESISTENTE}`)
+    expect(res.status).toBe(404)
+    expect((await corpo(res)).codice).toBe('CONCILIAZIONE_ALUNNO_NON_TROVATO')
+  })
+
+  it('basta UNO fuori perimetro perché la richiesta intera si fermi', async () => {
+    // Nessuna risposta parziale: servire i bambini leciti e tacere sugli altri
+    // direbbe comunque, per differenza, quali dei due erano fuori.
+    rendiRosso()
+    const res = await get(`&alunni=${BIMBO_IN},${BIMBO_FUORI}`)
+    expect(res.status).toBe(404)
+    expect((await corpo(res)).codice).toBe('CONCILIAZIONE_ALUNNO_NON_TROVATO')
+  })
+
+  it('il log del rifiuto porta CONTEGGI, mai gli uuid e mai i nomi', async () => {
+    rendiRosso()
+    await get(`&alunni=${BIMBO_FUORI}`)
+    const riga = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string } | undefined)?.esito === 'alunno-chiesto-fuori-perimetro',
+    )
+    expect(riga, 'il rifiuto è muto: «nessun log» non distingue «non è successo» da «non l’ho scritto»').toBeDefined()
+    expect(riga![2]).toMatchObject({ chiesti: 1, dentro: 0 })
+    const loggato = JSON.stringify([h.logEvento.mock.calls, h.logErrore.mock.calls, h.logOk.mock.calls])
+    expect(loggato, 'l’uuid del bambino chiesto è finito in `app_log`').not.toMatch(BIMBO_FUORI)
+    expect(loggato, 'il nome di un minore è in un log').not.toMatch(/luca|sara|giulia/i)
+    expect(loggato, 'un cognome è in un log').not.toMatch(/verdi|neri|bianchi/i)
+  })
+
+  it('senza NESSUNA sede attiva non esiste perimetro: 404, e nemmeno la query parte', async () => {
+    // `resolveScuoleAttive` risponde `[]` quando la sede scelta nel selettore non
+    // è (o non è più) accessibile. Lì `.in('scuola_id', [])` non è una condizione
+    // — è il modo in cui un filtro smette di restringere proprio dove serve di
+    // più — e la verifica deve rispondere di no invece di chiederlo al database.
+    h.sediAttive = []
+    rendiRosso()
+    const res = await get(`&alunni=${BIMBO_IN}`)
+    expect(res.status).toBe(404)
+    expect((await corpo(res)).codice).toBe('CONCILIAZIONE_ALUNNO_NON_TROVATO')
+    expect(letteDa('alunni'), 'una lettura è partita senza un perimetro entro cui verificare').toEqual([])
+  })
+
+  it('un guasto di lettura NON si traveste da 404: resta un 500 col suo codice', async () => {
+    // PostgREST non lancia. Senza il controllo sul valore di ritorno, un database
+    // che non risponde uscirebbe come «quel bambino non esiste» — e manderebbe a
+    // cercare un errore di digitazione dove c'è un guasto.
+    h.alunniError = { code: '08006', message: 'connessione caduta' }
+    rendiRosso()
+    const res = await get(`&alunni=${BIMBO_IN}`)
+    expect(res.status).toBe(500)
+    expect((await corpo(res)).codice).toBe('CONCILIAZIONE_CONTESTO_NON_LETTO')
+    expect(h.logErrore, 'un 500 senza una riga di log').toHaveBeenCalled()
+  })
+})
+
+describe('un bambino che nessun genitore risulta seguire: si vede, e si capisce perché', () => {
+  it('candidati vuoti e proposto nullo, ma il bambino resta nell’elenco dei figli', async () => {
+    // ⚠️ IL NUMERO È RIMISURATO IL 2026-09-20, non ereditato dalla specifica —
+    // che diceva «due bambini a Giugliano» e sbagliava due volte.
+    //   SELECT s.nome, count(*) FROM alunni a LEFT JOIN scuole s ON s.id=a.scuola_id
+    //   WHERE NOT EXISTS (SELECT 1 FROM student_parents sp WHERE sp.student_id=a.id)
+    //     AND NOT EXISTS (SELECT 1 FROM legame_genitori_alunni l WHERE l.alunno_id=a.id)
+    //   GROUP BY 1;
+    // I bambini senza NESSUN legame sono 9: Giugliano 4, Cesa 4, Aversa 1 (più 2
+    // righe della sede fittizia E2E, che non sono produzione). E lo stesso conteggio
+    // raggruppato per `a.stato` restituisce UNA riga sola: `ritirato`, 9.
+    //
+    // Nessuno di loro è ancora iscritto, e questo cambia ciò che il pannello deve
+    // fare: NON «creargli una voce» — su un `attivo: false` la scrittura rifiuta
+    // comunque una voce nuova (`CONCILIAZIONE_ALUNNO_NON_ATTIVO`, in
+    // `conciliazione-registra.ts`) — ma MOSTRARLO e spiegare perché «Conferma»
+    // resta spento, che qui sono due motivi e non uno: manca l'intestatario e il
+    // bambino non è più iscritto. Rispondere con un elenco vuoto renderebbe
+    // «non è tuo», «non ha intestatario» e «ha lasciato» la stessa risposta.
+    //
+    // Per questo la fixture porta `stato: 'ritirato'`: un bambino ISCRITTO e senza
+    // nessun genitore oggi in produzione non esiste, e modellarlo qui vorrebbe dire
+    // provare una schermata che nessuno vede.
+    rendiRosso()
+    h.alunni = [
+      ...h.alunni,
+      { id: BIMBO_SENZA_GENITORI, nome: 'Dario', cognome: 'Rossi', scuola_id: 'sc-1', stato: 'ritirato' },
+    ]
+    const b = await corpo(await get(`&alunni=${BIMBO_SENZA_GENITORI}`))
+    expect(b.data!.pagante.candidati).toEqual([])
+    expect(b.data!.pagante.proposto).toBeNull()
+    expect(
+      b.data!.figli.map((f) => f.alunno_id),
+      'il bambino senza genitori è sparito: il pannello non potrebbe nemmeno mostrarlo',
+    ).toEqual([BIMBO_SENZA_GENITORI])
+    // È della sede dell'operatore: il nome esce, come per ogni figlio in sede.
+    expect(b.data!.figli[0].nome).toBe('Dario Rossi')
+    // ...e marcato non attivo, come i 9 veri: è il campo da cui il pannello sa
+    // che «aggiungi una voce» qui va spento invece di andare a sbattere sul 422.
+    expect(
+      (b as unknown as { data: { figli: { attivo: boolean }[] } }).data.figli[0].attivo,
+      'un bambino ritirato risulta attivo: il pannello offrirebbe una voce nuova che la conferma rifiuta',
+    ).toBe(false)
+  })
+})
+
+describe('il tetto di `?alunni=` lo applica lo SCHEMA, non una riga dentro la rotta', () => {
+  it('più di cinque uuid è un 400, non una query', async () => {
+    const sei = Array.from({ length: 6 }, (_, i) => `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb2${i}`)
+    rendiRosso()
+    const res = await get(`&alunni=${sei.join(',')}`)
+    expect(res.status).toBe(400)
+    expect(letteDa('alunni'), 'la lista è arrivata al database prima del tetto').toEqual([])
+  })
+
+  it('e il tetto non si aggira ripetendo lo stesso uuid', async () => {
+    // Il tetto vale su ciò che è ARRIVATO: contarlo dopo aver tolto i doppioni
+    // lo renderebbe una formalità, perché sei uuid ripetuti sono comunque sei
+    // uuid chiesti.
+    rendiRosso()
+    const res = await get(`&alunni=${Array(6).fill(BIMBO_IN).join(',')}`)
+    expect(res.status).toBe(400)
+  })
+
+  it('un `alunni` che non è un uuid è un 400, non una query', async () => {
+    rendiRosso()
+    const res = await get('&alunni=pippo')
+    expect(res.status).toBe(400)
+    expect(letteDa('alunni')).toEqual([])
   })
 })

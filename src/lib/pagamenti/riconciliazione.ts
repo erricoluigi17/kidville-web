@@ -1,5 +1,6 @@
 import { createHash } from 'crypto'
 import { interpretaFogli, tabellaDaTesto } from './estratto-conto/tabella'
+import { codiceVoce, estraiCodiciVoce } from './codice-voce'
 
 // Riconciliazione bancaria: parser CSV (formati export banca italiani) e
 // matcher sui pagamenti aperti. Funzioni PURE: l'I/O vive nelle route.
@@ -40,6 +41,34 @@ export interface Suggerimento {
     label?: string
     /** True se il candidato è agganciato per codice fiscale (aggancio dominante). */
     cf_match?: boolean
+    /**
+     * True se il candidato è agganciato per CODICE DELLA VOCE: l'aggancio più forte
+     * che esista, più forte del codice fiscale (vedi `CODICE_BONUS`).
+     *
+     * ─── PERCHÉ UN CAMPO SUO, E NON SOLO UNA FRASE NEI `motivi` ─────────────
+     * I `motivi` sono prosa italiana, e si leggono a schermo. Chi deve SAPERE
+     * perché un abbinamento è stato proposto — la riga che mostra il badge, il
+     * popup che evidenzia il candidato, il log che conta gli agganci — non può
+     * fare il parsing di `motivi.includes('codice della voce')`: al primo
+     * ritocco della frase (o alla prima traduzione) quel controllo diventa
+     * muto, senza che niente diventi rosso. In questo file c'è già il
+     * precedente dichiarato: `cf_match` esiste accanto al motivo «codice
+     * fiscale» esattamente per questo — i numeri (e i booleani) stanno in un
+     * campo LORO e non solo dentro la frase.
+     *
+     * ⚠️ OPZIONALE COME IL GEMELLO `cf_match`, e per due motivi: i
+     * `suggerimenti` già scritti nel JSONB del registro non hanno questo campo
+     * (assente ⇒ no), e quella colonna è di gran lunga la più pesante della
+     * tabella — due chiavi in più su ogni candidato di ogni movimento si
+     * pagano su 6.775 accrediti.
+     */
+    codice_match?: boolean
+    /**
+     * Il codice della voce che ha agganciato, in forma canonica (`#K7MXN3P`).
+     * Presente solo insieme a `codice_match: true`. Non è un dato personale: è
+     * una funzione pura dell'uuid del pagamento (vedi `./codice-voce`).
+     */
+    codice_voce?: string | null
     /** Alunno del pagamento: serve alla UI per raggruppare i CF e aprire l'«Incasso unico». */
     alunno_id?: string | null
 }
@@ -145,6 +174,32 @@ export function estraiCodiciFiscali(testo: string): string[] {
 const CF_BONUS = 1000
 
 /**
+ * ─── IL CODICE DELLA VOCE BATTE IL CODICE FISCALE, E NON È UNA SFUMATURA ─────
+ *
+ * `10000`, cioè dieci volte `CF_BONUS` (1000) e cento volte la somma di TUTTI i
+ * segnali deboli (50 + 25 + 15 + 10 = 100). Il distacco è volutamente enorme:
+ * nessuna combinazione di CF più segnali deboli può arrivare a 10.000, quindi una
+ * voce NOMINATA in causale non può essere scavalcata da una voce soltanto
+ * riconducibile alla stessa famiglia.
+ *
+ * IL MOTIVO, in una riga: **il codice fiscale identifica una FAMIGLIA, il codice
+ * identifica una VOCE.** Finché la famiglia ha una voce aperta sola i due dicono
+ * la stessa cosa; appena ne ha due, il CF non discrimina più — e nemmeno
+ * l'importo, perché le rette sono tutte uguali. MISURATO IN PRODUZIONE IL
+ * 2026-09-20: **37 movimenti rossi su 50 hanno più voci aperte con lo stesso
+ * identico residuo.** Su quei 37 l'unico segnale che sceglie una voce invece di
+ * un'altra è il codice che il genitore ha ricopiato dalla causale.
+ *
+ * ⚠️ NON È UN'AUTO-CONFERMA. Un codice porta il movimento a `suggerito` (giallo),
+ * mai a «confermato»: questo file PROPONE, e chi incassa da solo è un altro
+ * predicato (`valutaCertezza` in `./riconciliazione-auto`), che enumera i
+ * sottoinsiemi e ha le proprie guardie. Per la stessa ragione una COLLISIONE fra
+ * due codici uguali qui non fa danni — entrambe le voci salgono e le guarda una
+ * persona — mentre là un codice colliso viene dichiarato non risolvibile.
+ */
+const CODICE_BONUS = 10000
+
+/**
  * ─── LE DUE SOGLIE DELL'AGGANCIO HANNO UN NOME, E NON È COSMESI ──────────────
  *
  * `60` e `20` erano due numeri anonimi dentro `suggerisciMatchPreparato`: «il
@@ -161,6 +216,34 @@ const CF_BONUS = 1000
 export const SOGLIA_AGGANCIO = 60
 export const DISTACCO_AGGANCIO = 20
 
+/**
+ * Perché un movimento è GIALLO quando nessun suggerimento lo giustifica.
+ *
+ * ⚠️ ENUMERATO, non prosa: lo leggeranno un log — dove la redazione è a lista
+ * bianca e una frase in italiano verrebbe redatta comunque — e una schermata,
+ * dove va tradotto. Stessa disciplina di `MotivoRinuncia` in
+ * `./riconciliazione-auto`, e apposta la stessa identica PAROLA, ripetuta senza
+ * importarla perché l'import inverso chiuderebbe un ciclo fra i due moduli.
+ *
+ * 🔴 STESSA PAROLA, INSIEME PIÙ STRETTO: non è lo stesso fatto, e chi volesse
+ * unificare i due enumerati (o derivarne uno dall'altro) romperebbe proprio qui.
+ * Là il commento del passo 3 (`riconciliazione-auto.ts`, «Passo 3») dichiara per
+ * esteso che `alunno_senza_voci_aperte` copre DUE casi tenuti apposta
+ * indistinguibili — «un CF di un alunno che non ha più niente da pagare, e un CF
+ * che non è di nessuno» — perché dall'elenco delle sole voci aperte non si
+ * distinguono e «dirli diversi sarebbe inventare l'informazione che manca». Qui
+ * entra solo il PRIMO: l'indice `alunniPerCf` esiste per separarli, e un CF che
+ * l'indice non conosce resta rosso senza motivo, perché non si inventa nessun
+ * bambino.
+ *
+ * I due moduli possono quindi rispondere DIVERSO sullo stesso movimento — un CF
+ * di nessuno: là giallo `alunno_senza_voci_aperte`, qui `da_abbinare` e nessun
+ * `motivo_stato` — e non è una divergenza da sanare: qui l'informazione c'è, là
+ * no. Chi un giorno passasse l'indice anche a `valutaCertezza` potrà stringere
+ * quel lato; finché non lo fa, i due insiemi restano diversi.
+ */
+export type MotivoStato = 'alunno_senza_voci_aperte'
+
 export interface RisultatoMatch {
     stato: 'suggerito' | 'da_abbinare'
     suggerimenti: Suggerimento[]
@@ -168,6 +251,27 @@ export interface RisultatoMatch {
     multi?: boolean
     /** Presente solo con almeno un aggancio CF: l'elenco dei pagamenti agganciati per CF. */
     cf_match?: { pagamento_id: string; alunno_id: string | null }[]
+    /**
+     * Gli ALUNNI (uuid) riconosciuti in causale che non hanno NESSUNA voce aperta.
+     * Presente solo quando ce n'è almeno uno, e solo se il chiamante ha passato
+     * `alunniPerCf` (vedi `suggerisciMatchPreparato`).
+     *
+     * ⚠️ USCITE SOLO GLI UUID, MAI IL CODICE FISCALE che li ha fatti riconoscere:
+     * questo elenco finisce nella risposta di una rotta e — attraverso i
+     * `suggerimenti` — in un JSONB. Il CF di un minore non esce da qui, come non
+     * esce da `…/riconciliazione/alunni`.
+     */
+    alunni_senza_voci?: string[]
+    /**
+     * Perché lo stato è `suggerito` QUANDO A RENDERLO GIALLO È STATA SOLO questa
+     * regola: nessun aggancio (né codice né CF) e nessun candidato sopra soglia,
+     * ma un codice fiscale in causale che è di un alunno noto senza voci aperte.
+     *
+     * Assente quando il giallo se lo sarebbe preso comunque: lì il motivo sta già
+     * nei `motivi` del suggerimento che lo aggancia, e ripeterlo qui farebbe
+     * credere a chi legge che il colore venga da questa regola.
+     */
+    motivo_stato?: MotivoStato
 }
 
 /**
@@ -194,6 +298,14 @@ export interface PagamentoPreparato {
     descrizioneNorm: string | null
     /** Il CF dell'alunno in MAIUSCOLO, o `null`. */
     cf: string | null
+    /**
+     * Il codice della voce in forma canonica (`#K7MXN3P`), o `''` per un id
+     * illeggibile. Si calcola QUI e non nel ciclo per la stessa ragione dei nomi
+     * normalizzati: `codiceVoce` è una mescola a 64 bit per carattere dell'uuid, e
+     * l'id di un pagamento aperto non cambia fra un movimento e l'altro. Una volta
+     * per pagamento (centinaia) invece che una per confronto (milioni).
+     */
+    codice: string
 }
 
 /**
@@ -217,29 +329,100 @@ export function preparaAperti(aperti: PagamentoAperto[]): PagamentoPreparato[] {
             //    `testo.includes('')` è sempre vero, e regalerebbe 10 punti a chiunque.
             descrizioneNorm: p.descrizione ? norm(p.descrizione) : null,
             cf: p.codice_fiscale ? String(p.codice_fiscale).toUpperCase() : null,
+            codice: codiceVoce(p.id),
         }
     })
 }
 
 /**
+ * L'INDICE `codice fiscale → alunno`, normalizzato una volta sola.
+ *
+ * È il parametro opzionale di `suggerisciMatchPreparato` (vedi lì il perché della
+ * regola che serve). Esiste come funzione, invece di lasciare al chiamante la
+ * costruzione della `Map`, per un motivo misurato altrove in questo file: le
+ * chiavi devono essere CF in **MAIUSCOLO** — è così che escono da
+ * `estraiCodiciFiscali` — e un chiamante che passasse le stringhe come stanno in
+ * tabella otterrebbe zero corrispondenze **senza nessun errore**. Un guasto
+ * silenzioso al posto di un `import`.
+ *
+ * ⚠️ DUE ALUNNI CON LO STESSO CF: la chiave si TOGLIE, non si tiene la prima.
+ * Quel CF non può più riconoscere nessuno, e il movimento resta rosso — cioè
+ * esattamente come oggi, che non fa danni. Tenere la prima vorrebbe dire aprire
+ * la composizione puntata su un bambino scelto dall'ordine con cui il database ha
+ * risposto quel giorno.
+ */
+export function preparaAlunniPerCf(
+    alunni: readonly { codice_fiscale?: string | null; alunno_id?: string | null }[],
+): Map<string, string> {
+    const mappa = new Map<string, string>()
+    const ambigui = new Set<string>()
+    for (const a of Array.isArray(alunni) ? alunni : []) {
+        const cf = typeof a?.codice_fiscale === 'string' ? a.codice_fiscale.trim().toUpperCase() : ''
+        const id = typeof a?.alunno_id === 'string' ? a.alunno_id.trim() : ''
+        if (cf === '' || id === '' || ambigui.has(cf)) continue
+        const gia = mappa.get(cf)
+        if (gia !== undefined && gia !== id) {
+            mappa.delete(cf)
+            ambigui.add(cf)
+            continue
+        }
+        mappa.set(cf, id)
+    }
+    return mappa
+}
+
+/**
  * Score di un pagamento aperto rispetto al movimento:
- *   +1000 CF dell'alunno nel movimento (DOMINANTE) · +50 residuo esattamente uguale
- *   +25 nome (alunno/intestatario) in causale · +15 mese di competenza citato
- *   +10 descrizione contenuta.
- * "suggerito" con best ≥ 60 E distacco ≥ 20 dal secondo, OPPURE con almeno un CF agganciato.
- * Un CF forza lo stato a 'suggerito' (giallo): MAI auto-conferma. Solo i pagamenti in `aperti`
- * (residuo aperto) sono candidati: un CF che punta a un alunno senza voce aperta NON eleva nulla.
+ *   +10000 CODICE DELLA VOCE in causale (DOMINANTE su tutto) · +1000 CF dell'alunno
+ *   nel movimento · +50 residuo esattamente uguale · +25 nome (alunno/intestatario)
+ *   in causale · +15 mese di competenza citato · +10 descrizione contenuta.
+ * "suggerito" con best ≥ 60 E distacco ≥ 20 dal secondo, OPPURE con almeno un codice o un
+ * CF agganciato. Codice e CF forzano lo stato a 'suggerito' (giallo): MAI auto-conferma.
+ * Solo i pagamenti in `aperti` (residuo aperto) sono candidati: un CF che punta a un alunno
+ * senza voce aperta non ha nessuna voce da elevare — vedi `alunniPerCf` qui sotto.
+ *
+ * ─── IL TERZO PARAMETRO, E PERCHÉ È OPZIONALE ───────────────────────────────
+ * `alunniPerCf` è l'indice `codice fiscale → alunno` degli alunni NOTI, costruito
+ * da `preparaAlunniPerCf`. Serve a una sola domanda, che dall'elenco delle voci
+ * aperte non si può porre: «questo codice fiscale è di un bambino di cui non c'è
+ * niente di aperto, oppure non è di nessuno?». Sono due fatti diversi e fino a
+ * ieri arrivavano identici — cioè rossi — perché il matcher guarda solo dentro
+ * `aperti`. Il primo è un pagamento di cui si sa TUTTO tranne su che cosa
+ * imputarlo, e per decisione del titolare diventa `suggerito`
+ * (`motivo_stato: 'alunno_senza_voci_aperte'`), così che il pannello possa aprirsi
+ * sulla composizione già puntata su quel bambino.
+ *
+ * ⚠️ È UN PARAMETRO E NON UN CAMPO DI `PagamentoPreparato`, e la funzione resta
+ * PURA: l'informazione non sta nelle voci aperte (per definizione: quelle voci non
+ * esistono), e allargare `PagamentoAperto` farebbe credere che il PUNTEGGIO sappia
+ * di alunni senza voci. Non lo sa: nessun candidato nasce da questo insieme, e il
+ * punteggio non cambia di un punto.
+ *
+ * ⚠️ OMETTERLO LASCIA IL COMPORTAMENTO IDENTICO A PRIMA, alla virgola: nessun
+ * campo nuovo nella risposta, nessuno stato che cambia. È la condizione per cui la
+ * rotta dell'import — che oggi non lo passa — non si accorge di questo lavoro.
  *
  * Questa è la strada VELOCE: prende i pagamenti già preparati. `suggerisciMatch` qui sotto
  * resta il guscio a una riga, e un test di equivalenza sorveglia che le due strade dicano la
  * stessa cosa — perché due strade che possono divergere, prima o poi divergono.
  */
-export function suggerisciMatchPreparato(mov: MovimentoCsv, aperti: PagamentoPreparato[]): RisultatoMatch {
-    const testo = norm(`${mov.causale} ${mov.controparte}`)
-    const cfSet = new Set(estraiCodiciFiscali(`${mov.causale} ${mov.controparte}`))
+export function suggerisciMatchPreparato(
+    mov: MovimentoCsv,
+    aperti: PagamentoPreparato[],
+    alunniPerCf?: ReadonlyMap<string, string>,
+): RisultatoMatch {
+    // Il testo GREZZO (non normalizzato) è quello che leggono i due estrattori:
+    // lavorano in MAIUSCOLO e si àncorano ai delimitatori, mentre `norm()` porta
+    // tutto in minuscolo. `norm()` resta per i segnali deboli, e resta intoccata.
+    const grezzo = `${mov.causale} ${mov.controparte}`
+    const testo = norm(grezzo)
+    const cfSet = new Set(estraiCodiciFiscali(grezzo))
+    const codiciSet = new Set(estraiCodiciVoce(grezzo))
     const candidati: Suggerimento[] = []
     const cfMatches: { pagamento_id: string; alunno_id: string | null }[] = []
     const alunniConCf = new Set<string>()
+    /** I CF che hanno agganciato almeno una voce APERTA: gli altri sono la domanda del passo finale. */
+    const cfAgganciati = new Set<string>()
 
     for (const p of aperti) {
         let score = 0
@@ -263,30 +446,81 @@ export function suggerisciMatchPreparato(mov: MovimentoCsv, aperti: PagamentoPre
             motivi.push('codice fiscale')
             cfMatches.push({ pagamento_id: p.id, alunno_id: p.alunnoId })
             if (p.alunnoId) alunniConCf.add(p.alunnoId)
+            if (p.cf !== null) cfAgganciati.add(p.cf)
         }
 
-        if (score > 0) candidati.push({ pagamento_id: p.id, score, motivi, alunno_id: p.alunnoId, ...(cfMatch ? { cf_match: true } : {}) })
+        // Il confronto costa un `Set.has` su una stringa di otto caratteri, e il
+        // codice della voce è già calcolato (`preparaAperti`). La guardia sulla
+        // dimensione dell'insieme è perché la stragrande maggioranza delle causali
+        // non porta nessun codice: lì non si entra proprio.
+        const codiceMatch = codiciSet.size > 0 && p.codice !== '' && codiciSet.has(p.codice)
+        if (codiceMatch) {
+            score += CODICE_BONUS
+            motivi.push('codice della voce')
+        }
+
+        if (score > 0) {
+            candidati.push({
+                pagamento_id: p.id,
+                score,
+                motivi,
+                alunno_id: p.alunnoId,
+                ...(cfMatch ? { cf_match: true } : {}),
+                ...(codiceMatch ? { codice_match: true, codice_voce: p.codice } : {}),
+            })
+        }
     }
 
     candidati.sort((a, b) => b.score - a.score)
-    // Con agganci CF NON si cappano i candidati per codice fiscale a 3: una famiglia con ≥4 figli
-    // perderebbe i suggerimenti oltre il terzo, mentre il totale precompilato è l'intero bonifico →
-    // l'«Incasso unico» allocherebbe corto. Si tengono TUTTI i cf_match, poi si riempie fino a 3 con
-    // i migliori non-CF. Senza CF il comportamento resta identico (i primi 3 per score).
-    const cfMatched = candidati.filter((c) => c.cf_match)
-    const nonCf = candidati.filter((c) => !c.cf_match)
-    const top = [...cfMatched, ...nonCf].slice(0, Math.max(3, cfMatched.length))
+    // Gli agganci FORTI — codice della voce e codice fiscale — NON si cappano a 3: una famiglia
+    // con ≥4 figli perderebbe i suggerimenti oltre il terzo, mentre il totale precompilato è
+    // l'intero bonifico → l'«Incasso unico» allocherebbe corto. Si tengono TUTTI gli agganci
+    // forti, poi si riempie fino a 3 con i migliori deboli. È la stessa asimmetria di prima, con
+    // il codice dentro l'insieme che la merita: un bonifico che nomina quattro voci per codice
+    // perderebbe la quarta esattamente come la perdeva il quarto figlio. Senza agganci forti il
+    // comportamento resta identico (i primi 3 per score).
+    const forti = candidati.filter((c) => c.codice_match || c.cf_match)
+    const deboli = candidati.filter((c) => !c.codice_match && !c.cf_match)
+    const top = [...forti, ...deboli].slice(0, Math.max(3, forti.length))
     const best = top[0]
     const second = top[1]
     const haCf = cfMatches.length > 0
-    // Un CF agganciato vale sempre "suggerito" (giallo): anche con due fratelli a pari punteggio,
-    // dove il distacco è 0 e la regola standard direbbe "da_abbinare".
-    const suggerito = haCf || (!!best && best.score >= SOGLIA_AGGANCIO && (!second || best.score - second.score >= DISTACCO_AGGANCIO))
+    const haCodice = candidati.some((c) => c.codice_match)
+
+    /**
+     * IL CODICE FISCALE CHE NON HA NESSUNA VOCE DA AGGANCIARE.
+     *
+     * Ci si arriva solo se il chiamante ha passato l'indice: senza, l'elenco resta
+     * vuoto e da qui in giù non cambia niente rispetto a ieri. Un CF che ha già
+     * agganciato una voce aperta non entra — quel movimento è giallo per
+     * l'aggancio, non per questa regola — e un alunno si nomina una volta sola.
+     */
+    const alunniSenzaVoci: string[] = []
+    if (alunniPerCf && alunniPerCf.size > 0) {
+        const visti = new Set<string>()
+        for (const cf of cfSet) {
+            if (cfAgganciati.has(cf)) continue
+            const alunno = alunniPerCf.get(cf)
+            if (typeof alunno !== 'string' || alunno === '' || visti.has(alunno)) continue
+            visti.add(alunno)
+            alunniSenzaVoci.push(alunno)
+        }
+    }
+
+    // Un aggancio forte vale sempre "suggerito" (giallo): anche con due fratelli a pari
+    // punteggio, dove il distacco è 0 e la regola standard direbbe "da_abbinare".
+    const sopraSoglia = !!best && best.score >= SOGLIA_AGGANCIO && (!second || best.score - second.score >= DISTACCO_AGGANCIO)
+    const suggerito = haCodice || haCf || sopraSoglia || alunniSenzaVoci.length > 0
 
     const out: RisultatoMatch = { stato: suggerito ? 'suggerito' : 'da_abbinare', suggerimenti: top }
     if (haCf) {
         out.multi = alunniConCf.size >= 2
         out.cf_match = cfMatches
+    }
+    if (alunniSenzaVoci.length > 0) {
+        out.alunni_senza_voci = alunniSenzaVoci
+        // Il motivo dello STATO si dichiara solo quando è questa regola a dare il colore.
+        if (!haCodice && !haCf && !sopraSoglia) out.motivo_stato = 'alunno_senza_voci_aperte'
     }
     return out
 }
@@ -298,8 +532,12 @@ export function suggerisciMatchPreparato(mov: MovimentoCsv, aperti: PagamentoPre
  * match di UN movimento. Su un file intero si chiama `preparaAperti` una volta e poi
  * `suggerisciMatchPreparato` per ogni riga.
  */
-export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): RisultatoMatch {
-    return suggerisciMatchPreparato(mov, preparaAperti(aperti))
+export function suggerisciMatch(
+    mov: MovimentoCsv,
+    aperti: PagamentoAperto[],
+    alunniPerCf?: ReadonlyMap<string, string>,
+): RisultatoMatch {
+    return suggerisciMatchPreparato(mov, preparaAperti(aperti), alunniPerCf)
 }
 
 // ─── «QUESTO BONIFICO SEMBRA DI UN'ALTRA SEDE» ───────────────────────────────
@@ -318,17 +556,42 @@ export function suggerisciMatch(mov: MovimentoCsv, aperti: PagamentoAperto[]): R
 // — posta su un ALTRO ASSE: non il primo contro il secondo, ma il migliore di
 // FUORI contro il migliore di DENTRO. Stesse due soglie, un posto solo.
 
-/** Un candidato come lo vede questa domanda: chi, quanto forte, e se è un CF. */
+/** Un candidato come lo vede questa domanda: chi, quanto forte, e di che aggancio si tratta. */
 export interface CandidatoSede {
   pagamento_id: string
   score: number
   cf_match?: boolean
+  /**
+   * L'aggancio per CODICE DELLA VOCE, più forte del CF. Opzionale come il gemello:
+   * i `suggerimenti` già scritti nel registro non lo portano, e assente ⇒ no.
+   *
+   * 🔇 OGGI NESSUNO LO PASSA, E VA DETTO QUI INVECE DI LASCIARLO SCOPRIRE. L'unico
+   * chiamante di produzione di `agganciaFuoriSede`/`sedeDedotta` è
+   * `pagamenti/riconciliazione:GET` (`src/app/api/pagamenti/riconciliazione/route.ts`),
+   * che i `CandidatoSede` se li costruisce a mano copiando SOLO `pagamento_id`,
+   * `score` e `cf_match` — quel literal è fuori dal perimetro di questo lavoro e in
+   * carico al lotto della rotta dell'import. Finché non cresce di una riga, i due
+   * rami `codiceDentro`/`codiceFuori` in `agganciaForte` sono verdi nei test e MUTI
+   * in produzione: qui vale «una configurazione mai vista passare non è
+   * configurata», e un ramo non raggiungibile che nessuno dichiara è il modo in cui
+   * si finisce a credere acceso qualcosa che non lo è mai stato.
+   */
+  codice_match?: boolean
 }
 
-/** Il verdetto: la sede che ha l'aggancio forte, e se a dirlo è un codice fiscale. */
+/** Il verdetto: la sede che ha l'aggancio forte, e che cosa l'ha deciso. */
 export interface VerdettoAltraSede {
   scuola_id: string
+  /** `true` quando a decidere è stato un CODICE FISCALE. */
   per_cf: boolean
+  /**
+   * `true` quando a decidere è stato il CODICE DELLA VOCE — l'aggancio più forte
+   * che esista. Presente SOLO in quel caso, e non è pigrizia: il verdetto per CF
+   * conserva così la forma esatta che aveva prima di questo campo, e chi lo legge
+   * (`sedeDedotta`, e i suoi test) non cambia comportamento per una chiave nuova
+   * che sul suo ramo non c'è.
+   */
+  per_codice?: boolean
 }
 
 /**
@@ -341,14 +604,25 @@ export interface VerdettoAltraSede {
  * ─── LA REGOLA, PER ESTESO ───────────────────────────────────────────────────
  *  1. i candidati si partizionano in DENTRO (sede risolta e in `sediAttive`),
  *     FUORI (sede risolta e non in `sediAttive`) e IGNOTI (sede assente);
- *  2. un `cf_match` DENTRO chiude la domanda: `null`, e nessuno degli altri due
- *     punti viene interrogato — è l'aggancio più forte che esista;
- *  3. un `cf_match` FUORI decide da solo: `per_cf: true`, e la sede è quella del
+ *  2. un `codice_match` DENTRO chiude la domanda: `null`. È l'aggancio più forte
+ *     che esista — più forte del codice fiscale — e nessun punto successivo viene
+ *     interrogato;
+ *  3. un `codice_match` FUORI decide da solo: `per_codice: true`, e la sede è
+ *     quella del codice col punteggio più alto;
+ *  4. un `cf_match` DENTRO chiude la domanda: `null`;
+ *  5. un `cf_match` FUORI decide da solo: `per_cf: true`, e la sede è quella del
  *     cf_match col punteggio più alto;
- *  4. altrimenti vale il distacco: `bestFuori >= SOGLIA_AGGANCIO` **e**
+ *  6. altrimenti vale il distacco: `bestFuori >= SOGLIA_AGGANCIO` **e**
  *     `bestFuori - bestDentro >= DISTACCO_AGGANCIO`, con `bestDentro = 0` quando
  *     dentro non c'è nessuno;
- *  5. in ogni altro caso `null`.
+ *  7. in ogni altro caso `null`.
+ *
+ * ⚠️ L'ORDINE FRA I PUNTI 2-3 E I PUNTI 4-5 È LA REGOLA, non una preferenza di
+ * scrittura. Un CODICE dentro e un CF fuori → `null`: la voce nominata è qui. Un
+ * CODICE fuori e un CF dentro → verdetto, `per_codice`: il codice fiscale dice
+ * che in casa c'è un FRATELLO di chi ha pagato, il codice dice QUALE VOCE è stata
+ * pagata, e quella voce è dell'altro plesso. È il bonifico di famiglia coi fratelli
+ * in due sedi, ed è l'unico caso in cui i due segnali litigano.
  *
  * ⚠️ GLI IGNOTI NON CONTANO DA NESSUNA PARTE, ed è una decisione: `pagamenti.scuola_id`
  * è NULLABLE (misurato), e un pagamento che non è stato letto — o che è sparito —
@@ -403,7 +677,10 @@ export function agganciaFuoriSede(
 /** La sede che l'app ha DEDOTTO per un movimento, e quanto è sicura di dirlo. */
 export interface SedeDedotta {
   scuola_id: string
-  /** `true` solo quando a deciderlo è un codice fiscale: l'aggancio più forte che esista. */
+  /**
+   * `true` solo quando a deciderlo è un IDENTIFICATIVO esatto — il codice della
+   * voce o il codice fiscale — e non una somma di segnali deboli.
+   */
   certa: boolean
 }
 
@@ -428,7 +705,9 @@ export interface SedeDedotta {
  *
  * Due sedi non possono vincere insieme: se entrambe avessero un `cf_match`, ognuna
  * sarebbe il `cfDentro` dell'altra e `agganciaForte` risponderebbe `null` a tutt'e
- * due — la regola si difende da sola, senza un caso speciale scritto qui.
+ * due — la regola si difende da sola, senza un caso speciale scritto qui. Vale
+ * identico per due `codice_match` in due sedi diverse (un bonifico che nomina due
+ * voci di due plessi): nessuna vince, e il movimento resta da leggere a mano.
  *
  * Funzione PURA. `sedeDi` è la stessa mappa `pagamento → scuola_id` che la rotta ha
  * già in mano: nessuna query in più.
@@ -450,13 +729,17 @@ export function sedeDedotta(
     const fuori = conSede.filter((c) => c.sede === sede)
     const dentro = conSede.filter((c) => c.sede !== sede).map((c) => c.candidato)
     const v = agganciaForte(dentro, fuori)
-    if (v) vincitori.push({ scuola_id: v.scuola_id, certa: v.per_cf })
+    // `certa` = «a deciderlo è stato un IDENTIFICATIVO, non un punteggio»: il codice
+    // della voce e il codice fiscale sono entrambi quello, e il codice è il più forte
+    // dei due. Scrivere qui `v.per_cf` da solo avrebbe declassato a «dedotta» proprio
+    // la sede su cui si è più sicuri.
+    if (v) vincitori.push({ scuola_id: v.scuola_id, certa: v.per_cf || v.per_codice === true })
   }
   return vincitori.length === 1 ? vincitori[0]! : null
 }
 
 /**
- * I punti 2-5 della regola qui sopra, con la PARTIZIONE COME PARAMETRO.
+ * I punti 2-7 della regola qui sopra, con la PARTIZIONE COME PARAMETRO.
  *
  * ⚠️ È questo che rende l'estrazione lecita: la regola non è «il migliore contro
  * il secondo», è «il migliore di UN insieme contro il migliore dell'ALTRO», e le
@@ -476,6 +759,20 @@ function agganciaForte(
   fuori: readonly { candidato: CandidatoSede; sede: string }[],
 ): VerdettoAltraSede | null {
   if (fuori.length === 0) return null
+
+  // ⚠️ IL CODICE DELLA VOCE VIENE PRIMA DEL CODICE FISCALE, nelle due direzioni.
+  // Il CF identifica una FAMIGLIA, il codice identifica una VOCE: sul bonifico di
+  // famiglia coi fratelli in due plessi il CF di casa è vero e non dice niente su
+  // quale voce sia stata pagata. La stessa asimmetria del CF, un gradino sopra —
+  // un codice DENTRO chiude la domanda, un codice FUORI la apre e la chiude da sé.
+  const codiceDentro = dentro.some((s) => s.codice_match === true)
+  if (codiceDentro) return null
+
+  const codiceFuori = fuori.filter((f) => f.candidato.codice_match === true)
+  if (codiceFuori.length > 0) {
+    const migliore = codiceFuori.reduce((a, b) => (b.candidato.score > a.candidato.score ? b : a))
+    return { scuola_id: migliore.sede, per_cf: false, per_codice: true }
+  }
 
   // ⚠️ UN `cf_match` DENTRO CHIUDE LA DOMANDA, E LA CHIUDE PER TUTTI I PUNTI.
   // Fino al 2026-09-07 questa guardia era appesa al solo ramo per_cf (`&& !cfDentro`)

@@ -9,10 +9,19 @@
  * del documento fiscale. Un id sbagliato non è un campo sbagliato: è una fattura
  * a nome di un estraneo, con la sua detrazione 730 addosso.
  *
- * Su quel permesso si affacciano DUE rotte, e fanno cose opposte:
+ * Su quel permesso si affacciano DUE porte, e fanno cose opposte:
  *   · `…/contesto:GET` — MOSTRA l'elenco dei candidati, e risponde 403 a un
  *     `?pagante=` che non è fra loro;
- *   · `…/componi:POST` — SCRIVE, e risponde 403 allo stesso modo.
+ *   · la SCRITTURA, che risponde 403 allo stesso modo.
+ *
+ * ⚠️ LA SECONDA PORTA HA CAMBIATO FILE IL 2026-09-20, e questo lock è stato
+ * spostato con lei. Era la rotta `…/componi:POST`; i suoi nove gate — pagante
+ * compreso — vivono ora in `src/lib/pagamenti/conciliazione-registra.ts`, perché
+ * l'import che concilierà da sé non ha una `Request` e deve attraversare le
+ * stesse identiche guardie. Se questo file avesse continuato a leggere la rotta
+ * sarebbe rimasto VERDE su un guscio che di paganti non decide più niente: un
+ * lock che punta al file da cui il codice è uscito non è severo, è cieco — ed è
+ * la specie di cecità che questo repository ha già pagato tre volte.
  * Fino al 2026-09-13 ognuna ne teneva una copia. Erano equivalenti — misurato su
  * 2000 scenari generati: stesse coppie, stessi id, stesse relazioni — ed è
  * esattamente la ragione per cui sono state unite. **Due copie non divergono il
@@ -20,14 +29,26 @@
  * un pagante che la scrittura rifiuta (l'operatrice sbatte contro un 403 su una
  * scelta che il pannello le ha proposto), o il contrario — che è peggio.
  *
+ * ⚠️ DAL 2026-09-20 I SORVEGLIATI SONO QUATTRO, ma le PORTE che MOSTRANO o
+ * RIFIUTANO restano due. Il terzo (`pagamenti/riconciliazione/alunni:GET`, la
+ * ricerca del bambino) non concede e non nega niente — riporta il booleano
+ * `ha_pagante`. Il quarto (la fase automatica dell'import) invece SCEGLIE, ed è
+ * l'unico dei quattro in cui non c'è nessuno a guardare: dove la scrittura
+ * manuale fa fail-open su un pagante non verificato, lui rifiuta e lascia la
+ * riga gialla. Stanno sotto le stesse regole perché è proprio il chiamante «di
+ * servizio» la specie che si scriverebbe in casa una query «giusto per sapere se
+ * c'è un genitore»: sarebbe un'altra traduzione del ponte, e il pannello direbbe
+ * «pronto» dove la conferma poi rifiuta — o la macchina intesterebbe una fattura
+ * a un adulto che la schermata non avrebbe mai proposto.
+ *
  * ─── COSA SORVEGLIA ─────────────────────────────────────────────────────────
- *  1. le due porte chiamano `pagantiAmmessiPerAlunni`;
- *  2. nessuna delle due ricostruisce il PONTE account→`parents`
+ *  1. i quattro sorvegliati chiamano `pagantiAmmessiPerAlunni`;
+ *  2. nessuno dei quattro ricostruisce il PONTE account→`parents`
  *     (`.in('auth_user_id', …)`): è il pezzo che, scritto due volte, fa
  *     divergere gli insiemi;
- *  3. nessuna delle due chiama `getGenitoriDiAlunniEsito`, cioè la sorgente
+ *  3. nessuno dei quattro chiama `getGenitoriDiAlunniEsito`, cioè la sorgente
  *     runtime di questa regola si raggiunge SOLO attraverso il modulo;
- *  4. il modulo non ha una TERZA porta che nessuno ha dichiarato.
+ *  4. il modulo non ha un QUINTO chiamante che nessuno ha dichiarato.
  *
  * ⚠️ SI ASSERISCE SUL CODICE SENZA COMMENTI, MAI SUL FILE GREZZO. La prosa di
  * queste due rotte NOMINA tutto ciò che questo lock cerca — `student_parents`,
@@ -50,12 +71,52 @@ import { join, relative } from 'node:path'
 const RADICE = process.cwd()
 const MODULO = join('src', 'lib', 'pagamenti', 'pagante-ammesso.ts')
 const CONTESTO = join('src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]', 'contesto', 'route.ts')
-const COMPONI = join('src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]', 'componi', 'route.ts')
+/** La porta che SCRIVE: dal 2026-09-20 è il modulo, non più `…/componi/route.ts`. */
+const SCRITTURA = join('src', 'lib', 'pagamenti', 'conciliazione-registra.ts')
+/**
+ * Il TERZO chiamante, dichiarato il 2026-09-20, e non è una porta: la ricerca
+ * del bambino da cui comporre un bonifico
+ * (`pagamenti/riconciliazione/alunni:GET`) non concede e non nega niente —
+ * riporta un booleano, `ha_pagante`, perché il pannello sappia in anticipo se
+ * quella conferma avrà un intestatario possibile.
+ *
+ * Sta comunque qui sotto, e con le stesse tre regole, per una ragione precisa:
+ * è proprio un LETTORE la specie di chiamante che si mette in casa una query
+ * «giusto per sapere se c'è un genitore». Quella query sarebbe una terza
+ * traduzione del ponte account→`parents`, e il pannello mostrerebbe «pronto» su
+ * un bambino che alla conferma non ha nessun pagante ammesso — cioè la
+ * divergenza di sempre, entrata dalla porta di servizio.
+ */
+const LETTURA = join('src', 'app', 'api', 'pagamenti', 'riconciliazione', 'alunni', 'route.ts')
 
-/** Le due porte, con la firma del loro `withRoute`: serve al controllo positivo. */
+/**
+ * Il QUARTO chiamante, dichiarato il 2026-09-20: la fase automatica dell'import.
+ *
+ * È una porta che SCEGLIE, ed è l'unica delle quattro in cui non c'è nessuno a
+ * guardare. `registraConciliazione` fa fail-**open** su un pagante non verificato
+ * — l'insieme non letto per intero, o vuoto — perché di là c'è un'operatrice che
+ * legge il nome sull'anteprima della fattura. Qui non c'è, e la fase fa
+ * fail-**closed**: niente automatismo, la riga resta gialla.
+ *
+ * Sta sotto le stesse tre regole degli altri per la ragione che vale per tutti:
+ * è proprio un chiamante «di servizio» — uno che vuole solo sapere chi intestare
+ * — quello che si scriverebbe in casa la propria query sui legami. Sarebbe la
+ * quarta traduzione del ponte account→`parents`, e la macchina intesterebbe un
+ * documento fiscale a un adulto che la schermata non avrebbe mai proposto.
+ */
+const AUTOMATISMO = join('src', 'lib', 'pagamenti', 'riconciliazione-auto-import.ts')
+
+/**
+ * I sorvegliati, ognuno con la propria firma: serve al controllo positivo dello
+ * strip. Sono firme di specie diversa perché le porte ormai lo sono — una è una
+ * rotta HTTP, l'altra la funzione che i suoi gate li contiene — e appiattirle su
+ * una forma sola vorrebbe dire cercare una somiglianza invece della cosa.
+ */
 const PORTE = [
   { file: CONTESTO, firma: "withRoute(\n  'pagamenti/riconciliazione/[id]/contesto:GET'" },
-  { file: COMPONI, firma: "withRoute(\n  'pagamenti/riconciliazione/[id]/componi:POST'" },
+  { file: SCRITTURA, firma: 'export async function registraConciliazione(' },
+  { file: LETTURA, firma: "withRoute('pagamenti/riconciliazione/alunni:GET'" },
+  { file: AUTOMATISMO, firma: 'export async function abbinaImportAutomaticamente(' },
 ]
 
 /** Via i commenti: un lock non deve poter essere né aggirato né innescato da una frase. */
@@ -104,19 +165,21 @@ describe('LOCK · un solo motore per «chi può essere il pagante»', () => {
     expect(CODICE_MODULO).toContain("from('student_parents')")
   })
 
-  it('🔴 le DUE porte passano dal modulo condiviso', () => {
+  it('🔴 i QUATTRO sorvegliati passano dal modulo condiviso', () => {
     const senza = PORTE.filter(({ file }) => !/\bpagantiAmmessiPerAlunni\s*\(/.test(CODICE.get(file)!))
     expect(
       senza.map((p) => p.file),
-      'Questa rotta decide chi può essere il pagante senza passare da ' +
+      'Questo sorvegliato decide chi può essere il pagante senza passare da ' +
         '`pagantiAmmessiPerAlunni`: o si è riscritta la regola in casa, o l’ha persa. ' +
         'Le due porte — quella che MOSTRA i candidati e quella che SCRIVE l’incasso — ' +
-        'devono dare lo stesso verdetto sullo stesso genitore, e l’unico modo perché ' +
+        'devono dare lo stesso verdetto sullo stesso genitore; il lettore deve ' +
+        'ANNUNCIARE quello stesso verdetto, e la fase automatica lo usa per intestare ' +
+        'un documento fiscale senza che nessuno guardi. L’unico modo perché i quattro ' +
         'non possano divergere è che sia la stessa funzione.',
     ).toEqual([])
   })
 
-  it('🔴 nessuna delle due ricostruisce il ponte account→`parents`', () => {
+  it('🔴 nessuno dei QUATTRO ricostruisce il ponte account→`parents`', () => {
     const colpevoli = PORTE.filter(({ file }) => CODICE.get(file)!.includes(".in('auth_user_id'"))
     expect(
       colpevoli.map((p) => p.file),
@@ -138,16 +201,16 @@ describe('LOCK · un solo motore per «chi può essere il pagante»', () => {
     ).toEqual([])
   })
 
-  it('🔴 non è spuntata una TERZA porta che nessuno ha dichiarato', () => {
+  it('🔴 non è spuntato un QUINTO chiamante che nessuno ha dichiarato', () => {
     const chiamanti = SORGENTI.filter(
       (f) => f.relativo !== MODULO && /\bpagantiAmmessiPerAlunni\s*\(/.test(f.codice),
     ).map((f) => f.relativo)
     expect(
       [...chiamanti].sort(),
       'I chiamanti di `pagantiAmmessiPerAlunni` sono cambiati. Non è un divieto: è un ' +
-        'avviso. Una terza porta va bene, ma va DICHIARATA qui e nella testata del ' +
+        'avviso. Una porta in più va bene, ma va DICHIARATA qui e nella testata del ' +
         'modulo, perché chi cambia la regola deve sapere quante schermate sta muovendo — ' +
         'e perché la porta nuova va provata, non dedotta.',
-    ).toEqual([COMPONI, CONTESTO].sort())
+    ).toEqual([SCRITTURA, CONTESTO, LETTURA, AUTOMATISMO].sort())
   })
 })

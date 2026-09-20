@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -146,14 +146,56 @@ import { join } from 'node:path'
  */
 
 const RADICE = process.cwd()
-const FILE_SQL = join(
-    RADICE,
-    'supabase',
-    'migrations',
-    '20260912180100_transazione_voci_nuove.sql',
-)
+const CARTELLA_MIGRAZIONI = join(RADICE, 'supabase', 'migrations')
 
-const SQL = readFileSync(FILE_SQL, 'utf8')
+/**
+ * ─── 🔴 IL FILE NON SI NOMINA PIÙ: SI CERCA (2026-09-20) ────────────────────
+ *
+ * Fino a oggi qui c'era scritto `'20260912180100_transazione_voci_nuove.sql'`, e
+ * per otto giorni è stato giusto. Poi la marca dell'abbinamento automatico ha
+ * preteso un `CREATE OR REPLACE` in più — `abbinato_auto_il` si scrive DENTRO il
+ * compare-and-swap, mai in un `UPDATE` dopo la RPC — e quel `CREATE OR REPLACE`
+ * NON poteva stare nel file del 12/09: quella `version` è già in
+ * `supabase_migrations.schema_migrations` (lo dice
+ * `__tests__/fixtures/migrazioni-applicate-snapshot.json`), e una migrazione già
+ * applicata non la riapplica nessuno. Correggerla avrebbe prodotto un repository
+ * che descrive una funzione e un database che ne esegue un'altra, senza un errore
+ * da nessuna parte.
+ *
+ * Quindi il corpo vivo sta in un file NUOVO, e un lock che continuasse a nominare
+ * il vecchio resterebbe **verde sorvegliando un corpo che il database non esegue
+ * più**: smetterebbero di essere sorvegliate, tutte insieme e in silenzio, le
+ * quattro decisioni di una RPC che muove denaro — la sede DERIVATA dall'alunno
+ * (un bonifico multi-sede finirebbe nel plesso sbagliato), il vocabolario di
+ * `stato_atteso` che esclude `'confermato'` (senza, un bonifico da X incide 2×X),
+ * `costo_unitario > 0`, e il divieto di testo libero nei `RAISE`, che è la difesa
+ * contro la PII nei log. È la cecità che questo repository ha appena pagato in
+ * PR #154 («tre lock erano verdi scansionando zero file»): non si paga una quarta
+ * volta per una costante.
+ *
+ * Si cerca perciò l'ULTIMA migrazione che ridefinisce la funzione — l'ultima in
+ * ordine di `version`, che è l'ordine in cui il CLI le applica, cioè quella che
+ * vince — e la prossima riscrittura sarà seguita da sé. È la stessa scelta, e per
+ * la stessa ragione, del lock gemello `annullo-riapre-movimento.test.ts`.
+ *
+ * ⚠️ Si guarda il TESTO GREZZO, commenti compresi, e va bene così: un file che
+ * NOMINA la funzione senza ridefinirla — la testata di `…124744` la cita — farebbe
+ * scegliere il file sbagliato, ma il `sanity` se ne accorgerebbe subito, perché
+ * quella asserzione cerca la stessa firma nel CODICE, cioè dopo aver tolto ogni
+ * commento. Il verso dell'errore è quello rumoroso.
+ */
+const FIRMA_FUNZIONE = 'CREATE OR REPLACE FUNCTION public.registra_transazione_contabile(p jsonb)'
+
+function ultimaMigrazioneDellaRpc(): string {
+    const candidati = readdirSync(CARTELLA_MIGRAZIONI)
+        .filter((f) => f.endsWith('.sql'))
+        .sort()
+        .filter((f) => readFileSync(join(CARTELLA_MIGRAZIONI, f), 'utf8').includes(FIRMA_FUNZIONE))
+    return candidati.length === 0 ? '' : candidati[candidati.length - 1]
+}
+
+const NOME_FILE_SQL = ultimaMigrazioneDellaRpc()
+const SQL = NOME_FILE_SQL ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_FILE_SQL), 'utf8') : ''
 
 /**
  * Il file senza un solo commento — né di riga né a blocco: resta il codice, e basta.
@@ -814,17 +856,30 @@ const RAISE = raiseDelFile()
 
 describe('lock architettura · la RPC composita non torna indietro sulle quattro correzioni, e non si aggira', () => {
     it('sanity: il file si legge, ed è quello giusto (senza, ogni asserzione qui sotto sarebbe verde sul vuoto)', () => {
+        // 🔴 PRIMA DI TUTTO: che un file ci SIA. `ultimaMigrazioneDellaRpc()`
+        //   restituisce la stringa vuota quando nessuna migrazione ridefinisce la
+        //   funzione, e senza questa riga `SQL` sarebbe `''` — cioè ogni `matchAll`
+        //   qui sotto darebbe zero, ogni elenco atteso sarebbe vuoto, e il lock
+        //   resterebbe verde sul nulla. È la specie di verde falso che questo file
+        //   condanna dalla riga uno, e la prima che si chiude.
+        expect(
+            NOME_FILE_SQL,
+            `nessun file di \`supabase/migrations/\` contiene \`${FIRMA_FUNZIONE}\`. O la RPC è ` +
+                'stata rinominata, o il suo corpo è stato spostato fuori dalle migrazioni: in ' +
+                'entrambi i casi questo lock non starebbe guardando niente, e le quattro decisioni ' +
+                'di una RPC che muove denaro resterebbero senza nessuna sorveglianza.',
+        ).not.toBe('')
         expect(
             SQL.length,
-            'la migrazione `20260912180100_transazione_voci_nuove.sql` non si legge: questo lock ' +
-                'non starebbe misurando niente.',
+            `la migrazione della RPC (\`${NOME_FILE_SQL}\`) non si legge: questo lock non starebbe ` +
+                'misurando niente.',
         ).toBeGreaterThan(5000)
         expect(
             CODICE,
-            'nel file non c\'è più `CREATE OR REPLACE FUNCTION public.registra_transazione_contabile`: ' +
-                'o la RPC è stata rinominata, o il corpo è stato spostato altrove. In entrambi i casi ' +
-                'le asserzioni qui sotto guarderebbero un file che non descrive più niente.',
-        ).toContain('CREATE OR REPLACE FUNCTION public.registra_transazione_contabile(p jsonb)')
+            `in \`${NOME_FILE_SQL}\` non c'è più \`${FIRMA_FUNZIONE}\` fuori dai commenti: il file ` +
+                'è stato scelto perché lo NOMINA, ma non ridefinisce la funzione. Le asserzioni qui ' +
+                'sotto guarderebbero un file che non descrive più niente.',
+        ).toContain(FIRMA_FUNZIONE)
         expect(
             INSERT_PAGAMENTI.length,
             'gli `INSERT INTO public.pagamenti` non sono due. Sono le due voci che questa fetta crea ' +
@@ -1246,16 +1301,25 @@ describe('lock architettura · la RPC composita non torna indietro sulle quattro
         expect(
             iSet < 0 || iWhere < 0 ? null : corpoUpdate.slice(iSet + 3, iWhere).replace(/\s+/g, ' ').trim(),
             'la clausola `SET` dell\'`UPDATE` su `riconciliazione_movimenti` non è più esattamente ' +
-                'quella attesa. Le sette colonne scritte qui sono il patto della conferma: lo stato, ' +
+                'quella attesa. Le OTTO colonne scritte qui sono il patto della conferma: lo stato, ' +
                 'il legame con la transazione, la voce àncora, il suo incasso, la sede del DOCUMENTO ' +
                 '(`v_scuola`, non la sede del pagamento: §3 della testata), e chi/quando. ' +
                 'Cambiare `scuola_id` in una sede derivata dai bambini ribalta in silenzio la ' +
                 'decisione n. 15 — un bonifico multi-sede produce UN documento, intestato alla sede ' +
-                'che l\'operatore sceglie — e nessun\'altra riga di questo file se ne accorgerebbe.',
+                'che l\'operatore sceglie — e nessun\'altra riga di questo file se ne accorgerebbe.\n' +
+                '⚠️ E l\'OTTAVA, `abbinato_auto_il` (dal 2026-09-20), sta QUI e non in un `UPDATE` ' +
+                'dopo la RPC: fuori dal compare-and-swap non sarebbe atomica, e una riga confermata ' +
+                'dalla macchina ma non marcata è una riga che l\'annullamento in blocco non ' +
+                'troverebbe più. Il `CASE` è portante in tutt\'e due i versi: quando la chiave manca ' +
+                'AZZERA la marca, cioè una ricomposizione fatta A MANO smette di risultare ' +
+                'automatica. Sostituirlo con `abbinato_auto_il = now()` marcherebbe automatica OGNI ' +
+                'conferma, anche quella di un\'operatrice, e l\'annullamento in blocco disferebbe il ' +
+                'suo lavoro.',
         ).toBe(
             "stato = 'confermato', transazione_id = v_txid, pagamento_id = v_anc_risolto, " +
                 'incasso_id = v_anc_incasso, scuola_id = v_scuola, confermato_da = v_reg, ' +
-                'confermato_il = now()',
+                "confermato_il = now(), abbinato_auto_il = CASE WHEN " +
+                "COALESCE((p->>'abbinato_auto')::boolean, false) THEN now() ELSE NULL END",
         )
 
         // E CHE COSA FINISCE IN `pagamento_id`/`incasso_id`: l'ÀNCORA. Trovato

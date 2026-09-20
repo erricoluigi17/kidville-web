@@ -80,6 +80,23 @@ const h = vi.hoisted(() => ({
    * su quel fallimento RIFIUTA di riaprire.
    */
   incassoInsertError: null as { code: string; message: string } | null,
+  /**
+   * Errore iniettabile sulla lettura che chiede `abbinato_auto_il`, la marca
+   * «abbinato dalla macchina».
+   *
+   * `null` = la colonna c'è (produzione dopo `20260920124742`). Con `42703` si
+   * riproduce il DB E2E della CI, che non è migrato: lì la riapertura NON deve
+   * scrivere quella chiave, perché una colonna sconosciuta farebbe fallire
+   * l'UPDATE con `PGRST204` — e fallirebbe DOPO lo storno, lasciando una riga
+   * confermata sopra un incasso che non esiste più.
+   *
+   * ⚠️ CON UN CODICE QUALUNQUE (`40001`, un timeout) la risposta attesa NON è
+   * più «si procede senza marca»: è 500 PRIMA dello storno. Fino al giro
+   * precedente questa chiave pilotava una sonda a parte, fail-closed, e un
+   * guasto transitorio faceva proseguire la riapertura lasciando ACCESA la marca
+   * che mente — cioè proprio ciò che questa fetta esiste per impedire.
+   */
+  marcaError: null as { code: string; message: string } | null,
 }))
 
 vi.mock('@/lib/auth/require-staff', () => ({ requireStaff: h.requireStaff }))
@@ -117,10 +134,20 @@ function finto() {
       b.maybeSingle = async () => {
         registra()
         if (table === 'riconciliazione_movimenti') {
-          // La colonna `transazione_id` non esiste sul DB E2E CI: chi la chiede
-          // riceve 42703 e deve ritentare senza.
-          const chiedeTx = typeof b._cols === 'string' && b._cols.includes('transazione_id')
-          if (chiedeTx && h.movimentoError) return { data: null, error: h.movimentoError }
+          const cols = typeof b._cols === 'string' ? b._cols : ''
+          // Le due colonne nate dopo si chiedono nella STESSA lettura, e l'ordine
+          // di questi due `if` non è cosmetico: è l'ordine delle migrazioni.
+          // `abbinato_auto_il` (20260920124742) arriva DOPO `transazione_id`
+          // (20260912180100), quindi un database a cui manchi la seconda non può
+          // avere la prima: le colonne presenti sono sempre un PREFISSO. Un finto
+          // che permettesse lo stato impossibile — marca presente, transazione
+          // assente — farebbe collaudare un ramo che nessun database può produrre.
+          if (cols.includes('transazione_id') && h.movimentoError) {
+            return { data: null, error: h.movimentoError }
+          }
+          if (cols.includes('abbinato_auto_il') && h.marcaError) {
+            return { data: null, error: h.marcaError }
+          }
           return { data: h.movimento, error: null }
         }
         if (table === 'incassi') return { data: h.incasso, error: null }
@@ -165,6 +192,11 @@ function finto() {
       }
       b.then = (resolve: (v: unknown) => unknown) => {
         registra()
+        // ⚠️ QUI NON C'È PIÙ UNA SONDA DELLA MARCA da riconoscere, e l'assenza è
+        // il punto: `abbinato_auto_il` si chiede nella lettura del movimento
+        // (`maybeSingle`, qui sopra), non in una `select(…).limit(1)` a parte. Una
+        // sonda separata rispondeva «non disponibile» anche sui guasti
+        // transitori, e la riapertura proseguiva lasciando accesa la marca.
         if (table === 'fatture_emesse') {
           return resolve({ data: h.fattureError ? null : h.fatture, error: h.fattureError })
         }
@@ -228,6 +260,7 @@ beforeEach(() => {
   h.controIncasso = []
   h.controIncassoError = null
   h.incassoInsertError = null
+  h.marcaError = null
   h.rpcEsito = {}
   h.requireStaff.mockResolvedValue({ user: { id: 'staff-1', role: 'segreteria' } })
   h.movimento = {
@@ -267,6 +300,16 @@ describe('PATCH riapri — un movimento CONFERMATO torna in coda, con lo storno'
     expect(upd[0].row.incasso_id).toBeNull()
     expect(upd[0].row.confermato_da).toBeNull()
     expect(upd[0].row.confermato_il).toBeNull()
+    // 🔴 E IL QUINTO LEGAME MORTO: la marca «abbinato dalla macchina». Senza
+    // questa riga la marca MENTE — la riga torna in coda ancora «automatica»,
+    // un'operatrice la riconferma A MANO e l'annullamento in blocco, che cerca
+    // esattamente quella marca, disfa il lavoro di una persona.
+    expect(
+      upd[0].row.abbinato_auto_il,
+      'la riapertura non spegne `abbinato_auto_il`: la riga torna in coda dicendo di essere ' +
+        'stata abbinata dalla macchina, e un annullamento in blocco la disferà anche dopo una ' +
+        'riconferma fatta a mano.',
+    ).toBeNull()
     expect(
       Object.keys(upd[0].row),
       '`pagamento_id` azzerato: è la memoria su cui poggia la guardia BONIFICO_GIA_FATTURATO',
@@ -483,11 +526,22 @@ describe('PATCH riapri — un movimento CONFERMATO torna in coda, con lo storno'
     expect(res.status).toBe(200)
     expect(h.rpcCalls.filter((c) => c.name === 'annulla_transazione_contabile')).toEqual([])
     expect(updateDi('riconciliazione_movimenti')).toHaveLength(1)
-    // Due letture del movimento: la prima con `transazione_id`, la seconda senza.
+    // TRE letture del movimento, e si scala di UNA colonna alla volta: le colonne
+    // nate dopo sono un prefisso (`abbinato_auto_il` dopo `transazione_id`), e
+    // togliere tutt'e due insieme al primo `42703` lascerebbe sulla riga riaperta
+    // un `transazione_id` che punta a una transazione annullata — un legame morto
+    // in meno di quelli che si azzerano oggi.
     const lette = letteDa('riconciliazione_movimenti')
-    expect(lette.length).toBeGreaterThanOrEqual(2)
-    expect(lette[0].cols).toContain('transazione_id')
-    expect(lette[1].cols).not.toContain('transazione_id')
+    expect(lette.length).toBeGreaterThanOrEqual(3)
+    expect(lette[0].cols).toContain('abbinato_auto_il')
+    expect(lette[1].cols).toContain('transazione_id')
+    expect(lette[1].cols).not.toContain('abbinato_auto_il')
+    expect(lette[2].cols).not.toContain('transazione_id')
+    // Su questo database non esiste NESSUNA delle due: nessuna delle due chiavi
+    // viaggia nell'UPDATE, o PostgREST risponde `PGRST204` DOPO lo storno.
+    const chiavi = Object.keys(updateDi('riconciliazione_movimenti')[0].row)
+    expect(chiavi).not.toContain('transazione_id')
+    expect(chiavi).not.toContain('abbinato_auto_il')
   })
 
   it('⛔ lo STORNO NON RIESCE → 500, e la riga NON torna in coda', async () => {
@@ -599,9 +653,14 @@ describe('PATCH riapri — un movimento CONFERMATO torna in coda, con lo storno'
     const campi = riga![2] as Record<string, unknown>
     expect(campi.operazione).toBe('pagamenti/riconciliazione/[id]:PATCH')
     expect(campi.movimento_id).toBe(MID)
+    // `marca_disponibile` è un BOOLEANO, e `redact` lascia in chiaro i booleani
+    // come già fa per `transazione_annullata`: dice se la marca «abbinato dalla
+    // macchina» si poteva spegnere, e senza di lui «nessun log» tornerebbe a non
+    // distinguere «spenta» da «non è mai partito niente».
+    expect(campi.marca_disponibile).toBe(true)
     // Nessuna causale, nessun nome: la causale di un bonifico porta i nomi delle famiglie.
     for (const k of Object.keys(campi)) {
-      expect(['operazione', 'esito', 'movimento_id', 'pagamento_id', 'transazione_annullata', 'incassi_stornati', 'fatture_vive']).toContain(k)
+      expect(['operazione', 'esito', 'movimento_id', 'pagamento_id', 'transazione_annullata', 'incassi_stornati', 'fatture_vive', 'marca_disponibile']).toContain(k)
     }
   })
 
@@ -856,6 +915,137 @@ describe('PATCH riapri — le frasi che l’operatrice legge davvero', () => {
 
     expect(testo).not.toContain('nulla è cambiato')
     expect(testo.toLowerCase()).toContain('riprova')
+  })
+})
+
+// ─── LA MARCA «ABBINATO DALLA MACCHINA», E IL DB CHE NON CE L'HA ────────────
+//
+// `abbinato_auto_il` (migrazione `20260920124742`) è l'unico appiglio
+// dell'annullamento in blocco: «disfa tutto ciò che l'import ha deciso da solo».
+// La riapertura deve SPEGNERLA insieme agli altri legami morti, o la marca mente.
+//
+// Ma il database E2E della CI è un progetto separato e NON è migrato: lì quella
+// colonna non esiste. La degradazione qui non è un dettaglio di stile — è la
+// differenza fra una riapertura che riesce e una che fallisce DOPO lo storno,
+// lasciando una riga `confermato` sopra un incasso che non esiste più. Cioè
+// esattamente la riga che mente da cui è nata tutta questa fetta.
+describe('PATCH riapri — la marca dell’abbinamento automatico', () => {
+  it('la colonna c’è: la riapertura la SPEGNE, dentro lo stesso UPDATE del CAS', async () => {
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+
+    const upd = updateDi('riconciliazione_movimenti')
+    expect(upd).toHaveLength(1)
+    expect(Object.keys(upd[0].row)).toContain('abbinato_auto_il')
+    expect(upd[0].row.abbinato_auto_il).toBeNull()
+    // Dentro la STESSA scrittura del CAS, non in un UPDATE dopo: una marca
+    // spenta fuori dal compare-and-swap è una marca che una corsa persa lascia
+    // accesa su una riga che nessuno ha riaperto.
+    expect(upd[0].filtri.stato).toBe('confermato')
+  })
+
+  it('⛔ colonna ASSENTE (42703): la chiave NON si scrive, e la riapertura riesce lo stesso', async () => {
+    h.marcaError = { code: '42703', message: 'column riconciliazione_movimenti.abbinato_auto_il does not exist' }
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status, 'il DB non migrato non deve far fallire una riapertura').toBe(200)
+    const upd = updateDi('riconciliazione_movimenti')
+    expect(upd).toHaveLength(1)
+    expect(
+      Object.keys(upd[0].row),
+      'la chiave viaggia lo stesso su un DB che non ha la colonna: PostgREST risponde PGRST204 ' +
+        'e l’UPDATE fallisce DOPO lo storno — una riga confermata sopra un incasso che non c’è più.',
+    ).not.toContain('abbinato_auto_il')
+    // E lo storno è avvenuto davvero: la degradazione non deve trasformarsi in
+    // un ramo che non fa niente e risponde 200.
+    expect(h.inserts.find((i) => i.table === 'incassi'), 'nessuno storno').toBeTruthy()
+    expect(upd[0].row.stato).toBe('da_abbinare')
+    // 🔴 E `transazione_id` SI AZZERA LO STESSO: qui manca solo la colonna più
+    // recente. È la finestra fra il merge della migrazione e il deploy del
+    // codice, ed è l'asserzione che distingue una catena che scala di UNA
+    // colonna alla volta da una che al primo `42703` le abbandona tutt'e due —
+    // la seconda lascerebbe sulla riga riaperta un puntatore a una transazione
+    // annullata, cioè un legame morto in meno di quelli che si azzerano oggi.
+    expect(Object.keys(upd[0].row)).toContain('transazione_id')
+    expect(upd[0].row.transazione_id).toBeNull()
+    // Due letture sole, non tre: la seconda variante risponde.
+    expect(letteDa('riconciliazione_movimenti')).toHaveLength(2)
+  })
+
+  it('⛔ colonna ASSENTE: lo dice un `warn`, e il log del successo lo riporta', async () => {
+    h.marcaError = { code: '42703', message: 'column ... does not exist' }
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+
+    const spento = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'movimento-letto-in-degradazione',
+    )
+    expect(
+      spento,
+      'un ramo di degradazione che nessuno vede è la prima metà di ogni guasto lungo di questo repo',
+    ).toBeTruthy()
+    expect(spento![1]).toBe('warn')
+    expect((spento![2] as { tipo?: string }).tipo).toBe('colonna-marca-assente')
+    expect((spento![2] as { error_code?: string }).error_code).toBe('42703')
+
+    const riga = h.logEvento.mock.calls.find(
+      (c) => (c[2] as { esito?: string })?.esito === 'movimento-riaperto',
+    )
+    expect((riga![2] as { marca_disponibile?: boolean }).marca_disponibile).toBe(false)
+  })
+
+  it('⛔ `PGRST204` conta come colonna assente quanto `42703`', async () => {
+    // Sono due codici per lo stesso fatto: `42703` lo dà una SELECT, `PGRST204`
+    // una scrittura. Guardarne uno solo lascerebbe cadere l’altro ramo invece
+    // di spegnerlo.
+    h.marcaError = { code: 'PGRST204', message: 'column not found in schema cache' }
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+    expect(Object.keys(updateDi('riconciliazione_movimenti')[0].row)).not.toContain('abbinato_auto_il')
+  })
+
+  it('🔴 la lettura fallisce per un ALTRO motivo: 500 PRIMA dello storno, non «si procede senza marca»', async () => {
+    // ⚠️ QUESTO TEST DICEVA L'OPPOSTO FINO AL 2026-09-20, e cementava un difetto.
+    // Pretendeva 200 e «la chiave non si scrive»: cioè su un guasto transitorio
+    // (deadlock, timeout, 5xx di PostgREST, pool esaurito) la riapertura andava
+    // avanti — STORNO COMPRESO — e la riga tornava in coda `da_abbinare` ANCORA
+    // marcata «automatica». Poi un'operatrice la riconferma a mano da
+    // `confermaSuVoceSingola`, che con `automatico = false` non scrive mai
+    // `abbinato_auto_il: null`: la marca sopravvive, e l'annullamento in blocco
+    // disfa il lavoro di una persona. È esattamente lo scenario che la testata
+    // della migrazione `20260920124742` descrive come da evitare.
+    //
+    // Il fail-closed è il verso giusto per «l'automatismo deve PARTIRE?» — là
+    // «non lo so» trattato come «no» lascia il lavoro a una persona, che è
+    // l'errore recuperabile. Qui la domanda è opposta — «posso SPEGNERE la
+    // marca?» — e «non lo so» trattato come «no» lascia accesa la marca che
+    // mente. Perciò un codice che non sia `42703`/`PGRST204` non degrada: rifiuta
+    // in lettura, prima di toccare un centesimo.
+    h.marcaError = { code: '40001', message: 'deadlock detected' }
+
+    const res = await patch({ azione: 'riapri' })
+
+    expect(res.status).toBe(500)
+    expect(((await res.json()) as { codice?: string }).codice).toBe('MOVIMENTO_NON_LETTO')
+    expect(
+      h.logErrore.mock.calls.find((c) => (c[0] as { evento?: string })?.evento === 'movimento_non_letto'),
+      'un rifiuto in lettura senza una riga di log che lo dica',
+    ).toBeTruthy()
+    // E NIENTE si è mosso: né lo storno, né la riapertura. È la differenza fra
+    // un rifiuto e un guasto a metà.
+    nessunaScrittura()
+  })
+
+  it('il ramo COMPOSITO non scrive la marca a mano: la spegne la RPC dentro la sua transazione', async () => {
+    // Quando ad annullare è `annulla_transazione_contabile` la riapertura la fa
+    // lei, atomica (migrazione `20260920124743`): la route non deve aggiungere
+    // un UPDATE suo, o la marca si spegnerebbe fuori dalla transazione — e un
+    // rollback la resusciterebbe su una riga già riaperta.
+    h.movimento = { ...h.movimento!, transazione_id: TXID }
+    h.rpcEsito.annulla_transazione_contabile = { data: { incassi_stornati: 1, movimenti_riaperti: 1 }, error: null }
+
+    expect((await patch({ azione: 'riapri' })).status).toBe(200)
+    expect(updateDi('riconciliazione_movimenti'), 'un UPDATE a mano dopo la RPC').toEqual([])
   })
 })
 

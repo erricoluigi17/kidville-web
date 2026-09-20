@@ -1204,6 +1204,42 @@ const AMMESSE: Record<string, string> = {
     // plessi in scope (vedi il commento in testa a `pagamenti/riconciliazione`).
     'pagamenti/riconciliazione:GET': 'estratto conto unico: le righe bancarie non hanno sede finché non sono abbinate; il nome del minore nei suggerimenti è filtrato per sede attiva',
     'pagamenti/riconciliazione:POST': 'dedup GLOBALE sull hash del movimento (UNIQUE non più per sede) + lettura dei pagamenti aperti per abbinamento cross-sede',
+    // ── L'ANNULLO IN BLOCCO DI UN IMPORT (2026-09-20) ────────────────────────
+    // ⚠️ IL `GET` DI QUELLA ROTTA NON È QUI, ed è la parte che vale la pena
+    // dire: la sua lettura di `pagamenti` porta il filtro di sede DENTRO la
+    // query (`.in('scuola_id', plessi)`). Il nome del minore di un altro plesso
+    // non usciva comunque — la risposta lo omette — ma finché il filtro stava
+    // solo nel `.map()` finale quei nomi e quei CODICI FISCALI venivano letti
+    // dal database per essere buttati una riga dopo. La correzione è stata
+    // aggiungere il filtro, non aggiungere una voce a questo elenco.
+    //
+    // Resta esentata la sola lettura di `pagamenti_transazioni`, e il perché è
+    // lo stesso della gemella `pagamenti/transazioni/[id]/annulla:POST`: le
+    // transazioni si leggono PER ID (`.in('id', txIds)`), e lo scope si applica
+    // DOPO, in memoria. Con `.in('scuola_id', plessi)` in query una transazione
+    // di un altro plesso sparirebbe dal risultato e diventerebbe
+    // indistinguibile da una transazione CANCELLATA — che è l'altro ramo, e ha
+    // un significato opposto («la riga esiste, il suo documento no»). Lo scope
+    // c'è, è più stretto della query, e rifiuta TUTTO prima di qualunque storno:
+    // 403 se anche una sola sede non è dell'operatore. Gli uuid non arrivano dal
+    // client: vengono dalle righe dell'import, già filtrate per sede.
+    'pagamenti/riconciliazione/annulla-import:POST':
+        "lettura di `pagamenti_transazioni` PER ID (gli uuid vengono dalle righe dell'import, già filtrate per sede) per sapere quali transazioni siano GIÀ annullate: il filtro di sede in query renderebbe una transazione di un altro plesso indistinguibile da una cancellata, che è l'altro ramo e significa il contrario. Il gate c'è ed è in memoria, come in `assertTransazioneInScope`: se anche una sola sede non è dell'operatore la rotta risponde 403 PRIMA di qualunque storno",
+    // ── LA NOTIFICA DIFFERITA (2026-09-20) ──────────────────────────────────
+    // 🔴 QUI IL PERIMETRO NON SI RESTRINGE APPOSTA, ed è l'opposto dell'annullo
+    // qui sopra. L'abbinamento automatico lavora su TUTTE E TRE le sedi anche
+    // quando chi importa ne gestisce una sola (deroga dichiarata e loggata in
+    // `@/lib/pagamenti/riconciliazione-auto-import`: l'estratto conto della banca
+    // è uno solo). Questa rotta manda l'avviso «Pagamento registrato» alle
+    // famiglie di quegli abbinamenti, e restringerla al perimetro di chi ha
+    // importato lascerebbe le famiglie degli altri due plessi senza avviso PER
+    // SEMPRE — nessun altro aprirà mai il riepilogo di quell'import.
+    // Non è una decisione presa qui: è la coda di quella deroga. Il giorno in cui
+    // la deroga venisse ristretta, questa riga va ristretta con lei.
+    // Nessun dato di minore esce: la risposta porta solo conteggi, e l'avviso
+    // arriva ai genitori di quegli stessi alunni.
+    'pagamenti/riconciliazione/riepilogo-visto:POST':
+        "avvisa le famiglie degli abbinamenti che la macchina ha chiuso da sola: legge `pagamenti` PER ID (uuid presi dalle righe di quell'import) su TUTTE le sedi, perché la fase automatica abbina cross-sede per decisione del titolare e un perimetro ristretto qui lascerebbe senza avviso, per sempre, le famiglie dei plessi che chi ha importato non gestisce. La risposta porta solo conteggi",
     'pagamenti/transazioni:POST': 'incasso unico di famiglia: le voci sono verificate una per una contro le sedi attive prima di registrare',
     // Gemella della riga qui sopra, e per la stessa ragione — con una differenza
     // che vale la pena scrivere, perché è il motivo per cui il filtro in query
@@ -1219,7 +1255,17 @@ const AMMESSE: Record<string, string> = {
     // più rifiuta i bambini non attivi e le sedi di collaudo. La sede del DOCUMENTO
     // passa da `resolveScuoleAttive` + `rifiutoSede`. La RPC riceve `p.scuola_id`
     // già validata, e le sedi delle singole voci le deriva lei da `alunni.scuola_id`.
-    'pagamenti/riconciliazione/[id]/componi:POST': 'conciliazione composita: le voci e i bambini si leggono per ID e si verificano UNO PER UNO contro le sedi attive (403, non 404) prima di registrare; la sede del documento passa da `resolveScuoleAttive` + `rifiutoSede`',
+    //
+    // ⚠️ LA VOCE `pagamenti/riconciliazione/[id]/componi:POST` È STATA TOLTA IL
+    // 2026-09-20, e non perché il difetto sia stato pagato: perché le letture che
+    // esentava non stanno più in una rotta. Sono in
+    // `src/lib/pagamenti/conciliazione-registra.ts`, dove le attraverserà anche
+    // l'import che concilierà da sé — e questo lock i file di `src/lib` li legge
+    // solo per riconoscere i gate, non per chiedergli conto delle query. Tenere
+    // la riga avrebbe fatto scattare «voci morte»; toglierla senza dirlo avrebbe
+    // fatto sembrare pagato un debito che si è solo spostato. Il racconto per
+    // esteso, con quel che resta a coprire quelle letture, sta accanto a
+    // `handlerEsentati` in fondo al file.
     'pagamenti/transazioni/[id]:GET': 'dettaglio di una transazione già verificata: incassi e crediti si leggono per `transazione_id`',
     'pagamenti/transazioni/[id]/annulla:POST': 'annullo atomico via RPC sulla transazione già verificata (`p.transazione_id`)',
     'pagamenti/incassi/storno:<modulo>': 'helper: ricalcola lo stato del pagamento appena stornato (`p_id` della riga verificata dal chiamante)',
@@ -1616,13 +1662,35 @@ const AMMESSE: Record<string, string> = {
     // denaro è arrivato. L'operatrice vedrebbe un bonifico che non quadra e
     // nessun modo di farlo quadrare.
     //
-    // GLI ID NON ARRIVANO DAL CLIENT, e questa è la metà che rende sicura la
-    // prima: sono i figli del PAGANTE, e il pagante o è proposto dal server
-    // (`riconosciOrdinante` / `scegliPaganteComune` sui bambini che il bonifico
-    // nomina) o è scelto dall'operatrice fra i CANDIDATI — un `?pagante=` fuori
-    // da quell'elenco è un 403 (`CONCILIAZIONE_PAGANTE_NON_AMMESSO`). Non
-    // esiste un parametro con cui chiedere a questa rotta gli alunni di una
-    // famiglia qualunque.
+    // GLI ID DEI FIGLI NON ARRIVANO DAL CLIENT: sono quelli del PAGANTE, e il
+    // pagante o è proposto dal server (`riconosciOrdinante` /
+    // `scegliPaganteComune` sui bambini che il bonifico nomina) o è scelto
+    // dall'operatrice fra i CANDIDATI — un `?pagante=` fuori da quell'elenco è un
+    // 403 (`CONCILIAZIONE_PAGANTE_NON_AMMESSO`).
+    //
+    // ⚠️ MA DAL 2026-09-20 UN ID DAL CLIENT C'È, ed è `?alunni=` (fino a 5 uuid):
+    // senza, su un movimento ROSSO non c'è nessun suggerimento, quindi nessun
+    // bambino, nessun candidato, e «Conferma» resta spento — era il motivo per cui
+    // i bonifici rossi non si potevano comporre. Questa nota diceva «non esiste un
+    // parametro con cui chiedere a questa rotta gli alunni di una famiglia
+    // qualunque»: non è più vero, e l'esenzione non può poggiare su una frase
+    // scaduta. Quel parametro è sicuro per un'altra ragione, che è questa: la sede
+    // si verifica DENTRO la query, prima che l'id diventi una chiave di lettura —
+    // `.in('id', chiesti).in('scuola_id', sedi)` con `resolveScuoleAttive`, cioè lo
+    // stesso perimetro della scrittura; a zero sedi attive la query non parte
+    // nemmeno. Fuori dal perimetro — e su un uuid che non esiste affatto, con la
+    // stessa risposta — è un 404 `CONCILIAZIONE_ALUNNO_NON_TROVATO`: mai 403 e mai
+    // un 200 con l'elenco vuoto, perché confermare l'esistenza direbbe a chi lavora
+    // a Cesa che quel bambino c'è a Giugliano. Lo misura
+    // `__tests__/api/pagamenti-riconciliazione-contesto.test.ts` («🔴 `?alunni=` non
+    // è un modo per sfogliare l'archivio: la sede si verifica PRIMA»), ed è stato
+    // visto fallire togliendo quel `.in('scuola_id', …)`: 3 rossi.
+    //
+    // La superficie però si allarga davvero, e va detto: prima i bambini
+    // raggiungibili erano quelli che il bonifico nominava, ora è qualunque bambino
+    // delle sedi attive — e, tramite il pagante che se ne deriva, i suoi fratelli in
+    // altri plessi con le loro voci aperte. È la decisione n. 10 applicata
+    // sapendolo, e il presidio sul dato sensibile è quello qui sotto.
     //
     // E LA PROTEZIONE VERA È ALTROVE, perché qui il dato sensibile è il NOME:
     // la rotta lo minimizza esattamente come i `label` dei suggerimenti nel GET
@@ -1632,9 +1700,41 @@ const AMMESSE: Record<string, string> = {
     // minori escono SOLO per le sedi dell'operatore»), e quel test è stato visto
     // fallire togliendo la minimizzazione.
     'pagamenti/riconciliazione/[id]/contesto:GET':
-        'bonifico di famiglia cross-sede (decisione n. 10): i figli si leggono per ID — id che ' +
-        'vengono dal pagante proposto o scelto fra i candidati, mai dal client — e il NOME del ' +
-        'minore resta minimizzato alle sole sedi attive',
+        'bonifico di famiglia cross-sede (decisione n. 10): i figli si leggono per ID — id del ' +
+        "pagante proposto o scelto fra i candidati. L'unico id che arriva dal client è `?alunni=` " +
+        '(al più 5, dal 2026-09-20, per poter comporre un movimento ROSSO): la sua sede è verificata ' +
+        "DENTRO la query (`.in('id', chiesti).in('scuola_id', sedi)` con `resolveScuoleAttive`) " +
+        'prima che diventi una chiave di lettura, e fuori perimetro è 404 ' +
+        '`CONCILIAZIONE_ALUNNO_NON_TROVATO`, mai 403 e mai un elenco vuoto. Il NOME del minore resta ' +
+        'minimizzato alle sole sedi attive',
+
+    // ── La RICERCA del bambino: gli alunni SONO filtrati, le loro voci no ────
+    // `pagamenti/riconciliazione/alunni:GET` legge due tabelle, e solo la seconda
+    // è qui dentro. La prima — `alunni` — porta il filtro di sede DENTRO la query
+    // (`.in('scuola_id', sedi)`, con `resolveScuoleAttive`, cioè lo stesso
+    // perimetro della scrittura): è ciò che rende lecito far uscire il nome di un
+    // minore, e lo misura `__tests__/api/pagamenti-riconciliazione-ricerca-alunni.test.ts`
+    // («il perimetro è quello di `resolveScuoleAttive`»), test visto fallire
+    // togliendo quel `.in`.
+    //
+    // La seconda — `pagamenti`, le voci aperte dei trovati — è letta per
+    // `.in('alunno_id', ids)` su AL PIÙ 20 id che vengono dalla prima query, mai
+    // dal client: non esiste un parametro con cui chiedere a questa rotta le voci
+    // di un bambino che la ricerca non ha già restituito. Il perimetro, quindi,
+    // c'è: è a monte, nell'unica query che possa farlo bene.
+    //
+    // 🔴 E AGGIUNGERE `.in('scuola_id', sedi)` ANCHE LÌ SAREBBE UN DIFETTO, non un
+    // presidio in più: la sede del PAGAMENTO e quella dell'ALUNNO divergono dopo
+    // un trasferimento di plesso (`riconciliazione/route.ts` lo dichiara già:
+    // «Sede dell'ALUNNO: può differire da quella del pagamento»). Quel filtro
+    // farebbe sparire in silenzio le voci vecchie di un bambino trasferito, cioè
+    // farebbe dire alla schermata «non deve niente» a chi sta per incassare
+    // proprio quell'arretrato. Nella risposta escono un CONTEGGIO e un RESIDUO,
+    // non le righe: nessun dato di un'altra famiglia attraversa il confine.
+    'pagamenti/riconciliazione/alunni:GET':
+        'le voci aperte si leggono per `alunno_id` su id che vengono dalla ricerca già filtrata ' +
+        'per sede (mai dal client); filtrare anche i `pagamenti` per sede nasconderebbe le voci ' +
+        'di un bambino trasferito di plesso, e ciò che esce sono conteggi, non righe',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2262,7 +2362,19 @@ describe('coverage-lock isolamento fra sedi', () => {
             // il secondo porta pure `assertAlunnoInScope` sul ramo col figlio —
             // collegare come genitore una persona a un bambino di un altro plesso
             // è il modo in cui si apre la scheda del figlio di qualcun altro.
-            routeConServiceRole: 327,
+            // 2026-09-20 (terzo passaggio) · +1 route e +1 handler:
+            // `pagamenti/riconciliazione/alunni:GET`, la ricerca del bambino da cui
+            // comporre un bonifico. La lettura degli ALUNNI è filtrata per sede
+            // nella query (`.in('scuola_id', sedi)` con `resolveScuoleAttive`); è
+            // la lettura delle VOCI APERTE dei trovati a essere esentata, e il
+            // perché sta per esteso accanto alla sua voce in AMMESSE.
+            // 2026-09-20 (quarto passaggio) · +2 route e +3 handler:
+            // `pagamenti/riconciliazione/annulla-import` (GET del riepilogo +
+            // POST dell'annullo in blocco) e `pagamenti/riconciliazione/riepilogo-visto`
+            // (POST della notifica differita). Misurato rieseguendo il lock, non
+            // dedotto: il passo NON coincide col numero di file, perché la prima
+            // rotta espone due metodi.
+            routeConServiceRole: 330,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2433,7 +2545,12 @@ describe('coverage-lock isolamento fra sedi', () => {
             // rieseguendo il lock, non dedotto.
             // 🔴 `avvisi/[id]/risposte:POST` NON conta qui come route nuova: il file
             // c'era già, e la sua riscrittura sulla RPC non ha aggiunto handler.
-            handlerControllati: 497,
+            // 497 → 498 il 2026-09-20: `pagamenti/riconciliazione/alunni:GET`
+            // (un file, un metodo). Vedi la nota accanto a `routeConServiceRole`.
+            // 498 → 501 il 2026-09-20: i tre handler dell'annullo in blocco di un
+            // import (`annulla-import` GET e POST, `riepilogo-visto` POST). Vedi la
+            // nota accanto a `routeConServiceRole`.
+            handlerControllati: 501,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.
@@ -2702,7 +2819,57 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `gdpr/retention-galleria` (`:POST` e `:<modulo>`): una per l'handler,
             // una per gli helper di modulo, perché un'esenzione data al `POST` non
             // deve estendersi in silenzio a un helper scritto dopo.
-            handlerEsentati: 105,
+            //
+            // ── 🔴 105 → 104 il 2026-09-20, E UN NUMERO CHE SCENDE QUI NON È UN
+            //    MIGLIORAMENTO: è `pagamenti/riconciliazione/[id]/componi:POST`, la
+            //    cui esenzione è diventata MORTA perché la rotta non contiene più
+            //    nessuna lettura. I suoi nove gate — voci esistenti, alunni delle
+            //    voci nuove, alunni dei ticket, sede del documento — sono stati
+            //    spostati in `src/lib/pagamenti/conciliazione-registra.ts`, perché
+            //    l'import che concilierà da sé deve attraversare le stesse
+            //    identiche guardie e non ha una `Request` da cui partire.
+            //
+            //    ⚠️ COSA SI PERDE, detto invece che taciuto: questo lock audita le
+            //    query dei file sotto `src/app/api`, e quelle letture ora non ci
+            //    sono più. `src/lib` lo legge soltanto per RICONOSCERE i gate
+            //    (`GATE_LIB`), non per chiedergli conto delle proprie query. Quindi
+            //    le `.in('id', …)` su `pagamenti` e `alunni` di quella fetta oggi
+            //    non le guarda più nessuno **qui**. Non sono scoperte: il 403 per
+            //    voce, per bambino e per ticket è provato dai test di
+            //    `__tests__/api/pagamenti-riconciliazione-componi.test.ts`, che
+            //    girano sulla rotta vera e sono stati visti fallire. Ma la
+            //    differenza fra «provato da un test di comportamento» e «sorvegliato
+            //    da questo lock» è reale, e chi legge questo numero deve saperla.
+            //
+            //    La strada per riprenderla, il giorno in cui si vorrà, è far
+            //    scandire a questo lock anche i moduli di `src/lib` che fanno da
+            //    gate per una rotta: oggi `nomeRoute()` e `handlerDi()` sanno
+            //    leggere solo `export const METODO = withRoute(`, quindi non è una
+            //    riga di configurazione — è un lavoro, e va fatto apposta.
+            // ── 104 → 105 il 2026-09-20, e questo numero che cresce va letto ─────
+            // È il numero che questo test esiste per non far salire in silenzio.
+            // La voce nuova è `pagamenti/riconciliazione/alunni:GET`, e copre UNA
+            // lettura sola: le voci aperte dei bambini già trovati. Gli alunni,
+            // nella stessa route, sono filtrati per sede DENTRO la query — la
+            // ragione per esteso sta accanto alla voce in AMMESSE, insieme al
+            // motivo per cui aggiungere `.in('scuola_id', sedi)` anche sui
+            // `pagamenti` sarebbe stato un difetto e non un presidio (la sede del
+            // pagamento e quella dell'alunno divergono dopo un trasferimento).
+            // 🔴 105 → 107 il 2026-09-20, e questo numero che SALE va letto come
+            // dice la riga in cima: sono due esenzioni in più, cioè due letture in
+            // meno sorvegliate da questo lock. Sono dichiarate una per una in
+            // AMMESSE con il motivo per esteso, e non sono la stessa cosa:
+            //  · `annulla-import:POST` legge `pagamenti_transazioni` PER ID e
+            //    applica lo scope DOPO, perché il filtro in query renderebbe una
+            //    transazione di un altro plesso indistinguibile da una cancellata
+            //    — il gate c'è, ed è un 403 prima di qualunque storno;
+            //  · `riepilogo-visto:POST` legge `pagamenti` di TUTTE le sedi perché
+            //    è la coda della deroga cross-sede della fase automatica:
+            //    restringerlo lascerebbe senza avviso, per sempre, le famiglie dei
+            //    plessi che chi ha importato non gestisce.
+            // Il terzo handler nuovo (`annulla-import:GET`) NON è qui: la sua
+            // lettura di `pagamenti` porta il filtro di sede dentro la query.
+            handlerEsentati: 107,
         })
     })
 })

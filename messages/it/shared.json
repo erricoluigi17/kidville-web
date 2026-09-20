@@ -452,8 +452,15 @@
   "erroreMovimentoNonLetto": "Non siamo riusciti a leggere questa riga dell’estratto conto: non è sparita, è la lettura ad essere fallita. Riprova fra poco.",
   "erroreRiaperturaStornataNonRiaperta": "L’incasso di questo bonifico è stato stornato, ma la riga non è tornata in coda. Ricarica l’elenco e riapri di nuovo il bonifico: il secondo tentativo riconosce lo storno già registrato e non lo ripete.",
   "erroreRiaperturaSedeNonVerificata": "Non siamo riusciti a verificare la sede di questo bonifico composito: la riapertura è stata fermata e nessuno storno è partito. Riprova fra poco.",
+  "erroreAnnulloImportNonLetto": "Non siamo riusciti a leggere che cosa l’import ha chiuso da solo: nessuna riga è stata toccata e nessuno storno è partito. Riprova fra poco.",
+  "erroreAnnulloImportNonDisponibile": "L’annullamento in blocco non è disponibile su questo ambiente: riapri i bonifici uno per uno dal registro dei movimenti.",
+  "erroreAnnulloImportTroppeRighe": "Questo import ha chiuso da solo troppi bonifici per annullarli in un colpo. Apri il registro filtrato per questo import e riaprili a gruppi.",
+  "erroreAnnulloImportFuoriPerimetro": "Alcuni di questi bonifici sono stati chiusi su sedi che non gestisci: annullarli è uno storno, e si fa dalla propria sede. Nessuna riga è stata toccata.",
+  "erroreRiepilogoNotificheNonInviate": "Non siamo riusciti a inviare gli avvisi alle famiglie: nessuna famiglia ha ricevuto niente e gli abbinamenti restano validi. Riapri il riepilogo dell’import per riprovare.",
   "erroreConciliazioneVoceContenitore": "Una delle voci scelte è il totale di un piano a rate: si incassano le rate, non il contenitore. Toglila dalla composizione e scegli le rate da saldare.",
   "erroreConciliazioneMovimentoNonLegato": "L’incasso è stato registrato, ma la riga dell’estratto conto non è stata legata: non ripetere l’operazione, il denaro risulterebbe incassato due volte. Segnala l’accaduto perché la riga venga legata.",
+  "erroreConciliazioneAlunnoNonTrovato": "Uno dei bambini indicati non risulta fra quelli che puoi gestire: controlla la scelta e riprova.",
+  "erroreConciliazioneRicercaAlunniNonLetta": "Non siamo riusciti a cercare i bambini: l’elenco vuoto qui sopra non significa che non ci siano. Riprova fra qualche minuto prima di aprire una scheda nuova.",
   "errorePossibileDoppione": "In questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso: se la famiglia ha inviato la domanda due volte, rifiuta questa; se è lo stesso bambino, usa la scheda esistente.",
   "erroreAbbinamentoNonValido": "La scheda esistente indicata non si può usare per questo bambino: non è stato scritto nulla. Riapri la domanda e riprova l’import.",
   "erroreVideoFileNonValido": "Questo file non contiene un video leggibile: potrebbe essere incompleto, oppure essersi rovinato durante il salvataggio. Riprova con un altro filmato.",
@@ -502,5 +509,7 @@
   "erroreRiportaGenitoreGiaGenitore": "Questa persona è già un genitore: non c’è niente da cambiare.",
   "erroreRiportaGenitoreGiaDeciso": "Il ruolo è cambiato nel frattempo: ricarica la scheda.",
   "erroreFascicoloNonCancellato": "Non è stato possibile togliere i documenti dall’archivio: nessun dato è stato cancellato. Riprova fra qualche minuto.",
-  "errorePersonaleOperazioneNonRiuscita": "Non è stato possibile completare l’operazione. Ricarica la scheda e controlla com’è rimasta prima di riprovare."
+  "errorePersonaleOperazioneNonRiuscita": "Non è stato possibile completare l’operazione. Ricarica la scheda e controlla com’è rimasta prima di riprovare.",
+  "erroreAnnulloImportInterrotto": "L’annullamento si è interrotto a metà: una parte dei bonifici può essere già tornata in coda. Apri il registro filtrato per questo import e controlla quali sono ancora verdi prima di riprovare.",
+  "erroreRiepilogoNotificheInterrotte": "L’invio degli avvisi alle famiglie si è interrotto a metà: una parte è già partita. Riapri il riepilogo per completare l’invio — chi è già stato avvisato non lo sarà due volte."
 }

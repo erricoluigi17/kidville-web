@@ -8,6 +8,7 @@ import {
   CHIAVE_CAUSALE_DEFAULT,
   DEFAULT_CAUSALE_TEMPLATE,
   PLACEHOLDER_CAUSALE,
+  causaleBonifico,
   renderCausale,
   type DatiCausale,
   type SegnapostoCausale,
@@ -15,6 +16,7 @@ import {
 import {
   CHIAVE_CONFIG_CAUSALI_FATTURA,
   DEFAULT_CAUSALE_FATTURA_TEMPLATE,
+  PLACEHOLDER_CAUSALE_FATTURA,
   VINCOLO_CAUSALE_FATTURAPA,
 } from '@/lib/pagamenti/causale-fattura';
 import { hdr, card, h3, input, label, hint } from '../settings/ui';
@@ -74,6 +76,21 @@ const DATI_ESEMPIO: DatiCausale = {
   scadenza: '30/09/2026',
 };
 
+/**
+ * Gli stessi dati, più il CODICE DELLA VOCE: sul bonifico c'è **sempre**
+ * (`causaleBonifico` lo garantisce anche ai modelli che non lo citano, v. `conCodiceVoce`),
+ * sulla fattura non c'è **mai** — decisione del titolare, non un limite tecnico
+ * (v. `PLACEHOLDER_CAUSALE_FATTURA`). Un solo `DATI_ESEMPIO` per due pannelli
+ * rimetterebbe a schermo, nell'editor della fattura, un valore che a runtime non arriva.
+ *
+ * Il codice d'esempio è di SOLE LETTERE ed è lo stesso del chip `{codice}`: è la stessa
+ * disciplina del CF sintetico qui sopra — un'anteprima si legge a schermo, e questo
+ * repository è pubblico. Il perché di quella forma sta accanto al catalogo, in
+ * `@/lib/pagamenti/causale`: `codiceVoce` non la produce mai ed `estraiCodiciVoce` la
+ * rifiuta, quindi ricopiata in una causale vera non aggancia il movimento di nessuno.
+ */
+const DATI_ESEMPIO_BONIFICO: DatiCausale = { ...DATI_ESEMPIO, codice: '#MNKPRTF' };
+
 /** I testi che cambiano da un editor all'altro. Il resto della cornice è condiviso. */
 interface TestiEditorCausali {
   /** Titolo della sezione. */
@@ -106,6 +123,22 @@ interface PropsEditorCausali extends Props {
   modelloPredefinito: string;
   /** Catalogo dei segnaposto proposti come chip. */
   segnaposto: SegnapostoCausale[];
+  /**
+   * L'ANTEPRIMA DI UN MODELLO: **il motore e i dati d'esempio insieme**, perché chi
+   * istanzia l'editor è l'unico che sa quale strada il modello farà davvero.
+   *
+   * Non è un dettaglio di stile, è la sola cosa che tiene *anteprima = runtime*. Il
+   * bonifico passa da `causaleBonifico`, che applica `conCodiceVoce` e quindi mostra il
+   * codice anche sui modelli che non lo citano — quelli delle tre sedi, scritti quando il
+   * codice non esisteva. Chiamando `renderCausale` anche qui, l'admin vedrebbe
+   * un'anteprima senza codice e il genitore riceverebbe la causale col codice: due verità
+   * per la stessa stringa, e quella a schermo sarebbe la falsa.
+   *
+   * È la stessa classe di difetto già pagata sulla causale della fattura (il conteggio
+   * misurava la stringa prima della normalizzazione FatturaPA, v. `VincoloTracciato`):
+   * una schermata che mostra qualcosa di diverso da ciò che esce non avvisa nessuno.
+   */
+  anteprimaDi: (modello: string) => string;
   testi: TestiEditorCausali;
   /**
    * Vincolo del tracciato di destinazione. Assente = nessun limite: la causale di un
@@ -133,6 +166,7 @@ function EditorCausali({
   chiaveConfig,
   modelloPredefinito,
   segnaposto,
+  anteprimaDi,
   testi,
   tracciato,
   Icona,
@@ -357,7 +391,7 @@ function EditorCausali({
           // Riga vuota → anteprima col modello che il server userà DAVVERO: per una
           // categoria è il «Predefinito» VIVO (non l'hardcoded), così anteprima = runtime.
           const fallback = chiave === CHIAVE_DEFAULT ? modelloPredefinito : placeholderDefault;
-          const resa = renderCausale((modelli[chiave] || '').trim() || fallback, DATI_ESEMPIO);
+          const resa = anteprimaDi((modelli[chiave] || '').trim() || fallback);
           // L'ANTEPRIMA È LA STRINGA DEL TRACCIATO, non quella resa.
           //
           // Il limite si misura sulla causale RESA e non sul modello — «{descrizione}»
@@ -470,6 +504,12 @@ function EditorCausali({
 /**
  * Causali del BONIFICO: la stringa che il genitore ricopia e su cui si regge
  * l'abbinamento automatico degli incassi (riconciliazione).
+ *
+ * L'anteprima passa da `causaleBonifico` e **non** da `renderCausale`: è l'unica porta
+ * che applica `conCodiceVoce`, cioè la stessa che usano l'elenco pagamenti del genitore
+ * (`/api/pagamenti`) e le email di sollecito. Con il motore nudo il pannello mostrerebbe
+ * un'anteprima senza `{codice}` per tutti i modelli che non lo citano — quelli già
+ * configurati dalle tre sedi — mentre la causale spedita il codice ce l'ha.
  */
 export function CausaliPanel({ userId, scuolaId }: Props) {
   const t = useTranslations('adminContabilita');
@@ -480,6 +520,7 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
       chiaveConfig="causali_config"
       modelloPredefinito={DEFAULT_CAUSALE_TEMPLATE}
       segnaposto={PLACEHOLDER_CAUSALE}
+      anteprimaDi={(modello) => causaleBonifico(DATI_ESEMPIO_BONIFICO, modello)}
       Icona={Pencil}
       testi={{ titolo: t('caus_titolo'), aiutoPre: t('caus_help_pre'), nota: t('caus_hint') }}
     />
@@ -497,6 +538,13 @@ export function CausaliPanel({ userId, scuolaId }: Props) {
  * `SettingsPanel` e da `ALLOWED_FIELDS` è parte dello stesso lavoro. Finché fosse
  * restato lì — modificabile, salvato, ignorato — questo pannello non avrebbe chiuso
  * niente: avrebbe aggiunto una seconda verità accanto alla prima.
+ *
+ * I CHIP SONO GLI ALTRI, e l'anteprima resta `renderCausale`: la fattura non porta il
+ * codice della voce (decisione del titolare, v. `PLACEHOLDER_CAUSALE_FATTURA`), quindi il
+ * chip `{codice}` non si offre e i dati d'esempio non lo contengono. Offrirlo qui sarebbe
+ * una promessa che a runtime rende **vuoto**, e `renderCausale` omette con grazia un
+ * segmento i cui segnaposto sono tutti vuoti: quel segmento sparirebbe da un documento
+ * fiscale senza un errore da nessuna parte.
  *
  * ⚠️ Sul limite di 200 caratteri, per non promettere più di quanto si misuri: il
  * conteggio dell'anteprima è calcolato sui DATI D'ESEMPIO. Una descrizione più lunga di
@@ -523,7 +571,8 @@ export function CausaliFatturaPanel({ userId, scuolaId }: Props) {
       scuolaId={scuolaId}
       chiaveConfig={CHIAVE_CONFIG_CAUSALI_FATTURA}
       modelloPredefinito={DEFAULT_CAUSALE_FATTURA_TEMPLATE}
-      segnaposto={PLACEHOLDER_CAUSALE}
+      segnaposto={PLACEHOLDER_CAUSALE_FATTURA}
+      anteprimaDi={(modello) => renderCausale(modello, DATI_ESEMPIO)}
       tracciato={VINCOLO_CAUSALE_FATTURAPA}
       Icona={Receipt}
       testi={{ titolo: t('causf_titolo'), aiutoPre: t('causf_help_pre'), nota: t('causf_hint') }}

@@ -64,6 +64,14 @@ import { POST as RUN } from '@/app/api/pagamenti/solleciti/run/route'
 
 const PID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaab1'
 const PID2 = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2'
+/**
+ * Il CODICE DELLA VOCE di `PID`, cioè `codiceVoce(PID)` — trascritto a mano, mai
+ * ricalcolato qui: comporlo invocando la stessa funzione che il motore invoca
+ * renderebbe verde anche una mescola rotta. Dal 2026-09-20 la causale del sollecito
+ * lo porta come già lo porta quella dell'app, e le due devono restare identiche:
+ * la prova stringa-contro-stringa sta in `solleciti-causale-codice.test.ts`.
+ */
+const COD_PID = '#Y899P47'
 const post = (body: unknown) =>
   new Request('http://localhost/api/pagamenti/solleciti', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -134,7 +142,9 @@ describe('POST /api/pagamenti/solleciti', () => {
     expect(res.status).toBe(200)
     expect(h.sendEmailDetailed).toHaveBeenCalledTimes(1)
     const text = (h.sendEmailDetailed.mock.calls[0][0] as { text: string }).text
-    expect(text).toContain('Retta Giugno - per il minore Mario Rossi - TSTTST00T00T000T - GIUGLIANO')
+    // Il codice sta ATTACCATO alla descrizione, nel primo segmento, e mai in coda:
+    // il campo causale dell'home banking si taglia da destra.
+    expect(text).toContain(`Retta Giugno ${COD_PID} - per il minore Mario Rossi - TSTTST00T00T000T - GIUGLIANO`)
     expect(text.toLowerCase()).toContain('causale')
   })
 
@@ -150,7 +160,14 @@ describe('POST /api/pagamenti/solleciti', () => {
     const res = await POST(post({ pagamento_ids: [PID], anteprima: true }))
     expect(res.status).toBe(200)
     const j = await res.json()
-    expect(j.data[0].corpo).toContain('Retta giugno 2026 € 150,00 - Mario Rossi - TSTTST00T00T000T')
+    // Il modello di questa sede non cita né `{codice}` né `{descrizione}` — è il
+    // caso vero delle tre sedi, scritte quando il codice non esisteva. Senza
+    // `{descrizione}` il `findIndex` di `conCodiceVoce` torna -1, il
+    // `Math.max(0, -1)` ricade sul PRIMO segmento e il segnaposto gli viene
+    // ACCODATO: il codice esce perciò in coda al primo segmento — che resta
+    // comunque la testa della causale, ed è ciò che conta, perché il campo
+    // dell'home banking si taglia da destra.
+    expect(j.data[0].corpo).toContain(`Retta giugno 2026 € 150,00 ${COD_PID} - Mario Rossi - TSTTST00T00T000T`)
   })
 
   it('anti-spam: sollecito recente → saltato con motivo cadenza', async () => {

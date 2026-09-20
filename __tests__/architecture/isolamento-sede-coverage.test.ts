@@ -2256,7 +2256,13 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `task_interni`). La prima stesura le aveva fuori dal filtro, il lock
             // ha segnalato `scrittura-senza-sede` e aveva ragione: la correzione è
             // stata aggiungere il filtro, non aggiungere una voce ad AMMESSE.
-            routeConServiceRole: 325,
+            // 2026-09-20 (secondo passaggio) · +2 route e +2 handler:
+            // `admin/staff/riporta-a-genitore` e `admin/staff/anche-genitore`.
+            // Anche qui CONTROLLATI, non esentati: gate + `assertUtenteInScope`, e
+            // il secondo porta pure `assertAlunnoInScope` sul ramo col figlio —
+            // collegare come genitore una persona a un bambino di un altro plesso
+            // è il modo in cui si apre la scheda del figlio di qualcun altro.
+            routeConServiceRole: 327,
             // 441 → 440 il 2026-08-11: è USCITO `admin/adults:POST`, cancellato perché
             // irraggiungibile (nessuna pagina montava la sua scheda) e rotto (scriveva le
             // colonne generate di `utenti`: `428C9` a ogni tentativo, dopo aver già invitato
@@ -2427,7 +2433,7 @@ describe('coverage-lock isolamento fra sedi', () => {
             // rieseguendo il lock, non dedotto.
             // 🔴 `avvisi/[id]/risposte:POST` NON conta qui come route nuova: il file
             // c'era già, e la sua riscrittura sulla RPC non ha aggiunto handler.
-            handlerControllati: 495,
+            handlerControllati: 497,
             // 111 → 109 il 2026-07-31: `tasks:GET` e `tasks:POST` non sono più
             // esentati. Questo numero CALA solo quando un debito viene pagato;
             // se sale, qualcuno ha appena tolto un pezzo di questo lock.

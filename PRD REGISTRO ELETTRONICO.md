@@ -33,7 +33,7 @@
 > | `pagamenti` | Scadenziario rette e quote (+ `sconto`/`sconto_motivo` per voce, Contabilità v2) | Schema creato, non ancora popolato |
 > | `fatture_emesse` — visibilità famiglie | Preparazione della visibilità del **PDF originale Aruba**: lo snapshot di emissione distingue `ordinaria` e `quote_separate`; l'intestatario resta uno snapshot fiscale. Ordinaria: documento visibile a entrambi i genitori autorizzati, anche se l'intestatario è terzo. Quote separate: ciascun genitore vede soltanto la propria quota. Storico: nessuna deduzione automatica; richiede revisione esplicita dello staff per sede e le irrisolte restano solo staff dopo l'attivazione. Le migrazioni preparatorie `20260916120000` e `20260916120100` sono applicate in CI e produzione, con FK della sede; alla verifica erano zero sedi attivate, revisioni, classificazioni e audit. Pannello staff, lifecycle StrictMode e pulsanti sono PASS; restano i gate globali finali e la prova E2E autenticata, mentre il rendering PDF nativo non è ancora provato. Schema applicato, funzione non pubblicata né attivata. | 🔶 Preparazione, non rilasciata |
 > | `pagamenti_transazioni` | Contenitore «incasso unico di famiglia»: un versamento → più voci di più figli + ricariche mensa (pagante = `parents.id`, metodo, riferimento/CRO, data valuta, note, annullo tracciato) | ✅ RLS + policy service_role |
-> | `riconciliazione_movimenti` | L'estratto conto della banca, **unico per le tre sedi** (`scuola_id` nullable dal 2026-07-19). Dal branch `feat/conciliazione-composita` porta **`transazione_id`** (migr. `20260912180000`): quando un bonifico salda più voci insieme il movimento si lega alla **transazione**, che diventa la sorgente di verità di importo e righe; `pagamento_id` e `incasso_id` **non** vengono svuotati e restano puntati sulla **voce àncora**, quella su cui si emette la fattura (li leggono il chip di fatturazione della coda, il lotto fatture e `src/lib/aruba/intestatario-pagamento.ts`, da cui passa la detrazione 730). ⚠️ **`scuola_id` cambia significato** su una riga confermata dalla composizione: è la sede del **DOCUMENTO**, dichiarata dall'operatore, non quella del pagamento àncora — su un bonifico multi-plesso le due **possono divergere per costruzione**. Rimisurato il 2026-09-13 (`SELECT stato, count(*), count(pagamento_id) FROM riconciliazione_movimenti GROUP BY stato`): **239 righe** — 174 `confermato` (tutte e 174 con `pagamento_id`), 33 `da_abbinare`, 31 `suggerito`, 1 `ignorato`, e **zero** righe non confermate con un `pagamento_id` addosso: lo stato «riaperto» che questo lavoro introduce oggi non esiste su nessuna riga. Dal branch `feat/riconciliazione-automatica` porta anche **`abbinato_auto_il`** (`timestamptz`, migr. `20260920124742`): **quando** l'abbinamento è stato deciso dall'applicazione all'import, senza un click. `NULL` = deciso da una persona **oppure** riga non confermata — **non è un quinto stato**, `stato` resta `confermato` in tutt'e due i casi e il `CHECK` non è stato toccato. Nessun backfill: lo storico resta `NULL` perché non è mai stato automatico. Si azzera a ogni riapertura insieme agli altri legami morti, ed è l'unico appiglio dell'annullamento in blocco | ✅ RLS + policy `service_role` (1 policy, `ALL`) |
+> | `riconciliazione_movimenti` | L'estratto conto della banca, **unico per le tre sedi** (`scuola_id` nullable dal 2026-07-19). Dal branch `feat/conciliazione-composita` porta **`transazione_id`** (migr. `20260912180000`): quando un bonifico salda più voci insieme il movimento si lega alla **transazione**, che diventa la sorgente di verità di importo e righe; `pagamento_id` e `incasso_id` **non** vengono svuotati e restano puntati sulla **voce àncora**, quella su cui si emette la fattura (li leggono il chip di fatturazione della coda, il lotto fatture e `src/lib/aruba/intestatario-pagamento.ts`, da cui passa la detrazione 730). ⚠️ **`scuola_id` cambia significato** su una riga confermata dalla composizione: è la sede del **DOCUMENTO**, dichiarata dall'operatore, non quella del pagamento àncora — su un bonifico multi-plesso le due **possono divergere per costruzione**. Rimisurato il 2026-09-13 (`SELECT stato, count(*), count(pagamento_id) FROM riconciliazione_movimenti GROUP BY stato`): **239 righe** — 174 `confermato` (tutte e 174 con `pagamento_id`), 33 `da_abbinare`, 31 `suggerito`, 1 `ignorato`, e **zero** righe non confermate con un `pagamento_id` addosso: lo stato «riaperto» che questo lavoro introduce oggi non esiste su nessuna riga. Dal branch `feat/riconciliazione-automatica` porta anche **`abbinato_auto_il`** (`timestamptz`, migr. `20260920124742`): **quando** l'abbinamento è stato deciso dall'applicazione all'import, senza un click. `NULL` = deciso da una persona **oppure** riga non confermata — **non è un quinto stato**, `stato` resta `confermato` in tutt'e due i casi e il `CHECK` non è stato toccato. Nessun backfill: lo storico resta `NULL` perché non è mai stato automatico. Si azzera a ogni riapertura insieme agli altri legami morti, ed è l'unico appiglio dell'annullamento in blocco — che **dallo stesso branch esiste**: `…/riconciliazione/annulla-import` (`GET` il riepilogo col perché di ogni riga, `POST` lo storno in blocco col perimetro dell'operatore, conferma digitata sul numero e tetto a 200) e `…/riconciliazione/riepilogo-visto` (la notifica alle famiglie, che parte **solo** se il riepilogo è stato davvero guardato e non annullato, idempotente sulla tabella `notifiche` senza nessuna colonna nuova) | ✅ RLS + policy `service_role` (1 policy, `ALL`) |
 > | `crediti_famiglia` | Ledger del credito di famiglia (causali eccedenza/utilizzo/rettifica/storno con `saldo_dopo`, ancorato a `parents.id`) — visibile **solo alla segreteria** | ✅ RLS + policy service_role |
 > | `cassa_movimenti` (+ `cassa_categorie`, `cassa_chiusure`, `admin_settings.cassa_config`) | Registro di cassa contanti per sede: ledger **immutabile** (entrata/uscita/prelievo/rettifica, solo storno tracciato), entrate auto dagli incassi contanti calcolate a query-time, svuotamento con differenza + prelievo (RPC atomica `registra_chiusura_cassa`), categorie di uscita con seed («Versamento in banca» `is_sistema`), giustificativo su Storage **privato**. Saldo/«entrato oggi»/totali/report/svuotamento **solo admin** | ✅ RLS service_role (RPC SECURITY DEFINER, REVOKE anon/authenticated) |
 > | `richieste_cancellazione` | Richieste self-service di cancellazione account genitore (App Store 5.1.1(v) + GDPR art. 17): il genitore avvia in-app **o dalla pagina pubblica `/cancellazione-account`** (C5, colonna `canale` = `in_app`/`pubblico_email`), la Direzione evade via anonimizzazione. Solo `parent_id`/stato/timestamp/conteggi/canale, **nessuna PII** | ✅ RLS abilitata **senza policy** (solo `service_role`) |
@@ -102,6 +102,146 @@
 > | **Libretto web giustificazioni** | 🔶 Parziale | Fase 2 | Preavviso d'assenza **operativo dal 2026-08-07 su tutti e tre i gradi**, con annullamento finché l'appello non è fatto (fino a quel giorno questa casella diceva «esiste» di codice che nessun utente poteva raggiungere: 0 usi in produzione). Manca la giustificazione online con PIN dispositivo |
 > | **Interoperabilità SIDI / Piattaforma Unica** | ✅ Implementato (P5, DL-047..050) · 🔶 egress gated | Fase P5 | Import ZIP (parser pluggable), Fase A, frequentanti, genitori-alunni, certificati competenze D.M. 14/2024 + indicatore sync. **Trasmissione reale subordinata all'accreditamento ministeriale** |
 > | **Accessibilità AgID / Legge Stanca** | 🔶 Baseline (P1, DL-008) | Trasversale | Fatto: alto contrasto globale persistito, focus-ring, reduced-motion, Modal accessibile, landmark/skip-link/aria-current, smoke jest-axe. **Dal 2026-09-04**: `color-scheme: light` dichiarato (i controlli nativi non vengono più disegnati scuri dal sistema), `muted` non è più un inchiostro, alto contrasto spostato dai menu rapidi alle impostazioni con lo stato visibile, e due lock nuovi (`palette-di-serie`, `token-alto-contrasto-non-inerti`). WCAG-AA = definition-of-done; audit AA per-pagina incrementale. ⚠️ **L'Alto Contrasto NON funziona su 7 rotte su 9** (17 classi `kv-*` su 173; misurato dal crawler il 2026-09-04/05, sette rotte fuori dalla sonda con la ragione scritta) |
+
+---
+
+## 🧾 Changelog — Il riepilogo di ciò che la macchina ha chiuso, e il modo di disfarlo — 2026-09-20 (branch `feat/riconciliazione-automatica`)
+
+Dopo un import con abbinamenti automatici la segreteria **vede l'elenco di ciò che è stato chiuso
+senza che nessuno cliccasse**, con il **perché** di ogni riga, e ha un pulsante che annulla l'intero
+import in un colpo. Decisione del titolare, e chiude il cerchio dei due lotti precedenti: la fase
+automatica scrive denaro da sola, la marca dice che è stata lei, questo lotto è la porta da cui una
+persona la controlla e la disfa.
+
+### Le tre porte
+
+| dove | che cosa |
+|---|---|
+| `GET /api/pagamenti/riconciliazione/annulla-import?import_id=…` | l'elenco: data, importo, causale troncata, **su quale voce** e **perché** |
+| `POST /api/pagamenti/riconciliazione/annulla-import` | lo storno in blocco, `{ import_id, conferma: z.literal(true) }` |
+| `POST /api/pagamenti/riconciliazione/riepilogo-visto` | la notifica differita alle famiglie |
+
+L'elenco **non** arriva dal `GET` del registro filtrato per import, che la consegna indicava: quel
+filtro porta *tutti* i confermati di un import — compresi quelli che una **persona** ha confermato a
+mano — e non porta né la marca né il motivo. Elenco e bersaglio dell'annullo sarebbero stati due
+insiemi diversi, e siccome la conferma si **digita** (si scrive il numero delle righe), quel numero
+avrebbe certificato un elenco che non è quello che si sta per disfare. Tutte e tre le porte passano
+perciò dalla **stessa query** (`src/lib/pagamenti/righe-automatiche.ts`: import + `confermato` +
+marca non nulla, paginata), che è anche il motivo per cui quella query sta fuori dalle rotte.
+
+### Il perché di ogni riga, che in nessuna colonna esiste
+
+`src/lib/pagamenti/motivo-abbinamento.ts` **ricostruisce** il motivo invece di leggerlo: il matcher
+lo calcola ma non lo persiste da nessuna parte (`abbinaImportAutomaticamente` usa `motivi` solo per
+l'aggregato delle rinunce). Esce come **enumerato** (`codice_voce` · `codice_fiscale` ·
+`residuo_esatto` · `somma_esatta` · `non_ricostruito`), mai come prosa: una frase italiana sul filo
+resterebbe italiana in interfaccia inglese. Il codice voce si ricostruisce dall'uuid del pagamento e
+**non costa nessuna lettura**; il codice fiscale sì, e per questo fuori dalle proprie sedi il motivo
+può restare `non_ricostruito` — è il verso giusto, sono righe che l'operatore non può annullare.
+
+### L'annullo: perimetro, conferma digitata, tetto, e nessuna finzione di atomicità
+
+- **Il perimetro torna quello dell'operatore** (`resolveScuoleAttive`), non la deroga cross-sede
+  della fase automatica: disfare è uno **storno**, cioè denaro di una sede. Una sola riga di un altro
+  plesso ⇒ **403 prima di qualunque scrittura**, e il `GET` lo dice prima (`annullabile: false`) così
+  il pannello non offre nemmeno il pulsante.
+- **La conferma si digita, e si digita il numero** delle righe da riaprire (grammatica di
+  `ZonaPericolosaStaff`, che fa digitare il cognome). Una spunta si clicca di riflesso; il numero
+  cambia da un import all'altro, e per scriverlo bisogna guardare l'elenco.
+- **Tetto a 200 righe**, oltre il quale si rifiuta con un codice dedicato e si rimanda al registro
+  filtrato: un ciclo non limitato su una rotta serverless è un timeout travestito da successo
+  parziale.
+- **Non è atomica e non lo finge**: N storni indipendenti, tutti attraverso `riapriMovimento` — lo
+  **stesso** codice del pulsante singolo, riusato e non ricopiato. La risposta dice quanti riaperti,
+  quanti falliti col loro codice, quanti incassi stornati, quante transazioni annullate, e il credito
+  già speso ha un contatore suo. Il ritentativo è idempotente **per costruzione** (verificato in
+  `riapertura-movimento.ts`, non dedotto), e le righe già riaperte non rientrano nemmeno nella query.
+- **Le fatture vive non fermano niente** (167 riaperture su 174 ne hanno una): l'avviso si aggrega.
+  Ma siccome l'automatismo **non emette fatture**, quel conteggio dovrebbe essere **zero**: se non lo
+  è, l'annullo sta arrivando tardi ⇒ `warn` dedicato.
+
+### 🔴 La notifica parte dal gesto umano, e solo se quel gesto c'è stato
+
+Gli abbinamenti automatici **non notificano** nessuno: un avviso mandato non si ritira, ed è l'unica
+cosa di tutta questa fase che nessun rollback riprende. L'avviso parte quando **la segreteria ha
+guardato il riepilogo e non l'ha annullato**.
+
+L'idempotenza **non ha richiesto nessuna colonna nuova**: la domanda «esiste già un
+`pagamento_registrato` su questa entità, creato **dopo** `abbinato_auto_il`?» la risponde la tabella
+`notifiche` che c'è già. Due click non avvisano due volte; una notifica di mesi fa per un'altra rata
+non blocca questa (è più vecchia della marca). **Non** si usa il `debounce` di `notificaEvento`:
+quello collassa le raffiche ancora *pending*, non è un'idempotenza. Lettura di `notifiche` fallita ⇒
+**503 fail-closed**, zero avvisi.
+
+⚠️ **E «popup chiuso» non è «riepilogo guardato».** Il primo giro di questo lotto faceva partire gli
+avvisi a **ogni** chiusura, comprese le due che non mostrano niente — il guasto di lettura, e
+l'Escape mentre l'elenco è ancora in volo. Partivano avvisi irreversibili per righe che nessuno aveva
+visto, che è esattamente l'invariante che questo lotto esiste per proteggere. Il popup dichiara ora
+se l'elenco era **a schermo** (`onChiudi(visto)`); il pannello chiama `riepilogo-visto` solo su
+`visto === true`. Anche un annullo **rifiutato** tace: chi chiudeva aveva appena chiesto di disfare.
+Nel dubbio non si avvisa — un avviso non partito si rimedia riaprendo il riepilogo dalla fascia (la
+rotta è idempotente), uno partito no.
+
+Per la stessa ragione, dopo un annullo **parziale** la fascia «N chiusi automaticamente — Vedi e
+annulla» **resta**: le righe che lo storno non ha riaperto sono famiglie che aspettano ancora il loro
+avviso, e buttando via l'`import_id` non ci sarebbe più nessuna porta da cui farlo partire.
+
+### Il perimetro non cambia sull'avviso, e la ragione è scritta
+
+L'annullo si restringe alle sedi dell'operatore; l'avviso **no**. È la coda della fase automatica,
+che lavora su tutte e tre le sedi per decisione del titolare (l'estratto conto è uno solo):
+restringerlo lascerebbe le famiglie degli altri due plessi senza avviso **per sempre**, perché
+nessun altro aprirà mai il riepilogo di quell'import.
+
+### 🔴 La finestra dell'avviso è quella dell'import, non quella dell'annullo
+
+**Stessa domanda al database, finestra diversa**, e la differenza è la correzione di un difetto
+trovato in revisione. La notifica differita riusava la finestra dell'annullo (200 righe) su un
+insieme che la fase automatica può riempire fino a **500** (`MAX_AUTO_PER_IMPORT`). L'ordine di
+lettura è stabile (`data_operazione, id`) e notificare **non cambia lo stato della riga**: ogni
+riapertura del riepilogo ripescava perciò le stesse prime 200 — già avvisate, quindi contate come
+«già notificate» — e dalla 201ª in poi le famiglie non venivano raggiunte **mai**, in silenzio. Su
+quell'import anche l'annullo in blocco rifiuta (oltre il tetto ⇒ `422`), quindi quelle righe
+restavano confermate, mute e senza nemmeno la via d'uscita di disfarle.
+
+`riepilogo-visto` legge ora con `TETTO_FINESTRA` (la finestra strutturale del lettore, 20 pagine da
+100 = **2.000**, quattro volte il tetto della fase automatica) e si ferma sulla pagina vuota. Il
+rapporto fra le due costanti è **verificato da un test** che rilegge `MAX_AUTO_PER_IMPORT` dal file
+che lo dichiara, non copiato a mano. Se la finestra si chiudesse comunque prima dell'import,
+`troncato` esce a livello **`error`** nel log **e** nella risposta, e il pannello lo mostra in una
+fascia d'avviso che dice la cosa che conta: quelle famiglie non sono state avvisate e **riaprire il
+riepilogo non le recupera**. Prima il campo c'era già e l'unico chiamante lo buttava, guardando solo
+`r.ok`.
+
+### L'elenco delle fatture rimaste vive arriva a schermo
+
+Il `POST` aggregava già i documenti ancora validi (`fatture: { movimento_id, numeri }[]`, col `warn`
+dedicato), ma la fascia dell'esito mostrava solo riaperti e falliti: i **numeri** delle fatture —
+l'unica cosa con cui la segreteria può andare ad annullarle — restavano in un log. Ora compaiono
+sotto l'esito dell'annullo (`reconAnnulloFattureVive`), a completare la frase che il popup dice
+*prima* di confermare («le fatture già emesse restano emesse e vanno annullate a parte»).
+
+### Minimizzazione: la riga oltre il tetto non si legge affatto
+
+Il `GET` filtra le voci **per sede in query**, non dopo: finché il filtro stava nel `.map()` finale,
+nomi e codici fiscali di minori di altri plessi venivano comunque letti dal database per essere
+buttati una riga dopo. Per la stessa ragione il taglio al tetto viene **prima** della lettura
+dell'anagrafica: oltre il tetto la query restituisce `TETTO+1` righe, e la riga in più non esce nella
+risposta — leggerne il pagamento sarebbe l'anagrafica di un minore letta per niente.
+
+⚠️ E `TETTO+1` è vero perché **lo taglia il lettore**, non perché venga così dal database: si pagina
+a blocchi di 100, quindi senza quel taglio ciò che arrivava alla rotta era fino a `TETTO+100`. Per
+due giri di revisione due commenti hanno dichiarato «TETTO+1» mentre il codice ne leggeva 300 — la
+stessa stima sbagliata da cui nasceva il difetto della finestra qui sopra. Adesso lo garantisce il
+codice, e un test lo tiene fermo (le rotte non possono vederlo: tagliano comunque a 200 prima di
+mostrare o di stornare).
+
+### Degradazione (il DB E2E della CI non è migrato)
+
+`abbinato_auto_il` assente (`42703`/`PGRST204`) ⇒ in **lettura** un `200` con `disponibile: false` (il
+popup lo dice invece di mostrare un elenco vuoto, che si leggerebbe come «non ha chiuso niente»), in
+**scrittura** un `503` col suo codice. Mai un ripiego su «tutti i confermati di questo import»:
+sarebbe disfare il lavoro di una persona.
 
 ---
 

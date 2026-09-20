@@ -119,6 +119,111 @@ test('lo storico mostra la retta aperta e la gita pagata', async ({ page, browse
    */
   await expect(page.getByText('Le coordinate bancarie non sono ancora disponibili')).toBeVisible();
 
+  /**
+   * ═══ IL CODICE DELLA VOCE, DENTRO LA CAUSALE E DENTRO GLI APPUNTI ═══════════
+   *
+   * Il codice (`#K7MXN3P`) dice QUALE voce si sta pagando. Il codice fiscale che
+   * la causale portava già dice di CHI è il pagamento, non di CHE COSA: finché la
+   * famiglia ha una voce sola la differenza non si vede, e appena ne ha due la
+   * riconciliazione deve indovinare — l'importo non aiuta, perché le rette sono
+   * tutte uguali. Questa è la prima metà della catena: il codice arriva a schermo,
+   * e il bottone lo mette negli appunti tale e quale. La seconda metà — la causale
+   * tornata dalla banca che riaggancia quella riga — vive in
+   * `e2e/admin-riconciliazione-popup.spec.ts` e nei test unitari di
+   * `estraiCodiciVoce`.
+   *
+   * ⚠️ QUI NON C'È NESSUNA DEGRADAZIONE DA PROVARE, e lo si scrive perché
+   * l'assenza non venga scambiata per una dimenticanza. Quasi ogni cosa aggiunta
+   * di recente porta con sé un ramo «sul DB E2E della CI la colonna non c'è» —
+   * `scadenza_avviso`, `abbinato_auto_il`, `pagamenti.sconto`. Il codice della
+   * voce **non ha colonne**: `codiceVoce(id)` è una funzione pura dell'uuid del
+   * pagamento, senza `import`, senza stato e senza database. Non esiste uno
+   * schema che possa essere indietro, quindi non esiste un ramo da collaudare:
+   * qui il comportamento è lo stesso su ogni ambiente, migrato o no.
+   *
+   * ⚠️ SI VERIFICA LA FORMA, NON IL VALORE. L'alfabeto è quello dichiarato in
+   * `src/lib/pagamenti/codice-voce.ts`: 8 cifre e 12 consonanti, senza vocali
+   * (un codice di sette simboli non può formare una parola italiana, né una
+   * volgare, su una comunicazione alle famiglie) e senza i sosia tipografici
+   * (`0/O/D/Q`, `1/I/L/J`, `B/8`, `S/5`, `Z/2`, `G/6`, `W`). Che quel codice sia
+   * ESATTAMENTE `codiceVoce('…0701')` lo provano i test unitari, che la funzione
+   * la importano; qui no — gli spec Playwright non importano da `src/`, e
+   * ricopiare un codice atteso creerebbe una seconda verità sullo stesso valore.
+   */
+  const FORMA_CODICE_VOCE = /#[23456789CFHKMNPRTVXY]{7}/;
+
+  // Il blocco è quello che porta il bottone di copia della causale: `getByText`
+  // pescherebbe i sosia — «Retta E2E luglio» è a schermo anche come titolo della
+  // riga e dentro lo storico più sotto.
+  const copiaCausale = page.getByRole('button', { name: /^Copia la causale di / });
+  const bloccoCausale = page.getByRole('listitem').filter({ has: copiaCausale });
+  await expect(
+    bloccoCausale,
+    'il seed ha UNA sola voce aperta: con due blocchi copiabili il locator sarebbe ambiguo',
+  ).toHaveCount(1);
+
+  const testoCausale = await bloccoCausale.innerText();
+  expect(
+    testoCausale,
+    'la causale consigliata non porta il codice della voce: senza, due rette identiche della stessa ' +
+      'famiglia tornano dalla banca indistinguibili e la riconciliazione deve indovinare',
+  ).toMatch(FORMA_CODICE_VOCE);
+  const codiceAschermo = testoCausale.match(FORMA_CODICE_VOCE)?.[0] ?? '';
+
+  /**
+   * GLI APPUNTI, LETTI DAVVERO. È il canale primario: la card dice «Copiala così
+   * com'è», e un bottone che copiasse un testo diverso da quello mostrato
+   * manderebbe la famiglia a scrivere nell'home banking una causale che nessuno
+   * riaggancia — senza che niente, a schermo, lo lasci vedere.
+   *
+   * ⚠️ Solo CHROMIUM, e non per scelta: `grantPermissions` non conosce
+   * `clipboard-read` su WebKit. Non serve una guardia, perché su WebKit questo
+   * test è già fermo al `fixme` in testa al file — quel motore non arriva mai
+   * qui. Il giorno in cui quella divergenza venisse chiusa, questo blocco è il
+   * primo posto da rileggere.
+   */
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await copiaCausale.click();
+
+  /**
+   * Si ATTENDE la clipboard, non l'etichetta. `navigator.clipboard.writeText` è
+   * asincrona: leggere subito coglierebbe la scrittura in volo, a intermittenza.
+   * Aspettare invece il «Copiato» a schermo sarebbe peggio — quella conferma
+   * torna «Copia» dopo due secondi (`setTimeout` in `CausaleBonifico`), e su una
+   * CI lenta la finestra si perde: un verde che dipende da un timer di due
+   * secondi è un rosso che arriverà un martedì. Il riscontro vero sono gli
+   * appunti, e si aspetta quelli.
+   */
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()), {
+      message:
+        'negli appunti non è finita nessuna causale col codice della voce: è proprio il pezzo che la ' +
+        'riconciliazione legge quando il bonifico torna dalla banca',
+      timeout: 15_000,
+    })
+    .toMatch(FORMA_CODICE_VOCE);
+
+  const appunti = await page.evaluate(() => navigator.clipboard.readText());
+  expect(
+    appunti,
+    'il codice copiato non è quello mostrato: il genitore scriverebbe nell’home banking il ' +
+      'riferimento di un’altra voce',
+  ).toContain(codiceAschermo);
+
+  /**
+   * …e nient'altro è cambiato per strada. Il confronto è a spazi NORMALIZZATI e
+   * per contenimento, non carattere per carattere: a schermo la causale passa da
+   * `CausaleLeggibile`, che la spezza in gruppi `whitespace-nowrap` perché il
+   * codice fiscale non vada a capo a metà, e il blocco porta anche titolo,
+   * importo, occhiello e bottone. La tesi è «ciò che sta negli appunti è ciò che
+   * si legge lì», che è quanto la card promette («Copiala così com'è»).
+   */
+  const normalizza = (s: string) => s.replace(/\s+/g, ' ').trim();
+  expect(
+    normalizza(testoCausale),
+    'il bottone «Copia» ha messo negli appunti un testo che a schermo non c’è',
+  ).toContain(normalizza(appunti));
+
   // I contanti sono un tab vero (WAI-ARIA), non un paragrafo: si può arrivarci da
   // tastiera. Il suo pannello dice DOVE si paga e — nella stessa schermata — che i
   // contanti NON sono detraibili (L. 160/2019). Dire la prima cosa senza la seconda

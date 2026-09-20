@@ -185,7 +185,7 @@ describe('GET /api/pagamenti — le coordinate del bonifico, una per sede', () =
     expect(j).toEqual({ success: true, data: [], sedi: [] })
   })
 
-  it('`data` resta quello di prima: causale consigliata e nome sede intatti', async () => {
+  it('`data` resta quello di prima: causale consigliata (col codice della voce) e nome sede intatti', async () => {
     h.db.pagamenti = [pagamento('pg-a', ALU_A, SEDE_A)]
     h.figli.mockResolvedValue([ALU_A])
     const j = await (await GET(url())).json()
@@ -193,7 +193,12 @@ describe('GET /api/pagamenti — le coordinate del bonifico, una per sede', () =
     expect(j.data[0]).toMatchObject({
       id: 'pg-a',
       scuola_nome: NOME_SEDE_A,
-      causale_suggerita: `Retta Settembre 2026 - per il minore Mara Bianchi - ${CF} - ALFA`,
+      // Il `#R3N397T` è `codiceVoce('pg-a')`, trascritto a mano: il codice dice QUALE
+      // voce si sta pagando quando la famiglia ne ha più d'una aperta, e qui si
+      // controlla che arrivi fino alla risposta che la card «Come pagare» legge.
+      // Scritto per esteso invece che composto con la funzione — un'asserzione che
+      // chiama ciò che vuole misurare è verde anche quando il codice non esce affatto.
+      causale_suggerita: `Retta Settembre 2026 #R3N397T - per il minore Mara Bianchi - ${CF} - ALFA`,
       residuo: 150,
     })
   })

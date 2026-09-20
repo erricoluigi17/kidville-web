@@ -354,13 +354,43 @@ export async function registraConciliazione(
     composizione: Composizione
     /** Le sedi su cui il chiamante può conciliare. Vedi la testata: è un parametro apposta. */
     sediAmmesse: string[]
-    /** Chi firma la transazione (`registrato_da`). */
+    /**
+     * Chi firma la transazione (`registrato_da`).
+     *
+     * ⚠️ RESTA VALORIZZATO ANCHE QUANDO `automatico` è vero: quell'uuid finisce
+     * in `pagamenti_transazioni.registrato_da` e in `incassi.registrato_da`,
+     * cioè in due registri contabili. Azzerarlo per distinguere la macchina
+     * avrebbe risparmiato una colonna al prezzo di due registri anonimi — e
+     * sarebbe anche falso: qualcuno ha comunque premuto «Importa».
+     */
     attoreId: string
     /** Il nome dell'operazione nei log: lo dichiara il chiamante, che è l'unico a saperlo. */
     operazione: string
+    /**
+     * `true` quando a decidere questa composizione è stata l'APPLICAZIONE, senza
+     * un click: la riga bancaria si marca con `abbinato_auto_il`, e a scriverla
+     * è la RPC DENTRO il proprio compare-and-swap (migrazione `20260920124744`).
+     *
+     * Default `false` = il comportamento di oggi, più l'azzeramento della marca
+     * — che è il verso giusto: una ricomposizione fatta a mano su un movimento
+     * che la macchina aveva abbinato deve smettere di risultare automatica, o
+     * l'annullamento in blocco disferebbe il lavoro di una persona.
+     *
+     * 🔴 CHI LO METTE A `true` DEVE AVER CHIESTO PRIMA `marcaAutomaticaDisponibile`:
+     * senza la colonna l'abbinamento automatico non deve PARTIRE, non «partire
+     * senza marca». Il perché per esteso sta in `@/lib/pagamenti/marca-automatica`.
+     */
+    automatico?: boolean
   },
 ): Promise<EsitoConciliazione> {
-  const { movimentoId, composizione: body, sediAmmesse, attoreId, operazione } = args
+  const {
+    movimentoId,
+    composizione: body,
+    sediAmmesse,
+    attoreId,
+    operazione,
+    automatico,
+  } = args
 
   // ── 1) IL MOVIMENTO ────────────────────────────────────────────────────
   // `transazione_id` è nella SELECT apposta, e non perché serva leggerlo: è
@@ -1011,6 +1041,21 @@ export async function registraConciliazione(
     ancora_indice_voce_nuova: ancoraIndiceNuova,
     ancora_indice_voce_ticket: ancoraIndiceTicket,
     registrato_da: attoreId,
+    // La marca «abbinato dalla macchina». La scrive la RPC DENTRO il proprio
+    // compare-and-swap (`20260920124744`), mai un UPDATE dopo: fra la RPC e una
+    // seconda scrittura c'è una finestra vera, e l'esito parziale è una riga
+    // confermata dalla macchina e non marcata — cioè una riga che
+    // l'annullamento in blocco non troverà mai più.
+    //
+    // Si manda SEMPRE, esplicito, anche quando è `false`, per la stessa ragione
+    // per cui `ricariche_mensa` viaggia come `[]`: il payload è ciò che si
+    // rilegge nei log quando una transazione va indagata, e «campo assente» e
+    // «non è automatica» devono leggersi diversi. Alla RPC non cambia niente —
+    // `COALESCE((p->>'abbinato_auto')::boolean, false)` tratta i due casi allo
+    // stesso modo — e alla RPC VECCHIA nemmeno: una chiave che non conosce la
+    // ignora, mentre una colonna che PostgREST non conosce farebbe fallire
+    // l'intera scrittura. Qui il jsonb non ha quel problema.
+    abbinato_auto: automatico === true,
   }
 
   const { data: rpcData, error: rpcErr } = await supabase.rpc('registra_transazione_contabile', { p: payload })
@@ -1098,6 +1143,11 @@ export async function registraConciliazione(
     ticket: body.voci_ticket.length,
     incassi: esito.incassi ?? 0,
     confermato: movimentoConfermato,
+    // «Questa l'ha decisa la macchina o una persona?» diventa una query invece
+    // di un'ipotesi: è un booleano, quindi `redact` lo lascia in chiaro, e senza
+    // di lui il giorno in cui l'automatismo sbaglia in blocco non ci sarebbe
+    // modo di contare quante righe ha toccato prima che qualcuno se ne accorga.
+    automatico: automatico === true,
     oblio_verificato: oblioVerificabile,
   })
 

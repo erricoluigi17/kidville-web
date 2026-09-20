@@ -110,13 +110,39 @@ export async function confermaSuVoceSingola(
     pagamentoId: string
     /** Le sedi su cui il chiamante può registrare un incasso. Vedi la scelta n. 1 in testata. */
     sediAmmesse: string[]
-    /** Chi firma l'incasso e la conferma (`registrato_da`, `confermato_da`). */
+    /**
+     * Chi firma l'incasso e la conferma (`registrato_da`, `confermato_da`).
+     *
+     * ⚠️ RESTA VALORIZZATO ANCHE QUANDO `automatico` è vero, e non è un ripiego:
+     * quell'uuid finisce in `incassi.registrato_da`, cioè in un registro
+     * contabile. Scriverlo a NULL per distinguere la macchina avrebbe
+     * risparmiato una colonna al prezzo di un registro anonimo — e sarebbe
+     * anche falso: qualcuno ha comunque premuto «Importa».
+     */
     attoreId: string
     /** Il nome dell'operazione nei log: lo dichiara il chiamante, che è l'unico a saperlo. */
     operazione: string
+    /**
+     * `true` quando a decidere questo abbinamento è stata l'APPLICAZIONE, senza
+     * un click: la riga si marca con `abbinato_auto_il`, dentro lo stesso
+     * compare-and-swap che la conferma.
+     *
+     * Default `false` = il comportamento di oggi, colonna non toccata. Il verso
+     * è scelto: chi arriva da una schermata non deve sapere che questa marca
+     * esiste, e un `undefined` non deve mai voler dire «forse automatico».
+     *
+     * 🔴 CHI LO METTE A `true` DEVE AVER CHIESTO PRIMA `marcaAutomaticaDisponibile`.
+     * Non si controlla qui, e non per pigrizia: se la colonna non c'è
+     * l'abbinamento automatico non deve PARTIRE — non «partire senza marca» —
+     * perché senza la marca non esiste l'annullamento in blocco, e un
+     * automatismo che non si può disfare non è quello che è stato chiesto.
+     * Decidere quello qui dentro, a incasso già scritto, sarebbe troppo tardi:
+     * la decisione sta a monte, dove si sceglie se far partire l'automatismo.
+     */
+    automatico?: boolean
   },
 ): Promise<EsitoConferma> {
-  const { movimento: mov, pagamentoId, sediAmmesse, attoreId, operazione } = args
+  const { movimento: mov, pagamentoId, sediAmmesse, attoreId, operazione, automatico } = args
 
   // ── 🔴 UN BONIFICO NON SI FATTURA DUE VOLTE ──────────────────────────────
   // La fattura si emette per `pagamento_id`, e la guardia contro il secondo
@@ -272,17 +298,57 @@ export async function confermaSuVoceSingola(
   // CAS ottimistico: conferma solo se il movimento è ancora nello stato letto.
   // Due conferme concorrenti creerebbero due incassi per lo stesso bonifico
   // (#12): se la corsa è persa, storna l'incasso appena inserito.
+  //
+  // ── 🔴 LA MARCA STA DENTRO QUESTO `update`, E NON IN UNO DOPO ────────────
+  // Un secondo UPDATE non sarebbe atomico con la conferma, e l'esito parziale
+  // ha un nome preciso: una riga confermata dalla macchina e NON marcata, cioè
+  // una riga che l'annullamento in blocco — il solo motivo per cui la marca
+  // esiste — non troverà mai più. Qui invece la marca vive o muore con il CAS:
+  // se la corsa è persa, l'`update` non tocca nessuna riga e l'incasso appena
+  // inserito viene cancellato subito sotto.
+  //
+  // E la chiave si AGGIUNGE solo quando serve, invece di scrivere sempre
+  // `abbinato_auto_il: automatico ? … : null`: sul DB E2E della CI la colonna
+  // non esiste, e una chiave sconosciuta fa fallire l'intero UPDATE con
+  // `PGRST204` — cioè la conferma manuale, che con questa marca non c'entra
+  // niente, cadrebbe su ogni ambiente non migrato. Il percorso manuale non ha
+  // niente da spegnere: una riga che si sta confermando non è confermata, e
+  // l'unico modo di arrivarci marcata sarebbe passare da una riapertura, che la
+  // marca la azzera (`riapertura-movimento.ts` e
+  // `annulla_transazione_contabile`).
+  //
+  // ⚠️ QUELLA FRASE POGGIA SU UN'INVARIANTE, e va detta invece di darla per
+  // scontata: la riapertura azzera la marca SEMPRE, o rifiuta. Il 2026-09-20 non
+  // era così — su un guasto qualunque della lettura la rotta proseguiva
+  // «senza marca», cioè lasciandola ACCESA su una riga tornata `da_abbinare` — e
+  // quel ramo rendeva falsa questa riga. Adesso in `…/[id]/route.ts` la marca si
+  // chiede dentro la lettura del movimento: `42703`/`PGRST204` degradano,
+  // qualunque altro errore esce 500 PRIMA dello storno. Chi tocca quel ramo
+  // rilegga questa riga: sono la stessa decisione scritta in due posti.
+  //
+  // ⚠️ E LE DUE PORTE MANUALI RESTANO ASIMMETRICHE, per una scelta misurata.
+  // `registraConciliazione` manda `abbinato_auto: false` alla RPC, che AZZERA la
+  // marca anche sul percorso manuale; qui non si scrive niente. Renderle uguali
+  // vorrebbe dire un `abbinato_auto_il: null` incondizionato, che su un DB non
+  // migrato fa cadere la conferma a voce singola con `PGRST204` — quindi
+  // servirebbe un parametro `colonnaMarca` in più, portato fin qui da chi chiama.
+  // Non si paga, perché non c'è niente da correggere: data l'invariante qui
+  // sopra, una riga `da_abbinare` marcata non esiste. Il giorno in cui quella
+  // invariante cadesse, questa asimmetria diventerebbe un difetto — ed è scritto
+  // qui perché non lo si scopra a incidente avvenuto.
+  const patch: Record<string, unknown> = {
+    stato: 'confermato',
+    pagamento_id: pagamentoId,
+    incasso_id: (incasso as { id: string }).id,
+    // Il movimento (finora globale/senza sede) assume la sede del pagamento confermato.
+    scuola_id: pagDett.scuola_id,
+    confermato_da: attoreId,
+    confermato_il: new Date().toISOString(),
+  }
+  if (automatico) patch.abbinato_auto_il = new Date().toISOString()
   const { data: updated, error: errUpd } = await supabase
     .from('riconciliazione_movimenti')
-    .update({
-      stato: 'confermato',
-      pagamento_id: pagamentoId,
-      incasso_id: (incasso as { id: string }).id,
-      // Il movimento (finora globale/senza sede) assume la sede del pagamento confermato.
-      scuola_id: pagDett.scuola_id,
-      confermato_da: attoreId,
-      confermato_il: new Date().toISOString(),
-    })
+    .update(patch)
     .eq('id', mov.id)
     .eq('stato', mov.stato)
     .select('id')

@@ -198,13 +198,65 @@ export async function riapriMovimento(
     transazioneGiaAnnullata: boolean
     /** `true` se il database HA la colonna `transazione_id`: decide se si può scriverla. */
     colonnaTransazione: boolean
+    /**
+     * `true` se il database HA `abbinato_auto_il`, la marca «abbinato dalla
+     * macchina»: decide se la riapertura può SPEGNERLA.
+     *
+     * ⚠️ DA DOVE ARRIVA: dalla LETTURA DEL MOVIMENTO che il chiamante fa
+     * comunque — la catena di varianti `MOV_VARIANTI` in
+     * `…/riconciliazione/[id]/route.ts`, che chiede `abbinato_auto_il` insieme
+     * alle altre colonne e scala di una variante per volta. Lì, e solo lì, la
+     * risposta ha il verso giusto: `42703`/`PGRST204` — «la colonna non esiste
+     * su questo database» — degradano alla variante più povera e portano qui
+     * `false`, mentre QUALUNQUE ALTRO errore fa uscire la richiesta con 500
+     * **prima** dello storno. Non costa una lettura in più: è la stessa.
+     *
+     * 🔴 NON SI RIEMPIE CON `marcaAutomaticaDisponibile()`, e il divieto è il
+     * punto di questo lotto. Quella funzione risponde a un'altra domanda —
+     * «l'automatismo deve PARTIRE?» — ed è fail-**closed** su ogni guasto: su un
+     * timeout, un 5xx di PostgREST o un pool esaurito risponde `false`. Per la
+     * sua domanda è il verso giusto (l'automatismo non parte, il lavoro resta a
+     * una persona: errore recuperabile). Per QUESTA domanda — «posso SPEGNERE la
+     * marca?» — lo stesso `false` è il verso non recuperabile: la riapertura
+     * proseguirebbe, STORNO COMPRESO, e la riga tornerebbe in coda `da_abbinare`
+     * ancora marcata «automatica». Una riconferma fatta a mano da
+     * `confermaSuVoceSingola` non la spegne (là `abbinato_auto_il` si scrive solo
+     * quando `automatico` è vero), e l'annullamento in blocco disferebbe il
+     * lavoro di una persona: la marca che mente, cioè la cosa che questa colonna
+     * esiste per impedire.
+     *
+     * ⚠️ VALE ANCHE PER LA RIAPERTURA IN BLOCCO, che è il motivo per cui questa
+     * funzione è stata estratta (`…/[id]/route.ts`: «la riapertura in blocco che
+     * arriverà dovrà passare di lì»). Su un import intero il verso sbagliato non
+     * lascia una riga mentitrice ma centinaia, con lo storno già fatto. Chi la
+     * scriverà porti qui `colonnaMarca` dalla propria lettura delle righe, con la
+     * stessa regola: colonna assente ⇒ `false`, guasto ⇒ si esce PRIMA di
+     * stornare. La stessa decisione è già scritta in `…/[id]/route.ts` (sopra
+     * `MOV_SELECT_MARCA` e sopra la chiamata) e in `riconciliazione-conferma.ts`:
+     * sono tre copie della stessa riga, e si correggono insieme.
+     *
+     * A `false` la colonna non si scrive affatto: su un DB non migrato un
+     * `abbinato_auto_il: null` farebbe fallire l'UPDATE con `PGRST204` — e
+     * fallirebbe DOPO lo storno, lasciando la riga confermata sopra un incasso
+     * che non esiste più. Non è una marca in meno: è la riapertura intera che
+     * non avviene. Dove la colonna non c'è, del resto, non c'è nemmeno niente da
+     * spegnere: l'abbinamento automatico su quell'ambiente è spento per intero.
+     */
+    colonnaMarca: boolean
     /** Chi firma l'annullo nella RPC e lo storno. */
     attoreId: string
     /** Il nome dell'operazione nei log: lo dichiara il chiamante. */
     operazione: string
   },
 ): Promise<EsitoRiapertura> {
-  const { movimento: mov, transazioneGiaAnnullata, colonnaTransazione, attoreId, operazione } = args
+  const {
+    movimento: mov,
+    transazioneGiaAnnullata,
+    colonnaTransazione,
+    colonnaMarca,
+    attoreId,
+    operazione,
+  } = args
   const id = mov.id
 
   // ── 1. L'AVVISO: quali documenti restano vivi ─────────────────────────
@@ -464,6 +516,16 @@ export async function riapriMovimento(
     // Si scrive solo se la colonna esiste: su un DB non migrato un
     // `transazione_id: null` farebbe fallire l'UPDATE con `PGRST204`.
     if (colonnaTransazione) patch.transazione_id = null
+    // ── LA MARCA «ABBINATO DALLA MACCHINA» È IL QUINTO LEGAME MORTO ───────
+    // Senza questa riga la marca MENTE, ed è il motivo per cui esiste: la riga
+    // torna in coda ancora marcata «automatica», un'operatrice la riconferma A
+    // MANO, e l'annullamento in blocco — che cerca esattamente quella marca —
+    // disfa il lavoro di una persona. Sta nella STESSA `patch` e non in un
+    // UPDATE dopo: una marca spenta fuori dal compare-and-swap è una marca che
+    // una corsa persa lascia accesa su una riga che nessuno ha riaperto.
+    // (Il ramo composito non passa di qui: lo spegne `annulla_transazione_contabile`
+    // dentro la propria transazione atomica — migrazione `20260920124743`.)
+    if (colonnaMarca) patch.abbinato_auto_il = null
     const { data: upd, error: errUpd } = await supabase
       .from('riconciliazione_movimenti')
       .update(patch)

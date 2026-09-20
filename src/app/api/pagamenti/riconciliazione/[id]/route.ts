@@ -29,6 +29,13 @@ import { confermaSuVoceSingola } from '@/lib/pagamenti/riconciliazione-conferma'
 // sola, letta dalla lettura del movimento e dallo storno. Riscriverla qui farebbe
 // due dichiarazioni gemelle, cioè la cosa che questa estrazione toglie di mezzo.
 import { riapriMovimento, COLONNA_ASSENTE } from '@/lib/pagamenti/riapertura-movimento'
+// ⚠️ QUI NON SI IMPORTA `marcaAutomaticaDisponibile`, e l'assenza è una scelta:
+// quella funzione risponde a «l'automatismo deve PARTIRE?» ed è fail-closed su
+// ogni guasto. Questa rotta fa la domanda opposta — «posso SPEGNERE la marca?» —
+// dove «non lo so» trattato come «no» lascia accesa una marca che mente. La
+// risposta arriva perciò dalla lettura del movimento (`MOV_SELECT_MARCA`), che
+// degrada sulla sola colonna assente e su tutto il resto esce 500 prima dello
+// storno.
 
 const patchBodySchema = z.object({
   azione: z.enum(['conferma', 'ignora', 'riapri']),
@@ -36,15 +43,55 @@ const patchBodySchema = z.object({
 })
 
 /**
- * Le colonne del movimento. Due varianti per la stessa ragione di `PAG_SELECT_*`
- * dentro `@/lib/pagamenti/riconciliazione-conferma`: `transazione_id` nasce con
- * la conciliazione composita e sul DB E2E della CI non c'è → `42703`. Chiederla
- * in una SELECT che serve anche alla conferma farebbe cadere l'intera rotta su
- * quell'ambiente.
+ * Le colonne del movimento. TRE varianti (erano due fino al 2026-09-20) per la
+ * stessa ragione di `PAG_SELECT_*` dentro `@/lib/pagamenti/riconciliazione-conferma`:
+ * `transazione_id` nasce con la conciliazione composita e sul DB E2E della CI non
+ * c'è → `42703`. Chiederla in una SELECT che serve anche alla conferma farebbe
+ * cadere l'intera rotta su quell'ambiente.
  */
 const MOV_SELECT_BASE =
   'id, scuola_id, importo, data_operazione, causale, stato, suggerimenti, pagamento_id, incasso_id'
 const MOV_SELECT_TX = `${MOV_SELECT_BASE}, transazione_id`
+/**
+ * La variante COMPLETA: `abbinato_auto_il` in coda, la marca «abbinato dalla
+ * macchina» (migrazione `20260920124742`).
+ *
+ * ⚠️ È QUI E NON IN UNA SONDA A PARTE, e la differenza non è di stile.
+ * `marcaAutomaticaDisponibile` è fail-closed per costruzione — su «non lo so»
+ * risponde `false` — ed è il verso giusto per la domanda che quella funzione fa:
+ * «l'automatismo deve PARTIRE?». La riapertura fa la domanda OPPOSTA — «posso
+ * SPEGNERE la marca?» — e lì `false` su un guasto qualunque (timeout, 5xx di
+ * PostgREST, pool esaurito) non è prudente: lascia ACCESA la marca che mente,
+ * cioè esattamente ciò che questa fetta esiste per impedire. La riga tornerebbe
+ * in coda `da_abbinare` ancora «automatica»; una riconferma fatta a mano da
+ * `confermaSuVoceSingola` non la spegne (là `abbinato_auto_il` si scrive solo
+ * quando `automatico` è vero); e l'annullamento in blocco disferebbe il lavoro
+ * di una persona.
+ *
+ * Chiedendola invece nella LETTURA DEL MOVIMENTO — l'unica che c'è già — le due
+ * colonne nuove seguono lo stesso ramo di degradazione che `transazione_id`
+ * aveva da sé: `42703` ⇒ si ritenta senza, qualunque ALTRO errore ⇒ 500 **prima**
+ * dello storno. Una lettura in meno, non una in più.
+ */
+const MOV_SELECT_MARCA = `${MOV_SELECT_TX}, abbinato_auto_il`
+
+/**
+ * Le tre varianti in ordine di ricchezza decrescente, cioè l'ordine in cui le
+ * migrazioni hanno aggiunto le colonne: `abbinato_auto_il` (20260920124742) dopo
+ * `transazione_id` (20260912180100). Le colonne presenti su un database sono
+ * perciò sempre un PREFISSO di questo elenco, e scalare di uno alla volta
+ * distingue i tre stati raggiungibili invece di appiattirli:
+ *   · produzione migrata → la prima riesce, tutt'e due le colonne si scrivono;
+ *   · la finestra fra il merge della migrazione e il deploy del codice (o
+ *     viceversa) → la prima dà `42703`, la seconda riesce: `transazione_id` si
+ *     azzera lo stesso, che è il comportamento di ieri;
+ *   · il DB E2E della CI, non migrato → si arriva alla terza e non si scrive
+ *     nessuna delle due.
+ * Appiattire i primi due stati in uno solo lascerebbe sulla riga riaperta un
+ * `transazione_id` che punta a una transazione annullata: un legame morto in
+ * meno di quelli che oggi si azzerano.
+ */
+const MOV_VARIANTI = [MOV_SELECT_MARCA, MOV_SELECT_TX, MOV_SELECT_BASE] as const
 
 interface Movimento {
   id: string
@@ -182,40 +229,51 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     let movRaw: unknown = null
     /** `true` se il database HA la colonna: decide se la riapertura può scriverla. */
     let colonnaTransazione = true
-    const letturaTx = await supabase
-      .from('riconciliazione_movimenti')
-      .select(MOV_SELECT_TX)
-      .eq('id', id)
-      .maybeSingle()
-    if (letturaTx.error && COLONNA_ASSENTE.has((letturaTx.error as { code?: string }).code ?? '')) {
-      colonnaTransazione = false
-      const letturaBase = await supabase
+    /**
+     * `true` se il database HA `abbinato_auto_il`: decide se la riapertura può
+     * SPEGNERE la marca. Parte da `true` e scende solo su un `42703`/`PGRST204`
+     * — cioè su «la colonna non c'è», mai su «non lo so»: un guasto qualunque
+     * esce 500 dal ciclo qui sotto, PRIMA dello storno.
+     */
+    let colonnaMarca = true
+    for (let i = 0; i < MOV_VARIANTI.length; i++) {
+      const lettura = await supabase
         .from('riconciliazione_movimenti')
-        .select(MOV_SELECT_BASE)
+        .select(MOV_VARIANTI[i])
         .eq('id', id)
         .maybeSingle()
-      if (letturaBase.error) {
-        logErrore(
-          { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'movimento_non_letto', stato: 500 },
-          letturaBase.error,
-        )
-        return NextResponse.json(
-          { error: 'Errore nel recupero del movimento', codice: 'MOVIMENTO_NON_LETTO' },
-          { status: 500 },
-        )
+      if (!lettura.error) {
+        movRaw = lettura.data
+        break
       }
-      movRaw = letturaBase.data
-    } else if (letturaTx.error) {
+      const code = (lettura.error as { code?: string }).code ?? ''
+      // Si scala di UNA colonna sola, e solo finché resta una variante più
+      // povera da provare: sull'ultima non c'è più niente da togliere, quindi
+      // l'errore è un guasto vero e va detto.
+      if (i < MOV_VARIANTI.length - 1 && COLONNA_ASSENTE.has(code)) {
+        if (i === 0) colonnaMarca = false
+        else colonnaTransazione = false
+        // `warn` e non `info`: una colonna nuova che manca è lo stato ATTESO sul
+        // DB E2E della CI, ma un ramo di degradazione che nessuno vede è la
+        // prima metà di ogni guasto lungo di questo repository. Non è `error`
+        // per la stessa ragione: un canale rosso a ogni giro di CI smette di
+        // essere guardato. Solo enumerati e codici: niente causali, niente nomi.
+        logEvento('pagamento', 'warn', {
+          operazione: 'pagamenti/riconciliazione/[id]:PATCH',
+          esito: 'movimento-letto-in-degradazione',
+          tipo: i === 0 ? 'colonna-marca-assente' : 'colonna-transazione-assente',
+          error_code: code,
+        })
+        continue
+      }
       logErrore(
         { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'movimento_non_letto', stato: 500 },
-        letturaTx.error,
+        lettura.error,
       )
       return NextResponse.json(
         { error: 'Errore nel recupero del movimento', codice: 'MOVIMENTO_NON_LETTO' },
         { status: 500 },
       )
-    } else {
-      movRaw = letturaTx.data
     }
     if (!movRaw) return NextResponse.json({ error: 'Movimento non trovato' }, { status: 404 })
     const mov = movRaw as unknown as Movimento
@@ -302,10 +360,25 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
         // errori della RPC e il compare-and-swap stanno in
         // `@/lib/pagamenti/riapertura-movimento`, perché la riapertura in blocco
         // che arriverà dovrà passare di lì e non di qui.
+        // ── LA MARCA «ABBINATO DALLA MACCHINA» SI PUÒ SPEGNERE QUI? ──────────
+        // La riapertura deve azzerare anche `abbinato_auto_il`, o la marca
+        // mente: la riga tornerebbe in coda ancora «automatica», e una
+        // riconferma fatta A MANO resterebbe bersaglio dell'annullamento in
+        // blocco. La risposta è già in mano: `colonnaMarca` viene dalla LETTURA
+        // DEL MOVIMENTO qui sopra, che chiede la colonna insieme alle altre.
+        //
+        // 🔴 E NON DA `marcaAutomaticaDisponibile`, che pure risponderebbe.
+        // Quella funzione è fail-closed su QUALUNQUE guasto, ed è il verso
+        // giusto per la sua domanda — «l'automatismo deve partire?» — ma il
+        // verso SBAGLIATO per questa: su un timeout risponderebbe «non
+        // disponibile» e la riapertura proseguirebbe, storno compreso, lasciando
+        // accesa la marca che mente. Qui un guasto che non sia «la colonna non
+        // esiste» ha già fatto uscire la richiesta con 500, PRIMA dello storno.
         const esito = await riapriMovimento(supabase, {
           movimento: mov,
           transazioneGiaAnnullata,
           colonnaTransazione,
+          colonnaMarca,
           attoreId: auth.user.id,
           operazione: 'pagamenti/riconciliazione/[id]:PATCH',
         })
@@ -338,6 +411,11 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
             transazione_annullata: esito.ok.transazioneAnnullata,
             incassi_stornati: esito.ok.incassiStornati,
             fatture_vive: esito.ok.fattureVive,
+            // Se la marca si è spenta viaggia sul log del SUCCESSO, invece di
+            // occupare una riga sua a ogni riapertura: così «nessun log» non
+            // diventa di nuovo l'ambiguità fra «la marca si è spenta» e «non è
+            // mai partito niente». Booleano, quindi `redact` lo lascia in chiaro.
+            marca_disponibile: colonnaMarca,
           })
         }
         return NextResponse.json(esito.body, { status: esito.status })

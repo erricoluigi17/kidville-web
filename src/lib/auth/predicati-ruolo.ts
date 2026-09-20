@@ -78,6 +78,34 @@ export function ruoliDi(user: AppUser): readonly AppRole[] {
   return user.ruoli && user.ruoli.length > 0 ? user.ruoli : [user.role]
 }
 
+/**
+ * A questo account è stato REVOCATO il profilo staff?
+ *
+ * ⚠️ STA QUI, e non in `require-staff.ts`, per una ragione misurata: 296 file di
+ * test sostituiscono `require-staff` per intero con `vi.mock`. Un predicato
+ * scritto là dentro verrebbe mockato via insieme all'I/O, e un test che mocka il
+ * gate e poi verifica che il gate nega è la definizione del mock piatto.
+ *
+ * ⚠️ REVOCA IL PROFILO DI `utenti.ruolo`, NON L'ACCESSO DELLA PERSONA. Chi ha
+ * anche il ponte `parents.auth_user_id` continua a entrare come genitore: al
+ * 2026-09-20 sono dodici, e fra loro c'è una maestra cessata che è anche mamma di
+ * un bambino iscritto. Scritta come «archiviato ⇒ 401», questa regola le
+ * chiuderebbe fuori il figlio.
+ *
+ * ⚠️ NON È `utenti.attivo`, e non va confusa: quella colonna nessun gate la legge,
+ * e al 2026-09-20 porta 26 righe a `false` su account tutti vivi — fra cui un
+ * amministratore e la Direzione. `archiviato_il` nasce vuota e la scrive solo il
+ * comando «Elimina docente».
+ *
+ * `undefined` vale «non archiviato»: è il valore che arriva da un ambiente in cui
+ * la colonna non esiste ancora (il DB E2E della CI non è migrato) e da tutti i
+ * fixture di test scritti prima di questa colonna. Il verso dell'errore è deciso:
+ * una lettura che non c'è non può chiudere fuori nessuno.
+ */
+export function profiloStaffRevocato(archiviatoIl: string | null | undefined): boolean {
+  return archiviatoIl != null
+}
+
 /** AUTORIZZAZIONE: ha questo ruolo nel DATABASE? (non «lo sta indossando adesso») */
 export function haRuolo(user: AppUser, ruolo: AppRole): boolean {
   return ruoliDi(user).includes(ruolo)

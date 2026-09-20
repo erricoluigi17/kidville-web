@@ -489,5 +489,18 @@
   "erroreAdesioneAlunnoFuoriAvviso": "This notice does not apply to the child you selected: your reply was not recorded. If you think this is a mistake, please contact the school office.",
   "navigatoreDataGiornoPrecedente": "Previous day",
   "navigatoreDataGiornoSuccessivo": "Next day",
-  "navigatoreDataOggi": "Today"
+  "navigatoreDataOggi": "Today",
+  "erroreAccountArchiviato": "This account is no longer active. If you think this is a mistake, please contact the school office.",
+  "erroreStaffEliminazioneNonLetta": "We could not read what this person left in the register: please try again in a moment.",
+  "erroreStaffEliminazioneNonDecisa": "One of the checks failed, so no action is available: nothing has been changed.",
+  "erroreStaffEliminazioneCambiata": "Things changed in the meantime: reload the record and read what will happen before confirming.",
+  "erroreStaffEliminazioneProfiloDoppio": "This account is also a family’s access to their children’s records, so it cannot be deleted. Use “Turn into parent”.",
+  "erroreStaffEliminazioneSeStessi": "You cannot delete or archive your own account.",
+  "erroreStaffEliminazioneBersaglioDirezione": "Management accounts cannot be deleted from here.",
+  "erroreStaffGiaArchiviato": "This account is already archived: reload the record.",
+  "erroreRiportaGenitoreSenzaPonte": "This person is not linked to any child as a parent yet: link them from the pupil’s record, then try again.",
+  "erroreRiportaGenitoreGiaGenitore": "This person is already a parent: there is nothing to change.",
+  "erroreRiportaGenitoreGiaDeciso": "The role changed in the meantime: reload the record.",
+  "erroreFascicoloNonCancellato": "We could not remove the documents from storage: no data has been deleted. Please try again in a few minutes.",
+  "errorePersonaleOperazioneNonRiuscita": "We could not complete the operation. Reload the record and check its state before trying again."
 }

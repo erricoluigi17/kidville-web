@@ -1941,7 +1941,16 @@ describe('CandidatureInsegnanti — accessibilità e cataloghi', () => {
     // senza riattraversare tutto l'elenco.
     await apriPrima()
     const intestazione = screen.getByRole('heading', { name: 'Anna Bianchi', level: 2 })
-    expect(document.activeElement).toBe(intestazione)
+    // ⚠️ SI ASPETTA IL FUOCO, non il pannello. Il gate in CI è diventato rosso
+    // qui il 2026-09-20 (`expected <body>…</body> to be <h2 tabindex="-1">`):
+    // `apriPrima()` attende che il DETTAGLIO sia a schermo, ma lo spostamento
+    // del fuoco avviene in un effetto che gira dopo — e fra i due istanti
+    // `document.activeElement` è ancora `<body>`.
+    //
+    // Passava per fortuna di tempi, e su una macchina più carica no. È la
+    // trappola 3 di `.claude/rules/test.md` nel verso meno visibile: attendere
+    // una cosa e asserirne un'altra.
+    await waitFor(() => expect(document.activeElement).toBe(intestazione))
   })
 
   it('il contenitore del dettaglio dichiara `aria-busy` mentre carica', async () => {

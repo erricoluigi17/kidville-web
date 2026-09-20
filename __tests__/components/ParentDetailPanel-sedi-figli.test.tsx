@@ -135,8 +135,22 @@ describe('ParentDetailPanel — la sede è del bambino, non del genitore', () =>
     // un blocco che non esiste.
     const uno = await screen.findByTestId('parent-figlio-al-1')
     const due = await screen.findByTestId('parent-figlio-al-2')
-    expect(uno.textContent).toContain(NOME_SEDE_B)
-    expect(due.textContent).toContain(NOME_SEDE_A)
+
+    // ⚠️ SI ASPETTA IL NOME, NON LA RIGA — e la differenza è una corsa vera,
+    // che ha reso rosso il gate in CI il 2026-09-20 (`expected 'Uno
+    // EsempioLEONISede: Sede non risolt…' to contain 'Kidville Beta'`).
+    //
+    // Le sedi arrivano da una SECONDA richiesta: `useDestinazioniSede` parte con
+    // `abilitato: figli.length > 0`, cioè solo DOPO che i figli sono stati
+    // letti. La riga del bambino esiste quindi già mentre il nome del plesso è
+    // ancora in volo, e in quell'istante dice «Sede non risolta». `findByTestId`
+    // aspetta la riga; il contenuto che si sta per asserire no.
+    //
+    // È la trappola 3 di `.claude/rules/test.md` nel suo verso meno visibile:
+    // non «attendere un'assenza», ma attendere UNA cosa e asserirne un'ALTRA.
+    // In locale passava per fortuna di tempi; su una macchina più carica no.
+    await waitFor(() => expect(uno.textContent).toContain(NOME_SEDE_B))
+    await waitFor(() => expect(due.textContent).toContain(NOME_SEDE_A))
     expect(uno.textContent).not.toContain(NOME_SEDE_A)
   })
 

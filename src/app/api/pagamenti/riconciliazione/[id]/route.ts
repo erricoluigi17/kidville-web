@@ -10,54 +10,37 @@ import { withRoute } from '@/lib/logging/with-route'
 import { logErrore, logEvento } from '@/lib/logging/logger'
 import { notificaEvento } from '@/lib/notifiche/triggers'
 import { verificaRevocaSospensioneMorosita } from '@/lib/pagamenti/sospensione'
-import { residuoEffettivo } from '@/lib/pagamenti/aging'
 import { formatEuro } from '@/lib/format/valuta'
-// «QUESTO DOCUMENTO È ANCORA VIVO?» HA UNA DEFINIZIONE SOLA, e non sta più qui.
-// Fino al 2026-09-13 questa rotta ne teneva una copia locale (`fatturaViva`,
-// `etichettaFattura`, `RigaFattura`), nata quando `componi` non poteva toccarla.
-// Le due espressioni erano identiche — misurato: stesso verdetto su tutti gli
-// stati SDI 0-20, su `null` e sui fuori scala, e stessa etichetta su 100
-// combinazioni di numero/anno/sezionale — ed è per questo che sono state unite.
-// Le due porte che arrivano allo stesso riabbinamento sono QUESTA (la conferma a
-// voce singola) e `…/componi:POST` (la composizione): due definizioni di «viva»
-// direbbero due cose diverse dello stesso documento, una fermerebbe e l'altra
-// lascerebbe passare — la seconda con un 200 sopra.
-import { fatturaViva, etichettaFattura, type RigaFatturaEmessa } from '@/lib/pagamenti/fattura-viva'
-// LO STORNO DI UN INCASSO SINGOLO HA UN POSTO SOLO, ed è quello. `eseguiStornoIncasso`
-// crea il contro-incasso NEGATIVO tracciato (`storno_di`), marca l'originale, ricalcola
-// lo stato del pagamento e scrive l'audit col motivo: riscriverne una copia qui
-// significherebbe avere due idee diverse di che cos'è uno storno, e la seconda nascerebbe
-// senza il ramo che degrada quando l'enum `storno` non esiste sul DB non migrato.
-import { eseguiStornoIncasso } from '@/app/api/pagamenti/incassi/storno/route'
+// ─── LE DUE OPERAZIONI CONTABILI NON VIVONO PIÙ DENTRO QUESTA ROTTA ─────────
+// Abbinare un bonifico a una voce e scioglierne l'abbinamento sono due gesti che
+// stanno per avere più di una porta: l'import dell'estratto conto confermerà da
+// sé i bonifici che riconosce, e un endpoint nuovo li riaprirà in blocco. Nessuna
+// delle due ha una `Request`, un operatore o un corpo JSON — ma tutte e due
+// devono passare dalle stesse identiche guardie, che quindi non possono stare
+// dentro un handler HTTP. Ricopiarle è il modo certo di farle divergere: in
+// questo repository quando un predicato è scritto in linea in due punti, la
+// correzione è una funzione esportata, non due modifiche gemelle.
+// Qui restano le sole cose che sono DAVVERO della rotta: il gate di ruolo, la
+// validazione, la risoluzione delle sedi, il gate di sede, e — dopo — l'audit,
+// l'avviso alla famiglia e la revoca della sospensione, che sono del chiamante
+// perché solo lui sa se sta rispondendo a una persona.
+import { confermaSuVoceSingola } from '@/lib/pagamenti/riconciliazione-conferma'
+// `COLONNA_ASSENTE` arriva da lì e non è una svista: nella rotta era UNA costante
+// sola, letta dalla lettura del movimento e dallo storno. Riscriverla qui farebbe
+// due dichiarazioni gemelle, cioè la cosa che questa estrazione toglie di mezzo.
+import { riapriMovimento, COLONNA_ASSENTE } from '@/lib/pagamenti/riapertura-movimento'
 
 const patchBodySchema = z.object({
   azione: z.enum(['conferma', 'ignora', 'riapri']),
   pagamento_id: zUuid.optional(),
 })
 
-/** La RPC non esiste su questo ambiente (DB E2E della CI, mai migrato). */
-const RPC_ASSENTE = new Set(['PGRST202', '42883'])
-/** La colonna non esiste (DB non migrato): si ritenta senza, non si cade. */
-const COLONNA_ASSENTE = new Set(['42703', 'PGRST204'])
-
-/**
- * Il motivo che finisce in `pagamenti_transazioni.annullo_motivo` e in
- * `incassi.storno_motivo` quando la riapertura scioglie un abbinamento.
- *
- * NON si chiede all'operatrice: la riapertura è un pulsante della coda, non un
- * modulo. Ma un motivo la RPC lo pretende (min 3 caratteri) e soprattutto lo
- * pretende chi domani aprirà il registro delle transazioni e troverà un annullo:
- * «annullata» senza un perché manda a cercare un'operazione che nessuno ricorda.
- * Testo fisso e generico: in quelle due colonne non deve finire niente che
- * riguardi una famiglia.
- */
-const MOTIVO_RIAPERTURA = 'Riapertura del movimento bancario dal registro di riconciliazione'
-
 /**
  * Le colonne del movimento. Due varianti per la stessa ragione di `PAG_SELECT_*`
- * qui sotto: `transazione_id` nasce con la conciliazione composita e sul DB E2E
- * della CI non c'è → `42703`. Chiederla in una SELECT che serve anche alla
- * conferma farebbe cadere l'intera rotta su quell'ambiente.
+ * dentro `@/lib/pagamenti/riconciliazione-conferma`: `transazione_id` nasce con
+ * la conciliazione composita e sul DB E2E della CI non c'è → `42703`. Chiederla
+ * in una SELECT che serve anche alla conferma farebbe cadere l'intera rotta su
+ * quell'ambiente.
  */
 const MOV_SELECT_BASE =
   'id, scuola_id, importo, data_operazione, causale, stato, suggerimenti, pagamento_id, incasso_id'
@@ -74,11 +57,12 @@ interface Movimento {
   /**
    * Il pagamento a cui questo bonifico è già abbinato: lo scrive solo la conferma.
    *
-   * ⚠️ Valorizzato NON vuol più dire «riga confermata», e la guardia qui sotto vive
-   * proprio di questa differenza: dal 2026-09-12
-   * `annulla_transazione_contabile` riapre il movimento della transazione annullata
-   * (`stato` → `da_abbinare`) e gli LASCIA questa colonna — è la memoria di ciò a cui
-   * era legato, e senza di essa `mov.pagamento_id != null` non scatterebbe mai.
+   * ⚠️ Valorizzato NON vuol più dire «riga confermata», e la guardia del
+   * riabbinamento vive proprio di questa differenza: dal 2026-09-12
+   * `annulla_transazione_contabile` riapre il movimento della transazione
+   * annullata (`stato` → `da_abbinare`) e gli LASCIA questa colonna — è la memoria
+   * di ciò a cui era legato, e senza di essa `mov.pagamento_id != null` non
+   * scatterebbe mai.
    */
   pagamento_id: string | null
   /** L'incasso creato dalla conferma: è la riga che la riapertura deve stornare. */
@@ -94,24 +78,6 @@ interface Movimento {
    */
   transazione_id?: string | null
   suggerimenti?: { pagamento_id: string }[] | null
-}
-
-/**
- * L'avviso che viaggia SU UNA RISPOSTA 200, accanto a `success: true`.
- *
- * ⚠️ Non è un errore travestito, ed è progettato per essere MOSTRATO. I numeri
- * stanno anche in un campo loro (`numeri`) e non solo dentro la frase, perché chi
- * disegna il pannello possa elencarli senza fare il parsing di una prosa; il
- * `codice` c'è perché la frase di contorno sia traducibile come tutte le altre
- * (`CODICI_ERRORE`), e `messaggio` porta il dettaglio che il catalogo non può
- * conoscere. È la stessa forma di `{ error, codice }`, spostata sul verso del
- * successo.
- */
-interface AvvisoRiapertura {
-  codice: 'RIAPERTURA_CON_FATTURA_VIVA' | 'RIAPERTURA_FATTURE_NON_VERIFICATE'
-  messaggio: string
-  /** I numeri dei documenti rimasti vivi. Vuoto quando non si è potuto leggerli. */
-  numeri: string[]
 }
 
 /**
@@ -132,6 +98,11 @@ interface AvvisoRiapertura {
  *
  * 404 e non 403 su una sede altrui: chi non può vederla non deve nemmeno sapere
  * che esiste. Stessa scelta della route dell'annullo.
+ *
+ * ⚠️ E STA QUI, NELL'HANDLER, mentre lo storno e la riapertura sono andati in
+ * `@/lib/pagamenti/riapertura-movimento`: il perimetro di sede è ciò che
+ * distingue questa porta da quelle che verranno, e un gate di sede si legge dove
+ * la richiesta arriva. Al modulo va il VERDETTO, non la domanda.
  */
 async function assertTransazioneInScope(
   supabase: Awaited<ReturnType<typeof createAdminClient>>,
@@ -182,80 +153,6 @@ async function assertTransazioneInScope(
   }
   return { annullataIl: riga.annullata_il ?? null }
 }
-
-/**
- * ─── LO STORNO DI QUESTO INCASSO È GIÀ STATO REGISTRATO? ─────────────────────
- *
- * ⚠️ ESISTE PERCHÉ L'IDEMPOTENZA DELLA RIAPERTURA NON PUÒ POGGIARE SU
- * `incassi.stornato_il`. Quella marcatura, dentro `eseguiStornoIncasso`, è un
- * `.then(() => {}, () => {})`: best-effort **muto**, e il motivo per cui è muto è
- * legittimo (sul DB non migrato le colonne S3 non ci sono). Ma la riapertura ne
- * è diventata un chiamante che DIPENDE da quella marcatura: se fallisce in
- * silenzio, l'originale resta «vivo» in ogni campo e il ritentativo lo storna una
- * seconda volta — due contro-incassi sullo stesso denaro, con un 200 sopra.
- *
- * Quella funzione non si riscrive: è di un'altra rotta, e il difetto è
- * preesistente. Ma questo ramo deve reggere lo stesso, e ci riesce guardando la
- * riga che quella funzione scrive DAVVERO, non quella che marca in silenzio: il
- * **contro-incasso** (`storno_di` = l'originale) è la sua scrittura primaria,
- * l'unica il cui errore viene restituito invece che inghiottito. Se c'è, lo
- * storno è avvenuto — che `stornato_il` sia stato scritto o no.
- *
- * Misurato in produzione il 2026-09-13: 4 contro-incassi, **0** originali
- * stornati e non marcati, **0** originali con due storni. Il caso non si è ancora
- * verificato: questa lettura serve perché non si verifichi.
- *
- * Fail-CLOSED su un guasto di lettura (stessa scelta della guardia del
- * riabbinamento poche decine di righe più giù): «non lo so» non è «non c'è», e
- * stornare alla cieca è la strada che porta al doppio contro-incasso. Unica
- * eccezione, il DB non migrato: senza la colonna `storno_di` la domanda non ha
- * nemmeno senso, e un 500 lì trasformerebbe una rete di sicurezza in un guasto.
- */
-async function stornoGiaRegistrato(
-  supabase: Awaited<ReturnType<typeof createAdminClient>>,
-  incassoId: string,
-): Promise<{ response: NextResponse } | { presente: boolean }> {
-  const { data, error } = await supabase
-    .from('incassi')
-    .select('id')
-    .eq('storno_di', incassoId)
-    .limit(1)
-  if (error) {
-    const code = (error as { code?: string }).code ?? ''
-    if (COLONNA_ASSENTE.has(code)) {
-      logEvento('pagamento', 'warn', {
-        operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-        esito: 'storno-non-verificabile-colonna-assente',
-        incasso_id: incassoId,
-      })
-      return { presente: false }
-    }
-    // PostgREST non lancia: senza questo controllo l'errore verrebbe scartato dalla
-    // destrutturazione e «non l'ho potuto leggere» diventerebbe «non c'è».
-    logErrore(
-      { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'storno_gia_registrato_non_letto', stato: 500 },
-      error,
-    )
-    return {
-      response: NextResponse.json(
-        {
-          error:
-            'Non è stato possibile verificare se l’incasso di questo bonifico fosse già stato stornato: ' +
-            'la riapertura è stata fermata per non stornarlo due volte.',
-          codice: 'RIAPERTURA_NON_RIUSCITA',
-        },
-        { status: 500 },
-      ),
-    }
-  }
-  return { presente: ((data ?? []) as unknown[]).length > 0 }
-}
-
-// SELECT del pagamento con le colonne Contabilità v2 (sconto) e quelle per il residuo effettivo.
-// Sul DB E2E CI (non migrato) `sconto` non esiste → 42703: si ritenta senza (residuoEffettivo
-// tratta sconto assente come 0). Stesso pattern di /api/pagamenti.
-const PAG_SELECT_BASE = 'id, scuola_id, stato, alunno_id, descrizione, importo, importo_pagato, scadenza'
-const PAG_SELECT_V2 = 'id, scuola_id, stato, alunno_id, descrizione, importo, importo_pagato, sconto, scadenza'
 
 // PATCH /api/pagamenti/riconciliazione/[id] — conferma/ignora/riapri (staff).
 // La CONFERMA crea l'incasso (metodo bonifico, data = data operazione): lo
@@ -365,7 +262,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
         const sediRiapertura = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
         /**
          * La transazione è GIÀ annullata: gli storni ci sono, manca solo la
-         * riapertura. Si salta la RPC e si va dritti al punto 3.
+         * riapertura. Si salta la RPC e si va dritti alla riapertura.
          *
          * ⚠️ QUI C'ERA UN 409, ed era il difetto che questa fetta esiste per
          * chiudere, ricreato in un percorso d'errore. Misurato su due giri
@@ -400,348 +297,50 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
           )
         }
 
-        // ── 1. L'AVVISO: quali documenti restano vivi ─────────────────────────
-        // Si legge PRIMA di scrivere, così l'avviso racconta lo stato su cui
-        // l'operatrice decide, e un guasto qui non lascia niente a metà.
-        // ⚠️ NON è una guardia: non ferma niente. Decisione esplicita del titolare
-        // («riapri comunque, avvisando»), presa davanti alla misura: 167 movimenti
-        // confermati su 174, in produzione, hanno una fattura viva sul pagamento
-        // abbinato. Un 409 qui avrebbe vietato il 96% delle riaperture.
-        let avviso: AvvisoRiapertura | undefined
-        let fattureVive = 0
-        if (mov.pagamento_id) {
-          const { data: righeFattura, error: errFatture } = await supabase
-            .from('fatture_emesse')
-            .select('numero, anno, sezionale, sdi_stato')
-            .eq('pagamento_id', mov.pagamento_id)
-          if (errFatture) {
-            // PostgREST non lancia. Con l'errore scartato, «nessuna fattura» e «non
-            // l'abbiamo potuta leggere» diventerebbero la stessa cosa — e siccome
-            // qui non si ferma niente, il silenzio non costerebbe un rifiuto: ne
-            // uscirebbe una riapertura che DICHIARA di non aver trovato documenti
-            // senza averli cercati.
-            logErrore(
-              {
-                operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-                evento: 'fatture_del_movimento_non_lette_riapertura',
-                stato: 200,
-              },
-              errFatture,
-            )
-            avviso = {
-              codice: 'RIAPERTURA_FATTURE_NON_VERIFICATE',
-              messaggio:
-                'Non è stato possibile leggere le fatture della voce a cui questo bonifico era abbinato.',
-              numeri: [],
-            }
-          } else {
-            const numeri = ((righeFattura ?? []) as RigaFatturaEmessa[]).filter(fatturaViva).map(etichettaFattura)
-            fattureVive = numeri.length
-            if (numeri.length > 0) {
-              avviso = {
-                codice: 'RIAPERTURA_CON_FATTURA_VIVA',
-                // La prosa dice il FATTO coi numeri — che il catalogo non può
-                // conoscere, e sono l'unica cosa che dica quale documento andare a
-                // guardare; la conseguenza sta nella frase tradotta.
-                messaggio: `Fatture ancora valide sulla voce abbinata: ${numeri.join(', ')}.`,
-                numeri,
-              }
-            }
-          }
-        }
-
-        // ── 2. LO STORNO ──────────────────────────────────────────────────────
-        let incassiStornati = 0
-        let transazioneAnnullata = false
-        let riapertaDallaRpc = false
-        /** Quante righe bancarie sono tornate in coda: 1 di norma, di più se la
-         *  transazione era stata saldata da più bonifici. Il numero viaggia fino
-         *  alla risposta perché è l'unica cosa che dica all'operatrice quanti
-         *  movimenti dovrà rilavorare. */
-        let movimentiRiaperti = 1
-        if (mov.transazione_id && transazioneGiaAnnullata) {
-          // Il RITENTATIVO del ramo composito. Gli storni sono già stati commessi
-          // da un giro precedente (o dal pulsante del registro transazioni): la RPC
-          // non si richiama — risponderebbe comunque `KV409` — e si va a riaprire,
-          // che è l'unica metà rimasta da fare.
-          transazioneAnnullata = true
-          // `incassi_stornati` resta 0, e non è pignoleria: quel numero dice
-          // all'operatrice quante righe questo giro ha toccato, e gonfiarlo con
-          // storni fatti prima le farebbe contare due volte lo stesso denaro.
-          logEvento('pagamento', 'warn', {
-            operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-            esito: 'riapertura-transazione-gia-annullata',
-            movimento_id: id,
-          })
-        } else if (mov.transazione_id) {
-          // Composito: si annulla la TRANSAZIONE intera, che è l'unico modo di
-          // stornare insieme incassi, ricariche mensa ed eccedenza a credito —
-          // e in una transazione atomica sola. La RPC riapre da sé il movimento.
-          const { data: esitoRpc, error: rpcErr } = await supabase.rpc('annulla_transazione_contabile', {
-            p: { transazione_id: mov.transazione_id, motivo: MOTIVO_RIAPERTURA, annullato_da: auth.user.id },
-          })
-          if (rpcErr) {
-            const code = (rpcErr as { code?: string }).code ?? ''
-            // RPC assente → 503 SENZA storni parziali: nulla è stato scritto,
-            // perché storno e riapertura vivono entrambi dentro quella chiamata.
-            if (RPC_ASSENTE.has(code)) {
-              logEvento(
-                'pagamento',
-                'error',
-                { operazione: 'pagamenti/riconciliazione/[id]:PATCH', esito: 'riapertura-rpc-assente' },
-                rpcErr,
-              )
-              return NextResponse.json(
-                {
-                  error: 'Riapertura non disponibile su questo ambiente: nessuno storno è stato registrato.',
-                  codice: 'RIAPERTURA_NON_DISPONIBILE',
-                },
-                { status: 503 },
-              )
-            }
-            if (code === 'KV410') {
-              logEvento('pagamento', 'warn', {
-                operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-                esito: 'riapertura-credito-gia-speso',
-                movimento_id: id,
-              })
-              return NextResponse.json(
-                {
-                  error:
-                    'Il credito generato da questo bonifico è già stato utilizzato: la riapertura è stata ' +
-                    'fermata prima di qualunque storno.',
-                  codice: 'RIAPERTURA_CREDITO_GIA_SPESO',
-                },
-                { status: 409 },
-              )
-            }
-            // KV404 — la transazione NON ESISTE. Qui non si riapre, ed è voluto:
-            // la RPC trova gli incassi da stornare PER `transazione_id`, quindi se
-            // la transazione non c'è quegli incassi non sono stati stornati.
-            // Liberare il bonifico lo farebbe riabbinare a un'altra voce con
-            // l'incasso ancora vivo — lo stesso denaro incassato due volte.
-            if (code === 'KV404') {
-              return NextResponse.json(
-                { error: 'La transazione di questo bonifico non esiste più.', codice: 'CONCILIAZIONE_MOVIMENTO_CAMBIATO' },
-                { status: 409 },
-              )
-            }
-            // KV409 — «già annullata», cioè la stessa condizione del pre-check qui
-            // sopra, raggiunta però in GARA (fra la lettura e la RPC). Gli storni
-            // ci sono: si PROSEGUE alla riapertura invece di rifiutare. Fino al
-            // 2026-09-13 anche questo era un 409, e lasciava una riga `confermato`
-            // sopra incassi che non esistevano più.
-            if (code !== 'KV409') {
-              logErrore(
-                { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'riapertura_rpc_fallita', stato: 500 },
-                rpcErr,
-              )
-              return NextResponse.json(
-                { error: 'Errore durante la riapertura del movimento', codice: 'RIAPERTURA_NON_RIUSCITA' },
-                { status: 500 },
-              )
-            }
-            transazioneAnnullata = true
-            logEvento('pagamento', 'warn', {
-              operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-              esito: 'riapertura-transazione-annullata-in-gara',
-              movimento_id: id,
-            })
-          } else {
-            const conteggi = (esitoRpc ?? {}) as { incassi_stornati?: number; movimenti_riaperti?: number }
-            transazioneAnnullata = true
-            incassiStornati = conteggi.incassi_stornati ?? 0
-            // ⚠️ `movimenti_riaperti` può MANCARE, e non è teoria: è lo stato del
-            // database fra il rilascio della colonna e quello della RPC estesa. Con la
-            // funzione vecchia lo storno avviene e il movimento resta `confermato` —
-            // cioè una riga che mente, il difetto che questa fetta esiste per chiudere.
-            // Chi non lo trova, riapre di sua mano qui sotto.
-            riapertaDallaRpc = (conteggi.movimenti_riaperti ?? 0) >= 1
-            if (riapertaDallaRpc) movimentiRiaperti = conteggi.movimenti_riaperti as number
-            if (!riapertaDallaRpc) {
-              logEvento('pagamento', 'warn', {
-                operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-                esito: 'riapertura-non-fatta-dalla-rpc',
-                movimento_id: id,
-              })
-            }
-          }
-        } else if (mov.incasso_id) {
-          // ── LO STORNO È GIÀ STATO REGISTRATO? Si chiede alla riga giusta ────
-          // Non a `incassi.stornato_il`, che `eseguiStornoIncasso` marca in
-          // best-effort MUTO: al CONTRO-INCASSO, che è la sua scrittura primaria.
-          // Senza questa lettura l'idempotenza di questo ramo dipenderebbe da una
-          // `update` il cui fallimento nessuno vede — e un ritentativo stornerebbe
-          // due volte lo stesso denaro. Il perché per esteso sta su
-          // `stornoGiaRegistrato`.
-          const gia = await stornoGiaRegistrato(supabase, mov.incasso_id)
-          if ('response' in gia) return gia.response
-          if (gia.presente) {
-            logEvento('pagamento', 'warn', {
-              operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-              esito: 'riapertura-storno-gia-registrato',
-              movimento_id: id,
-              incasso_id: mov.incasso_id,
-            })
-            // `incassiStornati` resta 0: questo giro non ha stornato niente.
-          } else {
-            // Voce singola: si storna l'incasso che la conferma aveva creato.
-            const esitoStorno = await eseguiStornoIncasso(supabase, {
-              incassoId: mov.incasso_id,
-              motivo: MOTIVO_RIAPERTURA,
-              userId: auth.user.id,
-            })
-            if (esitoStorno.status === 200) {
-              incassiStornati = 1
-            } else if (esitoStorno.status === 404 || esitoStorno.status === 409) {
-              // 404 «incasso non trovato» e 409 «già stornato / è uno storno» dicono
-              // la stessa cosa ai fini della riapertura: quella riga NON è più viva.
-              // Proseguire rende il ritentativo idempotente — ed è ciò che serve
-              // quando un giro precedente ha stornato e non è riuscito a riaprire.
-              // ⚠️ È la rete SECONDA, non la prima: scatta quando `stornato_il` è
-              // stato marcato davvero. Quando quella marcatura muta fallisce, qui
-              // non si arriva nemmeno — ferma prima `stornoGiaRegistrato`.
-              logEvento('pagamento', 'warn', {
-                operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-                esito: 'riapertura-incasso-gia-non-vivo',
-                movimento_id: id,
-                // `stato` numerico → `logEvento` lo promuove alla colonna `statoHttp`,
-                // che è il primo filtro di qualunque query sui log.
-                stato: esitoStorno.status,
-              })
-            } else {
-              // Lo storno non è riuscito: NON si riapre. Un movimento libero con
-              // l'incasso ancora vivo si fa riabbinare a un'altra voce, cioè incassare
-              // due volte lo stesso denaro. Qui non è stato scritto niente.
-              logErrore(
-                { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'riapertura_storno_fallito', stato: 500 },
-                new Error(String((esitoStorno.body as { error?: string }).error ?? 'storno non riuscito')),
-              )
-              return NextResponse.json(
-                {
-                  error: 'Non è stato possibile stornare l’incasso: il movimento non è stato riaperto.',
-                  codice: 'RIAPERTURA_NON_RIUSCITA',
-                },
-                { status: 500 },
-              )
-            }
-          }
-        } else {
-          // Confermato senza incasso: non dovrebbe esistere (la conferma li scrive
-          // insieme), ma se esiste non è un motivo per non riaprire — è un motivo
-          // per lasciarne traccia.
-          logEvento('pagamento', 'warn', {
-            operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-            esito: 'riapertura-senza-incasso',
-            movimento_id: id,
-          })
-        }
-
-        // ── 3. LA RIAPERTURA ──────────────────────────────────────────────────
-        // Solo se non l'ha già fatta la RPC. Si azzerano i legami MORTI e si
-        // CONSERVA `pagamento_id`: è la memoria di ciò a cui il bonifico era
-        // legato, ed è l'unica cosa che, al riabbinamento successivo, faccia
-        // scattare la guardia `BONIFICO_GIA_FATTURATO` qui sotto. Si conserva anche
-        // `scuola_id`, per la ragione scritta nella migrazione dell'annullo: a NULL
-        // la riga sparirebbe dalla vista di sede di chi deve rilavorarla.
-        if (!riapertaDallaRpc) {
-          const patch: Record<string, unknown> = {
-            stato: 'da_abbinare',
-            incasso_id: null,
-            confermato_da: null,
-            confermato_il: null,
-          }
-          // Si scrive solo se la colonna esiste: su un DB non migrato un
-          // `transazione_id: null` farebbe fallire l'UPDATE con `PGRST204`.
-          if (colonnaTransazione) patch.transazione_id = null
-          const { data: upd, error: errUpd } = await supabase
-            .from('riconciliazione_movimenti')
-            .update(patch)
-            .eq('id', id)
-            // CAS ottimistico: si riapre solo se la riga è ancora quella letta.
-            .eq('stato', 'confermato')
-            .select('id')
-          if (errUpd || !upd?.length) {
-            // ⚠️ QUI LO STORNO È GIÀ AVVENUTO, e la risposta lo DICE invece di
-            // tacerlo. L'ordine storno → riapertura è scelto: nel verso opposto un
-            // movimento libero con l'incasso ancora vivo si fa riabbinare, cioè
-            // incassare due volte. Così invece resta uno storno senza riapertura,
-            // che si ripara ritentando (il secondo giro trova l'incasso già
-            // stornato e prosegue).
-            logErrore(
-              {
-                operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-                evento: 'riapertura_non_scritta_dopo_storno',
-                stato: 409,
-              },
-              errUpd ?? new Error('nessuna riga riaperta: il movimento è cambiato sotto la richiesta'),
-            )
-            return NextResponse.json(
-              {
-                error:
-                  'Il movimento è cambiato mentre lo si riapriva: lo storno è stato registrato, la riga ' +
-                  'non è tornata in coda. Ricarica l’elenco e riprova.',
-                // ⚠️ NON `CONCILIAZIONE_MOVIMENTO_CAMBIATO`, e fino al 2026-09-13 lo
-                // era — proprio su una risposta progettata per DICHIARARE lo storno.
-                // Quel codice non sta in `CODICI_CON_DETTAGLIO`: `messaggioDaCorpo`
-                // scarta la prosa appena lo riconosce, e la frase qui sopra — l'unica
-                // che nomini il denaro restituito — non arrivava MAI a schermo. Al suo
-                // posto usciva «un altro operatore ha appena modificato questo
-                // bonifico: ricarica l'elenco e ricomponi il pagamento». Misurato
-                // eseguendo `messaggioDaCorpo`, non dedotto.
-                codice: 'RIAPERTURA_STORNATA_NON_RIAPERTA',
-                data: { incassi_stornati: incassiStornati, transazione_annullata: transazioneAnnullata },
-              },
-              { status: 409 },
-            )
-          }
-        }
-
-        // Chi ha riaperto: la riapertura cancella `confermato_da`/`confermato_il`,
-        // quindi senza questa riga «chi aveva confermato quel bonifico» si perde e
-        // nessuno sa nemmeno chi l'abbia disfatto.
-        await logScrittura(supabase, {
-          attore: auth.user,
-          entitaTipo: 'riconciliazione_movimenti',
-          entitaId: id,
-          azione: 'update',
-          scuolaId: mov.scuola_id ?? undefined,
-          valoreDopo: {
-            stato: 'da_abbinare',
-            transazione_annullata: transazioneAnnullata,
-            incassi_stornati: incassiStornati,
-          },
-        })
-
-        // Evento critico → il SUCCESSO si logga (AGENTS.md §5): con i soli errori,
-        // «nessun log» non distinguerebbe «tutto ok» da «non è mai partito niente».
-        // Solo uuid, numeri e booleani: la causale di un bonifico porta i nomi delle
-        // famiglie, e `redact` è a lista bianca.
-        logEvento('pagamento', 'info', {
+        // ── LO STORNO E LA RIAPERTURA ─────────────────────────────────────────
+        // L'avviso sulle fatture vive, lo storno idempotente, la mappa degli
+        // errori della RPC e il compare-and-swap stanno in
+        // `@/lib/pagamenti/riapertura-movimento`, perché la riapertura in blocco
+        // che arriverà dovrà passare di lì e non di qui.
+        const esito = await riapriMovimento(supabase, {
+          movimento: mov,
+          transazioneGiaAnnullata,
+          colonnaTransazione,
+          attoreId: auth.user.id,
           operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-          esito: 'movimento-riaperto',
-          movimento_id: id,
-          pagamento_id: mov.pagamento_id,
-          transazione_annullata: transazioneAnnullata,
-          incassi_stornati: incassiStornati,
-          fatture_vive: fattureVive,
         })
+        if (esito.ok) {
+          // Chi ha riaperto: la riapertura cancella `confermato_da`/`confermato_il`,
+          // quindi senza questa riga «chi aveva confermato quel bonifico» si perde e
+          // nessuno sa nemmeno chi l'abbia disfatto.
+          await logScrittura(supabase, {
+            attore: auth.user,
+            entitaTipo: 'riconciliazione_movimenti',
+            entitaId: id,
+            azione: 'update',
+            scuolaId: mov.scuola_id ?? undefined,
+            valoreDopo: {
+              stato: 'da_abbinare',
+              transazione_annullata: esito.ok.transazioneAnnullata,
+              incassi_stornati: esito.ok.incassiStornati,
+            },
+          })
 
-        // NESSUNA notifica al genitore: decisione esplicita del titolare. La
-        // conferma avvisa («Pagamento registrato»), lo storno no — un avviso
-        // «il tuo pagamento non risulta più» su una correzione di segreteria
-        // sarebbe allarmante e quasi sempre sbagliato (la riga viene rilavorata
-        // subito dopo).
-        return NextResponse.json({
-          success: true,
-          data: {
-            stato: 'da_abbinare',
-            transazione_annullata: transazioneAnnullata,
-            movimenti_riaperti: movimentiRiaperti,
-            incassi_stornati: incassiStornati,
-          },
-          ...(avviso ? { avviso } : {}),
-        })
+          // Evento critico → il SUCCESSO si logga (AGENTS.md §5): con i soli errori,
+          // «nessun log» non distinguerebbe «tutto ok» da «non è mai partito niente».
+          // Solo uuid, numeri e booleani: la causale di un bonifico porta i nomi delle
+          // famiglie, e `redact` è a lista bianca.
+          logEvento('pagamento', 'info', {
+            operazione: 'pagamenti/riconciliazione/[id]:PATCH',
+            esito: 'movimento-riaperto',
+            movimento_id: id,
+            pagamento_id: mov.pagamento_id,
+            transazione_annullata: esito.ok.transazioneAnnullata,
+            incassi_stornati: esito.ok.incassiStornati,
+            fatture_vive: esito.ok.fattureVive,
+          })
+        }
+        return NextResponse.json(esito.body, { status: esito.status })
       }
 
       // Il caso di sempre: un movimento IGNORATO torna in coda. Nessuno storno,
@@ -768,182 +367,35 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
       return NextResponse.json({ error: 'Indica il pagamento da abbinare' }, { status: 400 })
     }
 
-    // ── 🔴 UN BONIFICO NON SI FATTURA DUE VOLTE ──────────────────────────────
-    // La fattura si emette per `pagamento_id`, e la guardia contro il secondo
-    // documento (`emettiFatturaPagamento`) confronta le righe vive di
-    // `fatture_emesse` DELLO STESSO pagamento. Non vede niente, quindi, quando è
-    // il BONIFICO a cambiare pagamento sotto di lei: il movimento che aveva
-    // saldato la retta P1 — già fatturata — viene riabbinato a P2, e P2 nasce
-    // libero da fatture. Restano in circolazione un documento fiscale senza
-    // l'incasso che lo giustifica e un avviso «Pagamento registrato» al genitore,
-    // entrambi con un 200 sopra e nessuna riga d'errore da nessuna parte.
-    //
-    // ⚠️ NON È PIÙ UNA GUARDIA DIFENSIVA: dal 2026-09-12 sta sulla strada
-    // principale — e fino a quel giorno qui era scritto il contrario.
-    // Prima, lo stato che la fa scattare era irraggiungibile: `pagamento_id` lo
-    // scriveva solo la conferma qui sotto, e un confermato non tornava indietro
-    // (`ignora` e `riapri` rispondono 409 poche righe più su). Adesso
-    // `annulla_transazione_contabile` riapre il movimento della transazione
-    // annullata — `stato` torna `da_abbinare` — e gli LASCIA `pagamento_id`; e
-    // l'annullo non è un intervento a mano, è un pulsante del registro
-    // (`TransazioniPanel` → `pagamenti/transazioni/[id]/annulla:POST`).
-    // Il percorso «il bonifico M salda la transazione T, la cui voce di
-    // ancoraggio è P1 → su P1 si emette la fattura → si annulla T → M torna in
-    // coda → l'operatore lo riabbina a P2» è quindi normale amministrazione, non
-    // un'ipotesi: questo `if` è l'unica cosa che lo ferma, e la migrazione
-    // conserva `pagamento_id` PROPRIO perché lui lo legga — le due metà le tiene
-    // insieme il lock `__tests__/architecture/annullo-riapre-movimento.test.ts`.
-    // Costa una lettura, e solo quando il pagamento cambia davvero.
-    //
-    // Sta QUI, prima di ogni altra lettura e di ogni scrittura, per una ragione
-    // sola: finché una guardia sta in fondo, tutto ciò che le sta davanti ha già
-    // letto, scritto o notificato quando lei dice di no.
-    if (mov.pagamento_id != null && mov.pagamento_id !== pagamentoId) {
-      const { data: righeFattura, error: errFatture } = await supabase
-        .from('fatture_emesse')
-        .select('numero, anno, sezionale, sdi_stato')
-        .eq('pagamento_id', mov.pagamento_id)
-      // PostgREST non lancia: ritorna `{ error }`. Con l'errore scartato, `data`
-      // vale null, «nessuna fattura» e «non l'abbiamo potuta leggere» diventano
-      // la stessa cosa, e un guasto di lettura si trasforma in un secondo
-      // incasso. Fail-closed, come l'idempotenza del motore: se non è
-      // VERIFICABILE, non si riabbina.
-      if (errFatture) {
-        logErrore(
-          { operazione: 'pagamenti/riconciliazione/[id]:PATCH', evento: 'fatture_del_movimento_non_lette', stato: 503 },
-          errFatture,
-        )
-        return NextResponse.json(
-          {
-            error:
-              'Non è stato possibile verificare se questo bonifico sia già stato fatturato: il ' +
-              'riabbinamento è stato fermato per non rischiare un secondo documento. Riprova fra qualche minuto.',
-            codice: 'BONIFICO_FATTURA_NON_VERIFICABILE',
-          },
-          { status: 503 },
-        )
-      }
-      const righe = (righeFattura ?? []) as RigaFatturaEmessa[]
-      // Le righe VIVE: il predicato sta in `fatturaViva`, in un posto solo — lo
-      // legge anche l'avviso della riapertura, e due definizioni di «viva»
-      // direbbero due cose diverse dello stesso documento.
-      const viva = righe.find(fatturaViva)
-      if (viva) {
-        const annoViva = viva.anno ?? new Date().getFullYear()
-        const numeroFattura = etichettaFattura(viva)
-        // `esito` è in lista bianca e resta in chiaro: «quante volte si è tentato
-        // di spostare un bonifico già fatturato» diventa una query. Numeri e
-        // uuid, niente altro: la causale del bonifico porta i nomi delle famiglie.
-        logEvento('pagamento', 'warn', {
-          operazione: 'pagamenti/riconciliazione/[id]:PATCH',
-          esito: 'bonifico-gia-fatturato-fermato',
-          pagamento_id: mov.pagamento_id,
-          numero: viva.numero,
-          anno: annoViva,
-        })
-        // La prosa dice il FATTO col numero — che il catalogo non può conoscere,
-        // ed è l'unica cosa che dica quale documento andare a guardare; la
-        // conseguenza e il rimedio stanno nella frase tradotta
-        // (`BONIFICO_GIA_FATTURATO` è in `CODICI_CON_DETTAGLIO`, quindi a schermo
-        // si leggono tutte e due).
-        return NextResponse.json(
-          {
-            error: `Fattura viva sulla voce attualmente abbinata: ${numeroFattura}.`,
-            codice: 'BONIFICO_GIA_FATTURATO',
-          },
-          { status: 409 },
-        )
-      }
-    }
-
     // Vincolo di SCRITTURA: una segreteria registra un incasso solo sulla PROPRIA sede.
+    //
+    // ⚠️ Si risolve QUI e si passa al modulo come `sediAmmesse`, invece di
+    // lasciarglielo risolvere: il percorso manuale registra sulle sedi
+    // dell'operatore, quello automatico che arriverà su un perimetro che dovrà
+    // dichiarare: un modulo che se lo risolvesse da sé sceglierebbe per tutt'e
+    // due, e la differenza diventerebbe accidentale invece che scritta.
     const sediAttive = await resolveScuoleAttive(request as NextRequest, supabase, auth.user)
 
-    let { data: pag, error: errPag } = await supabase
-      .from('pagamenti')
-      .select(PAG_SELECT_V2)
-      .eq('id', pagamentoId)
-      .maybeSingle()
-    if (errPag?.code === '42703') {
-      // DB E2E CI non migrato: colonna `sconto` assente → ritenta senza.
-      ;({ data: pag, error: errPag } = await supabase
-        .from('pagamenti')
-        .select(PAG_SELECT_BASE)
-        .eq('id', pagamentoId)
-        .maybeSingle())
-    }
-    if (!pag || !sediAttive.includes((pag as { scuola_id: string }).scuola_id)) {
-      return NextResponse.json({ error: 'Pagamento non trovato' }, { status: 404 })
-    }
-    const pagDett = pag as {
-      scuola_id: string; alunno_id: string | null; descrizione: string | null; stato: string
-      importo: number | string; importo_pagato?: number | string | null
-      sconto?: number | string | null; scadenza?: string | null
-    }
-
-    // GUARD unificato sul residuo: si evita OGNI sovra-incasso (importo_pagato che sfonda importo).
-    //  • residuo ≤ 0 → voce già saldata (es. incasso a mano): niente secondo incasso.
-    //  • bonifico > residuo → registrare l'INTERO bonifico come incasso su questa voce sfonderebbe
-    //    l'importo, senza 409 e con notifica «Pagamento registrato» al genitore. Si blocca e si
-    //    rimanda all'«Incasso unico», che gestisce l'eccedenza come credito.
-    const residuo = Math.round(residuoEffettivo(pagDett) * 100) / 100
-    if (residuo <= 0) {
-      return NextResponse.json(
-        { error: 'Pagamento già saldato: ignora la riga o scegli un\'altra voce' },
-        { status: 409 },
-      )
-    }
-    if (Number(mov.importo) > residuo) {
-      return NextResponse.json(
-        { error: `L'importo del bonifico (${formatEuro(mov.importo)}) supera il residuo (${formatEuro(residuo)}): usa «Incasso unico» per gestire l'eccedenza/credito` },
-        { status: 409 },
-      )
-    }
-
-    const { data: incasso, error: errInc } = await supabase
-      .from('incassi')
-      .insert({
-        pagamento_id: pagamentoId,
-        importo: mov.importo,
-        data_incasso: mov.data_operazione,
-        metodo: 'bonifico',
-        note: `Riconciliazione: ${(mov.causale ?? '').slice(0, 160)}`.trim(),
-        registrato_da: auth.user.id,
-      })
-      .select()
-      .single()
-    if (errInc) {
-      return NextResponse.json({ error: 'Errore nella registrazione dell’incasso', details: errInc.message }, { status: 500 })
-    }
-
-    // CAS ottimistico: conferma solo se il movimento è ancora nello stato letto.
-    // Due conferme concorrenti creerebbero due incassi per lo stesso bonifico
-    // (#12): se la corsa è persa, storna l'incasso appena inserito.
-    const { data: updated, error: errUpd } = await supabase
-      .from('riconciliazione_movimenti')
-      .update({
-        stato: 'confermato',
-        pagamento_id: pagamentoId,
-        incasso_id: (incasso as { id: string }).id,
-        // Il movimento (finora globale/senza sede) assume la sede del pagamento confermato.
-        scuola_id: pagDett.scuola_id,
-        confermato_da: auth.user.id,
-        confermato_il: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .eq('stato', mov.stato)
-      .select('id')
-    if (errUpd || !updated || updated.length === 0) {
-      await supabase.from('incassi').delete().eq('id', (incasso as { id: string }).id)
-      return NextResponse.json({ error: 'Movimento già riconciliato da un altro operatore' }, { status: 409 })
-    }
+    // Le guardie della conferma — «un bonifico non si fattura due volte», il gate
+    // di sede sul pagamento, il residuo, l'incasso e il compare-and-swap con il
+    // rollback — stanno in `@/lib/pagamenti/riconciliazione-conferma`: sono le
+    // stesse che dovrà attraversare l'import quando confermerà da sé.
+    const esito = await confermaSuVoceSingola(supabase, {
+      movimento: mov,
+      pagamentoId,
+      sediAmmesse: sediAttive,
+      attoreId: auth.user.id,
+      operazione: 'pagamenti/riconciliazione/[id]:PATCH',
+    })
+    if (!esito.ok) return NextResponse.json(esito.body, { status: esito.status })
+    const pagDett = esito.ok.pagamento
 
     await logScrittura(supabase, {
       attore: auth.user,
       entitaTipo: 'riconciliazione_movimenti',
       entitaId: id,
       azione: 'update',
-      scuolaId: pagDett.scuola_id,
+      scuolaId: pagDett.scuolaId,
       valoreDopo: { stato: 'confermato', pagamento_id: pagamentoId, importo: mov.importo },
     })
 
@@ -953,7 +405,7 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
     // poter revocare la sospensione. Best-effort: lo stato l'ha già ricalcolato
     // il trigger; se l'avviso non parte, la conferma resta valida (si logga).
     try {
-      if (pagDett.alunno_id) {
+      if (pagDett.alunnoId) {
         const { data: aggiornato } = await supabase
           .from('pagamenti')
           .select('stato')
@@ -962,8 +414,8 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
         const saldato = (aggiornato as { stato?: string } | null)?.stato === 'pagato'
         await notificaEvento(supabase, {
           tipo: 'pagamento_registrato',
-          scuolaId: pagDett.scuola_id,
-          alunnoIds: [pagDett.alunno_id],
+          scuolaId: pagDett.scuolaId,
+          alunnoIds: [pagDett.alunnoId],
           titolo: saldato ? 'Pagamento registrato' : 'Acconto registrato',
           corpo: `${pagDett.descrizione ?? 'Pagamento'}: registrato un bonifico di ${formatEuro(mov.importo)}.`,
           link: '/parent/pagamenti',
@@ -971,13 +423,13 @@ export const PATCH = withRoute('pagamenti/riconciliazione/[id]:PATCH', async (re
           entitaId: pagamentoId,
           debounce: true,
         })
-        await verificaRevocaSospensioneMorosita(supabase, [pagDett.alunno_id])
+        await verificaRevocaSospensioneMorosita(supabase, [pagDett.alunnoId])
       }
     } catch (e) {
       logEvento('pagamento', 'error', { operazione: 'pagamenti/riconciliazione/[id]:PATCH', esito: 'avviso_o_revoca_non_eseguiti' }, e)
     }
 
-    return NextResponse.json({ success: true, data: { incasso_id: (incasso as { id: string }).id } })
+    return NextResponse.json(esito.body, { status: esito.status })
   } catch (err) {
     logErrore({ operazione: 'pagamenti/riconciliazione/[id]:PATCH', stato: 500 }, err)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

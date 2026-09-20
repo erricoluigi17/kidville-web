@@ -238,8 +238,38 @@ const MAX_FILE = 277;
  * protegge nulla se il tetto non scende insieme alla somma: rimisurato, non dedotto —
  * `jq '.totale_occorrenze' docs/superpowers/errori-senza-codice-allowlist.json` dice **1413**.
  * `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero.
+ *
+ * 🔻 1413 → 1408 il 2026-09-20, branch `feat/riconciliazione-automatica`, e questa volta
+ * **non è un debito pagato: è un debito USCITO DAL CAMPO VISIVO**. L'estrazione delle due
+ * operazioni contabili fuori da `pagamenti/riconciliazione/[id]:PATCH` ha portato in
+ * `src/lib/pagamenti/riconciliazione-conferma.ts` cinque risposte che erano senza `codice` e
+ * senza `codice` sono rimaste — «Pagamento non trovato», «Pagamento già saldato: ignora la riga
+ * o scegli un'altra voce», «l'importo del bonifico … supera il residuo», «Errore nella
+ * registrazione dell'incasso», «Movimento già riconciliato da un altro operatore» — solo che
+ * là dentro hanno la forma `return { status, body }`, mentre `inventario()` qui sotto cerca
+ * `NextResponse.json(`. La voce del file scende da 14 a 9 perché è scesa la MISURA, non perché
+ * qualcuno abbia dichiarato un codice: chi lavora con l'interfaccia in inglese continua a
+ * leggere quelle cinque frasi in italiano, esattamente come prima dello spostamento.
+ *
+ * Il tetto scende lo stesso, e per il motivo di sempre: lasciarlo a 1413 vorrebbe dire che
+ * cinque risposte senza codice possono rientrare su quella rotta con questo lock verde. Sarebbe
+ * la **quinta volta**, e il paragrafo qui sopra dice che la quarta era già una di troppo — ma
+ * questa arriva da una direzione nuova: non da chi paga il debito e si dimentica del tetto, da
+ * chi SPOSTA il codice e porta la misura fuori dalla portata del parser. Il tetto scende **con**
+ * la somma, sempre, anche quando la somma scende per un motivo che non è un merito.
+ * Rimisurato, non dedotto: `jq '.totale_occorrenze' docs/superpowers/errori-senza-codice-allowlist.json`
+ * dice **1408**, e il 14 → 9 viene da `inventario()` eseguito su questo stesso albero — 14 sulla
+ * versione a HEAD della rotta, 9 su quella di adesso.
+ *
+ * COME CI SI RIPRENDE QUELLE CINQUE. Non aggiungendo una voce per il modulo nuovo: l'elenco può
+ * solo rimpicciolirsi e `MAX_FILE` è già esattamente alla lunghezza dell'elenco, quindi una voce
+ * in più è rossa — ed è giusto così. Si insegna a `inventario()` a leggere anche i
+ * `return { status, body }` dei moduli di `src/lib` che fanno da gate a una rotta: oggi non sa
+ * farlo, ed è un lavoro, non una riga di configurazione. Finché non lo sa, questo paragrafo è
+ * l'unico posto del repository in cui quelle cinque risposte esistono ancora.
+ * `MAX_FILE` non si muove: la voce resta in elenco, non è arrivata a zero (9 risposte).
  */
-const MAX_OCCORRENZE = 1413;
+const MAX_OCCORRENZE = 1408;
 
 /**
  * Le frasi RITIRATE il 2026-08-01: le sei versioni scritte a mano dello stesso rifiuto. Non

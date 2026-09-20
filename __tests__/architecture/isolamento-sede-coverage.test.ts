@@ -1219,7 +1219,17 @@ const AMMESSE: Record<string, string> = {
     // più rifiuta i bambini non attivi e le sedi di collaudo. La sede del DOCUMENTO
     // passa da `resolveScuoleAttive` + `rifiutoSede`. La RPC riceve `p.scuola_id`
     // già validata, e le sedi delle singole voci le deriva lei da `alunni.scuola_id`.
-    'pagamenti/riconciliazione/[id]/componi:POST': 'conciliazione composita: le voci e i bambini si leggono per ID e si verificano UNO PER UNO contro le sedi attive (403, non 404) prima di registrare; la sede del documento passa da `resolveScuoleAttive` + `rifiutoSede`',
+    //
+    // ⚠️ LA VOCE `pagamenti/riconciliazione/[id]/componi:POST` È STATA TOLTA IL
+    // 2026-09-20, e non perché il difetto sia stato pagato: perché le letture che
+    // esentava non stanno più in una rotta. Sono in
+    // `src/lib/pagamenti/conciliazione-registra.ts`, dove le attraverserà anche
+    // l'import che concilierà da sé — e questo lock i file di `src/lib` li legge
+    // solo per riconoscere i gate, non per chiedergli conto delle query. Tenere
+    // la riga avrebbe fatto scattare «voci morte»; toglierla senza dirlo avrebbe
+    // fatto sembrare pagato un debito che si è solo spostato. Il racconto per
+    // esteso, con quel che resta a coprire quelle letture, sta accanto a
+    // `handlerEsentati` in fondo al file.
     'pagamenti/transazioni/[id]:GET': 'dettaglio di una transazione già verificata: incassi e crediti si leggono per `transazione_id`',
     'pagamenti/transazioni/[id]/annulla:POST': 'annullo atomico via RPC sulla transazione già verificata (`p.transazione_id`)',
     'pagamenti/incassi/storno:<modulo>': 'helper: ricalcola lo stato del pagamento appena stornato (`p_id` della riga verificata dal chiamante)',
@@ -2702,7 +2712,34 @@ describe('coverage-lock isolamento fra sedi', () => {
             // `gdpr/retention-galleria` (`:POST` e `:<modulo>`): una per l'handler,
             // una per gli helper di modulo, perché un'esenzione data al `POST` non
             // deve estendersi in silenzio a un helper scritto dopo.
-            handlerEsentati: 105,
+            //
+            // ── 🔴 105 → 104 il 2026-09-20, E UN NUMERO CHE SCENDE QUI NON È UN
+            //    MIGLIORAMENTO: è `pagamenti/riconciliazione/[id]/componi:POST`, la
+            //    cui esenzione è diventata MORTA perché la rotta non contiene più
+            //    nessuna lettura. I suoi nove gate — voci esistenti, alunni delle
+            //    voci nuove, alunni dei ticket, sede del documento — sono stati
+            //    spostati in `src/lib/pagamenti/conciliazione-registra.ts`, perché
+            //    l'import che concilierà da sé deve attraversare le stesse
+            //    identiche guardie e non ha una `Request` da cui partire.
+            //
+            //    ⚠️ COSA SI PERDE, detto invece che taciuto: questo lock audita le
+            //    query dei file sotto `src/app/api`, e quelle letture ora non ci
+            //    sono più. `src/lib` lo legge soltanto per RICONOSCERE i gate
+            //    (`GATE_LIB`), non per chiedergli conto delle proprie query. Quindi
+            //    le `.in('id', …)` su `pagamenti` e `alunni` di quella fetta oggi
+            //    non le guarda più nessuno **qui**. Non sono scoperte: il 403 per
+            //    voce, per bambino e per ticket è provato dai test di
+            //    `__tests__/api/pagamenti-riconciliazione-componi.test.ts`, che
+            //    girano sulla rotta vera e sono stati visti fallire. Ma la
+            //    differenza fra «provato da un test di comportamento» e «sorvegliato
+            //    da questo lock» è reale, e chi legge questo numero deve saperla.
+            //
+            //    La strada per riprenderla, il giorno in cui si vorrà, è far
+            //    scandire a questo lock anche i moduli di `src/lib` che fanno da
+            //    gate per una rotta: oggi `nomeRoute()` e `handlerDi()` sanno
+            //    leggere solo `export const METODO = withRoute(`, quindi non è una
+            //    riga di configurazione — è un lavoro, e va fatto apposta.
+            handlerEsentati: 104,
         })
     })
 })

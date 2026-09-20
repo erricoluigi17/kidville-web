@@ -19,7 +19,12 @@ import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 // fatta. Oggi le due porte che decidono chi può essere il pagante passano di qui:
 //   · `…/contesto:GET` — costruisce l'elenco che la schermata MOSTRA, e risponde
 //     403 `CONCILIAZIONE_PAGANTE_NON_AMMESSO` a un `?pagante=` fuori elenco;
-//   · `…/componi:POST` — la SCRITTURA, con lo stesso 403.
+//   · la SCRITTURA, con lo stesso 403 — che dal 2026-09-20 non è più la rotta
+//     `…/componi:POST` ma `@/lib/pagamenti/conciliazione-registra`, dove i suoi
+//     nove gate si sono spostati per essere attraversati anche dall'import che
+//     concilierà da sé. La porta è la stessa, il file no: il lock qui sotto è
+//     stato spostato con lei, perché un lock che punta al file da cui il codice
+//     è uscito non sorveglia più niente restando verde.
 // Erano equivalenti il giorno della migrazione, ed è proprio questo che rendeva
 // urgente chiuderle in una: due copie non divergono il giorno in cui nascono —
 // divergono dopo, e quel giorno la schermata offre un pagante che la scrittura

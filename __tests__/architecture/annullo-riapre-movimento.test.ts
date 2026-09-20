@@ -12,8 +12,8 @@ import { mapStatoAruba } from '@/lib/aruba/stato'
  * `annulla_transazione_contabile` (migrazione `…180200_…`) riapre il movimento
  * bancario legato alla transazione annullata. La prima stesura azzerava anche
  * `pagamento_id` — e quella colonna non è un ornamento: è l'unico appiglio della
- * guardia «un bonifico non si fattura due volte» in
- * `src/app/api/pagamenti/riconciliazione/[id]/route.ts`, che comincia con
+ * guardia «un bonifico non si fattura due volte», che dal 2026-09-20 vive in
+ * `src/lib/pagamenti/riconciliazione-conferma.ts` e comincia con
  * `if (mov.pagamento_id != null && mov.pagamento_id !== pagamentoId)`.
  * **Con `pagamento_id` a NULL quella guardia non scatta mai.**
  *
@@ -73,7 +73,7 @@ const FILE_SQL = join(
     'migrations',
     '20260912180200_annulla_transazione_riapre_movimento.sql',
 )
-const API = join(RADICE, 'src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]')
+const LIB_PAGAMENTI = join(RADICE, 'src', 'lib', 'pagamenti')
 
 const SQL = readFileSync(FILE_SQL, 'utf8')
 
@@ -124,22 +124,40 @@ const diagnosticheSintattiche = (codice: string): string[] =>
  * della propria guardia. Sono scritte diversamente perché fanno cose diverse —
  * l'una riabbina a UNA voce, l'altra ricompone su più voci — e appiattirle in
  * una regex sola vorrebbe dire cercare una somiglianza invece della guardia.
+ *
+ * ─── 🔴 E DAL 2026-09-20 NESSUNA DELLE DUE È PIÙ UNA ROUTE ───────────────────
+ *
+ * Le due guardie hanno cambiato file, e questo lock è stato spostato con loro:
+ * vivono in `src/lib/pagamenti/riconciliazione-conferma.ts` e
+ * `src/lib/pagamenti/conciliazione-registra.ts`. Il motivo dello spostamento è
+ * lo stesso che rende questo lock necessario: le porte stanno per diventare
+ * TRE — l'import dell'estratto conto confermerà da sé i bonifici che riconosce —
+ * e una terza copia della guardia sarebbe divergente il giorno dopo essere nata.
+ * Ora la guardia è una funzione sola, e ci passano tutti.
+ *
+ * ⚠️ Perché questo file è stato modificato invece di lasciarlo puntare alle
+ * rotte: continuando a leggere `…/[id]/route.ts` sarebbe rimasto VERDE — quelle
+ * rotte sono gusci, e un guscio non contiene nessuna guardia da perdere. Cioè
+ * avrebbe smesso di sorvegliare esattamente ciò che dichiara di tenere insieme
+ * con la migrazione, restando del colore giusto. È la terza volta che questo
+ * file lo scrive di sé stesso, e le altre due volte era un difetto: qui è il
+ * prezzo di uno spostamento, ed è pagato guardando dove il codice è andato.
  */
 const PORTE = [
     {
         nome: 'la conferma a voce singola',
-        file: join(API, 'route.ts'),
-        dove: 'src/app/api/pagamenti/riconciliazione/[id]/route.ts',
-        firma: "withRoute('pagamenti/riconciliazione/[id]:PATCH'",
+        file: join(LIB_PAGAMENTI, 'riconciliazione-conferma.ts'),
+        dove: 'src/lib/pagamenti/riconciliazione-conferma.ts',
+        firma: 'export async function confermaSuVoceSingola(',
         /** La memoria del movimento, confrontata col pagamento che si sta per legare. */
         guardia: /mov\.pagamento_id\s*!=\s*null/,
         guardiaTesto: 'mov.pagamento_id != null',
     },
     {
         nome: 'la composizione (blocco §9)',
-        file: join(API, 'componi', 'route.ts'),
-        dove: 'src/app/api/pagamenti/riconciliazione/[id]/componi/route.ts',
-        firma: "'pagamenti/riconciliazione/[id]/componi:POST'",
+        file: join(LIB_PAGAMENTI, 'conciliazione-registra.ts'),
+        dove: 'src/lib/pagamenti/conciliazione-registra.ts',
+        firma: 'export async function registraConciliazione(',
         guardia: /const\s+pagamentoDiPrima\s*=\s*movimento\.pagamento_id[\s\S]*?pagamentoDiPrima\s*!=\s*null/,
         guardiaTesto: 'const pagamentoDiPrima = movimento.pagamento_id … pagamentoDiPrima != null',
     },
@@ -168,6 +186,19 @@ const PORTE = [
  */
 const CONSUMATORI = [
     ...PORTE.map((p) => ({ dove: p.dove, file: p.file })),
+    {
+        // ⚠️ AGGIUNTO IL 2026-09-20, insieme allo spostamento delle due porte: è
+        // l'AVVISO della riapertura — «restano fatture vive su quella voce» — che
+        // stava dentro `…/[id]/route.ts` ed è uscito con lo storno. Non è una
+        // porta (non ferma niente, per decisione misurata del titolare: 167
+        // riaperture su 174 hanno una fattura viva), ma la domanda che fa è la
+        // stessa, e se un giorno se la ridefinisse in casa l'avviso della
+        // riapertura e il 409 del riabbinamento direbbero due cose diverse dello
+        // stesso documento. Lasciarlo fuori dall'elenco avrebbe rifatto,
+        // sull'altro verso, l'errore del riquadro «E LE PORTE SONO DUE».
+        dove: 'src/lib/pagamenti/riapertura-movimento.ts',
+        file: join(LIB_PAGAMENTI, 'riapertura-movimento.ts'),
+    },
     {
         dove: 'src/app/api/pagamenti/riconciliazione/route.ts',
         file: join(RADICE, 'src', 'app', 'api', 'pagamenti', 'riconciliazione', 'route.ts'),
@@ -312,7 +343,7 @@ describe("lock architettura · l'annullo riapre il movimento senza accecare la g
             azzera('pagamento_id'),
             'L\'UPDATE che riapre il movimento azzera `pagamento_id`. Quella colonna è l\'UNICO ' +
                 'appiglio della guardia «un bonifico non si fattura due volte» ' +
-                '(`src/app/api/pagamenti/riconciliazione/[id]/route.ts`), che comincia con ' +
+                '(`src/lib/pagamenti/riconciliazione-conferma.ts`), che comincia con ' +
                 '`if (mov.pagamento_id != null && …)`: con NULL non scatta mai. Il movimento ' +
                 'riaperto verrebbe riabbinato a un\'altra voce senza che nessuno veda la fattura ' +
                 'già emessa su quella vecchia — una fattura viva senza incasso e un secondo ' +

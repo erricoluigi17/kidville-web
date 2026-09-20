@@ -9,10 +9,19 @@
  * del documento fiscale. Un id sbagliato non è un campo sbagliato: è una fattura
  * a nome di un estraneo, con la sua detrazione 730 addosso.
  *
- * Su quel permesso si affacciano DUE rotte, e fanno cose opposte:
+ * Su quel permesso si affacciano DUE porte, e fanno cose opposte:
  *   · `…/contesto:GET` — MOSTRA l'elenco dei candidati, e risponde 403 a un
  *     `?pagante=` che non è fra loro;
- *   · `…/componi:POST` — SCRIVE, e risponde 403 allo stesso modo.
+ *   · la SCRITTURA, che risponde 403 allo stesso modo.
+ *
+ * ⚠️ LA SECONDA PORTA HA CAMBIATO FILE IL 2026-09-20, e questo lock è stato
+ * spostato con lei. Era la rotta `…/componi:POST`; i suoi nove gate — pagante
+ * compreso — vivono ora in `src/lib/pagamenti/conciliazione-registra.ts`, perché
+ * l'import che concilierà da sé non ha una `Request` e deve attraversare le
+ * stesse identiche guardie. Se questo file avesse continuato a leggere la rotta
+ * sarebbe rimasto VERDE su un guscio che di paganti non decide più niente: un
+ * lock che punta al file da cui il codice è uscito non è severo, è cieco — ed è
+ * la specie di cecità che questo repository ha già pagato tre volte.
  * Fino al 2026-09-13 ognuna ne teneva una copia. Erano equivalenti — misurato su
  * 2000 scenari generati: stesse coppie, stessi id, stesse relazioni — ed è
  * esattamente la ragione per cui sono state unite. **Due copie non divergono il
@@ -50,12 +59,18 @@ import { join, relative } from 'node:path'
 const RADICE = process.cwd()
 const MODULO = join('src', 'lib', 'pagamenti', 'pagante-ammesso.ts')
 const CONTESTO = join('src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]', 'contesto', 'route.ts')
-const COMPONI = join('src', 'app', 'api', 'pagamenti', 'riconciliazione', '[id]', 'componi', 'route.ts')
+/** La porta che SCRIVE: dal 2026-09-20 è il modulo, non più `…/componi/route.ts`. */
+const SCRITTURA = join('src', 'lib', 'pagamenti', 'conciliazione-registra.ts')
 
-/** Le due porte, con la firma del loro `withRoute`: serve al controllo positivo. */
+/**
+ * Le due porte, ognuna con la propria firma: serve al controllo positivo dello
+ * strip. Sono due firme di specie diversa perché le porte ormai lo sono — una è
+ * una rotta HTTP, l'altra la funzione che i suoi gate li contiene — e appiattirle
+ * su una forma sola vorrebbe dire cercare una somiglianza invece della cosa.
+ */
 const PORTE = [
   { file: CONTESTO, firma: "withRoute(\n  'pagamenti/riconciliazione/[id]/contesto:GET'" },
-  { file: COMPONI, firma: "withRoute(\n  'pagamenti/riconciliazione/[id]/componi:POST'" },
+  { file: SCRITTURA, firma: 'export async function registraConciliazione(' },
 ]
 
 /** Via i commenti: un lock non deve poter essere né aggirato né innescato da una frase. */
@@ -148,6 +163,6 @@ describe('LOCK · un solo motore per «chi può essere il pagante»', () => {
         'avviso. Una terza porta va bene, ma va DICHIARATA qui e nella testata del ' +
         'modulo, perché chi cambia la regola deve sapere quante schermate sta muovendo — ' +
         'e perché la porta nuova va provata, non dedotta.',
-    ).toEqual([COMPONI, CONTESTO].sort())
+    ).toEqual([SCRITTURA, CONTESTO].sort())
   })
 })

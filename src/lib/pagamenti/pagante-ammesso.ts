@@ -45,6 +45,25 @@ import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 // `completo === false`, cioè «una delle due sorgenti non si è letta», e dirlo
 // `false` manderebbe la segreteria a creare un genitore che esiste già.
 //
+// ─── E UN QUARTO CHIAMANTE, CHE È L'UNICO SENZA NESSUNO A GUARDARE ──────────
+// Dal 2026-09-20 chiama anche `@/lib/pagamenti/riconciliazione-auto-import`, la
+// fase che dentro l'import abbina i bonifici certi senza che nessuno clicchi.
+// Non aggiunge una regola: usa questa. Ma la usa in VERSO OPPOSTO, ed è una
+// decisione scritta, non un caso —
+//
+//   · `registraConciliazione` fa **fail-OPEN** quando l'insieme non è completo o
+//     è vuoto: rifiutare lì scaricherebbe un guasto del database sul banco della
+//     segreteria, e comunque c'è una persona che legge il nome sul documento;
+//   · l'automatismo fa **fail-CLOSED** negli stessi due casi, più un terzo (il
+//     pagante scelto che non cade dentro l'insieme ammesso): niente automatismo,
+//     motivo `pagante_non_determinato`, la riga resta gialla e la lavora una
+//     persona.
+//
+// La differenza è tutta lì: il fail-open esiste perché c'è qualcuno che guarda.
+// In automatico non c'è. Chi un giorno volesse uniformare i due versi legga
+// prima questo riquadro: sono la stessa funzione usata da due chiamanti con due
+// reti di sicurezza diverse, non una dimenticanza da pareggiare.
+//
 // ─── DUE PONTI, E DIVERGONO DAVVERO ─────────────────────────────────────────
 // Misurato sul database di produzione il 2026-09-13, confrontando coppia per
 // coppia `student_parents` con `legame_genitori_alunni` risolta via

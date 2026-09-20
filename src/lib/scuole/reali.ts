@@ -112,8 +112,33 @@ export interface EsitoSedi {
   /** Sedi reali e attive, ordinate per nome: è quello che si mostra al pubblico. */
   reali: SedeMinima[]
   /** Errore della lettura di `schools` (PostgREST NON lancia: ritorna `{ error }`).
-   *  Il degrado del solo filtro `attiva` NON finisce qui: è fail-open, non un errore. */
+   *  Il degrado del solo filtro `attiva` NON finisce qui: è fail-open, non un
+   *  errore — e si legge in `attivaDegradata`. */
   error: { message: string; code?: string } | null
+  /**
+   * 🔴 IL FILTRO `scuole.attiva` NON È STATO APPLICATO: la lettura del flag è
+   * fallita e il fail-open ha lasciato dentro `reali` anche i plessi che
+   * l'organizzazione ha cancellato con soft-delete.
+   *
+   * Esiste perché il fail-open è la scelta giusta per chi MOSTRA un elenco (una
+   * sede in più è meglio di nessuna sede) e quella sbagliata per chi ci SCRIVE
+   * DENARO: `reali` è il perimetro che l'abbinamento automatico dell'import
+   * passa ai moduli, e con quel filtro caduto il perimetro si allarga in
+   * silenzio — `error` resta `null`, nessuno se ne accorge, e la macchina
+   * incassa in un plesso disattivato. Fino al 2026-09-20 questo degrado non
+   * usciva da qui: c'era solo una riga `info fail-open-attiva` in `app_log`,
+   * cioè una notizia per chi la cerca dopo, non un dato per chi deve decidere
+   * prima.
+   *
+   * ⚠️ `false` NON vuol dire «tutte attive»: vuol dire «il filtro è stato
+   * applicato per quanto `scuole` si sia lasciata leggere». Quando `schools`
+   * fallisce (`error` valorizzato) vale `false` perché il filtro non è mai
+   * stato nemmeno tentato — e lì è `error` a comandare, non questo campo.
+   *
+   * I chiamanti che mostrano un elenco possono continuare a ignorarlo: il
+   * comportamento di `reali` non cambia di una riga.
+   */
+  attivaDegradata: boolean
 }
 
 /**
@@ -137,7 +162,12 @@ export async function sediReali(
       // Senza l'elenco delle sedi il form pubblico non sa dove iscrivere nessuno:
       // è un guasto, non una nota a piè di pagina.
       logEvento('multi_sede', 'error', { operazione, esito: 'schools-non-leggibile' }, error)
-      return { tutte: [], reali: [], error: { message: error.message, code: error.code } }
+      // `attivaDegradata: false` — il filtro non è stato «degradato», non è stato
+      // proprio tentato: non c'è nessun elenco da filtrare. Qui comanda `error`.
+      return {
+        tutte: [], reali: [], attivaDegradata: false,
+        error: { message: error.message, code: error.code },
+      }
     }
     tutte = ((data ?? []) as SedeMinima[]).map((s) => ({ id: s.id, nome: s.nome }))
   } catch (e) {
@@ -145,7 +175,7 @@ export async function sediReali(
     // non deve arrivare nuda al chiamante: un catch che non logga è un bug.
     logEvento('multi_sede', 'error', { operazione, esito: 'schools-eccezione' }, e)
     const msg = e instanceof Error ? e.message : 'errore lettura schools'
-    return { tutte: [], reali: [], error: { message: msg } }
+    return { tutte: [], reali: [], attivaDegradata: false, error: { message: msg } }
   }
 
   let reali = tutte.filter((s) => !isScuolaE2E(s))
@@ -154,6 +184,13 @@ export async function sediReali(
   // in /api/admin/sedi: se la lettura del flag fallisce NON filtriamo — meglio una
   // sede in più che nasconderle tutte per un errore transitorio (o per la colonna
   // assente sul DB E2E della CI, che non è migrato: PostgREST risponde 42703).
+  //
+  // ⚠️ MA IL FAIL-OPEN SI DICHIARA, e da qui in poi non è più solo una riga di log:
+  // `attivaDegradata` lo porta al chiamante. Chi MOSTRA un elenco continua a
+  // ignorarlo (una sede in più è meglio di nessuna sede); chi ci SCRIVE DENARO no,
+  // perché per lui «una sede in più» vuol dire incassare in un plesso che
+  // l'organizzazione ha cancellato. Vedi il campo in `EsitoSedi`.
+  let attivaDegradata = false
   const ids = reali.map((s) => s.id)
   if (ids.length > 0) {
     try {
@@ -162,6 +199,7 @@ export async function sediReali(
         .select('id, attiva')
         .in('id', ids)
       if (regError) {
+        attivaDegradata = true
         logEvento('multi_sede', 'info', { operazione, esito: 'fail-open-attiva' }, regError)
       } else {
         const disattivate = new Set(
@@ -172,9 +210,10 @@ export async function sediReali(
         if (disattivate.size > 0) reali = reali.filter((s) => !disattivate.has(s.id))
       }
     } catch (e) {
+      attivaDegradata = true
       logEvento('multi_sede', 'info', { operazione, esito: 'fail-open-attiva' }, e)
     }
   }
 
-  return { tutte, reali, error: null }
+  return { tutte, reali, attivaDegradata, error: null }
 }

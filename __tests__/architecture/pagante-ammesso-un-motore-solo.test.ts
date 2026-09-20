@@ -29,21 +29,26 @@
  * un pagante che la scrittura rifiuta (l'operatrice sbatte contro un 403 su una
  * scelta che il pannello le ha proposto), o il contrario — che è peggio.
  *
- * ⚠️ DAL 2026-09-20 I SORVEGLIATI SONO TRE, ma le PORTE restano due: il terzo
- * (`pagamenti/riconciliazione/alunni:GET`, la ricerca del bambino) non concede e
- * non nega niente — riporta il booleano `ha_pagante`. Sta sotto le stesse regole
- * perché è proprio un lettore la specie di chiamante che si scriverebbe in casa
- * una query «giusto per sapere se c'è un genitore»: sarebbe la terza traduzione
- * del ponte, e il pannello direbbe «pronto» dove la conferma poi rifiuta.
+ * ⚠️ DAL 2026-09-20 I SORVEGLIATI SONO QUATTRO, ma le PORTE che MOSTRANO o
+ * RIFIUTANO restano due. Il terzo (`pagamenti/riconciliazione/alunni:GET`, la
+ * ricerca del bambino) non concede e non nega niente — riporta il booleano
+ * `ha_pagante`. Il quarto (la fase automatica dell'import) invece SCEGLIE, ed è
+ * l'unico dei quattro in cui non c'è nessuno a guardare: dove la scrittura
+ * manuale fa fail-open su un pagante non verificato, lui rifiuta e lascia la
+ * riga gialla. Stanno sotto le stesse regole perché è proprio il chiamante «di
+ * servizio» la specie che si scriverebbe in casa una query «giusto per sapere se
+ * c'è un genitore»: sarebbe un'altra traduzione del ponte, e il pannello direbbe
+ * «pronto» dove la conferma poi rifiuta — o la macchina intesterebbe una fattura
+ * a un adulto che la schermata non avrebbe mai proposto.
  *
  * ─── COSA SORVEGLIA ─────────────────────────────────────────────────────────
- *  1. i tre sorvegliati chiamano `pagantiAmmessiPerAlunni`;
- *  2. nessuno dei tre ricostruisce il PONTE account→`parents`
+ *  1. i quattro sorvegliati chiamano `pagantiAmmessiPerAlunni`;
+ *  2. nessuno dei quattro ricostruisce il PONTE account→`parents`
  *     (`.in('auth_user_id', …)`): è il pezzo che, scritto due volte, fa
  *     divergere gli insiemi;
- *  3. nessuno dei tre chiama `getGenitoriDiAlunniEsito`, cioè la sorgente
+ *  3. nessuno dei quattro chiama `getGenitoriDiAlunniEsito`, cioè la sorgente
  *     runtime di questa regola si raggiunge SOLO attraverso il modulo;
- *  4. il modulo non ha un QUARTO chiamante che nessuno ha dichiarato.
+ *  4. il modulo non ha un QUINTO chiamante che nessuno ha dichiarato.
  *
  * ⚠️ SI ASSERISCE SUL CODICE SENZA COMMENTI, MAI SUL FILE GREZZO. La prosa di
  * queste due rotte NOMINA tutto ciò che questo lock cerca — `student_parents`,
@@ -85,6 +90,23 @@ const SCRITTURA = join('src', 'lib', 'pagamenti', 'conciliazione-registra.ts')
 const LETTURA = join('src', 'app', 'api', 'pagamenti', 'riconciliazione', 'alunni', 'route.ts')
 
 /**
+ * Il QUARTO chiamante, dichiarato il 2026-09-20: la fase automatica dell'import.
+ *
+ * È una porta che SCEGLIE, ed è l'unica delle quattro in cui non c'è nessuno a
+ * guardare. `registraConciliazione` fa fail-**open** su un pagante non verificato
+ * — l'insieme non letto per intero, o vuoto — perché di là c'è un'operatrice che
+ * legge il nome sull'anteprima della fattura. Qui non c'è, e la fase fa
+ * fail-**closed**: niente automatismo, la riga resta gialla.
+ *
+ * Sta sotto le stesse tre regole degli altri per la ragione che vale per tutti:
+ * è proprio un chiamante «di servizio» — uno che vuole solo sapere chi intestare
+ * — quello che si scriverebbe in casa la propria query sui legami. Sarebbe la
+ * quarta traduzione del ponte account→`parents`, e la macchina intesterebbe un
+ * documento fiscale a un adulto che la schermata non avrebbe mai proposto.
+ */
+const AUTOMATISMO = join('src', 'lib', 'pagamenti', 'riconciliazione-auto-import.ts')
+
+/**
  * I sorvegliati, ognuno con la propria firma: serve al controllo positivo dello
  * strip. Sono firme di specie diversa perché le porte ormai lo sono — una è una
  * rotta HTTP, l'altra la funzione che i suoi gate li contiene — e appiattirle su
@@ -94,6 +116,7 @@ const PORTE = [
   { file: CONTESTO, firma: "withRoute(\n  'pagamenti/riconciliazione/[id]/contesto:GET'" },
   { file: SCRITTURA, firma: 'export async function registraConciliazione(' },
   { file: LETTURA, firma: "withRoute('pagamenti/riconciliazione/alunni:GET'" },
+  { file: AUTOMATISMO, firma: 'export async function abbinaImportAutomaticamente(' },
 ]
 
 /** Via i commenti: un lock non deve poter essere né aggirato né innescato da una frase. */
@@ -142,19 +165,21 @@ describe('LOCK · un solo motore per «chi può essere il pagante»', () => {
     expect(CODICE_MODULO).toContain("from('student_parents')")
   })
 
-  it('🔴 le due porte E il lettore passano dal modulo condiviso', () => {
+  it('🔴 i QUATTRO sorvegliati passano dal modulo condiviso', () => {
     const senza = PORTE.filter(({ file }) => !/\bpagantiAmmessiPerAlunni\s*\(/.test(CODICE.get(file)!))
     expect(
       senza.map((p) => p.file),
-      'Questa rotta decide chi può essere il pagante senza passare da ' +
+      'Questo sorvegliato decide chi può essere il pagante senza passare da ' +
         '`pagantiAmmessiPerAlunni`: o si è riscritta la regola in casa, o l’ha persa. ' +
         'Le due porte — quella che MOSTRA i candidati e quella che SCRIVE l’incasso — ' +
-        'devono dare lo stesso verdetto sullo stesso genitore, e l’unico modo perché ' +
+        'devono dare lo stesso verdetto sullo stesso genitore; il lettore deve ' +
+        'ANNUNCIARE quello stesso verdetto, e la fase automatica lo usa per intestare ' +
+        'un documento fiscale senza che nessuno guardi. L’unico modo perché i quattro ' +
         'non possano divergere è che sia la stessa funzione.',
     ).toEqual([])
   })
 
-  it('🔴 nessuno dei tre ricostruisce il ponte account→`parents`', () => {
+  it('🔴 nessuno dei QUATTRO ricostruisce il ponte account→`parents`', () => {
     const colpevoli = PORTE.filter(({ file }) => CODICE.get(file)!.includes(".in('auth_user_id'"))
     expect(
       colpevoli.map((p) => p.file),
@@ -176,16 +201,16 @@ describe('LOCK · un solo motore per «chi può essere il pagante»', () => {
     ).toEqual([])
   })
 
-  it('🔴 non è spuntato un QUARTO chiamante che nessuno ha dichiarato', () => {
+  it('🔴 non è spuntato un QUINTO chiamante che nessuno ha dichiarato', () => {
     const chiamanti = SORGENTI.filter(
       (f) => f.relativo !== MODULO && /\bpagantiAmmessiPerAlunni\s*\(/.test(f.codice),
     ).map((f) => f.relativo)
     expect(
       [...chiamanti].sort(),
       'I chiamanti di `pagantiAmmessiPerAlunni` sono cambiati. Non è un divieto: è un ' +
-        'avviso. Una terza porta va bene, ma va DICHIARATA qui e nella testata del ' +
+        'avviso. Una porta in più va bene, ma va DICHIARATA qui e nella testata del ' +
         'modulo, perché chi cambia la regola deve sapere quante schermate sta muovendo — ' +
         'e perché la porta nuova va provata, non dedotta.',
-    ).toEqual([SCRITTURA, CONTESTO, LETTURA].sort())
+    ).toEqual([SCRITTURA, CONTESTO, LETTURA, AUTOMATISMO].sort())
   })
 })

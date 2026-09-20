@@ -18,6 +18,17 @@ import {
   type VerdettoAltraSede,
   sedeDedotta,
 } from '@/lib/pagamenti/riconciliazione'
+/**
+ * LA FASE AUTOMATICA — sta fuori di qui, e non è una preferenza di stile.
+ *
+ * Dentro ci sono le sole cose che il percorso manuale ha in una PERSONA e l'import non ha:
+ * il perimetro di sede (la deroga alle tre sedi), la scelta del pagante, il tetto di lavoro
+ * e la decisione di non avvisare la famiglia. Le GUARDIE non sono lì e non sono qui: si
+ * chiamano dove stanno già (`valutaCertezza`, `confermaSuVoceSingola`, `registraConciliazione`),
+ * perché un predicato scritto in linea in due punti, in questo repository, diverge il giorno
+ * dopo essere nato.
+ */
+import { abbinaImportAutomaticamente } from '@/lib/pagamenti/riconciliazione-auto-import'
 import { leggiEstrattoConto } from '@/lib/pagamenti/estratto-conto/lettura'
 import { interpretaFogli } from '@/lib/pagamenti/estratto-conto/tabella'
 import type { Formato } from '@/lib/pagamenti/estratto-conto/tipi'
@@ -278,10 +289,20 @@ const COLONNA_APERTI_ASSENTE = new Set(['42703', 'PGRST200'])
  * quindi la perdita è visibile, ma va letta nei log: la risposta non la dichiara.
  * È un costo accettato, non una svista. L'alternativa (un giro di conferma che ri-aggiunge i
  * gruppi sacrificati prima di quello che ha davvero fallito) pagherebbe round-trip in più a
- * ogni import su un database degradato, cioè in CI, per recuperare campi che in questo lotto
- * nessuno ancora legge. Quando l'abbinamento automatico userà `sconto` per davvero, quel
- * giro di conferma va aggiunto: perdere lo sconto per colpa di un'altra colonna è una cecità
- * gratuita, e `sconto` è proprio il campo che distingue il residuo vero da quello sbagliato.
+ * ogni import su un database degradato, cioè in CI.
+ *
+ * ⚠️ E QUI SOPRA C'ERA UNA CAMBIALE, che ora va onorata a metà e detta per intero: «quando
+ * l'abbinamento automatico userà `sconto` per davvero, quel giro di conferma va aggiunto».
+ * Dal 2026-09-20 lo usa (la fase in fondo al `POST`). Il giro di conferma NON è stato
+ * aggiunto, e la ragione è che la conseguenza è cambiata di specie: la fase automatica non
+ * è l'ultima parola sul residuo. Su una voce scontata letta senza `sconto` il residuo
+ * calcolato qui è PIÙ GRANDE del vero, quindi la fase può dire «certo» — ma chi SCRIVE
+ * rilegge il pagamento con `sconto` (`confermaSuVoceSingola`, e la RPC per la composizione)
+ * e rifiuta: 409 sulla singola, 422 sulla composta. Il costo del degrado è un tentativo
+ * sprecato e una riga `auto-scrittura-fallita` a livello `error` — mai un incasso sbagliato.
+ * Il giro di conferma resta la cosa giusta da fare il giorno in cui quei rifiuti si vedranno
+ * nei log; aggiungerlo oggi costerebbe round-trip a ogni import in CI per evitare un
+ * tentativo che comunque nessuno paga in denaro.
  *
  * L'ordine non tocca la correttezza (la scala converge comunque): tocca quanti round-trip
  * costa il degrado, e quali gruppi cadono per compagnia. Davanti c'è il gruppo che manca
@@ -335,6 +356,16 @@ function colonneAperti(vivi: ReadonlySet<GruppoAperti>): string {
 interface ApertoDaAbbinare extends PagamentoAperto {
   /** Sede del PAGAMENTO. `null` anche quando la colonna c'è: la riga può non averla. */
   scuola_id: string | null
+  /**
+   * `pagamenti.tipo`. `padre` è il CONTENITORE delle rate: non si incassa (lo
+   * farebbe risultare pagato lasciando aperte le figlie).
+   *
+   * ⚠️ Si porta ESPLICITO anche se il `.filter(p => p.tipo !== 'padre')` qui
+   * sotto li toglie già: l'abbinamento automatico decide su una bandiera per
+   * voce, e una bandiera che dipende da un filtro scritto altrove diventa falsa
+   * in silenzio il giorno in cui quel filtro si muove.
+   */
+  tipo: string | null
   /** Abbuono sulla voce: assente sui DB non migrati, e allora vale `null`, non zero. */
   sconto: number | string | null
   categoria_slug: string | null
@@ -349,13 +380,30 @@ interface ApertoDaAbbinare extends PagamentoAperto {
 /**
  * LA QUALITÀ DELL'ELENCO APERTI, IN SEI NUMERI — e perché esiste una funzione per questo.
  *
- * I campi che questo lotto legge in più non hanno ancora NESSUN consumatore: non entrano nel
- * punteggio, non escono nella risposta, non li guarda un `if`. Un percorso di lettura
- * sbagliato — un embed che torna in un'altra forma, un gruppo caduto per compagnia nella
- * scala, una chiave rinominata — passerebbe quindi inosservato fino al lotto che ci si
- * fiderà sopra, cioè fino al momento in cui incassare sulla voce sbagliata di un bambino
- * vero diventa possibile. Un campo portato e mai guardato è un campo non misurato, e
- * consegnarlo al prossimo lotto sarebbe consegnare il falso pronto all'uso.
+ * ⚠️ QUI SOPRA C'ERA SCRITTO «questi campi non hanno ancora nessun consumatore», ed è
+ * SMESSO di essere vero il 2026-09-20: li legge la fase automatica in fondo al `POST`, che
+ * su `sconto`, sede e stato dell'alunno decide se una riga bancaria si può incassare da
+ * sola. La funzione resta, e proprio per quello: un percorso di lettura sbagliato — un embed
+ * che torna in un'altra forma, un gruppo caduto per compagnia nella scala, una chiave
+ * rinominata — non fa più cadere niente: rende la macchina CIECA su quel campo. Questi sei
+ * numeri sono l'unico posto in cui quella cecità si conta.
+ *
+ * 🔴 E LA CECITÀ NON SIGNIFICA LA STESSA COSA SU TUTTI E TRE I CAMPI. Qui c'era scritto
+ * «una macchina cieca non sbaglia: rinuncia», ed era una promessa di sicurezza FALSA su uno
+ * dei tre:
+ *  • `sede_pagamento` — la cecità PRODUCE la rinuncia: `scuola_id` nullo ⇒ `sede_ignota`,
+ *    e `valutaCertezza` lascia stare l'intero movimento;
+ *  • `sconto` — la macchina non rinuncia affatto: sovrastima il residuo, TENTA, e viene
+ *    respinta a valle (409 sulla singola, 422 sulla composta, con una riga `error`
+ *    `auto-scrittura-fallita`). Un tentativo sprecato, mai un incasso sbagliato;
+ *  • `ciclo_alunno` — la cecità SPEGNE una rinuncia: senza `anonimizzato_il` la bandiera
+ *    `alunnoAnonimizzato` è falsa ovunque e `alunno_anonimizzato` non scatta più, cioè la
+ *    macchina incasserebbe su un fascicolo già passato per l'oblio. È il solo caso in cui
+ *    non vedere APRE invece di chiudere, e per questo non è affidato a un conteggio: è una
+ *    PRECONDIZIONE che spegne la fase (`ciclo-alunno-cieco`, in
+ *    `@/lib/pagamenti/riconciliazione-auto-import`), decisa sul dato — `alunno_stato` nullo
+ *    su tutte le voci — e non sul gradino caduto, così vale anche quando a cambiare è la
+ *    forma dell'embed. `aperti_ciclo_ignoto` qui sotto resta il numero che lo racconta.
  *
  * Sono CONTEGGI, e questo li rende dicibili: `@/lib/logging/redact` è a lista bianca e i
  * numeri passano in chiaro. Dicono QUANTE, mai di CHI — nessun uuid di alunno, nessuno slug
@@ -1870,7 +1918,10 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         alunno_id: p.alunno_id ?? null,
         codice_fiscale: p.alunni?.codice_fiscale ?? p.alunni?.fiscal_code ?? null,
         alunno_nome: [p.alunni?.nome, p.alunni?.cognome].filter(Boolean).join(' ') || null,
-        // Da qui in giù: letti e portati, NON ancora usati. È il lotto che prepara il terreno.
+        tipo: p.tipo ?? null,
+        // Da qui in giù: li legge la FASE AUTOMATICA più sotto (`abbinaImportAutomaticamente`),
+        // che su ognuno decide se una riga si può incassare da sola. Fino al
+        // 2026-09-20 erano «letti e portati, non ancora usati».
         scuola_id: p.scuola_id ?? null,
         sconto: p.sconto ?? null,
         // ⚠️ L'embed è letto come OGGETTO, non come array: `categoria_id` è una chiave
@@ -1938,13 +1989,27 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
     // A BLOCCHI. Un solo INSERT da 6.775 righe che portano anche i `suggerimenti` in JSONB è
     // un corpo di svariati megabyte: la richiesta a PostgREST muore per dimensione, e con lei
     // l'import intero. Il ritentativo su 23502 (DB E2E non migrato) resta DENTRO il ciclo.
+    //
+    // ⚠️ L'INSERT ORA RESTITUISCE LE RIGHE SCRITTE (`.select('id, hash_movimento')`), in
+    // ENTRAMBI i rami — anche in quello di degradazione. Serve alla fase automatica qui
+    // sotto, che senza gli uuid appena assegnati non ha niente su cui fare il
+    // compare-and-swap. Si prende di ritorno invece di rileggere: una seconda lettura
+    // costerebbe un giro in più e aprirebbe una finestra in cui un altro import si
+    // intromette fra la scrittura e la rilettura.
+    const scritti: { id: string; hash_movimento: string }[] = []
     for (let i = 0; i < righe.length; i += BLOCCO_INSERT) {
       const blocco = righe.slice(i, i + BLOCCO_INSERT)
-      let { error: errIns } = await supabase.from('riconciliazione_movimenti').insert(blocco)
+      let { data: inseriti, error: errIns } = await supabase
+        .from('riconciliazione_movimenti')
+        .insert(blocco)
+        .select('id, hash_movimento')
       if (errIns?.code === '23502') {
         logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_scuola_id_movimenti' })
         const bloccoConSede = blocco.map((r) => ({ ...r, scuola_id: scuolaId }))
-        ;({ error: errIns } = await supabase.from('riconciliazione_movimenti').insert(bloccoConSede))
+        ;({ data: inseriti, error: errIns } = await supabase
+          .from('riconciliazione_movimenti')
+          .insert(bloccoConSede)
+          .select('id, hash_movimento'))
       }
       if (errIns) {
         logErrore({ operazione: OPERAZIONE_POST, evento: 'movimenti_non_salvati', stato: 500 }, errIns)
@@ -1962,6 +2027,7 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         }
         return NextResponse.json({ error: 'Errore nel salvataggio dei movimenti' }, { status: 500 })
       }
+      scritti.push(...((inseriti ?? []) as { id: string; hash_movimento: string }[]))
     }
 
     await logScrittura(supabase, {
@@ -1971,6 +2037,56 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       azione: 'insert',
       scuolaId,
       valoreDopo: { filename: filename, nuovi: righe.length, duplicati },
+    })
+
+    // ── IL SECONDO PASSO: L'ABBINAMENTO AUTOMATICO ─────────────────────────────────────
+    //
+    // Sta QUI — dopo gli insert, dentro la stessa richiesta — e non dentro il ciclo che
+    // costruisce le righe. Le tre ragioni, per esteso, stanno nella testata di
+    // `@/lib/pagamenti/riconciliazione-auto-import`; in breve: il compare-and-swap
+    // confronta lo stato di una riga che dentro il ciclo non esiste ancora; l'insert a
+    // blocchi può fallire a metà e lascerebbe incassi puntati su movimenti mai scritti; e
+    // così la degradazione è un NON-EVENTO — se la fase cade, le righe restano gialle o
+    // rosse, cioè il comportamento di ieri, e l'import resta valido.
+    //
+    // La mappa hash→id viene dalle righe che l'INSERT ha appena restituito. Un hash senza
+    // id è un movimento che la fase non può abbinare (niente CAS possibile): non è un
+    // errore dell'import, ma non deve nemmeno sparire in silenzio.
+    const idPerHash = new Map(scritti.map((r) => [r.hash_movimento, r.id]))
+    const perAuto = righe.flatMap((r) => {
+      const id = idPerHash.get(r.hash_movimento)
+      return id
+        ? [{
+            id,
+            importo: Number(r.importo),
+            causale: r.causale,
+            controparte: r.controparte,
+            dataOperazione: r.data_operazione,
+            // Lo stato con cui la riga è NATA: è il valore del compare-and-swap, e lo
+            // sappiamo per averlo appena scritto noi.
+            stato: r.stato,
+          }]
+        : []
+    })
+    if (perAuto.length < righe.length) {
+      logEvento('pagamento', 'warn', {
+        operazione: OPERAZIONE_POST,
+        esito: 'auto-id-non-restituiti',
+        n: righe.length - perAuto.length,
+        totali: righe.length,
+      })
+    }
+    const auto = await abbinaImportAutomaticamente(supabase, {
+      importId: (imp as { id: string }).id,
+      movimenti: perAuto,
+      // Le righe scritte di cui l'uuid non è tornato entrano comunque nei conteggi
+      // della fase: sono movimenti che restano in coda, e un riepilogo che li
+      // dimenticasse direbbe «zero saltati» su N righe non abbinate.
+      nonMappati: righe.length - perAuto.length,
+      aperte: aperti,
+      apertiTroncati,
+      attore: auth.user,
+      operazione: OPERAZIONE_POST,
     })
 
     // Log di SUCCESSO con i soli CONTEGGI (mai PII: niente causale/CF/nomi). 'pagamento' è un
@@ -1996,9 +2112,13 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       // Il successo dichiara anche SU COSA è stato calcolato: con l'elenco degli aperti
       // troncato, `suggeriti` e `con_cf` sono limiti inferiori, non conteggi.
       aperti_troncati: apertiTroncati,
-      // …e con QUANTA vista: i sei numeri di `qualitaAperti` sono l'unico posto in cui i
-      // campi letti da questo lotto si fanno vedere, finché non avranno un consumatore.
+      // …e con QUANTA vista: i sei numeri di `qualitaAperti` dicono su quanta parte
+      // dell'elenco l'abbinamento automatico è cieco, e quindi rinuncia.
       ...qualitaAperti(aperti),
+      // Che la fase automatica sia PARTITA o no. I suoi conteggi li logga lei
+      // (`auto_abbinamento_eseguito`): qui basta il booleano, perché `import_ok` senza
+      // quella riga accanto è il solo modo di accorgersi che la fase non è partita affatto.
+      auto_attiva: auto.attiva,
     })
 
     return NextResponse.json({
@@ -2014,6 +2134,13 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         suggeriti,
         con_cf: conCf,
         da_abbinare: righe.length - suggeriti,
+        // Quello che la macchina ha chiuso da sé, e quello che resta alla coda manuale.
+        // `auto_saltati` comprende anche i movimenti che la fase non ha nemmeno guardato
+        // (budget o tetto esauriti): è «quanti ne restano», che è la domanda che si fa chi
+        // guarda il riepilogo dell'import.
+        auto_singole: auto.autoSingole,
+        auto_composite: auto.autoComposite,
+        auto_saltati: auto.saltati,
       },
     })
   } catch (err) {

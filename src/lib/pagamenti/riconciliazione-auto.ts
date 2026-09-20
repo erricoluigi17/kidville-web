@@ -52,8 +52,12 @@
  * Tolleranza ZERO oltre il centesimo: `33,33 + 33,33 + 33,34` fa 100,00 e quadra,
  * `33,333 × 3` fa 99,99 e non quadra. Un acconto lo decide una persona.
  *
- * ⚠️ QUESTO MODULO NON È ANCORA CHIAMATO DA NESSUNO. Produce un verdetto; chi lo
- * userà per scrivere arriva dopo, e porterà con sé i propri log.
+ * ⚠️ DAL 2026-09-20 QUESTO MODULO È CHIAMATO, e fino a quel giorno qui c'era
+ * scritto il contrario («non è ancora chiamato da nessuno»). Il chiamante è
+ * `./riconciliazione-auto-import.ts` — la fase in fondo al `POST` dell'import —
+ * e i log li porta lui, come era previsto. Ciò che è cambiato è il peso: un
+ * `auto-singola` di questo predicato non è più un'opinione, è un incasso scritto
+ * senza che nessuno clicchi. Chi tocca la regola qui dentro sta muovendo quello.
  */
 
 import { estraiCodiciFiscali } from './riconciliazione'

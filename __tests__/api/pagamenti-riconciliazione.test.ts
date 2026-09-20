@@ -68,8 +68,19 @@ vi.mock('@/lib/supabase/server-client', () => ({
         const err = h.fail23502.has(table) && nullSede
           ? { code: '23502', message: 'null value in column "scuola_id" violates not-null constraint' }
           : null
+        // ⚠️ `.insert(…).select(…)` DEVE essere attendibile, e prima non lo era.
+        // Dal 2026-09-20 l'insert dei movimenti chiede indietro le righe scritte
+        // (`.select('id, hash_movimento')`: la fase automatica ha bisogno degli uuid appena
+        // assegnati). Con un `select()` che restituiva solo `{ single }`, `await` su quella
+        // catena consegnava l'OGGETTO — `error` `undefined` — e il ramo `23502` del DB E2E
+        // non migrato non scattava più: il finto diceva «insert riuscito» dove il database
+        // vero dice «scuola_id NOT NULL». Un verde che parlava del finto, non del codice.
+        const righeScritte = rows.map((r, i) => ({ id: `${table}-${i}`, hash_movimento: r.hash_movimento }))
         return {
-          select: () => ({ single: async () => ({ data: err ? null : { id: `${table}-new`, ...(Array.isArray(row) ? {} : row) }, error: err }) }),
+          select: () => ({
+            single: async () => ({ data: err ? null : { id: `${table}-new`, ...(Array.isArray(row) ? {} : row) }, error: err }),
+            then: (r: (v: unknown) => unknown) => r({ data: err ? null : righeScritte, error: err }),
+          }),
           then: (r: (v: unknown) => unknown) => r({ data: null, error: err }),
         }
       }

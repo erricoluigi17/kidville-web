@@ -105,6 +105,105 @@
 
 ---
 
+## 🧹 Changelog — Eliminare un docente, e riportare a genitore chi è entrato dalla porta sbagliata — 2026-09-20 (branch `feat/elimina-docente-e-declassamento`)
+
+Una mamma aveva compilato il modulo pubblico `/anagrafica-personale` dichiarandosi insegnante. La
+segreteria l'ha approvata, e tre secondi dopo esistevano un account `educator` e un fascicolo del
+personale col suo **codice fiscale, la residenza e due scansioni della carta d'identità**. Non
+c'era nessun modo di tornare indietro: nessun comando eliminava o archiviava un membro del
+personale, e il ruolo `genitore` è escluso di proposito dai ruoli assegnabili.
+
+### Che cosa c'è adesso
+
+Tre comandi nella scheda del personale (Anagrafiche → Personale → la persona), in una zona
+separata e dichiarata pericolosa, ciascuno con un'anteprima che dice **prima** che cosa farà:
+
+| Comando | Che cosa fa |
+|---|---|
+| **Elimina docente** | Se non ha lasciato tracce si cancella davvero; se ne ha si archivia e sparisce dagli elenchi. |
+| **Trasforma in genitore** | `ruolo → genitore`, stesso account ed email, e cancella fascicolo e pratica d'origine. |
+| **Anche genitore** | Aggiunge il profilo genitore tenendo quello da insegnante. Il figlio si sceglie o si rimanda. |
+
+Permessi: Direzione ovunque, Segreteria sulla propria sede; mai un bersaglio di Direzione, mai sé
+stessi. La conferma si digita — il cognome, non una spunta.
+
+### Le misure che hanno cambiato il progetto
+
+Tutte in sola lettura su produzione, il **2026-09-20**. Vanno **rieseguite, non ricopiate**.
+
+| misura | valore |
+|---|---|
+| docenti (`ruolo='educator'`) | 80 |
+| decisione calcolata sugli 80 | **69 `archivia` · 8 `cancella` · 3 `profilo-doppio`** |
+| docenti che sono anche genitori (ponte `parents`) | **12** |
+| chiavi esterne verso `utenti(id)` | **56** (34 bloccanti, 13 cascade, 9 set-null) |
+| account con `utenti.attivo = false` | **26**, tutti con accesso fra il 10/07 e il 12/09 |
+
+Due correzioni le ha trovate la misura, non il ragionamento:
+
+1. **`pratiche_personale.utente_id` non è una traccia.** Contarla rendeva indelebili **67 docenti su
+   80** — ed è l'atto di nascita del loro account, non una cosa che hanno fatto.
+2. **Le tracce vanno chieste prima del ponte genitore.** Con l'ordine inverso tutti e dodici i
+   docenti-genitori diventavano `profilo-doppio`, compresi i nove che insegnano davvero, ai quali
+   veniva negata anche l'archiviazione — che su di loro è sicura.
+
+### `utenti.archiviato_il`, e perché non si è riusato `attivo`
+
+Perché `attivo` non ha mai avuto semantica applicativa: **nessun gate la leggeva**, e nel frattempo
+il database si è riempito di 26 righe a `false` su account **vivi** — fra cui un amministratore, la
+Direzione e tre di segreteria, tutti con un accesso fra luglio e il 12 settembre. Farla leggere
+adesso avrebbe dato valore retroattivo a ventisei decisioni che nessuno ricorda di aver preso.
+`archiviato_il` nasce vuota e la scrive solo il comando nuovo. **`attivo` resta com'è: è un problema
+separato, da guardare col titolare, non da risolvere di soppiatto.**
+
+La regola che i gate applicano: **l'archiviazione revoca il profilo di `utenti.ruolo`, non l'accesso
+della persona.** Chi ha anche il ponte `parents` continua a entrare come genitore — sono dodici, e
+fra loro c'è chi insegna e ha un figlio iscritto qui. Scritta come «archiviato ⇒ 401», questa regola
+avrebbe chiuso fuori una madre dal diario di suo figlio.
+
+⚠️ **Il filtro va messo in due posti**, perché la logica dei profili è scritta due volte:
+`getProfiliForAuthUid` e `GET /api/me`. Toccandone una sola si costruisce un giro infinito —
+`requireArea` → login → `signInWithPassword` **riesce** (GoTrue non sa niente di `archiviato_il`) →
+`/api/me` → profili vuoti → la pagina ripiega su `me.role`, che la riga porta ancora → area → login.
+Senza messaggio e senza uscita. Il 403 con codice è l'unica uscita, e il test lo asserisce **contro
+il 401**, perché è il 401 a chiudere l'anello.
+
+### L'ordine della cancellazione: file → pratica → anagrafica
+
+La DELETE della pratica cascata su `caricamenti_personale`, cioè sull'**unica riga che nomina quei
+file**. Cancellando le righe per prime, la fotografia di una carta d'identità resterebbe nel bucket
+senza che nessuna riga al mondo possa più nominarla: invisibile, non cancellata, e non eliminabile
+nemmeno su richiesta dell'interessata. E se la rimozione fallisce non si tocca nessuna riga.
+
+Le due righe si cancellano in una transazione sola (`personale_cancella_fascicolo`, `SECURITY
+DEFINER` con le revoche nello stesso file): PostgREST non rende atomiche due `.delete()`, e cancellare
+la sola anagrafica lascerebbe una pratica `approvata` e slegata — che la conservazione non tocca
+**mai**, perché le approvate le raggiunge solo passando per `origine_pratica_id`. Un codice fiscale
+immortale.
+
+### Che cosa questo lavoro NON ha fatto
+
+- **`supabase db reset` in locale non è stato eseguito**: Docker non è disponibile su questa
+  macchina. La migrazione la applica l'integrazione al merge, quindi la sua **prima esecuzione vera
+  è il merge**. I presupposti su cui poggia sono stati verificati in sola lettura su produzione.
+- **In produzione non è stato toccato nessuno.** L'intervento su Rosa Santini — l'unico previsto —
+  va fatto **dopo il rilascio**, perché fino ad allora né la colonna né la RPC esistono.
+- **I 26 `attivo = false` restano come sono**, e l'elenco è pronto quando il titolare vorrà guardarlo.
+- **Il modulo `/anagrafica-personale` resta pubblico e anonimo**: questo lavoro ripara il caso e dà
+  lo strumento, ma il prossimo arriverà dalla stessa porta.
+
+### Prova per rottura, eseguita
+
+Sedici mutazioni deliberate su cinque file, una alla volta e su copie pulite. Tre numeri dichiarati
+nei commenti erano **sbagliati** e sono stati corretti con la misura; una mutazione ha rivelato un
+presidio **mai misurato** — togliere il CAS sul cambio di ruolo lasciava la suite verde, perché il
+test che lo difende non esisteva. È stato scritto. Un'altra lascia la suite verde ed è scritta lo
+stesso, col perché: non è un difetto, e inseguirla avrebbe speso un lock per difendere una preferenza.
+
+Gate: `eslint` 0 · `tsc` 0 · `npm run build` 0 · **1.395 file di test, 19.294 verdi**.
+
+---
+
 ## 📢 Changelog — Il server accettava le adesioni DOPO la scadenza, e la card dava per morto un avviso vivo per 22 ore su 24 — 2026-09-19 (branch `feat/avvisi-scadenze-adesioni`)
 
 Il lavoro chiesto era «aggiungere il numero di partecipanti e una lista d'attesa». Scrivendolo sono

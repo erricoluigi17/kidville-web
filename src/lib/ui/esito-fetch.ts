@@ -2392,6 +2392,91 @@ export const CODICI_ERRORE = {
      */
     RIAPERTURA_SEDE_NON_VERIFICATA: 'erroreRiaperturaSedeNonVerificata',
     /**
+     * ─── I QUATTRO DELL'ANNULLAMENTO IN BLOCCO DI UN IMPORT ─────────────────
+     *
+     * «Disfa tutto ciò che la macchina ha chiuso da sola in questo import»:
+     * `pagamenti/riconciliazione/annulla-import`. Sono rifiuti che arrivano
+     * PRIMA di qualunque storno — l'annullo non parte mai a metà — e ognuno
+     * manda a fare una cosa diversa, che è il motivo per cui sono quattro e non
+     * uno generico.
+     *
+     * 500/503 — l'elenco di ciò che l'import ha chiuso da solo non si è potuto
+     * leggere, oppure non si sono potute leggere le transazioni dei bonifici
+     * compositi. **Nessuna riga è stata toccata**, e la frase lo dice: chi legge
+     * un «errore» su un'operazione che storna denaro deve sapere, prima di tutto
+     * il resto, se qualcosa è già partito.
+     */
+    ANNULLO_IMPORT_NON_LETTO: 'erroreAnnulloImportNonLetto',
+    /**
+     * 503 — su questo ambiente la marca `abbinato_auto_il` non esiste (il DB E2E
+     * della CI non è migrato), quindi non esiste nemmeno il modo di sapere quali
+     * righe abbia chiuso la macchina.
+     *
+     * ⚠️ Il rimedio NON è riprovare: è riaprire i movimenti uno per uno dal
+     * registro, col pulsante di sempre. Un «riprova» qui manderebbe a ripetere
+     * un'operazione che su quell'ambiente non può riuscire mai.
+     */
+    ANNULLO_IMPORT_NON_DISPONIBILE: 'erroreAnnulloImportNonDisponibile',
+    /**
+     * 422 — l'import ha chiuso da solo più movimenti di quanti se ne possano
+     * disfare in una richiesta.
+     *
+     * Un ciclo non limitato su una rotta serverless è un timeout travestito da
+     * successo parziale: a tempo scaduto le righe già stornate restano stornate
+     * e nessuna risposta dice quali fossero. Il rimedio è il registro filtrato
+     * per import, dove si riaprono a gruppi.
+     */
+    ANNULLO_IMPORT_TROPPE_RIGHE: 'erroreAnnulloImportTroppeRighe',
+    /**
+     * 403 — fra le righe da disfare ce n'è almeno una chiusa su una sede che chi
+     * opera non gestisce.
+     *
+     * ⚠️ NON è un'incoerenza col fatto che quelle righe si VEDANO: l'abbinamento
+     * automatico lavora su tutte e tre le sedi per decisione del titolare
+     * (l'estratto conto della banca è uno solo), ma annullare è uno **storno** —
+     * un movimento contabile definitivo sul denaro di un plesso — e lo storno si
+     * fa dalla propria sede. La frase dice anche che nessuna riga è stata
+     * toccata: l'annullo è tutto-o-niente, e non esiste un mezzo annullo da
+     * andare a cercare.
+     */
+    ANNULLO_IMPORT_FUORI_PERIMETRO: 'erroreAnnulloImportFuoriPerimetro',
+    /**
+     * 500 — l'annullo in blocco si è interrotto a metà del ciclo.
+     *
+     * ⚠️ ESISTE PERCHÉ NON SI PUÒ DIRE «nessuna riga è stata toccata», che è
+     * invece la frase di `ANNULLO_IMPORT_NON_LETTO`. Qui l'eccezione è arrivata
+     * DOPO che il ciclo era partito: una parte dei bonifici può essere già
+     * tornata in coda, coi suoi storni registrati. Dire il contrario manderebbe
+     * l'operatrice a ripetere un annullo già avvenuto per metà — e anche se il
+     * ritentativo è idempotente per costruzione, il conteggio che lei ha in
+     * testa non lo sarebbe.
+     *
+     * Il rimedio è guardare: il registro filtrato per quell'import dice quali
+     * righe sono tornate rosse e quali sono rimaste verdi.
+     */
+    ANNULLO_IMPORT_INTERROTTO: 'erroreAnnulloImportInterrotto',
+    /**
+     * 503 — gli avvisi alle famiglie degli abbinamenti automatici non sono
+     * partiti: non si è potuto leggere che cosa fosse già stato avvisato, o quali
+     * voci il bonifico abbia saldato.
+     *
+     * ⚠️ È un fail-closed VOLUTO, e la frase deve dire che si può riprovare: un
+     * avviso mandato due volte non si ritira, uno non ancora partito si manda
+     * riaprendo il riepilogo. Nessuna famiglia ha ricevuto niente.
+     */
+    RIEPILOGO_NOTIFICHE_NON_INVIATE: 'erroreRiepilogoNotificheNonInviate',
+    /**
+     * 500 — l'invio degli avvisi si è interrotto a metà.
+     *
+     * Gemello di `ANNULLO_IMPORT_INTERROTTO`, e per la stessa ragione: a
+     * differenza del fail-closed qui sopra, in questo caso **una parte delle
+     * famiglie può aver già ricevuto l'avviso**, e dire «nessuna famiglia ha
+     * ricevuto niente» sarebbe falso. Riaprire il riepilogo resta la cosa giusta
+     * da fare — la rotta è idempotente, chi è già stato avvisato non lo sarà due
+     * volte — ma va detto che qualcosa è partito.
+     */
+    RIEPILOGO_NOTIFICHE_INTERROTTE: 'erroreRiepilogoNotificheInterrotte',
+    /**
      * 422 — una delle voci scelte è un CONTENITORE di rate (`pagamenti.tipo =
      * 'padre'`): il totale di un piano, non una cosa che si incassa.
      *

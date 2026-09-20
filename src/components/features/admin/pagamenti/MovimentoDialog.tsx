@@ -18,7 +18,7 @@ import { AlertTriangle, Check, Clock, FileCheck, FileText, Layers, Receipt, Sear
 import { Modal } from '@/components/ui/Modal';
 import { FatturaButton } from './FatturaButton';
 import { ComposizioneBonifico } from './ComposizioneBonifico';
-import { MODAL_CARD, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
+import { MODAL_CARD_QUASI_SCHERMO, MODAL_SHADOW, INPUT, BTN_PRIMARY_AA, BTN_SECONDARY } from './ui';
 import { cx } from '@/lib/ui/cx';
 import { formatEuro } from '@/lib/format/valuta';
 import { logClient, nomeErrore } from '@/lib/logging/client';
@@ -479,6 +479,25 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
   const puoAbbinare = stato !== 'confermato';
   const isConfermato = stato === 'confermato';
   const isIgnorato = stato === 'ignorato';
+  /**
+   * C'È DAVVERO QUALCOSA DA FARE, IN QUESTA FINESTRA?
+   *
+   * Le due colonne hanno una premessa: «il FATTO a sinistra, il LAVORO a destra».
+   * Su un movimento già confermato il lavoro non esiste — `puoAbbinare` è falso e
+   * la colonna di destra resta un guscio: un `region` annunciato «Abbina» con
+   * dentro NIENTE. Chi naviga per landmark ci finisce dentro e trova il vuoto, col
+   * nome di un comando che lì non c'è; e a `lg` il binario `1fr` resta vuoto anche
+   * lui, così il riquadro Documenti vive nei 22rem del binario sinistro — più
+   * stretto di com'era nella card da 512px, dentro un popup grande quanto lo
+   * schermo. Dove il lavoro non c'è, i binari tornano uno solo e l'`aside` prende
+   * tutta la larghezza.
+   *
+   * `error` ed `esito` sono di stato e arrivano DOPO: su un confermato si può
+   * premere «Riapri», e la frase che ne racconta l'esito vive in questa colonna.
+   * Perciò la premessa si ricalcola a ogni render, non si decide sullo stato
+   * iniziale del movimento.
+   */
+  const haLavoro = Boolean(error) || Boolean(esito) || puoAbbinare;
   const suggerimenti = movimento.suggerimenti ?? [];
   const multiCf = movimentoMultiCf(suggerimenti);
   /**
@@ -608,25 +627,36 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
       onClose={onClose}
       title={`${t('movdlgTitoloMovimento')} ${dataIt(movimento.data_operazione)}`}
       labelledBy={TITLE_ID}
+      /* ⚠️ `safeArea` NASCE CON LA CARD GRANDE, e non è una svista rimediata: a
+         512px e centrata, la card stava lontana dal notch e dall'home indicator
+         per costruzione: nessuna imbottitura serviva. Al 95% dello schermo tocca
+         i bordi, e su iPhone il bordo di sopra è coperto dal notch e quello di
+         sotto dalla barra di gesto — cioè la ✕ della testa e i pulsanti del piede,
+         che sono le due cose da cui si esce. La prop esiste già su `Modal`: qui
+         la si usa, non la si aggiunge. */
+      safeArea
       /* `kv-recon-dialog` è l'àncora dell'Alto Contrasto (globals.css): senza,
          in HC il popup resta la stessa carta bianca della luce normale, perché
          `@theme inline` inlina gli hex e nessun rimappaggio di token lo tocca.
-         `sm:max-w-lg` e non `max-w-lg`: fra due utility di pari specificità
-         decide l'ordine nel FOGLIO, e lì `max-w-md` di MODAL_CARD veniva dopo —
-         il popup era largo 448px mentre il codice ne chiedeva 512. La variante
-         di media query viene emessa dopo, quindi vince davvero.
 
-         ⚠️ IL TETTO D'ALTEZZA NON È UN VEZZO: È CIÒ CHE RENDE «CHIUDI»
-         RAGGIUNGIBILE. `Modal` centra la card in un `fixed inset-0` e blocca lo
-         scorrimento del body (`document.body.style.overflow = 'hidden'`). La card
-         non aveva né altezza massima né `overflow`: su un movimento da abbinare —
-         suggerimenti PIÙ ricerca manuale — il popup supera l'altezza di un
-         telefono, e ciò che esce non si raggiunge in NESSUN modo. Non è «si
-         scorre dentro il popup»: non si scorreva affatto.
-         `dvh` e non `vh`: su iOS `vh` conta anche la barra degli indirizzi che poi
-         si ritira, cioè misura una finestra che non c'è. `2rem` è il `p-4` del
-         contenitore di `Modal`, sopra e sotto. */
-      className={cx(MODAL_CARD, 'kv-recon-dialog max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg')}
+         ⚠️ QUESTO POPUP NON È UN MESSAGGIO, È UN BANCO DI LAVORO, e fino al
+         2026-09-19 aveva la card dei messaggi: `max-w-md` + `sm:max-w-lg`, cioè
+         **512px anche su un monitor da 2560**. Dentro ci stavano causale,
+         avvisi, suggerimenti, l'INTERO form di composizione con le sue griglie e
+         una lista con un secondo scorrimento annidato: tutto in colonna, tutto
+         dentro la stessa card che scorreva — «Chiudi» compreso, che era in fondo
+         a quel rotolo. Ora la card è quasi a tutto schermo (decisione del
+         titolare: ~95%, margine sottile, **resta un popup**) e dentro ha tre
+         fasce: testa e piede fissi, il corpo che scorre.
+
+         Il tetto d'altezza NON è sparito, ha cambiato forma: sta in
+         `MODAL_CARD_QUASI_SCHERMO` (`h-[95dvh] max-h-full`) e insieme
+         all'`overflow-hidden` della card è ciò che tiene il piede dove si vede.
+         Il `calc(100dvh-2rem)` che c'era qui non si poteva tenere: sottraeva a
+         mano il `p-4` del contenitore di `Modal`, e con `safeArea` quella
+         imbottitura non è più 2rem — è `max(1rem, env(safe-area-inset-*))`, un
+         numero che dipende dal telefono. Il perché per esteso sta sulla costante. */
+      className={cx(MODAL_CARD_QUASI_SCHERMO, 'kv-recon-dialog')}
       style={{ boxShadow: MODAL_SHADOW }}
       returnFocusRef={returnFocusRef}
     >
@@ -638,8 +668,13 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           Toglierlo sistema anche l'allineamento della ✕, che con tre righe di
           testo a sinistra finiva otticamente in mezzo a due di esse: adesso la ✕
           vive nella STESSA riga flex della cifra, quindi è allineata per
-          costruzione e non per una misura da riazzeccare a ogni modifica. */}
-      <div className="mb-4">
+          costruzione e non per una misura da riazzeccare a ogni modifica.
+
+          ⚠️ ED È UNA FASCIA FISSA, non più il primo pezzo di ciò che scorre.
+          La cifra è l'unica cosa che dice QUANTO si sta incassando: scorreva via
+          al primo suggerimento, e con lei la ✕. `shrink-0` perché in una colonna
+          flex una fascia si lascia comprimere dal corpo se il corpo cresce. */}
+      <div data-testid="movdlg-testa" className="shrink-0 border-b border-kidville-line p-5">
         <div className="flex items-center justify-between gap-3">
           <h2 id={TITLE_ID} className="min-w-0 font-barlow text-2xl font-black uppercase leading-none text-kidville-green">
             {formatEuro(movimento.importo)}
@@ -657,386 +692,449 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
         <p className="mt-2 font-maven text-xs text-kidville-sub">{t('movdlgBonificoDel')} {dataIt(movimento.data_operazione)}</p>
       </div>
 
-      {/* Causale / ordinante: etichettati come nelle email di sollecito, dove la
-          stessa famiglia legge «Causale» e «Intestato a» — che è il testo di
-          `movdlgOrdinante` dal 2026-09-05: prima c'era «Ordinante:», cioè una
-          parola diversa da quella che la stessa persona legge nel sollecito, e
-          l'unico occhiello della schermata coi due punti.
-          Fondo crema PIENO e non `cream/60`: con l'alfa dentro il nome della
-          classe, la regola di Alto Contrasto `.bg-kidville-cream` non lo
-          raggiungerebbe nemmeno.
-          Spaziature sulla scala 4/8 (erano 14px e 6px, mezzi passi): il popup è
-          alto una decina di pixel in più e ha un ritmo che si legge. */}
-      <div className="mb-4 rounded-card bg-kidville-cream p-4">
-        <p className={OCCHIELLO}>{t('movdlgCausale')}</p>
-        <p className="mt-2 font-maven text-sm leading-snug break-words text-kidville-ink" title={movimento.causale ?? ''}>
-          {movimento.causale || t('movdlgNessunaCausale')}
-        </p>
-        {movimento.controparte && (
-          <>
-            <p className={cx(OCCHIELLO, 'mt-4')}>{t('movdlgOrdinante')}</p>
-            <p className="mt-2 font-maven text-sm leading-snug break-words text-kidville-ink">{movimento.controparte}</p>
-          </>
-        )}
-      </div>
+      {/* ── IL CORPO: l'unica cosa che scorre ────────────────────────────
+          `min-h-0` non è decorativo: senza, un figlio flex non si comprime
+          sotto il proprio contenuto (`min-height: auto`), la fascia cresce
+          quanto ciò che contiene e a scorrere torna la card intera — cioè
+          esattamente il difetto che queste tre fasce chiudono. */}
+      <div data-testid="movdlg-corpo" className="min-h-0 flex-1 overflow-y-auto p-5">
+        {/* ── IL FATTO A SINISTRA, IL LAVORO A DESTRA (da `lg` in su) ──────
+            `minmax(0,…)` su ENTRAMBI i binari, non `22rem 1fr`: il minimo
+            implicito di una traccia di griglia è `auto`, quindi una causale
+            lunghissima senza spazi allargherebbe il binario invece di andare
+            a capo, e la colonna di destra si stringerebbe per farle posto.
 
-      {error && <p role="alert" className="mb-4 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{error}</p>}
+            Sotto `lg` è una colonna sola e l'`aside` viene PRIMO, nell'ordine
+            in cui sta scritto: niente `order-*`. Un ordine visuale diverso da
+            quello di tabulazione è un difetto di accessibilità (WCAG 1.3.2),
+            non un dettaglio di impaginazione.
 
-      {/* ── L'ESITO, quando c'è qualcosa da raccontare ───────────────────────
-          Sta PRIMA dell'abbinamento e lo SOSTITUISCE, non gli si affianca: dopo
-          una composizione registrata, «Conferma questo» e la ricerca manuale
-          sarebbero due modi di incassare una seconda volta lo stesso bonifico —
-          e nel caso «incasso registrato, riga non legata» il ritentativo è
-          esattamente il gesto che il server chiede di NON fare. Vedi `EsitoAzione`. */}
-      {esito && <PannelloEsito esito={esito} />}
-
-      {/* ── Abbinamento (movimenti non confermati) ─────────────────────────── */}
-      {!esito && puoAbbinare && (
-        <div className="space-y-4">
-          {/* Bonifico di famiglia: innesto «Incasso unico» (impl. UI-2) */}
-          {!composto && multiCf && onIncassoUnico && (
-            <div className="rounded-card border-[1.5px] border-kidville-green-soft bg-kidville-green-soft p-4">
-              <p className="flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-green">
-                <Users size={15} /> {t('movdlgBonificoFamiglia')}
+            ⚠️ IL SECONDO BINARIO ESISTE SOLO SE C'È QUALCOSA DA METTERCI: vedi
+            `haLavoro`. Su un movimento confermato la colonna di destra è vuota, e
+            un `1fr` vuoto lascerebbe il FATTO schiacciato nei 22rem del binario
+            sinistro con mezzo schermo di niente accanto. */}
+        <div className={cx('grid grid-cols-1 gap-4 lg:gap-6', haLavoro && 'lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]')}>
+          {/* Il FATTO: ciò che la banca ha mandato, più i documenti che ne
+              sono nati. Resta a vista mentre si lavora a destra — è il motivo
+              dello `sticky`: la causale si legge mentre si compone, e prima
+              scorreva via. `self-start` perché una colonna alta quanto la
+              griglia non ha margine per incollarsi a niente. */}
+          <aside
+            aria-label={`${t('movdlgTitoloMovimento')} ${dataIt(movimento.data_operazione)}`}
+            className="min-w-0 lg:sticky lg:top-0 lg:self-start"
+          >
+            {/* Causale / ordinante: etichettati come nelle email di sollecito, dove la
+                stessa famiglia legge «Causale» e «Intestato a» — che è il testo di
+                `movdlgOrdinante` dal 2026-09-05: prima c'era «Ordinante:», cioè una
+                parola diversa da quella che la stessa persona legge nel sollecito, e
+                l'unico occhiello della schermata coi due punti.
+                Fondo crema PIENO e non `cream/60`: con l'alfa dentro il nome della
+                classe, la regola di Alto Contrasto `.bg-kidville-cream` non lo
+                raggiungerebbe nemmeno.
+                Spaziature sulla scala 4/8 (erano 14px e 6px, mezzi passi): il popup è
+                alto una decina di pixel in più e ha un ritmo che si legge. */}
+            <div className="mb-4 rounded-card bg-kidville-cream p-4">
+              <p className={OCCHIELLO}>{t('movdlgCausale')}</p>
+              <p className="mt-2 font-maven text-sm leading-snug break-words text-kidville-ink" title={movimento.causale ?? ''}>
+                {movimento.causale || t('movdlgNessunaCausale')}
               </p>
-              <button type="button" onClick={() => onIncassoUnico(movimento)} disabled={busy} className={cx(BTN_PRIMARY_AA, 'mt-3 min-h-11')}>
-                {t('movdlgApriIncassoUnico')}
-              </button>
+              {movimento.controparte && (
+                <>
+                  <p className={cx(OCCHIELLO, 'mt-4')}>{t('movdlgOrdinante')}</p>
+                  <p className="mt-2 font-maven text-sm leading-snug break-words text-kidville-ink">{movimento.controparte}</p>
+                </>
+              )}
             </div>
-          )}
 
-          {/* ── «Questo bonifico sembra di un'altra sede» ────────────────────
-              Sopra i suggerimenti, perché è la cosa da sapere PRIMA di premerne
-              uno.
+            {/* ── «Questo bonifico sembra di un'altra sede» ────────────────────
+                Sopra i suggerimenti, perché è la cosa da sapere PRIMA di premerne
+                uno.
 
-              ⚠️ E NON È PIÙ LA STESSA CARTA CREMA DEGLI ALTRI RIQUADRI, come
-              questo commento diceva fino al 2026-09-07. MISURATO sullo
-              screenshot: aveva lo stesso identico vestito della card «CAUSALE /
-              ORDINANTE» che gli sta due centimetri sopra — due rettangoli uguali,
-              uno che riporta dei dati e uno che dice «se premi qui sotto registri
-              l'incasso sulla voce di un bambino di un altro plesso». Un avviso col
-              vestito di ciò che informa non è un avviso: è una nota.
+                ⚠️ E NON È PIÙ LA STESSA CARTA CREMA DEGLI ALTRI RIQUADRI, come
+                questo commento diceva fino al 2026-09-07. MISURATO sullo
+                screenshot: aveva lo stesso identico vestito della card «CAUSALE /
+                ORDINANTE» che gli sta due centimetri sopra — due rettangoli uguali,
+                uno che riporta dei dati e uno che dice «se premi qui sotto registri
+                l'incasso sulla voce di un bambino di un altro plesso». Un avviso col
+                vestito di ciò che informa non è un avviso: è una nota.
 
-              Il peso lo danno TRE cose, e nessuna è il fondo: un FILETTO laterale
-              da 4px, un GLIFO e l'INCHIOSTRO d'avviso sul titolo. I numeri —
-              cioè gli hex, che in questo file sono vietati anche nei commenti
-              (`__tests__/architecture/design-tokens-admin.test.ts`) — stanno nel
-              lock che li ricalcola, `riconciliazione-a11y-css.test.ts`:
-                · `warn-strong` sul crema vale **5,05:1**, sopra i 4,5:1 di WCAG
-                  1.4.3 — ed è anche il colore del FILETTO, dove basterebbero i
-                  3:1 di 1.4.11. `warn` sul crema si ferma a 2,79:1 e sarebbe
-                  stato sotto soglia: misurato prima di scartarlo, non dopo;
-                · il fondo resta crema APPOSTA. `warn-soft` e crema distano tre
-                  punti per canale: cambiarlo non avrebbe separato niente, e
-                  avrebbe portato il riquadro fuori dalla regola di Alto Contrasto
-                  che il popup ha già su `.bg-kidville-cream`;
-                · fondi PIENI, mai `bg-…/70`: con l'alfa dentro il nome della
-                  classe quella regola HC non lo raggiungerebbe nemmeno. È la
-                  stessa lezione scritta due volte qui sopra.
+                Il peso lo danno TRE cose, e nessuna è il fondo: un FILETTO laterale
+                da 4px, un GLIFO e l'INCHIOSTRO d'avviso sul titolo. I numeri —
+                cioè gli hex, che in questo file sono vietati anche nei commenti
+                (`__tests__/architecture/design-tokens-admin.test.ts`) — stanno nel
+                lock che li ricalcola, `riconciliazione-a11y-css.test.ts`:
+                  · `warn-strong` sul crema vale **5,05:1**, sopra i 4,5:1 di WCAG
+                    1.4.3 — ed è anche il colore del FILETTO, dove basterebbero i
+                    3:1 di 1.4.11. `warn` sul crema si ferma a 2,79:1 e sarebbe
+                    stato sotto soglia: misurato prima di scartarlo, non dopo;
+                  · il fondo resta crema APPOSTA. `warn-soft` e crema distano tre
+                    punti per canale: cambiarlo non avrebbe separato niente, e
+                    avrebbe portato il riquadro fuori dalla regola di Alto Contrasto
+                    che il popup ha già su `.bg-kidville-cream`;
+                  · fondi PIENI, mai `bg-…/70`: con l'alfa dentro il nome della
+                    classe quella regola HC non lo raggiungerebbe nemmeno. È la
+                    stessa lezione scritta due volte qui sopra.
 
-              In Alto Contrasto le superfici crema di questo popup diventano il
-              grigio scurissimo, dove `warn-strong` varrebbe 5,62:1 — legge, ma
-              smette di gridare. Filetto e inchiostro passano all'AMBRA (10,12:1)
-              con la regola `.kv-recon-avviso-sede` in `globals.css`, fuori da
-              ogni `@layer`: `@theme inline` INLINA l'hex nelle utility, quindi
-              ridefinire un token sotto `[data-contrast="high"]` non tocca una
-              sola classe già generata.
+                In Alto Contrasto le superfici crema di questo popup diventano il
+                grigio scurissimo, dove `warn-strong` varrebbe 5,62:1 — legge, ma
+                smette di gridare. Filetto e inchiostro passano all'AMBRA (10,12:1)
+                con la regola `.kv-recon-avviso-sede` in `globals.css`, fuori da
+                ogni `@layer`: `@theme inline` INLINA l'hex nelle utility, quindi
+                ridefinire un token sotto `[data-contrast="high"]` non tocca una
+                sola classe già generata.
 
-              Mai il giallo dei comandi né il rosso, in nessuno dei due: qui
-              dentro quei colori sono di ciò che si preme (e c'è un lock che lo
-              verifica sulle regole nuove), e
-              questo riquadro non chiede un'azione a QUESTO operatore — chiede di
-              non farne una. L'ambra dell'avviso non è quel giallo.
+                Mai il giallo dei comandi né il rosso, in nessuno dei due: qui
+                dentro quei colori sono di ciò che si preme (e c'è un lock che lo
+                verifica sulle regole nuove), e
+                questo riquadro non chiede un'azione a QUESTO operatore — chiede di
+                non farne una. L'ambra dell'avviso non è quel giallo.
 
-              ⚠️ Variante SENZA nome quando il server non ha potuto leggerlo: si
-              dice comunque, senza nominare il plesso. Mai un nome inventato, e
-              mai un `null` a schermo.
+                ⚠️ Variante SENZA nome quando il server non ha potuto leggerlo: si
+                dice comunque, senza nominare il plesso. Mai un nome inventato, e
+                mai un `null` a schermo.
 
-              ⚠️ Privacy, dichiarata: questa frase rivela l'ESISTENZA di una voce
-              aperta in un altro plesso, mai CHI. È meno del nome dell'ordinante
-              che la riga bancaria mostra già a tutte e tre le segreterie. Il nome
-              del minore resta oscurato: i suggerimenti qui sotto sono quelli
-              minimizzati dal server, e non è cambiato niente.
+                ⚠️ Privacy, dichiarata: questa frase rivela l'ESISTENZA di una voce
+                aperta in un altro plesso, mai CHI. È meno del nome dell'ordinante
+                che la riga bancaria mostra già a tutte e tre le segreterie. Il nome
+                del minore resta oscurato: i suggerimenti qui sotto sono quelli
+                minimizzati dal server, e non è cambiato niente.
 
-              ⚠️ DUE FRASI, PERCHÉ I CASI SONO DUE E IL DOMINANTE ERA L'ALTRO. Il
-              riquadro dipende da `altraSede`, la lista dei candidati da
-              `suggerimenti.length > 0`: le due condizioni NON coincidono, e la
-              frase dei «deboli qui sotto» finiva sopra il vuoto. MISURATO in
-              produzione il 2026-09-07 applicando la regola COME È IMPLEMENTATA —
-              cioè sulle sole righe NON confermate, le uniche su cui il verdetto si
-              calcola — e contando i candidati che RESTANO dopo la minimizzazione:
-              dei 403 casi in cui il verdetto scatta, **332 non hanno nessun
-              candidato di casa** — Aversa 162 su 165, Cesa 162 su 166, Giugliano 8
-              su 72. Per due segreterie su tre la frase era falsa quasi sempre.
+                ⚠️ DUE FRASI, PERCHÉ I CASI SONO DUE E IL DOMINANTE ERA L'ALTRO. Il
+                riquadro dipende da `altraSede`, la lista dei candidati da
+                `suggerimenti.length > 0`: le due condizioni NON coincidono, e la
+                frase dei «deboli qui sotto» finiva sopra il vuoto. MISURATO in
+                produzione il 2026-09-07 applicando la regola COME È IMPLEMENTATA —
+                cioè sulle sole righe NON confermate, le uniche su cui il verdetto si
+                calcola — e contando i candidati che RESTANO dopo la minimizzazione:
+                dei 403 casi in cui il verdetto scatta, **332 non hanno nessun
+                candidato di casa** — Aversa 162 su 165, Cesa 162 su 166, Giugliano 8
+                su 72. Per due segreterie su tre la frase era falsa quasi sempre.
 
-              ⚠️ QUESTI NUMERI SONO DOPO LA GUARDIA SULLE CONFERMATE; i primi qui
-              scritti (338 su 413 — Aversa 166/169, Cesa 164/168, Giugliano 8/76)
-              erano PRIMA, cioè la somma con le 5 righe `confermato` che portano
-              ancora suggerimenti e su cui questo riquadro non compare mai. Non
-              cambiava nessuna decisione, ma è la specie esatta di riga — un
-              commento che descrive ciò che il codice non fa — che questo
-              repository ha già pagato due volte.
+                ⚠️ QUESTI NUMERI SONO DOPO LA GUARDIA SULLE CONFERMATE; i primi qui
+                scritti (338 su 413 — Aversa 166/169, Cesa 164/168, Giugliano 8/76)
+                erano PRIMA, cioè la somma con le 5 righe `confermato` che portano
+                ancora suggerimenti e su cui questo riquadro non compare mai. Non
+                cambiava nessuna decisione, ma è la specie esatta di riga — un
+                commento che descrive ciò che il codice non fa — che questo
+                repository ha già pagato due volte.
 
-              ⚠️ LA FRASE NON ATTRIBUISCE IL LAVORO A NESSUNO, e prima lo faceva:
-              diceva «lo lavorerà l'altra segreteria». Non è verificato. Il verdetto
-              si calcola contro `sediAttive`, che è `resolveScuoleAttive` — le sedi
-              ACCESSIBILI intersecate con quelle selezionate nel cookie del selettore
-              — quindi a un utente multi-sede che ha filtrato su Giugliano basta un
-              aggancio su Cesa, sede SUA, per sentirsi annunciare una segreteria che
-              non esiste. La schermata resta coerente (il PATCH risponde 404 sullo
-              stesso insieme), ed è la frase a doversi limitare a ciò che è vero:
-              parla di QUESTA schermata e di dove si abbina, non di chi lo farà. */}
-          {!composto && altraSede && (
-            <section className="kv-recon-avviso-sede flex gap-3 rounded-card border-l-4 border-kidville-warn-strong bg-kidville-cream p-4">
-              {/* `aria-hidden`: il glifo ripete ciò che la frase accanto dice per
-                  esteso, e uno screen reader non deve sentire due volte la stessa
-                  cosa. Il peso visivo è tutto suo, il significato è del testo. */}
-              <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-kidville-warn-strong" />
-              <div className="min-w-0">
-                <p className="font-maven text-sm font-bold leading-snug text-kidville-warn-strong">
-                  {altraSede.nome
-                    ? t('movdlgAltraSedeTitolo', { sede: altraSede.nome })
-                    : t('movdlgAltraSedeTitoloSenzaNome')}
-                </p>
-                <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
-                  {suggerimenti.length > 0 ? t('movdlgAltraSedeSpiega') : t('movdlgAltraSedeSpiegaSenzaCandidati')}
-                </p>
-              </div>
-            </section>
-          )}
+                ⚠️ LA FRASE NON ATTRIBUISCE IL LAVORO A NESSUNO, e prima lo faceva:
+                diceva «lo lavorerà l'altra segreteria». Non è verificato. Il verdetto
+                si calcola contro `sediAttive`, che è `resolveScuoleAttive` — le sedi
+                ACCESSIBILI intersecate con quelle selezionate nel cookie del selettore
+                — quindi a un utente multi-sede che ha filtrato su Giugliano basta un
+                aggancio su Cesa, sede SUA, per sentirsi annunciare una segreteria che
+                non esiste. La schermata resta coerente (il PATCH risponde 404 sullo
+                stesso insieme), ed è la frase a doversi limitare a ciò che è vero:
+                parla di QUESTA schermata e di dove si abbina, non di chi lo farà. */}
+            {!composto && altraSede && (
+              <section className="kv-recon-avviso-sede flex gap-3 rounded-card border-l-4 border-kidville-warn-strong bg-kidville-cream p-4">
+                {/* `aria-hidden`: il glifo ripete ciò che la frase accanto dice per
+                    esteso, e uno screen reader non deve sentire due volte la stessa
+                    cosa. Il peso visivo è tutto suo, il significato è del testo. */}
+                <AlertTriangle size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-kidville-warn-strong" />
+                <div className="min-w-0">
+                  <p className="font-maven text-sm font-bold leading-snug text-kidville-warn-strong">
+                    {altraSede.nome
+                      ? t('movdlgAltraSedeTitolo', { sede: altraSede.nome })
+                      : t('movdlgAltraSedeTitoloSenzaNome')}
+                  </p>
+                  <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">
+                    {suggerimenti.length > 0 ? t('movdlgAltraSedeSpiega') : t('movdlgAltraSedeSpiegaSenzaCandidati')}
+                  </p>
+                </div>
+              </section>
+            )}
 
-          {/* Suggerimenti ordinati (CF-match primi) */}
-          {!composto && suggerimenti.length > 0 && (
-            <div>
-              <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgSuggerimenti')}</h3>
-              <div className="space-y-2">
-                {suggerimenti.map((s, i) => (
-                  <div key={`${s.pagamento_id}-${i}`} className="flex items-center justify-between gap-2 rounded-input border border-kidville-line px-3 py-2">
-                    <span className="flex min-w-0 items-center gap-2">
-                      {s.cf_match && <CfPill />}
-                      <span className="min-w-0 truncate font-maven text-sm text-kidville-ink">{s.label || s.pagamento_id}</span>
-                    </span>
-                    {/* Declassato — non disabilitato — quando l'aggancio forte è
-                        altrove: si preme ancora, e la protezione vera resta il
-                        404 fuori sede del PATCH. */}
-                    <button type="button" onClick={() => azione('conferma', s.pagamento_id)} disabled={busy}
-                      className={altraSede ? CTA_SUGGERIMENTO_DEBOLE : CTA_SUGGERIMENTO}>
-                      <Check size={15} /> {t('movdlgConfermaQuesto')}
+            {/* ── Movimento confermato: i DOCUMENTI ──────────────────────────────────
+                Un riquadro solo, con un ordine di lettura: a che punto è la fattura
+                (chip) → che cosa vuol dire (frase) → che cosa si può fare (azioni).
+                Prima erano tre pillole in fila della stessa forma e dello stesso peso —
+                «Ricevuta», «FATTURATA», «Fattura» — di cui una non era premibile.
+
+                È una SUPERFICIE crema, gemella del riquadro della causale, e non più
+                una card bianca con un filetto `border-kidville-line`: su fondo bianco
+                quel filetto non si leggeva, e il blocco non aveva deciso se essere un
+                contenitore — chip, frase e pulsanti sembravano galleggiare. Ora i due
+                riquadri sono la stessa cosa e li separa lo spazio.
+                Crema PIENO, mai `bg-kidville-cream/50`: con l'alfa dentro il nome della
+                classe la regola di Alto Contrasto `.bg-kidville-cream` non lo
+                raggiungerebbe, e il riquadro resterebbe chiaro sulla card nera. */}
+            {!esito && isConfermato && (
+              <section className="rounded-card bg-kidville-cream p-4">
+                {/* Lo stato sta SULLA RIGA DELL'OCCHIELLO — «DOCUMENTI … FATTURATA» — e
+                    non più sopra i pulsanti: lì era il terzo di tre pillole identiche di
+                    cui una sola non si preme. Un titolo di riquadro e il suo stato sono
+                    la stessa informazione, e stanno sulla stessa riga. */}
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className={OCCHIELLO}>{t('movdlgDocumenti')}</h3>
+                  {!loadingPag && saldato && movimento.pagamento_id && fat && <ChipFatturazione fat={fat} suCarta />}
+                </div>
+                {loadingPag ? (
+                  <p className="mt-2 font-maven text-sm text-kidville-sub">{t('movdlgCaricamento')}</p>
+                ) : saldato && movimento.pagamento_id ? (
+                  <>
+                    {/* Una frase per stato, mai una sola per due: «già emessa» su una
+                        fattura in attesa era falso, e su una scartata non c'era niente —
+                        cioè nessuna istruzione proprio dove qualcuno deve rifare il
+                        lavoro. */}
+                    {fat && (
+                      <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">{t(FRASE_FATTURAZIONE[fat.tono])}</p>
+                    )}
+                    {/* ⚠️ IL CONTENITORE È CONDIZIONALE QUANTO IL SUO UNICO FIGLIO.
+                        Da quando la ricevuta non si scarica più da qui, dentro resta il
+                        solo pulsante della fattura: lasciare il div sempre montato
+                        significava, su una fattura «in attesa SDI», un `mt-4` alto e
+                        vuoto sotto la frase — uno spazio morto che sembra un pulsante
+                        che non è arrivato. Si rende il contenitore solo quando c'è
+                        qualcosa da metterci dentro.
+
+                        «In attesa SDI» NON ha un pulsante: in quello stato FatturaButton
+                        rende solo un badge con una rotella che gira, cioè la stessa
+                        parola del chip qui sopra più un'animazione che non annuncia
+                        niente. Lo stato si dice una volta.
+                        Il guscio è ciò che dà la pelle al pulsante senza toccare
+                        `FatturaButton`, che è condiviso con altre viste: `data-tono`
+                        decide CTA pieno (c'è da emettere) o secondario (c'è già).
+
+                        ⚠️ «UNA VOLTA» VALE ANCHE UN ISTANTE DOPO L'EMISSIONE, ed è ciò
+                        che questa riga ha smesso di dare per scontato. Il ramo qui sopra
+                        guarda `pagamentoFattura`, che era una fotografia del montaggio:
+                        emessa la fattura restava `non_richiesta`, quindi il CTA giallo
+                        sopravviveva accanto al badge «In attesa SDI» reso dal pulsante
+                        stesso. `onEmessa` adesso alza PRIMA il segnale di rilettura e
+                        POI avvisa la lista: quando la risposta arriva, questo ramo
+                        sparisce da sé e il chip è l'unico a parlare. */}
+                    {pagamentoFattura !== 'in_attesa' && (
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                        <span className="kv-recon-azione-fattura" data-tono={fat?.tono ?? 'da_fatturare'}>
+                          <FatturaButton
+                            pagamentoId={movimento.pagamento_id}
+                            userId={userId}
+                            fatturaStato={pagamentoFattura ?? undefined}
+                            onEmessa={() => { setRicarica((n) => n + 1); onDone(); }}
+                          />
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="mt-2 flex items-center gap-1.5 font-maven text-xs leading-relaxed text-kidville-sub">
+                    <FileText size={14} className="shrink-0" /> {t('movdlgFatturaSaldo')}
+                  </p>
+                )}
+              </section>
+            )}
+          </aside>
+
+          {/* Il LAVORO: tutto ciò che si preme per chiudere questa riga —
+              suggerimenti, composizione, ricerca manuale — più ciò che è
+              appena successo, che qui SOSTITUISCE l'abbinamento invece di
+              affiancarglisi. `min-w-0`: senza, una riga lunga di questa colonna
+              sfonderebbe il binario `1fr` invece di andare a capo.
+
+              ⚠️ O C'È, O NON C'È: un landmark vuoto è peggio di un landmark
+              assente. Tutto ciò che sta qui dentro è già condizionato a `error`,
+              `esito` o `puoAbbinare` — cioè esattamente a `haLavoro` — quindi
+              senza questa guardia sui confermati restava una `region` annunciata
+              «Abbina» con `childElementCount = 0`: chi naviga per regioni la
+              trova, ci entra e non c'è niente, sotto il nome di un comando che lì
+              non esiste. */}
+          {haLavoro && (
+          <section
+            data-testid="movdlg-lavoro"
+            aria-label={t('movdlgAbbina')}
+            className="min-w-0"
+          >
+            {error && <p role="alert" className="mb-4 rounded-card bg-kidville-error-soft px-3 py-2 font-maven text-xs text-kidville-error-strong">{error}</p>}
+
+            {/* ── L'ESITO, quando c'è qualcosa da raccontare ───────────────────────
+                Sta PRIMA dell'abbinamento e lo SOSTITUISCE, non gli si affianca: dopo
+                una composizione registrata, «Conferma questo» e la ricerca manuale
+                sarebbero due modi di incassare una seconda volta lo stesso bonifico —
+                e nel caso «incasso registrato, riga non legata» il ritentativo è
+                esattamente il gesto che il server chiede di NON fare. Vedi `EsitoAzione`. */}
+            {esito && <PannelloEsito esito={esito} />}
+
+            {/* ── Abbinamento (movimenti non confermati) ─────────────────────────── */}
+            {!esito && puoAbbinare && (
+              <div className="space-y-4">
+                {/* Bonifico di famiglia: innesto «Incasso unico» (impl. UI-2) */}
+                {!composto && multiCf && onIncassoUnico && (
+                  <div className="rounded-card border-[1.5px] border-kidville-green-soft bg-kidville-green-soft p-4">
+                    <p className="flex items-center gap-1.5 font-maven text-sm font-bold text-kidville-green">
+                      <Users size={15} /> {t('movdlgBonificoFamiglia')}
+                    </p>
+                    <button type="button" onClick={() => onIncassoUnico(movimento)} disabled={busy} className={cx(BTN_PRIMARY_AA, 'mt-3 min-h-11')}>
+                      {t('movdlgApriIncassoUnico')}
                     </button>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                )}
 
-          {/* ── «COMPONI IL PAGAMENTO» — il terzo modo, e sta SOTTO i suggerimenti
-              (decisione n. 1 del titolare: il pannello vive dentro questo popup).
+                {/* Suggerimenti ordinati (CF-match primi) */}
+                {!composto && suggerimenti.length > 0 && (
+                  <div>
+                    <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgSuggerimenti')}</h3>
+                    <div className="space-y-2">
+                      {suggerimenti.map((s, i) => (
+                        <div key={`${s.pagamento_id}-${i}`} className="flex items-center justify-between gap-2 rounded-input border border-kidville-line px-3 py-2">
+                          <span className="flex min-w-0 items-center gap-2">
+                            {s.cf_match && <CfPill />}
+                            <span className="min-w-0 truncate font-maven text-sm text-kidville-ink">{s.label || s.pagamento_id}</span>
+                          </span>
+                          {/* Declassato — non disabilitato — quando l'aggancio forte è
+                              altrove: si preme ancora, e la protezione vera resta il
+                              404 fuori sede del PATCH. */}
+                          <button type="button" onClick={() => azione('conferma', s.pagamento_id)} disabled={busy}
+                            className={altraSede ? CTA_SUGGERIMENTO_DEBOLE : CTA_SUGGERIMENTO}>
+                            <Check size={15} /> {t('movdlgConfermaQuesto')}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
-              Perché sotto e non sopra: i suggerimenti sono la risposta al caso
-              normale — un bonifico, una voce — e restano il primo posto dove
-              guardare. Questo è il caso dell'altro bonifico, quello di famiglia,
-              che paga la retta di due fratelli più i ticket mensa: lì nessun
-              suggerimento è giusto, perché nessuno da solo lo è.
+                {/* ── «COMPONI IL PAGAMENTO» — il terzo modo, e sta SOTTO i suggerimenti
+                    (decisione n. 1 del titolare: il pannello vive dentro questo popup).
 
-              ⚠️ I DUE PERCORSI DI PRIMA NON SI TOCCANO. «Conferma questo» e la
-              ricerca manuale restano dove sono, con la stessa pelle e la stessa
-              PATCH: il caso a voce singola è la maggioranza del lavoro, e
-              spostarlo per far posto a una funzione nuova lo renderebbe più
-              lento per tutti. Il pannello si apre solo se qualcuno lo chiede, e
-              `onChiudi` rimette la schermata com'era.
+                    Perché sotto e non sopra: i suggerimenti sono la risposta al caso
+                    normale — un bonifico, una voce — e restano il primo posto dove
+                    guardare. Questo è il caso dell'altro bonifico, quello di famiglia,
+                    che paga la retta di due fratelli più i ticket mensa: lì nessun
+                    suggerimento è giusto, perché nessuno da solo lo è.
 
-              ⚠️ E il pulsante è SECONDARIO, non un CTA: il verde pieno in questa
-              schermata è dell'abbinamento suggerito. Se «Componi» fosse l'unico
-              pulsante pieno, sarebbe lui a sembrare la cosa da fare anche sui
-              nove bonifici su dieci che hanno un suggerimento buono.
+                    ⚠️ I DUE PERCORSI DI PRIMA NON SI TOCCANO. «Conferma questo» e la
+                    ricerca manuale restano dove sono, con la stessa pelle e la stessa
+                    PATCH: il caso a voce singola è la maggioranza del lavoro, e
+                    spostarlo per far posto a una funzione nuova lo renderebbe più
+                    lento per tutti. Il pannello si apre solo se qualcuno lo chiede, e
+                    `onChiudi` rimette la schermata com'era.
 
-              Il pannello NON riceve dati da qui: si carica e si registra da sé
-              (contratto fissato dall'orchestratore). Questo popup gli passa
-              l'identità del bonifico e riceve indietro l'esito. */}
-          {componiAperto ? (
-            <ComposizioneBonifico
-              movimentoId={movimento.id}
-              importoMovimento={movimento.importo}
-              dataOperazione={movimento.data_operazione}
-              onFatto={(r) => {
-                /**
-                 * ─── DUE ESITI, DUE POSTI, E NESSUNA FRASE DETTA DUE VOLTE ─────
-                 *
-                 * Tre fette di questo lavoro sanno raccontare la stessa cosa — il
-                 * pannello qui dentro, questo popup, la fascia dell'elenco — e se
-                 * parlassero insieme l'operatrice leggerebbe lo stesso fatto due
-                 * volte a due centimetri di distanza. La divisione, decisa dal
-                 * coordinamento, è netta:
-                 *
-                 * ANDATA BENE → il popup si CHIUDE e il riepilogo lo mostra la
-                 * FASCIA DELL'ELENCO, che è il vestito del riepilogo d'import: uno
-                 * che l'operatrice conosce già, e che resta a schermo mentre guarda
-                 * la riga appena diventata verde. «Conferma questo» non può
-                 * riapparire, perché non c'è più la finestra.
-                 *
-                 * NON LEGATA → il denaro è scritto, la riga bancaria no. Parla il
-                 * PANNELLO, che è rimasto montato e mostra la frase che la rotta
-                 * dichiara col proprio codice (`CONCILIAZIONE_MOVIMENTO_NON_LEGATO`
-                 * → `shared.erroreConciliazioneMovimentoNonLegato`, quella che dice
-                 * «non ripetere l'operazione»); il suo pulsante di conferma è già
-                 * sparito da sé. Qui non si scrive una seconda frase e non si
-                 * chiude niente: un avviso che se ne va da solo è un avviso che non
-                 * è stato letto. All'elenco va `onDone()` NUDO, così il ramo
-                 * d'avviso della fascia — che si accende su `movimentoLegato ===
-                 * false` — resta spento e non ripete la stessa cosa più in là.
-                 *
-                 * I quattro campi si inoltrano COM'È: questo strato non li
-                 * interpreta e non li converte. `ticket` in particolare è già la
-                 * QUANTITÀ di pasti — non il numero di righe — perché il pannello
-                 * la somma alla fonte, dove le quantità ci sono; qui non ci
-                 * sarebbero, e ricalcolarla significherebbe inventarla.
-                 */
-                if (r.movimentoConfermato) {
-                  setComponiAperto(false);
-                  onDone({ voci: r.voci, ticket: r.ticket, totale: r.totale, movimentoLegato: true });
-                  onClose();
-                  return;
-                }
-                // Il denaro è a registro: da qui in poi questo popup non ha più
-                // niente da offrire su questa riga (v. `composto`, sotto).
-                setComposto(true);
-                onDone();
-              }}
-              /**
-               * ⚠️ LA VIA D'USCITA DEL PANNELLO CAMBIA SIGNIFICATO UNA VOLTA CHE IL
-               * DENARO È SCRITTO. Prima di comporre, «Chiudi» riporta
-               * all'abbinamento, ed è giusto: si è cambiato idea. Dopo, quel ritorno
-               * significherebbe «Conferma questo» e la ricerca manuale SU UN
-               * BONIFICO IL CUI INCASSO È GIÀ A REGISTRO — il secondo incasso,
-               * offerto dalla stessa schermata che ha appena avvisato di non farlo.
-               * Perciò si esce dal popup, non dal pannello.
-               */
-              onChiudi={() => {
-                if (composto) { onClose(); return; }
-                // Il solo caso «sono tornato indietro»: qui il fuoco ha un posto
-                // dove rientrare. Vedi `rientraSuComponi`, in cima al componente.
-                rientraSuComponi.current = true;
-                setComponiAperto(false);
-              }}
-            />
-          ) : !composto && (
-            <button type="button" ref={componiBtnRef} onClick={() => setComponiAperto(true)} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
-              <Layers size={15} /> {t('reconComponiTitolo')}
-            </button>
-          )}
+                    ⚠️ E il pulsante è SECONDARIO, non un CTA: il verde pieno in questa
+                    schermata è dell'abbinamento suggerito. Se «Componi» fosse l'unico
+                    pulsante pieno, sarebbe lui a sembrare la cosa da fare anche sui
+                    nove bonifici su dieci che hanno un suggerimento buono.
 
-          {/* ── Ricerca manuale fra i pagamenti aperti (stessa fonte del pannello)
-              ⚠️ `!composto`, come i suggerimenti qui sopra: una volta che la
-              composizione ha SCRITTO il denaro, questi due percorsi non sono più
-              «l'altra strada», sono un SECONDO incasso sullo stesso bonifico — e
-              starebbero a schermo accanto all'avviso che dice di non rifarlo.
-              Prima di quel momento restano intatti, ed è il loro caso: il bonifico
-              che paga una voce sola. */}
-          {!composto && (
-          <div>
-            <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgCercaAltroPagamento')}</h3>
-            <div className="relative mb-2">
-              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-kidville-sub" />
-              <input type="text" value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder={t('movdlgCercaPlaceholder')}
-                className={cx(INPUT, 'pl-9')} aria-label={t('movdlgCercaAriaLabel')} />
-            </div>
-            <div className="max-h-56 space-y-1 overflow-y-auto">
-              {apertiFiltrati.length === 0 ? (
-                <p className="px-1 py-2 font-maven text-xs text-kidville-sub">{t('movdlgNessunPagamentoCorrisponde')}</p>
-              ) : apertiFiltrati.map((p) => (
-                <div key={p.id} className="flex items-center justify-between gap-2 rounded-input bg-kidville-cream px-3 py-2">
-                  <span className="min-w-0 truncate font-maven text-xs text-kidville-ink">{labelPagamentoAperto(p)}</span>
-                  <button type="button" onClick={() => azione('conferma', p.id)} disabled={busy}
-                    className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white disabled:opacity-50">
-                    <Check size={14} /> {t('movdlgAbbina')}
+                    Il pannello NON riceve dati da qui: si carica e si registra da sé
+                    (contratto fissato dall'orchestratore). Questo popup gli passa
+                    l'identità del bonifico e riceve indietro l'esito. */}
+                {componiAperto ? (
+                  <ComposizioneBonifico
+                    movimentoId={movimento.id}
+                    importoMovimento={movimento.importo}
+                    dataOperazione={movimento.data_operazione}
+                    onFatto={(r) => {
+                      /**
+                       * ─── DUE ESITI, DUE POSTI, E NESSUNA FRASE DETTA DUE VOLTE ─────
+                       *
+                       * Tre fette di questo lavoro sanno raccontare la stessa cosa — il
+                       * pannello qui dentro, questo popup, la fascia dell'elenco — e se
+                       * parlassero insieme l'operatrice leggerebbe lo stesso fatto due
+                       * volte a due centimetri di distanza. La divisione, decisa dal
+                       * coordinamento, è netta:
+                       *
+                       * ANDATA BENE → il popup si CHIUDE e il riepilogo lo mostra la
+                       * FASCIA DELL'ELENCO, che è il vestito del riepilogo d'import: uno
+                       * che l'operatrice conosce già, e che resta a schermo mentre guarda
+                       * la riga appena diventata verde. «Conferma questo» non può
+                       * riapparire, perché non c'è più la finestra.
+                       *
+                       * NON LEGATA → il denaro è scritto, la riga bancaria no. Parla il
+                       * PANNELLO, che è rimasto montato e mostra la frase che la rotta
+                       * dichiara col proprio codice (`CONCILIAZIONE_MOVIMENTO_NON_LEGATO`
+                       * → `shared.erroreConciliazioneMovimentoNonLegato`, quella che dice
+                       * «non ripetere l'operazione»); il suo pulsante di conferma è già
+                       * sparito da sé. Qui non si scrive una seconda frase e non si
+                       * chiude niente: un avviso che se ne va da solo è un avviso che non
+                       * è stato letto. All'elenco va `onDone()` NUDO, così il ramo
+                       * d'avviso della fascia — che si accende su `movimentoLegato ===
+                       * false` — resta spento e non ripete la stessa cosa più in là.
+                       *
+                       * I quattro campi si inoltrano COM'È: questo strato non li
+                       * interpreta e non li converte. `ticket` in particolare è già la
+                       * QUANTITÀ di pasti — non il numero di righe — perché il pannello
+                       * la somma alla fonte, dove le quantità ci sono; qui non ci
+                       * sarebbero, e ricalcolarla significherebbe inventarla.
+                       */
+                      if (r.movimentoConfermato) {
+                        setComponiAperto(false);
+                        onDone({ voci: r.voci, ticket: r.ticket, totale: r.totale, movimentoLegato: true });
+                        onClose();
+                        return;
+                      }
+                      // Il denaro è a registro: da qui in poi questo popup non ha più
+                      // niente da offrire su questa riga (v. `composto`, sotto).
+                      setComposto(true);
+                      onDone();
+                    }}
+                    /**
+                     * ⚠️ LA VIA D'USCITA DEL PANNELLO CAMBIA SIGNIFICATO UNA VOLTA CHE IL
+                     * DENARO È SCRITTO. Prima di comporre, «Chiudi» riporta
+                     * all'abbinamento, ed è giusto: si è cambiato idea. Dopo, quel ritorno
+                     * significherebbe «Conferma questo» e la ricerca manuale SU UN
+                     * BONIFICO IL CUI INCASSO È GIÀ A REGISTRO — il secondo incasso,
+                     * offerto dalla stessa schermata che ha appena avvisato di non farlo.
+                     * Perciò si esce dal popup, non dal pannello.
+                     */
+                    onChiudi={() => {
+                      if (composto) { onClose(); return; }
+                      // Il solo caso «sono tornato indietro»: qui il fuoco ha un posto
+                      // dove rientrare. Vedi `rientraSuComponi`, in cima al componente.
+                      rientraSuComponi.current = true;
+                      setComponiAperto(false);
+                    }}
+                  />
+                ) : !composto && (
+                  <button type="button" ref={componiBtnRef} onClick={() => setComponiAperto(true)} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
+                    <Layers size={15} /> {t('reconComponiTitolo')}
                   </button>
+                )}
+
+                {/* ── Ricerca manuale fra i pagamenti aperti (stessa fonte del pannello)
+                    ⚠️ `!composto`, come i suggerimenti qui sopra: una volta che la
+                    composizione ha SCRITTO il denaro, questi due percorsi non sono più
+                    «l'altra strada», sono un SECONDO incasso sullo stesso bonifico — e
+                    starebbero a schermo accanto all'avviso che dice di non rifarlo.
+                    Prima di quel momento restano intatti, ed è il loro caso: il bonifico
+                    che paga una voce sola. */}
+                {!composto && (
+                <div>
+                  <h3 className={cx(OCCHIELLO, 'mb-2 block')}>{t('movdlgCercaAltroPagamento')}</h3>
+                  <div className="relative mb-2">
+                    <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-kidville-sub" />
+                    <input type="text" value={ricerca} onChange={(e) => setRicerca(e.target.value)} placeholder={t('movdlgCercaPlaceholder')}
+                      className={cx(INPUT, 'pl-9')} aria-label={t('movdlgCercaAriaLabel')} />
+                  </div>
+                  {/* ⚠️ NIENTE `max-h-56 overflow-y-auto` QUI: era uno scorrimento
+                      DENTRO lo scorrimento del popup, cioè due rotelle sovrapposte
+                      in 224px — e su trackpad la rotella prende quella interna, che
+                      finisce, e poi la pagina sotto sussulta. Ora la lista scorre
+                      con il corpo del popup, che è l'unico scorrevole.
+                      Il tetto dei 25 risultati resta (`apertiFiltrati`): quello è un
+                      TETTO sui risultati, non uno scorrimento, e serve a non
+                      disegnare 700 righe su una ricerca vuota. */}
+                  <div className="space-y-1">
+                    {apertiFiltrati.length === 0 ? (
+                      <p className="px-1 py-2 font-maven text-xs text-kidville-sub">{t('movdlgNessunPagamentoCorrisponde')}</p>
+                    ) : apertiFiltrati.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between gap-2 rounded-input bg-kidville-cream px-3 py-2">
+                        <span className="min-w-0 truncate font-maven text-xs text-kidville-ink">{labelPagamentoAperto(p)}</span>
+                        <button type="button" onClick={() => azione('conferma', p.id)} disabled={busy}
+                          className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-pill border-[1.5px] border-kidville-green px-4 font-maven text-sm font-bold text-kidville-green transition-colors hover:bg-kidville-green hover:text-kidville-white disabled:opacity-50">
+                          <Check size={14} /> {t('movdlgAbbina')}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </div>
-          </div>
+                )}
+              </div>
+            )}
+          </section>
           )}
         </div>
-      )}
-
-      {/* ── Movimento confermato: i DOCUMENTI ──────────────────────────────────
-          Un riquadro solo, con un ordine di lettura: a che punto è la fattura
-          (chip) → che cosa vuol dire (frase) → che cosa si può fare (azioni).
-          Prima erano tre pillole in fila della stessa forma e dello stesso peso —
-          «Ricevuta», «FATTURATA», «Fattura» — di cui una non era premibile.
-
-          È una SUPERFICIE crema, gemella del riquadro della causale, e non più
-          una card bianca con un filetto `border-kidville-line`: su fondo bianco
-          quel filetto non si leggeva, e il blocco non aveva deciso se essere un
-          contenitore — chip, frase e pulsanti sembravano galleggiare. Ora i due
-          riquadri sono la stessa cosa e li separa lo spazio.
-          Crema PIENO, mai `bg-kidville-cream/50`: con l'alfa dentro il nome della
-          classe la regola di Alto Contrasto `.bg-kidville-cream` non lo
-          raggiungerebbe, e il riquadro resterebbe chiaro sulla card nera. */}
-      {!esito && isConfermato && (
-        <section className="rounded-card bg-kidville-cream p-4">
-          {/* Lo stato sta SULLA RIGA DELL'OCCHIELLO — «DOCUMENTI … FATTURATA» — e
-              non più sopra i pulsanti: lì era il terzo di tre pillole identiche di
-              cui una sola non si preme. Un titolo di riquadro e il suo stato sono
-              la stessa informazione, e stanno sulla stessa riga. */}
-          <div className="flex items-center justify-between gap-3">
-            <h3 className={OCCHIELLO}>{t('movdlgDocumenti')}</h3>
-            {!loadingPag && saldato && movimento.pagamento_id && fat && <ChipFatturazione fat={fat} suCarta />}
-          </div>
-          {loadingPag ? (
-            <p className="mt-2 font-maven text-sm text-kidville-sub">{t('movdlgCaricamento')}</p>
-          ) : saldato && movimento.pagamento_id ? (
-            <>
-              {/* Una frase per stato, mai una sola per due: «già emessa» su una
-                  fattura in attesa era falso, e su una scartata non c'era niente —
-                  cioè nessuna istruzione proprio dove qualcuno deve rifare il
-                  lavoro. */}
-              {fat && (
-                <p className="mt-2 font-maven text-xs leading-relaxed text-kidville-sub">{t(FRASE_FATTURAZIONE[fat.tono])}</p>
-              )}
-              {/* ⚠️ IL CONTENITORE È CONDIZIONALE QUANTO IL SUO UNICO FIGLIO.
-                  Da quando la ricevuta non si scarica più da qui, dentro resta il
-                  solo pulsante della fattura: lasciare il div sempre montato
-                  significava, su una fattura «in attesa SDI», un `mt-4` alto e
-                  vuoto sotto la frase — uno spazio morto che sembra un pulsante
-                  che non è arrivato. Si rende il contenitore solo quando c'è
-                  qualcosa da metterci dentro.
-
-                  «In attesa SDI» NON ha un pulsante: in quello stato FatturaButton
-                  rende solo un badge con una rotella che gira, cioè la stessa
-                  parola del chip qui sopra più un'animazione che non annuncia
-                  niente. Lo stato si dice una volta.
-                  Il guscio è ciò che dà la pelle al pulsante senza toccare
-                  `FatturaButton`, che è condiviso con altre viste: `data-tono`
-                  decide CTA pieno (c'è da emettere) o secondario (c'è già).
-
-                  ⚠️ «UNA VOLTA» VALE ANCHE UN ISTANTE DOPO L'EMISSIONE, ed è ciò
-                  che questa riga ha smesso di dare per scontato. Il ramo qui sopra
-                  guarda `pagamentoFattura`, che era una fotografia del montaggio:
-                  emessa la fattura restava `non_richiesta`, quindi il CTA giallo
-                  sopravviveva accanto al badge «In attesa SDI» reso dal pulsante
-                  stesso. `onEmessa` adesso alza PRIMA il segnale di rilettura e
-                  POI avvisa la lista: quando la risposta arriva, questo ramo
-                  sparisce da sé e il chip è l'unico a parlare. */}
-              {pagamentoFattura !== 'in_attesa' && (
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <span className="kv-recon-azione-fattura" data-tono={fat?.tono ?? 'da_fatturare'}>
-                    <FatturaButton
-                      pagamentoId={movimento.pagamento_id}
-                      userId={userId}
-                      fatturaStato={pagamentoFattura ?? undefined}
-                      onEmessa={() => { setRicarica((n) => n + 1); onDone(); }}
-                    />
-                  </span>
-                </div>
-              )}
-            </>
-          ) : (
-            <p className="mt-2 flex items-center gap-1.5 font-maven text-xs leading-relaxed text-kidville-sub">
-              <FileText size={14} className="shrink-0" /> {t('movdlgFatturaSaldo')}
-            </p>
-          )}
-        </section>
-      )}
+      </div>
 
       {/* ── Azioni sul movimento: un PIEDE, non due pillole che galleggiano ───
           ⚠️ A COSE FATTE RESTA IL SOLO «Chiudi», e le due condizioni sono DUE
@@ -1051,8 +1149,16 @@ export function MovimentoDialog({ movimento, aperti, userId, onClose, onDone, re
           è già scritto e che non si è legata, nasconderla significa non legarla mai
           più — resterebbe un incasso senza la riga bancaria che lo giustifica, e
           nessuno a cercarla. La riga deve restare visibile e rossa finché qualcuno
-          non la lega. */}
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-kidville-line pt-4">
+          non la lega.
+
+          ⚠️ IL PIEDE È FRATELLO DEL CORPO, NON UN SUO DISCENDENTE — ed è la
+          ragione per cui il tetto d'altezza di prima esisteva. Stando DENTRO
+          l'area che scorre, «Chiudi» era in fondo al rotolo: su un movimento con
+          suggerimenti e ricerca bisognava scorrere tutto per uscire, e finché la
+          card non ebbe un `max-h` non ci si arrivava affatto. Fuori dal corpo
+          resta dov'è, qualunque cosa ci si metta dentro. `shrink-0` per lo stesso
+          motivo della testa. */}
+      <div data-testid="movdlg-piede" className="shrink-0 flex flex-wrap items-center gap-2 border-t border-kidville-line p-5">
         {!esito && !composto && (stato === 'da_abbinare' || stato === 'suggerito') && (
           <button type="button" onClick={() => azione('ignora')} disabled={busy} className={cx(BTN_SECONDARY, 'min-h-11')}>
             <X size={15} /> {t('movdlgIgnora')}

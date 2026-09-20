@@ -26,6 +26,21 @@ const CATALOGO_IT = JSON.parse(
 const testo = (chiave: string): string => CATALOGO_IT[chiave] ?? `adminContabilita.${chiave}`;
 
 /**
+ * IL SORGENTE DEL COMPONENTE, per le prove che il DOM non può reggere.
+ *
+ * Se ne serve una sola: `safeArea`. È una prop booleana che `Modal` traduce in
+ * `padding: max(1rem, env(safe-area-inset-*))` sul contenitore, e in jsdom quella
+ * dichiarazione NON sopravvive — misurato: con e senza la prop il contenitore esce
+ * con `getAttribute('style') === null` e `style.paddingTop === ''`, perché jsdom
+ * scarta il valore `env(...)`. Una prova sul DOM sarebbe verde in tutti e due i
+ * casi, cioè il classico lock che non può fallire.
+ */
+const SORGENTE_DIALOG = readFileSync(
+  join(process.cwd(), 'src/components/features/admin/pagamenti/MovimentoDialog.tsx'),
+  'utf8',
+);
+
+/**
  * FatturaButton fa fetch proprie: stub per isolare il dialog.
  *
  * ⚠️ IL MOCK REGISTRA LE PROPS, e non è un dettaglio: il difetto che questo file
@@ -580,14 +595,338 @@ describe('MovimentoDialog — forma, bersagli e àncore di stile', () => {
    *
    * Il tetto è in `dvh` e non in `vh`: su iOS `vh` conta anche la barra degli
    * indirizzi che poi si ritira, cioè misura una finestra che non c'è.
+   *
+   * ⚠️ LA TESI NON È CAMBIATA, L'ASSERZIONE SÌ — e non perché quella di prima
+   * fosse diventata scomoda. Quella prova difendeva una cosa sola, «il piede
+   * resta raggiungibile», e lo faceva per via INDIRETTA: se la card ha un tetto
+   * e scorre, scorrendo prima o poi ci arrivi. Ora il piede è FUORI dall'area
+   * che scorre, quindi la stessa tesi si può asserire dritta — ed è più forte,
+   * perché non dipende più da quanto è lungo il contenuto. Cancellare
+   * l'asserzione vecchia e basta l'avrebbe trasformata in decorazione: al suo
+   * posto ce ne sono QUATTRO, e la quarta è quella che tiene morto il
+   * `max-h-56` della lista impedendogli di rientrare da un'altra parte.
    */
-  it('la card ha un tetto d’altezza e scorre: il piede resta raggiungibile', async () => {
+  /**
+   * Chi scorre, cercato per TOKEN di classe: `overflow-hidden` non è uno scroller.
+   *
+   * ⚠️ LE VARIANTI CONTANO. Ancorata a `^overflow`, questa sonda non vedeva
+   * `lg:overflow-y-auto`: lo scorrimento annidato della lista rientrava da `lg` in
+   * su — cioè proprio sul monitor grande per cui il popup è stato allargato — con
+   * il gate tutto verde. Il prefisso di variante si consuma qui, non si ignora.
+   */
+  const SCROLLATORE = /^(?:[a-z0-9-]+:)*overflow(?:-[xy])?-(?:auto|scroll)$/;
+  /**
+   * …e la classe non è l'unica porta: su questa card lo `style` inline è già usato
+   * (il `boxShadow`), quindi `style={{ overflowY: 'auto' }}` non è un'ipotesi di
+   * scuola, è una via aperta accanto a quella sorvegliata.
+   */
+  const scorreInline = (e: HTMLElement): boolean =>
+    [e.style.overflow, e.style.overflowY, e.style.overflowX].some((v) => /^(?:auto|scroll)$/.test(v ?? ''));
+  const scrollatoriIn = (radice: HTMLElement): HTMLElement[] =>
+    [...radice.querySelectorAll<HTMLElement>('*')].filter(
+      (e) => (e.getAttribute('class') ?? '').split(/\s+/).some((c) => SCROLLATORE.test(c)) || scorreInline(e),
+    );
+
+  /**
+   * I token di una FAMIGLIA di proprietà (`max-w-`, `max-h-`), spogliati della
+   * variante responsive.
+   *
+   * ⚠️ `max-width` e `max-height` sono proprietà a ULTIMO-CHE-VINCE: asserire la
+   * PRESENZA di `max-w-[95%]` non dice NIENTE sull'effetto, perché un `sm:max-w-lg`
+   * rimesso accanto vince da `sm` in su e riporta il popup a 512px con l'asserzione
+   * ancora verde. La variante si toglie proprio perché `sm:max-w-lg` deve contare:
+   * è il difetto di partenza che rientra travestito.
+   */
+  const famiglia = (classi: string[], prefisso: string): string[] =>
+    classi.map((c) => c.replace(/^(?:[a-z0-9-]+:)*/, '')).filter((c) => c.startsWith(prefisso));
+
+  it('1/4 · la radice ha il tetto in `dvh` e NON scorre più: a scorrere è il corpo', async () => {
     vi.stubGlobal('fetch', rispostaPagamento('emessa'));
     render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
 
     const card = screen.getByRole('dialog');
-    expect(card.className).toContain('overflow-y-auto');
+    const classi = card.className.split(/\s+/);
     expect(card.className, 'il tetto va in dvh: su iOS vh misura una finestra che si ritira').toContain('dvh');
+    expect(card.className, 'la card ritaglia: se scorresse lei, testa e piede scorrerebbero con tutto il resto').toContain('overflow-hidden');
+    expect(classi).not.toContain('overflow-y-auto');
+
+    // ⚠️ LA LARGHEZZA È IL MOTIVO PER CUI QUESTO LAVORO ESISTE, e fino a qui non
+    // la teneva nessuna delle quattro prove: difendevano tutte l'ALTEZZA. Rimettere
+    // `max-w-md` sulla costante riporta il popup a 448px su un monitor da 2560 —
+    // cioè il difetto di partenza, con il gate tutto verde.
+    //
+    // ⚠️ E NON BASTA CHIEDERE CHE `max-w-[95%]` CI SIA: un `toContain` è verde anche
+    // con `sm:max-w-lg` scritto accanto, che da `sm` in su vince per ordine di CSS e
+    // riporta la card a 512px. È successo davvero, ed è il motivo per cui questa riga
+    // è stata riscritta: si asserisce l'INSIEME della famiglia — uno e uno solo — non
+    // la presenza di un suo membro. Per TOKEN e non per sottostringa, perché un lock
+    // che si accontenta di `includes` si lascia soddisfare da un commento.
+    expect(
+      famiglia(classi, 'max-w-'),
+      'un secondo `max-w-*` vince per ordine di CSS e riporta il popup a 512px: di questa famiglia ce n’è uno solo',
+    ).toEqual(['max-w-[95%]']);
+
+    // ⚠️ E UN TETTO NON È UNA LARGHEZZA. La riga qui sopra dichiara di difendere
+    // il 95%, ma `max-w-*` dice soltanto fin DOVE la card può arrivare: chi la
+    // porta fin lì è `w-full`. Misurato: tolto `w-full` dalla costante, il file
+    // resta verde 54/54 — la card è un figlio flex senza `flex-grow`, quindi si
+    // dimensiona sul contenuto, e `max-w-[95%]` diventa un limite che non viene
+    // mai raggiunto. Il popup non è più «quasi a tutto schermo», che è la
+    // decisione da cui nasce tutto questo lavoro.
+    // Stessa famiglia di difetto dello `sticky` più sotto: un token che resta
+    // scritto ed è inerte perché gli è stato tolto il compagno.
+    expect(
+      classi,
+      '`max-w-*` è un TETTO, non una larghezza: senza `w-full` la card si dimensiona sul contenuto e il 95% non lo raggiunge mai',
+    ).toContain('w-full');
+
+    // ⚠️ TOGLIERE IL CONTESTO FLEX È PEGGIO DEL DIFETTO DI PARTENZA, non un
+    // arretramento: senza `flex flex-col` sulla card, il `min-h-0 flex-1` del corpo
+    // non fa più niente (il corpo prende altezza `auto` e il suo `overflow-y-auto`
+    // non genera nessuno scorrimento) e l'`overflow-hidden` qui sopra RITAGLIA VIA
+    // il piede. «Chiudi» non torna «in fondo al rotolo»: diventa irraggiungibile,
+    // senza nemmeno una rotella da girare. Le prove 2/4 e 4/4 restano verdi lo
+    // stesso — la 2/4 guarda il FIGLIO, la 4/4 conta ancora un solo scroller — ed è
+    // esattamente per questo che la tesi va asserita sul PADRE, qui.
+    expect(
+      classi,
+      'senza contesto flex il `flex-1`/`min-h-0` del corpo non fa niente e l’`overflow-hidden` ritaglia via il piede',
+    ).toEqual(expect.arrayContaining(['flex', 'flex-col']));
+
+    // ⚠️ `max-h-full` È LA GUARDIA, e `h-[95dvh]` da solo soddisfa il `dvh` qui
+    // sopra: senza, il lock non la copre. Con `safeArea` il contenitore di `Modal`
+    // imbottisce di `max(1rem, env(safe-area-inset-*))` per lato, quindi lo spazio
+    // vero è `100dvh − (inset sopra + inset sotto)`; su un telefono con notch e
+    // barra di gesto quello spazio scende sotto il 95dvh chiesto dalla card, che
+    // essendo centrata (`items-center`) sfora simmetricamente SOPRA e SOTTO — la ✕
+    // sotto il notch, i pulsanti del piede sotto l'home indicator. Cioè le due cose
+    // da cui si esce.
+    //
+    // ⚠️ STESSA TRAPPOLA DELLA LARGHEZZA, e qui morde più forte: `max-height` è a
+    // ultimo-che-vince, quindi un `max-h-[calc(100dvh-2rem)]` rimesso accanto alla
+    // guardia vince — ed è proprio il `calc` a mano che tutto il commento della
+    // costante dichiara di aver ucciso, quello che sottrae 2rem fissi mentre con
+    // `safeArea` l'imbottitura vera è `max(1rem, env(safe-area-inset-*))`. Cioè il
+    // numero sbagliato torna in vigore esattamente nel caso per cui è sbagliato.
+    expect(
+      famiglia(classi, 'max-h-'),
+      'la guardia è una sola: un secondo `max-h-*` vince per ordine di CSS, e il `calc` a mano è sbagliato proprio quando `safeArea` è attivo',
+    ).toEqual(['max-h-full']);
+
+    // …e la guardia presuppone `safeArea`. In jsdom la prop non lascia traccia nel
+    // DOM (vedi `SORGENTE_DIALOG`), quindi si asserisce sul sorgente — con un'àncora
+    // di riga intera e non con un `includes('safeArea')`: quel file nomina «safeArea»
+    // anche nei propri commenti, e un lock che si immunizza da solo col proprio
+    // commento è una trappola già pagata in questo repo.
+    expect(
+      SORGENTE_DIALOG,
+      'senza `safeArea` la card al 95% finisce sotto il notch e sotto la barra di gesto',
+    ).toMatch(/^\s*safeArea\s*$/m);
+  });
+
+  it('2/4 · il corpo è il pezzo che scorre, e `min-h-0` è ciò che glielo permette', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const classi = screen.getByTestId('movdlg-corpo').className.split(/\s+/);
+    expect(
+      classi,
+      'senza `min-h-0` un figlio flex non si comprime sotto il proprio contenuto (`min-height: auto`): la fascia cresce e il corpo non scorre',
+    ).toContain('min-h-0');
+    expect(classi).toContain('flex-1');
+    expect(classi).toContain('overflow-y-auto');
+  });
+
+  it('3/4 · il piede è FRATELLO del corpo, non un suo discendente: «Chiudi» non si scorre', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const corpo = screen.getByTestId('movdlg-corpo');
+    const piede = screen.getByTestId('movdlg-piede');
+    const testa = screen.getByTestId('movdlg-testa');
+    expect(corpo.contains(piede), 'dentro il corpo il piede tornerebbe in fondo al rotolo: è il difetto di partenza').toBe(false);
+    expect(piede.parentElement, 'testa, corpo e piede sono tre fratelli della stessa colonna flex').toBe(corpo.parentElement);
+    expect(testa.parentElement).toBe(corpo.parentElement);
+    // La cifra sta nella fascia fissa, non nel rotolo: è l'unica cosa che dice
+    // QUANTO si sta incassando, e scorreva via al primo suggerimento.
+    expect(testa.contains(screen.getByRole('heading', { name: /150,00/ }))).toBe(true);
+    expect(corpo.contains(screen.getByRole('button', { name: 'Chiudi il movimento' }))).toBe(false);
+    // «Chiudi», non «Chiudi il movimento»: sono due comandi diversi, e quello
+    // del piede è l'unico che deve restare a vista senza scorrere.
+    expect(piede.contains(screen.getByRole('button', { name: 'Chiudi' }))).toBe(true);
+
+    // ⚠️ ESSERE FRATELLI NON BASTA: in una colonna flex il valore iniziale di
+    // `flex-shrink` è 1, quindi il corpo — che cresce quanto vuole — comprime le
+    // due fasce fisse invece di lasciarle intere. Senza `shrink-0` i pulsanti del
+    // piede si schiacciano e la cifra della testa pure: restano dove sono, ma
+    // alti pochi pixel, che è un altro modo di non poterli usare.
+    expect(piede.className.split(/\s+/), 'senza `shrink-0` il corpo comprime il piede e i pulsanti si schiacciano').toContain('shrink-0');
+    expect(testa.className.split(/\s+/), 'stessa cosa per la testa: la cifra e la ✕ si lasciano comprimere dal corpo').toContain('shrink-0');
+  });
+
+  it('4/4 · un solo scroller in tutto il popup: il `max-h-56` della lista non rientra da un’altra parte', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    // CONTROPROVA: senza, una sonda che non pesca più niente direbbe «tutto a posto».
+    //
+    // ⚠️ E LA CONTROPROVA SI ESERCITA IN TUTTE LE DIREZIONI IN CUI LA SONDA PUÒ
+    // FALLIRE, non solo in quella in cui funziona. Con il solo token nudo qui dentro,
+    // la sonda è stata verde mentre `lg:overflow-y-auto` e `style={{ overflowY }}`
+    // le passavano accanto: tre nodi, tre vie diverse allo stesso difetto.
+    const finto = document.createElement('div');
+    finto.innerHTML =
+      '<div class="max-h-56 space-y-1 overflow-y-auto"></div>' +
+      '<div class="max-h-56 lg:overflow-y-auto"></div>' +
+      '<div class="max-h-56" style="overflow-y: auto"></div>' +
+      '<div class="overflow-hidden"></div>';
+    expect(
+      scrollatoriIn(finto),
+      'la sonda pesca il token nudo, la VARIANTE e lo stile inline — e non l’`overflow-hidden`',
+    ).toHaveLength(3);
+
+    expect(
+      scrollatoriIn(screen.getByRole('dialog')),
+      'due rotelle sovrapposte: quella interna finisce e la pagina sotto sussulta',
+    ).toEqual([screen.getByTestId('movdlg-corpo')]);
+  });
+
+  /**
+   * ─── IL FATTO A SINISTRA, IL LAVORO A DESTRA ────────────────────────────────
+   *
+   * A 512px stava tutto in colonna: causale, avvisi, suggerimenti, il form di
+   * composizione, la lista. Con la card quasi a tutto schermo le due cose si
+   * separano — ciò che la banca ha mandato non si muove, ciò che si preme sta
+   * dall'altra parte — e i due binari sono `minmax(0,…)` tutti e due: il minimo
+   * implicito di una traccia è `auto`, quindi una causale lunghissima senza
+   * spazi allargherebbe il binario invece di andare a capo.
+   */
+  it('a `lg` il corpo ha due binari, e sotto `lg` l’aside viene PRIMO senza nessun `order-*`', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const aside = screen.getByRole('complementary');
+    const lavoro = screen.getByTestId('movdlg-lavoro');
+    const griglia = aside.parentElement as HTMLElement;
+    expect(lavoro.parentElement, 'le due colonne stanno nella stessa griglia').toBe(griglia);
+
+    // ⚠️ I BINARI NON SONO LA GRIGLIA: `grid-template-columns` su un box che è
+    // rimasto `display: block` è INERTE, e le due colonne tornano impilate senza
+    // che nessuna di queste righe se ne accorga. Misurato: tolto il solo token
+    // `grid` dal contenitore, il file resta verde 54/54 e il deliverable — FATTO
+    // a sinistra, LAVORO a destra — sparisce.
+    //
+    // E si asserisce per TOKEN, non per sottostringa: `toContain('grid-cols-1')`
+    // su una stringa è soddisfatto anche da un `lg:grid-cols-1` che di colonna
+    // sola non ne ha nessuna. È la stessa lezione del `border-kidville-line` che
+    // CONTIENE «order-», dieci righe più sotto.
+    const classiGriglia = griglia.className.split(/\s+/);
+    expect(
+      classiGriglia,
+      'senza `grid` il `grid-cols-*` è inerte: i binari non esistono e le colonne tornano una',
+    ).toContain('grid');
+    expect(classiGriglia).toContain('lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]');
+    expect(classiGriglia, 'sotto `lg` è una colonna sola').toContain('grid-cols-1');
+    expect(griglia.children[0], 'in colonna sola il FATTO si legge prima del lavoro').toBe(aside);
+
+    // Lo `sticky` è la ragione dichiarata della colonna sinistra: la causale si
+    // legge MENTRE si compone a destra, e prima scorreva via al primo
+    // suggerimento. Senza `lg:sticky` le due colonne restano due, ma la sinistra
+    // torna a sparire in alto — cioè il difetto si riapre con l'impaginazione
+    // ancora giusta.
+    //
+    // ⚠️ E LO `STICKY` SI SPEGNE LASCIANDOLO SCRITTO, in due modi che il solo
+    // `toContain('lg:sticky')` non vedeva: `position: sticky` con `top: auto` non si
+    // incolla mai a niente, e un elemento di griglia è alto quanto la riga
+    // (`align-items: stretch`), quindi senza `self-start` non ha nessun margine
+    // entro cui scorrere. Sono i due motivi che il sorgente scrive accanto alle
+    // classi: qui si asseriscono tutti e tre i token, non solo quello che dà il nome
+    // alla tecnica.
+    expect(
+      aside.className.split(/\s+/),
+      'lo sticky si spegne anche restando scritto: senza offset `top` non si incolla, e senza `self-start` la colonna è alta quanto la riga e non ha margine per scorrere',
+    ).toEqual(expect.arrayContaining(['lg:sticky', 'lg:top-0', 'lg:self-start']));
+    // `min-w-0` è la stessa tesi dei `minmax(0,…)` dei binari, un piano più giù:
+    // il minimo implicito di un elemento di griglia è `auto`, quindi una riga
+    // lunga senza spazi (una causale, un'etichetta) sfonda il binario `1fr`
+    // invece di andare a capo. Quella dei binari è coperta qui sopra; questa no.
+    expect(lavoro.className.split(/\s+/), 'senza `min-w-0` una riga lunga sfonda il binario `1fr` invece di andare a capo').toContain('min-w-0');
+
+    // Le classi come TOKEN: `border-kidville-line` CONTIENE «order-», e un
+    // `[class*="order-"]` scatterebbe su ogni filetto del popup.
+    //
+    // ⚠️ LE VARIANTI SONO IL RIORDINO, non un contorno: `order-*` nudo non lo
+    // scrive nessuno, si scrive `max-lg:order-last`. Ancorata a `(?:[a-z]+:)?`
+    // questa sonda era cieca proprio lì — `max-lg:` ha un trattino, `2xl:`
+    // comincia per cifra, e il `?` ne ammetteva UNA sola, quindi le sfuggiva
+    // anche `lg:hover:order-2`. Misurato: con `max-lg:order-last 2xl:order-2`
+    // sull'`aside` il file restava verde 54/54 con l'`aside` visivamente ULTIMO
+    // sotto `lg`, cioè esattamente ciò che questa prova dichiara di vietare.
+    // Stessa cecità sul prefisso già corretta in `SCROLLATORE` e in `famiglia`:
+    // il prefisso di variante si CONSUMA, e se ne consumano quanti ce ne sono.
+    const riordinati = [...griglia.querySelectorAll<HTMLElement>('*')]
+      .flatMap((e) => (e.getAttribute('class') ?? '').split(/\s+/))
+      .filter((c) => /^(?:[a-z0-9-]+:)*-?order-/.test(c));
+    expect(riordinati, 'un ordine visuale diverso da quello di tabulazione è un difetto di accessibilità (WCAG 1.3.2)').toEqual([]);
+  });
+
+  it('il FATTO e il LAVORO sono due regioni con un nome accessibile distinto', () => {
+    vi.stubGlobal('fetch', vi.fn());
+    render(<MovimentoDialog movimento={movBase} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    const aside = screen.getByRole('complementary');
+    const lavoro = screen.getByTestId('movdlg-lavoro');
+    const nomeFatto = aside.getAttribute('aria-label') ?? '';
+    const nomeLavoro = lavoro.getAttribute('aria-label') ?? '';
+    // Un `aside` senza nome accessibile non è un landmark: è un contenitore, e
+    // chi naviga per regioni non lo trova.
+    expect(nomeFatto).not.toBe('');
+    expect(nomeLavoro).not.toBe('');
+    expect(nomeLavoro, 'due landmark con lo stesso nome non si distinguono').not.toBe(nomeFatto);
+    expect(screen.getByRole('complementary', { name: nomeFatto })).toBe(aside);
+    expect(screen.getByRole('region', { name: nomeLavoro })).toBe(lavoro);
+  });
+
+  /**
+   * ─── DOVE IL LAVORO NON C'È, LE DUE COLONNE NON HANNO PIÙ UNA PREMESSA ──────
+   *
+   * Misurato sul render, non dedotto: su `stato: 'confermato'` la colonna di
+   * destra usciva con `childElementCount = 0` e `innerHTML = ""`, sotto un
+   * `aria-label` che dice «Abbina». Due guasti in uno.
+   *
+   * (a) Accessibilità: chi naviga per landmark trova una regione annunciata col
+   *     nome di un comando, ci entra, e dentro non c'è niente. Un landmark vuoto
+   *     è peggio di un landmark assente, perché promette.
+   * (b) Impaginazione, ed è il paradosso: il binario `1fr` resta vuoto, quindi
+   *     l'unico contenuto — causale, documenti — vive nei 22rem = 352px del
+   *     binario sinistro, con mezzo schermo di vuoto accanto. Cioè PIÙ STRETTO
+   *     dei ~472px che aveva nella card da 512px, dentro un popup che adesso è
+   *     95dvh × 95%. Il popup è diventato enorme e il suo unico contenuto si è
+   *     ristretto.
+   *
+   * Le altre prove di questo file usano `movBase` (`stato: 'suggerito'`), dove
+   * `haLavoro` è vero e non cambia niente: questa è l'unica che guarda l'altro
+   * ramo, ed è il ramo che nessuno guardava.
+   */
+  it('su un movimento confermato la colonna del LAVORO non esiste, e il FATTO prende tutta la larghezza', async () => {
+    vi.stubGlobal('fetch', rispostaPagamento('emessa'));
+    render(<MovimentoDialog movimento={confermato} aperti={aperti} userId="u1" onClose={() => {}} onDone={() => {}} returnFocusRef={ref()} />);
+
+    await screen.findByText('Fatturata');
+
+    expect(screen.queryByTestId('movdlg-lavoro'), 'un `region` vuoto col nome di un comando che lì non c’è').toBeNull();
+    expect(
+      screen.queryByRole('region', { name: testo('movdlgAbbina') }),
+      'e non deve restare nemmeno come landmark: chi naviga per regioni ci entrerebbe per trovare il vuoto',
+    ).toBeNull();
+
+    // Un solo binario: senza, il FATTO resterebbe nei 22rem del binario sinistro
+    // con il `1fr` vuoto accanto — più stretto di com'era nella card da 512px.
+    const aside = screen.getByRole('complementary');
+    const griglia = aside.parentElement as HTMLElement;
+    expect(griglia.className, 'niente secondo binario quando non c’è un secondo contenuto').not.toContain('lg:grid-cols-[');
+    expect(griglia.className, 'resta una griglia a una colonna, non un’altra impaginazione').toContain('grid-cols-1');
+    expect(griglia.children, 'il FATTO è rimasto l’unico figlio della griglia').toHaveLength(1);
   });
 });
 

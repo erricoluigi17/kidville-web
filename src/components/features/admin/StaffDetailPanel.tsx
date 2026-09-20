@@ -23,6 +23,7 @@ import { giorniResidui, sogliaRaggiunta } from '@/lib/anagrafica/scadenze';
 import { AVVISO_FINESTRA_BLOCCATA, apriDocumentoFirmato } from '@/lib/ui/apri-documento-firmato';
 import { FUOCO_ESITO } from '@/lib/ui/fuoco';
 import { logClient } from '@/lib/logging/client';
+import { ZonaPericolosaStaff } from './ZonaPericolosaStaff';
 
 // Scheda dedicata di un membro dello STAFF (elenco reale da `utenti`, tab Staff
 // dell'anagrafica). Si auto-carica da GET /api/admin/staff e seleziona il membro.
@@ -1744,6 +1745,16 @@ export function StaffDetailPanel({ staffId, onClose }: Props) {
           <ShieldCheck size={12} /> {t('staffDRiservate')}
         </div>
       ))}
+
+      {/* LA ZONA PERICOLOSA — in fondo, staccata, e SOLO per chi può modificare
+          l'incarico. Sta sotto i comandi ordinari e non fra loro: un
+          «Elimina» accanto a una matita è il bottone che si preme per sbaglio.
+          Il suo stato (anteprima → conferma → esito) vive tutto nel suo
+          componente: tenerlo qui avrebbe intrecciato `editMode` con la conferma,
+          che è il modo in cui due bottoni finiscono per abilitarsi a vicenda. */}
+      {tab === 'incarico' && canEdit && (
+        <ZonaPericolosaStaff staffId={staffId} cognome={member?.cognome} onFatto={load} />
+      )}
     </div>
   );
 }

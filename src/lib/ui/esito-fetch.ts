@@ -2573,6 +2573,76 @@ export const CODICI_ERRORE = {
      * (`adesione-alunno-fuori-avviso`, campo `tipo`), dove serve a chi indaga.
      */
     ADESIONE_ALUNNO_FUORI_AVVISO: 'erroreAdesioneAlunnoFuoriAvviso',
+    /**
+     * 403 — a questo account è stato REVOCATO il profilo staff
+     * (`utenti.archiviato_il` valorizzato) e non esiste il ponte genitore.
+     *
+     * 🔴 NON si riusa `ACCOUNT_SOSPESO`, e la differenza non è di sfumatura:
+     * quello nasce dalla morosità di una famiglia
+     * (`src/lib/pagamenti/sospensione.ts`) e la sua frase parla di «posizione
+     * amministrativa da regolarizzare». Darlo a una maestra archiviata le
+     * direbbe che non ha pagato una retta.
+     *
+     * ⚠️ La frase non dice PERCHÉ, non porta una data e non nomina chi ha
+     * deciso: è una decisione sul rapporto di lavoro di una persona, e la
+     * schermata di un'app non è il posto dove gliela si comunica. Manda alla
+     * segreteria perché è l'unico rimedio — non è un errore che si corregge
+     * riprovando.
+     *
+     * ⚠️ Chi ha ANCHE il ponte `parents` non vede mai questo codice: per lui
+     * l'archiviazione revoca il profilo staff e basta, e continua a entrare
+     * come genitore. Vedi `utenteDellaRichiesta`.
+     */
+    ACCOUNT_ARCHIVIATO: 'erroreAccountArchiviato',
+    /** 503 — le sonde sulle tracce del docente non si sono potute leggere. */
+    STAFF_ELIMINAZIONE_NON_LETTA: 'erroreStaffEliminazioneNonLetta',
+    /**
+     * 503 — almeno una verifica è fallita, quindi non si offre nessun comando.
+     *
+     * FAIL-CLOSED. «Non ho potuto leggere» non è «non c'è»: su una lettura
+     * fallita l'anteprima direbbe «si cancella» su un docente che ha scritto il
+     * registro per un anno.
+     */
+    STAFF_ELIMINAZIONE_NON_DECISA: 'erroreStaffEliminazioneNonDecisa',
+    /**
+     * 409 — fra l'anteprima e la conferma la decisione è cambiata.
+     *
+     * È la corsa che rende impossibile «ho premuto archivia e mi ha cancellato»:
+     * il server ricalcola e, se non trova ciò che il client dichiara di aver
+     * letto, non esegue.
+     */
+    STAFF_ELIMINAZIONE_CAMBIATA: 'erroreStaffEliminazioneCambiata',
+    /** 409 — l'account è anche l'accesso di una famiglia: non si elimina. */
+    STAFF_ELIMINAZIONE_PROFILO_DOPPIO: 'erroreStaffEliminazioneProfiloDoppio',
+    /** 403 — archiviare sé stessi è l'unico errore senza rimedio in-app. */
+    STAFF_ELIMINAZIONE_SE_STESSI: 'erroreStaffEliminazioneSeStessi',
+    /** 403 — un bersaglio di Direzione non si elimina da questo pannello. */
+    STAFF_ELIMINAZIONE_BERSAGLIO_DIREZIONE: 'erroreStaffEliminazioneBersaglioDirezione',
+    /** 409 — l'account risultava già archiviato (CAS a zero righe). */
+    STAFF_GIA_ARCHIVIATO: 'erroreStaffGiaArchiviato',
+    /**
+     * 409 — si chiede di riportare a genitore una persona che non ha il ponte
+     * `parents`.
+     *
+     * ⚠️ Il ponte NON si crea qui: fabbricare una scheda di genitore copiandola
+     * dal fascicolo del personale che si sta per cancellare è esattamente la
+     * scrittura silenziosa da evitare. E un genitore senza figli collegati
+     * atterra su un'area vuota. La frase manda dove il legame si crea davvero.
+     */
+    RIPORTA_GENITORE_SENZA_PONTE: 'erroreRiportaGenitoreSenzaPonte',
+    /** 409 — è già `genitore`: non c'è niente da cambiare. */
+    RIPORTA_GENITORE_GIA_GENITORE: 'erroreRiportaGenitoreGiaGenitore',
+    /** 409 — il CAS sul ruolo ha trovato zero righe: qualcuno è arrivato prima. */
+    RIPORTA_GENITORE_GIA_DECISO: 'erroreRiportaGenitoreGiaDeciso',
+    /**
+     * 503 — le scansioni del documento non sono uscite dallo Storage, quindi
+     * NESSUNA riga è stata cancellata.
+     *
+     * L'ordine è file → pratica → anagrafica, e questo codice è il punto in cui
+     * ci si ferma se il primo passo non riesce. Cancellare le righe adesso
+     * renderebbe quelle scansioni irraggiungibili invece che cancellate.
+     */
+    FASCICOLO_NON_CANCELLATO: 'erroreFascicoloNonCancellato',
 } as const;
 
 export type CodiceErrore = keyof typeof CODICI_ERRORE;

@@ -489,5 +489,17 @@
   "erroreAdesioneAlunnoFuoriAvviso": "Questo avviso non riguarda il bambino indicato: la risposta non è stata registrata. Se pensi che sia un errore, contatta la segreteria della scuola.",
   "navigatoreDataGiornoPrecedente": "Giorno precedente",
   "navigatoreDataGiornoSuccessivo": "Giorno successivo",
-  "navigatoreDataOggi": "Oggi"
+  "navigatoreDataOggi": "Oggi",
+  "erroreAccountArchiviato": "Questo accesso non è più attivo. Se pensi sia un errore, contatta la segreteria della scuola.",
+  "erroreStaffEliminazioneNonLetta": "Non è stato possibile leggere che cosa questa persona ha lasciato nel registro: riprova fra qualche istante.",
+  "erroreStaffEliminazioneNonDecisa": "Una delle verifiche non è riuscita, quindi nessun comando è disponibile: niente è stato modificato.",
+  "erroreStaffEliminazioneCambiata": "Nel frattempo la situazione è cambiata: ricarica la scheda e rileggi che cosa succederà prima di confermare.",
+  "erroreStaffEliminazioneProfiloDoppio": "Questo account è anche l’accesso di una famiglia alle schede dei figli: non si elimina. Usa «Trasforma in genitore».",
+  "erroreStaffEliminazioneSeStessi": "Non puoi eliminare o archiviare il tuo stesso account.",
+  "erroreStaffEliminazioneBersaglioDirezione": "Gli account della Direzione non si eliminano da qui.",
+  "erroreStaffGiaArchiviato": "Questo account risulta già archiviato: ricarica la scheda.",
+  "erroreRiportaGenitoreSenzaPonte": "Questa persona non è ancora collegata a nessun bambino come genitore: collegala dalla scheda dell’alunno, poi riprova.",
+  "erroreRiportaGenitoreGiaGenitore": "Questa persona è già un genitore: non c’è niente da cambiare.",
+  "erroreRiportaGenitoreGiaDeciso": "Il ruolo è cambiato nel frattempo: ricarica la scheda.",
+  "erroreFascicoloNonCancellato": "Non è stato possibile togliere i documenti dall’archivio: nessun dato è stato cancellato. Riprova fra qualche minuto."
 }

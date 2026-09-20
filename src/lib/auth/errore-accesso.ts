@@ -81,6 +81,20 @@ export const ESITO_TIMEOUT_DOPO_ACCESSO = 'timeoutDopoAccesso' as const;
 /** Un guasto qualunque DOPO l'autenticazione (il ramo `catch` a sessione già scritta). */
 export const ESITO_GUASTO_DOPO_ACCESSO = 'erroreDopoAccesso' as const;
 
+/*
+ * IL TERZO ESITO DOPO L'AUTENTICAZIONE — e l'unico che non è un guasto.
+ *
+ * GoTrue non sa niente di `utenti.archiviato_il`: `signInWithPassword` RIESCE anche per un
+ * account a cui è stato revocato il profilo staff, e il cookie di sessione viene scritto. È
+ * `/api/me` a scoprirlo un istante dopo, e a rispondere 403 `ACCOUNT_ARCHIVIATO`.
+ *
+ * ⚠️ SENZA QUESTO ESITO SI COSTRUISCE UN GIRO INFINITO, e non è un'ipotesi: `requireArea` con
+ * zero profili rimanda a `/auth/login`, l'accesso riesce, la pagina ripiega su `me.role` — che
+ * la riga `utenti` porta ancora — e rimanda all'area, che rimanda al login. Senza un messaggio,
+ * e senza che l'utente possa fare nulla. La frase è l'unica uscita dal giro.
+ */
+export const ESITO_ACCOUNT_ARCHIVIATO = 'accountArchiviato' as const;
+
 /**
  * Ogni messaggio che la schermata di accesso può mostrare è **una chiave del namespace
  * `auth`**: lo stato del componente tiene la CHIAVE, non il testo già tradotto. Non è
@@ -92,7 +106,8 @@ export type ChiaveErroreAccesso =
   | EsitoAccesso
   | typeof ESITO_TIMEOUT
   | typeof ESITO_TIMEOUT_DOPO_ACCESSO
-  | typeof ESITO_GUASTO_DOPO_ACCESSO;
+  | typeof ESITO_GUASTO_DOPO_ACCESSO
+  | typeof ESITO_ACCOUNT_ARCHIVIATO;
 
 /**
  * Gli status che sono davvero «hai sbagliato tu».

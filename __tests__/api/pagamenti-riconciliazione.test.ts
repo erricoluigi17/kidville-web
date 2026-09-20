@@ -48,9 +48,15 @@ vi.mock('@/lib/supabase/server-client', () => ({
       b.order = () => b
       b.limit = () => b
       // `.range()` — la dedup non chiede più una lista di 6.779 hash (una URL da 450 KB che
-      // PostgREST rifiuta) ma la finestra di date, letta a pagine. Il finto qui restituisce
-      // tutto in una pagina sola: `h.esistenti` sta sempre sotto il blocco.
-      b.range = () => b
+      // PostgREST rifiuta) ma la finestra di date, letta a pagine; dal 2026-09-20 si pagina
+      // allo stesso modo anche l'elenco dei pagamenti APERTI.
+      //
+      // ⚠️ IL FINTO RISPETTA IL RANGE, e prima lo ignorava. Restituire ogni volta l'elenco
+      // intero vuol dire una pagina mai vuota: il ciclo si ferma solo sul tetto dei
+      // round-trip, e l'elenco torna centuplicato. Sugli aperti diventa cento copie dello
+      // stesso pagamento, cioè cento pari merito, cioè nessun suggerimento — un rosso che
+      // parla del finto e non del codice.
+      b.range = (da: number, a: number) => { b._da = da; b._a = a; return b }
       b.maybeSingle = async () => ({
         data: table === 'riconciliazione_movimenti' ? h.movimento : table === 'pagamenti' ? h.pagamento : null,
         error: null,
@@ -83,11 +89,17 @@ vi.mock('@/lib/supabase/server-client', () => ({
           if (h.apertiCfError && cols.includes('codice_fiscale')) error = h.apertiCfError
           else if (h.batchSedeError && cols.startsWith('id, scuola_id')) error = h.batchSedeError
         }
+        /** La fetta chiesta: senza range, tutto (è il caso delle letture non paginate). */
+        const pagina = (righe: Record<string, unknown>[]): Record<string, unknown>[] => {
+          const da = typeof b._da === 'number' ? (b._da as number) : 0
+          const a = typeof b._a === 'number' ? (b._a as number) : righe.length - 1
+          return righe.slice(da, a + 1)
+        }
         return resolve({
           data:
             table === 'riconciliazione_movimenti'
-              ? (h.esistenti.length || h.movimenti.length ? (h.esistenti.length ? h.esistenti : h.movimenti) : [])
-              : table === 'pagamenti' ? h.aperti
+              ? pagina(h.esistenti.length || h.movimenti.length ? (h.esistenti.length ? h.esistenti : h.movimenti) : [])
+              : table === 'pagamenti' ? pagina(h.aperti)
               : [],
           error,
         })

@@ -55,10 +55,11 @@ import { termineOr, orIlike } from '@/lib/db/ricerca-postgrest'
 /**
  * L'ESTRATTO ANNUALE È 9.004 RIGHE, e le legge tutte in una richiesta sola.
  *
- * Il default di una Function è 10 secondi: con 6.775 accrediti da confrontare con i 545
- * pagamenti aperti, il taglio arriverebbe a metà dell'INSERT — cioè con parte dei movimenti
- * già scritti e nessuna risposta. Gli unici altri due `maxDuration` del repository stanno su
- * `api/pagamenti/fattura` e `api/iscrizione/import-massivo`, per la stessa ragione.
+ * Il default di una Function è 10 secondi: con 6.775 accrediti da confrontare con i pagamenti
+ * aperti (245 il 2026-09-20, contati), il taglio arriverebbe a metà dell'INSERT — cioè con
+ * parte dei movimenti già scritti e nessuna risposta. Gli unici altri due `maxDuration` del
+ * repository stanno su `api/pagamenti/fattura` e `api/iscrizione/import-massivo`, per la
+ * stessa ragione.
  */
 export const maxDuration = 300
 
@@ -221,6 +222,165 @@ const BLOCCO_DEDUP = 1000
 const MAX_PAGINE_DEDUP = 100
 /** Righe per INSERT: la taglia già usata da `iscrizioni/elenco`, qui con i `suggerimenti` in JSONB. */
 const BLOCCO_INSERT = 200
+
+/**
+ * Righe CHIESTE per pagina sull'elenco dei pagamenti APERTI.
+ *
+ * Stessa taglia e stessa ragione di `BLOCCO_DEDUP`: COINCIDE col `db-max-rows` di oggi
+ * invece di starci sotto, e il ciclo non ci fa affidamento — avanza di quante righe ha
+ * RICEVUTO, non di quante ne ha chieste.
+ */
+const BLOCCO_APERTI = 1000
+
+/**
+ * Il tetto dei round-trip sull'elenco degli aperti.
+ *
+ * Col `db-max-rows` di oggi le voci aperte ci entrano in UNA pagina, e le altre novantanove
+ * esistono per il giorno in cui quel tetto scende o il registro cresce — cioè per un giorno
+ * che nessuno vedrà arrivare, perché PostgREST tronca in SILENZIO.
+ *
+ * ⚠️ Quante siano è un numero che invecchia, quindi si data o non si scrive: **245 il
+ * 2026-09-20**, CONTATE (`SELECT count(*) FROM pagamenti WHERE stato IN ('da_pagare',
+ * 'parziale','scaduto')`), non copiate — la stessa riga diceva 545, ereditato dalla
+ * specifica, cioè più del doppio del vero. Quello che regge senza data è l'argomento: il
+ * margine c'è per fortuna, non per costruzione, e il codice qui sotto non ci si appoggia.
+ *
+ * ⚠️ Prima di paginare, questa lettura non aveva nemmeno un `.range()`: era sotto il tetto
+ * per fortuna, non per costruzione. Con l'elenco tagliato l'insieme delle voci di una
+ * famiglia è incompleto, e la regola su cui poggerà l'abbinamento automatico — «una sola
+ * combinazione di voci quadra con l'importo» — diventa falsamente CERTA: si incasserebbe
+ * sulla voce sbagliata di un bambino vero, col gate verde. Per questo il troncamento non
+ * resta un log: esce come dato (`apertiTroncati`), così chi deciderà può spegnersi.
+ */
+const MAX_PAGINE_APERTI = 100
+
+/**
+ * «Quella colonna qui non c'è», nei DUE modi in cui PostgREST lo dice su una SELECT:
+ * `42703` per una colonna vera, `PGRST200` per un embed la cui relazione non esiste
+ * (`payment_categories:categoria_id`). Il secondo non è teorico: gestire solo il primo
+ * farebbe cadere l'import intero su un database privo di quella chiave esterna.
+ */
+const COLONNA_APERTI_ASSENTE = new Set(['42703', 'PGRST200'])
+
+/**
+ * I GRUPPI DI COLONNE OPZIONALI dell'elenco aperti, IN ORDINE DI SACRIFICIO.
+ *
+ * Il database E2E della CI non è migrato: `sconto` lì non esiste, e PostgREST risponde
+ * `42703` nominando la colonna. Una SELECT sola e ricca cadrebbe per intero — cioè
+ * l'import cadrebbe in CI per una colonna che serve a DECIDERE, non a importare. Quindi si
+ * scende una scala: ogni gradino rinuncia a un gruppo IN PIÙ e riprova, e ogni gradino ha il
+ * suo log, perché «l'import è riuscito» e «l'import è riuscito cieco sullo sconto» non sono
+ * la stessa notizia.
+ *
+ * 🔴 LA CADUTA È CUMULATIVA, non selettiva: un gruppo che manca sacrifica anche TUTTI quelli
+ * che lo precedono nella scala, che magari esistono. Se manca solo `alunni.anonimizzato_il`
+ * si perdono per strada anche `sconto` e `categoria`, e il log li nomina uno per uno —
+ * quindi la perdita è visibile, ma va letta nei log: la risposta non la dichiara.
+ * È un costo accettato, non una svista. L'alternativa (un giro di conferma che ri-aggiunge i
+ * gruppi sacrificati prima di quello che ha davvero fallito) pagherebbe round-trip in più a
+ * ogni import su un database degradato, cioè in CI, per recuperare campi che in questo lotto
+ * nessuno ancora legge. Quando l'abbinamento automatico userà `sconto` per davvero, quel
+ * giro di conferma va aggiunto: perdere lo sconto per colpa di un'altra colonna è una cecità
+ * gratuita, e `sconto` è proprio il campo che distingue il residuo vero da quello sbagliato.
+ *
+ * L'ordine non tocca la correttezza (la scala converge comunque): tocca quanti round-trip
+ * costa il degrado, e quali gruppi cadono per compagnia. Davanti c'è il gruppo che manca
+ * DAVVERO oggi (`sconto`), in coda il codice fiscale, che è l'aggancio più forte che abbiamo
+ * e si perde per ultimo.
+ *
+ * ⚠️ Non si legge il MESSAGGIO dell'errore per indovinare quale colonna manchi: è testo di
+ * un provider, cambia forma quando vuole, e una scala non ha bisogno di indovinare.
+ */
+type GruppoAperti = 'sconto' | 'categoria' | 'ciclo_alunno' | 'sede_pagamento' | 'cf'
+const SACRIFICIO_APERTI: readonly GruppoAperti[] = ['sconto', 'categoria', 'ciclo_alunno', 'sede_pagamento', 'cf']
+
+/**
+ * Le colonne dell'elenco aperti, con i soli gruppi ancora VIVI.
+ *
+ * Perché ciascuno è qui:
+ *  • `sconto` — il matcher calcola il residuo come `importo − importo_pagato`, mentre il
+ *    resto del sistema usa `residuoEffettivo` (`importo − sconto − importo_pagato`,
+ *    clampato a zero: `src/lib/pagamenti/aging.ts`). Su una voce scontata i due numeri
+ *    DIVERGONO, e chi dirà «certo» userebbe quello sbagliato.
+ *  • `stato` e `anonimizzato_il` dell'alunno — dicono se quella voce appartiene ancora a un
+ *    bambino iscritto, o a un fascicolo già sottoposto all'oblio.
+ *  • le due `scuola_id` (del pagamento e dell'alunno) — con tre plessi, la conferma deve
+ *    sapere in quale sede sta scrivendo invece di indovinarla.
+ *  • lo slug della categoria — arriva con l'embed che la riga porta già: nessun giro in più.
+ *
+ * ⚠️ Nessuno di questi campi entra nel PUNTEGGIO di questo lotto: `preparaAperti` legge le
+ * chiavi che leggeva ieri e i suggerimenti non si muovono di un punto.
+ */
+function colonneAperti(vivi: ReadonlySet<GruppoAperti>): string {
+  const alunno = ['nome', 'cognome']
+  if (vivi.has('cf')) alunno.push('codice_fiscale', 'fiscal_code')
+  if (vivi.has('ciclo_alunno')) alunno.push('stato', 'anonimizzato_il', 'scuola_id')
+  return [
+    'id, descrizione, importo, importo_pagato, periodo_competenza, tipo, stato, alunno_id',
+    ...(vivi.has('sede_pagamento') ? ['scuola_id'] : []),
+    ...(vivi.has('sconto') ? ['sconto'] : []),
+    `alunni:alunno_id ( ${alunno.join(', ')} )`,
+    ...(vivi.has('categoria') ? ['payment_categories:categoria_id ( slug )'] : []),
+  ].join(', ')
+}
+
+/**
+ * Una voce aperta come la legge l'import: `PagamentoAperto` più i campi che servono a
+ * DECIDERE, che il matcher di oggi non guarda.
+ *
+ * Sta qui e non in `src/lib/pagamenti/riconciliazione.ts` di proposito: `PagamentoAperto` è
+ * la forma che il matcher pretende, e allargarla farebbe credere che il punteggio sappia di
+ * sconti e di sedi. Non lo sa — non ancora.
+ */
+interface ApertoDaAbbinare extends PagamentoAperto {
+  /** Sede del PAGAMENTO. `null` anche quando la colonna c'è: la riga può non averla. */
+  scuola_id: string | null
+  /** Abbuono sulla voce: assente sui DB non migrati, e allora vale `null`, non zero. */
+  sconto: number | string | null
+  categoria_slug: string | null
+  /** Stato dell'ALUNNO (iscritto, ritirato…), non del pagamento. */
+  alunno_stato: string | null
+  /** Valorizzato ⇒ il fascicolo è già passato per l'oblio. */
+  alunno_anonimizzato_il: string | null
+  /** Sede dell'ALUNNO: può differire da quella del pagamento dopo un trasferimento. */
+  alunno_scuola_id: string | null
+}
+
+/**
+ * LA QUALITÀ DELL'ELENCO APERTI, IN SEI NUMERI — e perché esiste una funzione per questo.
+ *
+ * I campi che questo lotto legge in più non hanno ancora NESSUN consumatore: non entrano nel
+ * punteggio, non escono nella risposta, non li guarda un `if`. Un percorso di lettura
+ * sbagliato — un embed che torna in un'altra forma, un gruppo caduto per compagnia nella
+ * scala, una chiave rinominata — passerebbe quindi inosservato fino al lotto che ci si
+ * fiderà sopra, cioè fino al momento in cui incassare sulla voce sbagliata di un bambino
+ * vero diventa possibile. Un campo portato e mai guardato è un campo non misurato, e
+ * consegnarlo al prossimo lotto sarebbe consegnare il falso pronto all'uso.
+ *
+ * Sono CONTEGGI, e questo li rende dicibili: `@/lib/logging/redact` è a lista bianca e i
+ * numeri passano in chiaro. Dicono QUANTE, mai di CHI — nessun uuid di alunno, nessuno slug
+ * per riga, nessuna data di nascita travestita da `anonimizzato_il`.
+ *
+ * E fanno doppio servizio: su un database degradato (la CI non migrata, o un gruppo caduto
+ * per compagnia) `senza_sede` e `ciclo_ignoto` valgono il TOTALE, ed è esattamente la
+ * notizia «qui l'automatismo è cieco» — che il solo `degradazione_*_aperti` non quantifica.
+ */
+function qualitaAperti(aperti: readonly ApertoDaAbbinare[]) {
+  return {
+    /** Voci su cui il residuo del matcher (`importo − importo_pagato`) DIVERGE da `residuoEffettivo`. */
+    aperti_scontati: aperti.filter((p) => Number(p.sconto ?? 0) > 0).length,
+    aperti_con_categoria: aperti.filter((p) => p.categoria_slug !== null).length,
+    /** Fascicoli già passati per l'oblio: su questi non si abbina niente, si abbina a un vuoto. */
+    aperti_anonimizzati: aperti.filter((p) => p.alunno_anonimizzato_il !== null).length,
+    /** Con tre plessi, una voce senza sede costringerebbe la conferma a INDOVINARE il plesso. */
+    aperti_senza_sede: aperti.filter((p) => p.scuola_id === null).length,
+    aperti_ciclo_ignoto: aperti.filter((p) => p.alunno_stato === null).length,
+    /** Il caso del trasferimento: l'alunno è in un plesso, la sua vecchia voce in un altro. */
+    aperti_sede_discorde: aperti.filter(
+      (p) => p.scuola_id !== null && p.alunno_scuola_id !== null && p.alunno_scuola_id !== p.scuola_id,
+    ).length,
+  }
+}
 
 /**
  * IL CORPO, LETTO MA NON ANCORA INTERPRETATO.
@@ -1603,37 +1763,102 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
     // FIX collaudo: l'ERRORE della SELECT non si scarta. Il matching per CF/nome è il CUORE
     // dell'import: se questa SELECT fallisce, `aperti` resterebbe vuoto e la rotta loggerebbe
     // comunque `import_ok` con `con_cf:0` — un successo che MENTE. Quindi:
-    //  • 42703 (colonna CF assente sul DB E2E CI non migrato) → si ritenta SENZA le colonne CF,
-    //    coerente col resto della codebase: l'import degrada senza aggancio per codice fiscale;
+    //  • colonna assente (`COLONNA_APERTI_ASSENTE`, sul DB E2E della CI non migrato) → si
+    //    scende di un gradino nella scala `SACRIFICIO_APERTI` e si ritenta, loggando;
     //  • qualunque altro errore → si INTERROMPE l'import (500 + logErrore), niente `import_ok`.
-    const APERTI_SELECT_CF = 'id, descrizione, importo, importo_pagato, periodo_competenza, tipo, stato, alunno_id, alunni:alunno_id ( nome, cognome, codice_fiscale, fiscal_code )'
-    const APERTI_SELECT_BASE = 'id, descrizione, importo, importo_pagato, periodo_competenza, tipo, stato, alunno_id, alunni:alunno_id ( nome, cognome )'
-    // `apertiRaw` normalizzato a `unknown[] | null`: la SELECT con CF e quella senza hanno tipi
-    // literal diversi (l'embed `alunni` differisce) → tenerli in un `let` tipizzato darebbe conflitto.
-    // Il downstream fa comunque `as unknown as {…}` sul mapping, quindi il tipo preciso qui non serve.
-    const primaSelezione = await supabase
-      .from('pagamenti')
-      .select(APERTI_SELECT_CF)
-      .in('stato', ['da_pagare', 'parziale', 'scaduto'])
-    let apertiRaw: unknown[] | null = primaSelezione.data
-    let errAperti = primaSelezione.error
-    if (errAperti?.code === '42703') {
-      logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: 'degradazione_cf_aperti' })
-      const senzaCf = await supabase
-        .from('pagamenti')
-        .select(APERTI_SELECT_BASE)
-        .in('stato', ['da_pagare', 'parziale', 'scaduto'])
-      apertiRaw = senzaCf.data
-      errAperti = senzaCf.error
+
+    /**
+     * L'ELENCO DEGLI APERTI, PAGINATO — e perché sta QUI DENTRO.
+     *
+     * Stessa ragione di `hashGiaInRegistro`: è una lettura DELIBERATAMENTE senza filtro di
+     * sede (l'estratto conto è uno per tutti e tre i plessi), e il lock
+     * `isolamento-sede-coverage` la legge insieme all'handler che la contiene. Portarla fuori
+     * la renderebbe una lettura «di nessuno», e l'unico modo di farla passare sarebbe una
+     * voce di allowlist: una protezione spenta per un dettaglio di forma.
+     *
+     * ─── LA REGOLA DI ARRESTO ─────────────────────────────────────────────────
+     * Si avanza di quante righe sono ARRIVATE e ci si ferma solo su una pagina VUOTA. «Ne
+     * sono arrivate meno di quante ne ho chieste» NON è la fine dell'elenco: è anche il
+     * `db-max-rows` del server, che taglia senza dirlo e senza sbagliare. È la stessa forma
+     * della dedup venti righe più su, e per lo stesso motivo.
+     *
+     * L'ordine è `id`, che è la chiave primaria: un ordine TOTALE, in cui nessuna riga può
+     * scivolare da una pagina all'altra. Senza, paginare è peggio che non paginare — si
+     * leggono righe due volte e se ne saltano altre. (Prima di oggi qui non c'era ordine
+     * affatto: quello che tornava era l'ordine che decideva il database, e i pari merito del
+     * matcher si rompevano di conseguenza. Ora è dichiarato, quindi ripetibile.)
+     */
+    const apertiPaginati = async (
+      colonne: string,
+    ): Promise<{ righe: unknown[]; troncato: boolean } | { errore: { code?: string; message?: string } }> => {
+      const righe: unknown[] = []
+      let letto = 0
+      for (let pagina = 0; pagina < MAX_PAGINE_APERTI; pagina++) {
+        const { data, error } = await supabase
+          .from('pagamenti')
+          .select(colonne)
+          .in('stato', ['da_pagare', 'parziale', 'scaduto'])
+          .order('id', { ascending: true })
+          .range(letto, letto + BLOCCO_APERTI - 1)
+        if (error) return { errore: error }
+        const righeDellaPagina = (data || []) as unknown[]
+        if (righeDellaPagina.length === 0) return { righe, troncato: false }
+        righe.push(...righeDellaPagina)
+        letto += righeDellaPagina.length
+      }
+      // Oltre il tetto: l'elenco è stato letto solo in parte, e il fatto esce di qui come
+      // DATO. Un log da solo non basterebbe: chi dovrà dire «questa combinazione è l'unica
+      // che quadra» deve poter tacere, non soltanto lasciare una riga in `app_log`.
+      return { righe, troncato: true }
+    }
+
+    // `apertiRighe` resta `unknown[]`: i gradini della scala hanno tipi literal diversi (gli
+    // embed cambiano forma), e il mapping qui sotto fa comunque `as unknown as {…}`.
+    const vivi = new Set<GruppoAperti>(SACRIFICIO_APERTI)
+    let apertiRighe: unknown[] = []
+    let apertiTroncati = false
+    let errAperti: { code?: string; message?: string } | null = null
+    for (let gradino = 0; gradino <= SACRIFICIO_APERTI.length; gradino++) {
+      if (gradino > 0) {
+        // Si logga il gruppo perduto PRIMA di riprovare: ci si arriva solo perché il gradino
+        // precedente è caduto su una colonna assente, quindi la rinuncia è già un fatto.
+        const perso = SACRIFICIO_APERTI[gradino - 1]
+        vivi.delete(perso)
+        logEvento('pagamento', 'info', { operazione: OPERAZIONE_POST, esito: `degradazione_${perso}_aperti` })
+      }
+      const esito = await apertiPaginati(colonneAperti(vivi))
+      if (!('errore' in esito)) {
+        apertiRighe = esito.righe
+        apertiTroncati = esito.troncato
+        errAperti = null
+        break
+      }
+      errAperti = esito.errore
+      if (!COLONNA_APERTI_ASSENTE.has(esito.errore.code ?? '')) break
     }
     if (errAperti) {
       logErrore({ operazione: OPERAZIONE_POST, evento: 'aperti_select_fallita', stato: 500 }, errAperti)
       return NextResponse.json({ error: 'Errore nel recupero dei pagamenti aperti' }, { status: 500 })
     }
-    const aperti: PagamentoAperto[] = ((apertiRaw || []) as unknown as {
+    if (apertiTroncati) {
+      // `error` e non `info`: da qui in poi l'insieme delle voci di una famiglia può essere
+      // incompleto, e un suggerimento «unico» calcolato su un elenco monco è un suggerimento
+      // che mente. Gemello di `dedup-finestra-troncata`.
+      logEvento('pagamento', 'error', {
+        operazione: OPERAZIONE_POST,
+        esito: 'aperti-finestra-troncata',
+        n: apertiRighe.length,
+      })
+    }
+    const aperti: ApertoDaAbbinare[] = (apertiRighe as unknown as {
       id: string; descrizione?: string | null; importo: number; importo_pagato?: number | null
+      sconto?: number | null; scuola_id?: string | null
       periodo_competenza?: string | null; tipo: string; alunno_id?: string | null
-      alunni?: { nome?: string; cognome?: string; codice_fiscale?: string | null; fiscal_code?: string | null } | null
+      alunni?: {
+        nome?: string; cognome?: string; codice_fiscale?: string | null; fiscal_code?: string | null
+        stato?: string | null; anonimizzato_il?: string | null; scuola_id?: string | null
+      } | null
+      payment_categories?: { slug?: string | null } | null
     }[])
       .filter((p) => p.tipo !== 'padre')
       .map((p) => ({
@@ -1645,6 +1870,18 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         alunno_id: p.alunno_id ?? null,
         codice_fiscale: p.alunni?.codice_fiscale ?? p.alunni?.fiscal_code ?? null,
         alunno_nome: [p.alunni?.nome, p.alunni?.cognome].filter(Boolean).join(' ') || null,
+        // Da qui in giù: letti e portati, NON ancora usati. È il lotto che prepara il terreno.
+        scuola_id: p.scuola_id ?? null,
+        sconto: p.sconto ?? null,
+        // ⚠️ L'embed è letto come OGGETTO, non come array: `categoria_id` è una chiave
+        // esterna a uno, come `alunno_id` qui sopra, e PostgREST sceglie la forma dalla
+        // CARDINALITÀ. Se quella relazione cambiasse verso, questo `?.slug` diventerebbe
+        // `undefined` in silenzio — se ne accorgerebbe `aperti_con_categoria`, che
+        // crollerebbe a zero nel log di `import_ok`.
+        categoria_slug: p.payment_categories?.slug ?? null,
+        alunno_stato: p.alunni?.stato ?? null,
+        alunno_anonimizzato_il: p.alunni?.anonimizzato_il ?? null,
+        alunno_scuola_id: p.alunni?.scuola_id ?? null,
       }))
     const labels = new Map(
       aperti.map((p) => [
@@ -1652,9 +1889,10 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
         `${p.alunno_nome ?? '—'} · ${p.descrizione ?? '—'} (residuo ${formatEuro(Number(p.importo) - Number(p.importo_pagato || 0))})`,
       ]),
     )
-    // ⚠️ UNA VOLTA SOLA. Sull'estratto annuale sono 6.775 accrediti × 545 pagamenti aperti =
-    // 3,7 milioni di confronti: normalizzare i nomi DENTRO il ciclo significava rifare
-    // `normalize('NFD')` sugli stessi nomi milioni di volte.
+    // ⚠️ UNA VOLTA SOLA. Sull'estratto annuale sono 6.775 accrediti × 245 pagamenti aperti
+    // (contati il 2026-09-20) = 1,7 milioni di confronti: normalizzare i nomi DENTRO il ciclo
+    // significava rifare `normalize('NFD')` sugli stessi nomi milioni di volte. Il numero è
+    // datato perché cresce; l'argomento no: il prodotto resta milionario a qualunque cifra.
     const apertiPreparati = preparaAperti(aperti)
 
     // Il movimento nasce SENZA sede (scuola_id null): la sede si assegna alla conferma.
@@ -1755,6 +1993,12 @@ export const POST = withRoute('pagamenti/riconciliazione:POST', async (request: 
       senza_ordinante: senzaOrdinante,
       suggeriti,
       con_cf: conCf,
+      // Il successo dichiara anche SU COSA è stato calcolato: con l'elenco degli aperti
+      // troncato, `suggeriti` e `con_cf` sono limiti inferiori, non conteggi.
+      aperti_troncati: apertiTroncati,
+      // …e con QUANTA vista: i sei numeri di `qualitaAperti` sono l'unico posto in cui i
+      // campi letti da questo lotto si fanno vedere, finché non avranno un consumatore.
+      ...qualitaAperti(aperti),
     })
 
     return NextResponse.json({

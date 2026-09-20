@@ -861,6 +861,7 @@
   "caus_ph_anno": "Anno",
   "caus_ph_importo": "Importo",
   "caus_ph_scadenza": "Scadenza",
+  "caus_ph_codice": "Codice della voce",
   "fatBtn_anteprima_errore": "Impossibile leggere la causale configurata per questa sede: la fattura non si può emettere adesso. Riprova fra poco.",
   "fatBtn_causale_caricamento": "Sto leggendo la causale configurata…",
   "fatBtn_causale_troppo_lunga": "La causale supera i 200 caratteri del tracciato: sul documento uscirà tagliata.",

@@ -861,6 +861,7 @@
   "caus_ph_anno": "Year",
   "caus_ph_importo": "Amount",
   "caus_ph_scadenza": "Due date",
+  "caus_ph_codice": "Item code",
   "fatBtn_anteprima_errore": "The description configured for this location could not be read: the invoice cannot be issued right now. Try again shortly.",
   "fatBtn_causale_caricamento": "Loading the configured description…",
   "fatBtn_causale_troppo_lunga": "The description exceeds the 200 characters allowed by the format: it will be truncated on the document.",

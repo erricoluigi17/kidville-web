@@ -46,6 +46,22 @@ export interface SuggerimentoUi {
   label?: string | null
   /** True se agganciato per codice fiscale (aggancio dominante, ordina primo). */
   cf_match?: boolean
+  /**
+   * True se agganciato per CODICE DELLA VOCE: l'aggancio più forte che esista,
+   * più del codice fiscale. Il CF identifica una FAMIGLIA, il codice identifica
+   * una VOCE — ed è la differenza che conta su un registro in cui le rette sono
+   * tutte uguali (misura in `@/lib/pagamenti/riconciliazione`, `CODICE_BONUS`).
+   */
+  codice_match?: boolean
+  /**
+   * Il codice che ha agganciato, in forma canonica (`#K7MXN3P`), quando c'è.
+   *
+   * ⚠️ ASSENTE SULLE RIGHE VECCHIE, e non è un difetto: i `suggerimenti` sono un
+   * JSONB scritto AL MOMENTO DELL'IMPORT, quindi il registro contiene anche
+   * candidati calcolati prima che questo campo esistesse. Chi lo legge tratta
+   * l'assenza come «non lo so», mai come «non c'era nessun codice».
+   */
+  codice_voce?: string | null
   /** Alunno del pagamento: serve a raggruppare i CF per l'«Incasso unico». */
   alunno_id?: string | null
 }
@@ -211,6 +227,45 @@ export interface EsitoImport {
 /** Il PRIMO suggerimento è un aggancio per CF? → badge «CF» sulla riga. */
 export function suggerimentoPrincipaleCf(sugg?: SuggerimentoUi[] | null): boolean {
   return Boolean(sugg && sugg.length > 0 && sugg[0]?.cf_match)
+}
+
+/**
+ * IL CODICE DI UN SUGGERIMENTO, LETTO DAL CAMPO E MAI DALLA FRASE.
+ *
+ * ⚠️ Il codice NON si ricava dai `motivi`, e vale la pena dire perché invece di
+ * lasciarlo scoprire: quella è prosa italiana scritta per essere letta da una
+ * persona («codice della voce»), e un `motivi.includes(…)` diventerebbe muto al
+ * primo ritocco della frase o alla prima traduzione — muto in silenzio, senza che
+ * niente diventi rosso. Il dato viaggia in un campo suo (`codice_voce`, accanto a
+ * `codice_match`) esattamente come `cf_match` viaggia accanto al motivo «codice
+ * fiscale».
+ *
+ * `null` quando il candidato non è agganciato per codice, quando il campo non c'è
+ * (riga importata prima che esistesse) o quando è una stringa vuota: tre assenze
+ * diverse che per chi disegna una riga sono la stessa cosa — non c'è niente da
+ * mostrare.
+ */
+export function codiceDelSuggerimento(s?: SuggerimentoUi | null): string | null {
+  if (!s || s.codice_match !== true) return null
+  return typeof s.codice_voce === 'string' && s.codice_voce !== '' ? s.codice_voce : null
+}
+
+/**
+ * Il codice da mostrare sulla RIGA del registro: quello del primo candidato che
+ * ne porta uno, o `null`.
+ *
+ * Non è «il primo suggerimento», come per il badge CF: i candidati arrivano già
+ * ordinati per punteggio e un aggancio per codice vale più di qualunque altro,
+ * ma i `suggerimenti` di una riga vecchia possono avere il campo assente mentre
+ * uno più in basso ce l'ha. Si scorre, e si prende il primo che parla.
+ */
+export function codiceDellaRiga(sugg?: SuggerimentoUi[] | null): string | null {
+  if (!sugg) return null
+  for (const s of sugg) {
+    const codice = codiceDelSuggerimento(s)
+    if (codice !== null) return codice
+  }
+  return null
 }
 
 /** «n parola» con singolare/plurale scelto sul conteggio (0 e >1 → plurale). */

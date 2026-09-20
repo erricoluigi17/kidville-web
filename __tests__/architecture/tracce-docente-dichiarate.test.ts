@@ -138,9 +138,23 @@ describe('la fotografia non è cieca a ciò che è successo dopo', () => {
     // migrazioni più recenti, e si grida al lupo su qualunque cosa somigli a una FK
     // verso `utenti`: un falso allarme si chiude rigenerando la fotografia, un
     // silenzio non si chiude mai.
+    // ⚠️ SI CERCANO LE DUE FORME CHE POSSONO CAMBIARE UNA FK, non la parola
+    // «on delete». Il primo filtro diceva anche `/\bon\s+delete\b/i`, e il
+    // 2026-09-20 ha sparato sulla migrazione di questo stesso lavoro: la frase
+    // stava in un commento DENTRO il corpo `$$` di una funzione, e `senzaCommenti`
+    // — giustamente — non tocca il contenuto delle stringhe dollar-quoted, dove un
+    // `--` è testo e non un commento SQL.
+    //
+    // `add constraint` / `drop constraint` restano perché cambiare la `ON DELETE`
+    // di una chiave esistente si fa SOLO così: la si lascia cadere e la si
+    // riscrive. Il filtro è ancora largo — una migrazione che tocca un vincolo
+    // qualunque fa gridare al lupo — ed è il verso giusto in cui sbagliare: un
+    // falso allarme si chiude rigenerando la fotografia, un silenzio non si chiude.
     const sospette = posterioriCheContengono(MIGRAZIONI, sogliaFotografia(foto), (sql) => {
       const s = senzaCommenti(sql)
-      return /references\s+(public\.)?utenti\b/i.test(s) || /\bon\s+delete\b/i.test(s)
+      return (
+        /references\s+(public\.)?utenti\b/i.test(s) || /\b(add|drop)\s+constraint\b/i.test(s)
+      )
     })
     expect(
       sospette,

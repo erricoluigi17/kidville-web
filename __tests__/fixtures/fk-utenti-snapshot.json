@@ -1,0 +1,288 @@
+{
+  "_come_si_rigenera": "node __tests__/fixtures/fk-utenti-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/fk-utenti-fotografia.mjs < risposta.json",
+  "generato_il": "2026-09-20",
+  "generato_alle": "2026-09-20T00:07:19Z",
+  "sha256": "33e60654a8866f5e727401f453e7bfec541b7ea09af68d0ebc65fb1024a916e2",
+  "fk": [
+    {
+      "tabella": "allegati_registro",
+      "colonna": "caricato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "anagrafica_personale",
+      "colonna": "aggiornata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "anagrafica_personale",
+      "colonna": "utente_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "audit_scritture_docente",
+      "colonna": "attore_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "avvisi",
+      "colonna": "author_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "avvisi_risposte",
+      "colonna": "parent_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "colonna": "etichetta_aggiornata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "colonna": "evasa_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "candidature_insegnanti",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "candidature_sedi",
+      "colonna": "evasa_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "cassa_chiusure",
+      "colonna": "eseguita_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "cassa_movimenti",
+      "colonna": "registrato_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "chat_messages",
+      "colonna": "sender_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "chat_threads",
+      "colonna": "parent_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "chat_threads",
+      "colonna": "teacher_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "eventi_agenda",
+      "colonna": "creato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "eventi_diario",
+      "colonna": "maestra_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "fascicolo_accessi_audit",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "fatture_visibilita_audit",
+      "colonna": "verificata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "fatture_visibilita_revisioni",
+      "colonna": "verificata_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "firme_documenti",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "form_submissions",
+      "colonna": "gestita_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "galleria_media",
+      "colonna": "caricato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "galleria_media_v2",
+      "colonna": "eliminato_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "galleria_media_v2",
+      "colonna": "uploaded_by",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "incassi",
+      "colonna": "registrato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "iscrizioni_decisioni",
+      "colonna": "decisa_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "iscrizioni_elenco_caricamenti",
+      "colonna": "caricato_da",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "legame_genitori_alunni",
+      "colonna": "genitore_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "mensa_prenotazioni",
+      "colonna": "prenotato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "notifiche",
+      "colonna": "utente_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "orario_settimanale",
+      "colonna": "docente_id",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "pagamenti",
+      "colonna": "creato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "pagamenti_quote",
+      "colonna": "adult_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "pagelle",
+      "colonna": "generata_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "pratiche_personale",
+      "colonna": "evasa_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "pratiche_personale",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "presenze",
+      "colonna": "giust_vista_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "presenze",
+      "colonna": "registrato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "presenze",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "push_subscriptions",
+      "colonna": "utente_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "registro_modifiche",
+      "colonna": "utente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "sblocchi_audit",
+      "colonna": "dirigente_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "scrutini",
+      "colonna": "chiuso_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "scrutini",
+      "colonna": "pubblicato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "scrutinio_giudizi",
+      "colonna": "proposto_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "student_documents",
+      "colonna": "caricato_da",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "student_guardians",
+      "colonna": "utenti_id",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "task_interni",
+      "colonna": "assigned_to",
+      "azione": "set-null"
+    },
+    {
+      "tabella": "task_interni",
+      "colonna": "author_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "utenti_scuole",
+      "colonna": "utente_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "utenti_sezioni",
+      "colonna": "utente_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "utenti_sezioni_materie",
+      "colonna": "utente_id",
+      "azione": "cascade"
+    },
+    {
+      "tabella": "valutazioni",
+      "colonna": "maestra_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "video_intents",
+      "colonna": "owner_id",
+      "azione": "blocca"
+    },
+    {
+      "tabella": "video_jobs",
+      "colonna": "owner_id",
+      "azione": "blocca"
+    }
+  ]
+}

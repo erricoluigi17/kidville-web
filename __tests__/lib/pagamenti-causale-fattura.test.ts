@@ -13,6 +13,7 @@ import {
   lunghezzaCausaleFatturaPA,
   DEFAULT_CAUSALE_FATTURA_TEMPLATE,
   LIMITE_CAUSALE_FATTURAPA,
+  PLACEHOLDER_CAUSALE_FATTURA,
   VINCOLO_CAUSALE_FATTURAPA,
 } from '@/lib/pagamenti/causale-fattura'
 import { buildFatturaElettronicaXml, type FatturaPAInput } from '@/lib/aruba/fatturapa-xml'
@@ -195,6 +196,73 @@ describe('causaleFattura — la causale del documento fiscale', () => {
 
   it('senza dati non inventa niente', () => {
     expect(causaleFattura({ dati: {} })).toBe('')
+  })
+})
+
+/**
+ * IL CODICE DELLA VOCE NON ENTRA IN UN DOCUMENTO FISCALE.
+ *
+ * Il bonifico lo porta perché serve a riconciliare un incasso: dice QUALE voce si sta
+ * pagando quando una famiglia ne ha più d'una aperta con lo stesso identico residuo. La
+ * fattura non è il posto dove si riconcilia, e il titolare ha deciso che lì non ci va.
+ *
+ * ⚠️ È una DECISIONE, non un limite tecnico — e la differenza va scritta, perché chi la
+ * leggesse come un limite proverebbe ad aggirarlo. I due casi in fondo lo dimostrano:
+ * il `#` attraversa il tracciato e i 200 caratteri reggono.
+ */
+describe('la causale della FATTURA non porta il codice della voce', () => {
+  const DATI = {
+    descrizione: 'Retta Settembre 2026',
+    nome: 'Mario',
+    cognome: 'Rossi',
+    codiceFiscale: CF_MASCHIO,
+    sede: 'Kidville <Sede>',
+    mese: 'settembre',
+    anno: '2026',
+  }
+  const CODICE = '#K7MXN3P'
+  const FABBRICA = `Retta Settembre 2026 - a favore del minore Mario Rossi - CF: ${CF_MASCHIO}`
+
+  it('nessun APPEND AUTOMATICO: passare `dati.codice` non cambia una virgola', () => {
+    // È l'asimmetria voluta con `causaleBonifico`, che il segnaposto se lo aggiunge da
+    // sé quando il modello non lo cita. Qui no, e nemmeno per sbaglio.
+    expect(causaleFattura({ dati: DATI })).toBe(FABBRICA)
+    expect(causaleFattura({ dati: { ...DATI, codice: CODICE } })).toBe(FABBRICA)
+  })
+
+  it('nemmeno un modello personalizzato lo riceve', () => {
+    expect(causaleFattura({
+      config: { default: 'FATTURA {descrizione} - {nome_completo}' },
+      dati: { ...DATI, codice: CODICE },
+    })).toBe('FATTURA Retta Settembre 2026 - Mario Rossi')
+  })
+
+  it('un {codice} scritto a mano in un modello di fattura rende VUOTO, e il segmento si OMETTE', () => {
+    // Da questa strada `dati.codice` non arriva mai: chi ha scritto il segnaposto ha
+    // ottenuto un segmento che sparisce da un documento fiscale senza nessun errore. È
+    // esattamente la ragione per cui il chip non esiste nell'editor della fattura.
+    expect(causaleFattura({
+      config: { default: '{descrizione} - rif. {codice} - {nome_completo}' },
+      dati: DATI,
+    })).toBe('Retta Settembre 2026 - Mario Rossi')
+  })
+
+  it('il catalogo dei chip della fattura è quello del bonifico MENO {codice}', () => {
+    expect(PLACEHOLDER_CAUSALE_FATTURA.find((p) => p.chiave === 'codice')).toBeUndefined()
+    // Controllo positivo: il chip esiste davvero di là, altrimenti «non c'è qui»
+    // sarebbe vero per la ragione sbagliata e il catalogo separato sarebbe cerimonia.
+    expect(PLACEHOLDER_CAUSALE.find((p) => p.chiave === 'codice')).toBeDefined()
+    // Per tutto il resto i due cataloghi coincidono, ordine compreso: si FILTRA, non si
+    // ricopia, perché una seconda copia diverge al primo segnaposto nuovo.
+    expect(PLACEHOLDER_CAUSALE_FATTURA.map((p) => p.chiave))
+      .toEqual(PLACEHOLDER_CAUSALE.map((p) => p.chiave).filter((k) => k !== 'codice'))
+  })
+
+  it('CI STAREBBE: il `#` attraversa il tracciato e i 200 caratteri reggono', () => {
+    // Senza questi due casi «la fattura non porta il codice» si leggerebbe come un
+    // vincolo del tracciato, e il primo che misura scoprirebbe che non è vero.
+    expect(VINCOLO_CAUSALE_FATTURAPA.perTracciato(CODICE)).toBe(CODICE)
+    expect(eccedeLimiteFatturaPA(`${FABBRICA} - ${CODICE}`)).toBe(false)
   })
 })
 

@@ -454,6 +454,8 @@
   "erroreRiaperturaSedeNonVerificata": "We could not verify the location of this combined bank transfer: the reopening was stopped and no reversal was made. Please try again shortly.",
   "erroreConciliazioneVoceContenitore": "One of the selected items is the total of an instalment plan: you collect the instalments, not the container. Remove it from the composition and pick the instalments to settle.",
   "erroreConciliazioneMovimentoNonLegato": "The payment has been recorded, but the bank statement row was not linked: do not repeat the operation, the money would be recorded twice. Report it so that the row can be linked.",
+  "erroreConciliazioneAlunnoNonTrovato": "One of the children you picked is not among those you can manage: check your choice and try again.",
+  "erroreConciliazioneRicercaAlunniNonLetta": "We could not search for children: the empty list above does not mean there are none. Please try again in a few minutes before creating a new record.",
   "errorePossibileDoppione": "A child with the same name and date of birth, but a different tax code, is already enrolled at this location: if the family sent the application twice, reject this one; if it is the same child, use the existing record.",
   "erroreAbbinamentoNonValido": "The existing record indicated cannot be used for this child: nothing was saved. Reopen the application and try the import again.",
   "erroreVideoFileNonValido": "This file does not contain a readable video: it may be incomplete, or it may have been spoiled while being saved. Please try another clip.",

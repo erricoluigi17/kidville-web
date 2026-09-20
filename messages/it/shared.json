@@ -454,6 +454,8 @@
   "erroreRiaperturaSedeNonVerificata": "Non siamo riusciti a verificare la sede di questo bonifico composito: la riapertura è stata fermata e nessuno storno è partito. Riprova fra poco.",
   "erroreConciliazioneVoceContenitore": "Una delle voci scelte è il totale di un piano a rate: si incassano le rate, non il contenitore. Toglila dalla composizione e scegli le rate da saldare.",
   "erroreConciliazioneMovimentoNonLegato": "L’incasso è stato registrato, ma la riga dell’estratto conto non è stata legata: non ripetere l’operazione, il denaro risulterebbe incassato due volte. Segnala l’accaduto perché la riga venga legata.",
+  "erroreConciliazioneAlunnoNonTrovato": "Uno dei bambini indicati non risulta fra quelli che puoi gestire: controlla la scelta e riprova.",
+  "erroreConciliazioneRicercaAlunniNonLetta": "Non siamo riusciti a cercare i bambini: l’elenco vuoto qui sopra non significa che non ci siano. Riprova fra qualche minuto prima di aprire una scheda nuova.",
   "errorePossibileDoppione": "In questa sede esiste già un bambino con lo stesso nome e la stessa data di nascita, ma con un codice fiscale diverso: se la famiglia ha inviato la domanda due volte, rifiuta questa; se è lo stesso bambino, usa la scheda esistente.",
   "erroreAbbinamentoNonValido": "La scheda esistente indicata non si può usare per questo bambino: non è stato scritto nulla. Riapri la domanda e riprova l’import.",
   "erroreVideoFileNonValido": "Questo file non contiene un video leggibile: potrebbe essere incompleto, oppure essersi rovinato durante il salvataggio. Riprova con un altro filmato.",

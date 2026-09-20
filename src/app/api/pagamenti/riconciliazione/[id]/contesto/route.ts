@@ -100,6 +100,30 @@ import { eAncoraIscritto } from '@/lib/alunni/stato'
  * sfogliare le famiglie dell'intero archivio, voci aperte e importi compresi,
  * conoscendo un solo uuid. Fuori dai candidati è un 403, non un elenco vuoto.
  *
+ * ─── PERCHÉ `?alunni=` VERIFICA LA SEDE PRIMA DI OGNI ALTRA COSA ────────────
+ * Su un movimento ROSSO il matcher non ha suggerito niente: nessun pagamento
+ * citato, quindi nessun bambino, quindi nessun genitore candidato, tendina dei
+ * figli vuota e «Conferma» spento. **È il motivo per cui sui rossi non si
+ * riesce a comporre**, e non c'entra il riconoscimento dell'ordinante: anche
+ * riconoscendolo alla perfezione non avrebbe su cosa decidere. `?alunni=` è il
+ * modo in cui l'operatrice dice DI CHI è quel bonifico; da lì in poi il resto
+ * della rotta funziona già così com'è — candidati, ordinante, figli, voci
+ * aperte, categorie, pacchetti.
+ *
+ * Ma un uuid arbitrario in query, senza verifica, farebbe di questa rotta
+ * esattamente ciò che il paragrafo qui sopra nega a `?pagante=`: un modo per
+ * sfogliare l'archivio — voci aperte, residui e nomi dei genitori di una
+ * famiglia qualunque — conoscendo un solo id. Si accettano quindi solo i
+ * bambini delle SEDI ATTIVE dell'operatore, e la verifica **sta nella query**
+ * (`.in('scuola_id', …)`), PRIMA che quegli id diventino una chiave di lettura:
+ * un perimetro controllato dopo aver letto è un perimetro che ha già risposto.
+ *
+ * E si risponde **404, non 403** — stessa grammatica del gate sul movimento in
+ * `…/componi` (`CONCILIAZIONE_MOVIMENTO_NON_TROVATO`). Un 403 direbbe a chi
+ * lavora a Cesa che quel bambino esiste a Giugliano, cioè regalerebbe metà
+ * dell'informazione che il gate esiste per non dare. Nel log vanno solo
+ * CONTEGGI — quanti chiesti, quanti dentro il perimetro — mai gli uuid, mai i nomi.
+ *
  * ─── DEGRADO ────────────────────────────────────────────────────────────────
  * PostgREST **non lancia**: ritorna `{ error }`, e qui si guarda sempre. Le tre
  * letture SENZA le quali la risposta sarebbe una bugia (movimento, alunni,
@@ -123,11 +147,38 @@ const SEL_PARENTS = 'id, first_name, last_name, auth_user_id, intestatario_defau
 const OPERAZIONE = 'pagamenti/riconciliazione/[id]/contesto:GET'
 
 /**
+ * Quanti bambini può nominare una richiesta con `?alunni=`.
+ *
+ * Il numero NON viene da una misura, e si dice invece di lasciarlo credere: è la
+ * soglia oltre la quale «i figli di questa famiglia» smette di essere una
+ * descrizione plausibile di ciò che si sta chiedendo, e la richiesta somiglia a
+ * un'enumerazione. Tenerlo basso non protegge niente da solo — a proteggere è la
+ * verifica di sede qui sotto — ma tiene corta la lista di un `.in(…)` che arriva
+ * dal client.
+ */
+const MAX_ALUNNI_CHIESTI = 5
+
+/**
+ * `?alunni=uuid,uuid` — i bambini che l'operatrice indica a mano su un movimento
+ * che il matcher non ha saputo abbinare.
+ *
+ * Il tetto si applica a ciò che è ARRIVATO, non a ciò che resta dopo aver tolto
+ * i doppioni: sei uuid ripetuti sono comunque sei uuid chiesti, e un tetto che
+ * si lasciasse aggirare ripetendo un valore non sarebbe un tetto.
+ */
+const zAlunniChiesti = z
+  .string()
+  .transform((s) => s.split(',').map((v) => v.trim()).filter((v) => v !== ''))
+  .pipe(
+    z.array(zUuid).max(MAX_ALUNNI_CHIESTI, `al massimo ${MAX_ALUNNI_CHIESTI} bambini per richiesta`),
+  )
+
+/**
  * ⚠️ NIENTE `.strict()`. La pagina di Contabilità appende `?userId=` a ogni GET:
  * con lo schema chiuso ogni richiesta sarebbe un 400. È la stessa ragione, e la
  * stessa nota, del GET della lista.
  */
-const getQuerySchema = z.object({ pagante: zUuid.optional() })
+const getQuerySchema = z.object({ pagante: zUuid.optional(), alunni: zAlunniChiesti.optional() })
 
 /** Perché quel pagante è proposto. `scelto` = l'ha indicato l'operatrice. */
 type MotivoPagante = MotivoAbbinamentoOrdinante | 'pagante_comune' | 'scelto'
@@ -180,6 +231,33 @@ function guasto(evento: string, err: unknown): NextResponse {
   )
 }
 
+/**
+ * Il rifiuto di un bambino chiesto in query, in un posto solo — perché i due
+ * modi di non passare (fuori perimetro, oppure nessun perimetro) devono uscire
+ * IDENTICI: due risposte diverse sarebbero esse stesse l'informazione.
+ *
+ * 404 e non 403: confermare l'esistenza direbbe a chi lavora in un plesso che
+ * quel bambino c'è in un altro. Stessa grammatica — e stesso verso — del gate
+ * sul movimento in `…/componi`.
+ *
+ * Il log porta SOLO conteggi: gli uuid chiesti sono di bambini che potrebbero
+ * non essere di questo operatore, e scriverli qui li trasferirebbe in `app_log`,
+ * dove restano 30 giorni e si interrogano in SQL.
+ */
+function alunnoNonTrovato(chiesti: number, dentro: number, sedi: number): NextResponse {
+  logEvento('pagamento', 'info', {
+    operazione: OPERAZIONE,
+    esito: 'alunno-chiesto-fuori-perimetro',
+    chiesti,
+    dentro,
+    sedi,
+  })
+  return NextResponse.json(
+    { error: 'Bambino non trovato', codice: 'CONCILIAZIONE_ALUNNO_NON_TROVATO' },
+    { status: 404 },
+  )
+}
+
 const testo = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null)
 const nomeIntero = (p: ParentRiga): string => [p.first_name, p.last_name].filter(Boolean).join(' ').trim()
 
@@ -200,6 +278,8 @@ export const GET = withRoute(
       const q = parseQuery(request, getQuerySchema)
       if ('response' in q) return q.response
       const paganteChiesto = q.data.pagante ?? null
+      /** Gli uuid ARRIVATI, ancora senza titolo: diventano una chiave solo dopo il §3-bis. */
+      const alunniChiesti = [...new Set(q.data.alunni ?? [])]
 
       const supabase = await createAdminClient()
 
@@ -223,6 +303,45 @@ export const GET = withRoute(
       // per sede è l'arricchimento identificante, non la riga.
       const sediAttive = new Set(await resolveScuoleAttive(request as NextRequest, supabase, auth.user))
 
+      // ── 3-bis · I BAMBINI INDICATI A MANO, E LA SEDE PRIMA DI USARLI ──────
+      // ⚠️ IL FILTRO DI SEDE STA NELLA QUERY, ed è l'unico punto di questa rotta
+      // in cui ci sta: qui gli id arrivano dal CLIENT, e finché non sono
+      // verificati non sono una chiave di lettura ma una domanda. Ovunque altro
+      // i figli si leggono per id senza filtro di sede — è la decisione n. 10, un
+      // bonifico di famiglia attraversa i plessi — e quegli id li ha prodotti il
+      // server. La differenza è tutta qui, e per questo il controllo è qui.
+      let alunniIndicati: string[] = []
+      if (alunniChiesti.length > 0) {
+        const sedi = [...sediAttive]
+        // Lo scope vuoto ha qui il suo ramo esplicito, e NEGA. Senza nessuna sede
+        // attiva non esiste un perimetro entro cui verificare, e `.in('scuola_id',
+        // [])` non sarebbe una condizione: è il modo in cui un filtro smette di
+        // restringere proprio dove serve di più. Si risponde di no prima della
+        // query — non si manda al database una domanda di cui si conosce già la
+        // risposta — così il filtro di sede, sotto, resta INCONDIZIONATO: è la
+        // forma che il lock `scope-vuoto-nega` impone, e non ha allowlist.
+        if (sedi.length === 0) return alunnoNonTrovato(alunniChiesti.length, 0, 0)
+
+        const ver = await supabase.from('alunni').select('id').in('id', alunniChiesti).in('scuola_id', sedi)
+        // PostgREST non lancia: senza questo controllo un guasto di lettura
+        // uscirebbe come «quel bambino non esiste», cioè un 404 che manda a
+        // cercare un errore di digitazione dove c'è un database che non risponde.
+        if (ver.error) return guasto('alunni-chiesti-non-verificati', ver.error)
+        const dentro = [
+          ...new Set(
+            ((ver.data ?? []) as { id?: string | null }[])
+              .map((r) => r.id)
+              .filter((v): v is string => typeof v === 'string' && v.trim() !== ''),
+          ),
+        ]
+        // Tutti o nessuno: una risposta parziale direbbe comunque, per differenza,
+        // quali dei due erano fuori.
+        if (dentro.length !== alunniChiesti.length) {
+          return alunnoNonTrovato(alunniChiesti.length, dentro.length, sedi.length)
+        }
+        alunniIndicati = dentro
+      }
+
       // ── 4 · I bambini che questo bonifico NOMINA ──────────────────────────
       // Sono quelli dei pagamenti citati: i suggerimenti, più il pagamento già
       // abbinato (che `annulla_transazione_contabile` lascia sul movimento
@@ -233,7 +352,7 @@ export const GET = withRoute(
       ].filter((v): v is string => typeof v === 'string' && v.trim() !== '')
       const pagIds = [...new Set(pagCitati)]
 
-      let alunniCitati: string[] = []
+      let alunniDaiPagamenti: string[] = []
       if (pagIds.length > 0) {
         const citati = await supabase.from('pagamenti').select('id, alunno_id').in('id', pagIds)
         if (citati.error) {
@@ -248,7 +367,7 @@ export const GET = withRoute(
             ...codiceErroreDi(citati.error),
           }, citati.error)
         }
-        alunniCitati = [
+        alunniDaiPagamenti = [
           ...new Set(
             ((citati.data ?? []) as { alunno_id?: string | null }[])
               .map((p) => p.alunno_id)
@@ -256,6 +375,13 @@ export const GET = withRoute(
           ),
         ]
       }
+
+      // ⚠️ I BAMBINI INDICATI A MANO SI SOMMANO QUI, prima del §5: da questa riga
+      // in giù «i bambini che il bonifico nomina» comprende anche quelli che
+      // l'operatrice ha nominato, e tutto ciò che segue — candidati, pagante,
+      // figli, voci — è già scritto per lavorarci. Su un movimento rosso questa
+      // somma è l'UNICA sorgente: i suggerimenti sono zero per definizione.
+      const alunniCitati = [...new Set([...alunniDaiPagamenti, ...alunniIndicati])]
 
       // ── 5 · I candidati: i genitori di QUEI bambini, dalle due sorgenti ────
       // L'insieme resta piccolissimo per la stessa ragione di
@@ -364,7 +490,17 @@ export const GET = withRoute(
         esito: proposto ? `proposta-${proposto.motivo}` : 'proposta-assente',
         movimento_id: movimento.id,
         candidati: candidati.length,
+        // ⚠️ DA `?alunni=` IN POI QUESTO CAMPO È UNA SOMMA: i bambini che il
+        // bonifico NOMINA più quelli che l'operatrice ha INDICATO (§3-bis). Il
+        // nome non è cambiato, quindi le due sorgenti si separano soltanto col
+        // conteggio qui sotto: senza, una riga di ieri e una di oggi sarebbero
+        // indistinguibili in `app_log` — cioè un criterio che smette di valere
+        // senza dirlo, esattamente ciò che questa rotta si vieta più giù.
         alunni_citati: alunniCitati.length,
+        // Il SUCCESSO del parametro nuovo, non solo il suo rifiuto: senza questo
+        // zero, «nessuna riga» non distinguerebbe «nessuno usa `?alunni=`» da
+        // «lo usano tutti e funziona sempre». Conteggio, mai gli uuid.
+        alunni_indicati: alunniIndicati.length,
         completo: candidatiCompleti,
       })
 

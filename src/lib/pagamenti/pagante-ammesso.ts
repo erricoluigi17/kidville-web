@@ -32,6 +32,19 @@ import { getGenitoriDiAlunniEsito } from '@/lib/anagrafiche/legami'
 // ed è il punto. Il lock che lo tiene fermo è
 // `__tests__/architecture/pagante-ammesso-un-motore-solo.test.ts`.
 //
+// ─── E DAL 2026-09-20 UN TERZO CHIAMANTE, CHE PORTA NON È ───────────────────
+// `pagamenti/riconciliazione/alunni:GET` — la ricerca del bambino da cui
+// comporre un bonifico — chiama questa funzione per un solo booleano,
+// `ha_pagante`: non concede e non nega, ANTICIPA. Serve a non offrire come
+// pronto un bambino per cui la conferma non troverebbe nessun intestatario.
+// È dichiarato nel lock insieme alle due porte, e sotto le stesse tre regole,
+// perché un lettore è esattamente il chiamante che si scriverebbe in casa una
+// query «giusto per sapere se c'è un genitore»: sarebbe la terza traduzione del
+// ponte account→`parents`, cioè la divergenza di sempre entrata di servizio.
+// ⚠️ Chi legge quel booleano deve distinguere `false` da `null`: `null` è
+// `completo === false`, cioè «una delle due sorgenti non si è letta», e dirlo
+// `false` manderebbe la segreteria a creare un genitore che esiste già.
+//
 // ─── DUE PONTI, E DIVERGONO DAVVERO ─────────────────────────────────────────
 // Misurato sul database di produzione il 2026-09-13, confrontando coppia per
 // coppia `student_parents` con `legame_genitori_alunni` risolta via

@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/server-client'
 import { requireStaff } from '@/lib/auth/require-staff'
 import { scuoleDiUtente } from '@/lib/auth/scope'
 import { parseQuery } from '@/lib/validation/http'
+import { ripulisciTermineRicerca } from '@/lib/validation/ricerca-testo'
 import { withRoute } from '@/lib/logging/with-route'
 
 /**
@@ -49,13 +50,11 @@ const ROLE_LABEL: Record<string, string> = {
   cuoca: 'Cucina',
 }
 
-/**
- * Neutralizza i metacaratteri di ilike (%/_) e della sintassi or() di
- * PostgREST (virgole/parentesi), che altrimenti romperebbero il filtro.
- */
-function sanitizeTerm(q: string): string {
-  return q.replace(/[%_,()]/g, ' ').replace(/\s+/g, ' ').trim()
-}
+// La ripulitura del termine (metacaratteri di `ilike` e della sintassi `or()`)
+// viveva qui, identica, e una seconda copia in `admin/legami-familiari`. Adesso
+// sta in `@/lib/validation/ricerca-testo`: è la riga che si aggiusta per prima
+// quando una ricerca sbaglia, e correggerla in un posto su due lascia due campi
+// che cercano in modo diverso nella stessa applicazione.
 
 export const GET = withRoute('admin/search:GET', async (request: Request) => {
   const auth = await requireStaff(request)
@@ -64,7 +63,7 @@ export const GET = withRoute('admin/search:GET', async (request: Request) => {
   const q = parseQuery(request, getQuerySchema)
   if ('response' in q) return q.response
 
-  const term = sanitizeTerm(q.data.q)
+  const term = ripulisciTermineRicerca(q.data.q)
   if (term.length < 2) {
     return NextResponse.json({ success: true, data: GRUPPI_VUOTI })
   }

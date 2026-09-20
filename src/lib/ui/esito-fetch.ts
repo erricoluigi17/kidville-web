@@ -2258,6 +2258,21 @@ export const CODICI_ERRORE = {
      */
     CONCILIAZIONE_CONTESTO_NON_LETTO: 'erroreConciliazioneContestoNonLetto',
     /**
+     * 500 — la ricerca del bambino da cui comporre il bonifico non è riuscita.
+     *
+     * ⚠️ NON è un elenco vuoto, ed è tutta la ragione per cui esiste. In una
+     * RICERCA i due esiti si somigliano — la schermata non mostra nessuna riga
+     * in entrambi i casi — ma dicono cose opposte: «quel bambino non c'è, apri
+     * la sua scheda» e «non ho potuto cercare, riprova». Chi legge il primo
+     * mentre valeva il secondo va a creare una seconda anagrafica di un bambino
+     * che è già a registro.
+     *
+     * Distinto da `CONCILIAZIONE_CONTESTO_NON_LETTO`, che è il guasto del
+     * pannello già aperto su una famiglia scelta: là non si compone, qui non si
+     * sceglie nemmeno.
+     */
+    CONCILIAZIONE_RICERCA_ALUNNI_NON_LETTA: 'erroreConciliazioneRicercaAlunniNonLetta',
+    /**
      * 403 — il pagante indicato a mano non è fra i genitori dei bambini che
      * questo bonifico nomina.
      *
@@ -2268,6 +2283,27 @@ export const CODICI_ERRORE = {
      * quello c'è zod): è una richiesta ben scritta a cui si risponde di no.
      */
     CONCILIAZIONE_PAGANTE_NON_AMMESSO: 'erroreConciliazionePaganteNonAmmesso',
+    /**
+     * 404 — uno dei bambini indicati a mano (`?alunni=` sul contesto) non è in
+     * nessuna delle sedi che l'operatore può gestire.
+     *
+     * È l'altra metà del paragrafo qui sopra. Su un movimento che il matcher non
+     * ha saputo abbinare non c'è nessun suggerimento, quindi nessun bambino,
+     * quindi nessun candidato: senza un modo di dire «questo bonifico è di questa
+     * famiglia» la composizione resta spenta. `?alunni=` è quel modo — e un uuid
+     * arbitrario, senza la verifica di sede, lo renderebbe anche un modo per
+     * sfogliare l'archivio: voci aperte, residui e nomi dei genitori di una
+     * famiglia qualunque, conoscendo un solo id.
+     *
+     * ⚠️ **404 E NON 403**, che qui è la sostanza e non la forma. Un 403
+     * distinguerebbe «non tuo» da «non esiste», cioè confermerebbe a chi lavora
+     * in un plesso che un certo bambino è iscritto in un altro — metà
+     * dell'informazione che il gate esiste per non dare. Stessa grammatica del
+     * gate sul movimento (`CONCILIAZIONE_MOVIMENTO_NON_TROVATO`), e per la stessa
+     * ragione. Non è nemmeno un errore di forma: per quello c'è zod, che risponde
+     * 400 a un uuid malformato o a più di cinque.
+     */
+    CONCILIAZIONE_ALUNNO_NON_TROVATO: 'erroreConciliazioneAlunnoNonTrovato',
     /**
      * 403 — una voce NUOVA o una ricarica ticket è intestata a un bambino che non
      * è più attivo: ritirato, oppure con l'anagrafica cancellata dall'oblio GDPR.

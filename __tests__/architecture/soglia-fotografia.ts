@@ -153,13 +153,13 @@ export function posterioriCheContengono(
  * Chiave: il nome del file, esatto. Il riconoscimento resta quello delle guardie: la
  * dichiarazione toglie il file dall'elenco, non allarga nessun riconoscitore.
  */
-export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {
-    '20260923102831_fatture_coda_nucleo.sql':
-        "PR-A coda fatture (nucleo): tabelle `fatture_coda` e `fatture_coda_stato` con la RLS " +
-        "accesa, indice unico parziale e RPC. La applica l'integrazione Supabase al merge della " +
-        'PR-A, mai a mano; le fotografie (migrazioni, policy, indici unici, FK) si rigenerano ' +
-        'dalla produzione nella PR-B, e lì questa voce si toglie.',
-}
+//
+// VUOTA dal 2026-09-23 (PR-B della coda fatture): `20260923102831_fatture_coda_nucleo.sql`,
+// l'unica voce mai scritta qui, è stata applicata dall'integrazione al merge della PR-A e le
+// fotografie (migrazioni, policy, indici unici, FK e tabelle con `scuola_id`) sono state
+// rigenerate dalla produzione — la prova gemella 2 l'aveva resa rossa, come previsto. Vuota
+// è lo stato normale: la prossima voce entra con la prossima migrazione scritta in una PR.
+export const MIGRAZIONI_ATTESE_AL_MERGE: Readonly<Record<string, string>> = {}
 
 /**
  * Le posteriori che una guardia deve segnalare: quelle che `riconosci` vede, MENO i file

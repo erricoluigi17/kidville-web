@@ -6,6 +6,9 @@
  *  · la guardia è FAIL-CLOSED: ogni lettura che non si capisce blocca. L'unica eccezione è la
  *    coda che NON C'È (to_regclass NULL per entrambe le tabelle, oppure 42P01 alla seconda
  *    lettura), perché fino alla PR-A la coda non esiste e gli script di R1 devono poter partire;
+ *  · il NUCLEO (PR #160: `fatture_coda_stato` senza `aruba_cancello`) lascia partire lo script
+ *    solo a coda sospesa, fuori dalla pausa del lavoratore (`pausa_fino_a`, il circuito del
+ *    nucleo) e senza lavoratore attivo; ogni errore di quella lettura blocca;
  *  · l'ordine delle guardie: lettura, coda, circuito, cancello, finestra della sync, attività;
  *  · la finestra della sync corretta (:58-:05 e :28-:35), non quella della v5;
  *  · 5000 ms fra due chiamate, la guardia prima di OGNI chiamata, lo stop al primo 429;
@@ -56,6 +59,7 @@ interface ModuloArubaLettura {
   RADICE_REPO: string
   SQL_PRIMA_LETTURA: string
   SQL_SECONDA_LETTURA: string
+  SQL_LETTURA_NUCLEO: string
   creaLettoreAruba: (o: {
     sql: Sql
     credenziali: { username: string; password: string } | null
@@ -89,6 +93,7 @@ const {
   RADICE_REPO,
   SQL_PRIMA_LETTURA,
   SQL_SECONDA_LETTURA,
+  SQL_LETTURA_NUCLEO,
   creaLettoreAruba,
   eseguiFiglio,
   estraiXmlDaP7m,
@@ -123,6 +128,20 @@ function primaRiga(extra: Record<string, unknown> = {}) {
   }
 }
 
+/** La riga del NUCLEO: coda sospesa, nessuna pausa in corso, nessun lavoratore col testimone. */
+function rigaNucleo(extra: Record<string, unknown> = {}) {
+  return {
+    sospesa: true,
+    pausa_attiva: false,
+    pausa_fino_a: null,
+    pausa_motivo: null,
+    lavoratore_attivo: false,
+    lavoratore_scade_il: null,
+    righe: 1,
+    ...extra,
+  }
+}
+
 function rigaCoda(extra: Record<string, unknown> = {}) {
   return {
     sospesa: true,
@@ -146,7 +165,7 @@ function erroreSql(messaggio: string, sqlstate: string | null = null) {
  * Una `sql` finta che riconosce le due letture per TESTO ESATTO e lancia su qualunque altra
  * query. Ogni lettura può essere righe, un errore da lanciare, o assente (→ lancia).
  */
-function sqlFinta({ prima, seconda }: { prima?: unknown; seconda?: unknown }) {
+function sqlFinta({ prima, seconda, nucleo }: { prima?: unknown; seconda?: unknown; nucleo?: unknown }) {
   const chiamate: string[] = []
   const sql: Sql = async (testo) => {
     if (testo === SQL_PRIMA_LETTURA) {
@@ -161,13 +180,19 @@ function sqlFinta({ prima, seconda }: { prima?: unknown; seconda?: unknown }) {
       if (seconda === undefined) throw new Error('SECONDA LETTURA NON PREVISTA dal caso')
       return seconda as unknown[]
     }
+    if (testo === SQL_LETTURA_NUCLEO) {
+      chiamate.push('nucleo')
+      if (nucleo instanceof Error) throw nucleo
+      if (nucleo === undefined) throw new Error('LETTURA DEL NUCLEO NON PREVISTA dal caso')
+      return nucleo as unknown[]
+    }
     chiamate.push('altra')
     throw new Error(`query non prevista: ${testo.slice(0, 40)}`)
   }
   return { sql, chiamate }
 }
 
-const guardiaCon = (p: { prima?: unknown; seconda?: unknown }) => guardiaArubaPerScript(sqlFinta(p)) as Promise<Esito>
+const guardiaCon = (p: { prima?: unknown; seconda?: unknown; nucleo?: unknown }) => guardiaArubaPerScript(sqlFinta(p)) as Promise<Esito>
 
 // ─── Casi riusabili, per eseguire i controlli negativi ─────────────────────────
 type VerdettoCoda = (p: { installata: unknown; riga?: unknown; errore?: unknown }) => Esito
@@ -540,16 +565,12 @@ describe('guardiaArubaPerScript con una sql finta', () => {
     }
   })
 
-  it('una tabella sola → coda-incoerente, senza seconda lettura', async () => {
-    for (const [stato, cancello] of [
-      [true, false],
-      [false, true],
-    ]) {
-      const f = sqlFinta({ prima: [primaRiga({ stato, cancello })], seconda: [rigaCoda()] })
-      const e = (await guardiaArubaPerScript({ sql: f.sql })) as Esito
-      expect(e.codice).toBe('coda-incoerente')
-      expect(f.chiamate).toEqual(['prima'])
-    }
+  it('aruba_cancello senza fatture_coda_stato → coda-incoerente, senza seconda lettura', async () => {
+    // Il contrario (stato senza cancello) è il NUCLEO: ha il suo describe più sotto.
+    const f = sqlFinta({ prima: [primaRiga({ stato: false, cancello: true })], seconda: [rigaCoda()], nucleo: [rigaNucleo()] })
+    const e = (await guardiaArubaPerScript({ sql: f.sql })) as Esito
+    expect(e.codice).toBe('coda-incoerente')
+    expect(f.chiamate).toEqual(['prima'])
   })
 
   it('coda installata: seconda lettura, e sospesa + libero → ok', async () => {
@@ -605,7 +626,7 @@ describe('guardiaArubaPerScript con una sql finta', () => {
     const installata = { ...tuttoRosso, stato: true, cancello: true }
     const casi: [unknown, unknown, string][] = [
       [erroreSql('boom'), [rigaCoda({ sospesa: false })], 'lettura-fallita'],
-      [[primaRiga({ ...tuttoRosso, stato: true, cancello: false })], undefined, 'coda-incoerente'],
+      [[primaRiga({ ...tuttoRosso, stato: false, cancello: true })], undefined, 'coda-incoerente'],
       [[primaRiga(installata)], [rigaCoda({ sospesa: false, circuito_aperto: true, cancello_in_uso: true })], 'coda-attiva'],
       [[primaRiga(installata)], [rigaCoda({ circuito_aperto: true, cancello_in_uso: true })], 'circuito-aperto'],
       [[primaRiga(installata)], [rigaCoda({ cancello_in_uso: true })], 'cancello-in-uso'],
@@ -641,6 +662,359 @@ describe('guardiaArubaPerScript con una sql finta', () => {
     expect(SQL_PRIMA_LETTURA).not.toMatch(/from public\.(fatture_coda_stato|aruba_cancello)/)
     expect(SQL_SECONDA_LETTURA).toContain('count(*) over () as righe')
     expect(SQL_SECONDA_LETTURA).toContain('cross join public.aruba_cancello')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════
+/**
+ * Il NUCLEO della coda (PR #160, in produzione dal 23/09/2026): esiste `fatture_coda_stato`,
+ * non `aruba_cancello`. È uno schema voluto, non a metà: lo script parte SOLO a coda sospesa e
+ * senza un lavoratore col testimone valido. Ogni errore di lettura blocca, 42P01 compreso.
+ */
+const PRIMA_NUCLEO = () => [primaRiga({ stato: true, cancello: false })]
+
+/** Tutti i casi del ramo del nucleo sul verdetto. Restituisce i fallimenti (vuoto = verde). */
+function casiNucleo(v: VerdettoCoda): string[] {
+  const f: string[] = []
+  const ok = v({ installata: 'nucleo', riga: rigaNucleo() })
+  if (!ok.ok) f.push(`nucleo sospeso e libero bloccato con ${ok.codice}`)
+  const scaduto = v({ installata: 'nucleo', riga: rigaNucleo({ lavoratore_scade_il: '2026-09-23T09:00:00Z' }) })
+  if (!scaduto.ok) f.push(`nucleo sospeso con testimone scaduto bloccato con ${scaduto.codice}`)
+  for (const sospesa of [false, null, undefined, 'true', 1]) {
+    const e = v({ installata: 'nucleo', riga: rigaNucleo({ sospesa }) })
+    if (e.ok || e.codice !== 'coda-attiva') f.push(`sospesa=${String(sospesa)} → ${e.ok ? 'ok' : e.codice}`)
+  }
+  const pausaScaduta = v({
+    installata: 'nucleo',
+    riga: rigaNucleo({ pausa_fino_a: '2026-09-23T09:00:00Z', pausa_motivo: 'aruba-429' }),
+  })
+  if (!pausaScaduta.ok) f.push(`nucleo sospeso con pausa scaduta bloccato con ${pausaScaduta.codice}`)
+  for (const pausa_attiva of [true, null, undefined, 'false', 0]) {
+    const e = v({
+      installata: 'nucleo',
+      riga: rigaNucleo({ pausa_attiva, pausa_fino_a: '2026-09-23T11:05:00Z', pausa_motivo: 'aruba-429' }),
+    })
+    if (e.ok || e.codice !== 'circuito-aperto') f.push(`pausa_attiva=${String(pausa_attiva)} → ${e.ok ? 'ok' : e.codice}`)
+  }
+  // La pausa pesa più del lavoratore: con entrambi, il blocco è sul circuito (orario più lontano).
+  const entrambi = v({
+    installata: 'nucleo',
+    riga: rigaNucleo({ pausa_attiva: true, pausa_fino_a: '2026-09-23T11:05:00Z', lavoratore_attivo: true }),
+  })
+  if (entrambi.ok || entrambi.codice !== 'circuito-aperto') f.push(`pausa+lavoratore → ${entrambi.ok ? 'ok' : entrambi.codice}`)
+  for (const lavoratore_attivo of [true, null, undefined, 'false', 0]) {
+    const e = v({
+      installata: 'nucleo',
+      riga: rigaNucleo({ lavoratore_attivo, lavoratore_scade_il: '2026-09-23T10:17:00Z' }),
+    })
+    if (e.ok || e.codice !== 'cancello-in-uso') f.push(`lavoratore_attivo=${String(lavoratore_attivo)} → ${e.ok ? 'ok' : e.codice}`)
+  }
+  for (const righe of [0, 2, null]) {
+    const e = v({ installata: 'nucleo', riga: rigaNucleo({ righe }) })
+    if (e.ok || e.codice !== 'coda-incoerente') f.push(`righe=${String(righe)} → ${e.ok ? 'ok' : e.codice}`)
+  }
+  if (v({ installata: 'nucleo' }).ok) f.push('nucleo senza riga lasciato passare')
+  for (const errore of [
+    erroreSql('relation "public.fatture_coda_stato" does not exist (SQLSTATE 42P01)', '42P01'),
+    erroreSql('permission denied for table fatture_coda_stato (SQLSTATE 42501)', '42501'),
+    erroreSql('supabase db query: uscita 1, senza SQLSTATE: failed to connect'),
+  ]) {
+    const e = v({ installata: 'nucleo', riga: rigaNucleo(), errore })
+    if (e.ok || e.codice !== 'lettura-fallita') f.push(`${errore.message} → ${e.ok ? 'ok' : e.codice}`)
+  }
+  return f
+}
+
+describe('il NUCLEO della coda: fatture_coda_stato senza aruba_cancello (PR #160)', () => {
+  it('verdetto: tutti i casi del ramo', () => {
+    expect(casiNucleo(verdettoCodaPerScript)).toEqual([])
+  })
+
+  it('verdetto: nucleo sospeso e senza lavoratore → ok', () => {
+    expect(verdettoCodaPerScript({ installata: 'nucleo', riga: rigaNucleo() })).toEqual({ ok: true })
+  })
+
+  it('verdetto: coda attiva → coda-attiva, e il messaggio dice come sospenderla', () => {
+    const e = verdettoCodaPerScript({ installata: 'nucleo', riga: rigaNucleo({ sospesa: false }) })
+    expect(e.ok).toBe(false)
+    expect(e.codice).toBe('coda-attiva')
+    expect(e.messaggio).toMatch(/Sospendere la coda da admin/)
+    expect(e.messaggio).toContain('fatture_coda_sospendi')
+  })
+
+  it('verdetto: lavoratore col testimone valido → cancello-in-uso, con l\'orario di Roma', () => {
+    const e = verdettoCodaPerScript({
+      installata: 'nucleo',
+      riga: rigaNucleo({ lavoratore_attivo: true, lavoratore_scade_il: '2026-09-23T10:17:00Z' }),
+    })
+    expect(e.ok).toBe(false)
+    expect(e.codice).toBe('cancello-in-uso')
+    expect(e.messaggio).toContain('12:17')
+    expect(e.riprova_dopo?.toISOString()).toBe('2026-09-23T10:17:00.000Z')
+  })
+
+  it('verdetto: coda sospesa ma in pausa da 429 → circuito-aperto, con l\'orario di Roma e riprova_dopo', () => {
+    const e = verdettoCodaPerScript({
+      installata: 'nucleo',
+      riga: rigaNucleo({ pausa_attiva: true, pausa_fino_a: '2026-09-23T11:05:00Z', pausa_motivo: 'aruba-429' }),
+    })
+    expect(e.ok).toBe(false)
+    expect(e.codice).toBe('circuito-aperto')
+    expect(e.messaggio).toContain('13:05')
+    expect(e.messaggio).toContain('Aruba ha risposto 429')
+    expect(e.messaggio).toContain('decisione 16')
+    expect(e.riprova_dopo?.toISOString()).toBe('2026-09-23T11:05:00.000Z')
+  })
+
+  it('verdetto: pausa da esito incerto → circuito-aperto; un motivo ignoto NON si ripete nel messaggio', () => {
+    const incerto = verdettoCodaPerScript({
+      installata: 'nucleo',
+      riga: rigaNucleo({ pausa_attiva: true, pausa_fino_a: '2026-09-23T10:30:00Z', pausa_motivo: 'esito-incerto' }),
+    })
+    expect(incerto.codice).toBe('circuito-aperto')
+    expect(incerto.messaggio).toContain('esito incerto')
+    const ignoto = verdettoCodaPerScript({
+      installata: 'nucleo',
+      riga: rigaNucleo({ pausa_attiva: true, pausa_fino_a: null, pausa_motivo: 'Mario Rossi' }),
+    })
+    expect(ignoto.codice).toBe('circuito-aperto')
+    expect(ignoto.messaggio).not.toContain('Mario')
+    expect(ignoto.messaggio).toContain('motivo non riconosciuto')
+    expect(ignoto.messaggio).toContain('orario non leggibile')
+    expect(ignoto.riprova_dopo).toBeUndefined()
+  })
+
+  it('guardia: nucleo sospeso → ok, con la lettura del nucleo e MAI quella dello schema completo', async () => {
+    const f = sqlFinta({ prima: PRIMA_NUCLEO(), nucleo: [rigaNucleo()] })
+    const e = (await guardiaArubaPerScript({ sql: f.sql })) as Esito
+    expect(e).toEqual({ ok: true, adesso: new Date(ADESSO) })
+    expect(f.chiamate).toEqual(['prima', 'nucleo'])
+  })
+
+  it('guardia: nucleo attivo → coda-attiva', async () => {
+    const e = await guardiaCon({ prima: PRIMA_NUCLEO(), nucleo: [rigaNucleo({ sospesa: false })] })
+    expect(e.ok).toBe(false)
+    expect(e.codice).toBe('coda-attiva')
+  })
+
+  it('guardia: sospesa ma con un lavoratore attivo → cancello-in-uso', async () => {
+    const e = await guardiaCon({
+      prima: PRIMA_NUCLEO(),
+      nucleo: [rigaNucleo({ lavoratore_attivo: true, lavoratore_scade_il: '2026-09-23T10:17:00Z' })],
+    })
+    expect(e.ok).toBe(false)
+    expect(e.codice).toBe('cancello-in-uso')
+  })
+
+  it('guardia: sospesa ma in pausa da 429 → circuito-aperto, e nessuna chiamata dopo la lettura', async () => {
+    const f = sqlFinta({
+      prima: PRIMA_NUCLEO(),
+      nucleo: [rigaNucleo({ pausa_attiva: true, pausa_fino_a: '2026-09-23T11:05:00Z', pausa_motivo: 'aruba-429' })],
+    })
+    const e = (await guardiaArubaPerScript({ sql: f.sql })) as Esito
+    expect(e.ok).toBe(false)
+    expect(e.codice).toBe('circuito-aperto')
+    expect(e.riprova_dopo?.toISOString()).toBe('2026-09-23T11:05:00.000Z')
+    expect(f.chiamate).toEqual(['prima', 'nucleo'])
+  })
+
+  it('guardia: errore di lettura del nucleo (42P01, 42501, CLI, forma) → lettura-fallita', async () => {
+    for (const nucleo of [
+      erroreSql('relation "public.fatture_coda_stato" does not exist (SQLSTATE 42P01)', '42P01'),
+      erroreSql('permission denied (SQLSTATE 42501)', '42501'),
+      erroreSql('supabase db query: uscita 1, senza SQLSTATE'),
+      { non: 'una tabella' },
+    ]) {
+      const e = await guardiaCon({ prima: PRIMA_NUCLEO(), nucleo })
+      expect(e.ok, JSON.stringify(nucleo)).toBe(false)
+      expect(e.codice).toBe('lettura-fallita')
+    }
+    // Zero righe: la riga unica manca → coda-incoerente.
+    expect((await guardiaCon({ prima: PRIMA_NUCLEO(), nucleo: [] })).codice).toBe('coda-incoerente')
+  })
+
+  it('guardia: col nucleo sospeso restano la finestra della sync e l\'attività dell\'app', async () => {
+    const finestra = await guardiaCon({
+      prima: [primaRiga({ stato: true, cancello: false, minuto: 2, adesso: '2026-09-23T10:02:40Z' })],
+      nucleo: [rigaNucleo()],
+    })
+    expect(finestra.codice).toBe('finestra-sync')
+    const attivita = await guardiaCon({
+      prima: [primaRiga({ stato: true, cancello: false, attivita_app: 1, ultima_attivita: '2026-09-23T10:12:00Z' })],
+      nucleo: [rigaNucleo()],
+    })
+    expect(attivita.codice).toBe('attivita-app')
+  })
+
+  it('la lettura del nucleo non tocca aruba_cancello e conta le righe', () => {
+    expect(SQL_LETTURA_NUCLEO).toContain('from public.fatture_coda_stato s')
+    expect(SQL_LETTURA_NUCLEO).not.toContain('aruba_cancello')
+    expect(SQL_LETTURA_NUCLEO).toContain('lavoratore_scade_il > now()')
+    expect(SQL_LETTURA_NUCLEO).toContain('coalesce(s.pausa_fino_a > now(), false) as pausa_attiva')
+    expect(SQL_LETTURA_NUCLEO).toContain('s.pausa_motivo')
+    expect(SQL_LETTURA_NUCLEO).toContain('count(*) over () as righe')
+  })
+
+  describe('controlli negativi eseguiti', () => {
+    it('il ramo rotto (nucleo trattato come «non installata») fa diventare rosso', () => {
+      const nucleoComeAssente: VerdettoCoda = (p) =>
+        p.installata === 'nucleo' ? verdettoCodaPerScript({ installata: false }) : verdettoCodaPerScript(p as never)
+      const f = casiNucleo(nucleoComeAssente)
+      expect(f).toContain('sospesa=false → ok')
+      expect(f).toContain('lavoratore_attivo=true → ok')
+      expect(f).toContain('nucleo senza riga lasciato passare')
+    })
+
+    it('un ramo che ignora il lavoratore fa diventare rosso', () => {
+      const senzaLavoratore: VerdettoCoda = (p) => {
+        const riga = p.riga && typeof p.riga === 'object' ? { ...(p.riga as object), lavoratore_attivo: false } : p.riga
+        return verdettoCodaPerScript({ ...(p as object), riga } as never)
+      }
+      expect(casiNucleo(senzaLavoratore)).toContain('lavoratore_attivo=true → ok')
+    })
+
+    it('un ramo che ignora la pausa del lavoratore (il circuito del nucleo) fa diventare rosso', () => {
+      const senzaPausa: VerdettoCoda = (p) => {
+        const riga = p.riga && typeof p.riga === 'object' ? { ...(p.riga as object), pausa_attiva: false } : p.riga
+        return verdettoCodaPerScript({ ...(p as object), riga } as never)
+      }
+      const f = casiNucleo(senzaPausa)
+      expect(f).toContain('pausa_attiva=true → ok')
+      expect(f).toContain('pausa_attiva=null → ok')
+      expect(f).toContain('pausa+lavoratore → cancello-in-uso')
+    })
+
+    it('un ramo che ignora la sospensione fa diventare rosso', () => {
+      const senzaSospensione: VerdettoCoda = (p) => {
+        const riga = p.riga && typeof p.riga === 'object' ? { ...(p.riga as object), sospesa: true } : p.riga
+        return verdettoCodaPerScript({ ...(p as object), riga } as never)
+      }
+      expect(casiNucleo(senzaSospensione)).toContain('sospesa=false → ok')
+    })
+
+    it('un ramo che tratta il 42P01 del nucleo come «non installata» fa diventare rosso', () => {
+      const tabellaSparitaPassa: VerdettoCoda = (p) =>
+        p.installata === 'nucleo' && p.errore
+          ? verdettoCodaPerScript({ installata: true, errore: p.errore })
+          : verdettoCodaPerScript(p as never)
+      expect(casiNucleo(tabellaSparitaPassa).some((x) => x.includes('42P01') && x.endsWith('→ ok'))).toBe(true)
+    })
+  })
+})
+
+/**
+ * Le due letture del nucleo ESEGUITE su un Postgres vero, con la tabella come la crea la
+ * migrazione 20260923102831_fatture_coda_nucleo (solo le colonne lette qui, stessi tipi e
+ * default). La guardia intera gira su PGlite; solo il minuto dell'orologio si fissa a :15,
+ * perché la finestra della sync dipende dall'ora in cui gira il test.
+ */
+describe('il NUCLEO eseguito su PGlite', () => {
+  let db: PGlite
+
+  beforeAll(async () => {
+    db = new PGlite()
+    await db.exec(`create table public.app_log (
+      id serial primary key,
+      creato_il timestamptz not null default now(),
+      visto_l_ultima timestamptz not null default now(),
+      evento text not null,
+      contesto jsonb not null default '{}'::jsonb
+    );
+    create table public.fatture_coda_stato (
+      id smallint primary key,
+      sospesa boolean not null default false,
+      pausa_fino_a timestamptz,
+      pausa_motivo text,
+      lavoratore_token uuid,
+      lavoratore_scade_il timestamptz,
+      constraint fatture_coda_stato_riga_unica_chk check (id = 1)
+    );
+    insert into public.fatture_coda_stato (id) values (1);`)
+  })
+
+  afterAll(async () => {
+    await db.close()
+  })
+
+  const sqlPglite: Sql = async (testo) => {
+    const righe = (await db.query<Record<string, unknown>>(testo)).rows
+    return testo === SQL_PRIMA_LETTURA ? righe.map((r) => ({ ...r, minuto: 15 })) : righe
+  }
+
+  async function statoCoda(sospesa: boolean, scade: string | null, pausa: string | null = null, motivo: string | null = null) {
+    await db.query(
+      `update public.fatture_coda_stato set sospesa = $1, lavoratore_scade_il = ${scade ?? 'null'},
+         lavoratore_token = ${scade ? "'00000000-0000-4000-8000-000000000001'" : 'null'},
+         pausa_fino_a = ${pausa ?? 'null'}, pausa_motivo = $2 where id = 1`,
+      [sospesa, motivo],
+    )
+  }
+
+  it('la prima lettura vede il nucleo: stato sì, cancello no', async () => {
+    const [r] = (await sqlPglite(SQL_PRIMA_LETTURA)) as { stato: boolean; cancello: boolean }[]
+    expect(r.stato).toBe(true)
+    expect(r.cancello).toBe(false)
+  })
+
+  it('coda NON sospesa (il default della migrazione) → coda-attiva', async () => {
+    await statoCoda(false, null)
+    const e = (await guardiaArubaPerScript({ sql: sqlPglite })) as Esito
+    expect(e.codice).toBe('coda-attiva')
+  })
+
+  it('sospesa, testimone nullo → ok', async () => {
+    await statoCoda(true, null)
+    const e = (await guardiaArubaPerScript({ sql: sqlPglite })) as Esito
+    expect(e.ok).toBe(true)
+  })
+
+  it('sospesa, testimone scaduto → ok', async () => {
+    await statoCoda(true, "now() - interval '3 minutes'")
+    const e = (await guardiaArubaPerScript({ sql: sqlPglite })) as Esito
+    expect(e.ok).toBe(true)
+  })
+
+  it('sospesa, testimone ancora valido → cancello-in-uso', async () => {
+    await statoCoda(true, "now() + interval '4 minutes'")
+    const e = (await guardiaArubaPerScript({ sql: sqlPglite })) as Esito
+    expect(e.codice).toBe('cancello-in-uso')
+    expect(e.riprova_dopo).toBeInstanceOf(Date)
+  })
+
+  it('sospesa, senza lavoratore, ma in pausa da 429 (60 minuti) → circuito-aperto', async () => {
+    await statoCoda(true, null, "now() + interval '50 minutes'", 'aruba-429')
+    const e = (await guardiaArubaPerScript({ sql: sqlPglite })) as Esito
+    expect(e.codice).toBe('circuito-aperto')
+    expect(e.messaggio).toContain('Aruba ha risposto 429')
+    expect(e.riprova_dopo).toBeInstanceOf(Date)
+    expect((e.riprova_dopo as Date).getTime()).toBeGreaterThan(Date.now() + 45 * 60_000)
+  })
+
+  it('sospesa, in pausa da esito incerto → circuito-aperto; pausa scaduta → ok', async () => {
+    await statoCoda(true, null, "now() + interval '10 minutes'", 'esito-incerto')
+    expect(((await guardiaArubaPerScript({ sql: sqlPglite })) as Esito).codice).toBe('circuito-aperto')
+    await statoCoda(true, null, "now() - interval '1 minute'", 'aruba-429')
+    expect(((await guardiaArubaPerScript({ sql: sqlPglite })) as Esito).ok).toBe(true)
+  })
+
+  it('controllo negativo ESEGUITO: la lettura senza la pausa lascia partire lo script dentro un 429', async () => {
+    await statoCoda(true, null, "now() + interval '50 minutes'", 'aruba-429')
+    // La variante rotta: la lettura del nucleo com'era prima, senza le colonne della pausa.
+    const rotta = SQL_LETTURA_NUCLEO.replace(
+      /\n\s*coalesce\(s\.pausa_fino_a > now\(\), false\) as pausa_attiva, s\.pausa_fino_a, s\.pausa_motivo,/,
+      '',
+    )
+    expect(rotta).not.toBe(SQL_LETTURA_NUCLEO)
+    expect(rotta).not.toContain('pausa_attiva')
+    const [riga] = (await db.query<Record<string, unknown>>(rotta)).rows
+    // Senza la colonna la lettura stretta blocca comunque (undefined !== false)…
+    expect(verdettoCodaPerScript({ installata: 'nucleo', riga }).codice).toBe('circuito-aperto')
+    // …ed è proprio la lettura stretta a farlo: con `pausa_attiva` trattata come «falso se manca»
+    // lo script partirebbe dentro il 429.
+    expect(verdettoCodaPerScript({ installata: 'nucleo', riga: { ...riga, pausa_attiva: false } }).ok).toBe(true)
+    // Con la lettura vera la pausa si vede dal DB, non da un default.
+    const [vera] = (await db.query<{ pausa_attiva: boolean }>(SQL_LETTURA_NUCLEO)).rows
+    expect(vera.pausa_attiva).toBe(true)
   })
 })
 

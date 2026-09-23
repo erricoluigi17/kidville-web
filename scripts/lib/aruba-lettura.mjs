@@ -26,6 +26,19 @@
  * le due letture). Trattare «non so» come «non c'è» sarebbe il modo di far partire uno script
  * a coda attiva — ed è il controllo negativo che il test esegue.
  *
+ * ─── IL NUCLEO (PR #160): `fatture_coda_stato` SENZA `aruba_cancello` ─────────────
+ * Il nucleo della coda è in produzione dal 23/09/2026 e porta solo `fatture_coda_stato`: il
+ * cancello condiviso con la sync arriva col piano completo. Non è uno schema a metà, è uno
+ * schema VOLUTO, e prima di questo ramo la guardia lo chiamava `coda-incoerente` e fermava ogni
+ * script per sempre. Col nucleo lo script parte SOLO se la coda è sospesa (`sospesa = true`) e
+ * nessun lavoratore ha il testimone (`lavoratore_scade_il` nullo o passato): il lavoratore del
+ * nucleo è l'unico altro che chiama Aruba, e un giro partito prima della sospensione finisce da
+ * solo. Blocca anche la PAUSA del lavoratore (`pausa_fino_a`, 60 minuti dopo un 429): è il
+ * circuito del nucleo, e sospendere la coda non la azzera. Ogni errore di questa lettura
+ * blocca, `42P01` compreso: l'eccezione «tabella sparita fra le due letture» vale solo per lo
+ * schema completo, dove la dichiara D1. Il contrario
+ * (`aruba_cancello` senza `fatture_coda_stato`) resta `coda-incoerente`.
+ *
  * ─── NIENTE LOG QUI DENTRO ──────────────────────────────────────────────────
  * Il modulo non stampa e non scrive in `app_log` (D1 §11: gli script lasciano traccia in
  * `registro_modifiche`). Restituisce esiti e lancia `FermoAruba`: stampare è dello script, che
@@ -128,6 +141,22 @@ export const SQL_SECONDA_LETTURA = `select s.sospesa,
        count(*) over () as righe
 from public.fatture_coda_stato s cross join public.aruba_cancello c`
 
+/**
+ * Seconda lettura col NUCLEO (PR #160): esiste `fatture_coda_stato`, non `aruba_cancello`.
+ * `lavoratore_attivo` è vero finché il testimone del lavoratore non è scaduto; un testimone
+ * nullo vale «nessun lavoratore». `righe` deve valere 1, come nello schema completo.
+ *
+ * `pausa_attiva` è il circuito del nucleo: il lavoratore la chiede al rilascio (`aruba-429` per
+ * 60 minuti, `esito-incerto` per 15, `src/lib/fatture-coda/giro.ts`) e la RPC `fatture_coda_prendi`
+ * non parte finché non scade. Sospendere la coda NON la azzera: uno script lanciato a coda sospesa
+ * dentro la pausa di un 429 prenderebbe un altro 429, e Aruba riaprirebbe l'ora (decisione 16).
+ */
+export const SQL_LETTURA_NUCLEO = `select s.sospesa,
+       coalesce(s.pausa_fino_a > now(), false) as pausa_attiva, s.pausa_fino_a, s.pausa_motivo,
+       coalesce(s.lavoratore_scade_il > now(), false) as lavoratore_attivo, s.lavoratore_scade_il,
+       count(*) over () as righe
+from public.fatture_coda_stato s`
+
 /* ────────────────────────────────────────────────────────────────────────────
  * L'errore che ferma lo script
  * ──────────────────────────────────────────────────────────────────────────── */
@@ -229,6 +258,10 @@ function minutiAllUscitaDallaFinestra(minuto) {
  *  1. lettura fallita o coda incoerente → blocco. Unica eccezione: `42P01` alla SECONDA lettura
  *     (la tabella è sparita fra le due letture) vale «non installata», e si prosegue con una nota;
  *  2. non installata → prosegue (è il caso di tutto R1, fino alla PR-A);
+ *  2bis. NUCLEO (`installata: 'nucleo'`, solo `fatture_coda_stato`): righe ≠ 1 → blocco;
+ *     `sospesa !== true` → `coda-attiva`; pausa del lavoratore non scaduta (`pausa_fino_a`, il
+ *     circuito del nucleo) → `circuito-aperto`, con l'orario; lavoratore col testimone non
+ *     scaduto → `cancello-in-uso`, con l'orario di scadenza; altrimenti prosegue;
  *  3. righe ≠ 1 → blocco;
  *  4. `sospesa !== true` → blocco;
  *  5. circuito aperto → blocco, con l'orario;
@@ -236,7 +269,7 @@ function minutiAllUscitaDallaFinestra(minuto) {
  * I booleani si leggono in forma STRETTA: tutto ciò che non è `false` è un circuito aperto o un
  * cancello occupato, e tutto ciò che non è `true` è una coda non sospesa.
  *
- * @param {{ installata: true | false | 'incoerente' | undefined, riga?: object, errore?: unknown }} p
+ * @param {{ installata: true | false | 'nucleo' | 'incoerente' | undefined, riga?: object, errore?: unknown }} p
  */
 export function verdettoCodaPerScript({ installata, riga, errore } = {}) {
   if (errore) {
@@ -257,10 +290,11 @@ export function verdettoCodaPerScript({ installata, riga, errore } = {}) {
   if (installata === 'incoerente') {
     return blocco(
       'coda-incoerente',
-      'Delle due tabelle della coda (fatture_coda_stato, aruba_cancello) ne esiste una sola: ' +
-        'lo schema è a metà. Lo script non parte finché non esistono entrambe o nessuna.',
+      'Esiste aruba_cancello ma non fatture_coda_stato: lo schema della coda è a metà. Lo script ' +
+        'non parte finché non esistono entrambe, solo fatture_coda_stato (il nucleo) o nessuna.',
     )
   }
+  if (installata === 'nucleo') return verdettoNucleo(riga)
   if (installata === false) return { ok: true }
   if (installata !== true) {
     return blocco('lettura-fallita', 'Stato della coda non determinato: lo script non parte.')
@@ -292,6 +326,59 @@ export function verdettoCodaPerScript({ installata, riga, errore } = {}) {
   if (riga.cancello_in_uso !== false) {
     const chi = riga.titolare === 'coda' || riga.titolare === 'sync' ? riga.titolare : 'un titolare sconosciuto'
     return blocco('cancello-in-uso', `Il cancello Aruba è in mano a ${chi}: rilancia fra qualche minuto.`)
+  }
+  return { ok: true }
+}
+
+/** I motivi di pausa che il lavoratore del nucleo scrive: solo questi si ripetono nel messaggio. */
+const MOTIVI_PAUSA_NUCLEO = {
+  'aruba-429': 'Aruba ha risposto 429',
+  'esito-incerto': "l'ultimo giro ha avuto un esito incerto",
+}
+
+/**
+ * Il ramo del NUCLEO: coda sospesa, nessuna pausa del lavoratore in corso e nessun lavoratore col
+ * testimone, altrimenti blocco. I booleani in forma STRETTA come sopra: tutto ciò che non è `true`
+ * è una coda non sospesa, tutto ciò che non è `false` è una pausa in corso o un lavoratore attivo.
+ */
+function verdettoNucleo(riga) {
+  if (!riga || typeof riga !== 'object' || Number(riga.righe) !== 1) {
+    const righe = riga && typeof riga === 'object' ? Number(riga.righe) : 0
+    return blocco(
+      'coda-incoerente',
+      `Lo stato della coda (nucleo) ha ${Number.isFinite(righe) ? righe : '?'} righe invece di una: ` +
+        'lo script non parte.',
+    )
+  }
+  if (riga.sospesa !== true) {
+    return blocco(
+      'coda-attiva',
+      'La coda fatture è attiva: il suo lavoratore chiama Aruba e questo script lo farebbe in ' +
+        'parallelo. Sospendere la coda da admin (pagina Coda fatture) o con fatture_coda_sospendi, ' +
+        'poi rilanciare; a fine lavoro la si riprende.',
+    )
+  }
+  if (riga.pausa_attiva !== false) {
+    // Il circuito del nucleo: vale anche a coda sospesa, perché sospendere non azzera la pausa.
+    const fino = istante(riga.pausa_fino_a)
+    const perche = Object.hasOwn(MOTIVI_PAUSA_NUCLEO, riga.pausa_motivo)
+      ? MOTIVI_PAUSA_NUCLEO[riga.pausa_motivo]
+      : 'motivo non riconosciuto'
+    return blocco(
+      'circuito-aperto',
+      `La coda è in pausa (${perche}) fino alle ${fino ? oraRoma(fino) : '(orario non leggibile)'}: ` +
+        "ogni tentativo prima di allora riapre l'ora di attesa (decisione 16). Rilancia dopo quell'ora.",
+      fino ?? undefined,
+    )
+  }
+  if (riga.lavoratore_attivo !== false) {
+    const fino = istante(riga.lavoratore_scade_il)
+    return blocco(
+      'cancello-in-uso',
+      'La coda è sospesa ma un giro del lavoratore è ancora in corso (testimone valido fino alle ' +
+        `${fino ? oraRoma(fino) : '(orario non leggibile)'}): rilancia dopo quell'ora.`,
+      fino ?? undefined,
+    )
   }
   return { ok: true }
 }
@@ -408,6 +495,14 @@ export async function guardiaArubaPerScript({ sql } = {}) {
     installata = true
     try {
       riga = rigaSecondaLettura(await sql(SQL_SECONDA_LETTURA))
+    } catch (e) {
+      errore = e ?? new Error('errore senza descrizione')
+    }
+  } else if (prima.stato && !prima.cancello) {
+    // Il nucleo (PR #160): la coda c'è, il cancello no. Si legge solo lo stato della coda.
+    installata = 'nucleo'
+    try {
+      riga = rigaSecondaLettura(await sql(SQL_LETTURA_NUCLEO))
     } catch (e) {
       errore = e ?? new Error('errore senza descrizione')
     }

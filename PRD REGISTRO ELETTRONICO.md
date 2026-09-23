@@ -75,7 +75,7 @@
 > | **Mensa** | ✅ Operativo | `/admin/mensa`, `/parent/mensa` | `/api/mensa/*` — ⚠️ **fino al 2026-09-06 il SALVATAGGIO del menu non funzionava in nessuna sede** (`42P10`: `ON CONFLICT` contro indici parziali). Corretto con le migrazioni `20260906122753`/`20260906122807` e sorvegliato dal lock `onconflict-arbitro`. **Resta vero che nessuna delle tre sedi ha ancora un menu vero caricato**: misurato il 2026-09-06, Cesa 0 righe, Aversa 0, Giugliano solo il menu demo. Il menu va inserito da capo |
 > | **Chat** | ✅ Operativo · 🔧 correzione del 14/09 sul branch `fix/chat-doppioni-coda-notifica`, ⏳ **non ancora in produzione** | `/teacher/chat`, `/parent/chat`, `/admin/messaggi` | `/api/chat/*` — conversazione **1:1** fra un'insegnante e un genitore su un bambino: chi non è uno dei due riceve 403. Dal 2026-09-07 la rubrica offre **solo le insegnanti della sezione dei propri figli** (e viceversa), con la stessa regola applicata al **gate di apertura** del thread (`@/lib/chat/rubrica`); realtime finalmente attivo (migr. `20260907120003`). **Dal branch del 14/09** (vedi il changelog): `GET /api/chat/messages` legge gli **ultimi 50** e pagina all'indietro con il cursore `primaDi` (`offset` → 400), con **«Carica messaggi precedenti»** in cima alla conversazione — fino a quel giorno leggeva i 50 più **vecchi**, e 48 messaggi in 7 conversazioni non erano mai stati mostrati; il messaggio inviato **non compare più due volte**; il tocco su una notifica di chat **apre la conversazione** (link `/<area>/chat?thread=<uuid>`) da push nativa, web push, notifica del browser e centro notifiche. Stato e regole in `useConversazioneChat` + `@/lib/chat/stato-conversazione`, condivisi dalle due pagine |
 > | **Vigilanza sulle chat** | ✅ Operativo (2026-09-09) | `/admin/messaggi` → «Tutti i messaggi» e «Registro accessi» | Segreteria e Direzione consultano qualunque conversazione della propria sede, e la consultazione è **silenziosa** per i due interlocutori. Ogni lettura e ogni ricerca finiscono in `chat_vigilanza_accessi`, in **sola aggiunta**; se il registro non si scrive il contenuto **non esce** (503 `VIGILANZA_NON_TRACCIABILE`). Il registro lo legge **solo la Direzione**, senza esenzioni per sé. Ritenzione: la riga resta, IP/browser/termine si azzerano a 12 mesi |
-> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)). ⏳ **Dal branch `feat/riconciliazione-automatica` (2026-09-20, non ancora in produzione)**: la causale del bonifico porta il **codice della voce** (`{codice}`, inserito d'ufficio anche nei modelli che le tre sedi avevano già configurato) e app del genitore ed email di sollecito escono dalla **stessa porta** (`causaleBonifico`) — **la causale della fattura elettronica il codice NON lo porta**, ed è una decisione, non un limite; il matcher riconosce il codice e lo pesa **dieci volte il codice fiscale** (`CODICE_BONUS = 10000` contro 1000, in `src/lib/pagamenti/riconciliazione.ts`) senza mai auto-confermare da solo; l'import legge le voci aperte **paginate** (prima troncava in silenzio) e poi **chiude da sé i bonifici certi** (`valutaCertezza`, marca `abbinato_auto_il`, riepilogo e annullamento in blocco — tre changelog del 2026-09-20 più sotto); il popup del movimento passa da **512 px** a ~95% dello schermo; e sui movimenti rossi si **cerca il bambino** (`GET /api/pagamenti/riconciliazione/alunni`, dentro il perimetro di chi cerca, **codice fiscale come chiave di ricerca ma mai in risposta**) per poi comporre partendo da lui (`?alunni=`, al massimo **5** bambini per richiesta). ⏳ **Dal 2026-09-23 esiste la spec del nucleo di una coda fatture** (`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md`, branch `feat/coda-fatture-aruba`) — accodamento fino a 500 fatture, invio in background anche a PC spento, stesso motore del lotto (50/ora, pause 60′/15′) — **codice scritto sul branch `feat/coda-fatture-aruba`, non ancora mergiato**: lavoratore, route `/api/pagamenti/fattura/coda*`, pagina `/admin/coda-fatture` con contatore nel menu, lotto e pulsante «Fattura» che accodano; **migrazione `20260923102831` scritta, la applica l'integrazione Supabase al merge e mai a mano** (changelog sotto) |
+> | **Contabilità (Pagamenti)** | ✅ Operativo | `/admin/pagamenti` (8 viste, con «Incasso unico» e «Cassa»), `/parent/pagamenti` | `/api/pagamenti/*` (+ transazione unica di famiglia, credito famiglia, ricevute numerate, attestazioni, export AdE/XLSX, solleciti schedulati, riconciliazione bancaria (estratto conto unico cross-sede, **file della banca letto così com'è: `.xls`/`.xlsx`/`.csv`, con preambolo, intestazione su due righe e anno a due cifre**, abbinamento per codice fiscale, **ordinante estratto dalla descrizione**, **avviso «sembra di un'altra sede»** sulla riga e nel popup quando l'aggancio forte sta in un plesso non proprio e i candidati di casa sono deboli o non ci sono (stesse due soglie del matcher, calcolato in lettura senza nessuna colonna nuova; esce il **nome del plesso**, mai chi; non si calcola sulle righe già confermate), **stato di fatturazione su ogni riga confermata** — chip col NUMERO del documento («Fattura FPR 1947/26») quando esiste in `fatture_emesse`, «Scartata, da riemettere» quando lo SdI l'ha respinto, «In attesa SDI» e «Da fatturare» (quest'ultimo solo sul pagamento **saldato**) dal riassunto su `pagamenti.fattura_stato`, con **due letture a blocchi di 100 per pagina** e **nessuna colonna nuova** — più il **filtro «Da fatturare»/«Fatturate»** (finestra 5.000 righe, `troncato: true` quando è piena) che, se lo stato non è leggibile, mostra le righe **NON filtrate** invece di rispondere «niente da fatturare» — e **conferma protetta contro il bonifico già fatturato** (409, o 503 se il controllo non è verificabile)), sconti/pro-rata configurabili, registro di cassa contanti (`/cassa/*`: saldo·movimenti·storno·svuotamento·report CSV, KPI solo admin), modelli di causale per tipologia di pagamento — **due**: bonifico (`causali_config`) e fattura (`fattura_causali_config`), **fattura elettronica su due sezionali** («Asilo»/«FPR», serie scelta dalla data di nascita del minore, numerazione unica per le tre sedi allineata ad Aruba una volta per lotto, **intestatario scelto in emissione** — un genitore del bambino o una persona digitata — **proposto da chi ha fatto il bonifico**, con guardia contro un secondo documento per la stessa retta, **estesa al ramo multi-quota**: una riga viva intestata a un adulto estraneo alle quote di oggi, o con l'importo di ieri, ferma tutte le quote; e se la lettura dei legami genitore-figlio fallisce la risposta è **503 «non verificabile»**, non 422 «non è un genitore»), **card «Come pagare» del genitore** (bonifico con IBAN e intestatario dalle impostazioni di sede — stesso motore delle email di sollecito — oppure contanti in segreteria, dichiarati non detraibili)). ⏳ **Dal branch `feat/riconciliazione-automatica` (2026-09-20, non ancora in produzione)**: la causale del bonifico porta il **codice della voce** (`{codice}`, inserito d'ufficio anche nei modelli che le tre sedi avevano già configurato) e app del genitore ed email di sollecito escono dalla **stessa porta** (`causaleBonifico`) — **la causale della fattura elettronica il codice NON lo porta**, ed è una decisione, non un limite; il matcher riconosce il codice e lo pesa **dieci volte il codice fiscale** (`CODICE_BONUS = 10000` contro 1000, in `src/lib/pagamenti/riconciliazione.ts`) senza mai auto-confermare da solo; l'import legge le voci aperte **paginate** (prima troncava in silenzio) e poi **chiude da sé i bonifici certi** (`valutaCertezza`, marca `abbinato_auto_il`, riepilogo e annullamento in blocco — tre changelog del 2026-09-20 più sotto); il popup del movimento passa da **512 px** a ~95% dello schermo; e sui movimenti rossi si **cerca il bambino** (`GET /api/pagamenti/riconciliazione/alunni`, dentro il perimetro di chi cerca, **codice fiscale come chiave di ricerca ma mai in risposta**) per poi comporre partendo da lui (`?alunni=`, al massimo **5** bambini per richiesta). ✅ **IN PRODUZIONE dal 2026-09-23**: il **nucleo della coda fatture** — PR [#160](https://github.com/erricoluigi17/kidville-web/pull/160), merge **15:34** (`a447e4ce`), deploy 15:36:54, cron `fatture-coda-tick` **verificato** in `app_log`: primo battito 15:37:02 (8 secondi dopo il deploy), esito `niente-da-fare` (`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md`) — accodamento fino a 500 fatture, invio in background anche a PC spento, stesso motore del lotto (50/ora, pause 60′/15′): lavoratore, route `/api/pagamenti/fattura/coda*`, pagina `/admin/coda-fatture` con contatore nel menu, lotto e pulsante «Fattura» che accodano. **Eccezione**: con l'intestatario digitato a mano («Altro») il pulsante «Fattura» **non** accoda, usa ancora la `POST /api/pagamenti/fattura` diretta — decisione del direttore, non un difetto, perché la coda non custodisce dati digitati nel browser; rientra in coda nella seconda consegna. Migrazione `20260923102831` **applicata in produzione** dall'integrazione Supabase al merge (mai a mano). 🔧 **PR-B** (branch `chore/coda-fatture-pr-b`, ⏳ non ancora in produzione): `fatture-coda-tick` sorvegliato nel battito di `/api/health` (`JOB_CRON`, finestra 30 minuti), fotografie rigenerate dalla produzione, guardia degli script d'indagine allineata al nucleo (partono solo a coda sospesa, fuori pausa e senza lavoratore attivo). ⏳ **Seconda consegna** (sessione successiva): notifiche, verifica automatica degli esiti incerti e il resto del piano completo — dettagli e rilievi aperti in `docs/superpowers/specs/2026-09-22-coda-fatture-aruba/HANDOFF.md` (changelog sotto) |
 > | **Conciliazione composita — un bonifico, più voci** | ✅ **IN PRODUZIONE dal 2026-09-13** — PR [#145](https://github.com/erricoluigi17/kidville-web/pull/145), merge `161f1e42`. ⚠️ *Questa casella ha detto «✅ Completa sul branch `feat/conciliazione-composita` (13/09/2026) · ⏳ **non ancora in produzione** … manca il rilascio del **codice**» fino al **2026-09-20**, cioè per una settimana dopo che il codice era stato rilasciato: il merge è avvenuto lo **stesso 13/09** in cui la riga fu scritta, e nessuno l'ha più riletta. Corretta verificando invece che deducendo — `git merge-base --is-ancestor 161f1e42 HEAD` risponde vero e `git log -1 161f1e42` dà «Merge pull request #145 from erricoluigi17/feat/conciliazione-composita», data 2026-09-13.* **Le tre migrazioni (`20260912180000`, `…180100`, `…180200`) sono già applicate sul database (le tre `version` risultano presenti in `supabase_migrations.schema_migrations`, verificato il 13/09, e il fixture `__tests__/fixtures/migrazioni-applicate-snapshot.json` le elenca): NON riapplicarle.** ⚠️ *Qui si leggeva «applicate **dal 12/09**»: la data è stata tolta perché **quella tabella non sa quando**. Le sue colonne sono `version`, `statements`, `name`, `created_by`, `idempotency_key`, `rollback` — nessuna è una data — e la strada per ricavarla dal commit è chiusa: `track_commit_timestamp` è `off`, quindi `pg_xact_commit_timestamp(xmin)` risponde `55000: could not get commit timestamp data` (provato il 13/09). Il «12/09» era il timestamp del **nome del file**, non una misura: resta vero che sono applicate, non quando* | `/admin/pagamenti` → *Riconciliazione* → popup del movimento → **«Componi il pagamento»** (`ComposizioneBonifico`, dentro il popup e non in una pagina a sé) | `GET /api/pagamenti/riconciliazione/[id]/contesto` (**non scrive niente**: di chi è il bonifico, quali figli ha la famiglia, cosa hanno di aperto, quali categorie, quanto costa un ticket in quella sede) e `POST /api/pagamenti/riconciliazione/[id]/componi` (registra l'intera composizione in **una** transazione atomica — RPC `registra_transazione_contabile` — con compare-and-swap sul movimento). Spunta le voci aperte, **ne crea di nuove**, **aggiunge ticket mensa** (quantità × costo unitario, che accreditano anche i pasti), e conferma **solo quando quadra all'esatto**: niente eccedenza, niente residuo. Funziona anche per **fratelli di plessi diversi**. 🔴 **Una sola fattura, con una riga sola, per il totale del bonifico e la descrizione della voce àncora** — con la conseguenza fiscale che ne segue, scritta per intero nel changelog del 13/09 |
 > | **Modulistica** | ✅ Operativo | `/admin/forms`, `/parent/forms` | `/api/forms/*` |
 > | **Prestampati (17 modelli)** | ✅ Operativo dal 2026-08-14 | `/admin/modulistica` → *Prestampati*, `/parent/modulistica` → *Certificati self-service* | `/api/prestampati/*`, `/api/parent/prestampati/*` |
@@ -1788,23 +1788,100 @@ SELECT (SELECT count(*) FROM allegati_registro) AS allegati,
 
 ---
 
-## Changelog — Coda fatture Aruba — nucleo (consegna 1): stato reale a fine correzione — 2026-09-23 (branch `feat/coda-fatture-aruba`)
+## Changelog — Coda fatture Aruba — PR-B: il tick sorvegliato, le fotografie rigenerate, la guardia degli script allineata al nucleo — 2026-09-23 (branch `chore/coda-fatture-pr-b`, ⏳ non ancora in produzione)
 
-**Correzione del 23/09/2026 (giro 2):** la voce precedente diceva «solo spec e questa voce di PRD:
-nessun codice, nessuna migrazione scritta o applicata» e «migrazione già fissata (non ancora
-scritta)». Era falso già al momento in cui è stata scritta: codice, migrazione, route e pagina erano
-sul disco. Anche la stesura successiva di questa voce era rimasta indietro — dava lotto e pulsante
-singolo come «non ancora riscritti» e il contatore del menu come «deroga» — ed è stata corretta al
-giro 2 del riparatore. Questa voce descrive lo stato verificato sul disco a quel giro; va
-riverificata prima del merge. La fonte di verità resta
+Seguito diretto del nucleo (PR #160, voce qui sotto). **Nessuna migrazione, nessuna scrittura in
+produzione**: le fotografie sono state rigenerate con sole letture. Tre parti.
+
+**1. `fatture-coda-tick` in `JOB_CRON`** (`src/lib/health/controlli.ts`), finestra **30 minuti**. Il
+lavoratore della coda è ciò che manda ad Aruba le fatture accodate a PC spento: se smette, «in coda»
+non è uno stato d'errore e nessuno se ne accorge — da qui il battito in `/api/health`. Perché 30 e
+non i 20 di `push-dispatch`, che pure gira ogni cinque minuti: la cadenza **salta :02 e :32** (fuori
+dalle finestre della sync SDI), quindi due battiti sani distano fino a 10 minuti, e il battito si
+scrive a **fine** giro, che può durare fino ai 300 s del `maxDuration`. Un giro regolare può tacere
+~15 minuti, con un giro saltato ~20: trenta assorbono un giro saltato anche attorno al buco dei :32,
+e mezz'ora di silenzio non è più un ritardo. Ogni esito del giro, anche «niente da fare» e
+«finestra della sync», batte `esito: 'ok'`. Entrato solo **dopo** che la migrazione che schedula il
+cron era applicata e la fotografia delle migrazioni rigenerata, come vuole il lock
+`cron-sorvegliato-e-applicato`.
+
+**2. Cinque fotografie rigenerate dalla produzione** — migrazioni applicate, policy, indici unici,
+FK su `scuola_id`, tabelle con `scuola_id` — e `MIGRAZIONI_ATTESE_AL_MERGE` **svuotata**: la sua
+unica voce (`20260923102831_fatture_coda_nucleo.sql`) è applicata. Vuota è lo stato normale; la
+prossima voce entra con la prossima migrazione scritta in una PR.
+- La fotografia delle tabelle con `scuola_id` era **ferma al 01/09**: un punto cieco di tre
+  settimane. Rigenerata, sono entrate `fatture_coda`, `video_jobs`, `video_intents`,
+  `chat_vigilanza_accessi` e `fatture_visibilita_audit`, e il lock `isolamento-sede` ha trovato
+  **quattro** handler — non uno di più — che su quelle tabelle non dicono la sede in query.
+- Il lock passa da **109 a 113** esenzioni, e va letto nel verso giusto: non guarda meno cose di
+  prima, ne guarda di più. Le quattro voci nuove in `AMMESSE`, ciascuna col motivo per esteso:
+  `pagamenti/fattura/coda:GET` e il suo helper `pagamenti/fattura/coda:<modulo>` (`conta`, conteggi
+  per stato), `pagamenti/fattura/coda/azioni:POST` (scope applicato dopo la lettura per id: una sola
+  voce di un plesso non proprio rifiuta l'intera richiesta con 403 prima della RPC) e
+  `video-uploads/[id]:<modulo>` (i job si leggono per l'intento già filtrato per proprietario e
+  passato da `sedeAncoraPropria`; è un residuo del punto cieco, non una rotta nuova).
+- ⚠️ **Detto per esteso, non taciuto**: la `coda:GET` mostra a tutto lo staff di **tutte le sedi**,
+  per ogni voce: stato, urgenza, posizione e orario d'accodamento, sede, id del pagamento, codice
+  d'esito, **nome dell'alunno**, descrizione e **importo** del pagamento, e il **nome di chi ha
+  accodato** (`creato_da_nome`, letto da `utenti` per id, senza filtro di sede). È la
+  **decisione 6** del titolare (l'utenza Aruba è una e il tetto orario è condiviso: chi fattura a
+  Cesa deve vedere le fatture di Giugliano che ha davanti). L'unico campo che **non** attraversa la
+  sede è il messaggio d'esito del provider, che può nominare un intestatario: per le voci di un
+  plesso non proprio esce solo il codice. Un test in `__tests__/api/fattura-coda.test.ts` confronta
+  campo per campo due voci gemelle di sedi diverse e fallisce se l'elenco cambia (provato:
+  nascondere l'importo fuori sede lo fa diventare rosso), così la voce in `AMMESSE` non può
+  tornare a essere parziale in silenzio.
+
+**3. La guardia degli script** (`scripts/lib/aruba-lettura.mjs`), usata da `scripts/fatture-orfane.mjs`
+e `scripts/numerazione-serie.mjs`. Prima di questa PR la guardia conosceva due stati: coda assente
+(tutto R1) e schema completo (`fatture_coda_stato` **più** `aruba_cancello`). Il nucleo porta solo la
+prima tabella, e la guardia lo chiamava `coda-incoerente`: **col nucleo in produzione i due script
+erano bloccati per sempre**. Ora il nucleo ha il suo ramo, e lo script parte **solo** se:
+- la coda è **sospesa** (altrimenti `coda-attiva`: il lavoratore chiamerebbe Aruba in parallelo);
+- non c'è una **pausa** del lavoratore in corso — `pausa_fino_a`, 60 minuti dopo un 429 e 15 dopo un
+  esito incerto — altrimenti `circuito-aperto`, con l'orario di Roma. Sospendere la coda non azzera
+  la pausa, e uno script lanciato dentro la pausa di un 429 prenderebbe un altro 429 e Aruba
+  riaprirebbe l'ora (decisione 16): alla ripresa la coda resterebbe ferma un'altra ora;
+- nessun lavoratore ha il **testimone** valido (altrimenti `cancello-in-uso`, con l'orario).
+
+Ogni errore della lettura blocca, `42P01` compreso. I booleani si leggono in forma stretta: tutto ciò
+che non è `false` è una pausa o un lavoratore attivo. Test su sql finta e su PGlite (tabella con le
+colonne della migrazione), con controlli negativi eseguiti: togliere dal codice il controllo della
+pausa fa diventare rossi sette test su 101. **In pratica**: per lanciare i due script un admin
+sospende la coda (pagina «Coda fatture» o RPC `fatture_coda_sospendi`), aspetta che testimone e
+pausa scadano, e a fine lavoro la riprende (procedura in `HANDOFF.md` §2).
+
+---
+
+## Changelog — Coda fatture Aruba — nucleo (consegna 1): ✅ IN PRODUZIONE — 2026-09-23 (branch `feat/coda-fatture-aruba`, PR [#160](https://github.com/erricoluigi17/kidville-web/pull/160))
+
+**Correzione del 23/09/2026 (giro 3, dopo il merge):** ✅ **IN PRODUZIONE.** PR #160 mergiata il
+23/09/2026 alle **15:34** (`a447e4ce`), deploy alle **15:36:54**. La migrazione
+`20260923102831_fatture_coda_nucleo.sql` è stata applicata dall'integrazione Supabase al merge,
+come da regola (mai a mano). Il cron `fatture-coda-tick` ha dato il **primo battito alle
+15:37:02**, 8 secondi dopo il deploy, esito `niente-da-fare` (coda vuota al primo giro,
+comportamento atteso). Le due voci precedenti di questa stessa casella avevano detto il falso su
+sé stesse: prima «nessun codice, nessuna migrazione» quando codice e migrazione erano già sul
+disco, poi «non ancora mergiato» dopo il giro 2 del riparatore. E la terza stesura, che si diceva
+«verificata sul primo battito reale del cron», ne dava l'orario sbagliato: 15:42, che è l'ora del
+secondo battito. Questa è la quarta, e l'orario viene da una `SELECT` su `app_log` (route
+`/api/pagamenti/fattura/coda/giro`, evento `cron`, livello `info`): una sola riga per il battito,
+`creato_il` (prima occorrenza della riga) alle 15:37:02 ora di Roma, e le occorrenze che salgono a ogni giro; il deploy di
+produzione di `a447e4ce` è `success` alle 15:36:54 sulle deployment di GitHub. La sorveglianza
+del tick nel battito di
+`/api/health` (`JOB_CRON`) e la rigenerazione delle fotografie, che questa voce dava «da fare in
+PR-B», sono fatte nella PR-B: vedi la voce qui sopra e
+`docs/superpowers/specs/2026-09-22-coda-fatture-aruba/HANDOFF.md`.
+La fonte di verità sul contenuto resta
 `docs/superpowers/specs/2026-09-22-coda-fatture-aruba/nucleo.md`.
 
-### Cosa c'è sul disco, non ancora mergiato
+### Cosa c'è sul disco, IN PRODUZIONE dal merge di PR #160
 
-- **Migrazione scritta, non applicata**: `supabase/migrations/20260923102831_fatture_coda_nucleo.sql`
+- **Migrazione scritta e applicata in produzione** (dall'integrazione Supabase al merge, mai a mano):
+  `supabase/migrations/20260923102831_fatture_coda_nucleo.sql`
   (tabelle `fatture_coda` e `fatture_coda_stato`, RLS accesa senza policy, indice unico parziale,
   RPC `fatture_coda_accoda/prendi/chiudi/rilascia/bidello/togli/rimetti/sospendi/tick_http`, cron
-  ogni 5 minuti). **La applica l'integrazione Supabase al merge di questa PR, mai a mano.**
+  ogni 5 minuti, primo battito verificato in `app_log` alle 15:37:02 con esito `niente-da-fare`).
 - **Lavoratore**: `src/lib/fatture-coda/giro.ts`.
 - **Route**: `src/app/api/pagamenti/fattura/coda/route.ts` (GET/POST), `.../coda/azioni/route.ts`,
   `.../coda/sospensione/route.ts`, `.../coda/giro/route.ts` (il tick del cron). Contratto e schemi
@@ -1869,15 +1946,14 @@ il tetto fail-closed del giro successivo lo conta fra le emesse dell'ultima ora,
 partito no. Il ramo resta raro (una fattura alla volta, a mano) e rientra nella coda nella seconda
 consegna, quando la coda avrà una forma per quella persona.
 
-### Cosa resta per la seconda consegna (PR-B, fuori dal nucleo)
+### Cosa resta dopo il nucleo
 
-- `JOB_CRON` (`src/lib/health/controlli.ts`): il tick `fatture-coda-tick` **non è ancora sorvegliato
-  nel battito**; entra in PR-B, dopo che la migrazione è stata applicata in produzione.
-- Rigenerazione delle fotografie (migrazioni, policy, indici unici, FK) dalla produzione, e con essa
-  lo svuotamento della dichiarazione in `MIGRAZIONI_ATTESE_AL_MERGE`
-  (`__tests__/architecture/soglia-fotografia.ts`), oggi ancora popolata con la voce di questa
-  migrazione.
-- Notifiche, «fattura tutto il periodo», selezione multipla nella lista Pagamenti, sezione nella
+- ✅ **Fatto nella PR-B** (voce del changelog qui sopra, non ancora in produzione): `fatture-coda-tick`
+  in `JOB_CRON` (`src/lib/health/controlli.ts`, finestra 30 minuti), fotografie rigenerate dalla
+  produzione e `MIGRAZIONI_ATTESE_AL_MERGE` (`__tests__/architecture/soglia-fotografia.ts`)
+  svuotata, guardia degli script allineata al nucleo. Fino alla PR-B questa sezione le dava da fare.
+- ⏳ **Seconda consegna** (sessione successiva):
+  notifiche, «fattura tutto il periodo», selezione multipla nella lista Pagamenti, sezione nella
   scheda alunno, verifica automatica degli esiti incerti, «Rimanda» con lo stesso numero, cancello
   condiviso con la sync, giornale dei numeri, livelli di priorità ulteriori, `410` sui vecchi percorsi,
   test cardine su PGlite completo, E2E nuovi.

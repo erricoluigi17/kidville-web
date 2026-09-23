@@ -1,8 +1,8 @@
 {
   "_come_si_rigenera": "node __tests__/fixtures/indici-unici-fotografia.mjs --sql | (esegui su prod) ; node __tests__/fixtures/indici-unici-fotografia.mjs < risposta.json",
-  "generato_il": "2026-09-17",
-  "generato_alle": "2026-09-17T17:44:55Z",
-  "sha256": "aa2c46cf2ec3faeb7d5e9f98ee09895b514aa414a187ecd74ed660170a3f5e4d",
+  "generato_il": "2026-09-23",
+  "generato_alle": "2026-09-23T13:57:07Z",
+  "sha256": "638aa56f5539e49be77ffe60afa00abd1a2dd34bffe23ae68dbb059c9a003e0b",
   "indici": [
     {
       "tabella": "admin_settings",
@@ -554,6 +554,39 @@
       ]
     },
     {
+      "tabella": "fatture_coda",
+      "indice": "fatture_coda_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "fatture_coda",
+      "indice": "fatture_coda_una_attiva_uidx",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "pagamento_id"
+      ]
+    },
+    {
+      "tabella": "fatture_coda_stato",
+      "indice": "fatture_coda_stato_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
       "tabella": "fatture_emesse",
       "indice": "fatture_emesse_pagamento_quota_uidx",
       "parziale": true,
@@ -573,19 +606,6 @@
       "ha_colonna_nullable": false,
       "colonne": [
         "id"
-      ]
-    },
-    {
-      "tabella": "fatture_emesse",
-      "indice": "fatture_emesse_scuola_id_anno_numero_key",
-      "parziale": false,
-      "con_espressioni": false,
-      "nulls_not_distinct": false,
-      "ha_colonna_nullable": false,
-      "colonne": [
-        "anno",
-        "numero",
-        "scuola_id"
       ]
     },
     {
@@ -2472,6 +2492,126 @@
     {
       "tabella": "valutazioni",
       "indice": "valutazioni_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "video_intents",
+      "indice": "video_intents_id_revision_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id",
+        "revision"
+      ]
+    },
+    {
+      "tabella": "video_intents",
+      "indice": "video_intents_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "video_intents",
+      "indice": "video_intents_target_revision_unico_idx",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "channel",
+        "owner_id",
+        "revision",
+        "target_id"
+      ]
+    },
+    {
+      "tabella": "video_jobs",
+      "indice": "video_jobs_gallery_intent_unico_idx",
+      "parziale": true,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "intent_id"
+      ]
+    },
+    {
+      "tabella": "video_jobs",
+      "indice": "video_jobs_originale_unico",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "original_bucket",
+        "original_path"
+      ]
+    },
+    {
+      "tabella": "video_jobs",
+      "indice": "video_jobs_output_unico",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": true,
+      "colonne": [
+        "output_bucket",
+        "output_path"
+      ]
+    },
+    {
+      "tabella": "video_jobs",
+      "indice": "video_jobs_owner_channel_idempotency_key_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "channel",
+        "idempotency_key",
+        "owner_id"
+      ]
+    },
+    {
+      "tabella": "video_jobs",
+      "indice": "video_jobs_pkey",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "id"
+      ]
+    },
+    {
+      "tabella": "video_outbox",
+      "indice": "video_outbox_intent_id_revision_event_type_key",
+      "parziale": false,
+      "con_espressioni": false,
+      "nulls_not_distinct": false,
+      "ha_colonna_nullable": false,
+      "colonne": [
+        "event_type",
+        "intent_id",
+        "revision"
+      ]
+    },
+    {
+      "tabella": "video_outbox",
+      "indice": "video_outbox_pkey",
       "parziale": false,
       "con_espressioni": false,
       "nulls_not_distinct": false,

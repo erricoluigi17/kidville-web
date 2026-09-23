@@ -158,6 +158,30 @@ describe('POST /api/pagamenti/fattura', () => {
     expect(res.status).toBe(502)
     expect((await res.json()).codice).toBeUndefined()
   })
+
+  /**
+   * ─── ROSSO DICHIARATO (R1-1.4 → si chiude con R1-2.2) ──────────────────────
+   *
+   * D1§8.1-§8.3: quando la fattura è già partita verso Aruba ma non risulta
+   * registrata a sistema, la route deve rifiutare con 409 e un `codice` che il
+   * pannello può leggere, non con la prosa generica. Il ramo non esiste ancora
+   * in `route.ts` (arriva in R1-2.2): questo caso resta rosso fino ad allora,
+   * per `AssertionError` su `codice`/`data.motivo`, mai per un errore di
+   * caricamento.
+   */
+  it('rifiuto «partita ma non registrata» → 409 con codice FATTURA_PARTITA_NON_REGISTRATA e data.motivo', async () => {
+    h.emetti.mockResolvedValue({
+      ok: false,
+      motivo: 'partita_non_registrata',
+      httpStatus: 409,
+      messaggio: 'La fattura di questo pagamento risulta già partita verso Aruba ma non è registrata nell’app: non se ne emette una seconda.',
+    })
+    const res = await POST(post({ pagamento_id: PID }))
+    expect(res.status).toBe(409)
+    const json = await res.json()
+    expect(json.codice).toBe('FATTURA_PARTITA_NON_REGISTRATA')
+    expect(json.data.motivo).toBe('partita_non_registrata')
+  })
 })
 
 describe('GET /api/pagamenti/fattura?fattura_id=', () => {

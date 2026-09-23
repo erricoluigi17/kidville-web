@@ -826,14 +826,29 @@ La guardia sta in `scripts/lib/aruba-lettura.mjs`. La usano `numerazione-serie.m
          to_regclass('public.fatture_coda_stato') is not null as stato,
          to_regclass('public.aruba_cancello') is not null as cancello,
          (select count(*) from public.app_log
-           where evento = 'fattura' and creato_il > now() - interval '10 minutes'
+           where evento = 'fattura' and visto_l_ultima > now() - interval '10 minutes'
              and (contesto->'campi'->>'operazione' like 'aruba:%'
+                  or contesto->'campi'->>'operazione' = 'emettiFatturaPagamento'
                   or contesto->'campi'->>'operazione' like 'emettiFatturaPagamento:%')) as attivita_app,
-         (select max(creato_il) from public.app_log
-           where evento = 'fattura' and creato_il > now() - interval '10 minutes'
+         (select max(visto_l_ultima) from public.app_log
+           where evento = 'fattura' and visto_l_ultima > now() - interval '10 minutes'
              and (contesto->'campi'->>'operazione' like 'aruba:%'
+                  or contesto->'campi'->>'operazione' = 'emettiFatturaPagamento'
                   or contesto->'campi'->>'operazione' like 'emettiFatturaPagamento:%')) as ultima_attivita
   ```
+
+  > **Nota (23/09/2026, R1-1.5 giro 3) — la versione precedente di questa query falliva APERTA.**
+  > Leggeva il tempo da `creato_il` e prendeva solo `like 'emettiFatturaPagamento:%'`. Due difetti:
+  > (1) `app_log` deduplica per (fingerprint, giorno) e `app_log_registra` (migrazione
+  > `20260713090000_app_log.sql`, `ON CONFLICT … SET occorrenze + n, visto_l_ultima = now()`) lascia
+  > `creato_il` alla PRIMA occorrenza del giorno: il battito `aruba:upload` di `externalFetch` ha
+  > un'impronta costante, e dal secondo upload della giornata una guardia su `creato_il` non lo vede
+  > più; (2) la riga di successo dell'emissione ha `operazione = 'emettiFatturaPagamento'` senza i
+  > due punti. Ora il tempo si legge da `visto_l_ultima` (coperto da `app_log_evento_idx (evento,
+  > visto_l_ultima DESC)`) e l'operazione nuda è presa per uguaglianza. Chi usa questa query alla
+  > lettera (R1-8.1 come precondizione del merge, R2A-13) usa QUESTA versione, cioè
+  > `SQL_PRIMA_LETTURA` di `scripts/lib/aruba-lettura.mjs`, provata eseguita su PGlite in
+  > `__tests__/lib/aruba-lettura.test.ts` con controllo negativo su `creato_il`.
 
   - nessuna delle due tabelle → «non installata»;
   - una sola delle due → incoerente → blocco.

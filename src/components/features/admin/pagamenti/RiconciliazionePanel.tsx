@@ -27,6 +27,9 @@ import {
   FILTRI_FATTURA,
   chipFatturazione,
   classiChipAltraSede,
+  CHIP_CODA,
+  classiChipCoda,
+  type PelleCoda,
   etichettaConteggio,
   numeroPillolaFattura,
   suggerimentoPrincipaleCf,
@@ -1384,6 +1387,10 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
             // `pagamenti/riconciliazione:GET`), perché lo stato del movimento lì c'è e
             // nel tipo d'ingresso del chip no.
             const fat = chipFatturazione(m);
+            // La voce della coda (consegna 2a, rilievo e). Uno stato fuori dai tre non ha pelle e non
+            // si mostra: il server li filtra già (`attivo()` in `stato-righe.ts`), ma un valore inatteso
+            // non deve far cadere l'intera lista con un TypeError (FatturaChip fa lo stesso con `?? null`).
+            const pelleCoda: PelleCoda | undefined = m.coda_stato ? CHIP_CODA[m.coda_stato] : undefined;
             return (
               <li key={m.id} className="flex items-stretch gap-1">
                 {/* ── LA CASELLA È FRATELLO DEL BOTTONE, MAI DENTRO ──────────
@@ -1544,6 +1551,9 @@ export function RiconciliazionePanel({ userId, scuolaId, onIncassoUnico }: Props
                           opacità) perché vive sopra il verde della riga confermata,
                           e senza filetto: qui a staccarlo basta il fondo. */}
                       {fat && <ChipFatturazione fat={fat} />}
+                      {pelleCoda && (
+                        <span data-testid="coda-chip" className={classiChipCoda(pelleCoda)}>{t(pelleCoda.labelKey)}</span>
+                      )}
                       <span className={cx('font-barlow text-[11px] font-extrabold uppercase tracking-wide', s.testo)}>{s.label}</span>
                     </span>
                   </div>

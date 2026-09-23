@@ -2142,8 +2142,8 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    `RiconciliazionePanel` posa sulla riga confermata — fondo VERDE PIENO — un chip
    che dice a che punto è la fattura: «Fatturata», «In attesa SDI», «Scartata»,
    «Da fatturare». In luce normale sono carta bianca con inchiostro di funzione
-   (green 6,51:1 · warn-strong 5,61:1 · error-strong 5,62:1) e, per l'unico che
-   chiede di agire, giallo pieno su inchiostro (7,33:1).
+   (green 6,51:1 · warn-strong 5,61:1 · error-strong 5,62:1) e, per «Da fatturare»,
+   che chiede di agire, giallo pieno su inchiostro (7,33:1).
 
    In Alto Contrasto niente di tutto questo si ribalta da solo: `@theme inline`
    INLINA l'hex dentro le utility, quindi ridefinire `--color-kidville-*` sotto
@@ -2155,8 +2155,9 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    CONTORNO nero da 2px — che è ciò che stacca il chip dal fondo della riga, dato
    che in Alto Contrasto il colore non può più farlo.
 
-   L'eccezione è «Da fatturare», e non è un vezzo: è l'unico chip che chiede
-   un'azione, e perderlo dentro una fila di bianchi identici toglierebbe la
+   L'eccezione è «Da fatturare», e non è un vezzo: chiede un'azione (quando nacque
+   questa regola era l'unico; poi sono venuti «Scartata» ed «Errore in coda», qui
+   sotto), e perderlo dentro una fila di bianchi identici toglierebbe la
    ragione per cui è stato aggiunto. Prende lo stesso giallo brillante che il tema
    usa già come segnale (#FFE500, 16,46:1 sul nero), con lo stesso contorno.
    La variante sta DOPO la regola comune: stessa specificità, vince l'ultima.
@@ -2186,8 +2187,19 @@ button[class*="border-kidville-muted"]:hover:not(:focus) {
    del collaudo lo segnerebbe (giustamente) come difetto. Fondo rosso e inchiostro
    nero (ereditato dalla regola comune) valgono 6,58:1, ed è la stessa grammatica
    di «Da fatturare». Restano due chip di carta — le fatture che non chiedono
-   niente — e due colorati, che sono le due che chiedono di agire. */
+   niente — e due colorati, che sono le due che chiedono di agire. Dal 2026-09-23
+   la coda fatture aggiunge due chip di carta («In coda», «In invio») e un terzo
+   colorato, «Errore in coda», rosso come questo (regola qui sotto). */
 [data-contrast="high"] .kv-recon-chip--scartata {
+  background: #FF5252;
+}
+/* «Errore in coda» è la terza eccezione (2026-09-23, consegna 2a della coda fatture,
+   rilievo e), per la stessa ragione di «Scartata»: una voce della coda che non è
+   partita chiede a chi guarda di intervenire (pagina «Coda fatture»: rimetti o togli).
+   «In coda» e «In invio» non chiedono niente e restano carta bianca. Stessa grammatica:
+   si ribalta il chip, fondo rosso e inchiostro nero ereditato dalla regola comune, 6,58:1.
+   Lock: `__tests__/pagamenti/riconciliazione-a11y-css.test.ts`. */
+[data-contrast="high"] .kv-recon-chip--coda-errore {
   background: #FF5252;
 }
 

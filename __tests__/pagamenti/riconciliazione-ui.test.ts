@@ -15,6 +15,8 @@ import {
   CHIP_ALTRA_SEDE,
   classiChipFatturazione,
   classiChipAltraSede,
+  CHIP_CODA,
+  classiChipCoda,
   FRASE_FATTURAZIONE,
   FILTRI_FATTURA,
   numeroPillolaFattura,
@@ -546,6 +548,7 @@ describe('i testi della Riconciliazione esistono in italiano e in inglese', () =
     for (const k of Object.values(FRASE_FATTURAZIONE)) out.add(k)
     for (const f of FILTRI_FATTURA) out.add(f.labelKey)
     out.add(CHIP_ALTRA_SEDE.labelKey)
+    for (const c of Object.values(CHIP_CODA)) out.add(c.labelKey)
     return [...out]
   }
 
@@ -558,6 +561,49 @@ describe('i testi della Riconciliazione esistono in italiano e in inglese', () =
     const en_ = JSON.parse(readFileSync(join(process.cwd(), 'messages/en/adminContabilita.json'), 'utf8')) as Record<string, string>
     expect(usate.filter((k) => !(k in it_)), 'chiavi senza testo italiano').toEqual([])
     expect(usate.filter((k) => !(k in en_)), 'chiavi senza testo inglese').toEqual([])
+  })
+})
+
+/**
+ * ─── LA VOCE DELLA CODA FATTURE SULLA RIGA (2026-09-23) ──────────────────────
+ *
+ * Consegna 2a della coda fatture, rilievo (e). Una pelle a sé, NON un quinto tono di
+ * `CHIP_FATTURAZIONE`: è un altro asse, come «altra sede». Carta bianca; inchiostro blu
+ * mentre la voce aspetta o parte, rosso sull'errore, l'unico dei tre che chiede di agire.
+ *
+ * Le `labelKey` si pretendono ESATTE: `FatturaChip` (Pagamenti) ha la sua tabella con le
+ * stesse chiavi, e questo è ciò che tiene allineate le due.
+ */
+describe('CHIP_CODA / classiChipCoda — la voce della coda fatture sulla riga', () => {
+  it('copre esattamente i tre stati attivi, con le chiavi del catalogo', () => {
+    expect(Object.keys(CHIP_CODA).sort()).toEqual(['errore', 'in_coda', 'in_invio'])
+    expect(CHIP_CODA.in_coda.labelKey).toBe('fatChip_coda_in_coda')
+    expect(CHIP_CODA.in_invio.labelKey).toBe('fatChip_coda_in_invio')
+    expect(CHIP_CODA.errore.labelKey).toBe('fatChip_coda_errore')
+  })
+
+  it('stesso vestito dei chip di fatturazione: carta bianca, pillola, nessuna opacità', () => {
+    for (const stato of ['in_coda', 'in_invio', 'errore'] as const) {
+      const classi = classiChipCoda(CHIP_CODA[stato])
+      expect(classi).toContain('kv-recon-chip')
+      expect(classi).toContain('bg-kidville-white')
+      expect(classi).toContain('rounded-pill')
+      expect(classi, 'l’opacità sul fondo abbassa il contrasto sotto AA').not.toMatch(/bg-kidville-[a-z-]+\//)
+    }
+  })
+
+  it('«In coda» e «In invio» sono blu e non chiedono niente: nessuna variante di Alto Contrasto', () => {
+    for (const stato of ['in_coda', 'in_invio'] as const) {
+      const classi = classiChipCoda(CHIP_CODA[stato])
+      expect(classi).toContain('text-kidville-info-strong')
+      expect(classi).not.toContain('kv-recon-chip--')
+    }
+  })
+
+  it('«Errore in coda» è rosso e porta la sua àncora di Alto Contrasto', () => {
+    const classi = classiChipCoda(CHIP_CODA.errore)
+    expect(classi).toContain('text-kidville-error-strong')
+    expect(classi).toContain('kv-recon-chip--coda-errore')
   })
 })
 

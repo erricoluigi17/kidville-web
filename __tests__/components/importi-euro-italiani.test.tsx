@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 
 /**
  * ─── ⚠️ IL RUOLO, DAL 2026-09-02, DECIDE SE LE CARD ESISTONO ────────────────
@@ -253,6 +253,89 @@ describe('PaymentsDashboard — i totali sono della Direzione (2026-09-02)', () 
         identita.ruolo = 'coordinator';
         render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
         await waitFor(() => expect(cardKpi('Incassato')).toHaveTextContent('€ 1.234,50'));
+    });
+});
+
+/**
+ * ─── IL CHIP DELLA CODA FATTURE, SULLA RIGA DELLA TABELLA (2026-09-23) ─────────
+ *
+ * Consegna 2a della coda fatture, rilievo (e). La segreteria lavora sulla TABELLA; la card
+ * mobile ha il suo test (`PagamentoCardMobile.test.tsx`). In jsdom le due sono montate
+ * INSIEME (`hidden lg:block` e `lg:hidden` sono solo classi) e montano entrambe
+ * `FatturaChip`: il chip si cerca DENTRO la `row`. Cercato nel documento lo troverebbe la
+ * card, e togliere `codaStato=` dalla tabella lascerebbe questo gruppo verde.
+ */
+const CATEGORIE_CODA = {
+    success: true,
+    data: [
+        { id: 'c1', nome: 'Retta', slug: 'retta' },
+        { id: 'c2', nome: 'Mensa', slug: 'mensa' },
+    ],
+};
+
+/** Saldato e non fatturato («Da fatturare»), di ottobre come `GIORNO_FISSO`. */
+function saldato(id: string, alunno: (typeof STUDENTS)[number], categoria_id: string, descrizione: string, coda_stato: string | null) {
+    return {
+        id, alunno_id: alunno.id, descrizione, importo: 150, importo_pagato: 150, stato: 'pagato', tipo: 'singolo',
+        fattura_stato: 'non_richiesta', scadenza: '2026-10-05', categoria_id, periodo_competenza: '2026-10-01',
+        coda_stato, alunni: { nome: alunno.nome, cognome: alunno.cognome },
+    };
+}
+
+const PAGAMENTI_CODA = {
+    success: true,
+    data: [
+        saldato('p3', STUDENTS[0], 'c1', 'Retta Ottobre', 'in_coda'),
+        saldato('p4', STUDENTS[1], 'c1', 'Retta Ottobre', null),
+        saldato('p5', STUDENTS[0], 'c2', 'Mensa Ottobre', 'errore'),
+        saldato('p6', STUDENTS[1], 'c2', 'Mensa Novembre', null),
+    ],
+};
+
+/** La riga della TABELLA che contiene il testo: la card mobile è un `div` senza ruolo. */
+function rigaTabella(testo: string): HTMLElement {
+    const riga = screen.getAllByRole('row').find((r) => r.textContent?.includes(testo));
+    if (!riga) throw new Error(`nessuna riga di tabella contiene «${testo}»`);
+    return riga;
+}
+
+describe('PaymentsDashboard — il chip della coda fatture sta sulla riga della TABELLA (2026-09-23)', () => {
+    beforeEach(() => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        vi.setSystemTime(new Date(GIORNO_FISSO));
+        vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+            const u = String(url);
+            const body =
+                u.startsWith('/api/pagamenti?') ? PAGAMENTI_CODA
+                    : u.startsWith('/api/admin/students') ? STUDENTS
+                        : u.includes('/settings/categorie') ? CATEGORIE_CODA
+                            : u.includes('/settings/aruba') ? ARUBA
+                                : { success: true, data: [] };
+            return { ok: true, json: async () => body };
+        }));
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+    });
+
+    it('vista rette, quella che si apre: «In coda» sulla riga in coda, niente sulla riga senza voce', async () => {
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        await waitFor(() => expect(within(rigaTabella('Mario Rossi')).getByTestId('coda-chip')).toHaveTextContent('In coda'));
+        // L'assenza DOPO la presenza (.claude/rules/test.md, punto 3), su una riga che c'è.
+        const senzaVoce = rigaTabella('Ada Bianchi');
+        expect(within(senzaVoce).getByText('Da fatturare')).toBeInTheDocument();
+        expect(within(senzaVoce).queryByTestId('coda-chip')).toBeNull();
+    });
+
+    it('vista per categoria, dal select: «Errore in coda» sulla riga in errore, niente sulla riga senza voce', async () => {
+        render(<PaymentsDashboard userId="u1" scuolaId="s1" />);
+        // Il select delle categorie (`PaymentsDashboard.tsx:324`) si riempie con una fetch: si aspetta la «Retta».
+        fireEvent.change(await screen.findByDisplayValue('Retta'), { target: { value: 'c2' } });
+        await waitFor(() => expect(within(rigaTabella('Mensa Ottobre')).getByTestId('coda-chip')).toHaveTextContent('Errore in coda'));
+        const senzaVoce = rigaTabella('Mensa Novembre');
+        expect(within(senzaVoce).getByText('Da fatturare')).toBeInTheDocument();
+        expect(within(senzaVoce).queryByTestId('coda-chip')).toBeNull();
     });
 });
 

@@ -482,7 +482,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 {p && moroso && Number(p.importo_pagato) > 0 && (
                                                     <Badge tone="warn">{t('dashAcconto')} {formatEuro(p.importo_pagato)}</Badge>
                                                 )}
-                                                {p && <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />}
+                                                {p && <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} codaStato={p.coda_stato} />}
                                             </span>
                                         </td>
                                         <td className={cx(TD, 'text-right')}>
@@ -593,7 +593,7 @@ export function PaymentsDashboard({ userId, scuolaId }: Props) {
                                                 {moroso && acconto > 0 && (
                                                     <Badge tone="warn">{t('dashAcconto')} {formatEuro(acconto)}</Badge>
                                                 )}
-                                                <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} />
+                                                <FatturaChip stato={p.stato} fatturaStato={p.fattura_stato} codaStato={p.coda_stato} />
                                             </span>
                                         </td>
                                         <td className={cx(TD, 'text-right')}>

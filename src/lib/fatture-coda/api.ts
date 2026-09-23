@@ -36,6 +36,8 @@ export const STATI_CODA = ['in_coda', 'in_invio', 'emessa', 'errore', 'tolta'] a
 export type StatoVoceCoda = (typeof STATI_CODA)[number]
 /** Gli stati che occupano il posto del pagamento (indice unico parziale della migrazione). */
 export const STATI_ATTIVI: readonly StatoVoceCoda[] = ['in_coda', 'in_invio', 'errore']
+/** Gli stati attivi come TIPO: ciò che una riga di Pagamenti o Riconciliazione può dire (consegna 2a, rilievo e). */
+export type StatoCodaAttivo = Extract<StatoVoceCoda, 'in_coda' | 'in_invio' | 'errore'>
 
 /**
  * I codici d'esito che il lavoratore scrive in `fatture_coda.esito_codice` (§2.7).

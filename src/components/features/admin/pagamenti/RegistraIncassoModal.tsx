@@ -11,6 +11,8 @@ import { formatEuro } from '@/lib/format/valuta';
 import { Modal } from '@/components/ui/Modal';
 import { MODAL_CARD, MODAL_SHADOW, INPUT, SELECT, BTN_PRIMARY, BTN_SECONDARY } from './ui';
 import { messaggioDaCorpo } from '@/lib/ui/esito-fetch';
+// `import type`: `@/lib/fatture-coda/api` tira dentro `next/server` e il logger del server.
+import type { StatoCodaAttivo } from '@/lib/fatture-coda/api';
 
 export interface PagamentoRow {
     id: string;
@@ -24,6 +26,11 @@ export interface PagamentoRow {
     alunno_id?: string;
     parent_payment_id?: string | null;
     fattura_stato?: string;
+    /**
+     * La voce ATTIVA della coda fatture (consegna 2a, rilievo e). La manda solo
+     * `GET /api/pagamenti` allo staff; `null` = nessuna voce attiva, o coda non letta.
+     */
+    coda_stato?: StatoCodaAttivo | null;
     alunni?: { nome?: string; cognome?: string };
 }
 

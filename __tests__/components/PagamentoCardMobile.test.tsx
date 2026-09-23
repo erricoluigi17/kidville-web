@@ -84,6 +84,37 @@ describe('PagamentoCardMobile', () => {
     expect(screen.getByText('Da fatturare')).toBeInTheDocument();
   });
 
+  it('saldato con una voce attiva in coda → chip «In coda» (consegna 2a coda fatture, rilievo e)', () => {
+    render(
+      <PagamentoCardMobile
+        pagamento={{ ...base, stato: 'pagato', importo_pagato: 150, coda_stato: 'in_coda' }}
+        alunnoLabel="Mario Rossi"
+        onIncassa={() => {}}
+        onApri={() => {}}
+      />
+    );
+    expect(screen.getByTestId('coda-chip')).toHaveTextContent('In coda');
+  });
+
+  it('con due chip (Da fatturare + Errore in coda) la riga chip/bottoni va a capo invece di traboccare', () => {
+    // jsdom non misura: si blocca la CLASSE, e il perché sta qui. Il Badge è
+    // `whitespace-nowrap` e FatturaChip ora rende due Badge. Misurato in Chrome
+    // (replica fedele, font della build): senza `flex-wrap` «Dettagli» esce dalla
+    // card di 27 px a 360 px e di 12 px a 375 px. È lo stato che chiede di agire,
+    // e sotto `lg` la card è l'unica vista (rette, per categoria, agenda).
+    render(
+      <PagamentoCardMobile
+        pagamento={{ ...base, stato: 'pagato', importo_pagato: 150, coda_stato: 'errore' }}
+        alunnoLabel="Mario Rossi"
+        onIncassa={() => {}}
+        onApri={() => {}}
+      />
+    );
+    const riga = screen.getByTestId('coda-chip').parentElement!;
+    expect(riga).toContainElement(screen.getByRole('button', { name: /Dettagli/ }));
+    expect(riga).toHaveClass('flex', 'flex-wrap');
+  });
+
   it('la card espone il marker .kv-admin-rowcard (aggancio HC/alto contrasto)', () => {
     const { container } = render(
       <PagamentoCardMobile pagamento={base} alunnoLabel="Mario Rossi" onIncassa={() => {}} onApri={() => {}} />

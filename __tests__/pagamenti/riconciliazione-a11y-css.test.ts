@@ -40,10 +40,11 @@ describe('globals.css — a11y Riconciliazione', () => {
    *
    * Il chip prende il linguaggio HC del repo: carta bianca, inchiostro nero,
    * contorno nero 2px (il contorno è ciò che lo stacca dal fondo della riga, non
-   * il colore). «Da fatturare» resta l'unico distinguibile a colpo d'occhio —
-   * giallo brillante #FFE500, lo stesso di `.kv-recon-row--suggerito` — perché è
-   * l'unico chip che chiede di agire: perderlo nella fila dei bianchi
-   * annullerebbe la ragione per cui esiste.
+   * il colore). «Da fatturare» si distingue a colpo d'occhio — giallo brillante
+   * #FFE500, lo stesso di `.kv-recon-row--suggerito` — perché chiede di agire:
+   * perderlo nella fila dei bianchi annullerebbe la ragione per cui esiste. Gli
+   * altri due che chiedono di agire, «Scartata» ed «Errore in coda», si ribaltano
+   * a rosso pieno (i loro `describe` più sotto).
    */
   it('il chip di fatturazione ha una regola HC dedicata: carta bianca, inchiostro nero, contorno nero', () => {
     const i = css.indexOf('[data-contrast="high"] .kv-recon-chip {');
@@ -55,7 +56,7 @@ describe('globals.css — a11y Riconciliazione', () => {
     expect(blocco).toMatch(/box-shadow:[^;]*2px\s+#(?:000000|000)\b/i);
   });
 
-  it('«Da fatturare» resta giallo brillante in HC (è l’unico chip che chiede di agire)', () => {
+  it('«Da fatturare» resta giallo brillante in HC (chiede di agire)', () => {
     const i = css.indexOf('[data-contrast="high"] .kv-recon-chip--da-fatturare');
     expect(i, 'manca la variante HC di `.kv-recon-chip--da-fatturare`').toBeGreaterThan(-1);
     const blocco = css.slice(i, css.indexOf('}', i));
@@ -154,8 +155,8 @@ describe('globals.css — il popup del movimento in Alto Contrasto', () => {
    * Le due sole ammesse: il CTA pieno (`.bg-kidville-green`, cioè «Conferma
    * questo» / «Apri Incasso unico» / la pill «CF») e il pulsante della fattura
    * (`.kv-recon-azione-fattura`). Il chip «Da fatturare» ha la sua regola fuori
-   * da `.kv-recon-dialog` ed è l'eccezione dichiarata: è l'unico stato che chiede
-   * di agire, e resta giallo apposta.
+   * da `.kv-recon-dialog` ed è l'eccezione dichiarata: chiede di agire, e resta
+   * giallo apposta.
    */
   it('in Alto Contrasto il giallo del popup è riservato a ciò che si può premere', () => {
     const nudo = css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -341,7 +342,9 @@ describe('globals.css — le righe del registro in Alto Contrasto', () => {
  * Si ribalta il chip — fondo rosso, inchiostro nero: 6,58:1 — con la stessa
  * grammatica di «Da fatturare», che è giallo pieno per la stessa ragione. Restano
  * due chip di carta (le fatture che non chiedono niente) e due colorati (quelle
- * che chiedono di agire).
+ * che chiedono di agire). Dal 2026-09-23 la coda fatture aggiunge due chip di
+ * carta («In coda», «In invio») e un terzo colorato, «Errore in coda», rosso
+ * come «Scartata»: `describe` qui sotto.
  */
 describe('globals.css — il chip «Scartata» in Alto Contrasto', () => {
   it('si ribalta a rosso pieno con inchiostro nero (6,58:1), non a testo rosso su bianco', () => {
@@ -354,10 +357,51 @@ describe('globals.css — il chip «Scartata» in Alto Contrasto', () => {
     expect(i).toBeGreaterThan(css.indexOf('[data-contrast="high"] .kv-recon-chip {'));
   });
 
-  it('resta un solo chip di segnale per ciascuna richiesta d’azione (giallo, rosso)', () => {
+  it('chi non chiede niente resta carta: nessuna variante per «Fatturata» e «In attesa SDI»', () => {
     // «Fatturata» e «In attesa SDI» non chiedono niente: restano carta bianca.
     expect(css).not.toContain('[data-contrast="high"] .kv-recon-chip--fatturata');
     expect(css).not.toContain('[data-contrast="high"] .kv-recon-chip--attesa');
+  });
+});
+
+/**
+ * ─── «ERRORE IN CODA» IN ALTO CONTRASTO (2026-09-23) ─────────────────────────
+ *
+ * Consegna 2a della coda fatture, rilievo (e). Il chip della coda sulla riga della
+ * Riconciliazione ha tre stati: «In coda» e «In invio» non chiedono niente e restano
+ * carta bianca con la regola comune; «Errore in coda» chiede di intervenire (pagina
+ * «Coda fatture»: rimetti o togli) e senza un'eccezione, in Alto Contrasto, sparirebbe
+ * fra i due — il difetto già pagato da «Scartata». Stessa grammatica: fondo rosso,
+ * inchiostro nero ereditato, 6,58:1.
+ *
+ * Si legge il foglio SENZA commenti: un commento che nominasse il selettore farebbe
+ * verde questo gruppo da solo.
+ */
+describe('globals.css — il chip «Errore in coda» in Alto Contrasto', () => {
+  const nudo = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const SEL = '[data-contrast="high"] .kv-recon-chip--coda-errore';
+
+  it('si ribalta a rosso pieno con inchiostro nero, non a testo rosso su bianco', () => {
+    const i = nudo.indexOf(SEL);
+    expect(i, 'manca la variante HC di `.kv-recon-chip--coda-errore`').toBeGreaterThan(-1);
+    const b = nudo.slice(i, nudo.indexOf('}', i));
+    expect(b).toMatch(/background:\s*#FF5252\b/i);
+    expect(b, 'il rosso su carta bianca vale 3,19:1: sarebbe sotto AA').not.toMatch(/color:\s*#FF5252/i);
+  });
+
+  it('viene DOPO la regola comune del chip, altrimenti il bianco la copre', () => {
+    const i = nudo.indexOf(SEL);
+    const comune = nudo.indexOf('[data-contrast="high"] .kv-recon-chip {');
+    expect(comune, 'manca la regola comune').toBeGreaterThan(-1);
+    expect(i).toBeGreaterThan(comune);
+  });
+
+  it('sta FUORI da ogni @layer (dentro perderebbe contro le utility)', () => {
+    const j = nudo.indexOf(SEL);
+    expect(j, `selettore non trovato: ${SEL}`).toBeGreaterThan(-1);
+    let p = 0;
+    for (const c of nudo.slice(0, j)) { if (c === '{') p++; else if (c === '}') p--; }
+    expect(p).toBe(0);
   });
 });
 

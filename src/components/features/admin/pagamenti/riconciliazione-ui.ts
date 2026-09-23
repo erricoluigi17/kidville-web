@@ -21,6 +21,8 @@
  */
 import { formatEuro } from '@/lib/format/valuta'
 import { esitoFatturazione, type RigaFatturabile, type TonoFatturazione } from '@/lib/pagamenti/fatturazione-riga'
+// `import type`: `@/lib/fatture-coda/api` tira dentro `next/server` e il logger del server.
+import type { StatoCodaAttivo } from '@/lib/fatture-coda/api'
 
 /**
  * I tipi della politica si rileggono da qui perché questo modulo è il barile
@@ -100,6 +102,12 @@ export interface MovimentoUi extends RigaFatturabile {
    * l'app non l'ha capito: è il bidone «sede non riconosciuta», cioè i rossi.
    */
   sede_dedotta?: SedeDedottaUi | null
+  /**
+   * La voce ATTIVA della coda fatture del pagamento (consegna 2a, rilievo e). Stessa
+   * regola di `fattura_stato`: il server la valorizza solo sulle confermate di una sede
+   * di chi guarda. `null` = nessuna voce attiva, o coda non letta.
+   */
+  coda_stato?: StatoCodaAttivo | null
 }
 
 /**
@@ -485,6 +493,30 @@ export const CHIP_ALTRA_SEDE = {
  */
 export function classiChipAltraSede(): string {
   return classiChipFatturazione({ bg: CHIP_ALTRA_SEDE.bg, testo: CHIP_ALTRA_SEDE.testo, hcClass: '' })
+}
+
+/**
+ * La voce della coda fatture sulla riga (consegna 2a, rilievo e). Come «altra sede»: una
+ * pelle a sé e NON un quinto tono, perché è un altro asse (qui sopra). Carta bianca;
+ * inchiostro blu mentre aspetta o parte, rosso sull'errore, l'unico che chiede di agire
+ * a chi guarda (pagina «Coda fatture»: rimetti o togli).
+ *
+ * Alto Contrasto: «In coda» e «In invio» prendono la regola comune di `kv-recon-chip`
+ * (carta bianca, inchiostro nero: non chiedono niente). «Errore in coda» ha un'àncora sua,
+ * `kv-recon-chip--coda-errore`, che `globals.css` ribalta a rosso pieno come «Scartata»:
+ * senza, in Alto Contrasto sparirebbe fra i due che non chiedono niente.
+ */
+export type PelleCoda = { labelKey: string; testo: string; hcClass: string }
+
+export const CHIP_CODA: Record<StatoCodaAttivo, PelleCoda> = {
+  in_coda: { labelKey: 'fatChip_coda_in_coda', testo: 'text-kidville-info-strong', hcClass: '' },
+  in_invio: { labelKey: 'fatChip_coda_in_invio', testo: 'text-kidville-info-strong', hcClass: '' },
+  errore: { labelKey: 'fatChip_coda_errore', testo: 'text-kidville-error-strong', hcClass: 'kv-recon-chip--coda-errore' },
+}
+
+/** Lo STESSO vestito dei chip di fatturazione (`classiChipFatturazione`): cambia solo la pelle. */
+export function classiChipCoda(pelle: PelleCoda): string {
+  return classiChipFatturazione({ bg: 'bg-kidville-white', testo: pelle.testo, hcClass: pelle.hcClass })
 }
 
 /**

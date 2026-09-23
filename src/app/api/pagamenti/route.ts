@@ -30,6 +30,8 @@ import { coordinateBonificoSede } from '@/lib/pagamenti/coordinate-bonifico'
 import { meseAnnoDaPeriodo } from '@/lib/pagamenti/periodo'
 import { formatEuro } from '@/lib/format/valuta'
 import { isoToIt } from '@/lib/format/data'
+import { STATI_ATTIVI, type StatoCodaAttivo } from '@/lib/fatture-coda/api'
+import { leggiCodaAttiva } from '@/lib/fatture-coda/stato-righe'
 
 // ─── Schemi di validazione input (M3) ────────────────────────────────────────
 // Uuid opzionale da query string: stringa vuota trattata come assente
@@ -299,15 +301,30 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
     // stessa riga di `admin_settings` e nessuna delle due dipende dall'altra. In
     // sequenza erano tre round-trip per sede, in fila uno dietro l'altro, su una
     // pagina che il genitore apre spesso.
-    const perSede = await Promise.all(
-      scuolaIds.map(async (sid) => {
-        const [causali, coordinate] = await Promise.all([
-          getModuleConfig<Record<string, string>>(supabase, 'causali_config', sid),
-          soloAperti ? null : coordinateBonificoSede(supabase, sid, { operazione: 'pagamenti:GET' }),
-        ])
-        return { sid, causali, coordinate }
-      }),
-    )
+    //
+    // La voce attiva della coda fatture, sulla riga (consegna 2a, rilievo e). SOLO staff: il
+    // genitore non sa che la coda esiste. Non sugli aperti: la coda accoglie solo pagamenti
+    // saldati (nucleo §3). Le sedi sono quelle delle righe già filtrate (`scuolaIds`, sopra):
+    // mai più larghe della lista.
+    const leggiCoda = isStaff && !soloAperti && scuolaIds.length > 0
+    const [perSede, codaPerPagamento] = await Promise.all([
+      Promise.all(
+        scuolaIds.map(async (sid) => {
+          const [causali, coordinate] = await Promise.all([
+            getModuleConfig<Record<string, string>>(supabase, 'causali_config', sid),
+            soloAperti ? null : coordinateBonificoSede(supabase, sid, { operazione: 'pagamenti:GET' }),
+          ])
+          return { sid, causali, coordinate }
+        }),
+      ),
+      leggiCoda
+        ? leggiCodaAttiva(
+            () => supabase.from('fatture_coda').select('pagamento_id, stato')
+              .in('scuola_id', scuolaIds).in('stato', [...STATI_ATTIVI]),
+            'pagamenti:GET',
+          )
+        : Promise.resolve(new Map<string, StatoCodaAttivo>()),
+    ])
 
     const causaliBySede: Record<string, Partial<Record<string, string>>> = {}
     const sedi: { id: string; nome: string; iban: string | null; intestatario: string | null }[] = []
@@ -419,7 +436,7 @@ export const GET = withRoute('pagamenti:GET', async (request: NextRequest) => {
           // questa causale descrive descrizione e importo.
           codice: codiceVoce(r.id),
         }, template)
-        return { ...r, scuola_nome: sede, causale_suggerita }
+        return { ...r, scuola_nome: sede, causale_suggerita, ...(isStaff ? { coda_stato: codaPerPagamento.get(r.id) ?? null } : {}) }
       }),
     }, { headers: SENZA_CACHE })
   } catch (err) {

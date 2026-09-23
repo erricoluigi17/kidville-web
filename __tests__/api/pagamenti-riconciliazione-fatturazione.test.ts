@@ -1242,3 +1242,138 @@ describe('GET /api/pagamenti/riconciliazione — i numeri delle pillole (`?conte
     expect((await get('?conteggi=0')).status).toBe(400)
   })
 })
+
+/**
+ * LA VOCE ATTIVA DELLA CODA FATTURE SULLA RIGA (consegna 2a della coda fatture, rilievo e).
+ *
+ * `coda_stato` segue la stessa regola di `fattura_stato`: si valorizza solo sulle righe
+ * CONFERMATE di una sede dell'operatore, ed esce SEMPRE, anche a `null`. La lettura di
+ * `fatture_coda` è filtrata per sede e per stato; il finto qui sopra applica davvero
+ * `eq`/`in`, quindi ogni filtro ha un caso che diventa rosso se lo si toglie.
+ */
+describe('GET /api/pagamenti/riconciliazione — coda_stato, la voce attiva della coda fatture', () => {
+  const voceCoda = (pagamentoId: string, scuolaId: string, stato: string) => ({ pagamento_id: pagamentoId, scuola_id: scuolaId, stato })
+  const rigaDi = (j: { data: { id: string }[] }, id: string) => j.data.find((r: { id: string }) => r.id === id)
+  const chiamateCoda = () => h.chiamate.filter((c) => c.tabella === 'fatture_coda')
+
+  it('confermata di sc-1 con una voce in_invio → `coda_stato: \'in_invio\'`', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta')]
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'in_invio')]
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', 'in_invio')
+  })
+
+  it('voce emessa o tolta → `null`: la riga non ha più niente in coda', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1)), mov(2, 'confermato', PID(2))]
+    h.db.pagamenti = [pag(1, 'pagato', 'emessa'), pag(2, 'pagato', 'non_richiesta')]
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'emessa'), voceCoda(PID(2), 'sc-1', 'tolta')]
+
+    const j = await (await get()).json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    expect(rigaDi(j, MID(2))).toHaveProperty('coda_stato', null)
+  })
+
+  it('prova della guardia `visibile`: pagamento oggi di sc-99, voce rimasta su sc-1 → `null`; il controllo su sc-1 → `in_coda`', async () => {
+    // Dato sintetico, caso reale: la voce fu accodata quando il pagamento era di sc-1
+    // (`fatture_coda_accoda` copia la sede all'accodamento), e una correzione a mano
+    // l'ha poi spostato su sc-99. La voce DEVE stare su sc-1: su sc-99 la lettura, già
+    // filtrata per sede, non la restituirebbe mai, e la guardia non sarebbe messa alla prova.
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1)), mov(2, 'confermato', PID(2))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta', 'sc-99'), pag(2, 'pagato', 'non_richiesta', 'sc-1')]
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'in_coda'), voceCoda(PID(2), 'sc-1', 'in_coda')]
+
+    const j = await (await get()).json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    // Il controllo: la lettura della coda HA restituito le voci di sc-1.
+    expect(rigaDi(j, MID(2))).toHaveProperty('coda_stato', 'in_coda')
+  })
+
+  it('la lettura porta i filtri di sede e di stato; una voce di sc-99 su un pagamento di sc-1 resta `null`', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta', 'sc-1')]
+    // Dato sintetico: isola il filtro di sede della lettura (speculare alla guardia).
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-99', 'in_coda')]
+
+    const j = await (await get()).json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    const [lettura, ...altre] = chiamateCoda()
+    expect(altre).toHaveLength(0)
+    expect(lettura.filtri).toContainEqual({ op: 'in', col: 'scuola_id', val: ['sc-1'] })
+    expect(lettura.filtri).toContainEqual({ op: 'in', col: 'stato', val: ['in_coda', 'in_invio', 'errore'] })
+  })
+
+  it('righe da_abbinare / suggerito: il campo esce sempre, a `null`', async () => {
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'da_abbinare', null),
+      mov(2, 'suggerito', null, { suggerimenti: [{ pagamento_id: PID(2), score: 90, label: 'Mario Rossi · Retta' }] }),
+      mov(3, 'confermato', PID(3)),
+    ]
+    h.db.pagamenti = [pag(2, 'pagato', 'non_richiesta'), pag(3, 'pagato', 'non_richiesta')]
+    h.db.fatture_coda = [voceCoda(PID(2), 'sc-1', 'in_coda'), voceCoda(PID(3), 'sc-1', 'errore')]
+
+    const j = await (await get()).json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    expect(rigaDi(j, MID(2))).toHaveProperty('coda_stato', null)
+    expect(rigaDi(j, MID(3))).toHaveProperty('coda_stato', 'errore')
+  })
+
+  it('`?conteggi=1`: le righe non escono, e `fatture_coda` non si legge', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta')]
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'in_coda')]
+
+    const res = await get('?conteggi=1')
+    expect(res.status).toBe(200)
+    expect(h.chiamate.some((c) => c.tabella === 'pagamenti')).toBe(true)
+    expect(chiamateCoda()).toHaveLength(0)
+  })
+
+  it('registro senza confermate con pagamento: `fatture_coda` non si legge', async () => {
+    h.db.riconciliazione_movimenti = [
+      mov(1, 'suggerito', null, { suggerimenti: [{ pagamento_id: PID(1), score: 90, label: 'Mario Rossi · Retta' }] }),
+    ]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta')]
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'in_coda')]
+
+    const j = await (await get()).json()
+    expect(h.chiamate.some((c) => c.tabella === 'pagamenti')).toBe(true)
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    expect(chiamateCoda()).toHaveLength(0)
+  })
+
+  it('coda assente (PGRST205): 200, `null`, e un evento info «coda-assente»', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta')]
+    h.errori.fatture_coda = { code: 'PGRST205', message: 'Could not find the table' }
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    // Il resto della riga non paga il guasto del chip.
+    expect(rigaDi(j, MID(1))).toHaveProperty('fattura_stato', 'non_richiesta')
+    const assente = h.eventi.filter((e) => e.campi.esito === 'coda-assente')
+    expect(assente).toEqual([
+      { evento: 'fattura', livello: 'info', campi: { operazione: 'pagamenti/riconciliazione:GET', esito: 'coda-assente' } },
+    ])
+  })
+
+  it('guasto vero (08006): 200, `null`, e un warn «coda-badge-non-letta»', async () => {
+    h.db.riconciliazione_movimenti = [mov(1, 'confermato', PID(1))]
+    h.db.pagamenti = [pag(1, 'pagato', 'non_richiesta')]
+    h.db.fatture_coda = [voceCoda(PID(1), 'sc-1', 'in_coda')]
+    h.errori.fatture_coda = { code: '08006', message: 'connection failure' }
+
+    const res = await get()
+    expect(res.status).toBe(200)
+    const j = await res.json()
+    expect(rigaDi(j, MID(1))).toHaveProperty('coda_stato', null)
+    const nonLetta = h.eventi.filter((e) => e.campi.esito === 'coda-badge-non-letta')
+    expect(nonLetta).toHaveLength(1)
+    expect(nonLetta[0].livello).toBe('warn')
+  })
+})

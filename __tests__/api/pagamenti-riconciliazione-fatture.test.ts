@@ -57,6 +57,7 @@ vi.mock('@/lib/supabase/server-client', () => ({
         if (table === 'riconciliazione_movimenti') return resolve({ data: h.movimenti, error: null })
         if (table === 'pagamenti') return resolve({ data: h.sediError ? null : h.sedi, error: h.sediError })
         if (table === 'fatture_emesse') return resolve({ data: h.fattureError ? null : h.fatture, error: h.fattureError })
+        if (table === 'fatture_coda') return resolve({ data: [], error: null })
         // Tabella non pilotata dal test: è un difetto DEL TEST, e deve vedersi.
         return resolve({ data: null, error: { code: 'TEST', message: `tabella non pilotata: ${table}` } })
       }

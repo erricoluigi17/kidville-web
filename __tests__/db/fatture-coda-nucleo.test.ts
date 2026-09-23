@@ -2,7 +2,9 @@
 
 /**
  * Coda fatture Aruba, NUCLEO — la migrazione `20260923102831_fatture_coda_nucleo.sql`
- * eseguita su PGlite dal FILE VERO della cartella delle migrazioni.
+ * eseguita su PGlite dal FILE VERO della cartella delle migrazioni, seguita dalla
+ * correzione della consegna 2a `<version>_fatture_coda_togli_azzera_esito.sql` (rilievo b:
+ * «Togli» azzera anche `esito_codice` ed `esito_messaggio`), trovata per suffisso.
  *
  * Stesso impianto di `__tests__/lib/video-job-next.test.ts`: i ruoli di Supabase
  * ricostruiti a mano, le sole tabelle toccate dalla migrazione (`schools`, `pagamenti`,
@@ -24,13 +26,20 @@
  * veri (il repository è pubblico).
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { PGlite } from '@electric-sql/pglite'
+import { senzaCommenti, toccaLaRls, toccaLeFkUtenti, toccaUnUnico } from '../architecture/soglia-fotografia'
 
 const NOME_FILE = '20260923102831_fatture_coda_nucleo.sql'
 const MIGRAZIONE = readFileSync(join(process.cwd(), 'supabase/migrations', NOME_FILE), 'utf8')
+
+const CARTELLA_MIGRAZIONI = join(process.cwd(), 'supabase/migrations')
+const SUFFISSO_TOGLI = '_fatture_coda_togli_azzera_esito.sql'
+const TROVATI_TOGLI = readdirSync(CARTELLA_MIGRAZIONI).filter((nome) => nome.endsWith(SUFFISSO_TOGLI))
+const NOME_TOGLI = TROVATI_TOGLI[0] ?? ''
+const TOGLI_AZZERA = NOME_TOGLI ? readFileSync(join(CARTELLA_MIGRAZIONI, NOME_TOGLI), 'utf8') : ''
 
 const SEDE_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const SEDE_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
@@ -268,6 +277,7 @@ beforeEach(async () => {
   db = new PGlite()
   await preparaDatabase()
   await db.exec(MIGRAZIONE)
+  if (TOGLI_AZZERA) await db.exec(TOGLI_AZZERA)
 })
 
 afterEach(async () => {
@@ -365,6 +375,9 @@ describe('fatture_coda · forma dello schema', () => {
     await sospendi(true)
 
     await expect(db.exec(MIGRAZIONE)).resolves.toBeDefined()
+    // Rieseguire il solo nucleo rimette la togli vecchia (CREATE OR REPLACE):
+    // l'ordine vero è nucleo → correzione della consegna 2a.
+    if (TOGLI_AZZERA) await expect(db.exec(TOGLI_AZZERA)).resolves.toBeDefined()
 
     expect(await voci()).toHaveLength(1)
     const s = await stato()
@@ -877,6 +890,66 @@ describe('fatture_coda_togli', () => {
     ).toBe('22023')
     expect(await togli([])).toBe(0)
   })
+
+  it('la migrazione della consegna 2a esiste, è una sola, viene dopo il nucleo e non è nel futuro', () => {
+    expect(TROVATI_TOGLI).toHaveLength(1)
+    const version = NOME_TOGLI.slice(0, 14)
+    expect(version).toMatch(/^\d{14}$/)
+    expect(version > NOME_FILE.slice(0, 14)).toBe(true)
+    expect(version <= new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)).toBe(true)
+  })
+
+  it('non accende nessuna guardia delle fotografie, e revoca per nome', () => {
+    expect(TOGLI_AZZERA).not.toBe('')
+    expect(toccaLaRls(TOGLI_AZZERA)).toBe(false)
+    expect(toccaUnUnico(TOGLI_AZZERA)).toBe(false)
+    expect(toccaLeFkUtenti(TOGLI_AZZERA)).toBe(false)
+    expect(senzaCommenti(TOGLI_AZZERA)).not.toMatch(/scuola_id/i)
+    expect(TOGLI_AZZERA).toContain(
+      'REVOKE ALL ON FUNCTION public.fatture_coda_togli(uuid[], uuid) FROM PUBLIC, anon, authenticated;',
+    )
+  })
+
+  it('azzera anche esito_codice ed esito_messaggio, su in_coda come su errore; non tocca le altre', async () => {
+    for (const n of [1, 2, 3]) await nuovoPagamento(n)
+    await accoda([1, 2, 3].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 3)
+    const idDi = (n: number) => prese.find((v) => v.pagamento_id === pag(n))!.id
+    await chiudi(idDi(1), TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+    await chiudi(idDi(2), TOKEN_A, 'riprova', 'non_tentata') // torna in_coda CON un codice
+    await chiudi(idDi(3), TOKEN_A, 'errore', 'esito_incerto', 'Altro messaggio finto') // controllo
+
+    expect(await togli([idDi(1), idDi(2)])).toBe(2)
+
+    for (const n of [1, 2]) {
+      expect(await voceDi(n)).toMatchObject({ stato: 'tolta', esito_codice: null, esito_messaggio: null })
+    }
+    expect(await voceDi(3)).toMatchObject({
+      stato: 'errore', esito_codice: 'esito_incerto', esito_messaggio: 'Altro messaggio finto',
+    })
+  })
+
+  it('ripulisce le voci GIÀ tolte dalla versione vecchia, ed è idempotente', async () => {
+    if (!TOGLI_AZZERA) throw new Error(`manca la migrazione *${SUFFISSO_TOGLI}`)
+    await db.exec(MIGRAZIONE) // il nucleo di nuovo = la togli che è in produzione oggi
+    for (const n of [1, 2, 3]) await nuovoPagamento(n)
+    await accoda([1, 2, 3].map((n, i) => ({ pagamento_id: pag(n), ordine_selezione: i })))
+    const prese = await prendi(TOKEN_A, 3)
+    const idDi = (n: number) => prese.find((v) => v.pagamento_id === pag(n))!.id
+    await chiudi(idDi(1), TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+    await chiudi(idDi(2), TOKEN_A, 'errore', 'esito_incerto', 'Resta')
+    await chiudi(idDi(3), TOKEN_A, 'emessa')
+    expect(await togli([idDi(1)])).toBe(1)
+    expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto') // lo stato da ripulire c'è davvero
+
+    await db.exec(TOGLI_AZZERA)
+    expect(await voceDi(1)).toMatchObject({ stato: 'tolta', esito_codice: null, esito_messaggio: null })
+    expect(await voceDi(2)).toMatchObject({ stato: 'errore', esito_codice: 'esito_incerto', esito_messaggio: 'Resta' })
+    expect(await voceDi(3)).toMatchObject({ stato: 'emessa', esito_codice: 'emessa' })
+
+    await expect(db.exec(TOGLI_AZZERA)).resolves.toBeDefined()
+    expect(await voceDi(1)).toMatchObject({ esito_codice: null, esito_messaggio: null })
+  })
 })
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1083,5 +1156,31 @@ describe('controlli negativi · le prove devono fallire sulla migrazione rotta',
     await db.exec(`UPDATE public.fatture_coda SET prestito_scade_il = now() - interval '1 second'`)
     await bidello()
     expect((await voceDi(1)).stato).toBe('in_coda')
+  })
+
+  it('senza le due righe dell’esito la togli lascerebbe il messaggio: la prova dell’esito lo misura', async () => {
+    const rotta = TOGLI_AZZERA.replace(/\n\s+esito_codice\s+= NULL,\n\s+esito_messaggio\s+= NULL,/, '')
+    expect(rotta).not.toBe(TOGLI_AZZERA)
+    await conMigrazione(MIGRAZIONE)
+    await db.exec(rotta)
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+    expect(await togli([voce.id])).toBe(1)
+    expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto')
+  })
+
+  it('senza il blocco DO le voci già tolte restano col messaggio: la prova della ripulitura lo misura', async () => {
+    const senzaDo = TOGLI_AZZERA.replace(/DO \$\$[\s\S]*?END \$\$;/, '')
+    expect(senzaDo).not.toBe(TOGLI_AZZERA)
+    await conMigrazione(MIGRAZIONE)
+    await nuovoPagamento(1)
+    await accoda([{ pagamento_id: pag(1) }])
+    const [voce] = await prendi(TOKEN_A, 1)
+    await chiudi(voce.id, TOKEN_A, 'errore', 'scarto_aruba', 'Messaggio finto')
+    await togli([voce.id]) // la togli VECCHIA
+    await db.exec(senzaDo)
+    expect((await voceDi(1)).esito_messaggio).toBe('Messaggio finto')
   })
 })

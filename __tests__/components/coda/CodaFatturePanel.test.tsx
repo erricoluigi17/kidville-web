@@ -67,8 +67,6 @@ const PAGAMENTO_B = 'cccccccc-0000-4000-8000-000000000004'
 const VOCE_A = 'dddddddd-0000-4000-8000-000000000005'
 const VOCE_B = 'dddddddd-0000-4000-8000-000000000006'
 
-const ORA_IT = new Intl.DateTimeFormat('it-IT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Rome' })
-
 function voce(extra: Partial<VoceCoda> = {}): VoceCoda {
     return {
         id: VOCE_A,
@@ -170,17 +168,6 @@ describe('CodaFatturePanel — striscia di stato e contatori', () => {
         expect(bottone).toBeTruthy()
     })
 
-    it('in pausa: mostra l’orario nel fuso Europe/Rome', async () => {
-        // Relativo ad ADESSO, mai una data cablata: il pannello mostra la pausa solo se è ancora nel
-        // futuro, e un orario scritto a mano fa scadere il test col calendario (.claude/rules/test.md).
-        const finoA = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-        code = [risposta({ stato: { sospesa: false, sospesa_il: null, pausa_fino_a: finoA, pausa_motivo: 'aruba-429', ultimo_giro_il: null } })]
-        render(<CodaFatturePanel userId={UTENTE} ruolo="segreteria" />)
-
-        const attesa = `In pausa fino alle ${ORA_IT.format(new Date(finoA))}.`
-        await screen.findByText(attesa)
-    })
-
     it('coda non disponibile: l’avviso c’è, contatori ed elenco no', async () => {
         code = [{ ...risposta(), disponibile: false }]
         render(<CodaFatturePanel userId={UTENTE} ruolo="admin" />)
@@ -198,6 +185,66 @@ describe('CodaFatturePanel — striscia di stato e contatori', () => {
         code = [risposta({ conteggi: { in_coda: 1, in_invio: 0, errore: 0, emesse_7g: 0, tolte_7g: 0 } })]
         fireEvent.click(riprova)
         await screen.findByText('L’invio continua anche a PC spento.')
+    })
+})
+
+/**
+ * La pausa e la fine stimata dicono il GIORNO, non solo l'ora (consegna 2a, rilievo c): una pausa
+ * 429 di 60 minuti partita alle 23:30 diceva «In pausa fino alle 00:30.», e 300 fatture a 50 l'ora
+ * accodate alle 18:03 dicevano «Fine stimata alle 00:03.». Tutti e due sono il giorno DOPO.
+ *
+ * Qui l'orologio si ferma, ed è l'oggetto della prova, non la cura di un test scaduto: il caso che
+ * conta è la mezzanotte di Roma, e un «adesso» relativo non la attraversa a comando. Si falsifica
+ * SOLO `Date`: `findBy*` e il polling restano sui timer veri (l'`afterEach` rimette quelli veri).
+ */
+describe('CodaFatturePanel — la pausa e la fine stimata dicono il giorno (Europe/Rome)', () => {
+    function fermaOrologio(adessoZ: string) {
+        vi.useFakeTimers({ toFake: ['Date'] })
+        vi.setSystemTime(new Date(adessoZ))
+    }
+
+    function inPausaFinoA(pausaFinoA: string): RispostaCoda {
+        return risposta({ stato: { sospesa: false, sospesa_il: null, pausa_fino_a: pausaFinoA, pausa_motivo: 'aruba-429', ultimo_giro_il: null } })
+    }
+
+    it('pausa che scavalca la mezzanotte di Roma: «fino a domani alle 00:30»', async () => {
+        fermaOrologio('2026-09-23T21:30:00.000Z')
+        code = [inPausaFinoA('2026-09-23T22:30:00.000Z')]
+        render(<CodaFatturePanel userId={UTENTE} ruolo="segreteria" />)
+
+        await screen.findByText('In pausa fino a domani alle 00:30.')
+    })
+
+    it('pausa nello stesso giorno: «fino alle 13:00», senza giorno', async () => {
+        fermaOrologio('2026-09-23T10:00:00.000Z')
+        code = [inPausaFinoA('2026-09-23T11:00:00.000Z')]
+        render(<CodaFatturePanel userId={UTENTE} ruolo="segreteria" />)
+
+        await screen.findByText('In pausa fino alle 13:00.')
+    })
+
+    // Il caso NORMALE in produzione: dopo un 429 `pausa_fino_a` resta scritto anche quando la
+    // pausa è finita. La guardia `inPausa` sta nel calcolo di `pausaFino` (fuori dal JSX): senza,
+    // una pausa scaduta direbbe «In pausa fino alle 11:00.» su una coda che lavora.
+    it('pausa SCADUTA: la striscia torna «attiva», nessun «In pausa»', async () => {
+        fermaOrologio('2026-09-23T10:00:00.000Z')
+        code = [inPausaFinoA('2026-09-23T09:00:00.000Z')]
+        render(<CodaFatturePanel userId={UTENTE} ruolo="segreteria" />)
+
+        await screen.findByText('L’invio continua anche a PC spento.')
+        expect(screen.queryByText(/In pausa/)).toBeNull()
+    })
+
+    it.each([
+        ['2026-09-23T17:03:00.000Z', 'Fine stimata alle 19:03.'],
+        ['2026-09-23T22:03:00.000Z', 'Fine stimata domani alle 00:03.'],
+        ['2026-09-25T06:00:00.000Z', 'Fine stimata ven 25/09 alle 08:00.'],
+    ])('fine stimata %s letta alle 18:03 di Roma → «%s»', async (stimaFine, attesa) => {
+        fermaOrologio('2026-09-23T16:03:00.000Z')
+        code = [risposta({ stima_fine: stimaFine, conteggi: { in_coda: 300, in_invio: 0, errore: 0, emesse_7g: 0, tolte_7g: 0 } })]
+        render(<CodaFatturePanel userId={UTENTE} ruolo="segreteria" />)
+
+        await screen.findByText(attesa)
     })
 })
 
